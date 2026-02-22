@@ -31,7 +31,7 @@ graph TB
     ON_CHAIN -.->|verify/settle| OFF_CHAIN
     OFF_CHAIN -.->|prove| ON_CHAIN
 
-    style ON_CHAIN fill:#3498db
+    style ON_CHAIN fill:#1f618d
     style OFF_CHAIN fill:#27ae60
 ```
 
@@ -74,9 +74,9 @@ graph TB
     L1 --> L2
     L1 -.-> ALT
 
-    style L1 fill:#3498db
+    style L1 fill:#1f618d
     style L2 fill:#27ae60
-    style ALT fill:#f39c12
+    style ALT fill:#b7950b
 ```
 
 ### Chain Support Timeline
@@ -123,8 +123,8 @@ graph TB
     CORE --> GOV
     ECONOMIC --> GOV
 
-    style CORE fill:#9b59b6
-    style ECONOMIC fill:#3498db
+    style CORE fill:#6c3483
+    style ECONOMIC fill:#1f618d
     style GOV fill:#27ae60
 ```
 
@@ -272,7 +272,7 @@ graph TB
         MINT[Mint OCTO to provider]
     end
 
-    style CONVERSION fill:#3498db
+    style CONVERSION fill:#1f618d
 ```
 
 ---
@@ -325,7 +325,7 @@ graph LR
     B1 -->|Confirm| D2
     D2 -->|Mint| D1
 
-    style SOURCE fill:#e74c3c
+    style SOURCE fill:#b03a2e
     style DEST fill:#27ae60
 ```
 
@@ -387,8 +387,8 @@ graph TB
     V1 --> P2
     V2 --> P2
 
-    style GOV_PROCESS fill:#3498db
-    style VOTING fill:#9b59b6
+    style GOV_PROCESS fill:#1f618d
+    style VOTING fill:#6c3483
 ```
 
 ### Governance Contracts
@@ -480,9 +480,9 @@ graph TB
     INDEXER --> API
     API --> FRONTEND
 
-    style CHAIN fill:#3498db
-    style INDEXER fill:#9b59b6
-    style API fill:#e74c3c
+    style CHAIN fill:#1f618d
+    style INDEXER fill:#6c3483
+    style API fill:#b03a2e
     style FRONTEND fill:#27ae60
 ```
 

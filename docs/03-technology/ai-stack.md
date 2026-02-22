@@ -20,9 +20,9 @@ graph TB
 
     L1 --> L2 --> L3 --> L4
 
-    style L1 fill:#9b59b6
-    style L2 fill:#3498db
-    style L3 fill:#e74c3c
+    style L1 fill:#6c3483
+    style L2 fill:#1f618d
+    style L3 fill:#b03a2e
     style L4 fill:#27ae60
 ```
 

@@ -84,11 +84,11 @@ graph TB
     PATHS --> PROTO
     PATHS --> ENTERPRISE
 
-    style PATHS fill:#3498db
+    style PATHS fill:#1f618d
     style AGENT fill:#27ae60
-    style INFRA fill:#f39c12
-    style PROTO fill:#9b59b6
-    style ENTERPRISE fill:#e74c3c
+    style INFRA fill:#b7950b
+    style PROTO fill:#6c3483
+    style ENTERPRISE fill:#b03a2e
 ```
 
 ---

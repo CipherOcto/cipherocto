@@ -188,9 +188,9 @@ graph TB
         C4[CipherOcto]
     end
 
-    style C1 fill:#e74c3c
-    style C2 fill:#f39c12
-    style C3 fill:#9b59b6
+    style C1 fill:#b03a2e
+    style C2 fill:#b7950b
+    style C3 fill:#6c3483
     style C4 fill:#27ae60
 ```
 

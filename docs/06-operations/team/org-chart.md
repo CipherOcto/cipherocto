@@ -17,9 +17,9 @@ graph TB
     CEO --> CFO
     CEO --> COO
 
-    style CEO fill:#9b59b6
-    style CTO fill:#3498db
-    style CFO fill:#e74c3c
+    style CEO fill:#6c3483
+    style CTO fill:#1f618d
+    style CFO fill:#b03a2e
     style COO fill:#27ae60
 ```
 
@@ -70,10 +70,10 @@ graph TB
     HeadSecurity --> SecurityTeam2
     HeadSecurity --> SecurityTeam3
 
-    style CTO fill:#3498db
-    style HeadProtocol fill:#9b59b6
+    style CTO fill:#1f618d
+    style HeadProtocol fill:#6c3483
     style HeadInfra fill:#27ae60
-    style HeadSecurity fill:#e74c3c
+    style HeadSecurity fill:#b03a2e
 ```
 
 ---
@@ -123,9 +123,9 @@ graph TB
     HeadData --> DataTeam2
     HeadData --> DataTeam3
 
-    style CPO fill:#f39c12
-    style HeadDesign fill:#9b59b6
-    style HeadPM fill:#3498db
+    style CPO fill:#b7950b
+    style HeadDesign fill:#6c3483
+    style HeadPM fill:#1f618d
     style HeadData fill:#27ae60
 ```
 
@@ -188,11 +188,11 @@ graph TB
     HeadContent --> ContentTeam2
     HeadContent --> ContentTeam3
 
-    style CGO fill:#e74c3c
-    style HeadMarketing fill:#9b59b6
-    style HeadCommunity fill:#3498db
+    style CGO fill:#b03a2e
+    style HeadMarketing fill:#6c3483
+    style HeadCommunity fill:#1f618d
     style HeadBD fill:#27ae60
-    style HeadContent fill:#f39c12
+    style HeadContent fill:#b7950b
 ```
 
 ---
@@ -255,10 +255,10 @@ graph TB
     HeadPeople --> PeopleTeam3
 
     style COO fill:#27ae60
-    style HeadOps fill:#9b59b6
-    style HeadFinance fill:#3498db
-    style HeadLegal fill:#e74c3c
-    style HeadPeople fill:#f39c12
+    style HeadOps fill:#6c3483
+    style HeadFinance fill:#1f618d
+    style HeadLegal fill:#b03a2e
+    style HeadPeople fill:#b7950b
 ```
 
 ---

@@ -42,8 +42,8 @@ graph TB
     CHAMBER1 --> SHARED
     CHAMBER2 --> SHARED
 
-    style CHAMBER1 fill:#9b59b6
-    style CHAMBER2 fill:#3498db
+    style CHAMBER1 fill:#6c3483
+    style CHAMBER2 fill:#1f618d
     style SHARED fill:#27ae60
 ```
 
@@ -288,7 +288,7 @@ graph TB
 
     D1 --> D2 --> D3 --> D4 --> D5 --> D6
 
-    style DISPUTE fill:#e74c3c
+    style DISPUTE fill:#b03a2e
 ```
 
 ---

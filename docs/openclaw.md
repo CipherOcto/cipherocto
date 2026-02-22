@@ -46,7 +46,7 @@ graph TB
         P2[Dynamic Infrastructure<br/>Pay per use]
     end
 
-    style TODAY fill:#e74c3c
+    style TODAY fill:#b03a2e
     style FUTURE fill:#27ae60
 ```
 
@@ -98,8 +98,8 @@ graph LR
     A -->|Hires for coding| S2
     A -->|Hires for content| S3
 
-    style ASSISTANT fill:#9b59b6
-    style SPECIALISTS fill:#3498db
+    style ASSISTANT fill:#6c3483
+    style SPECIALISTS fill:#1f618d
 ```
 
 ### 3. Secure Storage
@@ -170,7 +170,7 @@ graph LR
 
     U --> VALUE
 
-    style USER fill:#e74c3c
+    style USER fill:#b03a2e
     style VALUE fill:#27ae60
 ```
 

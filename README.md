@@ -177,11 +177,11 @@ graph TB
     CIPHEROCTO --> PROVIDERS
     CIPHEROCTO --> BLOCKCHAIN
 
-    style USERS fill:#e74c3c
-    style APPLICATION fill:#9b59b6
-    style CIPHEROCTO fill:#3498db
+    style USERS fill:#b03a2e
+    style APPLICATION fill:#6c3483
+    style CIPHEROCTO fill:#1f618d
     style PROVIDERS fill:#27ae60
-    style BLOCKCHAIN fill:#f39c12
+    style BLOCKCHAIN fill:#b7950b
 ```
 
 **The flow:** Users deploy agents → Agents use CipherOcto protocol → Protocol coordinates providers → Blockchain settles transactions.

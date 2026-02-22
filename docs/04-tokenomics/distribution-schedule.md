@@ -214,7 +214,7 @@ graph TB
         S5[2035: ~3.5B circulating<br/>35% of total]
     end
 
-    style SUPPLY fill:#3498db
+    style SUPPLY fill:#1f618d
 ```
 
 **Note:** Emissions decrease after infrastructure incentives complete (2029). Long-term emissions stabilize at ecosystem reward levels only.

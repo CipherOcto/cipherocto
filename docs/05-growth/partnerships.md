@@ -204,7 +204,7 @@ graph TB
 
     TIERS --> REQUIREMENTS
 
-    style TIERS fill:#3498db
+    style TIERS fill:#1f618d
     style REQUIREMENTS fill:#27ae60
 ```
 

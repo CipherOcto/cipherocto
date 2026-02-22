@@ -15,9 +15,9 @@ graph TB
 
     INTELLIGENCE --> EXECUTION --> NETWORK
 
-    style INTELLIGENCE fill:#9b59b6
-    style EXECUTION fill:#e74c3c
-    style NETWORK fill:#3498db
+    style INTELLIGENCE fill:#6c3483
+    style EXECUTION fill:#b03a2e
+    style NETWORK fill:#1f618d
 ```
 
 ---
@@ -52,8 +52,8 @@ graph TB
 
     F1 --> F2 --> F3 --> F4 --> F5 --> F6
 
-    style INTELLIGENCE fill:#9b59b6
-    style FLOW fill:#f39c12
+    style INTELLIGENCE fill:#6c3483
+    style FLOW fill:#b7950b
 ```
 
 ### Agent Orchestrator
@@ -104,7 +104,7 @@ graph TB
     FA --> P2
     FA --> P3
 
-    style ROUTER fill:#3498db
+    style ROUTER fill:#1f618d
     style PROVIDERS fill:#27ae60
 ```
 
@@ -138,8 +138,8 @@ graph TB
 
     L1 --> L2 --> L3 --> L4
 
-    style EXECUTION fill:#e74c3c
-    style ISOLATION fill:#f39c12
+    style EXECUTION fill:#b03a2e
+    style ISOLATION fill:#b7950b
 ```
 
 ### Secure Execution Runtime
@@ -226,8 +226,8 @@ graph TB
 
     C1 --> C2 --> C3
 
-    style NETWORK fill:#3498db
-    style CONSENSUS fill:#9b59b6
+    style NETWORK fill:#1f618d
+    style CONSENSUS fill:#6c3483
 ```
 
 ### Node Coordinator
@@ -261,7 +261,7 @@ graph TB
 
     DISCOVERY --> SELECTION
 
-    style DISCOVERY fill:#3498db
+    style DISCOVERY fill:#1f618d
     style SELECTION fill:#27ae60
 ```
 
@@ -307,7 +307,7 @@ graph TB
     A --> B --> C --> D
 
     style A fill:#27ae60
-    style D fill:#9b59b6
+    style D fill:#6c3483
 ```
 
 ---
@@ -404,7 +404,7 @@ graph TB
 
     REGIONS --> INTERCONNECT
 
-    style REGIONS fill:#3498db
+    style REGIONS fill:#1f618d
     style INTERCONNECT fill:#27ae60
 ```
 

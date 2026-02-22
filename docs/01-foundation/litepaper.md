@@ -33,10 +33,10 @@ graph LR
     G --> X
     A --> X
 
-    style O fill:#ff6b6b
-    style G fill:#ff6b6b
-    style A fill:#ff6b6b
-    style X fill:#c0392b
+    style O fill:#943126
+    style G fill:#943126
+    style A fill:#943126
+    style X fill:#943126
 ```
 
 **The reality:**
@@ -77,7 +77,7 @@ graph LR
 
     UNIFIED --> OUTCOME
 
-    style UNIFIED fill:#3498db
+    style UNIFIED fill:#1f618d
     style OUTCOME fill:#27ae60
 ```
 
@@ -120,9 +120,9 @@ graph TB
 
     INTELLIGENCE --> EXECUTION --> NETWORK
 
-    style INTELLIGENCE fill:#9b59b6
-    style EXECUTION fill:#e74c3c
-    style NETWORK fill:#3498db
+    style INTELLIGENCE fill:#6c3483
+    style EXECUTION fill:#b03a2e
+    style NETWORK fill:#1f618d
 ```
 
 **Many agents, one intelligence.**
@@ -184,7 +184,7 @@ graph TB
 
     DUAL_STAKE --> BENEFITS
 
-    style DUAL_STAKE fill:#3498db
+    style DUAL_STAKE fill:#1f618d
     style BENEFITS fill:#27ae60
 ```
 
@@ -253,7 +253,7 @@ graph LR
     C --> D[Convert to OCTO]
     D --> E[Revenue realized]
 
-    style A fill:#e74c3c
+    style A fill:#b03a2e
     style E fill:#27ae60
 ```
 
@@ -424,7 +424,7 @@ graph TB
         F3[Privacy accessible to all]
     end
 
-    style TODAY fill:#e74c3c
+    style TODAY fill:#b03a2e
     style FUTURE fill:#27ae60
 ```
 
@@ -472,11 +472,11 @@ graph LR
     C --> D[Earn<br/>Receive rewards]
     D --> E[Govern<br/>Shape future]
 
-    style A fill:#3498db
-    style B fill:#9b59b6
-    style C fill:#f39c12
+    style A fill:#1f618d
+    style B fill:#6c3483
+    style C fill:#b7950b
     style D fill:#27ae60
-    style E fill:#e74c3c
+    style E fill:#b03a2e
 ```
 
 ---

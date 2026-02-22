@@ -233,7 +233,7 @@ graph TB
 
     W1 --> W2 --> W3 --> W4 --> W5 --> W6 --> W7 --> W8
 
-    style WORKFLOW fill:#3498db
+    style WORKFLOW fill:#1f618d
 ```
 
 ### Roles & Responsibilities
@@ -332,9 +332,9 @@ graph LR
     C --> F[Shares<br/>Backlinks]
     D --> G[Views<br/>Subscribers]
 
-    style A fill:#9b59b6
-    style B fill:#3498db
-    style C fill:#e74c3c
+    style A fill:#6c3483
+    style B fill:#1f618d
+    style C fill:#b03a2e
     style D fill:#27ae60
 ```
 

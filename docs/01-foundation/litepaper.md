@@ -10,19 +10,49 @@
 
 ## What is CipherOcto?
 
-CipherOcto is a **decentralized AI infrastructure layer** that transforms fragmented AI resources into a unified, sovereign economy.
+**CipherOcto is a decentralized AI infrastructure network that converts idle compute, bandwidth, storage, and AI access into a unified sovereign intelligence economy.**
 
 We are building the coordination protocol for global machine intelligence — enabling AI agents, compute providers, storage operators, and enterprises to cooperate autonomously without centralized intermediaries.
 
 **Think of CipherOcto as the TCP/IP for AI:** the invisible infrastructure layer that allows intelligence to flow between participants as effortlessly as data flows across the internet.
 
+**CipherOcto is not a chatbot or personal assistant. It is the infrastructure layer powering the next generation of AI agents.**
+
 CipherOcto can operate as a personal AI assistant similar to emerging open assistant systems, but extends beyond them by transforming assistants into participants of a global autonomous infrastructure economy.
 
 ---
 
-## The Problem in One View
+## Why Now?
 
-Today's AI economy is fundamentally broken.
+The timing for CipherOcto is not accidental. Five convergent forces make decentralized AI infrastructure inevitable:
+
+| Force | 2025 Reality | Why It Matters |
+| ----- | ------------ | ------------- |
+| **Local AI Explosion** | Open-weight models (Llama, Mistral) run anywhere | AI no longer requires centralized APIs |
+| **Edge Compute Rise** | Consumer devices now AI-capable | Intelligence moving to the edge |
+| **Enterprise Privacy Pressure** | Data cannot leave corporate boundaries | Sovereign infrastructure required |
+| **GPU Scarcity** | Demand exceeds supply by 3-5x | Idle capacity must be mobilized |
+| **AI Becoming Infrastructure** | AI embedded in every business process | Coordination layer essential |
+
+**This transforms the project perception from idea → inevitable movement.**
+
+---
+
+## The Fragmented Intelligence Problem
+
+Today's AI economy faces a fundamental market failure.
+
+**The Current Reality:**
+
+| Failure | Impact |
+| ------- | ------ |
+| **AI locked behind centralized APIs** | No portability, vendor lock-in |
+| **Unused GPU capacity globally** | 40-60% of compute sits idle |
+| **Unused enterprise quotas** | $15-20B wasted annually |
+| **Siloed SaaS subscriptions** | No market for AI resources |
+| **No sovereign AI ownership** | Platforms control intelligence |
+
+**The cost:** A $400B+ coordination failure that grows daily.
 
 ```mermaid
 graph LR
@@ -43,17 +73,7 @@ graph LR
     style X fill:#943126
 ```
 
-**The reality:**
-
-| Issue | Impact |
-| ----- | ------ |
-| **Millions of GPUs sit idle** | 40-60% utilization industry-wide |
-| **Enterprise AI subscriptions go unused** | Billions in wasted capacity |
-| **Valuable datasets remain locked** | No safe way to share or monetize |
-| **AI agents cannot collaborate** | Each platform is a walled garden |
-| **Vendor lock-in is accelerating** | Enterprises desperate for alternatives |
-
-**The cost:** A $400B+ coordination failure.
+**This is not just inefficiency. This is a market failure that CipherOcto must exist to solve.**
 
 ---
 
@@ -95,6 +115,40 @@ graph LR
 6. **Everyone earns** based on their contribution
 
 **No intermediaries. No platform rent-seeking. Just economic coordination.**
+
+---
+
+## How Users Interact with CipherOcto
+
+### Individual User
+
+1. **Discover agents** — Browse marketplace for specialized AI
+2. **Choose privacy level** — Flag data PRIVATE, CONFIDENTIAL, SHARED, or PUBLIC
+3. **Submit tasks** — Agents execute while maintaining sovereignty
+4. **Earn from data** — Public datasets generate passive revenue
+5. **Own everything** — Agent state, memory, and reputation are portable
+
+**Result:** AI that works for you—not a platform.
+
+### Organization
+
+1. **Deploy internal agents** — Specialized AI per department
+2. **Private AI infrastructure** — Data never leaves corporate boundaries
+3. **Cost reduction vs SaaS** — 30-50% savings through efficiency
+4. **Internal marketplace** — Departments trade compute and data
+5. **Compliance native** — SOC2, HIPAA, GDPR built-in
+
+**Result:** Enterprise AI independence.
+
+### Builder
+
+1. **Deploy agent** — Publish to marketplace once
+2. **Earn immediately** — Revenue from first execution
+3. **Compose freely** — Hire other agents for complex tasks
+4. **Accumulate reputation** — Early adopters gain permanent advantage
+5. **Own your work** — Agent identity and earnings are portable
+
+**Result:** Build once, earn continuously.
 
 ---
 
@@ -225,7 +279,35 @@ Each market operates independently while sharing the same trust infrastructure, 
 
 ---
 
+## Trust & Verification
+
+CipherOcto operates on zero-trust principles. Every claim is verifiable.
+
+| Mechanism | What It Secures |
+| ---------- | --------------- |
+| **Staking Requirements** | Economic commitment to honest behavior |
+| **Reputation Scoring** | Track record influences routing priority |
+| **Cryptographic Proof of Service** | ZK proofs verify work was completed |
+| **Slashing Mechanisms** | Misbehavior results in stake forfeiture |
+| **Encrypted Memory Guarantees** | Data never accessible without authorization |
+
+**Attacking CipherOcto requires defeating cryptographic proofs, reputation history, economic stakes, identity verification, and community consensus—simultaneously.**
+
+---
+
 ## The Token System
+
+### The Economic Organism
+
+CipherOcto operates as a multi-role economic organism where each token represents a biological function of a distributed intelligence system:
+
+| Layer | Tokens | Function |
+| ----- | ------ | -------- |
+| **Governance** | OCTO | Coordination, settlement, reserve asset |
+| **Infrastructure** | OCTO-N, OCTO-S, OCTO-B | Network operations, storage, bandwidth |
+| **Intelligence Supply** | OCTO-A, OCTO-W | Compute access, enterprise AI resale |
+| **Coordination** | OCTO-O | Task routing and orchestration |
+| **Growth** | OCTO-M, OCTO-D | Ecosystem expansion, agent development |
 
 ### OCTO — The Sovereign Token
 
@@ -399,28 +481,47 @@ Network effects create self-reinforcing growth:
 
 ```mermaid
 graph LR
-    A[More Providers] --> B[Cheaper Compute]
-    B --> C[More Agents]
-    C --> D[More Users]
-    D --> E[More Data & Revenue]
-    E --> A
+    A[More Users] --> B[More Demand]
+    B --> C[Higher Rewards]
+    C --> D[More Providers Join]
+    D --> E[Lower Prices]
+    E --> F[More Agents Created]
+    F --> A
 
-    style A fill:#27ae60
+    style A fill:#b03a2e
     style B fill:#1f618d
-    style C fill:#6c3483
-    style D fill:#b03a2e
-    style E fill:#b7950b
+    style C fill:#b7950b
+    style D fill:#27ae60
+    style E fill:#6c3483
+    style F fill:#b03a2e
 ```
 
 **The growth logic:**
 
-1. More providers → cheaper compute (supply increases)
-2. Cheaper compute → more agents (demand increases)
-3. More agents → more users (utility expands)
-4. More users → more data & revenue (network effects compound)
-5. More revenue → more providers (incentive strengthens)
+1. More users → more demand for AI services
+2. More demand → higher rewards for providers
+3. Higher rewards → more providers join network
+4. More providers → lower prices through competition
+5. Lower prices → more agents created
+6. More agents → more users attracted
 
 This is not a linear roadmap. It is a compounding flywheel where each accelerator feeds the next.
+
+---
+
+## CipherOcto vs Centralized AI
+
+| Feature | Centralized AI | CipherOcto |
+| ------- | -------------- | ----------- |
+| **Data Ownership** | Platform owns | User owns |
+| **Compute Source** | Corporate data centers | Global idle compute |
+| **AI Access** | API-gatekept | Open marketplace |
+| **Revenue Flow** | Corporation | Network participants |
+| **Privacy Model** | Policy-based (revocable) | Cryptographic (guaranteed) |
+| **Vendor Lock-in** | High | Zero (portable identity) |
+| **Innovation** | Centralized roadmap | Permissionless evolution |
+
+**The choice:** Rent intelligence from platforms—or own the infrastructure.
 
 ---
 
@@ -457,55 +558,36 @@ Early builders establish reputation that compounds. Late entrants face higher ba
 
 ---
 
-## For Different Participants
-
-### For Compute Providers
+## Phased Roadmap
 
 ```mermaid
-graph LR
-    A[Idle GPUs] --> B[Connect to CipherOcto]
-    B --> C[Earn OCTO-A]
-    C --> D[Convert to OCTO]
-    D --> E[Revenue realized]
-
-    style A fill:#b03a2e
-    style E fill:#27ae60
+timeline
+    title CipherOcto Development Phases
+    section Phase 0
+        Seed Stage : Protocol Design & Specification : Complete
+        : Community Building : Active
+    section Phase 1
+        Agent Network Alpha : First agents execute : Target Q1 2027
+        : Market Layer : Economic activity begins : Target Q2 2027
+    section Phase 2
+        Marketplace Launch : Public network access : Target Q3 2027
+        : Storage Layer : Persistent memory : Target Q4 2027
+    section Phase 3
+        Enterprise Layer : Business features : Target Q1 2028
+        : DAO Governance : Decentralized control : Target Q2 2028
+    section Phase 4
+        Autonomous Intelligence Economy : Self-sustaining : Target Q4 2028+
 ```
 
-**Transform idle hardware into continuous revenue.**
+### Milestones by Phase
 
-### For Enterprises
-
-| Challenge | CipherOcto Solution |
-| --------- | ------------------- |
-| Unused AI subscriptions | Sell on marketplace, recoup costs |
-| Vendor lock-in | Multi-provider redundancy |
-| Data privacy concerns | Sovereign data control |
-| Compliance requirements | SOC2, HIPAA, GDPR-native design |
-
-**Reduce AI costs 30-50% while gaining independence.**
-
-### For Developers
-
-| Opportunity | Description |
-| ----------- | ----------- |
-| **Publish agents** | Build once, earn continuously |
-| **Agent marketplace** | Global distribution |
-| **Agent composition** | Agents hiring agents |
-| **No infrastructure** | Focus on logic, not ops |
-
-**Your agents work while you sleep.**
-
-### For Token Holders
-
-| Utility | Description |
-| ------- | ----------- |
-| **Governance** | Vote on protocol decisions |
-| **Staking rewards** | 5-8% APY for securing network |
-| **Deflation** | Buyback & burn from fees |
-| **Treasury backing** | Protocol revenue supports value |
-
-**OCTO becomes the reserve currency of AI infrastructure.**
+| Phase | Focus | Key Capability |
+| ----- | ----- | ------------- |
+| **Phase 0** | Foundation | Architecture, specification, community |
+| **Phase 1** | Agent Network | First agents execute, market layer active |
+| **Phase 2** | Marketplace | Public access, storage layer live |
+| **Phase 3** | Enterprise | Business features, DAO governance |
+| **Phase 4** | Maturity | Self-sustaining autonomous economy |
 
 ---
 
@@ -555,44 +637,6 @@ Every $100 transaction:
 
 ---
 
-## Capability Roadmap
-
-```mermaid
-timeline
-    title CipherOcto Capability Unlocks
-    section Foundation
-        Protocol Design : Complete : Whitepaper + Architecture
-        Community Building : Active : Early adopters onboarding
-    section Core Capabilities
-        Agent Runtime : Q1 2027 : First agents execute
-        Market Layer : Q2 2027 : Economic activity begins
-        Storage Layer : Q3 2027 : Persistent memory available
-    section Network Security
-        Dual Staking : Q4 2027 : Economic alignment active
-        Proof of Reliability : Q1 2028 : Reputation system live
-    section Governance
-        DAO Governance : Q2 2028 : Decentralized control
-        Treasury Management : Q3 2028 : Protocol revenue distribution
-    section Maturity
-        Autonomous Agents : Q4 2028 : Self-sustaining economy
-        Cross-Protocol Coordination : 2029+ : Network-of-networks
-```
-
-### Capability-Based Milestones
-
-| Capability | Unlock | What It Enables |
-| ---------- | ------ | --------------- |
-| **Agent Runtime** | Q1 2027 | First agents execute tasks |
-| **Market Layer** | Q2 2027 | Economic activity begins |
-| **Storage Layer** | Q3 2027 | Persistent memory available |
-| **Dual Staking** | Q4 2027 | Economic alignment active |
-| **DAO Governance** | Q2 2028 | Decentralized control |
-| **Autonomous Agents** | Q4 2028 | Self-sustaining economy |
-
-Investors fund capabilities, not dates.
-
----
-
 ## Why CipherOcto Matters
 
 ### The Market Opportunity
@@ -604,14 +648,6 @@ Investors fund capabilities, not dates.
 | CipherOcto Target | — | 10% share | 20% share |
 
 **Multi-trillion dollar opportunity.**
-
-### The Problem with Alternatives
-
-| Approach | Problem |
-| -------- | ------- |
-| **Centralized AI (OpenAI, Google)** | Institutional trust, no cryptographic guarantees |
-| **Traditional DePIN** | Stake-based security, vulnerable to capital attacks |
-| **CipherOcto** | Zero-trust architecture with cryptographic proof |
 
 ### Our Competitive Advantages
 

@@ -28,7 +28,21 @@
 
 CipherOcto is a sovereign AI infrastructure protocol that connects private compute, bandwidth, storage, and autonomous agents into a unified decentralized intelligence network.
 
+**CipherOcto aims to become the coordination layer for autonomous AI systems, similar to how Kubernetes orchestrated cloud computing.**
+
 AI that works with your infrastructure — not above it.
+
+---
+
+## Start Here
+
+👤 **Users** → Explore [`examples/`](./examples/) to see what's possible
+
+🧑‍💻 **Developers** → Read [`docs/03-technology/system-architecture.md`](./docs/03-technology/system-architecture.md) + [`docs/07-developers/getting-started.md`](./docs/07-developers/getting-started.md)
+
+🖥️ **Providers** → Learn about network roles in [`docs/04-tokenomics/token-design.md`](./docs/04-tokenomics/token-design.md)
+
+🏢 **Enterprises** → Read the [`docs/01-foundation/whitepaper/v1.0-whitepaper.md`](./docs/01-foundation/whitepaper/v1.0-whitepaper.md)
 
 ---
 
@@ -71,9 +85,11 @@ CipherOcto solves the coordination problem — creating a protocol where intelli
 
 ---
 
-## The CipherOcto Network
+## First Milestone
 
-CipherOcto connects:
+**The CipherOcto Node** — The foundational infrastructure piece that enables providers to join the network, accept tasks, and earn rewards.
+
+Everything builds from here.
 
 • **Users & Enterprises** — Access intelligence while maintaining sovereignty
 • **AI Hardware Providers** — Monetize idle compute resources
@@ -116,6 +132,59 @@ Hybrid Network Mesh 🪼
 ```
 
 Architecture is evolving during the seed phase.
+
+---
+
+## Network Diagram
+
+```mermaid
+graph TB
+    subgraph USERS["Users & Enterprises"]
+        U1[Individual Users]
+        U2[Enterprises]
+    end
+
+    subgraph APPLICATION["Application Layer"]
+        direction TB
+        A1[Personal Assistants]
+        A2[Telegram Agents]
+        A3[Enterprise Workflows]
+    end
+
+    subgraph CIPHEROCTO["CipherOcto Protocol"]
+        direction TB
+        O1[🐙 Orchestration Layer<br/>Task Routing & Scheduling]
+        O2[🦑 Execution Layer<br/>Secure Runtime & Privacy]
+        O3[🪼 Network Layer<br/>Provider Coordination]
+    end
+
+    subgraph PROVIDERS["Infrastructure Providers"]
+        direction TB
+        P1[GPU Compute<br/>OCTO-A]
+        P2[Storage<br/>OCTO-S]
+        P3[Bandwidth<br/>OCTO-B]
+    end
+
+    subgraph BLOCKCHAIN["Blockchain Settlement"]
+        direction TB
+        B1[Smart Contracts]
+        B2[Token Economics]
+        B3[Governance]
+    end
+
+    USERS --> APPLICATION
+    APPLICATION --> CIPHEROCTO
+    CIPHEROCTO --> PROVIDERS
+    CIPHEROCTO --> BLOCKCHAIN
+
+    style USERS fill:#e74c3c
+    style APPLICATION fill:#9b59b6
+    style CIPHEROCTO fill:#3498db
+    style PROVIDERS fill:#27ae60
+    style BLOCKCHAIN fill:#f39c12
+```
+
+**The flow:** Users deploy agents → Agents use CipherOcto protocol → Protocol coordinates providers → Blockchain settles transactions.
 
 ---
 

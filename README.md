@@ -9,6 +9,10 @@
 </p>
 
 <p align="center">
+  Sovereign AI • Hybrid Infrastructure • Autonomous Agents
+</p>
+
+<p align="center">
   <a href="./docs/01-foundation/whitepaper/v1.0-whitepaper.md"><b>Whitepaper</b></a> •
   <a href="./docs/"><b>Docs</b></a> •
   <a href="./docs/03-technology/system-architecture.md"><b>Architecture</b></a> •
@@ -20,34 +24,85 @@
 
 ## What is CipherOcto?
 
-CipherOcto is a decentralized marketplace and orchestration protocol transforming spare compute, bandwidth, storage, and AI capabilities into a unified programmable intelligence network.
+CipherOcto is a sovereign AI infrastructure protocol that connects private compute, bandwidth, storage, and autonomous agents into a unified decentralized intelligence network.
+
+AI that works with your infrastructure — not above it.
 
 ---
 
-## The Problem
+## Mission
 
-- AI compute is centralized
-- Bandwidth unused worldwide
-- Storage fragmented
-- Enterprises locked into vendors
-- AI access fragmented
-- Users cannot monetize data or resources
+Build a sovereign intelligence layer where AI agents can:
+
+- **reason privately**
+- **execute autonomously**
+- **coordinate securely**
+- **operate anywhere**
+
+CipherOcto aims to become the operational layer between AI systems, private compute, and decentralized trust networks.
 
 ---
 
-## The CipherOcto Solution
+## Why CipherOcto Exists
+
+**The problem is $400B+ in coordination failure:**
+
+- Centralized AI captures most value
+- Millions of GPUs sit idle worldwide
+- Enterprise AI subscriptions go unused
+- Data remains locked in silos
+- AI agents cannot collaborate across platforms
+- No economic alignment between builders and users
+
+CipherOcto solves the coordination problem — creating a protocol where intelligence flows as easily as data flows across the internet.
+
+---
+
+## The CipherOcto Network
 
 CipherOcto connects:
 
-• **Compute Providers** — Monetize idle hardware
-• **Bandwidth Nodes** — Earn from network relay
-• **Storage Intelligence Nodes** — Profit from encrypted storage
-• **AI Service Wholesalers** — Resell unused enterprise quotas
-• **Developers** — Publish earning agents
-• **Enterprises** — Private hosted AI at lower cost
-• **Autonomous Agents** — Hire each other, form coalitions
+• **Users & Enterprises** — Access intelligence while maintaining sovereignty
+• **AI Hardware Providers** — Monetize idle compute resources
+• **Bandwidth Operators** — Earn from network relay and delivery
+• **Storage & Memory Nodes** — Profit from encrypted data persistence
+• **Orchestrators** — Coordinate task distribution across providers
+• **AI Model Wholesalers** — Resell unused enterprise AI quotas
+• **Developers** — Publish agents that earn autonomously
+• **Governance Participants** — Shape protocol direction
 
 into a single decentralized intelligence economy.
+
+---
+
+## The Ocean Stack
+
+CipherOcto's three-layer architecture:
+
+- 🐙 **Intelligence Layer** — Reasoning & orchestration
+- 🦑 **Execution Layer** — Secure agent actions
+- 🪼 **Network Layer** — Distributed coordination
+
+**Many agents, one intelligence.**
+
+---
+
+## Architecture (Conceptual)
+
+```text
+User / Organization
+↓
+CipherOcto Assistant 🐙
+↓
+Agent Orchestrator
+↓
+Secure Execution Runtime 🦑
+↓
+Hybrid Network Mesh 🪼
+(Local Nodes + Blockchain Verification)
+```
+
+Architecture is evolving during the seed phase.
 
 ---
 
@@ -67,63 +122,92 @@ into a single decentralized intelligence economy.
 
 ---
 
-## Architecture Overview
+## Token Ecosystem
 
-**Infrastructure Layer** — Compute / Storage / Bandwidth
+CipherOcto introduces the **OCTO governance token** and a role-based ecosystem of specialized network tokens that align incentives across all infrastructure participants.
 
-**Orchestration Layer** — Agents + scheduling + routing
-
-**Market Layer** — Services, data, agents marketplace
-
-**Governance Layer** — OCTO DAO
+Full token architecture described in the [Whitepaper](./docs/01-foundation/whitepaper/v1.0-whitepaper.md).
 
 ---
 
-## Why CipherOcto Wins
+## Use Cases
 
-CipherOcto unifies:
-
-- Decentralized cloud
-- AI marketplace
-- Compute sharing
-- Data economy
-- Agent economy
-- Governance
-
-Into one protocol.
+- Private enterprise AI assistants
+- Self-hosted autonomous agents
+- Sovereign AI infrastructure
+- Secure workflow automation
+- Hybrid AI + blockchain applications
+- Edge intelligence systems
 
 ---
 
-## User Benefits
+## Roadmap
 
-### Individual Users
+### Phase 0 — Foundation
 
-- Access AI cheaper
-- Monetize unused compute/data
-- Privacy control
-- Own AI agents
+- Brand & identity
+- Repository initialization
+- Architecture definition
 
-### Developers
+### Phase 1 — Core Intelligence
 
-- Deploy agents without infra
-- Monetize automatically
-- Protocol incentives
+- Agent orchestration prototype
+- Local execution runtime
+- Private assistant interface
 
-### Enterprises
+### Phase 2 — Network Layer
 
-- Multi-provider AI sourcing
-- Cost optimization
-- Hybrid decentralized backbone
-- Avoid vendor lock-in
+- Node coordination
+- Identity & trust model
+- Hybrid verification mechanisms
+
+### Phase 3 — Ecosystem
+
+- Developer SDK
+- Deployment framework
+- Community node network
 
 ---
 
-## Getting Started
+## Repository Status
 
-1. **Read the Whitepaper** — [`docs/01-foundation/whitepaper/v1.0-whitepaper.md`](./docs/01-foundation/whitepaper/v1.0-whitepaper.md)
-2. **Join the Network** — [discord.gg/cipherocto](https://discord.gg/cipherocto)
-3. **Become a Provider** — See [`docs/07-developers/getting-started.md`](./docs/07-developers/getting-started.md)
-4. **Build on CipherOcto** — See [`docs/07-developers/contributing.md`](./docs/07-developers/contributing.md)
+🚧 **Seed Stage Development**
+
+CipherOcto is under active exploration.
+
+You should expect:
+
+- rapid iteration
+- experimental modules
+- incomplete features
+- architectural refactors
+
+Early contributors are helping shape the foundation.
+
+---
+
+## Philosophy
+
+AI should be:
+
+- **private by default**
+- **distributed by design**
+- **sovereign by choice**
+
+---
+
+## Contributing
+
+CipherOcto is being built in the open.
+
+We welcome:
+
+- architectural discussions
+- experimentation
+- early prototypes
+- research collaboration
+
+See [`docs/07-developers/contributing.md`](./docs/07-developers/contributing.md)
 
 ---
 
@@ -147,32 +231,6 @@ docs/
 
 ---
 
-## Status
-
-🧪 **Seed Phase** — Protocol design & ecosystem architecture in active development
-
-📜 **Whitepaper v1.0** — Complete
-
-🏗️ **Architecture** — Ocean Stack defined
-
-💬 **Governance** — Bicameral model specified
-
----
-
-## Vision
-
-CipherOcto is the **Internet of Intelligence Infrastructure** — the coordination protocol for a global network of autonomous AI agents, compute providers, and enterprises building the future of decentralized intelligence.
-
----
-
-## License & Community
-
-**License:** To be defined
-
-**Contributing:** See [`docs/07-developers/contributing.md`](./docs/07-developers/contributing.md)
-
----
-
 ## Connect
 
 - **Discord:** [discord.gg/cipherocto](https://discord.gg/cipherocto)
@@ -181,6 +239,6 @@ CipherOcto is the **Internet of Intelligence Infrastructure** — the coordinati
 
 ---
 
-🐙 **CipherOcto** — *Decentralized Intelligence Infrastructure*
+🐙 **CipherOcto**
 
 *Private intelligence, everywhere.*

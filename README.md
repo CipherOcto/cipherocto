@@ -4,6 +4,8 @@
 
 *Compute • Bandwidth • Storage • Intelligence • Governance*
 
+> Decentralized infrastructure for personal AI assistants and autonomous agents.
+
 <p align="center">
   <img src="./logo.png" width="300" alt="CipherOcto Logo">
 </p>
@@ -45,7 +47,18 @@ CipherOcto aims to become the operational layer between AI systems, private comp
 
 ## Why CipherOcto Exists
 
-**The problem is $400B+ in coordination failure:**
+| Today | CipherOcto |
+|-------|-------------|
+| Centralized agents run on one platform | Agents run across a global network |
+| Centralized compute | Distributed providers |
+| Personal assistant | Global intelligence mesh |
+| One node | Planet-scale swarm |
+
+---
+
+### The Problem
+
+**The world faces a $400B+ coordination failure:**
 
 - Centralized AI captures most value
 - Millions of GPUs sit idle worldwide
@@ -132,12 +145,12 @@ Full token architecture described in the [Whitepaper](./docs/01-foundation/white
 
 ## Use Cases
 
-- Private enterprise AI assistants
-- Self-hosted autonomous agents
-- Sovereign AI infrastructure
-- Secure workflow automation
-- Hybrid AI + blockchain applications
-- Edge intelligence systems
+- **Personal AI Assistants** — Sovereign agents that work for you
+- **Enterprise AI** — Private infrastructure for corporate intelligence
+- **Agent Networks** — Autonomous agents hiring agents
+- **Compute Providers** — Monetize idle hardware
+- **OpenClaw Ecosystem** — Infrastructure for personal AI agents
+- **Decentralized Cloud** — Sovereign alternative to centralized providers
 
 ---
 

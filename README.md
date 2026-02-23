@@ -16,10 +16,12 @@
 
 <p align="center">
   <a href="./START_HERE.md"><b>⚡ Start Here</b></a> •
+  <a href="./ROADMAP.md"><b>📍 Roadmap</b></a> •
   <a href="./docs/01-foundation/whitepaper/v1.0-whitepaper.md"><b>Whitepaper</b></a> •
   <a href="./docs/01-foundation/litepaper.md"><b>Litepaper</b></a> •
   <a href="./docs/"><b>Docs</b></a> •
   <a href="./docs/ROLES.md"><b>Roles</b></a> •
+  <a href="./ECOSYSTEM.md"><b>Ecosystem</b></a> •
   <a href="./docs/visuals/ecosystem-map.md"><b>Ecosystem Map</b></a> •
   <a href="https://discord.gg/cipherocto"><b>Join Network</b></a>
 </p>
@@ -278,13 +280,15 @@ Full token architecture described in the [Whitepaper](./docs/01-foundation/white
 
 ## Roadmap
 
-### Phase 0 — Foundation
+**Full roadmap with momentum tracking:** [→ **ROADMAP.md**](./ROADMAP.md)
+
+### Phase 0 — Foundation ✓
 
 - Brand & identity
 - Repository initialization
 - Architecture definition
 
-### Phase 1 — Core Intelligence
+### Phase 1 — Core Intelligence 🔄 CURRENT
 
 - Agent orchestration prototype
 - Local execution runtime
@@ -318,6 +322,18 @@ You should expect:
 - architectural refactors
 
 Early contributors are helping shape the foundation.
+
+---
+
+## 👥 Early Builders
+
+*Contributors shaping Phase 1 gain permanent ecosystem recognition.*
+
+| Builder | Focus | GitHub |
+| ------- | ----- | ------ |
+| *[Your name here](https://github.com/Cipherocto)* | *[Add your contribution]* | *[Open a PR or join Discord]* |
+
+**Want to be listed?** Contribute to [open missions](missions/) or join the discussion in [Discord](https://discord.gg/cipherocto).
 
 ---
 

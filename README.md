@@ -15,10 +15,12 @@
 </p>
 
 <p align="center">
+  <a href="./START_HERE.md"><b>⚡ Start Here</b></a> •
   <a href="./docs/01-foundation/whitepaper/v1.0-whitepaper.md"><b>Whitepaper</b></a> •
+  <a href="./docs/01-foundation/litepaper.md"><b>Litepaper</b></a> •
   <a href="./docs/"><b>Docs</b></a> •
-  <a href="./docs/03-technology/system-architecture.md"><b>Architecture</b></a> •
-  <a href="./docs/04-tokenomics/token-design.md"><b>Tokenomics</b></a> •
+  <a href="./docs/ROLES.md"><b>Roles</b></a> •
+  <a href="./docs/visuals/ecosystem-map.md"><b>Ecosystem Map</b></a> •
   <a href="https://discord.gg/cipherocto"><b>Join Network</b></a>
 </p>
 
@@ -36,13 +38,10 @@ AI that works with your infrastructure — not above it.
 
 ## 🚀 Start Here
 
+**New here? Begin here:** [→ **START_HERE.md**](./START_HERE.md) ⚡
+
 **Choose your role in the CipherOcto ecosystem:**
-
 [→ **ROLES.md**](./docs/ROLES.md) — Find your path and start contributing
-
----
-
-*Not sure yet?* Read the [Litepaper](./docs/01-foundation/litepaper.md) (10 min) for a complete overview.
 
 ---
 
@@ -55,6 +54,48 @@ AI that works with your infrastructure — not above it.
 🖥️ **Providers** → Learn about network roles in [`docs/ROLES.md`](./docs/ROLES.md)
 
 🏢 **Enterprises** → Read the [Whitepaper](./docs/01-foundation/whitepaper/v1.0-whitepaper.md) or [Enterprise Example](./examples/enterprise-ai/)
+
+---
+
+## 🗺️ Ecosystem Map
+
+**One view of the entire network:**
+
+[→ **View Full Ecosystem Map**](./docs/visuals/ecosystem-map.md)
+
+```mermaid
+graph TB
+    subgraph CORE["🐙 CipherOcto Core Network"]
+        direction TB
+        PROTOCOL[Protocol Layer<br/>Coordination & Settlement]
+        MARKET[Market Layer<br/>Compute • Storage • Bandwidth • Agents]
+        TRUST[Trust Layer<br/>Reputation & Verification]
+    end
+
+    subgraph PARTICIPANTS["Ecosystem Participants"]
+        direction TB
+        USERS[Users & Enterprises]
+        BUILDERS[Builders & Developers]
+        ORCH[Orchestrators OCTO-O]
+        PROV[Providers OCTO-A/B/S]
+        WHOLE[AI Wholesalers OCTO-W]
+        GROWTH[Growth Contributors OCTO-M]
+        NODES[Node Operators OCTO-N]
+    end
+
+    subgraph GOVERNANCE["🪙 Governance"]
+        direction TB
+        OCTO[OCTO Token<br/>Governance & Reserve]
+        DAO[DAO Governance<br/>Bicameral System]
+    end
+
+    PARTICIPANTS --> CORE
+    CORE --> GOVERNANCE
+
+    style CORE fill:#1f618d
+    style PARTICIPANTS fill:#27ae60
+    style GOVERNANCE fill:#b7950b
+```
 
 ---
 

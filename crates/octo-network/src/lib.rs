@@ -12,7 +12,6 @@
 //! In Phase 2+: libp2p-based decentralized networking
 
 use anyhow::Result;
-use libp2p::{identity, Swarm};
 use tokio::sync::RwLock;
 
 pub struct Network {
@@ -30,8 +29,9 @@ impl Network {
     /// Add a peer to the network
     pub async fn add_peer(&self, peer_id: String) -> Result<()> {
         let mut peers = self.peers.write().await;
-        peers.push(peer_id);
-        println!("🌐 Peer added: {} (total: {} peers)", peer_id, peers.len());
+        let peer_count = peers.len() + 1;
+        peers.push(peer_id.clone());
+        println!("🌐 Peer added: {} (total: {} peers)", peer_id, peer_count);
         Ok(())
     }
 

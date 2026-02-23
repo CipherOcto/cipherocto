@@ -26,8 +26,8 @@ pub fn init() -> Result<()> {
     let db = open_db()?;
     let identity_id = uuid::Uuid::new_v4();
 
-    // Store identity
-    db.insert(IDENTITY_FILE.as_bytes(), identity_id.as_bytes_as_slice())?;
+    // Store identity as string for easy retrieval
+    db.insert(IDENTITY_FILE.as_bytes(), identity_id.to_string().as_bytes())?;
 
     println!("📁 Registry initialized at: {}", registry_dir.display());
     Ok(())

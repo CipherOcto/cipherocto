@@ -34,15 +34,27 @@ AI that works with your infrastructure — not above it.
 
 ---
 
-## Start Here
+## 🚀 Start Here
+
+**Choose your role in the CipherOcto ecosystem:**
+
+[→ **ROLES.md**](./docs/ROLES.md) — Find your path and start contributing
+
+---
+
+*Not sure yet?* Read the [Litepaper](./docs/01-foundation/litepaper.md) (10 min) for a complete overview.
+
+---
+
+**Quick links by audience:**
 
 👤 **Users** → Explore [`examples/`](./examples/) to see what's possible
 
-🧑‍💻 **Developers** → Read [`docs/03-technology/system-architecture.md`](./docs/03-technology/system-architecture.md) + [`docs/07-developers/getting-started.md`](./docs/07-developers/getting-started.md)
+🧑‍💻 **Developers** → Read [Builder Manifesto](./docs/01-foundation/builder-manifesto.md) + [Getting Started](./docs/07-developers/getting-started.md)
 
-🖥️ **Providers** → Learn about network roles in [`docs/04-tokenomics/token-design.md`](./docs/04-tokenomics/token-design.md)
+🖥️ **Providers** → Learn about network roles in [`docs/ROLES.md`](./docs/ROLES.md)
 
-🏢 **Enterprises** → Read the [`docs/01-foundation/whitepaper/v1.0-whitepaper.md`](./docs/01-foundation/whitepaper/v1.0-whitepaper.md)
+🏢 **Enterprises** → Read the [Whitepaper](./docs/01-foundation/whitepaper/v1.0-whitepaper.md) or [Enterprise Example](./examples/enterprise-ai/)
 
 ---
 

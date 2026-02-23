@@ -1,0 +1,10 @@
+{
+  "name": "hello-agent",
+  "version": "0.1.0",
+  "description": "A simple greeting agent that demonstrates the CipherOcto agent system",
+  "runtime": "deno",
+  "permissions": ["net", "read"],
+  "role": "builder",
+  "entrypoint": "agent.ts",
+  "author": "CipherOcto"
+}

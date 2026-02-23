@@ -1,0 +1,22 @@
+# Rust / CipherOcto
+/target
+/.octo
+**/*.rs.bk
+*.pdb
+
+# Cargo lockfile (optional - comment out if you want it in repo)
+# Cargo.lock
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log

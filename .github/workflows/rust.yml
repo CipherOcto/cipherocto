@@ -1,22 +1,56 @@
-name: Rust
+name: Rust CI
 
 on:
   push:
-    branches: [ "main" ]
+    branches: [next, feat/**, agent/**, research/**, hotfix/**]
   pull_request:
-    branches: [ "main" ]
+    branches: [main, next]
 
 env:
   CARGO_TERM_COLOR: always
+  RUST_BACKTRACE: 1
 
 jobs:
-  build:
-
+  test:
+    name: Test
     runs-on: ubuntu-latest
 
     steps:
-    - uses: actions/checkout@v4
-    - name: Build
-      run: cargo build --verbose
-    - name: Run tests
-      run: cargo test --verbose
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+
+      - uses: swatinem/rust-cache@v2
+
+      - name: Build
+        run: cargo build --verbose
+
+      - name: Run tests
+        run: cargo test --verbose
+
+      - name: Format check
+        run: cargo fmt --all -- --check
+
+      - name: Clippy
+        run: cargo clippy --all-targets --all-features -- -D warnings
+
+  # Check MSRV (Minimum Supported Rust Version)
+  msrv:
+    name: Check MSRV
+    runs-on: ubuntu-latest
+    if: github.event_name == 'pull_request'
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: "1.93.0"  # MSRV
+
+      - uses: swatinem/rust-cache@v2
+
+      - name: Check with MSRV
+        run: cargo check --verbose
+

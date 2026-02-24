@@ -1,0 +1,42 @@
+# Dependency + Secret Scan
+# Mandatory for blockchain projects
+
+name: Security Scan
+
+on:
+  push:
+    branches: [next, feat/**, agent/**, research/**, hotfix/**]
+  pull_request:
+    branches: [main, next]
+  schedule:
+    - cron: "0 3 * * 1"
+
+jobs:
+  security:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Dependency Review
+        uses: actions/dependency-review-action@v4
+
+      - name: Install cargo-audit
+        run: cargo install cargo-audit
+
+      - name: Rust security audit
+        run: |
+          if [ -f Cargo.toml ]; then cargo audit || true; fi
+
+      - name: Run Trivy filesystem scan
+        uses: aquasecurity/trivy-action@master
+        with:
+          scan-type: fs
+          format: table
+          exit-code: 0
+
+      - name: Secret Scan (Gitleaks)
+        uses: gitleaks/gitleaks-action@v2

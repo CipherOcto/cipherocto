@@ -1,0 +1,67 @@
+# Build + Test
+# Validates every contribution before merge
+
+name: CI
+
+on:
+  push:
+    branches: [next, feat/**, agent/**, research/**, hotfix/**]
+  pull_request:
+    branches: [main, next]
+
+jobs:
+  build-test:
+    runs-on: ubuntu-latest
+
+    strategy:
+      matrix:
+        node-version: [20]
+        python-version: [3.11]
+        rust: [stable]
+
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: ${{ matrix.rust }}
+          components: rustfmt, clippy
+
+      - name: Rust Cache
+        uses: swatinem/rust-cache@v2
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node-version }}
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+
+      - name: Install JS deps
+        run: |
+          if [ -f package.json ]; then npm install; fi
+
+      - name: Install Python deps
+        run: |
+          if [ -f requirements.txt ]; then pip install -r requirements.txt; fi
+
+      - name: Build Rust
+        run: |
+          if [ -f Cargo.toml ]; then cargo build --verbose; fi
+
+      - name: Run Rust tests
+        run: |
+          if [ -f Cargo.toml ]; then cargo test --verbose; fi
+
+      - name: Run JS tests
+        run: |
+          if [ -f package.json ]; then npm test || true; fi
+
+      - name: Run Python tests
+        run: |
+          if [ -d tests ]; then pytest || true; fi

@@ -1,0 +1,43 @@
+# CipherOcto Code Owners
+
+# This file controls who has to approve pull requests based on file changes.
+
+# Core runtime - team with expertise in the agent execution layer
+/crates/runtime/ @core-team
+/crates/sandbox/ @core-team
+
+# Agent system - AI agent orchestration and management
+/crates/agents/ @agent-team
+/crates/orchestrator/ @agent-team
+
+# Blockchain/crypto - security-critical code
+/crates/blockchain/ @crypto-team
+/crates/crypto/ @crypto-team
+/crates/consensus/ @crypto-team
+
+# CLI tools - command-line interface
+/crates/cli/ @cli-team
+/crates/repl/ @cli-team
+
+# Node identity system
+/crates/identity/ @crypto-team
+
+# Network mesh
+/crates/network/ @network-team
+
+# Documentation
+/docs/ @docs-team
+/*.md @docs-team
+
+# GitHub workflows and CI/CD
+.github/ @devops-team
+
+# Smart contracts (if any)
+/contracts/ @crypto-team
+
+# AI/ML components
+/crates/ai/ @ai-team
+/crates/inference/ @ai-team
+
+# Default fallback - maintainers must approve everything else
+* @maintainers

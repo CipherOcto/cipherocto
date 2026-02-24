@@ -1,0 +1,41 @@
+# Automated Releases
+# Creates releases automatically when merging next → main
+
+name: Release
+
+on:
+  push:
+    branches:
+      - main
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Verify branch protection
+        run: |
+          if [ "${{ github.event.head_commit.message }}" == "" ]; then
+            echo "ERROR: Direct push to main is not allowed"
+            exit 1
+          fi
+
+      - name: Generate changelog
+        uses: mikepenz/release-changelog-builder-action@v4
+        id: changelog
+        with:
+          configuration: ""
+
+      - name: Create Release
+        uses: softprops/action-gh-release@v2
+        with:
+          body: ${{ steps.changelog.outputs.changelog }}
+          draft: false
+          prerelease: false

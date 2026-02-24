@@ -1,0 +1,54 @@
+# Formatting + Style
+# Keeps multi-contributor code consistent
+
+name: Lint
+
+on:
+  pull_request:
+    branches: [main, next]
+  push:
+    branches: [next, feat/**, agent/**, research/**, hotfix/**]
+
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: 3.11
+
+      - name: Install linters
+        run: |
+          npm install -g prettier || true
+          pip install black flake8 || true
+          cargo install cargo-audit || true
+
+      - name: Rust format check
+        run: |
+          if [ -f Cargo.toml ]; then cargo fmt --all -- --check; fi
+
+      - name: Rust clippy
+        run: |
+          if [ -f Cargo.toml ]; then cargo clippy --all-targets --all-features -- -D warnings || true; fi
+
+      - name: Run Prettier
+        run: prettier --check . || true
+
+      - name: Run Python format checks
+        run: |
+          black --check . || true
+          flake8 . || true

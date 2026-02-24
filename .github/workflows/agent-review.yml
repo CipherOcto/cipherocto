@@ -1,0 +1,61 @@
+# AI Review Automation
+# CipherOcto becomes AI-native
+
+name: AI Agent Review
+
+on:
+  pull_request:
+    branches: [main, next, feat/**, agent/**]
+
+jobs:
+  ai-review:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Get PR diff
+        run: |
+          git fetch origin main
+          git diff origin/main > pr.diff
+
+      - name: Detect changed languages
+        id: detect
+        run: |
+          if git diff --name-only origin/main | grep -q '\.rs$'; then
+            echo "rust=true" >> $GITHUB_OUTPUT
+          fi
+          if git diff --name-only origin/main | grep -E '\.(js|ts)$'; then
+            echo "js=true" >> $GITHUB_OUTPUT
+          fi
+          if git diff --name-only origin/main | grep -E '\.py$'; then
+            echo "python=true" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Build review prompt
+        id: prompt
+        run: |
+          PROMPT="Review this pull request diff for bugs, security risks, and architectural concerns."
+          PROMPT="$PROMPT\n\nContext: This is a Rust-first decentralized AI platform with blockchain components."
+          PROMPT="$PROMPT\n\nFor Rust changes, check for:\n- Memory safety issues\n- Correct error handling (Result, Option)\n- Unsafe code usage\n- Concurrency patterns (Arc, Mutex, channels)\n- Clippy warnings adherence"
+          PROMPT="$PROMPT\n\n\n=== DIFF START ===\n$(cat pr.diff)\n=== DIFF END ==="
+          echo "prompt<<EOF" >> $GITHUB_OUTPUT
+          echo "$PROMPT" >> $GITHUB_OUTPUT
+          echo "EOF" >> $GITHUB_OUTPUT
+
+      - name: AI Review
+        env:
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+        run: |
+          curl https://api.openai.com/v1/responses \
+            -H "Authorization: Bearer $OPENAI_API_KEY" \
+            -H "Content-Type: application/json" \
+            -d "{
+              \"model\":\"gpt-4.1\",
+              \"input\":\"${{ steps.prompt.outputs.prompt }}\"
+            }" > review.json
+
+      - name: Post Comment
+        uses: marocchino/sticky-pull-request-comment@v2
+        with:
+          path: review.json

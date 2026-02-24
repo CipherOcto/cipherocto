@@ -45,6 +45,12 @@ impl Network {
     }
 }
 
+impl Default for Network {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 pub struct NetworkStatus {
     pub peer_count: usize,
     pub is_active: bool,

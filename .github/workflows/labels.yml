@@ -32,9 +32,16 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - uses: tj-actions/size-label@v0.2.0
+      - uses: coverwalletcode/size-label-action@v3.0.0
         with:
-          repo-token: ${{ secrets.GITHUB_TOKEN }}
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          xs_max: '10'
+          s_max: '50'
+          m_max: '200'
+          l_max: '500'
+          xl_max: '1000'
+          fail_if_xl: 'false'
+          message_if_xl: 'This PR is XXL (very large)! Please consider splitting into smaller PRs.'
           sizes: |
             label:XS, max_lines:10
             label:S, max_lines:50
@@ -42,4 +49,3 @@ jobs:
             label:L, max_lines:500
             label:XL, max_lines:1000
             label:XXL
-          ignore_as: Do not merge

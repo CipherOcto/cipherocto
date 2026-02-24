@@ -8,6 +8,7 @@ on:
     branches: [main, next]
   push:
     branches: [next, feat/**, agent/**, research/**, hotfix/**]
+  merge_group:
 
 jobs:
   lint:

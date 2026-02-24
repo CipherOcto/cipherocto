@@ -1,0 +1,51 @@
+# Sync main → next
+# Keeps integration lane up to date after releases
+
+name: Sync main to next
+
+on:
+  push:
+    branches:
+      - main
+    paths-ignore:
+      - '**.md'
+      - 'docs/**'
+      - 'LICENSE'
+      - '.gitattributes'
+
+permissions:
+  contents: write
+
+jobs:
+  sync:
+    # Skip if this was a release commit (already synced)
+    if: "!contains(github.event.head_commit.message, '[skip release]')"
+
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout main
+        uses: actions/checkout@v4
+        with:
+          ref: main
+          fetch-depth: 0
+
+      - name: Check if next is behind
+        id: check
+        run: |
+          git fetch origin next
+          BEHIND=$(git rev-list --count origin/next..origin/main)
+          echo "behind=$BEHIND" >> $GITHUB_OUTPUT
+          echo "Next is $BEHIND commits behind main"
+
+      - name: Sync next with main
+        if: steps.check.outputs.behind != '0'
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+          # Create/update next branch from main
+          git checkout -B next origin/main
+          git push origin next --force-with-lease
+
+          echo "✅ Synced next with main"

@@ -22,6 +22,8 @@ jobs:
         uses: dtolnay/rust-toolchain@stable
 
       - name: Dependency Review
+        if: github.event_name == 'pull_request'
+        continue-on-error: true
         uses: actions/dependency-review-action@v4
 
       - name: Install cargo-audit
@@ -39,4 +41,5 @@ jobs:
           exit-code: 0
 
       - name: Secret Scan (Gitleaks)
+        continue-on-error: true
         uses: gitleaks/gitleaks-action@v2

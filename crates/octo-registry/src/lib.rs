@@ -44,8 +44,7 @@ pub fn get_identity() -> Option<String> {
     let db = open_db().ok()?;
     db.get(IDENTITY_FILE.as_bytes())
         .ok()?
-        .map(|bytes| String::from_utf8(bytes.to_vec()).ok())
-        .flatten()
+        .and_then(|bytes| String::from_utf8(bytes.to_vec()).ok())
 }
 
 /// Set the user's ecosystem role
@@ -60,6 +59,5 @@ pub fn get_role() -> Option<String> {
     let db = open_db().ok()?;
     db.get(ROLE_KEY)
         .ok()?
-        .map(|bytes| String::from_utf8(bytes.to_vec()).ok())
-        .flatten()
+        .and_then(|bytes| String::from_utf8(bytes.to_vec()).ok())
 }

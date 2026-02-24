@@ -1,5 +1,5 @@
-use clap::{Parser, Subcommand};
 use anyhow::Result;
+use clap::{Parser, Subcommand};
 
 /// CipherOcto CLI - The entry point to the decentralized intelligence network
 #[derive(Parser, Debug)]
@@ -200,8 +200,14 @@ async fn status() -> Result<()> {
     println!("  ✓ Network     Simulated");
     println!();
 
-    println!("Your Role: {}", octo_registry::get_role().unwrap_or_else(|| "None".to_string()));
-    println!("Your Identity: {}", octo_registry::get_identity().unwrap_or_else(|| "Not initialized".to_string()));
+    println!(
+        "Your Role: {}",
+        octo_registry::get_role().unwrap_or_else(|| "None".to_string())
+    );
+    println!(
+        "Your Identity: {}",
+        octo_registry::get_identity().unwrap_or_else(|| "Not initialized".to_string())
+    );
 
     Ok(())
 }

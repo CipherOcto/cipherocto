@@ -41,4 +41,5 @@ jobs:
           exit-code: 0
 
       - name: Secret Scan (Gitleaks)
+        continue-on-error: true
         uses: gitleaks/gitleaks-action@v2

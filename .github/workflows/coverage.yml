@@ -1,0 +1,43 @@
+# Code Coverage
+# Track test coverage over time
+
+name: Coverage
+
+on:
+  push:
+    branches: [main, next]
+  pull_request:
+
+jobs:
+  coverage:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: llvm-tools-preview
+
+      - uses: taiki-e/install-action@cargo-llvm-cov
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Generate coverage
+        run: cargo llvm-cov --all-features --workspace --lcov --output-path lcov.info
+
+      - name: Upload to Codecov
+        uses: codecov/codecov-action@v4
+        with:
+          files: ./lcov.info
+          fail_ci_if_error: false
+          token: ${{ secrets.CODECOV_TOKEN }}
+
+      - name: Generate coverage summary
+        run: |
+          cargo llvm-cov --all-features --workspace --summary
+
+      - name: Check coverage threshold
+        run: |
+          COVERAGE=$(cargo llvm-cov --all-features --workspace --summary --output-format=json | jq '.regions.covered')
+          echo "Coverage: ${COVERAGE}%"

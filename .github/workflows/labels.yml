@@ -1,5 +1,5 @@
 # Auto-Label Pull Requests
-# Classify PRs automatically based on changed files
+# Classify PRs automatically based on changed files and size
 
 name: Auto-Label PRs
 
@@ -8,7 +8,8 @@ on:
     types: [opened, synchronize, reopened]
 
 jobs:
-  label:
+  # Label by file type
+  type-label:
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -20,3 +21,25 @@ jobs:
           configuration-path: .github/labeler.yml
           repo-token: ${{ secrets.GITHUB_TOKEN }}
           sync-labels: true
+
+  # Label by size (lines changed)
+  size-label:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: write
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: tj-actions/size-label@v0.2.0
+        with:
+          repo-token: ${{ secrets.GITHUB_TOKEN }}
+          sizes: |
+            label:XS, max_lines:10
+            label:S, max_lines:50
+            label:M, max_lines:200
+            label:L, max_lines:500
+            label:XL, max_lines:1000
+            label:XXL
+          ignore_as: Do not merge

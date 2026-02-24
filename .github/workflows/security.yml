@@ -22,6 +22,7 @@ jobs:
         uses: dtolnay/rust-toolchain@stable
 
       - name: Dependency Review
+        if: github.event_name == 'pull_request'
         uses: actions/dependency-review-action@v4
 
       - name: Install cargo-audit

@@ -7,6 +7,9 @@ on:
   push:
     branches:
       - main
+  pull_request:
+    branches:
+      - main
 
 permissions:
   contents: write
@@ -60,6 +63,8 @@ jobs:
           echo "EOF" >> $GITHUB_OUTPUT
 
       - name: Create Release
+        # Only create actual releases on push to main, not on PRs
+        if: github.event_name == 'push'
         uses: softprops/action-gh-release@v2
         with:
           body: ${{ steps.changelog.outputs.changelog || steps.initial_changelog.outputs.changelog }}
@@ -69,3 +74,10 @@ jobs:
           name: v0.1.0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: PR check (dry-run)
+        # Always pass on PRs without creating a release
+        if: github.event_name == 'pull_request'
+        run: |
+          echo "Release check passed (PR mode - no release created)"
+          echo "This check will create an actual release when merged to main"

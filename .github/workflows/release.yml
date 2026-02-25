@@ -34,7 +34,7 @@ jobs:
 
       - name: Generate changelog
         if: steps.check_tags.outputs.has_tags == 'true'
-        uses: mikepenz/release-changelog-builder-action@v4
+        uses: mikepenz/release-changelog-builder-action@v6
         id: changelog
         with:
           configuration: ""

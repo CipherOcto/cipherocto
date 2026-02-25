@@ -3,75 +3,88 @@
 
 # Agent-related changes
 agent:
-  - crates/octo-ai/**
-  - crates/octo-runtime/**
-  - crates/agents/**
+  - changed_files:
+    - crates/octo-ai/**
+    - crates/octo-runtime/**
+    - crates/agents/**
 
 # Protocol/network layer
 protocol:
-  - crates/octo-network/**
-  - crates/octo-p2p/**
-  - crates/blockchain/**
+  - changed_files:
+    - crates/octo-network/**
+    - crates/octo-p2p/**
+    - crates/blockchain/**
 
 # Runtime/execution
 runtime:
-  - crates/octo-runtime/**
-  - crates/octo-sandbox/**
-  - crates/executor/**
+  - changed_files:
+    - crates/octo-runtime/**
+    - crates/octo-sandbox/**
+    - crates/executor/**
 
 # Core infrastructure
 core:
-  - crates/octo-core/**
-  - crates/octo-registry/**
-  - crates/octo-identity/**
+  - changed_files:
+    - crates/octo-core/**
+    - crates/octo-registry/**
+    - crates/octo-identity/**
 
 # CLI tools
 cli:
-  - crates/octo-cli/**
-  - crates/repl/**
+  - changed_files:
+    - crates/octo-cli/**
+    - crates/repl/**
 
 # Documentation
 docs:
-  - docs/**
-  - **/*.md
-  - .github/**/*.md
+  - changed_files:
+    - docs/**
+    - "**/*.md"
+    - .github/**/*.md
 
 # CI/CD
 ci:
-  - .github/workflows/**
-  - .github/actions/**
+  - changed_files:
+    - .github/workflows/**
+    - .github/actions/**
 
 # Smart contracts
 contracts:
-  - contracts/**
+  - changed_files:
+    - contracts/**
 
 # Developer tooling
 tooling:
-  - scripts/**
-  - tools/**
-  - dev/**
+  - changed_files:
+    - scripts/**
+    - tools/**
+    - dev/**
 
 # AI/ML
 ai:
-  - crates/ai/**
-  - crates/inference/**
-  - crates/ml/**
+  - changed_files:
+    - crates/ai/**
+    - crates/inference/**
+    - crates/ml/**
 
 # Security
 security:
-  - crates/crypto/**
-  - crates/security/**
+  - changed_files:
+    - crates/crypto/**
+    - crates/security/**
 
 # Testing
 testing:
-  - tests/**
-  - **/*_test.rs
-  - **/tests/**
+  - changed_files:
+    - tests/**
+    - "**/*_test.rs"
+    - "**/tests/**"
 
 # Dependencies
 dependencies:
-  - Cargo.toml
-  - Cargo.lock
-  - package.json
-  - requirements.txt
-  - **/Cargo.toml
+  - changed_files:
+    - Cargo.toml
+    - Cargo.lock
+    - package.json
+    - requirements.txt
+    - "**/Cargo.toml"

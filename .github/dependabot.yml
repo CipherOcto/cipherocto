@@ -6,6 +6,7 @@ updates:
   # Rust dependencies
   - package-ecosystem: "cargo"
     directory: "/"
+    target-branch: "next"
     schedule:
       interval: "weekly"
       day: "monday"
@@ -35,6 +36,7 @@ updates:
   # GitHub Actions
   - package-ecosystem: "github-actions"
     directory: "/"
+    target-branch: "next"
     schedule:
       interval: "weekly"
       day: "monday"
@@ -49,6 +51,7 @@ updates:
   # npm dependencies (if any)
   - package-ecosystem: "npm"
     directory: "/"
+    target-branch: "next"
     schedule:
       interval: "weekly"
       day: "monday"
@@ -63,6 +66,7 @@ updates:
   # Python dependencies (if any)
   - package-ecosystem: "pip"
     directory: "/"
+    target-branch: "next"
     schedule:
       interval: "weekly"
       day: "monday"

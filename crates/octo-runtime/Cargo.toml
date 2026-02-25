@@ -10,7 +10,7 @@ serde_json = "1.0"
 async-trait = "0.1"
 tracing = "0.1"
 anyhow = "1.0"
-thiserror = "1.0"
+thiserror = "2.0"
 
 octo-core = { path = "../octo-core" }
 octo-registry = { path = "../octo-registry" }

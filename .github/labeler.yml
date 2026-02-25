@@ -33,7 +33,7 @@ cli:
 # Documentation
 docs:
   - docs/**
-  - **/*.md
+  - "**/*.md"
   - .github/**/*.md
 
 # CI/CD
@@ -65,8 +65,8 @@ security:
 # Testing
 testing:
   - tests/**
-  - **/*_test.rs
-  - **/tests/**
+  - "**/*_test.rs"
+  - "**/tests/**"
 
 # Dependencies
 dependencies:
@@ -74,4 +74,4 @@ dependencies:
   - Cargo.lock
   - package.json
   - requirements.txt
-  - **/Cargo.toml
+  - "**/Cargo.toml"

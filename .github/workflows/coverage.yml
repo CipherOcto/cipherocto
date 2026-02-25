@@ -27,7 +27,7 @@ jobs:
         run: cargo llvm-cov --all-features --workspace --lcov --output-path lcov.info
 
       - name: Upload to Codecov
-        uses: codecov/codecov-action@v4
+        uses: codecov/codecov-action@v5
         continue-on-error: true
         with:
           files: ./lcov.info
@@ -37,9 +37,5 @@ jobs:
 
       - name: Generate coverage summary
         run: |
-          cargo llvm-cov --all-features --workspace --summary
-
-      - name: Check coverage threshold
-        run: |
-          COVERAGE=$(cargo llvm-cov --all-features --workspace --summary --output-format=json | jq '.regions.covered')
-          echo "Coverage: ${COVERAGE}%"
+          cargo llvm-cov --all-features --workspace --report json --output-path coverage.json
+          echo "Coverage report generated"

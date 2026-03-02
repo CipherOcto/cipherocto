@@ -69,7 +69,7 @@ graph TB
     subgraph PROTO["Protocol Contributor"]
         direction TB
         R1[Improve protocol]
-        R2[Earn grants]
+        R2[Earn OCTO-D]
         R3[Build reputation]
     end
 
@@ -100,7 +100,7 @@ graph TB
 AI Agents are autonomous programs that:
 - Accept tasks from users or other agents
 - Execute using decentralized compute
-- Earn OCTO-D tokens automatically
+- Earn OCTO-D tokens automatically when tasks complete
 - Can hire other agents for subtasks
 
 ### Hello World Agent
@@ -196,40 +196,76 @@ cipherocto provider earnings
 
 ## Path 3: Contribute to Protocol
 
-### Contribution Areas
+### What You'll Do
+
+Build the core infrastructure that powers the CipherOcto network — and earn OCTO-D tokens for every contribution.
+
+### How You Earn OCTO-D
+
+| Contribution Type | How It's Tracked | Reward |
+| ----------------- | ---------------- | ------ |
+| **Code merged** | Missions in `missions/` | OCTO-D awarded on merge |
+| **RFC proposals** | RFCs in `rfcs/` | OCTO-D for accepted RFCs |
+| **Reviews** | PR reviews merged | OCTO-D per review |
+| **Documentation** | Docs merged | OCTO-D for quality docs |
+| **Bug fixes** | Issues resolved | OCTO-D based on impact |
+
+### The Mission System
+
+All protocol contributions are tracked via the Mission system:
 
 ```mermaid
-mindmap
-  root((Contributions))
-    Core_Protocol
-      Smart_contracts
-      Node_software
-      Consensus_mechanisms
-    Developer_Tools
-      SDK_improvements
-      CLI_tools
-      Testing_frameworks
-    Documentation
-      Technical_guides
-      API_references
-      Tutorials
-    Ecosystem
-      Community_management
-      Event_organization
-      Content_creation
+graph LR
+    A[Open Mission] -->|claim| B[Claimed]
+    B -->|PR submitted| C[In Review]
+    C -->|merged| D[Completed]
+    D -->|auto| E[OCTO-D Awarded]
 ```
 
-### Good First Issues
+1. **Browse missions** — Check `missions/` for open work
+2. **Claim a mission** — Assign yourself to work on it
+3. **Submit PR** — When complete, submit a pull request
+4. **Get reviewed** — PRs are reviewed by peers
+5. **Earn OCTO-D** — Tokens automatically awarded on merge
 
-Visit our [GitHub Issues](https://github.com/cipherocto/cipherocto/issues) and filter by `good first issue` tag.
+### Your First Contribution
 
-### Grant Program
+```bash
+# 1. Find open missions
+ls missions/
+
+# 2. Pick one that matches your skills
+# Missions are tagged by complexity: good-first-issue, medium, hard
+
+# 3. Read the RFC it implements
+cat rfcs/<rfc-number>.md
+
+# 4. Claim it (comment on the issue or PR)
+# Your work is now tracked!
+
+# 5. Submit PR and earn OCTO-D
+```
+
+### Reputation & Future Benefits
+
+Your contributions build permanent reputation:
+
+- **Early contributor status** — First builders get lasting recognition
+- **Governance weight** — Reputation influences DAO voting
+- **Priority routing** — High-reputation contributors' work gets fast-tracked
+- **Role token eligibility** — Core contributors can become Orchestrators (OCTO-O)
+
+### Grant Program (For Larger Work)
+
+For substantial protocol improvements beyond individual missions:
 
 | Grant Type | Amount | Duration |
 | ---------- | ------ | -------- |
 | **Small** | $1,000-5,000 | 1-2 months |
 | **Medium** | $5,000-20,000 | 2-4 months |
 | **Large** | $20,000-100,000 | 4-12 months |
+
+Grants are paid in OCTO or OCTO-D tokens.
 
 Apply: [grants.cipherocto.io](https://grants.cipherocto.io)
 

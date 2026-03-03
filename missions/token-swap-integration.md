@@ -51,26 +51,15 @@ quota-router swap history
 
 ### Swap Flow
 
-```
-User enables auto-swap
-        │
-        ▼
-Router monitors OCTO-W balance
-        │
-        ▼
-Balance drops below threshold
-        │
-        ▼
-Check auto-swap config
-        │
-        ▼
-Execute swap (OCTO-D → OCTO-W)
-        │
-        ▼
-Update balance
-        │
-        ▼
-Continue routing requests
+```mermaid
+flowchart TD
+    A[User enables auto-swap] --> B[Router monitors OCTO-W balance]
+    B --> C{Balance below threshold?}
+    C -->|No| B
+    C -->|Yes| D[Check auto-swap config]
+    D --> E[Execute swap OCTO-D to OCTO-W]
+    E --> F[Update balance]
+    F --> B
 ```
 
 ### Exchange Rates

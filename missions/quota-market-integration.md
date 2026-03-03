@@ -43,32 +43,16 @@ quota-router market auto-disable
 
 ### Market Flow
 
-```
-User makes request
-        │
-        ▼
-Check own quota (OCTO-W balance)
-        │
-   ┌────┴────┐
-   │Has quota │ No quota
-   ▼          ▼
-Use own   Check auto-purchase enabled?
-provider       │
-        ┌──────┴──────┐
-        ▼               ▼
-   Yes          No → Return error
-        │
-        ▼
-Query market listings
-        │
-        ▼
-Find cheapest that meets criteria
-        │
-        ▼
-Purchase from market (spend OCTO-W)
-        │
-        ▼
-Route request through purchased quota
+```mermaid
+flowchart TD
+    A[User makes request] --> B{Check own quota OCTO-W balance}
+    B -->|Has quota| C[Use own provider]
+    B -->|No quota| D{Auto-purchase enabled?}
+    D -->|Yes| E[Query market listings]
+    D -->|No| F[Return error]
+    E --> G[Find cheapest that meets criteria]
+    G --> H[Purchase from market - spend OCTO-W]
+    H --> I[Route request through purchased quota]
 ```
 
 ## Dependencies

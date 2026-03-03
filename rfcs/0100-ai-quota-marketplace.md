@@ -133,10 +133,46 @@ async function routePrompt(
 
 - [AI Quota Marketplace for Developer Bootstrapping](../../docs/use-cases/ai-quota-marketplace.md)
 
+## Observability
+
+The marketplace must support logging without exposing sensitive data:
+
+```typescript
+interface MarketTelemetry {
+  // What we log (no PII)
+  event: 'purchase' | 'listing' | 'swap' | 'dispute';
+  timestamp: number;
+  provider: string;
+  octo_w_amount: number;
+  latency_ms: number;
+  success: boolean;
+
+  // What we DON'T log
+  // - Prompt content
+  // - API keys
+  // - Wallet addresses (use hash instead)
+}
+```
+
+## Security & Privacy
+
+| Concern | Mitigation |
+|---------|------------|
+| API key exposure | Local proxy only, keys never transmitted |
+| Prompt privacy | End-to-end encryption, marketplace sees metadata only |
+| Wallet privacy | Pseudonymous addresses |
+| Data residency | No central storage |
+
 ## Related RFCs
 
+- RFC-0101: Quota Router Agent Specification
 - RFC-XXXX: Token Swap Protocol (future)
 - RFC-XXXX: Reputation System (future)
+
+## References
+
+- Parent Document: docs/use-cases/ai-quota-marketplace.md
+- Research: docs/research/ai-quota-marketplace-research.md
 
 ## Open Questions
 

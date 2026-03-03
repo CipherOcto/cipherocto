@@ -17,6 +17,18 @@ CipherOcto needs a mechanism to:
 - What's included: Token mechanics, marketplace design, security model
 - What's excluded: Blockchain implementation details, specific provider integrations
 
+---
+
+## Personas
+
+| Persona | Role | Description |
+|---------|------|-------------|
+| **Provider** | Seller | Developer with unused AI API quota who lists it on the market |
+| **Consumer** | Buyer | Developer who needs more quota than they have |
+| **Router** | Infrastructure | Agent that routes prompts based on policy and balance |
+
+---
+
 ## Findings
 
 ### Similar Approaches
@@ -34,12 +46,45 @@ CipherOcto needs a mechanism to:
 3. **Market Engine** - Match buyers/sellers, settle in OCTO-W
 4. **Token Swaps** - OCTO-W ↔ OCTO-D ↔ OCTO
 
+### Latency Considerations
+
+| Scenario | Expected Latency | Notes |
+|----------|-----------------|-------|
+| Direct (no market) | 100-500ms | Normal API latency |
+| Market route | +50-200ms | Network hop through seller proxy |
+| Multi-route | +100-500ms | Fallback through multiple sellers |
+
+**Acceptable degradation:** Up to 2x baseline latency acceptable for market-sourced quota.
+
+### Market Dynamics
+
+| Model | Description | Pros | Cons |
+|-------|-------------|------|------|
+| **Fixed price** | Set price per prompt, static | Simple, predictable | May not reflect demand |
+| **Dynamic AMM** | Automated market maker | Real-time pricing | Complex to implement |
+| **Auction** | Bid for quota | Efficient pricing | Slower execution |
+| **Reputation-weighted** | Higher rep = better price | Incentivizes quality | Requires reputation first |
+
+**Recommendation:** Start with fixed price, evolve to reputation-weighted as network matures.
+
 ### Security Considerations
 
 - API keys never leave developer's machine
 - Requests routed through local proxy only
 - OCTO-W balance required for each request
 - No central authority holds credentials
+- Prompts encrypted end-to-end
+
+### Dispute Resolution
+
+| Issue | Resolution |
+|-------|------------|
+| Failed prompt after payment | Seller reputation penalty, refund from stake |
+| Garbage/invalid response | Reputation hit, auto-blacklist |
+| Seller offline mid-request | Retry with fallback provider |
+| Insufficient OCTO-W | Request rejected before routing |
+
+**Mechanism:** Sellers stake OCTO-W. If dispute proven, stake slashed and buyer refunded.
 
 ## Token Economics
 
@@ -72,6 +117,13 @@ Implement as agent-based system where:
 
 - Create Use Case? **Yes**
 - Explore further: Specific provider APIs, rate limiting
+
+---
+
+## References
+
+- Parent Document: BLUEPRINT.md
+- Leads to: docs/use-cases/ai-quota-marketplace.md
 
 ---
 

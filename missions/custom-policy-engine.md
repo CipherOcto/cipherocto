@@ -7,6 +7,10 @@ Open
 RFC-0100: AI Quota Marketplace Protocol
 RFC-0101: Quota Router Agent Specification
 
+## Blockers / Dependencies
+
+- **Blocked by:** Mission: Multi-Provider Support (must complete first)
+
 ## Acceptance Criteria
 
 - [ ] Custom policy configuration file

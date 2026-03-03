@@ -188,6 +188,78 @@ interface SwapClient {
 }
 ```
 
+## Agent Communication Protocol
+
+The router agent exposes an OpenAI-compatible local API:
+
+```typescript
+// Local proxy endpoint (OpenAI-compatible)
+POST http://localhost:11434/v1/chat/completions
+Authorization: Bearer local-only
+
+{
+  "model": "gpt-4",
+  "messages": [{"role": "user", "content": "Hello"}]
+}
+```
+
+This allows existing applications to route through the quota router without code changes.
+
+### Communication Methods
+
+| Method | Protocol | Use Case |
+|--------|----------|----------|
+| **Local proxy** | HTTP (OpenAI-compatible) | Primary - existing apps |
+| **CLI** | Command line | Manual control |
+| **IPC** | Unix socket | Advanced integrations |
+
+## Fallback & Retry Logic
+
+```typescript
+interface RetryConfig {
+  max_retries: number;
+  retry_delay_ms: number;
+  backoff_multiplier: number;
+  max_backoff_ms: number;
+}
+```
+
+### Fallback Chain
+
+1. Try own provider (if OCTO-W balance available)
+2. Try market quota (if auto-purchase enabled)
+3. Try swap (if auto-swap enabled and threshold reached)
+4. Return error (no options remaining)
+
+## Unified Provider Schema
+
+All providers expose a common interface:
+
+```typescript
+interface UnifiedProvider {
+  name: string;
+  endpoint: string;
+  complete(prompt: UnifiedPrompt): Promise<UnifiedResponse>;
+  getBalance(): Promise<number>;
+  healthCheck(): Promise<boolean>;
+}
+
+interface UnifiedPrompt {
+  model: string;
+  messages: Message[];
+  temperature?: number;
+  max_tokens?: number;
+}
+
+interface UnifiedResponse {
+  content: string;
+  usage: { prompt: number; completion: number; total: number };
+  latency_ms: number;
+}
+```
+
+---
+
 ## Implementation
 
 ### MVE Features
@@ -232,6 +304,11 @@ interface SwapClient {
 ## Related RFCs
 
 - RFC-0100: AI Quota Marketplace Protocol
+
+## References
+
+- Parent Document: docs/use-cases/ai-quota-marketplace.md
+- Research: docs/research/ai-quota-marketplace-research.md
 
 ## Open Questions
 

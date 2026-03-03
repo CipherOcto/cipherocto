@@ -147,6 +147,14 @@ More contributors → more liquidity → more valuable
 
 ---
 
+## References
+
+- Parent Document: BLUEPRINT.md
+- Research: docs/research/ai-quota-marketplace-research.md
+- RFCs: rfcs/0100-ai-quota-marketplace.md, rfcs/0101-quota-router-agent.md
+
+---
+
 **Category:** Token Economics / Developer Adoption
 **Priority:** High
 **Status:** Ready for RFC phase

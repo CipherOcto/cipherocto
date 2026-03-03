@@ -1,122 +1,284 @@
-# Research: Wallet Technology for CipherOcto
+# Research: Wallet Cryptography for CipherOcto
 
 ## Executive Summary
 
-This research investigates wallet technology options for the CipherOcto AI Quota Marketplace, considering compatibility with the Cairo ecosystem (used by Stoolap for ZK proofs) and practical transaction requirements.
+This research investigates the cryptographic foundations required for wallet implementation in the CipherOcto AI Quota Marketplace. Focuses on cryptographic primitives, signature schemes, and key management compatible with the Cairo ecosystem (Starknet) used by Stoolap for ZK proofs.
 
 ## Problem Statement
 
-CipherOcto needs a wallet solution that:
-1. Supports Cairo/Cairo ecosystem (for Stoolap ZK integration)
-2. Handles plain token transactions (OCTO-W, OCTO-D, OCTO)
-3. Integrates with CLI tools (Rust-based)
-4. Supports both hot (online) and cold storage
+CipherOcto needs cryptographic wallet infrastructure that:
+1. Provides secure key management and signing
+2. Integrates with Cairo/Starknet ecosystem
+3. Supports token transactions (OCTO-W, OCTO-D, OCTO)
+4. Enables ZK proof verification for Stoolap integration
 
 ## Research Scope
 
-- What's included: Wallet options, integration analysis, recommendations
-- What's excluded: Full implementation details (belongs in RFC)
+- **Included:** Cryptographic primitives, signature schemes, key derivation, account models
+- **Excluded:** User-facing wallet applications (consumer UX) - separate research
 
 ---
 
-## Current Landscape
+## Cryptographic Foundations
 
-### Wallet Types
+### 1. Starknet Signature Scheme
 
-| Type | Use Case | Pros | Cons |
-|------|----------|------|-------|
-| **Cairo-native** | Starknet/Cairo contracts | Native ZK integration | Limited to Starknet |
-| **EVM-compatible** | Ethereum/L2 wallets | Wide adoption | No Cairo native |
-| **Multi-chain** | Multiple ecosystems | Flexibility | Complexity |
-| **Custom** | Build from scratch | Full control | High effort |
+Starknet uses a different signature scheme from Ethereum's ECDSA:
 
----
-
-## Wallet Options Analysis
-
-### Option A: Starknet Wallet (Cairo-native)
-
-| Aspect | Details |
-|--------|---------|
-| **Technology** | Cairo smart contracts |
-| **Examples** | Argent X, Braavos |
-| **Pros** | Native Cairo, ZK-ready, Starknet integration |
-| **Cons** | Starknet-specific, smaller ecosystem |
-| **ZK Integration** | ✅ Native |
-
-### Option B: Ethereum/EVM Wallet
-
-| Aspect | Details |
-|--------|---------|
-| **Technology** | EVM-compatible |
-| **Examples** | MetaMask, WalletConnect, Ledger |
-| **Pros** | Largest ecosystem, best tooling |
-| **Cons** | No Cairo native |
-| **ZK Integration** | ⚠️ Requires bridge |
-
-### Option C: Multi-Sig / DAO Wallet
-
-| Aspect | Details |
-|--------|---------|
-| **Technology** | Gnosis Safe, OpenZeppelin |
-| **Pros** | Security, governance integration |
-| **Cons** | More complex, slower transactions |
-| **Use Case** | Treasury, governance |
-
-### Option D: Hybrid Approach
-
-| Layer | Wallet | Purpose |
-|-------|--------|---------|
-| **Hot** | Argent X / Braavos | Daily transactions, OCTO-W swaps |
-| **Cold** | Ledger | Large holdings, OCTO |
-| **Governance** | Gnosis Safe | Protocol decisions |
-
----
-
-## Recommended Approach
-
-### For MVE: Starknet Wallet (Cairo-native)
-
-Rationale:
-1. **Cairo alignment** - Same ecosystem as Stoolap
-2. **ZK-ready** - Native ZK proof integration
-3. **Growing ecosystem** - Starknet is battle-tested
-4. **Future-proof** - As Stoolap evolves, wallet evolves with it
-
-### Integration with Stoolap
+| Aspect | Ethereum | Starknet |
+|--------|----------|----------|
+| **Curve** | secp256k1 | Stark Curve (EC over BLS12-381) |
+| **Signature** | ECDSA | StarkNet ECDSA |
+| **Key Size** | 32 bytes | 32 bytes |
+| **Address** | 20 bytes | 32 bytes |
 
 ```rust
-// Stoolap can interact with Starknet contracts
-// Using starknet-rs crate
-
+// Starknet key pair using starknet-rs
+use starknet::core::crypto::{sign, verify};
 use starknet::core::types::FieldElement;
-use starknet::providers::Provider;
 
-struct OctoWallet {
-    address: FieldElement,
-    private_key: FieldElement,
-}
+// Private key → Public key → Address
+let private_key = FieldElement::from_hex_be("0x...").unwrap();
+let public_key = private_key_to_public_key(private_key);
+let address = compute_address(public_key);
+```
 
-impl OctoWallet {
-    // Sign OCTO-W transfer
-    async fn transfer(&self, to: FieldElement, amount: u64) -> Result<Transaction> {
-        // Submit to Starknet
+### 2. Account Model
+
+Starknet uses account abstraction - every account is a smart contract:
+
+```cairo
+// Minimal Account Contract (OpenZeppelin)
+#[starknet::contract]
+mod Account {
+    #[storage]
+    struct Storage {
+        public_key: felt252,
     }
 
-    // Verify ZK proof from Stoolap
-    async fn verify_proof(&self, proof: &StarkProof) -> Result<bool> {
-        // Verify on Starknet
+    #[external]
+    fn __validate__(calldata: Array<felt252>) -> felt252 {
+        // Verify signature matches public_key
+    }
+
+    #[external]
+    fn __execute__(calls: Array<Call>) -> Array<Span<felt252>> {
+        // Execute calls if __validate__ passed
     }
 }
 ```
 
-### Token Standards
+**Account Types:**
 
-| Token | Standard | Network |
-|-------|----------|---------|
-| OCTO | ERC-20 | Starknet |
-| OCTO-W | ERC-20 | Starknet |
-| OCTO-D | ERC-20 | Starknet |
+| Type | Validation | Use Case |
+|------|-----------|----------|
+| **Argent** | Multi-party computation | Mobile wallets |
+| **Braavos** | Hardware security | High security |
+| **Generic** | Single ECDSA | Standard accounts |
+| **Multisig** | M-of-N signatures | Treasury |
+
+### 3. Key Derivation
+
+```rust
+// BIP-32 style derivation for Starknet
+// Note: Starknet uses different path format
+
+// Standard derivation path: m/44'/60'/0'/0/0 (Ethereum)
+// Starknet: No BIP-44 yet, use sequential nonces
+
+struct KeyDerivation {
+    seed: [u8; 32],
+    path: Vec<u32>,
+}
+
+impl KeyDerivation {
+    fn derive(&self, index: u32) -> FieldElement {
+        // HMAC-SHA256 based derivation
+        // Different from Ethereum due to curve difference
+    }
+}
+```
+
+### 4. Local Key Storage
+
+For CLI tools, keys must be stored securely locally:
+
+```rust
+struct SecureKeyStore {
+    path: PathBuf,
+    // Encryption: AES-256-GCM with key derived from user password
+}
+
+impl SecureKeyStore {
+    fn encrypt_key(&self, private_key: FieldElement, password: &str) -> Vec<u8> {
+        // PBKDF2 (100,000 iterations) → AES-256-GCM
+    }
+
+    fn decrypt_key(&self, encrypted: &[u8], password: &str) -> FieldElement {
+        // Reverse the process
+    }
+}
+```
+
+**Storage Options:**
+
+| Method | Security | Use Case |
+|--------|----------|----------|
+| **Encrypted file** | Medium | CLI tools |
+| **OS Keychain** | High | Desktop apps |
+| **HSM** | Very High | Production |
+| **MPC** | Very High | Institutional |
+
+---
+
+## Cryptographic Operations
+
+### 1. Transaction Signing
+
+```rust
+struct OctoTransaction {
+    sender: FieldElement,
+    receiver: FieldElement,
+    token: TokenType,  // OCTO, OCTO-W, OCTO-D
+    amount: u64,
+    nonce: u64,
+    chain_id: FieldElement,
+}
+
+impl OctoTransaction {
+    fn hash(&self) -> FieldElement {
+        // Poseidon hash of transaction fields
+    }
+
+    fn sign(&self, private_key: FieldElement) -> Signature {
+        // StarkNet ECDSA sign
+        sign(private_key, self.hash())
+    }
+}
+```
+
+### 2. Message Signing (Off-chain)
+
+```rust
+// Sign messages for off-chain authentication
+fn sign_message(private_key: FieldElement, message: &[u8]) -> (FieldElement, FieldElement) {
+    // Starknet signed message prefix: "\x19StarkNet Message\n"
+    let prefixed = format!("\x19StarkNet Message\n{}", hex::encode(message));
+    let hash = starknet_hash(prefixed.as_bytes());
+    sign(private_key, hash)
+}
+```
+
+### 3. Multi-Sig (Threshold Signatures)
+
+```rust
+struct MultisigWallet {
+    threshold: u8,
+    signers: Vec<FieldElement>,
+}
+
+impl MultisigWallet {
+    // Collect signatures, execute when threshold reached
+    fn execute_if_ready(&mut self, tx: &Transaction, signatures: Vec<Signature>) -> bool {
+        let valid = signatures.iter()
+            .filter(|sig| verify(self.signers.clone(), tx.hash(), *sig))
+            .count();
+
+        if valid >= self.threshold {
+            self.execute(tx)
+        } else {
+            false
+        }
+    }
+}
+```
+
+---
+
+## Stoolap ZK Integration
+
+### Proof Verification
+
+```rust
+// Verify Stoolap execution proof
+use starknet::core::types::TransactionReceipt;
+
+struct ProofVerifier {
+    stoolap_contract: FieldElement,
+}
+
+impl ProofVerifier {
+    async fn verify_execution_proof(
+        &self,
+        provider: &Provider,
+        proof: &HexaryProof,
+    ) -> Result<bool> {
+        // Call Stoolap verifier contract
+        let call = FunctionCall {
+            contract_address: self.stoolap_contract,
+            entry_point_selector: 0x1234, // verify_proof
+            calldata: proof.to_calldata(),
+        };
+
+        provider.call(call).await
+    }
+}
+```
+
+### ZK-Friendly Operations
+
+| Operation | ZK-Friendly | Notes |
+|-----------|-------------|-------|
+| Balance transfer | ✅ | Standard ERC-20 |
+| Multi-sig | ✅ | Threshold sigs |
+| Confidential txs | ⚠️ | Requires commitment schemes |
+| Proof verification | ✅ | Native to Starknet |
+
+---
+
+## Recommended Implementation
+
+### For MVE: Direct Starknet Integration
+
+```rust
+// Minimal wallet for CLI tool
+use starknet::providers::Provider;
+use starknet::signers::Signer;
+
+struct QuotaWallet<P: Provider> {
+    provider: P,
+    account: LocalWallet,
+}
+
+impl<P: Provider> QuotaWallet<P> {
+    // Initialize from encrypted key file
+    async fn from_keyfile(path: &Path, password: &str) -> Result<Self> {
+        let encrypted = std::fs::read(path)?;
+        let private_key = decrypt_key(encrypted, password)?;
+        let account = LocalWallet::from_key(private_key);
+        Ok(Self { provider, account })
+    }
+
+    // Pay for quota request
+    async fn pay_for_quota(&self, to: FieldElement, amount: u64) -> Result<FieldElement> {
+        let tx = TransactionRequest {
+            to,
+            amount,
+            // ... token transfer calldata
+        };
+        self.provider.broadcast_tx(tx, &self.account).await
+    }
+}
+```
+
+### Key Components
+
+| Component | Technology | Purpose |
+|-----------|------------|---------|
+| **Signing** | starknet-rs | Transaction signing |
+| **Key Storage** | AES-256-GCM | Local encrypted storage |
+| **Provider** | starknet-rs JSON-RPC | Network communication |
+| **Account** | OpenZeppelin | Smart contract wallet |
 
 ---
 
@@ -124,36 +286,38 @@ impl OctoWallet {
 
 | Risk | Mitigation | Severity |
 |------|------------|----------|
-| Starknet ecosystem smaller than Ethereum | Start with Starknet, add EVM later | Low |
-| ZK integration complexity | Use Stoolap's existing STWO integration | Medium |
-| Wallet adoption | Support multiple wallet types | Low |
+| Private key exposure | Use OS keychain, never log keys | Critical |
+| Signature replay | Include nonce + chain_id in every tx | High |
+| Curve vulnerability | Use starknet-rs (audited) | Low |
+| MPC complexity | Defer to Phase 2 | Medium |
 
 ---
 
 ## Recommendations
 
 ### Phase 1 (MVE)
-- Use Starknet wallet (Argent X or Braavos)
-- Focus on OCTO-W transactions
-- CLI integration via starknet-rs
+- Use starknet-rs for signing and provider
+- Encrypted keyfile with password protection
+- Simple single-signer account
+- Manual nonce management
 
 ### Phase 2
-- Add EVM wallet support (WalletConnect)
-- Enable cross-chain swaps
-- Multi-sig for governance
+- Add multi-sig support for governance
+- Integrate OS keychain (macOS Keychain, Windows Credential Manager)
+- Hardware wallet signing (Ledger via HID)
 
 ### Phase 3
-- Hardware wallet integration (Ledger)
-- Cold storage support
-- Full governance integration
+- MPC-based key sharding
+- Threshold signatures for treasury
+- ZK-based confidential transactions
 
 ---
 
 ## Next Steps
 
-- [ ] Create Use Case for Wallet Integration?
-- [ ] Draft RFC for Wallet Provider?
-- [ ] Evaluate specific wallet libraries (starknet-rs, argentX SDK)
+- [ ] Draft RFC for Wallet Cryptography Specification
+- [ ] Define KeyDerivation trait for extensibility
+- [ ] Create Use Case for CLI wallet integration
 
 ---
 
@@ -161,10 +325,11 @@ impl OctoWallet {
 
 - Parent Document: BLUEPRINT.md
 - Stoolap: `/home/mmacedoeu/_w/databases/stoolap`
-- Cairo: Starknet smart contracts
 - starknet-rs: https://github.com/xJonathanLEGO/starknet-rs
+- OpenZeppelin Starknet Accounts: https://github.com/OpenZeppelin/cairo-contracts
+- Starknet ECDSA: https://docs.starknet.io/
 
 ---
 
-**Research Status:** Complete
-**Recommended Action:** Proceed to Use Case
+**Research Status:** Complete (Cryptography Focus)
+**Recommended Action:** Proceed to RFC for Wallet Cryptography

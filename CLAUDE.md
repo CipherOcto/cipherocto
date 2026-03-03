@@ -111,6 +111,26 @@ CipherOcto uses **Trunk-Based + Feature Streams**:
 Full documentation: `.github/BRANCH_STRATEGY.md`
 Branch protection rules: `.github/branch-protection-rules.md`
 
+## Documentation Standards
+
+**Diagrams:** Always prefer Mermaid diagrams over ASCII art. Mermaid is:
+- Rendered in GitHub, VS Code, and most Markdown viewers
+- Easier to maintain and edit
+- Consistent with modern documentation practices
+
+**Example:**
+```mermaid
+graph TD
+    A[Start] --> B{Decision}
+    B -->|Yes| C[Action 1]
+    B -->|No| D[Action 2]
+```
+
+**When creating or updating docs:**
+- Use `mermaid` code blocks for flowcharts, state diagrams, sequence diagrams
+- Avoid ASCII art (`┌─`, `└─`, `─►`, etc.)
+- If existing ASCII diagrams exist, convert them to Mermaid
+
 <!-- gitnexus:start -->
 # GitNexus MCP
 

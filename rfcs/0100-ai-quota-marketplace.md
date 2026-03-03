@@ -204,89 +204,46 @@ interface SlashingRules {
 
 ### Listing Lifecycle
 
-```
-┌─────────┐
-│ CREATED │ ← Seller creates listing
-└────┬────┘
-     │ listed
-     ▼
-┌─────────┐
-│ ACTIVE  │ ← Available for purchase
-└────┬────┘
-     │ purchased / exhausted / cancelled
-     ▼
-┌──────────┐   ┌──────────┐   ┌──────────┐
-│EXHAUSTED │   │ ACTIVE   │   │ CANCELLED│
-└──────────┘   └────┬─────┘   └──────────┘
-     │              │              │
-     └──────────────┴──────────────┘
-                    │
-                    ▼
-              ARCHIVED
+```mermaid
+stateDiagram-v2
+  [*] --> CREATED: Seller creates listing
+  CREATED --> ACTIVE: Listed
+  ACTIVE --> EXHAUSTED: All prompts sold
+  ACTIVE --> CANCELLED: Seller cancels
+  EXHAUSTED --> [*]
+  CANCELLED --> [*]
 ```
 
 ### Purchase Lifecycle
 
-```
-┌───────────┐
-│ INITIATED │ ← Buyer selects listing
-└─────┬─────┘
-      │ escrow_held
-      ▼
-┌───────────┐
-│ ESCROWED  │ ← OCTO-W in protocol
-└─────┬─────┘
-      │ prompt_executed
-      ▼
-┌───────────┐
-│COMPLETED  │ ← Success - release to seller
-└───────────┘
-
-OR
-
-┌───────────┐
-│ ESCROWED  │
-└─────┬─────┘
-      │ dispute_raised
-      ▼
-┌───────────┐
-│ DISPUTED  │ ← Resolution process
-└─────┬─────┘
-      │ resolved
-      ▼
-┌─────────────┐   ┌────────────┐
-│REFUNDED    │   │CONFIRMED   │
-└─────────────┘   └────────────┘
+```mermaid
+stateDiagram-v2
+  [*] --> INITIATED: Buyer selects listing
+  INITIATED --> ESCROWED: OCTO-W held in protocol
+  ESCROWED --> COMPLETED: Success - release to seller
+  ESCROWED --> DISPUTED: Buyer raises dispute
+  COMPLETED --> [*]
+  DISPUTED --> REFUNDED: Valid dispute
+  DISPUTED --> CONFIRMED: Invalid dispute
+  REFUNDED --> [*]
+  CONFIRMED --> [*]
 ```
 
 ### Dispute Lifecycle
 
-```
-┌────────────┐
-│  FILED    │ ← Buyer raises dispute
-└─────┬──────┘
-      │ evidence
-      ▼
-┌────────────┐
-│INVESTIGATING│ ← Governance reviews
-└─────┬──────┘
-      │ vote
-      ├─────────────┬──────────────┐
-      ▼              ▼              ▼
-┌──────────┐  ┌──────────┐  ┌──────────┐
-│  VALID   │  │ INVALID  │  │ PARTIAL  │
-└────┬─────┘  └────┬─────┘  └────┬─────┘
-     │              │              │
-     ▼              │              ▼
-┌──────────┐        │        ┌──────────┐
-│  SLASH   │        │        │ PARTIAL  │
-│ SELLER   │        │        │  REFUND  │
-└──────────┘        │        └──────────┘
-                    ▼
-              ┌──────────┐
-              │  KEEP    │
-              │ PAYMENT  │
-              └──────────┘
+```mermaid
+stateDiagram-v2
+  [*] --> FILED: Buyer raises dispute
+  FILED --> INVESTIGATING: Evidence collected
+  INVESTIGATING --> VALID: Governance rules valid
+  INVESTIGATING --> INVALID: No grounds
+  INVESTIGATING --> PARTIAL: Partial refund
+  VALID --> SLASHED: Seller penalized
+  INVALID --> KEEP: Payment confirmed
+  PARTIAL --> PARTIAL_REFUND: Partial refund
+  SLASHED --> [*]
+  KEEP --> [*]
+  PARTIAL_REFUND --> [*]
 ```
 
 ## Observability

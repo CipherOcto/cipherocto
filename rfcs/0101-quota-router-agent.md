@@ -82,27 +82,18 @@ interface RouterConfig {
 
 ### Request Flow
 
-```
-User calls: agent.routePrompt("Hello")
-              │
-              ▼
-         Check OCTO-W balance
-              │
-     ┌───────┴───────┐
-     ▼               ▼
-  Enough          Not enough
-     │               │
-     ▼               ▼
- Check policy    Check auto-recharge
-     │               │
-     ▼               ▼
-Find provider   Attempt recharge
-     │               │
-     ▼               ▼
-Route request  If failed: return error
-     │               │
-     ▼               ▼
-Return result  If success: route request
+```mermaid
+flowchart TD
+    A[User calls agent.routePrompt] --> B{Check OCTO-W balance}
+    B -->|Enough| C[Check policy]
+    B -->|Not enough| D{Check auto-recharge}
+    C --> E[Find provider]
+    D -->|Enabled| F[Attempt recharge]
+    D -->|Disabled| G[Return error]
+    E --> H[Route request]
+    F -->|Success| H
+    F -->|Failed| G
+    H --> I[Return result]
 ```
 
 ### Provider Integration

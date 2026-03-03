@@ -275,15 +275,93 @@ const MODEL_WEIGHTS = {
   // Local models: varies by hardware
 };
 
+// Context window limits (max tokens)
+const MODEL_LIMITS = {
+  'gpt-4': 8192,
+  'gpt-3.5-turbo': 16385,
+  'claude-3-opus': 200000,
+  'claude-3-haiku': 200000,
+  'gemini-pro': 32768,
+};
+
 // Calculate OCTO-W cost
 function calculateCost(model: string, inputTokens: number, outputTokens: number): number {
   const baseWeight = MODEL_WEIGHTS[model] || 1;
   const tokenFactor = (inputTokens + outputTokens) / 1000;
   return Math.ceil(baseWeight * tokenFactor);
 }
+
+// Validate context window before routing
+function validateContext(model: string, inputTokens: number): boolean {
+  const limit = MODEL_LIMITS[model];
+  return limit ? inputTokens <= limit : false;
+}
+```
+
+### Context Window Handling
+
+**Issue:** User sends 100k-token prompt to model with 8k limit.
+
+**Solution:** Fail fast before spending OCTO-W:
+
+```typescript
+async function routeWithValidation(
+  prompt: UnifiedPrompt
+): Promise<UnifiedResponse> {
+  const tokenCount = countTokens(prompt);
+
+  // Check context window first
+  if (!validateContext(prompt.model, tokenCount)) {
+    throw new RouterError(
+      `Prompt exceeds ${prompt.model} context limit of ${MODEL_LIMITS[prompt.model]} tokens`
+    );
+  }
+
+  // Only spend OCTO-W after validation
+  const cost = calculateCost(prompt);
+  await reserveBalance(cost);
+
+  return await routePrompt(prompt);
+}
 ```
 
 *See Research doc for complete cost normalization specification.*
+
+### Concurrency Handling
+
+**Issue:** Agent has 10 OCTO-W, sends 5 concurrent requests costing 3 OCTO-W each.
+
+**Solution:** Local mutex / atomic balance lock:
+
+```typescript
+class AtomicBalance {
+  private balance: number;
+  private mutex: Mutex;
+
+  async reserve(amount: number): Promise<boolean> {
+    return this.mutex.runExclusive(async () => {
+      if (this.balance >= amount) {
+        this.balance -= amount;
+        return true;
+      }
+      return false;
+    });
+  }
+
+  async release(amount: number): void {
+    this.balance += amount;
+  }
+}
+```
+
+**Flow:**
+1. Acquire mutex
+2. Check balance (atomic)
+3. Reserve if sufficient
+4. Release mutex
+5. Execute request
+6. On success: burn OCTO-W
+7. On failure: release back to balance
 
 ## Rationale
 

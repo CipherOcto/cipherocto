@@ -154,6 +154,24 @@ interface Dispute {
 // Resolution: Governance vote or automated arbitration
 ```
 
+### Dispute Evidence Challenge
+
+**Issue:** Prompts are private, but buyer needs to prove "garbage response" without revealing prompt content.
+
+**MVE Solution:** Heavily weight automated failures:
+
+| Dispute Type | Evidence | Verifiability |
+|-------------|----------|---------------|
+| **Timeout** | Network logs, timestamps | Automatic |
+| **Provider error** | Provider error codes | Automatic |
+| **Latency high** | Latency measurements | Automatic |
+| **Garbage response** | Requires human review | Manual |
+| **Failed response** | HTTP status codes | Automatic |
+
+**For MVE:** Focus disputes on automated verifications (timeouts, errors, latency). Response quality disputes require trust (reputation-based) until cryptographic solutions emerge.
+
+**Future:** ZK proofs of inference quality (research phase).
+
 ### Slashing Model
 
 ```typescript

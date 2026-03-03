@@ -29,24 +29,38 @@ Build a reputation system that tracks provider and seller reliability, enabling 
 
 ### Reputation Score
 
-```typescript
-interface Reputation {
-  wallet: string;
-  role: 'provider' | 'seller' | 'router';
+```rust
+struct Reputation {
+    wallet: Address,
+    role: ReputationRole,
 
-  // Metrics
-  total_transactions: number;
-  successful_transactions: number;
-  failed_transactions: number;
-  average_latency_ms: number;
+    // Metrics
+    total_transactions: u64,
+    successful_transactions: u64,
+    failed_transactions: u64,
+    average_latency_ms: u64,
 
-  // Calculated
-  score: number;  // 0-100
-  tier: 'new' | 'bronze' | 'silver' | 'gold' | 'platinum';
+    // Calculated
+    score: u8,  // 0-100
+    tier: ReputationTier,
 
-  // Early contributor
-  joined_at: timestamp;
-  multiplier: number;
+    // Early contributor
+    joined_at: DateTime,
+    multiplier: f64,
+}
+
+enum ReputationRole {
+    Provider,
+    Seller,
+    Router,
+}
+
+enum ReputationTier {
+    New,
+    Bronze,
+    Silver,
+    Gold,
+    Platinum,
 }
 ```
 

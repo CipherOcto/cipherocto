@@ -49,40 +49,34 @@ quota-router provider test --name openai
 
 ### Provider State
 
-```typescript
-interface Provider {
-  name: string;
-  status: 'active' | 'inactive' | 'error';
-  balance: OCTO-W;  // quota available
-  latency_ms: number;
-  success_rate: number;
-  last_used: timestamp;
+```rust
+struct Provider {
+    name: String,
+    status: ProviderStatus,  // Active, Inactive, Error
+    balance: u64,             // OCTO-W quota available
+    latency_ms: u64,
+    success_rate: f64,
+    last_used: DateTime,
+}
+
+enum ProviderStatus {
+    Active,
+    Inactive,
+    Error,
 }
 ```
 
 ### Routing with Multiple Providers
 
-```
-User makes request
-        │
-        ▼
-Check policy (cheapest/fastest/quality/balanced)
-        │
-        ▼
-Find provider matching policy
-        │
-        ▼
-Check provider health
-        │
-        ▼
-Has quota + healthy?
-        │
-   ┌────┴────┐
-   │         │
-  Yes       No → Try next provider
-   │              │
-   ▼              ▼
-Route         If all fail → Error
+```mermaid
+flowchart TD
+    A[User makes request] --> B{Check policy}
+    B --> C[Find provider matching policy]
+    C --> D{Check provider health}
+    D -->|Has quota + healthy| E[Route request]
+    D -->|No| F{Try next provider}
+    E --> G[Return result]
+    F -->|All failed| H[Return error]
 ```
 
 ### Provider Policies

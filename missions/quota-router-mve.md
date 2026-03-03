@@ -9,7 +9,7 @@ RFC-0101: Quota Router Agent Specification
 
 ## Acceptance Criteria
 
-- [ ] CLI tool that can be installed via npm/pip
+- [ ] CLI tool that can be installed via cargo
 - [ ] Local proxy server that intercepts API requests
 - [ ] API key management (secure local storage)
 - [ ] OCTO-W balance display
@@ -51,20 +51,22 @@ quota-router route --provider openai --prompt "Hello"
 ```
 quota-router/
 ├── src/
-│   ├── cli.ts          # CLI commands
-│   ├── proxy.ts        # Local proxy
-│   ├── wallet.ts       # Wallet/balance
+│   ├── main.rs         # CLI entry point
+│   ├── cli.rs          # CLI commands
+│   ├── proxy.rs        # Local proxy server
+│   ├── wallet.rs       # Wallet/balance management
 │   ├── providers/      # Provider integrations
-│   └── storage.ts      # Secure key storage
-├── package.json
+│   └── storage.rs      # Secure key storage
+├── Cargo.toml
 └── README.md
 ```
 
 ## Dependencies
 
-- Node.js 18+
-- ethers.js (for wallet)
-- TypeScript
+- Rust (latest stable)
+- Cargo
+- ethers-rs (for wallet)
+- tokio (async runtime)
 
 ## Implementation Notes
 

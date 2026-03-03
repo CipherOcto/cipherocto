@@ -27,17 +27,19 @@ Integrate Stoolap blockchain SQL database as a provider type in the quota router
 
 ### Stoolap Provider
 
-```typescript
-interface StoolapProvider {
-  name: 'stoolap';
-  endpoint: string;
-  chain_id: string;
+```rust
+struct StoolapProvider {
+    name: &'static str,  // "stoolap"
+    endpoint: String,
+    chain_id: String,
+}
 
-  // Submit execution proof
-  async submitProof(execution: Execution): Promise<Proof>;
+impl StoolapProvider {
+    // Submit execution proof
+    async fn submit_proof(&self, execution: Execution) -> Result<Proof>;
 
-  // Verify proof before payment
-  async verifyProof(proof: Proof): Promise<boolean>;
+    // Verify proof before payment
+    async fn verify_proof(&self, proof: &Proof) -> Result<bool>;
 }
 ```
 

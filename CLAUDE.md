@@ -77,7 +77,17 @@ Every participant stakes both OCTO (global alignment) + Role Token (local specia
 
 ## Development Workflow
 
-Since this is documentation-only, there are no build, test, or lint commands.
+### Rust Development Commands
+
+**Lint (must pass with zero warnings)**
+```bash
+cargo clippy --all-targets --all-features -- -D warnings
+```
+
+**Format**
+```bash
+cargo fmt
+```
 
 ### Documentation Script
 

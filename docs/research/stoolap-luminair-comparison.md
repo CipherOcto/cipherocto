@@ -439,18 +439,20 @@ flowchart TB
 
 ### Stoolap (STWO for Database Operations)
 
-| Operation | Time | Details| |
+| Operation | Time | Details|
 |-----------|---------------|
-| **Proof Generation** (merkle_batch) | ~25-28 seconds | Cairo program for batch verification |
+| **Proof Generation** (merkle_batch) | ~25-28 seconds | Cairo program → STWO |
 | **Proof Verification** | ~15 ms | Using stwo-cairo verifier |
 | **HexaryProof** (no STWO) | ~2-3 μs | Lightweight Merkle proof only |
 
 **Source:** `missions/archived/0106-01-stwo-real-benchmarks.md`
 
 ```rust
-// Stoolap uses Blake2sMerkleChannel
+// Stoolap: PROVES CAIRO PROGRAMS
 prove_cairo::<Blake2sMerkleChannel>()  // ~25-28s
 verify_cairo::<Blake2sMerkleChannel>() // ~15ms
+
+// Flow: SQL → Cairo program → stwo-cairo-prover → Proof
 ```
 
 ### LuminAIR (STWO for ML Operations)
@@ -461,24 +463,41 @@ verify_cairo::<Blake2sMerkleChannel>() // ~15ms
 | Proof Generation | Add/Mul/Recip | 32x32 | Benchmarked |
 | Verification | Add/Mul/Recip | 32x32 | Benchmarked |
 
-**Source:** `crates/graph/benches/ops.rs` - benchmarks run on GitHub Actions, published to https://gizatechxyz.github.io/LuminAIR/bench/
+**Source:** `crates/graph/benches/ops.rs`
 
 ```rust
-// LuminAIR benchmarks the full pipeline
-// - Trace generation: graph.gen_trace()
-// - Proof generation: prove(trace, settings)
-// - Verification: verify(proof, settings)
+// LuminAIR: PROVES DIRECT AIR (NOT Cairo)
+// Uses stwo constraint framework directly
+prove(trace, settings)    // Full pipeline
+verify(proof, settings)
+
+// Flow: ML Graph → AIR (direct) → stwo → Proof
+// NO Cairo compilation involved
 ```
 
-### Comparison Analysis
+### Critical Difference: Cairo vs Direct AIR
 
-| Metric | Stoolap | LuminAIR | Notes |
-|--------|---------|----------|-------|
-| **Workload** | Merkle batch (SQL) | ML operators (tensors) | Different domains |
-| **Proving** | ~25-28s | Unknown* | *Results not publicly listed |
-| **Verification** | ~15ms | Unknown* | *Published to web UI |
-| **Tensor size** | N/A | 32x32 (tested) | Scales with complexity |
-| **Proof size** | 100-500 KB | Varies | Depends on model |
+| Aspect | Stoolap | LuminAIR |
+|--------|---------|----------|
+| **Proves** | Cairo programs | Direct AIR |
+| **Prover** | `stwo-cairo-prover` | `stwo` (direct) |
+| **Compilation** | SQL → Cairo | ML Graph → AIR |
+| **Use case** | Database verification | ML inference |
+
+```mermaid
+flowchart TD
+    subgraph STOOLAP["Stoolap: Cairo Path"]
+        SQL[SQL Query] --> CAIRO[Cairo Program]
+        CAIRO --> PROVE1[stwo-cairo-prover]
+        PROVE1 --> P1[Proof]
+    end
+
+    subgraph LUMINAIR["LuminAIR: Direct AIR Path"]
+        GRAPH[ML Graph] --> AIR[AIR Generation]
+        AIR --> PROVE2[stwo (direct)]
+        PROVE2 --> P2[Proof]
+    end
+```
 
 ### Is LuminAIR Better?
 
@@ -543,6 +562,8 @@ However, LuminAIR's approach could inspire **future optimizations** in Stoolap's
 |--------|---------|----------|---------|
 | **Database integrity** | ✅ Excellent | ❌ N/A | Stoolap for SQL |
 | **ML integrity** | ❌ Not designed | ✅ Excellent | LuminAIR for zkML |
+| **Cairo-based** | ✅ Yes | ❌ No | Stoolap (on-chain) |
+| **Direct AIR** | ❌ No | ✅ Yes | LuminAIR (faster) |
 | **Confidentiality** | ✅ Advanced | ⚠️ Basic | Stoolap leads |
 | **Verification** | ✅ Rust + Cairo | ✅ Rust + WASM | Both strong |
 | **Performance** | ✅ Optimized | 🔄 Improving | Stoolap faster for DB |

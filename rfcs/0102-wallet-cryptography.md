@@ -36,6 +36,10 @@ A complete specification defining:
 ### Data Structures
 
 ```rust
+/// Entropy source for key generation
+use rand::rngs::OsRng;
+use rand::RngCore;
+
 /// Starknet FieldElement (32 bytes)
 type FieldElement = [u8; 32];
 
@@ -54,6 +58,20 @@ type Address = FieldElement;
 /// Token type in the OCTO ecosystem
 #[derive(Clone, Copy, Debug)]
 enum Token {
+
+/// Key generation from OS entropy
+fn generate_keypair() -> KeyPair {
+    let mut private_key = FieldElement::default();
+    OsRng.fill_bytes(&mut private_key);
+
+    // Ensure key is valid (non-zero, within curve order)
+    while private_key == [0u8; 32] || is_on_curve(&private_key) == false {
+        OsRng.fill_bytes(&mut private_key);
+    }
+
+    let public_key = private_to_public_key(private_key);
+    KeyPair { private_key, public_key }
+}
     OCTO,   // Governance token
     OCTO_W, // Wrapped quota (1 token = 1 prompt)
     OCTO_D, // Contributor reward token
@@ -108,6 +126,38 @@ trait KeyDerivation {
 struct StarknetKeyDerivation {
     /// HMAC-SHA256 based, different from Ethereum due to curve
     path_prefix: [u32; 4],
+}
+
+/// Mnemonic-based recovery (BIP-39 adapted for Starknet)
+/// Uses 12-word mnemonic → seed → Starknet key
+struct MnemonicRecovery;
+
+impl MnemonicRecovery {
+    /// Generate new 12-word mnemonic
+    fn generate() -> String {
+        // Use 128 bits of entropy = 12 words
+        let entropy = generate_entropy(128);
+        mnemonic_from_entropy(&entropy)
+    }
+
+    /// Derive key from mnemonic + optional passphrase
+    fn derive_key(mnemonic: &str, passphrase: &str) -> FieldElement {
+        // BIP-39: mnemonic + passphrase → seed
+        let seed = bip39_seed(mnemonic, passphrase);
+
+        // Derive Starknet key from seed (simplified)
+        // In production: BIP-32 derivation with custom path
+        let mut key = [0u8; 32];
+        key.copy_from_slice(&seed[..32]);
+        FieldElement::from_slice(&key)
+    }
+
+    /// Restore wallet from existing mnemonic
+    fn restore(mnemonic: &str) -> KeyPair {
+        let private_key = Self::derive_key(mnemonic, "");
+        let public_key = private_to_public_key(private_key);
+        KeyPair { private_key, public_key }
+    }
 }
 
 impl KeyDerivation for StarknetKeyDerivation {
@@ -426,25 +476,31 @@ Starknet's native ZK compatibility with Stoolap is the primary driver.
 None - new functionality.
 
 ### Migration Path
-- Phase 1: Single-signer accounts only
-- Phase 2: Multi-sig support
-- Phase 3: Hardware wallet integration
+- **Phase 1:** Single-signer accounts only, encrypted keyfile
+- **Phase 2:** Multi-sig support, OS keychain integration
+- **Phase 3:** Hardware wallet integration (Ledger/Trezor via HID)
 
 ### Dependencies
 - External: starknet-rs (signing, provider)
 - External: aes-gcm (encryption)
 - External: pbkdf2 (key derivation)
+- External: rand (entropy, OsRng)
+- External: bip39 (mnemonic recovery)
 
 ### Performance
-- Signing: ~5ms per transaction
+> **Note:** Estimates based on modern hardware. Low-end devices may see 2-3x latency.
+
+- Signing: ~5ms per transaction (modern CPU)
 - Encryption: ~1ms for key operations
 - Network: Depends on RPC provider
+- Mnemonic generation: ~10ms
 
 ## Related RFCs
 - RFC-0100: AI Quota Marketplace Protocol
 - RFC-0101: Quota Router Agent Specification
 
 ## References
+- **Stoolap**: Blockchain SQL database with ZK proofs (`/home/mmacedoeu/_w/databases/stoolap`)
 - starknet-rs: https://github.com/xJonathanLEGO/starknet-rs
 - OpenZeppelin Starknet: https://github.com/OpenZeppelin/cairo-contracts
 - Starknet Account Abstraction: https://docs.starknet.io/

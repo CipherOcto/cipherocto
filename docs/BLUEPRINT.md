@@ -18,10 +18,11 @@ This Blueprint defines how work flows through CipherOcto—from idea to protocol
 
 ## The Core Separation
 
-We maintain three distinct layers that must never mix:
+We maintain four distinct layers that must never mix:
 
 | Layer | Purpose | Question | Blockchain Analogy |
 |-------|---------|----------|-------------------|
+| **Research** | Feasibility | CAN WE? | Technical Investigation |
 | **Use Cases** | Intent | WHY? | Ethereum Vision |
 | **RFCs** | Design | WHAT? | EIPs |
 | **Missions** | Execution | HOW? | Implementation |
@@ -115,33 +116,32 @@ We maintain three distinct layers that must never mix:
 Idea
  │
  ▼
-Use Case (WHY?)
+Research (CAN WE?)
  │
- ▼
-RFC Discussion (WHAT?)
+ ├─ Viable → Use Case (WHY?)
+ │           │
+ │           ▼
+ │         RFC (WHAT?)
+ │           │
+ │           ▼
+ │         Mission (HOW?)
+ │           │
+ │           ▼
+ │       Agent/Human Claims Mission
+ │           │
+ │           ▼
+ │       Implementation (PR)
+ │           │
+ │           ▼
+ │       Review & Test
+ │           │
+ │           ▼
+ │       Merge
+ │           │
+ │           ▼
+ │       Protocol Evolution
  │
- ├─ Draft RFC
- ├─ Community Review
- ├─ Revision
- └─ Accepted RFC
- │
- ▼
-Mission Created (HOW?)
- │
- ▼
-Agent/Human Claims Mission
- │
- ▼
-Implementation (PR)
- │
- ▼
-Review & Test
- │
- ▼
-Merge
- │
- ▼
-Protocol Evolution
+ └─ Not Viable → Archive (document learnings)
 ```
 
 **This is the only flow. Shortcuts create technical debt.**
@@ -149,6 +149,50 @@ Protocol Evolution
 ---
 
 ## Artifact Types
+
+### Research Report
+
+**Location:** `docs/research/`
+
+**Purpose:** Investigate feasibility and technology options before committing to a Use Case.
+
+**Template:**
+```markdown
+# Research: [Technology/Approach]
+
+## Executive Summary
+Brief overview of what this research investigates.
+
+## Problem Statement
+What challenge are we investigating?
+
+## Research Scope
+- What's included
+- What's excluded
+
+## Findings
+### Technology A
+### Technology B
+
+## Recommendations
+- Recommended approach
+- Risks
+
+## Next Steps
+- Create Use Case? (Yes/No)
+```
+
+**Examples:**
+- ZKP Research Report
+- Cairo AI Research Report
+
+**Flow:**
+```
+Research → (viable) → Use Case
+       → (not viable) → Archive
+```
+
+---
 
 ### Use Case
 
@@ -388,6 +432,10 @@ cipherocto/
 │   ├── START_HERE.md
 │   ├── ROLES.md
 │   ├── ROADMAP.md
+│   ├── research/              ← Feasibility layer
+│   │   ├── README.md
+│   │   ├── ZKP_Research_Report.md
+│   │   └── cairo-ai-research-report.md
 │   └── use-cases/             ← Intent layer
 │       ├── decentralized-mission-execution.md
 │       └── agent-marketplace.md

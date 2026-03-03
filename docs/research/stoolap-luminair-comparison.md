@@ -435,6 +435,71 @@ flowchart TB
 | Verifiable quality | LuminAIR | Output validity proofs |
 | Data pipeline | Both | Combined SQL + ML proofs |
 
+## STWO Proof Benchmarks
+
+### Stoolap (STWO for Database Operations)
+
+| Operation | Time | Details| |
+|-----------|---------------|
+| **Proof Generation** (merkle_batch) | ~25-28 seconds | Cairo program for batch verification |
+| **Proof Verification** | ~15 ms | Using stwo-cairo verifier |
+| **HexaryProof** (no STWO) | ~2-3 μs | Lightweight Merkle proof only |
+
+**Source:** `missions/archived/0106-01-stwo-real-benchmarks.md`
+
+```rust
+// Stoolap uses Blake2sMerkleChannel
+prove_cairo::<Blake2sMerkleChannel>()  // ~25-28s
+verify_cairo::<Blake2sMerkleChannel>() // ~15ms
+```
+
+### LuminAIR (STWO for ML Operations)
+
+| Stage | Operation | Tensor Size | Status |
+|-------|-----------|-------------|--------|
+| Trace Generation | Add/Mul/Recip | 32x32 | Benchmarked |
+| Proof Generation | Add/Mul/Recip | 32x32 | Benchmarked |
+| Verification | Add/Mul/Recip | 32x32 | Benchmarked |
+
+**Source:** `crates/graph/benches/ops.rs` - benchmarks run on GitHub Actions, published to https://gizatechxyz.github.io/LuminAIR/bench/
+
+```rust
+// LuminAIR benchmarks the full pipeline
+// - Trace generation: graph.gen_trace()
+// - Proof generation: prove(trace, settings)
+// - Verification: verify(proof, settings)
+```
+
+### Comparison Analysis
+
+| Metric | Stoolap | LuminAIR | Notes |
+|--------|---------|----------|-------|
+| **Workload** | Merkle batch (SQL) | ML operators (tensors) | Different domains |
+| **Proving** | ~25-28s | Unknown* | *Results not publicly listed |
+| **Verification** | ~15ms | Unknown* | *Published to web UI |
+| **Tensor size** | N/A | 32x32 (tested) | Scales with complexity |
+| **Proof size** | 100-500 KB | Varies | Depends on model |
+
+### Is LuminAIR Better?
+
+**It depends on the use case:**
+
+| Criterion | Stoolap | LuminAIR | Winner |
+|-----------|---------|----------|--------|
+| **Database proofs** | ✅ Specialized | ❌ Not designed | **Stoolap** |
+| **ML inference proofs** | ❌ Not designed | ✅ Specialized | **LuminAIR** |
+| **Proof size** | Optimized | Varies | **Stoolap** (for DB) |
+| **Verification speed** | 15ms | Unknown | TBD |
+| **Operator flexibility** | Fixed (SQL) | extensible (11+ operators) | **LuminAIR** |
+
+### Key Insight
+
+The systems are **not directly comparable** - they prove different things:
+- **Stoolap**: Proves SQL query results are correct (merkle batch)
+- **LuminAIR**: Proves ML inference executed correctly (zkML)
+
+However, LuminAIR's approach could inspire **future optimizations** in Stoolap's proving pipeline.
+
 ---
 
 ## Recommendations

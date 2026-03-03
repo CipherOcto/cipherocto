@@ -500,7 +500,7 @@ None - new functionality.
 - RFC-0101: Quota Router Agent Specification
 
 ## References
-- **Stoolap**: Blockchain SQL database with ZK proofs (`/home/mmacedoeu/_w/databases/stoolap`)
+- **Stoolap**: Blockchain SQL database with ZK proofs (https://github.com/CipherOcto/stoolap/tree/feat/blockchain-sql)
 - starknet-rs: https://github.com/xJonathanLEGO/starknet-rs
 - OpenZeppelin Starknet: https://github.com/OpenZeppelin/cairo-contracts
 - Starknet Account Abstraction: https://docs.starknet.io/

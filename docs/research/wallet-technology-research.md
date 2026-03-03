@@ -324,7 +324,7 @@ impl<P: Provider> QuotaWallet<P> {
 ## References
 
 - Parent Document: BLUEPRINT.md
-- Stoolap: `/home/mmacedoeu/_w/databases/stoolap`
+- Stoolap: https://github.com/CipherOcto/stoolap/tree/feat/blockchain-sql
 - starknet-rs: https://github.com/xJonathanLEGO/starknet-rs
 - OpenZeppelin Starknet Accounts: https://github.com/OpenZeppelin/cairo-contracts
 - Starknet ECDSA: https://docs.starknet.io/

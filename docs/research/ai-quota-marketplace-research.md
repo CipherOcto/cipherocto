@@ -67,13 +67,70 @@ CipherOcto needs a mechanism to:
 
 **Recommendation:** Start with fixed price, evolve to reputation-weighted as network matures.
 
+### Cost Normalization
+
+Different providers have different pricing structures:
+
+| Provider | Model | Cost per 1K input tokens | Cost per 1K output tokens |
+|----------|-------|--------------------------|--------------------------|
+| OpenAI | GPT-4 | $0.01 | $0.03 |
+| OpenAI | GPT-3.5 | $0.0005 | $0.0015 |
+| Anthropic | Claude 3 Opus | $0.015 | $0.075 |
+| Anthropic | Claude 3 Haiku | $0.00025 | $0.00125 |
+| Google | Gemini Pro | $0.00125 | $0.005 |
+
+**Solution: Compute Units**
+
+```typescript
+// Normalize all models to compute units
+const MODEL_WEIGHTS = {
+  'gpt-4': 10,      // 10 units per prompt
+  'gpt-3.5-turbo': 1, // 1 unit per prompt
+  'claude-3-opus': 12,
+  'claude-3-haiku': 1,
+  'gemini-pro': 2,
+};
+
+// OCTO-W cost = base_units × model_weight
+const BASE_COST = 1; // 1 OCTO-W minimum
+```
+
+This allows 1 OCTO-W to represent ~equivalent compute across providers.
+
+### Token Mint/Burn Rules
+
+| Event | Action | Details |
+|-------|--------|---------|
+| **List quota** | Mint | OCTO-W minted on successful listing |
+| **Use quota** | Burn | OCTO-W burned on successful prompt delivery |
+| **Dispute** | Slash | From seller stake, buyer refunded |
+| **Listing cancelled** | No burn | Unused OCTO-W remains (no inflation) |
+
+**Inflation Control:**
+- Maximum OCTO-W supply: 1B tokens
+- Mint only on verified usage (not listing)
+- Protocol treasury provides initial liquidity
+
 ### Security Considerations
 
 - API keys never leave developer's machine
 - Requests routed through local proxy only
 - OCTO-W balance required for each request
 - No central authority holds credentials
-- Prompts encrypted end-to-end
+
+### Prompt Privacy (Critical Clarification)
+
+**IMPORTANT:** The current design routes prompts through seller's proxy, meaning:
+- Seller **will see prompt content** when executing API calls
+- This is a **trust assumption**, not a cryptographic guarantee
+- End-to-end encryption is **NOT** currently implemented
+
+**Future options to explore:**
+- Trusted Execution Environments (TEE) for seller proxies
+- ZK proofs of inference (research phase)
+- TEE + remote attestation
+
+For MVE, we accept this trust model with reputation as the mitigation.
 
 ### Dispute Resolution
 

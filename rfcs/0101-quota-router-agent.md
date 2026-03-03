@@ -260,27 +260,30 @@ interface UnifiedResponse {
 
 ---
 
-## Implementation
+## Cost Normalization
 
-### MVE Features
+The router must normalize costs across different providers:
 
-1. **Local router** - Basic prompt routing with single provider
-2. **Balance display** - Show OCTO-W balance
-3. **Manual list** - List quota for sale (CLI command)
-4. **Basic policy** - cheapest/fallback only
+```typescript
+// Model weights (compute units per request)
+const MODEL_WEIGHTS = {
+  'gpt-4': 10,
+  'gpt-3.5-turbo': 1,
+  'claude-3-opus': 12,
+  'claude-3-haiku': 1,
+  'gemini-pro': 2,
+  // Local models: varies by hardware
+};
 
-### Phase 2 Features
+// Calculate OCTO-W cost
+function calculateCost(model: string, inputTokens: number, outputTokens: number): number {
+  const baseWeight = MODEL_WEIGHTS[model] || 1;
+  const tokenFactor = (inputTokens + outputTokens) / 1000;
+  return Math.ceil(baseWeight * tokenFactor);
+}
+```
 
-1. **Multi-provider** - Support multiple API providers
-2. **Market integration** - Auto-purchase from market
-3. **Auto-recharge** - Swap when balance low
-4. **Policy engine** - All policy types
-
-### Phase 3 Features
-
-1. **Custom policies** - User-defined rules
-2. **Reputation** - Provider trust scores
-3. **Analytics** - Usage dashboards
+*See Research doc for complete cost normalization specification.*
 
 ## Rationale
 

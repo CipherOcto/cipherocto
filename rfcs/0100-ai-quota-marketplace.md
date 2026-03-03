@@ -100,25 +100,74 @@ async function routePrompt(
 
 ## Implementation
 
-### Phase 1: Local Router
+*Implementation phases have been moved to the Roadmap and Mission files.*
 
-1. **Quota Router Agent** - CLI tool developers run locally
-2. **API Key Management** - Encrypted local storage
-3. **Balance Checking** - Before each request
-4. **Request Routing** - Through local proxy
+See: `missions/quota-router-mve.md`, `missions/quota-market-integration.md`
 
-### Phase 2: Market
+## Settlement Model
 
-1. **Listing Registry** - On-chain or off-chain
-2. **Order Matching** - Buyer ↔ Seller
-3. **Settlement** - OCTO-W transfer
-4. **State Sync** - Between agents
+### Registry Decision
 
-### Phase 3: Swaps
+| Option | Pros | Cons | Recommendation |
+|--------|------|------|----------------|
+| **Off-chain** | Fast, cheap | Less trust | MVE - start here |
+| **On-chain** | Trustless, verifiable | Expensive, slow | Phase 2 |
 
-1. **OCTO-W ↔ OCTO-D** - At market rate
-2. **OCTO ↔ OCTO-W** - At market rate
-3. **Auto-swap** - When balance low, swap to continue
+### Escrow Flow
+
+```
+1. Buyer initiates purchase
+   │
+   ▼
+2. OCTO-W held in escrow (protocol contract)
+   │
+   ▼
+3. Seller executes prompt via their proxy
+   │
+   ▼
+4. Success?
+   │
+   ├─ YES → Release OCTO-W to seller
+   │
+   └─ NO → Refund to buyer, slash seller stake
+```
+
+### Dispute Resolution
+
+```typescript
+enum DisputeOutcome {
+  Valid,      // Refund buyer, slash seller
+  Invalid,    // Keep payment, no action
+  Partial,    // Partial refund
+}
+
+interface Dispute {
+  id: string;
+  buyer: string;
+  seller: string;
+  listing_id: string;
+  reason: 'failed_response' | 'garbage_data' | 'timeout';
+  evidence: string;  // URL or hash
+  timestamp: number;
+}
+
+// Resolution: Governance vote or automated arbitration
+```
+
+### Slashing Model
+
+```typescript
+interface SlashingRules {
+  // First offense: 10% of stake
+  first_offense_penalty: 0.10;
+
+  // Escalation per offense
+  offense_multiplier: 1.5;
+
+  // Permanent ban threshold
+  permanent_ban_at: 0.50;  // 50% of stake lost
+}
+```
 
 ## Security
 
@@ -132,6 +181,95 @@ async function routePrompt(
 ## Related Use Cases
 
 - [AI Quota Marketplace for Developer Bootstrapping](../../docs/use-cases/ai-quota-marketplace.md)
+
+## State Machines
+
+### Listing Lifecycle
+
+```
+┌─────────┐
+│ CREATED │ ← Seller creates listing
+└────┬────┘
+     │ listed
+     ▼
+┌─────────┐
+│ ACTIVE  │ ← Available for purchase
+└────┬────┘
+     │ purchased / exhausted / cancelled
+     ▼
+┌──────────┐   ┌──────────┐   ┌──────────┐
+│EXHAUSTED │   │ ACTIVE   │   │ CANCELLED│
+└──────────┘   └────┬─────┘   └──────────┘
+     │              │              │
+     └──────────────┴──────────────┘
+                    │
+                    ▼
+              ARCHIVED
+```
+
+### Purchase Lifecycle
+
+```
+┌───────────┐
+│ INITIATED │ ← Buyer selects listing
+└─────┬─────┘
+      │ escrow_held
+      ▼
+┌───────────┐
+│ ESCROWED  │ ← OCTO-W in protocol
+└─────┬─────┘
+      │ prompt_executed
+      ▼
+┌───────────┐
+│COMPLETED  │ ← Success - release to seller
+└───────────┘
+
+OR
+
+┌───────────┐
+│ ESCROWED  │
+└─────┬─────┘
+      │ dispute_raised
+      ▼
+┌───────────┐
+│ DISPUTED  │ ← Resolution process
+└─────┬─────┘
+      │ resolved
+      ▼
+┌─────────────┐   ┌────────────┐
+│REFUNDED    │   │CONFIRMED   │
+└─────────────┘   └────────────┘
+```
+
+### Dispute Lifecycle
+
+```
+┌────────────┐
+│  FILED    │ ← Buyer raises dispute
+└─────┬──────┘
+      │ evidence
+      ▼
+┌────────────┐
+│INVESTIGATING│ ← Governance reviews
+└─────┬──────┘
+      │ vote
+      ├─────────────┬──────────────┐
+      ▼              ▼              ▼
+┌──────────┐  ┌──────────┐  ┌──────────┐
+│  VALID   │  │ INVALID  │  │ PARTIAL  │
+└────┬─────┘  └────┬─────┘  └────┬─────┘
+     │              │              │
+     ▼              │              ▼
+┌──────────┐        │        ┌──────────┐
+│  SLASH   │        │        │ PARTIAL  │
+│ SELLER   │        │        │  REFUND  │
+└──────────┘        │        └──────────┘
+                    ▼
+              ┌──────────┐
+              │  KEEP    │
+              │ PAYMENT  │
+              └──────────┘
+```
 
 ## Observability
 
@@ -159,9 +297,12 @@ interface MarketTelemetry {
 | Concern | Mitigation |
 |---------|------------|
 | API key exposure | Local proxy only, keys never transmitted |
-| Prompt privacy | End-to-end encryption, marketplace sees metadata only |
+| Prompt privacy | ⚠️ **TRUST ASSUMPTION** - Sellers see prompt content when executing API calls |
 | Wallet privacy | Pseudonymous addresses |
 | Data residency | No central storage |
+
+**Important:** Prompt content is visible to the seller who executes the API request.
+This is a trust-based model, not cryptographic. See Research doc for future options (TEE/ZK).
 
 ## Related RFCs
 

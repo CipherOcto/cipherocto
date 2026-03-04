@@ -5,6 +5,7 @@ Open
 
 ## RFC
 RFC-0100: AI Quota Marketplace Protocol
+RFC-0102: Wallet Cryptography Specification
 
 ## Blockers / Dependencies
 
@@ -17,6 +18,7 @@ RFC-0100: AI Quota Marketplace Protocol
 - [ ] On-chain proof submission to Stoolap
 - [ ] Verify proofs before releasing payment
 - [ ] Display verification status
+- [ ] GPU-accelerated proof generation (optional optimization)
 
 ## Description
 
@@ -24,13 +26,43 @@ Enable ZK proof-based verification for marketplace transactions using Stoolap's 
 
 ## Technical Details
 
-### Proof Types
+### Proof Types (from Stoolap)
 
-| Proof Type | Use Case | Verification |
-|-----------|-----------|---------------|
-| HexaryProof | Individual execution | ~2-3 μs |
-| StarkProof | Batch verification | ~100ms |
-| CompressedProof | Multiple batches | ~500ms |
+| Proof Type | Use Case | Verification | Size |
+|-----------|-----------|---------------|------|
+| HexaryProof | Individual execution | ~2-3 μs | ~68 bytes |
+| StarkProof | Batch verification | ~15 ms | 100-500 KB |
+| CompressedProof | Multiple batches | ~100ms | ~10 KB |
+
+### Stoolap Integration
+
+```mermaid
+flowchart TD
+    subgraph STOOLAP["Stoolap ZK Stack"]
+        SQL[SQL Query] --> HEX[HexaryProof]
+        HEX --> BATCH[Batch]
+        BATCH --> STARK[STARK Proof<br/>via stwo-cairo-prover]
+    end
+
+    subgraph CIPHER["CipherOcto Integration"]
+        REQ[Request] --> VERIFY[Verify Proof]
+        VERIFY --> PAY[Release OCTO-W]
+    end
+
+    STOOLAP -->|verify| CIPHER
+```
+
+### GPU Acceleration (Optional)
+
+For production, consider GPU-accelerated STWO:
+
+| Implementation | Speedup | Notes |
+|---------------|---------|-------|
+| NitrooZK-stwo | 22x-355x | Cairo AIR support |
+| ICICLE-Stwo | 3x-7x | Drop-in backend |
+| stwo-gpu | ~193% | Multi-GPU scaling |
+
+See: `docs/research/stwo-gpu-acceleration.md`
 
 ### Verification Flow
 
@@ -67,6 +99,14 @@ quota-router verify history
 1. **Async verification** - Don't block response, verify in background
 2. **Batch for cost** - Combine multiple verifications
 3. **Caching** - Cache verified proofs to avoid re-verification
+4. **GPU acceleration** - Consider NitrooZK-stwo for production (22x-355x speedup)
+
+## Research References
+
+- [Stoolap vs LuminAIR Comparison](../docs/research/stoolap-luminair-comparison.md)
+- [STWO GPU Acceleration](../docs/research/stwo-gpu-acceleration.md)
+- [Privacy-Preserving Query Routing](../docs/use-cases/privacy-preserving-query-routing.md)
+- [Provable QoS](../docs/use-cases/provable-quality-of-service.md)
 
 ## Claimant
 

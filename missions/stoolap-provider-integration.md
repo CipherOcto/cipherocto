@@ -84,6 +84,12 @@ quota-router provider stoolap proofs
 2. **Fallback** - If proof fails, use reputation-based resolution
 3. **Async** - Proof generation can be async, don't block response
 
+## Research References
+
+- [Stoolap vs LuminAIR Comparison](../docs/research/stoolap-luminair-comparison.md)
+- [STWO GPU Acceleration](../docs/research/stwo-gpu-acceleration.md)
+- [Privacy-Preserving Query Routing](../docs/use-cases/privacy-preserving-query-routing.md)
+
 ## Claimant
 
 <!-- Add your name when claiming -->

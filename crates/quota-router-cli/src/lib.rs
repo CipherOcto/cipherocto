@@ -2,3 +2,4 @@
 pub mod config;
 pub mod balance;
 pub mod providers;
+pub mod proxy;

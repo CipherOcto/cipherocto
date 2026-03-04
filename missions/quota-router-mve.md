@@ -1,7 +1,7 @@
 # Mission: Quota Router CLI (MVE)
 
 ## Status
-Open
+In Progress
 
 ## RFC
 RFC-0100: AI Quota Marketplace Protocol
@@ -77,7 +77,7 @@ quota-router/
 
 ## Claimant
 
-<!-- Add your name when claiming -->
+AI Agent (Claude)
 
 ## Pull Request
 

@@ -3,6 +3,8 @@ use std::path::PathBuf;
 use directories::ProjectDirs;
 use thiserror::Error;
 
+pub use crate::providers::Provider;
+
 #[derive(Error, Debug)]
 pub enum ConfigError {
     #[error("Failed to get config directory")]
@@ -18,12 +20,6 @@ pub struct Config {
     pub balance: u64,
     pub providers: Vec<Provider>,
     pub proxy_port: u16,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct Provider {
-    pub name: String,
-    pub endpoint: String,
 }
 
 impl Config {

@@ -17,9 +17,22 @@ pub enum Commands {
     /// Check balance
     Balance,
     /// List quota for sale
-    List { prompts: u64, price: u64 },
+    List {
+        #[arg(long, default_value = "100")]
+        prompts: u64,
+        #[arg(short, long, default_value = "1")]
+        price: u64,
+    },
     /// Start proxy server
-    Proxy { port: u16 },
+    Proxy {
+        #[arg(short, long, default_value = "8080")]
+        port: u16
+    },
     /// Route a test request
-    Route { provider: String, prompt: String },
+    Route {
+        #[arg(long)]
+        provider: String,
+        #[arg(short, long)]
+        prompt: String,
+    },
 }

@@ -1210,3 +1210,61 @@ SELECT * FROM (
 ORDER BY score DESC
 LIMIT 5;
 ```
+
+### E. Implementation Notes for Phase 1 Dev Team
+
+#### Memory Alignment for SoA
+
+When implementing the Struct of Arrays for vectors (`embeddings: Vec<f32>`), ensure the memory allocations are explicitly aligned:
+
+| SIMD Level | Alignment | Implementation |
+|------------|-----------|----------------|
+| AVX2 | 32-byte | `std::alloc::Layout::from_size_align(n, 32)` |
+| AVX-512 | 64-byte | `std::alloc::Layout::from_size_align(n, 64)` |
+| ARM NEON | 16-byte | `std::alloc::Layout::from_size_align(n, 16)` |
+
+Standard Rust `Vec<f32>` does not guarantee this alignment. Consider using the `aligned-vec` crate or manual allocation:
+
+```rust
+use std::alloc::{alloc, Layout};
+
+// For AVX-512
+let layout = Layout::from_size_align(size * mem::size_of::<f32>(), 64).unwrap();
+let ptr = unsafe { alloc(layout) };
+```
+
+#### WAL Bloat Prevention
+
+In `WalVectorOp`, logging raw `Vec<f32>` for every insert will cause the Write-Ahead Log to grow rapidly:
+
+- 768-dimension vector ≈ 3KB per insert
+- 1M inserts = 3GB WAL
+
+**Mitigation strategies**:
+
+1. **Aggressive WAL rotation**: Rotate at 64MB (not 256MB like standard SQL)
+2. **Quantize before WAL**: Apply Product Quantization before logging
+3. **Delta encoding**: Log only differences for updates
+4. **Separate vector WAL**: Maintain independent high-rotation WAL for vectors
+
+**Recommendation**: Apply BQ (Binary Quantization) before WAL write—sufficient for recovery while reducing 768-dim vector to 96 bytes.
+
+#### Blake3 for Merkle Tree
+
+The `blake3(vector_id || blake3(embedding))` structure is optimal:
+
+- Blake3 has SIMD-optimized Rust implementation
+- Benchmarks: 10M hashes/second on modern CPU
+- Makes "commit-time Merkle root" feasible (<100ms for 1M vectors)
+
+```rust
+use blake3::Hasher;
+
+fn merkle_leaf(vector_id: i64, embedding: &[f32]) -> Hash {
+    let content_hash = blake3::hash(embedding.as_bytes());
+    let mut hasher = Hasher::new();
+    hasher.update(&vector_id.to_le_bytes());
+    hasher.update(content_hash.as_bytes());
+    *hasher.finalize()
+}
+```

@@ -70,7 +70,10 @@ graph TB
 |---------|----------|------------|
 | **In-Memory** | Low-latency, small datasets | Limited by RAM |
 | **Memory-Mapped** | Large datasets, OS-managed caching | Slower than memory |
-| **RocksDB** | Persistent, large scale | C++ dependency, memory overhead |
+| **RocksDB** | Persistent, large scale (optional) | C++ dependency, memory overhead |
+| **redb** | Pure Rust alternative (future) | Embedded, no C++ dependency |
+
+> **Note**: RocksDB is an optional feature flag (`feature = "rocksdb"`). For pure Rust deployments, consider `redb` or `sled` as alternatives. The "Pure Rust" ethos applies to default configurations.
 
 #### SQL Syntax
 
@@ -173,6 +176,110 @@ pub mod gpu {
 | **HNSW** | General ANNS | Default |
 | **Acorn** | Memory-constrained | Optional |
 
+### Determinism & Consensus
+
+**Critical Challenge**: Blockchain consensus requires exact determinism. Vector search uses floating-point math which can be non-deterministic across architectures.
+
+#### The Problem
+
+- Floating-point rounding differs between x86 (AVX) and ARM (NEON)
+- SIMD instructions may produce slightly different results
+- Concurrent HNSW graph construction is non-deterministic
+
+#### Solution: Snapshot-Based Verification
+
+```mermaid
+graph LR
+    A[Transaction Commits] --> B[Snapshot Vector Index]
+    B --> C[Generate Merkle Root]
+    C --> D[Store in Blockchain]
+
+    E[Query Request] --> F[Use Committed Snapshot]
+    F --> G[Return Results + Proof]
+```
+
+**Approach**:
+1. **Immutable Snapshots**: After commit, vector index becomes immutable
+2. **Merkle Root**: Compute root hash of all vectors at commit time
+3. **Stored State**: Store serialized vector data (not graph) for verification
+4. **Software Float**: Use strict IEEE 754 for critical comparisons (optional feature)
+
+> **Trade-off**: This means live HNSW graph searches cannot be directly verified. Instead, verified queries use a snapshot. Real-time verification requires async proof generation.
+
+### MVCC & Vector Index
+
+**Critical Challenge**: HNSW is a connected graph. Concurrent transactions must see consistent vector visibility.
+
+#### The Problem
+
+- Transaction A inserts vector → updates HNSW graph
+- Transaction B runs concurrently → should not see A's uncommitted vectors
+- Graph traversals may include/exclude nodes incorrectly
+
+#### Solution: Visibility-Aware Vector Layer
+
+```mermaid
+graph TB
+    subgraph "Vector Storage"
+        A[Vector Data Store] --> B[Transaction ID Map]
+        A --> C[Tombstone Index]
+        B --> D[Visibility Filter]
+        C --> D
+    end
+```
+
+**Approach**:
+1. **Separate Index from Data**: HNSW index points to vector IDs, not direct data
+2. **Transaction Metadata**: Each vector stores `created_txn_id` and `deleted_txn_id`
+3. **Visibility Filter**: During search, filter by MVCC visibility rules
+4. **Tombstoning**: Deleted vectors marked, not removed (until GC)
+
+```rust
+// Visibility check during vector search
+fn is_visible(vector: &VectorEntry, txn: &Transaction) -> bool {
+    // Created by this transaction?
+    if vector.created_txn_id > txn.start_id {
+        return false;
+    }
+    // Deleted by committed transaction?
+    if let Some(deleted_by) = vector.deleted_txn_id {
+        if deleted_by <= txn.commit_id && txn.is_committed(deleted_by) {
+            return false;
+        }
+    }
+    true
+}
+```
+
+### Hybrid Query Optimization
+
+**Challenge**: For queries like `WHERE reputation > 0.9 ORDER BY vector_distance`, which plan is optimal?
+
+```sql
+SELECT * FROM agents
+WHERE reputation_score > 0.9
+ORDER BY VEC_DISTANCE_COSINE(embedding, $query)
+LIMIT 10;
+```
+
+#### Approach: Cost-Based Decision
+
+The optimizer will estimate:
+
+| Factor | Consideration |
+|--------|---------------|
+| **Selectivity** | How many rows pass `reputation > 0.9`? |
+| **Index Selectivity** | HNSW ef_search value vs full scan |
+| **Vector Dimension** | Brute-force cost scales with dimension |
+| **Quantization** | Quantized search is faster but approximate |
+
+**Plans**:
+1. **Index-First**: Use HNSW, filter by reputation post-search (low selectivity)
+2. **Filter-First**: Scan with reputation filter, brute-force vector (high selectivity)
+3. **Index-Filtered**: Use HNSW with payload filter pre-search (Qdrant-style)
+
+The optimizer will use statistics to pick the cheapest plan.
+
 ## Rationale
 
 ### Why Multiple Backends?
@@ -187,7 +294,9 @@ pub mod gpu {
 1. **Clean Foundation**: Stoolap's HNSW is well-structured, cache-optimized
 2. **SQL Integration**: Already has query planner, optimizer, MVCC
 3. **Blockchain Ready**: Already has trie, consensus, ZK modules
-4. **Pure Rust**: No C++ dependencies (unlike adding to Qdrant)
+4. **Default Pure Rust**: No C++ dependencies by default (rocksdb is optional)
+
+> **Correction**: The "Pure Rust" benefit applies to default builds. RocksDB is available as an optional feature for users who need its production-proven persistence.
 
 ### Alternative Approaches Considered
 
@@ -241,6 +350,55 @@ Phase 5: GPU Support
 | `src/parser/` | Add STORAGE, QUANTIZATION syntax |
 | `src/executor/` | Add vector/sparse operators |
 | `Cargo.toml` | Add quantization, sparse deps |
+
+### Vector Update/Delete Semantics
+
+#### UPDATE Vector
+
+```sql
+UPDATE embeddings SET embedding = $new_vec WHERE id = 5;
+```
+
+**Behavior**:
+1. Old vector marked with `deleted_txn_id` (tombstone)
+2. New vector inserted with `created_txn_id`
+3. HNSW graph updated asynchronously (background merge)
+
+#### DELETE Vector
+
+```sql
+DELETE FROM embeddings WHERE id = 5;
+```
+
+**Behavior**:
+1. Vector marked with `deleted_txn_id`
+2. Tombstoned until garbage collection
+3. HNSW index entry marked deleted (not removed from graph)
+
+#### Background Compaction
+
+```sql
+-- Trigger manual compaction
+ALTER TABLE embeddings COMPACT;
+```
+
+Compaction rebuilds the HNSW graph without tombstones. Recommended after bulk deletes.
+
+### License Compliance
+
+When porting code from Qdrant (Apache 2.0 license):
+
+1. **Copyright Headers**: Maintain all original Apache 2.0 headers
+2. **NOTICE File**: Add to repository noting Apache 2.0 code used
+3. **Module Attribution**: Add doc comments crediting original Qdrant authors
+4. **No Proprietary Changes**: Apache 2.0 allows modification, but changes must be documented
+
+```rust
+// Example attribution header
+// Originally adapted from Qdrant (Apache 2.0)
+// https://github.com/qdrant/qdrant
+// Copyright 2024 Qdrant Contributors
+```
 
 ### Testing Strategy
 

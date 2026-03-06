@@ -146,10 +146,13 @@ let proof = trie::generate_proof(&query_result);
 
 ## Success Metrics
 
-| Metric | Target |
-|--------|--------|
-| Query latency | <50ms (vs 350ms multi-system) |
-| Storage cost | 60% reduction |
-| API simplicity | Single SDK |
-| Verification | Merkle proofs for results |
-| Feature completeness | Parity with Qdrant + Stoolap |
+| Metric | Target | Notes |
+|--------|--------|-------|
+| Query latency | <50ms | Query execution only; proof generation is async/optional |
+| Proof generation | Async | Merkle/ZK proofs generated in background |
+| Storage cost | 60% reduction | Calculated from: removing network egress, eliminating data duplication across 3 DBs, utilizing BQ compression |
+| API simplicity | Single SDK | One client instead of three |
+| Verification | Merkle proofs | For committed snapshots only |
+| Feature completeness | Parity with Qdrant + Stoolap | Phased implementation |
+
+> **Clarification**: The <50ms latency is for query execution. Generating ZK proofs or Merkle proofs for complex query results can take longer and is handled asynchronously.

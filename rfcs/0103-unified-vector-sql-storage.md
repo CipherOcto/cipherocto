@@ -75,6 +75,40 @@ graph TB
 
 > **Recommendation**: Start with In-Memory + Memory-Mapped only. Add persistence backends later to avoid development surface explosion.
 
+#### Vector Storage Layout
+
+> ⚠️ **Optimization**: Vector storage layout significantly impacts cache performance.
+
+Use **Struct of Arrays (SoA)** instead of **Array of Structs (AoS)**:
+
+```rust
+// ❌ Array of Structs (poor cache locality)
+// Each vector's data scattered across memory
+struct VectorStore {
+    vectors: Vec<VectorData>,  // [vec1, vec2, vec3, ...]
+}
+
+struct VectorData {
+    id: i64,
+    embedding: Vec<f32>,
+    metadata: Json,
+}
+
+// ✅ Struct of Arrays (better cache locality)
+// All embeddings contiguous, all IDs contiguous
+struct VectorStoreSoA {
+    ids: Vec<i64>,           // [id1, id2, id3, ...]
+    embeddings: Vec<f32>,    // [v1_d1, v1_d2, ..., v2_d1, v2_d2, ...]
+    metadata_offsets: Vec<u32>,
+    metadata_blob: Vec<u8>,
+}
+```
+
+**Benefits**:
+- Better CPU cache utilization
+- SIMD-friendly vector operations
+- Faster batch distance computation
+
 #### SQL Syntax
 
 ```sql
@@ -181,6 +215,41 @@ pub mod gpu {
 - CUDA support only (OpenCL future)
 - Start with distance computation, not full traversal
 
+#### SIMD Specialization (More Impact Than GPU)
+
+> ⚠️ **Optimization**: SIMD acceleration often provides more benefit than GPU for vector databases.
+
+| SIMD Level | Benefit | Use Case |
+|-----------|---------|----------|
+| **AVX-512** | Highest | Data center (Intel) |
+| **AVX2** | High | General x86 |
+| **NEON** | High | ARM/Apple Silicon |
+| **SSE** | Medium | Legacy x86 |
+
+```rust
+// SIMD dispatch
+#[cfg(target_arch = "x86_64")]
+mod simd {
+    #[cfg(feature = "avx512")]
+    pub fn distance(a: &[f32], b: &[f32]) -> f32 {
+        unsafe { avx512_distance(a, b) }
+    }
+    #[cfg(feature = "avx2")]
+    pub fn distance(a: &[f32], b: &[f32]) -> f32 {
+        unsafe { avx2_distance(a, b) }
+    }
+}
+
+#[cfg(target_arch = "aarch64")]
+mod simd {
+    pub fn distance(a: &[f32], b: &[f32]) -> f32 {
+        unsafe { neon_distance(a, b) }
+    }
+}
+```
+
+**Priority**: Implement SIMD before GPU. Higher ROI for most deployments.
+
 ### Search Algorithms
 
 | Algorithm | Best For | Implementation |
@@ -246,6 +315,45 @@ struct MerkleEntry {
 - Faster incremental updates
 - Still proves vector content exists
 
+#### Hierarchical Merkle Tree
+
+For large datasets (1B+ vectors), flat Merkle tree depth becomes problematic. Use hierarchical structure:
+
+```mermaid
+graph TB
+    R[root hash]
+    S1[segment_1_root]
+    S2[segment_2_root]
+    S3[segment_3_root]
+    V1[vector hashes]
+    V2[vector hashes]
+    V3[vector hashes]
+
+    R --> S1
+    R --> S2
+    R --> S3
+    S1 --> V1
+    S2 --> V2
+    S3 --> V3
+```
+
+**Structure**:
+```
+Merkle root
+  └─ segment_1_root
+      └─ vector_hashes (segment_1)
+  └─ segment_2_root
+      └─ vector_hashes (segment_2)
+  └─ segment_3_root
+      └─ vector_hashes (segment_3)
+```
+
+**Benefits**:
+- Segment merges only update part of tree
+- Snapshotting cheaper (per-segment)
+- Proofs smaller (segment-level)
+- Scales to billions of vectors
+
 #### Software Float Performance
 
 > ⚠️ **Implementation Warning**: Software floating-point emulation (strict IEEE 754) is orders of magnitude slower than hardware SIMD.
@@ -285,22 +393,27 @@ graph LR
 **Constraint**:
 | Parameter | Value | Rationale |
 |-----------|-------|-----------|
-| Candidate set | ≤128 | Re-ranking 200+ vectors with software float is expensive |
-| Dimension | Original | Projection adds complexity |
+| Candidate set | ≥4×K, ≤512 | Must cover enough candidates for top-K |
+| Min candidates | 40 | For K=10, need at least 40 |
+| Max candidates | 512 | Software float cost limit |
 
 **Example**:
 ```rust
-fn deterministic_rerank(candidates: &[ScoredPoint], query: &[f32]) -> Vec<ScoredPoint> {
-    // Limit to 128 for performance
-    let top_candidates = &candidates[..128.min(candidates.len())];
+fn deterministic_rerank(candidates: &[ScoredPoint], k: usize) -> Vec<ScoredPoint> {
+    // Expand candidate set for cross-node consistency
+    let candidate_count = (4 * k).max(40).min(candidates.len());
+    let top_candidates = &candidates[..candidate_count];
 
     // Software float distance
     top_candidates.iter()
         .map(|p| (p.id, software_float_distance(&p.vector, query)))
         .sort_by(|a, b| a.1.partial_cmp(&b.1).unwrap())
+        .take(k)
         .collect()
 }
 ```
+
+> **Key**: Expanded candidate sets ensure different nodes produce identical top-K results despite HNSW non-determinism.
 
 ### Performance SLAs
 
@@ -311,8 +424,61 @@ fn deterministic_rerank(candidates: &[ScoredPoint], query: &[f32]) -> Vec<Scored
 | Proof generation (fast-proof) | <100ms | Synchronous, top-K only |
 | Merkle root update | <1s | Incremental at commit |
 | Auto-compaction trigger | <25% tombstone threshold | Background scheduler |
+| Index build throughput | >100K vectors/sec | During bulk import |
+| Vector insert QPS | >10K inserts/sec | Sustained write rate |
 
 > **Fast-Proof Mode**: Optional synchronous proof generation for small result sets (top-K). Uses abbreviated Merkle proof for top-K results only, bypassing full snapshot hashing.
+
+#### Background Task Scheduler
+
+> ⚠️ **Critical**: Many operations require background processing. Must not block query path.
+
+Required background tasks:
+
+| Task | Priority | Trigger |
+|------|----------|---------|
+| Segment merge | Medium | segments > 8 |
+| Compaction | Medium | tombstone > 15% |
+| Proof generation | Low | Async queue |
+| Index rebuild | Low | On segment merge |
+| Snapshot creation | Low | Configurable interval |
+| Statistics refresh | Low | ANALYZE command |
+
+```rust
+// Background scheduler
+struct BackgroundScheduler {
+    tasks: PriorityQueue<BackgroundTask>,
+    max_concurrent: usize,
+}
+
+enum BackgroundTask {
+    MergeSegments { table_id: u64, segment_ids: Vec<u64> },
+    Compact { table_id: u64, threshold: f32 },
+    GenerateProof { query_id: u64 },
+    RebuildIndex { segment_id: u64 },
+    CreateSnapshot { table_id: u64 },
+    RefreshStatistics { table_id: u64 },
+}
+
+impl BackgroundScheduler {
+    fn schedule(&self, task: BackgroundTask) {
+        // Add to priority queue
+        // Execute based on priority and resources
+    }
+
+    fn should_run(&self, task: &BackgroundTask) -> bool {
+        // Check resource availability
+        // Check priority
+        true
+    }
+}
+```
+
+**Design Principles**:
+- Non-blocking (query path never waits)
+- Configurable concurrency
+- Priority-based execution
+- Crash-recovery via WAL replay
 
 ### Benchmark Targets (Post-Implementation)
 
@@ -393,6 +559,46 @@ fn merge_segments(segments: &mut Vec<Segment>) {
 - Reduces resource usage
 - Maintains fast search speeds
 
+#### Versioned Segments for Blockchain Snapshots
+
+> ⚠️ **Critical**: Segment merges conflict with blockchain immutability. Old segments must remain until snapshot finalized.
+
+**Problem**:
+```
+segment_1 + segment_2 → segment_3
+```
+
+Merkle roots change. Historical queries break. Proof verification fails.
+
+**Solution**: Versioned segments
+
+```rust
+struct VersionedSegment {
+    segment_id: u64,
+    version: u64,        // Incremented on merge
+    vectors: Vec<Vector>,
+    merkle_root: [u8; 32],
+    created_at: u64,     // Block timestamp
+    is_active: bool,
+}
+
+// Segments never deleted, just marked inactive
+// Query: active_segments + historical_segments(version)
+```
+
+**Behavior**:
+| Operation | Segment Action |
+|-----------|----------------|
+| Insert | Add to live segment |
+| Commit | Freeze segment, increment version |
+| Merge | Create new version, mark old inactive |
+| Historical query | Use segment at specific version |
+
+**Benefits**:
+- Blockchain snapshots immutable
+- Historical queries supported
+- Proof verification stable
+
 **Benefits**:
 - No per-node visibility checks (eliminates branch mispredictions)
 - Simpler concurrency model
@@ -469,6 +675,32 @@ fn recover_from_wal(wal: &Wal) -> VectorState {
 - Segment create/merge also logged
 - Recovery rebuilds exact state
 
+**Missing Operations** (add to enum):
+```rust
+    IndexBuild {
+        segment_id: u64,
+        index_type: String,
+        index_path: String,
+    },
+    CompactionStart {
+        segment_ids: Vec<u64>,
+        compaction_id: u64,
+    },
+    CompactionFinish {
+        compaction_id: u64,
+        new_segment_id: u64,
+        deleted_vector_ids: Vec<i64>,
+    },
+    SnapshotCommit {
+        snapshot_id: u64,
+        merkle_root: [u8; 32],
+        block_height: u64,
+    },
+}
+```
+
+> ⚠️ **Critical**: Without IndexBuild/Compaction/Snapshot entries, recovery cannot rebuild index state reliably.
+
 **Challenge**: For queries like `WHERE reputation > 0.9 ORDER BY vector_distance`, which plan is optimal?
 
 ```sql
@@ -495,6 +727,56 @@ The optimizer will estimate:
 3. **Index-Filtered**: Use HNSW with payload filter pre-search (Qdrant-style)
 
 The optimizer will use statistics to pick the cheapest plan.
+
+#### Statistics Subsystem
+
+> ⚠️ **Critical**: Without accurate statistics, the planner will make poor choices.
+
+Required statistics for hybrid queries:
+
+| Statistic | Description | Collection |
+|-----------|-------------|------------|
+| `vector_norm_histogram` | Distribution of vector magnitudes | On insert |
+| `payload_histograms` | Value distributions per column | On ANALYZE |
+| `segment_sizes` | Vectors per segment | On commit |
+| `index_density` | HNSW connectivity density | On index build |
+| `tombstone_ratio` | Deleted/total vectors | Continuous |
+
+```rust
+// Statistics collection
+struct TableStatistics {
+    table_id: u64,
+    row_count: u64,
+    vector_stats: VectorStatistics,
+    payload_stats: HashMap<String, PayloadStatistics>,
+}
+
+struct VectorStatistics {
+    dimension: usize,
+    norm_histogram: Histogram<f32>,
+    avg_norm: f32,
+    non_zero_count: u64,
+}
+
+struct PayloadStatistics {
+    min: Value,
+    max: Value,
+    null_count: u64,
+    histogram: Histogram<Value>,
+}
+
+// ANALYZE command triggers collection
+fn analyze_table(table: &Table) -> TableStatistics {
+    // Sample vectors for norm histogram
+    // Scan payload columns for histograms
+    // Update segment metadata
+}
+```
+
+**Collection Strategy**:
+- Background sampling (not full scan)
+- Incremental updates (not full recalculation)
+- Configurable refresh interval
 
 ## Rationale
 

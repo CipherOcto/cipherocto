@@ -141,6 +141,12 @@ graph TD
 - Avoid ASCII art (`┌─`, `└─`, `─►`, etc.)
 - If existing ASCII diagrams exist, convert them to Mermaid
 
+**Markdown Formatting:**
+- All markdown files must pass Prettier formatting
+- Run `npx prettier --write <file>.md` before committing
+- Ensure files end with a newline
+- Use consistent heading hierarchy (no skipping levels)
+
 <!-- gitnexus:start -->
 # GitNexus MCP
 

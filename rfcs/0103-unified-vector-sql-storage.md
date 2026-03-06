@@ -278,6 +278,30 @@ graph LR
 
 > **Key Insight**: You can prove vectors exist, but the ranking may differ across architectures. This architecture ensures both speed and verifiability.
 
+#### Deterministic Re-Ranking Constraint
+
+> ⚠️ **Implementation Warning**: Software float is orders of magnitude slower. Limit candidate set size.
+
+**Constraint**:
+| Parameter | Value | Rationale |
+|-----------|-------|-----------|
+| Candidate set | ≤128 | Re-ranking 200+ vectors with software float is expensive |
+| Dimension | Original | Projection adds complexity |
+
+**Example**:
+```rust
+fn deterministic_rerank(candidates: &[ScoredPoint], query: &[f32]) -> Vec<ScoredPoint> {
+    // Limit to 128 for performance
+    let top_candidates = &candidates[..128.min(candidates.len())];
+
+    // Software float distance
+    top_candidates.iter()
+        .map(|p| (p.id, software_float_distance(&p.vector, query)))
+        .sort_by(|a, b| a.1.partial_cmp(&b.1).unwrap())
+        .collect()
+}
+```
+
 ### Performance SLAs
 
 | Metric | Target | Measurement |
@@ -337,6 +361,38 @@ graph TB
 3. **Per-Segment Visibility**: Transaction sees `visible_segments(txn_id)`
 4. **Search Per Segment**: Search each segment, merge results
 
+#### Segment Merge Policy
+
+> ⚠️ **Implementation Warning**: Without merge policy, segment count explodes with writes.
+
+**Merge Triggers**:
+| Condition | Action |
+|-----------|--------|
+| segments > 8 | Trigger merge |
+| segments > 16 | Aggressive merge |
+| Total size > 1GB | Merge smallest |
+
+**Merge Strategy**:
+```rust
+fn should_merge(segments: &[Segment]) -> bool {
+    segments.len() > 8 || segments.iter().map(|s| s.size()).sum() > 1_073_741_824
+}
+
+fn merge_segments(segments: &mut Vec<Segment>) {
+    // Sort by size, merge smallest pairs
+    segments.sort_by_key(|s| s.size());
+    let smallest = segments.remove(0);
+    let second_smallest = segments.remove(0);
+    let merged = merge(smallest, second_smallest);
+    segments.push(merged);
+}
+```
+
+**Benefits**:
+- Prevents query performance degradation
+- Reduces resource usage
+- Maintains fast search speeds
+
 **Benefits**:
 - No per-node visibility checks (eliminates branch mispredictions)
 - Simpler concurrency model
@@ -357,7 +413,61 @@ fn search_with_mvcc(query: &Query, txn: &Transaction) -> Vec<ScoredPoint> {
 }
 ```
 
-### Hybrid Query Optimization
+### WAL Format for Vector Operations
+
+Vector operations must be WAL-logged for recovery:
+
+```rust
+// WAL entry types for vectors
+enum WalVectorOp {
+    VectorInsert {
+        segment_id: u64,
+        vector_id: i64,
+        embedding: Vec<f32>,
+        txn_id: u64,
+    },
+    VectorDelete {
+        segment_id: u64,
+        vector_id: i64,
+        txn_id: u64,
+    },
+    VectorUpdate {
+        segment_id: u64,
+        vector_id: i64,
+        old_embedding: Vec<f32>,
+        new_embedding: Vec<f32>,
+        txn_id: u64,
+    },
+    SegmentCreate {
+        segment_id: u64,
+        is_immutable: bool,
+    },
+    SegmentMerge {
+        old_segments: Vec<u64>,
+        new_segment: u64,
+    },
+}
+
+// Recovery: replay WAL entries to rebuild index state
+fn recover_from_wal(wal: &Wal) -> VectorState {
+    let mut state = VectorState::new();
+    for entry in wal.entries() {
+        match entry {
+            WalVectorOp::VectorInsert { .. } => state.apply_insert(entry),
+            WalVectorOp::VectorDelete { .. } => state.apply_delete(entry),
+            WalVectorOp::VectorUpdate { .. } => state.apply_update(entry),
+            WalVectorOp::SegmentCreate { .. } => state.add_segment(entry),
+            WalVectorOp::SegmentMerge { .. } => state.merge_segments(entry),
+        }
+    }
+    state
+}
+```
+
+**Properties**:
+- Each vector op logged atomically
+- Segment create/merge also logged
+- Recovery rebuilds exact state
 
 **Challenge**: For queries like `WHERE reputation > 0.9 ORDER BY vector_distance`, which plan is optimal?
 
@@ -608,6 +718,32 @@ When porting code from Qdrant (Apache 2.0 license):
 | **Blockchain-only** | Verification only | Merkle state, not real-time sync |
 
 **Recommendation**: Start with Raft for strong consistency. Gossip for large-scale deployments (future).
+
+#### Vector Index Replication Strategy
+
+> ⚠️ **Important**: Vector indexes are NOT directly replicated.
+
+**Approach**:
+| Component | Replicated? | Strategy |
+|-----------|--------------|----------|
+| Vector data | Yes | Raft log replicates raw vectors |
+| HNSW index | No | Rebuilt locally from replicated vectors |
+| Segment metadata | Yes | Replicated via Raft |
+| Merkle root | Yes | Computed locally, proof shared |
+
+**Why**:
+- Replicating graph structure is complex and non-deterministic
+- Rebuilding index locally is simpler and deterministic
+- Each node computes identical index from identical data
+
+**Process**:
+```
+1. Leader receives vector INSERT
+2. Raft log replicates to followers
+3. Each node applies to local vector store
+4. Each node rebuilds affected segment
+5. Index remains consistent across nodes
+```
 
 ### B. Query Language Extensions
 

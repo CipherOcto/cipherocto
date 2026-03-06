@@ -1,7 +1,7 @@
 <!-- gitnexus:start -->
 # GitNexus MCP
 
-This project is indexed by GitNexus as **cipherocto** (120 symbols, 140 relationships, 2 execution flows).
+This project is indexed by GitNexus as **cipherocto** (227 symbols, 328 relationships, 10 execution flows).
 
 GitNexus provides a knowledge graph over this codebase — call chains, blast radius, execution flows, and semantic search.
 

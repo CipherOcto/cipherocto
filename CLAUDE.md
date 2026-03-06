@@ -144,7 +144,7 @@ graph TD
 <!-- gitnexus:start -->
 # GitNexus MCP
 
-This project is indexed by GitNexus as **cipherocto** (60 files, 120 symbols, 2 execution flows).
+This project is indexed by GitNexus as **cipherocto** (227 symbols, 328 relationships, 10 execution flows).
 
 GitNexus provides a knowledge graph over this codebase — call chains, blast radius, execution flows, and semantic search.
 
@@ -178,15 +178,6 @@ For any task involving code understanding, debugging, impact analysis, or refact
 | `rename` | Multi-file coordinated rename with confidence-tagged edits |
 | `cypher` | Raw graph queries (read `gitnexus://repo/{name}/schema` first) |
 | `list_repos` | Discover indexed repos |
-
-## Current Codebase Structure
-
-**Functional Areas (Clusters):**
-- Cluster_1: 5 symbols, 89% cohesion
-
-**Execution Flows (Processes):**
-- Main → Open_db: 4 steps (cross-community)
-- Main → Execute_agent: 3 steps (intra-community)
 
 ## Resources Reference
 

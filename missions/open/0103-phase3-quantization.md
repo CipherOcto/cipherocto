@@ -1,14 +1,15 @@
 # Mission: Phase 3 - Quantization
 
 ## Status
-Open
+Claimed
 
 ## RFC
 RFC-0103: Unified Vector-SQL Storage Engine
 
 ## Blockers / Dependencies
 
-- **Blocked by:** Mission: Phase 1 - Core Engine MVP (must complete first)
+- **Blocked by:** Mission: Phase 1 - Core Engine MVP ✅ COMPLETE
+- **Blocked by:** Mission: Phase 2 - Persistence ✅ COMPLETE
 
 ## Acceptance Criteria
 
@@ -73,7 +74,7 @@ USING HNSW WITH (quantization = 'pq', pq_subvecs = 8);
 
 ## Claimant
 
-<!-- Add your name when claiming -->
+@claude-code
 
 ## Pull Request
 

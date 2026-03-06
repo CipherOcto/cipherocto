@@ -66,14 +66,14 @@ graph TB
 
 #### Backend Types
 
-| Backend | Use Case | Trade-offs |
-|---------|----------|------------|
-| **In-Memory** | Low-latency, small datasets | Limited by RAM |
-| **Memory-Mapped** | Large datasets, OS-managed caching | Slower than memory |
-| **RocksDB** | Persistent, large scale (optional) | C++ dependency, memory overhead |
-| **redb** | Pure Rust alternative (future) | Embedded, no C++ dependency |
+| Backend | Status | Use Case |
+|---------|--------|----------|
+| **In-Memory** | Default | Low-latency, small datasets |
+| **Memory-Mapped** | Default | Large datasets, OS-managed caching |
+| **RocksDB** | Future | Persistent, large scale (optional) |
+| **redb** | Future | Pure Rust alternative |
 
-> **Note**: RocksDB is an optional feature flag (`feature = "rocksdb"`). For pure Rust deployments, consider `redb` or `sled` as alternatives. The "Pure Rust" ethos applies to default configurations.
+> **Recommendation**: Start with In-Memory + Memory-Mapped only. Add persistence backends later to avoid development surface explosion.
 
 #### SQL Syntax
 
@@ -154,20 +154,32 @@ The following modules remain unchanged:
 
 All blockchain features operate independently of storage backend selection.
 
-### GPU Acceleration
+### GPU Acceleration (Limited Scope)
+
+> ⚠️ **Implementation Warning**: HNSW GPU support is experimental. Graph traversal is memory-bound; GPU gains are smaller than expected.
+
+**Initial GPU Scope** (Phase 5):
+| Operation | GPU Benefit |
+|----------|-------------|
+| Vector distance computation | High |
+| Quantization training | High |
+| Batch re-ranking | Medium |
+| Full graph traversal | Low (memory-bound) |
 
 ```rust
 #[cfg(feature = "gpu")]
 pub mod gpu {
-    // CUDA kernels for HNSW graph building
-    // GPU-accelerated vector operations
-    // Memory management for GPU vectors
+    // CUDA kernels for distance computation
+    // Quantization training
+    // Batch re-ranking
+    // NOT full graph traversal initially
 }
 ```
 
 - Feature-gated with `#[cfg(feature = "gpu")]`
 - Fallback to CPU when GPU unavailable
 - CUDA support only (OpenCL future)
+- Start with distance computation, not full traversal
 
 ### Search Algorithms
 
@@ -210,11 +222,61 @@ graph LR
 >
 > **Recommendation**: Use incremental hashing - only hash newly inserted/deleted vectors and update branches to root, rather than rehashing entire dataset. The existing `trie/RowTrie` should support this pattern.
 
+#### Improved Merkle Strategy: ID + Content Hash
+
+Instead of hashing raw vectors (1.5GB for 1M vectors), hash vector IDs and content:
+
+```rust
+// Instead of hashing 1536 bytes per vector:
+// vector_hash = blake3(embedding_bytes)  // 1536 bytes
+
+// Hash only:
+// vector_hash = blake3(vector_id || blake3(embedding_bytes))  // ~64 bytes
+struct MerkleEntry {
+    vector_id: i64,
+    content_hash: [u8; 32],  // blake3 of embedding
+}
+
+// Merkle tree uses: vector_id → vector_hash
+// Much smaller tree, faster updates
+```
+
+**Benefits**:
+- Smaller hashes (64 bytes vs 1536 bytes per vector)
+- Faster incremental updates
+- Still proves vector content exists
+
 #### Software Float Performance
 
 > ⚠️ **Implementation Warning**: Software floating-point emulation (strict IEEE 754) is orders of magnitude slower than hardware SIMD.
 >
 > **Recommendation**: Isolate software emulation strictly to verification/snapshot phase. Live query nodes should use hardware acceleration (AVX/NEON) to maintain <50ms latency. Only enforce software float on nodes participating in block generation/validation.
+
+### Three-Layer Verification Architecture
+
+Separate concerns into distinct layers:
+
+```mermaid
+graph LR
+    A[Query Node] --> B[Fast Search<br/>HNSW (AVX/GPU)]
+    B --> C[Candidate Set<br/>top-200]
+    C --> D[Deterministic Re-rank<br/>Software Float]
+    D --> E[Top-K Result]
+    E --> F[Merkle Proof<br/>of vectors]
+```
+
+| Layer | Purpose | Determinism |
+|-------|---------|------------|
+| **Fast Search** | HNSW traversal, candidate generation | Non-deterministic |
+| **Deterministic Re-rank** | Final ranking of candidates | Software float |
+| **Blockchain Proof** | Verify vector inputs exist | Full verification |
+
+**Benefits**:
+- Fast queries use hardware acceleration
+- Final result is deterministically ranked
+- Merkle proof verifies input vectors
+
+> **Key Insight**: You can prove vectors exist, but the ranking may differ across architectures. This architecture ensures both speed and verifiability.
 
 ### Performance SLAs
 
@@ -247,38 +309,51 @@ graph LR
 - Transaction B runs concurrently → should not see A's uncommitted vectors
 - Graph traversals may include/exclude nodes incorrectly
 
-#### Solution: Visibility-Aware Vector Layer
+#### Solution: Segment Architecture (Qdrant-Style)
+
+Instead of per-vector MVCC visibility checks (20-40% slowdown), use immutable segments:
 
 ```mermaid
 graph TB
-    subgraph "Vector Storage"
-        A[Vector Data Store] --> B[Transaction ID Map]
-        A --> C[Tombstone Index]
-        B --> D[Visibility Filter]
-        C --> D
+    subgraph "Segment Architecture"
+        S1[segment_1<br/>immutable]
+        S2[segment_2<br/>immutable]
+        SL[segment_live<br/>mutable]
+        Q[Query]
+        R[Merge Results]
     end
+
+    Q --> S1
+    Q --> S2
+    Q --> SL
+    S1 --> R
+    S2 --> R
+    SL --> R
 ```
 
 **Approach**:
-1. **Separate Index from Data**: HNSW index points to vector IDs, not direct data
-2. **Transaction Metadata**: Each vector stores `created_txn_id` and `deleted_txn_id`
-3. **Visibility Filter**: During search, filter by MVCC visibility rules
-4. **Tombstoning**: Deleted vectors marked, not removed (until GC)
+1. **Immutable Segments**: After commit, vectors go into immutable segments
+2. **Live Segment**: New inserts go to mutable segment_live
+3. **Per-Segment Visibility**: Transaction sees `visible_segments(txn_id)`
+4. **Search Per Segment**: Search each segment, merge results
 
+**Benefits**:
+- No per-node visibility checks (eliminates branch mispredictions)
+- Simpler concurrency model
+- Faster queries
+- Borrowed from Qdrant's proven segment architecture
+
+**Implementation**:
 ```rust
-// Visibility check during vector search
-fn is_visible(vector: &VectorEntry, txn: &Transaction) -> bool {
-    // Created by this transaction?
-    if vector.created_txn_id > txn.start_id {
-        return false;
+fn search_with_mvcc(query: &Query, txn: &Transaction) -> Vec<ScoredPoint> {
+    let visible = visible_segments(&txn);
+    let mut results = Vec::new();
+
+    for segment in visible {
+        results.extend(search_segment(segment, query));
     }
-    // Deleted by committed transaction?
-    if let Some(deleted_by) = vector.deleted_txn_id {
-        if deleted_by <= txn.commit_id && txn.is_committed(deleted_by) {
-            return false;
-        }
-    }
-    true
+
+    merge_top_k(results, query.limit)
 }
 ```
 
@@ -341,34 +416,48 @@ The optimizer will use statistics to pick the cheapest plan.
 
 ## Implementation
 
-### Phases
+### Phases (Risk-Ordered)
+
+> ⚠️ **Important**: Implement hardest parts first. Reversed from original order.
 
 ```
-Phase 1: Storage Backend Abstraction
-├── Define StorageBackend enum
-├── Implement InMemory backend (current)
-├── Implement MmapBackend (from Qdrant)
-└── Implement RocksDBBackend (from Qdrant)
+Phase 1: MVCC + Vector Correctness
+├── Segment architecture (not per-vector visibility)
+├── Three-layer verification (fast search → deterministic → proof)
+├── Vector ID + content hash for Merkle
+└── Test: MVCC + concurrent vector UPDATE/DELETE
 
-Phase 2: Quantization (from Qdrant)
+Phase 2: Deterministic Snapshot
+├── Software float re-ranking
+├── Incremental Merkle updates
+├── Fast-proof mode (top-K sync)
+└── Test: Cross-architecture (x86 vs ARM)
+
+Phase 3: Hybrid Query Planner
+├── Cost-based planning (index-first vs filter-first)
+├── Statistics collection (selectivity, histograms)
+├── Payload filter integration
+└── Test: Hybrid queries with various selectivities
+
+Phase 4: Storage Backends
+├── In-Memory (current)
+├── Memory-Mapped
+└── (Persistence backends: future)
+
+Phase 5: Quantization
 ├── Copy lib/quantization to src/storage/quantization
 ├── Integrate with HNSW index
 └── Add SQL syntax for quantization config
 
-Phase 3: Sparse Vectors / BM25
+Phase 6: Sparse Vectors / BM25
 ├── Copy lib/sparse to src/storage/sparse
 ├── Add SPARSE index type
 └── Add BM25_MATCH SQL function
 
-Phase 4: Payload Indexes
-├── Add field index modules from Qdrant
-├── Integrate with query planner
-└── Add filter syntax
-
-Phase 5: GPU Support
+Phase 7: GPU Support (Future)
 ├── Add GPU feature flag
-├── Port CUDA kernels (future)
-└── Add runtime GPU detection
+├── Distance computation only
+└── NOT full graph traversal initially
 ```
 
 ### Key Files to Modify
@@ -419,7 +508,12 @@ Compaction rebuilds the HNSW graph without tombstones. Recommended after bulk de
 >
 > **Recommendation**: Implement auto-vacuum/auto-compact threshold in background (e.g., trigger when tombstone count > 20% of total nodes).
 >
-> **Strengthening**: Make auto-compaction **mandatory**, not optional. Add configurable per-table threshold (similar to PostgreSQL autovacuum). Log warnings when compaction is delayed.
+> **Strengthening**:
+> - Make auto-compaction **mandatory**, not optional
+> - **Hard limit: 30%** - Beyond this, recall collapses
+> - Soft trigger: 15%
+> - Configurable per-table threshold (similar to PostgreSQL autovacuum)
+> - Log warnings when compaction is delayed
 
 #### Testing Requirements
 
@@ -498,3 +592,96 @@ When porting code from Qdrant (Apache 2.0 license):
 
 - [Qdrant Research Report](../../docs/research/qdrant-research.md)
 - [Stoolap Research Report](../../docs/research/stoolap-research.md)
+
+---
+
+## Appendices
+
+### A. Replication Model
+
+**Question**: How do nodes synchronize in distributed deployments?
+
+| Model | Use Case | Implementation |
+|-------|----------|----------------|
+| **Raft** | Strong consistency | Leader + followers, log replication |
+| **Gossip** | Eventual consistency | Peer-to-peer state sharing |
+| **Blockchain-only** | Verification only | Merkle state, not real-time sync |
+
+**Recommendation**: Start with Raft for strong consistency. Gossip for large-scale deployments (future).
+
+### B. Query Language Extensions
+
+SQL extensions for vector operations:
+
+| Syntax | Purpose |
+|--------|---------|
+| `VECTOR(dims)` | Column type for vectors |
+| `VEC_DISTANCE_COSINE(v1, v2)` | Cosine distance function |
+| `VEC_DISTANCE_L2(v1, v2)` | Euclidean distance |
+| `BM25_MATCH(column, query)` | Text search |
+| `STORAGE = backend` | Storage backend selection |
+| `USING HNSW` | Index type selection |
+
+**Future Extensions**:
+```sql
+-- Hybrid search (dense + sparse)
+SELECT * FROM docs
+ORDER BY hybrid_score(dense_vector, sparse_vector, 0.7)
+LIMIT 10;
+```
+
+### C. Agent Memory Model
+
+CipherOcto agents require structured memory:
+
+```sql
+-- Episodic memory: what the agent did
+CREATE TABLE episodic_memory (
+    id INTEGER PRIMARY KEY,
+    agent_id INTEGER,
+    episode_id BIGINT,
+    embedding VECTOR(768),
+    action JSON,
+    result JSON,
+    timestamp TIMESTAMP
+) STORAGE = memory;
+
+-- Semantic memory: what the agent knows
+CREATE TABLE semantic_memory (
+    id INTEGER PRIMARY KEY,
+    agent_id INTEGER,
+    embedding VECTOR(768),
+    content TEXT,
+    importance FLOAT,
+    last_accessed TIMESTAMP
+) STORAGE = mmap;
+
+-- Task memory: current tasks
+CREATE TABLE task_memory (
+    id INTEGER PRIMARY KEY,
+    agent_id INTEGER,
+    task_id BIGINT,
+    embedding VECTOR(768),
+    status TEXT,
+    priority INTEGER
+) STORAGE = memory;
+
+-- Index for retrieval
+CREATE INDEX idx_episodic ON episodic_memory(embedding) USING HNSW;
+CREATE INDEX idx_semantic ON semantic_memory(embedding) USING HNSW;
+```
+
+**Query: Retrieve relevant context for agent**
+```sql
+SELECT * FROM (
+    SELECT 'episodic' as type, id, action, timestamp,
+        VEC_DISTANCE_COSINE(embedding, $context) as score
+    FROM episodic_memory WHERE agent_id = $agent
+    UNION ALL
+    SELECT 'semantic' as type, id, content, timestamp,
+        VEC_DISTANCE_COSINE(embedding, $context) as score
+    FROM semantic_memory WHERE agent_id = $agent
+) combined
+ORDER BY score DESC
+LIMIT 5;
+```

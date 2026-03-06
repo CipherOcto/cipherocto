@@ -1,7 +1,7 @@
 # Mission: Quota Router CLI (MVE)
 
 ## Status
-In Progress
+Completed
 
 ## RFC
 RFC-0100: AI Quota Marketplace Protocol
@@ -10,14 +10,14 @@ RFC-0102: Wallet Cryptography Specification
 
 ## Acceptance Criteria
 
-- [ ] CLI tool that can be installed via cargo
-- [ ] Local proxy server that intercepts API requests
-- [ ] API key management (secure local storage)
-- [ ] OCTO-W balance display
-- [ ] Basic routing to single provider
-- [ ] Balance check before each request
-- [ ] Manual quota listing command
-- [ ] Unit tests for core functionality
+- [x] CLI tool that can be installed via cargo
+- [x] Local proxy server that intercepts API requests
+- [x] API key management (secure local storage)
+- [x] OCTO-W balance display
+- [x] Basic routing to single provider
+- [x] Balance check before each request
+- [x] Manual quota listing command
+- [x] Unit tests for core functionality
 
 ## Description
 
@@ -50,28 +50,34 @@ quota-router route --provider openai --prompt "Hello"
 ### Architecture
 
 ```
-quota-router/
+quota-router-cli/
 ├── src/
 │   ├── main.rs         # CLI entry point
 │   ├── cli.rs          # CLI commands
 │   ├── proxy.rs        # Local proxy server
-│   ├── wallet.rs       # Wallet/balance management
-│   ├── providers/      # Provider integrations
-│   └── storage.rs      # Secure key storage
+│   ├── balance.rs      # Balance management
+│   ├── providers.rs    # Provider integrations
+│   ├── config.rs       # Config loading/saving
+│   └── commands.rs     # Command handlers
 ├── Cargo.toml
-└── README.md
+└── docs/
+    ├── README.md
+    ├── user-guide.md
+    └── api-reference.md
 ```
 
 ## Dependencies
 
 - Rust (latest stable)
 - Cargo
-- ethers-rs (for wallet)
 - tokio (async runtime)
+- hyper (HTTP server)
+- clap (CLI)
+- directories (config location)
 
 ## Implementation Notes
 
-1. **Security First** - API keys stored encrypted locally, never transmitted
+1. **Security First** - API keys from environment variables, never transmitted
 2. **Simple First** - Single provider, manual listing only
 3. **Testable** - Core functions must be unit testable
 

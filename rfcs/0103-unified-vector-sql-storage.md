@@ -206,6 +206,16 @@ graph LR
 
 > **Trade-off**: This means live HNSW graph searches cannot be directly verified. Instead, verified queries use a snapshot. Real-time verification requires async proof generation.
 
+> ⚠️ **Implementation Warning**: Computing Merkle root at commit time for tables with millions of vectors will destroy write throughput.
+>
+> **Recommendation**: Use incremental hashing - only hash newly inserted/deleted vectors and update branches to root, rather than rehashing entire dataset. The existing `trie/RowTrie` should support this pattern.
+
+#### Software Float Performance
+
+> ⚠️ **Implementation Warning**: Software floating-point emulation (strict IEEE 754) is orders of magnitude slower than hardware SIMD.
+>
+> **Recommendation**: Isolate software emulation strictly to verification/snapshot phase. Live query nodes should use hardware acceleration (AVX/NEON) to maintain <50ms latency. Only enforce software float on nodes participating in block generation/validation.
+
 ### MVCC & Vector Index
 
 **Critical Challenge**: HNSW is a connected graph. Concurrent transactions must see consistent vector visibility.
@@ -383,6 +393,10 @@ ALTER TABLE embeddings COMPACT;
 ```
 
 Compaction rebuilds the HNSW graph without tombstones. Recommended after bulk deletes.
+
+> ⚠️ **Implementation Warning**: HNSW search performance degrades rapidly with too many tombstones. Relying on users manually running `COMPACT` will cause slowdowns.
+>
+> **Recommendation**: Implement auto-vacuum/auto-compact threshold in background (e.g., trigger when tombstone count > 20% of total nodes).
 
 ### License Compliance
 

@@ -13,6 +13,7 @@ This RFC specifies the design for merging Qdrant's vector search capabilities wi
 ### Problem Statement
 
 Current AI applications require multiple systems:
+
 - **Vector database** (Qdrant, Pinecone, Weaviate) for similarity search
 - **SQL database** (PostgreSQL, SQLite) for structured data
 - **Blockchain** for verification/audit
@@ -22,6 +23,7 @@ This creates operational complexity, data consistency challenges, and latency fr
 ### Why This Matters for CipherOcto
 
 CipherOcto's architecture requires:
+
 1. **Vector similarity search** for agent memory/retrieval
 2. **SQL queries** for structured data (quotas, payments, reputation)
 3. **Blockchain verification** for provable state (Merkle proofs)
@@ -66,12 +68,12 @@ graph TB
 
 #### Backend Types
 
-| Backend | Status | Use Case |
-|---------|--------|----------|
-| **In-Memory** | Default | Low-latency, small datasets |
+| Backend           | Status  | Use Case                           |
+| ----------------- | ------- | ---------------------------------- |
+| **In-Memory**     | Default | Low-latency, small datasets        |
 | **Memory-Mapped** | Default | Large datasets, OS-managed caching |
-| **RocksDB** | Future | Persistent, large scale (optional) |
-| **redb** | Future | Pure Rust alternative |
+| **RocksDB**       | Future  | Persistent, large scale (optional) |
+| **redb**          | Future  | Pure Rust alternative              |
 
 > **Recommendation**: Start with In-Memory + Memory-Mapped only. Add persistence backends later to avoid development surface explosion.
 
@@ -105,6 +107,7 @@ struct VectorStoreSoA {
 ```
 
 **Benefits**:
+
 - Better CPU cache utilization
 - SIMD-friendly vector operations
 - Faster batch distance computation
@@ -143,20 +146,20 @@ LIMIT 10;
 
 #### HNSW Index
 
-| Parameter | Default | Range | Description |
-|-----------|---------|-------|-------------|
-| `m` | 16 | 2-128 | Connections per node |
-| `ef_construction` | 200 | 64-512 | Build-time search width |
-| `ef_search` | 200 | 1-512 | Query-time search width |
-| `metric` | cosine | l2, cosine, ip | Distance metric |
+| Parameter         | Default | Range          | Description             |
+| ----------------- | ------- | -------------- | ----------------------- |
+| `m`               | 16      | 2-128          | Connections per node    |
+| `ef_construction` | 200     | 64-512         | Build-time search width |
+| `ef_search`       | 200     | 1-512          | Query-time search width |
+| `metric`          | cosine  | l2, cosine, ip | Distance metric         |
 
 #### Quantization
 
-| Type | Compression | Quality Loss | Use Case |
-|------|-------------|--------------|----------|
-| **SQ** (Scalar) | 4x | Low | General use |
-| **PQ** (Product) | 4-64x | Medium | Large datasets |
-| **BQ** (Binary) | 32x | High | Extreme compression |
+| Type             | Compression | Quality Loss | Use Case            |
+| ---------------- | ----------- | ------------ | ------------------- |
+| **SQ** (Scalar)  | 4x          | Low          | General use         |
+| **PQ** (Product) | 4-64x       | Medium       | Large datasets      |
+| **BQ** (Binary)  | 32x         | High         | Extreme compression |
 
 #### Sparse Vectors
 
@@ -166,25 +169,25 @@ LIMIT 10;
 
 #### Payload Filtering
 
-| Index Type | Use Case |
-|------------|----------|
-| `bool_index` | Boolean filters |
-| `numeric_index` | Range queries |
-| `geo_index` | Location filtering |
-| `full_text_index` | Text match |
-| `facet_index` | Categorical |
-| `map_index` | Key-value |
+| Index Type        | Use Case           |
+| ----------------- | ------------------ |
+| `bool_index`      | Boolean filters    |
+| `numeric_index`   | Range queries      |
+| `geo_index`       | Location filtering |
+| `full_text_index` | Text match         |
+| `facet_index`     | Categorical        |
+| `map_index`       | Key-value          |
 
 ### Blockchain Feature Preservation
 
 The following modules remain unchanged:
 
-| Module | Purpose | Integration |
-|--------|---------|-------------|
-| `consensus/` | Block/Operation types | Unchanged |
-| `trie/` | RowTrie, SchemaTrie | Unchanged |
-| `determ/` | Deterministic values | Unchanged |
-| `zk/` | ZK proofs | Unchanged |
+| Module       | Purpose               | Integration |
+| ------------ | --------------------- | ----------- |
+| `consensus/` | Block/Operation types | Unchanged   |
+| `trie/`      | RowTrie, SchemaTrie   | Unchanged   |
+| `determ/`    | Deterministic values  | Unchanged   |
+| `zk/`        | ZK proofs             | Unchanged   |
 
 All blockchain features operate independently of storage backend selection.
 
@@ -219,12 +222,12 @@ pub mod gpu {
 
 > ⚠️ **Optimization**: SIMD acceleration often provides more benefit than GPU for vector databases.
 
-| SIMD Level | Benefit | Use Case |
-|-----------|---------|----------|
+| SIMD Level  | Benefit | Use Case            |
+| ----------- | ------- | ------------------- |
 | **AVX-512** | Highest | Data center (Intel) |
-| **AVX2** | High | General x86 |
-| **NEON** | High | ARM/Apple Silicon |
-| **SSE** | Medium | Legacy x86 |
+| **AVX2**    | High    | General x86         |
+| **NEON**    | High    | ARM/Apple Silicon   |
+| **SSE**     | Medium  | Legacy x86          |
 
 ```rust
 // SIMD dispatch
@@ -252,10 +255,10 @@ mod simd {
 
 ### Search Algorithms
 
-| Algorithm | Best For | Implementation |
-|-----------|----------|----------------|
-| **HNSW** | General ANNS | Default |
-| **Acorn** | Memory-constrained | Optional |
+| Algorithm | Best For           | Implementation |
+| --------- | ------------------ | -------------- |
+| **HNSW**  | General ANNS       | Default        |
+| **Acorn** | Memory-constrained | Optional       |
 
 ### Determinism & Consensus
 
@@ -280,6 +283,7 @@ graph LR
 ```
 
 **Approach**:
+
 1. **Immutable Snapshots**: After commit, vector index becomes immutable
 2. **Merkle Root**: Compute root hash of all vectors at commit time
 3. **Stored State**: Store serialized vector data (not graph) for verification
@@ -311,6 +315,7 @@ struct MerkleEntry {
 ```
 
 **Benefits**:
+
 - Smaller hashes (64 bytes vs 1536 bytes per vector)
 - Faster incremental updates
 - Still proves vector content exists
@@ -338,6 +343,7 @@ graph TB
 ```
 
 **Structure**:
+
 ```
 Merkle root
   └─ segment_1_root
@@ -349,6 +355,7 @@ Merkle root
 ```
 
 **Benefits**:
+
 - Segment merges only update part of tree
 - Snapshotting cheaper (per-segment)
 - Proofs smaller (segment-level)
@@ -373,13 +380,14 @@ graph LR
     E --> F[Merkle Proof<br/>of vectors]
 ```
 
-| Layer | Purpose | Determinism |
-|-------|---------|------------|
-| **Fast Search** | HNSW traversal, candidate generation | Non-deterministic |
-| **Deterministic Re-rank** | Final ranking of candidates | Software float |
-| **Blockchain Proof** | Verify vector inputs exist | Full verification |
+| Layer                     | Purpose                              | Determinism       |
+| ------------------------- | ------------------------------------ | ----------------- |
+| **Fast Search**           | HNSW traversal, candidate generation | Non-deterministic |
+| **Deterministic Re-rank** | Final ranking of candidates          | Software float    |
+| **Blockchain Proof**      | Verify vector inputs exist           | Full verification |
 
 **Benefits**:
+
 - Fast queries use hardware acceleration
 - Final result is deterministically ranked
 - Merkle proof verifies input vectors
@@ -398,6 +406,7 @@ graph LR
 | Max candidates | 512 | Software float cost limit |
 
 **Example**:
+
 ```rust
 fn deterministic_rerank(candidates: &[ScoredPoint], k: usize) -> Vec<ScoredPoint> {
     // Expand candidate set for cross-node consistency
@@ -417,15 +426,15 @@ fn deterministic_rerank(candidates: &[ScoredPoint], k: usize) -> Vec<ScoredPoint
 
 ### Performance SLAs
 
-| Metric | Target | Measurement |
-|--------|--------|-------------|
-| Live query latency | <50ms | P50 at 1K QPS |
-| Proof generation (async) | <5s (95th percentile) | Async background |
-| Proof generation (fast-proof) | <100ms | Synchronous, top-K only |
-| Merkle root update | <1s | Incremental at commit |
-| Auto-compaction trigger | <25% tombstone threshold | Background scheduler |
-| Index build throughput | >100K vectors/sec | During bulk import |
-| Vector insert QPS | >10K inserts/sec | Sustained write rate |
+| Metric                        | Target                   | Measurement             |
+| ----------------------------- | ------------------------ | ----------------------- |
+| Live query latency            | <50ms                    | P50 at 1K QPS           |
+| Proof generation (async)      | <5s (95th percentile)    | Async background        |
+| Proof generation (fast-proof) | <100ms                   | Synchronous, top-K only |
+| Merkle root update            | <1s                      | Incremental at commit   |
+| Auto-compaction trigger       | <25% tombstone threshold | Background scheduler    |
+| Index build throughput        | >100K vectors/sec        | During bulk import      |
+| Vector insert QPS             | >10K inserts/sec         | Sustained write rate    |
 
 > **Fast-Proof Mode**: Optional synchronous proof generation for small result sets (top-K). Uses abbreviated Merkle proof for top-K results only, bypassing full snapshot hashing.
 
@@ -435,14 +444,14 @@ fn deterministic_rerank(candidates: &[ScoredPoint], k: usize) -> Vec<ScoredPoint
 
 Required background tasks:
 
-| Task | Priority | Trigger |
-|------|----------|---------|
-| Segment merge | Medium | segments > 8 |
-| Compaction | Medium | tombstone > 15% |
-| Proof generation | Low | Async queue |
-| Index rebuild | Low | On segment merge |
-| Snapshot creation | Low | Configurable interval |
-| Statistics refresh | Low | ANALYZE command |
+| Task               | Priority | Trigger               |
+| ------------------ | -------- | --------------------- |
+| Segment merge      | Medium   | segments > 8          |
+| Compaction         | Medium   | tombstone > 15%       |
+| Proof generation   | Low      | Async queue           |
+| Index rebuild      | Low      | On segment merge      |
+| Snapshot creation  | Low      | Configurable interval |
+| Statistics refresh | Low      | ANALYZE command       |
 
 ```rust
 // Background scheduler
@@ -475,6 +484,7 @@ impl BackgroundScheduler {
 ```
 
 **Design Principles**:
+
 - Non-blocking (query path never waits)
 - Configurable concurrency
 - Priority-based execution
@@ -482,12 +492,12 @@ impl BackgroundScheduler {
 
 ### Benchmark Targets (Post-Implementation)
 
-| Metric | Target | Notes |
-|--------|--------|-------|
-| Query latency | <50ms | vs 350ms multi-system baseline |
-| Storage reduction | 60% | With BQ compression |
-| Compression ratio | 4-64x | PQ/SQ/BQ configurations |
-| Recall@10 | >95% | At 25% tombstone threshold |
+| Metric            | Target | Notes                          |
+| ----------------- | ------ | ------------------------------ |
+| Query latency     | <50ms  | vs 350ms multi-system baseline |
+| Storage reduction | 60%    | With BQ compression            |
+| Compression ratio | 4-64x  | PQ/SQ/BQ configurations        |
+| Recall@10         | >95%   | At 25% tombstone threshold     |
 
 ### MVCC & Vector Index
 
@@ -522,6 +532,7 @@ graph TB
 ```
 
 **Approach**:
+
 1. **Immutable Segments**: After commit, vectors go into immutable segments
 2. **Live Segment**: New inserts go to mutable segment_live
 3. **Per-Segment Visibility**: Transaction sees `visible_segments(txn_id)`
@@ -539,6 +550,7 @@ graph TB
 | Total size > 1GB | Merge smallest |
 
 **Merge Strategy**:
+
 ```rust
 fn should_merge(segments: &[Segment]) -> bool {
     segments.len() > 8 || segments.iter().map(|s| s.size()).sum() > 1_073_741_824
@@ -555,6 +567,7 @@ fn merge_segments(segments: &mut Vec<Segment>) {
 ```
 
 **Benefits**:
+
 - Prevents query performance degradation
 - Reduces resource usage
 - Maintains fast search speeds
@@ -564,6 +577,7 @@ fn merge_segments(segments: &mut Vec<Segment>) {
 > ⚠️ **Critical**: Segment merges conflict with blockchain immutability. Old segments must remain until snapshot finalized.
 
 **Problem**:
+
 ```
 segment_1 + segment_2 → segment_3
 ```
@@ -595,17 +609,20 @@ struct VersionedSegment {
 | Historical query | Use segment at specific version |
 
 **Benefits**:
+
 - Blockchain snapshots immutable
 - Historical queries supported
 - Proof verification stable
 
 **Benefits**:
+
 - No per-node visibility checks (eliminates branch mispredictions)
 - Simpler concurrency model
 - Faster queries
 - Borrowed from Qdrant's proven segment architecture
 
 **Implementation**:
+
 ```rust
 fn search_with_mvcc(query: &Query, txn: &Transaction) -> Vec<ScoredPoint> {
     let visible = visible_segments(&txn);
@@ -671,11 +688,13 @@ fn recover_from_wal(wal: &Wal) -> VectorState {
 ```
 
 **Properties**:
+
 - Each vector op logged atomically
 - Segment create/merge also logged
 - Recovery rebuilds exact state
 
 **Missing Operations** (add to enum):
+
 ```rust
     IndexBuild {
         segment_id: u64,
@@ -714,14 +733,15 @@ LIMIT 10;
 
 The optimizer will estimate:
 
-| Factor | Consideration |
-|--------|---------------|
-| **Selectivity** | How many rows pass `reputation > 0.9`? |
-| **Index Selectivity** | HNSW ef_search value vs full scan |
-| **Vector Dimension** | Brute-force cost scales with dimension |
-| **Quantization** | Quantized search is faster but approximate |
+| Factor                | Consideration                              |
+| --------------------- | ------------------------------------------ |
+| **Selectivity**       | How many rows pass `reputation > 0.9`?     |
+| **Index Selectivity** | HNSW ef_search value vs full scan          |
+| **Vector Dimension**  | Brute-force cost scales with dimension     |
+| **Quantization**      | Quantized search is faster but approximate |
 
 **Plans**:
+
 1. **Index-First**: Use HNSW, filter by reputation post-search (low selectivity)
 2. **Filter-First**: Scan with reputation filter, brute-force vector (high selectivity)
 3. **Index-Filtered**: Use HNSW with payload filter pre-search (Qdrant-style)
@@ -734,13 +754,13 @@ The optimizer will use statistics to pick the cheapest plan.
 
 Required statistics for hybrid queries:
 
-| Statistic | Description | Collection |
-|-----------|-------------|------------|
-| `vector_norm_histogram` | Distribution of vector magnitudes | On insert |
-| `payload_histograms` | Value distributions per column | On ANALYZE |
-| `segment_sizes` | Vectors per segment | On commit |
-| `index_density` | HNSW connectivity density | On index build |
-| `tombstone_ratio` | Deleted/total vectors | Continuous |
+| Statistic               | Description                       | Collection     |
+| ----------------------- | --------------------------------- | -------------- |
+| `vector_norm_histogram` | Distribution of vector magnitudes | On insert      |
+| `payload_histograms`    | Value distributions per column    | On ANALYZE     |
+| `segment_sizes`         | Vectors per segment               | On commit      |
+| `index_density`         | HNSW connectivity density         | On index build |
+| `tombstone_ratio`       | Deleted/total vectors             | Continuous     |
 
 ```rust
 // Statistics collection
@@ -774,6 +794,7 @@ fn analyze_table(table: &Table) -> TableStatistics {
 ```
 
 **Collection Strategy**:
+
 - Background sampling (not full scan)
 - Incremental updates (not full recalculation)
 - Configurable refresh interval
@@ -799,10 +820,12 @@ fn analyze_table(table: &Table) -> TableStatistics {
 ### Alternative Approaches Considered
 
 #### Option 1: New Codebase
+
 - **Rejected**: Duplication of SQL/MVCC infrastructure
 - **Trade-off**: More work, cleaner slate
 
 #### Option 2: Fork Qdrant + Add SQL
+
 - **Rejected**: Qdrant's Rust codebase less modular for SQL addition
 - **Trade-off**: Would require significant refactoring
 
@@ -854,14 +877,14 @@ Phase 7: GPU Support (Future)
 
 ### Key Files to Modify
 
-| File | Change |
-|------|--------|
-| `src/storage/mod.rs` | Add backend abstraction |
-| `src/storage/index/hnsw.rs` | Add quantization, algorithms |
-| `src/storage/index/mod.rs` | Add sparse, field indexes |
-| `src/parser/` | Add STORAGE, QUANTIZATION syntax |
-| `src/executor/` | Add vector/sparse operators |
-| `Cargo.toml` | Add quantization, sparse deps |
+| File                        | Change                           |
+| --------------------------- | -------------------------------- |
+| `src/storage/mod.rs`        | Add backend abstraction          |
+| `src/storage/index/hnsw.rs` | Add quantization, algorithms     |
+| `src/storage/index/mod.rs`  | Add sparse, field indexes        |
+| `src/parser/`               | Add STORAGE, QUANTIZATION syntax |
+| `src/executor/`             | Add vector/sparse operators      |
+| `Cargo.toml`                | Add quantization, sparse deps    |
 
 ### Vector Update/Delete Semantics
 
@@ -872,6 +895,7 @@ UPDATE embeddings SET embedding = $new_vec WHERE id = 5;
 ```
 
 **Behavior**:
+
 1. Old vector marked with `deleted_txn_id` (tombstone)
 2. New vector inserted with `created_txn_id`
 3. HNSW graph updated asynchronously (background merge)
@@ -883,6 +907,7 @@ DELETE FROM embeddings WHERE id = 5;
 ```
 
 **Behavior**:
+
 1. Vector marked with `deleted_txn_id`
 2. Tombstoned until garbage collection
 3. HNSW index entry marked deleted (not removed from graph)
@@ -901,6 +926,7 @@ Compaction rebuilds the HNSW graph without tombstones. Recommended after bulk de
 > **Recommendation**: Implement auto-vacuum/auto-compact threshold in background (e.g., trigger when tombstone count > 20% of total nodes).
 >
 > **Strengthening**:
+>
 > - Make auto-compaction **mandatory**, not optional
 > - **Hard limit: 30%** - Beyond this, recall collapses
 > - Soft trigger: 15%
@@ -911,12 +937,12 @@ Compaction rebuilds the HNSW graph without tombstones. Recommended after bulk de
 
 The following test matrix must be implemented:
 
-| Test Category | Scenario | Acceptance Criteria |
-|---------------|----------|---------------------|
-| **MVCC + Vector** | High-concurrency UPDATE/DELETE | No consistency violations |
-| **Determinism** | x86 vs ARM execution | Identical results |
-| **Merkle Root** | 1M → 100M vectors | <1s incremental update |
-| **Tombstone Degradation** | recall@10 vs % deleted | <5% recall loss at 25% deleted |
+| Test Category             | Scenario                       | Acceptance Criteria            |
+| ------------------------- | ------------------------------ | ------------------------------ |
+| **MVCC + Vector**         | High-concurrency UPDATE/DELETE | No consistency violations      |
+| **Determinism**           | x86 vs ARM execution           | Identical results              |
+| **Merkle Root**           | 1M → 100M vectors              | <1s incremental update         |
+| **Tombstone Degradation** | recall@10 vs % deleted         | <5% recall loss at 25% deleted |
 
 > **Segment-Merge Philosophy**: Borrow from Qdrant - use immutable segments + background merge. Old segments remain searchable while new ones are built.
 
@@ -924,12 +950,12 @@ The following test matrix must be implemented:
 
 Add production monitoring hooks:
 
-| Metric | Purpose |
-|--------|---------|
-| `tombstone_ratio` | Current % deleted nodes in HNSW |
-| `compaction_queue_depth` | Pending compaction operations |
+| Metric                    | Purpose                           |
+| ------------------------- | --------------------------------- |
+| `tombstone_ratio`         | Current % deleted nodes in HNSW   |
+| `compaction_queue_depth`  | Pending compaction operations     |
 | `proof_gen_queue_latency` | P50/P95/P99 proof generation time |
-| `recall_estimate` | Estimated recall degradation |
+| `recall_estimate`         | Estimated recall degradation      |
 
 ```sql
 -- System view for monitoring
@@ -941,13 +967,14 @@ SELECT * FROM system.vector_index_stats('embeddings');
 
 Validate against:
 
-| Baseline | Target |
-|----------|--------|
-| **Current Stoolap** (basic HNSW) | Compare latency |
-| **Standalone Qdrant** | Compare recall @ K |
+| Baseline                           | Target                          |
+| ---------------------------------- | ------------------------------- |
+| **Current Stoolap** (basic HNSW)   | Compare latency                 |
+| **Standalone Qdrant**              | Compare recall @ K              |
 | **Multi-system** (SQL + vector DB) | Compare 350ms vs 50ms narrative |
 
 > **Critical**: Prototype highest-risk pieces first:
+>
 > 1. Incremental Merkle root at 10M+ scale
 > 2. Visibility filter cost during HNSW descent
 > 3. Auto-compaction with recall/latency measurements
@@ -993,11 +1020,11 @@ When porting code from Qdrant (Apache 2.0 license):
 
 **Question**: How do nodes synchronize in distributed deployments?
 
-| Model | Use Case | Implementation |
-|-------|----------|----------------|
-| **Raft** | Strong consistency | Leader + followers, log replication |
-| **Gossip** | Eventual consistency | Peer-to-peer state sharing |
-| **Blockchain-only** | Verification only | Merkle state, not real-time sync |
+| Model               | Use Case             | Implementation                      |
+| ------------------- | -------------------- | ----------------------------------- |
+| **Raft**            | Strong consistency   | Leader + followers, log replication |
+| **Gossip**          | Eventual consistency | Peer-to-peer state sharing          |
+| **Blockchain-only** | Verification only    | Merkle state, not real-time sync    |
 
 **Recommendation**: Start with Raft for strong consistency. Gossip for large-scale deployments (future).
 
@@ -1014,11 +1041,13 @@ When porting code from Qdrant (Apache 2.0 license):
 | Merkle root | Yes | Computed locally, proof shared |
 
 **Why**:
+
 - Replicating graph structure is complex and non-deterministic
 - Rebuilding index locally is simpler and deterministic
 - Each node computes identical index from identical data
 
 **Process**:
+
 ```
 1. Leader receives vector INSERT
 2. Raft log replicates to followers
@@ -1031,16 +1060,17 @@ When porting code from Qdrant (Apache 2.0 license):
 
 SQL extensions for vector operations:
 
-| Syntax | Purpose |
-|--------|---------|
-| `VECTOR(dims)` | Column type for vectors |
-| `VEC_DISTANCE_COSINE(v1, v2)` | Cosine distance function |
-| `VEC_DISTANCE_L2(v1, v2)` | Euclidean distance |
-| `BM25_MATCH(column, query)` | Text search |
-| `STORAGE = backend` | Storage backend selection |
-| `USING HNSW` | Index type selection |
+| Syntax                        | Purpose                   |
+| ----------------------------- | ------------------------- |
+| `VECTOR(dims)`                | Column type for vectors   |
+| `VEC_DISTANCE_COSINE(v1, v2)` | Cosine distance function  |
+| `VEC_DISTANCE_L2(v1, v2)`     | Euclidean distance        |
+| `BM25_MATCH(column, query)`   | Text search               |
+| `STORAGE = backend`           | Storage backend selection |
+| `USING HNSW`                  | Index type selection      |
 
 **Future Extensions**:
+
 ```sql
 -- Hybrid search (dense + sparse)
 SELECT * FROM docs
@@ -1090,6 +1120,7 @@ CREATE INDEX idx_semantic ON semantic_memory(embedding) USING HNSW;
 ```
 
 **Query: Retrieve relevant context for agent**
+
 ```sql
 SELECT * FROM (
     SELECT 'episodic' as type, id, action, timestamp,

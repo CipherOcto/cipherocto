@@ -10,14 +10,14 @@ CipherOcto faces a critical infrastructure challenge: AI agents require multiple
 
 ### Current Pain Points
 
-| Challenge | Current Solution | Problem |
-|-----------|-----------------|---------|
-| **Data consistency** | Multiple systems | No ACID across vector + SQL |
-| **Query latency** | Separate API calls | RTT overhead between systems |
-| **Infrastructure complexity** | Multiple deployments | Operational burden |
-| **Cost** | Multiple licenses/servers | Budget multiplied |
-| **Agent memory** | External vector DB | No blockchain verification |
-| **Verification** | Separate blockchain | Can't prove vector search correctness |
+| Challenge                     | Current Solution          | Problem                               |
+| ----------------------------- | ------------------------- | ------------------------------------- |
+| **Data consistency**          | Multiple systems          | No ACID across vector + SQL           |
+| **Query latency**             | Separate API calls        | RTT overhead between systems          |
+| **Infrastructure complexity** | Multiple deployments      | Operational burden                    |
+| **Cost**                      | Multiple licenses/servers | Budget multiplied                     |
+| **Agent memory**              | External vector DB        | No blockchain verification            |
+| **Verification**              | Separate blockchain       | Can't prove vector search correctness |
 
 ## Motivation
 
@@ -45,22 +45,22 @@ CipherOcto faces a critical infrastructure challenge: AI agents require multiple
 
 ### If Implemented
 
-| Area | Transformation |
-|------|----------------|
-| **Agent Memory** | Vector search with SQL queries in one system |
-| **Verification** | Merkle proofs for vector search results |
-| **Infrastructure** | Single deployment instead of three |
-| **Latency** | 50-120ms instead of 150-400ms |
-| **Cost** | ~60% reduction in storage costs |
-| **Privacy** | Local-first with optional blockchain |
+| Area               | Transformation                               |
+| ------------------ | -------------------------------------------- |
+| **Agent Memory**   | Vector search with SQL queries in one system |
+| **Verification**   | Merkle proofs for vector search results      |
+| **Infrastructure** | Single deployment instead of three           |
+| **Latency**        | 50-120ms instead of 150-400ms                |
+| **Cost**           | ~60% reduction in storage costs              |
+| **Privacy**        | Local-first with optional blockchain         |
 
 ### If Not Implemented
 
-| Risk | Consequence |
-|------|-------------|
-| Multiple systems | Higher ops cost, consistency issues |
-| No verification | Can't prove AI decision provenance |
-| Slow agents | Cross-system queries add latency |
+| Risk                | Consequence                                  |
+| ------------------- | -------------------------------------------- |
+| Multiple systems    | Higher ops cost, consistency issues          |
+| No verification     | Can't prove AI decision provenance           |
+| Slow agents         | Cross-system queries add latency             |
 | Competitor launches | Market captured by less-capable alternatives |
 
 ## Narrative
@@ -68,6 +68,7 @@ CipherOcto faces a critical infrastructure challenge: AI agents require multiple
 ### The Agent's Perspective
 
 **Today (Multiple Systems):**
+
 ```
 Agent: "Find similar tasks"
   → Vector DB: Returns task IDs (100ms)
@@ -77,6 +78,7 @@ Agent: "Find similar tasks"
 ```
 
 **With Unified Storage:**
+
 ```
 Agent: "Find similar verified tasks"
   → Single query: Vector + SQL + Verification
@@ -134,12 +136,12 @@ let proof = trie::generate_proof(&query_result);
 
 ### CipherOcto Integration Points
 
-| Component | Integration |
-|-----------|-------------|
-| Agent Orchestrator | Unified storage for agent memory |
-| Quota Marketplace | Vector similarity + SQL in one |
-| Node Operations | Persistent state with verification |
-| Reputation System | Verifiable agent history |
+| Component          | Integration                        |
+| ------------------ | ---------------------------------- |
+| Agent Orchestrator | Unified storage for agent memory   |
+| Quota Marketplace  | Vector similarity + SQL in one     |
+| Node Operations    | Persistent state with verification |
+| Reputation System  | Verifiable agent history           |
 
 ## Related RFCs
 
@@ -153,11 +155,11 @@ When executed correctly, this system positions CipherOcto as:
 
 > **The First Verifiable AI Database**
 
-| Analogy | Description |
-|---------|-------------|
-| **Snowflake for AI data** | Unified data platform for AI |
+| Analogy                   | Description                     |
+| ------------------------- | ------------------------------- |
+| **Snowflake for AI data** | Unified data platform for AI    |
 | **Ethereum for AI state** | Verifiable, deterministic state |
-| **Qdrant for memory** | But with SQL + blockchain |
+| **Qdrant for memory**     | But with SQL + blockchain       |
 
 ### Key Differentiator: Verifiable AI Memory
 
@@ -171,6 +173,7 @@ AI Decision
 ```
 
 This enables:
+
 - **Decentralized AI agents** with verifiable decision history
 - **DAO decision systems** with auditable AI input
 - **AI marketplaces** with verified model behavior
@@ -180,15 +183,15 @@ No other database offers this combination.
 
 ## Success Metrics
 
-| Metric | Target | Notes |
-|--------|--------|-------|
-| Query latency | <50ms | Query execution only; proof generation is async/optional |
-| Proof generation | <5s (P95) | Async background, SLAs defined |
-| Storage cost | 60% reduction | Calculated from: removing network egress, eliminating data duplication across 3 DBs, utilizing BQ compression |
-| Compression ratio | 4-64x | PQ/SQ/BQ configurations |
-| Recall@10 | >95% | At 25% tombstone threshold |
-| API simplicity | Single SDK | One client instead of three |
-| Verification | Merkle proofs | For committed snapshots only |
-| Feature completeness | Parity with Qdrant + Stoolap | Phased implementation |
+| Metric               | Target                       | Notes                                                                                                         |
+| -------------------- | ---------------------------- | ------------------------------------------------------------------------------------------------------------- |
+| Query latency        | <50ms                        | Query execution only; proof generation is async/optional                                                      |
+| Proof generation     | <5s (P95)                    | Async background, SLAs defined                                                                                |
+| Storage cost         | 60% reduction                | Calculated from: removing network egress, eliminating data duplication across 3 DBs, utilizing BQ compression |
+| Compression ratio    | 4-64x                        | PQ/SQ/BQ configurations                                                                                       |
+| Recall@10            | >95%                         | At 25% tombstone threshold                                                                                    |
+| API simplicity       | Single SDK                   | One client instead of three                                                                                   |
+| Verification         | Merkle proofs                | For committed snapshots only                                                                                  |
+| Feature completeness | Parity with Qdrant + Stoolap | Phased implementation                                                                                         |
 
 > **Clarification**: The <50ms latency is for query execution. Generating ZK proofs or Merkle proofs for complex query results can take longer and is handled asynchronously. Proof generation SLAs: 95th percentile <5 seconds.

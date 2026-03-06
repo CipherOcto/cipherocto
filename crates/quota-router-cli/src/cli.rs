@@ -26,7 +26,7 @@ pub enum Commands {
     /// Start proxy server
     Proxy {
         #[arg(short, long, default_value = "8080")]
-        port: u16
+        port: u16,
     },
     /// Route a test request
     Route {

@@ -1,7 +1,7 @@
+use anyhow::Result;
 use clap::Parser;
 use quota_router_cli::cli::{Cli, Commands};
 use quota_router_cli::commands as cmd;
-use anyhow::Result;
 
 #[tokio::main]
 async fn main() -> Result<()> {

@@ -1,15 +1,15 @@
+use crate::balance::Balance;
+use crate::providers::Provider;
 use hyper::server::conn::http1;
 use hyper::service::service_fn;
 use hyper::{Response, StatusCode};
+use hyper_util::rt::TokioIo;
+use parking_lot::Mutex;
 use std::convert::Infallible;
 use std::net::SocketAddr;
 use std::sync::Arc;
 use tokio::net::TcpListener;
-use hyper_util::rt::TokioIo;
-use parking_lot::Mutex;
 use tracing::info;
-use crate::balance::Balance;
-use crate::providers::Provider;
 
 pub struct ProxyServer {
     balance: Arc<Mutex<Balance>>,
@@ -46,30 +46,32 @@ impl ProxyServer {
                 tokio::spawn(async move {
                     let io = TokioIo::new(stream);
 
-                    if let Err(err) = http1::Builder::new()
-                        .serve_connection(io, service_fn(move |_req| {
-                            let balance = Arc::clone(&balance);
-                            let provider = provider.clone();
-                            async move {
-                                Ok::<_, Infallible>(handle_request(&balance, &provider))
-                            }
-                        }))
-                        .await
+                    if let Err(err) =
+                        http1::Builder::new()
+                            .serve_connection(
+                                io,
+                                service_fn(move |_req| {
+                                    let balance = Arc::clone(&balance);
+                                    let provider = provider.clone();
+                                    async move {
+                                        Ok::<_, Infallible>(handle_request(&balance, &provider))
+                                    }
+                                }),
+                            )
+                            .await
                     {
                         eprintln!("Error serving connection: {}", err);
                     }
                 });
             }
-        }).await?;
+        })
+        .await?;
 
         Ok(())
     }
 }
 
-fn handle_request(
-    balance: &Arc<Mutex<Balance>>,
-    provider: &Provider,
-) -> Response<String> {
+fn handle_request(balance: &Arc<Mutex<Balance>>, provider: &Provider) -> Response<String> {
     // Check balance
     {
         let bal = balance.lock();
@@ -99,7 +101,10 @@ fn handle_request(
     }
 
     // Forward request to provider (simplified - just return success for MVE)
-    info!("Request forwarded with API key: {}...", &api_key[..8.min(api_key.len())]);
+    info!(
+        "Request forwarded with API key: {}...",
+        &api_key[..8.min(api_key.len())]
+    );
 
     Response::builder()
         .status(StatusCode::OK)

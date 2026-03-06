@@ -1,6 +1,6 @@
+use directories::ProjectDirs;
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
-use directories::ProjectDirs;
 use thiserror::Error;
 
 pub use crate::providers::Provider;
@@ -31,7 +31,7 @@ impl Config {
         } else {
             // Default config
             Ok(Config {
-                balance: 100,  // Mock balance
+                balance: 100, // Mock balance
                 providers: vec![],
                 proxy_port: 8080,
             })

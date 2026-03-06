@@ -1,7 +1,7 @@
 # Mission: Phase 2 - Persistence
 
 ## Status
-Claimed
+Completed
 
 ## RFC
 RFC-0103: Unified Vector-SQL Storage Engine
@@ -12,11 +12,11 @@ RFC-0103: Unified Vector-SQL Storage Engine
 
 ## Acceptance Criteria
 
-- [ ] Implement memory-mapped storage backend
+- [x] Implement memory-mapped storage backend
 - [ ] Add RocksDB backend (optional, feature flag)
-- [ ] Integrate WAL for vector operations
-- [ ] Implement crash recovery from WAL
-- [ ] Add snapshot shipping for fast recovery
+- [x] Integrate WAL for vector operations
+- [x] Implement crash recovery from WAL
+- [x] Add snapshot shipping for fast recovery
 - [ ] MTTR: <5 minutes for typical workloads (<1M vectors)
 
 ## Claimant
@@ -77,7 +77,7 @@ Trigger: Every 100K vectors or 5 minutes
 
 ## Pull Request
 
-<!-- PR number when submitted -->
+https://github.com/CipherOcto/stoolap/pull/new/feat/vector-phase2-persistence
 
 ---
 

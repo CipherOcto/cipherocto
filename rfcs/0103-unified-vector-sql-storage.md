@@ -433,7 +433,12 @@ fn verify_with_consensus(query: &[f32], k: usize) -> VerifiedResult {
 | Min candidates | 40 | For K=10, need at least 40 |
 | Max candidates | 512 | Software float cost limit |
 
-**Example**:
+**Performance Estimate**:
+- 512 candidates × 768 dimensions ≈ 393,216 float operations
+- Software float: ~1-5ms per query (single-threaded, depending on CPU)
+- At 100 QPS: 100-500ms total CPU — acceptable for async verification path
+- **Isolation**: Runs on background thread, not hot query path
+- **Validation**: Benchmark required before Phase 4 to confirm <50ms SLA compatibility
 
 ```rust
 fn deterministic_rerank(candidates: &[ScoredPoint], k: usize) -> Vec<ScoredPoint> {
@@ -697,6 +702,29 @@ enum WalVectorOp {
         old_segments: Vec<u64>,
         new_segment: u64,
     },
+    // Phase 1 CRITICAL: Index rebuild entries for crash recovery
+    IndexBuild {
+        segment_id: u64,
+        index_type: String,  // "hnsw" | "flat"
+        build_config: HashMap<String, Value>,
+    },
+    CompactionStart {
+        compaction_id: u64,
+        source_segments: Vec<u64>,
+    },
+    CompactionFinish {
+        compaction_id: u64,
+        source_segments: Vec<u64>,
+        new_segment_id: u64,
+        deleted_vector_ids: Vec<i64>,  // For tombstone tracking
+    },
+    // Snapshot for fast recovery without full WAL replay
+    SnapshotCommit {
+        snapshot_id: u64,
+        block_height: u64,
+        merkle_root: Hash,
+        vector_count: u64,
+    },
 }
 
 // Recovery: replay WAL entries to rebuild index state
@@ -709,6 +737,10 @@ fn recover_from_wal(wal: &Wal) -> VectorState {
             WalVectorOp::VectorUpdate { .. } => state.apply_update(entry),
             WalVectorOp::SegmentCreate { .. } => state.add_segment(entry),
             WalVectorOp::SegmentMerge { .. } => state.merge_segments(entry),
+            WalVectorOp::IndexBuild { .. } => state.build_index(entry),
+            WalVectorOp::CompactionStart { .. } => state.start_compaction(entry),
+            WalVectorOp::CompactionFinish { .. } => state.finish_compaction(entry),
+            WalVectorOp::SnapshotCommit { .. } => state.commit_snapshot(entry),
         }
     }
     state
@@ -790,7 +822,17 @@ Required statistics for hybrid queries:
 | `index_density`         | HNSW connectivity density         | On index build |
 | `tombstone_ratio`       | Deleted/total vectors             | Continuous     |
 
-```rust
+**Collection Strategy**:
+
+1. **Sampling Rate**: 1% random sample per segment (minimum 1000 vectors)
+2. **Update Triggers**:
+   - After bulk inserts (>10K vectors)
+   - On `ANALYZE` command
+   - Every 5 minutes for high-throughput workloads
+3. **Staleness Policy**: Mark stale if >20% change since last collection
+4. **Clustered Embeddings**: Use k-means (k=10) to detect semantic clusters for better selectivity estimation
+
+> ⚠️ **Note**: Embedding distributions are often highly non-uniform (clustered by semantic domain). K-means detection helps the planner distinguish index-first vs filter-first strategies.
 // Statistics collection
 struct TableStatistics {
     table_id: u64,
@@ -870,7 +912,8 @@ Phase 1: Core Engine (MVP)
 ├── Vector ID + content hash for Merkle
 ├── Basic statistics collection (row counts, null counts)
 ├── In-Memory storage
-└── Test: MVCC + concurrent vector UPDATE/DELETE
+├── Test: MVCC + concurrent vector UPDATE/DELETE
+└── P0: WAL enum completeness (IndexBuild, CompactionStart/Finish, SnapshotCommit)
 
 Phase 2: Persistence (MVP)
 ├── Memory-Mapped storage
@@ -1093,6 +1136,17 @@ When porting code from Qdrant (Apache 2.0 license):
 
 > ⚠️ **Optimization**: Rebuilding HNSW from millions of vectors takes hours. Add snapshot shipping for faster recovery.
 
+**MTTR Estimates** (Mean Time To Recovery):
+
+| Dataset Size | Rebuild (no snapshot) | With Snapshot Shipping |
+|--------------|----------------------|------------------------|
+| 100K vectors | ~5 min | <30 sec |
+| 1M vectors | ~45 min | ~2 min |
+| 10M vectors | ~6 hours | ~15 min |
+| 100M vectors | ~2 days | ~2 hours |
+
+**Target SLA**: MTTR <5 minutes for typical workloads (<1M vectors).
+
 **Problem**: New or recovering nodes must rebuild entire HNSW index from scratch.
 
 **Solution**: Periodically ship pre-built index snapshots:
@@ -1210,6 +1264,10 @@ SELECT * FROM (
 ORDER BY score DESC
 LIMIT 5;
 ```
+
+### D. Reserved
+
+> This appendix is reserved for future work.
 
 ### E. Implementation Notes for Phase 1 Dev Team
 

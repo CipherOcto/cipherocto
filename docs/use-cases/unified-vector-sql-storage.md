@@ -33,7 +33,7 @@ CipherOcto faces a critical infrastructure challenge: AI agents require multiple
 - **No system combines all three**: Current market has vector OR SQL OR blockchain, but never **vector + SQL + blockchain verification** in a single engine
 - **Existing partial solutions**: PostgreSQL+pgvector, Weaviate, Milvus, LanceDB - but none offer blockchain verification
 - **AI + Blockchain convergence** - Growing demand for verifiable AI
-- **CipherOcto's edge** - Already has blockchain modules (trie, consensus, ZK)
+- **CipherOcto's edge** - Already has blockchain modules (trie, consensus), inherited from Stoolap
 
 ### Why Now
 
@@ -50,7 +50,7 @@ CipherOcto faces a critical infrastructure challenge: AI agents require multiple
 | **Agent Memory**   | Vector search with SQL queries in one system |
 | **Verification**   | Merkle proofs for vector search results      |
 | **Infrastructure** | Single deployment instead of three           |
-| **Latency**        | 50-120ms instead of 150-400ms                |
+| **Latency**        | 50-120ms instead of 150-400ms (50ms: simple queries; 120ms: complex hybrid or with proof) |
 | **Cost**           | ~60% reduction in storage costs              |
 | **Privacy**        | Local-first with optional blockchain         |
 
@@ -158,6 +158,10 @@ let verified_results = db.query_verified(
 | Phase 5-7 | Long-term | Hybrid search, GPU, strict consensus          |
 
 > **Note**: "Verifiable Memory" capabilities are primarily delivered in Phase 4. The MVP provides unified storage with async proof generation; real-time deterministic verification follows.
+>
+> **Proof Types**:
+> - **Merkle proofs** (Phase 1-4): Inclusion proofs that vector data exists in committed state — fast to generate, sufficient for most use cases
+> - **ZK proofs** (Phase 4+): Zero-knowledge proofs for privacy-preserving verification — inherited from Stoolap's existing ZK module
 
 ### CipherOcto Integration Points
 
@@ -216,11 +220,11 @@ No other database offers this combination.
 | -------------------- | ---------------------------- | ------------------------------------------------------------------------------------------------------------- |
 | Query latency        | <50ms                        | Query execution only; proof generation is async/optional                                                      |
 | Proof generation     | <5s (P95)                    | Async background, SLAs defined                                                                                |
-| Storage cost         | 60% reduction                | Calculated from: removing network egress, eliminating data duplication across 3 DBs, utilizing BQ compression |
+| Storage cost         | 60% reduction                | Breakdown: ~20% (eliminate 3-DB duplication) + ~25% (BQ 32x compression) + ~15% (no network egress); BQ suitable for recall-tolerant workloads |
 | Compression ratio    | 4-64x                        | PQ/SQ/BQ configurations                                                                                       |
-| Recall@10            | >95%                         | At 25% tombstone threshold                                                                                    |
-| API simplicity       | Single SDK                   | One client instead of three                                                                                   |
+| Recall@10            | >95%                         | At 15% tombstone threshold (compaction triggers at 15%, hard limit at 30%)                                  |
+| API simplicity       | Unified API                  | Single query interface; SDK is downstream goal                                                               |
 | Verification         | Merkle proofs                | For committed snapshots only                                                                                  |
 | Feature completeness | Parity with Qdrant + Stoolap | Phased implementation                                                                                         |
 
-> **Clarification**: The <50ms latency is for query execution. Generating ZK proofs or Merkle proofs for complex query results can take longer and is handled asynchronously. Proof generation SLAs: 95th percentile <5 seconds.
+> **Clarification**: The <50ms latency is for query execution. Generating Merkle proofs for complex query results takes longer and is handled asynchronously. Proof generation SLAs: 95th percentile <5 seconds.

@@ -13,11 +13,11 @@ RFC-0103: Unified Vector-SQL Storage Engine
 
 ## Acceptance Criteria
 
-- [ ] Implement Scalar Quantization (SQ)
+- [x] Implement Scalar Quantization (SQ)
 - [ ] Implement Product Quantization (PQ)
 - [x] Implement Binary Quantization (BQ)
 - [ ] Add SQL syntax for quantization config
-- [x] Achieve 4-64x compression ratio (32x for BQ)
+- [x] Achieve 4-64x compression ratio (32x BQ, 4x SQ)
 - [ ] Maintain >95% recall@10 at 15% tombstone threshold
 
 ## Description

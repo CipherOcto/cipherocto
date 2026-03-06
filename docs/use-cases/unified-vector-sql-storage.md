@@ -113,13 +113,19 @@ LIMIT 10;
 ### Example: Provable Query Results
 
 ```rust
-// Generate Merkle proof for query result
-let query_result = db.query(
-    "SELECT * FROM embeddings WHERE VEC_DISTANCE_COSINE(embedding, $1) < 0.5"
+// Standard query (fast, no verification)
+let results = db.query(
+    "SELECT * FROM embeddings WHERE category = 'ai' ORDER BY VEC_DISTANCE_COSINE(embedding, $1) LIMIT 10"
 )?;
 
-let proof = trie::generate_proof(&query_result);
-// Proof can be verified by anyone
+// Async verification (for blockchain/proof needs)
+// Verification happens in background, results returned immediately
+let verified_results = db.query_verified(
+    "SELECT * FROM embeddings ORDER BY VEC_DISTANCE_COSINE(embedding, $1) LIMIT 10",
+    VerificationLevel::Proof  // Returns results + async proof
+).await?;
+
+// Proof generated in background (<5s P95)
 // Enables: verifiable AI decision trails
 ```
 
@@ -127,12 +133,20 @@ let proof = trie::generate_proof(&query_result);
 
 ### From RFC-0103
 
-- Multiple storage backends (memory, mmap, rocksdb)
+**MVP (Phases 1-3):**
+
+- In-Memory + Memory-Mapped storage
+- RocksDB persistence (optional)
 - Vector quantization (PQ, SQ, BQ)
+- Three-layer verification (async proof)
+- Segment-based MVCC
+
+**Future (Phases 4-7):**
+
 - Sparse vectors + BM25 hybrid search
 - Payload filtering indexes
-- GPU acceleration (future)
-- Blockchain feature preservation
+- GPU acceleration
+- Faster verification (brute-force consensus mode)
 
 ### CipherOcto Integration Points
 
@@ -180,6 +194,10 @@ This enables:
 - **Regulatory AI auditing** with complete trails
 
 No other database offers this combination.
+
+### Consensus Model Clarification
+
+> **Note**: "Sovereign" refers to **data ownership and local-first** capabilities. The initial replication uses Raft (leader-follower) for strong consistency. Full decentralization (Gossip/Blockchain consensus) is planned for future phases.
 
 ## Success Metrics
 

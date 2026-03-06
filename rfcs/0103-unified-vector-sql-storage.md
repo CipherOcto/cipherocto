@@ -392,7 +392,35 @@ graph LR
 - Final result is deterministically ranked
 - Merkle proof verifies input vectors
 
-> **Key Insight**: You can prove vectors exist, but the ranking may differ across architectures. This architecture ensures both speed and verifiability.
+> **Key Insight**: This architecture ensures **Process Integrity** (correct ranking logic) rather than **Result Uniformity** (identical candidate sets across nodes). For strict blockchain consensus, a brute-force fallback may be required for the final verification step.
+
+#### Consensus Guarantees
+
+> ⚠️ **Critical Clarification**: The three-layer approach has limits:
+
+| Guarantee               | Scope         | Notes                                    |
+| ----------------------- | ------------- | ---------------------------------------- |
+| **Vector Existence**    | Full          | Merkle proof verifies vectors existed    |
+| **Ranking Correctness** | Full          | Software float ensures identical ranking |
+| **Identical Results**   | Probabilistic | HNSW candidates may differ across nodes  |
+
+**For Strict Blockchain Consensus**: Use brute-force search for final verification step (computes exact K nearest neighbors). This ensures identical results but sacrifices speed.
+
+```rust
+// Strict verification mode
+fn verify_with_consensus(query: &[f32], k: usize) -> VerifiedResult {
+    // Layer 1: HNSW for speed
+    let candidates = hnsw_search(query, k * 4);
+
+    // Layer 2: Brute-force for exact consensus
+    let exact_results = brute_force_search(query, k);
+
+    // Layer 3: Merkle proof
+    let proof = generate_merkle_proof(&exact_results);
+
+    VerifiedResult { results: exact_results, proof }
+}
+```
 
 #### Deterministic Re-Ranking Constraint
 
@@ -432,7 +460,7 @@ fn deterministic_rerank(candidates: &[ScoredPoint], k: usize) -> Vec<ScoredPoint
 | Proof generation (async)      | <5s (95th percentile)    | Async background        |
 | Proof generation (fast-proof) | <100ms                   | Synchronous, top-K only |
 | Merkle root update            | <1s                      | Incremental at commit   |
-| Auto-compaction trigger       | <25% tombstone threshold | Background scheduler    |
+| Auto-compaction trigger       | <15% tombstone threshold | Background scheduler    |
 | Index build throughput        | >100K vectors/sec        | During bulk import      |
 | Vector insert QPS             | >10K inserts/sec         | Sustained write rate    |
 
@@ -497,7 +525,7 @@ impl BackgroundScheduler {
 | Query latency     | <50ms  | vs 350ms multi-system baseline |
 | Storage reduction | 60%    | With BQ compression            |
 | Compression ratio | 4-64x  | PQ/SQ/BQ configurations        |
-| Recall@10         | >95%   | At 25% tombstone threshold     |
+| Recall@10         | >95%   | At 15% tombstone threshold     |
 
 ### MVCC & Vector Index
 
@@ -831,38 +859,41 @@ fn analyze_table(table: &Table) -> TableStatistics {
 
 ## Implementation
 
-### Phases (Risk-Ordered)
+### Phases (Revised - MVP Focus)
 
-> ⚠️ **Important**: Implement hardest parts first. Reversed from original order.
+> ⚠️ **Important**: Revised to bring persistence and quantization to MVP. Hardest problems still first.
 
 ```
-Phase 1: MVCC + Vector Correctness
-├── Segment architecture (not per-vector visibility)
-├── Three-layer verification (fast search → deterministic → proof)
+Phase 1: Core Engine (MVP)
+├── MVCC + Segment architecture
+├── Three-layer verification
 ├── Vector ID + content hash for Merkle
+├── In-Memory storage
 └── Test: MVCC + concurrent vector UPDATE/DELETE
 
-Phase 2: Deterministic Snapshot
+Phase 2: Persistence (MVP)
+├── Memory-Mapped storage
+├── RocksDB backend (optional)
+├── WAL integration for vectors
+└── Crash recovery
+
+Phase 3: Quantization (MVP)
+├── Scalar Quantization (SQ)
+├── Product Quantization (PQ)
+├── Binary Quantization (BQ)
+└── SQL syntax for quantization config
+
+Phase 4: Deterministic Verification
 ├── Software float re-ranking
 ├── Incremental Merkle updates
 ├── Fast-proof mode (top-K sync)
 └── Test: Cross-architecture (x86 vs ARM)
 
-Phase 3: Hybrid Query Planner
+Phase 5: Hybrid Query Planner
 ├── Cost-based planning (index-first vs filter-first)
 ├── Statistics collection (selectivity, histograms)
 ├── Payload filter integration
 └── Test: Hybrid queries with various selectivities
-
-Phase 4: Storage Backends
-├── In-Memory (current)
-├── Memory-Mapped
-└── (Persistence backends: future)
-
-Phase 5: Quantization
-├── Copy lib/quantization to src/storage/quantization
-├── Integrate with HNSW index
-└── Add SQL syntax for quantization config
 
 Phase 6: Sparse Vectors / BM25
 ├── Copy lib/sparse to src/storage/sparse
@@ -942,7 +973,7 @@ The following test matrix must be implemented:
 | **MVCC + Vector**         | High-concurrency UPDATE/DELETE | No consistency violations      |
 | **Determinism**           | x86 vs ARM execution           | Identical results              |
 | **Merkle Root**           | 1M → 100M vectors              | <1s incremental update         |
-| **Tombstone Degradation** | recall@10 vs % deleted         | <5% recall loss at 25% deleted |
+| **Tombstone Degradation** | recall@10 vs % deleted         | <5% recall loss at 15% deleted |
 
 > **Segment-Merge Philosophy**: Borrow from Qdrant - use immutable segments + background merge. Old segments remain searchable while new ones are built.
 

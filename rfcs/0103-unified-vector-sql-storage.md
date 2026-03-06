@@ -868,6 +868,7 @@ Phase 1: Core Engine (MVP)
 ├── MVCC + Segment architecture
 ├── Three-layer verification
 ├── Vector ID + content hash for Merkle
+├── Basic statistics collection (row counts, null counts)
 ├── In-Memory storage
 └── Test: MVCC + concurrent vector UPDATE/DELETE
 

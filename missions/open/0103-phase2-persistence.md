@@ -1,14 +1,14 @@
 # Mission: Phase 2 - Persistence
 
 ## Status
-Open
+Claimed
 
 ## RFC
 RFC-0103: Unified Vector-SQL Storage Engine
 
 ## Blockers / Dependencies
 
-- **Blocked by:** Mission: Phase 1 - Core Engine MVP (must complete first)
+- **Blocked by:** Mission: Phase 1 - Core Engine MVP (must complete first) ✅ COMPLETE
 
 ## Acceptance Criteria
 
@@ -18,6 +18,10 @@ RFC-0103: Unified Vector-SQL Storage Engine
 - [ ] Implement crash recovery from WAL
 - [ ] Add snapshot shipping for fast recovery
 - [ ] MTTR: <5 minutes for typical workloads (<1M vectors)
+
+## Claimant
+
+@claude-code
 
 ## Description
 

@@ -221,9 +221,12 @@ graph LR
 | Metric | Target | Measurement |
 |--------|--------|-------------|
 | Live query latency | <50ms | P50 at 1K QPS |
-| Proof generation | <5s (95th percentile) | Async background |
+| Proof generation (async) | <5s (95th percentile) | Async background |
+| Proof generation (fast-proof) | <100ms | Synchronous, top-K only |
 | Merkle root update | <1s | Incremental at commit |
 | Auto-compaction trigger | <25% tombstone threshold | Background scheduler |
+
+> **Fast-Proof Mode**: Optional synchronous proof generation for small result sets (top-K). Uses abbreviated Merkle proof for top-K results only, bypassing full snapshot hashing.
 
 ### Benchmark Targets (Post-Implementation)
 
@@ -430,6 +433,38 @@ The following test matrix must be implemented:
 | **Tombstone Degradation** | recall@10 vs % deleted | <5% recall loss at 25% deleted |
 
 > **Segment-Merge Philosophy**: Borrow from Qdrant - use immutable segments + background merge. Old segments remain searchable while new ones are built.
+
+### Monitoring & Telemetry
+
+Add production monitoring hooks:
+
+| Metric | Purpose |
+|--------|---------|
+| `tombstone_ratio` | Current % deleted nodes in HNSW |
+| `compaction_queue_depth` | Pending compaction operations |
+| `proof_gen_queue_latency` | P50/P95/P99 proof generation time |
+| `recall_estimate` | Estimated recall degradation |
+
+```sql
+-- System view for monitoring
+SELECT * FROM system.vector_index_stats('embeddings');
+-- Returns: tombstone_ratio, last_compacted, proof_pending, etc.
+```
+
+### Benchmark Baselines
+
+Validate against:
+
+| Baseline | Target |
+|----------|--------|
+| **Current Stoolap** (basic HNSW) | Compare latency |
+| **Standalone Qdrant** | Compare recall @ K |
+| **Multi-system** (SQL + vector DB) | Compare 350ms vs 50ms narrative |
+
+> **Critical**: Prototype highest-risk pieces first:
+> 1. Incremental Merkle root at 10M+ scale
+> 2. Visibility filter cost during HNSW descent
+> 3. Auto-compaction with recall/latency measurements
 
 ### License Compliance
 

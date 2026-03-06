@@ -149,10 +149,12 @@ let proof = trie::generate_proof(&query_result);
 | Metric | Target | Notes |
 |--------|--------|-------|
 | Query latency | <50ms | Query execution only; proof generation is async/optional |
-| Proof generation | Async | Merkle/ZK proofs generated in background |
+| Proof generation | <5s (P95) | Async background, SLAs defined |
 | Storage cost | 60% reduction | Calculated from: removing network egress, eliminating data duplication across 3 DBs, utilizing BQ compression |
+| Compression ratio | 4-64x | PQ/SQ/BQ configurations |
+| Recall@10 | >95% | At 25% tombstone threshold |
 | API simplicity | Single SDK | One client instead of three |
 | Verification | Merkle proofs | For committed snapshots only |
 | Feature completeness | Parity with Qdrant + Stoolap | Phased implementation |
 
-> **Clarification**: The <50ms latency is for query execution. Generating ZK proofs or Merkle proofs for complex query results can take longer and is handled asynchronously.
+> **Clarification**: The <50ms latency is for query execution. Generating ZK proofs or Merkle proofs for complex query results can take longer and is handled asynchronously. Proof generation SLAs: 95th percentile <5 seconds.

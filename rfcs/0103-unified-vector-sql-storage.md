@@ -216,6 +216,24 @@ graph LR
 >
 > **Recommendation**: Isolate software emulation strictly to verification/snapshot phase. Live query nodes should use hardware acceleration (AVX/NEON) to maintain <50ms latency. Only enforce software float on nodes participating in block generation/validation.
 
+### Performance SLAs
+
+| Metric | Target | Measurement |
+|--------|--------|-------------|
+| Live query latency | <50ms | P50 at 1K QPS |
+| Proof generation | <5s (95th percentile) | Async background |
+| Merkle root update | <1s | Incremental at commit |
+| Auto-compaction trigger | <25% tombstone threshold | Background scheduler |
+
+### Benchmark Targets (Post-Implementation)
+
+| Metric | Target | Notes |
+|--------|--------|-------|
+| Query latency | <50ms | vs 350ms multi-system baseline |
+| Storage reduction | 60% | With BQ compression |
+| Compression ratio | 4-64x | PQ/SQ/BQ configurations |
+| Recall@10 | >95% | At 25% tombstone threshold |
+
 ### MVCC & Vector Index
 
 **Critical Challenge**: HNSW is a connected graph. Concurrent transactions must see consistent vector visibility.
@@ -397,6 +415,21 @@ Compaction rebuilds the HNSW graph without tombstones. Recommended after bulk de
 > ⚠️ **Implementation Warning**: HNSW search performance degrades rapidly with too many tombstones. Relying on users manually running `COMPACT` will cause slowdowns.
 >
 > **Recommendation**: Implement auto-vacuum/auto-compact threshold in background (e.g., trigger when tombstone count > 20% of total nodes).
+>
+> **Strengthening**: Make auto-compaction **mandatory**, not optional. Add configurable per-table threshold (similar to PostgreSQL autovacuum). Log warnings when compaction is delayed.
+
+#### Testing Requirements
+
+The following test matrix must be implemented:
+
+| Test Category | Scenario | Acceptance Criteria |
+|---------------|----------|---------------------|
+| **MVCC + Vector** | High-concurrency UPDATE/DELETE | No consistency violations |
+| **Determinism** | x86 vs ARM execution | Identical results |
+| **Merkle Root** | 1M → 100M vectors | <1s incremental update |
+| **Tombstone Degradation** | recall@10 vs % deleted | <5% recall loss at 25% deleted |
+
+> **Segment-Merge Philosophy**: Borrow from Qdrant - use immutable segments + background merge. Old segments remain searchable while new ones are built.
 
 ### License Compliance
 

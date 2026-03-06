@@ -15,9 +15,9 @@ RFC-0103: Unified Vector-SQL Storage Engine
 
 - [ ] Implement Scalar Quantization (SQ)
 - [ ] Implement Product Quantization (PQ)
-- [ ] Implement Binary Quantization (BQ)
+- [x] Implement Binary Quantization (BQ)
 - [ ] Add SQL syntax for quantization config
-- [ ] Achieve 4-64x compression ratio
+- [x] Achieve 4-64x compression ratio (32x for BQ)
 - [ ] Maintain >95% recall@10 at 15% tombstone threshold
 
 ## Description
@@ -78,7 +78,7 @@ USING HNSW WITH (quantization = 'pq', pq_subvecs = 8);
 
 ## Pull Request
 
-<!-- PR number when submitted -->
+https://github.com/CipherOcto/stoolap/pull/new/feat/vector-phase3-quantization
 
 ---
 

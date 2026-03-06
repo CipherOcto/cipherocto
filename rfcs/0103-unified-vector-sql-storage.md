@@ -1033,6 +1033,7 @@ When porting code from Qdrant (Apache 2.0 license):
 2. **Integration Tests**: SQL + Vector queries
 3. **Benchmark Tests**: Performance vs Qdrant, vs standalone Stoolap
 4. **Blockchain Tests**: Verify trie/ZK integration unchanged
+5. **Cross-Architecture Consistency**: Verify identical results on x86, ARM, different SIMD levels
 
 ## Related Use Cases
 
@@ -1127,9 +1128,9 @@ fn recover_node(snapshot: IndexSnapshot, wal_delta: Wal) -> VectorState {
 
 - Faster node recovery (minutes vs hours)
 - Reduced computation on followers
-- Trade-off: Higher bandwidth usage
+- Trade-off: Higher bandwidth usage (estimate: 2-5x WAL-only depending on snapshot frequency)
 
-**Trigger**: Ship snapshots every N vectors or T time interval.
+**Trigger**: Ship snapshots every N vectors or T time interval (recommend: 100K vectors or 5 minutes).
 
 ### B. Query Language Extensions
 

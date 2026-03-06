@@ -19,11 +19,24 @@ CipherOcto faces a critical infrastructure challenge: AI agents require multiple
 | **Agent memory**              | External vector DB        | No blockchain verification            |
 | **Verification**              | Separate blockchain       | Can't prove vector search correctness |
 
+## MVP vs. Full Capabilities
+
+| Capability | MVP (Phases 1-3) | Full (Phase 4+) |
+| ---------- | ---------------- | --------------- |
+| **Storage** | Unified Vector + SQL in one system | Same |
+| **Query Latency** | <50ms | Same |
+| **Verification** | Async Merkle proofs (<5s) | Real-time deterministic re-ranking |
+| **Consensus** | Raft (leader-follower) | Optional brute-force for strict consensus |
+| **Payload Filters** | SQL WHERE clause | Same |
+| **Hybrid Search** | - | BM25 + vector |
+
+> **Note**: The "Verifiable AI Memory" narrative (Phase 4+) requires deterministic verification. MVP delivers unified storage with async proofs — genuinely useful but a different value proposition.
+
 ## Motivation
 
 ### Why This Matters for CipherOcto
 
-1. **Sovereign Intelligence** - Agents need private, verifiable memory
+1. **Sovereign Intelligence** - Data ownership and local-first capabilities; agents have private, verifiable memory
 2. **Unified Data Layer** - Single system for all agent data
 3. **Blockchain Integration** - Provenance and verification of AI decisions
 4. **Cost Efficiency** - One system instead of three
@@ -174,7 +187,7 @@ let verified_results = db.query_verified(
 
 ## Related RFCs
 
-- [RFC-0103: Unified Vector-SQL Storage Engine](../../rfcs/0103-unified-vector-sql-storage.md)
+- [RFC-0103: Unified Vector-SQL Storage Engine](../../rfcs/0103-unified-vector-sql-storage.md) (aligned with RFC-0103 rev March 2026)
 
 ## Strategic Positioning
 

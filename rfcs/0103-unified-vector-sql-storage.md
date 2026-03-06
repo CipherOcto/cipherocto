@@ -1087,6 +1087,49 @@ When porting code from Qdrant (Apache 2.0 license):
 5. Index remains consistent across nodes
 ```
 
+#### Index Snapshot Shipping (Recovery Optimization)
+
+> ⚠️ **Optimization**: Rebuilding HNSW from millions of vectors takes hours. Add snapshot shipping for faster recovery.
+
+**Problem**: New or recovering nodes must rebuild entire HNSW index from scratch.
+
+**Solution**: Periodically ship pre-built index snapshots:
+
+```rust
+// Periodic snapshot shipping
+struct IndexSnapshot {
+    snapshot_id: u64,
+    segment_id: u64,
+    hnsw_graph: Vec<u8>,  // Serialized graph
+    vector_offsets: Vec<u64>,
+    merkle_root: [u8; 32],
+}
+
+// Recovery process
+fn recover_node(snapshot: IndexSnapshot, wal_delta: Wal) -> VectorState {
+    // 1. Load snapshot
+    let mut state = load_snapshot(snapshot);
+
+    // 2. Replay WAL delta
+    for entry in wal_delta.entries() {
+        state.apply(entry);
+    }
+
+    // 3. Rebuild affected segments
+    state.rebuild_dirty_segments();
+
+    state
+}
+```
+
+**Benefits**:
+
+- Faster node recovery (minutes vs hours)
+- Reduced computation on followers
+- Trade-off: Higher bandwidth usage
+
+**Trigger**: Ship snapshots every N vectors or T time interval.
+
 ### B. Query Language Extensions
 
 SQL extensions for vector operations:

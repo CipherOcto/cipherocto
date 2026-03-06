@@ -138,15 +138,26 @@ let verified_results = db.query_verified(
 - In-Memory + Memory-Mapped storage
 - RocksDB persistence (optional)
 - Vector quantization (PQ, SQ, BQ)
-- Three-layer verification (async proof)
+- Async proof generation (<5s)
 - Segment-based MVCC
 
 **Future (Phases 4-7):**
 
+- Deterministic verification (software float re-ranking)
 - Sparse vectors + BM25 hybrid search
 - Payload filtering indexes
 - GPU acceleration
-- Faster verification (brute-force consensus mode)
+- Strict consensus mode (brute-force for DeFi)
+
+### Rollout Phases
+
+| Phase     | Timeline  | Features                                      |
+| --------- | --------- | --------------------------------------------- |
+| MVP (1-3) | Near-term | Unified Vector-SQL, persistence, quantization |
+| Phase 4   | Mid-term  | Deterministic verification, async proofs      |
+| Phase 5-7 | Long-term | Hybrid search, GPU, strict consensus          |
+
+> **Note**: "Verifiable Memory" capabilities are primarily delivered in Phase 4. The MVP provides unified storage with async proof generation; real-time deterministic verification follows.
 
 ### CipherOcto Integration Points
 

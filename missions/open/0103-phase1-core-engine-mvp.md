@@ -1,14 +1,20 @@
 # Mission: Phase 1 - Core Engine MVP
 
 ## Status
-Open
+Claimed
 
 ## RFC
 RFC-0103: Unified Vector-SQL Storage Engine
 
-## Blockers / Dependencies
+## Implementation Location
 
-- None - This is the foundational phase
+**Worktree**: `/home/mmacedoeu/_w/ai/cipherocto-vector-impl`
+**Branch**: `vector-phase1`
+**PR**: https://github.com/CipherOcto/cipherocto/pull/new/vector-phase1
+
+## Claimant
+
+@claude-code
 
 ## Acceptance Criteria
 
@@ -75,7 +81,7 @@ Merkle Structure:
 
 ## Claimant
 
-<!-- Add your name when claiming -->
+@claude-code
 
 ## Pull Request
 

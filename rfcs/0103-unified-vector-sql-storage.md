@@ -1090,6 +1090,20 @@ When porting code from Qdrant (Apache 2.0 license):
 
 ---
 
+## Prioritized Recommendations
+
+| Priority | Phase Gate | Action | Status |
+|----------|------------|--------|--------|
+| **P0** | Phase 1 | WAL enum completeness: `IndexBuild`, `CompactionStart`, `CompactionFinish`, `SnapshotCommit` | ✅ Implemented |
+| **P0** | Phase 2 | MTTR quantification: HNSW rebuild time estimates + SLA + snapshot trigger justification | ✅ Implemented |
+| **P1** | Phase 4 | Software float benchmark: 512 candidates × 768 dimensions at target QPS | ✅ Estimated |
+| **P1** | Phase 5 | Statistics collection: sampling rate, triggers, staleness policy, k-means for clusters | ✅ Specified |
+| **P2** | Any | Appendix D placeholder | ✅ Added |
+
+> All P0 and P1 items are addressed in this RFC. Phase gates ensure validation happens before each phase begins.
+
+---
+
 ## Appendices
 
 ### A. Replication Model

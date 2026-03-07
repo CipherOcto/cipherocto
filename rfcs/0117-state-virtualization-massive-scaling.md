@@ -347,6 +347,7 @@ The blockchain-like layer only stores **roots and commitments**.
 - RFC-0114: Verifiable Reasoning Traces
 - RFC-0115: Probabilistic Verification Markets
 - RFC-0116: Unified Deterministic Execution Model
+- RFC-0118: Autonomous Agent Organizations
 
 ## Related Use Cases
 

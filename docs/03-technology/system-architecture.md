@@ -59,6 +59,7 @@ graph TB
 ### Agent Orchestrator
 
 **Responsibilities:**
+
 - Agent discovery and selection
 - Task decomposition and routing
 - Multi-agent coordination
@@ -75,6 +76,7 @@ graph TB
 ### Task Router
 
 **Routing Strategies:**
+
 - **Cost-optimized** — Lowest price per token
 - **Speed-optimized** — Fastest response time
 - **Quality-optimized** — Highest reputation
@@ -82,6 +84,7 @@ graph TB
 - **Geo-optimized** — Regional requirements
 
 **Load Balancing:**
+
 ```mermaid
 graph TB
     subgraph ROUTER["Task Router"]
@@ -153,6 +156,7 @@ graph TB
 | **Attestation** | TPM, Nitro SEV | TEE verification |
 
 **Execution Flow:**
+
 ```mermaid
 sequenceDiagram
     participant User
@@ -170,14 +174,23 @@ sequenceDiagram
 
 ### Privacy Containers
 
-**Data Classification Enforcement:**
+**Data Classification + Execution Policy:**
 
-| Classification | Storage | Compute | Transmission |
-| -------------- | ------- | ------- | ------------ |
-| **PRIVATE** | Encrypted at rest | TEE only | E2E encrypted |
-| **CONFIDENTIAL** | Encrypted at rest | TEE + ACL | E2E encrypted |
-| **SHARED** | Standard encryption | Standard | TLS |
-| **PUBLIC** | No encryption | No restriction | No encryption |
+This extends the data flags with execution policies for the verifiable retrieval layer:
+
+| Classification   | Storage             | Compute        | Execution Policy | Example Use               |
+| ---------------- | ------------------- | -------------- | ---------------- | ------------------------- |
+| **PRIVATE**      | Encrypted at rest   | TEE only       | `LOCAL`          | User's private embeddings |
+| **CONFIDENTIAL** | Encrypted at rest   | TEE + ACL      | `TEE`            | Enterprise sensitive data |
+| **SHARED**       | Standard encryption | Standard       | `VERIFIED`       | Licensed datasets         |
+| **PUBLIC**       | No encryption       | No restriction | `OPEN`           | Public embeddings         |
+
+> ⚠️ **Integration**: The execution policy integrates with RFC-0108 (Verifiable AI Retrieval):
+>
+> - `LOCAL`: Computation stays on user device, no server can access
+> - `TEE`: Computation in secure enclave, remote attestation required
+> - `VERIFIED`: Computation verifiable via Merkle proofs + ZK
+> - `OPEN`: Standard computation, no restrictions
 
 ### Local Inference Engine
 
@@ -241,6 +254,7 @@ graph TB
 | **Observer** | None | Read-only access |
 
 **Node Discovery:**
+
 ```mermaid
 graph TB
     subgraph DISCOVERY["Node Discovery"]
@@ -286,6 +300,7 @@ graph TB
 ### Trust Engine
 
 **Reputation Calculation:**
+
 ```text
 Reputation_Score =
   (Performance_Score × 0.35) +
@@ -297,6 +312,7 @@ Reputation_Score =
 ```
 
 **Trust Propagation:**
+
 ```mermaid
 graph TB
     A[Trusted Orchestrator<br/>Reputation: 95]
@@ -339,13 +355,13 @@ sequenceDiagram
 
 ### Data Flow
 
-| Stage | Handler | Processing |
-| ------ | ------- | ---------- |
-| **Request** | Intelligence Layer | Task validation, routing |
-| **Assignment** | Network Layer | Provider selection, trust check |
-| **Execution** | Execution Layer | TEE execution, proof generation |
-| **Verification** | Network Layer | Proof validation, settlement |
-| **Response** | Intelligence Layer | Result delivery, confirmation |
+| Stage            | Handler            | Processing                      |
+| ---------------- | ------------------ | ------------------------------- |
+| **Request**      | Intelligence Layer | Task validation, routing        |
+| **Assignment**   | Network Layer      | Provider selection, trust check |
+| **Execution**    | Execution Layer    | TEE execution, proof generation |
+| **Verification** | Network Layer      | Proof validation, settlement    |
+| **Response**     | Intelligence Layer | Result delivery, confirmation   |
 
 ---
 
@@ -353,30 +369,30 @@ sequenceDiagram
 
 ### Scalability
 
-| Metric | Target | Approach |
-| ------ | ------ | -------- |
-| **Throughput** | 10,000+ tasks/sec | Parallel routing, sharding |
-| **Latency** | <100ms p95 | Local caching, edge deployment |
-| **Providers** | 100,000+ | Hierarchical coordination |
-| **Agents** | 1,000,000+ | Distributed agent registry |
+| Metric         | Target            | Approach                       |
+| -------------- | ----------------- | ------------------------------ |
+| **Throughput** | 10,000+ tasks/sec | Parallel routing, sharding     |
+| **Latency**    | <100ms p95        | Local caching, edge deployment |
+| **Providers**  | 100,000+          | Hierarchical coordination      |
+| **Agents**     | 1,000,000+        | Distributed agent registry     |
 
 ### Reliability
 
-| Metric | Target | Approach |
-| ------ | ------ | -------- |
-| **Availability** | 99.9% | Geographic distribution |
+| Metric              | Target     | Approach                         |
+| ------------------- | ---------- | -------------------------------- |
+| **Availability**    | 99.9%      | Geographic distribution          |
 | **Fault tolerance** | <1% impact | Redundancy, graceful degradation |
-| **Recovery time** | <5 min | Automated failover |
-| **Data durability** | 99.999% | Erasure coding, replication |
+| **Recovery time**   | <5 min     | Automated failover               |
+| **Data durability** | 99.999%    | Erasure coding, replication      |
 
 ### Security
 
-| Property | Implementation |
-| -------- | --------------- |
-| **Confidentiality** | E2E encryption, TEEs |
-| **Integrity** | ZK proofs, Merkle trees |
-| **Availability** | DDoS resistance, redundancy |
-| **Accountability** | Immutable audit logs |
+| Property            | Implementation              |
+| ------------------- | --------------------------- |
+| **Confidentiality** | E2E encryption, TEEs        |
+| **Integrity**       | ZK proofs, Merkle trees     |
+| **Availability**    | DDoS resistance, redundancy |
+| **Accountability**  | Immutable audit logs        |
 
 ---
 
@@ -410,14 +426,14 @@ graph TB
 
 ### Software Stack
 
-| Layer | Technology |
-| ----- | ---------- |
-| **Application** | Rust, TypeScript |
-| **Protocol** | libp2p, Geth |
-| **Consensus** | Proof of Stake |
-| **Storage** | IPFS, PostgreSQL |
-| **Monitoring** | Prometheus, Grafana |
+| Layer           | Technology          |
+| --------------- | ------------------- |
+| **Application** | Rust, TypeScript    |
+| **Protocol**    | libp2p, Geth        |
+| **Consensus**   | Proof of Stake      |
+| **Storage**     | IPFS, PostgreSQL    |
+| **Monitoring**  | Prometheus, Grafana |
 
 ---
 
-*For AI-specific architecture, see [ai-stack.md](./ai-stack.md). For blockchain details, see [blockchain-integration.md](./blockchain-integration.md).*
+_For AI-specific architecture, see [ai-stack.md](./ai-stack.md). For blockchain details, see [blockchain-integration.md](./blockchain-integration.md)._

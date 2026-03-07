@@ -35,6 +35,8 @@ A unified system reduces infrastructure complexity while maintaining all require
 
 ### Architecture Overview
 
+> ⚠️ **Missing Component**: The planner outputs vector operators. Add a section like this to the RFC:
+
 ```mermaid
 graph TB
     subgraph "Unified Storage Engine"
@@ -63,6 +65,31 @@ graph TB
         R[zk/]
     end
 ```
+
+#### Execution Operators
+
+Vector operations become first-class execution operators in the executor:
+
+```
+Execution Plan Example:
+
+SeqScan(embeddings)
+  → VectorIndexScan(HNSW, k=10)
+  → PayloadFilter(reputation > 0.9)
+  → DeterministicRerank
+  → VectorTopK(k=10)
+```
+
+| Operator                | Purpose                                 | Determinism       |
+| ----------------------- | --------------------------------------- | ----------------- |
+| **VectorIndexScan**     | HNSW traversal for candidate generation | Non-deterministic |
+| **VectorDistance**      | Compute distance (L2, cosine, IP)       | Non-deterministic |
+| **PayloadFilter**       | Filter by scalar columns                | Deterministic     |
+| **DeterministicRerank** | Re-rank candidates with software float  | Deterministic     |
+| **VectorTopK**          | Return top-K results                    | Deterministic     |
+| **HybridMerge**         | Combine index + filter results          | Deterministic     |
+
+> **Clarification**: Planner outputs these operators. DeterministicRerank runs on all candidate sets before final TopK to ensure consensus safety.
 
 ### Storage Backend System
 
@@ -394,6 +421,20 @@ graph LR
 
 > **Key Insight**: This architecture ensures **Process Integrity** (correct ranking logic) rather than **Result Uniformity** (identical candidate sets across nodes). For strict blockchain consensus, a brute-force fallback may be required for the final verification step.
 
+#### Storage Vectors vs Consensus Vectors
+
+> ⚠️ **Critical Architectural Distinction**: This RFC defines **Storage Vectors** (VECTOR(f32)) for high-performance indexing and retrieval. RFC-0106 (Numeric Tower) defines **Consensus Vectors** (DVEC\<N\>) for deterministic verification.
+
+| Aspect          | Storage Vectors (0103)           | Consensus Vectors (0106)          |
+| --------------- | -------------------------------- | --------------------------------- |
+| **Type**        | VECTOR(f32)                      | DVEC\<N\> with DQA/DFP            |
+| **Purpose**     | HNSW indexing, similarity search | Consensus verification, inference |
+| **Determinism** | Three-layer (fast→soft→proof)    | Built-in (scalar loop order)      |
+| **Performance** | SIMD/GPU accelerated             | Software only                     |
+| **Use Case**    | Retrieval, ranking               | ZK proofs, on-chain inference     |
+
+> **Migration Path**: For consensus-critical vector workloads, convert VECTOR(f32) to DVEC\<N\> using `CAST`. Example: `SELECT CAST(vector AS DVEC128(DFP)) FROM embeddings WHERE id = ?`
+
 #### Consensus Guarantees
 
 > ⚠️ **Critical Clarification**: The three-layer approach has limits:
@@ -404,7 +445,14 @@ graph LR
 | **Ranking Correctness** | Full          | Software float ensures identical ranking |
 | **Identical Results**   | Probabilistic | HNSW candidates may differ across nodes  |
 
-**For Strict Blockchain Consensus**: Use brute-force search for final verification step (computes exact K nearest neighbors). This ensures identical results but sacrifices speed.
+**For Strict Blockchain Consensus**:
+
+> ⚠️ **Validator Requirement**: Validator nodes **MUST** run brute-force verification to ensure identical results. HNSW candidate divergence between nodes can cause consensus failure.
+
+| Node Type      | Required Verification                 |
+| -------------- | ------------------------------------- |
+| Query Node     | HNSW + DeterministicRerank            |
+| Validator Node | HNSW + **Brute-force** + Merkle proof |
 
 ```rust
 // Strict verification mode
@@ -434,6 +482,7 @@ fn verify_with_consensus(query: &[f32], k: usize) -> VerifiedResult {
 | Max candidates | 512 | Software float cost limit |
 
 **Performance Estimate**:
+
 - 512 candidates × 768 dimensions ≈ 393,216 float operations
 - Software float: ~1-5ms per query (single-threaded, depending on CPU)
 - At 100 QPS: 100-500ms total CPU — acceptable for async verification path
@@ -641,6 +690,42 @@ struct VersionedSegment {
 | Merge | Create new version, mark old inactive |
 | Historical query | Use segment at specific version |
 
+#### Segment Garbage Collection
+
+> ⚠️ **Critical**: Without GC, memory explodes. Add GC policy:
+
+```rust
+struct GcConfig {
+    /// Retain history for N finalized blocks
+    retain_blocks: u64,  // Default: 10,000
+    /// Minimum segments before GC triggers
+    min_inactive_segments: u32,  // Default: 10
+    /// Force GC if inactive segments exceed this
+    max_inactive_segments: u32,  // Default: 50
+}
+
+impl GcConfig {
+    fn should_gc(&self, inactive_count: u32) -> bool {
+        inactive_count >= self.min_inactive_segments
+    }
+}
+```
+
+**GC Policy**:
+
+1. Mark segment inactive after merge completes
+2. Retain inactive segments for `retain_blocks` (e.g., 10,000 blocks)
+3. After retention period + `min_inactive_segments` exceeded → delete oldest
+4. Historical queries beyond retention use snapshot export, not live segments
+
+**Memory Estimate**:
+
+- 1M vectors @ 768 dim = ~3GB
+- 10,000 blocks retention = ~10x inactive segments potential
+- Without GC: 30GB+ memory for active workload
+
+> **Blockchain Integration**: Finalized blocks determine retention. After block N is finalized, segments from blocks < N-10,000 are eligible for GC.
+
 **Benefits**:
 
 - Blockchain snapshots immutable
@@ -671,6 +756,8 @@ fn search_with_mvcc(query: &Query, txn: &Transaction) -> Vec<ScoredPoint> {
 
 ### WAL Format for Vector Operations
 
+> ⚠️ **Optimization**: For production, use WAL pointer approach to avoid WAL bloat:
+
 Vector operations must be WAL-logged for recovery:
 
 ```rust
@@ -679,7 +766,9 @@ enum WalVectorOp {
     VectorInsert {
         segment_id: u64,
         vector_id: i64,
-        embedding: Vec<f32>,
+        // POINTER APPROACH: Log offset, not full vector
+        file_offset: u64,
+        vector_size: u32,
         txn_id: u64,
     },
     VectorDelete {
@@ -690,8 +779,9 @@ enum WalVectorOp {
     VectorUpdate {
         segment_id: u64,
         vector_id: i64,
-        old_embedding: Vec<f32>,
-        new_embedding: Vec<f32>,
+        // Delta approach: log only changed dimensions
+        delta_offset: u64,
+        delta_size: u32,
         txn_id: u64,
     },
     SegmentCreate {
@@ -701,6 +791,10 @@ enum WalVectorOp {
     SegmentMerge {
         old_segments: Vec<u64>,
         new_segment: u64,
+        // Merkle root change
+        old_merkle_root: [u8; 32],
+        new_merkle_root: [u8; 32],
+    },
     },
     // Phase 1 CRITICAL: Index rebuild entries for crash recovery
     IndexBuild {
@@ -833,34 +927,37 @@ Required statistics for hybrid queries:
 4. **Clustered Embeddings**: Use k-means (k=10) to detect semantic clusters for better selectivity estimation
 
 > ⚠️ **Note**: Embedding distributions are often highly non-uniform (clustered by semantic domain). K-means detection helps the planner distinguish index-first vs filter-first strategies.
-// Statistics collection
-struct TableStatistics {
+> // Statistics collection
+> struct TableStatistics {
+
     table_id: u64,
     row_count: u64,
     vector_stats: VectorStatistics,
     payload_stats: HashMap<String, PayloadStatistics>,
+
 }
 
 struct VectorStatistics {
-    dimension: usize,
-    norm_histogram: Histogram<f32>,
-    avg_norm: f32,
-    non_zero_count: u64,
+dimension: usize,
+norm_histogram: Histogram<f32>,
+avg_norm: f32,
+non_zero_count: u64,
 }
 
 struct PayloadStatistics {
-    min: Value,
-    max: Value,
-    null_count: u64,
-    histogram: Histogram<Value>,
+min: Value,
+max: Value,
+null_count: u64,
+histogram: Histogram<Value>,
 }
 
 // ANALYZE command triggers collection
 fn analyze_table(table: &Table) -> TableStatistics {
-    // Sample vectors for norm histogram
-    // Scan payload columns for histograms
-    // Update segment metadata
+// Sample vectors for norm histogram
+// Scan payload columns for histograms
+// Update segment metadata
 }
+
 ```
 
 **Collection Strategy**:
@@ -906,6 +1003,7 @@ fn analyze_table(table: &Table) -> TableStatistics {
 > ⚠️ **Important**: Revised to bring persistence and quantization to MVP. Hardest problems still first.
 
 ```
+
 Phase 1: Core Engine (MVP)
 ├── MVCC + Segment architecture
 ├── Three-layer verification
@@ -948,7 +1046,8 @@ Phase 7: GPU Support (Future)
 ├── Add GPU feature flag
 ├── Distance computation only
 └── NOT full graph traversal initially
-```
+
+````
 
 ### Key Files to Modify
 
@@ -967,7 +1066,7 @@ Phase 7: GPU Support (Future)
 
 ```sql
 UPDATE embeddings SET embedding = $new_vec WHERE id = 5;
-```
+````
 
 **Behavior**:
 
@@ -1092,13 +1191,13 @@ When porting code from Qdrant (Apache 2.0 license):
 
 ## Prioritized Recommendations
 
-| Priority | Phase Gate | Action | Status |
-|----------|------------|--------|--------|
-| **P0** | Phase 1 | WAL enum completeness: `IndexBuild`, `CompactionStart`, `CompactionFinish`, `SnapshotCommit` | ✅ Implemented |
-| **P0** | Phase 2 | MTTR quantification: HNSW rebuild time estimates + SLA + snapshot trigger justification | ✅ Implemented |
-| **P1** | Phase 4 | Software float benchmark: 512 candidates × 768 dimensions at target QPS | ✅ Estimated |
-| **P1** | Phase 5 | Statistics collection: sampling rate, triggers, staleness policy, k-means for clusters | ✅ Specified |
-| **P2** | Any | Appendix D placeholder | ✅ Added |
+| Priority | Phase Gate | Action                                                                                       | Status         |
+| -------- | ---------- | -------------------------------------------------------------------------------------------- | -------------- |
+| **P0**   | Phase 1    | WAL enum completeness: `IndexBuild`, `CompactionStart`, `CompactionFinish`, `SnapshotCommit` | ✅ Implemented |
+| **P0**   | Phase 2    | MTTR quantification: HNSW rebuild time estimates + SLA + snapshot trigger justification      | ✅ Implemented |
+| **P1**   | Phase 4    | Software float benchmark: 512 candidates × 768 dimensions at target QPS                      | ✅ Estimated   |
+| **P1**   | Phase 5    | Statistics collection: sampling rate, triggers, staleness policy, k-means for clusters       | ✅ Specified   |
+| **P2**   | Any        | Appendix D placeholder                                                                       | ✅ Added       |
 
 > All P0 and P1 items are addressed in this RFC. Phase gates ensure validation happens before each phase begins.
 
@@ -1153,11 +1252,11 @@ When porting code from Qdrant (Apache 2.0 license):
 **MTTR Estimates** (Mean Time To Recovery):
 
 | Dataset Size | Rebuild (no snapshot) | With Snapshot Shipping |
-|--------------|----------------------|------------------------|
-| 100K vectors | ~5 min | <30 sec |
-| 1M vectors | ~45 min | ~2 min |
-| 10M vectors | ~6 hours | ~15 min |
-| 100M vectors | ~2 days | ~2 hours |
+| ------------ | --------------------- | ---------------------- |
+| 100K vectors | ~5 min                | <30 sec                |
+| 1M vectors   | ~45 min               | ~2 min                 |
+| 10M vectors  | ~6 hours              | ~15 min                |
+| 100M vectors | ~2 days               | ~2 hours               |
 
 **Target SLA**: MTTR <5 minutes for typical workloads (<1M vectors).
 
@@ -1289,11 +1388,11 @@ LIMIT 5;
 
 When implementing the Struct of Arrays for vectors (`embeddings: Vec<f32>`), ensure the memory allocations are explicitly aligned:
 
-| SIMD Level | Alignment | Implementation |
-|------------|-----------|----------------|
-| AVX2 | 32-byte | `std::alloc::Layout::from_size_align(n, 32)` |
-| AVX-512 | 64-byte | `std::alloc::Layout::from_size_align(n, 64)` |
-| ARM NEON | 16-byte | `std::alloc::Layout::from_size_align(n, 16)` |
+| SIMD Level | Alignment | Implementation                               |
+| ---------- | --------- | -------------------------------------------- |
+| AVX2       | 32-byte   | `std::alloc::Layout::from_size_align(n, 32)` |
+| AVX-512    | 64-byte   | `std::alloc::Layout::from_size_align(n, 64)` |
+| ARM NEON   | 16-byte   | `std::alloc::Layout::from_size_align(n, 16)` |
 
 Standard Rust `Vec<f32>` does not guarantee this alignment. Consider using the `aligned-vec` crate or manual allocation:
 
@@ -1312,14 +1411,14 @@ In `WalVectorOp`, logging raw `Vec<f32>` for every insert will cause the Write-A
 - 768-dimension vector ≈ 3KB per insert
 - 1M inserts = 3GB WAL
 
-**Mitigation strategies**:
+**Mitigation strategies** (all required for production):
 
-1. **Aggressive WAL rotation**: Rotate at 64MB (not 256MB like standard SQL)
-2. **Quantize before WAL**: Apply Product Quantization before logging
-3. **Delta encoding**: Log only differences for updates
+1. **Delta encoding** (REQUIRED): Log only differences for updates. Full vectors cause 3GB WAL for 1M inserts. Delta encoding reduces to ~300MB.
+2. **Quantize before WAL** (REQUIRED): Apply Product Quantization before logging
+3. **Aggressive WAL rotation**: Rotate at 64MB (not 256MB like standard SQL)
 4. **Separate vector WAL**: Maintain independent high-rotation WAL for vectors
 
-**Recommendation**: Apply BQ (Binary Quantization) before WAL write—sufficient for recovery while reducing 768-dim vector to 96 bytes.
+**Recommendation**: Apply BQ (Binary Quantization) before WAL write—sufficient for recovery while reducing 768-dim vector to 96 bytes. Combined with delta encoding, WAL growth is reduced from 3GB to ~30MB per 1M operations.
 
 #### Blake3 for Merkle Tree
 

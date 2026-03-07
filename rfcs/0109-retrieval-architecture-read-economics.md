@@ -434,6 +434,7 @@ Potential future extensions:
 - ZK-vector search
 - Verifiable ranking proofs
 - Programmable retrieval pipelines
+- RFC-0110: Verifiable Agent Memory
 
 ## Proof-Carrying Data Pipelines (PCDP)
 
@@ -457,6 +458,11 @@ Retrieval integrates into the three-layer trust architecture:
 ```
 ┌─────────────────────────────────────────┐
 │         AI Agents / Applications         │
+└────────────────────┬────────────────────┘
+                     │
+┌────────────────────▼────────────────────┐
+│    Verifiable Agent Memory (VAM)        │
+│         (RFC-0110 - Memory Proofs)      │
 └────────────────────┬────────────────────┘
                      │
 ┌────────────────────▼────────────────────┐

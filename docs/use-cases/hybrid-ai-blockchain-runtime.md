@@ -88,3 +88,4 @@ graph TB
 - [RFC-0130: Proof-of-Inference Consensus](../rfcs/0130-proof-of-inference-consensus.md)
 - [RFC-0131: Deterministic Transformer Circuit](../rfcs/0131-deterministic-transformer-circuit.md)
 - [RFC-0132: Deterministic Training Circuits](../rfcs/0132-deterministic-training-circuits.md)
+- [RFC-0133: Proof-of-Dataset Integrity](../rfcs/0133-proof-of-dataset-integrity.md)

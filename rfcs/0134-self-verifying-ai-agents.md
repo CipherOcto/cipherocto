@@ -771,6 +771,10 @@ Traces enable:
 - RFC-0131: Deterministic Transformer Circuit
 - RFC-0132: Deterministic Training Circuits
 - RFC-0133: Proof-of-Dataset Integrity
+- RFC-0140: Sharded Consensus Protocol
+- RFC-0141: Parallel Block DAG Specification
+- RFC-0142: Data Availability & Sampling Protocol
+- RFC-0143: OCTO-Network Protocol
 
 ## Related Use Cases
 

@@ -200,3 +200,8 @@ sequenceDiagram
 ## Related RFCs
 
 - [RFC-0109: Retrieval Architecture](../rfcs/0109-retrieval-architecture-read-economics.md)
+- [RFC-0130: Proof-of-Inference Consensus](../rfcs/0130-proof-of-inference-consensus.md)
+- [RFC-0140: Sharded Consensus Protocol](../rfcs/0140-sharded-consensus-protocol.md)
+- [RFC-0141: Parallel Block DAG Specification](../rfcs/0141-parallel-block-dag.md)
+- [RFC-0142: Data Availability & Sampling Protocol](../rfcs/0142-data-availability-sampling.md)
+- [RFC-0143: OCTO-Network Protocol](../rfcs/0143-octo-network-protocol.md)

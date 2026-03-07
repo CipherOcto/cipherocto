@@ -622,6 +622,7 @@ FRI (Fast Reed-Solomon Interactive Oracle Proof of Proximity) provides:
 - RFC-0124: Proof Market and Hierarchical Network
 - RFC-0125: Model Liquidity Layer
 - RFC-0130: Proof-of-Inference Consensus
+- RFC-0132: Deterministic Training Circuits
 
 ## Related Use Cases
 

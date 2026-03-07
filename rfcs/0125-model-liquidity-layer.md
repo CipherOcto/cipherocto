@@ -841,6 +841,7 @@ Automation ensures:
 - RFC-0124: Proof Market and Hierarchical Inference Network
 - RFC-0130: Proof-of-Inference Consensus
 - RFC-0131: Deterministic Transformer Circuit
+- RFC-0132: Deterministic Training Circuits
 
 ## Related Use Cases
 

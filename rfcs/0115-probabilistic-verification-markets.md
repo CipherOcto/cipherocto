@@ -227,6 +227,137 @@ Example:
   Fraud penalty: 50% to verifier
 ```
 
+### Network Roles
+
+A functioning verification market needs three actors:
+
+| Role            | Description                 | Examples                                          |
+| --------------- | --------------------------- | ------------------------------------------------- |
+| **Workers**     | Perform computation         | Training nodes, inference nodes, simulation nodes |
+| **Challengers** | Audit results               | Verifiers who earn rewards for catching fraud     |
+| **Stakers**     | Provide economic collateral | Token holders who back provider integrity         |
+
+### Multi-Level Verification
+
+Large systems use **tiered verification**:
+
+```
+Level 1 — Random sampling (most computations)
+Level 2 — Dispute games
+Level 3 — Full cryptographic proof
+```
+
+Most computations stop at Level 1. Only suspicious ones escalate.
+
+### Dispute Games
+
+If someone challenges a result, both parties enter an interactive protocol:
+
+```mermaid
+graph TD
+    COMP[Computation Trace] --> SPLIT[Split in Half]
+    SPLIT --> FIRST[First Half]
+    SPLIT --> SECOND[Second Half]
+    FIRST -->|disagree| SPLIT
+    SECOND -->|disagree| SPLIT
+    FIRST -->|agree| VERIFY[Verify Step]
+    SECOND -->|agree| VERIFY
+    VERIFY --> FAULT[Find Faulty Step]
+```
+
+They narrow the disagreement until a minimal step must be proven.
+
+This reduces proof cost dramatically — similar to optimistic rollup architectures.
+
+### Integration with AI Workloads
+
+For AI tasks, challenges may target:
+
+| Task Type | Challenge Target                             |
+| --------- | -------------------------------------------- |
+| Training  | Random training step (e.g., step #2,834,112) |
+| Inference | Model execution correctness                  |
+| Reasoning | Specific reasoning trace step                |
+| Retrieval | Dataset inclusion proof                      |
+
+Instead of proving an entire training run, the verifier checks one random step.
+
+If that step is wrong, the entire job is invalid.
+
+### Why This Scales
+
+Let:
+
+```
+N = total computations
+p = challenge probability
+```
+
+Total proofs required:
+
+```
+proofs_needed = N × p
+```
+
+Example:
+
+```
+N = 10,000,000 computations
+p = 0.01 (1% sampling)
+proofs_needed = 100,000
+```
+
+Verification becomes economically manageable.
+
+### Security Intuition
+
+Attack success probability becomes extremely small.
+
+If a job cheats in k places:
+
+```
+P(undetected) ≈ (1 − p)^k
+```
+
+Example:
+
+```
+p = 1%
+k = 100 incorrect steps
+P ≈ 0.366 (36.6%)
+```
+
+Increase sampling or stakes:
+
+```
+p = 5%
+k = 100
+P ≈ 0.006 (0.6%)
+```
+
+Probability quickly collapses.
+
+### Integration with Verifiable Reasoning
+
+Reasoning traces from RFC-0114 integrate well:
+
+- Each reasoning step publishes a commitment: `step_hash`
+- Only some traces are challenged
+- If a step fails verification, entire reasoning trace invalid
+
+### Already Proven in Production
+
+Similar ideas power major systems:
+
+| System                 | Domain                |
+| ---------------------- | --------------------- |
+| **Optimistic Rollups** | Ethereum L2           |
+| **Arbitrum**           | L2 scaling            |
+| **Optimism**           | L2 scaling            |
+| **BOINC**              | Distributed computing |
+
+The same principle adapts well to decentralized AI.
+
 ## Performance Targets
 
 | Metric               | Target    | Notes                  |

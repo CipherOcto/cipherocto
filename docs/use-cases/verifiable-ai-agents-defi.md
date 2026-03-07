@@ -313,3 +313,4 @@ graph TB
 - [RFC-0122: Mixture-of-Experts](../rfcs/0122-mixture-of-experts.md)
 - [RFC-0123: Scalable Verifiable AI Execution](../rfcs/0123-scalable-verifiable-ai-execution.md)
 - [RFC-0124: Proof Market and Hierarchical Inference Network](../rfcs/0124-proof-market-hierarchical-network.md)
+- [RFC-0125: Model Liquidity Layer](../rfcs/0125-model-liquidity-layer.md)

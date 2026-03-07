@@ -964,6 +964,7 @@ Market mechanism:
 - RFC-0121: Verifiable Large Model Execution
 - RFC-0122: Mixture-of-Experts
 - RFC-0123: Scalable Verifiable AI Execution
+- RFC-0125: Model Liquidity Layer
 
 ## Related Use Cases
 

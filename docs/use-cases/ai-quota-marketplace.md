@@ -3,6 +3,7 @@
 ## Problem
 
 CipherOcto needs an initial utility for developers to participate in the network. Currently:
+
 - Developers have unused AI API quotas (OpenAI, Anthropic, etc.)
 - These quotas sit idle during off-hours (sleep, weekends)
 - No mechanism exists to monetize or trade these quotas
@@ -28,20 +29,20 @@ CipherOcto needs an initial utility for developers to participate in the network
 
 ### If Implemented
 
-| Area | Transformation |
-|------|----------------|
-| **Token Utility** | OCTO-W becomes functional immediately |
-| **Developer Adoption** | Clear path to participate and earn |
-| **Network Effects** | More contributors = more liquidity = more valuable |
-| **Bootstrapping** | Self-sustaining growth flywheel |
+| Area                   | Transformation                                     |
+| ---------------------- | -------------------------------------------------- |
+| **Token Utility**      | OCTO-W becomes functional immediately              |
+| **Developer Adoption** | Clear path to participate and earn                 |
+| **Network Effects**    | More contributors = more liquidity = more valuable |
+| **Bootstrapping**      | Self-sustaining growth flywheel                    |
 
 ### If Not Implemented
 
-| Risk | Consequence |
-|------|-------------|
-| No token utility | No reason for developers to join |
-| Slow adoption | Network fails to grow |
-| Centralized alternatives | Market captured by others |
+| Risk                     | Consequence                      |
+| ------------------------ | -------------------------------- |
+| No token utility         | No reason for developers to join |
+| Slow adoption            | Network fails to grow            |
+| Centralized alternatives | Market captured by others        |
 
 ## Narrative
 
@@ -104,13 +105,13 @@ More contributors → more liquidity → more valuable
 
 ## Token Mechanics
 
-| Action | Token Flow |
-|--------|------------|
-| List quota | 0 prompts → 1000 OCTO-W (earned) |
-| Buy quota | 100 OCTO-W → 100 prompts (spent) |
-| Swap OCTO-W → OCTO-D | At market rate × multiplier |
-| Swap OCTO → OCTO-W | At market rate |
-| Governance | Hold OCTO for voting |
+| Action               | Token Flow                       |
+| -------------------- | -------------------------------- |
+| List quota           | 0 prompts → 1000 OCTO-W (earned) |
+| Buy quota            | 100 OCTO-W → 100 prompts (spent) |
+| Swap OCTO-W → OCTO-D | At market rate × multiplier      |
+| Swap OCTO → OCTO-W   | At market rate                   |
+| Governance           | Hold OCTO for voting             |
 
 ## Security Model
 
@@ -121,12 +122,12 @@ More contributors → more liquidity → more valuable
 
 ## Success Metrics
 
-| Metric | Target |
-|--------|--------|
-| Early contributors (Month 1) | 100 |
-| OCTO-W trading volume | 1M tokens |
-| Active quota routers | 50 |
-| Time to first swap | < 7 days |
+| Metric                       | Target    |
+| ---------------------------- | --------- |
+| Early contributors (Month 1) | 100       |
+| OCTO-W trading volume        | 1M tokens |
+| Active quota routers         | 50        |
+| Time to first swap           | < 7 days  |
 
 ## Open Questions
 
@@ -137,21 +138,20 @@ More contributors → more liquidity → more valuable
 
 ## Timeline
 
-| Phase | When | What |
-|-------|------|------|
-| **Research** | Now | Feasibility confirmed |
-| **Use Case** | Now | Definition complete |
-| **RFC/Missions** | Next | Technical specification |
-| **MVE** | Q2 2026 | Basic quota router |
-| **Market** | Q3 2026 | Trading functionality |
+| Phase            | When    | What                    |
+| ---------------- | ------- | ----------------------- |
+| **Research**     | Now     | Feasibility confirmed   |
+| **Use Case**     | Now     | Definition complete     |
+| **RFC/Missions** | Next    | Technical specification |
+| **MVE**          | Q2 2026 | Basic quota router      |
+| **Market**       | Q3 2026 | Trading functionality   |
 
 ---
 
-## References
+## Related RFCs
 
-- Parent Document: BLUEPRINT.md
-- Research: docs/research/ai-quota-marketplace-research.md
-- RFCs: rfcs/0100-ai-quota-marketplace.md, rfcs/0101-quota-router-agent.md
+- [RFC-0100: AI Quota Marketplace Protocol](../rfcs/0100-ai-quota-marketplace.md)
+- [RFC-0101: Quota Router Agent Specification](../rfcs/0101-quota-router-agent.md)
 
 ---
 

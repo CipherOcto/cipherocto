@@ -3,6 +3,7 @@
 ## Problem
 
 CipherOcto agents need persistent memory and data storage, but:
+
 - No decentralized encrypted storage exists for AI agents
 - Sensitive data requires guarantees of privacy
 - Historical state must be verifiable and immutable
@@ -27,20 +28,20 @@ CipherOcto agents need persistent memory and data storage, but:
 
 ### If Implemented
 
-| Area | Transformation |
-|------|----------------|
-| **Agent Memory** | Persistent state across sessions |
-| **Data Privacy** | End-to-end encryption guaranteed |
-| **Revenue** | Recurring provider income |
-| **Verifiability** | ZK proofs of storage integrity |
+| Area              | Transformation                   |
+| ----------------- | -------------------------------- |
+| **Agent Memory**  | Persistent state across sessions |
+| **Data Privacy**  | End-to-end encryption guaranteed |
+| **Revenue**       | Recurring provider income        |
+| **Verifiability** | ZK proofs of storage integrity   |
 
 ### If Not Implemented
 
-| Risk | Consequence |
-|------|-------------|
-| No persistence | Agents lose context |
-| Privacy gaps | Users don't trust network |
-| Limited utility | Network feels incomplete |
+| Risk            | Consequence               |
+| --------------- | ------------------------- |
+| No persistence  | Agents lose context       |
+| Privacy gaps    | Users don't trust network |
+| Limited utility | Network feels incomplete  |
 
 ## Narrative
 
@@ -76,12 +77,12 @@ Continues seamlessly
 
 ### OCTO-S Token
 
-| Aspect | Description |
-|--------|-------------|
-| **Purpose** | Payment for encrypted storage |
-| **Earned by** | Storage providers |
-| **Spent by** | Agent memory, data archives |
-| **Value** | Represents storage capacity (GB-months) |
+| Aspect        | Description                             |
+| ------------- | --------------------------------------- |
+| **Purpose**   | Payment for encrypted storage           |
+| **Earned by** | Storage providers                       |
+| **Spent by**  | Agent memory, data archives             |
+| **Value**     | Represents storage capacity (GB-months) |
 
 ### Pricing Model
 
@@ -103,16 +104,19 @@ graph LR
 ## Storage Tiers
 
 ### Hot Storage
+
 - Frequently accessed data
 - Low latency requirements
 - Higher cost per GB
 
 ### Cold Storage
+
 - Archival data
 - Infrequent access
 - Lower cost, higher retrieval time
 
 ### Encrypted Vaults
+
 - Maximum security
 - Zero-knowledge proof availability
 - Enterprise compliance
@@ -132,12 +136,12 @@ sequenceDiagram
 
 ### Integrity Verification
 
-| Method | Frequency | Purpose |
-|--------|-----------|----------|
-| Merkle proofs | Random | Data integrity |
-| Uptime checks | Hourly | Availability |
-| Encryption validation | Weekly | Security |
-| ZK proofs | On-demand | Privacy verification |
+| Method                | Frequency | Purpose              |
+| --------------------- | --------- | -------------------- |
+| Merkle proofs         | Random    | Data integrity       |
+| Uptime checks         | Hourly    | Availability         |
+| Encryption validation | Weekly    | Security             |
+| ZK proofs             | On-demand | Privacy verification |
 
 ## ZK Integration
 
@@ -168,43 +172,43 @@ graph TB
 
 ### Privacy Guarantees
 
-| Feature | Protection |
-|---------|------------|
-| Client-side encryption | Provider cannot read data |
-| Zero-knowledge proofs | Verify without exposing |
-| Selective disclosure | Share specific fields only |
-| Immutable logs | Historical proof |
+| Feature                | Protection                 |
+| ---------------------- | -------------------------- |
+| Client-side encryption | Provider cannot read data  |
+| Zero-knowledge proofs  | Verify without exposing    |
+| Selective disclosure   | Share specific fields only |
+| Immutable logs         | Historical proof           |
 
 ## Data Flagging
 
 Storage respects CipherOcto's data classification:
 
-| Level | Storage Behavior |
-|-------|-----------------|
-| **PRIVATE** | Single-tenant, never leaves user |
-| **CONFIDENTIAL** | Encrypted, access-controlled |
-| **SHARED** | Encrypted, accessible to verified agents |
-| **PUBLIC** | Can be cached, monetizable |
+| Level            | Storage Behavior                         |
+| ---------------- | ---------------------------------------- |
+| **PRIVATE**      | Single-tenant, never leaves user         |
+| **CONFIDENTIAL** | Encrypted, access-controlled             |
+| **SHARED**       | Encrypted, accessible to verified agents |
+| **PUBLIC**       | Can be cached, monetizable               |
 
 ## Provider Requirements
 
 ### Minimum Stake
 
-| Tier | Storage Provided | Stake Required |
-|------|-----------------|----------------|
-| Basic | 10 GB | 100 OCTO |
-| Standard | 100 GB | 1000 OCTO |
-| Professional | 1 TB | 10,000 OCTO |
-| Enterprise | 10 TB | 100,000 OCTO |
+| Tier         | Storage Provided | Stake Required |
+| ------------ | ---------------- | -------------- |
+| Basic        | 10 GB            | 100 OCTO       |
+| Standard     | 100 GB           | 1000 OCTO      |
+| Professional | 1 TB             | 10,000 OCTO    |
+| Enterprise   | 10 TB            | 100,000 OCTO   |
 
 ### Slashing Conditions
 
-| Offense | Penalty |
-|---------|---------|
-| Data loss | 50-100% stake |
+| Offense        | Penalty          |
+| -------------- | ---------------- |
+| Data loss      | 50-100% stake    |
 | Privacy breach | 100% stake + ban |
-| Invalid proofs | 25% stake |
-| Downtime >24h | 10% stake |
+| Invalid proofs | 25% stake        |
+| Downtime >24h  | 10% stake        |
 
 ## Relationship to Other Components
 
@@ -231,16 +235,19 @@ graph TB
 ## Use Cases
 
 ### Agent Memory
+
 - Conversation history
 - User preferences
 - Learning data
 
 ### Knowledge Vaults
+
 - Proprietary insights
 - Research data
 - Business intelligence
 
 ### Immutable Records
+
 - Transaction history
 - Compliance logs
 - Verification proofs
@@ -248,27 +255,30 @@ graph TB
 ## Implementation Path
 
 ### Phase 1: Basic Storage
+
 - [ ] Provider registration
 - [ ] Encrypted upload/download
 - [ ] Basic durability guarantees
 - [ ] Simple payment in OCTO-S
 
 ### Phase 2: ZK Integration
+
 - [ ] Stoolap integration
 - [ ] Proof generation
 - [ ] Verification layer
 - [ ] Tiered storage options
 
 ### Phase 3: Enterprise Features
+
 - [ ] SOC2 compliance
 - [ ] HIPAA support
 - [ ] GDPR tools
 - [ ] Multi-region replication
 
-## RFC Link
+## Related RFCs
 
 - [RFC-0100: AI Quota Marketplace Protocol](../rfcs/0100-ai-quota-marketplace.md)
-- [Wallet Technology Research](../research/wallet-technology-research.md)
+- [RFC-0103: Unified Vector-SQL Storage](rfcs/0103-unified-vector-sql-storage.md)
 
 ---
 

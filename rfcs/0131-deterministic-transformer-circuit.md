@@ -624,6 +624,7 @@ FRI (Fast Reed-Solomon Interactive Oracle Proof of Proximity) provides:
 - RFC-0130: Proof-of-Inference Consensus
 - RFC-0132: Deterministic Training Circuits
 - RFC-0133: Proof-of-Dataset Integrity
+- RFC-0134: Self-Verifying AI Agents
 
 ## Related Use Cases
 

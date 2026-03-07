@@ -962,6 +962,7 @@ Millions of training steps cannot produce a single proof. Recursive aggregation 
 - RFC-0125: Model Liquidity Layer
 - RFC-0130: Proof-of-Inference Consensus
 - RFC-0133: Proof-of-Dataset Integrity
+- RFC-0134: Self-Verifying AI Agents
 
 ## Related Use Cases
 

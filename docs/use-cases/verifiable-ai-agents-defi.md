@@ -318,3 +318,4 @@ graph TB
 - [RFC-0131: Deterministic Transformer Circuit](../rfcs/0131-deterministic-transformer-circuit.md)
 - [RFC-0132: Deterministic Training Circuits](../rfcs/0132-deterministic-training-circuits.md)
 - [RFC-0133: Proof-of-Dataset Integrity](../rfcs/0133-proof-of-dataset-integrity.md)
+- [RFC-0134: Self-Verifying AI Agents](../rfcs/0134-self-verifying-ai-agents.md)

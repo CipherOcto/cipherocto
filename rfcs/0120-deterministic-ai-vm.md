@@ -833,6 +833,7 @@ A purpose-built VM enables deterministic guarantees impossible in general-purpos
 - RFC-0114: Verifiable Reasoning Traces
 - RFC-0115: Probabilistic Verification Markets
 - RFC-0116: Unified Deterministic Execution Model
+- RFC-0121: Verifiable Large Model Execution
 
 ## Related Use Cases
 

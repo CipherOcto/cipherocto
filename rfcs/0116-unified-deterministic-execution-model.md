@@ -349,6 +349,7 @@ All can run simultaneously as long as they don't touch the same objects.
 - RFC-0118: Autonomous Agent Organizations
 - RFC-0119: Alignment & Control Mechanisms
 - RFC-0120: Deterministic AI Virtual Machine
+- RFC-0121: Verifiable Large Model Execution
 
 ## Related Use Cases
 

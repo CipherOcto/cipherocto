@@ -345,6 +345,7 @@ All can run simultaneously as long as they don't touch the same objects.
 - RFC-0110: Verifiable Agent Memory
 - RFC-0114: Verifiable Reasoning Traces
 - RFC-0115: Probabilistic Verification Markets
+- RFC-0117: State Virtualization for Massive Agent Scaling
 
 ## Related Use Cases
 

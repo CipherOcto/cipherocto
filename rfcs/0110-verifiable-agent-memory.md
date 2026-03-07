@@ -661,6 +661,7 @@ Proof Infrastructure (STWO/AIR)
 **Related RFCs:**
 
 - RFC-0113: Retrieval Gateway & Query Routing
+- RFC-0117: State Virtualization for Massive Agent Scaling
 
 ## Adversarial Review
 

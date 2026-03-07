@@ -435,6 +435,21 @@ Potential future extensions:
 - Verifiable ranking proofs
 - Programmable retrieval pipelines
 
+## Proof-Carrying Data Pipelines (PCDP)
+
+> ⚠️ **Architectural Pattern**: To avoid proving full computation (expensive at scale), retrieval uses **Proof-Carrying Data** — each stage outputs data + proof.
+
+### Pipeline Stages
+
+| Stage         | Output                 | Proof Type        |
+| ------------- | ---------------------- | ----------------- |
+| **Retrieval** | Documents + commitment | Merkle + coverage |
+| **Context**   | Chunks + ordering      | Transcript        |
+| **Prompt**    | Final prompt           | Commitment        |
+| **Inference** | Result                 | TEE/Sampled/Full  |
+
+See RFC-0108 for full PCDP specification.
+
 ## CipherOcto Trust Stack
 
 Retrieval integrates into the three-layer trust architecture:

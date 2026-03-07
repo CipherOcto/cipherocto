@@ -758,6 +758,150 @@ Transcript proofs verify:
 4. **Model integrity**: Specific model produced output (model hash)
 5. **No hallucination**: Output derives from retrieved context
 
+## Proof-Carrying Data Pipelines (PCDP)
+
+> ⚠️ **Architectural Improvement**: Instead of proving full computation (expensive at scale), CipherOcto uses **Proof-Carrying Data (PCD)** — proving each pipeline stage independently.
+
+### The Scalability Problem
+
+Naïve ZK-AI attempts to prove everything at once:
+
+```
+retrieval → vector search → dataset filtering → LLM inference → proof
+```
+
+This fails for three reasons:
+
+| Problem            | Impact                                                     |
+| ------------------ | ---------------------------------------------------------- |
+| Proof size         | LLM inference traces are enormous (millions of operations) |
+| Prover cost        | Massive GPU resources, huge memory, long proving time      |
+| Poor composability | Change one stage → recompute entire proof                  |
+
+### The PCDP Approach
+
+Instead, each stage outputs **data + proof**:
+
+```mermaid
+graph LR
+    S1[Stage 1: Retrieval] -->|data₁ + proof₁| S2[Stage 2: Context]
+    S2 -->|data₂ + proof₂| S3[Stage 3: Prompt]
+    S3 -->|data₃ + proof₃| S4[Stage 4: Inference]
+```
+
+### CipherOcto Pipeline Stages
+
+#### Stage 1 — Retrieval Proof
+
+```
+Query → Vector Search → Document Set
+```
+
+**Output:**
+
+```json
+{
+  "documents": [...],
+  "retrieval_proof": "...",
+  "dataset_commitment": "..."
+}
+```
+
+**Guarantees:**
+
+- Correct index used
+- Correct documents returned
+- No omission of better matches
+
+#### Stage 2 — Context Assembly Proof
+
+```
+Documents → Chunk Selection → Prompt Context
+```
+
+**Output:**
+
+```json
+{
+  "prompt_context": "...",
+  "context_proof": "..."
+}
+```
+
+**Guarantees:**
+
+- Selected chunks come from retrieved documents
+- Chunk ordering is correct
+
+#### Stage 3 — Deterministic Prompt Construction
+
+```
+System Prompt + User Query + Retrieved Context → Final Prompt
+```
+
+**Output:**
+
+```json
+{
+  "final_prompt": "...",
+  "prompt_commitment": "..."
+}
+```
+
+**Guarantees:**
+
+- Prompt = deterministic function(inputs)
+- Integrates with RFC-0106 deterministic compute
+
+#### Stage 4 — Inference Verification
+
+Instead of proving full model (expensive), three options:
+
+| Option                 | Approach                        | Cost    | Trust Level |
+| ---------------------- | ------------------------------- | ------- | ----------- |
+| **A: TEE Attestation** | Remote attestation + model hash | Lowest  | High        |
+| **B: Sampled STARK**   | Prove selected layers only      | Medium  | High        |
+| **C: Full STARK**      | Full inference proof            | Highest | Highest     |
+
+### Proof Envelope Format
+
+Standard proof artifact for CipherOcto AI:
+
+```json
+{
+  "pipeline_id": "uuid",
+  "stages": [
+    {
+      "stage": "retrieval",
+      "proof": "...",
+      "dataset_root": "..."
+    },
+    {
+      "stage": "context",
+      "proof": "..."
+    },
+    {
+      "stage": "prompt",
+      "commitment": "..."
+    },
+    {
+      "stage": "inference",
+      "verification": "TEE|SAMPLED|FULL",
+      "proof": "..."
+    }
+  ]
+}
+```
+
+### Advantages
+
+| Advantage         | Benefit                                                      |
+| ----------------- | ------------------------------------------------------------ |
+| **Scalability**   | Proof cost = retrieval + small inference (not full pipeline) |
+| **Modularity**    | Different nodes specialize: retrieval, prover, inference     |
+| **Composability** | Reuse retrieval_proof across multiple queries                |
+| **Parallelism**   | Stages can be proven independently in parallel               |
+
 ### Proof-Carrying AI
 
 This enables **Proof-Carrying AI** — every AI output includes:

@@ -179,3 +179,4 @@ Effectively: `Git + IPFS + VectorDB + Knowledge Graph` for AI agents.
 - [RFC-0110: Verifiable Agent Memory](../rfcs/0110-verifiable-agent-memory.md)
 - [RFC-0108: Verifiable AI Retrieval](../rfcs/0108-verifiable-ai-retrieval.md)
 - [RFC-0109: Retrieval Architecture](../rfcs/0109-retrieval-architecture-read-economics.md)
+- [RFC-0114: Verifiable Reasoning Traces](../rfcs/0114-verifiable-reasoning-traces.md)

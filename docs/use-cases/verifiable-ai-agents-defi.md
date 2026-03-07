@@ -302,3 +302,5 @@ graph TB
 
 - [RFC-0108: Verifiable AI Retrieval](../rfcs/0108-verifiable-ai-retrieval.md)
 - [RFC-0110: Verifiable Agent Memory](../rfcs/0110-verifiable-agent-memory.md)
+- [RFC-0114: Verifiable Reasoning Traces](../rfcs/0114-verifiable-reasoning-traces.md)
+- [RFC-0115: Probabilistic Verification Markets](../rfcs/0115-probabilistic-verification-markets.md)

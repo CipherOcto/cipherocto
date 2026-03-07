@@ -348,6 +348,7 @@ All can run simultaneously as long as they don't touch the same objects.
 - RFC-0117: State Virtualization for Massive Agent Scaling
 - RFC-0118: Autonomous Agent Organizations
 - RFC-0119: Alignment & Control Mechanisms
+- RFC-0120: Deterministic AI Virtual Machine
 
 ## Related Use Cases
 

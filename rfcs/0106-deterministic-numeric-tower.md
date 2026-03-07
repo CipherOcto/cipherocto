@@ -528,6 +528,7 @@ None. DNT adds new types.
 - RFC-0105: Deterministic Quant Arithmetic (DQA)
 - RFC-0103: Unified Vector-SQL Storage
 - RFC-0108: Verifiable AI Retrieval (ZK circuit integration)
+- RFC-0120: Deterministic AI Virtual Machine
 
 ## Related Use Cases
 

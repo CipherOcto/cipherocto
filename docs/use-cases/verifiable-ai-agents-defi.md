@@ -308,3 +308,4 @@ graph TB
 - [RFC-0117: State Virtualization for Massive Agent Scaling](../rfcs/0117-state-virtualization-massive-scaling.md)
 - [RFC-0118: Autonomous Agent Organizations](../rfcs/0118-autonomous-agent-organizations.md)
 - [RFC-0119: Alignment & Control Mechanisms](../rfcs/0119-alignment-control-mechanisms.md)
+- [RFC-0120: Deterministic AI Virtual Machine](../rfcs/0120-deterministic-ai-vm.md)

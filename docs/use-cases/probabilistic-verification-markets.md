@@ -136,3 +136,5 @@ Storage + Compute
 - [RFC-0115: Probabilistic Verification Markets](../rfcs/0115-probabilistic-verification-markets.md)
 - [RFC-0114: Verifiable Reasoning Traces](../rfcs/0114-verifiable-reasoning-traces.md)
 - [RFC-0116: Unified Deterministic Execution Model](../rfcs/0116-unified-deterministic-execution-model.md)
+- [RFC-0117: State Virtualization for Massive Agent Scaling](../rfcs/0117-state-virtualization-massive-scaling.md)
+- [RFC-0119: Alignment & Control Mechanisms](../rfcs/0119-alignment-control-mechanisms.md)

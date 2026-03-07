@@ -148,3 +148,6 @@ The trace proves regulatory compliance.
 - [RFC-0110: Verifiable Agent Memory](../rfcs/0110-verifiable-agent-memory.md)
 - [RFC-0111: Knowledge Market](../rfcs/0111-knowledge-market-verifiable-data-assets.md)
 - [RFC-0116: Unified Deterministic Execution Model](../rfcs/0116-unified-deterministic-execution-model.md)
+- [RFC-0117: State Virtualization for Massive Agent Scaling](../rfcs/0117-state-virtualization-massive-scaling.md)
+- [RFC-0118: Autonomous Agent Organizations](../rfcs/0118-autonomous-agent-organizations.md)
+- [RFC-0119: Alignment & Control Mechanisms](../rfcs/0119-alignment-control-mechanisms.md)

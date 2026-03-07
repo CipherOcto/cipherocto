@@ -405,6 +405,8 @@ The same principle adapts well to decentralized AI.
 - RFC-0109: Retrieval Architecture & Read Economics
 - RFC-0111: Knowledge Market & Verifiable Data Assets
 - RFC-0116: Unified Deterministic Execution Model
+- RFC-0117: State Virtualization for Massive Agent Scaling
+- RFC-0119: Alignment & Control Mechanisms
 
 ## Related Use Cases
 

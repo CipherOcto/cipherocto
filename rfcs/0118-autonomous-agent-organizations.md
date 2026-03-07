@@ -245,6 +245,7 @@ To scale coordination, organizations run internal markets:
 | RFC-0115 | Verification markets                  |
 | RFC-0116 | Deterministic execution               |
 | RFC-0117 | State virtualization                  |
+| RFC-0119 | Alignment & control mechanisms        |
 
 ## Performance Targets
 

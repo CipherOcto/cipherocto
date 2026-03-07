@@ -369,6 +369,9 @@ Royalties propagate backward through the lineage.
 - RFC-0110: Verifiable Agent Memory
 - RFC-0111: Knowledge Market & Verifiable Data Assets
 - RFC-0116: Unified Deterministic Execution Model
+- RFC-0117: State Virtualization for Massive Agent Scaling
+- RFC-0118: Autonomous Agent Organizations
+- RFC-0119: Alignment & Control Mechanisms
 
 ## Related Use Cases
 

@@ -3,6 +3,7 @@
 ## Problem
 
 Valuable data remains locked:
+
 - Enterprises have datasets that could train better AI
 - Individuals cannot monetize their personal data
 - Researchers lack access to quality datasets
@@ -19,12 +20,12 @@ Valuable data remains locked:
 
 ## Data Classification
 
-| Level | Access | Monetization |
-|-------|--------|--------------|
-| **PRIVATE** | Owner only | None |
-| **CONFIDENTIAL** | Selected agents | Premium |
-| **SHARED** | Verified agents | Standard |
-| **PUBLIC** | Anyone | Full |
+| Level            | Access          | Monetization |
+| ---------------- | --------------- | ------------ |
+| **PRIVATE**      | Owner only      | None         |
+| **CONFIDENTIAL** | Selected agents | Premium      |
+| **SHARED**       | Verified agents | Standard     |
+| **PUBLIC**       | Anyone          | Full         |
 
 ## Token Mechanics
 
@@ -40,24 +41,24 @@ graph LR
 
 ### Pricing Models
 
-| Model | Description |
-|-------|-------------|
-| **Per-query** | Pay per data access |
-| **Subscription** | Monthly data access |
-| **One-time** | Buy dataset outright |
+| Model             | Description               |
+| ----------------- | ------------------------- |
+| **Per-query**     | Pay per data access       |
+| **Subscription**  | Monthly data access       |
+| **One-time**      | Buy dataset outright      |
 | **Revenue share** | % of AI revenue generated |
 
 ## Verification
 
 ### Data Quality Signals
 
-| Signal | Verification |
-|--------|--------------|
-| Provenance | Origin verification |
-| Freshness | Last update timestamp |
-| Completeness | Missing data percentage |
-| Accuracy | Spot-check validation |
-| ZK proofs | Privacy-preserving verification |
+| Signal       | Verification                    |
+| ------------ | ------------------------------- |
+| Provenance   | Origin verification             |
+| Freshness    | Last update timestamp           |
+| Completeness | Missing data percentage         |
+| Accuracy     | Spot-check validation           |
+| ZK proofs    | Privacy-preserving verification |
 
 ### Quality Scores
 
@@ -82,26 +83,29 @@ sequenceDiagram
 
 ### Access Control
 
-| Classification | Verification Required |
-|----------------|---------------------|
-| PRIVATE | Owner signature only |
-| CONFIDENTIAL | Owner + reputation check |
-| SHARED | Reputation threshold |
-| PUBLIC | None |
+| Classification | Verification Required    |
+| -------------- | ------------------------ |
+| PRIVATE        | Owner signature only     |
+| CONFIDENTIAL   | Owner + reputation check |
+| SHARED         | Reputation threshold     |
+| PUBLIC         | None                     |
 
 ## Use Cases
 
 ### Training Data
+
 - Model fine-tuning datasets
 - Evaluation benchmarks
 - Synthetic data generation
 
 ### Real-time Data
+
 - Market feeds
 - Weather data
 - News aggregation
 
 ### Domain Expertise
+
 - Legal precedents
 - Medical records (anonymized)
 - Scientific datasets
@@ -110,23 +114,29 @@ sequenceDiagram
 
 ### Minimum Stake
 
-| Data Type | Minimum Stake |
-|-----------|--------------|
-| Public | 100 OCTO |
-| Shared | 500 OCTO |
-| Confidential | 1000 OCTO |
+| Data Type    | Minimum Stake |
+| ------------ | ------------- |
+| Public       | 100 OCTO      |
+| Shared       | 500 OCTO      |
+| Confidential | 1000 OCTO     |
 
 ### Slashing Conditions
 
-| Offense | Penalty |
-|---------|---------|
-| **Fake data** | 100% stake + ban |
-| **Privacy breach** | 100% stake + legal |
-| **Inaccurate quality** | 50% stake |
-| **Unauthorized sharing** | 75% stake |
+| Offense                  | Penalty            |
+| ------------------------ | ------------------ |
+| **Fake data**            | 100% stake + ban   |
+| **Privacy breach**       | 100% stake + legal |
+| **Inaccurate quality**   | 50% stake          |
+| **Unauthorized sharing** | 75% stake          |
 
 ---
 
 **Status:** Draft
 **Priority:** Medium
 **Token:** All (multi-token)
+
+## Related RFCs
+
+- [RFC-0108: Verifiable AI Retrieval](../rfcs/0108-verifiable-ai-retrieval.md)
+- [RFC-0109: Retrieval Architecture](../rfcs/0109-retrieval-architecture-read-economics.md)
+- [RFC-0111: Knowledge Market & Verifiable Data Assets](../rfcs/0111-knowledge-market-verifiable-data-assets.md)

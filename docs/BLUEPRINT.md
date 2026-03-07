@@ -20,12 +20,12 @@ This Blueprint defines how work flows through CipherOcto—from idea to protocol
 
 We maintain four distinct layers that must never mix:
 
-| Layer | Purpose | Question | Blockchain Analogy |
-|-------|---------|----------|-------------------|
-| **Research** | Feasibility | CAN WE? | Technical Investigation |
-| **Use Cases** | Intent | WHY? | Ethereum Vision |
-| **RFCs** | Design | WHAT? | EIPs |
-| **Missions** | Execution | HOW? | Implementation |
+| Layer         | Purpose     | Question | Blockchain Analogy      |
+| ------------- | ----------- | -------- | ----------------------- |
+| **Research**  | Feasibility | CAN WE?  | Technical Investigation |
+| **Use Cases** | Intent      | WHY?     | Ethereum Vision         |
+| **RFCs**      | Design      | WHAT?    | EIPs                    |
+| **Missions**  | Execution   | HOW?     | Implementation          |
 
 **Mix these layers and governance breaks.**
 
@@ -157,36 +157,46 @@ Research (CAN WE?)
 **Purpose:** Investigate feasibility and technology options before committing to a Use Case.
 
 **Template:**
+
 ```markdown
 # Research: [Technology/Approach]
 
 ## Executive Summary
+
 Brief overview of what this research investigates.
 
 ## Problem Statement
+
 What challenge are we investigating?
 
 ## Research Scope
+
 - What's included
 - What's excluded
 
 ## Findings
+
 ### Technology A
+
 ### Technology B
 
 ## Recommendations
+
 - Recommended approach
 - Risks
 
 ## Next Steps
+
 - Create Use Case? (Yes/No)
 ```
 
 **Examples:**
+
 - ZKP Research Report
 - Cairo AI Research Report
 
 **Flow:**
+
 ```
 Research → (viable) → Use Case
        → (not viable) → Archive
@@ -199,23 +209,29 @@ Research → (viable) → Use Case
 **Location:** `docs/use-cases/`
 
 **Template:**
+
 ```markdown
 # Use Case: [Title]
 
 ## Problem
+
 What problem exists?
 
 ## Motivation
+
 Why does this matter for CipherOcto?
 
 ## Impact
+
 What changes if this is implemented?
 
 ## Related RFCs
+
 - RFC-XXXX
 ```
 
 **Examples:**
+
 - Decentralized Mission Execution
 - Autonomous Agent Marketplace
 - Hybrid AI-Blockchain Runtime
@@ -227,29 +243,121 @@ What changes if this is implemented?
 **Location:** `rfcs/`
 
 **Template:**
-```markdown
+
+````markdown
 # RFC-XXXX: [Title]
 
 ## Status
+
 Draft | Accepted | Replaced | Deprecated
 
 ## Summary
-One-paragraph overview.
+
+One-paragraph overview of what this RFC defines.
+
+## Design Goals
+
+Specific measurable objectives (G1, G2, G3...).
+
+| Goal | Target | Metric        |
+| ---- | ------ | ------------- |
+| G1   | <50ms  | Query latency |
+| G2   | >95%   | Recall@10     |
 
 ## Motivation
-Why this RFC?
+
+Why this RFC? What problem does it solve?
 
 ## Specification
-Technical details, constraints, interfaces.
+
+Technical details, constraints, interfaces, data types, algorithms.
+
+### System Architecture
+
+```mermaid
+graph TB
+    A[Component A] --> B[Component B]
+```
+````
+
+### Query / API Design
+
+Key interfaces and expected behavior.
+
+## Performance Targets
+
+| Metric     | Target | Notes       |
+| ---------- | ------ | ----------- |
+| Latency    | <50ms  | @ 1K QPS    |
+| Throughput | >10k/s | Single node |
+
+## Adversarial Review
+
+Analysis of failure modes and mitigations.
+
+| Threat | Impact | Mitigation   |
+| ------ | ------ | ------------ |
+| XSS    | High   | Sanitization |
+
+## Alternatives Considered
+
+| Approach | Pros | Cons |
+| -------- | ---- | ---- |
+| Option A | X    | Y    |
+
+## Implementation Phases
+
+### Phase 1: Core
+
+- [ ] Task 1
+- [ ] Task 2
+
+### Phase 2: Enhanced
+
+- [ ] Task 3
+
+## Key Files to Modify
+
+| File     | Change           |
+| -------- | ---------------- |
+| src/a.rs | Add feature X    |
+| src/b.rs | Update interface |
+
+## Future Work
+
+- F1: [Description]
+- F2: [Description]
 
 ## Rationale
+
 Why this approach over alternatives?
 
-## Implementation
-Path to missions.
+## Related RFCs
+
+- RFC-XXXX: [Title]
+- RFC-XXXX: [Title]
 
 ## Related Use Cases
+
 - [Use Case Name](../../docs/use-cases/...)
+
+## Appendices
+
+### A. [Topic]
+
+Additional implementation details.
+
+### B. [Topic]
+
+Reference material.
+
+---
+
+**Version:** 1.0
+**Submission Date:** YYYY-MM-DD
+**Last Updated:** YYYY-MM-DD
+**Replaces:** RFC-XXXX (if applicable)
+
 ```
 
 **RFC Process:**
@@ -267,11 +375,13 @@ Path to missions.
 
 **Lifecycle:**
 ```
-missions/open/     → Available to claim
-missions/claimed/  → Someone working on it
-missions/with-pr/  → PR submitted
+
+missions/open/ → Available to claim
+missions/claimed/ → Someone working on it
+missions/with-pr/ → PR submitted
 missions/archived/ → Completed or abandoned
-```
+
+````
 
 **Template:**
 ```markdown
@@ -295,9 +405,10 @@ RFC-XXXX
 
 ## Notes
 Implementation notes, blockers, decisions.
-```
+````
 
 **Mission Rules:**
+
 - Missions REQUIRE an approved RFC
 - No RFC = Create one first
 - One mission = One claimable unit
@@ -309,20 +420,20 @@ Implementation notes, blockers, decisions.
 
 ### What Agents CAN Do
 
-| Capability | Description |
-|------------|-------------|
-| Claim Missions | Pick up work from `missions/open/` |
-| Implement Specs | Execute according to RFC |
-| Write Tests | Ensure quality |
-| Submit PRs | Standard contribution flow |
+| Capability      | Description                        |
+| --------------- | ---------------------------------- |
+| Claim Missions  | Pick up work from `missions/open/` |
+| Implement Specs | Execute according to RFC           |
+| Write Tests     | Ensure quality                     |
+| Submit PRs      | Standard contribution flow         |
 
 ### What Agents CANNOT Do
 
-| Restriction | Reason |
-|-------------|--------|
+| Restriction      | Reason                   |
+| ---------------- | ------------------------ |
 | Create Use Cases | Human direction required |
-| Accept RFCs | Governance decision |
-| Bypass Missions | Chaos prevention |
+| Accept RFCs      | Governance decision      |
+| Bypass Missions  | Chaos prevention         |
 
 ### Agent Workflow
 
@@ -340,16 +451,16 @@ Implementation notes, blockers, decisions.
 
 ## Human vs Agent Roles
 
-| Activity | Human | Agent |
-|----------|-------|-------|
-| Define Use Cases | ✓ | ✗ |
-| Write RFCs | ✓ | ✗ |
-| Accept RFCs | ✓ | ✗ |
-| Create Missions | ✓ | ✓ |
-| Claim Missions | ✓ | ✓ |
-| Implement RFCs | ✓ | ✓ |
-| Review PRs | ✓ | ✗ |
-| Merge to main | ✓ | ✗ |
+| Activity         | Human | Agent |
+| ---------------- | ----- | ----- |
+| Define Use Cases | ✓     | ✗     |
+| Write RFCs       | ✓     | ✗     |
+| Accept RFCs      | ✓     | ✗     |
+| Create Missions  | ✓     | ✓     |
+| Claim Missions   | ✓     | ✓     |
+| Implement RFCs   | ✓     | ✓     |
+| Review PRs       | ✓     | ✗     |
+| Merge to main    | ✓     | ✗     |
 
 **Humans govern. Agents implement.**
 
@@ -397,6 +508,7 @@ Implementation notes, blockers, decisions.
 ```
 
 **Timeouts:**
+
 - Claimed mission: 14 days → Return to open
 - PR in review: 7 days → Follow up or close
 
@@ -405,16 +517,19 @@ Implementation notes, blockers, decisions.
 ## Future Decentralization Path
 
 ### Phase 1: Foundation (Current)
+
 - Human governance
 - Centralized RFC process
 - Mission-based execution
 
 ### Phase 2: Stakeholder Input
+
 - OCTO token holders vote on RFCs
 - Reputation-based weighting
 - Agent representation
 
 ### Phase 3: Protocol Governance
+
 - On-chain decision making
 - Automated RFC acceptance
 - Autonomous mission creation
@@ -499,4 +614,4 @@ When in doubt, return to the Blueprint.
 
 ---
 
-*"We are not documenting a repository. We are defining how autonomous intelligence collaborates to build infrastructure."*
+_"We are not documenting a repository. We are defining how autonomous intelligence collaborates to build infrastructure."_

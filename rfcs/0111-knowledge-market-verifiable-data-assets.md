@@ -520,6 +520,148 @@ The Knowledge Market becomes more valuable as:
 - Dataset derivative markets
 - Knowledge tokenization
 
+## Verifiable Training & Economic Security
+
+> ⚠️ **Critical Technical Risk**: The largest risk in a decentralized AI knowledge economy is **unverifiable model usage**.
+
+### The Core Problem: Hidden Training Data
+
+Once a model is trained on CipherOcto data:
+
+```
+
+Dataset → Developer trains model → Model deployed off-chain
+
+```
+
+The developer can claim:
+
+```
+
+"I trained this myself"
+
+```
+
+**No cryptographic proof** links the model to the dataset. This breaks royalty distribution.
+
+### Why This Problem Is Hard
+
+AI training is non-deterministic and massive:
+
+```
+
+10^12+ operations
+hundreds of GPUs
+random initialization
+
+````
+
+Two models trained on different datasets can produce similar weights — simple hashing doesn't work.
+
+### The Three-Layer Solution
+
+#### Layer 1 — Deterministic Pipelines
+
+Training runs in a deterministic environment:
+
+```json
+{
+  "training_commitment": "sha256:...",
+  "components": {
+    "dataset_root": "sha256:...",
+    "code_hash": "sha256:...",
+    "hyperparams": "sha256:...",
+    "seed": "sha256:..."
+  }
+}
+````
+
+Output is deterministic given the same inputs.
+
+#### Layer 2 — Sampling Proofs
+
+Instead of proving all training, prove random subsets:
+
+```
+Verifier chooses random steps → Trainer proves correctness
+```
+
+This dramatically reduces proof cost.
+
+#### Layer 3 — Retrieval Proof Enforcement
+
+If the model uses CipherOcto retrieval memory, each query produces:
+
+```json
+{
+  "retrieval_proof": "...",
+  "dataset_root": "sha256:...",
+  "query_timestamp": 1234567890
+}
+```
+
+This creates a **usage record** for royalty distribution.
+
+### The Critical Insight
+
+You don't need to prove:
+
+```
+model trained on dataset
+```
+
+You only need to prove:
+
+```
+model economically depends on dataset
+```
+
+Because royalties flow through **actual usage** — retrieval proofs.
+
+### Dataset Spam Prevention
+
+Once royalties exist, attackers will upload garbage to farm rewards.
+
+**Mitigation Mechanisms:**
+
+| Mechanism                  | Description                                          |
+| -------------------------- | ---------------------------------------------------- |
+| **Reputation Staking**     | Minimum stake to list (prevents spam)                |
+| **Usage-Weighted Rewards** | Royalties based on actual usage, not listings        |
+| **Quality Scoring**        | Weighted signals (accuracy, freshness, completeness) |
+| **Challenge System**       | Anyone can challenge fake datasets                   |
+| **Slashing**               | Penalties for fake data (100% stake)                 |
+
+### The Three Pillars of Economic Security
+
+A sustainable knowledge economy requires:
+
+| Pillar                | Implementation                            |
+| --------------------- | ----------------------------------------- |
+| **Provenance**        | Lineage graph with parent roots           |
+| **Usage Proofs**      | Retrieval proofs + inference verification |
+| **Economic Friction** | Staking + slashing + verification markets |
+
+### Secure Usage Flow
+
+```
+dataset_root
+      ↓
+training_commitment
+      ↓
+model_hash
+      ↓
+inference
+      ↓
+retrieval_proof
+      ↓
+royalty engine
+      ↓
+revenue distribution
+```
+
+Every step is cryptographically verifiable.
+
 ## Summary
 
 The CipherOcto Knowledge Market enables a **decentralized economy for verifiable knowledge assets**.
@@ -554,13 +696,13 @@ By combining cryptographic commitments, retrieval proofs, and privacy controls, 
 
 CipherOcto unifies four layers that other networks cover separately:
 
-| System | Layer Covered |
-|--------|--------------|
-| Filecoin | storage only |
+| System         | Layer Covered         |
+| -------------- | --------------------- |
+| Filecoin       | storage only          |
 | Ocean Protocol | data marketplace only |
-| Akash | compute only |
-| Bittensor | inference only |
-| **CipherOcto** | **all four layers** |
+| Akash          | compute only          |
+| Bittensor      | inference only        |
+| **CipherOcto** | **all four layers**   |
 
 This makes CipherOcto a **decentralized operating system for AI knowledge production**.
 
@@ -568,4 +710,7 @@ This makes CipherOcto a **decentralized operating system for AI knowledge produc
 
 **Submission Date:** 2026-03-07
 **Last Updated:** 2026-03-07
+
+```
+
 ```

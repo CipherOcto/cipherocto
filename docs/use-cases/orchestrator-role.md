@@ -3,6 +3,7 @@
 ## Problem
 
 Users and agents need:
+
 - Intelligent routing to best providers
 - Trust-aware selection of services
 - Privacy constraint enforcement
@@ -23,12 +24,12 @@ Without orchestration, users must manually select providers.
 
 ### OCTO-O Token
 
-| Aspect | Description |
-|--------|-------------|
-| **Purpose** | Payment for coordination services |
-| **Earned by** | Orchestrators |
-| **Spent by** | Users/agents needing routing |
-| **Value** | Represents coordination complexity |
+| Aspect        | Description                        |
+| ------------- | ---------------------------------- |
+| **Purpose**   | Payment for coordination services  |
+| **Earned by** | Orchestrators                      |
+| **Spent by**  | Users/agents needing routing       |
+| **Value**     | Represents coordination complexity |
 
 ### Fee Structure
 
@@ -42,30 +43,34 @@ graph LR
     FEE -->|coordination| ORCH
 ```
 
-| Coordination Type | Fee |
-|------------------|-----|
-| Simple routing | 1-2% |
-| Multi-agent chain | 5-10% |
+| Coordination Type     | Fee    |
+| --------------------- | ------ |
+| Simple routing        | 1-2%   |
+| Multi-agent chain     | 5-10%  |
 | Complex orchestration | 10-15% |
 
 ## Responsibilities
 
 ### Task Analysis
+
 - Understand user requirements
 - Identify necessary capabilities
 - Estimate complexity and cost
 
 ### Provider Selection
+
 - Match requirements to providers
 - Apply trust/reputation weighting
 - Consider price/performance
 
 ### Execution Management
+
 - Monitor task progress
 - Handle failures gracefully
 - Coordinate multi-party work
 
 ### Result Verification
+
 - Validate outputs
 - Enforce quality thresholds
 - Handle disputes
@@ -74,13 +79,13 @@ graph LR
 
 ### Policy Types
 
-| Policy | Selection Criteria |
-|--------|-------------------|
-| **cheapest** | Lowest cost |
-| **fastest** | Lowest latency |
-| **quality** | Highest reputation |
+| Policy       | Selection Criteria      |
+| ------------ | ----------------------- |
+| **cheapest** | Lowest cost             |
+| **fastest**  | Lowest latency          |
+| **quality**  | Highest reputation      |
 | **balanced** | Price/performance score |
-| **custom** | User-defined rules |
+| **custom**   | User-defined rules      |
 
 ### Trust Weighting
 
@@ -119,55 +124,60 @@ sequenceDiagram
 
 ### Failure Handling
 
-| Scenario | Response |
-|----------|----------|
-| Provider timeout | Retry with next best |
-| Quality failure | Re-assign to different provider |
-| Chain failure | Rollback, notify user |
-| Dispute | Hold payment, escalate |
+| Scenario         | Response                        |
+| ---------------- | ------------------------------- |
+| Provider timeout | Retry with next best            |
+| Quality failure  | Re-assign to different provider |
+| Chain failure    | Rollback, notify user           |
+| Dispute          | Hold payment, escalate          |
 
 ## Reputation for Orchestrators
 
 ### Scoring
 
-| Metric | Weight |
-|--------|--------|
-| Task success rate | 40% |
-| User satisfaction | 25% |
-| Latency | 15% |
-| Cost efficiency | 20% |
+| Metric            | Weight |
+| ----------------- | ------ |
+| Task success rate | 40%    |
+| User satisfaction | 25%    |
+| Latency           | 15%    |
+| Cost efficiency   | 20%    |
 
 ### Tier Benefits
 
-| Tier | Score | Benefits |
-|------|-------|----------|
-| Bronze | 21-40 | Base routing |
-| Silver | 41-60 | Priority listing |
-| Gold | 61-80 | Featured placement |
-| Platinum | 81-100 | Premium fees |
+| Tier     | Score  | Benefits           |
+| -------- | ------ | ------------------ |
+| Bronze   | 21-40  | Base routing       |
+| Silver   | 41-60  | Priority listing   |
+| Gold     | 61-80  | Featured placement |
+| Platinum | 81-100 | Premium fees       |
 
 ## Requirements
 
 ### Minimum Stake
 
-| Tier | Stake Required |
-|------|----------------|
-| Basic | 500 OCTO |
-| Standard | 5000 OCTO |
-| Professional | 50,000 OCTO |
-| Enterprise | 500,000 OCTO |
+| Tier         | Stake Required |
+| ------------ | -------------- |
+| Basic        | 500 OCTO       |
+| Standard     | 5000 OCTO      |
+| Professional | 50,000 OCTO    |
+| Enterprise   | 500,000 OCTO   |
 
 ### Slashing Conditions
 
-| Offense | Penalty |
-|---------|---------|
-| **Fraud** | 100% stake + ban |
-| **Collusion** | 75% stake |
-| **Poor routing** | 25% stake |
-| **Data breach** | 100% stake |
+| Offense          | Penalty          |
+| ---------------- | ---------------- |
+| **Fraud**        | 100% stake + ban |
+| **Collusion**    | 75% stake        |
+| **Poor routing** | 25% stake        |
+| **Data breach**  | 100% stake       |
 
 ---
 
 **Status:** Draft
 **Priority:** High (Phase 1)
 **Token:** OCTO-O
+
+## Related RFCs
+
+- [RFC-0109: Retrieval Architecture](../rfcs/0109-retrieval-architecture-read-economics.md)
+- [RFC-0113: Retrieval Gateway & Query Routing](../rfcs/0113-retrieval-gateway-query-routing.md)

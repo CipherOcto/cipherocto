@@ -3,6 +3,7 @@
 ## Problem
 
 Enterprises face AI challenges:
+
 - Cannot send sensitive data to external APIs
 - Need AI capabilities without infrastructure overhead
 - Must comply with SOC2, HIPAA, GDPR
@@ -36,23 +37,23 @@ graph TB
 
 ### Deployment Options
 
-| Model | Data Location | Compliance |
-|-------|---------------|------------|
-| **On-premises** | Enterprise data center | Full control |
-| **Private cloud** | Dedicated VPC | SOC2 Type II |
-| **Hybrid** | Edge + cloud | Flexible |
-| **Sovereign** | Geographic restriction | GDPR/ localization |
+| Model             | Data Location          | Compliance         |
+| ----------------- | ---------------------- | ------------------ |
+| **On-premises**   | Enterprise data center | Full control       |
+| **Private cloud** | Dedicated VPC          | SOC2 Type II       |
+| **Hybrid**        | Edge + cloud           | Flexible           |
+| **Sovereign**     | Geographic restriction | GDPR/ localization |
 
 ## Features
 
 ### Compliance Native
 
-| Framework | Support |
-|-----------|----------|
-| SOC2 | ✅ Type I & II |
-| HIPAA | ✅ BAA available |
-| GDPR | ✅ Data localization |
-| ISO 27001 | ✅ Certification |
+| Framework | Support              |
+| --------- | -------------------- |
+| SOC2      | ✅ Type I & II       |
+| HIPAA     | ✅ BAA available     |
+| GDPR      | ✅ Data localization |
+| ISO 27001 | ✅ Certification     |
 
 ### Team Management
 
@@ -70,13 +71,13 @@ graph LR
 
 ### Capabilities
 
-| Feature | Description |
-|---------|-------------|
-| **Team agents** | Specialized AI per department |
-| **Shared memory** | Team knowledge bases |
-| **Quota management** | Budget controls |
-| **Audit logs** | Full activity tracking |
-| **Access control** | RBAC integration |
+| Feature              | Description                   |
+| -------------------- | ----------------------------- |
+| **Team agents**      | Specialized AI per department |
+| **Shared memory**    | Team knowledge bases          |
+| **Quota management** | Budget controls               |
+| **Audit logs**       | Full activity tracking        |
+| **Access control**   | RBAC integration              |
 
 ## Token Economics
 
@@ -97,25 +98,25 @@ graph TD
 
 ### Pricing Models
 
-| Model | Description | Best For |
-|-------|-------------|----------|
-| **Subscription** | Fixed monthly AI budget | Predictable costs |
-| **Pay-as-you-go** | Per-request pricing | Variable usage |
-| **Enterprise** | Custom annual contract | Large scale |
-| **Hybrid** | Base + variable | Mix of needs |
+| Model             | Description             | Best For          |
+| ----------------- | ----------------------- | ----------------- |
+| **Subscription**  | Fixed monthly AI budget | Predictable costs |
+| **Pay-as-you-go** | Per-request pricing     | Variable usage    |
+| **Enterprise**    | Custom annual contract  | Large scale       |
+| **Hybrid**        | Base + variable         | Mix of needs      |
 
 ## Use Cases
 
 ### Department-Specific Agents
 
-| Department | Agent Capability |
-|------------|-----------------|
-| **Legal** | Contract review, compliance |
-| **Finance** | Analysis, forecasting |
-| **HR** | Resume screening, Q&A |
-| **Sales** | Lead scoring, CRM |
-| **Support** | Ticket classification |
-| **Engineering** | Code review, debugging |
+| Department      | Agent Capability            |
+| --------------- | --------------------------- |
+| **Legal**       | Contract review, compliance |
+| **Finance**     | Analysis, forecasting       |
+| **HR**          | Resume screening, Q&A       |
+| **Sales**       | Lead scoring, CRM           |
+| **Support**     | Ticket classification       |
+| **Engineering** | Code review, debugging      |
 
 ### Compliance Workflows
 
@@ -137,34 +138,34 @@ User Query →
 
 ### Data Protection
 
-| Layer | Protection |
-|-------|------------|
-| **Transport** | TLS 1.3 |
-| **Storage** | AES-256 encryption |
-| **Compute** | TEE (optional) |
-| **Access** | RBAC + MFA |
-| **Audit** | Immutable logs |
+| Layer         | Protection         |
+| ------------- | ------------------ |
+| **Transport** | TLS 1.3            |
+| **Storage**   | AES-256 encryption |
+| **Compute**   | TEE (optional)     |
+| **Access**    | RBAC + MFA         |
+| **Audit**     | Immutable logs     |
 
 ### Privacy Levels
 
-| Level | Behavior |
-|-------|----------|
-| **PRIVATE** | Local-only, no network |
+| Level            | Behavior                     |
+| ---------------- | ---------------------------- |
+| **PRIVATE**      | Local-only, no network       |
 | **CONFIDENTIAL** | Encrypted, restricted agents |
-| **SHARED** | Encrypted, verified agents |
-| **PUBLIC** | Allowed out-of-band |
+| **SHARED**       | Encrypted, verified agents   |
+| **PUBLIC**       | Allowed out-of-band          |
 
 ## Integration
 
 ### Enterprise Systems
 
-| System | Integration |
-|--------|-------------|
-| **Active Directory** | SSO/LDAP |
-| **Slack/Teams** | Bot integration |
-| **CRM** | Salesforce, HubSpot |
-| **HRIS** | Workday, BambooHR |
-| **SIEM** | Splunk, Datadog |
+| System               | Integration         |
+| -------------------- | ------------------- |
+| **Active Directory** | SSO/LDAP            |
+| **Slack/Teams**      | Bot integration     |
+| **CRM**              | Salesforce, HubSpot |
+| **HRIS**             | Workday, BambooHR   |
+| **SIEM**             | Splunk, Datadog     |
 
 ### API Access
 
@@ -189,14 +190,19 @@ impl EnterpriseClient {
 
 ### Service Levels
 
-| Tier | Response Time | Support Hours | Price |
-|------|--------------|----------------|-------|
-| **Standard** | 24 hours | Business | Base |
-| **Professional** | 4 hours | 12x5 | +50% |
-| **Enterprise** | 1 hour | 24x7 | Custom |
+| Tier             | Response Time | Support Hours | Price  |
+| ---------------- | ------------- | ------------- | ------ |
+| **Standard**     | 24 hours      | Business      | Base   |
+| **Professional** | 4 hours       | 12x5          | +50%   |
+| **Enterprise**   | 1 hour        | 24x7          | Custom |
 
 ---
 
 **Status:** Draft
 **Priority:** Medium (Phase 3)
 **Token:** OCTO (primary), role tokens
+
+## Related RFCs
+
+- [RFC-0108: Verifiable AI Retrieval](../rfcs/0108-verifiable-ai-retrieval.md)
+- [RFC-0109: Retrieval Architecture](../rfcs/0109-retrieval-architecture-read-economics.md)

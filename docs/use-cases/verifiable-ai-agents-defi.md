@@ -3,6 +3,7 @@
 ## Problem
 
 DeFi protocols face trust challenges with AI agents:
+
 - No way to verify trading decisions were made correctly
 - Black-box AI makes unpredictable moves with user funds
 - Cannot prove agent followed its stated strategy
@@ -78,12 +79,12 @@ enum TradeAction {
 
 ### What Gets Proven
 
-| Property | Proof Method | On-chain Settleable |
-|----------|--------------|---------------------|
-| **Correct analysis** | zkML proof | ✅ |
-| **Strategy adherence** | Constraint proof | ✅ |
-| **Timing** | Block timestamp | ✅ |
-| **No manipulation** | Merkle inclusion | ✅ |
+| Property               | Proof Method     | On-chain Settleable |
+| ---------------------- | ---------------- | ------------------- |
+| **Correct analysis**   | zkML proof       | ✅                  |
+| **Strategy adherence** | Constraint proof | ✅                  |
+| **Timing**             | Block timestamp  | ✅                  |
+| **No manipulation**    | Merkle inclusion | ✅                  |
 
 ## Integration with CipherOcto
 
@@ -124,12 +125,12 @@ Where:
 
 ### Automated Trading Strategies
 
-| Strategy | Verifiable Proof |
-|----------|-----------------|
-| **Dollar-cost averaging** | Regular intervals proven |
-| **Rebalancing** | Threshold triggers proven |
-| **Arbitrage** | Cross-exchange timing proven |
-| **Yield optimization** | APY calculations proven |
+| Strategy                  | Verifiable Proof             |
+| ------------------------- | ---------------------------- |
+| **Dollar-cost averaging** | Regular intervals proven     |
+| **Rebalancing**           | Threshold triggers proven    |
+| **Arbitrage**             | Cross-exchange timing proven |
+| **Yield optimization**    | APY calculations proven      |
 
 ### Portfolio Management
 
@@ -148,11 +149,11 @@ On-chain: Verified → Executed → Recorded
 
 ### Risk Management
 
-| Risk | Verifiable Proof |
-|------|-----------------|
-| **Stop-loss triggered** | Price oracle + timestamp |
-| **Max drawdown** | Historical value proof |
-| **Exposure limits** | Portfolio composition proof |
+| Risk                    | Verifiable Proof            |
+| ----------------------- | --------------------------- |
+| **Stop-loss triggered** | Price oracle + timestamp    |
+| **Max drawdown**        | Historical value proof      |
+| **Exposure limits**     | Portfolio composition proof |
 
 ## Dispute Resolution
 
@@ -174,12 +175,12 @@ sequenceDiagram
 
 ### Slashing Conditions
 
-| Offense | Penalty |
-|---------|---------|
-| **No proof submitted** | 50% stake |
-| **Invalid proof** | 100% stake |
-| **Strategy deviation** | 75% stake |
-| **Late proof** | Warning → penalty |
+| Offense                | Penalty           |
+| ---------------------- | ----------------- |
+| **No proof submitted** | 50% stake         |
+| **Invalid proof**      | 100% stake        |
+| **Strategy deviation** | 75% stake         |
+| **Late proof**         | Warning → penalty |
 
 ## Technical Implementation
 
@@ -263,26 +264,29 @@ graph TB
 
 ### Token Economics
 
-| Component | Token | Purpose |
-|-----------|-------|---------|
-| Agent execution | OCTO-W | Pay for inference |
-| Agent development | OCTO-D | Developer revenue |
-| Verification | OCTO | Protocol security |
-| Staking | OCTO | Economic commitment |
+| Component         | Token  | Purpose             |
+| ----------------- | ------ | ------------------- |
+| Agent execution   | OCTO-W | Pay for inference   |
+| Agent development | OCTO-D | Developer revenue   |
+| Verification      | OCTO   | Protocol security   |
+| Staking           | OCTO   | Economic commitment |
 
 ## Implementation Path
 
 ### Phase 1: Basic Verifiable Agents
+
 - [ ] Decision logging with hashes
 - [ ] Block timestamp proofs
 - [ ] Strategy commitment on-chain
 
 ### Phase 2: zkML Integration
+
 - [ ] Lightweight zkML for decisions
 - [ ] WASM verifier for browsers
 - [ ] Off-chain verification
 
 ### Phase 3: Full Protocol
+
 - [ ] On-chain Cairo verifier
 - [ ] EigenLayer AVS integration
 - [ ] Complete dispute flow
@@ -293,3 +297,8 @@ graph TB
 **Priority:** Medium (Phase 2-3)
 **Token:** OCTO-D, OCTO-W, OCTO
 **Research:** [LuminAIR Analysis](../research/luminair-analysis.md)
+
+## Related RFCs
+
+- [RFC-0108: Verifiable AI Retrieval](../rfcs/0108-verifiable-ai-retrieval.md)
+- [RFC-0110: Verifiable Agent Memory](../rfcs/0110-verifiable-agent-memory.md)

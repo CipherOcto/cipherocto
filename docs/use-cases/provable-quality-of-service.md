@@ -3,6 +3,7 @@
 ## Problem
 
 Current service quality relies on trust:
+
 - Latency claims unverified
 - SLA violations difficult to prove
 - Dispute resolution based on reputation
@@ -27,13 +28,13 @@ Current service quality relies on trust:
 
 ### Verifiable Metrics
 
-| Metric | Proof Method | On-chain Settleable |
-|--------|--------------|---------------------|
-| **Latency** | Timestamp + hash | ✅ Auto-refund |
-| **Uptime** | Block inclusion | ✅ SLA penalties |
-| **Output validity** | Shape/content proof | ✅ Dispute resolution |
-| **Routing correctness** | Merkle path | ✅ Payment release |
-| **Model execution** | zkML proof | ✅ Quality bonus |
+| Metric                  | Proof Method        | On-chain Settleable   |
+| ----------------------- | ------------------- | --------------------- |
+| **Latency**             | Timestamp + hash    | ✅ Auto-refund        |
+| **Uptime**              | Block inclusion     | ✅ SLA penalties      |
+| **Output validity**     | Shape/content proof | ✅ Dispute resolution |
+| **Routing correctness** | Merkle path         | ✅ Payment release    |
+| **Model execution**     | zkML proof          | ✅ Quality bonus      |
 
 ### Latency Proof
 
@@ -120,12 +121,12 @@ impl OutputValidityProof {
 
 ### Service Levels
 
-| Tier | Latency | Uptime | Output Validity | Price |
-|------|---------|--------|------------------|-------|
-| **Basic** | < 10s | 99% | Best effort | 1x |
-| **Standard** | < 5s | 99.9% | Guaranteed | 1.5x |
-| **Premium** | < 1s | 99.99% | Verified | 2x |
-| **Enterprise** | < 500ms | 99.999% | Fully proven | 4x |
+| Tier           | Latency | Uptime  | Output Validity | Price |
+| -------------- | ------- | ------- | --------------- | ----- |
+| **Basic**      | < 10s   | 99%     | Best effort     | 1x    |
+| **Standard**   | < 5s    | 99.9%   | Guaranteed      | 1.5x  |
+| **Premium**    | < 1s    | 99.99%  | Verified        | 2x    |
+| **Enterprise** | < 500ms | 99.999% | Fully proven    | 4x    |
 
 ### SLA Penalties
 
@@ -238,12 +239,12 @@ sequenceDiagram
 
 ### Arbitration Levels
 
-| Level | Description | Resolution Time |
-|-------|-------------|----------------|
-| **Automated** | On-chain verification | < 1 minute |
-| **Evidence** | Both parties submit proof | < 24 hours |
-| **Arbitration** | Third-party judge | < 7 days |
-| **Appeals** | DAO vote on edge cases | < 30 days |
+| Level           | Description               | Resolution Time |
+| --------------- | ------------------------- | --------------- |
+| **Automated**   | On-chain verification     | < 1 minute      |
+| **Evidence**    | Both parties submit proof | < 24 hours      |
+| **Arbitration** | Third-party judge         | < 7 days        |
+| **Appeals**     | DAO vote on edge cases    | < 30 days       |
 
 ## Quality Scoring
 
@@ -333,28 +334,31 @@ sequenceDiagram
 
 ### Token Economics
 
-| Component | Token | Purpose |
-|-----------|-------|---------|
-| Provider stake | OCTO | Security deposit |
-| Payment | OCTO-W | For execution |
-| Bonuses | OCTO | For exceeding SLA |
-| Penalties | OCTO | Slashed for violations |
+| Component      | Token  | Purpose                |
+| -------------- | ------ | ---------------------- |
+| Provider stake | OCTO   | Security deposit       |
+| Payment        | OCTO-W | For execution          |
+| Bonuses        | OCTO   | For exceeding SLA      |
+| Penalties      | OCTO   | Slashed for violations |
 
 ## Implementation Path
 
 ### Phase 1: Basic QoS
+
 - [ ] Timestamp-based latency proofs
 - [ ] Block inclusion for uptime
 - [ ] Basic SLA penalties
 - [ ] Manual dispute submission
 
 ### Phase 2: Automated Verification
+
 - [ ] On-chain proof verification
 - [ ] Automatic refund triggers
 - [ ] Quality score calculation
 - [ ] Provider tiering
 
 ### Phase 3: Full SLA
+
 - [ ] zkML output validation
 - [ ] Real-time verification
 - [ ] Complete arbitration system
@@ -366,3 +370,8 @@ sequenceDiagram
 **Priority:** High (improves trust)
 **Token:** OCTO, OCTO-W
 **Research:** [LuminAIR Analysis](../research/luminair-analysis.md)
+
+## Related RFCs
+
+- [RFC-0108: Verifiable AI Retrieval](../rfcs/0108-verifiable-ai-retrieval.md)
+- [RFC-0109: Retrieval Architecture](../rfcs/0109-retrieval-architecture-read-economics.md)

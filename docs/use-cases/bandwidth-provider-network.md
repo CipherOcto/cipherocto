@@ -3,6 +3,7 @@
 ## Problem
 
 CipherOcto requires network connectivity for:
+
 - Agent communication between nodes
 - Data transfer for distributed compute
 - Edge node relay
@@ -23,50 +24,57 @@ Current centralized CDNs are expensive and create dependency on single providers
 
 ### OCTO-B Token
 
-| Aspect | Description |
-|--------|-------------|
-| **Purpose** | Payment for bandwidth services |
-| **Earned by** | Bandwidth providers |
-| **Spent by** | Agents, users needing relay |
-| **Value** | Represents data transfer (GB) |
+| Aspect        | Description                    |
+| ------------- | ------------------------------ |
+| **Purpose**   | Payment for bandwidth services |
+| **Earned by** | Bandwidth providers            |
+| **Spent by**  | Agents, users needing relay    |
+| **Value**     | Represents data transfer (GB)  |
 
 ## Provider Types
 
 ### Edge Nodes
+
 - Residential connections
 - Low-latency relay
 - Geographic distribution
 
 ### Relay Nodes
+
 - High-bandwidth connections
 - Data aggregation
 - Traffic obfuscation
 
 ### CDN Nodes
+
 - Cached content delivery
 - Static asset serving
 - Geographic proximity
 
 ## Verification
 
-| Method | What It Proves |
-|--------|---------------|
-| Throughput tests | Available bandwidth |
-| Uptime monitoring | Availability |
-| Latency checks | Geographic reach |
-| Data delivery | Successful transfer |
+| Method            | What It Proves      |
+| ----------------- | ------------------- |
+| Throughput tests  | Available bandwidth |
+| Uptime monitoring | Availability        |
+| Latency checks    | Geographic reach    |
+| Data delivery     | Successful transfer |
 
 ## Slashing Conditions
 
-| Offense | Penalty |
-|---------|---------|
-| **Throttling** | 25% stake |
-| **Data manipulation** | 100% stake |
+| Offense               | Penalty     |
+| --------------------- | ----------- |
+| **Throttling**        | 25% stake   |
+| **Data manipulation** | 100% stake  |
 | **Extended downtime** | 5% per hour |
-| **Privacy breach** | 100% stake |
+| **Privacy breach**    | 100% stake  |
 
 ---
 
 **Status:** Draft
 **Priority:** Medium
 **Token:** OCTO-B
+
+## Related RFCs
+
+- [RFC-0109: Retrieval Architecture](../rfcs/0109-retrieval-architecture-read-economics.md)

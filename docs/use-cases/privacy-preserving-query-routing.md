@@ -3,6 +3,7 @@
 ## Problem
 
 Current CipherOcto architecture has a privacy gap:
+
 - Sellers see prompt content when proxying requests
 - Trust assumption required - seller could leak/inspect data
 - No cryptographic guarantee of privacy
@@ -59,12 +60,12 @@ flowchart TD
 
 ### Tiered Privacy Model
 
-| Level | What Seller Sees | Proof Type |
-|-------|-----------------|-------------|
-| **Standard** | Nothing | Routing commitment |
-| **Confidential** | Model type only | No input/output |
-| **Private** | Nothing at all | Full zk proof |
-| **Sovereign** | User controls | Selective disclosure |
+| Level            | What Seller Sees | Proof Type           |
+| ---------------- | ---------------- | -------------------- |
+| **Standard**     | Nothing          | Routing commitment   |
+| **Confidential** | Model type only  | No input/output      |
+| **Private**      | Nothing at all   | Full zk proof        |
+| **Sovereign**    | User controls    | Selective disclosure |
 
 ### Standard Mode (Phase 1)
 
@@ -235,35 +236,35 @@ sequenceDiagram
 
 ### Trade-off Matrix
 
-| Feature | Standard Privacy | High Privacy |
-|---------|-----------------|---------------|
-| **Routing verification** | ✅ | ✅ |
-| **Latency proof** | ✅ | ✅ |
-| **Output validation** | ✅ | ✅ |
-| **Model selection** | ✅ | Provider sees |
-| **Prompt content** | ❌ Hidden | ❌ Hidden |
-| **Response content** | ✅ Visible | ❌ Encrypted |
-| **Full zkML** | ❌ | ✅ (expensive) |
+| Feature                  | Standard Privacy | High Privacy   |
+| ------------------------ | ---------------- | -------------- |
+| **Routing verification** | ✅               | ✅             |
+| **Latency proof**        | ✅               | ✅             |
+| **Output validation**    | ✅               | ✅             |
+| **Model selection**      | ✅               | Provider sees  |
+| **Prompt content**       | ❌ Hidden        | ❌ Hidden      |
+| **Response content**     | ✅ Visible       | ❌ Encrypted   |
+| **Full zkML**            | ❌               | ✅ (expensive) |
 
 ### Cost Comparison
 
-| Mode | Compute Cost | Latency Impact |
-|------|-------------|----------------|
-| Standard | 1x (baseline) | +10ms |
-| Confidential | 1.5x | +50ms |
-| Private | 10x | +500ms |
-| Sovereign | 20x | +1000ms |
+| Mode         | Compute Cost  | Latency Impact |
+| ------------ | ------------- | -------------- |
+| Standard     | 1x (baseline) | +10ms          |
+| Confidential | 1.5x          | +50ms          |
+| Private      | 10x           | +500ms         |
+| Sovereign    | 20x           | +1000ms        |
 
 ## Compliance Mapping
 
 ### Regulatory Requirements
 
-| Regulation | Privacy Mode Required | CipherOcto Feature |
-|------------|----------------------|-------------------|
-| **SOC2** | Confidential | No prompt access |
-| **HIPAA** | Private | Full encryption |
-| **GDPR** | Sovereign | Selective disclosure |
-| **FINRA** | Private | Full audit trail |
+| Regulation | Privacy Mode Required | CipherOcto Feature   |
+| ---------- | --------------------- | -------------------- |
+| **SOC2**   | Confidential          | No prompt access     |
+| **HIPAA**  | Private               | Full encryption      |
+| **GDPR**   | Sovereign             | Selective disclosure |
+| **FINRA**  | Private               | Full audit trail     |
 
 ### Audit Capabilities
 
@@ -337,18 +338,21 @@ sequenceDiagram
 ## Implementation Path
 
 ### Phase 1: Standard Privacy
+
 - [ ] Client-side encryption
 - [ ] Commitment-based routing
 - [ ] Proof of correct routing
 - [ ] Basic verification
 
 ### Phase 2: Confidential Mode
+
 - [ ] Zero-knowledge commitments
 - [ ] Blind execution
 - [ ] Encrypted responses
 - [ ] WASM verifier
 
 ### Phase 3: Sovereign Mode
+
 - [ ] Full zkML integration
 - [ ] Selective disclosure policies
 - [ ] On-chain verification
@@ -360,3 +364,9 @@ sequenceDiagram
 **Priority:** High (addresses privacy gap)
 **Token:** OCTO-W (additional fees for privacy)
 **Research:** [LuminAIR Analysis](../research/luminair-analysis.md)
+
+## Related RFCs
+
+- [RFC-0108: Verifiable AI Retrieval](../rfcs/0108-verifiable-ai-retrieval.md)
+- [RFC-0109: Retrieval Architecture](../rfcs/0109-retrieval-architecture-read-economics.md)
+- [RFC-0113: Retrieval Gateway & Query Routing](../rfcs/0113-retrieval-gateway-query-routing.md)

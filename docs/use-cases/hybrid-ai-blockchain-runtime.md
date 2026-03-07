@@ -83,3 +83,4 @@ graph TB
 - [RFC-0121: Verifiable Large Model Execution](../rfcs/0121-verifiable-large-model-execution.md)
 - [RFC-0122: Mixture-of-Experts](../rfcs/0122-mixture-of-experts.md)
 - [RFC-0123: Scalable Verifiable AI Execution](../rfcs/0123-scalable-verifiable-ai-execution.md)
+- [RFC-0124: Proof Market and Hierarchical Inference Network](../rfcs/0124-proof-market-hierarchical-network.md)

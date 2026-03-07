@@ -839,6 +839,7 @@ Automation ensures:
 - RFC-0120: Deterministic AI Virtual Machine
 - RFC-0121: Verifiable Large Model Execution
 - RFC-0124: Proof Market and Hierarchical Inference Network
+- RFC-0130: Proof-of-Inference Consensus
 
 ## Related Use Cases
 

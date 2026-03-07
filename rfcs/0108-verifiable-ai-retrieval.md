@@ -699,8 +699,84 @@ A new primitive for verifiable AI infrastructure.
 - RFC-0106: Deterministic Numeric Tower
 - RFC-0107: Production Vector-SQL Storage v2
 
-**Related RFCs**:
+## Research Integration
+
+This RFC connects to the CipherOcto proof system:
+
+| Layer                | Document                      | Purpose                  |
+| -------------------- | ----------------------------- | ------------------------ |
+| Verifiable Retrieval | RFC-0108 (this)               | Retrieval proofs         |
+| Numeric Tower        | RFC-0106                      | Deterministic arithmetic |
+| AIR                  | `luminair-air-deep-dive.md`   | Constraint generation    |
+| STWO                 | `stwo-gpu-acceleration.md`    | GPU-accelerated proving  |
+| Orion                | `cairo-ai-research-report.md` | Provable ML inference    |
+
+## Transcript Proofs
+
+A **transcript proof** proves the complete RAG pipeline:
+
+```mermaid
+graph TD
+    Q[User Query] -->|embed| E[Embedding]
+    E -->|search| R[Retriever]
+    R -->|fetch| D[Documents]
+    D -->|assemble| P[Prompt]
+    P -->|infer| L[LLM]
+    L -->|output| A[Answer]
+
+    T[Transcript Proof] -.->|verifies| Q
+    T -.->|verifies| R
+    T -.->|verifies| D
+    T -.->|verifies| P
+    T -.->|verifies| A
+```
+
+### Transcript Structure
+
+```rust
+struct RetrievalTranscript {
+    query_text: String,
+    query_embedding: DVec,
+    retrieved_doc_ids: Vec<u64>,
+    retrieved_chunks: Vec<String>,
+    prompt_template: String,
+    prompt_hash: Digest,
+    model_id: String,
+    model_hash: Digest,
+    llm_output: String,
+    timestamp: u64,
+}
+```
+
+### Verification Guarantees
+
+Transcript proofs verify:
+
+1. **Retrieval integrity**: Documents actually exist in dataset (Merkle proof)
+2. **Relevance**: Distances computed correctly (deterministic arithmetic)
+3. **Prompt commitment**: Prompt cannot be modified after retrieval
+4. **Model integrity**: Specific model produced output (model hash)
+5. **No hallucination**: Output derives from retrieved context
+
+### Proof-Carrying AI
+
+This enables **Proof-Carrying AI** — every AI output includes:
+
+```json
+{
+  "answer": "The capital of France is Paris.",
+  "proof": {
+    "retrieval_proof": { "merkle_root": "...", "doc_ids": [...] },
+    "inference_proof": { "model_hash": "...", "prompt_hash": "..." },
+    "dataset_commitment": "..."
+  }
+}
+```
+
+## Related RFCs
 
 - RFC-0103: Unified Vector-SQL Storage (superseded by 0107)
 - RFC-0104: Deterministic Floating-Point
 - RFC-0105: Deterministic Quant Arithmetic
+- RFC-0106: Deterministic Numeric Tower (numeric determinism)
+- RFC-0110: Verifiable RAG & Transcript Proofs (future)

@@ -527,6 +527,81 @@ None. DNT adds new types.
 - RFC-0104: Deterministic Floating-Point (DFP)
 - RFC-0105: Deterministic Quant Arithmetic (DQA)
 - RFC-0103: Unified Vector-SQL Storage
+- RFC-0108: Verifiable AI Retrieval (ZK circuit integration)
+
+## Research Integration
+
+This RFC connects to the CipherOcto proof system stack:
+
+| Layer         | Research Doc                  | Purpose                   |
+| ------------- | ----------------------------- | ------------------------- |
+| Numeric Tower | RFC-0106 (this)               | Deterministic computation |
+| AIR           | `luminair-air-deep-dive.md`   | Constraint verification   |
+| STARK Prover  | `stwo-gpu-acceleration.md`    | Proof generation          |
+| Cairo/Orion   | `cairo-ai-research-report.md` | Provable ML inference     |
+
+### CipherOcto Trust Stack
+
+```
+┌─────────────────────────────────────────┐
+│         AI Agents / Applications         │
+└────────────────────┬────────────────────┘
+                     │
+┌────────────────────▼────────────────────┐
+│          Verifiable RAG                  │
+│        (RFC-0108 - Transcript Proofs)   │
+└────────────────────┬────────────────────┘
+                     │
+┌────────────────────▼────────────────────┐
+│       Retrieval Gateway                  │
+│        (RFC-0109 + 0113)                │
+└────────────────────┬────────────────────┘
+                     │
+┌────────────────────▼────────────────────┐
+│      Deterministic Execution VM          │
+│      (RFC-0106 - DFP/DQA/DVEC)          │
+└────────────────────┬────────────────────┘
+                     │
+┌────────────────────▼────────────────────┐
+│        AIR Representation                │
+│    (Algebraic Intermediate Representation)│
+└────────────────────┬────────────────────┘
+                     │
+┌────────────────────▼────────────────────┐
+│      STARK Prover (STWO GPU)             │
+└─────────────────────────────────────────┘
+```
+
+### Execution Trace Format
+
+> ⚠️ **Architectural Gap**: The repository lacks a standardized execution trace format.
+
+**CipherOcto Execution Trace (CET)** standardizes traces for:
+
+- SQL execution
+- Vector search
+- ML inference
+
+Trace structure:
+
+```rust
+struct CipherOctoTrace {
+    trace_id: u64,
+    timestamp: u64,
+    operations: Vec<TraceEntry>,
+    input_commitment: Digest,
+    output_commitment: Digest,
+}
+
+enum TraceEntry {
+    SqlExec { query: String, rows: u64 },
+    VectorSearch { index: String, k: u32, distance: DFP },
+    MatMul { rows: u32, cols: u32, elapsed_ms: u32 },
+    Activation { function: String, input: DVec, output: DVec },
+}
+```
+
+Traces are converted to AIR constraints for STARK proof generation.
 
 ## Use Cases
 

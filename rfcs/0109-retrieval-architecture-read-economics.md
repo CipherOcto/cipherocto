@@ -349,6 +349,56 @@ Agent processing
 - Redundant retrieval from multiple nodes
 - Verification sampling
 
+## Retrieval Gateway (RFC-0113)
+
+> ⚠️ **Note**: RFC-0113 (Retrieval Gateway & Query Routing) content is integrated here.
+
+The Retrieval Gateway is the **control plane** for data retrieval:
+
+### Responsibilities
+
+| Responsibility            | Description                        |
+| ------------------------- | ---------------------------------- |
+| Query parsing             | Parse user queries, extract intent |
+| Data flag enforcement     | Ensure execution policy compliance |
+| Tier discovery            | Route to appropriate storage tier  |
+| Node selection            | Choose optimal retrieval nodes     |
+| Verification coordination | Orchestrate proof generation       |
+
+### Query Flow
+
+```
+User Query
+     │
+     ▼
+Query Parser → Data Flag Extraction
+     │
+     ▼
+Tier Discovery (Hot/Cold/Archive)
+     │
+     ▼
+Node Selection (latency, cost, reputation)
+     │
+     ▼
+Deterministic Routing (verification required)
+     │
+     ▼
+Retrieval + Proof Generation
+     │
+     ▼
+Response + Verification Proofs
+```
+
+### Routing Modes
+
+| Mode              | Use Case       | Verification          |
+| ----------------- | -------------- | --------------------- |
+| **Deterministic** | High-assurance | Full proof required   |
+| **Adaptive**      | Performance    | Sampling verification |
+| **Hybrid**        | Balanced       | Tiered verification   |
+
+See RFC-0113 for full specification.
+
 ## Integration Points
 
 ### With RFC-0106 (Numeric Tower)
@@ -385,6 +435,41 @@ Potential future extensions:
 - Verifiable ranking proofs
 - Programmable retrieval pipelines
 
+## CipherOcto Trust Stack
+
+Retrieval integrates into the three-layer trust architecture:
+
+```
+┌─────────────────────────────────────────┐
+│         AI Agents / Applications         │
+└────────────────────┬────────────────────┘
+                     │
+┌────────────────────▼────────────────────┐
+│          Verifiable RAG                  │
+│        (RFC-0108 - Transcript Proofs)   │
+└────────────────────┬────────────────────┘
+                     │
+┌────────────────────▼────────────────────┐
+│       Retrieval Gateway                  │
+│      (RFC-0113 - Query Routing)         │
+└────────────────────┬────────────────────┘
+                     │
+┌────────────────────▼────────────────────┐
+│      Retrieval Architecture              │
+│      (RFC-0109 - This RFC)              │
+└────────────────────┬────────────────────┘
+                     │
+┌────────────────────▼────────────────────┐
+│      Deterministic Execution             │
+│        (RFC-0106 - Numeric Tower)       │
+└────────────────────┬────────────────────┘
+                     │
+┌────────────────────▼────────────────────┐
+│      AIR → STARK Prover                 │
+│    (Research: STWO, AIR, Cairo)         │
+└─────────────────────────────────────────┘
+```
+
 ## Summary
 
 Retrieval in CipherOcto is a **network capability**, not a single service.
@@ -418,3 +503,4 @@ By separating **storage economics** from **retrieval economics**, the network en
 - RFC-0100: AI Quota Marketplace Protocol
 - RFC-0103: Unified Vector-SQL Storage
 - RFC-0105: Deterministic Quant Arithmetic
+- RFC-0113: Retrieval Gateway & Query Routing

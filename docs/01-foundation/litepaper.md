@@ -1,7 +1,7 @@
 # 🐙 CipherOcto Litepaper
 
-**Version:** 1.0
-**Date:** February 2026
+**Version:** 1.1
+**Date:** March 2026
 **Read Time:** 10 minutes
 
 **STATUS: Seed Phase | Protocol Design Complete | Implementation Starting**
@@ -28,12 +28,28 @@ CipherOcto can operate as a personal AI assistant similar to emerging open assis
 
 | Milestone | Status |
 | ----------- | ------ |
-| Architecture Defined | ✓ Complete |
+| Architecture Defined (RFC-0000) | ✓ Complete |
 | Token Model Designed | ✓ Complete |
 | Documentation Layer | ✓ Active |
+| RFC Stack (0147 RFCs) | ✓ Complete |
+| Implementation Roadmap | ✓ Complete |
 | Agent Prototype Phase | → Next |
 | Provider Network Alpha | → Planned |
 | Marketplace Launch | → Roadmap |
+
+### Technical Foundation Complete
+
+CipherOcto's protocol stack is now fully specified:
+
+| Layer | RFCs | Status |
+|-------|------|--------|
+| Deterministic Math | 0104-0106 | ✓ |
+| AI Execution | 0120, 0131-0132 | ✓ |
+| Consensus | 0130, 0140-0143 | ✓ |
+| Economy | 0144-0147 | ✓ |
+| Agents | 0134, 0118 | ✓ |
+
+**See [RFC-0147: Implementation Roadmap](../rfcs/0147-implementation-roadmap.md) for the 6-phase implementation plan.**
 
 ---
 
@@ -243,36 +259,67 @@ The octopus is not just a mascot. It represents a fundamentally different approa
 
 ## The Architecture: Ocean Stack
 
-CipherOcto's three-layer architecture:
+CipherOcto's architecture consists of **seven layers**:
 
 ```mermaid
 graph TB
-    subgraph INTELLIGENCE["Intelligence Layer 🐙"]
-        I1[Agent Orchestrator]
-        I2[Task Routing]
-        I3[Result Verification]
+    subgraph APP["Application Layer 🐙"]
+        A1[Self-Verifying Agents]
+        A2[Agent Organizations]
     end
 
-    subgraph EXECUTION["Execution Layer 🦑"]
-        E1[Secure Runtime]
-        E2[Privacy Containers]
-        E3[Local Inference]
+    subgraph AI["AI Execution Layer"]
+        AI1[Transformer Circuits]
+        AI2[Training Circuits]
+        AI3[AI-VM]
     end
 
-    subgraph NETWORK["Network Layer 🪼"]
-        N1[Node Coordination]
-        N2[Identity System]
-        N3[Trust & Reputation]
+    subgraph VERIFY["Verification Layer"]
+        V1[Dataset Integrity]
+        V2[Verification Markets]
+        V3[Proof Aggregation]
     end
 
-    INTELLIGENCE --> EXECUTION --> NETWORK
+    subgraph CONSENSUS["Consensus Layer"]
+        C1[Proof-of-Inference]
+        C2[Sharded Consensus]
+        C3[Block DAG]
+    end
 
-    style INTELLIGENCE fill:#6c3483
-    style EXECUTION fill:#b03a2e
-    style NETWORK fill:#1f618d
+    subgraph NET["Network Layer 🪼"]
+        N1[OCTO-Network]
+        N2[Task Market]
+    end
+
+    subgraph EXEC["Execution Layer 🦑"]
+        E1[Numeric Tower]
+        E2[DFP + DQA]
+    end
+
+    APP --> AI --> VERIFY --> CONSENSUS --> NET --> EXEC
+
+    style APP fill:#6c3483
+    style AI fill:#b03a2e
+    style VERIFY fill:#1f618d
+    style CONSENSUS fill:#b7950b
+    style NET fill:#27ae60
+    style EXEC fill:#943126
 ```
 
 **Many agents, one intelligence.**
+
+### Key Technical Innovations
+
+| Component | RFC | Description |
+|-----------|-----|-------------|
+| **Proof-of-Inference** | RFC-0130 | AI inference replaces hash computation as consensus work |
+| **Deterministic AI-VM** | RFC-0120 | Hardware-agnostic AI execution with bit-exact results |
+| **Transformer Circuits** | RFC-0131 | STARK-efficient transformer proofs |
+| **Proof Aggregation** | RFC-0146 | O(1) verification for batched proofs |
+| **Hardware Registry** | RFC-0145 | Intelligent task routing to capable workers |
+| **Self-Verifying Agents** | RFC-0134 | Agents that prove their reasoning |
+
+**See [RFC-0000: Architecture Overview](../rfcs/0000-cipherocto-architecture-overview.md) for the complete technical specification.**
 
 ---
 
@@ -506,7 +553,20 @@ Every role depends on others. Every participant earns from value created. The sy
 
 ## Key Innovations
 
-### 1. Proof of Reliability (PoR)
+### 1. Proof-of-Inference (PoI)
+
+The cornerstone innovation: AI inference replaces wasteful hash computation as consensus work.
+
+| Traditional PoW | CipherOcto PoI |
+| --------------- | --------------- |
+| SHA256 hashing | Real AI inference |
+| Zero societal value | Verifiable AI computation |
+| Energy-intensive | Productive consensus |
+| Single-purpose | Multi-purpose infrastructure |
+
+**Every block secured by actual AI work.** This transforms the network into a global distributed AI supercomputer.
+
+### 2. Proof of Reliability (PoR)
 
 Trust earned through verifiable performance, not capital.
 
@@ -651,32 +711,33 @@ Early builders establish reputation that compounds. Late entrants face higher ba
 
 ```mermaid
 timeline
-    title CipherOcto Development Phases
-    section Phase 0
-        Seed Stage : Protocol Design & Specification : Complete
-        : Community Building : Active
-    section Phase 1
-        Agent Network Alpha : First agents execute : Target Q1 2027
-        : Market Layer : Economic activity begins : Target Q2 2027
-    section Phase 2
-        Marketplace Launch : Public network access : Target Q3 2027
-        : Storage Layer : Persistent memory : Target Q4 2027
-    section Phase 3
-        Enterprise Layer : Business features : Target Q1 2028
-        : DAO Governance : Decentralized control : Target Q2 2028
-    section Phase 4
-        Autonomous Intelligence Economy : Self-sustaining : Target Q4 2028+
+    title CipherOcto Implementation Phases (20 months)
+    section Phase 1: Foundation (3 months)
+        Deterministic Math : RFC-0104-0106 : Complete
+    section Phase 2: AI Engine (4 months)
+        AI-VM + Circuits : RFC-0120, 0131-0132 : In Progress
+    section Phase 3: Network (3 months)
+        P2P + Consensus : RFC-0143, 0130, 0140-0142 : Planned
+    section Phase 4: Economy (3 months)
+        Markets + Data : RFC-0144, 0133, 0100-0101 : Planned
+    section Phase 5: Intelligence (3 months)
+        Retrieval + Agents : RFC-0108-0114, 0134 : Planned
+    section Phase 6: Autonomy (4 months)
+        Organizations : RFC-0118-0119, 0145-0146 : Planned
 ```
 
 ### Milestones by Phase
 
-| Phase | Focus | Key Capability |
-| ----- | ----- | ------------- |
-| **Phase 0** | Foundation | Architecture, specification, community |
-| **Phase 1** | Agent Network | First agents execute, market layer active |
-| **Phase 2** | Marketplace | Public access, storage layer live |
-| **Phase 3** | Enterprise | Business features, DAO governance |
-| **Phase 4** | Maturity | Self-sustaining autonomous economy |
+| Phase | Focus | Duration | Key Deliverable |
+| ----- | ----- |----------|-----------------|
+| **Phase 1** | Foundation | 3 months | Deterministic computation |
+| **Phase 2** | AI Engine | 4 months | Verifiable AI inference |
+| **Phase 3** | Network | 3 months | Distributed consensus |
+| **Phase 4** | Economy | 3 months | Compute marketplace |
+| **Phase 5** | Intelligence | 3 months | Self-verifying agents |
+| **Phase 6** | Autonomy | 4 months | Agent organizations |
+
+**See [RFC-0147: Implementation Roadmap](../rfcs/0147-implementation-roadmap.md) for detailed phase breakdown.**
 
 ---
 
@@ -841,10 +902,11 @@ graph LR
 | **Why** | $400B+ coordination failure in AI economy |
 | **How** | Role-based multi-token economy with dual-stake security |
 | **Token** | OCTO (sovereign) + 8 role tokens (economic) |
-| **Innovation** | Proof of Reliability, AI Wholesale, Zero-Trust |
+| **RFCs** | 47 technical specifications (complete) |
+| **Innovation** | Proof-of-Inference, Deterministic AI-VM, Self-Verifying Agents |
 | **Target** | 10-20% market share by 2035 |
 | **Team** | Experienced builders in AI, blockchain, security |
-| **Status** | Seed phase — foundation complete |
+| **Status** | Seed phase — RFC stack complete, implementation starting |
 
 ---
 

@@ -24,6 +24,23 @@ The Retrieval Gateway enables unified access to:
 - distributed datasets
 - archival storage
 
+## Design Goals
+
+| Goal                   | Target                | Metric           |
+| ---------------------- | --------------------- | ---------------- |
+| **G1: Routing**        | Route to optimal node | Latency savings  |
+| **G2: Node Selection** | Select best provider  | Quality score    |
+| **G3: Tier Discovery** | Find appropriate tier | Match accuracy   |
+| **G4: Verification**   | Enforce proof policy  | 100% enforcement |
+
+## Performance Targets
+
+| Metric             | Target   | Notes       |
+| ------------------ | -------- | ----------- |
+| Routing decision   | <10ms    | Per query   |
+| Node selection     | <5ms     | With scores |
+| Gateway throughput | >10k QPS | Per gateway |
+
 ## Motivation
 
 ### Problem Statement
@@ -365,6 +382,30 @@ The gateway enforces:
 | SHARED       | Verification-capable nodes |
 | PUBLIC       | Any available node         |
 
+## Adversarial Review
+
+| Threat                   | Impact | Mitigation             |
+| ------------------------ | ------ | ---------------------- |
+| **Routing Manipulation** | High   | Multi-gateway fallback |
+| **Node Collusion**       | Medium | Reputation + stake     |
+| **Censorship**           | High   | Tier redundancy        |
+
+## Alternatives Considered
+
+| Approach                | Pros          | Cons                    |
+| ----------------------- | ------------- | ----------------------- |
+| **Centralized gateway** | Simple        | Single point of failure |
+| **Gossip routing**      | Decentralized | Latency                 |
+| **This approach**       | Hybrid        | Complexity              |
+
+## Key Files to Modify
+
+| File                     | Change         |
+| ------------------------ | -------------- |
+| src/gateway/router.rs    | Routing logic  |
+| src/gateway/selector.rs  | Node selection |
+| src/gateway/discovery.rs | Tier discovery |
+
 ## Future Extensions
 
 Potential enhancements:
@@ -414,3 +455,9 @@ This component enables the network to provide:
 
 - [Privacy-Preserving Query Routing](../../docs/use-cases/privacy-preserving-query-routing.md)
 - [Data Marketplace](../../docs/use-cases/data-marketplace.md)
+
+---
+
+**Version:** 1.0
+**Submission Date:** 2026-03-07
+**Last Updated:** 2026-03-07

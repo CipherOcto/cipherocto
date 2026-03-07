@@ -17,6 +17,24 @@ Agent memory becomes a **verifiable data structure** where:
 
 This builds on RFC-0108 (Verifiable Retrieval), RFC-0106 (Deterministic Compute), and integrates with storage tiers (OCTO-S).
 
+## Design Goals
+
+| Goal                       | Target                            | Metric         |
+| -------------------------- | --------------------------------- | -------------- |
+| **G1: Verifiable Writes**  | Every memory write produces proof | 100% coverage  |
+| **G2: Retrievable Proofs** | Every query returns verification  | Proof included |
+| **G3: Memory Lineage**     | Full trace of memory evolution    | DAG tracking   |
+| **G4: Auditability**       | Post-hoc decision verification    | Proof replay   |
+
+## Performance Targets
+
+| Metric          | Target | Notes                 |
+| --------------- | ------ | --------------------- |
+| Write latency   | <100ms | With proof generation |
+| Query latency   | <50ms  | Retrieval + proof     |
+| Proof size      | <1KB   | Merkle path           |
+| Memory overhead | <10%   | For proof storage     |
+
 ## Motivation
 
 ### The Problem: AI Memory Is Unverifiable
@@ -644,7 +662,44 @@ Proof Infrastructure (STWO/AIR)
 
 - RFC-0113: Retrieval Gateway & Query Routing
 
+## Adversarial Review
+
+| Threat               | Impact | Mitigation          |
+| -------------------- | ------ | ------------------- |
+| **Memory Poisoning** | High   | Reputation + stake  |
+| **Proof Forgery**    | High   | Merkle verification |
+| **Lineage Replay**   | Low    | Timestamp bounds    |
+
+## Alternatives Considered
+
+| Approach            | Pros            | Cons                      |
+| ------------------- | --------------- | ------------------------- |
+| **Append-only log** | Simple          | No deletion support       |
+| **Mutable state**   | Flexible        | Complex proofs            |
+| **This approach**   | DAG with proofs | Implementation complexity |
+
+## Key Files to Modify
+
+| File                         | Change               |
+| ---------------------------- | -------------------- |
+| src/agent/memory/prover.rs   | Proof generation     |
+| src/agent/memory/verifier.rs | Proof verification   |
+| src/agent/memory/dag.rs      | Memory DAG structure |
+
+## Future Work
+
+- F1: Hierarchical memory consolidation
+- F2: Cross-agent memory sharing
+- F3: ZK memory privacy
+
 ## Related Use Cases
 
 - [Verifiable AI Agents for DeFi](../../docs/use-cases/verifiable-ai-agents-defi.md)
 - [Agent Marketplace (OCTO-D)](../../docs/use-cases/agent-marketplace.md)
+- [Verifiable Agent Memory Layer](../../docs/use-cases/verifiable-agent-memory-layer.md)
+
+---
+
+**Version:** 1.0
+**Submission Date:** 2026-03-06
+**Last Updated:** 2026-03-07

@@ -10,6 +10,24 @@ This RFC defines the **Knowledge Market** of the CipherOcto network — enabling
 
 All assets are cryptographically verifiable through **dataset commitments** and **retrieval proofs**, unlocking economic value while preserving privacy and verifiability.
 
+## Design Goals
+
+| Goal                         | Target                        | Metric                       |
+| ---------------------------- | ----------------------------- | ---------------------------- |
+| **G1: Dataset Commitments**  | Every dataset has Merkle root | 100% coverage                |
+| **G2: Royalty Distribution** | Automatic per-query payments  | Payment accuracy             |
+| **G3: Access Models**        | Multiple retrieval types      | Download/Query/Vector/Stream |
+| **G4: Verifiable Training**  | Proof of data provenance      | Training audit               |
+
+## Performance Targets
+
+| Metric                | Target | Notes                |
+| --------------------- | ------ | -------------------- |
+| Commitment generation | <10s   | For 1M records       |
+| Query response        | <100ms | Retrieval + proof    |
+| Royalty distribution  | <5min  | Per-query settlement |
+| Proof verification    | <10ms  | On-chain             |
+
 ## Motivation
 
 ### Problem Statement
@@ -508,7 +526,36 @@ The Knowledge Market becomes more valuable as:
 - RFC-0110: Verifiable Agent Memory
 - RFC-0113: Retrieval Gateway & Query Routing
 
-## Related Use Cases
+## Adversarial Review
+
+| Threat | Impact | Mitigation |
+| -------| -------| ------------|
+| **Dataset Poisoning** | High | Reputation + stake slash |
+| **Royalty Theft** | High | On-chain verification |
+| **Commitment Replay** | Medium | Timestamp + nonce |
+
+## Alternatives Considered
+
+| Approach | Pros | Cons |
+| -------- | ---- | ---- |
+| **Centralized marketplace** | Simple | Trust required |
+| **File-based only** | Easy | No query integration |
+| **This approach** | Full integration | Complexity |
+
+## Key Files to Modify
+
+| File | Change |
+| ---- | ------ |
+| src/market/dataset.rs | Dataset commitment logic |
+| src/market/royalty.rs | Royalty distribution |
+| src/market/verification.rs | Proof verification |
+
+## Future Extensions
+
+- Decentralized data indexing
+- Automated royalty distribution
+- Dataset derivative markets
+- Knowledge tokenization
 
 - [Data Marketplace](../../docs/use-cases/data-marketplace.md)
 - [Verifiable AI Agents for DeFi](../../docs/use-cases/verifiable-ai-agents-defi.md)

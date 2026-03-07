@@ -21,6 +21,26 @@ This is a capability no current vector database (Faiss, Milvus, Pinecone, Weavia
 
 > ⚠️ **Prerequisites**: This RFC builds on RFC-0106 (Numeric Tower) and RFC-0107 (Vector-SQL Storage v2)
 
+## Design Goals
+
+| Goal                       | Target                    | Metric             |
+| -------------------------- | ------------------------- | ------------------ |
+| **G1: Verifiable Results** | Every query returns proof | 100% of queries    |
+| **G2: Query Latency**      | <100ms                    | P99 latency        |
+| **G3: Recall**             | >95%                      | vs brute-force     |
+| **G4: Proof Size**         | <10KB                     | Merkle proof       |
+| **G5: ZK Compatibility**   | Circuit-friendly          | BLAKE3 commitments |
+
+## Performance Targets
+
+| Metric            | Target    | Notes            |
+| ----------------- | --------- | ---------------- |
+| Query latency     | <100ms    | P99 @ 1K QPS     |
+| Proof generation  | <5s async | Merkle tree      |
+| Recall@10         | >95%      | vs brute-force   |
+| Merkle proof size | <10KB     | For 1M vectors   |
+| ZK proof time     | <60s      | STARK generation |
+
 ## Motivation
 
 ### Problem Statement
@@ -917,6 +937,38 @@ This enables **Proof-Carrying AI** — every AI output includes:
 }
 ```
 
+## Adversarial Review
+
+| Threat                 | Impact | Mitigation                         |
+| ---------------------- | ------ | ---------------------------------- |
+| **Query Manipulation** | High   | Merkle root binds dataset to proof |
+| **Cache Poisoning**    | Medium | Freshness proofs with timestamps   |
+| **Index Poisoning**    | High   | Reputation + stake-based inserts   |
+| **Replay Attacks**     | Low    | Nonce-based query signatures       |
+
+## Alternatives Considered
+
+| Approach          | Pros               | Cons            |
+| ----------------- | ------------------ | --------------- |
+| **ZK-only**       | Full privacy       | 60s+ proof time |
+| **Merkle only**   | Fast, small proofs | No privacy      |
+| **This approach** | Tunable trade-off  | Complexity      |
+
+## Key Files to Modify
+
+| File                             | Change                      |
+| -------------------------------- | --------------------------- |
+| src/retrieval/prover.rs          | Add Merkle proof generation |
+| src/retrieval/verifier.rs        | Add proof verification      |
+| src/storage/vector/commitment.rs | Add vector commitments      |
+| src/crypto/merkle.rs             | BLAKE3-based Merkle tree    |
+
+## Future Work
+
+- F1: Hardware-accelerated proof generation (GPU)
+- F2: Recursive STARKs for aggregated proofs
+- F3: Privacy-preserving retrieval with MPC
+
 ## Related RFCs
 
 - RFC-0103: Unified Vector-SQL Storage (superseded by 0107)
@@ -929,3 +981,9 @@ This enables **Proof-Carrying AI** — every AI output includes:
 
 - [Verifiable AI Agents for DeFi](../../docs/use-cases/verifiable-ai-agents-defi.md)
 - [Data Marketplace](../../docs/use-cases/data-marketplace.md)
+
+---
+
+**Version:** 1.0
+**Submission Date:** 2025-03-06
+**Last Updated:** 2025-03-07

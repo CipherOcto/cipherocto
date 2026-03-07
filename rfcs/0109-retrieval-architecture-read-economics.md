@@ -29,6 +29,24 @@ This RFC formalizes:
 - execution policy integration
 - storage tier routing
 
+## Design Goals
+
+| Goal                       | Target                            | Metric                  |
+| -------------------------- | --------------------------------- | ----------------------- |
+| **G1: Multi-Tier Routing** | Route queries to appropriate tier | Tier selection accuracy |
+| **G2: Read Economics**     | Fair compensation for providers   | Payment accuracy        |
+| **G3: Verification**       | Verify retrieval correctness      | 100% of queries         |
+| **G4: Latency**            | <100ms P99                        | End-to-end query        |
+
+## Performance Targets
+
+| Metric             | Target | Notes            |
+| ------------------ | ------ | ---------------- |
+| Query latency      | <100ms | P99              |
+| Provider selection | <10ms  | Routing decision |
+| Verification       | <50ms  | Proof check      |
+| Payment settlement | <5min  | On-chain         |
+
 ## Motivation
 
 ### Problem Statement
@@ -424,6 +442,31 @@ See RFC-0113 for full specification.
 | Coverage proofs      | ANN verification         |
 | ZK circuits          | High-assurance pipelines |
 | Transcript hash      | Query integrity          |
+
+## Adversarial Review
+
+| Threat                   | Impact | Mitigation              |
+| ------------------------ | ------ | ----------------------- |
+| **Provider Censorship**  | High   | Multi-provider fallback |
+| **Read Fraud**           | High   | Verification + slashing |
+| **Tier Pollution**       | Medium | Quality scores          |
+| **Payment Manipulation** | High   | On-chain settlement     |
+
+## Alternatives Considered
+
+| Approach              | Pros          | Cons                    |
+| --------------------- | ------------- | ----------------------- |
+| **Centralized index** | Fast          | Single point of failure |
+| **Gossip-based**      | Decentralized | Consistency issues      |
+| **This approach**     | Hybrid tier   | Complexity              |
+
+## Key Files to Modify
+
+| File                       | Change             |
+| -------------------------- | ------------------ |
+| src/retrieval/router.rs    | Multi-tier routing |
+| src/retrieval/economics.rs | Read payment model |
+| src/retrieval/verifier.rs  | Verification logic |
 
 ## Future Work
 

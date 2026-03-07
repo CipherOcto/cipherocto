@@ -247,12 +247,227 @@ graph TB
 
     MARKET --> GATEWAY
     GATEWAY --> STORAGE
-    STORAGE --> PROOFS
 
-    style MARKET fill:#6c3483
-    style GATEWAY fill:#1f618d
-    style STORAGE fill:#27ae60
-    style PROOFS fill:#b7950b
+## The Three-Market System
+
+> ⚠️ **Architectural Enhancement**: To capture full AI value chain, CipherOcto implements three integrated markets.
+
+### Why Single Markets Fail
+
+Previous Web3 data projects (Ocean, Numerai, Filecoin experiments) failed because:
+
+```
+
+data → sold once → buyer keeps all future value
+
+```
+
+**Example:**
+```
+
+dataset → model → billion-dollar AI product
+Dataset creator earns once, if at all.
+
+```
+
+### The Three-Market Architecture
+
+```
+
+┌─────────────────────────────────────────────────┐
+│ AI Applications │
+└──────────────────────┬──────────────────────────┘
+│
+┌──────────────────────▼──────────────────────────┐
+│ AI Production Market │
+│ (training / inference / proofs) │
+└──────────────────────┬──────────────────────────┘
+│
+┌──────────────────────▼──────────────────────────┐
+│ Knowledge Market │
+│ (datasets / embeddings / memory) │
+└──────────────────────┬──────────────────────────┘
+│
+┌──────────────────────▼──────────────────────────┐
+│ Retrieval Layer │
+└──────────────────────┬──────────────────────────┘
+│
+┌──────────────────────▼──────────────────────────┐
+│ Storage Market (OCTO-S) │
+│ (Hot / Cold / Archive Tiers) │
+└────────────────────────────────────────────────┘
+
+```
+
+### Layer Comparison
+
+| Layer | Asset | Participants |
+|-------|-------|--------------|
+| **Storage Market** | Raw data persistence | Storage providers |
+| **Knowledge Market** | Datasets, embeddings, memory | Data providers |
+| **AI Production Market** | Training, inference, proofs | GPU operators, developers |
+
+## Knowledge Lineage Graph
+
+Knowledge assets form a **derivation graph** instead of isolated assets.
+
+### Graph Structure
+
+```
+
+Dataset A (raw)
+│
+├──► Dataset B (cleaned)
+│
+├──► Embedding Index
+│
+└──► Model Training
+│
+└──► AI Service
+
+````
+
+### Node Structure
+
+```json
+{
+  "asset_id": "uuid",
+  "asset_root": "sha256:...",
+  "parent_roots": ["parent1", "parent2"],
+  "derivation_proof": "...",
+  "transformation": "cleaning | embedding | training | inference",
+  "created_at": 1234567890
+}
+````
+
+### Benefits
+
+- **Royalty propagation**: Value flows backward through lineage
+- **Provenance tracking**: Every asset has verifiable origin
+- **Quality signals**: Derivatives inherit parent quality scores
+
+## Knowledge Royalty Engine
+
+When downstream products generate revenue, royalties distribute through the lineage graph.
+
+### Distribution Model
+
+```
+AI service revenue = 100 OCTO
+```
+
+| Asset in Lineage   | Share |
+| ------------------ | ----- |
+| Model creator      | 50%   |
+| Dataset provider   | 30%   |
+| Embedding provider | 10%   |
+| Index provider     | 10%   |
+
+### Royalty Flow
+
+```mermaid
+graph LR
+    REVENUE[AI Service Revenue] -->|50%| MODEL[Model Creator]
+    REVENUE -->|30%| DATASET[Dataset Provider]
+    REVENUE -->|10%| EMBED[Embedding Provider]
+    REVENUE -->|10%| INDEX[Index Provider]
+```
+
+### Verification
+
+Because CipherOcto supports **retrieval proofs**, usage is verifiable:
+
+```json
+{
+  "dataset_root": "...",
+  "embedding_root": "...",
+  "model_hash": "...",
+  "inference_proof": "...",
+  "usage_verified": true
+}
+```
+
+This proves the model used this dataset — royalties cannot be faked.
+
+## Compute Market (AI Production)
+
+The third market handles **knowledge production** — training, inference, and proof generation.
+
+### Participants
+
+| Role                | Function        | Earnings       |
+| ------------------- | --------------- | -------------- |
+| **GPU Operators**   | Model training  | Training fees  |
+| **Inference Nodes** | AI inference    | Per-query fees |
+| **Proving Nodes**   | ZK/STARK proofs | Proof fees     |
+
+### Pipeline
+
+```
+Dataset
+    │
+    ▼
+Compute Node (GPU)
+    │
+    ▼
+Training Job
+    │
+    ▼
+Model Artifact
+    │
+    ▼
+Inference Node
+    │
+    ▼
+AI Service
+```
+
+### Compute Pricing
+
+| Service          | Pricing Model |
+| ---------------- | ------------- |
+| Training         | Per-epoch fee |
+| Inference        | Per-token fee |
+| Proof generation | Per-proof fee |
+
+## Knowledge NFTs
+
+> ⚠️ **Future Extension**: Knowledge assets can be tokenized as NFTs.
+
+Each Knowledge NFT represents:
+
+- Dataset with lineage
+- Embedding index
+- Trained model
+- Agent memory
+
+```json
+{
+  "knowledge_nft": {
+    "asset_id": "uuid",
+    "asset_root": "sha256:...",
+    "lineage": ["parent1", "parent2"],
+    "royalties": {
+      "on_sale": "10%",
+      "on_derivative": "5%"
+    },
+    "owner": "wallet_address"
+  }
+}
+```
+
+This enables:
+
+- Trading knowledge assets
+- Programmable royalties
+- Derivative markets
+  STORAGE --> PROOFS
+
+  style MARKET fill:#6c3483
+  style GATEWAY fill:#1f618d
+  style STORAGE fill:#27ae60
+  style PROOFS fill:#b7950b
+
 ```
 
 ## Economic Model
@@ -311,19 +526,46 @@ The CipherOcto Knowledge Market enables a **decentralized economy for verifiable
 
 By combining cryptographic commitments, retrieval proofs, and privacy controls, the market enables trustworthy data exchange for AI systems.
 
-```
-Data Providers
-       ↓
-Knowledge Market
-       ↓
-AI Agents
-       ↓
-Verifiable Outputs
+### The Three-Market System
+
 ```
 
-This positions CipherOcto as a **Verifiable Knowledge Economy** — integrating storage, retrieval, proofs, AI pipelines, and data markets into a single architecture.
+┌─────────────────────────────────────┐
+│ AI Applications │
+└────────────────┬────────────────────┘
+│
+┌────────────────▼────────────────────┐
+│ AI Production Market │
+│ (training / inference / proofs) │
+└────────────────┬────────────────────┘
+│
+┌────────────────▼────────────────────┐
+│ Knowledge Market │
+│ (datasets / embeddings / memory) │
+└────────────────┬────────────────────┘
+│
+┌────────────────▼────────────────────┐
+│ Storage Market (OCTO-S) │
+└────────────────────────────────────┘
+
+```
+
+### Strategic Positioning
+
+CipherOcto unifies four layers that other networks cover separately:
+
+| System | Layer Covered |
+|--------|--------------|
+| Filecoin | storage only |
+| Ocean Protocol | data marketplace only |
+| Akash | compute only |
+| Bittensor | inference only |
+| **CipherOcto** | **all four layers** |
+
+This makes CipherOcto a **decentralized operating system for AI knowledge production**.
 
 ---
 
 **Submission Date:** 2026-03-07
 **Last Updated:** 2026-03-07
+```

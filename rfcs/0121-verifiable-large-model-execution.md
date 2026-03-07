@@ -883,6 +883,7 @@ Pipeline allows each node to hold only its shards.
 - RFC-0117: State Virtualization for Massive Agent Scaling
 - RFC-0118: Autonomous Agent Organizations
 - RFC-0120: Deterministic AI Virtual Machine
+- RFC-0122: Mixture-of-Experts
 
 ## Related Use Cases
 

@@ -310,3 +310,4 @@ graph TB
 - [RFC-0119: Alignment & Control Mechanisms](../rfcs/0119-alignment-control-mechanisms.md)
 - [RFC-0120: Deterministic AI Virtual Machine](../rfcs/0120-deterministic-ai-vm.md)
 - [RFC-0121: Verifiable Large Model Execution](../rfcs/0121-verifiable-large-model-execution.md)
+- [RFC-0122: Mixture-of-Experts](../rfcs/0122-mixture-of-experts.md)

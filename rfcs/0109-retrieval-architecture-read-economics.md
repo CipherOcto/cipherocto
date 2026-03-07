@@ -525,3 +525,8 @@ By separating **storage economics** from **retrieval economics**, the network en
 - RFC-0103: Unified Vector-SQL Storage
 - RFC-0105: Deterministic Quant Arithmetic
 - RFC-0113: Retrieval Gateway & Query Routing
+
+## Related Use Cases
+
+- [Data Marketplace](../../docs/use-cases/data-marketplace.md)
+- [Privacy-Preserving Query Routing](../../docs/use-cases/privacy-preserving-query-routing.md)

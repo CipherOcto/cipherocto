@@ -1,9 +1,11 @@
 # RFC-0002: Agent Manifest Specification
 
 ## Status
+
 Accepted
 
 ## Summary
+
 Define the standard manifest format for CipherOcto agents, enabling autonomous agents to claim missions, report capabilities, and interact with the protocol in a structured, verifiable way.
 
 ## Motivation
@@ -18,7 +20,8 @@ CipherOcto enables AI agents to participate in protocol development. Without a s
 This RFC establishes the agent identity and capability layer.
 
 ### Use Case Link
-- [Autonomous Agent Marketplace](../docs/use-cases/autonomous-agent-marketplace.md)
+
+- [Agent Marketplace (OCTO-D)](../docs/use-cases/agent-marketplace.md)
 
 ## Specification
 
@@ -65,14 +68,14 @@ reputation_score = 0.95
 
 ### Capability Categories
 
-| Category | Operations | Description |
-|----------|------------|-------------|
-| `rust` | implement, test, refactor | Rust development |
-| `protocol` | rfc-read, mission-claim | Protocol interaction |
-| `documentation` | write, update | Docs and guides |
-| `review` | code-review, security-review | PR review |
-| `testing` | unit-test, integration-test | Test creation |
-| `blockchain` | smart-contract, integration | Chain integration |
+| Category        | Operations                   | Description          |
+| --------------- | ---------------------------- | -------------------- |
+| `rust`          | implement, test, refactor    | Rust development     |
+| `protocol`      | rfc-read, mission-claim      | Protocol interaction |
+| `documentation` | write, update                | Docs and guides      |
+| `review`        | code-review, security-review | PR review            |
+| `testing`       | unit-test, integration-test  | Test creation        |
+| `blockchain`    | smart-contract, integration  | Chain integration    |
 
 ### Agent State Machine
 
@@ -200,26 +203,31 @@ Prevents any single agent from monopolizing work. Encourages distribution of tas
 ## Implementation
 
 ### Mission 1: Agent Registry
+
 - Store agent manifests
 - Public key registration
 - Capability indexing
 
 ### Mission 2: Claim API
+
 - Mission claiming endpoint
 - Signature verification
 - State management
 
 ### Mission 3: Progress Tracking
+
 - Progress update endpoint
 - Status queries
 - Timeout monitoring
 
 ### Mission 4: CLI Integration
+
 - `octo agent register <manifest>`
 - `octo agent list`
 - `octo agent status <id>`
 
 ### Mission 5: Reputation System
+
 - Track completed missions
 - Calculate quality scores
 - Influence mission assignment
@@ -227,19 +235,23 @@ Prevents any single agent from monopolizing work. Encourages distribution of tas
 ## Impact
 
 ### Breaking Changes
+
 None. This is new functionality.
 
 ### Security Considerations
+
 - Signature verification must be robust
 - Replay attack prevention
 - Key rotation support
 
 ### Privacy Considerations
+
 - Agent capabilities are public
 - Mission history is public
 - No private data in manifests
 
 ## Related RFCs
+
 - RFC-0001: Mission Lifecycle (agents claim missions)
 
 ## References

@@ -322,6 +322,11 @@ None. DQA is a new type.
 - Item pricing
 - Achievement scores
 
+## Related Use Cases
+
+- [Hybrid AI-Blockchain Runtime](../../docs/use-cases/hybrid-ai-blockchain-runtime.md)
+- [Verifiable AI Agents for DeFi](../../docs/use-cases/verifiable-ai-agents-defi.md)
+
 ---
 
 **Submission Date:** 2025-03-06

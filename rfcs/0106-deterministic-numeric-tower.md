@@ -529,6 +529,11 @@ None. DNT adds new types.
 - RFC-0103: Unified Vector-SQL Storage
 - RFC-0108: Verifiable AI Retrieval (ZK circuit integration)
 
+## Related Use Cases
+
+- [Hybrid AI-Blockchain Runtime](../../docs/use-cases/hybrid-ai-blockchain-runtime.md)
+- [Verifiable AI Agents for DeFi](../../docs/use-cases/verifiable-ai-agents-defi.md)
+
 ## Research Integration
 
 This RFC connects to the CipherOcto proof system stack:

@@ -61,11 +61,11 @@ Retrieval Gateway (control plane)
 
 **Responsibilities by layer**:
 
-| Layer | Responsibility |
-|-------|---------------|
+| Layer             | Responsibility                 |
+| ----------------- | ------------------------------ |
 | Retrieval Gateway | Orchestrates retrieval process |
-| Retrieval Nodes | Execute queries |
-| Storage Providers | Persist data |
+| Retrieval Nodes   | Execute queries                |
+| Storage Providers | Persist data                   |
 
 ### Core Responsibilities
 
@@ -89,27 +89,28 @@ LIMIT 10
 
 The gateway classifies the request type:
 
-| Query Type | Engine |
-|------------|--------|
-| SQL | distributed query engine |
-| Vector | ANN search |
-| File | storage retrieval |
-| Memory | agent memory store |
+| Query Type | Engine                   |
+| ---------- | ------------------------ |
+| SQL        | distributed query engine |
+| Vector     | ANN search               |
+| File       | storage retrieval        |
+| Memory     | agent memory store       |
 
 #### Data Flag Enforcement
 
 Queries inherit execution constraints from data classification flags.
 
-| Data Flag | Execution Policy |
-|-----------|-----------------|
-| PRIVATE | local only |
-| CONFIDENTIAL | TEE execution |
-| SHARED | verifiable computation |
-| PUBLIC | open execution |
+| Data Flag    | Execution Policy       |
+| ------------ | ---------------------- |
+| PRIVATE      | local only             |
+| CONFIDENTIAL | TEE execution          |
+| SHARED       | verifiable computation |
+| PUBLIC       | open execution         |
 
 The gateway ensures that routing respects these constraints.
 
 > ⚠️ **Example**:
+>
 > - `PRIVATE` → must execute locally
 > - `CONFIDENTIAL` → route to enclave node
 > - `SHARED` → requires verification proofs
@@ -119,13 +120,14 @@ The gateway ensures that routing respects these constraints.
 
 The gateway resolves which storage tier contains the requested data.
 
-| Tier | Token | Latency |
-|------|-------|---------|
-| Hot | OCTO-S-H | <10ms |
-| Cold | OCTO-S-C | minutes |
-| Archive | OCTO-H | hours |
+| Tier    | Token    | Latency |
+| ------- | -------- | ------- |
+| Hot     | OCTO-S-H | <10ms   |
+| Cold    | OCTO-S-C | minutes |
+| Archive | OCTO-H   | hours   |
 
 > **Example**:
+>
 > - vector index → hot tier
 > - historical dataset → cold tier
 > - archive proof → archive tier
@@ -134,13 +136,13 @@ The gateway resolves which storage tier contains the requested data.
 
 The gateway selects nodes based on several metrics.
 
-| Metric | Description |
-|--------|-------------|
-| Latency | Response time |
-| Cost | Query cost in OCTO |
+| Metric       | Description           |
+| ------------ | --------------------- |
+| Latency      | Response time         |
+| Cost         | Query cost in OCTO    |
 | Verification | Supported proof types |
-| Reputation | PoR score |
-| Capacity | Available bandwidth |
+| Reputation   | PoR score             |
+| Capacity     | Available bandwidth   |
 
 #### Multi-Node Query Execution
 
@@ -171,6 +173,7 @@ hash(query) → node set
 ```
 
 **Benefits**:
+
 - Verifiable execution
 - Reproducible queries
 
@@ -206,12 +209,12 @@ Each stage may execute on different nodes.
 
 The gateway coordinates verification processes.
 
-| Level | Mechanism |
-|-------|-----------|
-| Basic | Merkle proof |
+| Level    | Mechanism                   |
+| -------- | --------------------------- |
+| Basic    | Merkle proof                |
 | Verified | transcript + coverage proof |
-| Trusted | enclave attestation |
-| ZK | zero-knowledge proof |
+| Trusted  | enclave attestation         |
+| ZK       | zero-knowledge proof        |
 
 The required level depends on the **data flag**.
 
@@ -219,11 +222,11 @@ The required level depends on the **data flag**.
 
 Before execution, the gateway estimates query cost.
 
-| Component | Description |
-|----------|-------------|
-| Bandwidth | data transfer |
-| Compute | query execution |
-| Index lookup | vector search |
+| Component    | Description      |
+| ------------ | ---------------- |
+| Bandwidth    | data transfer    |
+| Compute      | query execution  |
+| Index lookup | vector search    |
 | Verification | proof generation |
 
 Example estimation:
@@ -271,14 +274,15 @@ The gateway uses this metadata for routing.
 
 The gateway must tolerate node failures.
 
-| Strategy | Description |
-|----------|-------------|
+| Strategy          | Description                  |
+| ----------------- | ---------------------------- |
 | Redundant routing | Multiple nodes for same data |
-| Fallback nodes | Secondary node selection |
-| Retry policies | Automatic retry with backoff |
-| Quorum retrieval | Require N of M responses |
+| Fallback nodes    | Secondary node selection     |
+| Retry policies    | Automatic retry with backoff |
+| Quorum retrieval  | Require N of M responses     |
 
 > **Example**:
+>
 > ```
 > primary node fails
 >       ↓
@@ -289,12 +293,12 @@ The gateway must tolerate node failures.
 
 ### Threats
 
-| Threat | Description |
-|--------|-------------|
-| Malicious routing | Gateway directs to compromised nodes |
-| Incomplete retrieval | Partial data returned |
-| Manipulated rankings | Vector results altered |
-| Denial-of-service | Gateway overwhelmed |
+| Threat               | Description                          |
+| -------------------- | ------------------------------------ |
+| Malicious routing    | Gateway directs to compromised nodes |
+| Incomplete retrieval | Partial data returned                |
+| Manipulated rankings | Vector results altered               |
+| Denial-of-service    | Gateway overwhelmed                  |
 
 ### Mitigations
 
@@ -327,12 +331,12 @@ The gateway becomes the **data access layer for agent cognition**.
 
 Gateways must expose telemetry.
 
-| Metric | Description |
-|--------|-------------|
-| Query latency | End-to-end response time |
-| Success rate | Queries completed successfully |
-| Routing decisions | Node selection reasoning |
-| Cost distribution | Fees collected |
+| Metric            | Description                    |
+| ----------------- | ------------------------------ |
+| Query latency     | End-to-end response time       |
+| Success rate      | Queries completed successfully |
+| Routing decisions | Node selection reasoning       |
+| Cost distribution | Fees collected                 |
 
 These metrics support:
 
@@ -343,23 +347,23 @@ These metrics support:
 
 ### With RFC-0109 (Retrieval Architecture)
 
-| Component | Gateway Responsibility |
-|-----------|---------------------|
+| Component         | Gateway Responsibility |
+| ----------------- | ---------------------- |
 | Storage retrieval | Route to storage nodes |
-| Vector retrieval | Route to ANN engines |
-| Agent memory | Route to memory stores |
-| Archive retrieval | Route to cold storage |
+| Vector retrieval  | Route to ANN engines   |
+| Agent memory      | Route to memory stores |
+| Archive retrieval | Route to cold storage  |
 
 ### With Data Flags
 
 The gateway enforces:
 
-| Data Flag | Routing Constraint |
-|-----------|------------------|
-| PRIVATE | Local-only execution |
-| CONFIDENTIAL | TEE-enabled nodes |
-| SHARED | Verification-capable nodes |
-| PUBLIC | Any available node |
+| Data Flag    | Routing Constraint         |
+| ------------ | -------------------------- |
+| PRIVATE      | Local-only execution       |
+| CONFIDENTIAL | TEE-enabled nodes          |
+| SHARED       | Verification-capable nodes |
+| PUBLIC       | Any available node         |
 
 ## Future Extensions
 
@@ -395,11 +399,18 @@ This component enables the network to provide:
 **Last Updated:** 2026-03-07
 
 **Prerequisites**:
+
 - RFC-0106: Deterministic Numeric Tower
 - RFC-0107: Production Vector-SQL Storage v2
 - RFC-0108: Verifiable AI Retrieval
 - RFC-0109: Retrieval Architecture & Read Economics
 
 **Related RFCs**:
+
 - RFC-0103: Unified Vector-SQL Storage
 - RFC-0105: Deterministic Quant Arithmetic
+
+## Related Use Cases
+
+- [Privacy-Preserving Query Routing](../../docs/use-cases/privacy-preserving-query-routing.md)
+- [Data Marketplace](../../docs/use-cases/data-marketplace.md)

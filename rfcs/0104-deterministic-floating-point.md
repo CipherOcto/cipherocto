@@ -832,6 +832,11 @@ None. DFP is a new type that does not modify existing FLOAT/DOUBLE behavior.
 - RFC-0100: AI Quota Marketplace
 - RFC-0102: Wallet Cryptography
 
+## Related Use Cases
+
+- [Hybrid AI-Blockchain Runtime](../../docs/use-cases/hybrid-ai-blockchain-runtime.md)
+- [Decentralized Mission Execution](../../docs/use-cases/decentralized-mission-execution.md)
+
 ## References
 
 - IEEE-754-2019: IEEE Standard for Floating-Point Arithmetic

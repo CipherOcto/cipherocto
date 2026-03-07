@@ -923,4 +923,9 @@ This enables **Proof-Carrying AI** — every AI output includes:
 - RFC-0104: Deterministic Floating-Point
 - RFC-0105: Deterministic Quant Arithmetic
 - RFC-0106: Deterministic Numeric Tower (numeric determinism)
-- RFC-0110: Verifiable RAG & Transcript Proofs (future)
+- RFC-0110: Verifiable Agent Memory
+
+## Related Use Cases
+
+- [Verifiable AI Agents for DeFi](../../docs/use-cases/verifiable-ai-agents-defi.md)
+- [Data Marketplace](../../docs/use-cases/data-marketplace.md)

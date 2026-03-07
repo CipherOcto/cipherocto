@@ -1090,6 +1090,18 @@ FPGA
 
 Use ML to optimize vector partitioning.
 
+## Related RFCs
+
+- RFC-0103: Unified Vector-SQL Storage (superseded by this RFC)
+- RFC-0106: Deterministic Numeric Tower (numeric types)
+- RFC-0108: Verifiable AI Retrieval (ZK commitments)
+- RFC-0109: Retrieval Architecture (storage integration)
+
+## Related Use Cases
+
+- [Unified Vector-SQL Storage](../../docs/use-cases/unified-vector-sql-storage.md)
+- [Data Marketplace](../../docs/use-cases/data-marketplace.md)
+
 ## Conclusion
 
 This RFC defines a **production-grade vector-SQL storage engine** capable of:

@@ -453,3 +453,8 @@ Proof Infrastructure (STWO/AIR)
 **Related RFCs:**
 
 - RFC-0113: Retrieval Gateway & Query Routing
+
+## Related Use Cases
+
+- [Verifiable AI Agents for DeFi](../../docs/use-cases/verifiable-ai-agents-defi.md)
+- [Agent Marketplace (OCTO-D)](../../docs/use-cases/agent-marketplace.md)

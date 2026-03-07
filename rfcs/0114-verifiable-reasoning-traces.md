@@ -368,6 +368,7 @@ Royalties propagate backward through the lineage.
 - RFC-0108: Verifiable AI Retrieval
 - RFC-0110: Verifiable Agent Memory
 - RFC-0111: Knowledge Market & Verifiable Data Assets
+- RFC-0116: Unified Deterministic Execution Model
 
 ## Related Use Cases
 

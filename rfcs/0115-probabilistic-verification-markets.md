@@ -404,6 +404,7 @@ The same principle adapts well to decentralized AI.
 - RFC-0108: Verifiable AI Retrieval
 - RFC-0109: Retrieval Architecture & Read Economics
 - RFC-0111: Knowledge Market & Verifiable Data Assets
+- RFC-0116: Unified Deterministic Execution Model
 
 ## Related Use Cases
 

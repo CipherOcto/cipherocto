@@ -78,3 +78,4 @@ graph TB
 - [RFC-0104: Deterministic Floating-Point](../rfcs/0104-deterministic-floating-point.md)
 - [RFC-0105: Deterministic Quant Arithmetic](../rfcs/0105-deterministic-quant-arithmetic.md)
 - [RFC-0106: Deterministic Numeric Tower](../rfcs/0106-deterministic-numeric-tower.md)
+- [RFC-0116: Unified Deterministic Execution Model](../rfcs/0116-unified-deterministic-execution-model.md)

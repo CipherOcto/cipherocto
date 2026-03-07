@@ -147,3 +147,4 @@ The trace proves regulatory compliance.
 - [RFC-0114: Verifiable Reasoning Traces](../rfcs/0114-verifiable-reasoning-traces.md)
 - [RFC-0110: Verifiable Agent Memory](../rfcs/0110-verifiable-agent-memory.md)
 - [RFC-0111: Knowledge Market](../rfcs/0111-knowledge-market-verifiable-data-assets.md)
+- [RFC-0116: Unified Deterministic Execution Model](../rfcs/0116-unified-deterministic-execution-model.md)

@@ -843,6 +843,7 @@ In decentralized verification:
 - RFC-0115: Probabilistic Verification Markets
 - RFC-0120: Deterministic AI Virtual Machine
 - RFC-0121: Verifiable Large Model Execution
+- RFC-0123: Scalable Verifiable AI Execution
 
 ## Related Use Cases
 

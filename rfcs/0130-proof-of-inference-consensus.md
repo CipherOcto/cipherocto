@@ -715,6 +715,7 @@ SNARKs require trusted setup ceremonies which create:
 - RFC-0122: Mixture-of-Experts
 - RFC-0124: Proof Market and Hierarchical Inference Network
 - RFC-0125: Model Liquidity Layer
+- RFC-0131: Deterministic Transformer Circuit
 
 ## Related Use Cases
 

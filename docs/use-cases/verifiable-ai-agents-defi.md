@@ -314,3 +314,5 @@ graph TB
 - [RFC-0123: Scalable Verifiable AI Execution](../rfcs/0123-scalable-verifiable-ai-execution.md)
 - [RFC-0124: Proof Market and Hierarchical Inference Network](../rfcs/0124-proof-market-hierarchical-network.md)
 - [RFC-0125: Model Liquidity Layer](../rfcs/0125-model-liquidity-layer.md)
+- [RFC-0130: Proof-of-Inference Consensus](../rfcs/0130-proof-of-inference-consensus.md)
+- [RFC-0131: Deterministic Transformer Circuit](../rfcs/0131-deterministic-transformer-circuit.md)

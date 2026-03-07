@@ -814,6 +814,8 @@ Our approach uses:
 - RFC-0121: Verifiable Large Model Execution
 - RFC-0122: Mixture-of-Experts
 - RFC-0124: Proof Market and Hierarchical Inference Network
+- RFC-0130: Proof-of-Inference Consensus
+- RFC-0131: Deterministic Transformer Circuit
 
 ## Related Use Cases
 

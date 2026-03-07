@@ -509,6 +509,7 @@ Simple batching (multiple proofs in one transaction) still requires linear verif
 ## Related Use Cases
 
 - [Hybrid AI-Blockchain Runtime](../../docs/use-cases/hybrid-ai-blockchain-runtime.md)
+- [Probabilistic Verification Markets](../../docs/use-cases/probabilistic-verification-markets.md)
 - [Node Operations](../../docs/use-cases/node-operations.md)
 
 ---

@@ -432,6 +432,7 @@ This RFC uses capability bitmaps instead.
 
 ## Related Use Cases
 
+- [Compute Provider Network (OCTO-A)](../../docs/use-cases/compute-provider-network.md)
 - [Node Operations](../../docs/use-cases/node-operations.md)
 - [Hybrid AI-Blockchain Runtime](../../docs/use-cases/hybrid-ai-blockchain-runtime.md)
 

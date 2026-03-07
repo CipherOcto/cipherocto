@@ -95,3 +95,5 @@ graph TB
 - [RFC-0142: Data Availability & Sampling Protocol](../rfcs/0142-data-availability-sampling.md)
 - [RFC-0143: OCTO-Network Protocol](../rfcs/0143-octo-network-protocol.md)
 - [RFC-0144: Inference Task Market](../rfcs/0144-inference-task-market.md)
+- [RFC-0145: Hardware Capability Registry](../rfcs/0145-hardware-capability-registry.md)
+- [RFC-0146: Proof Aggregation Protocol](../rfcs/0146-proof-aggregation-protocol.md)

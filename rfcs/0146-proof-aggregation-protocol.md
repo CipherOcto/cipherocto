@@ -245,63 +245,70 @@ trait AggregationCircuit {
 }
 ```
 
-### Aggregation Circuit Definition
+### Aggregation Circuit Definition (MMR-Based)
 
-The recursive aggregation circuit is defined as:
+The recursive aggregation circuit uses **Merkle Mountain Range (MMR)** for efficient incremental updates:
 
 ```
-AggregationCircuit:
+AggregationCircuit (MMR-Based):
 
 Public Inputs:
-    left_child_digest: Digest
-    right_child_digest: Digest
-    left_public_input_root: Digest
-    right_public_input_root: Digest
+    // Existing MMR peaks (from previous aggregation)
+    existing_peaks: Vec<Digest>    // Array of peak digests
+    peak_count: u8                 // Number of peaks
+
+    // New proof being appended
+    new_leaf: Digest              // Leaf digest of new proof
+    new_public_input_root: Digest  // Public inputs of new proof
+
+    // Binding
     program_hash: Digest
-    level: u8
-    proof_count: u32
+    proof_count: u32              // Total after adding new proof
     aggregate_id: Digest
 
 Private Inputs:
-    left_proof: Vec<u8>
-    right_proof: Vec<u8>
+    new_proof: Vec<u8>            // The STARK proof to verify
 
 Constraints:
-    // 1. Verify left child proof
-    verify_stark(left_proof, left_public_input_root)
+    // 1. Verify new proof
+    verify_stark(new_proof, new_public_input_root)
 
-    // 2. Verify right child proof
-    verify_stark(right_proof, right_public_input_root)
+    // 2. Compute new leaf digest
+    leaf_digest = H(new_proof_commitment || new_public_input_root)
+    assert(leaf_digest == new_leaf)
 
-    // 3. CRITICAL: Enforce Merkle root from children
-    // This prevents proof substitution attacks
-    proof_root = MerkleRoot(left_child_digest, right_child_digest)
+    // 3. CRITICAL: Append leaf to existing MMR (binary merge)
+    // This implements the MMR bagging operation
+    new_peaks = mmr_append(existing_peaks, proof_count, new_leaf)
 
-    // 4. Verify child digests match public inputs
-    left_child_digest = H(left_proof_commitment || left_public_input_root)
-    right_child_digest = H(right_proof_commitment || right_public_input_root)
+    // 4. Compute aggregate_id binding all peaks
+    aggregate_id = H(new_peaks || proof_count || program_hash)
 
-    // 5. Compute aggregate_id
-    aggregate_id = H(left_child_digest || right_child_digest || level || proof_count || program_hash)
-
-    // 6. Output commitment
-    output = H(aggregate_id || left_public_input_root || right_public_input_root)
+    // 5. Output commitment (bag of peaks)
+    output = H(aggregate_id || new_peaks[0])  // Primary root
 ```
 
-> **Security Note:** Constraint #3 is CRITICAL. Without `proof_root = MerkleRoot(left_child, right_child)`, an attacker can claim different children than those verified, making Merkle inclusion meaningless.
+> **Why MMR for Circuit:**
+> - **Efficient:** O(log n) update without rebuilding entire tree
+> - **Append-only:** New proofs added to end, preserving order
+> - **Deterministic:** Same proofs in same order → same peaks
+> - **Battle-tested:** Used in Grin, Filecoin, Chia
 
 ### Proof Binding
 
 To prevent proof substitution and reordering attacks:
 
 ```rust
-/// Aggregate ID computation - binds child proofs, ordering, and program
-fn compute_aggregate_id(
-    left_child: Digest,
-    right_child: Digest,
-    level: u8,
+/// Aggregate ID computation - binds MMR peaks and program
+fn compute_aggregate_id_mmr(
+    peaks: &[Digest],
     proof_count: u32,
     program_hash: Digest,
+) -> Digest {
+    // Bag the peaks: H(peak_1 || peak_2 || ... || peak_n)
+    let peak_hash = poseidon_hash(peaks);
+    poseidon_hash(&[peak_hash, Digest::from(proof_count), program_hash])
+}
 ) -> Digest {
     H(left_child || right_child || level || proof_count || program_hash)
 }
@@ -952,18 +959,26 @@ enum RecoveryAction {
 A(P1, P2, P3) = A(A(P1, P2), P3) = A(P1, A(P2, P3))
 ```
 
-**Clarification on Associativity vs. Determinism:**
+**Deterministic Append-Only Structure (MMR)**
 
-The protocol enforces **Canonical Ordering** (Deterministic) rather than true Associativity. This is a critical distinction:
+The protocol uses **Merkle Mountain Range (MMR)** — an append-only structure that is **NOT associative** but is **deterministic**. This is a critical distinction:
 
-| Property | Associativity | Canonical Ordering (This RFC) |
-|----------|---------------|------------------------------|
-| Definition | `(A+B)+C = A+(B+C)` | Fixed sort order → unique root |
-| Tree structure | Any parenthesization works | Left-to-right only |
+| Property | Associativity | MMR (This RFC) |
+|----------|---------------|----------------|
+| Definition | `(A+B)+C = A+(B+C)` | Fixed insertion order |
+| Tree structure | Any parenthesization | Left-to-right append |
 | Proof mixing | Allowed | NOT allowed |
+| Operation | Commutative-like | Order-dependent |
 
-**Why not Associative?**
-Hash functions are NOT commutative: `H(A || B) ≠ H(B || A)`. A binary tree where left/right positions matter cannot be truly associative.
+**Why MMR is NOT Associative:**
+MMRs are order-dependent data structures. Inserting A, then B, then C produces a different structure than inserting B, then A, then C. This is **by design** — it ensures:
+- **Append-only:** New proofs always added to end
+- **Order-preserving:** Proof submission order is captured
+- **Efficient:** O(log n) per insertion
+
+**This is acceptable because:**
+- The protocol defines a **canonical ordering** (by proof_id or block timestamp)
+- All honest aggregators will produce identical MMR roots for identical proof sequences
 
 **Solution: Canonical Proof Ordering**
 
@@ -2072,16 +2087,11 @@ Run 1000 simulations, verify Nash equilibrium.
 
 ---
 
-**Version:** 4.0
+**Version:** 4.1
 **Submission Date:** 2026-03-07
 **Last Updated:** 2026-03-07
-**Changes:** v4.0 10/10 production-ready (post-audit fixes):
-- Fix 1: Add Merkle root constraint in aggregation circuit
-- Fix 2: Define Poseidon parameters (width, rate, rounds)
-- Fix 3: Replace incremental aggregation with Merkle Mountain Range
-- Fix 4: Add unique proof_id with epoch inclusion
-- Fix 5: Add proof submission receipts for censorship detection
-- Fix 6: Add network message types and SSZ serialization
-- Fix 7: Add canonical serialization constants (MAX_PROOF_SIZE, etc.)
-- Allow M31, BabyBear, Goldilocks fields (not just M31)
-- Specify FRI parameters for 128-bit security
+**Changes:** v4.1 structural fix (MMR-only):
+- Unify circuit definition to MMR-only (remove binary tree references)
+- Replace "Associativity" with "Deterministic Append-Only" for MMR
+- Add MMR-based aggregate_id computation
+- Update proof binding for MMR peaks

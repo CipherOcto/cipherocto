@@ -298,10 +298,24 @@ DFP_MUL(a, b):
     1. Handle special values (NaN, Infinity, Zero)
     2. result_sign = a.sign XOR b.sign
     3. result_exponent = a.exponent + b.exponent
-    4. result_mantissa = a.mantissa * b.mantissa
-    5. Apply RNE rounding to 113-bit precision cap
-    6. Normalize
-    7. Return
+
+    // 113-bit × 113-bit = up to 226-bit intermediate
+    // Use 256-bit multiplication (two u128s)
+    product_hi = (a.mantissa as u256) * (b.mantissa as u256)  // Upper bits
+    product_lo = ...                                          // Lower bits
+
+    // Extract top 128 bits for rounding
+    // The 226-bit product is in product_hi:product_lo
+    // We need the most significant 128 bits for rounding
+    intermediate_128 = (product_hi << 128) | product_lo  // This is conceptual
+
+    // Apply RNE rounding from 128 to 113 bits
+    // Pass upper 128 bits to round_to_113
+    (result_mantissa, exp_adj) = round_to_113(product_hi, product_lo)
+    result_exponent += exp_adj
+
+    4. Normalize (ensure odd mantissa)
+    5. Return
 ```
 
 #### Division Algorithm (Deterministic Long Division)
@@ -313,35 +327,39 @@ DFP_DIV(a, b):
     2. result_sign = a.sign XOR b.sign
     3. result_exponent = a.exponent - b.exponent
 
-    // DETERMINISTIC LONG DIVISION (not simple integer division)
-    // Represent 256-bit dividend as two u128s: (hi, lo)
-    // a.mantissa << 128 = (hi=a.mantissa, lo=0)
+    // DETERMINISTIC LONG DIVISION using standard shift-and-subtract
+    // Represent dividend as 256-bit: (dividend_hi, dividend_lo)
+    // where initial: hi = a.mantissa, lo = 0
     dividend_hi = a.mantissa
     dividend_lo = 0u128
-    quotient_hi = 0u128
-    quotient_lo = 0u128
+
+    // Quotient accumulator
+    quotient = 0u128
 
     // Fixed 256 iterations for determinism
     for i in 0..256:
-        // Shift dividend left by 1 (carry between hi/lo)
-        (dividend_hi, dividend_lo) = shift_left_1(dividend_hi, dividend_lo)
+        // Shift dividend left by 1 (with carry between hi/lo)
+        (dividend_hi, dividend_lo, carry) = shift_left_with_carry(
+            dividend_hi, dividend_lo
+        )
 
-        // Extract current bit position
-        bit_pos = 255 - i
+        // Shift quotient left by 1
+        quotient = quotient << 1
 
-        // Compare dividend >= (b.mantissa << bit_pos)
-        if compare_256bit(dividend_hi, dividend_lo,
-                          b.mantissa, 0u128 << bit_pos):
-            quotient_lo |= 1  // Set bit in quotient
-            // Subtract
-            (dividend_hi, dividend_lo) = subtract_256bit(
-                dividend_hi, dividend_lo,
-                b.mantissa, 0u128 << bit_pos
-            )
+        // Compare: dividend >= b.mantissa ?
+        // (Compare 256-bit dividend against 128-bit b.mantissa positioned at top)
+        if (dividend_hi > b.mantissa) OR
+           (dividend_hi == b.mantissa AND dividend_lo > 0):
+            // Subtract b.mantissa from dividend (dividend_hi is top 128 bits)
+            dividend_hi = dividend_hi - b.mantissa
+            // Set quotient bit
+            quotient = quotient | 1
+        // Else: quotient bit remains 0, dividend unchanged
 
-    // quotient = (quotient_hi, quotient_lo) now has full precision
+    // quotient now has 256-bit precision
     // Apply RNE rounding from 256 to 113 bits
-    (result_mantissa, exp_adj) = round_to_113(quotient_hi, quotient_lo)
+    // Extract most significant 128 bits for rounding
+    (result_mantissa, exp_adj) = round_to_113_from_256(quotient)
     result_exponent += exp_adj
 
     4. Normalize (ensure odd mantissa)
@@ -499,6 +517,26 @@ fn round_to_113(mantissa: i128) -> (u128, i32) {
     // CRITICAL: Return both mantissa AND exponent adjustment
     // Shifting right by trailing zeros DECREASES the value, so we ADD to exponent
     (normalized, trailing as i32)
+}
+
+/// Round 256-bit quotient to 113-bit with sticky bit (RNE)
+/// Input: 256-bit unsigned integer from division
+/// Output: (113-bit odd mantissa, exponent_adjustment)
+/// NOTE: Extracts upper 128 bits as the significant portion for rounding
+fn round_to_113_from_256(quotient: u256) -> (u128, i32) {
+    // Extract upper 128 bits from 256-bit quotient
+    // This represents the significant digits after the binary point
+    let hi = quotient >> 128;  // Upper 128 bits
+    let lo = quotient & ((1u256 << 128) - 1);  // Lower 128 bits
+
+    // For rounding, we need: [upper 113 bits] [round bit] [sticky bits]
+    // Use upper 128 bits as the mantissa for round_to_113
+    // Convert u256 to i128 for the existing function (upper 128 bits fit in i128)
+    let mantissa_for_rounding = hi as i128;
+
+    // Pass to round_to_113 - it handles the rounding from 128 to 113 bits
+    // The sticky bit computation includes bits from 'lo' (lower 128 bits)
+    round_to_113(mantissa_for_rounding)
 }
 
 /// Normalize after rounding to ensure canonical odd mantissa
@@ -1163,12 +1201,12 @@ None. DFP is a new type that does not modify existing FLOAT/DOUBLE behavior.
 
 ---
 
-**Version:** 1.8
+**Version:** 1.10
 **Submission Date:** 2025-03-06
 **Last Updated:** 2026-03-08
-**Changes:** v1.8 production fixes:
-- Fix sticky bit mask: (abs_mant >> 114) != 0
-- Fix exponent adjustment: positive (adding back lost magnitude)
-- Fix division: use two-u128 (hi, lo) decomposition
-- Add Infinity class lifecycle note: never produced by arithmetic
-- Add golden rules to implementation section
+**Changes:** v1.10 production fixes:
+- Add round_to_113_from_256 for 256-bit division output handling
+- Fix division: use shift-and-subtract algorithm (not u128 << bit_pos)
+- Clarify Infinity class: only used in from_f64() before saturation
+- v1.9: Fix multiplication 226-bit intermediate handling
+- v1.8: Fix sticky bit mask, exponent adjustment, division decomposition

@@ -196,8 +196,10 @@ struct AggregatedProof {
     /// - right_child: Digest
     /// - stark_proof: Vec<u8>
     ///
-    /// For full definition, see "Aggregated proof with binding" below.
-    _use_canonical_definition: (),
+    /// For the canonical AggregatedProof definition, see "Proof Binding" section.
+    /// This placeholder exists for backward compatibility and is DEPRECATED.
+    #[deprecated(use = "Proof Binding section")]
+    proof_root: Digest,  // Legacy field - use canonical definition
 }
 
 struct AggregateMetadata {
@@ -323,6 +325,8 @@ struct AggregatedProof {
     stark_proof: Vec<u8>,
 }
 ```
+
+> **Note on `program_hash`:** This is the hash of the compiled STARK circuit (the verification key). It prevents cross-circuit aggregation attacks where proofs from different AI models could be mixed. The registry of allowed `program_hash` values is maintained by governance; only accepted circuit hashes may be aggregated.
 
 **Binding prevents:**
 - Proof swapping (different child order)
@@ -577,38 +581,22 @@ fn pad_to_power_of_two(proofs: Vec<InferenceProof>) -> Vec<InferenceProof> {
     [proofs, null_proofs].concat()
 }
 
-/// Null proof handling in circuit:
+/// Padding Strategy: Private Input (O(1) Verification)
 ///
-/// The aggregation circuit MUST handle NULL_PROOF with strict security constraints:
+/// CRITICAL: `is_padding` is a PRIVATE input (witness), NOT a public input.
 ///
-/// Option 1: Identity verification (SELECTED)
-///   - `is_padding` is a PUBLIC INPUT to the circuit (enforced by verifier)
-///   - If `is_padding=true`, circuit skips verification (accepts as identity)
-///   - Circuit MUST enforce: `proof_id == Digest::ZERO && task_id == Digest::ZERO` when `is_padding=true`
-///   - This prevents attackers from bypassing verification with forged proofs
+/// If `is_padding` were a public input, the verifier would need to read O(N) flags,
+/// breaking the O(1) verification guarantee.
 ///
-/// The circuit enforces these constraints:
-/// ```
-/// if is_padding == true:
-///     assert(proof_id == Digest::ZERO)
-///     assert(task_id == Digest::ZERO)
-///     assert(public_inputs == Vec::new())
-///     return ACCEPT
-/// else:
-///     return verify_stark(proof, public_inputs)
-/// ```
+/// Solution: The circuit proves padding correctness internally:
+/// - Public Inputs (O(1)): proof_root, proof_count, aggregate_id, level, program_hash
+/// - Private Witness: leaves (real + NULL proofs), merkle_proofs
 ///
-/// Security: By making `is_padding` a public input, the verifier can distinguish
-/// padding from real proofs. The circuit enforces that padding proofs have
-/// zero/empty values, preventing forged padding.
+/// The circuit verifies internally:
+/// - NULL proofs have proof_id == 0, task_id == 0, empty public_inputs
+/// - Merkle proofs verify leaves against proof_root
 ///
-/// NULL_PROOF constant (not compile-time, shown as schema):
-struct NULL_PROOF {
-    proof_id: Digest::ZERO,    // Must be zero
-    task_id: Digest::ZERO,     // Must be zero
-    public_inputs: Vec::new(),   // Must be empty
-    is_padding: true,           // Circuit public input
-}
+/// Result: O(1) verification - verifier sees only the root!
 
 ### Epoch Management
 
@@ -792,45 +780,47 @@ enum RecoveryAction {
 A(P1, P2, P3) = A(A(P1, P2), P3) = A(P1, A(P2, P3))
 ```
 
+**Clarification on Associativity vs. Determinism:**
+
+The protocol enforces **Canonical Ordering** (Deterministic) rather than true Associativity. This is a critical distinction:
+
+| Property | Associativity | Canonical Ordering (This RFC) |
+|----------|---------------|------------------------------|
+| Definition | `(A+B)+C = A+(B+C)` | Fixed sort order → unique root |
+| Tree structure | Any parenthesization works | Left-to-right only |
+| Proof mixing | Allowed | NOT allowed |
+
+**Why not Associative?**
+Hash functions are NOT commutative: `H(A || B) ≠ H(B || A)`. A binary tree where left/right positions matter cannot be truly associative.
+
+**Solution: Canonical Proof Ordering**
+
+The protocol requires proofs to be sorted by `proof_id` before building the Merkle tree:
+
+```rust
+/// Canonical aggregation: proofs sorted before tree construction
+fn canonical_aggregate(proofs: &[InferenceProof]) -> AggregatedProof {
+    // Step 1: Sort proofs by proof_id (canonical ordering)
+    let mut sorted = proofs.to_vec();
+    sorted.sort_by_key(|p| p.proof_id);
+
+    // Step 2: Build Merkle tree with sorted order
+    let leaves: Vec<Digest> = sorted.iter()
+        .map(|p| compute_leaf_digest(p))
+        .collect();
+    let root = merkle_root(&leaves);
+
+    // Step 3: Generate recursive STARK proof
+    // ...
+}
+```
+
 This ensures:
+- **Unique root:** Same set of proofs → same sorted order → same root
+- **No confusion:** `((P1,P2),P3)` in canonical order equals `(P1,(P2,P3))` because order is fixed
+- **Deterministic:** All aggregators produce identical roots for identical proof sets
 
-- Incremental updates are valid
-- Order doesn't matter
-- Parallel aggregation safe
-
-#### Mathematical Proof of Associativity
-
-The binary tree recursion achieves associativity through its structure:
-
-**Theorem:** Let `A(P_i, P_j)` denote aggregating proofs `P_i` through `P_j` using binary tree recursion. Then for any proofs `P1, P2, P3`:
-
-```
-A(P1, P2, P3) = A(A(P1, P2), P3) = A(P1, A(P2, P3))
-```
-
-**Proof:**
-
-1. **Binary tree structure:** Each aggregation combines exactly 2 proofs via the aggregation circuit `Agg(P_a, P_b) → P_ab`
-
-2. **Base case:** `Agg(P1, P2)` produces a proof committing to both P1 and P2 via Merkle root
-
-3. **Inductive step:** Assume `Agg(P1, P2) = P_12` commits to `{P1, P2}`
-   - `Agg(P_12, P3)` commits to `{P1, P2, P3}` via fixed left-to-right binary tree construction
-   - `Agg(P1, P_23)` similarly commits to `{P1, P2, P3}`
-
-4. **Fixed canonical ordering:** The binary tree construction uses a **fixed left-to-right ordering**:
-   - Left subtree always built first, then right
-   - This defines a canonical parenthesization: `((P1 P2) P3)` vs `(P1 (P2 P3))`
-   - For the **same set of leaves** `{P1, P2, P3}` in canonical order, both parenthesizations produce identical Merkle roots
-   - The key insight: associativity holds because we aggregate over the **same set** of proofs in **canonical order**, not because Merkle roots commute
-
-5. **Conclusion:** The aggregation operator is associative because both `A(A(P1, P2), P3)` and `A(P1, A(P2, P3))` produce proofs that commit to the same set of leaves in canonical order.
-
-∎
-
-> **Note:** This is NOT claiming Merkle roots are order-independent (they are not). It claims that for a fixed canonical leaf ordering, different binary tree parenthesizations produce the same root because they compute over the same ordered set.
-
-### Incremental Aggregation Algorithm
+### Incremental Aggregation with Canonical Ordering
 
 The `add_proof` function extends an existing aggregate with a new proof:
 
@@ -1597,13 +1587,14 @@ const EVIDENCE_THRESHOLD: u8 = 2;           // corroborating sources
 
 ---
 
-**Version:** 2.0
+**Version:** 2.1
 **Submission Date:** 2026-03-07
 **Last Updated:** 2026-03-07
-**Changes:** v2.0 final review fixes:
-- Resolve AggregatedProof struct conflict (single canonical definition)
-- Specify add_proof incremental aggregation algorithm
-- Fix associativity proof (corrected logical error)
+**Changes:** v2.1 critical fixes:
+- Clarify Canonical Ordering (Deterministic) vs Associativity
+- Fix padding: is_padding is PRIVATE input (O(1) verification)
+- Add program_hash governance note
+- Clean up duplicate struct definition
 - Add hardware baseline to performance targets
 - Add padding security constraints (is_padding as public input)
 - Clarify cross-shard aggregation as out of scope

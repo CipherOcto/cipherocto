@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Repository Status
 
-**IMPORTANT:** This is a documentation-only repository in seed stage development. There is NO implementation code yet. The repository contains architectural planning, whitepapers, and tokenomics documentation for a future decentralized AI platform.
+**IMPORTANT:** Implementation has begun. The repository now contains both architectural planning (RFCs, Missions) and implementation code (crates/). The current focus is on RFC-0104 Deterministic Floating-Point (DFP) implementation starting with the determin/ crate.
 
 ## Project Overview
 

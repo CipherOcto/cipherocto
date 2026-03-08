@@ -314,17 +314,35 @@ DFP_DIV(a, b):
     3. result_exponent = a.exponent - b.exponent
 
     // DETERMINISTIC LONG DIVISION (not simple integer division)
-    // Use 256-bit intermediate for precision
-    dividend = a.mantissa << 128  // Scale for 128-bit precision
-    quotient = 0
-    for i in 0..128:              // Fixed 128 iterations
-        if dividend >= (b.mantissa << i):
-            quotient |= 1
-            dividend -= b.mantissa << i
+    // Represent 256-bit dividend as two u128s: (hi, lo)
+    // a.mantissa << 128 = (hi=a.mantissa, lo=0)
+    dividend_hi = a.mantissa
+    dividend_lo = 0u128
+    quotient_hi = 0u128
+    quotient_lo = 0u128
 
-    // quotient now has 128-bit precision result
-    // Apply RNE rounding from 128 to 113 bits
-    result_mantissa = round_to_113(quotient)
+    // Fixed 256 iterations for determinism
+    for i in 0..256:
+        // Shift dividend left by 1 (carry between hi/lo)
+        (dividend_hi, dividend_lo) = shift_left_1(dividend_hi, dividend_lo)
+
+        // Extract current bit position
+        bit_pos = 255 - i
+
+        // Compare dividend >= (b.mantissa << bit_pos)
+        if compare_256bit(dividend_hi, dividend_lo,
+                          b.mantissa, 0u128 << bit_pos):
+            quotient_lo |= 1  // Set bit in quotient
+            // Subtract
+            (dividend_hi, dividend_lo) = subtract_256bit(
+                dividend_hi, dividend_lo,
+                b.mantissa, 0u128 << bit_pos
+            )
+
+    // quotient = (quotient_hi, quotient_lo) now has full precision
+    // Apply RNE rounding from 256 to 113 bits
+    (result_mantissa, exp_adj) = round_to_113(quotient_hi, quotient_lo)
+    result_exponent += exp_adj
 
     4. Normalize (ensure odd mantissa)
     5. Return
@@ -458,8 +476,8 @@ fn round_to_113(mantissa: i128) -> (u128, i32) {
     let round_bit = (abs_mant >> ROUND_BIT_POS) & 1;
 
     // Extract sticky bits (bits 114-127) - OR them together
-    let sticky_mask = (1u128 << STICKY_BITS) - 1;  // Lower 14 bits
-    let sticky_bit = (abs_mant & (sticky_mask << ROUND_BIT_POS)) != 0;
+    // Sticky = any bit set ABOVE the round bit (positions 114-127)
+    let sticky_bit = (abs_mant >> (ROUND_BIT_POS + 1)) != 0;
 
     // Extract kept bits (lower 113 bits)
     let kept_bits = abs_mant & ((1u128 << ROUND_BIT_POS) - 1);
@@ -479,7 +497,8 @@ fn round_to_113(mantissa: i128) -> (u128, i32) {
     let normalized = rounded >> trailing;
 
     // CRITICAL: Return both mantissa AND exponent adjustment
-    (normalized, -(trailing as i32))  // Negative because shifting right reduces value
+    // Shifting right by trailing zeros DECREASES the value, so we ADD to exponent
+    (normalized, trailing as i32)
 }
 
 /// Normalize after rounding to ensure canonical odd mantissa
@@ -580,7 +599,11 @@ pub const DFP_CANONICAL_NAN: Dfp = Dfp {
     exponent: 0,
 };
 
-/// Positive infinity
+/// Infinity class is reserved for completeness but NEVER produced by arithmetic.
+/// All overflow saturates to MAX value (class=Normal).
+/// Only used in from_f64() conversion before saturation.
+/// This constant exists only for completeness - DO NOT use in computations.
+#[allow(dead_code)]
 pub const DFP_POS_INFINITY: Dfp = Dfp {
     class: DfpClass::Infinity,
     sign: false,
@@ -588,7 +611,8 @@ pub const DFP_POS_INFINITY: Dfp = Dfp {
     exponent: 0,
 };
 
-/// Negative infinity
+/// @hidden - see DFP_POS_INFINITY
+#[allow(dead_code)]
 pub const DFP_NEG_INFINITY: Dfp = Dfp {
     class: DfpClass::Infinity,
     sign: true,
@@ -1125,12 +1149,12 @@ None. DFP is a new type that does not modify existing FLOAT/DOUBLE behavior.
 
 ---
 
-**Version:** 1.6
+**Version:** 1.8
 **Submission Date:** 2025-03-06
 **Last Updated:** 2026-03-08
-**Changes:** v1.6 final production fixes:
-- Fix round_to_113: return (mantissa, exponent_adjustment) tuple
-- Fix division: specify deterministic long division algorithm
-- Fix sqrt: use fixed 32 iterations (not convergence-based)
-- Clarify encoding: in-memory may have tail padding, always use to_bytes()
-- Confirm duplicate impl block already removed
+**Changes:** v1.8 production fixes:
+- Fix sticky bit mask: (abs_mant >> 114) != 0
+- Fix exponent adjustment: positive (adding back lost magnitude)
+- Fix division: use two-u128 (hi, lo) decomposition
+- Add Infinity class lifecycle note: never produced by arithmetic
+- Add golden rules to implementation section

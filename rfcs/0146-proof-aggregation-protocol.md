@@ -188,8 +188,8 @@ struct AggregateMetadata {
     /// Block height
     block_height: u64,
 
-    /// Aggregator signature
-    aggregator_sig: Option<Signature>,
+    /// Aggregator signature (REQUIRED for accountability)
+    aggregator_sig: Signature,
 }
 ```
 
@@ -386,6 +386,43 @@ level n:  2^n proofs
 | 5 | 32 | Epoch |
 | ... | 2^n | Extended |
 
+### Non-Power-of-Two Batch Sizes
+
+The binary tree assumes powers of two. Handle odd batch sizes:
+
+| Method | Description | When |
+|--------|-------------|------|
+| **Padding** | Add null/identity proofs to reach power of two | Default |
+| **Variable-depth** | Use different depths for different subtrees | Performance-critical |
+| **Leftover handling** | Aggregate power-of-two subset, verify remaining individually | Simpler |
+
+```rust
+/// Pad to power of two
+fn pad_to_power_of_two(proofs: Vec<InferenceProof>) -> Vec<InferenceProof> {
+    let count = proofs.len();
+    let power = count.next_power_of_two();
+
+    if count == power {
+        return proofs;
+    }
+
+    // Add null proofs to fill
+    let padding = power - count;
+    let null_proofs = vec![NULL_PROOF; padding];
+
+    [proofs, null_proofs].concat()
+}
+
+/// Null proof (identity for aggregation)
+const NULL_PROOF: InferenceProof = InferenceProof {
+    version: 0,
+    proof_id: Digest::ZERO,
+    task_id: Digest::ZERO,
+    public_inputs: vec![],
+    stark_proof: vec![],
+};
+```
+
 ### Incremental Aggregation
 
 **CRITICAL REQUIREMENT:** The aggregation operator MUST be associative:
@@ -447,6 +484,39 @@ fn verify_at_consensus(
 }
 ```
 
+### Consensus Rejection Rules
+
+When `verify_at_consensus` returns `false`:
+
+| Condition | Action |
+|----------|--------|
+| Invalid proof | Block rejected entirely |
+| Invalid metadata | Block rejected |
+| Missing required fields | Block rejected |
+| Proof not for current epoch | Block rejected |
+
+### Double-Aggregation Resolution
+
+When two valid aggregations exist for overlapping proof sets:
+
+1. **First-seen wins** — First valid aggregation in consensus wins
+2. **Proofs are exclusive** — Same proof cannot be in two aggregates
+3. **Dispute window** — 3 block challenge period
+
+### Partial Batch Handling
+
+- A block MAY include partial batch (some proofs not aggregated)
+- Unaggregated proofs verified individually at consensus
+- Aggregator penalized for incomplete aggregation
+
+### Shard-Aggregation Boundary
+
+Each shard independently aggregates proofs within that shard:
+
+- Shard responsible for its own aggregation
+- Cross-shard proofs handled by parent shard aggregation
+- See RFC-0140 for cross-shard details
+
 ## Performance Targets
 
 | Metric | Target | Notes |
@@ -500,7 +570,109 @@ struct EpochBinding {
 2. **SHOULD separate aggregator/prover** — Reduce trust
 3. **SHOULD include aggregator signature** — Accountability
 
-## Comparison: Original vs Revised
+## Alternatives Considered
+
+### Approach 1: STARK Recursion (Selected)
+
+Binary tree STARK recursion as specified in this RFC.
+
+| Pros | Cons |
+|------|------|
+| No trusted setup | Large proof size |
+| Quantum-resistant | Complex implementation |
+| Transparent | Higher verification cost |
+
+### Approach 2: SNARK Wrapper
+
+Wrap STARK proof inside SNARK (e.g., Groth16).
+
+| Pros | Cons |
+|------|------|
+| Small proof size | Trusted setup required |
+| Fast verification | Ceremony complexity |
+| | Single point of trust |
+
+**Decision:** STARK recursion selected — trust minimization preferred over proof size.
+
+### Approach 3: Batch Verification Without Recursion
+
+Randomized linear combination of proofs.
+
+| Pros | Cons |
+|------|------|
+| Simple | Statistical security only |
+| No recursion | Cannot scale infinitely |
+| | Not composable |
+
+**Decision:** Rejected — does not achieve O(1) verification.
+
+### Approach 4: Proof-Carrying Data (PCD)
+
+General PCD framework for proof composition.
+
+| Pros | Cons |
+|------|------|
+| Most general | Very complex |
+| Flexible | Less mature |
+| | Over-engineered for our use case |
+
+**Decision:** Considered but deferred — binary tree simpler for our use case.
+
+---
+
+## Rationale
+
+### Why Binary Tree Recursion?
+
+The binary tree structure was chosen because:
+
+1. **Associativity** — (P1+P2)+P3 = P1+(P2+P3) enables incremental aggregation
+2. **Merkle alignment** — Binary tree maps naturally to Merkle proof structure
+3. **Simplicity** — Clear recursion depth = log2(proof_count)
+4. **Proven** — Matches StarkWare, Polygon zkEVM approaches
+
+### Why Merkle Commitment?
+
+Raw vector hashing is vulnerable to:
+
+- **Ordering attacks** — Reorder proofs, same hash
+- **Collision attacks** — Craft inputs with same hash
+- **Substitution** — Replace proof without detection
+
+Merkle commitment provides:
+
+- **Ordering safety** — Different order = Different root
+- **Inclusion proofs** — Verify specific proof in aggregate
+- **Collision resistance** — Hash function security
+
+### Why Task/Epoch Binding?
+
+Prevents two critical attacks:
+
+- **Proof mixing** — P1 used for task A, P2 for task B, swapped
+- **Replay attack** — Old aggregate re-used in new epoch
+
+---
+
+## Future Work
+
+- F1: **Cross-shard aggregation** — Define aggregation boundaries across shards
+- F2: **Privacy-preserving aggregation** — Zero-knowledge aggregation
+- F3: **Formal verification** — Prove associativity mathematically
+- F4: **Hardware acceleration** — GPU/ASIC optimized circuits
+- F5: **Multi-proof types** — Aggregate proofs from different circuits
+
+---
+
+## Key Files to Modify
+
+| File | Change |
+|------|--------|
+| `crates/aggregation/src/lib.rs` | Core aggregation logic |
+| `crates/aggregation/src/merkle.rs` | Merkle commitment implementation |
+| `crates/aggregation/src/circuit.rs` | Aggregation circuit |
+| `crates/aggregation/src/protocol.rs` | Actor communication |
+| `crates/consensus/src/proofs.rs` | Consensus integration |
 
 | Aspect | Original | Revised |
 |--------|----------|---------|
@@ -559,7 +731,16 @@ struct EpochBinding {
 
 ---
 
-**Version:** 1.1
+**Version:** 1.2
 **Submission Date:** 2026-03-07
 **Last Updated:** 2026-03-07
-**Changes:** Major rewrite per technical review — added cryptographic formalization, Merkle commitment, proof format, threat model
+**Changes:** v1.1 fixes per second review:
+- Added Alternatives Considered section
+- Added Rationale section
+- Added Future Work section
+- Added Key Files to Modify section
+- Made aggregator_sig required (not optional)
+- Added non-power-of-two batch handling (padding)
+- Added consensus rejection rules
+- Added double-aggregation resolution
+- Added shard-aggregation boundary

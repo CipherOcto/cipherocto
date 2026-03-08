@@ -75,6 +75,23 @@ Tier 2 — Deterministic (Consensus)
 └── Use: Blockchain state, smart contracts, replicated queries
 ```
 
+### SQL Literal Parsing
+
+In **deterministic execution mode**, numeric literals are implicitly typed as **DFP**:
+
+```sql
+-- In Deterministic View:
+SELECT 0.1 + 0.2;  -- 0.1 and 0.2 parsed as DFP, result is deterministic
+SELECT 1.5 * 2.0;  -- DFP multiplication
+SELECT 1 / 0;      -- Returns MAX (saturating arithmetic)
+```
+
+| Context | Literal Type | Behavior |
+|---------|-------------|----------|
+| Deterministic View | DFP | Bit-identical across nodes |
+| Analytics Query | FLOAT/DOUBLE | Non-deterministic allowed |
+| Mixed | ERROR | Must use explicit CAST |
+
 ### Data Structures
 
 ```rust
@@ -98,19 +115,30 @@ pub struct Dfp {
     class: DfpClass,
     /// Sign bit (0 = positive, 1 = negative)
     sign: bool,
-    /// Mantissa (only valid for Normal class)
-    mantissa: i128,
+    /// Mantissa (unsigned, only valid for Normal class)
+    /// Stored as absolute value; sign is separate field
+    mantissa: u128,
     /// Binary exponent (only valid for Normal class)
     exponent: i32,
 }
 
 impl Dfp {
     /// Create a normal DFP value
-    pub fn new(mantissa: i128, exponent: i32) -> Self {
+    pub fn new(mantissa: u128, exponent: i32, sign: bool) -> Self {
+        Self {
+            class: DfpClass::Normal,
+            sign,
+            mantissa,
+            exponent,
+        }
+    }
+
+    /// Create from signed mantissa
+    pub fn from_signed(mantissa: i128, exponent: i32) -> Self {
         Self {
             class: DfpClass::Normal,
             sign: mantissa < 0,
-            mantissa: mantissa.abs(),
+            mantissa: mantissa.unsigned_abs(),
             exponent,
         }
     }
@@ -163,9 +191,9 @@ impl Dfp {
 #[derive(Clone, Copy, Debug)]
 #[repr(C)]
 pub struct DfpEncoding {
-    /// Mantissa in big-endian (16 bytes)
-    /// Placed first to align i128 naturally
-    mantissa: i128,
+    /// Mantissa in big-endian (16 bytes, unsigned)
+    /// Placed first to align u128 naturally
+    mantissa: u128,
     /// Exponent in big-endian (4 bytes)
     exponent: i32,
     /// Class tag (0=Normal, 1=Infinity, 2=NaN, 3=Zero) - 1 byte
@@ -206,7 +234,7 @@ impl DfpEncoding {
                 _ => DfpClass::NaN,
             },
             sign: sign != 0,
-            mantissa: i128::from_be(self.mantissa),
+            mantissa: u128::from_be(self.mantissa),
             exponent: i32::from_be(self.exponent),
         }
     }
@@ -218,40 +246,6 @@ impl DfpEncoding {
         bytes[16..20].copy_from_slice(&self.exponent.to_be_bytes());
         bytes[20..24].copy_from_slice(&self.class_sign.to_be_bytes());
         bytes
-    }
-}
-
-impl DfpEncoding {
-    /// Serialize DFP to canonical big-endian encoding
-    pub fn from_dfp(dfp: &Dfp) -> Self {
-        Self {
-            class: match dfp.class {
-                DfpClass::Normal => 0,
-                DfpClass::Infinity => 1,
-                DfpClass::NaN => 2,
-                DfpClass::Zero => 3,
-            },
-            sign: if dfp.sign { 1 } else { 0 },
-            _reserved: [0; 2],
-            mantissa: dfp.mantissa.to_be(),
-            exponent: dfp.exponent.to_be(),
-        }
-    }
-
-    /// Deserialize from canonical encoding
-    pub fn to_dfp(&self) -> Dfp {
-        Dfp {
-            class: match self.class {
-                0 => DfpClass::Normal,
-                1 => DfpClass::Infinity,
-                2 => DfpClass::NaN,
-                3 => DfpClass::Zero,
-                _ => DfpClass::NaN, // Invalid encoding
-            },
-            sign: self.sign != 0,
-            mantissa: i128::from_be(self.mantissa),
-            exponent: i32::from_be(self.exponent),
-        }
     }
 }
 
@@ -374,17 +368,33 @@ fn normalize(dfp: &mut Dfp) {
     }
 
     // O(1) normalization using trailing zeros count
-    // After shifting, mantissa is guaranteed odd (or zero), so no further loop needed
-    let trailing = dfp.mantissa.unsigned_abs().trailing_zeros() as i32;
+    let trailing = dfp.mantissa.trailing_zeros() as i32;
     dfp.mantissa >>= trailing;
     dfp.exponent = dfp.exponent.saturating_add(trailing);
 
-    // Handle overflow - convert to Infinity class
+    // Handle overflow - SATURATING ARITHMETIC (not Infinity)
+    // This prevents NaN poisoning in subsequent calculations
     if dfp.exponent > DFP_MAX_EXPONENT {
-        dfp.class = DfpClass::Infinity;
-        // Sign is preserved
+        dfp.exponent = DFP_MAX_EXPONENT;
+        dfp.mantissa = DFP_MAX_MANTISSA;  // Clamp to maximum value
+        // Class remains Normal, NOT Infinity
+    }
+
+    // Handle underflow - saturate to Zero
+    if dfp.exponent < DFP_MIN_EXPONENT {
+        dfp.class = DfpClass::Zero;
         dfp.mantissa = 0;
         dfp.exponent = 0;
+    }
+}
+
+/// Division by zero: saturate to MAX with sign preserved
+fn div_by_zero(sign: bool) -> Dfp {
+    Dfp {
+        class: DfpClass::Normal,  // NOT Infinity!
+        sign,
+        mantissa: DFP_MAX_MANTISSA,
+        exponent: DFP_MAX_EXPONENT,
     }
 }
 ````
@@ -986,11 +996,12 @@ None. DFP is a new type that does not modify existing FLOAT/DOUBLE behavior.
 
 ---
 
-**Version:** 1.1
+**Version:** 1.2
 **Submission Date:** 2025-03-06
 **Last Updated:** 2026-03-08
-**Changes:** v1.1 production fixes:
-- Add Sticky Bit definition for 113-bit RNE rounding
-- Fix struct layout to 24 bytes (no padding)
-- Increase DFP_DIV/SQRT gas to 50-100x (prevent DoS)
-- Add Consensus Verification Probe (every 100K blocks)
+**Changes:** v1.2 production fixes:
+- Fix overflow: use saturating MAX instead of Infinity (prevents NaN poisoning)
+- Fix duplicate struct: remove second DfpEncoding definition
+- Fix mantissa: change from i128 to u128 (avoid sign confusion)
+- Add division by zero: explicit saturating MAX behavior
+- Add SQL literals: DFP by default in deterministic mode

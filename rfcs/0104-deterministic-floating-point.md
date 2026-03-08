@@ -440,8 +440,9 @@ All operations use **Round-to-Nearest-Even (RNE)** with a **Sticky Bit** for 113
 ```rust
 /// Round 128-bit intermediate to 113-bit with sticky bit (RNE)
 /// Input: 128-bit signed integer representing mantissa with guard bits
-/// Output: 113-bit odd mantissa (canonical form)
-fn round_to_113(mantissa: i128) -> u128 {
+/// Output: (113-bit odd mantissa, exponent_adjustment)
+/// NOTE: The exponent adjustment MUST be added to the result exponent
+fn round_to_113(mantissa: i128) -> (u128, i32) {
     // We work with absolute value for rounding logic
     let abs_mant = mantissa.unsigned_abs();
 
@@ -477,7 +478,8 @@ fn round_to_113(mantissa: i128) -> u128 {
     let trailing = rounded.trailing_zeros();
     let normalized = rounded >> trailing;
 
-    normalized  // Now guaranteed odd (or zero)
+    // CRITICAL: Return both mantissa AND exponent adjustment
+    (normalized, -(trailing as i32))  // Negative because shifting right reduces value
 }
 
 /// Normalize after rounding to ensure canonical odd mantissa
@@ -1113,13 +1115,12 @@ None. DFP is a new type that does not modify existing FLOAT/DOUBLE behavior.
 
 ---
 
-**Version:** 1.5
+**Version:** 1.6
 **Submission Date:** 2025-03-06
 **Last Updated:** 2026-03-08
-**Changes:** v1.5 10/10 production fixes:
-- Fix RNE rounding: correct bit extraction for round/sticky
+**Changes:** v1.6 final production fixes:
+- Fix round_to_113: return (mantissa, exponent_adjustment) tuple
 - Fix division: specify deterministic long division algorithm
 - Fix sqrt: use fixed 32 iterations (not convergence-based)
-- Fix encoding: add safety comments + always use to_bytes()
-- Fix ordering: clarify Infinity not produced in computed results
-- Add normalization step after rounding
+- Clarify encoding: in-memory may have tail padding, always use to_bytes()
+- Confirm duplicate impl block already removed

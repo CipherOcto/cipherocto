@@ -1,6 +1,7 @@
 # Rust / CipherOcto
 /target
 /.octo
+determin/target
 **/*.rs.bk
 *.pdb
 

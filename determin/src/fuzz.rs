@@ -200,8 +200,7 @@ mod tests {
     }
 
     /// Fuzz test for div with 10,000 random inputs
-    /// NOTE: Division algorithm is broken - needs complete rewrite
-    /// This test is skipped for now
+    /// NOTE: Division algorithm broken - needs complete rewrite
     #[test]
     #[ignore]
     fn test_fuzz_div_10k() {

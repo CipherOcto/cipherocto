@@ -1144,8 +1144,22 @@ None. DFP is a new type that does not modify existing FLOAT/DOUBLE behavior.
 > 2. **Multi-architecture fuzzing** (x86, ARM, RISC-V)
 > 3. **External security audit** by numeric-specialist firm
 > 4. **Implementation requirement**: At least partial implementation (add/mul/div/sqrt) before advancing RFC status
+
+### Recommended Production Deployment Scope
+
+> ⚠️ **CRITICAL RECOMMENDATION:**
 >
-> Consider: Use DFP only in **deterministic read-only views / oracles**, not full state transitions.
+> For initial production deployment, DFP should be **restricted to deterministic read-only contexts**:
+>
+> | Context | DFP Allowed? | Notes |
+> |---------|--------------|-------|
+> | Read-only queries | ✅ Yes | Deterministic SQL queries |
+> | Materialized views | ✅ Yes | Pre-computed aggregations |
+> | Oracle data feeds | ✅ Yes | Off-chain computation, on-chain verification |
+> | Smart contract state | ❌ No | Wait for extensive testing |
+> | State transitions | ❌ No | High-risk consensus path |
+>
+> This phased approach minimizes consensus risk while proving the technology.
 
 ---
 

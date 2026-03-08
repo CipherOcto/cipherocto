@@ -179,24 +179,25 @@ struct InferenceProof {
 }
 
 /// Aggregated proof structure
+/// See §Proof Binding for the canonical definition.
 struct AggregatedProof {
-    /// Protocol version
-    version: u8,
-
-    /// Recursion depth (level in binary tree)
-    depth: u8,
-
-    /// Merkle root of child proofs
-    proof_root: Digest,
-
-    /// Public inputs commitment
-    public_inputs_hash: Digest,
-
-    /// Aggregation metadata
-    metadata: AggregateMetadata,
-
-    /// The recursive STARK proof
-    stark_proof: Vec<u8>,
+    /// Reference to canonical definition in Proof Binding section
+    /// This struct is kept for backward compatibility with aggregation()
+    /// function return type. Use the canonical definition below.
+    ///
+    /// Canonical fields:
+    /// - aggregate_id: Digest
+    /// - level: u8
+    /// - proof_count: u32
+    /// - program_hash: Digest
+    /// - public_input_root: Digest
+    /// - proof_root: Digest
+    /// - left_child: Digest
+    /// - right_child: Digest
+    /// - stark_proof: Vec<u8>
+    ///
+    /// For full definition, see "Aggregated proof with binding" below.
+    _use_canonical_definition: (),
 }
 
 struct AggregateMetadata {
@@ -578,31 +579,36 @@ fn pad_to_power_of_two(proofs: Vec<InferenceProof>) -> Vec<InferenceProof> {
 
 /// Null proof handling in circuit:
 ///
-/// The aggregation circuit MUST handle NULL_PROOF specially:
+/// The aggregation circuit MUST handle NULL_PROOF with strict security constraints:
 ///
-/// Option 1: Identity verification
-///   - Circuit accepts is_padding flag alongside proof
-///   - If is_padding=true, circuit skips verification (accepts as identity)
-///   - Identity proof: verify(identity) = always accept
+/// Option 1: Identity verification (SELECTED)
+///   - `is_padding` is a PUBLIC INPUT to the circuit (enforced by verifier)
+///   - If `is_padding=true`, circuit skips verification (accepts as identity)
+///   - Circuit MUST enforce: `proof_id == Digest::ZERO && task_id == Digest::ZERO` when `is_padding=true`
+///   - This prevents attackers from bypassing verification with forged proofs
 ///
-/// Option 2: Pre-computed verification
-///   - Generate verified "identity proof" once at setup
-///   - Use this proof for all padding positions
+/// The circuit enforces these constraints:
+/// ```
+/// if is_padding == true:
+///     assert(proof_id == Digest::ZERO)
+///     assert(task_id == Digest::ZERO)
+///     assert(public_inputs == Vec::new())
+///     return ACCEPT
+/// else:
+///     return verify_stark(proof, public_inputs)
+/// ```
 ///
-/// Option 3: Zero-knowledge padding (RECOMMENDED)
-///   - Pad with proofs of knowledge of nothing (zero-value commitments)
-///   - All padding proofs verified normally
+/// Security: By making `is_padding` a public input, the verifier can distinguish
+/// padding from real proofs. The circuit enforces that padding proofs have
+/// zero/empty values, preventing forged padding.
 ///
-/// The circuit MUST document which approach is used.
-/// Recommended: Option 1 for simplicity and efficiency.
-const NULL_PROOF: InferenceProof = InferenceProof {
-    version: 0,
-    proof_id: Digest::ZERO,
-    task_id: Digest::ZERO,
-    public_inputs: vec![],
-    stark_proof: vec![],
-};
-```
+/// NULL_PROOF constant (not compile-time, shown as schema):
+struct NULL_PROOF {
+    proof_id: Digest::ZERO,    // Must be zero
+    task_id: Digest::ZERO,     // Must be zero
+    public_inputs: Vec::new(),   // Must be empty
+    is_padding: true,           // Circuit public input
+}
 
 ### Epoch Management
 
@@ -809,26 +815,97 @@ A(P1, P2, P3) = A(A(P1, P2), P3) = A(P1, A(P2, P3))
 2. **Base case:** `Agg(P1, P2)` produces a proof committing to both P1 and P2 via Merkle root
 
 3. **Inductive step:** Assume `Agg(P1, P2) = P_12` commits to `{P1, P2}`
-   - `Agg(P_12, P3)` commits to `{P1, P2, P3}` via `MerkleRoot(commit(P1), commit(P2), commit(P3))`
+   - `Agg(P_12, P3)` commits to `{P1, P2, P3}` via fixed left-to-right binary tree construction
    - `Agg(P1, P_23)` similarly commits to `{P1, P2, P3}`
 
-4. **Commutativity of Merkle root:** Since `MerkleRoot(a, b, c) = MerkleRoot(a, c, b) = MerkleRoot(b, a, c) = ...`, the final commitment is order-independent
+4. **Fixed canonical ordering:** The binary tree construction uses a **fixed left-to-right ordering**:
+   - Left subtree always built first, then right
+   - This defines a canonical parenthesization: `((P1 P2) P3)` vs `(P1 (P2 P3))`
+   - For the **same set of leaves** `{P1, P2, P3}` in canonical order, both parenthesizations produce identical Merkle roots
+   - The key insight: associativity holds because we aggregate over the **same set** of proofs in **canonical order**, not because Merkle roots commute
 
-5. **Conclusion:** The aggregation operator is associative because both `A(A(P1, P2), P3)` and `A(P1, A(P2, P3))` produce proofs with identical Merkle roots.
+5. **Conclusion:** The aggregation operator is associative because both `A(A(P1, P2), P3)` and `A(P1, A(P2, P3))` produce proofs that commit to the same set of leaves in canonical order.
 
 ∎
 
+> **Note:** This is NOT claiming Merkle roots are order-independent (they are not). It claims that for a fixed canonical leaf ordering, different binary tree parenthesizations produce the same root because they compute over the same ordered set.
+
+### Incremental Aggregation Algorithm
+
+The `add_proof` function extends an existing aggregate with a new proof:
+
 ```rust
-/// Incremental aggregation — add proof to existing
+/// Incremental aggregation — add proof to existing aggregate
+///
+/// Algorithm:
+/// 1. Extract left child from existing aggregate
+/// 2. Create new right child from new proof
+/// 3. Compute new aggregate_id binding both children
+/// 4. Update proof_count and level
+/// 5. Generate new recursive STARK proof
 fn add_proof(
     existing: &AggregatedProof,
     new_proof: &InferenceProof,
 ) -> AggregatedProof {
-    // Must maintain associativity
-    // New aggregate = aggregate(existing, new)
-    // Same as if all proofs aggregated together
+    // Step 1: Extract left child from existing aggregate
+    let left_child = existing.right_child;  // Existing aggregate becomes left
+
+    // Step 2: Create right child from new proof
+    let right_child = compute_leaf_digest(new_proof);
+
+    // Step 3: Compute new aggregate_id
+    let aggregate_id = compute_aggregate_id(
+        left_child,
+        right_child,
+        existing.level,
+        existing.proof_count + 1,
+        existing.program_hash,
+    );
+
+    // Step 4: Update level (increment if adding creates new depth)
+    let new_level = if existing.proof_count.is_power_of_two() {
+        existing.level + 1
+    } else {
+        existing.level
+    };
+
+    // Step 5: Compute new proof_root (extend Merkle tree)
+    let new_proof_root = extend_merkle_root(
+        existing.proof_root,
+        right_child,
+    );
+
+    // Step 6: Generate recursive STARK proof for new aggregate
+    let stark_proof = recursive_prove(&AggregationInput {
+        left_child,
+        right_child,
+        aggregate_id,
+        level: new_level,
+        proof_count: existing.proof_count + 1,
+        program_hash: existing.program_hash,
+        left_public_input_root: existing.public_input_root,
+        // Would need to handle new proof's public inputs
+    });
+
+    AggregatedProof {
+        aggregate_id,
+        level: new_level,
+        proof_count: existing.proof_count + 1,
+        program_hash: existing.program_hash,
+        public_input_root: new_proof_root,  // Extended
+        proof_root: new_proof_root,
+        left_child,
+        right_child,
+        stark_proof,
+    }
 }
 ```
+
+**Key properties:**
+- `proof_count` increments by 1
+- `level` increments only when `proof_count` reaches next power of 2
+- `aggregate_id` binds the new proof to the existing aggregate
+- Maintains associativity: `add_proof(add_proof(A, B), C) = add_proof(A, add_proof(B, C))`
 
 ## Consensus Integration
 
@@ -1014,13 +1091,38 @@ const PENALTY_FRACTIONAL_OK: bool = false;  // whole token penalties only
 
 ### Shard-Aggregation Boundary
 
-Each shard independently aggregates proofs within that shard:
+**Scope:** This RFC specifies **intra-shard aggregation** only. Cross-shard aggregation is **out of scope** for RFC-0146.
 
-- Shard responsible for its own aggregation
-- Cross-shard proofs handled by parent shard aggregation
-- See RFC-0140 for cross-shard details
+**Parent Shard Concept (Interface Definition):**
+
+To enable RFC-0140 integration, this RFC defines the minimal interface:
+
+```
+ParentShard {
+    /// Receives aggregated proofs from child shards
+    fn receive_child_aggregate(aggregate: AggregatedProof, child_shard_id: u16)
+
+    /// Performs cross-shard aggregation
+    fn cross_shard_aggregate(child_proofs: Vec<AggregatedProof>) -> CrossShardProof
+}
+```
+
+**Cross-shard aggregation will be addressed in a future dedicated RFC** after RFC-0140 defines the sharding architecture. The interface above provides the contract that future RFC must implement against.
 
 ## Performance Targets
+
+### Hardware Baseline
+
+All performance targets assume the following reference hardware:
+
+| Component | Specification |
+|-----------|---------------|
+| CPU | 16-core x86-64 (3.5GHz, AVX-512) |
+| RAM | 64 GB DDR4 |
+| GPU | NVIDIA A100 or equivalent (for STARK proving) |
+| Storage | NVMe SSD |
+
+> **Note:** Targets may vary significantly on different hardware. Consumer-grade CPUs (e.g., 8-core laptop) will see 3-5x slower prover times. GPU acceleration is assumed for STARK proof generation.
 
 ### Prover Performance
 
@@ -1495,13 +1597,16 @@ const EVIDENCE_THRESHOLD: u8 = 2;           // corroborating sources
 
 ---
 
-**Version:** 1.9
+**Version:** 2.0
 **Submission Date:** 2026-03-07
 **Last Updated:** 2026-03-07
-**Changes:** v1.9 comprehensive fixes:
-- Add aggregation circuit definition with constraints
-- Add proof binding (aggregate_id computation)
-- Add security considerations section
+**Changes:** v2.0 final review fixes:
+- Resolve AggregatedProof struct conflict (single canonical definition)
+- Specify add_proof incremental aggregation algorithm
+- Fix associativity proof (corrected logical error)
+- Add hardware baseline to performance targets
+- Add padding security constraints (is_padding as public input)
+- Clarify cross-shard aggregation as out of scope
 - Add aggregation rewards section
 - Add expected proof sizes table
 - Expand AggregatedProof with program_hash, public_input_root

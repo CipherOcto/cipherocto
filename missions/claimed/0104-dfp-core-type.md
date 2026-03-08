@@ -66,3 +66,7 @@ None
 - Known issues found by fuzzing (not yet fixed):
   * Division algorithm produces wrong results - needs complete rewrite
   * Edge case alignment issues in add/sub for extreme exponents
+- Added RFC-0104 compiler flags to stoolap:
+  * `[profile.release]` overflow-checks = false
+  * `[profile.test]` inherits release, overflow-checks = false
+  * `[profile.ci]` thinner LTO for faster CI builds

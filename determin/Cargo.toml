@@ -10,8 +10,8 @@ description = "Deterministic Floating-Point (DFP) implementation for CipherOcto"
 # Do NOT set overflow-checks = true, as it would break saturating arithmetic
 # Note: We use saturating_add/sub/mul explicitly in code where needed
 
-# LTO for better optimization
-lto = "thin"
+# LTO disabled for faster builds - can enable for production
+# lto = "thin"
 
 [profile.bench]
 # Bench uses release flags

@@ -220,7 +220,7 @@ pub fn dfp_div(a: Dfp, b: Dfp) -> Dfp {
     // If MSB is at position p (0-indexed), then Q ≈ mantissa * 2^(p-112)
     // The value is Q / 2^128 = mantissa * 2^(p-112) / 2^128 = mantissa * 2^(p-240)
     // So exponent = result_exponent + (p - 240)
-    let mut final_exponent = result_exponent + (quotient_msb as i32) - 240;
+    let final_exponent = result_exponent + (quotient_msb as i32) - 240;
 
     // Normalize to 113-bit mantissa
     let shift_needed = if quotient_msb >= 112 {

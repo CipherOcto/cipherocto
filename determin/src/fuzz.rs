@@ -200,9 +200,7 @@ mod tests {
     }
 
     /// Fuzz test for div with 10,000 random inputs
-    /// NOTE: Division algorithm broken - needs complete rewrite
     #[test]
-    #[ignore]
     fn test_fuzz_div_10k() {
         let mut rng = StdRng::seed_from_u64(42);
         let mut mismatches = Vec::new();
@@ -233,9 +231,7 @@ mod tests {
     }
 
     /// Edge case test with special values
-    /// NOTE: Skipped - finding additional bugs that need separate fixes
     #[test]
-    #[ignore]
     fn test_fuzz_edge_cases() {
         // This test is ignored - edge cases reveal more implementation bugs
         // that need separate fixes beyond the scope of this fuzzing effort

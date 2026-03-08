@@ -1,0 +1,11 @@
+[package]
+name = "dfp_cli"
+version = "0.1.0"
+edition = "2021"
+
+[[bin]]
+name = "dfp_cli"
+path = "main.rs"
+
+[dependencies]
+octo-determin = { path = ".." }

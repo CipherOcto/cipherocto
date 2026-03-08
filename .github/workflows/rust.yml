@@ -12,30 +12,74 @@ env:
   RUST_BACKTRACE: 1
 
 jobs:
+  # Multi-platform test matrix
   test:
-    name: Test
-    runs-on: ubuntu-latest
+    name: Test (${{ matrix.os }}-${{ matrix.rust }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+        rust: [stable, beta, nightly]
 
     steps:
       - uses: actions/checkout@v6
 
       - uses: dtolnay/rust-toolchain@stable
         with:
+          toolchain: ${{ matrix.rust }}
           components: rustfmt, clippy
 
       - uses: swatinem/rust-cache@v2
+        with:
+          cache-on-failure: true
 
-      - name: Build
-        run: cargo build --verbose
+      - name: Build determin
+        working-directory: determin
+        run: cargo build --release --verbose
 
-      - name: Run tests
-        run: cargo test --verbose
+      - name: Build CLI
+        working-directory: determin/cli
+        run: cargo build --release --verbose
+
+      - name: Run tests (release mode per RFC-0104)
+        working-directory: determin
+        run: cargo test --release --verbose
 
       - name: Format check
+        working-directory: determin
         run: cargo fmt --all -- --check
 
       - name: Clippy
+        working-directory: determin
         run: cargo clippy --all-targets --all-features -- -D warnings
+
+  # Python cross-language verifier
+  verifier:
+    name: Cross-Language Verifier
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Build CLI
+        working-directory: determin/cli
+        run: cargo build --release
+
+      - name: Run verifier
+        working-directory: determin/verify
+        run: |
+          pip install -q -r requirements.txt 2>/dev/null || true
+          python3 verifier.py --count 1000
+
+      - name: Run production verifier (10,500 tests)
+        working-directory: determin/verify
+        run: python3 verify_vectors.py
 
   # Check MSRV (Minimum Supported Rust Version)
   msrv:
@@ -53,5 +97,23 @@ jobs:
       - uses: swatinem/rust-cache@v2
 
       - name: Check with MSRV
+        working-directory: determin
         run: cargo check --verbose
 
+  # Clippy on stable
+  clippy:
+    name: Clippy (stable)
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+
+      - uses: swatinem/rust-cache@v2
+
+      - name: Clippy
+        working-directory: determin
+        run: cargo clippy --all-targets --all-features -- -D warnings

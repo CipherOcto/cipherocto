@@ -1,0 +1,14 @@
+/home/mmacedoeu/_w/ai/cipherocto/determin/cli/target/release/deps/serde-dd34522324fe8679.d: /home/mmacedoeu/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.228/src/lib.rs /home/mmacedoeu/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.228/src/integer128.rs /home/mmacedoeu/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.228/src/private/mod.rs /home/mmacedoeu/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.228/src/private/de.rs /home/mmacedoeu/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.228/src/private/ser.rs /home/mmacedoeu/_w/ai/cipherocto/determin/cli/target/release/build/serde-41e97f31a0c20611/out/private.rs
+
+/home/mmacedoeu/_w/ai/cipherocto/determin/cli/target/release/deps/libserde-dd34522324fe8679.rlib: /home/mmacedoeu/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.228/src/lib.rs /home/mmacedoeu/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.228/src/integer128.rs /home/mmacedoeu/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.228/src/private/mod.rs /home/mmacedoeu/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.228/src/private/de.rs /home/mmacedoeu/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.228/src/private/ser.rs /home/mmacedoeu/_w/ai/cipherocto/determin/cli/target/release/build/serde-41e97f31a0c20611/out/private.rs
+
+/home/mmacedoeu/_w/ai/cipherocto/determin/cli/target/release/deps/libserde-dd34522324fe8679.rmeta: /home/mmacedoeu/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.228/src/lib.rs /home/mmacedoeu/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.228/src/integer128.rs /home/mmacedoeu/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.228/src/private/mod.rs /home/mmacedoeu/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.228/src/private/de.rs /home/mmacedoeu/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.228/src/private/ser.rs /home/mmacedoeu/_w/ai/cipherocto/determin/cli/target/release/build/serde-41e97f31a0c20611/out/private.rs
+
+/home/mmacedoeu/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.228/src/lib.rs:
+/home/mmacedoeu/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.228/src/integer128.rs:
+/home/mmacedoeu/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.228/src/private/mod.rs:
+/home/mmacedoeu/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.228/src/private/de.rs:
+/home/mmacedoeu/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.228/src/private/ser.rs:
+/home/mmacedoeu/_w/ai/cipherocto/determin/cli/target/release/build/serde-41e97f31a0c20611/out/private.rs:
+
+# env-dep:OUT_DIR=/home/mmacedoeu/_w/ai/cipherocto/determin/cli/target/release/build/serde-41e97f31a0c20611/out

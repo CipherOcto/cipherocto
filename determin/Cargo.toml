@@ -4,6 +4,19 @@ version = "0.1.0"
 edition = "2021"
 description = "Deterministic Floating-Point (DFP) implementation for CipherOcto"
 
+# Per RFC-0104: Compiler flags for deterministic execution
+[profile.release]
+# Overflow checks are OFF by default in release - REQUIRED for DFP
+# Do NOT set overflow-checks = true, as it would break saturating arithmetic
+# Note: We use saturating_add/sub/mul explicitly in code where needed
+
+# LTO for better optimization
+lto = "thin"
+
+[profile.bench]
+# Bench uses release flags
+inherits = "release"
+
 [dependencies]
 serde = { version = "1.0", features = ["derive"] }
 thiserror = "1.0"

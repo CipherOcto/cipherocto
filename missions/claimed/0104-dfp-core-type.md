@@ -34,9 +34,13 @@ None
 ## Implementation Notes
 - Uses U256 (hi:lo tuple) for intermediate calculations
 - SQRT uses bit-by-bit integer algorithm with 256-bit multiplication
-- All iterations execute (no early termination)
+- All iterations execute (no early termination) - RFC-0104 §3 rule
 - See RFC-0104 Three Golden Rules for critical implementation details
 - Can be imported by stoolap as path dependency
+- **Compiler flags (RFC-0104 §2.4):**
+  - Use `release` profile (overflow checks OFF)
+  - Do NOT use debug profile for DFP operations
+  - LTO enabled for optimization
 
 ## Completed
 - Created `determin/` crate (moved from crates/octo-determin)

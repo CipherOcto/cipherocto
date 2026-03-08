@@ -1073,6 +1073,143 @@ This RFC represents an ambitious attempt to bring floating-point into consensus-
 
 This RFC makes CipherOcto a potential outlier. The experimental warning reflects genuine technical risk.
 
+### Arithmetic Properties
+
+The deterministic floating-point (DFP) format provides **bit-identical deterministic arithmetic**, but it does **not change fundamental floating-point algebraic limitations**.
+
+As with IEEE-754 arithmetic, certain mathematical identities do **not hold exactly** due to rounding and exponent alignment.
+
+#### Associativity
+
+Addition is **not associative**.
+
+```
+(a + b) + c ≠ a + (b + c)
+```
+
+Example:
+
+```
+a = 1e20
+b = -1e20
+c = 3
+```
+
+Evaluation order:
+
+```
+(a + b) + c
+= (1e20 - 1e20) + 3
+= 3
+```
+
+```
+a + (b + c)
+= 1e20 + (-1e20 + 3)
+= 1e20 + (-1e20)
+= 0
+```
+
+The difference occurs because:
+
+* `b + c` loses precision when aligning exponents
+* rounding occurs during intermediate operations
+
+> **Note: Addition associativity is intentionally excluded from required arithmetic invariants.**
+
+#### Guaranteed Properties
+
+The following properties **are guaranteed** under DFP:
+
+**Determinism**: All compliant implementations must produce **bit-identical results**.
+
+```
+f(a, b) = identical bits on all platforms
+```
+
+**Canonical Representation**: All results are normalized such that:
+
+```
+mantissa is odd
+value = mantissa × 2^exponent
+```
+
+**Deterministic Rounding**: Rounding behavior is fully specified and independent of:
+- CPU architecture
+- compiler optimizations
+- hardware floating-point units
+
+**Algebraic Identities That Hold** (when no overflow/underflow):
+
+| Property | Formula |
+| -------- | ------- |
+| Multiplicative associativity | `(a × b) × c = a × (b × c)` |
+| Multiplicative identity | `a × 1 = a` |
+| Additive identity | `a + 0 = a` |
+| Inverse property | `a − a = 0` |
+
+#### Properties Explicitly Not Guaranteed
+
+| Property | Reason |
+| -------- | ------ |
+| Addition associativity | rounding during exponent alignment |
+| Subtraction associativity | same reason |
+| Distributivity | rounding after multiplication |
+
+Example:
+
+```
+a × (b + c) ≠ a×b + a×c
+```
+
+#### Testing Guidance
+
+Because of the above properties, the test suite **must not assert associativity** for addition or subtraction.
+
+Recommended patterns:
+
+- **Stable identities**: `a + 0 = a`, `a × 1 = a`, `a − a = 0`
+- **Round-trip checks**: `(a × b) ÷ b ≈ a`
+- **Determinism checks**: `f(a,b)` executed twice produces identical bits
+
+#### Determinism Hazards and Mitigations
+
+Production deployments must guard against compiler and hardware behaviors that can break determinism:
+
+| Hazard | Description | Mitigation |
+| -------|-------------|------------|
+| Compiler reordering | Optimizers may reorder floating-point operations | Use `-ffp-contract=off` and disable fast-math |
+| FMA contraction | Fused multiply-add can change precision | Disable FMA contraction via flags |
+| Integer overflow | Signed overflow is UB in C/C++ | Use wrapping arithmetic or `-fwrapv` |
+| Shift semantics | Shift amounts beyond bit width vary | Explicit bounds checking |
+| NaN propagation | Different NaN payloads may differ | Canonical NaN (signaling NaN with payload 0) |
+| Denormal handling | Hardware denormal mode may differ | Software handling for denormals |
+| Rounding mode | Default rounding may vary | Explicit Round-to-Nearest-Even |
+
+**Required Compiler Flags:**
+
+```
+# GCC/Clang for deterministic builds
+-ffp-contract=off
+-fno-fast-math
+-fno-tree-vrp
+-fwrapv
+-fno-strict-overflow
+
+# Rust (in Cargo.toml)
+RUSTFLAGS = ["-C", "overflow-checks=true"]
+```
+
+**Cross-Platform Verification:**
+
+All DFP implementations must pass the deterministic test suite on:
+- x86_64
+- ARM64
+- RISC-V
+- WASM (if targeting browser/wasm32)
+
+Each platform must produce **bit-identical results** for all test vectors.
+
 ### Alternatives Considered
 
 | Alternative            | Pros          | Cons                                    | Rejection Reason                         |

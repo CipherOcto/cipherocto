@@ -12,6 +12,7 @@
 mod arithmetic;
 #[cfg(test)]
 mod fuzz;
+mod probe;
 
 pub use arithmetic::{dfp_add, dfp_div, dfp_mul, dfp_sqrt, dfp_sub};
 
@@ -45,6 +46,11 @@ pub struct Dfp {
 }
 
 impl Dfp {
+    /// Get the 24-byte encoding
+    pub fn to_encoding(&self) -> DfpEncoding {
+        DfpEncoding::from_dfp(self)
+    }
+
     /// Create a new Dfp from components
     pub fn new(mantissa: u128, exponent: i32, class: DfpClass, sign: bool) -> Self {
         let mut dfp = Dfp {

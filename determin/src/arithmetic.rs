@@ -1037,4 +1037,168 @@ mod tests {
         assert_eq!(m, 1);
         assert_eq!(e, 1);
     }
+
+    // ========================================================================
+    // Canonical Invariant Tests
+    // ========================================================================
+
+    #[test]
+    fn test_canonical_invariant() {
+        let values = [
+            Dfp::from_i64(1),
+            Dfp::from_i64(2),
+            Dfp::from_i64(3),
+            Dfp::from_i64(4),
+            Dfp::from_i64(5),
+            Dfp::from_i64(6),
+            Dfp::from_i64(7),
+            Dfp::from_i64(8),
+        ];
+
+        for v in values {
+            if v.mantissa != 0 {
+                assert!(v.mantissa % 2 != 0, "mantissa {} not canonical", v.mantissa);
+            }
+        }
+    }
+
+    // ========================================================================
+    // Addition Tests
+    // ========================================================================
+
+    #[test]
+    fn test_add_simple() {
+        // 1 + 1 = 2
+        let a = Dfp::from_i64(1);
+        let b = Dfp::from_i64(1);
+        let r = dfp_add(a, b);
+        assert!(approx(r.to_f64(), 2.0, 1e-10), "1+1 = {}", r.to_f64());
+    }
+
+    #[test]
+    fn test_add_extreme_exponent_diff_canonical() {
+        // 1e100 + 1 ≈ 1e100 (smaller value vanishes)
+        let large = Dfp::from_f64(1e100);
+        let small = Dfp::from_i64(1);
+        let r = dfp_add(large, small);
+        assert_eq!(r.mantissa, large.mantissa, "mantissa should be unchanged");
+    }
+
+    // ========================================================================
+    // Subtraction Tests
+    // ========================================================================
+
+    #[test]
+    fn test_sub_simple() {
+        // 5 - 3 = 2
+        let a = Dfp::from_i64(5);
+        let b = Dfp::from_i64(3);
+        let r = dfp_sub(a, b);
+        assert!(approx(r.to_f64(), 2.0, 1e-10), "5-3 = {}", r.to_f64());
+    }
+
+    #[test]
+    fn test_sub_cancellation() {
+        // x - x = 0
+        let x = Dfp::from_f64(123.456);
+        let r = dfp_sub(x, x);
+        assert_eq!(r.mantissa, 0, "x-x should be zero");
+    }
+
+    // ========================================================================
+    // Multiplication Tests
+    // ========================================================================
+
+    #[test]
+    fn test_mul_simple() {
+        // 3 * 5 = 15
+        let a = Dfp::from_i64(3);
+        let b = Dfp::from_i64(5);
+        let r = dfp_mul(a, b);
+        assert!(approx(r.to_f64(), 15.0, 1e-10), "3*5 = {}", r.to_f64());
+    }
+
+    #[test]
+    fn test_mul_power_two() {
+        // 3 * 2 = 6
+        let a = Dfp::from_i64(3);
+        let b = Dfp::from_i64(2);
+        let r = dfp_mul(a, b);
+        assert!(approx(r.to_f64(), 6.0, 1e-10), "3*2 = {}", r.to_f64());
+    }
+
+    #[test]
+    fn test_mul_large() {
+        // Large multiplication increases exponent
+        let a = Dfp::from_f64(1e40);
+        let b = Dfp::from_f64(1e40);
+        let r = dfp_mul(a, b);
+        assert!(r.exponent > a.exponent, "exponent should increase");
+    }
+
+    // ========================================================================
+    // Division Tests
+    // ========================================================================
+
+    #[test]
+    fn test_div_simple() {
+        // 6 / 3 = 2
+        let a = Dfp::from_i64(6);
+        let b = Dfp::from_i64(3);
+        let r = dfp_div(a, b);
+        assert!(approx(r.to_f64(), 2.0, 1e-10), "6/3 = {}", r.to_f64());
+    }
+
+    #[test]
+    fn test_div_fraction() {
+        // 7 / 2 = 3.5
+        let a = Dfp::from_i64(7);
+        let b = Dfp::from_i64(2);
+        let r = dfp_div(a, b);
+        assert!(approx(r.to_f64(), 3.5, 1e-10), "7/2 = {}", r.to_f64());
+    }
+
+    // ========================================================================
+    // Square Root Tests
+    // ========================================================================
+
+    #[test]
+    fn test_sqrt_exact_canonical() {
+        // sqrt(4) = 2
+        let four = Dfp::from_i64(4);
+        let r = dfp_sqrt(four);
+        assert!(approx(r.to_f64(), 2.0, 1e-10), "sqrt(4) = {}", r.to_f64());
+    }
+
+    // ========================================================================
+    // Algebraic Property Tests
+    // ========================================================================
+
+    // Note: Addition is NOT associative in floating point due to rounding
+    // This is expected behavior, not a bug
+
+    #[test]
+    fn test_mul_associativity() {
+        // (a * b) * c ≈ a * (b * c)
+        let a = Dfp::from_i64(2);
+        let b = Dfp::from_i64(3);
+        let c = Dfp::from_i64(5);
+        let r1 = dfp_mul(dfp_mul(a, b), c);
+        let r2 = dfp_mul(a, dfp_mul(b, c));
+        assert!(approx(r1.to_f64(), r2.to_f64(), 1e-10), "associativity");
+    }
+
+    // ========================================================================
+    // Determinism Tests
+    // ========================================================================
+
+    #[test]
+    fn test_determinism() {
+        let a = Dfp::from_f64(1.23456789);
+        let b = Dfp::from_f64(9.87654321);
+        let r1 = dfp_mul(a, b);
+        let r2 = dfp_mul(a, b);
+        assert_eq!(r1.mantissa, r2.mantissa, "determinism mantissa");
+        assert_eq!(r1.exponent, r2.exponent, "determinism exponent");
+    }
 }

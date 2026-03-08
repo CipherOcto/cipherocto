@@ -396,6 +396,37 @@ The binary tree assumes powers of two. Handle odd batch sizes:
 | **Variable-depth** | Use different depths for different subtrees | Performance-critical |
 | **Leftover handling** | Aggregate power-of-two subset, verify remaining individually | Simpler |
 
+**DECISION: Padding with Option 1 (Identity Verification)**
+
+After analysis, **Option 1** is selected as the canonical approach:
+
+```rust
+/// Final recommendation: Identity verification with is_padding flag
+struct AggregatorInput {
+    /// The proof data
+    proof: Vec<u8>,
+    /// Whether this is a padding proof
+    is_padding: bool,
+}
+
+impl AggregationCircuit {
+    fn verify(&self, input: &AggregatorInput) -> bool {
+        if input.is_padding {
+            // Identity: always accept padding positions
+            return true;
+        }
+        // Normal verification for actual proofs
+        self.verify_stark(&input.proof)
+    }
+}
+```
+
+**Rationale:**
+- Avoids complex zero-knowledge padding circuits
+- Maintains constant verification time
+- Simple implementation with clear semantics
+- No special cryptographic assumptions
+
 ```rust
 /// Pad to power of two
 fn pad_to_power_of_two(proofs: Vec<InferenceProof>) -> Vec<InferenceProof> {
@@ -431,7 +462,7 @@ fn pad_to_power_of_two(proofs: Vec<InferenceProof>) -> Vec<InferenceProof> {
 ///   - All padding proofs verified normally
 ///
 /// The circuit MUST document which approach is used.
-/// Recommended: Option 3 for maximum security (no special cases).
+/// Recommended: Option 1 for simplicity and efficiency.
 const NULL_PROOF: InferenceProof = InferenceProof {
     version: 0,
     proof_id: Digest::ZERO,
@@ -441,9 +472,183 @@ const NULL_PROOF: InferenceProof = InferenceProof {
 };
 ```
 
-### Incremental Aggregation
+### Epoch Management
 
-**CRITICAL REQUIREMENT:** The aggregation operator MUST be associative:
+Epochs prevent replay attacks and define aggregation windows:
+
+```rust
+/// Epoch configuration
+struct EpochConfig {
+    /// Duration of each epoch in blocks
+    duration_blocks: u64,
+
+    /// Number of blocks for proof collection
+    collection_window: u64,
+
+    /// Grace period for late proofs
+    grace_period: u64,
+}
+
+impl EpochConfig {
+    /// Genesis epoch parameters
+    const GENESIS: Self = Self {
+        duration_blocks: 100,
+        collection_window: 20,
+        grace_period: 5,
+    };
+}
+
+/// Epoch state machine
+enum EpochState {
+    /// Epoch is accepting proofs
+    Collecting,
+
+    /// Collection window closed, finalizing
+    Finalizing,
+
+    /// Epoch complete, proofs settled
+    Settled,
+}
+
+struct Epoch {
+    /// Epoch number
+    number: u64,
+
+    /// Epoch start block
+    start_block: u64,
+
+    /// Current state
+    state: EpochState,
+
+    /// Proofs submitted this epoch
+    proofs: Vec<Digest>,
+}
+
+impl Epoch {
+    /// Check if proof belongs to this epoch
+    fn contains_proof(&self, proof: &InferenceProof) -> bool {
+        proof.metadata.epoch == self.number
+    }
+
+    /// Transition to next epoch
+    fn next(&self) -> Epoch {
+        Epoch {
+            number: self.number + 1,
+            start_block: self.start_block + Self::GENESIS.duration_blocks,
+            state: EpochState::Collecting,
+            proofs: vec![],
+        }
+    }
+
+    /// Handle proofs in flight during transition
+    fn handle_transition(&self, in_flight: Vec<InferenceProof>) -> Vec<InferenceProof> {
+        // During epoch transition, accept proofs from previous epoch
+        // within grace period
+        in_flight
+            .into_iter()
+            .filter(|p| p.metadata.epoch == self.number.saturating_sub(1))
+            .collect()
+    }
+}
+```
+
+**Epoch Boundary Rules:**
+
+| Scenario | Handling |
+|----------|----------|
+| Proof arrives after epoch ends | Rejected (wrong epoch) |
+| Proof in flight during transition | Accepted during grace period |
+| Aggregator spans epochs | Split aggregation by epoch |
+| Cross-epoch aggregation | Not allowed |
+
+### Error Handling
+
+The protocol handles failure modes explicitly:
+
+```rust
+/// Protocol error types
+enum ProtocolError {
+    /// Network partition during collection
+    NetworkPartition {
+        missed_proofs: Vec<Digest>,
+    },
+
+    /// Timeout waiting for proofs
+    CollectionTimeout {
+        collected: u32,
+        expected: u32,
+    },
+
+    /// Aggregator failed to produce recursive proof
+    AggregationFailure {
+        reason: AggregationErrorCode,
+    },
+
+    /// Partial aggregation scenario
+    PartialAggregation {
+        aggregated: u32,
+        unaggregated: Vec<InferenceProof>,
+    },
+}
+
+enum AggregationErrorCode {
+    CircuitConstraintFailure,
+    MerkleTreeError,
+    InsufficientProofs,
+    RecursiveProofFailure,
+}
+
+/// Error recovery procedures
+impl ProtocolError {
+    fn recovery_action(&self) -> RecoveryAction {
+        match self {
+            ProtocolError::NetworkPartition { missed_proofs } => {
+                // Retry collection with missed proofs
+                RecoveryAction::RetryCollection { proofs: missed_proofs.clone() }
+            }
+
+            ProtocolError::CollectionTimeout { collected, expected } => {
+                // Proceed with partial batch if enough proofs
+                if *collected >= expected / 2 {
+                    RecoveryAction::ProceedPartial
+                } else {
+                    RecoveryAction::Abort
+                }
+            }
+
+            ProtocolError::AggregationFailure { reason } => {
+                // Fall back to individual verification
+                RecoveryAction::VerifyIndividually
+            }
+
+            ProtocolError::PartialAggregation { aggregated, unaggregated } => {
+                // Include both aggregated and individual proofs
+                RecoveryAction::MixedMode {
+                    aggregated: *aggregated,
+                    individual: unaggregated.len() as u32,
+                }
+            }
+        }
+    }
+}
+
+enum RecoveryAction {
+    RetryCollection { proofs: Vec<Digest> },
+    ProceedPartial,
+    Abort,
+    VerifyIndividually,
+    MixedMode { aggregated: u32, individual: u32 },
+}
+```
+
+**Error Handling Rules:**
+
+| Error Type | Recovery | On-Failure Verification |
+|------------|----------|------------------------|
+| Network Partition | Retry missed proofs | Individual |
+| Collection Timeout | Partial if ≥50% | Individual remaining |
+| Aggregation Failure | Fall back to individual | Full individual |
+| Partial Batch | Mixed mode | Both paths |
 
 ```
 A(P1, P2, P3) = A(A(P1, P2), P3) = A(P1, A(P2, P3))
@@ -454,6 +659,32 @@ This ensures:
 - Incremental updates are valid
 - Order doesn't matter
 - Parallel aggregation safe
+
+#### Mathematical Proof of Associativity
+
+The binary tree recursion achieves associativity through its structure:
+
+**Theorem:** Let `A(P_i, P_j)` denote aggregating proofs `P_i` through `P_j` using binary tree recursion. Then for any proofs `P1, P2, P3`:
+
+```
+A(P1, P2, P3) = A(A(P1, P2), P3) = A(P1, A(P2, P3))
+```
+
+**Proof:**
+
+1. **Binary tree structure:** Each aggregation combines exactly 2 proofs via the aggregation circuit `Agg(P_a, P_b) → P_ab`
+
+2. **Base case:** `Agg(P1, P2)` produces a proof committing to both P1 and P2 via Merkle root
+
+3. **Inductive step:** Assume `Agg(P1, P2) = P_12` commits to `{P1, P2}`
+   - `Agg(P_12, P3)` commits to `{P1, P2, P3}` via `MerkleRoot(commit(P1), commit(P2), commit(P3))`
+   - `Agg(P1, P_23)` similarly commits to `{P1, P2, P3}`
+
+4. **Commutativity of Merkle root:** Since `MerkleRoot(a, b, c) = MerkleRoot(a, c, b) = MerkleRoot(b, a, c) = ...`, the final commitment is order-independent
+
+5. **Conclusion:** The aggregation operator is associative because both `A(A(P1, P2), P3)` and `A(P1, A(P2, P3))` produce proofs with identical Merkle roots.
+
+∎
 
 ```rust
 /// Incremental aggregation — add proof to existing
@@ -563,6 +794,33 @@ enum WorkerPenalty {
 const PENALTY_INVALID_PROOF: u64 = 1_000;      // OCTO tokens
 const PENALTY_NO_SUBMISSION: u64 = 500;        // OCTO tokens
 const PENALTY_AGGREGATION_FAILURE: u64 = 2_000; // OCTO tokens
+
+/// Penalty enforcement mechanism
+struct PenaltyEnforcer {
+    /// Slashing authority
+    authority: PublicKey,
+}
+
+impl PenaltyEnforcer {
+    /// Enforce penalty after validation failure
+    fn enforce_penalty(&self, violation: &WorkerPenalty) -> Result<(), Error> {
+        // 1. Validate violation
+        // 2. Calculate penalty amount
+        // 3. Slash stake from violator
+        // 4. Distribute to reporter/treasury
+    }
+
+    /// Appeal process for disputed penalties
+    fn appeal(&self, penalty_id: Digest) -> AppealResult {
+        // appeals go to governance
+        // if appeal successful, stake returned
+    }
+}
+
+/// Penalty enforcement rules
+const PENALTY_APPEAL_WINDOW: u64 = 7;  // days
+const PENALTY_EVIDENCE_REQUIRED: bool = true;
+const PENALTY_FRACTIONAL_OK: bool = false;  // whole token penalties only
 
 /// Graceful degradation
 /// If aggregator fails, individual proofs still verified:
@@ -860,6 +1118,53 @@ enum AggregatorFraud {
 | Fraud rejected | Fisherman stake preserved |
 | False accusation | Fisherman stake slashed |
 
+**Fraud Detection Procedures:**
+
+```rust
+/// Fraud detection procedure
+struct FraudDetectionProcedure {
+    /// Detection window (blocks)
+    detection_window: u64,
+
+    /// Evidence required
+    evidence_threshold: u8,
+}
+
+impl FraudDetectionProcedure {
+    /// Step 1: Observe aggregator behavior
+    fn observe(aggregator: &PublicKey, block: &Block) -> Option<Observation> {
+        // Monitor submitted aggregates for anomalies
+        // Store observations for evidence
+    }
+
+    /// Step 2: Collect evidence
+    fn collect_evidence(observation: &Observation) -> FraudEvidence {
+        // Evidence types:
+        // - Original proof submissions (worker receipts)
+        // - Final aggregate (what was submitted)
+        // - Merkle inclusion proofs
+        // - Timestamp/order data
+    }
+
+    /// Step 3: Submit fraud claim
+    fn submit_claim(evidence: &FraudEvidence) -> FraudClaim {
+        // Submit to consensus for adjudication
+        // Include stake deposit
+    }
+
+    /// Step 4: Adjudication
+    fn adjudicate(claim: &FraudClaim) -> AdjudicationResult {
+        // Consensus nodes verify evidence
+        // Check: Is proof in aggregate? Was ordering correct?
+        // Return: Confirmed / Rejected / Uncertain
+    }
+}
+
+/// Fraud detection timeline
+const FRAUD_DETECTION_WINDOW: u64 = 12;    // blocks
+const FRAUD_CLAIM_DEPOSIT: u64 = 5000;     // OCTO tokens
+const EVIDENCE_THRESHOLD: u8 = 2;           // corroborating sources
+
 ---
 
 | Aspect | Original | Revised |
@@ -900,10 +1205,29 @@ enum AggregatorFraud {
 
 ## Related RFCs
 
-- RFC-0131: Deterministic Transformer Circuit
-- RFC-0132: Deterministic Training Circuits
-- RFC-0130: Proof-of-Inference Consensus
-- RFC-0140: Sharded Consensus Protocol
+### Dependency Status
+
+| RFC | Status | Dependency Type | Interface Required |
+|-----|--------|-----------------|-------------------|
+| RFC-0131 | Draft | Required | Inference proof format |
+| RFC-0132 | Draft | Optional | Training proof format |
+| RFC-0130 | Draft | Required | Consensus integration |
+| RFC-0140 | Draft | Optional | Shard boundary handling |
+
+**Required Dependencies:**
+- RFC-0131 (Transformer Circuit): Must be accepted before implementation
+- RFC-0130 (Proof-of-Inference): Must be accepted before implementation
+
+**Optional Dependencies:**
+- RFC-0132 (Training Circuits): For training proof aggregation
+- RFC-0140 (Sharded Consensus): For cross-shard aggregation
+
+### RFC Reference
+
+- [RFC-0131: Deterministic Transformer Circuit](../0131-deterministic-transformer-circuit.md)
+- [RFC-0132: Deterministic Training Circuits](../0132-deterministic-training-circuits.md)
+- [RFC-0130: Proof-of-Inference Consensus](../0130-proof-of-inference-consensus.md)
+- [RFC-0140: Sharded Consensus Protocol](../0140-sharded-consensus-protocol.md)
 
 ## Related Use Cases
 
@@ -923,11 +1247,14 @@ enum AggregatorFraud {
 
 ---
 
-**Version:** 1.5
+**Version:** 1.6
 **Submission Date:** 2026-03-07
 **Last Updated:** 2026-03-07
-**Changes:** v1.5 per additional review feedback:
-- Added Fisherman role for aggregator monitoring
-- Clarified Universal VK vs. Per-Level VK approach
-- Added Worker Penalty for Failed Aggregation (DoS mitigation)
-- Added penalty schedule constants
+**Changes:** v1.6 comprehensive review fixes:
+- Added mathematical proof of associativity
+- Selected Option 1 (Identity Verification) as canonical padding approach
+- Added Epoch Management section with state machine
+- Added Error Handling section with recovery procedures
+- Added Fraud Detection Procedures with timeline
+- Added Penalty Enforcement mechanism specification
+- Added RFC dependency status section

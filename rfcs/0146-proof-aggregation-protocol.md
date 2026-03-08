@@ -178,29 +178,7 @@ struct InferenceProof {
     stark_proof: Vec<u8>,
 }
 
-/// Aggregated proof structure
-/// See §Proof Binding for the canonical definition.
-struct AggregatedProof {
-    /// Reference to canonical definition in Proof Binding section
-    /// This struct is kept for backward compatibility with aggregation()
-    /// function return type. Use the canonical definition below.
-    ///
-    /// Canonical fields:
-    /// - aggregate_id: Digest
-    /// - level: u8
-    /// - proof_count: u32
-    /// - program_hash: Digest
-    /// - public_input_root: Digest
-    /// - proof_root: Digest
-    /// - left_child: Digest
-    /// - right_child: Digest
-    /// - stark_proof: Vec<u8>
-    ///
-    /// For the canonical AggregatedProof definition, see "Proof Binding" section.
-    /// This placeholder exists for backward compatibility and is DEPRECATED.
-    #[deprecated(use = "Proof Binding section")]
-    proof_root: Digest,  // Legacy field - use canonical definition
-}
+// For the canonical AggregatedProof definition, see "Proof Binding" section below.
 
 struct AggregateMetadata {
     /// Number of proofs aggregated
@@ -327,6 +305,12 @@ struct AggregatedProof {
 ```
 
 > **Note on `program_hash`:** This is the hash of the compiled STARK circuit (the verification key). It prevents cross-circuit aggregation attacks where proofs from different AI models could be mixed. The registry of allowed `program_hash` values is maintained by governance; only accepted circuit hashes may be aggregated.
+>
+> **ZK Privacy Model:**
+> - `program_hash` is **public** to the verifier (included in aggregate_id)
+> - The **actual circuit** (model weights, architecture) remains **private**
+> - Aggregators verify proofs without learning model details
+> - Only the VK hash is revealed, not the model itself
 
 **Binding prevents:**
 - Proof swapping (different child order)
@@ -385,19 +369,29 @@ The protocol targets specific security levels:
 | Cumulative security | ≥100 bits | After 10 levels (with degradation) |
 | FRI soundness | 80-100 bits | Blow-up factor ρ = 2^-80 |
 | Query complexity | 40-60 | FRI queries per proof |
-| Field size | Small field | M31 or BabyBear recommended |
+| **Field (MANDATORY)** | M31 | Circle STARKs field |
 | Hash security | 256 bits | BLAKE3 / Poseidon |
 
-**Cumulative Soundness Degradation:**
+**Cumulative Soundness Bound:**
 
-At each recursive level, soundness decreases marginally. With 10 levels:
-- Level 0: 128 bits
-- Level 10: ~100 bits (acceptable)
+The total soundness error MUST NOT exceed `2^-100` after 10 levels of recursion.
 
-**Implementation Note:** Small-field STARKs (M31, BabyBear) are recommended for:
-- Faster prover time
-- Lower memory usage
+```
+ε_total ≈ Σ ε_i (additive across levels)
+Constraint: ε_total ≤ 2^-100
+```
+
+This provides a hard constraint for circuit designers.
+
+**Field Requirement:**
+
+> **MANDATORY:** Implementations MUST use the **M31** (2^31 - 1) field for Circle STARKs alignment with modern standards (e.g., Plonky3/Starky).
+
+**Implementation Note:** M31 is selected for:
+- Fast modular arithmetic
+- Circle STARKs compatibility
 - Better recursion performance
+- Industry standard (Plonky3, Starky)
 
 ## Protocol Flow
 
@@ -1587,14 +1581,14 @@ const EVIDENCE_THRESHOLD: u8 = 2;           // corroborating sources
 
 ---
 
-**Version:** 2.1
+**Version:** 2.2
 **Submission Date:** 2026-03-07
 **Last Updated:** 2026-03-07
-**Changes:** v2.1 critical fixes:
-- Clarify Canonical Ordering (Deterministic) vs Associativity
-- Fix padding: is_padding is PRIVATE input (O(1) verification)
-- Add program_hash governance note
-- Clean up duplicate struct definition
+**Changes:** v2.2 final polish:
+- Remove deprecated struct placeholder (single canonical definition)
+- Add M31 mandatory field requirement with Circle STARKs
+- Add cumulative soundness bound (2^-100 max)
+- Add ZK privacy model for program_hash
 - Add hardware baseline to performance targets
 - Add padding security constraints (is_padding as public input)
 - Clarify cross-shard aggregation as out of scope

@@ -77,6 +77,13 @@ Every participant stakes both OCTO (global alignment) + Role Token (local specia
 
 ## Development Workflow
 
+### Shell Command Guidelines
+
+**DO NOT use compound shell commands** (e.g., `cd path && command`). Instead:
+- Use separate Bash calls sequentially when commands depend on each other
+- Use absolute paths to avoid needing `cd`
+- If cd is absolutely necessary, use separate tool calls
+
 ### Rust Development Commands
 
 **Lint (must pass with zero warnings)**

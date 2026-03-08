@@ -102,12 +102,30 @@ RFC-0140 (Sharded Consensus)
 
 We use **binary tree STARK recursion**:
 
-```
-Level 0: [P1] [P2] [P3] [P4] ... individual proofs
-             ↓       ↓
-Level 1:    [P12]    [P34]      ... 2 proofs combined
-               ↓
-Level 2:    [P1234]                 ... 4 proofs combined
+```mermaid
+graph LR
+    subgraph Level 0
+        P1[P1]
+        P2[P2]
+        P3[P3]
+        P4[P4]
+    end
+
+    subgraph Level 1
+        P12[P12]
+        P34[P34]
+    end
+
+    subgraph Level 2
+        P1234[P1234]
+    end
+
+    P1 --> P12
+    P2 --> P12
+    P3 --> P34
+    P4 --> P34
+    P12 --> P1234
+    P34 --> P1234
 ```
 
 This provides:
@@ -1247,14 +1265,10 @@ const EVIDENCE_THRESHOLD: u8 = 2;           // corroborating sources
 
 ---
 
-**Version:** 1.6
+**Version:** 1.7
 **Submission Date:** 2026-03-07
 **Last Updated:** 2026-03-07
-**Changes:** v1.6 comprehensive review fixes:
-- Added mathematical proof of associativity
-- Selected Option 1 (Identity Verification) as canonical padding approach
-- Added Epoch Management section with state machine
-- Added Error Handling section with recovery procedures
-- Added Fraud Detection Procedures with timeline
-- Added Penalty Enforcement mechanism specification
+**Changes:** v1.7 final review fixes:
+- Upgraded ASCII diagram to Mermaid for binary tree recursion
+- Minor editorial improvements per final review
 - Added RFC dependency status section

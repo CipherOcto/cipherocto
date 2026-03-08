@@ -288,7 +288,7 @@ DFP_ADD(a, b):
     1b. Signed-zero rules (apply before main addition):
         - If a.class == Zero AND b.class == Zero:
             - a.sign == b.sign: result.sign = a.sign (same signs preserve)
-            - a.sign != b.sign: result.sign = false (positive wins in RNE)
+            - a.sign != b.sign: result.sign = false (positive wins under RNE per IEEE-754 §6.3)
             - Return Zero with computed sign
         - If exactly one operand is Zero:
             - Result takes the sign of the non-zero operand
@@ -439,15 +439,15 @@ DFP_SQRT(a):
             result = candidate
 
     // result now contains sqrt(adjusted_mantissa * 2^226) in 226-bit precision
-    // The actual sqrt result is result / 2^113
 
     // Shift right by 113 to get the mantissa in normal range
-    // This gives us the upper 113 bits of the 226-bit result
+    // This extracts the upper 113 bits, effectively dividing by 2^113
+    // The scaling and unscaling cancel: sqrt(x * 2^226) / 2^113 = sqrt(x) * 2^113 / 2^113 = sqrt(x)
     result_mantissa = result >> 113
 
-    // The exponent adjustment accounts for the scaling
-    // We divided by 2^113, so we subtract 113 from exponent
-    result_exponent = exponent_quotient - 113
+    // The exponent is simply the halved exponent from decomposition
+    // (scaling/unscaling cancel exactly)
+    result_exponent = exponent_quotient
 
     3. Normalize (ensure odd mantissa)
     4. Return
@@ -461,10 +461,10 @@ DFP_SQRT(a):
 // Bit-by-bit sqrt: result ≈ 2^113 * sqrt(2) ≈ 2^113 * 1.414...
 //   result has 226 bits, approximately 0x1.6A09E667F3BCD... in hex
 //   result_mantissa = result >> 113 ≈ sqrt(2) in 113-bit mantissa
-//   result_mantissa ≈ 0x1.6A09E667F3BCD (in hex, as 113-bit mantissa)
-//   result_exponent = 0 - 113 = -113
-// Final: sqrt(2.0) ≈ mantissa * 2^(-113) * 2^113 = mantissa * 2^0
-// Result: mantissa ≈ 0x1.6A09E667F3BCD (canonical 113-bit), exponent = 0
+//   result_mantissa ≈ 0x1.6A09E667F3BCD (113-bit odd mantissa)
+//   result_exponent = 0
+// Final: sqrt(2.0) ≈ mantissa * 2^0 = 1.41421356...
+// Result: mantissa ≈ 0x1.6A09E667F3BCD (canonical 113-bit), exponent = 0 ✓
 ```
 
 ### Expression VM opcodes
@@ -668,9 +668,10 @@ from_f64_subnormal(f64_bits):
         significant_bits = 52 - leading_zeros  // 1-52
 
         // The subnormal value is: fraction × 2^(-1022 - (52 - significant_bits))
-        // Equivalent to: (fraction << (significant_bits - 1)) × 2^(-1022 - 52 + 1)
-        // Normalize: shift fraction left so MSB is at bit (significant_bits - 1)
-        normalized_fraction = fraction << (significant_bits - 1)  // Now has implicit 1-bit at position (significant_bits-1)
+        // Equivalent to: (fraction << (52 - significant_bits)) × 2^(-1022)
+        // Normalize: shift fraction left so the highest bit is at position 51 (the MSB)
+        // After this shift: normalized_fraction.bit_length() == significant_bits
+        normalized_fraction = fraction << (52 - significant_bits)  // Shift to normalize; highest bit at position 51
 
         // Effective exponent after normalization
         // Original: -1022 - (52 - significant_bits)
@@ -842,7 +843,10 @@ DFP uses software-only deterministic arithmetic. Verification ensures the implem
 
 ```rust
 /// Verification test vectors
-/// Full suite: ~265 vectors covering arithmetic, special values, overflow/underflow
+/// NOTE: This is a developer smoke test only. For consensus-grade verification,
+/// use VERIFICATION_PROBE (24-byte byte comparison) instead.
+/// These tests compare DFP.to_f64() against f64 approximations, which cannot
+/// detect errors smaller than ~1 ULP in f64 (~2^50 ULPs in DFP space).
 const VERIFICATION_TESTS: &[(&str, f64)] = &[
     ("0.1 + 0.2", 0.3),
     ("sqrt(2)", 1.4142135623730951),
@@ -851,6 +855,8 @@ const VERIFICATION_TESTS: &[(&str, f64)] = &[
 ```
 
 > **Note**: `sin`, `cos`, `log`, `exp` are excluded from initial verification because transcendental functions are deferred to Mission 1b.
+>
+> **Authoritative Verification**: Use `VERIFICATION_PROBE` (defined above) for consensus-grade verification. It compares full 24-byte DfpEncoding serialization against known-correct reference values.
 
 #### Continuous Verification
 
@@ -924,7 +930,7 @@ DFP software arithmetic is significantly slower than native integer operations. 
 | DFP_ADD      | 6-10x            | 128-bit + normalization |
 | DFP_MUL      | 10-15x           | 128-bit multiplication |
 | **DFP_DIV**  | **50-100x**      | Iterative algorithm |
-| **DFP_SQRT** | **50-100x**      | Bit-by-bit or Newton-Raphson |
+| **DFP_SQRT** | **50-100x**      | Bit-by-bit integer sqrt (226-bit scaled) |
 | DFP_FROM_I64 | 2x               | Conversion |
 | DFP_TO_I64   | 2x               | Conversion |
 | DFP_FROM_F64 | 4-6x             | Canonicalization |
@@ -1106,7 +1112,7 @@ This RFC makes CipherOcto a potential outlier. The experimental warning reflects
 
 2. **No f64 for SQRT Seed:** The initial approximation for SQRT must use bit-by-bit integer sqrt. Using `f64::sqrt(x)` as a seed is FORBIDDEN — it introduces non-determinism.
 
-3. **No Iteration Short-Circuiting:** Even if convergence occurs in 5 iterations, execute ALL 32 iterations (or 128 for division). Compilers must NOT elide "useless" iterations via "fast-math" flags.
+3. **No Iteration Short-Circuiting:** Execute ALL iterations as specified (256 for division, 226 for SQRT). Compilers must NOT elide "useless" iterations via "fast-math" flags.
 
 ### Mission 1b: Additional Transcendental Functions (Future Phase)
 
@@ -1199,7 +1205,7 @@ struct ProbeEntry {
 /// DfpEncoding layout (24 bytes total):
 ///   Bytes 0-15:  mantissa (u128, big-endian)
 ///   Bytes 16-19: exponent (i32, big-endian)
-///   Bytes 20-23: class_sign (u32, big-endian) - high byte contains class (0=Zero,1=Normal,2=NaN,3=Infinity)
+///   Bytes 20-23: class_sign (u32, big-endian) - high byte contains class (0=Normal,1=Infinity,2=NaN,3=Zero)
 const VERIFICATION_PROBE: &[ProbeEntry] = &[
     // Test: 1.5 + 2.0 = 3.5
     // a = 1.5 = mantissa=3, exponent=-1; b = 2.0 = mantissa=4, exponent=-1
@@ -1447,17 +1453,18 @@ None. DFP is a new type that does not modify existing FLOAT/DOUBLE behavior.
 
 ---
 
-**Version:** 1.14
+**Version:** 1.15
 **Submission Date:** 2025-03-06
 **Last Updated:** 2026-03-08
-**Changes:** v1.14 production fixes:
-- S1: Fix SQRT - add 226-bit scaling for full precision, add worked example
-- S2: Fix probe entries - correct byte layouts, add layout documentation
-- S3: Expand Mission 5 with fork handling, spec version pinning, replay semantics
-- S4: Add from_f64 subnormal conversion algorithm
-- S5: Add signed-zero rules to ADD and MUL algorithms
-- S6: Fix comparator - sign-aware magnitude comparison for same-sign Normal
-- M1: Fix Mission 1 checklist - bit-by-bit sqrt (not Newton-Raphson)
+**Changes:** v1.15 production fixes:
+- MOD-1: Fix SQRT exponent - remove spurious -113, result_exponent = exponent_quotient
+- MOD-2: Fix from_f64 subnormal shift - (52 - significant_bits) not (significant_bits - 1)
+- MOD-3: Mark VERIFICATION_TESTS as smoke test only, point to VERIFICATION_PROBE
+- L1: Fix probe layout comment - class encoding (0=Normal,1=Infinity,2=NaN,3=Zero)
+- L3: Fix Golden Rule 3 - 256 iterations for division
+- L4: Fix gas table - bit-by-bit integer sqrt (226-bit scaled)
+- L5: Add IEEE-754 §6.3 citation to signed-zero rule
+- v1.14: SQRT 226-bit scaling, subnormal algorithm, signed-zero rules
 - M2: Remove sqrt probe entry (was incorrect), now covered by algorithm fix
 - M3: Replace dfp_soft with dfp_spec_version for replay pinning
 - M4: Fix DFP_MAX_MANTISSA comment - correct formula to (2^113-1) × 2^1023

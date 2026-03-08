@@ -527,6 +527,49 @@ When two valid aggregations exist for overlapping proof sets:
 - Unaggregated proofs verified individually at consensus
 - Aggregator penalized for incomplete aggregation
 
+### Worker Penalty for Failed Aggregation
+
+To prevent DoS attacks on verifier CPU time:
+
+```rust
+/// Penalty rules for workers
+enum WorkerPenalty {
+    /// Proof fails validation before aggregation
+    InvalidProof {
+        /// Worker submitted invalid proof
+        worker: PublicKey,
+        /// Reason for failure
+        reason: ValidationError,
+    },
+
+    /// Proof not submitted during collection window
+    NoSubmission {
+        /// Worker promised but didn't deliver
+        worker: PublicKey,
+        /// Promised proof hash
+        commitment: Digest,
+    },
+
+    /// Proof causes aggregation failure
+    AggregationFailure {
+        /// Worker proof caused recursive failure
+        worker: PublicKey,
+        /// Failure type
+        failure: AggregationError,
+    },
+}
+
+/// Penalty schedule
+const PENALTY_INVALID_PROOF: u64 = 1_000;      // OCTO tokens
+const PENALTY_NO_SUBMISSION: u64 = 500;        // OCTO tokens
+const PENALTY_AGGREGATION_FAILURE: u64 = 2_000; // OCTO tokens
+
+/// Graceful degradation
+/// If aggregator fails, individual proofs still verified:
+/// - Worker penalty for invalid proofs
+/// - Standard fee for valid proofs verified individually
+/// - Aggregator penalty for failed recursive proof
+
 ### Shard-Aggregation Boundary
 
 Each shard independently aggregates proofs within that shard:
@@ -743,6 +786,16 @@ Level N VK: 2^N proofs aggregated
 - Upgrade via governance (hard fork)
 - Security parameter: 128 bits minimum
 
+**Universal VK vs. Multiple Keys:**
+
+| Approach | Storage | Verification | Use Case |
+|----------|---------|--------------|----------|
+| **Universal VK** | 1 key | Dynamic input size | Light clients, mobile |
+| **Per-Level VKs** | 11 keys (0-10) | Fixed input per level | High-performance nodes |
+| **Hybrid** | 2-3 keys | Level groups | Balanced |
+
+**Recommendation:** Universal VK approach for maximum flexibility and minimal storage. The circuit accepts proof_count as public input, allowing single VK to verify any depth ≤10.
+
 ### Aggregator Incentives & DoS Mitigation
 
 **Race Condition:**
@@ -763,6 +816,49 @@ Level N VK: 2^N proofs aggregated
 | Invalid aggregate submitted | Deposit slashed |
 | Valid aggregate verified | Deposit returned + reward |
 | Aggregator censorship | Worker can submit directly |
+
+### Fisherman Role (Fraud Detection)
+
+The protocol defines a **Fisherman** role for monitoring aggregator behavior:
+
+```rust
+/// Fisherman monitors aggregator integrity
+struct Fisherman {
+    /// Fisherman stake deposit
+    stake: TokenAmount,
+
+    /// Monitored aggregators
+    watched: Vec<PublicKey>,
+}
+
+impl Fisherman {
+    /// Submit fraud proof against aggregator
+    fn submit_fraud_proof(&self, fraud: AggregatorFraud) -> Result<(), Error> {
+        // Fraud types:
+        // - Circuit constraint bypass (metadata manipulation)
+        // - Proof exclusion without cause
+        // - Invalid ordering
+        // - Double aggregation
+
+        // If fraud confirmed: Fisherman receives portion of slashed stake
+    }
+}
+
+/// Types of aggregator fraud
+enum AggregatorFraud {
+    Censorship { proof_id: Digest, aggregator: PublicKey },
+    OrderingManipulation { wrong_order: Vec<Digest> },
+    MetadataTampering { original: Metadata, modified: Metadata },
+}
+```
+
+**Fisherman Rewards:**
+
+| Outcome | Fisherman Reward |
+|---------|-----------------|
+| Fraud confirmed | 10% of slashed aggregator stake |
+| Fraud rejected | Fisherman stake preserved |
+| False accusation | Fisherman stake slashed |
 
 ---
 
@@ -827,10 +923,11 @@ Level N VK: 2^N proofs aggregated
 
 ---
 
-**Version:** 1.4
+**Version:** 1.5
 **Submission Date:** 2026-03-07
 **Last Updated:** 2026-03-07
-**Changes:** v1.4 fixes per final review:
-- Refined Performance Targets with separate Prover/Network/Verification sections
-- Added Appendix A for References (template compliance)
-- Added more reference links
+**Changes:** v1.5 per additional review feedback:
+- Added Fisherman role for aggregator monitoring
+- Clarified Universal VK vs. Per-Level VK approach
+- Added Worker Penalty for Failed Aggregation (DoS mitigation)
+- Added penalty schedule constants

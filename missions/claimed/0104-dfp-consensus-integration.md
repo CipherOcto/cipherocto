@@ -1,7 +1,7 @@
 # Mission: DFP Consensus Integration
 
 ## Status
-Open
+Blocked
 
 ## RFC
 RFC-0104: Deterministic Floating-Point Abstraction

@@ -20,6 +20,59 @@ This RFC defines the **Deterministic AI Virtual Machine (AI-VM)** — a speciali
 
 ## Motivation
 
+### CAN WE? — Feasibility Research
+
+The fundamental question: **Can we create a deterministic execution environment for AI workloads that produces bit-exact results across heterogeneous hardware?**
+
+Research confirms feasibility through:
+
+- **Deterministic Numeric Tower (RFC-0106)** — Provides DQA, DFP, DVEC, DMAT types with guaranteed determinism
+- **Canonical operator semantics** — Fixed loop orders, deterministic reductions
+- **Hardware adapter pattern** — Map canonical semantics to hardware-specific implementations while preserving correctness
+- **Execution trace commitment** — Merkle-based verification of execution history
+
+### WHY? — Why This Matters
+
+Without deterministic AI execution:
+
+| Problem | Consequence |
+|---------|-------------|
+| Non-reproducible inference | Verification impossible, fraud detection fails |
+| Hardware variance | Different results on CPU vs GPU vs TPU |
+| Verification cost | Full ZK proofs economically infeasible for large models |
+| Agent unpredictability | Autonomous agents cannot guarantee reproducible behavior |
+
+The AI-VM enables:
+
+- **Verifiable Inference** — Cryptographic proof that specific inputs produced specific outputs
+- **Deterministic Training** — Reproducible model training across the network
+- **Verification Markets** — Fraud proofs require deterministic execution
+- **Agent Trust** — Autonomous agents need guaranteed reproducible behavior
+
+### WHAT? — What This Specifies
+
+The AI-VM defines:
+
+1. **Execution model** — State machine semantics with canonical operators
+2. **Instruction set** — Deterministic operations (MATMUL, ATTENTION, SOFTMAX, etc.)
+3. **Hardware abstraction** — Adapters that preserve semantics across devices
+4. **Verification interface** — Sampling, fraud proofs, and ZK integration
+5. **Memory model** — Object-based storage with cryptographic addressing
+
+### HOW? — Implementation
+
+The AI-VM integrates with the existing stack:
+
+```
+RFC-0106 (Numeric Tower)
+       ↓
+RFC-0120 (AI-VM) ← NEW
+       ↓
+RFC-0121 (Verifiable Large Model Execution)
+       ↓
+RFC-0130 (Proof-of-Inference Consensus)
+```
+
 ### The Problem: Non-Deterministic AI Execution
 
 Modern ML stacks introduce nondeterminism through:
@@ -826,6 +879,35 @@ This separation enables:
 
 A purpose-built VM enables deterministic guarantees impossible in general-purpose ML frameworks.
 
+## Dependency on RFC-0106
+
+The AI-VM builds directly on the Deterministic Numeric Tower (RFC-0106) for all numeric operations:
+
+### Numeric Types Used
+
+| RFC-0106 Type | AI-VM Usage | Purpose |
+|---------------|-------------|---------|
+| `DqaScalar` | Weight matrices, activations | Quantized inference |
+| `DfpScalar` | Intermediate computations | Floating-point precision |
+| `DVEC<N>` | Embedding vectors | Vector search, attention scores |
+| `DMAT<M,N>` | Weight matrices, activation tensors | Linear algebra operations |
+
+### Key Integration Points
+
+1. **Scalar Arithmetic**: All operator implementations use `DqaScalar` traits for deterministic arithmetic
+2. **Matrix Operations**: `matmul()` uses `DMat<A, M, K>` with fixed loop order
+3. **Vector Operations**: Attention and embedding lookup use `DVEC` with deterministic traversal
+4. **Numeric Context**: VM state includes `numeric_mode: NumericMode` from RFC-0106
+
+### Why Not Other Approaches?
+
+| Approach | Why Rejected |
+|----------|--------------|
+| IEEE 754 floats | Non-deterministic across hardware |
+| Vendor tensor cores | Algorithm selection varies |
+| General-purpose vectors | No determinism guarantees |
+| This approach | Full stack determinism via RFC-0106 |
+
 ## Related RFCs
 
 - RFC-0106: Deterministic Numeric Tower
@@ -892,6 +974,6 @@ sequenceDiagram
 
 ---
 
-**Version:** 1.0
+**Version:** 1.1
 **Submission Date:** 2026-03-07
 **Last Updated:** 2026-03-07

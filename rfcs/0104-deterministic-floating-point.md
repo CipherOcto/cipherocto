@@ -301,18 +301,23 @@ DFP_MUL(a, b):
 
     // 113-bit × 113-bit = up to 226-bit intermediate
     // Use 256-bit multiplication (two u128s)
-    product_hi = (a.mantissa as u256) * (b.mantissa as u256)  // Upper bits
-    product_lo = ...                                          // Lower bits
+    product = (a.mantissa as u256) * (b.mantissa as u256)
 
-    // Extract top 128 bits for rounding
-    // The 226-bit product is in product_hi:product_lo
-    // We need the most significant 128 bits for rounding
-    intermediate_128 = (product_hi << 128) | product_lo  // This is conceptual
+    // CRITICAL: Align intermediate for round_to_113
+    // Find MSB position in 256-bit product (0-255)
+    product_msb = 255 - product.leading_zeros()
+
+    // Shift product right so MSB is at bit 112:
+    // - Bit 112 becomes the result LSB (of the 113 we keep)
+    // - Bit 113 becomes the round bit
+    // - Bits shifted off the right end become the sticky bit
+    shift_amount = product_msb.saturating_sub(112)
+    aligned = product >> shift_amount
 
     // Apply RNE rounding from 128 to 113 bits
-    // Pass upper 128 bits to round_to_113
-    (result_mantissa, exp_adj) = round_to_113(product_hi, product_lo)
-    result_exponent += exp_adj
+    // Pass aligned value to round_to_113
+    (result_mantissa, exp_adj) = round_to_113(aligned as i128)
+    result_exponent += exp_adj + shift_amount as i32
 
     4. Normalize (ensure odd mantissa)
     5. Return
@@ -357,10 +362,20 @@ DFP_DIV(a, b):
         // Else: quotient bit remains 0, dividend unchanged
 
     // quotient now has 256-bit precision
-    // Apply RNE rounding from 256 to 113 bits
-    // Extract most significant 128 bits for rounding
-    (result_mantissa, exp_adj) = round_to_113_from_256(quotient)
-    result_exponent += exp_adj
+    // CRITICAL: Align quotient for round_to_113
+    // Find MSB position in 256-bit quotient (0-255)
+    quotient_msb = 255 - quotient.leading_zeros()
+
+    // Shift quotient right so MSB is at bit 112:
+    // - Bit 112 becomes the result LSB (of the 113 we keep)
+    // - Bit 113 becomes the round bit
+    // - Bits shifted off the right end become the sticky bit
+    shift_amount = quotient_msb.saturating_sub(112)
+    aligned = quotient >> shift_amount
+
+    // Apply RNE rounding from aligned value to 113 bits
+    (result_mantissa, exp_adj) = round_to_113(aligned as i128)
+    result_exponent += exp_adj + shift_amount as i32
 
     4. Normalize (ensure odd mantissa)
     5. Return
@@ -517,26 +532,6 @@ fn round_to_113(mantissa: i128) -> (u128, i32) {
     // CRITICAL: Return both mantissa AND exponent adjustment
     // Shifting right by trailing zeros DECREASES the value, so we ADD to exponent
     (normalized, trailing as i32)
-}
-
-/// Round 256-bit quotient to 113-bit with sticky bit (RNE)
-/// Input: 256-bit unsigned integer from division
-/// Output: (113-bit odd mantissa, exponent_adjustment)
-/// NOTE: Extracts upper 128 bits as the significant portion for rounding
-fn round_to_113_from_256(quotient: u256) -> (u128, i32) {
-    // Extract upper 128 bits from 256-bit quotient
-    // This represents the significant digits after the binary point
-    let hi = quotient >> 128;  // Upper 128 bits
-    let lo = quotient & ((1u256 << 128) - 1);  // Lower 128 bits
-
-    // For rounding, we need: [upper 113 bits] [round bit] [sticky bits]
-    // Use upper 128 bits as the mantissa for round_to_113
-    // Convert u256 to i128 for the existing function (upper 128 bits fit in i128)
-    let mantissa_for_rounding = hi as i128;
-
-    // Pass to round_to_113 - it handles the rounding from 128 to 113 bits
-    // The sticky bit computation includes bits from 'lo' (lower 128 bits)
-    round_to_113(mantissa_for_rounding)
 }
 
 /// Normalize after rounding to ensure canonical odd mantissa
@@ -1201,12 +1196,12 @@ None. DFP is a new type that does not modify existing FLOAT/DOUBLE behavior.
 
 ---
 
-**Version:** 1.10
+**Version:** 1.11
 **Submission Date:** 2025-03-06
 **Last Updated:** 2026-03-08
-**Changes:** v1.10 production fixes:
-- Add round_to_113_from_256 for 256-bit division output handling
-- Fix division: use shift-and-subtract algorithm (not u128 << bit_pos)
-- Clarify Infinity class: only used in from_f64() before saturation
+**Changes:** v1.11 production fixes:
+- Fix multiplication alignment: shift product right so MSB at bit 112 before rounding
+- Fix division alignment: shift quotient right so MSB at bit 112 before rounding
+- Remove round_to_113_from_256 (alignment now done in caller)
+- v1.10: Add 256-bit division output handling
 - v1.9: Fix multiplication 226-bit intermediate handling
-- v1.8: Fix sticky bit mask, exponent adjustment, division decomposition

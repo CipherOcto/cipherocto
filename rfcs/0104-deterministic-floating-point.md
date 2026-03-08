@@ -1174,41 +1174,117 @@ Recommended patterns:
 
 #### Determinism Hazards and Mitigations
 
-Production deployments must guard against compiler and hardware behaviors that can break determinism:
+Deterministic Floating Point (DFP) is designed to produce **bit-identical results across architectures and compilers**. However, several common compiler and platform behaviors can break determinism if not controlled.
 
-| Hazard | Description | Mitigation |
-| -------|-------------|------------|
-| Compiler reordering | Optimizers may reorder floating-point operations | Use `-ffp-contract=off` and disable fast-math |
-| FMA contraction | Fused multiply-add can change precision | Disable FMA contraction via flags |
-| Integer overflow | Signed overflow is UB in C/C++ | Use wrapping arithmetic or `-fwrapv` |
-| Shift semantics | Shift amounts beyond bit width vary | Explicit bounds checking |
-| NaN propagation | Different NaN payloads may differ | Canonical NaN (signaling NaN with payload 0) |
-| Denormal handling | Hardware denormal mode may differ | Software handling for denormals |
-| Rounding mode | Default rounding may vary | Explicit Round-to-Nearest-Even |
+##### 1. Floating-Point Hardware Execution
 
-**Required Compiler Flags:**
+**Hazard:** Native floating-point hardware may introduce:
+- extended precision registers
+- fused multiply-add (FMA)
+- platform-dependent rounding
+- hidden intermediate precision
 
+These behaviors differ across x86, ARM, RISC-V, and WASM.
+
+**Mitigation:** DFP arithmetic **must not rely on hardware floating-point instructions** for core arithmetic operations. All operations must use integer arithmetic with explicit normalization and deterministic rounding.
+
+##### 2. Fused Multiply-Add (FMA)
+
+**Hazard:** Compilers may replace `a * b + c` with `fma(a,b,c)`, performing multiplication and addition in a single rounding step, which changes results.
+
+**Mitigation:** Disable FMA contraction:
+
+| Compiler | Flag |
+| -------- | ---- |
+| GCC/Clang | `-ffp-contract=off` |
+| Rust | `-C target-feature=-fma` |
+| MSVC | `/fp:strict` |
+
+##### 3. Compiler Reordering
+
+**Hazard:** Compilers may reorder operations like `(a + b) + c` → `a + (b + c)`, changing results due to non-associativity.
+
+**Mitigation:** Disable auto-vectorization and fast-math flags. Prohibited: `-ffast-math`, `-Ofast`.
+
+##### 4. Undefined Integer Behavior
+
+**Hazard:** Signed integer overflow, shifting by ≥ word size, and negative shifts have undefined behavior.
+
+**Mitigation:** Use checked arithmetic and explicit overflow handling:
+
+```rust
+let (m, overflow) = a.mantissa.overflowing_mul(b.mantissa);
+if overflow { return Err(DfpError::Overflow); }
 ```
-# GCC/Clang for deterministic builds
+
+##### 5. Platform Word Size
+
+**Hazard:** 32-bit, 64-bit, and 128-bit native integers can cause implicit widening/narrowing inconsistencies.
+
+**Mitigation:** Explicitly define all numeric widths:
+```
+mantissa: i128
+exponent: i32
+```
+
+##### 6. Endianness
+
+**Hazard:** Little vs big endian can misinterpret serialized values.
+
+**Mitigation:** Use fixed byte order (little-endian) in serialization:
+```
+struct { int128 mantissa, int32 exponent }
+```
+
+##### 7. Non-Deterministic Math Libraries
+
+**Hazard:** Standard math libraries (libm, libc) use platform-specific implementations for sqrt(), pow(), exp().
+
+**Mitigation:** All mathematical operations must be implemented within the DFP library itself.
+
+##### 8. Parallel Execution
+
+**Hazard:** Parallel reductions and SIMD can change evaluation order.
+
+**Mitigation:** DFP arithmetic must execute in deterministic sequential order with fixed reduction trees.
+
+##### 9. Compiler Optimization Levels
+
+**Hazard:** Certain optimization levels enable floating-point transformations.
+
+**Mitigation:** Use:
+```
+-O2
 -ffp-contract=off
 -fno-fast-math
--fno-tree-vrp
--fwrapv
--fno-strict-overflow
-
-# Rust (in Cargo.toml)
-RUSTFLAGS = ["-C", "overflow-checks=true"]
 ```
 
-**Cross-Platform Verification:**
+##### Determinism Compliance Checklist
 
-All DFP implementations must pass the deterministic test suite on:
-- x86_64
-- ARM64
-- RISC-V
-- WASM (if targeting browser/wasm32)
+| Requirement | Status |
+|-------------|--------|
+| No hardware FP for arithmetic | Required |
+| Explicit integer widths | Required |
+| Canonical normalization enforced | Required |
+| Deterministic rounding | Required |
+| FMA disabled | Required |
+| Fast-math disabled | Required |
+| Stable serialization format | Required |
 
-Each platform must produce **bit-identical results** for all test vectors.
+##### Verification Strategy
+
+- **Cross-platform testing**: Execute test vectors on x86_64, ARM64, RISC-V, WASM - all must match bit-for-bit
+- **Deterministic test vectors**: Minimum 500 reference vectors covering add, sub, mul, div, sqrt, normalization
+- **Reproducibility testing**: `f(a,b)` executed multiple times must produce identical bits
+
+##### Security Considerations
+
+Non-deterministic arithmetic may lead to:
+- consensus failure in distributed systems
+- divergent blockchain state
+- inconsistent simulation outcomes
+
+Deterministic arithmetic is a **consensus-critical component** and must be treated as such.
 
 ### Alternatives Considered
 

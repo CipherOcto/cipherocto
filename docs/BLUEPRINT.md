@@ -20,14 +20,16 @@ This Blueprint defines how work flows through CipherOcto—from idea to protocol
 
 We maintain four distinct layers that must never mix:
 
-| Layer         | Purpose     | Question | Blockchain Analogy      |
-| ------------- | ----------- | -------- | ----------------------- |
-| **Research**  | Feasibility | CAN WE?  | Technical Investigation |
-| **Use Cases** | Intent      | WHY?     | Ethereum Vision         |
-| **RFCs**      | Design      | WHAT?    | EIPs                    |
-| **Missions**  | Execution   | HOW?     | Implementation          |
+| Layer          | Purpose     | Question | Blockchain Analogy      |
+| -------------- | ----------- | -------- | ---------------------- |
+| **Research**   | Feasibility | CAN WE?  | Technical Investigation |
+| **Use Cases**  | Intent      | WHY?     | Ethereum Vision        |
+| **RFCs**       | Design      | WHAT?    | EIPs                   |
+| **Missions**   | Execution   | HOW?     | Implementation         |
 
 **Mix these layers and governance breaks.**
+
+> **Terminology Note:** "Use Cases" and "Missions" are always capitalized when referring to the formal artifact types. Lowercase "use case" or "mission" refers to general concepts.
 
 ---
 
@@ -353,10 +355,14 @@ Reference material.
 
 ---
 
-**Version:** 1.0
-**Submission Date:** YYYY-MM-DD
-**Last Updated:** YYYY-MM-DD
-**Replaces:** RFC-XXXX (if applicable)
+**Version:** 1.1
+**Submission Date:** 2026-03-07
+**Last Updated:** 2026-03-07
+**Changes:**
+- Added terminology consistency note
+- Added Research to Governance Stack (0️⃣ layer)
+- Clarified agent RFC initiation rules
+- Added timeout rationale table
 
 ```
 
@@ -434,6 +440,17 @@ Implementation notes, blockers, decisions.
 | Create Use Cases | Human direction required |
 | Accept RFCs      | Governance decision      |
 | Bypass Missions  | Chaos prevention         |
+| Initiate RFCs    | Requires human approval  |
+
+### RFC Initiation
+
+Agents **CANNOT** initiate RFCs. However, agents MAY:
+
+- Draft RFCs based on human-provided requirements
+- Propose technical solutions within a Mission
+- Contribute to RFC technical content
+
+The key distinction: **Humans provide intent, agents provide implementation detail.**
 
 ### Agent Workflow
 
@@ -511,6 +528,13 @@ Implementation notes, blockers, decisions.
 
 - Claimed mission: 14 days → Return to open
 - PR in review: 7 days → Follow up or close
+
+**Timeout Rationale:**
+
+| Timeout | Value | Rationale |
+|---------|-------|-----------|
+| Mission claim | 14 days | Allows adequate time for understanding RFC, planning implementation, and making significant progress. Two weeks is standard for substantial development work. |
+| PR review | 7 days | One week provides sufficient time for thorough human review while preventing indefinite review stalls. Aligns with common sprint cycles. |
 
 ---
 

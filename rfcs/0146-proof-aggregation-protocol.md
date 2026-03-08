@@ -309,9 +309,6 @@ fn compute_aggregate_id_mmr(
     let peak_hash = poseidon_hash(peaks);
     poseidon_hash(&[peak_hash, Digest::from(proof_count), program_hash])
 }
-) -> Digest {
-    H(left_child || right_child || level || proof_count || program_hash)
-}
 
 /// Aggregated proof with Merkle Mountain Range
 struct AggregatedProof {
@@ -635,6 +632,7 @@ struct ProofCommitment {
 const MAX_PROOF_SIZE: usize = 1_000_000;      // 1 MB
 const MAX_PUBLIC_INPUTS: usize = 1024;
 const MAX_BATCH_SIZE: usize = 1024;           // Max proofs per batch
+const MAX_PEAKS: usize = 32;                  // Max MMR peaks (supports 2^32 proofs)
 
 ```rust
 /// Aggregator builds recursive proof
@@ -2087,11 +2085,10 @@ Run 1000 simulations, verify Nash equilibrium.
 
 ---
 
-**Version:** 4.1
+**Version:** 4.2
 **Submission Date:** 2026-03-07
 **Last Updated:** 2026-03-07
-**Changes:** v4.1 structural fix (MMR-only):
-- Unify circuit definition to MMR-only (remove binary tree references)
-- Replace "Associativity" with "Deterministic Append-Only" for MMR
-- Add MMR-based aggregate_id computation
-- Update proof binding for MMR peaks
+**Changes:** v4.2 final fixes:
+- Fix syntax error: remove orphaned code block in Proof Binding
+- Add MAX_PEAKS constant (32 for SSZ compliance)
+- Union Bound confirmed as conservative safety floor (Theorem 3)

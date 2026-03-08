@@ -896,12 +896,22 @@ This RFC makes CipherOcto a potential outlier. The experimental warning reflects
   - [ ] Range bounds and overflow/underflow clamping
   - [ ] From/To f64 conversion
   - [ ] Serialization
-  - [ ] sqrt (square root) - Newton-Raphson with 16 iterations
+  - [ ] sqrt (square root) - Newton-Raphson with 32 iterations
   - [ ] **Test vectors: 500+ verified cases** including edge cases
   - [ ] **Differential fuzzing** against Berkeley SoftFloat reference
 - Estimated complexity: Medium
 
 > **Prerequisite before consensus integration:** At least 300 passing test vectors + differential fuzzing report.
+
+### ⚠️ Three Golden Rules for Implementation
+
+> **CRITICAL:** These rules must be followed exactly to ensure deterministic execution:
+
+1. **Intermediate u256 for Division:** In `DFP_DIV`, when shifting `a.mantissa << 128`, you MUST use a 256-bit intermediate (or two u128s). Using u128 will shift bits to zero.
+
+2. **No f64 for SQRT Seed:** The initial approximation for SQRT must use bit-by-bit integer sqrt. Using `f64::sqrt(x)` as a seed is FORBIDDEN — it introduces non-determinism.
+
+3. **No Iteration Short-Circuiting:** Even if convergence occurs in 5 iterations, execute ALL 32 iterations (or 128 for division). Compilers must NOT elide "useless" iterations via "fast-math" flags.
 
 ### Mission 1b: Additional Transcendental Functions (Future Phase)
 

@@ -413,7 +413,25 @@ fn pad_to_power_of_two(proofs: Vec<InferenceProof>) -> Vec<InferenceProof> {
     [proofs, null_proofs].concat()
 }
 
-/// Null proof (identity for aggregation)
+/// Null proof handling in circuit:
+///
+/// The aggregation circuit MUST handle NULL_PROOF specially:
+///
+/// Option 1: Identity verification
+///   - Circuit accepts is_padding flag alongside proof
+///   - If is_padding=true, circuit skips verification (accepts as identity)
+///   - Identity proof: verify(identity) = always accept
+///
+/// Option 2: Pre-computed verification
+///   - Generate verified "identity proof" once at setup
+///   - Use this proof for all padding positions
+///
+/// Option 3: Zero-knowledge padding (RECOMMENDED)
+///   - Pad with proofs of knowledge of nothing (zero-value commitments)
+///   - All padding proofs verified normally
+///
+/// The circuit MUST document which approach is used.
+/// Recommended: Option 3 for maximum security (no special cases).
 const NULL_PROOF: InferenceProof = InferenceProof {
     version: 0,
     proof_id: Digest::ZERO,
@@ -674,6 +692,55 @@ Prevents two critical attacks:
 | `crates/aggregation/src/protocol.rs` | Actor communication |
 | `crates/consensus/src/proofs.rs` | Consensus integration |
 
+### Verification Key Management
+
+The RFC must specify how Verification Keys are managed:
+
+**Key Hierarchy:**
+
+```
+Level 0 VK: Base circuit (inference proof)
+Level 1 VK: Aggregation circuit (2 proofs)
+Level 2 VK: Aggregation circuit (4 proofs)
+...
+Level N VK: 2^N proofs aggregated
+```
+
+**Key Derivation:**
+
+- Pre-generated VKs for each depth level
+- Universal VK (same circuit, different input size)
+- VK bundled with proof metadata
+
+**Network Agreement:**
+
+- VKs committed in genesis
+- Upgrade via governance (hard fork)
+- Security parameter: 128 bits minimum
+
+### Aggregator Incentives & DoS Mitigation
+
+**Race Condition:**
+
+- Multiple aggregators may submit valid aggregates for same proof set
+- "First-seen wins" creates competition
+
+**DoS Attack Vector:**
+
+- Attackers submit invalid aggregates to waste verification cycles
+- Mitigation: Economic stake required to submit
+
+**Mitigation Rules:**
+
+| Action | Requirement |
+|--------|-------------|
+| Submit aggregate | Stake deposit required |
+| Invalid aggregate submitted | Deposit slashed |
+| Valid aggregate verified | Deposit returned + reward |
+| Aggregator censorship | Worker can submit directly |
+
+---
+
 | Aspect | Original | Revised |
 |--------|----------|---------|
 | Aggregation method | Unspecified | Binary tree recursion |
@@ -731,10 +798,14 @@ Prevents two critical attacks:
 
 ---
 
-**Version:** 1.2
+**Version:** 1.3
 **Submission Date:** 2026-03-07
 **Last Updated:** 2026-03-07
-**Changes:** v1.1 fixes per second review:
+**Changes:** v1.2 fixes per third review:
+- Added NULL_PROOF circuit handling specification
+- Added Verification Key Management section
+- Added Aggregator Incentives & DoS Mitigation
+- Improved padding method documentation
 - Added Alternatives Considered section
 - Added Rationale section
 - Added Future Work section

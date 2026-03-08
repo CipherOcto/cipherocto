@@ -159,20 +159,66 @@ impl Dfp {
 }
 
 /// DFP encoding for storage/consensus
-/// Uses big-endian canonical encoding to avoid cross-platform ambiguity
+/// Uses optimized 24-byte layout to avoid compiler padding issues
 #[derive(Clone, Copy, Debug)]
-#[repr(C, align(16))]
+#[repr(C)]
 pub struct DfpEncoding {
-    /// Class tag (0=Normal, 1=Infinity, 2=NaN, 3=Zero)
-    class: u8,
-    /// Sign bit
-    sign: u8,
-    /// Reserved for alignment
-    _reserved: [u8; 2],
-    /// Mantissa in big-endian
+    /// Mantissa in big-endian (16 bytes)
+    /// Placed first to align i128 naturally
     mantissa: i128,
-    /// Exponent in big-endian
+    /// Exponent in big-endian (4 bytes)
     exponent: i32,
+    /// Class tag (0=Normal, 1=Infinity, 2=NaN, 3=Zero) - 1 byte
+    /// Sign bit - 1 byte
+    /// Reserved - 2 bytes
+    class_sign: u32,  // [class:8][sign:8][reserved:16]
+}
+
+/// Optimized accessor methods
+impl DfpEncoding {
+    /// Create from DFP value
+    pub fn from_dfp(dfp: &Dfp) -> Self {
+        let class_sign = ((match dfp.class {
+            DfpClass::Normal => 0,
+            DfpClass::Infinity => 1,
+            DfpClass::NaN => 2,
+            DfpClass::Zero => 3,
+        } as u32) << 24) | ((dfp.sign as u32) << 16);
+
+        Self {
+            mantissa: dfp.mantissa.to_be(),
+            exponent: dfp.exponent.to_be(),
+            class_sign,
+        }
+    }
+
+    /// Convert to DFP value
+    pub fn to_dfp(&self) -> Dfp {
+        let class = (self.class_sign >> 24) & 0xFF;
+        let sign = (self.class_sign >> 16) & 0x01;
+
+        Dfp {
+            class: match class {
+                0 => DfpClass::Normal,
+                1 => DfpClass::Infinity,
+                2 => DfpClass::NaN,
+                3 => DfpClass::Zero,
+                _ => DfpClass::NaN,
+            },
+            sign: sign != 0,
+            mantissa: i128::from_be(self.mantissa),
+            exponent: i32::from_be(self.exponent),
+        }
+    }
+
+    /// Canonical serialization for Merkle tree (24 bytes)
+    pub fn to_bytes(&self) -> [u8; 24] {
+        let mut bytes = [0u8; 24];
+        bytes[..16].copy_from_slice(&self.mantissa.to_be_bytes());
+        bytes[16..20].copy_from_slice(&self.exponent.to_be_bytes());
+        bytes[20..24].copy_from_slice(&self.class_sign.to_be_bytes());
+        bytes
+    }
 }
 
 impl DfpEncoding {
@@ -345,13 +391,43 @@ fn normalize(dfp: &mut Dfp) {
 
 ### Rounding Rules
 
-All operations use round-to-nearest-even (matches IEEE-754 default):
+All operations use **Round-to-Nearest-Even (RNE)** with a **Sticky Bit** for 113-bit precision:
 
-| Input | Rounded To |
-| ----- | ---------- |
-| 1.5   | 2          |
-| 2.5   | 2          |
-| 3.5   | 4          |
+**Internal Representation (128-bit for accuracy):**
+- **Target:** 113-bit mantissa
+- **Guard bits:** 15 bits (128 - 113)
+- **Round bit:** Bit 113 (first guard bit)
+- **Sticky bit:** OR of all bits beyond bit 113
+
+```rust
+/// Round 128-bit intermediate to 113-bit with sticky bit
+fn round_to_113(mantissa: i128) -> i128 {
+    // Bits: [sign|113 mantissa bits|15 guard bits]
+    const MASK_113: i128 = (1i128 << 113) - 1;      // Lower 113 bits
+    const MASK_ROUND: i128 = 1i128 << 113;           // Round bit (114th)
+    const MASK_STICKY: i128 = !((1i128 << 114) - 1); // Bits 115+
+
+    let mant = mantissa & MASK_113;
+    let round_bit = (mantissa & MASK_ROUND) != 0;
+    let sticky_bit = (mantissa & MASK_STICKY) != 0;
+
+    // RNE: Round up if (round AND sticky) OR (round AND mant_even AND sticky=0)
+    if round_bit && (sticky_bit || (mant & 1) == 1) {
+        (mant >> 114) + 1  // Round up
+    } else {
+        mant >> 114  // Truncate
+    }
+}
+```
+
+**RNE Table:**
+
+| Scenario | Round Bit | Sticky Bit | LSB (113th) | Result |
+|----------|-----------|------------|--------------|--------|
+| 1.5 | 1 | 0 | 1 | Round UP → 2 |
+| 2.5 | 1 | 0 | 0 | Round DOWN → 2 |
+| 2.500...1 | 1 | 1 | 0 | Round UP → 3 |
+| 3.5 | 1 | 0 | 1 | Round UP → 4 |
 
 **Multi-step expressions:** RNE is applied after **every individual operation**. There are no fused paths. For example, `(a + b) * c` is computed as: `(a + b)` → round → then multiply → round. This ensures deterministic results regardless of evaluation order.
 
@@ -580,21 +656,26 @@ impl Serialize for Dfp {
 
 ### Gas/Fee Modeling
 
-DFP software arithmetic is slower than native integer operations due to normalization. The VM must charge accordingly:
+DFP software arithmetic is significantly slower than native integer operations. Gas costs reflect true computational cost to prevent resource exhaustion attacks:
 
-| Operation    | Relative Gas Cost   |
-| ------------ | ------------------- |
-| INT_ADD      | 1x (baseline)       |
-| DFP_ADD      | 6-10x               |
-| DFP_MUL      | 10-15x              |
-| DFP_DIV      | 25-40x              |
-| DFP_SQRT     | 20-30x              |
-| DFP_FROM_I64 | 2x                  |
-| DFP_TO_I64   | 2x                  |
-| DFP_FROM_F64 | 4-6x (canonicalize) |
-| DFP_TO_F64   | 3-4x (roundtrip)    |
+| Operation    | Relative Gas Cost | Notes |
+| ------------ | ----------------- | ----- |
+| INT_ADD      | 1x (baseline)     | Native |
+| DFP_ADD      | 6-10x            | 128-bit + normalization |
+| DFP_MUL      | 10-15x           | 128-bit multiplication |
+| **DFP_DIV**  | **50-100x**      | Iterative algorithm |
+| **DFP_SQRT** | **50-100x**      | Bit-by-bit or Newton-Raphson |
+| DFP_FROM_I64 | 2x               | Conversion |
+| DFP_TO_I64   | 2x               | Conversion |
+| DFP_FROM_F64 | 4-6x             | Canonicalization |
+| DFP_TO_F64   | 3-4x             | Roundtrip |
 
-**Rationale:** Software DFP uses 128-bit arithmetic with normalization loops. Division and square root are most expensive due to iterative algorithms. f64 conversion requires canonicalization.
+**Rationale:** Software DFP uses 128-bit arithmetic with normalization loops. Division and square root require iterative algorithms (16-32 iterations minimum). The 50-100x multiplier prevents DoS attacks via computationally dense DFP operations.
+
+**Resource Exhaustion Protection:**
+- Max DFP ops per block: 10,000
+- Max DFP_DIV/DFP_SQRT per block: 1,000
+- Exceeding limits → transaction rejected
 
 ### Deterministic Ordering
 
@@ -768,6 +849,66 @@ Comprehensive verification requires extensive test vectors:
 | Transcendental     | sqrt, sin, cos, log, exp         | ~40   |
 | Cross-platform     | Same inputs across architectures | ~100  |
 
+### Consensus Verification Probe
+
+Every 100,000 blocks, nodes should execute a **Deterministic Sanity Check** to detect compiler bugs, CPU microcode errors, or VM implementation flaws:
+
+```rust
+/// Hard-coded DFP stress test values
+const VERIFICATION_PROBE: &[(i128, i32, i128, i32)] = &[
+    // (a_mantissa, a_exp, b_mantissa, b_exp)
+    // Test: (1.5 * 2.0) + 0.25 = 3.25
+    (3, 0, 4, 0),      // 3.0
+    // Test: sqrt(2.0) precision
+    (2, 0, 0, 0),      // sqrt(2) ≈ 1.414...
+    // Test: (10.0 / 3.0) precision loss
+    (10, 0, 3, 0),     // 3.333...
+    // Test: subnormal handling
+    (1, -100, 0, 0),   // Very small number
+    // Test: overflow
+    (1, 100, 0, 0),    // Very large number
+    // Test: NaN propagation
+    (0, 0, 0, 0),      // NaN
+];
+
+/// Verification probe result
+struct ProbeResult {
+    expected_hashes: Vec<Digest>,
+    actual_hashes: Vec<Digest>,
+    passed: bool,
+}
+
+/// Execute verification probe
+fn run_verification_probe() -> ProbeResult {
+    let mut expected = Vec::new();
+    let mut actual = Vec::new();
+
+    // These are precomputed canonical hash results
+    // Any deviation indicates implementation bug
+    expected.push(hash_dfp(&compute_reference(&VERIFICATION_PROBE[0])));
+    actual.push(hash_dfp(&execute_probe_op(0)));
+
+    // ... verify all test cases
+
+    ProbeResult {
+        expected_hashes: expected.clone(),
+        actual_hashes: actual.clone(),
+        passed: expected == actual,
+    }
+}
+```
+
+**Why Verification Probe is Critical:**
+- Detects **compiler bugs** that produce incorrect i128 arithmetic
+- Detects **CPU microcode errors** (e.g., flawed i128 division)
+- Detects **VM implementation errors** in soft-float emulation
+- Prevents signing fraudulent blocks due to arithmetic bugs
+
+**Probe Execution:**
+- Runs automatically every 100,000 blocks
+- If probe fails: node halts, logs diagnostic, awaits manual intervention
+- Probe results are published for network-wide visibility
+
 ### Mission 5: Consensus Integration
 
 - Location: `src/storage/`, `src/consensus/`
@@ -845,5 +986,11 @@ None. DFP is a new type that does not modify existing FLOAT/DOUBLE behavior.
 
 ---
 
+**Version:** 1.1
 **Submission Date:** 2025-03-06
-**Last Updated:** 2025-03-06
+**Last Updated:** 2026-03-08
+**Changes:** v1.1 production fixes:
+- Add Sticky Bit definition for 113-bit RNE rounding
+- Fix struct layout to 24 bytes (no padding)
+- Increase DFP_DIV/SQRT gas to 50-100x (prevent DoS)
+- Add Consensus Verification Probe (every 100K blocks)

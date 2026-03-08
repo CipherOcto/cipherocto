@@ -41,6 +41,8 @@ None
   - Use `release` profile (overflow checks OFF)
   - Do NOT use debug profile for DFP operations
   - LTO enabled for optimization
+  - Run tests/fuzz in release mode: `cargo test --release`
+  - Or use custom profiles: `cargo test --profile test`
 
 ## Completed
 - Created `determin/` crate (moved from crates/octo-determin)

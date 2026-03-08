@@ -17,6 +17,16 @@ lto = "thin"
 # Bench uses release flags
 inherits = "release"
 
+# Test profile - use release for DFP determinism
+# Run with: cargo test --profile test
+[profile.test]
+inherits = "release"
+
+# Fuzz profile - use release for performance and DFP determinism
+# Run with: cargo fuzz --profile fuzz
+[profile.fuzz]
+inherits = "release"
+
 [dependencies]
 serde = { version = "1.0", features = ["derive"] }
 thiserror = "1.0"

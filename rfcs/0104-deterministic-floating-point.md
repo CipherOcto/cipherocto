@@ -400,7 +400,10 @@ DFP_SQRT(a):
         x = (x + a.mantissa / x) >> 1  // Fixed shift, not division
 
     // Apply RNE rounding to 113 bits
-    result_mantissa = round_to_113(x)
+    // CRITICAL: round_to_113 returns (mantissa, exponent_adjustment)
+    // The exponent adjustment accounts for normalization after rounding
+    (result_mantissa, exp_adj) = round_to_113(x)
+    result_exponent += exp_adj
 
     3. Normalize
     4. Return
@@ -817,8 +820,8 @@ DFP software arithmetic is significantly slower than native integer operations. 
 **Rationale:** Software DFP uses 128-bit arithmetic with normalization loops. Division and square root require iterative algorithms (16-32 iterations minimum). The 50-100x multiplier prevents DoS attacks via computationally dense DFP operations.
 
 **Resource Exhaustion Protection:**
-- Max DFP ops per block: 10,000
-- Max DFP_DIV/DFP_SQRT per block: 1,000
+- Max DFP ops per transaction: 10,000
+- Max DFP_DIV/DFP_SQRT per transaction: 1,000
 - Exceeding limits → transaction rejected
 
 ### Deterministic Ordering
@@ -1196,12 +1199,11 @@ None. DFP is a new type that does not modify existing FLOAT/DOUBLE behavior.
 
 ---
 
-**Version:** 1.11
+**Version:** 1.12
 **Submission Date:** 2025-03-06
 **Last Updated:** 2026-03-08
-**Changes:** v1.11 production fixes:
-- Fix multiplication alignment: shift product right so MSB at bit 112 before rounding
-- Fix division alignment: shift quotient right so MSB at bit 112 before rounding
-- Remove round_to_113_from_256 (alignment now done in caller)
+**Changes:** v1.12 final polish:
+- Fix DFP ops scope: "per transaction" not "per block"
+- Fix SQRT: capture exponent adjustment from round_to_113
+- v1.11: Fix multiplication/division rounding alignment
 - v1.10: Add 256-bit division output handling
-- v1.9: Fix multiplication 226-bit intermediate handling

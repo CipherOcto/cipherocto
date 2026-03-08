@@ -537,12 +537,37 @@ Each shard independently aggregates proofs within that shard:
 
 ## Performance Targets
 
+### Prover Performance
+
 | Metric | Target | Notes |
 |--------|--------|-------|
-| Aggregation latency | 30-120s | Aspirational |
-| Verification time | 50-200ms | Realistic |
-| Proof compression | >90% | Size reduction |
+| Single proof aggregation | 5-15s | Level 0 → Level 1 |
+| Recursive proof generation | 10-30s per level | Additional depth |
+| Full batch (1024 proofs) | 60-180s | 10 levels recursive |
+
+### Network Performance
+
+| Metric | Target | Notes |
+|--------|--------|-------|
+| Proof collection window | 10-30s | Wait for batch fill |
+| Network finalization | 3-5 blocks | Finality confirmation |
+| Total end-to-end | 90-300s | From first proof to final |
+
+### Verification Performance
+
+| Metric | Target | Notes |
+|--------|--------|-------|
+| Verification time | 50-200ms | Per aggregated proof |
+| Memory usage | <1GB | Proof data storage |
+| Proof compression ratio | >90% | Size reduction |
+
+### Scaling Parameters
+
+| Metric | Target | Notes |
+|--------|--------|-------|
 | Max recursion depth | 10 | 2^10 = 1024 proofs |
+| Max aggregation levels | 10 | Per RFC design |
+| Proof batch size | Variable | Power-of-two |
 
 ## Adversarial Review
 
@@ -790,28 +815,22 @@ Level N VK: 2^N proofs aggregated
 - [Probabilistic Verification Markets](../../docs/use-cases/probabilistic-verification-markets.md)
 - [Node Operations](../../docs/use-cases/node-operations.md)
 
-## References
+## Appendices
+
+### Appendix A: References
 
 - [STARK Recursion (Vitalik)](https://vitalik.ca/general/2022/11/19/proof_of_synthesis.html)
 - [FRI Folding Schemes](https://eprint.iacr.org/2023/)
 - [Proof Carrying Data](https://research.protocol.ai/sites/pcd/)
+- [StarkWare Recursive Proofs](https://starkware.co/)
+- [Polygon zkEVM Aggregation](https://polygon.technology/)
 
 ---
 
-**Version:** 1.3
+**Version:** 1.4
 **Submission Date:** 2026-03-07
 **Last Updated:** 2026-03-07
-**Changes:** v1.2 fixes per third review:
-- Added NULL_PROOF circuit handling specification
-- Added Verification Key Management section
-- Added Aggregator Incentives & DoS Mitigation
-- Improved padding method documentation
-- Added Alternatives Considered section
-- Added Rationale section
-- Added Future Work section
-- Added Key Files to Modify section
-- Made aggregator_sig required (not optional)
-- Added non-power-of-two batch handling (padding)
-- Added consensus rejection rules
-- Added double-aggregation resolution
-- Added shard-aggregation boundary
+**Changes:** v1.4 fixes per final review:
+- Refined Performance Targets with separate Prover/Network/Verification sections
+- Added Appendix A for References (template compliance)
+- Added more reference links

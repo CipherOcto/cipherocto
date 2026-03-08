@@ -49,15 +49,21 @@ pub fn dfp_add(a: Dfp, b: Dfp) -> Dfp {
     };
 
     // Add mantissas (accounting for sign)
-    let result_sign = aligned_a.sign;
-    let (result_mantissa, _overflow) = if aligned_a.sign == aligned_b.sign {
+    let (result_sign, result_mantissa) = if aligned_a.sign == aligned_b.sign {
         // Same sign: add
-        let (sum, overflow) = aligned_a.mantissa.overflowing_add(aligned_b.mantissa);
-        (sum, overflow)
+        let (sum, _overflow) = aligned_a.mantissa.overflowing_add(aligned_b.mantissa);
+        (aligned_a.sign, sum)
     } else {
-        // Different sign: subtract (guaranteed positive result since we aligned)
-        let (diff, _) = aligned_a.mantissa.overflowing_sub(aligned_b.mantissa);
-        (diff, false)
+        // Different sign: subtract - need to handle wraparound correctly
+        if aligned_a.mantissa >= aligned_b.mantissa {
+            // a's magnitude is larger: result takes a's sign
+            let diff = aligned_a.mantissa - aligned_b.mantissa;
+            (aligned_a.sign, diff)
+        } else {
+            // b's magnitude is larger: result takes b's sign (flipped)
+            let diff = aligned_b.mantissa - aligned_a.mantissa;
+            (aligned_b.sign, diff)
+        }
     };
 
     // Apply rounding
@@ -114,36 +120,28 @@ pub fn dfp_mul(a: Dfp, b: Dfp) -> Dfp {
     // Both Normal
     let result_sign = a.sign ^ b.sign;
     let result_exponent = a.exponent + b.exponent;
-    eprintln!("MUL: a.mantissa={}, b.mantissa={}, a.exp={}, b.exp={}", a.mantissa, b.mantissa, a.exponent, b.exponent);
-    eprintln!("MUL: result_sign={}, result_exponent={}", result_sign, result_exponent);
 
     // 113-bit × 113-bit = up to 226-bit intermediate
     // Use U256 for multiplication: (hi, lo) = a * b
     let (hi, lo) = mul_u128_to_u256(a.mantissa, b.mantissa);
     let product = U256 { hi, lo };
-    eprintln!("MUL: product hi={}, lo={}", hi, lo);
 
     // Find MSB position for alignment
     let product_msb: i32 = 255 - product.leading_zeros() as i32;
-    eprintln!("MUL: product_msb={}", product_msb);
 
     // Handle based on product size
     let (result_mantissa, exp_adj) = if product_msb <= 112 {
         // Product fits in 113 bits - no shift needed
-        eprintln!("MUL: no shift needed");
         // Just use lo directly for rounding
         let lo_bits = lo & ((1u128 << 114) - 1);  // Get 114 bits for rounding
         round_to_113(lo_bits as i128)
     } else {
         // Product > 113 bits - shift right to align MSB at bit 112
         let shift_right = (product_msb - 112) as u32;
-        eprintln!("MUL: shifting right by {}", shift_right);
         let aligned = product.shr(shift_right);
-        eprintln!("MUL: aligned hi={}, lo={}", aligned.hi, aligned.lo);
         let (rm, ea) = round_to_113(aligned.lo as i128);
         (rm, ea - shift_right as i32)
     };
-    eprintln!("MUL: rounded mantissa={}, exp_adj={}", result_mantissa, exp_adj);
 
     let mut result = Dfp {
         mantissa: result_mantissa,
@@ -157,11 +155,9 @@ pub fn dfp_mul(a: Dfp, b: Dfp) -> Dfp {
         return if result.sign { DFP_MIN } else { DFP_MAX };
     }
 
-    eprintln!("BEFORE normalize: mantissa={}, exponent={}", result.mantissa, result.exponent);
 
     // Normalize
     result.normalize();
-    eprintln!("AFTER normalize: mantissa={}, exponent={}", result.mantissa, result.exponent);
     result
 }
 
@@ -179,8 +175,8 @@ pub fn dfp_div(a: Dfp, b: Dfp) -> Dfp {
         (_, DfpClass::Zero) => {
             return if b.sign { DFP_MIN } else { DFP_MAX };
         }
-        // Zero / anything = Zero
-        (DfpClass::Zero, _) => return Dfp::zero(),
+        // Zero / anything = Zero (preserve sign per IEEE-754 §6.3)
+        (DfpClass::Zero, _) => return if a.sign { Dfp::neg_zero() } else { Dfp::zero() },
         _ => {}
     }
 
@@ -211,17 +207,43 @@ pub fn dfp_div(a: Dfp, b: Dfp) -> Dfp {
         }
     }
 
-    // Align for rounding
+    // Handle zero quotient
+    if quotient == 0 {
+        return Dfp::zero();
+    }
+
+    // The quotient Q represents (a * 2^128) / b
+    // Q is a 256-bit value, we need to normalize it to 113 bits
+    // Find MSB position (0-255)
     let quotient_msb = 255 - quotient.leading_zeros();
-    let shift_amount = quotient_msb.saturating_sub(112);
-    let aligned = quotient >> shift_amount;
+
+    // If MSB is at position p (0-indexed), then Q ≈ mantissa * 2^(p-112)
+    // The value is Q / 2^128 = mantissa * 2^(p-112) / 2^128 = mantissa * 2^(p-240)
+    // So exponent = result_exponent + (p - 240)
+    let mut final_exponent = result_exponent + (quotient_msb as i32) - 240;
+
+    // Normalize to 113-bit mantissa
+    let shift_needed = if quotient_msb >= 112 {
+        quotient_msb - 112
+    } else {
+        // Result is smaller than normalized, need to handle
+        0
+    };
+
+    let aligned = if shift_needed > 0 && shift_needed < 128 {
+        quotient >> shift_needed
+    } else if shift_needed == 0 {
+        quotient
+    } else {
+        quotient
+    };
 
     // Apply RNE rounding
     let (result_mantissa, exp_adj) = round_to_113(aligned as i128);
 
     let mut result = Dfp {
         mantissa: result_mantissa,
-        exponent: result_exponent + exp_adj + shift_amount as i32,
+        exponent: final_exponent + exp_adj,
         class: DfpClass::Normal,
         sign: result_sign,
     };
@@ -525,20 +547,16 @@ impl U256 {
         // This is a simplified comparison for square root
         let self_sq = self.mul(self);
         let result = self_sq.hi < other.hi || (self_sq.hi == other.hi && self_sq.lo <= other.lo);
-        eprintln!("MUL_LE: self hi={}, lo={}, sq hi={}, lo={}, other hi={}, lo={}, result={}",
-                  self.hi, self.lo, self_sq.hi, self_sq.lo, other.hi, other.lo, result);
         result
     }
 
     /// Multiply two U256: self * other
     fn mul(self, other: Self) -> Self {
-        eprintln!("U256_MUL: self hi={}, lo={}", self.hi, self.lo);
         // Split into 64-bit parts - extract properly
         let a0 = (self.lo & 0xFFFFFFFFFFFFFFFFu128) as u64;
         let a1 = ((self.lo >> 64) & 0xFFFFFFFFFFFFFFFFu128) as u64;
         let a2 = (self.hi & 0xFFFFFFFFFFFFFFFFu128) as u64;
         let a3 = ((self.hi >> 64) & 0xFFFFFFFFFFFFFFFFu128) as u64;
-        eprintln!("U256_MUL: a0=0x{:x}, a1=0x{:x}, a2=0x{:x}, a3=0x{:x}", a0, a1, a2, a3);
 
         let b0 = other.lo as u64;
         let b1 = (other.lo >> 64) as u64;
@@ -594,8 +612,6 @@ impl U256 {
         // Result is w0:w1 (lo), w2:w3 (hi) for 256-bit
         let lo = (w1 << 64) | w0;
         let hi = (w3 << 64) | w2;
-        eprintln!("U256_MUL: w0={}, w1={}, w2={}, w3={}", w0, w1, w2, w3);
-        eprintln!("U256_MUL: result hi={}, lo={}", hi, lo);
 
         Self { hi, lo }
     }
@@ -615,22 +631,16 @@ fn mul_u128_to_u256(a: u128, b: u128) -> (u128, u128) {
     let pp_hi_lo: u128 = (a_hi as u128) * (b_lo as u128);
     let pp_hi_hi: u128 = (a_hi as u128) * (b_hi as u128);
 
-    eprintln!("MUL_U128: pp_lo_lo={}, pp_lo_hi={}, pp_hi_lo={}, pp_hi_hi={}",
-              pp_lo_lo, pp_lo_hi, pp_hi_lo, pp_hi_hi);
-
     // Combine: result = pp_hi_hi << 128 + (pp_hi_lo + pp_lo_hi) << 64 + pp_lo_lo
     let mid = pp_hi_lo.wrapping_add(pp_lo_hi);
-    eprintln!("MUL_U128: mid={}", mid);
 
     // Check for overflow in mid addition
     let has_carry = mid < pp_hi_lo || mid < pp_lo_hi;
-    eprintln!("MUL_U128: has_carry={}", has_carry);
 
     let hi = pp_hi_hi.wrapping_add(if has_carry { 1u128 << 64 } else { 0 })
         .wrapping_add(mid >> 64);
     let lo = (mid << 64).wrapping_add(pp_lo_lo);
 
-    eprintln!("MUL_U128: hi={}, lo={}", hi, lo);
 
     (hi, lo)
 }
@@ -655,13 +665,11 @@ mod tests {
         // Test multiplication directly with odd mantissas (to avoid normalization issues)
         // 3 * 5 = 15 → normalize: 15 → 15*2^0 (mantissa stays odd)
         let (hi, lo) = mul_u128_to_u256(3, 5);
-        eprintln!("mul(3,5) = hi:{}, lo:{}", hi, lo);
 
         // Create inputs directly with odd mantissas to avoid normalization
         let a = Dfp { mantissa: 3, exponent: 0, class: DfpClass::Normal, sign: false };
         let b = Dfp { mantissa: 5, exponent: 0, class: DfpClass::Normal, sign: false };
         let result = dfp_mul(a, b);
-        eprintln!("result: mantissa={}, exponent={}", result.mantissa, result.exponent);
         // 3 * 5 = 15 → normalize: 15 is odd so mantissa=15, exp=0
         assert_eq!(result.mantissa, 15);
         assert_eq!(result.exponent, 0);

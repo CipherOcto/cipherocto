@@ -138,20 +138,23 @@ This provides:
 
 **NOT** raw vector hashing (vulnerable to ordering/collision attacks).
 
-Instead, **Merkle tree commitment**:
+Instead, **Merkle tree commitment with domain separation**:
 
 ```
 MerkleRoot(
-  Leaf 0: hash(proof_1.public_inputs || proof_1.proof_data)
-  Leaf 1: hash(proof_2.public_inputs || proof_2.proof_data)
+  Leaf 0: hash("InferenceProof-v1" || proof_1.public_inputs || proof_1.proof_data)
+  Leaf 1: hash("InferenceProof-v1" || proof_2.public_inputs || proof_2.proof_data)
   ...
 )
 ```
+
+**Domain Separation Tag:** `"InferenceProof-v1"` prevents collisions with future proof types.
 
 Properties:
 
 - **Ordering-safe** — Different order = Different root
 - **Collision-resistant** — Hash function security
+- **Domain-separated** — Unique tag per proof version
 - **Inclusion proofs** — Verify specific proof in aggregate
 
 ### Proof Format Specification
@@ -279,6 +282,30 @@ struct VerificationKey {
     security_bits: u8,
 }
 ```
+
+### Security Parameters
+
+The protocol targets specific security levels:
+
+| Parameter | Target | Notes |
+|-----------|--------|-------|
+| Base security | 128 bits | Per recursion layer |
+| Cumulative security | ≥100 bits | After 10 levels (with degradation) |
+| FRI soundness | 80-100 bits | Blow-up factor ρ = 2^-80 |
+| Query complexity | 40-60 | FRI queries per proof |
+| Field size | Small field | M31 or BabyBear recommended |
+| Hash security | 256 bits | BLAKE3 / Poseidon |
+
+**Cumulative Soundness Degradation:**
+
+At each recursive level, soundness decreases marginally. With 10 levels:
+- Level 0: 128 bits
+- Level 10: ~100 bits (acceptable)
+
+**Implementation Note:** Small-field STARKs (M31, BabyBear) are recommended for:
+- Faster prover time
+- Lower memory usage
+- Better recursion performance
 
 ## Protocol Flow
 
@@ -1023,6 +1050,12 @@ Prevents two critical attacks:
 - F3: **Formal verification** — Prove associativity mathematically
 - F4: **Hardware acceleration** — GPU/ASIC optimized circuits
 - F5: **Multi-proof types** — Aggregate proofs from different circuits
+- F6: **FRI multi-folding / packing** — Adopt StarkPack-style aggregation for efficiency (see Note below)
+- F7: **Variable-depth trees** — Support unbalanced tree structures for non-power-of-two batches
+- F8: **Circle STARKs** — Implement emerging small-field techniques for better constants
+- F9: **Lookup arguments** — Integrate lookup arguments in recursion for efficiency
+
+> **Note on Padding Inefficiency:** The current Option 1 padding strategy is intentionally conservative for MVP. Future work items F6 and F7 will address this inefficiency through FRI multi-folding or StarkPack-style packing, which batch real + dummy instances with random linear combination, avoiding full recursive verification for padded leaves. Target: 6-18 months post-MVP.
 
 ---
 
@@ -1265,10 +1298,11 @@ const EVIDENCE_THRESHOLD: u8 = 2;           // corroborating sources
 
 ---
 
-**Version:** 1.7
+**Version:** 1.8
 **Submission Date:** 2026-03-07
 **Last Updated:** 2026-03-07
-**Changes:** v1.7 final review fixes:
-- Upgraded ASCII diagram to Mermaid for binary tree recursion
-- Minor editorial improvements per final review
-- Added RFC dependency status section
+**Changes:** v1.8 technical review fixes:
+- Add concrete security parameter table (soundness bits, FRI params)
+- Add domain separation tag to leaf commitments
+- Add Future Work items for FRI multi-folding, Circle STARKs, lookup arguments
+- Add padding inefficiency note with 6-18 month roadmap

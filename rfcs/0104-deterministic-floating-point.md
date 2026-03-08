@@ -282,6 +282,7 @@ For deterministic execution, all implementations must use this exact algorithm:
 DFP_ADD(a, b):
     1. If a.class != Normal or b.class != Normal:
        → Handle special values per class rules
+       // Note: Infinity inputs unreachable (overflow saturates to MAX); treat as NaN if encountered
 
     // Signed-zero arithmetic per IEEE-754-2019 §6.3
     // Zero operands preserve sign through the operation
@@ -309,6 +310,7 @@ DFP_ADD(a, b):
 ```
 DFP_MUL(a, b):
     1. Handle special values (NaN, Infinity, Zero)
+       // Note: Infinity inputs unreachable (overflow saturates to MAX); treat as NaN if encountered
 
     // Signed-zero arithmetic per IEEE-754-2019 §6.3
     // Zero × anything = Zero with sign = a.sign XOR b.sign
@@ -349,6 +351,7 @@ DFP_MUL(a, b):
 DFP_DIV(a, b):
     1. Handle special values
        - If b == 0: return saturating MAX with sign
+       // Note: Infinity inputs unreachable (overflow saturates to MAX); treat as NaN if encountered
     2. result_sign = a.sign XOR b.sign
     3. result_exponent = a.exponent - b.exponent
 
@@ -409,17 +412,23 @@ DFP_SQRT(a):
        - NaN: return NaN
        - Negative: return NaN (invalid)
        - Zero: return Zero
+       - Infinity: unreachable in compliant implementations (would saturate to MAX before this op); if encountered, return NaN
+
+    // Note: DfpClass::Infinity inputs are unreachable in compliant implementations
+    // because overflow saturates to MAX (class=Normal). If an implementation
+    // produces Infinity somehow, treat as NaN per IEEE-754 conventions.
 
     2. Decompose: sqrt(mantissa * 2^exponent) = sqrt(mantissa) * 2^(exponent/2)
 
     // CRITICAL: Adjust mantissa for odd exponent BEFORE all computations
-    // If exponent is odd, multiply mantissa by 2 (shift left by 1)
+    // Use (exp != 0 for & 1) parity - works correctly for negative exponents
+    // Use >> 1 for floor division (arithmetic right shift in two's complement)
     adjusted_mantissa = a.mantissa
-    if a.exponent % 2 == 1:
+    if (a.exponent & 1) != 0:  // Odd exponent (works for negative too)
         adjusted_mantissa = a.mantissa << 1
-        exponent_quotient = a.exponent / 2  // Integer division
+        exponent_quotient = a.exponent >> 1  // Floor division via right shift
     else:
-        exponent_quotient = a.exponent / 2
+        exponent_quotient = a.exponent >> 1
 
     // CRITICAL: Scale up to get 113-bit precision in result
     // To compute sqrt(x) to 113 bits, we compute sqrt(x * 2^226)
@@ -1453,17 +1462,13 @@ None. DFP is a new type that does not modify existing FLOAT/DOUBLE behavior.
 
 ---
 
-**Version:** 1.15
+**Version:** 1.16
 **Submission Date:** 2025-03-06
 **Last Updated:** 2026-03-08
-**Changes:** v1.15 production fixes:
-- MOD-1: Fix SQRT exponent - remove spurious -113, result_exponent = exponent_quotient
-- MOD-2: Fix from_f64 subnormal shift - (52 - significant_bits) not (significant_bits - 1)
-- MOD-3: Mark VERIFICATION_TESTS as smoke test only, point to VERIFICATION_PROBE
-- L1: Fix probe layout comment - class encoding (0=Normal,1=Infinity,2=NaN,3=Zero)
-- L3: Fix Golden Rule 3 - 256 iterations for division
-- L4: Fix gas table - bit-by-bit integer sqrt (226-bit scaled)
-- L5: Add IEEE-754 §6.3 citation to signed-zero rule
+**Changes:** v1.16 final fixes (10/10):
+- R1: Add Infinity unreachable note to ADD, MUL, DIV, SQRT
+- R2: Fix SQRT negative odd exponent - use >> 1 (floor), (exp & 1) != 0 (parity)
+- v1.15: MOD-1, MOD-2, MOD-3 and L1-L5 fixes
 - v1.14: SQRT 226-bit scaling, subnormal algorithm, signed-zero rules
 - M2: Remove sqrt probe entry (was incorrect), now covered by algorithm fix
 - M3: Replace dfp_soft with dfp_spec_version for replay pinning

@@ -1286,6 +1286,118 @@ Non-deterministic arithmetic may lead to:
 
 Deterministic arithmetic is a **consensus-critical component** and must be treated as such.
 
+#### Cross-Language Arithmetic Verifier
+
+The cross-language verifier ensures the Rust DFP implementation produces results consistent with a mathematically correct reference model using arbitrary precision integers.
+
+##### Architecture
+
+```
+Test Vector Generator
+        ↓
+Reference Model (Python big integer math)
+        ↓
+Rust Implementation
+        ↓
+Result Comparator
+```
+
+All implementations operate on the same serialized DFP representation:
+```
+struct {
+    int128 mantissa
+    int32 exponent
+}
+```
+
+##### Python Reference Implementation
+
+The Python model uses unlimited precision integers to ensure exact mathematical values before canonicalization:
+
+```python
+from dataclasses import dataclass
+
+@dataclass
+class Dfp:
+    mantissa: int
+    exponent: int
+
+def normalize(m, e):
+    if m == 0:
+        return Dfp(0, 0)
+    while m % 2 == 0:
+        m //= 2
+        e += 1
+    return Dfp(m, e)
+
+def dfp_add(a: Dfp, b: Dfp) -> Dfp:
+    if a.mantissa == 0: return b
+    if b.mantissa == 0: return a
+    if a.exponent > b.exponent:
+        shift = a.exponent - b.exponent
+        m = a.mantissa + (b.mantissa >> shift)
+        e = a.exponent
+    else:
+        shift = b.exponent - a.exponent
+        m = (a.mantissa >> shift) + b.mantissa
+        e = b.exponent
+    return normalize(m, e)
+
+def dfp_mul(a: Dfp, b: Dfp) -> Dfp:
+    return normalize(a.mantissa * b.mantissa, a.exponent + b.exponent)
+
+DIV_PRECISION = 256
+
+def dfp_div(a: Dfp, b: Dfp) -> Dfp:
+    num = a.mantissa << DIV_PRECISION
+    m = num // b.mantissa
+    e = a.exponent - b.exponent - DIV_PRECISION
+    return normalize(m, e)
+
+def dfp_sqrt(x: Dfp) -> Dfp:
+    import math
+    m = x.mantissa << 256
+    root = math.isqrt(m)
+    e = (x.exponent - 256) // 2
+    return normalize(root, e)
+```
+
+##### Rust CLI Interface
+
+```rust
+fn main() {
+    let args: Vec<String> = env::args().collect();
+    let op = &args[1];
+    let a = Dfp { mantissa: args[2].parse().unwrap(), exponent: args[3].parse().unwrap() };
+    let b = Dfp { mantissa: args[4].parse().unwrap(), exponent: args[5].parse().unwrap() };
+    let result = match op.as_str() {
+        "add" => dfp_add(a, b),
+        "mul" => dfp_mul(a, b),
+        "div" => dfp_div(a, b),
+        "sqrt" => dfp_sqrt(a),
+        _ => panic!("unknown op"),
+    };
+    println!("{} {}", result.mantissa, result.exponent);
+}
+```
+
+##### Verification Scale
+
+| Level | Tests |
+|-------|-------|
+| Basic CI | 10,000 vectors |
+| Pre-release | 100,000 vectors |
+| Production validation | 1,000,000 vectors |
+
+##### CI Integration
+
+```bash
+cargo build --release
+python verifier.py
+```
+
+Recommended CI matrix: x86_64-linux, arm64-linux, macOS, wasm
+
 ### Alternatives Considered
 
 | Alternative            | Pros          | Cons                                    | Rejection Reason                         |

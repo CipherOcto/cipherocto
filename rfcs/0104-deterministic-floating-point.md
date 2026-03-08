@@ -410,22 +410,38 @@ All operations use **Round-to-Nearest-Even (RNE)** with a **Sticky Bit** for 113
 - **Sticky bit:** OR of all bits beyond bit 113
 
 ```rust
-/// Round 128-bit intermediate to 113-bit with sticky bit
-fn round_to_113(mantissa: i128) -> i128 {
-    // Bits: [sign|113 mantissa bits|15 guard bits]
-    const MASK_113: i128 = (1i128 << 113) - 1;      // Lower 113 bits
-    const MASK_ROUND: i128 = 1i128 << 113;           // Round bit (114th)
-    const MASK_STICKY: i128 = !((1i128 << 114) - 1); // Bits 115+
+/// Round 128-bit intermediate to 113-bit with sticky bit (RNE)
+/// Input: 128-bit signed integer representing mantissa with guard bits
+/// Output: 113-bit odd mantissa
+fn round_to_113(mantissa: i128) -> u128 {
+    // We work with absolute value for rounding logic
+    let abs_mant = mantissa.unsigned_abs();
 
-    let mant = mantissa & MASK_113;
-    let round_bit = (mantissa & MASK_ROUND) != 0;
-    let sticky_bit = (mantissa & MASK_STICKY) != 0;
+    // We need to round from 128 bits to 113 bits
+    // Bits 0-112: kept bits (113 bits)
+    // Bit 113: round bit
+    // Bits 114-127: sticky bits (14 bits)
 
-    // RNE: Round up if (round AND sticky) OR (round AND mant_even AND sticky=0)
-    if round_bit && (sticky_bit || (mant & 1) == 1) {
-        (mant >> 114) + 1  // Round up
+    const BITS_TO_KEEP: u32 = 113;
+    const GUARD_BITS: u32 = 15;
+
+    // Extract the round bit (bit at position BITS_TO_KEEP)
+    let round_bit = (abs_mant >> BITS_TO_KEEP) & 1;
+
+    // Extract sticky bits (all bits below the round bit)
+    let sticky_mask = (1u128 << BITS_TO_KEEP) - 1;  // Lower 113 bits
+    let sticky_bit = (abs_mant & sticky_mask) != 0;
+
+    // Extract the 113-bit mantissa to keep
+    let kept_bits = abs_mant >> GUARD_BITS;  // Shift to get 113 bits
+
+    // RNE: Round up if (round AND sticky) OR (round AND LSB=1 AND sticky=0)
+    let lsb = kept_bits & 1;
+
+    if round_bit && (sticky_bit || lsb == 1) {
+        kept_bits + 1
     } else {
-        mant >> 114  // Truncate
+        kept_bits
     }
 }
 ```
@@ -443,22 +459,24 @@ fn round_to_113(mantissa: i128) -> i128 {
 
 ### Special Values
 
-DFP uses tagged representation to avoid encoding collisions:
+DFP uses **saturating arithmetic** — Infinity class is NOT produced in computed results. Instead, overflow saturates to MAX/MIN:
 
-| Special Value | Class    | Sign | Mantissa | Exponent | Behavior                  |
-| ------------- | -------- | ---- | -------- | -------- | ------------------------- |
-| NaN           | NaN      | -    | -        | -        | Canonical NaN, propagates |
-| +Infinity     | Infinity | 0    | -        | -        | Clamps to MAX_DFP         |
-| -Infinity     | Infinity | 1    | -        | -        | Clamps to MIN_DFP         |
-| +0.0          | Zero     | 0    | -        | -        | Distinct from -0.0        |
-| -0.0          | Zero     | 1    | -        | -        | Distinct from +0.0        |
-| Normal        | Normal   | 0/1  | i128     | i32      | Standard value            |
+| Special Value | Class  | Sign | Mantissa     | Exponent | Behavior                           |
+| ------------- | ------ | ---- | ------------ | -------- | ---------------------------------- |
+| NaN           | NaN    | -    | -            | -        | Canonical NaN, propagates          |
+| +Overflow     | Normal | 0    | MAX_MANTISSA | MAX_EXP  | Saturates to +MAX (not Infinity)  |
+| -Overflow     | Normal | 1    | MAX_MANTISSA | MAX_EXP  | Saturates to -MAX (not Infinity)  |
+| +0.0          | Zero   | 0    | -            | -        | Distinct from -0.0                 |
+| -0.0          | Zero   | 1    | -            | -        | Distinct from +0.0                 |
+| Normal        | Normal | 0/1  | u128         | i32      | Standard value                    |
+
+> **Design Decision:** DFP does NOT produce Infinity in computed results. Overflow saturates to MAX value (class=Normal). This prevents NaN poisoning chains where `Infinity - Infinity = NaN`.
 
 **Conversion from f64:**
 
 - NaN → canonical NaN (class=NaN)
-- +Infinity → Infinity (class=Infinity, sign=0)
-- -Infinity → Infinity (class=Infinity, sign=1)
+- +Infinity → saturates to DFP_MAX (class=Normal)
+- -Infinity → saturates to DFP_MIN (class=Normal)
 - +0.0 → Zero (class=Zero, sign=0)
 - -0.0 → Zero (class=Zero, sign=1)
 - Subnormal → normalized to DFP precision (class=Normal)
@@ -467,16 +485,16 @@ DFP uses tagged representation to avoid encoding collisions:
 
 DFP provides higher precision than IEEE-754 double:
 
-| Characteristic | DFP         | IEEE-754 Double |
-| -------------- | ----------- | --------------- |
-| Mantissa bits  | 128         | 53 (implicit)   |
-| Exponent bits  | 32          | 11              |
-| Decimal digits | ~38         | ~15-17          |
-| Exponent range | ±1023       | ±1023           |
-| MAX value      | ~1.8×10³⁰⁸  | ~1.8×10³⁰⁸      |
-| MIN positive   | ~2.2×10⁻³⁰⁸ | ~2.2×10⁻³⁰⁸     |
+| Characteristic | DFP (Effective) | IEEE-754 Double |
+| -------------- | ---------------- | --------------- |
+| Mantissa bits  | 113 (internal 128) | 53 (implicit)   |
+| Exponent bits  | 11               | 11              |
+| Decimal digits | ~34              | ~15-17          |
+| Exponent range | ±1023            | ±1023           |
+| MAX value      | ~1.7×10³⁰⁸      | ~1.8×10³⁰⁸      |
+| MIN positive   | ~2.2×10⁻³⁰⁸     | ~2.2×10⁻³⁰⁸     |
 
-**Precision cap:** To ensure stable f64→DFP→f64 round-trips, mantissa is capped at **113 bits** (matching IEEE quad precision). Values requiring more precision are rounded.
+> **Note:** Internal storage uses 128-bit u128, but effective precision is capped at **113 bits** to ensure stable f64 round-trips and maintain the canonical odd-mantissa invariant.
 
 **Canonical mantissa invariant:** For all Normal values: `mantissa % 2 == 1` (mantissa is always odd). This ensures unique canonical encoding.
 
@@ -486,11 +504,14 @@ DFP provides higher precision than IEEE-754 double:
 pub const DFP_MAX_EXPONENT: i32 = 1023;
 pub const DFP_MIN_EXPONENT: i32 = -1074;
 
-/// Maximum finite DFP value
+/// Maximum finite DFP value (113-bit odd mantissa at max exponent)
+/// Value: (2^113 - 1) * 2^(1023-112) ≈ 1.7 × 10^308
+pub const DFP_MAX_MANTISSA: u128 = (1u128 << 113) - 1;  // All 113 bits set (odd)
+
 pub const DFP_MAX: Dfp = Dfp {
     class: DfpClass::Normal,
     sign: false,
-    mantissa: i128::MAX,
+    mantissa: DFP_MAX_MANTISSA,
     exponent: DFP_MAX_EXPONENT,
 };
 
@@ -624,35 +645,42 @@ To ensure ongoing deterministic behavior:
 
 To ensure deterministic software-path execution, nodes must compile with specific flags:
 
-| Platform | Required Flags                                      |
-| -------- | --------------------------------------------------- |
-| x86      | `-Cf target-feature=+sse2` (disable x87)            |
-| ARM      | Standard AAPCS (deterministic by default)           |
-| All      | `-C overflow-checks=false` (wrap semantics defined) |
+| Platform | Required Flags |
+| -------- | ------------- |
+| x86      | `-C target-feature=+sse2` (disable x87 extended precision) |
+| ARM      | Standard AAPCS (deterministic by default) |
+| All      | Use `release` profile (overflow checks off by default) |
 
-> ⚠️ **Virtualized environments**: Hardware fast-path is permitted only on bare-metal nodes. Cloud VMs and containers must use the software path.
+> **Note:** Rust's `release` profile disables integer overflow checks. Do NOT use `debug` profile for DFP operations. For `overflow-checks = true` in any profile, wrap semantics are defined (`wrapping_add`, etc.).
+
+> ⚠️ **Virtualized environments**: Hardware fast-path is NOT permitted. All nodes must use the software path.
 
 ### Storage Encoding
 
-DFP values serialize deterministically:
+DFP values serialize deterministically using **one canonical path**:
 
 ```rust
 impl Serialize for Dfp {
     fn serialize(&self) -> Vec<u8> {
-        // Canonical big-endian encoding for Merkle compatibility
-        // Uses DfpEncoding internally
+        // CRITICAL: Use DfpEncoding::to_bytes() for Merkle compatibility
+        // This ensures identical byte layout across all implementations
         let encoding = DfpEncoding::from_dfp(self);
-        let mut bytes = vec![];
-        bytes.push(encoding.class);
-        bytes.push(encoding.sign);
-        bytes.extend_from_slice(&encoding.mantissa.to_be_bytes());
-        bytes.extend_from_slice(&encoding.exponent.to_be_bytes());
-        bytes
+        encoding.to_bytes().to_vec()  // 24 bytes, big-endian
     }
 }
 ```
 
-> Note: Uses big-endian encoding for cross-platform consistency. This matches `DfpEncoding` for consensus safety.
+> **Critical:** All implementations MUST use `DfpEncoding::to_bytes()` for serialization. This produces 24-byte canonical layout: `[mantissa: 16][exponent: 4][class_sign: 4]`.
+
+### Gas Limits Scope
+
+| Limit | Scope | Notes |
+|-------|-------|-------|
+| Max DFP ops per block | Per-transaction | 10,000 per tx |
+| Max DFP_DIV/SQRT per block | Per-transaction | 1,000 per tx |
+| Interaction with block gas | N/A | DFP ops are charged as compute units |
+
+> **Unit definition:** One "op" = one DFP opcode execution (DFP_ADD, DFP_MUL, etc.). A complex expression like `(a + b) * c` counts as 3 ops.
 
 ### Constraints
 
@@ -694,19 +722,42 @@ DFP defines total ordering for sorting and comparison operations:
 | Order | Class     | Sign | Mantissa  | Exponent  |
 | ----- | --------- | ---- | --------- | --------- |
 | 1     | -Infinity | 1    | -         | -         |
-| 2     | Zero      | 1    | -         | -         |
-| 3     | Normal    | 1    | ascending | ascending |
+| 2     | Zero      | 1    | -         | -         | (-0.0)
+| 3     | Normal    | 1    | descending| descending|
 | ...   | ...       | ...  | ...       | ...       |
 | N-2   | Normal    | 0    | ascending | ascending |
-| N-1   | Zero      | 0    | -         | -         |
+| N-1   | Zero      | 0    | -         | -         | (+0.0)
 | N     | +Infinity | 0    | -         | -         |
 | N+1   | NaN       | -    | -         | -         |
 
 **Total ordering:** `-Infinity < -0.0 < negative values < +0.0 < positive values < +Infinity < NaN`
 
-> Note: All comparisons with NaN return false. For sorting, NaN is placed last.
+> **Note:** For **equality comparison** (`WHERE col = 0`): `-0.0 == +0.0` returns TRUE.
+> For **ordering comparison** (`ORDER BY`, `<`, `>`): `-0.0 < +0.0` returns TRUE.
+> This matches IEEE-754 behavior.
 
-**Sorting algorithm:** For negative Normal values, comparison must invert mantissa ordering (ascending mantissa = descending value). Implementation:
+**Sorting algorithm:**
+
+```
+compare(a, b):
+    // 1. Class ordering: Infinity < Normal < Zero < NaN
+    if a.class != b.class:
+        return class_order(a.class) < class_order(b.class)
+
+    // 2. Zero: -0.0 < +0.0 (distinct for ordering)
+    if a.class == Zero:
+        return a.sign < b.sign  // 1 < 0 is false, so +0.0 > -0.0
+
+    // 3. Normal: compare by sign then magnitude
+    if a.class == Normal:
+        if a.sign != b.sign:
+            return a.sign < b.sign  // negative < positive
+        // Same sign: compare magnitude
+        if a.sign:  // negative: larger exponent/mantissa = smaller value
+            return (a.exponent, a.mantissa) > (b.exponent, b.mantissa)
+        else:       // positive: normal ascending
+            return (a.exponent, a.mantissa) < (b.exponent, b.mantissa)
+```
 
 ```
 compare(a, b):
@@ -996,12 +1047,14 @@ None. DFP is a new type that does not modify existing FLOAT/DOUBLE behavior.
 
 ---
 
-**Version:** 1.2
+**Version:** 1.3
 **Submission Date:** 2025-03-06
 **Last Updated:** 2026-03-08
-**Changes:** v1.2 production fixes:
-- Fix overflow: use saturating MAX instead of Infinity (prevents NaN poisoning)
-- Fix duplicate struct: remove second DfpEncoding definition
-- Fix mantissa: change from i128 to u128 (avoid sign confusion)
-- Add division by zero: explicit saturating MAX behavior
-- Add SQL literals: DFP by default in deterministic mode
+**Changes:** v1.3 post-review fixes:
+- Fix B1: Rewrite round_to_113 with correct algorithm
+- Fix B2: Update DFP_MAX to use u128 and add DFP_MAX_MANTISSA
+- Fix B3: Unify Serialize to use DfpEncoding::to_bytes()
+- Fix B4: Fix ordering table (invert mantissa for negatives)
+- Fix B5: Clarify Infinity NOT used in computed results
+- Fix S3: Fix compiler flags (-Cf → -C)
+- Add gas limits scope definition

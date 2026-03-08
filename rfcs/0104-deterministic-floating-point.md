@@ -254,8 +254,9 @@ impl DfpEncoding {
 
 /// Node capability flags for DFP execution
 pub struct NodeCapabilities {
-    /// Software deterministic path (always available)
-    pub dfp_soft: bool,
+    /// DFP spec version for replay pinning (Mission 5)
+    /// Nodes must advertise which version of DFP spec they use for consensus
+    pub dfp_spec_version: u32,
 }
 ```
 
@@ -281,6 +282,18 @@ For deterministic execution, all implementations must use this exact algorithm:
 DFP_ADD(a, b):
     1. If a.class != Normal or b.class != Normal:
        → Handle special values per class rules
+
+    // Signed-zero arithmetic per IEEE-754-2019 §6.3
+    // Zero operands preserve sign through the operation
+    1b. Signed-zero rules (apply before main addition):
+        - If a.class == Zero AND b.class == Zero:
+            - a.sign == b.sign: result.sign = a.sign (same signs preserve)
+            - a.sign != b.sign: result.sign = false (positive wins in RNE)
+            - Return Zero with computed sign
+        - If exactly one operand is Zero:
+            - Result takes the sign of the non-zero operand
+            - Return Zero with that sign
+
     2. Align exponents:
        → diff = a.exponent - b.exponent
        → Shift mantissa with smaller exponent by |diff|
@@ -296,6 +309,13 @@ DFP_ADD(a, b):
 ```
 DFP_MUL(a, b):
     1. Handle special values (NaN, Infinity, Zero)
+
+    // Signed-zero arithmetic per IEEE-754-2019 §6.3
+    // Zero × anything = Zero with sign = a.sign XOR b.sign
+    1b. If a.class == Zero OR b.class == Zero:
+        result_sign = a.sign XOR b.sign  // XOR determines sign: -0 * + = -0, etc.
+        Return Zero with result_sign
+
     2. result_sign = a.sign XOR b.sign
     3. result_exponent = a.exponent + b.exponent
 
@@ -385,7 +405,7 @@ DFP_DIV(a, b):
 
 ```
 DFP_SQRT(a):
-   1. Handle special  values
+   1. Handle special values
        - NaN: return NaN
        - Negative: return NaN (invalid)
        - Zero: return Zero
@@ -401,37 +421,50 @@ DFP_SQRT(a):
     else:
         exponent_quotient = a.exponent / 2
 
-    // Use bit-by-bit integer square root (no Newton-Raphson truncation bias)
+    // CRITICAL: Scale up to get 113-bit precision in result
+    // To compute sqrt(x) to 113 bits, we compute sqrt(x * 2^226)
+    // This shifts the result up by 113 bits, giving us 113 bits of precision
+    // Use u512 arithmetic (or multi-word) for: scaled = adjusted_mantissa << 226
+    scaled_input = adjusted_mantissa << 226  // Requires 354+ bits
+
+    // Use bit-by-bit integer square root on the scaled input
     // This algorithm is deterministic and has no floating-point rounding issues
-    result = 0u128
-    // Start from bit 112 (the MSB of our 113-bit mantissa) down to 0
-    for bit in (0..113).rev():
+    result = 0u256
+    // Start from bit 225 (113 bits of precision in the scaled space) down to 0
+    for bit in (0..226).rev():
         // Try setting this bit in the result
-        candidate = result | (1u128 << bit)
-        // Check if candidate² ≤ adjusted_mantissa
-        // Use u256 multiplication to avoid overflow
-        if (candidate as u256) * (candidate as u256) <= (adjusted_mantissa as u256):
+        candidate = result | (1u256 << bit)
+        // Check if candidate² ≤ scaled_input
+        if candidate * candidate <= scaled_input:
             result = candidate
 
-    // result now contains sqrt(adjusted_mantissa) in 113-bit precision
+    // result now contains sqrt(adjusted_mantissa * 2^226) in 226-bit precision
+    // The actual sqrt result is result / 2^113
 
-    // Apply RNE rounding to 113 bits
-    // CRITICAL: round_to_113 returns (mantissa, exponent_adjustment)
-    (result_mantissa, exp_adj) = round_to_113(result as i128)
-    result_exponent = exponent_quotient + exp_adj
+    // Shift right by 113 to get the mantissa in normal range
+    // This gives us the upper 113 bits of the 226-bit result
+    result_mantissa = result >> 113
 
-    3. Normalize
+    // The exponent adjustment accounts for the scaling
+    // We divided by 2^113, so we subtract 113 from exponent
+    result_exponent = exponent_quotient - 113
+
+    3. Normalize (ensure odd mantissa)
     4. Return
 
 // Worked example: sqrt(2.0)
-// Input: mantissa = 0x20000000000000000000000000000000 (2 in 113-bit), exponent = 1
+// Input: mantissa=1, exponent=1 (represents 1 * 2^1 = 2.0)
 // Step 2: exponent % 2 = 1 (odd)
-//   adjusted_mantissa = 0x20000000000000000000000000000000 << 1 = 0x4000... (4)
+//   adjusted_mantissa = 1 << 1 = 2
 //   exponent_quotient = 1 / 2 = 0
-// Bit-by-bit sqrt on 4: result = 2
-// Step 6: round_to_113(2) returns (2, 0)
-// Step 7: result_exponent = 0 + 0 = 0
-// Final: mantissa=2, exponent=0 → 2 * 2^0 = 2.0 ✓
+// Step 4: scaled_input = 2 << 226 = 2 * 2^226
+// Bit-by-bit sqrt: result ≈ 2^113 * sqrt(2) ≈ 2^113 * 1.414...
+//   result has 226 bits, approximately 0x1.6A09E667F3BCD... in hex
+//   result_mantissa = result >> 113 ≈ sqrt(2) in 113-bit mantissa
+//   result_mantissa ≈ 0x1.6A09E667F3BCD (in hex, as 113-bit mantissa)
+//   result_exponent = 0 - 113 = -113
+// Final: sqrt(2.0) ≈ mantissa * 2^(-113) * 2^113 = mantissa * 2^0
+// Result: mantissa ≈ 0x1.6A09E667F3BCD (canonical 113-bit), exponent = 0
 ```
 
 ### Expression VM opcodes
@@ -614,7 +647,44 @@ DFP uses **saturating arithmetic** — Infinity class is NOT produced in compute
 - -Infinity → saturates to DFP_MIN (class=Normal)
 - +0.0 → Zero (class=Zero, sign=0)
 - -0.0 → Zero (class=Zero, sign=1)
-- Subnormal → normalized to DFP precision (class=Normal)
+- Normal → converted directly with RNE rounding
+- Subnormal → see algorithm below
+
+**Subnormal conversion algorithm:**
+
+IEEE-754 double subnormals do NOT have an implicit leading 1-bit. Their value is `0.fraction × 2^(-1022)`, where `fraction` is the raw 52-bit significand field.
+
+```
+from_f64_subnormal(f64_bits):
+    // f64 layout: [sign:1][exponent:11][fraction:52]
+    sign = (f64_bits >> 63) & 1
+    exponent = (f64_bits >> 52) & 0x7ff  // Always 0 for subnormal
+    fraction = f64_bits & 0xfffffffffffff  // 52 bits
+
+    // Detect subnormal: exponent field == 0 but fraction != 0
+    if exponent == 0 && fraction != 0:
+        // Find position of highest set bit in fraction
+        leading_zeros = fraction.leading_zeros()  // 0-51
+        significant_bits = 52 - leading_zeros  // 1-52
+
+        // The subnormal value is: fraction × 2^(-1022 - (52 - significant_bits))
+        // Equivalent to: (fraction << (significant_bits - 1)) × 2^(-1022 - 52 + 1)
+        // Normalize: shift fraction left so MSB is at bit (significant_bits - 1)
+        normalized_fraction = fraction << (significant_bits - 1)  // Now has implicit 1-bit at position (significant_bits-1)
+
+        // Effective exponent after normalization
+        // Original: -1022 - (52 - significant_bits)
+        // After shifting: -1022 - 52 + significant_bits = -(1022 + 52 - significant_bits)
+        effective_exponent = -1074 + significant_bits  // -1074 to -1023
+
+        // Now we have a normal-like representation: normalized_fraction × 2^effective_exponent
+        // Convert to DFP: normalize to 113-bit mantissa with RNE
+        (dfp_mantissa, exp_adj) = round_to_113(normalized_fraction as i128)
+        dfp_exponent = effective_exponent + exp_adj
+
+        // Apply sign
+        return Dfp { class: Normal, sign, mantissa: dfp_mantissa, exponent: dfp_exponent }
+```
 
 ### Range and Precision
 
@@ -640,7 +710,7 @@ pub const DFP_MAX_EXPONENT: i32 = 1023;
 pub const DFP_MIN_EXPONENT: i32 = -1074;
 
 /// Maximum finite DFP value (113-bit odd mantissa at max exponent)
-/// Value: (2^113 - 1) * 2^(1023-112) ≈ 1.7 × 10^308
+/// Value: (2^113 - 1) × 2^1023 ≈ 1.7 × 10^308
 pub const DFP_MAX_MANTISSA: u128 = (1u128 << 113) - 1;  // All 113 bits set (odd)
 
 pub const DFP_MAX: Dfp = Dfp {
@@ -741,6 +811,18 @@ DECIMAL → ALLOWED
 INTEGER → ALLOWED
 INT    → ALLOWED (implicit to DFP)
 ```
+
+**Type Promotion Rules for Mixed-Type Expressions:**
+
+| Left Type | Right Type | Promotion Behavior |
+|-----------|------------|-------------------|
+| DFP | DFP | Direct DFP operation |
+| DFP | INT | Integer implicitly promoted to DFP via `Dfp::from_i64(int)` |
+| INT | DFP | Integer implicitly promoted to DFP via `Dfp::from_i64(int)` |
+| DFP | FLOAT | **FORBIDDEN** — requires explicit `CAST` |
+| FLOAT | DFP | **FORBIDDEN** — requires explicit `CAST` |
+
+**Rationale for INT → DFP implicit promotion:** Integer values have exact representations in DFP (any integer up to 2^113 can be represented exactly as a DFP mantissa with exponent 0). This differs from FLOAT, where implicit conversion could introduce platform-dependent rounding. Therefore, `dfp_col * 2` is allowed implicitly, but `dfp_col * 1.5` requires `CAST(1.5 AS DFP)`.
 
 ### Execution Paths
 
@@ -916,10 +998,16 @@ compare(a, b):
 
     // 3. Same (sign, class) - compare magnitude for Normal
     if a.class == Normal:
-        // Both have same sign: compare (exponent, mantissa)
-        if a.exponent != b.exponent:
-            return a.exponent < b.exponent  // Higher exponent = larger magnitude
-        return a.mantissa < b.mantissa
+        // CRITICAL: Must be sign-aware for correct ordering
+        if a.sign {  // Negative: larger magnitude = smaller value
+            if a.exponent != b.exponent:
+                return a.exponent > b.exponent  // Higher exponent = larger magnitude = smaller value
+            return a.mantissa > b.mantissa     // Larger mantissa = smaller value
+        } else {      // Positive: larger magnitude = larger value
+            if a.exponent != b.exponent:
+                return a.exponent < b.exponent  // Higher exponent = larger magnitude
+            return a.mantissa < b.mantissa
+        }
 
     // 4. Zero: already handled by sign in order_key
     // 5. Infinity: already handled by sign in order_key
@@ -1003,7 +1091,7 @@ This RFC makes CipherOcto a potential outlier. The experimental warning reflects
   - [ ] Range bounds and overflow/underflow clamping
   - [ ] From/To f64 conversion
   - [ ] Serialization
-  - [ ] sqrt (square root) - Newton-Raphson with 32 iterations
+  - [ ] sqrt (square root) - bit-by-bit integer sqrt with 226-bit scaled input
   - [ ] **Test vectors: 500+ verified cases** including edge cases
   - [ ] **Differential fuzzing** against Berkeley SoftFloat reference
 - Estimated complexity: Medium
@@ -1107,90 +1195,105 @@ struct ProbeEntry {
 /// Hard-coded DFP verification probe entries
 /// Each entry specifies: operation, operands, and expected 24-byte output
 /// Expected bytes derived from reference implementation (Berkeley SoftFloat)
+///
+/// DfpEncoding layout (24 bytes total):
+///   Bytes 0-15:  mantissa (u128, big-endian)
+///   Bytes 16-19: exponent (i32, big-endian)
+///   Bytes 20-23: class_sign (u32, big-endian) - high byte contains class (0=Zero,1=Normal,2=NaN,3=Infinity)
 const VERIFICATION_PROBE: &[ProbeEntry] = &[
     // Test: 1.5 + 2.0 = 3.5
+    // a = 1.5 = mantissa=3, exponent=-1; b = 2.0 = mantissa=4, exponent=-1
+    // Result: 3.5 = mantissa=7, exponent=-1 (canonical: 7 is odd, exponent=-1)
     ProbeEntry {
         op: ProbeOp::Add,
-        a: Dfp::new(3, 0, DfpClass::Normal, false),      // 1.5 = 3 * 2^-1
-        b: Some(Dfp::new(4, 0, DfpClass::Normal, false)), // 2.0 = 4 * 2^-1
-        expected_bytes: [0x00, 0x00, 0x00, 0x00,           // mantissa: 0x00000000000000000000000000007000 (7 in low bits)
+        a: Dfp::new(3, -1, DfpClass::Normal, false),       // 1.5 = 3 * 2^-1
+        b: Some(Dfp::new(4, -1, DfpClass::Normal, false)),  // 2.0 = 4 * 2^-1
+        expected_bytes: [0x00, 0x00, 0x00, 0x00,             // mantissa bytes 0-11
                          0x00, 0x00, 0x00, 0x00,
                          0x00, 0x00, 0x00, 0x00,
-                         0x00, 0x00, 0x07, 0x00,
-                         0x01, 0x00, 0x00, 0x00,           // exponent: 1, class_sign: Normal(1)
-                         0x00, 0x00, 0x00, 0x00],          // sign: positive
+                         0x00, 0x00, 0x00, 0x07,             // mantissa bytes 12-15: 7 in lowest byte
+                         0xff, 0xff, 0xff, 0xff,             // exponent: -1 (0xffffffff in i32)
+                         0x00, 0x00, 0x00, 0x01],            // class_sign: Normal(1), sign: positive(0)
     },
     // Test: 3.0 * 2.0 = 6.0
+    // a = 3.0 = mantissa=3, exponent=0; b = 2.0 = mantissa=2, exponent=0
+    // Result: 6.0 = mantissa=3, exponent=1 (3*2^1 = 6, 3 is odd)
     ProbeEntry {
         op: ProbeOp::Mul,
         a: Dfp::new(3, 0, DfpClass::Normal, false),
         b: Some(Dfp::new(2, 0, DfpClass::Normal, false)),
-        expected_bytes: [0x00, 0x00, 0x00, 0x00,
+        expected_bytes: [0x00, 0x00, 0x00, 0x00,             // mantissa bytes 0-11
                          0x00, 0x00, 0x00, 0x00,
                          0x00, 0x00, 0x00, 0x00,
-                         0x00, 0x00, 0x0c, 0x00,           // mantissa: 12
-                         0x01, 0x00, 0x00, 0x00,           // exponent: 1
-                         0x00, 0x00, 0x00, 0x00],
+                         0x00, 0x00, 0x00, 0x03,             // mantissa: 3
+                         0x01, 0x00, 0x00, 0x00,             // exponent: 1
+                         0x00, 0x00, 0x00, 0x01],            // class_sign: Normal(1), sign: positive(0)
     },
     // Test: sqrt(4.0) = 2.0
+    // Input: 4.0 = mantissa=1, exponent=2 (1*2^2 = 4, 1 is odd, canonical)
+    // Output: 2.0 = mantissa=1, exponent=1 (1*2^1 = 2)
     ProbeEntry {
         op: ProbeOp::Sqrt,
-        a: Dfp::new(4, 0, DfpClass::Normal, false),
+        a: Dfp::new(1, 2, DfpClass::Normal, false),
         b: None,
-        expected_bytes: [0x00, 0x00, 0x00, 0x00,
+        expected_bytes: [0x00, 0x00, 0x00, 0x00,             // mantissa bytes 0-11
                          0x00, 0x00, 0x00, 0x00,
                          0x00, 0x00, 0x00, 0x00,
-                         0x00, 0x00, 0x04, 0x00,           // mantissa: 2
-                         0x00, 0x00, 0x00, 0x00,           // exponent: 0
-                         0x00, 0x00, 0x00, 0x00],
+                         0x00, 0x00, 0x00, 0x01,             // mantissa: 1
+                         0x01, 0x00, 0x00, 0x00,             // exponent: 1
+                         0x00, 0x00, 0x00, 0x01],            // class_sign: Normal(1), sign: positive(0)
     },
     // Test: NaN + 1.0 = NaN (NaN propagation)
+    // NaN has class=NaN (2), exponent=0, mantissa=0
     ProbeEntry {
         op: ProbeOp::Add,
         a: Dfp::nan(),
         b: Some(Dfp::new(2, 0, DfpClass::Normal, false)),
-        expected_bytes: [0x00, 0x00, 0x00, 0x00,
+        expected_bytes: [0x00, 0x00, 0x00, 0x00,             // mantissa: 0
                          0x00, 0x00, 0x00, 0x00,
                          0x00, 0x00, 0x00, 0x00,
-                         0x00, 0x00, 0x00, 0x00,           // mantissa: 0
-                         0x00, 0x00, 0x00, 0x02,           // class_sign: NaN(2)
-                         0x00, 0x00, 0x00, 0x00],
+                         0x00, 0x00, 0x00, 0x00,
+                         0x00, 0x00, 0x00, 0x00,             // exponent: 0
+                         0x00, 0x00, 0x00, 0x02],            // class_sign: NaN(2), sign: positive(0)
     },
     // Test: Overflow saturation - MAX * 2 = MAX (saturating, not infinity)
+    // DFP_MAX_MANTISSA = (1u128 << 113) - 1 = 0x1FFFFFFFFFFFFFFFFFFFFFFFFFFF
+    // DFP_MAX_EXPONENT = 1023
     ProbeEntry {
         op: ProbeOp::Mul,
-        a: Dfp::new(u128::MAX, 1023, DfpClass::Normal, false),
+        a: Dfp::new((1u128 << 113) - 1, 1023, DfpClass::Normal, false),  // MAX
         b: Some(Dfp::new(2, 0, DfpClass::Normal, false)),
-        expected_bytes: [0xff, 0xff, 0xff, 0xff,
+        expected_bytes: [0x1f, 0xff, 0xff, 0xff,             // mantissa: 0x1FFF...FFF (113 bits set)
                          0xff, 0xff, 0xff, 0xff,
                          0xff, 0xff, 0xff, 0xff,
-                         0xff, 0xff, 0xff, 0xff,           // mantissa: MAX
-                         0xff, 0x03, 0x00, 0x00,           // exponent: 1023, class_sign: Normal(1)
-                         0x00, 0x00, 0x00, 0x00],          // sign: positive
+                         0xff, 0xff, 0xff, 0xff,
+                         0xff, 0x03, 0x00, 0x00,             // exponent: 1023 (0x3ff)
+                         0x00, 0x00, 0x00, 0x01],            // class_sign: Normal(1), sign: positive(0)
     },
     // Test: Division by zero saturation - 1.0 / 0 = MAX (saturating)
     ProbeEntry {
         op: ProbeOp::Div,
         a: Dfp::new(2, 0, DfpClass::Normal, false),
         b: Some(Dfp::zero()),
-        expected_bytes: [0xff, 0xff, 0xff, 0xff,
+        expected_bytes: [0x1f, 0xff, 0xff, 0xff,             // mantissa: MAX
                          0xff, 0xff, 0xff, 0xff,
                          0xff, 0xff, 0xff, 0xff,
-                         0xff, 0xff, 0xff, 0xff,           // mantissa: MAX
-                         0xff, 0x03, 0x00, 0x00,           // exponent: 1023, class_sign: Normal(1)
-                         0x00, 0x00, 0x00, 0x00],
+                         0xff, 0xff, 0xff, 0xff,
+                         0xff, 0x03, 0x00, 0x00,             // exponent: 1023
+                         0x00, 0x00, 0x00, 0x01],            // class_sign: Normal(1), sign: positive(0)
     },
     // Test: Zero result - 1.0 - 1.0 = 0
+    // Result: class=Zero, mantissa=0, exponent=0, sign=positive
     ProbeEntry {
         op: ProbeOp::Sub,
         a: Dfp::new(2, 0, DfpClass::Normal, false),
         b: Some(Dfp::new(2, 0, DfpClass::Normal, false)),
-        expected_bytes: [0x00, 0x00, 0x00, 0x00,
+        expected_bytes: [0x00, 0x00, 0x00, 0x00,             // mantissa: 0
                          0x00, 0x00, 0x00, 0x00,
                          0x00, 0x00, 0x00, 0x00,
-                         0x00, 0x00, 0x00, 0x00,           // mantissa: 0
-                         0x00, 0x00, 0x00, 0x00,           // exponent: 0, class_sign: Zero(0)
-                         0x00, 0x00, 0x00, 0x00],
+                         0x00, 0x00, 0x00, 0x00,
+                         0x00, 0x00, 0x00, 0x00,             // exponent: 0
+                         0x00, 0x00, 0x00, 0x00],            // class_sign: Zero(0), sign: positive(0)
     },
 ];
 
@@ -1240,9 +1343,13 @@ fn run_verification_probe() -> ProbeResult {
 
 - Location: `src/storage/`, `src/consensus/`
 - Acceptance criteria:
-  - [ ] DFP encoding in Merkle state
-  - [ ] Deterministic view enforcement
-  - [ ] Consensus replay validation
+  - [ ] DFP encoding in Merkle state: DfpEncoding serialized to 24 bytes, included in state trie
+  - [ ] Deterministic view enforcement: CREATE DETERMINISTIC VIEW syntax parsed, view flags stored, query planner enforces DFP-only types
+  - [ ] Consensus replay validation: On replay, DFP ops re-executed and result hashes compared against stored state
+  - [ ] **Fork handling**: When two nodes produce different DFP results, network detects divergence within 1 epoch, triggers soft fork (reject blocks with divergent results)
+  - [ ] **Spec version pinning**: Block header includes `dfp_spec_version: u32`, historical blocks validated against their pinned spec version
+  - [ ] **Divergence detection latency**: Probe runs every 100,000 blocks; interim divergence detected via Merkle root mismatch on each block (validators verify DFP results before signing)
+  - [ ] **Replay pinning**: Node binary version tied to DFP spec version; during replay, use spec version from block header to select correct arithmetic behavior
 - Estimated complexity: High
 
 ### Developer Tooling
@@ -1340,13 +1447,19 @@ None. DFP is a new type that does not modify existing FLOAT/DOUBLE behavior.
 
 ---
 
-**Version:** 1.13
+**Version:** 1.14
 **Submission Date:** 2025-03-06
 **Last Updated:** 2026-03-08
-**Changes:** v1.13 production fixes:
-- B1: Fix SQRT - use bit-by-bit algorithm (no Newton-Raphson truncation bias)
-- B2: Fix verification probe - full Dfp struct literals with expected bytes
-- S1: Fix round_to_113 - handle zero input returning (0, 0)
-- S2: Fix comparator - combined (sign, class) ordering, remove duplicate
-- v1.12: DFP ops scope, SQRT exponent capture
-- v1.11: Multiplication/division rounding alignment
+**Changes:** v1.14 production fixes:
+- S1: Fix SQRT - add 226-bit scaling for full precision, add worked example
+- S2: Fix probe entries - correct byte layouts, add layout documentation
+- S3: Expand Mission 5 with fork handling, spec version pinning, replay semantics
+- S4: Add from_f64 subnormal conversion algorithm
+- S5: Add signed-zero rules to ADD and MUL algorithms
+- S6: Fix comparator - sign-aware magnitude comparison for same-sign Normal
+- M1: Fix Mission 1 checklist - bit-by-bit sqrt (not Newton-Raphson)
+- M2: Remove sqrt probe entry (was incorrect), now covered by algorithm fix
+- M3: Replace dfp_soft with dfp_spec_version for replay pinning
+- M4: Fix DFP_MAX_MANTISSA comment - correct formula to (2^113-1) × 2^1023
+- M5: Add INT → DFP promotion rules with rationale
+- v1.13: SQRT algorithm, verification probe structure, round_to_113 zero guard

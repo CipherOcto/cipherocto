@@ -241,6 +241,93 @@ trait AggregationCircuit {
 }
 ```
 
+### Aggregation Circuit Definition
+
+The recursive aggregation circuit is defined as:
+
+```
+AggregationCircuit:
+
+Public Inputs:
+    left_child_digest: Digest
+    right_child_digest: Digest
+    left_public_input_root: Digest
+    right_public_input_root: Digest
+    program_hash: Digest
+    level: u8
+    proof_count: u32
+    aggregate_id: Digest
+
+Private Inputs:
+    left_proof: Vec<u8>
+    right_proof: Vec<u8>
+
+Constraints:
+    // 1. Verify left child proof
+    verify_stark(left_proof, left_public_input_root)
+
+    // 2. Verify right child proof
+    verify_stark(right_proof, right_public_input_root)
+
+    // 3. Compute aggregate_id
+    aggregate_id = H(left_child_digest || right_child_digest || level || proof_count || program_hash)
+
+    // 4. Output commitment
+    output = H(aggregate_id || left_public_input_root || right_public_input_root)
+```
+
+### Proof Binding
+
+To prevent proof substitution and reordering attacks:
+
+```rust
+/// Aggregate ID computation - binds child proofs, ordering, and program
+fn compute_aggregate_id(
+    left_child: Digest,
+    right_child: Digest,
+    level: u8,
+    proof_count: u32,
+    program_hash: Digest,
+) -> Digest {
+    H(left_child || right_child || level || proof_count || program_hash)
+}
+
+/// Aggregated proof with binding
+struct AggregatedProof {
+    /// Unique aggregate identifier (binds all children)
+    aggregate_id: Digest,
+
+    /// Aggregation level
+    level: u8,
+
+    /// Number of proofs aggregated
+    proof_count: u32,
+
+    /// Program/circuit hash (prevents cross-circuit aggregation)
+    program_hash: Digest,
+
+    /// Merkle root of child public inputs
+    public_input_root: Digest,
+
+    /// Merkle root of child proofs
+    proof_root: Digest,
+
+    /// Left child digest (for verification)
+    left_child: Digest,
+
+    /// Right child digest (for verification)
+    right_child: Digest,
+
+    /// Recursive STARK proof
+    stark_proof: Vec<u8>,
+}
+```
+
+**Binding prevents:**
+- Proof swapping (different child order)
+- Cross-circuit aggregation (different programs)
+- Replay attacks (epoch/block binding via aggregate_id)
+
 ## Verification Algorithm
 
 ### O(1) Verification
@@ -745,6 +832,58 @@ fn add_proof(
 
 ## Consensus Integration
 
+### Aggregation Rewards
+
+To incentivize proof aggregation, the protocol defines reward distribution:
+
+```rust
+/// Aggregation reward distribution
+struct AggregationRewards {
+    /// Total reward pool for epoch
+    reward_pool: TokenAmount,
+
+    /// Base reward per proof verified
+    base_reward_per_proof: TokenAmount,
+
+    /// Aggregator share percentage (e.g., 20%)
+    aggregator_share: u8,
+}
+
+impl AggregationRewards {
+    /// Calculate aggregator reward for an aggregate
+    fn aggregator_reward(&self, proof_count: u32) -> TokenAmount {
+        let base = self.base_reward_per_proof * proof_count as u64;
+        let share = (base * self.aggregator_share as u64) / 100;
+        share
+    }
+
+    /// Calculate worker reward per proof
+    fn worker_reward(&self, proof_count: u32) -> TokenAmount {
+        let base = self.base_reward_per_proof * proof_count as u64;
+        let aggregator_share = (base * self.aggregator_share as u64) / 100;
+        let remaining = base - aggregator_share;
+        remaining / proof_count as u64
+    }
+}
+
+/// Reward distribution constants
+const AGGREGATOR_SHARE: u8 = 20;  // 20% to aggregator
+const BASE_REWARD_PER_PROOF: u64 = 10;  // 10 OCTO tokens
+const EPOCH_REWARD_POOL: u64 = 1_000_000;  // 1M OCTO per epoch
+```
+
+**Reward Model:**
+
+| Actor | Reward Source | Percentage |
+|-------|--------------|------------|
+| Aggregator | Per-aggregate fee | 20% |
+| Workers | Per-proof base | 80% (split) |
+
+**Incentive Structure:**
+- Aggregators are rewarded for successful proof aggregation
+- Workers receive base rewards for producing valid proofs
+- Penalties (slashing) fund the reward pool
+
 ### Block Inclusion
 
 Aggregated proofs are included in blocks:
@@ -914,6 +1053,64 @@ Each shard independently aggregates proofs within that shard:
 | Max recursion depth | 10 | 2^10 = 1024 proofs |
 | Max aggregation levels | 10 | Per RFC design |
 | Proof batch size | Variable | Power-of-two |
+
+### Expected Proof Sizes
+
+| Level | Proofs | Est. Size | Notes |
+|-------|--------|-----------|-------|
+| Individual | 1 | 100-200 KB | Base STARK proof |
+| Batch | 16 | 150-250 KB | Slight overhead from recursion |
+| SuperBatch | 256 | 300-500 KB | Multiple recursion levels |
+| Block | 4096 | 500 KB - 1 MB | Full aggregation |
+| Epoch | 65536 | 1-2 MB | Maximum compression |
+
+> **Note:** Sizes are estimates assuming small-field STARKs (M31/BabyBear). Actual sizes depend on circuit complexity and FRI parameters.
+
+## Security Considerations
+
+### Soundness
+
+The security of the aggregation protocol depends on:
+
+| Component | Security Basis |
+|-----------|----------------|
+| STARK proofs | FRI soundness + hash collision resistance |
+| Merkle commitment | Hash function security |
+| Recursive composition | Cumulative soundness across levels |
+| Aggregate binding | Computational binding to child proofs |
+
+### Proof Substitution Attack
+
+If aggregation does not bind child proofs, an attacker could swap proofs within an aggregate.
+
+**Mitigation:** `aggregate_id = H(left_child || right_child || level || proof_count || program_hash)`
+
+### Replay Attacks
+
+Aggregated proofs could be reused across blocks or epochs.
+
+**Mitigation:** Include `epoch` and `block_height` in aggregate metadata; verify against current state.
+
+### Aggregation Depth Attacks
+
+Deep recursion could cause verification stack overflow or expensive computation.
+
+**Mitigation:** `max_depth = 10` enforced at protocol level.
+
+### Cross-Circuit Aggregation
+
+Proofs from different circuits/programs should not be aggregated together.
+
+**Mitigation:** `program_hash` field binds aggregation to specific circuit.
+
+### Aggregation Rules
+
+| Rule | Description |
+|------|-------------|
+| Same program | All proofs must share `program_hash` |
+| Same epoch | All proofs must be from current `epoch` |
+| Ordering | Child order fixed by Merkle tree position |
+| No mixing | Task ID binding prevents proof mixing |
 
 ## Adversarial Review
 
@@ -1298,11 +1495,14 @@ const EVIDENCE_THRESHOLD: u8 = 2;           // corroborating sources
 
 ---
 
-**Version:** 1.8
+**Version:** 1.9
 **Submission Date:** 2026-03-07
 **Last Updated:** 2026-03-07
-**Changes:** v1.8 technical review fixes:
-- Add concrete security parameter table (soundness bits, FRI params)
-- Add domain separation tag to leaf commitments
-- Add Future Work items for FRI multi-folding, Circle STARKs, lookup arguments
+**Changes:** v1.9 comprehensive fixes:
+- Add aggregation circuit definition with constraints
+- Add proof binding (aggregate_id computation)
+- Add security considerations section
+- Add aggregation rewards section
+- Add expected proof sizes table
+- Expand AggregatedProof with program_hash, public_input_root
 - Add padding inefficiency note with 6-18 month roadmap

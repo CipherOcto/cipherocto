@@ -14,8 +14,8 @@ This RFC defines the **Proof Aggregation Protocol** — a system for combining m
 | ---- | ------ | ------ |
 | G1: Proof Compression | 10x size reduction | >90% reduction |
 | G2: Batch Verification | O(1) verification | Independent of batch size |
-| G3: Recursive Composition | Multiple aggregation levels | Up to 2^10 proofs |
-| G4: Incremental Updates | Add proofs to existing aggregate | O(log n) |
+| G3: Recursive Composition | Binary recursion | Up to 2^10 proofs |
+| G4: Incremental Updates | Associative aggregation | O(log n) |
 
 ## Motivation
 
@@ -26,9 +26,9 @@ The fundamental question: **Can we efficiently aggregate STARK proofs while main
 Research confirms feasibility through:
 
 - Recursive STARK composition (Vitalik's work)
-- Batch proof techniques
-- Fiat-Shamir transformation
+- FRI-based folding schemes
 - Accumulator-based aggregation
+- Binary tree recursion
 
 ### WHY? — Why This Matters
 
@@ -52,10 +52,11 @@ Proof aggregation enables:
 
 The protocol defines:
 
-1. **Proof bundling** — Group related proofs
-2. **Recursive aggregation** — Combine aggregates recursively
-3. **Verification circuit** — Single circuit verifies batch
-4. **Aggregation state** — Track aggregation progress
+1. **Aggregation cryptographic method** — STARK recursion via binary tree
+2. **Proof commitment scheme** — Merkle tree-based
+3. **Proof format specification** — Standardized structure
+4. **Verification algorithm** — O(1) for any batch size
+5. **Consensus integration** — How aggregations are included
 
 ### HOW? — Implementation
 
@@ -66,438 +67,476 @@ RFC-0131 (Transformer Circuit)
        ↓
 RFC-0132 (Training Circuits)
        ↓
-RFC-0146 (Proof Aggregation) ← NEW
+RFC-0146 (Proof Aggregation) ← THIS RFC
        ↓
 RFC-0130 (Proof-of-Inference)
        ↓
 RFC-0140 (Sharded Consensus)
 ```
 
-## Specification
+## Threat Model
 
-### Proof Types
+### Assumptions
+
+1. **STARK security** — Underlying proof system is sound
+2. **Hash function security** — Collision-resistant
+3. **Network liveness** — Messages eventually delivered
+
+### Attackers
+
+| Attacker | Capability | Goal |
+|----------|------------|-------|
+| Malicious Worker | Submit invalid proofs | Disrupt aggregation |
+| Malicious Aggregator | Exclude valid proofs | Censor workers |
+| Colluding Aggregators | Reorder proofs | Manipulate ordering |
+
+### Trust Model
+
+- **Aggregators** are trust-but-verify — any node can become aggregator
+- **Verifiers** independently verify all proofs
+- **No single aggregator** controls aggregation outcome
+
+## Proof Model
+
+### Aggregation Method: Binary Tree Recursion
+
+We use **binary tree STARK recursion**:
+
+```
+Level 0: [P1] [P2] [P3] [P4] ... individual proofs
+             ↓       ↓
+Level 1:    [P12]    [P34]      ... 2 proofs combined
+               ↓
+Level 2:    [P1234]                 ... 4 proofs combined
+```
+
+This provides:
+
+- **Associative** — (P1+P2)+P3 = P1+(P2+P3)
+- **Deterministic** — Same input = Same output
+- **Binary** — Matches Merkle structure
+
+### Proof Commitment Scheme
+
+**NOT** raw vector hashing (vulnerable to ordering/collision attacks).
+
+Instead, **Merkle tree commitment**:
+
+```
+MerkleRoot(
+  Leaf 0: hash(proof_1.public_inputs || proof_1.proof_data)
+  Leaf 1: hash(proof_2.public_inputs || proof_2.proof_data)
+  ...
+)
+```
+
+Properties:
+
+- **Ordering-safe** — Different order = Different root
+- **Collision-resistant** — Hash function security
+- **Inclusion proofs** — Verify specific proof in aggregate
+
+### Proof Format Specification
 
 ```rust
 /// Individual inference proof
 struct InferenceProof {
-    /// Proof identifier
+    /// Protocol version
+    version: u8,
+
+    /// Unique proof identifier
     proof_id: Digest,
 
-    /// Public inputs
+    /// Task ID for binding (prevents proof mixing)
+    task_id: Digest,
+
+    /// Public inputs (committed)
     public_inputs: Vec<Digest>,
 
     /// STARK proof data
-    proof_data: Vec<u8>,
-
-    /// Metadata
-    metadata: ProofMetadata,
+    stark_proof: Vec<u8>,
 }
 
-/// Proof metadata
-struct ProofMetadata {
-    /// Task ID
-    task_id: Digest,
-
-    /// Worker that generated
-    worker: PublicKey,
-
-    /// Timestamp
-    timestamp: u64,
-
-    /// Proof size (bytes)
-    size_bytes: u32,
-}
-
-/// Aggregated proof
+/// Aggregated proof structure
 struct AggregatedProof {
-    /// Aggregate identifier
-    aggregate_id: Digest,
+    /// Protocol version
+    version: u8,
 
+    /// Recursion depth (level in binary tree)
+    depth: u8,
+
+    /// Merkle root of child proofs
+    proof_root: Digest,
+
+    /// Public inputs commitment
+    public_inputs_hash: Digest,
+
+    /// Aggregation metadata
+    metadata: AggregateMetadata,
+
+    /// The recursive STARK proof
+    stark_proof: Vec<u8>,
+}
+
+struct AggregateMetadata {
     /// Number of proofs aggregated
-    proof_count: u32,
+    count: u32,
 
-    /// Combined public inputs
-    public_inputs: Vec<Digest>,
+    /// Epoch number (prevents replay)
+    epoch: u64,
 
-    /// Aggregated proof
-    proof_data: Vec<u8>,
+    /// Block height
+    block_height: u64,
 
-    /// Aggregation level
-    level: u8,
+    /// Aggregator signature
+    aggregator_sig: Option<Signature>,
 }
 ```
 
-### Aggregation Levels
+## Aggregation Circuit
+
+### Constraints
+
+The aggregation circuit MUST enforce:
+
+1. **Verify all child proofs** — Each child proof is valid
+2. **Verify public inputs** — Child public inputs are committed
+3. **Compute root hash** — Merkle root correctly computed
+4. **Output new proof** — New proof commits to all children
+
+### Circuit Interface
 
 ```rust
-/// Aggregation hierarchy
-enum AggregationLevel {
-    /// Level 0: Individual proofs
-    Individual,
+/// Aggregation circuit constraints
+trait AggregationCircuit {
+    /// Verify a child proof
+    fn verify_child(&self, child_proof: &[u8], public_inputs: &[Digest]) -> bool;
 
-    /// Level 1: Batch (2-16 proofs)
-    Batch { count: u16 },
+    /// Compute parent commitment
+    fn compute_parent_commitment(&self, children: &[Digest]) -> Digest;
 
-    /// Level 2: Super batch (16-256 proofs)
-    SuperBatch { count: u16 },
-
-    /// Level 3: Block (256-4096 proofs)
-    Block { count: u16 },
-
-    /// Level 4: Epoch (4096+ proofs)
-    Epoch { count: u32 },
-}
-
-impl AggregationLevel {
-    fn max_proofs(&self) -> u32 {
-        match self {
-            AggregationLevel::Individual => 1,
-            AggregationLevel::Batch { count } => *count as u32,
-            AggregationLevel::SuperBatch { count } => (*count as u32) * 16,
-            AggregationLevel::Block { count } => (*count as u32) * 256,
-            AggregationLevel::Epoch { count } => *count,
-        }
-    }
+    /// Output generation
+    fn output(&self, verified: bool, commitment: Digest) -> Vec<u8>;
 }
 ```
 
-### Aggregation Algorithm
+## Verification Algorithm
+
+### O(1) Verification
+
+Given an aggregated proof, verification cost is **constant** regardless of batch size:
 
 ```rust
-/// Proof aggregator
-struct ProofAggregator {
-    /// Current aggregation level
-    level: AggregationLevel,
+/// Verify aggregated proof in O(1)
+fn verify_aggregated(proof: &AggregatedProof, vk: &VerificationKey) -> bool {
+    // 1. Verify the recursive STARK proof
+    let stark_valid = stark_verify(&proof.stark_proof, vk);
 
+    // 2. Verify public inputs commitment
+    let inputs_valid = verify_inputs_commitment(
+        &proof.public_inputs_hash,
+        &proof.metadata
+    );
+
+    // 3. Verify metadata
+    let meta_valid = verify_metadata(&proof.metadata);
+
+    stark_valid && inputs_valid && meta_valid
+}
+
+/// Complexity: O(1) — independent of proof count
+```
+
+### Verification Key Structure
+
+```rust
+struct VerificationKey {
+    /// STARK verification key
+    stark_vk: StarkVk,
+
+    /// Circuit configuration
+    circuit_config: CircuitConfig,
+
+    /// Security parameters
+    security_bits: u8,
+}
+```
+
+## Protocol Flow
+
+### Actors
+
+| Actor | Role |
+|-------|------|
+| Worker | Produces inference proofs |
+| Collector | Gathers proofs from workers |
+| Aggregator | Builds recursive aggregation |
+| Verifier | Validates aggregated proofs |
+| Consensus | Includes in blocks |
+
+### Complete Flow
+
+```
+┌─────────┐    ┌──────────┐    ┌───────────┐    ┌──────────┐
+│ Worker  │───>│ Collector│───>│ Aggregator│───>│ Verifier │
+└─────────┘    └──────────┘    └───────────┘    └──────────┘
+      │                                    │              │
+      │ P1, P2, P3...                     │              │
+      │                                    │              │
+      │                              ┌─────▼─────┐        │
+      │                              │ Recursive │        │
+      │                              │   Proof   │        │
+      │                              └─────┬─────┘        │
+      │                                    │              │
+      │                               ┌────▼────┐        │
+      │                               │Consensus│        │
+      │                               │ Include │        │
+      │                               └─────────┘        │
+```
+
+### Proof Collection Protocol
+
+```rust
+/// Collector collects proofs from workers
+struct ProofCollector {
     /// Pending proofs
     pending: Vec<InferenceProof>,
 
-    /// Aggregation threshold
-    threshold: u16,
+    /// Collection window
+    window_size: u32,
+
+    /// Timeout
+    timeout: u64,
+}
+
+impl ProofCollector {
+    /// Collect proofs until window full or timeout
+    fn collect(&mut self) -> Vec<InferenceProof> {
+        // Wait for window_size proofs or timeout
+        // Return collected batch
+    }
+}
+```
+
+### Aggregation Protocol
+
+```rust
+/// Aggregator builds recursive proof
+struct ProofAggregator {
+    /// Current aggregation level
+    level: u8,
+
+    /// Merkle tree builder
+    merkle: MerkleTree,
 }
 
 impl ProofAggregator {
-    /// Add proof to aggregation
-    fn add(&mut self, proof: InferenceProof) -> Option<AggregatedProof> {
-        self.pending.push(proof);
+    /// Build aggregation proof
+    fn aggregate(&self, proofs: &[InferenceProof]) -> AggregatedProof {
+        // 1. Build Merkle tree from proofs
+        let leaves: Vec<Digest> = proofs.iter()
+            .map(|p| digest(p.public_inputs || p.stark_proof))
+            .collect();
+        let root = merkle_root(&leaves);
 
-        // Check if ready to aggregate
-        if self.pending.len() >= self.threshold as usize {
-            Some(self.aggregate())
-        } else {
-            None
-        }
-    }
+        // 2. Build recursive circuit input
+        let circuit_input = AggregationInput {
+            proof_root: root,
+            public_inputs: aggregate_inputs(&proofs),
+            metadata: aggregate_metadata(proofs),
+        };
 
-    /// Aggregate pending proofs
-    fn aggregate(&mut self) -> AggregatedProof {
-        // Build aggregation circuit input
-        let inputs = self.build_aggregation_inputs();
-
-        // Run aggregation circuit
-        let aggregated = self.run_aggregation_circuit(&inputs);
-
-        // Clear pending
-        self.pending.clear();
-
-        aggregated
-    }
-
-    /// Build circuit inputs from pending proofs
-    fn build_aggregation_inputs(&self) -> AggregationInputs {
-        let mut public_inputs = Vec::new();
-        let mut proof_commitments = Vec::new();
-
-        for proof in &self.pending {
-            // Hash public inputs
-            let input_hash = digest(&proof.public_inputs);
-            public_inputs.push(input_hash);
-
-            // Commitment to proof
-            let commitment = pedersen_commit(&proof.proof_data);
-            proof_commitments.push(commitment);
-        }
-
-        AggregationInputs {
-            public_inputs,
-            proof_commitments,
-            metadata: AggregationMetadata {
-                count: self.pending.len() as u16,
-                level: self.level.clone(),
-            },
-        }
-    }
-
-    /// Recursive aggregation
-    fn aggregate_recursive(&self, proofs: &[AggregatedProof]) -> AggregatedProof {
-        if proofs.len() == 1 {
-            return proofs[0].clone();
-        }
-
-        // Split into halves
-        let mid = proofs.len() / 2;
-        let left = self.aggregate_recursive(&proofs[..mid]);
-        let right = self.aggregate_recursive(&proofs[mid..]);
-
-        // Combine
-        self.combine_proofs(&left, &right)
-    }
-}
-```
-
-### Verification Circuit
-
-```rust
-/// Aggregation verification circuit
-struct AggregationCircuit {
-    /// Number of proofs to verify
-    proof_count: usize,
-
-    /// Circuit configuration
-    config: CircuitConfig,
-}
-
-impl AggregationCircuit {
-    /// Generate aggregation proof
-    fn prove(&self, inputs: &AggregationInputs) -> AggregatedProof {
-        // Use STARK prover
-        let proof = stark_prove(inputs, self.config);
+        // 3. Generate recursive STARK proof
+        let stark_proof = recursive_prove(&circuit_input);
 
         AggregatedProof {
-            aggregate_id: digest(&inputs.public_inputs),
-            proof_count: inputs.metadata.count as u32,
-            public_inputs: inputs.public_inputs.clone(),
-            proof_data: proof.to_bytes(),
-            level: self.level_as_u8(),
+            version: CURRENT_VERSION,
+            depth: self.level,
+            proof_root: root,
+            public_inputs_hash: digest(circuit_input.public_inputs),
+            metadata: circuit_input.metadata,
+            stark_proof,
         }
     }
-
-    /// Verify aggregated proof
-    fn verify(&self, proof: &AggregatedProof, expected_output: Digest) -> bool {
-        // Verify STARK proof
-        let valid = stark_verify(
-            &proof.proof_data,
-            &proof.public_inputs,
-            self.config,
-        );
-
-        // Check output
-        let output = digest(&proof.public_inputs);
-        valid && output == expected_output
-    }
-}
-
-/// Public inputs for aggregation circuit
-struct AggregationInputs {
-    /// Individual proof hashes
-    public_inputs: Vec<Digest>,
-
-    /// Proof commitments
-    proof_commitments: Vec<Digest>,
-
-    /// Aggregation metadata
-    metadata: AggregationMetadata,
-}
-
-struct AggregationMetadata {
-    count: u16,
-    level: AggregationLevel,
 }
 ```
 
-### Batch Verification
+## Aggregation Levels
 
-```rust
-/// Batch verifier for multiple aggregated proofs
-struct BatchVerifier {
-    /// Verification keys
-    vks: HashMap<u8, VerificationKey>,
-}
+### Binary Tree Structure
 
-impl BatchVerifier {
-    /// Verify multiple aggregated proofs efficiently
-    fn verify_batch(&self, proofs: &[AggregatedProof]) -> BatchVerificationResult {
-        let mut results = Vec::new();
-
-        // Parallel verification
-        for proof in proofs {
-            let vk = &self.vks[&proof.level];
-            let result = self.verify_single(vk, proof);
-            results.push(result);
-        }
-
-        // Check all valid
-        let all_valid = results.iter().all(|r| r.valid);
-
-        BatchVerificationResult {
-            valid: all_valid,
-            results,
-            total_proofs: proofs.len(),
-        }
-    }
-
-    /// Verify with early exit
-    fn verify_with_early_exit(&self, proofs: &[AggregatedProof]) -> Option<usize> {
-        for (i, proof) in proofs.iter().enumerate() {
-            let vk = &self.vks[&proof.level];
-            if !self.verify_single(vk, proof).valid {
-                return Some(i); // Return first invalid index
-            }
-        }
-        None
-    }
-}
-
-struct BatchVerificationResult {
-    valid: bool,
-    results: Vec<SingleVerificationResult>,
-    total_proofs: usize,
-}
 ```
+level 0:  1 proof  (2^0)
+level 1:  2 proofs (2^1)
+level 2:  4 proofs (2^2)
+level 3:  8 proofs (2^3)
+...
+level n:  2^n proofs
+```
+
+### Level Parameters
+
+| Level | Max Proofs | Use Case |
+|-------|------------|----------|
+| 0 | 1 | Individual |
+| 1 | 2 | Quick batch |
+| 2 | 4 | Standard batch |
+| 3 | 8 | Large batch |
+| 4 | 16 | Block |
+| 5 | 32 | Epoch |
+| ... | 2^n | Extended |
 
 ### Incremental Aggregation
 
+**CRITICAL REQUIREMENT:** The aggregation operator MUST be associative:
+
+```
+A(P1, P2, P3) = A(A(P1, P2), P3) = A(P1, A(P2, P3))
+```
+
+This ensures:
+
+- Incremental updates are valid
+- Order doesn't matter
+- Parallel aggregation safe
+
 ```rust
-/// Incremental proof aggregation
-struct IncrementalAggregator {
-    /// Current aggregate
-    current: Option<AggregatedProof>,
-
-    /// Pending proofs to add
-    pending: Vec<InferenceProof>,
-
-    /// Max aggregation level
-    max_level: u8,
-}
-
-impl IncrementalAggregator {
-    /// Add proof to existing aggregate
-    fn add_to_aggregate(&mut self, proof: InferenceProof) -> AggregatedProof {
-        match &self.current {
-            Some(existing) => {
-                // Combine existing with new proof
-                let new_aggregate = self.combine_proofs(
-                    existing,
-                    &self.proof_to_aggregate(&proof),
-                );
-
-                self.current = Some(new_aggregate.clone());
-                new_aggregate
-            }
-            None => {
-                // Start new aggregate
-                let aggregate = self.aggregate_pending();
-                self.current = Some(aggregate.clone());
-                aggregate
-            }
-        }
-    }
-
-    /// Get current aggregate proof
-    fn get_aggregate(&self) -> Option<&AggregatedProof> {
-        self.current.as_ref()
-    }
+/// Incremental aggregation — add proof to existing
+fn add_proof(
+    existing: &AggregatedProof,
+    new_proof: &InferenceProof,
+) -> AggregatedProof {
+    // Must maintain associativity
+    // New aggregate = aggregate(existing, new)
+    // Same as if all proofs aggregated together
 }
 ```
 
-### Aggregation Protocol Flow
+## Consensus Integration
 
-```mermaid
-sequenceDiagram
-    participant W as Worker
-    participant A as Aggregator
-    participant V as Verifier
-    participant C as Consensus
+### Block Inclusion
 
-    W->>A: Submit InferenceProof
-    A->>A: Add to batch
-    A->>A: Aggregate when threshold reached
-    A-->>W: Return AggregatedProof
+Aggregated proofs are included in blocks:
 
-    loop Verification Round
-        A->>V: Submit AggregatedProof
-        V->>V: Verify batch
-        V-->>A: Verification result
-    end
+```rust
+struct Block {
+    /// Previous block hash
+    parent: Digest,
 
-    V->>C: Submit verified aggregate
-    C->>C: Include in block
+    /// Aggregated proof
+    proof: AggregatedProof,
+
+    /// State updates
+    state: StateUpdates,
+
+    /// Block metadata
+    metadata: BlockMetadata,
+}
+```
+
+### Verification at Consensus
+
+```rust
+/// Consensus verifies aggregated proof
+fn verify_at_consensus(
+    block: &Block,
+    vk: &VerificationKey,
+) -> bool {
+    // O(1) verification
+    verify_aggregated(&block.proof, vk)
+}
 ```
 
 ## Performance Targets
 
 | Metric | Target | Notes |
 |--------|--------|-------|
-| Aggregation latency | <30s | Per batch |
+| Aggregation latency | 30-120s | Aspirational |
+| Verification time | 50-200ms | Realistic |
 | Proof compression | >90% | Size reduction |
-| Verification time | <100ms | Per aggregate |
-| Max recursion depth | 10 levels | 2^10 = 1024 proofs |
+| Max recursion depth | 10 | 2^10 = 1024 proofs |
 
 ## Adversarial Review
 
-| Threat | Impact | Mitigation |
+### Known Attacks
+
+| Attack | Impact | Mitigation |
 |--------|--------|------------|
-| **Proof forgery** | High | Cryptographic verification |
-| **Aggregation manipulation** | High | Commitment checks |
-| **Verification bypass** | Critical | Multiple verification rounds |
-| **Resource exhaustion** | Medium | Size limits, rate limits |
+| Proof mixing | High | Task ID binding in proof |
+| Aggregation replay | High | Epoch number in aggregate |
+| Proof substitution | High | Merkle root commitments |
+| Aggregator censorship | Medium | Anyone can aggregate |
+| Worker false proofs | High | Verification required |
 
-## Alternatives Considered
+### Additional Mitigations
 
-| Approach | Pros | Cons |
-|----------|------|------|
-| **Sequential verification** | Simple | O(n) cost |
-| **Signature aggregation** | Fast | Not composable |
-| **This approach** | Composable + efficient | Circuit complexity |
-| **Supercomputation** | Infinite scaling | Trust assumptions |
+```rust
+/// Task binding — prevents proof mixing
+struct TaskBinding {
+    task_id: Digest,  // Bind proof to specific task
+}
+
+/// Epoch binding — prevents replay
+struct EpochBinding {
+    epoch: u64,       // Bind to specific epoch
+    block_height: u64,
+}
+```
+
+## Specification Requirements
+
+### MUST Requirements
+
+1. **MUST use Merkle commitment** — Not raw vector hashing
+2. **MUST bind task ID** — Prevent proof mixing
+3. **MUST include epoch** — Prevent replay attacks
+4. **MUST be associative** — For incremental aggregation
+5. **MUST be deterministic** — Same input = Same output
+6. **MUST verify all children** — Circuit constraints
+
+### SHOULD Requirements
+
+1. **SHOULD support binary recursion** — Matches Merkle structure
+2. **SHOULD separate aggregator/prover** — Reduce trust
+3. **SHOULD include aggregator signature** — Accountability
+
+## Comparison: Original vs Revised
+
+| Aspect | Original | Revised |
+|--------|----------|---------|
+| Aggregation method | Unspecified | Binary tree recursion |
+| Commitment scheme | Vector hashing | Merkle tree |
+| Proof format | Implicit | Explicit specification |
+| Associativity | Not defined | Required property |
+| Circuit constraints | Not specified | Defined |
+| Trust model | Incomplete | Complete |
+| Protocol flow | Incomplete | Full actor model |
 
 ## Implementation Phases
 
 ### Phase 1: Core Aggregation
 
-- [ ] Basic proof bundling
-- [ ] Batch aggregation circuit
-- [ ] Verification interface
+- [ ] Merkle commitment implementation
+- [ ] Basic binary aggregation
+- [ ] Verification algorithm
 
 ### Phase 2: Recursive Composition
 
-- [ ] Multi-level aggregation
-- [ ] Recursive proof combining
-- [ ] Level management
+- [ ] Multi-level recursion
+- [ ] Binary tree structure
+- [ ] Circuit constraints
 
-### Phase 3: Optimization
+### Phase 3: Protocol
 
-- [ ] Incremental aggregation
-- [ ] Parallel verification
-- [ ] Compression tuning
-
-### Phase 4: Integration
-
+- [ ] Actor definitions
+- [ ] Message protocols
 - [ ] Consensus integration
-- [ ] Storage optimization
-- [ ] Monitoring
 
-## Future Work
+### Phase 4: Security
 
-- F1: Cross-shard proof aggregation
-- F2: Privacy-preserving aggregation
-- F3: Proof-of-provenance aggregation
-- F4: Formal verification of aggregation circuit
-
-## Rationale
-
-### Why Recursive Aggregation?
-
-Recursive aggregation provides:
-
-- **Infinite scalability** — Compose any number of proofs
-- **No trusted setup** — STARK-based
-- **Constant verification** — O(1) regardless of batch size
-- **Flexible batching** — Adaptive to network conditions
-
-### Why Not Simple Batching?
-
-Simple batching (multiple proofs in one transaction) still requires linear verification. Recursive aggregation achieves true O(1) verification.
+- [ ] Task binding
+- [ ] Epoch binding
+- [ ] Attack mitigations
 
 ## Related RFCs
 
@@ -512,8 +551,15 @@ Simple batching (multiple proofs in one transaction) still requires linear verif
 - [Probabilistic Verification Markets](../../docs/use-cases/probabilistic-verification-markets.md)
 - [Node Operations](../../docs/use-cases/node-operations.md)
 
+## References
+
+- [STARK Recursion (Vitalik)](https://vitalik.ca/general/2022/11/19/proof_of_synthesis.html)
+- [FRI Folding Schemes](https://eprint.iacr.org/2023/)
+- [Proof Carrying Data](https://research.protocol.ai/sites/pcd/)
+
 ---
 
-**Version:** 1.0
+**Version:** 1.1
 **Submission Date:** 2026-03-07
 **Last Updated:** 2026-03-07
+**Changes:** Major rewrite per technical review — added cryptographic formalization, Merkle commitment, proof format, threat model

@@ -846,7 +846,11 @@ This RFC makes CipherOcto a potential outlier. The experimental warning reflects
   - [ ] From/To f64 conversion
   - [ ] Serialization
   - [ ] sqrt (square root) - Newton-Raphson with 16 iterations
+  - [ ] **Test vectors: 500+ verified cases** including edge cases
+  - [ ] **Differential fuzzing** against Berkeley SoftFloat reference
 - Estimated complexity: Medium
+
+> **Prerequisite before consensus integration:** At least 300 passing test vectors + differential fuzzing report.
 
 ### Mission 1b: Additional Transcendental Functions (Future Phase)
 
@@ -1042,19 +1046,29 @@ None. DFP is a new type that does not modify existing FLOAT/DOUBLE behavior.
 ## References
 
 - IEEE-754-2019: IEEE Standard for Floating-Point Arithmetic
+- [Berkeley SoftFloat](https://github.com/ucb-bar/berkeley-softfloat-3): Industry-standard software floating-point (used by QEMU, EOS, RISC-V)
+- [libfixmath](https://github.com/aseprite/libfixmath): Fixed-point library reference
 - Stoolap Expression VM documentation
 - Deterministic execution in replicated state machines
 
+## Implementation Roadmap
+
+> ⚠️ **STRONGLY RECOMMENDED:** Before production deployment:
+>
+> 1. **Differential testing** against Berkeley SoftFloat (500+ test vectors)
+> 2. **Multi-architecture fuzzing** (x86, ARM, RISC-V)
+> 3. **External security audit** by numeric-specialist firm
+> 4. **Implementation requirement**: At least partial implementation (add/mul/div/sqrt) before advancing RFC status
+>
+> Consider: Use DFP only in **deterministic read-only views / oracles**, not full state transitions.
+
 ---
 
-**Version:** 1.3
+**Version:** 1.4
 **Submission Date:** 2025-03-06
 **Last Updated:** 2026-03-08
-**Changes:** v1.3 post-review fixes:
-- Fix B1: Rewrite round_to_113 with correct algorithm
-- Fix B2: Update DFP_MAX to use u128 and add DFP_MAX_MANTISSA
-- Fix B3: Unify Serialize to use DfpEncoding::to_bytes()
-- Fix B4: Fix ordering table (invert mantissa for negatives)
-- Fix B5: Clarify Infinity NOT used in computed results
-- Fix S3: Fix compiler flags (-Cf → -C)
-- Add gas limits scope definition
+**Changes:** v1.4 production readiness:
+- Add Berkeley SoftFloat reference to implementations
+- Add implementation roadmap with test vector requirements
+- Add prerequisite: 300+ test vectors before consensus integration
+- Add external audit commitment to roadmap

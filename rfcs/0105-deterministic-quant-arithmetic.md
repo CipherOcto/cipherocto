@@ -783,39 +783,41 @@ This matches the `sign(value)` pseudo-code function used throughout the algorith
 
 ## Implementation
 
-### Mission 1: DQA Core Type
+### Mission 1: DQA Core Type ✅
 
 - Location: `determ/dqa.rs`
 - Acceptance criteria:
-  - [ ] DQA struct with value/scale
-  - [ ] Arithmetic: add, sub, mul, div
-  - [ ] Scale alignment rules
-  - [ ] From/To f64 conversion
-  - [ ] Serialization
+  - [x] DQA struct with value/scale
+  - [x] Arithmetic: add, sub, mul, div
+  - [x] Scale alignment rules
+  - [x] From/To f64 conversion
+  - [x] Serialization (DqaEncoding)
 - Estimated complexity: Low
 
-### Mission 2: DataType Integration
+### Mission 2: DataType Integration ✅
 
-- Location: `src/parser/ast.rs`, `src/parser/statements.rs`
+- Location: `stoolap/src/parser/ast.rs`, `stoolap/src/parser/statements.rs`
 - Acceptance criteria:
-  - [ ] Add `DataType::Quant` variant
-  - [ ] SQL parser accepts `DQA(n)` syntax
-  - [ ] Type checking for scale alignment
+  - [x] Add `DataType::Quant` variant
+  - [x] SQL parser accepts `DQA(n)` syntax
+  - [x] Type checking for scale alignment (built into DQA operations)
 - Estimated complexity: Low
 
-### Mission 3: Expression VM Opcodes
+### Mission 3: Expression VM Opcodes ✅
 
-- Location: `src/vm/`
+- Location: `stoolap/src/executor/expression/vm.rs`, `stoolap/src/executor/expression/ops.rs`
 - Acceptance criteria:
-  - [ ] OP_DQA_ADD, OP_DQA_SUB, OP_DQA_MUL, OP_DQA_DIV
-  - [ ] Scale alignment validation
+  - [x] OP_DQA_ADD, OP_DQA_SUB, OP_DQA_MUL, OP_DQA_DIV
+  - [x] Scale alignment validation (built into DQA operations)
 - Estimated complexity: Low
 
-### Mission 4: Consensus Integration
+### Mission 4: Consensus Integration ⏳
 
-- Location: `src/storage/`, `src/consensus/`
+- Location: `stoolap/src/storage/`, `stoolap/src/consensus/`
 - Acceptance criteria:
-  - [ ] DQA encoding in Merkle state
+  - [x] DQA encoding in Merkle state (DqaEncoding uses canonical form)
+  - [x] Spec version pinning (DQA_SPEC_VERSION = 1)
+  - [ ] Deterministic view enforcement
   - [ ] Consensus replay validation
 - Estimated complexity: Medium
 

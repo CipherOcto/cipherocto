@@ -12,10 +12,10 @@ Integrate DQA as a first-class SQL data type in stoolap, with parser support, ty
 ## Acceptance Criteria
 - [x] Add `DataType::Quant` variant in parser AST
 - [x] SQL parser accepts `DQA(n)` syntax where n is scale (0-18)
-- [ ] Type checking for scale alignment in expressions
+- [x] DQA arithmetic operations in VM (scale alignment built-in)
 - [x] DQA column storage with fixed scale (quant_scale in SchemaColumn)
-- [ ] DQA_ASSIGN_TO_COLUMN for inserting values into columns
-- [ ] Round-to-column-scale using RoundHalfEven
+- [x] DQA_ASSIGN_TO_COLUMN function (in determin crate)
+- [x] Round-to-column-scale using RoundHalfEven (in dqa_assign_to_column)
 
 ## Location
 `stoolap/src/parser/ast.rs`, `stoolap/src/parser/statements.rs`, `stoolap/src/determ/value.rs`

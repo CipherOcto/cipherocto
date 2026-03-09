@@ -2,7 +2,7 @@
 
 ## Status
 
-Draft (Production-Grade Revision v2.7)
+Draft (Production-Grade Revision v2.14)
 
 ## Summary
 
@@ -12,16 +12,16 @@ DQA complements RFC-0104's DFP type: where DFP handles arbitrary-precision scien
 
 #### When to Use DQA vs DFP
 
-| Use Case | Recommended Type | Reason |
-|----------|------------------|--------|
-| Financial prices, order book quantities | DQA | Bounded range, 10-40x faster |
-| Portfolio risk (VaR, Greeks) | DQA | Bounded precision, high throughput |
-| Option pricing (Black-Scholes) | DQA or DFP | DQA sufficient for standard precision |
-| Scientific computing / physics simulation | DFP | Requires arbitrary exponents |
-| AI/ML inference (embeddings, activations) | DQA | Bounded range, cache-friendly |
-| Arbitrary-precision accounting | DFP | May exceed 18 decimal places |
-| Blockchain consensus arithmetic | DQA | Deterministic, bounded, fast |
-| Regulatory reporting (exact decimals) | DQA | Fixed scale, audit-friendly |
+| Use Case                                  | Recommended Type | Reason                                |
+| ----------------------------------------- | ---------------- | ------------------------------------- |
+| Financial prices, order book quantities   | DQA              | Bounded range, 10-40x faster          |
+| Portfolio risk (VaR, Greeks)              | DQA              | Bounded precision, high throughput    |
+| Option pricing (Black-Scholes)            | DQA or DFP       | DQA sufficient for standard precision |
+| Scientific computing / physics simulation | DFP              | Requires arbitrary exponents          |
+| AI/ML inference (embeddings, activations) | DQA              | Bounded range, cache-friendly         |
+| Arbitrary-precision accounting            | DFP              | May exceed 18 decimal places          |
+| Blockchain consensus arithmetic           | DQA              | Deterministic, bounded, fast          |
+| Regulatory reporting (exact decimals)     | DQA              | Fixed scale, audit-friendly           |
 
 ## Motivation
 
@@ -99,10 +99,12 @@ pub struct DqaEncoding {
 
 impl DqaEncoding {
     /// Serialize DQA to canonical big-endian encoding
+    /// CRITICAL: Canonicalizes before encoding to ensure deterministic Merkle hashes
     pub fn from_dqa(dqa: &Dqa) -> Self {
+        let canonical = CANONICALIZE(*dqa);
         Self {
-            value: dqa.value.to_be(),
-            scale: dqa.scale,
+            value: canonical.value.to_be(),
+            scale: canonical.scale,
             _reserved: [0; 7],
         }
     }
@@ -155,9 +157,11 @@ impl Dqa {
         }
         // Algorithm: multiply by 10^scale, round to nearest integer, clamp to i64
         // Note: f64::round() uses half-away-from-zero, not RoundHalfEven.
-        // For consensus-critical code, prefer parsing from integer types instead.
-        let power = 10_f64.powi(scale as i32);
-        let scaled = value * power;
+        // WARNING: Values ingested via from_f64 may differ by ±1 ULP from integer-path values
+        // when compared via DQA_CMP. Only use for display/logging, never for consensus.
+        // Future enhancement: add from_f64_half_even using integer arithmetic for stricter callers.
+        let power = POW10_I64[scale as usize];
+        let scaled = value * power as f64;
         let rounded = scaled.round();
         if rounded > i64::MAX as f64 || rounded < i64::MIN as f64 {
             return Err(DqaError::Overflow);
@@ -230,11 +234,11 @@ INSERT INTO trades (price) VALUES (123.4567899);  -- rounds to 123.456790
 INSERT INTO trades (price) VALUES (123.4567894);  -- rounds to 123.456789
 ```
 
-| Ingress Scenario | Behavior |
-| ---------------- | -------- |
-| Extra decimal places | Round to column scale (RoundHalfEven) |
-| Fewer decimal places | Pad with zeros |
-| Scale exceeds column | Return error or round (configurable) |
+| Ingress Scenario     | Behavior                                                           |
+| -------------------- | ------------------------------------------------------------------ |
+| Extra decimal places | Round to column scale (RoundHalfEven)                              |
+| Fewer decimal places | Pad with zeros                                                     |
+| Scale exceeds column | Round to column scale using `DQA_ASSIGN_TO_COLUMN` (RoundHalfEven) |
 
 This ensures deterministic storage regardless of input precision.
 
@@ -242,10 +246,10 @@ This ensures deterministic storage regardless of input precision.
 
 DQA operations require scale alignment:
 
-| Operation | Result Scale          |
-| --------- | --------------------- |
-| ADD/SUB   | max(scale_a, scale_b) |
-| MUL       | scale_a + scale_b     |
+| Operation | Result Scale                 |
+| --------- | ---------------------------- |
+| ADD/SUB   | max(scale_a, scale_b)        |
+| MUL       | scale_a + scale_b            |
 | DIV       | See division algorithm below |
 
 #### Scale Alignment Algorithm (Pure Function)
@@ -275,7 +279,7 @@ ALIGN_SCALES(a, b):
     5. Return (new_a_value, new_b_value)  // Caller computes result_scale as max(a.scale, b.scale)
 ```
 
-**Note**: The result scale is always `max(a.scale, b.scale)`, so callers compute this directly rather than using returned scale values.
+**Note**: The returned values are NOT yet canonicalized. Callers MUST canonicalize if required (e.g., after ADD/SUB). The result scale is always `max(a.scale, b.scale)`, so callers compute this directly rather than using returned scale values.
 
 ### Arithmetic Algorithms
 
@@ -338,6 +342,8 @@ DQA_MUL(a, b):
 
 **Critical**: Rounding MUST happen in i128 before checked conversion to i64, otherwise 10^36 cannot be safely rounded down to fit. Canonicalization is REQUIRED to prevent Merkle hash divergence.
 
+**Normative behavior for result_scale > MAX_SCALE (18)**: When multiplication produces scale > 18, the value is right-shifted (divided by 10^(result_scale - 18)) with RoundHalfEven applied, then clamped to scale=18. Overflow is checked after clamping.
+
 #### Division (Simplified Correct Algorithm)
 
 To achieve true RoundHalfEven at TARGET_SCALE, compute directly at TARGET_SCALE precision and apply rounding once.
@@ -347,7 +353,7 @@ DQA_DIV(a, b):
     1. TARGET_SCALE = max(a.scale, b.scale)
     2. If b.value == 0: return Error::DivisionByZero
     3. power = TARGET_SCALE + b.scale - a.scale
-    4. // Guard against i128 overflow using checked multiplication (simpler and correct)
+    4. // Guard against i128 overflow using checked multiplication
     5. match (a.value as i128).checked_mul(POW10[power]) {
     6.     Some(s) => scaled = s,
     7.     None => return Error::Overflow,
@@ -359,8 +365,8 @@ DQA_DIV(a, b):
    13. result_value = ROUND_HALF_EVEN_WITH_REMAINDER(quotient, remainder, abs_b, result_sign)
    14. if result_value > i64::MAX or result_value < i64::MIN:
    15.     return Error::Overflow
-   16. result_scale = TARGET_SCALE
-   17. Return Dqa { value: result_value as i64, scale: TARGET_SCALE }
+   16. // Canonicalize to prevent Merkle hash divergence (required for all arithmetic ops)
+   17. Return CANONICALIZE(Dqa { value: result_value as i64, scale: TARGET_SCALE })
 ```
 
 **Note**: This simplified algorithm computes at exactly TARGET_SCALE precision, applies RoundHalfEven once using the helper, and returns.
@@ -370,9 +376,10 @@ DQA_DIV(a, b):
 This implementation uses **"last-remainder half-even"** rounding: RoundHalfEven applied using the single remainder from `scaled % b.value`.
 
 **Trade-off rationale:**
+
 - **Performance**: ~10-25% faster than guard-digit approach
 - **Precision**: Correct for typical financial calculations (prices, quantities, fees with 0-8 decimals)
-- This algorithm produces correct RoundHalfEven at TARGET_SCALE for all inputs
+- This algorithm produces correct rounding at TARGET_SCALE precision for all inputs
 
 #### Division Rounding Semantics (Deliberate Trade-off)
 
@@ -381,6 +388,7 @@ DQA division applies **RoundHalfEven using the single remainder** after integer 
 This differs from mathematically complete decimal rounding (e.g. PostgreSQL NUMERIC, Java BigDecimal) which use a **guard digit + sticky bit**.
 
 **Consequences:**
+
 - The remainder-based rounding decision is mathematically exact for the TARGET_SCALE precision
 - DQA caps output precision at 18 decimal places; PostgreSQL NUMERIC returns unlimited digits
 - Performance benefit: no extra multiplication/shift
@@ -390,11 +398,13 @@ For applications requiring stricter mathematical rounding (e.g. certain derivati
 Most quantitative trading systems accept this approximation for the significant speed gain.
 
 **Alternative**: For high-precision risk/valuation engines, use the guard-digit variant:
+
 ```
 // Compute at TARGET_SCALE + 1, round using that digit, then shift back
 power = (TARGET_SCALE + 1) + b.scale - a.scale
 // ... rest of algorithm
 ```
+
 This matches PostgreSQL NUMERIC and Java BigDecimal behavior.
 
 ### Constraints
@@ -411,11 +421,11 @@ This matches PostgreSQL NUMERIC and Java BigDecimal behavior.
 /// Maximum allowed scale (0-18)
 pub const MAX_SCALE: u8 = 18;
 
-/// Maximum digits in i64 (19 digits, including sign)
+/// Maximum decimal digits in abs(i64): i64::MAX has 19 digits
 pub const MAX_I64_DIGITS: u32 = 19;
 
-/// Maximum digits in i128 (38 digits, including sign)
-pub const MAX_I128_DIGITS: u32 = 38;
+/// Maximum decimal digits in i128: i128::MAX has 39 digits (170141183460469231731687303715884105727)
+pub const MAX_I128_DIGITS: u32 = 39;
 
 /// Canonical zero representation
 pub const CANONICAL_ZERO: Dqa = Dqa { value: 0, scale: 0 };
@@ -439,24 +449,25 @@ fn checked_mul(a: i64, b: i64) -> Result<i64, DqaError> {
 }
 ```
 
-| Scenario              | Behavior                                    |
-| --------------------- | ------------------------------------------ |
-| i64 overflow          | Return `DqaError::Overflow` deterministic |
-| i64 underflow         | Return `DqaError::Overflow` deterministic  |
-| Scale overflow (>18)  | Round to 18 (see rounding mode below)      |
+| Scenario             | Behavior                                     |
+| -------------------- | -------------------------------------------- |
+| i64 overflow         | Return `DqaError::Overflow` deterministic    |
+| i64 underflow        | Return `DqaError::Overflow` deterministic    |
+| Scale overflow (>18) | Round to 18 (see DQA_MUL normative behavior) |
 
 ### Deterministic Rounding Mode
 
 **All rounding uses RoundHalfEven (Banker's Rounding)**.
 
 This is the industry standard used by:
+
 - IEEE 754
 - PostgreSQL NUMERIC
 - Java BigDecimal
 - Most financial systems
 
 ```
-ROUND_HALF_EVEN(value, target_scale):
+ROUND_HALF_EVEN(value, current_scale, target_scale):
     1. If target_scale >= current_scale: return value (no rounding needed)
     2. divisor = POW10[current_scale - target_scale]
     3. quotient = value / divisor
@@ -467,11 +478,13 @@ ROUND_HALF_EVEN(value, target_scale):
     8. If abs_remainder < half: return quotient
     9. If abs_remainder > half: return quotient + sign(value)
     10. // remainder == half (tie)
-    11. If quotient % 2 == 0: return quotient  // quotient is even
+    11. If quotient % 2 == 0: return quotient  // quotient is even (Rust's signed % is safe: (-2)%2==0, (-3)%2==-1)
     12. Else: return quotient + sign(value)
 ```
 
 **Note**: The `sign(value)` function returns 1 for positive, -1 for negative, 0 for zero.
+
+**Note**: This scale-reduction variant is provided for completeness. All DQA algorithms use `ROUND_HALF_EVEN_WITH_REMAINDER` instead, which operates directly on quotient/remainder pairs without re-dividing.
 
 #### Rounding Helper for Division
 
@@ -491,12 +504,12 @@ ROUND_HALF_EVEN_WITH_REMAINDER(quotient, remainder, divisor, result_sign):
 
 **Note**: `result_sign` is calculated as `sign(a.value) * sign(b.value)` in the caller to handle negative division correctly even when quotient is 0.
 
-| Example    | Target Scale | Result |
-| ---------- | ------------ | ------ |
-| 1.25       | 1            | 1.2    |
-| 1.35       | 1            | 1.4    |
-| 1.250      | 1            | 1.2    |
-| 1.150      | 1            | 1.2    |
+| Example | Target Scale | Result |
+| ------- | ------------ | ------ |
+| 1.25    | 1            | 1.2    |
+| 1.35    | 1            | 1.4    |
+| 1.250   | 1            | 1.2    |
+| 1.150   | 1            | 1.2    |
 
 ### Canonical Representation
 
@@ -516,11 +529,11 @@ CANONICALIZE(dqa):
 
 **Note**: The `dqa.scale > 0` guard prevents u8 underflow when scale is 0.
 
-| Input          | Canonical Form    |
-| -------------- | ----------------- |
-| value=1000, s=3 | value=1, s=0     |
-| value=50, s=2   | value=5, s=1     |
-| value=0, s=5    | value=0, s=0     |
+| Input           | Canonical Form |
+| --------------- | -------------- |
+| value=1000, s=3 | value=1, s=0   |
+| value=50, s=2   | value=5, s=1   |
+| value=0, s=5    | value=0, s=0   |
 
 **Serialization MUST canonicalize before encoding**, otherwise Merkle state hashes will differ.
 
@@ -529,6 +542,7 @@ CANONICALIZE(dqa):
 **Rule**: All arithmetic operations (ADD, SUB, MUL, DIV) **MUST canonicalize their result before returning**.
 
 This ensures:
+
 - Internal state is deterministic
 - Comparisons work correctly
 - Serialization is consistent
@@ -552,7 +566,7 @@ For hot paths in VM execution, canonicalization after every operation can be exp
 // - Fast comparison when scales are known equal
 ```
 
-**Implementation suggestion**: Track a "possibly non-canonical" flag on VM registers. Force canonicalization before any value leaves the VM execution context—specifically before serialization, storage, comparison, or hashing.
+**VM Canonicalization Rule (Normative)**: VM registers MAY contain non-canonical DQA values during intermediate evaluation. Before a value is used for comparison, serialization, hashing, storage, control-flow evaluation, or returning from a VM frame, it MUST be canonicalized. This guarantees cross-node state equivalence.
 
 ### Deterministic Power Table
 
@@ -634,6 +648,8 @@ CREATE TABLE trades (
 
 **Per-value scale** is only available in expression arithmetic, not column storage.
 
+**Canonical vs SQL Storage**: SQL column storage retains the column's declared scale, not the canonical form. A value like `1.200000` with column scale 6 is stored as `{value: 1200000, scale: 6}`, not canonicalized to `{value: 12, scale: 1}`. This is intentional for SQL semantics. However, **canonicalization MUST occur when values exit SQL storage** into VM execution, serialization, hashing, or state comparison. The canonical form is required for deterministic Merkle hashes.
+
 #### Expression-to-Column Assignment Coercion
 
 When storing an expression result into a fixed-scale column:
@@ -648,16 +664,21 @@ DQA_ASSIGN_TO_COLUMN(expr_result, column_scale):
     6.     remainder = expr_result.value % divisor
     7.     // Round using ROUND_HALF_EVEN_WITH_REMAINDER
     8.     result_value = ROUND_HALF_EVEN_WITH_REMAINDER(quotient, remainder, divisor, sign(expr_result.value))
-    9.     return Dqa { value: result_value, scale: column_scale }
-    10. else if expr_result.scale < column_scale:
-    11.     // Pad with trailing zeros
-    12.     diff = column_scale - expr_result.scale
-    13.     result_value = expr_result.value * POW10[diff]
-    14.     if result_value > i64::MAX or result_value < i64::MIN:
-    15.         return Error::Overflow
-    16.     return Dqa { value: result_value, scale: column_scale }
-    17. else:
-    18.     return expr_result  // scales match, no coercion needed
+    9.     // Check i64 range (rounded quotient could theoretically exceed i64)
+   10.    if result_value > i64::MAX as i128 or result_value < i64::MIN as i128:
+   11.        return Error::Overflow
+   12.    return Dqa { value: result_value as i64, scale: column_scale }
+    13. else if expr_result.scale < column_scale:
+    14.     // Pad with trailing zeros
+    15.     diff = column_scale - expr_result.scale
+    16.     // Use i128 for overflow-safe multiplication
+    17.     intermediate = (expr_result.value as i128) * POW10[diff]
+    18.     if intermediate > i64::MAX as i128 or intermediate < i64::MIN as i128:
+    19.         return Error::Overflow
+    20.     result_value = intermediate as i64
+    21.     return Dqa { value: result_value, scale: column_scale }
+    22. else:
+    23.     return expr_result  // scales match, no coercion needed
 ```
 
 **Note**: The rounding uses the same `ROUND_HALF_EVEN_WITH_REMAINDER` helper as division, ensuring deterministic results.
@@ -683,15 +704,15 @@ pub enum DqaError {
 /// (TARGET_SCALE = max(a.scale, b.scale) ensures power >= 0)
 ```
 
-| Scenario                     | Behavior                               |
-| ---------------------------- | -------------------------------------- |
-| DQA \* FLOAT                 | Compile error                          |
-| DQA + DQA (mismatched scale) | Automatic alignment via ALIGN_SCALES |
-| Division by zero             | Return `DqaError::DivisionByZero`      |
-| Scale overflow (>18)         | Round to 18 (RoundHalfEven)            |
-| i64 overflow                 | Return `DqaError::Overflow`            |
-| NEG(i64::MIN)                | Return `DqaError::Overflow` (abs overflows) |
-| ABS(i64::MIN)                | Return `DqaError::Overflow` (abs overflows) |
+| Scenario                     | Behavior                                     |
+| ---------------------------- | -------------------------------------------- |
+| DQA \* FLOAT                 | Compile error                                |
+| DQA + DQA (mismatched scale) | Automatic alignment via ALIGN_SCALES         |
+| Division by zero             | Return `DqaError::DivisionByZero`            |
+| Scale overflow (>18)         | Round to 18 (see DQA_MUL normative behavior) |
+| i64 overflow                 | Return `DqaError::Overflow`                  |
+| NEG(i64::MIN)                | Return `DqaError::Overflow` (abs overflows)  |
+| ABS(i64::MIN)                | Return `DqaError::Overflow` (abs overflows)  |
 
 ### VM Determinism Guarantees
 
@@ -699,7 +720,7 @@ For consensus safety, the VM implementation MUST:
 
 1. **Use only deterministic integer operations** — no floating-point arithmetic
 2. **Use checked arithmetic** — never wrapping/overflowing silently
-3. **Never use architecture-dependent intrinsics** — SIMD is allowed only if results are bit-identical across architectures
+3. **Never use architecture-dependent intrinsics** — SIMD may be used internally BUT results MUST match scalar reference implementation bit-exactly. All implementations MUST pass reference test vectors using scalar arithmetic semantics.
 4. **Serialize canonical form** — before hashing or storing state
 5. **Use POW10 table** — never call pow() or exp() functions
 
@@ -717,13 +738,13 @@ VM_DQA_INVARIANTS:
 
 The quant finance industry has decades of evidence that scaled integers are:
 
-| Property          | Scaled Integer | Binary Float          |
-| ----------------- | -------------- | --------------------- |
-| Determinism       | ✅ Guaranteed  | ❌ Platform-dependent |
+| Property          | Scaled Integer   | Binary Float          |
+| ----------------- | ---------------- | --------------------- |
+| Determinism       | ✅ Guaranteed    | ❌ Platform-dependent |
 | Speed             | 1.5-3.5x integer | 10-40x slower         |
-| Cache efficiency  | ✅ Excellent   | ❌ Poor               |
-| SIMD support      | ✅ Excellent   | ❌ Limited            |
-| Decimal precision | ✅ Exact       | ❌ Approximate        |
+| Cache efficiency  | ✅ Excellent     | ❌ Poor               |
+| SIMD support      | ✅ Excellent     | ❌ Limited            |
+| Decimal precision | ✅ Exact         | ❌ Approximate        |
 
 ### Alternatives Considered
 
@@ -755,6 +776,7 @@ When implementing `Dqa::new(value, scale)`, enforce the `scale > 18` check. Sinc
 ### Sign Function
 
 In Rust, use the `.signum()` method on integers:
+
 - `a.value.signum()` returns `1`, `0`, or `-1` for positive, zero, or negative respectively.
 
 This matches the `sign(value)` pseudo-code function used throughout the algorithms.
@@ -805,14 +827,15 @@ None. DQA is a new type.
 
 ### Performance
 
-| Type    | Relative Speed | Notes |
-| ------- | -------------- |-------|
-| INTEGER | 1x (baseline)  | Native integer ops |
+| Type    | Relative Speed | Notes                                       |
+| ------- | -------------- | ------------------------------------------- |
+| INTEGER | 1x (baseline)  | Native integer ops                          |
 | DQA     | 1.5-3.5x       | Includes scale alignment + canonicalization |
-| DECIMAL | 2-3x           | Variable precision libraries |
-| DFP     | 8-20x          | Arbitrary precision |
+| DECIMAL | 2-3x           | Variable precision libraries                |
+| DFP     | 8-20x          | Arbitrary precision                         |
 
 **Note**: Real-world DQA performance includes:
+
 - Scale alignment (1 multiplication + check)
 - Canonicalization (trailing zero strip, rare but required)
 - Overflow checks (i128 intermediate)
@@ -826,16 +849,18 @@ For high-frequency trading hot paths, an optional fast mode skips safety checks:
 
 ```rust
 /// Unchecked scale alignment for fast path - caller guarantees no overflow
+/// Uses i64 wrapping multiply with POW10_I64 table (diff <= 18 ensures no overflow)
 #[cfg(feature = "fast")]
 fn align_scales_unchecked(a: Dqa, b: Dqa) -> (i64, u8, i64, u8) {
     if a.scale == b.scale {
         (a.value, a.scale, b.value, b.scale)
     } else if a.scale > b.scale {
         let diff = a.scale - b.scale;
-        (a.value, a.scale, b.value * POW10[diff as usize], a.scale)
+        // diff <= 18, so POW10_I64[diff] fits in i64; wrapping_mul for fast path
+        (a.value, a.scale, b.value.wrapping_mul(POW10_I64[diff as usize]), a.scale)
     } else {
         let diff = b.scale - a.scale;
-        (a.value * POW10[diff as usize], b.scale, b.value, b.scale)
+        (a.value.wrapping_mul(POW10_I64[diff as usize]), b.scale, b.value, b.scale)
     }
 }
 
@@ -851,11 +876,13 @@ impl Dqa {
 ```
 
 **When to use fast path:**
+
 - Input values proven to be within safe range (e.g., pre-validated price feeds)
 - Temporary calculations in tight loops where safety is guaranteed externally
 - Performance-critical code with verified bounded inputs
 
 **When NOT to use:**
+
 - User-supplied data
 - Smart contract execution
 - Cross-node consensus
@@ -877,40 +904,40 @@ These vectors MUST produce identical results across all implementations:
 ### Addition Test Vectors
 
 | a.value | a.scale | b.value | b.scale | expected value | expected scale |
-| ------- | -------- | ------- | ------- | -------------- | --------------- |
-| 12      | 1        | 123     | 2       | 243            | 2               |
-| 1000    | 3        | 1       | 0       | 1001           | 3               |
-| -50     | 2        | 75      | 2       | 25             | 2               |
-| 0       | 0        | 0       | 5       | 0              | 0 (canonical)   |
+| ------- | ------- | ------- | ------- | -------------- | -------------- |
+| 12      | 1       | 123     | 2       | 243            | 2              |
+| 1000    | 3       | 1       | 0       | 1001           | 3              |
+| -50     | 2       | 75      | 2       | 25             | 2              |
+| 0       | 0       | 0       | 5       | 0              | 0 (canonical)  |
 
 ### Multiplication Test Vectors
 
 | a.value | a.scale | b.value | b.scale | expected value | expected scale |
-| ------- | -------- | ------- | ------- | -------------- | --------------- |
-| 12      | 1        | 3       | 1       | 36             | 2               |
-| 100     | 2        | 200     | 3       | 20000          | 5               |
-| -5      | 1        | 4       | 1       | -20            | 2               |
+| ------- | ------- | ------- | ------- | -------------- | -------------- |
+| 12      | 1       | 3       | 1       | 36             | 2              |
+| 100     | 2       | 200     | 3       | 20000          | 5              |
+| -5      | 1       | 4       | 1       | -20            | 2              |
 
 ### Division Test Vectors
 
 Using simplified algorithm: compute at TARGET_SCALE, apply RoundHalfEven directly.
 
-| a.value | a.scale | b.value | b.scale | expected value | expected scale | Note |
-| ------- | -------- | ------- | ------- | -------------- | --------------- | ---- |
-| 1000    | 3        | 2       | 0       | 500            | 3               | 1.0 / 2 = 0.5 |
-| 1000000 | 6        | 2       | 0       | 500000         | 6               | 1.0 / 2 = 0.5 at scale 6 |
-| 1       | 6        | 2       | 0       | 0              | 6               | 0.000001 / 2 = 0.0000005 → rounds to 0 |
-| 10      | 1        | 4       | 0       | 2              | 1               | 1.0 / 4 = 0.25 → rounds to 0.2 |
-| 5       | 0        | 2       | 0       | 3              | 0               | 5 / 2 = 2.5 → tie rounds to odd → rounds up to 3 |
-| 15      | 0        | 2       | 0       | 8              | 0               | 15 / 2 = 7.5 → tie rounds to even (8) |
-| -5      | 0        | 2       | 0       | -3             | 0               | -5 / 2 = -2.5 → tie rounds to odd → rounds to -3 |
-| -15     | 0        | 2       | 0       | -8             | 0               | -15 / 2 = -7.5 → tie rounds to even (-8) |
-| 1       | 0        | 3       | 0       | 0              | 0               | 1 / 3 = 0.333... → rounds down |
-| -1      | 0        | 3       | 0       | 0              | 0               | -1 / 3 = -0.333... → rounds toward zero |
-| 2       | 0        | 3       | 0       | 1              | 0               | 2 / 3 = 0.666... → rounds up to 1 |
-| 1       | 0        | 6       | 0       | 0              | 0               | 1 / 6 = 0.1666... → rounds down to 0 |
-| 2000000 | 6        | 3       | 0       | 666667         | 6               | 2.0 / 3 = 0.666667 → rounds up |
-| -2000000| 6        | 3       | 0       | -666667        | 6               | -2.0 / 3 = -0.666667 → rounds toward zero |
+| a.value  | a.scale | b.value | b.scale | expected value | expected scale | Note                                             |
+| -------- | ------- | ------- | ------- | -------------- | -------------- | ------------------------------------------------ |
+| 1000     | 3       | 2       | 0       | 500            | 3              | 1.0 / 2 = 0.5                                    |
+| 1000000  | 6       | 2       | 0       | 500000         | 6              | 1.0 / 2 = 0.5 at scale 6                         |
+| 1        | 6       | 2       | 0       | 0              | 6              | 0.000001 / 2 = 0.0000005 → rounds to 0           |
+| 10       | 1       | 4       | 0       | 2              | 1              | 1.0 / 4 = 0.25 → rounds to 0.2                   |
+| 5        | 0       | 2       | 0       | 3              | 0              | 5 / 2 = 2.5 → tie rounds to odd → rounds up to 3 |
+| 15       | 0       | 2       | 0       | 8              | 0              | 15 / 2 = 7.5 → tie rounds to even (8)            |
+| -5       | 0       | 2       | 0       | -3             | 0              | -5 / 2 = -2.5 → tie rounds to odd → rounds to -3 |
+| -15      | 0       | 2       | 0       | -8             | 0              | -15 / 2 = -7.5 → tie rounds to even (-8)         |
+| 1        | 0       | 3       | 0       | 0              | 0              | 1 / 3 = 0.333... → rounds down                   |
+| -1       | 0       | 3       | 0       | 0              | 0              | -1 / 3 = -0.333... → rounds toward zero          |
+| 2        | 0       | 3       | 0       | 1              | 0              | 2 / 3 = 0.666... → rounds up to 1                |
+| 1        | 0       | 6       | 0       | 0              | 0              | 1 / 6 = 0.1666... → rounds down to 0             |
+| 2000000  | 6       | 3       | 0       | 666667         | 6              | 2.0 / 3 = 0.666667 → rounds up                   |
+| -2000000 | 6       | 3       | 0       | -666667        | 6              | -2.0 / 3 = -0.666667 → rounds toward zero        |
 
 **Note**: The simplified algorithm produces mathematically correct RoundHalfEven at TARGET_SCALE.
 
@@ -918,49 +945,49 @@ Using simplified algorithm: compute at TARGET_SCALE, apply RoundHalfEven directl
 
 #### Additional Test Vectors (Recommended for Full Compliance)
 
-| a.value | a.scale | b.value | b.scale | expected value | expected scale | Note |
-| ------- | -------- | ------- | ------- | -------------- | --------------- | ---- |
-| 9223372036854775807 | 0 | 1 | 0 | 9223372036854775807 | 0 | MAX_i64 / 1 |
-| 9223372036854775807 | 0 | 2 | 0 | 4611686018427387903 | 0 | MAX_i64 / 2 (truncates) |
-| 1 | 0 | 9223372036854775807 | 0 | 0 | 0 | 1 / MAX_i64 (very small) |
-| 9223372036854775807 | 0 | 3 | 0 | 3074457345618258602 | 0 | MAX_i64 / 3 |
-| 1 | 18 | 2 | 0 | 500000000000000000 | 18 | 1e-18 / 2 = 5e-19 |
-| 9223372036854775807 | 18 | 1 | 0 | 9223372036854775807 | 18 | MAX_i64 / 1 = MAX_i64 (no overflow) |
-| 1 | 0 | 3 | 0 | 0 | 0 | 1/3 rounds down |
+| a.value             | a.scale | b.value             | b.scale | expected value      | expected scale | Note                                |
+| ------------------- | ------- | ------------------- | ------- | ------------------- | -------------- | ----------------------------------- |
+| 9223372036854775807 | 0       | 1                   | 0       | 9223372036854775807 | 0              | MAX_i64 / 1                         |
+| 9223372036854775807 | 0       | 2                   | 0       | 4611686018427387903 | 0              | MAX_i64 / 2 (truncates)             |
+| 1                   | 0       | 9223372036854775807 | 0       | 0                   | 0              | 1 / MAX_i64 (very small)            |
+| 9223372036854775807 | 0       | 3                   | 0       | 3074457345618258602 | 0              | MAX_i64 / 3                         |
+| 1                   | 18      | 2                   | 0       | 500000000000000000  | 18             | 1e-18 / 2 = 5e-19                   |
+| 9223372036854775807 | 18      | 1                   | 0       | 9223372036854775807 | 18             | MAX_i64 / 1 = MAX_i64 (no overflow) |
+| 1                   | 0       | 3                   | 0       | 0                   | 0              | 1/3 rounds down                     |
 
 ### Chain Operations Test Vectors
 
-| operation | a | b | c | expected | Note |
-| --------- | --- | --- | --- | --------- | ---- |
-| mul→div | 10,0 * 5,0 | / 2,0 | - | 25,0 | (10*5)/2 = 25 |
-| add→canonicalize | 100,2 + 200,1 | - | - | 21,0 | 1.00 + 20.0 = 21.00 → 21 |
-| mul→add | 2,0 * 3,0 | + 1,0 | - | 7,0 | (2*3) + 1 = 7 |
+| operation        | a             | b     | c   | expected | Note                     |
+| ---------------- | ------------- | ----- | --- | -------- | ------------------------ |
+| mul→div          | 10,0 \* 5,0   | / 2,0 | -   | 25,0     | (10\*5)/2 = 25           |
+| add→canonicalize | 100,2 + 200,1 | -     | -   | 21,0     | 1.00 + 20.0 = 21.00 → 21 |
+| mul→add          | 2,0 \* 3,0    | + 1,0 | -   | 7,0      | (2\*3) + 1 = 7           |
 
 ### Overflow Test Vectors
 
 | operation | a.value | a.scale | b.value | b.scale | expected result |
-| --------- | ------- | -------- | ------- | ------- | --------------- |
-| MUL       | 10^18   | 0        | 10      | 0       | Error::Overflow |
-| MUL       | 10^17   | 1        | 10      | 0       | 10^18 (OK)     |
+| --------- | ------- | ------- | ------- | ------- | --------------- |
+| MUL       | 10^18   | 0       | 10      | 0       | Error::Overflow |
+| MUL       | 10^17   | 1       | 10      | 0       | 10^18 (OK)      |
 
 ### Rounding Test Vectors (RoundHalfEven)
 
 | input value | input scale | target scale | expected value | expected scale |
-| ----------- | ------------ | ------------- | -------------- | --------------- |
-| 125         | 2            | 1             | 12             | 1               |
-| 135         | 2            | 1             | 14             | 1               |
-| 1250        | 3            | 1             | 12             | 1               |
-| 1150        | 3            | 1             | 12             | 1               |
-| 1050        | 3            | 1             | 10             | 1               |
+| ----------- | ----------- | ------------ | -------------- | -------------- |
+| 125         | 2           | 1            | 12             | 1              |
+| 135         | 2           | 1            | 14             | 1              |
+| 1250        | 3           | 1            | 12             | 1              |
+| 1150        | 3           | 1            | 12             | 1              |
+| 1050        | 3           | 1            | 10             | 1              |
 
 ### Canonicalization Test Vectors
 
 | input value | input scale | expected value | expected scale |
-| ----------- | ------------ | -------------- | --------------- |
-| 1000        | 3            | 1              | 0               |
-| 50          | 2            | 5              | 1               |
-| 0           | 5            | 0              | 0               |
-| 100         | 2            | 1              | 0               |
+| ----------- | ----------- | -------------- | -------------- |
+| 1000        | 3           | 1              | 0              |
+| 50          | 2           | 5              | 1              |
+| 0           | 5           | 0              | 0              |
+| 100         | 2           | 1              | 0              |
 
 ### Comparison Specification
 
@@ -970,6 +997,7 @@ This ensures that `Dqa { value: 120, scale: 2 }` (1.20) equals `Dqa { value: 12,
 
 ```
 DQA_CMP(a, b):
+    // Fast path avoids i128 when possible — important for VM hot paths (>90% of comparisons)
     1. // Canonicalize both operands first
     2. a_canonical = CANONICALIZE(a)
     3. b_canonical = CANONICALIZE(b)
@@ -993,59 +1021,63 @@ DQA_CMP(a, b):
     21.         scale_factor = POW10[diff as usize]
     22.         compare_a = (a_canonical.value as i128) * scale_factor
     23.         compare_b = b_canonical.value as i128
-    24. // Scale diff <= 18: safe i128 multiplication
-    30. If compare_a < compare_b: return -1
-    31. If compare_a > compare_b: return 1
-    32. Return 0
+    // Scale diff <= 18: safe i128 multiplication
+    24. If compare_a < compare_b: return -1
+    26. If compare_a > compare_b: return 1
+    27. Return 0
 ```
 
-**Note on scale-diff > 18 comparison**: When the scale difference exceeds 18, direct multiplication would overflow i128. The algorithm uses a magnitude heuristic: the operand with larger scale is considered to have smaller magnitude (more decimal places = more precise but smaller). This is deterministic and safe for all real-world values, since a number with 19+ more decimal places than another is necessarily smaller in absolute magnitude when both have similar i64 values.
+**Note on scale-diff > 18 comparison**: After canonicalization, both operands have scale ≤ 18, so their scale difference is at most 18. The `diff > 18` case is provably unreachable with valid DQA inputs and triggers a `debug_assert!` in implementation.
 
 ### Comparison Test Vectors
 
-| a.value | a.scale | b.value | b.scale | expected | Note |
-| ------- | -------- | ------- | ------- | -------- | ---- |
-| 12      | 1        | 120     | 2       | 0 (equal) | 1.2 == 1.20 |
-| 12      | 1        | 110     | 2       | 1 (greater) | 1.2 > 1.10 |
-| 12      | 1        | 130     | 2       | -1 (less) | 1.2 < 1.30 |
-| -15     | 1        | -15     | 1       | 0 (equal) | negative equality |
-| -15     | 1        | -25     | 1       | 1 (greater) | -1.5 > -2.5 |
-| 9223372036854775807 | 0 | 1 | 18 | 1 (greater) | i64::MAX vs 1e-18 |
-| 1 | 18 | 9223372036854775807 | 0 | -1 (less) | 1e-18 vs i64::MAX |
-| 1000000000000000000 | 0 | 9223372036854775806 | 0 | 1 (greater) | near max comparison |
-| -9223372036854775808 | 0 | -1 | 0 | -1 (less) | i64::MIN comparison |
+| a.value              | a.scale | b.value             | b.scale | expected    | Note                |
+| -------------------- | ------- | ------------------- | ------- | ----------- | ------------------- |
+| 12                   | 1       | 120                 | 2       | 0 (equal)   | 1.2 == 1.20         |
+| 12                   | 1       | 110                 | 2       | 1 (greater) | 1.2 > 1.10          |
+| 12                   | 1       | 130                 | 2       | -1 (less)   | 1.2 < 1.30          |
+| -15                  | 1       | -15                 | 1       | 0 (equal)   | negative equality   |
+| -15                  | 1       | -25                 | 1       | 1 (greater) | -1.5 > -2.5         |
+| 9223372036854775807  | 0       | 1                   | 18      | 1 (greater) | i64::MAX vs 1e-18   |
+| 1                    | 18      | 9223372036854775807 | 0       | -1 (less)   | 1e-18 vs i64::MAX   |
+| 1000000000000000000  | 0       | 9223372036854775806 | 0       | 1 (greater) | near max comparison |
+| -9223372036854775808 | 0       | -1                  | 0       | -1 (less)   | i64::MIN comparison |
 
 ### Additional Brutal Edge Case Test Vectors
 
-| Operation | a | b | Expected Result | Note |
-|-----------|---|---|-----------------|------|
-| DIV | -9223372036854775808 | 1 | -9223372036854775808, scale=0 | i64::MIN ÷ 1 |
-| DIV | -9223372036854775808 | -1 | Error::Overflow | -i64::MIN overflows |
-| DIV | 1000,3 | 3,0 | 333,3 (0.333) | 1/3 at scale=3 |
-| DIV | 2000,4 | 3,0 | 6667,4 (0.6667) | 2/3 at scale=4 |
-| DIV | 1000000,6 | 7,0 | 142857,6 (0.142857) | 1/7 at scale=6 |
-| DIV | 9223372036854775807 | 2 | 4611686018427387903, scale=0 | MAX/2 exact |
-| MUL | 9223372036854775807 | 2 | Error::Overflow | Near overflow multiplication |
-| MUL | 4611686018427387903 | 2 | 9223372036854775806, scale=0 | Max safe × 2 |
-| ADD | 9223372036854775807 | 1 | Error::Overflow | i64::MAX + 1 |
-| SUB | -9223372036854775808 | 1 | Error::Overflow | i64::MIN - 1 |
-| Chain | mul(1000,2) → div(2) → add(1,0) | 1000×2=2000; 2000÷2=1000; 1000+1=1001 | 1001,0 | mul→div→add→canonicalize |
-| Chain | 1,18 × 1000,3 → canonicalize | 1e-18 × 1000 = 1e-15 | 1,15 | scale overflow to larger |
-| Serialize round-trip | 1200,3 → serialize → deserialize | 1200,3 → 12,1 | value=12, scale=1 | canonicalization on deserialize |
-| DIV | 25,2 | 2,0 | 13,2 (1.25) | 0.25 ÷ 2 = 0.125, half-even rounds up |
-| DIV | 15,2 | 4,0 | 4,2 (0.04) | 0.15 ÷ 4 = 0.0375, half-even rounds down (3 is even) |
-| DIV | 35,2 | 8,0 | 4,2 (0.04) | 0.35 ÷ 8 = 0.04375, half-even rounds to 4 |
-| DIV | -25,2 | 2,0 | -13,2 (-1.25) | negative half-even up |
-| DIV | -15,2 | 4,0 | -4,2 (-0.04) | negative half-even down |
-| MUL | -5,1 | -3,1 | 15,2 (1.50) | negative × negative = positive |
-| MUL | -5,1 | 3,1 | -15,2 (-1.50) | mixed signs |
-| Chain | 10,2 × 20,2 → div 4,0 → canonicalize | 200×20=4000; 4000÷4=1000; scale=2+2-0=4; canonicalize to 10,1 | 10,1 | mul→div→canonicalize |
-| Chain | 1,0 / 3,0 → × 3,0 → add 0,0 | 1÷3≈0; 0×3=0; 0+0=0 | 0,0 | division precision loss chain |
-| Chain | 100,2 → add 200,2 → canonicalize | 100+200=300; canonicalize | 3,0 | add→canonicalize trailing zeros |
-| Chain | -50,2 → sub 25,2 → canonicalize | -50-25=-75; canonicalize | -75,2 | negative subtraction |
-| Compare | 100,0 | 1,2 | 1 (greater) | 100 > 1.00 |
-| Compare | 1,18 | 1,0 | -1 (less) | 1e-18 < 1 |
-| Compare | -5,1 | -50,2 | 0 (equal) | -0.5 == -0.50 canonicalization |
+| Operation            | a                                         | b                                                                      | Expected Result               | Note                                                                  |
+| -------------------- | ----------------------------------------- | ---------------------------------------------------------------------- | ----------------------------- | --------------------------------------------------------------------- |
+| DIV                  | -9223372036854775808                      | 1                                                                      | -9223372036854775808, scale=0 | i64::MIN ÷ 1                                                          |
+| DIV                  | -9223372036854775808                      | -1                                                                     | Error::Overflow               | -i64::MIN / -1 = 9223372036854775808 > i64::MAX                       |
+| DIV                  | 1000,3                                    | 3,0                                                                    | 333,3 (0.333)                 | 1/3 at scale=3                                                        |
+| DIV                  | 2000,4                                    | 3,0                                                                    | 6667,4 (0.6667)               | 2/3 at scale=4                                                        |
+| DIV                  | 1000000,6                                 | 7,0                                                                    | 142857,6 (0.142857)           | 1/7 at scale=6                                                        |
+| DIV                  | 9223372036854775807                       | 2                                                                      | 4611686018427387903, scale=0  | MAX/2 exact                                                           |
+| DIV                  | 1000,3                                    | 1,0                                                                    | 1,0                           | DIV result canonicalization: 1000/1=1000, scale=3→canonicalize to 1,0 |
+| MUL                  | 9223372036854775807                       | 2                                                                      | Error::Overflow               | Near overflow multiplication                                          |
+| MUL                  | 4611686018427387903                       | 2                                                                      | 9223372036854775806, scale=0  | Max safe × 2                                                          |
+| ADD                  | 9223372036854775807                       | 1                                                                      | Error::Overflow               | i64::MAX + 1                                                          |
+| SUB                  | -9223372036854775808                      | 1                                                                      | Error::Overflow               | i64::MIN - 1                                                          |
+| Chain                | mul(1000,2) → div(2) → add(1,0)           | 1000×2=2000; 2000÷2=1000; 1000+1=1001                                  | 1001,0                        | mul→div→add→canonicalize                                              |
+| Chain                | 1,18 × 1000,3 → canonicalize              | 1e-18 × 1000 = 1e-15, but result_scale=18+3=21 limited to MAX_SCALE=18 | 1,18                          | scale clamped to MAX_SCALE=18                                         |
+| Serialize round-trip | 1200,3 → serialize → deserialize          | 1200,3 → 12,1                                                          | value=12, scale=1             | canonicalization on deserialize                                       |
+| DIV                  | 25,2                                      | 2,0                                                                    | 12,2 (0.12)                   | 0.25 ÷ 2 = 0.125, half-even rounds to 12 (tie to even)                |
+| DIV                  | 15,2                                      | 4,0                                                                    | 4,2 (0.04)                    | 0.15 ÷ 4 at scale 2: scaled=15/4=3 rem 3, 3/4 > 0.5 rounds up to 4    |
+| DIV                  | 35,2                                      | 8,0                                                                    | 4,2 (0.04)                    | 0.35 ÷ 8 at scale 2: scaled=35/8=4 rem 3, 3<4 rounds down to 4        |
+| DIV                  | -25,2                                     | 2,0                                                                    | -12,2 (-0.12)                 | -0.25 ÷ 2 = -0.125, half-even rounds to -12 (symmetric with positive) |
+| DIV                  | -15,2                                     | 4,0                                                                    | -4,2 (-0.04)                  | -0.15 ÷ 4: symmetric rounding, rounds to -4                           |
+| MUL                  | -5,1                                      | -3,1                                                                   | 15,2 (1.50)                   | negative × negative = positive                                        |
+| MUL                  | -5,1                                      | 3,1                                                                    | -15,2 (-1.50)                 | mixed signs                                                           |
+| Chain                | 10,2 × 20,2 → div 4,0 → canonicalize      | 200×20=4000; 4000÷4=1000; scale=2+2-0=4; canonicalize to 10,1          | 10,1                          | mul→div→canonicalize                                                  |
+| Chain                | 99999999999999999,0 × 10,0 → canonicalize | 999999999999999990 → canonicalize                                      | 99999999999999999,0           | large value, no trailing zeros                                        |
+| Chain                | 1,0 / 3,0 → × 3,0 → add 0,0               | 1÷3≈0; 0×3=0; 0+0=0                                                    | 0,0                           | division precision loss chain                                         |
+| Chain                | 100,2 → add 200,2 → canonicalize          | 100+200=300; canonicalize                                              | 3,0                           | add→canonicalize trailing zeros                                       |
+| Chain                | -50,2 → sub 25,2 → canonicalize           | -50-25=-75; canonicalize                                               | -75,2                         | negative subtraction                                                  |
+| Compare              | 100,0                                     | 1,2                                                                    | 1 (greater)                   | 100 > 1.00                                                            |
+| Compare              | 1,18                                      | 1,0                                                                    | -1 (less)                     | 1e-18 < 1                                                             |
+| Compare              | -5,1                                      | -50,2                                                                  | 0 (equal)                     | -0.5 == -0.50 canonicalization                                        |
+| Compare              | 1,0                                       | 1000000000000000000,18                                                 | 1 (greater)                   | 1 vs 1e-18 - near-zero crossover                                      |
+| ADD                  | 9223372036854775807,0                     | 1,18                                                                   | Error::Overflow               | scale alignment overflow: i64::MAX + 1e-18                            |
 
 ## Use Cases
 
@@ -1078,6 +1110,12 @@ DQA_CMP(a, b):
 
 **Submission Date:** 2025-03-06
 **Last Updated:** 2026-03-08
+**Revision:** v2.13 - Tightened MUL clamping wording, added large-value chain test, added >90% note to DQA_CMP fast-path
+**Revision:** v2.12 - Added SQL vs canonical representation clarification, fixed division rounding wording (TARGET_SCALE precision), strengthened SIMD determinism rule, enforced canonicalization in encoding API, added control-flow to VM canonicalization rule, added power<=36 invariant, added scale alignment overflow test vector
+**Revision:** v2.11 - Fixed DIV negative test vector (-12 not -13), added i64 range check to DQA_ASSIGN_TO_COLUMN, added CANONICALIZE to DIV return, unified scale overflow references, fixed test vector notes, added DIV canonicalization test vector, fixed MAX_I128_DIGITS to 39
+**Revision:** v2.10 - Added MUL scale >18 normative behavior, added near-zero comparison test, added ALIGN_SCALES canonicalization note, added DQA_CMP hot-path comment, suggested from_f64_half_even future helper
+**Revision:** v2.9 - Made lazy canonicalization rule normative, fixed DQA_ASSIGN_TO_COLUMN duplicate lines, clarified chain test vector comment
+**Revision:** v2.8 - Fixed division overflow guard (replaced with checked_mul), fixed SQL column coercion i128 cast, fixed test vectors, updated comparison note, clarified ROUND_HALF_EVEN, fixed align_scales_unchecked, fixed SQL ingress table, added from_f64 warning, added parity comment, fixed MAX_I64_DIGITS comment
 **Revision:** v2.7 - Added from_f64 rounding note, added 15+ brutal test vectors (negative ties, chains), added DQA vs DFP decision table
 **Revision:** v2.6 - Fixed division overflow guard (actual digit count), removed unreachable comparison branch, removed incorrect PartialOrd/Ord derives, fixed division rounding claim, added SQL column coercion algorithm, fixed test vectors, removed ScaleOverflow error, fixed ALIGN_SCALES return type
 **Revision:** v2.5 - Added division rounding trade-off section, documented scale-diff > 18 comparison heuristic, added brutal edge case test vectors

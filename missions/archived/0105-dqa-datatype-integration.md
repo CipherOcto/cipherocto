@@ -1,7 +1,7 @@
 # Mission: DQA DataType Integration
 
 ## Status
-Open
+Completed
 
 ## RFC
 RFC-0105: Deterministic Quant Arithmetic (DQA)

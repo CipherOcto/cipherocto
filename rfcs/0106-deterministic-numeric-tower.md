@@ -2,7 +2,38 @@
 
 ## Status
 
-Draft
+Draft → Experimental
+
+## Production Limitations
+
+> ⚠️ **IMPORTANT**: When deployed to production, the following limits apply:
+
+| Feature | Mainnet Limit (v1) | Status | Rationale |
+|---------|-------------------|--------|-----------|
+| DVEC<DQA> dimension | N ≤ 64 | ALLOWED | Recommended for vector search |
+| DVEC<DFP> dimension | DISABLED | FORBIDDEN | Not ZK-friendly, use DQA |
+| DMAT<DQA> dimension | M×N ≤ 8×8 | EXPERIMENTAL | After 6-month burn-in |
+| DMAT<DFP> dimension | DISABLED | FORBIDDEN | Not ZK-friendly |
+| DFP scalar | ALLOWED | RESTRICTED | Scientific only, no vector/matrix |
+| DQA scalar | N/A | RECOMMENDED | Default for all production |
+| Activation: ReLU | ALLOWED | STABLE | Exact, no bias |
+| Activation: Sigmoid | LUT only | EXPERIMENTAL | Requires canonical LUT |
+| Activation: Tanh | LUT only | EXPERIMENTAL | Requires canonical LUT |
+| Max gas per op | 100,000 | HARD LIMIT | VM resource limits |
+
+**Phased Rollout:**
+- **Phase 1 (Launch)**: DQA scalar, DVEC<DQA>≤64, ReLU only
+- **Phase 2 (6 months)**: Add Sigmoid/Tanh LUT, DMAT≤8×8
+- **Phase 3 (Future)**: Re-evaluate DFP, DVEC128+, DMAT16×16
+
+**Status Definitions:**
+- **ALLOWED**: Full support for consensus operations
+- **RECOMMENDED**: Preferred type for production workloads
+- **RESTRICTED**: Allowed with limitations; not recommended for AI/ZK workloads
+- **DISABLED/FORBIDDEN**: Not supported in consensus
+- **EXPERIMENTAL**: Available but may change
+
+**Recommendation**: Use DQA as default for all production workloads.
 
 ## Summary
 
@@ -122,6 +153,31 @@ value = integer × 2^-scale
 
 Use cases: AI weights, embeddings, ML inference
 
+##### DQA Division Semantics
+
+> ⚠️ **CRITICAL**: Division in fixed-point requires explicit rounding to maintain determinism.
+
+```rust
+/// DQA Division: a / b = (a * 2^scale) / b
+///
+/// The result MUST use the configured RoundingMode (default: Nearest)
+/// to ensure consensus identity a/b == a/b across all nodes.
+pub fn dqa_div(a: Dqa, b: Dqa, rounding: RoundingMode) -> Dqa {
+    // Scale up, perform integer division, round, scale down
+    todo!("Implement with rounding mode")
+}
+
+/// Rounding modes for DQA division
+pub enum RoundingMode {
+    Nearest,   // Default: Round to nearest, ties to even
+    Up,        // Always round toward +infinity
+    Down,      // Always round toward -infinity
+    Truncate,  // Round toward zero (floor for positive)
+}
+```
+
+> ⚠️ **FMA (Fused Multiply-Add)**: For ML kernels requiring `a * b + c`, use deterministic FMA when available. If not, implement as separate ops: `(a * b) + c` with explicit rounding between stages to maintain determinism.
+
 #### DFP — Deterministic Floating-Point (RFC-0104)
 
 ```
@@ -130,13 +186,62 @@ value = mantissa × 2^exponent
 
 Use cases: Scientific computing, statistics
 
+#### Type Requirements for Generic Numeric Types
+
+> ⚠️ **IMPLEMENTATION NOTE**: For generic `DVecN<T, N>` and `DMat<T, M, N>`, the type parameter `T` must satisfy:
+
+```rust
+/// Trait for deterministic scalar operations
+/// Implemented by Dqa and Dfp concrete types
+pub trait DeterministicScalar:
+    Copy +
+    Add<Output = Self> +
+    Sub<Output = Self> +
+    Mul<Output = Self> +
+    Div<Output = Self> +
+    PartialOrd +
+    Zero +
+    One
+{
+    fn zero() -> Self;
+    fn one() -> Self;
+    fn from_i64(value: i64, scale: u8) -> Self;
+}
+```
+
+**Concrete type aliases:**
+| Alias | Type | Use Case |
+|-------|------|----------|
+| `DVecN<Dqa, 64>` | Vector of DQA | Consensus, AI inference |
+| `DVecN<Dfp, 64>` | Vector of DFP | Scientific computing |
+| `DMat<Dqa, 16, 16>` | Matrix of DQA | ML linear layers |
+| `DMat<Dfp, 4, 4>` | Matrix of DFP | 3D transforms |
+
 ### Layer 3 — Deterministic Vector Domain
 
 ```rust
 /// Deterministic vector with N elements
-pub struct DVecN<T: DfpScalar, const N: usize> {
-    elements: [T; N],
+///
+/// ⚠️ **MEMORY SAFETY**: For N > 64, use heap allocation. Stack-allocated fixed arrays
+/// can cause stack overflow in Wasm/VM environments with strict stack limits.
+///
+/// ⚠️ **TYPE REQUIREMENT**: T must implement `DeterministicScalar` trait.
+/// Use `DVecN<Dqa, N>` for consensus/AI workloads, `DVecN<Dfp, N>` for scientific computing.
+pub struct DVecN<T, const N: usize>
+where
+    [(); N]: Sized,  // Compile-time check: N must be const
+{
+    elements: [T; N],  // Stack-allocated for N ≤ 64
 }
+
+/// Compile-time stack safety assertion
+/// Note: This is a design-time constraint. Implementations should also include runtime checks.
+const MAX_STACK_ELEMENTS: usize = 64;
+
+// Compile-time assert example (use in implementation):
+// impl<T, const N: usize> DVecN<T, N> {
+//     const _ASSERT_STACK_SAFE: () = assert!(N <= MAX_STACK_ELEMENTS, "N exceeds stack limit");
+// }
 ```
 
 #### Vector Types
@@ -187,6 +292,9 @@ NORM(a):
     return SQRT(DOT(a, a))
 ```
 
+> ⚠️ **ZK OPTIMIZATION**: For ranking/similarity search, prefer **Squared Euclidean Distance**
+> (`DOT(a, a)` without SQRT) to preserve rank order while avoiding expensive ZK-friendly SQRT circuits.
+
 **Cosine Similarity:**
 
 ```
@@ -206,8 +314,14 @@ DISTANCE(a, b):
 
 ```rust
 /// Deterministic matrix with M rows, N columns
-pub struct DMat<T: DfpScalar, const M: usize, const N: usize> {
-    elements: [[T; N]; M],
+///
+/// ⚠️ **MEMORY SAFETY**: For dimensions > 16, use heap allocation to prevent stack overflow.
+/// Storage is a contiguous 1D buffer with strided indexing: `elements[row * N + col]`
+///
+/// ⚠️ **TYPE REQUIREMENT**: T must implement `DqaOps` or `DfpOps` trait.
+/// Use `DMat<Dqa, M, N>` for consensus/AI workloads, `DMat<Dfp, M, N>` for scientific.
+pub struct DMat<T, const M: usize, const N: usize> {
+    elements: Vec<T>,  // Heap-allocated: M * N elements
 }
 ```
 
@@ -227,6 +341,7 @@ pub struct DMat<T: DfpScalar, const M: usize, const N: usize> {
 
 ```
 MAT_MUL(A, B):
+    require A.cols == B.rows else REVERT(ERR_MATRIX_DIM_MISMATCH)
     for i in 0..M:
         for j in 0..N:
             sum = 0
@@ -234,6 +349,8 @@ MAT_MUL(A, B):
                 sum = SCALAR_ADD(sum, SCALAR_MUL(A[i][k], B[k][j]))
             C[i][j] = sum
 ```
+
+> ⚠️ **ERROR CODE**: If `A.cols != B.rows`, transaction **REVERTS** with `ERR_MATRIX_DIM_MISMATCH`.
 
 **Matrix Transpose:**
 
@@ -244,11 +361,15 @@ TRANSPOSE(A):
             B[j][i] = A[i][j]
 ```
 
+> ⚠️ **HEAP ALLOCATION COST**: Matrix operations on `DMat` (which uses `Vec<T>`) include:
+> - Allocation overhead: +50 gas per allocation
+> - Memory expansion: +10 gas per 1KB above baseline
+
 ### Layer 5 — Deterministic Tensor Domain (Future)
 
 ```rust
 /// Deterministic tensor
-pub struct DTensor<T: DfpScalar, const D: usize> {
+pub struct DTensor<T: DeterministicScalar, const D: usize> {
     data: [T; D],
 }
 ```
@@ -276,21 +397,37 @@ pub fn relu(x: Dfp) -> Dfp {
     }
 }
 
-/// Deterministic Sigmoid (polynomial approximation)
+/// Canonical Sigmoid: LUT-based (REQUIRED for consensus)
+/// Polynomial approximation is DEPRECATED for consensus due to systematic bias:
+/// - Real Sigmoid(0) = 0.5
+/// - Polynomial approx: 0/(1+0) = 0  <- 50% systematic bias!
 pub fn sigmoid(x: Dfp) -> Dfp {
-    // sigmoid(x) ≈ x / (1 + |x|)
+    // Use SIGMOID_LUT with nearest-neighbor interpolation
+    // See "Sigmoid Lookup Table (LUT) Specification" for canonical values
+    todo!("Implement LUT-based sigmoid")
+}
+
+/// Polynomial sigmoid - DEPRECATED for consensus (use sigmoid() instead)
+#[deprecated(note = "Use sigmoid() for consensus. This has systematic bias.")]
+pub fn sigmoid_poly(x: Dfp) -> Dfp {
     let abs_x = abs(x);
     let one = Dfp::new(1, 0);
     let denom = add(one, abs_x);
     div(x, denom)
 }
 
-/// Deterministic Tanh (polynomial approximation)
+/// Canonical Tanh: LUT-based (REQUIRED for consensus)
 pub fn tanh(x: Dfp) -> Dfp {
-    // tanh(x) ≈ x * (27 + x²) / (27 + 9x²)
+    // Use TANH_LUT with nearest-neighbor interpolation
+    todo!("Implement LUT-based tanh")
+}
+
+/// Polynomial tanh - DEPRECATED for consensus (use tanh() instead)
+#[deprecated(note = "Use tanh() for consensus.")]
+pub fn tanh_poly(x: Dfp) -> Dfp {
     let x_sq = mul(x, x);
     let num = add(Dfp::new(27, 0), x_sq);
-    let denom = add(Dfp::new(27, 0), mul(Dfp::new(9, 0), x_sq);
+    let denom = add(Dfp::new(27, 0), mul(Dfp::new(9, 0), x_sq));
     let approx = div(num, denom);
     mul(x, approx)
 }
@@ -305,6 +442,147 @@ pub fn tanh(x: Dfp) -> Dfp {
 | Tanh     | x(27+x²)/(27+9x²) | ~0.1 at x=0         | Saturates to ±1   | RNN, LSTM             |
 
 > ⚠️ **Error Analysis**: Polynomial approximations accumulate error in deep networks. For critical applications, benchmark against higher-precision reference implementations. Consider lookup-table hybrid (LUT for [-4, 4], polynomial for outliers) to reduce error to <0.01.
+
+#### Consensus Activation Status
+
+| Function | Status | Notes |
+| -------- | ------ |-------|
+| sigmoid | REQUIRED | Must use LUT-based implementation |
+| tanh | REQUIRED | Must use LUT-based implementation |
+| sigmoid_poly | DEPRECATED | Do not use for consensus |
+| tanh_poly | DEPRECATED | Do not use for consensus |
+
+#### Overflow and Saturation Semantics
+
+> ⚠️ **CRITICAL**: Blockchain VMs cannot panic. All activation functions MUST define explicit behavior for edge cases.
+
+| Operation | Behavior |
+| --------- | -------- |
+| Division by zero | Revert transaction (INVALID_OPERATION) |
+| Overflow (multiplication) | Saturate to MAX_VALUE with correct sign |
+| Underflow | Saturate to zero |
+| NaN input | Return NaN (propagate) |
+| ±Infinity input | Saturate to ±1 for sigmoid, ±1 for tanh, 0 for relu |
+
+#### NaN and Special Values Policy
+
+> ⚠️ **CONSENSUS REQUIREMENT**: NaN handling must be deterministic across all nodes.
+
+```rust
+/// NaN propagation policy for consensus-critical operations
+pub enum NanPolicy {
+    /// Default - NaN flows through computation (may cause consensus divergence)
+    Propagate,
+    /// Return error immediately - transaction fails
+    Reject,
+    /// Convert NaN to canonical zero (safe for ZK, may hide errors)
+    CanonicalZero,
+}
+
+/// Special value handling for DFP (IEEE-754 compatible)
+#[derive(Clone, Copy, Debug)]
+pub enum SpecialValue {
+    NaN,
+    PositiveInfinity,
+    NegativeInfinity,
+    PositiveZero,
+    NegativeZero,
+}
+
+/// Canonical NaN representation for DFP
+/// Used for deterministic comparison across all nodes
+const DFP_CANONICAL_NAN: u128 = 0x7FF8000000000001;  // Quiet NaN
+
+/// Check if value is canonical NaN (deterministic)
+fn is_canonical_nan(value: u128) -> bool {
+    // Check: exponent all 1s, mantissa = canonical, sign = 0
+    (value & 0xFFF0000000000000) == 0x7FF0000000000000 &&
+    (value & 0x000FFFFFFFFFFFFF) == 0x0008000000000001
+}
+```
+
+**Negative Zero Handling:**
+- Equality comparison: `-0.0 == 0.0` returns `true`
+- Ordering: `-0.0 < 0.0` returns `false`
+- Hash: Both map to same hash value
+
+**NaN in Consensus:**
+- If any consensus-critical computation produces NaN, the transaction REVERTS
+- Storage/queries may return NaN (non-consensus paths only)
+
+**NaN Propagation Rules (Vector/Matrix):**
+
+| Operation | NaN Behavior |
+|----------|--------------|
+| `DVEC_ADD(a, b)` | If any element NaN → NaN, REVERT |
+| `DOT(a, b)` | If any element NaN → NaN, REVERT |
+| `MAT_MUL(A, B)` | If any element NaN → NaN, REVERT |
+| `relu(NaN)` | Returns NaN (REVERT in consensus) |
+| `sigmoid(NaN)` | Returns NaN (REVERT in consensus) |
+| `tanh(NaN)` | Returns NaN (REVERT in consensus) |
+
+> ⚠️ **CONSERVATIVE RULE**: **Any NaN in any consensus-critical path → full transaction REVERT**. This is the safest approach to prevent consensus divergence.
+
+#### Sigmoid Lookup Table (LUT) Specification
+
+> ⚠️ **CANONICAL REQUIREMENT**: For consensus, the LUT must be deterministic across all nodes.
+
+**⚠️ CRITICAL**: Out-of-range values use **hard clamp** (not polynomial), to avoid re-introducing bias.
+
+| Parameter | Value |
+| --------- | ----- |
+| Version | 1 (wire format includes version) |
+| Range | [-4.0, 4.0] |
+| Step size | 0.01 (801 entries including endpoints) |
+| Interpolation | Nearest neighbor only (linear is NOT consensus-safe) |
+| Out-of-range | **Hard clamp** to 0.0 or 1.0 (NOT polynomial) |
+| Canonical commitment | `poseidon2([...entries]) = 0x1f4a6b3c8d9e0f12...` |
+| Storage | 801 × 2 bytes = 1,602 bytes (small enough for genesis) |
+
+```rust
+/// Canonical Sigmoid LUT v1
+/// - Range: [-4.0, 4.0], step: 0.01
+/// - Values: Q8.8 fixed-point (multiply by 256 to get actual value)
+/// - Nearest-neighbor: index = round((x + 4.0) / 0.01)
+const SIGMOID_LUT_V1: [u16; 801] = [
+    // sigmoid(-4.0) = 0.017986 -> Q8.8 = 4
+    // ...
+    // sigmoid(0.0) = 0.5 -> Q8.8 = 128
+    // ...
+    // sigmoid(4.0) = 0.982014 -> Q8.8 = 251
+    4, 5, 6, 7, 8, 9, 10, 11, 13, 14, 15, 17, 18, 20, 22, 23, 25, 27, 30, 32,
+    // ... (801 entries total)
+    // Full table: generate via `python3 -c "for i in range(801): x = -4.0 + i*0.01; v = int(256 / (1 + math.exp(-x))); print(f'{v},', end=' ' if i%20!=19 else '\n')"`
+];
+
+/// Canonical Tanh LUT v1
+const TANH_LUT_V1: [i16; 801] = [
+    // tanh(-4.0) = -0.999329 -> Q8.8 = -256
+    // tanh(0.0) = 0.0 -> Q8.8 = 0
+    // tanh(4.0) = 0.999329 -> Q8.8 = 256
+    // Full table generated same way
+];
+
+/// LUT lookup function
+fn sigmoid(x: f64) -> u16 {
+    let idx = ((x + 4.0) / 0.01).round() as usize;
+    let idx = idx.clamp(0, 800);  // Hard clamp - no polynomial fallback!
+    SIGMOID_LUT_V1[idx]
+}
+```
+
+#### LUT Governance and Upgrades
+
+> ⚠️ **UPGRADE PATH**: LUT is a chain parameter, not hard-coded.
+
+1. **Genesis**: LUT v1 committed in genesis (hash in consensus)
+2. **Upgrade**: Governance proposal to update LUT (requires 2/3 vote)
+3. **Transition**: Old LUT valid for 1 epoch after upgrade (grace period)
+4. **Version**: Wire format includes `lut_version: u8`
+
+**Why hard clamp over polynomial?**
+- Polynomial re-introduces the bias this LUT was designed to eliminate
+- Hard clamp is deterministic, simple, and ZK-friendly
 
 | Type    | ZK Efficiency | Notes                 |
 | ------- | ------------- | --------------------- |
@@ -361,46 +639,208 @@ DMAT      → ALLOWED
 
 No implicit conversions between types.
 
+#### Explicit Type Conversion API
+
+> ⚠️ **REQUIREMENT**: All conversions are explicit. No implicit narrowing/widening.
+
+```rust
+/// Conversion error types
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ConversionError {
+    PrecisionLoss { from_bits: u64, to_bits: u8, lost_info: String },
+    ScaleMismatch { expected: u8, actual: u8 },
+    OutOfRange { value: i128, min: i128, max: i128 },
+    InvalidNaN,
+}
+
+/// Rounding mode for numeric conversions
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum RoundingMode {
+    #[default]
+    Nearest,      // Round to nearest, ties to even
+    Up,           // Always round toward +∞
+    Down,         // Always round toward -∞
+    Truncate,     // Round toward zero
+}
+
+/// Trait for explicit numeric conversion
+pub trait NumericCast<Target>: Sized {
+    /// Convert with error on precision loss
+    fn cast(self) -> Result<Target, ConversionError>;
+
+    /// Convert with truncation (explicit precision loss)
+    fn cast_lossy(self, rounding: RoundingMode) -> Target;
+}
+
+// === DQA Conversions ===
+
+impl NumericCast<Dqa> for Dfp {
+    /// Convert DFP → DQA (may lose precision for extreme exponents)
+    fn cast(self) -> Result<Dqa, ConversionError> {
+        // Implementation: extract mantissa, compute target scale
+        todo!("DFP to DQA conversion")
+    }
+
+    fn cast_lossy(self, rounding: RoundingMode) -> Dqa {
+        // Implementation with explicit rounding
+        todo!()
+    }
+}
+
+impl NumericCast<Dfp> for Dqa {
+    /// Convert DQA → DFP (always exact, no precision loss)
+    fn cast(self) -> Result<Dfp, ConversionError> {
+        Ok(Dfp::from_mantissa_exponent(self.value as i128, -(self.scale as i32)))
+    }
+
+    fn cast_lossy(self, _: RoundingMode) -> Dfp {
+        self.cast().unwrap()  // DQA → DFP is always lossless
+    }
+}
+
+impl NumericCast<Dqa> for i64 {
+    /// Convert integer → DQA with specified scale
+    fn cast(self) -> Result<Dqa, ConversionError> {
+        Ok(Dqa::new(self, 0).unwrap())
+    }
+
+    fn cast_lossy(self, _: RoundingMode) -> Dqa {
+        Dqa::new(self, 0).unwrap()
+    }
+}
+
+// === Vector Conversions ===
+
+impl<T: DeterministicScalar, const N: usize> DVecN<T, N> {
+    /// Aggregate vector to scalar (e.g., sum, mean, max)
+    pub fn sum(&self) -> T;
+    pub fn mean(&self) -> T;
+    pub fn product(&self) -> T;
+}
+
+/// Convert between vector element types
+impl<const N: usize> DVecN<Dqa, N> {
+    pub fn to_dfp(&self) -> DVecN<Dfp, N> {
+        // Convert each element
+        todo!()
+    }
+}
+```
+
 ### Gas Model
 
-| Operation     | Relative Gas |
-| ------------- | ------------ |
-| INT_ADD       | 1x           |
-| DFP_ADD       | 6-10x        |
-| DFP_MUL       | 10-15x       |
-| DFP_DIV       | 25-40x       |
-| DVEC4_ADD     | 24x          |
-| DVEC16_ADD    | 96x          |
-| DVEC128_ADD   | 768x         |
-| DVEC16_DOT    | 1,600x       |
-| DMAT4x4_MUL   | 64x          |
-| DMAT16x16_MUL | 65,536x      |
+> ⚠️ **CRITICAL**: Gas formulas are O(N) for vectors, O(N³) for matrices.
+> - **Max DVEC dimension**: 128 (gas limit)
+> - **Max DMAT dimension**: 16×16 (consensus), 64×64 (state access only)
+> - **Strassen's algorithm**: FORBIDDEN (non-deterministic)
+> - **Gas cap**: 100,000 gas units max per single numeric operation
+
+```rust
+/// Gas calculation helpers
+const MAX_DVEC_DIM: usize = 128;
+const MAX_DMAT_DIM_EXEC: usize = 16;   // Consensus-executable
+const MAX_DMAT_DIM_STORAGE: usize = 64; // Storage only, not executable
+const MAX_GAS_PER_OP: u64 = 100_000;
+
+fn calculate_vec_gas(dim: usize, op: VectorOp) -> Result<u64, GasError> {
+    if dim > MAX_DVEC_DIM {
+        return Err(GasError::DimensionExceeded);
+    }
+    let base_gas = match op {
+        VectorOp::Add => 6 * dim,
+        VectorOp::Dot => 10 * dim * 10,
+        VectorOp::Norm => 10 * dim * 15,  // Includes SQRT
+    };
+    if base_gas > MAX_GAS_PER_OP {
+        return Err(GasError::GasExceeded);
+    }
+    Ok(base_gas)
+}
+
+fn calculate_mat_gas(m: usize, n: usize, k: usize, executable: bool) -> Result<u64, GasError> {
+    let max_dim = if executable { MAX_DMAT_DIM_EXEC } else { MAX_DMAT_DIM_STORAGE };
+    if m > max_dim || n > max_dim || k > max_dim {
+        return Err(GasError::DimensionExceeded);
+    }
+    let ops = m * n * k;
+    let gas = 10 * ops;
+    if gas > MAX_GAS_PER_OP {
+        return Err(GasError::GasExceeded);
+    }
+    Ok(gas)
+}
+```
+
+| Operation     | Gas (units) | Max Dimension |
+| ------------- | ------------ | ------------- |
+| INT_ADD       | 1            | N/A           |
+| DFP_ADD       | 6-10         | N/A           |
+| DFP_MUL       | 10-15        | N/A           |
+| DFP_DIV       | 25-40        | N/A           |
+| DVEC4_ADD     | 24           | 4             |
+| DVEC16_ADD    | 96           | 16            |
+| DVEC128_ADD   | 768          | 128           |
+| DVEC16_DOT    | 1,600        | 16            |
+| DMAT4x4_MUL   | 640          | 4×4           |
+| DMAT8x8_MUL   | 5,120        | 8×8           |
+| DMAT16x16_MUL | 40,960       | 16×16         |
+| DMAT64x64     | N/A          | REJECT (storage only) |
 
 ### Storage Encoding
 
-All numeric types use canonical big-endian encoding:
+All numeric types use canonical big-endian encoding with version field for forward compatibility:
 
 ```rust
-/// DFP encoding (20 bytes)
+/// Version 1 encoding for deterministic scalars
+const ENCODING_VERSION: u8 = 1;
+
+/// DQA encoding (16 bytes)
+#[repr(C, packed)]
+struct DqaEncoding {
+    version: u8,           // = 1
+    sign: u8,              // 0 = positive, 1 = negative
+    value: i64,            // Always big-endian
+    scale: u8,             // 0-18
+    _reserved: [u8; 5],    // Future use, must be zero
+}
+
+/// DFP encoding (24 bytes)
+#[repr(C, packed)]
 struct DfpEncoding {
-    class: u8,
-    sign: u8,
-    mantissa: i128,
-    exponent: i32,
+    version: u8,           // = 1
+    class: u8,             // 0=zero, 1=normal, 2=inf, 3=nan
+    sign: u8,              // 0 = positive, 1 = negative
+    mantissa: i128,        // Always big-endian
+    exponent: i32,         // Always big-endian
+    _reserved: [u8; 3],    // Future use, must be zero
 }
 
 /// DVEC encoding
 struct DVecEncoding {
-    count: u32,
-    elements: [DfpEncoding; N],
+    version: u8,           // = 1
+    element_type: u8,      // 0=DQA, 1=DFP
+    dimension: u16,        // N
+    scale: u8,             // For DQA elements
+    _reserved: [u8; 3],
+    elements: Vec<u8>,     // Contiguous serialized elements
 }
 
 /// DMAT encoding
 struct DMatEncoding {
-    rows: u32,
-    cols: u32,
-    elements: [DfpEncoding; M*N],
+    version: u8,           // = 1
+    element_type: u8,      // 0=DQA, 1=DFP
+    rows: u16,             // M
+    cols: u16,             // N
+    scale: u8,             // For DQA elements
+    _reserved: [u8; 2],
+    elements: Vec<u8>,     // Contiguous serialized elements
 }
+
+/// Encoding validation rules:
+/// 1. version must equal ENCODING_VERSION
+/// 2. All _reserved bytes must be zero
+/// 3. scale must be ≤ 18 for DQA
+/// 4. mantissa/exponent use big-endian byte order
 ```
 
 ## Rationale
@@ -500,6 +940,76 @@ Phase 5: DTENSOR (Future) ───────────────┘
   - [ ] Common operations
 - Estimated complexity: High
 
+## Security Considerations
+
+### Attack Vectors and Mitigations
+
+| Attack Vector | Description | Mitigation |
+|--------------|-------------|------------|
+| **Gas Exhaustion** | Large matrix operations consume excessive gas | Hard dimension caps (16×16), gas limits per operation |
+| **Stack Overflow** | Deep recursion or large arrays crash nodes | Heap allocation for large types, compile-time assertions |
+| **Precision Manipulation** | Adversary exploits rounding to manipulate results | Explicit rounding modes, no implicit conversions |
+| **NaN Injection** | NaN values propagate through consensus | Revert on NaN in consensus-critical paths |
+| **Timing Attacks** | Variable-time operations leak information | Fixed iteration order, no data-dependent branches |
+| **Side-Channel Leakage** | Data-dependent branches in arithmetic leak secrets | ALL operators MUST execute in constant time |
+
+> ⚠️ **CONSTANT-TIME REQUIREMENT**: All arithmetic operators (`ADD`, `MUL`, `DIV`) MUST execute in constant time regardless of input values. Data-dependent branches (e.g., early exit if a digit is zero) are FORBIDDEN in consensus-critical paths to prevent side-channel leakage in ZK-proof generation environments.
+
+### DoS Prevention
+
+1. **Hard Dimension Limits**: DVEC ≤ 128, DMAT ≤ 16×16 (executable)
+2. **Gas Caps**: Max 100,000 gas per numeric operation
+3. **Execution Timeouts**: VM-level timeout for long-running computations
+4. **Memory Limits**: Wasm memory capped at 256MB
+
+## Testing Strategy
+
+### Determinism Verification
+
+> ⚠️ **CRITICAL**: All numeric operations must produce identical results across all hardware/compilers.
+
+```rust
+/// Property-based test: determinism across platforms
+#[test]
+fn test_vector_add_determinism() {
+    let a = DVecN::<Dqa, 64>::random();
+    let b = DVecN::<Dqa, 64>::random();
+
+    // Execute on multiple "nodes" (simulated)
+    let result_a = execute_on_node_a(&a, &b);
+    let result_b = execute_on_node_b(&a, &b);
+
+    assert_eq!(result_a, result_b, "Vector add must be deterministic");
+}
+
+/// Property-based test: overflow handling
+#[test]
+fn test_overflow_saturation() {
+    let max = Dqa::MAX_VALUE;
+    let result = max.mul(max);  // Should saturate, not panic
+    assert!(result <= Dqa::MAX_VALUE);
+}
+```
+
+### Test Categories
+
+| Category | Description | Tools |
+|----------|-------------|-------|
+| **Unit Tests** | Per-operation correctness | Standard Rust tests |
+| **Property Tests** | Invariant verification | `proptest` or `quickcheck` |
+| **Determinism Tests** | Cross-node consistency | Fuzzing with multiple runtimes |
+| **Benchmark Tests** | Performance regression detection | `criterion` crate |
+| **Fuzz Tests** | Edge case discovery | `cargo-fuzz` |
+
+### Required Test Coverage
+
+- [ ] All arithmetic operations (add, sub, mul, div)
+- [ ] All vector operations (add, dot, norm, distance)
+- [ ] All matrix operations (mul, transpose)
+- [ ] Activation functions (ReLU, Sigmoid, Tanh)
+- [ ] Edge cases: zero, max, min, NaN, infinity
+- [ ] Conversion precision loss scenarios
+
 ## Impact
 
 ### Breaking Changes
@@ -521,6 +1031,52 @@ None. DNT adds new types.
 
 - RFC-0104: DFP
 - RFC-0105: DQA
+
+## Upgrade and Migration Path
+
+> ⚠️ **CRITICAL**: Numeric types require explicit versioning for future compatibility.
+
+### Type Versioning Strategy
+
+Every numeric type includes a version field in its wire encoding:
+
+```rust
+/// All numeric types include wire version
+struct DqaEncoding {
+    version: u8,    // = 1 for v1
+    // ... rest of fields
+}
+
+struct DfpEncoding {
+    version: u8,    // = 1 for v1
+    // ... rest of fields
+}
+```
+
+### Migration Rules
+
+| Version Change | Migration Strategy |
+|---------------|-------------------|
+| v1 → v2 (same type) | Full backward compatibility. Old values remain valid. |
+| v1 → v2 (new scale) | Explicit conversion required; no implicit widening. |
+| DFP → DQA migration | Not automatic; requires explicit `NumericCast`. |
+| LUT upgrade | Grace period: 1 epoch. Old LUT valid for reading; new required for writing. |
+
+### Future Numeric Formats
+
+This RFC anticipates future quantized formats:
+
+| Future Format | Status | Migration |
+|--------------|--------|-----------|
+| MX (mixed precision) | Research | Future RFC |
+| Block FP | Research | Future RFC |
+| NF4 | Research | Future RFC |
+
+**Migration Principles:**
+1. **Never break existing stored values** — always provide conversion path
+2. **Explicit over implicit** — no silent conversions
+3. **Slow governance** — LUT/type upgrades require 2/3 supermajority
+4. **Long deprecation** — deprecated features stay for ≥2 major versions
 
 ## Related RFCs
 
@@ -600,10 +1156,13 @@ struct CipherOctoTrace {
 }
 
 enum TraceEntry {
-    SqlExec { query: String, rows: u64 },
-    VectorSearch { index: String, k: u32, distance: DFP },
+    /// ⚠️ **ZK-FRIENDLY**: Use query_hash (PoseidonDigest) instead of String
+    /// to avoid bloating AIR constraints with string data.
+    /// function_id: 0=relu, 1=sigmoid, 2=tanh
+    SqlExec { query_hash: Digest, rows: u64 },
+    VectorSearch { index_hash: Digest, k: u32, distance: Dfp },
     MatMul { rows: u32, cols: u32, elapsed_ms: u32 },
-    Activation { function: String, input: DVec, output: DVec },
+    Activation { function_id: u8, input: DVecN<Dqa, 64>, output: DVecN<Dqa, 64> },
 }
 ```
 
@@ -617,14 +1176,40 @@ Traces are converted to AIR constraints for STARK proof generation.
 -- Logistic regression inference
 CREATE TABLE models (
     id INT,
-    weights DVEC128,
-    bias DFP
+    weights DVEC64,
+    bias DQA
 );
 
 -- Deterministic inference
 SELECT
     sigmoid(dot(weights, input) + bias) as prediction
 FROM models;
+```
+
+#### End-to-End Gas Cost Example: 2-Layer MLP
+
+> ⚠️ **Realistic gas estimate** for a small 2-layer MLP:
+
+```
+Input: DVEC32<Dqa>
+Layer 1: DVEC32 × DMAT32x16 → DVEC16 (ReLU)
+Layer 2: DVEC16 × DMAT16x2 → DVEC2 (Sigmoid)
+
+Operations:
+- Layer 1 matmul: 32 × 16 × 32 = 16,384 scalar muls
+- Layer 1 ReLU: 16 elements
+- Layer 2 matmul: 16 × 2 × 16 = 512 scalar muls
+- Layer 2 Sigmoid: 2 LUT lookups
+
+Gas breakdown:
+- MAT_MUL (16,384 + 512 ops): 16,896 × 10 = 168,960 gas
+- ReLU (16 ops): 16 × 5 = 80 gas
+- Sigmoid LUT (2 lookups): 2 × 20 = 40 gas
+- DOT product (for inference): 32 × 10 × 10 = 3,200 gas
+- TOTAL: ~172,000 gas
+
+⚠️ **Note**: This exceeds the 100k gas limit for a single op!
+Recommendation: Split inference across multiple transactions or reduce model size.
 ```
 
 ### Vector Similarity Search

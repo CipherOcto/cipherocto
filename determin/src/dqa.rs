@@ -400,6 +400,55 @@ pub fn dqa_cmp(a: Dqa, b: Dqa) -> i8 {
     }
 }
 
+/// DQA Assignment to Column
+///
+/// Coerces a DQA expression result to a fixed-scale column.
+/// Uses RoundHalfEven for deterministic rounding.
+///
+/// # Arguments
+/// * `expr_result` - The DQA value from an expression
+/// * `column_scale` - The target scale of the column
+///
+/// # Returns
+/// * `Ok(Dqa)` - The value rounded/padded to column scale
+/// * `Err(DqaError::Overflow)` - If result exceeds i64 range
+pub fn dqa_assign_to_column(expr_result: Dqa, column_scale: u8) -> Result<Dqa, DqaError> {
+    if expr_result.scale > column_scale {
+        // Round to column scale using RoundHalfEven
+        let diff = expr_result.scale - column_scale;
+        let divisor = POW10[diff as usize];
+        let value_i128 = expr_result.value as i128;
+        let quotient = value_i128 / divisor;
+        let remainder = value_i128 % divisor;
+        let result_sign = expr_result.value.signum();
+        let result_value = round_half_even_with_remainder(quotient, remainder, divisor, result_sign);
+        // Check i64 range (rounded quotient could theoretically exceed i64)
+        if result_value > i64::MAX as i128 || result_value < i64::MIN as i128 {
+            return Err(DqaError::Overflow);
+        }
+        Ok(Dqa {
+            value: result_value as i64,
+            scale: column_scale,
+        })
+    } else if expr_result.scale < column_scale {
+        // Pad with trailing zeros
+        let diff = column_scale - expr_result.scale;
+        // Use i128 for overflow-safe multiplication
+        let intermediate = (expr_result.value as i128) * POW10[diff as usize];
+        if intermediate > i64::MAX as i128 || intermediate < i64::MIN as i128 {
+            return Err(DqaError::Overflow);
+        }
+        let result_value = intermediate as i64;
+        Ok(Dqa {
+            value: result_value,
+            scale: column_scale,
+        })
+    } else {
+        // Scales match, no coercion needed
+        Ok(expr_result)
+    }
+}
+
 /// DQA encoding for storage/consensus (16 bytes)
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 #[repr(C)]
@@ -565,5 +614,53 @@ mod tests {
         let max = dqa(i64::MAX, 0);
         let one = dqa(1, 0);
         assert_eq!(dqa_add(max, one).unwrap_err(), DqaError::Overflow);
+    }
+
+    /// Test assign to column - round down
+    #[test]
+    fn test_assign_round_down() {
+        // 123.456789 -> scale 6 = 123.456789 (no change)
+        assert_eq!(dqa_assign_to_column(dqa(123456789, 6), 6).unwrap(), dqa(123456789, 6));
+        // 123.456789 -> scale 4 = 123.4568 (round up)
+        assert_eq!(dqa_assign_to_column(dqa(123456789, 6), 4).unwrap(), dqa(1234568, 4));
+        // 123.456789 -> scale 2 = 123.46 (round up)
+        assert_eq!(dqa_assign_to_column(dqa(123456789, 6), 2).unwrap(), dqa(12346, 2));
+    }
+
+    /// Test assign to column - round half even
+    #[test]
+    fn test_assign_round_half_even() {
+        // 2.5 -> scale 0 = 2 (even, round down)
+        assert_eq!(dqa_assign_to_column(dqa(25, 1), 0).unwrap(), dqa(2, 0));
+        // 3.5 -> scale 0 = 4 (odd, round up)
+        assert_eq!(dqa_assign_to_column(dqa(35, 1), 0).unwrap(), dqa(4, 0));
+        // 1.25 -> scale 1 = 1.2 (round down)
+        assert_eq!(dqa_assign_to_column(dqa(125, 2), 1).unwrap(), dqa(12, 1));
+        // 1.35 -> scale 1 = 1.4 (round up - 3 is odd)
+        assert_eq!(dqa_assign_to_column(dqa(135, 2), 1).unwrap(), dqa(14, 1));
+    }
+
+    /// Test assign to column - pad with zeros
+    #[test]
+    fn test_assign_pad_zeros() {
+        // 123 -> scale 2 = 123.00
+        assert_eq!(dqa_assign_to_column(dqa(123, 0), 2).unwrap(), dqa(12300, 2));
+        // 1.5 (scale 1) -> scale 4 = 1.5000
+        assert_eq!(dqa_assign_to_column(dqa(15, 1), 4).unwrap(), dqa(15000, 4));
+    }
+
+    /// Test assign to column - same scale
+    #[test]
+    fn test_assign_same_scale() {
+        assert_eq!(dqa_assign_to_column(dqa(123, 2), 2).unwrap(), dqa(123, 2));
+    }
+
+    /// Test assign overflow
+    #[test]
+    fn test_assign_overflow() {
+        // i64::MAX with scale 0 -> scale 18 would overflow
+        let max = dqa(i64::MAX, 0);
+        // This would require 10^18 multiplication, definitely overflows
+        assert_eq!(dqa_assign_to_column(max, 18).unwrap_err(), DqaError::Overflow);
     }
 }

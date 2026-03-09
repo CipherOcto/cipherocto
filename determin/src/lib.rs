@@ -16,7 +16,7 @@ mod probe;
 pub mod dqa;
 
 pub use arithmetic::{dfp_add, dfp_div, dfp_mul, dfp_sqrt, dfp_sub};
-pub use dqa::{Dqa, DqaEncoding, DqaError};
+pub use dqa::{dqa_assign_to_column, Dqa, DqaEncoding, DqaError};
 
 use serde::{Deserialize, Serialize};
 

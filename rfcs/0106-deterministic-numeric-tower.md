@@ -1735,14 +1735,14 @@ Each workload has different requirements:
 
 > ⚠️ **MANDATORY**: A reference implementation crate is required for consensus specs.
 
-> ⚠️ **NOTE**: Some `todo!()` stubs in this RFC are placeholder implementations. The authoritative reference is the `cipherocto-numeric` crate, which provides complete implementations. All consensus-critical algorithms are fully specified in the Canonical Arithmetic Algorithms section.
+> ⚠️ **NOTE**: Some `todo!()` stubs in this RFC are placeholder implementations. The authoritative reference is the `octo_determin` crate, which provides complete implementations. All consensus-critical algorithms are fully specified in the Canonical Arithmetic Algorithms section.
 
-**Reference crate:** `cipherocto-numeric` (to be created)
+**Reference crate:** `octo_determin` (to be created)
 
 This crate serves as the canonical reference for all numeric operations:
 
 ```
-cipherocto-numeric/
+octo_determin/
 ├── src/
 │   ├── dqa.rs        # DQA canonical algorithms
 │   ├── dfp.rs        # DFP canonical algorithms

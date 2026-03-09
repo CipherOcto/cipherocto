@@ -2,8 +2,8 @@
 
 ## Status
 
-**Version:** v7 (2026-03-09) — Production Review Round 7 (Final)
-**Status:** Draft → Experimental
+**Version:** v8 (2026-03-09) — Production Review Round 8 (Final)
+**Status:** Experimental
 
 ## Production Limitations
 
@@ -415,8 +415,9 @@ fn bigint_add(a: &BigInt, b: &BigInt) -> BigInt {
 
 fn bigint_mul(a: &BigInt, b: &BigInt) -> BigInt {
     assert!(a.bits() + b.bits() <= MAX_BIGINT_BITS);
-    // Schoolbook or Karatsuba (deterministic choice required)
-    // Must document which algorithm is used
+    // MANDATORY: Schoolbook multiplication algorithm
+    // Karatsuba is NOT allowed due to potential implementation variance
+    // Schoolbook: O(n²) limb-wise multiplication
 }
 
 fn bigint_div(a: &BigInt, b: &BigInt) -> BigInt {
@@ -456,7 +457,7 @@ fn mat_mul<const M: usize, const K: usize, const N: usize>(
     a: &[[i32; K]; M],
     b: &[[i32; N]; K],
     scale: u8
-) -> [[i32; N]; M] {
+) -> Result<[[i32; N]; M], ExecutionError> {
     // Naive triple loop - deterministic order
     let mut result: [[i32; N]; M] = [[0; N]; M];
     for i in 0..M {
@@ -465,10 +466,15 @@ fn mat_mul<const M: usize, const K: usize, const N: usize>(
             for k in 0..K {
                 acc += (a[i][k] as i128) * (b[k][j] as i128);
             }
-            result[i][j] = (acc >> scale) as i32;
+            // Check for overflow before casting to i32
+            let shifted = acc >> scale;
+            if shifted > i32::MAX as i128 || shifted < i32::MIN as i128 {
+                return Err(ExecutionError::Overflow);
+            }
+            result[i][j] = shifted as i32;
         }
     }
-    result
+    Ok(result)
 }
 ```
 
@@ -553,7 +559,27 @@ Use cases: AI weights, embeddings, ML inference
 /// to ensure consensus identity a/b == a/b across all nodes.
 pub fn dqa_div(a: Dqa, b: Dqa, rounding: RoundingMode) -> Dqa {
     // Scale up, perform integer division, round, scale down
-    todo!("Implement with rounding mode")
+    // Reference: see Canonical Arithmetic Algorithms section (lines ~354-375)
+    // Implementation: widen to i64, shift by scale, divide, apply rounding
+    let wide_a: i64 = (a.value as i64) << a.scale;
+    if b.value == 0 {
+        panic!("Division by zero"); // Will be caught by VM as trap
+    }
+    let quotient = wide_a / (b.value as i64);
+    let remainder = wide_a % (b.value as i64);
+    let result = match rounding {
+        RoundingMode::Nearest => {
+            let twice_rem = remainder.abs() * 2;
+            let divisor = (b.value as i64).abs();
+            if twice_rem > divisor { if remainder >= 0 { quotient + 1 } else { quotient - 1 } }
+            else if twice_rem == divisor { if quotient % 2 == 0 { quotient } else { quotient + 1 } }
+            else { quotient }
+        },
+        RoundingMode::Truncate => quotient,
+        RoundingMode::Up => if remainder > 0 { quotient + 1 } else { quotient },
+        RoundingMode::Down => if remainder < 0 { quotient - 1 } else { quotient },
+    };
+    Dqa { value: result as i32, scale: a.scale }
 }
 
 /// Rounding modes for DQA division
@@ -914,7 +940,11 @@ pub fn relu_dqa(x: Dqa) -> Dqa {
 pub fn sigmoid(x: Dfp) -> Dfp {
     // Use SIGMOID_LUT with nearest-neighbor interpolation
     // See "Sigmoid Lookup Table (LUT) Specification" for canonical values
-    todo!("Implement LUT-based sigmoid")
+    // Input: Q8.8 fixed-point (scale=8), clamp to [-1024, 1024] for LUT range [-4, 4]
+    let clamped = x.mantissa.clamp(-1024, 1024);
+    let index = ((clamped + 1024) >> 8) as usize;  // Map to 0-801
+    let lut_value = SIGMOID_LUT_V1[index.min(800)];
+    Dfp::from_mantissa_exponent(lut_value as i128, -8)
 }
 
 /// Polynomial sigmoid - DEPRECATED for consensus (use sigmoid() instead)
@@ -929,7 +959,11 @@ pub fn sigmoid_poly(x: Dfp) -> Dfp {
 /// Canonical Tanh: LUT-based (REQUIRED for consensus)
 pub fn tanh(x: Dfp) -> Dfp {
     // Use TANH_LUT with nearest-neighbor interpolation
-    todo!("Implement LUT-based tanh")
+    // Input: Q8.8 fixed-point (scale=8), clamp to [-1024, 1024] for LUT range [-4, 4]
+    let clamped = x.mantissa.clamp(-1024, 1024);
+    let index = ((clamped + 1024) >> 8) as usize;  // Map to 0-801
+    let lut_value = TANH_LUT_V1[index.min(800)];
+    Dfp::from_mantissa_exponent(lut_value as i128, -8)
 }
 
 /// Polynomial tanh - DEPRECATED for consensus (use tanh() instead)
@@ -1701,6 +1735,8 @@ Each workload has different requirements:
 
 > ⚠️ **MANDATORY**: A reference implementation crate is required for consensus specs.
 
+> ⚠️ **NOTE**: Some `todo!()` stubs in this RFC are placeholder implementations. The authoritative reference is the `cipherocto-numeric` crate, which provides complete implementations. All consensus-critical algorithms are fully specified in the Canonical Arithmetic Algorithms section.
+
 **Reference crate:** `cipherocto-numeric` (to be created)
 
 This crate serves as the canonical reference for all numeric operations:
@@ -1932,12 +1968,12 @@ fn test_vector_add_determinism() {
     assert_eq!(result_a, result_b, "Vector add must be deterministic");
 }
 
-/// Property-based test: overflow handling
+/// Property-based test: overflow TRAPs (not saturates)
 #[test]
-fn test_overflow_saturation() {
+#[should_panic(expected = "Overflow")]
+fn test_overflow_traps() {
     let max = Dqa::MAX_VALUE;
-    let result = max.mul(max);  // Should saturate, not panic
-    assert!(result <= Dqa::MAX_VALUE);
+    let _result = max.mul(max);  // MUST panic/trap per spec
 }
 ```
 

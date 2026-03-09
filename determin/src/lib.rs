@@ -1,13 +1,21 @@
-//! Deterministic Floating-Point (DFP) Implementation
+//! Deterministic Arithmetic (DFP/DQA) Implementation
 //!
-//! This module implements RFC-0104: Deterministic Floating-Point Abstraction
-//! for the CipherOcto protocol.
+//! This module implements:
+//! - RFC-0104: Deterministic Floating-Point (DFP)
+//! - RFC-0105: Deterministic Quant Arithmetic (DQA)
 //!
 //! Key design principles:
 //! - Pure integer arithmetic (no floating-point operations)
-//! - Saturating arithmetic (overflow → MAX, not Infinity)
-//! - Canonical odd-mantissa invariant
-//! - Round-to-nearest-even (RNE)
+//! - DFP: Saturating arithmetic (overflow → MAX, not Infinity)
+//! - DQA: Bounded range (i64 value with 0-18 decimal scale)
+//! - Canonical representation for deterministic Merkle hashing
+//! - Round-to-nearest-even (RNE) / RoundHalfEven
+
+/// DQA (Deterministic Quant Arithmetic) specification version
+pub const DQA_SPEC_VERSION: u32 = 1;
+
+/// DFP (Deterministic Floating-Point) specification version
+pub const DFP_SPEC_VERSION: u32 = 1;
 
 mod arithmetic;
 #[cfg(test)]
@@ -16,7 +24,7 @@ mod probe;
 pub mod dqa;
 
 pub use arithmetic::{dfp_add, dfp_div, dfp_mul, dfp_sqrt, dfp_sub};
-pub use dqa::{dqa_assign_to_column, Dqa, DqaEncoding, DqaError};
+pub use dqa::{dqa_abs, dqa_assign_to_column, dqa_cmp, dqa_negate, Dqa, DqaEncoding, DqaError};
 
 use serde::{Deserialize, Serialize};
 

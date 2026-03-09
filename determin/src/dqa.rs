@@ -400,6 +400,16 @@ pub fn dqa_cmp(a: Dqa, b: Dqa) -> i8 {
     }
 }
 
+/// DQA Negation: -a
+pub fn dqa_negate(a: Dqa) -> Result<Dqa, DqaError> {
+    a.negate()
+}
+
+/// DQA Absolute Value: |a|
+pub fn dqa_abs(a: Dqa) -> Result<Dqa, DqaError> {
+    a.absolute()
+}
+
 /// DQA Assignment to Column
 ///
 /// Coerces a DQA expression result to a fixed-scale column.
@@ -662,5 +672,32 @@ mod tests {
         let max = dqa(i64::MAX, 0);
         // This would require 10^18 multiplication, definitely overflows
         assert_eq!(dqa_assign_to_column(max, 18).unwrap_err(), DqaError::Overflow);
+    }
+
+    /// Test encoding is deterministic (canonical form)
+    #[test]
+    fn test_encoding_deterministic() {
+        // 1.500 with scale 3 should canonicalize to 15 with scale 1
+        let dqa1 = dqa(1500, 3);
+        let encoding1 = DqaEncoding::from_dqa(&dqa1);
+        // After canonicalization: value=15, scale=1
+        assert_eq!(i64::from_be(encoding1.value), 15i64);
+        assert_eq!(encoding1.scale, 1);
+
+        // Same logical value should produce same encoding
+        let dqa2 = dqa(15, 1);
+        let encoding2 = DqaEncoding::from_dqa(&dqa2);
+        assert_eq!(encoding1.value, encoding2.value);
+        assert_eq!(encoding1.scale, encoding2.scale);
+    }
+
+    /// Test encoding round-trip
+    #[test]
+    fn test_encoding_roundtrip() {
+        let original = dqa(123456789, 6);
+        let encoding = DqaEncoding::from_dqa(&original);
+        let recovered = encoding.to_dqa().unwrap();
+        // Canonical form should match
+        assert_eq!(canonicalize(recovered), canonicalize(original));
     }
 }

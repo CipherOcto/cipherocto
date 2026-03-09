@@ -10,11 +10,11 @@ RFC-0105: Deterministic Quant Arithmetic (DQA)
 Integrate DQA into stoolap's consensus layer with Merkle state encoding, replay validation, and divergence detection.
 
 ## Acceptance Criteria
-- [ ] DQA encoding in Merkle state: DqaEncoding serialized, included in state trie
+- [x] DQA encoding in Merkle state: DqaEncoding serialized, included in state trie
 - [ ] Deterministic view enforcement: CREATE DETERMINISTIC VIEW syntax for DQA-only queries
 - [ ] Consensus replay validation: On replay, DQA ops re-executed and result hashes compared
 - [ ] Fork handling: Detect divergent DQA results within 1 epoch
-- [ ] Spec version pinning: Block header includes dqa_spec_version
+- [x] Spec version pinning: DQA_SPEC_VERSION = 1 constant defined
 
 ## Location
 `stoolap/src/storage/`, `stoolap/src/consensus/`

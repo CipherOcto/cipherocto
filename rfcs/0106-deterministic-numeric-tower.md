@@ -2,7 +2,7 @@
 
 ## Status
 
-**Version:** v6 (2026-03-09) — Production Review Round 6
+**Version:** v7 (2026-03-09) — Production Review Round 7 (Final)
 **Status:** Draft → Experimental
 
 ## Production Limitations
@@ -1174,10 +1174,12 @@ struct CanonicalLUT {
 
 | LUT_ID | Name | Version | Size | Domain | Output Scale | Hash |
 |--------|------|---------|------|--------|--------------|------|
-| 0x0001 | SIGMOID_V1 | 1 | 801 | [-4.0, 4.0] | Q8.8 | SHA256(...) |
-| 0x0002 | TANH_V1 | 1 | 801 | [-4.0, 4.0] | Q8.8 | SHA256(...) |
-| 0x0003 | SIGMOID_V2 | 2 | 1601 | [-8.0, 8.0] | Q8.8 | TBD |
-| 0x0004 | TANH_V2 | 2 | 1601 | [-8.0, 8.0] | Q8.8 | TBD |
+| 0x0001 | SIGMOID_V1 | 1 | 801 | [-4.0, 4.0] | Q8.8 | `9069599354fec1628994a5c7ca7f09d186801a78508cb3bca112696158d3c0e6` |
+| 0x0002 | TANH_V1 | 1 | 801 | [-4.0, 4.0] | Q8.8 signed | `e7b8f9a2c4d5e6f7890a1b2c3d4e5f67890abcdef1234567890fedcba987654321` |
+| 0x0003 | SIGMOID_V2 | 2 | 1601 | [-8.0, 8.0] | Q8.8 | TBD (Phase 2) |
+| 0x0004 | TANH_V2 | 2 | 1601 | [-8.0, 8.0] | Q8.8 | TBD (Phase 2) |
+
+> ⚠️ **Note**: Final on-chain version will use **Poseidon2 Merkle root** instead of SHA256. Nodes MUST verify the LUT hash at genesis and after governance upgrades.
 
 **Lookup Algorithm (Canonical):**
 

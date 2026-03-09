@@ -222,8 +222,9 @@ pub trait DeterministicScalar:
 ```rust
 /// Deterministic vector with N elements
 ///
-/// ⚠️ **MEMORY SAFETY**: For N > 64, use heap allocation. Stack-allocated fixed arrays
-/// can cause stack overflow in Wasm/VM environments with strict stack limits.
+/// ⚠️ **MEMORY SAFETY**: All vectors use heap allocation in VM runtime.
+/// Stack allocation is NOT permitted for consensus safety - different VMs have
+/// different stack sizes (Wasm typically 1MB, native can be 8MB).
 ///
 /// ⚠️ **TYPE REQUIREMENT**: T must implement `DeterministicScalar` trait.
 /// Use `DVecN<Dqa, N>` for consensus/AI workloads, `DVecN<Dfp, N>` for scientific computing.
@@ -231,12 +232,12 @@ pub struct DVecN<T, const N: usize>
 where
     [(); N]: Sized,  // Compile-time check: N must be const
 {
-    elements: [T; N],  // Stack-allocated for N ≤ 64
+    elements: Vec<T>,  // ALWAYS heap-allocated for consensus safety
 }
 
-/// Compile-time stack safety assertion
-/// Note: This is a design-time constraint. Implementations should also include runtime checks.
-const MAX_STACK_ELEMENTS: usize = 64;
+/// Compile-time dimension check
+/// Note: This const assertion fails at compile time if N exceeds limit
+const MAX_DVEC_ELEMENTS: usize = 128;
 
 // Compile-time assert example (use in implementation):
 // impl<T, const N: usize> DVecN<T, N> {
@@ -259,7 +260,7 @@ const MAX_STACK_ELEMENTS: usize = 64;
 
 > ⚠️ **Storage vs Consensus**: For high-performance vector search (HNSW indexing), use RFC-0103's VECTOR(f32) storage type. For consensus verification or on-chain inference, use DVEC with DQA elements.
 
-> ⚠️ **IMPLEMENTATION RECOMMENDATION**: For initial implementation, limit to **DVEC4–DVEC64** only. Gas costs scale linearly with dimension (DVEC128_ADD = 768× baseline), making larger vectors economically infeasible for most use cases. DVEC128+ should be marked experimental.
+> ⚠️ **MAINNET LIMIT**: DVEC dimension limited to **N ≤ 64** for production. DVEC128+ is experimental.
 
 #### Vector Operations
 
@@ -388,12 +389,15 @@ pub struct DTensor<T: DeterministicScalar, const D: usize> {
 Neural networks require nonlinear functions:
 
 ```rust
-/// Deterministic ReLU
+/// Deterministic ReLU: max(0, x)
+/// Correct implementation: returns 0 for x <= 0, returns x otherwise
 pub fn relu(x: Dfp) -> Dfp {
-    if x.class == DfpClass::Normal && x.sign == false && x.mantissa == 0 {
-        Dfp::zero(false) // max(0, x)
+    // Check if x <= 0: (sign == 1) OR (value == 0)
+    let is_negative_or_zero = x.sign == 1 || (x.mantissa == 0 && x.class == DfpClass::Normal);
+    if is_negative_or_zero {
+        Dfp::zero(false)  // Return positive zero
     } else {
-        x
+        x  // Return original value
     }
 }
 
@@ -563,11 +567,23 @@ const TANH_LUT_V1: [i16; 801] = [
     // Full table generated same way
 ];
 
-/// LUT lookup function
-fn sigmoid(x: f64) -> u16 {
-    let idx = ((x + 4.0) / 0.01).round() as usize;
-    let idx = idx.clamp(0, 800);  // Hard clamp - no polynomial fallback!
+/// LUT lookup function - uses integer arithmetic for determinism
+/// Input: x as DQA (scaled integer with scale=2, i.e., x100)
+/// Example: x = 400 means x = 4.0
+fn sigmoid(x_scaled: i32) -> u16 {
+    // x_scaled = x * 100 (DQA with scale=2)
+    // LUT range: -400 to +400 (representing -4.0 to +4.0)
+    let idx = (x_scaled + 400) / 1;  // Integer division
+    let idx = idx.clamp(0, 800) as usize;
     SIGMOID_LUT_V1[idx]
+}
+
+/// Same for tanh
+fn tanh_lookup(x_scaled: i32) -> i16 {
+) -> i16 {
+    let idx = (x_scaled + 400) / 1;
+    let idx = idx.clamp(0, 800) as usize;
+    TANH_LUT_V1[idx]
 }
 ```
 
@@ -742,14 +758,36 @@ const MAX_DMAT_DIM_EXEC: usize = 16;   // Consensus-executable
 const MAX_DMAT_DIM_STORAGE: usize = 64; // Storage only, not executable
 const MAX_GAS_PER_OP: u64 = 100_000;
 
+/// Scalar operation gas costs
+const GAS_INT_ADD: u64 = 1;
+const GAS_INT_MUL: u64 = 3;
+const GAS_INT_DIV: u64 = 10;
+const GAS_DQA_ADD: u64 = 5;
+const GAS_DQA_MUL: u64 = 8;
+const GAS_DQA_DIV: u64 = 20;
+const GAS_DFP_ADD: u64 = 8;
+const GAS_DFP_MUL: u64 = 15;
+const GAS_DFP_DIV: u64 = 35;
+const GAS_SQRT: u64 = 50;  // Newton-Raphson iterations
+
+/// Vector operation gas formula:
+/// - ADD: N × GAS_DQA_ADD
+/// - DOT: N × (GAS_DQA_MUL + GAS_DQA_ADD) × 2
+/// - NORM: N × (GAS_DQA_MUL + GAS_DQA_ADD) × 2 + GAS_SQRT
 fn calculate_vec_gas(dim: usize, op: VectorOp) -> Result<u64, GasError> {
     if dim > MAX_DVEC_DIM {
         return Err(GasError::DimensionExceeded);
     }
     let base_gas = match op {
-        VectorOp::Add => 6 * dim,
-        VectorOp::Dot => 10 * dim * 10,
-        VectorOp::Norm => 10 * dim * 15,  // Includes SQRT
+        VectorOp::Add => GAS_DQA_ADD * dim as u64,
+        VectorOp::Dot => {
+            // N multiplications + (N-1) additions
+            (GAS_DQA_MUL * dim as u64) + (GAS_DQA_ADD * (dim - 1) as u64)
+        },
+        VectorOp::Norm => {
+            // DOT + SQRT
+            (GAS_DQA_MUL * dim as u64) + (GAS_DQA_ADD * (dim - 1) as u64) + GAS_SQRT
+        },
     };
     if base_gas > MAX_GAS_PER_OP {
         return Err(GasError::GasExceeded);
@@ -757,13 +795,16 @@ fn calculate_vec_gas(dim: usize, op: VectorOp) -> Result<u64, GasError> {
     Ok(base_gas)
 }
 
+/// Matrix operation gas formula:
+/// - MAT_MUL: M × N × K × GAS_DQA_MUL + M × N × (K-1) × GAS_DQA_ADD
 fn calculate_mat_gas(m: usize, n: usize, k: usize, executable: bool) -> Result<u64, GasError> {
     let max_dim = if executable { MAX_DMAT_DIM_EXEC } else { MAX_DMAT_DIM_STORAGE };
     if m > max_dim || n > max_dim || k > max_dim {
         return Err(GasError::DimensionExceeded);
     }
-    let ops = m * n * k;
-    let gas = 10 * ops;
+    let mul_ops = m * n * k;
+    let add_ops = m * n * (k.saturating_sub(1));
+    let gas = (GAS_DQA_MUL * mul_ops as u64) + (GAS_DQA_ADD * add_ops as u64);
     if gas > MAX_GAS_PER_OP {
         return Err(GasError::GasExceeded);
     }
@@ -771,20 +812,21 @@ fn calculate_mat_gas(m: usize, n: usize, k: usize, executable: bool) -> Result<u
 }
 ```
 
-| Operation     | Gas (units) | Max Dimension |
-| ------------- | ------------ | ------------- |
-| INT_ADD       | 1            | N/A           |
-| DFP_ADD       | 6-10         | N/A           |
-| DFP_MUL       | 10-15        | N/A           |
-| DFP_DIV       | 25-40        | N/A           |
-| DVEC4_ADD     | 24           | 4             |
-| DVEC16_ADD    | 96           | 16            |
-| DVEC128_ADD   | 768          | 128           |
-| DVEC16_DOT    | 1,600        | 16            |
-| DMAT4x4_MUL   | 640          | 4×4           |
-| DMAT8x8_MUL   | 5,120        | 8×8           |
-| DMAT16x16_MUL | 40,960       | 16×16         |
-| DMAT64x64     | N/A          | REJECT (storage only) |
+| Operation | Gas Formula | Example (N=16) | Max Dimension |
+| --------- | ----------- |----------------| -------------|
+| INT_ADD | 1 | 1 | N/A |
+| DQA_ADD | 5 | 5 | N/A |
+| DQA_MUL | 8 | 8 | N/A |
+| DQA_DIV | 20 | 20 | N/A |
+| DFP_ADD | 8 | 8 | N/A |
+| DFP_MUL | 15 | 15 | N/A |
+| DFP_DIV | 35 | 35 | N/A |
+| SQRT | 50 | 50 | N/A |
+| DVEC_ADD | 5 × N | 80 | 64 |
+| DVEC_DOT | 8N + 5(N-1) | 203 | 64 |
+| DVEC_NORM | DOT + 50 | 253 | 64 |
+| DMAT_MUL | 8MNK + 5MN(K-1) | 8×4×4×4 + 5×4×4×3 = 608 | 8×8 |
+| DMAT_MUL | REJECT | - | >8×8 |
 
 ### Storage Encoding
 
@@ -794,26 +836,52 @@ All numeric types use canonical big-endian encoding with version field for forwa
 /// Version 1 encoding for deterministic scalars
 const ENCODING_VERSION: u8 = 1;
 
-/// DQA encoding (16 bytes)
-#[repr(C, packed)]
-struct DqaEncoding {
-    version: u8,           // = 1
-    sign: u8,              // 0 = positive, 1 = negative
-    value: i64,            // Always big-endian
-    scale: u8,             // 0-18
-    _reserved: [u8; 5],    // Future use, must be zero
-}
+/// ⚠️ WIRE FORMAT: Binary layout is byte-defined for protocol safety.
+/// DO NOT rely on Rust repr(C) or repr(packed) for wire protocol.
+/// Serialization MUST follow this exact byte order.
 
-/// DFP encoding (24 bytes)
-#[repr(C, packed)]
-struct DfpEncoding {
-    version: u8,           // = 1
-    class: u8,             // 0=zero, 1=normal, 2=inf, 3=nan
-    sign: u8,              // 0 = positive, 1 = negative
-    mantissa: i128,        // Always big-endian
-    exponent: i32,         // Always big-endian
-    _reserved: [u8; 3],    // Future use, must be zero
+/// DQA encoding (16 bytes) - byte-defined layout
+struct DqaEncoding {
+    // Byte[0]: version (must be 1)
+    version: u8,
+    // Byte[1]: sign (0 = positive, 1 = negative)
+    sign: u8,
+    // Bytes[2-9]: value (big-endian i64)
+    value: i64,
+    // Byte[10]: scale (0-18)
+    scale: u8,
+    // Bytes[11-15]: reserved (must be zero)
+    _reserved: [u8; 5],
 }
+/// Canonical byte layout:
+/// | Byte 0 | Byte 1 | Bytes 2-9    | Byte 10 | Bytes 11-15 |
+/// |--------|--------|--------------|---------|-------------|
+/// | version| sign   | value (BE)   | scale   | reserved    |
+
+/// DFP encoding (24 bytes) - byte-defined layout
+struct DfpEncoding {
+    // Byte[0]: version (must be 1)
+    version: u8,
+    // Byte[1]: class (0=zero, 1=normal, 2=inf, 3=nan)
+    class: u8,
+    // Byte[2]: sign (0 = positive, 1 = negative)
+    sign: u8,
+    // Bytes[3-18]: mantissa (big-endian i128)
+    mantissa: i128,
+    // Bytes[19-22]: exponent (big-endian i32)
+    exponent: i32,
+    // Byte[23]: reserved (must be zero)
+    _reserved: u8,
+}
+/// Canonical byte layout:
+/// | Byte 0 | Byte 1 | Byte 2 | Bytes 3-18      | Bytes 19-22   | Byte 23 |
+/// |--------|--------|--------|-----------------|---------------|---------|
+/// | version| class  | sign   | mantissa (BE)   | exponent (BE) | reserved|
+
+/// DFP Canonical NaN representation
+/// In DFP format: class=NAN(3), mantissa=1, exponent=0, sign=0
+const DFP_CANONICAL_NAN: (u8, u8, i128, i32) = (1, 3, 1, 0);
+/// Where: (version, class=NaN, mantissa=1, exponent=0)
 
 /// DVEC encoding
 struct DVecEncoding {
@@ -953,7 +1021,7 @@ Phase 5: DTENSOR (Future) ───────────────┘
 | **Timing Attacks** | Variable-time operations leak information | Fixed iteration order, no data-dependent branches |
 | **Side-Channel Leakage** | Data-dependent branches in arithmetic leak secrets | ALL operators MUST execute in constant time |
 
-> ⚠️ **CONSTANT-TIME REQUIREMENT**: All arithmetic operators (`ADD`, `MUL`, `DIV`) MUST execute in constant time regardless of input values. Data-dependent branches (e.g., early exit if a digit is zero) are FORBIDDEN in consensus-critical paths to prevent side-channel leakage in ZK-proof generation environments.
+> ⚠️ **BRANCH-FREE REQUIREMENT**: Arithmetic operators MUST NOT branch on secret data (data-dependent branches are FORBIDDEN). Constant-time execution is RECOMMENDED but not strictly required for consensus determinism - what matters is that operations produce identical results across nodes, not that they run in identical cycle counts.
 
 ### DoS Prevention
 

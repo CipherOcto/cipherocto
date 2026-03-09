@@ -10,10 +10,10 @@ RFC-0105: Deterministic Quant Arithmetic (DQA)
 Integrate DQA as a first-class SQL data type in stoolap, with parser support, type checking, and column storage.
 
 ## Acceptance Criteria
-- [ ] Add `DataType::Quant` variant in parser AST
-- [ ] SQL parser accepts `DQA(n)` syntax where n is scale (0-18)
+- [x] Add `DataType::Quant` variant in parser AST
+- [x] SQL parser accepts `DQA(n)` syntax where n is scale (0-18)
 - [ ] Type checking for scale alignment in expressions
-- [ ] DQA column storage with fixed scale
+- [x] DQA column storage with fixed scale (quant_scale in SchemaColumn)
 - [ ] DQA_ASSIGN_TO_COLUMN for inserting values into columns
 - [ ] Round-to-column-scale using RoundHalfEven
 

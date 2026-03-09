@@ -1,7 +1,7 @@
 # Mission: DQA Core Type Implementation
 
 ## Status
-Claimed
+Completed
 
 ## RFC
 RFC-0105: Deterministic Quant Arithmetic (DQA)

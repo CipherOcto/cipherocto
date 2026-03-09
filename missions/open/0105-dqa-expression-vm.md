@@ -1,7 +1,7 @@
 # Mission: DQA Expression VM Opcodes
 
 ## Status
-Open
+Completed
 
 ## RFC
 RFC-0105: Deterministic Quant Arithmetic (DQA)
@@ -10,15 +10,15 @@ RFC-0105: Deterministic Quant Arithmetic (DQA)
 Add VM opcodes for DQA arithmetic operations, enabling deterministic expression evaluation in stoolap.
 
 ## Acceptance Criteria
-- [ ] OP_DQA_ADD opcode implementation
-- [ ] OP_DQA_SUB opcode implementation
-- [ ] OP_DQA_MUL opcode implementation
-- [ ] OP_DQA_DIV opcode implementation
-- [ ] OP_DQA_NEG (unary negation)
-- [ ] OP_DQA_ABS (absolute value)
-- [ ] OP_DQA_CMP (compare: returns -1, 0, or 1)
-- [ ] Scale alignment validation at runtime
-- [ ] Overflow/division-by-zero error handling
+- [x] OP_DQA_ADD opcode implementation
+- [x] OP_DQA_SUB opcode implementation
+- [x] OP_DQA_MUL opcode implementation
+- [x] OP_DQA_DIV opcode implementation
+- [x] OP_DQA_NEG (unary negation)
+- [x] OP_DQA_ABS (absolute value)
+- [x] OP_DQA_CMP (compare: returns -1, 0, or 1)
+- [x] Scale alignment validation at runtime (built into DQA operations)
+- [x] Overflow/division-by-zero error handling
 
 ## Location
 `stoolap/src/vm/`, `stoolap/src/execution/`

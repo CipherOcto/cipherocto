@@ -9,25 +9,27 @@
 
 > ⚠️ **IMPORTANT**: When deployed to production, the following limits apply:
 
-| Feature | Mainnet Limit (v1) | Status | 2026 Mainnet Ready? | Rationale |
-|---------|-------------------|--------|---------------------|-----------|
-| DVEC<DQA> dimension | N ≤ 64 | ALLOWED | **Yes** | Recommended for vector search |
-| DVEC<DFP> dimension | DISABLED | FORBIDDEN | No | Not ZK-friendly, use DQA |
-| DMAT<DQA> dimension | M×N ≤ 8×8 | EXPERIMENTAL | Phase 2 | After 6-month burn-in |
-| DMAT<DFP> dimension | DISABLED | FORBIDDEN | No | Not ZK-friendly |
-| DFP scalar | ALLOWED | RESTRICTED | Evaluate | Scientific only, no vector/matrix |
-| DQA scalar | N/A | RECOMMENDED | **Yes** | Default for all production |
-| Activation: ReLU | ALLOWED | STABLE | **Yes** | Exact, no bias |
-| Activation: Sigmoid | LUT only | EXPERIMENTAL | Phase 2 | Requires canonical LUT |
-| Activation: Tanh | LUT only | EXPERIMENTAL | Phase 2 | Requires canonical LUT |
-| Max gas per op | 100,000 | HARD LIMIT | **Yes** | VM resource limits |
+| Feature             | Mainnet Limit (v1) | Status       | 2026 Mainnet Ready? | Rationale                         |
+| ------------------- | ------------------ | ------------ | ------------------- | --------------------------------- |
+| DVEC<DQA> dimension | N ≤ 64             | ALLOWED      | **Yes**             | Recommended for vector search     |
+| DVEC<DFP> dimension | DISABLED           | FORBIDDEN    | No                  | Not ZK-friendly, use DQA          |
+| DMAT<DQA> dimension | M×N ≤ 8×8          | EXPERIMENTAL | Phase 2             | After 6-month burn-in             |
+| DMAT<DFP> dimension | DISABLED           | FORBIDDEN    | No                  | Not ZK-friendly                   |
+| DFP scalar          | ALLOWED            | RESTRICTED   | Evaluate            | Scientific only, no vector/matrix |
+| DQA scalar          | N/A                | RECOMMENDED  | **Yes**             | Default for all production        |
+| Activation: ReLU    | ALLOWED            | STABLE       | **Yes**             | Exact, no bias                    |
+| Activation: Sigmoid | LUT only           | EXPERIMENTAL | Phase 2             | Requires canonical LUT            |
+| Activation: Tanh    | LUT only           | EXPERIMENTAL | Phase 2             | Requires canonical LUT            |
+| Max gas per op      | 100,000            | HARD LIMIT   | **Yes**             | VM resource limits                |
 
 **Phased Rollout:**
+
 - **Phase 1 (Launch)**: DQA scalar, DVEC<DQA>≤64, ReLU only
 - **Phase 2 (6 months)**: Add Sigmoid/Tanh LUT, DMAT≤8×8
 - **Phase 3 (Future)**: Re-evaluate DFP, DVEC128+, DMAT16×16
 
 **Status Definitions:**
+
 - **ALLOWED**: Full support for consensus operations
 - **RECOMMENDED**: Preferred type for production workloads
 - **RESTRICTED**: Allowed with limitations; not recommended for AI/ZK workloads
@@ -172,6 +174,7 @@ This includes:
 - Runtime libraries
 
 **All operations MUST be implemented using:**
+
 - Integer arithmetic
 - Fixed-point arithmetic
 - Canonical algorithms defined in this RFC
@@ -183,15 +186,15 @@ This includes:
 
 > ⚠️ **CRITICAL**: Consensus safety requires deterministic overflow behavior.
 
-| Type      | Overflow Behavior     | Underflow Behavior    |
-| --------- | --------------------- | --------------------- |
-| INT       | TRAP                  | TRAP                  |
-| BIGINT    | Impossible (arbitrary) | Impossible (arbitrary) |
-| DQA       | TRAP                  | TRAP                  |
-| DFP       | TRAP                  | TRAP                  |
-| DECIMAL   | TRAP                  | TRAP                  |
-| DVEC      | TRAP (any element)   | TRAP (any element)    |
-| DMAT      | TRAP (any element)   | TRAP (any element)   |
+| Type    | Overflow Behavior      | Underflow Behavior     |
+| ------- | ---------------------- | ---------------------- |
+| INT     | TRAP                   | TRAP                   |
+| BIGINT  | Impossible (arbitrary) | Impossible (arbitrary) |
+| DQA     | TRAP                   | TRAP                   |
+| DFP     | TRAP                   | TRAP                   |
+| DECIMAL | TRAP                   | TRAP                   |
+| DVEC    | TRAP (any element)     | TRAP (any element)     |
+| DMAT    | TRAP (any element)     | TRAP (any element)     |
 
 **Overflow/underflow MUST cause a deterministic execution trap.** The VM MUST revert the transaction and consume all gas allocated to that operation.
 
@@ -295,11 +298,13 @@ REQUIRED: Sequential reduction
 ```
 
 **Matrix multiplication:**
+
 - Must use naive triple loop (i, j, k)
 - Parallel tile decomposition produces different results
 - Strassen algorithm is FORBIDDEN (non-deterministic)
 
 **Vector dot product:**
+
 - Must accumulate in strict order: i=0, then i=1, then i=2...
 - No SIMD horizontal operations
 - No reduction trees
@@ -491,12 +496,12 @@ fn mat_mul<const M: usize, const K: usize, const N: usize>(
 
 #### Rounding Rules
 
-| Mode | Negative Numbers | Positive Numbers | Tie Break |
-| ---- | --------------- | --------------- | --------- |
-| Nearest | Round away from zero at tie | Round away from zero at tie | Round to even |
-| Truncate | Round toward zero | Round toward zero | N/A |
-| Up | Round toward +∞ | Round toward +∞ | N/A |
-| Down | Round toward -∞ | Round toward -∞ | N/A |
+| Mode     | Negative Numbers            | Positive Numbers            | Tie Break     |
+| -------- | --------------------------- | --------------------------- | ------------- |
+| Nearest  | Round away from zero at tie | Round away from zero at tie | Round to even |
+| Truncate | Round toward zero           | Round toward zero           | N/A           |
+| Up       | Round toward +∞             | Round toward +∞             | N/A           |
+| Down     | Round toward -∞             | Round toward -∞             | N/A           |
 
 > ⚠️ **TIE BREAKING**: "Round to even" means: if exactly halfway, round to the nearest even number (0, 2, 4...). This is the IEEE 754 default and reduces systematic bias.
 
@@ -727,6 +732,7 @@ DOT(a, b):
 ```
 
 > ⚠️ **Determinism requirements**:
+>
 > - Strict iteration order (i=0→N) ensures identical results
 > - Accumulator MUST be 128-bit (i128) to prevent overflow
 > - No early termination / short-circuiting
@@ -756,6 +762,7 @@ COSINE_SIM(a, b):
 ```
 
 > ⚠️ **Determinism requirements**:
+>
 > - Division rounding: round to nearest, ties to even
 > - Both norms MUST be non-zero (zero vector → TRAP)
 > - Result range: [-1.0, 1.0] in Q8.8 format
@@ -855,10 +862,10 @@ pub struct DMat<T, const M: usize, const N: usize> {
 | ----------- | ------- | ------------------------ |
 | DMAT2x2     | 2×2     | 2D transforms            |
 | DMAT4x4     | 4×4     | 3D graphics, quaternions |
-| DMAT8x8     | 8×8     | Linear layer (Phase 2+) |
-| DMAT16x16   | 16×16   | Phase 2+                |
+| DMAT8x8     | 8×8     | Linear layer (Phase 2+)  |
+| DMAT16x16   | 16×16   | Phase 2+                 |
 | DMAT64x64   | 64×64   | Storage only (Phase 3)   |
-| DMAT128x128 | 128×128 | Storage only (Future)   |
+| DMAT128x128 | 128×128 | Storage only (Future)    |
 
 #### Matrix Operations
 
@@ -887,6 +894,7 @@ TRANSPOSE(A):
 ```
 
 > ⚠️ **HEAP ALLOCATION COST**: Matrix operations on `DMat` (which uses `Box<[T]>`) include:
+>
 > - Allocation overhead: +50 gas per allocation
 > - Memory expansion: +10 gas per 1KB above baseline
 
@@ -973,21 +981,21 @@ pub fn tanh(x: Dfp) -> Dfp {
 
 #### Consensus Activation Status
 
-| Function | Status | Notes |
-| -------- | ------ |-------|
-| sigmoid | REQUIRED | Must use LUT-based implementation |
-| tanh | REQUIRED | Must use LUT-based implementation |
-| sigmoid_poly | DEPRECATED | Do not use for consensus |
-| tanh_poly | DEPRECATED | Do not use for consensus |
+| Function     | Status     | Notes                             |
+| ------------ | ---------- | --------------------------------- |
+| sigmoid      | REQUIRED   | Must use LUT-based implementation |
+| tanh         | REQUIRED   | Must use LUT-based implementation |
+| sigmoid_poly | DEPRECATED | Do not use for consensus          |
+| tanh_poly    | DEPRECATED | Do not use for consensus          |
 
 #### Overflow and Saturation Semantics
 
 > ⚠️ **CRITICAL**: Out-of-range activation function inputs (e.g., sigmoid input > 4.0) are handled by LUT hard-clamp at lookup time, before any arithmetic occurs. All arithmetic overflow and underflow TRAPs per the Overflow/Underflow Semantics table (line 185–200).
 
-| Edge Case | Behavior |
-| --------- | -------- |
-| Division by zero | TRAP → REVERT |
-| Out-of-range input (sigmoid > 4.0) | LUT hard-clamp to max output |
+| Edge Case                           | Behavior                     |
+| ----------------------------------- | ---------------------------- |
+| Division by zero                    | TRAP → REVERT                |
+| Out-of-range input (sigmoid > 4.0)  | LUT hard-clamp to max output |
 | Out-of-range input (sigmoid < -4.0) | LUT hard-clamp to min output |
 
 #### NaN and Special Values Policy
@@ -1037,6 +1045,7 @@ fn is_canonical_nan(class: u8, sign: u8, mantissa: i128, exponent: i32) -> bool 
 ```
 
 **Negative Zero Handling:**
+
 - Equality comparison: `-0.0 == 0.0` returns `true`
 - Ordering: `-0.0 < 0.0` returns `false`
 - Hash: Both map to same hash value
@@ -1044,12 +1053,14 @@ fn is_canonical_nan(class: u8, sign: u8, mantissa: i128, exponent: i32) -> bool 
 - **Deserialization**: Any received encoding with sign=1 and class=Zero MUST be canonicalized to sign=0, or return `Err(InvalidEncoding)`
 
 > ⚠️ **CANONICALIZATION ON READ (SINGLE CANONICAL BEHAVIOR)**: During deserialization, all values MUST be canonicalized:
+>
 > 1. `-0.0` (sign=1, class=Zero) MUST be converted to `+0.0` (sign=0, class=Zero) — **this is NOT an error**
 > 2. Non-minimal exponents (DFP) MUST be normalized
 > 3. Trailing binary zeros (DQA) MUST be shifted out
-> Implementations that reject `-0.0` encodings will fail consensus.
+>    Implementations that reject `-0.0` encodings will fail consensus.
 
 > ⚠️ **Negative Zero Test Vector**:
+>
 > ```rust
 > #[test]
 > fn test_negative_zero_deserialization() {
@@ -1061,22 +1072,24 @@ fn is_canonical_nan(class: u8, sign: u8, mantissa: i128, exponent: i32) -> bool 
 >     assert_eq!(decoded.class, DfpClass::Zero);
 > }
 > ```
+>
 > Implementations that reject `-0.0` encodings will fail consensus.
 
 **NaN in Consensus:**
+
 - If any consensus-critical computation produces NaN, the transaction REVERTS
 - Storage/queries may return NaN (non-consensus paths only)
 
 **NaN Propagation Rules (Vector/Matrix):**
 
-| Operation | NaN Behavior |
-|----------|--------------|
-| `DVEC_ADD(a, b)` | If any element NaN → NaN, REVERT |
-| `DOT(a, b)` | If any element NaN → NaN, REVERT |
-| `MAT_MUL(A, B)` | If any element NaN → NaN, REVERT |
-| `relu(NaN)` | Returns NaN (REVERT in consensus) |
-| `sigmoid(NaN)` | Returns NaN (REVERT in consensus) |
-| `tanh(NaN)` | Returns NaN (REVERT in consensus) |
+| Operation        | NaN Behavior                      |
+| ---------------- | --------------------------------- |
+| `DVEC_ADD(a, b)` | If any element NaN → NaN, REVERT  |
+| `DOT(a, b)`      | If any element NaN → NaN, REVERT  |
+| `MAT_MUL(A, B)`  | If any element NaN → NaN, REVERT  |
+| `relu(NaN)`      | Returns NaN (REVERT in consensus) |
+| `sigmoid(NaN)`   | Returns NaN (REVERT in consensus) |
+| `tanh(NaN)`      | Returns NaN (REVERT in consensus) |
 
 > ⚠️ **CONSERVATIVE RULE**: **Any NaN in any consensus-critical path → full transaction REVERT**. This is the safest approach to prevent consensus divergence.
 
@@ -1086,17 +1099,17 @@ fn is_canonical_nan(class: u8, sign: u8, mantissa: i128, exponent: i32) -> bool 
 
 **⚠️ CRITICAL**: Out-of-range values use **hard clamp** (not polynomial), to avoid re-introducing bias.
 
-| Parameter | Value |
-| --------- | ----- |
-| Version | 1 (wire format includes version) |
-| Range | [-4.0, 4.0] |
-| Step size | 0.01 (801 entries including endpoints) |
-| Interpolation | Nearest neighbor only (linear is NOT consensus-safe) |
-| Out-of-range | **Hard clamp** to 0.0 or 1.0 (NOT polynomial) |
+| Parameter            | Value                                                                                      |
+| -------------------- | ------------------------------------------------------------------------------------------ |
+| Version              | 1 (wire format includes version)                                                           |
+| Range                | [-4.0, 4.0]                                                                                |
+| Step size            | 0.01 (801 entries including endpoints)                                                     |
+| Interpolation        | Nearest neighbor only (linear is NOT consensus-safe)                                       |
+| Out-of-range         | **Hard clamp** to 0.0 or 1.0 (NOT polynomial)                                              |
 | Canonical commitment | SHA256: `9069599354fec1628994a5c7ca7f09d186801a78508cb3bca112696158d3c0e6` (Poseidon2 TBD) |
-| Storage | 801 × 2 bytes = 1,602 bytes (small enough for genesis) |
+| Storage              | 801 × 2 bytes = 1,602 bytes (small enough for genesis)                                     |
 
-```rust
+````rust
 /// Canonical Sigmoid LUT v1
 /// - Range: [-4.0, 4.0], step: 0.01
 /// - Values: Q8.8 fixed-point (multiply by 256 to get actual value)
@@ -1303,7 +1316,7 @@ fn tanh_lookup(x_scaled: i32) -> i16 {
     let idx = (x_scaled + 400).clamp(0, 800) as usize;
     TANH_LUT_V1[idx as usize]
 }
-```
+````
 
 #### Canonical LUT Specification
 
@@ -1328,12 +1341,12 @@ struct CanonicalLUT {
 
 **Canonical LUT Registry:**
 
-| LUT_ID | Name | Version | Size | Domain | Output Scale | Hash |
-|--------|------|---------|------|--------|--------------|------|
-| 0x0001 | SIGMOID_V1 | 1 | 801 | [-4.0, 4.0] | Q8.8 | `9069599354fec1628994a5c7ca7f09d186801a78508cb3bca112696158d3c0e6` |
-| 0x0002 | TANH_V1 | 1 | 801 | [-4.0, 4.0] | Q8.8 signed | `7cc2ab92e901c133ab430d4e095c9fec109ab2aea8ae35f109ffae5a3cd9f60b` |
-| 0x0003 | SIGMOID_V2 | 2 | 1601 | [-8.0, 8.0] | Q8.8 | TBD (Phase 2) |
-| 0x0004 | TANH_V2 | 2 | 1601 | [-8.0, 8.0] | Q8.8 | TBD (Phase 2) |
+| LUT_ID | Name       | Version | Size | Domain      | Output Scale | Hash                                                               |
+| ------ | ---------- | ------- | ---- | ----------- | ------------ | ------------------------------------------------------------------ |
+| 0x0001 | SIGMOID_V1 | 1       | 801  | [-4.0, 4.0] | Q8.8         | `9069599354fec1628994a5c7ca7f09d186801a78508cb3bca112696158d3c0e6` |
+| 0x0002 | TANH_V1    | 1       | 801  | [-4.0, 4.0] | Q8.8 signed  | `7cc2ab92e901c133ab430d4e095c9fec109ab2aea8ae35f109ffae5a3cd9f60b` |
+| 0x0003 | SIGMOID_V2 | 2       | 1601 | [-8.0, 8.0] | Q8.8         | TBD (Phase 2)                                                      |
+| 0x0004 | TANH_V2    | 2       | 1601 | [-8.0, 8.0] | Q8.8         | TBD (Phase 2)                                                      |
 
 > ⚠️ **Note**: Final on-chain version will use **Poseidon2 Merkle root** instead of SHA256. Nodes MUST verify the LUT hash at genesis and after governance upgrades.
 
@@ -1372,6 +1385,7 @@ fn lut_lookup(lut: &CanonicalLUT, x: i32) -> i32 {
 4. **Version**: Wire format includes `lut_version: u8`
 
 > ⚠️ **LUT HASH CORRECTION MIGRATION PATH** (if bug found post-launch):
+>
 > - **Detection**: Consensus monitoring detects hash mismatch
 > - **Governance**: Emergency proposal with correct hash
 > - **Dual Acceptance**: Both old and new hash accepted during transition
@@ -1382,6 +1396,7 @@ fn lut_lookup(lut: &CanonicalLUT, x: i32) -> i32 {
 > ⚠️ **IMPLEMENTATION TIP**: The execution context must expose `active_lut_version`. Pass `lut_version` as a transaction context parameter rather than hardcoding `SIGMOID_LUT_V1` inside the function. This enables seamless future upgrades without code changes.
 
 **Why hard clamp over polynomial?**
+
 - Polynomial re-introduces the bias this LUT was designed to eliminate
 - Hard clamp is deterministic, simple, and ZK-friendly
 
@@ -1446,7 +1461,7 @@ No implicit conversions between types.
 
 > ⚠️ **REQUIREMENT**: All conversions are explicit. No implicit narrowing/widening.
 
-```rust
+````rust
 /// Conversion error types
 /// ⚠️ All fields are fixed-size for deterministic memory behavior in consensus VM
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -1574,11 +1589,12 @@ impl<const N: usize> DVecN<Dqa, N> {
         unimplemented!("to_dfp() - Phase 2 feature (DFP vectors not ZK-friendly)")
     }
 }
-```
+````
 
 ### Gas Model
 
 > ⚠️ **CRITICAL**: Gas formulas are O(N) for vectors, O(N³) for matrices.
+>
 > - **Max DVEC dimension**: 128 (gas limit)
 > - **Max DMAT dimension**: 8×8 (consensus), 64×64 (state access only)
 > - **Strassen's algorithm**: FORBIDDEN (non-deterministic)
@@ -1588,15 +1604,16 @@ impl<const N: usize> DVecN<Dqa, N> {
 
 > ⚠️ **CONTINGENCY**: In case of catastrophic consensus failure (e.g., LUT hash mismatch, catastrophic arithmetic bug), the VM MUST implement an emergency pause:
 >
-> | Trigger | Action | Recovery |
-> |---------|--------|----------|
-> | LUT hash mismatch at genesis | **HALT** - refuse to start | Manual fix required |
-> | Runtime TRAP storm (>50% txs) | **PAUSE** numeric ops | Governance vote to resume |
-> | Gas limit exceeded (100k+) | **REVERT** transaction | Reduce input size |
+> | Trigger                       | Action                     | Recovery                  |
+> | ----------------------------- | -------------------------- | ------------------------- |
+> | LUT hash mismatch at genesis  | **HALT** - refuse to start | Manual fix required       |
+> | Runtime TRAP storm (>50% txs) | **PAUSE** numeric ops      | Governance vote to resume |
+> | Gas limit exceeded (100k+)    | **REVERT** transaction     | Reduce input size         |
 >
 > **Implementation**: The VM should expose `numeric_pause()` and `numeric_resume()` management functions callable only by governance (not regular users).
 >
 > ⚠️ **GOVERNANCE REQUIREMENTS**:
+>
 > - Callable by: CipherOcto Governance Contract with 2/3 validator signature
 > - Timelock: 24 hours minimum between proposal and execution
 > - In-flight transactions: Complete current block, pause next block
@@ -1718,21 +1735,21 @@ fn calculate_mat_gas(m: usize, n: usize, k: usize, executable: bool) -> Result<u
 }
 ```
 
-| Operation | Gas Formula | Example (N=16) | Max Dimension |
-| --------- | ----------- |----------------| -------------|
-| INT_ADD | 1 | 1 | N/A |
-| DQA_ADD | 5 | 5 | N/A |
-| DQA_MUL | 8 | 8 | N/A |
-| DQA_DIV | 20 | 20 | N/A |
-| DFP_ADD | 8 | 8 | N/A |
-| DFP_MUL | 15 | 15 | N/A |
-| DFP_DIV | 35 | 35 | N/A |
-| SQRT | 480 | 480 | N/A |
-| DVEC_ADD | 5 × N | 80 | 64 |
-| DVEC_DOT | 8N + 5(N-1) | 203 | 64 |
-| DVEC_NORM | DOT + 480 | 683 | 64 |
-| DMAT_MUL | 8MNK + 5MN(K-1) | 8×4×4×4 + 5×4×4×3 = 752 | 8×8 |
-| DMAT_MUL | REJECT | - | >8×8 |
+| Operation | Gas Formula     | Example (N=16)          | Max Dimension |
+| --------- | --------------- | ----------------------- | ------------- |
+| INT_ADD   | 1               | 1                       | N/A           |
+| DQA_ADD   | 5               | 5                       | N/A           |
+| DQA_MUL   | 8               | 8                       | N/A           |
+| DQA_DIV   | 20              | 20                      | N/A           |
+| DFP_ADD   | 8               | 8                       | N/A           |
+| DFP_MUL   | 15              | 15                      | N/A           |
+| DFP_DIV   | 35              | 35                      | N/A           |
+| SQRT      | 480             | 480                     | N/A           |
+| DVEC_ADD  | 5 × N           | 80                      | 64            |
+| DVEC_DOT  | 8N + 5(N-1)     | 203                     | 64            |
+| DVEC_NORM | DOT + 480       | 683                     | 64            |
+| DMAT_MUL  | 8MNK + 5MN(K-1) | 8×4×4×4 + 5×4×4×3 = 752 | 8×8           |
+| DMAT_MUL  | REJECT          | -                       | >8×8          |
 
 ### Storage Encoding
 
@@ -1807,6 +1824,7 @@ const DFP_CANONICAL_NAN: (u8, u8, u8, i128, i32) = (1, DFP_CANONICAL_NAN_CLASS, 
 #### DVEC Memory Layout
 
 ```
+
 DVEC<N> Layout (row-major, contiguous):
 [elem_0][elem_1][elem_2]...[elem_{N-1}]
 
@@ -1815,11 +1833,13 @@ DVEC<N> Layout (row-major, contiguous):
 - Alignment: 4 bytes (i32 alignment)
 - Total size: N × sizeof(T) bytes
 - Index formula: elements[i] at offset (i × sizeof(T))
+
 ```
 
 #### DMAT Memory Layout
 
 ```
+
 DMAT<M,N> Layout (row-major, contiguous):
 [row_0: col_0, col_1, ..., col_{N-1}]
 [row_1: col_0, col_1, ..., col_{N-1}]
@@ -1831,6 +1851,7 @@ DMAT<M,N> Layout (row-major, contiguous):
 - Alignment: 4 bytes (i32 alignment)
 - Total size: M × N × sizeof(T) bytes
 - Index formula: elements[i × N + j] at offset ((i × N + j) × sizeof(T))
+
 ```
 
 > ⚠️ **ROW-MANDATORY**: All implementations MUST use row-major order. Column-major produces different memory layouts and will cause state divergence.
@@ -1840,36 +1861,40 @@ DMAT<M,N> Layout (row-major, contiguous):
 > ⚠️ **DO NOT use Vec<T>** — use `Box<[T]>` for deterministic fixed-size allocation.
 
 ```
+
 struct DVecEncoding {
-    version: u8,           // = 1
-    element_type: u8,      // 0=DQA, 1=DFP
-    dimension: u16,        // N
-    scale: u8,             // For DQA elements
-    lut_version: u8,       // LUT version used (for sigmoid/tanh outputs)
-    _reserved: [u8; 2],
-    elements: Box<[u8]>,  // Contiguous serialized elements (NOT Vec)
+version: u8, // = 1
+element_type: u8, // 0=DQA, 1=DFP
+dimension: u16, // N
+scale: u8, // For DQA elements
+lut_version: u8, // LUT version used (for sigmoid/tanh outputs)
+\_reserved: [u8; 2],
+elements: Box<[u8]>, // Contiguous serialized elements (NOT Vec)
 }
+
 ```
 
 #### DMAT encoding (for activation outputs, includes LUT version)
 
 ```
+
 struct DMatEncoding {
-    version: u8,           // = 1
-    element_type: u8,      // 0=DQA, 1=DFP
-    rows: u16,             // M
-    cols: u16,             // N
-    scale: u8,             // For DQA elements
-    lut_version: u8,       // LUT version used (for sigmoid/tanh outputs)
-    _reserved: [u8; 1],
-    elements: Box<[u8]>,  // Contiguous serialized elements (NOT Vec)
+version: u8, // = 1
+element_type: u8, // 0=DQA, 1=DFP
+rows: u16, // M
+cols: u16, // N
+scale: u8, // For DQA elements
+lut_version: u8, // LUT version used (for sigmoid/tanh outputs)
+\_reserved: [u8; 1],
+elements: Box<[u8]>, // Contiguous serialized elements (NOT Vec)
 }
 
 /// Encoding validation rules:
 /// 1. version must equal ENCODING_VERSION
-/// 2. All _reserved bytes must be zero
+/// 2. All \_reserved bytes must be zero
 /// 3. scale must be ≤ 18 for DQA
 /// 4. mantissa/exponent use big-endian byte order
+
 ```
 
 ## Rationale
@@ -1908,19 +1933,21 @@ Each workload has different requirements:
 This crate serves as the canonical reference for all numeric operations:
 
 ```
-octo_determin/
+
+determin/
 ├── src/
-│   ├── dqa.rs        # DQA canonical algorithms
-│   ├── dfp.rs        # DFP canonical algorithms
-│   ├── decimal.rs    # DECIMAL canonical algorithms
-│   ├── dvec.rs       # DVEC operations
-│   ├── dmat.rs       # DMAT operations
-│   ├── lut.rs        # LUT lookup
-│   └── lib.rs
+│ ├── dqa.rs # DQA canonical algorithms
+│ ├── dfp.rs # DFP canonical algorithms
+│ ├── decimal.rs # DECIMAL canonical algorithms
+│ ├── dvec.rs # DVEC operations
+│ ├── dmat.rs # DMAT operations
+│ ├── lut.rs # LUT lookup
+│ └── lib.rs
 ├── tests/
-│   └── vectors/      # Deterministic test vectors
+│ └── vectors/ # Deterministic test vectors
 └── Cargo.toml
-```
+
+````
 
 **Test vectors MUST include:**
 
@@ -1969,7 +1996,7 @@ fn test_sqrt_vector() {
     let result = sqrt_q8_8(input);
     assert_eq!(result, 512);  // 2.0 in Q8.8
 }
-```
+````
 
 **Cross-platform determinism tests:**
 
@@ -2069,19 +2096,19 @@ graph LR
 
 ### Attack Vectors and Mitigations
 
-| Attack Vector | Description | Mitigation |
-|--------------|-------------|------------|
-| **Gas Exhaustion** | Large matrix operations consume excessive gas | Hard dimension caps (8×8 exec), gas limits per op |
-| **Stack Overflow** | Deep recursion or large arrays crash nodes | Heap allocation (Box<[T]>), compile-time assertions |
-| **Precision Manipulation** | Adversary exploits rounding to manipulate results | Explicit rounding modes, no implicit conversions |
-| **NaN Injection** | NaN values propagate through consensus | NaN is FORBIDDEN in consensus execution |
-| **Infinity Injection** | Infinity values cause consensus divergence | Infinity is FORBIDDEN in consensus execution |
-| **Division by Zero** | Division by zero causes trap/inconsistent results | Division by zero MUST trap |
-| **Timing Attacks** | Variable-time operations leak information | Fixed iteration order, no data-dependent branches |
-| **Side-Channel Leakage** | Data-dependent branches in arithmetic leak secrets | ALL operators MUST execute in constant time for ZK |
-| **Vector Normalization Attack** | Zero-vector norm causes division by zero | Zero vector input to NORM/COSINE MUST trap |
-| **LUT Poisoning** | Compromised LUT produces wrong activation outputs | LUT values must be cryptographically hashed and verified |
-| **LUT Poisoning Prevention** | LUT generation script produces wrong values | The LUT generation script MUST be included in the repository and verified to produce the exact canonical hash. Any deviation in the generated LUT constitutes a consensus failure. |
+| Attack Vector                   | Description                                        | Mitigation                                                                                                                                                                         |
+| ------------------------------- | -------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Gas Exhaustion**              | Large matrix operations consume excessive gas      | Hard dimension caps (8×8 exec), gas limits per op                                                                                                                                  |
+| **Stack Overflow**              | Deep recursion or large arrays crash nodes         | Heap allocation (Box<[T]>), compile-time assertions                                                                                                                                |
+| **Precision Manipulation**      | Adversary exploits rounding to manipulate results  | Explicit rounding modes, no implicit conversions                                                                                                                                   |
+| **NaN Injection**               | NaN values propagate through consensus             | NaN is FORBIDDEN in consensus execution                                                                                                                                            |
+| **Infinity Injection**          | Infinity values cause consensus divergence         | Infinity is FORBIDDEN in consensus execution                                                                                                                                       |
+| **Division by Zero**            | Division by zero causes trap/inconsistent results  | Division by zero MUST trap                                                                                                                                                         |
+| **Timing Attacks**              | Variable-time operations leak information          | Fixed iteration order, no data-dependent branches                                                                                                                                  |
+| **Side-Channel Leakage**        | Data-dependent branches in arithmetic leak secrets | ALL operators MUST execute in constant time for ZK                                                                                                                                 |
+| **Vector Normalization Attack** | Zero-vector norm causes division by zero           | Zero vector input to NORM/COSINE MUST trap                                                                                                                                         |
+| **LUT Poisoning**               | Compromised LUT produces wrong activation outputs  | LUT values must be cryptographically hashed and verified                                                                                                                           |
+| **LUT Poisoning Prevention**    | LUT generation script produces wrong values        | The LUT generation script MUST be included in the repository and verified to produce the exact canonical hash. Any deviation in the generated LUT constitutes a consensus failure. |
 
 > ⚠️ **BRANCH-FREE REQUIREMENT**: Arithmetic operators MUST NOT branch on secret data (data-dependent branches are FORBIDDEN).
 >
@@ -2097,16 +2124,16 @@ graph LR
 
 All numeric operations MUST handle these failure cases deterministically:
 
-| Failure Case | Behavior | Consensus Impact |
-|-------------|----------|------------------|
-| Overflow | TRAP | Transaction reverts, gas consumed |
-| Underflow | TRAP | Transaction reverts, gas consumed |
-| Division by Zero | TRAP | Transaction reverts, gas consumed |
-| NaN Output | TRAP | Transaction reverts, gas consumed |
-| Infinity Output | TRAP | Transaction reverts, gas consumed |
-| Zero Vector Norm | TRAP | Transaction reverts, gas consumed |
-| Dimension Exceeded | REJECT | Transaction rejected pre-execution |
-| Gas Exceeded | TRAP | Transaction reverts, partial gas consumed |
+| Failure Case       | Behavior | Consensus Impact                          |
+| ------------------ | -------- | ----------------------------------------- |
+| Overflow           | TRAP     | Transaction reverts, gas consumed         |
+| Underflow          | TRAP     | Transaction reverts, gas consumed         |
+| Division by Zero   | TRAP     | Transaction reverts, gas consumed         |
+| NaN Output         | TRAP     | Transaction reverts, gas consumed         |
+| Infinity Output    | TRAP     | Transaction reverts, gas consumed         |
+| Zero Vector Norm   | TRAP     | Transaction reverts, gas consumed         |
+| Dimension Exceeded | REJECT   | Transaction rejected pre-execution        |
+| Gas Exceeded       | TRAP     | Transaction reverts, partial gas consumed |
 
 ### DoS Prevention
 
@@ -2149,13 +2176,13 @@ fn test_overflow_traps() {
 
 ### Test Categories
 
-| Category | Description | Tools |
-|----------|-------------|-------|
-| **Unit Tests** | Per-operation correctness | Standard Rust tests |
-| **Property Tests** | Invariant verification | `proptest` or `quickcheck` |
-| **Determinism Tests** | Cross-node consistency | Fuzzing with multiple runtimes |
-| **Benchmark Tests** | Performance regression detection | `criterion` crate |
-| **Fuzz Tests** | Edge case discovery | `cargo-fuzz` |
+| Category              | Description                      | Tools                          |
+| --------------------- | -------------------------------- | ------------------------------ |
+| **Unit Tests**        | Per-operation correctness        | Standard Rust tests            |
+| **Property Tests**    | Invariant verification           | `proptest` or `quickcheck`     |
+| **Determinism Tests** | Cross-node consistency           | Fuzzing with multiple runtimes |
+| **Benchmark Tests**   | Performance regression detection | `criterion` crate              |
+| **Fuzz Tests**        | Edge case discovery              | `cargo-fuzz`                   |
 
 #### Fuzzing Harness Example
 
@@ -2253,24 +2280,25 @@ struct DfpEncoding {
 
 ### Migration Rules
 
-| Version Change | Migration Strategy |
-|---------------|-------------------|
-| v1 → v2 (same type) | Full backward compatibility. Old values remain valid. |
-| v1 → v2 (new scale) | Explicit conversion required; no implicit widening. |
-| DFP → DQA migration | Not automatic; requires explicit `NumericCast`. |
-| LUT upgrade | Grace period: 1 epoch. Old LUT valid for reading; new required for writing. |
+| Version Change      | Migration Strategy                                                          |
+| ------------------- | --------------------------------------------------------------------------- |
+| v1 → v2 (same type) | Full backward compatibility. Old values remain valid.                       |
+| v1 → v2 (new scale) | Explicit conversion required; no implicit widening.                         |
+| DFP → DQA migration | Not automatic; requires explicit `NumericCast`.                             |
+| LUT upgrade         | Grace period: 1 epoch. Old LUT valid for reading; new required for writing. |
 
 ### Future Numeric Formats
 
 This RFC anticipates future quantized formats:
 
-| Future Format | Status | Migration |
-|--------------|--------|-----------|
+| Future Format        | Status   | Migration  |
+| -------------------- | -------- | ---------- |
 | MX (mixed precision) | Research | Future RFC |
-| Block FP | Research | Future RFC |
-| NF4 | Research | Future RFC |
+| Block FP             | Research | Future RFC |
+| NF4                  | Research | Future RFC |
 
 **Migration Principles:**
+
 1. **Never break existing stored values** — always provide conversion path
 2. **Explicit over implicit** — no silent conversions
 3. **Slow governance** — LUT/type upgrades require 2/3 supermajority
@@ -2510,6 +2538,7 @@ WHERE poseidon(w.weights || l.intermediate_hash) = l.commitment;
 ```
 
 This pattern:
+
 1. Stores intermediate results with cryptographic commitment
 2. Each transaction stays within gas limit
 3. Verification ensures layer N only runs if layer N-1 output matches commitment

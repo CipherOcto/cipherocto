@@ -43,3 +43,7 @@ rand = "0.8"
 [lib]
 name = "octo_determin"
 path = "src/lib.rs"
+
+[[bin]]
+name = "generate_lut"
+path = "bin/generate_lut.rs"

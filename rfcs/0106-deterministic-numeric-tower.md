@@ -2,7 +2,7 @@
 
 ## Status
 
-**Version:** v20 (2026-03-09) — Production Review Round 20
+**Version:** v21 (2026-03-09) — Production Review Round 21
 **Status:** Experimental
 
 ## Production Limitations
@@ -496,12 +496,12 @@ fn mat_mul<const M: usize, const K: usize, const N: usize>(
 
 #### Rounding Rules
 
-| Mode     | Negative Numbers            | Positive Numbers            | Tie Break     |
-| -------- | --------------------------- | --------------------------- | ------------- |
-| Nearest  | Round away from zero at tie | Round away from zero at tie | Round to even |
-| Truncate | Round toward zero           | Round toward zero           | N/A           |
-| Up       | Round toward +∞             | Round toward +∞             | N/A           |
-| Down     | Round toward -∞             | Round toward -∞             | N/A           |
+| Mode     | Negative Numbers | Positive Numbers | Tie Break |
+| -------- | --------------- | --------------- | --------- |
+| Nearest  | Round to nearest | Round to nearest | Round to even |
+| Truncate | Round toward zero | Round toward zero | N/A |
+| Up       | Round toward +∞ | Round toward +∞ | N/A |
+| Down     | Round toward -∞ | Round toward -∞ | N/A |
 
 > ⚠️ **TIE BREAKING**: "Round to even" means: if exactly halfway, round to the nearest even number (0, 2, 4...). This is the IEEE 754 default and reduces systematic bias.
 
@@ -1647,20 +1647,20 @@ const GAS_DECIMAL_ADD: u64 = 6;
 const GAS_DECIMAL_MUL: u64 = 12;
 const GAS_DECIMAL_DIV: u64 = 25;
 const GAS_SQRT: u64 = 480;  // Newton-Raphson 16 iterations
-                            // Full cost recovery: 16 × (div + add + shift)
+                            // Derivation: 16 × (GAS_DQA_DIV + GAS_DQA_ADD + 1 shift)
+                            // = 16 × (20 + 5 + 1) = 416, rounded to 480 for safety margin
 
 /// Vector operation gas costs (per operation)
 const GAS_VEC_ADD: u64 = 5;    // Per element
 const GAS_VEC_MUL: u64 = 8;    // Per element (element-wise)
 const GAS_VEC_DOT: u64 = 10;   // Per element (includes multiply + add)
-const GAS_SQRT: u64 = 480; // SQRT component only (DOT is calculated separately)
 const GAS_VEC_DIST: u64 = 400; // Squared distance + SQRT
 const GAS_VEC_COSINE: u64 = 750; // 2×NORM + DIV
 
 /// Matrix operation gas costs (per operation)
 const GAS_MAT_ADD: u64 = 5;    // Per element
 const GAS_MAT_MUL: u64 = 12;  // Per element (element-wise)
-const GAS_MAT_DOT: u64 = 15;  // Per (M×N×K) multiply-accumulate
+const GAS_MAT_DOT: u64 = 13;  // Per (M×N×K) multiply-accumulate: 8 (mul) + 5 (add)
 
 /// Activation function gas costs
 const GAS_RELU: u64 = 2;      // Per element: comparison + select
@@ -1681,7 +1681,7 @@ const GAS_TANH_LUT: u64 = 4;     // Per element: LUT lookup
 /// | DVEC distance (N)  | 400  | 2×N mul + add + SQRT      |
 /// | DVEC cosine (N)     | 750  | 2×NORM + DIV              |
 /// | DMAT add (M×N)      | 5MN  | M×N × GAS_MAT_ADD         |
-/// | DMAT mul (M×N×K)    | 15MNK| M×N×K × GAS_MAT_DOT       |
+/// | DMAT mul (M×N×K)    | 13MNK| M×N×K × (8 mul + 5 add) |
 /// | ReLU (per element)  | 2    | comparison + select        |
 /// | Sigmoid LUT          | 4    | LUT lookup                 |
 /// | Tanh LUT             | 4    | LUT lookup                 |

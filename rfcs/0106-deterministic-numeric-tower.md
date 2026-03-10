@@ -2,7 +2,7 @@
 
 ## Status
 
-**Version:** v21 (2026-03-09) — Production Review Round 21
+**Version:** v22 (2026-03-09) — Production Review Round 22
 **Status:** Experimental
 
 ## Production Limitations
@@ -308,6 +308,8 @@ REQUIRED: Sequential reduction
 - Must accumulate in strict order: i=0, then i=1, then i=2...
 - No SIMD horizontal operations
 - No reduction trees
+
+> ⚠️ **SIMD CLARIFICATION**: SIMD is ALLOWED for element-wise independent operations (e.g., vector addition, element-wise multiplication). SIMD is FORBIDDEN only for horizontal reductions (dot product, sum) where lane results must be combined. This allows vectorized implementations while maintaining determinism.
 
 **Reason:** Different parallelization strategies produce different rounding intermediate results → consensus divergence.
 
@@ -673,6 +675,10 @@ pub trait DeterministicScalar:
 /// Heterogeneous per-element scales are NOT supported in v1. This simplifies operations
 /// and ensures deterministic results. Future versions may add heterogeneous scales as
 /// an optional feature.
+///
+/// ⚠️ **SCALE MISMATCH RULE**: When combining DVECs (e.g., addition, dot product), if
+/// element scales differ → TRAP (revert transaction). Do NOT auto-rescale as this
+/// introduces nondeterministic rounding order.
 pub struct DVecN<T, const N: usize>
 where
     [(); N]: Sized,  // Compile-time check: N must be const
@@ -792,6 +798,8 @@ DISTANCE(a, b):
 #### Deterministic SQRT Algorithm
 
 > ⚠️ **REQUIRED**: SQRT must be deterministic across all nodes. Use Newton-Raphson with fixed iteration count.
+>
+> ⚠️ **DIVISION ROUNDING**: All integer divisions in Newton-Raphson MUST use **truncation toward zero**. This ensures identical results across implementations. Compiler-optimized division may use different rounding - must be explicitly specified.
 
 ```rust
 /// Deterministic square root using Newton-Raphson
@@ -1052,8 +1060,12 @@ fn is_canonical_nan(class: u8, sign: u8, mantissa: i128, exponent: i32) -> bool 
 - **Serialization**: Any zero MUST be encoded with sign=0 (positive)
 - **Deserialization**: Any received encoding with sign=1 and class=Zero MUST be canonicalized to sign=0, or return `Err(InvalidEncoding)`
 
-> ⚠️ **CANONICALIZATION ON READ (SINGLE CANONICAL BEHAVIOR)**: During deserialization, all values MUST be canonicalized:
+> ⚠️ **CANONICALIZATION TIMING (CRITICAL)**: Canonicalization MUST occur at TWO points:
+> 1. **After EVERY arithmetic operation** - results must be canonicalized before use
+> 2. **During deserialization** - input values must be canonicalized on read
+> This prevents divergent encodings between implementations.
 >
+> ⚠️ **CANONICALIZATION ON READ (SINGLE CANONICAL BEHAVIOR)**: During deserialization, all values MUST be canonicalized:
 > 1. `-0.0` (sign=1, class=Zero) MUST be converted to `+0.0` (sign=0, class=Zero) — **this is NOT an error**
 > 2. Non-minimal exponents (DFP) MUST be normalized
 > 3. Trailing binary zeros (DQA) MUST be shifted out

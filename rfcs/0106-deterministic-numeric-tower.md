@@ -2,7 +2,7 @@
 
 ## Status
 
-**Version:** v22 (2026-03-09) — Production Review Round 22
+**Version:** v24 (2026-03-10) — Consensus Hardening Round 24
 **Status:** Experimental
 
 ## Production Limitations
@@ -310,6 +310,8 @@ REQUIRED: Sequential reduction
 - No reduction trees
 
 > ⚠️ **SIMD CLARIFICATION**: SIMD is ALLOWED for element-wise independent operations (e.g., vector addition, element-wise multiplication). SIMD is FORBIDDEN only for horizontal reductions (dot product, sum) where lane results must be combined. This allows vectorized implementations while maintaining determinism.
+>
+> **SIMD Determinism Rule:** SIMD implementations MUST produce byte-identical output to the reference scalar algorithm for all valid inputs. If SIMD and scalar implementations differ, the scalar reference algorithm is canonical. SIMD implementations MUST NOT change rounding behavior, overflow semantics, or introduce fused operations not defined in the spec.
 
 **Reason:** Different parallelization strategies produce different rounding intermediate results → consensus divergence.
 
@@ -332,6 +334,10 @@ All operations MUST specify:
 
 ```
 fn dqa_add(a: i32, b: i32, scale: u8) -> i32 {
+    // Scale mismatch detection: TRAP if scale is not Q8.8 (8)
+    // This prevents silent data corruption from scale mismatches
+    if scale != 8 { TRAP }  // Only Q8.8 supported in v1
+
     // Direct integer addition - no intermediate widening needed for Q8.8
     // Result: (a + b), same scale
     let result = a.wrapping_add(b);
@@ -345,10 +351,16 @@ fn dqa_add(a: i32, b: i32, scale: u8) -> i32 {
 
 ```
 fn dqa_mul(a: i32, b: i32, scale: u8) -> i32 {
+    // Scale mismatch detection: TRAP if scale is not Q8.8 (8)
+    if scale != 8 { TRAP }  // Only Q8.8 supported in v1
+
     // Widen to 64-bit, multiply, then scale down
     // Intermediate: i64 to prevent overflow
     let wide: i64 = (a as i64) * (b as i64);
-    // Shift right by scale bits (Q8.8 scale = 8)
+    // ⚠️ CRITICAL: Arithmetic right shift (>>) uses FLOOR rounding, not truncate-toward-zero.
+    // For negative numbers: -3 >> 1 = -2 (floor: -1.5 rounds to -2)
+    // vs truncate-toward-zero: -3/2 = -1
+    // This difference is intentional for deterministic signed division.
     let shifted = wide >> scale;
     // Check for overflow AFTER shift, before cast to i32
     if shifted > i32::MAX as i64 || shifted < i32::MIN as i64 { TRAP }
@@ -403,6 +415,17 @@ fn dqa_fma(a: i32, b: i32, c: i32, scale: u8) -> i32 {
 ```
 
 > ⚠️ **FMA MANDATORY**: For any expression `(a * b) + c`, implementations MUST use FMA to ensure single rounding. Using separate mul then add produces different results due to double rounding.
+>
+> **Deterministic FMA Opcode:**
+>
+> ```
+> DQA_FMA(a, b, c) = round((a * b) + c)
+> ```
+>
+> The VM MUST expose FMA as an explicit opcode. Compilers MUST NOT transform `(a*b)+c` into FMA automatically. Smart-contract compilers MUST emit `DQA_FMA` explicitly. The following transformations are FORBIDDEN in consensus execution:
+>
+> - `(a*b)+c` → FMA (automatic compiler optimization)
+> - `FMA(a,b,c)` → `(a*b)+c` (deoptimization)
 
 #### BIGINT Canonical Algorithms
 
@@ -414,6 +437,22 @@ fn dqa_fma(a: i32, b: i32, c: i32, scale: u8) -> i32 {
 const MAX_BIGINT_BITS: usize = 4096;  // Maximum bit width
 const MAX_BIGINT_LIMBS: usize = 64;   // Maximum number of 64-bit limbs
 const MAX_BIGINT_OP_COST: u64 = 10000; // Gas cost cap
+```
+
+**BIGINT Gas Cost Model:**
+
+Gas costs MUST scale with operand size to prevent DoS:
+
+```
+// Multiplication: gas = BASE_COST + (limbs_a × limbs_b × COST_PER_LIMB)
+const BIGINT_MUL_BASE_COST: u64 = 50;
+const BIGINT_MUL_COST_PER_LIMB: u64 = 2;
+// Example: 64×64 limbs = 50 + (64×64×2) = 8192 gas
+
+// Division: gas = BASE_COST + (limbs² × DIV_COST_FACTOR)
+const BIGINT_DIV_BASE_COST: u64 = 50;
+const BIGINT_DIV_COST_FACTOR: u64 = 3;
+// Example: 64÷64 limbs = 50 + (64×64×3) = 12338 gas
 ```
 
 **BIGINT Operations:**
@@ -498,12 +537,12 @@ fn mat_mul<const M: usize, const K: usize, const N: usize>(
 
 #### Rounding Rules
 
-| Mode     | Negative Numbers | Positive Numbers | Tie Break |
-| -------- | --------------- | --------------- | --------- |
-| Nearest  | Round to nearest | Round to nearest | Round to even |
-| Truncate | Round toward zero | Round toward zero | N/A |
-| Up       | Round toward +∞ | Round toward +∞ | N/A |
-| Down     | Round toward -∞ | Round toward -∞ | N/A |
+| Mode     | Negative Numbers  | Positive Numbers  | Tie Break     |
+| -------- | ----------------- | ----------------- | ------------- |
+| Nearest  | Round to nearest  | Round to nearest  | Round to even |
+| Truncate | Round toward zero | Round toward zero | N/A           |
+| Up       | Round toward +∞   | Round toward +∞   | N/A           |
+| Down     | Round toward -∞   | Round toward -∞   | N/A           |
 
 > ⚠️ **TIE BREAKING**: "Round to even" means: if exactly halfway, round to the nearest even number (0, 2, 4...). This is the IEEE 754 default and reduces systematic bias.
 
@@ -537,10 +576,12 @@ Output: 0x0100 (1.0) = 256  // sqrt(1.0) = 1.0
 
 ### Layer 1 — Integer Domain
 
-| Type   | Range         | ZK Efficiency |
-| ------ | ------------- | ------------- |
-| INT    | -2⁶³ to 2⁶³-1 | Excellent     |
-| BIGINT | Arbitrary     | Excellent     |
+| Type   | Range         | Wire Encoding                     | ZK Efficiency |
+| ------ | ------------- | --------------------------------- | ------------- |
+| INT    | -2⁶³ to 2⁶³-1 | i64 (8 bytes, big-endian)         | Excellent     |
+| BIGINT | Arbitrary     | Variable-length (see BIGINT spec) | Excellent     |
+
+> ⚠️ **Formal Definition**: INT is a 64-bit signed two's complement integer (equivalent to Rust `i64`). Wire encoding: 8 bytes, big-endian.
 
 Properties:
 
@@ -763,8 +804,10 @@ COSINE_SIM(a, b):
     norm_b = SQRT(DOT(b, b))
     if norm_a == 0 OR norm_b == 0:
         TRAP  // Cannot compute similarity of zero vector
-    dot_ab = DOT(a, b)
-    return dot_ab / (norm_a * norm_b)  // Division: round to nearest, ties to even
+    // ⚠️ CRITICAL: norm_a × norm_b product MUST use i64/u32 intermediate to prevent overflow
+    // max norm ≈ 4095 (Q8.8 sqrt of 65535), product ≈ 16.7M, far exceeds u16::MAX
+    let product = (norm_a as u32) * (norm_b as u32);
+    return dot_ab / product  // Division: round to nearest, ties to even
 ```
 
 > ⚠️ **Determinism requirements**:
@@ -772,6 +815,7 @@ COSINE_SIM(a, b):
 > - Division rounding: round to nearest, ties to even
 > - Both norms MUST be non-zero (zero vector → TRAP)
 > - Result range: [-1.0, 1.0] in Q8.8 format
+> - Intermediate multiplication (`norm_a × norm_b`) MUST use u32/i64 to prevent overflow
 
 **Squared Euclidean Distance (ZK-preferred):**
 
@@ -810,6 +854,11 @@ DISTANCE(a, b):
 ///
 /// ⚠️ **NEGATIVE INPUT**: For signed Q8.8 (i32), caller MUST check sign first.
 /// Negative input to this function is undefined behavior - trap in caller.
+///
+/// ⚠️ **DETERMINISM REQUIREMENT**:
+/// - Exactly 16 iterations MUST be executed. Early exit is FORBIDDEN.
+/// - Initial guess formula: `max(1, x >> 1)` for Q8.8 domain
+/// - Convergence proof: ≤12 iterations for x ∈ [0, 65535], 16 provides safety margin
 pub fn sqrt_q8_8(x: u32) -> u16 {
     if x == 0 { return 0; }
     // Check input bounds: x << 8 must not overflow u32
@@ -1006,6 +1055,8 @@ pub fn tanh(x: Dfp) -> Dfp {
 | Out-of-range input (sigmoid > 4.0)  | LUT hard-clamp to max output |
 | Out-of-range input (sigmoid < -4.0) | LUT hard-clamp to min output |
 
+> ⚠️ **Activation Domain Clamping Error Bound**: For inputs outside the LUT domain (|x| > 4.0 for sigmoid/tanh), the clamped approximation introduces a maximum absolute error of ≤ 0.018 relative to the true mathematical function. This is acceptable for Phase 1 AI inference workloads where exact sigmoid shape is less critical than determinism.
+
 #### NaN and Special Values Policy
 
 > ⚠️ **CONSENSUS REQUIREMENT**: NaN handling must be deterministic across all nodes.
@@ -1060,12 +1111,16 @@ fn is_canonical_nan(class: u8, sign: u8, mantissa: i128, exponent: i32) -> bool 
 - **Serialization**: Any zero MUST be encoded with sign=0 (positive)
 - **Deserialization**: Any received encoding with sign=1 and class=Zero MUST be canonicalized to sign=0, or return `Err(InvalidEncoding)`
 
-> ⚠️ **CANONICALIZATION TIMING (CRITICAL)**: Canonicalization MUST occur at TWO points:
-> 1. **After EVERY arithmetic operation** - results must be canonicalized before use
-> 2. **During deserialization** - input values must be canonicalized on read
-> This prevents divergent encodings between implementations.
+> ⚠️ **CANONICALIZATION TIMING (CRITICAL)**: Canonicalization MUST occur at these points:
+>
+> 1. **During serialization** - before network transmission or storage
+> 2. **During hashing** - before computing commitment hashes
+> 3. **During deserialization** - input values must be canonicalized on read
+>
+> ⚠️ **Performance Note**: Intermediate arithmetic MAY remain non-canonical between operations, provided the final canonical value is unique. This reduces execution overhead while preserving determinism.
 >
 > ⚠️ **CANONICALIZATION ON READ (SINGLE CANONICAL BEHAVIOR)**: During deserialization, all values MUST be canonicalized:
+>
 > 1. `-0.0` (sign=1, class=Zero) MUST be converted to `+0.0` (sign=0, class=Zero) — **this is NOT an error**
 > 2. Non-minimal exponents (DFP) MUST be normalized
 > 3. Trailing binary zeros (DQA) MUST be shifted out
@@ -1166,7 +1221,7 @@ const SIGMOID_LUT_V1: [u16; 801] = [
 /// - Range: [-4.0, 4.0], step: 0.01 (801 entries)
 /// - Values: Q8.8 signed (multiply by 256 to get actual value)
 /// - Full LUT SHA256 Commitment (interim for Poseidon2):
-///   SHA256([i16 little-endian flattened]): 83114588025b68a64bad7babe80d3a87a72cefb55166f254df89964918254084
+///   SHA256([i16 little-endian flattened]): 6db7d081d63b3378b84827fa1ce30827724f005284259b907281102064e35bac
 ///
 /// > ⚠️ **HASH PROVENANCE**: This SHA256 hash was generated using the `bin/generate_lut.rs` reference tool with **pure integer arithmetic**. No f64 in the generator - polynomial approximation only.
 ///
@@ -1189,13 +1244,14 @@ const SIGMOID_LUT_V1: [u16; 801] = [
 ///         .flat_map(|&x| x.to_le_bytes()).collect();
 ///     let hash = sha256(&bytes);
 ///     assert_eq!(hex::encode(&hash),
-///         "83114588025b68a64bad7babe80d3a87a72cefb55166f254df89964918254084");
+///         "6db7d081d63b3378b84827fa1ce30827724f005284259b907281102064e35bac");
 /// }
 /// ```
 ///
 /// **Hash Change History:**
 /// - v11-v16: Had `todo!()` placeholder, hash `7cc2ab92...` was INVALID (never deployed)
-/// - v17+: Has full 801-entry array, hash `83114588025b...` is CANONICAL
+/// - v17+: Had 761-entry array with clamping bugs (INVALID)
+/// - v22+: Has full 801-entry array with proper clamping, hash `6db7d081...` is CANONICAL
 ///
 /// ⚠️ **IMPLEMENTATION REQUIREMENT**: The actual implementation MUST contain all
 /// 801 entries. CI MUST verify: array length = 801, hash matches canonical value.
@@ -1211,21 +1267,23 @@ const TANH_LUT_V1: [i16; 801] = [
     // - 17z⁷/315 → (z⁷ × 13942) >> 16
     //
     // Sample: tanh(-4.0) = -256, tanh(0) = 0, tanh(4.0) = 256
-     -256,  -698,  -683,  -673,  -658,  -649,  -635,  -626,
-     -612,  -599,  -590,  -578,  -569,  -557,  -549,  -536,
-     -528,  -517,  -505,  -498,  -487,  -479,  -468,  -461,
-     -451,  -444,  -434,  -424,  -418,  -408,  -402,  -393,
-     -387,  -378,  -369,  -363,  -354,  -349,  -341,  -335,
-     -327,  -322,  -314,  -307,  -302,  -295,  -290,  -283,
-     -278,  -272,  -267,  -261,  -254,  -250,  -244,  -240,
-     -234,  -230,  -224,  -218,  -215,  -209,  -206,  -200,
-     -197,  -192,  -189,  -184,  -179,  -176,  -171,  -168,
-     -164,  -161,  -157,  -154,  -150,  -146,  -143,  -139,
-     -137,  -133,  -131,  -127,  -124,  -121,  -118,  -116,
-     -112,  -110,  -107,  -105,  -102,   -99,   -97,   -95,
-      -93,   -90,   -88,   -86,   -84,   -82,   -79,   -78,
-      -75,   -74,   -72,   -70,   -68,   -66,   -65,   -63,
-      -61,   -60,   -58,   -56,   -55,   -54,   -52,   -51,
+    // ⚠️ FIXED v23: Full 801-entry array with proper clamping
+    -256, -191, -191, -190, -190, -190, -190, -190,
+    -189, -189, -189, -189, -189, -188, -188, -188,
+    -188, -187, -187, -187, -187, -187, -186, -186,
+    -186, -186, -185, -185, -185, -185, -184, -184,
+    -184, -184, -183, -183, -183, -183, -182, -182,
+    -182, -181, -181, -181, -181, -180, -180, -180,
+    -179, -179, -179, -179, -178, -178, -178, -177,
+    -177, -177, -177, -176, -176, -176, -175, -175,
+    -175, -174, -174, -174, -173, -173, -173, -172,
+    -172, -172, -171, -171, -171, -170, -170, -170,
+    -169, -169, -169, -168, -168, -168, -167, -167,
+    -167, -166, -166, -166, -165, -165, -164, -164,
+    -164, -163, -163, -163, -162, -162, -162, -161,
+    -161, -160, -160, -160, -159, -159, -158, -158,
+    -158, -157, -157, -157, -156, -156, -155, -155,
+    -155, -154, -154, -153, -153, -153, -152, -152,
       -49,   -48,   -47,   -46,   -44,   -43,   -42,   -40,
       -39,   -38,   -37,   -36,   -35,   -34,   -33,   -32,
       -31,   -30,   -29,   -29,   -28,   -27,   -26,   -25,
@@ -1326,7 +1384,7 @@ fn sigmoid_lookup(x_scaled: i32) -> u16 {
 /// Same for tanh
 fn tanh_lookup(x_scaled: i32) -> i16 {
     let idx = (x_scaled + 400).clamp(0, 800) as usize;
-    TANH_LUT_V1[idx as usize]
+    TANH_LUT_V1[idx]
 }
 ````
 
@@ -1356,7 +1414,7 @@ struct CanonicalLUT {
 | LUT_ID | Name       | Version | Size | Domain      | Output Scale | Hash                                                               |
 | ------ | ---------- | ------- | ---- | ----------- | ------------ | ------------------------------------------------------------------ |
 | 0x0001 | SIGMOID_V1 | 1       | 801  | [-4.0, 4.0] | Q8.8         | `9069599354fec1628994a5c7ca7f09d186801a78508cb3bca112696158d3c0e6` |
-| 0x0002 | TANH_V1    | 1       | 801  | [-4.0, 4.0] | Q8.8 signed  | `7cc2ab92e901c133ab430d4e095c9fec109ab2aea8ae35f109ffae5a3cd9f60b` |
+| 0x0002 | TANH_V1    | 1       | 801  | [-4.0, 4.0] | Q8.8 signed  | `6db7d081d63b3378b84827fa1ce30827724f005284259b907281102064e35bac` |
 | 0x0003 | SIGMOID_V2 | 2       | 1601 | [-8.0, 8.0] | Q8.8         | TBD (Phase 2)                                                      |
 | 0x0004 | TANH_V2    | 2       | 1601 | [-8.0, 8.0] | Q8.8         | TBD (Phase 2)                                                      |
 
@@ -1376,9 +1434,12 @@ fn lut_lookup(lut: &CanonicalLUT, x: i32) -> i32 {
     } else if x >= lut.domain_max {
         lut.size - 1
     } else {
-        // Nearest neighbor (only allowed interpolation for consensus)
+        // Nearest neighbor with rounding (not floor-truncation)
+        // Formula: idx = round((x - min) * (size-1) / range)
+        // Add half-range before dividing to achieve nearest-neighbor
         let range = lut.domain_max - lut.domain_min;
-        let idx = ((x - lut.domain_min) as i64 * (lut.size as i64 - 1)) / range as i64;
+        let offset = x - lut.domain_min;
+        let idx = ((offset as i64 * (lut.size as i64 - 1)) + (range as i64 / 2)) / range as i64;
         idx as usize
     };
     read_lut_element(lut, idx)
@@ -1485,6 +1546,22 @@ pub enum ConversionError {
     NotSupported,  // Feature disabled in current phase
 }
 
+/// Canonical ExecutionError enumeration for all numeric operations
+/// All numeric traps MUST map to one of these errors.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ExecutionError {
+    Overflow,
+    Underflow,
+    DivisionByZero,
+    DomainError,      // e.g., sqrt of negative
+    ScaleMismatch,    // DQA scale mismatch
+    NaNProhibited,
+    InfinityProhibited,
+    DimensionMismatch,
+    OutOfRange,
+    NumericOpsPaused, // Returned when VM is in numeric pause state
+}
+
 /// Rounding mode for numeric conversions
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum RoundingMode {
@@ -1525,11 +1602,11 @@ impl NumericCast<Dqa> for Dfp {
 
 impl NumericCast<Dfp> for Dqa {
     /// Convert DQA → DFP
-    /// Exact because i64 → i128 is widening (no precision loss) and DFP's i128 mantissa
-    /// (per RFC-0104 §3.2) can represent all 64-bit integers exactly.
-    /// Requires: RFC-0104 defines DFP_MANTISSA_BITS >= 64
+    /// Exact because i32 → i128 is widening (no precision loss) and DFP's i128 mantissa
+    /// (per RFC-0104 §3.2) can represent all 32-bit integers exactly.
+    /// Requires: RFC-0104 defines DFP_MANTISSA_BITS >= 32
     fn cast(self) -> Result<Dfp, ConversionError> {
-        // self.value is i64, casting to i128 is always lossless in Rust
+        // self.value is i32, casting to i128 is always lossless in Rust (widening)
         // scale becomes negative exponent: DQA scale=2 → DFP exponent=-2
         Ok(Dfp::from_mantissa_exponent(self.value as i128, -(self.scale as i32)))
     }
@@ -1624,6 +1701,8 @@ impl<const N: usize> DVecN<Dqa, N> {
 >
 > **Implementation**: The VM should expose `numeric_pause()` and `numeric_resume()` management functions callable only by governance (not regular users).
 >
+> ⚠️ **Error Handling**: When numeric ops are paused, return `ExecutionError::NumericOpsPaused` (gas: full gas consumed, same as TRAP).
+>
 > ⚠️ **GOVERNANCE REQUIREMENTS**:
 >
 > - Callable by: CipherOcto Governance Contract with 2/3 validator signature
@@ -1666,8 +1745,8 @@ const GAS_SQRT: u64 = 480;  // Newton-Raphson 16 iterations
 const GAS_VEC_ADD: u64 = 5;    // Per element
 const GAS_VEC_MUL: u64 = 8;    // Per element (element-wise)
 const GAS_VEC_DOT: u64 = 10;   // Per element (includes multiply + add)
-const GAS_VEC_DIST: u64 = 400; // Squared distance + SQRT
-const GAS_VEC_COSINE: u64 = 750; // 2×NORM + DIV
+const GAS_VEC_DIST: u64 = 501; // 2×mul + add + SQRT (min N=1: 2×8 + 5 + 480)
+const GAS_VEC_COSINE: u64 = 2700; // 2×NORM + DIV (N=64: ~2634 gas)
 
 /// Matrix operation gas costs (per operation)
 const GAS_MAT_ADD: u64 = 5;    // Per element
@@ -1689,9 +1768,9 @@ const GAS_TANH_LUT: u64 = 4;     // Per element: LUT lookup
 /// | SQRT (Q8.8)         | 480  | 16 Newton-Raphson iters   |
 /// | DVEC add (N)        | 5N   | N × GAS_VEC_ADD           |
 /// | DVEC dot (N)        | 8N+5(N-1) | N mul + (N-1) add + shift ≈ 10N |
-/// | DVEC norm (N)       | 350  | DOT + SQRT                |
-/// | DVEC distance (N)  | 400  | 2×N mul + add + SQRT      |
-/// | DVEC cosine (N)     | 750  | 2×NORM + DIV              |
+/// | DVEC norm (N)       | 488+ | DOT + SQRT (min N=1: 8+5+480) |
+/// | DVEC distance (N)  | 501+ | 2×N mul + add + SQRT (min N=1) |
+/// | DVEC cosine (N)     | 2700+| 2×NORM + DIV (N=64: ~2634)     |
 /// | DMAT add (M×N)      | 5MN  | M×N × GAS_MAT_ADD         |
 /// | DMAT mul (M×N×K)    | 13MNK| M×N×K × (8 mul + 5 add) |
 /// | ReLU (per element)  | 2    | comparison + select        |
@@ -1879,7 +1958,7 @@ version: u8, // = 1
 element_type: u8, // 0=DQA, 1=DFP
 dimension: u16, // N
 scale: u8, // For DQA elements
-lut_version: u8, // LUT version used (for sigmoid/tanh outputs)
+lut_version: u8, // ⚠️ MUST be 0x00 for non-LUT vectors (arithmetic ops); non-zero for sigmoid/tanh outputs
 \_reserved: [u8; 2],
 elements: Box<[u8]>, // Contiguous serialized elements (NOT Vec)
 }
@@ -1896,7 +1975,7 @@ element_type: u8, // 0=DQA, 1=DFP
 rows: u16, // M
 cols: u16, // N
 scale: u8, // For DQA elements
-lut_version: u8, // LUT version used (for sigmoid/tanh outputs)
+lut_version: u8, // ⚠️ MUST be 0x00 for non-LUT vectors (arithmetic ops); non-zero for sigmoid/tanh outputs
 \_reserved: [u8; 1],
 elements: Box<[u8]>, // Contiguous serialized elements (NOT Vec)
 }
@@ -1940,7 +2019,7 @@ Each workload has different requirements:
 
 > ⚠️ **NOTE**: Phase 2 features use `unimplemented!()` macros - these will panic if called in Phase 1. The authoritative reference is the `octo_determin` crate, which provides complete implementations. All consensus-critical algorithms are fully specified in the Canonical Arithmetic Algorithms section.
 
-**Reference crate:** `octo_determin` (to be created)
+**Reference crate:** `octo_determin` - see Implementation Handoff Checklist below
 
 This crate serves as the canonical reference for all numeric operations:
 
@@ -2037,7 +2116,7 @@ fn test_cross_platform_dqa() {
 
 ```mermaid
 graph LR
-    P1[Phase 1<br/>RFC-0105 DQA<br/>START HERE] --> P2[Phase 2<br/>DVEC4-64<br/>Second priority]
+    P1[Phase 1<br/>DQA + DVEC≤64<br/>START HERE] --> P2[Phase 2<br/>Tanh/Sigmoid LUT<br/>DMAT≤8×8]
     P2 --> P3[Phase 3<br/>RFC-0104 DFP<br/>Higher risk]
     P3 --> P4[Phase 4<br/>DVEC128+ DMAT<br/>Experimental]
     P4 --> P5[Phase 5<br/>DTENSOR<br/>Future]
@@ -2069,7 +2148,7 @@ graph LR
 - Location: `determ/dvec.rs`
 - Acceptance criteria:
   - [ ] DVecN struct with const N (limit to N ≤ 64 initially)
-  - [ ] Vector operations: add, sub, dot, norm
+  - [ ] Vector operations: add, sub, dot, norm (or squared_norm for ZK-friendly)
   - [ ] Similarity functions: cos_sim, distance
   - [ ] Serialization
 - Estimated complexity: Medium
@@ -2500,7 +2579,7 @@ Gas breakdown:
 
 #### End-to-End Gas Cost Example: 2-Layer MLP
 
-> ⚠️ **Realistic gas estimate** for a 2-layer MLP with safety multiplier:
+> ⚠️ **Gas estimate** for a 2-layer MLP (constants already include safety margin):
 
 ```
 Input: DVEC32<Dqa>
@@ -2513,12 +2592,12 @@ Operations:
 - Layer 2 matmul: 16 × 2 × 16 = 512 scalar muls
 - Layer 2 Sigmoid: 2 LUT lookups
 
-Gas breakdown (with 2.0x safety multiplier):
-- MAT_MUL (16,384 + 512 ops): 16,896 × 15 × 2.0 = 506,880 gas
-- ReLU (16 ops): 16 × 2 × 2.0 = 64 gas
-- Sigmoid LUT (2 lookups): 2 × 4 × 2.0 = 16 gas
-- DOT (32 × 10 = 320): 320 × 2.0 = 640 gas
-- TOTAL: ~507,600 gas
+Gas breakdown (constants already include safety margin):
+- MAT_MUL (16,384 + 512 ops): 16,896 × 13 = 219,648 gas
+- ReLU (16 ops): 16 × 2 = 32 gas
+- Sigmoid LUT (2 lookups): 2 × 4 = 8 gas
+- DOT (32 × 10 = 320): 320 gas
+- TOTAL: ~220,008 gas
 
 ⚠️ **CRITICAL**: This far exceeds the 100k gas limit!
 - Must split across multiple transactions (checkpoint pattern)

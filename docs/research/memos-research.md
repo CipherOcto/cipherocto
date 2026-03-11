@@ -13,10 +13,10 @@ MemOS (Memory Operating System) is a production-grade memory management system d
 
 ### Key Performance Metrics
 
-| Metric | Improvement vs OpenAI Memory |
-|--------|------------------------------|
-| Accuracy | **+43.70%** |
-| Memory Token Savings | **35.24%** |
+| Metric               | Improvement vs OpenAI Memory |
+| -------------------- | ---------------------------- |
+| Accuracy             | **+43.70%**                  |
+| Memory Token Savings | **35.24%**                   |
 
 MemOS was published on arXiv as "MemOS: A Memory OS for AI System" and represents a significant advancement in AI memory architecture.
 
@@ -116,6 +116,7 @@ MemOS distinguishes between four distinct memory types, each optimized for diffe
 **Purpose**: Store conversational context, documents, and general text data.
 
 **Characteristics**:
+
 - High-volume text storage
 - Semantic search via vector embeddings
 - Supports long-form content
@@ -127,6 +128,7 @@ MemOS distinguishes between four distinct memory types, each optimized for diffe
 **Purpose**: Record agent actions, decisions, and execution traces.
 
 **Characteristics**:
+
 - Temporal ordering important
 - Causal relationships between actions
 - Graph-like structure for action chains
@@ -138,6 +140,7 @@ MemOS distinguishes between four distinct memory types, each optimized for diffe
 **Purpose**: Store learned parameters, weights, and model-specific data.
 
 **Characteristics**:
+
 - Structured numerical data
 - Requires efficient similarity search
 - Updated frequently
@@ -149,6 +152,7 @@ MemOS distinguishes between four distinct memory types, each optimized for diffe
 **Purpose**: Capture user preferences, settings, and behavioral patterns.
 
 **Characteristics**:
+
 - Key-value style access patterns
 - User-specific data isolation
 - Frequently read, occasionally written
@@ -163,23 +167,24 @@ MemOS distinguishes between four distinct memory types, each optimized for diffe
 
 MemOS supports multiple vector databases for embedding storage and similarity search:
 
-| Database | Use Case | Strengths |
-|----------|----------|-----------|
-| **Qdrant** | Primary vector store | Rust-based, high performance, cloud-native |
-| **Milvus** | Large-scale vector operations | Horizontal scaling, distributed |
+| Database   | Use Case                      | Strengths                                  |
+| ---------- | ----------------------------- | ------------------------------------------ |
+| **Qdrant** | Primary vector store          | Rust-based, high performance, cloud-native |
+| **Milvus** | Large-scale vector operations | Horizontal scaling, distributed            |
 
 ### 4.2 Graph Databases
 
 For action memory and relationship-heavy data:
 
-| Database | Use Case | Strengths |
-|----------|----------|-----------|
-| **Neo4j** | Action tracing | Mature, Cypher query language |
-| **NebulaGraph** | High-scale graphs | Distributed, Facebook-origin |
+| Database        | Use Case          | Strengths                     |
+| --------------- | ----------------- | ----------------------------- |
+| **Neo4j**       | Action tracing    | Mature, Cypher query language |
+| **NebulaGraph** | High-scale graphs | Distributed, Facebook-origin  |
 
 ### 4.3 Redis Streams
 
 Used for the MemScheduler task queue:
+
 - Async task processing
 - Distributed message passing
 - Task persistence and replay
@@ -203,6 +208,7 @@ GET    /health          # Health check
 ### 5.2 Client Integration
 
 MemOS provides client libraries for easy integration with AI agents:
+
 - Python SDK
 - HTTP API for language-agnostic access
 - WebSocket support for streaming updates
@@ -241,10 +247,10 @@ graph LR
 
 MemOS demonstrates significant improvements over baseline solutions:
 
-| Metric | Result |
-|--------|--------|
-| Accuracy Improvement | **+43.70%** vs OpenAI Memory |
-| Token Efficiency | **35.24%** memory token savings |
+| Metric               | Result                          |
+| -------------------- | ------------------------------- |
+| Accuracy Improvement | **+43.70%** vs OpenAI Memory    |
+| Token Efficiency     | **35.24%** memory token savings |
 
 ### 7.2 Key Success Factors
 

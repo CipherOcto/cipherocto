@@ -8,23 +8,23 @@ This guide ensures consistency across all CipherOcto documentation.
 
 ### Our Voice
 
-| Attribute | Description |
-| ----------- | ----------- |
-| **Professional** | Clear, competent, credible |
-| **Accessible** | Explain technical concepts clearly |
-| **Visionary** | Inspiring but grounded |
-| **Direct** | Get to the point, avoid fluff |
-| **Inclusive** | "We" not "I", welcoming to all |
+| Attribute        | Description                        |
+| ---------------- | ---------------------------------- |
+| **Professional** | Clear, competent, credible         |
+| **Accessible**   | Explain technical concepts clearly |
+| **Visionary**    | Inspiring but grounded             |
+| **Direct**       | Get to the point, avoid fluff      |
+| **Inclusive**    | "We" not "I", welcoming to all     |
 
 ### Tone Guidelines
 
-| Context | Tone |
-| -------- | ----- |
-| **Technical docs** | Precise, instructional |
-| **Whitepaper** | Formal, comprehensive |
-| **Blog posts** | Engaging, conversational |
-| **Social media** | Casual, responsive |
-| **Announcements** | Clear, celebratory |
+| Context            | Tone                     |
+| ------------------ | ------------------------ |
+| **Technical docs** | Precise, instructional   |
+| **Whitepaper**     | Formal, comprehensive    |
+| **Blog posts**     | Engaging, conversational |
+| **Social media**   | Casual, responsive       |
+| **Announcements**  | Clear, celebratory       |
 
 ---
 
@@ -40,20 +40,20 @@ This guide ensures consistency across all CipherOcto documentation.
 
 ### Sentence Structure
 
-| Do | Don't |
-| ---- | ---- | ---- |
-| **Use active voice** | "The protocol processes transactions" | "Transactions are processed by the protocol" |
-| **Use simple words** | "Use" instead of "Utilize" | "Utilize" when "use" works |
-| **Be direct** | "Stake tokens to earn rewards" | "Tokens can be staked in order to earn rewards" |
-| **Use present tense** | "The protocol uses PoR" | "The protocol will use PoR" |
+| Do                    | Don't                                 |
+| --------------------- | ------------------------------------- | ----------------------------------------------- |
+| **Use active voice**  | "The protocol processes transactions" | "Transactions are processed by the protocol"    |
+| **Use simple words**  | "Use" instead of "Utilize"            | "Utilize" when "use" works                      |
+| **Be direct**         | "Stake tokens to earn rewards"        | "Tokens can be staked in order to earn rewards" |
+| **Use present tense** | "The protocol uses PoR"               | "The protocol will use PoR"                     |
 
 ### Paragraph Length
 
-| Content | Paragraph Length |
-| ------- | ---------------- |
-| **Introduction** | 2-3 sentences |
-| **Body paragraphs** | 3-5 sentences |
-| **Technical explanations** | 5-7 sentences |
+| Content                    | Paragraph Length |
+| -------------------------- | ---------------- |
+| **Introduction**           | 2-3 sentences    |
+| **Body paragraphs**        | 3-5 sentences    |
+| **Technical explanations** | 5-7 sentences    |
 
 ---
 
@@ -65,12 +65,16 @@ This guide ensures consistency across all CipherOcto documentation.
 
 ```markdown
 # Level 1 (document title only)
+
 ## Level 2 (main sections)
+
 ### Level 3 (subsections)
+
 #### Level 4 (detailed topics)
 ```
 
 **Rules:**
+
 - One H1 per document (title)
 - Use H2 for main sections
 - Don't skip levels (H2 → H4)
@@ -78,7 +82,7 @@ This guide ensures consistency across all CipherOcto documentation.
 #### Emphasis
 
 ```markdown
-*Italic* for emphasis
+_Italic_ for emphasis
 **Bold** for key terms
 _**Bold and italic**_ for special emphasis
 `Code` for inline code
@@ -94,6 +98,7 @@ _**Bold and italic**_ for special emphasis
 #### Lists
 
 **Bullet lists:**
+
 ```markdown
 - Item one
 - Item two
@@ -103,6 +108,7 @@ _**Bold and italic**_ for special emphasis
 ```
 
 **Numbered lists:**
+
 ```markdown
 1. First step
 2. Second step
@@ -110,6 +116,7 @@ _**Bold and italic**_ for special emphasis
 ```
 
 **Task lists:**
+
 ```markdown
 - [ ] Incomplete task
 - [x] Completed task
@@ -125,6 +132,7 @@ _**Bold and italic**_ for special emphasis
 ```
 
 **Rules:**
+
 - Include blank line before and after tables
 - Column alignment optional (but nice)
 - Max 5-6 columns for readability
@@ -138,6 +146,7 @@ code here
 ````
 
 **Supported languages:**
+
 - `typescript` / `js`
 - `python` / `py`
 - `rust` / `rs`
@@ -150,7 +159,8 @@ code here
 
 ```markdown
 > Blockquote for quotes
->> Nested blockquote
+>
+> > Nested blockquote
 ```
 
 #### Horizontal Rules
@@ -166,6 +176,7 @@ code here
 ### Mermaid Diagrams
 
 **Use Mermaid for:**
+
 - Flowcharts
 - Sequence diagrams
 - State diagrams
@@ -187,6 +198,7 @@ graph TB
 ### ASCII Art
 
 **Use for:**
+
 - Simple diagrams when Mermaid unavailable
 - Text-based documentation
 - Email communications
@@ -244,28 +256,28 @@ npm test
 
 ### Standard Terms
 
-| Term | Usage |
-| ---- | ----- |
-| **CipherOcto** | Capitalized, no space |
-| **OCTO** | All caps for token symbol |
-| **OCTO-A** | Role tokens (hyphenated) |
+| Term            | Usage                         |
+| --------------- | ----------------------------- |
+| **CipherOcto**  | Capitalized, no space         |
+| **OCTO**        | All caps for token symbol     |
+| **OCTO-A**      | Role tokens (hyphenated)      |
 | **Ocean Stack** | Capitalized, our architecture |
-| **PoR** | Proof of Reliability |
-| **PoUW** | Proof of Useful Work |
-| **TEE** | Trusted Execution Environment |
-| **ZK** | Zero-Knowledge |
+| **PoR**         | Proof of Reliability          |
+| **PoUW**        | Proof of Useful Work          |
+| **TEE**         | Trusted Execution Environment |
+| **ZK**          | Zero-Knowledge                |
 
 ### Emoji Usage
 
-| Emoji | Usage | Placement |
-| ----- | ----- | --------- |
-| 🐙 | Intelligence Layer | In headings, diagrams |
-| 🦑 | Execution Layer | In headings, diagrams |
-| 🪼 | Network Layer | In headings, diagrams |
-| ✅ | Positive indicator | In lists, tables |
-| ❌ | Negative indicator | In lists, tables |
-| 🔥 | Burn mechanism | In tokenomics |
-| ⚠️ | Warning | In warnings, notes |
+| Emoji | Usage              | Placement             |
+| ----- | ------------------ | --------------------- |
+| 🐙    | Intelligence Layer | In headings, diagrams |
+| 🦑    | Execution Layer    | In headings, diagrams |
+| 🪼    | Network Layer      | In headings, diagrams |
+| ✅    | Positive indicator | In lists, tables      |
+| ❌    | Negative indicator | In lists, tables      |
+| 🔥    | Burn mechanism     | In tokenomics         |
+| ⚠️    | Warning            | In warnings, notes    |
 
 ---
 
@@ -281,23 +293,28 @@ npm test
 **Status:** Draft | Published | Deprecated
 
 ## Overview
+
 2-3 sentence summary
 
 ## Table of Contents
+
 [Auto-generated or manual]
 
 ## Sections
+
 Use H2 for main sections
 
 ## Code Examples
+
 Include working examples
 
 ## See Also
+
 Links to related docs
 
 ---
 
-*Footer notes or attribution*
+_Footer notes or attribution_
 ```
 
 ---
@@ -307,16 +324,19 @@ Links to related docs
 ### Callouts
 
 **Note:**
+
 ```markdown
 > **Note:** Additional information
 ```
 
 **Warning:**
+
 ```markdown
 > **Warning:** Important caution
 ```
 
 **Tip:**
+
 ```markdown
 > **Tip:** Helpful suggestion
 ```
@@ -332,12 +352,12 @@ Links to related docs
 ### Status Badges
 
 ```markdown
-| Status | Description |
-| -------- | ----------- |
-| ✅ Complete | Feature implemented |
+| Status         | Description               |
+| -------------- | ------------------------- |
+| ✅ Complete    | Feature implemented       |
 | 🔄 In Progress | Currently being worked on |
-| 📅 Planned | Scheduled for future |
-| ❌ Deprecated | No longer supported |
+| 📅 Planned     | Scheduled for future      |
+| ❌ Deprecated  | No longer supported       |
 ```
 
 ---
@@ -346,21 +366,21 @@ Links to related docs
 
 ### Guidelines
 
-| Practice | Implementation |
-| ---------- | --------------- |
-| **Alt text** | Describe images and diagrams |
-| **Headers** | Use proper heading hierarchy |
-| **Links** | Descriptive link text (not "click here") |
-| **Contrast** | High contrast for readability |
-| **Font size** | Default to readable sizes |
+| Practice      | Implementation                           |
+| ------------- | ---------------------------------------- |
+| **Alt text**  | Describe images and diagrams             |
+| **Headers**   | Use proper heading hierarchy             |
+| **Links**     | Descriptive link text (not "click here") |
+| **Contrast**  | High contrast for readability            |
+| **Font size** | Default to readable sizes                |
 
 ### Link Text
 
-| Good | Bad |
-| ---- | --- |
-| [Read the whitepaper](...) | [Click here](...) |
-| [Download the SDK](...) | [Go to this link](...) |
-| [Join Discord](...) | [Link](...) |
+| Good                       | Bad                    |
+| -------------------------- | ---------------------- |
+| [Read the whitepaper](...) | [Click here](...)      |
+| [Download the SDK](...)    | [Go to this link](...) |
+| [Join Discord](...)        | [Link](...)            |
 
 ---
 
@@ -399,13 +419,13 @@ When writing for translation:
 
 ### Recommended Tools
 
-| Tool | Purpose |
-| ---- | ------- |
-| **markdownlint** | Lint markdown files |
-| **Hemingway Editor** | Improve readability |
-| **Grammarly** | Grammar checking |
-| **Mermaid Live Editor** | Preview diagrams |
-| **VS Code** | Editing with extensions |
+| Tool                    | Purpose                 |
+| ----------------------- | ----------------------- |
+| **markdownlint**        | Lint markdown files     |
+| **Hemingway Editor**    | Improve readability     |
+| **Grammarly**           | Grammar checking        |
+| **Mermaid Live Editor** | Preview diagrams        |
+| **VS Code**             | Editing with extensions |
 
 ### markdownlint Configuration
 
@@ -433,4 +453,4 @@ When writing for translation:
 
 ---
 
-*Last updated: February 2026*
+_Last updated: February 2026_

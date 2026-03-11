@@ -12,11 +12,11 @@ Qdrant is a production-grade **vector similarity search engine** written in Rust
 
 ### Key Characteristics
 
-| Attribute | Value |
-|-----------|-------|
-| **Language** | Rust (v1.92+) |
-| **License** | Apache 2.0 |
-| **Version** | 1.17.0 |
+| Attribute       | Value                    |
+| --------------- | ------------------------ |
+| **Language**    | Rust (v1.92+)            |
+| **License**     | Apache 2.0               |
+| **Version**     | 1.17.0                   |
 | **Primary Use** | Vector similarity search |
 
 ### Primary Use Cases
@@ -81,16 +81,16 @@ graph TB
 
 ### Workspace Modules
 
-| Module | Path | Purpose |
-|--------|------|---------|
-| **segment** | `lib/segment` | Core data storage, indexing, retrieval |
-| **collection** | `lib/collection` | Collection management, operations |
-| **storage** | `lib/storage` | High-level storage coordination |
-| **shard** | `lib/shard` | Sharding and replication |
-| **api** | `lib/api` | REST and gRPC API definitions |
-| **sparse** | `lib/sparse` | Sparse vector support (BM25-like) |
-| **quantization** | `lib/quantization` | Vector quantization (PQ, SQ, BQ) |
-| **consensus** | `src/consensus.rs` | Raft-based distributed consensus |
+| Module           | Path               | Purpose                                |
+| ---------------- | ------------------ | -------------------------------------- |
+| **segment**      | `lib/segment`      | Core data storage, indexing, retrieval |
+| **collection**   | `lib/collection`   | Collection management, operations      |
+| **storage**      | `lib/storage`      | High-level storage coordination        |
+| **shard**        | `lib/shard`        | Sharding and replication               |
+| **api**          | `lib/api`          | REST and gRPC API definitions          |
+| **sparse**       | `lib/sparse`       | Sparse vector support (BM25-like)      |
+| **quantization** | `lib/quantization` | Vector quantization (PQ, SQ, BQ)       |
+| **consensus**    | `src/consensus.rs` | Raft-based distributed consensus       |
 
 ---
 
@@ -114,12 +114,12 @@ pub struct ScoredPoint {
 
 ### 2.2 Vector Types
 
-| Type | Description |
-|------|-------------|
-| **Dense** | Standard float vectors |
+| Type            | Description                |
+| --------------- | -------------------------- |
+| **Dense**       | Standard float vectors     |
 | **Multi-dense** | Multiple vectors per point |
-| **Quantized** | Compressed representations |
-| **Sparse** | BM25-style sparse vectors |
+| **Quantized**   | Compressed representations |
+| **Sparse**      | BM25-style sparse vectors  |
 
 ---
 
@@ -144,11 +144,13 @@ pub fn search(
 ```
 
 **Configuration Parameters**:
+
 - `m`: Number of connections per node
 - `ef_construction`: Build-time search width
 - `ef`: Query-time search width
 
 **Why It Works**:
+
 - Builds a multi-layer graph structure
 - Higher layers contain "shortcuts" for fast traversal
 - Greedy search with backtracking achieves high recall
@@ -161,22 +163,24 @@ pub fn search(
 
 **Field Index Types** (`lib/segment/src/index/field_index/`):
 
-| Index Type | Purpose | Query Examples |
-|------------|---------|-----------------|
-| `bool_index` | Boolean values | `is_active: true` |
-| `map_index` | Keywords/IDs | `category: "electronics"` |
-| `numeric_index` | Numeric ranges | `price: [10, 100]` |
-| `geo_index` | Geospatial | `location: {within: polygon}` |
-| `full_text_index` | Text search | `description: "machine learning"` |
-| `facet_index` | Faceted navigation | `color: ["red", "blue"]` |
-| `null_index` | NULL handling | `deleted_at: null` |
+| Index Type        | Purpose            | Query Examples                    |
+| ----------------- | ------------------ | --------------------------------- |
+| `bool_index`      | Boolean values     | `is_active: true`                 |
+| `map_index`       | Keywords/IDs       | `category: "electronics"`         |
+| `numeric_index`   | Numeric ranges     | `price: [10, 100]`                |
+| `geo_index`       | Geospatial         | `location: {within: polygon}`     |
+| `full_text_index` | Text search        | `description: "machine learning"` |
+| `facet_index`     | Faceted navigation | `color: ["red", "blue"]`          |
+| `null_index`      | NULL handling      | `deleted_at: null`                |
 
 **Filter Combinations**:
+
 - `must`: All conditions must match (AND)
 - `must_not`: None can match (NOT)
 - `should`: At least one should match (OR)
 
 **Implementation Pattern**:
+
 ```rust
 // Filter to index conversion
 pub fn condition_to_index_query(&self, condition: &FieldCondition) -> Option<Box<dyn IndexIterator>>
@@ -189,6 +193,7 @@ pub fn condition_to_index_query(&self, condition: &FieldCondition) -> Option<Box
 **Types** (`lib/quantization/src/`):
 
 #### Scalar Quantization (SQ)
+
 Converts float32 to uint8 by dividing by a scale factor.
 
 ```rust
@@ -200,6 +205,7 @@ pub struct EncodedVectorsU8 {
 ```
 
 #### Product Quantization (PQ)
+
 Splits vectors into sub-vectors, clusters each separately, stores centroid indices.
 
 ```rust
@@ -213,6 +219,7 @@ pub struct EncodedVectorsPQ {
 ```
 
 #### Binary Quantization (BQ)
+
 Represents vectors as binary strings (0/1).
 
 ```rust
@@ -224,6 +231,7 @@ pub struct EncodedVectorsBinary {
 ```
 
 **Search with Quantization**:
+
 ```rust
 pub fn similarity(
     &self,
@@ -238,6 +246,7 @@ pub fn similarity(
 **Semantic Purpose**: Enables keyword-based matching alongside dense vector similarity, supporting hybrid search scenarios.
 
 **Implementation** (`lib/sparse/`):
+
 - BM25-like text scoring
 - Inverted index for term lookup
 - Combines with dense vectors for relevance ranking
@@ -246,14 +255,15 @@ pub fn similarity(
 
 **Architecture Components** (`lib/shard/` and `lib/collection/src/shards/`):
 
-| Shard Type | Purpose |
-|------------|---------|
-| **LocalShard** | Single-node storage |
-| **RemoteShard** | Distributed peer storage |
-| **ProxyShard** | Delegation patterns |
-| **ReplicaSet** | Multiple replicas management |
+| Shard Type      | Purpose                      |
+| --------------- | ---------------------------- |
+| **LocalShard**  | Single-node storage          |
+| **RemoteShard** | Distributed peer storage     |
+| **ProxyShard**  | Delegation patterns          |
+| **ReplicaSet**  | Multiple replicas management |
 
 **Consensus Algorithm** (`src/consensus.rs`):
+
 - Uses **Raft consensus** for distributed coordination
 - Handles:
   - Collection creation/deletion
@@ -262,6 +272,7 @@ pub fn similarity(
   - Snapshot coordination
 
 **Consensus Operations**:
+
 ```rust
 pub enum ConsensusOperations {
     CollectionMeta(Box<CollectionMetaOperations>),
@@ -305,11 +316,11 @@ pub struct Segment {
 
 ### 4.2 Storage Backends
 
-| Backend | Feature Flag | Use Case |
-|--------|--------------|----------|
-| **Memory-mapped** | Default | Large vectors, general use |
-| **RocksDB** | `rocksdb` | Larger datasets |
-| **io_uring** | Linux only | High-throughput async I/O |
+| Backend           | Feature Flag | Use Case                   |
+| ----------------- | ------------ | -------------------------- |
+| **Memory-mapped** | Default      | Large vectors, general use |
+| **RocksDB**       | `rocksdb`    | Larger datasets            |
+| **io_uring**      | Linux only   | High-throughput async I/O  |
 
 ### 4.3 Performance Optimizations
 
@@ -345,14 +356,14 @@ pub struct Segment {
 
 ### 5.3 Official Clients
 
-| Language | Package |
-|----------|---------|
-| Python | `qdrant-client` |
-| Go | `qdrant-go` |
-| Rust | `qdrant-client` |
+| Language   | Package             |
+| ---------- | ------------------- |
+| Python     | `qdrant-client`     |
+| Go         | `qdrant-go`         |
+| Rust       | `qdrant-client`     |
 | JavaScript | `@qdrant/js-client` |
-| Java | `qdrant-java` |
-| .NET | `Qdrant.Net` |
+| Java       | `qdrant-java`       |
+| .NET       | `Qdrant.Net`        |
 
 ---
 
@@ -397,13 +408,13 @@ sequenceDiagram
 
 ### 7.2 Key Success Factors
 
-| Factor | Implementation |
-|--------|----------------|
-| Fast ANNS | HNSW with tunable parameters |
-| Rich Filtering | Multiple index types for payload |
+| Factor            | Implementation                   |
+| ----------------- | -------------------------------- |
+| Fast ANNS         | HNSW with tunable parameters     |
+| Rich Filtering    | Multiple index types for payload |
 | Memory Efficiency | Quantization up to 97% reduction |
-| Distributed | Raft consensus for consistency |
-| Production-Ready | WAL, snapshots, RBAC |
+| Distributed       | Raft consensus for consistency   |
+| Production-Ready  | WAL, snapshots, RBAC             |
 
 ---
 

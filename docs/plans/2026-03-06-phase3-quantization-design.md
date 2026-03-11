@@ -22,7 +22,7 @@ Search: query_f32[768] → BinaryQuantizer → bitstream[768 bits] → XOR + pop
 ### Compression Ratio
 
 | Dimension | Original | BQ Compressed | Compression |
-|-----------|----------|---------------|-------------|
+| --------- | -------- | ------------- | ----------- |
 | 128       | 512B     | 16B           | 32x         |
 | 384       | 1536B    | 48B           | 32x         |
 | 768       | 3072B    | 96B           | 32x         |

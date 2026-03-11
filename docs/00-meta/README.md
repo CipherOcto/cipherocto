@@ -6,13 +6,13 @@ Welcome to the official CipherOcto documentation repository.
 
 ## Quick Links
 
-| Audience | Start Here |
-| -------- | ---------- |
-| **Newcomers** | [Litepaper](../01-foundation/litepaper.md) — 10-minute read |
-| **Investors** | [Investor Portal](../08-investors/README.md) |
-| **Developers** | [Getting Started](../07-developers/getting-started.md) |
-| **Partners** | [Partnership Strategy](../05-growth/partnerships.md) |
-| **Everyone** | [Glossary](./GLOSSARY.md) |
+| Audience       | Start Here                                                  |
+| -------------- | ----------------------------------------------------------- |
+| **Newcomers**  | [Litepaper](../01-foundation/litepaper.md) — 10-minute read |
+| **Investors**  | [Investor Portal](../08-investors/README.md)                |
+| **Developers** | [Getting Started](../07-developers/getting-started.md)      |
+| **Partners**   | [Partnership Strategy](../05-growth/partnerships.md)        |
+| **Everyone**   | [Glossary](./GLOSSARY.md)                                   |
 
 ---
 
@@ -109,14 +109,14 @@ docs/
 
 ## Key Documents
 
-| Document | Length | Audience | Summary |
-| ---------- | ------ | -------- | -------- |
-| **Litepaper** | 10 min | All | Quick overview |
-| **Whitepaper** | 2-3 hours | Investors, Developers | Comprehensive |
-| **Manifesto** | 5 min | All | Philosophy |
-| **Roadmap** | 10 min | All | Timeline |
-| **Token Design** | 30 min | Investors | Economics |
-| **Governance** | 20 min | Token holders | Voting |
+| Document         | Length    | Audience              | Summary        |
+| ---------------- | --------- | --------------------- | -------------- |
+| **Litepaper**    | 10 min    | All                   | Quick overview |
+| **Whitepaper**   | 2-3 hours | Investors, Developers | Comprehensive  |
+| **Manifesto**    | 5 min     | All                   | Philosophy     |
+| **Roadmap**      | 10 min    | All                   | Timeline       |
+| **Token Design** | 30 min    | Investors             | Economics      |
+| **Governance**   | 20 min    | Token holders         | Voting         |
 
 ---
 
@@ -124,24 +124,24 @@ docs/
 
 ### Emojis
 
-| Emoji | Meaning |
-| ----- | ------- |
-| 🐙 | Intelligence Layer |
-| 🦑 | Execution Layer |
-| 🪼 | Network Layer |
-| ✅ | Complete, positive |
-| ❌ | Incomplete, negative |
-| 🔄 | In progress |
-| 📅 | Planned |
+| Emoji | Meaning              |
+| ----- | -------------------- |
+| 🐙    | Intelligence Layer   |
+| 🦑    | Execution Layer      |
+| 🪼    | Network Layer        |
+| ✅    | Complete, positive   |
+| ❌    | Incomplete, negative |
+| 🔄    | In progress          |
+| 📅    | Planned              |
 
 ### Status Indicators
 
-| Status | Meaning |
-| ------ | ------- |
-| **Published** | Final, approved |
-| **Draft** | Work in progress |
-| **Deprecated** | Outdated, do not use |
-| ** Confidential** | Restricted access |
+| Status            | Meaning              |
+| ----------------- | -------------------- |
+| **Published**     | Final, approved      |
+| **Draft**         | Work in progress     |
+| **Deprecated**    | Outdated, do not use |
+| ** Confidential** | Restricted access    |
 
 ---
 
@@ -159,6 +159,7 @@ docs/
 All documentation should follow the [Style Guide](./STYLE-GUIDE.md).
 
 Key points:
+
 - Use clear, concise language
 - Write for accessibility
 - Include examples where helpful
@@ -171,23 +172,23 @@ Key points:
 
 ### Document Versions
 
-| Document | Version | Last Updated |
-| ---------- | ------- | ------------- |
-| Litepaper | 1.0 | February 2026 |
-| Whitepaper | 1.0 | February 2026 |
-| Manifesto | 1.0 | February 2026 |
-| Roadmap | 1.0 | February 2026 |
-| Token Design | 1.0 | February 2026 |
+| Document     | Version | Last Updated  |
+| ------------ | ------- | ------------- |
+| Litepaper    | 1.0     | February 2026 |
+| Whitepaper   | 1.0     | February 2026 |
+| Manifesto    | 1.0     | February 2026 |
+| Roadmap      | 1.0     | February 2026 |
+| Token Design | 1.0     | February 2026 |
 
 ### Update Policy
 
-| Document Type | Update Frequency |
-| ------------- | ---------------- |
-| Whitepaper | Quarterly |
-| Litepaper | Quarterly |
-| Roadmap | Monthly |
-| Technical docs | Per release |
-| API docs | Continuous |
+| Document Type  | Update Frequency |
+| -------------- | ---------------- |
+| Whitepaper     | Quarterly        |
+| Litepaper      | Quarterly        |
+| Roadmap        | Monthly          |
+| Technical docs | Per release      |
+| API docs       | Continuous       |
 
 ---
 
@@ -232,12 +233,12 @@ Use the built-in search or check these indexes:
 
 ## Support
 
-| Channel | Best For | Response Time |
-| ------- | ----------------- | -------------- |
-| **Documentation** | Self-service | Immediate |
-| **Discord #docs** | Questions | Hours |
-| **GitHub Issues** | Bugs, suggestions | Days |
-| **Email** | Private inquiries | 1-2 days |
+| Channel           | Best For          | Response Time |
+| ----------------- | ----------------- | ------------- |
+| **Documentation** | Self-service      | Immediate     |
+| **Discord #docs** | Questions         | Hours         |
+| **GitHub Issues** | Bugs, suggestions | Days          |
+| **Email**         | Private inquiries | 1-2 days      |
 
 ---
 
@@ -261,4 +262,4 @@ Special thanks to all contributors who improve these documents.
 
 ---
 
-*Last updated: February 2026*
+_Last updated: February 2026_

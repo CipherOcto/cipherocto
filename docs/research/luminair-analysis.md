@@ -7,6 +7,7 @@ This research analyzes LuminAIR (by Giza) and explores how its zkML solutions ca
 ## Problem Statement
 
 CipherOcto faces challenges that LuminAIR's approach could address:
+
 1. **Privacy limitation**: Sellers see prompt content (trust-based model)
 2. **Dispute resolution**: Relies on automated signals + reputation
 3. **Verification gap**: No cryptographic proof of correct execution
@@ -16,13 +17,13 @@ CipherOcto faces challenges that LuminAIR's approach could address:
 
 ### Core Technology
 
-| Component | Technology | Purpose |
-|-----------|------------|---------|
-| **Proof System** | Circle STARKs | Scalable, transparent, post-quantum secure |
-| **Prover** | Stwo (Starkware) | Ultra-efficient proof generation |
-| **Arithmetization** | AIR (Algebraic Intermediate Representation) | Computational graph → polynomials |
-| **Verification** | Rust + Cairo (planned) | On-chain verification |
-| **Field** | M31 (highly efficient prime field) | Fast computation |
+| Component           | Technology                                  | Purpose                                    |
+| ------------------- | ------------------------------------------- | ------------------------------------------ |
+| **Proof System**    | Circle STARKs                               | Scalable, transparent, post-quantum secure |
+| **Prover**          | Stwo (Starkware)                            | Ultra-efficient proof generation           |
+| **Arithmetization** | AIR (Algebraic Intermediate Representation) | Computational graph → polynomials          |
+| **Verification**    | Rust + Cairo (planned)                      | On-chain verification                      |
+| **Field**           | M31 (highly efficient prime field)          | Fast computation                           |
 
 ### Architecture
 
@@ -46,33 +47,36 @@ flowchart TD
 ### Key Innovations
 
 #### 1. AIR (Algebraic Intermediate Representation)
+
 - Each operator maps to specific AIR constraints
 - Local constraints ensure operation correctness
 - LogUp lookup argument ensures data flow integrity
 
 #### 2. Circle STARKs (Stwo)
+
 - More efficient than traditional STARKs
 - Uses M31 prime field for speed
 - SIMD backend for parallelization
 - GPU acceleration planned (Icicle-Stwo)
 
 #### 3. Verification Options
-| Verification Type | Status | Use Case |
-|------------------|--------|----------|
-| **Rust verifier** | ✅ Current | Off-chain verification |
-| **WASM verifier** | 🔜 Phase 2 | Browser-based verification |
-| **On-chain (Cairo)** | 🔜 Phase 3 | Starknet verification |
-| **EigenLayer AVS** | 🔜 Phase 3 | Decentralized verification |
+
+| Verification Type    | Status     | Use Case                   |
+| -------------------- | ---------- | -------------------------- |
+| **Rust verifier**    | ✅ Current | Off-chain verification     |
+| **WASM verifier**    | 🔜 Phase 2 | Browser-based verification |
+| **On-chain (Cairo)** | 🔜 Phase 3 | Starknet verification      |
+| **EigenLayer AVS**   | 🔜 Phase 3 | Decentralized verification |
 
 ### Use Cases from LuminAIR
 
-| Use Case | Description |
-|----------|-------------|
-| **Verifiable DeFi Agents** | zk-proved trading decisions |
-| **Trustless Inference** | On-chain ML without re-execution |
-| **Privacy-Preserving ML** | Selective disclosure of model inputs/outputs |
-| **Scientific Computing** | Black-Scholes PINNs with proofs |
-| **Healthcare** | Verifiable diagnosis assistance |
+| Use Case                   | Description                                  |
+| -------------------------- | -------------------------------------------- |
+| **Verifiable DeFi Agents** | zk-proved trading decisions                  |
+| **Trustless Inference**    | On-chain ML without re-execution             |
+| **Privacy-Preserving ML**  | Selective disclosure of model inputs/outputs |
+| **Scientific Computing**   | Black-Scholes PINNs with proofs              |
+| **Healthcare**             | Verifiable diagnosis assistance              |
 
 ---
 
@@ -101,6 +105,7 @@ flowchart TD
 ```
 
 **Proposal for CipherOcto**:
+
 - Encrypt prompt at proxy layer
 - Generate zk proof that routing was correct without revealing content
 - Seller verifies proof without seeing actual prompt
@@ -138,11 +143,13 @@ sequenceDiagram
 ```
 
 **Lightweight Proofs for MVE**:
+
 - Not full zkML - just prove output shape/validity
 - Latency proof: timestamp + hash of request/response
 - Correct routing proof: prove X routed to Y without revealing prompt
 
 **Integration with RFC-0900 (Economics)**:
+
 ```rust
 struct ExecutionProof {
     input_hash: FieldElement,      // Hash of encrypted input
@@ -176,11 +183,13 @@ flowchart LR
 ```
 
 **CipherOcto Advantage**:
+
 - Already on Starknet/Cairo - natural fit
 - Can implement LuminAIR-style proofs without migration
 - Stoolap uses same ecosystem (STWO integration)
 
 **Proposed Integration**:
+
 ```cairo
 // Starknet contract for quota proof verification
 #[starknet::contract]
@@ -222,6 +231,7 @@ flowchart TD
 ```
 
 **Positioning**:
+
 - CipherOcto's quota router = access layer
 - LuminAIR-style proofs = verification layer
 - Combined = "verifiable autonomous agents"
@@ -255,6 +265,7 @@ struct DecisionProof {
 ```
 
 **Integration with Quota Router**:
+
 - Agent pays OCTO-W for inference
 - Generates proof of correct execution
 - On-chain verification for transparency
@@ -276,6 +287,7 @@ flowchart TD
 ```
 
 **Properties**:
+
 - Seller verifies routing without seeing prompt
 - ZK proof demonstrates correct execution
 - Selective disclosure: reveal only when needed
@@ -284,12 +296,12 @@ flowchart TD
 
 **Use Case**: SLA enforcement with cryptographic guarantees
 
-| Metric | Proof Type | On-chain Settleable |
-|--------|------------|---------------------|
-| Latency | Timestamp + hash | ✅ |
-| Output validity | Shape check | ✅ |
-| Model execution | zkML proof | ✅ |
-| Routing correctness | Merkle path | ✅ |
+| Metric              | Proof Type       | On-chain Settleable |
+| ------------------- | ---------------- | ------------------- |
+| Latency             | Timestamp + hash | ✅                  |
+| Output validity     | Shape check      | ✅                  |
+| Model execution     | zkML proof       | ✅                  |
+| Routing correctness | Merkle path      | ✅                  |
 
 ---
 
@@ -297,50 +309,50 @@ flowchart TD
 
 ### Phase 1: Immediate (MVE Enhancement)
 
-| Enhancement | Description | Effort |
-|-------------|-------------|--------|
-| **Latency proofs** | Timestamp + hash for timing disputes | Low |
-| **Output hashing** | Hash outputs for later verification | Low |
-| **Routing logs** | Merkle-tree of routing decisions | Medium |
+| Enhancement        | Description                          | Effort |
+| ------------------ | ------------------------------------ | ------ |
+| **Latency proofs** | Timestamp + hash for timing disputes | Low    |
+| **Output hashing** | Hash outputs for later verification  | Low    |
+| **Routing logs**   | Merkle-tree of routing decisions     | Medium |
 
 ### Phase 2: Near-term (Post-MVE)
 
-| Enhancement | Description | Effort |
-|-------------|-------------|--------|
-| **Basic zkML** | Prove model executed without revealing input | Medium |
-| **WASM verifier** | Browser-based proof verification | Medium |
-| **Starknet verifier** | On-chain proof settlement | Medium |
+| Enhancement           | Description                                  | Effort |
+| --------------------- | -------------------------------------------- | ------ |
+| **Basic zkML**        | Prove model executed without revealing input | Medium |
+| **WASM verifier**     | Browser-based proof verification             | Medium |
+| **Starknet verifier** | On-chain proof settlement                    | Medium |
 
 ### Phase 3: Future (Full Integration)
 
-| Enhancement | Description | Effort |
-|-------------|-------------|--------|
-| **Full zkML** | Complete inference verification | High |
-| **EigenLayer AVS** | Decentralized verification network | High |
-| **Selective disclosure** | User-controlled data release | High |
+| Enhancement              | Description                        | Effort |
+| ------------------------ | ---------------------------------- | ------ |
+| **Full zkML**            | Complete inference verification    | High   |
+| **EigenLayer AVS**       | Decentralized verification network | High   |
+| **Selective disclosure** | User-controlled data release       | High   |
 
 ---
 
 ## Technical Stack Alignment
 
-| Component | CipherOcto | LuminAIR | Alignment |
-|-----------|------------|----------|-----------|
-| **Blockchain** | Starknet | Starknet (planned) | ✅ Perfect |
-| **ZK Prover** | Stoolap STWO | Stwo | ✅ Same ecosystem |
-| **Signature** | Starknet ECDSA | Circle STARKs | ✅ Complementary |
-| **Language** | Rust | Rust | ✅ Compatible |
-| **Verification** | Cairo (future) | Cairo (planned) | ✅ Aligned |
+| Component        | CipherOcto     | LuminAIR           | Alignment         |
+| ---------------- | -------------- | ------------------ | ----------------- |
+| **Blockchain**   | Starknet       | Starknet (planned) | ✅ Perfect        |
+| **ZK Prover**    | Stoolap STWO   | Stwo               | ✅ Same ecosystem |
+| **Signature**    | Starknet ECDSA | Circle STARKs      | ✅ Complementary  |
+| **Language**     | Rust           | Rust               | ✅ Compatible     |
+| **Verification** | Cairo (future) | Cairo (planned)    | ✅ Aligned        |
 
 ---
 
 ## Risk Assessment
 
-| Risk | Severity | Mitigation |
-|------|----------|------------|
-| zkML overhead too high for MVE | Medium | Start with lightweight proofs |
-| Integration complexity | Medium | Phase approach |
-| Stoolap + LuminAIR overlap | Low | Different focus (DB vs ML) |
-| Performance at scale | Medium | GPU acceleration later |
+| Risk                           | Severity | Mitigation                    |
+| ------------------------------ | -------- | ----------------------------- |
+| zkML overhead too high for MVE | Medium   | Start with lightweight proofs |
+| Integration complexity         | Medium   | Phase approach                |
+| Stoolap + LuminAIR overlap     | Low      | Different focus (DB vs ML)    |
+| Performance at scale           | Medium   | GPU acceleration later        |
 
 ---
 
@@ -354,6 +366,7 @@ LuminAIR's zkML approach offers significant opportunities for CipherOcto:
 4. **Narrative**: "Verifiable intelligence" positions both projects
 
 **Recommended Actions**:
+
 - [ ] Create RFC for zkML Integration
 - [ ] Prototype lightweight proof of routing
 - [ ] Evaluate Stoolap + Stwo integration

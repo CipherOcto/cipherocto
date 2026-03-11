@@ -44,6 +44,7 @@ quota-router add-provider anthropic
 ```
 
 Known providers automatically get their default endpoints:
+
 - OpenAI: `https://api.openai.com/v1`
 - Anthropic: `https://api.anthropic.com`
 - Google: `https://generativelanguage.googleapis.com`
@@ -67,6 +68,7 @@ quota-router add-provider <name>
 ```
 
 Example:
+
 ```bash
 quota-router add-provider openai
 ```
@@ -80,6 +82,7 @@ quota-router balance
 ```
 
 Output:
+
 ```
 OCTO-W Balance: 100
 ```
@@ -93,6 +96,7 @@ quota-router list --prompts 100 --price 1
 ```
 
 Arguments:
+
 - `--prompts` - Number of prompts to sell (default: 100)
 - `--price` - Price per prompt in OCTO-W (default: 1)
 
@@ -105,6 +109,7 @@ quota-router proxy --port 8080
 ```
 
 The proxy:
+
 1. Listens on localhost
 2. Checks your OCTO-W balance before each request
 3. Injects your API key from environment variable
@@ -137,6 +142,7 @@ quota-router route --provider openai -p "Hello, world!"
 ```
 
 Arguments:
+
 - `--provider` - Provider name
 - `-p`, `--prompt` - Test prompt
 
@@ -144,11 +150,11 @@ Arguments:
 
 The proxy reads API keys from these environment variables:
 
-| Provider | Variable |
-|----------|----------|
-| OpenAI | `OPENAI_API_KEY` |
+| Provider  | Variable            |
+| --------- | ------------------- |
+| OpenAI    | `OPENAI_API_KEY`    |
 | Anthropic | `ANTHROPIC_API_KEY` |
-| Google | `GOOGLE_API_KEY` |
+| Google    | `GOOGLE_API_KEY`    |
 
 ## Troubleshooting
 

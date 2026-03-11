@@ -380,13 +380,13 @@ block accepted
 
 These RFCs are **not required for genesis**:
 
-| RFC      | Reason                                             |
-| -------- | -------------------------------------------------- |
-| RFC-0414 (Agents) | Autonomous Agent Organizations — application layer |
+| RFC                  | Reason                                             |
+| -------------------- | -------------------------------------------------- |
+| RFC-0414 (Agents)    | Autonomous Agent Organizations — application layer |
 | RFC-0411 (Economics) | Knowledge Markets — application layer              |
 | RFC-0900 (Economics) | AI Quota Marketplace — application layer           |
 | RFC-0955 (Economics) | Model Liquidity — application layer                |
-| RFC-0415 (Agents) | Alignment Mechanisms — application layer           |
+| RFC-0415 (Agents)    | Alignment Mechanisms — application layer           |
 
 **Genesis focuses on the infrastructure layer.** Applications can grow on top.
 

@@ -30,14 +30,14 @@ OPENAI_API_KEY=sk-... quota-router proxy --port 8080
 
 ## Commands
 
-| Command | Description |
-|---------|-------------|
-| `init` | Initialize configuration |
-| `add-provider` | Add an AI provider |
-| `balance` | Show OCTO-W balance |
-| `list` | List quota for sale |
-| `proxy` | Start the proxy server |
-| `route` | Test routing to a provider |
+| Command        | Description                |
+| -------------- | -------------------------- |
+| `init`         | Initialize configuration   |
+| `add-provider` | Add an AI provider         |
+| `balance`      | Show OCTO-W balance        |
+| `list`         | List quota for sale        |
+| `proxy`        | Start the proxy server     |
+| `route`        | Test routing to a provider |
 
 ## Configuration
 

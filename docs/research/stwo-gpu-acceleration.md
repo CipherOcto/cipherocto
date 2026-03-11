@@ -6,11 +6,11 @@ STWO (StarkWare's open-source prover for Circle STARKs) primarily runs on CPU/SI
 
 ## The Problem
 
-| Metric | CPU/SIMD | GPU Accelerated |
-|--------|-----------|-----------------|
-| **Proof Generation** | ~25-28 seconds | ~0.07-9 seconds |
-| **Speedup** | Baseline | 3x - 355x |
-| **Hardware** | Apple Silicon, x86 | NVIDIA RTX 4090, H100 |
+| Metric               | CPU/SIMD           | GPU Accelerated       |
+| -------------------- | ------------------ | --------------------- |
+| **Proof Generation** | ~25-28 seconds     | ~0.07-9 seconds       |
+| **Speedup**          | Baseline           | 3x - 355x             |
+| **Hardware**         | Apple Silicon, x86 | NVIDIA RTX 4090, H100 |
 
 ## Why GPU Acceleration Matters for Circle FRI
 
@@ -40,13 +40,13 @@ STWO (StarkWare's open-source prover for Circle STARKs) primarily runs on CPU/SI
 
 ## Implementation Comparison
 
-| Feature | ICICLE-Stwo | stwo-gpu | NitrooZK-stwo |
-|---------|-------------|-----------|----------------|
-| **Speedup** | 3.25x - 7x | ~193% (multi-GPU) | 22x - 355x |
-| **Focus** | Drop-in backend | Circle FRI | Cairo AIR + FRI |
-| **License** | Apache 2.0 | Apache 2.0 | Apache 2.0 |
-| **Status** | Feature branch | Early WIP | Production-ready |
-| **Multi-GPU** | Limited | Yes | Limited |
+| Feature       | ICICLE-Stwo     | stwo-gpu          | NitrooZK-stwo    |
+| ------------- | --------------- | ----------------- | ---------------- |
+| **Speedup**   | 3.25x - 7x      | ~193% (multi-GPU) | 22x - 355x       |
+| **Focus**     | Drop-in backend | Circle FRI        | Cairo AIR + FRI  |
+| **License**   | Apache 2.0      | Apache 2.0        | Apache 2.0       |
+| **Status**    | Feature branch  | Early WIP         | Production-ready |
+| **Multi-GPU** | Limited         | Yes               | Limited          |
 
 ---
 
@@ -80,13 +80,13 @@ flowchart TD
 
 ### Key Components Accelerated
 
-| Component | Acceleration | Notes |
-|-----------|--------------|-------|
-| **DCCT (Circle FFT)** | ✅ Full GPU | M31 polynomial ops |
-| **Composition Polynomial** | ✅ Full GPU | No lookup support yet |
-| **OOD Sampling** | ⚠️ Partial | 20% runtime, bottleneck |
-| **Merkle Tree** | ✅ Full GPU | All hashing on GPU |
-| **FRI Folding** | ✅ Full GPU | FRI quotient computation |
+| Component                  | Acceleration | Notes                    |
+| -------------------------- | ------------ | ------------------------ |
+| **DCCT (Circle FFT)**      | ✅ Full GPU  | M31 polynomial ops       |
+| **Composition Polynomial** | ✅ Full GPU  | No lookup support yet    |
+| **OOD Sampling**           | ⚠️ Partial   | 20% runtime, bottleneck  |
+| **Merkle Tree**            | ✅ Full GPU  | All hashing on GPU       |
+| **FRI Folding**            | ✅ Full GPU  | FRI quotient computation |
 
 ### Code Structure
 
@@ -171,12 +171,12 @@ Focused CUDA backend emphasizing Circle FRI acceleration with multi-GPU scaling.
 
 ### Key Features
 
-| Feature | Implementation |
-|---------|----------------|
+| Feature        | Implementation                     |
+| -------------- | ---------------------------------- |
 | **Circle FRI** | FRI folding, polynomial evaluation |
-| **M31 Field** | Native CUDA kernels |
-| **Multi-GPU** | CUDA peer access (P2P) |
-| **Docker** | Ready-to-use devcontainer |
+| **M31 Field**  | Native CUDA kernels                |
+| **Multi-GPU**  | CUDA peer access (P2P)             |
+| **Docker**     | Ready-to-use devcontainer          |
 
 ### Components Accelerated
 
@@ -218,11 +218,11 @@ cargo test  # Compiles CUDA via CMake
 
 ### Benchmark Results
 
-| Workload | Speedup vs SIMD | Throughput |
-|----------|-----------------|------------|
-| Wide-Fib (Poseidon, log=23) | **152x** | — |
-| Wide-Fib (Blake2s, log=23) | **22x** | — |
-| General (various) | **355x** | 116x Kelem/s |
+| Workload                    | Speedup vs SIMD | Throughput   |
+| --------------------------- | --------------- | ------------ |
+| Wide-Fib (Poseidon, log=23) | **152x**        | —            |
+| Wide-Fib (Blake2s, log=23)  | **22x**         | —            |
+| General (various)           | **355x**        | 116x Kelem/s |
 
 ### Architecture
 
@@ -252,10 +252,10 @@ cargo test  # Compiles CUDA via CMake
 
 ### Inspirations
 
-| Source | What was ported |
-|--------|----------------|
-| **stwo-gpu** | M31 ops, FRI, quotient |
-| **era-bellman-cuda** | Poseidon252 |
+| Source               | What was ported        |
+| -------------------- | ---------------------- |
+| **stwo-gpu**         | M31 ops, FRI, quotient |
+| **era-bellman-cuda** | Poseidon252            |
 
 ### Key Features
 
@@ -300,11 +300,11 @@ STWO_QUIET=1 LOG_N_INSTANCES=23 RAYON_NUM_THREADS=16 cargo bench
 
 ### Single GPU Benchmarks
 
-| Implementation | Hardware | Speedup | Best For |
-|---------------|----------|---------|----------|
-| **ICICLE-Stwo** | RTX 3090 Ti | 3.25x - 7x | Drop-in replacement |
-| **stwo-gpu** | Multi-GPU | ~193% | Scaling |
-| **NitrooZK-stwo** | RTX 4090 | 22x - 355x | Production |
+| Implementation    | Hardware    | Speedup    | Best For            |
+| ----------------- | ----------- | ---------- | ------------------- |
+| **ICICLE-Stwo**   | RTX 3090 Ti | 3.25x - 7x | Drop-in replacement |
+| **stwo-gpu**      | Multi-GPU   | ~193%      | Scaling             |
+| **NitrooZK-stwo** | RTX 4090    | 22x - 355x | Production          |
 
 ### Why NitrooZK is Fastest
 
@@ -319,12 +319,12 @@ STWO_QUIET=1 LOG_N_INSTANCES=23 RAYON_NUM_THREADS=16 cargo bench
 
 ### Decision Matrix
 
-| Requirement | Recommended |
-|------------|-------------|
-| **Quick integration** | ICICLE-Stwo (drop-in) |
-| **Multi-GPU scaling** | stwo-gpu |
-| **Production/Max speed** | NitrooZK-stwo |
-| **On-chain (Cairo)** | NitrooZK-stwo |
+| Requirement              | Recommended           |
+| ------------------------ | --------------------- |
+| **Quick integration**    | ICICLE-Stwo (drop-in) |
+| **Multi-GPU scaling**    | stwo-gpu              |
+| **Production/Max speed** | NitrooZK-stwo         |
+| **On-chain (Cairo)**     | NitrooZK-stwo         |
 
 ### Integration Path
 
@@ -342,11 +342,11 @@ flowchart TD
 
 ### Expected Improvements
 
-| Component | Current (CPU) | GPU Accelerated |
-|-----------|---------------|-----------------|
-| Proof Generation | ~25-28s | ~0.07-9s |
-| Verification | ~15ms | ~15ms (same) |
-| Cost/Proof | Higher | ~10x lower |
+| Component        | Current (CPU) | GPU Accelerated |
+| ---------------- | ------------- | --------------- |
+| Proof Generation | ~25-28s       | ~0.07-9s        |
+| Verification     | ~15ms         | ~15ms (same)    |
+| Cost/Proof       | Higher        | ~10x lower      |
 
 ---
 
@@ -354,14 +354,14 @@ flowchart TD
 
 ### Circle FRI Components
 
-| Operation | Parallelizable | GPU Benefit |
-|-----------|---------------|------------|
-| **Trace Generation** | Yes | High |
-| **DCCT (Circle FFT)** | Yes | Very High |
-| **OOD Sampling** | Partial | Medium |
-| **FRI Folding** | Yes | High |
-| **Composition Poly** | Yes | Very High |
-| **Merkle Tree** | Yes | High |
+| Operation             | Parallelizable | GPU Benefit |
+| --------------------- | -------------- | ----------- |
+| **Trace Generation**  | Yes            | High        |
+| **DCCT (Circle FFT)** | Yes            | Very High   |
+| **OOD Sampling**      | Partial        | Medium      |
+| **FRI Folding**       | Yes            | High        |
+| **Composition Poly**  | Yes            | Very High   |
+| **Merkle Tree**       | Yes            | High        |
 
 ### Memory Access Patterns
 
@@ -416,11 +416,11 @@ let proof = prove_cairo::<Blake2sMerkleChannel>(input)?;
 
 ## Summary
 
-| Implementation | Status | Speedup | Best For |
-|---------------|--------|---------|----------|
-| **ICICLE-Stwo** | Feature branch | 3x-7x | Easy integration |
-| **stwo-gpu** | WIP | ~193% | Multi-GPU |
-| **NitrooZK-stwo** | Production | 22x-355x | Maximum performance |
+| Implementation    | Status         | Speedup  | Best For            |
+| ----------------- | -------------- | -------- | ------------------- |
+| **ICICLE-Stwo**   | Feature branch | 3x-7x    | Easy integration    |
+| **stwo-gpu**      | WIP            | ~193%    | Multi-GPU           |
+| **NitrooZK-stwo** | Production     | 22x-355x | Maximum performance |
 
 **For CipherOcto**: Start with **NitrooZK-stwo** for production, or **ICICLE-Stwo** for quick integration. The 22x-355x speedup dramatically reduces proof generation costs.
 

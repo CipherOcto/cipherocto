@@ -7,6 +7,7 @@ This research investigates the cryptographic foundations required for wallet imp
 ## Problem Statement
 
 CipherOcto needs cryptographic wallet infrastructure that:
+
 1. Provides secure key management and signing
 2. Integrates with Cairo/Starknet ecosystem
 3. Supports token transactions (OCTO-W, OCTO-D, OCTO)
@@ -25,12 +26,12 @@ CipherOcto needs cryptographic wallet infrastructure that:
 
 Starknet uses a different signature scheme from Ethereum's ECDSA:
 
-| Aspect | Ethereum | Starknet |
-|--------|----------|----------|
-| **Curve** | secp256k1 | Stark Curve (EC over BLS12-381) |
-| **Signature** | ECDSA | StarkNet ECDSA |
-| **Key Size** | 32 bytes | 32 bytes |
-| **Address** | 20 bytes | 32 bytes |
+| Aspect        | Ethereum  | Starknet                        |
+| ------------- | --------- | ------------------------------- |
+| **Curve**     | secp256k1 | Stark Curve (EC over BLS12-381) |
+| **Signature** | ECDSA     | StarkNet ECDSA                  |
+| **Key Size**  | 32 bytes  | 32 bytes                        |
+| **Address**   | 20 bytes  | 32 bytes                        |
 
 ```rust
 // Starknet key pair using starknet-rs
@@ -70,12 +71,12 @@ mod Account {
 
 **Account Types:**
 
-| Type | Validation | Use Case |
-|------|-----------|----------|
-| **Argent** | Multi-party computation | Mobile wallets |
-| **Braavos** | Hardware security | High security |
-| **Generic** | Single ECDSA | Standard accounts |
-| **Multisig** | M-of-N signatures | Treasury |
+| Type         | Validation              | Use Case          |
+| ------------ | ----------------------- | ----------------- |
+| **Argent**   | Multi-party computation | Mobile wallets    |
+| **Braavos**  | Hardware security       | High security     |
+| **Generic**  | Single ECDSA            | Standard accounts |
+| **Multisig** | M-of-N signatures       | Treasury          |
 
 ### 3. Key Derivation
 
@@ -122,12 +123,12 @@ impl SecureKeyStore {
 
 **Storage Options:**
 
-| Method | Security | Use Case |
-|--------|----------|----------|
-| **Encrypted file** | Medium | CLI tools |
-| **OS Keychain** | High | Desktop apps |
-| **HSM** | Very High | Production |
-| **MPC** | Very High | Institutional |
+| Method             | Security  | Use Case      |
+| ------------------ | --------- | ------------- |
+| **Encrypted file** | Medium    | CLI tools     |
+| **OS Keychain**    | High      | Desktop apps  |
+| **HSM**            | Very High | Production    |
+| **MPC**            | Very High | Institutional |
 
 ---
 
@@ -227,12 +228,12 @@ impl ProofVerifier {
 
 ### ZK-Friendly Operations
 
-| Operation | ZK-Friendly | Notes |
-|-----------|-------------|-------|
-| Balance transfer | ✅ | Standard ERC-20 |
-| Multi-sig | ✅ | Threshold sigs |
-| Confidential txs | ⚠️ | Requires commitment schemes |
-| Proof verification | ✅ | Native to Starknet |
+| Operation          | ZK-Friendly | Notes                       |
+| ------------------ | ----------- | --------------------------- |
+| Balance transfer   | ✅          | Standard ERC-20             |
+| Multi-sig          | ✅          | Threshold sigs              |
+| Confidential txs   | ⚠️          | Requires commitment schemes |
+| Proof verification | ✅          | Native to Starknet          |
 
 ---
 
@@ -273,40 +274,43 @@ impl<P: Provider> QuotaWallet<P> {
 
 ### Key Components
 
-| Component | Technology | Purpose |
-|-----------|------------|---------|
-| **Signing** | starknet-rs | Transaction signing |
-| **Key Storage** | AES-256-GCM | Local encrypted storage |
-| **Provider** | starknet-rs JSON-RPC | Network communication |
-| **Account** | OpenZeppelin | Smart contract wallet |
+| Component       | Technology           | Purpose                 |
+| --------------- | -------------------- | ----------------------- |
+| **Signing**     | starknet-rs          | Transaction signing     |
+| **Key Storage** | AES-256-GCM          | Local encrypted storage |
+| **Provider**    | starknet-rs JSON-RPC | Network communication   |
+| **Account**     | OpenZeppelin         | Smart contract wallet   |
 
 ---
 
 ## Risk Assessment
 
-| Risk | Mitigation | Severity |
-|------|------------|----------|
-| Private key exposure | Use OS keychain, never log keys | Critical |
-| Signature replay | Include nonce + chain_id in every tx | High |
-| Curve vulnerability | Use starknet-rs (audited) | Low |
-| MPC complexity | Defer to Phase 2 | Medium |
+| Risk                 | Mitigation                           | Severity |
+| -------------------- | ------------------------------------ | -------- |
+| Private key exposure | Use OS keychain, never log keys      | Critical |
+| Signature replay     | Include nonce + chain_id in every tx | High     |
+| Curve vulnerability  | Use starknet-rs (audited)            | Low      |
+| MPC complexity       | Defer to Phase 2                     | Medium   |
 
 ---
 
 ## Recommendations
 
 ### Phase 1 (MVE)
+
 - Use starknet-rs for signing and provider
 - Encrypted keyfile with password protection
 - Simple single-signer account
 - Manual nonce management
 
 ### Phase 2
+
 - Add multi-sig support for governance
 - Integrate OS keychain (macOS Keychain, Windows Credential Manager)
 - Hardware wallet signing (Ledger via HID)
 
 ### Phase 3
+
 - MPC-based key sharding
 - Threshold signatures for treasury
 - ZK-based confidential transactions

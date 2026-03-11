@@ -84,12 +84,12 @@ Memory enables agents to:
 
 #### 1. By Duration
 
-| Type | Duration | Capacity | Purpose | Examples |
-|------|----------|----------|---------|----------|
-| **Sensory Memory** | < 1 second | Very limited | Raw input buffering | Token embeddings |
-| **Working Memory** | Seconds-minutes | 7±2 items | Active processing | Context window, KV cache |
-| **Short-term Memory** | Hours-days | Limited | Session persistence | Conversation history |
-| **Long-term Memory** | Indefinite | Large | Permanent storage | Vector DBs, knowledge graphs |
+| Type                  | Duration        | Capacity     | Purpose             | Examples                     |
+| --------------------- | --------------- | ------------ | ------------------- | ---------------------------- |
+| **Sensory Memory**    | < 1 second      | Very limited | Raw input buffering | Token embeddings             |
+| **Working Memory**    | Seconds-minutes | 7±2 items    | Active processing   | Context window, KV cache     |
+| **Short-term Memory** | Hours-days      | Limited      | Session persistence | Conversation history         |
+| **Long-term Memory**  | Indefinite      | Large        | Permanent storage   | Vector DBs, knowledge graphs |
 
 #### 2. By Content Type
 
@@ -119,11 +119,11 @@ graph LR
 
 #### 3. By Implementation
 
-| Category | Description | Examples |
-|----------|-------------|----------|
-| **Parametric Memory** | Stored in model weights | Fine-tuning, adapters |
-| **Non-Parametric Memory** | External storage | Vector DBs, key-value stores |
-| **Hybrid Memory** | Combined approach | RAG + fine-tuning |
+| Category                  | Description             | Examples                     |
+| ------------------------- | ----------------------- | ---------------------------- |
+| **Parametric Memory**     | Stored in model weights | Fine-tuning, adapters        |
+| **Non-Parametric Memory** | External storage        | Vector DBs, key-value stores |
+| **Hybrid Memory**         | Combined approach       | RAG + fine-tuning            |
 
 ### Memory Operations
 
@@ -181,17 +181,20 @@ graph TD
 ```
 
 **Key Systems:**
+
 - **Mem0**: Drop-in memory layer with smart retrieval
 - **TeleMem**: High-performance Mem0 replacement
 - **OMEGA**: Ranks #1 on LongMemEval (95.4%)
 
 **Advantages:**
+
 - Simple implementation
 - Scalable to billions of vectors
 - Semantic similarity search
 - Easy to update
 
 **Limitations:**
+
 - Limited reasoning about relationships
 - No temporal awareness
 - Retrieval can miss relevant context
@@ -222,17 +225,20 @@ graph TD
 ```
 
 **Key Systems:**
+
 - **Zep (Graphiti)**: Dynamic graph construction from conversations
 - **MIRIX**: Multi-agent memory with graph structures
 - **HippoRAG**: Neurobiologically inspired long-term memory
 
 **Advantages:**
+
 - Rich relationship modeling
 - Multi-hop reasoning
 - Temporal event tracking
 - Explainable retrieval paths
 
 **Limitations:**
+
 - Complex implementation
 - Scalability challenges
 - Requires entity extraction
@@ -262,18 +268,19 @@ graph TD
 ```
 
 **Key Systems:**
+
 - **Letta (MemGPT)**: Tiered memory with OS-like management
 - **MemOS**: Operating system for agent memory
 - **MemU**: Universal memory framework
 
 **Architecture Layers:**
 
-| Layer | Duration | Size | Retrieval | Example |
-|-------|----------|------|-----------|---------|
-| L1 Cache | Instant | ~100 items | Instant | Current context |
-| L2 Cache | Session | ~10K items | Fast | Recent conversation |
-| SSD Store | Persistent | ~1M items | Medium | Session history |
-| Cold Store | Archive | Unlimited | Slow | Historical data |
+| Layer      | Duration   | Size       | Retrieval | Example             |
+| ---------- | ---------- | ---------- | --------- | ------------------- |
+| L1 Cache   | Instant    | ~100 items | Instant   | Current context     |
+| L2 Cache   | Session    | ~10K items | Fast      | Recent conversation |
+| SSD Store  | Persistent | ~1M items  | Medium    | Session history     |
+| Cold Store | Archive    | Unlimited  | Slow      | Historical data     |
 
 ### 4. Hybrid Architectures
 
@@ -299,6 +306,7 @@ graph TD
 ```
 
 **Notable Hybrid Systems:**
+
 - **MemVerse**: Multimodal memory with multiple storage backends
 - **Second Me**: Personalized memory with hybrid retrieval
 - **Congee**: Contextual memory with graph organization
@@ -311,32 +319,33 @@ graph TD
 
 #### Top 18 Open-Source Agent Memory Systems (2025-2026)
 
-| Rank | System | Stars | Language | Key Features | Best For |
-|------|--------|-------|----------|--------------|----------|
-| 1 | **Mem0** | ★★★★★ | Python | Smart retrieval, easy API | Quick integration |
-| 2 | **Claude-Mem** | ★★★★☆ | TypeScript | Claude Code plugin | Claude projects |
-| 3 | **Zep/Graphiti** | ★★★★☆ | Rust/Python | Dynamic graphs | Complex relationships |
-| 4 | **Letta (MemGPT)** | ★★★★☆ | Python | OS-like memory management | Long-horizon tasks |
-| 5 | **Second Me** | ★★★★☆ | Python | Personalization | User-centric agents |
-| 6 | **Congee** | ★★★☆☆ | Python | Hierarchical compression | Long conversations |
-| 7 | **MemU** | ★★★☆☆ | Python | Universal framework | Research |
-| 8 | **MemOS** | ★★★☆☆ | Python | Memory OS | Production systems |
-| 9 | **MemMachine** | ★★★☆☆ | Python | Modular architecture | Custom solutions |
-| 10 | **MIRIX** | ★★★☆☆ | Python | Multi-agent | Collaborative agents |
-| 11 | **OpenMemory** | ★★★☆☆ | Python | Open standard | Interoperability |
-| 12 | **Memobase** | ★★☆☆☆ | Python | Memory operations | Memory research |
-| 13 | **EverMemOS** | ★★☆☆☆ | Python | EverMind integration | EverMind ecosystem |
-| 14 | **Hindsight** | ★★☆☆☆ | Python | Reflective memory | Learning agents |
-| 15 | **LangMem** | ★★☆☆☆ | Python | LangChain integration | LangChain users |
-| 16 | **MemoryBear** | ★★☆☆☆ | Python | Persistence | Production apps |
-| 17 | **Memov** | ★★☆☆☆ | Python | Git-based | Version control |
-| 18 | **OMEGA** | ★★☆☆☆ | Python | 25 MCP tools, top benchmark | Coding agents |
+| Rank | System             | Stars | Language    | Key Features                | Best For              |
+| ---- | ------------------ | ----- | ----------- | --------------------------- | --------------------- |
+| 1    | **Mem0**           | ★★★★★ | Python      | Smart retrieval, easy API   | Quick integration     |
+| 2    | **Claude-Mem**     | ★★★★☆ | TypeScript  | Claude Code plugin          | Claude projects       |
+| 3    | **Zep/Graphiti**   | ★★★★☆ | Rust/Python | Dynamic graphs              | Complex relationships |
+| 4    | **Letta (MemGPT)** | ★★★★☆ | Python      | OS-like memory management   | Long-horizon tasks    |
+| 5    | **Second Me**      | ★★★★☆ | Python      | Personalization             | User-centric agents   |
+| 6    | **Congee**         | ★★★☆☆ | Python      | Hierarchical compression    | Long conversations    |
+| 7    | **MemU**           | ★★★☆☆ | Python      | Universal framework         | Research              |
+| 8    | **MemOS**          | ★★★☆☆ | Python      | Memory OS                   | Production systems    |
+| 9    | **MemMachine**     | ★★★☆☆ | Python      | Modular architecture        | Custom solutions      |
+| 10   | **MIRIX**          | ★★★☆☆ | Python      | Multi-agent                 | Collaborative agents  |
+| 11   | **OpenMemory**     | ★★★☆☆ | Python      | Open standard               | Interoperability      |
+| 12   | **Memobase**       | ★★☆☆☆ | Python      | Memory operations           | Memory research       |
+| 13   | **EverMemOS**      | ★★☆☆☆ | Python      | EverMind integration        | EverMind ecosystem    |
+| 14   | **Hindsight**      | ★★☆☆☆ | Python      | Reflective memory           | Learning agents       |
+| 15   | **LangMem**        | ★★☆☆☆ | Python      | LangChain integration       | LangChain users       |
+| 16   | **MemoryBear**     | ★★☆☆☆ | Python      | Persistence                 | Production apps       |
+| 17   | **Memov**          | ★★☆☆☆ | Python      | Git-based                   | Version control       |
+| 18   | **OMEGA**          | ★★☆☆☆ | Python      | 25 MCP tools, top benchmark | Coding agents         |
 
 ### Deep Dive: Leading Systems
 
 #### Mem0 (Most Popular)
 
 **Architecture:**
+
 ```python
 import mem0
 
@@ -354,6 +363,7 @@ memory.update(memory_id="abc123", data="User now uses Chrome")
 ```
 
 **Key Features:**
+
 - Semantic vector storage
 - Automatic memory deduplication
 - Multi-backend support (ChromaDB, Qdrant, Pinecone)
@@ -361,6 +371,7 @@ memory.update(memory_id="abc123", data="User now uses Chrome")
 - Easy API integration
 
 **Use Cases:**
+
 - Personal assistant memory
 - Customer support history
 - User preference tracking
@@ -387,6 +398,7 @@ sequenceDiagram
 ```
 
 **Key Features:**
+
 - Automatic entity and relationship extraction
 - Temporal graph evolution
 - Context window summarization
@@ -394,6 +406,7 @@ sequenceDiagram
 - Role-based access control
 
 **Use Cases:**
+
 - Complex relationship tracking
 - Multi-party conversation memory
 - Knowledge base construction
@@ -424,12 +437,14 @@ graph TD
 ```
 
 **Memory Hierarchy:**
+
 1. **Conversation Context**: Immediate context (4-8K tokens)
 2. **Episodic Memory**: Timestamped interaction logs
 3. **Recall Store**: Searchable historical episodes
 4. **Archival Memory**: Compressed summaries
 
 **Key Features:**
+
 - OS-style memory management
 - Automatic context window management
 - Memory consolidation during idle periods
@@ -437,6 +452,7 @@ graph TD
 - Persistent state across sessions
 
 **Use Cases:**
+
 - Long-horizon task execution
 - Research assistants
 - Code generation with context
@@ -460,6 +476,7 @@ tools = {
 ```
 
 **Key Innovations:**
+
 - 25 specialized memory tools via MCP
 - Hybrid retrieval strategies
 - Context-aware ranking
@@ -467,6 +484,7 @@ tools = {
 - Deduplication and fusion
 
 **Use Cases:**
+
 - AI coding agents
 - Development assistants
 - Technical documentation memory
@@ -483,12 +501,14 @@ tools = {
 **Focus:** Chat assistants with long-term interactive memory
 
 **Key Metrics:**
+
 - Fact retrieval accuracy
 - Temporal ordering
 - Entity consistency
 - Preference tracking
 
 **Leaderboard Top Performers:**
+
 1. OMEGA: 95.4%
 2. MemGPT: 89.2%
 3. Mem0: 87.6%
@@ -498,6 +518,7 @@ tools = {
 **"Beyond a Million Tokens"** - Tests extreme context handling
 
 **Test Categories:**
+
 - Million-token document understanding
 - Long-term consistency
 - Information retrieval at scale
@@ -512,6 +533,7 @@ tools = {
 **Focus:** Ultra-long role-playing dialogues
 
 **Evaluation Dimensions:**
+
 - Memory consistency over 100+ turn conversations
 - Character coherence
 - Plot continuity
@@ -524,6 +546,7 @@ tools = {
 **Incremental multi-turn interaction evaluation**
 
 **Test Setup:**
+
 ```
 100+ turn conversation
 ↓
@@ -543,6 +566,7 @@ Retrieval accuracy
 **Problem:** Memory systems can introduce false information
 
 **Evaluation:**
+
 - Factuality of stored memories
 - Retrieval accuracy
 - False positive rate
@@ -557,6 +581,7 @@ Retrieval accuracy
 **First comprehensive video understanding benchmark**
 
 **Test Dimensions:**
+
 - Long video understanding (10+ minutes)
 - Temporal reasoning
 - Visual-semantic alignment
@@ -571,6 +596,7 @@ Retrieval accuracy
 **Scenario:** First-person perspective daily activities
 
 **Challenges:**
+
 - Continuous video streams
 - Multi-day memory
 - Personal preference learning
@@ -585,6 +611,7 @@ Retrieval accuracy
 **Test Length:** Up to 4-hour videos
 
 **Requirements:**
+
 - Hierarchical memory compression
 - Key moment detection
 - Cross-scene reasoning
@@ -599,12 +626,14 @@ Retrieval accuracy
 **"Scaling Up Agent Environments and Evaluations" (Gaia2)**
 
 **Features:**
+
 - Realistic task scenarios
 - Multi-step problem solving
 - Memory-dependent goals
 - Stateful world simulation
 
 **Memory Requirements:**
+
 - Object permanence
 - Causal relationships
 - Planning memory
@@ -619,46 +648,56 @@ Retrieval accuracy
 #### Text Memory (2025)
 
 **LightMem** - Lightweight, efficient memory-augmented generation
+
 - **Innovation:** Compressed memory representation
 - **Result:** 3x faster retrieval with minimal accuracy loss
 
 **Nemori** - Self-organizing agent memory
+
 - **Innovation:** Cognitive science-inspired memory organization
 - **Result:** Autonomous memory clustering without supervision
 
 **MemoRAG** - Global memory-enhanced retrieval
+
 - **Innovation:** Two-stage retrieval (local + global)
 - **Result:** 28% improvement on long-context tasks
 
 **Compress to Impress** (2024) - Compressive memory
+
 - **Innovation:** Incremental conversation summarization
 - **Result:** 10x compression with 95% information retention
 
 #### Graph Memory (2025)
 
 **HippoRAG** - Neurobiologically inspired memory
+
 - **Innovation:** Hippocampus-like pattern completion
 - **Result:** Human-like memory recall patterns
 
 **MIRIX** - Multi-agent memory system
+
 - **Innovation:** Shared memory across agent teams
 - **Result:** Collaborative agents with common knowledge
 
 **From RAG to Memory** - Non-parametric continual learning
+
 - **Innovation:** Learning from retrieved examples
 - **Result:** Zero-shot task adaptation
 
 #### Multimodal Memory (2025)
 
 **WorldMM** - Dynamic multimodal memory
+
 - **Innovation:** Video-text cross-modal memory
 - **Result:** Long video reasoning with 15-minute understanding
 
 **MemVerse** - Multimodal lifelong learning
+
 - **Innovation:** Multi-modal memory consolidation
 - **Result:** Continual learning without catastrophic forgetting
 
 **HippoMM** - Hippocampal-inspired audiovisual memory
+
 - **Innovation:** Integrated audio-visual episodic memory
 - **Result:** 34% improvement on long-form video understanding
 
@@ -667,18 +706,22 @@ Retrieval accuracy
 #### 2025-2026 Advances
 
 **MeKi** - Memory-based expert knowledge injection
+
 - **Innovation:** Mixture of memory experts
 - **Result:** Efficient model scaling
 
 **DeepSeek Engram** (Conditional Memory)
+
 - **Innovation:** Learnable memory lookup layers
 - **Result:** 50% reduction in compute for same performance
 
 **MLP Memory** - Retriever-pretrained external memory
+
 - **Innovation:** Pretrained memory decoder
 - **Result:** Plug-and-play memory for any LLM
 
 **Memory Decoder** - Pretrained plug-and-play memory
+
 - **Innovation:** Universal memory interface
 - **Result:** Drop-in memory for existing models
 
@@ -687,32 +730,39 @@ Retrieval accuracy
 #### Reinforcement Learning Approaches
 
 **ProcMEM** (2026) - Procedural memory from experience
+
 - **Innovation:** Non-parametric PPO for skill learning
 - **Result:** Reusable skills without weight updates
 
 **MemSkill** (2026) - Memory skill evolution
+
 - **Innovation:** Learnable memory operations
 - **Result:** Self-improving memory systems
 
 **Memento 2** (2026) - Stateful reflective memory
+
 - **Innovation:** Reflection-driven learning
 - **Result:** Agent improvement without fine-tuning
 
 **Mem-α** (2025) - Memory construction via RL
+
 - **Innovation:** Learned memory policies
 - **Result:** Optimal memory management strategies
 
 #### Continual Learning
 
 **End-to-End Test-Time Training** (2025)
+
 - **Innovation:** Learn during inference
 - **Result:** Adaptation without weight updates
 
 **MemEvolve** (2025) - Meta-evolution of memory
+
 - **Innovation:** Self-improving memory architectures
 - **Result:** Automatic memory optimization
 
 **Evo-Memory** - Test-time learning benchmark
+
 - **Innovation:** Self-evolving memory evaluation
 - **Result:** Framework for continual learning
 
@@ -744,13 +794,13 @@ graph LR
 
 #### Key Brain Structures
 
-| Structure | Function | AI Analog |
-|-----------|----------|-----------|
-| **Hippocampus** | Episodic memory formation | Vector encoding |
-| **Neocortex** | Long-term storage | Knowledge base |
-| **Amygdala** | Emotional memory | Preference tracking |
-| **Prefrontal Cortex** | Working memory | Context window |
-| **Basal Ganglia** | Procedural memory | Skill storage |
+| Structure             | Function                  | AI Analog           |
+| --------------------- | ------------------------- | ------------------- |
+| **Hippocampus**       | Episodic memory formation | Vector encoding     |
+| **Neocortex**         | Long-term storage         | Knowledge base      |
+| **Amygdala**          | Emotional memory          | Preference tracking |
+| **Prefrontal Cortex** | Working memory            | Context window      |
+| **Basal Ganglia**     | Procedural memory         | Skill storage       |
 
 ### Memory Consolidation
 
@@ -771,6 +821,7 @@ graph TD
 ```
 
 **AI Implementation:**
+
 - **Immediate**: Store in vector database
 - **Background**: Compress and summarize
 - **Periodic**: Abstract into general knowledge
@@ -786,6 +837,7 @@ graph TD
 4. **Motivated Forgetting**: Emotional regulation
 
 **AI Application:**
+
 - Gradual memory weight decay
 - Importance-based retention
 - Pruning low-value memories
@@ -798,18 +850,21 @@ graph TD
 ### 1. Scalability
 
 **Problem:** Memory systems must handle:
+
 - Millions of interactions
 - Multi-user scenarios
 - Real-time retrieval
 - Efficient storage
 
 **Current Solutions:**
+
 - Vector database sharding
 - Hierarchical indexing
 - Approximate nearest neighbor search
 - Memory compression
 
 **Remaining Gaps:**
+
 - Cross-user memory deduplication
 - Efficient graph traversal at scale
 - Real-time memory consolidation
@@ -820,12 +875,14 @@ graph TD
 **Problem:** Maintaining accurate, up-to-date memory
 
 **Challenges:**
+
 - Contradictory information
 - Temporal validity
 - Source attribution
 - Fact verification
 
 **Current Approaches:**
+
 - Memory versioning
 - Confidence scoring
 - Source tracking
@@ -856,6 +913,7 @@ graph TD
 ```
 
 **Requirements:**
+
 - End-to-end encryption
 - User-controlled memory
 - Right to be forgotten
@@ -866,12 +924,14 @@ graph TD
 **Problem:** No standardized evaluation framework
 
 **Current State:**
+
 - Fragmented benchmarks
 - Task-specific metrics
 - Limited reproducibility
 - Unclear baselines
 
 **Need:**
+
 - Standard evaluation suite
 - Clear metrics for each use case
 - Reproducible baselines
@@ -882,12 +942,14 @@ graph TD
 **Problem:** Systems can create false memories
 
 **Causes:**
+
 - Retrieval errors
 - Incorrect summarization
 - Source confusion
 - Generation mistakes
 
 **Mitigation:**
+
 - Strict retrieval-only modes
 - Source attribution
 - Confidence calibration
@@ -902,6 +964,7 @@ graph TD
 #### 1. Neurobiologically Inspired Memory
 
 **Hippocampus-like Systems:**
+
 - Pattern completion (HippoRAG)
 - Episodic-semantic separation
 - Memory replay during "sleep"
@@ -910,6 +973,7 @@ graph TD
 #### 2. Self-Evolving Memory
 
 **Agents that improve their own memory:**
+
 - Learn optimal retrieval strategies
 - Adapt compression algorithms
 - Discover memory patterns
@@ -918,6 +982,7 @@ graph TD
 #### 3. Multi-Agent Memory Sharing
 
 **Collaborative memory systems:**
+
 - Shared knowledge bases
 - Distributed memory storage
 - Collective intelligence
@@ -926,6 +991,7 @@ graph TD
 #### 4. Memory Specialization
 
 **Domain-specific memory systems:**
+
 - Medical memory (HIPAA compliant)
 - Legal memory (case law patterns)
 - Code memory (repository understanding)
@@ -934,6 +1000,7 @@ graph TD
 #### 5. Explainable Memory
 
 **Transparent memory operations:**
+
 - Why was this memory retrieved?
 - How was this summary created?
 - What sources support this claim?
@@ -984,25 +1051,25 @@ graph TD
 
 ### Decision Matrix
 
-| Requirement | Recommended System | Rationale |
-|-------------|-------------------|-----------|
-| **Quick integration** | Mem0 | Simple API, good documentation |
-| **Relationship tracking** | Zep/Graphiti | Dynamic graph construction |
-| **Long conversations** | Letta/MemGPT | OS-like memory management |
-| **Top performance** | OMEGA | Best benchmark scores |
-| **Multi-user** | LangMem | LangChain integration |
-| **Research** | MemU | Universal framework |
-| **Production** | MemOS | Designed for deployment |
+| Requirement               | Recommended System | Rationale                      |
+| ------------------------- | ------------------ | ------------------------------ |
+| **Quick integration**     | Mem0               | Simple API, good documentation |
+| **Relationship tracking** | Zep/Graphiti       | Dynamic graph construction     |
+| **Long conversations**    | Letta/MemGPT       | OS-like memory management      |
+| **Top performance**       | OMEGA              | Best benchmark scores          |
+| **Multi-user**            | LangMem            | LangChain integration          |
+| **Research**              | MemU               | Universal framework            |
+| **Production**            | MemOS              | Designed for deployment        |
 
 ### Storage Backends
 
-| Backend | Best For | Pros | Cons |
-|---------|----------|------|------|
-| **ChromaDB** | Local development | Open source, easy setup | Limited scalability |
-| **Qdrant** | Production | Hybrid search, filtering | Self-hosted complexity |
-| **Pinecone** | Cloud-native | Managed service, fast | Cost, vendor lock-in |
-| **Weaviate** | Multi-modal | Built-in vectorization | Complex setup |
-| **PostgreSQL + pgvector** | Existing DB | Single storage stack | Slower than specialized |
+| Backend                   | Best For          | Pros                     | Cons                    |
+| ------------------------- | ----------------- | ------------------------ | ----------------------- |
+| **ChromaDB**              | Local development | Open source, easy setup  | Limited scalability     |
+| **Qdrant**                | Production        | Hybrid search, filtering | Self-hosted complexity  |
+| **Pinecone**              | Cloud-native      | Managed service, fast    | Cost, vendor lock-in    |
+| **Weaviate**              | Multi-modal       | Built-in vectorization   | Complex setup           |
+| **PostgreSQL + pgvector** | Existing DB       | Single storage stack     | Slower than specialized |
 
 ### Best Practices
 
@@ -1072,7 +1139,7 @@ async def maintain_memory():
 ### Core Repository
 
 **[Awesome-Agent-Memory](https://github.com/TeleAI-UAGI/Awesome-Agent-Memory)** by TeleAI-UAGI
-*Comprehensive collection of systems, benchmarks, and papers on agent memory*
+_Comprehensive collection of systems, benchmarks, and papers on agent memory_
 
 ### Key Surveys (2025-2026)
 
@@ -1084,39 +1151,42 @@ async def maintain_memory():
 ### Essential Papers
 
 **Non-Parametric Memory:**
+
 - LightMem (2025) - Lightweight efficient memory
 - HippoRAG (2024) - Neurobiologically inspired
 - MemRAG - Global memory-enhanced retrieval
 
 **Parametric Memory:**
+
 - DeepSeek Engram (2026) - Conditional memory
 - MLP Memory (2025) - Retriever-pretrained
 - Titans (2024) - Learning to memorize
 
 **Agent Evolution:**
+
 - ProcMEM (2026) - Procedural memory via RL
 - MemSkill (2026) - Memory skill evolution
 - Memento 2 (2026) - Reflective memory
 
 ### Key Systems (GitHub)
 
-| System | Repository | Stars |
-|--------|-----------|-------|
-| Mem0 | [mem0ai/mem0](https://github.com/mem0ai/mem0) | Highest |
-| Claude-Mem | [thedotmack/claude-mem](https://github.com/thedotmack/claude-mem) | High |
-| Zep/Graphiti | [getzep/graphiti](https://github.com/getzep/graphiti) | High |
-| Letta | [letta-ai/letta](https://github.com/letta-ai/letta) | High |
-| OMEGA | [omega-memory/omega](https://github.com/omega-memory/core) | Medium |
+| System       | Repository                                                        | Stars   |
+| ------------ | ----------------------------------------------------------------- | ------- |
+| Mem0         | [mem0ai/mem0](https://github.com/mem0ai/mem0)                     | Highest |
+| Claude-Mem   | [thedotmack/claude-mem](https://github.com/thedotmack/claude-mem) | High    |
+| Zep/Graphiti | [getzep/graphiti](https://github.com/getzep/graphiti)             | High    |
+| Letta        | [letta-ai/letta](https://github.com/letta-ai/letta)               | High    |
+| OMEGA        | [omega-memory/omega](https://github.com/omega-memory/core)        | Medium  |
 
 ### Benchmarks
 
-| Benchmark | Focus | Repository |
-|-----------|-------|------------|
-| LongMemEval | Long-term interactive memory | Available |
-| BEAM | Million-token context | Available |
-| MOOM | Ultra-long roleplay | Available |
-| HaluMem | Hallucination detection | Available |
-| Video-MME | Video understanding | Available |
+| Benchmark   | Focus                        | Repository |
+| ----------- | ---------------------------- | ---------- |
+| LongMemEval | Long-term interactive memory | Available  |
+| BEAM        | Million-token context        | Available  |
+| MOOM        | Ultra-long roleplay          | Available  |
+| HaluMem     | Hallucination detection      | Available  |
+| Video-MME   | Video understanding          | Available  |
 
 ### Communities and Events
 
@@ -1145,6 +1215,7 @@ async def maintain_memory():
 **Version:** 1.0
 
 **Change Log:**
+
 - 2026-03-09: Initial comprehensive research document created
 
 ---
@@ -1153,14 +1224,14 @@ async def maintain_memory():
 
 ### Memory Type Quick Guide
 
-| Need | Use | Example |
-|------|-----|---------|
-| Quick facts | Vector DB | "What did X say?" |
-| Relationships | Graph DB | "How are X and Y connected?" |
-| Recent context | Working memory | "What were we discussing?" |
-| Long-term storage | Compressed archive | "What happened last year?" |
-| Skills | Procedural memory | "How do I perform X?" |
-| Preferences | Key-value store | "User likes X" |
+| Need              | Use                | Example                      |
+| ----------------- | ------------------ | ---------------------------- |
+| Quick facts       | Vector DB          | "What did X say?"            |
+| Relationships     | Graph DB           | "How are X and Y connected?" |
+| Recent context    | Working memory     | "What were we discussing?"   |
+| Long-term storage | Compressed archive | "What happened last year?"   |
+| Skills            | Procedural memory  | "How do I perform X?"        |
+| Preferences       | Key-value store    | "User likes X"               |
 
 ### System Selection Flowchart
 
@@ -1186,6 +1257,7 @@ Start
 ### Common Patterns
 
 **Pattern 1: Conversation Memory**
+
 ```python
 # Store each turn
 for message in conversation:
@@ -1196,6 +1268,7 @@ context = memory.retrieve_conversation(session_id, last_n=10)
 ```
 
 **Pattern 2: User Preferences**
+
 ```python
 # Extract and store preferences
 if "I prefer" in message or "I like" in message:
@@ -1204,6 +1277,7 @@ if "I prefer" in message or "I like" in message:
 ```
 
 **Pattern 3: Fact Verification**
+
 ```python
 # Check memory before answering
 fact = memory.search(query)
@@ -1217,4 +1291,4 @@ else:
 
 **End of Document**
 
-*This research document is maintained as part of the CipherOcto project. For updates, corrections, or contributions, please refer to the project documentation.*
+_This research document is maintained as part of the CipherOcto project. For updates, corrections, or contributions, please refer to the project documentation._

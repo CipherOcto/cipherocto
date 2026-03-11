@@ -15,6 +15,7 @@
 ### Task 1: Add dependencies to workspace Cargo.toml
 
 **File:**
+
 - Modify: `Cargo.toml`
 
 **Step 1: Add dependencies**
@@ -53,6 +54,7 @@ git commit -m "chore: add quota-router dependencies to workspace"
 ### Step 1: Create directory and Cargo.toml
 
 **File:**
+
 - Create: `crates/quota-router-cli/Cargo.toml`
 
 ```toml
@@ -108,9 +110,11 @@ path = "src/main.rs"
 **Step 2: Add to workspace**
 
 **File:**
+
 - Modify: `Cargo.toml:2`
 
 Change:
+
 ```toml
 members = ["crates/*"]
 ```
@@ -129,6 +133,7 @@ git commit -m "feat: add quota-router-cli crate to workspace"
 ### Step 1: Write failing test
 
 **File:**
+
 - Create: `crates/quota-router-cli/src/config.rs`
 
 **Step 2: Write minimal implementation**
@@ -210,6 +215,7 @@ git commit -m "feat: add config module with load/save"
 ### Step 1: Write failing test
 
 **File:**
+
 - Create: `crates/quota-router-cli/src/balance.rs`
 
 ```rust
@@ -307,6 +313,7 @@ git commit -m "feat: add balance module with check/deduct"
 ### Step 1: Write failing test
 
 **File:**
+
 - Create: `crates/quota-router-cli/src/providers.rs`
 
 ```rust
@@ -378,6 +385,7 @@ git commit -m "feat: add provider module with API key from env"
 ### Step 1: Write failing test (mock test - not actual HTTP)
 
 **File:**
+
 - Create: `crates/quota-router-cli/src/proxy.rs`
 
 **Step 2: Write implementation**
@@ -476,6 +484,7 @@ git commit -m "feat: add proxy server module"
 ### Step 1: Write CLI structure
 
 **File:**
+
 - Create: `crates/quota-router-cli/src/cli.rs`
 
 ```rust
@@ -520,6 +529,7 @@ git commit -m "feat: add CLI command structure"
 ### Step 1: Create main.rs
 
 **File:**
+
 - Create: `crates/quota-router-cli/src/main.rs`
 
 ```rust
@@ -547,6 +557,7 @@ async fn main() -> anyhow::Result<()> {
 ### Step 2: Create lib.rs
 
 **File:**
+
 - Create: `crates/quota-router-cli/src/lib.rs`
 
 ```rust
@@ -561,6 +572,7 @@ pub mod commands;
 ### Step 3: Create commands.rs
 
 **File:**
+
 - Create: `crates/quota-router-cli/src/commands.rs`
 
 ```rust

@@ -43,12 +43,12 @@ graph TB
 
 ### Primary Chain: Ethereum
 
-| Aspect | Decision | Rationale |
-| ------ | -------- | --------- |
-| **Layer 1** | Ethereum | Largest ecosystem, best tooling |
-| **Settlement layer** | Ethereum Mainnet | Security, finality |
-| **User transactions** | L2 (Arbitrum/Optimism) | Low fees, fast confirmations |
-| **Cross-chain** | LayerZero / CCIP | Interoperability |
+| Aspect                | Decision               | Rationale                       |
+| --------------------- | ---------------------- | ------------------------------- |
+| **Layer 1**           | Ethereum               | Largest ecosystem, best tooling |
+| **Settlement layer**  | Ethereum Mainnet       | Security, finality              |
+| **User transactions** | L2 (Arbitrum/Optimism) | Low fees, fast confirmations    |
+| **Cross-chain**       | LayerZero / CCIP       | Interoperability                |
 
 ### Multi-Chain Strategy
 
@@ -81,12 +81,12 @@ graph TB
 
 ### Chain Support Timeline
 
-| Phase | Chains Supported | Features |
-| ----- | ---------------- | -------- |
-| **Phase 1** | Ethereum + Arbitrum | Core functionality |
-| **Phase 2** | + Optimism, Polygon | User choice |
-| **Phase 3** | + Solana | High-throughput options |
-| **Phase 4** | + Cosmos (via IBC) | Ecosystem expansion |
+| Phase       | Chains Supported    | Features                |
+| ----------- | ------------------- | ----------------------- |
+| **Phase 1** | Ethereum + Arbitrum | Core functionality      |
+| **Phase 2** | + Optimism, Polygon | User choice             |
+| **Phase 3** | + Solana            | High-throughput options |
+| **Phase 4** | + Cosmos (via IBC)  | Ecosystem expansion     |
 
 ---
 
@@ -132,33 +132,35 @@ graph TB
 
 #### OCTO Token (ERC-20)
 
-| Parameter | Value |
-| --------- | ----- |
-| **Name** | CipherOcto |
-| **Symbol** | OCTO |
-| **Decimals** | 18 |
-| **Initial Supply** | 10,000,000,000 |
-| **Standard** | ERC-20 + ERC-20Votes + ERC-20Permit |
+| Parameter          | Value                               |
+| ------------------ | ----------------------------------- |
+| **Name**           | CipherOcto                          |
+| **Symbol**         | OCTO                                |
+| **Decimals**       | 18                                  |
+| **Initial Supply** | 10,000,000,000                      |
+| **Standard**       | ERC-20 + ERC-20Votes + ERC-20Permit |
 
 **Additional Features:**
+
 - **Votes** — Optimized for on-chain governance
 - **Permit** — Gasless approvals via EIP-2612
 - **Flash mint protection** — Reentrancy guards
 
 #### Role Tokens (8x ERC-20)
 
-| Token | Name | Purpose |
-| ----- | ---- | ------- |
-| **OCTO-A** | AI Compute | GPU inference/training rewards |
-| **OCTO-S** | Storage | Data storage rewards |
-| **OCTO-B** | Bandwidth | Network relay rewards |
-| **OCTO-O** | Orchestrator | Task coordination rewards |
-| **OCTO-W** | AI Wholesale | Enterprise quota resale |
-| **OCTO-D** | Developers | Agent building rewards |
-| **OCTO-M** | Marketing | Growth contribution rewards |
-| **OCTO-N** | Node Ops | Infrastructure maintenance rewards |
+| Token      | Name         | Purpose                            |
+| ---------- | ------------ | ---------------------------------- |
+| **OCTO-A** | AI Compute   | GPU inference/training rewards     |
+| **OCTO-S** | Storage      | Data storage rewards               |
+| **OCTO-B** | Bandwidth    | Network relay rewards              |
+| **OCTO-O** | Orchestrator | Task coordination rewards          |
+| **OCTO-W** | AI Wholesale | Enterprise quota resale            |
+| **OCTO-D** | Developers   | Agent building rewards             |
+| **OCTO-M** | Marketing    | Growth contribution rewards        |
+| **OCTO-N** | Node Ops     | Infrastructure maintenance rewards |
 
 **Role Token Features:**
+
 - Convertible to OCTO via Adaptive Conversion Engine
 - Emission tied to sector-specific contribution
 - Cannot be used for governance
@@ -281,22 +283,22 @@ graph TB
 
 ### Strategies
 
-| Technique | Gas Savings | Implementation |
-| ---------- | ----------- | -------------- |
-| **Batch operations** | 30-50% | Multi-token transfers |
-| **Lazy minting** | Variable | Mint on first use |
-| **EIP-1559** | 10-20% | Dynamic fee adjustment |
-| **L2 settlement** | 90%+ | Arbitrum/Optimism |
-| **ZK rollups** | 95%+ | Future implementation |
+| Technique            | Gas Savings | Implementation         |
+| -------------------- | ----------- | ---------------------- |
+| **Batch operations** | 30-50%      | Multi-token transfers  |
+| **Lazy minting**     | Variable    | Mint on first use      |
+| **EIP-1559**         | 10-20%      | Dynamic fee adjustment |
+| **L2 settlement**    | 90%+        | Arbitrum/Optimism      |
+| **ZK rollups**       | 95%+        | Future implementation  |
 
 ### Gas Cost Estimates
 
-| Operation | L1 Cost | L2 Cost | Savings |
-| ---------- | ------- | ------- | ------- |
-| **Stake OCTO** | ~$5-20 | ~$0.10-0.50 | 97%+ |
-| **Submit task** | ~$10-50 | ~$0.20-1.00 | 96%+ |
-| **Claim rewards** | ~$3-10 | ~$0.05-0.25 | 98%+ |
-| **Convert tokens** | ~$8-30 | ~$0.15-0.75 | 97%+ |
+| Operation          | L1 Cost | L2 Cost     | Savings |
+| ------------------ | ------- | ----------- | ------- |
+| **Stake OCTO**     | ~$5-20  | ~$0.10-0.50 | 97%+    |
+| **Submit task**    | ~$10-50 | ~$0.20-1.00 | 96%+    |
+| **Claim rewards**  | ~$3-10  | ~$0.05-0.25 | 98%+    |
+| **Convert tokens** | ~$8-30  | ~$0.15-0.75 | 97%+    |
 
 ---
 
@@ -331,12 +333,12 @@ graph LR
 
 ### Supported Bridge Protocols
 
-| Protocol | Security | Speed | Use Case |
-| ---------- | -------- | ----- | -------- |
-| **LayerZero** | High | Fast | Standard transfers |
-| **CCIP (Chainlink)** | High | Medium | Enterprise use |
-| **Wormhole** | Medium | Fast | Emergency transfers |
-| **Synapse** | Medium | Fast | Alternative route |
+| Protocol             | Security | Speed  | Use Case            |
+| -------------------- | -------- | ------ | ------------------- |
+| **LayerZero**        | High     | Fast   | Standard transfers  |
+| **CCIP (Chainlink)** | High     | Medium | Enterprise use      |
+| **Wormhole**         | Medium   | Fast   | Emergency transfers |
+| **Synapse**          | Medium   | Fast   | Alternative route   |
 
 ---
 
@@ -344,22 +346,22 @@ graph LR
 
 ### Data Requirements
 
-| Data Type | Source | Update Frequency |
-| --------- | ------ | ---------------- |
-| **OCTO price** | DEXs (Uniswap, Curve) | Every block |
-| **Role token prices** | DEXs | Every block |
-| **External AI prices** | CEXs + DEXs | Hourly |
-| **Node uptime** | Internal monitoring | Every minute |
-| **Reputation scores** | On-chain calculation | Per task |
+| Data Type              | Source                | Update Frequency |
+| ---------------------- | --------------------- | ---------------- |
+| **OCTO price**         | DEXs (Uniswap, Curve) | Every block      |
+| **Role token prices**  | DEXs                  | Every block      |
+| **External AI prices** | CEXs + DEXs           | Hourly           |
+| **Node uptime**        | Internal monitoring   | Every minute     |
+| **Reputation scores**  | On-chain calculation  | Per task         |
 
 ### Oracle Providers
 
-| Provider | Use Case |
-| ---------- | -------- |
-| **Chainlink** | Price feeds, external data |
-| **Pyth Network** | Low-latency price updates |
-| **UMA** | Optimistic oracle for custom data |
-| **Custom oracles** | Protocol-specific metrics |
+| Provider           | Use Case                          |
+| ------------------ | --------------------------------- |
+| **Chainlink**      | Price feeds, external data        |
+| **Pyth Network**   | Low-latency price updates         |
+| **UMA**            | Optimistic oracle for custom data |
+| **Custom oracles** | Protocol-specific metrics         |
 
 ---
 
@@ -393,12 +395,12 @@ graph TB
 
 ### Governance Contracts
 
-| Contract | Purpose |
-| ---------- | -------- |
-| **Governor** | Proposal creation & voting |
-| **Timelock** | Execution delay (48 hours) |
-| **Tokenomics** | Parameter adjustments |
-| **Emergency** | Crisis response |
+| Contract       | Purpose                    |
+| -------------- | -------------------------- |
+| **Governor**   | Proposal creation & voting |
+| **Timelock**   | Execution delay (48 hours) |
+| **Tokenomics** | Parameter adjustments      |
+| **Emergency**  | Crisis response            |
 
 ---
 
@@ -406,13 +408,13 @@ graph TB
 
 ### Audit Strategy
 
-| Contract | Auditors | Status |
-| ---------- | ---------- | ------ |
-| **OCTO Token** | TBD, OpenZeppelin | Planned |
-| **Role Tokens** | TBD, OpenZeppelin | Planned |
-| **Staking Manager** | TBD, ConsenSys Diligence | Planned |
-| **Reputation System** | TBD, Trail of Bits | Planned |
-| **Marketplace** | TBD, CertiK | Planned |
+| Contract              | Auditors                 | Status  |
+| --------------------- | ------------------------ | ------- |
+| **OCTO Token**        | TBD, OpenZeppelin        | Planned |
+| **Role Tokens**       | TBD, OpenZeppelin        | Planned |
+| **Staking Manager**   | TBD, ConsenSys Diligence | Planned |
+| **Reputation System** | TBD, Trail of Bits       | Planned |
+| **Marketplace**       | TBD, CertiK              | Planned |
 
 ### Security Measures
 
@@ -438,13 +440,13 @@ Operational_Security:
 
 ### On-Chain Metrics
 
-| Metric | Source | Dashboard |
-| ------ | ------ | --------- |
-| **Total value staked** | Staking contracts | Dune Analytics |
-| **Token velocity** | Transfer events | Custom dashboard |
-| **Active providers** | Reputation registry | Dune Analytics |
-| **Transaction volume** | Marketplace contracts | Dune Analytics |
-| **Governance participation** | Voting contracts | Tally |
+| Metric                       | Source                | Dashboard        |
+| ---------------------------- | --------------------- | ---------------- |
+| **Total value staked**       | Staking contracts     | Dune Analytics   |
+| **Token velocity**           | Transfer events       | Custom dashboard |
+| **Active providers**         | Reputation registry   | Dune Analytics   |
+| **Transaction volume**       | Marketplace contracts | Dune Analytics   |
+| **Governance participation** | Voting contracts      | Tally            |
 
 ### Off-Chain Integration
 
@@ -490,13 +492,13 @@ graph TB
 
 ## Roadmap
 
-| Phase | Milestones | Timeline |
-| ----- | ---------- | -------- |
-| **Phase 1** | Ethereum + Arbitrum deployment | 2027 Q2 |
-| **Phase 2** | Optimism + Polygon integration | 2028 Q1 |
-| **Phase 3** | Solana integration | 2028 Q3 |
-| **Phase 4** | Cosmos IBC integration | 2029 Q1 |
+| Phase       | Milestones                     | Timeline |
+| ----------- | ------------------------------ | -------- |
+| **Phase 1** | Ethereum + Arbitrum deployment | 2027 Q2  |
+| **Phase 2** | Optimism + Polygon integration | 2028 Q1  |
+| **Phase 3** | Solana integration             | 2028 Q3  |
+| **Phase 4** | Cosmos IBC integration         | 2029 Q1  |
 
 ---
 
-*For system architecture details, see [system-architecture.md](./system-architecture.md). For tokenomics, see [token-design.md](../04-tokenomics/token-design.md).*
+_For system architecture details, see [system-architecture.md](./system-architecture.md). For tokenomics, see [token-design.md](../04-tokenomics/token-design.md)._

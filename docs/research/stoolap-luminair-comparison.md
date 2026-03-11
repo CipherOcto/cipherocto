@@ -6,14 +6,14 @@ This report provides a comprehensive technical comparison between the zero-knowl
 
 ## Overview
 
-| Aspect | Stoolap | LuminAIR |
-|--------|---------|----------|
-| **Domain** | Blockchain SQL database | Machine learning inference |
-| **Primary Proof Type** | Merkle (Hexary) + STARK | STARK (zkML) |
-| **Prover** | Stwo (Circle STARKs) | Stwo (Circle STARKs) |
-| **Language** | Rust | Rust |
-| **Target** | Database integrity, confidential queries | ML computation integrity |
-| **Status** | Phase 2 Complete | Phase 1 Active |
+| Aspect                 | Stoolap                                  | LuminAIR                   |
+| ---------------------- | ---------------------------------------- | -------------------------- |
+| **Domain**             | Blockchain SQL database                  | Machine learning inference |
+| **Primary Proof Type** | Merkle (Hexary) + STARK                  | STARK (zkML)               |
+| **Prover**             | Stwo (Circle STARKs)                     | Stwo (Circle STARKs)       |
+| **Language**           | Rust                                     | Rust                       |
+| **Target**             | Database integrity, confidential queries | ML computation integrity   |
+| **Status**             | Phase 2 Complete                         | Phase 1 Active             |
 
 ---
 
@@ -39,6 +39,7 @@ flowchart TD
 ```
 
 **Key Features:**
+
 - **HexaryProof**: 16-way trie Merkle proofs (~68 bytes)
 - **CompressedProof**: Aggregate multiple HexaryProofs into one STARK
 - **Proof size**: 100-500 KB (STARK)
@@ -64,6 +65,7 @@ flowchart TD
 ```
 
 **Key Features:**
+
 - **Operators**: 11 primitive operators, Mul, Sin (Add, Exp2, etc.)
 - **AIR**: Algebraic Intermediate Representation per operator
 - **Trace**: Execution trace for each operator
@@ -71,11 +73,11 @@ flowchart TD
 
 ### 2. Field & Curve
 
-| Component | Stoolap | LuminAIR |
-|-----------|---------|----------|
-| **Field** | M31 (2^31 - 1) | M31 (2^31 - 1) |
-| **Curve** | Circle STARK | Circle STARK |
-| **Prover** | Stwo | Stwo |
+| Component    | Stoolap             | LuminAIR            |
+| ------------ | ------------------- | ------------------- |
+| **Field**    | M31 (2^31 - 1)      | M31 (2^31 - 1)      |
+| **Curve**    | Circle STARK        | Circle STARK        |
+| **Prover**   | Stwo                | Stwo                |
 | **Verifier** | Rust + Cairo plugin | Rust (WASM planned) |
 
 **Note**: Both use the same underlying technology - Stwo prover with M31 prime field.
@@ -110,11 +112,11 @@ pub struct EncryptedFilter {
 
 **Comparison:**
 
-| Aspect | Stoolap | LuminAIR |
-|--------|---------|----------|
-| **Commitment** | Pedersen (discrete log) | LogUp (lookup) |
-| **Purpose** | Hide filter values | Prove tensor flow |
-| **Integration** | SQL filters | ML operator chains |
+| Aspect          | Stoolap                 | LuminAIR           |
+| --------------- | ----------------------- | ------------------ |
+| **Commitment**  | Pedersen (discrete log) | LogUp (lookup)     |
+| **Purpose**     | Hide filter values      | Prove tensor flow  |
+| **Integration** | SQL filters             | ML operator chains |
 
 ---
 
@@ -183,29 +185,29 @@ pub struct EncryptedFilter {
 
 ## Feature Comparison Matrix
 
-| Feature | Stoolap | LuminAIR | Notes |
-|---------|---------|----------|-------|
-| **Proof Type** | | | |
-| Merkle (Hexary) | ✅ | ❌ | Stoolap-specific |
-| STARK (Circle) | ✅ | ✅ | Both use Stwo |
-| zkML | ❌ | ✅ | LuminAIR specialty |
-| **Operators** | | | |
-| Primitive set | N/A | 11 | LuminAIR ML-focused |
-| SQL operations | ✅ | ❌ | Stoolap database |
-| ML operations | ❌ | ✅ | LuminAIR compute |
-| **Confidentiality** | | | |
-| Pedersen commitments | ✅ | ❌ | Stoolap |
-| LogUp lookup | ❌ | ✅ | LuminAIR |
-| Encrypted queries | ✅ | Partial | Both |
-| **Verification** | | | |
-| Rust verifier | ✅ | ✅ | Current |
-| WASM verifier | ❌ | 🔜 | LuminAIR Phase 2 |
-| Cairo (on-chain) | ✅ | 🔜 | Both planned |
-| **Performance** | | | |
-| HexaryProof size | ~68 bytes | N/A | Stoolap |
-| STARK proof | 100-500 KB | Varies | Model size |
-| Hexary verify | ~2-3 μs | N/A | Stoolap |
-| ML verify | N/A | ~seconds | LuminAIR |
+| Feature              | Stoolap    | LuminAIR | Notes               |
+| -------------------- | ---------- | -------- | ------------------- |
+| **Proof Type**       |            |          |                     |
+| Merkle (Hexary)      | ✅         | ❌       | Stoolap-specific    |
+| STARK (Circle)       | ✅         | ✅       | Both use Stwo       |
+| zkML                 | ❌         | ✅       | LuminAIR specialty  |
+| **Operators**        |            |          |                     |
+| Primitive set        | N/A        | 11       | LuminAIR ML-focused |
+| SQL operations       | ✅         | ❌       | Stoolap database    |
+| ML operations        | ❌         | ✅       | LuminAIR compute    |
+| **Confidentiality**  |            |          |                     |
+| Pedersen commitments | ✅         | ❌       | Stoolap             |
+| LogUp lookup         | ❌         | ✅       | LuminAIR            |
+| Encrypted queries    | ✅         | Partial  | Both                |
+| **Verification**     |            |          |                     |
+| Rust verifier        | ✅         | ✅       | Current             |
+| WASM verifier        | ❌         | 🔜       | LuminAIR Phase 2    |
+| Cairo (on-chain)     | ✅         | 🔜       | Both planned        |
+| **Performance**      |            |          |                     |
+| HexaryProof size     | ~68 bytes  | N/A      | Stoolap             |
+| STARK proof          | 100-500 KB | Varies   | Model size          |
+| Hexary verify        | ~2-3 μs    | N/A      | Stoolap             |
+| ML verify            | N/A        | ~seconds | LuminAIR            |
 
 ---
 
@@ -224,6 +226,7 @@ let stark_proof = stwo_prover.prove(compressed)?;
 ```
 
 **Flow:**
+
 1. Execute SQL query
 2. Generate HexaryProof (Merkle)
 3. Batch multiple proofs
@@ -243,6 +246,7 @@ cx.verify(proof)?;
 ```
 
 **Flow:**
+
 1. Build computational graph
 2. Define operators
 3. Compile to AIR (StwoCompiler)
@@ -303,6 +307,7 @@ struct EncryptedFilter {
 ```
 
 **Capabilities:**
+
 - ✅ Encrypted WHERE clauses
 - ✅ Commitment-based filters
 - ✅ Range proofs
@@ -342,23 +347,23 @@ cx.verify(proof)?;
 
 ### What Stoolap Does Better
 
-| Capability | Stoolap Advantage |
-|-----------|------------------|
-| **Database proofs** | HexaryProof specifically designed for trie/table verification |
-| **Batch verification** | Efficient parallel batch verification |
-| **SQL integrity** | Query result verification with merkle proofs |
-| **Confidential queries** | Full Pedersen commitment scheme |
-| **L2 rollup** | Complete rollup protocol implemented |
+| Capability               | Stoolap Advantage                                             |
+| ------------------------ | ------------------------------------------------------------- |
+| **Database proofs**      | HexaryProof specifically designed for trie/table verification |
+| **Batch verification**   | Efficient parallel batch verification                         |
+| **SQL integrity**        | Query result verification with merkle proofs                  |
+| **Confidential queries** | Full Pedersen commitment scheme                               |
+| **L2 rollup**            | Complete rollup protocol implemented                          |
 
 ### What LuminAIR Does Better
 
-| Capability | LuminAIR Advantage |
-|-----------|------------------|
-| **zkML** | Purpose-built for ML inference proofs |
-| **Operator library** | 11 primitive ML operators |
-| **AIR generation** | Automatic from computational graph |
-| **Data flow proof** | LogUp for tensor connections |
-| **SIMD parallel** | Native SIMD backend |
+| Capability           | LuminAIR Advantage                    |
+| -------------------- | ------------------------------------- |
+| **zkML**             | Purpose-built for ML inference proofs |
+| **Operator library** | 11 primitive ML operators             |
+| **AIR generation**   | Automatic from computational graph    |
+| **Data flow proof**  | LogUp for tensor connections          |
+| **SIMD parallel**    | Native SIMD backend                   |
 
 ### Synergies for CipherOcto
 
@@ -388,6 +393,7 @@ flowchart TD
 ### 1. Shared Infrastructure
 
 Both systems use:
+
 - **Stwo prover** (Circle STARKs)
 - **M31 prime field**
 - **Rust implementation**
@@ -427,23 +433,23 @@ flowchart TB
 
 ### 3. Use Case Mapping
 
-| CipherOcto Need | Best Fit | Implementation |
-|-----------------|----------|----------------|
-| Query integrity | Stoolap | HexaryProof for routing logs |
-| ML inference proof | LuminAIR | zkML for agent execution |
-| Confidential routing | Stoolap | Pedersen commitments |
-| Verifiable quality | LuminAIR | Output validity proofs |
-| Data pipeline | Both | Combined SQL + ML proofs |
+| CipherOcto Need      | Best Fit | Implementation               |
+| -------------------- | -------- | ---------------------------- |
+| Query integrity      | Stoolap  | HexaryProof for routing logs |
+| ML inference proof   | LuminAIR | zkML for agent execution     |
+| Confidential routing | Stoolap  | Pedersen commitments         |
+| Verifiable quality   | LuminAIR | Output validity proofs       |
+| Data pipeline        | Both     | Combined SQL + ML proofs     |
 
 ## STWO Proof Benchmarks
 
 ### Stoolap (STWO for Database Operations)
 
-| Operation | Time | Details|
-|-----------|---------------|
-| **Proof Generation** (merkle_batch) | ~25-28 seconds | Cairo program → STWO |
-| **Proof Verification** | ~15 ms | Using stwo-cairo verifier |
-| **HexaryProof** (no STWO) | ~2-3 μs | Lightweight Merkle proof only |
+| Operation                           | Time           | Details                       |
+| ----------------------------------- | -------------- | ----------------------------- |
+| **Proof Generation** (merkle_batch) | ~25-28 seconds | Cairo program → STWO          |
+| **Proof Verification**              | ~15 ms         | Using stwo-cairo verifier     |
+| **HexaryProof** (no STWO)           | ~2-3 μs        | Lightweight Merkle proof only |
 
 **Source:** `missions/archived/0106-01-stwo-real-benchmarks.md`
 
@@ -457,11 +463,11 @@ verify_cairo::<Blake2sMerkleChannel>() // ~15ms
 
 ### LuminAIR (STWO for ML Operations)
 
-| Stage | Operation | Tensor Size | Status |
-|-------|-----------|-------------|--------|
-| Trace Generation | Add/Mul/Recip | 32x32 | Benchmarked |
-| Proof Generation | Add/Mul/Recip | 32x32 | Benchmarked |
-| Verification | Add/Mul/Recip | 32x32 | Benchmarked |
+| Stage            | Operation     | Tensor Size | Status      |
+| ---------------- | ------------- | ----------- | ----------- |
+| Trace Generation | Add/Mul/Recip | 32x32       | Benchmarked |
+| Proof Generation | Add/Mul/Recip | 32x32       | Benchmarked |
+| Verification     | Add/Mul/Recip | 32x32       | Benchmarked |
 
 **Source:** `crates/graph/benches/ops.rs`
 
@@ -477,12 +483,12 @@ verify(proof, settings)
 
 ### Critical Difference: Cairo vs Direct AIR
 
-| Aspect | Stoolap | LuminAIR |
-|--------|---------|----------|
-| **Proves** | Cairo programs | Direct AIR |
-| **Prover** | `stwo-cairo-prover` | `stwo` (direct) |
-| **Compilation** | SQL → Cairo | ML Graph → AIR |
-| **Use case** | Database verification | ML inference |
+| Aspect          | Stoolap               | LuminAIR        |
+| --------------- | --------------------- | --------------- |
+| **Proves**      | Cairo programs        | Direct AIR      |
+| **Prover**      | `stwo-cairo-prover`   | `stwo` (direct) |
+| **Compilation** | SQL → Cairo           | ML Graph → AIR  |
+| **Use case**    | Database verification | ML inference    |
 
 ```mermaid
 flowchart TD
@@ -503,17 +509,18 @@ flowchart TD
 
 **It depends on the use case:**
 
-| Criterion | Stoolap | LuminAIR | Winner |
-|-----------|---------|----------|--------|
-| **Database proofs** | ✅ Specialized | ❌ Not designed | **Stoolap** |
-| **ML inference proofs** | ❌ Not designed | ✅ Specialized | **LuminAIR** |
-| **Proof size** | Optimized | Varies | **Stoolap** (for DB) |
-| **Verification speed** | 15ms | Unknown | TBD |
-| **Operator flexibility** | Fixed (SQL) | extensible (11+ operators) | **LuminAIR** |
+| Criterion                | Stoolap         | LuminAIR                   | Winner               |
+| ------------------------ | --------------- | -------------------------- | -------------------- |
+| **Database proofs**      | ✅ Specialized  | ❌ Not designed            | **Stoolap**          |
+| **ML inference proofs**  | ❌ Not designed | ✅ Specialized             | **LuminAIR**         |
+| **Proof size**           | Optimized       | Varies                     | **Stoolap** (for DB) |
+| **Verification speed**   | 15ms            | Unknown                    | TBD                  |
+| **Operator flexibility** | Fixed (SQL)     | extensible (11+ operators) | **LuminAIR**         |
 
 ### Key Insight
 
 The systems are **not directly comparable** - they prove different things:
+
 - **Stoolap**: Proves SQL query results are correct (merkle batch)
 - **LuminAIR**: Proves ML inference executed correctly (zkML)
 
@@ -558,15 +565,15 @@ However, LuminAIR's approach could inspire **future optimizations** in Stoolap's
 
 ## Conclusion
 
-| Aspect | Stoolap | LuminAIR | Verdict |
-|--------|---------|----------|---------|
-| **Database integrity** | ✅ Excellent | ❌ N/A | Stoolap for SQL |
-| **ML integrity** | ❌ Not designed | ✅ Excellent | LuminAIR for zkML |
-| **Cairo-based** | ✅ Yes | ❌ No | Stoolap (on-chain) |
-| **Direct AIR** | ❌ No | ✅ Yes | LuminAIR (faster) |
-| **Confidentiality** | ✅ Advanced | ⚠️ Basic | Stoolap leads |
-| **Verification** | ✅ Rust + Cairo | ✅ Rust + WASM | Both strong |
-| **Performance** | ✅ Optimized | 🔄 Improving | Stoolap faster for DB |
+| Aspect                 | Stoolap         | LuminAIR       | Verdict               |
+| ---------------------- | --------------- | -------------- | --------------------- |
+| **Database integrity** | ✅ Excellent    | ❌ N/A         | Stoolap for SQL       |
+| **ML integrity**       | ❌ Not designed | ✅ Excellent   | LuminAIR for zkML     |
+| **Cairo-based**        | ✅ Yes          | ❌ No          | Stoolap (on-chain)    |
+| **Direct AIR**         | ❌ No           | ✅ Yes         | LuminAIR (faster)     |
+| **Confidentiality**    | ✅ Advanced     | ⚠️ Basic       | Stoolap leads         |
+| **Verification**       | ✅ Rust + Cairo | ✅ Rust + WASM | Both strong           |
+| **Performance**        | ✅ Optimized    | 🔄 Improving   | Stoolap faster for DB |
 
 **Key Finding**: Stoolap and LuminAIR are **complementary**, not competitive. Stoolap excels at database integrity and confidential queries. LuminAIR excels at ML inference verification. For CipherOcto, both can be leveraged:
 

@@ -1056,13 +1056,13 @@ graph LR
 
 **Stoolap's Unique Advantages:**
 
-| Feature                   | Competitors | Stoolap Advantage              |
-| ------------------------- | ----------- | ------------------------------ |
-| **Verifiable State**      | None        | Merkle proofs for every memory |
-| **ZK Privacy**            | Partial     | STWO integration               |
-| **Deterministic Compute** | None        | DQA from RFC-0106 (Numeric/Math)              |
-| **Time-Travel Queries**   | No          | Built-in temporal queries      |
-| **Cost-Based Optimizer**  | Some        | AQE + semantic cache           |
+| Feature                   | Competitors | Stoolap Advantage                |
+| ------------------------- | ----------- | -------------------------------- |
+| **Verifiable State**      | None        | Merkle proofs for every memory   |
+| **ZK Privacy**            | Partial     | STWO integration                 |
+| **Deterministic Compute** | None        | DQA from RFC-0106 (Numeric/Math) |
+| **Time-Travel Queries**   | No          | Built-in temporal queries        |
+| **Cost-Based Optimizer**  | Some        | AQE + semantic cache             |
 
 **Action Items:**
 

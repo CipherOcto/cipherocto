@@ -14,13 +14,13 @@ Think of CipherOcto as the **TCP/IP for AI** — the invisible infrastructure la
 
 Today's AI economy is fundamentally broken:
 
-| Issue | Impact |
-| ----- | ------ |
-| **Millions of GPUs sit idle** | 40-60% utilization industry-wide |
-| **Enterprise AI subscriptions go unused** | Billions in wasted capacity |
-| **Valuable datasets remain locked** | No safe way to share or monetize |
-| **AI agents cannot collaborate** | Each platform is a walled garden |
-| **Vendor lock-in is accelerating** | Enterprises desperate for alternatives |
+| Issue                                     | Impact                                 |
+| ----------------------------------------- | -------------------------------------- |
+| **Millions of GPUs sit idle**             | 40-60% utilization industry-wide       |
+| **Enterprise AI subscriptions go unused** | Billions in wasted capacity            |
+| **Valuable datasets remain locked**       | No safe way to share or monetize       |
+| **AI agents cannot collaborate**          | Each platform is a walled garden       |
+| **Vendor lock-in is accelerating**        | Enterprises desperate for alternatives |
 
 **The cost:** A $400B+ coordination failure.
 
@@ -108,12 +108,12 @@ Trust earned through verifiable performance, not capital.
 
 Your data is classified cryptographically:
 
-| Level | Access |
-| ----- | ------ |
-| **PRIVATE** | Single-agent use only |
+| Level            | Access                 |
+| ---------------- | ---------------------- |
+| **PRIVATE**      | Single-agent use only  |
 | **CONFIDENTIAL** | Owner-specified agents |
-| **SHARED** | Verified agents |
-| **PUBLIC** | Open to all |
+| **SHARED**       | Verified agents        |
+| **PUBLIC**       | Open to all            |
 
 ### 4. AI Wholesale (OCTO-W)
 
@@ -123,17 +123,17 @@ Unique innovation: Represents resale of unused enterprise AI quotas from provide
 
 ### 5. Multi-Token Economy
 
-| Token | Role | Purpose |
-| ----- | ---- | ------- |
-| **OCTO** | Sovereign | Governance, staking, settlement |
-| **OCTO-A** | AI Compute | GPU provider rewards |
-| **OCTO-S** | Storage | Storage provider rewards |
-| **OCTO-B** | Bandwidth | Network relay rewards |
-| **OCTO-O** | Orchestrator | Task coordinator rewards |
-| **OCTO-W** | AI Wholesale | Enterprise quota resale |
-| **OCTO-D** | Developers | Agent builder rewards |
-| **OCTO-M** | Marketing | Growth contributor rewards |
-| **OCTO-N** | Node Operators | Infrastructure rewards |
+| Token      | Role           | Purpose                         |
+| ---------- | -------------- | ------------------------------- |
+| **OCTO**   | Sovereign      | Governance, staking, settlement |
+| **OCTO-A** | AI Compute     | GPU provider rewards            |
+| **OCTO-S** | Storage        | Storage provider rewards        |
+| **OCTO-B** | Bandwidth      | Network relay rewards           |
+| **OCTO-O** | Orchestrator   | Task coordinator rewards        |
+| **OCTO-W** | AI Wholesale   | Enterprise quota resale         |
+| **OCTO-D** | Developers     | Agent builder rewards           |
+| **OCTO-M** | Marketing      | Growth contributor rewards      |
+| **OCTO-N** | Node Operators | Infrastructure rewards          |
 
 ### 6. Dual-Stake Security
 
@@ -161,42 +161,42 @@ graph LR
 
 ### For Enterprises
 
-| Challenge | Solution |
-| --------- | -------- |
-| Unused AI subscriptions | Sell on marketplace |
-| Vendor lock-in | Multi-provider redundancy |
-| Data privacy | Sovereign data control |
-| Compliance | SOC2, HIPAA, GDPR-native |
+| Challenge               | Solution                  |
+| ----------------------- | ------------------------- |
+| Unused AI subscriptions | Sell on marketplace       |
+| Vendor lock-in          | Multi-provider redundancy |
+| Data privacy            | Sovereign data control    |
+| Compliance              | SOC2, HIPAA, GDPR-native  |
 
 **Reduce AI costs 30-50% while gaining independence.**
 
 ### For Developers
 
-| Opportunity | Description |
-| ----------- | ----------- |
-| **Publish agents** | Build once, earn continuously |
-| **Agent marketplace** | Global distribution |
-| **Agent composition** | Agents hiring agents |
-| **No infrastructure** | Focus on logic, not ops |
+| Opportunity           | Description                   |
+| --------------------- | ----------------------------- |
+| **Publish agents**    | Build once, earn continuously |
+| **Agent marketplace** | Global distribution           |
+| **Agent composition** | Agents hiring agents          |
+| **No infrastructure** | Focus on logic, not ops       |
 
 ### For Token Holders
 
-| Utility | Description |
-| ------- | ----------- |
-| **Governance** | Vote on protocol decisions |
-| **Staking rewards** | 5-8% APY |
-| **Deflation** | Buyback & burn from fees |
+| Utility              | Description                     |
+| -------------------- | ------------------------------- |
+| **Governance**       | Vote on protocol decisions      |
+| **Staking rewards**  | 5-8% APY                        |
+| **Deflation**        | Buyback & burn from fees        |
 | **Treasury backing** | Protocol revenue supports value |
 
 ---
 
 ## Competitive Positioning
 
-| Approach | Problem | CipherOcto Advantage |
-| -------- | ------- | --------------------- |
-| **Centralized AI** | Institutional trust, no cryptographic guarantees | Zero-trust architecture with proof |
-| **Traditional DePIN** | Stake-based security, vulnerable to attacks | Performance-based trust (PoR) |
-| **Single-token projects** | All roles compete for same token | Role-based tokens for economic efficiency |
+| Approach                  | Problem                                          | CipherOcto Advantage                      |
+| ------------------------- | ------------------------------------------------ | ----------------------------------------- |
+| **Centralized AI**        | Institutional trust, no cryptographic guarantees | Zero-trust architecture with proof        |
+| **Traditional DePIN**     | Stake-based security, vulnerable to attacks      | Performance-based trust (PoR)             |
+| **Single-token projects** | All roles compete for same token                 | Role-based tokens for economic efficiency |
 
 ---
 
@@ -210,4 +210,4 @@ graph LR
 
 ---
 
-*For technical details, see the [whitepaper](../01-foundation/whitepaper/v1.0-whitepaper.md).*
+_For technical details, see the [whitepaper](../01-foundation/whitepaper/v1.0-whitepaper.md)._

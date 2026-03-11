@@ -73,11 +73,13 @@ mindmap
 ### 1. Choose What to Work On
 
 **Good first issues:**
+
 - Filter by `good first issue` label
 - Look for `help wanted` label
 - Check [roadmap](../../01-foundation/roadmap.md) for planned features
 
 **Advanced contributions:**
+
 - Architecture improvements
 - Major features
 - Protocol upgrades
@@ -128,14 +130,14 @@ git checkout -b fix/issue-number-description
 
 ### Branch Naming Convention
 
-| Type | Format | Example |
-| ---- | ------ | ------- |
-| **Feature** | `feature/short-description` | `feature/add-zk-proofs` |
-| **Bug fix** | `fix/issue-number-description` | `fix/123-memory-leak` |
-| **Documentation** | `docs/what-changed` | `docs/api-updates` |
-| **Refactor** | `refactor/what-changed` | `refactor/improve-cache` |
-| **Test** | `test/what-is-tested` | `test/add-integration-tests` |
-| **Chore** | `chore/what-changed` | `chore/update-dependencies` |
+| Type              | Format                         | Example                      |
+| ----------------- | ------------------------------ | ---------------------------- |
+| **Feature**       | `feature/short-description`    | `feature/add-zk-proofs`      |
+| **Bug fix**       | `fix/issue-number-description` | `fix/123-memory-leak`        |
+| **Documentation** | `docs/what-changed`            | `docs/api-updates`           |
+| **Refactor**      | `refactor/what-changed`        | `refactor/improve-cache`     |
+| **Test**          | `test/what-is-tested`          | `test/add-integration-tests` |
+| **Chore**         | `chore/what-changed`           | `chore/update-dependencies`  |
 
 ---
 
@@ -171,8 +173,8 @@ async function processTask(task: Task): Promise<Result> {
 }
 
 // Use meaningful variable names
-const totalRewards = calculateRewards(stake, multiplier);  // Good
-const x = calc(s, m);  // Bad
+const totalRewards = calculateRewards(stake, multiplier); // Good
+const x = calc(s, m); // Bad
 ```
 
 ### Python
@@ -250,6 +252,7 @@ Follow Conventional Commits:
 ```
 
 **Types:**
+
 - `feat`: New feature
 - `fix`: Bug fix
 - `docs`: Documentation changes
@@ -282,11 +285,13 @@ git commit -m "refactor(core): simplify reputation calculation"
 ### Write Tests
 
 **Test requirements:**
+
 - Unit tests for all new functions
 - Integration tests for new features
 - E2E tests for user workflows
 
 **Test file location:**
+
 ```
 packages/sdk/
 ├── src/
@@ -298,17 +303,17 @@ packages/sdk/
 ### Test Structure
 
 ```typescript
-describe('Agent', () => {
-  describe('onTask', () => {
-    it('should handle task successfully', async () => {
-      const agent = new Agent({ name: 'test' });
+describe("Agent", () => {
+  describe("onTask", () => {
+    it("should handle task successfully", async () => {
+      const agent = new Agent({ name: "test" });
       const task = mockTask();
       const result = await agent.onTask(task);
       expect(result).toBeDefined();
     });
 
-    it('should throw on invalid task', async () => {
-      const agent = new Agent({ name: 'test' });
+    it("should throw on invalid task", async () => {
+      const agent = new Agent({ name: "test" });
       await expect(agent.onTask(null)).rejects.toThrow();
     });
   });
@@ -317,12 +322,12 @@ describe('Agent', () => {
 
 ### Test Coverage
 
-| Component | Target Coverage |
-| ---------- | --------------- |
-| **Core logic** | 90%+ |
-| **SDK functions** | 80%+ |
-| **Utilities** | 95%+ |
-| **Infrastructure** | 70%+ |
+| Component          | Target Coverage |
+| ------------------ | --------------- |
+| **Core logic**     | 90%+            |
+| **SDK functions**  | 80%+            |
+| **Utilities**      | 95%+            |
+| **Infrastructure** | 70%+            |
 
 ### Run Tests Before Submitting
 
@@ -355,6 +360,7 @@ npm run type-check
 ### 2. Opening the PR
 
 **PR Title Format:**
+
 ```
 [<type>] <short description>
 ```
@@ -363,23 +369,28 @@ npm run type-check
 
 ```markdown
 ## Description
+
 Brief description of changes
 
 ## Type of Change
+
 - [ ] Bug fix
 - [ ] New feature
 - [ ] Breaking change
 - [ ] Documentation update
 
 ## Related Issue
+
 Fixes #123
 
 ## Testing
+
 - [ ] Unit tests pass
 - [ ] Integration tests pass
 - [ ] Manual testing completed
 
 ## Checklist
+
 - [ ] Code follows style guidelines
 - [ ] Self-review completed
 - [ ] Comments added to complex code
@@ -389,13 +400,13 @@ Fixes #123
 
 ### 3. PR Review Process
 
-| Stage | Description | Time |
-| ------ | ----------- | ---- |
-| **Automated checks** | CI/CD tests | ~10 min |
-| **Code review** | Maintainer review | 1-3 days |
-| **Address feedback** | Make requested changes | Variable |
-| **Approval** | Final approval | 1 day |
-| **Merge** | Squash & merge | Immediate |
+| Stage                | Description            | Time      |
+| -------------------- | ---------------------- | --------- |
+| **Automated checks** | CI/CD tests            | ~10 min   |
+| **Code review**      | Maintainer review      | 1-3 days  |
+| **Address feedback** | Make requested changes | Variable  |
+| **Approval**         | Final approval         | 1 day     |
+| **Merge**            | Squash & merge         | Immediate |
 
 ### 4. Addressing Feedback
 
@@ -411,6 +422,7 @@ Fixes #123
 ### When to Update Docs
 
 Update documentation when:
+
 - Adding new features
 - Changing APIs
 - Fixing bugs affecting user behavior
@@ -418,12 +430,12 @@ Update documentation when:
 
 ### Documentation Types
 
-| Type | Location | Template |
-| ---- | -------- | -------- |
-| **API docs** | Code comments | JSDoc / docstrings |
-| **Guides** | `/docs` directory | Markdown |
-| **Examples** | `/examples` directory | Working code |
-| **Changelog** | `CHANGELOG.md` | Keep a changelog |
+| Type          | Location              | Template           |
+| ------------- | --------------------- | ------------------ |
+| **API docs**  | Code comments         | JSDoc / docstrings |
+| **Guides**    | `/docs` directory     | Markdown           |
+| **Examples**  | `/examples` directory | Working code       |
+| **Changelog** | `CHANGELOG.md`        | Keep a changelog   |
 
 ---
 
@@ -438,12 +450,12 @@ Update documentation when:
 
 ### Grant Tiers
 
-| Tier | Amount | Scope |
-| ---- | ------ | ----- |
-| **Micro** | $500-1,000 | Bug fixes, small features |
-| **Small** | $1,000-5,000 | New features, tools |
-| **Medium** | $5,000-20,000 | Major features, research |
-| **Large** | $20,000-100,000 | Core protocol, infrastructure |
+| Tier       | Amount          | Scope                         |
+| ---------- | --------------- | ----------------------------- |
+| **Micro**  | $500-1,000      | Bug fixes, small features     |
+| **Small**  | $1,000-5,000    | New features, tools           |
+| **Medium** | $5,000-20,000   | Major features, research      |
+| **Large**  | $20,000-100,000 | Core protocol, infrastructure |
 
 ### Apply
 
@@ -456,6 +468,7 @@ Submit proposals at: [grants.cipherocto.io](https://grants.cipherocto.io)
 ### Contributors Hall of Fame
 
 All contributors are recognized in:
+
 - `CONTRIBUTORS.md` in the repository
 - Monthly community updates
 - Annual contributor appreciation
@@ -463,6 +476,7 @@ All contributors are recognized in:
 ### Top Contributors
 
 Top contributors receive:
+
 - Special Discord role
 - OCTO token grants
 - Governance weight bonus
@@ -472,12 +486,12 @@ Top contributors receive:
 
 ## Getting Help
 
-| Channel | Best For | Response Time |
-| ------- | ----------------- | -------------- |
-| **Discord #dev** | Development questions | Hours |
-| **GitHub Discussions** | Design discussions | Days |
-| **GitHub Issues** | Bug reports | Days |
-| **Email** | Security, legal | 1-2 days |
+| Channel                | Best For              | Response Time |
+| ---------------------- | --------------------- | ------------- |
+| **Discord #dev**       | Development questions | Hours         |
+| **GitHub Discussions** | Design discussions    | Days          |
+| **GitHub Issues**      | Bug reports           | Days          |
+| **Email**              | Security, legal       | 1-2 days      |
 
 ---
 
@@ -508,4 +522,4 @@ By contributing, you agree that your contributions will be licensed under the sa
 
 ---
 
-*For getting started, see [getting-started.md](./getting-started.md). For local setup, see [local-setup.md](./local-setup.md).*
+_For getting started, see [getting-started.md](./getting-started.md). For local setup, see [local-setup.md](./local-setup.md)._

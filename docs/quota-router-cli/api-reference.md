@@ -9,6 +9,7 @@ Initialize the router configuration.
 **Arguments:** None
 
 **Exit Codes:**
+
 - `0` - Success
 - `1` - Error
 
@@ -19,9 +20,11 @@ Initialize the router configuration.
 Add a new AI provider.
 
 **Arguments:**
+
 - `name` (required) - Provider name
 
 **Example:**
+
 ```bash
 quota-router add-provider openai
 ```
@@ -35,6 +38,7 @@ Display current OCTO-W balance.
 **Arguments:** None
 
 **Output:**
+
 ```
 OCTO-W Balance: <number>
 ```
@@ -46,10 +50,12 @@ OCTO-W Balance: <number>
 List quota for sale.
 
 **Arguments:**
+
 - `--prompts`, `-p` (optional) - Number of prompts (default: 100)
 - `--price` (optional) - Price per prompt (default: 1)
 
 **Example:**
+
 ```bash
 quota-router list --prompts 100 --price 1
 ```
@@ -61,12 +67,15 @@ quota-router list --prompts 100 --price 1
 Start the transparent proxy server.
 
 **Arguments:**
+
 - `--port`, `-p` (optional) - Port to listen on (default: 8080)
 
 **Environment Variables:**
+
 - Provider API keys (e.g., `OPENAI_API_KEY`)
 
 **Example:**
+
 ```bash
 quota-router proxy --port 8080
 ```
@@ -78,10 +87,12 @@ quota-router proxy --port 8080
 Test routing to a provider.
 
 **Arguments:**
+
 - `--provider` (required) - Provider name
 - `-p`, `--prompt` (required) - Test prompt
 
 **Example:**
+
 ```bash
 quota-router route --provider openai -p "Hello"
 ```
@@ -113,34 +124,34 @@ quota-router route --provider openai -p "Hello"
 
 ## Error Codes
 
-| Code | Meaning |
-|------|---------|
-| 0 | Success |
-| 1 | General error |
-| 2 | Invalid arguments |
+| Code | Meaning           |
+| ---- | ----------------- |
+| 0    | Success           |
+| 1    | General error     |
+| 2    | Invalid arguments |
 
 ### Proxy HTTP Responses
 
-| Status | Meaning |
-|--------|---------|
-| 200 | Request forwarded successfully |
-| 401 | API key not set in environment |
-| 402 | Insufficient OCTO-W balance |
+| Status | Meaning                        |
+| ------ | ------------------------------ |
+| 200    | Request forwarded successfully |
+| 401    | API key not set in environment |
+| 402    | Insufficient OCTO-W balance    |
 
 ---
 
 ## Environment Variables
 
-| Variable | Description |
-|----------|-------------|
-| `OPENAI_API_KEY` | OpenAI API key |
+| Variable            | Description       |
+| ------------------- | ----------------- |
+| `OPENAI_API_KEY`    | OpenAI API key    |
 | `ANTHROPIC_API_KEY` | Anthropic API key |
-| `GOOGLE_API_KEY` | Google API key |
+| `GOOGLE_API_KEY`    | Google API key    |
 
 ---
 
 ## File Locations
 
-| File | Location |
-|------|----------|
+| File   | Location                             |
+| ------ | ------------------------------------ |
 | Config | `~/.config/quota-router/config.json` |

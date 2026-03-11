@@ -74,33 +74,33 @@ The availability of S-two as an open-source project (272 stars, 60 forks, 1,199 
 
 The following feature matrix provides a comparative analysis of the key AI-related capabilities across the Cairo ecosystem components:
 
-| Feature Category | Cairo Language | Orion Framework | S-two Prover | Cairo Verifier |
-|----------------|---------------|-----------------|--------------|----------------|
-| **ML Framework** | | | | |
-| Neural Network Support | Basic | Advanced | N/A | N/A |
-| ONNX Runtime | Via External | Native | N/A | N/A |
-| Model Training | Not Supported | Limited | N/A | N/A |
-| Pre-trained Model Import | Via Manual Port | Automatic (ONNX) | N/A | N/A |
-| **Proving Capabilities** | | | | |
-| STARK Proof Generation | Native | Via Framework | Native | N/A |
-| ZK Proof Support | Native | Native | Native | Verification Only |
-| Recursive Proving | Via Libraries | Via Libraries | Native | Limited |
-| Client-side Proving | Not Native | Not Native | Native | N/A |
-| **AI Verification** | | | | |
-| Model Authenticity | Manual | Via Framework | Native | Supported |
-| Input Integrity | Manual | Via Framework | Native | Supported |
-| Output Verification | Manual | Via Framework | Via Proof | Supported |
-| Privacy Preservation | Manual | Via Framework | Native | Supported |
-| **Performance** | | | | |
-| Proof Generation Speed | Standard | Standard | 28-39X Faster | N/A |
-| Verification Cost | High | Medium | Low | Low (L2) |
-| Hardware Acceleration | No | No | CPU/SIMD/GPU | N/A |
-| Browser Support | No | No | Coming Soon | N/A |
-| **Development** | | | | |
-| Language | Cairo 1.0 | Cairo 1.0 | Rust/Cairo | Cairo |
-| Framework Integration | N/A | TensorFlow/PyTorch | N/A | N/A |
-| Documentation | Comprehensive | Good | Good | Good |
-| Maintenance Status | Active | Archived | Active | Active |
+| Feature Category         | Cairo Language  | Orion Framework    | S-two Prover  | Cairo Verifier    |
+| ------------------------ | --------------- | ------------------ | ------------- | ----------------- |
+| **ML Framework**         |                 |                    |               |                   |
+| Neural Network Support   | Basic           | Advanced           | N/A           | N/A               |
+| ONNX Runtime             | Via External    | Native             | N/A           | N/A               |
+| Model Training           | Not Supported   | Limited            | N/A           | N/A               |
+| Pre-trained Model Import | Via Manual Port | Automatic (ONNX)   | N/A           | N/A               |
+| **Proving Capabilities** |                 |                    |               |                   |
+| STARK Proof Generation   | Native          | Via Framework      | Native        | N/A               |
+| ZK Proof Support         | Native          | Native             | Native        | Verification Only |
+| Recursive Proving        | Via Libraries   | Via Libraries      | Native        | Limited           |
+| Client-side Proving      | Not Native      | Not Native         | Native        | N/A               |
+| **AI Verification**      |                 |                    |               |                   |
+| Model Authenticity       | Manual          | Via Framework      | Native        | Supported         |
+| Input Integrity          | Manual          | Via Framework      | Native        | Supported         |
+| Output Verification      | Manual          | Via Framework      | Via Proof     | Supported         |
+| Privacy Preservation     | Manual          | Via Framework      | Native        | Supported         |
+| **Performance**          |                 |                    |               |                   |
+| Proof Generation Speed   | Standard        | Standard           | 28-39X Faster | N/A               |
+| Verification Cost        | High            | Medium             | Low           | Low (L2)          |
+| Hardware Acceleration    | No              | No                 | CPU/SIMD/GPU  | N/A               |
+| Browser Support          | No              | No                 | Coming Soon   | N/A               |
+| **Development**          |                 |                    |               |                   |
+| Language                 | Cairo 1.0       | Cairo 1.0          | Rust/Cairo    | Cairo             |
+| Framework Integration    | N/A             | TensorFlow/PyTorch | N/A           | N/A               |
+| Documentation            | Comprehensive   | Good               | Good          | Good              |
+| Maintenance Status       | Active          | Archived           | Active        | Active            |
 
 ### 5.1 Feature Matrix Interpretation
 

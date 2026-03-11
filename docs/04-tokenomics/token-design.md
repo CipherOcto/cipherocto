@@ -23,17 +23,17 @@ infrastructure.
 
 Our design rests on five non-negotiable principles:
 
-| Principle | Meaning |
-| --------- | ------- |
-| **Tokens represent real work** | No emissions without measurable |
-| | contribution |
-| **Emissions follow growth** | Inflation scales with network activity, |
-| | not arbitrary schedules |
-| **Utility precedes speculation** | You earn by doing, not by holding |
-| **Value flows upward** | All economic activity ultimately drives |
-| | OCTO demand |
-| **Inflation rewards builders** | Those who contribute receive newly |
-| | minted tokens |
+| Principle                        | Meaning                                 |
+| -------------------------------- | --------------------------------------- |
+| **Tokens represent real work**   | No emissions without measurable         |
+|                                  | contribution                            |
+| **Emissions follow growth**      | Inflation scales with network activity, |
+|                                  | not arbitrary schedules                 |
+| **Utility precedes speculation** | You earn by doing, not by holding       |
+| **Value flows upward**           | All economic activity ultimately drives |
+|                                  | OCTO demand                             |
+| **Inflation rewards builders**   | Those who contribute receive newly      |
+|                                  | minted tokens                           |
 
 ---
 
@@ -60,17 +60,17 @@ Every secondary token ultimately settles into OCTO demand.
 
 Specialized tokens for each infrastructure layer:
 
-| Token | Role | Purpose |
-| ----- | ---- | ------- |
-| **OCTO-A** | AI Compute | GPU inference and training rewards |
-| **OCTO-B** | Bandwidth | Network routing and relay |
-| **OCTO-O** | Orchestrator | Task coordination and validation |
-| **OCTO-W** | AI Wholesale | Enterprise quota resale market |
-| **OCTO-M** | Marketing | Agent-driven growth incentives |
-| **OCTO-D** | Developers | Build and integration rewards |
-| **OCTO-N** | Node Operators | Infrastructure maintenance |
-| **OCTO-S** | Storage | Decentralized data persistence |
-| **OCTO-H** | Historical | Long-term archival services |
+| Token      | Role           | Purpose                            |
+| ---------- | -------------- | ---------------------------------- |
+| **OCTO-A** | AI Compute     | GPU inference and training rewards |
+| **OCTO-B** | Bandwidth      | Network routing and relay          |
+| **OCTO-O** | Orchestrator   | Task coordination and validation   |
+| **OCTO-W** | AI Wholesale   | Enterprise quota resale market     |
+| **OCTO-M** | Marketing      | Agent-driven growth incentives     |
+| **OCTO-D** | Developers     | Build and integration rewards      |
+| **OCTO-N** | Node Operators | Infrastructure maintenance         |
+| **OCTO-S** | Storage        | Decentralized data persistence     |
+| **OCTO-H** | Historical     | Long-term archival services        |
 
 **These are economic instruments, not governance tokens.** They represent claims
 on specific economic outputs within their sector.
@@ -116,15 +116,15 @@ Work → Revenue → Buy Pressure → OCTO
 
 ### Initial OCTO Distribution
 
-| Allocation | Percentage | Purpose |
-| ---------- | ---------- | ------- |
-| Ecosystem Rewards | 35% | Long-term contributor incentives |
-| Treasury / DAO | 20% | Governance and ecosystem development |
-| Infrastructure | 15% | Early node bootstrapping |
-| Team & Founders | 12% | Core development alignment |
-| Early Contributors | 8% | Community recognition |
-| Strategic Partners | 5% | Enterprise integrations |
-| Liquidity Provision | 5% | Market stability |
+| Allocation          | Percentage | Purpose                              |
+| ------------------- | ---------- | ------------------------------------ |
+| Ecosystem Rewards   | 35%        | Long-term contributor incentives     |
+| Treasury / DAO      | 20%        | Governance and ecosystem development |
+| Infrastructure      | 15%        | Early node bootstrapping             |
+| Team & Founders     | 12%        | Core development alignment           |
+| Early Contributors  | 8%         | Community recognition                |
+| Strategic Partners  | 5%         | Enterprise integrations              |
+| Liquidity Provision | 5%         | Market stability                     |
 
 ### The Key Rule
 
@@ -143,13 +143,13 @@ CipherOcto runs on **Proof of Useful Work (PoUW)**.
 
 Tokens are minted only when measurable work occurs:
 
-| Contribution | Emission Trigger |
-| ------------ | ---------------- |
-| Inference completed | Successful model execution |
-| Bandwidth routed | Packets delivered, validated |
-| Storage proven | Encrypted data verified |
-| Agent executed | Task completed and confirmed |
-| Enterprise task | SLA satisfied, verified |
+| Contribution        | Emission Trigger             |
+| ------------------- | ---------------------------- |
+| Inference completed | Successful model execution   |
+| Bandwidth routed    | Packets delivered, validated |
+| Storage proven      | Encrypted data verified      |
+| Agent executed      | Task completed and confirmed |
+| Enterprise task     | SLA satisfied, verified      |
 
 **This prevents:**
 
@@ -165,18 +165,18 @@ Each role token represents a claim on the economic output of its sector.
 
 ### OCTO-A (AI Compute)
 
-- *Earned when:* GPUs perform inference or training
+- _Earned when:_ GPUs perform inference or training
 
-- *Redeemed for:* OCTO conversion, staking upgrades, priority job allocation
+- _Redeemed for:_ OCTO conversion, staking upgrades, priority job allocation
 
 ### OCTO-B (Bandwidth)
 
-- *Earned when:* Packets routed, decentralized relays used, agent communication
+- _Earned when:_ Packets routed, decentralized relays used, agent communication
   handled
 
 ### OCTO-O (Orchestrator)
 
-- *Earned when:* Tasks scheduled, agents coordinated, cross-provider execution
+- _Earned when:_ Tasks scheduled, agents coordinated, cross-provider execution
   validated
 
 ### OCTO-W (AI Wholesale) — A Unique Innovation
@@ -209,13 +209,13 @@ This creates automatic economic stabilization.
 
 Every transaction generates protocol fees:
 
-| Destination | Percentage |
-| ----------- | ---------- |
-| Provider | 70% |
-| Orchestrator | 10% |
-| Treasury | 10% |
-| Burn Mechanism | 5% |
-| Governance Rewards | 5% |
+| Destination        | Percentage |
+| ------------------ | ---------- |
+| Provider           | 70%        |
+| Orchestrator       | 10%        |
+| Treasury           | 10%        |
+| Burn Mechanism     | 5%         |
+| Governance Rewards | 5%         |
 
 **This creates:**
 
@@ -236,14 +236,14 @@ Every participant must stake **both**:
 1. **OCTO** (global alignment)
 2. **Role Token** (local specialization)
 
-| Role | Stake Required |
-| ---- | -------------- |
-| Compute Provider | OCTO + OCTO-A |
-| Bandwidth Node | OCTO + OCTO-B |
-| Storage Provider | OCTO + OCTO-S |
-| Orchestrator | OCTO + OCTO-O |
-| Developer | OCTO + OCTO-D |
-| Validator | OCTO + OCTO-N |
+| Role             | Stake Required |
+| ---------------- | -------------- |
+| Compute Provider | OCTO + OCTO-A  |
+| Bandwidth Node   | OCTO + OCTO-B  |
+| Storage Provider | OCTO + OCTO-S  |
+| Orchestrator     | OCTO + OCTO-O  |
+| Developer        | OCTO + OCTO-D  |
+| Validator        | OCTO + OCTO-N  |
 
 ### Why This Matters
 
@@ -273,12 +273,12 @@ This mirrors real economies: national currency + professional licenses.
 Two independent penalty systems:
 
 1. **Global Slashing (OCTO)**
-   - *Trigger:* Fraud, malicious coordination, protocol attacks
-   - *Impact:* Ecosystem harmed
+   - _Trigger:_ Fraud, malicious coordination, protocol attacks
+   - _Impact:_ Ecosystem harmed
 
 2. **Role Slashing (Subtoken)**
-   - *Trigger:* Poor performance, SLA violations, downtime
-   - *Impact:* Sector market harmed
+   - _Trigger:_ Poor performance, SLA violations, downtime
+   - _Impact:_ Sector market harmed
 
 Penalties hit exactly where risk exists.
 
@@ -288,14 +288,14 @@ Penalties hit exactly where risk exists.
 
 Dynamic collateral weighting based on risk profiles:
 
-| Role | OCTO Stake | Role Token Stake | Rationale |
-| ---- | ---------- | ---------------- | --------- |
-| Validator | 80% | 20% | Threatens consensus; heavy global stake |
-| Orchestrator | 70% | 30% | Cross-sector coordination risk |
-| Compute | 60% | 40% | Infrastructure criticality |
-| Storage | 50% | 50% | Balanced risk profile |
-| Developer | 40% | 60% | Output-focused, lower systemic risk |
-| Marketing | 30% | 70% | Localized impact |
+| Role         | OCTO Stake | Role Token Stake | Rationale                               |
+| ------------ | ---------- | ---------------- | --------------------------------------- |
+| Validator    | 80%        | 20%              | Threatens consensus; heavy global stake |
+| Orchestrator | 70%        | 30%              | Cross-sector coordination risk          |
+| Compute      | 60%        | 40%              | Infrastructure criticality              |
+| Storage      | 50%        | 50%              | Balanced risk profile                   |
+| Developer    | 40%        | 60%              | Output-focused, lower systemic risk     |
+| Marketing    | 30%        | 70%              | Localized impact                        |
 
 High-reputation nodes can reduce required collateral—creating **meritocratic
 decentralization**.

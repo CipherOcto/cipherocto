@@ -7,6 +7,7 @@
 ## What is Agent Memory?
 
 Agent memory enables AI systems to:
+
 - **Remember** past conversations and experiences
 - **Learn** user preferences and patterns
 - **Maintain context** across unlimited interactions
@@ -31,13 +32,13 @@ graph LR
 
 ## Quick Start: Choosing a System
 
-| Use Case | Recommended System | Complexity |
-|----------|-------------------|------------|
-| Simple chat memory | **Mem0** | ⭐ Easy |
-| Complex relationships | **Zep/Graphiti** | ⭐⭐ Medium |
-| Long conversations | **Letta/MemGPT** | ⭐⭐ Medium |
-| Coding assistant | **OMEGA** | ⭐⭐⭐ Advanced |
-| Multi-agent teams | **MIRIX** | ⭐⭐⭐ Advanced |
+| Use Case              | Recommended System | Complexity      |
+| --------------------- | ------------------ | --------------- |
+| Simple chat memory    | **Mem0**           | ⭐ Easy         |
+| Complex relationships | **Zep/Graphiti**   | ⭐⭐ Medium     |
+| Long conversations    | **Letta/MemGPT**   | ⭐⭐ Medium     |
+| Coding assistant      | **OMEGA**          | ⭐⭐⭐ Advanced |
+| Multi-agent teams     | **MIRIX**          | ⭐⭐⭐ Advanced |
 
 ---
 
@@ -65,16 +66,19 @@ graph TD
 ```
 
 ### 1. Working Memory (Now)
+
 - **Duration**: Seconds to minutes
 - **Purpose**: Active processing
 - **Implementation**: Context window
 
 ### 2. Short-Term Memory (Session)
+
 - **Duration**: Hours to days
 - **Purpose**: Conversation continuity
 - **Implementation**: Vector database
 
 ### 3. Long-Term Memory (Forever)
+
 - **Duration**: Indefinite
 - **Purpose**: Persistent knowledge
 - **Implementation**: Compressed storage + retrieval
@@ -150,14 +154,14 @@ graph LR
     style F fill:#87CEEB
 ```
 
-| Operation | What It Does | Example |
-|-----------|--------------|---------|
-| **Encode** | Convert to storable format | Text → Vector |
-| **Store** | Save to memory | Add to database |
-| **Retrieve** | Find relevant memories | Semantic search |
-| **Consolidate** | Summarize/compress | 100 turns → summary |
-| **Archive** | Move to cold storage | Rarely used data |
-| **Forget** | Remove outdated data | Delete old preferences |
+| Operation       | What It Does               | Example                |
+| --------------- | -------------------------- | ---------------------- |
+| **Encode**      | Convert to storable format | Text → Vector          |
+| **Store**       | Save to memory             | Add to database        |
+| **Retrieve**    | Find relevant memories     | Semantic search        |
+| **Consolidate** | Summarize/compress         | 100 turns → summary    |
+| **Archive**     | Move to cold storage       | Rarely used data       |
+| **Forget**      | Remove outdated data       | Delete old preferences |
 
 ---
 
@@ -165,12 +169,12 @@ graph LR
 
 ### Decision 1: Storage Backend
 
-| Option | Best For | Cost |
-|--------|----------|------|
-| ChromaDB | Development | Free |
-| Qdrant | Production | $$ (self-hosted) |
-| Pinecone | Cloud-native | $$$ (managed) |
-| PostgreSQL + pgvector | Existing stack | $ (add-on) |
+| Option                | Best For       | Cost             |
+| --------------------- | -------------- | ---------------- |
+| ChromaDB              | Development    | Free             |
+| Qdrant                | Production     | $$ (self-hosted) |
+| Pinecone              | Cloud-native   | $$$ (managed)    |
+| PostgreSQL + pgvector | Existing stack | $ (add-on)       |
 
 ### Decision 2: Retrieval Strategy
 
@@ -212,6 +216,7 @@ async def cleanup_memory():
 ## Common Pitfalls
 
 ### ❌ Don't: Store Everything
+
 ```python
 # Bad: Storing every message
 for msg in messages:
@@ -219,6 +224,7 @@ for msg in messages:
 ```
 
 ### ✅ Do: Filter and Summarize
+
 ```python
 # Good: Store what matters
 if is_important(msg):
@@ -226,6 +232,7 @@ if is_important(msg):
 ```
 
 ### ❌ Don't: Trust Memory Blindly
+
 ```python
 # Bad: Memory might be wrong
 fact = memory.search(query)[0]
@@ -233,6 +240,7 @@ return fact  # Could be hallucinated!
 ```
 
 ### ✅ Do: Verify and Attribute
+
 ```python
 # Good: Check and cite
 fact = memory.search(query, k=3)
@@ -243,12 +251,14 @@ else:
 ```
 
 ### ❌ Don't: Ignore Privacy
+
 ```python
 # Bad: No privacy controls
 memory.add(user_data)  # Anyone can access!
 ```
 
 ### ✅ Do: Implement Access Control
+
 ```python
 # Good: User-scoped memory
 memory.add(user_data, user_id=user.id, encrypted=True)
@@ -260,34 +270,36 @@ memory.add(user_data, user_id=user.id, encrypted=True)
 
 ### Metrics to Track
 
-| Metric | How to Measure | Target |
-|--------|----------------|--------|
-| **Retrieval Accuracy** | % of relevant memories found | > 85% |
-| **Response Quality** | User satisfaction ratings | > 4/5 |
-| **Memory Consistency** | No contradictions over time | 100% |
-| **Retrieval Speed** | Time to fetch memories | < 100ms |
-| **Storage Efficiency** | Compression ratio | > 10x |
+| Metric                 | How to Measure               | Target  |
+| ---------------------- | ---------------------------- | ------- |
+| **Retrieval Accuracy** | % of relevant memories found | > 85%   |
+| **Response Quality**   | User satisfaction ratings    | > 4/5   |
+| **Memory Consistency** | No contradictions over time  | 100%    |
+| **Retrieval Speed**    | Time to fetch memories       | < 100ms |
+| **Storage Efficiency** | Compression ratio            | > 10x   |
 
 ### Benchmarks
 
-| Benchmark | What It Tests | Top Performer |
-|-----------|---------------|---------------|
-| LongMemEval | Conversational memory | OMEGA: 95.4% |
-| BEAM | Million-token context | MemGPT variants |
-| HaluMem | Hallucination rate | Hybrid systems |
-| MOOM | Long conversations | Graph-based |
+| Benchmark   | What It Tests         | Top Performer   |
+| ----------- | --------------------- | --------------- |
+| LongMemEval | Conversational memory | OMEGA: 95.4%    |
+| BEAM        | Million-token context | MemGPT variants |
+| HaluMem     | Hallucination rate    | Hybrid systems  |
+| MOOM        | Long conversations    | Graph-based     |
 
 ---
 
 ## Next Steps
 
 ### For Quick Start
+
 1. Install Mem0: `pip install mem0`
 2. Initialize: `memory = mem0.Memory()`
 3. Store: `memory.add("important fact")`
 4. Retrieve: `memory.search("relevant query")`
 
 ### For Production
+
 1. Choose production backend (Qdrant/Pinecone)
 2. Implement access controls
 3. Add monitoring and logging
@@ -295,6 +307,7 @@ memory.add(user_data, user_id=user.id, encrypted=True)
 5. Test with your specific use case
 
 ### For Advanced Use
+
 1. Implement hierarchical memory (Letta/MemGPT)
 2. Add graph relationships (Zep/Graphiti)
 3. Enable multi-agent sharing (MIRIX)
@@ -305,18 +318,21 @@ memory.add(user_data, user_id=user.id, encrypted=True)
 ## Resources
 
 ### Learn More
+
 - [Full Research Document](./agent-memory-comprehensive-research.md) - Deep dive into all topics
 - [Awesome-Agent-Memory](https://github.com/TeleAI-UAGI/Awesome-Agent-Memory) - Curated papers and systems
 - [Mem0 Documentation](https://docs.mem0.ai) - Getting started guide
 - [Letta/MemGPT Paper](https://arxiv.org/abs/2403.05916) - OS-inspired memory
 
 ### Key Systems
+
 - **Mem0**: [github.com/mem0ai/mem0](https://github.com/mem0ai/mem0)
 - **Zep/Graphiti**: [github.com/getzep/graphiti](https://github.com/getzep/graphiti)
 - **Letta**: [github.com/letta-ai/letta](https://github.com/letta-ai/letta)
 - **OMEGA**: [github.com/omega-memory/core](https://github.com/omega-memory/core)
 
 ### Communities
+
 - TeleAI Research: [github.com/TeleAI-UAGI](https://github.com/TeleAI-UAGI)
 - Agent Memory Discord: (link TBD)
 - ACL 2025 L2M2 Workshop: (link TBD)

@@ -12,16 +12,16 @@ Stoolap is a modern embedded SQL database written entirely in pure Rust (Apache 
 
 ### Key Differentiators
 
-| Feature | Stoolap | SQLite | DuckDB | PostgreSQL |
-|---------|---------|--------|--------|------------|
-| **Time-Travel Queries** | Built-in | No | No | Extension |
-| **MVCC Transactions** | Yes | No | No | Yes |
-| **Cost-Based Optimizer** | Yes | No | Yes | Yes |
-| **Adaptive Query Execution** | Yes | No | No | Partial |
-| **Semantic Query Caching** | Yes | No | No | No |
-| **Parallel Query Execution** | Yes | No | Yes | Yes |
-| **Native Vector Search** | Yes | Extension | Extension | Extension |
-| **Pure Rust** | Yes | No | No | No |
+| Feature                      | Stoolap  | SQLite    | DuckDB    | PostgreSQL |
+| ---------------------------- | -------- | --------- | --------- | ---------- |
+| **Time-Travel Queries**      | Built-in | No        | No        | Extension  |
+| **MVCC Transactions**        | Yes      | No        | No        | Yes        |
+| **Cost-Based Optimizer**     | Yes      | No        | Yes       | Yes        |
+| **Adaptive Query Execution** | Yes      | No        | No        | Partial    |
+| **Semantic Query Caching**   | Yes      | No        | No        | No         |
+| **Parallel Query Execution** | Yes      | No        | Yes       | Yes        |
+| **Native Vector Search**     | Yes      | Extension | Extension | Extension  |
+| **Pure Rust**                | Yes      | No        | No        | No         |
 
 ---
 
@@ -77,18 +77,18 @@ graph TB
 
 ### 1.2 Main Source Modules
 
-| Module | Purpose |
-|--------|---------|
-| `api/` | Public database interface (Database, Statement, Transaction) |
-| `executor/` | Query execution engine with parallel execution |
-| `optimizer/` | Cost-based optimization, AQE, join planning |
-| `storage/` | MVCC engine, indexes, WAL, persistence |
-| `parser/` | SQL parser (lexer, AST, statements) |
-| `functions/` | 101+ built-in SQL functions |
-| `core/` | Core types (DataType, Value, Row, Schema) |
-| `consensus/` | Blockchain operation log (blocks, operations) |
-| `trie/` | Merkle trie for state verification |
-| `determ/` | Deterministic value types |
+| Module       | Purpose                                                      |
+| ------------ | ------------------------------------------------------------ |
+| `api/`       | Public database interface (Database, Statement, Transaction) |
+| `executor/`  | Query execution engine with parallel execution               |
+| `optimizer/` | Cost-based optimization, AQE, join planning                  |
+| `storage/`   | MVCC engine, indexes, WAL, persistence                       |
+| `parser/`    | SQL parser (lexer, AST, statements)                          |
+| `functions/` | 101+ built-in SQL functions                                  |
+| `core/`      | Core types (DataType, Value, Row, Schema)                    |
+| `consensus/` | Blockchain operation log (blocks, operations)                |
+| `trie/`      | Merkle trie for state verification                           |
+| `determ/`    | Deterministic value types                                    |
 
 ---
 
@@ -113,14 +113,15 @@ pub struct MVCCEngine {
 
 **Components**:
 
-| Component | Purpose |
-|-----------|---------|
-| `MvccTransaction` | Transaction context |
-| `TransactionRegistry` | Global transaction tracking |
-| `RowVersion` | Individual row version with metadata |
-| `VisibilityChecker` | Determines visible versions per transaction |
+| Component             | Purpose                                     |
+| --------------------- | ------------------------------------------- |
+| `MvccTransaction`     | Transaction context                         |
+| `TransactionRegistry` | Global transaction tracking                 |
+| `RowVersion`          | Individual row version with metadata        |
+| `VisibilityChecker`   | Determines visible versions per transaction |
 
 **Isolation Levels**:
+
 - `ReadUncommitted`: No isolation
 - `ReadCommitted`: See committed changes (default)
 - `Snapshot`: See snapshot at transaction start (MVCC)
@@ -131,14 +132,14 @@ pub struct MVCCEngine {
 
 **Implementation** (`src/storage/index/mod.rs`):
 
-| Index Type | Use Case | Implementation |
-|------------|----------|----------------|
-| **BTreeIndex** | Range queries, sorted access | Standard B-tree |
-| **HashIndex** | O(1) equality lookups | Hash map based |
-| **BitmapIndex** | Low-cardinality columns | Roaring bitmaps |
-| **HnswIndex** | Vector similarity search | HNSW algorithm |
-| **MultiColumnIndex** | Composite queries | Composite keys |
-| **PkIndex** | Primary key lookups | Virtual index |
+| Index Type           | Use Case                     | Implementation  |
+| -------------------- | ---------------------------- | --------------- |
+| **BTreeIndex**       | Range queries, sorted access | Standard B-tree |
+| **HashIndex**        | O(1) equality lookups        | Hash map based  |
+| **BitmapIndex**      | Low-cardinality columns      | Roaring bitmaps |
+| **HnswIndex**        | Vector similarity search     | HNSW algorithm  |
+| **MultiColumnIndex** | Composite queries            | Composite keys  |
+| **PkIndex**          | Primary key lookups          | Virtual index   |
 
 ### 2.3 Cost-Based Optimizer
 
@@ -160,6 +161,7 @@ pub struct Optimizer {
 ```
 
 **Features**:
+
 - **Statistics Collection**: Table/column statistics via `ANALYZE`
 - **Histogram Support**: Range selectivity estimation
 - **Zone Maps**: Segment pruning for columnar storage
@@ -197,6 +199,7 @@ impl SemanticCache {
 ```
 
 **Capabilities**:
+
 - **Predicate Subsumption**: `amount > 100` covers `amount > 150`
 - **Numeric Range Tightening**: Narrow `>` and `<` predicates
 - **Equality Subset**: `IN` clause narrowing
@@ -247,6 +250,7 @@ pub fn parallel_hash_join(
 ```
 
 **Parallel Operations**:
+
 - Parallel hash join (build and probe phases)
 - Parallel ORDER BY
 - Parallel aggregation
@@ -297,6 +301,7 @@ pub struct WalManager {
 ```
 
 **Features**:
+
 - **Durable Logging**: All operations logged before applying
 - **Configurable Sync Modes**: None, Normal, Full
 - **WAL Rotation**: Automatic rotation at 64MB
@@ -321,6 +326,7 @@ pub struct PersistenceManager {
 ```
 
 **Features**:
+
 - Periodic full database snapshots
 - Recovery: Load snapshot + replay WAL entries
 - Zone Maps: Column-level min/max statistics for segment pruning
@@ -330,16 +336,16 @@ pub struct PersistenceManager {
 
 **Implementation** (`src/core/types.rs`):
 
-| Type | Description |
-|------|-------------|
-| `Null` | NULL value |
-| `Integer` | 64-bit signed integer |
-| `Float` | 64-bit floating point |
-| `Text` | UTF-8 string |
-| `Boolean` | true/false |
-| `Timestamp` | Timestamp with timezone |
-| `Json` | JSON document |
-| `Vector` | f32 vector for similarity search |
+| Type        | Description                      |
+| ----------- | -------------------------------- |
+| `Null`      | NULL value                       |
+| `Integer`   | 64-bit signed integer            |
+| `Float`     | 64-bit floating point            |
+| `Text`      | UTF-8 string                     |
+| `Boolean`   | true/false                       |
+| `Timestamp` | Timestamp with timezone          |
+| `Json`      | JSON document                    |
+| `Vector`    | f32 vector for similarity search |
 
 ---
 
@@ -397,12 +403,12 @@ impl ExpressionVM {
 
 **Implementation** (`src/executor/operators/`):
 
-| Algorithm | Best For | Implementation |
-|-----------|----------|----------------|
-| **Hash Join** | Large datasets | Build hash table, probe |
-| **Merge Join** | Pre-sorted inputs | Sorted merge |
-| **Nested Loop** | Small tables | Index-optimized variant |
-| **Bloom Filter** | Runtime filtering | Probabilistic filter |
+| Algorithm        | Best For          | Implementation          |
+| ---------------- | ----------------- | ----------------------- |
+| **Hash Join**    | Large datasets    | Build hash table, probe |
+| **Merge Join**   | Pre-sorted inputs | Sorted merge            |
+| **Nested Loop**  | Small tables      | Index-optimized variant |
+| **Bloom Filter** | Runtime filtering | Probabilistic filter    |
 
 ---
 
@@ -471,13 +477,13 @@ db.execute_named(
 
 Stoolap includes components for blockchain integration:
 
-| Module | Purpose |
-|--------|---------|
-| `consensus/` | Block and operation types for operation logs |
-| `trie/` | Merkle tries for state verification |
-| `determ/` | Deterministic value types |
-| `rollup/` | L2 rollup types |
-| `zk/` | Zero-knowledge proof integration (STWO plugin) |
+| Module       | Purpose                                        |
+| ------------ | ---------------------------------------------- |
+| `consensus/` | Block and operation types for operation logs   |
+| `trie/`      | Merkle tries for state verification            |
+| `determ/`    | Deterministic value types                      |
+| `rollup/`    | L2 rollup types                                |
+| `zk/`        | Zero-knowledge proof integration (STWO plugin) |
 
 ### 6.2 Merkle Trie
 
@@ -509,25 +515,25 @@ Can be compiled to WebAssembly for browser and edge execution.
 
 ### 7.1 Design Decisions
 
-| Decision | Rationale |
-|----------|-----------|
-| **Pure Rust** | Memory safety, no C dependencies, WASM support |
-| **MVCC** | Concurrent reads/writes without locking |
-| **Cost-Based Optimizer** | Better plans than rule-based optimizers |
-| **Semantic Caching** | Higher cache hit rates through predicate understanding |
-| **Time-Travel** | Built-in temporal queries without application logic |
-| **Vector Search** | Single database for SQL + AI workloads |
+| Decision                 | Rationale                                              |
+| ------------------------ | ------------------------------------------------------ |
+| **Pure Rust**            | Memory safety, no C dependencies, WASM support         |
+| **MVCC**                 | Concurrent reads/writes without locking                |
+| **Cost-Based Optimizer** | Better plans than rule-based optimizers                |
+| **Semantic Caching**     | Higher cache hit rates through predicate understanding |
+| **Time-Travel**          | Built-in temporal queries without application logic    |
+| **Vector Search**        | Single database for SQL + AI workloads                 |
 
 ### 7.2 Performance Features
 
-| Feature | Benefit |
-|---------|---------|
-| MVCC | Lock-free reads, consistent snapshots |
-| Parallel Execution | Multi-core utilization |
-| Semantic Caching | Reduced redundant computation |
-| AQE | Runtime plan adaptation |
-| Zone Maps | Reduced I/O for analytical queries |
-| Vector Quantization | Memory-efficient similarity search |
+| Feature             | Benefit                               |
+| ------------------- | ------------------------------------- |
+| MVCC                | Lock-free reads, consistent snapshots |
+| Parallel Execution  | Multi-core utilization                |
+| Semantic Caching    | Reduced redundant computation         |
+| AQE                 | Runtime plan adaptation               |
+| Zone Maps           | Reduced I/O for analytical queries    |
+| Vector Quantization | Memory-efficient similarity search    |
 
 ---
 

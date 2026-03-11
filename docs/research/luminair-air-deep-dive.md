@@ -30,39 +30,39 @@ flowchart TD
 
 ### Key AIR Concepts
 
-| Concept | Description |
-|---------|-------------|
-| **Trace** | Execution record (values at each step) |
+| Concept         | Description                                 |
+| --------------- | ------------------------------------------- |
+| **Trace**       | Execution record (values at each step)      |
 | **Constraints** | Mathematical relations between trace values |
-| **Polynomials** | Trace interpolated to polynomials |
-| **Components** | AIR modules for specific operations |
+| **Polynomials** | Trace interpolated to polynomials           |
+| **Components**  | AIR modules for specific operations         |
 
 ## LuminAIR AIR Components
 
 ### Current Operators (11 Primitive)
 
-| Operator | Component | Purpose |
-|----------|-----------|---------|
-| **Add** | `AddComponent` | Element-wise addition |
-| **Mul** | `MulComponent` | Element-wise multiplication |
-| **Recip** | `RecipComponent` | Reciprocal (1/x) |
-| **Sin** | `SinComponent` | Sine with lookup table |
-| **Exp2** | `Exp2Component` | 2^x with lookup table |
-| **Log2** | `Log2Component` | log2(x) with lookup table |
-| **Sqrt** | `SqrtComponent` | Square root |
-| **Mod** | `RemComponent` | Modulo/remainder |
-| **LessThan** | `LessThanComponent` | Comparison |
-| **SumReduce** | `SumReduceComponent` | Sum all elements |
-| **MaxReduce** | `MaxReduceComponent` | Find maximum |
-| **Contiguous** | `ContiguousComponent` | Memory layout |
+| Operator       | Component             | Purpose                     |
+| -------------- | --------------------- | --------------------------- |
+| **Add**        | `AddComponent`        | Element-wise addition       |
+| **Mul**        | `MulComponent`        | Element-wise multiplication |
+| **Recip**      | `RecipComponent`      | Reciprocal (1/x)            |
+| **Sin**        | `SinComponent`        | Sine with lookup table      |
+| **Exp2**       | `Exp2Component`       | 2^x with lookup table       |
+| **Log2**       | `Log2Component`       | log2(x) with lookup table   |
+| **Sqrt**       | `SqrtComponent`       | Square root                 |
+| **Mod**        | `RemComponent`        | Modulo/remainder            |
+| **LessThan**   | `LessThanComponent`   | Comparison                  |
+| **SumReduce**  | `SumReduceComponent`  | Sum all elements            |
+| **MaxReduce**  | `MaxReduceComponent`  | Find maximum                |
+| **Contiguous** | `ContiguousComponent` | Memory layout               |
 
 ### Planned (Fused) Operators
 
-| Operator | Description |
-|----------|-------------|
-| **MatMul** | Matrix multiplication |
-| **SoftMax** | Softmax function |
-| **ReLU** | Rectified linear unit |
+| Operator    | Description           |
+| ----------- | --------------------- |
+| **MatMul**  | Matrix multiplication |
+| **SoftMax** | Softmax function      |
+| **ReLU**    | Rectified linear unit |
 
 ## Component Architecture
 
@@ -97,6 +97,7 @@ impl FrameworkEval for SomeEval {
 ### Constraint Types
 
 #### 1. Consistency Constraints
+
 Ensure trace values are consistent:
 
 ```rust
@@ -105,6 +106,7 @@ eval.eval_fixed_add(lhs_val.clone(), rhs_val.clone(), out_val.clone());
 ```
 
 #### 2. Transition Constraints
+
 Ensure state transitions are valid:
 
 ```rust
@@ -114,6 +116,7 @@ eval.add_constraint(not_last * (next_idx - idx - E::F::one()));
 ```
 
 #### 3. Interaction Constraints (LogUp)
+
 Ensure data flow between operators:
 
 ```rust
@@ -195,14 +198,14 @@ impl FrameworkEval for AddEval {
 
 ### Constraint Summary
 
-| Constraint | Formula | Purpose |
-|-----------|---------|---------|
-| is_last_valid | `is_last * (is_last - 1) = 0` | Binary flag check |
-| add_correct | `out - lhs - rhs = 0` | Addition correctness |
-| same_node | `(1-is_last) * (next_node - node) = 0` | Node continuity |
-| same_lhs | `(1-is_last) * (next_lhs - lhs) = 0` | LHS continuity |
-| same_rhs | `(1-is_last) * (next_rhs - rhs) = 0` | RHS continuity |
-| index_inc | `(1-is_last) * (next_idx - idx - 1) = 0` | Index progression |
+| Constraint    | Formula                                  | Purpose              |
+| ------------- | ---------------------------------------- | -------------------- |
+| is_last_valid | `is_last * (is_last - 1) = 0`            | Binary flag check    |
+| add_correct   | `out - lhs - rhs = 0`                    | Addition correctness |
+| same_node     | `(1-is_last) * (next_node - node) = 0`   | Node continuity      |
+| same_lhs      | `(1-is_last) * (next_lhs - lhs) = 0`     | LHS continuity       |
+| same_rhs      | `(1-is_last) * (next_rhs - rhs) = 0`     | RHS continuity       |
+| index_inc     | `(1-is_last) * (next_idx - idx - 1) = 0` | Index progression    |
 
 ## Data Flow: LogUp
 
@@ -228,12 +231,12 @@ flowchart LR
 
 ### Multiplicity Rules
 
-| Scenario | Multiplicity | Example |
-|----------|-------------|---------|
-| Output yielded | Positive | Tensor used by 2 consumers → yield=2 |
-| Input consumed | Negative | Operation reads from tensor → consume=-1 |
-| Graph input | Zero | Initial tensor, no prior operation |
-| Graph output | Zero | Final result, no subsequent operation |
+| Scenario       | Multiplicity | Example                                  |
+| -------------- | ------------ | ---------------------------------------- |
+| Output yielded | Positive     | Tensor used by 2 consumers → yield=2     |
+| Input consumed | Negative     | Operation reads from tensor → consume=-1 |
+| Graph input    | Zero         | Initial tensor, no prior operation       |
+| Graph output   | Zero         | Final result, no subsequent operation    |
 
 ## Lookup Tables (LUT)
 
@@ -241,12 +244,12 @@ Some operations use **lookup tables** for efficiency:
 
 ### Operations with LUTs
 
-| Operation | Lookup Table | Purpose |
-|-----------|--------------|---------|
-| **Sin** | sin(x) values | Fast sine approximation |
-| **Exp2** | 2^x values | Fast exponential |
-| **Log2** | log2(x) values | Fast logarithm |
-| **RangeCheck** | 0..N range | Bounds checking |
+| Operation      | Lookup Table   | Purpose                 |
+| -------------- | -------------- | ----------------------- |
+| **Sin**        | sin(x) values  | Fast sine approximation |
+| **Exp2**       | 2^x values     | Fast exponential        |
+| **Log2**       | log2(x) values | Fast logarithm          |
+| **RangeCheck** | 0..N range     | Bounds checking         |
 
 ### LUT Implementation
 
@@ -275,10 +278,10 @@ pub type TraceEval = ColumnVec<CircleEvaluation<SimdBackend, BaseField, BitRever
 
 ### Column Layout
 
-| Column Type | Description |
-|------------|-------------|
-| **Trace columns** | Computation values |
-| **Mask columns** | Index, IDs, flags |
+| Column Type             | Description          |
+| ----------------------- | -------------------- |
+| **Trace columns**       | Computation values   |
+| **Mask columns**        | Index, IDs, flags    |
 | **Interaction columns** | LogUp multiplicities |
 
 ## Proving Pipeline
@@ -336,14 +339,14 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
 ## Comparison: Cairo vs Direct AIR
 
-| Aspect | Stoolap (Cairo) | LuminAIR (Direct AIR) |
-|--------|-----------------|------------------------|
-| **Compilation** | SQL → Cairo | ML Graph → AIR |
-| **Prover** | stwo-cairo-prover | stwo (direct) |
-| **On-chain** | ✅ Yes | ❌ Not yet |
-| **Flexibility** | Fixed (SQL ops) | Extensible (components) |
-| **Performance** | ~25-28s proving | Variable by model |
-| **Complexity** | Lower (pre-built) | Higher (custom AIR) |
+| Aspect          | Stoolap (Cairo)   | LuminAIR (Direct AIR)   |
+| --------------- | ----------------- | ----------------------- |
+| **Compilation** | SQL → Cairo       | ML Graph → AIR          |
+| **Prover**      | stwo-cairo-prover | stwo (direct)           |
+| **On-chain**    | ✅ Yes            | ❌ Not yet              |
+| **Flexibility** | Fixed (SQL ops)   | Extensible (components) |
+| **Performance** | ~25-28s proving   | Variable by model       |
+| **Complexity**  | Lower (pre-built) | Higher (custom AIR)     |
 
 ## Why Direct AIR is Faster
 

@@ -146,11 +146,11 @@ graph TD
 
 The foundation layer ensuring bit-exact arithmetic across all nodes.
 
-| Component      | Purpose                            |
-| -------------- | ---------------------------------- |
+| Component                     | Purpose                            |
+| ----------------------------- | ---------------------------------- |
 | DFP (RFC-0104 (Numeric/Math)) | Deterministic floating-point       |
 | DQA (RFC-0105 (Numeric/Math)) | Deterministic quantized arithmetic |
-| Numeric Types  | Q32.32, Q16.16 fixed-point         |
+| Numeric Types                 | Q32.32, Q16.16 fixed-point         |
 
 **Key Property:** Any computation produces identical results on any hardware.
 

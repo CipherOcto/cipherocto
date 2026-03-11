@@ -24,15 +24,15 @@ pie showData
 
 ### Allocation Breakdown
 
-| Allocation | Tokens | Percentage | Purpose |
-| ---------- | ------ | ---------- | ------- |
-| **Ecosystem Rewards** | 3,500,000,000 | 35% | Long-term contributor incentives |
-| **Treasury / DAO** | 2,000,000,000 | 20% | Governance and ecosystem development |
-| **Infrastructure Incentives** | 1,500,000,000 | 15% | Early node bootstrapping |
-| **Team & Founders** | 1,200,000,000 | 12% | Core development alignment |
-| **Early Contributors** | 800,000,000 | 8% | Community recognition |
-| **Strategic Partners** | 500,000,000 | 5% | Enterprise integrations |
-| **Liquidity Provision** | 500,000,000 | 5% | Market stability |
+| Allocation                    | Tokens        | Percentage | Purpose                              |
+| ----------------------------- | ------------- | ---------- | ------------------------------------ |
+| **Ecosystem Rewards**         | 3,500,000,000 | 35%        | Long-term contributor incentives     |
+| **Treasury / DAO**            | 2,000,000,000 | 20%        | Governance and ecosystem development |
+| **Infrastructure Incentives** | 1,500,000,000 | 15%        | Early node bootstrapping             |
+| **Team & Founders**           | 1,200,000,000 | 12%        | Core development alignment           |
+| **Early Contributors**        | 800,000,000   | 8%         | Community recognition                |
+| **Strategic Partners**        | 500,000,000   | 5%         | Enterprise integrations              |
+| **Liquidity Provision**       | 500,000,000   | 5%         | Market stability                     |
 
 ---
 
@@ -42,15 +42,16 @@ pie showData
 
 **Purpose:** Long-term contributor incentives (node operators, developers, researchers)
 
-| Parameter | Value |
-| --------- | ----- |
-| **Initial unlock** | 0% |
-| **Cliff period** | 12 months |
-| **Vesting duration** | 48 months (4 years) |
-| **Release type** | Linear monthly vesting |
+| Parameter             | Value                       |
+| --------------------- | --------------------------- |
+| **Initial unlock**    | 0%                          |
+| **Cliff period**      | 12 months                   |
+| **Vesting duration**  | 48 months (4 years)         |
+| **Release type**      | Linear monthly vesting      |
 | **Release mechanism** | Proof of Useful Work (PoUW) |
 
 **Emission Schedule:**
+
 ```mermaid
 graph TB
     subgraph EMISSION["Ecosystem Emission (4 years)"]
@@ -70,13 +71,13 @@ graph TB
 
 **Purpose:** Governance and ecosystem development
 
-| Parameter | Value |
-| --------- | ----- |
-| **Initial unlock** | 10% (200M OCTO) |
-| **Cliff period** | 36 months (3 years) |
-| **Vesting duration** | 60 months (5 years) |
-| **Release type** | Linear after cliff |
-| **Control** | DAO governance after transfer |
+| Parameter            | Value                         |
+| -------------------- | ----------------------------- |
+| **Initial unlock**   | 10% (200M OCTO)               |
+| **Cliff period**     | 36 months (3 years)           |
+| **Vesting duration** | 60 months (5 years)           |
+| **Release type**     | Linear after cliff            |
+| **Control**          | DAO governance after transfer |
 
 **Treasury Allocation:**
 | Use Case | Percentage | Annual Budget |
@@ -91,12 +92,12 @@ graph TB
 
 **Purpose:** Early node bootstrapping and network security
 
-| Parameter | Value |
-| --------- | ----- |
-| **Initial unlock** | 20% (300M OCTO) |
-| **Vesting duration** | 36 months (3 years) |
-| **Release type** | Performance-based |
-| **Requirement** | Active node operation |
+| Parameter            | Value                 |
+| -------------------- | --------------------- |
+| **Initial unlock**   | 20% (300M OCTO)       |
+| **Vesting duration** | 36 months (3 years)   |
+| **Release type**     | Performance-based     |
+| **Requirement**      | Active node operation |
 
 **Distribution Tiers:**
 | Tier | Stake Required | Monthly Emission | Nodes Targeted |
@@ -109,13 +110,13 @@ graph TB
 
 **Purpose:** Core development alignment
 
-| Parameter | Value |
-| --------- | ----- |
-| **Initial unlock** | 0% |
-| **Cliff period** | 12 months |
-| **Vesting duration** | 48 months (4 years) |
-| **Release type** | Linear quarterly vesting |
-| **Lock-up** | Additional 6-month trading lock |
+| Parameter            | Value                           |
+| -------------------- | ------------------------------- |
+| **Initial unlock**   | 0%                              |
+| **Cliff period**     | 12 months                       |
+| **Vesting duration** | 48 months (4 years)             |
+| **Release type**     | Linear quarterly vesting        |
+| **Lock-up**          | Additional 6-month trading lock |
 
 **Team Breakdown:**
 | Role | Allocation | Vesting |
@@ -128,12 +129,12 @@ graph TB
 
 **Purpose:** Community recognition (testnet participants, beta testers, community builders)
 
-| Parameter | Value |
-| --------- | ----- |
-| **Initial unlock** | 25% (200M OCTO) |
-| **Cliff period** | 6 months |
-| **Vesting duration** | 30 months (2.5 years) |
-| **Release type** | Linear monthly vesting |
+| Parameter            | Value                  |
+| -------------------- | ---------------------- |
+| **Initial unlock**   | 25% (200M OCTO)        |
+| **Cliff period**     | 6 months               |
+| **Vesting duration** | 30 months (2.5 years)  |
+| **Release type**     | Linear monthly vesting |
 
 **Contribution Categories:**
 | Category | Allocation | Requirement |
@@ -147,12 +148,12 @@ graph TB
 
 **Purpose:** Enterprise integrations and ecosystem partnerships
 
-| Parameter | Value |
-| --------- | ----- |
-| **Initial unlock** | 0% |
-| **Vesting type** | Milestone-based |
-| **Maximum duration** | 48 months |
-| **Cliff per milestone** | 3 months |
+| Parameter               | Value           |
+| ----------------------- | --------------- |
+| **Initial unlock**      | 0%              |
+| **Vesting type**        | Milestone-based |
+| **Maximum duration**    | 48 months       |
+| **Cliff per milestone** | 3 months        |
 
 **Milestone Examples:**
 | Milestone | Release | Example Partner |
@@ -166,11 +167,11 @@ graph TB
 
 **Purpose:** Market stability and DEX/CEX liquidity
 
-| Parameter | Value |
-| --------- | ----- |
-| **Initial unlock** | 100% (500M OCTO) |
-| **Release timing** | TGE |
-| **Lock-up** | None (immediate liquidity) |
+| Parameter          | Value                      |
+| ------------------ | -------------------------- |
+| **Initial unlock** | 100% (500M OCTO)           |
+| **Release timing** | TGE                        |
+| **Lock-up**        | None (immediate liquidity) |
 
 **Liquidity Distribution:**
 | Venue | Allocation | Purpose |
@@ -185,21 +186,21 @@ graph TB
 
 ### Monthly Emission Schedule
 
-| Quarter | Ecosystem | Treasury | Infrastructure | Team | Contributors | Partners | Total |
-| ------- | --------- | -------- | -------------- | ---- | ------------ | -------- | ----- |
-| **Q1 2027** | 18M | — | 25M | — | 13M | — | 56M |
-| **Q2 2027** | 18M | — | 25M | — | 13M | — | 56M |
-| **Q3 2027** | 18M | — | 25M | 25M | 13M | — | 81M |
-| **Q4 2027** | 18M | — | 25M | 25M | 13M | — | 81M |
-| **Q1 2028** | 73M | — | 25M | 25M | 27M | — | 150M |
-| **Q2 2028** | 73M | — | 25M | 25M | 27M | 13M | 163M |
-| **Q3 2028** | 73M | — | 25M | 25M | 27M | 13M | 163M |
-| **Q4 2028** | 73M | 33M | 25M | 25M | 27M | 13M | 196M |
-| **Q1 2029** | 73M | 33M | 25M | 25M | 27M | 13M | 196M |
-| **Q2 2029** | 73M | 33M | 25M | 25M | 27M | 13M | 196M |
-| **Q3 2029** | 73M | 33M | 25M | 25M | 27M | 13M | 196M |
-| **Q4 2029** | 73M | 33M | — | 25M | 27M | 13M | 171M |
-| **2030+** | 73M/quarter | 33M/quarter | — | — | — | — | 106M/quarter |
+| Quarter     | Ecosystem   | Treasury    | Infrastructure | Team | Contributors | Partners | Total        |
+| ----------- | ----------- | ----------- | -------------- | ---- | ------------ | -------- | ------------ |
+| **Q1 2027** | 18M         | —           | 25M            | —    | 13M          | —        | 56M          |
+| **Q2 2027** | 18M         | —           | 25M            | —    | 13M          | —        | 56M          |
+| **Q3 2027** | 18M         | —           | 25M            | 25M  | 13M          | —        | 81M          |
+| **Q4 2027** | 18M         | —           | 25M            | 25M  | 13M          | —        | 81M          |
+| **Q1 2028** | 73M         | —           | 25M            | 25M  | 27M          | —        | 150M         |
+| **Q2 2028** | 73M         | —           | 25M            | 25M  | 27M          | 13M      | 163M         |
+| **Q3 2028** | 73M         | —           | 25M            | 25M  | 27M          | 13M      | 163M         |
+| **Q4 2028** | 73M         | 33M         | 25M            | 25M  | 27M          | 13M      | 196M         |
+| **Q1 2029** | 73M         | 33M         | 25M            | 25M  | 27M          | 13M      | 196M         |
+| **Q2 2029** | 73M         | 33M         | 25M            | 25M  | 27M          | 13M      | 196M         |
+| **Q3 2029** | 73M         | 33M         | 25M            | 25M  | 27M          | 13M      | 196M         |
+| **Q4 2029** | 73M         | 33M         | —              | 25M  | 27M          | 13M      | 171M         |
+| **2030+**   | 73M/quarter | 33M/quarter | —              | —    | —            | —        | 106M/quarter |
 
 ### Cumulative Supply Projection
 
@@ -225,22 +226,22 @@ graph TB
 
 ### TGE Specifications
 
-| Parameter | Value |
-| --------- | ----- |
-| **Date** | Q2 2027 (target) |
+| Parameter               | Value                     |
+| ----------------------- | ------------------------- |
+| **Date**                | Q2 2027 (target)          |
 | **Initial circulating** | ~500M OCTO (5% of supply) |
-| **Initial price** | TBD (market determined) |
-| **Listing venues** | Major DEX + Tier 1 CEX |
+| **Initial price**       | TBD (market determined)   |
+| **Listing venues**      | Major DEX + Tier 1 CEX    |
 
 ### Initial Circulating Breakdown
 
-| Source | Amount | Percentage of Initial |
-| ------ | ------ | --------------------- |
-| **Liquidity provision** | 500M | 100% |
-| **Ecosystem (early contributors)** | 0M | 0% |
-| **Treasury initial** | 0M | 0% |
-| **Infrastructure initial** | 0M | 0% |
-| **Total** | 500M | 100% |
+| Source                             | Amount | Percentage of Initial |
+| ---------------------------------- | ------ | --------------------- |
+| **Liquidity provision**            | 500M   | 100%                  |
+| **Ecosystem (early contributors)** | 0M     | 0%                    |
+| **Treasury initial**               | 0M     | 0%                    |
+| **Infrastructure initial**         | 0M     | 0%                    |
+| **Total**                          | 500M   | 100%                  |
 
 ---
 
@@ -250,24 +251,24 @@ graph TB
 
 Ecosystem rewards are distributed only upon verified contribution:
 
-| Contribution Type | Verification Method | Reward |
-| ----------------- | ------------------- | ------ |
+| Contribution Type       | Verification Method       | Reward        |
+| ----------------------- | ------------------------- | ------------- |
 | **Inference completed** | Task success confirmation | OCTO-A earned |
-| **Storage provided** | Proof of spacetime | OCTO-S earned |
-| **Bandwidth routed** | Packet delivery proof | OCTO-B earned |
-| **Agent executed** | Task completion | OCTO-D earned |
+| **Storage provided**    | Proof of spacetime        | OCTO-S earned |
+| **Bandwidth routed**    | Packet delivery proof     | OCTO-B earned |
+| **Agent executed**      | Task completion           | OCTO-D earned |
 
 ### Automatic vs. Claimed
 
-| Allocation | Release Type | Action Required |
-| ---------- | ------------ | --------------- |
-| **Ecosystem** | Automatic (on-chain) | None |
-| **Treasury** | DAO governance | Proposal + vote |
-| **Infrastructure** | Automatic (staking) | Claim rewards |
-| **Team** | Vesting contract | Claim monthly |
-| **Contributors** | Vesting contract | Claim monthly |
-| **Partners** | Milestone verification | Claim on milestone |
-| **Liquidity** | Immediate at TGE | None |
+| Allocation         | Release Type           | Action Required    |
+| ------------------ | ---------------------- | ------------------ |
+| **Ecosystem**      | Automatic (on-chain)   | None               |
+| **Treasury**       | DAO governance         | Proposal + vote    |
+| **Infrastructure** | Automatic (staking)    | Claim rewards      |
+| **Team**           | Vesting contract       | Claim monthly      |
+| **Contributors**   | Vesting contract       | Claim monthly      |
+| **Partners**       | Milestone verification | Claim on milestone |
+| **Liquidity**      | Immediate at TGE       | None               |
 
 ---
 
@@ -275,22 +276,22 @@ Ecosystem rewards are distributed only upon verified contribution:
 
 ### Protection Mechanisms
 
-| Mechanism | Purpose | Implementation |
-| ---------- | ------- | --------------- |
-| **Vesting schedules** | Prevent immediate sell pressure | 4-year team vesting |
-| **Cliff periods** | Ensure long-term commitment | 1-3 year cliffs |
-| **Performance-based release** | Align incentives with delivery | Milestone-based emissions |
-| **Staking requirements** | Encourage holding | Minimum stakes for roles |
-| **Liquidity limits** | Control market impact | Gradual LP releases |
+| Mechanism                     | Purpose                         | Implementation            |
+| ----------------------------- | ------------------------------- | ------------------------- |
+| **Vesting schedules**         | Prevent immediate sell pressure | 4-year team vesting       |
+| **Cliff periods**             | Ensure long-term commitment     | 1-3 year cliffs           |
+| **Performance-based release** | Align incentives with delivery  | Milestone-based emissions |
+| **Staking requirements**      | Encourage holding               | Minimum stakes for roles  |
+| **Liquidity limits**          | Control market impact           | Gradual LP releases       |
 
 ### Price Stabilization
 
-| Tool | Trigger | Action |
-| ---- | ------ | ------ |
-| **Treasury buyback** | Price < 200-day MA | Use treasury funds |
-| **Fee burn increase** | Price declining | Increase burn percentage |
-| **Staking rewards boost** | Low staking ratio | Increase APY |
-| **LP incentives** | Low liquidity | Additional rewards |
+| Tool                      | Trigger            | Action                   |
+| ------------------------- | ------------------ | ------------------------ |
+| **Treasury buyback**      | Price < 200-day MA | Use treasury funds       |
+| **Fee burn increase**     | Price declining    | Increase burn percentage |
+| **Staking rewards boost** | Low staking ratio  | Increase APY             |
+| **LP incentives**         | Low liquidity      | Additional rewards       |
 
 ---
 
@@ -298,12 +299,12 @@ Ecosystem rewards are distributed only upon verified contribution:
 
 ### Jurisdictional Considerations
 
-| Category | Treatment |
-| ---------- | --------- |
-| **Utility tokens** | OCTO and role tokens |
-| **Security considerations** | Compliance with applicable regulations |
-| **Tax treatment** | Consult local tax advisors |
-| **KYC/AML** | Required for large purchases, enterprise participation |
+| Category                    | Treatment                                              |
+| --------------------------- | ------------------------------------------------------ |
+| **Utility tokens**          | OCTO and role tokens                                   |
+| **Security considerations** | Compliance with applicable regulations                 |
+| **Tax treatment**           | Consult local tax advisors                             |
+| **KYC/AML**                 | Required for large purchases, enterprise participation |
 
 ### Restricted Territories
 
@@ -313,17 +314,17 @@ Tokens will not be offered to residents of restricted jurisdictions without prop
 
 ## Summary
 
-| Metric | Value |
-| ------ | ----- |
-| **Total supply** | 10,000,000,000 OCTO |
-| **Initial circulating** | 500,000,000 (5%) |
-| **Fully diluted** | Year 5+ |
-| **Core team vesting** | 4 years |
-| **Ecosystem emissions** | Performance-based (PoUW) |
-| **Treasury control** | Transferred to DAO by Year 3 |
+| Metric                  | Value                        |
+| ----------------------- | ---------------------------- |
+| **Total supply**        | 10,000,000,000 OCTO          |
+| **Initial circulating** | 500,000,000 (5%)             |
+| **Fully diluted**       | Year 5+                      |
+| **Core team vesting**   | 4 years                      |
+| **Ecosystem emissions** | Performance-based (PoUW)     |
+| **Treasury control**    | Transferred to DAO by Year 3 |
 
 **All emissions tied to measurable contribution. No inflation without work.**
 
 ---
 
-*For token design details, see [token-design.md](./token-design.md). For governance, see [governance.md](./governance.md).*
+_For token design details, see [token-design.md](./token-design.md). For governance, see [governance.md](./governance.md)._

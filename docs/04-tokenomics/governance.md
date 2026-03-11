@@ -55,11 +55,11 @@ graph TB
 
 **Basis of Participation:** OCTO tokens staked
 
-| Requirement | Value |
-| ----------- | ----- |
-| **Minimum stake** | 1,000 OCTO |
-| **Staking duration** | Minimum 7 days (unstaking requires 7-day unbond) |
-| **Voting eligibility** | Staked at time of proposal |
+| Requirement            | Value                                            |
+| ---------------------- | ------------------------------------------------ |
+| **Minimum stake**      | 1,000 OCTO                                       |
+| **Staking duration**   | Minimum 7 days (unstaking requires 7-day unbond) |
+| **Voting eligibility** | Staked at time of proposal                       |
 
 ### Voting Power Calculation
 
@@ -75,19 +75,19 @@ Lock_Multiplier = 1.0 (standard) to 2.0 (4-year lock)
 
 | OCTO Staked | Square Root | Voting Power (4-yr lock) |
 | ----------- | ----------- | ------------------------ |
-| 1,000 | 31.6 | 63.2 |
-| 10,000 | 100 | 200 |
-| 100,000 | 316 | 632 |
-| 1,000,000 | 1,000 | 2,000 |
+| 1,000       | 31.6        | 63.2                     |
+| 10,000      | 100         | 200                      |
+| 100,000     | 316         | 632                      |
+| 1,000,000   | 1,000       | 2,000                    |
 
 ### Powers & Responsibilities
 
-| Power | Threshold | Scope |
-| ----- | --------- | ----- |
+| Power                          | Threshold                       | Scope                         |
+| ------------------------------ | ------------------------------- | ----------------------------- |
 | **Protocol parameter changes** | 50% participation, 60% approval | Fee rates, emission schedules |
-| **Treasury allocation** | 50% participation, 60% approval | Budget approval |
-| **Constitutional amendments** | 75% participation, 80% approval | Foundation rules |
-| **Emergency measures** | 67% of locked OCTO | Crisis response |
+| **Treasury allocation**        | 50% participation, 60% approval | Budget approval               |
+| **Constitutional amendments**  | 75% participation, 80% approval | Foundation rules              |
+| **Emergency measures**         | 67% of locked OCTO              | Crisis response               |
 
 ---
 
@@ -97,13 +97,13 @@ Lock_Multiplier = 1.0 (standard) to 2.0 (4-year lock)
 
 **Basis of Participation:** Verified contribution to the ecosystem
 
-| Councilor Type | Requirement | Seats |
-| -------------- | ----------- | ----- |
-| **Compute Provider** | 100K+ OCTO-A earned, reputation >80 | 30 |
-| **Developer** | 10+ agents deployed, active maintenance | 25 |
-| **Node Operator** | 6+ months uptime, reputation >85 | 20 |
-| **Enterprise** | Active customer, 12+ months tenure | 15 |
-| **Researcher** | Published papers, protocol contributions | 10 |
+| Councilor Type       | Requirement                              | Seats |
+| -------------------- | ---------------------------------------- | ----- |
+| **Compute Provider** | 100K+ OCTO-A earned, reputation >80      | 30    |
+| **Developer**        | 10+ agents deployed, active maintenance  | 25    |
+| **Node Operator**    | 6+ months uptime, reputation >85         | 20    |
+| **Enterprise**       | Active customer, 12+ months tenure       | 15    |
+| **Researcher**       | Published papers, protocol contributions | 10    |
 
 **Total Council Size:** 100 members
 
@@ -120,12 +120,12 @@ Role_Multiplier = Sector weight (0.8-1.2)
 
 ### Powers & Responsibilities
 
-| Power | Threshold | Scope |
-| ----- | --------- | ----- |
-| **Technical standards** | 50% participation, 60% approval | API changes, protocol upgrades |
+| Power                     | Threshold                       | Scope                             |
+| ------------------------- | ------------------------------- | --------------------------------- |
+| **Technical standards**   | 50% participation, 60% approval | API changes, protocol upgrades    |
 | **Role token parameters** | 50% participation, 60% approval | Emission rates, conversion ratios |
-| **Dispute resolution** | Panel of 7 | Slashing disputes, misconduct |
-| **Integration approvals** | 66% approval | New partnerships, listings |
+| **Dispute resolution**    | Panel of 7                      | Slashing disputes, misconduct     |
+| **Integration approvals** | 66% approval                    | New partnerships, listings        |
 
 ---
 
@@ -133,12 +133,12 @@ Role_Multiplier = Sector weight (0.8-1.2)
 
 ### Amendments Requiring Both Chambers
 
-| Amendment Type | Chamber 1 | Chamber 2 |
-| -------------- | --------- | --------- |
-| **Constitutional changes** | 75% / 80% | 75% / 80% |
-| **Treasury allocation changes** | 50% / 60% | 50% / 60% |
-| **New role token creation** | 67% approval | 67% approval |
-| **Supply modifications** | 75% / 80% | Not applicable |
+| Amendment Type                  | Chamber 1    | Chamber 2      |
+| ------------------------------- | ------------ | -------------- |
+| **Constitutional changes**      | 75% / 80%    | 75% / 80%      |
+| **Treasury allocation changes** | 50% / 60%    | 50% / 60%      |
+| **New role token creation**     | 67% approval | 67% approval   |
+| **Supply modifications**        | 75% / 80%    | Not applicable |
 
 **Note:** Both chambers must approve independently for constitutional amendments to pass.
 
@@ -192,13 +192,13 @@ stateDiagram-v2
 
 ### Proposal Parameters
 
-| Parameter | Value |
-| --------- | ----- |
-| **Minimum discussion period** | 7 days |
-| **Voting duration** | 5 days |
-| **Execution timelock** | 48 hours |
-| **Quorum requirement** | 40% for standard, 50% for major |
-| **Approval threshold** | 60% standard, 67-80% for major |
+| Parameter                     | Value                           |
+| ----------------------------- | ------------------------------- |
+| **Minimum discussion period** | 7 days                          |
+| **Voting duration**           | 5 days                          |
+| **Execution timelock**        | 48 hours                        |
+| **Quorum requirement**        | 40% for standard, 50% for major |
+| **Approval threshold**        | 60% standard, 67-80% for major  |
 
 ---
 
@@ -208,29 +208,29 @@ stateDiagram-v2
 
 **Composition:** 7 members (multi-sig)
 
-| Member | Selection | Term |
-| ------ | --------- | ---- |
-| **3 protocol founders** | Appointed | Indefinite (removable) |
-| **2 council representatives** | Elected by council | 6 months |
-| **2 community delegates** | Elected by OCTO holders | 6 months |
+| Member                        | Selection               | Term                   |
+| ----------------------------- | ----------------------- | ---------------------- |
+| **3 protocol founders**       | Appointed               | Indefinite (removable) |
+| **2 council representatives** | Elected by council      | 6 months               |
+| **2 community delegates**     | Elected by OCTO holders | 6 months               |
 
 ### Emergency Powers
 
-| Power | Activation | Duration |
-| ---- | ---------- | -------- |
-| **Protocol pause** | 5/7 vote | 48 hours max |
-| **Emergency upgrades** | 6/7 vote | Immediate, ratification required |
-| **Treasury access** | 6/7 vote | Crisis response only |
-| **Slashing authority** | 5/7 vote | Security incidents |
+| Power                  | Activation | Duration                         |
+| ---------------------- | ---------- | -------------------------------- |
+| **Protocol pause**     | 5/7 vote   | 48 hours max                     |
+| **Emergency upgrades** | 6/7 vote   | Immediate, ratification required |
+| **Treasury access**    | 6/7 vote   | Crisis response only             |
+| **Slashing authority** | 5/7 vote   | Security incidents               |
 
 ### Emergency Checks
 
-| Safeguard | Purpose |
-| --------- | ------- |
-| **72-hour ratification window** | Full governance must approve |
-| **Automatic expiration** | Emergency powers expire if not ratified |
-| **Public disclosure requirement** | All actions must be explained |
-| **Removal mechanism** | Council can remove emergency members |
+| Safeguard                         | Purpose                                 |
+| --------------------------------- | --------------------------------------- |
+| **72-hour ratification window**   | Full governance must approve            |
+| **Automatic expiration**          | Emergency powers expire if not ratified |
+| **Public disclosure requirement** | All actions must be explained           |
+| **Removal mechanism**             | Council can remove emergency members    |
 
 ---
 
@@ -238,13 +238,13 @@ stateDiagram-v2
 
 ### Staking for Governance
 
-| Lock Duration | Multiplier | Unbonding Period |
-| ------------- | ---------- | ---------------- |
-| **Flexible** | 1.0x | 7 days |
-| **3-month lock** | 1.25x | 7 days |
-| **6-month lock** | 1.5x | 7 days |
-| **1-year lock** | 1.75x | 30 days |
-| **4-year lock** | 2.0x | 90 days |
+| Lock Duration    | Multiplier | Unbonding Period |
+| ---------------- | ---------- | ---------------- |
+| **Flexible**     | 1.0x       | 7 days           |
+| **3-month lock** | 1.25x      | 7 days           |
+| **6-month lock** | 1.5x       | 7 days           |
+| **1-year lock**  | 1.75x      | 30 days          |
+| **4-year lock**  | 2.0x       | 90 days          |
 
 **Note:** Longer locks increase voting power but reduce liquidity. Participants choose their preferred balance.
 
@@ -252,12 +252,12 @@ stateDiagram-v2
 
 OCTO holders can delegate their voting power without transferring tokens:
 
-| Feature | Description |
-| ------- | ----------- |
-| **Delegation** | Assign voting power to another address |
-| **Revocability** | Can revoke delegation at any time |
-| **No transfer required** | Tokens remain in your control |
-| **Delegation incentives** | Delegates may share rewards |
+| Feature                   | Description                            |
+| ------------------------- | -------------------------------------- |
+| **Delegation**            | Assign voting power to another address |
+| **Revocability**          | Can revoke delegation at any time      |
+| **No transfer required**  | Tokens remain in your control          |
+| **Delegation incentives** | Delegates may share rewards            |
 
 ---
 
@@ -265,12 +265,12 @@ OCTO holders can delegate their voting power without transferring tokens:
 
 ### Dispute Categories
 
-| Category | Chamber | Process |
-| ---------- | -------- | -------- |
-| **Slashing disputes** | Contribution Council | Evidence review, vote |
-| **Parameter violations** | Both chambers | Joint review |
-| **Governance misconduct** | Emergency Council | Immediate action |
-| **Protocol exploits** | Emergency Council | Emergency response |
+| Category                  | Chamber              | Process               |
+| ------------------------- | -------------------- | --------------------- |
+| **Slashing disputes**     | Contribution Council | Evidence review, vote |
+| **Parameter violations**  | Both chambers        | Joint review          |
+| **Governance misconduct** | Emergency Council    | Immediate action      |
+| **Protocol exploits**     | Emergency Council    | Emergency response    |
 
 ### Resolution Process
 
@@ -325,21 +325,21 @@ graph TB
 
 ### Whale Mitigation
 
-| Measure | Effect |
-| ------- | ------ |
-| **Square-root voting** | Reduces whale dominance |
-| **Lock multiplier** | Encourages longer commitment |
-| **Contribution council** | Non-capital power center |
-| **Delegation limits** | Prevents centralization |
+| Measure                  | Effect                       |
+| ------------------------ | ---------------------------- |
+| **Square-root voting**   | Reduces whale dominance      |
+| **Lock multiplier**      | Encourages longer commitment |
+| **Contribution council** | Non-capital power center     |
+| **Delegation limits**    | Prevents centralization      |
 
 ### Sybil Resistance
 
-| Measure | Implementation |
-| ------- | --------------- |
-| **Minimum stake** | 1,000 OCTO minimum |
-| **Reputation decay** | Inactive voting power decreases |
-| **Identity verification** | Optional KYC for enhanced voting |
-| **Activity scores** | Active participation weighted higher |
+| Measure                   | Implementation                       |
+| ------------------------- | ------------------------------------ |
+| **Minimum stake**         | 1,000 OCTO minimum                   |
+| **Reputation decay**      | Inactive voting power decreases      |
+| **Identity verification** | Optional KYC for enhanced voting     |
+| **Activity scores**       | Active participation weighted higher |
 
 ---
 
@@ -364,17 +364,17 @@ graph TB
 
 ## Summary
 
-| Feature | Implementation |
-| ------- | --------------- |
-| **Governance model** | Bicameral (two chambers) |
-| **Chamber 1** | OCTO Holders Assembly (stake-based) |
-| **Chamber 2** | Contribution Council (merit-based) |
-| **Voting power** | Square-root of stake (anti-whale) |
-| **Proposal types** | Protocol, technical, treasury, governance, disputes |
-| **Emergency powers** | Security Council (7 members) |
-| **Constitutional protection** | Core principles immutable |
-| **Decentralization timeline** | Complete by 2029 |
+| Feature                       | Implementation                                      |
+| ----------------------------- | --------------------------------------------------- |
+| **Governance model**          | Bicameral (two chambers)                            |
+| **Chamber 1**                 | OCTO Holders Assembly (stake-based)                 |
+| **Chamber 2**                 | Contribution Council (merit-based)                  |
+| **Voting power**              | Square-root of stake (anti-whale)                   |
+| **Proposal types**            | Protocol, technical, treasury, governance, disputes |
+| **Emergency powers**          | Security Council (7 members)                        |
+| **Constitutional protection** | Core principles immutable                           |
+| **Decentralization timeline** | Complete by 2029                                    |
 
 ---
 
-*For token distribution details, see [distribution-schedule.md](./distribution-schedule.md). For token design, see [token-design.md](./token-design.md).*
+_For token distribution details, see [distribution-schedule.md](./distribution-schedule.md). For token design, see [token-design.md](./token-design.md)._

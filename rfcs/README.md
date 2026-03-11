@@ -34,27 +34,46 @@ An RFC is a **design specification**, not implementation.
 ## RFC Lifecycle
 
 ```
-Draft → Review → Accepted | Rejected | Archived
+Draft → Review → Accepted → Final
+       → Rejected → Archived
+       → Superseded → Archived
+       → Deprecated → Archived
 ```
 
-| Status       | Description                      | Location             |
-| ------------ | -------------------------------- | -------------------- |
-| **Draft**    | Open for discussion              | `rfcs/0000-title.md` |
-| **Review**   | PR submitted, community feedback | PR comment thread    |
-| **Accepted** | Approved, create missions        | `rfcs/XXXX-title.md` |
-| **Rejected** | Declined, record reasoning       | `rfcs/archived/`     |
-| **Replaced** | Superseded by newer RFC          | `rfcs/archived/`     |
+| Status         | Description                      | Location             |
+| -------------- | -------------------------------- | -------------------- |
+| **Draft**      | Open for discussion              | `rfcs/0000-title.md` |
+| **Review**     | PR submitted, community feedback | PR comment thread    |
+| **Accepted**   | Approved, create missions        | `rfcs/XXXX-title.md` |
+| **Final**      | Implemented and verified         | `rfcs/XXXX-title.md` |
+| **Rejected**   | Declined, record reasoning       | `rfcs/archived/`     |
+| **Superseded** | Replaced by newer RFC            | `rfcs/archived/`     |
+| **Deprecated** | Still supported but discouraged  | `rfcs/archived/`     |
 
 ---
 
 ## RFC Template
 
+For the complete template with all required sections, see [RFC-0000-template.md](0000-template.md).
+
+Key sections include:
+
+- Dependencies
+- Design Goals
+- Determinism Requirements
+- Security Considerations
+- Adversarial Review
+- Economic Analysis
+- Compatibility
+- Test Vectors
+- Version History
+
 ```markdown
-# RFC-XXXX: [Title]
+# RFC-XXXX (Category): [Title]
 
 ## Status
 
-Draft | Accepted | Rejected | Replaced | Deprecated
+Draft | Review | Accepted | Final | Rejected | Superseded | Deprecated
 
 ## Summary
 
@@ -187,103 +206,103 @@ Once accepted:
 
 ### Process & Meta (RFC-0000-0099)
 
-| RFC                      | Title                            | Status   | Description                                |
-| ------------------------ | -------------------------------- | -------- | ------------------------------------------ |
-| RFC-0000 (Process/Meta)  | CipherOcto Architecture Overview | Draft    | System architecture                        |
-| RFC-0001 (Process/Meta)  | Mission Lifecycle                | Accepted | Mission framework                          |
-| RFC-0002 (Process/Meta)  | Agent Manifest Specification     | Accepted | Agent definition                           |
-| RFC-0003 (Process/Meta)  | Deterministic Execution Standard | Draft    | Core determinism requirements              |
-| RFC-0004 (Process/Meta)  | Implementation Roadmap           | Draft    | Phased implementation plan                  |
+| RFC                     | Title                            | Status   | Description                   |
+| ----------------------- | -------------------------------- | -------- | ----------------------------- |
+| RFC-0000 (Process/Meta) | CipherOcto Architecture Overview | Draft    | System architecture           |
+| RFC-0001 (Process/Meta) | Mission Lifecycle                | Accepted | Mission framework             |
+| RFC-0002 (Process/Meta) | Agent Manifest Specification     | Accepted | Agent definition              |
+| RFC-0003 (Process/Meta) | Deterministic Execution Standard | Draft    | Core determinism requirements |
+| RFC-0004 (Process/Meta) | Implementation Roadmap           | Draft    | Phased implementation plan    |
 
 ### Numeric (RFC-0100-0199)
 
-| RFC                      | Title                                    | Status   | Description                                  |
-| ------------------------ | ---------------------------------------- | -------- | -------------------------------------------- |
-| RFC-0102 (Numeric)       | Wallet Cryptography                       | Draft    | Wallet security and key management           |
-| RFC-0104 (Numeric)       | Deterministic Floating-Point (DFP)        | Draft    | Deterministic floating-point types          |
-| RFC-0105 (Numeric)       | Deterministic Quant Arithmetic (DQA)    | Draft    | Quantized arithmetic types                   |
-| RFC-0106 (Numeric)       | Deterministic Numeric Tower (DNT)        | Draft    | Complete numeric type system (Foundational) |
-| RFC-0107 (Numeric)       | Deterministic Transformer Circuit        | Draft    | Transformer circuit design                   |
-| RFC-0108 (Numeric)       | Deterministic Training Circuits          | Draft    | Training circuit design                      |
-| RFC-0109 (Numeric)       | Deterministic Linear Algebra Engine      | Draft    | Vector/matrix operations                     |
-| RFC-0116 (Numeric)       | Unified Deterministic Execution Model    | Draft    | Unified execution framework                  |
+| RFC                | Title                                 | Status | Description                                 |
+| ------------------ | ------------------------------------- | ------ | ------------------------------------------- |
+| RFC-0102 (Numeric) | Wallet Cryptography                   | Draft  | Wallet security and key management          |
+| RFC-0104 (Numeric) | Deterministic Floating-Point (DFP)    | Draft  | Deterministic floating-point types          |
+| RFC-0105 (Numeric) | Deterministic Quant Arithmetic (DQA)  | Draft  | Quantized arithmetic types                  |
+| RFC-0106 (Numeric) | Deterministic Numeric Tower (DNT)     | Draft  | Complete numeric type system (Foundational) |
+| RFC-0107 (Numeric) | Deterministic Transformer Circuit     | Draft  | Transformer circuit design                  |
+| RFC-0108 (Numeric) | Deterministic Training Circuits       | Draft  | Training circuit design                     |
+| RFC-0109 (Numeric) | Deterministic Linear Algebra Engine   | Draft  | Vector/matrix operations                    |
+| RFC-0116 (Numeric) | Unified Deterministic Execution Model | Draft  | Unified execution framework                 |
 
 ### Storage (RFC-0200-0299)
 
-| RFC                      | Title                           | Status   | Description                         |
-| ------------------------ | ------------------------------ | -------- | ----------------------------------- |
-| RFC-0200 (Storage)       | Production Vector-SQL Storage  | Draft    | Vector storage with SQL interface   |
+| RFC                | Title                         | Status | Description                       |
+| ------------------ | ----------------------------- | ------ | --------------------------------- |
+| RFC-0200 (Storage) | Production Vector-SQL Storage | Draft  | Vector storage with SQL interface |
 
 ### Retrieval (RFC-0300-0399)
 
-| RFC                      | Title                                    | Status   | Description                        |
-| ------------------------ | --------------------------------------- | -------- | ---------------------------------- |
-| RFC-0300 (Retrieval)     | Verifiable AI Retrieval                  | Draft    | Deterministic retrieval foundations|
-| RFC-0301 (Retrieval)     | Retrieval Architecture & Read Economics | Draft    | Retrieval system design + economics|
-| RFC-0302 (Retrieval)     | Retrieval Gateway & Query Routing       | Draft    | Query routing layer                |
-| RFC-0303 (Retrieval)     | Deterministic Vector Index (HNSW-D)      | Draft    | ANN index                          |
-| RFC-0304 (Retrieval)     | Verifiable Vector Query Execution       | Draft    | Query layer                        |
+| RFC                  | Title                                   | Status | Description                         |
+| -------------------- | --------------------------------------- | ------ | ----------------------------------- |
+| RFC-0300 (Retrieval) | Verifiable AI Retrieval                 | Draft  | Deterministic retrieval foundations |
+| RFC-0301 (Retrieval) | Retrieval Architecture & Read Economics | Draft  | Retrieval system design + economics |
+| RFC-0302 (Retrieval) | Retrieval Gateway & Query Routing       | Draft  | Query routing layer                 |
+| RFC-0303 (Retrieval) | Deterministic Vector Index (HNSW-D)     | Draft  | ANN index                           |
+| RFC-0304 (Retrieval) | Verifiable Vector Query Execution       | Draft  | Query layer                         |
 
 ### Agents (RFC-0400-0499)
 
-| RFC                      | Title                                     | Status   | Description                           |
-| ------------------------ | ---------------------------------------- | -------- | ------------------------------------- |
-| RFC-0410 (Agents)       | Verifiable Agent Memory                   | Draft    | Agent memory with cryptographic proofs|
-| RFC-0411 (Agents)       | Knowledge Market & Verifiable Data Assets | Draft    | Data ownership and trading            |
-| RFC-0412 (Agents)       | Verifiable Reasoning Traces                | Draft    | Agent reasoning verification          |
-| RFC-0413 (Agents)       | State Virtualization for Massive Scaling  | Draft    | Virtualized state for agents          |
-| RFC-0414 (Agents)       | Autonomous Agent Organizations            | Draft    | Agent governance structures           |
-| RFC-0415 (Agents)       | Alignment & Control Mechanisms            | Draft    | Agent safety and control             |
-| RFC-0416 (Agents)       | Self-Verifying AI Agents                  | Draft    | Agents that verify themselves        |
-| RFC-0450 (Agents)       | Verifiable Agent Runtime (VAR)            | Draft    | Agent execution                      |
+| RFC               | Title                                     | Status | Description                            |
+| ----------------- | ----------------------------------------- | ------ | -------------------------------------- |
+| RFC-0410 (Agents) | Verifiable Agent Memory                   | Draft  | Agent memory with cryptographic proofs |
+| RFC-0411 (Agents) | Knowledge Market & Verifiable Data Assets | Draft  | Data ownership and trading             |
+| RFC-0412 (Agents) | Verifiable Reasoning Traces               | Draft  | Agent reasoning verification           |
+| RFC-0413 (Agents) | State Virtualization for Massive Scaling  | Draft  | Virtualized state for agents           |
+| RFC-0414 (Agents) | Autonomous Agent Organizations            | Draft  | Agent governance structures            |
+| RFC-0415 (Agents) | Alignment & Control Mechanisms            | Draft  | Agent safety and control               |
+| RFC-0416 (Agents) | Self-Verifying AI Agents                  | Draft  | Agents that verify themselves          |
+| RFC-0450 (Agents) | Verifiable Agent Runtime (VAR)            | Draft  | Agent execution                        |
 
 ### AI Execution (RFC-0500-0599)
 
-| RFC                      | Title                                   | Status   | Description                              |
-| ------------------------ | -------------------------------------- | -------- | ---------------------------------------- |
-| RFC-0520 (AI Execution)  | Deterministic AI Virtual Machine        | Draft    | VM for AI model execution                |
-| RFC-0521 (AI Execution)  | Verifiable Large Model Execution        | Draft    | Large model verification                 |
-| RFC-0522 (AI Execution)  | Mixture-of-Experts                      | Draft    | MoE architecture for decentralized inference |
-| RFC-0523 (AI Execution)  | Scalable Verifiable AI Execution        | Draft    | Unified scalable execution               |
-| RFC-0550 (AI Execution)  | Verifiable RAG Execution (VRE)          | Draft    | RAG pipelines                           |
-| RFC-0555 (AI Execution)  | Deterministic Model Execution Engine     | Draft    | Transformer execution                    |
+| RFC                     | Title                                | Status | Description                                  |
+| ----------------------- | ------------------------------------ | ------ | -------------------------------------------- |
+| RFC-0520 (AI Execution) | Deterministic AI Virtual Machine     | Draft  | VM for AI model execution                    |
+| RFC-0521 (AI Execution) | Verifiable Large Model Execution     | Draft  | Large model verification                     |
+| RFC-0522 (AI Execution) | Mixture-of-Experts                   | Draft  | MoE architecture for decentralized inference |
+| RFC-0523 (AI Execution) | Scalable Verifiable AI Execution     | Draft  | Unified scalable execution                   |
+| RFC-0550 (AI Execution) | Verifiable RAG Execution (VRE)       | Draft  | RAG pipelines                                |
+| RFC-0555 (AI Execution) | Deterministic Model Execution Engine | Draft  | Transformer execution                        |
 
 ### Proof Systems (RFC-0600-0699)
 
-| RFC                       | Title                                    | Status   | Description                           |
-| ------------------------- | --------------------------------------- | -------- | ------------------------------------- |
-| RFC-0615 (Proof Systems)  | Probabilistic Verification Markets       | Draft    | Market for probabilistic verification  |
-| RFC-0616 (Proof Systems)  | Proof Market & Hierarchical Inference    | Draft    | Distributed inference + proof market   |
-| RFC-0630 (Proof Systems)  | Proof-of-Inference Consensus             | Draft    | Consensus for inference results        |
-| RFC-0631 (Proof Systems)  | Proof-of-Dataset Integrity              | Draft    | Dataset integrity verification         |
-| RFC-0650 (Proof Systems)  | Proof Aggregation Protocol              | Draft    | Aggregating proofs efficiently         |
-| RFC-0651 (Proof Systems)  | Proof Market & Hierarchical Verification | Draft    | Verification layer                     |
+| RFC                      | Title                                    | Status | Description                           |
+| ------------------------ | ---------------------------------------- | ------ | ------------------------------------- |
+| RFC-0615 (Proof Systems) | Probabilistic Verification Markets       | Draft  | Market for probabilistic verification |
+| RFC-0616 (Proof Systems) | Proof Market & Hierarchical Inference    | Draft  | Distributed inference + proof market  |
+| RFC-0630 (Proof Systems) | Proof-of-Inference Consensus             | Draft  | Consensus for inference results       |
+| RFC-0631 (Proof Systems) | Proof-of-Dataset Integrity               | Draft  | Dataset integrity verification        |
+| RFC-0650 (Proof Systems) | Proof Aggregation Protocol               | Draft  | Aggregating proofs efficiently        |
+| RFC-0651 (Proof Systems) | Proof Market & Hierarchical Verification | Draft  | Verification layer                    |
 
 ### Consensus (RFC-0700-0799)
 
-| RFC                      | Title                        | Status   | Description                    |
-| ------------------------ | --------------------------- | -------- | ------------------------------ |
-| RFC-0740 (Consensus)     | Sharded Consensus Protocol   | Draft    | Sharded blockchain consensus    |
-| RFC-0741 (Consensus)     | Parallel Block DAG           | Draft    | DAG-based block structure      |
-| RFC-0742 (Consensus)     | Data Availability & Sampling| Draft    | DAS protocol                   |
+| RFC                  | Title                        | Status | Description                  |
+| -------------------- | ---------------------------- | ------ | ---------------------------- |
+| RFC-0740 (Consensus) | Sharded Consensus Protocol   | Draft  | Sharded blockchain consensus |
+| RFC-0741 (Consensus) | Parallel Block DAG           | Draft  | DAG-based block structure    |
+| RFC-0742 (Consensus) | Data Availability & Sampling | Draft  | DAS protocol                 |
 
 ### Networking (RFC-0800-0899)
 
-| RFC                      | Title                        | Status   | Description                    |
-| ------------------------ | --------------------------- | -------- | ------------------------------ |
-| RFC-0843 (Networking)    | OCTO-Network Protocol        | Draft    | Network protocol specification  |
-| RFC-0845 (Networking)   | Hardware Capability Registry  | Draft    | Hardware capability tracking    |
+| RFC                   | Title                        | Status | Description                    |
+| --------------------- | ---------------------------- | ------ | ------------------------------ |
+| RFC-0843 (Networking) | OCTO-Network Protocol        | Draft  | Network protocol specification |
+| RFC-0845 (Networking) | Hardware Capability Registry | Draft  | Hardware capability tracking   |
 
 ### Economics (RFC-0900-0999)
 
-| RFC                      | Title                            | Status   | Description                       |
-| ------------------------ | -------------------------------- | -------- | --------------------------------- |
-| RFC-0900 (Economics)     | AI Quota Marketplace Protocol    | Draft    | Marketplace for AI compute quotas  |
-| RFC-0901 (Economics)    | Quota Router Agent               | Draft    | Agent for routing requests        |
-| RFC-0910 (Economics)    | Inference Task Market            | Draft    | Market for inference tasks        |
-| RFC-0950 (Economics)    | Agent Mission Marketplace (AMM) | Draft    | Mission marketplace               |
-| RFC-0955 (Economics)    | Model Liquidity Layer           | Draft    | Tokenized AI models              |
-| RFC-0956 (Economics)    | Model Liquidity Layer (MLL) v2  | Draft    | Tokenized AI models (updated)    |
+| RFC                  | Title                           | Status | Description                       |
+| -------------------- | ------------------------------- | ------ | --------------------------------- |
+| RFC-0900 (Economics) | AI Quota Marketplace Protocol   | Draft  | Marketplace for AI compute quotas |
+| RFC-0901 (Economics) | Quota Router Agent              | Draft  | Agent for routing requests        |
+| RFC-0910 (Economics) | Inference Task Market           | Draft  | Market for inference tasks        |
+| RFC-0950 (Economics) | Agent Mission Marketplace (AMM) | Draft  | Mission marketplace               |
+| RFC-0955 (Economics) | Model Liquidity Layer           | Draft  | Tokenized AI models               |
+| RFC-0956 (Economics) | Model Liquidity Layer (MLL) v2  | Draft  | Tokenized AI models (updated)     |
 
 ### Archived
 

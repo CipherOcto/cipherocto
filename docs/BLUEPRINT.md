@@ -150,6 +150,30 @@ Research (CAN WE?)
 
 ---
 
+### Research Review Gate
+
+Before research becomes a Use Case, it must pass review:
+
+```
+Research
+   │
+   ├─ Review by maintainers (min. 2 reviewers)
+   │
+   ├─ Evaluation Criteria:
+   │   - Technical feasibility
+   │   - Protocol relevance
+   │   - Economic viability
+   │   - Security implications
+   │
+   ├─ Approved → Use Case
+   │
+   └─ Rejected → Archive (document learnings)
+```
+
+Research without gates becomes blog posts.
+
+---
+
 ## Artifact Types
 
 ### Research Report
@@ -219,9 +243,36 @@ Research → (viable) → Use Case
 
 What problem exists?
 
+## Stakeholders
+
+Who benefits from this use case?
+
+- Primary: [user/role]
+- Secondary: [user/role]
+- Affected: [user/role]
+
 ## Motivation
 
 Why does this matter for CipherOcto?
+
+## Success Metrics
+
+How do we know this succeeded?
+
+| Metric | Target | Measurement |
+| ------ | ------ | ----------- |
+|        |        |             |
+
+## Constraints
+
+What are the boundaries?
+
+- Must not: [constraint]
+- Limited to: [constraint]
+
+## Non-Goals
+
+What are we explicitly NOT doing?
 
 ## Impact
 
@@ -229,7 +280,7 @@ What changes if this is implemented?
 
 ## Related RFCs
 
-- RFC-XXXX
+- RFC-XXXX (Category): [Title]
 ```
 
 **Examples:**
@@ -508,7 +559,13 @@ Open | Claimed | In Review | Completed | Blocked
 
 ## RFC
 
-RFC-XXXX
+RFC-XXXX (Category): [Title]
+
+## Dependencies
+
+Missions that must be completed before this one:
+
+- Mission-XXX: [Title] (if applicable)
 
 ## Acceptance Criteria
 
@@ -534,6 +591,19 @@ Implementation notes, blockers, decisions.
 - No RFC = Create one first
 - One mission = One claimable unit
 - Missions are timeboxed
+- Missions MUST declare dependencies on other missions
+
+**Mission Dependency Model:**
+
+Real implementation requires ordered execution. Declare dependencies:
+
+```yaml
+depends_on:
+  - mission-003 # Must complete first
+  - mission-007 # Must complete first
+```
+
+Without dependencies, agents may implement out-of-order, producing dead PRs.
 
 ---
 

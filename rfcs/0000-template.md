@@ -1,107 +1,170 @@
-# RFC-XXXX: [Title]
+# RFC-XXXX (Category): [Title]
 
 ## Status
-Draft | Accepted | Rejected | Replaced | Deprecated
+
+Draft | Review | Accepted | Final | Rejected | Superseded | Deprecated
+
+> **Note:** This RFC was originally numbered RFC-XXXX under the legacy numbering system. It remains at XXXX as it belongs to the [Category] category.
+
+## Authors
+
+- Author: @username
+
+## Maintainers
+
+- Maintainer: @username
 
 ## Summary
-One-paragraph overview of the proposal.
+
+One-paragraph overview of what this RFC defines.
+
+## Dependencies
+
+**Requires:**
+
+- RFC-XXXX (Category): [Title]
+
+**Optional:**
+
+- RFC-XXXX (Category): [Title]
+
+## Design Goals
+
+Specific measurable objectives (G1, G2, G3...).
+
+| Goal | Target | Metric        |
+| ---- | ------ | ------------- |
+| G1   | <50ms  | Query latency |
+| G2   | >95%   | Recall@10     |
 
 ## Motivation
 
-### Problem Statement
-What problem does this solve?
-
-### Current State
-How do things work now?
-
-### Desired State
-How should things work after this RFC?
-
-### Use Case Link
-- [Use Case Name](../docs/use-cases/filename.md)
+Why this RFC? What problem does it solve?
 
 ## Specification
 
+Technical details, constraints, interfaces, data types, algorithms.
+
+### System Architecture
+
+```mermaid
+graph TB
+    A[Component A] --> B[Component B]
+```
+
 ### Data Structures
-```rust
-// Define key types, structs, enums
-```
 
-### APIs/Interfaces
-```rust
-// Function signatures, method definitions
-```
+Formal interface definitions.
 
-### Protocols
-Step-by-step interaction flows.
+### Algorithms
 
-### Constraints
-- Must support...
-- Must not break...
-- Limited to...
+Canonical algorithms with deterministic behavior.
+
+### Determinism Requirements
+
+MUST specify deterministic behavior if affecting consensus, proofs, or verification.
 
 ### Error Handling
-How failures are detected and reported.
+
+Error codes and recovery strategies.
+
+## Performance Targets
+
+| Metric     | Target | Notes       |
+| ---------- | ------ | ----------- |
+| Latency    | <50ms  | @ 1K QPS    |
+| Throughput | >10k/s | Single node |
+
+## Security Considerations
+
+MUST document:
+
+- Consensus attacks
+- Economic exploits
+- Proof forgery
+- Replay attacks
+- Determinism violations
+
+## Adversarial Review
+
+Analysis of failure modes and mitigations.
+
+| Threat | Impact | Mitigation   |
+| ------ | ------ | ------------ |
+| XSS    | High   | Sanitization |
+
+## Economic Analysis
+
+(Optional) Market dynamics and economic attack surfaces.
+
+## Compatibility
+
+Backward/forward compatibility guarantees.
+
+## Test Vectors
+
+Canonical test cases for verification.
+
+## Alternatives Considered
+
+| Approach | Pros | Cons |
+| -------- | ---- | ---- |
+| Option A | X    | Y    |
+
+## Implementation Phases
+
+### Phase 1: Core
+
+- [ ] Task 1
+- [ ] Task 2
+
+### Phase 2: Enhanced
+
+- [ ] Task 3
+
+## Key Files to Modify
+
+| File     | Change           |
+| -------- | ---------------- |
+| src/a.rs | Add feature X    |
+| src/b.rs | Update interface |
+
+## Future Work
+
+- F1: [Description]
+- F2: [Description]
 
 ## Rationale
 
-### Why This Approach?
-Technical justification for chosen design.
+Why this approach over alternatives?
 
-### Alternatives Considered
-| Alternative | Pros | Cons | Rejection Reason |
-|-------------|------|------|------------------|
-| Option A | | | |
-| Option B | | | |
+## Version History
 
-### Trade-offs
-What did we prioritize? What did we deprioritize?
-
-## Implementation
-
-### Mission 1: [Title]
-- Acceptance criteria:
-  - [ ] Criteria 1
-  - [ ] Criteria 2
-- Estimated complexity: Low/Medium/High
-
-### Mission 2: [Title]
-- Acceptance criteria:
-  - [ ] Criteria 1
-  - [ ] Criteria 2
-- Estimated complexity: Low/Medium/High
-
-### Mission 3: [Title]
-- Acceptance criteria:
-  - [ ] Criteria 1
-  - [ ] Criteria 2
-- Estimated complexity: Low/Medium/High
-
-## Impact
-
-### Breaking Changes
-What existing functionality changes?
-
-### Migration Path
-How do users/developers migrate?
-
-### Dependencies
-- RFC-XXXX: [Title]
-- External: [crate/lib]
-
-### Performance
-Impact on performance/throughput/latency.
+| Version | Date       | Changes |
+| ------- | ---------- | ------- |
+| 1.0     | YYYY-MM-DD | Initial |
 
 ## Related RFCs
-- RFC-XXXX: [Title]
-- RFC-YYYY: [Title]
 
-## References
-- [External Spec](https://...)
-- [Prior Art](https://...)
-- [Discussion](link to issue/PR)
+- RFC-XXXX (Category): [Title]
+- RFC-XXXX (Category): [Title]
+
+## Related Use Cases
+
+- [Use Case Name](../../docs/use-cases/filename.md)
+
+## Appendices
+
+### A. [Topic]
+
+Additional implementation details.
+
+### B. [Topic]
+
+Reference material.
 
 ---
 
+**Version:** 1.0
 **Submission Date:** YYYY-MM-DD
 **Last Updated:** YYYY-MM-DD

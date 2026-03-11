@@ -106,12 +106,12 @@ If it fails:
 
 ## Related RFCs
 
-- **RFC-0001**: Mission Lifecycle
+- **RFC-0001 (Process/Meta)**: Mission Lifecycle
   - Defines states: OPEN → CLAIMED → IN_REVIEW → COMPLETED
   - Establishes timeout rules
   - Enables async handoff
 
-- **RFC-0002**: Agent Manifest Specification
+- **RFC-0002 (Process/Meta)**: Agent Manifest Specification
   - Enables agents to claim missions
   - Defines capability verification
   - Establishes reputation system
@@ -146,5 +146,5 @@ If it fails:
 
 **Category:** Protocol Governance
 **Priority:** High
-**RFCs:** RFC-0001, RFC-0002
+**RFCs:** RFC-0001 (Process/Meta), RFC-0002 (Process/Meta)
 **Status:** Defined → Ready for RFC phase

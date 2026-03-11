@@ -21,14 +21,14 @@ CipherOcto faces a critical infrastructure challenge: AI agents require multiple
 
 ## MVP vs. Full Capabilities
 
-| Capability | MVP (Phases 1-3) | Full (Phase 4+) |
-| ---------- | ---------------- | --------------- |
-| **Storage** | Unified Vector + SQL in one system | Same |
-| **Query Latency** | <50ms | Same |
-| **Verification** | Async Merkle proofs (<5s) | Real-time deterministic re-ranking |
-| **Consensus** | Raft (leader-follower) | Optional brute-force for strict consensus |
-| **Payload Filters** | SQL WHERE clause | Same |
-| **Hybrid Search** | - | BM25 + vector |
+| Capability          | MVP (Phases 1-3)                   | Full (Phase 4+)                           |
+| ------------------- | ---------------------------------- | ----------------------------------------- |
+| **Storage**         | Unified Vector + SQL in one system | Same                                      |
+| **Query Latency**   | <50ms                              | Same                                      |
+| **Verification**    | Async Merkle proofs (<5s)          | Real-time deterministic re-ranking        |
+| **Consensus**       | Raft (leader-follower)             | Optional brute-force for strict consensus |
+| **Payload Filters** | SQL WHERE clause                   | Same                                      |
+| **Hybrid Search**   | -                                  | BM25 + vector                             |
 
 > **Note**: The "Verifiable AI Memory" narrative (Phase 4+) requires deterministic verification. MVP delivers unified storage with async proofs — genuinely useful but a different value proposition.
 
@@ -58,14 +58,14 @@ CipherOcto faces a critical infrastructure challenge: AI agents require multiple
 
 ### If Implemented
 
-| Area               | Transformation                               |
-| ------------------ | -------------------------------------------- |
-| **Agent Memory**   | Vector search with SQL queries in one system |
-| **Verification**   | Merkle proofs for vector search results      |
-| **Infrastructure** | Single deployment instead of three           |
+| Area               | Transformation                                                                            |
+| ------------------ | ----------------------------------------------------------------------------------------- |
+| **Agent Memory**   | Vector search with SQL queries in one system                                              |
+| **Verification**   | Merkle proofs for vector search results                                                   |
+| **Infrastructure** | Single deployment instead of three                                                        |
 | **Latency**        | 50-120ms instead of 150-400ms (50ms: simple queries; 120ms: complex hybrid or with proof) |
-| **Cost**           | ~60% reduction in storage costs              |
-| **Privacy**        | Local-first with optional blockchain         |
+| **Cost**           | ~60% reduction in storage costs                                                           |
+| **Privacy**        | Local-first with optional blockchain                                                      |
 
 ### If Not Implemented
 
@@ -144,7 +144,9 @@ let verified_results = db.query_verified(
 
 ## Technical Requirements
 
-### From RFC-0103
+### From RFC-0103 (Storage)
+
+> **Note:** RFC-0103 has been archived. See [RFC-0107 (Storage): Deterministic Storage Engine](./0107-deterministic-storage-engine.md) for the current specification.
 
 **MVP (Phases 1-3):**
 
@@ -173,6 +175,7 @@ let verified_results = db.query_verified(
 > **Note**: "Verifiable Memory" capabilities are primarily delivered in Phase 4. The MVP provides unified storage with async proof generation; real-time deterministic verification follows.
 >
 > **Proof Types**:
+>
 > - **Merkle proofs** (Phase 1-4): Inclusion proofs that vector data exists in committed state — fast to generate, sufficient for most use cases
 > - **ZK proofs** (Phase 4+): Zero-knowledge proofs for privacy-preserving verification — inherited from Stoolap's existing ZK module
 
@@ -187,7 +190,8 @@ let verified_results = db.query_verified(
 
 ## Related RFCs
 
-- [RFC-0103: Unified Vector-SQL Storage Engine](../../rfcs/0103-unified-vector-sql-storage.md) (aligned with RFC-0103 rev March 2026)
+- [RFC-0103 (Storage - Archived): Unified Vector-SQL Storage Engine](../../rfcs/archived/0103-unified-vector-sql-storage.md) (Superseded by RFC-0107)
+- [RFC-0107 (Storage): Deterministic Storage Engine](../../rfcs/0107-deterministic-storage-engine.md)
 
 ## Strategic Positioning
 
@@ -229,15 +233,15 @@ No other database offers this combination.
 
 ## Success Metrics
 
-| Metric               | Target                       | Notes                                                                                                         |
-| -------------------- | ---------------------------- | ------------------------------------------------------------------------------------------------------------- |
-| Query latency        | <50ms                        | Query execution only; proof generation is async/optional                                                      |
-| Proof generation     | <5s (P95)                    | Async background, SLAs defined                                                                                |
+| Metric               | Target                       | Notes                                                                                                                                          |
+| -------------------- | ---------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------- |
+| Query latency        | <50ms                        | Query execution only; proof generation is async/optional                                                                                       |
+| Proof generation     | <5s (P95)                    | Async background, SLAs defined                                                                                                                 |
 | Storage cost         | 60% reduction                | Breakdown: ~20% (eliminate 3-DB duplication) + ~25% (BQ 32x compression) + ~15% (no network egress); BQ suitable for recall-tolerant workloads |
-| Compression ratio    | 4-64x                        | PQ/SQ/BQ configurations                                                                                       |
-| Recall@10            | >95%                         | At 15% tombstone threshold (compaction triggers at 15%, hard limit at 30%)                                  |
-| API simplicity       | Unified API                  | Single query interface; SDK is downstream goal                                                               |
-| Verification         | Merkle proofs                | For committed snapshots only                                                                                  |
-| Feature completeness | Parity with Qdrant + Stoolap | Phased implementation                                                                                         |
+| Compression ratio    | 4-64x                        | PQ/SQ/BQ configurations                                                                                                                        |
+| Recall@10            | >95%                         | At 15% tombstone threshold (compaction triggers at 15%, hard limit at 30%)                                                                     |
+| API simplicity       | Unified API                  | Single query interface; SDK is downstream goal                                                                                                 |
+| Verification         | Merkle proofs                | For committed snapshots only                                                                                                                   |
+| Feature completeness | Parity with Qdrant + Stoolap | Phased implementation                                                                                                                          |
 
 > **Clarification**: The <50ms latency is for query execution. Generating Merkle proofs for complex query results takes longer and is handled asynchronously. Proof generation SLAs: 95th percentile <5 seconds.

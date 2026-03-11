@@ -77,4 +77,4 @@ Current centralized CDNs are expensive and create dependency on single providers
 
 ## Related RFCs
 
-- [RFC-0109: Retrieval Architecture](../rfcs/0109-retrieval-architecture-read-economics.md)
+- [RFC-0109 (Retrieval): Retrieval Architecture](../rfcs/0109-retrieval-architecture-read-economics.md)

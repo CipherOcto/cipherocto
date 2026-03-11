@@ -277,7 +277,7 @@ graph TB
 
 ## Related RFCs
 
-- [RFC-0100: AI Quota Marketplace Protocol](../rfcs/0100-ai-quota-marketplace.md)
+- [RFC-0100 (Economics): AI Quota Marketplace Protocol](../rfcs/0100-ai-quota-marketplace.md)
 - [RFC-0103: Unified Vector-SQL Storage](rfcs/0103-unified-vector-sql-storage.md)
 
 ---

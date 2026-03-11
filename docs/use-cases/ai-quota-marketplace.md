@@ -150,8 +150,8 @@ More contributors → more liquidity → more valuable
 
 ## Related RFCs
 
-- [RFC-0100: AI Quota Marketplace Protocol](../rfcs/0100-ai-quota-marketplace.md)
-- [RFC-0101: Quota Router Agent Specification](../rfcs/0101-quota-router-agent.md)
+- [RFC-0100 (Economics): AI Quota Marketplace Protocol](../rfcs/0100-ai-quota-marketplace.md)
+- [RFC-0101 (Economics): Quota Router Agent Specification](../rfcs/0101-quota-router-agent.md)
 
 ---
 

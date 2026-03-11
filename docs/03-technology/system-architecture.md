@@ -4,6 +4,16 @@
 
 CipherOcto is a three-layer architecture designed from first principles for sovereign, decentralized intelligence.
 
+CipherOcto supports a **hybrid intelligence model**, where tasks can be executed across multiple trust levels:
+
+- **Cryptographic Verification**: Deterministic AI with cryptographic proofs
+- **Deterministic Execution**: Reproducible computation validated by consensus
+- **Replicated Inference**: Multiple providers execute and compare results
+- **Trusted Providers**: Reputation and stake-based execution
+- **External APIs**: Integration with closed-source AI services
+
+This hybrid approach allows CipherOcto to bootstrap using existing AI systems while progressively enabling fully verifiable AI computation.
+
 ```mermaid
 graph TB
     subgraph OCEAN["The Ocean Stack"]

@@ -257,6 +257,233 @@ The octopus is not just a mascot. It represents a fundamentally different approa
 
 ---
 
+## Hybrid Intelligence Architecture
+
+CipherOcto is designed as a **coordination protocol for the global intelligence economy**, where multiple forms of computation and trust coexist.
+
+Rather than assuming all AI computation can be deterministic or cryptographically verifiable, CipherOcto acknowledges that intelligence exists across a **spectrum of verifiability**.
+
+Some computations can be proven mathematically, while others rely on reputation, replication, or trusted execution environments. The protocol is designed to support all of these models simultaneously.
+
+This hybrid architecture allows CipherOcto to bootstrap using existing AI systems while progressively enabling fully verifiable AI computation.
+
+---
+
+### The Intelligence Trust Spectrum
+
+CipherOcto introduces a layered trust model for AI execution.
+
+Not all AI outputs can be proven deterministically. Therefore the protocol supports multiple verification models.
+
+| Trust Level | Model                      | Description                                                   |
+| ----------- | -------------------------- | ------------------------------------------------------------- |
+| Level 5     | Cryptographic Verification | Deterministic inference verified through cryptographic proofs |
+| Level 4     | Deterministic Execution    | Reproducible computation validated by consensus               |
+| Level 3     | Replicated Inference       | Multiple independent providers execute the same task          |
+| Level 2     | Trusted Providers          | Execution by reputable providers with economic staking        |
+| Level 1     | Opaque APIs                | Closed-source AI services with no verification                |
+
+CipherOcto routes tasks across this spectrum based on cost, trust requirements, and availability.
+
+Users and agents can define **trust policies** that determine how tasks are executed.
+
+Example:
+
+```
+task:
+  type: research
+  trust_level: 3
+  budget: $1
+```
+
+The network automatically selects the appropriate execution model.
+
+---
+
+### The Ocean Stack
+
+CipherOcto's architecture is organized into a modular stack that separates applications, intelligence orchestration, and infrastructure.
+
+```
+Applications
+     │
+Agent Economy
+     │
+Hybrid Intelligence Layer
+     │
+Execution Layer
+     │
+Infrastructure Markets
+     │
+Peer Network
+```
+
+Each layer serves a distinct role in the system.
+
+---
+
+### Agent Economy
+
+Agents are autonomous software entities that perform tasks, provide services, and interact economically within the CipherOcto network.
+
+Agents can represent:
+
+- AI assistants
+- automated workflows
+- enterprise services
+- research systems
+- infrastructure brokers
+
+Agents can buy and sell services including:
+
+- inference
+- data access
+- computation
+- storage
+- network bandwidth
+
+The agent economy forms the **primary demand layer** of the protocol.
+
+---
+
+### Hybrid Intelligence Layer
+
+The Hybrid Intelligence Layer orchestrates how tasks are executed across different trust models.
+
+This layer selects the appropriate execution method based on task requirements.
+
+Execution strategies may include:
+
+**Verified Inference**
+
+Deterministic models running in a verifiable AI virtual machine with cryptographic proof generation.
+
+**Replicated Inference**
+
+Multiple independent providers execute the same task. Results are compared and consensus is determined.
+
+**Trusted Provider Execution**
+
+Tasks are executed by providers with reputation, staking, and service guarantees.
+
+**External AI APIs**
+
+Closed-source AI services are integrated through standardized connectors.
+
+This design allows CipherOcto to integrate with existing AI ecosystems while gradually transitioning toward fully verifiable AI.
+
+---
+
+### Infrastructure Markets
+
+CipherOcto provides decentralized markets for computing infrastructure.
+
+These markets allow participants to provide and consume resources including:
+
+- GPU compute
+- CPU compute
+- AI accelerators
+- storage
+- network bandwidth
+- edge compute
+
+Infrastructure providers publish capabilities and pricing to the network.
+
+Agents dynamically acquire infrastructure resources to execute workloads.
+
+These markets operate independently of the AI economy and can support a wide range of applications beyond AI.
+
+---
+
+### AI Accelerator Marketplace
+
+High-performance hardware plays a critical role in AI computation.
+
+CipherOcto supports an open marketplace for specialized compute resources including:
+
+- GPUs
+- TPUs
+- AI ASICs
+- edge neural processing units
+
+Providers can offer resources through several market types:
+
+**Spot compute**
+
+Short-duration inference workloads.
+
+**Reserved compute**
+
+Dedicated compute capacity for longer tasks.
+
+**Compute futures**
+
+Forward contracts for guaranteed compute availability.
+
+This marketplace enables global access to AI hardware and reduces barriers to entry for developers and agents.
+
+---
+
+### Integration with External AI Providers
+
+CipherOcto is designed to interoperate with existing AI ecosystems.
+
+Closed-source models and APIs can be accessed through standardized gateways.
+
+Examples include:
+
+- proprietary language models
+- enterprise AI services
+- specialized vertical models
+
+These services can be used directly by agents or integrated into multi-provider execution strategies.
+
+External providers may participate in the network by offering services, staking reputation, and participating in verification markets.
+
+This approach allows CipherOcto to leverage existing AI innovation while building decentralized alternatives.
+
+---
+
+### Bootstrapping the Network
+
+In its early stages, CipherOcto may rely heavily on existing AI services to power agent capabilities.
+
+Agents can call external APIs to perform reasoning, generation, or analysis tasks.
+
+As the network evolves, more workloads will migrate toward decentralized infrastructure and verifiable AI execution.
+
+This gradual transition ensures practical usability from the beginning while enabling long-term decentralization.
+
+---
+
+### Verification Economy
+
+Verification is an independent economic activity within the network.
+
+Participants can earn rewards by validating computation and challenging incorrect results.
+
+Verification mechanisms include:
+
+- cryptographic proof validation
+- replicated inference consensus
+- dispute resolution challenges
+
+This creates a robust incentive structure that improves reliability and trust across the ecosystem.
+
+---
+
+### Evolution Toward Verifiable AI
+
+CipherOcto is designed with a long-term objective of enabling cryptographically verifiable AI computation.
+
+As advances in deterministic machine learning and proof systems mature, more workloads can transition to fully verifiable execution.
+
+The hybrid architecture ensures that this transition can occur gradually without disrupting the broader ecosystem.
+
+This approach allows CipherOcto to remain compatible with both current AI systems and future verifiable intelligence infrastructure.
+
+---
+
 ## The Architecture: Ocean Stack
 
 CipherOcto's architecture consists of **seven layers**:

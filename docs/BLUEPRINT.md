@@ -346,25 +346,41 @@ rfcs/
 **RFC Lifecycle:**
 
 ```
-Draft → Review → Accepted → Final
-                ↓
-          Rejected
-                ↓
-         Superseded
-                ↓
-         Deprecated
+Planned → Draft → Review → Accepted → Final
+                                    ↓
+                              Rejected
+                                    ↓
+                             Superseded
+                                    ↓
+                             Deprecated
 ```
 
-| Status     | Folder           | Description                        |
-| ---------- | ---------------- | ---------------------------------- |
-| Draft      | `rfcs/draft/`    | Open for discussion                |
-| Review     | `rfcs/draft/`    | PR submitted, community feedback   |
-| Accepted   | `rfcs/accepted/` | Approved, ready for implementation |
-| Final      | `rfcs/final/`    | Implemented and stable             |
-| Rejected   | `rfcs/archived/` | Declined, archived with reasoning  |
-| Superseded | `rfcs/archived/` | Replaced by newer RFC              |
-| Deprecated | `rfcs/archived/` | Still supported but discouraged    |
-| Planned    | `rfcs/planned/`  | Placeholder for future work        |
+| Status      | Folder           | Description                        |
+| ----------- | ---------------- | ---------------------------------- |
+| **Planned** | `rfcs/planned/`  | Placeholder for future work        |
+| Draft       | `rfcs/draft/`    | Open for discussion                |
+| Review      | `rfcs/draft/`    | PR submitted, community feedback   |
+| Accepted    | `rfcs/accepted/` | Approved, ready for implementation |
+| Final       | `rfcs/final/`    | Implemented and stable             |
+| Rejected    | `rfcs/archived/` | Declined, archived with reasoning  |
+| Superseded  | `rfcs/archived/` | Replaced by newer RFC              |
+| Deprecated  | `rfcs/archived/` | Still supported but discouraged    |
+
+**Planned RFCs:**
+
+Planned RFCs are placeholders for future work. They define the concept and scope but do not include full implementation details. A Planned RFC:
+
+- Is a lightweight placeholder (1-2 pages)
+- Defines the problem statement
+- Outlines proposed scope
+- Lists dependencies on existing RFCs
+- Does NOT require the full RFC template
+
+To create a Planned RFC:
+
+1. Create `rfcs/planned/{category}/XXXX-title.md`
+2. Use minimal template with just Summary, Why Needed, Scope, Dependencies
+3. When ready to implement → convert to Draft status
 
 **RFC Process:**
 

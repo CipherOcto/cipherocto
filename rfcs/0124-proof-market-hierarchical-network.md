@@ -965,6 +965,7 @@ Market mechanism:
 - RFC-0122: Mixture-of-Experts
 - RFC-0123: Scalable Verifiable AI Execution
 - RFC-0125: Model Liquidity Layer
+- RFC-0154: Proof Market & Hierarchical Verification Network (complementary: 0124 focuses on distributed inference, 0154 focuses on verification)
 
 ## Related Use Cases
 

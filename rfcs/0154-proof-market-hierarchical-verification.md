@@ -389,6 +389,7 @@ PHVN provides scalable verification for the AI stack:
 - RFC-0151: Verifiable RAG Execution — Inference proofs
 - RFC-0152: Verifiable Agent Runtime — Agent proofs
 - RFC-0153: Agent Mission Marketplace — Mission layer
+- RFC-0124: Proof Market and Hierarchical Inference Network (complementary: 0124 focuses on distributed inference, 0154 focuses on verification)
 
 > **Note**: RFC-0154 completes the verification layer.
 

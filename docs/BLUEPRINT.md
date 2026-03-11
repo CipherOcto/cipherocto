@@ -110,6 +110,42 @@ We maintain four distinct layers that must never mix:
 └─────────────────────────────────────────────────────────────┘
 ```
 
+### High-Level Architecture
+
+```mermaid
+flowchart TB
+    subgraph Research["Research Layer (Feasibility)"]
+        R1[Technology Investigation]
+    end
+
+    subgraph UseCases["Intent Layer (Why?)"]
+        UC1[Problem Definition]
+        UC2[Narrative & Motivation]
+    end
+
+    subgraph RFCs["Design Layer (What?)"]
+        RF[RFC Specifications]
+        RF -->|"defines"| RF1[Interfaces]
+        RF -->|"specifies"| RF2[Constraints]
+    end
+
+    subgraph Missions["Execution Layer (How?)"]
+        M1[Claimable Work Units]
+        M2[Implementation]
+    end
+
+    subgraph Agents["Agent Actors"]
+        A1[Implement RFCs]
+        A2[Claim Missions]
+    end
+
+    R1 -->|"viable"| UC1
+    UC1 -->|"motivates"| RF
+    RF -->|"enables"| M1
+    M1 -->|"claimed by"| A1
+    A1 -->|"implements"| M2
+```
+
 ---
 
 ## Canonical Workflow
@@ -342,6 +378,8 @@ rfcs/
 | 0700-0799 | Consensus      |
 | 0800-0899 | Networking     |
 | 0900-0999 | Economics      |
+
+**RFC Numbering Authority:** RFC numbers are allocated by the CipherOcto maintainers based on the category ranges above. New RFCs should use the next available number in their category range. The canonical list of RFCs is maintained in [rfcs/README.md](../rfcs/README.md).
 
 **RFC Lifecycle:**
 
@@ -805,7 +843,7 @@ cipherocto/
 │   ├── BLUEPRINT.md           ← This document
 │   ├── START_HERE.md
 │   ├── ROLES.md
-│   ├── ROADMAP.md
+│   ├── ROADMAP.md             ← Protocol roadmap
 │   ├── research/              ← Feasibility layer
 │   │   ├── README.md
 │   │   ├── ZKP_Research_Report.md
@@ -813,12 +851,19 @@ cipherocto/
 │   └── use-cases/             ← Intent layer
 │       ├── decentralized-mission-execution.md
 │       └── agent-marketplace.md
-├── rfcs/                      ← Design layer
-│   ├── README.md
-│   ├── 0000-template.md
-│   ├── 0001-mission-lifecycle.md
-│   ├── 0002-agent-manifest.md
-│   └── archived/
+├── rfcs/                      ← Design layer (see [rfcs/README.md](../rfcs/README.md))
+│   ├── README.md              ← RFC index & registry
+│   ├── planned/               ← Placeholder RFCs
+│   │   ├── numeric/
+│   │   ├── retrieval/
+│   │   └── ...
+│   ├── draft/                 ← Open for discussion
+│   │   ├── process/
+│   │   ├── numeric/
+│   │   └── ...
+│   ├── accepted/              ← Approved RFCs
+│   ├── final/                 ← Implemented & stable
+│   └── archived/              ← Rejected/Superseded/Deprecated
 ├── missions/                  ← Execution layer
 │   ├── open/
 │   ├── claimed/

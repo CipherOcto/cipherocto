@@ -1,4 +1,4 @@
-# RFC-0107 (Numeric): Deterministic Transformer Circuit
+# RFC-0107 (Numeric/Math): Deterministic Transformer Circuit
 
 ## Status
 

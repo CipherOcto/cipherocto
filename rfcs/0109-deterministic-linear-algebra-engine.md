@@ -1,4 +1,4 @@
-# RFC-0109 (Numeric): Deterministic Linear Algebra Engine (DLAE)
+# RFC-0109 (Numeric/Math): Deterministic Linear Algebra Engine (DLAE)
 
 ## Status
 

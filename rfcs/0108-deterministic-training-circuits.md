@@ -1,4 +1,4 @@
-# RFC-0108 (Numeric): Deterministic Training Circuits
+# RFC-0108 (Numeric/Math): Deterministic Training Circuits
 
 ## Status
 

@@ -20,12 +20,12 @@ This Blueprint defines how work flows through CipherOcto—from idea to protocol
 
 We maintain four distinct layers that must never mix:
 
-| Layer          | Purpose     | Question | Blockchain Analogy      |
-| -------------- | ----------- | -------- | ---------------------- |
-| **Research**   | Feasibility | CAN WE?  | Technical Investigation |
-| **Use Cases**  | Intent      | WHY?     | Ethereum Vision        |
-| **RFCs**       | Design      | WHAT?    | EIPs                   |
-| **Missions**   | Execution   | HOW?     | Implementation         |
+| Layer         | Purpose     | Question | Blockchain Analogy      |
+| ------------- | ----------- | -------- | ----------------------- |
+| **Research**  | Feasibility | CAN WE?  | Technical Investigation |
+| **Use Cases** | Intent      | WHY?     | Ethereum Vision         |
+| **RFCs**      | Design      | WHAT?    | EIPs                    |
+| **Missions**  | Execution   | HOW?     | Implementation          |
 
 **Mix these layers and governance breaks.**
 
@@ -244,6 +244,52 @@ What changes if this is implemented?
 
 **Location:** `rfcs/`
 
+**RFC Numbering:**
+
+| Range     | Category       |
+| --------- | -------------- |
+| 0000-0099 | Process / Meta |
+| 0100-0199 | Numeric / Math |
+| 0200-0299 | Storage        |
+| 0300-0399 | Retrieval      |
+| 0400-0499 | Agents         |
+| 0500-0599 | AI Execution   |
+| 0600-0699 | Proof Systems  |
+| 0700-0799 | Consensus      |
+| 0800-0899 | Networking     |
+| 0900-0999 | Economics      |
+
+**RFC Lifecycle:**
+
+```
+Draft → Review → Accepted → Final
+                ↓
+          Rejected
+                ↓
+         Superseded
+                ↓
+         Deprecated
+```
+
+| Status     | Description                        |
+| ---------- | ---------------------------------- |
+| Draft      | Open for discussion                |
+| Review     | PR submitted, community feedback   |
+| Accepted   | Approved, ready for implementation |
+| Final      | Implemented and stable             |
+| Rejected   | Declined, archived with reasoning  |
+| Superseded | Replaced by newer RFC              |
+| Deprecated | Still supported but discouraged    |
+
+**RFC Process:**
+
+1. Draft RFC in `rfcs/0000-title.md`
+2. Submit PR for discussion
+3. Address feedback (minimum 7 days)
+4. Accepted → Renumbered
+5. Implemented → Final
+6. Rejected/Superseded → Moved to `rfcs/archived/`
+
 **Template:**
 
 ````markdown
@@ -251,11 +297,29 @@ What changes if this is implemented?
 
 ## Status
 
-Draft | Accepted | Replaced | Deprecated
+Draft | Review | Accepted | Final | Rejected | Superseded | Deprecated
+
+## Authors
+
+- Author: @username
+
+## Maintainers
+
+- Maintainer: @username
 
 ## Summary
 
 One-paragraph overview of what this RFC defines.
+
+## Dependencies
+
+**Requires:**
+
+- RFC-XXXX: [Title]
+
+**Optional:**
+
+- RFC-XXXX: [Title]
 
 ## Design Goals
 
@@ -280,11 +344,22 @@ Technical details, constraints, interfaces, data types, algorithms.
 graph TB
     A[Component A] --> B[Component B]
 ```
-````
 
-### Query / API Design
+### Data Structures
 
-Key interfaces and expected behavior.
+Formal interface definitions.
+
+### Algorithms
+
+Canonical algorithms with deterministic behavior.
+
+### Determinism Requirements
+
+MUST specify deterministic behavior if affecting consensus, proofs, or verification.
+
+### Error Handling
+
+Error codes and recovery strategies.
 
 ## Performance Targets
 
@@ -293,6 +368,16 @@ Key interfaces and expected behavior.
 | Latency    | <50ms  | @ 1K QPS    |
 | Throughput | >10k/s | Single node |
 
+## Security Considerations
+
+MUST document:
+
+- Consensus attacks
+- Economic exploits
+- Proof forgery
+- Replay attacks
+- Determinism violations
+
 ## Adversarial Review
 
 Analysis of failure modes and mitigations.
@@ -300,6 +385,18 @@ Analysis of failure modes and mitigations.
 | Threat | Impact | Mitigation   |
 | ------ | ------ | ------------ |
 | XSS    | High   | Sanitization |
+
+## Economic Analysis
+
+(Optional) Market dynamics and economic attack surfaces.
+
+## Compatibility
+
+Backward/forward compatibility guarantees.
+
+## Test Vectors
+
+Canonical test cases for verification.
 
 ## Alternatives Considered
 
@@ -334,6 +431,12 @@ Analysis of failure modes and mitigations.
 
 Why this approach over alternatives?
 
+## Version History
+
+| Version | Date       | Changes |
+| ------- | ---------- | ------- |
+| 1.0     | YYYY-MM-DD | Initial |
+
 ## Related RFCs
 
 - RFC-XXXX: [Title]
@@ -355,23 +458,29 @@ Reference material.
 
 ---
 
-**Version:** 1.1
-**Submission Date:** 2026-03-07
-**Last Updated:** 2026-03-07
+**Version:** 1.2
+**Submission Date:** 2026-03-10
+**Last Updated:** 2026-03-10
 **Changes:**
-- Added terminology consistency note
-- Added Research to Governance Stack (0️⃣ layer)
-- Clarified agent RFC initiation rules
-- Added timeout rationale table
 
-```
+- Added RFC ownership (Authors, Maintainers)
+- Added Dependencies section
+- Added Determinism Requirements
+- Added Security Considerations
+- Added Economic Analysis
+- Added Compatibility
+- Added Test Vectors
+- Added Version History
+- Updated lifecycle (Draft → Review → Accepted → Final)
+- Updated numbering architecture
 
-**RFC Process:**
+```**RFC Process:**
 1. Draft RFC in `rfcs/0000-title.md`
-2. Submit PR for discussion
-3. Address feedback
+2. Submit PR for discussion (minimum 7 days)
+3. Address all feedback
 4. Accepted → Renumbered
-5. Rejected → Moved to `rfcs/archived/`
+5. Implemented → Final
+6. Rejected/Superseded → Moved to `rfcs/archived/`
 
 ---
 
@@ -386,32 +495,38 @@ missions/open/ → Available to claim
 missions/claimed/ → Someone working on it
 missions/with-pr/ → PR submitted
 missions/archived/ → Completed or abandoned
-
 ````
 
 **Template:**
+
 ```markdown
 # Mission: [Title]
 
 ## Status
+
 Open | Claimed | In Review | Completed | Blocked
 
 ## RFC
+
 RFC-XXXX
 
 ## Acceptance Criteria
+
 - [ ] Criteria 1
 - [ ] Criteria 2
 
 ## Claimant
+
 @username
 
 ## Pull Request
+
 #
 
 ## Notes
+
 Implementation notes, blockers, decisions.
-````
+```
 
 **Mission Rules:**
 
@@ -531,10 +646,10 @@ The key distinction: **Humans provide intent, agents provide implementation deta
 
 **Timeout Rationale:**
 
-| Timeout | Value | Rationale |
-|---------|-------|-----------|
+| Timeout       | Value   | Rationale                                                                                                                                                     |
+| ------------- | ------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | Mission claim | 14 days | Allows adequate time for understanding RFC, planning implementation, and making significant progress. Two weeks is standard for substantial development work. |
-| PR review | 7 days | One week provides sufficient time for thorough human review while preventing indefinite review stalls. Aligns with common sprint cycles. |
+| PR review     | 7 days  | One week provides sufficient time for thorough human review while preventing indefinite review stalls. Aligns with common sprint cycles.                      |
 
 ---
 

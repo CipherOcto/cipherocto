@@ -205,9 +205,9 @@ graph TB
 
 ## Related RFCs
 
-- [RFC-0100 (Economics): AI Quota Marketplace Protocol](../rfcs/0100-ai-quota-marketplace.md)
-- [RFC-0101 (Economics): Quota Router Agent Specification](../rfcs/0101-quota-router-agent.md)
-- [RFC-0145 (Networking): Hardware Capability Registry](../rfcs/0145-hardware-capability-registry.md)
+- [RFC-0900 (Economics): AI Quota Marketplace Protocol](../rfcs/0900-ai-quota-marketplace.md)
+- [RFC-0901 (Economics): Quota Router Agent Specification](../rfcs/0901-quota-router-agent.md)
+- [RFC-0845 (Networking): Hardware Capability Registry](../rfcs/0845-hardware-capability-registry.md)
 
 ---
 

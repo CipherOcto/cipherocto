@@ -108,7 +108,7 @@ If cheating gains < $100, it's irrational.
 ```
 Autonomous Agents
         ↓
-Reasoning Traces (RFC-0114)
+Reasoning Traces (RFC-0412)
         ↓
 Verification Markets
         ↓
@@ -133,9 +133,9 @@ Storage + Compute
 
 ## Related RFCs
 
-- [RFC-0115 (Proof Systems): Probabilistic Verification Markets](../rfcs/0115-probabilistic-verification-markets.md)
-- [RFC-0114 (Agents): Verifiable Reasoning Traces](../rfcs/0114-verifiable-reasoning-traces.md)
+- [RFC-0615 (Proof Systems): Probabilistic Verification Markets](../rfcs/0615-probabilistic-verification-markets.md)
+- [RFC-0412 (Agents): Verifiable Reasoning Traces](../rfcs/0412-verifiable-reasoning-traces.md)
 - [RFC-0116 (Numeric/Math): Unified Deterministic Execution Model](../rfcs/0116-unified-deterministic-execution-model.md)
-- [RFC-0117 (AI Execution): State Virtualization for Massive Agent Scaling](../rfcs/0117-state-virtualization-massive-scaling.md)
-- [RFC-0119 (Agents): Alignment & Control Mechanisms](../rfcs/0119-alignment-control-mechanisms.md)
-- [RFC-0146 (Proof Systems): Proof Aggregation Protocol](../rfcs/0146-proof-aggregation-protocol.md)
+- [RFC-0413 (Agents): State Virtualization for Massive Agent Scaling](../rfcs/0413-state-virtualization-massive-scaling.md)
+- [RFC-0415 (Agents): Alignment & Control Mechanisms](../rfcs/0415-alignment-control-mechanisms.md)
+- [RFC-0650 (Proof Systems): Proof Aggregation Protocol](../rfcs/0650-proof-aggregation-protocol.md)

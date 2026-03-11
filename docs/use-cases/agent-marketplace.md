@@ -337,12 +337,12 @@ graph TB
 
 ## Related RFCs
 
-- [RFC-0100 (Economics): AI Quota Marketplace Protocol](../rfcs/0100-ai-quota-marketplace.md)
-- [RFC-0101 (Economics): Quota Router Agent Specification](../rfcs/0101-quota-router-agent.md)
-- [RFC-0110 (Agents): Verifiable Agent Memory](../rfcs/0110-verifiable-agent-memory.md)
-- [RFC-0114 (Agents): Verifiable Reasoning Traces](../rfcs/0114-verifiable-reasoning-traces.md)
-- [RFC-0118 (Agents): Autonomous Agent Organizations](../rfcs/0118-autonomous-agent-organizations.md)
-- [RFC-0119 (Agents): Alignment & Control Mechanisms](../rfcs/0119-alignment-control-mechanisms.md)
+- [RFC-0900 (Economics): AI Quota Marketplace Protocol](../rfcs/0900-ai-quota-marketplace.md)
+- [RFC-0901 (Economics): Quota Router Agent Specification](../rfcs/0901-quota-router-agent.md)
+- [RFC-0410 (Agents): Verifiable Agent Memory](../rfcs/0410-verifiable-agent-memory.md)
+- [RFC-0412 (Agents): Verifiable Reasoning Traces](../rfcs/0412-verifiable-reasoning-traces.md)
+- [RFC-0414 (Agents): Autonomous Agent Organizations](../rfcs/0414-autonomous-agent-organizations.md)
+- [RFC-0415 (Agents): Alignment & Control Mechanisms](../rfcs/0415-alignment-control-mechanisms.md)
 
 ---
 

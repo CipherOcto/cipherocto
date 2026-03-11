@@ -199,11 +199,11 @@ sequenceDiagram
 
 ## Related RFCs
 
-- [RFC-0109 (Retrieval): Retrieval Architecture](../rfcs/0109-retrieval-architecture-read-economics.md)
-- [RFC-0130 (Proof Systems): Proof-of-Inference Consensus](../rfcs/0130-proof-of-inference-consensus.md)
-- [RFC-0140 (Consensus): Sharded Consensus Protocol](../rfcs/0140-sharded-consensus-protocol.md)
-- [RFC-0141 (Consensus): Parallel Block DAG Specification](../rfcs/0141-parallel-block-dag.md)
-- [RFC-0142 (Consensus): Data Availability & Sampling Protocol](../rfcs/0142-data-availability-sampling.md)
-- [RFC-0143 (Networking): OCTO-Network Protocol](../rfcs/0143-octo-network-protocol.md)
-- [RFC-0144 (Economics): Inference Task Market](../rfcs/0144-inference-task-market.md)
-- [RFC-0145 (Networking): Hardware Capability Registry](../rfcs/0145-hardware-capability-registry.md)
+- [RFC-0109 (Numeric/Math): Linear Algebra Engine](../rfcs/0109-linear-algebra-engine.md)
+- [RFC-0630 (Proof Systems): Proof-of-Inference Consensus](../rfcs/0630-proof-of-inference-consensus.md)
+- [RFC-0740 (Consensus): Sharded Consensus Protocol](../rfcs/0740-sharded-consensus-protocol.md)
+- [RFC-0741 (Consensus): Parallel Block DAG Specification](../rfcs/0741-parallel-block-dag.md)
+- [RFC-0742 (Consensus): Data Availability & Sampling Protocol](../rfcs/0742-data-availability-sampling.md)
+- [RFC-0843 (Networking): OCTO-Network Protocol](../rfcs/0843-octo-network-protocol.md)
+- [RFC-0910 (Economics): Inference Task Market](../rfcs/0910-inference-task-market.md)
+- [RFC-0845 (Networking): Hardware Capability Registry](../rfcs/0845-hardware-capability-registry.md)

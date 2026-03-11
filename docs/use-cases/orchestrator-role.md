@@ -179,5 +179,5 @@ sequenceDiagram
 
 ## Related RFCs
 
-- [RFC-0109 (Retrieval): Retrieval Architecture](../rfcs/0109-retrieval-architecture-read-economics.md)
-- [RFC-0113 (Retrieval): Retrieval Gateway & Query Routing](../rfcs/0113-retrieval-gateway-query-routing.md)
+- [RFC-0109 (Numeric/Math): Linear Algebra Engine](../rfcs/0109-linear-algebra-engine.md)
+- [RFC-0302 (Retrieval): Retrieval Gateway & Query Routing](../rfcs/0302-retrieval-gateway-query-routing.md)

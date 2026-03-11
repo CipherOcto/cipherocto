@@ -176,10 +176,10 @@ Effectively: `Git + IPFS + VectorDB + Knowledge Graph` for AI agents.
 
 ## Related RFCs
 
-- [RFC-0110 (Agents): Verifiable Agent Memory](../rfcs/0110-verifiable-agent-memory.md)
-- [RFC-0108 (Retrieval): Verifiable AI Retrieval](../rfcs/0108-verifiable-ai-retrieval.md)
-- [RFC-0109 (Retrieval): Retrieval Architecture](../rfcs/0109-retrieval-architecture-read-economics.md)
-- [RFC-0114 (Agents): Verifiable Reasoning Traces](../rfcs/0114-verifiable-reasoning-traces.md)
-- [RFC-0117 (AI Execution): State Virtualization for Massive Scaling](../rfcs/0117-state-virtualization-massive-scaling.md)
-- [RFC-0118 (Agents): Autonomous Agent Organizations](../rfcs/0118-autonomous-agent-organizations.md)
-- [RFC-0119 (Agents): Alignment & Control Mechanisms](../rfcs/0119-alignment-control-mechanisms.md)
+- [RFC-0410 (Agents): Verifiable Agent Memory](../rfcs/0410-verifiable-agent-memory.md)
+- [RFC-0108 (Numeric/Math): Deterministic Training Circuits](../rfcs/0108-deterministic-training-circuits.md)
+- [RFC-0109 (Numeric/Math): Linear Algebra Engine](../rfcs/0109-linear-algebra-engine.md)
+- [RFC-0412 (Agents): Verifiable Reasoning Traces](../rfcs/0412-verifiable-reasoning-traces.md)
+- [RFC-0413 (Agents): State Virtualization for Massive Scaling](../rfcs/0413-state-virtualization-massive-scaling.md)
+- [RFC-0414 (Agents): Autonomous Agent Organizations](../rfcs/0414-autonomous-agent-organizations.md)
+- [RFC-0415 (Agents): Alignment & Control Mechanisms](../rfcs/0415-alignment-control-mechanisms.md)

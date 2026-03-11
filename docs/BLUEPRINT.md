@@ -293,7 +293,40 @@ What changes if this is implemented?
 
 ### RFC (Request for Comments)
 
-**Location:** `rfcs/`
+**Location:** `rfcs/{status}/{category}/`
+
+RFCs use a hierarchical folder structure organized by **status** and **category**:
+
+```
+rfcs/
+├── draft/
+│   ├── numeric/
+│   │   └── 0126-deterministic-serialization.md
+│   ├── retrieval/
+│   │   └── 0302-query-routing.md
+│   └── ...
+├── accepted/
+│   ├── numeric/
+│   │   └── 0104-dfp.md
+│   └── ...
+├── final/
+│   ├── agents/
+│   │   └── 0416-self-verifying-agents.md
+│   └── ...
+├── archived/
+│   ├── rejected/
+│   │   └── ...
+│   ├── superseded/
+│   │   └── 0103-unified-vector-sql.md
+│   └── deprecated/
+│       └── ...
+└── planned/
+    ├── numeric/
+    │   ├── 0127-kernel-library.md
+    │   └── 0128-memory-layout.md
+    └── proof-systems/
+        └── 0135-proof-format.md
+```
 
 **RFC Numbering:**
 
@@ -322,24 +355,25 @@ Draft → Review → Accepted → Final
          Deprecated
 ```
 
-| Status     | Description                        |
-| ---------- | ---------------------------------- |
-| Draft      | Open for discussion                |
-| Review     | PR submitted, community feedback   |
-| Accepted   | Approved, ready for implementation |
-| Final      | Implemented and stable             |
-| Rejected   | Declined, archived with reasoning  |
-| Superseded | Replaced by newer RFC              |
-| Deprecated | Still supported but discouraged    |
+| Status     | Folder           | Description                        |
+| ---------- | ---------------- | ---------------------------------- |
+| Draft      | `rfcs/draft/`    | Open for discussion                |
+| Review     | `rfcs/draft/`    | PR submitted, community feedback   |
+| Accepted   | `rfcs/accepted/` | Approved, ready for implementation |
+| Final      | `rfcs/final/`    | Implemented and stable             |
+| Rejected   | `rfcs/archived/` | Declined, archived with reasoning  |
+| Superseded | `rfcs/archived/` | Replaced by newer RFC              |
+| Deprecated | `rfcs/archived/` | Still supported but discouraged    |
+| Planned    | `rfcs/planned/`  | Placeholder for future work        |
 
 **RFC Process:**
 
-1. Draft RFC in `rfcs/0000-title.md`
+1. Draft RFC in `rfcs/draft/{category}/XXXX-title.md`
 2. Submit PR for discussion
 3. Address feedback (minimum 7 days)
-4. Accepted → Renumbered
-5. Implemented → Final
-6. Rejected/Superseded → Moved to `rfcs/archived/`
+4. Accepted → Move to `rfcs/accepted/{category}/`
+5. Implemented → Move to `rfcs/final/{category}/`
+6. Rejected/Superseded/Deprecated → Move to `rfcs/archived/`
 
 **Template:**
 
@@ -526,12 +560,12 @@ Reference material.
 - Updated numbering architecture
 
 ```**RFC Process:**
-1. Draft RFC in `rfcs/0000-title.md`
+1. Draft RFC in `rfcs/draft/{category}/XXXX-title.md`
 2. Submit PR for discussion (minimum 7 days)
 3. Address all feedback
-4. Accepted → Renumbered
-5. Implemented → Final
-6. Rejected/Superseded → Moved to `rfcs/archived/`
+4. Accepted → Move to `rfcs/accepted/{category}/`
+5. Implemented → Move to `rfcs/final/{category}/`
+6. Rejected/Superseded/Deprecated → Move to `rfcs/archived/`
 
 ---
 

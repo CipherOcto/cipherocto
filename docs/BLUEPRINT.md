@@ -148,6 +148,44 @@ flowchart TB
 
 ---
 
+## The Determinism Boundary
+
+> **Critical Architectural Insight:** Without a clear boundary between deterministic protocol execution and probabilistic AI computation, consensus eventually breaks.
+
+The CipherOcto protocol attempts the ambitious goal of deterministic AI execution within a verifiable protocol. Two implementations can still produce different results due to:
+
+- Kernel ordering differences
+- Parallel reduction ordering
+- FMA (fused multiply-add) differences
+- Memory layout variations
+- Attention kernel implementation differences
+
+### Execution Classes
+
+CipherOcto defines three execution classes to manage this risk:
+
+| Class | Name                    | Description                                                 | Examples                                                        |
+| ----- | ----------------------- | ----------------------------------------------------------- | --------------------------------------------------------------- |
+| **A** | Protocol Deterministic  | MUST be deterministic across all implementations            | Numeric tower, Linear algebra, Serialization, Deterministic RNG |
+| **B** | Deterministic Off-Chain | Deterministic when configured correctly, may vary otherwise | Model inference with canonical kernels                          |
+| **C** | Probabilistic           | Non-deterministic by nature                                 | Training, Sampling, Exploration                                 |
+
+### The Boundary Rule
+
+> **All consensus-relevant computation MUST be deterministic and reproducible across independent implementations.**
+
+This means:
+
+1. Class A is required for anything affecting consensus, economic settlement, or proof generation
+2. Class B execution requires proof verification for consensus-critical use
+3. Class C is explicitly excluded from consensus but may be used in agent behavior
+
+### RFC-0008: Deterministic AI Execution Boundary
+
+See [RFC-0008 (Process/Meta): Deterministic AI Execution Boundary](../rfcs/planned/0008-deterministic-ai-execution-boundary.md) for the full specification of execution classes and boundary requirements.
+
+---
+
 ## Canonical Workflow
 
 ```

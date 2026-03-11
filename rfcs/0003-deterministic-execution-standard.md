@@ -310,6 +310,7 @@ This standard ensures all nodes produce identical results for identical inputs.
 
 ## Related RFCs
 
+- RFC-0008 (Process/Meta): Deterministic AI Execution Boundary
 - RFC-0106 (Numeric/Math): Deterministic Numeric Tower
 - RFC-0148 (Numeric/Math): Deterministic Linear Algebra Engine
 - RFC-0149 (Retrieval): Deterministic Vector Index

@@ -262,7 +262,7 @@ Once accepted:
 | -------- | ---------------------- | -------------------------- |
 | RFC-0147 | Implementation Roadmap | Phased implementation plan |
 
-### Deterministic AI Stack v2 (RFC-0148-0155)
+### Deterministic AI Stack v2 (RFC-0148-0156)
 
 | RFC      | Title                                           | Description              |
 | -------- | ----------------------------------------------- | ------------------------ |
@@ -274,6 +274,7 @@ Once accepted:
 | RFC-0153 | Agent Mission Marketplace (AMM)                 | Mission marketplace      |
 | RFC-0154 | Proof Market & Hierarchical Verification (PHVN) | Verification layer       |
 | RFC-0155 | Deterministic Model Execution Engine (DMEE)     | Transformer execution    |
+| RFC-0156 | Model Liquidity Layer (MLL)                     | Tokenized AI models     |
 
 ### Archived
 
@@ -303,6 +304,8 @@ Mission Marketplace (RFC-0153)
 Proof Verification (RFC-0154)
         ↓
 Model Execution (RFC-0155)
+        ↓
+Model Liquidity (RFC-0156)
 ```
 
 ---

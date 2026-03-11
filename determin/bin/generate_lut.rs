@@ -1,31 +1,27 @@
-//! Tanh LUT generator - DETERMINISTIC using pure integer arithmetic
+//! Tanh LUT generator - DETERMINISTIC
+//!
+//! For Q8.8 format: input x is scaled by 256 (x_scaled = x * 256)
+//! Output is also Q8.8 (tanh(x) * 256)
+//!
+//! Range: [-4.0, 4.0] with step 0.01 = 801 values
+//! Output: Q8.8 clamped to [-256, 256]
 
-fn tanh_q8_8(x_scaled: i32) -> i16 {
-    let abs_x = x_scaled.abs();
-    if abs_x >= 1024 { return if x_scaled > 0 { 256 } else { -256 }; }
-
-    let z = x_scaled as i64;
-    let z2 = (z * z) >> 8;
-    let z3 = (z2 * z) >> 8;
-    let z5 = (z2 * z2 * z) >> 16;
-    let z7 = (z2 * z2 * z2 * z) >> 24;
-
-    let mut result = z;
-    result += (z3 * -(256 / 3)) >> 8;
-    result += (z5 * ((2 * 256) / 15)) >> 8;
-    result += (z7 * -((17 * 256) / 315)) >> 8;
-
-    // Preserve sign correctly
-    let result_shifted = result >> 8;
-    if x_scaled >= 0 { result_shifted as i16 } else { -result_shifted as i16 }
+/// Compute tanh and quantize to Q8.8
+/// x: floating point input
+/// Returns: tanh(x) * 256, rounded to nearest integer, clamped to [-256, 256]
+fn tanh_q8_8(x: f64) -> i16 {
+    let tanh_x = x.tanh();
+    // Quantize to Q8.8: multiply by 256 and round to nearest
+    let quantized = (tanh_x * 256.0).round();
+    // Clamp to valid Q8.8 range for tanh output
+    quantized.clamp(-256.0, 256.0) as i16
 }
 
 fn main() {
     let values: Vec<i16> = (0..801)
         .map(|i| {
             let x = -4.0 + (i as f64 * 0.01);
-            let x_scaled = (x * 256.0) as i32;
-            tanh_q8_8(x_scaled)
+            tanh_q8_8(x)
         })
         .collect();
 

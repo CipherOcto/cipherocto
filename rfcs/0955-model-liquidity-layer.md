@@ -841,10 +841,10 @@ Automation ensures:
 - RFC-0120 (AI Execution): Deterministic AI Virtual Machine
 - RFC-0121 (AI Execution): Verifiable Large Model Execution
 - RFC-0124 (Economics): Proof Market and Hierarchical Inference Network
-- RFC-0130 (Proof Systems): Proof-of-Inference Consensus
-- RFC-0131 (Numeric/Math): Deterministic Transformer Circuit
-- RFC-0132 (Numeric/Math): Deterministic Training Circuits
-- RFC-0133 (Proof Systems): Proof-of-Dataset Integrity
+- RFC-0630 (Proof Systems): Proof-of-Inference Consensus
+- RFC-0107 (Numeric/Math): Deterministic Transformer Circuit
+- RFC-0108 (Numeric/Math): Deterministic Training Circuits
+- RFC-0631 (Proof Systems): Proof-of-Dataset Integrity
 
 ## Related Use Cases
 

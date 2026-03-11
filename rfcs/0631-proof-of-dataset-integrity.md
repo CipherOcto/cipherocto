@@ -87,11 +87,11 @@ Implementation integrates with existing stack:
 ```
 RFC-0108 (Verifiable AI Retrieval)
        ↓
-RFC-0133 (Proof-of-Dataset Integrity) ← NEW
+RFC-0631 (Proof-of-Dataset Integrity) ← NEW
        ↓
-RFC-0132 (Deterministic Training Circuits)
+RFC-0108 (Deterministic Training Circuits)
        ↓
-RFC-0131 (Deterministic Transformer Circuit)
+RFC-0107 (Deterministic Transformer Circuit)
        ↓
 RFC-0120 (Deterministic AI-VM)
        ↓
@@ -99,7 +99,7 @@ RFC-0124 (Proof Market)
        ↓
 RFC-0125 (Model Liquidity Layer)
        ↓
-RFC-0130 (Proof-of-Inference Consensus)
+RFC-0630 (Proof-of-Inference Consensus)
 ```
 
 ## Specification
@@ -866,9 +866,9 @@ With PoDI, the full AI lifecycle is verifiable:
 
 ```mermaid
 graph TD
-    DI[Dataset Integrity<br/>PoDI] --> TP[Training Proof<br/>RFC-0132]
+    DI[Dataset Integrity<br/>PoDI] --> TP[Training Proof<br/>RFC-0108]
     TP --> MC[Model Commitment]
-    MC --> IP[Inference Proof<br/>RFC-0131]
+    MC --> IP[Inference Proof<br/>RFC-0107]
     IP --> VO[Verified Output]
 ```
 
@@ -980,10 +980,10 @@ Reputation aggregates:
 - RFC-0106 (Numeric/Math): Deterministic Numeric Tower
 - RFC-0108 (Retrieval): Verifiable AI Retrieval
 - RFC-0125 (Economics): Model Liquidity Layer
-- RFC-0130 (Proof Systems): Proof-of-Inference Consensus
-- RFC-0131 (Numeric/Math): Deterministic Transformer Circuit
-- RFC-0132 (Numeric/Math): Deterministic Training Circuits
-- RFC-0134 (Agents): Self-Verifying AI Agents
+- RFC-0630 (Proof Systems): Proof-of-Inference Consensus
+- RFC-0107 (Numeric/Math): Deterministic Transformer Circuit
+- RFC-0108 (Numeric/Math): Deterministic Training Circuits
+- RFC-0416 (Agents): Self-Verifying AI Agents
 
 ## Related Use Cases
 
@@ -996,7 +996,7 @@ Reputation aggregates:
 
 ```
 ┌─────────────────────────────────────────────────────┐
-│        Proof-of-Inference Consensus (RFC-0130)       │
+│        Proof-of-Inference Consensus (RFC-0630)       │
 └─────────────────────────┬───────────────────────────┘
                           │
 ┌─────────────────────────▼───────────────────────────┐
@@ -1012,15 +1012,15 @@ Reputation aggregates:
 └─────────────────────────┬───────────────────────────┘
                           │
 ┌─────────────────────────▼───────────────────────────┐
-│        Deterministic Training (RFC-0132)             │
+│        Deterministic Training (RFC-0108)             │
 └─────────────────────────┬───────────────────────────┘
                           │
 ┌─────────────────────────▼───────────────────────────┐
-│        Transformer Circuit (RFC-0131)               │
+│        Transformer Circuit (RFC-0107)               │
 └─────────────────────────┬───────────────────────────┘
                           │
 ┌─────────────────────────▼───────────────────────────┐
-│        Proof-of-Dataset Integrity (RFC-0133)          │
+│        Proof-of-Dataset Integrity (RFC-0631)          │
 └─────────────────────────┬───────────────────────────┘
                           │
 ┌─────────────────────────▼───────────────────────────┐

@@ -65,13 +65,13 @@ The protocol defines:
 Integration with existing stack:
 
 ```
-RFC-0131 (Transformer Circuit)
+RFC-0107 (Transformer Circuit)
        ↓
-RFC-0132 (Training Circuits)
+RFC-0108 (Training Circuits)
        ↓
 RFC-0146 (Proof Aggregation) ← THIS RFC
        ↓
-RFC-0130 (Proof-of-Inference)
+RFC-0630 (Proof-of-Inference)
        ↓
 RFC-0140 (Sharded Consensus)
 ```
@@ -1957,11 +1957,11 @@ const EVIDENCE_THRESHOLD: u8 = 2;           // corroborating sources
 | RFC-0140 | Draft | Optional | Shard boundary handling |
 
 **Required Dependencies:**
-- RFC-0131 (Transformer Circuit): Must be accepted before implementation
-- RFC-0130 (Proof-of-Inference): Must be accepted before implementation
+- RFC-0107 (Transformer Circuit): Must be accepted before implementation
+- RFC-0630 (Proof-of-Inference): Must be accepted before implementation
 
 **Optional Dependencies:**
-- RFC-0132 (Training Circuits): For training proof aggregation
+- RFC-0108 (Training Circuits): For training proof aggregation
 - RFC-0140 (Sharded Consensus): For cross-shard aggregation
 
 ### RFC Reference

@@ -72,7 +72,7 @@ RFC-0120 (AI-VM) ← NEW
        ↓
 RFC-0121 (Verifiable Large Model Execution)
        ↓
-RFC-0130 (Proof-of-Inference Consensus)
+RFC-0630 (Proof-of-Inference Consensus)
 ```
 
 ### The Problem: Non-Deterministic AI Execution

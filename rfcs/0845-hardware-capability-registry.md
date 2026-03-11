@@ -70,7 +70,7 @@ RFC-0145 (Hardware Capability Registry) ← NEW
        ↓
 RFC-0143 (OCTO-Network)
        ↓
-RFC-0130 (Proof-of-Inference)
+RFC-0630 (Proof-of-Inference)
 ```
 
 ## Specification
@@ -430,7 +430,7 @@ This RFC uses capability bitmaps instead.
 
 - RFC-0143 (Networking): OCTO-Network Protocol
 - RFC-0144 (Economics): Inference Task Market
-- RFC-0130 (Proof Systems): Proof-of-Inference Consensus
+- RFC-0630 (Proof Systems): Proof-of-Inference Consensus
 
 ## Related Use Cases
 

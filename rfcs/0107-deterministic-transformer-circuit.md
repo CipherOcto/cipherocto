@@ -79,13 +79,13 @@ RFC-0106 (Numeric Tower)
        ↓
 RFC-0120 (Deterministic AI-VM)
        ↓
-RFC-0131 (Deterministic Transformer Circuit)
+RFC-0107 (Deterministic Transformer Circuit)
        ↓
 RFC-0121 (Hierarchical Inference Network)
        ↓
 RFC-0124 (Proof Market)
        ↓
-RFC-0130 (Proof-of-Inference Consensus)
+RFC-0630 (Proof-of-Inference Consensus)
 ```
 
 ## Specification
@@ -623,10 +623,10 @@ FRI (Fast Reed-Solomon Interactive Oracle Proof of Proximity) provides:
 - RFC-0123 (AI Execution): Scalable Verifiable AI Execution
 - RFC-0124 (Economics): Proof Market and Hierarchical Network
 - RFC-0125 (Economics): Model Liquidity Layer
-- RFC-0130 (Proof Systems): Proof-of-Inference Consensus
-- RFC-0132 (Numeric/Math): Deterministic Training Circuits
-- RFC-0133 (Proof Systems): Proof-of-Dataset Integrity
-- RFC-0134 (Agents): Self-Verifying AI Agents
+- RFC-0630 (Proof Systems): Proof-of-Inference Consensus
+- RFC-0108 (Numeric/Math): Deterministic Training Circuits
+- RFC-0631 (Proof Systems): Proof-of-Dataset Integrity
+- RFC-0416 (Agents): Self-Verifying AI Agents
 
 ## Related Use Cases
 
@@ -639,7 +639,7 @@ FRI (Fast Reed-Solomon Interactive Oracle Proof of Proximity) provides:
 
 ```
 ┌─────────────────────────────────────────────────────┐
-│        Proof-of-Inference Consensus (RFC-0130)      │
+│        Proof-of-Inference Consensus (RFC-0630)      │
 └─────────────────────────┬───────────────────────────┘
                           │
 ┌─────────────────────────▼───────────────────────────┐
@@ -659,7 +659,7 @@ FRI (Fast Reed-Solomon Interactive Oracle Proof of Proximity) provides:
 └─────────────────────────┬───────────────────────────┘
                           │
 ┌─────────────────────────▼───────────────────────────┐
-│        Deterministic Transformer Circuit (RFC-0131) │
+│        Deterministic Transformer Circuit (RFC-0107) │
 └─────────────────────────┬───────────────────────────┘
                           │
 ┌─────────────────────────▼───────────────────────────┐

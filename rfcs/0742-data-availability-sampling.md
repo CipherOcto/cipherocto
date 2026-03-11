@@ -638,7 +638,7 @@ Staking provides:
 
 ## Related RFCs
 
-- RFC-0130 (Proof Systems): Proof-of-Inference Consensus
+- RFC-0630 (Proof Systems): Proof-of-Inference Consensus
 - RFC-0140 (Consensus): Sharded Consensus Protocol
 - RFC-0141 (Consensus): Parallel Block DAG Specification
 - RFC-0143 (Networking): OCTO-Network Protocol

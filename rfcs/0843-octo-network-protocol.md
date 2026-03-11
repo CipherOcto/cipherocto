@@ -79,9 +79,9 @@ RFC-0106 (Numeric Tower)
        ↓
 RFC-0120 (AI-VM)
        ↓
-RFC-0131 (Transformer Circuit)
+RFC-0107 (Transformer Circuit)
        ↓
-RFC-0130 (Proof-of-Inference)
+RFC-0630 (Proof-of-Inference)
        ↓
 RFC-0143 (OCTO-Network) ← NEW
 ```
@@ -877,11 +877,11 @@ Backbone nodes provide:
 
 - RFC-0106 (Numeric/Math): Deterministic Numeric Tower
 - RFC-0120 (AI Execution): Deterministic AI Virtual Machine
-- RFC-0130 (Proof Systems): Proof-of-Inference Consensus
-- RFC-0131 (Numeric/Math): Deterministic Transformer Circuit
-- RFC-0132 (Numeric/Math): Deterministic Training Circuits
-- RFC-0133 (Proof Systems): Proof-of-Dataset Integrity
-- RFC-0134 (Agents): Self-Verifying AI Agents
+- RFC-0630 (Proof Systems): Proof-of-Inference Consensus
+- RFC-0107 (Numeric/Math): Deterministic Transformer Circuit
+- RFC-0108 (Numeric/Math): Deterministic Training Circuits
+- RFC-0631 (Proof Systems): Proof-of-Dataset Integrity
+- RFC-0416 (Agents): Self-Verifying AI Agents
 - RFC-0140 (Consensus): Sharded Consensus Protocol
 - RFC-0141 (Consensus): Parallel Block DAG Specification
 - RFC-0142 (Consensus): Data Availability & Sampling Protocol

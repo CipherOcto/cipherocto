@@ -8,7 +8,7 @@ Draft
 
 ## Summary
 
-This RFC defines **Deterministic Training Circuits (DTC-Train)** — an extension of the Deterministic Transformer Circuit (RFC-0131) for verifying gradient-based training of large neural networks. DTC-Train cryptographically proves that weight updates follow the correct computation: `model_{t+1} = model_t − η ∇L(model_t, data)`, enabling verifiable model provenance, auditable fine-tuning, dataset royalty enforcement, and decentralized training markets.
+This RFC defines **Deterministic Training Circuits (DTC-Train)** — an extension of the Deterministic Transformer Circuit (RFC-0107) for verifying gradient-based training of large neural networks. DTC-Train cryptographically proves that weight updates follow the correct computation: `model_{t+1} = model_t − η ∇L(model_t, data)`, enabling verifiable model provenance, auditable fine-tuning, dataset royalty enforcement, and decentralized training markets.
 
 ## Design Goals
 
@@ -38,7 +38,7 @@ Training is substantially harder than inference:
 
 Research confirms feasibility through:
 
-- DTC (RFC-0131) already verifies forward passes
+- DTC (RFC-0107) already verifies forward passes
 - Gradient computation is deterministic matrix operations
 - Optimizer state can be tracked via accumulator constraints
 - Recursive proof aggregation handles millions of steps
@@ -86,9 +86,9 @@ RFC-0106 (Numeric Tower)
        ↓
 RFC-0120 (Deterministic AI-VM)
        ↓
-RFC-0131 (Deterministic Transformer Circuit)
+RFC-0107 (Deterministic Transformer Circuit)
        ↓
-RFC-0132 (Deterministic Training Circuits) ← NEW
+RFC-0108 (Deterministic Training Circuits) ← NEW
        ↓
 RFC-0121 (Hierarchical Inference Network)
        ↓
@@ -96,7 +96,7 @@ RFC-0124 (Proof Market)
        ↓
 RFC-0125 (Model Liquidity Layer)
        ↓
-RFC-0130 (Proof-of-Inference Consensus)
+RFC-0630 (Proof-of-Inference Consensus)
 ```
 
 ## Specification
@@ -336,7 +336,7 @@ impl LossFunction {
         labels: &[u32],
         trace: &mut TrainingTrace,
     ) -> Q32_32 {
-        // Softmax first (RFC-0131)
+        // Softmax first (RFC-0107)
         let probs = softmax(logits, trace);
 
         // Cross-entropy: -Σ y * log(p)
@@ -898,7 +898,7 @@ impl TrainingMarket {
 ### Phase 1: Core Training
 
 - [ ] Training trace structure
-- [ ] Forward pass integration (RFC-0131)
+- [ ] Forward pass integration (RFC-0107)
 - [ ] Basic loss functions (MSE)
 - [ ] SGD optimizer
 
@@ -957,14 +957,14 @@ Millions of training steps cannot produce a single proof. Recursive aggregation 
 
 - RFC-0106 (Numeric/Math): Deterministic Numeric Tower
 - RFC-0120 (AI Execution): Deterministic AI Virtual Machine
-- RFC-0131 (Numeric/Math): Deterministic Transformer Circuit
+- RFC-0107 (Numeric/Math): Deterministic Transformer Circuit
 - RFC-0121 (AI Execution): Verifiable Large Model Execution
 - RFC-0122 (AI Execution): Mixture-of-Experts
 - RFC-0124 (Economics): Proof Market and Hierarchical Network
 - RFC-0125 (Economics): Model Liquidity Layer
-- RFC-0130 (Proof Systems): Proof-of-Inference Consensus
-- RFC-0133 (Proof Systems): Proof-of-Dataset Integrity
-- RFC-0134 (Agents): Self-Verifying AI Agents
+- RFC-0630 (Proof Systems): Proof-of-Inference Consensus
+- RFC-0631 (Proof Systems): Proof-of-Dataset Integrity
+- RFC-0416 (Agents): Self-Verifying AI Agents
 
 ## Related Use Cases
 
@@ -977,7 +977,7 @@ Millions of training steps cannot produce a single proof. Recursive aggregation 
 
 ```
 ┌─────────────────────────────────────────────────────┐
-│        Proof-of-Inference Consensus (RFC-0130)        │
+│        Proof-of-Inference Consensus (RFC-0630)        │
 └─────────────────────────┬───────────────────────────┘
                           │
 ┌─────────────────────────▼───────────────────────────┐
@@ -993,11 +993,11 @@ Millions of training steps cannot produce a single proof. Recursive aggregation 
 └─────────────────────────┬───────────────────────────┘
                           │
 ┌─────────────────────────▼───────────────────────────┐
-│        Deterministic Training Circuits (RFC-0132)    │
+│        Deterministic Training Circuits (RFC-0108)    │
 └─────────────────────────┬───────────────────────────┘
                           │
 ┌─────────────────────────▼───────────────────────────┐
-│        Deterministic Transformer Circuit (RFC-0131) │
+│        Deterministic Transformer Circuit (RFC-0107) │
 └─────────────────────────┬───────────────────────────┘
                           │
 ┌─────────────────────────▼───────────────────────────┐
@@ -1027,7 +1027,7 @@ Split:
 1. Dataset Commitment
    dataset → Merkle root
 
-2. Forward Pass (RFC-0131)
+2. Forward Pass (RFC-0107)
    input → activations → loss
 
 3. Backward Pass

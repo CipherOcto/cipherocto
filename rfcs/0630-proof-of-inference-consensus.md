@@ -717,10 +717,10 @@ SNARKs require trusted setup ceremonies which create:
 - RFC-0122 (AI Execution): Mixture-of-Experts
 - RFC-0124 (Economics): Proof Market and Hierarchical Inference Network
 - RFC-0125 (Economics): Model Liquidity Layer
-- RFC-0131 (Numeric/Math): Deterministic Transformer Circuit
-- RFC-0132 (Numeric/Math): Deterministic Training Circuits
-- RFC-0133 (Proof Systems): Proof-of-Dataset Integrity
-- RFC-0134 (Agents): Self-Verifying AI Agents
+- RFC-0107 (Numeric/Math): Deterministic Transformer Circuit
+- RFC-0108 (Numeric/Math): Deterministic Training Circuits
+- RFC-0631 (Proof Systems): Proof-of-Dataset Integrity
+- RFC-0416 (Agents): Self-Verifying AI Agents
 - RFC-0140 (Consensus): Sharded Consensus Protocol
 - RFC-0141 (Consensus): Parallel Block DAG Specification
 - RFC-0142 (Consensus): Data Availability & Sampling Protocol

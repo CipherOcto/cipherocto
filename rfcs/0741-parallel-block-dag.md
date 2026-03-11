@@ -44,7 +44,7 @@ DAG-based solutions (Hashgraph, Avalanche, Phantom) demonstrate:
 
 ### WHY? — Why This Matters
 
-Current PoI consensus (RFC-0130) assumes linear block production. Problems:
+Current PoI consensus (RFC-0630) assumes linear block production. Problems:
 
 | Problem           | Impact                       |
 | ----------------- | ---------------------------- |
@@ -76,7 +76,7 @@ The Parallel Block DAG defines:
 Integration with existing stack:
 
 ```
-RFC-0130 (Proof-of-Inference)
+RFC-0630 (Proof-of-Inference)
        ↓
 RFC-0141 (Parallel Block DAG) ← NEW
        ↓
@@ -671,7 +671,7 @@ Global checkpoints provide:
 
 ## Related RFCs
 
-- RFC-0130 (Proof Systems): Proof-of-Inference Consensus
+- RFC-0630 (Proof Systems): Proof-of-Inference Consensus
 - RFC-0140 (Consensus): Sharded Consensus Protocol
 - RFC-0142 (Consensus): Data Availability & Sampling Protocol
 - RFC-0143 (Networking): OCTO-Network Protocol

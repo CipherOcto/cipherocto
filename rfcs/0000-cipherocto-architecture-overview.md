@@ -28,7 +28,7 @@ The fundamental question: **Can we build a complete decentralized AI operating s
 Research confirms feasibility through:
 
 - Deterministic computation (RFC-0106)
-- STARK-based verification (RFC-0131)
+- STARK-based verification (RFC-0107)
 - Sharded consensus (RFC-0140)
 - Task markets (RFC-0144)
 
@@ -75,7 +75,7 @@ CipherOcto consists of **seven architectural layers**:
 │  ┌─────────────────────┐  ┌─────────────────────────────────────────┐       │
 │  │ Self-Verifying     │  │ Autonomous Agent Organizations         │       │
 │  │ AI Agents          │  │ (RFC-0118)                            │       │
-│  │ (RFC-0134)        │  │                                        │       │
+│  │ (RFC-0416)        │  │                                        │       │
 │  └─────────────────────┘  └─────────────────────────────────────────┘       │
 └────────────────────────────────────┬────────────────────────────────────┘
                                      │
@@ -83,8 +83,8 @@ CipherOcto consists of **seven architectural layers**:
 │                         AI EXECUTION LAYER                              │
 │  ┌─────────────────────────┐  ┌─────────────────────────────────────┐       │
 │  │ Deterministic           │  │ Deterministic Training Circuits       │       │
-│  │ Transformer Circuit    │  │ (RFC-0132)                          │       │
-│  │ (RFC-0131)            │  │                                     │       │
+│  │ Transformer Circuit    │  │ (RFC-0108)                          │       │
+│  │ (RFC-0107)            │  │                                     │       │
 │  └─────────────────────────┘  └─────────────────────────────────────┘       │
 │                                    │                                    │
 │  ┌───────────────────────────────▼────────────────────────────────┐        │
@@ -96,7 +96,7 @@ CipherOcto consists of **seven architectural layers**:
 │                         VERIFICATION LAYER                              │
 │  ┌─────────────────────────┐  ┌─────────────────────────────────────┐       │
 │  │ Proof-of-Dataset       │  │ Probabilistic Verification Markets   │       │
-│  │ Integrity (RFC-0133)   │  │ (RFC-0115)                         │       │
+│  │ Integrity (RFC-0631)   │  │ (RFC-0115)                         │       │
 │  └─────────────────────────┘  └─────────────────────────────────────┘       │
 │  ┌─────────────────────────┐  ┌─────────────────────────────────────┐       │
 │  │ Proof Aggregation      │  │ Hardware Capability Registry         │       │
@@ -107,7 +107,7 @@ CipherOcto consists of **seven architectural layers**:
 ┌────────────────────────────────────▼────────────────────────────────────┐
 │                         CONSENSUS LAYER                                  │
 │  ┌──────────────────────────────────────────────────────────────┐          │
-│  │            Proof-of-Inference Consensus (RFC-0130)           │          │
+│  │            Proof-of-Inference Consensus (RFC-0630)           │          │
 │  │  ┌─────────────┐  ┌─────────────┐  ┌──────────────────┐  │          │
 │  │  │ Sharded     │  │ Parallel    │  │ Data            │  │          │
 │  │  │ Consensus   │  │ Block DAG   │  │ Availability    │  │          │
@@ -313,7 +313,7 @@ Goal: Deterministic inference locally.
 Required RFCs:
 - RFC-0104, RFC-0105, RFC-0106 (Numeric Tower)
 - RFC-0116, RFC-0120 (Execution Model + AI-VM)
-- RFC-0131 (Transformer Circuit)
+- RFC-0107 (Transformer Circuit)
 
 **Status:** ✓ Complete
 
@@ -322,7 +322,7 @@ Required RFCs:
 Goal: Provable inference.
 
 Required RFCs:
-- RFC-0132 (Training Circuits)
+- RFC-0108 (Training Circuits)
 - RFC-0121, RFC-0123 (Large Model + Scalable Execution)
 
 **Status:** ✓ Complete
@@ -341,7 +341,7 @@ Required RFCs:
 Goal: Secure the network.
 
 Required RFCs:
-- RFC-0130 (Proof-of-Inference)
+- RFC-0630 (Proof-of-Inference)
 - RFC-0140, RFC-0141, RFC-0142 (Sharding, DAG, DA)
 
 **Status:** ✓ Complete
@@ -351,7 +351,7 @@ Required RFCs:
 Goal: Verifiable datasets.
 
 Required RFCs:
-- RFC-0133 (Dataset Integrity)
+- RFC-0631 (Dataset Integrity)
 - RFC-0111 (Knowledge Market)
 
 **Status:** ✓ Complete

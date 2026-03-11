@@ -8,7 +8,7 @@ Draft
 
 ## Summary
 
-This RFC defines **Self-Verifying AI Agents** — autonomous agents that produce cryptographic proofs of their reasoning steps, decisions, and actions. Each agent decision generates a proof chain that can be verified on-chain, enabling auditable AI behavior in DeFi, governance, and autonomous systems. The framework combines deterministic execution (RFC-0131), verifiable reasoning traces (RFC-0114), and ZK proofs to create agents whose every action is cryptographically auditable.
+This RFC defines **Self-Verifying AI Agents** — autonomous agents that produce cryptographic proofs of their reasoning steps, decisions, and actions. Each agent decision generates a proof chain that can be verified on-chain, enabling auditable AI behavior in DeFi, governance, and autonomous systems. The framework combines deterministic execution (RFC-0107), verifiable reasoning traces (RFC-0114), and ZK proofs to create agents whose every action is cryptographically auditable.
 
 ## Design Goals
 
@@ -78,13 +78,13 @@ Self-Verifying Agents define:
 Implementation builds on existing stack:
 
 ```
-RFC-0131 (Transformer Circuit)
+RFC-0107 (Transformer Circuit)
        ↓
 RFC-0114 (Reasoning Traces)
        ↓
-RFC-0134 (Self-Verifying Agents) ← NEW
+RFC-0416 (Self-Verifying Agents) ← NEW
        ↓
-RFC-0130 (Proof-of-Inference)
+RFC-0630 (Proof-of-Inference)
        ↓
 RFC-0125 (Model Liquidity)
 ```
@@ -769,10 +769,10 @@ Traces enable:
 - RFC-0106 (Numeric/Math): Deterministic Numeric Tower
 - RFC-0114 (Agents): Verifiable Reasoning Traces
 - RFC-0120 (AI Execution): Deterministic AI Virtual Machine
-- RFC-0130 (Proof Systems): Proof-of-Inference Consensus
-- RFC-0131 (Numeric/Math): Deterministic Transformer Circuit
-- RFC-0132 (Numeric/Math): Deterministic Training Circuits
-- RFC-0133 (Proof Systems): Proof-of-Dataset Integrity
+- RFC-0630 (Proof Systems): Proof-of-Inference Consensus
+- RFC-0107 (Numeric/Math): Deterministic Transformer Circuit
+- RFC-0108 (Numeric/Math): Deterministic Training Circuits
+- RFC-0631 (Proof Systems): Proof-of-Dataset Integrity
 - RFC-0140 (Consensus): Sharded Consensus Protocol
 - RFC-0141 (Consensus): Parallel Block DAG Specification
 - RFC-0142 (Consensus): Data Availability & Sampling Protocol
@@ -789,19 +789,19 @@ Traces enable:
 
 ```
 ┌─────────────────────────────────────────────────────┐
-│        Self-Verifying AI Agents (RFC-0134)            │
+│        Self-Verifying AI Agents (RFC-0416)            │
 └─────────────────────────┬───────────────────────────┘
                           │
 ┌─────────────────────────▼───────────────────────────┐
-│        Proof-of-Dataset Integrity (RFC-0133)          │
+│        Proof-of-Dataset Integrity (RFC-0631)          │
 └─────────────────────────┬───────────────────────────┘
                           │
 ┌─────────────────────────▼───────────────────────────┐
-│        Deterministic Training (RFC-0132)               │
+│        Deterministic Training (RFC-0108)               │
 └─────────────────────────┬───────────────────────────┘
                           │
 ┌─────────────────────────▼───────────────────────────┐
-│        Transformer Circuit (RFC-0131)                 │
+│        Transformer Circuit (RFC-0107)                 │
 └─────────────────────────┬───────────────────────────┘
                           │
 ┌─────────────────────────▼───────────────────────────┐
@@ -809,7 +809,7 @@ Traces enable:
 └─────────────────────────┬───────────────────────────┘
                           │
 ┌─────────────────────────▼───────────────────────────┐
-│        Proof-of-Inference Consensus (RFC-0130)         │
+│        Proof-of-Inference Consensus (RFC-0630)         │
 └─────────────────────────┬───────────────────────────┘
                           │
 ┌─────────────────────────▼───────────────────────────┐

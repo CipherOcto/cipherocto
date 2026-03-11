@@ -80,7 +80,7 @@ RFC-0124 (Proof Market)
        ↓
 RFC-0144 (Inference Task Market) ← NEW
        ↓
-RFC-0130 (Proof-of-Inference)
+RFC-0630 (Proof-of-Inference)
        ↓
 RFC-0143 (OCTO-Network)
 ```
@@ -772,7 +772,7 @@ Each task type needs different pricing:
 ## Related RFCs
 
 - RFC-0124 (Economics): Proof Market and Hierarchical Network
-- RFC-0130 (Proof Systems): Proof-of-Inference Consensus
+- RFC-0630 (Proof Systems): Proof-of-Inference Consensus
 - RFC-0140 (Consensus): Sharded Consensus Protocol
 - RFC-0143 (Networking): OCTO-Network Protocol
 

@@ -430,7 +430,7 @@ The DLAE builds on RFC-0106's deterministic numeric types to provide linear alge
 - RFC-0120 (AI Execution): Deterministic AI VM — AI VM with linear algebra requirements
 - RFC-0121 (AI Execution): Verifiable Large Model Execution — Matrix mul, neural network layers
 - RFC-0122 (AI Execution): Mixture of Experts — Linear layers, dot products
-- RFC-0131 (Numeric/Math): Deterministic Transformer Circuit — Matrix multiplication, attention
+- RFC-0107 (Numeric/Math): Deterministic Transformer Circuit — Matrix multiplication, attention
 
 > **Note**: RFC-0148 serves as the canonical linear algebra layer that these RFCs depend on for deterministic operations.
 

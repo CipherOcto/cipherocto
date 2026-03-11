@@ -2776,10 +2776,10 @@ Use ML to optimize vector partitioning.
 
 ## Related RFCs
 
-- RFC-0103: Unified Vector-SQL Storage (superseded by this RFC)
-- RFC-0106: Deterministic Numeric Tower (numeric types)
-- RFC-0108: Verifiable AI Retrieval (ZK commitments)
-- RFC-0109: Retrieval Architecture (storage integration)
+- RFC-0103 (Numeric/Math): Unified Vector-SQL Storage (superseded by this RFC)
+- RFC-0106 (Numeric/Math): Deterministic Numeric Tower (numeric types)
+- RFC-0108 (Retrieval): Verifiable AI Retrieval (ZK commitments)
+- RFC-0109 (Retrieval): Retrieval Architecture (storage integration)
 
 ## Related Use Cases
 

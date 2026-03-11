@@ -292,11 +292,11 @@ To scale coordination, organizations run internal markets:
 
 ## Related RFCs
 
-- RFC-0110: Verifiable Agent Memory
-- RFC-0114: Verifiable Reasoning Traces
-- RFC-0115: Probabilistic Verification Markets
-- RFC-0116: Unified Deterministic Execution Model
-- RFC-0117: State Virtualization for Massive Agent Scaling
+- RFC-0110 (Agents): Verifiable Agent Memory
+- RFC-0114 (Agents): Verifiable Reasoning Traces
+- RFC-0115 (Economics): Probabilistic Verification Markets
+- RFC-0116 (Numeric/Math): Unified Deterministic Execution Model
+- RFC-0117 (Agents): State Virtualization for Massive Agent Scaling
 
 ## Related Use Cases
 

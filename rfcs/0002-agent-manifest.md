@@ -254,7 +254,7 @@ None. This is new functionality.
 
 ## Related RFCs
 
-- RFC-0001: Mission Lifecycle (agents claim missions)
+- RFC-0001 (Process/Meta): Mission Lifecycle (agents claim missions)
 
 ## References
 

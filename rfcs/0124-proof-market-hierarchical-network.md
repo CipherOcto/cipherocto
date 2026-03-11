@@ -958,16 +958,16 @@ Market mechanism:
 
 ## Related RFCs
 
-- RFC-0106: Deterministic Numeric Tower
-- RFC-0108: Verifiable AI Retrieval
-- RFC-0109: Retrieval Architecture
-- RFC-0115: Probabilistic Verification Markets
-- RFC-0120: Deterministic AI Virtual Machine
-- RFC-0121: Verifiable Large Model Execution
-- RFC-0122: Mixture-of-Experts
-- RFC-0123: Scalable Verifiable AI Execution
-- RFC-0125: Model Liquidity Layer
-- RFC-0154: Proof Market & Hierarchical Verification Network (complementary: 0124 focuses on distributed inference, 0154 focuses on verification)
+- RFC-0106 (Numeric/Math): Deterministic Numeric Tower
+- RFC-0108 (Retrieval): Verifiable AI Retrieval
+- RFC-0109 (Retrieval): Retrieval Architecture
+- RFC-0115 (Economics): Probabilistic Verification Markets
+- RFC-0120 (AI Execution): Deterministic AI Virtual Machine
+- RFC-0121 (AI Execution): Verifiable Large Model Execution
+- RFC-0122 (AI Execution): Mixture-of-Experts
+- RFC-0123 (AI Execution): Scalable Verifiable AI Execution
+- RFC-0125 (Economics): Model Liquidity Layer
+- RFC-0154 (Economics): Proof Market & Hierarchical Verification Network (complementary: 0124 focuses on distributed inference, 0154 focuses on verification)
 
 ## Related Use Cases
 

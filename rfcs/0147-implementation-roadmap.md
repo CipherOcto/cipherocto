@@ -447,13 +447,13 @@ Phase 6:
 
 All RFCs are related to this roadmap. Key dependencies:
 
-- RFC-0104: Deterministic Floating-Point
-- RFC-0106: Deterministic Numeric Tower
-- RFC-0120: Deterministic AI-VM
-- RFC-0130: Proof-of-Inference Consensus
-- RFC-0143: OCTO-Network Protocol
-- RFC-0144: Inference Task Market
-- RFC-0134: Self-Verifying AI Agents
+- RFC-0104 (Numeric/Math): Deterministic Floating-Point
+- RFC-0106 (Numeric/Math): Deterministic Numeric Tower
+- RFC-0120 (AI Execution): Deterministic AI-VM
+- RFC-0130 (Proof Systems): Proof-of-Inference Consensus
+- RFC-0143 (Networking): OCTO-Network Protocol
+- RFC-0144 (Economics): Inference Task Market
+- RFC-0134 (Agents): Self-Verifying AI Agents
 
 ## Related Documentation
 

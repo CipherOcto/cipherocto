@@ -893,13 +893,13 @@ impl Dqa {
 
 ### Dependencies
 
-- RFC-0104: DFP (complementary type)
-- RFC-0103: Vector-SQL Storage
+- RFC-0104 (Numeric/Math): DFP (complementary type)
+- RFC-0103 (Numeric/Math): Vector-SQL Storage
 
 ## Related RFCs
 
-- RFC-0104: Deterministic Floating-Point Abstraction (DFP)
-- RFC-0103: Unified Vector-SQL Storage Engine
+- RFC-0104 (Numeric/Math): Deterministic Floating-Point Abstraction (DFP)
+- RFC-0103 (Numeric/Math): Unified Vector-SQL Storage Engine
 
 ## Reference Test Vectors
 

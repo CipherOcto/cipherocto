@@ -912,13 +912,13 @@ The AI-VM builds directly on the Deterministic Numeric Tower (RFC-0106) for all 
 
 ## Related RFCs
 
-- RFC-0106: Deterministic Numeric Tower
-- RFC-0108: Verifiable AI Retrieval
-- RFC-0114: Verifiable Reasoning Traces
-- RFC-0115: Probabilistic Verification Markets
-- RFC-0116: Unified Deterministic Execution Model
-- RFC-0121: Verifiable Large Model Execution
-- RFC-0122: Mixture-of-Experts
+- RFC-0106 (Numeric/Math): Deterministic Numeric Tower
+- RFC-0108 (Retrieval): Verifiable AI Retrieval
+- RFC-0114 (Agents): Verifiable Reasoning Traces
+- RFC-0115 (Economics): Probabilistic Verification Markets
+- RFC-0116 (Numeric/Math): Unified Deterministic Execution Model
+- RFC-0121 (AI Execution): Verifiable Large Model Execution
+- RFC-0122 (AI Execution): Mixture-of-Experts
 
 ## Related Use Cases
 

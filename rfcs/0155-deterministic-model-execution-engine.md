@@ -10,10 +10,10 @@
 
 ## Depends on
 
-- RFC-0106: Deterministic Numeric Tower
-- RFC-0148: Deterministic Linear Algebra Engine
-- RFC-0151: Verifiable RAG Execution
-- RFC-0152: Verifiable Agent Runtime
+- RFC-0106 (Numeric/Math): Deterministic Numeric Tower
+- RFC-0148 (Numeric/Math): Deterministic Linear Algebra Engine
+- RFC-0151 (AI Execution): Verifiable RAG Execution
+- RFC-0152 (Agents): Verifiable Agent Runtime
 
 ## Summary
 
@@ -392,10 +392,10 @@ DMEE provides the core model execution layer:
 
 ## Related RFCs
 
-- RFC-0106: Deterministic Numeric Tower — DQA types
-- RFC-0148: Deterministic Linear Algebra Engine — Matrix operations
-- RFC-0151: Verifiable RAG Execution — Inference integration
-- RFC-0152: Verifiable Agent Runtime — Agent reasoning
+- RFC-0106 (Numeric/Math): Deterministic Numeric Tower — DQA types
+- RFC-0148 (Numeric/Math): Deterministic Linear Algebra Engine — Matrix operations
+- RFC-0151 (AI Execution): Verifiable RAG Execution — Inference integration
+- RFC-0152 (Agents): Verifiable Agent Runtime — Agent reasoning
 
 > **Note**: RFC-0155 completes the compute layer.
 

@@ -345,13 +345,13 @@ HNSW-D provides the deterministic ANN index needed for:
 
 ## Related RFCs
 
-- RFC-0106: Deterministic Numeric Tower (DNT) — Core numeric types
-- RFC-0105: Deterministic Quantized Arithmetic (DQA) — Scalar operations
-- RFC-0148: Deterministic Linear Algebra Engine (DLAE) — Distance primitives
-- RFC-0103: Unified Vector SQL Storage — Vector storage layer
-- RFC-0107: Production Vector SQL Storage v2 — Production vector ops
-- RFC-0120: Deterministic AI VM — AI VM integration
-- RFC-0110: Verifiable Agent Memory — Memory layer with vectors
+- RFC-0106 (Numeric/Math): Deterministic Numeric Tower (DNT) — Core numeric types
+- RFC-0105 (Numeric/Math): Deterministic Quantized Arithmetic (DQA) — Scalar operations
+- RFC-0148 (Numeric/Math): Deterministic Linear Algebra Engine (DLAE) — Distance primitives
+- RFC-0103 (Numeric/Math): Unified Vector SQL Storage — Vector storage layer
+- RFC-0107 (Storage): Production Vector SQL Storage v2 — Production vector ops
+- RFC-0120 (AI Execution): Deterministic AI VM — AI VM integration
+- RFC-0110 (Agents): Verifiable Agent Memory — Memory layer with vectors
 
 > **Note**: RFC-0149 completes the deterministic AI/vector stack together with RFC-0106 and RFC-0148.
 

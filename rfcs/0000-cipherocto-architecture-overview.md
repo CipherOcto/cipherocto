@@ -1,8 +1,10 @@
-# RFC-0000: CipherOcto Architecture Overview
+# RFC-0000 (Process/Meta): CipherOcto Architecture Overview
 
 ## Status
 
 Draft
+
+> **Note:** This RFC was originally numbered RFC-0000 under the legacy numbering system. It remains at 0000 as it belongs to the Process/Meta category.
 
 ## Summary
 

@@ -1,9 +1,11 @@
-# RFC-0003: Deterministic Execution Standard (DES)
+# RFC-0003 (Process/Meta): Deterministic Execution Standard (DES)
 
 ## Status
 
 **Version:** 1.0
 **Status:** Draft
+
+> **Note:** This RFC was originally numbered RFC-0003 under the legacy numbering system. It remains at 0003 as it belongs to the Process/Meta category.
 
 ## Authors
 
@@ -28,13 +30,13 @@ This RFC ensures that:
 
 **Requires:**
 
-- RFC-0106: Deterministic Numeric Tower (numeric types)
+- RFC-0106 (Numeric/Math): Deterministic Numeric Tower (numeric types)
 
 **Optional:**
 
-- RFC-0148: Deterministic Linear Algebra Engine
-- RFC-0149: Deterministic Vector Index
-- RFC-0155: Deterministic Model Execution Engine
+- RFC-0148 (Numeric/Math): Deterministic Linear Algebra Engine
+- RFC-0149 (Retrieval): Deterministic Vector Index
+- RFC-0155 (AI Execution): Deterministic Model Execution Engine
 
 ## Motivation
 
@@ -308,10 +310,10 @@ This standard ensures all nodes produce identical results for identical inputs.
 
 ## Related RFCs
 
-- RFC-0106: Deterministic Numeric Tower
-- RFC-0148: Deterministic Linear Algebra Engine
-- RFC-0149: Deterministic Vector Index
-- RFC-0155: Deterministic Model Execution Engine
+- RFC-0106 (Numeric/Math): Deterministic Numeric Tower
+- RFC-0148 (Numeric/Math): Deterministic Linear Algebra Engine
+- RFC-0149 (Retrieval): Deterministic Vector Index
+- RFC-0155 (AI Execution): Deterministic Model Execution Engine
 
 ## Related Use Cases
 

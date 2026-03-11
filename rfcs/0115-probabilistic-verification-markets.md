@@ -403,12 +403,12 @@ The same principle adapts well to decentralized AI.
 
 ## Related RFCs
 
-- RFC-0108: Verifiable AI Retrieval
-- RFC-0109: Retrieval Architecture & Read Economics
-- RFC-0111: Knowledge Market & Verifiable Data Assets
-- RFC-0116: Unified Deterministic Execution Model
-- RFC-0117: State Virtualization for Massive Agent Scaling
-- RFC-0119: Alignment & Control Mechanisms
+- RFC-0108 (Retrieval): Verifiable AI Retrieval
+- RFC-0109 (Retrieval): Retrieval Architecture & Read Economics
+- RFC-0111 (Agents): Knowledge Market & Verifiable Data Assets
+- RFC-0116 (Numeric/Math): Unified Deterministic Execution Model
+- RFC-0117 (Agents): State Virtualization for Massive Agent Scaling
+- RFC-0119 (Agents): Alignment & Control Mechanisms
 
 ## Related Use Cases
 

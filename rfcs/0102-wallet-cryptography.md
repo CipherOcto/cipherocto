@@ -1,7 +1,10 @@
-# RFC-0102: Wallet Cryptography Specification
+# RFC-0102 (Numeric/Math): Wallet Cryptography Specification
 
 ## Status
+
 Draft
+
+> **Note:** This RFC was originally numbered RFC-0102 under the legacy numbering system. It remains at 0102 as it belongs to the Numeric/Math category.
 
 ## Summary
 
@@ -22,6 +25,7 @@ The Quota Router MVE requires a secure wallet implementation to handle OCTO-W, O
 ### Desired State
 
 A complete specification defining:
+
 - Key types and derivation paths
 - Transaction signing workflow
 - Local key storage format
@@ -29,6 +33,7 @@ A complete specification defining:
 - Error handling patterns
 
 ### Use Case Link
+
 - [AI Quota Marketplace](../docs/use-cases/ai-quota-marketplace.md)
 
 ## Specification
@@ -406,12 +411,12 @@ pub enum WalletError {
 
 ### Why Starknet ECDSA?
 
-| Consideration | Starknet | Ethereum |
-|--------------|----------|----------|
-| Curve | Stark Curve (BLS12-381) | secp256k1 |
-| Native ZK | ✅ Direct integration | ❌ Requires bridge |
-| Stoolap | ✅ Same ecosystem | ⚠️ Additional complexity |
-| Ecosystem | Growing | Large |
+| Consideration | Starknet                | Ethereum                 |
+| ------------- | ----------------------- | ------------------------ |
+| Curve         | Stark Curve (BLS12-381) | secp256k1                |
+| Native ZK     | ✅ Direct integration   | ❌ Requires bridge       |
+| Stoolap       | ✅ Same ecosystem       | ⚠️ Additional complexity |
+| Ecosystem     | Growing                 | Large                    |
 
 Starknet's native ZK compatibility with Stoolap is the primary driver.
 
@@ -424,12 +429,12 @@ Starknet's native ZK compatibility with Stoolap is the primary driver.
 
 ### Alternatives Considered
 
-| Alternative | Pros | Cons | Rejection Reason |
-|-------------|------|------|------------------|
-| EVM (secp256k1) | Larger ecosystem | No native ZK | Cairo ecosystem required for Stoolap |
-| MPC-based | High security | Complex | Phase 2 optimization |
-| HSM | Maximum security | Expensive | Not for MVE |
-| Raw key file | Simple | No password protection | Security non-negotiable |
+| Alternative     | Pros             | Cons                   | Rejection Reason                     |
+| --------------- | ---------------- | ---------------------- | ------------------------------------ |
+| EVM (secp256k1) | Larger ecosystem | No native ZK           | Cairo ecosystem required for Stoolap |
+| MPC-based       | High security    | Complex                | Phase 2 optimization                 |
+| HSM             | Maximum security | Expensive              | Not for MVE                          |
+| Raw key file    | Simple           | No password protection | Security non-negotiable              |
 
 ### Trade-offs
 
@@ -439,6 +444,7 @@ Starknet's native ZK compatibility with Stoolap is the primary driver.
 ## Implementation
 
 ### Mission 1: Core Wallet Cryptography
+
 - Acceptance criteria:
   - [ ] KeyPair generation from random entropy
   - [ ] Key derivation (Starknet-style)
@@ -447,6 +453,7 @@ Starknet's native ZK compatibility with Stoolap is the primary driver.
 - Estimated complexity: Medium
 
 ### Mission 2: Secure Key Storage
+
 - Acceptance criteria:
   - [ ] AES-256-GCM encryption/decryption
   - [ ] PBKDF2 key derivation (100k iterations)
@@ -455,6 +462,7 @@ Starknet's native ZK compatibility with Stoolap is the primary driver.
 - Estimated complexity: Medium
 
 ### Mission 3: Account Interface
+
 - Acceptance criteria:
   - [ ] OpenZeppelin account integration
   - [ ] Nonce management
@@ -463,6 +471,7 @@ Starknet's native ZK compatibility with Stoolap is the primary driver.
 - Estimated complexity: High
 
 ### Mission 4: CLI Integration
+
 - Acceptance criteria:
   - [ ] Wallet init command
   - [ ] Balance display
@@ -473,14 +482,17 @@ Starknet's native ZK compatibility with Stoolap is the primary driver.
 ## Impact
 
 ### Breaking Changes
+
 None - new functionality.
 
 ### Migration Path
+
 - **Phase 1:** Single-signer accounts only, encrypted keyfile
 - **Phase 2:** Multi-sig support, OS keychain integration
 - **Phase 3:** Hardware wallet integration (Ledger/Trezor via HID)
 
 ### Dependencies
+
 - External: starknet-rs (signing, provider)
 - External: aes-gcm (encryption)
 - External: pbkdf2 (key derivation)
@@ -488,6 +500,7 @@ None - new functionality.
 - External: bip39 (mnemonic recovery)
 
 ### Performance
+
 > **Note:** Estimates based on modern hardware. Low-end devices may see 2-3x latency.
 
 - Signing: ~5ms per transaction (modern CPU)
@@ -496,10 +509,12 @@ None - new functionality.
 - Mnemonic generation: ~10ms
 
 ## Related RFCs
-- RFC-0100: AI Quota Marketplace Protocol
-- RFC-0101: Quota Router Agent Specification
+
+- RFC-0100 (Economics): AI Quota Marketplace Protocol
+- RFC-0101 (Economics): Quota Router Agent Specification
 
 ## References
+
 - **Stoolap**: Blockchain SQL database with ZK proofs (https://github.com/CipherOcto/stoolap/tree/feat/blockchain-sql)
 - starknet-rs: https://github.com/xJonathanLEGO/starknet-rs
 - OpenZeppelin Starknet: https://github.com/OpenZeppelin/cairo-contracts

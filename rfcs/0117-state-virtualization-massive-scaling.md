@@ -345,12 +345,12 @@ The blockchain-like layer only stores **roots and commitments**.
 
 ## Related RFCs
 
-- RFC-0110: Verifiable Agent Memory
-- RFC-0114: Verifiable Reasoning Traces
-- RFC-0115: Probabilistic Verification Markets
-- RFC-0116: Unified Deterministic Execution Model
-- RFC-0118: Autonomous Agent Organizations
-- RFC-0119: Alignment & Control Mechanisms
+- RFC-0110 (Agents): Verifiable Agent Memory
+- RFC-0114 (Agents): Verifiable Reasoning Traces
+- RFC-0115 (Economics): Probabilistic Verification Markets
+- RFC-0116 (Numeric/Math): Unified Deterministic Execution Model
+- RFC-0118 (Agents): Autonomous Agent Organizations
+- RFC-0119 (Agents): Alignment & Control Mechanisms
 
 ## Related Use Cases
 

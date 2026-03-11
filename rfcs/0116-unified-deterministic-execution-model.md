@@ -341,17 +341,17 @@ All can run simultaneously as long as they don't touch the same objects.
 
 ## Related RFCs
 
-- RFC-0106: Deterministic Numeric Tower
-- RFC-0107: Production Vector-SQL Storage
-- RFC-0108: Verifiable AI Retrieval
-- RFC-0110: Verifiable Agent Memory
-- RFC-0114: Verifiable Reasoning Traces
-- RFC-0115: Probabilistic Verification Markets
-- RFC-0117: State Virtualization for Massive Agent Scaling
-- RFC-0118: Autonomous Agent Organizations
-- RFC-0119: Alignment & Control Mechanisms
-- RFC-0120: Deterministic AI Virtual Machine
-- RFC-0121: Verifiable Large Model Execution
+- RFC-0106 (Numeric/Math): Deterministic Numeric Tower
+- RFC-0107 (Storage): Production Vector-SQL Storage
+- RFC-0108 (Retrieval): Verifiable AI Retrieval
+- RFC-0110 (Agents): Verifiable Agent Memory
+- RFC-0114 (Agents): Verifiable Reasoning Traces
+- RFC-0115 (Economics): Probabilistic Verification Markets
+- RFC-0117 (Agents): State Virtualization for Massive Agent Scaling
+- RFC-0118 (Agents): Autonomous Agent Organizations
+- RFC-0119 (Agents): Alignment & Control Mechanisms
+- RFC-0120 (AI Execution): Deterministic AI Virtual Machine
+- RFC-0121 (AI Execution): Verifiable Large Model Execution
 
 ## Related Use Cases
 

@@ -384,7 +384,7 @@ class AtomicBalance {
 
 ## Related RFCs
 
-- RFC-0100: AI Quota Marketplace Protocol
+- RFC-0100 (Economics): AI Quota Marketplace Protocol
 
 ## References
 

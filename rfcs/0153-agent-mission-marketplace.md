@@ -10,10 +10,10 @@
 
 ## Depends on
 
-- RFC-0001: Mission Lifecycle
-- RFC-0106: Deterministic Numeric Tower
-- RFC-0151: Verifiable RAG Execution
-- RFC-0152: Verifiable Agent Runtime
+- RFC-0001 (Process/Meta): Mission Lifecycle
+- RFC-0106 (Numeric/Math): Deterministic Numeric Tower
+- RFC-0151 (AI Execution): Verifiable RAG Execution
+- RFC-0152 (Agents): Verifiable Agent Runtime
 
 ## Summary
 
@@ -411,10 +411,10 @@ AMM provides the economic layer for verifiable AI:
 
 ## Related RFCs
 
-- RFC-0001: Mission Lifecycle — Foundation
-- RFC-0106: Deterministic Numeric Tower — Arithmetic
-- RFC-0151: Verifiable RAG Execution — Agent reasoning
-- RFC-0152: Verifiable Agent Runtime — Agent execution
+- RFC-0001 (Process/Meta): Mission Lifecycle — Foundation
+- RFC-0106 (Numeric/Math): Deterministic Numeric Tower — Arithmetic
+- RFC-0151 (AI Execution): Verifiable RAG Execution — Agent reasoning
+- RFC-0152 (Agents): Verifiable Agent Runtime — Agent execution
 
 > **Note**: RFC-0153 completes the economic layer for verifiable AI.
 

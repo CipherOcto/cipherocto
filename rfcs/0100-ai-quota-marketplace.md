@@ -285,7 +285,7 @@ This is a trust-based model, not cryptographic. See Research doc for future opti
 
 ## Related RFCs
 
-- RFC-0101: Quota Router Agent Specification
+- RFC-0101 (Economics): Quota Router Agent Specification
 - RFC-XXXX: Token Swap Protocol (future)
 - RFC-XXXX: Reputation System (future)
 

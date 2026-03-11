@@ -365,11 +365,11 @@ VVQE provides the query layer needed for:
 
 ## Related RFCs
 
-- RFC-0106: Deterministic Numeric Tower (DNT) — Core numeric types
-- RFC-0105: Deterministic Quantized Arithmetic (DQA) — Scalar operations
-- RFC-0107: Production Vector SQL Storage v2 — Vector storage engine
-- RFC-0148: Deterministic Linear Algebra Engine — Distance primitives
-- RFC-0149: Deterministic Vector Index (HNSW-D) — ANN index
+- RFC-0106 (Numeric/Math): Deterministic Numeric Tower (DNT) — Core numeric types
+- RFC-0105 (Numeric/Math): Deterministic Quantized Arithmetic (DQA) — Scalar operations
+- RFC-0107 (Storage): Production Vector SQL Storage v2 — Vector storage engine
+- RFC-0148 (Numeric/Math): Deterministic Linear Algebra Engine — Distance primitives
+- RFC-0149 (Retrieval): Deterministic Vector Index (HNSW-D) — ANN index
 
 > **Note**: RFC-0150 completes the deterministic AI retrieval stack together with RFC-0106, RFC-0148, and RFC-0149.
 

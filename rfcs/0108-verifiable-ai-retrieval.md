@@ -718,8 +718,8 @@ A new primitive for verifiable AI infrastructure.
 
 **Prerequisites**:
 
-- RFC-0106: Deterministic Numeric Tower
-- RFC-0107: Production Vector-SQL Storage v2
+- RFC-0106 (Numeric/Math): Deterministic Numeric Tower
+- RFC-0107 (Storage): Production Vector-SQL Storage v2
 
 ## Research Integration
 
@@ -973,11 +973,11 @@ This enables **Proof-Carrying AI** — every AI output includes:
 
 ## Related RFCs
 
-- RFC-0103: Unified Vector-SQL Storage (superseded by 0107)
-- RFC-0104: Deterministic Floating-Point
-- RFC-0105: Deterministic Quant Arithmetic
-- RFC-0106: Deterministic Numeric Tower (numeric determinism)
-- RFC-0110: Verifiable Agent Memory
+- RFC-0103 (Numeric/Math): Unified Vector-SQL Storage (superseded by 0107)
+- RFC-0104 (Numeric/Math): Deterministic Floating-Point
+- RFC-0105 (Numeric/Math): Deterministic Quant Arithmetic
+- RFC-0106 (Numeric/Math): Deterministic Numeric Tower (numeric determinism)
+- RFC-0110 (Agents): Verifiable Agent Memory
 
 ## Related Use Cases
 

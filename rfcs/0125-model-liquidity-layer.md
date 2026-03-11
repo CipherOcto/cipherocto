@@ -1,8 +1,10 @@
-# RFC-0125: Model Liquidity Layer
+# RFC-0125 (Economics): Model Liquidity Layer
 
 ## Status
 
 Draft
+
+> **Note:** This RFC was originally numbered RFC-0125 under the legacy numbering system. It remains at 0125 as it belongs to the Economics category.
 
 ## Summary
 
@@ -832,17 +834,17 @@ Automation ensures:
 
 ## Related RFCs
 
-- RFC-0106: Deterministic Numeric Tower
-- RFC-0108: Verifiable AI Retrieval
-- RFC-0109: Retrieval Architecture
-- RFC-0115: Probabilistic Verification Markets
-- RFC-0120: Deterministic AI Virtual Machine
-- RFC-0121: Verifiable Large Model Execution
-- RFC-0124: Proof Market and Hierarchical Inference Network
-- RFC-0130: Proof-of-Inference Consensus
-- RFC-0131: Deterministic Transformer Circuit
-- RFC-0132: Deterministic Training Circuits
-- RFC-0133: Proof-of-Dataset Integrity
+- RFC-0106 (Numeric/Math): Deterministic Numeric Tower
+- RFC-0108 (Retrieval): Verifiable AI Retrieval
+- RFC-0109 (Retrieval): Retrieval Architecture
+- RFC-0115 (Economics): Probabilistic Verification Markets
+- RFC-0120 (AI Execution): Deterministic AI Virtual Machine
+- RFC-0121 (AI Execution): Verifiable Large Model Execution
+- RFC-0124 (Economics): Proof Market and Hierarchical Inference Network
+- RFC-0130 (Proof Systems): Proof-of-Inference Consensus
+- RFC-0131 (Numeric/Math): Deterministic Transformer Circuit
+- RFC-0132 (Numeric/Math): Deterministic Training Circuits
+- RFC-0133 (Proof Systems): Proof-of-Dataset Integrity
 
 ## Related Use Cases
 

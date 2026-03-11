@@ -10,11 +10,11 @@
 
 ## Depends on
 
-- RFC-0106: Deterministic Numeric Tower
-- RFC-0151: Verifiable RAG Execution
-- RFC-0152: Verifiable Agent Runtime
-- RFC-0153: Agent Mission Marketplace
-- RFC-0155: Deterministic Model Execution Engine
+- RFC-0106 (Numeric/Math): Deterministic Numeric Tower
+- RFC-0151 (AI Execution): Verifiable RAG Execution
+- RFC-0152 (Agents): Verifiable Agent Runtime
+- RFC-0153 (Agents): Agent Mission Marketplace
+- RFC-0155 (AI Execution): Deterministic Model Execution Engine
 
 ## Summary
 
@@ -360,11 +360,11 @@ MLL provides economic layer for AI models:
 
 ## Related RFCs
 
-- RFC-0106: Deterministic Numeric Tower — Arithmetic
-- RFC-0151: Verifiable RAG Execution — Inference
-- RFC-0152: Verifiable Agent Runtime — Agent execution
-- RFC-0153: Agent Mission Marketplace — Task market
-- RFC-0155: Deterministic Model Execution Engine — Model execution
+- RFC-0106 (Numeric/Math): Deterministic Numeric Tower — Arithmetic
+- RFC-0151 (AI Execution): Verifiable RAG Execution — Inference
+- RFC-0152 (Agents): Verifiable Agent Runtime — Agent execution
+- RFC-0153 (Agents): Agent Mission Marketplace — Task market
+- RFC-0155 (AI Execution): Deterministic Model Execution Engine — Model execution
 
 > **Note**: RFC-0156 completes the economic layer for AI models.
 

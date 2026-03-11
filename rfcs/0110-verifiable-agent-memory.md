@@ -656,14 +656,14 @@ Proof Infrastructure (STWO/AIR)
 
 **Prerequisites:**
 
-- RFC-0106: Deterministic Numeric Tower
-- RFC-0108: Verifiable AI Retrieval
-- RFC-0109: Retrieval Architecture
+- RFC-0106 (Numeric/Math): Deterministic Numeric Tower
+- RFC-0108 (Retrieval): Verifiable AI Retrieval
+- RFC-0109 (Retrieval): Retrieval Architecture
 
 **Related RFCs:**
 
-- RFC-0113: Retrieval Gateway & Query Routing
-- RFC-0117: State Virtualization for Massive Agent Scaling
+- RFC-0113 (Retrieval): Retrieval Gateway & Query Routing
+- RFC-0117 (Agents): State Virtualization for Massive Agent Scaling
 
 ## Adversarial Review
 

@@ -10,11 +10,11 @@
 
 ## Depends on
 
-- RFC-0106: Deterministic Numeric Tower
-- RFC-0150: Verifiable Vector Query Execution
-- RFC-0151: Verifiable RAG Execution
-- RFC-0152: Verifiable Agent Runtime
-- RFC-0153: Agent Mission Marketplace
+- RFC-0106 (Numeric/Math): Deterministic Numeric Tower
+- RFC-0150 (Retrieval): Verifiable Vector Query Execution
+- RFC-0151 (AI Execution): Verifiable RAG Execution
+- RFC-0152 (Agents): Verifiable Agent Runtime
+- RFC-0153 (Agents): Agent Mission Marketplace
 
 ## Summary
 
@@ -386,12 +386,12 @@ PHVN provides scalable verification for the AI stack:
 
 ## Related RFCs
 
-- RFC-0106: Deterministic Numeric Tower — Arithmetic
-- RFC-0150: Verifiable Vector Query — Execution proofs
-- RFC-0151: Verifiable RAG Execution — Inference proofs
-- RFC-0152: Verifiable Agent Runtime — Agent proofs
-- RFC-0153: Agent Mission Marketplace — Mission layer
-- RFC-0124: Proof Market and Hierarchical Inference Network (complementary: 0124 focuses on distributed inference, 0154 focuses on verification)
+- RFC-0106 (Numeric/Math): Deterministic Numeric Tower — Arithmetic
+- RFC-0150 (Retrieval): Verifiable Vector Query — Execution proofs
+- RFC-0151 (AI Execution): Verifiable RAG Execution — Inference proofs
+- RFC-0152 (Agents): Verifiable Agent Runtime — Agent proofs
+- RFC-0153 (Agents): Agent Mission Marketplace — Mission layer
+- RFC-0124 (Economics): Proof Market and Hierarchical Inference Network (complementary: 0124 focuses on distributed inference, 0154 focuses on verification)
 
 > **Note**: RFC-0154 completes the verification layer.
 

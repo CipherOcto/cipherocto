@@ -443,15 +443,15 @@ This component enables the network to provide:
 
 **Prerequisites**:
 
-- RFC-0106: Deterministic Numeric Tower
-- RFC-0107: Production Vector-SQL Storage v2
-- RFC-0108: Verifiable AI Retrieval
-- RFC-0109: Retrieval Architecture & Read Economics
+- RFC-0106 (Numeric/Math): Deterministic Numeric Tower
+- RFC-0107 (Storage): Production Vector-SQL Storage v2
+- RFC-0108 (Retrieval): Verifiable AI Retrieval
+- RFC-0109 (Retrieval): Retrieval Architecture & Read Economics
 
 **Related RFCs**:
 
-- RFC-0103: Unified Vector-SQL Storage
-- RFC-0105: Deterministic Quant Arithmetic
+- RFC-0103 (Numeric/Math): Unified Vector-SQL Storage
+- RFC-0105 (Numeric/Math): Deterministic Quant Arithmetic
 
 ## Related Use Cases
 

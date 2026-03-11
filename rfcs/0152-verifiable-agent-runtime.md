@@ -10,12 +10,12 @@
 
 ## Depends on
 
-- RFC-0106: Deterministic Numeric Tower
-- RFC-0108: Verifiable AI Retrieval
-- RFC-0148: Deterministic Linear Algebra Engine
-- RFC-0149: Deterministic Vector Index
-- RFC-0150: Verifiable Vector Query Execution
-- RFC-0151: Verifiable RAG Execution
+- RFC-0106 (Numeric/Math): Deterministic Numeric Tower
+- RFC-0108 (Retrieval): Verifiable AI Retrieval
+- RFC-0148 (Numeric/Math): Deterministic Linear Algebra Engine
+- RFC-0149 (Retrieval): Deterministic Vector Index
+- RFC-0150 (Retrieval): Verifiable Vector Query Execution
+- RFC-0151 (AI Execution): Verifiable RAG Execution
 
 ## Summary
 
@@ -466,13 +466,13 @@ VAR completes the verifiable AI stack by providing:
 
 ## Related RFCs
 
-- RFC-0106: Deterministic Numeric Tower (DNT) — Numeric types
-- RFC-0108: Verifiable AI Retrieval — Retrieval foundations
-- RFC-0148: Deterministic Linear Algebra Engine — Math primitives
-- RFC-0149: Deterministic Vector Index (HNSW-D) — Memory storage
-- RFC-0150: Verifiable Vector Query Execution — Query engine
-- RFC-0151: Verifiable RAG Execution — Model inference
-- RFC-0110: Verifiable Agent Memory — Memory layer
+- RFC-0106 (Numeric/Math): Deterministic Numeric Tower (DNT) — Numeric types
+- RFC-0108 (Retrieval): Verifiable AI Retrieval — Retrieval foundations
+- RFC-0148 (Numeric/Math): Deterministic Linear Algebra Engine — Math primitives
+- RFC-0149 (Retrieval): Deterministic Vector Index (HNSW-D) — Memory storage
+- RFC-0150 (Retrieval): Verifiable Vector Query Execution — Query engine
+- RFC-0151 (AI Execution): Verifiable RAG Execution — Model inference
+- RFC-0110 (Agents): Verifiable Agent Memory — Memory layer
 
 > **Note**: RFC-0152 completes the verifiable AI stack.
 

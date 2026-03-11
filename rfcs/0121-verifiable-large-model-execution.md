@@ -880,13 +880,13 @@ Pipeline allows each node to hold only its shards.
 
 ## Related RFCs
 
-- RFC-0106: Deterministic Numeric Tower
-- RFC-0115: Probabilistic Verification Markets
-- RFC-0117: State Virtualization for Massive Agent Scaling
-- RFC-0118: Autonomous Agent Organizations
-- RFC-0120: Deterministic AI Virtual Machine
-- RFC-0122: Mixture-of-Experts
-- RFC-0123: Scalable Verifiable AI Execution
+- RFC-0106 (Numeric/Math): Deterministic Numeric Tower
+- RFC-0115 (Economics): Probabilistic Verification Markets
+- RFC-0117 (Agents): State Virtualization for Massive Agent Scaling
+- RFC-0118 (Agents): Autonomous Agent Organizations
+- RFC-0120 (AI Execution): Deterministic AI Virtual Machine
+- RFC-0122 (AI Execution): Mixture-of-Experts
+- RFC-0123 (AI Execution): Scalable Verifiable AI Execution
 
 ## Related Use Cases
 

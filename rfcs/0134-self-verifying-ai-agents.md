@@ -766,17 +766,17 @@ Traces enable:
 
 ## Related RFCs
 
-- RFC-0106: Deterministic Numeric Tower
-- RFC-0114: Verifiable Reasoning Traces
-- RFC-0120: Deterministic AI Virtual Machine
-- RFC-0130: Proof-of-Inference Consensus
-- RFC-0131: Deterministic Transformer Circuit
-- RFC-0132: Deterministic Training Circuits
-- RFC-0133: Proof-of-Dataset Integrity
-- RFC-0140: Sharded Consensus Protocol
-- RFC-0141: Parallel Block DAG Specification
-- RFC-0142: Data Availability & Sampling Protocol
-- RFC-0143: OCTO-Network Protocol
+- RFC-0106 (Numeric/Math): Deterministic Numeric Tower
+- RFC-0114 (Agents): Verifiable Reasoning Traces
+- RFC-0120 (AI Execution): Deterministic AI Virtual Machine
+- RFC-0130 (Proof Systems): Proof-of-Inference Consensus
+- RFC-0131 (Numeric/Math): Deterministic Transformer Circuit
+- RFC-0132 (Numeric/Math): Deterministic Training Circuits
+- RFC-0133 (Proof Systems): Proof-of-Dataset Integrity
+- RFC-0140 (Consensus): Sharded Consensus Protocol
+- RFC-0141 (Consensus): Parallel Block DAG Specification
+- RFC-0142 (Consensus): Data Availability & Sampling Protocol
+- RFC-0143 (Networking): OCTO-Network Protocol
 
 ## Related Use Cases
 

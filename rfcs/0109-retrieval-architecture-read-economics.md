@@ -479,7 +479,7 @@ Potential future extensions:
 - ZK-vector search
 - Verifiable ranking proofs
 - Programmable retrieval pipelines
-- RFC-0110: Verifiable Agent Memory
+- RFC-0110 (Agents): Verifiable Agent Memory
 
 ## Proof-Carrying Data Pipelines (PCDP)
 
@@ -560,16 +560,16 @@ By separating **storage economics** from **retrieval economics**, the network en
 
 **Prerequisites**:
 
-- RFC-0106: Deterministic Numeric Tower
-- RFC-0107: Production Vector-SQL Storage v2
-- RFC-0108: Verifiable AI Retrieval
+- RFC-0106 (Numeric/Math): Deterministic Numeric Tower
+- RFC-0107 (Storage): Production Vector-SQL Storage v2
+- RFC-0108 (Retrieval): Verifiable AI Retrieval
 
 **Related RFCs**:
 
-- RFC-0100: AI Quota Marketplace Protocol
-- RFC-0103: Unified Vector-SQL Storage
-- RFC-0105: Deterministic Quant Arithmetic
-- RFC-0113: Retrieval Gateway & Query Routing
+- RFC-0100 (Economics): AI Quota Marketplace Protocol
+- RFC-0103 (Numeric/Math): Unified Vector-SQL Storage
+- RFC-0105 (Numeric/Math): Deterministic Quant Arithmetic
+- RFC-0113 (Retrieval): Retrieval Gateway & Query Routing
 
 ## Related Use Cases
 

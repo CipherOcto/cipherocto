@@ -709,23 +709,23 @@ SNARKs require trusted setup ceremonies which create:
 
 ## Related RFCs
 
-- RFC-0106: Deterministic Numeric Tower
-- RFC-0108: Verifiable AI Retrieval
-- RFC-0109: Retrieval Architecture
-- RFC-0120: Deterministic AI Virtual Machine
-- RFC-0121: Verifiable Large Model Execution
-- RFC-0122: Mixture-of-Experts
-- RFC-0124: Proof Market and Hierarchical Inference Network
-- RFC-0125: Model Liquidity Layer
-- RFC-0131: Deterministic Transformer Circuit
-- RFC-0132: Deterministic Training Circuits
-- RFC-0133: Proof-of-Dataset Integrity
-- RFC-0134: Self-Verifying AI Agents
-- RFC-0140: Sharded Consensus Protocol
-- RFC-0141: Parallel Block DAG Specification
-- RFC-0142: Data Availability & Sampling Protocol
-- RFC-0143: OCTO-Network Protocol
-- RFC-0144: Inference Task Market
+- RFC-0106 (Numeric/Math): Deterministic Numeric Tower
+- RFC-0108 (Retrieval): Verifiable AI Retrieval
+- RFC-0109 (Retrieval): Retrieval Architecture
+- RFC-0120 (AI Execution): Deterministic AI Virtual Machine
+- RFC-0121 (AI Execution): Verifiable Large Model Execution
+- RFC-0122 (AI Execution): Mixture-of-Experts
+- RFC-0124 (Economics): Proof Market and Hierarchical Inference Network
+- RFC-0125 (Economics): Model Liquidity Layer
+- RFC-0131 (Numeric/Math): Deterministic Transformer Circuit
+- RFC-0132 (Numeric/Math): Deterministic Training Circuits
+- RFC-0133 (Proof Systems): Proof-of-Dataset Integrity
+- RFC-0134 (Agents): Self-Verifying AI Agents
+- RFC-0140 (Consensus): Sharded Consensus Protocol
+- RFC-0141 (Consensus): Parallel Block DAG Specification
+- RFC-0142 (Consensus): Data Availability & Sampling Protocol
+- RFC-0143 (Networking): OCTO-Network Protocol
+- RFC-0144 (Economics): Inference Task Market
 
 ## Related Use Cases
 

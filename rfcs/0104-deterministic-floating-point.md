@@ -1742,7 +1742,7 @@ None. DFP is a new type that does not modify existing FLOAT/DOUBLE behavior.
 
 ### Dependencies
 
-- RFC-0103: Vector-SQL Storage (uses f32 internally, but separate)
+- RFC-0103 (Numeric/Math): Vector-SQL Storage (uses f32 internally, but separate)
 - Expression VM (existing Stoolap component)
 
 ### Performance
@@ -1756,9 +1756,9 @@ None. DFP is a new type that does not modify existing FLOAT/DOUBLE behavior.
 
 ## Related RFCs
 
-- RFC-0103: Unified Vector-SQL Storage Engine
-- RFC-0100: AI Quota Marketplace
-- RFC-0102: Wallet Cryptography
+- RFC-0103 (Numeric/Math): Unified Vector-SQL Storage Engine
+- RFC-0100 (Economics): AI Quota Marketplace
+- RFC-0102 (Numeric/Math): Wallet Cryptography
 
 ## Related Use Cases
 

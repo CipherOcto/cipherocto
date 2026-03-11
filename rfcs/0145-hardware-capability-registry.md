@@ -428,9 +428,9 @@ This RFC uses capability bitmaps instead.
 
 ## Related RFCs
 
-- RFC-0143: OCTO-Network Protocol
-- RFC-0144: Inference Task Market
-- RFC-0130: Proof-of-Inference Consensus
+- RFC-0143 (Networking): OCTO-Network Protocol
+- RFC-0144 (Economics): Inference Task Market
+- RFC-0130 (Proof Systems): Proof-of-Inference Consensus
 
 ## Related Use Cases
 

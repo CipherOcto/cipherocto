@@ -366,14 +366,14 @@ Royalties propagate backward through the lineage.
 
 ## Related RFCs
 
-- RFC-0106: Deterministic Numeric Tower
-- RFC-0108: Verifiable AI Retrieval
-- RFC-0110: Verifiable Agent Memory
-- RFC-0111: Knowledge Market & Verifiable Data Assets
-- RFC-0116: Unified Deterministic Execution Model
-- RFC-0117: State Virtualization for Massive Agent Scaling
-- RFC-0118: Autonomous Agent Organizations
-- RFC-0119: Alignment & Control Mechanisms
+- RFC-0106 (Numeric/Math): Deterministic Numeric Tower
+- RFC-0108 (Retrieval): Verifiable AI Retrieval
+- RFC-0110 (Agents): Verifiable Agent Memory
+- RFC-0111 (Agents): Knowledge Market & Verifiable Data Assets
+- RFC-0116 (Numeric/Math): Unified Deterministic Execution Model
+- RFC-0117 (Agents): State Virtualization for Massive Agent Scaling
+- RFC-0118 (Agents): Autonomous Agent Organizations
+- RFC-0119 (Agents): Alignment & Control Mechanisms
 
 ## Related Use Cases
 

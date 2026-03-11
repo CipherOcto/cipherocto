@@ -329,11 +329,11 @@ VRE provides:
 
 ## Related RFCs
 
-- RFC-0106: Deterministic Numeric Tower (DNT) — Numeric types
-- RFC-0108: Verifiable AI Retrieval — Retrieval foundations
-- RFC-0148: Deterministic Linear Algebra Engine — Distance primitives
-- RFC-0149: Deterministic Vector Index (HNSW-D) — ANN index
-- RFC-0150: Verifiable Vector Query Execution — Query engine
+- RFC-0106 (Numeric/Math): Deterministic Numeric Tower (DNT) — Numeric types
+- RFC-0108 (Retrieval): Verifiable AI Retrieval — Retrieval foundations
+- RFC-0148 (Numeric/Math): Deterministic Linear Algebra Engine — Distance primitives
+- RFC-0149 (Retrieval): Deterministic Vector Index (HNSW-D) — ANN index
+- RFC-0150 (Retrieval): Verifiable Vector Query Execution — Query engine
 
 > **Note**: RFC-0151 completes the verifiable AI stack.
 

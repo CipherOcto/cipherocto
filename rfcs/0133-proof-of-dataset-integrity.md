@@ -977,13 +977,13 @@ Reputation aggregates:
 
 ## Related RFCs
 
-- RFC-0106: Deterministic Numeric Tower
-- RFC-0108: Verifiable AI Retrieval
-- RFC-0125: Model Liquidity Layer
-- RFC-0130: Proof-of-Inference Consensus
-- RFC-0131: Deterministic Transformer Circuit
-- RFC-0132: Deterministic Training Circuits
-- RFC-0134: Self-Verifying AI Agents
+- RFC-0106 (Numeric/Math): Deterministic Numeric Tower
+- RFC-0108 (Retrieval): Verifiable AI Retrieval
+- RFC-0125 (Economics): Model Liquidity Layer
+- RFC-0130 (Proof Systems): Proof-of-Inference Consensus
+- RFC-0131 (Numeric/Math): Deterministic Transformer Circuit
+- RFC-0132 (Numeric/Math): Deterministic Training Circuits
+- RFC-0134 (Agents): Self-Verifying AI Agents
 
 ## Related Use Cases
 

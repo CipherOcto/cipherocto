@@ -236,7 +236,7 @@ impl FraudProof {
 
 ## Related RFCs
 
-- RFC-0130: Proof-of-Inference Consensus
-- RFC-0143: OCTO-Network Protocol
-- RFC-0141: Parallel Block DAG
-- RFC-0142: Data Availability & Sampling
+- RFC-0130 (Proof Systems): Proof-of-Inference Consensus
+- RFC-0143 (Networking): OCTO-Network Protocol
+- RFC-0141 (Consensus): Parallel Block DAG
+- RFC-0142 (Consensus): Data Availability & Sampling

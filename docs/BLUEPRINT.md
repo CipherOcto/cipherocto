@@ -68,9 +68,9 @@ We maintain four distinct layers that must never mix:
 │  - Expected behavior                                        │
 │                                                             │
 │  Examples:                                                  │
-│  - RFC-0001: Mission Lifecycle                              │
-│  - RFC-0002: Agent Manifest Spec                            │
-│  - RFC-0003: Storage Provider Protocol                      │
+│  - RFC-0001 (Process/Meta): Mission Lifecycle                              │
+│  - RFC-0002 (Process/Meta): Agent Manifest Spec                            │
+│  - RFC-0003 (Process/Meta): Deterministic Execution Standard                      │
 │                                                             │
 │  Answer: "What must exist before implementation?"           │
 └──────────────────────────┬──────────────────────────────────┘

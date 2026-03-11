@@ -955,16 +955,16 @@ Millions of training steps cannot produce a single proof. Recursive aggregation 
 
 ## Related RFCs
 
-- RFC-0106: Deterministic Numeric Tower
-- RFC-0120: Deterministic AI Virtual Machine
-- RFC-0131: Deterministic Transformer Circuit
-- RFC-0121: Verifiable Large Model Execution
-- RFC-0122: Mixture-of-Experts
-- RFC-0124: Proof Market and Hierarchical Network
-- RFC-0125: Model Liquidity Layer
-- RFC-0130: Proof-of-Inference Consensus
-- RFC-0133: Proof-of-Dataset Integrity
-- RFC-0134: Self-Verifying AI Agents
+- RFC-0106 (Numeric/Math): Deterministic Numeric Tower
+- RFC-0120 (AI Execution): Deterministic AI Virtual Machine
+- RFC-0131 (Numeric/Math): Deterministic Transformer Circuit
+- RFC-0121 (AI Execution): Verifiable Large Model Execution
+- RFC-0122 (AI Execution): Mixture-of-Experts
+- RFC-0124 (Economics): Proof Market and Hierarchical Network
+- RFC-0125 (Economics): Model Liquidity Layer
+- RFC-0130 (Proof Systems): Proof-of-Inference Consensus
+- RFC-0133 (Proof Systems): Proof-of-Dataset Integrity
+- RFC-0134 (Agents): Self-Verifying AI Agents
 
 ## Related Use Cases
 

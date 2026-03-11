@@ -2814,8 +2814,8 @@ None. DNT adds new types.
 
 ### Dependencies
 
-- RFC-0104: DFP
-- RFC-0105: DQA
+- RFC-0104 (Numeric/Math): DFP
+- RFC-0105 (Numeric/Math): DQA
 
 ## Upgrade and Migration Path
 
@@ -2911,11 +2911,11 @@ This RFC anticipates future quantized formats:
 
 ## Related RFCs
 
-- RFC-0104: Deterministic Floating-Point (DFP)
-- RFC-0105: Deterministic Quant Arithmetic (DQA)
-- RFC-0103: Unified Vector-SQL Storage
-- RFC-0108: Verifiable AI Retrieval (ZK circuit integration)
-- RFC-0120: Deterministic AI Virtual Machine
+- RFC-0104 (Numeric/Math): Deterministic Floating-Point (DFP)
+- RFC-0105 (Numeric/Math): Deterministic Quant Arithmetic (DQA)
+- RFC-0103 (Numeric/Math): Unified Vector-SQL Storage
+- RFC-0108 (Retrieval): Verifiable AI Retrieval (ZK circuit integration)
+- RFC-0120 (AI Execution): Deterministic AI Virtual Machine
 
 ## Related Use Cases
 

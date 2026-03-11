@@ -201,11 +201,11 @@ Existing issues can be tagged as missions. No data loss.
 
 ### Dependencies
 
-- RFC-0002: Agent Manifest (missions may be claimed by agents)
+- RFC-0002 (Process/Meta): Agent Manifest (missions may be claimed by agents)
 
 ## Related RFCs
 
-- RFC-0002: Agent Manifest Specification
+- RFC-0002 (Process/Meta): Agent Manifest Specification
 
 ## References
 

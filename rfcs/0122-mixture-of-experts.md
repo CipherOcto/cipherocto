@@ -841,11 +841,11 @@ In decentralized verification:
 
 ## Related RFCs
 
-- RFC-0106: Deterministic Numeric Tower
-- RFC-0115: Probabilistic Verification Markets
-- RFC-0120: Deterministic AI Virtual Machine
-- RFC-0121: Verifiable Large Model Execution
-- RFC-0123: Scalable Verifiable AI Execution
+- RFC-0106 (Numeric/Math): Deterministic Numeric Tower
+- RFC-0115 (Economics): Probabilistic Verification Markets
+- RFC-0120 (AI Execution): Deterministic AI Virtual Machine
+- RFC-0121 (AI Execution): Verifiable Large Model Execution
+- RFC-0123 (AI Execution): Scalable Verifiable AI Execution
 
 ## Related Use Cases
 

@@ -1,8 +1,10 @@
-# RFC-0118: Autonomous Agent Organizations
+# RFC-0118 (Agents): Autonomous Agent Organizations
 
 ## Status
 
 Draft
+
+> **Note:** This RFC was originally numbered RFC-0118 under the legacy numbering system. It remains at 0118 as it belongs to the Agents category.
 
 ## Summary
 

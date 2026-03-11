@@ -1,8 +1,10 @@
-# RFC-0119: Alignment & Control Mechanisms for Autonomous Agents
+# RFC-0119 (Agents): Alignment & Control Mechanisms for Autonomous Agents
 
 ## Status
 
 Draft
+
+> **Note:** This RFC was originally numbered RFC-0119 under the legacy numbering system. It remains at 0119 as it belongs to the Agents category.
 
 ## Summary
 

@@ -1,8 +1,10 @@
-# RFC-0114: Verifiable Reasoning Traces
+# RFC-0114 (Agents): Verifiable Reasoning Traces
 
 ## Status
 
 Draft
+
+> **Note:** This RFC was originally numbered RFC-0114 under the legacy numbering system. It remains at 0114 as it belongs to the Agents category.
 
 ## Summary
 

@@ -1,8 +1,10 @@
-# RFC-0143: OCTO-Network Protocol
+# RFC-0143 (Networking): OCTO-Network Protocol
 
 ## Status
 
 Draft
+
+> **Note:** This RFC was originally numbered RFC-0143 under the legacy numbering system. It remains at 0143 as it belongs to the Networking category.
 
 ## Summary
 

@@ -1,8 +1,10 @@
-# RFC-0120: Deterministic AI Virtual Machine
+# RFC-0120 (AI Execution): Deterministic AI Virtual Machine
 
 ## Status
 
 Draft
+
+> **Note:** This RFC was originally numbered RFC-0120 under the legacy numbering system. It remains at 0120 as it belongs to the AI Execution category.
 
 ## Summary
 
@@ -35,12 +37,12 @@ Research confirms feasibility through:
 
 Without deterministic AI execution:
 
-| Problem | Consequence |
-|---------|-------------|
-| Non-reproducible inference | Verification impossible, fraud detection fails |
-| Hardware variance | Different results on CPU vs GPU vs TPU |
-| Verification cost | Full ZK proofs economically infeasible for large models |
-| Agent unpredictability | Autonomous agents cannot guarantee reproducible behavior |
+| Problem                    | Consequence                                              |
+| -------------------------- | -------------------------------------------------------- |
+| Non-reproducible inference | Verification impossible, fraud detection fails           |
+| Hardware variance          | Different results on CPU vs GPU vs TPU                   |
+| Verification cost          | Full ZK proofs economically infeasible for large models  |
+| Agent unpredictability     | Autonomous agents cannot guarantee reproducible behavior |
 
 The AI-VM enables:
 
@@ -885,12 +887,12 @@ The AI-VM builds directly on the Deterministic Numeric Tower (RFC-0106) for all 
 
 ### Numeric Types Used
 
-| RFC-0106 Type | AI-VM Usage | Purpose |
-|---------------|-------------|---------|
-| `DqaScalar` | Weight matrices, activations | Quantized inference |
-| `DfpScalar` | Intermediate computations | Floating-point precision |
-| `DVEC<N>` | Embedding vectors | Vector search, attention scores |
-| `DMAT<M,N>` | Weight matrices, activation tensors | Linear algebra operations |
+| RFC-0106 Type | AI-VM Usage                         | Purpose                         |
+| ------------- | ----------------------------------- | ------------------------------- |
+| `DqaScalar`   | Weight matrices, activations        | Quantized inference             |
+| `DfpScalar`   | Intermediate computations           | Floating-point precision        |
+| `DVEC<N>`     | Embedding vectors                   | Vector search, attention scores |
+| `DMAT<M,N>`   | Weight matrices, activation tensors | Linear algebra operations       |
 
 ### Key Integration Points
 
@@ -901,12 +903,12 @@ The AI-VM builds directly on the Deterministic Numeric Tower (RFC-0106) for all 
 
 ### Why Not Other Approaches?
 
-| Approach | Why Rejected |
-|----------|--------------|
-| IEEE 754 floats | Non-deterministic across hardware |
-| Vendor tensor cores | Algorithm selection varies |
-| General-purpose vectors | No determinism guarantees |
-| This approach | Full stack determinism via RFC-0106 |
+| Approach                | Why Rejected                        |
+| ----------------------- | ----------------------------------- |
+| IEEE 754 floats         | Non-deterministic across hardware   |
+| Vendor tensor cores     | Algorithm selection varies          |
+| General-purpose vectors | No determinism guarantees           |
+| This approach           | Full stack determinism via RFC-0106 |
 
 ## Related RFCs
 

@@ -1,9 +1,11 @@
-# RFC-0106: Deterministic Numeric Tower (DNT) v28
+# RFC-0106 (Numeric/Math): Deterministic Numeric Tower (DNT)
 
 ## Status
 
-**Version:** v28 (2026-03-10) — v27 Review Fixes (conversion algorithms, TRAP semantics, NORM interface, DFP normalization, commitment scheme)
+**Version:** v28 (2026-03-10)
 **Status:** RFC
+
+> **Note:** This RFC was originally numbered RFC-0106 under the legacy numbering system. It remains at 0106 as it forms the foundational numeric layer for the entire stack.
 
 ## Production Limitations
 

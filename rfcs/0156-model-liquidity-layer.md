@@ -1,10 +1,12 @@
-# RFC-0156: Model Liquidity Layer (MLL)
+# RFC-0156 (Economics): Model Liquidity Layer (MLL)
 
 ## Status
 
 **Version:** 1.0
 **Status:** Draft
 **Submission Date:** 2026-03-10
+
+> **Note:** This RFC was originally numbered RFC-0156 under the legacy numbering system. It remains at 0156 as it belongs to the Economics category.
 
 ## Depends on
 

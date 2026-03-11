@@ -1,8 +1,10 @@
-# RFC-0111: Knowledge Market & Verifiable Data Assets
+# RFC-0111 (Economics): Knowledge Market & Verifiable Data Assets
 
 ## Status
 
 Draft
+
+> **Note:** This RFC was originally numbered RFC-0111 under the legacy numbering system. It remains at 0111 as it belongs to the Economics category.
 
 ## Summary
 

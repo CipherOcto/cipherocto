@@ -1,8 +1,10 @@
-# RFC-0110: Verifiable Agent Memory
+# RFC-0110 (Agents): Verifiable Agent Memory
 
 ## Status
 
 Draft
+
+> **Note:** This RFC was originally numbered RFC-0110 under the legacy numbering system. It remains at 0110 as it belongs to the Agents category.
 
 ## Summary
 

@@ -1,8 +1,10 @@
-# RFC-0123: Scalable Verifiable AI Execution
+# RFC-0123 (AI Execution): Scalable Verifiable AI Execution
 
 ## Status
 
 Draft
+
+> **Note:** This RFC was originally numbered RFC-0123 under the legacy numbering system. It remains at 0123 as it belongs to the AI Execution category.
 
 ## Summary
 

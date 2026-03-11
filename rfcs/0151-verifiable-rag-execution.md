@@ -1,10 +1,12 @@
-# RFC-0151: Verifiable RAG Execution (VRE)
+# RFC-0151 (AI Execution): Verifiable RAG Execution (VRE)
 
 ## Status
 
 **Version:** 1.0
 **Status:** Draft
 **Submission Date:** 2026-03-10
+
+> **Note:** This RFC was originally numbered RFC-0151 under the legacy numbering system. It remains at 0151 as it belongs to the AI Execution category.
 
 ## Summary
 
@@ -14,22 +16,24 @@ Typical RAG pipelines are not reproducible due to nondeterministic retrieval, st
 
 ## Design Goals
 
-| Goal | Target | Metric |
-| ---- | ------ | ------ |
-| G1 | Determinism | Identical inputs → identical outputs |
-| G2 | Verifiability | Proof describing all execution steps |
-| G3 | Reproducibility | Any node can recompute result |
-| G4 | AI-Native Contracts | Smart contracts can trigger RAG pipelines |
+| Goal | Target              | Metric                                    |
+| ---- | ------------------- | ----------------------------------------- |
+| G1   | Determinism         | Identical inputs → identical outputs      |
+| G2   | Verifiability       | Proof describing all execution steps      |
+| G3   | Reproducibility     | Any node can recompute result             |
+| G4   | AI-Native Contracts | Smart contracts can trigger RAG pipelines |
 
 ## Motivation
 
 RAG is essential for modern AI systems:
+
 - Semantic search
 - Question answering
 - Knowledge augmentation
 - Agentic AI
 
 Current RAG implementations are nondeterministic. VRE enables:
+
 - Verifiable AI inference
 - Reproducible results
 - Consensus-safe AI operations
@@ -170,6 +174,7 @@ Tie-breaking: lowest token_id wins
 All model operations use deterministic arithmetic from RFC-0106.
 
 Allowed types:
+
 - INT
 - DQA
 - DVEC
@@ -215,6 +220,7 @@ The proof allows recomputation of the result.
 ### Verifier Algorithm
 
 Verifier checks:
+
 1. Retrieval correctness
 2. Prompt construction
 3. Model inference
@@ -224,23 +230,24 @@ All steps must match the proof.
 
 ## Performance Targets
 
-| Metric | Target | Notes |
-| ------- | ------ | ----- |
-| Retrieval latency | O(EF_SEARCH log N) | ~1ms |
-| Context assembly | O(top_k) | Token processing |
-| Model inference | O(tokens × layers) | Dominant cost |
+| Metric            | Target             | Notes            |
+| ----------------- | ------------------ | ---------------- |
+| Retrieval latency | O(EF_SEARCH log N) | ~1ms             |
+| Context assembly  | O(top_k)           | Token processing |
+| Model inference   | O(tokens × layers) | Dominant cost    |
 
 ## Gas Cost Model
 
 RAG execution has multiple cost components:
 
-| Component | Gas |
-| --------- | ---- |
-| Vector retrieval | EF_SEARCH × dim |
-| Context assembly | context_tokens |
-| Model inference | tokens × model_cost |
+| Component        | Gas                 |
+| ---------------- | ------------------- |
+| Vector retrieval | EF_SEARCH × dim     |
+| Context assembly | context_tokens      |
+| Model inference  | tokens × model_cost |
 
 Approximate formula:
+
 ```
 gas = retrieval_cost + context_cost + inference_cost
 ```
@@ -249,30 +256,30 @@ Inference dominates cost.
 
 ## Consensus Limits
 
-| Constant | Value | Purpose |
-| -------- | ----- | -------- |
-| MAX_TOP_K | 32 | Maximum retrieved chunks |
-| MAX_CONTEXT_TOKENS | 4096 | Maximum context length |
-| MAX_OUTPUT_TOKENS | 512 | Maximum generation |
-| MAX_MODEL_LAYERS | 128 | Maximum model depth |
+| Constant           | Value | Purpose                  |
+| ------------------ | ----- | ------------------------ |
+| MAX_TOP_K          | 32    | Maximum retrieved chunks |
+| MAX_CONTEXT_TOKENS | 4096  | Maximum context length   |
+| MAX_OUTPUT_TOKENS  | 512   | Maximum generation       |
+| MAX_MODEL_LAYERS   | 128   | Maximum model depth      |
 
 Queries exceeding limits must fail.
 
 ## Adversarial Review
 
-| Threat | Impact | Mitigation |
-| ------ | ------ | ---------- |
-| Prompt injection | High | System prompt isolation, deterministic boundaries |
-| Retrieval poisoning | High | Distance thresholds, index integrity |
-| Determinism violation | Critical | Disable all random sampling |
+| Threat                | Impact   | Mitigation                                        |
+| --------------------- | -------- | ------------------------------------------------- |
+| Prompt injection      | High     | System prompt isolation, deterministic boundaries |
+| Retrieval poisoning   | High     | Distance thresholds, index integrity              |
+| Determinism violation | Critical | Disable all random sampling                       |
 
 ## Alternatives Considered
 
-| Approach | Pros | Cons |
-| -------- | ---- | ---- |
-| Standard RAG | Flexible | Non-deterministic |
-| Frozen retrieval only | Deterministic | Limited AI capability |
-| This spec | Verifiable + capable | Requires all RFC deps |
+| Approach              | Pros                 | Cons                  |
+| --------------------- | -------------------- | --------------------- |
+| Standard RAG          | Flexible             | Non-deterministic     |
+| Frozen retrieval only | Deterministic        | Limited AI capability |
+| This spec             | Verifiable + capable | Requires all RFC deps |
 
 ## Implementation Phases
 
@@ -297,11 +304,11 @@ Queries exceeding limits must fail.
 
 ## Key Files to Modify
 
-| File | Change |
-| ----- | ------ |
+| File                            | Change            |
+| ------------------------------- | ----------------- |
 | crates/octo-rag/src/pipeline.rs | Core RAG pipeline |
-| crates/octo-rag/src/proof.rs | Proof generation |
-| crates/octo-vm/src/gas.rs | RAG gas costs |
+| crates/octo-rag/src/proof.rs    | Proof generation  |
+| crates/octo-vm/src/gas.rs       | RAG gas costs     |
 
 ## Future Work
 
@@ -393,4 +400,5 @@ fn construct_prompt(
 **Version:** 1.0
 **Submission Date:** 2026-03-10
 **Changes:**
+
 - Initial draft for VRE specification

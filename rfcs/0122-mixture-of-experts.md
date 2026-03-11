@@ -1,8 +1,10 @@
-# RFC-0122: Mixture-of-Experts for Decentralized Inference
+# RFC-0122 (AI Execution): Mixture-of-Experts for Decentralized Inference
 
 ## Status
 
 Draft
+
+> **Note:** This RFC was originally numbered RFC-0122 under the legacy numbering system. It remains at 0122 as it belongs to the AI Execution category.
 
 ## Summary
 

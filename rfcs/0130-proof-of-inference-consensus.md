@@ -1,8 +1,10 @@
-# RFC-0130: Proof-of-Inference Consensus
+# RFC-0130 (Proof Systems): Proof-of-Inference Consensus
 
 ## Status
 
 Draft
+
+> **Note:** This RFC was originally numbered RFC-0130 under the legacy numbering system. It remains at 0130 as it belongs to the Proof Systems category.
 
 ## Summary
 

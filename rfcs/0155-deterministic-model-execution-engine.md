@@ -1,10 +1,12 @@
-# RFC-0155: Deterministic Model Execution Engine (DMEE)
+# RFC-0155 (AI Execution): Deterministic Model Execution Engine (DMEE)
 
 ## Status
 
 **Version:** 1.0
 **Status:** Draft
 **Submission Date:** 2026-03-10
+
+> **Note:** This RFC was originally numbered RFC-0155 under the legacy numbering system. It remains at 0155 as it belongs to the AI Execution category.
 
 ## Depends on
 

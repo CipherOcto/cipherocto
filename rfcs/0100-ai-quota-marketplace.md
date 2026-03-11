@@ -1,7 +1,10 @@
-# RFC-0100: AI Quota Marketplace Protocol
+# RFC-0100 (Economics): AI Quota Marketplace Protocol
 
 ## Status
+
 Draft
+
+> **Note:** This RFC was originally numbered RFC-0100 under the legacy numbering system. It remains at 0100 as it belongs to the Economics category.
 
 ## Summary
 
@@ -10,6 +13,7 @@ Define the protocol for trading AI API quotas between developers using OCTO-W to
 ## Motivation
 
 Enable developers to:
+
 - Contribute spare AI API quota to the network
 - Earn OCTO-W tokens for contributed quota
 - Purchase quota from other developers when needed
@@ -53,11 +57,11 @@ interface QuotaRouter {
 
 ### Token Economics
 
-| Action | Token |
-|--------|-------|
-| Contribute 1 prompt | +1 OCTO-W |
-| Purchase 1 prompt | -1 OCTO-W |
-| Minimum listing | 10 prompts |
+| Action              | Token      |
+| ------------------- | ---------- |
+| Contribute 1 prompt | +1 OCTO-W  |
+| Purchase 1 prompt   | -1 OCTO-W  |
+| Minimum listing     | 10 prompts |
 
 ### Routing Protocol
 
@@ -100,7 +104,7 @@ async function routePrompt(
 
 ## Implementation
 
-*Implementation phases have been moved to the Roadmap and Mission files.*
+_Implementation phases have been moved to the Roadmap and Mission files._
 
 See: `missions/quota-router-mve.md`, `missions/quota-market-integration.md`
 
@@ -108,10 +112,10 @@ See: `missions/quota-router-mve.md`, `missions/quota-market-integration.md`
 
 ### Registry Decision
 
-| Option | Pros | Cons | Recommendation |
-|--------|------|------|----------------|
-| **Off-chain** | Fast, cheap | Less trust | MVE - start here |
-| **On-chain** | Trustless, verifiable | Expensive, slow | Phase 2 |
+| Option        | Pros                  | Cons            | Recommendation   |
+| ------------- | --------------------- | --------------- | ---------------- |
+| **Off-chain** | Fast, cheap           | Less trust      | MVE - start here |
+| **On-chain**  | Trustless, verifiable | Expensive, slow | Phase 2          |
 
 ### Escrow Flow
 
@@ -136,9 +140,9 @@ See: `missions/quota-router-mve.md`, `missions/quota-market-integration.md`
 
 ```typescript
 enum DisputeOutcome {
-  Valid,      // Refund buyer, slash seller
-  Invalid,    // Keep payment, no action
-  Partial,    // Partial refund
+  Valid, // Refund buyer, slash seller
+  Invalid, // Keep payment, no action
+  Partial, // Partial refund
 }
 
 interface Dispute {
@@ -146,8 +150,8 @@ interface Dispute {
   buyer: string;
   seller: string;
   listing_id: string;
-  reason: 'failed_response' | 'garbage_data' | 'timeout';
-  evidence: string;  // URL or hash
+  reason: "failed_response" | "garbage_data" | "timeout";
+  evidence: string; // URL or hash
   timestamp: number;
 }
 
@@ -160,13 +164,13 @@ interface Dispute {
 
 **MVE Solution:** Heavily weight automated failures:
 
-| Dispute Type | Evidence | Verifiability |
-|-------------|----------|---------------|
-| **Timeout** | Network logs, timestamps | Automatic |
-| **Provider error** | Provider error codes | Automatic |
-| **Latency high** | Latency measurements | Automatic |
-| **Garbage response** | Requires human review | Manual |
-| **Failed response** | HTTP status codes | Automatic |
+| Dispute Type         | Evidence                 | Verifiability |
+| -------------------- | ------------------------ | ------------- |
+| **Timeout**          | Network logs, timestamps | Automatic     |
+| **Provider error**   | Provider error codes     | Automatic     |
+| **Latency high**     | Latency measurements     | Automatic     |
+| **Garbage response** | Requires human review    | Manual        |
+| **Failed response**  | HTTP status codes        | Automatic     |
 
 **For MVE:** Focus disputes on automated verifications (timeouts, errors, latency). Response quality disputes require trust (reputation-based) until cryptographic solutions emerge.
 
@@ -177,24 +181,24 @@ interface Dispute {
 ```typescript
 interface SlashingRules {
   // First offense: 10% of stake
-  first_offense_penalty: 0.10;
+  first_offense_penalty: 0.1;
 
   // Escalation per offense
   offense_multiplier: 1.5;
 
   // Permanent ban threshold
-  permanent_ban_at: 0.50;  // 50% of stake lost
+  permanent_ban_at: 0.5; // 50% of stake lost
 }
 ```
 
 ## Security
 
-| Mechanism | Purpose |
-|----------|---------|
-| Local proxy only | API keys never leave machine |
-| Balance check first | Prevent overspending |
-| Stake requirement | Prevent spam/abuse |
-| Reputation system | Build trust |
+| Mechanism           | Purpose                      |
+| ------------------- | ---------------------------- |
+| Local proxy only    | API keys never leave machine |
+| Balance check first | Prevent overspending         |
+| Stake requirement   | Prevent spam/abuse           |
+| Reputation system   | Build trust                  |
 
 ## Related Use Cases
 
@@ -253,7 +257,7 @@ The marketplace must support logging without exposing sensitive data:
 ```typescript
 interface MarketTelemetry {
   // What we log (no PII)
-  event: 'purchase' | 'listing' | 'swap' | 'dispute';
+  event: "purchase" | "listing" | "swap" | "dispute";
   timestamp: number;
   provider: string;
   octo_w_amount: number;
@@ -269,12 +273,12 @@ interface MarketTelemetry {
 
 ## Security & Privacy
 
-| Concern | Mitigation |
-|---------|------------|
-| API key exposure | Local proxy only, keys never transmitted |
-| Prompt privacy | ⚠️ **TRUST ASSUMPTION** - Sellers see prompt content when executing API calls |
-| Wallet privacy | Pseudonymous addresses |
-| Data residency | No central storage |
+| Concern          | Mitigation                                                                    |
+| ---------------- | ----------------------------------------------------------------------------- |
+| API key exposure | Local proxy only, keys never transmitted                                      |
+| Prompt privacy   | ⚠️ **TRUST ASSUMPTION** - Sellers see prompt content when executing API calls |
+| Wallet privacy   | Pseudonymous addresses                                                        |
+| Data residency   | No central storage                                                            |
 
 **Important:** Prompt content is visible to the seller who executes the API request.
 This is a trust-based model, not cryptographic. See Research doc for future options (TEE/ZK).

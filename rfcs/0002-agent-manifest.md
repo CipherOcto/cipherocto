@@ -1,8 +1,10 @@
-# RFC-0002: Agent Manifest Specification
+# RFC-0002 (Process/Meta): Agent Manifest Specification
 
 ## Status
 
 Accepted
+
+> **Note:** This RFC was originally numbered RFC-0002 under the legacy numbering system. It remains at 0002 as it belongs to the Process/Meta category.
 
 ## Summary
 

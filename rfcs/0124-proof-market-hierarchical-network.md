@@ -1,8 +1,10 @@
-# RFC-0124: Proof Market and Hierarchical Inference Network
+# RFC-0124 (Proof Systems): Proof Market and Hierarchical Inference Network
 
 ## Status
 
 Draft
+
+> **Note:** This RFC was originally numbered RFC-0124 under the legacy numbering system. It remains at 0124 as it belongs to the Proof Systems category.
 
 ## Summary
 

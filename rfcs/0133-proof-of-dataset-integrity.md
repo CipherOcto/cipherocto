@@ -1,8 +1,10 @@
-# RFC-0133: Proof-of-Dataset Integrity
+# RFC-0133 (Proof Systems): Proof-of-Dataset Integrity
 
 ## Status
 
 Draft
+
+> **Note:** This RFC was originally numbered RFC-0133 under the legacy numbering system. It remains at 0133 as it belongs to the Proof Systems category.
 
 ## Summary
 

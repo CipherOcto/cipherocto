@@ -1,8 +1,10 @@
-# RFC-0115: Probabilistic Verification Markets
+# RFC-0115 (Proof Systems): Probabilistic Verification Markets
 
 ## Status
 
 Draft
+
+> **Note:** This RFC was originally numbered RFC-0115 under the legacy numbering system. It remains at 0115 as it belongs to the Proof Systems category.
 
 ## Summary
 

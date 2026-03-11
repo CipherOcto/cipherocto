@@ -1,8 +1,10 @@
-# RFC-0132: Deterministic Training Circuits
+# RFC-0132 (Numeric/Math): Deterministic Training Circuits
 
 ## Status
 
 Draft
+
+> **Note:** This RFC was originally numbered RFC-0132 under the legacy numbering system. It remains at 0132 as it belongs to the Numeric/Math category.
 
 ## Summary
 

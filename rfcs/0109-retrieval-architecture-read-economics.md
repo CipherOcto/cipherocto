@@ -1,8 +1,10 @@
-# RFC-0109: Retrieval Architecture & Read Economics
+# RFC-0109 (Retrieval): Retrieval Architecture & Read Economics
 
 ## Status
 
 Draft
+
+> **Note:** This RFC was originally numbered RFC-0109 under the legacy numbering system. It remains at 0109 as it belongs to the Retrieval category.
 
 ## Summary
 

@@ -1,8 +1,10 @@
-# RFC-0116: Unified Deterministic Execution Model
+# RFC-0116 (Numeric/Math): Unified Deterministic Execution Model
 
 ## Status
 
 Draft
+
+> **Note:** This RFC was originally numbered RFC-0116 under the legacy numbering system. It remains at 0116 as it belongs to the Numeric/Math category.
 
 ## Summary
 

@@ -1,8 +1,10 @@
-# RFC-0145: Hardware Capability Registry
+# RFC-0145 (Networking): Hardware Capability Registry
 
 ## Status
 
 Draft
+
+> **Note:** This RFC was originally numbered RFC-0145 under the legacy numbering system. It remains at 0145 as it belongs to the Networking category.
 
 ## Summary
 
@@ -10,12 +12,12 @@ This RFC defines the **Hardware Capability Registry** — a protocol for nodes t
 
 ## Design Goals
 
-| Goal | Target | Metric |
-| ---- | ------ | ------ |
-| G1: Capability Advertisement | All nodes advertise hardware | 100% coverage |
-| G2: Accurate Metrics | Real-time hardware reporting | <30s refresh |
-| G3: Task Matching | Intelligent worker selection | <5s assignment |
-| G4: Privacy | Minimal hardware fingerprinting | No unique identification |
+| Goal                         | Target                          | Metric                   |
+| ---------------------------- | ------------------------------- | ------------------------ |
+| G1: Capability Advertisement | All nodes advertise hardware    | 100% coverage            |
+| G2: Accurate Metrics         | Real-time hardware reporting    | <30s refresh             |
+| G3: Task Matching            | Intelligent worker selection    | <5s assignment           |
+| G4: Privacy                  | Minimal hardware fingerprinting | No unique identification |
 
 ## Motivation
 
@@ -34,12 +36,12 @@ Research confirms feasibility through:
 
 Without hardware capability registry:
 
-| Problem | Consequence |
-|---------|-------------|
-| Blind task routing | Workers receive unsuitable tasks |
-| GPU starvation | Memory-intensive tasks sent to low-RAM nodes |
-| Performance degradation | Timeouts, failed proofs, wasted work |
-| Economic inefficiency | Misallocated compute resources |
+| Problem                 | Consequence                                  |
+| ----------------------- | -------------------------------------------- |
+| Blind task routing      | Workers receive unsuitable tasks             |
+| GPU starvation          | Memory-intensive tasks sent to low-RAM nodes |
+| Performance degradation | Timeouts, failed proofs, wasted work         |
+| Economic inefficiency   | Misallocated compute resources               |
 
 The registry enables:
 
@@ -345,30 +347,30 @@ impl HardwareRegistry {
 
 ## Performance Targets
 
-| Metric | Target | Notes |
-|--------|--------|-------|
-| Advertisement refresh | <30s | Near real-time |
-| Worker matching | <5s | Per task |
-| Registry lookup | <100ms | Query response |
-| Capability verification | <60s | Initial registration |
+| Metric                  | Target | Notes                |
+| ----------------------- | ------ | -------------------- |
+| Advertisement refresh   | <30s   | Near real-time       |
+| Worker matching         | <5s    | Per task             |
+| Registry lookup         | <100ms | Query response       |
+| Capability verification | <60s   | Initial registration |
 
 ## Adversarial Review
 
-| Threat | Impact | Mitigation |
-|--------|--------|------------|
-| **Capability falsification** | High | Staked self-report + random benchmarks |
-| **Hardware fingerprinting** | Medium | Aggregate data, differential privacy |
-| **Reputation manipulation** | High | Slashing for false reporting |
-| **Sybil attacks** | High | Stake requirement + rate limiting |
+| Threat                       | Impact | Mitigation                             |
+| ---------------------------- | ------ | -------------------------------------- |
+| **Capability falsification** | High   | Staked self-report + random benchmarks |
+| **Hardware fingerprinting**  | Medium | Aggregate data, differential privacy   |
+| **Reputation manipulation**  | High   | Slashing for false reporting           |
+| **Sybil attacks**            | High   | Stake requirement + rate limiting      |
 
 ## Alternatives Considered
 
-| Approach | Pros | Cons |
-|----------|------|------|
-| **Centralized benchmarking** | Accurate | Single point of failure |
-| **Peer verification** | Decentralized | Collusion risk |
-| **Self-reporting only** | Simple | Easy to fake |
-| **This approach** | Balanced | Stake requirement |
+| Approach                     | Pros          | Cons                    |
+| ---------------------------- | ------------- | ----------------------- |
+| **Centralized benchmarking** | Accurate      | Single point of failure |
+| **Peer verification**        | Decentralized | Collusion risk          |
+| **Self-reporting only**      | Simple        | Easy to fake            |
+| **This approach**            | Balanced      | Stake requirement       |
 
 ## Implementation Phases
 

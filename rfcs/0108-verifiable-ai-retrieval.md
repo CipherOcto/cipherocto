@@ -1,8 +1,10 @@
-# RFC-0108: Verifiable AI Retrieval
+# RFC-0108 (Retrieval): Verifiable AI Retrieval
 
 ## Status
 
 Draft
+
+> **Note:** This RFC was originally numbered RFC-0108 under the legacy numbering system. It remains at 0108 as it belongs to the Retrieval category.
 
 ## Summary
 

@@ -1,10 +1,12 @@
-# RFC-0153: Agent Mission Marketplace (AMM)
+# RFC-0153 (Economics): Agent Mission Marketplace (AMM)
 
 ## Status
 
 **Version:** 1.0
 **Status:** Draft
 **Submission Date:** 2026-03-10
+
+> **Note:** This RFC was originally numbered RFC-0153 under the legacy numbering system. It remains at 0153 as it belongs to the Economics category.
 
 ## Depends on
 

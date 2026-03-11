@@ -1,8 +1,10 @@
-# RFC-0121: Verifiable Large Model Execution
+# RFC-0121 (AI Execution): Verifiable Large Model Execution
 
 ## Status
 
 Draft
+
+> **Note:** This RFC was originally numbered RFC-0121 under the legacy numbering system. It remains at 0121 as it belongs to the AI Execution category.
 
 ## Summary
 

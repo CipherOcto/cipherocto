@@ -1,8 +1,10 @@
-# RFC-0134: Self-Verifying AI Agents
+# RFC-0134 (Agents): Self-Verifying AI Agents
 
 ## Status
 
 Draft
+
+> **Note:** This RFC was originally numbered RFC-0134 under the legacy numbering system. It remains at 0134 as it belongs to the Agents category.
 
 ## Summary
 

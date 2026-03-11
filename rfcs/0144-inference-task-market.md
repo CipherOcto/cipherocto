@@ -1,8 +1,10 @@
-# RFC-0144: Inference Task Market
+# RFC-0144 (Economics): Inference Task Market
 
 ## Status
 
 Draft
+
+> **Note:** This RFC was originally numbered RFC-0144 under the legacy numbering system. It remains at 0144 as it belongs to the Economics category.
 
 ## Summary
 

@@ -1,8 +1,10 @@
-# RFC-0146: Proof Aggregation Protocol
+# RFC-0146 (Proof Systems): Proof Aggregation Protocol
 
 ## Status
 
 Draft
+
+> **Note:** This RFC was originally numbered RFC-0146 under the legacy numbering system. It remains at 0146 as it belongs to the Proof Systems category.
 
 ## Summary
 
@@ -10,12 +12,12 @@ This RFC defines the **Proof Aggregation Protocol** — a system for combining m
 
 ## Design Goals
 
-| Goal | Target | Metric |
-| ---- | ------ | ------ |
-| G1: Proof Compression | 10x size reduction | >90% reduction |
-| G2: Batch Verification | O(1) verification | Independent of batch size |
-| G3: Recursive Composition | Binary recursion | Up to 2^10 proofs |
-| G4: Incremental Updates | Associative aggregation | O(log n) |
+| Goal                      | Target                  | Metric                    |
+| ------------------------- | ----------------------- | ------------------------- |
+| G1: Proof Compression     | 10x size reduction      | >90% reduction            |
+| G2: Batch Verification    | O(1) verification       | Independent of batch size |
+| G3: Recursive Composition | Binary recursion        | Up to 2^10 proofs         |
+| G4: Incremental Updates   | Associative aggregation | O(log n)                  |
 
 ## Motivation
 
@@ -34,12 +36,12 @@ Research confirms feasibility through:
 
 Without proof aggregation:
 
-| Problem | Consequence |
-|---------|-------------|
-| Linear verification cost | Each proof verified separately |
-| Bandwidth explosion | Full proofs transmitted per task |
-| Storage bloat | Large proof archives |
-| Scalability ceiling | Network hits verification bottleneck |
+| Problem                  | Consequence                          |
+| ------------------------ | ------------------------------------ |
+| Linear verification cost | Each proof verified separately       |
+| Bandwidth explosion      | Full proofs transmitted per task     |
+| Storage bloat            | Large proof archives                 |
+| Scalability ceiling      | Network hits verification bottleneck |
 
 Proof aggregation enables:
 
@@ -84,11 +86,11 @@ RFC-0140 (Sharded Consensus)
 
 ### Attackers
 
-| Attacker | Capability | Goal |
-|----------|------------|-------|
-| Malicious Worker | Submit invalid proofs | Disrupt aggregation |
-| Malicious Aggregator | Exclude valid proofs | Censor workers |
-| Colluding Aggregators | Reorder proofs | Manipulate ordering |
+| Attacker              | Capability            | Goal                |
+| --------------------- | --------------------- | ------------------- |
+| Malicious Worker      | Submit invalid proofs | Disrupt aggregation |
+| Malicious Aggregator  | Exclude valid proofs  | Censor workers      |
+| Colluding Aggregators | Reorder proofs        | Manipulate ordering |
 
 ### Trust Model
 
@@ -289,6 +291,7 @@ Constraints:
 ```
 
 > **Why MMR for Circuit:**
+>
 > - **Efficient:** O(log n) update without rebuilding entire tree
 > - **Append-only:** New proofs added to end, preserving order
 > - **Deterministic:** Same proofs in same order → same peaks
@@ -344,12 +347,14 @@ struct AggregatedProof {
 > **Note on `program_hash`:** This is the hash of the compiled STARK circuit (the verification key). It prevents cross-circuit aggregation attacks where proofs from different AI models could be mixed. The registry of allowed `program_hash` values is maintained by governance; only accepted circuit hashes may be aggregated.
 >
 > **ZK Privacy Model:**
+>
 > - `program_hash` is **public** to the verifier (included in aggregate_id)
 > - The **actual circuit** (model weights, architecture) remains **private**
 > - Aggregators verify proofs without learning model details
 > - Only the VK hash is revealed, not the model itself
 
 **Binding prevents:**
+
 - Proof swapping (different child order)
 - Cross-circuit aggregation (different programs)
 - Replay attacks (epoch/block binding via aggregate_id)
@@ -400,15 +405,15 @@ struct VerificationKey {
 
 The protocol targets specific security levels:
 
-| Parameter | Target | Notes |
-|-----------|--------|-------|
-| Base security | 128 bits | Per recursion layer |
-| Cumulative security | ≥100 bits | After 10 levels |
-| **FRI (MANDATORY)** | See below | Specific parameters |
-| Query complexity | 40-60 | FRI queries per proof |
-| **Field (MANDATORY)** | M31 | Circle STARKs field |
-| **Hash (MANDATORY)** | Poseidon | ZK-friendly hash |
-| Hash security | 256 bits | Poseidon hash |
+| Parameter             | Target    | Notes                 |
+| --------------------- | --------- | --------------------- |
+| Base security         | 128 bits  | Per recursion layer   |
+| Cumulative security   | ≥100 bits | After 10 levels       |
+| **FRI (MANDATORY)**   | See below | Specific parameters   |
+| Query complexity      | 40-60     | FRI queries per proof |
+| **Field (MANDATORY)** | M31       | Circle STARKs field   |
+| **Hash (MANDATORY)**  | Poseidon  | ZK-friendly hash      |
+| Hash security         | 256 bits  | Poseidon hash         |
 
 **FRI Parameters (MANDATORY):**
 
@@ -465,13 +470,14 @@ This provides a hard constraint for circuit designers.
 
 > **REQUIRED:** Implementations MUST use ONE of the following fields for Circle STARKs alignment:
 
-| Field | Modulus | Bits | Use Case |
-|-------|---------|------|----------|
-| **M31** | 2^31 - 1 | 31 | Default (Circle STARKs) |
-| BabyBear | 2^31 - 2^27 + 1 | 31 | EVM compatibility |
-| Goldilocks | 2^64 - 2^32 + 1 | 64 | High throughput |
+| Field      | Modulus         | Bits | Use Case                |
+| ---------- | --------------- | ---- | ----------------------- |
+| **M31**    | 2^31 - 1        | 31   | Default (Circle STARKs) |
+| BabyBear   | 2^31 - 2^27 + 1 | 31   | EVM compatibility       |
+| Goldilocks | 2^64 - 2^32 + 1 | 64   | High throughput         |
 
 **Field Selection Rationale:**
+
 - **M31**: Default choice for Circle STARKs, fastest recursion
 - **BabyBear**: Best EVM compatibility, native BN254 pairing
 - **Goldilocks**: Highest throughput for base circuits
@@ -482,13 +488,13 @@ This provides a hard constraint for circuit designers.
 
 ### Actors
 
-| Actor | Role |
-|-------|------|
-| Worker | Produces inference proofs |
-| Collector | Gathers proofs from workers |
+| Actor      | Role                         |
+| ---------- | ---------------------------- |
+| Worker     | Produces inference proofs    |
+| Collector  | Gathers proofs from workers  |
 | Aggregator | Builds recursive aggregation |
-| Verifier | Validates aggregated proofs |
-| Consensus | Includes in blocks |
+| Verifier   | Validates aggregated proofs  |
+| Consensus  | Includes in blocks           |
 
 ### Complete Flow
 
@@ -538,7 +544,7 @@ impl ProofCollector {
 
 The protocol defines these message types for peer-to-peer communication:
 
-```rust
+````rust
 /// Network message types for proof aggregation
 enum AggregationMessage {
     /// Worker submits proof to collector
@@ -673,7 +679,7 @@ impl ProofAggregator {
         }
     }
 }
-```
+````
 
 ## Aggregation Levels
 
@@ -690,25 +696,25 @@ level n:  2^n proofs
 
 ### Level Parameters
 
-| Level | Max Proofs | Use Case |
-|-------|------------|----------|
-| 0 | 1 | Individual |
-| 1 | 2 | Quick batch |
-| 2 | 4 | Standard batch |
-| 3 | 8 | Large batch |
-| 4 | 16 | Block |
-| 5 | 32 | Epoch |
-| ... | 2^n | Extended |
+| Level | Max Proofs | Use Case       |
+| ----- | ---------- | -------------- |
+| 0     | 1          | Individual     |
+| 1     | 2          | Quick batch    |
+| 2     | 4          | Standard batch |
+| 3     | 8          | Large batch    |
+| 4     | 16         | Block          |
+| 5     | 32         | Epoch          |
+| ...   | 2^n        | Extended       |
 
 ### Non-Power-of-Two Batch Sizes
 
 The binary tree assumes powers of two. Handle odd batch sizes:
 
-| Method | Description | When |
-|--------|-------------|------|
-| **Padding** | Add null/identity proofs to reach power of two | Default |
-| **Variable-depth** | Use different depths for different subtrees | Performance-critical |
-| **Leftover handling** | Aggregate power-of-two subset, verify remaining individually | Simpler |
+| Method                | Description                                                  | When                 |
+| --------------------- | ------------------------------------------------------------ | -------------------- |
+| **Padding**           | Add null/identity proofs to reach power of two               | Default              |
+| **Variable-depth**    | Use different depths for different subtrees                  | Performance-critical |
+| **Leftover handling** | Aggregate power-of-two subset, verify remaining individually | Simpler              |
 
 **DECISION: Padding with Option 1 (Identity Verification)**
 
@@ -736,12 +742,13 @@ impl AggregationCircuit {
 ```
 
 **Rationale:**
+
 - Avoids complex zero-knowledge padding circuits
 - Maintains constant verification time
 - Simple implementation with clear semantics
 - No special cryptographic assumptions
 
-```rust
+````rust
 /// Pad to power of two
 fn pad_to_power_of_two(proofs: Vec<InferenceProof>) -> Vec<InferenceProof> {
     let count = proofs.len();
@@ -853,16 +860,16 @@ impl Epoch {
             .collect()
     }
 }
-```
+````
 
 **Epoch Boundary Rules:**
 
-| Scenario | Handling |
-|----------|----------|
-| Proof arrives after epoch ends | Rejected (wrong epoch) |
+| Scenario                          | Handling                     |
+| --------------------------------- | ---------------------------- |
+| Proof arrives after epoch ends    | Rejected (wrong epoch)       |
 | Proof in flight during transition | Accepted during grace period |
-| Aggregator spans epochs | Split aggregation by epoch |
-| Cross-epoch aggregation | Not allowed |
+| Aggregator spans epochs           | Split aggregation by epoch   |
+| Cross-epoch aggregation           | Not allowed                  |
 
 ### Error Handling
 
@@ -946,12 +953,12 @@ enum RecoveryAction {
 
 **Error Handling Rules:**
 
-| Error Type | Recovery | On-Failure Verification |
-|------------|----------|------------------------|
-| Network Partition | Retry missed proofs | Individual |
-| Collection Timeout | Partial if ≥50% | Individual remaining |
-| Aggregation Failure | Fall back to individual | Full individual |
-| Partial Batch | Mixed mode | Both paths |
+| Error Type          | Recovery                | On-Failure Verification |
+| ------------------- | ----------------------- | ----------------------- |
+| Network Partition   | Retry missed proofs     | Individual              |
+| Collection Timeout  | Partial if ≥50%         | Individual remaining    |
+| Aggregation Failure | Fall back to individual | Full individual         |
+| Partial Batch       | Mixed mode              | Both paths              |
 
 ```
 A(P1, P2, P3) = A(A(P1, P2), P3) = A(P1, A(P2, P3))
@@ -961,20 +968,22 @@ A(P1, P2, P3) = A(A(P1, P2), P3) = A(P1, A(P2, P3))
 
 The protocol uses **Merkle Mountain Range (MMR)** — an append-only structure that is **NOT associative** but is **deterministic**. This is a critical distinction:
 
-| Property | Associativity | MMR (This RFC) |
-|----------|---------------|----------------|
-| Definition | `(A+B)+C = A+(B+C)` | Fixed insertion order |
-| Tree structure | Any parenthesization | Left-to-right append |
-| Proof mixing | Allowed | NOT allowed |
-| Operation | Commutative-like | Order-dependent |
+| Property       | Associativity        | MMR (This RFC)        |
+| -------------- | -------------------- | --------------------- |
+| Definition     | `(A+B)+C = A+(B+C)`  | Fixed insertion order |
+| Tree structure | Any parenthesization | Left-to-right append  |
+| Proof mixing   | Allowed              | NOT allowed           |
+| Operation      | Commutative-like     | Order-dependent       |
 
 **Why MMR is NOT Associative:**
 MMRs are order-dependent data structures. Inserting A, then B, then C produces a different structure than inserting B, then A, then C. This is **by design** — it ensures:
+
 - **Append-only:** New proofs always added to end
 - **Order-preserving:** Proof submission order is captured
 - **Efficient:** O(log n) per insertion
 
 **This is acceptable because:**
+
 - The protocol defines a **canonical ordering** (by proof_id or block timestamp)
 - All honest aggregators will produce identical MMR roots for identical proof sequences
 
@@ -1001,6 +1010,7 @@ fn canonical_aggregate(proofs: &[InferenceProof]) -> AggregatedProof {
 ```
 
 This ensures:
+
 - **Unique root:** Same set of proofs → same sorted order → same root
 - **No confusion:** `((P1,P2),P3)` in canonical order equals `(P1,(P2,P3))` because order is fixed
 - **Deterministic:** All aggregators produce identical roots for identical proof sets
@@ -1094,11 +1104,13 @@ fn mmr_append(
 ```
 
 **Why Merkle Mountain Range:**
+
 - **Append-only:** New proofs added to end, never reordering
 - **O(log n):** Efficient updates without rebuilding tree
 - **Deterministic:** Same insertion order → same root
 - **Battle-tested:** Used in Grin, Filecoin consensus
-```
+
+````
 
 **Key properties:**
 - `proof_count` increments by 1
@@ -1146,16 +1158,17 @@ impl AggregationRewards {
 const AGGREGATOR_SHARE: u8 = 20;  // 20% to aggregator
 const BASE_REWARD_PER_PROOF: u64 = 10;  // 10 OCTO tokens
 const EPOCH_REWARD_POOL: u64 = 1_000_000;  // 1M OCTO per epoch
-```
+````
 
 **Reward Model:**
 
-| Actor | Reward Source | Percentage |
-|-------|--------------|------------|
-| Aggregator | Per-aggregate fee | 20% |
-| Workers | Per-proof base | 80% (split) |
+| Actor      | Reward Source     | Percentage  |
+| ---------- | ----------------- | ----------- |
+| Aggregator | Per-aggregate fee | 20%         |
+| Workers    | Per-proof base    | 80% (split) |
 
 **Incentive Structure:**
+
 - Aggregators are rewarded for successful proof aggregation
 - Workers receive base rewards for producing valid proofs
 - Penalties (slashing) fund the reward pool
@@ -1197,12 +1210,12 @@ fn verify_at_consensus(
 
 When `verify_at_consensus` returns `false`:
 
-| Condition | Action |
-|----------|--------|
-| Invalid proof | Block rejected entirely |
-| Invalid metadata | Block rejected |
-| Missing required fields | Block rejected |
-| Proof not for current epoch | Block rejected |
+| Condition                   | Action                  |
+| --------------------------- | ----------------------- |
+| Invalid proof               | Block rejected entirely |
+| Invalid metadata            | Block rejected          |
+| Missing required fields     | Block rejected          |
+| Proof not for current epoch | Block rejected          |
 
 ### Double-Aggregation Resolution
 
@@ -1297,13 +1310,16 @@ const PENALTY_FRACTIONAL_OK: bool = false;  // whole token penalties only
 To enable RFC-0140 integration, this RFC defines the minimal interface:
 
 ```
+
 ParentShard {
-    /// Receives aggregated proofs from child shards
-    fn receive_child_aggregate(aggregate: AggregatedProof, child_shard_id: u16)
+/// Receives aggregated proofs from child shards
+fn receive_child_aggregate(aggregate: AggregatedProof, child_shard_id: u16)
 
     /// Performs cross-shard aggregation
     fn cross_shard_aggregate(child_proofs: Vec<AggregatedProof>) -> CrossShardProof
+
 }
+
 ```
 
 **Cross-shard aggregation will be addressed in a future dedicated RFC** after RFC-0140 defines the sharding architecture. The interface above provides the contract that future RFC must implement against.
@@ -1429,13 +1445,15 @@ Proofs from different circuits/programs should not be aggregated together.
 
 For an attacker to profit from censorship:
 ```
+
 Attack Gain < Expected Penalty
 G < (Detection_Probability × Slash_Amount)
 G < (0.9 × 50,000 OCTO)
 G < 45,000 OCTO
 
 Therefore: Any censorship attempt with gain < 45,000 OCTO is irrational.
-```
+
+````
 
 ### Economic Parameters (Governance-Adjustable)
 
@@ -1472,7 +1490,7 @@ struct EconomicParams {
     /// Maximum recursion depth
     max_depth: u8 = 10,
 }
-```
+````
 
 ### Appeal Process
 
@@ -1575,6 +1593,7 @@ fn prove_censorship(
 ```
 
 **Why Receipts Are Required:**
+
 - Without receipts, fishermen cannot prove a proof was submitted
 - Aggregators could claim "never received" valid proofs
 - Receipts create on-chain evidence of submission intent
@@ -1591,13 +1610,13 @@ To ensure economic model robustness:
 
 ### Known Attacks
 
-| Attack | Impact | Mitigation |
-|--------|--------|------------|
-| Proof mixing | High | Task ID binding in proof |
-| Aggregation replay | High | Epoch number in aggregate |
-| Proof substitution | High | Merkle root commitments |
-| Aggregator censorship | Medium | Anyone can aggregate |
-| Worker false proofs | High | Verification required |
+| Attack                | Impact | Mitigation                |
+| --------------------- | ------ | ------------------------- |
+| Proof mixing          | High   | Task ID binding in proof  |
+| Aggregation replay    | High   | Epoch number in aggregate |
+| Proof substitution    | High   | Merkle root commitments   |
+| Aggregator censorship | Medium | Anyone can aggregate      |
+| Worker false proofs   | High   | Verification required     |
 
 ### Additional Mitigations
 
@@ -1637,21 +1656,21 @@ struct EpochBinding {
 
 Binary tree STARK recursion as specified in this RFC.
 
-| Pros | Cons |
-|------|------|
-| No trusted setup | Large proof size |
-| Quantum-resistant | Complex implementation |
-| Transparent | Higher verification cost |
+| Pros              | Cons                     |
+| ----------------- | ------------------------ |
+| No trusted setup  | Large proof size         |
+| Quantum-resistant | Complex implementation   |
+| Transparent       | Higher verification cost |
 
 ### Approach 2: SNARK Wrapper
 
 Wrap STARK proof inside SNARK (e.g., Groth16).
 
-| Pros | Cons |
-|------|------|
-| Small proof size | Trusted setup required |
-| Fast verification | Ceremony complexity |
-| | Single point of trust |
+| Pros              | Cons                   |
+| ----------------- | ---------------------- |
+| Small proof size  | Trusted setup required |
+| Fast verification | Ceremony complexity    |
+|                   | Single point of trust  |
 
 **Decision:** STARK recursion selected — trust minimization preferred over proof size.
 
@@ -1659,11 +1678,11 @@ Wrap STARK proof inside SNARK (e.g., Groth16).
 
 Randomized linear combination of proofs.
 
-| Pros | Cons |
-|------|------|
-| Simple | Statistical security only |
-| No recursion | Cannot scale infinitely |
-| | Not composable |
+| Pros         | Cons                      |
+| ------------ | ------------------------- |
+| Simple       | Statistical security only |
+| No recursion | Cannot scale infinitely   |
+|              | Not composable            |
 
 **Decision:** Rejected — does not achieve O(1) verification.
 
@@ -1671,11 +1690,11 @@ Randomized linear combination of proofs.
 
 General PCD framework for proof composition.
 
-| Pros | Cons |
-|------|------|
-| Most general | Very complex |
-| Flexible | Less mature |
-| | Over-engineered for our use case |
+| Pros         | Cons                             |
+| ------------ | -------------------------------- |
+| Most general | Very complex                     |
+| Flexible     | Less mature                      |
+|              | Over-engineered for our use case |
 
 **Decision:** Considered but deferred — binary tree simpler for our use case.
 
@@ -1733,13 +1752,13 @@ Prevents two critical attacks:
 
 ## Key Files to Modify
 
-| File | Change |
-|------|--------|
-| `crates/aggregation/src/lib.rs` | Core aggregation logic |
-| `crates/aggregation/src/merkle.rs` | Merkle commitment implementation |
-| `crates/aggregation/src/circuit.rs` | Aggregation circuit |
-| `crates/aggregation/src/protocol.rs` | Actor communication |
-| `crates/consensus/src/proofs.rs` | Consensus integration |
+| File                                 | Change                           |
+| ------------------------------------ | -------------------------------- |
+| `crates/aggregation/src/lib.rs`      | Core aggregation logic           |
+| `crates/aggregation/src/merkle.rs`   | Merkle commitment implementation |
+| `crates/aggregation/src/circuit.rs`  | Aggregation circuit              |
+| `crates/aggregation/src/protocol.rs` | Actor communication              |
+| `crates/consensus/src/proofs.rs`     | Consensus integration            |
 
 ### Verification Key Management
 
@@ -1769,11 +1788,11 @@ Level N VK: 2^N proofs aggregated
 
 **Universal VK vs. Multiple Keys:**
 
-| Approach | Storage | Verification | Use Case |
-|----------|---------|--------------|----------|
-| **Universal VK** | 1 key | Dynamic input size | Light clients, mobile |
+| Approach          | Storage        | Verification          | Use Case               |
+| ----------------- | -------------- | --------------------- | ---------------------- |
+| **Universal VK**  | 1 key          | Dynamic input size    | Light clients, mobile  |
 | **Per-Level VKs** | 11 keys (0-10) | Fixed input per level | High-performance nodes |
-| **Hybrid** | 2-3 keys | Level groups | Balanced |
+| **Hybrid**        | 2-3 keys       | Level groups          | Balanced               |
 
 **Recommendation:** Universal VK approach for maximum flexibility and minimal storage. The circuit accepts proof_count as public input, allowing single VK to verify any depth ≤10.
 
@@ -1791,12 +1810,12 @@ Level N VK: 2^N proofs aggregated
 
 **Mitigation Rules:**
 
-| Action | Requirement |
-|--------|-------------|
-| Submit aggregate | Stake deposit required |
-| Invalid aggregate submitted | Deposit slashed |
-| Valid aggregate verified | Deposit returned + reward |
-| Aggregator censorship | Worker can submit directly |
+| Action                      | Requirement                |
+| --------------------------- | -------------------------- |
+| Submit aggregate            | Stake deposit required     |
+| Invalid aggregate submitted | Deposit slashed            |
+| Valid aggregate verified    | Deposit returned + reward  |
+| Aggregator censorship       | Worker can submit directly |
 
 ### Fisherman Role (Fraud Detection)
 
@@ -1835,11 +1854,11 @@ enum AggregatorFraud {
 
 **Fisherman Rewards:**
 
-| Outcome | Fisherman Reward |
-|---------|-----------------|
-| Fraud confirmed | 10% of slashed aggregator stake |
-| Fraud rejected | Fisherman stake preserved |
-| False accusation | Fisherman stake slashed |
+| Outcome          | Fisherman Reward                |
+| ---------------- | ------------------------------- |
+| Fraud confirmed  | 10% of slashed aggregator stake |
+| Fraud rejected   | Fisherman stake preserved       |
+| False accusation | Fisherman stake slashed         |
 
 **Fraud Detection Procedures:**
 
@@ -2040,19 +2059,23 @@ const EVIDENCE_THRESHOLD: u8 = 2;           // corroborating sources
 For agent-based economic simulation:
 
 ```
+
 Parameters:
-  - N workers: 100-10000
-  - N aggregators: 10-100
-  - Epoch duration: 100 blocks
-  - Attack probability: 0.01
+
+- N workers: 100-10000
+- N aggregators: 10-100
+- Epoch duration: 100 blocks
+- Attack probability: 0.01
 
 Metrics:
-  - Successful attacks
-  - False accusations
-  - Network liveness
-  - Economic efficiency
+
+- Successful attacks
+- False accusations
+- Network liveness
+- Economic efficiency
 
 Run 1000 simulations, verify Nash equilibrium.
+
 ```
 
 ### Appendix D: Error Codes
@@ -2092,3 +2115,4 @@ Run 1000 simulations, verify Nash equilibrium.
 - Fix syntax error: remove orphaned code block in Proof Binding
 - Add MAX_PEAKS constant (32 for SSZ compliance)
 - Union Bound confirmed as conservative safety floor (Theorem 3)
+```

@@ -1,9 +1,13 @@
-# RFC-0001: Mission Lifecycle
+# RFC-0001 (Process/Meta): Mission Lifecycle
 
 ## Status
+
 Accepted
 
+> **Note:** This RFC was originally numbered RFC-0001 under the legacy numbering system. It remains at 0001 as it belongs to the Process/Meta category.
+
 ## Summary
+
 Define the standard lifecycle for missions in CipherOcto, from creation through completion, establishing clear states, transitions, and timeout rules for claimable work units.
 
 ## Motivation
@@ -18,6 +22,7 @@ CipherOcto scales through parallel execution by both humans and AI agents. Witho
 This RFC provides the governance framework for mission-based execution.
 
 ### Use Case Link
+
 - [Decentralized Mission Execution](../docs/use-cases/decentralized-mission-execution.md)
 
 ## Specification
@@ -50,14 +55,14 @@ This RFC provides the governance framework for mission-based execution.
 
 ### State Definitions
 
-| State | Description | Valid Transitions |
-|-------|-------------|-------------------|
-| `OPEN` | Available to claim | → CLAIMED |
-| `CLAIMED` | Someone assigned | → IN_REVIEW, → OPEN (timeout) |
-| `IN_REVIEW` | PR submitted | → COMPLETED, → CLAIMED |
-| `COMPLETED` | Merged to main | Terminal state |
-| `BLOCKED` | Cannot proceed | → CLAIMED (unblocked) |
-| `ARCHIVED` | Closed/abandoned | Terminal state |
+| State       | Description        | Valid Transitions             |
+| ----------- | ------------------ | ----------------------------- |
+| `OPEN`      | Available to claim | → CLAIMED                     |
+| `CLAIMED`   | Someone assigned   | → IN_REVIEW, → OPEN (timeout) |
+| `IN_REVIEW` | PR submitted       | → COMPLETED, → CLAIMED        |
+| `COMPLETED` | Merged to main     | Terminal state                |
+| `BLOCKED`   | Cannot proceed     | → CLAIMED (unblocked)         |
+| `ARCHIVED`  | Closed/abandoned   | Terminal state                |
 
 ### Mission File Format
 
@@ -66,16 +71,16 @@ This RFC provides the governance framework for mission-based execution.
 
 id: "0001"
 title: "Add Mission Lifecycle"
-status: "open"  # open | claimed | in_review | completed | blocked | archived
+status: "open" # open | claimed | in_review | completed | blocked | archived
 created_at: "2025-02-24T00:00:00Z"
 updated_at: "2025-02-24T00:00:00Z"
 
 rfc: "0001"
 
-claimant: null  # @username when claimed
+claimant: null # @username when claimed
 claimed_at: null
 
-pull_request: null  # PR number when in review
+pull_request: null # PR number when in review
 
 acceptance_criteria:
   - "Mission state enum defined"
@@ -83,16 +88,16 @@ acceptance_criteria:
   - "Timeout enforcement added"
   - "Tests for all transitions"
 
-timeout_days: 14  # Days before auto-unclaim
+timeout_days: 14 # Days before auto-unclaim
 ```
 
 ### Timeout Rules
 
-| State | Timeout | Action |
-|-------|---------|--------|
-| `CLAIMED` | 14 days | Return to `OPEN` |
-| `IN_REVIEW` | 7 days | Request status update |
-| `BLOCKED` | 30 days | Archive or reassign |
+| State       | Timeout | Action                |
+| ----------- | ------- | --------------------- |
+| `CLAIMED`   | 14 days | Return to `OPEN`      |
+| `IN_REVIEW` | 7 days  | Request status update |
+| `BLOCKED`   | 30 days | Archive or reassign   |
 
 ### Directory Structure
 
@@ -143,6 +148,7 @@ impl Mission {
 **Why mission-based instead of issue-based?**
 
 Issues are discussions. Missions are claimable units of work. By separating them:
+
 - Clear intent to execute
 - Handoff mechanism between contributors
 - Timeout enforcement
@@ -159,22 +165,26 @@ Visibility into what's awaiting review prevents duplicate work and enables batch
 ## Implementation
 
 ### Mission 1: Core Mission Types
+
 - Define `MissionStatus` enum
 - Implement `Mission` struct
 - Add state transition validation
 
 ### Mission 2: Filesystem Backend
+
 - Mission CRUD operations
 - Directory-based state management
 - YAML serialization
 
 ### Mission 3: CLI Commands
+
 - `octo mission list`
 - `octo mission claim <id>`
 - `octo mission submit <pr>`
 - `octo mission status <id>`
 
 ### Mission 4: Timeout Enforcement
+
 - Background task to check timeouts
 - Auto-unclaim stale missions
 - Notifications for impending timeouts
@@ -182,15 +192,19 @@ Visibility into what's awaiting review prevents duplicate work and enables batch
 ## Impact
 
 ### Breaking Changes
+
 None. This is new functionality.
 
 ### Migration Path
+
 Existing issues can be tagged as missions. No data loss.
 
 ### Dependencies
+
 - RFC-0002: Agent Manifest (missions may be claimed by agents)
 
 ## Related RFCs
+
 - RFC-0002: Agent Manifest Specification
 
 ## References

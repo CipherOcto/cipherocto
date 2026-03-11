@@ -1,8 +1,10 @@
-# RFC-0142: Data Availability & Sampling Protocol
+# RFC-0142 (Consensus): Data Availability & Sampling Protocol
 
 ## Status
 
 Draft
+
+> **Note:** This RFC was originally numbered RFC-0142 under the legacy numbering system. It remains at 0142 as it belongs to the Consensus category.
 
 ## Summary
 

@@ -1,10 +1,12 @@
-# RFC-0149: Deterministic Vector Index (HNSW-D)
+# RFC-0149 (Retrieval): Deterministic Vector Index (HNSW-D)
 
 ## Status
 
 **Version:** 1.0
 **Status:** Draft
 **Submission Date:** 2026-03-10
+
+> **Note:** This RFC was originally numbered RFC-0149 under the legacy numbering system. It remains at 0149 as it belongs to the Retrieval category.
 
 ## Summary
 

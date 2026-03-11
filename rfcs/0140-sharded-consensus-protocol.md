@@ -1,8 +1,10 @@
-# RFC-0140: Sharded Consensus Protocol
+# RFC-0140 (Consensus): Sharded Consensus Protocol
 
 ## Status
 
 Draft
+
+> **Note:** This RFC was originally numbered RFC-0140 under the legacy numbering system. It remains at 0140 as it belongs to the Consensus category.
 
 ## Summary
 

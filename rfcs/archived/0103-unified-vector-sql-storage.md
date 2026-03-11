@@ -1,8 +1,10 @@
-# RFC-0103: Unified Vector-SQL Storage Engine
+# RFC-0103 (Storage): Unified Vector-SQL Storage Engine
 
 ## Status
 
-Draft
+Archived (Superseded by RFC-0107)
+
+> **Note:** This RFC was originally numbered RFC-0103 under the legacy numbering system. It was archived and superseded by RFC-0107. Kept for historical reference.
 
 ## Summary
 

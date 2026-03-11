@@ -1,8 +1,10 @@
-# RFC-0131: Deterministic Transformer Circuit
+# RFC-0131 (Numeric/Math): Deterministic Transformer Circuit
 
 ## Status
 
 Draft
+
+> **Note:** This RFC was originally numbered RFC-0131 under the legacy numbering system. It remains at 0131 as it belongs to the Numeric/Math category.
 
 ## Summary
 

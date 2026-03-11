@@ -1,10 +1,12 @@
-# RFC-0148: Deterministic Linear Algebra Engine (DLAE)
+# RFC-0148 (Numeric/Math): Deterministic Linear Algebra Engine (DLAE)
 
 ## Status
 
 **Version:** 1.0
 **Status:** Draft
 **Submission Date:** 2026-03-10
+
+> **Note:** This RFC was originally numbered RFC-0148 under the legacy numbering system. It remains at 0148 as it belongs to the Numeric/Math category.
 
 ## Summary
 

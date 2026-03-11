@@ -1,8 +1,10 @@
-# RFC-0105: Deterministic Quant Arithmetic (DQA)
+# RFC-0105 (Numeric/Math): Deterministic Quant Arithmetic (DQA)
 
 ## Status
 
 Draft (Production-Grade Revision v2.14)
+
+> **Note:** This RFC was originally numbered RFC-0105 under the legacy numbering system. It remains at 0105 as it belongs to the Numeric/Math category.
 
 ## Summary
 

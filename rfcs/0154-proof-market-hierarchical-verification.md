@@ -1,10 +1,12 @@
-# RFC-0154: Proof Market & Hierarchical Verification Network (PHVN)
+# RFC-0154 (Proof Systems): Proof Market & Hierarchical Verification Network (PHVN)
 
 ## Status
 
 **Version:** 1.0
 **Status:** Draft
 **Submission Date:** 2026-03-10
+
+> **Note:** This RFC was originally numbered RFC-0154 under the legacy numbering system. It remains at 0154 as it belongs to the Proof Systems category.
 
 ## Depends on
 

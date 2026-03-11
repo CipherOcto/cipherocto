@@ -1,7 +1,10 @@
-# RFC-0101: Quota Router Agent Specification
+# RFC-0101 (Economics): Quota Router Agent Specification
 
 ## Status
+
 Draft
+
+> **Note:** This RFC was originally numbered RFC-0101 under the legacy numbering system. It remains at 0101 as it belongs to the Economics category.
 
 ## Summary
 
@@ -10,6 +13,7 @@ Define the agent-based quota router that handles prompt routing based on user po
 ## Motivation
 
 Create a customizable routing system where:
+
 - Developers can define their own policies
 - Routing behavior is agent-driven
 - Security is maintained (keys never leave machine)
@@ -72,13 +76,13 @@ interface RouterConfig {
 
 ### Policy Behaviors
 
-| Policy | Behavior |
-|--------|----------|
+| Policy       | Behavior                             |
+| ------------ | ------------------------------------ |
 | **cheapest** | Route to cheapest available provider |
-| **fastest** | Route to fastest responding provider |
-| **quality** | Prefer higher-quality models |
-| **balanced** | Mix of price/speed/quality |
-| **custom** | User-defined rules |
+| **fastest**  | Route to fastest responding provider |
+| **quality**  | Prefer higher-quality models         |
+| **balanced** | Mix of price/speed/quality           |
+| **custom**   | User-defined rules                   |
 
 ### Request Flow
 
@@ -101,14 +105,14 @@ flowchart TD
 ```typescript
 interface Provider {
   name: string;
-  api_type: 'openai' | 'anthropic' | 'google' | 'custom';
+  api_type: "openai" | "anthropic" | "google" | "custom";
 
   // Connection
   endpoint: string;
-  auth_method: 'bearer' | 'api-key';
+  auth_method: "bearer" | "api-key";
 
   // State
-  status: 'available' | 'rate-limited' | 'error';
+  status: "available" | "rate-limited" | "error";
 
   // Metrics
   latency_ms: number;
@@ -134,7 +138,7 @@ interface SecureKeyStore {
 async function routeWithKey(
   provider: Provider,
   prompt: string,
-  key: SecureKeyRef
+  key: SecureKeyRef,
 ): Promise<string>;
 ```
 
@@ -198,11 +202,11 @@ This allows existing applications to route through the quota router without code
 
 ### Communication Methods
 
-| Method | Protocol | Use Case |
-|--------|----------|----------|
+| Method          | Protocol                 | Use Case                |
+| --------------- | ------------------------ | ----------------------- |
 | **Local proxy** | HTTP (OpenAI-compatible) | Primary - existing apps |
-| **CLI** | Command line | Manual control |
-| **IPC** | Unix socket | Advanced integrations |
+| **CLI**         | Command line             | Manual control          |
+| **IPC**         | Unix socket              | Advanced integrations   |
 
 ## Fallback & Retry Logic
 
@@ -258,25 +262,29 @@ The router must normalize costs across different providers:
 ```typescript
 // Model weights (compute units per request)
 const MODEL_WEIGHTS = {
-  'gpt-4': 10,
-  'gpt-3.5-turbo': 1,
-  'claude-3-opus': 12,
-  'claude-3-haiku': 1,
-  'gemini-pro': 2,
+  "gpt-4": 10,
+  "gpt-3.5-turbo": 1,
+  "claude-3-opus": 12,
+  "claude-3-haiku": 1,
+  "gemini-pro": 2,
   // Local models: varies by hardware
 };
 
 // Context window limits (max tokens)
 const MODEL_LIMITS = {
-  'gpt-4': 8192,
-  'gpt-3.5-turbo': 16385,
-  'claude-3-opus': 200000,
-  'claude-3-haiku': 200000,
-  'gemini-pro': 32768,
+  "gpt-4": 8192,
+  "gpt-3.5-turbo": 16385,
+  "claude-3-opus": 200000,
+  "claude-3-haiku": 200000,
+  "gemini-pro": 32768,
 };
 
 // Calculate OCTO-W cost
-function calculateCost(model: string, inputTokens: number, outputTokens: number): number {
+function calculateCost(
+  model: string,
+  inputTokens: number,
+  outputTokens: number,
+): number {
   const baseWeight = MODEL_WEIGHTS[model] || 1;
   const tokenFactor = (inputTokens + outputTokens) / 1000;
   return Math.ceil(baseWeight * tokenFactor);
@@ -297,14 +305,14 @@ function validateContext(model: string, inputTokens: number): boolean {
 
 ```typescript
 async function routeWithValidation(
-  prompt: UnifiedPrompt
+  prompt: UnifiedPrompt,
 ): Promise<UnifiedResponse> {
   const tokenCount = countTokens(prompt);
 
   // Check context window first
   if (!validateContext(prompt.model, tokenCount)) {
     throw new RouterError(
-      `Prompt exceeds ${prompt.model} context limit of ${MODEL_LIMITS[prompt.model]} tokens`
+      `Prompt exceeds ${prompt.model} context limit of ${MODEL_LIMITS[prompt.model]} tokens`,
     );
   }
 
@@ -316,7 +324,7 @@ async function routeWithValidation(
 }
 ```
 
-*See Research doc for complete cost normalization specification.*
+_See Research doc for complete cost normalization specification._
 
 ### Concurrency Handling
 
@@ -346,6 +354,7 @@ class AtomicBalance {
 ```
 
 **Flow:**
+
 1. Acquire mutex
 2. Check balance (atomic)
 3. Reserve if sufficient

@@ -1,8 +1,10 @@
-# RFC-0117: State Virtualization for Massive Agent Scaling
+# RFC-0117 (AI Execution): State Virtualization for Massive Agent Scaling
 
 ## Status
 
 Draft
+
+> **Note:** This RFC was originally numbered RFC-0117 under the legacy numbering system. It remains at 0117 as it belongs to the AI Execution category.
 
 ## Summary
 

@@ -1,8 +1,10 @@
-# RFC-0113: Retrieval Gateway & Query Routing
+# RFC-0113 (Retrieval): Retrieval Gateway & Query Routing
 
 ## Status
 
 Draft
+
+> **Note:** This RFC was originally numbered RFC-0113 under the legacy numbering system. It remains at 0113 as it belongs to the Retrieval category.
 
 ## Summary
 

@@ -1,10 +1,12 @@
-# RFC-0150: Verifiable Vector Query Execution (VVQE)
+# RFC-0150 (Retrieval): Verifiable Vector Query Execution (VVQE)
 
 ## Status
 
 **Version:** 1.0
 **Status:** Draft
 **Submission Date:** 2026-03-10
+
+> **Note:** This RFC was originally numbered RFC-0150 under the legacy numbering system. It remains at 0150 as it belongs to the Retrieval category.
 
 ## Summary
 

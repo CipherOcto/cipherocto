@@ -1,8 +1,10 @@
-# RFC-0141: Parallel Block DAG Specification
+# RFC-0141 (Consensus): Parallel Block DAG Specification
 
 ## Status
 
 Draft
+
+> **Note:** This RFC was originally numbered RFC-0141 under the legacy numbering system. It remains at 0141 as it belongs to the Consensus category.
 
 ## Summary
 

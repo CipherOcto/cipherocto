@@ -1,10 +1,12 @@
-# RFC-0152: Verifiable Agent Runtime (VAR)
+# RFC-0152 (Agents): Verifiable Agent Runtime (VAR)
 
 ## Status
 
 **Version:** 1.0
 **Status:** Draft
 **Submission Date:** 2026-03-10
+
+> **Note:** This RFC was originally numbered RFC-0152 under the legacy numbering system. It remains at 0152 as it belongs to the Agents category.
 
 ## Depends on
 

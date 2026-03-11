@@ -1,8 +1,10 @@
-# RFC-0107: Production Vector-SQL Storage Engine (v2)
+# RFC-0107 (Storage): Production Vector-SQL Storage Engine (v2)
 
 ## Status
 
 Draft (v5 — kernel-grade)
+
+> **Note:** This RFC was originally numbered RFC-0107 under the legacy numbering system. It remains at 0107 as it belongs to the Storage category.
 
 ## Summary
 
@@ -298,12 +300,12 @@ Operator definitions:
 
 #### HNSW Parameters
 
-| Parameter         | Default | Range     | Description                |
-| ----------------- | ------- | --------- | -------------------------- |
-| `m`               | 16      | 4-64      | Connections per layer     |
-| `ef_construction` | 200     | 64-512    | Search width during build  |
-| `ef_search`       | 50      | 10-512    | Search width during query |
-| `metric`          | cosine  | l2, cosine, ip | Distance metric      |
+| Parameter         | Default | Range          | Description               |
+| ----------------- | ------- | -------------- | ------------------------- |
+| `m`               | 16      | 4-64           | Connections per layer     |
+| `ef_construction` | 200     | 64-512         | Search width during build |
+| `ef_search`       | 50      | 10-512         | Search width during query |
+| `metric`          | cosine  | l2, cosine, ip | Distance metric           |
 
 #### Candidate Expansion Safety
 
@@ -331,20 +333,20 @@ fn compute_candidate_count(k: usize, ef_search: usize) -> usize {
 
 **Example:**
 
-| k | ef_search | candidates | Notes |
-|---|-----------|------------|-------|
-| 10 | 50 | 55 | ef_search dominates |
-| 10 | 10 | 44 | 4k dominates |
-| 100 | 100 | 110 | 10% margin added |
+| k   | ef_search | candidates | Notes               |
+| --- | --------- | ---------- | ------------------- |
+| 10  | 50        | 55         | ef_search dominates |
+| 10  | 10        | 44         | 4k dominates        |
+| 100 | 100       | 110        | 10% margin added    |
 
 **Worst-Case Recommendations:**
 
-| Scenario | Expansion Factor |
-| -------- | ---------------- |
-| Standard | 4×k |
-| High recall required | 6×k |
-| Adversarial vectors | 10×k |
-| Quantized index | 8×k |
+| Scenario             | Expansion Factor |
+| -------------------- | ---------------- |
+| Standard             | 4×k              |
+| High recall required | 6×k              |
+| Adversarial vectors  | 10×k             |
+| Quantized index      | 8×k              |
 
 #### Quantization Options
 
@@ -504,10 +506,12 @@ Should T2 see V?
 ```
 
 Without proper handling:
+
 ```
 index contains vector
 MVCC snapshot says invisible
 ```
+
 This breaks query correctness.
 
 ### Vector Row Structure
@@ -535,19 +539,19 @@ fn filter_visible(results: Vec<VectorRow>, snapshot: &Snapshot) -> Vec<VectorRow
 
 **Visibility conditions:**
 
-| State | xmin | xmax | Visible to T |
-|-------|------|------|--------------|
-| Inserted & live | committed | None | T > xmin |
-| Inserted & deleted | committed | committed | T > xmax |
-| Inserted & deleting | committed | active | depends on isolation |
+| State               | xmin      | xmax      | Visible to T         |
+| ------------------- | --------- | --------- | -------------------- |
+| Inserted & live     | committed | None      | T > xmin             |
+| Inserted & deleted  | committed | committed | T > xmax             |
+| Inserted & deleting | committed | active    | depends on isolation |
 
 ### Isolation Levels
 
-| Level | Behavior |
-| ------| -------- |
-| snapshot isolation | See only committed vectors at snapshot |
-| read committed | May see uncommitted (use with care) |
-| serializable | Same as snapshot + additional constraints |
+| Level              | Behavior                                  |
+| ------------------ | ----------------------------------------- |
+| snapshot isolation | See only committed vectors at snapshot    |
+| read committed     | May see uncommitted (use with care)       |
+| serializable       | Same as snapshot + additional constraints |
 
 ### Implementation
 
@@ -576,6 +580,7 @@ The RFC states:
 But **HNSW insertion order matters**. Different build threads produce different graphs.
 
 Example:
+
 ```
 node A: inserts vectors 1..N with threads T1, T2
 node B: inserts vectors 1..N with threads T2, T1
@@ -651,11 +656,11 @@ fn verify_index_equality(local: &HnswIndex, remote: &HnswIndex) -> bool {
 
 ### Summary
 
-| Constraint | Mechanism |
-| ---------- | --------- |
-| Build order | vector_id ascending |
-| Builder | single-threaded or deterministic batch |
-| Verification | Merkle root comparison |
+| Constraint   | Mechanism                              |
+| ------------ | -------------------------------------- |
+| Build order  | vector_id ascending                    |
+| Builder      | single-threaded or deterministic batch |
+| Verification | Merkle root comparison                 |
 
 ---
 
@@ -764,12 +769,12 @@ fn estimate_cost(
 
 ### Planner Decision Rules
 
-| Condition | Plan |
-|-----------|------|
-| filter_selectivity < 5% | Filter first |
+| Condition                | Plan               |
+| ------------------------ | ------------------ |
+| filter_selectivity < 5%  | Filter first       |
 | filter_selectivity > 50% | Vector index first |
-| dataset < 1,000 vectors | Brute force |
-| k * 4 > dataset_size | Brute force |
+| dataset < 1,000 vectors  | Brute force        |
+| k \* 4 > dataset_size    | Brute force        |
 
 ### Selectivity Estimation
 
@@ -925,12 +930,12 @@ async fn wait_for_proof(job_id: ProofJobId) -> Proof {
 
 ### Performance Targets
 
-| Metric | Target |
-|--------|--------|
-| Proof generation (k=10) | < 5 seconds |
-| Circuit compilation | < 30 seconds (cached) |
-| Proof size | < 100 KB |
-| Throughput | 10 proofs/minute/worker |
+| Metric                  | Target                  |
+| ----------------------- | ----------------------- |
+| Proof generation (k=10) | < 5 seconds             |
+| Circuit compilation     | < 30 seconds (cached)   |
+| Proof size              | < 100 KB                |
+| Throughput              | 10 proofs/minute/worker |
 
 ### Concurrency
 
@@ -1043,12 +1048,12 @@ fn replay_vector_insert(op: &WalVectorOp, segment: &Segment) -> Result<()> {
 
 ### Durability Guarantees
 
-| Scenario | Guarantee |
-|----------|-----------|
-| Crash before flush | WAL contains full vector → recoverable |
-| Crash after flush | Segment contains vector → recoverable |
-| Segment deleted before replay | Error, requires full rebuild |
-| Vector corrupted | Hash mismatch → error detected |
+| Scenario                      | Guarantee                              |
+| ----------------------------- | -------------------------------------- |
+| Crash before flush            | WAL contains full vector → recoverable |
+| Crash after flush             | Segment contains vector → recoverable  |
+| Segment deleted before replay | Error, requires full rebuild           |
+| Vector corrupted              | Hash mismatch → error detected         |
 
 ### Implementation
 
@@ -1142,12 +1147,12 @@ impl GroupCommit {
 
 ### Fsync Policy
 
-| Scenario | Fsync Behavior |
-|----------|---------------|
-| WAL | Always fsync (durable) |
-| Segment buffer | Background flush |
-| Checkpoint | Full fsync |
-| Critical data | Force fsync |
+| Scenario       | Fsync Behavior         |
+| -------------- | ---------------------- |
+| WAL            | Always fsync (durable) |
+| Segment buffer | Background flush       |
+| Checkpoint     | Full fsync             |
+| Critical data  | Force fsync            |
 
 ### Torn Write Handling
 
@@ -1189,11 +1194,11 @@ Checkpoints contain:
 
 ### Checkpoint Trigger
 
-| Trigger | Condition |
-|---------|-----------|
+| Trigger    | Condition       |
+| ---------- | --------------- |
 | Time-based | Every 5 minutes |
-| WAL-based | Every 1GB WAL |
-| Manual | Admin request |
+| WAL-based  | Every 1GB WAL   |
+| Manual     | Admin request   |
 
 ### Checkpoint Creation
 
@@ -1361,19 +1366,19 @@ struct VectorBlockHeader {
 
 ### Alignment
 
-| Field | Alignment |
-|-------|-----------|
-| Headers | 8 bytes |
+| Field       | Alignment                |
+| ----------- | ------------------------ |
+| Headers     | 8 bytes                  |
 | Vector data | 16 bytes (AVX2 friendly) |
-| Metadata | 8 bytes |
+| Metadata    | 8 bytes                  |
 
 ### Compression
 
-| Type | Flag | Description |
-|------|------|-------------|
-| None | 0x00 | Raw f32 |
-| PQ | 0x01 | Product quantized |
-| SQ | 0x02 | Scalar quantized |
+| Type | Flag | Description       |
+| ---- | ---- | ----------------- |
+| None | 0x00 | Raw f32           |
+| PQ   | 0x01 | Product quantized |
+| SQ   | 0x02 | Scalar quantized  |
 
 ### Checksum
 
@@ -1515,10 +1520,10 @@ impl DistributedTransaction {
 
 ### Consistency Model
 
-| Mode | Guarantee |
-|------|-----------|
-| Strong | 2PC with leader |
-| Eventual | Async replication |
+| Mode             | Guarantee           |
+| ---------------- | ------------------- |
+| Strong           | 2PC with leader     |
+| Eventual         | Async replication   |
 | Read-your-writes | Session consistency |
 
 ---
@@ -1983,12 +1988,12 @@ fn compact_log(&self, checkpoint_index: u64) -> Result<()> {
 
 ### Failure Handling
 
-| Scenario | Handling |
-|----------|----------|
-| Leader crash | Election timeout → new leader election |
-| Follower crash | Reconnect → catch-up protocol |
+| Scenario          | Handling                                      |
+| ----------------- | --------------------------------------------- |
+| Leader crash      | Election timeout → new leader election        |
+| Follower crash    | Reconnect → catch-up protocol                 |
 | Network partition | Majority quorum check → step down if isolated |
-| Duplicate entries | Idempotent apply |
+| Duplicate entries | Idempotent apply                              |
 
 ---
 
@@ -2143,16 +2148,16 @@ impl SchedulerMetrics {
 
 ### Task Types by Priority
 
-| Task | Priority | Preemptible |
-|------|----------|-------------|
-| WAL fsync | Critical | No |
-| Checkpoint | Critical | No |
-| User query | High | No |
-| Compaction | Medium | Yes |
-| Segment merge | Medium | Yes |
-| HNSW rebuild | Low | Yes |
-| Proof generation | Low | Yes |
-| Statistics collection | Low | Yes |
+| Task                  | Priority | Preemptible |
+| --------------------- | -------- | ----------- |
+| WAL fsync             | Critical | No          |
+| Checkpoint            | Critical | No          |
+| User query            | High     | No          |
+| Compaction            | Medium   | Yes         |
+| Segment merge         | Medium   | Yes         |
+| HNSW rebuild          | Low      | Yes         |
+| Proof generation      | Low      | Yes         |
+| Statistics collection | Low      | Yes         |
 
 ---
 

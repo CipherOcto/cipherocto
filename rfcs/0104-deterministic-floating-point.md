@@ -1,8 +1,10 @@
-# RFC-0104: Deterministic Floating-Point Abstraction (DFP)
+# RFC-0104 (Numeric/Math): Deterministic Floating-Point Abstraction (DFP)
 
 ## Status
 
 Draft
+
+> **Note:** This RFC was originally numbered RFC-0104 under the legacy numbering system. It remains at 0104 as it belongs to the Numeric/Math category.
 
 ## Summary
 
@@ -86,11 +88,11 @@ SELECT 1.5 * 2.0;  -- DFP multiplication
 SELECT 1 / 0;      -- Returns MAX (saturating arithmetic)
 ```
 
-| Context | Literal Type | Behavior |
-|---------|-------------|----------|
-| Deterministic View | DFP | Bit-identical across nodes |
-| Analytics Query | FLOAT/DOUBLE | Non-deterministic allowed |
-| Mixed | ERROR | Must use explicit CAST |
+| Context            | Literal Type | Behavior                   |
+| ------------------ | ------------ | -------------------------- |
+| Deterministic View | DFP          | Bit-identical across nodes |
+| Analytics Query    | FLOAT/DOUBLE | Non-deterministic allowed  |
+| Mixed              | ERROR        | Must use explicit CAST     |
 
 ### Data Structures
 
@@ -553,6 +555,7 @@ fn div_by_zero(sign: bool) -> Dfp {
 All operations use **Round-to-Nearest-Even (RNE)** with a **Sticky Bit** for 113-bit precision:
 
 **Internal Representation (128-bit for accuracy):**
+
 - **Target:** 113-bit mantissa
 - **Guard bits:** 15 bits (128 - 113)
 - **Round bit:** Bit 113 (first guard bit)
@@ -625,12 +628,12 @@ fn normalize_mantissa(mantissa: &mut u128, exponent: &mut i32) {
 
 **RNE Table:**
 
-| Scenario | Round Bit | Sticky Bit | LSB (113th) | Result |
-|----------|-----------|------------|--------------|--------|
-| 1.5 | 1 | 0 | 1 | Round UP → 2 |
-| 2.5 | 1 | 0 | 0 | Round DOWN → 2 |
-| 2.500...1 | 1 | 1 | 0 | Round UP → 3 |
-| 3.5 | 1 | 0 | 1 | Round UP → 4 |
+| Scenario  | Round Bit | Sticky Bit | LSB (113th) | Result         |
+| --------- | --------- | ---------- | ----------- | -------------- |
+| 1.5       | 1         | 0          | 1           | Round UP → 2   |
+| 2.5       | 1         | 0          | 0           | Round DOWN → 2 |
+| 2.500...1 | 1         | 1          | 0           | Round UP → 3   |
+| 3.5       | 1         | 0          | 1           | Round UP → 4   |
 
 **Multi-step expressions:** RNE is applied after **every individual operation**. There are no fused paths. For example, `(a + b) * c` is computed as: `(a + b)` → round → then multiply → round. This ensures deterministic results regardless of evaluation order.
 
@@ -638,14 +641,14 @@ fn normalize_mantissa(mantissa: &mut u128, exponent: &mut i32) {
 
 DFP uses **saturating arithmetic** — Infinity class is NOT produced in computed results. Instead, overflow saturates to MAX/MIN:
 
-| Special Value | Class  | Sign | Mantissa     | Exponent | Behavior                           |
-| ------------- | ------ | ---- | ------------ | -------- | ---------------------------------- |
-| NaN           | NaN    | -    | -            | -        | Canonical NaN, propagates          |
-| +Overflow     | Normal | 0    | MAX_MANTISSA | MAX_EXP  | Saturates to +MAX (not Infinity)  |
-| -Overflow     | Normal | 1    | MAX_MANTISSA | MAX_EXP  | Saturates to -MAX (not Infinity)  |
-| +0.0          | Zero   | 0    | -            | -        | Distinct from -0.0                 |
-| -0.0          | Zero   | 1    | -            | -        | Distinct from +0.0                 |
-| Normal        | Normal | 0/1  | u128         | i32      | Standard value                    |
+| Special Value | Class  | Sign | Mantissa     | Exponent | Behavior                         |
+| ------------- | ------ | ---- | ------------ | -------- | -------------------------------- |
+| NaN           | NaN    | -    | -            | -        | Canonical NaN, propagates        |
+| +Overflow     | Normal | 0    | MAX_MANTISSA | MAX_EXP  | Saturates to +MAX (not Infinity) |
+| -Overflow     | Normal | 1    | MAX_MANTISSA | MAX_EXP  | Saturates to -MAX (not Infinity) |
+| +0.0          | Zero   | 0    | -            | -        | Distinct from -0.0               |
+| -0.0          | Zero   | 1    | -            | -        | Distinct from +0.0               |
+| Normal        | Normal | 0/1  | u128         | i32      | Standard value                   |
 
 > **Design Decision:** DFP does NOT produce Infinity in computed results. Overflow saturates to MAX value (class=Normal). This prevents NaN poisoning chains where `Infinity - Infinity = NaN`.
 
@@ -700,14 +703,14 @@ from_f64_subnormal(f64_bits):
 
 DFP provides higher precision than IEEE-754 double:
 
-| Characteristic | DFP (Effective) | IEEE-754 Double |
-| -------------- | ---------------- | --------------- |
+| Characteristic | DFP (Effective)    | IEEE-754 Double |
+| -------------- | ------------------ | --------------- |
 | Mantissa bits  | 113 (internal 128) | 53 (implicit)   |
-| Exponent bits  | 11               | 11              |
-| Decimal digits | ~34              | ~15-17          |
-| Exponent range | ±1023            | ±1023           |
-| MAX value      | ~1.7×10³⁰⁸      | ~1.8×10³⁰⁸      |
-| MIN positive   | ~2.2×10⁻³⁰⁸     | ~2.2×10⁻³⁰⁸     |
+| Exponent bits  | 11                 | 11              |
+| Decimal digits | ~34                | ~15-17          |
+| Exponent range | ±1023              | ±1023           |
+| MAX value      | ~1.7×10³⁰⁸         | ~1.8×10³⁰⁸      |
+| MIN positive   | ~2.2×10⁻³⁰⁸        | ~2.2×10⁻³⁰⁸     |
 
 > **Note:** Internal storage uses 128-bit u128, but effective precision is capped at **113 bits** to ensure stable f64 round-trips and maintain the canonical odd-mantissa invariant.
 
@@ -824,13 +827,13 @@ INT    → ALLOWED (implicit to DFP)
 
 **Type Promotion Rules for Mixed-Type Expressions:**
 
-| Left Type | Right Type | Promotion Behavior |
-|-----------|------------|-------------------|
-| DFP | DFP | Direct DFP operation |
-| DFP | INT | Integer implicitly promoted to DFP via `Dfp::from_i64(int)` |
-| INT | DFP | Integer implicitly promoted to DFP via `Dfp::from_i64(int)` |
-| DFP | FLOAT | **FORBIDDEN** — requires explicit `CAST` |
-| FLOAT | DFP | **FORBIDDEN** — requires explicit `CAST` |
+| Left Type | Right Type | Promotion Behavior                                          |
+| --------- | ---------- | ----------------------------------------------------------- |
+| DFP       | DFP        | Direct DFP operation                                        |
+| DFP       | INT        | Integer implicitly promoted to DFP via `Dfp::from_i64(int)` |
+| INT       | DFP        | Integer implicitly promoted to DFP via `Dfp::from_i64(int)` |
+| DFP       | FLOAT      | **FORBIDDEN** — requires explicit `CAST`                    |
+| FLOAT     | DFP        | **FORBIDDEN** — requires explicit `CAST`                    |
 
 **Rationale for INT → DFP implicit promotion:** Integer values have exact representations in DFP (any integer up to 2^113 can be represented exactly as a DFP mantissa with exponent 0). This differs from FLOAT, where implicit conversion could introduce platform-dependent rounding. Therefore, `dfp_col * 2` is allowed implicitly, but `dfp_col * 1.5` requires `CAST(1.5 AS DFP)`.
 
@@ -882,11 +885,11 @@ To ensure ongoing deterministic behavior:
 
 To ensure deterministic software-path execution, nodes must compile with specific flags:
 
-| Platform | Required Flags |
-| -------- | ------------- |
+| Platform | Required Flags                                             |
+| -------- | ---------------------------------------------------------- |
 | x86      | `-C target-feature=+sse2` (disable x87 extended precision) |
-| ARM      | Standard AAPCS (deterministic by default) |
-| All      | Use `release` profile (overflow checks off by default) |
+| ARM      | Standard AAPCS (deterministic by default)                  |
+| All      | Use `release` profile (overflow checks off by default)     |
 
 > **Note:** Rust's `release` profile disables integer overflow checks. Do NOT use `debug` profile for DFP operations. For `overflow-checks = true` in any profile, wrap semantics are defined (`wrapping_add`, etc.).
 
@@ -911,11 +914,11 @@ impl Serialize for Dfp {
 
 ### Gas Limits Scope
 
-| Limit | Scope | Notes |
-|-------|-------|-------|
-| Max DFP ops per block | Per-transaction | 10,000 per tx |
-| Max DFP_DIV/SQRT per block | Per-transaction | 1,000 per tx |
-| Interaction with block gas | N/A | DFP ops are charged as compute units |
+| Limit                      | Scope           | Notes                                |
+| -------------------------- | --------------- | ------------------------------------ |
+| Max DFP ops per block      | Per-transaction | 10,000 per tx                        |
+| Max DFP_DIV/SQRT per block | Per-transaction | 1,000 per tx                         |
+| Interaction with block gas | N/A             | DFP ops are charged as compute units |
 
 > **Unit definition:** One "op" = one DFP opcode execution (DFP_ADD, DFP_MUL, etc.). A complex expression like `(a + b) * c` counts as 3 ops.
 
@@ -933,21 +936,22 @@ impl Serialize for Dfp {
 
 DFP software arithmetic is significantly slower than native integer operations. Gas costs reflect true computational cost to prevent resource exhaustion attacks:
 
-| Operation    | Relative Gas Cost | Notes |
-| ------------ | ----------------- | ----- |
-| INT_ADD      | 1x (baseline)     | Native |
-| DFP_ADD      | 6-10x            | 128-bit + normalization |
-| DFP_MUL      | 10-15x           | 128-bit multiplication |
-| **DFP_DIV**  | **50-100x**      | Iterative algorithm |
-| **DFP_SQRT** | **50-100x**      | Bit-by-bit integer sqrt (226-bit scaled) |
-| DFP_FROM_I64 | 2x               | Conversion |
-| DFP_TO_I64   | 2x               | Conversion |
-| DFP_FROM_F64 | 4-6x             | Canonicalization |
-| DFP_TO_F64   | 3-4x             | Roundtrip |
+| Operation    | Relative Gas Cost | Notes                                    |
+| ------------ | ----------------- | ---------------------------------------- |
+| INT_ADD      | 1x (baseline)     | Native                                   |
+| DFP_ADD      | 6-10x             | 128-bit + normalization                  |
+| DFP_MUL      | 10-15x            | 128-bit multiplication                   |
+| **DFP_DIV**  | **50-100x**       | Iterative algorithm                      |
+| **DFP_SQRT** | **50-100x**       | Bit-by-bit integer sqrt (226-bit scaled) |
+| DFP_FROM_I64 | 2x                | Conversion                               |
+| DFP_TO_I64   | 2x                | Conversion                               |
+| DFP_FROM_F64 | 4-6x              | Canonicalization                         |
+| DFP_TO_F64   | 3-4x              | Roundtrip                                |
 
 **Rationale:** Software DFP uses 128-bit arithmetic with normalization loops. Division and square root require iterative algorithms (16-32 iterations minimum). The 50-100x multiplier prevents DoS attacks via computationally dense DFP operations.
 
 **Resource Exhaustion Protection:**
+
 - Max DFP ops per transaction: 10,000
 - Max DFP_DIV/DFP_SQRT per transaction: 1,000
 - Exceeding limits → transaction rejected
@@ -956,16 +960,16 @@ DFP software arithmetic is significantly slower than native integer operations. 
 
 DFP defines total ordering for sorting and comparison operations:
 
-| Order | Class     | Sign | Mantissa  | Exponent  |
-| ----- | --------- | ---- | --------- | --------- |
-| 1     | -Infinity | 1    | -         | -         |
-| 2     | Zero      | 1    | -         | -         | (-0.0)
-| 3     | Normal    | 1    | descending| descending|
-| ...   | ...       | ...  | ...       | ...       |
-| N-2   | Normal    | 0    | ascending | ascending |
-| N-1   | Zero      | 0    | -         | -         | (+0.0)
-| N     | +Infinity | 0    | -         | -         |
-| N+1   | NaN       | -    | -         | -         |
+| Order | Class     | Sign | Mantissa   | Exponent   |
+| ----- | --------- | ---- | ---------- | ---------- | ------ |
+| 1     | -Infinity | 1    | -          | -          |
+| 2     | Zero      | 1    | -          | -          | (-0.0) |
+| 3     | Normal    | 1    | descending | descending |
+| ...   | ...       | ...  | ...        | ...        |
+| N-2   | Normal    | 0    | ascending  | ascending  |
+| N-1   | Zero      | 0    | -          | -          | (+0.0) |
+| N     | +Infinity | 0    | -          | -          |
+| N+1   | NaN       | -    | -          | -          |
 
 **Total ordering:** `-Infinity < -0.0 < negative values < +0.0 < positive values < +Infinity < NaN`
 
@@ -1112,8 +1116,8 @@ a + (b + c)
 
 The difference occurs because:
 
-* `b + c` loses precision when aligning exponents
-* rounding occurs during intermediate operations
+- `b + c` loses precision when aligning exponents
+- rounding occurs during intermediate operations
 
 > **Note: Addition associativity is intentionally excluded from required arithmetic invariants.**
 
@@ -1135,26 +1139,27 @@ value = mantissa × 2^exponent
 ```
 
 **Deterministic Rounding**: Rounding behavior is fully specified and independent of:
+
 - CPU architecture
 - compiler optimizations
 - hardware floating-point units
 
 **Algebraic Identities That Hold** (when no overflow/underflow):
 
-| Property | Formula |
-| -------- | ------- |
+| Property                     | Formula                     |
+| ---------------------------- | --------------------------- |
 | Multiplicative associativity | `(a × b) × c = a × (b × c)` |
-| Multiplicative identity | `a × 1 = a` |
-| Additive identity | `a + 0 = a` |
-| Inverse property | `a − a = 0` |
+| Multiplicative identity      | `a × 1 = a`                 |
+| Additive identity            | `a + 0 = a`                 |
+| Inverse property             | `a − a = 0`                 |
 
 #### Properties Explicitly Not Guaranteed
 
-| Property | Reason |
-| -------- | ------ |
-| Addition associativity | rounding during exponent alignment |
-| Subtraction associativity | same reason |
-| Distributivity | rounding after multiplication |
+| Property                  | Reason                             |
+| ------------------------- | ---------------------------------- |
+| Addition associativity    | rounding during exponent alignment |
+| Subtraction associativity | same reason                        |
+| Distributivity            | rounding after multiplication      |
 
 Example:
 
@@ -1179,6 +1184,7 @@ Deterministic Floating Point (DFP) is designed to produce **bit-identical result
 ##### 1. Floating-Point Hardware Execution
 
 **Hazard:** Native floating-point hardware may introduce:
+
 - extended precision registers
 - fused multiply-add (FMA)
 - platform-dependent rounding
@@ -1194,11 +1200,11 @@ These behaviors differ across x86, ARM, RISC-V, and WASM.
 
 **Mitigation:** Disable FMA contraction:
 
-| Compiler | Flag |
-| -------- | ---- |
-| GCC/Clang | `-ffp-contract=off` |
-| Rust | `-C target-feature=-fma` |
-| MSVC | `/fp:strict` |
+| Compiler  | Flag                     |
+| --------- | ------------------------ |
+| GCC/Clang | `-ffp-contract=off`      |
+| Rust      | `-C target-feature=-fma` |
+| MSVC      | `/fp:strict`             |
 
 ##### 3. Compiler Reordering
 
@@ -1222,6 +1228,7 @@ if overflow { return Err(DfpError::Overflow); }
 **Hazard:** 32-bit, 64-bit, and 128-bit native integers can cause implicit widening/narrowing inconsistencies.
 
 **Mitigation:** Explicitly define all numeric widths:
+
 ```
 mantissa: i128
 exponent: i32
@@ -1232,6 +1239,7 @@ exponent: i32
 **Hazard:** Little vs big endian can misinterpret serialized values.
 
 **Mitigation:** Use fixed byte order (little-endian) in serialization:
+
 ```
 struct { int128 mantissa, int32 exponent }
 ```
@@ -1253,6 +1261,7 @@ struct { int128 mantissa, int32 exponent }
 **Hazard:** Certain optimization levels enable floating-point transformations.
 
 **Mitigation:** Use:
+
 ```
 -O2
 -ffp-contract=off
@@ -1261,15 +1270,15 @@ struct { int128 mantissa, int32 exponent }
 
 ##### Determinism Compliance Checklist
 
-| Requirement | Status |
-|-------------|--------|
-| No hardware FP for arithmetic | Required |
-| Explicit integer widths | Required |
+| Requirement                      | Status   |
+| -------------------------------- | -------- |
+| No hardware FP for arithmetic    | Required |
+| Explicit integer widths          | Required |
 | Canonical normalization enforced | Required |
-| Deterministic rounding | Required |
-| FMA disabled | Required |
-| Fast-math disabled | Required |
-| Stable serialization format | Required |
+| Deterministic rounding           | Required |
+| FMA disabled                     | Required |
+| Fast-math disabled               | Required |
+| Stable serialization format      | Required |
 
 ##### Verification Strategy
 
@@ -1280,6 +1289,7 @@ struct { int128 mantissa, int32 exponent }
 ##### Security Considerations
 
 Non-deterministic arithmetic may lead to:
+
 - consensus failure in distributed systems
 - divergent blockchain state
 - inconsistent simulation outcomes
@@ -1303,6 +1313,7 @@ Result Comparator
 ```
 
 All implementations operate on the same serialized DFP representation:
+
 ```
 struct {
     int128 mantissa
@@ -1383,10 +1394,10 @@ fn main() {
 
 ##### Verification Scale
 
-| Level | Tests |
-|-------|-------|
-| Basic CI | 10,000 vectors |
-| Pre-release | 100,000 vectors |
+| Level                 | Tests             |
+| --------------------- | ----------------- |
+| Basic CI              | 10,000 vectors    |
+| Pre-release           | 100,000 vectors   |
 | Production validation | 1,000,000 vectors |
 
 ##### CI Integration
@@ -1669,12 +1680,14 @@ fn run_verification_probe() -> ProbeResult {
 ```
 
 **Why Verification Probe is Critical:**
+
 - Detects **compiler bugs** that produce incorrect i128 arithmetic
 - Detects **CPU microcode errors** (e.g., flawed i128 division)
 - Detects **VM implementation errors** in soft-float emulation
 - Prevents signing fraudulent blocks due to arithmetic bugs
 
 **Probe Execution:**
+
 - Runs automatically every 100,000 blocks
 - If probe fails: node halts, logs diagnostic, awaits manual intervention
 - Probe results are published for network-wide visibility
@@ -1775,13 +1788,13 @@ None. DFP is a new type that does not modify existing FLOAT/DOUBLE behavior.
 >
 > For initial production deployment, DFP should be **restricted to deterministic read-only contexts**:
 >
-> | Context | DFP Allowed? | Notes |
-> |---------|--------------|-------|
-> | Read-only queries | ✅ Yes | Deterministic SQL queries |
-> | Materialized views | ✅ Yes | Pre-computed aggregations |
-> | Oracle data feeds | ✅ Yes | Off-chain computation, on-chain verification |
-> | Smart contract state | ❌ No | Wait for extensive testing |
-> | State transitions | ❌ No | High-risk consensus path |
+> | Context              | DFP Allowed? | Notes                                        |
+> | -------------------- | ------------ | -------------------------------------------- |
+> | Read-only queries    | ✅ Yes       | Deterministic SQL queries                    |
+> | Materialized views   | ✅ Yes       | Pre-computed aggregations                    |
+> | Oracle data feeds    | ✅ Yes       | Off-chain computation, on-chain verification |
+> | Smart contract state | ❌ No        | Wait for extensive testing                   |
+> | State transitions    | ❌ No        | High-risk consensus path                     |
 >
 > This phased approach minimizes consensus risk while proving the technology.
 
@@ -1791,6 +1804,7 @@ None. DFP is a new type that does not modify existing FLOAT/DOUBLE behavior.
 **Submission Date:** 2025-03-06
 **Last Updated:** 2026-03-08
 **Changes:** v1.16 final fixes (10/10):
+
 - R1: Add Infinity unreachable note to ADD, MUL, DIV, SQRT
 - R2: Fix SQRT negative odd exponent - use >> 1 (floor), (exp & 1) != 0 (parity)
 - v1.15: MOD-1, MOD-2, MOD-3 and L1-L5 fixes

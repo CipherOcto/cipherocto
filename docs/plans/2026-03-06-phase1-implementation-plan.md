@@ -1,7 +1,7 @@
 # Implementation Plan: Phase 1 - Core Engine MVP
 
 **Date**: March 2026
-**Mission**: RFC-0103 Phase 1 - Core Engine MVP
+**Mission**: RFC-0200 (Storage) Phase 1 - Core Engine MVP
 **Location**: `/home/mmacedoeu/_w/ai/cipherocto-vector-impl`
 **Base**: Stoolap fork at `/home/mmacedoeu/_w/databases/stoolap`
 
@@ -9,9 +9,10 @@
 
 ## Overview
 
-This plan details the implementation of Phase 1 (Core Engine MVP) of RFC-0103: Unified Vector-SQL Storage Engine. The goal is to build the foundational infrastructure for vector storage with MVCC, segment architecture, and Merkle verification.
+This plan details the implementation of Phase 1 (Core Engine MVP) of RFC-0200 (Storage): Unified Vector-SQL Storage Engine (archived/superseded). The goal is to build the foundational infrastructure for vector storage with MVCC, segment architecture, and Merkle verification.
 
 **Stoolap already has:**
+
 - ✅ Vector data type
 - ✅ HNSW index
 - ✅ Vector distance functions (L2, cosine, inner product)
@@ -19,6 +20,7 @@ This plan details the implementation of Phase 1 (Core Engine MVP) of RFC-0103: U
 - ✅ Transaction management
 
 **What's new:**
+
 - Vector segment architecture
 - Segment-level MVCC visibility
 - Merkle tree integration
@@ -33,6 +35,7 @@ This plan details the implementation of Phase 1 (Core Engine MVP) of RFC-0103: U
 **Location**: `src/storage/vector/`
 
 **Files to create**:
+
 ```
 src/storage/vector/
 ├── mod.rs          # Module exports
@@ -42,6 +45,7 @@ src/storage/vector/
 ```
 
 **Tasks**:
+
 - [ ] Create `src/storage/vector/mod.rs` with module exports
 - [ ] Define `VectorSegment` struct with SoA layout
 - [ ] Add segment configuration (max size: 100K vectors)
@@ -111,6 +115,7 @@ impl VectorSegment {
 ```
 
 **Memory alignment** (for SIMD):
+
 ```rust
 use std::alloc::{alloc, Layout};
 
@@ -132,6 +137,7 @@ let ptr = unsafe { alloc(layout) };
 **Location**: `src/storage/vector/mvcc.rs`
 
 **Files to create**:
+
 ```
 src/storage/vector/
 ├── mvcc.rs         # Vector MVCC implementation
@@ -565,17 +571,20 @@ impl MVCCTable {
 ## Testing Strategy
 
 ### Unit Tests
+
 - [ ] VectorSegment: push, get, SoA layout
 - [ ] VectorMvcc: insert, update, visibility
 - [ ] VectorMerkle: leaf hash, segment root, global root
 - [ ] WAL: serialize/deserialize
 
 ### Integration Tests
+
 - [ ] SQL: CREATE TABLE with VECTOR, INSERT, SELECT
 - [ ] Concurrent: multiple threads doing INSERT/UPDATE
 - [ ] Recovery: crash and recover from WAL
 
 ### Performance Tests
+
 - [ ] Latency: <50ms for simple queries
 - [ ] Throughput: X vectors/second insert
 - [ ] Memory: segment memory usage
@@ -597,19 +606,20 @@ impl MVCCTable {
 
 ## Dependencies
 
-| Component | Status | Notes |
-|-----------|--------|-------|
-| Stoolap MVCC | ✅ Ready | Existing in `src/storage/mvcc/` |
-| Stoolap WAL | ✅ Ready | Existing in `src/storage/mvcc/wal_manager.rs` |
-| HNSW Index | ✅ Ready | Existing in `src/storage/index/hnsw.rs` |
-| Vector Functions | ✅ Ready | Existing in `src/functions/scalar/vector.rs` |
-| blake3 crate | 🔲 Add | Add to `Cargo.toml` |
+| Component        | Status   | Notes                                         |
+| ---------------- | -------- | --------------------------------------------- |
+| Stoolap MVCC     | ✅ Ready | Existing in `src/storage/mvcc/`               |
+| Stoolap WAL      | ✅ Ready | Existing in `src/storage/mvcc/wal_manager.rs` |
+| HNSW Index       | ✅ Ready | Existing in `src/storage/index/hnsw.rs`       |
+| Vector Functions | ✅ Ready | Existing in `src/functions/scalar/vector.rs`  |
+| blake3 crate     | 🔲 Add   | Add to `Cargo.toml`                           |
 
 ---
 
 ## File Changes Summary
 
 ### New Files
+
 ```
 src/storage/vector/
 ├── mod.rs          # 50 lines
@@ -620,6 +630,7 @@ src/storage/vector/
 ```
 
 ### Modified Files
+
 ```
 src/storage/mod.rs         # Add vector module
 src/storage/mvcc/wal_manager.rs  # Add vector WAL ops
@@ -630,14 +641,14 @@ Cargo.toml                 # Add blake3 dependency
 
 ## Timeline
 
-| Week | Focus | Deliverable |
-|------|-------|-------------|
-| 1 | Module setup + Segment | Vector module with SoA |
-| 2 | MVCC + Visibility | Segment-level MVCC |
-| 3 | Merkle | Proof generation |
-| 4 | WAL + Recovery | Crash recovery |
-| 5 | SQL Integration | Full table ops |
-| 6 | Testing + Polish | All tests pass |
+| Week | Focus                  | Deliverable            |
+| ---- | ---------------------- | ---------------------- |
+| 1    | Module setup + Segment | Vector module with SoA |
+| 2    | MVCC + Visibility      | Segment-level MVCC     |
+| 3    | Merkle                 | Proof generation       |
+| 4    | WAL + Recovery         | Crash recovery         |
+| 5    | SQL Integration        | Full table ops         |
+| 6    | Testing + Polish       | All tests pass         |
 
 ---
 

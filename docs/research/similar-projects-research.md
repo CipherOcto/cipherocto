@@ -22,23 +22,24 @@ Metrics for success: Aim for 1M OCTO-W volume in Month 1 (per use-case doc) by u
 LuminAIR specializes in verifiable ML computations — cryptographically proving that a machine learning model (inference or forward pass) executed correctly using Circle STARK proofs powered by StarkWare's S-two (STWO) prover, often with Cairo programs for on-chain verification on Starknet.
 
 Positioning Options for CipherOcto
+
 1. Get Inspiration (Recommended Starting Point – Low Effort, High Value)
-LuminAIR / Giza's approach offers several concrete ideas CipherOcto can borrow without any partnership:
+   LuminAIR / Giza's approach offers several concrete ideas CipherOcto can borrow without any partnership:
 
 Privacy upgrade path
 CipherOcto's biggest current limitation is the trust assumption that sellers see prompt content when proxying requests.
 → Draw inspiration from zkML techniques to explore future-proofing with selective disclosure or encrypted prompts. Even if full ZK inference is too heavy for MVE, reference LuminAIR's Circle STARKs + STWO as a north star for eventual "provable clean routing" or "ZK proof of correct proxy execution without revealing prompt".
 Verifiable quality / disputes
-In RFC-0100 disputes (garbage response, failed inference), CipherOcto relies on automated signals + reputation.
+In RFC-0900 disputes (garbage response, failed inference), CipherOcto relies on automated signals + reputation.
 → Take cues from LuminAIR's proof-of-correct-execution to design lightweight proofs for "the model produced a valid output shape/latency" or integrate STWO-based verification for high-stake routes in Phase 2/3.
 Starknet / Cairo alignment
-CipherOcto's RFC-0102 already chooses Starknet ECDSA, Poseidon hashing, and Cairo-compatible structures.
+CipherOcto's RFC-0102 (Numeric/Math) already chooses Starknet ECDSA, Poseidon hashing, and Cairo-compatible structures.
 → This makes future integration technically natural. Use LuminAIR as inspiration to make quota proofs verifiable on Starknet (e.g., prove that X prompts were routed correctly and burned OCTO-W).
 Agent verifiability
 As both projects target autonomous agents, borrow the "verifiable intelligence" narrative: position CipherOcto's quota router as the access layer that feeds into verifiable execution layers like LuminAIR.
 
 2. Partnering / Integration (Medium-Term Opportunity)
-A natural symbiosis exists, especially given shared Starknet ecosystem affinity:
+   A natural symbiosis exists, especially given shared Starknet ecosystem affinity:
 
 CipherOcto as the "data & access frontend" for LuminAIR agents
 Verifiable agents (e.g., DeFi trading bots, autonomous recommenders) built on LuminAIR need reliable, cheap, burstable inference. CipherOcto can become the decentralized quota provider/routing layer that these agents call — e.g., a router policy that prefers "verifiable" routes when available.
@@ -48,7 +49,7 @@ Co-marketing in Starknet / deAI ecosystem
 Both projects are early, Starknet-aligned, and agent-focused. A loose collaboration (e.g., "LuminAIR agents powered by CipherOcto quota routing") could help both bootstrap adoption.
 
 3. Against / Competitive Framing (Only If Forced)
-Avoid direct "vs" framing — it's not apples-to-apples. If pressed:
+   Avoid direct "vs" framing — it's not apples-to-apples. If pressed:
 
 CipherOcto wins on immediate utility & developer onboarding (drop-in OpenAI proxy, earn from idle quota today).
 LuminAIR wins on cryptographic trust & on-chain composability (verifiable outputs for smart contracts).

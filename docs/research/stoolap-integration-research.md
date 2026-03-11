@@ -6,7 +6,8 @@ This research investigates integrating the Stoolap blockchain SQL database (with
 
 ## Problem Statement
 
-The current AI Quota Marketplace design (RFC-0100, RFC-0101) faces challenges:
+The current AI Quota Marketplace design (RFC-0900, RFC-0901) faces challenges:
+
 1. **Trust** - Buyers must trust sellers to execute prompts correctly
 2. **Verification** - No cryptographic proof that work was completed
 3. **Dispute Resolution** - Relies on reputation, not cryptographic verification
@@ -25,30 +26,32 @@ Stoolap's blockchain SQL database with ZK proofs could address these.
 
 ### Phase 1: Foundation (Complete)
 
-| Feature | Implementation | Details |
-|--------|---------------|---------|
-| **HexaryProof** | ✅ Implemented | 16-way Merkle trie, ~68 byte proofs |
-| **Deterministic Types** | ✅ Implemented | DetermValue with inline/heap optimization |
-| **Blockchain Consensus** | ✅ Implemented | Gas-metered transaction execution |
-| **RowTrie** | ✅ Implemented | Hexary Merkle trie with proof generation |
+| Feature                  | Implementation | Details                                   |
+| ------------------------ | -------------- | ----------------------------------------- |
+| **HexaryProof**          | ✅ Implemented | 16-way Merkle trie, ~68 byte proofs       |
+| **Deterministic Types**  | ✅ Implemented | DetermValue with inline/heap optimization |
+| **Blockchain Consensus** | ✅ Implemented | Gas-metered transaction execution         |
+| **RowTrie**              | ✅ Implemented | Hexary Merkle trie with proof generation  |
 
 **Performance:**
+
 - Proof size: ~68 bytes (target <100)
 - Verification time: ~2-3 μs (target <5)
 - Batch verification: ~50 μs for 100 proofs
 
 ### Phase 2: Zero-Knowledge Proofs (Complete)
 
-| Feature | Implementation | Details |
-|--------|---------------|---------|
-| **STWO Integration** | ✅ Implemented | Circle STARK prover/verifier in Rust |
-| **Cairo Programs** | ✅ Implemented | 3 Cairo programs |
-| **Compressed Proofs** | ✅ Implemented | Aggregate multiple proofs |
-| **Confidential Queries** | ✅ Implemented | Pedersen commitments |
-| **L2 Rollup** | ✅ Implemented | Off-chain execution, on-chain verification |
-| **STWO Plugin** | ✅ Implemented | Modular architecture |
+| Feature                  | Implementation | Details                                    |
+| ------------------------ | -------------- | ------------------------------------------ |
+| **STWO Integration**     | ✅ Implemented | Circle STARK prover/verifier in Rust       |
+| **Cairo Programs**       | ✅ Implemented | 3 Cairo programs                           |
+| **Compressed Proofs**    | ✅ Implemented | Aggregate multiple proofs                  |
+| **Confidential Queries** | ✅ Implemented | Pedersen commitments                       |
+| **L2 Rollup**            | ✅ Implemented | Off-chain execution, on-chain verification |
+| **STWO Plugin**          | ✅ Implemented | Modular architecture                       |
 
 **Deliverables:**
+
 - `stwo-plugin/` - STWO verification plugin (C-compatible FFI)
 - `stwo-bench/` - Benchmarks
 - `cairo/hexary_verify.cairo` - Proof verification
@@ -57,12 +60,12 @@ Stoolap's blockchain SQL database with ZK proofs could address these.
 
 ### Phase 3: Protocol Enhancement (Planned)
 
-| Feature | Status | RFC |
-|--------|--------|-----|
-| Block Production | Draft | RFC-0301 |
-| Block Validation | Draft | RFC-0302 |
-| Network Protocol | Draft | RFC-0303 |
-| Signature Schemes | Draft | RFC-0304 |
+| Feature           | Status | RFC      |
+| ----------------- | ------ | -------- |
+| Block Production  | Draft  | RFC-0301 |
+| Block Validation  | Draft  | RFC-0302 |
+| Network Protocol  | Draft  | RFC-0303 |
+| Signature Schemes | Draft  | RFC-0304 |
 
 ---
 
@@ -73,6 +76,7 @@ Stoolap's blockchain SQL database with ZK proofs could address these.
 **Current Problem:** No cryptographic proof that seller executed the prompt.
 
 **Stoolap Solution:**
+
 - Seller submits transaction to Stoolap with prompt hash
 - Stoolap generates HexaryProof of execution
 - Buyer verifies proof without trusting seller
@@ -97,6 +101,7 @@ hexary_proof::verify(proof).unwrap();
 **Current Problem:** Each prompt verification requires individual proof.
 
 **Stoolap Solution:**
+
 - Aggregate multiple prompt executions into single STARK proof
 - Dramatically reduce on-chain verification costs
 
@@ -115,6 +120,7 @@ let stark_proof = stwo_prover::prove(batch);
 **Current Problem:** Marketplace sees all listing details, pricing.
 
 **Stoolap Solution:**
+
 - Use Pedersen commitments for listing details
 - Prove listing validity without revealing specifics
 - Enable private bidding
@@ -132,6 +138,7 @@ let range_proof = pedersen::range_proof(commitment, 0..1000);
 **Current Problem:** Centralized or off-chain registry.
 
 **Stoolap Solution:**
+
 - On-chain listing registry with Stoolap
 - Each listing is a blockchain record
 - Verifiable state transitions
@@ -159,6 +166,7 @@ let proof = row_trie::prove(&tx);
 **Current Problem:** High on-chain costs for small transactions.
 
 **Stoolap Solution:**
+
 - Execute marketplace on L2
 - Batch thousands of operations
 - Submit single proof to L1
@@ -169,29 +177,29 @@ let proof = row_trie::prove(&tx);
 
 ### Use Case Changes
 
-| Current | Proposed | Rationale |
-|---------|----------|-----------|
-| Off-chain registry | Stoolap on-chain registry | Verifiable, decentralized |
-| Reputation-based trust | Proof-based trust | Cryptographic, not social |
-| Manual dispute | Automated proof verification | Faster resolution |
-| Fixed pricing | Confidential auctions | Privacy-preserving |
+| Current                | Proposed                     | Rationale                 |
+| ---------------------- | ---------------------------- | ------------------------- |
+| Off-chain registry     | Stoolap on-chain registry    | Verifiable, decentralized |
+| Reputation-based trust | Proof-based trust            | Cryptographic, not social |
+| Manual dispute         | Automated proof verification | Faster resolution         |
+| Fixed pricing          | Confidential auctions        | Privacy-preserving        |
 
-### RFC-0100 Changes
+### RFC-0900 Changes
 
-| Section | Change |
-|---------|--------|
-| **Registry** | Add Stoolap on-chain option |
-| **Settlement** | Add ZK proof verification step |
-| **Dispute** | Add "submit proof" resolution path |
-| **Escrow** | Use Stoolap state for escrow |
+| Section        | Change                             |
+| -------------- | ---------------------------------- |
+| **Registry**   | Add Stoolap on-chain option        |
+| **Settlement** | Add ZK proof verification step     |
+| **Dispute**    | Add "submit proof" resolution path |
+| **Escrow**     | Use Stoolap state for escrow       |
 
-### RFC-0101 Changes
+### RFC-0901 Changes
 
-| Section | Change |
-|---------|--------|
-| **Provider** | Add Stoolap provider type |
+| Section          | Change                               |
+| ---------------- | ------------------------------------ |
+| **Provider**     | Add Stoolap provider type            |
 | **Verification** | Add proof submission after execution |
-| **Balance** | Read from Stoolap state |
+| **Balance**      | Read from Stoolap state              |
 
 ---
 
@@ -203,7 +211,7 @@ let proof = row_trie::prove(&tx);
 │  ┌─────────────────┐    ┌─────────────────────────────┐ │
 │  │  Quota Router   │───▶│   Stoolap L2                │ │
 │  │    Agent        │    │  ┌─────────────────────────┐ │ │
-│  │  (RFC-0101)     │    │  │  Listing Registry      │ │ │
+│  │  (RFC-0901)     │    │  │  Listing Registry      │ │ │
 │  └─────────────────┘    │  │  - Create listing     │ │ │
 │         │                │  │  - Update quantity    │ │ │
 │         ▼                │  │  - Verify execution   │ │ │
@@ -229,12 +237,12 @@ let proof = row_trie::prove(&tx);
 
 ## Risk Assessment
 
-| Risk | Mitigation | Severity |
-|------|------------|----------|
-| Integration complexity | Phased rollout | Medium |
-| Performance overhead | Use L2, batch proofs | Low |
-| ZK proof generation time | Pre-compute, async | Medium |
-| Stoolap not production-ready | Run on testnet first | Medium |
+| Risk                         | Mitigation           | Severity |
+| ---------------------------- | -------------------- | -------- |
+| Integration complexity       | Phased rollout       | Medium   |
+| Performance overhead         | Use L2, batch proofs | Low      |
+| ZK proof generation time     | Pre-compute, async   | Medium   |
+| Stoolap not production-ready | Run on testnet first | Medium   |
 
 ---
 
@@ -249,13 +257,13 @@ let proof = row_trie::prove(&tx);
 
 ### Key Integration Points
 
-| Priority | Integration | Impact |
-|----------|-------------|--------|
-| High | Stoolap provider type | Enable proof-based verification |
-| High | On-chain listing registry | Decentralize registry |
-| Medium | STARK proof batching | Reduce costs |
-| Medium | Confidential queries | Privacy |
-| Low | L2 rollup | Scale |
+| Priority | Integration               | Impact                          |
+| -------- | ------------------------- | ------------------------------- |
+| High     | Stoolap provider type     | Enable proof-based verification |
+| High     | On-chain listing registry | Decentralize registry           |
+| Medium   | STARK proof batching      | Reduce costs                    |
+| Medium   | Confidential queries      | Privacy                         |
+| Low      | L2 rollup                 | Scale                           |
 
 ---
 

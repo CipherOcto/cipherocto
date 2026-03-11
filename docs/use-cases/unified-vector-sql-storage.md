@@ -144,9 +144,9 @@ let verified_results = db.query_verified(
 
 ## Technical Requirements
 
-### From RFC-0103 (Storage)
+### From RFC-0200 (Storage)
 
-> **Note:** RFC-0103 has been archived. See [RFC-0107 (Storage): Deterministic Storage Engine](./0107-deterministic-storage-engine.md) for the current specification.
+> **Note:** RFC-0200 (Storage) has been archived. See [RFC-0107 (Storage): Deterministic Storage Engine](./0107-deterministic-storage-engine.md) for the current specification.
 
 **MVP (Phases 1-3):**
 
@@ -190,7 +190,7 @@ let verified_results = db.query_verified(
 
 ## Related RFCs
 
-- [RFC-0103 (Storage - Archived): Unified Vector-SQL Storage Engine](../../rfcs/archived/0103-unified-vector-sql-storage.md) (Superseded by RFC-0107)
+- [RFC-0200 (Storage - Archived): Unified Vector-SQL Storage Engine](../../rfcs/archived/0103-unified-vector-sql-storage.md) (Superseded by RFC-0107)
 - [RFC-0107 (Storage): Deterministic Storage Engine](../../rfcs/0107-deterministic-storage-engine.md)
 
 ## Strategic Positioning

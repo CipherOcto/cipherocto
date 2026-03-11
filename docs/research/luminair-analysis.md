@@ -115,7 +115,7 @@ flowchart TD
 
 ### 2. Verifiable Quality / Dispute Resolution
 
-**Current Problem**: RFC-0100 disputes rely on signals + reputation
+**Current Problem**: RFC-0900 (Economics) disputes rely on signals + reputation
 
 **LuminAIR Solution**: Proof of correct execution
 
@@ -142,7 +142,7 @@ sequenceDiagram
 - Latency proof: timestamp + hash of request/response
 - Correct routing proof: prove X routed to Y without revealing prompt
 
-**Integration with RFC-0100**:
+**Integration with RFC-0900 (Economics)**:
 ```rust
 struct ExecutionProof {
     input_hash: FieldElement,      // Hash of encrypted input
@@ -164,7 +164,7 @@ impl ExecutionProof {
 
 ### 3. Starknet/Cairo Alignment
 
-**Current State**: RFC-0102 already uses Starknet ECDSA, Poseidon hashing
+**Current State**: RFC-0102 (Numeric/Math) already uses Starknet ECDSA, Poseidon hashing
 
 **LuminAIR Planned**: On-chain Cairo verifier
 

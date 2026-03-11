@@ -185,7 +185,7 @@ This extends the data flags with execution policies for the verifiable retrieval
 | **SHARED**       | Standard encryption | Standard       | `VERIFIED`       | Licensed datasets         |
 | **PUBLIC**       | No encryption       | No restriction | `OPEN`           | Public embeddings         |
 
-> ⚠️ **Integration**: The execution policy integrates with RFC-0108 (Verifiable AI Retrieval):
+> ⚠️ **Integration**: The execution policy integrates with RFC-0302 (Retrieval) (Verifiable AI Retrieval):
 >
 > - `LOCAL`: Computation stays on user device, no server can access
 > - `TEE`: Computation in secure enclave, remote attestation required

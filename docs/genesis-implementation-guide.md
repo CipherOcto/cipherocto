@@ -21,11 +21,13 @@ If this works, the entire architecture becomes credible.
 **Purpose:** Foundation for everything — same model + same input = identical output
 
 **Required RFCs:**
-- RFC-0104: Deterministic Floating-Point
-- RFC-0105: Deterministic Quant Arithmetic
-- RFC-0106: Deterministic Numeric Tower
+
+- RFC-0104 (Numeric/Math): Deterministic Floating-Point
+- RFC-0105 (Numeric/Math): Deterministic Quant Arithmetic
+- RFC-0106 (Numeric/Math): Deterministic Numeric Tower
 
 **Implementation:**
+
 ```rust
 // octo-math library
 pub mod deterministic {
@@ -49,9 +51,11 @@ pub mod deterministic {
 **Purpose:** Execute canonical AI operations and produce execution traces
 
 **Required RFCs:**
-- RFC-0120: Deterministic AI-VM
+
+- RFC-0520 (AI Execution): Deterministic AI-VM
 
 **Implementation:**
+
 ```rust
 // octo-vm
 pub struct AI-VM {
@@ -76,12 +80,15 @@ pub enum Operator {
 **Purpose:** Generate STARK proofs for inference
 
 **Required RFCs:**
-- RFC-0131: Deterministic Transformer Circuit
+
+- RFC-0107 (Numeric/Math): Deterministic Transformer Circuit
 
 **Start Small:**
+
 - 100M parameter transformer (manageable proof size, easier debugging)
 
 **Implementation:**
+
 ```rust
 // octo-transformer
 pub struct TransformerCircuit {
@@ -102,15 +109,18 @@ impl Circuit for TransformerCircuit {
 **Purpose:** Generate and verify STARK proofs
 
 **Required RFCs:**
-- RFC-0130: Proof-of-Inference Consensus
+
+- RFC-0630 (Proof Systems): Proof-of-Inference Consensus
 
 **Options (use existing framework):**
+
 - RISC Zero
 - SP1
 - Winterfell
 - StarkWare STWO
 
 **Implementation:**
+
 ```rust
 // octo-prover
 pub struct Prover {
@@ -135,9 +145,11 @@ pub fn verify(proof: &Proof, result: &Digest) -> bool {
 **Purpose:** Peer-to-peer communication
 
 **Required RFCs:**
-- RFC-0143: OCTO-Network Protocol
+
+- RFC-0843 (Networking): OCTO-Network Protocol
 
 **Implementation:**
+
 ```rust
 // octo-network
 pub struct Network {
@@ -161,14 +173,17 @@ pub const TOPICS: &str = [
 **Purpose:** Block creation and verification
 
 **Required RFCs:**
-- RFC-0130: Proof-of-Inference
-- RFC-0141: Parallel Block DAG
+
+- RFC-0630 (Proof Systems): Proof-of-Inference
+- RFC-0741 (Consensus): Parallel Block DAG
 
 **Simplify for Genesis:**
+
 - Start with single chain (no shards)
 - Add sharding later
 
 **Block Structure:**
+
 ```rust
 struct Block {
     previous_hash: Digest,
@@ -192,6 +207,7 @@ fn verify_block(block: &Block) -> bool {
 **Purpose:** Replace mining puzzles with useful work
 
 **Implementation:**
+
 ```rust
 // octo-task-engine
 pub struct TaskGenerator {
@@ -222,9 +238,11 @@ pub fn adjust_difficulty(block_time: u64) {
 **Purpose:** Deterministic prompts for inference tasks
 
 **Required RFCs:**
-- RFC-0133: Proof-of-Dataset Integrity
+
+- RFC-0631 (Proof Systems): Proof-of-Dataset Integrity
 
 **Simplified Format:**
+
 ```rust
 struct Dataset {
     root: Digest,
@@ -246,9 +264,11 @@ fn get_prompt(i: u32) -> String {
 **Purpose:** Node identification and signing
 
 **Required RFCs:**
-- RFC-0102: Wallet Cryptography
+
+- RFC-0102 (Numeric/Math): Wallet Cryptography
 
 **Implementation:**
+
 ```rust
 struct NodeIdentity {
     node_id: PublicKey,
@@ -309,6 +329,7 @@ mod task_engine; // Task generation
 ```
 
 **Startup:**
+
 ```bash
 octo-node --bootstrap --network testnet
 ```
@@ -319,13 +340,13 @@ octo-node --bootstrap --network testnet
 
 **Minimum:** 5-10 nodes
 
-| Node | Role |
-|------|------|
+| Node  | Role      |
+| ----- | --------- |
 | node1 | bootstrap |
-| node2 | compute |
-| node3 | compute |
-| node4 | verifier |
-| node5 | router |
+| node2 | compute   |
+| node3 | compute   |
+| node4 | verifier  |
+| node5 | router    |
 
 ---
 
@@ -348,6 +369,7 @@ block accepted
 ```
 
 **What This Proves:**
+
 - Proof-of-Inference consensus works
 - AI inference secures the network
 - Deterministic execution is reproducible
@@ -358,13 +380,13 @@ block accepted
 
 These RFCs are **not required for genesis**:
 
-| RFC | Reason |
-|-----|--------|
-| RFC-0118 | Autonomous Agent Organizations — application layer |
-| RFC-0111 | Knowledge Markets — application layer |
-| RFC-0100 | AI Quota Marketplace — application layer |
-| RFC-0125 | Model Liquidity — application layer |
-| RFC-0119 | Alignment Mechanisms — application layer |
+| RFC      | Reason                                             |
+| -------- | -------------------------------------------------- |
+| RFC-0414 (Agents) | Autonomous Agent Organizations — application layer |
+| RFC-0411 (Economics) | Knowledge Markets — application layer              |
+| RFC-0900 (Economics) | AI Quota Marketplace — application layer           |
+| RFC-0955 (Economics) | Model Liquidity — application layer                |
+| RFC-0415 (Agents) | Alignment Mechanisms — application layer           |
 
 **Genesis focuses on the infrastructure layer.** Applications can grow on top.
 
@@ -372,17 +394,17 @@ These RFCs are **not required for genesis**:
 
 ## Realistic Build Order
 
-| Step | Component | Duration |
-|------|-----------|----------|
-| 1 | Deterministic Math Library | 1-2 months |
-| 2 | Deterministic AI-VM | 2 months |
-| 3 | Transformer Execution | 2 months |
-| 4 | Proof Generation | 2 months |
-| 5 | libp2p Network | 1-2 months |
-| 6 | Minimal Consensus | 1-2 months |
-| 7 | Task Generator | 1 month |
-| 8 | Dataset Registry | 1 month |
-| 9 | Node Binary | 1 month |
+| Step | Component                  | Duration   |
+| ---- | -------------------------- | ---------- |
+| 1    | Deterministic Math Library | 1-2 months |
+| 2    | Deterministic AI-VM        | 2 months   |
+| 3    | Transformer Execution      | 2 months   |
+| 4    | Proof Generation           | 2 months   |
+| 5    | libp2p Network             | 1-2 months |
+| 6    | Minimal Consensus          | 1-2 months |
+| 7    | Task Generator             | 1 month    |
+| 8    | Dataset Registry           | 1 month    |
+| 9    | Node Binary                | 1 month    |
 
 **Total:** 12-16 months for a small team
 
@@ -390,37 +412,37 @@ These RFCs are **not required for genesis**:
 
 ## Risk Mitigation
 
-| Risk | Mitigation |
-|------|------------|
+| Risk                 | Mitigation                           |
+| -------------------- | ------------------------------------ |
 | Proof size too large | Start with small model (100M params) |
-| Network instability | Limited node count (5-10) |
-| Consensus failure | Single chain initially |
-| Performance issues | Profile and optimize iteratively |
+| Network instability  | Limited node count (5-10)            |
+| Consensus failure    | Single chain initially               |
+| Performance issues   | Profile and optimize iteratively     |
 
 ---
 
 ## Success Criteria
 
-| Metric | Target |
-|--------|--------|
-| Block time | 10-30s |
-| Proof generation | <60s |
-| Proof verification | <1s |
-| Node count | 5-10 |
-| Determinism | 100% (same input = same output) |
+| Metric             | Target                          |
+| ------------------ | ------------------------------- |
+| Block time         | 10-30s                          |
+| Proof generation   | <60s                            |
+| Proof verification | <1s                             |
+| Node count         | 5-10                            |
+| Determinism        | 100% (same input = same output) |
 
 ---
 
 ## Related RFCs
 
-- RFC-0104: Deterministic Floating-Point
-- RFC-0105: Deterministic Quant Arithmetic
-- RFC-0106: Deterministic Numeric Tower
-- RFC-0120: Deterministic AI-VM
-- RFC-0130: Proof-of-Inference Consensus
-- RFC-0131: Deterministic Transformer Circuit
-- RFC-0143: OCTO-Network Protocol
-- RFC-0147: Implementation Roadmap
+- RFC-0104 (Numeric/Math): Deterministic Floating-Point
+- RFC-0105 (Numeric/Math): Deterministic Quant Arithmetic
+- RFC-0106 (Numeric/Math): Deterministic Numeric Tower
+- RFC-0520 (AI Execution): Deterministic AI-VM
+- RFC-0630 (Proof Systems): Proof-of-Inference Consensus
+- RFC-0107 (Numeric/Math): Deterministic Transformer Circuit
+- RFC-0843 (Networking): OCTO-Network Protocol
+- RFC-0004 (Process/Meta): Implementation Roadmap
 
 ---
 
@@ -434,4 +456,4 @@ Once this works, everything else (agents, markets, governance) can grow on top.
 
 ---
 
-*This guide complements RFC-0147: Implementation Roadmap with a focused genesis strategy.*
+_This guide complements RFC-0004 (Process/Meta): Implementation Roadmap with a focused genesis strategy._

@@ -16,19 +16,20 @@
 
 **Stoolap has ~40% of the foundational components for Agent Memory**, but lacks the critical higher-level memory abstractions, lifecycle management, and agent-specific features that systems like Mem0, Zep/Graphiti, and Letta/MemGPT provide.
 
-| Category | Stoolap Current | Agent Memory Required | Gap |
-|----------|----------------|----------------------|-----|
-| **Storage Engine** | ✅ Complete (MVCC, WAL, Indexes) | Same | ✅ None |
-| **Vector Search** | ✅ Complete (HNSW) | Same | ✅ None |
-| **Verifiable State** | ✅ Complete (Merkle, ZK) | Same | ✅ None |
-| **Memory Abstractions** | ❌ None | Episodic, Semantic, Procedural | 🔴 Critical |
-| **Memory Lifecycle** | ❌ None | Consolidation, Compression, Forgetting | 🔴 Critical |
-| **Agent Identity** | ⚠️ Partial | Agent-scoped memory, Ownership | 🟡 High |
-| **Memory Operations** | ⚠️ Partial | Smart retrieval, Ranking, Reflection | 🟡 High |
-| **Multi-Modal** | ❌ None | Video, Audio, Image memory | 🟡 Medium |
-| **Benchmarks** | ❌ None | LongMemEval, BEAM, MOOM | 🟢 Low |
+| Category                | Stoolap Current                  | Agent Memory Required                  | Gap         |
+| ----------------------- | -------------------------------- | -------------------------------------- | ----------- |
+| **Storage Engine**      | ✅ Complete (MVCC, WAL, Indexes) | Same                                   | ✅ None     |
+| **Vector Search**       | ✅ Complete (HNSW)               | Same                                   | ✅ None     |
+| **Verifiable State**    | ✅ Complete (Merkle, ZK)         | Same                                   | ✅ None     |
+| **Memory Abstractions** | ❌ None                          | Episodic, Semantic, Procedural         | 🔴 Critical |
+| **Memory Lifecycle**    | ❌ None                          | Consolidation, Compression, Forgetting | 🔴 Critical |
+| **Agent Identity**      | ⚠️ Partial                       | Agent-scoped memory, Ownership         | 🟡 High     |
+| **Memory Operations**   | ⚠️ Partial                       | Smart retrieval, Ranking, Reflection   | 🟡 High     |
+| **Multi-Modal**         | ❌ None                          | Video, Audio, Image memory             | 🟡 Medium   |
+| **Benchmarks**          | ❌ None                          | LongMemEval, BEAM, MOOM                | 🟢 Low      |
 
 **Overall Gap Analysis:**
+
 - ✅ **Foundational Layer (60% complete)**: Storage, indexing, vector search, verification
 - 🔴 **Memory Layer (0% complete)**: Abstractions, lifecycle, operations
 - 🟡 **Agent Layer (20% complete)**: Identity, multi-agent sharing, ownership
@@ -63,6 +64,7 @@ pub struct Database {
 ```
 
 **Capabilities:**
+
 - ✅ MVCC transactions with snapshot isolation
 - ✅ Multiple index types (BTree, Hash, Bitmap, HNSW)
 - ✅ Durable WAL with LZ4 compression
@@ -89,6 +91,7 @@ FROM embeddings ORDER BY dist LIMIT 10;
 ```
 
 **Capabilities:**
+
 - ✅ Native HNSW vector index
 - ✅ Multiple distance metrics (cosine, euclidean, dot)
 - ✅ Vector column type with mmap support
@@ -114,6 +117,7 @@ pub struct HexaryProof {
 ```
 
 **Capabilities:**
+
 - ✅ Hexary Merkle trie for state proofs
 - ✅ STWO integration for STARK proofs
 - ✅ Pedersen commitments for confidential queries
@@ -134,6 +138,7 @@ pub struct Optimizer {
 ```
 
 **Capabilities:**
+
 - ✅ Cost-based query optimization
 - ✅ Adaptive query execution (AQE)
 - ✅ Semantic query caching (predicate subsumption)
@@ -218,6 +223,7 @@ memory.update(memory_id, new_data)
 ```
 
 **Key Features:**
+
 - ✅ Simple, high-level API
 - ✅ Automatic deduplication
 - ✅ Memory ranking/scoring
@@ -239,6 +245,7 @@ results = graphiti.search("What do I love to eat?")
 ```
 
 **Key Features:**
+
 - ✅ Dynamic entity/relationship extraction
 - ✅ Temporal graph evolution
 - ✅ Multi-hop reasoning
@@ -262,6 +269,7 @@ agent.run(long_running_task)
 ```
 
 **Key Features:**
+
 - ✅ Hierarchical memory tiers
 - ✅ Automatic context management
 - ✅ Memory consolidation during idle
@@ -281,6 +289,7 @@ tools = {
 ```
 
 **Key Features:**
+
 - ✅ Specialized memory operations
 - ✅ Hybrid retrieval strategies
 - ✅ Context-aware ranking
@@ -292,13 +301,13 @@ tools = {
 
 ### Gap Category 1: Memory Type Abstractions 🔴 CRITICAL
 
-| Memory Type | Description | Stoolap Current | Required | Gap Severity |
-|-------------|-------------|-----------------|----------|--------------|
-| **Episodic** | Specific events, conversations | Raw SQL tables | Typed API + metadata | 🔴 Critical |
-| **Semantic** | Facts, rules, concepts | Raw SQL tables | Knowledge abstraction | 🔴 Critical |
-| **Procedural** | Skills, tools, workflows | No support | Executable memory | 🔴 Critical |
-| **Emotional** | Preferences, sentiments | No support | Affective tagging | 🟡 High |
-| **Working** | Active context | No support | Session management | 🟡 High |
+| Memory Type    | Description                    | Stoolap Current | Required              | Gap Severity |
+| -------------- | ------------------------------ | --------------- | --------------------- | ------------ |
+| **Episodic**   | Specific events, conversations | Raw SQL tables  | Typed API + metadata  | 🔴 Critical  |
+| **Semantic**   | Facts, rules, concepts         | Raw SQL tables  | Knowledge abstraction | 🔴 Critical  |
+| **Procedural** | Skills, tools, workflows       | No support      | Executable memory     | 🔴 Critical  |
+| **Emotional**  | Preferences, sentiments        | No support      | Affective tagging     | 🟡 High      |
+| **Working**    | Active context                 | No support      | Session management    | 🟡 High      |
 
 **Required Implementation:**
 
@@ -351,13 +360,13 @@ impl MemoryStore {
 
 ### Gap Category 2: Memory Lifecycle Management 🔴 CRITICAL
 
-| Operation | Description | Stoolap Current | Required | Gap Severity |
-|-----------|-------------|-----------------|----------|--------------|
-| **Consolidation** | Summarize related memories | Manual DELETE | Automatic summarization | 🔴 Critical |
-| **Compression** | Deduplicate repetitive | Manual operations | Smart compression | 🔴 Critical |
-| **Forgetting** | Prune low-value | Manual DELETE | Importance-based decay | 🟡 High |
-| **Reflection** | Learn from patterns | No support | Memory replay & analysis | 🟡 High |
-| **Migration** | Hot→Cold→Archive | No tiering | Automatic tier migration | 🟡 High |
+| Operation         | Description                | Stoolap Current   | Required                 | Gap Severity |
+| ----------------- | -------------------------- | ----------------- | ------------------------ | ------------ |
+| **Consolidation** | Summarize related memories | Manual DELETE     | Automatic summarization  | 🔴 Critical  |
+| **Compression**   | Deduplicate repetitive     | Manual operations | Smart compression        | 🔴 Critical  |
+| **Forgetting**    | Prune low-value            | Manual DELETE     | Importance-based decay   | 🟡 High      |
+| **Reflection**    | Learn from patterns        | No support        | Memory replay & analysis | 🟡 High      |
+| **Migration**     | Hot→Cold→Archive           | No tiering        | Automatic tier migration | 🟡 High      |
 
 **Required Implementation:**
 
@@ -451,13 +460,13 @@ impl MemoryLifecycleManager {
 
 ### Gap Category 3: Agent Identity & Ownership 🟡 HIGH
 
-| Feature | Description | Stoolap Current | Required | Gap Severity |
-|---------|-------------|-----------------|----------|--------------|
-| **Agent ID** | Persistent identity | No concept | Cryptographic agent ID | 🟡 High |
-| **Memory Scoping** | Per-agent isolation | Manual filtering | Automatic scoping | 🔴 Critical |
-| **Ownership** | Agents own memory | No ownership model | Asset model | 🟡 High |
-| **Multi-Agent Sharing** | Knowledge exchange | No support | Memory marketplace | 🟢 Medium |
-| **Lineage Tracking** | Memory provenance | Manual logs | DAG structure | 🟡 High |
+| Feature                 | Description         | Stoolap Current    | Required               | Gap Severity |
+| ----------------------- | ------------------- | ------------------ | ---------------------- | ------------ |
+| **Agent ID**            | Persistent identity | No concept         | Cryptographic agent ID | 🟡 High      |
+| **Memory Scoping**      | Per-agent isolation | Manual filtering   | Automatic scoping      | 🔴 Critical  |
+| **Ownership**           | Agents own memory   | No ownership model | Asset model            | 🟡 High      |
+| **Multi-Agent Sharing** | Knowledge exchange  | No support         | Memory marketplace     | 🟢 Medium    |
+| **Lineage Tracking**    | Memory provenance   | Manual logs        | DAG structure          | 🟡 High      |
 
 **Required Implementation:**
 
@@ -530,13 +539,13 @@ impl MemoryLineage {
 
 ### Gap Category 4: Advanced Memory Operations 🟡 HIGH
 
-| Operation | Description | Stoolap Current | Required | Gap Severity |
-|-----------|-------------|-----------------|----------|--------------|
-| **Smart Retrieval** | Context-aware search | Vector search only | Hybrid strategies | 🟡 High |
-| **Memory Ranking** | Relevance scoring | No ranking | Multi-factor ranking | 🟡 High |
-| **Temporal Queries** | Time-based retrieval | AS OF timestamp | Agent-temporal semantics | 🟡 High |
-| **Reflection** | Learn from patterns | No support | Memory replay & analysis | 🟢 Medium |
-| **Cross-Modal** | Video + text + audio | Vectors only | Multi-modal memory | 🟢 Medium |
+| Operation            | Description          | Stoolap Current    | Required                 | Gap Severity |
+| -------------------- | -------------------- | ------------------ | ------------------------ | ------------ |
+| **Smart Retrieval**  | Context-aware search | Vector search only | Hybrid strategies        | 🟡 High      |
+| **Memory Ranking**   | Relevance scoring    | No ranking         | Multi-factor ranking     | 🟡 High      |
+| **Temporal Queries** | Time-based retrieval | AS OF timestamp    | Agent-temporal semantics | 🟡 High      |
+| **Reflection**       | Learn from patterns  | No support         | Memory replay & analysis | 🟢 Medium    |
+| **Cross-Modal**      | Video + text + audio | Vectors only       | Multi-modal memory       | 🟢 Medium    |
 
 **Required Implementation:**
 
@@ -636,13 +645,13 @@ impl MemoryReflector {
 
 ### Gap Category 5: Multi-Modal Memory 🟢 MEDIUM
 
-| Modality | Description | Stoolap Current | Required | Gap Severity |
-|----------|-------------|-----------------|----------|--------------|
-| **Text** | Natural language | ✅ Complete | - | ✅ None |
-| **Vectors** | Embeddings | ✅ Complete | - | ✅ None |
-| **Video** | Long-form video | No support | Hierarchical memory | 🟢 Medium |
-| **Audio** | Speech, sound | No support | Audio-visual memory | 🟢 Medium |
-| **Images** | Visual content | No support | Image memory | 🟢 Medium |
+| Modality    | Description      | Stoolap Current | Required            | Gap Severity |
+| ----------- | ---------------- | --------------- | ------------------- | ------------ |
+| **Text**    | Natural language | ✅ Complete     | -                   | ✅ None      |
+| **Vectors** | Embeddings       | ✅ Complete     | -                   | ✅ None      |
+| **Video**   | Long-form video  | No support      | Hierarchical memory | 🟢 Medium    |
+| **Audio**   | Speech, sound    | No support      | Audio-visual memory | 🟢 Medium    |
+| **Images**  | Visual content   | No support      | Image memory        | 🟢 Medium    |
 
 **Required Implementation (Future Phase):**
 
@@ -688,12 +697,12 @@ pub struct AVEpisode {
 
 ### Gap Category 6: Benchmarks & Evaluation 🟢 LOW
 
-| Benchmark | Description | Stoolap Current | Required | Gap Severity |
-|-----------|-------------|-----------------|----------|--------------|
-| **LongMemEval** | Conversational memory | No evaluation | 95%+ target | 🟢 Low |
-| **BEAM** | Million-token context | No evaluation | Pass benchmark | 🟢 Low |
-| **MOOM** | Ultra-long roleplay | No evaluation | Character consistency | 🟢 Low |
-| **HaluMem** | Hallucination detection | No evaluation | Low hallucination | 🟢 Low |
+| Benchmark       | Description             | Stoolap Current | Required              | Gap Severity |
+| --------------- | ----------------------- | --------------- | --------------------- | ------------ |
+| **LongMemEval** | Conversational memory   | No evaluation   | 95%+ target           | 🟢 Low       |
+| **BEAM**        | Million-token context   | No evaluation   | Pass benchmark        | 🟢 Low       |
+| **MOOM**        | Ultra-long roleplay     | No evaluation   | Character consistency | 🟢 Low       |
+| **HaluMem**     | Hallucination detection | No evaluation   | Low hallucination     | 🟢 Low       |
 
 **Required Implementation:**
 
@@ -792,6 +801,7 @@ graph TB
 ```
 
 **Gap Summary:**
+
 - ✅ Foundation layer: Complete
 - 🔴 Memory abstraction layer: Missing entirely
 - 🟡 Agent layer: Partial (crypto exists, abstractions missing)
@@ -805,6 +815,7 @@ graph TB
 **Goal:** Add episodic, semantic, procedural memory abstractions
 
 **Deliverables:**
+
 1. `MemoryType` enum and `MemoryEntry` struct
 2. `MemoryStore` trait with type-safe operations
 3. Memory metadata (provenance, importance, tags)
@@ -812,6 +823,7 @@ graph TB
 5. Integration with existing storage engine
 
 **SQL Schema:**
+
 ```sql
 CREATE TABLE memory_entries (
     id UUID PRIMARY KEY,
@@ -836,6 +848,7 @@ CREATE INDEX idx_embedding ON memory_entries USING HNSW(embedding);
 ```
 
 **Acceptance Criteria:**
+
 - ✅ Store and retrieve each memory type
 - ✅ Agent-scoped memory access
 - ✅ Metadata tracking
@@ -846,6 +859,7 @@ CREATE INDEX idx_embedding ON memory_entries USING HNSW(embedding);
 **Goal:** Automatic consolidation, compression, and forgetting
 
 **Deliverables:**
+
 1. `MemoryLifecycleManager`
 2. Consolidation: Summarize episodic → semantic
 3. Compression: Deduplicate similar memories
@@ -853,6 +867,7 @@ CREATE INDEX idx_embedding ON memory_entries USING HNSW(embedding);
 5. Background job scheduling
 
 **API:**
+
 ```rust
 impl MemoryLifecycleManager {
     pub async fn consolidate(&self, agent_id: AgentId) -> Result<()>;
@@ -866,6 +881,7 @@ impl MemoryLifecycleManager {
 ```
 
 **Acceptance Criteria:**
+
 - ✅ Automatic consolidation of related memories
 - ✅ Compression reduces memory size by 10x+
 - ✅ Low-value memories automatically forgotten
@@ -876,6 +892,7 @@ impl MemoryLifecycleManager {
 **Goal:** Agent-scoped memory with ownership model
 
 **Deliverables:**
+
 1. `AgentId` and `Agent` types
 2. `AgentMemory` for scoped access
 3. Memory ownership and marketplace primitives
@@ -883,6 +900,7 @@ impl MemoryLifecycleManager {
 5. Multi-agent memory sharing
 
 **API:**
+
 ```rust
 let agent = Agent::create()?;
 let memory = agent.memory();
@@ -901,6 +919,7 @@ let royalties = lineage.royalties(price)?;
 ```
 
 **Acceptance Criteria:**
+
 - ✅ Automatic agent memory scoping
 - ✅ Memory ownership and transfer
 - ✅ Lineage tracking and royalties
@@ -911,6 +930,7 @@ let royalties = lineage.royalties(price)?;
 **Goal:** Hybrid retrieval with smart ranking
 
 **Deliverables:**
+
 1. `MemoryRetriever` with multiple strategies
 2. Semantic + exact + temporal + graph retrieval
 3. Multi-factor ranking
@@ -918,6 +938,7 @@ let royalties = lineage.royalties(price)?;
 5. Query optimization for agent patterns
 
 **API:**
+
 ```rust
 let retriever = MemoryRetriever::new(store)
     .with_strategy(SemanticStrategy::new())
@@ -929,6 +950,7 @@ let results = retriever.recall(agent_id, "user preferences", k=10)?;
 ```
 
 **Acceptance Criteria:**
+
 - ✅ Hybrid retrieval outperforms single strategy
 - ✅ Sub-100ms retrieval latency
 - ✅ Context-aware ranking
@@ -939,6 +961,7 @@ let results = retriever.recall(agent_id, "user preferences", k=10)?;
 **Goal:** Validate against industry benchmarks
 
 **Deliverables:**
+
 1. LongMemEval benchmark suite
 2. BEAM million-token testing
 3. MOOM character consistency
@@ -946,12 +969,14 @@ let results = retriever.recall(agent_id, "user preferences", k=10)?;
 5. Performance optimization
 
 **Targets:**
+
 - LongMemEval: >90% accuracy
 - BEAM: Pass all tests
 - MOOM: Character consistency >95%
 - HaluMem: Hallucination rate <5%
 
 **Acceptance Criteria:**
+
 - ✅ Pass all benchmarks at target levels
 - ✅ Published benchmark results
 - ✅ Competitive with top systems
@@ -961,6 +986,7 @@ let results = retriever.recall(agent_id, "user preferences", k=10)?;
 **Goal:** Video, audio, and image memory
 
 **Deliverables:**
+
 1. `VideoMemoryStore` with hierarchical compression
 2. `AudioMemoryStore` for speech and sound
 3. `ImageMemoryStore` for visual content
@@ -968,6 +994,7 @@ let results = retriever.recall(agent_id, "user preferences", k=10)?;
 5. Audio-visual episodic memory
 
 **Acceptance Criteria:**
+
 - ✅ Store and retrieve multi-modal content
 - ✅ Hierarchical video compression (1000:1)
 - ✅ Cross-modal search (text → video)
@@ -983,11 +1010,13 @@ let results = retriever.recall(agent_id, "user preferences", k=10)?;
 **Recommended Positioning:** "Verifiable Agent Memory for Autonomous AI"
 
 **Rationale:**
+
 - Agent memory is a massive emerging market (projected $10B+ by 2030)
 - Stoolap has unique competitive advantage (ZK proofs, verification)
 - No existing solution combines agent memory + cryptographic verification
 
 **Action Items:**
+
 1. Update website/docs to emphasize agent memory use case
 2. Create "Agent Memory with Stoolap" tutorial
 3. Publish benchmark results vs. Mem0, Zep, Letta
@@ -1010,12 +1039,14 @@ graph LR
 ```
 
 **Benefits:**
+
 - Faster time to market
 - Clear separation of concerns
 - Easier testing and iteration
 - Can ship incrementally
 
 **Action Items:**
+
 1. Create `stoolap-agent` crate alongside `stoolap-core`
 2. Ship Phase 1 (Memory Types) independently
 3. Gather feedback from early adopters
@@ -1025,15 +1056,16 @@ graph LR
 
 **Stoolap's Unique Advantages:**
 
-| Feature | Competitors | Stoolap Advantage |
-|---------|-------------|-------------------|
-| **Verifiable State** | None | Merkle proofs for every memory |
-| **ZK Privacy** | Partial | STWO integration |
-| **Deterministic Compute** | None | DQA from RFC-0106 |
-| **Time-Travel Queries** | No | Built-in temporal queries |
-| **Cost-Based Optimizer** | Some | AQE + semantic cache |
+| Feature                   | Competitors | Stoolap Advantage              |
+| ------------------------- | ----------- | ------------------------------ |
+| **Verifiable State**      | None        | Merkle proofs for every memory |
+| **ZK Privacy**            | Partial     | STWO integration               |
+| **Deterministic Compute** | None        | DQA from RFC-0106 (Numeric/Math)              |
+| **Time-Travel Queries**   | No          | Built-in temporal queries      |
+| **Cost-Based Optimizer**  | Some        | AQE + semantic cache           |
 
 **Action Items:**
+
 1. Emphasize "verifiable memory" in messaging
 2. Create "Memory Proofs" documentation
 3. Build memory verification tooling
@@ -1043,16 +1075,17 @@ graph LR
 
 **Measure Success Quantitatively:**
 
-| Benchmark | Target | Status |
-|-----------|--------|--------|
-| LongMemEval | >90% | Not tested |
-| BEAM | Pass | Not tested |
-| MOOM | >95% character consistency | Not tested |
-| HaluMem | <5% hallucination | Not tested |
-| Write latency | <100ms with proof | ~68μs proof only ✅ |
-| Query latency | <50ms with proof | ~2-3μs proof only ✅ |
+| Benchmark     | Target                     | Status               |
+| ------------- | -------------------------- | -------------------- |
+| LongMemEval   | >90%                       | Not tested           |
+| BEAM          | Pass                       | Not tested           |
+| MOOM          | >95% character consistency | Not tested           |
+| HaluMem       | <5% hallucination          | Not tested           |
+| Write latency | <100ms with proof          | ~68μs proof only ✅  |
+| Query latency | <50ms with proof           | ~2-3μs proof only ✅ |
 
 **Action Items:**
+
 1. Implement benchmark suite (Phase 5)
 2. Publish results on website
 3. Continuous benchmarking in CI
@@ -1062,11 +1095,11 @@ graph LR
 
 **Target Audience Shift:**
 
-| Current Target | Recommended Target |
-|----------------|-------------------|
-| Database developers | Agent builders |
-| SQL users | AI engineers |
-| App developers | LLM application developers |
+| Current Target      | Recommended Target         |
+| ------------------- | -------------------------- |
+| Database developers | Agent builders             |
+| SQL users           | AI engineers               |
+| App developers      | LLM application developers |
 
 **Developer Experience:**
 
@@ -1082,6 +1115,7 @@ let results = memory.recall("preferences")?;
 ```
 
 **Action Items:**
+
 1. Design agent-first API (not SQL-first)
 2. Create agent memory tutorials
 3. Build examples for common agent patterns
@@ -1091,15 +1125,16 @@ let results = memory.recall("preferences")?;
 
 **Potential Partnerships:**
 
-| Project | Integration Opportunity |
-|---------|------------------------|
-| **LangChain** | Stoolap as memory backend |
-| **LlamaIndex** | Verifiable memory connector |
-| **AutoGPT** | Persistent memory layer |
-| **CrewAI** | Multi-agent memory sharing |
+| Project                   | Integration Opportunity     |
+| ------------------------- | --------------------------- |
+| **LangChain**             | Stoolap as memory backend   |
+| **LlamaIndex**            | Verifiable memory connector |
+| **AutoGPT**               | Persistent memory layer     |
+| **CrewAI**                | Multi-agent memory sharing  |
 | **OpenAI Assistants API** | Alternative memory provider |
 
 **Action Items:**
+
 1. Build LangChain integration (`langchain-stoolap`)
 2. Create LlamaIndex connector
 3. Publish integration examples
@@ -1111,22 +1146,22 @@ let results = memory.recall("preferences")?;
 
 ### Must-Have (MVP)
 
-| Feature | Priority | Effort | Impact |
-|---------|----------|--------|--------|
-| **Memory Type System** | 🔴 Critical | 4-6 weeks | Enables all else |
-| **Agent Identity** | 🔴 Critical | 4-6 weeks | Scoping + ownership |
-| **Memory Lifecycle** | 🔴 Critical | 6-8 weeks | Long-term viability |
-| **Advanced Retrieval** | 🟡 High | 6-8 weeks | User experience |
+| Feature                | Priority    | Effort    | Impact              |
+| ---------------------- | ----------- | --------- | ------------------- |
+| **Memory Type System** | 🔴 Critical | 4-6 weeks | Enables all else    |
+| **Agent Identity**     | 🔴 Critical | 4-6 weeks | Scoping + ownership |
+| **Memory Lifecycle**   | 🔴 Critical | 6-8 weeks | Long-term viability |
+| **Advanced Retrieval** | 🟡 High     | 6-8 weeks | User experience     |
 
 **Total MVP Effort: 20-28 weeks (5-7 months)**
 
 ### Nice-to-Have (Post-MVP)
 
-| Feature | Priority | Effort | Impact |
-|---------|----------|--------|--------|
-| **Multi-Modal Memory** | 🟢 Medium | 8-12 weeks | Video agents |
-| **Reflection System** | 🟢 Medium | 4-6 weeks | Self-improvement |
-| **Benchmarks** | 🟢 Low | 4-6 weeks | Credibility |
+| Feature                | Priority  | Effort     | Impact           |
+| ---------------------- | --------- | ---------- | ---------------- |
+| **Multi-Modal Memory** | 🟢 Medium | 8-12 weeks | Video agents     |
+| **Reflection System**  | 🟢 Medium | 4-6 weeks  | Self-improvement |
+| **Benchmarks**         | 🟢 Low    | 4-6 weeks  | Credibility      |
 
 ### Competitive Positioning
 
@@ -1157,8 +1192,9 @@ Stoolap: All features + ZK proofs ✨
 **Next Review:** After Phase 1 completion
 
 **Related Documents:**
+
 - [Agent Memory Comprehensive Research](./agent-memory-comprehensive-research.md)
-- [RFC-0110: Verifiable Agent Memory](../rfcs/0110-verifiable-agent-memory.md)
+- [RFC-0410 (Agents): Verifiable Agent Memory](../rfcs/0410-verifiable-agent-memory.md)
 - [Use Case: Verifiable Agent Memory Layer](../use-cases/verifiable-agent-memory-layer.md)
 - [Stoolap Research Report](./stoolap-research.md)
 - [Mission: Stoolap Provider Integration](../missions/stoolap-provider-integration.md)

@@ -181,14 +181,23 @@ Once accepted:
 
 ## Active RFCs
 
-| RFC      | Title                        | Status   |
-| -------- | ---------------------------- | -------- |
-| RFC-0001 | Mission Lifecycle            | Accepted |
-| RFC-0002 | Agent Manifest Specification | Accepted |
+| RFC      | Title                           | Status |
+| -------- | ------------------------------ | ------ |
+| RFC-0001 | Mission Lifecycle               | Accepted |
+| RFC-0002 | Agent Manifest Specification    | Accepted |
+| RFC-0003 | Deterministic Execution Standard | Draft |
 
 ---
 
 ## RFC Index by Category
+
+### Process & Meta (RFC-0000-0009)
+
+| RFC      | Title                           | Description |
+| -------- | ------------------------------ | ----------- |
+| RFC-0001 | Mission Lifecycle               | Mission framework |
+| RFC-0002 | Agent Manifest Specification    | Agent definition |
+| RFC-0003 | Deterministic Execution Standard | **Core** - Global determinism requirements |
 
 ### Core Foundation (RFC-0100-0106)
 
@@ -287,6 +296,8 @@ Once accepted:
 ## Quick Reference: The Stack
 
 ```
+Determinism Standard (RFC-0003) ← Foundation
+        ↓
 Numeric Foundation (RFC-0106)
         ↓
 Linear Algebra (RFC-0148)

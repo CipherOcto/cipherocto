@@ -2,7 +2,7 @@
 
 ## Status
 
-Open
+Completed
 
 ## RFC
 
@@ -10,23 +10,24 @@ RFC-0908 (Economics): Python SDK and PyO3 Bindings
 
 ## Dependencies
 
-- Mission-0908-a: Python SDK - PyO3 Core Bindings (blocks Python SDK implementation)
+- Mission-0908-a: Python SDK - PyO3 Core Bindings (completed)
 
 ## Acceptance Criteria
 
 - [x] Audit current `quota-router-cli` exports vs Python SDK expected exports
 - [x] Extract quota-router-core crate (done)
-- [x] Add `completion()` / `acompletion()` functions to Rust library - via PyO3
-- [x] Add `embedding()` / `aembedding()` functions to Rust library - via PyO3
-- [ ] Add `Router` struct with routing strategies to Rust library
-- [x] Add exception types matching LiteLLM - via PyO3
-- [ ] Update CLI to match LiteLLM-style commands
-- [ ] Add OpenAI-compatible `/v1/chat/completions` endpoint to proxy
-- [ ] Add `/v1/embeddings` endpoint to proxy
-- [ ] Implement config loading from YAML (RFC-0907)
-- [ ] Add routing strategies: least-busy, latency-based, cost-based
-- [ ] Add fallback provider logic
-- [ ] Add response caching (RFC-0906)
+- [x] Add `completion()` / `acompletion()` functions to Rust library (via PyO3)
+- [x] Add `embedding()` / `aembedding()` functions to Rust library (via PyO3)
+- [x] Add exception types matching LiteLLM (AuthenticationError, RateLimitError, BudgetExceededError, ProviderError)
+- [x] Add `Router` struct with routing strategies to quota-router-core
+- [x] Add completion functions to quota-router-core library
+- [x] Update CLI to match LiteLLM-style commands
+- [x] Add OpenAI-compatible `/v1/chat/completions` endpoint to proxy
+- [x] Add `/v1/embeddings` endpoint to proxy
+- [x] Implement config loading from YAML (RFC-0907)
+- [x] Add routing strategies: least-busy, latency-based, cost-based
+- [x] Add fallback provider logic
+- [ ] Add response caching (RFC-0906) - deferred
 - [x] Unit tests for all new functions
 
 ## Description
@@ -144,9 +145,16 @@ This mission blocks the PyO3 binding missions as they depend on the Rust core ha
 
 ---
 
-**Claimant:** Open
+## Claimant
 
-**Related RFCs:**
+@claude-code
+
+## Pull Request
+
+https://github.com/CipherOcto/cipherocto/pull/36
+
+## Related RFCs
+
 - RFC-0902: Multi-Provider Routing and Load Balancing
 - RFC-0903: Virtual API Key System
 - RFC-0904: Real-Time Cost Tracking

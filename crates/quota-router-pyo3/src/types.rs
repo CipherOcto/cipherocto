@@ -1,5 +1,7 @@
 // Type definitions for PyO3 bindings
 
+#![allow(deprecated)]
+
 use pyo3::prelude::*;
 use pyo3::types::{PyDict, PyList};
 use serde::{Deserialize, Serialize};
@@ -80,17 +82,10 @@ pub struct ChatCompletion {
 }
 
 impl ChatCompletion {
-    pub fn new(
-        id: impl Into<String>,
-        model: impl Into<String>,
-        choices: Vec<Choice>,
-    ) -> Self {
+    pub fn new(id: impl Into<String>, model: impl Into<String>, choices: Vec<Choice>) -> Self {
         let id = id.into();
         let model = model.into();
-        let total_tokens: u32 = choices
-            .iter()
-            .map(|c| c.message.content.len() as u32)
-            .sum();
+        let total_tokens: u32 = choices.iter().map(|c| c.message.content.len() as u32).sum();
 
         Self {
             id,
@@ -122,10 +117,14 @@ impl ChatCompletion {
 
                 let message_dict = PyDict::new(py);
                 message_dict.set_item("role", &c.message.role).unwrap();
-                message_dict.set_item("content", &c.message.content).unwrap();
+                message_dict
+                    .set_item("content", &c.message.content)
+                    .unwrap();
                 choice_dict.set_item("message", message_dict).unwrap();
 
-                choice_dict.set_item("finish_reason", &c.finish_reason).unwrap();
+                choice_dict
+                    .set_item("finish_reason", &c.finish_reason)
+                    .unwrap();
                 choice_dict.to_object(py)
             }),
         );

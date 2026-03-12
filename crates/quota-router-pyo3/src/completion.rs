@@ -1,6 +1,7 @@
 // Completion functions for PyO3 bindings
 
 #![allow(clippy::too_many_arguments)]
+#![allow(deprecated)]
 
 use crate::types::{ChatCompletion, Choice, Message};
 use pyo3::prelude::*;
@@ -45,11 +46,8 @@ pub fn completion(
         })
         .collect();
 
-    let response = ChatCompletion::new(
-        format!("chatcmpl-{}", uuid::Uuid::new_v4()),
-        model,
-        choices,
-    );
+    let response =
+        ChatCompletion::new(format!("chatcmpl-{}", uuid::Uuid::new_v4()), model, choices);
 
     // Convert to Python dict
     let result = Python::with_gil(|py| response.to_dict(py))?;
@@ -96,11 +94,8 @@ pub async fn acompletion(
         })
         .collect();
 
-    let response = ChatCompletion::new(
-        format!("chatcmpl-{}", uuid::Uuid::new_v4()),
-        model,
-        choices,
-    );
+    let response =
+        ChatCompletion::new(format!("chatcmpl-{}", uuid::Uuid::new_v4()), model, choices);
 
     // Convert to Python dict
     Python::with_gil(|py| response.to_dict(py))
@@ -109,10 +104,7 @@ pub async fn acompletion(
 /// embedding - Sync embedding call
 #[pyfunction]
 #[pyo3(name = "embedding", text_signature = "(input, model, **kwargs)")]
-pub fn embedding(
-    input: Vec<String>,
-    model: String,
-) -> PyResult<Py<PyAny>> {
+pub fn embedding(input: Vec<String>, model: String) -> PyResult<Py<PyAny>> {
     println!("embedding called: model={}, input={}", model, input.len());
 
     // Mock embedding response
@@ -167,10 +159,7 @@ pub fn embedding(
 /// aembedding - Async embedding call
 #[pyfunction]
 #[pyo3(name = "aembedding")]
-pub async fn aembedding(
-    input: Vec<String>,
-    model: String,
-) -> PyResult<Py<PyAny>> {
+pub async fn aembedding(input: Vec<String>, model: String) -> PyResult<Py<PyAny>> {
     println!("aembedding called: model={}, input={}", model, input.len());
 
     // Mock embedding response

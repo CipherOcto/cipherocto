@@ -1,6 +1,8 @@
 // quota-router-pyo3 - Python bindings for quota-router
 // Enables drop-in replacement for LiteLLM
 
+#![allow(deprecated)]
+
 mod completion;
 mod exceptions;
 mod types;

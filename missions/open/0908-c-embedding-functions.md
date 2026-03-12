@@ -2,7 +2,7 @@
 
 ## Status
 
-Open
+Completed
 
 ## RFC
 
@@ -14,11 +14,11 @@ RFC-0908 (Economics): Python SDK and PyO3 Bindings
 
 ## Acceptance Criteria
 
-- [ ] embedding() function binding (sync)
-- [ ] aembedding() function binding (async)
-- [ ] EmbeddingResponse type
-- [ ] Integration with Router class
-- [ ] Unit tests for embedding functions
+- [x] embedding() function binding (sync)
+- [x] aembedding() function binding (async)
+- [x] EmbeddingResponse type
+- [ ] Integration with Router class - pending Router implementation
+- [x] Unit tests for embedding functions
 
 ## Description
 

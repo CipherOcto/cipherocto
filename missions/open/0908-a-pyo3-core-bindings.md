@@ -16,13 +16,13 @@ RFC-0908 (Economics): Python SDK and PyO3 Bindings
 
 - [x] PyO3 Cargo crate at `crates/quota-router-pyo3/`
 - [x] Depends on `quota-router-core` crate
-- [ ] Basic module exports (`__init__.py`) - Python package not created yet
+- [x] Basic module exports (`__init__.py`) - Python package created
 - [x] Exception classes matching LiteLLM
 - [x] Completion function binding (sync)
 - [x] Completion function binding (async) - using pyo3 experimental-async
 - [x] Basic error handling
 - [x] Unit tests for core functions
-- [ ] Type stubs (.pyi) for IDE support - deferred to future
+- [x] Type stubs (.pyi) for IDE support - implemented
 
 ## Description
 

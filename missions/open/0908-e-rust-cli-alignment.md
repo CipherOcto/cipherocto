@@ -14,11 +14,12 @@ RFC-0908 (Economics): Python SDK and PyO3 Bindings
 
 ## Acceptance Criteria
 
-- [ ] Audit current `quota-router-cli` exports vs Python SDK expected exports
-- [ ] Add `completion()` / `acompletion()` functions to Rust library
-- [ ] Add `embedding()` / `aembedding()` functions to Rust library
+- [x] Audit current `quota-router-cli` exports vs Python SDK expected exports
+- [x] Extract quota-router-core crate (done)
+- [x] Add `completion()` / `acompletion()` functions to Rust library - via PyO3
+- [x] Add `embedding()` / `aembedding()` functions to Rust library - via PyO3
 - [ ] Add `Router` struct with routing strategies to Rust library
-- [ ] Add exception types matching LiteLLM (AuthenticationError, RateLimitError, BudgetExceededError, ProviderError)
+- [x] Add exception types matching LiteLLM - via PyO3
 - [ ] Update CLI to match LiteLLM-style commands
 - [ ] Add OpenAI-compatible `/v1/chat/completions` endpoint to proxy
 - [ ] Add `/v1/embeddings` endpoint to proxy
@@ -26,7 +27,7 @@ RFC-0908 (Economics): Python SDK and PyO3 Bindings
 - [ ] Add routing strategies: least-busy, latency-based, cost-based
 - [ ] Add fallback provider logic
 - [ ] Add response caching (RFC-0906)
-- [ ] Unit tests for all new functions
+- [x] Unit tests for all new functions
 
 ## Description
 

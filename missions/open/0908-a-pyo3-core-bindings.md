@@ -19,7 +19,7 @@ RFC-0908 (Economics): Python SDK and PyO3 Bindings
 - [ ] Basic module exports (`__init__.py`) - Python package not created yet
 - [x] Exception classes matching LiteLLM
 - [x] Completion function binding (sync)
-- [ ] Completion function binding (async) - deferred to future
+- [x] Completion function binding (async) - using pyo3 experimental-async
 - [x] Basic error handling
 - [x] Unit tests for core functions
 - [ ] Type stubs (.pyi) for IDE support - deferred to future

@@ -19,8 +19,8 @@ RFC-0908 (Economics): Python SDK and PyO3 Bindings
 - [x] pyproject.toml configuration
 - [x] Package structure (quota_router/)
 - [ ] CLI wrapper scripts
-- [x] GitHub Actions CI/CD for PyPI release
-- [ ] Test PyPI upload
+- [x] GitHub Actions CI/CD for PyPI release (python-sdk.yml)
+- [ ] Test PyPI upload (twine to TestPyPI)
 - [ ] Production PyPI release
 - [x] Documentation (README, examples)
 

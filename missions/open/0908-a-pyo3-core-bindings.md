@@ -10,11 +10,12 @@ RFC-0908 (Economics): Python SDK and PyO3 Bindings
 
 ## Dependencies
 
-None - this is the foundational mission for Python SDK
+- Mission-0908-e: Rust CLI/Library Alignment (must extract core first)
 
 ## Acceptance Criteria
 
-- [ ] PyO3 Cargo crate setup in quota-router-cli
+- [ ] PyO3 Cargo crate at `crates/quota-router-pyo3/`
+- [ ] Depends on `quota-router-core` crate
 - [ ] Basic module exports (`__init__.py`)
 - [ ] Exception classes matching LiteLLM
 - [ ] Completion function binding (sync)
@@ -61,6 +62,7 @@ from quota_router import (
 
 ## Notes
 
+This mission depends on Mission-0908-e (Rust CLI/Library Alignment) which creates `quota-router-core`.
 This mission blocks all other Python SDK missions (0908-b, 0908-c, 0908-d).
 
 ---

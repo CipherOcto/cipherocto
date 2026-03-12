@@ -2,7 +2,7 @@
 
 ## Status
 
-Draft
+Review
 
 ## Authors
 
@@ -206,7 +206,134 @@ litellm --config config.yaml
 ln -s /usr/local/bin/quota-router /usr/local/bin/litellm
 ```
 
-## PyO3 Implementation Notes
+## Architecture
+
+### LiteLLM: Native Python Architecture
+
+```mermaid
+flowchart TB
+    subgraph Python["LiteLLM (Native Python)"]
+        direction TB
+        SDK["SDK Module<br/>completion.py<br/>embedding.py<br/>router.py"]
+        HTTP["HTTP Client<br/>httpx"]
+        Cache["In-Memory Cache<br/>dict/LRU"]
+        Logging["Logging<br/>structlog"]
+    end
+
+    subgraph Providers["LLM Providers"]
+        OpenAI["OpenAI API"]
+        Anthropic["Anthropic API"]
+        Google["Google AI"]
+    end
+
+    User[("User Code")] --> SDK
+    SDK --> HTTP
+    HTTP --> OpenAI
+    HTTP --> Anthropic
+    HTTP --> Google
+    SDK <--> Cache
+    SDK <--> Logging
+```
+
+### quota-router: Rust + PyO3 Architecture
+
+```mermaid
+flowchart TB
+    subgraph PythonSDK["Python SDK (quota-router)"]
+        direction TB
+        Init["__init__.py<br/>Exports"]
+        Completion["completion.py<br/>acompletion()"]
+        Embedding["embedding.py<br/>aembedding()"]
+        Router["router.py<br/>Router class"]
+        Exceptions["exceptions.py<br/>Error types"]
+    end
+
+    subgraph PyO3["PyO3 Bindings Layer"]
+        PyWrapper["Rust Wrapper<br/>pyo3-asyncio"]
+    end
+
+    subgraph RustCore["Rust Core (quota-router-core)"]
+        direction TB
+        RouterCore["Router<br/>Load Balancing<br/>Fallbacks"]
+        Quota["Quota Manager<br/>OCTO-W Balance<br/>Budget Check"]
+        CacheCore["Cache<br/>Response Cache"]
+        ConfigCore["Config<br/>YAML/JSON Parser"]
+        Metrics["Metrics<br/>Prometheus"]
+    end
+
+    subgraph Persistence["Persistence (stoolap)"]
+        Stoolap["stoolap<br/>Unified Storage"]
+    end
+
+    subgraph Providers2["LLM Providers"]
+        OpenAI2["OpenAI API"]
+        Anthropic2["Anthropic API"]
+        Google2["Google AI"]
+    end
+
+    User2[("User Code")] --> Init
+    Init --> Completion
+    Init --> Embedding
+    Init --> Router
+    Init --> Exceptions
+
+    Completion --> PyWrapper
+    Embedding --> PyWrapper
+    Router --> PyWrapper
+
+    PyWrapper --> RouterCore
+    RouterCore --> Quota
+    RouterCore --> CacheCore
+    RouterCore --> ConfigCore
+    RouterCore --> Metrics
+
+    Quota --> Stoolap
+    CacheCore --> Stoolap
+    ConfigCore --> Stoolap
+
+    RouterCore --> OpenAI2
+    RouterCore --> Anthropic2
+    RouterCore --> Google2
+```
+
+### Data Flow: Python to Rust via PyO3
+
+```mermaid
+sequenceDiagram
+    participant User as User Code
+    participant Py as Python SDK
+    participant Pyo3 as PyO3 Layer
+    participant Core as Rust Core
+    participant Stoolap as stoolap
+    participant Provider as LLM Provider
+
+    User->>Py: completion(model, messages)
+    Py->>Py: Prepare request
+    Py->>Pyo3: Call pyo3::wrap_pyfunction!
+    Note over Pyo3: Acquire GIL<br/>Serialize args<br/>Cross boundary
+    Pyo3->>Core: Invoke Rust async function
+    Core->>Core: Route selection<br/>Quota check<br/>Logging
+    Core->>Stoolap: Store/retrieve state
+    Core->>Provider: Forward HTTP request
+    Provider-->>Core: Response
+    Core-->>Pyo3: Return PyResult
+    Note over Pyo3: Deserialize<br/>Release GIL<br/>Cross boundary
+    Pyo3-->>Py: Python object
+    Py-->>User: ModelResponse
+```
+
+### Key Differences
+
+| Aspect | LiteLLM (Python) | quota-router (Rust+PyO3) |
+|--------|------------------|-------------------------|
+| Core Logic | Pure Python | Rust (performance) |
+| Async Runtime | Python asyncio | Rust tokio |
+| Cache | Python dict/LRU | Rust+l |
+| Quota Check | Python | Rust (fast) |
+| Provider Calls | httpx | reqwest (Rust) |
+| Persistence | Redis/PostgreSQL | stoolap |
+
+### PyO3 Implementation Notes
 
 ### Rust → Python Binding Strategy
 
@@ -281,16 +408,50 @@ dev = [
 
 ## Key Files to Modify
 
+### New Crates
+
+| Crate | Description |
+|-------|-------------|
+| `crates/quota-router-core/` | Core library (moved from CLI + proxy) |
+| `crates/quota-router-pyo3/` | PyO3 Python bindings |
+
+### quota-router-core (`crates/quota-router-core/`)
+
 | File | Change |
 |------|--------|
-| `crates/quota-router-cli/pyo3/Cargo.toml` | New - PyO3 bindings |
-| `crates/quota-router-cli/pyo3/src/lib.rs` | New - Python module |
-| `crates/quota-router-cli/pyo3/src/completion.rs` | New - completion binding |
-| `crates/quota-router-cli/pyo3/src/router.rs` | New - Router binding |
-| `crates/quota-router-cli/pyo3/src/exceptions.rs` | New - Exception parity |
-| `python/quota_router/__init__.py` | New - Package init |
-| `python/quota_router/completion.py` | New - SDK functions |
-| `python/quota_router/router.py` | New - Router class |
+| `src/lib.rs` | Re-export core modules |
+| `src/balance.rs` | Moved from CLI |
+| `src/providers.rs` | Moved from CLI |
+| `src/config.rs` | Moved from CLI |
+| `src/proxy.rs` | Moved from CLI - OpenAI-compatible proxy |
+
+### quota-router-pyo3 (`crates/quota-router-pyo3/`)
+
+| File | Change |
+|------|--------|
+| `Cargo.toml` | New - PyO3 bindings |
+| `src/lib.rs` | New - Python module |
+| `src/exceptions.rs` | New - LiteLLM-compatible exceptions |
+| `src/completion.rs` | New - completion binding |
+
+### Updated CLI (`crates/quota-router-cli/`)
+
+| File | Change |
+|------|--------|
+| `Cargo.toml` | Depend on quota-router-core |
+| `src/lib.rs` | Re-export from core |
+| Remove `src/balance.rs` | Moved to core |
+| Remove `src/providers.rs` | Moved to core |
+| Remove `src/config.rs` | Moved to core |
+| Remove `src/proxy.rs` | Moved to core |
+
+### Python SDK (`python/quota_router/`)
+
+| File | Change |
+|------|--------|
+| `__init__.py` | New - Package init |
+| `completion.py` | New - SDK functions |
+| `router.py` | New - Router class |
 
 ## Future Work
 

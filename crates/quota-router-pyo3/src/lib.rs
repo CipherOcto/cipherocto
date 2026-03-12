@@ -5,6 +5,7 @@
 
 mod completion;
 mod exceptions;
+mod router;
 mod types;
 
 use pyo3::prelude::*;
@@ -39,6 +40,11 @@ fn quota_router(m: &PyModule) -> PyResult<()> {
     // Register async completion functions (using pyo3 experimental-async)
     m.add_function(wrap_pyfunction!(completion::acompletion, m)?)?;
     m.add_function(wrap_pyfunction!(completion::aembedding, m)?)?;
+
+    // Register Router class
+    m.add_class::<router::PyRouter>()?;
+    m.add_class::<router::PyModel>()?;
+    m.add_class::<router::PyRoutingStrategy>()?;
 
     Ok(())
 }

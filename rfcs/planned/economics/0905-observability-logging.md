@@ -16,14 +16,14 @@ Define the observability system for the enhanced quota router, including structu
 
 **Requires:**
 
-- RFC-0900 (Economics): AI Quota Marketplace Protocol
-- RFC-0901 (Economics): Quota Router Agent Specification
-
 **Optional:**
 
+- RFC-0900 (Economics): AI Quota Marketplace Protocol
+- RFC-0901 (Economics): Quota Router Agent Specification
 - RFC-0902: Multi-Provider Routing (for latency metrics)
 - RFC-0903: Virtual API Key System (for auth metrics)
 - RFC-0904: Real-Time Cost Tracking (for spend metrics)
+
 
 ## Why Needed
 

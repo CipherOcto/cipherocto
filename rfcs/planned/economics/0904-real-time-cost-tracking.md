@@ -16,13 +16,14 @@ Define the real-time cost tracking system for the enhanced quota router, includi
 
 **Requires:**
 
-- RFC-0900 (Economics): AI Quota Marketplace Protocol
-- RFC-0901 (Economics): Quota Router Agent Specification
 - RFC-0903: Virtual API Key System (for per-key budgets)
 
 **Optional:**
 
+- RFC-0900 (Economics): AI Quota Marketplace Protocol
+- RFC-0901 (Economics): Quota Router Agent Specification
 - RFC-0902: Multi-Provider Routing (for cost-based routing)
+
 
 ## Why Needed
 

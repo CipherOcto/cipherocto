@@ -289,6 +289,7 @@ And: Receives OCTO-W for sold prompts
 - [RFC-0905 (Economics): Observability and Logging](../rfcs/planned/economics/0905-observability-logging.md) (Planned)
 - [RFC-0906 (Economics): Response Caching](../rfcs/planned/economics/0906-response-caching.md) (Planned)
 - [RFC-0907 (Economics): Configuration Management](../rfcs/planned/economics/0907-configuration-management.md) (Planned)
+- [RFC-0908 (Economics): Python SDK and PyO3 Bindings](../rfcs/planned/economics/0908-python-sdk-pyo3-bindings.md) (Planned) - **CRITICAL for drop-in replacement**
 
 ---
 

@@ -16,11 +16,11 @@ Define the response caching system for the enhanced quota router to reduce costs
 
 **Requires:**
 
-- RFC-0900 (Economics): AI Quota Marketplace Protocol
-- RFC-0901 (Economics): Quota Router Agent Specification
 
 **Optional:**
 
+- RFC-0900 (Economics): AI Quota Marketplace Protocol
+- RFC-0901 (Economics): Quota Router Agent Specification
 - RFC-0904: Real-Time Cost Tracking (for cache savings metrics)
 
 ## Why Needed
@@ -126,7 +126,7 @@ litellm_settings:
   cache: true
   cache_params:
     # Cache type
-    type: "sqlite"  # or "redis" via stoolap
+    type: "stoolap"  # only stoolap for now, any other value replaced by stoolap
 
     # Default TTL (seconds)
     default_ttl: 3600

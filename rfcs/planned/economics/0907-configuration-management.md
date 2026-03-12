@@ -16,11 +16,10 @@ Define the configuration management system for the enhanced quota router, includ
 
 **Requires:**
 
-- RFC-0900 (Economics): AI Quota Marketplace Protocol
-- RFC-0901 (Economics): Quota Router Agent Specification
-
 **Optional:**
 
+- RFC-0900 (Economics): AI Quota Marketplace Protocol
+- RFC-0901 (Economics): Quota Router Agent Specification
 - RFC-0902: Multi-Provider Routing (router settings)
 - RFC-0903: Virtual API Key System (key settings)
 - RFC-0904: Real-Time Cost Tracking (pricing settings)

@@ -26,3 +26,7 @@ Cargo.lock
 
 # Worktrees
 .worktrees/
+
+# Python
+.venv/
+.python-version

@@ -1,9 +1,11 @@
+#![allow(dead_code)]
+
 //! Deterministic Floating-Point Verification Probe
 //!
 //! This module provides hardware/software verification for DFP operations.
 //! Used for consensus-grade verification that nodes produce identical results.
 
-use crate::{Dfp, DfpEncoding};
+use crate::Dfp;
 
 /// Current DFP spec version - increment on any arithmetic change
 pub const DFP_SPEC_VERSION: u32 = 1;
@@ -92,7 +94,10 @@ impl DeterministicFloatProbe {
                 if encoding != prev {
                     return ProbeResult::fail(
                         result.result,
-                        format!("Non-deterministic: run {} encoding {:02x?} != run 0 {:02x?}", i, encoding, prev)
+                        format!(
+                            "Non-deterministic: run {} encoding {:02x?} != run 0 {:02x?}",
+                            i, encoding, prev
+                        ),
                     );
                 }
             }
@@ -237,7 +242,11 @@ mod tests {
         let b = Dfp::from_f64(2.5);
         let result = DeterministicFloatProbe::determinism_check("add", a, Some(b), 5);
 
-        assert!(result.passed, "Determinism check failed: {:?}", result.error);
+        assert!(
+            result.passed,
+            "Determinism check failed: {:?}",
+            result.error
+        );
     }
 
     #[test]

@@ -37,11 +37,11 @@ fn compare_f64(a: f64, b: f64) -> bool {
     if max_val == 0.0 {
         diff == 0.0
     } else {
-        diff / max_val < 1e-6  // More tolerant for different implementations
+        diff / max_val < 1e-6 // More tolerant for different implementations
     }
 }
 
-use softfloat_rs::{f64_add, f64_sub, f64_mul, f64_div};
+use softfloat_rs::{f64_add, f64_div, f64_mul, f64_sub};
 
 /// Compare DFP add against SoftFloat reference
 pub fn compare_add(a: Dfp, b: Dfp) -> (Dfp, f64, bool) {
@@ -106,9 +106,9 @@ pub fn compare_div(a: Dfp, b: Dfp) -> (Dfp, f64, bool) {
 mod tests {
     use super::*;
     use crate::Dfp;
-    use rand::SeedableRng;
     use rand::rngs::StdRng;
     use rand::Rng;
+    use rand::SeedableRng;
 
     /// Fuzz test for add with 10,000 random inputs
     #[test]
@@ -138,7 +138,11 @@ mod tests {
             }
         }
 
-        assert!(mismatches.is_empty(), "Found {} mismatches", mismatches.len());
+        assert!(
+            mismatches.is_empty(),
+            "Found {} mismatches",
+            mismatches.len()
+        );
     }
 
     /// Fuzz test for sub with 10,000 random inputs
@@ -167,7 +171,11 @@ mod tests {
             }
         }
 
-        assert!(mismatches.is_empty(), "Found {} mismatches", mismatches.len());
+        assert!(
+            mismatches.is_empty(),
+            "Found {} mismatches",
+            mismatches.len()
+        );
     }
 
     /// Fuzz test for mul with 10,000 random inputs
@@ -196,7 +204,11 @@ mod tests {
             }
         }
 
-        assert!(mismatches.is_empty(), "Found {} mismatches", mismatches.len());
+        assert!(
+            mismatches.is_empty(),
+            "Found {} mismatches",
+            mismatches.len()
+        );
     }
 
     /// Fuzz test for div with 10,000 random inputs
@@ -227,11 +239,16 @@ mod tests {
             }
         }
 
-        assert!(mismatches.is_empty(), "Found {} mismatches", mismatches.len());
+        assert!(
+            mismatches.is_empty(),
+            "Found {} mismatches",
+            mismatches.len()
+        );
     }
 
     /// Edge case test with special values
     #[test]
+    #[allow(clippy::assertions_on_constants)]
     fn test_fuzz_edge_cases() {
         // This test is ignored - edge cases reveal more implementation bugs
         // that need separate fixes beyond the scope of this fuzzing effort

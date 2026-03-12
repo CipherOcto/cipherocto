@@ -73,7 +73,12 @@
 //! `result_exponent = exponent_quotient + 1` — the +1 is from a stale wrong algorithm.
 //! RFC: `result_exponent = exponent_quotient` (no adjustment; scaling and unscaling cancel).
 
-#![allow(dead_code, unused_assignments, clippy::assign_op_pattern, clippy::unnecessary_cast)]
+#![allow(
+    dead_code,
+    unused_assignments,
+    clippy::assign_op_pattern,
+    clippy::unnecessary_cast
+)]
 
 use crate::{Dfp, DfpClass, DFP_MAX, DFP_MAX_EXPONENT, DFP_MIN};
 
@@ -92,7 +97,11 @@ pub fn dfp_add(a: Dfp, b: Dfp) -> Dfp {
         // Zero + Zero — IEEE-754 §6.3 signed-zero rules.
         (DfpClass::Zero, DfpClass::Zero) => {
             let result_sign = if a.sign == b.sign { a.sign } else { false };
-            return if result_sign { Dfp::neg_zero() } else { Dfp::zero() };
+            return if result_sign {
+                Dfp::neg_zero()
+            } else {
+                Dfp::zero()
+            };
         }
         (DfpClass::Zero, _) => return b,
         (_, DfpClass::Zero) => return a,
@@ -129,7 +138,11 @@ pub fn dfp_add(a: Dfp, b: Dfp) -> Dfp {
     let exponent = aligned_a.exponent.saturating_add(exp_adj);
 
     if mantissa == 0 {
-        return if result_sign { Dfp::neg_zero() } else { Dfp::zero() };
+        return if result_sign {
+            Dfp::neg_zero()
+        } else {
+            Dfp::zero()
+        };
     }
 
     let mut result = Dfp {
@@ -162,7 +175,11 @@ pub fn dfp_mul(a: Dfp, b: Dfp) -> Dfp {
         (DfpClass::Infinity, _) | (_, DfpClass::Infinity) => return Dfp::nan(),
         (DfpClass::Zero, _) | (_, DfpClass::Zero) => {
             let result_sign = a.sign ^ b.sign;
-            return if result_sign { Dfp::neg_zero() } else { Dfp::zero() };
+            return if result_sign {
+                Dfp::neg_zero()
+            } else {
+                Dfp::zero()
+            };
         }
         _ => {}
     }
@@ -196,7 +213,11 @@ pub fn dfp_mul(a: Dfp, b: Dfp) -> Dfp {
     let exponent = result_exponent + exp_adj + shift_right as i32;
 
     if result_mantissa == 0 {
-        return if result_sign { Dfp::neg_zero() } else { Dfp::zero() };
+        return if result_sign {
+            Dfp::neg_zero()
+        } else {
+            Dfp::zero()
+        };
     }
 
     let mut result = Dfp {
@@ -230,7 +251,11 @@ pub fn dfp_div(a: Dfp, b: Dfp) -> Dfp {
         // 0 / x — preserve sign per IEEE-754 §6.3.
         (DfpClass::Zero, _) => {
             let result_sign = a.sign ^ b.sign;
-            return if result_sign { Dfp::neg_zero() } else { Dfp::zero() };
+            return if result_sign {
+                Dfp::neg_zero()
+            } else {
+                Dfp::zero()
+            };
         }
         _ => {}
     }
@@ -278,7 +303,11 @@ pub fn dfp_div(a: Dfp, b: Dfp) -> Dfp {
     }
 
     if quotient == 0 {
-        return if result_sign { Dfp::neg_zero() } else { Dfp::zero() };
+        return if result_sign {
+            Dfp::neg_zero()
+        } else {
+            Dfp::zero()
+        };
     }
 
     // FIX D2: Correct exponent formula.
@@ -295,12 +324,20 @@ pub fn dfp_div(a: Dfp, b: Dfp) -> Dfp {
     //
     // Final exponent: (a.e - b.e) + (scale - 128) + exp_adj + shift_amount.
     let q_msb = 127 - quotient.leading_zeros() as i32; // 0-indexed
-    let shift_amount = if q_msb >= 112 { (q_msb - 112) as u32 } else { 0u32 };
+    let shift_amount = if q_msb >= 112 {
+        (q_msb - 112) as u32
+    } else {
+        0u32
+    };
     let aligned = quotient >> shift_amount;
     let (result_mantissa, exp_adj) = round_to_113(aligned as i128);
 
     if result_mantissa == 0 {
-        return if result_sign { Dfp::neg_zero() } else { Dfp::zero() };
+        return if result_sign {
+            Dfp::neg_zero()
+        } else {
+            Dfp::zero()
+        };
     }
 
     let exponent = (a.exponent - b.exponent) + scale - 128 + exp_adj + shift_amount as i32;
@@ -357,7 +394,7 @@ pub fn dfp_sqrt(a: Dfp) -> Dfp {
     //   bits 128..255 → w1 carries bits 0..(226-128-1) = 0..97 of adjusted_mantissa
     //   bits 256..383 → w2 carries bits 98..(113+1-1) = 98..113 of adjusted_mantissa
     //   bits 384..511 → w3 = 0 (adjusted_mantissa is at most 114 bits, so 114+226=340 < 384)
-    let (scaled_hi, scaled_lo) = u128_shl_to_u256(adjusted_mantissa, 226);
+    let (_scaled_hi, _scaled_lo) = u128_shl_to_u256(adjusted_mantissa, 226);
     // scaled_hi:scaled_lo is a 256-bit value equal to adjusted_mantissa << 226.
     // For a 113-bit mantissa: adjusted_mantissa << 226 fits in 339 bits < 256?
     // No: 113 + 226 = 339 bits. Does NOT fit in 256! We need the U512 check.
@@ -383,9 +420,9 @@ pub fn dfp_sqrt(a: Dfp) -> Dfp {
     //   mid = (adjusted_mantissa << (226-128)) & MASK128 = (adjusted_mantissa << 98) & MASK128
     //   top = adjusted_mantissa >> (128-98) = adjusted_mantissa >> 30
     let mask128: u128 = u128::MAX;
-    let scaled_mid = (adjusted_mantissa << 98) & mask128;   // bits 128..255 of the product
-    let scaled_top = adjusted_mantissa >> 30;               // bits 256..339 of the product
-    // bot = 0.
+    let scaled_mid = (adjusted_mantissa << 98) & mask128; // bits 128..255 of the product
+    let scaled_top = adjusted_mantissa >> 30; // bits 256..339 of the product
+                                              // bot = 0.
 
     // Integer sqrt: find largest integer R such that R^2 <= scaled.
     // R is at most 2^170 (since sqrt(2^340) = 2^170). We represent R as (r_hi, r_lo) U256.
@@ -620,12 +657,22 @@ fn u256_sq_le_u384(c_hi: u128, c_lo: u128, s_top: u128, s_mid: u128) -> bool {
     // Scaled input as U512: 0 * 2^384 + s_top * 2^256 + s_mid * 2^128 + 0.
     // Compare (q3, q2, q1, q0) <= (0, s_top, s_mid, 0):
     // Lexicographic comparison from most-significant limb.
-    if q3 != 0 { return false; } // q3 > 0 = s[3]
-    if q2 < s_top { return true; }
-    if q2 > s_top { return false; }
-    if q1 < s_mid { return true; }
-    if q1 > s_mid { return false; }
-    q0 <= 0 // s[0] = 0
+    if q3 != 0 {
+        return false;
+    } // q3 > 0 = s[3]
+    if q2 < s_top {
+        return true;
+    }
+    if q2 > s_top {
+        return false;
+    }
+    if q1 < s_mid {
+        return true;
+    }
+    if q1 > s_mid {
+        return false;
+    }
+    q0 == 0 // s[0] = 0
 }
 
 /// U256 wrapper for 256-bit arithmetic.
@@ -638,8 +685,12 @@ struct U256 {
 
 #[allow(dead_code)]
 impl U256 {
-    fn new(lo: u128) -> Self { Self { hi: 0, lo } }
-    fn from_u128(val: u128) -> Self { Self { hi: 0, lo: val } }
+    fn new(lo: u128) -> Self {
+        Self { hi: 0, lo }
+    }
+    fn from_u128(val: u128) -> Self {
+        Self { hi: 0, lo: val }
+    }
 
     fn leading_zeros(&self) -> u32 {
         if self.hi != 0 {
@@ -652,10 +703,17 @@ impl U256 {
     }
 
     fn shr(self, shift: u32) -> Self {
-        if shift == 0 { return self; }
-        if shift >= 256 { return Self::new(0); }
+        if shift == 0 {
+            return self;
+        }
+        if shift >= 256 {
+            return Self::new(0);
+        }
         if shift >= 128 {
-            Self { hi: 0, lo: self.hi >> (shift - 128) }
+            Self {
+                hi: 0,
+                lo: self.hi >> (shift - 128),
+            }
         } else {
             Self {
                 hi: self.hi >> shift,
@@ -665,10 +723,17 @@ impl U256 {
     }
 
     fn shl(self, n: u32) -> Self {
-        if n == 0 { return self; }
-        if n >= 256 { return Self::new(0); }
+        if n == 0 {
+            return self;
+        }
+        if n >= 256 {
+            return Self::new(0);
+        }
         if n >= 128 {
-            Self { hi: self.lo << (n - 128), lo: 0 }
+            Self {
+                hi: self.lo << (n - 128),
+                lo: 0,
+            }
         } else {
             Self {
                 hi: (self.hi << n) | (self.lo >> (128 - n)),
@@ -678,7 +743,10 @@ impl U256 {
     }
 
     fn bitor(self, other: Self) -> Self {
-        Self { hi: self.hi | other.hi, lo: self.lo | other.lo }
+        Self {
+            hi: self.hi | other.hi,
+            lo: self.lo | other.lo,
+        }
     }
 
     fn mul(self, other: Self) -> Self {
@@ -693,21 +761,32 @@ impl U256 {
         let b3 = (other.hi >> 64) as u64;
 
         let p: [u128; 16] = [
-            (a0 as u128) * (b0 as u128), (a0 as u128) * (b1 as u128),
-            (a0 as u128) * (b2 as u128), (a0 as u128) * (b3 as u128),
-            (a1 as u128) * (b0 as u128), (a1 as u128) * (b1 as u128),
-            (a1 as u128) * (b2 as u128), (a1 as u128) * (b3 as u128),
-            (a2 as u128) * (b0 as u128), (a2 as u128) * (b1 as u128),
-            (a2 as u128) * (b2 as u128), (a2 as u128) * (b3 as u128),
-            (a3 as u128) * (b0 as u128), (a3 as u128) * (b1 as u128),
-            (a3 as u128) * (b2 as u128), (a3 as u128) * (b3 as u128),
+            (a0 as u128) * (b0 as u128),
+            (a0 as u128) * (b1 as u128),
+            (a0 as u128) * (b2 as u128),
+            (a0 as u128) * (b3 as u128),
+            (a1 as u128) * (b0 as u128),
+            (a1 as u128) * (b1 as u128),
+            (a1 as u128) * (b2 as u128),
+            (a1 as u128) * (b3 as u128),
+            (a2 as u128) * (b0 as u128),
+            (a2 as u128) * (b1 as u128),
+            (a2 as u128) * (b2 as u128),
+            (a2 as u128) * (b3 as u128),
+            (a3 as u128) * (b0 as u128),
+            (a3 as u128) * (b1 as u128),
+            (a3 as u128) * (b2 as u128),
+            (a3 as u128) * (b3 as u128),
         ];
 
         let mut w = [0u128; 8];
         w[0] = p[0];
         w[1] = p[1].wrapping_add(p[4]);
         w[2] = p[2].wrapping_add(p[5]).wrapping_add(p[8]);
-        w[3] = p[3].wrapping_add(p[6]).wrapping_add(p[9]).wrapping_add(p[12]);
+        w[3] = p[3]
+            .wrapping_add(p[6])
+            .wrapping_add(p[9])
+            .wrapping_add(p[12]);
         w[4] = p[7].wrapping_add(p[10]).wrapping_add(p[13]);
         w[5] = p[11].wrapping_add(p[14]);
         w[6] = p[15];
@@ -739,13 +818,19 @@ mod tests {
 
     /// Quick approximate f64 comparison.
     fn approx(a: f64, b: f64, tol: f64) -> bool {
-        if a.is_nan() && b.is_nan() { return true; }
-        if a.is_infinite() && b.is_infinite() { return a.signum() == b.signum(); }
+        if a.is_nan() && b.is_nan() {
+            return true;
+        }
+        if a.is_infinite() && b.is_infinite() {
+            return a.signum() == b.signum();
+        }
         let denom = a.abs().max(b.abs()).max(1.0);
         ((a - b).abs() / denom) < tol
     }
 
-    fn dfp(val: f64) -> Dfp { Dfp::from_f64(val) }
+    fn dfp(val: f64) -> Dfp {
+        Dfp::from_f64(val)
+    }
 
     // ------------------------------------------------------------------
     // ADD
@@ -829,11 +914,21 @@ mod tests {
     #[test]
     fn test_mul_basics() {
         // 3 * 5 = 15
-        let a = Dfp { mantissa: 3, exponent: 0, class: DfpClass::Normal, sign: false };
-        let b = Dfp { mantissa: 5, exponent: 0, class: DfpClass::Normal, sign: false };
+        let a = Dfp {
+            mantissa: 3,
+            exponent: 0,
+            class: DfpClass::Normal,
+            sign: false,
+        };
+        let b = Dfp {
+            mantissa: 5,
+            exponent: 0,
+            class: DfpClass::Normal,
+            sign: false,
+        };
         let r = dfp_mul(a, b);
         assert_eq!(r.mantissa, 15, "3*5 mantissa");
-        assert_eq!(r.exponent, 0,  "3*5 exponent");
+        assert_eq!(r.exponent, 0, "3*5 exponent");
 
         // BUG M1 regression: 2 * 3 = 6 (shift_right=1 should ADD to exponent)
         let r = dfp_mul(dfp(2.0), dfp(3.0));
@@ -853,8 +948,18 @@ mod tests {
         // big * 2 = DFP_MAX_MANTISSA * 2^511 * 2 = DFP_MAX_MANTISSA * 2^512
         // DFP_MAX = DFP_MAX_MANTISSA * 2^1023
         // Result is much smaller than DFP_MAX, no overflow
-        let big = Dfp { mantissa: DFP_MAX_MANTISSA, exponent: 511, class: DfpClass::Normal, sign: false };
-        let two = Dfp { mantissa: 1, exponent: 1, class: DfpClass::Normal, sign: false };
+        let big = Dfp {
+            mantissa: DFP_MAX_MANTISSA,
+            exponent: 511,
+            class: DfpClass::Normal,
+            sign: false,
+        };
+        let two = Dfp {
+            mantissa: 1,
+            exponent: 1,
+            class: DfpClass::Normal,
+            sign: false,
+        };
         let r = dfp_mul(big, two);
         // Verify it computes correctly, not checking for overflow since there's none
         assert!(r.to_f64() > 1e150, "result should be huge");
@@ -894,7 +999,7 @@ mod tests {
 
         // 1/3
         let r = dfp_div(dfp(1.0), dfp(3.0));
-        assert!(approx(r.to_f64(), 1.0/3.0, 1e-12), "1/3={}", r.to_f64());
+        assert!(approx(r.to_f64(), 1.0 / 3.0, 1e-12), "1/3={}", r.to_f64());
 
         // 1/1 = 1
         let r = dfp_div(dfp(1.0), dfp(1.0));
@@ -937,7 +1042,12 @@ mod tests {
     #[test]
     fn test_sqrt_exact() {
         // sqrt(4) = 2
-        let four = Dfp { mantissa: 1, exponent: 2, class: DfpClass::Normal, sign: false };
+        let four = Dfp {
+            mantissa: 1,
+            exponent: 2,
+            class: DfpClass::Normal,
+            sign: false,
+        };
         let r = dfp_sqrt(four);
         assert!(approx(r.to_f64(), 2.0, 1e-12), "sqrt(4)={}", r.to_f64());
 
@@ -991,14 +1101,17 @@ mod tests {
         // MAX * 2 should saturate to DFP_MAX (not produce Infinity)
         let r = dfp_mul(DFP_MAX, dfp(2.0));
         assert_eq!(r, DFP_MAX, "MAX*2 should saturate to DFP_MAX");
-        assert_ne!(r.class, DfpClass::Infinity, "Infinity must never be produced");
+        assert_ne!(
+            r.class,
+            DfpClass::Infinity,
+            "Infinity must never be produced"
+        );
     }
 
     // ------------------------------------------------------------------
     // Probe vectors (matches VERIFICATION_PROBE from RFC-0104)
     // ------------------------------------------------------------------
 
-    #[test]
     // Skipping test_probe_add_1_5_plus_2_0 - DFP format issues, fuzz test covers add
 
     #[test]

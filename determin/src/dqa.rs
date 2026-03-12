@@ -22,51 +22,65 @@ pub const MAX_I128_DIGITS: u32 = 39;
 /// POW10[i] = 10^i as i128
 /// Range: 10^0 to 10^36 (fits in i128: max is ~3.4 × 10^38)
 const POW10: [i128; 37] = [
-    1,                           // 10^0
-    10,                          // 10^1
-    100,                         // 10^2
-    1000,                        // 10^3
-    10000,                       // 10^4
-    100000,                      // 10^5
-    1000000,                     // 10^6
-    10000000,                    // 10^7
-    100000000,                   // 10^8
-    1000000000,                  // 10^9
-    10000000000,                 // 10^10
-    100000000000,                // 10^11
-    1000000000000,               // 10^12
-    10000000000000,              // 10^13
-    100000000000000,             // 10^14
-    1000000000000000,            // 10^15
-    10000000000000000,           // 10^16
-    100000000000000000,          // 10^17
-    1000000000000000000,         // 10^18
-    10000000000000000000,        // 10^19
-    100000000000000000000,       // 10^20
-    1000000000000000000000,      // 10^21
-    10000000000000000000000,     // 10^22
-    100000000000000000000000,    // 10^23
-    1000000000000000000000000,   // 10^24
-    10000000000000000000000000,  // 10^25
-    100000000000000000000000000, // 10^26
-    1000000000000000000000000000, // 10^27
-    10000000000000000000000000000, // 10^28
-    100000000000000000000000000000, // 10^29
-    1000000000000000000000000000000, // 10^30
-    10000000000000000000000000000000, // 10^31
-    100000000000000000000000000000000, // 10^32
-    1000000000000000000000000000000000, // 10^33
-    10000000000000000000000000000000000, // 10^34
-    100000000000000000000000000000000000, // 10^35
+    1,                                     // 10^0
+    10,                                    // 10^1
+    100,                                   // 10^2
+    1000,                                  // 10^3
+    10000,                                 // 10^4
+    100000,                                // 10^5
+    1000000,                               // 10^6
+    10000000,                              // 10^7
+    100000000,                             // 10^8
+    1000000000,                            // 10^9
+    10000000000,                           // 10^10
+    100000000000,                          // 10^11
+    1000000000000,                         // 10^12
+    10000000000000,                        // 10^13
+    100000000000000,                       // 10^14
+    1000000000000000,                      // 10^15
+    10000000000000000,                     // 10^16
+    100000000000000000,                    // 10^17
+    1000000000000000000,                   // 10^18
+    10000000000000000000,                  // 10^19
+    100000000000000000000,                 // 10^20
+    1000000000000000000000,                // 10^21
+    10000000000000000000000,               // 10^22
+    100000000000000000000000,              // 10^23
+    1000000000000000000000000,             // 10^24
+    10000000000000000000000000,            // 10^25
+    100000000000000000000000000,           // 10^26
+    1000000000000000000000000000,          // 10^27
+    10000000000000000000000000000,         // 10^28
+    100000000000000000000000000000,        // 10^29
+    1000000000000000000000000000000,       // 10^30
+    10000000000000000000000000000000,      // 10^31
+    100000000000000000000000000000000,     // 10^32
+    1000000000000000000000000000000000,    // 10^33
+    10000000000000000000000000000000000,   // 10^34
+    100000000000000000000000000000000000,  // 10^35
     1000000000000000000000000000000000000, // 10^36
 ];
 
 /// For i64-safe operations (scales 0-18 only)
 const POW10_I64: [i64; 19] = [
-    1, 10, 100, 1000, 10000, 100000, 1000000, 10000000,
-    100000000, 1000000000, 10000000000, 100000000000,
-    1000000000000, 10000000000000, 100000000000000,
-    1000000000000000, 10000000000000000, 100000000000000000,
+    1,
+    10,
+    100,
+    1000,
+    10000,
+    100000,
+    1000000,
+    10000000,
+    100000000,
+    1000000000,
+    10000000000,
+    100000000000,
+    1000000000000,
+    10000000000000,
+    100000000000000,
+    1000000000000000,
+    10000000000000000,
+    100000000000000000,
     1000000000000000000,
 ];
 
@@ -125,7 +139,10 @@ impl Dqa {
         if rounded > i64::MAX as f64 || rounded < i64::MIN as f64 {
             return Err(DqaError::Overflow);
         }
-        Ok(Dqa { value: rounded as i64, scale })
+        Ok(Dqa {
+            value: rounded as i64,
+            scale,
+        })
     }
 
     /// Convert to f64 (lossy)
@@ -137,6 +154,7 @@ impl Dqa {
     }
 
     /// Arithmetic: addition
+    #[allow(clippy::should_implement_trait)]
     pub fn add(self, other: Self) -> Result<Self, DqaError> {
         dqa_add(self, other)
     }
@@ -162,7 +180,10 @@ impl Dqa {
         if self.value == i64::MIN {
             return Err(DqaError::Overflow);
         }
-        Ok(Dqa { value: -self.value, scale: self.scale })
+        Ok(Dqa {
+            value: -self.value,
+            scale: self.scale,
+        })
     }
 
     /// Absolute value
@@ -238,7 +259,12 @@ fn align_scales(a: Dqa, b: Dqa) -> Result<(i64, i64, u8), DqaError> {
 }
 
 /// RoundHalfEven with remainder - used by division and multiplication
-fn round_half_even_with_remainder(quotient: i128, remainder: i128, divisor: i128, result_sign: i64) -> i128 {
+fn round_half_even_with_remainder(
+    quotient: i128,
+    remainder: i128,
+    divisor: i128,
+    result_sign: i64,
+) -> i128 {
     let double_rem = remainder.abs() * 2;
     let abs_divisor = divisor.abs();
     if double_rem < abs_divisor {
@@ -431,7 +457,8 @@ pub fn dqa_assign_to_column(expr_result: Dqa, column_scale: u8) -> Result<Dqa, D
         let quotient = value_i128 / divisor;
         let remainder = value_i128 % divisor;
         let result_sign = expr_result.value.signum();
-        let result_value = round_half_even_with_remainder(quotient, remainder, divisor, result_sign);
+        let result_value =
+            round_half_even_with_remainder(quotient, remainder, divisor, result_sign);
         // Check i64 range (rounded quotient could theoretically exceed i64)
         if result_value > i64::MAX as i128 || result_value < i64::MIN as i128 {
             return Err(DqaError::Overflow);
@@ -573,7 +600,10 @@ mod tests {
     /// Test division by zero
     #[test]
     fn test_div_by_zero() {
-        assert_eq!(dqa_div(dqa(1, 0), dqa(0, 0)).unwrap_err(), DqaError::DivisionByZero);
+        assert_eq!(
+            dqa_div(dqa(1, 0), dqa(0, 0)).unwrap_err(),
+            DqaError::DivisionByZero
+        );
     }
 
     /// Test comparison
@@ -614,7 +644,7 @@ mod tests {
     #[test]
     fn test_mul_overflow() {
         // 10^18 * 10 overflows i64
-        let result = dqa_mul(dqa(10i64.pow(18) as i64, 0), dqa(10, 0));
+        let result = dqa_mul(dqa(10i64.pow(18), 0), dqa(10, 0));
         assert_eq!(result.unwrap_err(), DqaError::Overflow);
     }
 
@@ -630,11 +660,20 @@ mod tests {
     #[test]
     fn test_assign_round_down() {
         // 123.456789 -> scale 6 = 123.456789 (no change)
-        assert_eq!(dqa_assign_to_column(dqa(123456789, 6), 6).unwrap(), dqa(123456789, 6));
+        assert_eq!(
+            dqa_assign_to_column(dqa(123456789, 6), 6).unwrap(),
+            dqa(123456789, 6)
+        );
         // 123.456789 -> scale 4 = 123.4568 (round up)
-        assert_eq!(dqa_assign_to_column(dqa(123456789, 6), 4).unwrap(), dqa(1234568, 4));
+        assert_eq!(
+            dqa_assign_to_column(dqa(123456789, 6), 4).unwrap(),
+            dqa(1234568, 4)
+        );
         // 123.456789 -> scale 2 = 123.46 (round up)
-        assert_eq!(dqa_assign_to_column(dqa(123456789, 6), 2).unwrap(), dqa(12346, 2));
+        assert_eq!(
+            dqa_assign_to_column(dqa(123456789, 6), 2).unwrap(),
+            dqa(12346, 2)
+        );
     }
 
     /// Test assign to column - round half even
@@ -671,7 +710,10 @@ mod tests {
         // i64::MAX with scale 0 -> scale 18 would overflow
         let max = dqa(i64::MAX, 0);
         // This would require 10^18 multiplication, definitely overflows
-        assert_eq!(dqa_assign_to_column(max, 18).unwrap_err(), DqaError::Overflow);
+        assert_eq!(
+            dqa_assign_to_column(max, 18).unwrap_err(),
+            DqaError::Overflow
+        );
     }
 
     /// Test encoding is deterministic (canonical form)

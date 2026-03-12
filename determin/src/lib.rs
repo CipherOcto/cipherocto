@@ -18,10 +18,10 @@ pub const DQA_SPEC_VERSION: u32 = 1;
 pub const DFP_SPEC_VERSION: u32 = 1;
 
 mod arithmetic;
+pub mod dqa;
 #[cfg(test)]
 mod fuzz;
 mod probe;
-pub mod dqa;
 
 pub use arithmetic::{dfp_add, dfp_div, dfp_mul, dfp_sqrt, dfp_sub};
 pub use dqa::{dqa_abs, dqa_assign_to_column, dqa_cmp, dqa_negate, Dqa, DqaEncoding, DqaError};
@@ -156,7 +156,7 @@ impl Dfp {
         }
         if val == i64::MIN {
             let mut dfp = Dfp {
-                mantissa: (1u128 << 63) as u128,
+                mantissa: 1u128 << 63,
                 exponent: 0,
                 class: DfpClass::Normal,
                 sign: true,
@@ -197,7 +197,11 @@ impl Dfp {
             }
             0 => {
                 if mantissa == 0 {
-                    if sign { Dfp::neg_zero() } else { Dfp::zero() }
+                    if sign {
+                        Dfp::neg_zero()
+                    } else {
+                        Dfp::zero()
+                    }
                 } else {
                     let mut dfp = Dfp {
                         mantissa: mantissa as u128,
@@ -228,24 +232,51 @@ impl Dfp {
     pub fn to_f64(self) -> f64 {
         use DfpClass::*;
         match self.class {
-            Zero => if self.sign { -0.0 } else { 0.0 },
-            Infinity => if self.sign { f64::NEG_INFINITY } else { f64::INFINITY },
+            Zero => {
+                if self.sign {
+                    -0.0
+                } else {
+                    0.0
+                }
+            }
+            Infinity => {
+                if self.sign {
+                    f64::NEG_INFINITY
+                } else {
+                    f64::INFINITY
+                }
+            }
             NaN => f64::NAN,
             Normal => {
                 let mantissa_f64 = self.mantissa as f64;
                 let mut value = mantissa_f64 * 2.0_f64.powi(self.exponent);
-                if self.sign { value = -value; }
+                if self.sign {
+                    value = -value;
+                }
                 value
             }
         }
     }
 
     /// Convert DFP to string representation
+    #[allow(clippy::inherent_to_string)]
     pub fn to_string(self) -> String {
         use DfpClass::*;
         match self.class {
-            Zero => if self.sign { "-0.0".to_string() } else { "0.0".to_string() },
-            Infinity => if self.sign { "-Inf".to_string() } else { "Inf".to_string() },
+            Zero => {
+                if self.sign {
+                    "-0.0".to_string()
+                } else {
+                    "0.0".to_string()
+                }
+            }
+            Infinity => {
+                if self.sign {
+                    "-Inf".to_string()
+                } else {
+                    "Inf".to_string()
+                }
+            }
             NaN => "NaN".to_string(),
             Normal => {
                 let f = self.to_f64();
@@ -302,7 +333,9 @@ impl DfpEncoding {
             DfpClass::Infinity => 1,
             DfpClass::NaN => 2,
             DfpClass::Zero => 3,
-        } as u32) << 24) | ((dfp.sign as u32) << 16);
+        } as u32)
+            << 24)
+            | ((dfp.sign as u32) << 16);
 
         Self {
             mantissa: dfp.mantissa.to_be(),
@@ -433,10 +466,35 @@ mod tests {
     fn test_from_i64_comprehensive() {
         // Test edge case integers
         let test_cases: &[i64] = &[
-            0, 1, -1, 2, -2, 7, -7, 42, -42, 127, -127,
-            128, -128, 255, -255, 256, -256, 1023, -1023,
-            1024, -1024, 4096, -4096, 10000, -10000,
-            i64::MAX, i64::MIN, i64::MAX - 1, i64::MIN + 1,
+            0,
+            1,
+            -1,
+            2,
+            -2,
+            7,
+            -7,
+            42,
+            -42,
+            127,
+            -127,
+            128,
+            -128,
+            255,
+            -255,
+            256,
+            -256,
+            1023,
+            -1023,
+            1024,
+            -1024,
+            4096,
+            -4096,
+            10000,
+            -10000,
+            i64::MAX,
+            i64::MIN,
+            i64::MAX - 1,
+            i64::MIN + 1,
         ];
 
         for &val in test_cases {
@@ -466,14 +524,7 @@ mod tests {
     #[test]
     fn test_from_f64_subnormals() {
         // Test subnormal values
-        let subnormals: &[f64] = &[
-            f64::MIN,
-            f64::MIN_POSITIVE,
-            1e-310,
-            1e-300,
-            1e-200,
-            1e-100,
-        ];
+        let subnormals: &[f64] = &[f64::MIN, f64::MIN_POSITIVE, 1e-310, 1e-300, 1e-200, 1e-100];
 
         for &val in subnormals {
             let dfp = Dfp::from_f64(val);
@@ -485,8 +536,19 @@ mod tests {
     fn test_from_f64_edge_cases() {
         // Test boundary values
         let edge_cases: &[f64] = &[
-            1.0, -1.0, 2.0, 0.5, 0.25, 0.125, 0.1, 0.3,
-            1e10, 1e100, f64::MAX, f64::MIN, f64::EPSILON,
+            1.0,
+            -1.0,
+            2.0,
+            0.5,
+            0.25,
+            0.125,
+            0.1,
+            0.3,
+            1e10,
+            1e100,
+            f64::MAX,
+            f64::MIN,
+            f64::EPSILON,
         ];
 
         for &val in edge_cases {
@@ -497,8 +559,8 @@ mod tests {
 
     #[test]
     fn test_arithmetic_special_cases() {
-        use super::dfp_mul;
         use super::dfp_div;
+        use super::dfp_mul;
         use super::dfp_sqrt;
 
         // Zero operations
@@ -515,18 +577,18 @@ mod tests {
     fn test_signed_zero_arithmetic() {
         // IEEE-754 §6.3: signed-zero arithmetic
         use super::dfp_add;
-        use super::dfp_sub;
-        use super::dfp_mul;
         use super::dfp_div;
+        use super::dfp_mul;
+        use super::dfp_sub;
 
         // ADD: Zero + Zero preserves sign rules
         let pos_zero = Dfp::zero();
         let neg_zero = Dfp::neg_zero();
 
         // +0 + +0 = +0
-        assert_eq!(dfp_add(pos_zero, pos_zero).sign, false);
+        assert!(!dfp_add(pos_zero, pos_zero).sign);
         // -0 + -0 = -0
-        assert_eq!(dfp_add(neg_zero, neg_zero).sign, true);
+        assert!(dfp_add(neg_zero, neg_zero).sign);
         // +0 + -0 = +0 (positive wins per IEEE-754 §6.3)
         assert!(!dfp_add(pos_zero, neg_zero).sign);
 
@@ -561,7 +623,7 @@ mod tests {
             Dfp::from_i64(i64::MIN),
             Dfp::from_f64(1.0),
             Dfp::from_f64(-1.0),
-            Dfp::from_f64(3.14159),
+            Dfp::from_f64(std::f64::consts::PI),
             Dfp::from_f64(1e10),
         ];
 
@@ -571,8 +633,16 @@ mod tests {
             let recovered = super::DfpEncoding::from_bytes(bytes).to_dfp();
             assert_eq!(dfp.class, recovered.class, "class mismatch for {:?}", dfp);
             if dfp.class == DfpClass::Normal {
-                assert_eq!(dfp.mantissa, recovered.mantissa, "mantissa mismatch for {:?}", dfp);
-                assert_eq!(dfp.exponent, recovered.exponent, "exponent mismatch for {:?}", dfp);
+                assert_eq!(
+                    dfp.mantissa, recovered.mantissa,
+                    "mantissa mismatch for {:?}",
+                    dfp
+                );
+                assert_eq!(
+                    dfp.exponent, recovered.exponent,
+                    "exponent mismatch for {:?}",
+                    dfp
+                );
             }
             assert_eq!(dfp.sign, recovered.sign, "sign mismatch for {:?}", dfp);
         }

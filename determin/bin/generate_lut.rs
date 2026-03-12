@@ -27,13 +27,19 @@ fn main() {
 
     println!("const TANH_LUT_V1: [i16; 801] = [");
     for (i, &v) in values.iter().enumerate() {
-        if i % 8 == 0 { print!("    "); }
+        if i % 8 == 0 {
+            print!("    ");
+        }
         print!("{:5}, ", v);
-        if i % 8 == 7 || i == 800 { println!(); }
+        if i % 8 == 7 || i == 800 {
+            println!();
+        }
     }
     println!("];");
 
     // Debug: print first, middle, last
-    println!("\n// Debug: tanh(-4.0)={}, tanh(0)={}, tanh(4.0)={}",
-             values[0], values[400], values[800]);
+    println!(
+        "\n// Debug: tanh(-4.0)={}, tanh(0)={}, tanh(4.0)={}",
+        values[0], values[400], values[800]
+    );
 }

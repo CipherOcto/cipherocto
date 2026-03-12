@@ -45,5 +45,6 @@ rustls-pemfile = "2.1"
 reqwest = { version = "0.12", features = ["json"] }
 # Config file handling
 directories = "5"
+serde_yaml = "0.9"
 # Async mutex
 parking_lot = "0.12"

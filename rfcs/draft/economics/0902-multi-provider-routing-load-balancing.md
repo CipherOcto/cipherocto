@@ -2,7 +2,7 @@
 
 ## Status
 
-Planned
+Draft
 
 ## Authors
 
@@ -61,27 +61,62 @@ The enhanced quota router must support multiple LLM providers with intelligent r
 
 ### Routing Strategies
 
+Based on research into LiteLLM's routing implementation, the following strategies are supported:
+
 ```rust
 /// Supported routing strategies
 enum RoutingStrategy {
+    /// Default - Weighted distribution based on rpm/tpm weights (recommended for production)
+    /// LiteLLM: "simple-shuffle" - randomly distributes requests based on configured rpm/tpm
+    SimpleShuffle,
+
     /// Round-robin through available providers
     RoundRobin,
 
     /// Route to provider with fewest active requests
+    /// LiteLLM: "least-busy"
     LeastBusy,
 
     /// Route to fastest responding provider (based on recent latency)
-    Fastest,
+    /// LiteLLM: "latency-based-routing"
+    LatencyBased,
 
     /// Route to cheapest provider (requires RFC-0904)
-    Cheapest,
+    /// LiteLLM: "cost-based-routing"
+    CostBased,
+
+    /// Route to provider with lowest current usage (RPM/TPM)
+    /// LiteLLM: "usage-based-routing" / "usage-based-routing-v2"
+    UsageBased,
 
     /// Weighted distribution based on configured weights
     Weighted,
-
-    /// Custom rules (future extension)
-    Custom,
 }
+```
+
+> **Note:** LiteLLM research shows `simple-shuffle` is recommended for production due to minimal latency overhead. Rate limit aware routing uses RPM/TPM values to make routing decisions.
+
+#### LiteLLM Reference Implementation
+
+| Strategy | LiteLLM Value | Description |
+|----------|---------------|-------------|
+| Simple Shuffle | `simple-shuffle` (default) | Randomly distributes requests based on rpm/tpm weights |
+| Least Busy | `least-busy` | Routes to deployment with fewest active requests |
+| Latency Based | `latency-based-routing` | Routes to fastest responding deployment |
+| Cost Based | `cost-based-routing` | Routes to deployment with lowest cost |
+| Usage Based | `usage-based-routing` | Routes to deployment with lowest current usage (RPM/TPM) |
+
+#### LiteLLM Routing Strategy Enum
+
+```python
+# From litellm/types/router.py
+class RoutingStrategy(enum.Enum):
+    LEAST_BUSY = "least-busy"
+    LATENCY_BASED = "latency-based-routing"
+    COST_BASED = "cost-based-routing"
+    USAGE_BASED_ROUTING_V2 = "usage-based-routing-v2"
+    USAGE_BASED_ROUTING = "usage-based-routing"
+    PROVIDER_BUDGET_LIMITING = "provider-budget-routing"
 ```
 
 ### Configuration
@@ -116,7 +151,43 @@ router_settings:
   latency_window: 100  # Track last N requests
 ```
 
+### Fallback Mechanisms
+
+Based on LiteLLM research, fallbacks provide reliability when a deployment fails:
+
+#### Fallback Types
+
+| Type | Trigger | Description |
+|------|---------|-------------|
+| `fallbacks` | All errors (RateLimitError, Timeout, etc.) | General fallback for failed requests |
+| `content_policy_fallbacks` | ContentPolicyViolationError | Maps content policy errors across providers |
+| `context_window_fallbacks` | ContextWindowExceededError | Maps context window errors to models with larger context |
+
+#### Fallback Configuration
+
+```yaml
+router_settings:
+  # Basic fallback - route to next model group on failure
+  fallbacks:
+    - model: gpt-3.5-turbo
+      fallback_models:
+        - gpt-4
+        - claude-3-opus
+
+  # Context window fallback - for longer prompts
+  context_window_fallbacks:
+    gpt-3.5-turbo: gpt-3.5-turbo-16k
+
+  # Content policy fallback
+  content_policy_fallbacks:
+    gpt-4: claude-3-opus
+```
+
+> **LiteLLM Reference:** Fallbacks are done in-order. A list like `["gpt-3.5-turbo", "gpt-4", "gpt-4-32k"]` will try each sequentially.
+
 ### Provider State
+
+Based on LiteLLM's implementation, provider state tracks deployment health:
 
 ```rust
 struct ProviderState {
@@ -128,10 +199,31 @@ struct ProviderState {
     avg_latency_ms: f64,
     success_rate: f64,
 
+    // Rate limiting (LiteLLM-inspired)
+    rpm_limit: u32,          // Requests per minute limit
+    tpm_limit: u32,          // Tokens per minute limit
+    current_rpm: u32,       // Current usage
+    current_tpm: u32,       // Current token usage
+
     // Health check
     last_health_check: DateTime<Utc>,
     consecutive_failures: u32,
 }
+```
+
+#### Rate Limit Enforcement
+
+LiteLLM provides two modes for rate limiting:
+
+| Mode | Behavior | Use Case |
+|------|----------|----------|
+| **Soft (default)** | RPM/TPM used for routing decisions only | Prefer available capacity |
+| **Hard** | Hard blocking when limit exceeded | Strict enforcement |
+
+```yaml
+router_settings:
+  optional_pre_call_checks:
+    - enforce_model_rate_limits  # Enables hard blocking
 ```
 
 ### Request Flow
@@ -181,6 +273,47 @@ Reference LiteLLM's routing configuration:
 - Model list format matches `model_list` in LiteLLM config
 - Router settings map to LiteLLM's `router_settings`
 - Same `/chat/completions`, `/embeddings` endpoints
+
+#### LiteLLM Router Python Interface
+
+```python
+from litellm import Router
+
+model_list = [
+    {
+        "model_name": "gpt-3.5-turbo",
+        "litellm_params": {
+            "model": "azure/chatgpt-v-2",
+            "api_key": os.getenv("AZURE_API_KEY"),
+            "api_base": os.getenv("AZURE_API_BASE"),
+            "rpm": 900
+        }
+    }
+]
+
+router = Router(
+    model_list=model_list,
+    routing_strategy="simple-shuffle",  # or "least-busy", "latency-based-routing"
+    fallbacks=[{"gpt-3.5-turbo": ["gpt-4"]}],
+    num_retries=2,
+    timeout=30
+)
+
+# Async completion
+response = await router.acompletion(
+    model="gpt-3.5-turbo",
+    messages=[{"role": "user", "content": "Hello!"}]
+)
+```
+
+#### LiteLLM Key Classes
+
+| Class | File | Purpose |
+|-------|------|---------|
+| `Router` | `litellm/router.py` | Main routing class |
+| `RoutingStrategy` | `litellm/types/router.py` | Enum of routing strategies |
+| `AutoRouter` | `litellm/router_strategy/auto_router/auto_router.py` | Pre-routing hooks |
+| `Deployment` | `litellm/types/router.py` | Model deployment configuration |
 
 ## Key Files to Modify
 

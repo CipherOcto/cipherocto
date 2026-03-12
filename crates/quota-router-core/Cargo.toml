@@ -1,22 +1,16 @@
 [package]
-name = "quota-router-cli"
+name = "quota-router-core"
 version.workspace = true
 edition.workspace = true
 authors.workspace = true
 license.workspace = true
 
 [dependencies]
-# Core library
-quota-router-core = { path = "../quota-router-core" }
-
-# CLI
-clap.workspace = true
-
 # Async
 tokio.workspace = true
 async-trait.workspace = true
 
-# HTTP/HTTPS
+# HTTP/HTTP server
 hyper.workspace = true
 hyper-util.workspace = true
 http-body-util.workspace = true
@@ -42,9 +36,5 @@ anyhow.workspace = true
 thiserror.workspace = true
 
 [lib]
-name = "quota_router_cli"
+name = "quota_router_core"
 path = "src/lib.rs"
-
-[[bin]]
-name = "quota-router"
-path = "src/main.rs"

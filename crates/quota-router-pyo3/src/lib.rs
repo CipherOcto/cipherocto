@@ -30,9 +30,12 @@ fn quota_router(_py: Python<'_>, m: &PyModule) -> PyResult<()> {
     // Add version
     m.add("__version__", env!("CARGO_PKG_VERSION"))?;
 
-    // Register completion functions
+    // Register completion functions (sync)
     m.add_function(wrap_pyfunction!(completion::completion, m)?)?;
     m.add_function(wrap_pyfunction!(completion::embedding, m)?)?;
+
+    // Note: async versions (acompletion, aembedding) require pyo3-asyncio
+    // with Python 3.11+ native async support. Deferred to future.
 
     Ok(())
 }

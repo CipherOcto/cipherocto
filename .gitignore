@@ -30,3 +30,5 @@ Cargo.lock
 # Python
 .venv/
 .python-version
+**/__pycache__/
+*.egg-info/

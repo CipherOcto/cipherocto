@@ -1,0 +1,89 @@
+name: Quota Router Python SDK
+
+on:
+  push:
+    branches: [main, next, feat/*]
+  pull_request:
+    paths:
+      - 'crates/quota-router-pyo3/**'
+      - 'python/**'
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        python-version: ['3.12']
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python ${{ matrix.python-version }}
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+
+      - name: Install Rust
+        uses: dtolnay/rust-action@stable
+
+      - name: Install dependencies
+        run: |
+          pip install maturin pytest
+
+      - name: Build and install
+        run: |
+          maturin develop --manifest-path crates/quota-router-pyo3/Cargo.toml
+
+      - name: Run smoke tests
+        run: python tests/smoke_test.py
+
+      - name: Run pytest
+        run: pytest
+
+  type-check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install mypy
+        run: pip install mypy
+
+      - name: Install dependencies
+        run: |
+          pip install maturin
+          maturin develop --manifest-path crates/quota-router-pyo3/Cargo.toml
+
+      - name: Type check
+        run: mypy python/quota_router
+
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install Rust
+        uses: dtolnay/rust-action@stable
+
+      - name: Install maturin
+        run: pip install maturin
+
+      - name: Build wheel
+        run: maturin build --manifest-path crates/quota-router-pyo3/Cargo.toml
+        env:
+          MATURIN_PYTHON_TAGS: true
+
+      - name: Upload wheel
+        uses: actions/upload-artifact@v4
+        with:
+          name: wheels
+          path: target/wheels/*.whl

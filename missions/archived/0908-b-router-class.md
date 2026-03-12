@@ -2,7 +2,7 @@
 
 ## Status
 
-In Progress
+Completed
 
 ## RFC
 
@@ -16,8 +16,8 @@ RFC-0908 (Economics): Python SDK and PyO3 Bindings
 
 - [x] Router class binding in PyO3
 - [x] Router initialization with model_list
-- [ ] Router completion() method
-- [ ] Router acompletion() method
+- [x] Router completion() method
+- [x] Router acompletion() method
 - [x] Routing strategy configuration
 - [x] Fallback configuration
 - [ ] Unit tests for Router class
@@ -59,7 +59,9 @@ This mission extends the core bindings from Mission-0908-a.
 
 ---
 
-**Claimant:** Open
+**Claimant:** @claude-code
+
+**Pull Request:** https://github.com/CipherOcto/cipherocto/pull/37
 
 **Related Missions:**
 - Mission-0908-a: Python SDK - PyO3 Core Bindings

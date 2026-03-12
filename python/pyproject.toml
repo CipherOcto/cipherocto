@@ -1,14 +1,13 @@
 [build-system]
-requires = ["maturin"]
-build-backend = "maturin"
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
 
 [project]
 name = "quota-router"
 version = "0.1.0"
 description = "AI Gateway with OCTO-W integration - drop-in LiteLLM replacement"
 requires-python = ">=3.12"
-dependencies = []
 
-[tool.maturin]
-features = ["pyo3/extension-module"]
-module-name = "quota_router"
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["quota_router*"]

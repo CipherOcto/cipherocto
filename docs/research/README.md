@@ -26,6 +26,7 @@ Mission (implementation)
 | ------------------------------------------------------------ | -------- | ---------------------------------------- |
 | [ZKP_Research_Report.md](./ZKP_Research_Report.md)           | Complete | Zero-knowledge proofs landscape analysis |
 | [cairo-ai-research-report.md](./cairo-ai-research-report.md) | Complete | Cairo AI integration feasibility         |
+| [litellm-analysis-and-quota-router-comparison.md](./litellm-analysis-and-quota-router-comparison.md) | **Approved** | LiteLLM analysis and quota-router gaps   |
 
 ## Research vs RFC
 

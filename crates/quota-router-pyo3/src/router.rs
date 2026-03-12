@@ -6,6 +6,8 @@ use pyo3::prelude::*;
 use pyo3::types::{PyDict, PyList};
 use quota_router_core::{Model, Router as RustRouter, RouterConfig, RoutingStrategy};
 
+use crate::types::{ChatCompletion, Choice, Message};
+
 /// Routing strategy enum for Python
 #[pyclass(name = "RoutingStrategy")]
 #[derive(Debug, Clone)]
@@ -179,5 +181,88 @@ impl PyRouter {
         dict.set_item("cache", self.inner.config().cache)?;
 
         Ok(dict.into())
+    }
+
+    /// Sync completion call via router
+    fn completion(&mut self, model: String, messages: Vec<Message>) -> PyResult<Py<PyAny>> {
+        // Select provider based on routing strategy
+        if let Some((_primary, _fallbacks)) = self.inner.select_provider(&model) {
+            // For MVE, just call the completion function directly
+            let choices: Vec<Choice> = messages
+                .iter()
+                .enumerate()
+                .map(|(i, msg)| {
+                    Choice::new(
+                        i as u32,
+                        Message::new("assistant", format!("Router Echo: {}", msg.content)),
+                        "stop",
+                    )
+                })
+                .collect();
+
+            let response = ChatCompletion::new(
+                format!("chatcmpl-{}", uuid::Uuid::new_v4()),
+                model,
+                choices,
+            );
+
+            Python::with_gil(|py| response.to_dict(py))
+        } else {
+            Err(pyo3::exceptions::PyValueError::new_err(format!(
+                "No provider found for model: {}",
+                model
+            )))
+        }
+    }
+
+    /// Async completion call via router
+    async fn acompletion(&mut self, model: String, messages: Vec<Message>) -> PyResult<Py<PyAny>> {
+        // For async, we use the same logic but it's async
+        self.completion(model, messages)
+    }
+
+    /// Embedding call via router
+    fn embedding(&self, input: Vec<String>, model: String) -> PyResult<Py<PyAny>> {
+        // Mock embedding via router
+        let embeddings: Vec<quota_router_core::Embedding> = input
+            .iter()
+            .enumerate()
+            .map(|(i, _)| {
+                let embedding: Vec<f32> = (0..384).map(|_| 0.1).collect();
+                quota_router_core::Embedding::new(i as u32, embedding)
+            })
+            .collect();
+
+        let response = quota_router_core::EmbeddingsResponse::new(model, embeddings);
+
+        Python::with_gil(|py| {
+            let dict = PyDict::new(py);
+            dict.set_item("object", "list")?;
+
+            let data_list = PyList::new(
+                py,
+                response.data.iter().map(|emb| {
+                    let emb_dict = PyDict::new(py);
+                    emb_dict.set_item("object", "embedding").unwrap();
+                    emb_dict.set_item("embedding", &emb.embedding).unwrap();
+                    emb_dict.set_item("index", emb.index).unwrap();
+                    emb_dict.to_object(py)
+                }),
+            );
+            dict.set_item("data", data_list)?;
+            dict.set_item("model", &response.model)?;
+
+            let usage_dict = PyDict::new(py);
+            usage_dict.set_item("prompt_tokens", 0)?;
+            usage_dict.set_item("total_tokens", 0)?;
+            dict.set_item("usage", usage_dict)?;
+
+            Ok::<_, PyErr>(dict.into())
+        })
+    }
+
+    /// Async embedding call via router
+    async fn aembedding(&self, input: Vec<String>, model: String) -> PyResult<Py<PyAny>> {
+        self.embedding(input, model)
     }
 }

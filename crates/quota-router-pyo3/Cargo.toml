@@ -9,8 +9,8 @@ license.workspace = true
 crate-type = ["cdylib", "rlib"]
 
 [dependencies]
-# PyO3 for Python bindings
-pyo3 = { version = "0.20", features = ["extension-module"] }
+# PyO3 for Python bindings - using 0.21 with experimental async
+pyo3 = { version = "0.21", features = ["extension-module", "experimental-async"] }
 
 # Core library
 quota-router-core = { path = "../quota-router-core" }
@@ -26,4 +26,4 @@ uuid.workspace = true
 thiserror.workspace = true
 
 [build-dependencies]
-pyo3-build-config = "0.20"
+pyo3-build-config = "0.21"

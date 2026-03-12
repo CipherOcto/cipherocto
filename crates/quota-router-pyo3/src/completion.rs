@@ -57,6 +57,55 @@ pub fn completion(
     Ok(result)
 }
 
+/// acompletion - Async completion call
+#[pyfunction]
+#[pyo3(name = "acompletion")]
+pub async fn acompletion(
+    model: String,
+    messages: Vec<Message>,
+    // Optional parameters (match LiteLLM)
+    _temperature: Option<f64>,
+    _max_tokens: Option<i32>,
+    _top_p: Option<f64>,
+    _n: Option<i32>,
+    _stream: Option<bool>,
+    _stop: Option<String>,
+    _presence_penalty: Option<f64>,
+    _frequency_penalty: Option<f64>,
+    _user: Option<String>,
+    // quota-router specific
+    _api_key: Option<String>,
+) -> PyResult<Py<PyAny>> {
+    // Log the request parameters
+    println!(
+        "acompletion called: model={}, messages={}",
+        model,
+        messages.len()
+    );
+
+    // Convert messages to response choices
+    let choices: Vec<Choice> = messages
+        .iter()
+        .enumerate()
+        .map(|(i, msg)| {
+            Choice::new(
+                i as u32,
+                Message::new("assistant", format!("Async Echo: {}", msg.content)),
+                "stop",
+            )
+        })
+        .collect();
+
+    let response = ChatCompletion::new(
+        format!("chatcmpl-{}", uuid::Uuid::new_v4()),
+        model,
+        choices,
+    );
+
+    // Convert to Python dict
+    Python::with_gil(|py| response.to_dict(py))
+}
+
 /// embedding - Sync embedding call
 #[pyfunction]
 #[pyo3(name = "embedding", text_signature = "(input, model, **kwargs)")]
@@ -113,4 +162,52 @@ pub fn embedding(
     })?;
 
     Ok(result)
+}
+
+/// aembedding - Async embedding call
+#[pyfunction]
+#[pyo3(name = "aembedding")]
+pub async fn aembedding(
+    input: Vec<String>,
+    model: String,
+) -> PyResult<Py<PyAny>> {
+    println!("aembedding called: model={}, input={}", model, input.len());
+
+    // Mock embedding response
+    let embeddings: Vec<crate::types::Embedding> = input
+        .iter()
+        .enumerate()
+        .map(|(i, _)| {
+            let embedding: Vec<f32> = (0..384).map(|_| 0.1).collect();
+            crate::types::Embedding::new(i as u32, embedding)
+        })
+        .collect();
+
+    let response = crate::types::EmbeddingsResponse::new(model, embeddings);
+
+    // Convert to dict
+    Python::with_gil(|py| {
+        let dict = PyDict::new(py);
+        dict.set_item("object", "list")?;
+
+        let data_list = PyList::new(
+            py,
+            response.data.iter().map(|emb| {
+                let emb_dict = PyDict::new(py);
+                emb_dict.set_item("object", "embedding").unwrap();
+                emb_dict.set_item("embedding", &emb.embedding).unwrap();
+                emb_dict.set_item("index", emb.index).unwrap();
+                emb_dict.to_object(py)
+            }),
+        );
+        dict.set_item("data", data_list)?;
+        dict.set_item("model", &response.model)?;
+
+        let usage_dict = PyDict::new(py);
+        usage_dict.set_item("prompt_tokens", 0)?;
+        usage_dict.set_item("total_tokens", 0)?;
+        dict.set_item("usage", usage_dict)?;
+
+        Ok::<_, PyErr>(dict.into())
+    })
 }

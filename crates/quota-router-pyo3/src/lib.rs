@@ -23,19 +23,20 @@ use pyo3::prelude::*;
 /// print(response["choices"][0]["message"]["content"])
 /// ```
 #[pymodule]
-fn quota_router(_py: Python<'_>, m: &PyModule) -> PyResult<()> {
+fn quota_router(m: &PyModule) -> PyResult<()> {
     // Register exception classes
     exceptions::register_exceptions(m)?;
 
     // Add version
     m.add("__version__", env!("CARGO_PKG_VERSION"))?;
 
-    // Register completion functions (sync)
+    // Register sync completion functions
     m.add_function(wrap_pyfunction!(completion::completion, m)?)?;
     m.add_function(wrap_pyfunction!(completion::embedding, m)?)?;
 
-    // Note: async versions (acompletion, aembedding) require pyo3-asyncio
-    // with Python 3.11+ native async support. Deferred to future.
+    // Register async completion functions (using pyo3 experimental-async)
+    m.add_function(wrap_pyfunction!(completion::acompletion, m)?)?;
+    m.add_function(wrap_pyfunction!(completion::aembedding, m)?)?;
 
     Ok(())
 }

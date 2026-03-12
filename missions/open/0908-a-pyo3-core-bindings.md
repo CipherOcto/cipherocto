@@ -2,7 +2,7 @@
 
 ## Status
 
-Open
+In Progress
 
 ## RFC
 
@@ -65,7 +65,7 @@ This mission blocks all other Python SDK missions (0908-b, 0908-c, 0908-d).
 
 ---
 
-**Claimant:** Open
+**Claimant:** @mmacedoeu
 
 **Related Missions:**
 - Mission-0908-b: Python SDK Router Class

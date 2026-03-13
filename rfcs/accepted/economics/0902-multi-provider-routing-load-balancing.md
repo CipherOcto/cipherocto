@@ -2,11 +2,15 @@
 
 ## Status
 
-Draft
+Accepted
 
 ## Authors
 
 - Author: @cipherocto
+
+## Maintainers
+
+- Maintainer: @mmacedoeu
 
 ## Summary
 
@@ -337,8 +341,31 @@ Multi-provider routing is essential for:
 3. **Rate limit avoidance** - Distribute across providers
 4. **LiteLLM migration** - Match LiteLLM's routing capabilities
 
+## Version History
+
+| Version | Date       | Changes |
+| ------- | ---------- | --------|
+| 1.0     | 2026-03-12 | Initial draft with LiteLLM research |
+| 1.1     | 2026-03-12 | Moved to Draft, added routing strategies, fallback mechanisms |
+| 1.2     | 2026-03-12 | Changed to Accepted status |
+
+## Related RFCs
+
+- RFC-0900 (Economics): AI Quota Marketplace Protocol
+- RFC-0901 (Economics): Quota Router Agent Specification
+- RFC-0903: Virtual API Key System
+- RFC-0904: Real-Time Cost Tracking
+- RFC-0908 (Economics): Python SDK and PyO3 Bindings
+
+## Related Use Cases
+
+- Enhanced Quota Router Gateway
+
+## Related Research
+
+- LiteLLM Analysis and Quota Router Comparison
+
 ---
 
-**Planned Date:** 2026-03-12
-**Related Use Case:** Enhanced Quota Router Gateway
-**Related Research:** LiteLLM Analysis and Quota Router Comparison
+**Submission Date:** 2026-03-12
+**Last Updated:** 2026-03-12

@@ -2,7 +2,7 @@
 
 ## Status
 
-Open
+Claimed
 
 ## RFC
 
@@ -15,13 +15,13 @@ RFC-0902 (Economics): Multi-Provider Routing and Load Balancing
 
 ## Acceptance Criteria
 
-- [ ] RPM (requests per minute) tracking
-- [ ] TPM (tokens per minute) tracking
-- [ ] Soft mode: RPM/TPM for routing decisions only
-- [ ] Hard mode: Strict blocking when limit exceeded
-- [ ] Redis support for multi-instance deployment
-- [ ] 429 response on hard limit exceeded
-- [ ] Unit tests for rate limiting
+- [x] RPM (requests per minute) tracking
+- [x] TPM (tokens per minute) tracking
+- [x] Soft mode: RPM/TPM for routing decisions only
+- [x] Hard mode: Strict blocking when limit exceeded
+- [ ] Redis support for multi-instance deployment (future)
+- [x] 429 response on hard limit exceeded
+- [x] Unit tests for rate limiting
 
 ## Description
 
@@ -74,9 +74,28 @@ model_list:
 
 Response includes `retry-after: 60` header.
 
+## Implementation Notes
+
+**Files created:**
+- `crates/quota-router-core/src/rate_limit.rs` - New rate limiting module
+
+**Implemented:**
+- RateLimitMode enum (Soft/Hard)
+- RateLimitConfig with rpm/tpm limits
+- RateLimiter with usage tracking
+- RateLimiterManager for multi-model groups
+- RateLimitResult with blocked reason and retry_after
+
+**Deferred:**
+- Redis support (future enhancement)
+
+**Tests:** 5 rate limit tests passing (27 total)
+
 ---
 
-**Claimant:** Open
+**Claimant:** @claude-code
+
+**Pull Request:** #
 
 **Related RFCs:**
 - RFC-0902: Multi-Provider Routing and Load Balancing

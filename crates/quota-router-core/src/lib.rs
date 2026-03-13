@@ -6,4 +6,5 @@ pub mod config;
 pub mod fallback;
 pub mod providers;
 pub mod proxy;
+pub mod rate_limit;
 pub mod router;

@@ -2,7 +2,7 @@
 
 ## Status
 
-Final (v28 - hygiene fixes)
+Final (v29 - Stoolap compatibility)
 
 ## Authors
 
@@ -422,25 +422,6 @@ CREATE TABLE api_keys (
     metadata TEXT,
     FOREIGN KEY (team_id) REFERENCES teams(team_id) ON DELETE SET NULL
 );
-
--- Trigger to enforce MAX_KEYS_PER_TEAM (100 keys per team)
-CREATE OR REPLACE FUNCTION check_team_key_limit()
-RETURNS TRIGGER AS $$
-BEGIN
-    IF NEW.team_id IS NOT NULL THEN
-        IF (SELECT COUNT(*) FROM api_keys WHERE team_id = NEW.team_id) >= 100 THEN
-            RAISE EXCEPTION 'Team key limit exceeded (max 100 keys)';
-        END IF;
-    END IF;
-    RETURN NEW;
-END;
-$$ LANGUAGE plpgsql;
-
-CREATE TRIGGER trg_team_key_limit
-    BEFORE INSERT ON api_keys
-    FOR EACH ROW
-    WHEN (NEW.team_id IS NOT NULL)
-    EXECUTE FUNCTION check_team_key_limit();
 
 -- Teams table
 -- Note: current_spend is REMOVED - it's derived from spend_ledger for deterministic accounting
@@ -2222,10 +2203,19 @@ const LOCKOUT_DURATION_SECS: i64 = 300; // 5 minutes
 
 ### Maximum Key Limits
 
+> **Note:** Stoolap (the persistence layer) does not support PostgreSQL-style triggers.
+> MAX_KEYS_PER_TEAM enforcement is implemented at the application layer via
+> `check_team_key_limit()` - called before INSERT in `generate_key`.
+
 Prevent abuse by enforcing team key limits (application layer enforcement):
 
 ```rust
 /// Maximum keys per team
+/// NOTE: This is enforced at application layer, not via DB trigger.
+/// Called in generate_key() before inserting a new key:
+///   if let Some(team_id) = req.team_id {
+///       check_team_key_limit(db, &team_id)?;
+///   }
 const MAX_KEYS_PER_TEAM: u32 = 100;
 
 /// Check key limit before insertion
@@ -2255,9 +2245,13 @@ pub fn check_team_key_limit(db: &Database, team_id: &Uuid) -> Result<(), KeyErro
 
 ## Changelog
 
+- **v29 (2026-03-13):** Stoolap compatibility
+  - Removed PostgreSQL trigger (plpgsql) from DDL - not supported in Stoolap
+  - Added note: MAX_KEYS_PER_TEAM enforced at application layer via check_team_key_limit()
+  - Stoolap fully supports CHECK constraints (used in schema)
+
 - **v28 (2026-03-13):** Hygiene fixes
   - Fixed version mismatch: header says v27, footer says v26 → now both say v28
-  - Added DB CHECK constraint for MAX_KEYS_PER_TEAM (100) via trigger
   - Fixed i64 casts in check_budget_soft_limit: use try_into().unwrap_or() for explicit overflow handling
   - Clarified GenerateKeyResponse.expires: now returns expiration if rotation_interval_days is set
 
@@ -2322,6 +2316,6 @@ pub fn check_team_key_limit(db: &Database, team_id: &Uuid) -> Result<(), KeyErro
   - Added DERIVED CACHE comments to key_balances and team_balances tables
 
 **Draft Date:** 2026-03-13
-**Version:** v28
+**Version:** v29
 **Related Use Case:** Enhanced Quota Router Gateway
 **Related Research:** LiteLLM Analysis and Quota Router Comparison

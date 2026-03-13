@@ -2,7 +2,7 @@
 
 ## Status
 
-Accepted (v28 - hygiene fixes)
+Final (v28 - hygiene fixes)
 
 ## Authors
 

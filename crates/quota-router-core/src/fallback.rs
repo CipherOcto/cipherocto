@@ -155,7 +155,10 @@ impl FallbackExecutor {
 
     /// Check if fallback is available for a model
     pub fn has_fallback(&self, model: &str, error: RouterError) -> bool {
-        self.config.get_fallback_models(model, error).map(|v| !v.is_empty()).unwrap_or(false)
+        self.config
+            .get_fallback_models(model, error)
+            .map(|v| !v.is_empty())
+            .unwrap_or(false)
     }
 
     /// Get max retries
@@ -180,12 +183,10 @@ mod tests {
         content_map.insert("gpt-4".to_string(), "claude-3-opus".to_string());
 
         FallbackConfig {
-            fallbacks: vec![
-                FallbackEntry {
-                    model: "gpt-3.5-turbo".to_string(),
-                    fallback_models: vec!["gpt-4".to_string(), "claude-3-opus".to_string()],
-                },
-            ],
+            fallbacks: vec![FallbackEntry {
+                model: "gpt-3.5-turbo".to_string(),
+                fallback_models: vec!["gpt-4".to_string(), "claude-3-opus".to_string()],
+            }],
             context_window_fallbacks: context_map,
             content_policy_fallbacks: content_map,
             ..Default::default()
@@ -203,7 +204,8 @@ mod tests {
     #[test]
     fn test_context_window_fallback() {
         let config = test_fallback_config();
-        let fallbacks = config.get_fallback_models("gpt-3.5-turbo", RouterError::ContextWindowExceeded);
+        let fallbacks =
+            config.get_fallback_models("gpt-3.5-turbo", RouterError::ContextWindowExceeded);
         assert!(fallbacks.is_some());
         assert_eq!(fallbacks.unwrap(), vec!["gpt-3.5-turbo-16k"]);
     }
@@ -233,10 +235,10 @@ mod tests {
             ..Default::default()
         };
 
-        assert_eq!(config.retry_delay(0), 100);   // 100ms
-        assert_eq!(config.retry_delay(1), 200);   // 100 * 2
-        assert_eq!(config.retry_delay(2), 400);   // 100 * 4
-        assert_eq!(config.retry_delay(3), 800);   // 100 * 8
+        assert_eq!(config.retry_delay(0), 100); // 100ms
+        assert_eq!(config.retry_delay(1), 200); // 100 * 2
+        assert_eq!(config.retry_delay(2), 400); // 100 * 4
+        assert_eq!(config.retry_delay(3), 800); // 100 * 8
         assert_eq!(config.retry_delay(10), 5000); // Capped at max
     }
 }

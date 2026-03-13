@@ -84,7 +84,9 @@ impl RateLimiter {
             if status.current_rpm >= limit {
                 return RateLimitResult::Blocked {
                     reason: format!("RPM limit exceeded: {}/{}", status.current_rpm, limit),
-                    retry_after: Some(self.window_seconds - (status.last_reset % self.window_seconds)),
+                    retry_after: Some(
+                        self.window_seconds - (status.last_reset % self.window_seconds),
+                    ),
                 };
             }
         }
@@ -94,7 +96,9 @@ impl RateLimiter {
             if status.current_tpm >= limit {
                 return RateLimitResult::Blocked {
                     reason: format!("TPM limit exceeded: {}/{}", status.current_tpm, limit),
-                    retry_after: Some(self.window_seconds - (status.last_reset % self.window_seconds)),
+                    retry_after: Some(
+                        self.window_seconds - (status.last_reset % self.window_seconds),
+                    ),
                 };
             }
         }
@@ -109,13 +113,14 @@ impl RateLimiter {
             .unwrap_or_default()
             .as_secs();
 
-        let status = self.usage.entry(provider_id.to_string()).or_insert_with(|| {
-            RateLimitStatus {
+        let status = self
+            .usage
+            .entry(provider_id.to_string())
+            .or_insert_with(|| RateLimitStatus {
                 current_rpm: 0,
                 current_tpm: 0,
                 last_reset: now,
-            }
-        });
+            });
 
         // Reset if window has passed
         if now - status.last_reset >= self.window_seconds {
@@ -183,10 +188,16 @@ impl RateLimiterManager {
     }
 
     /// Get or create a rate limiter for a model group
-    pub fn get_or_create(&mut self, model_group: &str, config: Option<RateLimitConfig>) -> &mut RateLimiter {
+    pub fn get_or_create(
+        &mut self,
+        model_group: &str,
+        config: Option<RateLimitConfig>,
+    ) -> &mut RateLimiter {
         self.limiters
             .entry(model_group.to_string())
-            .or_insert_with(|| RateLimiter::new(config.unwrap_or_else(|| self.default_config.clone())))
+            .or_insert_with(|| {
+                RateLimiter::new(config.unwrap_or_else(|| self.default_config.clone()))
+            })
     }
 
     /// Check if request is allowed (hard mode)

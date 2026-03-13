@@ -118,7 +118,8 @@ impl ProviderWithState {
         self.latencies.push(latency_ms);
         // Trim latencies to window size
         if self.latencies.len() > latency_window {
-            self.latencies.drain(0..self.latencies.len() - latency_window);
+            self.latencies
+                .drain(0..self.latencies.len() - latency_window);
         }
         self.current_rpm = self.current_rpm.saturating_add(1);
         self.current_tpm = self.current_tpm.saturating_add(tokens);
@@ -172,10 +173,7 @@ impl Router {
         }
 
         // Initialize round-robin indices
-        let round_robin_index = providers_map
-            .keys()
-            .map(|k| (k.clone(), 0))
-            .collect();
+        let round_robin_index = providers_map.keys().map(|k| (k.clone(), 0)).collect();
 
         Self {
             config,
@@ -198,7 +196,11 @@ impl Router {
     }
 
     /// Get a provider by index
-    pub fn get_provider(&mut self, model_group: &str, index: usize) -> Option<&mut ProviderWithState> {
+    pub fn get_provider(
+        &mut self,
+        model_group: &str,
+        index: usize,
+    ) -> Option<&mut ProviderWithState> {
         self.providers.get_mut(model_group)?.get_mut(index)
     }
 
@@ -218,7 +220,10 @@ impl Router {
         let selected_idx = match strategy {
             RoutingStrategy::SimpleShuffle => Self::simple_shuffle_impl(providers),
             RoutingStrategy::RoundRobin => {
-                let idx = self.round_robin_index.entry(model_group.to_string()).or_insert(0);
+                let idx = self
+                    .round_robin_index
+                    .entry(model_group.to_string())
+                    .or_insert(0);
                 let selected = *idx % providers.len();
                 *idx = selected.wrapping_add(1);
                 selected
@@ -304,7 +309,13 @@ impl Router {
     }
 
     /// Record request end for a specific provider index
-    pub fn record_request_end(&mut self, model_group: &str, index: usize, latency_ms: f64, tokens: u32) {
+    pub fn record_request_end(
+        &mut self,
+        model_group: &str,
+        index: usize,
+        latency_ms: f64,
+        tokens: u32,
+    ) {
         let latency_window = self.config.latency_window;
         if let Some(providers) = self.providers.get_mut(model_group) {
             if let Some(p) = providers.get_mut(index) {

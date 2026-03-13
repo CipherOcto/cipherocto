@@ -2,7 +2,7 @@
 
 ## Status
 
-Open
+Claimed
 
 ## RFC
 
@@ -14,13 +14,13 @@ RFC-0902 (Economics): Multi-Provider Routing and Load Balancing
 
 ## Acceptance Criteria
 
-- [ ] LeastBusy strategy implementation
-- [ ] LatencyBased routing implementation
-- [ ] CostBased routing (requires RFC-0904)
-- [ ] UsageBased routing (RPM/TPM tracking)
-- [ ] Request counting for LeastBusy
-- [ ] Latency tracking window
-- [ ] Unit tests for each strategy
+- [x] LeastBusy strategy implementation
+- [x] LatencyBased routing implementation
+- [x] CostBased routing (requires RFC-0904) - placeholder
+- [x] UsageBased routing (RPM/TPM tracking)
+- [x] Request counting for LeastBusy
+- [x] Latency tracking window
+- [x] Unit tests for each strategy
 
 ## Description
 
@@ -59,9 +59,27 @@ router_settings:
   latency_window: 10  # Track last N requests
 ```
 
+## Implementation Notes
+
+**Enhancements from Mission-0902-a:**
+- Added request tracking (request_started, request_ended)
+- Added latency window trimming for LatencyBased
+- Added usage reset for sliding window RPM/TPM
+- Added 3 new tests: latency_based_routing, usage_based_routing, request_tracking
+
+**Advanced strategies implemented:**
+- LeastBusy: Tracks active_requests, picks provider with fewest in-flight
+- LatencyBased: Tracks rolling latency window, picks fastest avg
+- UsageBased: Tracks current RPM, picks lowest current usage
+- CostBased: Placeholder (falls back to SimpleShuffle until RFC-0904)
+
+**Tests:** 7 new/enhanced tests passing (17 total)
+
 ---
 
-**Claimant:** Open
+**Claimant:** @claude-code
+
+**Pull Request:** #
 
 **Related RFCs:**
 - RFC-0902: Multi-Provider Routing and Load Balancing

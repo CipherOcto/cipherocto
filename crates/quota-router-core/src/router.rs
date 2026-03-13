@@ -113,11 +113,21 @@ impl ProviderWithState {
     }
 
     /// Record a request end with latency
-    pub fn request_ended(&mut self, latency_ms: f64, tokens: u32) {
+    pub fn request_ended(&mut self, latency_ms: f64, tokens: u32, latency_window: usize) {
         self.active_requests = self.active_requests.saturating_sub(1);
         self.latencies.push(latency_ms);
+        // Trim latencies to window size
+        if self.latencies.len() > latency_window {
+            self.latencies.drain(0..self.latencies.len() - latency_window);
+        }
         self.current_rpm = self.current_rpm.saturating_add(1);
         self.current_tpm = self.current_tpm.saturating_add(tokens);
+    }
+
+    /// Reset RPM/TPM counters (call periodically for sliding window)
+    pub fn reset_usage(&mut self) {
+        self.current_rpm = 0;
+        self.current_tpm = 0;
     }
 
     /// Get average latency
@@ -295,9 +305,19 @@ impl Router {
 
     /// Record request end for a specific provider index
     pub fn record_request_end(&mut self, model_group: &str, index: usize, latency_ms: f64, tokens: u32) {
+        let latency_window = self.config.latency_window;
         if let Some(providers) = self.providers.get_mut(model_group) {
             if let Some(p) = providers.get_mut(index) {
-                p.request_ended(latency_ms, tokens);
+                p.request_ended(latency_ms, tokens, latency_window);
+            }
+        }
+    }
+
+    /// Reset usage counters for all providers (call periodically for sliding window)
+    pub fn reset_all_usage(&mut self) {
+        for providers in self.providers.values_mut() {
+            for p in providers.iter_mut() {
+                p.reset_usage();
             }
         }
     }
@@ -414,5 +434,96 @@ mod tests {
             "least-busy".parse::<RoutingStrategy>().unwrap(),
             RoutingStrategy::LeastBusy
         );
+        assert_eq!(
+            "latency-based".parse::<RoutingStrategy>().unwrap(),
+            RoutingStrategy::LatencyBased
+        );
+        assert_eq!(
+            "usage-based".parse::<RoutingStrategy>().unwrap(),
+            RoutingStrategy::UsageBased
+        );
+    }
+
+    #[test]
+    fn test_latency_based_routing() {
+        let providers = test_providers();
+        let config = RouterConfig {
+            routing_strategy: RoutingStrategy::LatencyBased,
+            latency_window: 10,
+            verbose: false,
+        };
+        let mut router = Router::new(config, providers);
+
+        // Set latencies - azure should be faster
+        if let Some(providers) = router.providers.get_mut("gpt-3.5-turbo") {
+            for p in providers.iter_mut() {
+                if p.provider.name == "azure" {
+                    p.latencies = vec![100.0, 110.0, 105.0]; // Fast: ~105ms avg
+                } else {
+                    p.latencies = vec![500.0, 510.0, 505.0]; // Slow: ~505ms avg
+                }
+            }
+        }
+
+        // Should select azure (lower latency)
+        if let Some(idx) = router.route("gpt-3.5-turbo") {
+            if let Some(p) = router.get_provider("gpt-3.5-turbo", idx) {
+                assert_eq!(p.provider.name, "azure");
+            }
+        }
+    }
+
+    #[test]
+    fn test_usage_based_routing() {
+        let providers = test_providers();
+        let config = RouterConfig {
+            routing_strategy: RoutingStrategy::UsageBased,
+            ..Default::default()
+        };
+        let mut router = Router::new(config, providers);
+
+        // Set current usage - azure has lower usage
+        if let Some(providers) = router.providers.get_mut("gpt-3.5-turbo") {
+            for p in providers.iter_mut() {
+                if p.provider.name == "azure" {
+                    p.current_rpm = 10; // Low usage
+                } else {
+                    p.current_rpm = 500; // High usage
+                }
+            }
+        }
+
+        // Should select azure (lower current usage)
+        if let Some(idx) = router.route("gpt-3.5-turbo") {
+            if let Some(p) = router.get_provider("gpt-3.5-turbo", idx) {
+                assert_eq!(p.provider.name, "azure");
+            }
+        }
+    }
+
+    #[test]
+    fn test_request_tracking() {
+        let providers = test_providers();
+        let config = RouterConfig::default();
+        let mut router = Router::new(config, providers);
+
+        // Route and track request
+        let idx = router.route("gpt-3.5-turbo").unwrap();
+        router.record_request_start("gpt-3.5-turbo", idx);
+
+        // Check active requests increased
+        if let Some(p) = router.get_provider("gpt-3.5-turbo", idx) {
+            assert_eq!(p.active_requests, 1);
+        }
+
+        // Record request end
+        router.record_request_end("gpt-3.5-turbo", idx, 150.0, 100);
+
+        // Check active requests decreased and latency recorded
+        if let Some(p) = router.get_provider("gpt-3.5-turbo", idx) {
+            assert_eq!(p.active_requests, 0);
+            assert!(!p.latencies.is_empty());
+            assert_eq!(p.current_rpm, 1);
+        }
     }
 }

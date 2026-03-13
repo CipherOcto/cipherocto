@@ -2,7 +2,7 @@
 
 ## Status
 
-Draft (v2)
+Draft (v3)
 
 ## Authors
 
@@ -102,6 +102,14 @@ if self.peek_token_is_keyword("FOR") {
         stmt.for_update = true;
     }
 }
+```
+
+**Grammar rule:** `FOR UPDATE` is accepted after `ORDER BY`, `LIMIT`, and `OFFSET`:
+```
+SelectStatement ::= SELECT ... [WHERE ...] [GROUP BY ...] [HAVING ...]
+                    [ORDER BY expr [ASC|DESC], ...]
+                    [LIMIT n [OFFSET n]]
+                    [FOR UPDATE]
 ```
 
 ### Executor Changes
@@ -221,9 +229,16 @@ fn test_concurrent_budget_update() {
 - Completes Stoolap as standalone persistence (no Redis for locking)
 - Internal MVCC methods already exist - just needs SQL syntax
 
+### Locking Contract
+
+Invocation of `get_visible_versions_for_update` / `get_all_visible_rows_for_update` acquires an exclusive row lock held until the enclosing transaction ends (see `TransactionRegistry` in `storage/mvcc/registry.rs:188` and `TxnState` at `registry.rs:59`). This locking guarantee is required for cross-router determinism in multi-instance deployments.
+
 ## Out of Scope
 
-- Distributed locks across multiple Stoolap instances (use replication or WAL-based pub/sub)
+- **Distributed locks across multiple Stoolap instances** - `FOR UPDATE` provides intra-instance pessimistic locking only. For production multi-router deployments with independent Stoolap processes, use:
+  - Stoolap replication (leader-follower), or
+  - WAL-based pub/sub (RFC-0913), or
+  - A shared primary instance
 - Deadlock detection (application-level lock ordering per RFC-0903)
 - NOWAIT / SKIP LOCKED variants (future enhancement)
 
@@ -263,6 +278,11 @@ This prevents deadlocks in multi-router deployments.
 - RFC-0913: Stoolap Pub/Sub for Cache Invalidation (depends on this)
 
 ## Changelog
+
+- **v3 (2026-03-13):** Review clarifications (Grok review)
+  - Added "Locking Contract" section documenting row lock held until transaction end (references TransactionRegistry/TxnState)
+  - Added grammar rule for FOR UPDATE clause position (after ORDER BY, LIMIT, OFFSET)
+  - Strengthened "Out of Scope" with multi-router deployment note (intra-instance only, use RFC-0913 for distributed)
 
 - **v2 (2026-03-13):** Added comprehensive code analysis from Stoolap source
   - Documented existing internal methods (`get_visible_versions_for_update`, `get_all_visible_rows_for_update`)

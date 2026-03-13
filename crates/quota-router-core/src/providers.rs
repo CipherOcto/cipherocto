@@ -5,6 +5,18 @@ use std::env;
 pub struct Provider {
     pub name: String,
     pub endpoint: String,
+    /// Requests per minute limit (for routing decisions)
+    #[serde(default)]
+    pub rpm: Option<u32>,
+    /// Tokens per minute limit (for routing decisions)
+    #[serde(default)]
+    pub tpm: Option<u32>,
+    /// Custom weight for weighted routing
+    #[serde(default)]
+    pub weight: Option<u32>,
+    /// Model group alias (multiple providers can share same model_name)
+    #[serde(default)]
+    pub model_name: Option<String>,
 }
 
 impl Provider {
@@ -12,7 +24,25 @@ impl Provider {
         Self {
             name: name.to_string(),
             endpoint: endpoint.to_string(),
+            rpm: None,
+            tpm: None,
+            weight: None,
+            model_name: None,
         }
+    }
+
+    /// Get the routing weight (priority: explicit weight > rpm > tpm > 1)
+    pub fn get_routing_weight(&self) -> u32 {
+        if let Some(w) = self.weight {
+            return w;
+        }
+        if let Some(r) = self.rpm {
+            return r;
+        }
+        if let Some(t) = self.tpm {
+            return t / 1000; // Convert TPM to approximate weight
+        }
+        1 // Default weight
     }
 
     /// Get API key from environment variable

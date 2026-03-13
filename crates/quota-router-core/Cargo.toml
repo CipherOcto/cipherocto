@@ -27,6 +27,9 @@ serde_json.workspace = true
 uuid.workspace = true
 parking_lot.workspace = true
 
+# Random
+rand = "0.8"
+
 # Logging
 tracing.workspace = true
 tracing-subscriber.workspace = true

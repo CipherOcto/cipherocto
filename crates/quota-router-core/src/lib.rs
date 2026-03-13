@@ -5,3 +5,4 @@ pub mod balance;
 pub mod config;
 pub mod providers;
 pub mod proxy;
+pub mod router;

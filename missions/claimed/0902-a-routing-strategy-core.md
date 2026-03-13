@@ -14,11 +14,11 @@ None - Core mission to start
 
 ## Acceptance Criteria
 
-- [ ] SimpleShuffle strategy implementation
-- [ ] Weighted random selection based on rpm/tpm
-- [ ] RoundRobin strategy implementation
-- [ ] Default strategy configuration
-- [ ] Unit tests for routing strategies
+- [x] SimpleShuffle strategy implementation
+- [x] Weighted random selection based on rpm/tpm
+- [x] RoundRobin strategy implementation
+- [x] Default strategy configuration
+- [x] Unit tests for routing strategies
 - [ ] Integration tests with mock providers
 
 ## Description
@@ -61,6 +61,22 @@ router_settings:
 **Claimant:** @claude-code
 
 **Pull Request:** #
+
+## Implementation Notes
+
+**Files created/modified:**
+- `crates/quota-router-core/src/router.rs` - New routing module with Router, RouterConfig, ProviderWithState
+- `crates/quota-router-core/src/providers.rs` - Added rpm, tpm, weight, model_name to Provider
+- `crates/quota-router-core/Cargo.toml` - Added rand dependency
+
+**Routing strategies implemented:**
+- SimpleShuffle: Weighted random based on rpm/tpm/weight (LiteLLM-compatible)
+- RoundRobin: Sequential rotation
+- LeastBusy, LatencyBased, CostBased, UsageBased: Placeholder (Mission-0902-b)
+
+**Tests:** 4 new tests passing (simple_shuffle_weights, round_robin, least_busy, routing_strategy_from_str)
+
+---
 
 **Related RFCs:**
 - RFC-0902: Multi-Provider Routing and Load Balancing

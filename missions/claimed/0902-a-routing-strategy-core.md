@@ -2,7 +2,7 @@
 
 ## Status
 
-Open
+Claimed
 
 ## RFC
 
@@ -58,7 +58,9 @@ router_settings:
 
 ---
 
-**Claimant:** Open
+**Claimant:** @claude-code
+
+**Pull Request:** #
 
 **Related RFCs:**
 - RFC-0902: Multi-Provider Routing and Load Balancing

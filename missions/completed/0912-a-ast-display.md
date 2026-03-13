@@ -1,7 +1,7 @@
 # Mission: FOR UPDATE AST and Display Implementation
 
 ## Status
-Open
+Completed
 
 ## RFC
 RFC-0912: Stoolap FOR UPDATE Row Locking
@@ -10,9 +10,9 @@ RFC-0912: Stoolap FOR UPDATE Row Locking
 Add `for_update: bool` field to SelectStatement AST and implement Display formatting.
 
 ## Acceptance Criteria
-- [ ] Add `for_update: bool` field to SelectStatement in parser/ast.rs:1435
-- [ ] Update Display impl to output "FOR UPDATE" clause
-- [ ] Unit tests for AST and Display
+- [x] Add `for_update: bool` field to SelectStatement in parser/ast.rs:1435
+- [x] Update Display impl to output "FOR UPDATE" clause
+- [x] Unit tests for AST and Display
 
 ## Complexity
 Low

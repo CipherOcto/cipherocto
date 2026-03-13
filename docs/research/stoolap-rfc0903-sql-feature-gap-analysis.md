@@ -346,6 +346,53 @@ pub fn revoke_key_with_invalidation(
 
 ---
 
+## Implementation Feasibility (Code Analysis)
+
+Based on analysis of Stoolap source code at `/home/mmacedoeu/_w/databases/stoolap/src/`:
+
+### 1. FOR UPDATE Row Locking
+
+| Aspect | Finding | Effort |
+|--------|---------|--------|
+| **Current State** | No parser, no `for_update` field in SelectStatement | - |
+| **MVCC Infrastructure** | ✅ COMPLETE - TransactionRegistry (registry.rs:188), TxnState (registry.rs:59), IsolationLevel (ReadCommitted=0, Snapshot=1), version_store has `get_visible_versions_for_update()` (version_store.rs:1597) | - |
+| **Feasibility** | **HIGH** - MVCC already tracks transactions; add syntax and wire to existing internal methods | ~2-3 days |
+
+**Implementation:**
+1. Add `for_update: bool` to SelectStatement AST (ast.rs:1435)
+2. Parse `FOR UPDATE` after ORDER BY in parser (statements.rs:170)
+3. Executor calls `get_visible_versions_for_update()` instead of read-only methods
+
+### 2. Partial Indexes (WHERE in CREATE INDEX)
+
+| Aspect | Finding | Effort |
+|--------|---------|--------|
+| **Current State** | CreateIndexStatement has no `where_clause` (ast.rs:1932) | - |
+| **Index Infrastructure** | ✅ COMPLETE - BTreeIndex, HashIndex, BitmapIndex all implemented | - |
+| **Feasibility** | **MEDIUM** - Need to add WHERE clause to AST + filter during scan | ~3-4 days |
+
+**Implementation:**
+1. Add `where_clause: Option<Expression>` to CreateIndexStatement
+2. Parse `WHERE` after columns in parser (statements.rs:1883)
+3. In index scan, apply filter expression before including rows in results
+
+### 3. Triggers
+
+| Aspect | Finding | Effort |
+|--------|---------|--------|
+| **Current State** | Token exists (token.rs:322), no parser, no executor | - |
+| **Alternative** | ✅ CHECK constraints fully implemented | - |
+| **Feasibility** | **LOW-MEDIUM** - Complex to build from scratch; CHECK constraints provide equivalent | ~5-7 days |
+
+**Recommendation:** Since CHECK constraints work, implement MAX_KEYS_PER_TEAM at application layer instead of triggers.
+
+**Implementation (if needed):**
+1. Add Trigger AST (CREATE TRIGGER statement)
+2. Parse timing (BEFORE/AFTER), event (INSERT/UPDATE/DELETE), body
+3. Execute trigger body on event - requires expression evaluation
+
+---
+
 ## Recommendations
 
 ### Phase 1: Verified (Code Analysis Complete)

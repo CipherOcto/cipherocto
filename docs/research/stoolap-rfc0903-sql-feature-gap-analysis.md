@@ -165,17 +165,26 @@ Based on `docs/research/stoolap-research.md`:
 
 ### 3. Feature Gap Matrix
 
-| RFC-0903 Requirement | Stoolap Support | Gap Severity | Mitigation |
-|---------------------|-----------------|--------------|------------|
-| `FOR UPDATE` row locking | Partial (MVCC) | **Critical** | Need explicit lock syntax |
-| Partial indexes (`WHERE`) | Unknown | High | Application-level filter |
-| CHECK constraints | Unknown | Medium | Application validation |
-| Triggers | Unknown | Medium | Application-level enforcement |
-| Unique constraints | ✅ Yes | None | Fully supported |
-| Composite indexes | ✅ Yes | None | Fully supported |
-| Foreign keys | ✅ Yes | None | Supported |
+> **Code Analysis Verified** (2026-03-13): Analyzed Stoolap source at `/home/mmacedoeu/_w/databases/stoolap/src/`
+
+| RFC-0903 Requirement | Stoolap Support | Gap Severity | Evidence |
+|---------------------|-----------------|--------------|----------|
+| `FOR UPDATE` row locking | ❌ NOT IMPLEMENTED | **Critical** | No `for_update` field in SelectStatement AST; no parser for `FOR UPDATE` clause |
+| Partial indexes (`WHERE`) | ❌ NOT IMPLEMENTED | High | CreateIndexStatement has no `where_clause` field |
+| CHECK constraints | ✅ **IMPLEMENTED** | None | Parser token (token.rs:309), AST (ast.rs:1746), Schema (schema.rs:59), DDL executor (ddl.rs:224-241), DML enforcement (dml.rs:639-2467) |
+| Triggers | ❌ NOT IMPLEMENTED | Medium | Token exists in token.rs:322, but no parser/executor implementation |
+| Unique constraints | ✅ Yes | None | Supported via UNIQUE in table/column constraints |
+| Composite indexes | ✅ Yes | None | MultiColumnIndex implemented |
+| Foreign keys | ✅ Yes | None | Supported in DDL |
 | WAL persistence | ✅ Yes | None | Fully implemented |
 | MVCC | ✅ Yes | None | Core feature |
+
+**Summary from Code Analysis:**
+
+- **CHECK constraints**: Fully implemented ✅ - Parser parses CHECK, schema stores expression, DML validates on INSERT/UPDATE
+- **TRIGGERS**: NOT implemented ❌ - Only the token exists, no parser/executor
+- **FOR UPDATE**: NOT implemented ❌ - No SQL syntax support, internal MVCC methods exist but no SELECT ... FOR UPDATE
+- **Partial indexes**: NOT implemented ❌ - CREATE INDEX has no WHERE clause support
 
 ### 4. Cache and Rate Limiting Patterns
 
@@ -339,14 +348,16 @@ pub fn revoke_key_with_invalidation(
 
 ## Recommendations
 
-### Phase 1: Immediate Feasibility
+### Phase 1: Verified (Code Analysis Complete)
 
-| Action | Effort | Impact |
-|--------|--------|--------|
-| Verify CHECK constraint support | Low | Unblock schema migration |
-| Verify TRIGGER support | Low | Unblock constraint enforcement |
-| Implement partial index alternative | Medium | Enable filtered indexes |
-| Document FOR UPDATE status | Low | Clarify row locking behavior |
+| Action | Effort | Impact | Status |
+|--------|--------|--------|--------|
+| Verify CHECK constraint support | Low | Unblock schema migration | ✅ **IMPLEMENTED** |
+| Verify TRIGGER support | Low | Unblock constraint enforcement | ❌ NOT IMPLEMENTED |
+| Implement partial index alternative | Medium | Enable filtered indexes | ❌ NOT IMPLEMENTED |
+| Document FOR UPDATE status | Low | Clarify row locking behavior | ❌ NOT IMPLEMENTED |
+
+**Result:** RFC-0903 schema with CHECK constraints is fully compatible with Stoolap. Trigger-based enforcement (MAX_KEYS_PER_TEAM) requires application-level implementation.
 
 ### Phase 2: Core Extensions (RFC Candidate)
 
@@ -355,14 +366,14 @@ pub fn revoke_key_with_invalidation(
 | FOR UPDATE syntax | **P0** | Explicit row locking for multi-router |
 | Pub/Sub mechanism | **P1** | Distributed cache invalidation |
 | Partial indexes | P2 | WHERE clause in index DDL |
-| CHECK constraints | P2 | Inline constraint validation |
+| Triggers | P2 | Database-level constraint enforcement |
 
 ### Phase 3: Advanced Features
 
 | Feature | Priority | Description |
 |---------|----------|-------------|
-| Trigger support | P2 | Database-level constraint enforcement |
 | Semantic cache tuning | P3 | Optimize for key lookup patterns |
+| HNSW vector indexes | P3 | Future AI query support |
 
 ### Recommended Path
 
@@ -383,11 +394,11 @@ pub fn revoke_key_with_invalidation(
 
 ## Next Steps
 
-- [ ] Verify Stoolap CHECK constraint support (code analysis)
-- [ ] Verify Stoolap TRIGGER support (code analysis)
-- [ ] Test FOR UPDATE syntax against Stoolap
+- [x] Verify Stoolap CHECK constraint support (code analysis) → ✅ IMPLEMENTED
+- [x] Verify Stoolap TRIGGER support (code analysis) → ❌ NOT IMPLEMENTED
+- [x] Test FOR UPDATE syntax against Stoolap → ❌ NOT IMPLEMENTED
 - [ ] Create Use Case for Stoolap-only persistence (no Redis)
-- [ ] Draft RFC for Stoolap extensions (pub/sub, FOR UPDATE)
+- [ ] Draft RFC for Stoolap extensions (pub/sub, FOR UPDATE, Triggers)
 
 ---
 

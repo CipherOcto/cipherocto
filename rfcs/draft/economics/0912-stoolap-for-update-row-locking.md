@@ -2,7 +2,7 @@
 
 ## Status
 
-Planned (v1)
+Draft (v1)
 
 ## Authors
 

@@ -2,7 +2,7 @@
 
 ## Status
 
-Open
+Claimed
 
 ## RFC
 
@@ -15,13 +15,13 @@ RFC-0902 (Economics): Multi-Provider Routing and Load Balancing
 
 ## Acceptance Criteria
 
-- [ ] Basic fallback configuration
-- [ ] Fallback chain execution (try next model on failure)
-- [ ] Content policy fallback mapping
-- [ ] Context window fallback mapping
-- [ ] Retry with exponential backoff
-- [ ] Max retries configuration
-- [ ] Unit tests for fallback logic
+- [x] Basic fallback configuration
+- [x] Fallback chain execution (try next model on failure)
+- [x] Content policy fallback mapping
+- [x] Context window fallback mapping
+- [x] Retry with exponential backoff
+- [x] Max retries configuration
+- [x] Unit tests for fallback logic
 
 ## Description
 
@@ -74,9 +74,25 @@ Failure → Continue to Model C
 All fail → Return error
 ```
 
+## Implementation Notes
+
+**Files created:**
+- `crates/quota-router-core/src/fallback.rs` - New fallback module
+
+**Implemented:**
+- RouterError enum with error type classification
+- FallbackEntry and FallbackConfig structs
+- FallbackExecutor with retry logic
+- Exponential backoff calculation
+- 3 fallback types: general, content_policy, context_window
+
+**Tests:** 5 fallback tests passing (22 total)
+
 ---
 
-**Claimant:** Open
+**Claimant:** @claude-code
+
+**Pull Request:** #
 
 **Related RFCs:**
 - RFC-0902: Multi-Provider Routing and Load Balancing

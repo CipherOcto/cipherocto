@@ -2,7 +2,7 @@
 
 ## Status
 
-Accepted (v27 - ledger consistency)
+Accepted (v28 - hygiene fixes)
 
 ## Authors
 
@@ -373,17 +373,19 @@ pub async fn validate_key(
 /// - Or conservatively use `budget_limit` itself as the ceiling
 /// - For streaming requests, skip this check as output tokens are unknown
 pub fn check_budget_soft_limit(db: &Database, key_id: &Uuid, estimated_max_cost: u64) -> Result<(), KeyError> {
+    // Query returns BIGINT (i64); cast to u64 is safe since cost_amount is non-negative
     let current: u64 = db.query_row(
         "SELECT COALESCE(SUM(cost_amount), 0) FROM spend_ledger WHERE key_id = $1",
         params![key_id.to_string()],
         |row| row.get::<_, i64>(0),
-    )? as u64;
+    ).map(|v: i64| v.try_into().unwrap_or(u64::MAX))?;
 
+    // budget_limit is BIGINT NOT NULL CHECK (budget_limit >= 0), so always non-negative
     let budget: u64 = db.query_row(
         "SELECT budget_limit FROM api_keys WHERE key_id = $1",
         params![key_id.to_string()],
         |row| row.get::<_, i64>(0),
-    )? as u64;
+    ).map(|v: i64| v.try_into().unwrap_or(u64::MAX))?;
 
     if current.saturating_add(estimated_max_cost) > budget {
         return Err(KeyError::BudgetExceeded { current, limit: budget });
@@ -420,6 +422,25 @@ CREATE TABLE api_keys (
     metadata TEXT,
     FOREIGN KEY (team_id) REFERENCES teams(team_id) ON DELETE SET NULL
 );
+
+-- Trigger to enforce MAX_KEYS_PER_TEAM (100 keys per team)
+CREATE OR REPLACE FUNCTION check_team_key_limit()
+RETURNS TRIGGER AS $$
+BEGIN
+    IF NEW.team_id IS NOT NULL THEN
+        IF (SELECT COUNT(*) FROM api_keys WHERE team_id = NEW.team_id) >= 100 THEN
+            RAISE EXCEPTION 'Team key limit exceeded (max 100 keys)';
+        END IF;
+    END IF;
+    RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+CREATE TRIGGER trg_team_key_limit
+    BEFORE INSERT ON api_keys
+    FOR EACH ROW
+    WHEN (NEW.team_id IS NOT NULL)
+    EXECUTE FUNCTION check_team_key_limit();
 
 -- Teams table
 -- Note: current_spend is REMOVED - it's derived from spend_ledger for deterministic accounting
@@ -985,10 +1006,13 @@ pub fn generate_key(db: &Database, req: GenerateKeyRequest) -> Result<GenerateKe
         ],
     )?;
 
+    // Compute expiration if rotation interval is set
+    let expires = req.rotation_interval_days.map(|d| now + (d as i64 * 86400));
+
     Ok(GenerateKeyResponse {
         key,
         key_id,
-        expires: None, // Calculate based on rotation
+        expires, // Present if auto_rotate enabled with rotation_interval_days
         team_id: req.team_id,
         key_type: req.key_type,
         created_at: now,
@@ -2231,6 +2255,12 @@ pub fn check_team_key_limit(db: &Database, team_id: &Uuid) -> Result<(), KeyErro
 
 ## Changelog
 
+- **v28 (2026-03-13):** Hygiene fixes
+  - Fixed version mismatch: header says v27, footer says v26 → now both say v28
+  - Added DB CHECK constraint for MAX_KEYS_PER_TEAM (100) via trigger
+  - Fixed i64 casts in check_budget_soft_limit: use try_into().unwrap_or() for explicit overflow handling
+  - Clarified GenerateKeyResponse.expires: now returns expiration if rotation_interval_days is set
+
 - **v27 (2026-03-13):** Ledger consistency fixes (continued)
   - Fixed to_db_str() implementation (was referencing undefined `event` variable)
   - Moved check_budget_soft_limit outside validate_key as standalone function with doc comments
@@ -2292,6 +2322,6 @@ pub fn check_team_key_limit(db: &Database, team_id: &Uuid) -> Result<(), KeyErro
   - Added DERIVED CACHE comments to key_balances and team_balances tables
 
 **Draft Date:** 2026-03-13
-**Version:** v26
+**Version:** v28
 **Related Use Case:** Enhanced Quota Router Gateway
 **Related Research:** LiteLLM Analysis and Quota Router Comparison

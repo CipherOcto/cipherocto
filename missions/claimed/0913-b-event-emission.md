@@ -1,7 +1,7 @@
 # Mission: WAL Pub/Sub Event Emission
 
 ## Status
-Claimed
+Completed
 
 ## RFC
 RFC-0913: Stoolap Pub/Sub for Cache Invalidation
@@ -13,12 +13,12 @@ Integrate event emission into DML operations. Define EventPublisher trait, wire 
 See: `docs/plans/2026-03-14-wal-pubsub-event-emission.md`
 
 ## Acceptance Criteria
-- [ ] Define EventPublisher/EventSubscriber traits in pubsub/
-- [ ] Add optional event_publisher to ExecutionContext
-- [ ] Emit TableModified event after INSERT
-- [ ] Emit TableModified event after UPDATE
-- [ ] Emit TableModified event after DELETE
-- [ ] Unit tests for event emission
+- [x] Define EventPublisher/EventSubscriber traits in pubsub/
+- [x] Add optional event_publisher to ExecutionContext
+- [x] Emit TableModified event after INSERT
+- [x] Emit TableModified event after UPDATE
+- [x] Emit TableModified event after DELETE
+- [x] Unit tests for event emission
 
 ## Claimant
 Claude (Agent)
@@ -32,6 +32,12 @@ Claude (Agent)
 - Integration: ExecutionContext holds Arc<dyn EventPublisher>
 - Events emitted: After successful DML operations
 - Key management (revoke/rotate) deferred to quota-router-core (future)
+
+## Implementation Complete
+- EventPublisher/EventSubscriber traits: pubsub/traits.rs
+- ExecutionContext integration: pubsub::EventPublisher field
+- Event emission: executor/mod.rs emit_table_modified_event()
+- Tests: 9 pubsub tests passing
 
 ## Complexity
 Medium

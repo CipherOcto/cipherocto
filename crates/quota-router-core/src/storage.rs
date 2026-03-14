@@ -264,4 +264,95 @@ mod tests {
         assert!(lookup.is_some());
         assert_eq!(lookup.unwrap().key_id, "test-key-1");
     }
+
+    #[test]
+    fn test_update_key() {
+        let storage = create_test_storage();
+
+        let key = ApiKey {
+            key_id: "test-key-update".to_string(),
+            key_hash: vec![4, 5, 6],
+            key_prefix: "sk-qr-tes".to_string(),
+            team_id: None,
+            budget_limit: 1000,
+            rpm_limit: Some(100),
+            tpm_limit: Some(1000),
+            created_at: 100,
+            expires_at: None,
+            revoked: false,
+            revoked_at: None,
+            revoked_by: None,
+            revocation_reason: None,
+            key_type: KeyType::Default,
+            allowed_routes: None,
+            auto_rotate: false,
+            rotation_interval_days: None,
+            description: None,
+            metadata: None,
+        };
+
+        storage.create_key(&key).unwrap();
+
+        // Update the key
+        storage.update_key("test-key-update", &KeyUpdates {
+            budget_limit: Some(2000),
+            rpm_limit: Some(200),
+            tpm_limit: None,
+            expires_at: None,
+            revoked: None,
+            revoked_by: None,
+            revocation_reason: None,
+            key_type: None,
+            description: Some("Updated key".to_string()),
+        }).unwrap();
+
+        // Lookup and verify
+        let updated = storage.lookup_by_hash(&[4, 5, 6]).unwrap().unwrap();
+        assert_eq!(updated.budget_limit, 2000);
+        assert_eq!(updated.rpm_limit.unwrap(), 200);
+        assert_eq!(updated.description, Some("Updated key".to_string()));
+    }
+
+    #[test]
+    fn test_list_keys() {
+        let storage = create_test_storage();
+
+        // Create keys
+        for i in 0..3 {
+            let key = ApiKey {
+                key_id: format!("test-key-{}", i),
+                key_hash: vec![i as u8],
+                key_prefix: "sk-qr-tes".to_string(),
+                team_id: Some("team1".to_string()),
+                budget_limit: 1000,
+                rpm_limit: None,
+                tpm_limit: None,
+                created_at: 100,
+                expires_at: None,
+                revoked: false,
+                revoked_at: None,
+                revoked_by: None,
+                revocation_reason: None,
+                key_type: KeyType::Default,
+                allowed_routes: None,
+                auto_rotate: false,
+                rotation_interval_days: None,
+                description: None,
+                metadata: None,
+            };
+            storage.create_key(&key).unwrap();
+        }
+
+        // List all
+        let all_keys = storage.list_keys(None).unwrap();
+        assert_eq!(all_keys.len(), 3);
+
+        // List by team
+        let team_keys = storage.list_keys(Some("team1")).unwrap();
+        assert_eq!(team_keys.len(), 3);
+
+        // List by non-existent team
+        let other_keys = storage.list_keys(Some("nonexistent")).unwrap();
+        assert_eq!(other_keys.len(), 0);
+    }
 }

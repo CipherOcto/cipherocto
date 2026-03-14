@@ -1,7 +1,7 @@
 # Mission: WAL Pub/Sub Core Module
 
 ## Status
-Pending
+Claimed
 
 ## RFC
 RFC-0913: Stoolap Pub/Sub for Cache Invalidation
@@ -20,6 +20,15 @@ See: `docs/plans/2026-03-14-wal-pubsub-core-implementation.md`
 - [ ] Unit tests for idempotency tracker
 - [ ] Unit tests for event_id generation
 - [ ] Add pubsub module to executor/mod.rs
+
+## Claimant
+Claude (Agent)
+
+## Pull Request
+#
+
+## Notes
+Implementation in progress. Target: stoolap src/pubsub/ directory.
 
 ## Complexity
 Medium

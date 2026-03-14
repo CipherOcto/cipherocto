@@ -9,6 +9,7 @@ pub trait KeyStorage: Send + Sync {
 }
 
 pub struct StoolapKeyStorage {
+    #[allow(dead_code)]
     db: stoolap::Database,
 }
 

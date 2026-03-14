@@ -1,18 +1,13 @@
 use serde::{Deserialize, Serialize};
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 #[serde(rename_all = "lowercase")]
 pub enum KeyType {
+    #[default]
+    Default,
     LlmApi,
     Management,
     ReadOnly,
-    Default,
-}
-
-impl Default for KeyType {
-    fn default() -> Self {
-        KeyType::Default
-    }
 }
 
 impl std::fmt::Display for KeyType {

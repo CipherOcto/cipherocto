@@ -14,3 +14,5 @@ pub mod storage;
 
 pub use keys::{compute_key_hash, KeyError};
 pub use keys::models::{ApiKey, KeyType, KeyUpdates};
+pub use schema::init_database;
+pub use storage::{KeyStorage, StoolapKeyStorage};

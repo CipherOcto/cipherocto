@@ -9,6 +9,8 @@ pub mod providers;
 pub mod proxy;
 pub mod rate_limit;
 pub mod router;
+pub mod schema;
+pub mod storage;
 
 pub use keys::{compute_key_hash, KeyError};
 pub use keys::models::{ApiKey, KeyType, KeyUpdates};

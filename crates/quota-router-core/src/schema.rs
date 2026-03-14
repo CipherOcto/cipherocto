@@ -3,9 +3,10 @@ use crate::keys::KeyError;
 /// Initialize database with api_keys and teams tables
 pub fn init_database(db: &stoolap::Database) -> Result<(), KeyError> {
     // Create api_keys table
+    // Note: Using rowid as implicit primary key, key_id is a unique text identifier
     db.execute(
         "CREATE TABLE IF NOT EXISTS api_keys (
-            key_id INTEGER PRIMARY KEY,
+            key_id TEXT NOT NULL UNIQUE,
             key_hash TEXT NOT NULL UNIQUE,
             key_prefix TEXT NOT NULL,
             team_id TEXT,
@@ -32,7 +33,7 @@ pub fn init_database(db: &stoolap::Database) -> Result<(), KeyError> {
     // Create teams table
     db.execute(
         "CREATE TABLE IF NOT EXISTS teams (
-            team_id INTEGER PRIMARY KEY,
+            team_id TEXT NOT NULL UNIQUE,
             name TEXT NOT NULL,
             budget_limit INTEGER NOT NULL,
             created_at INTEGER NOT NULL

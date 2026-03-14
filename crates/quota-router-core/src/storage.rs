@@ -59,9 +59,26 @@ impl StoolapKeyStorage {
 
 impl KeyStorage for StoolapKeyStorage {
     fn create_key(&self, key: &ApiKey) -> Result<(), KeyError> {
+        // Validate required fields
+        if key.key_id.is_empty() {
+            return Err(KeyError::InvalidFormat);
+        }
+        if key.budget_limit <= 0 {
+            return Err(KeyError::InvalidFormat);
+        }
+
         let key_type_str = key.key_type.to_string();
         // Store key_hash as hex string
         let key_hash_hex = hex::encode(&key.key_hash);
+
+        // Helper to convert Option<i64> to stoolap::Value (None = Null)
+        let opt_i64_to_value = |opt: Option<i64>| -> stoolap::Value {
+            opt.map(|v| v.into()).unwrap_or(stoolap::Value::Null(stoolap::DataType::Null))
+        };
+        // Helper to convert Option<i32> to stoolap::Value (None = Null)
+        let opt_i32_to_value = |opt: Option<i32>| -> stoolap::Value {
+            opt.map(|v| v.into()).unwrap_or(stoolap::Value::Null(stoolap::DataType::Null))
+        };
 
         let params: Vec<stoolap::Value> = vec![
             key.key_id.clone().into(),
@@ -69,15 +86,15 @@ impl KeyStorage for StoolapKeyStorage {
             key.key_prefix.clone().into(),
             key.team_id.clone().into(),
             key.budget_limit.into(),
-            key.rpm_limit.unwrap_or(0).into(),
-            key.tpm_limit.unwrap_or(0).into(),
+            opt_i32_to_value(key.rpm_limit),
+            opt_i32_to_value(key.tpm_limit),
             key.created_at.into(),
-            key.expires_at.unwrap_or(0).into(),
+            opt_i64_to_value(key.expires_at),
             (key.revoked as i32).into(),
             key_type_str.into(),
             key.allowed_routes.clone().into(),
             (key.auto_rotate as i32).into(),
-            key.rotation_interval_days.unwrap_or(0).into(),
+            opt_i32_to_value(key.rotation_interval_days),
             key.description.clone().into(),
             key.metadata.clone().into(),
         ];

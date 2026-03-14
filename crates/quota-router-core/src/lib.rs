@@ -12,7 +12,7 @@ pub mod router;
 pub mod schema;
 pub mod storage;
 
-pub use keys::{compute_key_hash, KeyError};
+pub use keys::{compute_key_hash, generate_key_id, generate_key_string, KeyError};
 pub use keys::models::{ApiKey, KeyType, KeyUpdates};
 pub use schema::init_database;
 pub use storage::{KeyStorage, StoolapKeyStorage};

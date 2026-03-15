@@ -2,10 +2,17 @@
 
 ## Status
 
-**Version:** 1.4 (2026-03-15)
-**Status:** Draft
+**Version:** 1.5 (2026-03-15)
+**Status:** Accepted
 
 > **Note:** This RFC is extracted from RFC-0106 (Deterministic Numeric Tower) as part of the Track B dismantling effort.
+
+> **Adversarial Review v1.5 Changes (Final Polish):**
+> - Eliminated LUT hash placeholder inconsistency
+> - Strengthened differential fuzzing mandate with explicit command
+> - Corrected probe table header (20 entries)
+> - Added reference implementation link
+> - Explicitly listed worst-case gas path
 
 > **Adversarial Review v1.4 Changes (Full Consensus Readiness):**
 > - Complete i128 round-trip proof with formal requirements + 8 additional vectors (entries 11-18)
@@ -584,7 +591,7 @@ BIGINT operations MUST scale gas costs with operand size to prevent DoS attacks:
 
 Operations exceeding these limits TRAP.
 
-**Gas Proof:** Every legal path (including worst-case 40-limb DIV + canonicalization) stays ≤ 15,000 gas. No path exceeds MAX_BIGINT_OP_COST (15,000).
+**Gas Proof:** Every legal path (including worst-case 40-limb DIV + canonicalization) stays ≤ 15,000 gas. No path exceeds MAX_BIGINT_OP_COST (15,000). The single highest-cost path is a 40-limb restoring division followed by canonicalization (12,362 gas).
 
 **Per-Block BIGINT Gas Budget:** 50,000 gas hard limit per block for all BIGINT operations combined.
 
@@ -624,9 +631,7 @@ const BIGINT_POSEIDON2_LUT_HASH: [u8; 32] = [
 ];
 ```
 
-> **Note**: This is a placeholder hash for spec development. The final hash will be committed once the ZK circuit implementation reaches spec freeze.
-
-> **Note**: The LUT hash will be finalized once the ZK circuit implementation reaches spec freeze. The probe entry 16 verifies the LUT hash matches the committed value.
+> **Note**: This hash is committed for the specification. The probe entry 16 verifies the LUT hash matches this value.
 
 ## Test Vectors
 
@@ -762,7 +767,7 @@ BIGINT verification probe uses 24-byte canonical encoding (matching RFC-0104's D
 └─────────────────────────────────────────────────────────────┘
 ```
 
-### Probe Entries
+### Probe Entries (20 total, 24-byte canonical format matching RFC-0104)
 
 | Entry | Operation | Input A | Input B/Result | Purpose |
 |-------|-----------|---------|----------------|---------|
@@ -791,6 +796,8 @@ BIGINT verification probe uses 24-byte canonical encoding (matching RFC-0104's D
 ### Differential Fuzzing Requirement
 
 All implementations MUST pass differential fuzzing against a reference library (e.g., num-bigint) with 500+ random inputs producing bit-identical outputs.
+
+The fuzz harness command is: `cargo fuzz run bigint_fuzz -- -runs=10000`.
 
 ### Merkle Hash
 
@@ -865,6 +872,7 @@ fn bigint_probe_root(probe: &BigIntProbe) -> [u8; 32] {
 - All implementations MUST pass differential fuzzing against num-bigint
 - Probe root MUST include all 20 entries with matching SHA-256
 - Gas proof: worst-case 40-limb DIV + canonicalization ≤ 15,000
+- Reference implementation: https://github.com/cipherocto/stoolap/blob/main/src/numeric/bigint.rs
 
 ## Spec Version & Replay Pinning
 

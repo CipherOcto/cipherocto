@@ -2,7 +2,7 @@
 
 ## Status
 
-Planned
+Draft (v2) - Ready for implementation
 
 ## Authors
 
@@ -16,6 +16,8 @@ Define the response caching system for the enhanced quota router to reduce costs
 
 **Requires:**
 
+- RFC-0913: Stoolap Pub/Sub for Cache Invalidation (Accepted)
+- RFC-0914: Stoolap-Only Quota Router Persistence (Draft)
 
 **Optional:**
 
@@ -202,13 +204,13 @@ Reference LiteLLM's caching:
 
 ## Persistence
 
-> **Critical:** Use CipherOcto/stoolap as the persistence layer.
+> **Critical:** Use CipherOcto/stoolap as the persistence layer (per RFC-0914).
 
 Cache stored in stoolap:
 - Cache entries table
 - Cache statistics table
 
-Note: stoolap provides Redis-like caching capabilities for the Rust backend.
+Uses RFC-0913 pub/sub for cache invalidation events.
 
 ## Key Files to Modify
 

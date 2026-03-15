@@ -65,3 +65,12 @@ pub struct Team {
     pub budget_limit: i64,
     pub created_at: i64,
 }
+
+/// Tracks spending for a key within a time window
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct KeySpend {
+    pub key_id: String,
+    pub total_spend: i64,    // in cents/millicents
+    pub window_start: i64,    // timestamp when window started
+    pub last_updated: i64,
+}

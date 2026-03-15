@@ -2,7 +2,7 @@ pub mod errors;
 pub mod models;
 
 pub use errors::KeyError;
-pub use models::{ApiKey, KeyType, KeyUpdates, Team};
+pub use models::{ApiKey, KeyType, KeyUpdates, KeySpend, Team};
 
 use hmac_sha256::HMAC;
 use rand::Rng;

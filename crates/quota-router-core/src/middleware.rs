@@ -61,6 +61,25 @@ impl<S: KeyStorage> KeyMiddleware<S> {
 
         self.validate_request_key(&key_string)
     }
+
+    /// Check if key has remaining budget
+    pub fn check_budget(&self, key: &ApiKey) -> Result<(), KeyError> {
+        let spend = self.storage.get_spend(&key.key_id)?;
+
+        if let Some(s) = spend {
+            let remaining = key.budget_limit - s.total_spend;
+            if remaining <= 0 {
+                return Err(KeyError::BudgetExceeded);
+            }
+        }
+
+        Ok(())
+    }
+
+    /// Record spend for a key after a request
+    pub fn record_spend(&self, key_id: &str, amount: i64) -> Result<(), KeyError> {
+        self.storage.record_spend(key_id, amount)
+    }
 }
 
 #[cfg(test)]
@@ -170,5 +189,115 @@ mod tests {
         // Try to validate - should fail
         let result = middleware.validate_request_key("sk-qr-expired");
         assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_check_budget_no_spend() {
+        let middleware = create_test_middleware();
+
+        // Create a key with budget
+        let storage = middleware.storage.clone();
+        let key = ApiKey {
+            key_id: "budget-key".to_string(),
+            key_hash: vec![10, 20, 30],
+            key_prefix: "sk-qr-bud".to_string(),
+            team_id: None,
+            budget_limit: 1000,
+            rpm_limit: None,
+            tpm_limit: None,
+            created_at: 100,
+            expires_at: None,
+            revoked: false,
+            revoked_at: None,
+            revoked_by: None,
+            revocation_reason: None,
+            key_type: KeyType::Default,
+            allowed_routes: None,
+            auto_rotate: false,
+            rotation_interval_days: None,
+            description: None,
+            metadata: None,
+        };
+        storage.create_key(&key).unwrap();
+
+        // Should pass - no spend recorded
+        let result = middleware.check_budget(&key);
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_check_budget_exceeded() {
+        let middleware = create_test_middleware();
+
+        // Create a key with budget
+        let storage = middleware.storage.clone();
+        let key = ApiKey {
+            key_id: "budget-key-2".to_string(),
+            key_hash: vec![11, 21, 31],
+            key_prefix: "sk-qr-bud".to_string(),
+            team_id: None,
+            budget_limit: 1000,
+            rpm_limit: None,
+            tpm_limit: None,
+            created_at: 100,
+            expires_at: None,
+            revoked: false,
+            revoked_at: None,
+            revoked_by: None,
+            revocation_reason: None,
+            key_type: KeyType::Default,
+            allowed_routes: None,
+            auto_rotate: false,
+            rotation_interval_days: None,
+            description: None,
+            metadata: None,
+        };
+        storage.create_key(&key).unwrap();
+
+        // Record spend that exceeds budget
+        storage.record_spend(&key.key_id, 1500).unwrap();
+
+        // Should fail - exceeded budget
+        let result = middleware.check_budget(&key);
+        assert!(result.is_err());
+        assert!(matches!(result.unwrap_err(), KeyError::BudgetExceeded));
+    }
+
+    #[test]
+    fn test_record_spend() {
+        let middleware = create_test_middleware();
+
+        // Create a key
+        let storage = middleware.storage.clone();
+        let key = ApiKey {
+            key_id: "spend-key".to_string(),
+            key_hash: vec![12, 22, 32],
+            key_prefix: "sk-qr-spe".to_string(),
+            team_id: None,
+            budget_limit: 1000,
+            rpm_limit: None,
+            tpm_limit: None,
+            created_at: 100,
+            expires_at: None,
+            revoked: false,
+            revoked_at: None,
+            revoked_by: None,
+            revocation_reason: None,
+            key_type: KeyType::Default,
+            allowed_routes: None,
+            auto_rotate: false,
+            rotation_interval_days: None,
+            description: None,
+            metadata: None,
+        };
+        storage.create_key(&key).unwrap();
+
+        // Record spend
+        middleware.record_spend(&key.key_id, 250).unwrap();
+
+        // Check spend recorded
+        let spend = storage.get_spend(&key.key_id).unwrap();
+        assert!(spend.is_some());
+        assert_eq!(spend.unwrap().total_spend, 250);
     }
 }

@@ -1,4 +1,4 @@
-use crate::keys::{ApiKey, KeyError, KeyType, KeyUpdates, Team};
+use crate::keys::{ApiKey, KeyError, KeyType, KeyUpdates, KeySpend, Team};
 
 pub trait KeyStorage: Send + Sync {
     // Key operations
@@ -12,6 +12,11 @@ pub trait KeyStorage: Send + Sync {
     fn get_team(&self, team_id: &str) -> Result<Option<Team>, KeyError>;
     fn list_teams(&self) -> Result<Vec<Team>, KeyError>;
     fn delete_team(&self, team_id: &str) -> Result<(), KeyError>;
+
+    // Spend tracking
+    fn record_spend(&self, key_id: &str, amount: i64) -> Result<(), KeyError>;
+    fn get_spend(&self, key_id: &str) -> Result<Option<KeySpend>, KeyError>;
+    fn reset_spend(&self, key_id: &str) -> Result<(), KeyError>;
 }
 
 pub struct StoolapKeyStorage {
@@ -298,6 +303,87 @@ impl KeyStorage for StoolapKeyStorage {
                 vec![team_id.into()],
             )
             .map_err(|e| KeyError::Storage(e.to_string()))?;
+        Ok(())
+    }
+
+    fn record_spend(&self, key_id: &str, amount: i64) -> Result<(), KeyError> {
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_secs() as i64;
+
+        // Check if spend record exists
+        let existing = self.get_spend(key_id)?;
+
+        if let Some(mut spend) = existing {
+            // Update existing spend
+            spend.total_spend += amount;
+            spend.last_updated = now;
+
+            self.db
+                .execute(
+                    "UPDATE key_spend SET total_spend = $1, last_updated = $2 WHERE key_id = $3",
+                    vec![
+                        spend.total_spend.into(),
+                        spend.last_updated.into(),
+                        key_id.into(),
+                    ],
+                )
+                .map_err(|e| KeyError::Storage(e.to_string()))?;
+        } else {
+            // Create new spend record
+            self.db
+                .execute(
+                    "INSERT INTO key_spend (key_id, total_spend, window_start, last_updated) VALUES ($1, $2, $3, $4)",
+                    vec![
+                        key_id.into(),
+                        amount.into(),
+                        now.into(),
+                        now.into(),
+                    ],
+                )
+                .map_err(|e| KeyError::Storage(e.to_string()))?;
+        }
+
+        Ok(())
+    }
+
+    fn get_spend(&self, key_id: &str) -> Result<Option<KeySpend>, KeyError> {
+        let rows = self
+            .db
+            .query(
+                "SELECT * FROM key_spend WHERE key_id = $1",
+                vec![key_id.into()],
+            )
+            .map_err(|e| KeyError::Storage(e.to_string()))?;
+
+        if let Some(Ok(row)) = rows.into_iter().next() {
+            let spend = KeySpend {
+                key_id: row.get_by_name("key_id").map_err(|e| KeyError::Storage(e.to_string()))?,
+                total_spend: row.get_by_name("total_spend").map_err(|e| KeyError::Storage(e.to_string()))?,
+                window_start: row.get_by_name("window_start").map_err(|e| KeyError::Storage(e.to_string()))?,
+                last_updated: row.get_by_name("last_updated").map_err(|e| KeyError::Storage(e.to_string()))?,
+            };
+            Ok(Some(spend))
+        } else {
+            Ok(None)
+        }
+    }
+
+    fn reset_spend(&self, key_id: &str) -> Result<(), KeyError> {
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_secs() as i64;
+
+        // Reset to zero or delete record
+        self.db
+            .execute(
+                "UPDATE key_spend SET total_spend = 0, window_start = $1, last_updated = $1 WHERE key_id = $2",
+                vec![now.into(), key_id.into()],
+            )
+            .map_err(|e| KeyError::Storage(e.to_string()))?;
+
         Ok(())
     }
 }

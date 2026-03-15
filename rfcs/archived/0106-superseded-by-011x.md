@@ -193,12 +193,20 @@ This includes:
 | INT     | TRAP                   | TRAP                   |
 | BIGINT  | Impossible (arbitrary) | Impossible (arbitrary) |
 | DQA     | TRAP                   | TRAP                   |
-| DFP     | TRAP                   | TRAP                   |
+| DFP     | SATURATION (to DFP_MAX) | SATURATION (to DFP_MIN) |
 | DECIMAL | TRAP                   | TRAP                   |
 | DVEC    | TRAP (any element)     | TRAP (any element)     |
 | DMAT    | TRAP (any element)     | TRAP (any element)     |
 
-**Overflow/underflow MUST cause a deterministic execution trap.** The VM MUST revert the transaction and consume all gas allocated to that operation.
+**DFP SATURATION semantics** (per RFC-0104):
+
+- **Overflow**: Result saturates to `DFP_MAX_MANTISSA` with sign preserved, class remains Normal
+- **Underflow**: Result saturates to `DFP_MIN_NORMAL` (smallest representable positive normal), positive sign
+- Division by Zero: Result saturates to `DFP_MAX` with sign of dividend preserved
+
+> **Note**: DFP uses SATURATION to maintain deterministic state hashes. Unlike TRAP (which causes divergence when different nodes hit overflow), SATURATION ensures all nodes converge to the same saturated value.
+
+**DQA, DECIMAL, INT overflow/underflow MUST cause a deterministic execution trap.** The VM MUST revert the transaction and consume all gas allocated to that operation.
 
 ```
 overflow → GasError::Overflow → REVERT
@@ -207,33 +215,54 @@ underflow → GasError::Underflow → REVERT
 
 ### NaN / Infinity Policy
 
-> ⚠️ **CRITICAL**: NaN and Infinity are FORBIDDEN in consensus execution.
+> ⚠️ **CRITICAL**: This section amended per Track A (2026-03-14). NaN and Infinity are now ALLOWED for DFP with canonical forms.
 
-For blockchain consensus, we adopt the strictest policy:
+**DFP NaN (per RFC-0104):**
 
-**NaN is forbidden in consensus execution.**
-
-```
-NaN values MUST NOT appear in consensus state.
-Any operation producing NaN MUST trap.
-NaN input to any operation MUST trap.
-```
-
-**Infinity is forbidden in consensus execution.**
+DFP allows canonical NaN for mathematical honesty. NaN values MUST use canonical form:
 
 ```
-+Infinity and -Infinity MUST NOT appear in consensus state.
-Any operation producing Infinity MUST trap.
-Division by zero MUST trap.
+DFP_NaN = DFP {
+    class: NaN,
+    mantissa: 0x80000000000000000000000000000000,  // Canonical NaN mantissa
+    exponent: 0xFFFF,  // All 1s
+    sign: false
+}
 ```
 
-**Trap behavior:**
+**NaN propagation rules:**
+- 0/0 → canonical NaN
+- sqrt(negative) → canonical NaN
+- Infinity - Infinity → canonical NaN
+- Any operation with NaN input → NaN output
+
+**DFP Infinity (per RFC-0104):**
+
+DFP allows Infinity for overflow/division-by-zero:
 
 ```
-NaN detected → ExecutionError::NaNProhibited → REVERT
-Infinity detected → ExecutionError::InfinityProhibited → REVERT
-Division by zero → ExecutionError::DivisionByZero → REVERT
++Infinity = DFP { class: Infinity, mantissa: 0, exponent: 0xFFFF, sign: false }
+-Infinity = DFP { class: Infinity, mantissa: 0, exponent: 0xFFFF, sign: true }
 ```
+
+**DQA, DECIMAL, INT:** NaN and Infinity are FORBIDDEN (these types have bounded range).
+
+**CRITICAL: LUT Indexing Requirement**
+
+> ⚠️ **LUT operations MUST use integer arithmetic, NOT floating-point.**
+
+When implementing activation functions (sigmoid, tanh) with LUT:
+
+```
+# WRONG — floating-point arithmetic (forbidden)
+idx = ((x + 4.0) / 0.01).round()  # Uses FP!
+
+# CORRECT — DQA arithmetic (required)
+let x_scaled = x * 100;  # DQA multiplication
+let idx = (x_scaled + 400) / 1;  # DQA division, integer result
+```
+
+All LUT indexing must use DQA (scaled integer) arithmetic to maintain determinism.
 
 ### Canonicalization Rules
 
@@ -260,17 +289,19 @@ Examples:
   250 × 10^-1 → 25 × 10^0  (mantissa=250, scale=1 → 25, 0)
 ```
 
-**DQA canonicalization (general DQA, not v1-specific):**
+**DQA canonicalization:**
 
-> ⚠️ **v1 NOTE**: In Phase 1, only Q8.8 (scale=8) is supported. All other scales are rejected with TRAP.
+> ⚠️ **Scale Support**: DQA supports scales 0-18 per RFC-0105. This is a change from the original Q8.8-only restriction.
+
+> ⚠️ **SQRT Domain**: When using SQRT with DQA, the input MUST be non-negative. Negative input produces undefined behavior.
 
 ```
-The value 4.0 has multiple DQA representations (general form):
-  mantissa=4,  scale=0  → 4 × 2^0  = 4.0  ← CANONICAL (mantissa has no trailing binary zero)
-  mantissa=8,  scale=1  → 8 × 2^-1 = 4.0  ← INVALID (8 = 0b1000 has trailing zero)
-  mantissa=16, scale=2  → 16 × 2^-2 = 4.0 ← INVALID (16 = 0b10000 has trailing zeros)
+The value 4.0 has multiple DQA representations:
+  mantissa=4,  scale=0  → 4 × 10^0  = 4.0  ← CANONICAL
+  mantissa=40, scale=1  → 40 × 10^-1 = 4.0 ← INVALID (trailing zero)
+  mantissa=400, scale=2 → 400 × 10^-2 = 4.0 ← INVALID (trailing zeros)
 
-In v1 (Q8.8 only): mantissa=1024, scale=8 → 1024 × 2^-8 = 4.0 ← ONLY VALID FORM
+Canonical form: remove trailing zeros, minimize scale.
 ```
 
 **DFP canonicalization:**
@@ -344,45 +375,62 @@ All operations MUST specify:
 3. **Overflow detection**: How traps are triggered
 4. **Intermediate precision**: Width of internal calculations
 
-#### DQA (Q8.8) Canonical Algorithms
+#### DQA Canonical Algorithms
+
+> ⚠️ **Note**: These algorithms support scales 0-18 per RFC-0105 (not just Q8.8).
 
 **Addition:**
 
 ```
-fn dqa_add(a: i32, b: i32, scale: u8) -> i32 {
-    // Scale mismatch detection: TRAP if scale is not Q8.8 (8)
-    // This prevents silent data corruption from scale mismatches
-    if scale != 8 { TRAP }  // Only Q8.8 supported in v1
+fn dqa_add(a: Dqa, b: Dqa) -> Dqa {
+    // Scale alignment: align to max(scale_a, scale_b)
+    let (a_val, b_val, result_scale) = align_scales(a, b);
 
     // Use checked_add for provably correct overflow detection
-    // Returns None on overflow, Some(result) on success
-    match a.checked_add(b) {
-        Some(result) => result,
+    let result_value = match a_val.checked_add(b_val) {
+        Some(v) => v,
         None => TRAP,  // Overflow: trap per spec
-    }
+    };
+
+    // Canonicalize result (remove trailing zeros)
+    CANONICALIZE(Dqa { value: result_value, scale: result_scale })
 }
 ```
 
 **Multiplication:**
 
-> ⚠️ **Rounding Mode**: Multiplication uses **Floor** (toward negative infinity) as the implicit rounding mode.
-> This is consistent with the right-shift operation. For explicit control, use `dqa_mul_rounded()` with a RoundingMode parameter (Phase 2).
+> ⚠️ **Rounding Mode**: Multiplication uses **Round-to-Nearest-Even (RNE)** per RFC-0105. This is the industry standard for financial calculations and is unbiased over many operations.
 
 ```
-fn dqa_mul(a: i32, b: i32, scale: u8) -> i32 {
-    // Scale mismatch detection: TRAP if scale is not Q8.8 (8)
-    if scale != 8 { TRAP }  // Only Q8.8 supported in v1
+fn dqa_mul(a: i64, b: i64, result_scale: u8) -> Dqa {
+    // Step 1: Compute at target scale directly (single rounding point)
+    let target_scale = result_scale;
 
-    // Widen to 64-bit, multiply, then scale down
-    // Intermediate: i64 to prevent overflow
-    let wide: i64 = (a as i64) * (b as i64);
-    // ⚠️ CRITICAL: Arithmetic right shift (>>) uses FLOOR rounding, not truncate-toward-zero.
-    // For negative numbers: -3 >> 1 = -2 (floor: -1.5 rounds to -2)
-    // vs truncate-toward-zero: -3/2 = -1
-    // This difference is intentional for deterministic signed division.
-    let shifted = wide >> scale;
-    // Check for overflow AFTER shift, before cast to i32
-    if shifted > i32::MAX as i64 || shifted < i32::MIN as i64 { TRAP }
+    // Step 2: Scale adjustment for target precision
+    // Scale factor = 10^target_scale
+    let scaled_a = a * 10_i128.pow(target_scale as u32);
+
+    // Step 3: Multiply in i128 to prevent overflow
+    let product = scaled_a * b;
+
+    // Step 4: Round to nearest even using remainder
+    // quotient = product / 1 (full precision division)
+    // remainder = product % 1
+    // If remainder * 2 >= divisor: round up if quotient is even, round up if quotient is odd
+    let quotient = product / 1;
+    let remainder = product % 1;
+
+    // RNE: round up if remainder*2 >= 1 AND (quotient is odd OR remainder*2 > 1)
+    let round_up = remainder.abs() * 2 >= 1 && (quotient % 2 != 0 || remainder.abs() * 2 > 1);
+
+    let result = if round_up { quotient + 1 } else { quotient };
+
+    // Step 5: Canonicalize
+    CANONICALIZE(Dqa { value: result as i64, scale: target_scale })
+}
+```
+
+> **Note**: This algorithm differs from the original Q8.8 Floor approach. RFC-0105 RNE is the authoritative specification for DQA multiplication.
     shifted as i32
 }
 ```
@@ -1564,11 +1612,13 @@ pub fn tanh(x: Dfp) -> Dfp {
 /// NaN is FORBIDDEN in consensus per the NaN/Infinity Policy section
 #[derive(Clone, Copy, Debug, Default)]
 pub enum NanPolicy {
-    /// ⚠️ DEPRECATED - NaN causes consensus divergence, never use in consensus
-    #[deprecated(note = "NaN causes consensus divergence")]
-    Propagate,
-    /// Default - NaN triggers TRAP, transaction reverts
+    /// Default - Canonical NaN allowed (per RFC-0104), non-canonical → canonicalize
     #[default]
+    AllowCanonical,
+    /// ⚠️ DEPRECATED - Use AllowCanonical instead
+    #[deprecated(note = "Use AllowCanonical for DFP per RFC-0104")]
+    Propagate,
+    /// Reject all NaN (for DQA/DECIMAL/INT types only)
     Reject,
     /// ⚠️ DEPRECATED - May hide errors in ZK contexts
     #[deprecated(note = "May hide underlying errors")]
@@ -1586,16 +1636,16 @@ pub enum SpecialValue {
 }
 
 /// Canonical NaN representation for DFP (in DFP wire format)
-/// ⚠️ **NaN is FORBIDDEN in consensus** - this is for deserialization validation only.
-/// Any incoming DFP value with class=NaN during deserialization MUST be rejected (TRAP).
-/// This canonical form exists only to identify and reject NaN-encoded inputs.
+/// ⚠️ **NaN is ALLOWED for DFP** (per RFC-0104 amendment).
+/// Non-canonical NaN values during deserialization MUST be canonicalized.
+/// Only canonical NaN is allowed in consensus state.
 const DFP_CANONICAL_NAN_CLASS: u8 = 3;  // DfpClass::NaN
-const DFP_CANONICAL_NAN_MANTISSA: i128 = 1;
-const DFP_CANONICAL_NAN_EXPONENT: i32 = 0;
+const DFP_CANONICAL_NAN_MANTISSA: u128 = 0x80000000000000000000000000000000;  // Canonical NaN
+const DFP_CANONICAL_NAN_EXPONENT: i32 = -16383;  // All 1s exponent pattern (per 0104)
 
 /// Check if DFP wire encoding represents canonical NaN
-fn is_canonical_nan(class: u8, sign: u8, mantissa: i128, exponent: i32) -> bool {
-    // In DFP wire format: class=3 (NaN), sign=0, mantissa=1, exponent=0
+fn is_canonical_nan(class: u8, sign: u8, mantissa: u128, exponent: i32) -> bool {
+    // In DFP wire format: class=3 (NaN), sign=0, mantissa=canonical, exponent=all-1s
     class == DFP_CANONICAL_NAN_CLASS &&
     sign == 0 &&  // Canonical NaN must have positive sign
     mantissa == DFP_CANONICAL_NAN_MANTISSA &&
@@ -2684,16 +2734,16 @@ graph LR
 
 All numeric operations MUST handle these failure cases deterministically:
 
-| Failure Case       | Behavior | Consensus Impact                          |
-| ------------------ | -------- | ----------------------------------------- |
-| Overflow           | TRAP     | Transaction reverts, gas consumed         |
-| Underflow          | TRAP     | Transaction reverts, gas consumed         |
-| Division by Zero   | TRAP     | Transaction reverts, gas consumed         |
-| NaN Output         | TRAP     | Transaction reverts, gas consumed         |
-| Infinity Output    | TRAP     | Transaction reverts, gas consumed         |
-| Zero Vector Norm   | TRAP     | Transaction reverts, gas consumed         |
-| Dimension Exceeded | REJECT   | Transaction rejected pre-execution        |
-| Gas Exceeded       | TRAP     | Transaction reverts, partial gas consumed |
+| Failure Case       | DQA/DECIMAL/INT | DFP | Consensus Impact |
+| ------------------ | --------------- | --- | ----------------- |
+| Overflow           | TRAP           | SATURATE | Transaction reverts (DQA/DECIMAL/INT), State converges (DFP) |
+| Underflow          | TRAP           | SATURATE | Transaction reverts (DQA/DECIMAL/INT), State converges (DFP) |
+| Division by Zero   | TRAP           | SATURATE | Transaction reverts (DQA/DECIMAL/INT), State converges (DFP) |
+| NaN Output         | TRAP           | ALLOW (canonical) | Transaction reverts (DQA/DECIMAL/INT), Allowed (DFP) |
+| Infinity Output    | TRAP           | ALLOW (saturated) | Transaction reverts (DQA/DECIMAL/INT), Allowed (DFP) |
+| Zero Vector Norm   | TRAP           | N/A | Transaction reverts |
+| Dimension Exceeded | REJECT         | N/A | Transaction rejected pre-execution |
+| Gas Exceeded       | TRAP           | TRAP | Transaction reverts, partial gas consumed |
 
 ### DoS Prevention
 
@@ -2882,6 +2932,8 @@ This RFC anticipates future quantized formats:
 - [ ] Use `Box<[T]>` for DVecN and DMat allocations (not `Vec<T>`)
 - [ ] Enforce Wasm memory limits: 256MB max
 - [ ] Implement TRAP on: overflow, underflow, NaN, Infinity, division by zero
+  - **DFP**: Use SATURATION for overflow/underflow, allow canonical NaN/Infinity
+  - **DQA/DECIMAL/INT**: TRAP on all NaN/Infinity/overflow/underflow
 - [ ] Enforce dimension limits: DVEC ≤ 64 (mainnet), DMAT ≤ 8×8 (mainnet)
 - [ ] Implement 128-bit accumulator for DOT product (i128)
 

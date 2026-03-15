@@ -221,10 +221,16 @@ Once accepted:
 | RFC-0102 (Numeric) | Wallet Cryptography                   | Draft  | Wallet security and key management          |
 | RFC-0104 (Numeric) | Deterministic Floating-Point (DFP)    | Draft  | Deterministic floating-point types          |
 | RFC-0105 (Numeric) | Deterministic Quant Arithmetic (DQA)  | Draft  | Quantized arithmetic types                  |
-| RFC-0106 (Numeric) | Deterministic Numeric Tower (DNT)     | Draft  | Complete numeric type system (Foundational) |
+| RFC-0106 (Numeric) | Deterministic Numeric Tower (DNT)     | Superseded | Replaced by 0110-0115 (Track B)      |
 | RFC-0107 (Numeric) | Deterministic Transformer Circuit     | Draft  | Transformer circuit design                  |
 | RFC-0108 (Numeric) | Deterministic Training Circuits       | Draft  | Training circuit design                     |
 | RFC-0109 (Numeric) | Deterministic Linear Algebra Engine   | Draft  | Vector/matrix operations                    |
+| RFC-0110 (Numeric) | Deterministic BIGINT                 | Draft  | Arbitrary-precision integers               |
+| RFC-0111 (Numeric) | Deterministic DECIMAL                | Draft  | Extended precision decimals (i128)         |
+| RFC-0112 (Numeric) | Deterministic Vectors (DVEC)         | Draft  | Vector operations for AI inference         |
+| RFC-0113 (Numeric) | Deterministic Matrices (DMAT)         | Draft  | Matrix operations for linear algebra      |
+| RFC-0114 (Numeric) | Deterministic Activation Functions    | Draft  | ReLU, Sigmoid, Tanh for ML                |
+| RFC-0115 (Numeric) | Deterministic Tensors (DTENSOR)       | Planned | N-dimensional tensors (Phase 4)          |
 | RFC-0116 (Numeric) | Unified Deterministic Execution Model | Draft  | Unified execution framework                 |
 
 ### Storage (RFC-0200-0299)

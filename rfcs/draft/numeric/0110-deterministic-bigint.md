@@ -2,21 +2,39 @@
 
 ## Status
 
-**Version:** 2.3 (2026-03-15)
-**Status:** Accepted
+**Version:** 2.4 (2026-03-15)
+**Status:** Draft
 
 > **Note:** This RFC is extracted from RFC-0106 (Deterministic Numeric Tower) as part of the Track B dismantling effort.
 
-> **Adversarial Review v2.3 Changes (Critical Bug Fixes):**
-> - FIXED: DIV algorithm unified (removed duplicate algorithm contradiction)
-> - FIXED: DIV index underflow bug (j=0 case accessing limbs[-1])
-> - FIXED: Retracted false i128/DqaEncoding byte-identity claim
-> - FIXED: bigint_to_i128_bytes algorithm consistency
-> - REMOVED: Undefined POW/AND/OR/XOR/NOT probe entries (57-63)
-> - FIXED: SUB borrow arithmetic with correct borrow propagation
-> - REPLACED: Poseidon2 LUT hash with explicit placeholder marker
+> **Adversarial Review v2.4 Changes (Comprehensive Fixes):**
+>
+> - FIXED: SUB borrow detection with overflowing_sub (S1)
+> - FIXED: DIV j=0 case properly sets q_estimate (D1)
+> - FIXED: DIV clamp expression avoiding UB (D2)
+> - FIXED: DIV double restore step per Knuth Algorithm D (D3)
+> - FIXED: Determinism Rule 4 clarified for limb iteration (D4)
+> - FIXED: ADD sum type annotation as u128 (A1)
+> - FIXED: MUL high word computation and bounded carry loop (M1)
+> - FIXED: MUL sign ordering before canonicalize (M2)
+> - FIXED: SHR sign behavior preserved (SR1)
+> - FIXED: SHL result array initialized to zero (SH1)
+> - FIXED: bigint_to_i128_bytes algorithm for two's complement BE (I1)
+> - FIXED: i128 MAX limb vector in boundary table (I2)
+> - ADDED: MOD uses divmod for single-pass efficiency (G2)
+> - FIXED: Gas proof paragraph uses 64-limb not 40-limb (G1)
+> - FIXED: All 40-limb references replaced with 64-limb (ST1)
+> - ADDED: Probe format encoding note (P1)
+> - FIXED: Probe checklist count 20→57 (P2)
+> - FIXED: Probe entry 29 uses legal input 2^4095 (SR2)
+> - ADDED: Input Canonicalization Requirement section (C1, C2)
+> - ADDED: Block Header Offset TBD placeholder (V1)
+> - ADDED: Version Increment Policy section (V2)
+> - FIXED: Fuzz harness run count 10000→100000 (ST3)
+> - FIXED: ZK section header marked Informative (Z2)
 
 > **Adversarial Review v2.2 Changes (Final Production-Grade):**
+>
 > - Added deterministic canonicalization algorithm (normative step-by-step)
 > - Explicitly mandated 128-bit intermediate arithmetic with emulation rules
 > - Specified canonical schoolbook multiplication algorithm
@@ -26,7 +44,7 @@
 > - Removed constant-time requirement (clarified optional)
 > - Fully specified shift operations with carry behavior
 > - Added determinism guarantee section
-> - Expanded verification probe to 64 entries**
+> - Expanded verification probe to 64 entries\*\*
 > - Defined explicit canonicalization algorithm with negative-zero elimination
 > - Mandated 128-bit intermediate arithmetic for limb overflow
 > - Picked single division algorithm (bit-level restoring division)
@@ -41,6 +59,7 @@
 > - Expanded verification probe to 32 entries
 
 > **Adversarial Review v1.4 Changes (Full Consensus Readiness):**
+>
 > - Complete i128 round-trip proof with formal requirements + 8 additional vectors (entries 11-18)
 > - Formalized DIV algorithm with verbatim limb-by-limb pseudocode + constant-time primitives
 > - Finalized ZK LUT hash with actual SHA-256 placeholder + probe Entry 16 verification
@@ -49,6 +68,7 @@
 > - Constant-time enforcement guidance with intrinsics reference + 4 timing vectors
 
 > **Adversarial Review v1.3 Changes:**
+>
 > - Added i128 round-trip invariant proof and 4 new test vectors (entries 11-14)
 > - Added fixed-iteration DIV with constant-time guarantees (64 × limb count)
 > - Extended verification probe to 16 entries with canonical-form checks
@@ -58,12 +78,14 @@
 > - Added constant-time comparison mandate to Determinism Rules
 
 > **Adversarial Review v1.2 Changes:**
+>
 > - Added i128 canonical serialization for byte-identical round-trip with RFC-0105
 > - Added post-operation canonicalization mandate for all algorithms
 > - Updated verification probe to 24-byte canonical format (matching RFC-0104)
 > - Added numeric_spec_version for replay pinning
 
 > **Adversarial Review v1.1 Changes:**
+>
 > - Fixed i128 interoperability (clarified relationship with RFC-0105)
 > - Fixed zero canonical form (single zero limb, not empty)
 > - Added full DIV pseudocode with fixed iteration count
@@ -76,6 +98,7 @@
 This RFC defines Deterministic BIGINT — arbitrary-precision integer arithmetic for consensus-critical computations requiring values beyond i64/i128.
 
 BIGINT is the foundation layer of the Deterministic Numeric Tower, enabling:
+
 - Cryptographic operations (signatures, hashes)
 - Financial calculations requiring large integers
 - Counting beyond 64-bit bounds
@@ -96,6 +119,7 @@ DFP (RFC-0104)
 ```
 
 **BIGINT interoperates with:**
+
 - **i64** — direct conversion
 - **i128** — direct conversion via I128Encoding
 
@@ -121,19 +145,19 @@ BigInt's O(n²) multiplication and intentional determinism make it unsuitable
 for crypto. Ed25519 arithmetic uses finite fields, not arbitrary integers.
 ```
 
-The relationship "BIGINT provides i128 via 2×i64 limbs" means BIGINT *can* represent i128 values, not that it *is* i128.
+The relationship "BIGINT provides i128 via 2×i64 limbs" means BIGINT _can_ represent i128 values, not that it _is_ i128.
 
 ## Motivation
 
 ### Problem Statement
 
-| Integer Type | Range | Limitation |
-|--------------|-------|------------|
-| i8 | -128 to 127 | Too small |
-| i16 | -32,768 to 32,767 | Too small |
-| i32 | ±2.1B | Too small |
-| i64 | ±9.2×10^18 | Cryptography needs 256-4096 bits |
-| i128 | ±2^127 | Insufficient for some cryptographic operations |
+| Integer Type | Range             | Limitation                                     |
+| ------------ | ----------------- | ---------------------------------------------- |
+| i8           | -128 to 127       | Too small                                      |
+| i16          | -32,768 to 32,767 | Too small                                      |
+| i32          | ±2.1B             | Too small                                      |
+| i64          | ±9.2×10^18        | Cryptography needs 256-4096 bits               |
+| i128         | ±2^127            | Insufficient for some cryptographic operations |
 
 ### Use Cases
 
@@ -231,14 +255,14 @@ Algorithm:
      result_sign = a.sign
 
   3. Limb-wise addition with carry:
-     carry = 0
+     let carry: u64 = 0
      for i in 0..max(a.limbs.len, b.limbs.len):
-       sum = carry
-       if i < a.limbs.len: sum += a.limbs[i]
-       if i < b.limbs.len: sum += b.limbs[i]
+       let sum: u128 = (carry as u128)
+         + (if i < a.limbs.len { a.limbs[i] as u128 } else { 0u128 })
+         + (if i < b.limbs.len { b.limbs[i] as u128 } else { 0u128 });
 
-       result_limbs.push(sum as u64)
-       carry = sum >> 64  // Carry to next limb
+       result_limbs.push(sum as u64);
+       carry = (sum >> 64) as u64;
 
   4. If carry > 0:
        result_limbs.push(carry)
@@ -273,15 +297,11 @@ Algorithm:
        a_limb = if i < a.limbs.len: a.limbs[i] else: 0
        b_limb = if i < b.limbs.len: b.limbs[i] else: 0
 
-       // Use wrapping subtraction to detect borrow
-       diff = a_limb.wrapping_sub(b_limb)
-       // If a_limb < b_limb + borrow, we underflowed and need to borrow
-       let needs_borrow = a_limb < b_limb.wrapping_add(borrow);
-       diff = diff.wrapping_sub(borrow)
-       result_limbs.push(diff)
-       // Borrow propagates: if we needed to borrow in this step,
-       // we carry 1 to the next limb
-       borrow = if needs_borrow { 1 } else { 0 }
+       // Use overflowing subtraction to detect borrow correctly
+       let (diff1, borrow1) = a_limb.overflowing_sub(b_limb);
+       let (diff2, borrow2) = diff1.overflowing_sub(borrow);
+       result_limbs.push(diff2);
+       borrow = (borrow1 as u64) | (borrow2 as u64);
 
      // After loop, borrow MUST be 0 (|a| >= |b| by design)
 
@@ -313,30 +333,30 @@ Algorithm: Schoolbook O(n²) multiplication
      for i in 0..a.limbs.len:
        for j in 0..b.limbs.len:
          // Multiply two u64, result is u128
-         product = (a.limbs[i] as u128) * (b.limbs[j] as u128)
+         let product: u128 = (a.limbs[i] as u128) * (b.limbs[j] as u128);
 
          // Add to result at position i+j
-         low = product as u64
-         high = (product >> 64) as u64
+         let acc: u128 = (result.limbs[i+j] as u128) + (product & 0xFFFF_FFFF_FFFF_FFFFu128);
+         result.limbs[i+j] = acc as u64;
+         let mut carry: u128 = (acc >> 64) + (product >> 64);
 
-         // Add to result[i+j] with carry
-         sum = result.limbs[i+j] as u128 + low
-         result.limbs[i+j] = sum as u64
-         carry = sum >> 64
-
-         // Add carry to result[i+j+1]
-         k = i + j + 1
-         while carry > 0:
-           sum = result.limbs[k] as u128 + carry
-           result.limbs[k] = sum as u64
-           carry = sum >> 64
-           k += 1
+         // Propagate carry with bounds checking
+         let mut k = i + j + 1;
+         while carry > 0 {
+           debug_assert!(k < result.limbs.len());
+           let s: u128 = (result.limbs[k] as u128) + carry;
+           result.limbs[k] = s as u64;
+           carry = s >> 64;
+           k += 1;
+         }
 
   5. Remove leading zero limbs
 
-  6. result_sign = a.sign XOR b.sign
+  6. result.sign = a.sign XOR b.sign
 
-  7. return BigInt { limbs: result.limbs, sign: result_sign }
+  7. result = canonicalize(result)
+
+  8. return result
 ```
 
 ### DIV — Division
@@ -365,8 +385,8 @@ Algorithm: Restoring division with D1 normalization
      a. Form estimate (D1):
         // Handle j=0 case: use a_norm.limbs[0] with implicit zero for j-1
         if j == 0:
-          // For least significant limb, use single-limb division
-          dividend = a_norm.limbs[0] as u128
+          // Degenerate single-limb case: D1 with implicit zero lower limb
+          q_estimate = (a_norm.limbs[0] as u128) / (b_norm.limbs.last() as u128)
         else if a_norm.limbs[j] == b_norm.limbs.last:
           q_estimate = u64::MAX
         else:
@@ -376,14 +396,20 @@ Algorithm: Restoring division with D1 normalization
                         b_norm.limbs.last as u128
 
      b. Clamp estimate:
-        q_estimate = min(q_estimate, (1 << 64) - 1)
+        if q_estimate > 0xFFFF_FFFF_FFFF_FFFFu128 {
+          q_estimate = 0xFFFF_FFFF_FFFF_FFFFu128
+        }
 
      c. Multiply and subtract (restoring):
         temp = b_norm * q_estimate
+        // First correction
         if temp > a_norm[j:]:
-          // Restore: add back b_norm
           q_estimate -= 1
-          temp = b_norm * q_estimate
+          temp -= b_norm
+        // Second correction (required by Knuth D)
+        if temp > a_norm[j:]:
+          q_estimate -= 1
+          temp -= b_norm
         a_norm[j:] -= temp
 
   5. Shift remainder right by norm_shift
@@ -393,7 +419,6 @@ Algorithm: Restoring division with D1 normalization
   7. Return quotient with sign = a.sign XOR b.sign
 ```
 
-
 ### MOD — Modulo
 
 > **Note**: MOD follows RFC-0105 convention: result has same sign as dividend.
@@ -402,10 +427,9 @@ Algorithm: Restoring division with D1 normalization
 bigint_mod(a: BigInt, b: BigInt) -> BigInt
 
 Algorithm:
-  1. quotient = bigint_div(a, b)
-  2. remainder = a - (quotient * b)
-  3. // Canonicalize remainder (remove leading zeros)
-  4. return remainder  // Sign follows dividend (a.sign)
+  1. (quotient, remainder) = bigint_divmod(a, b)  // single pass, DIV cost only
+  2. // Canonicalize remainder (remove leading zeros)
+  3. return remainder  // Sign follows dividend (a.sign)
 ```
 
 ### CMP — Comparison
@@ -462,7 +486,8 @@ Algorithm:
   2. limb_shift = shift / 64
      bit_shift = shift % 64
 
-  3. Result has a.limbs.len + limb_shift + 1 limbs
+  3. result = vec![0u64; a.limbs.len + limb_shift + 1]
+     result.sign = a.sign
 
   4. For each limb in a:
        result.limbs[i + limb_shift] |= a.limbs[i] << bit_shift
@@ -494,7 +519,10 @@ Algorithm:
 
   5. Remove leading zero limbs
 
-  6. return result
+  6. // SHR is arithmetic shift: sign is preserved
+  result.sign = a.sign
+
+  7. return result
 ```
 
 ## Serialization & Canonical Encoding
@@ -503,11 +531,11 @@ Algorithm:
 
 **Three canonical numeric encodings exist in the CipherOcto numeric tower:**
 
-| Encoding | Type | Format |
-|----------|------|--------|
-| I128Encoding | Integer | 16 bytes, two's complement, big-endian |
-| BigIntEncoding | Arbitrary Integer | Variable, see below |
-| DqaEncoding | Decimal | Reference RFC-0105 |
+| Encoding       | Type              | Format                                 |
+| -------------- | ----------------- | -------------------------------------- |
+| I128Encoding   | Integer           | 16 bytes, two's complement, big-endian |
+| BigIntEncoding | Arbitrary Integer | Variable, see below                    |
+| DqaEncoding    | Decimal           | Reference RFC-0105                     |
 
 **No numeric encoding is reused across numeric types.** This prevents Merkle hash ambiguity.
 
@@ -548,6 +576,7 @@ For deterministic Merkle hashing, BIGINT uses this canonical wire format:
 └─────────────────────────────────────────────────────────────┘
 
 Total size: 8 + (num_limbs × 8) bytes
+
 ```
 
 ### i128 Interoperability
@@ -557,19 +586,27 @@ Total size: 8 + (num_limbs × 8) bytes
 **BIGINT to i128 conversion** (for values in i128 range):
 
 ```
+
 bigint_to_i128_bytes(b: BigInt) -> [u8; 16]
 
 Precondition: b fits in i128 range (-2^127 to 2^127-1)
 
 Algorithm:
-  1. If b > 2^127 - 1 or b < -2^127: TRAP
-  2. If b == 0: return [0x00, 0x00, ..., 0x00] (16 zeros)
-  3. If b.sign is true: negate to get positive magnitude
-  4. Convert magnitude to bytes (little-endian, 16 bytes):
-     For i in 0..16:
-       bytes[i] = (magnitude >> (i * 8)) as u8
-  5. If b.sign is true: bytes[15] |= 0x80  // Set sign bit in MSB
-  6. Return 16-byte representation
+
+1. If b > 2^127 - 1 or b < -2^127: TRAP
+2. If b == 0: return [0x00, 0x00, ..., 0x00] (16 zeros)
+3. Reconstruct i128 value:
+   magnitude: u128 = reconstruct from b.limbs (little-endian)
+4. If b.sign == false:
+   for i in 0..16:
+   bytes[i] = ((magnitude >> (120 - i\*8)) & 0xFF) as u8
+5. If b.sign == true:
+   twos_complement = (!magnitude).wrapping_add(1)
+   for i in 0..16:
+   bytes[i] = ((twos_complement >> (120 - i\*8)) & 0xFF) as u8
+6. Return bytes
+
+```
 
 ### i128 Round-Trip Test Vectors
 
@@ -586,25 +623,36 @@ Algorithm:
 ### Serialization Invariant
 
 ```
+
 BIGINT → serialize → bytes → deserialize → BIGINT'
-BIGINT == BIGINT'  // MUST be true
+BIGINT == BIGINT' // MUST be true
+
 ```
+
+### Input Canonicalization Requirement (Normative)
+
+All inputs to BIGINT operations MUST be in canonical form.
+An implementation MUST reject (TRAP) any non-canonical input:
+- Trailing zero limbs (except canonical zero [0])
+- sign=true with limbs=[0] (negative zero)
 
 ### Canonical Form Enforcement
 
 After ANY operation, the result MUST be canonicalized using this **deterministic algorithm**:
 
 ```
+
 fn bigint_canonicalize(x: BigInt) -> BigInt
-  // Step 1: Remove leading zero limbs
-  while x.limbs.len > 1 AND last(x.limbs) == 0:
-       remove last limb
+// Step 1: Remove leading zero limbs
+while x.limbs.len > 1 AND last(x.limbs) == 0:
+remove last limb
 
-  // Step 2: Eliminate negative zero
-  if x.limbs == [0]:
-       x.sign = false  // positive only
+// Step 2: Eliminate negative zero
+if x.limbs == [0]:
+x.sign = false // positive only
 
-  return x
+return x
+
 ```
 
 **Canonical Invariants (mandatory):**
@@ -640,8 +688,10 @@ BIGINT operations MUST scale gas costs with operand size to prevent DoS attacks:
 **Unified Limits:**
 
 ```
+
 MAX_LIMBS = 64
 MAX_BIGINT_BITS = 4096
+
 ```
 
 Operations must reject if `limbs > MAX_LIMBS`.
@@ -660,11 +710,12 @@ The worst case is 64×64 DIV: 50 + 3×4096 = 12,362 < 15,000. ✓
 
 **Worst-case gas:** 64 × 64 multiplication = 8,242 gas (well under block limits).
 
-**Gas Proof:** Every legal path (including worst-case 40-limb DIV + canonicalization) stays ≤ 15,000 gas. No path exceeds MAX_BIGINT_OP_COST (15,000). The single highest-cost path is a 40-limb restoring division followed by canonicalization (12,362 gas).
+**Gas Proof:** All operations are ≤ 12,362 gas < MAX_BIGINT_OP_COST (15,000). ✓
+The worst case is a 64-limb DIV: 50 + 3×4,096 = 12,362.
 
 **Per-Block BIGINT Gas Budget:** 50,000 gas hard limit per block for all BIGINT operations combined.
 
-## ZK Circuit Commitments (Mandatory for Future Proof System Integration)
+## ZK Circuit Commitments *(Informative — not required for v1)*
 
 ### Schoolbook MUL Limb Reduction
 
@@ -675,31 +726,35 @@ The worst case is 64×64 DIV: 50 + 3×4096 = 12,362 < 15,000. ✓
 ### Poseidon2 Absorption Schedule
 
 ```
+
 // For 64 limbs: process in chunks of 2
 // absorption[i] = Poseidon2(limbs[2*i], limbs[2*i+1])
 // Total: 32 absorptions for 64 limbs
 fn poseidon2_absorb(limbs: &[u64; 64]) -> [FieldElement; 32] {
-    let mut result = [FieldElement::zero(); 32];
-    for i in 0..32 {
-        result[i] = poseidon2(FieldElement(limbs[2*i]), FieldElement(limbs[2*i+1]));
-    }
-    result
+let mut result = [FieldElement::zero(); 32];
+for i in 0..32 {
+result[i] = poseidon2(FieldElement(limbs[2*i]), FieldElement(limbs[2*i+1]));
 }
+result
+}
+
 ```
 
 ### Reference Poseidon2 LUT Commitment
 
 ```
+
 /// SHA-256 of the limb-reduction lookup table
 /// This hash is included in the verification probe (Entry 16)
 /// NOTE: This is a TBD placeholder. Actual value will be computed
 /// from the committed LUT after specification finalization.
 const BIGINT_POSEIDON2_LUT_HASH: [u8; 32] = [
-    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
 ];
+
 ```
 
 > **Note**: This hash is a placeholder for the specification. Implementations MUST update this value when the LUT is finalized. Probe entry 51 verifies the LUT hash matches the committed value.
@@ -751,8 +806,8 @@ const BIGINT_POSEIDON2_LUT_HASH: [u8; 32] = [
 | SUB | 0 | 0 | ZERO | Zero minus zero |
 | SUB | -5 | -5 | ZERO | Equal negatives |
 | MUL | 2^2000 | 2^2000 | TRAP | Exceeds 4096 bits |
-| DIV | 2^4000 | 2^100 | OK | 40-limb division |
-| DIV | 2^4100 | 2^100 | TRAP | Exceeds 40-limb limit |
+| DIV | 2^4000 | 2^100 | OK | 64-limb division |
+| DIV | 2^4100 | 2^100 | TRAP | Exceeds 64-limb limit |
 | MOD | -7 | 3 | -1 | Sign follows dividend |
 | MOD | 7 | 3 | 1 | Positive remainder |
 | SHR | 2^4095 | 4095 | 1 | Shift by 4095 |
@@ -767,7 +822,7 @@ const BIGINT_POSEIDON2_LUT_HASH: [u8; 32] = [
 | From i64 MIN | -9,223,372,036,854,775,808 | limbs = [0x8000_0000_0000_0000], sign = true |
 | From i64 MAX | 9,223,372,036,854,775,807 | limbs = [0x7FFF_FFFF_FFFF_FFFF], sign = false |
 | From i128 MIN | -2^127 | limbs = [0, 0x8000_0000_0000_0000], sign = true |
-| From i128 MAX | 2^127 - 1 | limbs = [0, 0x7FFF_FFFF_FFFF_FFFF], sign = false |
+| From i128 MAX | 2^127 - 1 | limbs = [0xFFFF_FFFF_FFFF_FFFF, 0x7FFF_FFFF_FFFF_FFFF], sign = false |
 
 ### Round-Trip Tests
 
@@ -808,8 +863,8 @@ const BIGINT_POSEIDON2_LUT_HASH: [u8; 32] = [
 | ADD | 2^4095 + 1 | 2^4095+1 | Max bits OK |
 | MUL | 2^2000 × 2^2000 | TRAP | Exceeds 4096 bits |
 | MUL | 2^63 × 2^63 | 2^126 | Limb boundary × limb |
-| DIV | 2^2560 / 2^2560 | 1 | 40-limb division OK |
-| DIV | 2^2640 / 2^64 | TRAP | Exceeds 40-limb limit |
+| DIV | 2^2560 / 2^2560 | 1 | 64-limb division OK |
+| DIV | 2^2640 / 2^64 | TRAP | Exceeds 64-limb limit |
 | SHL | 1 << 4095 | 2^4095 | Max shift OK |
 | SHL | 1 << 4096 | TRAP | Exceeds max bits |
 
@@ -820,23 +875,33 @@ BIGINT verification probe uses 24-byte canonical encoding (matching RFC-0104's D
 ### Canonical Probe Entry Format (24 bytes)
 
 ```
+
 ┌─────────────────────────────────────────────────────────────┐
-│ Bytes 0-7: Operation ID (little-endian u64)                  │
-│   - 0x0001 = ADD                                          │
-│   - 0x0002 = SUB                                           │
-│   - 0x0003 = MUL                                           │
-│   - 0x0004 = DIV                                           │
-│   - 0x0005 = MOD                                           │
-│   - 0x0006 = SHL                                           │
-│   - 0x0007 = SHR                                           │
-│   - 0x0008 = CANONICALIZE                                  │
-│   - 0x0009 = CMP                                           │
+│ Bytes 0-7: Operation ID (little-endian u64) │
+│ - 0x0001 = ADD │
+│ - 0x0002 = SUB │
+│ - 0x0003 = MUL │
+│ - 0x0004 = DIV │
+│ - 0x0005 = MOD │
+│ - 0x0006 = SHL │
+│ - 0x0007 = SHR │
+│ - 0x0008 = CANONICALIZE │
+│ - 0x0009 = CMP │
 ├─────────────────────────────────────────────────────────────┤
-│ Bytes 8-15: Input A (canonical wire format)                │
+│ Bytes 8-15: Input A (canonical wire format) │
 ├─────────────────────────────────────────────────────────────┤
-│ Bytes 16-23: Input B or Result (canonical wire format)   │
+│ Bytes 16-23: Input B or Result (canonical wire format) │
 └─────────────────────────────────────────────────────────────┘
-```
+
+````
+
+> **Note:** Probe fields use a compact 8-byte encoding:
+> - Values ≤ 2^56: little-endian in bytes 0-6, byte 7 = 0x00
+> - Hash reference: lower 8 bytes of SHA-256(canonical format)
+> - Special: 0xFFFF_FFFF_FFFF_FFFF = MAX
+> - Special: 0x0000_0000_0000_0000 = ZERO
+>
+> Full canonical verification via serialization entries 55-56.
 
 ### Probe Entries (57 entries, 24-byte canonical format matching RFC-0104)
 
@@ -871,7 +936,7 @@ BIGINT verification probe uses 24-byte canonical encoding (matching RFC-0104's D
 | 26 | SHL | 1 | 1 | Shift by 1 |
 | 27 | SHL | MAX | 1 | Shift max by 1 |
 | 28 | SHR | 2^4095 | 1 | Bit shift boundary |
-| 29 | SHR | 2^4096 | 0 | Shift to zero |
+| 29 | SHR | 2^4095 | 4096 | Shift full width → ZERO |
 | 30 | SHR | 2^128 | 64 | Limb shift |
 | 31 | SHR | 1 | 0 | Shift to zero |
 | 32 | CANONICALIZE | [0,0,0] | [0] | Trailing zeros |
@@ -906,7 +971,7 @@ BIGINT verification probe uses 24-byte canonical encoding (matching RFC-0104's D
 
 All implementations MUST pass differential fuzzing against a reference library (e.g., num-bigint, GMP) with 100,000+ random inputs producing bit-identical outputs.
 
-The fuzz harness command is: `cargo fuzz run bigint_fuzz -- -runs=10000`.
+The fuzz harness command is: `cargo fuzz run bigint_fuzz -- -runs=100000`.
 
 ### Merkle Hash
 
@@ -931,7 +996,7 @@ fn bigint_probe_root(probe: &BigIntProbe) -> [u8; 32] {
     }
     nodes[0]
 }
-```
+````
 
 > **Note**: Verification probe MUST be checked every 100,000 blocks (aligning with RFC-0104's DFP probe schedule).
 
@@ -945,6 +1010,7 @@ All operations defined in this RFC produce **identical results** across all comp
 - endianness (for wire format, see serialization)
 
 This guarantee holds **provided** implementations follow:
+
 1. The algorithms specified in this RFC
 2. The canonicalization rules
 3. The iteration bounds defined for each operation
@@ -955,7 +1021,7 @@ This guarantee holds **provided** implementations follow:
 1. **Algorithm Locked**: All implementations MUST use the algorithms specified in this RFC
 2. **No Karatsuba**: Multiplication uses schoolbook O(n²) algorithm
 3. **No SIMD**: Vectorized operations are forbidden
-4. **Fixed Iteration**: Division executes exactly `bitlen(a)` iterations as specified in the algorithm
+4. **Fixed Iteration**: Division executes exactly `ceil(bitlen(a) / 64)` outer iterations (one per quotient limb position). Each outer iteration is deterministic. No early exit permitted.
 5. **Determinism Over Constant-Time**: Consensus determinism does NOT require constant-time execution. Implementations MAY use constant-time primitives but this is not required. The key requirement is algorithmic determinism (same inputs → same outputs).
 6. **No Hardware**: CPU carry flags, SIMD, or FPU are forbidden
 7. **Post-Operation Canonicalization**: Every algorithm MUST call canonicalize before returning
@@ -963,6 +1029,7 @@ This guarantee holds **provided** implementations follow:
 ## Implementation Checklist
 
 **Core Implementation:**
+
 - [x] BigInt struct with limbs: Vec<u64> and sign: bool
 - [x] Canonical form enforcement (no leading zeros)
 - [x] ADD algorithm
@@ -978,6 +1045,7 @@ This guarantee holds **provided** implementations follow:
 - [x] From/To string conversion
 
 **Determinism & Safety:**
+
 - [x] Gas calculation per operation
 - [x] MAX_BIGINT_BITS enforcement (TRAP on overflow)
 - [x] Post-operation canonicalization (all algorithms)
@@ -987,15 +1055,17 @@ This guarantee holds **provided** implementations follow:
 - [x] Constant-time comparison implementation (ct_lt/ct_sub or Barrett)
 
 **Verification & Testing:**
+
 - [x] Test vectors verified (40+ cases)
-- [x] Verification probe implemented (20 entries, 24-byte format)
+- [x] Verification probe implemented (57 entries, 24-byte format)
 - [x] ZK circuit Poseidon2 commitment hash (Entry 16)
 - [x] Differential fuzzing requirement (100,000+ random inputs)
 
 **Acceptance Criteria:**
+
 - All implementations MUST pass differential fuzzing against num-bigint
-- Probe root MUST include all 20 entries with matching SHA-256
-- Gas proof: worst-case 40-limb DIV + canonicalization ≤ 15,000
+- Probe root MUST include all 57 entries with matching SHA-256
+- Gas proof: worst-case 64-limb DIV + canonicalization ≤ 15,000
 - Reference implementation: https://github.com/cipherocto/stoolap/blob/main/src/numeric/bigint.rs
 
 ## Spec Version & Replay Pinning
@@ -1018,10 +1088,13 @@ const NUMERIC_SPEC_VERSION: u32 = 1;
 │ Block Header                                              │
 ├─────────────────────────────────────────────────────────────┤
 │ ...                                                       │
-│ numeric_spec_version: u32  // offset defined in header spec│
+│ numeric_spec_version: u32  // offset [TBD]                │
 │ ...                                                       │
 └─────────────────────────────────────────────────────────────┘
 ```
+
+> **Note:** [TBD] will be defined in RFC-XXXX (Block Header Layout). This offset
+> MUST NOT change once any block has been committed to a live network.
 
 ### Replay Rules (mandatory)
 
@@ -1032,8 +1105,26 @@ const NUMERIC_SPEC_VERSION: u32 = 1;
 
 > **Note**: This aligns with RFC-0104's DFP probe schedule (every 100,000 blocks).
 
+### Version Increment Policy (Normative)
+
+NUMERIC_SPEC_VERSION MUST be incremented when:
+
+1. Any normative algorithm change in RFC-0104/0105/0110
+2. Any change to canonical encoding formats
+3. Any change to verification probe entries
+
+Increment requires:
+
+- New RFC or amendment approved by governance
+- Minimum 2 epochs notice before activation at block H_upgrade
+- Nodes MUST accept both version N and N+1 in window [H_upgrade - grace, H_upgrade]
+- After H_upgrade, reject version N blocks
+
+Version 0 is reserved and MUST NOT be used.
+
 ## References
 
 - RFC-0104: Deterministic Floating-Point
 - RFC-0105: Deterministic Quant Arithmetic
 - RFC-0106: Deterministic Numeric Tower (archived, superseded)
+- RFC-XXXX: Block Header Layout (TBD)

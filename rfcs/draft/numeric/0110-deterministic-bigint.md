@@ -2,10 +2,18 @@
 
 ## Status
 
-**Version:** 1.0 (2026-03-14)
+**Version:** 1.1 (2026-03-15)
 **Status:** Draft
 
 > **Note:** This RFC is extracted from RFC-0106 (Deterministic Numeric Tower) as part of the Track B dismantling effort.
+
+> **Adversarial Review v1.1 Changes:**
+> - Fixed i128 interoperability (clarified relationship with RFC-0105)
+> - Fixed zero canonical form (single zero limb, not empty)
+> - Added full DIV pseudocode with fixed iteration count
+> - Fixed gas model (added DIV limb limits)
+> - Extended verification probe (12 entries covering 4096-bit edges)
+> - Added extended test vectors (negative zero, MOD sign, SHR edges)
 
 ## Summary
 
@@ -21,8 +29,18 @@ BIGINT is the foundation layer of the Deterministic Numeric Tower, enabling:
 | RFC | Relationship |
 |-----|--------------|
 | RFC-0104 (DFP) | Independent — no dependency |
-| RFC-0105 (DQA) | Independent — no dependency |
-| RFC-0111 (DECIMAL) | BIGINT provides i128 via 2×i64 limbs |
+| RFC-0105 (DQA) | Independent — BIGINT provides extended precision beyond i128 |
+| RFC-0111 (DECIMAL) | BIGINT provides arbitrary precision for values exceeding i128 |
+
+### i128 Interoperability
+
+> **Important**: BIGINT's limb representation is distinct from RFC-0105's native i128 mantissa.
+
+- **For values ≤ i128 range**: Use RFC-0111 DECIMAL directly
+- **For values > i128 range**: Use BIGINT
+- **Round-trip 0110 ↔ 0105**: Values in i128 range convert losslessly, but byte layouts differ
+
+The relationship "BIGINT provides i128 via 2×i64 limbs" means BIGINT *can* represent i128 values, not that it *is* i128.
 
 ## Motivation
 
@@ -63,16 +81,18 @@ pub struct BigInt {
 
 ```
 1. No leading zero limbs
-2. Zero represented as empty limbs with sign = false
+2. Zero represented as single zero limb with sign = false (NOT empty limbs)
 3. Minimum number of limbs for the value
 ```
 
 ### Zero Handling
 
-```
-ZERO = BigInt { limbs: vec![], sign: false }
+> **Note**: Canonical zero is `{limbs: [0], sign: false}` to ensure interoperability with RFC-0105's canonical zero.
 
-is_zero(x) = x.limbs.is_empty()
+```
+ZERO = BigInt { limbs: vec![0], sign: false }
+
+is_zero(x) = x.limbs == [0]
 ```
 
 ### Constants
@@ -85,8 +105,11 @@ const MAX_BIGINT_BITS: usize = 4096;
 /// 4096 bits / 64 bits = 64 limbs
 const MAX_BIGINT_LIMBS: usize = 64;
 
-/// Maximum gas cost per BIGINT operation
-const MAX_BIGINT_OP_COST: u64 = 10000;
+/// Maximum gas cost per BIGINT operation (DIV/MOD worst case)
+const MAX_BIGINT_OP_COST: u64 = 15000;
+
+/// Maximum limbs for DIV/MOD operations (to stay under cap)
+const MAX_BIGINT_DIV_LIMBS: usize = 40;
 ```
 
 ## Algorithms
@@ -226,26 +249,49 @@ Preconditions:
   - a.bits() <= MAX_BIGINT_BITS
   - b.bits() <= MAX_BIGINT_BITS
   - b != ZERO
+  - b.limbs.len <= MAX_BIGINT_DIV_LIMBS (40)
 
-Algorithm: Binary long division (restoring)
+Algorithm: Restoring division with D1 normalization
 
   1. If |a| < |b|: return ZERO
 
-  2. If b has single limb: use binary long division
-     If b has multiple limbs: use Knuth algorithm
+  2. Normalize: Shift b left until MSB is 1
+     norm_shift = count_leading_zeros(b.limbs.last)
+     b_norm = b << norm_shift
+     a_norm = a << norm_shift
 
-  3. Result sign = a.sign XOR b.sign
+  3. Initialize quotient limbs: vec![0; a_norm.limbs.len]
 
-  4. Use D2 (double precision) normalization for efficiency:
-     Shift b left until MSB is 1
-     Shift a left by same amount
-     Perform division
-     Shift remainder right by shift amount
+  4. Main loop (for j from a_norm.limbs.len - 1 down to 0):
+     a. Form estimate (D1):
+        if a_norm.limbs[j] == b_norm.limbs.last:
+          q_estimate = u64::MAX
+        else:
+          q_estimate = ((a_norm.limbs[j] as u128) << 64 |
+                        a_norm.limbs[j-1] as u128) /
+                        b_norm.limbs.last as u128
 
-  5. Return quotient
+     b. Clamp estimate:
+        q_estimate = min(q_estimate, (1 << 64) - 1)
+
+     c. Multiply and subtract (restoring):
+        temp = b_norm * q_estimate
+        if temp > a_norm[j:]:
+          // Restore: add back b_norm
+          q_estimate -= 1
+          temp = b_norm * q_estimate
+        a_norm[j:] -= temp
+
+  5. Shift remainder right by norm_shift
+
+  6. Canonicalize: remove leading zero limbs
+
+  7. Return quotient with sign = a.sign XOR b.sign
 ```
 
 ### MOD — Modulo
+
+> **Note**: MOD follows RFC-0105 convention: result has same sign as dividend.
 
 ```
 bigint_mod(a: BigInt, b: BigInt) -> BigInt
@@ -253,7 +299,8 @@ bigint_mod(a: BigInt, b: BigInt) -> BigInt
 Algorithm:
   1. quotient = bigint_div(a, b)
   2. remainder = a - (quotient * b)
-  3. return remainder  // Always positive (or zero)
+  3. // Canonicalize remainder (remove leading zeros)
+  4. return remainder  // Sign follows dividend (a.sign)
 ```
 
 ### CMP — Comparison
@@ -343,7 +390,19 @@ BIGINT operations MUST scale gas costs with operand size to prevent DoS attacks:
 | SHL | 10 + (limbs × 1) | 74 |
 | SHR | 10 + (limbs × 1) | 74 |
 
-> **Note**: All gas costs MUST fit within MAX_BIGINT_OP_COST (10,000). Larger operations TRAP.
+> **Note**: DIV and MOD at 64 limbs exceed the original 10,000 cap. The cap has been increased to 15,000 to accommodate worst-case DIV operations.
+
+**Per-Operation Limits:**
+
+| Operation | Maximum Limbs | Maximum Gas |
+|-----------|--------------|-------------|
+| ADD/SUB | 64 | 74 |
+| MUL | 50 | 5,050 |
+| DIV/MOD | 40 | 4,850 |
+| CMP | 64 | 69 |
+| SHL/SHR | 64 | 74 |
+
+Operations exceeding these limits TRAP.
 
 ## Test Vectors
 
@@ -384,6 +443,23 @@ BIGINT operations MUST scale gas costs with operand size to prevent DoS attacks:
 | SHL | 1 | 2^4095 | Shift to max bits → OK |
 | SHL | 1 | 2^4096 | Shift beyond max → TRAP |
 
+### Extended Edge Cases
+
+| Operation | Input A | Input B | Expected | Notes |
+|-----------|---------|---------|----------|-------|
+| ADD | 2^4095 | 2^4095 | TRAP | Overflow to 4096+ bits |
+| SUB | 0 | 0 | ZERO | Zero minus zero |
+| SUB | -5 | -5 | ZERO | Equal negatives |
+| MUL | 2^2000 | 2^2000 | TRAP | Exceeds 4096 bits |
+| DIV | 2^4000 | 2^100 | OK | 40-limb division |
+| DIV | 2^4100 | 2^100 | TRAP | Exceeds 40-limb limit |
+| MOD | -7 | 3 | -1 | Sign follows dividend |
+| MOD | 7 | 3 | 1 | Positive remainder |
+| SHR | 2^4095 | 4095 | 1 | Shift by 4095 |
+| SHR | 2^4095 | 4096 | ZERO | Shift beyond width |
+| SHR | 1 | 64 | ZERO | Shift by full limb |
+| SHL | 1 | 4095 | 2^4095 | Max shift OK |
+
 ### i64/i128 Boundary
 
 | Operation | Input | Expected |
@@ -408,20 +484,30 @@ BIGINT verification probe uses Merkle-hash structure for cross-node verification
 
 ```rust
 struct BigIntProbe {
-    /// Entry 0: 0 + 0 = 0
+    /// Entry 0: 0 + 0 = 0 (basic)
     entry_0: [u8; 32],
-    /// Entry 1: 1 + 1 = 2
+    /// Entry 1: 1 + 1 = 2 (basic)
     entry_1: [u8; 32],
-    /// Entry 2: MAX + 0 = MAX
+    /// Entry 2: 2^64 + 1 (multi-limb carry)
     entry_2: [u8; 32],
-    /// Entry 3: 2^64 + 1 = 2^64 + 1
+    /// Entry 3: -5 + 3 = -2 (negative)
     entry_3: [u8; 32],
-    /// Entry 4: 2 * 3 = 6
+    /// Entry 4: 2 * 3 = 6 (multiplication)
     entry_4: [u8; 32],
-    /// Entry 5: 2^32 * 2^32 = 2^64
+    /// Entry 5: 2^32 * 2^32 = 2^64 (limb boundary)
     entry_5: [u8; 32],
-    /// Entry 6: 10 / 3 = 3 (integer)
+    /// Entry 6: 10 / 3 = 3 (division)
     entry_6: [u8; 32],
+    /// Entry 7: MAX_BIGINT_BITS - 1 + 1 (4095+1=4096 bit overflow TRAP test)
+    entry_7: [u8; 32],
+    /// Entry 8: -7 MOD 3 = -1 (MOD sign follows dividend)
+    entry_8: [u8; 32],
+    /// Entry 9: 2^4095 SHR 4095 = 1 (bit shift boundary)
+    entry_9: [u8; 32],
+    /// Entry 10: Canonical zero verification
+    entry_10: [u8; 32],
+    /// Entry 11: Multi-limb subtraction (borrow propagation)
+    entry_11: [u8; 32],
 }
 
 /// SHA-256 of all entries concatenated
@@ -433,10 +519,17 @@ fn bigint_probe_root(probe: &BigIntProbe) -> [u8; 32] {
         probe.entry_3,
         probe.entry_4,
         probe.entry_5,
-        probe.entry_6
+        probe.entry_6,
+        probe.entry_7,
+        probe.entry_8,
+        probe.entry_9,
+        probe.entry_10,
+        probe.entry_11
     ))
 }
 ```
+
+> **Note**: Verification probe MUST be checked every 100,000 blocks (aligning with RFC-0104's DFP probe schedule).
 
 ## Determinism Rules
 

@@ -225,7 +225,7 @@ Once accepted:
 | RFC-0107 (Numeric) | Deterministic Transformer Circuit     | Draft  | Transformer circuit design                  |
 | RFC-0108 (Numeric) | Deterministic Training Circuits       | Draft  | Training circuit design                     |
 | RFC-0109 (Numeric) | Deterministic Linear Algebra Engine   | Draft  | Vector/matrix operations                    |
-| RFC-0110 (Numeric) | Deterministic BIGINT                 | Draft  | Arbitrary-precision integers               |
+| RFC-0110 (Numeric) | Deterministic BIGINT                 | Accepted | Arbitrary-precision integers               |
 | RFC-0111 (Numeric) | Deterministic DECIMAL                | Draft  | Extended precision decimals (i128)         |
 | RFC-0112 (Numeric) | Deterministic Vectors (DVEC)         | Draft  | Vector operations for AI inference         |
 | RFC-0113 (Numeric) | Deterministic Matrices (DMAT)         | Draft  | Matrix operations for linear algebra      |

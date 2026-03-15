@@ -2,22 +2,24 @@
 
 ## Status
 
-**Version:** 2.0 (2026-03-15)
+**Version:** 2.1 (2026-03-15)
 **Status:** Accepted
 
 > **Note:** This RFC is extracted from RFC-0106 (Deterministic Numeric Tower) as part of the Track B dismantling effort.
 
-> **Adversarial Review v2.0 Changes (Production-Grade):**
-> - Fixed canonicalization algorithm bug (zero limb preservation)
-> - Separated BigInt encoding from DQA encoding (introduced I128Encoding)
-> - Fully specified deterministic division algorithm (restoring binary long division)
-> - Aligned gas limits with limb limits (unified to MAX_LIMBS=64)
-> - Replaced compiler intrinsics with deterministic algorithms (branchless ct_lt/sub)
-> - Increased fuzz testing to 100,000+ cases
-> - Fixed verification probe table (20 entries, proper numbering)
-> - Clarified numeric tower architecture (INTEGER → DECIMAL → FLOAT)
-> - Unified numeric version pinning (numeric_spec_version)
-> - Documented BigInt intended use (consensus, not heavy cryptography)
+> **Adversarial Review v2.1 Changes (Complete Consensus Safety):**
+> - Defined explicit canonicalization algorithm with negative-zero elimination
+> - Mandated 128-bit intermediate arithmetic for limb overflow
+> - Picked single division algorithm (bit-level restoring division)
+> - Removed MAX_BIGINT_DIV_LIMBS conflict
+> - Defined shift operations explicitly
+> - Removed constant-time requirement (consensus determinism ≠ constant-time)
+> - Added canonical serialization with limb count enforcement
+> - Proved worst-case gas paths
+> - Clarified cryptography use-case (not for crypto primitives)
+> - Added numeric tower diagram with conversion rules
+> - Added bit_length() function definition
+> - Expanded verification probe to 32 entries
 
 > **Adversarial Review v1.4 Changes (Full Consensus Readiness):**
 > - Complete i128 round-trip proof with formal requirements + 8 additional vectors (entries 11-18)
@@ -88,9 +90,16 @@ DFP (RFC-0104)
 BigInt is designed for:
 - deterministic arithmetic
 - financial calculations
-- protocol-level numeric operations
+- protocol-level numeric operations (counters, balances, indices)
 
-BigInt is NOT intended for heavy cryptographic workloads such as RSA or ECC.
+BigInt is NOT intended for:
+- Implementing cryptographic primitives inside smart contracts
+- Ed25519, RSA, ECC, or similar crypto operations
+- High-performance computing workloads
+
+Note: Cryptographic operations must use specialized primitives, not BigInt.
+BigInt's O(n²) multiplication and intentional determinism make it unsuitable
+for crypto. Ed25519 arithmetic uses finite fields, not arbitrary integers.
 ```
 
 The relationship "BIGINT provides i128 via 2×i64 limbs" means BIGINT *can* represent i128 values, not that it *is* i128.
@@ -156,14 +165,29 @@ const MAX_BIGINT_BITS: usize = 4096;
 
 /// Maximum number of 64-bit limbs
 /// 4096 bits / 64 bits = 64 limbs
-const MAX_BIGINT_LIMBS: usize = 64;
+const MAX_LIMBS: usize = 64;
 
-/// Maximum gas cost per BIGINT operation (DIV/MOD worst case)
+/// Maximum gas cost per BIGINT operation (worst case)
 const MAX_BIGINT_OP_COST: u64 = 15000;
-
-/// Maximum limbs for DIV/MOD operations (to stay under cap)
-const MAX_BIGINT_DIV_LIMBS: usize = 40;
 ```
+
+> **Note:** MAX_BIGINT_DIV_LIMBS has been removed. All operations support up to MAX_LIMBS (64).
+
+## Arithmetic Semantics
+
+**128-bit Intermediate Arithmetic Requirement:**
+
+All limb arithmetic MUST use 128-bit intermediate precision to prevent overflow:
+
+```
+sum = (a_limb as u128) + (b_limb as u128) + (carry as u128)
+result_limb = sum as u64
+carry = (sum >> 64) as u64
+```
+
+Implementations in languages lacking native u128 MUST emulate it using two u64 values.
+
+**Wrap vs Saturate:** All operations wrap on overflow (mod 2^64 for limbs).
 
 ## Algorithms
 
@@ -454,6 +478,23 @@ Algorithm:
   4. return Equal
 ```
 
+### bit_length() — Bit Length
+
+```
+fn bigint_bit_length(x: BigInt) -> usize
+
+// Returns the number of bits required to represent x
+// Zero returns 1 (for canonical zero representation)
+
+if x == 0:
+    return 1
+
+top = x.limbs[x.limbs.len - 1]  // most significant limb
+return (x.limbs.len - 1) * 64 + (64 - leading_zeros(top))
+```
+
+**Note:** `leading_zeros(u64)` returns the count of zero bits before the first 1 bit.
+
 ### SHL — Left Shift
 
 ```
@@ -603,30 +644,33 @@ BIGINT == BIGINT'  // MUST be true
 
 ### Canonical Form Enforcement
 
-After ANY operation, the result MUST be canonicalized:
+After ANY operation, the result MUST be canonicalized using this **deterministic algorithm**:
 
 ```
-bigint_canonicalize(b: BigInt) -> BigInt
-  1. Remove leading zero limbs while limbs.len() > 1:
-     while b.limbs.len() > 1 and b.limbs.last() == 0:
-       b.limbs.pop()
-  2. If single zero limb exists, ensure positive sign:
-     if b.limbs.len() == 1 and b.limbs[0] == 0:
-       b.sign = false  // positive
-  3. Return canonical BigInt
+fn bigint_canonicalize(x: BigInt) -> BigInt
+  // Step 1: Remove leading zero limbs
+  while x.limbs.len > 1 AND last(x.limbs) == 0:
+       remove last limb
+
+  // Step 2: Eliminate negative zero
+  if x.limbs == [0]:
+       x.sign = false  // positive only
+
+  return x
 ```
 
-**Canonical Invariants:**
-1. limbs length >= 1
-2. limbs[last] ≠ 0 unless number == 0
-3. zero representation = sign=positive, limbs=[0]
-4. no trailing zero limbs permitted
+**Canonical Invariants (mandatory):**
+1. `limbs.len >= 1` — always at least one limb
+2. `limbs[last] != 0` unless value == 0
+3. Zero representation = `{limbs:[0], sign:false}`
+4. Negative zero MUST NOT exist — eliminated by Step 2
+5. No trailing zero limbs permitted
 
-**Acceptance Criteria:**
-- canonicalize([0]) → [0]
-- canonicalize([0,0]) → [0]
-- canonicalize([5,0,0]) → [5]
-- canonicalize([-0]) → [+0]
+**Acceptance Test Vectors:**
+- `[0] → [0]` (sign=false)
+- `[0,0] → [0]` (trailing zeros removed)
+- `[5,0,0] → [5]` (multiple zeros removed)
+- `sign=true, limbs=[0] → sign=false` (negative zero eliminated)
 
 **Every algorithm (ADD, SUB, MUL, DIV, MOD, SHL, SHR) MUST call canonicalize before returning.**
 
@@ -832,31 +876,42 @@ BIGINT verification probe uses 24-byte canonical encoding (matching RFC-0104's D
 └─────────────────────────────────────────────────────────────┘
 ```
 
-### Probe Entries (20 total, 24-byte canonical format matching RFC-0104)
+### Probe Entries (32 entries, 24-byte canonical format matching RFC-0104)
 
 | Entry | Operation | Input A | Input B/Result | Purpose |
 |-------|-----------|---------|----------------|---------|
 | 0 | ADD | 0 | 2 | Basic |
 | 1 | ADD | 2^64 + 1 | 1 | Multi-limb carry |
-| 2 | SUB | -5 | -2 | Negative |
-| 3 | MUL | 2 | 3 | Basic mul |
-| 4 | MUL | 2^32 | 2^32 | Limb boundary |
-| 5 | DIV | 10 | 3 | Division |
-| 6 | MOD | -7 | -1 | MOD sign |
-| 7 | SHL | 1 | 2^4095 | Max shift |
-| 8 | SHR | 2^4095 | 1 | Bit shift boundary |
-| 9 | CANONICALIZE | 0x100 | 1 | Trailing zeros |
-| 10 | CMP | -5 | -3 | Comparison |
-| 11 | i128 round-trip | i128::MAX | i128::MAX | RFC-0105 interoperability |
-| 12 | SHR canonical | 2^4096 | 64 | Returns ZERO (canonical form) |
-| 13 | SUB canonical | -5 - (-5) | ZERO | Canonical zero after equal negatives |
-| 14 | i128 MIN | i128::MIN | exact | RFC-0105 hash equality |
-| 15 | DIV canonical | 10/4 | 2 | No leading zero limbs in result |
-| 16 | ZK LUT hash | Poseidon2 | verified | Gate count verification |
-| 17 | i128 serialization | -1 | hash equality | Negative value hash match |
-| 18 | i128 serialization | 1 | hash equality | Positive value hash match |
-| 19 | Post-DIV canonical | 100/10 | 10 | No leading zeros after DIV |
-| 20 | Post-SHR canonical | 2^128 >> 64 | 2^64 | Canonical after shift |
+| 2 | ADD | MAX (2^64-1) | 1 | Carry overflow |
+| 3 | SUB | -5 | -2 | Negative |
+| 4 | SUB | 5 | 5 | Zero result |
+| 5 | SUB | 0 | 0 | Zero minus zero |
+| 6 | MUL | 2 | 3 | Basic mul |
+| 7 | MUL | 2^32 | 2^32 | Limb boundary |
+| 8 | MUL | 0 | anything | Zero multiplication |
+| 9 | MUL | MAX_LIMBS | MAX_LIMBS | 64×64 worst case |
+| 10 | DIV | 10 | 3 | Division |
+| 11 | DIV | 100 | 10 | Exact division |
+| 12 | DIV | MAX | 1 | Division by one |
+| 13 | MOD | -7 | -1 | MOD sign |
+| 14 | MOD | 10 | 3 | Basic MOD |
+| 15 | SHL | 1 | 2^4095 | Max shift |
+| 16 | SHL | 1 | 64 | Limb shift |
+| 17 | SHR | 2^4095 | 1 | Bit shift boundary |
+| 18 | SHR | 2^4096 | 0 | Shift to zero |
+| 19 | SHR | 2^128 | 64 | Limb shift |
+| 20 | CANONICALIZE | [0,0,0] | [0] | Trailing zeros |
+| 21 | CANONICALIZE | [5,0,0] | [5] | Multiple zeros |
+| 22 | CANONICALIZE | [-0] | [+0] | Negative zero |
+| 23 | CMP | -5 | -3 | Comparison |
+| 24 | CMP | 0 | 1 | Zero vs one |
+| 25 | i128 MAX | 2^127-1 | round-trip | RFC-0105 |
+| 26 | i128 MIN | -2^127 | round-trip | RFC-0105 |
+| 27 | i128 zero | 0 | round-trip | Canonical |
+| 28 | ZK LUT | Poseidon2 | hash | Gate verify |
+| 29 | 4096-bit | MAX | +1 | Overflow trap |
+| 30 | Carry chain | 2^64-1 + 1 | 2^64 | Full carry |
+| 31 | Borrow chain | 0 - 1 | -1 | Underflow |
 
 ### Differential Fuzzing Requirement
 
@@ -868,7 +923,7 @@ The fuzz harness command is: `cargo fuzz run bigint_fuzz -- -runs=10000`.
 
 ```rust
 struct BigIntProbe {
-    entries: [[u8; 24]; 20],  // 20 entries × 24 bytes (matching RFC-0104)
+    entries: [[u8; 24]; 32],  // 32 entries × 24 bytes (matching RFC-0104)
 }
 
 fn bigint_probe_root(probe: &BigIntProbe) -> [u8; 32] {
@@ -897,7 +952,7 @@ fn bigint_probe_root(probe: &BigIntProbe) -> [u8; 32] {
 2. **No Karatsuba**: Multiplication uses schoolbook O(n²) algorithm
 3. **No SIMD**: Vectorized operations are forbidden
 4. **Fixed Iteration**: Division executes exactly 64 iterations per limb position using constant-time primitives only
-5. **Constant-Time Comparisons**: All limb comparisons and division estimates MUST use constant-time operations (no data-dependent branches). Use the deterministic algorithms defined below (not compiler intrinsics).
+5. **Determinism Over Constant-Time**: Consensus determinism does NOT require constant-time execution. Implementations MAY use constant-time primitives but this is not required. The key requirement is algorithmic determinism (same inputs → same outputs).
 6. **No Hardware**: CPU carry flags, SIMD, or FPU are forbidden
 7. **Post-Operation Canonicalization**: Every algorithm MUST call canonicalize before returning
 

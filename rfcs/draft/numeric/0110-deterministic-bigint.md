@@ -2,10 +2,16 @@
 
 ## Status
 
-**Version:** 1.1 (2026-03-15)
+**Version:** 1.2 (2026-03-15)
 **Status:** Draft
 
 > **Note:** This RFC is extracted from RFC-0106 (Deterministic Numeric Tower) as part of the Track B dismantling effort.
+
+> **Adversarial Review v1.2 Changes:**
+> - Added i128 canonical serialization for byte-identical round-trip with RFC-0105
+> - Added post-operation canonicalization mandate for all algorithms
+> - Updated verification probe to 24-byte canonical format (matching RFC-0104)
+> - Added bigint_spec_version for replay pinning
 
 > **Adversarial Review v1.1 Changes:**
 > - Fixed i128 interoperability (clarified relationship with RFC-0105)
@@ -375,6 +381,67 @@ Algorithm:
   6. return result
 ```
 
+## Serialization & Canonical Encoding
+
+### Canonical Byte Format
+
+For deterministic Merkle hashing, BIGINT uses this canonical wire format:
+
+```
+┌─────────────────────────────────────────────────────────────┐
+│ Byte 0: Sign (0 = positive, 0xFF = negative)              │
+│ Byte 1-2: Reserved (0x0000)                               │
+│ Byte 3: Number of limbs (1-64)                              │
+│ Byte 4-7: Reserved (0x00000000)                            │
+│ Byte 8+: Little-endian limbs (64 bits each)               │
+└─────────────────────────────────────────────────────────────┘
+
+Total size: 8 + (num_limbs × 8) bytes
+```
+
+### i128 Canonical Serialization (for RFC-0105 Interoperability)
+
+> **Critical**: For values ≤ i128 range, BIGINT serialization MUST produce byte-identical output to RFC-0105's DqaEncoding when converting to/from DECIMAL.
+
+```
+bigint_to_i128_bytes(b: BigInt) -> [u8; 16]
+
+Precondition: b fits in i128 range (-2^127 to 2^127-1)
+
+Algorithm:
+  1. If b > 2^127 - 1 or b < -2^127: TRAP
+  2. If b == 0: return [0x00, 0x00, ..., 0x00] (16 zeros)
+  3. Extract magnitude: abs_b = |b.value|
+  4. Convert limbs to little-endian bytes:
+     For i in 0..2:
+       bytes[i*8:(i+1)*8] = little_endian(limbs[i])
+  5. Set sign byte: bytes[0] |= 0x80 if b.sign else 0x00
+  6. Return 16-byte canonical representation
+```
+
+### Serialization Invariant
+
+```
+BIGINT → serialize → bytes → deserialize → BIGINT'
+BIGINT == BIGINT'  // MUST be true
+```
+
+### Canonical Form Enforcement
+
+After ANY operation, the result MUST be canonicalized:
+
+```
+bigint_canonicalize(b: BigInt) -> BigInt
+  1. If b.limbs is empty: return ZERO
+  2. Remove leading zero limbs:
+     while b.limbs.last() == Some(0):
+       b.limbs.pop()
+  3. If b.limbs is empty: return ZERO
+  4. Return canonical BigInt
+```
+
+**Every algorithm (ADD, SUB, MUL, DIV, MOD, SHL, SHR) MUST call canonicalize before returning.**
+
 ## Gas Model
 
 BIGINT operations MUST scale gas costs with operand size to prevent DoS attacks:
@@ -480,52 +547,70 @@ Operations exceeding these limits TRAP.
 
 ## Verification Probe
 
-BIGINT verification probe uses Merkle-hash structure for cross-node verification:
+BIGINT verification probe uses 24-byte canonical encoding (matching RFC-0104's DFP probe structure):
+
+### Canonical Probe Entry Format (24 bytes)
+
+```
+┌─────────────────────────────────────────────────────────────┐
+│ Bytes 0-7: Operation ID (little-endian u64)                  │
+│   - 0x0001 = ADD                                          │
+│   - 0x0002 = SUB                                           │
+│   - 0x0003 = MUL                                           │
+│   - 0x0004 = DIV                                           │
+│   - 0x0005 = MOD                                           │
+│   - 0x0006 = SHL                                           │
+│   - 0x0007 = SHR                                           │
+│   - 0x0008 = CANONICALIZE                                  │
+│   - 0x0009 = CMP                                           │
+├─────────────────────────────────────────────────────────────┤
+│ Bytes 8-15: Input A (canonical wire format)                │
+├─────────────────────────────────────────────────────────────┤
+│ Bytes 16-23: Input B or Result (canonical wire format)   │
+└─────────────────────────────────────────────────────────────┘
+```
+
+### Probe Entries
+
+| Entry | Operation | Input A | Input B/Result | Purpose |
+|-------|-----------|---------|----------------|---------|
+| 0 | ADD | 0 | 2 | Basic |
+| 1 | ADD | 2^64 + 1 | 1 | Multi-limb carry |
+| 2 | SUB | -5 | -2 | Negative |
+| 3 | MUL | 2 | 3 | Basic mul |
+| 4 | MUL | 2^32 | 2^32 | Limb boundary |
+| 5 | DIV | 10 | 3 | Division |
+| 6 | MOD | -7 | -1 | MOD sign |
+| 7 | SHL | 1 | 2^4095 | Max shift |
+| 8 | SHR | 2^4095 | 1 | Bit shift boundary |
+| 9 | CANONICALIZE | 0x100 | 1 | Trailing zeros |
+| 10 | CMP | -5 | -3 | Comparison |
+| 11 | i128 round-trip | i128::MAX | i128::MAX | RFC-0105 interoperability |
+
+### Merkle Hash
 
 ```rust
 struct BigIntProbe {
-    /// Entry 0: 0 + 0 = 0 (basic)
-    entry_0: [u8; 32],
-    /// Entry 1: 1 + 1 = 2 (basic)
-    entry_1: [u8; 32],
-    /// Entry 2: 2^64 + 1 (multi-limb carry)
-    entry_2: [u8; 32],
-    /// Entry 3: -5 + 3 = -2 (negative)
-    entry_3: [u8; 32],
-    /// Entry 4: 2 * 3 = 6 (multiplication)
-    entry_4: [u8; 32],
-    /// Entry 5: 2^32 * 2^32 = 2^64 (limb boundary)
-    entry_5: [u8; 32],
-    /// Entry 6: 10 / 3 = 3 (division)
-    entry_6: [u8; 32],
-    /// Entry 7: MAX_BIGINT_BITS - 1 + 1 (4095+1=4096 bit overflow TRAP test)
-    entry_7: [u8; 32],
-    /// Entry 8: -7 MOD 3 = -1 (MOD sign follows dividend)
-    entry_8: [u8; 32],
-    /// Entry 9: 2^4095 SHR 4095 = 1 (bit shift boundary)
-    entry_9: [u8; 32],
-    /// Entry 10: Canonical zero verification
-    entry_10: [u8; 32],
-    /// Entry 11: Multi-limb subtraction (borrow propagation)
-    entry_11: [u8; 32],
+    entries: [[u8; 24]; 12],  // 12 entries × 24 bytes
 }
 
-/// SHA-256 of all entries concatenated
 fn bigint_probe_root(probe: &BigIntProbe) -> [u8; 32] {
-    sha256(concat!(
-        probe.entry_0,
-        probe.entry_1,
-        probe.entry_2,
-        probe.entry_3,
-        probe.entry_4,
-        probe.entry_5,
-        probe.entry_6,
-        probe.entry_7,
-        probe.entry_8,
-        probe.entry_9,
-        probe.entry_10,
-        probe.entry_11
-    ))
+    // Build Merkle tree from entries
+    let mut nodes: Vec<[u8; 32]> = probe.entries.iter()
+        .map(|e| sha256(e))
+        .collect();
+
+    while nodes.len() > 1 {
+        if nodes.len() % 2 == 1 {
+            nodes.push(nodes.last().unwrap().clone());
+        }
+        nodes = nodes.chunks(2)
+            .map(|pair| sha256(concat!(pair[0], pair[1])))
+            .collect();
+    }
+    nodes[0]
+}
+```
 }
 ```
 
@@ -558,6 +643,37 @@ fn bigint_probe_root(probe: &BigIntProbe) -> [u8; 32] {
 - [ ] MAX_BIGINT_BITS enforcement (TRAP on overflow)
 - [ ] Test vectors verified
 - [ ] Verification probe implemented
+
+## Spec Version & Replay Pinning
+
+### bigint_spec_version
+
+To ensure deterministic historical replay, BIGINT implementations MUST declare a spec version:
+
+```rust
+/// BIGINT specification version
+const BIGINT_SPEC_VERSION: u32 = 1;
+```
+
+### Block Header Integration
+
+BIGINT spec version MUST be included in block headers for historical verification:
+
+```
+┌─────────────────────────────────────────────────────────────┐
+│ Block Header                                              │
+├─────────────────────────────────────────────────────────────┤
+│ ...                                                       │
+│ bigint_spec_version: u32  // MUST match current version   │
+│ ...                                                       │
+└─────────────────────────────────────────────────────────────┘
+```
+
+### Replay Rules
+
+1. Blocks with mismatched BIGINT spec version MUST be rejected
+2. All BIGINT operations in a block MUST use the declared spec version
+3. State transitions involving BIGINT MUST verify canonical form
 
 ## References
 

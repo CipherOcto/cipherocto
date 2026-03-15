@@ -6,13 +6,29 @@ pub use models::{ApiKey, KeyType, KeyUpdates, KeySpend, Team};
 
 use hmac_sha256::HMAC;
 use rand::Rng;
+use std::sync::OnceLock;
 
-/// Server secret for key hashing
-const SERVER_SECRET: &[u8] = b"quota-router-server-secret-change-in-production";
+/// Default server secret for key hashing (fallback)
+const DEFAULT_SERVER_SECRET: &[u8] = b"quota-router-server-secret-change-in-production";
+
+/// Environment variable name for server secret
+const SERVER_SECRET_ENV: &str = "QUOTA_ROUTER_SECRET";
+
+/// Cached server secret (initialized once)
+static SERVER_SECRET: OnceLock<Vec<u8>> = OnceLock::new();
+
+/// Get the server secret, using env var if set
+fn get_server_secret() -> &'static [u8] {
+    SERVER_SECRET.get_or_init(|| {
+        std::env::var(SERVER_SECRET_ENV)
+            .map(|s| s.into_bytes())
+            .unwrap_or_else(|_| DEFAULT_SERVER_SECRET.to_vec())
+    })
+}
 
 /// Compute HMAC-SHA256 hash of an API key
 pub fn compute_key_hash(key: &str) -> [u8; 32] {
-    HMAC::mac(key.as_bytes(), SERVER_SECRET)
+    HMAC::mac(key.as_bytes(), get_server_secret())
 }
 
 /// Generate a cryptographically secure API key string

@@ -52,6 +52,8 @@ pub enum BigIntError {
     NonCanonicalInput,
     /// Value out of i128 range for conversion
     OutOfI128Range,
+    /// Value out of range for target type (i64/u64)
+    OutOfRange,
 }
 
 /// Deterministic BIGINT representation
@@ -69,6 +71,7 @@ impl BigInt {
     /// Create a new BigInt with the given limbs and sign
     /// Caller should ensure input is canonical or call canonicalize()
     pub fn new(limbs: Vec<u64>, sign: bool) -> Self {
+        debug_assert!(!limbs.is_empty(), "BigInt limbs must not be empty");
         BigInt { limbs, sign }
     }
 
@@ -207,6 +210,11 @@ impl BigInt {
 /// Add two BigInt values
 /// RFC-0110: bigint_add(a: BigInt, b: BigInt) -> BigInt
 pub fn bigint_add(a: BigInt, b: BigInt) -> Result<BigInt, BigIntError> {
+    // RFC: TRAP on non-canonical input
+    if !a.is_canonical() || !b.is_canonical() {
+        return Err(BigIntError::NonCanonicalInput);
+    }
+
     // Handle same sign addition
     if a.sign == b.sign {
         let result_limbs = limb_add(&a.limbs, &b.limbs);
@@ -287,20 +295,15 @@ pub fn bigint_sub(a: BigInt, b: BigInt) -> Result<BigInt, BigIntError> {
 
 /// Subtract limb vectors where |a| >= |b|
 fn limb_sub(a: &[u64], b: &[u64]) -> Vec<u64> {
-    let mut result = vec![0; a.len()];
+    let mut result = vec![0u64; a.len()];
+    let mut borrow: u64 = 0;
 
     for i in 0..a.len() {
-        let a_val = a[i] as i128;
-        let b_val = b.get(i).copied().unwrap_or(0) as i128;
-        // Subtract with borrow: (a - b - borrow)
-        let diff = a_val - b_val;
-
-        if diff >= 0 {
-            result[i] = diff as u64;
-        } else {
-            // Borrow: add 2^64
-            result[i] = (diff + (1 << 64)) as u64;
-        }
+        let b_val = b.get(i).copied().unwrap_or(0);
+        let (d1, borrow1) = a[i].overflowing_sub(b_val);
+        let (d2, borrow2) = d1.overflowing_sub(borrow);
+        result[i] = d2;
+        borrow = (borrow1 as u64) | (borrow2 as u64);
     }
 
     result
@@ -315,6 +318,11 @@ fn limb_sub(a: &[u64], b: &[u64]) -> Vec<u64> {
 /// RFC-0110: bigint_mul(a: BigInt, b: BigInt) -> BigInt
 /// Uses schoolbook O(n²) multiplication - NO Karatsuba, NO SIMD
 pub fn bigint_mul(a: BigInt, b: BigInt) -> Result<BigInt, BigIntError> {
+    // RFC: TRAP on non-canonical input
+    if !a.is_canonical() || !b.is_canonical() {
+        return Err(BigIntError::NonCanonicalInput);
+    }
+
     // Handle zero early
     if a.is_zero() || b.is_zero() {
         return Ok(BigInt::zero());
@@ -345,11 +353,9 @@ pub fn bigint_mul(a: BigInt, b: BigInt) -> Result<BigInt, BigIntError> {
 /// Schoolbook multiplication O(n²)
 /// Uses 128-bit intermediate arithmetic
 fn limb_mul(a: &[u64], b: &[u64]) -> Vec<u64> {
-    let mut result = vec![0; a.len() + b.len()];
+    let mut result = vec![0u64; a.len() + b.len()];
 
     for (i, &ai) in a.iter().enumerate() {
-        let mut carry = 0u128;
-
         for (j, &bj) in b.iter().enumerate() {
             // 128-bit intermediate multiplication
             let product = (ai as u128) * (bj as u128);
@@ -358,14 +364,20 @@ fn limb_mul(a: &[u64], b: &[u64]) -> Vec<u64> {
 
             let k = i + j;
 
-            // Add to result with carry propagation
-            let sum = (result[k] as u128) + (low as u128) + carry;
-            result[k] = sum as u64;
-            carry = sum >> 64;
+            // Add low part to result[k] with carry
+            let acc = (result[k] as u128) + (low as u128);
+            result[k] = acc as u64;
+            let mut carry = (acc >> 64) + (high as u128);
 
-            // Upper carry (USE |= NOT =)
-            result[k + 1] |= high;
-            result[k + 1] |= carry as u64;
+            // Propagate carry to result[k+1], result[k+2], ...
+            let mut k2 = k + 1;
+            while carry > 0 {
+                debug_assert!(k2 < result.len());
+                let s = (result[k2] as u128) + carry;
+                result[k2] = s as u64;
+                carry = s >> 64;
+                k2 += 1;
+            }
         }
     }
 
@@ -377,18 +389,21 @@ fn limb_mul(a: &[u64], b: &[u64]) -> Vec<u64> {
 // RFC-0110 §bigint_divmod
 // =============================================================================
 
-/// Divide two BigInt values and return quotient and remainder
-/// RFC-0110: bigint_divmod(a: BigInt, b: BigInt) -> (BigInt, BigInt)
-/// Uses binary long division
+/// Divide two BigInt values and return (quotient, remainder).
+///
+/// RFC-0110: bigint_divmod(a, b) -> (BigInt, BigInt)
+/// Algorithm: Knuth Vol.2 §4.3.1 Algorithm D (multi-precision division).
+/// Iteration count: exactly `a_norm.limbs.len()` outer iterations —
+/// no early exit (Determinism Rule 4).
 pub fn bigint_divmod(a: BigInt, b: BigInt) -> Result<(BigInt, BigInt), BigIntError> {
-    // Division by zero check
-    if b.is_zero() {
-        return Err(BigIntError::DivisionByZero);
+    // RFC: TRAP on non-canonical input
+    if !a.is_canonical() || !b.is_canonical() {
+        return Err(BigIntError::NonCanonicalInput);
     }
 
-    // |a| < |b| => quotient = 0, remainder = a
-    if a.magnitude_cmp(&b) < 0 {
-        return Ok((BigInt::zero(), a));
+    // Division by zero
+    if b.is_zero() {
+        return Err(BigIntError::DivisionByZero);
     }
 
     // Preconditions
@@ -396,125 +411,253 @@ pub fn bigint_divmod(a: BigInt, b: BigInt) -> Result<(BigInt, BigInt), BigIntErr
         return Err(BigIntError::Overflow);
     }
 
-    // Work with absolute values
-    let mut a_abs = a.limbs.clone();
-    let b_abs = b.limbs.clone();
-
-    // Simple binary division: find how many times b fits into a
-    let mut quotient_limbs: Vec<u64> = vec![0];
-
-    // Compare and subtract approach
-    while a_abs.len() > 1 || (a_abs.len() == 1 && a_abs[0] > 0) {
-        // Compare a_abs vs b_abs
-        if limb_cmp(&a_abs, &b_abs) >= 0 {
-            // Subtract b from a
-            a_abs = limb_sub_vec(&a_abs, &b_abs);
-            // Add 1 to quotient (this is very naive - works but slow)
-            quotient_limbs = limb_add_scalar(&quotient_limbs, 1);
-        } else {
-            break;
-        }
+    // |a| < |b| → quotient = 0, remainder = a (sign of a preserved)
+    if a.magnitude_cmp(&b) < 0 {
+        return Ok((BigInt::zero(), a));
     }
 
-    // Handle single limb quotient case
-    let quotient = if quotient_limbs.len() == 1 && quotient_limbs[0] == 0 {
-        BigInt::zero()
+    // Single-limb divisor fast path
+    let (q_limbs, r_limbs) = if b.limbs.len() == 1 {
+        knuth_single_limb_div(&a.limbs, b.limbs[0])
     } else {
-        BigInt {
-            limbs: quotient_limbs,
-            sign: a.sign != b.sign,
-        }
+        knuth_d(&a.limbs, &b.limbs)
     };
-    let quotient = quotient.canonicalize();
 
-    let remainder = if a_abs == vec![0] {
-        BigInt::zero()
-    } else {
-        BigInt {
-            limbs: a_abs,
-            sign: a.sign,
-        }
-    };
-    let remainder = remainder.canonicalize();
+    // Apply signs — BEFORE canonicalize (Determinism Rule 7)
+    let q_sign = a.sign != b.sign; // XOR
+    let r_sign = a.sign; // remainder sign matches dividend
+
+    let quotient = BigInt {
+        limbs: q_limbs,
+        sign: q_sign,
+    }
+    .canonicalize();
+    let remainder = BigInt {
+        limbs: r_limbs,
+        sign: r_sign,
+    }
+    .canonicalize();
 
     Ok((quotient, remainder))
 }
 
-/// Division: a / b
-pub fn bigint_div(a: BigInt, b: BigInt) -> Result<BigInt, BigIntError> {
-    Ok(bigint_divmod(a, b)?.0)
-}
+/// Divide dividend by a single-limb divisor.
+/// Returns (quotient_limbs, remainder_limbs).
+/// O(n) where n = dividend.len().
+fn knuth_single_limb_div(dividend: &[u64], divisor: u64) -> (Vec<u64>, Vec<u64>) {
+    debug_assert!(divisor != 0);
 
-/// Modulo: a % b
-pub fn bigint_mod(a: BigInt, b: BigInt) -> Result<BigInt, BigIntError> {
-    Ok(bigint_divmod(a, b)?.1)
-}
+    let mut remainder: u128 = 0;
+    let mut result = vec![0u64; dividend.len()];
 
-// =============================================================================
-// Helper functions for DIV
-// =============================================================================
-
-/// Compare limb vectors (unsigned)
-fn limb_cmp(a: &[u64], b: &[u64]) -> i32 {
-    if a.len() != b.len() {
-        return if a.len() > b.len() { 1 } else { -1 };
+    // Process from most-significant to least-significant
+    for i in (0..dividend.len()).rev() {
+        let current = (remainder << 64) | (dividend[i] as u128);
+        result[i] = (current / divisor as u128) as u64;
+        remainder = current % divisor as u128;
     }
 
-    for i in (0..a.len()).rev() {
-        if a[i] != b[i] {
-            return if a[i] > b[i] { 1 } else { -1 };
-        }
-    }
-
-    0
-}
-
-/// Subtract b from a where a >= b (vectors)
-fn limb_sub_vec(a: &[u64], b: &[u64]) -> Vec<u64> {
-    let mut result = vec![0; a.len()];
-    let mut borrow = 0i128;
-
-    for i in 0..a.len() {
-        let a_val = a[i] as i128;
-        let b_val = b.get(i).copied().unwrap_or(0) as i128;
-        let diff = a_val - b_val - borrow;
-
-        if diff >= 0 {
-            result[i] = diff as u64;
-            borrow = 0;
-        } else {
-            result[i] = (diff + (1 << 64)) as u64;
-            borrow = 1;
-        }
-    }
-
-    // Remove leading zeros
+    // Trim quotient leading zeros
     while result.len() > 1 && *result.last().unwrap() == 0 {
         result.pop();
     }
 
-    result
+    let rem_limbs = if remainder == 0 {
+        vec![0u64]
+    } else {
+        vec![remainder as u64]
+    };
+
+    (result, rem_limbs)
 }
 
-/// Add scalar to limb vector
-fn limb_add_scalar(a: &[u64], scalar: u64) -> Vec<u64> {
-    let mut result = a.to_vec();
-    let mut carry = scalar as u128;
+/// Knuth Algorithm D — multi-precision division.
+///
+/// Preconditions (enforced by caller):
+///   - dividend.len() >= divisor.len() >= 2
+///   - divisor.last() != 0  (canonical)
+///   - |dividend| >= |divisor|
+///
+/// Returns (quotient_limbs, remainder_limbs), both positive (unsigned).
+/// Signs are applied by bigint_divmod after this function returns.
+///
+/// Algorithm reference: Knuth TAOCP Vol.2, §4.3.1 Algorithm D.
+/// Fixed iteration count: exactly (dividend.len() - divisor.len() + 1)
+/// outer iterations — no early exit.
+fn knuth_d(dividend: &[u64], divisor: &[u64]) -> (Vec<u64>, Vec<u64>) {
+    const BASE: u128 = 1u128 << 64;
 
-    for slot in result.iter_mut() {
-        let sum = (*slot as u128) + carry;
-        *slot = sum as u64;
-        carry = sum >> 64;
-        if carry == 0 {
-            break;
+    let n = divisor.len(); // divisor digit count (n >= 2)
+    let m = dividend.len() - n; // quotient has m+1 digits
+
+    // D1: Normalize — shift divisor left until its MSB is 1.
+    // d_shift = number of leading zero bits in divisor[n-1].
+    let d_shift = divisor[n - 1].leading_zeros() as usize;
+
+    // v = normalized divisor (n limbs).
+    // u = normalized dividend (n + m + 1 limbs).
+    // When d_shift == 0, these are copies; no bits are moved.
+    let v = shl_limbs_n(divisor, d_shift, n);
+    let mut u = shl_limbs_n(dividend, d_shift, n + m + 1);
+
+    debug_assert_eq!(v.len(), n);
+    debug_assert_eq!(u.len(), n + m + 1);
+    debug_assert!(
+        v[n - 1] >= (1u64 << 63),
+        "MSB of v must be 1 after normalization"
+    );
+
+    let mut q = vec![0u64; m + 1];
+
+    // D2-D7: Main loop — exactly m+1 iterations, no early exit.
+    // j counts DOWN from m to 0 (most-significant quotient digit first).
+    for j in (0..=m).rev() {
+        // D3: Calculate trial quotient digit q_hat.
+        //
+        // u[j+n] and u[j+n-1] are the two most significant words of the
+        // current partial remainder at offset j.
+        let u_top = u[j + n] as u128;
+        let u_mid = u[j + n - 1] as u128;
+        let v_top = v[n - 1] as u128;
+        let v_next = v[n - 2] as u128; // safe: n >= 2
+
+        let mut q_hat: u128 = if u_top == v_top {
+            // q_hat = BASE - 1 (Knuth: this is the maximum possible value)
+            BASE - 1
+        } else {
+            // Standard two-digit estimate
+            (u_top * BASE + u_mid) / v_top
+        };
+
+        // D3 refinement: correct q_hat by at most 2 via Knuth's 3-digit test.
+        // This guarantees q_hat - true_digit ∈ {0, 1, 2}.
+        {
+            let u_low = if j + n >= 2 { u[j + n - 2] as u128 } else { 0 };
+            // while q_hat*v[n-2] > BASE*(u_top*BASE+u_mid - q_hat*v_top) + u[j+n-2]
+            loop {
+                let rhat = u_top * BASE + u_mid - q_hat * v_top;
+                if rhat >= BASE {
+                    break; // rhat overflows: q_hat is already correct
+                }
+                if q_hat * v_next > BASE * rhat + u_low {
+                    q_hat -= 1;
+                } else {
+                    break;
+                }
+            }
+        }
+
+        // D4: Multiply and subtract: u[j..j+n+1] -= q_hat * v.
+        //
+        // We compute borrow using i128 arithmetic to detect underflow.
+        // `borrow` holds the combined carry-borrow from previous limb.
+        {
+            let mut borrow: i128 = 0;
+            for i in 0..n {
+                // product = q_hat * v[i] (can be up to (BASE-1)^2 < 2^128)
+                let prod = (q_hat * v[i] as u128) as i128 + borrow;
+                borrow = prod >> 64; // signed right-shift: propagates sign
+                let d = u[j + i] as i128 - (prod & 0xFFFF_FFFF_FFFF_FFFFi128);
+                if d < 0 {
+                    u[j + i] = (d + (1i128 << 64)) as u64;
+                    borrow += 1;
+                } else {
+                    u[j + i] = d as u64;
+                }
+            }
+            // Apply final borrow to u[j+n]
+            let top = u[j + n] as i128 - borrow;
+            if top < 0 {
+                // D6: Add back — q_hat was too large by 1.
+                // This happens with probability ~2/BASE (extremely rare).
+                q_hat -= 1;
+                u[j + n] = (top + (1i128 << 64)) as u64;
+                // Restore: u[j..j+n+1] += v (with carry propagation)
+                let mut carry: u128 = 0;
+                for i in 0..n {
+                    let s = u[j + i] as u128 + v[i] as u128 + carry;
+                    u[j + i] = s as u64;
+                    carry = s >> 64;
+                }
+                u[j + n] = u[j + n].wrapping_add(carry as u64);
+            } else {
+                u[j + n] = top as u64;
+            }
+        }
+
+        q[j] = q_hat as u64;
+    }
+
+    // D8: Denormalize remainder.
+    // The remainder is u[0..n] shifted right by d_shift bits.
+    let rem = shr_limbs_n(&u[..n], d_shift);
+
+    // Trim leading zeros from quotient
+    while q.len() > 1 && *q.last().unwrap() == 0 {
+        q.pop();
+    }
+
+    (q, rem)
+}
+
+/// Shift a limb slice left by `shift` bits and return exactly `output_len` limbs.
+/// Limbs are little-endian. Extra high limbs are zero-extended.
+/// When shift == 0, returns a copy truncated or zero-padded to output_len.
+fn shl_limbs_n(limbs: &[u64], shift: usize, output_len: usize) -> Vec<u64> {
+    let mut out = vec![0u64; output_len];
+    if shift == 0 {
+        let copy_len = limbs.len().min(output_len);
+        out[..copy_len].copy_from_slice(&limbs[..copy_len]);
+        return out;
+    }
+    let rshift = 64 - shift;
+    for (i, &v) in limbs.iter().enumerate() {
+        if i < output_len {
+            out[i] |= v << shift;
+        }
+        if i + 1 < output_len {
+            out[i + 1] |= v >> rshift;
         }
     }
+    out
+}
 
-    if carry > 0 {
-        result.push(carry as u64);
+/// Shift a limb slice right by `shift` bits.
+/// Returns canonical result (no leading zero limbs, at least one limb).
+fn shr_limbs_n(limbs: &[u64], shift: usize) -> Vec<u64> {
+    if shift == 0 {
+        let mut r = limbs.to_vec();
+        while r.len() > 1 && *r.last().unwrap() == 0 {
+            r.pop();
+        }
+        return r;
     }
+    let lshift = 64 - shift;
+    let mut out = vec![0u64; limbs.len()];
+    for i in 0..limbs.len() {
+        out[i] = limbs[i] >> shift;
+        if i + 1 < limbs.len() {
+            out[i] |= limbs[i + 1] << lshift;
+        }
+    }
+    while out.len() > 1 && *out.last().unwrap() == 0 {
+        out.pop();
+    }
+    if out.is_empty() {
+        out.push(0);
+    }
+    out
+}
 
-    result
+/// Division: a / b (quotient only)
+pub fn bigint_div(a: BigInt, b: BigInt) -> Result<BigInt, BigIntError> {
+    Ok(bigint_divmod(a, b)?.0)
+}
+
+/// Modulo: a % b (remainder only)
+/// RFC-0110: remainder sign matches dividend (same as RFC-0105 convention).
+pub fn bigint_mod(a: BigInt, b: BigInt) -> Result<BigInt, BigIntError> {
+    Ok(bigint_divmod(a, b)?.1)
 }
 
 // =============================================================================
@@ -525,9 +668,14 @@ fn limb_add_scalar(a: &[u64], scalar: u64) -> Vec<u64> {
 /// Left shift: a << shift
 /// RFC-0110: bigint_shl(a: BigInt, shift: usize) -> BigInt
 pub fn bigint_shl(a: BigInt, shift: usize) -> Result<BigInt, BigIntError> {
-    // Validate shift amount
-    if shift == 0 || shift >= MAX_BIGINT_BITS {
-        return Err(BigIntError::Overflow);
+    // RFC: TRAP on non-canonical input
+    if !a.is_canonical() {
+        return Err(BigIntError::NonCanonicalInput);
+    }
+
+    // shift == 0 is a no-op, return a
+    if shift == 0 {
+        return Ok(a);
     }
 
     // Check overflow
@@ -576,13 +724,18 @@ fn bigint_shl_internal(limbs: &[u64], bit_shift: usize, sign: bool) -> BigInt {
 /// Right shift: a >> shift
 /// RFC-0110: bigint_shr(a: BigInt, shift: usize) -> BigInt
 pub fn bigint_shr(a: BigInt, shift: usize) -> Result<BigInt, BigIntError> {
-    // Validate shift amount
-    if shift >= MAX_BIGINT_BITS {
-        return Err(BigIntError::Overflow);
+    // RFC: TRAP on non-canonical input
+    if !a.is_canonical() {
+        return Err(BigIntError::NonCanonicalInput);
     }
 
     if shift == 0 {
         return Ok(a);
+    }
+
+    // If shifting zero by any amount, return zero
+    if a.is_zero() {
+        return Ok(BigInt::zero());
     }
 
     let limb_shift = shift / 64;
@@ -637,19 +790,19 @@ impl TryFrom<BigInt> for i64 {
 
     fn try_from(b: BigInt) -> Result<i64, Self::Error> {
         if b.limbs.len() > 1 {
-            return Err(BigIntError::OutOfI128Range);
+            return Err(BigIntError::OutOfRange);
         }
         let mag = b.limbs.first().copied().unwrap_or(0);
         if b.sign {
             // For negative, check against i64::MIN.unsigned_abs()
             // i64::MIN = -9223372036854775808, so unsigned_abs = 9223372036854775808
             if mag > i64::MIN.unsigned_abs() {
-                return Err(BigIntError::OutOfI128Range);
+                return Err(BigIntError::OutOfRange);
             }
             Ok(-(mag as i64))
         } else {
             if mag > i64::MAX.unsigned_abs() {
-                return Err(BigIntError::OutOfI128Range);
+                return Err(BigIntError::OutOfRange);
             }
             Ok(mag as i64)
         }
@@ -709,10 +862,10 @@ impl TryFrom<BigInt> for u64 {
 
     fn try_from(b: BigInt) -> Result<u64, Self::Error> {
         if b.sign {
-            return Err(BigIntError::OutOfI128Range);
+            return Err(BigIntError::OutOfRange);
         }
         if b.limbs.len() > 1 {
-            return Err(BigIntError::OutOfI128Range);
+            return Err(BigIntError::OutOfRange);
         }
         Ok(b.limbs.first().copied().unwrap_or(0))
     }
@@ -752,7 +905,7 @@ impl TryFrom<BigInt> for u128 {
 // =============================================================================
 
 /// BigInt wire encoding
-/// Format: [version: u8, sign: u8, num_limbs: u8, unused: 5 bytes, limbs: little-endian u64[]]
+/// Format: [version: u8, sign: u8, reserved: 2 bytes, num_limbs: u8, reserved: 3 bytes, limbs: little-endian u64[]]
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct BigIntEncoding {
     /// Version (0x01)
@@ -763,6 +916,28 @@ pub struct BigIntEncoding {
     pub num_limbs: u8,
     /// Limbs (little-endian)
     pub limbs: Vec<u64>,
+}
+
+impl BigIntEncoding {
+    /// Convert to wire format bytes
+    /// Format: [version, sign, 0, 0, num_limbs, 0, 0, 0, limbs...]
+    pub fn to_bytes(&self) -> Vec<u8> {
+        let mut bytes = Vec::with_capacity(8 + self.limbs.len() * 8);
+        bytes.push(self.version);
+        bytes.push(self.sign);
+        bytes.push(0); // reserved
+        bytes.push(0); // reserved
+        bytes.push(self.num_limbs);
+        bytes.push(0); // reserved
+        bytes.push(0); // reserved
+        bytes.push(0); // reserved
+
+        for &limb in &self.limbs {
+            bytes.extend_from_slice(&limb.to_le_bytes());
+        }
+
+        bytes
+    }
 }
 
 impl BigInt {
@@ -778,7 +953,8 @@ impl BigInt {
 
     /// Deserialize from BigIntEncoding
     pub fn deserialize(data: &[u8]) -> Result<BigInt, BigIntError> {
-        if data.len() < 16 {
+        // Minimum length: 8 bytes header + at least 1 limb
+        if data.len() < 8 {
             return Err(BigIntError::NonCanonicalInput);
         }
         let version = data[0];
@@ -790,17 +966,32 @@ impl BigInt {
             return Err(BigIntError::NonCanonicalInput);
         }
         let sign = sign_byte == 0xFF;
-        let num_limbs = data[2];
-        if num_limbs == 0 || num_limbs > 64 {
-            return Err(BigIntError::NonCanonicalInput);
-        }
-        if data.len() != 16 + 8 * (num_limbs as usize) {
+
+        // Validate reserved bytes (bytes 2 and 3 should be 0)
+        if data[2] != 0 || data[3] != 0 {
             return Err(BigIntError::NonCanonicalInput);
         }
 
-        let mut limbs = Vec::with_capacity(num_limbs as usize);
+        // num_limbs is at byte 4
+        let num_limbs = data[4] as usize;
+        if num_limbs == 0 || num_limbs > 64 {
+            return Err(BigIntError::NonCanonicalInput);
+        }
+
+        // Validate reserved bytes (bytes 5, 6, 7 should be 0)
+        if data[5] != 0 || data[6] != 0 || data[7] != 0 {
+            return Err(BigIntError::NonCanonicalInput);
+        }
+
+        // Total length: 8 bytes header + num_limbs * 8 bytes
+        let expected_len = 8 + num_limbs * 8;
+        if data.len() != expected_len {
+            return Err(BigIntError::NonCanonicalInput);
+        }
+
+        let mut limbs = Vec::with_capacity(num_limbs);
         for i in 0..num_limbs {
-            let offset = 16 + (i as usize) * 8;
+            let offset = 8 + i * 8;
             let limb = u64::from_le_bytes([
                 data[offset],
                 data[offset + 1],
@@ -1298,5 +1489,843 @@ mod tests {
         // Too large returns error
         let big = BigInt::from(u128::MAX);
         assert!(bigint_to_i128_bytes(big).is_err());
+    }
+}
+
+// =============================================================================
+// RFC-0110 BigInt Regression Tests
+//
+// Regression coverage for all 7 bugs identified in the code review:
+//
+//  Bug 1 [CRITICAL] — limb_sub missing borrow propagation
+//  Bug 2 [CRITICAL] — limb_mul uses |= instead of proper addition
+//  Bug 3 [CRITICAL] — bigint_divmod uses naive repeated subtraction
+//  Bug 4 [HIGH]     — Serialization wire format uses wrong byte offsets
+//  Bug 5 [HIGH]     — bigint_shr returns Err for large shifts (should return ZERO)
+//  Bug 6 [HIGH]     — bigint_shl returns Err for shift == 0 (should return a)
+//  Bug 7 [HIGH]     — No input canonicalization enforcement
+//
+// Each test block is labelled with the bug number it covers.
+// All expected values are independently computed and annotated.
+// =============================================================================
+
+#[cfg(test)]
+mod regression_tests {
+    use super::*;
+
+    // =========================================================================
+    // Bug 1 — limb_sub: missing borrow propagation across limb boundaries
+    // =========================================================================
+
+    /// 2^64 − 1: requires borrow from limb[1] into limb[0]
+    #[test]
+    fn bug1_sub_borrow_across_limb_boundary_simple() {
+        let a = BigInt::new(vec![0, 1], false); // 2^64
+        let b = BigInt::new(vec![1], false);
+        let result = bigint_sub(a, b).expect("sub should succeed");
+
+        assert_eq!(
+            result.limbs(),
+            &[0xFFFF_FFFF_FFFF_FFFF],
+            "2^64 - 1 should be a single limb 0xFFFF...FFFF"
+        );
+        assert!(!result.sign(), "result should be positive");
+    }
+
+    /// 2^64 − (2^32 − 1)
+    #[test]
+    fn bug1_sub_borrow_across_limb_boundary_partial() {
+        let a = BigInt::new(vec![0, 1], false); // 2^64
+        let b = BigInt::new(vec![0xFFFF_FFFF], false);
+        let result = bigint_sub(a, b).expect("sub should succeed");
+
+        assert_eq!(
+            result.limbs(),
+            &[0xFFFF_FFFF_0000_0001],
+            "2^64 - (2^32-1) = 0xFFFFFFFF00000001"
+        );
+    }
+
+    /// 2^64 − 2^32
+    #[test]
+    fn bug1_sub_borrow_across_limb_power_of_two() {
+        let a = BigInt::new(vec![0, 1], false); // 2^64
+        let b = BigInt::new(vec![0x0000_0001_0000_0000], false); // 2^32
+        let result = bigint_sub(a, b).expect("sub should succeed");
+
+        assert_eq!(result.limbs(), &[0xFFFF_FFFF_0000_0000]);
+        assert!(!result.sign());
+    }
+
+    /// 2^128 − 1: borrow propagates two levels
+    #[test]
+    fn bug1_sub_borrow_three_limb_chain() {
+        let a = BigInt::new(vec![0, 0, 1], false); // 2^128
+        let b = BigInt::new(vec![1], false);
+        let result = bigint_sub(a, b).expect("sub should succeed");
+
+        assert_eq!(
+            result.limbs(),
+            &[0xFFFF_FFFF_FFFF_FFFF, 0xFFFF_FFFF_FFFF_FFFF],
+            "2^128 - 1 should be two all-ones limbs"
+        );
+    }
+
+    /// 2^128 − 2^64: borrow through zero limb
+    #[test]
+    fn bug1_sub_borrow_zero_limb_bridge() {
+        let a = BigInt::new(vec![0, 0, 1], false); // 2^128
+        let b = BigInt::new(vec![0, 1], false); // 2^64
+        let result = bigint_sub(a, b).expect("sub should succeed");
+
+        assert_eq!(
+            result.limbs(),
+            &[0, 0xFFFF_FFFF_FFFF_FFFF],
+            "2^128 - 2^64 = [0, 0xFFFF...FFFF]"
+        );
+    }
+
+    /// 2 * 2^64 − 1
+    #[test]
+    fn bug1_sub_borrow_from_second_limb() {
+        let a = BigInt::new(vec![0, 2], false); // 2 * 2^64
+        let b = BigInt::new(vec![1], false);
+        let result = bigint_sub(a, b).expect("sub should succeed");
+
+        assert_eq!(
+            result.limbs(),
+            &[0xFFFF_FFFF_FFFF_FFFF, 1],
+            "2*2^64 - 1 = [MAX_U64, 1]"
+        );
+    }
+
+    /// add(a, -b) where subtraction requires borrow
+    #[test]
+    fn bug1_add_dispatches_sub_correctly_with_borrow() {
+        let a = BigInt::new(vec![0, 1], false); // 2^64
+        let b = BigInt::new(vec![1], true); // -1 (negative)
+        let result = bigint_add(a, b).expect("add should succeed");
+
+        assert_eq!(result.limbs(), &[0xFFFF_FFFF_FFFF_FFFF]);
+        assert!(!result.sign());
+    }
+
+    // =========================================================================
+    // Bug 2 — limb_mul: uses |= instead of proper addition for carry/high
+    // =========================================================================
+
+    /// MAX_U64 * MAX_U64
+    #[test]
+    fn bug2_mul_max_u64_squared() {
+        let a = BigInt::new(vec![u64::MAX], false);
+        let b = BigInt::new(vec![u64::MAX], false);
+        let result = bigint_mul(a, b).expect("mul should succeed");
+
+        // (2^64-1)^2 = 2^128 - 2^65 + 1
+        assert_eq!(
+            result.limbs(),
+            &[0x0000_0000_0000_0001, 0xFFFF_FFFF_FFFF_FFFE],
+            "MAX_U64^2 should be [1, 0xFFFFFFFFFFFFFFFE]"
+        );
+        assert!(!result.sign());
+    }
+
+    /// (2^65-1)^2
+    #[test]
+    fn bug2_mul_two_limb_max_squared() {
+        let a2 = BigInt::new(vec![u64::MAX, 1], false); // 2^65 - 1
+        let b2 = BigInt::new(vec![u64::MAX, 1], false);
+        let result = bigint_mul(a2, b2).expect("mul should succeed");
+
+        // (2^65-1)^2 = 2^130 - 2^66 + 1
+        assert_eq!(
+            result.limbs(),
+            &[1, 0xFFFF_FFFF_FFFF_FFFC, 3],
+            "(2^65-1)^2 should be [1, 0xFFFFFFFFFFFFFFFC, 3]"
+        );
+    }
+
+    /// 2^64 * 2^64 = 2^128
+    #[test]
+    fn bug2_mul_power_of_two_64_squared() {
+        let a = BigInt::new(vec![0, 1], false); // 2^64
+        let b = BigInt::new(vec![0, 1], false); // 2^64
+        let result = bigint_mul(a, b).expect("2^64 * 2^64 should not overflow");
+
+        assert_eq!(
+            result.limbs(),
+            &[0, 0, 1],
+            "2^64 * 2^64 = 2^128 should be [0, 0, 1]"
+        );
+    }
+
+    /// (2^128-1)^2 = 2^256 - 2^129 + 1 fits within MAX_BIGINT_BITS (4096)
+    #[test]
+    fn bug2_mul_max_two_limb_correct_result() {
+        // (2^128 - 1)^2 = 2^256 - 2^129 + 1
+        // This is 256 bits — well within MAX_BIGINT_BITS (4096). Must NOT overflow.
+        let a = BigInt::new(vec![u64::MAX, u64::MAX], false); // 2^128 - 1
+        let b = BigInt::new(vec![u64::MAX, u64::MAX], false);
+        let result = bigint_mul(a, b);
+
+        assert!(
+            result.is_ok(),
+            "(2^128-1)^2 = 256 bits, must not overflow MAX_BIGINT_BITS=4096"
+        );
+
+        let r = result.unwrap();
+        // (2^128-1)^2 = 2^256 - 2^129 + 1
+        // LE limbs: [1, 0, 0xFFFFFFFFFFFFFFFE, 0xFFFFFFFFFFFFFFFF]
+        assert_eq!(
+            r.len(), // use public .len(), not private .limbs.len()
+            4,
+            "(2^128-1)^2 should have exactly 4 limbs"
+        );
+        assert_eq!(
+            r.limbs(),
+            &[0x1, 0x0, 0xFFFF_FFFF_FFFF_FFFE, 0xFFFF_FFFF_FFFF_FFFF]
+        );
+        assert!(!r.sign());
+    }
+
+    /// Multiplication by 1 is identity
+    #[test]
+    fn bug2_mul_single_limb_multiplier_identity() {
+        let a = BigInt::new(vec![0xDEAD_BEEF_CAFE_1234, 0x1234_5678_9ABC_DEF0], false);
+        let b = BigInt::new(vec![1], false);
+        let result = bigint_mul(a, b).expect("mul by 1 should succeed");
+        assert_eq!(
+            result.limbs(),
+            &[0xDEAD_BEEF_CAFE_1234, 0x1234_5678_9ABC_DEF0],
+            "multiplying by 1 must be identity"
+        );
+    }
+
+    // =========================================================================
+    // Bug 3 — bigint_divmod: division correctness
+    // =========================================================================
+
+    /// 2^64 / 3
+    #[test]
+    fn bug3_div_two_limb_by_one_limb() {
+        let a = BigInt::new(vec![0, 1], false); // 2^64
+        let b = BigInt::new(vec![3], false);
+        let (q, r) = bigint_divmod(a, b).expect("divmod should succeed");
+
+        assert_eq!(
+            q.limbs(),
+            &[0x5555_5555_5555_5555],
+            "2^64 / 3 = 0x5555555555555555"
+        );
+        assert_eq!(r.limbs(), &[1], "2^64 mod 3 = 1");
+    }
+
+    /// 2^64 / 2^32
+    #[test]
+    fn bug3_div_power_of_two_quotient() {
+        let a = BigInt::new(vec![0, 1], false); // 2^64
+        let b = BigInt::new(vec![0x1_0000_0000], false); // 2^32
+        let (q, r) = bigint_divmod(a, b).expect("divmod should succeed");
+
+        assert_eq!(q.limbs(), &[0x1_0000_0000], "2^64 / 2^32 = 2^32");
+        assert!(r.is_zero(), "2^64 / 2^32 has zero remainder");
+    }
+
+    /// 2^128 / 2^64 = 2^64 (probe entry 20)
+    #[test]
+    fn bug3_div_2_to_128_by_2_to_64() {
+        let a = BigInt::new(vec![0, 0, 1], false); // 2^128
+        let b = BigInt::new(vec![0, 1], false); // 2^64
+        let (q, r) = bigint_divmod(a, b).expect("divmod should succeed");
+
+        assert_eq!(q.limbs(), &[0, 1], "2^128 / 2^64 = 2^64 = [0, 1]");
+        assert!(r.is_zero(), "2^128 / 2^64 remainder is zero");
+    }
+    /// -7 / 3: quotient negative, remainder negative
+    #[test]
+    fn bug3_div_negative_dividend() {
+        let a = BigInt::new(vec![7], true); // -7
+        let b = BigInt::new(vec![3], false); // 3
+        let (q, r) = bigint_divmod(a, b).expect("divmod should succeed");
+
+        assert_eq!(q.limbs(), &[2], "|-7 / 3| = 2");
+        assert!(q.sign(), "quotient of (-7)/3 should be negative");
+        assert_eq!(r.limbs(), &[1], "|-7 % 3| = 1");
+        assert!(r.sign(), "remainder sign must match dividend (negative)");
+    }
+
+    /// 7 / -3
+    #[test]
+    fn bug3_div_negative_divisor() {
+        let a = BigInt::new(vec![7], false); // 7
+        let b = BigInt::new(vec![3], true); // -3
+        let (q, r) = bigint_divmod(a, b).expect("divmod should succeed");
+
+        assert_eq!(q.limbs(), &[2]);
+        assert!(q.sign(), "quotient of 7/(-3) should be negative");
+        assert_eq!(r.limbs(), &[1]);
+        assert!(!r.sign(), "remainder sign must match dividend (positive)");
+    }
+
+    /// -7 / -3
+    #[test]
+    fn bug3_div_both_negative() {
+        let a = BigInt::new(vec![7], true); // -7
+        let b = BigInt::new(vec![3], true); // -3
+        let (q, r) = bigint_divmod(a, b).expect("divmod should succeed");
+
+        assert_eq!(q.limbs(), &[2]);
+        assert!(!q.sign(), "quotient of (-7)/(-3) should be positive");
+        assert_eq!(r.limbs(), &[1]);
+        assert!(r.sign(), "remainder sign must match dividend (negative)");
+    }
+
+    /// |a| < |b|: quotient = 0, remainder = a
+    #[test]
+    fn bug3_div_dividend_smaller_than_divisor() {
+        let a = BigInt::new(vec![3], false); // 3
+        let b = BigInt::new(vec![0, 1], false); // 2^64 (larger)
+        let (q, r) = bigint_divmod(a, b).expect("divmod should succeed");
+
+        assert!(q.is_zero(), "quotient must be zero when |a| < |b|");
+        assert_eq!(r.limbs(), &[3], "remainder must equal a when |a| < |b|");
+    }
+
+    /// Division by zero
+    #[test]
+    fn bug3_div_by_zero_returns_error() {
+        let a = BigInt::new(vec![10], false);
+        let result = bigint_divmod(a, BigInt::zero());
+        assert_eq!(result.unwrap_err(), BigIntError::DivisionByZero);
+    }
+
+    /// Algebraic invariant: q * b + r == a
+    #[test]
+    fn bug3_div_algebraic_invariant_multi_limb() {
+        let a_val: u128 = 0xDEAD_BEEF_CAFE_1234_5678_9ABC;
+        let b_val: u128 = 0x1234_5678_9ABC_DEF0;
+
+        let a = BigInt::from(a_val);
+        let b = BigInt::from(b_val);
+        let (q, r) = bigint_divmod(a.clone(), b.clone()).expect("divmod should succeed");
+
+        let qb = bigint_mul(q, b).expect("q * b");
+        let reconstructed = bigint_add(qb, r).expect("q*b + r");
+        assert_eq!(
+            reconstructed, a,
+            "quotient * divisor + remainder must equal dividend"
+        );
+    }
+    // =========================================================================
+    // Bug 4 — Serialization: wire format
+    // =========================================================================
+    /// BigInt(1) serializes to RFC canonical bytes
+    #[test]
+    fn bug4_serialize_bigint_1_matches_rfc_canonical() {
+        let b = BigInt::from(1i64);
+        let encoding = b.serialize();
+
+        let expected = vec![
+            0x01u8, 0x00, 0x00, 0x00, // version, sign, reserved, reserved
+            0x01, 0x00, 0x00, 0x00, // num_limbs=1, reserved, reserved, reserved
+            0x01, 0x00, 0x00, 0x00, // limb[0] LE u64
+            0x00, 0x00, 0x00, 0x00,
+        ];
+        let actual = encoding.to_bytes();
+        assert_eq!(
+            actual, expected,
+            "BigInt(1) must serialize to RFC canonical bytes"
+        );
+    }
+
+    /// Negative sign byte at position 1
+    #[test]
+    fn bug4_serialize_negative_sign_byte_at_position_1() {
+        let b = BigInt::from(-1i64);
+        let bytes = b.serialize().to_bytes();
+        assert_eq!(bytes[0], 0x01, "byte 0 must be version 0x01");
+        assert_eq!(bytes[1], 0xFF, "byte 1 must be sign 0xFF for negative");
+    }
+
+    /// num_limbs at byte 4
+    #[test]
+    fn bug4_serialize_num_limbs_at_byte_4() {
+        let b = BigInt::new(vec![0, 1], false); // 2^64: 2 limbs
+        let bytes = b.serialize().to_bytes();
+
+        assert_eq!(bytes[2], 0x00, "byte 2 is reserved, must be 0x00");
+        assert_eq!(bytes[3], 0x00, "byte 3 is reserved, must be 0x00");
+        assert_eq!(bytes[4], 2, "byte 4 must be num_limbs=2");
+        assert_eq!(
+            bytes.len(),
+            8 + 2 * 8,
+            "total length = 8 header + 2 limbs * 8 bytes"
+        );
+    }
+
+    /// Deserialize RFC canonical BigInt(42)
+    #[test]
+    fn bug4_deserialize_rfc_canonical_bigint_42() {
+        let bytes: Vec<u8> = vec![
+            0x01, 0x00, 0x00, 0x00, // version, sign, res, res
+            0x01, 0x00, 0x00, 0x00, // num_limbs=1, res, res, res
+            42, 0x00, 0x00, 0x00, // limb[0] LE u64
+            0x00, 0x00, 0x00, 0x00,
+        ];
+        let b = BigInt::deserialize(&bytes).expect("valid RFC canonical bytes should deserialize");
+        assert_eq!(b.limbs(), &[42]);
+    }
+
+    /// Reject non-zero reserved byte 2
+    #[test]
+    fn bug4_deserialize_rejects_nonzero_reserved_byte_2() {
+        let bytes: Vec<u8> = vec![
+            0x01, 0x00, 0xFF, 0x00, // byte 2 = 0xFF (invalid reserved)
+            0x01, 0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+        ];
+        let result = BigInt::deserialize(&bytes);
+        assert!(result.is_err(), "non-zero reserved byte must be rejected");
+    }
+
+    /// Reject non-zero reserved bytes 5-7
+    #[test]
+    fn bug4_deserialize_rejects_nonzero_reserved_bytes_5_to_7() {
+        let bytes: Vec<u8> = vec![
+            0x01, 0x00, 0x00, 0x00, 0x01, 0x00, 0x01,
+            0x00, // byte 6 = 0x01 (invalid reserved)
+            0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+        ];
+        let result = BigInt::deserialize(&bytes);
+        assert!(result.is_err(), "non-zero reserved byte 6 must be rejected");
+    }
+
+    /// Reject unknown version
+    #[test]
+    fn bug4_deserialize_rejects_unknown_version() {
+        let bytes: Vec<u8> = vec![
+            0x02, 0x00, 0x00, 0x00, // version = 0x02 (unknown)
+            0x01, 0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+        ];
+        let result = BigInt::deserialize(&bytes);
+        assert!(result.is_err(), "unknown version must be rejected");
+    }
+
+    /// Reject invalid sign byte
+    #[test]
+    fn bug4_deserialize_rejects_invalid_sign_byte() {
+        let bytes: Vec<u8> = vec![
+            0x01, 0x80, 0x00, 0x00, // sign = 0x80 (invalid)
+            0x01, 0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+        ];
+        let result = BigInt::deserialize(&bytes);
+        assert!(result.is_err(), "sign byte 0x80 must be rejected");
+    }
+
+    /// Reject num_limbs = 0
+    #[test]
+    fn bug4_deserialize_rejects_zero_num_limbs() {
+        let bytes: Vec<u8> = vec![
+            0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, // num_limbs = 0 (invalid)
+        ];
+        let result = BigInt::deserialize(&bytes);
+        assert!(result.is_err(), "num_limbs=0 must be rejected");
+    }
+
+    /// Reject num_limbs > 64
+    #[test]
+    fn bug4_deserialize_rejects_too_many_limbs() {
+        let bytes: Vec<u8> = vec![
+            0x01, 0x00, 0x00, 0x00, 65, 0x00, 0x00, 0x00, // num_limbs = 65 (exceeds MAX_LIMBS)
+        ];
+        let result = BigInt::deserialize(&bytes);
+        assert!(result.is_err(), "num_limbs=65 must be rejected");
+    }
+
+    /// Reject length mismatch
+    #[test]
+    fn bug4_deserialize_rejects_length_mismatch() {
+        let bytes: Vec<u8> = vec![
+            0x01, 0x00, 0x00, 0x00, 0x02, 0x00, 0x00, 0x00, // num_limbs = 2
+            // Only 1 limb worth of data provided
+            0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+        ];
+        let result = BigInt::deserialize(&bytes);
+        assert!(result.is_err(), "truncated limb data must be rejected");
+    }
+
+    /// Round-trip serialize/deserialize
+    #[test]
+    fn bug4_roundtrip_serialize_deserialize() {
+        let values: Vec<BigInt> = vec![
+            BigInt::zero(),
+            BigInt::from(1i64),
+            BigInt::from(-1i64),
+            BigInt::from(i128::MAX),
+            BigInt::from(i128::MIN),
+            BigInt::new(vec![0xDEAD_BEEF, 0xCAFE_BABE], false),
+        ];
+        for original in values {
+            let bytes = original.serialize().to_bytes();
+            let recovered = BigInt::deserialize(&bytes)
+                .unwrap_or_else(|_| panic!("roundtrip failed for {:?}", original));
+            assert_eq!(
+                original, recovered,
+                "serialize → deserialize must be identity"
+            );
+        }
+    }
+
+    // =========================================================================
+    // Bug 5 — bigint_shr: large shifts should return ZERO
+    // =========================================================================
+
+    /// SHR(2^4095, 4096) = ZERO (probe entry 29)
+    #[test]
+    fn bug5_shr_shift_equals_bit_length_returns_zero() {
+        let mut limbs = vec![0u64; 64];
+        limbs[63] = 1 << 63; // 2^4095
+        let a = BigInt::new(limbs, false);
+
+        let result = bigint_shr(a, 4096).expect("SHR with large shift must not return Err");
+        assert!(
+            result.is_zero(),
+            "SHR(2^4095, 4096) must return ZERO, not Err"
+        );
+    }
+
+    /// SHR(1, MAX_BIGINT_BITS) = ZERO
+    #[test]
+    fn bug5_shr_shift_far_exceeds_value_returns_zero() {
+        let a = BigInt::from(1i64);
+        let result = bigint_shr(a, MAX_BIGINT_BITS)
+            .expect("SHR with shift == MAX_BIGINT_BITS must not return Err");
+        assert!(result.is_zero(), "shifting 1 by 4096 bits must give ZERO");
+    }
+
+    /// SHR(1, MAX_BIGINT_BITS - 1) = ZERO
+    #[test]
+    fn bug5_shr_shift_much_larger_than_bit_length_returns_zero() {
+        let a = BigInt::from(1i64);
+        let result =
+            bigint_shr(a, MAX_BIGINT_BITS - 1).expect("large shift on 1-bit value must not Err");
+        assert!(result.is_zero(), "1 >> 4095 must be zero");
+    }
+
+    /// SHR(2^4095, 4095) = 1
+    #[test]
+    fn bug5_shr_shift_one_less_than_bit_length_gives_one() {
+        let mut limbs = vec![0u64; 64];
+        limbs[63] = 1 << 63;
+        let a = BigInt::new(limbs, false);
+
+        let result = bigint_shr(a, 4095).expect("SHR(2^4095, 4095) should succeed");
+        assert_eq!(result.limbs(), &[1], "2^4095 >> 4095 = 1");
+    }
+
+    /// SHR(2^4095, 1) within top limb
+    #[test]
+    fn bug5_shr_shift_by_one_within_top_limb() {
+        let mut limbs = vec![0u64; 64];
+        limbs[63] = 1 << 63;
+        let a = BigInt::new(limbs, false);
+
+        let result = bigint_shr(a, 1).expect("SHR by 1 should succeed");
+        assert_eq!(result.limbs()[63], 1 << 62);
+    }
+
+    /// SHR(2^4095, 64) = 2^4031
+    #[test]
+    fn bug5_shr_shift_by_full_limb_width() {
+        let mut limbs = vec![0u64; 64];
+        limbs[63] = 1 << 63;
+        let a = BigInt::new(limbs, false);
+
+        let result = bigint_shr(a, 64).expect("SHR by 64 should succeed");
+        assert_eq!(result.limbs().len(), 63, "2^4031 needs 63 limbs");
+    }
+
+    /// SHR(x, 0) = x
+    #[test]
+    fn bug5_shr_shift_zero_is_identity() {
+        let a = BigInt::from(42i64);
+        let result = bigint_shr(a.clone(), 0).expect("SHR by 0 should succeed");
+        assert_eq!(result, a, "SHR(x, 0) must return x unchanged");
+    }
+
+    /// SHR(1, 1) = 0
+    #[test]
+    fn bug5_shr_shift_one_gives_zero() {
+        let a = BigInt::from(1i64);
+        let result = bigint_shr(a, 1).expect("SHR(1, 1) should succeed");
+        assert!(result.is_zero(), "1 >> 1 = 0");
+    }
+
+    // =========================================================================
+    // Bug 6 — bigint_shl: zero shift should return a
+    // =========================================================================
+
+    /// SHL(x, 0) = x
+    #[test]
+    fn bug6_shl_shift_zero_is_identity() {
+        let a = BigInt::from(42i64);
+        let result = bigint_shl(a.clone(), 0).expect("SHL(x, 0) must not return Err");
+        assert_eq!(result, a, "SHL(x, 0) must return x unchanged");
+    }
+
+    /// SHL(0, 0) = 0
+    #[test]
+    fn bug6_shl_zero_value_zero_shift() {
+        let a = BigInt::zero();
+        let result = bigint_shl(a, 0).expect("SHL(0, 0) must not Err");
+        assert!(result.is_zero());
+    }
+
+    /// SHL(1, 1) = 2
+    #[test]
+    fn bug6_shl_shift_one() {
+        let a = BigInt::from(1i64);
+        let result = bigint_shl(a, 1).expect("SHL(1, 1) should succeed");
+        assert_eq!(result.limbs(), &[2]);
+    }
+
+    /// SHL(1, 4095) = 2^4095 (max legal shift)
+    #[test]
+    fn bug6_shl_max_legal_shift() {
+        let a = BigInt::from(1i64);
+        let result = bigint_shl(a, 4095).expect("SHL(1, 4095) should succeed");
+        assert_eq!(result.limbs().len(), 64, "2^4095 needs 64 limbs");
+        assert_eq!(result.limbs()[63], 1u64 << 63);
+    }
+
+    /// SHL(1, 4096) must Err(Overflow)
+    #[test]
+    fn bug6_shl_overflow_trap() {
+        let a = BigInt::from(1i64);
+        let result = bigint_shl(a, 4096);
+        assert_eq!(result.unwrap_err(), BigIntError::Overflow);
+    }
+
+    /// SHL(2, 4095) must Err(Overflow)
+    #[test]
+    fn bug6_shl_overflow_when_value_has_more_than_one_bit() {
+        let a = BigInt::from(2i64);
+        let result = bigint_shl(a, 4095);
+        assert_eq!(result.unwrap_err(), BigIntError::Overflow);
+    }
+
+    /// SHL(2^4094, 1) at exact boundary
+    #[test]
+    fn bug6_shl_exactly_at_max_bits_is_ok() {
+        let mut limbs = vec![0u64; 64];
+        limbs[63] = 1 << 62; // 2^4094
+        let a = BigInt::new(limbs, false);
+        let result =
+            bigint_shl(a, 1).expect("SHL at exact MAX_BIGINT_BITS boundary should succeed");
+        assert_eq!(result.limbs().len(), 64);
+    }
+
+    // =========================================================================
+    // Bug 7 — Input canonicalization enforcement
+    // =========================================================================
+
+    /// bigint_add rejects non-canonical input A
+    #[test]
+    fn bug7_add_rejects_non_canonical_input_a_trailing_zero() {
+        let a = BigInt::new(vec![1, 0], false); // non-canonical: trailing zero
+        let b = BigInt::from(1i64);
+        let result = bigint_add(a, b);
+        assert_eq!(result.unwrap_err(), BigIntError::NonCanonicalInput);
+    }
+
+    /// bigint_add rejects non-canonical input B
+    #[test]
+    fn bug7_add_rejects_non_canonical_input_b_trailing_zero() {
+        let a = BigInt::from(1i64);
+        let b = BigInt::new(vec![1, 0], false);
+        let result = bigint_add(a, b);
+        assert_eq!(result.unwrap_err(), BigIntError::NonCanonicalInput);
+    }
+
+    /// bigint_add rejects negative zero
+    #[test]
+    fn bug7_add_rejects_negative_zero_input() {
+        let a = BigInt::new(vec![0], true); // negative zero
+        let b = BigInt::from(1i64);
+        let result = bigint_add(a, b);
+        assert_eq!(result.unwrap_err(), BigIntError::NonCanonicalInput);
+    }
+
+    /// bigint_sub rejects non-canonical input
+    #[test]
+    fn bug7_sub_rejects_non_canonical_input() {
+        let a = BigInt::new(vec![5, 0, 0], false);
+        let b = BigInt::from(3i64);
+        let result = bigint_sub(a, b);
+        assert_eq!(result.unwrap_err(), BigIntError::NonCanonicalInput);
+    }
+
+    /// bigint_mul rejects non-canonical input
+    #[test]
+    fn bug7_mul_rejects_non_canonical_input() {
+        let a = BigInt::new(vec![2, 0], false);
+        let b = BigInt::from(3i64);
+        let result = bigint_mul(a, b);
+        assert_eq!(result.unwrap_err(), BigIntError::NonCanonicalInput);
+    }
+
+    /// bigint_divmod rejects non-canonical dividend
+    #[test]
+    fn bug7_divmod_rejects_non_canonical_dividend() {
+        let a = BigInt::new(vec![10, 0], false);
+        let b = BigInt::from(3i64);
+        let result = bigint_divmod(a, b);
+        assert_eq!(result.unwrap_err(), BigIntError::NonCanonicalInput);
+    }
+
+    /// bigint_divmod rejects non-canonical divisor
+    #[test]
+    fn bug7_divmod_rejects_non_canonical_divisor() {
+        let a = BigInt::from(10i64);
+        let b = BigInt::new(vec![3, 0], false);
+        let result = bigint_divmod(a, b);
+        assert_eq!(result.unwrap_err(), BigIntError::NonCanonicalInput);
+    }
+
+    /// bigint_shl rejects non-canonical input
+    #[test]
+    fn bug7_shl_rejects_non_canonical_input() {
+        let a = BigInt::new(vec![1, 0], false);
+        let result = bigint_shl(a, 1);
+        assert_eq!(result.unwrap_err(), BigIntError::NonCanonicalInput);
+    }
+
+    /// bigint_shr rejects non-canonical input
+    #[test]
+    fn bug7_shr_rejects_non_canonical_input() {
+        let a = BigInt::new(vec![4, 0], false);
+        let result = bigint_shr(a, 1);
+        assert_eq!(result.unwrap_err(), BigIntError::NonCanonicalInput);
+    }
+
+    /// bigint_shl rejects negative zero
+    #[test]
+    fn bug7_shl_rejects_negative_zero() {
+        let a = BigInt::new(vec![0], true);
+        let result = bigint_shl(a, 1);
+        assert_eq!(result.unwrap_err(), BigIntError::NonCanonicalInput);
+    }
+
+    // =========================================================================
+    // Cross-cutting: overflow boundary tests
+    // =========================================================================
+
+    /// ADD at exact MAX_BIGINT_BITS is OK
+    #[test]
+    fn boundary_add_at_max_bigint_bits_is_ok() {
+        let mut limbs = vec![0u64; 64];
+        limbs[63] = 1 << 63;
+        let a = BigInt::new(limbs, false);
+        let result = bigint_add(a, BigInt::zero());
+        assert!(result.is_ok(), "2^4095 + 0 must not overflow");
+    }
+
+    /// ADD(2^4095, 2^4095) = 2^4096 exceeds MAX_BIGINT_BITS → TRAP
+    #[test]
+    fn boundary_add_overflow_by_one_bit() {
+        let mut limbs = vec![0u64; 64];
+        limbs[63] = 1 << 63;
+        let a = BigInt::new(limbs.clone(), false);
+        let b = BigInt::new(limbs, false);
+        let result = bigint_add(a, b);
+        assert_eq!(result.unwrap_err(), BigIntError::Overflow);
+    }
+
+    /// MUL(4096-bit, 1) is OK
+    #[test]
+    fn boundary_mul_by_one_at_max_bits() {
+        let mut limbs = vec![0u64; 64];
+        limbs[63] = 1 << 63;
+        let a = BigInt::new(limbs, false);
+        let result = bigint_mul(a, BigInt::from(1i64));
+        assert!(result.is_ok(), "4096-bit * 1 must not overflow");
+    }
+
+    // =========================================================================
+    // Probe entry verification
+    // =========================================================================
+
+    /// Probe entry 0: ADD(0, 2) = 2
+    #[test]
+    fn probe_entry_0_add_zero_and_two() {
+        let result = bigint_add(BigInt::zero(), BigInt::from(2i64)).unwrap();
+        assert_eq!(result.limbs(), &[2]);
+    }
+
+    /// Probe entry 3: ADD(1, -1) = 0
+    #[test]
+    fn probe_entry_3_add_one_and_neg_one() {
+        let a = BigInt::from(1i64);
+        let b = BigInt::from(-1i64);
+        let result = bigint_add(a, b).unwrap();
+        assert!(result.is_zero());
+    }
+
+    /// Probe entry 5: SUB(-5, -2) = -3
+    #[test]
+    fn probe_entry_5_sub_neg5_neg2() {
+        let a = BigInt::from(-5i64);
+        let b = BigInt::from(-2i64);
+        let result = bigint_sub(a, b).unwrap();
+        assert_eq!(result.limbs(), &[3]);
+        assert!(result.sign());
+    }
+
+    /// Probe entry 10: MUL(2, 3) = 6
+    #[test]
+    fn probe_entry_10_mul_two_three() {
+        let result = bigint_mul(BigInt::from(2i64), BigInt::from(3i64)).unwrap();
+        assert_eq!(result.limbs(), &[6]);
+    }
+
+    /// Probe entry 16: DIV(10, 3) = 3 (remainder 1)
+    #[test]
+    fn probe_entry_16_div_10_by_3() {
+        let (q, r) = bigint_divmod(BigInt::from(10i64), BigInt::from(3i64)).unwrap();
+        assert_eq!(q.limbs(), &[3]);
+        assert_eq!(r.limbs(), &[1]);
+    }
+
+    /// Probe entry 21: MOD(-7, 3) = -1
+    #[test]
+    fn probe_entry_21_mod_neg7_by_3() {
+        let result = bigint_mod(BigInt::from(-7i64), BigInt::from(3i64)).unwrap();
+        assert_eq!(result.limbs(), &[1]);
+        assert!(result.sign());
+    }
+
+    /// Probe entry 24: SHL(1, 4095)
+    #[test]
+    fn probe_entry_24_shl_1_by_4095() {
+        let result = bigint_shl(BigInt::from(1i64), 4095).unwrap();
+        assert_eq!(result.limbs().len(), 64);
+        assert_eq!(result.limbs()[63], 1u64 << 63);
+    }
+
+    /// Probe entry 29: SHR(2^4095, 4096) = ZERO
+    #[test]
+    fn probe_entry_29_shr_2_to_4095_by_4096() {
+        let mut limbs = vec![0u64; 64];
+        limbs[63] = 1 << 63;
+        let a = BigInt::new(limbs, false);
+        let result = bigint_shr(a, 4096).unwrap();
+        assert!(result.is_zero());
+    }
+
+    /// Probe entry 53: SUB(0, 1) = -1
+    #[test]
+    fn probe_entry_53_sub_zero_one() {
+        let result = bigint_sub(BigInt::zero(), BigInt::from(1i64)).unwrap();
+        assert_eq!(result.limbs(), &[1]);
+        assert!(result.sign());
     }
 }

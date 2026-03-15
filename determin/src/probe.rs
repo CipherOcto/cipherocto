@@ -1,5 +1,4 @@
 #![allow(dead_code)]
-#![allow(arithmetic_overflow)]
 
 //! Deterministic Floating-Point Verification Probe
 //!
@@ -528,7 +527,7 @@ pub fn bigint_all_probe_entries() -> Vec<BigIntProbeEntry> {
         BigIntProbeEntry {
             index: 1,
             op_id: OP_ADD,
-            input_a: BigIntProbeValue::Int(1 << 64),
+            input_a: BigIntProbeValue::Int((1u128 << 64) as i128),
             input_b: BigIntProbeValue::Int(1),
             description: "2^64 + 1",
         },

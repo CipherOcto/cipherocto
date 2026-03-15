@@ -7,34 +7,218 @@ Open
 RFC-0110 (Numeric): Deterministic BIGINT
 
 ## Summary
-Implement BigInt conversions (i64, i128, string) and canonical wire serialization format.
+Implement BigInt conversions (i64, i128, string) and canonical wire serialization format. This mission enables interoperability with Rust primitives and persistent storage.
 
-## Acceptance Criteria
+## Phase 1: Primitive Conversions
+
+### Acceptance Criteria
 - [ ] From<i64> trait implementation
 - [ ] From<i128> trait implementation
-- [ ] To<i64> trait implementation (TRAP on overflow)
-- [ ] To<i128> trait implementation (TRAP on overflow)
-- [ ] FromStr and Display trait implementations
-- [ ] Serialization: canonical wire format with version byte
-- [ ] Deserialization: with canonical form verification
-- [ ] bigint_to_i128_bytes for i128 round-trip conversion
+- [ ] TryFrom<u64> trait implementation
+- [ ] TryFrom<u128> trait implementation
+- [ ] To<i64> trait (TRAP on overflow)
+- [ ] To<i128> trait (TRAP on overflow)
+- [ ] To<u64> trait (TRAP on overflow)
+- [ ] To<u128> trait (TRAP on overflow)
 
-## Location
-`stoolap/src/numeric/bigint.rs`
+### i64 Conversion
+```rust
+impl From<i64> for BigInt {
+    fn from(n: i64) -> BigInt {
+        if n == 0 { return ZERO; }
+        let sign = n < 0;
+        let mag = n.unsigned_abs() as u64;
+        canonicalize(BigInt {
+            limbs: vec![mag],
+            sign,
+        })
+    }
+}
 
-## Complexity
-Medium
+impl TryFrom<BigInt> for i64 {
+    type Error = (); // TRAP on overflow
+
+    fn try_from(b: BigInt) -> Result<i64, Self::Error> {
+        if b.limbs.len() > 1 { return Err(()); } // Overflow
+        let mag = b.limbs[0];
+        if b.sign {
+            if mag > (i64::MIN.unsigned_abs() as u64) { return Err(()); }
+            Ok(-(mag as i64))
+        } else {
+            if mag > i64::MAX as u64 { return Err(()); }
+            Ok(mag as i64)
+        }
+    }
+}
+```
+
+### i128 Conversion
+```rust
+impl From<i128> for BigInt {
+    fn from(n: i128) -> BigInt {
+        if n == 0 { return ZERO; }
+        let sign = n < 0;
+        let mag = n.unsigned_abs() as u128;
+        let lo = mag as u64;
+        let hi = (mag >> 64) as u64;
+        let limbs = if hi == 0 {
+            vec![lo]
+        } else {
+            vec![lo, hi]
+        };
+        canonicalize(BigInt { limbs, sign })
+    }
+}
+
+impl TryFrom<BigInt> for i128 {
+    type Error = (); // TRAP on overflow
+
+    fn try_from(b: &BigInt) -> Result<i128, Self::Error> {
+        if b.limbs.len() > 2 { return Err(()); }
+        let lo = b.limbs[0];
+        let hi = b.limbs.get(1).copied().unwrap_or(0);
+        let mag = ((hi as u128) << 64) | (lo as u128);
+        if b.sign {
+            if mag > (i128::MIN.unsigned_abs() as u128) { return Err(()); }
+            Ok(-(mag as i128))
+        } else {
+            if mag > i128::MAX as u128 { return Err(()); }
+            Ok(mag as i128)
+        }
+    }
+}
+```
+
+## Phase 2: String Conversions
+
+### Acceptance Criteria
+- [ ] FromStr trait implementation (parsing)
+- [ ] Display trait implementation (formatting)
+- [ ] Support decimal string representation
+- [ ] Support hex string prefix (0x)
+- [ ] Error handling for invalid input
+
+### String Format
+```
+Decimal: "12345678901234567890"
+Hex:     "0x1a2b3c4d5e6f"
+Negative: "-9876543210"
+```
+
+## Phase 3: Serialization (Wire Format)
+
+### Acceptance Criteria
+- [ ] BigIntEncoding: canonical 16-byte wire format
+- [ ] Serialization: struct → bytes
+- [ ] Deserialization: bytes → struct with canonical form verification
+- [ ] Version byte: 0x01 for v1
+
+### Wire Format (RFC-0110 §BigIntEncoding)
+```
+┌─────────────────────────────────────────────┐
+│ BigIntEncoding (16 bytes)                  │
+├─────────────────────────────────────────────┤
+│ byte 0:    version (0x01)                 │
+│ byte 1:    sign (0x00 = positive, 0xFF = negative) │
+│ byte 2:    num_limbs (1-64)               │
+│ bytes 3-15: unused (0x00)                  │
+│ + limbs:    little-endian u64[1..num_limbs]│
+└─────────────────────────────────────────────┘
+```
+
+### Serialization Algorithm
+```
+bigint_serialize(b: BigInt) -> Vec<u8>
+
+1. Precondition: b is canonical
+2. version = 0x01
+3. sign = 0xFF if b.sign else 0x00
+4. num_limbs = b.limbs.len() as u8
+5. Encode header bytes [version, sign, num_limbs, 0...0]
+6. Append little-endian limbs
+
+Total: 16 bytes + 8*num_limbs bytes
+```
+
+### Deserialization Algorithm
+```
+bigint_deserialize(data: &[u8]) -> Result<BigInt, Error>
+
+1. If data.len() < 16: return Err(InvalidEncoding)
+2. version = data[0]; if version != 0x01: return Err(UnsupportedVersion)
+3. sign = data[1]; if sign != 0x00 && sign != 0xFF: return Err(InvalidSign)
+4. num_limbs = data[2]; if num_limbs == 0 || num_limbs > 64: return Err(InvalidLimbs)
+5. If data.len() != 16 + 8*num_limbs: return Err(InvalidLength)
+
+6. limbs = parse little-endian u64 from data[16..]
+7. b = BigInt { limbs, sign: sign == 0xFF }
+
+8. Verify canonical form:
+   a. If limbs.len() > 1 and limbs[last] == 0: return Err(NonCanonical)
+   b. If limbs == [0] and sign == 0xFF: return Err(NonCanonicalNegativeZero)
+
+9. return Ok(b)
+```
+
+## Phase 4: i128 Round-Trip Conversion
+
+### Acceptance Criteria
+- [ ] bigint_to_i128_bytes: BigInt → 16-byte two's complement BE
+- [ ] i128_roundtrip tests for all i128 values
+
+### bigint_to_i128_bytes Algorithm (RFC-0110)
+```
+bigint_to_i128_bytes(b: BigInt) -> [u8; 16]
+
+Precondition: b fits in i128 range (-2^127 to 2^127-1)
+
+1. If b > 2^127 - 1 or b < -2^127: TRAP
+2. If b == 0: return [0x00, 0x00, ..., 0x00] (16 zeros)
+3. Reconstruct magnitude as u128:
+   magnitude: u128 = b.limbs[0] as u128;
+   if b.limbs.len >= 2 {
+     magnitude |= (b.limbs[1] as u128) << 64;
+   }
+4. let mut bytes = [0u8; 16];
+5. let val: u128 = if b.sign == false {
+     magnitude
+   } else {
+     (!magnitude).wrapping_add(1)  // two's complement
+   };
+6. for i in 0..16 {
+     bytes[i] = ((val >> (120 - i*8)) & 0xFF) as u8;
+   }
+7. Return bytes
+```
+
+### i128 Round-Trip Test Vectors (RFC-0110 §i128 Round-Trip Test Vectors)
+| Entry | Input | Expected |
+|-------|-------|----------|
+| 42 | 2^127-1 (i128::MAX) | round-trip |
+| 43 | -2^127 (i128::MIN) | round-trip |
+| 44 | 0 | round-trip |
+| 45 | 1 | round-trip |
+| 46 | -1 | round-trip |
+
+## Implementation Location
+- **File**: `determin/src/bigint.rs` (extends core algorithms)
+- **Module**: `determin/src/serialize.rs` (optional separate module)
 
 ## Prerequisites
-- Mission 0110-bigint-core-algorithms
+- Mission 0110-bigint-core-algorithms (Phase 1-4 complete)
 
-## Implementation Notes
-- Wire format: [version: u8, sign: u8, num_limbs: u8, limbs: [u64; n]]
-- Sign byte: 0x00 = positive, 0xFF = negative
-- Limbs stored as little-endian u64
-- No leading zero limbs in canonical form
-- bigint_to_i128_bytes must produce valid two's complement BE representation
+## Testing Requirements
+- Unit tests for all conversion functions
+- Round-trip tests: i64 → BigInt → i64
+- Round-trip tests: i128 → BigInt → i128
+- Serialization round-trip: serialize → deserialize → identical
+- Edge cases: i64::MIN, i64::MAX, i128::MIN, i128::MAX, zero, negative zero
 
 ## Reference
 - RFC-0110: Deterministic BIGINT (§Wire Format)
 - RFC-0110: Deterministic BIGINT (§BIGINT to i128 conversion)
+- RFC-0110: Deterministic BIGINT (§i128 Round-Trip Test Vectors)
+- RFC-0110: Deterministic BIGINT (§Deserialization Algorithm)
+
+## Complexity
+Medium — Straightforward conversions with careful overflow handling

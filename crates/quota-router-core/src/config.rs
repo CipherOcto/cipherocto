@@ -15,11 +15,35 @@ pub enum ConfigError {
     Json(#[from] serde_json::Error),
 }
 
+/// WAL Pub/Sub configuration
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct WalPubSubConfig {
+    /// Enable WAL pub/sub (default: true)
+    #[serde(default = "default_true")]
+    pub enabled: bool,
+    /// Polling interval in milliseconds (default: 50)
+    #[serde(default = "default_poll_interval")]
+    pub poll_interval_ms: u64,
+    /// WAL path for shared storage (optional)
+    pub wal_path: Option<String>,
+}
+
+fn default_true() -> bool {
+    true
+}
+
+fn default_poll_interval() -> u64 {
+    50
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Config {
     pub balance: u64,
     pub providers: Vec<Provider>,
     pub proxy_port: u16,
+    /// WAL pub/sub configuration
+    #[serde(default)]
+    pub wal_pubsub: WalPubSubConfig,
 }
 
 impl Config {
@@ -34,6 +58,11 @@ impl Config {
                 balance: 100, // Mock balance
                 providers: vec![],
                 proxy_port: 8080,
+                wal_pubsub: WalPubSubConfig {
+                    enabled: true,
+                    poll_interval_ms: 50,
+                    wal_path: None,
+                },
             })
         }
     }
@@ -52,5 +81,39 @@ impl Config {
         let proj_dirs = ProjectDirs::from("com", "cipherocto", "quota-router")
             .ok_or(ConfigError::NoConfigDir)?;
         Ok(proj_dirs.config_dir().join("config.json"))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_wal_pubsub_config_defaults() {
+        let config = WalPubSubConfig {
+            enabled: true,
+            poll_interval_ms: 50,
+            wal_path: None,
+        };
+
+        assert!(config.enabled);
+        assert_eq!(config.poll_interval_ms, 50);
+    }
+
+    #[test]
+    fn test_config_default() {
+        // Test default config
+        let config = Config {
+            balance: 100,
+            providers: vec![],
+            proxy_port: 8080,
+            wal_pubsub: WalPubSubConfig {
+                enabled: true,
+                poll_interval_ms: 50,
+                wal_path: None,
+            },
+        };
+
+        assert!(config.wal_pubsub.enabled);
     }
 }

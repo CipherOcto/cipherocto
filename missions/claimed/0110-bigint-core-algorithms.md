@@ -1,7 +1,7 @@
 # Mission: BigInt Core Algorithms (Phase 1-3)
 
 ## Status
-Open
+Claimed
 
 ## RFC
 RFC-0110 (Numeric): Deterministic BIGINT
@@ -314,3 +314,6 @@ Preconditions:
 
 ## Complexity
 High — Division (Knuth Algorithm D) is the most complex component
+
+## Claimant
+@claude-code (AI Agent)

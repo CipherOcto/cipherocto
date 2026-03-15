@@ -2,10 +2,15 @@
 
 ## Status
 
-**Version:** 1.0 (2026-03-14)
+**Version:** 1.1 (2026-03-15)
 **Status:** Draft
 
 > **Note:** This RFC is extracted from RFC-0106 (Deterministic Numeric Tower) as part of the Track B dismantling effort.
+
+> **Adversarial Review v1.1 Changes:**
+> - Fixed RoundHalfEven to match RFC-0105 exact algorithm (handles negative values correctly)
+> - Fixed Newton-Raphson SQRT with explicit iteration limit and convergence check
+> - Added decimal_spec_version for replay pinning
 
 ## Summary
 
@@ -180,11 +185,15 @@ Algorithm:
      quotient = scaled_dividend / b.mantissa
      remainder = scaled_dividend % b.mantissa
 
-  4. Round to target scale using RoundHalfEven:
-     // If remainder*2 >= b.mantissa, round quotient up
-     if abs(remainder) * 2 >= abs(b.mantissa):
-       if quotient >= 0: quotient += 1
-       else: quotient -= 1
+  4. Round to target scale using RoundHalfEven (matches RFC-0105):
+     abs_remainder = abs(remainder)
+     abs_b = abs(b.mantissa)
+     half = abs_b / 2
+     if abs_remainder < half: result = quotient  // round down
+     else if abs_remainder > half: result = quotient + sign(quotient)  // round up
+     else:  // remainder == half (tie): round to even
+       if quotient % 2 == 0: result = quotient
+       else: result = quotient + sign(quotient)
 
   5. Check overflow and canonicalize
 ```
@@ -194,18 +203,23 @@ Algorithm:
 ```
 decimal_sqrt(a: Decimal) -> Decimal
 
-Algorithm: Newton-Raphson iteration
+Algorithm: Newton-Raphson iteration with explicit convergence
   1. If a.mantissa < 0: TRAP (square root of negative)
+  2. If a.mantissa == 0: return {0, 0}
 
-  2. Initial guess: sqrt(mantissa) at (scale/2)
+  3. Initial guess: x = sqrt(mantissa) as i128, scale = a.scale / 2
 
-  3. Iterate 20 times:
-     x_new = (x + a/x) / 2
+  4. Iterate max 20 times:
+     // Division uses DECIMAL_DIV with target_scale = a.scale
+     x_new = (x + a / x) / 2
+     // Convergence: stop when |x_new - x| < 2 (i128 precision)
+     if abs(x_new - x) < 2: break
+     x = x_new
 
-  4. Round to target scale using RoundHalfEven
-
-  5. Canonicalize result
+  5. Return canonicalized result at original scale
 ```
+
+**Note:** The division `a / x` in step 4 requires DECIMAL_DIV, which uses i128 internally. Convergence check at step 4 uses i128 precision (not DECIMAL scale) to ensure deterministic iteration count.
 
 ### ROUND — Rounding
 
@@ -226,11 +240,17 @@ Algorithm:
 
   4. Apply rounding per mode:
 
-     RoundHalfEven:
+     RoundHalfEven: (matches RFC-0105 exact algorithm)
        q = d.mantissa / divisor
        r = d.mantissa % divisor
-       if r * 2 >= divisor:
-         if q is odd: q += 1
+       // Use absolute remainder for comparison (Rust % preserves sign of dividend)
+       abs_r = abs(r)
+       half = divisor / 2
+       if abs_r < half: return q  // round down
+       if abs_r > half: return q + sign(d.mantissa)  // round up
+       // remainder == half (tie): round to even
+       if q % 2 == 0: return q  // q is even, round to even
+       else: return q + sign(d.mantissa)  // q is odd, round away from zero
 
      RoundDown:
        q = d.mantissa / divisor
@@ -330,6 +350,16 @@ Return "integer_part.fractional_part"
 | 1.245, 2 | 1 | 1.2 | 0.45 rounds to even (2) |
 | 1.255, 2 | 1 | 1.3 | 0.55 rounds to odd (3) |
 
+### Rounding Negative Values (Critical for Consensus)
+
+| Input | Target Scale | Expected | Notes |
+|-------|--------------|----------|-------|
+| -1.235, 2 | 1 | -1.2 | -0.35 rounds to even (-2→-1.2) |
+| -1.245, 2 | 1 | -1.2 | -0.45 rounds to even (-2→-1.2) |
+| -1.255, 2 | 1 | -1.3 | -0.55 rounds away from zero |
+| -2.5, 1 | 0 | -2 | -0.5 rounds to even (-2) |
+| -3.5, 1 | 0 | -4 | -0.5 rounds to even (-4) |
+
 ### Chain Operations
 
 | Expression | Expected | Notes |
@@ -350,6 +380,9 @@ Return "integer_part.fractional_part"
 ## Verification Probe
 
 ```rust
+/// Spec version for replay pinning (matches RFC-0104/0110 pattern)
+const DECIMAL_SPEC_VERSION: u32 = 1;
+
 struct DecimalProbe {
     /// Entry 0: 1.0 + 2.0 = 3.0
     entry_0: [u8; 32],

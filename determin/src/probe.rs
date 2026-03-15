@@ -469,17 +469,42 @@ pub struct BigIntProbeEntry {
 }
 
 /// Probe input value types
+///
+/// # IMPORTANT: Sentinel vs Integer Distinction
+///
+/// This enum has two kinds of values: **sentinels** (special probe markers) and **integers**
+/// (actual BigInt operand values). They encode to DIFFERENT bytes in the compact probe format,
+/// so using the wrong variant will silently produce wrong probe entries.
+///
+/// | Variant | Encodes to | Use when |
+/// |---------|------------|----------|
+/// | `Int(MAX_U64)` | `43 c9 c2...` (hash-ref) | Entry tests integer 2^64-1 as operand |
+/// | `Max` | `ff ff ff ff ff ff ff ff` | Entry tests 4096-bit MAX_BIGINT sentinel |
+/// | `Int(TRAP)` | `43 xx xx...` (hash-ref) | Entry tests integer TRAP_VALUE as operand |
+/// | `Trap` | `de ad de ad de ad de ad` | Entry tests TRAP sentinel |
+///
+/// **Common mistake:** Writing `BigIntProbeValue::Max` when you mean "the integer 2^64-1".
+/// This will produce a probe entry with different bytes than one using `Int(MAX_U64 as i128)`,
+/// even though both represent the same numeric value. The probe Merkle root will differ.
 #[derive(Debug, Clone)]
 pub enum BigIntProbeValue {
-    /// Integer value
+    /// Integer value (use this for actual BigInt operands like 1, 42, MAX_U64, etc.)
     Int(i128),
-    /// BigInt limbs (for CANONICALIZE)
+    /// BigInt limbs (for CANONICALIZE operation)
     Limbs(Vec<u64>),
-    /// Special sentinel
+    /// **4096-bit MAX_BIGINT sentinel** — NOT the integer 2^64-1
+    ///
+    /// Only use `Max` when the probe entry explicitly tests the overflow boundary
+    /// at MAX_BIGINT_BITS (4096 bits). For testing 2^64-1 + 1 carry propagation,
+    /// use `Int(MAX_U64 as i128)` instead.
     Max,
-    /// Special sentinel
+    /// **TRAP sentinel** — triggers overflow/division-by-zero error
+    ///
+    /// Only use `Trap` when the probe entry explicitly tests TRAP behavior.
+    /// For testing arithmetic with the integer value 0xDEAD_DEAD_DEAD_DEAD,
+    /// use `Int(TRAP as i128)` instead.
     Trap,
-    /// Hash reference for serialization
+    /// Hash reference for serialization (SHA256 of serialized canonical bytes)
     HashRef,
 }
 

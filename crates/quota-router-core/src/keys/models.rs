@@ -56,3 +56,12 @@ pub struct KeyUpdates {
     pub key_type: Option<KeyType>,
     pub description: Option<String>,
 }
+
+/// Team - group of API keys with shared budget
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Team {
+    pub team_id: String,
+    pub name: String,
+    pub budget_limit: i64,
+    pub created_at: i64,
+}

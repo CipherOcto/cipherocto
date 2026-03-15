@@ -1,10 +1,17 @@
-use crate::keys::{ApiKey, KeyError, KeyType, KeyUpdates};
+use crate::keys::{ApiKey, KeyError, KeyType, KeyUpdates, Team};
 
 pub trait KeyStorage: Send + Sync {
+    // Key operations
     fn create_key(&self, key: &ApiKey) -> Result<(), KeyError>;
     fn lookup_by_hash(&self, key_hash: &[u8]) -> Result<Option<ApiKey>, KeyError>;
     fn update_key(&self, key_id: &str, updates: &KeyUpdates) -> Result<(), KeyError>;
     fn list_keys(&self, team_id: Option<&str>) -> Result<Vec<ApiKey>, KeyError>;
+
+    // Team operations
+    fn create_team(&self, team: &Team) -> Result<(), KeyError>;
+    fn get_team(&self, team_id: &str) -> Result<Option<Team>, KeyError>;
+    fn list_teams(&self) -> Result<Vec<Team>, KeyError>;
+    fn delete_team(&self, team_id: &str) -> Result<(), KeyError>;
 }
 
 pub struct StoolapKeyStorage {
@@ -219,6 +226,80 @@ impl KeyStorage for StoolapKeyStorage {
 
         Ok(keys)
     }
+
+    fn create_team(&self, team: &Team) -> Result<(), KeyError> {
+        self.db
+            .execute(
+                "INSERT INTO teams (team_id, name, budget_limit, created_at) VALUES ($1, $2, $3, $4)",
+                vec![
+                    team.team_id.clone().into(),
+                    team.name.clone().into(),
+                    team.budget_limit.into(),
+                    team.created_at.into(),
+                ],
+            )
+            .map_err(|e| KeyError::Storage(e.to_string()))?;
+        Ok(())
+    }
+
+    fn get_team(&self, team_id: &str) -> Result<Option<Team>, KeyError> {
+        let rows = self
+            .db
+            .query(
+                "SELECT * FROM teams WHERE team_id = $1",
+                vec![team_id.into()],
+            )
+            .map_err(|e| KeyError::Storage(e.to_string()))?;
+
+        if let Some(Ok(row)) = rows.into_iter().next() {
+            let team = Team {
+                team_id: row.get_by_name("team_id").map_err(|e| KeyError::Storage(e.to_string()))?,
+                name: row.get_by_name("name").map_err(|e| KeyError::Storage(e.to_string()))?,
+                budget_limit: row.get_by_name("budget_limit").map_err(|e| KeyError::Storage(e.to_string()))?,
+                created_at: row.get_by_name("created_at").map_err(|e| KeyError::Storage(e.to_string()))?,
+            };
+            Ok(Some(team))
+        } else {
+            Ok(None)
+        }
+    }
+
+    fn list_teams(&self) -> Result<Vec<Team>, KeyError> {
+        let rows = self
+            .db
+            .query("SELECT * FROM teams", ())
+            .map_err(|e| KeyError::Storage(e.to_string()))?;
+
+        let mut teams = Vec::new();
+        for row in rows {
+            let row = row.map_err(|e| KeyError::Storage(e.to_string()))?;
+            let team = Team {
+                team_id: row.get_by_name("team_id").map_err(|e| KeyError::Storage(e.to_string()))?,
+                name: row.get_by_name("name").map_err(|e| KeyError::Storage(e.to_string()))?,
+                budget_limit: row.get_by_name("budget_limit").map_err(|e| KeyError::Storage(e.to_string()))?,
+                created_at: row.get_by_name("created_at").map_err(|e| KeyError::Storage(e.to_string()))?,
+            };
+            teams.push(team);
+        }
+
+        Ok(teams)
+    }
+
+    fn delete_team(&self, team_id: &str) -> Result<(), KeyError> {
+        // Check if any keys belong to this team
+        let keys = self.list_keys(Some(team_id))?;
+        if !keys.is_empty() {
+            return Err(KeyError::Storage("Cannot delete team with existing keys".to_string()));
+        }
+
+        self.db
+            .execute(
+                "DELETE FROM teams WHERE team_id = $1",
+                vec![team_id.into()],
+            )
+            .map_err(|e| KeyError::Storage(e.to_string()))?;
+        Ok(())
+    }
 }
 
 #[cfg(test)]
@@ -354,5 +435,116 @@ mod tests {
         // List by non-existent team
         let other_keys = storage.list_keys(Some("nonexistent")).unwrap();
         assert_eq!(other_keys.len(), 0);
+    }
+
+    #[test]
+    fn test_create_and_get_team() {
+        let storage = create_test_storage();
+
+        let team = Team {
+            team_id: "team-1".to_string(),
+            name: "Test Team".to_string(),
+            budget_limit: 10000,
+            created_at: 100,
+        };
+
+        storage.create_team(&team).unwrap();
+
+        let retrieved = storage.get_team("team-1").unwrap();
+        assert!(retrieved.is_some());
+        let t = retrieved.unwrap();
+        assert_eq!(t.team_id, "team-1");
+        assert_eq!(t.name, "Test Team");
+        assert_eq!(t.budget_limit, 10000);
+    }
+
+    #[test]
+    fn test_get_nonexistent_team() {
+        let storage = create_test_storage();
+
+        let retrieved = storage.get_team("nonexistent").unwrap();
+        assert!(retrieved.is_none());
+    }
+
+    #[test]
+    fn test_list_teams() {
+        let storage = create_test_storage();
+
+        // Create multiple teams
+        for i in 0..3 {
+            let team = Team {
+                team_id: format!("team-{}", i),
+                name: format!("Team {}", i),
+                budget_limit: 1000 * (i + 1) as i64,
+                created_at: 100 + i as i64,
+            };
+            storage.create_team(&team).unwrap();
+        }
+
+        let teams = storage.list_teams().unwrap();
+        assert_eq!(teams.len(), 3);
+    }
+
+    #[test]
+    fn test_delete_team_with_keys_fails() {
+        let storage = create_test_storage();
+
+        // Create a team
+        let team = Team {
+            team_id: "team-with-keys".to_string(),
+            name: "Team With Keys".to_string(),
+            budget_limit: 10000,
+            created_at: 100,
+        };
+        storage.create_team(&team).unwrap();
+
+        // Create a key belonging to this team
+        let key = ApiKey {
+            key_id: "test-key".to_string(),
+            key_hash: vec![1, 2, 3],
+            key_prefix: "sk-qr-tes".to_string(),
+            team_id: Some("team-with-keys".to_string()),
+            budget_limit: 1000,
+            rpm_limit: None,
+            tpm_limit: None,
+            created_at: 100,
+            expires_at: None,
+            revoked: false,
+            revoked_at: None,
+            revoked_by: None,
+            revocation_reason: None,
+            key_type: crate::keys::KeyType::Default,
+            allowed_routes: None,
+            auto_rotate: false,
+            rotation_interval_days: None,
+            description: None,
+            metadata: None,
+        };
+        storage.create_key(&key).unwrap();
+
+        // Delete should fail
+        let result = storage.delete_team("team-with-keys");
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_delete_team_success() {
+        let storage = create_test_storage();
+
+        // Create a team with no keys
+        let team = Team {
+            team_id: "orphan-team".to_string(),
+            name: "Orphan Team".to_string(),
+            budget_limit: 5000,
+            created_at: 100,
+        };
+        storage.create_team(&team).unwrap();
+
+        // Delete should succeed
+        storage.delete_team("orphan-team").unwrap();
+
+        // Verify deleted
+        let retrieved = storage.get_team("orphan-team").unwrap();
+        assert!(retrieved.is_none());
     }
 }

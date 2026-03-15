@@ -315,15 +315,49 @@ Once accepted:
 | RFC                | Title                      | Status                           |
 | ------------------ | -------------------------- | -------------------------------- |
 | RFC-0103 (Storage) | Unified Vector-SQL Storage | Superseded by RFC-0200 (Storage) |
+| RFC-0106 (Numeric) | Deterministic Numeric Tower | Superseded by 0110-0115          |
 
 ---
 
-## Quick Reference: The Stack
+## RFC Folder Structure
+
+RFCs are organized by status and category per the BLUEPRINT:
+
+```
+rfcs/
+├── draft/
+│   ├── process/       (0000-0099)
+│   ├── numeric/       (0100-0199)
+│   ├── storage/      (0200-0299)
+│   ├── retrieval/    (0300-0399)
+│   ├── agents/       (0400-0499)
+│   ├── ai-execution/ (0500-0599)
+│   ├── proof-systems/(0600-0699)
+│   ├── consensus/    (0700-0799)
+│   ├── networking/   (0800-0899)
+│   └── economics/    (0900-0999)
+├── planned/
+│   ├── process/
+│   ├── numeric/
+│   ├── proof-systems/
+│   └── economics/
+├── accepted/
+├── final/
+└── archived/
+```
+
+See [docs/BLUEPRINT.md](../docs/BLUEPRINT.md) for the full specification.
 
 ```
 Determinism Standard (RFC-0003 Process/Meta) ← Foundation
         ↓
-Numeric Foundation (RFC-0106 Numeric)
+Numeric Foundation (RFC-0104/0105 DFP/DQA)
+        ↓
+BIGINT & DECIMAL (RFC-0110/0111)
+        ↓
+Vectors & Matrices (RFC-0112/0113)
+        ↓
+Activation Functions (RFC-0114)
         ↓
 Linear Algebra (RFC-0109 Numeric)
         ↓

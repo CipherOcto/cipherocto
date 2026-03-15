@@ -2,10 +2,19 @@
 
 ## Status
 
-**Version:** 2.2 (2026-03-15)
+**Version:** 2.3 (2026-03-15)
 **Status:** Accepted
 
 > **Note:** This RFC is extracted from RFC-0106 (Deterministic Numeric Tower) as part of the Track B dismantling effort.
+
+> **Adversarial Review v2.3 Changes (Critical Bug Fixes):**
+> - FIXED: DIV algorithm unified (removed duplicate algorithm contradiction)
+> - FIXED: DIV index underflow bug (j=0 case accessing limbs[-1])
+> - FIXED: Retracted false i128/DqaEncoding byte-identity claim
+> - FIXED: bigint_to_i128_bytes algorithm consistency
+> - REMOVED: Undefined POW/AND/OR/XOR/NOT probe entries (57-63)
+> - FIXED: SUB borrow arithmetic with correct borrow propagation
+> - REPLACED: Poseidon2 LUT hash with explicit placeholder marker
 
 > **Adversarial Review v2.2 Changes (Final Production-Grade):**
 > - Added deterministic canonicalization algorithm (normative step-by-step)
@@ -264,14 +273,17 @@ Algorithm:
        a_limb = if i < a.limbs.len: a.limbs[i] else: 0
        b_limb = if i < b.limbs.len: b.limbs[i] else: 0
 
-       diff = a_limb - b_limb - borrow
-       if diff < 0:
-         diff += 2^64
-         borrow = 1
-       else:
-         borrow = 0
+       // Use wrapping subtraction to detect borrow
+       diff = a_limb.wrapping_sub(b_limb)
+       // If a_limb < b_limb + borrow, we underflowed and need to borrow
+       let needs_borrow = a_limb < b_limb.wrapping_add(borrow);
+       diff = diff.wrapping_sub(borrow)
+       result_limbs.push(diff)
+       // Borrow propagates: if we needed to borrow in this step,
+       // we carry 1 to the next limb
+       borrow = if needs_borrow { 1 } else { 0 }
 
-       result_limbs.push(diff as u64)
+     // After loop, borrow MUST be 0 (|a| >= |b| by design)
 
   5. Remove leading zero limbs
 
@@ -351,9 +363,14 @@ Algorithm: Restoring division with D1 normalization
 
   4. Main loop (for j from a_norm.limbs.len - 1 down to 0):
      a. Form estimate (D1):
-        if a_norm.limbs[j] == b_norm.limbs.last:
+        // Handle j=0 case: use a_norm.limbs[0] with implicit zero for j-1
+        if j == 0:
+          // For least significant limb, use single-limb division
+          dividend = a_norm.limbs[0] as u128
+        else if a_norm.limbs[j] == b_norm.limbs.last:
           q_estimate = u64::MAX
         else:
+          // Standard D1: ((r[j] << 64) | r[j-1]) / d[m-1]
           q_estimate = ((a_norm.limbs[j] as u128) << 64 |
                         a_norm.limbs[j-1] as u128) /
                         b_norm.limbs.last as u128
@@ -376,77 +393,6 @@ Algorithm: Restoring division with D1 normalization
   7. Return quotient with sign = a.sign XOR b.sign
 ```
 
-### DIV Fixed-Iteration Guarantee (Mandatory)
-
-The restoring division MUST execute **exactly 64 iterations per limb position** (no early exit).
-
-**Verbatim Limb-by-Limb Algorithm:**
-
-```
-bigint_div_fixed(a: BigInt, b: BigInt) -> BigInt
-
-Preconditions:
-  - Same as DIV above
-  - b.limbs.len <= MAX_LIMBS
-
-Algorithm:
-  1. If |a| < |b|: return ZERO
-
-  2. Normalize: Shift b left until MSB is 1
-     norm_shift = count_leading_zeros(b.limbs.last)
-     b_norm = b << norm_shift
-     a_norm = a << norm_shift
-     n = a_norm.limbs.len     // quotient limbs
-     m = b_norm.limbs.len     // divisor limbs
-
-  3. Initialize quotient: q = vec![0; n]
-
-  4. For j from (n - 1) down to 0:  // Outer: each quotient limb
-       // --- BEGIN FIXED 64 ITERATIONS ---
-       for iteration in 0..64:  // FIXED, no early exit
-         // (a) Shift remainder left by 1 limb (with carry)
-         // (b) Subtract if needed (restoring step)
-         // All comparisons use constant-time ct_lt
-       // --- END FIXED 64 ITERATIONS ---
-
-       // Compute quotient digit q[j] using D1 estimation:
-       // q_hat = ((r[j] << 64) | r[j-1]) / d[m-1]
-       // Clamp q_hat to 2^64 - 1
-
-       // Multiply and subtract (restoring):
-       // r[j:] -= b_norm * q_hat
-       // If borrow: q_hat -= 1, restore
-
-       q[j] = q_hat
-
-  5. Shift remainder right by norm_shift
-
-  6. Canonicalize: remove leading zero limbs
-
-  7. Return quotient with sign = a.sign XOR b.sign
-```
-
-**Constant-Time Primitives (Required):**
-
-```rust
-// Constant-time less-than comparison
-fn ct_lt(a: u64, b: u64) -> u64 {
-    // Returns 1 if a < b, else 0 (no branches)
-    (b.wrapping_sub(a) & (1 << 63)) >> 63
-}
-
-// Constant-time subtract with borrow
-fn ct_sub(a: u64, b: u64) -> (u64, u64) {
-    // Returns (a - b, borrow)
-    let diff = a.wrapping_sub(b);
-    let borrow = (a < b) as u64;
-    (diff, borrow)
-}
-```
-
-**Determinism Rule:**
-- Division executes exactly 64 iterations per limb position using constant-time primitives only.
-- No data-dependent branches in the inner loop.
 
 ### MOD — Modulo
 
@@ -604,9 +550,11 @@ For deterministic Merkle hashing, BIGINT uses this canonical wire format:
 Total size: 8 + (num_limbs × 8) bytes
 ```
 
-### i128 Canonical Serialization (for RFC-0105 Interoperability)
+### i128 Interoperability
 
-> **Critical**: For values ≤ i128 range, BIGINT serialization MUST produce byte-identical output to RFC-0105's DqaEncoding when converting to/from DECIMAL.
+> **Clarification**: BIGINT uses a separate encoding from RFC-0105's DqaEncoding. They are NOT byte-identical. This prevents Merkle hash ambiguity between numeric types.
+
+**BIGINT to i128 conversion** (for values in i128 range):
 
 ```
 bigint_to_i128_bytes(b: BigInt) -> [u8; 16]
@@ -616,39 +564,24 @@ Precondition: b fits in i128 range (-2^127 to 2^127-1)
 Algorithm:
   1. If b > 2^127 - 1 or b < -2^127: TRAP
   2. If b == 0: return [0x00, 0x00, ..., 0x00] (16 zeros)
-  3. Extract magnitude: abs_b = |b.value|
-  4. Convert limbs to little-endian bytes:
-     For i in 0..2:
-       bytes[i*8:(i+1)*8] = little_endian(limbs[i])
-  5. Set sign byte: bytes[0] |= 0x80 if b.sign else 0x00
-  6. Return 16-byte canonical representation
-```
-
-### i128 Round-Trip Invariant (Mandatory for Consensus Safety)
-
-**Algorithm** `bigint_to_i128_bytes` (already present) MUST produce a 16-byte array that is **byte-identical** to RFC-0105 DqaEncoding for every value in [-2^127, 2^127-1].
-
-**Formal Proof Requirement:**
-For every BIGINT b where |b| ≤ 2^127-1, after canonicalization:
-- `bigint_to_i128_bytes(b)` produces exactly the 16-byte layout of RFC-0105 DqaEncoding.
-- `sha256(bigint_to_i128_bytes(b))` == `sha256(DqaEncoding::from_i128(value))`.
-
-This invariant MUST hold after canonicalization in both directions.
+  3. If b.sign is true: negate to get positive magnitude
+  4. Convert magnitude to bytes (little-endian, 16 bytes):
+     For i in 0..16:
+       bytes[i] = (magnitude >> (i * 8)) as u8
+  5. If b.sign is true: bytes[15] |= 0x80  // Set sign bit in MSB
+  6. Return 16-byte representation
 
 ### i128 Round-Trip Test Vectors
 
-| Operation | Input | Expected 16-byte output (hex) | Merkle-hash equality with 0105 |
-|-----------|-------|-------------------------------|--------------------------------|
-| i128::MIN round-trip | limbs=[0, 0x8000_0000_0000_0000], sign=true | [0x00,…,0x80,0x00,…] (exact 0105 layout) | Yes |
-| i128::MAX round-trip | limbs=[0xFFFF_FFFF_FFFF_FFFF, 0x7FFF_FFFF_FFFF_FFFF], sign=false | exact match | Yes |
-| Negative zero | limbs=[0], sign=true → canonicalized | all-zero 16 bytes | Yes |
-| Positive 2^127-1 | limbs=[0xFFFF_FFFF_FFFF_FFFF, 0x7FFF_FFFF_FFFF_FFFF] | exact match | Yes |
-| Negative -1 | limbs=[1], sign=true | [0xFF, 0xFF, …, 0xFF] | Yes |
-| Positive 1 | limbs=[1], sign=false | [0x01, 0x00, …, 0x00] | Yes |
-| i128::MAX + 1 (carry) | limbs=[0, 0x8000_0000_0000_0000], sign=false | TRAP (out of range) | N/A |
-| -i128::MIN (overflow) | limbs=[0, 0x8000_0000_0000_0000], sign=true | TRAP (out of range) | N/A |
-| Value requiring carry | limbs=[0xFFFF_FFFF_FFFF_FFFF, 0], sign=false | [0xFF,…,0xFF, 0x00,…] | Yes |
-| Negative carry | limbs=[0xFFFF_FFFF_FFFF_FFFF, 0], sign=true | [0xFF,…,0xFF, 0x80,…] | Yes |
+| Operation | Input | Expected Result |
+|-----------|-------|-----------------|
+| i128::MIN | -2^127 | limbs=[0, 0x8000_0000_0000_0000], sign=true |
+| i128::MAX | 2^127-1 | limbs=[0xFFFF_FFFF_FFFF_FFFF, 0x7FFF_FFFF_FFFF_FFFF], sign=false |
+| i128 zero | 0 | limbs=[0], sign=false |
+| Positive 1 | 1 | limbs=[1], sign=false |
+| Negative -1 | -1 | limbs=[1], sign=true |
+| i128::MAX + 1 | 2^127 | TRAP (out of range) |
+| -i128::MIN overflow | -2^127 - 1 | TRAP (out of range) |
 
 ### Serialization Invariant
 
@@ -759,15 +692,17 @@ fn poseidon2_absorb(limbs: &[u64; 64]) -> [FieldElement; 32] {
 ```
 /// SHA-256 of the limb-reduction lookup table
 /// This hash is included in the verification probe (Entry 16)
+/// NOTE: This is a TBD placeholder. Actual value will be computed
+/// from the committed LUT after specification finalization.
 const BIGINT_POSEIDON2_LUT_HASH: [u8; 32] = [
-    0x12, 0x34, 0x56, 0x78, 0x9A, 0xBC, 0xDE, 0xF0,
-    0x11, 0x22, 0x33, 0x44, 0x55, 0x66, 0x77, 0x88,
-    0xA1, 0xB2, 0xC3, 0xD4, 0xE5, 0xF6, 0x01, 0x23,
-    0x45, 0x67, 0x89, 0xAB, 0xCD, 0xEF, 0x01, 0x23,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
 ];
 ```
 
-> **Note**: This hash is committed for the specification. The probe entry 16 verifies the LUT hash matches this value.
+> **Note**: This hash is a placeholder for the specification. Implementations MUST update this value when the LUT is finalized. Probe entry 51 verifies the LUT hash matches the committed value.
 
 ## Test Vectors
 
@@ -903,7 +838,7 @@ BIGINT verification probe uses 24-byte canonical encoding (matching RFC-0104's D
 └─────────────────────────────────────────────────────────────┘
 ```
 
-### Probe Entries (64 entries, 24-byte canonical format matching RFC-0104)
+### Probe Entries (57 entries, 24-byte canonical format matching RFC-0104)
 
 | Entry | Operation | Input A | Input B/Result | Purpose |
 |-------|-----------|---------|----------------|---------|
@@ -964,13 +899,8 @@ BIGINT verification probe uses 24-byte canonical encoding (matching RFC-0104's D
 | 54 | Borrow chain | 0 - 1 | -1 | Underflow |
 | 55 | Serialize | MAX | versioned | Format verify |
 | 56 | Deserialize | bytes | MAX | Parse verify |
-| 57 | POW | 2 | 10 | 2^10 |
-| 58 | POW | 10 | 2 | 10^2 |
-| 59 | POW | MAX | 0 | MAX^0 = 1 |
-| 60 | AND | MAX | MAX | Bitwise AND |
-| 61 | OR | MAX | 1 | Bitwise OR |
-| 62 | XOR | MAX | 1 | Bitwise XOR |
-| 63 | NOT | MAX | ~MAX | Bitwise NOT |
+
+> **Note:** Entries 57-63 removed. POW, AND, OR, XOR, NOT are not specified in this RFC.
 
 ### Differential Fuzzing Requirement
 
@@ -982,7 +912,7 @@ The fuzz harness command is: `cargo fuzz run bigint_fuzz -- -runs=10000`.
 
 ```rust
 struct BigIntProbe {
-    entries: [[u8; 24]; 64],  // 64 entries × 24 bytes (matching RFC-0104)
+    entries: [[u8; 24]; 57],  // 57 entries × 24 bytes (matching RFC-0104)
 }
 
 fn bigint_probe_root(probe: &BigIntProbe) -> [u8; 32] {

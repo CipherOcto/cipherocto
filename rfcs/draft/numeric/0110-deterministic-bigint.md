@@ -2,17 +2,22 @@
 
 ## Status
 
-**Version:** 1.5 (2026-03-15)
+**Version:** 2.0 (2026-03-15)
 **Status:** Accepted
 
 > **Note:** This RFC is extracted from RFC-0106 (Deterministic Numeric Tower) as part of the Track B dismantling effort.
 
-> **Adversarial Review v1.5 Changes (Final Polish):**
-> - Eliminated LUT hash placeholder inconsistency
-> - Strengthened differential fuzzing mandate with explicit command
-> - Corrected probe table header (20 entries)
-> - Added reference implementation link
-> - Explicitly listed worst-case gas path
+> **Adversarial Review v2.0 Changes (Production-Grade):**
+> - Fixed canonicalization algorithm bug (zero limb preservation)
+> - Separated BigInt encoding from DQA encoding (introduced I128Encoding)
+> - Fully specified deterministic division algorithm (restoring binary long division)
+> - Aligned gas limits with limb limits (unified to MAX_LIMBS=64)
+> - Replaced compiler intrinsics with deterministic algorithms (branchless ct_lt/sub)
+> - Increased fuzz testing to 100,000+ cases
+> - Fixed verification probe table (20 entries, proper numbering)
+> - Clarified numeric tower architecture (INTEGER → DECIMAL → FLOAT)
+> - Unified numeric version pinning (numeric_spec_version)
+> - Documented BigInt intended use (consensus, not heavy cryptography)
 
 > **Adversarial Review v1.4 Changes (Full Consensus Readiness):**
 > - Complete i128 round-trip proof with formal requirements + 8 additional vectors (entries 11-18)
@@ -26,7 +31,7 @@
 > - Added i128 round-trip invariant proof and 4 new test vectors (entries 11-14)
 > - Added fixed-iteration DIV with constant-time guarantees (64 × limb count)
 > - Extended verification probe to 16 entries with canonical-form checks
-> - Formalized bigint_spec_version block-header integration rules
+> - Formalized numeric_spec_version block-header integration rules
 > - Added ZK circuit commitments (Poseidon2 gate counts)
 > - Expanded test vectors to 40+ cases covering canonical-form enforcement
 > - Added constant-time comparison mandate to Determinism Rules
@@ -35,7 +40,7 @@
 > - Added i128 canonical serialization for byte-identical round-trip with RFC-0105
 > - Added post-operation canonicalization mandate for all algorithms
 > - Updated verification probe to 24-byte canonical format (matching RFC-0104)
-> - Added bigint_spec_version for replay pinning
+> - Added numeric_spec_version for replay pinning
 
 > **Adversarial Review v1.1 Changes:**
 > - Fixed i128 interoperability (clarified relationship with RFC-0105)
@@ -56,19 +61,37 @@ BIGINT is the foundation layer of the Deterministic Numeric Tower, enabling:
 
 ## Relationship to Other RFCs
 
-| RFC | Relationship |
-|-----|--------------|
-| RFC-0104 (DFP) | Independent — no dependency |
-| RFC-0105 (DQA) | Independent — BIGINT provides extended precision beyond i128 |
-| RFC-0111 (DECIMAL) | BIGINT provides arbitrary precision for values exceeding i128 |
+### Numeric Tower Architecture
 
-### i128 Interoperability
+```
+INTEGER DOMAIN
+i64 → i128 → BigInt (RFC-0110)
 
-> **Important**: BIGINT's limb representation is distinct from RFC-0105's native i128 mantissa.
+DECIMAL DOMAIN
+DQA (RFC-0105)
 
-- **For values ≤ i128 range**: Use RFC-0111 DECIMAL directly
-- **For values > i128 range**: Use BIGINT
-- **Round-trip 0110 ↔ 0105**: Values in i128 range convert losslessly, but byte layouts differ
+FLOAT DOMAIN
+DFP (RFC-0104)
+```
+
+**BIGINT interoperates with:**
+- **i64** — direct conversion
+- **i128** — direct conversion via I128Encoding
+
+**DQA uses BIGINT internally** when intermediate precision exceeds i128.
+
+> **Note:** BigInt encoding is separate from DQA encoding. No numeric encoding is reused across types to prevent Merkle hash ambiguity.
+
+### Intended Use
+
+```
+BigInt is designed for:
+- deterministic arithmetic
+- financial calculations
+- protocol-level numeric operations
+
+BigInt is NOT intended for heavy cryptographic workloads such as RSA or ECC.
+```
 
 The relationship "BIGINT provides i128 via 2×i64 limbs" means BIGINT *can* represent i128 values, not that it *is* i128.
 
@@ -479,6 +502,36 @@ Algorithm:
 
 ## Serialization & Canonical Encoding
 
+### Numeric Encoding Types
+
+**Three canonical numeric encodings exist in the CipherOcto numeric tower:**
+
+| Encoding | Type | Format |
+|----------|------|--------|
+| I128Encoding | Integer | 16 bytes, two's complement, big-endian |
+| BigIntEncoding | Arbitrary Integer | Variable, see below |
+| DqaEncoding | Decimal | Reference RFC-0105 |
+
+**No numeric encoding is reused across numeric types.** This prevents Merkle hash ambiguity.
+
+### I128Encoding (for i128 interoperability)
+
+```
+struct I128Encoding {
+    value: i128
+}
+```
+
+Canonical representation: 16 bytes, two's complement, big-endian.
+
+### BigIntEncoding (BIGINT native format)
+
+As defined below in §Canonical Byte Format.
+
+### DqaEncoding (RFC-0105 decimal)
+
+Reference RFC-0105: `value: i64`, `scale: u8`, `reserved: [7]`.
+
 ### Canonical Byte Format
 
 For deterministic Merkle hashing, BIGINT uses this canonical wire format:
@@ -554,13 +607,26 @@ After ANY operation, the result MUST be canonicalized:
 
 ```
 bigint_canonicalize(b: BigInt) -> BigInt
-  1. If b.limbs is empty: return ZERO
-  2. Remove leading zero limbs:
-     while b.limbs.last() == Some(0):
+  1. Remove leading zero limbs while limbs.len() > 1:
+     while b.limbs.len() > 1 and b.limbs.last() == 0:
        b.limbs.pop()
-  3. If b.limbs is empty: return ZERO
-  4. Return canonical BigInt
+  2. If single zero limb exists, ensure positive sign:
+     if b.limbs.len() == 1 and b.limbs[0] == 0:
+       b.sign = false  // positive
+  3. Return canonical BigInt
 ```
+
+**Canonical Invariants:**
+1. limbs length >= 1
+2. limbs[last] ≠ 0 unless number == 0
+3. zero representation = sign=positive, limbs=[0]
+4. no trailing zero limbs permitted
+
+**Acceptance Criteria:**
+- canonicalize([0]) → [0]
+- canonicalize([0,0]) → [0]
+- canonicalize([5,0,0]) → [5]
+- canonicalize([-0]) → [+0]
 
 **Every algorithm (ADD, SUB, MUL, DIV, MOD, SHL, SHR) MUST call canonicalize before returning.**
 
@@ -570,26 +636,25 @@ BIGINT operations MUST scale gas costs with operand size to prevent DoS attacks:
 
 | Operation | Gas Formula | Example (64 limbs) |
 |-----------|------------|-------------------|
-| ADD | 10 + (limbs × 1) | 74 |
-| SUB | 10 + (limbs × 1) | 74 |
-| MUL | 50 + (limbs_a × limbs_b × 2) | 8,242 |
-| DIV | 50 + (limbs_a × limbs_b × 3) | 12,362 |
+| ADD | 10 + limbs | 74 |
+| SUB | 10 + limbs | 74 |
+| MUL | 50 + 2 × limbs_a × limbs_b | 8,242 |
+| DIV | 50 + 3 × limbs_a × limbs_b | 12,362 |
 | MOD | Same as DIV | 12,362 |
-| CMP | 5 + (limbs × 1) | 69 |
-| SHL | 10 + (limbs × 1) | 74 |
-| SHR | 10 + (limbs × 1) | 74 |
+| CMP | 5 + limbs | 69 |
+| SHL | 10 + limbs | 74 |
+| SHR | 10 + limbs | 74 |
 
-**Per-Operation Limits:**
+**Unified Limits:**
 
-| Operation | Maximum Limbs | Maximum Gas |
-|-----------|--------------|-------------|
-| ADD/SUB | 64 | 74 |
-| MUL | 50 | 5,050 |
-| DIV/MOD | 40 | 4,850 |
-| CMP | 64 | 69 |
-| SHL/SHR | 64 | 74 |
+```
+MAX_LIMBS = 64
+MAX_BIGINT_BITS = 4096
+```
 
-Operations exceeding these limits TRAP.
+Operations must reject if `limbs > MAX_LIMBS`.
+
+**Worst-case gas:** 64 × 64 multiplication = 8,242 gas (well under block limits).
 
 **Gas Proof:** Every legal path (including worst-case 40-limb DIV + canonicalization) stays ≤ 15,000 gas. No path exceeds MAX_BIGINT_OP_COST (15,000). The single highest-cost path is a 40-limb restoring division followed by canonicalization (12,362 gas).
 
@@ -795,7 +860,7 @@ BIGINT verification probe uses 24-byte canonical encoding (matching RFC-0104's D
 
 ### Differential Fuzzing Requirement
 
-All implementations MUST pass differential fuzzing against a reference library (e.g., num-bigint) with 500+ random inputs producing bit-identical outputs.
+All implementations MUST pass differential fuzzing against a reference library (e.g., num-bigint, GMP) with 100,000+ random inputs producing bit-identical outputs.
 
 The fuzz harness command is: `cargo fuzz run bigint_fuzz -- -runs=10000`.
 
@@ -832,7 +897,7 @@ fn bigint_probe_root(probe: &BigIntProbe) -> [u8; 32] {
 2. **No Karatsuba**: Multiplication uses schoolbook O(n²) algorithm
 3. **No SIMD**: Vectorized operations are forbidden
 4. **Fixed Iteration**: Division executes exactly 64 iterations per limb position using constant-time primitives only
-5. **Constant-Time Comparisons**: All limb comparisons and division estimates MUST use constant-time operations (no data-dependent branches). Use `core::intrinsics::ct_lt` / `ct_sub` or equivalent Barrett reduction for all limb comparisons.
+5. **Constant-Time Comparisons**: All limb comparisons and division estimates MUST use constant-time operations (no data-dependent branches). Use the deterministic algorithms defined below (not compiler intrinsics).
 6. **No Hardware**: CPU carry flags, SIMD, or FPU are forbidden
 7. **Post-Operation Canonicalization**: Every algorithm MUST call canonicalize before returning
 
@@ -866,7 +931,7 @@ fn bigint_probe_root(probe: &BigIntProbe) -> [u8; 32] {
 - [x] Test vectors verified (40+ cases)
 - [x] Verification probe implemented (20 entries, 24-byte format)
 - [x] ZK circuit Poseidon2 commitment hash (Entry 16)
-- [x] Differential fuzzing requirement (500+ random inputs)
+- [x] Differential fuzzing requirement (100,000+ random inputs)
 
 **Acceptance Criteria:**
 - All implementations MUST pass differential fuzzing against num-bigint
@@ -876,32 +941,32 @@ fn bigint_probe_root(probe: &BigIntProbe) -> [u8; 32] {
 
 ## Spec Version & Replay Pinning
 
-### bigint_spec_version
+### numeric_spec_version
 
-To ensure deterministic historical replay, BIGINT implementations MUST declare a spec version:
+To ensure deterministic historical replay, all numeric implementations MUST declare a unified spec version that applies to DFP, DQA, and BigInt:
 
 ```rust
-/// BIGINT specification version
-const BIGINT_SPEC_VERSION: u32 = 1;
+/// Numeric tower unified specification version (DFP, DQA, BigInt)
+const NUMERIC_SPEC_VERSION: u32 = 1;
 ```
 
 ### Block Header Integration (normative)
 
-**bigint_spec_version: u32** MUST be present in every block header at a defined offset.
+**numeric_spec_version: u32** MUST be present in every block header at a defined offset.
 
 ```
 ┌─────────────────────────────────────────────────────────────┐
 │ Block Header                                              │
 ├─────────────────────────────────────────────────────────────┤
 │ ...                                                       │
-│ bigint_spec_version: u32  // offset defined in header spec│
+│ numeric_spec_version: u32  // offset defined in header spec│
 │ ...                                                       │
 └─────────────────────────────────────────────────────────────┘
 ```
 
 ### Replay Rules (mandatory)
 
-1. **Version Check**: If block.bigint_spec_version != current BIGINT_SPEC_VERSION → reject block
+1. **Version Check**: If block.numeric_spec_version != current NUMERIC_SPEC_VERSION → reject block
 2. **Historical Replay**: Load the exact algorithm version declared in the block header
 3. **Algorithm Pinning**: All BIGINT operations inside the block MUST use the pinned version
 4. **Canonical Form**: State transitions involving BIGINT MUST verify canonical form after each operation

@@ -10,9 +10,10 @@ license.workspace = true
 tokio.workspace = true
 async-trait.workspace = true
 
-# HTTP/HTTP server
+# HTTP server
 hyper.workspace = true
 hyper-util.workspace = true
+http.workspace = true
 http-body-util.workspace = true
 rustls.workspace = true
 rustls-pemfile.workspace = true

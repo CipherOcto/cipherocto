@@ -25,4 +25,7 @@ pub enum KeyError {
 
     #[error("Key already exists")]
     AlreadyExists,
+
+    #[error("Missing API key")]
+    MissingKey,
 }

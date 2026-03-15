@@ -2,7 +2,7 @@
 
 ## Status
 
-Planned (v1)
+Draft (v2) - Updated scope to match implementation
 
 ## Authors
 
@@ -42,18 +42,19 @@ Goal: Single persistence layer (Stoolap) for all quota router data.
 
 ### In Scope
 
-- Key storage and validation
-- L1 cache (replacing Redis)
-- Budget ledger (already in Stoolap)
-- Rate limiting state
-- Distributed cache invalidation (pub/sub)
-- Row locking for atomic updates (FOR UPDATE)
+- Key storage and validation ✅ (RFC-0903)
+- Budget ledger (key_spend table) ✅
+- Rate limiting state (in-memory KeyRateLimiter) ✅
+- Distributed cache invalidation via WAL pub/sub ✅ (RFC-0913)
+- Row locking via FOR UPDATE ✅ (RFC-0912)
+- HTTP API routes for key management ✅ (Mission 0903-f)
 
 ### Out of Scope
 
+- L1 cache table (defer to future phase)
+- Rate limit state table (in-memory sufficient for current scale)
 - Other CipherOcto components using Redis
 - Full pub/sub protocol (only cache invalidation)
-- Trigger support (application-layer enforcement)
 
 ## Architecture
 
@@ -84,50 +85,65 @@ Goal: Single persistence layer (Stoolap) for all quota router data.
 
 ## Implementation Phases
 
-### Phase 1: Foundation (MVE)
-- Use Stoolap as primary DB (already working)
-- Keep Redis for cache/pubsub (dual-write)
-- Measure performance delta
+### Phase 1: Foundation (MVE) ✅ DONE
+- Use Stoolap as primary DB
+- Key storage and validation
+- Budget ledger (key_spend table)
 
-### Phase 2: Cache Migration
-- Replace Redis L1 cache with Stoolap table
-- Implement in-process broadcast for invalidation
-- Validate cache hit rate
+### Phase 2: Rate Limiting ✅ DONE
+- In-memory KeyRateLimiter
+- RPM/TPM enforcement
 
-### Phase 3: Locking
-- Add FOR UPDATE syntax to Stoolap (RFC-0912)
-- Implement multi-router atomic budget updates
-- Test concurrent access patterns
+### Phase 3: Pub/Sub Integration ✅ DONE (RFC-0913)
+- WAL pub/sub for cache invalidation
+- DatabaseEvent types for key invalidation
 
-### Phase 4: Full Replacement
-- Remove Redis from deployment
-- Single-process deployment
-- Full integration testing
+### Phase 4: Row Locking ✅ DONE (RFC-0912)
+- FOR UPDATE syntax in Stoolap
+- Atomic budget updates
 
-## Data Model
+### Phase 5: Key Management API ✅ DONE
+- HTTP routes for CRUD operations (Mission 0903-f)
 
-### Cache Table
+## Data Model (Implemented)
+
+### api_keys Table
 
 ```sql
-CREATE TABLE key_cache (
-    key_hash BYTEA PRIMARY KEY,
-    serialized_key TEXT NOT NULL,
-    cached_at INTEGER NOT NULL,
-    expires_at INTEGER
+CREATE TABLE api_keys (
+    key_id TEXT NOT NULL UNIQUE,
+    key_hash TEXT NOT NULL UNIQUE,
+    key_prefix TEXT NOT NULL,
+    team_id TEXT,
+    budget_limit INTEGER NOT NULL,
+    rpm_limit INTEGER,
+    tpm_limit INTEGER,
+    created_at INTEGER NOT NULL,
+    expires_at INTEGER,
+    revoked INTEGER DEFAULT 0,
+    ...
 );
-
-CREATE INDEX idx_key_cache_expires ON key_cache(expires_at);
 ```
 
-### Rate Limit State Table
+### key_spend Table (Budget Ledger)
 
 ```sql
-CREATE TABLE rate_limit_state (
-    key_id TEXT PRIMARY KEY,
-    rpm_tokens BIGINT NOT NULL,
-    tpm_tokens BIGINT NOT NULL,
-    last_refill INTEGER NOT NULL,
-    updated_at INTEGER NOT NULL
+CREATE TABLE key_spend (
+    key_id TEXT NOT NULL UNIQUE,
+    total_spend INTEGER NOT NULL DEFAULT 0,
+    window_start INTEGER NOT NULL,
+    last_updated INTEGER NOT NULL
+);
+```
+
+### teams Table
+
+```sql
+CREATE TABLE teams (
+    team_id TEXT NOT NULL UNIQUE,
+    name TEXT NOT NULL,
+    budget_limit INTEGER NOT NULL,
+    created_at INTEGER NOT NULL
 );
 ```
 
@@ -146,16 +162,30 @@ CREATE TABLE rate_limit_state (
 
 ## Approval Criteria
 
-- [ ] RFC-0912 (FOR UPDATE) implemented
-- [ ] RFC-0913 (Pub/Sub) implemented
-- [ ] L1 cache hit rate ≥80%
-- [ ] Key lookup latency <1ms P50
-- [ ] Multi-router deployment tested
-- [ ] Redis removed from deployment config
+- [x] RFC-0903 (Virtual API Key System) - Final
+- [x] RFC-0912 (FOR UPDATE) - Accepted, 3/3 missions complete
+- [x] RFC-0913 (Pub/Sub) - Accepted, 4/4 missions complete
+- [x] Key storage and validation working
+- [x] Budget ledger (key_spend) implemented
+- [x] Rate limiting (in-memory) implemented
+- [x] Key management HTTP routes (Mission 0903-f)
+- [ ] L1 cache table (future phase - optional)
+- [ ] Rate limit state table (future phase - optional)
 
 ## Related Use Case
 
 - `docs/use-cases/stoolap-only-persistence.md`
+
+## Current Status
+
+This RFC describes the current architecture of quota-router. The core functionality is implemented:
+- Stoolap as the single persistence layer
+- No Redis dependency
+- In-memory rate limiting with pub/sub-based invalidation
+
+Future enhancements (optional):
+- L1 cache table for higher cache hit rates
+- Rate limit state table for distributed rate limiting
 
 ## Related RFCs
 

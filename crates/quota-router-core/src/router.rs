@@ -248,7 +248,7 @@ impl Router {
 
         if total_weight == 0 {
             // No weights - uniform random
-            rng.gen_range(0..providers.len())
+            rng.random_range(0..providers.len())
         } else {
             // Weighted random selection
             let mut cumulative = 0u32;
@@ -260,7 +260,7 @@ impl Router {
                 })
                 .collect();
 
-            let roll = rng.gen_range(1..=total_weight);
+            let roll = rng.random_range(1..=total_weight);
             weighted.iter().position(|&w| w >= roll).unwrap_or(0)
         }
     }

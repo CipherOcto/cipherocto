@@ -5,7 +5,7 @@ pub use errors::KeyError;
 pub use models::{ApiKey, KeyType, KeyUpdates};
 
 use hmac_sha256::HMAC;
-use rand::RngCore;
+use rand::Rng;
 
 /// Server secret for key hashing
 const SERVER_SECRET: &[u8] = b"quota-router-server-secret-change-in-production";
@@ -18,8 +18,8 @@ pub fn compute_key_hash(key: &str) -> [u8; 32] {
 /// Generate a cryptographically secure API key string
 /// Format: sk-qr-{64 hex characters}
 pub fn generate_key_string() -> String {
-    let mut bytes = [0u8; 32]; // 256-bit entropy
-    rand::thread_rng().fill_bytes(&mut bytes);
+    let mut rng = rand::thread_rng();
+    let bytes: Vec<u8> = (0..32).map(|_| rng.random()).collect();
 
     let hex_string = bytes
         .iter()
@@ -39,8 +39,8 @@ pub fn generate_key_id() -> String {
         .unwrap()
         .as_millis() as u64;
 
-    let mut random_bytes = [0u8; 10];
-    rand::thread_rng().fill_bytes(&mut random_bytes);
+    let mut rng = rand::thread_rng();
+    let random_bytes: Vec<u8> = (0..8).map(|_| rng.random()).collect();
 
     format!(
         "{:016x}-{:02x}{:02x}{:02x}{:02x}{:02x}{:02x}{:02x}{:02x}",

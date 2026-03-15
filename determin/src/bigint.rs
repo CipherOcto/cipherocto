@@ -7,6 +7,28 @@
 //! - 128-bit intermediate arithmetic for carry/borrow
 //! - TRAP on overflow (result exceeds MAX_BIGINT_BITS)
 //! - Explicit canonicalization after every operation
+//!
+//! ## Implementation Fixes Log
+//!
+//! This section documents fixes applied during implementation for future reference.
+//! See source code for details of each fix.
+//!
+//! ### Phase 4: Conversions & Serialization (2026-03-15)
+//!
+//! - TryFrom signature: Changed from fn try_from(&BigInt) to fn try_from(BigInt)
+//! - i64::MIN handling: Changed from i64::MAX.unsigned_abs() to i64::MIN.unsigned_abs()
+//! - clippy unnecessary_cast: Removed redundant as u128 cast
+//! - clippy needless_range_loop: Changed to iterator with enumerate
+//! - bit_length on u128: Used 128 - leading_zeros() instead of non-existent method
+//!
+//! ### Phase 5: Verification Probe (2026-03-15)
+//!
+//! - Entry 52: Changed from BigIntProbeValue::Max to BigIntProbeValue::Int(MAX_U64 as i128)
+//! - clippy manual_div_ceil: Changed (num_bits + 63) / 64 to num_bits.div_ceil(64)
+//! - clippy needless_borrows: Removed & from hasher.update() calls
+//! - Merkle root verification: Added BIGINT_REFERENCE_MERKLE_ROOT constant
+//!
+//! Reference: scripts/compute_bigint_probe_root.py for Python reference implementation
 
 use serde::{Deserialize, Serialize};
 
@@ -594,6 +616,267 @@ pub fn bigint_shr(a: BigInt, shift: usize) -> Result<BigInt, BigIntError> {
 }
 
 // =============================================================================
+// Primitive Conversions
+// =============================================================================
+
+use std::convert::{From, TryFrom};
+
+impl From<i64> for BigInt {
+    fn from(n: i64) -> BigInt {
+        if n == 0 {
+            return BigInt::zero();
+        }
+        let sign = n < 0;
+        let mag = n.unsigned_abs();
+        BigInt::new(vec![mag], sign).canonicalize()
+    }
+}
+
+impl TryFrom<BigInt> for i64 {
+    type Error = BigIntError;
+
+    fn try_from(b: BigInt) -> Result<i64, Self::Error> {
+        if b.limbs.len() > 1 {
+            return Err(BigIntError::OutOfI128Range);
+        }
+        let mag = b.limbs.first().copied().unwrap_or(0);
+        if b.sign {
+            // For negative, check against i64::MIN.unsigned_abs()
+            // i64::MIN = -9223372036854775808, so unsigned_abs = 9223372036854775808
+            if mag > i64::MIN.unsigned_abs() {
+                return Err(BigIntError::OutOfI128Range);
+            }
+            Ok(-(mag as i64))
+        } else {
+            if mag > i64::MAX.unsigned_abs() {
+                return Err(BigIntError::OutOfI128Range);
+            }
+            Ok(mag as i64)
+        }
+    }
+}
+
+impl From<i128> for BigInt {
+    fn from(n: i128) -> BigInt {
+        if n == 0 {
+            return BigInt::zero();
+        }
+        let sign = n < 0;
+        let mag = n.unsigned_abs();
+        let lo = mag as u64;
+        let hi = (mag >> 64) as u64;
+        let limbs = if hi == 0 { vec![lo] } else { vec![lo, hi] };
+        BigInt::new(limbs, sign).canonicalize()
+    }
+}
+
+impl TryFrom<BigInt> for i128 {
+    type Error = BigIntError;
+
+    fn try_from(b: BigInt) -> Result<i128, Self::Error> {
+        if b.limbs.len() > 2 {
+            return Err(BigIntError::OutOfI128Range);
+        }
+        let lo = b.limbs.first().copied().unwrap_or(0);
+        let hi = b.limbs.get(1).copied().unwrap_or(0);
+        let mag = ((hi as u128) << 64) | (lo as u128);
+        if b.sign {
+            // For negative, check against i128::MIN.unsigned_abs()
+            if mag > i128::MIN.unsigned_abs() {
+                return Err(BigIntError::OutOfI128Range);
+            }
+            Ok(-(mag as i128))
+        } else {
+            if mag > i128::MAX.unsigned_abs() {
+                return Err(BigIntError::OutOfI128Range);
+            }
+            Ok(mag as i128)
+        }
+    }
+}
+
+impl From<u64> for BigInt {
+    fn from(n: u64) -> BigInt {
+        if n == 0 {
+            return BigInt::zero();
+        }
+        BigInt::new(vec![n], false).canonicalize()
+    }
+}
+
+impl TryFrom<BigInt> for u64 {
+    type Error = BigIntError;
+
+    fn try_from(b: BigInt) -> Result<u64, Self::Error> {
+        if b.sign {
+            return Err(BigIntError::OutOfI128Range);
+        }
+        if b.limbs.len() > 1 {
+            return Err(BigIntError::OutOfI128Range);
+        }
+        Ok(b.limbs.first().copied().unwrap_or(0))
+    }
+}
+
+impl From<u128> for BigInt {
+    fn from(n: u128) -> BigInt {
+        if n == 0 {
+            return BigInt::zero();
+        }
+        let lo = n as u64;
+        let hi = (n >> 64) as u64;
+        let limbs = if hi == 0 { vec![lo] } else { vec![lo, hi] };
+        BigInt::new(limbs, false).canonicalize()
+    }
+}
+
+impl TryFrom<BigInt> for u128 {
+    type Error = BigIntError;
+
+    fn try_from(b: BigInt) -> Result<u128, Self::Error> {
+        if b.sign {
+            return Err(BigIntError::OutOfI128Range);
+        }
+        if b.limbs.len() > 2 {
+            return Err(BigIntError::OutOfI128Range);
+        }
+        let lo = b.limbs.first().copied().unwrap_or(0);
+        let hi = b.limbs.get(1).copied().unwrap_or(0);
+        Ok(((hi as u128) << 64) | (lo as u128))
+    }
+}
+
+// =============================================================================
+// Serialization (BigIntEncoding)
+// RFC-0110 §BigIntEncoding
+// =============================================================================
+
+/// BigInt wire encoding
+/// Format: [version: u8, sign: u8, num_limbs: u8, unused: 5 bytes, limbs: little-endian u64[]]
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct BigIntEncoding {
+    /// Version (0x01)
+    pub version: u8,
+    /// Sign: 0x00 = positive, 0xFF = negative
+    pub sign: u8,
+    /// Number of limbs
+    pub num_limbs: u8,
+    /// Limbs (little-endian)
+    pub limbs: Vec<u64>,
+}
+
+impl BigInt {
+    /// Serialize to BigIntEncoding
+    pub fn serialize(&self) -> BigIntEncoding {
+        BigIntEncoding {
+            version: 0x01,
+            sign: if self.sign { 0xFF } else { 0x00 },
+            num_limbs: self.limbs.len() as u8,
+            limbs: self.limbs.clone(),
+        }
+    }
+
+    /// Deserialize from BigIntEncoding
+    pub fn deserialize(data: &[u8]) -> Result<BigInt, BigIntError> {
+        if data.len() < 16 {
+            return Err(BigIntError::NonCanonicalInput);
+        }
+        let version = data[0];
+        if version != 0x01 {
+            return Err(BigIntError::NonCanonicalInput);
+        }
+        let sign_byte = data[1];
+        if sign_byte != 0x00 && sign_byte != 0xFF {
+            return Err(BigIntError::NonCanonicalInput);
+        }
+        let sign = sign_byte == 0xFF;
+        let num_limbs = data[2];
+        if num_limbs == 0 || num_limbs > 64 {
+            return Err(BigIntError::NonCanonicalInput);
+        }
+        if data.len() != 16 + 8 * (num_limbs as usize) {
+            return Err(BigIntError::NonCanonicalInput);
+        }
+
+        let mut limbs = Vec::with_capacity(num_limbs as usize);
+        for i in 0..num_limbs {
+            let offset = 16 + (i as usize) * 8;
+            let limb = u64::from_le_bytes([
+                data[offset],
+                data[offset + 1],
+                data[offset + 2],
+                data[offset + 3],
+                data[offset + 4],
+                data[offset + 5],
+                data[offset + 6],
+                data[offset + 7],
+            ]);
+            limbs.push(limb);
+        }
+
+        let b = BigInt { limbs, sign };
+        if !b.is_canonical() {
+            return Err(BigIntError::NonCanonicalInput);
+        }
+        Ok(b)
+    }
+}
+
+// =============================================================================
+// i128 Round-Trip Conversion
+// RFC-0110 §bigint_to_i128_bytes
+// =============================================================================
+
+/// Convert BigInt to 16-byte two's complement big-endian representation
+/// Precondition: b fits in i128 range
+pub fn bigint_to_i128_bytes(b: BigInt) -> Result<[u8; 16], BigIntError> {
+    // Check range: -2^127 to 2^127-1
+    if b.limbs.len() > 2 {
+        return Err(BigIntError::OutOfI128Range);
+    }
+    if b.limbs.len() == 2 {
+        let hi = b.limbs[1];
+        if b.sign {
+            // For negative, check if magnitude exceeds 2^127
+            if hi > 0x8000_0000_0000_0000 {
+                return Err(BigIntError::OutOfI128Range);
+            }
+        } else {
+            // For positive, check if magnitude >= 2^127
+            if hi >= 0x8000_0000_0000_0000 {
+                return Err(BigIntError::OutOfI128Range);
+            }
+        }
+    }
+
+    // Zero case
+    if b.is_zero() {
+        return Ok([0u8; 16]);
+    }
+
+    // Reconstruct magnitude as u128
+    let lo = b.limbs.first().copied().unwrap_or(0);
+    let hi = b.limbs.get(1).copied().unwrap_or(0);
+    let magnitude = ((hi as u128) << 64) | (lo as u128);
+
+    // Convert to two's complement
+    let val: u128 = if !b.sign {
+        magnitude
+    } else {
+        // Two's complement: !magnitude + 1
+        (!magnitude).wrapping_add(1)
+    };
+
+    // Encode as big-endian bytes (per RFC spec)
+    let mut bytes = [0u8; 16];
+    for (i, byte) in bytes.iter_mut().enumerate() {
+        *byte = ((val >> (120 - i * 8)) & 0xFF) as u8;
+    }
+
+    Ok(bytes)
+}
+
+// =============================================================================
 // Tests
 // =============================================================================
 
@@ -822,5 +1105,198 @@ mod tests {
         let a = BigInt::new(vec![4], false);
         let result = bigint_shr(a, 1).unwrap();
         assert_eq!(result.limbs, vec![2]);
+    }
+
+    // Phase 4: Conversion Tests
+    #[test]
+    fn test_from_i64() {
+        let cases = vec![
+            (0i64, vec![0], false),
+            (1, vec![1], false),
+            (-1, vec![1], true),
+            (42, vec![42], false),
+            (-42, vec![42], true),
+            (i64::MAX, vec![i64::MAX as u64], false),
+            (i64::MIN, vec![i64::MIN.unsigned_abs()], true),
+        ];
+        for (n, expected_limbs, expected_sign) in cases {
+            let bigint = BigInt::from(n);
+            assert_eq!(bigint.limbs, expected_limbs, "from_i64({}) limbs", n);
+            assert_eq!(bigint.sign, expected_sign, "from_i64({}) sign", n);
+        }
+    }
+
+    #[test]
+    fn test_try_from_i64() {
+        // Positive cases - convert BigInt -> i64
+        let big0 = BigInt::zero();
+        let result: Result<i64, _> = big0.try_into();
+        assert_eq!(result, Ok(0i64));
+
+        let big1 = BigInt::from(1i64);
+        let result: Result<i64, _> = big1.try_into();
+        assert_eq!(result, Ok(1i64));
+
+        let big_neg1 = BigInt::from(-1i64);
+        let result: Result<i64, _> = big_neg1.try_into();
+        assert_eq!(result, Ok(-1i64));
+
+        let big42 = BigInt::from(42i64);
+        let result: Result<i64, _> = big42.try_into();
+        assert_eq!(result, Ok(42i64));
+
+        let big_max = BigInt::from(i64::MAX);
+        let result: Result<i64, _> = big_max.try_into();
+        assert_eq!(result, Ok(i64::MAX));
+
+        let big_min = BigInt::from(i64::MIN);
+        let result: Result<i64, _> = big_min.try_into();
+        assert_eq!(result, Ok(i64::MIN));
+
+        // Negative cases - too large
+        let big = BigInt::new(vec![u64::MAX, u64::MAX], false);
+        let result: Result<i64, _> = big.try_into();
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_from_u64() {
+        let cases = vec![
+            (0u64, vec![0]),
+            (1, vec![1]),
+            (42, vec![42]),
+            (u64::MAX, vec![u64::MAX]),
+        ];
+        for (n, expected_limbs) in cases {
+            let bigint = BigInt::from(n);
+            assert_eq!(bigint.limbs, expected_limbs, "from_u64({}) limbs", n);
+            assert!(!bigint.sign, "from_u64({}) should be positive", n);
+        }
+    }
+
+    #[test]
+    fn test_from_i128() {
+        let cases = vec![
+            (0i128, vec![0], false),
+            (1, vec![1], false),
+            (-1, vec![1], true),
+            // i128::MAX = 0x7FFF...FF (127 ones): lower=u64::MAX, upper=0x7FFFFFFFFFFFFFFF
+            (i128::MAX, vec![u64::MAX, 0x7FFFFFFFFFFFFFFF], false),
+            // i128::MIN = -0x8000...000 (magnitude has 1 bit at position 127)
+            (i128::MIN, vec![0, 0x8000000000000000], true),
+        ];
+        for (n, expected_limbs, expected_sign) in cases {
+            let bigint = BigInt::from(n);
+            assert_eq!(bigint.limbs, expected_limbs, "from_i128({}) limbs", n);
+            assert_eq!(bigint.sign, expected_sign, "from_i128({}) sign", n);
+        }
+    }
+
+    #[test]
+    fn test_try_from_i128() {
+        let big0 = BigInt::zero();
+        let result: Result<i128, _> = big0.try_into();
+        assert_eq!(result, Ok(0i128));
+
+        let big1 = BigInt::from(1i128);
+        let result: Result<i128, _> = big1.try_into();
+        assert_eq!(result, Ok(1i128));
+
+        let big_neg1 = BigInt::from(-1i128);
+        let result: Result<i128, _> = big_neg1.try_into();
+        assert_eq!(result, Ok(-1i128));
+
+        let big_max = BigInt::from(i128::MAX);
+        let result: Result<i128, _> = big_max.try_into();
+        assert_eq!(result, Ok(i128::MAX));
+
+        let big_min = BigInt::from(i128::MIN);
+        let result: Result<i128, _> = big_min.try_into();
+        assert_eq!(result, Ok(i128::MIN));
+
+        // Too large magnitude
+        let big = BigInt::new(vec![0, 0x8000000000000001], false);
+        let result: Result<i128, _> = big.try_into();
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_from_u128() {
+        // u128::MAX = 0xFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF (all 128 bits set)
+        // Both lower and upper 64 bits are u64::MAX
+        let bigint = BigInt::from(u128::MAX);
+        assert_eq!(bigint.limbs, vec![u64::MAX, u64::MAX]);
+        assert!(!bigint.sign);
+    }
+
+    #[test]
+    fn test_try_from_u128() {
+        let big0 = BigInt::zero();
+        let result: Result<u128, _> = big0.try_into();
+        assert_eq!(result, Ok(0u128));
+
+        let big1 = BigInt::from(1u128);
+        let result: Result<u128, _> = big1.try_into();
+        assert_eq!(result, Ok(1u128));
+
+        let big_max = BigInt::from(u128::MAX);
+        let result: Result<u128, _> = big_max.try_into();
+        assert_eq!(result, Ok(u128::MAX));
+
+        // Too large - needs 3 limbs (exceeds u128)
+        let big = BigInt::new(vec![0, 0, 1], false); // 2^128
+        let result: Result<u128, _> = big.try_into();
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_serialize_deserialize() {
+        // Test serialization to bytes using serde
+        let bigint = BigInt::from(42i64);
+        let encoded = bigint.serialize();
+        // Verify encoding structure
+        assert_eq!(encoded.version, 0x01);
+        assert_eq!(encoded.sign, 0x00); // positive
+        assert_eq!(encoded.num_limbs, 1);
+        assert_eq!(encoded.limbs, vec![42]);
+
+        // Test negative
+        let bigneg = BigInt::from(-42i64);
+        let enc_neg = bigneg.serialize();
+        assert_eq!(enc_neg.sign, 0xFF);
+
+        // Test multi-limb
+        let big128 = BigInt::from(u128::MAX);
+        let enc128 = big128.serialize();
+        assert_eq!(enc128.num_limbs, 2);
+    }
+
+    #[test]
+    fn test_bigint_to_i128_bytes() {
+        // Zero
+        let bytes = bigint_to_i128_bytes(BigInt::zero()).unwrap();
+        assert_eq!(bytes, [0u8; 16]);
+
+        // One (big-endian: 0x00...01)
+        let bytes = bigint_to_i128_bytes(BigInt::from(1i64)).unwrap();
+        assert_eq!(bytes[15], 1); // Last byte is 1
+
+        // Negative one (big-endian two's complement: all 0xFF)
+        let bytes = bigint_to_i128_bytes(BigInt::from(-1i64)).unwrap();
+        assert_eq!(bytes, [0xFFu8; 16]);
+
+        // i128::MAX = 0x7FFF...FF
+        let bytes = bigint_to_i128_bytes(BigInt::from(i128::MAX)).unwrap();
+        assert_eq!(bytes[0], 0x7F);
+        assert_eq!(bytes[15], 0xFF);
+
+        // i128::MIN = 0x80...00
+        let bytes = bigint_to_i128_bytes(BigInt::from(i128::MIN)).unwrap();
+        assert_eq!(bytes[0], 0x80);
+        assert_eq!(bytes[1], 0x00);
+
+        // Too large returns error
+        let big = BigInt::from(u128::MAX);
+        assert!(bigint_to_i128_bytes(big).is_err());
     }
 }

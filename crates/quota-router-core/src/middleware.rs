@@ -1,6 +1,7 @@
 // Key validation middleware - validates API keys from HTTP requests
 
 use crate::keys::{validate_key, ApiKey, KeyError};
+use crate::key_rate_limiter::KeyRateLimiter;
 use crate::KeyStorage;
 use http;
 use std::sync::Arc;
@@ -8,11 +9,19 @@ use std::sync::Arc;
 /// Middleware state containing key storage
 pub struct KeyMiddleware<S: KeyStorage> {
     storage: Arc<S>,
+    rate_limiter: Arc<KeyRateLimiter>,
 }
 
 impl<S: KeyStorage> KeyMiddleware<S> {
     pub fn new(storage: Arc<S>) -> Self {
-        Self { storage }
+        Self {
+            storage,
+            rate_limiter: Arc::new(KeyRateLimiter::new()),
+        }
+    }
+
+    pub fn with_rate_limiter(storage: Arc<S>, rate_limiter: Arc<KeyRateLimiter>) -> Self {
+        Self { storage, rate_limiter }
     }
 
     /// Extract API key from request
@@ -79,6 +88,24 @@ impl<S: KeyStorage> KeyMiddleware<S> {
     /// Record spend for a key after a request
     pub fn record_spend(&self, key_id: &str, amount: i64) -> Result<(), KeyError> {
         self.storage.record_spend(key_id, amount)
+    }
+
+    /// Check rate limits for key (RPM and TPM)
+    pub fn check_rate_limits(&self, key: &ApiKey, tokens: Option<u32>) -> Result<(), KeyError> {
+        // Check RPM
+        self.rate_limiter.check_rpm(&key.key_id, key.rpm_limit)?;
+
+        // Check TPM if tokens provided
+        if let Some(t) = tokens {
+            self.rate_limiter.check_tpm(&key.key_id, t, key.tpm_limit)?;
+        }
+
+        Ok(())
+    }
+
+    /// Get rate limiter for external use
+    pub fn rate_limiter(&self) -> &KeyRateLimiter {
+        &self.rate_limiter
     }
 }
 
@@ -299,5 +326,79 @@ mod tests {
         let spend = storage.get_spend(&key.key_id).unwrap();
         assert!(spend.is_some());
         assert_eq!(spend.unwrap().total_spend, 250);
+    }
+
+    #[test]
+    fn test_check_rate_limits_rpm() {
+        let middleware = create_test_middleware();
+
+        // Create a key with RPM limit
+        let key = ApiKey {
+            key_id: "rate-key".to_string(),
+            key_hash: vec![13, 23, 33],
+            key_prefix: "sk-qr-rat".to_string(),
+            team_id: None,
+            budget_limit: 1000,
+            rpm_limit: Some(5),
+            tpm_limit: None,
+            created_at: 100,
+            expires_at: None,
+            revoked: false,
+            revoked_at: None,
+            revoked_by: None,
+            revocation_reason: None,
+            key_type: KeyType::Default,
+            allowed_routes: None,
+            auto_rotate: false,
+            rotation_interval_days: None,
+            description: None,
+            metadata: None,
+        };
+
+        // Should allow up to limit
+        for _ in 0..5 {
+            middleware.check_rate_limits(&key, None).unwrap();
+        }
+
+        // 6th should fail
+        let result = middleware.check_rate_limits(&key, None);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_check_rate_limits_tpm() {
+        let middleware = create_test_middleware();
+
+        // Create a key with TPM limit
+        let key = ApiKey {
+            key_id: "tpm-key".to_string(),
+            key_hash: vec![14, 24, 34],
+            key_prefix: "sk-qr-tpm".to_string(),
+            team_id: None,
+            budget_limit: 1000,
+            rpm_limit: None,
+            tpm_limit: Some(500),
+            created_at: 100,
+            expires_at: None,
+            revoked: false,
+            revoked_at: None,
+            revoked_by: None,
+            revocation_reason: None,
+            key_type: KeyType::Default,
+            allowed_routes: None,
+            auto_rotate: false,
+            rotation_interval_days: None,
+            description: None,
+            metadata: None,
+        };
+
+        // Should allow up to limit
+        for _ in 0..5 {
+            middleware.check_rate_limits(&key, Some(100)).unwrap();
+        }
+
+        // 6th should fail (600 tokens > 500 limit)
+        let result = middleware.check_rate_limits(&key, Some(100));
+        assert!(result.is_err());
     }
 }

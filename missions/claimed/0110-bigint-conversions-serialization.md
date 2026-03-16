@@ -1,7 +1,7 @@
 # Mission: BigInt Conversions & Serialization
 
 ## Status
-Open
+Done (claimed by agent/bigint-core-algorithms)
 
 ## RFC
 RFC-0110 (Numeric): Deterministic BIGINT
@@ -12,14 +12,14 @@ Implement BigInt conversions (i64, i128, string) and canonical wire serializatio
 ## Phase 1: Primitive Conversions
 
 ### Acceptance Criteria
-- [ ] From<i64> trait implementation
-- [ ] From<i128> trait implementation
-- [ ] TryFrom<u64> trait implementation
-- [ ] TryFrom<u128> trait implementation
-- [ ] To<i64> trait (TRAP on overflow)
-- [ ] To<i128> trait (TRAP on overflow)
-- [ ] To<u64> trait (TRAP on overflow)
-- [ ] To<u128> trait (TRAP on overflow)
+- [x] From<i64> trait implementation
+- [x] From<i128> trait implementation
+- [x] TryFrom<u64> trait implementation
+- [x] TryFrom<u128> trait implementation
+- [x] To<i64> trait (TRAP on overflow)
+- [x] To<i128> trait (TRAP on overflow)
+- [x] To<u64> trait (TRAP on overflow)
+- [x] To<u128> trait (TRAP on overflow)
 
 ### i64 Conversion
 ```rust
@@ -92,11 +92,11 @@ impl TryFrom<BigInt> for i128 {
 ## Phase 2: String Conversions
 
 ### Acceptance Criteria
-- [ ] FromStr trait implementation (parsing)
-- [ ] Display trait implementation (formatting)
-- [ ] Support decimal string representation
-- [ ] Support hex string prefix (0x)
-- [ ] Error handling for invalid input
+- [x] FromStr trait implementation (parsing)
+- [x] Display trait implementation (formatting)
+- [x] Support decimal string representation
+- [x] Support hex string prefix (0x)
+- [x] Error handling for invalid input
 
 ### String Format
 ```
@@ -108,10 +108,10 @@ Negative: "-9876543210"
 ## Phase 3: Serialization (Wire Format)
 
 ### Acceptance Criteria
-- [ ] BigIntEncoding: canonical 16-byte wire format
-- [ ] Serialization: struct → bytes
-- [ ] Deserialization: bytes → struct with canonical form verification
-- [ ] Version byte: 0x01 for v1
+- [x] BigIntEncoding: canonical 16-byte wire format
+- [x] Serialization: struct → bytes
+- [x] Deserialization: bytes → struct with canonical form verification
+- [x] Version byte: 0x01 for v1
 
 ### Wire Format (RFC-0110 §BigIntEncoding)
 ```
@@ -163,8 +163,8 @@ bigint_deserialize(data: &[u8]) -> Result<BigInt, Error>
 ## Phase 4: i128 Round-Trip Conversion
 
 ### Acceptance Criteria
-- [ ] bigint_to_i128_bytes: BigInt → 16-byte two's complement BE
-- [ ] i128_roundtrip tests for all i128 values
+- [x] bigint_to_i128_bytes: BigInt → 16-byte two's complement BE
+- [x] i128_roundtrip tests for all i128 values
 
 ### bigint_to_i128_bytes Algorithm (RFC-0110)
 ```

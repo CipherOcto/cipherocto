@@ -1049,7 +1049,7 @@ All implementations MUST verify the Merkle root by:
 - [x] VM boundary lazy canonicalization (deserialization, DQA/BIGINT conversion) implemented and tested
 
 The VM must invoke CANONICALIZE on every value returned by deserialize, dqa_to_decimal, and bigint_to_decimal before the value enters any arithmetic operation.
-- [ ] SQRT convergence bound (40 iterations, quadratic proof) documented and verified on all probe entries 20–24
+- [x] SQRT convergence bound (40 iterations, quadratic proof) documented and verified on all probe entries 20–24
 
 **Verification & Testing:**
 - [ ] Test vectors verified (40+ cases)

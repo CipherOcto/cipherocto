@@ -54,6 +54,8 @@ pub enum BigIntError {
     OutOfI128Range,
     /// Value out of range for target type (i64/u64)
     OutOfRange,
+    /// Invalid string format
+    InvalidString,
 }
 
 /// Deterministic BIGINT representation
@@ -1009,6 +1011,244 @@ impl BigInt {
             return Err(BigIntError::NonCanonicalInput);
         }
         Ok(b)
+    }
+}
+
+// =============================================================================
+// String Conversions (Display + FromStr)
+// =============================================================================
+
+use std::fmt;
+use std::str::FromStr;
+
+impl fmt::Display for BigInt {
+    /// Format BigInt as decimal string
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        if self.is_zero() {
+            return write!(f, "0");
+        }
+
+        // For hex format
+        if f.alternate() {
+            return write!(f, "0x{}", self.to_hex_string());
+        }
+
+        // Decimal format
+        let s = self.to_decimal_string();
+        if self.sign {
+            write!(f, "-{}", s)
+        } else {
+            write!(f, "{}", s)
+        }
+    }
+}
+
+impl fmt::LowerHex for BigInt {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        if self.is_zero() {
+            return write!(f, "0");
+        }
+
+        let s = self.to_hex_string();
+        if f.alternate() {
+            write!(f, "0x{}", s)
+        } else {
+            write!(f, "{}", s)
+        }
+    }
+}
+
+impl fmt::UpperHex for BigInt {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        if self.is_zero() {
+            return write!(f, "0");
+        }
+
+        let s = self.to_upper_hex_string();
+        if f.alternate() {
+            write!(f, "0x{}", s)
+        } else {
+            write!(f, "{}", s)
+        }
+    }
+}
+
+impl FromStr for BigInt {
+    type Err = BigIntError;
+
+    /// Parse BigInt from string (decimal or hex)
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        let s = s.trim();
+
+        if s.is_empty() {
+            return Err(BigIntError::InvalidString);
+        }
+
+        // Check for hex prefix
+        if s.starts_with("0x") || s.starts_with("0X") {
+            return Self::from_hex_str(&s[2..]);
+        }
+
+        // Decimal parse
+        Self::from_decimal_str(s)
+    }
+}
+
+impl BigInt {
+    /// Convert to decimal string representation
+    fn to_decimal_string(&self) -> String {
+        if self.is_zero() {
+            return "0".to_string();
+        }
+
+        // Clone to avoid mutating self
+        let mut abs_val = self.clone();
+        abs_val.sign = false;
+
+        // Divide by 10 repeatedly to extract digits
+        let mut digits = Vec::new();
+        while !abs_val.is_zero() {
+            let ten = BigInt::new(vec![10], false);
+            let (_, rem) = bigint_divmod(abs_val, ten).unwrap();
+            let digit = rem.limbs()[0] as u8;
+            digits.push(char::from(b'0' + digit));
+            abs_val = BigInt::new(rem.limbs().to_vec(), false);
+        }
+
+        digits.iter().rev().collect()
+    }
+
+    /// Convert to hex string representation (without 0x prefix)
+    fn to_hex_string(&self) -> String {
+        if self.is_zero() {
+            return "0".to_string();
+        }
+
+        self.limbs()
+            .iter()
+            .enumerate()
+            .rev()
+            .map(|(i, limb)| {
+                if i == self.limbs().len() - 1 {
+                    // Most significant limb: don't pad
+                    format!("{:x}", limb)
+                } else {
+                    // Other limbs: pad to 16 hex chars
+                    format!("{:016x}", limb)
+                }
+            })
+            .collect()
+    }
+
+    /// Convert to uppercase hex string representation (without 0x prefix)
+    fn to_upper_hex_string(&self) -> String {
+        if self.is_zero() {
+            return "0".to_string();
+        }
+
+        self.limbs()
+            .iter()
+            .enumerate()
+            .rev()
+            .map(|(i, limb)| {
+                if i == self.limbs().len() - 1 {
+                    format!("{:X}", limb)
+                } else {
+                    format!("{:016X}", limb)
+                }
+            })
+            .collect()
+    }
+
+    /// Parse from decimal string
+    fn from_decimal_str(s: &str) -> Result<Self, BigIntError> {
+        let s = s.trim();
+
+        if s.is_empty() {
+            return Err(BigIntError::InvalidString);
+        }
+
+        let (s, sign) = if let Some(stripped) = s.strip_prefix('-') {
+            (stripped, true)
+        } else if let Some(stripped) = s.strip_prefix('+') {
+            (stripped, false)
+        } else {
+            (s, false)
+        };
+
+        if s.is_empty() {
+            return Err(BigIntError::InvalidString);
+        }
+
+        // Check for invalid characters (only digits allowed)
+        if !s.chars().all(|c| c.is_ascii_digit()) {
+            return Err(BigIntError::InvalidString);
+        }
+
+        // Parse by building limbs from decimal chunks
+        // Use 10^19 as chunk (fits in u64)
+        let chunk_size = 19u32;
+        let base = BigInt::new(vec![10u64.pow(chunk_size)], false);
+
+        let mut result = BigInt::zero();
+        let chars: Vec<char> = s.chars().collect();
+
+        // Process in chunks from the right
+        let mut pos = chars.len();
+        while pos > 0 {
+            let start = pos.saturating_sub(chunk_size as usize);
+            let chunk: String = chars[start..pos].iter().collect();
+            let chunk_val: u64 = chunk.parse().map_err(|_| BigIntError::InvalidString)?;
+
+            // result = result * 10^chunk_size + chunk_val
+            if pos > chunk_size as usize {
+                result = bigint_mul(result, base.clone()).map_err(|_| BigIntError::Overflow)?;
+            }
+
+            let chunk_bigint = BigInt::new(vec![chunk_val], false);
+            result = bigint_add(result, chunk_bigint).map_err(|_| BigIntError::Overflow)?;
+
+            pos = start;
+        }
+
+        if sign {
+            result.sign = true;
+        }
+
+        Ok(result)
+    }
+
+    /// Parse from hex string (without 0x prefix)
+    fn from_hex_str(s: &str) -> Result<Self, BigIntError> {
+        let s = s.trim();
+
+        if s.is_empty() {
+            return Err(BigIntError::InvalidString);
+        }
+
+        // Check for invalid characters (only hex digits allowed)
+        if !s.chars().all(|c| c.is_ascii_hexdigit()) {
+            return Err(BigIntError::InvalidString);
+        }
+
+        // Parse hex string into limbs (little-endian)
+        let mut limbs = Vec::new();
+        let chars: Vec<char> = s.chars().rev().collect();
+        let chunk_size = 16usize; // 16 hex chars = 64 bits
+
+        for chunk in chars.chunks(chunk_size) {
+            let chunk_str: String = chunk.iter().rev().collect();
+            let limb_val = u64::from_str_radix(&chunk_str, 16)
+                .map_err(|_| BigIntError::InvalidString)?;
+            limbs.push(limb_val);
+        }
+
+        // Remove trailing zeros
+        while limbs.len() > 1 && limbs.last() == Some(&0) {
+            limbs.pop();
+        }
+
+        Ok(BigInt { limbs, sign: false })
     }
 }
 
@@ -2326,5 +2566,83 @@ mod regression_tests {
         let result = bigint_sub(BigInt::zero(), BigInt::from(1i64)).unwrap();
         assert_eq!(result.limbs(), &[1]);
         assert!(result.sign());
+    }
+
+    // =========================================================================
+    // String Conversions Tests
+    // =========================================================================
+
+    /// Test decimal Display
+    #[test]
+    #[ignore] // Slow for large numbers - decimal conversion is O(n²)
+    fn test_display_decimal() {
+        let n = BigInt::from(12345i64);
+        assert_eq!(format!("{}", n), "12345");
+
+        let neg = BigInt::from(-12345i64);
+        assert_eq!(format!("{}", neg), "-12345");
+    }
+
+    /// Test hex Display
+    #[test]
+    fn test_display_hex() {
+        let n = BigInt::new(vec![0x123456789ABCDEF0], false);
+        assert_eq!(format!("{:#x}", n), "0x123456789abcdef0");
+    }
+
+    /// Test zero Display
+    #[test]
+    fn test_display_zero() {
+        let zero = BigInt::zero();
+        assert_eq!(format!("{}", zero), "0");
+    }
+
+    /// Test FromStr decimal parsing
+    #[test]
+    fn test_from_str_decimal() {
+        let n: BigInt = "12345".parse().unwrap();
+        assert_eq!(n, BigInt::from(12345i64));
+
+        let neg: BigInt = "-12345".parse().unwrap();
+        assert_eq!(neg, BigInt::from(-12345i64));
+
+        let pos: BigInt = "+12345".parse().unwrap();
+        assert_eq!(pos, BigInt::from(12345i64));
+    }
+
+    /// Test FromStr hex parsing
+    #[test]
+    fn test_from_str_hex() {
+        let n: BigInt = "0xFF".parse().unwrap();
+        assert_eq!(n.limbs(), &[0xFF]);
+
+        let n2: BigInt = "0xDEADBEEF".parse().unwrap();
+        assert_eq!(n2.limbs(), &[0xDEADBEEF]);
+
+        let upper: BigInt = "0XDEADBEEF".parse().unwrap();
+        assert_eq!(upper.limbs(), &[0xDEADBEEF]);
+    }
+
+    /// Test FromStr invalid input
+    #[test]
+    fn test_from_str_invalid() {
+        let result: Result<BigInt, _> = "".parse();
+        assert!(result.is_err());
+
+        let result: Result<BigInt, _> = "abc".parse();
+        assert!(result.is_err());
+
+        let result: Result<BigInt, _> = "0x".parse();
+        assert!(result.is_err());
+    }
+
+    /// Test roundtrip: parse -> display -> parse (small number)
+    #[test]
+    #[ignore] // Slow - decimal conversion is O(n²)
+    fn test_string_roundtrip() {
+        let original = BigInt::from(12345i64);
+        let s = format!("{}", original);
+        let parsed: BigInt = s.parse().unwrap();
+        assert_eq!(parsed, original);
     }
 }

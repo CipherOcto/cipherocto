@@ -12,6 +12,62 @@
 > - Fixed Newton-Raphson SQRT with explicit iteration limit and convergence check
 > - Added decimal_spec_version for replay pinning
 
+## Authors
+
+- Primary Author: TBD
+- Contributing Reviewers: TBD
+
+## Maintainers
+
+- Lead Maintainer: TBD
+- Technical Contact: TBD
+- Repository: `rfcs/draft/numeric/0111-deterministic-decimal.md`
+
+## Dependencies
+
+### Required RFCs
+
+| RFC | Relationship | Reason |
+|-----|--------------|--------|
+| RFC-0105 (DQA) | Required | DECIMAL extends DQA from i64→i128, scale 0-18→0-36 |
+| RFC-0110 (BIGINT) | Required | i128 uses 2×i64 limbs internally |
+
+### Optional RFCs
+
+| RFC | Relationship | Reason |
+|-----|--------------|--------|
+| RFC-0104 (DFP) | Optional | Interoperability with floating-point |
+
+## Design Goals
+
+1. **Precision**: Support up to 36 decimal places for high-precision financial calculations
+2. **Determinism**: Ensure bit-exact reproducible results across all implementations
+3. **Compatibility**: Provide seamless conversion to/from DQA (RFC-0105)
+4. **Performance**: Maintain 1.2-1.5x slower than DQA (acceptable for high-precision use cases)
+5. **Safety**: Prevent overflow/underflow through explicit scale limits (0-36)
+
+## Motivation
+
+### Why DECIMAL?
+
+While DQA (RFC-0105) provides sufficient precision for most financial calculations (up to 18 decimal places), certain use cases demand higher precision:
+
+1. **High-precision risk calculations**: VaR, exotic derivatives, and complex financial models
+2. **Regulatory requirements**: Some jurisdictions require more than 18 decimal places for specific instruments
+3. **Scientific computing**: Certain scientific calculations benefit from extended precision
+4. **Interoperability**: Compatibility with external systems that use higher precision decimals
+
+DECIMAL addresses these requirements by extending DQA's approach to i128-based scaled integers, providing:
+- Scale range: 0-36 (vs DQA's 0-18)
+- Mantissa range: ±(10^36 - 1)
+- Backward compatibility with DQA via explicit conversion
+
+### When NOT to Use DECIMAL
+
+- Default financial calculations: Use DQA (faster, sufficient precision)
+- General computation: Use DFP (RFC-0104) for floating-point approximation
+- Cryptographic operations: Use BIGINT (RFC-0110) for integer arithmetic
+
 ## Summary
 
 This RFC defines Deterministic DECIMAL — extended-precision decimal arithmetic using i128-based scaled integers. DECIMAL provides higher precision than DQA (RFC-0105) for financial calculations requiring more than 18 decimal places.
@@ -438,6 +494,203 @@ fn decimal_probe_root(probe: &DecimalProbe) -> [u8; 32] {
 - [ ] MAX_DECIMAL_SCALE enforcement
 - [ ] Test vectors verified
 - [ ] Verification probe
+
+## System Architecture
+
+```mermaid
+flowchart TB
+    subgraph Input["Input Layer"]
+        DQA[DQA i64]
+        BIGINT[BIGINT arbitrary]
+        STR[String]
+    end
+
+    subgraph Core["DECIMAL Core"]
+        DEC[Decimal<br/>mantissa: i128<br/>scale: u8]
+        CANON[Canonicalize]
+        ADD[ADD]
+        SUB[SUB]
+        MUL[MUL]
+        DIV[DIV]
+        SQRT[SQRT]
+        ROUND[ROUND]
+    end
+
+    subgraph Output["Output Layer"]
+        DQA_OUT[DQA i64]
+        BIGINT_OUT[BIGINT]
+        STR_OUT[String]
+    end
+
+    DQA -->|dqa_to_decimal| DEC
+    BIGINT -->|bigint_to_decimal| DEC
+    STR -->|parse| DEC
+    DEC --> CANON
+    CANON --> ADD
+    CANON --> SUB
+    CANON --> MUL
+    CANON --> DIV
+    CANON --> SQRT
+    CANON --> ROUND
+    ADD --> DQA_OUT
+    SUB --> BIGINT_OUT
+    MUL --> STR_OUT
+    DIV --> DEC
+    SQRT --> DEC
+    ROUND --> DEC
+```
+
+**Architecture Notes:**
+- DECIMAL operates in the decimal domain, separate from INTEGER (BIGINT) and FLOAT (DFP) domains
+- All operations flow through CANONICALIZE to ensure deterministic canonical form
+- Conversions to DQA require explicit scale checks (scale ≤ 18)
+
+## Error Handling
+
+### Error Codes
+
+| Error | Code | Condition |
+|-------|------|-----------|
+| DEC_OVERFLOW | 0xD001 | Result exceeds ±(10^36 - 1) |
+| DEC_SCALE_OVERFLOW | 0xD002 | Scale exceeds 36 |
+| DEC_DIVISION_BY_ZERO | 0xD003 | Division by zero |
+| DEC_NEGATIVE_SQRT | 0xD004 | Square root of negative |
+| DEC_PRECISION_LOSS | 0xD005 | Conversion to DQA loses precision (scale > 18) |
+| DEC_INVALID_STRING | 0xD006 | String parsing failure |
+
+### Error Semantics
+
+All errors are fatal (TRAP) — no partial results or fallback behavior:
+- Contract execution reverts on any DECIMAL error
+- Gas is consumed up to the point of failure
+- Error code is logged for debugging
+
+## Security Considerations
+
+### Threat Model
+
+1. **Arithmetic Overflows**: Prevented by explicit bounds checking before every operation
+2. **Division by Zero**: Explicit check before division, TRAP on zero divisor
+3. **Negative Square Root**: Explicit check, TRAP on negative input
+4. **Precision Loss**: Explicit scale checks for DQA conversion
+5. **Canonical Form Violation**: All operations must return canonical form
+
+### Attack Vectors
+
+| Vector | Mitigation |
+|--------|------------|
+| Malicious scale values | Scale limited to 0-36, enforced at boundaries |
+| Giant mantissa amplification | MAX_DECIMAL_MANTISSA bounds on all operations |
+| Reentrancy | DECIMAL operations are atomic (single function call) |
+| Front-running | Deterministic ordering eliminates race conditions |
+
+### Consensus Security
+
+- All nodes must produce identical results for identical inputs
+- RoundHalfEven required for financial calculations (prevents manipulation)
+- Canonical form ensures consistent Merkle tree hashes
+
+## Adversarial Review
+
+### Review History
+
+| Version | Date | Changes |
+|---------|------|---------|
+| 1.0 | 2026-03-14 | Initial draft |
+| 1.1 | 2026-03-15 | Fixed RoundHalfEven negative handling, added Newton-Raphson convergence |
+
+### Known Issues
+
+| Issue ID | Severity | Description | Status |
+|----------|----------|-------------|--------|
+| D1 | Medium | Newton-Raphson iteration limit (20) may be insufficient for extreme scales | Open |
+| D2 | Low | Gas model not validated against real-world benchmarks | Open |
+
+## Alternatives Considered
+
+### Option 1: Use DQA with Higher Scale (Rejected)
+
+**Approach**: Extend DQA (RFC-0105) to support scale 0-36
+
+**Pros:**
+- No new type needed
+- Simpler codebase
+
+**Cons:**
+- DQA uses i64, insufficient for scale 36 (would require 128-bit intermediate)
+- Breaking change to DQA semantics
+
+**Decision**: DECIMAL uses i128 to support full 36-digit precision
+
+### Option 2: Use Arbitrary-Precision Decimal (Rejected)
+
+**Approach**: Support arbitrary scale beyond 36
+
+**Pros:**
+- Unlimited precision
+
+**Cons:**
+- Gas costs become unpredictable
+- No practical benefit (36 digits exceeds all known requirements)
+- Implementation complexity
+
+**Decision**: Fixed 36-digit limit provides sufficient precision with predictable gas
+
+### Option 3: Use IEEE 754 Decimal128 (Rejected)
+
+**Approach**: Adopt IEEE 754 decimal128 format
+
+**Pros:**
+- Industry standard
+- Hardware support on some platforms
+
+**Cons:**
+- Not deterministic across implementations
+- Different encoding than other numeric types
+- Complex serialization
+
+**Decision**: Custom i128 + scale format maintains consistency with DQA/BIGINT
+
+## Version History
+
+| Version | Date | Author | Changes |
+|---------|------|--------|---------|
+| 1.0 | 2026-03-14 | TBD | Initial draft extracted from RFC-0106 |
+| 1.1 | 2026-03-15 | TBD | Fixed RoundHalfEven algorithm, added SQRT convergence |
+
+## Compatibility
+
+### Backward Compatibility
+
+- DECIMAL v1.x is backward compatible within draft status
+- Breaking changes may occur before Accepted status
+
+### Forward Compatibility
+
+- No forward compatibility guarantees for draft RFCs
+
+### Interoperability
+
+| From | To | Supported | Notes |
+|------|-----|-----------|-------|
+| DECIMAL | DQA | ✅ | Requires scale ≤ 18 |
+| DQA | DECIMAL | ✅ | Always valid |
+| DECIMAL | BIGINT | ✅ | Requires scale = 0 |
+| BIGINT | DECIMAL | ✅ | Always valid |
+| DECIMAL | String | ✅ | Full round-trip |
+| DECIMAL | DFP | ❌ | Not recommended (precision loss) |
+
+## Related Use Cases
+
+- **UC-XXX**: High-Precision Financial Derivatives (future)
+- **UC-XXX**: Regulatory Reporting with Extended Precision (future)
+
+## Future Work
+
+1. **ZK Circuit Commitments**: Add ZK proofs for DECIMAL operations (post-v1)
+2. **SIMD Optimization**: Vectorized operations for batch processing
+3. **Hardware Acceleration**: Leverage dedicated decimal arithmetic units where available
+4. **Decimal128 Interoperability**: Optional conversion to IEEE 754 format
 
 ## References
 

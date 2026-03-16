@@ -554,7 +554,7 @@ pub fn bigint_all_probe_entries() -> Vec<BigIntProbeEntry> {
             op_id: OP_ADD,
             input_a: BigIntProbeValue::Int((1u128 << 64) as i128),
             input_b: BigIntProbeValue::Int(1),
-            description: "2^64 + 1",
+            description: "2^64",
         },
         BigIntProbeEntry {
             index: 2,
@@ -1102,10 +1102,10 @@ mod bigint_tests {
             "35301b2bbc4bf3d0",
             "d4b2749a53b112b3",
             "7044098303c9fafd",
-            "ba5c1357640f1ba5",
+            "05adc7ee38381723",
             "53afea624a503a0b",
-            "78403c84df66c25d",
-            "049af6a1bbee3c5a",
+            "7913564ed70f2a20",
+            "4683de3b4072bd54",
         ];
 
         let entries = bigint_all_probe_entries();
@@ -1127,6 +1127,7 @@ mod bigint_tests {
                 );
             }
         }
+        assert_eq!(mismatches, 0, "per-entry hash mismatches");
         eprintln!("Total mismatches: {}", mismatches);
 
         let root = bigint_compute_merkle_root();

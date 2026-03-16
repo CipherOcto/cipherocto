@@ -393,7 +393,7 @@ fn limb_mul(a: &[u64], b: &[u64]) -> Vec<u64> {
 ///
 /// RFC-0110: bigint_divmod(a, b) -> (BigInt, BigInt)
 /// Algorithm: Knuth Vol.2 §4.3.1 Algorithm D (multi-precision division).
-/// Iteration count: exactly `a_norm.limbs.len()` outer iterations —
+/// Iteration count: exactly m+1 outer iterations where m = dividend.len() - divisor.len() —
 /// no early exit (Determinism Rule 4).
 pub fn bigint_divmod(a: BigInt, b: BigInt) -> Result<(BigInt, BigInt), BigIntError> {
     // RFC: TRAP on non-canonical input

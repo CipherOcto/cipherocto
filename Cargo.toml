@@ -43,7 +43,7 @@ http-body-util = "0.1"
 rustls = "0.23"
 rustls-pemfile = "2.1"
 # HTTP client for forwarding
-reqwest = { version = "0.12", features = ["json"] }
+reqwest = { version = "0.13", features = ["json"] }
 # Config file handling
 directories = "6"
 # Async mutex

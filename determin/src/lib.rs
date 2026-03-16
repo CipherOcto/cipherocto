@@ -1,13 +1,15 @@
-//! Deterministic Arithmetic (DFP/DQA) Implementation
+//! Deterministic Arithmetic (DFP/DQA/BigInt) Implementation
 //!
 //! This module implements:
 //! - RFC-0104: Deterministic Floating-Point (DFP)
 //! - RFC-0105: Deterministic Quant Arithmetic (DQA)
+//! - RFC-0110: Deterministic BIGINT
 //!
 //! Key design principles:
 //! - Pure integer arithmetic (no floating-point operations)
 //! - DFP: Saturating arithmetic (overflow → MAX, not Infinity)
 //! - DQA: Bounded range (i64 value with 0-18 decimal scale)
+//! - BigInt: Arbitrary precision with TRAP on overflow
 //! - Canonical representation for deterministic Merkle hashing
 //! - Round-to-nearest-even (RNE) / RoundHalfEven
 
@@ -17,13 +19,20 @@ pub const DQA_SPEC_VERSION: u32 = 1;
 /// DFP (Deterministic Floating-Point) specification version
 pub const DFP_SPEC_VERSION: u32 = 1;
 
+/// BIGINT specification version
+pub const BIGINT_SPEC_VERSION: u32 = 1;
+
 mod arithmetic;
+pub mod bigint;
 pub mod dqa;
 #[cfg(test)]
 mod fuzz;
 mod probe;
 
 pub use arithmetic::{dfp_add, dfp_div, dfp_mul, dfp_sqrt, dfp_sub};
+pub use bigint::{
+    bigint_add, bigint_div, bigint_divmod, bigint_mod, bigint_mul, bigint_sub, BigInt, BigIntError,
+};
 pub use dqa::{dqa_abs, dqa_assign_to_column, dqa_cmp, dqa_negate, Dqa, DqaEncoding, DqaError};
 
 use serde::{Deserialize, Serialize};

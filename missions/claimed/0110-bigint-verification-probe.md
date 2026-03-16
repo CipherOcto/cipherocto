@@ -1,7 +1,7 @@
 # Mission: BigInt Verification Probe
 
 ## Status
-Open
+Done (claimed by agent/bigint-core-algorithms)
 
 ## RFC
 RFC-0110 (Numeric): Deterministic BIGINT
@@ -20,10 +20,10 @@ The verification probe is a canonical set of 56 BigInt operations that:
 ## Phase 1: Probe Encoding
 
 ### Acceptance Criteria
-- [ ] Implement 8-byte compact encoding for probe fields
-- [ ] Values ≤ 2^56: bytes 0-6 little-endian, byte 7 = 0x00 (positive) or 0x80 (negative)
-- [ ] Values > 2^56: hash reference (lower 8 bytes of SHA-256)
-- [ ] Special sentinels: MAX = 0xFFFF_FFFF_FFFF_FFFF, TRAP = 0xDEAD_DEAD_DEAD_DEAD
+- [x] Implement 8-byte compact encoding for probe fields
+- [x] Values ≤ 2^56: bytes 0-6 little-endian, byte 7 = 0x00 (positive) or 0x80 (negative)
+- [x] Values > 2^56: hash reference (lower 8 bytes of SHA-256)
+- [x] Special sentinels: MAX = 0xFFFF_FFFF_FFFF_FFFF, TRAP = 0xDEAD_DEAD_DEAD_DEAD
 
 ### Probe Format (RFC-0110 §Canonical Probe Entry Format)
 ```
@@ -73,10 +73,10 @@ I128_ROUNDTRIP = 13
 ## Phase 2: Probe Entries
 
 ### Acceptance Criteria
-- [ ] Implement all 56 probe entries
-- [ ] Match RFC-0110 table exactly
-- [ ] Handle MAX_BIGINT sentinel correctly
-- [ ] Handle TRAP results for overflow cases
+- [x] Implement all 56 probe entries
+- [x] Match RFC-0110 table exactly
+- [x] Handle MAX_BIGINT sentinel correctly
+- [x] Handle TRAP results for overflow cases
 
 ### Probe Entries Table (RFC-0110 §Probe Entries)
 
@@ -142,10 +142,10 @@ I128_ROUNDTRIP = 13
 ## Phase 3: Merkle Tree
 
 ### Acceptance Criteria
-- [ ] Build Merkle tree from 56 entry hashes
-- [ ] Use SHA-256 for hashing
-- [ ] Pairwise combination (if odd, duplicate last)
-- [ ] Verify root matches reference
+- [x] Build Merkle tree from 56 entry hashes
+- [x] Use SHA-256 for hashing
+- [x] Pairwise combination (if odd, duplicate last)
+- [x] Verify root matches reference
 
 ### Merkle Root (RFC-0110)
 ```
@@ -170,10 +170,10 @@ c447fa82db0763435c1a18268843300c2ed811e21fcb400b18c75e579ddac7c0
 ## Phase 4: Verification Procedures
 
 ### Acceptance Criteria
-- [ ] Two-input verification procedure (ADD, SUB, MUL, DIV, MOD, CMP)
-- [ ] One-input verification procedure (CANONICALIZE, BITLEN, SHL, SHR)
-- [ ] Round-trip verification (I128_ROUNDTRIP)
-- [ ] Serialization verification (SERIALIZE, DESERIALIZE)
+- [x] Two-input verification procedure (ADD, SUB, MUL, DIV, MOD, CMP)
+- [x] One-input verification procedure (CANONICALIZE, BITLEN, SHL, SHR)
+- [x] Round-trip verification (I128_ROUNDTRIP)
+- [x] Serialization verification (SERIALIZE, DESERIALIZE)
 
 ### Two-Input Verification Procedure
 ```

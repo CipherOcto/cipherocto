@@ -170,7 +170,7 @@
 > - Removed constant-time requirement (clarified optional)
 > - Fully specified shift operations with carry behavior
 > - Added determinism guarantee section
-> - Expanded verification probe to 64 entries\*\*
+> - Expanded verification probe to 56 entries\*\*
 > - Defined explicit canonicalization algorithm with negative-zero elimination
 > - Mandated 128-bit intermediate arithmetic for limb overflow
 > - Picked single division algorithm (bit-level restoring division)
@@ -500,14 +500,11 @@ Preconditions:
 Algorithm: Schoolbook O(n²) multiplication
   (Karatsuba NOT allowed — implementation variance risk)
 
-  1. Check overflow:
-     if a.limbs.len + b.limbs.len > MAX_LIMBS + 1: TRAP
+  1. If either is zero: return ZERO
 
-  2. If either is zero: return ZERO
+  2. Result limbs = vec![0; a.limbs.len + b.limbs.len]
 
-  3. Result limbs = vec![0; a.limbs.len + b.limbs.len]
-
-  4. Schoolbook multiplication:
+  3. Schoolbook multiplication:
      for i in 0..a.limbs.len:
        for j in 0..b.limbs.len:
          // Multiply two u64, result is u128
@@ -528,15 +525,15 @@ Algorithm: Schoolbook O(n²) multiplication
            k += 1;
          }
 
-  5. Remove leading zero limbs
+  4. Remove leading zero limbs
      result_bits = bigint_bit_length(result)
      if result_bits > MAX_BIGINT_BITS: TRAP
 
-  6. result.sign = a.sign XOR b.sign
+  5. result.sign = a.sign XOR b.sign
 
-  7. result = canonicalize(result)
+  6. result = canonicalize(result)
 
-  8. return result
+  7. return result
 ```
 
 ### bigint_divmod — Division with Remainder

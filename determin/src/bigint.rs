@@ -549,39 +549,38 @@ fn knuth_d(dividend: &[u64], divisor: &[u64]) -> (Vec<u64>, Vec<u64>) {
 
         // D4: Multiply and subtract: u[j..j+n+1] -= q_hat * v.
         //
-        // We compute borrow using i128 arithmetic to detect underflow.
-        // `borrow` holds the combined carry-borrow from previous limb.
+        // Two-pass approach using pure u128 arithmetic to avoid i128 overflow
+        // when q_hat * v[i] > 2^127.
         {
-            let mut borrow: i128 = 0;
+            // Pass 1: Compute q_hat * v into qv[]
+            let mut qv = vec![0u64; n + 1];
+            let mut mul_carry: u128 = 0;
             for i in 0..n {
-                // product = q_hat * v[i] (can be up to (BASE-1)^2 < 2^128)
-                let prod = (q_hat * v[i] as u128) as i128 + borrow;
-                borrow = prod >> 64; // signed right-shift: propagates sign
-                let d = u[j + i] as i128 - (prod & 0xFFFF_FFFF_FFFF_FFFFi128);
-                if d < 0 {
-                    u[j + i] = (d + (1i128 << 64)) as u64;
-                    borrow += 1;
-                } else {
-                    u[j + i] = d as u64;
-                }
+                let prod = q_hat * (v[i] as u128) + mul_carry;
+                qv[i] = prod as u64;
+                mul_carry = prod >> 64;
             }
-            // Apply final borrow to u[j+n]
-            let top = u[j + n] as i128 - borrow;
-            if top < 0 {
-                // D6: Add back — q_hat was too large by 1.
-                // This happens with probability ~2/BASE (extremely rare).
+            qv[n] = mul_carry as u64;
+
+            // Pass 2: Subtract qv[] from u[j..j+n+1] with overflow tracking
+            let mut sub_borrow: u64 = 0;
+            for i in 0..=n {
+                let (d1, b1) = u[j + i].overflowing_sub(qv[i]);
+                let (d2, b2) = d1.overflowing_sub(sub_borrow);
+                u[j + i] = d2;
+                sub_borrow = (b1 as u64) | (b2 as u64);
+            }
+
+            if sub_borrow != 0 {
+                // D6: Add back — q_hat was 1 too large (probability ~2/BASE).
                 q_hat -= 1;
-                u[j + n] = (top + (1i128 << 64)) as u64;
-                // Restore: u[j..j+n+1] += v (with carry propagation)
-                let mut carry: u128 = 0;
+                let mut add_carry: u128 = 0;
                 for i in 0..n {
-                    let s = u[j + i] as u128 + v[i] as u128 + carry;
+                    let s = u[j + i] as u128 + v[i] as u128 + add_carry;
                     u[j + i] = s as u64;
-                    carry = s >> 64;
+                    add_carry = s >> 64;
                 }
-                u[j + n] = u[j + n].wrapping_add(carry as u64);
-            } else {
-                u[j + n] = top as u64;
+                u[j + n] = u[j + n].wrapping_add(add_carry as u64);
             }
         }
 

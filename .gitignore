@@ -1,6 +1,7 @@
 # Rust / CipherOcto
 /target
 /.octo
+determin/target
 **/*.rs.bk
 *.pdb
 
@@ -21,3 +22,13 @@ Thumbs.db
 # Logs
 *.log
 .gitnexus
+Cargo.lock
+
+# Worktrees
+.worktrees/
+
+# Python
+.venv/
+.python-version
+**/__pycache__/
+*.egg-info/

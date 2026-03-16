@@ -8,24 +8,24 @@ This guide covers setting up a complete CipherOcto development environment on yo
 
 ### Minimum Requirements
 
-| Component | Minimum |
-| --------- | -------- |
-| **OS** | Linux (Ubuntu 22.04+), macOS 13+, Windows 11 with WSL2 |
-| **CPU** | 4 cores, x86_64 or arm64 |
-| **RAM** | 8 GB |
-| **Storage** | 20 GB free space |
-| **Network** | Stable internet connection |
+| Component   | Minimum                                                |
+| ----------- | ------------------------------------------------------ |
+| **OS**      | Linux (Ubuntu 22.04+), macOS 13+, Windows 11 with WSL2 |
+| **CPU**     | 4 cores, x86_64 or arm64                               |
+| **RAM**     | 8 GB                                                   |
+| **Storage** | 20 GB free space                                       |
+| **Network** | Stable internet connection                             |
 
 ### Recommended Requirements
 
-| Component | Recommended |
-| ----------- | ----------- |
-| **OS** | Ubuntu 22.04 LTS or macOS 14+ |
-| **CPU** | 8+ cores |
-| **RAM** | 16 GB+ |
-| **Storage** | 50 GB+ SSD |
-| **GPU** | NVIDIA GPU (compute capability 7.0+) with 8GB+ VRAM |
-| **Network** | 100 Mbps+ connection |
+| Component   | Recommended                                         |
+| ----------- | --------------------------------------------------- |
+| **OS**      | Ubuntu 22.04 LTS or macOS 14+                       |
+| **CPU**     | 8+ cores                                            |
+| **RAM**     | 16 GB+                                              |
+| **Storage** | 50 GB+ SSD                                          |
+| **GPU**     | NVIDIA GPU (compute capability 7.0+) with 8GB+ VRAM |
+| **Network** | 100 Mbps+ connection                                |
 
 ---
 
@@ -475,14 +475,14 @@ node --loader ts-node/esm src/index.ts
 
 ## Environment Variables
 
-| Variable | Description | Default |
-| ---------- | ----------- | ------- |
-| `CIHEROCTO_RPC_URL` | RPC endpoint | http://localhost:8545 |
-| `CIHEROCTO_CHAIN_ID` | Chain ID | 1337 |
-| `CIHEROCTO_PRIVATE_KEY` | Wallet private key | — |
-| `CIHEROCTO_DATA_DIR` | Data directory | ~/.cipherocto |
-| `DEBUG` | Debug logging | — |
-| `NODE_ENV` | Environment | development |
+| Variable                | Description        | Default               |
+| ----------------------- | ------------------ | --------------------- |
+| `CIHEROCTO_RPC_URL`     | RPC endpoint       | http://localhost:8545 |
+| `CIHEROCTO_CHAIN_ID`    | Chain ID           | 1337                  |
+| `CIHEROCTO_PRIVATE_KEY` | Wallet private key | —                     |
+| `CIHEROCTO_DATA_DIR`    | Data directory     | ~/.cipherocto         |
+| `DEBUG`                 | Debug logging      | —                     |
+| `NODE_ENV`              | Environment        | development           |
 
 ---
 
@@ -499,4 +499,4 @@ node --loader ts-node/esm src/index.ts
 
 ---
 
-*For contribution guidelines, see [contributing.md](./contributing.md).*
+_For contribution guidelines, see [contributing.md](./contributing.md)._

@@ -327,6 +327,7 @@ graph LR
 **CipherOcto is not a product. It is a coordinated system.**
 
 Every participant has:
+
 - A clear role
 - A specific token
 - A defined earning mechanism
@@ -339,17 +340,17 @@ The ecosystem works when all parts coordinate.
 
 ## Quick Reference
 
-| Layer | Token | Function |
-| ----- | ----- | -------- |
-| **Governance** | OCTO | Coordination, settlement, reserve |
-| **Compute** | OCTO-A | GPU inference, training |
-| **Storage** | OCTO-S | Encrypted memory, archival |
-| **Bandwidth** | OCTO-B | Network relay, delivery |
-| **Orchestration** | OCTO-O | Task routing, coordination |
-| **Wholesale** | OCTO-W | Enterprise AI resale |
-| **Developers** | OCTO-D | Agent building, tools |
-| **Growth** | OCTO-M | Marketing, community |
-| **Nodes** | OCTO-N | Blockchain validation |
+| Layer             | Token  | Function                          |
+| ----------------- | ------ | --------------------------------- |
+| **Governance**    | OCTO   | Coordination, settlement, reserve |
+| **Compute**       | OCTO-A | GPU inference, training           |
+| **Storage**       | OCTO-S | Encrypted memory, archival        |
+| **Bandwidth**     | OCTO-B | Network relay, delivery           |
+| **Orchestration** | OCTO-O | Task routing, coordination        |
+| **Wholesale**     | OCTO-W | Enterprise AI resale              |
+| **Developers**    | OCTO-D | Agent building, tools             |
+| **Growth**        | OCTO-M | Marketing, community              |
+| **Nodes**         | OCTO-N | Blockchain validation             |
 
 ---
 

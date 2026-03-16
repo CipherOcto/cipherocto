@@ -32,13 +32,13 @@ graph TB
 
 ### Supported Model Types
 
-| Category | Formats | Examples |
-| ---------- | ------- | -------- |
-| **LLMs** | GGUF, SafeTensors, ONNX | Llama 2, Mistral, Phi |
-| **Diffusion** | Safetensors, PyTorch | Stable Diffusion, FLUX |
-| **Embeddings** | ONNX, PyTorch | BERT, Sentence-Transformers |
-| **Vision** | ONNX, TensorRT | YOLO, ResNet |
-| **Audio** | ONNX, PyTorch | Whisper, AudioLDM |
+| Category       | Formats                 | Examples                    |
+| -------------- | ----------------------- | --------------------------- |
+| **LLMs**       | GGUF, SafeTensors, ONNX | Llama 2, Mistral, Phi       |
+| **Diffusion**  | Safetensors, PyTorch    | Stable Diffusion, FLUX      |
+| **Embeddings** | ONNX, PyTorch           | BERT, Sentence-Transformers |
+| **Vision**     | ONNX, TensorRT          | YOLO, ResNet                |
+| **Audio**      | ONNX, PyTorch           | Whisper, AudioLDM           |
 
 ### Model Distribution
 
@@ -61,12 +61,12 @@ graph LR
 
 ### Model Versioning
 
-| Component | Description |
-| --------- | ----------- |
-| **Semantic versioning** | Major.Minor.Patch format |
-| **Content addressing** | IPFS hashes for integrity |
-| **Signature verification** | Model creator signatures |
-| **Compatibility matrix** | Hardware requirement specs |
+| Component                  | Description                |
+| -------------------------- | -------------------------- |
+| **Semantic versioning**    | Major.Minor.Patch format   |
+| **Content addressing**     | IPFS hashes for integrity  |
+| **Signature verification** | Model creator signatures   |
+| **Compatibility matrix**   | Hardware requirement specs |
 
 ---
 
@@ -74,38 +74,38 @@ graph LR
 
 ### Inference Engines
 
-| Engine | Use Case | GPU Support |
-| ------ | -------- | ----------- |
-| **llama.cpp** | CPU/LLM inference | Optional GPU |
-| **vLLM** | Production LLM serving | NVIDIA CUDA |
-| **TensorRT-LLM** | Optimized inference | NVIDIA only |
-| **ONNX Runtime** | Cross-framework | Multiple |
-| **Diffusers** | Diffusion models | NVIDIA/ROCm |
+| Engine           | Use Case               | GPU Support  |
+| ---------------- | ---------------------- | ------------ |
+| **llama.cpp**    | CPU/LLM inference      | Optional GPU |
+| **vLLM**         | Production LLM serving | NVIDIA CUDA  |
+| **TensorRT-LLM** | Optimized inference    | NVIDIA only  |
+| **ONNX Runtime** | Cross-framework        | Multiple     |
+| **Diffusers**    | Diffusion models       | NVIDIA/ROCm  |
 
 ### Inference Modes
 
-| Mode | Description | Latency | Cost |
-| ---- | ----------- | ------- | ---- |
-| **Real-time** | Streaming responses | <100ms | Premium |
-| **Batch** | Processed in batches | 1-5s | Standard |
-| **Async** | Queue and process | Variable | Economy |
+| Mode          | Description          | Latency  | Cost     |
+| ------------- | -------------------- | -------- | -------- |
+| **Real-time** | Streaming responses  | <100ms   | Premium  |
+| **Batch**     | Processed in batches | 1-5s     | Standard |
+| **Async**     | Queue and process    | Variable | Economy  |
 
 ### Hardware Support Matrix
 
-| Hardware Tier | VRAM | Models Supported | OCTO-A Required |
-| ------------- | ---- | ---------------- | --------------- |
-| **Consumer** | 8-16GB | 7B-13B LLMs | 1,000 |
-| **Prosumer** | 24-48GB | 13B-70B LLMs | 5,000 |
-| **Enterprise** | 80GB+ | 70B+ LLMs, diffusion | 10,000 |
+| Hardware Tier  | VRAM    | Models Supported     | OCTO-A Required |
+| -------------- | ------- | -------------------- | --------------- |
+| **Consumer**   | 8-16GB  | 7B-13B LLMs          | 1,000           |
+| **Prosumer**   | 24-48GB | 13B-70B LLMs         | 5,000           |
+| **Enterprise** | 80GB+   | 70B+ LLMs, diffusion | 10,000          |
 
 ### Quantization Support
 
-| Format | Size Reduction | Quality Impact | Use Case |
-| ------ | -------------- | -------------- | -------- |
-| **FP16** | 0% | None | Precision required |
-| **FP8** | 50% | Minimal | Production |
-| **INT8** | 75% | Slight | Cost optimization |
-| **INT4** | 87.5% | Noticeable | Edge cases |
+| Format   | Size Reduction | Quality Impact | Use Case           |
+| -------- | -------------- | -------------- | ------------------ |
+| **FP16** | 0%             | None           | Precision required |
+| **FP8**  | 50%            | Minimal        | Production         |
+| **INT8** | 75%            | Slight         | Cost optimization  |
+| **INT4** | 87.5%          | Noticeable     | Edge cases         |
 
 ---
 
@@ -126,13 +126,13 @@ stateDiagram-v2
 
 ### Task Routing
 
-| Router Type | Selection Criteria |
-| ----------- | ----------------- |
-| **Cost-based** | Lowest price per token |
-| **Speed-based** | Fastest response time |
-| **Quality-based** | Highest reputation |
-| **Privacy-based** | TEE/encrypted only |
-| **Geo-based** | Regional requirements |
+| Router Type       | Selection Criteria     |
+| ----------------- | ---------------------- |
+| **Cost-based**    | Lowest price per token |
+| **Speed-based**   | Fastest response time  |
+| **Quality-based** | Highest reputation     |
+| **Privacy-based** | TEE/encrypted only     |
+| **Geo-based**     | Regional requirements  |
 
 ### Load Balancing
 
@@ -158,12 +158,12 @@ graph TB
 
 ### Monitoring & Observability
 
-| Metric | Collection | Alert Threshold |
-| ------ | ---------- | --------------- |
-| **Response time** | Per-request | >5s p95 |
-| **Error rate** | Per-provider | >1% |
-| **Throughput** | Tokens/second | <10 t/s |
-| **GPU utilization** | Per-provider | <30% (idle) or >95% (overloaded) |
+| Metric              | Collection    | Alert Threshold                  |
+| ------------------- | ------------- | -------------------------------- |
+| **Response time**   | Per-request   | >5s p95                          |
+| **Error rate**      | Per-provider  | >1%                              |
+| **Throughput**      | Tokens/second | <10 t/s                          |
+| **GPU utilization** | Per-provider  | <30% (idle) or >95% (overloaded) |
 
 ---
 
@@ -197,22 +197,22 @@ graph TB
 
 ### Agent Communication Protocol
 
-| Message Type | Purpose | Example |
-| ------------ | ------- | ------- |
-| **TASK_REQUEST** | Request work from another agent | "Summarize this transcript" |
-| **TASK_RESPONSE** | Return result | "Here is the summary" |
-| **STATUS_UPDATE** | Progress notification | "50% complete" |
-| **ERROR** | Failure notification | "Model unavailable" |
-| **NEGOTIATE** | Discuss terms | "Will pay 0.5 OCTO" |
+| Message Type      | Purpose                         | Example                     |
+| ----------------- | ------------------------------- | --------------------------- |
+| **TASK_REQUEST**  | Request work from another agent | "Summarize this transcript" |
+| **TASK_RESPONSE** | Return result                   | "Here is the summary"       |
+| **STATUS_UPDATE** | Progress notification           | "50% complete"              |
+| **ERROR**         | Failure notification            | "Model unavailable"         |
+| **NEGOTIATE**     | Discuss terms                   | "Will pay 0.5 OCTO"         |
 
 ### Agent Composition Patterns
 
-| Pattern | Description | Use Case |
-| ------- | ----------- | -------- |
-| **Sequential** | A → B → C | Multi-step workflows |
-| **Parallel** | A + B + C simultaneously | Distributed processing |
-| **Hierarchical** | A manages B, C, D | Complex orchestration |
-| **Recursive** | Agents hiring agents | Dynamic problem solving |
+| Pattern          | Description              | Use Case                |
+| ---------------- | ------------------------ | ----------------------- |
+| **Sequential**   | A → B → C                | Multi-step workflows    |
+| **Parallel**     | A + B + C simultaneously | Distributed processing  |
+| **Hierarchical** | A manages B, C, D        | Complex orchestration   |
+| **Recursive**    | Agents hiring agents     | Dynamic problem solving |
 
 ---
 
@@ -220,12 +220,12 @@ graph TB
 
 ### Confidential Computing
 
-| Technology | Protection Level | Availability |
-| ---------- | --------------- | ------------ |
-| **Software TEE** | Medium (SGX2) | Most providers |
-| **Hardware TEE** | High (SEV-SNP, TDX) | Enterprise tier |
-| **Zero-Knowledge** | Very High | Limited models |
-| **Federated** | High | Training only |
+| Technology         | Protection Level    | Availability    |
+| ------------------ | ------------------- | --------------- |
+| **Software TEE**   | Medium (SGX2)       | Most providers  |
+| **Hardware TEE**   | High (SEV-SNP, TDX) | Enterprise tier |
+| **Zero-Knowledge** | Very High           | Limited models  |
+| **Federated**      | High                | Training only   |
 
 ### Data Flow Security
 
@@ -251,11 +251,11 @@ sequenceDiagram
 
 ### Caching Strategy
 
-| Cache Type | Scope | Invalidation |
-| ---------- | ----- | ------------ |
-| **Model cache** | Provider-local | Model update |
-| **Response cache** | Global (IPFS) | TTL-based |
-| **Embedding cache** | Global | User-requested |
+| Cache Type          | Scope          | Invalidation   |
+| ------------------- | -------------- | -------------- |
+| **Model cache**     | Provider-local | Model update   |
+| **Response cache**  | Global (IPFS)  | TTL-based      |
+| **Embedding cache** | Global         | User-requested |
 
 ### Token Streaming
 
@@ -269,11 +269,11 @@ graph LR
 
 ### Batch Optimization
 
-| Strategy | Description | Throughput Gain |
-| -------- | ----------- | --------------- |
-| **Dynamic batching** | Combine requests in flight | 2-3x |
-| **Continuous batching** | vLLM paged-attention | 5-10x |
-| **Speculative decoding** | Draft model + verify | 2x |
+| Strategy                 | Description                | Throughput Gain |
+| ------------------------ | -------------------------- | --------------- |
+| **Dynamic batching**     | Combine requests in flight | 2-3x            |
+| **Continuous batching**  | vLLM paged-attention       | 5-10x           |
+| **Speculative decoding** | Draft model + verify       | 2x              |
 
 ---
 
@@ -281,12 +281,12 @@ graph LR
 
 ### External AI Services
 
-| Service | Integration Type | Use Case |
-| ------- | ---------------- | -------- |
-| **HuggingFace** | Model hub | Model distribution |
-| **OpenAI API** | OCTO-W bridge | Enterprise quota resale |
-| **Anthropic API** | OCTO-W bridge | Enterprise quota resale |
-| **Replicate** | Fallback provider | Overflow handling |
+| Service           | Integration Type  | Use Case                |
+| ----------------- | ----------------- | ----------------------- |
+| **HuggingFace**   | Model hub         | Model distribution      |
+| **OpenAI API**    | OCTO-W bridge     | Enterprise quota resale |
+| **Anthropic API** | OCTO-W bridge     | Enterprise quota resale |
+| **Replicate**     | Fallback provider | Overflow handling       |
 
 ### Developer APIs
 
@@ -325,13 +325,13 @@ Inference_API:
 
 ## Roadmap
 
-| Phase | Features | Timeline |
-| ----- | -------- | -------- |
-| **Phase 1** | Basic inference, single agents | 2027 |
-| **Phase 2** | Multi-agent, streaming | 2028 |
-| **Phase 3** | Federated training, ZK inference | 2029 |
-| **Phase 4** | AGI preparation, recursive agents | 2030+ |
+| Phase       | Features                          | Timeline |
+| ----------- | --------------------------------- | -------- |
+| **Phase 1** | Basic inference, single agents    | 2027     |
+| **Phase 2** | Multi-agent, streaming            | 2028     |
+| **Phase 3** | Federated training, ZK inference  | 2029     |
+| **Phase 4** | AGI preparation, recursive agents | 2030+    |
 
 ---
 
-*For system architecture details, see [system-architecture.md](./system-architecture.md). For blockchain integration, see [blockchain-integration.md](./blockchain-integration.md).*
+_For system architecture details, see [system-architecture.md](./system-architecture.md). For blockchain integration, see [blockchain-integration.md](./blockchain-integration.md)._

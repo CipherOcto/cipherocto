@@ -1,0 +1,29 @@
+[package]
+name = "quota-router-pyo3"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+# PyO3 for Python bindings - using 0.21 with experimental async
+pyo3 = { version = "0.21", features = ["extension-module", "experimental-async"] }
+
+# Core library
+quota-router-core = { path = "../quota-router-core" }
+
+# Serialization
+serde.workspace = true
+serde_json.workspace = true
+
+# UUID generation
+uuid.workspace = true
+
+# Error handling
+thiserror.workspace = true
+
+[build-dependencies]
+pyo3-build-config = "0.21"

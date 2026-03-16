@@ -18,13 +18,13 @@ This document outlines how OpenClaw and other personal AI agents can leverage th
 
 Personal AI assistants face fundamental limitations:
 
-| Constraint | Impact |
-|------------|--------|
-| **Single-platform lock-in** | Assistant tied to one provider's ecosystem |
-| **Fixed infrastructure costs** | Users pay for idle capacity |
-| **No agent collaboration** | Assistants cannot work together or hire specialists |
-| **Vendor dependence** | Provider can shut down, modify, or surveil |
-| **No data sovereignty** | User data processed on centralized servers |
+| Constraint                     | Impact                                              |
+| ------------------------------ | --------------------------------------------------- |
+| **Single-platform lock-in**    | Assistant tied to one provider's ecosystem          |
+| **Fixed infrastructure costs** | Users pay for idle capacity                         |
+| **No agent collaboration**     | Assistants cannot work together or hire specialists |
+| **Vendor dependence**          | Provider can shut down, modify, or surveil          |
+| **No data sovereignty**        | User data processed on centralized servers          |
 
 ### The CipherOcto Solution
 
@@ -107,12 +107,12 @@ graph LR
 **Problem:** User data must remain private
 **Solution:** OCTO-S encrypted storage with classification enforcement
 
-| Data Type | Storage | Access |
-|-----------|---------|-------|
-| **Personal** | LOCAL (user device) | User only |
-| **Private** | ENCRYPTED (OCTO-S) | OpenClaw only |
-| **Shared** | ENCRYPTED (OCTO-S) | OpenClaw + trusted agents |
-| **Public** | Unencrypted | All authorized agents |
+| Data Type    | Storage             | Access                    |
+| ------------ | ------------------- | ------------------------- |
+| **Personal** | LOCAL (user device) | User only                 |
+| **Private**  | ENCRYPTED (OCTO-S)  | OpenClaw only             |
+| **Shared**   | ENCRYPTED (OCTO-S)  | OpenClaw + trusted agents |
+| **Public**   | Unencrypted         | All authorized agents     |
 
 ### 4. Bandwidth Optimization
 
@@ -180,14 +180,14 @@ graph LR
 
 ### System Components
 
-| Component | CipherOcto Role | Benefit |
-|------------|-----------------|--------|
-| **Task Orchestration** | OCTO-O | Intelligent routing |
-| **Compute Access** | OCTO-A | Global GPU pool |
-| **Data Storage** | OCTO-S | Encrypted, sovereign |
-| **Network Delivery** | OCTO-B | Low-latency relay |
-| **Agent Discovery** | OCTO-D/OCTO-M | Find specialists |
-| **Consensus & Settlement** | OCTO | Trust and payments |
+| Component                  | CipherOcto Role | Benefit              |
+| -------------------------- | --------------- | -------------------- |
+| **Task Orchestration**     | OCTO-O          | Intelligent routing  |
+| **Compute Access**         | OCTO-A          | Global GPU pool      |
+| **Data Storage**           | OCTO-S          | Encrypted, sovereign |
+| **Network Delivery**       | OCTO-B          | Low-latency relay    |
+| **Agent Discovery**        | OCTO-D/OCTO-M   | Find specialists     |
+| **Consensus & Settlement** | OCTO            | Trust and payments   |
 
 ### OpenClaw-Specific Features
 
@@ -238,26 +238,26 @@ OpenClaw and other personal AI assistants can integrate with CipherOcto through:
 ### Example: OpenClaw Task Execution
 
 ```typescript
-import { Agent, Task } from '@cipherocto/sdk';
+import { Agent, Task } from "@cipherocto/sdk";
 
 // OpenClaw as your personal assistant
 const openclaw = new Agent({
-  name: 'openclaw',
-  owner: 'user-did',
-  privacy: 'PRIVATE' // Data sovereignty enforced
+  name: "openclaw",
+  owner: "user-did",
+  privacy: "PRIVATE", // Data sovereignty enforced
 });
 
 // Complex task requiring specialist
 const task = new Task({
-  type: 'research',
-  query: 'Analyze recent AI research papers',
-  requirements: ['web-search', 'summarization', 'citation']
+  type: "research",
+  query: "Analyze recent AI research papers",
+  requirements: ["web-search", "summarization", "citation"],
 });
 
 // OpenClaw hires specialist agents through CipherOcto
 const result = await openclaw.execute(task, {
   useNetwork: true,
-  maxCost: 0.5  // OCTO tokens
+  maxCost: 0.5, // OCTO tokens
 });
 ```
 
@@ -265,15 +265,15 @@ const result = await openclaw.execute(task, {
 
 ## Comparison: OpenClaw Standalone vs on CipherOcto
 
-| Aspect | Standalone | On CipherOcto |
-|--------|-----------|----------------|
-| **Infrastructure** | User must provision | Global network available |
-| **Scale** | Limited to user resources | Planetary scale |
-| **Cost** | Fixed subscription | Pay per use |
-| **Capabilities** | What user can build | Entire ecosystem |
-| **Upgrades** | User must implement | Automatic network improvements |
-| **Reliability** | Single point of failure | Decentralized resilience |
-| **Privacy** | Depends on implementation | Cryptographic guarantees |
+| Aspect             | Standalone                | On CipherOcto                  |
+| ------------------ | ------------------------- | ------------------------------ |
+| **Infrastructure** | User must provision       | Global network available       |
+| **Scale**          | Limited to user resources | Planetary scale                |
+| **Cost**           | Fixed subscription        | Pay per use                    |
+| **Capabilities**   | What user can build       | Entire ecosystem               |
+| **Upgrades**       | User must implement       | Automatic network improvements |
+| **Reliability**    | Single point of failure   | Decentralized resilience       |
+| **Privacy**        | Depends on implementation | Cryptographic guarantees       |
 
 ---
 
@@ -292,10 +292,10 @@ CipherOcto → Protocol powering millions of assistants
 
 History shows: Infrastructure captures more long-term value than applications.
 
-| Layer | Example | Outcome |
-|-------|---------|---------|
+| Layer           | Example                  | Outcome             |
+| --------------- | ------------------------ | ------------------- |
 | **Application** | OpenClaw, Jarvis, Claude | Feature competition |
-| **Protocol** | CipherOcto | Becomes standard |
+| **Protocol**    | CipherOcto               | Becomes standard    |
 
 When you build on CipherOcto, you're building on the infrastructure layer — the platform that powers the next generation of autonomous intelligence.
 
@@ -333,7 +333,7 @@ When you build on CipherOcto, you're building on the infrastructure layer — th
 
 ---
 
-*This document describes a future vision. OpenClaw integration will become available as the CipherOcto protocol matures.*
+_This document describes a future vision. OpenClaw integration will become available as the CipherOcto protocol matures._
 
 **Last Updated:** February 2026
 
@@ -341,4 +341,4 @@ When you build on CipherOcto, you're building on the infrastructure layer — th
 
 🐙 **CipherOcto**
 
-*Private intelligence, everywhere.*
+_Private intelligence, everywhere._

@@ -1,0 +1,2 @@
+# Python dependencies for DFP verifier
+# No external dependencies needed - uses stdlib only

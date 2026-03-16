@@ -1,0 +1,102 @@
+name: Quota Router Python SDK
+
+on:
+  push:
+    branches: [main, next, feat/*]
+  pull_request:
+    paths:
+      - 'crates/quota-router-pyo3/**'
+      - 'python/**'
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        python-version: ['3.12']
+
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Set up Python ${{ matrix.python-version }}
+        uses: actions/setup-python@v6
+        with:
+          python-version: ${{ matrix.python-version }}
+          virtual-environment: .venv
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Create venv and install dependencies
+        run: |
+          source .venv/bin/activate
+          pip install maturin pytest
+
+      - name: Build and install
+        run: |
+          source .venv/bin/activate
+          maturin develop --manifest-path crates/quota-router-pyo3/Cargo.toml
+
+      - name: Run smoke tests
+        run: |
+          source .venv/bin/activate
+          python tests/smoke_test.py
+
+      - name: Run pytest
+        run: |
+          source .venv/bin/activate
+          pytest
+
+  type-check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v6
+        with:
+          python-version: '3.12'
+          virtual-environment: .venv
+
+      - name: Install mypy
+        run: |
+          source .venv/bin/activate
+          pip install mypy
+
+      - name: Install dependencies
+        run: |
+          source .venv/bin/activate
+          pip install maturin
+          maturin develop --manifest-path crates/quota-router-pyo3/Cargo.toml
+
+      - name: Type check
+        run: |
+          source .venv/bin/activate
+          mypy python/quota_router
+
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v6
+        with:
+          python-version: '3.12'
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Install maturin
+        run: pip install maturin
+
+      - name: Build wheel
+        run: maturin build --manifest-path crates/quota-router-pyo3/Cargo.toml
+        env:
+          MATURIN_PYTHON_TAGS: true
+
+      - name: Upload wheel
+        uses: actions/upload-artifact@v7
+        with:
+          name: wheels
+          path: target/wheels/*.whl

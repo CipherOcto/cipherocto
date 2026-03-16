@@ -1,7 +1,7 @@
 # 🐙 CipherOcto Litepaper
 
-**Version:** 1.0
-**Date:** February 2026
+**Version:** 1.1
+**Date:** March 2026
 **Read Time:** 10 minutes
 
 **STATUS: Seed Phase | Protocol Design Complete | Implementation Starting**
@@ -26,14 +26,30 @@ CipherOcto can operate as a personal AI assistant similar to emerging open assis
 
 ## Development Progress
 
-| Milestone | Status |
-| ----------- | ------ |
-| Architecture Defined | ✓ Complete |
-| Token Model Designed | ✓ Complete |
-| Documentation Layer | ✓ Active |
-| Agent Prototype Phase | → Next |
-| Provider Network Alpha | → Planned |
-| Marketplace Launch | → Roadmap |
+| Milestone                                      | Status     |
+| ---------------------------------------------- | ---------- |
+| Architecture Defined (RFC-0000 (Process/Meta)) | ✓ Complete |
+| Token Model Designed                           | ✓ Complete |
+| Documentation Layer                            | ✓ Active   |
+| RFC Stack (0147 RFCs)                          | ✓ Complete |
+| Implementation Roadmap                         | ✓ Complete |
+| Agent Prototype Phase                          | → Next     |
+| Provider Network Alpha                         | → Planned  |
+| Marketplace Launch                             | → Roadmap  |
+
+### Technical Foundation Complete
+
+CipherOcto's protocol stack is now fully specified:
+
+| Layer              | RFCs            | Status |
+| ------------------ | --------------- | ------ |
+| Deterministic Math | 0104-0106       | ✓      |
+| AI Execution       | 0120, 0131-0132 | ✓      |
+| Consensus          | 0130, 0140-0143 | ✓      |
+| Economy            | 0144-0147       | ✓      |
+| Agents             | 0134, 0118      | ✓      |
+
+**See [RFC-0004 (Process/Meta): Implementation Roadmap](../rfcs/0004-implementation-roadmap.md) for the 6-phase implementation plan.**
 
 ---
 
@@ -41,13 +57,13 @@ CipherOcto can operate as a personal AI assistant similar to emerging open assis
 
 The timing for CipherOcto is not accidental. Five convergent forces make decentralized AI infrastructure inevitable:
 
-| Force | 2025 Reality | Why It Matters |
-| ----- | ------------ | ------------- |
-| **Local AI Explosion** | Open-weight models (Llama, Mistral) run anywhere | AI no longer requires centralized APIs |
-| **Edge Compute Rise** | Consumer devices now AI-capable | Intelligence moving to the edge |
-| **Enterprise Privacy Pressure** | Data cannot leave corporate boundaries | Sovereign infrastructure required |
-| **GPU Scarcity** | Demand exceeds supply by 3-5x | Idle capacity must be mobilized |
-| **AI Becoming Infrastructure** | AI embedded in every business process | Coordination layer essential |
+| Force                           | 2025 Reality                                     | Why It Matters                         |
+| ------------------------------- | ------------------------------------------------ | -------------------------------------- |
+| **Local AI Explosion**          | Open-weight models (Llama, Mistral) run anywhere | AI no longer requires centralized APIs |
+| **Edge Compute Rise**           | Consumer devices now AI-capable                  | Intelligence moving to the edge        |
+| **Enterprise Privacy Pressure** | Data cannot leave corporate boundaries           | Sovereign infrastructure required      |
+| **GPU Scarcity**                | Demand exceeds supply by 3-5x                    | Idle capacity must be mobilized        |
+| **AI Becoming Infrastructure**  | AI embedded in every business process            | Coordination layer essential           |
 
 **This transforms the project perception from idea → inevitable movement.**
 
@@ -59,13 +75,13 @@ Today's AI economy faces a fundamental market failure.
 
 **The Current Reality:**
 
-| Failure | Impact |
-| ------- | ------ |
+| Failure                               | Impact                         |
+| ------------------------------------- | ------------------------------ |
 | **AI locked behind centralized APIs** | No portability, vendor lock-in |
-| **Unused GPU capacity globally** | 40-60% of compute sits idle |
-| **Unused enterprise quotas** | $15-20B wasted annually |
-| **Siloed SaaS subscriptions** | No market for AI resources |
-| **No sovereign AI ownership** | Platforms control intelligence |
+| **Unused GPU capacity globally**      | 40-60% of compute sits idle    |
+| **Unused enterprise quotas**          | $15-20B wasted annually        |
+| **Siloed SaaS subscriptions**         | No market for AI resources     |
+| **No sovereign AI ownership**         | Platforms control intelligence |
 
 **The cost:** A $400B+ coordination failure that grows daily.
 
@@ -96,13 +112,13 @@ graph LR
 
 Decentralized AI infrastructure is not just possible—it is inevitable because structural forces align:
 
-| Factor | Reality |
-| ------- | ------- |
-| **No single company can own AI infrastructure** | AI is too critical for centralized control |
-| **Idle global compute exists** | $50B+ in wasted capacity annually |
-| **Enterprises demand sovereignty** | Data privacy requirements intensifying |
-| **Agents require marketplaces** | Multi-agent coordination needs economic primitives |
-| **Open ecosystems compound faster** | Developer velocity outpaces centralized R&D |
+| Factor                                          | Reality                                            |
+| ----------------------------------------------- | -------------------------------------------------- |
+| **No single company can own AI infrastructure** | AI is too critical for centralized control         |
+| **Idle global compute exists**                  | $50B+ in wasted capacity annually                  |
+| **Enterprises demand sovereignty**              | Data privacy requirements intensifying             |
+| **Agents require marketplaces**                 | Multi-agent coordination needs economic primitives |
+| **Open ecosystems compound faster**             | Developer velocity outpaces centralized R&D        |
 
 **The question is not whether decentralized AI infrastructure will emerge. The question is who will coordinate it.**
 
@@ -230,49 +246,307 @@ As organizations and individuals share public datasets on the marketplace, agent
 
 The octopus embodies principles central to CipherOcto's design:
 
-| Principle | Manifestation |
-| --------- | -------------- |
-| **Decentralized intelligence** | No central brain—decision-making distributed across arms |
-| **Adaptive coordination** | Each arm operates independently while pursuing shared goals |
-| **Multi-arm execution** | Parallel problem-solving across multiple domains simultaneously |
-| **Distributed cognition** | Knowledge and capability emerge from the network, not a single point |
+| Principle                      | Manifestation                                                        |
+| ------------------------------ | -------------------------------------------------------------------- |
+| **Decentralized intelligence** | No central brain—decision-making distributed across arms             |
+| **Adaptive coordination**      | Each arm operates independently while pursuing shared goals          |
+| **Multi-arm execution**        | Parallel problem-solving across multiple domains simultaneously      |
+| **Distributed cognition**      | Knowledge and capability emerge from the network, not a single point |
 
 The octopus is not just a mascot. It represents a fundamentally different approach to intelligence coordination—one where no single component controls the system, yet the entire organism operates as a unified intelligence.
 
 ---
 
+## Hybrid Intelligence Architecture
+
+CipherOcto is designed as a **coordination protocol for the global intelligence economy**, where multiple forms of computation and trust coexist.
+
+Rather than assuming all AI computation can be deterministic or cryptographically verifiable, CipherOcto acknowledges that intelligence exists across a **spectrum of verifiability**.
+
+Some computations can be proven mathematically, while others rely on reputation, replication, or trusted execution environments. The protocol is designed to support all of these models simultaneously.
+
+This hybrid architecture allows CipherOcto to bootstrap using existing AI systems while progressively enabling fully verifiable AI computation.
+
+---
+
+### The Intelligence Trust Spectrum
+
+CipherOcto introduces a layered trust model for AI execution.
+
+Not all AI outputs can be proven deterministically. Therefore the protocol supports multiple verification models.
+
+| Trust Level | Model                      | Description                                                   |
+| ----------- | -------------------------- | ------------------------------------------------------------- |
+| Level 5     | Cryptographic Verification | Deterministic inference verified through cryptographic proofs |
+| Level 4     | Deterministic Execution    | Reproducible computation validated by consensus               |
+| Level 3     | Replicated Inference       | Multiple independent providers execute the same task          |
+| Level 2     | Trusted Providers          | Execution by reputable providers with economic staking        |
+| Level 1     | Opaque APIs                | Closed-source AI services with no verification                |
+
+CipherOcto routes tasks across this spectrum based on cost, trust requirements, and availability.
+
+Users and agents can define **trust policies** that determine how tasks are executed.
+
+Example:
+
+```
+task:
+  type: research
+  trust_level: 3
+  budget: $1
+```
+
+The network automatically selects the appropriate execution model.
+
+---
+
+### The Ocean Stack
+
+CipherOcto's architecture is organized into a modular stack that separates applications, intelligence orchestration, and infrastructure.
+
+```
+Applications
+     │
+Agent Economy
+     │
+Hybrid Intelligence Layer
+     │
+Execution Layer
+     │
+Infrastructure Markets
+     │
+Peer Network
+```
+
+Each layer serves a distinct role in the system.
+
+---
+
+### Agent Economy
+
+Agents are autonomous software entities that perform tasks, provide services, and interact economically within the CipherOcto network.
+
+Agents can represent:
+
+- AI assistants
+- automated workflows
+- enterprise services
+- research systems
+- infrastructure brokers
+
+Agents can buy and sell services including:
+
+- inference
+- data access
+- computation
+- storage
+- network bandwidth
+
+The agent economy forms the **primary demand layer** of the protocol.
+
+---
+
+### Hybrid Intelligence Layer
+
+The Hybrid Intelligence Layer orchestrates how tasks are executed across different trust models.
+
+This layer selects the appropriate execution method based on task requirements.
+
+Execution strategies may include:
+
+**Verified Inference**
+
+Deterministic models running in a verifiable AI virtual machine with cryptographic proof generation.
+
+**Replicated Inference**
+
+Multiple independent providers execute the same task. Results are compared and consensus is determined.
+
+**Trusted Provider Execution**
+
+Tasks are executed by providers with reputation, staking, and service guarantees.
+
+**External AI APIs**
+
+Closed-source AI services are integrated through standardized connectors.
+
+This design allows CipherOcto to integrate with existing AI ecosystems while gradually transitioning toward fully verifiable AI.
+
+---
+
+### Infrastructure Markets
+
+CipherOcto provides decentralized markets for computing infrastructure.
+
+These markets allow participants to provide and consume resources including:
+
+- GPU compute
+- CPU compute
+- AI accelerators
+- storage
+- network bandwidth
+- edge compute
+
+Infrastructure providers publish capabilities and pricing to the network.
+
+Agents dynamically acquire infrastructure resources to execute workloads.
+
+These markets operate independently of the AI economy and can support a wide range of applications beyond AI.
+
+---
+
+### AI Accelerator Marketplace
+
+High-performance hardware plays a critical role in AI computation.
+
+CipherOcto supports an open marketplace for specialized compute resources including:
+
+- GPUs
+- TPUs
+- AI ASICs
+- edge neural processing units
+
+Providers can offer resources through several market types:
+
+**Spot compute**
+
+Short-duration inference workloads.
+
+**Reserved compute**
+
+Dedicated compute capacity for longer tasks.
+
+**Compute futures**
+
+Forward contracts for guaranteed compute availability.
+
+This marketplace enables global access to AI hardware and reduces barriers to entry for developers and agents.
+
+---
+
+### Integration with External AI Providers
+
+CipherOcto is designed to interoperate with existing AI ecosystems.
+
+Closed-source models and APIs can be accessed through standardized gateways.
+
+Examples include:
+
+- proprietary language models
+- enterprise AI services
+- specialized vertical models
+
+These services can be used directly by agents or integrated into multi-provider execution strategies.
+
+External providers may participate in the network by offering services, staking reputation, and participating in verification markets.
+
+This approach allows CipherOcto to leverage existing AI innovation while building decentralized alternatives.
+
+---
+
+### Bootstrapping the Network
+
+In its early stages, CipherOcto may rely heavily on existing AI services to power agent capabilities.
+
+Agents can call external APIs to perform reasoning, generation, or analysis tasks.
+
+As the network evolves, more workloads will migrate toward decentralized infrastructure and verifiable AI execution.
+
+This gradual transition ensures practical usability from the beginning while enabling long-term decentralization.
+
+---
+
+### Verification Economy
+
+Verification is an independent economic activity within the network.
+
+Participants can earn rewards by validating computation and challenging incorrect results.
+
+Verification mechanisms include:
+
+- cryptographic proof validation
+- replicated inference consensus
+- dispute resolution challenges
+
+This creates a robust incentive structure that improves reliability and trust across the ecosystem.
+
+---
+
+### Evolution Toward Verifiable AI
+
+CipherOcto is designed with a long-term objective of enabling cryptographically verifiable AI computation.
+
+As advances in deterministic machine learning and proof systems mature, more workloads can transition to fully verifiable execution.
+
+The hybrid architecture ensures that this transition can occur gradually without disrupting the broader ecosystem.
+
+This approach allows CipherOcto to remain compatible with both current AI systems and future verifiable intelligence infrastructure.
+
+---
+
 ## The Architecture: Ocean Stack
 
-CipherOcto's three-layer architecture:
+CipherOcto's architecture consists of **seven layers**:
 
 ```mermaid
 graph TB
-    subgraph INTELLIGENCE["Intelligence Layer 🐙"]
-        I1[Agent Orchestrator]
-        I2[Task Routing]
-        I3[Result Verification]
+    subgraph APP["Application Layer 🐙"]
+        A1[Self-Verifying Agents]
+        A2[Agent Organizations]
     end
 
-    subgraph EXECUTION["Execution Layer 🦑"]
-        E1[Secure Runtime]
-        E2[Privacy Containers]
-        E3[Local Inference]
+    subgraph AI["AI Execution Layer"]
+        AI1[Transformer Circuits]
+        AI2[Training Circuits]
+        AI3[AI-VM]
     end
 
-    subgraph NETWORK["Network Layer 🪼"]
-        N1[Node Coordination]
-        N2[Identity System]
-        N3[Trust & Reputation]
+    subgraph VERIFY["Verification Layer"]
+        V1[Dataset Integrity]
+        V2[Verification Markets]
+        V3[Proof Aggregation]
     end
 
-    INTELLIGENCE --> EXECUTION --> NETWORK
+    subgraph CONSENSUS["Consensus Layer"]
+        C1[Proof-of-Inference]
+        C2[Sharded Consensus]
+        C3[Block DAG]
+    end
 
-    style INTELLIGENCE fill:#6c3483
-    style EXECUTION fill:#b03a2e
-    style NETWORK fill:#1f618d
+    subgraph NET["Network Layer 🪼"]
+        N1[OCTO-Network]
+        N2[Task Market]
+    end
+
+    subgraph EXEC["Execution Layer 🦑"]
+        E1[Numeric Tower]
+        E2[DFP + DQA]
+    end
+
+    APP --> AI --> VERIFY --> CONSENSUS --> NET --> EXEC
+
+    style APP fill:#6c3483
+    style AI fill:#b03a2e
+    style VERIFY fill:#1f618d
+    style CONSENSUS fill:#b7950b
+    style NET fill:#27ae60
+    style EXEC fill:#943126
 ```
 
 **Many agents, one intelligence.**
+
+### Key Technical Innovations
+
+| Component                 | RFC                      | Description                                              |
+| ------------------------- | ------------------------ | -------------------------------------------------------- |
+| **Proof-of-Inference**    | RFC-0630 (Proof Systems) | AI inference replaces hash computation as consensus work |
+| **Deterministic AI-VM**   | RFC-0520 (AI Execution)  | Hardware-agnostic AI execution with bit-exact results    |
+| **Transformer Circuits**  | RFC-0107 (Numeric/Math)  | STARK-efficient transformer proofs                       |
+| **Proof Aggregation**     | RFC-0650 (Proof Systems) | O(1) verification for batched proofs                     |
+| **Hardware Registry**     | RFC-0845 (Networking)    | Intelligent task routing to capable workers              |
+| **Self-Verifying Agents** | RFC-0416 (Agents)        | Agents that prove their reasoning                        |
+
+**See [RFC-0000 (Process/Meta): Architecture Overview](../rfcs/0000-cipherocto-architecture-overview.md) for the complete technical specification.**
 
 ---
 
@@ -284,13 +558,13 @@ CipherOcto does not only execute intelligence — it remembers it.
 
 Beyond compute coordination, CipherOcto provides encrypted memory that enables:
 
-| Capability | Description |
-| ---------- | ----------- |
-| **AI Memory Persistence** | Agents maintain state across sessions |
-| **Agent State Continuity** | Pause and resume without losing context |
-| **Encrypted Knowledge Vaults** | Store proprietary insights securely |
+| Capability                         | Description                                 |
+| ---------------------------------- | ------------------------------------------- |
+| **AI Memory Persistence**          | Agents maintain state across sessions       |
+| **Agent State Continuity**         | Pause and resume without losing context     |
+| **Encrypted Knowledge Vaults**     | Store proprietary insights securely         |
 | **Blockchain Historical Archival** | Immutable records of intelligence evolution |
-| **Long-Term Reasoning Storage** | Multi-week deliberation and analysis |
+| **Long-Term Reasoning Storage**    | Multi-week deliberation and analysis        |
 
 ### Why Memory Matters
 
@@ -304,34 +578,34 @@ Competitors can copy compute protocols. They cannot replicate accumulated persis
 
 ### Individual Users
 
-| Capability | Benefit |
-| ---------- | ------- |
-| **Launch agents without infra** | No servers, no DevOps, no infrastructure costs |
-| **Choose privacy level** | PRIVATE → CONFIDENTIAL → SHARED → PUBLIC |
-| **Monetize public datasets** | Your data earns when shared in marketplace |
-| **Own AI memory permanently** | Agent state persists across providers |
-| **Switch providers without lock-in** | Portable agent identity and reputation |
+| Capability                           | Benefit                                        |
+| ------------------------------------ | ---------------------------------------------- |
+| **Launch agents without infra**      | No servers, no DevOps, no infrastructure costs |
+| **Choose privacy level**             | PRIVATE → CONFIDENTIAL → SHARED → PUBLIC       |
+| **Monetize public datasets**         | Your data earns when shared in marketplace     |
+| **Own AI memory permanently**        | Agent state persists across providers          |
+| **Switch providers without lock-in** | Portable agent identity and reputation         |
 
 ### Enterprise Organizations
 
-| Capability | Benefit |
-| ---------- | ------- |
-| **Team accounts** | Multi-user organizational OCTO-ID |
-| **Department agents** | Specialized AI per business unit |
-| **Shared encrypted memory** | Collaborative knowledge vaults |
-| **Internal AI marketplace** | Departments trade compute and data internally |
-| **Compliance-native deployment** | SOC2, HIPAA, GDPR built-in |
+| Capability                       | Benefit                                       |
+| -------------------------------- | --------------------------------------------- |
+| **Team accounts**                | Multi-user organizational OCTO-ID             |
+| **Department agents**            | Specialized AI per business unit              |
+| **Shared encrypted memory**      | Collaborative knowledge vaults                |
+| **Internal AI marketplace**      | Departments trade compute and data internally |
+| **Compliance-native deployment** | SOC2, HIPAA, GDPR built-in                    |
 
 ### Data Classification Economy
 
 Your data choice determines economic outcome:
 
-| Data Mode | Access | Economic Outcome |
-| --------- | ------ | ----------------- |
-| **PRIVATE** | Single-agent use only | No monetization, maximum privacy |
+| Data Mode        | Access                 | Economic Outcome                         |
+| ---------------- | ---------------------- | ---------------------------------------- |
+| **PRIVATE**      | Single-agent use only  | No monetization, maximum privacy         |
 | **CONFIDENTIAL** | Owner-specified agents | Selective collaboration, premium pricing |
-| **SHARED** | Verified agents | Revenue eligible, licensed usage |
-| **PUBLIC** | Open to all | Marketplace asset, maximum monetization |
+| **SHARED**       | Verified agents        | Revenue eligible, licensed usage         |
+| **PUBLIC**       | Open to all            | Marketplace asset, maximum monetization  |
 
 This is a fundamental advantage: competitors force binary privacy choices. CipherOcto enables granular economic control over every dataset.
 
@@ -372,13 +646,13 @@ Each market operates independently while sharing the same trust infrastructure, 
 
 CipherOcto operates on zero-trust principles. Every claim is verifiable.
 
-| Mechanism | What It Secures |
-| ---------- | --------------- |
-| **Staking Requirements** | Economic commitment to honest behavior |
-| **Reputation Scoring** | Track record influences routing priority |
-| **Cryptographic Proof of Service** | ZK proofs verify work was completed |
-| **Slashing Mechanisms** | Misbehavior results in stake forfeiture |
-| **Encrypted Memory Guarantees** | Data never accessible without authorization |
+| Mechanism                          | What It Secures                             |
+| ---------------------------------- | ------------------------------------------- |
+| **Staking Requirements**           | Economic commitment to honest behavior      |
+| **Reputation Scoring**             | Track record influences routing priority    |
+| **Cryptographic Proof of Service** | ZK proofs verify work was completed         |
+| **Slashing Mechanisms**            | Misbehavior results in stake forfeiture     |
+| **Encrypted Memory Guarantees**    | Data never accessible without authorization |
 
 **Attacking CipherOcto requires defeating cryptographic proofs, reputation history, economic stakes, identity verification, and community consensus—simultaneously.**
 
@@ -390,13 +664,13 @@ CipherOcto operates on zero-trust principles. Every claim is verifiable.
 
 CipherOcto operates as a multi-role economic organism where each token represents a biological function of a distributed intelligence system:
 
-| Layer | Tokens | Function |
-| ----- | ------ | -------- |
-| **Governance** | OCTO | Coordination, settlement, reserve asset |
-| **Infrastructure** | OCTO-N, OCTO-S, OCTO-B | Network operations, storage, bandwidth |
-| **Intelligence Supply** | OCTO-A, OCTO-W | Compute access, enterprise AI resale |
-| **Coordination** | OCTO-O | Task routing and orchestration |
-| **Growth** | OCTO-M, OCTO-D | Ecosystem expansion, agent development |
+| Layer                   | Tokens                 | Function                                |
+| ----------------------- | ---------------------- | --------------------------------------- |
+| **Governance**          | OCTO                   | Coordination, settlement, reserve asset |
+| **Infrastructure**      | OCTO-N, OCTO-S, OCTO-B | Network operations, storage, bandwidth  |
+| **Intelligence Supply** | OCTO-A, OCTO-W         | Compute access, enterprise AI resale    |
+| **Coordination**        | OCTO-O                 | Task routing and orchestration          |
+| **Growth**              | OCTO-M, OCTO-D         | Ecosystem expansion, agent development  |
 
 ### OCTO — The Sovereign Token
 
@@ -413,15 +687,15 @@ OCTO serves three functions: governance voting, network security staking, and re
 
 Specialized tokens for each infrastructure layer:
 
-| Token | Role | Earned By |
-| ----- | ---- | --------- |
-| **OCTO-A** | AI Compute | GPU providers |
-| **OCTO-S** | Storage | Data storage operators |
-| **OCTO-B** | Bandwidth | Network relay operators |
-| **OCTO-O** | Orchestrator | Task coordinators |
-| **OCTO-W** | AI Wholesale | Enterprise quota resellers |
-| **OCTO-D** | Developers | Agent builders |
-| **OCTO-M** | Marketing | Growth contributors |
+| Token      | Role           | Earned By                  |
+| ---------- | -------------- | -------------------------- |
+| **OCTO-A** | AI Compute     | GPU providers              |
+| **OCTO-S** | Storage        | Data storage operators     |
+| **OCTO-B** | Bandwidth      | Network relay operators    |
+| **OCTO-O** | Orchestrator   | Task coordinators          |
+| **OCTO-W** | AI Wholesale   | Enterprise quota resellers |
+| **OCTO-D** | Developers     | Agent builders             |
+| **OCTO-M** | Marketing      | Growth contributors        |
 | **OCTO-N** | Node Operators | Infrastructure maintainers |
 
 **These are economic instruments, not governance tokens.** They represent claims on specific economic outputs within their sector.
@@ -430,13 +704,13 @@ Specialized tokens for each infrastructure layer:
 
 Multi-token systems face skepticism. Here is why CipherOcto's approach is necessary:
 
-| Single-Token Problem | Multi-Token Solution |
-| -------------------- | -------------------- |
-| Capital dominance | Prevents wealth concentration |
-| Misaligned incentives | Each role optimized for its value creation |
-| Shared economic risk | Sector failures isolated |
-| No price discovery | Each market finds its own equilibrium |
-| One-size-fits-all economics | Specialization enables efficiency |
+| Single-Token Problem        | Multi-Token Solution                       |
+| --------------------------- | ------------------------------------------ |
+| Capital dominance           | Prevents wealth concentration              |
+| Misaligned incentives       | Each role optimized for its value creation |
+| Shared economic risk        | Sector failures isolated                   |
+| No price discovery          | Each market finds its own equilibrium      |
+| One-size-fits-all economics | Specialization enables efficiency          |
 
 Single-token protocols force all participants into one economic model. CipherOcto recognizes that compute providers, storage operators, and developers create different value and deserve aligned—not identical—incentives.
 
@@ -506,7 +780,20 @@ Every role depends on others. Every participant earns from value created. The sy
 
 ## Key Innovations
 
-### 1. Proof of Reliability (PoR)
+### 1. Proof-of-Inference (PoI)
+
+The cornerstone innovation: AI inference replaces wasteful hash computation as consensus work.
+
+| Traditional PoW     | CipherOcto PoI               |
+| ------------------- | ---------------------------- |
+| SHA256 hashing      | Real AI inference            |
+| Zero societal value | Verifiable AI computation    |
+| Energy-intensive    | Productive consensus         |
+| Single-purpose      | Multi-purpose infrastructure |
+
+**Every block secured by actual AI work.** This transforms the network into a global distributed AI supercomputer.
+
+### 2. Proof of Reliability (PoR)
 
 Trust earned through verifiable performance, not capital.
 
@@ -515,13 +802,13 @@ CipherOcto: Proven performance = High trust
 
 **How reputation is earned:**
 
-| Proof Type | Verification Method |
-| ---------- | ------------------- |
-| Uptime proofs | Continuous availability monitoring |
-| Latency benchmarks | Response time measurements |
-| Verified inference completion | ZK proofs of computation |
-| Storage integrity checks | Cryptographic hash verification |
-| Bandwidth delivery | Packet-level verification |
+| Proof Type                    | Verification Method                |
+| ----------------------------- | ---------------------------------- |
+| Uptime proofs                 | Continuous availability monitoring |
+| Latency benchmarks            | Response time measurements         |
+| Verified inference completion | ZK proofs of computation           |
+| Storage integrity checks      | Cryptographic hash verification    |
+| Bandwidth delivery            | Packet-level verification          |
 
 **Attackers must defeat:**
 
@@ -543,12 +830,12 @@ A unique innovation: Represents the resale of unused enterprise AI quotas from p
 
 Your data is classified cryptographically:
 
-| Level | Access |
-| ----- | ------ |
-| **PRIVATE** | Single-agent use only |
+| Level            | Access                 |
+| ---------------- | ---------------------- |
+| **PRIVATE**      | Single-agent use only  |
 | **CONFIDENTIAL** | Owner-specified agents |
-| **SHARED** | Verified agents |
-| **PUBLIC** | Open to all |
+| **SHARED**       | Verified agents        |
+| **PUBLIC**       | Open to all            |
 
 **Encryption + Zero-Knowledge Proofs = Privacy guaranteed.**
 
@@ -600,15 +887,15 @@ This is not a linear roadmap. It is a compounding flywheel where each accelerato
 
 ## CipherOcto vs Centralized AI
 
-| Feature | Centralized AI | CipherOcto |
-| ------- | -------------- | ----------- |
-| **Data Ownership** | Platform owns | User owns |
-| **Compute Source** | Corporate data centers | Global idle compute |
-| **AI Access** | API-gatekept | Open marketplace |
-| **Revenue Flow** | Corporation | Network participants |
-| **Privacy Model** | Policy-based (revocable) | Cryptographic (guaranteed) |
-| **Vendor Lock-in** | High | Zero (portable identity) |
-| **Innovation** | Centralized roadmap | Permissionless evolution |
+| Feature            | Centralized AI           | CipherOcto                 |
+| ------------------ | ------------------------ | -------------------------- |
+| **Data Ownership** | Platform owns            | User owns                  |
+| **Compute Source** | Corporate data centers   | Global idle compute        |
+| **AI Access**      | API-gatekept             | Open marketplace           |
+| **Revenue Flow**   | Corporation              | Network participants       |
+| **Privacy Model**  | Policy-based (revocable) | Cryptographic (guaranteed) |
+| **Vendor Lock-in** | High                     | Zero (portable identity)   |
+| **Innovation**     | Centralized roadmap      | Permissionless evolution   |
 
 **The choice:** Rent intelligence from platforms—or own the infrastructure.
 
@@ -622,13 +909,13 @@ Every decentralized network faces the cold start problem: why join when nobody i
 
 **CipherOcto's bootstrap strategy:**
 
-| Phase | Strategy |
-| ----- | -------- |
-| **Foundation Nodes** | Protocol-operated nodes provide initial capacity |
-| **Enterprise Partners** | Early adopters receive preferential token economics |
-| **Incentive Multipliers** | 2-5x rewards for first 100 providers in each role |
-| **Developer Grants** | OCTO-D grants for high-potential agent projects |
-| **Orchestrator Federation** | Initial coordination guild ensures quality routing |
+| Phase                       | Strategy                                            |
+| --------------------------- | --------------------------------------------------- |
+| **Foundation Nodes**        | Protocol-operated nodes provide initial capacity    |
+| **Enterprise Partners**     | Early adopters receive preferential token economics |
+| **Incentive Multipliers**   | 2-5x rewards for first 100 providers in each role   |
+| **Developer Grants**        | OCTO-D grants for high-potential agent projects     |
+| **Orchestrator Federation** | Initial coordination guild ensures quality routing  |
 
 The first 6 months prioritize supply-side bootstrap. Once compute and storage are available, agent demand naturally follows.
 
@@ -636,12 +923,12 @@ The first 6 months prioritize supply-side bootstrap. Once compute and storage ar
 
 ## Why Builders Join Early
 
-| Reason | Benefit |
-| ------ | ------- |
-| **Protocol Revenue Participation** | Earn from every transaction your agents facilitate |
-| **Early Reputation Advantage** | First-mover reputation becomes premium pricing power |
-| **Agent Composability** | Build on existing agents instead of starting from scratch |
-| **Network-Native Monetization** | No billing infrastructure—payments built into protocol |
+| Reason                             | Benefit                                                   |
+| ---------------------------------- | --------------------------------------------------------- |
+| **Protocol Revenue Participation** | Earn from every transaction your agents facilitate        |
+| **Early Reputation Advantage**     | First-mover reputation becomes premium pricing power      |
+| **Agent Composability**            | Build on existing agents instead of starting from scratch |
+| **Network-Native Monetization**    | No billing infrastructure—payments built into protocol    |
 
 Early builders establish reputation that compounds. Late entrants face higher barriers to entry.
 
@@ -651,32 +938,33 @@ Early builders establish reputation that compounds. Late entrants face higher ba
 
 ```mermaid
 timeline
-    title CipherOcto Development Phases
-    section Phase 0
-        Seed Stage : Protocol Design & Specification : Complete
-        : Community Building : Active
-    section Phase 1
-        Agent Network Alpha : First agents execute : Target Q1 2027
-        : Market Layer : Economic activity begins : Target Q2 2027
-    section Phase 2
-        Marketplace Launch : Public network access : Target Q3 2027
-        : Storage Layer : Persistent memory : Target Q4 2027
-    section Phase 3
-        Enterprise Layer : Business features : Target Q1 2028
-        : DAO Governance : Decentralized control : Target Q2 2028
-    section Phase 4
-        Autonomous Intelligence Economy : Self-sustaining : Target Q4 2028+
+    title CipherOcto Implementation Phases (20 months)
+    section Phase 1: Foundation (3 months)
+        Deterministic Math : RFC-0104-0106 (Numeric/Math) : Complete
+    section Phase 2: AI Engine (4 months)
+        AI-VM + Circuits : RFC-0520, RFC-0107-0108 (Numeric/Math) : In Progress
+    section Phase 3: Network (3 months)
+        P2P + Consensus : RFC-0843 (Networking), RFC-0630 (Proof Systems), RFC-0740-0742 (Consensus) : Planned
+    section Phase 4: Economy (3 months)
+        Markets + Data : RFC-0910 (Economics), RFC-0631 (Proof Systems), RFC-0900-0901 (Economics) : Planned
+    section Phase 5: Intelligence (3 months)
+        Retrieval + Agents : RFC-0108-0109 (Numeric/Math), RFC-0410-0412 (Agents), RFC-0416 (Agents) : Planned
+    section Phase 6: Autonomy (4 months)
+        Organizations : RFC-0414-0415 (Agents), RFC-0845 (Networking), RFC-0650 (Proof Systems) : Planned
 ```
 
 ### Milestones by Phase
 
-| Phase | Focus | Key Capability |
-| ----- | ----- | ------------- |
-| **Phase 0** | Foundation | Architecture, specification, community |
-| **Phase 1** | Agent Network | First agents execute, market layer active |
-| **Phase 2** | Marketplace | Public access, storage layer live |
-| **Phase 3** | Enterprise | Business features, DAO governance |
-| **Phase 4** | Maturity | Self-sustaining autonomous economy |
+| Phase       | Focus        | Duration | Key Deliverable           |
+| ----------- | ------------ | -------- | ------------------------- |
+| **Phase 1** | Foundation   | 3 months | Deterministic computation |
+| **Phase 2** | AI Engine    | 4 months | Verifiable AI inference   |
+| **Phase 3** | Network      | 3 months | Distributed consensus     |
+| **Phase 4** | Economy      | 3 months | Compute marketplace       |
+| **Phase 5** | Intelligence | 3 months | Self-verifying agents     |
+| **Phase 6** | Autonomy     | 4 months | Agent organizations       |
+
+**See [RFC-0004 (Process/Meta): Implementation Roadmap](../rfcs/0004-implementation-roadmap.md) for detailed phase breakdown.**
 
 ---
 
@@ -700,13 +988,13 @@ pie showData
 
 Tokens are minted **only** when measurable work occurs:
 
-| Contribution | Emission Trigger |
-| ------------ | ---------------- |
-| Inference completed | Successful model execution |
-| Bandwidth routed | Packets delivered, verified |
-| Storage proven | Encrypted data verified |
-| Agent executed | Task completed and confirmed |
-| Enterprise task | SLA satisfied, verified |
+| Contribution        | Emission Trigger             |
+| ------------------- | ---------------------------- |
+| Inference completed | Successful model execution   |
+| Bandwidth routed    | Packets delivered, verified  |
+| Storage proven      | Encrypted data verified      |
+| Agent executed      | Task completed and confirmed |
+| Enterprise task     | SLA satisfied, verified      |
 
 **No emissions without measurable contribution.**
 
@@ -714,13 +1002,13 @@ Tokens are minted **only** when measurable work occurs:
 
 Every $100 transaction:
 
-| Destination | Amount |
-| ----------- | ------ |
-| Provider | $70 |
-| Orchestrator | $10 |
-| Treasury | $10 |
-| 🔥 Burn | $5 |
-| Governance Rewards | $5 |
+| Destination        | Amount |
+| ------------------ | ------ |
+| Provider           | $70    |
+| Orchestrator       | $10    |
+| Treasury           | $10    |
+| 🔥 Burn            | $5     |
+| Governance Rewards | $5     |
 
 **Deflationary by design.**
 
@@ -730,11 +1018,11 @@ Every $100 transaction:
 
 ### The Market Opportunity
 
-| Metric | 2025 | 2030 | 2035 |
-| ------ | ---- | ---- | ---- |
-| AI Infrastructure Market | $200B | $500B | $1.1T |
-| Decentralized AI Share | 2% | 20% | 45% |
-| CipherOcto Target | — | 10% share | 20% share |
+| Metric                   | 2025  | 2030      | 2035      |
+| ------------------------ | ----- | --------- | --------- |
+| AI Infrastructure Market | $200B | $500B     | $1.1T     |
+| Decentralized AI Share   | 2%    | 20%       | 45%       |
+| CipherOcto Target        | —     | 10% share | 20% share |
 
 **Multi-trillion dollar opportunity.**
 
@@ -835,29 +1123,30 @@ graph LR
 
 ## Quick Facts
 
-| Category | Detail |
-| ---------- | ---------- |
-| **What** | Decentralized AI infrastructure protocol |
-| **Why** | $400B+ coordination failure in AI economy |
-| **How** | Role-based multi-token economy with dual-stake security |
-| **Token** | OCTO (sovereign) + 8 role tokens (economic) |
-| **Innovation** | Proof of Reliability, AI Wholesale, Zero-Trust |
-| **Target** | 10-20% market share by 2035 |
-| **Team** | Experienced builders in AI, blockchain, security |
-| **Status** | Seed phase — foundation complete |
+| Category       | Detail                                                         |
+| -------------- | -------------------------------------------------------------- |
+| **What**       | Decentralized AI infrastructure protocol                       |
+| **Why**        | $400B+ coordination failure in AI economy                      |
+| **How**        | Role-based multi-token economy with dual-stake security        |
+| **Token**      | OCTO (sovereign) + 8 role tokens (economic)                    |
+| **RFCs**       | 47 technical specifications (complete)                         |
+| **Innovation** | Proof-of-Inference, Deterministic AI-VM, Self-Verifying Agents |
+| **Target**     | 10-20% market share by 2035                                    |
+| **Team**       | Experienced builders in AI, blockchain, security               |
+| **Status**     | Seed phase — RFC stack complete, implementation starting       |
 
 ---
 
 ## Connect
 
-| Channel | Link |
-| ------- | ---- |
-| **Website** | <https://cipherocto.io> |
-| **Documentation** | <https://docs.cipherocto.io> |
-| **GitHub** | <https://github.com/Cipherocto> |
-| **Twitter/X** | @cipherocto |
-| **Discord** | discord.gg/cipherocto |
-| **Email** | contact@cipherocto.io |
+| Channel           | Link                            |
+| ----------------- | ------------------------------- |
+| **Website**       | <https://cipherocto.io>         |
+| **Documentation** | <https://docs.cipherocto.io>    |
+| **GitHub**        | <https://github.com/Cipherocto> |
+| **Twitter/X**     | @cipherocto                     |
+| **Discord**       | discord.gg/cipherocto           |
+| **Email**         | contact@cipherocto.io           |
 
 ---
 

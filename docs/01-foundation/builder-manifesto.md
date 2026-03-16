@@ -134,16 +134,16 @@ Early builders shape ecosystems.
 
 Inside CipherOcto, contributors gain:
 
-| Advantage | What It Means |
-| ---------- | ------------- |
-| **Protocol-level incentives** | Earn tokens every time your agents execute |
-| **Token-aligned rewards** | Your success = ecosystem success |
-| **Ecosystem visibility** | Early builders dominate their category |
-| **Governance influence** | Shape protocol before it's set in stone |
-| **First-moter advantage** | Reputation compounds, latecomers face barriers |
-| **Economic participation** | Share in network growth as it scales |
+| Advantage                     | What It Means                                  |
+| ----------------------------- | ---------------------------------------------- |
+| **Protocol-level incentives** | Earn tokens every time your agents execute     |
+| **Token-aligned rewards**     | Your success = ecosystem success               |
+| **Ecosystem visibility**      | Early builders dominate their category         |
+| **Governance influence**      | Shape protocol before it's set in stone        |
+| **First-moter advantage**     | Reputation compounds, latecomers face barriers |
+| **Economic participation**    | Share in network growth as it scales           |
 
-You are not building *on top* of a product.
+You are not building _on top_ of a product.
 
 You are helping define the protocol itself.
 
@@ -153,13 +153,13 @@ You are helping define the protocol itself.
 
 ## The CipherOcto Philosophy
 
-| Principle | Meaning |
-| --------- | ------- |
-| **Sovereignty first** | Users own their data, agents, and reputation |
-| **Open by default** | Permissionless participation, forkable code |
-| **Coordination over control** | Markets allocate resources, not authorities |
-| **Intelligence as infrastructure** | AI is a public utility, not a product |
-| **Networks outlive platforms** | Protocols endure beyond any single company |
+| Principle                          | Meaning                                      |
+| ---------------------------------- | -------------------------------------------- |
+| **Sovereignty first**              | Users own their data, agents, and reputation |
+| **Open by default**                | Permissionless participation, forkable code  |
+| **Coordination over control**      | Markets allocate resources, not authorities  |
+| **Intelligence as infrastructure** | AI is a public utility, not a product        |
+| **Networks outlive platforms**     | Protocols endure beyond any single company   |
 
 CipherOcto is decentralized cognition expressed as infrastructure.
 
@@ -235,12 +235,12 @@ Open development attracts collaborators. Closed development builds walls.
 
 Early builders have category-defining opportunities:
 
-| Builder Type | Opportunity |
-| ------------ | ---------- |
-| **Agent creator** | Your agent becomes the standard for its task |
-| **Provider** | Your capacity routes preferentially as reputation grows |
-| **Tool builder** | Your SDK becomes the default for new builders |
-| **Integrator** | Your marketplace captures a vertical |
+| Builder Type      | Opportunity                                             |
+| ----------------- | ------------------------------------------------------- |
+| **Agent creator** | Your agent becomes the standard for its task            |
+| **Provider**      | Your capacity routes preferentially as reputation grows |
+| **Tool builder**  | Your SDK becomes the default for new builders           |
+| **Integrator**    | Your marketplace captures a vertical                    |
 
 **Early reputation compounds into long-term advantage.**
 

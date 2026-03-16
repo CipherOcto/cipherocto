@@ -10,40 +10,40 @@ The decentralized AI infrastructure market is emerging rapidly, with several app
 
 ### Dimension 1: Centralization
 
-| Project | Centralization Level | Trust Model |
-| ------- | ------------------- | ----------- |
-| **OpenAI, Google, Anthropic** | Fully centralized | Institutional trust |
-| **Akash Network** | Partially decentralized | Stake-based trust |
-| **Render Network** | Partially decentralized | Stake-based trust |
-| **Together AI** | Partially decentralized | Institutional + stake |
-| **CipherOcto** | Fully decentralized | Zero-trust + PoR |
+| Project                       | Centralization Level    | Trust Model           |
+| ----------------------------- | ----------------------- | --------------------- |
+| **OpenAI, Google, Anthropic** | Fully centralized       | Institutional trust   |
+| **Akash Network**             | Partially decentralized | Stake-based trust     |
+| **Render Network**            | Partially decentralized | Stake-based trust     |
+| **Together AI**               | Partially decentralized | Institutional + stake |
+| **CipherOcto**                | Fully decentralized     | Zero-trust + PoR      |
 
 ### Dimension 2: Token Economics
 
-| Project | Token Model | Issue |
-| ------- | ---------- | ----- |
-| **Akash Network** | Single token (AKT) | All roles compete for same token |
-| **Render Network** | Single token (RNDR) | Compute-only focus |
-| **Together AI** | Single token (Together) | No role specialization |
-| **CipherOcto** | Multi-token (OCTO + 8 role tokens) | Economic alignment by sector |
+| Project            | Token Model                        | Issue                            |
+| ------------------ | ---------------------------------- | -------------------------------- |
+| **Akash Network**  | Single token (AKT)                 | All roles compete for same token |
+| **Render Network** | Single token (RNDR)                | Compute-only focus               |
+| **Together AI**    | Single token (Together)            | No role specialization           |
+| **CipherOcto**     | Multi-token (OCTO + 8 role tokens) | Economic alignment by sector     |
 
 ### Dimension 3: Trust Model
 
-| Project | Trust Mechanism | Vulnerability |
-| ------- | --------------- | ------------- |
-| **Akash Network** | Stake (bond) | Rich attackers can buy trust |
-| **Render Network** | Stake + reputation | Reputation secondary to capital |
-| **Together AI** | Institutional | Centralized point of failure |
-| **CipherOcto** | Proof of Reliability (PoR) | Performance > Capital |
+| Project            | Trust Mechanism            | Vulnerability                   |
+| ------------------ | -------------------------- | ------------------------------- |
+| **Akash Network**  | Stake (bond)               | Rich attackers can buy trust    |
+| **Render Network** | Stake + reputation         | Reputation secondary to capital |
+| **Together AI**    | Institutional              | Centralized point of failure    |
+| **CipherOcto**     | Proof of Reliability (PoR) | Performance > Capital           |
 
 ### Dimension 4: Privacy
 
-| Project | Privacy Approach | Limitations |
-| ------- | ---------------- | ----------- |
-| **Akash Network** | Basic encryption | No data classification |
-| **Render Network** | Container isolation | No ZK proofs |
-| **Together AI** | Privacy policy | Enterprise-controlled |
-| **CipherOcto** | ZK proofs + TEEs + data classification | Comprehensive privacy by design |
+| Project            | Privacy Approach                       | Limitations                     |
+| ------------------ | -------------------------------------- | ------------------------------- |
+| **Akash Network**  | Basic encryption                       | No data classification          |
+| **Render Network** | Container isolation                    | No ZK proofs                    |
+| **Together AI**    | Privacy policy                         | Enterprise-controlled           |
+| **CipherOcto**     | ZK proofs + TEEs + data classification | Comprehensive privacy by design |
 
 ---
 
@@ -54,11 +54,13 @@ The decentralized AI infrastructure market is emerging rapidly, with several app
 **Overview:** Decentralized cloud computing marketplace
 
 **Strengths:**
+
 - First mover in DePIN cloud
 - Strong ecosystem momentum
 - Cosmos SDK integration
 
 **Weaknesses:**
+
 - General-purpose cloud (not AI-specific)
 - Single-token economics
 - Stake-based security (capital > performance)
@@ -66,6 +68,7 @@ The decentralized AI infrastructure market is emerging rapidly, with several app
 - No AI agent orchestration
 
 **CipherOcto Advantage:**
+
 - AI-specific optimization
 - Role-based token economics
 - Performance-based trust (PoR)
@@ -77,11 +80,13 @@ The decentralized AI infrastructure market is emerging rapidly, with several app
 **Overview:** Decentralized GPU rendering network
 
 **Strengths:**
+
 - GPU-focused infrastructure
 - Established marketplace
 - Creator community
 
 **Weaknesses:**
+
 - Rendering-focused (not inference)
 - Single-token economics
 - No storage or bandwidth layers
@@ -89,6 +94,7 @@ The decentralized AI infrastructure market is emerging rapidly, with several app
 - Limited to graphics workloads
 
 **CipherOcto Advantage:**
+
 - AI inference + training focus
 - Multi-layer architecture (compute + storage + bandwidth)
 - Agent economy
@@ -100,11 +106,13 @@ The decentralized AI infrastructure market is emerging rapidly, with several app
 **Overview:** Decentralized AI compute network
 
 **Strengths:**
+
 - AI-native focus
 - Open-source model leadership
 - Research community
 
 **Weaknesses:**
+
 - Hybrid centralization
 - Institutional trust requirements
 - Limited token utility
@@ -112,6 +120,7 @@ The decentralized AI infrastructure market is emerging rapidly, with several app
 - Platform-centric approach
 
 **CipherOcto Advantage:**
+
 - Fully decentralized architecture
 - Zero-trust security model
 - Multi-role token economics
@@ -124,47 +133,47 @@ The decentralized AI infrastructure market is emerging rapidly, with several app
 
 ### 1. Proof of Reliability (PoR)
 
-| Feature | CipherOcto | Competitors |
-| ------- | ---------- | ----------- |
-| Trust basis | Verifiable performance | Capital stake |
-| Attack resistance | Exponential cost | Linear cost |
-| Meritocracy | Performance > capital | Capital > performance |
-| Composability | Trust propagates | Trust siloed |
+| Feature           | CipherOcto             | Competitors           |
+| ----------------- | ---------------------- | --------------------- |
+| Trust basis       | Verifiable performance | Capital stake         |
+| Attack resistance | Exponential cost       | Linear cost           |
+| Meritocracy       | Performance > capital  | Capital > performance |
+| Composability     | Trust propagates       | Trust siloed          |
 
 ### 2. Role-Based Multi-Token Economy
 
-| Feature | CipherOcto | Competitors |
-| ------- | ---------- | ----------- |
-| Token count | 9 (1 sovereign + 8 role) | 1 |
-| Economic efficiency | Specialized by sector | Cross-sector competition |
-| Inflation fairness | Emissions match contribution | Arbitrary schedules |
- Value capture | Each role captures sector value | Single token dilutes |
+| Feature             | CipherOcto                      | Competitors              |
+| ------------------- | ------------------------------- | ------------------------ |
+| Token count         | 9 (1 sovereign + 8 role)        | 1                        |
+| Economic efficiency | Specialized by sector           | Cross-sector competition |
+| Inflation fairness  | Emissions match contribution    | Arbitrary schedules      |
+| Value capture       | Each role captures sector value | Single token dilutes     |
 
 ### 3. AI Wholesale (OCTO-W)
 
-| Feature | CipherOcto | Competitors |
-| ------- | ---------- | ----------- |
-| Enterprise quota resale | ✅ Unique innovation | ❌ Not available |
-| Idle capacity monetization | ✅ Billions unlocked | ❌ Not addressed |
-| Enterprise integration | ✅ Native to protocol | ❌ Afterthought |
+| Feature                    | CipherOcto            | Competitors      |
+| -------------------------- | --------------------- | ---------------- |
+| Enterprise quota resale    | ✅ Unique innovation  | ❌ Not available |
+| Idle capacity monetization | ✅ Billions unlocked  | ❌ Not addressed |
+| Enterprise integration     | ✅ Native to protocol | ❌ Afterthought  |
 
 ### 4. Data Sovereignty
 
-| Feature | CipherOcto | Competitors |
-| ------- | ---------- | ----------- |
-| Data classification | ✅ 4 levels enforced | ❌ Basic encryption |
-| Zero-knowledge proofs | ✅ Verification without exposure | ❌ Not implemented |
-| TEE integration | ✅ Hardware-level security | ❌ Container-only |
-| Compliance native | ✅ SOC2/HIPAA/GDPR | ❌ Retrofitted |
+| Feature               | CipherOcto                       | Competitors         |
+| --------------------- | -------------------------------- | ------------------- |
+| Data classification   | ✅ 4 levels enforced             | ❌ Basic encryption |
+| Zero-knowledge proofs | ✅ Verification without exposure | ❌ Not implemented  |
+| TEE integration       | ✅ Hardware-level security       | ❌ Container-only   |
+| Compliance native     | ✅ SOC2/HIPAA/GDPR               | ❌ Retrofitted      |
 
 ### 5. Dual-Stake Security
 
-| Feature | CipherOcto | Competitors |
-| ------- | ---------- | ----------- |
-| Stake requirements | OCTO + role token | Single token |
-| Attack cost | Exponential (must acquire both) | Linear (single token) |
-| Role tourism prevention | ✅ By design | ❌ Vulnerable |
-| Local/global alignment | ✅ Both enforced | ❌ No distinction |
+| Feature                 | CipherOcto                      | Competitors           |
+| ----------------------- | ------------------------------- | --------------------- |
+| Stake requirements      | OCTO + role token               | Single token          |
+| Attack cost             | Exponential (must acquire both) | Linear (single token) |
+| Role tourism prevention | ✅ By design                    | ❌ Vulnerable         |
+| Local/global alignment  | ✅ Both enforced                | ❌ No distinction     |
 
 ---
 
@@ -202,13 +211,13 @@ graph TB
 
 ### Defensibility
 
-| Barrier | CipherOcto | Competitors |
-| ------- | ---------- | ----------- |
-| **Network effects** | Composable trust graph | Limited composability |
+| Barrier             | CipherOcto              | Competitors                |
+| ------------------- | ----------------------- | -------------------------- |
+| **Network effects** | Composable trust graph  | Limited composability      |
 | **Switching costs** | Dual-stake + reputation | Single-stake, low friction |
-| **Data moats** | Sovereign data stays | Platform-controlled |
-| **Economic moats** | Multi-token alignment | Single-token dilution |
-| **Technical moats** | PoR + AI Wholesale | Stake-only models |
+| **Data moats**      | Sovereign data stays    | Platform-controlled        |
+| **Economic moats**  | Multi-token alignment   | Single-token dilution      |
+| **Technical moats** | PoR + AI Wholesale      | Stake-only models          |
 
 ### First-Mover Advantages
 
@@ -234,4 +243,4 @@ CipherOcto's competitive position is defined by:
 
 ---
 
-*For technical details on our architecture, see the [system overview](./overview.md) and [whitepaper](../01-foundation/whitepaper/v1.0-whitepaper.md).*
+_For technical details on our architecture, see the [system overview](./overview.md) and [whitepaper](../01-foundation/whitepaper/v1.0-whitepaper.md)._

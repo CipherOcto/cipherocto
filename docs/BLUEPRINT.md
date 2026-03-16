@@ -18,15 +18,18 @@ This Blueprint defines how work flows through CipherOcto—from idea to protocol
 
 ## The Core Separation
 
-We maintain three distinct layers that must never mix:
+We maintain four distinct layers that must never mix:
 
-| Layer | Purpose | Question | Blockchain Analogy |
-|-------|---------|----------|-------------------|
-| **Use Cases** | Intent | WHY? | Ethereum Vision |
-| **RFCs** | Design | WHAT? | EIPs |
-| **Missions** | Execution | HOW? | Implementation |
+| Layer         | Purpose     | Question | Blockchain Analogy      |
+| ------------- | ----------- | -------- | ----------------------- |
+| **Research**  | Feasibility | CAN WE?  | Technical Investigation |
+| **Use Cases** | Intent      | WHY?     | Ethereum Vision         |
+| **RFCs**      | Design      | WHAT?    | EIPs                    |
+| **Missions**  | Execution   | HOW?     | Implementation          |
 
 **Mix these layers and governance breaks.**
+
+> **Terminology Note:** "Use Cases" and "Missions" are always capitalized when referring to the formal artifact types. Lowercase "use case" or "mission" refers to general concepts.
 
 ---
 
@@ -65,9 +68,9 @@ We maintain three distinct layers that must never mix:
 │  - Expected behavior                                        │
 │                                                             │
 │  Examples:                                                  │
-│  - RFC-0001: Mission Lifecycle                              │
-│  - RFC-0002: Agent Manifest Spec                            │
-│  - RFC-0003: Storage Provider Protocol                      │
+│  - RFC-0001 (Process/Meta): Mission Lifecycle                              │
+│  - RFC-0002 (Process/Meta): Agent Manifest Spec                            │
+│  - RFC-0003 (Process/Meta): Deterministic Execution Standard                      │
 │                                                             │
 │  Answer: "What must exist before implementation?"           │
 └──────────────────────────┬──────────────────────────────────┘
@@ -107,6 +110,80 @@ We maintain three distinct layers that must never mix:
 └─────────────────────────────────────────────────────────────┘
 ```
 
+### High-Level Architecture
+
+```mermaid
+flowchart TB
+    subgraph Research["Research Layer (Feasibility)"]
+        R1[Technology Investigation]
+    end
+
+    subgraph UseCases["Intent Layer (Why?)"]
+        UC1[Problem Definition]
+        UC2[Narrative & Motivation]
+    end
+
+    subgraph RFCs["Design Layer (What?)"]
+        RF[RFC Specifications]
+        RF -->|"defines"| RF1[Interfaces]
+        RF -->|"specifies"| RF2[Constraints]
+    end
+
+    subgraph Missions["Execution Layer (How?)"]
+        M1[Claimable Work Units]
+        M2[Implementation]
+    end
+
+    subgraph Agents["Agent Actors"]
+        A1[Implement RFCs]
+        A2[Claim Missions]
+    end
+
+    R1 -->|"viable"| UC1
+    UC1 -->|"motivates"| RF
+    RF -->|"enables"| M1
+    M1 -->|"claimed by"| A1
+    A1 -->|"implements"| M2
+```
+
+---
+
+## The Determinism Boundary
+
+> **Critical Architectural Insight:** Without a clear boundary between deterministic protocol execution and probabilistic AI computation, consensus eventually breaks.
+
+The CipherOcto protocol attempts the ambitious goal of deterministic AI execution within a verifiable protocol. Two implementations can still produce different results due to:
+
+- Kernel ordering differences
+- Parallel reduction ordering
+- FMA (fused multiply-add) differences
+- Memory layout variations
+- Attention kernel implementation differences
+
+### Execution Classes
+
+CipherOcto defines three execution classes to manage this risk:
+
+| Class | Name                    | Description                                                 | Examples                                                        |
+| ----- | ----------------------- | ----------------------------------------------------------- | --------------------------------------------------------------- |
+| **A** | Protocol Deterministic  | MUST be deterministic across all implementations            | Numeric tower, Linear algebra, Serialization, Deterministic RNG |
+| **B** | Deterministic Off-Chain | Deterministic when configured correctly, may vary otherwise | Model inference with canonical kernels                          |
+| **C** | Probabilistic           | Non-deterministic by nature                                 | Training, Sampling, Exploration                                 |
+
+### The Boundary Rule
+
+> **All consensus-relevant computation MUST be deterministic and reproducible across independent implementations.**
+
+This means:
+
+1. Class A is required for anything affecting consensus, economic settlement, or proof generation
+2. Class B execution requires proof verification for consensus-critical use
+3. Class C is explicitly excluded from consensus but may be used in agent behavior
+
+### RFC-0008: Deterministic AI Execution Boundary
+
+See [RFC-0008 (Process/Meta): Deterministic AI Execution Boundary](../rfcs/planned/0008-deterministic-ai-execution-boundary.md) for the full specification of execution classes and boundary requirements.
+
 ---
 
 ## Canonical Workflow
@@ -115,63 +192,173 @@ We maintain three distinct layers that must never mix:
 Idea
  │
  ▼
-Use Case (WHY?)
+Research (CAN WE?)
  │
- ▼
-RFC Discussion (WHAT?)
+ ├─ Viable → Use Case (WHY?)
+ │           │
+ │           ▼
+ │         RFC (WHAT?)
+ │           │
+ │           ▼
+ │         Mission (HOW?)
+ │           │
+ │           ▼
+ │       Agent/Human Claims Mission
+ │           │
+ │           ▼
+ │       Implementation (PR)
+ │           │
+ │           ▼
+ │       Review & Test
+ │           │
+ │           ▼
+ │       Merge
+ │           │
+ │           ▼
+ │       Protocol Evolution
  │
- ├─ Draft RFC
- ├─ Community Review
- ├─ Revision
- └─ Accepted RFC
- │
- ▼
-Mission Created (HOW?)
- │
- ▼
-Agent/Human Claims Mission
- │
- ▼
-Implementation (PR)
- │
- ▼
-Review & Test
- │
- ▼
-Merge
- │
- ▼
-Protocol Evolution
+ └─ Not Viable → Archive (document learnings)
 ```
 
 **This is the only flow. Shortcuts create technical debt.**
 
 ---
 
+### Research Review Gate
+
+Before research becomes a Use Case, it must pass review:
+
+```
+Research
+   │
+   ├─ Review by maintainers (min. 2 reviewers)
+   │
+   ├─ Evaluation Criteria:
+   │   - Technical feasibility
+   │   - Protocol relevance
+   │   - Economic viability
+   │   - Security implications
+   │
+   ├─ Approved → Use Case
+   │
+   └─ Rejected → Archive (document learnings)
+```
+
+Research without gates becomes blog posts.
+
+---
+
 ## Artifact Types
+
+### Research Report
+
+**Location:** `docs/research/`
+
+**Purpose:** Investigate feasibility and technology options before committing to a Use Case.
+
+**Template:**
+
+```markdown
+# Research: [Technology/Approach]
+
+## Executive Summary
+
+Brief overview of what this research investigates.
+
+## Problem Statement
+
+What challenge are we investigating?
+
+## Research Scope
+
+- What's included
+- What's excluded
+
+## Findings
+
+### Technology A
+
+### Technology B
+
+## Recommendations
+
+- Recommended approach
+- Risks
+
+## Next Steps
+
+- Create Use Case? (Yes/No)
+```
+
+**Examples:**
+
+- ZKP Research Report
+- Cairo AI Research Report
+
+**Flow:**
+
+```
+Research → (viable) → Use Case
+       → (not viable) → Archive
+```
+
+---
 
 ### Use Case
 
 **Location:** `docs/use-cases/`
 
 **Template:**
+
 ```markdown
 # Use Case: [Title]
 
 ## Problem
+
 What problem exists?
 
+## Stakeholders
+
+Who benefits from this use case?
+
+- Primary: [user/role]
+- Secondary: [user/role]
+- Affected: [user/role]
+
 ## Motivation
+
 Why does this matter for CipherOcto?
 
+## Success Metrics
+
+How do we know this succeeded?
+
+| Metric | Target | Measurement |
+| ------ | ------ | ----------- |
+|        |        |             |
+
+## Constraints
+
+What are the boundaries?
+
+- Must not: [constraint]
+- Limited to: [constraint]
+
+## Non-Goals
+
+What are we explicitly NOT doing?
+
 ## Impact
+
 What changes if this is implemented?
 
 ## Related RFCs
-- RFC-XXXX
+
+- RFC-XXXX (Category): [Title]
 ```
 
 **Examples:**
+
 - Decentralized Mission Execution
 - Autonomous Agent Marketplace
 - Hybrid AI-Blockchain Runtime
@@ -180,40 +367,297 @@ What changes if this is implemented?
 
 ### RFC (Request for Comments)
 
-**Location:** `rfcs/`
+**Location:** `rfcs/{status}/{category}/`
+
+RFCs use a hierarchical folder structure organized by **status** and **category**:
+
+```
+rfcs/
+├── draft/
+│   ├── numeric/
+│   │   └── 0126-deterministic-serialization.md
+│   ├── retrieval/
+│   │   └── 0302-query-routing.md
+│   └── ...
+├── accepted/
+│   ├── numeric/
+│   │   └── 0104-dfp.md
+│   └── ...
+├── final/
+│   ├── agents/
+│   │   └── 0416-self-verifying-agents.md
+│   └── ...
+├── archived/
+│   ├── rejected/
+│   │   └── ...
+│   ├── superseded/
+│   │   └── 0103-unified-vector-sql.md
+│   └── deprecated/
+│       └── ...
+└── planned/
+    ├── numeric/
+    │   ├── 0127-kernel-library.md
+    │   └── 0128-memory-layout.md
+    └── proof-systems/
+        └── 0135-proof-format.md
+```
+
+**RFC Numbering:**
+
+| Range     | Category       |
+| --------- | -------------- |
+| 0000-0099 | Process / Meta |
+| 0100-0199 | Numeric / Math |
+| 0200-0299 | Storage        |
+| 0300-0399 | Retrieval      |
+| 0400-0499 | Agents         |
+| 0500-0599 | AI Execution   |
+| 0600-0699 | Proof Systems  |
+| 0700-0799 | Consensus      |
+| 0800-0899 | Networking     |
+| 0900-0999 | Economics      |
+
+**RFC Numbering Authority:** RFC numbers are allocated by the CipherOcto maintainers based on the category ranges above. New RFCs should use the next available number in their category range. The canonical list of RFCs is maintained in [rfcs/README.md](../rfcs/README.md).
+
+**RFC Lifecycle:**
+
+```
+Planned → Draft → Review → Accepted → Final
+                                    ↓
+                              Rejected
+                                    ↓
+                             Superseded
+                                    ↓
+                             Deprecated
+```
+
+| Status      | Folder           | Description                        |
+| ----------- | ---------------- | ---------------------------------- |
+| **Planned** | `rfcs/planned/`  | Placeholder for future work        |
+| Draft       | `rfcs/draft/`    | Open for discussion                |
+| Review      | `rfcs/draft/`    | PR submitted, community feedback   |
+| Accepted    | `rfcs/accepted/` | Approved, ready for implementation |
+| Final       | `rfcs/final/`    | Implemented and stable             |
+| Rejected    | `rfcs/archived/` | Declined, archived with reasoning  |
+| Superseded  | `rfcs/archived/` | Replaced by newer RFC              |
+| Deprecated  | `rfcs/archived/` | Still supported but discouraged    |
+
+**Planned RFCs:**
+
+Planned RFCs are placeholders for future work. They define the concept and scope but do not include full implementation details. A Planned RFC:
+
+- Is a lightweight placeholder (1-2 pages)
+- Defines the problem statement
+- Outlines proposed scope
+- Lists dependencies on existing RFCs
+- Does NOT require the full RFC template
+
+To create a Planned RFC:
+
+1. Create `rfcs/planned/{category}/XXXX-title.md`
+2. Use minimal template with just Summary, Why Needed, Scope, Dependencies
+3. When ready to implement → convert to Draft status
+
+**RFC Process:**
+
+1. Draft RFC in `rfcs/draft/{category}/XXXX-title.md`
+2. Submit PR for discussion
+3. Address feedback (minimum 7 days)
+4. Accepted → Move to `rfcs/accepted/{category}/`
+5. Implemented → Move to `rfcs/final/{category}/`
+6. Rejected/Superseded/Deprecated → Move to `rfcs/archived/`
 
 **Template:**
-```markdown
+
+````markdown
 # RFC-XXXX: [Title]
 
 ## Status
-Draft | Accepted | Replaced | Deprecated
+
+Draft | Review | Accepted | Final | Rejected | Superseded | Deprecated
+
+## Authors
+
+- Author: @username
+
+## Maintainers
+
+- Maintainer: @username
 
 ## Summary
-One-paragraph overview.
+
+One-paragraph overview of what this RFC defines.
+
+## Dependencies
+
+**Requires:**
+
+- RFC-XXXX: [Title]
+
+**Optional:**
+
+- RFC-XXXX: [Title]
+
+## Design Goals
+
+Specific measurable objectives (G1, G2, G3...).
+
+| Goal | Target | Metric        |
+| ---- | ------ | ------------- |
+| G1   | <50ms  | Query latency |
+| G2   | >95%   | Recall@10     |
 
 ## Motivation
-Why this RFC?
+
+Why this RFC? What problem does it solve?
 
 ## Specification
-Technical details, constraints, interfaces.
 
-## Rationale
-Why this approach over alternatives?
+Technical details, constraints, interfaces, data types, algorithms.
 
-## Implementation
-Path to missions.
+### System Architecture
 
-## Related Use Cases
-- [Use Case Name](../../docs/use-cases/...)
+```mermaid
+graph TB
+    A[Component A] --> B[Component B]
 ```
 
-**RFC Process:**
-1. Draft RFC in `rfcs/0000-title.md`
-2. Submit PR for discussion
-3. Address feedback
-4. Accepted → Renumbered
-5. Rejected → Moved to `rfcs/archived/`
+### Data Structures
+
+Formal interface definitions.
+
+### Algorithms
+
+Canonical algorithms with deterministic behavior.
+
+### Determinism Requirements
+
+MUST specify deterministic behavior if affecting consensus, proofs, or verification.
+
+### Error Handling
+
+Error codes and recovery strategies.
+
+## Performance Targets
+
+| Metric     | Target | Notes       |
+| ---------- | ------ | ----------- |
+| Latency    | <50ms  | @ 1K QPS    |
+| Throughput | >10k/s | Single node |
+
+## Security Considerations
+
+MUST document:
+
+- Consensus attacks
+- Economic exploits
+- Proof forgery
+- Replay attacks
+- Determinism violations
+
+## Adversarial Review
+
+Analysis of failure modes and mitigations.
+
+| Threat | Impact | Mitigation   |
+| ------ | ------ | ------------ |
+| XSS    | High   | Sanitization |
+
+## Economic Analysis
+
+(Optional) Market dynamics and economic attack surfaces.
+
+## Compatibility
+
+Backward/forward compatibility guarantees.
+
+## Test Vectors
+
+Canonical test cases for verification.
+
+## Alternatives Considered
+
+| Approach | Pros | Cons |
+| -------- | ---- | ---- |
+| Option A | X    | Y    |
+
+## Implementation Phases
+
+### Phase 1: Core
+
+- [ ] Task 1
+- [ ] Task 2
+
+### Phase 2: Enhanced
+
+- [ ] Task 3
+
+## Key Files to Modify
+
+| File     | Change           |
+| -------- | ---------------- |
+| src/a.rs | Add feature X    |
+| src/b.rs | Update interface |
+
+## Future Work
+
+- F1: [Description]
+- F2: [Description]
+
+## Rationale
+
+Why this approach over alternatives?
+
+## Version History
+
+| Version | Date       | Changes |
+| ------- | ---------- | ------- |
+| 1.0     | YYYY-MM-DD | Initial |
+
+## Related RFCs
+
+- RFC-XXXX: [Title]
+- RFC-XXXX: [Title]
+
+## Related Use Cases
+
+- [Use Case Name](../../docs/use-cases/...)
+
+## Appendices
+
+### A. [Topic]
+
+Additional implementation details.
+
+### B. [Topic]
+
+Reference material.
+
+---
+
+**Version:** 1.2
+**Submission Date:** 2026-03-10
+**Last Updated:** 2026-03-10
+**Changes:**
+
+- Added RFC ownership (Authors, Maintainers)
+- Added Dependencies section
+- Added Determinism Requirements
+- Added Security Considerations
+- Added Economic Analysis
+- Added Compatibility
+- Added Test Vectors
+- Added Version History
+- Updated lifecycle (Draft → Review → Accepted → Final)
+- Updated numbering architecture
+
+```**RFC Process:**
+1. Draft RFC in `rfcs/draft/{category}/XXXX-title.md`
+2. Submit PR for discussion (minimum 7 days)
+3. Address all feedback
+4. Accepted → Move to `rfcs/accepted/{category}/`
+5. Implemented → Move to `rfcs/final/{category}/`
+6. Rejected/Superseded/Deprecated → Move to `rfcs/archived/`
 
 ---
 
@@ -223,41 +667,69 @@ Path to missions.
 
 **Lifecycle:**
 ```
-missions/open/     → Available to claim
-missions/claimed/  → Someone working on it
-missions/with-pr/  → PR submitted
+
+missions/open/ → Available to claim
+missions/claimed/ → Someone working on it
+missions/with-pr/ → PR submitted
 missions/archived/ → Completed or abandoned
-```
+````
 
 **Template:**
+
 ```markdown
 # Mission: [Title]
 
 ## Status
+
 Open | Claimed | In Review | Completed | Blocked
 
 ## RFC
-RFC-XXXX
+
+RFC-XXXX (Category): [Title]
+
+## Dependencies
+
+Missions that must be completed before this one:
+
+- Mission-XXX: [Title] (if applicable)
 
 ## Acceptance Criteria
+
 - [ ] Criteria 1
 - [ ] Criteria 2
 
 ## Claimant
+
 @username
 
 ## Pull Request
+
 #
 
 ## Notes
+
 Implementation notes, blockers, decisions.
 ```
 
 **Mission Rules:**
+
 - Missions REQUIRE an approved RFC
 - No RFC = Create one first
 - One mission = One claimable unit
 - Missions are timeboxed
+- Missions MUST declare dependencies on other missions
+
+**Mission Dependency Model:**
+
+Real implementation requires ordered execution. Declare dependencies:
+
+```yaml
+depends_on:
+  - mission-003 # Must complete first
+  - mission-007 # Must complete first
+```
+
+Without dependencies, agents may implement out-of-order, producing dead PRs.
 
 ---
 
@@ -265,20 +737,31 @@ Implementation notes, blockers, decisions.
 
 ### What Agents CAN Do
 
-| Capability | Description |
-|------------|-------------|
-| Claim Missions | Pick up work from `missions/open/` |
-| Implement Specs | Execute according to RFC |
-| Write Tests | Ensure quality |
-| Submit PRs | Standard contribution flow |
+| Capability      | Description                        |
+| --------------- | ---------------------------------- |
+| Claim Missions  | Pick up work from `missions/open/` |
+| Implement Specs | Execute according to RFC           |
+| Write Tests     | Ensure quality                     |
+| Submit PRs      | Standard contribution flow         |
 
 ### What Agents CANNOT Do
 
-| Restriction | Reason |
-|-------------|--------|
+| Restriction      | Reason                   |
+| ---------------- | ------------------------ |
 | Create Use Cases | Human direction required |
-| Accept RFCs | Governance decision |
-| Bypass Missions | Chaos prevention |
+| Accept RFCs      | Governance decision      |
+| Bypass Missions  | Chaos prevention         |
+| Initiate RFCs    | Requires human approval  |
+
+### RFC Initiation
+
+Agents **CANNOT** initiate RFCs. However, agents MAY:
+
+- Draft RFCs based on human-provided requirements
+- Propose technical solutions within a Mission
+- Contribute to RFC technical content
+
+The key distinction: **Humans provide intent, agents provide implementation detail.**
 
 ### Agent Workflow
 
@@ -296,16 +779,16 @@ Implementation notes, blockers, decisions.
 
 ## Human vs Agent Roles
 
-| Activity | Human | Agent |
-|----------|-------|-------|
-| Define Use Cases | ✓ | ✗ |
-| Write RFCs | ✓ | ✗ |
-| Accept RFCs | ✓ | ✗ |
-| Create Missions | ✓ | ✓ |
-| Claim Missions | ✓ | ✓ |
-| Implement RFCs | ✓ | ✓ |
-| Review PRs | ✓ | ✗ |
-| Merge to main | ✓ | ✗ |
+| Activity         | Human | Agent |
+| ---------------- | ----- | ----- |
+| Define Use Cases | ✓     | ✗     |
+| Write RFCs       | ✓     | ✗     |
+| Accept RFCs      | ✓     | ✗     |
+| Create Missions  | ✓     | ✓     |
+| Claim Missions   | ✓     | ✓     |
+| Implement RFCs   | ✓     | ✓     |
+| Review PRs       | ✓     | ✗     |
+| Merge to main    | ✓     | ✗     |
 
 **Humans govern. Agents implement.**
 
@@ -353,24 +836,35 @@ Implementation notes, blockers, decisions.
 ```
 
 **Timeouts:**
+
 - Claimed mission: 14 days → Return to open
 - PR in review: 7 days → Follow up or close
+
+**Timeout Rationale:**
+
+| Timeout       | Value   | Rationale                                                                                                                                                     |
+| ------------- | ------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Mission claim | 14 days | Allows adequate time for understanding RFC, planning implementation, and making significant progress. Two weeks is standard for substantial development work. |
+| PR review     | 7 days  | One week provides sufficient time for thorough human review while preventing indefinite review stalls. Aligns with common sprint cycles.                      |
 
 ---
 
 ## Future Decentralization Path
 
 ### Phase 1: Foundation (Current)
+
 - Human governance
 - Centralized RFC process
 - Mission-based execution
 
 ### Phase 2: Stakeholder Input
+
 - OCTO token holders vote on RFCs
 - Reputation-based weighting
 - Agent representation
 
 ### Phase 3: Protocol Governance
+
 - On-chain decision making
 - Automated RFC acceptance
 - Autonomous mission creation
@@ -387,16 +881,27 @@ cipherocto/
 │   ├── BLUEPRINT.md           ← This document
 │   ├── START_HERE.md
 │   ├── ROLES.md
-│   ├── ROADMAP.md
+│   ├── ROADMAP.md             ← Protocol roadmap
+│   ├── research/              ← Feasibility layer
+│   │   ├── README.md
+│   │   ├── ZKP_Research_Report.md
+│   │   └── cairo-ai-research-report.md
 │   └── use-cases/             ← Intent layer
 │       ├── decentralized-mission-execution.md
 │       └── agent-marketplace.md
-├── rfcs/                      ← Design layer
-│   ├── README.md
-│   ├── 0000-template.md
-│   ├── 0001-mission-lifecycle.md
-│   ├── 0002-agent-manifest.md
-│   └── archived/
+├── rfcs/                      ← Design layer (see [rfcs/README.md](../rfcs/README.md))
+│   ├── README.md              ← RFC index & registry
+│   ├── planned/               ← Placeholder RFCs
+│   │   ├── numeric/
+│   │   ├── retrieval/
+│   │   └── ...
+│   ├── draft/                 ← Open for discussion
+│   │   ├── process/
+│   │   ├── numeric/
+│   │   └── ...
+│   ├── accepted/              ← Approved RFCs
+│   ├── final/                 ← Implemented & stable
+│   └── archived/              ← Rejected/Superseded/Deprecated
 ├── missions/                  ← Execution layer
 │   ├── open/
 │   ├── claimed/
@@ -451,4 +956,4 @@ When in doubt, return to the Blueprint.
 
 ---
 
-*"We are not documenting a repository. We are defining how autonomous intelligence collaborates to build infrastructure."*
+_"We are not documenting a repository. We are defining how autonomous intelligence collaborates to build infrastructure."_

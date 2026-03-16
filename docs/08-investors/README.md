@@ -6,13 +6,13 @@ Welcome to the CipherOcto investor portal. This section provides resources for u
 
 ## Quick Links
 
-| Document | Description | Link |
-| ---------- | ----------- | ---- |
-| **Litepaper** | 10-minute overview | [Read](../01-foundation/litepaper.md) |
+| Document       | Description                                  | Link                                                   |
+| -------------- | -------------------------------------------- | ------------------------------------------------------ |
+| **Litepaper**  | 10-minute overview                           | [Read](../01-foundation/litepaper.md)                  |
 | **Whitepaper** | Comprehensive technical and economic details | [Read](../01-foundation/whitepaper/v1.0-whitepaper.md) |
-| **Manifesto** | Our philosophy and vision | [Read](../01-foundation/manifesto.md) |
-| **Roadmap** | Development timeline and milestones | [Read](../01-foundation/roadmap.md) |
-| **Tokenomics** | Economic model and token design | [Read](../04-tokenomics/token-design.md) |
+| **Manifesto**  | Our philosophy and vision                    | [Read](../01-foundation/manifesto.md)                  |
+| **Roadmap**    | Development timeline and milestones          | [Read](../01-foundation/roadmap.md)                    |
+| **Tokenomics** | Economic model and token design              | [Read](../04-tokenomics/token-design.md)               |
 
 ---
 
@@ -22,12 +22,12 @@ Welcome to the CipherOcto investor portal. This section provides resources for u
 
 **$400B+ coordination failure** in AI infrastructure:
 
-| Issue | Market Impact |
-| ----- | ------------- |
-| **Idle GPUs** | 40-60% utilization = $50B+ waste |
-| **Unused subscriptions** | Billions in enterprise AI spend |
-| **Vendor lock-in** | Enterprises trapped in ecosystems |
-| **No agent economy** | AI cannot collaborate or earn autonomously |
+| Issue                    | Market Impact                              |
+| ------------------------ | ------------------------------------------ |
+| **Idle GPUs**            | 40-60% utilization = $50B+ waste           |
+| **Unused subscriptions** | Billions in enterprise AI spend            |
+| **Vendor lock-in**       | Enterprises trapped in ecosystems          |
+| **No agent economy**     | AI cannot collaborate or earn autonomously |
 
 ### The Solution
 
@@ -48,12 +48,12 @@ graph TB
 
 ### The Opportunity
 
-| Metric | 2025 | 2030 | 2035 |
-| ------ | ---- | ---- | ---- |
-| **AI Infrastructure Market** | $200B | $500B | $1.1T |
-| **Decentralized AI Share** | 2% | 20% | 45% |
-| **CipherOcto Addressable** | — | 10% share | 20% share |
-| **Potential Revenue** | — | $10B/year | $220B/year |
+| Metric                       | 2025  | 2030      | 2035       |
+| ---------------------------- | ----- | --------- | ---------- |
+| **AI Infrastructure Market** | $200B | $500B     | $1.1T      |
+| **Decentralized AI Share**   | 2%    | 20%       | 45%        |
+| **CipherOcto Addressable**   | —     | 10% share | 20% share  |
+| **Potential Revenue**        | —     | $10B/year | $220B/year |
 
 ---
 
@@ -61,22 +61,22 @@ graph TB
 
 ### Unique Differentiators
 
-| Advantage | Competitors | CipherOcto |
-| ---------- | ----------- | ---------- |
-| **Trust model** | Stake-based | Proof of Reliability (performance) |
-| **Token economics** | Single token | Multi-token (9 tokens) |
-| **Enterprise integration** | Afterthought | Native (OCTO-W) |
-| **Privacy** | Basic encryption | ZK proofs + TEEs + data classification |
-| **Agent support** | None | Multi-agent orchestration |
+| Advantage                  | Competitors      | CipherOcto                             |
+| -------------------------- | ---------------- | -------------------------------------- |
+| **Trust model**            | Stake-based      | Proof of Reliability (performance)     |
+| **Token economics**        | Single token     | Multi-token (9 tokens)                 |
+| **Enterprise integration** | Afterthought     | Native (OCTO-W)                        |
+| **Privacy**                | Basic encryption | ZK proofs + TEEs + data classification |
+| **Agent support**          | None             | Multi-agent orchestration              |
 
 ### Defensibility
 
-| Barrier | Description |
-| -------- | ----------- |
-| **Network effects** | Composable trust graph |
-| **Switching costs** | Dual-stake + reputation |
-| **Data moats** | Sovereign data stays |
-| **Economic moats** | Multi-token alignment |
+| Barrier             | Description                 |
+| ------------------- | --------------------------- |
+| **Network effects** | Composable trust graph      |
+| **Switching costs** | Dual-stake + reputation     |
+| **Data moats**      | Sovereign data stays        |
+| **Economic moats**  | Multi-token alignment       |
 | **Technical moats** | PoR + AI Wholesale (unique) |
 
 ---
@@ -96,22 +96,22 @@ pie showData
 
 ### Unit Economics
 
-| Metric | Value |
-| ------ | ----- |
-| **Take rate** | 5% of transaction value |
-| **Target volume** | $160M/year (Year 3) |
-| **Revenue** | $8M/year (Year 3) |
-| **Operating margin** | 75%+ |
-| **Break-even** | $26M protocol volume |
+| Metric               | Value                   |
+| -------------------- | ----------------------- |
+| **Take rate**        | 5% of transaction value |
+| **Target volume**    | $160M/year (Year 3)     |
+| **Revenue**          | $8M/year (Year 3)       |
+| **Operating margin** | 75%+                    |
+| **Break-even**       | $26M protocol volume    |
 
 ### Path to Profitability
 
-| Phase | Revenue | Annual Burn | Timeline |
-| ----- | ------- | ----------- | -------- |
-| **Phase 1** | $0 | $5M | Year 1-2 |
-| **Phase 2** | $2M | $8M | Year 2-3 |
-| **Phase 3** | $8M | $3M | Year 3-4 |
-| **Phase 4** | $50M+ | Profitable | Year 4+ |
+| Phase       | Revenue | Annual Burn | Timeline |
+| ----------- | ------- | ----------- | -------- |
+| **Phase 1** | $0      | $5M         | Year 1-2 |
+| **Phase 2** | $2M     | $8M         | Year 2-3 |
+| **Phase 3** | $8M     | $3M         | Year 3-4 |
+| **Phase 4** | $50M+   | Profitable  | Year 4+  |
 
 ---
 
@@ -121,12 +121,12 @@ pie showData
 
 **Purpose:** Reserve currency of AI infrastructure
 
-| Use Case | Description |
-| -------- | ----------- |
-| **Governance** | Vote on protocol decisions |
-| **Staking** | Earn 5-8% APY |
-| **Settlement** | Cross-role transactions |
-| **Store of value** | Treasury-backed |
+| Use Case           | Description                |
+| ------------------ | -------------------------- |
+| **Governance**     | Vote on protocol decisions |
+| **Staking**        | Earn 5-8% APY              |
+| **Settlement**     | Cross-role transactions    |
+| **Store of value** | Treasury-backed            |
 
 ### Initial Distribution
 
@@ -143,6 +143,7 @@ pie showData
 ```
 
 **Investor considerations:**
+
 - Team/founders: 1-year cliff, 4-year vesting
 - No massive upfront unlocks
 - Emissions tied to Proof of Useful Work
@@ -189,13 +190,13 @@ Market Cap = $0.12 × 2B = $240M
 ### Valuation Scenarios
 
 | Scenario | Year | Token Price | Market Cap |
-| ----------| ---- | ----------- | ---------- |
-| **Bear** | 2028 | $0.02 | $40M |
-| **Base** | 2028 | $0.10 | $200M |
-| **Bull** | 2028 | $0.50 | $1B |
-| **Bear** | 2030 | $0.05 | $500M |
-| **Base** | 2030 | $0.25 | $2.5B |
-| **Bull** | 2030 | $2.50 | $25B |
+| -------- | ---- | ----------- | ---------- |
+| **Bear** | 2028 | $0.02       | $40M       |
+| **Base** | 2028 | $0.10       | $200M      |
+| **Bull** | 2028 | $0.50       | $1B        |
+| **Bear** | 2030 | $0.05       | $500M      |
+| **Base** | 2030 | $0.25       | $2.5B      |
+| **Bull** | 2030 | $2.50       | $25B       |
 
 ---
 
@@ -203,13 +204,13 @@ Market Cap = $0.12 × 2B = $240M
 
 ### Key Risks
 
-| Risk | Probability | Impact | Mitigation |
-| ---- | ---------- | ------ | ---------- |
-| **Security breach** | Medium | Critical | Audits, bug bounties, gradual rollout |
-| **Regulatory action** | Medium | High | Compliance-first design |
-| **Competition** | Low | Medium | Network effects, first-mover |
-| **Execution risk** | Low | High | Experienced team, clear roadmap |
-| **Economic model** | Low | High | Conservative emissions, treasury |
+| Risk                  | Probability | Impact   | Mitigation                            |
+| --------------------- | ----------- | -------- | ------------------------------------- |
+| **Security breach**   | Medium      | Critical | Audits, bug bounties, gradual rollout |
+| **Regulatory action** | Medium      | High     | Compliance-first design               |
+| **Competition**       | Low         | Medium   | Network effects, first-mover          |
+| **Execution risk**    | Low         | High     | Experienced team, clear roadmap       |
+| **Economic model**    | Low         | High     | Conservative emissions, treasury      |
 
 ### Risk Management
 
@@ -224,22 +225,22 @@ Market Cap = $0.12 × 2B = $240M
 
 ### Leadership
 
-*(To be updated based on actual team composition)*
+_(To be updated based on actual team composition)_
 
-| Role | Background |
-| ---- | ----------- |
-| **CEO** | TBD |
-| **CTO** | TBD |
-| **CFO** | TBD |
-| **Head of Protocol** | TBD |
+| Role                 | Background |
+| -------------------- | ---------- |
+| **CEO**              | TBD        |
+| **CTO**              | TBD        |
+| **CFO**              | TBD        |
+| **Head of Protocol** | TBD        |
 
 ### Advisors
 
-| Advisor | Background |
-| -------- | ----------- |
-| **Technical advisors** | TBD |
-| **Economics advisors** | TBD |
-| **Legal/compliance** | TBD |
+| Advisor                | Background |
+| ---------------------- | ---------- |
+| **Technical advisors** | TBD        |
+| **Economics advisors** | TBD        |
+| **Legal/compliance**   | TBD        |
 
 ---
 
@@ -269,14 +270,14 @@ Market Cap = $0.12 × 2B = $240M
 
 ### Available Upon Request
 
-| Document | Availability |
-| ---------- | -------------- |
-| **Financial projections** | Upon NDA |
-| **Technical architecture** | Public |
-| **Legal structure** | Upon NDA |
-| **Security audits** | When completed |
-| **Advisor bios** | Public |
-| **Competitive analysis** | Public |
+| Document                   | Availability   |
+| -------------------------- | -------------- |
+| **Financial projections**  | Upon NDA       |
+| **Technical architecture** | Public         |
+| **Legal structure**        | Upon NDA       |
+| **Security audits**        | When completed |
+| **Advisor bios**           | Public         |
+| **Competitive analysis**   | Public         |
 
 ---
 
@@ -315,7 +316,7 @@ A: Staking will be available immediately after TGE.
 
 ---
 
-*For comprehensive details, see the [whitepaper](../01-foundation/whitepaper/v1.0-whitepaper.md). For a quick overview, see the [litepaper](../01-foundation/litepaper.md).*
+_For comprehensive details, see the [whitepaper](../01-foundation/whitepaper/v1.0-whitepaper.md). For a quick overview, see the [litepaper](../01-foundation/litepaper.md)._
 
 ---
 

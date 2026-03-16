@@ -10,13 +10,13 @@ This guide will help you get started with CipherOcto — whether you want to bui
 
 ### Prerequisites
 
-| Requirement | Minimum | Recommended |
-| ----------- | ------- | ----------- |
-| **Operating System** | Linux, macOS, Windows (WSL2) | Ubuntu 22.04, macOS 14+ |
-| **RAM** | 8 GB | 16 GB+ |
-| **Storage** | 20 GB free | 50 GB+ SSD |
-| **GPU** | None (CPU inference) | NVIDIA GPU (compute capability 7.0+) |
-| **Programming** | Basic Python/TypeScript | Familiarity with both |
+| Requirement          | Minimum                      | Recommended                          |
+| -------------------- | ---------------------------- | ------------------------------------ |
+| **Operating System** | Linux, macOS, Windows (WSL2) | Ubuntu 22.04, macOS 14+              |
+| **RAM**              | 8 GB                         | 16 GB+                               |
+| **Storage**          | 20 GB free                   | 50 GB+ SSD                           |
+| **GPU**              | None (CPU inference)         | NVIDIA GPU (compute capability 7.0+) |
+| **Programming**      | Basic Python/TypeScript      | Familiarity with both                |
 
 ### 5-Minute Setup
 
@@ -69,7 +69,7 @@ graph TB
     subgraph PROTO["Protocol Contributor"]
         direction TB
         R1[Improve protocol]
-        R2[Earn grants]
+        R2[Earn OCTO-D]
         R3[Build reputation]
     end
 
@@ -98,22 +98,23 @@ graph TB
 ### What You'll Build
 
 AI Agents are autonomous programs that:
+
 - Accept tasks from users or other agents
 - Execute using decentralized compute
-- Earn OCTO-D tokens automatically
+- Earn OCTO-D tokens automatically when tasks complete
 - Can hire other agents for subtasks
 
 ### Hello World Agent
 
 ```typescript
-import { Agent, Task } from '@cipherocto/sdk';
+import { Agent, Task } from "@cipherocto/sdk";
 
 // Define your agent
 const helloAgent = new Agent({
-  name: 'hello-world',
-  description: 'A simple greeting agent',
-  model: 'llama-2-7b',
-  maxTokens: 100
+  name: "hello-world",
+  description: "A simple greeting agent",
+  model: "llama-2-7b",
+  maxTokens: 100,
 });
 
 // Define task handler
@@ -129,13 +130,13 @@ await helloAgent.start();
 
 ### Agent Development Tutorial
 
-| Step | Topic | Link |
-| ---- | ----- | ---- |
-| 1 | Agent basics | [Tutorial](https://docs.cipherocto.io/agents/basics) |
-| 2 | State management | [Guide](https://docs.cipherocto.io/agents/state) |
-| 3 | Multi-agent patterns | [Guide](https://docs.cipherocto.io/agents/patterns) |
-| 4 | Publishing to marketplace | [Tutorial](https://docs.cipherocto.io/agents/publish) |
-| 5 | Monetization | [Guide](https://docs.cipherocto.io/agents/earnings) |
+| Step | Topic                     | Link                                                  |
+| ---- | ------------------------- | ----------------------------------------------------- |
+| 1    | Agent basics              | [Tutorial](https://docs.cipherocto.io/agents/basics)  |
+| 2    | State management          | [Guide](https://docs.cipherocto.io/agents/state)      |
+| 3    | Multi-agent patterns      | [Guide](https://docs.cipherocto.io/agents/patterns)   |
+| 4    | Publishing to marketplace | [Tutorial](https://docs.cipherocto.io/agents/publish) |
+| 5    | Monetization              | [Guide](https://docs.cipherocto.io/agents/earnings)   |
 
 ### Publishing Your Agent
 
@@ -158,12 +159,12 @@ cipherocto agent earnings my-agent
 
 Become a network provider and earn:
 
-| Resource | Token | Requirements |
-| --------- | ----- | ------------ |
-| **GPU Compute** | OCTO-A | NVIDIA GPU, 8GB+ VRAM |
-| **Storage** | OCTO-S | 1TB+ storage, reliable uptime |
-| **Bandwidth** | OCTO-B | 100 Mbps+ upload |
-| **Orchestration** | OCTO-O | High reputation, stake |
+| Resource          | Token  | Requirements                  |
+| ----------------- | ------ | ----------------------------- |
+| **GPU Compute**   | OCTO-A | NVIDIA GPU, 8GB+ VRAM         |
+| **Storage**       | OCTO-S | 1TB+ storage, reliable uptime |
+| **Bandwidth**     | OCTO-B | 100 Mbps+ upload              |
+| **Orchestration** | OCTO-O | High reputation, stake        |
 
 ### Quick Start: GPU Provider
 
@@ -186,50 +187,86 @@ cipherocto provider earnings
 
 ### Provider Requirements
 
-| Tier | Hardware | Stake | Expected Earnings |
-| ---- | -------- | ----- | ----------------- |
-| **Consumer** | 8-16GB VRAM | 1,000 OCTO-A | $100-300/month |
-| **Prosumer** | 24-48GB VRAM | 5,000 OCTO-A | $500-1,500/month |
-| **Enterprise** | 80GB+ VRAM | 10,000 OCTO-A | $2,000-5,000/month |
+| Tier           | Hardware     | Stake         | Expected Earnings  |
+| -------------- | ------------ | ------------- | ------------------ |
+| **Consumer**   | 8-16GB VRAM  | 1,000 OCTO-A  | $100-300/month     |
+| **Prosumer**   | 24-48GB VRAM | 5,000 OCTO-A  | $500-1,500/month   |
+| **Enterprise** | 80GB+ VRAM   | 10,000 OCTO-A | $2,000-5,000/month |
 
 ---
 
 ## Path 3: Contribute to Protocol
 
-### Contribution Areas
+### What You'll Do
+
+Build the core infrastructure that powers the CipherOcto network — and earn OCTO-D tokens for every contribution.
+
+### How You Earn OCTO-D
+
+| Contribution Type | How It's Tracked        | Reward                   |
+| ----------------- | ----------------------- | ------------------------ |
+| **Code merged**   | Missions in `missions/` | OCTO-D awarded on merge  |
+| **RFC proposals** | RFCs in `rfcs/`         | OCTO-D for accepted RFCs |
+| **Reviews**       | PR reviews merged       | OCTO-D per review        |
+| **Documentation** | Docs merged             | OCTO-D for quality docs  |
+| **Bug fixes**     | Issues resolved         | OCTO-D based on impact   |
+
+### The Mission System
+
+All protocol contributions are tracked via the Mission system:
 
 ```mermaid
-mindmap
-  root((Contributions))
-    Core_Protocol
-      Smart_contracts
-      Node_software
-      Consensus_mechanisms
-    Developer_Tools
-      SDK_improvements
-      CLI_tools
-      Testing_frameworks
-    Documentation
-      Technical_guides
-      API_references
-      Tutorials
-    Ecosystem
-      Community_management
-      Event_organization
-      Content_creation
+graph LR
+    A[Open Mission] -->|claim| B[Claimed]
+    B -->|PR submitted| C[In Review]
+    C -->|merged| D[Completed]
+    D -->|auto| E[OCTO-D Awarded]
 ```
 
-### Good First Issues
+1. **Browse missions** — Check `missions/` for open work
+2. **Claim a mission** — Assign yourself to work on it
+3. **Submit PR** — When complete, submit a pull request
+4. **Get reviewed** — PRs are reviewed by peers
+5. **Earn OCTO-D** — Tokens automatically awarded on merge
 
-Visit our [GitHub Issues](https://github.com/cipherocto/cipherocto/issues) and filter by `good first issue` tag.
+### Your First Contribution
 
-### Grant Program
+```bash
+# 1. Find open missions
+ls missions/
 
-| Grant Type | Amount | Duration |
-| ---------- | ------ | -------- |
-| **Small** | $1,000-5,000 | 1-2 months |
-| **Medium** | $5,000-20,000 | 2-4 months |
-| **Large** | $20,000-100,000 | 4-12 months |
+# 2. Pick one that matches your skills
+# Missions are tagged by complexity: good-first-issue, medium, hard
+
+# 3. Read the RFC it implements
+cat rfcs/<rfc-number>.md
+
+# 4. Claim it (comment on the issue or PR)
+# Your work is now tracked!
+
+# 5. Submit PR and earn OCTO-D
+```
+
+### Reputation & Future Benefits
+
+Your contributions build permanent reputation:
+
+- **Early contributor status** — First builders get lasting recognition
+- **Governance weight** — Reputation influences DAO voting
+- **Priority routing** — High-reputation contributors' work gets fast-tracked
+- **Role token eligibility** — Core contributors can become Orchestrators (OCTO-O)
+
+### Grant Program (For Larger Work)
+
+For substantial protocol improvements beyond individual missions:
+
+| Grant Type | Amount          | Duration    |
+| ---------- | --------------- | ----------- |
+| **Small**  | $1,000-5,000    | 1-2 months  |
+| **Medium** | $5,000-20,000   | 2-4 months  |
+| **Large**  | $20,000-100,000 | 4-12 months |
+
+Grants are paid in OCTO or OCTO-D tokens.
 
 Apply: [grants.cipherocto.io](https://grants.cipherocto.io)
 
@@ -239,42 +276,42 @@ Apply: [grants.cipherocto.io](https://grants.cipherocto.io)
 
 ### Integration Points
 
-| Integration | Benefit | Complexity |
-| ----------- | ------- | ---------- |
-| **AI Wholesale** | Monetize unused quotas | Low |
-| **Private deployment** | On-premise inference | Medium |
-| **Custom agents** | Domain-specific automation | High |
-| **Full migration** | Complete independence | Very High |
+| Integration            | Benefit                    | Complexity |
+| ---------------------- | -------------------------- | ---------- |
+| **AI Wholesale**       | Monetize unused quotas     | Low        |
+| **Private deployment** | On-premise inference       | Medium     |
+| **Custom agents**      | Domain-specific automation | High       |
+| **Full migration**     | Complete independence      | Very High  |
 
 ### Enterprise SDK
 
 ```typescript
-import { EnterpriseClient } from '@cipherocto/sdk';
+import { EnterpriseClient } from "@cipherocto/sdk";
 
 // Initialize enterprise client
 const client = new EnterpriseClient({
   apiKey: process.env.CIPHEROCTO_API_KEY,
-  organization: 'your-org-id',
-  privacy: 'confidential'  // PRIVATE, CONFIDENTIAL, SHARED, PUBLIC
+  organization: "your-org-id",
+  privacy: "confidential", // PRIVATE, CONFIDENTIAL, SHARED, PUBLIC
 });
 
 // Run inference with enterprise guarantees
 const result = await client.inference({
-  model: 'llama-2-70b',
+  model: "llama-2-70b",
   prompt: confidentialPrompt,
-  dataClassification: 'confidential',
-  compliance: ['SOC2', 'GDPR']
+  dataClassification: "confidential",
+  compliance: ["SOC2", "GDPR"],
 });
 ```
 
 ### Compliance Features
 
-| Feature | Implementation |
-| ------- | -------------- |
-| **Data sovereignty** | Geographic controls, encryption at rest |
-| **Access logging** | Immutable audit trail |
-| **Role-based access** | Fine-grained permissions |
-| **Compliance reporting** | Automated SOC2, HIPAA, GDPR reports |
+| Feature                  | Implementation                          |
+| ------------------------ | --------------------------------------- |
+| **Data sovereignty**     | Geographic controls, encryption at rest |
+| **Access logging**       | Immutable audit trail                   |
+| **Role-based access**    | Fine-grained permissions                |
+| **Compliance reporting** | Automated SOC2, HIPAA, GDPR reports     |
 
 ---
 
@@ -314,12 +351,12 @@ cipherocto wallet unstake <amount>        # Unstake tokens
 
 ### SDK Reference
 
-| Language | Package | Documentation |
-| ----------| ------- | ------------- |
-| **TypeScript** | `@cipherocto/sdk` | [docs](https://sdk.cipherocto.io/ts) |
-| **Python** | `cipherocto` | [docs](https://sdk.cipherocto.io/python) |
-| **Rust** | `cipherocto-core` | [docs](https://sdk.cipherocto.io/rust) |
-| **Go** | `github.com/cipherocto/go` | [docs](https://sdk.cipherocto.io/go) |
+| Language       | Package                    | Documentation                            |
+| -------------- | -------------------------- | ---------------------------------------- |
+| **TypeScript** | `@cipherocto/sdk`          | [docs](https://sdk.cipherocto.io/ts)     |
+| **Python**     | `cipherocto`               | [docs](https://sdk.cipherocto.io/python) |
+| **Rust**       | `cipherocto-core`          | [docs](https://sdk.cipherocto.io/rust)   |
+| **Go**         | `github.com/cipherocto/go` | [docs](https://sdk.cipherocto.io/go)     |
 
 ---
 
@@ -329,12 +366,12 @@ cipherocto wallet unstake <amount>        # Unstake tokens
 
 Get testnet tokens here: [faucet.cipherocto.io](https://faucet.cipherocto.io)
 
-| Token | Testnet Amount | Purpose |
-| ----- | -------------- | ------- |
-| **OCTO** | 10,000 | Staking, gas |
-| **OCTO-A** | 1,000 | Compute provider testing |
-| **OCTO-S** | 1,000 | Storage provider testing |
-| **OCTO-D** | 500 | Agent deployment |
+| Token      | Testnet Amount | Purpose                  |
+| ---------- | -------------- | ------------------------ |
+| **OCTO**   | 10,000         | Staking, gas             |
+| **OCTO-A** | 1,000          | Compute provider testing |
+| **OCTO-S** | 1,000          | Storage provider testing |
+| **OCTO-D** | 500            | Agent deployment         |
 
 ### Testnet Explorer
 
@@ -382,12 +419,12 @@ cipherocto agent pricing my-agent --adjust 0.8
 
 ## Support
 
-| Channel | Response Time | Use For |
-| ------- | ------------- | -------- |
-| **Discord** | Community (hours) | General questions |
-| **GitHub Issues** | Community (days) | Bug reports, features |
-| **Email** | Business (1-2 days) | Enterprise, partnerships |
-| **Documentation** | Self-service | Technical reference |
+| Channel           | Response Time       | Use For                  |
+| ----------------- | ------------------- | ------------------------ |
+| **Discord**       | Community (hours)   | General questions        |
+| **GitHub Issues** | Community (days)    | Bug reports, features    |
+| **Email**         | Business (1-2 days) | Enterprise, partnerships |
+| **Documentation** | Self-service        | Technical reference      |
 
 ---
 
@@ -395,4 +432,4 @@ cipherocto agent pricing my-agent --adjust 0.8
 
 ---
 
-*For local development setup, see [local-setup.md](./local-setup.md). For contribution guidelines, see [contributing.md](./contributing.md).*
+_For local development setup, see [local-setup.md](./local-setup.md). For contribution guidelines, see [contributing.md](./contributing.md)._

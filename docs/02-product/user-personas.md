@@ -44,13 +44,13 @@ Marcus runs a mid-sized datacenter serving the SEA region. He invested heavily i
 
 ### Pain Points
 
-| Pain | Impact |
-| ---- | ------ |
-| **Idle capacity** | $50K+/month in unrealized revenue |
+| Pain                     | Impact                            |
+| ------------------------ | --------------------------------- |
+| **Idle capacity**        | $50K+/month in unrealized revenue |
 | **Customer acquisition** | Difficult to find reliable buyers |
-| **Platform fees** | AWS, Azure charge 30-50% margins |
-| **Geographic limits** | Local market only |
-| **Revenue volatility** | Unpredictable cash flow |
+| **Platform fees**        | AWS, Azure charge 30-50% margins  |
+| **Geographic limits**    | Local market only                 |
+| **Revenue volatility**   | Unpredictable cash flow           |
 
 ### Goals
 
@@ -62,13 +62,13 @@ Marcus runs a mid-sized datacenter serving the SEA region. He invested heavily i
 
 ### How CipherOcto Helps
 
-| Feature | Benefit |
-| ------- | ------- |
-| **Global marketplace** | Access buyers worldwide, 24/7 |
-| **Automated matching** | No sales effort required |
-| **OCTO-A earnings** | Direct payment for compute |
-| **Reputation system** | Higher rates for reliable providers |
-| **Dual-stake security** | Protected against bad actors |
+| Feature                 | Benefit                             |
+| ----------------------- | ----------------------------------- |
+| **Global marketplace**  | Access buyers worldwide, 24/7       |
+| **Automated matching**  | No sales effort required            |
+| **OCTO-A earnings**     | Direct payment for compute          |
+| **Reputation system**   | Higher rates for reliable providers |
+| **Dual-stake security** | Protected against bad actors        |
 
 ### Quote
 
@@ -98,13 +98,13 @@ Sarah's company is aggressively adopting AI but faces vendor lock-in, escalating
 
 ### Pain Points
 
-| Pain | Impact |
-| ---- | ------ |
-| **Vendor lock-in** | Trapped in OpenAI/AWS ecosystem |
-| **Escalating costs** | AI budget doubled in 18 months |
-| **Data sovereignty** | Cannot send financial data externally |
-| **Compliance risk** | GDPR, SOC2 requirements |
-| **Single point of failure** | Downtime = lost revenue |
+| Pain                        | Impact                                |
+| --------------------------- | ------------------------------------- |
+| **Vendor lock-in**          | Trapped in OpenAI/AWS ecosystem       |
+| **Escalating costs**        | AI budget doubled in 18 months        |
+| **Data sovereignty**        | Cannot send financial data externally |
+| **Compliance risk**         | GDPR, SOC2 requirements               |
+| **Single point of failure** | Downtime = lost revenue               |
 
 ### Goals
 
@@ -116,13 +116,13 @@ Sarah's company is aggressively adopting AI but faces vendor lock-in, escalating
 
 ### How CipherOcto Helps
 
-| Feature | Benefit |
-| ------- | ------- |
-| **Multi-provider marketplace** | No single vendor dependency |
-| **AI Wholesale (OCTO-W)** | Monetize unused OpenAI/Anthropic quotas |
-| **Data classification** | PRIVATE data stays on-premise |
-| **SOC2/GDPR native** | Compliance by design |
-| **Geographic distribution** | Redundancy across regions |
+| Feature                        | Benefit                                 |
+| ------------------------------ | --------------------------------------- |
+| **Multi-provider marketplace** | No single vendor dependency             |
+| **AI Wholesale (OCTO-W)**      | Monetize unused OpenAI/Anthropic quotas |
+| **Data classification**        | PRIVATE data stays on-premise           |
+| **SOC2/GDPR native**           | Compliance by design                    |
+| **Geographic distribution**    | Redundancy across regions               |
 
 ### Quote
 
@@ -144,7 +144,7 @@ Sarah's company is aggressively adopting AI but faces vendor lock-in, escalating
 - **Age:** 28
 - **Location:** Remote (Portugal)
 - **Background:** Ex-FAANG AI engineer
-| **Status:** Indie hacker, 3 AI apps deployed
+  | **Status:** Indie hacker, 3 AI apps deployed
 
 ### Background
 
@@ -152,13 +152,13 @@ Alex left Big Tech to build autonomous AI agents. He has valuable agents but lim
 
 ### Pain Points
 
-| Pain | Impact |
-| ---- | ------ |
-| **Distribution** | Hard to reach customers |
-| **Infrastructure costs** | GPU bills eating margins |
-| **Platform risk** | Agents can be delisted |
-| **Payment friction** | Complex billing setup |
-| **No passive income** | Must actively maintain everything |
+| Pain                     | Impact                            |
+| ------------------------ | --------------------------------- |
+| **Distribution**         | Hard to reach customers           |
+| **Infrastructure costs** | GPU bills eating margins          |
+| **Platform risk**        | Agents can be delisted            |
+| **Payment friction**     | Complex billing setup             |
+| **No passive income**    | Must actively maintain everything |
 
 ### Goals
 
@@ -170,13 +170,13 @@ Alex left Big Tech to build autonomous AI agents. He has valuable agents but lim
 
 ### How CipherOcto Helps
 
-| Feature | Benefit |
-| ------- | ------- |
-| **Agent marketplace** | Global distribution, built-in customers |
-| **Publish once, earn forever** | Passive income from agents |
-| **Infrastructure included** | No GPU management required |
-| **Automatic payments** | Earn OCTO-D automatically |
-| **Agent composition** | Agents can hire other agents |
+| Feature                        | Benefit                                 |
+| ------------------------------ | --------------------------------------- |
+| **Agent marketplace**          | Global distribution, built-in customers |
+| **Publish once, earn forever** | Passive income from agents              |
+| **Infrastructure included**    | No GPU management required              |
+| **Automatic payments**         | Earn OCTO-D automatically               |
+| **Agent composition**          | Agents can hire other agents            |
 
 ### Quote
 
@@ -187,7 +187,7 @@ Alex left Big Tech to build autonomous AI agents. He has valuable agents but lim
 - 5 agents published
 - $8K/month passive income
 - 200+ enterprise customers
-| Zero infrastructure management
+  | Zero infrastructure management
 
 ---
 
@@ -206,13 +206,13 @@ Priya is experienced in crypto but tired of speculative tokens with no utility. 
 
 ### Pain Points
 
-| Pain | Impact |
-| ---- | ------ |
-| **Speculative tokens** | Value from hype, not utility |
-| **Inflation dilution** | Endless token emissions |
-| **No real yield** | Staking = inflation, not revenue |
-| **Governance meaningless** | Teams ignore votes |
-| **Short-term projects** | Exit scams common |
+| Pain                       | Impact                           |
+| -------------------------- | -------------------------------- |
+| **Speculative tokens**     | Value from hype, not utility     |
+| **Inflation dilution**     | Endless token emissions          |
+| **No real yield**          | Staking = inflation, not revenue |
+| **Governance meaningless** | Teams ignore votes               |
+| **Short-term projects**    | Exit scams common                |
 
 ### Goals
 
@@ -224,13 +224,13 @@ Priya is experienced in crypto but tired of speculative tokens with no utility. 
 
 ### How CipherOcto Helps
 
-| Feature | Benefit |
-| ------- | ------- |
-| **Proof of Useful Work** | Emissions only with real activity |
-| **Treasury backing** | Protocol revenue supports token value |
-| **5-8% APY** | Real yield from staking |
+| Feature                   | Benefit                                    |
+| ------------------------- | ------------------------------------------ |
+| **Proof of Useful Work**  | Emissions only with real activity          |
+| **Treasury backing**      | Protocol revenue supports token value      |
+| **5-8% APY**              | Real yield from staking                    |
 | **Meaningful governance** | Square-root voting reduces whale dominance |
-| **Deflationary** | Buyback & burn from fees |
+| **Deflationary**          | Buyback & burn from fees                   |
 
 ### Quote
 
@@ -239,7 +239,7 @@ Priya is experienced in crypto but tired of speculative tokens with no utility. 
 ### Success Metrics
 
 - 7.2% staking APY
-| Governance proposals passed
+  | Governance proposals passed
 - 3x price appreciation over 2 years
 - Dividends from treasury revenue
 
@@ -260,13 +260,13 @@ James's startup needs AI infrastructure but can't afford enterprise contracts or
 
 ### Pain Points
 
-| Pain | Impact |
-| ---- | ------ |
-| **Enterprise pricing** | OpenAI Enterprise too expensive |
-| **Build vs buy** | Can't afford to build own stack |
+| Pain                    | Impact                                 |
+| ----------------------- | -------------------------------------- |
+| **Enterprise pricing**  | OpenAI Enterprise too expensive        |
+| **Build vs buy**        | Can't afford to build own stack        |
 | **Vendor lock-in fear** | Startups get acquired and terms change |
-| **Limited runway** | Every dollar counts |
-| **Talent scarcity** | Can't hire ML infrastructure engineers |
+| **Limited runway**      | Every dollar counts                    |
+| **Talent scarcity**     | Can't hire ML infrastructure engineers |
 
 ### Goals
 
@@ -278,13 +278,13 @@ James's startup needs AI infrastructure but can't afford enterprise contracts or
 
 ### How CipherOcto Helps
 
-| Feature | Benefit |
-| ------- | ------- |
-| **Pay-per-use** | No upfront commitments |
-| **Multi-provider** | Automatic switching on price |
-| **No lock-in** | Leave anytime |
-| **Developer-friendly** | SDK, not infrastructure |
-| **Startup grants** | OCTO-D grants for builders |
+| Feature                | Benefit                      |
+| ---------------------- | ---------------------------- |
+| **Pay-per-use**        | No upfront commitments       |
+| **Multi-provider**     | Automatic switching on price |
+| **No lock-in**         | Leave anytime                |
+| **Developer-friendly** | SDK, not infrastructure      |
+| **Startup grants**     | OCTO-D grants for builders   |
 
 ### Quote
 
@@ -294,19 +294,19 @@ James's startup needs AI infrastructure but can't afford enterprise contracts or
 
 - 60% cost savings vs OpenAI Enterprise
 - Zero infrastructure engineering hires
-| Successfully raised Series B (fuel for growth)
+  | Successfully raised Series B (fuel for growth)
 
 ---
 
 ## Persona Summary Matrix
 
-| Persona | Primary Motivation | Key Benefit | Time to Value |
-| ------- | ----------------- | ----------- | ------------- |
-| **Marcus (GPU Provider)** | Monetize idle capacity | Additional $40K/month | Immediate |
-| **Sarah (Enterprise CTO)** | Reduce costs & lock-in | 35% savings, sovereignty | 3-6 months |
-| **Alex (Developer)** | Passive agent income | $8K/month passive | 1-3 months |
-| **Priya (Token Holder)** | Sustainable yield | 7.2% APY + governance | Immediate |
-| **James (Startup)** | Enterprise AI at startup prices | 60% cost savings | Immediate |
+| Persona                    | Primary Motivation              | Key Benefit              | Time to Value |
+| -------------------------- | ------------------------------- | ------------------------ | ------------- |
+| **Marcus (GPU Provider)**  | Monetize idle capacity          | Additional $40K/month    | Immediate     |
+| **Sarah (Enterprise CTO)** | Reduce costs & lock-in          | 35% savings, sovereignty | 3-6 months    |
+| **Alex (Developer)**       | Passive agent income            | $8K/month passive        | 1-3 months    |
+| **Priya (Token Holder)**   | Sustainable yield               | 7.2% APY + governance    | Immediate     |
+| **James (Startup)**        | Enterprise AI at startup prices | 60% cost savings         | Immediate     |
 
 ---
 
@@ -326,4 +326,4 @@ Each persona has a customized onboarding path, but all follow the same journey f
 
 ---
 
-*For product details, see the [product overview](./overview.md). For technical specifications, see the [whitepaper](../01-foundation/whitepaper/v1.0-whitepaper.md).*
+_For product details, see the [product overview](./overview.md). For technical specifications, see the [whitepaper](../01-foundation/whitepaper/v1.0-whitepaper.md)._

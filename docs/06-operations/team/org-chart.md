@@ -267,37 +267,37 @@ graph TB
 
 ### Phase 1: Foundation Team (2026)
 
-| Role | Status | Priority |
-| ---- | ------ | -------- |
-| CEO | 🔄 Hiring | Critical |
-| CTO | 🔄 Hiring | Critical |
-| Smart Contract Engineer | 📅 Q2 2026 | High |
-| Protocol Engineer | 📅 Q2 2026 | High |
-| DevOps Engineer | 📅 Q3 2026 | Medium |
+| Role                    | Status     | Priority |
+| ----------------------- | ---------- | -------- |
+| CEO                     | 🔄 Hiring  | Critical |
+| CTO                     | 🔄 Hiring  | Critical |
+| Smart Contract Engineer | 📅 Q2 2026 | High     |
+| Protocol Engineer       | 📅 Q2 2026 | High     |
+| DevOps Engineer         | 📅 Q3 2026 | Medium   |
 
 ### Phase 2: Growth Team (2027)
 
-| Role | Target | Priority |
-| ---- | ------ | -------- |
-| CFO | Q1 2027 | Critical |
-| Head of Product | Q1 2027 | High |
-| Head of Community | Q2 2027 | High |
-| Security Researcher | Q2 2027 | High |
-| 3 Protocol Engineers | Q2-Q4 2027 | High |
+| Role                 | Target     | Priority |
+| -------------------- | ---------- | -------- |
+| CFO                  | Q1 2027    | Critical |
+| Head of Product      | Q1 2027    | High     |
+| Head of Community    | Q2 2027    | High     |
+| Security Researcher  | Q2 2027    | High     |
+| 3 Protocol Engineers | Q2-Q4 2027 | High     |
 
 ### Phase 3: Scale Team (2028+)
 
-| Role | Target | Headcount |
-| ---- | ------ | --------- |
-| Protocol engineers | 2028-2029 | 10 |
-| Full-stack developers | 2028-2029 | 8 |
-| DevOps | 2028-2029 | 5 |
-| Security | 2028-2029 | 3 |
-| Product | 2028-2029 | 5 |
-| Marketing | 2028-2029 | 8 |
-| Community | 2028-2029 | 5 |
-| Operations | 2028-2029 | 5 |
-| **Total** | | ~50 FTE |
+| Role                  | Target    | Headcount |
+| --------------------- | --------- | --------- |
+| Protocol engineers    | 2028-2029 | 10        |
+| Full-stack developers | 2028-2029 | 8         |
+| DevOps                | 2028-2029 | 5         |
+| Security              | 2028-2029 | 3         |
+| Product               | 2028-2029 | 5         |
+| Marketing             | 2028-2029 | 8         |
+| Community             | 2028-2029 | 5         |
+| Operations            | 2028-2029 | 5         |
+| **Total**             |           | ~50 FTE   |
 
 ---
 
@@ -309,4 +309,4 @@ graph TB
 
 ---
 
-*Note: This org chart is a planning document. Actual structure will evolve based on needs and candidates.*
+_Note: This org chart is a planning document. Actual structure will evolve based on needs and candidates._

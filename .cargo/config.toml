@@ -1,0 +1,7 @@
+# Cargo configuration for CipherOcto
+# Fixes aws-lc-sys build on systems with GCC bug #95189
+# https://gcc.gnu.org/bugzilla/show_bug.cgi?id=95189
+
+[env]
+# Use CMake builder for aws-lc-sys to avoid GCC memcmp bug
+AWS_LC_SYS_CMAKE_BUILDER = "1"

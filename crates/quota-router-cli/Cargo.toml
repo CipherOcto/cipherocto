@@ -1,0 +1,50 @@
+[package]
+name = "quota-router-cli"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+
+[dependencies]
+# Core library
+quota-router-core = { path = "../quota-router-core" }
+
+# CLI
+clap.workspace = true
+
+# Async
+tokio.workspace = true
+async-trait.workspace = true
+
+# HTTP/HTTPS
+hyper.workspace = true
+hyper-util.workspace = true
+http-body-util.workspace = true
+rustls.workspace = true
+rustls-pemfile.workspace = true
+reqwest.workspace = true
+
+# Config
+directories.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+
+# Utilities
+uuid.workspace = true
+parking_lot.workspace = true
+
+# Logging
+tracing.workspace = true
+tracing-subscriber.workspace = true
+
+# Errors
+anyhow.workspace = true
+thiserror.workspace = true
+
+[lib]
+name = "quota_router_cli"
+path = "src/lib.rs"
+
+[[bin]]
+name = "quota-router"
+path = "src/main.rs"

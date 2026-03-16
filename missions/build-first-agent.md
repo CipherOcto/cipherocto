@@ -1,8 +1,10 @@
 # Mission: Build the First CipherOcto Agent
 
-**Difficulty:** Intermediate
-**Reward:** First-mover positioning in agent marketplace
-**Category:** Builder / OCTO-D
+## Status
+Open
+
+## Category
+This is an **Agent Builder** mission - different from the Quota Marketplace track.
 
 ---
 

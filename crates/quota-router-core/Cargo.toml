@@ -1,0 +1,53 @@
+[package]
+name = "quota-router-core"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+
+[dependencies]
+# Async
+tokio.workspace = true
+async-trait.workspace = true
+
+# HTTP server
+hyper.workspace = true
+hyper-util.workspace = true
+http.workspace = true
+http-body-util.workspace = true
+rustls.workspace = true
+rustls-pemfile.workspace = true
+reqwest.workspace = true
+
+# Config
+directories.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+
+# Utilities
+uuid.workspace = true
+parking_lot.workspace = true
+
+# Random
+rand.workspace = true
+
+# Logging
+tracing.workspace = true
+tracing-subscriber.workspace = true
+
+# Errors
+anyhow.workspace = true
+thiserror.workspace = true
+
+# Database
+stoolap = { path = "/home/mmacedoeu/_w/databases/stoolap" }
+
+# For HMAC-SHA256 key hashing
+hmac-sha256 = "1.1"
+
+# For hex encoding of key hashes
+hex = "0.4"
+
+[lib]
+name = "quota_router_core"
+path = "src/lib.rs"

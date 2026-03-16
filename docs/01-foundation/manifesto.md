@@ -5,6 +5,7 @@
 > **Many agents, one intelligence.**
 
 We believe the future of artificial intelligence should be:
+
 - **Private by default** — Your data never leaves your control
 - **Distributed by design** — Intelligence operates across a global mesh
 - **Sovereign by choice** — You decide where, how, and with whom
@@ -145,4 +146,4 @@ The stakes are high. The time is now.
 
 ---
 
-*This manifesto expresses the core philosophy of CipherOcto. For technical details, see the [whitepaper](./whitepaper/v1.0-whitepaper.md) and [litepaper](./litepaper.md).*
+_This manifesto expresses the core philosophy of CipherOcto. For technical details, see the [whitepaper](./whitepaper/v1.0-whitepaper.md) and [litepaper](./litepaper.md)._

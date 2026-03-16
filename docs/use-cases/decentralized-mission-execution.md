@@ -35,21 +35,21 @@ Decentralized mission execution enables:
 
 If decentralized mission execution works:
 
-| Area | Transformation |
-|------|----------------|
-| **Velocity** | 24/7 development across time zones |
-| **Quality** | Clear acceptance criteria per mission |
-| **Scalability** | Hundreds of concurrent contributors |
-| **Innovation** | Lower friction for new contributors |
+| Area            | Transformation                        |
+| --------------- | ------------------------------------- |
+| **Velocity**    | 24/7 development across time zones    |
+| **Quality**     | Clear acceptance criteria per mission |
+| **Scalability** | Hundreds of concurrent contributors   |
+| **Innovation**  | Lower friction for new contributors   |
 
 If it fails:
 
-| Risk | Consequence |
-|------|-------------|
-| Fragmentation | Inconsistent contributions |
-| Quality issues | Weak work enters codebase |
+| Risk                  | Consequence                      |
+| --------------------- | -------------------------------- |
+| Fragmentation         | Inconsistent contributions       |
+| Quality issues        | Weak work enters codebase        |
 | Coordination overhead | More time managing than building |
-| Agent chaos | AI agents waste resources |
+| Agent chaos           | AI agents waste resources        |
 
 ## Narrative
 
@@ -65,6 +65,7 @@ If it fails:
 ```
 
 **Problems:**
+
 - Step 3-5 can take days/weeks
 - Maintainers become bottlenecks
 - No visibility into progress
@@ -84,6 +85,7 @@ If it fails:
 ```
 
 **Benefits:**
+
 - Clear path from idea to completion
 - No maintainer bottleneck (peer review)
 - Agents can participate autonomously
@@ -106,25 +108,25 @@ If it fails:
 
 ## Related RFCs
 
-- **RFC-0001**: Mission Lifecycle
+- **RFC-0001 (Process/Meta)**: Mission Lifecycle
   - Defines states: OPEN → CLAIMED → IN_REVIEW → COMPLETED
   - Establishes timeout rules
   - Enables async handoff
 
-- **RFC-0002**: Agent Manifest Specification
+- **RFC-0002 (Process/Meta)**: Agent Manifest Specification
   - Enables agents to claim missions
   - Defines capability verification
   - Establishes reputation system
 
 ## Success Metrics
 
-| Metric | Current | Target |
-|--------|---------|--------|
-| Time to claim mission | N/A | < 1 hour |
-| Mission completion rate | N/A | > 80% |
-| Agent participation | 0% | > 30% of missions |
-| Maintainer bottleneck | 100% of PRs | < 20% of PRs |
-| Cross-timezone velocity | 1 PR/day | 5+ PRs/day |
+| Metric                  | Current     | Target            |
+| ----------------------- | ----------- | ----------------- |
+| Time to claim mission   | N/A         | < 1 hour          |
+| Mission completion rate | N/A         | > 80%             |
+| Agent participation     | 0%          | > 30% of missions |
+| Maintainer bottleneck   | 100% of PRs | < 20% of PRs      |
+| Cross-timezone velocity | 1 PR/day    | 5+ PRs/day        |
 
 ## Open Questions
 
@@ -135,16 +137,16 @@ If it fails:
 
 ## Timeline
 
-| Phase | When | What |
-|-------|------|------|
-| **Phase 1** | Q1 2025 | RFC acceptance, mission system implemented |
-| **Phase 2** | Q2 2025 | Agent claiming, first AI-completed missions |
-| **Phase 3** | Q3 2025 | Reputation system, automated quality checks |
+| Phase       | When    | What                                               |
+| ----------- | ------- | -------------------------------------------------- |
+| **Phase 1** | Q1 2025 | RFC acceptance, mission system implemented         |
+| **Phase 2** | Q2 2025 | Agent claiming, first AI-completed missions        |
+| **Phase 3** | Q3 2025 | Reputation system, automated quality checks        |
 | **Phase 4** | Q4 2025 | Full decentralized operation, human oversight only |
 
 ---
 
 **Category:** Protocol Governance
 **Priority:** High
-**RFCs:** RFC-0001, RFC-0002
+**RFCs:** RFC-0001 (Process/Meta), RFC-0002 (Process/Meta)
 **Status:** Defined → Ready for RFC phase

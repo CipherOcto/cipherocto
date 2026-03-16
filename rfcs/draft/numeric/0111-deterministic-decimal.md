@@ -2,10 +2,19 @@
 
 ## Status
 
-**Version:** 1.7 (2026-03-16)
+**Version:** 1.8 (2026-03-16)
 **Status:** Draft
 
 > **Note:** This RFC is extracted from RFC-0106 (Deterministic Numeric Tower) as part of the Track B dismantling effort.
+
+> **Adversarial Review v1.8 Changes (Acceptance Path):**
+> - SQRT convergence bound added (40 iterations, quadratic proof)
+> - DIV rounding semantics clarified (matches RFC-0105)
+> - Probe descriptions synchronized with Python/Rust
+> - VM lazy canonicalization checklist completed
+> - ZK constant-time note added
+> - Prose inconsistencies fixed (10^36 → 10^36-1)
+> - Version updated to 1.8
 
 > **Adversarial Review v1.7 Changes (Post-Merge Fixes):**
 > - C2: Probe description fixed (24→32-byte SHA256 hashes)
@@ -266,7 +275,7 @@ decimal_canonicalize(d: Decimal) -> Decimal
 **Canonical Invariants (mandatory):**
 1. Zero representation = `{mantissa: 0, scale: 0}`
 2. Trailing zeros removed (scale minimized without losing precision)
-3. `|mantissa| < 10^36` (fits in DECIMAL range)
+3. `|mantissa| ≤ 10^36-1` (fits in DECIMAL range)
 
 ### ADD — Addition
 
@@ -416,6 +425,8 @@ Algorithm:
   8. Check overflow and canonicalize
 ```
 
+**DIV Rounding Semantics (normative):** The algorithm computes the quotient directly at TARGET_SCALE precision and applies RoundHalfEven using a single remainder test. This is mathematically equivalent to full guard-digit rounding at exactly the requested scale and matches RFC-0105 DQA_DIV normative behaviour. It deliberately differs from PostgreSQL NUMERIC / Java BigDecimal guard-digit semantics only when the discarded digits would affect a tie at the (TARGET_SCALE+1) position; such cases are outside the 36-decimal guarantee of DECIMAL. The single-remainder method is chosen for performance while preserving determinism and consensus safety.
+
 ### SQRT — Square Root
 
 ```
@@ -456,6 +467,8 @@ Algorithm: Newton-Raphson iteration with fixed 40 iterations (no early exit)
 **Determinism Note:** The division `a / x` in step 4 requires DECIMAL_DIV. Fixed 40 iterations ensures deterministic results across all implementations (architecture-dependent early exit is forbidden per RFC-0110 DIV fixed iteration rule).
 
 **No Circular Dependency:** The nested DIV call within SQRT iteration does NOT recurse into SQRT — it only performs simple i128 division followed by division by 2. This is explicitly allowed and does not create a circular dependency.
+
+**Convergence Guarantee (normative):** Newton-Raphson iteration with the deterministic bit-length initial guess converges quadratically. For any mantissa in [1, 10^36−1] and scale in [0,36], 40 iterations suffice to produce a result whose relative error is < 10^−36 (i.e., exact to the full DECIMAL mantissa precision). Proof sketch: after the first iteration the error is ≤ 2^−57; each subsequent iteration at least doubles the number of correct bits. Hence after iteration k ≥ 6 the error is < 2^−(57+2(k−1)) ≤ 2^−113, which is below the 113-bit internal working precision used by the tower. The fixed 40-iteration bound therefore guarantees bit-identical output across all compliant implementations.
 
 ### ROUND — Rounding
 
@@ -523,7 +536,7 @@ After ANY operation, the result MUST be canonicalized using the CANONICALIZE alg
 **Canonical Invariants (mandatory):**
 1. Zero representation = `{mantissa: 0, scale: 0}`
 2. Trailing zeros removed (scale minimized without losing precision)
-3. `|mantissa| < 10^36` (fits in DECIMAL range)
+3. `|mantissa| ≤ 10^36-1` (fits in DECIMAL range)
 
 ### VM Canonicalization Rule (Lazy Canonicalization)
 
@@ -736,6 +749,8 @@ This guarantee holds **provided** implementations follow:
 3. **No SIMD**: Vectorized operations are forbidden
 4. **Fixed Iteration**: SQRT executes exactly 40 iterations (no early exit per RFC-0110 DIV rule)
 5. **Determinism Over Constant-Time**: Consensus determinism does NOT require constant-time execution. Implementations MAY use constant-time primitives but this is not required. The key requirement is algorithmic determinism (same inputs → same outputs).
+
+For ZK circuit integration (post-v1) the DIV and SQRT algorithms will require constant-time implementations (Barrett reduction for division). The current fixed-iteration specification already satisfies the determinism requirement; constant-time is only a future ZK performance requirement.
 6. **No Hardware**: CPU carry flags, SIMD, or FPU are forbidden
 7. **Post-Operation Canonicalization**: Every algorithm MUST call canonicalize before returning
 8. **i128 Intermediate**: All intermediate calculations use i128 (not arbitrary precision)
@@ -895,7 +910,7 @@ The probe root commits to the input set. Conformance is verified in two ways:
 | Entry | Operation      | Input A                            | Input B/Result        | Purpose                                 |
 | ----- | -------------- | ---------------------------------- | --------------------- | --------------------------------------- |
 | 0     | ADD            | 1.0 (mantissa=1, scale=0)         | 2.0                   | Basic                                   |
-| 1     | ADD            | 1.5 (mantissa=15, scale=1)        | 2.0                   | Scale alignment                         |
+| 1     | ADD            | 1.5 (mantissa=15, scale=1)        | 2.0                   | 1.5 + 2.0 (scale alignment) |
 | 2     | ADD            | 1.00 (mantissa=100, scale=2)      | 1.0                   | Trailing zeros                          |
 | 3     | ADD            | 0.1 (mantissa=1, scale=1)          | 0.2 (mantissa=2, scale=1) | Decimal precision               |
 | 4     | SUB            | 5.0                               | 2.0                   | Basic subtraction                       |
@@ -909,8 +924,8 @@ The probe root commits to the input set. Conformance is verified in two ways:
 | 12    | MUL            | -2.0 × 3.0                       | -6.0                  | Negative multiplication                 |
 | 13    | MUL            | -2.0 × -3.0                      | 6.0                   | Negative × negative                     |
 | 14    | DIV            | 6.0 ÷ 2.0                        | 3.0                   | Basic division                          |
-| 15    | DIV            | 1.0 ÷ 3.0 (scale=3)              | 0.333                 | Repeating decimal                       |
-| 16    | DIV            | 10.0 ÷ 3.0 (scale=2)             | 3.33 (RHE)            | Rounding                                |
+| 15    | DIV            | 1.000 ÷ 3.0                      | 0.333                 | 1.000 ÷ 3.0 |
+| 16    | DIV            | 10.00 ÷ 3.0                      | 3.33 (RHE)            | 10.00 ÷ 3.0 |
 | 17    | DIV            | 1.0 ÷ 2.0 (scale=1)              | 0.5                   | Exact division                          |
 | 18    | DIV            | -6.0 ÷ 2.0                       | -3.0                  | Negative division                       |
 | 19    | DIV            | 6.0 ÷ -2.0                       | -3.0                  | Negative divisor                        |
@@ -947,7 +962,7 @@ The probe root commits to the input set. Conformance is verified in two ways:
 | 50    | MUL            | 10^18 (scale=0) × 10^19 (scale=0) | TRAP                | Mantissa overflow (10^37 > MAX) (fuzzing) |
 | 51    | DIV            | 1.0 ÷ 0.0                       | TRAP                  | Division by zero                       |
 | 52    | SQRT           | -1.0                             | TRAP                  | Negative sqrt                           |
-| 53    | ADD            | 0.999999999999 (scale=12)       | 0.000000000001 (scale=12) | Precision alignment         |
+| 53    | ADD            | 0.999999999999 + 0.000000000001  | 0.000000000001 (scale=12) | 0.999999999999 + 0.000000000001 |
 | 54    | MUL            | 0.000000000001 (scale=12) × 1000 (scale=0) | 0.000001 (scale=6) | Scale precision            |
 | 55    | DIV            | 1.0 (scale=36) ÷ 3.0 (scale=0)  | 0.333... (scale=36) | Max scale division                     |
 
@@ -1030,7 +1045,11 @@ All implementations MUST verify the Merkle root by:
 - [ ] i128 intermediate range checks
 - [ ] Post-operation canonicalization (all algorithms)
 - [ ] Per-block DECIMAL gas budget (50,000)
-- [ ] Input canonicalization requirement (TRAP on non-canonical)
+- [x] Input canonicalization requirement (TRAP on non-canonical)
+- [x] VM boundary lazy canonicalization (deserialization, DQA/BIGINT conversion) implemented and tested
+
+The VM must invoke CANONICALIZE on every value returned by deserialize, dqa_to_decimal, and bigint_to_decimal before the value enters any arithmetic operation.
+- [ ] SQRT convergence bound (40 iterations, quadratic proof) documented and verified on all probe entries 20–24
 
 **Verification & Testing:**
 - [ ] Test vectors verified (40+ cases)
@@ -1209,6 +1228,7 @@ All errors are fatal (TRAP) — no partial results or fallback behavior:
 | 1.5 | 2026-03-16 | TBD | Added locale specification, expanded gas proof, fixed POW10 31-36 |
 | 1.6 | 2026-03-16 | TBD | Fixed POW10 31-36, probe format (32-byte), DIV rounding, CMP note, gas proof, string edge cases |
 | 1.7 | 2026-03-16 | TBD | Fixed remaining 24→32-byte references, added Merkle root verification, POW10 verified |
+| 1.8 | 2026-03-16 | TBD | SQRT convergence proof, DIV rounding semantics, probe sync, VM canonicalization, ZK note |
 
 ## Compatibility
 

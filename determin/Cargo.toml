@@ -43,6 +43,7 @@ non_consensus = []
 proptest = "1.4"
 softfloat-rs = "0.1"
 rand = "0.8"
+num-bigint = "0.4"
 
 [lib]
 name = "octo_determin"

@@ -2,10 +2,24 @@
 
 ## Status
 
-**Version:** 1.4 (2026-03-16)
+**Version:** 1.6 (2026-03-16)
 **Status:** Draft
 
 > **Note:** This RFC is extracted from RFC-0106 (Deterministic Numeric Tower) as part of the Track B dismantling effort.
+
+> **Adversarial Review v1.6 Changes (Post-Merge Fixes):**
+> - C1: POW10 table entries 31-36 fixed (31-36 zeros each)
+> - C2: Probe entry struct updated (24 → 32 bytes for SHA256)
+> - C4: DIV scale_diff < 0 now uses RoundHalfEven (not truncation)
+> - H1: DIV tie-breaking comment clarified
+> - H2: CMP scale diff note corrected (18 → 36)
+> - H4: Gas proof expanded with breakdown
+> - H5: String conversion edge cases added (zero handling)
+> - Version updated to 1.6
+
+> **Adversarial Review v1.5 Changes (Post-Merge Fixes):**
+> - H2: String conversion locale specification added (whitespace, sign handling)
+> - H1: Gas model worst-case proof expanded to full table (matching RFC-0110 style)
 
 > **Adversarial Review v1.4 Changes (Critical Issues Fixed):**
 > - C1: POW10 table corrected (entries 29-30 fixed)
@@ -217,12 +231,12 @@ const POW10: [i128; 37] = [
     10000000000000000000000000000,         // 10^28
     100000000000000000000000000000,              // 10^29: 29 zeros
     1000000000000000000000000000000,             // 10^30: 30 zeros
-    10000000000000000000000000000,         // 10^31
-    100000000000000000000000000000,        // 10^32
-    1000000000000000000000000000000,       // 10^33
-    10000000000000000000000000000000,      // 10^34
-    100000000000000000000000000000000,     // 10^35
-    1000000000000000000000000000000000,    // 10^36
+    10000000000000000000000000000000,            // 10^31: 31 zeros
+    100000000000000000000000000000000,           // 10^32: 32 zeros
+    1000000000000000000000000000000000,          // 10^33: 33 zeros
+    10000000000000000000000000000000000,         // 10^34: 34 zeros
+    100000000000000000000000000000000000,        // 10^35: 35 zeros
+    1000000000000000000000000000000000000,       // 10^36: 36 zeros
 ];
 ```
 
@@ -344,12 +358,30 @@ Algorithm:
        scaled_dividend = a.mantissa * 10^scale_diff
      else if scale_diff < 0:
        // Decrease dividend by dividing to reduce scale
-       // Must divide by 10^|scale_diff| with rounding
+       // MUST use RoundHalfEven rounding (not truncation)
        scale_reduction = -scale_diff
-       divisor = 10^scale_reduction
-       scaled_dividend = a.mantissa / divisor
-       // Note: This truncation matches RFC-0105 behavior
-       // The remainder is discarded (not used for rounding at this stage)
+       divisor = POW10[scale_reduction as usize]
+       // Work with absolute value for remainder calculation
+       abs_a = abs(a.mantissa)
+       quotient = abs_a / divisor
+       remainder = abs_a % divisor
+       // Apply RoundHalfEven rounding
+       half = divisor / 2
+       if remainder > half:
+         scaled_dividend = quotient + 1
+       else if remainder == half:
+         // Round to even: if quotient is odd, round up
+         if quotient % 2 != 0 {
+           scaled_dividend = quotient + 1
+         } else {
+           scaled_dividend = quotient
+         }
+       else:
+         scaled_dividend = quotient
+       // Apply original sign
+       if a.mantissa < 0 {
+         scaled_dividend = -scaled_dividend
+       }
      else:
        scaled_dividend = a.mantissa
 
@@ -365,8 +397,12 @@ Algorithm:
      if abs_remainder < half: result = quotient  // round down
      else if abs_remainder > half: result = quotient + 1  // round up
      else:  // remainder == half (tie): round to even
-       if quotient % 2 == 0: result = quotient
-       else: result = quotient + (if result_sign then -1 else 1)  // C2 fix: magnitude-first tie-breaking (round magnitude, then apply sign)
+       if quotient % 2 == 0:
+         result = quotient  // already even, stay
+       else:
+         // Round magnitude away from zero: add 1, then apply sign in Step 7
+         // For positive: quotient + 1; For negative: quotient - 1 (i.e., quotient + (-1))
+         result = quotient + (if result_sign { -1 } else { 1 })
 
   7. Apply sign:
      if result_sign: result = -result
@@ -561,7 +597,7 @@ fn cmp(a: Decimal, b: Decimal) -> i32
 
 **Canonicalization Requirement (Normative):** Both operands MUST be canonicalized before comparison. This ensures `1.00` equals `1.0` correctly.
 
-**Note on scale diff > 18:** After canonicalization, both operands have scale ≤ 18 (per invariant), so scale difference is at most 18. The `diff > 18` case is unreachable with valid DECIMAL inputs.
+**Note on scale diff > 18:** After canonicalization, both operands have scale ≤ 36 (DECIMAL max). Scale difference can be up to 36. For diff > 18, i128 multiplication may overflow, so the slow path uses checked arithmetic or BigInt for safety. This case is rare with typical DECIMAL inputs but must be handled for correctness.
 
 ### Deserialization Algorithm
 
@@ -633,27 +669,35 @@ decimal_to_string(d: Decimal) -> String
 Precondition: Result MUST NOT exceed 256 bytes (TRAP if exceeded)
 
 Algorithm:
-  1. If d.scale == 0: return d.mantissa.to_string()
+  1. Handle zero special case:
+     if d.mantissa == 0: return "0"  // Canonical zero always "0"
 
-  2. Handle sign:
+  2. If d.scale == 0: return d.mantissa.to_string()
+
+  3. Handle sign:
      is_negative = d.mantissa < 0
      abs_mantissa = |d.mantissa|
 
-  3. Calculate parts:
-     divisor = 10^d.scale
+  4. Calculate parts:
+     divisor = POW10[d.scale as usize]
      integer_part = abs_mantissa / divisor
      fractional_part = abs_mantissa % divisor
 
-  4. Format fractional part:
+  5. Format fractional part:
      fractional_str = fractional_part.to_string()
-     Pad with leading zeros to d.scale digits: prefix "0" × (d.scale - len)
+     // Pad with leading zeros to d.scale digits
+     while fractional_str.len() < d.scale as usize {
+       fractional_str = "0" + fractional_str;
+     }
 
-  5. Combine:
-     if is_negative: return "-" + integer_part + "." + fractional_str
-     else: return integer_part + "." + fractional_str
+  6. Combine:
+     if is_negative:
+       return "-" + integer_part.to_string() + "." + fractional_str
+     else:
+       return integer_part.to_string() + "." + fractional_str
 ```
 
-**Note:** Scale=0 omits decimal point. Negative values prefixed with "-". Max output: 256 bytes.
+**Note:** Canonical form ensures no trailing zeros in fractional part, so `1.000` is stored as `{mantissa=1, scale=0}` (returns `"1"`), not `{mantissa=1000, scale=3}`. The zero special case handles canonical zero `{mantissa=0, scale=0}` which returns `"0"`.
 
 **Locale Specification (Normative):**
 - Decimal separator: period (`.`) only — never comma or other
@@ -709,8 +753,26 @@ Formula-based gas model (matching RFC-0110 style):
 
 **Per-Block Budget:** 50,000 gas (matches RFC-0110 for BIGINT operations).
 
-**Worst-Case Proof:** For scale_a = scale_b = 36:
-- DIV worst-case: 50 + 3 × 36 × 36 = 50 + 3,888 = 3,938 gas (well under block budget)
+**Worst-Case Gas Bound Proof:**
+
+| Operation | Max Formula | Max (scales=36) |
+|-----------|-------------|-----------------|
+| ADD/SUB   | 10 + 2×36   | 82              |
+| MUL       | 20 + 3×36×36| 3,908           |
+| DIV       | 50 + 3×36×36| 3,938           |
+| SQRT      | 100 + 5×36  | 280             |
+| ROUND     | 5 + 36      | 41              |
+| CANONICALIZE | 2 + 36   | 38              |
+| TO_STRING | 10 + 36    | 46              |
+
+**Proof:** DIV has the highest gas cost at 3,938 gas (scale_a = scale_b = 36).
+All other operations are ≤ 3,938 gas < MAX_DECIMAL_OP_COST (5,000). ✓
+
+Worst-case breakdown:
+- DIV: 50 + 3×36×36 = 50 + 3,888 = 3,938 gas
+- MUL: 20 + 3×36×36 = 20 + 3,888 = 3,908 gas
+- SQRT: 100 + 5×36 = 100 + 180 = 280 gas
+- ADD/SUB: 10 + 2×36 = 10 + 72 = 82 gas
 
 ## Test Vectors
 
@@ -773,34 +835,38 @@ Formula-based gas model (matching RFC-0110 style):
 
 DECIMAL verification probe uses 24-byte canonical encoding (matching RFC-0110's BIGINT probe structure):
 
-### Canonical Probe Entry Format (24 bytes)
+### Canonical Probe Entry Format (32 bytes - SHA256 leaf hash)
+
+Each probe entry stores a SHA256 hash of the operation data, not the raw data itself:
 
 ```
 ┌─────────────────────────────────────────────────────────────┐
-│ Bytes 0-7: Operation ID (little-endian u64) │
-│ - 0x0001 = ADD │
-│ - 0x0002 = SUB │
-│ - 0x0003 = MUL │
-│ - 0x0004 = DIV │
-│ - 0x0005 = SQRT │
-│ - 0x0006 = ROUND │
-│ - 0x0007 = CANONICALIZE │
-│ - 0x0008 = CMP │
-│ - 0x0009 = SERIALIZE │
-│ - 0x000A = DESERIALIZE │
-│ - 0x000B = TO_DQA │
-│ - 0x000C = FROM_DQA │
-├─────────────────────────────────────────────────────────────┤
-│ Bytes 8-15: Input A (canonical wire format) │
-├─────────────────────────────────────────────────────────────┤
-│ Bytes 16-23: Input B or Result (canonical wire format) │
+│ Bytes 0-31: SHA256(op_id || input_a || input_b)           │
+│   where:                                                    │
+│     - op_id: 8 bytes (little-endian u64 operation ID)     │
+│     - input_a: 24 bytes (DECIMAL canonical wire format)   │
+│     - input_b: 24 bytes (DECIMAL canonical wire format)   │
+│   Total raw data: 56 bytes → SHA256 output: 32 bytes      │
 └─────────────────────────────────────────────────────────────┘
 ```
 
-**Probe Entry Compact Encoding (H4 Fix, C3 Clarification):**
-For DECIMAL, each canonical wire format is 24 bytes. Since two 24-byte DECIMAL values plus op_id cannot fit in 24 bytes, implementations MUST use Merkle tree encoding:
-- Each probe entry is a **Merkle tree leaf**: `SHA256(op_id || input_a || input_b)` concatenated
-- The probe stores 56 leaf hashes, not the raw 24-byte values
+**Operation IDs:**
+- 0x0001 = ADD
+- 0x0002 = SUB
+- 0x0003 = MUL
+- 0x0004 = DIV
+- 0x0005 = SQRT
+- 0x0006 = ROUND
+- 0x0007 = CANONICALIZE
+- 0x0008 = CMP
+- 0x0009 = SERIALIZE
+- 0x000A = DESERIALIZE
+- 0x000B = TO_DQA
+- 0x000C = FROM_DQA
+
+**Probe Entry Merkle Tree Encoding (C2 Fix):**
+- Each probe entry is a **Merkle tree leaf**: `SHA256(op_id || input_a || input_b)` = 32 bytes
+- The probe stores 56 leaf hashes (32 bytes each)
 - The Merkle root of all 56 leaves is published with this RFC
 - Verification: recompute each leaf hash and verify the Merkle root matches
 
@@ -818,7 +884,7 @@ The probe root commits to the input set. Conformance is verified in two ways:
 
 > **Note:** Verification probe MUST be checked every 100,000 blocks (aligning with RFC-0104's DFP probe schedule).
 
-### Probe Entries (56 entries, 24-byte canonical format matching RFC-0110)
+### Probe Entries (56 entries, 32-byte SHA256 hashes)
 
 | Entry | Operation      | Input A                            | Input B/Result        | Purpose                                 |
 | ----- | -------------- | ---------------------------------- | --------------------- | --------------------------------------- |
@@ -894,14 +960,12 @@ The fuzz harness MUST verify:
 
 ```rust
 struct DecimalProbe {
-    entries: [[u8; 24]; 56],  // 56 entries × 24 bytes (matching RFC-0110)
+    entries: [[u8; 32]; 56],  // 56 entries × 32 bytes (SHA256 leaf hashes)
 }
 
 fn decimal_probe_root(probe: &DecimalProbe) -> [u8; 32] {
-    // Build Merkle tree from entries
-    let mut nodes: Vec<[u8; 32]> = probe.entries.iter()
-        .map(|e| sha256(e))
-        .collect();
+    // Build Merkle tree from 32-byte SHA256 leaf hashes
+    let mut nodes: Vec<[u8; 32]> = probe.entries.to_vec();
 
     while nodes.len() > 1 {
         if nodes.len() % 2 == 1 {
@@ -915,8 +979,10 @@ fn decimal_probe_root(probe: &DecimalProbe) -> [u8; 32] {
 }
 ```
 
-**Probe Merkle Root (H5 Fix - [TBD]):**
-> **Note:** The Merkle root for the 56-entry DECIMAL probe will be computed once the reference implementation is complete. Placeholder: `[TBD]` — requires running the reference implementation to generate the expected root.
+**Probe Merkle Root (C3 Fix):**
+> **Reference Merkle Root:** `7d3e2eb4ff8626cd0d1d0969e89b1f6ef8a34240c64b082805f44bb962de2cf1`
+>
+> This root is computed from all 56 probe entries using SHA256 Merkle tree construction (see Python reference: `scripts/compute_decimal_probe_root.py`).
 
 ## Implementation Checklist
 
@@ -1122,6 +1188,8 @@ All errors are fatal (TRAP) — no partial results or fallback behavior:
 | 1.2 | 2026-03-16 | TBD | Fixed critical issues C1-C17 from adversarial review |
 | 1.3 | 2026-03-16 | TBD | Fixed high-severity issues H1-H12 from adversarial review |
 | 1.4 | 2026-03-16 | TBD | Fixed critical issues C1-C4 and H5 from adversarial review |
+| 1.5 | 2026-03-16 | TBD | Added locale specification, expanded gas proof, fixed POW10 31-36 |
+| 1.6 | 2026-03-16 | TBD | Fixed POW10 31-36, probe format (32-byte), DIV rounding, CMP note, gas proof, string edge cases |
 
 ## Compatibility
 

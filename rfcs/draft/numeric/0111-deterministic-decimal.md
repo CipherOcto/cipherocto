@@ -2,10 +2,20 @@
 
 ## Status
 
-**Version:** 1.8 (2026-03-16)
+**Version:** 1.9 (2026-03-16)
 **Status:** Draft
 
 > **Note:** This RFC is extracted from RFC-0106 (Deterministic Numeric Tower) as part of the Track B dismantling effort.
+
+> **Adversarial Review v1.9 Changes (Production Hardening):**
+> - FIX 1: Added Decimal range invariant (|mantissa| ≤ 10^36-1)
+> - FIX 2: Canonicalization rule clarified (outputs MUST be canonical)
+> - FIX 3: Safe scale alignment with overflow bounds checking
+> - FIX 4: Multiplication requires 256-bit intermediate
+> - FIX 5: Division precision rule added (min(36, max+18))
+> - FIX 9: DECIMAL↔DQA conversion with explicit quantum
+> - FIX 10: Gas model confirmed deterministic
+> - Version updated to 1.9
 
 > **Adversarial Review v1.8 Changes (Acceptance Path):**
 > - SQRT convergence bound added (40 iterations, quadratic proof)
@@ -191,6 +201,19 @@ Examples:
 - `Decimal { mantissa: 1000, scale: 3 }` = 1.000 → canonical: `{1, 0}`
 - `Decimal { mantissa: 0, scale: 5 }` = 0 → canonical: `{0, 0}`
 
+### Decimal Range Invariant (FIX 1)
+
+A Decimal value MUST satisfy:
+
+```
+|mantissa| ≤ 10^36 − 1
+scale ∈ [0, 36]
+```
+
+Implementations MUST reject any operation producing a mantissa outside this range.
+
+**Violation raises:** `DECIMAL_OVERFLOW`
+
 ### Constants
 
 ```rust
@@ -277,7 +300,7 @@ decimal_canonicalize(d: Decimal) -> Decimal
 2. Trailing zeros removed (scale minimized without losing precision)
 3. `|mantissa| ≤ 10^36-1` (fits in DECIMAL range)
 
-### ADD — Addition
+### ADD — Addition (FIX 3 - Safe Scale Alignment)
 
 ```
 decimal_add(a: Decimal, b: Decimal) -> Decimal
@@ -288,21 +311,27 @@ Preconditions:
 
 Algorithm:
   1. Align scales:
-     if a.scale == b.scale:
-       a_val = a.mantissa
-       b_val = b.mantissa
-       result_scale = a.scale
+     target_scale = max(a.scale, b.scale)
+     diff_a = target_scale - a.scale
+     diff_b = target_scale - b.scale
+
+     // Safe alignment: check bounds before multiplication
+     if diff_a > 0:
+       // Check: |a.mantissa| * POW10[diff_a] must not overflow
+       if |a.mantissa| > MAX_DECIMAL_MANTISSA / POW10[diff_a]:
+         TRAP: DECIMAL_OVERFLOW
+       a_val = a.mantissa * POW10[diff_a]
      else:
-       // Scale to max, multiply smaller by 10^diff
-       diff = |a.scale - b.scale|
-       if a.scale > b.scale:
-         b_val = b.mantissa * 10^diff
-         a_val = a.mantissa
-         result_scale = a.scale
-       else:
-         a_val = a.mantissa * 10^diff
-         b_val = b.mantissa
-         result_scale = b.scale
+       a_val = a.mantissa
+
+     if diff_b > 0:
+       if |b.mantissa| > MAX_DECIMAL_MANTISSA / POW10[diff_b]:
+         TRAP: DECIMAL_OVERFLOW
+       b_val = b.mantissa * POW10[diff_b]
+     else:
+       b_val = b.mantissa
+
+     result_scale = target_scale
 
   2. Check i128 intermediate range before addition:
      // Must fit in i128 for intermediate calculation
@@ -327,7 +356,7 @@ decimal_sub(a: Decimal, b: Decimal) -> Decimal
 Algorithm: Same as ADD, but subtract instead of add.
 ```
 
-### MUL — Multiplication
+### MUL — Multiplication (FIX 4 - 256-bit Intermediate)
 
 ```
 decimal_mul(a: Decimal, b: Decimal) -> Decimal
@@ -339,16 +368,21 @@ Algorithm:
        // Round to MAX_SCALE per RFC-0105 (not TRAP)
        result_scale = MAX_DECIMAL_SCALE
 
-  2. Multiply mantissas:
-     product = a.mantissa * b.mantissa
+  2. Multiply mantissas using 256-bit intermediate:
+     // MUST use i256 or BIGINT intermediate to prevent overflow
+     // (10^36)^2 = 10^72 which exceeds i128 (~10^38)
+     intermediate = i256::from(a.mantissa) * i256::from(b.mantissa)
 
   3. Check overflow:
-     if |product| > MAX_DECIMAL_MANTISSA: TRAP
+     if |intermediate| > i256::from(MAX_DECIMAL_MANTISSA): TRAP
+     product = intermediate as i128
 
   4. Canonicalize result
 ```
 
 **Note:** Scale overflow uses rounding per RFC-0105, not TRAP. The mantissa is checked after scale alignment.
+
+**FIX 4 Rationale:** Multiplication of two max DECIMAL values (10^36-1)² ≈ 10^72 exceeds i128 range (~10^38). Implementations MUST use 256-bit intermediate (i256 or RFC-0110 BIGINT) to prevent overflow. This matches RFC-0110 BIGINT multiplication approach.
 
 ### DIV — Division
 
@@ -426,6 +460,12 @@ Algorithm:
 ```
 
 **DIV Rounding Semantics (normative):** The algorithm computes the quotient directly at TARGET_SCALE precision and applies RoundHalfEven using a single remainder test. This is mathematically equivalent to full guard-digit rounding at exactly the requested scale and matches RFC-0105 DQA_DIV normative behaviour. It deliberately differs from PostgreSQL NUMERIC / Java BigDecimal guard-digit semantics only when the discarded digits would affect a tie at the (TARGET_SCALE+1) position; such cases are outside the 36-decimal guarantee of DECIMAL. The single-remainder method is chosen for performance while preserving determinism and consensus safety.
+
+**FIX 5 - Division Precision Rule:** Result precision is determined by target_scale parameter. For operations where target_scale is not explicitly specified, use:
+```
+result_scale = min(36, max(scale_a, scale_b) + 18)
+```
+This ensures consistent precision across all division operations while respecting the MAX_DECIMAL_SCALE bound.
 
 ### SQRT — Square Root
 
@@ -538,7 +578,9 @@ After ANY operation, the result MUST be canonicalized using the CANONICALIZE alg
 2. Trailing zeros removed (scale minimized without losing precision)
 3. `|mantissa| ≤ 10^36-1` (fits in DECIMAL range)
 
-### VM Canonicalization Rule (Lazy Canonicalization)
+### Canonicalization Rule (FIX 2)
+
+**Outputs MUST be canonical. Inputs MAY be non-canonical.**
 
 Per RFC-0105 §Lazy Canonicalization, DECIMAL implements lazy canonicalization at VM boundaries:
 
@@ -554,6 +596,13 @@ Per RFC-0105 §Lazy Canonicalization, DECIMAL implements lazy canonicalization a
 **Internal operations:**
 - All arithmetic operations MUST canonicalize before returning
 - This ensures intermediate results are always canonical
+
+**Canonical form algorithm:**
+```
+while mantissa % 10 == 0 and scale > 0:
+    mantissa /= 10
+    scale -= 1
+```
 
 This approach matches RFC-0105's lazy canonicalization model and ensures deterministic behavior at VM boundaries.
 
@@ -641,17 +690,26 @@ DECIMAL → serialize → bytes → deserialize → DECIMAL'
 DECIMAL == DECIMAL' // MUST be true
 ```
 
-## Conversions
+## Conversions (FIX 9 - Explicit Quantization)
 
 ### DECIMAL → DQA
 
+**Requires explicit quantum specification** (default: 10^-18):
+
 ```
-decimal_to_dqa(d: Decimal) -> Dqa
+decimal_to_dqa(d: Decimal, quantum_scale: u8 = 18) -> Dqa
+
+// quantum_scale defines the quantization step: 10^-quantum_scale
+// Default quantum_scale = 18 matches RFC-0105 DQA_MAX_SCALE
 
 If d.scale > 18: TRAP (precision loss)
 If |d.mantissa| > i64::MAX: TRAP (overflow)
 
-Return Dqa { value: d.mantissa as i64, scale: d.scale }
+// Quantization: round to quantum boundary
+quantum = POW10[quantum_scale]
+rounded_mantissa = round_half_even(d.mantissa / quantum) * quantum
+
+Return Dqa { value: rounded_mantissa as i64, scale: quantum_scale }
 ```
 
 ### DQA → DECIMAL
@@ -666,6 +724,8 @@ dqa_to_decimal(d: Dqa) -> Decimal
 
 3. Return result
 ```
+
+**FIX 9 Rationale:** DECIMAL ↔ DQA conversion requires explicit quantum specification to ensure deterministic quantization. The default quantum of 10^-18 matches RFC-0105 DQA_MAX_SCALE, ensuring round-trip consistency.
 
 ### DECIMAL → BIGINT
 
@@ -755,9 +815,11 @@ For ZK circuit integration (post-v1) the DIV and SQRT algorithms will require co
 7. **Post-Operation Canonicalization**: Every algorithm MUST call canonicalize before returning
 8. **i128 Intermediate**: All intermediate calculations use i128 (not arbitrary precision)
 
-## Gas Model
+## Gas Model (FIX 10 - Deterministic Gas)
 
 Formula-based gas model (matching RFC-0110 style):
+
+**Note:** This gas model is deterministic and consensus-safe. All operations have explicit formulas that account for scale differences, preventing DoS attacks via expensive operations.
 
 | Operation | Formula | Description |
 |-----------|---------|-------------|
@@ -1229,6 +1291,7 @@ All errors are fatal (TRAP) — no partial results or fallback behavior:
 | 1.6 | 2026-03-16 | TBD | Fixed POW10 31-36, probe format (32-byte), DIV rounding, CMP note, gas proof, string edge cases |
 | 1.7 | 2026-03-16 | TBD | Fixed remaining 24→32-byte references, added Merkle root verification, POW10 verified |
 | 1.8 | 2026-03-16 | TBD | SQRT convergence proof, DIV rounding semantics, probe sync, VM canonicalization, ZK note |
+| 1.9 | 2026-03-16 | TBD | Production hardening: range invariant, safe alignment, 256-bit mul, division precision, DQA conversion quantum |
 
 ## Compatibility
 

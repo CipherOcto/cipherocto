@@ -1,11 +1,11 @@
-# RFC-0126 (Numeric/Math): Deterministic Serialization
+# RFC-0126 (Serialization): Deterministic Serialization
 
 ## Status
 
-**Version:** 1.0 (2026-03-16)
+**Version:** 1.2 (2026-03-16)
 **Status:** Draft
 
-> **Note:** This RFC defines canonical serialization formats for all protocol numeric data structures to ensure bit-identical encoding across implementations.
+> **Note:** This RFC defines canonical serialization formats for all protocol data structures to ensure bit-identical encoding across implementations. It covers both **binary serialization** (for numeric types) and **JSON serialization** (for structured data).
 
 ## Authors
 
@@ -36,7 +36,7 @@
 
 ## Design Goals
 
-1. **Determinism**: All numeric types must serialize to identical bytes across implementations
+1. **Determinism**: All types must serialize to identical bytes across implementations
 2. **No Ambiguity**: Each numeric type uses distinct encoding to prevent Merkle hash collisions
 3. **Efficiency**: Fixed-size encodings where possible for fast parsing
 4. **Extensibility**: Version byte allows future format changes without breaking compatibility
@@ -51,6 +51,7 @@ Currently serialization is implicitly assumed. Without a standard:
 - **Hash mismatches** between implementations (different byte orderings)
 - **Proof verification failures** (inconsistent encoding)
 - **Cross-language compatibility bugs** (endianness, padding, struct layout)
+- **JSON variability** (key ordering, whitespace, number formatting)
 
 ### The Merkle Hash Ambiguity Problem
 
@@ -62,360 +63,253 @@ If both encode to identical bytes, their Merkle hashes are identical.
 This breaks consensus state verification.
 ```
 
-**Solution**: Each numeric type uses a distinct encoding format.
+**Solution**: Each type uses a distinct encoding format.
 
 ## Summary
 
-This RFC defines canonical serialization formats for all protocol data structures to ensure bit-identical encoding across implementations. It specifies:
+This RFC defines two complementary serialization systems:
 
-- **DFP Encoding**: 24-byte fixed-size format
-- **DQA Encoding**: 16-byte fixed-size format
-- **BIGINT Encoding**: Variable-size format (8-520 bytes)
-- **I128 Encoding**: 16-byte fixed-size format
+### Part 1: Binary Serialization (Numeric Types)
 
-All encodings use big-endian byte order for network compatibility, with explicit version bytes for future extensibility.
+For consensus-critical numeric types:
 
-## Relationship to Other RFCs
+| Encoding | Authoritative RFC | Type | Size |
+|----------|-------------------|------|------|
+| I128Encoding | RFC-0110 | Integer | 16 bytes |
+| BigIntEncoding | RFC-0110 | Arbitrary Integer | 8-520 bytes |
+| DqaEncoding | RFC-0105 | Decimal | 16 bytes |
+| DfpEncoding | RFC-0104 | Floating-Point | 24 bytes |
 
-| RFC | Relationship |
-|-----|--------------|
-| RFC-0104 (DFP) | Defines DfpEncoding |
-| RFC-0105 (DQA) | Defines DqaEncoding |
-| RFC-0110 (BIGINT) | Defines BigIntEncoding |
-| RFC-0111 (DECIMAL) | Future: extends with DecimalEncoding |
+### Part 2: JSON Serialization (Structured Data)
 
-### Numeric Tower Encoding Architecture
+For non-consensus data that requires deterministic representation:
+
+- Canonical JSON field ordering
+- Consistent number formatting
+- Whitespace normalization
+- Escape sequence handling
+
+## Part 1: Binary Serialization (Numeric Types)
+
+### Overview
 
 ```
 ┌─────────────────────────────────────────────┐
-│           Numeric Encoding Types            │
+│           Numeric Encoding Types              │
 ├─────────────────────────────────────────────┤
-│ I128Encoding   → i128 (16 bytes, BE)       │
-│ BigIntEncoding → Arbitrary Integer          │
-│                 (variable, 8-520 bytes)     │
-│ DqaEncoding    → Decimal (16 bytes, BE)    │
-│ DfpEncoding    → Floating-Point (24 bytes) │
+│ I128Encoding   → i128 (16 bytes, BE)      │
+│ BigIntEncoding → Arbitrary Integer         │
+│                 (variable, 8-520 bytes)    │
+│ DqaEncoding    → Decimal (16 bytes, BE)   │
+│ DfpEncoding    → Floating-Point (24 bytes)│
 └─────────────────────────────────────────────┘
 ```
 
-## Specification
+### Encoding Reference
 
-### Design Principles
+#### I128Encoding
 
-1. **Big-Endian Everywhere**: All multi-byte integers use big-endian byte order (network byte order)
-2. **Version First**: First byte of every encoding is a version identifier
-3. **Canonical Only**: Only canonical forms may be serialized (invalid inputs TRAP)
-4. **No Padding Overlap**: Each encoding has distinct structure to prevent ambiguity
-5. **Explicit Size**: Variable encodings include explicit length fields
+- **Authoritative RFC**: RFC-0110 (§I128Encoding)
+- **Size**: 16 bytes
+- **Format**: i128 two's complement, big-endian
+- **Version**: Embedded in first byte (for BIGINT), implicit for raw i128
 
-### Encoding Overview
+#### BigIntEncoding
 
-| Encoding | Type | Size | Byte Order | Version |
-|----------|------|------|------------|---------|
-| I128Encoding | Integer | 16 bytes | Big-Endian | First byte |
-| BigIntEncoding | Arbitrary Integer | 8-520 bytes | LE limbs, BE header | Byte 0 |
-| DqaEncoding | Decimal | 16 bytes | Big-Endian | Implicit (v1) |
-| DfpEncoding | Floating-Point | 24 bytes | Big-Endian | Implicit (v1) |
+- **Authoritative RFC**: RFC-0110 (§Canonical Byte Format)
+- **Size**: 8-520 bytes (variable)
+- **Format**: `[version:1][sign:1][reserved:2][num_limbs:1][reserved:3][limbs:n*8]`
+- **Version**: Byte 0 (0x01 = current)
 
-### I128Encoding
+#### DqaEncoding
 
-For i128 interoperability with external systems.
+- **Authoritative RFC**: RFC-0105 (§DqaEncoding)
+- **Size**: 16 bytes
+- **Format**: `[value:8][scale:1][reserved:7]`
+- **Version**: Implicit v1
 
-```
-┌─────────────────────────────────────────────────────────────┐
-│ I128Encoding (16 bytes)                                   │
-├─────────────────────────────────────────────────────────────┤
-│ Bytes 0-15: i128 in two's complement, big-endian          │
-└─────────────────────────────────────────────────────────────┘
-```
+#### DfpEncoding
 
-**Rust definition:**
-```rust
-struct I128Encoding {
-    value: i128,  // 16 bytes, big-endian
-}
-```
-
-**Canonical form:** Standard i128 two's complement.
-
-### BigIntEncoding
-
-For arbitrary-precision integer serialization (RFC-0110).
-
-```
-┌─────────────────────────────────────────────────────────────┐
-│ Byte 0: Version (0x01)                                    │
-│ Byte 1: Sign (0x00 = positive, 0xFF = negative)           │
-│ Bytes 2-3: Reserved (MUST be 0x0000)                       │
-│ Byte 4: Number of limbs (u8, range 1-64)                    │
-│ Bytes 5-7: Reserved (MUST be 0x000000)                     │
-│ Bytes 8+: Limb array (little-endian within each limb)      │
-└─────────────────────────────────────────────────────────────┘
-```
-
-**Total size:** 8 + (num_limbs × 8) bytes
-
-**Maximum size:** 520 bytes (64 limbs × 8 bytes + 8 header bytes)
-
-**Rust definition:**
-```rust
-pub struct BigIntEncoding {
-    pub version: u8,           // 0x01
-    pub sign: u8,              // 0x00 or 0xFF
-    pub num_limbs: u8,        // 1-64
-    pub limbs: Vec<u64>,       // little-endian
-}
-```
-
-### DqaEncoding
-
-For bounded decimal arithmetic (RFC-0105).
-
-```
-┌─────────────────────────────────────────────────────────────┐
-│ Bytes 0-7:  value (i64, big-endian)                       │
-│ Byte 8:     scale (u8)                                    │
-│ Bytes 9-15: Reserved (MUST be zeros)                      │
-└─────────────────────────────────────────────────────────────┘
-```
-
-**Rust definition:**
-```rust
-#[repr(C)]
-pub struct DqaEncoding {
-    pub value: i64,      // big-endian
-    pub scale: u8,      // 0-18
-    pub _reserved: [u8; 7],
-}
-```
-
-**Canonical form:**
-- Value must be canonical per RFC-0105 (trailing zeros removed)
-- Scale must be 0-18
-- Reserved bytes must be zero
-
-### DfpEncoding
-
-For deterministic floating-point (RFC-0104).
-
-```
-┌─────────────────────────────────────────────────────────────┐
-│ Bytes 0-15:  mantissa (u128, big-endian)                  │
-│ Bytes 16-19: exponent (i32, big-endian)                   │
-│ Bytes 20-23: class_sign (u32, big-endian)                 │
-│   - Bits 24-31: class (0=Normal, 1=Infinity, 2=NaN, 3=Zero)│
-│   - Bits 16-23: sign (0=positive, 1=negative)             │
-│   - Bits 0-15:  reserved                                  │
-└─────────────────────────────────────────────────────────────┘
-```
-
-**Rust definition:**
-```rust
-#[repr(C, align(8))]
-pub struct DfpEncoding {
-    mantissa: u128,     // 16 bytes, big-endian
-    exponent: i32,      // 4 bytes, big-endian
-    class_sign: u32,    // 4 bytes, big-endian
-}
-```
-
-## Serialization Algorithms
-
-### BigInt Serialization
-
-```
-bigint_serialize(b: BigInt) -> BigIntEncoding
-
-Precondition: b is in canonical form
-
-1. If not canonical: TRAP (non-canonical input)
-2. Return BigIntEncoding {
-       version: 0x01,
-       sign: if b.sign then 0xFF else 0x00,
-       num_limbs: b.limbs.len() as u8,
-       limbs: b.limbs.clone(),
-   }
-```
-
-### BigInt Deserialization
-
-```
-bigint_deserialize(data: &[u8]) -> BigInt
-
-1. If data.len < 8: TRAP (too short)
-2. version = data[0]
-   If version != 0x01: TRAP (unknown version)
-3. sign_byte = data[1]
-   If sign_byte == 0x00: sign = false
-   else if sign_byte == 0xFF: sign = true
-   else: TRAP (invalid sign)
-4. If data[2] != 0x00 or data[3] != 0x00: TRAP (reserved)
-5. num_limbs = data[4] as usize
-   If num_limbs == 0 or num_limbs > 64: TRAP
-6. If data[5] != 0x00 or data[6] != 0x00 or data[7] != 0x00: TRAP
-7. expected_len = 8 + num_limbs * 8
-   If data.len != expected_len: TRAP (length mismatch)
-8. For i in 0..num_limbs:
-     limbs[i] = u64::from_le_bytes(data[8 + i*8 .. 16 + i*8])
-9. Construct b = BigInt { limbs, sign }
-10. Validate canonical form:
-    a. If num_limbs > 1 AND limbs[num_limbs-1] == 0: TRAP
-    b. If num_limbs == 1 AND limbs[0] == 0 AND sign == true: TRAP
-11. Return b
-```
-
-### DQA Serialization
-
-```
-dqa_serialize(d: Dqa) -> DqaEncoding
-
-1. canonical = dqa_canonicalize(d)
-2. Return DqaEncoding {
-       value: canonical.value.to_be(),
-       scale: canonical.scale,
-       _reserved: [0; 7],
-   }
-```
-
-### DQA Deserialization
-
-```
-dqa_deserialize(data: DqaEncoding) -> Dqa
-
-1. If data.scale > 18: TRAP (invalid scale)
-2. For each byte in data._reserved:
-     If byte != 0: TRAP (reserved must be zero)
-3. Return Dqa {
-       value: i64::from_be(data.value),
-       scale: data.scale,
-   }
-```
-
-### DFP Serialization
-
-```
-dfp_serialize(d: Dfp) -> DfpEncoding
-
-1. Return DfpEncoding::from_dfp(d)  // handles class/sign encoding
-```
-
-### DFP Deserialization
-
-```
-dfp_deserialize(data: [u8; 24]) -> Dfp
-
-1. Return DfpEncoding::from_bytes(data).to_dfp()
-```
-
-## Serialization Invariants
+- **Authoritative RFC**: RFC-0104 (§DfpEncoding)
+- **Size**: 24 bytes
+- **Format**: `[mantissa:16][exponent:4][class_sign:4]`
+- **Version**: Implicit v1
 
 ### Cross-Type Ambiguity Prevention
 
+Each type's encoding is structurally distinct, preventing Merkle hash collisions:
+
 | Type A | Type B | Encoding Difference |
 |--------|--------|---------------------|
-| DQA(1.0) | BIGINT(1) | DQA: 16 bytes, scale field; BIGINT: header + limbs |
-| DFP(1.0) | BIGINT(1) | DFP: 24 bytes, class_sign; BIGINT: header + limbs |
-| DQA(1) | I128(1) | DQA: 16 bytes, scale field; I128: 16 bytes raw |
+| DQA(1.0) | BIGINT(1) | DQA: 16 bytes with scale; BIGINT: variable header + limbs |
+| DFP(1.0) | BIGINT(1) | DFP: 24 bytes with class_sign; BIGINT: variable header + limbs |
+| DQA(1) | I128(1) | DQA: 16 bytes with scale field; I128: 16 bytes raw |
 
-**Each type's encoding is structurally distinct**, preventing Merkle hash collisions.
+## Part 2: JSON Serialization (Structured Data)
 
-### Canonical Form Requirements
+### Overview
 
-| Type | Canonical Form | Non-Canonical Behavior |
-|------|---------------|----------------------|
-| BIGINT | No leading zero limbs, no negative zero | TRAP on deserialize |
-| DQA | Trailing zeros removed, scale minimized | TRAP on serialize |
-| DFP | Per RFC-0104 canonical rules | Implementation-defined |
-| I128 | Standard two's complement | Standard |
+For structured data (non-consensus) that requires deterministic representation (e.g., API metadata, configuration), this RFC defines canonical JSON serialization rules.
 
-### Version Handling
+### Canonical JSON Rules
 
-- **Known versions**: 0x01 (current)
-- **Unknown versions**: TRAP on deserialization
-- **Version negotiation**: Not supported (always use latest)
+#### 1. Field Ordering
+
+- **Object keys** MUST be sorted lexicographically (ASCII order)
+- **Array order** MUST be preserved as-is (no sorting)
+- **Use BTreeMap** in implementations for automatic ordering
+
+```
+✓ {"a": 1, "b": 2}     // Correct: sorted keys
+✗ {"b": 2, "a": 1}     // Incorrect: unsorted
+```
+
+#### 2. Number Formatting
+
+- **Integers** MUST NOT have decimal points or exponents
+- **Floating-point** MUST use lowercase `e` for exponents (if present)
+- **No leading zeros** except for zero (0)
+- **No unnecessary leading plus signs**
+
+```
+✓ 12345
+✗ 012345
+✗ +12345
+✗ 1.2345e4
+```
+
+#### 3. Whitespace
+
+- **No whitespace** inside JSON structures
+- **No trailing whitespace**
+- **Single space** after colon and comma
+
+```
+✓ {"key":"value"}
+✗ { "key" : "value" }
+✗ {"key": "value" }
+```
+
+#### 4. String Encoding
+
+- **UTF-8** only
+- **Escape sequences** MUST use lowercase (e.g., `\n` not `\N`)
+- **Control characters** MUST be escaped
+- **No unnecessary escapes** (e.g., `\/` is allowed but `/` is preferred)
+
+```
+✓ "hello\nworld"
+✗ "hello\nworld" (uppercase N)
+```
+
+#### 5. Null vs Empty
+
+- **Empty array**: `[]`
+- **Empty object**: `{}`
+- **Null** MUST be the literal string `null` (not `undefined` or omitted)
+
+```
+✓ {"field": null}
+✗ {"field": ""}
+```
+
+### Example: Canonical JSON Serialization
+
+#### Input (unspecified order)
+
+```json
+{
+  "metadata": {
+    "created_at": 1234567890,
+    "name": "test"
+  },
+  "enabled": true,
+  "tags": ["a", "c", "b"]
+}
+```
+
+#### Canonical Output
+
+```json
+{"enabled":true,"metadata":{"created_at":1234567890,"name":"test"},"tags":["a","c","b"]}
+```
+
+### Implementation Guidelines
+
+```rust
+use std::collections::BTreeMap;
+
+fn canonical_json_encode<T: Serialize>(value: &T) -> String {
+    // Use BTreeMap for automatic key ordering
+    // Serialize with compact formatting (no whitespace)
+    // Use lowercase escape sequences
+}
+
+fn verify_canonical(json: &str) -> bool {
+    // Parse and re-serialize, compare results
+    // Check key ordering, whitespace, number format
+}
+```
 
 ## Error Handling
 
-### Error Codes
+### Binary Serialization Errors
 
-| Error | Code | Condition |
-|-------|------|-----------|
-| SER_VERSION_UNKNOWN | 0xS001 | Unknown encoding version |
-| SER_INVALID_SIGN | 0xS002 | Invalid sign byte |
-| SER_INVALID_LENGTH | 0xS003 | Length mismatch for limbs |
-| SER_NONCANONICAL | 0xS004 | Input not in canonical form |
-| SER_RESERVED_NONZERO | 0xS005 | Reserved bytes not zero |
-| SER_SCALE_INVALID | 0xS006 | Scale out of valid range |
+All serialization errors are fatal (TRAP). See authoritative RFCs for specific error codes:
 
-### Error Semantics
+| Error Domain | Authoritative RFC |
+|--------------|-------------------|
+| BIGINT errors | RFC-0110 |
+| DQA errors | RFC-0105 |
+| DFP errors | RFC-0104 |
 
-All serialization errors are fatal (TRAP):
-- Contract execution reverts
-- Gas consumed up to failure point
-- Error code logged for debugging
+### JSON Serialization Errors
+
+| Error | Condition |
+|-------|-----------|
+| JSON_INVALID_UTF8 | Input not valid UTF-8 |
+| JSON_INVALID_NUMBER | Number formatting violation |
+| JSON_KEY_ORDER_VIOLATION | Keys not lexicographically sorted |
+| JSON_WHITESPACE_VIOLATION | Extra whitespace detected |
 
 ## Test Vectors
 
-### BigInt Serialization
+### Binary Serialization
 
-| Input | Expected Bytes (hex) |
-|-------|---------------------|
-| BigInt(0) | 01 00 00 00 01 00 00 00 00 00 00 00 00 00 00 00 |
-| BigInt(1) | 01 00 00 00 01 00 00 00 01 00 00 00 00 00 00 00 |
-| BigInt(-1) | 01 FF 00 00 01 00 00 00 01 00 00 00 00 00 00 00 |
-| BigInt(2^64) | 01 00 00 00 02 00 00 00 00 00 00 00 00 00 00 00 01 00 00 00 00 00 00 00 |
+Test vectors are defined in each authoritative RFC:
 
-### DQA Serialization
+| Encoding | Authoritative RFC |
+|----------|-------------------|
+| I128Encoding | RFC-0110 (§Test Vectors) |
+| BigIntEncoding | RFC-0110 (§Test Vectors) |
+| DqaEncoding | RFC-0105 (§Test Vectors) |
+| DfpEncoding | RFC-0104 (§Test Vectors) |
 
-| Input | Expected Bytes (hex) |
-|-------|---------------------|
-| DQA(1.0, scale=0) | 00 00 00 00 00 00 00 01 00 00 00 00 00 00 00 00 |
-| DQA(1.5, scale=1) | 00 00 00 00 00 00 00 0F 01 00 00 00 00 00 00 00 |
-| DQA(-1.0, scale=0) | FF FF FF FF FF FF FF FF 00 00 00 00 00 00 00 00 |
+### JSON Serialization
 
-### DFP Serialization
-
-| Input | Expected Bytes (hex) |
-|-------|---------------------|
-| DFP(1.0) | 00 00 00 00 00 00 00 01 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 |
-| DFP(-1.0) | 00 00 00 00 00 00 00 01 00 00 00 00 01 00 00 00 00 00 00 00 00 00 00 00 |
-
-### I128 Serialization
-
-| Input | Expected Bytes (hex) |
-|-------|---------------------|
-| i128::MAX | 00 FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF |
-| i128::MIN | FF 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 |
-| 1 | 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 01 |
-
-## Performance Targets
-
-| Operation | Target | Notes |
-|-----------|--------|-------|
-| BigInt serialize | O(n) | n = number of limbs |
-| BigInt deserialize | O(n) | n = number of limbs |
-| DQA serialize | O(1) | Fixed size |
-| DQA deserialize | O(1) | Fixed size |
-| DFP serialize | O(1) | Fixed size |
-| DFP deserialize | O(1) | Fixed size |
+| Input | Canonical Output |
+|-------|-----------------|
+| `{"b":2,"a":1}` | `{"a":1,"b":2}` |
+| `{"x":1e2}` | `{"x":100}` |
+| `{"x":+1}` | `{"x":1}` |
+| `{"x":01}` | ERROR |
+| `{"a":["b","a"]}` | `{"a":["b","a"]}` (array order preserved) |
 
 ## Security Considerations
 
-### Threat Model
+### Binary Serialization
 
-1. **Buffer Overflow**: Prevented by explicit length validation before memory allocation
-2. **Canonical Form Violation**: TRAP on non-canonical input prevents state manipulation
-3. **Version Rollback**: Unknown versions TRAP, preventing downgrade attacks
-4. **Endianness Confusion**: Explicit big-endian everywhere eliminates ambiguity
+1. **Buffer Overflow**: Prevented by explicit length validation
+2. **Canonical Form Violation**: TRAP on non-canonical input
+3. **Version Rollback**: Unknown versions TRAP
+4. **Endianness Confusion**: Explicit big-endian everywhere
 
-### Attack Vectors
+### JSON Serialization
 
-| Vector | Mitigation |
-|--------|------------|
-| Malformed length fields | Explicit bounds checking before allocation |
-| Reserved byte tampering | TRAP if non-zero reserved bytes |
-| Version downgrade | Unknown versions TRAP |
-| Non-canonical forms | Canonical validation before/after serialization |
+1. **Hash Manipulation**: Canonical form prevents different representations producing same hash
+2. **Unicode Attacks**: Enforce UTF-8, normalize unicode escape sequences
+3. **Number Precision**: Specify precision limits for floating-point in JSON
+4. **Whitespace Injection**: Reject inputs with inconsistent whitespace
 
 ## Adversarial Review
 
@@ -423,93 +317,53 @@ All serialization errors are fatal (TRAP):
 
 | Version | Date | Changes |
 |---------|------|---------|
-| 1.0 | 2026-03-16 | Initial draft from implementation |
+| 1.0 | 2026-03-16 | Initial draft with duplicated definitions |
+| 1.1 | 2026-03-16 | Removed duplicated definitions, now references authoritative RFCs |
+| 1.2 | 2026-03-16 | Added Part 2: JSON Serialization for RFC-0903 compatibility |
 
 ### Known Issues
 
-None yet.
-
-## Alternatives Considered
-
-### Option 1: Single Universal Numeric Encoding (Rejected)
-
-**Approach**: Use one encoding for all numeric types
-
-**Pros:**
-- Simpler implementation
-- Smaller code size
-
-**Cons:**
-- Merkle hash ambiguity between types
-- Cannot distinguish DQA(1.0) from BIGINT(1)
-- Loses type information
-
-**Decision**: Each type has distinct encoding
-
-### Option 2: Little-Endian Everywhere (Rejected)
-
-**Approach**: Use little-endian for all encodings
-
-**Pros:**
-- Some architectures prefer LE
-
-**Cons:**
-- Network protocol convention is big-endian
-- Inconsistent with existing standards
-
-**Decision**: Big-endian everywhere (network byte order)
-
-### Option 3: Self-Describing Length Prefix (Rejected)
-
-**Approach**: Use length-prefixed envelopes for all types
-
-**Pros:**
-- Extensible
-
-**Cons:**
-- Additional overhead
-- Not needed for fixed types
-
-**Decision**: Header includes length for variable types only
+None.
 
 ## Version History
 
 | Version | Date | Author | Changes |
 |---------|------|--------|---------|
-| 1.0 | 2026-03-16 | CipherOcto | Initial draft from implementation |
+| 1.0 | 2026-03-16 | CipherOcto | Initial draft with duplicated definitions |
+| 1.1 | 2026-03-16 | CipherOcto | Removed duplication - references authoritative RFCs |
+| 1.2 | 2026-03-16 | CipherOcto | Added JSON Serialization (Part 2) for RFC-0903 |
 
 ## Compatibility
 
-### Backward Compatibility
+### Binary Serialization
 
-- Version byte allows format evolution
+- Version byte (where present) allows format evolution
 - Old versions TRAP on deserialization
 - Forward compatibility not guaranteed
 
-### Interoperability
+### JSON Serialization
 
-| Format | Systems | Notes |
-|--------|---------|-------|
-| I128Encoding | Rust, Go, Java | Standard big-endian i128 |
-| BigIntEncoding | Custom | CipherOcto-specific |
-| DqaEncoding | Custom | CipherOcto-specific |
-| DfpEncoding | Custom | CipherOcto-specific |
+- Implementations MUST produce canonical output
+- Consumers MAY accept non-canonical but SHOULD reject
+- Version negotiation not supported
 
 ## Future Work
 
 1. **DecimalEncoding**: RFC-0111 DECIMAL type serialization
 2. **Enum/Union Tags**: Type-safe wrapper for multi-type numeric values
-3. **Compression**: Optional compressed encoding for large values
-4. **ZK Commitments**: Integration with proof system for serialized values
+3. **Binary Object Signing (BOS)**: Canonical binary serialization wrapper
+4. **Schema Validation**: JSON Schema for canonical JSON validation
 
 ## Related Use Cases
 
+- UC-0903: Virtual API Key System (uses JSON serialization)
 - UC-XXX: Cross-chain state verification (future)
 - UC-XXX: Deterministic proof verification (future)
 
 ## References
 
-- RFC-0104: Deterministic Floating-Point
-- RFC-0105: Deterministic Quant Arithmetic
-- RFC-0110: Deterministic BIGINT
-- RFC-0111: Deterministic DECIMAL (planned)
+- [RFC-0104: Deterministic Floating-Point](../draft/numeric/0104-deterministic-floating-point.md)
+- [RFC-0105: Deterministic Quant Arithmetic](../draft/numeric/0105-deterministic-quant-arithmetic.md)
+- [RFC-0110: Deterministic BIGINT](../accepted/numeric/0110-deterministic-bigint.md)
+- [RFC-0111: Deterministic DECIMAL](../draft/numeric/0111-deterministic-decimal.md) (planned)
+- [RFC-0903: Virtual API Key System](../final/economics/0903-virtual-api-key-system.md)

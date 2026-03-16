@@ -2,10 +2,17 @@
 
 ## Status
 
-**Version:** 1.3 (2026-03-16)
+**Version:** 1.4 (2026-03-16)
 **Status:** Draft
 
 > **Note:** This RFC is extracted from RFC-0106 (Deterministic Numeric Tower) as part of the Track B dismantling effort.
+
+> **Adversarial Review v1.4 Changes (Critical Issues Fixed):**
+> - C1: POW10 table corrected (entries 29-30 fixed)
+> - C2: DIV tie-breaking clarified (magnitude-first approach)
+> - C3: Probe format explicitly uses Merkle leaf encoding (SHA256)
+> - C4: Probe Merkle root remains [TBD] (requires reference impl)
+> - H5: CMP algorithm added (copied from RFC-0105)
 
 > **Adversarial Review v1.3 Changes (High-Severity Issues Fixed):**
 > - H1: POW10 table corrected (entries 25-27 fixed)
@@ -208,8 +215,8 @@ const POW10: [i128; 37] = [
     100000000000000000000000000,           // 10^26
     1000000000000000000000000000,          // 10^27
     10000000000000000000000000000,         // 10^28
-    100000000000000000000000000,           // 10^29
-    1000000000000000000000000000,          // 10^30
+    100000000000000000000000000000,              // 10^29: 29 zeros
+    1000000000000000000000000000000,             // 10^30: 30 zeros
     10000000000000000000000000000,         // 10^31
     100000000000000000000000000000,        // 10^32
     1000000000000000000000000000000,       // 10^33
@@ -359,7 +366,7 @@ Algorithm:
      else if abs_remainder > half: result = quotient + 1  // round up
      else:  // remainder == half (tie): round to even
        if quotient % 2 == 0: result = quotient
-       else: result = quotient + (if result_sign then -1 else 1)  // H6 fix: use sign for tie-breaking
+       else: result = quotient + (if result_sign then -1 else 1)  // C2 fix: magnitude-first tie-breaking (round magnitude, then apply sign)
 
   7. Apply sign:
      if result_sign: result = -result
@@ -518,6 +525,44 @@ For deterministic Merkle hashing, DECIMAL uses this canonical wire format (24 by
 
 Total size: 24 bytes
 
+### CMP — Comparison (H5 Fix)
+
+Comparison returns -1 (less), 0 (equal), or 1 (greater).
+
+```
+fn cmp(a: Decimal, b: Decimal) -> i32
+
+1. // Canonicalize both operands per lazy canonicalization rule
+   a_canonical = canonicalize(a)
+   b_canonical = canonicalize(b)
+
+2. // Fast path: if both scales equal, compare values directly
+   if a_canonical.scale == b_canonical.scale:
+       if a_canonical.mantissa < b_canonical.mantissa: return -1
+       if a_canonical.mantissa > b_canonical.mantissa: return 1
+       return 0
+
+3. // Scale alignment: normalize both to max_scale
+   max_scale = max(a_canonical.scale, b_canonical.scale)
+   scale_diff_a = max_scale - a_canonical.scale
+   scale_diff_b = max_scale - b_canonical.scale
+
+4. // Fast path: if scale diff <= 18, i128 multiplication won't overflow
+   if scale_diff_a <= 18 and scale_diff_b <= 18:
+       compare_a = a_canonical.mantissa * POW10[scale_diff_a]
+       compare_b = b_canonical.mantissa * POW10[scale_diff_b]
+       if compare_a < compare_b: return -1
+       if compare_a > compare_b: return 1
+       return 0
+
+5. // Slow path: use checked arithmetic for large scale differences
+   // (this case is rare with canonical inputs, scale <= 36 each)
+   // Implementation uses checked_mul or BigInt for safety
+
+**Canonicalization Requirement (Normative):** Both operands MUST be canonicalized before comparison. This ensures `1.00` equals `1.0` correctly.
+
+**Note on scale diff > 18:** After canonicalization, both operands have scale ≤ 18 (per invariant), so scale difference is at most 18. The `diff > 18` case is unreachable with valid DECIMAL inputs.
+
 ### Deserialization Algorithm
 
 ```
@@ -614,6 +659,8 @@ Algorithm:
 - Decimal separator: period (`.`) only — never comma or other
 - No thousands separators — digits are not grouped
 - No exponent notation — never output scientific notation like "1.5e+10"
+- Whitespace: trim leading/trailing, TRAP on internal whitespace
+- Sign: optional '+' allowed for positive, '-' for negative
 - Output uses ASCII characters only
 
 ## Determinism Guarantee
@@ -750,11 +797,12 @@ DECIMAL verification probe uses 24-byte canonical encoding (matching RFC-0110's 
 └─────────────────────────────────────────────────────────────┘
 ```
 
-**Probe Entry Compact Encoding (H4 Fix):**
-For DECIMAL, each canonical wire format is 24 bytes. To fit two 24-byte values plus operation ID into 24 bytes, implementations MUST use compact encoding:
-- Reference implementation stores full probe entries as (op_id, input_a, input_b) triplets
-- For verification, compute hash over (op_id || input_a || input_b_concatenated)
-- Alternative: Store probe as Merkle tree leaves where each leaf is SHA256(op_id || input_a || input_b)
+**Probe Entry Compact Encoding (H4 Fix, C3 Clarification):**
+For DECIMAL, each canonical wire format is 24 bytes. Since two 24-byte DECIMAL values plus op_id cannot fit in 24 bytes, implementations MUST use Merkle tree encoding:
+- Each probe entry is a **Merkle tree leaf**: `SHA256(op_id || input_a || input_b)` concatenated
+- The probe stores 56 leaf hashes, not the raw 24-byte values
+- The Merkle root of all 56 leaves is published with this RFC
+- Verification: recompute each leaf hash and verify the Merkle root matches
 
 **Verification Procedure:**
 
@@ -1073,6 +1121,7 @@ All errors are fatal (TRAP) — no partial results or fallback behavior:
 | 1.1 | 2026-03-15 | TBD | Fixed RoundHalfEven algorithm, added SQRT convergence |
 | 1.2 | 2026-03-16 | TBD | Fixed critical issues C1-C17 from adversarial review |
 | 1.3 | 2026-03-16 | TBD | Fixed high-severity issues H1-H12 from adversarial review |
+| 1.4 | 2026-03-16 | TBD | Fixed critical issues C1-C4 and H5 from adversarial review |
 
 ## Compatibility
 

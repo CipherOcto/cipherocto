@@ -2,10 +2,17 @@
 
 ## Status
 
-**Version:** 1.6 (2026-03-16)
+**Version:** 1.7 (2026-03-16)
 **Status:** Draft
 
 > **Note:** This RFC is extracted from RFC-0106 (Deterministic Numeric Tower) as part of the Track B dismantling effort.
+
+> **Adversarial Review v1.7 Changes (Post-Merge Fixes):**
+> - C2: Probe description fixed (24→32-byte SHA256 hashes)
+> - C4: Merkle root verification instructions added
+> - H4: Implementation checklist updated (24→32-byte)
+> - POW10 table verified with Python script (all 37 entries correct)
+> - Version updated to 1.7
 
 > **Adversarial Review v1.6 Changes (Post-Merge Fixes):**
 > - C1: POW10 table entries 31-36 fixed (31-36 zeros each)
@@ -15,7 +22,6 @@
 > - H2: CMP scale diff note corrected (18 → 36)
 > - H4: Gas proof expanded with breakdown
 > - H5: String conversion edge cases added (zero handling)
-> - Version updated to 1.6
 
 > **Adversarial Review v1.5 Changes (Post-Merge Fixes):**
 > - H2: String conversion locale specification added (whitespace, sign handling)
@@ -833,7 +839,7 @@ Worst-case breakdown:
 
 ## Verification Probe
 
-DECIMAL verification probe uses 24-byte canonical encoding (matching RFC-0110's BIGINT probe structure):
+DECIMAL verification probe uses 32-byte SHA256 leaf hashes (per RFC-0111 §Canonical Probe Entry Format):
 
 ### Canonical Probe Entry Format (32 bytes - SHA256 leaf hash)
 
@@ -984,6 +990,18 @@ fn decimal_probe_root(probe: &DecimalProbe) -> [u8; 32] {
 >
 > This root is computed from all 56 probe entries using SHA256 Merkle tree construction (see Python reference: `scripts/compute_decimal_probe_root.py`).
 
+**Verification Instruction:**
+All implementations MUST verify the Merkle root by:
+1. Implementing all 56 probe entries per §Probe Entries table
+2. Encoding each entry as 56-byte raw data (8-byte op_id + 24-byte input_a + 24-byte input_b)
+3. Computing SHA256 hash of each 56-byte entry → 32-byte leaf hash
+4. Building Merkle tree from 56 leaf hashes per §Merkle Hash algorithm
+5. Verifying root matches: `7d3e2eb4ff8626cd0d1d0969e89b1f6ef8a34240c64b082805f44bb962de2cf1`
+
+**Cross-Verification:**
+- Python: `python3 scripts/compute_decimal_probe_root.py` → outputs root above
+- Rust: `cargo test decimal_tests::test_merkle_root` → verifies against reference
+
 ## Implementation Checklist
 
 **Core Implementation:**
@@ -1016,7 +1034,7 @@ fn decimal_probe_root(probe: &DecimalProbe) -> [u8; 32] {
 
 **Verification & Testing:**
 - [ ] Test vectors verified (40+ cases)
-- [ ] Verification probe (56 entries, 24-byte format)
+- [ ] Verification probe (56 entries, 32-byte SHA256 leaf hashes)
 - [ ] Differential fuzzing (100,000+ random inputs vs rust_decimal)
 - [ ] Probe verification every 100,000 blocks
 
@@ -1190,6 +1208,7 @@ All errors are fatal (TRAP) — no partial results or fallback behavior:
 | 1.4 | 2026-03-16 | TBD | Fixed critical issues C1-C4 and H5 from adversarial review |
 | 1.5 | 2026-03-16 | TBD | Added locale specification, expanded gas proof, fixed POW10 31-36 |
 | 1.6 | 2026-03-16 | TBD | Fixed POW10 31-36, probe format (32-byte), DIV rounding, CMP note, gas proof, string edge cases |
+| 1.7 | 2026-03-16 | TBD | Fixed remaining 24→32-byte references, added Merkle root verification, POW10 verified |
 
 ## Compatibility
 

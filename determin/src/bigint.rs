@@ -1105,17 +1105,31 @@ impl BigInt {
         let mut abs_val = self.clone();
         abs_val.sign = false;
 
-        // Divide by 10 repeatedly to extract digits
-        let mut digits = Vec::new();
+        // Use 10^19 as the chunk base — largest power of 10 fitting in u64
+        // This reduces divmod calls from O(d) to O(d/19), where d = decimal digit count
+        const CHUNK_BASE: u64 = 10_000_000_000_000_000_000; // 10^19
+        let base = BigInt::new(vec![CHUNK_BASE], false);
+
+        let mut chunks: Vec<u64> = Vec::new();
+
         while !abs_val.is_zero() {
-            let ten = BigInt::new(vec![10], false);
-            let (_, rem) = bigint_divmod(abs_val, ten).unwrap();
-            let digit = rem.limbs()[0] as u8;
-            digits.push(char::from(b'0' + digit));
-            abs_val = BigInt::new(rem.limbs().to_vec(), false);
+            let (quot, rem) = bigint_divmod(abs_val, base.clone()).unwrap();
+            // rem is a single-limb value since base fits in u64
+            chunks.push(if rem.is_zero() { 0 } else { rem.limbs()[0] });
+            abs_val = quot;
         }
 
-        digits.iter().rev().collect()
+        // Build string: most-significant chunk first (no leading zeros),
+        // all subsequent chunks zero-padded to 19 digits.
+        let mut s = String::new();
+        for (i, chunk) in chunks.iter().rev().enumerate() {
+            if i == 0 {
+                s.push_str(&chunk.to_string()); // no padding on the leading chunk
+            } else {
+                s.push_str(&format!("{:019}", chunk)); // pad interior chunks
+            }
+        }
+        s
     }
 
     /// Convert to hex string representation (without 0x prefix)
@@ -2574,7 +2588,6 @@ mod regression_tests {
 
     /// Test decimal Display
     #[test]
-    #[ignore] // Slow for large numbers - decimal conversion is O(n²)
     fn test_display_decimal() {
         let n = BigInt::from(12345i64);
         assert_eq!(format!("{}", n), "12345");
@@ -2638,7 +2651,6 @@ mod regression_tests {
 
     /// Test roundtrip: parse -> display -> parse (small number)
     #[test]
-    #[ignore] // Slow - decimal conversion is O(n²)
     fn test_string_roundtrip() {
         let original = BigInt::from(12345i64);
         let s = format!("{}", original);

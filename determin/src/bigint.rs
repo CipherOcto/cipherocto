@@ -1238,8 +1238,8 @@ impl BigInt {
 
         for chunk in chars.chunks(chunk_size) {
             let chunk_str: String = chunk.iter().rev().collect();
-            let limb_val = u64::from_str_radix(&chunk_str, 16)
-                .map_err(|_| BigIntError::InvalidString)?;
+            let limb_val =
+                u64::from_str_radix(&chunk_str, 16).map_err(|_| BigIntError::InvalidString)?;
             limbs.push(limb_val);
         }
 

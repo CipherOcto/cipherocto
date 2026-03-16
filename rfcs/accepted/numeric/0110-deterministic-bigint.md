@@ -2,7 +2,7 @@
 
 ## Status
 
-**Version:** 2.12 (2026-03-15)
+**Version:** 2.13 (2026-03-16)
 **Status:** Accepted
 
 > **Note:** This RFC is extracted from RFC-0106 (Deterministic Numeric Tower) as part of the Track B dismantling effort.
@@ -102,6 +102,12 @@
 > - FIXED: LOW RFC table entry 13 (MAX_LIMBS → MAX_BIGINT) — 64-limb × 64-limb → TRAP
 > - FIXED: LOW bigint_to_i128_bytes if/else structure — use single val variable
 > - FIXED: Corrected Merkle root after all script bugs resolved
+>
+> **Adversarial Review v2.13 Changes (Final Review Fixes):**
+>
+> - FIXED: LOW entry 1 label (2^64 + 1 → 2^64) — matches Python/Rust reference
+> - FIXED: MEDIUM Rule 4 DIV iteration count — now correctly states m+1 where m = dividend.len() - divisor.len()
+> - FIXED: Removed unnecessary j=0 special case — standard D1 formula works with implicit r[-1] = 0
 >
 > **Adversarial Review v2.12 Changes (All Review Findings):**
 >
@@ -577,14 +583,9 @@ Algorithm: Restoring division with D1 normalization
 
   4. Main loop (for j from a_norm.limbs.len - 1 down to 0):
      a. Form estimate (D1):
-        // Handle j=0 case: use a_norm.limbs[0] with implicit zero for j-1
-        // j=0 is correct: D1 normalization ensures the partial remainder
-        // at this position fits in a single limb. The implicit lower half
-        // of the two-limb D1 numerator is zero.
-        if j == 0:
-          // Degenerate single-limb case: D1 with implicit zero lower limb
-          q_estimate = (a_norm.limbs[0] as u128) / (b_norm.limbs[b_norm.limbs.len - 1] as u128)
-        else if a_norm.limbs[j] == b_norm.limbs[b_norm.limbs.len - 1]:
+        // At j=0, a_norm.limbs[0] is the single leading limb; the standard
+        // D1 formula ((r[j] << 64) | r[j-1]) works with r[-1] = 0.
+        if a_norm.limbs[j] == b_norm.limbs[b_norm.limbs.len - 1]:
           q_estimate = 0xFFFF_FFFF_FFFF_FFFFu128
         else:
           // Standard D1: ((r[j] << 64) | r[j-1]) / d[m-1]
@@ -1237,7 +1238,7 @@ The probe root commits to the input set. Conformance is verified in two ways:
    other conformant implementation. Output conformance is enforced via differential
    fuzzing (see §Differential Fuzzing Requirement).
 
-The expected probe Merkle root for v2.12 is:
+The expected probe Merkle root for v2.13 is:
 `c447fa82db0763435c1a18268843300c2ed811e21fcb400b18c75e579ddac7c0`
 
 All compliant implementations MUST produce this root when computing the Merkle
@@ -1271,7 +1272,7 @@ hash over all 56 probe entries using the encoding rules defined in this section.
 | Entry | Operation      | Input A                            | Input B/Result        | Purpose                                 |
 | ----- | -------------- | ---------------------------------- | --------------------- | --------------------------------------- |
 | 0     | ADD            | 0                                  | 2                     | Basic                                   |
-| 1     | ADD            | 2^64 + 1                           | 1                     | Multi-limb carry                        |
+| 1     | ADD            | 2^64                               | 1                     | Multi-limb carry                        |
 | 2     | ADD            | MAX (2^64-1)                       | 1                     | Carry overflow                          |
 | 3     | ADD            | 1                                  | -1                    | Zero result                             |
 | 4     | ADD            | MAX                                | MAX                   | Max + max → TRAP (overflow; verified via fuzzing) |
@@ -1397,7 +1398,7 @@ This guarantee holds **provided** implementations follow:
 1. **Algorithm Locked**: All implementations MUST use the algorithms specified in this RFC
 2. **No Karatsuba**: Multiplication uses schoolbook O(n²) algorithm
 3. **No SIMD**: Vectorized operations are forbidden
-4. **Fixed Iteration**: Division executes exactly `a_norm.limbs.len` outer iterations, where `a_norm` is the left-normalized dividend (a shifted left by `norm_shift` bits). This equals `ceil(bitlen(a_norm) / 64)` and may exceed `ceil(bitlen(a) / 64)` by one when normalization shifts `a` into an additional limb. No early exit is permitted.
+4. **Fixed Iteration**: Division executes exactly `m + 1` outer iterations where `m = dividend.len() - divisor.len()`, i.e., `dividend.len() - divisor.len() + 1` total iterations. This matches the Knuth D algorithm: the loop iterates from `j = m` down to `j = 0` inclusive. No early exit is permitted.
 5. **Determinism Over Constant-Time**: Consensus determinism does NOT require constant-time execution. Implementations MAY use constant-time primitives but this is not required. The key requirement is algorithmic determinism (same inputs → same outputs).
 6. **No Hardware**: CPU carry flags, SIMD, or FPU are forbidden
 7. **Post-Operation Canonicalization**: Every algorithm MUST call canonicalize before returning

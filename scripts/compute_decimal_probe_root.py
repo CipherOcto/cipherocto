@@ -129,10 +129,17 @@ def decimal_mul(a_mantissa, a_scale, b_mantissa, b_scale):
 
         # RoundHalfEven
         half = divisor // 2
+        # BUG-1 Fix: sign-aware rounding for negative products
         if remainder > half:
-            product += 1
+            if product >= 0:
+                product += 1
+            else:
+                product -= 1
         elif remainder == half and product % 2 != 0:
-            product += 1
+            if product >= 0:
+                product += 1
+            else:
+                product -= 1
 
         if abs(product) > MAX_DECIMAL_MANTISSA:
             return None  # TRAP
@@ -192,7 +199,7 @@ def decimal_div(a_mantissa, a_scale, b_mantissa, b_scale, target_scale=6):
     if abs(quotient) > MAX_DECIMAL_MANTISSA:
         return None  # TRAP
 
-    return (quotient, result_scale)  # Don't canonicalize - preserve scale
+    return canonicalize(quotient, result_scale)
 
 
 def isqrt(n):
@@ -233,6 +240,12 @@ def decimal_sqrt(a_mantissa, a_scale):
 
     # Compute integer sqrt
     x = isqrt(scaled_n)
+
+    # BUG-6 Fix: Newton-Raphson can overshoot by 1
+    if x > 0 and x * x > scaled_n:
+        x -= 1
+    if x > MAX_DECIMAL_MANTISSA:
+        return None  # TRAP
 
     return canonicalize(x, P)
 
@@ -322,7 +335,7 @@ def compute_result(op, a_mantissa, a_scale, b_mantissa, b_scale):
             else:
                 return None  # TRAP
         elif op == 'FROM_DQA':
-            return (a_mantissa, a_scale)
+            return canonicalize(a_mantissa, a_scale)
         else:
             return None
     except Exception as e:
@@ -383,50 +396,53 @@ DATA = [
     (23, 'SQRT', 1, 4, 0, 0, "√0.0001"),
     (24, 'SQRT', 0, 0, 0, 0, "√0"),
 
-    # ROUND (entries 25-31) - b_mantissa holds target_scale
-    (25, 'ROUND', 1234, 3, 1, 0, "1.234 → scale=1 (round down)"),
-    (26, 'ROUND', 1235, 3, 1, 0, "1.235 → scale=1 (RHE even)"),
-    (27, 'ROUND', 1245, 3, 1, 0, "1.245 → scale=1 (RHE odd)"),
-    (28, 'ROUND', 1255, 3, 1, 0, "1.255 → scale=1 (round up)"),
-    (29, 'ROUND', -1235, 3, 1, 0, "-1.235 → scale=1"),
-    (30, 'ROUND', -1245, 3, 1, 0, "-1.245 → scale=1"),
-    (31, 'ROUND', -1255, 3, 1, 0, "-1.255 → scale=1"),
+    # SQRT (entry 25) - BUG-4 Fix: High scale SQRT now valid
+    (25, 'SQRT', 1, 25, 0, 0, "√(10^-25) — high scale split multiplication"),
 
-    # CANONICALIZE (entries 32-35)
-    (32, 'CANONICALIZE', 1000, 3, 0, 0, "1000 (scale=3) → {1, 0}"),
-    (33, 'CANONICALIZE', 0, 5, 0, 0, "0 (scale=5) → {0, 0}"),
-    (34, 'CANONICALIZE', 100, 2, 0, 0, "100 (scale=2) → {1, 0}"),
-    (35, 'CANONICALIZE', 0, 2, 0, 0, "0.0 (scale=2) → {0, 0}"),
+    # ROUND (entries 26-32) - b_mantissa holds target_scale
+    (26, 'ROUND', 1234, 3, 1, 0, "1.234 → scale=1 (round down)"),
+    (27, 'ROUND', 1235, 3, 1, 0, "1.235 → scale=1 (RHE even)"),
+    (28, 'ROUND', 1245, 3, 1, 0, "1.245 → scale=1 (RHE odd)"),
+    (29, 'ROUND', 1255, 3, 1, 0, "1.255 → scale=1 (round up)"),
+    (30, 'ROUND', -1235, 3, 1, 0, "-1.235 → scale=1"),
+    (31, 'ROUND', -1245, 3, 1, 0, "-1.245 → scale=1"),
+    (32, 'ROUND', -1255, 3, 1, 0, "-1.255 → scale=1"),
 
-    # CMP (entries 36-41)
-    (36, 'CMP', 1, 0, 2, 0, "1.0 vs 2.0"),
-    (37, 'CMP', 2, 0, 1, 0, "2.0 vs 1.0"),
-    (38, 'CMP', 15, 1, 15, 1, "1.5 vs 1.5"),
-    (39, 'CMP', -1, 0, 1, 0, "-1.0 vs 1.0"),
-    (40, 'CMP', 1, 0, 100, 2, "1.0 vs 1.00"),
-    (41, 'CMP', 1, 1, 10, 2, "0.1 vs 0.10"),
+    # CANONICALIZE (entries 33-36)
+    (33, 'CANONICALIZE', 1000, 3, 0, 0, "1000 (scale=3) → {1, 0}"),
+    (34, 'CANONICALIZE', 0, 5, 0, 0, "0 (scale=5) → {0, 0}"),
+    (35, 'CANONICALIZE', 100, 2, 0, 0, "100 (scale=2) → {1, 0}"),
+    (36, 'CANONICALIZE', 0, 2, 0, 0, "0.0 (scale=2) → {0, 0}"),
 
-    # SERIALIZE/DESERIALIZE (entries 42-43)
-    (42, 'SERIALIZE', 15, 1, 0, 0, "serialize(1.5)"),
-    (43, 'DESERIALIZE', 15, 1, 0, 0, "deserialize(1.5)"),
+    # CMP (entries 37-42)
+    (37, 'CMP', 1, 0, 2, 0, "1.0 vs 2.0"),
+    (38, 'CMP', 2, 0, 1, 0, "2.0 vs 1.0"),
+    (39, 'CMP', 15, 1, 15, 1, "1.5 vs 1.5"),
+    (40, 'CMP', -1, 0, 1, 0, "-1.0 vs 1.0"),
+    (41, 'CMP', 1, 0, 100, 2, "1.0 vs 1.00"),
+    (42, 'CMP', 1, 1, 10, 2, "0.1 vs 0.10"),
 
-    # TO_DQA (entries 44-45)
-    (44, 'TO_DQA', 15, 1, 0, 0, "1.5 → DQA (scale≤18)"),
-    (45, 'TO_DQA', 15, 20, 0, 0, "1.5 scale=20 → TRAP"),
+    # SERIALIZE/DESERIALIZE (entries 43-44)
+    (43, 'SERIALIZE', 15, 1, 0, 0, "serialize(1.5)"),
+    (44, 'DESERIALIZE', 15, 1, 0, 0, "deserialize(1.5)"),
 
-    # FROM_DQA (entries 46-47)
-    (46, 'FROM_DQA', 15, 1, 0, 0, "DQA(15,1) → 1.5"),
-    (47, 'FROM_DQA', 0, 18, 0, 0, "DQA(0,18) → 0.0"),
+    # TO_DQA (entries 45-46)
+    (45, 'TO_DQA', 15, 1, 0, 0, "1.5 → DQA (scale≤18)"),
+    (46, 'TO_DQA', 15, 20, 0, 0, "1.5 scale=20 → TRAP"),
 
-    # Overflow/edge cases (entries 48-55)
-    (48, 'ADD', MAX_DECIMAL, 0, 1, 0, "MAX + 1 → overflow"),
-    (49, 'ADD', -MAX_DECIMAL, 0, 1, 0, "-MAX + 1 → underflow"),
-    (50, 'MUL', 10**18, 0, 10**19, 0, "10^18 × 10^19 → overflow"),
-    (51, 'DIV', 1, 0, 0, 0, "1.0 ÷ 0.0 → div by zero"),
-    (52, 'SQRT', -1, 0, 0, 0, "√-1.0 → negative"),
-    (53, 'ADD', 999999999999, 12, 1, 12, "0.999999999999 + 0.000000000001"),
-    (54, 'MUL', 1, 12, 1000, 0, "0.000000000001 × 1000"),
-    (55, 'DIV', 1, 36, 3, 0, "1.0 (scale=36) ÷ 3.0"),
+    # FROM_DQA (entries 47-48)
+    (47, 'FROM_DQA', 15, 1, 0, 0, "DQA(15,1) → 1.5"),
+    (48, 'FROM_DQA', 0, 18, 0, 0, "DQA(0,18) → 0.0"),
+
+    # Overflow/edge cases (entries 49-56)
+    (49, 'ADD', MAX_DECIMAL, 0, 1, 0, "MAX + 1 → overflow"),
+    (50, 'ADD', -MAX_DECIMAL, 0, 1, 0, "-MAX + 1 → underflow"),
+    (51, 'MUL', 10**18, 0, 10**19, 0, "10^18 × 10^19 → overflow"),
+    (52, 'DIV', 1, 0, 0, 0, "1.0 ÷ 0.0 → div by zero"),
+    (53, 'SQRT', -1, 0, 0, 0, "√-1.0 → negative"),
+    (54, 'ADD', 999999999999, 12, 1, 12, "0.999999999999 + 0.000000000001"),
+    (55, 'MUL', 1, 12, 1000, 0, "0.000000000001 × 1000"),
+    (56, 'DIV', 1, 36, 3, 0, "1.0 (scale=36) ÷ 3.0"),
 ]
 
 print("Computing DECIMAL probe Merkle root (80-byte entries with results)...")
@@ -452,7 +468,7 @@ for entry in DATA:
         print(f"{idx:2d} {op:14} ERROR: {e} - {desc}")
         hashes.append(b'\x00' * 32)
 
-print(f"\n56 entries computed, building Merkle tree...")
+print(f"\n57 entries computed, building Merkle tree...")
 
 # Build Merkle tree
 while len(hashes) > 1:

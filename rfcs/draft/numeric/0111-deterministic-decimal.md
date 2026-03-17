@@ -2,10 +2,34 @@
 
 ## Status
 
-**Version:** 1.15 (2026-03-17)
+**Version:** 1.18 (2026-03-17)
 **Status:** Draft
 
 > **Note:** This RFC is extracted from RFC-0106 (Deterministic Numeric Tower) as part of the Track B dismantling effort.
+
+> **Adversarial Review v1.18 Changes (3 Issues Fixed):**
+> - CRITICAL-1: Unified Merkle root values (lines 1457 and 1469)
+> - HIGH-2: FROM_DQA now applies canonicalization (probe entry 48)
+> - MEDIUM-2: Added 625-byte length assertion to config hash script
+> - Version updated to 1.18
+
+> **Adversarial Review v1.17 Changes (2 Python Bugs Fixed):**
+> - ISSUE-3/ISSUE-5: Python SQRT now includes BUG-6 off-by-one correction
+> - ISSUE-9: Python DIV now returns canonicalized result
+> - ISSUE-6: Added config hash verification script
+> - ISSUE-7: Fixed probe entry 25 description (explicit form)
+> - ISSUE-8: Updated Known Issues table
+> - Version updated to 1.17
+
+> **Adversarial Review v1.16 Changes (7 Bugs Fixed):**
+> - BUG-1: MUL RoundHalfEven sign-aware rounding for negative products
+> - BUG-2: DIV unsafe cast i256→i128 with explicit range check
+> - BUG-3: BIGINT→DECIMAL uses RFC-0110 I128_ROUNDTRIP
+> - BUG-4: Probe entry 24b committed (57 entries, new Merkle root)
+> - BUG-5: Config hash serialization uses deterministic big-endian u128
+> - BUG-6: SQRT Newton-Raphson off-by-one correction
+> - BUG-7: ROUND encoding documented in probe section
+> - Version updated to 1.16
 
 > **Adversarial Review v1.15 Changes (10 Remaining Issues Fixed):**
 > - REMAINING-1: SQRT TRAP removed (scale 25-35 now valid via split multiplication)
@@ -134,7 +158,7 @@
 > - C2: MUL overflow check order (scale first, round if exceeded)
 > - C3: DIV sign handling (result sign before division)
 > - C4: Input Canonicalization Requirement added
-> - C5: Verification probe expanded to 56 entries
+> - C5: Verification probe expanded to 57 entries
 > - C6: i128 intermediate range check added
 > - C7: ROUND Rust modulo semantics explicitly defined
 > - C8: Gas model formula-based with worst-case proof
@@ -444,10 +468,18 @@ Algorithm:
        abs_remainder = if remainder < 0 { -remainder } else { remainder }
        half = divisor / 2
        if abs_remainder > half:
-         product_i256 = product_i256 + 1
+         // BUG-1 Fix: sign-aware rounding - round UP means larger magnitude
+         if product_i256 >= 0:
+           product_i256 = product_i256 + 1
+         else:
+           product_i256 = product_i256 - 1
        else if abs_remainder == half && product_i256 % 2 != 0:
          // Round to even: only round up if product is odd
-         product_i256 = product_i256 + 1
+         // BUG-1 Fix: sign-aware rounding
+         if product_i256 >= 0:
+           product_i256 = product_i256 + 1
+         else:
+           product_i256 = product_i256 - 1
        // Now scale is MAX_DECIMAL_SCALE
        result_scale = MAX_DECIMAL_SCALE
        // CRIT-3: Check overflow in both directions after rounding
@@ -495,8 +527,11 @@ Algorithm:
      if scale_diff > 0:
        // Increase dividend by multiplying to get more precision
        // FIX C4: Use i256 to prevent overflow
+       // BUG-2 Fix: Add explicit i128 range check before casting
        match i256::from(POW10[scale_diff as usize]).checked_mul(i256::from(abs_a)):
-         Some(val) => scaled_dividend = val as i128
+         Some(val) =>
+           if val > i256::from(i128::MAX): TRAP: DECIMAL_OVERFLOW
+           else: scaled_dividend = val as i128
          None => TRAP: DECIMAL_OVERFLOW
      else if scale_diff < 0:
        // Decrease dividend by dividing to reduce scale
@@ -608,10 +643,18 @@ Algorithm: Deterministic integer square root based on precision growth control
      repeat 40 times:
        x = (x + scaled_n / x) / 2
 
-  6. Return result:
+  6. Correct for off-by-one in integer sqrt:
+     // BUG-6 Fix: Standard Newton-Raphson can overshoot by 1
+     if x * x > scaled_n:
+       x = x - 1
+
+     // Ensure result fits in DECIMAL range
+     if x < 0 or x > i256::from(MAX_DECIMAL_MANTISSA): TRAP
+
+  7. Return result:
      return Decimal { mantissa: x as i128, scale: P }
 
-  7. Canonicalize (redundant but explicit)
+  8. Canonicalize (redundant but explicit)
 ```
 
 **REMAINING-2 - bit_length Definition (normative):**
@@ -912,17 +955,20 @@ decimal_to_bigint(d: Decimal) -> BigInt
 ```
 bigint_to_decimal(b: BigInt) -> Decimal
 
-// REMAINING-5 Fix: Use RFC-0110 defined conversion
+// BUG-3 Fix: Use RFC-0110 I128_ROUNDTRIP (op 0x000D) for proper conversion
 
-1. Convert BigInt to i128 using RFC-0110 §bigint_to_i128_bytes:
-   // This is the canonical BigInt→i128 conversion defined in RFC-0110
-   bytes = b.to_bytes_be()  // Get big-endian bytes
-   if |b| > MAX_DECIMAL_MANTISSA: TRAP  // value exceeds DECIMAL range
-   mantissa = i128::from_be_bytes(bytes)  // Convert to i128
+1. Use RFC-0110 I128_ROUNDTRIP (op 0x000D) to convert b to i128:
+   match bigint_i128_roundtrip(b):
+     Ok(val) => mantissa = val
+     Err(_)  => TRAP: DECIMAL_OVERFLOW
 
-2. Return Decimal { mantissa: mantissa, scale: 0 }
+2. Check DECIMAL range (i128 > DECIMAL):
+   if mantissa > MAX_DECIMAL_MANTISSA or mantissa < -MAX_DECIMAL_MANTISSA:
+     TRAP: DECIMAL_OVERFLOW
 
-3. Canonicalize result (redundant but explicit):
+3. Return Decimal { mantissa: mantissa, scale: 0 }
+
+4. Canonicalize result:
    result = canonicalize(result)
    return result
 ```
@@ -1127,20 +1173,22 @@ DECIMAL_ARITHMETIC_CONFIG_HASH: [u8; 32]
 
 Hash of the following configuration serialized in canonical format (SHA256):
 
-**Serialization Format:**
+**Serialization Format (BUG-5 Fix - Deterministic Big-Endian u128):**
 ```
-- POW10[0..36]: For each entry, encode as (length: u8, value: varint big-endian)
-- Rounding mode: "RoundHalfEven" (13 bytes ASCII)
-- DIV rounding: "RoundHalfEven" (13 bytes ASCII)
-- MAX_DECIMAL_SCALE: 36 (u8)
-- Overflow policy: "TRAP" (4 bytes ASCII)
-- SQRT iterations: 40 (u8)
-- Precision cap: 6 (u8)
+Serialization format (deterministic, all values big-endian):
+  [0..592]:   POW10[0..36] — 37 entries × 16 bytes each, big-endian u128
+  [592..605]: "RoundHalfEven" — 13 bytes ASCII
+  [605..618]: "RoundHalfEven" — 13 bytes ASCII (DIV)
+  [618]:      MAX_DECIMAL_SCALE = 36 — 1 byte u8
+  [619..623]: "TRAP" — 4 bytes ASCII
+  [623]:      SQRT_ITERATIONS = 40 — 1 byte u8
+  [624]:      PRECISION_CAP = 6 — 1 byte u8
+  Total: 625 bytes
 ```
 
-**Canonical Hash Value:**
+**Canonical Hash Value (BUG-5 Fix):**
 ```
-DECIMAL_ARITHMETIC_CONFIG_HASH: f196f0ec28e7ca00c033ceff51252dbebb5166586fb1b4cac992ef67eb73dead
+DECIMAL_ARITHMETIC_CONFIG_HASH: b071fa37d62a50318fde35fa5064464db49c2faaf03a5e2a58c209251f400a14
 ```
 
 ### Verification Requirement
@@ -1288,9 +1336,9 @@ Each probe entry stores a SHA256 hash of the operation data INCLUDING OUTPUT:
 
 **Probe Entry Merkle Tree Encoding (REMAINING-3 Fix - HIGH-4 Clarification):**
 - Each probe entry is a **Merkle tree leaf**: `SHA256(op_id || input_a || input_b || result)` = 32 bytes
-- The probe stores 56 leaf hashes (32 bytes each)
+- The probe stores 57 leaf hashes (32 bytes each)
 - **The Merkle root commits to (operation, input_a, input_b, result) tuples** - INCLUDING the output
-- The Merkle root of all 56 leaves is published with this RFC
+- The Merkle root of all 57 leaves is published with this RFC
 - For TRAP entries (operations that should TRAP), encode a canonical TRAP sentinel: `{mantissa: 0x8000000000000000, scale: 0xFF}` (signals overflow/error condition)
 - Verification: recompute each leaf hash and verify the Merkle root matches
 
@@ -1304,7 +1352,7 @@ For two-input operations (ADD, SUB, MUL, DIV, CMP), the probe entry encodes (op_
 
 The probe root commits to the full tuple (operation + inputs + output). Conformance is verified in two ways:
 
-1. The Merkle root of all 56 probe entries MUST match the expected root published with this RFC.
+1. The Merkle root of all 57 probe entries MUST match the expected root published with this RFC.
 2. For each probe entry, the implementation MUST produce the same output as any other conformant implementation.
 
 > **Note:** The probe commits to (operation, inputs, output) to ensure implementations not only use correct algorithms but also produce identical results. This prevents divergent implementations from passing probes.
@@ -1313,7 +1361,9 @@ The probe root commits to the full tuple (operation + inputs + output). Conforma
 
 > **Normative Rule:** Implementations MUST verify the DECIMAL probe Merkle root (1) at node startup before block production, and (2) at every block height multiple of 100,000. The probe verifies arithmetic correctness and prevents divergent implementations from affecting consensus.
 
-### Probe Entries (56 entries, 32-byte SHA256 hashes)
+### Probe Entries (57 entries, 32-byte SHA256 hashes)
+
+> **BUG-7 Fix - ROUND encoding:** For ROUND probe entries, `input_b.mantissa` encodes the `target_scale` parameter. `input_b.scale` is 0. The result field encodes the rounded output.
 
 | Entry | Operation      | Input A                            | Input B/Result        | Purpose                                 |
 | ----- | -------------- | ---------------------------------- | --------------------- | --------------------------------------- |
@@ -1342,38 +1392,38 @@ The probe root commits to the full tuple (operation + inputs + output). Conforma
 | 22    | SQRT           | 0.04                             | 0.2                   | Decimal sqrt                            |
 | 23    | SQRT           | 0.0001                           | 0.01                  | Small decimal                           |
 | 24    | SQRT           | 0                                | 0                     | Zero                                    |
-| 24b   | SQRT           | 1.0 (scale=25)                  | 1e31                  | REMAINING-1: High scale (no TRAP)     |
-| 25    | ROUND          | 1.234 → scale=1                  | 1.2                   | Round down                              |
-| 26    | ROUND          | 1.235 → scale=1                  | 1.2                   | Round to even                           |
-| 27    | ROUND          | 1.245 → scale=1                  | 1.2                   | Round to even (odd q)                   |
-| 28    | ROUND          | 1.255 → scale=1                  | 1.3                   | Round up                                |
-| 29    | ROUND          | -1.235 → scale=1                 | -1.2                  | Negative rounding                       |
-| 30    | ROUND          | -1.245 → scale=1                 | -1.2                  | Negative round to even                  |
-| 31    | ROUND          | -1.255 → scale=1                 | -1.3                  | Negative round up                       |
-| 32    | CANONICALIZE   | 1000 (scale=3)                   | {1, 0}                | Trailing zeros                          |
-| 33    | CANONICALIZE   | 0 (scale=5)                      | {0, 0}                | Zero                                    |
-| 34    | CANONICALIZE   | 100 (scale=2)                    | {1, 0}                | Single trailing                         |
-| 35    | CANONICALIZE   | 0.0 (mantissa=0, scale=2)        | {0, 0}                | Zero scale                              |
-| 36    | CMP            | 1.0 vs 2.0                       | Less                  | Comparison                              |
-| 37    | CMP            | 2.0 vs 1.0                       | Greater               | Comparison                              |
-| 38    | CMP            | 1.5 vs 1.5                       | Equal                 | Equal                                   |
-| 39    | CMP            | -1.0 vs 1.0                      | Less                  | Negative vs positive                    |
-| 40    | CMP            | 1.0 vs 1.00                      | Equal                 | Same value, different scale             |
-| 41    | CMP            | 0.1 vs 0.10                      | Equal                 | Trailing zeros                          |
-| 42    | SERIALIZE      | 1.5                              | [01 00 00 00 01 00...] | Canonical bytes                   |
-| 43    | DESERIALIZE    | [01 00 00 00 01 00...]          | 1.5                   | From bytes                              |
-| 44    | TO_DQA         | 1.5 (scale=1)                    | Dqa(15, 1)            | Scale ≤ 18                              |
-| 45    | TO_DQA         | 1.5 (scale=20)                   | TRAP                  | Scale > 18                              |
-| 46    | FROM_DQA       | Dqa(15, 1)                       | 1.5                   | DQA → DECIMAL                          |
-| 47    | FROM_DQA       | Dqa(0, 18)                       | 0.0                   | Max scale DQA                           |
-| 48    | ADD            | MAX (10^36-1, scale=0)           | 1.0                   | Overflow trap (fuzzing)                |
-| 49    | ADD            | -MAX                             | 1.0                   | Underflow trap (fuzzing)               |
-| 50    | MUL            | 10^18 (scale=0) × 10^19 (scale=0) | TRAP                | Mantissa overflow (10^37 > MAX) (fuzzing) |
-| 51    | DIV            | 1.0 ÷ 0.0                       | TRAP                  | Division by zero                       |
-| 52    | SQRT           | -1.0                             | TRAP                  | Negative sqrt                           |
-| 53    | ADD            | 0.999999999999 + 0.000000000001  | 0.000000000001 (scale=12) | 0.999999999999 + 0.000000000001 |
-| 54    | MUL            | 0.000000000001 (scale=12) × 1000 (scale=0) | 0.000001 (scale=6) | Scale precision            |
-| 55    | DIV            | 1.0 (scale=36) ÷ 3.0 (scale=0)  | 0.333... (scale=36) | Max scale division                     |
+| 25    | SQRT           | 1.0 (mantissa=1, scale=25)       | {3162277660168379331, scale=31} | High-scale split multiplication |
+| 26    | ROUND          | 1.234 → scale=1                  | 1.2                   | Round down                              |
+| 27    | ROUND          | 1.235 → scale=1                  | 1.2                   | Round to even                           |
+| 28    | ROUND          | 1.245 → scale=1                  | 1.2                   | Round to even (odd q)                   |
+| 29    | ROUND          | 1.255 → scale=1                  | 1.3                   | Round up                                |
+| 30    | ROUND          | -1.235 → scale=1                 | -1.2                  | Negative rounding                       |
+| 31    | ROUND          | -1.245 → scale=1                 | -1.2                  | Negative round to even                  |
+| 32    | ROUND          | -1.255 → scale=1                 | -1.3                  | Negative round up                       |
+| 33    | CANONICALIZE   | 1000 (scale=3)                   | {1, 0}                | Trailing zeros                          |
+| 34    | CANONICALIZE   | 0 (scale=5)                      | {0, 0}                | Zero                                    |
+| 35    | CANONICALIZE   | 100 (scale=2)                    | {1, 0}                | Single trailing                         |
+| 36    | CANONICALIZE   | 0.0 (mantissa=0, scale=2)        | {0, 0}                | Zero scale                              |
+| 37    | CMP            | 1.0 vs 2.0                       | Less                  | Comparison                              |
+| 38    | CMP            | 2.0 vs 1.0                       | Greater               | Comparison                              |
+| 39    | CMP            | 1.5 vs 1.5                       | Equal                 | Equal                                   |
+| 40    | CMP            | -1.0 vs 1.0                      | Less                  | Negative vs positive                    |
+| 41    | CMP            | 1.0 vs 1.00                      | Equal                 | Same value, different scale             |
+| 42    | CMP            | 0.1 vs 0.10                      | Equal                 | Trailing zeros                          |
+| 43    | SERIALIZE      | 1.5                              | [01 00 00 00 01 00...] | Canonical bytes                   |
+| 44    | DESERIALIZE    | [01 00 00 00 01 00...]          | 1.5                   | From bytes                              |
+| 45    | TO_DQA         | 1.5 (scale=1)                    | Dqa(15, 1)            | Scale ≤ 18                              |
+| 46    | TO_DQA         | 1.5 (scale=20)                   | TRAP                  | Scale > 18                              |
+| 47    | FROM_DQA       | Dqa(15, 1)                       | 1.5                   | DQA → DECIMAL                          |
+| 48    | FROM_DQA       | Dqa(0, 18)                       | 0.0                   | Max scale DQA                           |
+| 49    | ADD            | MAX (10^36-1, scale=0)           | 1.0                   | Overflow trap (fuzzing)                |
+| 50    | ADD            | -MAX                             | 1.0                   | Underflow trap (fuzzing)               |
+| 51    | MUL            | 10^18 (scale=0) × 10^19 (scale=0) | TRAP                | Mantissa overflow (10^37 > MAX) (fuzzing) |
+| 52    | DIV            | 1.0 ÷ 0.0                       | TRAP                  | Division by zero                       |
+| 53    | SQRT           | -1.0                             | TRAP                  | Negative sqrt                           |
+| 54    | ADD            | 0.999999999999 + 0.000000000001  | 0.000000000001 (scale=12) | 0.999999999999 + 0.000000000001 |
+| 55    | MUL            | 0.000000000001 (scale=12) × 1000 (scale=0) | 0.000001 (scale=6) | Scale precision            |
+| 56    | DIV            | 1.0 (scale=36) ÷ 3.0 (scale=0)  | 0.333... (scale=36) | Max scale division                     |
 
 ### Differential Fuzzing Requirement (FIX C6 - Use Reference Implementation)
 
@@ -1390,7 +1440,7 @@ The fuzz harness MUST verify:
 
 ```rust
 struct DecimalProbe {
-    entries: [[u8; 32]; 56],  // 56 entries × 32 bytes (SHA256 leaf hashes)
+    entries: [[u8; 32]; 57],  // 57 entries × 32 bytes (SHA256 leaf hashes)
 }
 
 fn decimal_probe_root(probe: &DecimalProbe) -> [u8; 32] {
@@ -1410,19 +1460,19 @@ fn decimal_probe_root(probe: &DecimalProbe) -> [u8; 32] {
 ```
 
 **Probe Merkle Root (REMAINING-3 Fix - C3 Fix):**
-> **Reference Merkle Root (80-byte format):** `4888369e4e6574793ea14aaf5da3f82a36e7051130da9ba76dcd9d8c04092f0a`
+> **Reference Merkle Root (80-byte format):** `08c274676c4b7b035335c0a9a33cdb46d5b6acb11d5cc80fb65f0a056933e940`
 >
-> This root is computed from all 56 probe entries using SHA256 Merkle tree construction (see Python reference: `scripts/compute_decimal_probe_root.py`).
+> This root is computed from all 57 probe entries using SHA256 Merkle tree construction (see Python reference: `scripts/compute_decimal_probe_root.py`).
 
 **Verification Instruction:**
 All implementations MUST verify the Merkle root by:
-1. Implementing all 56 probe entries per §Probe Entries table
+1. Implementing all 57 probe entries per §Probe Entries table
 2. For each entry, executing the operation to compute the result
 3. Encoding each entry as 80-byte raw data (8-byte op_id + 24-byte input_a + 24-byte input_b + 24-byte result)
 4. For TRAP entries, use sentinel encoding: {mantissa: 0x8000000000000000, scale: 0xFF}
 5. Computing SHA256 hash of each 80-byte entry → 32-byte leaf hash
-6. Building Merkle tree from 56 leaf hashes per §Merkle Hash algorithm
-7. Verifying root matches: `4888369e4e6574793ea14aaf5da3f82a36e7051130da9ba76dcd9d8c04092f0a`
+6. Building Merkle tree from 57 leaf hashes per §Merkle Hash algorithm
+7. Verifying root matches: `08c274676c4b7b035335c0a9a33cdb46d5b6acb11d5cc80fb65f0a056933e940`
 
 **Cross-Verification:**
 - Python: `python3 scripts/compute_decimal_probe_root.py` → outputs root above
@@ -1464,7 +1514,7 @@ The VM must invoke CANONICALIZE on every value returned by deserialize, dqa_to_d
 
 **Verification & Testing:**
 - [ ] Test vectors verified (40+ cases)
-- [ ] Verification probe (56 entries, 32-byte SHA256 leaf hashes)
+- [ ] Verification probe (57 entries, 32-byte SHA256 leaf hashes)
 - [ ] Differential fuzzing (100,000+ random inputs vs rust_decimal)
 - [x] Probe verification at node startup and every 100,000 blocks (REMAINING-8 fix)
 
@@ -1582,9 +1632,9 @@ All errors are fatal (TRAP) — no partial results or fallback behavior:
 | D1 | Medium | Newton-Raphson iteration limit (40) lacks formal convergence proof for extreme scales (10^36 magnitude) | Open |
 | D2 | Low | Gas model not validated against real-world benchmarks | Open |
 | HIGH-1 | High | Precision growth rule (+6 per operation) may break expected algebraic identities (e.g., (a×b)/b ≠ a in edge cases due to rounding) | Open |
-| MED-2 | Medium | SQRT probe gap: no probe entry tests SQRT that produces exact result requiring canonicalization | Open |
+| MED-2 | Medium | SQRT probe gap: no probe entry tests SQRT that produces perfect square with trailing zeros requiring canonicalization (e.g., √0.0400) | Open |
 | MED-3 | Medium | DQA↔DECIMAL round-trip conversion may have unbounded drift due to scale differences | Open |
-| MED-6 | Medium | Probe entry 47 tests max scale DQA but doesn't verify canonicalization behavior | Open |
+| MED-6 | Medium | Probe entry 48 tests max scale DQA but doesn't verify canonicalization behavior | Open |
 
 ## Alternatives Considered
 
@@ -1646,6 +1696,8 @@ All errors are fatal (TRAP) — no partial results or fallback behavior:
 | 1.8 | 2026-03-16 | TBD | SQRT convergence proof, DIV rounding semantics, probe sync, VM canonicalization, ZK note |
 | 1.9 | 2026-03-16 | TBD | Production hardening: range invariant, safe alignment, 256-bit mul, division precision, DQA conversion quantum |
 | 1.14 | 2026-03-17 | TBD | Fixed HIGH-1, HIGH-3, HIGH-4, MED-2, MED-3, MED-4, MED-6 from adversarial review |
+| 1.16 | 2026-03-17 | TBD | Fixed BUG-1 (MUL sign-aware rounding), BUG-2 (DIV unsafe cast), BUG-3 (BIGINT→DECIMAL), BUG-4 (probe 24b), BUG-5 (config hash), BUG-6 (SQRT off-by-one), BUG-7 (ROUND encoding) |
+| 1.17 | 2026-03-17 | TBD | Fixed Python SQRT (BUG-6 off-by-one), Python DIV (canonicalize), added config hash script, fixed probe 25 description, updated Known Issues |
 
 ## Compatibility
 

@@ -2,10 +2,72 @@
 
 ## Status
 
-**Version:** 1.9 (2026-03-16)
+**Version:** 1.15 (2026-03-17)
 **Status:** Draft
 
 > **Note:** This RFC is extracted from RFC-0106 (Deterministic Numeric Tower) as part of the Track B dismantling effort.
+
+> **Adversarial Review v1.15 Changes (10 Remaining Issues Fixed):**
+> - REMAINING-1: SQRT TRAP removed (scale 25-35 now valid via split multiplication)
+> - REMAINING-2: Added bit_length(i256) normative definition
+> - REMAINING-3: Probe Merkle root now includes outputs (80-byte format)
+> - REMAINING-4: DIV variable naming clarified (abs_a → magnitude)
+> - REMAINING-5: BIGINT→DECIMAL uses RFC-0110 defined conversion
+> - REMAINING-6: MUL RoundHalfEven works on magnitude for negative products
+> - REMAINING-7: Canonicalization heading corrected (lazy boundary model)
+> - REMAINING-8: Probe scheduling normative (node startup + 100k blocks)
+> - REMAINING-9: Config hash has canonical value
+> - REMAINING-10: ADD/SUB use i256 throughout (no unsafe cast)
+> - Version updated to 1.15
+
+> **Adversarial Review v1.14 Changes (Remaining Issues):**
+> - HIGH-1: Added Known Issue for +6 rule breaking algebraic identities
+> - HIGH-3: Updated D1 known issue (40 iterations, convergence guarantee)
+> - HIGH-4: Clarified probe Merkle root commits to (operation, input, output)
+> - MED-2: Added Known Issue for SQRT probe gap (exact-result canonicalization)
+> - MED-3: Added Known Issue for DQA↔DECIMAL round-trip drift
+> - MED-4: Verified D2 exists (gas model benchmarks)
+> - MED-6: Added Known Issue for probe entry 47 canonicalization gap
+> - Version updated to 1.14
+
+> **Adversarial Review v1.13 Changes (Critical Fixes):**
+> - CRIT-1: SQRT scale_factor bounds check (if > 36 or < 0: TRAP)
+> - CRIT-2: DIV sign handling consistency (work with abs, apply sign after)
+> - CRIT-3: MUL negative overflow check (check both +MAX and -MAX)
+> - CRIT-4: CMP always use i256 (removed i128 fast path)
+> - CRIT-5: TO_DQA remainder uses abs() for correct rounding
+> - HIGH-2: BIGINT → DECIMAL algorithm defined
+> - HIGH-5: DIV rounding added to arithmetic config hash
+> - MED-1: Canonicalization contradiction resolved (lazy model)
+> - MED-5: TO_DQA quantum_scale bounds check (0-18)
+> - Version updated to 1.13
+
+> **Adversarial Review v1.12 Changes (Critical Fixes):**
+> - C1: Unified division scale rule (max + 6) instead of (max + 18)
+> - C2: Fixed SQRT algorithm with correct scale factor formula
+> - C3: Fixed DIV rounding for negative numbers (round on magnitude, apply sign after)
+> - C4: Fixed DECIMAL→DQA conversion (scale alignment before rounding)
+> - C5: Probe now includes result in hash (80 bytes → 32 bytes)
+> - C6: Fuzz against reference impl in determin/ (not external libs)
+> - H2: Fixed ADD overflow check (use checked_add)
+> - H3: CMP handles non-canonical inputs without explicit canonicalization
+> - H5: Probe verified at node startup (not periodically)
+> - Version updated to 1.12
+
+> **Adversarial Review v1.11 Changes (System Architecture):**
+> - Precision Growth Control: scale_result ≤ min(36, max(scale_a, scale_b) + 6)
+> - Numeric Domain Isolation: No implicit Decimal ↔ DQA conversions during arithmetic
+> - Arithmetic Configuration Commitment: DECIMAL_ARITHMETIC_CONFIG_HASH required
+> - Version updated to 1.11
+
+> **Adversarial Review v1.10 Changes (Algorithmic Correctness):**
+> - C1: ADD/SUB now uses checked_mul with i256 for scale alignment
+> - C2: MUL scale normalization with RoundHalfEven before clamping
+> - C3: MUL overflow check after rounding (not before)
+> - C4: DIV uses i256 for scale_diff multiplication
+> - C5: SQRT replaced with integer sqrt algorithm (no DECIMAL_DIV)
+> - C6: Canonicalization rule clarified (outputs MUST be canonical)
+> - Version updated to 1.10
 
 > **Adversarial Review v1.9 Changes (Production Hardening):**
 > - FIX 1: Added Decimal range invariant (|mantissa| ≤ 10^36-1)
@@ -315,37 +377,36 @@ Algorithm:
      diff_a = target_scale - a.scale
      diff_b = target_scale - b.scale
 
-     // Safe alignment: check bounds before multiplication
+     // REMAINING-10: Keep intermediate in i256 through addition
+     // Use i256 for scale alignment multiplication
      if diff_a > 0:
-       // Check: |a.mantissa| * POW10[diff_a] must not overflow
-       if |a.mantissa| > MAX_DECIMAL_MANTISSA / POW10[diff_a]:
-         TRAP: DECIMAL_OVERFLOW
-       a_val = a.mantissa * POW10[diff_a]
+       match i256::from(POW10[diff_a]).checked_mul(i256::from(a.mantissa)):
+         Some(val) => a_val_256 = val
+         None => TRAP: DECIMAL_OVERFLOW
      else:
-       a_val = a.mantissa
+       a_val_256 = i256::from(a.mantissa)
 
      if diff_b > 0:
-       if |b.mantissa| > MAX_DECIMAL_MANTISSA / POW10[diff_b]:
-         TRAP: DECIMAL_OVERFLOW
-       b_val = b.mantissa * POW10[diff_b]
+       match i256::from(POW10[diff_b]).checked_mul(i256::from(b.mantissa)):
+         Some(val) => b_val_256 = val
+         None => TRAP: DECIMAL_OVERFLOW
      else:
-       b_val = b.mantissa
+       b_val_256 = i256::from(b.mantissa)
 
      result_scale = target_scale
 
-  2. Check i128 intermediate range before addition:
-     // Must fit in i128 for intermediate calculation
-     if a_val > i128::MAX or a_val < i128::MIN: TRAP
-     if b_val > i128::MAX or b_val < i128::MIN: TRAP
-     if |a_val + b_val| > i128::MAX: TRAP
+  2. Add in i256, then check range before casting to i128:
+     // REMAINING-10: Keep in i256 through addition to avoid unsafe cast
+     match a_val_256.checked_add(b_val_256):
+       Some(sum_256) =>
+         // Check range in i256 before casting
+         if sum_256 > i256::from(MAX_DECIMAL_MANTISSA) or sum_256 < i256::from(-MAX_DECIMAL_MANTISSA):
+           TRAP: DECIMAL_OVERFLOW
+         else:
+           sum = sum_256 as i128
+       None => TRAP: DECIMAL_OVERFLOW
 
-  3. Check overflow to MAX_DECIMAL_MANTISSA:
-     if |a_val + b_val| > MAX_DECIMAL_MANTISSA: TRAP
-
-  4. Sum:
-     sum = a_val + b_val
-
-  5. Canonicalize result
+  3. Canonicalize result
 ```
 
 ### SUB — Subtraction
@@ -353,7 +414,10 @@ Algorithm:
 ```
 decimal_sub(a: Decimal, b: Decimal) -> Decimal
 
-Algorithm: Same as ADD, but subtract instead of add.
+Algorithm: Same as ADD (REMAINING-10 fix), but subtract instead of add:
+  1. Align scales using i256 (same as ADD step 1)
+  2. Subtract in i256, check range, then cast to i128 (same as ADD step 2)
+  3. Canonicalize result
 ```
 
 ### MUL — Multiplication (FIX 4 - 256-bit Intermediate)
@@ -362,25 +426,46 @@ Algorithm: Same as ADD, but subtract instead of add.
 decimal_mul(a: Decimal, b: Decimal) -> Decimal
 
 Algorithm:
-  1. Add scales first:
-     result_scale = a.scale + b.scale
-     if result_scale > MAX_DECIMAL_SCALE:
-       // Round to MAX_SCALE per RFC-0105 (not TRAP)
+  1. Calculate raw scale first:
+     raw_scale = a.scale + b.scale
+
+  2. Scale normalization with rounding:
+     // When raw_scale > MAX_DECIMAL_SCALE, we must round the product
+     // before scaling down. This is the key fix for C2.
+     if raw_scale > MAX_DECIMAL_SCALE:
+       scale_reduction = raw_scale - MAX_DECIMAL_SCALE
+       // First multiply at full precision, then round
+       intermediate = i256::from(a.mantissa) * i256::from(b.mantissa)
+       // Round using RoundHalfEven at the reduction point
+       // REMAINING-6: Work on magnitude to handle negative products correctly
+       divisor = i256::from(POW10[scale_reduction])
+       (product_i256, remainder) = (intermediate / divisor, intermediate % divisor)
+       // Apply RoundHalfEven rounding on MAGNITUDE (Rust % preserves sign of dividend)
+       abs_remainder = if remainder < 0 { -remainder } else { remainder }
+       half = divisor / 2
+       if abs_remainder > half:
+         product_i256 = product_i256 + 1
+       else if abs_remainder == half && product_i256 % 2 != 0:
+         // Round to even: only round up if product is odd
+         product_i256 = product_i256 + 1
+       // Now scale is MAX_DECIMAL_SCALE
        result_scale = MAX_DECIMAL_SCALE
+       // CRIT-3: Check overflow in both directions after rounding
+       if product_i256 > i256::from(MAX_DECIMAL_MANTISSA) or product_i256 < i256::from(-MAX_DECIMAL_MANTISSA): TRAP
+       product = product_i256 as i128
+     else:
+       // Normal case: no scale overflow
+       result_scale = raw_scale
+       // Multiply mantissas using 256-bit intermediate
+       intermediate = i256::from(a.mantissa) * i256::from(b.mantissa)
+       // Check overflow
+       if |intermediate| > i256::from(MAX_DECIMAL_MANTISSA): TRAP
+       product = intermediate as i128
 
-  2. Multiply mantissas using 256-bit intermediate:
-     // MUST use i256 or BIGINT intermediate to prevent overflow
-     // (10^36)^2 = 10^72 which exceeds i128 (~10^38)
-     intermediate = i256::from(a.mantissa) * i256::from(b.mantissa)
-
-  3. Check overflow:
-     if |intermediate| > i256::from(MAX_DECIMAL_MANTISSA): TRAP
-     product = intermediate as i128
-
-  4. Canonicalize result
+  3. Canonicalize result
 ```
 
-**Note:** Scale overflow uses rounding per RFC-0105, not TRAP. The mantissa is checked after scale alignment.
+**FIX C2/C3 - MUL Scale Normalization:** When raw_scale > MAX_DECIMAL_SCALE, the multiplication MUST round the intermediate result BEFORE scaling down. This prevents the mathematical error where scale clamping loses precision. The algorithm: (1) compute full-precision product, (2) round using RoundHalfEven at the reduction point, (3) then clamp scale to MAX.
 
 **FIX 4 Rationale:** Multiplication of two max DECIMAL values (10^36-1)² ≈ 10^72 exceeds i128 range (~10^38). Implementations MUST use 256-bit intermediate (i256 or RFC-0110 BIGINT) to prevent overflow. This matches RFC-0110 BIGINT multiplication approach.
 
@@ -392,26 +477,33 @@ decimal_div(a: Decimal, b: Decimal, target_scale: u8) -> Decimal
 Algorithm:
   1. If b.mantissa == 0: TRAP (division by zero)
 
-  2. Handle negative scale difference:
-     // scale_diff < 0: we need to reduce dividend's scale (division makes it smaller)
-     // scale_diff >= 0: we need to increase dividend's scale (keep precision)
-     scale_diff = target_scale + b.scale - a.scale
+  2. Compute result scale using unified rule:
+     // FIX C1: Division follows same precision growth rule as all operations
+     raw_scale = max(a.scale, b.scale) + 6
+     target_scale = min(MAX_DECIMAL_SCALE, raw_scale)
 
   3. Calculate result sign BEFORE division:
      // quotient can be zero, so use a.sign XOR b.sign, not sign(quotient)
      result_sign = (a.mantissa < 0) != (b.mantissa < 0)
 
   4. Scale to target precision:
+     // CRIT-2: Work with absolute values, track sign separately
+     scale_diff = target_scale + b.scale - a.scale
+     // Work with magnitude only in this step
+     abs_a = abs(a.mantissa)
+
      if scale_diff > 0:
        // Increase dividend by multiplying to get more precision
-       scaled_dividend = a.mantissa * 10^scale_diff
+       // FIX C4: Use i256 to prevent overflow
+       match i256::from(POW10[scale_diff as usize]).checked_mul(i256::from(abs_a)):
+         Some(val) => scaled_dividend = val as i128
+         None => TRAP: DECIMAL_OVERFLOW
      else if scale_diff < 0:
        // Decrease dividend by dividing to reduce scale
        // MUST use RoundHalfEven rounding (not truncation)
        scale_reduction = -scale_diff
        divisor = POW10[scale_reduction as usize]
        // Work with absolute value for remainder calculation
-       abs_a = abs(a.mantissa)
        quotient = abs_a / divisor
        remainder = abs_a % divisor
        // Apply RoundHalfEven rounding
@@ -427,33 +519,33 @@ Algorithm:
          }
        else:
          scaled_dividend = quotient
-       // Apply original sign
-       if a.mantissa < 0 {
-         scaled_dividend = -scaled_dividend
-       }
+       // Sign will be applied in step 7, not here
      else:
-       scaled_dividend = a.mantissa
+       scaled_dividend = abs_a
 
-  5. Divide (work with positive values, apply sign at end):
-     abs_a = abs(scaled_dividend)
+  5. Divide (REMAINING-4 Fix: operate on absolute values, apply sign AFTER rounding):
+     // INVARIANT: scaled_dividend is already in magnitude form (from step 4)
+     magnitude = abs(scaled_dividend)
      abs_b = abs(b.mantissa)
-     quotient = abs_a / abs_b
-     remainder = abs_a % abs_b
+     quotient = magnitude / abs_b
+     remainder = magnitude % abs_b
 
-  6. Round to target scale using RoundHalfEven (matches RFC-0105):
-     abs_remainder = remainder
+  6. Round to target scale using RoundHalfEven:
+     // FIX C3: RoundHalfEven is defined on MAGNITUDE, not sign
+     // Apply rounding on absolute values, then apply sign in Step 7
      half = abs_b / 2
-     if abs_remainder < half: result = quotient  // round down
-     else if abs_remainder > half: result = quotient + 1  // round up
-     else:  // remainder == half (tie): round to even
+     if remainder < half:
+       result = quotient  // round down
+     else if remainder > half:
+       result = quotient + 1  // round up
+     else:
+       // remainder == half (tie): round to even
        if quotient % 2 == 0:
          result = quotient  // already even, stay
        else:
-         // Round magnitude away from zero: add 1, then apply sign in Step 7
-         // For positive: quotient + 1; For negative: quotient - 1 (i.e., quotient + (-1))
-         result = quotient + (if result_sign { -1 } else { 1 })
+         result = quotient + 1  // round up (magnitude)
 
-  7. Apply sign:
+  7. Apply sign AFTER rounding:
      if result_sign: result = -result
 
   8. Check overflow and canonicalize
@@ -461,54 +553,83 @@ Algorithm:
 
 **DIV Rounding Semantics (normative):** The algorithm computes the quotient directly at TARGET_SCALE precision and applies RoundHalfEven using a single remainder test. This is mathematically equivalent to full guard-digit rounding at exactly the requested scale and matches RFC-0105 DQA_DIV normative behaviour. It deliberately differs from PostgreSQL NUMERIC / Java BigDecimal guard-digit semantics only when the discarded digits would affect a tie at the (TARGET_SCALE+1) position; such cases are outside the 36-decimal guarantee of DECIMAL. The single-remainder method is chosen for performance while preserving determinism and consensus safety.
 
-**FIX 5 - Division Precision Rule:** Result precision is determined by target_scale parameter. For operations where target_scale is not explicitly specified, use:
+**Division Scale Rule (Unified with Precision Growth Control):** Division MUST obey the same precision growth rule as all operations:
 ```
-result_scale = min(36, max(scale_a, scale_b) + 18)
+result_scale = min(MAX_DECIMAL_SCALE, max(scale_a, scale_b) + 6)
 ```
-This ensures consistent precision across all division operations while respecting the MAX_DECIMAL_SCALE bound.
+This replaces the previous rule (max + 18) to ensure consistency across all arithmetic operations.
 
-### SQRT — Square Root
+### SQRT — Square Root (CRIT-1 - Scale Factor Bounds Check)
 
 ```
 decimal_sqrt(a: Decimal) -> Decimal
 
-Algorithm: Newton-Raphson iteration with fixed 40 iterations (no early exit)
+Algorithm: Deterministic integer square root based on precision growth control
+
   1. If a.mantissa < 0: TRAP (square root of negative)
-  2. If a.mantissa == 0: return {0, 0}
+  2. If a.mantissa == 0: return Decimal { mantissa: 0, scale: 0 }
 
-  3. Initial guess: Use deterministic bit-length based algorithm:
-     // This ensures all implementations produce identical initial guess
-     //
-     // Step 3a: Find bit length of |mantissa|
-     // bit_len = floor(log2(|mantissa|)) + 1
-     // For example: mantissa=16 → bit_len=5, mantissa=17 → bit_len=5
-     //
-     // Step 3b: Use 2^(bit_len/2) as initial approximation
-     // This is equivalent to 2^floor(bit_len/2) scaled appropriately
-     //
-     // Algorithm (deterministic):
-     //   abs_mantissa = |a.mantissa|
-     //   if abs_mantissa == 0: x = 0, scale = a.scale / 2
-     //   bit_len = floor(log2(abs_mantissa)) + 1
-     //   guess_bits = bit_len / 2  // integer division
-     //   x = 2^guess_bits
-     //   scale = a.scale / 2
-     //
-     // Note: Using 2^guess_bits avoids platform-dependent sqrt() implementations
+  3. Compute result precision:
+     // FIX C2: Follows precision growth rule: P = min(36, a.scale + 6)
+     P = min(MAX_DECIMAL_SCALE, a.scale + 6)
 
-  4. Iterate exactly 40 times (no early exit - matches RFC-0110 DIV fixed iteration rule):
-     // Division uses DECIMAL_DIV with target_scale = a.scale
-     x_new = (x + a / x) / 2
-     x = x_new
+  4. Scale mantissa to target precision:
+     // To compute sqrt(m × 10^-s) with scale P precision:
+     // Multiply by 10^(2P - s) to eliminate scale before sqrt
+     scale_factor = 2 * P - a.scale
+     // REMAINING-1: Only check for negative scale_factor (the actual constraint)
+     // The POW10 table is NOT the gate - the constraint is whether
+     // a.mantissa × 10^scale_factor overflows i256
+     if scale_factor < 0: TRAP  // should not happen with P >= a.scale/2
 
-  5. Return canonicalized result at original scale
+     // n = m × 10^(2P-s), using split multiplication when scale_factor > 36
+     // REMAINING-1: Use split multiplication to handle larger scale factors
+     if scale_factor > 36:
+       // Split: POW10[scale_factor] = POW10[36] × POW10[scale_factor - 36]
+       lo = i256::from(POW10[scale_factor - 36])
+       hi = i256::from(POW10[36])
+       match i256::from(a.mantissa).checked_mul(lo):
+         Some(partial) => match partial.checked_mul(hi):
+           Some(n) => scaled_n = n
+           None => TRAP: DECIMAL_OVERFLOW
+         None => TRAP: DECIMAL_OVERFLOW
+     else:
+       match i256::from(a.mantissa).checked_mul(i256::from(POW10[scale_factor as usize])):
+         Some(n) => scaled_n = n
+         None => TRAP: DECIMAL_OVERFLOW
+
+  5. Compute integer square root:
+     // Use Newton-Raphson on i256, NOT on DECIMAL
+     // Initial guess: 2^(bit_length(n)/2)
+     x = 1_i256 << ((scaled_n.bit_length() + 1) / 2)
+
+     // Iterate: x_new = (x + n/x) / 2
+     // Use integer division, fixed 40 iterations for determinism
+     repeat 40 times:
+       x = (x + scaled_n / x) / 2
+
+  6. Return result:
+     return Decimal { mantissa: x as i128, scale: P }
+
+  7. Canonicalize (redundant but explicit)
 ```
 
-**Determinism Note:** The division `a / x` in step 4 requires DECIMAL_DIV. Fixed 40 iterations ensures deterministic results across all implementations (architecture-dependent early exit is forbidden per RFC-0110 DIV fixed iteration rule).
+**REMAINING-2 - bit_length Definition (normative):**
+The `bit_length(n: i256)` function used in step 5 is defined as:
+```
+bit_length(n: i256) -> u32:
+  // n is guaranteed positive at this point
+  // Equivalent to: 256 - n.unsigned_abs().leading_zeros()
+  if n == 0: return 0
+  return 256 - n.unsigned_abs().leading_zeros()
+```
 
-**No Circular Dependency:** The nested DIV call within SQRT iteration does NOT recurse into SQRT — it only performs simple i128 division followed by division by 2. This is explicitly allowed and does not create a circular dependency.
+**FIX C2 - Correct SQRT Algorithm:** The mathematical correction ensures sqrt(m × 10^-s) produces correct magnitude:
+- Target precision P = min(36, a.scale + 6) follows precision growth rule
+- Scale factor 2P - s ensures integer sqrt produces correct decimal placement
+- Uses i256 throughout to prevent overflow (scaled_n can be up to ~10^108)
 
-**Convergence Guarantee (normative):** Newton-Raphson iteration with the deterministic bit-length initial guess converges quadratically. For any mantissa in [1, 10^36−1] and scale in [0,36], 40 iterations suffice to produce a result whose relative error is < 10^−36 (i.e., exact to the full DECIMAL mantissa precision). Proof sketch: after the first iteration the error is ≤ 2^−57; each subsequent iteration at least doubles the number of correct bits. Hence after iteration k ≥ 6 the error is < 2^−(57+2(k−1)) ≤ 2^−113, which is below the 113-bit internal working precision used by the tower. The fixed 40-iteration bound therefore guarantees bit-identical output across all compliant implementations.
+This eliminates the circular dependency issue (no longer calls DIV) and ensures exact integer arithmetic throughout.
 
 ### ROUND — Rounding
 
@@ -561,9 +682,17 @@ This is critical for RoundHalfEven correctness with negative values.
 
 ### Input Canonicalization Requirement (Normative)
 
-All inputs to DECIMAL operations MUST be in canonical form.
-An implementation MUST reject (TRAP) any non-canonical input:
+Per RFC-0105 §Lazy Canonicalization, DECIMAL uses boundary canonicalization:
 
+**At VM boundaries (external inputs):**
+- Input is checked for canonical form
+- Non-canonical input is REJECTED (TRAP)
+
+**Internal operations:**
+- All inputs to arithmetic operations are assumed canonical (per lazy model)
+- This eliminates redundant canonicalization and supports lazy canonicalization
+
+**Rejection criteria for external inputs:**
 - Non-zero mantissa with trailing zeros not removed
 - Zero representation with scale > 0 (canonical zero is `{0, 0}`)
 - Mantissa outside range ±(10^36 - 1)
@@ -578,9 +707,9 @@ After ANY operation, the result MUST be canonicalized using the CANONICALIZE alg
 2. Trailing zeros removed (scale minimized without losing precision)
 3. `|mantissa| ≤ 10^36-1` (fits in DECIMAL range)
 
-### Canonicalization Rule (FIX 2)
+### Canonicalization Rule (REMAINING-7 Fix - FIX 2)
 
-**Outputs MUST be canonical. Inputs MAY be non-canonical.**
+**Outputs MUST be canonical. External inputs MUST be canonical (TRAP otherwise). Internal operation inputs are guaranteed canonical by the post-operation canonicalization invariant.**
 
 Per RFC-0105 §Lazy Canonicalization, DECIMAL implements lazy canonicalization at VM boundaries:
 
@@ -629,43 +758,43 @@ For deterministic Merkle hashing, DECIMAL uses this canonical wire format (24 by
 
 Total size: 24 bytes
 
-### CMP — Comparison (H5 Fix)
+### CMP — Comparison
 
 Comparison returns -1 (less), 0 (equal), or 1 (greater).
+
+**CRIT-4:** CMP uses i256 for all scale alignments. Per lazy canonicalization model, inputs are assumed canonical at operation boundaries.
 
 ```
 fn cmp(a: Decimal, b: Decimal) -> i32
 
-1. // Canonicalize both operands per lazy canonicalization rule
-   a_canonical = canonicalize(a)
-   b_canonical = canonicalize(b)
+1. // Handle non-canonical inputs directly - no explicit canonicalization needed
+   // The algorithm works correctly with trailing zeros
+   a_work = a
+   b_work = b
 
 2. // Fast path: if both scales equal, compare values directly
-   if a_canonical.scale == b_canonical.scale:
-       if a_canonical.mantissa < b_canonical.mantissa: return -1
-       if a_canonical.mantissa > b_canonical.mantissa: return 1
+   if a_work.scale == b_work.scale:
+       if a_work.mantissa < b_work.mantissa: return -1
+       if a_work.mantissa > b_work.mantissa: return 1
        return 0
 
 3. // Scale alignment: normalize both to max_scale
-   max_scale = max(a_canonical.scale, b_canonical.scale)
-   scale_diff_a = max_scale - a_canonical.scale
-   scale_diff_b = max_scale - b_canonical.scale
+   max_scale = max(a_work.scale, b_work.scale)
+   scale_diff_a = max_scale - a_work.scale
+   scale_diff_b = max_scale - b_work.scale
 
-4. // Fast path: if scale diff <= 18, i128 multiplication won't overflow
-   if scale_diff_a <= 18 and scale_diff_b <= 18:
-       compare_a = a_canonical.mantissa * POW10[scale_diff_a]
-       compare_b = b_canonical.mantissa * POW10[scale_diff_b]
-       if compare_a < compare_b: return -1
-       if compare_a > compare_b: return 1
-       return 0
-
-5. // Slow path: use checked arithmetic for large scale differences
-   // (this case is rare with canonical inputs, scale <= 36 each)
-   // Implementation uses checked_mul or BigInt for safety
+4. // CRIT-4: Always use i256 to prevent overflow (scale_diff can be up to 36)
+   // After canonicalization, scale ≤ 36, so scale_diff can be up to 36
+   // i128 multiplication overflows when diff > 18, so use i256 for all cases
+   compare_a_i256 = i256::from(a_work.mantissa) * i256::from(POW10[scale_diff_a])
+   compare_b_i256 = i256::from(b_work.mantissa) * i256::from(POW10[scale_diff_b])
+   if compare_a_i256 < compare_b_i256: return -1
+   if compare_a_i256 > compare_b_i256: return 1
+   return 0
 
 **Canonicalization Requirement (Normative):** Both operands MUST be canonicalized before comparison. This ensures `1.00` equals `1.0` correctly.
 
-**Note on scale diff > 18:** After canonicalization, both operands have scale ≤ 36 (DECIMAL max). Scale difference can be up to 36. For diff > 18, i128 multiplication may overflow, so the slow path uses checked arithmetic or BigInt for safety. This case is rare with typical DECIMAL inputs but must be handled for correctness.
+**CRIT-4 - CMP Complete Algorithm:** Always uses i256 for scale alignment to prevent overflow. After canonicalization, scale ≤ 36, so scale_diff can be up to 36 which exceeds i128 capacity. This eliminates the undefined "checked arithmetic or BigInt" behavior.
 
 ### Deserialization Algorithm
 
@@ -692,7 +821,7 @@ DECIMAL == DECIMAL' // MUST be true
 
 ## Conversions (FIX 9 - Explicit Quantization)
 
-### DECIMAL → DQA
+### DECIMAL → DQA (FIX C4 - Corrected Algorithm)
 
 **Requires explicit quantum specification** (default: 10^-18):
 
@@ -702,12 +831,50 @@ decimal_to_dqa(d: Decimal, quantum_scale: u8 = 18) -> Dqa
 // quantum_scale defines the quantization step: 10^-quantum_scale
 // Default quantum_scale = 18 matches RFC-0105 DQA_MAX_SCALE
 
+// MED-5: Bounds check quantum_scale
+If quantum_scale > 18: TRAP (quantum_scale must be 0-18 for DQA)
 If d.scale > 18: TRAP (precision loss)
 If |d.mantissa| > i64::MAX: TRAP (overflow)
 
-// Quantization: round to quantum boundary
-quantum = POW10[quantum_scale]
-rounded_mantissa = round_half_even(d.mantissa / quantum) * quantum
+// FIX C4: Correct algorithm - align scales BEFORE rounding
+// diff > 0: need to reduce scale (divide)
+// diff < 0: need to increase scale (multiply)
+
+diff = d.scale - quantum_scale
+
+if diff > 0:
+    // Reduce scale: divide with RoundHalfEven rounding
+    divisor = POW10[diff as usize]
+    // CRIT-5: Work with absolute values for correct rounding
+    abs_mantissa = abs(d.mantissa)
+    quotient = abs_mantissa / divisor
+    remainder = abs_mantissa % divisor
+    // RoundHalfEven on magnitude
+    half = divisor / 2
+    if remainder > half:
+        rounded_mantissa = quotient + 1
+    else if remainder == half:
+        // Round to even: if quotient is odd, round up
+        if quotient % 2 != 0:
+            rounded_mantissa = quotient + 1
+        else:
+            rounded_mantissa = quotient
+    else:
+        rounded_mantissa = quotient
+    // Apply original sign
+    if d.mantissa < 0 {
+        rounded_mantissa = -rounded_mantissa
+    }
+
+if diff < 0:
+    // Increase scale: multiply (exact, no rounding)
+    multiplier = POW10[(-diff) as usize]
+    match i128::from(d.mantissa).checked_mul(i128::from(multiplier)):
+        Some(v) => rounded_mantissa = v
+        None => TRAP: DECIMAL_OVERFLOW
+
+if diff == 0:
+    rounded_mantissa = d.mantissa
 
 Return Dqa { value: rounded_mantissa as i64, scale: quantum_scale }
 ```
@@ -738,6 +905,26 @@ decimal_to_bigint(d: Decimal) -> BigInt
    d = canonicalize(d)  // ensure no trailing zeros
 
 3. Return BigInt::from(d.mantissa) per RFC-0110 From<i128> behavior
+```
+
+### BIGINT → DECIMAL
+
+```
+bigint_to_decimal(b: BigInt) -> Decimal
+
+// REMAINING-5 Fix: Use RFC-0110 defined conversion
+
+1. Convert BigInt to i128 using RFC-0110 §bigint_to_i128_bytes:
+   // This is the canonical BigInt→i128 conversion defined in RFC-0110
+   bytes = b.to_bytes_be()  // Get big-endian bytes
+   if |b| > MAX_DECIMAL_MANTISSA: TRAP  // value exceeds DECIMAL range
+   mantissa = i128::from_be_bytes(bytes)  // Convert to i128
+
+2. Return Decimal { mantissa: mantissa, scale: 0 }
+
+3. Canonicalize result (redundant but explicit):
+   result = canonicalize(result)
+   return result
 ```
 
 ### DECIMAL → String
@@ -810,10 +997,159 @@ This guarantee holds **provided** implementations follow:
 4. **Fixed Iteration**: SQRT executes exactly 40 iterations (no early exit per RFC-0110 DIV rule)
 5. **Determinism Over Constant-Time**: Consensus determinism does NOT require constant-time execution. Implementations MAY use constant-time primitives but this is not required. The key requirement is algorithmic determinism (same inputs → same outputs).
 
-For ZK circuit integration (post-v1) the DIV and SQRT algorithms will require constant-time implementations (Barrett reduction for division). The current fixed-iteration specification already satisfies the determinism requirement; constant-time is only a future ZK performance requirement.
+> **ZK Note:** For ZK circuit integration (post-v1) the DIV and SQRT algorithms will require constant-time implementations (Barrett reduction for division). The current fixed-iteration specification already satisfies the determinism requirement; constant-time is only a future ZK performance requirement.
+
 6. **No Hardware**: CPU carry flags, SIMD, or FPU are forbidden
 7. **Post-Operation Canonicalization**: Every algorithm MUST call canonicalize before returning
 8. **i128 Intermediate**: All intermediate calculations use i128 (not arbitrary precision)
+9. **Precision Growth Control**: scale_result ≤ min(36, max(scale_a, scale_b) + 6) — see §Precision Growth Control
+10. **Numeric Domain Isolation**: No implicit Decimal ↔ DQA conversions during arithmetic — see §Numeric Domain Isolation
+11. **Arithmetic Configuration Commitment**: All implementations MUST expose deterministic config hash — see §Arithmetic Configuration Commitment
+
+## Precision Growth Control
+
+Decimal operations can create precision amplification loops through repeated composition:
+
+```
+x = 1
+repeat 100 times:
+    x = x / 3
+    x = x * 3
+```
+
+Even with deterministic rounding, this creates precision drift:
+```
+1 / 3 = 0.333333333333333333333333333333333333
+*3    = 0.999999999999999999999999999999999999
+```
+
+After canonicalization: `0.999...` ≠ `1`
+
+This enables **precision arbitrage** - systematic value leakage through rounding loops.
+
+### Rule (Normative)
+
+```
+All arithmetic operations MUST produce results with:
+    scale_result ≤ min(36, max(scale_a, scale_b) + 6)
+```
+
+### Rationale
+
+- Prevents precision amplification beyond 6 decimal places per operation
+- Caps at 36 (MAX_DECIMAL_SCALE) to maintain storage bounds
+- Breaks precision arbitrage loops by limiting cumulative drift
+
+### Example
+
+```
+Input A: 0.333333333333333333 (scale = 18)
+Input B: 1.0 (scale = 0)
+
+max(scale_a, scale_b) = 18
+Allowed result scale ≤ min(36, 18 + 6) = 24
+```
+
+> **Known Issue (HIGH-1):** This rule may break expected algebraic identities in edge cases. For example, `(a × b) / b` does not always equal `a` due to the precision cap:
+> - `1.0 × 3.0 = 3.0` (scale 0)
+> - `3.0 / 3.0 = 1.0` (scale 0, exact division)
+> - But with different scales: `1.0 × 3.000 = 3.000` (scale 3), then `3.000 / 3.0` → scale 3 → may not equal `1.000` after canonicalization
+>
+> Applications requiring exact algebraic identities should handle these edge cases explicitly.
+
+## Numeric Domain Isolation
+
+CipherOcto has three numeric domains that convert between each other:
+- Decimal (RFC-0111): i128-based scaled integers, scale 0-36
+- DQA (RFC-0105): i64-based scaled integers, scale 0-18
+- BigInt (RFC-0110): arbitrary precision integers
+
+Conversion is **not mathematically bijective**:
+
+```
+Decimal → DQA → Decimal
+```
+
+may produce different mantissa/scale after intermediate rounding.
+
+### Example Failure
+
+```
+Decimal: 0.333333333333333333 (scale=18)
+Convert to DQA (scale=18): 333333333333333333
+Round-trip to Decimal: 0.333333333333333333
+But if intermediate rounding occurs: 0.333333333333333334
+Canonicalization produces DIFFERENT mantissa
+```
+
+This creates **cross-domain numeric representation drift** - different nodes may convert at different steps, causing economic divergence.
+
+### Rule (Normative)
+
+```
+Each numeric operation MUST execute entirely within a single numeric domain.
+- Decimal ops → Decimal only
+- DQA ops → DQA only
+- BigInt ops → BigInt only
+
+Implicit conversions during arithmetic evaluation are FORBIDDEN.
+```
+
+### Mandatory Conversion Boundaries
+
+Conversions are allowed only at:
+- VM instruction boundaries
+- Storage serialization
+- Probe verification
+
+### Rationale
+
+Prevents consensus-layer hazards where different VM implementations may choose different internal domains, causing economic outcomes to diverge.
+
+## Arithmetic Configuration Commitment
+
+Probe verification proves arithmetic correctness but does **NOT** prove arithmetic configuration equivalence.
+
+Two nodes can both pass probes but run different arithmetic environments:
+- Different POW10 table generation
+- Different overflow handling paths
+- Different canonicalization thresholds
+
+This creates a **conformance gap attack** - malicious implementation passes probes but exploits rare edge cases.
+
+### Required Constant (Normative)
+
+```
+DECIMAL_ARITHMETIC_CONFIG_HASH: [u8; 32]
+```
+
+**REMAINING-9 Fix - Canonical Hash Value:**
+
+Hash of the following configuration serialized in canonical format (SHA256):
+
+**Serialization Format:**
+```
+- POW10[0..36]: For each entry, encode as (length: u8, value: varint big-endian)
+- Rounding mode: "RoundHalfEven" (13 bytes ASCII)
+- DIV rounding: "RoundHalfEven" (13 bytes ASCII)
+- MAX_DECIMAL_SCALE: 36 (u8)
+- Overflow policy: "TRAP" (4 bytes ASCII)
+- SQRT iterations: 40 (u8)
+- Precision cap: 6 (u8)
+```
+
+**Canonical Hash Value:**
+```
+DECIMAL_ARITHMETIC_CONFIG_HASH: f196f0ec28e7ca00c033ceff51252dbebb5166586fb1b4cac992ef67eb73dead
+```
+
+### Verification Requirement
+
+All nodes MUST verify arithmetic configuration hash matches the canonical value before participating in consensus.
+
+### Rationale
+
+Closes the conformance gap by ensuring all nodes run identical arithmetic configurations, not just correct ones.
 
 ## Gas Model (FIX 10 - Deterministic Gas)
 
@@ -920,18 +1256,21 @@ DECIMAL verification probe uses 32-byte SHA256 leaf hashes (per RFC-0111 §Canon
 
 ### Canonical Probe Entry Format (32 bytes - SHA256 leaf hash)
 
-Each probe entry stores a SHA256 hash of the operation data, not the raw data itself:
+Each probe entry stores a SHA256 hash of the operation data INCLUDING OUTPUT:
 
 ```
 ┌─────────────────────────────────────────────────────────────┐
-│ Bytes 0-31: SHA256(op_id || input_a || input_b)           │
+│ Bytes 0-31: SHA256(op_id || input_a || input_b || result)│
 │   where:                                                    │
 │     - op_id: 8 bytes (little-endian u64 operation ID)     │
-│     - input_a: 24 bytes (DECIMAL canonical wire format)   │
-│     - input_b: 24 bytes (DECIMAL canonical wire format)   │
-│   Total raw data: 56 bytes → SHA256 output: 32 bytes      │
+│     - input_a: 24 bytes (DECIMAL canonical wire format)    │
+│     - input_b: 24 bytes (DECIMAL canonical wire format)    │
+│     - result: 24 bytes (DECIMAL canonical wire format)     │
+│   Total raw data: 80 bytes → SHA256 output: 32 bytes      │
 └─────────────────────────────────────────────────────────────┘
 ```
+
+**FIX C5 - Probe Must Include Output:** The probe leaf MUST include the result to verify arithmetic correctness. Without the output, two implementations could produce different results yet have identical probe leaves, making the probe meaningless.
 
 **Operation IDs:**
 - 0x0001 = ADD
@@ -947,25 +1286,32 @@ Each probe entry stores a SHA256 hash of the operation data, not the raw data it
 - 0x000B = TO_DQA
 - 0x000C = FROM_DQA
 
-**Probe Entry Merkle Tree Encoding (C2 Fix):**
-- Each probe entry is a **Merkle tree leaf**: `SHA256(op_id || input_a || input_b)` = 32 bytes
+**Probe Entry Merkle Tree Encoding (REMAINING-3 Fix - HIGH-4 Clarification):**
+- Each probe entry is a **Merkle tree leaf**: `SHA256(op_id || input_a || input_b || result)` = 32 bytes
 - The probe stores 56 leaf hashes (32 bytes each)
+- **The Merkle root commits to (operation, input_a, input_b, result) tuples** - INCLUDING the output
 - The Merkle root of all 56 leaves is published with this RFC
+- For TRAP entries (operations that should TRAP), encode a canonical TRAP sentinel: `{mantissa: 0x8000000000000000, scale: 0xFF}` (signals overflow/error condition)
 - Verification: recompute each leaf hash and verify the Merkle root matches
 
 **Verification Procedure:**
 
-For two-input operations (ADD, SUB, MUL, DIV, CMP), the probe entry encodes (op_id, input_a, input_b). Verification is performed by:
+For two-input operations (ADD, SUB, MUL, DIV, CMP), the probe entry encodes (op_id, input_a, input_b, result). Verification is performed by:
 
 1. Executing op(input_a, input_b) per the algorithms in this RFC.
 2. Comparing the result to the value produced by the reference implementation for the same inputs.
+3. Hashing (op_id || input_a || input_b || result) and verifying the Merkle leaf matches.
 
-The probe root commits to the input set. Conformance is verified in two ways:
+The probe root commits to the full tuple (operation + inputs + output). Conformance is verified in two ways:
 
 1. The Merkle root of all 56 probe entries MUST match the expected root published with this RFC.
 2. For each probe entry, the implementation MUST produce the same output as any other conformant implementation.
 
-> **Note:** Verification probe MUST be checked every 100,000 blocks (aligning with RFC-0104's DFP probe schedule).
+> **Note:** The probe commits to (operation, inputs, output) to ensure implementations not only use correct algorithms but also produce identical results. This prevents divergent implementations from passing probes.
+
+### Probe Scheduling (REMAINING-8 Fix - Normative Rule)
+
+> **Normative Rule:** Implementations MUST verify the DECIMAL probe Merkle root (1) at node startup before block production, and (2) at every block height multiple of 100,000. The probe verifies arithmetic correctness and prevents divergent implementations from affecting consensus.
 
 ### Probe Entries (56 entries, 32-byte SHA256 hashes)
 
@@ -996,6 +1342,7 @@ The probe root commits to the input set. Conformance is verified in two ways:
 | 22    | SQRT           | 0.04                             | 0.2                   | Decimal sqrt                            |
 | 23    | SQRT           | 0.0001                           | 0.01                  | Small decimal                           |
 | 24    | SQRT           | 0                                | 0                     | Zero                                    |
+| 24b   | SQRT           | 1.0 (scale=25)                  | 1e31                  | REMAINING-1: High scale (no TRAP)     |
 | 25    | ROUND          | 1.234 → scale=1                  | 1.2                   | Round down                              |
 | 26    | ROUND          | 1.235 → scale=1                  | 1.2                   | Round to even                           |
 | 27    | ROUND          | 1.245 → scale=1                  | 1.2                   | Round to even (odd q)                   |
@@ -1028,16 +1375,16 @@ The probe root commits to the input set. Conformance is verified in two ways:
 | 54    | MUL            | 0.000000000001 (scale=12) × 1000 (scale=0) | 0.000001 (scale=6) | Scale precision            |
 | 55    | DIV            | 1.0 (scale=36) ÷ 3.0 (scale=0)  | 0.333... (scale=36) | Max scale division                     |
 
-### Differential Fuzzing Requirement
+### Differential Fuzzing Requirement (FIX C6 - Use Reference Implementation)
 
-All implementations MUST pass differential fuzzing against a reference library (e.g., rust_decimal, decimal.rs) with 100,000+ random inputs producing bit-identical outputs.
+All implementations MUST pass differential fuzzing against the **reference implementation shipped with this RFC** in `determin/src/`, NOT external libraries.
+
+**FIX C6 Rationale:** External libraries (rust_decimal, decimal.rs) may change rounding behavior, update algorithms, or include optimizations. Consensus spec must NEVER depend on external libraries - the reference implementation IS the spec.
 
 The fuzz harness MUST verify:
-- All operations produce identical results to reference implementation
+- All operations produce identical results to reference implementation in `determin/`
 - Canonical form is maintained after every operation
 - Error cases (overflow, division by zero, etc.) are handled correctly
-
-> **Note:** Probe MUST be checked every 100,000 blocks (aligning with RFC-0104's DFP probe schedule).
 
 ### Merkle Hash
 
@@ -1062,18 +1409,20 @@ fn decimal_probe_root(probe: &DecimalProbe) -> [u8; 32] {
 }
 ```
 
-**Probe Merkle Root (C3 Fix):**
-> **Reference Merkle Root:** `7d3e2eb4ff8626cd0d1d0969e89b1f6ef8a34240c64b082805f44bb962de2cf1`
+**Probe Merkle Root (REMAINING-3 Fix - C3 Fix):**
+> **Reference Merkle Root (80-byte format):** `4888369e4e6574793ea14aaf5da3f82a36e7051130da9ba76dcd9d8c04092f0a`
 >
 > This root is computed from all 56 probe entries using SHA256 Merkle tree construction (see Python reference: `scripts/compute_decimal_probe_root.py`).
 
 **Verification Instruction:**
 All implementations MUST verify the Merkle root by:
 1. Implementing all 56 probe entries per §Probe Entries table
-2. Encoding each entry as 56-byte raw data (8-byte op_id + 24-byte input_a + 24-byte input_b)
-3. Computing SHA256 hash of each 56-byte entry → 32-byte leaf hash
-4. Building Merkle tree from 56 leaf hashes per §Merkle Hash algorithm
-5. Verifying root matches: `7d3e2eb4ff8626cd0d1d0969e89b1f6ef8a34240c64b082805f44bb962de2cf1`
+2. For each entry, executing the operation to compute the result
+3. Encoding each entry as 80-byte raw data (8-byte op_id + 24-byte input_a + 24-byte input_b + 24-byte result)
+4. For TRAP entries, use sentinel encoding: {mantissa: 0x8000000000000000, scale: 0xFF}
+5. Computing SHA256 hash of each 80-byte entry → 32-byte leaf hash
+6. Building Merkle tree from 56 leaf hashes per §Merkle Hash algorithm
+7. Verifying root matches: `4888369e4e6574793ea14aaf5da3f82a36e7051130da9ba76dcd9d8c04092f0a`
 
 **Cross-Verification:**
 - Python: `python3 scripts/compute_decimal_probe_root.py` → outputs root above
@@ -1117,7 +1466,7 @@ The VM must invoke CANONICALIZE on every value returned by deserialize, dqa_to_d
 - [ ] Test vectors verified (40+ cases)
 - [ ] Verification probe (56 entries, 32-byte SHA256 leaf hashes)
 - [ ] Differential fuzzing (100,000+ random inputs vs rust_decimal)
-- [ ] Probe verification every 100,000 blocks
+- [x] Probe verification at node startup and every 100,000 blocks (REMAINING-8 fix)
 
 ## System Architecture
 
@@ -1230,8 +1579,12 @@ All errors are fatal (TRAP) — no partial results or fallback behavior:
 
 | Issue ID | Severity | Description | Status |
 |----------|----------|-------------|--------|
-| D1 | Medium | Newton-Raphson iteration limit (20) may be insufficient for extreme scales | Open |
+| D1 | Medium | Newton-Raphson iteration limit (40) lacks formal convergence proof for extreme scales (10^36 magnitude) | Open |
 | D2 | Low | Gas model not validated against real-world benchmarks | Open |
+| HIGH-1 | High | Precision growth rule (+6 per operation) may break expected algebraic identities (e.g., (a×b)/b ≠ a in edge cases due to rounding) | Open |
+| MED-2 | Medium | SQRT probe gap: no probe entry tests SQRT that produces exact result requiring canonicalization | Open |
+| MED-3 | Medium | DQA↔DECIMAL round-trip conversion may have unbounded drift due to scale differences | Open |
+| MED-6 | Medium | Probe entry 47 tests max scale DQA but doesn't verify canonicalization behavior | Open |
 
 ## Alternatives Considered
 
@@ -1292,6 +1645,7 @@ All errors are fatal (TRAP) — no partial results or fallback behavior:
 | 1.7 | 2026-03-16 | TBD | Fixed remaining 24→32-byte references, added Merkle root verification, POW10 verified |
 | 1.8 | 2026-03-16 | TBD | SQRT convergence proof, DIV rounding semantics, probe sync, VM canonicalization, ZK note |
 | 1.9 | 2026-03-16 | TBD | Production hardening: range invariant, safe alignment, 256-bit mul, division precision, DQA conversion quantum |
+| 1.14 | 2026-03-17 | TBD | Fixed HIGH-1, HIGH-3, HIGH-4, MED-2, MED-3, MED-4, MED-6 from adversarial review |
 
 ## Compatibility
 

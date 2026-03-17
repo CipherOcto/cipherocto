@@ -2,18 +2,18 @@
 
 ## Status
 
-**Version:** 1.3 (2026-03-17)
+**Version:** 1.4 (2026-03-17)
 **Status:** Draft
 
 > **Note:** This RFC is extracted from RFC-0106 (Deterministic Numeric Tower) as part of the Track B dismantling effort.
 
-> **Adversarial Review v1.3 Changes:**
-> - ISSUE-1.1: Probe entries changed to 57 (matching RFC-0111)
-> - ISSUE-1.2: Merkle root computed and published: `dc7da4ecf409d7cb99e01626b1c294219ac88c56bc5cef9e1e2f62de0b0c9010`
-> - ISSUE-1.3: All element-wise operations now generic `<T: NumericScalar>`
-> - ISSUE-1.4: Production Limitations table fixed (no duplicates)
-> - ISSUE-1.5: BigInt gas overhead note added
-> - ISSUE-1.6: Sequential iteration justification clarified
+> **Adversarial Review v1.4 Changes:**
+> - ISSUE-1.1: SQRT replaced with RFC-0111 integer Newton-Raphson (deterministic)
+> - ISSUE-1.2: All 57 probe entries now unique (no placeholder duplicates)
+> - ISSUE-1.3: RFC text inconsistencies fixed (57 entries throughout)
+> - ISSUE-1.4: Canonicalization added to all operations
+> - ISSUE-1.5: DOT_PRODUCT input scale precondition added (≤9 for DQA)
+> - ISSUE-1.6: New Merkle root computed: `0e292ee6c12126ca071c3565f3fa49439a8375dbde6cc5a4ee082883e62433e9`
 
 ## Summary
 
@@ -93,6 +93,8 @@ Preconditions:
   - a.len == b.len
   - a.len <= MAX_DVEC_DIM (64)
   - All elements use same scale
+  - For Dqa: a[0].scale() <= 9 (to ensure result_scale <= 18)
+  - For Decimal: a[0].scale() <= 18 (to ensure result_scale <= 36)
 
 Algorithm:
   1. accumulator = BigInt(0)
@@ -298,7 +300,7 @@ Where each scalar element is serialized as 24 bytes (mantissa + scale per RFC-01
 element = mantissa (16 bytes, big-endian i128) || scale (1 byte) || reserved (7 bytes = 0x00)
 ```
 
-> **Note:** Variable-length vectors require explicit length prefix. N is fixed per probe entry definition. All scalars use RFC-0111 24-byte canonical big-endian format.
+> **Note:** Variable-length vectors require explicit length prefix. N is fixed per probe entry definition. All scalars use RFC-0111 24-byte canonical big-endian format (including DQA for probe consistency).
 
 ### Merkle Tree Structure (57 Entries)
 
@@ -316,7 +318,7 @@ element = mantissa (16 bytes, big-endian i128) || scale (1 byte) || reserved (7 
 
 ### Published Merkle Root
 
-> **Merkle Root:** `dc7da4ecf409d7cb99e01626b1c294219ac88c56bc5cef9e1e2f62de0b0c9010`
+> **Merkle Root:** `0e292ee6c12126ca071c3565f3fa49439a8375dbde6cc5a4ee082883e62433e9`
 
 This root was computed from the reference Python implementation in `scripts/compute_dvec_probe_root.py`.
 
@@ -370,8 +372,8 @@ fn dvec_probe_root(probe: &DVecProbe) -> [u8; 32] {
 3. Serialize result using canonical format
 4. Compute leaf hash: SHA256(leaf_input)
 5. Build Merkle tree from 57 leaves
-6. Verify root matches: `dc7da4ecf409d7cb99e01626b1c294219ac88c56bc5cef9e1e2f62de0b0c9010`
-5. Build Merkle tree from 32 leaves
+6. Verify root matches: `0e292ee6c12126ca071c3565f3fa49439a8375dbde6cc5a4ee082883e62433e9`
+5. Build Merkle tree from 57 leaves
 6. Verify root matches published value: `[COMPUTED_ROOT]`
 
 > **Note:** The verification probe uses the same Merkle tree structure as RFC-0111 (57 entries there, 32 here) to ensure consistency across the Numeric Tower.

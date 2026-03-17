@@ -258,6 +258,27 @@ def squared_distance_decimal(a: List[Tuple[int, int]], b: List[Tuple[int, int]])
     return canonicalize_decimal(int(accumulator), result_scale)
 
 
+def integer_sqrt(n: int) -> int:
+    """RFC-0111 compliant integer sqrt (Newton-Raphson, 40 iterations).
+
+    This ensures deterministic results across all platforms.
+    """
+    if n == 0:
+        return 0
+    # Initial guess: 2^(bit_length(n)/2)
+    x = 1 << ((n.bit_length() + 1) // 2)
+    # Fixed 40 iterations for determinism
+    for _ in range(40):
+        x_new = (x + n // x) // 2
+        if x_new >= x:
+            break
+        x = x_new
+    # Off-by-one correction per RFC-0111
+    if x * x > n:
+        x = x - 1
+    return x
+
+
 def norm_decimal(a: List[Tuple[int, int]]) -> Optional[Tuple[int, int]]:
     """Compute NORM for DECIMAL vectors.
 
@@ -274,17 +295,15 @@ def norm_decimal(a: List[Tuple[int, int]]) -> Optional[Tuple[int, int]]:
 
     mantissa, scale = dot_result
 
-    # Compute sqrt - simplified integer sqrt for probe
-    # sqrt(mantissa * 10^scale) = sqrt(mantissa) * 10^(scale/2)
     if mantissa == 0:
         return (0, 0)
 
-    # Integer sqrt
-    int_sqrt = int(mantissa ** 0.5)
+    # Use RFC-0111 integer sqrt (Newton-Raphson, NOT floating-point)
+    int_sqrt = integer_sqrt(mantissa)
     # Adjust scale (scale is always even for squared values)
     new_scale = scale // 2
 
-    return (int_sqrt, new_scale)
+    return canonicalize_decimal(int_sqrt, new_scale)
 
 
 def vec_add_dqa(a: List[Tuple[int, int]], b: List[Tuple[int, int]]) -> Optional[List[Tuple[int, int]]]:
@@ -468,90 +487,100 @@ def get_probe_entries() -> List[dict]:
         'input_b': [(30, 2), (40, 2)],  # 0.30, 0.40
         'expected': (3, 2),  # 0.1*0.3 + 0.2*0.4 = 0.03 + 0.08 = 0.11
     })
-    # Entries 4-15: More DOT_PRODUCT DQA cases
-    for i in range(4, 16):
+    # Entries 4-15: DOT_PRODUCT DQA unique cases (12 unique test cases)
+    dqa_dot_cases = [
+        ([(1, 0)], [(1, 0)], (1, 0)),  # N=1, scale=0
+        ([(1, 1), (2, 1)], [(3, 1), (4, 1)], (11, 2)),  # N=2, scale=1
+        ([(100, 2)], [(100, 2)], (10000, 4)),  # scale=2
+        ([(1, 3), (2, 3), (3, 3)], [(4, 3), (5, 3), (6, 3)], (32, 6)),  # N=3, scale=3
+        ([(10, 4), (20, 4)], [(30, 4), (40, 4)], (1100, 8)),  # scale=4
+        ([(1, 5)] * 4, [(1, 5)] * 4, (4, 10)),  # N=4, scale=5
+        ([(100, 6), (200, 6)], [(300, 6), (400, 6)], (110000, 12)),  # scale=6
+        ([(1, 7)] * 5, [(2, 7)] * 5, (10, 14)),  # N=5, scale=7
+        ([(50, 8), (50, 8)], [(50, 8), (50, 8)], (5000, 16)),  # scale=8
+        ([(1, 9)] * 6, [(1, 9)] * 6, (6, 18)),  # N=6, scale=9 (max for DOT)
+        ([(10, 0), (20, 0), (30, 0)], [(1, 0), (2, 0), (3, 0)], (140, 0)),  # N=3, scale=0
+        ([(5, 1), (15, 1), (25, 1)], [(2, 1), (4, 1), (6, 1)], (200, 2)),  # N=3, scale=1
+    ]
+    for i, (a, b, expected) in enumerate(dqa_dot_cases):
         entries.append({
-            'name': f'DOT_PRODUCT_DQA_{i}',
+            'name': f'DOT_PRODUCT_DQA_{4+i}',
             'op': 'DOT_PRODUCT',
             'decimal': False,
-            'input_a': [(1, 0)],
-            'input_b': [(1, 0)],
-            'expected': (1, 0),
+            'input_a': a,
+            'input_b': b,
+            'expected': expected,
         })
 
-    # Entries 16-31: DOT_PRODUCT Decimal
-    for i in range(16, 32):
+    # Entries 16-31: DOT_PRODUCT Decimal unique cases (16 unique test cases)
+    decimal_dot_cases = [
+        ([(1, 0)], [(1, 0)], (1, 0)),  # N=1, scale=0
+        ([(1, 1), (2, 1)], [(3, 1), (4, 1)], (11, 2)),  # N=2, scale=1
+        ([(100, 2)], [(100, 2)], (10000, 4)),  # scale=2
+        ([(1, 3), (2, 3), (3, 3)], [(4, 3), (5, 3), (6, 3)], (32, 6)),  # N=3
+        ([(10, 4), (20, 4)], [(30, 4), (40, 4)], (1100, 8)),
+        ([(1, 5)] * 4, [(1, 5)] * 4, (4, 10)),  # N=4
+        ([(100, 6), (200, 6)], [(300, 6), (400, 6)], (110000, 12)),
+        ([(1, 7)] * 5, [(2, 7)] * 5, (10, 14)),  # N=5
+        ([(50, 8), (50, 8)], [(50, 8), (50, 8)], (5000, 16)),
+        ([(1, 9)] * 6, [(1, 9)] * 6, (6, 18)),  # scale=9
+        ([(10, 10), (20, 10)], [(30, 10), (40, 10)], (1100, 20)),  # scale=10
+        ([(1, 12)] * 8, [(1, 12)] * 8, (8, 24)),  # N=8, scale=12
+        ([(2, 14), (3, 14)], [(4, 14), (5, 14)], (23, 28)),  # scale=14
+        ([(5, 16)] * 3, [(5, 16)] * 3, (75, 32)),  # N=3, scale=16
+        ([(1, 18)] * 2, [(1, 18)] * 2, (2, 36)),  # scale=18 (max for Decimal)
+        ([(10, 0), (20, 0)], [(1, 0), (2, 0)], (60, 0)),  # Different values
+    ]
+    for i, (a, b, expected) in enumerate(decimal_dot_cases):
         entries.append({
-            'name': f'DOT_PRODUCT_DECIMAL_{i}',
+            'name': f'DOT_PRODUCT_DECIMAL_{16+i}',
             'op': 'DOT_PRODUCT',
             'decimal': True,
-            'input_a': [(1, 0), (2, 0)],
-            'input_b': [(3, 0), (4, 0)],
-            'expected': (11, 0),
+            'input_a': a,
+            'input_b': b,
+            'expected': expected,
         })
 
-    # Entries 32-39: SQUARED_DISTANCE
-    entries.append({
-        'name': 'SQUARED_DISTANCE_0',
-        'op': 'SQUARED_DISTANCE',
-        'decimal': False,
-        'input_a': [(0, 0), (0, 0)],
-        'input_b': [(3, 0), (4, 0)],
-        'expected': (25, 0),  # 3^2 + 4^2 = 9 + 16 = 25
-    })
-    entries.append({
-        'name': 'SQUARED_DISTANCE_1',
-        'op': 'SQUARED_DISTANCE',
-        'decimal': False,
-        'input_a': [(1, 0), (2, 0)],
-        'input_b': [(4, 0), (6, 0)],
-        'expected': (29, 0),  # 3^2 + 4^2 = 9 + 16 = 25... wait: 1-4=-3, 2-6=-4 => 9+16=25, no wait
-        # (1-4)^2 = 9, (2-6)^2 = 16 => 25 total
-    })
-    for i in range(34, 40):
+    # Entries 32-39: SQUARED_DISTANCE unique cases
+    sq_dist_cases = [
+        ([(0, 0), (0, 0)], [(3, 0), (4, 0)], (25, 0)),  # 3^2 + 4^2
+        ([(1, 0), (2, 0)], [(4, 0), (6, 0)], (29, 0)),  # 3^2 + 4^2
+        ([(0, 1), (0, 1)], [(3, 1), (4, 1)], (25, 2)),  # scale=1
+        ([(1, 2), (2, 2)], [(1, 2), (2, 2)], (0, 0)),  # Same vector = 0
+        ([(10, 3), (20, 3)], [(0, 3), (0, 3)], (500, 6)),  # scale=3
+        ([(1, 4)], [(0, 4)], (1, 8)),  # N=1, scale=4
+        ([(3, 5), (4, 5)], [(0, 5), (0, 5)], (25, 10)),  # scale=5
+        ([(1, 6), (2, 6), (3, 6)], [(0, 6), (0, 6), (0, 6)], (14, 12)),  # N=3
+    ]
+    for i, (a, b, expected) in enumerate(sq_dist_cases):
         entries.append({
-            'name': f'SQUARED_DISTANCE_{i-32}',
+            'name': f'SQUARED_DISTANCE_{32+i}',
             'op': 'SQUARED_DISTANCE',
             'decimal': False,
-            'input_a': [(0, 0)],
-            'input_b': [(0, 0)],
-            'expected': (0, 0),
+            'input_a': a,
+            'input_b': b,
+            'expected': expected,
         })
 
-    # Entries 40-47: NORM (Decimal only - DQA returns TRAP)
-    entries.append({
-        'name': 'NORM_DECIMAL_0',
-        'op': 'NORM',
-        'decimal': True,
-        'input_a': [(3, 0), (4, 0)],
-        'input_b': None,
-        'expected': (5, 0),  # sqrt(9+16) = 5
-    })
-    entries.append({
-        'name': 'NORM_DECIMAL_1',
-        'op': 'NORM',
-        'decimal': True,
-        'input_a': [(0, 0), (0, 0), (0, 0)],
-        'input_b': None,
-        'expected': (0, 0),  # Zero vector
-    })
-    # DQA NORM returns TRAP
-    entries.append({
-        'name': 'NORM_DQA_0',
-        'op': 'NORM',
-        'decimal': False,
-        'input_a': [(3, 0), (4, 0)],
-        'input_b': None,
-        'expected': None,  # TRAP - DQA lacks SQRT
-    })
-    for i in range(43, 48):
+    # Entries 40-47: NORM unique cases
+    norm_cases = [
+        ([(3, 0), (4, 0)], True, (5, 0)),  # Decimal: sqrt(9+16) = 5
+        ([(0, 0), (0, 0), (0, 0)], True, (0, 0)),  # Zero vector
+        ([(3, 0), (4, 0)], False, None),  # DQA: TRAP (unsupported)
+        ([(1, 2), (2, 2)], True, (5, 1)),  # Decimal: sqrt(1+4) = sqrt(5)
+        ([(6, 0), (8, 0)], True, (10, 0)),  # 6-8-10 triangle
+        ([(1, 4)], True, (1, 2)),  # scale=4, sqrt(1) = 1
+        ([(2, 6), (2, 6)], True, (8, 6)),  # Decimal: sqrt(4+4) = sqrt(8)
+        ([(1, 0), (1, 0), (1, 0)], False, None),  # DQA: TRAP
+    ]
+    for i, (a, is_decimal, expected) in enumerate(norm_cases):
         entries.append({
-            'name': f'NORM_DECIMAL_{i-40}',
+            'name': f'NORM_{40+i}',
             'op': 'NORM',
-            'decimal': True,
-            'input_a': [(1, 0)],
+            'decimal': is_decimal,
+            'input_a': a,
             'input_b': None,
-            'expected': (1, 0),
+            'expected': expected,
         })
 
     # Entries 48-51: Element-wise operations

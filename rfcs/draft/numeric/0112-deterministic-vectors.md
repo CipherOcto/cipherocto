@@ -372,11 +372,10 @@ fn dvec_probe_root(probe: &DVecProbe) -> [u8; 32] {
 3. Serialize result using canonical format
 4. Compute leaf hash: SHA256(leaf_input)
 5. Build Merkle tree from 57 leaves
-6. Verify root matches: `0e292ee6c12126ca071c3565f3fa49439a8375dbde6cc5a4ee082883e62433e9`
 5. Build Merkle tree from 57 leaves
-6. Verify root matches published value: `[COMPUTED_ROOT]`
+6. Verify root matches: `0e292ee6c12126ca071c3565f3fa49439a8375dbde6cc5a4ee082883e62433e9`
 
-> **Note:** The verification probe uses the same Merkle tree structure as RFC-0111 (57 entries there, 32 here) to ensure consistency across the Numeric Tower.
+> **Note:** The verification probe uses the same Merkle tree structure as RFC-0111 (57 entries) to ensure consistency across the Numeric Tower.
 
 ## Determinism Rules
 

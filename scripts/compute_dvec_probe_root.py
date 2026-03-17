@@ -485,7 +485,7 @@ def get_probe_entries() -> List[dict]:
         'decimal': False,
         'input_a': [(10, 2), (20, 2)],  # 0.10, 0.20
         'input_b': [(30, 2), (40, 2)],  # 0.30, 0.40
-        'expected': (3, 2),  # 0.1*0.3 + 0.2*0.4 = 0.03 + 0.08 = 0.11
+        'expected': (11, 2),  # 0.1*0.3 + 0.2*0.4 = 0.03 + 0.08 = 0.11
     })
     # Entries 4-15: DOT_PRODUCT DQA unique cases (12 unique test cases)
     dqa_dot_cases = [

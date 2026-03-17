@@ -2,23 +2,24 @@
 
 ## Status
 
-**Version:** 1.5 (2026-03-17)
+**Version:** 1.6 (2026-03-17)
 **Status:** Draft
 
 > **Note:** This RFC is extracted from RFC-0106 (Deterministic Numeric Tower) as part of the Track B dismantling effort.
 
-> **Adversarial Review v1.5 Changes:**
+> **Adversarial Review v1.6 Changes:**
 > - ISSUE-1.1: SQRT replaced with RFC-0111 integer Newton-Raphson (deterministic)
 > - ISSUE-1.2: All 57 probe entries now unique (no placeholder duplicates)
 > - ISSUE-1.3: RFC text inconsistencies fixed (57 entries throughout)
 > - ISSUE-1.4: Canonicalization added to all operations
 > - ISSUE-1.5: DOT_PRODUCT input scale precondition added (≤9 for DQA)
-> - ISSUE-1.6: New Merkle root computed: `0e292ee6c12126ca071c3565f3fa49439a8375dbde6cc5a4ee082883e62433e9`
-> - ISSUE-1.7: Entry 56 changed from duplicate NORM TRAP to NORMALIZE consensus TRAP
-> - ISSUE-1.8: All "Various" entries replaced with explicit probe values
-> - ISSUE-1.9: Python reference implementation added to appendix
-> - ISSUE-2.0: DQA 24-byte encoding clarified
-> - ISSUE-2.1: TRAP sentinel definition added
+> - ISSUE-1.6: Entry 56 changed from duplicate NORM TRAP to NORMALIZE consensus TRAP
+> - ISSUE-1.7: All "Various" entries replaced with explicit probe values
+> - ISSUE-1.8: Python reference implementation added to appendix
+> - ISSUE-1.9: DQA 24-byte encoding clarified
+> - ISSUE-2.0: TRAP sentinel definition added
+> - ISSUE-2.1: Entry 3 fixed: {3, scale=2} → {11, scale=2} (dot product math correction)
+> - ISSUE-2.2: New Merkle root computed: `deedbcd8bf9800ffa4b102693f7eb43fcad2c0366af0ff5b6fcd35dd9d55df20`
 
 ## Summary
 
@@ -319,6 +320,8 @@ element = version (1 byte = 0x01) || reserved (3 bytes = 0x00) || scale (1 byte)
 
 > **Note:** Variable-length vectors require explicit length prefix. N is fixed per probe entry definition. All scalars use 24-byte canonical big-endian format for probe consistency.
 
+> **DQA Note:** DQA values are promoted to 24-byte RFC-0111 format for probe serialization only (mantissa zero-extended to i128). This ensures uniform leaf format across numeric types for Merkle tree computation.
+
 #### TRAP Sentinel Definition
 
 For TRAP entries, the result is encoded as a sentinel value:
@@ -344,7 +347,7 @@ This sentinel is encoded using the same 24-byte format as normal values, with ma
 
 ### Published Merkle Root
 
-> **Merkle Root:** `0e292ee6c12126ca071c3565f3fa49439a8375dbde6cc5a4ee082883e62433e9`
+> **Merkle Root:** `deedbcd8bf9800ffa4b102693f7eb43fcad2c0366af0ff5b6fcd35dd9d55df20`
 
 This root was computed from the reference Python implementation in `scripts/compute_dvec_probe_root.py`.
 
@@ -355,7 +358,7 @@ This root was computed from the reference Python implementation in `scripts/comp
 | 0 | DOT_PRODUCT | DQA | [1,2,3] | [4,5,6] | {32, scale=0} |
 | 1 | DOT_PRODUCT | DQA | [1,2] scale=1 | [3,4] scale=1 | {11, scale=2} |
 | 2 | DOT_PRODUCT | DQA | [0,0,0] | [1,2,3] | {0, scale=0} |
-| 3 | DOT_PRODUCT | DQA | [10,20] scale=2 | [30,40] scale=2 | {3, scale=2} |
+| 3 | DOT_PRODUCT | DQA | [10,20] scale=2 | [30,40] scale=2 | {11, scale=2} |
 | 4 | DOT_PRODUCT | DQA | [1] | [1] | {1, scale=0} |
 | 5 | DOT_PRODUCT | DQA | [1,2] | [3,4] | {11, scale=2} |
 | 6 | DOT_PRODUCT | DQA | [100] scale=2 | [100] scale=2 | {10000, scale=4} |
@@ -433,7 +436,7 @@ fn dvec_probe_root(probe: &DVecProbe) -> [u8; 32] {
 3. Serialize result using canonical format
 4. Compute leaf hash: SHA256(leaf_input)
 5. Build Merkle tree from 57 leaves
-6. Verify root matches: `0e292ee6c12126ca071c3565f3fa49439a8375dbde6cc5a4ee082883e62433e9`
+6. Verify root matches: `deedbcd8bf9800ffa4b102693f7eb43fcad2c0366af0ff5b6fcd35dd9d55df20`
 
 > **Note:** The verification probe uses the same Merkle tree structure as RFC-0111 (57 entries) to ensure consistency across the Numeric Tower.
 
@@ -954,7 +957,7 @@ def get_probe_entries() -> List[dict]:
         'decimal': False,
         'input_a': [(10, 2), (20, 2)],  # 0.10, 0.20
         'input_b': [(30, 2), (40, 2)],  # 0.30, 0.40
-        'expected': (3, 2),  # 0.1*0.3 + 0.2*0.4 = 0.03 + 0.08 = 0.11
+        'expected': (11, 2),  # 0.1*0.3 + 0.2*0.4 = 0.03 + 0.08 = 0.11
     })
     # Entries 4-15: DOT_PRODUCT DQA unique cases (12 unique test cases)
     dqa_dot_cases = [

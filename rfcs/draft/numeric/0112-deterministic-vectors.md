@@ -2,12 +2,12 @@
 
 ## Status
 
-**Version:** 1.6 (2026-03-17)
+**Version:** 1.7 (2026-03-17)
 **Status:** Draft
 
 > **Note:** This RFC is extracted from RFC-0106 (Deterministic Numeric Tower) as part of the Track B dismantling effort.
 
-> **Adversarial Review v1.6 Changes:**
+> **Adversarial Review v1.7 Changes:**
 > - ISSUE-1.1: SQRT replaced with RFC-0111 integer Newton-Raphson (deterministic)
 > - ISSUE-1.2: All 57 probe entries now unique (no placeholder duplicates)
 > - ISSUE-1.3: RFC text inconsistencies fixed (57 entries throughout)
@@ -20,6 +20,12 @@
 > - ISSUE-2.0: TRAP sentinel definition added
 > - ISSUE-2.1: Entry 3 fixed: {3, scale=2} → {11, scale=2} (dot product math correction)
 > - ISSUE-2.2: New Merkle root computed: `deedbcd8bf9800ffa4b102693f7eb43fcad2c0366af0ff5b6fcd35dd9d55df20`
+> - ISSUE-2.3: Entry 56 fixed: NORM DQA → NORMALIZE Decimal (consensus TRAP)
+> - ISSUE-2.4: NORMALIZE operation added to Python reference implementation
+> - ISSUE-2.5: New Merkle root: `797ee8fcbd4d1b1e4b6b100bb8e53bb6bae9d247a1846461d2446f851219b4da`
+> - ISSUE-2.6: Entry 3 comment clarified (raw → canonical explanation)
+> - ISSUE-2.7: TRAP sentinel reference added (RFC-0111 v1.20)
+> - ISSUE-2.8: DQA zero-extension rationale documented
 
 ## Summary
 
@@ -321,6 +327,8 @@ element = version (1 byte = 0x01) || reserved (3 bytes = 0x00) || scale (1 byte)
 > **Note:** Variable-length vectors require explicit length prefix. N is fixed per probe entry definition. All scalars use 24-byte canonical big-endian format for probe consistency.
 
 > **DQA Note:** DQA values are promoted to 24-byte RFC-0111 format for probe serialization only (mantissa zero-extended to i128). This ensures uniform leaf format across numeric types for Merkle tree computation.
+>
+> **Zero-Extension Rationale:** When encoding DQA's 64-bit mantissa into the 128-bit slot, the upper 64 bits are zero-filled (not sign-extended). This is intentional because DQA mantissas are unsigned by specification (per RFC-0105). Zero-extension ensures the encoded value remains positive and consistent with DQA semantics, while also providing a uniform 24-byte format across all numeric types for deterministic Merkle tree construction.
 
 #### TRAP Sentinel Definition
 
@@ -330,6 +338,8 @@ TRAP = { mantissa: 0x8000000000000000 (i64 min), scale: 0xFF }
 ```
 
 This sentinel is encoded using the same 24-byte format as normal values, with mantissa set to the minimum i64 value (signifying error) and scale set to 0xFF (255) as the error indicator.
+
+> **Reference:** See RFC-0111 v1.20 Section X (TRAP Sentinel Encoding) for the canonical definition.
 
 ### Merkle Tree Structure (57 Entries)
 
@@ -347,7 +357,7 @@ This sentinel is encoded using the same 24-byte format as normal values, with ma
 
 ### Published Merkle Root
 
-> **Merkle Root:** `deedbcd8bf9800ffa4b102693f7eb43fcad2c0366af0ff5b6fcd35dd9d55df20`
+> **Merkle Root:** `797ee8fcbd4d1b1e4b6b100bb8e53bb6bae9d247a1846461d2446f851219b4da`
 
 This root was computed from the reference Python implementation in `scripts/compute_dvec_probe_root.py`.
 
@@ -358,7 +368,7 @@ This root was computed from the reference Python implementation in `scripts/comp
 | 0 | DOT_PRODUCT | DQA | [1,2,3] | [4,5,6] | {32, scale=0} |
 | 1 | DOT_PRODUCT | DQA | [1,2] scale=1 | [3,4] scale=1 | {11, scale=2} |
 | 2 | DOT_PRODUCT | DQA | [0,0,0] | [1,2,3] | {0, scale=0} |
-| 3 | DOT_PRODUCT | DQA | [10,20] scale=2 | [30,40] scale=2 | {11, scale=2} |
+| 3 | DOT_PRODUCT | DQA | [10,20] scale=2 | [30,40] scale=2 | {11, scale=2} | Raw: 1100→canonical: 11 |
 | 4 | DOT_PRODUCT | DQA | [1] | [1] | {1, scale=0} |
 | 5 | DOT_PRODUCT | DQA | [1,2] | [3,4] | {11, scale=2} |
 | 6 | DOT_PRODUCT | DQA | [100] scale=2 | [100] scale=2 | {10000, scale=4} |
@@ -496,6 +506,7 @@ OPS = {
     'VEC_SUB': 5,
     'VEC_MUL': 6,
     'VEC_SCALE': 7,
+    'NORMALIZE': 8,
 }
 
 # Type IDs
@@ -776,6 +787,17 @@ def norm_decimal(a: List[Tuple[int, int]]) -> Optional[Tuple[int, int]]:
     new_scale = scale // 2
 
     return canonicalize_decimal(int_sqrt, new_scale)
+
+
+def normalize_decimal(a: List[Tuple[int, int]]) -> Optional[List[Tuple[int, int]]]:
+    """Compute NORMALIZE for DECIMAL vectors.
+
+    Returns: List of normalized elements or None for TRAP.
+    Note: Returns TRAP in consensus context (exceeds gas budget).
+    """
+    # NORMALIZE is FORBIDDEN in consensus per RFC-0112
+    # This probe entry verifies the CONSENSUS_RESTRICTION TRAP
+    return None  # TRAP CONSENSUS_RESTRICTION
 
 
 def vec_add_dqa(a: List[Tuple[int, int]], b: List[Tuple[int, int]]) -> Optional[List[Tuple[int, int]]]:
@@ -1123,12 +1145,12 @@ def get_probe_entries() -> List[dict]:
         'expected': None,  # TRAP INPUT_SCALE
     })
     entries.append({
-        'name': 'TRAP_NORM_DQA',
-        'op': 'NORM',
-        'decimal': False,
+        'name': 'TRAP_NORMALIZE_DECIMAL',
+        'op': 'NORMALIZE',
+        'decimal': True,
         'input_a': [(3, 0), (4, 0)],
         'input_b': None,
-        'expected': None,  # TRAP UNSUPPORTED
+        'expected': None,  # TRAP CONSENSUS_RESTRICTION
     })
 
     return entries

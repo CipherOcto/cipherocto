@@ -24,6 +24,7 @@ OPS = {
     'VEC_SUB': 5,
     'VEC_MUL': 6,
     'VEC_SCALE': 7,
+    'NORMALIZE': 8,
 }
 
 # Type IDs
@@ -304,6 +305,17 @@ def norm_decimal(a: List[Tuple[int, int]]) -> Optional[Tuple[int, int]]:
     new_scale = scale // 2
 
     return canonicalize_decimal(int_sqrt, new_scale)
+
+
+def normalize_decimal(a: List[Tuple[int, int]]) -> Optional[List[Tuple[int, int]]]:
+    """Compute NORMALIZE for DECIMAL vectors.
+
+    Returns: List of normalized elements or None for TRAP.
+    Note: Returns TRAP in consensus context (exceeds gas budget).
+    """
+    # NORMALIZE is FORBIDDEN in consensus per RFC-0112
+    # This probe entry verifies the CONSENSUS_RESTRICTION TRAP
+    return None  # TRAP CONSENSUS_RESTRICTION
 
 
 def vec_add_dqa(a: List[Tuple[int, int]], b: List[Tuple[int, int]]) -> Optional[List[Tuple[int, int]]]:
@@ -651,12 +663,12 @@ def get_probe_entries() -> List[dict]:
         'expected': None,  # TRAP INPUT_SCALE
     })
     entries.append({
-        'name': 'TRAP_NORM_DQA',
-        'op': 'NORM',
-        'decimal': False,
+        'name': 'TRAP_NORMALIZE_DECIMAL',
+        'op': 'NORMALIZE',
+        'decimal': True,
         'input_a': [(3, 0), (4, 0)],
         'input_b': None,
-        'expected': None,  # TRAP UNSUPPORTED
+        'expected': None,  # TRAP CONSENSUS_RESTRICTION
     })
 
     return entries

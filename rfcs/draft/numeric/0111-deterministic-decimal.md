@@ -2,10 +2,17 @@
 
 ## Status
 
-**Version:** 1.18 (2026-03-17)
+**Version:** 1.19 (2026-03-17)
 **Status:** Draft
 
 > **Note:** This RFC is extracted from RFC-0106 (Deterministic Numeric Tower) as part of the Track B dismantling effort.
+
+> **Adversarial Review v1.19 Changes (4 Issues Fixed):**
+> - ISSUE-1 (CRITICAL): Entry 50 now tests negative overflow (-MAX + -1), returns TRAP
+> - ISSUE-2 (HIGH): Entry 54 result corrected to {1, 0}
+> - ISSUE-3 (HIGH): Entry 56 result corrected to {0, 0}
+> - ISSUE-4 (MEDIUM): Python comment updated (56 → 57 entries)
+> - Version updated to 1.19, new Merkle root
 
 > **Adversarial Review v1.18 Changes (3 Issues Fixed):**
 > - CRITICAL-1: Unified Merkle root values (lines 1457 and 1469)
@@ -1417,13 +1424,13 @@ The probe root commits to the full tuple (operation + inputs + output). Conforma
 | 47    | FROM_DQA       | Dqa(15, 1)                       | 1.5                   | DQA → DECIMAL                          |
 | 48    | FROM_DQA       | Dqa(0, 18)                       | 0.0                   | Max scale DQA                           |
 | 49    | ADD            | MAX (10^36-1, scale=0)           | 1.0                   | Overflow trap (fuzzing)                |
-| 50    | ADD            | -MAX                             | 1.0                   | Underflow trap (fuzzing)               |
+| 50    | ADD            | -MAX + -1.0                      | TRAP                  | Underflow trap (-MAX + -1)             |
 | 51    | MUL            | 10^18 (scale=0) × 10^19 (scale=0) | TRAP                | Mantissa overflow (10^37 > MAX) (fuzzing) |
 | 52    | DIV            | 1.0 ÷ 0.0                       | TRAP                  | Division by zero                       |
 | 53    | SQRT           | -1.0                             | TRAP                  | Negative sqrt                           |
-| 54    | ADD            | 0.999999999999 + 0.000000000001  | 0.000000000001 (scale=12) | 0.999999999999 + 0.000000000001 |
+| 54    | ADD            | 0.999999999999 + 0.000000000001  | {1, 0}                    | Canonicalizes to 1.0                  |
 | 55    | MUL            | 0.000000000001 (scale=12) × 1000 (scale=0) | 0.000001 (scale=6) | Scale precision            |
-| 56    | DIV            | 1.0 (scale=36) ÷ 3.0 (scale=0)  | 0.333... (scale=36) | Max scale division                     |
+| 56    | DIV            | 1.0 (scale=36) ÷ 3.0 (scale=0)  | {0, 0}              | Rounds to zero at max scale             |
 
 ### Differential Fuzzing Requirement (FIX C6 - Use Reference Implementation)
 
@@ -1460,7 +1467,7 @@ fn decimal_probe_root(probe: &DecimalProbe) -> [u8; 32] {
 ```
 
 **Probe Merkle Root (REMAINING-3 Fix - C3 Fix):**
-> **Reference Merkle Root (80-byte format):** `08c274676c4b7b035335c0a9a33cdb46d5b6acb11d5cc80fb65f0a056933e940`
+> **Reference Merkle Root (80-byte format):** `496bc8038e3fd38462f4308bf03088b3f872d000256a45ddb53d4932efff0c1c`
 >
 > This root is computed from all 57 probe entries using SHA256 Merkle tree construction (see Python reference: `scripts/compute_decimal_probe_root.py`).
 
@@ -1472,7 +1479,7 @@ All implementations MUST verify the Merkle root by:
 4. For TRAP entries, use sentinel encoding: {mantissa: 0x8000000000000000, scale: 0xFF}
 5. Computing SHA256 hash of each 80-byte entry → 32-byte leaf hash
 6. Building Merkle tree from 57 leaf hashes per §Merkle Hash algorithm
-7. Verifying root matches: `08c274676c4b7b035335c0a9a33cdb46d5b6acb11d5cc80fb65f0a056933e940`
+7. Verifying root matches: `496bc8038e3fd38462f4308bf03088b3f872d000256a45ddb53d4932efff0c1c`
 
 **Cross-Verification:**
 - Python: `python3 scripts/compute_decimal_probe_root.py` → outputs root above

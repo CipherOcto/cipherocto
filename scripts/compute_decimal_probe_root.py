@@ -358,7 +358,7 @@ def mk_entry(op, a_mantissa, a_scale, b_mantissa, b_scale, result):
     return op_bytes + a_bytes + b_bytes + r_bytes  # 80 bytes total
 
 
-# All 56 probe entries from RFC-0111
+# All 57 probe entries from RFC-0111 v1.19
 # Format: (index, operation, a_mantissa, a_scale, b_mantissa, b_scale, description)
 DATA = [
     # ADD (entries 0-3)
@@ -436,7 +436,7 @@ DATA = [
 
     # Overflow/edge cases (entries 49-56)
     (49, 'ADD', MAX_DECIMAL, 0, 1, 0, "MAX + 1 → overflow"),
-    (50, 'ADD', -MAX_DECIMAL, 0, 1, 0, "-MAX + 1 → underflow"),
+    (50, 'ADD', -MAX_DECIMAL, 0, -1, 0, "-MAX + (-1) → underflow TRAP"),
     (51, 'MUL', 10**18, 0, 10**19, 0, "10^18 × 10^19 → overflow"),
     (52, 'DIV', 1, 0, 0, 0, "1.0 ÷ 0.0 → div by zero"),
     (53, 'SQRT', -1, 0, 0, 0, "√-1.0 → negative"),

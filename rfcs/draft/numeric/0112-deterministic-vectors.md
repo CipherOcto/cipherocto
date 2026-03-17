@@ -2,19 +2,18 @@
 
 ## Status
 
-**Version:** 1.2 (2026-03-17)
+**Version:** 1.3 (2026-03-17)
 **Status:** Draft
 
 > **Note:** This RFC is extracted from RFC-0106 (Deterministic Numeric Tower) as part of the Track B dismantling effort.
 
-> **Adversarial Review v1.2 Changes:**
-> - ISSUE-1.1: Gas budget - NORMALIZE FORBIDDEN in consensus (exceeds 50k block budget)
-> - ISSUE-1.2: SQRT gas corrected to 280 per RFC-0111 (not 50,000)
-> - ISSUE-1.3: DOT_PRODUCT now generic `<T: NumericScalar>` not hardcoded to Dqa
-> - ISSUE-1.4: Explicit scale TRAP when result_scale > MAX_SCALE
-> - ISSUE-1.5: Probe serialization format defined (len + 24-byte elements)
-> - ISSUE-1.6: Probe entry count fixed to 32 (power of 2)
-> - ISSUE-1.7: BigInt conversion uses RFC-0110 I128_ROUNDTRIP semantics
+> **Adversarial Review v1.3 Changes:**
+> - ISSUE-1.1: Probe entries changed to 57 (matching RFC-0111)
+> - ISSUE-1.2: Merkle root computed and published: `dc7da4ecf409d7cb99e01626b1c294219ac88c56bc5cef9e1e2f62de0b0c9010`
+> - ISSUE-1.3: All element-wise operations now generic `<T: NumericScalar>`
+> - ISSUE-1.4: Production Limitations table fixed (no duplicates)
+> - ISSUE-1.5: BigInt gas overhead note added
+> - ISSUE-1.6: Sequential iteration justification clarified
 
 ## Summary
 
@@ -77,9 +76,11 @@ pub struct DVec<T: NumericScalar> {
 
 | Feature | Limit | Status |
 |---------|-------|--------|
-| DVEC<DQA> | N ≤ 64 | ALLOWED |
-| DVEC<DFP> | DISABLED | FORBIDDEN |
-| DVEC<DECIMAL> | N ≤ 64 | ALLOWED |
+| DVec<Dqa> | N ≤ 64 | ALLOWED |
+| DVec<Decimal> | N ≤ 64 | ALLOWED |
+| DVec<Dfp> | Any | FORBIDDEN (not ZK-friendly) |
+| Mixed-Type Ops | Any | FORBIDDEN |
+| NORMALIZE | Consensus | FORBIDDEN (exceeds 50k gas budget) |
 
 ## Core Operations
 
@@ -112,9 +113,12 @@ Algorithm:
   6. Return T::new(value, result_scale)
 ```
 
-> ⚠️ **CRITICAL**: Sequential iteration is MANDATORY. Tree reduction `(a1+a2)+(a3+a4)` produces different results than sequential `(((a1+a2)+a3)+a4)` due to overflow/rounding.
+> ⚠️ **CRITICAL**: Sequential iteration is MANDATORY.
 >
-> **Overflow TRAP Order**: The accumulator must overflow TRAP before any scale transformation. This ensures deterministic behavior regardless of scale - if the raw sum overflows, it must TRAP even if the scaled result would fit.
+> **Deterministic TRAP Location:** While integer addition is mathematically associative, overflow TRAP conditions are order-dependent:
+> - Sequential: `((MAX + 1) + 0)` → TRAP at first addition
+> - Tree: `(MAX + (1 + 0))` → TRAP at second addition
+> To ensure deterministic TRAP location across implementations, sequential left-to-right accumulation is MANDATORY.
 >
 > **DQA Note**: For Dqa, MAX_SCALE=18. If result_scale > 18, TRAP(INVALID_SCALE).
 
@@ -197,27 +201,27 @@ Algorithm:
 
 > **Rationale**: NORMALIZE requires N divisions (N×GAS_DIV ≈ 251,000 for N=64) plus SQRT gas, totaling ~319,000. This exceeds the per-block numeric budget of 50,000 gas defined in RFC-0110/0111. Use SQUARED_DISTANCE for consensus-critical similarity ranking.
 
-### Element-wise Operations
+### Element-wise Operations (Generic)
 
 ```
 // Element-wise ADD
-vec_add(a: &[Dqa], b: &[Dqa]) -> Vec<Dqa>
+fn vec_add<T: NumericScalar>(a: &[T], b: &[T]) -> Result<Vec<T>, Error>
   - TRAP if a.len != b.len
   - Scales must match
-  - Result[i] = a[i] + b[i]
+  - Result[i] = a[i].add(b[i])?
 
 // Element-wise SUB
-vec_sub(a: &[Dqa], b: &[Dqa]) -> Vec<Dqa>
+fn vec_sub<T: NumericScalar>(a: &[T], b: &[T]) -> Result<Vec<T>, Error>
   - Same as ADD but subtraction
 
 // Element-wise MUL
-vec_mul(a: &[Dqa], b: &[Dqa]) -> Vec<Dqa>
+fn vec_mul<T: NumericScalar>(a: &[T], b: &[T]) -> Result<Vec<T>, Error>
   - TRAP if a.len != b.len
-  - Result[i] = a[i] * b[i]
+  - Result[i] = a[i].mul(b[i])?
 
 // SCALE (multiply all by scalar)
-vec_scale(a: &[Dqa], scalar: Dqa) -> Vec<Dqa>
-  - Result[i] = a[i] * scalar
+fn vec_scale<T: NumericScalar>(a: &[T], scalar: T) -> Result<Vec<T>, Error>
+  - Result[i] = a[i].mul(scalar)?
 ```
 
 ## Gas Model
@@ -236,6 +240,8 @@ vec_scale(a: &[Dqa], scalar: Dqa) -> Vec<Dqa>
 > **Note:** GAS_SQRT = 280 (max per RFC-0111, formula: `100 + 5 * scale`, max scale 36).
 >
 > **Consensus Restriction:** NORMALIZE is FORBIDDEN in consensus because it exceeds the 50,000 per-block numeric gas budget. Use SQUARED_DISTANCE for similarity ranking.
+>
+> **BigInt Overhead:** DOT_PRODUCT formula `N × (30 + 3 × scale²)` accounts for scalar MUL/ADD. BigInt accumulator overhead (~12 gas per iteration) is absorbed into the base cost (30). For N=64, total BigInt overhead ≈ 768 gas, which is <5% of total cost.
 
 ## Test Vectors
 
@@ -292,58 +298,67 @@ Where each scalar element is serialized as 24 bytes (mantissa + scale per RFC-01
 element = mantissa (16 bytes, big-endian i128) || scale (1 byte) || reserved (7 bytes = 0x00)
 ```
 
-> **Note:** Variable-length vectors require explicit length prefix. N is fixed per probe entry definition.
+> **Note:** Variable-length vectors require explicit length prefix. N is fixed per probe entry definition. All scalars use RFC-0111 24-byte canonical big-endian format.
 
-### Merkle Tree Structure
+### Merkle Tree Structure (57 Entries)
 
-- **Entry Count:** 32 (fixed power of 2 for deterministic tree structure)
+- **Entry Count:** 57 (matching RFC-0111)
 - Each probe entry is a **Merkle tree leaf**: `SHA256(leaf_input)` = 32 bytes
-- The Merkle root commits to all 32 entries
+- The Merkle root commits to all 57 entries
 
-```
-DVecProbe {
-    // DOT_PRODUCT entries (Dqa)
-    entry_0:  dot_product([1,2,3], [4,5,6]) → {32, scale=0}
-    entry_1:  dot_product([1,2], [3,4]) scale=1 → {11, scale=2}
-    entry_2:  dot_product([MAX,MAX], [1,1]) → TRAP(OVERFLOW)
-    // ... more DOT_PRODUCT
+**Entry Distribution:**
+- Entries 0-15: DOT_PRODUCT DQA (various N, scales)
+- Entries 16-31: DOT_PRODUCT Decimal (various N, scales)
+- Entries 32-39: SQUARED_DISTANCE (DQA/Decimal)
+- Entries 40-47: NORM (Decimal + DQA TRAPs)
+- Entries 48-51: Element-wise ADD/SUB/MUL/SCALE
+- Entries 52-56: TRAP cases (overflow, scale, dimension)
 
-    // SQUARED_DISTANCE entries (Dqa)
-    entry_8:  squared_distance([0,0], [3,4]) → {25, scale=0}
-    entry_9:  squared_distance([1,2], [4,6]) → {29, scale=0}
-    entry_10: squared_distance scale=10 → TRAP(INVALID_SCALE)
-    // ... more SQUARED_DISTANCE
+### Published Merkle Root
 
-    // NORM entries (Decimal only)
-    entry_16: norm([3,4]) Decimal → {5, scale=0}
-    entry_17: norm([0,0,0]) Decimal → {0, scale=0}
-    entry_18: norm([3,4]) Dqa → TRAP(UNSUPPORTED_OPERATION)
-    // ... more NORM
+> **Merkle Root:** `dc7da4ecf409d7cb99e01626b1c294219ac88c56bc5cef9e1e2f62de0b0c9010`
 
-    // Element-wise operations
-    entry_24: vec_add [1,2] + [3,4] → [4,6]
-    entry_25: vec_sub [4,6] - [1,2] → [3,4]
-    entry_26: vec_mul [2,3] * [4,5] → [8,15]
-    entry_27: vec_scale [1,2] * 2 → [2,4]
+This root was computed from the reference Python implementation in `scripts/compute_dvec_probe_root.py`.
 
-    // TRAP/consensus restriction entries
-    entry_28: NORMALIZE in consensus → TRAP(CONSENSUS_RESTRICTION)
-    // ... padding entries to reach 32
-    entry_31: [reserved]
-}
-```
+### Probe Entry Details
+
+| Entry | Operation | Type | Input A | Input B | Expected Result |
+|-------|-----------|------|---------|---------|-----------------|
+| 0 | DOT_PRODUCT | DQA | [1,2,3] | [4,5,6] | {32, scale=0} |
+| 1 | DOT_PRODUCT | DQA | [1,2] scale=1 | [3,4] scale=1 | {11, scale=2} |
+| 2 | DOT_PRODUCT | DQA | [0,0,0] | [1,2,3] | {0, scale=0} |
+| 3 | DOT_PRODUCT | DQA | [10,20] scale=2 | [30,40] scale=2 | {3, scale=2} |
+| 4-15 | DOT_PRODUCT | DQA | Various | Various | Various |
+| 16-31 | DOT_PRODUCT | Decimal | Various | Various | Various |
+| 32 | SQUARED_DISTANCE | DQA | [0,0] | [3,4] | {25, scale=0} |
+| 33 | SQUARED_DISTANCE | DQA | [1,2] | [4,6] | {29, scale=0} |
+| 34-39 | SQUARED_DISTANCE | DQA | Various | Various | Various |
+| 40 | NORM | Decimal | [3,4] | - | {5, scale=0} |
+| 41 | NORM | Decimal | [0,0,0] | - | {0, scale=0} |
+| 42 | NORM | DQA | [3,4] | - | TRAP (UNSUPPORTED) |
+| 43-47 | NORM | Decimal | Various | - | Various |
+| 48 | VEC_ADD | DQA | [1,2] | [3,4] | [4,6] |
+| 49 | VEC_SUB | DQA | [4,6] | [1,2] | [3,4] |
+| 50 | VEC_MUL | DQA | [2,3] | [4,5] | [8,15] |
+| 51 | VEC_SCALE | DQA | [1,2] | scalar=2 | [2,4] |
+| 52 | DOT_PRODUCT | DQA | N=65 elements | - | TRAP (DIMENSION) |
+| 53 | DOT_PRODUCT | DQA | scale=10+10 | - | TRAP (INVALID_SCALE) |
+| 54 | DOT_PRODUCT | DQA | max values | - | TRAP (OVERFLOW) |
+| 55 | SQUARED_DISTANCE | DQA | scale=10 input | - | TRAP (INPUT_SCALE) |
+| 56 | NORM | DQA | [3,4] | - | TRAP (UNSUPPORTED) |
 
 ### Merkle Root Computation
 
 ```
 fn dvec_probe_root(probe: &DVecProbe) -> [u8; 32] {
-    // Build Merkle tree from 32 leaf hashes
-    // Level 0: 32 leaf hashes (SHA256 of each entry's leaf_input)
-    // Level 1: 16 parent hashes (SHA256(leaf[i] || leaf[i+1]))
-    // Level 2: 8 grandparent hashes
-    // Level 3: 4 great-grandparent hashes
-    // Level 4: 2 great-great-grandparent hashes
-    // Level 5: 1 root hash
+    // Build Merkle tree from 57 leaf hashes
+    // Level 0: 57 leaf hashes (SHA256 of each entry's leaf_input)
+    // Level 1: 29 parent hashes (last entry duplicated for odd count)
+    // Level 2: 15 grandparent hashes
+    // Level 3: 8 great-grandparent hashes
+    // Level 4: 4 great-great-grandparent hashes
+    // Level 5: 2 great-great-grandparent hashes
+    // Level 6: 1 root hash
     // Return root hash
 }
 ```
@@ -354,6 +369,8 @@ fn dvec_probe_root(probe: &DVecProbe) -> [u8; 32] {
 2. Execute operation per algorithms in this RFC
 3. Serialize result using canonical format
 4. Compute leaf hash: SHA256(leaf_input)
+5. Build Merkle tree from 57 leaves
+6. Verify root matches: `dc7da4ecf409d7cb99e01626b1c294219ac88c56bc5cef9e1e2f62de0b0c9010`
 5. Build Merkle tree from 32 leaves
 6. Verify root matches published value: `[COMPUTED_ROOT]`
 

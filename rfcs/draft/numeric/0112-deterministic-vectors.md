@@ -2,12 +2,15 @@
 
 ## Status
 
-**Version:** 1.7 (2026-03-17)
+**Version:** 1.8 (2026-03-17)
 **Status:** Draft
 
 > **Note:** This RFC is extracted from RFC-0106 (Deterministic Numeric Tower) as part of the Track B dismantling effort.
 
-> **Adversarial Review v1.7 Changes:**
+> **Adversarial Review v1.8 Changes:**
+> - ISSUE-3.1: Unified Merkle root in verification procedure (was old v1.6 root)
+> - ISSUE-3.2: Fixed TRAP sentinel reference (Section X → actual section)
+> - ISSUE-3.3: Added DQA probe encoding note (24-byte probe vs 16-byte native)
 > - ISSUE-1.1: SQRT replaced with RFC-0111 integer Newton-Raphson (deterministic)
 > - ISSUE-1.2: All 57 probe entries now unique (no placeholder duplicates)
 > - ISSUE-1.3: RFC text inconsistencies fixed (57 entries throughout)
@@ -326,7 +329,7 @@ element = version (1 byte = 0x01) || reserved (3 bytes = 0x00) || scale (1 byte)
 
 > **Note:** Variable-length vectors require explicit length prefix. N is fixed per probe entry definition. All scalars use 24-byte canonical big-endian format for probe consistency.
 
-> **DQA Note:** DQA values are promoted to 24-byte RFC-0111 format for probe serialization only (mantissa zero-extended to i128). This ensures uniform leaf format across numeric types for Merkle tree computation.
+> **DQA Note:** DQA values are promoted to 24-byte RFC-0111 format for **probe serialization only** (mantissa zero-extended to i128). This ensures uniform leaf format across numeric types for Merkle tree computation. **Note:** Native DQA encoding per RFC-0105 is 16 bytes total (i64 mantissa + scale + reserved). The 24-byte format is probe-specific and not the on-wire or storage format.
 >
 > **Zero-Extension Rationale:** When encoding DQA's 64-bit mantissa into the 128-bit slot, the upper 64 bits are zero-filled (not sign-extended). This is intentional because DQA mantissas are unsigned by specification (per RFC-0105). Zero-extension ensures the encoded value remains positive and consistent with DQA semantics, while also providing a uniform 24-byte format across all numeric types for deterministic Merkle tree construction.
 
@@ -339,7 +342,7 @@ TRAP = { mantissa: 0x8000000000000000 (i64 min), scale: 0xFF }
 
 This sentinel is encoded using the same 24-byte format as normal values, with mantissa set to the minimum i64 value (signifying error) and scale set to 0xFF (255) as the error indicator.
 
-> **Reference:** See RFC-0111 v1.20 Section X (TRAP Sentinel Encoding) for the canonical definition.
+> **Reference:** See RFC-0111 v1.20 Section 13.3 (Verification Probe) for the canonical definition.
 
 ### Merkle Tree Structure (57 Entries)
 
@@ -446,7 +449,7 @@ fn dvec_probe_root(probe: &DVecProbe) -> [u8; 32] {
 3. Serialize result using canonical format
 4. Compute leaf hash: SHA256(leaf_input)
 5. Build Merkle tree from 57 leaves
-6. Verify root matches: `deedbcd8bf9800ffa4b102693f7eb43fcad2c0366af0ff5b6fcd35dd9d55df20`
+6. Verify root matches: `797ee8fcbd4d1b1e4b6b100bb8e53bb6bae9d247a1846461d2446f851219b4da`
 
 > **Note:** The verification probe uses the same Merkle tree structure as RFC-0111 (57 entries) to ensure consistency across the Numeric Tower.
 

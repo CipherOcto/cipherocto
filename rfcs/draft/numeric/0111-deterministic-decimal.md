@@ -2,10 +2,15 @@
 
 ## Status
 
-**Version:** 1.19 (2026-03-17)
+**Version:** 1.20 (2026-03-17)
 **Status:** Draft
 
 > **Note:** This RFC is extracted from RFC-0106 (Deterministic Numeric Tower) as part of the Track B dismantling effort.
+
+> **Adversarial Review v1.20 Changes (2 Issues Fixed):**
+> - Finding 1 (LOW): Entry 55 spec table corrected ({1, 9}, not scale=6)
+> - Finding 2 (LOW): Python leaf hash printing now uses preserved leaf hashes
+> - Version updated to 1.20, Merkle root unchanged
 
 > **Adversarial Review v1.19 Changes (4 Issues Fixed):**
 > - ISSUE-1 (CRITICAL): Entry 50 now tests negative overflow (-MAX + -1), returns TRAP
@@ -1429,7 +1434,7 @@ The probe root commits to the full tuple (operation + inputs + output). Conforma
 | 52    | DIV            | 1.0 ÷ 0.0                       | TRAP                  | Division by zero                       |
 | 53    | SQRT           | -1.0                             | TRAP                  | Negative sqrt                           |
 | 54    | ADD            | 0.999999999999 + 0.000000000001  | {1, 0}                    | Canonicalizes to 1.0                  |
-| 55    | MUL            | 0.000000000001 (scale=12) × 1000 (scale=0) | 0.000001 (scale=6) | Scale precision            |
+| 55    | MUL            | 0.000000000001 (scale=12) × 1000 (scale=0) | {1, 9} (0.000000001) | Scale precision: trailing zero removal |
 | 56    | DIV            | 1.0 (scale=36) ÷ 3.0 (scale=0)  | {0, 0}              | Rounds to zero at max scale             |
 
 ### Differential Fuzzing Requirement (FIX C6 - Use Reference Implementation)

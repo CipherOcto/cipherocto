@@ -449,6 +449,7 @@ print("Computing DECIMAL probe Merkle root (80-byte entries with results)...")
 print("=" * 60)
 
 hashes = []
+leaf_hashes = []  # Preserve leaf hashes before Merkle tree build
 for entry in DATA:
     idx, op, a_mant, a_scl, b_mant, b_scl, desc = entry
     try:
@@ -458,6 +459,7 @@ for entry in DATA:
         raw = mk_entry(op, a_mant, a_scl, b_mant, b_scl, result)
         h = hashlib.sha256(raw).digest()
         hashes.append(h)
+        leaf_hashes.append(h)  # Save leaf hash before tree building
 
         if result is None:
             print(f"{idx:2d} {op:14} TRAP: {desc}")
@@ -484,5 +486,5 @@ print("=" * 60)
 
 # Also print each leaf hash for verification
 print("\nLeaf hashes (first 8 bytes):")
-for i, h in enumerate(hashes[:56]):
+for i, h in enumerate(leaf_hashes):
     print(f"  {i:2d}: {h[:8].hex()}")

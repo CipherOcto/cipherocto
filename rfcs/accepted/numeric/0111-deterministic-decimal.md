@@ -3,7 +3,7 @@
 ## Status
 
 **Version:** 1.20 (2026-03-17)
-**Status:** Draft
+**Status:** Accepted
 
 > **Note:** This RFC is extracted from RFC-0106 (Deterministic Numeric Tower) as part of the Track B dismantling effort.
 

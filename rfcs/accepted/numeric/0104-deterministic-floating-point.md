@@ -2,7 +2,7 @@
 
 ## Status
 
-Draft
+Accepted
 
 > **Note:** This RFC was originally numbered RFC-0104 under the legacy numbering system. It remains at 0104 as it belongs to the Numeric/Math category.
 

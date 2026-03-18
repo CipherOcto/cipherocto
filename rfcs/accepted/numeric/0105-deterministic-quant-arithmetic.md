@@ -2,7 +2,7 @@
 
 ## Status
 
-Draft (Production-Grade Revision v2.14)
+Accepted
 
 > **Note:** This RFC was originally numbered RFC-0105 under the legacy numbering system. It remains at 0105 as it belongs to the Numeric/Math category.
 

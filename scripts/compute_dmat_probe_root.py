@@ -9,7 +9,7 @@ Usage: python3 scripts/compute_dmat_probe_root.py
 """
 
 import hashlib
-from typing import Tuple, List, Optional
+from typing import Tuple, List, Optional, Union
 
 # TRAP sentinel for probe encoding
 TRAP = (0x8000000000000000, 0xFF)
@@ -70,8 +70,8 @@ def leaf_hash(
     op_id: int,
     type_id: int,
     a_data: Tuple[int, int, List[Tuple[int, int]]],  # (rows, cols, elements)
-    b_data: Optional[Tuple[int, int, List[Tuple[int, int]]]],
-    c_data: Tuple[int, int, List[Tuple[int, int]]]
+    b_data: Optional[Union[Tuple[int, int, List[Tuple[int, int]]], List[Tuple[int, int]]]],  # Matrix or Vector (MED-4)
+    c_data: Union[Tuple[int, int, List[Tuple[int, int]]], List[Tuple[int, int]]]  # Matrix or Vector
 ) -> bytes:
     """Compute SHA256 leaf hash for probe entry.
 
@@ -177,9 +177,9 @@ PROBE_ENTRIES = [
     (OP_MAT_MUL, TYPE_DQA, mat(2, 2, dqa(2), dqa(2), dqa(2), dqa(2)),
                         mat(2, 2, dqa(3), dqa(3), dqa(3), dqa(3)),
                         mat(2, 2, dqa(12), dqa(12), dqa(12), dqa(12))),
-    (OP_MAT_MUL, TYPE_DQA, mat(3, 2, dqa(1), dqa(2), dqa(3), dqa(4), dqa(5), dqa(6)),
-                        mat(2, 3, dqa(1), dqa(2), dqa(3), dqa(4), dqa(5), dqa(6)),
-                        mat(3, 3, dqa(9), dqa(12), dqa(15), dqa(19), dqa(26), dqa(33), dqa(29), dqa(40), dqa(51))),
+    (OP_MAT_MUL, TYPE_DQA, mat(2, 3, dqa(1), dqa(2), dqa(3), dqa(4), dqa(5), dqa(6)),  # 2×3
+                        mat(3, 2, dqa(1), dqa(2), dqa(3), dqa(4), dqa(5), dqa(6)),  # 3×2
+                        mat(2, 2, dqa(22), dqa(28), dqa(49), dqa(64))),  # MED-3/4: 2×2 = [[22,28],[49,64]]
     (OP_MAT_MUL, TYPE_DQA, mat(2, 4, dqa(1), dqa(0), dqa(0), dqa(0), dqa(0), dqa(1), dqa(0), dqa(0)),
                         mat(4, 2, dqa(1), dqa(2), dqa(3), dqa(4), dqa(5), dqa(6), dqa(7), dqa(8)),
                         mat(2, 2, dqa(5), dqa(6), dqa(23), dqa(34))),
@@ -273,6 +273,7 @@ PROBE_ENTRIES = [
     (OP_MAT_MUL, TYPE_DECIMAL, mat(1, 3, dqa(1), dqa(2), dqa(3)),
                             mat(3, 1, dqa(1), dqa(2), dqa(3)),
                             mat(1, 1, dqa(14))),
+    # MED-5: RFC Table Entry 46 - 3×2 × 2×3 = 3×3
     (OP_MAT_MUL, TYPE_DECIMAL, mat(3, 2, dqa(1), dqa(2), dqa(3), dqa(4), dqa(5), dqa(6)),
                             mat(2, 3, dqa(1), dqa(2), dqa(3), dqa(4), dqa(5), dqa(6)),
                             mat(3, 3, dqa(9), dqa(12), dqa(15), dqa(19), dqa(26), dqa(33), dqa(29), dqa(40), dqa(51))),
@@ -284,7 +285,7 @@ PROBE_ENTRIES = [
     (OP_MAT_MUL, TYPE_DQA, mat(9, 9), mat(9, 9), mat(1, 1, TRAP)),  # DIMENSION_ERROR
     (OP_MAT_MUL, TYPE_DQA, mat(2, 3), mat(2, 3), mat(1, 1, TRAP)),   # DIMENSION_MISMATCH
     (OP_MAT_ADD, TYPE_DQA, mat(2, 2), mat(2, 3), mat(1, 1, TRAP)),   # DIMENSION_MISMATCH
-    (OP_MAT_VEC_MUL, TYPE_DQA, mat(2, 3), [dqa(1), dqa(2)], [dqa(0), TRAP]),  # DIMENSION_MISMATCH
+    (OP_MAT_VEC_MUL, TYPE_DQA, mat(2, 3), [dqa(1), dqa(2)], [TRAP, TRAP]),  # DIMENSION_MISMATCH (MED-3)
     (OP_MAT_MUL, TYPE_DQA, mat(2, 2, dqa(10**8), dqa(0), dqa(0), dqa(10**8)),
                          mat(2, 2, dqa(10**8), dqa(0), dqa(0), dqa(10**8)),
                          mat(2, 2, TRAP, TRAP, TRAP, TRAP)),  # OVERFLOW

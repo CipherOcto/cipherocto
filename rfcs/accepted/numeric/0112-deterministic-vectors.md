@@ -3,7 +3,7 @@
 ## Status
 
 **Version:** 1.12 (2026-03-17)
-**Status:** Draft
+**Status:** Accepted
 **NUMERIC_SPEC_VERSION:** 1 (per RFC-0110, incremented only when protocol semantics change)
 
 > **Rationale:** NUMERIC_SPEC_VERSION remains at 1 because this RFC does not change the fundamental protocol semantics of any existing numeric types (DFP, DQA, Decimal). DVEC is a new container type that operates on existing numeric types without modifying their encoding, arithmetic, or TRAP semantics. Changes to probe entries or reference implementations do not constitute protocol semantic changes per RFC-0110.

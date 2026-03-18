@@ -2,13 +2,25 @@
 
 ## Status
 
-**Version:** 1.11 (2026-03-17)
+**Version:** 1.12 (2026-03-17)
 **Status:** Draft
 **NUMERIC_SPEC_VERSION:** 1 (per RFC-0110, incremented only when protocol semantics change)
 
 > **Rationale:** NUMERIC_SPEC_VERSION remains at 1 because this RFC does not change the fundamental protocol semantics of any existing numeric types (DFP, DQA, Decimal). DVEC is a new container type that operates on existing numeric types without modifying their encoding, arithmetic, or TRAP semantics. Changes to probe entries or reference implementations do not constitute protocol semantic changes per RFC-0110.
 
 > **Note:** This RFC is extracted from RFC-0106 (Deterministic Numeric Tower) as part of the Track B dismantling effort.
+
+> **Adversarial Review v1.12 Changes (Round 5):**
+> - CRIT-1 (R5): Updated §Published Merkle Root from stale v1.11 value to new root `74a4c3b44b88bae483ae24b26d04980868a0cc26772b06fe2029c328c1118998`
+> - CRIT-2 (R5): Corrected 15 probe expected values (13 non-canonical, 2 wrong math)
+>   - Non-canonical: entries 6, 8, 10, 11, 12, 18, 20, 22, 23, 24, 26, 36
+>   - Wrong math: entries 15 (220 not 200), 31 (50 not 60), 33 (25 not 29)
+> - Updated RFC §Probe Entry Details table to match corrected expected values
+> - MED-1: Fixed §Test Vectors §SQUARED_DISTANCE prose table `{29}` → `{25}`
+> - MED-2: Added gas derivation footnote for `3 × scale²` term
+> - MED-3: Fixed NORMALIZE gas total `~319,000` → `~269,000`
+> - LOW-2: Added note explaining VEC_ADD/SUB/MUL entries 48-51 verified by inspection
+> - LOW-4: Added note stating canonical script takes precedence over embedded copy
 
 > **Adversarial Review v1.11 Changes (Round 3):**
 > - CRIT-NEW-R1: Fixed NORM probe entries 43, 45, 46 with correct RFC-0111 SQRT values
@@ -110,7 +122,6 @@ pub trait NumericScalar: Clone {
 /// Deterministic Vector
 pub struct DVec<T: NumericScalar> {
     pub data: Vec<T>,
-    pub len: usize,
 }
 ```
 
@@ -173,7 +184,7 @@ Algorithm:
 
   8. (value, result_scale) = canonicalize(value, result_scale)
 
-  8. Return T::new(value, result_scale)
+  9. Return T::new(value, result_scale)
 ```
 
 > ⚠️ **CRITICAL**: Sequential iteration is MANDATORY.
@@ -232,7 +243,7 @@ Algorithm:
 
   9. (value, result_scale) = canonicalize(value, result_scale)
 
- 11. Return T::new(value, result_scale)
+ 10. Return T::new(value, result_scale)
 ```
 
 ### NORM — L2 Norm
@@ -244,18 +255,18 @@ fn norm<T: NumericScalar + MaxScale>(a: &[T]) -> Result<T, Error>
 
 Preconditions:
   - For Dqa: TRAP (UNSUPPORTED_OPERATION - DQA lacks SQRT per RFC-0105)
-  - For Decimal: a[0].scale <= 9 (required for SQRT per RFC-0111)
-    - **Derivation:** Per RFC-0111 §SQRT algorithm, SQRT computes:
-      - P = min(36, scale + 6)
-      - scale_factor = 2 * P - scale
-      - For the result to have valid scale_factor >= 0, we need scale <= P*2
-      - Since P = scale + 6 (at minimum), scale_factor >= 0 implies scale <= 2*(scale+6)
-      - This simplifies to input_scale <= 9 (to ensure result mantissa fits in DECIMAL range)
+  - For Decimal: a[0].scale <= 9 (required for SQRT per RFC-0111 v1.20)
+    - **Derivation:** input_scale <= 9 is a design constraint:
+      1. dot(a,a) has scale = 2 × input_scale
+      2. RFC-0111 v1.20 §SQRT algorithm produces result at scale P = min(36, dot_scale + 6)
+      3. For input_scale = 9: dot_scale = 18, P = 24 (fits in DECIMAL)
+      4. For input_scale > 9: result scale grows beyond 24, increasing precision requirements
+      5. The limit aligns NORM output precision with practical embedding use cases
 
 Algorithm:
   1. If T is Dqa: TRAP(UNSUPPORTED_OPERATION)
   2. dot = dot_product(a, a)?
-  3. result = sqrt_rfc0111(dot)  // Per RFC-0111: P = min(36, scale+6), scale_factor = 2*P - scale
+  3. result = sqrt_rfc0111(dot)  // Per RFC-0111 v1.20: P = min(36, scale+6), scale_factor = 2*P - scale
   4. Return result.canonicalize()
 
 ⚠️ **Zero Vector**: If all elements are zero, return zero (not an error).
@@ -281,7 +292,10 @@ Algorithm:
   4. Return result
 ```
 
-> **Rationale**: NORMALIZE requires N divisions (N×GAS_DIV ≈ 251,000 for N=64) plus SQRT gas, totaling ~319,000. This exceeds the per-block numeric budget of 50,000 gas defined in RFC-0110/0111. Use SQUARED_DISTANCE for consensus-critical similarity ranking.
+> **Rationale**: NORMALIZE requires NORM gas (17,752) plus N divisions:
+> - At max Decimal scale (36): N × GAS_DIV = 64 × 3,938 = 251,000
+> - Total: 17,752 + 251,000 ≈ 269,000
+> This exceeds the per-block numeric budget of 50,000 gas defined in RFC-0110/0111. Use SQUARED_DISTANCE for consensus-critical similarity ranking.
 
 ### Element-wise Operations (Generic)
 
@@ -305,7 +319,7 @@ fn vec_mul<T: NumericScalar>(a: &[T], b: &[T]) -> Result<Vec<T>, Error>
 fn vec_scale<T: NumericScalar>(a: &[T], scalar: T) -> Result<Vec<T>, Error>
   - Result[i] = a[i].mul(scalar)?
 
-> **Probe Serialization Note:** For VEC_SCALE, input_b contains a single-element vector representing the scalar. The probe encoding format follows the standard DVEC encoding: len (1 byte) + scalar element (24 bytes).
+> **Probe Serialization Note:** For VEC_SCALE, input_b contains a single-element vector representing the scalar. The probe encoding format follows the standard DVEC encoding: len (1 byte) + scalar element (24 bytes). Entries 48–51 (VEC_ADD/SUB/MUL/SCALE) commit to constant expected values verified by direct arithmetic inspection (e.g., 1+3=4, 4−1=3, 2×4=8, 1×2=2 with scale=0).
 ```
 
 ## Gas Model
@@ -328,6 +342,8 @@ fn vec_scale<T: NumericScalar>(a: &[T], scalar: T) -> Result<Vec<T>, Error>
 > **Consensus Restriction:** NORMALIZE is FORBIDDEN in consensus because it exceeds the 50,000 per-block numeric gas budget. Use SQUARED_DISTANCE for similarity ranking.
 >
 > **BigInt Overhead:** DOT_PRODUCT formula `N × (30 + 3 × scale²)` accounts for scalar MUL/ADD. BigInt accumulator overhead (~12 gas per iteration) is absorbed into the base cost (30). For N=64, total BigInt overhead ≈ 768 gas, which is <5% of total cost.
+>
+> **Derivation of `3 × scale²` term:** Per RFC-0105 §Gas Model, DQA MUL costs `20 + 3 × scale_a × scale_b` gas. For DOT_PRODUCT where `scale_a = scale_b = input_scale`, per-element MUL cost is `20 + 3 × scale²`. Adding BigInt accumulator cost (~10 gas per ADD): per-element total = `30 + 3 × scale²`.
 
 ## Test Vectors
 
@@ -345,7 +361,7 @@ fn vec_scale<T: NumericScalar>(a: &[T], scalar: T) -> Result<Vec<T>, Error>
 | Input A | Input B | Expected | Notes |
 |---------|---------|----------|-------|
 | [0, 0] | [3, 4] | {25, scale=0} | 3² + 4² |
-| [1, 2] | [4, 6] | {29, scale=0} | 3² + 4² |
+| [1, 2] | [4, 6] | {25, scale=0} | (4-1)²+(6-2)²=9+16=25 |
 | [1.5, 2.5] | [1.5, 2.5] | {0, scale=0} | Identical |
 | [1.5e10, 2.5e10] | [1.5e10, 2.5e10] | TRAP | scale=10 → result scale=20 > 18 |
 
@@ -355,7 +371,7 @@ fn vec_scale<T: NumericScalar>(a: &[T], scalar: T) -> Result<Vec<T>, Error>
 |-------|------|----------|-------|
 | [3, 4] | Decimal | {5, scale=0} | 3-4-5 triangle |
 | [0, 0, 0] | Decimal | {0, scale=0} | Zero vector |
-| [1, 1, 1] | Decimal | {1.732..., scale=6} | √3 |
+| [1, 1, 1] | Decimal | {173205, scale=5} | √3 ≈ 1.73205, canonical form |
 | [3, 4] | Dqa | TRAP | UNSUPPORTED_OPERATION |
 
 ### Boundary Cases
@@ -376,8 +392,16 @@ Following RFC-0111's rigorous serialization approach:
 
 **DVec Canonical Wire Format:**
 ```
-leaf_input = op_id (8 bytes) || vector_a_len (1 byte) || vector_a_elements... || vector_b_len (1 byte) || vector_b_elements... || result_len (1 byte) || result_elements...
+leaf_input = op_id (8 bytes) || type_id (1 byte) || vector_a_len (1 byte) || vector_a_elements... || vector_b_len (1 byte) || vector_b_elements... || result_len (1 byte) || result_elements...
 ```
+
+> **CRIT-1 Fix:** The `type_id` byte distinguishes between numeric types:
+> - `1` = DQA (Deterministic Quantized Arithmetic)
+> - `2` = Decimal (per RFC-0111)
+>
+> This ensures DQA and Decimal entries with identical values produce distinct leaf hashes.
+
+> **Note:** Probe entries 48–51 (VEC_ADD, VEC_SUB, VEC_MUL, VEC_SCALE) commit to constant expected values trivially verifiable by inspection.
 
 Where each scalar element is serialized as 24 bytes (mantissa + scale):
 
@@ -424,7 +448,7 @@ This sentinel is encoded using the same 24-byte format as normal values, with ma
 
 ### Published Merkle Root
 
-> **Merkle Root:** `2f33256f429009e5cf3529ae05f68efd4039105d83d9b6d659a049fbaab76c33`
+> **Merkle Root:** `74a4c3b44b88bae483ae24b26d04980868a0cc26772b06fe2029c328c1118998`
 
 This root was computed from the reference Python implementation in `scripts/compute_dvec_probe_root.py`.
 
@@ -437,38 +461,38 @@ This root was computed from the reference Python implementation in `scripts/comp
 | 2 | DOT_PRODUCT | DQA | [0,0,0] | [1,2,3] | {0, scale=0} |
 | 3 | DOT_PRODUCT | DQA | [10,20] scale=2 | [30,40] scale=2 | {11, scale=2} | Raw: 1100→canonical: 11 |
 | 4 | DOT_PRODUCT | DQA | [1] | [1] | {1, scale=0} |
-| 5 | DOT_PRODUCT | DQA | [1,2] | [3,4] | {11, scale=2} |
-| 6 | DOT_PRODUCT | DQA | [100] scale=2 | [100] scale=2 | {10000, scale=4} |
+| 5 | DOT_PRODUCT | DQA | [3,5] scale=1 | [2,4] scale=1 | {26, scale=2} |
+| 6 | DOT_PRODUCT | DQA | [100] scale=2 | [100] scale=2 | {1, scale=0} | Canonical: 10000→1 |
 | 7 | DOT_PRODUCT | DQA | [1,2,3] scale=3 | [4,5,6] scale=3 | {32, scale=6} |
-| 8 | DOT_PRODUCT | DQA | [10,20] scale=4 | [30,40] scale=4 | {1100, scale=8} |
+| 8 | DOT_PRODUCT | DQA | [10,20] scale=4 | [30,40] scale=4 | {11, scale=6} | Canonical: 1100→11 |
 | 9 | DOT_PRODUCT | DQA | [1,1,1,1] scale=5 | [1,1,1,1] scale=5 | {4, scale=10} |
-| 10 | DOT_PRODUCT | DQA | [100,200] scale=6 | [300,400] scale=6 | {110000, scale=12} |
-| 11 | DOT_PRODUCT | DQA | [1,1,1,1,1] scale=7 | [2,2,2,2,2] scale=7 | {10, scale=14} |
-| 12 | DOT_PRODUCT | DQA | [50,50] scale=8 | [50,50] scale=8 | {5000, scale=16} |
+| 10 | DOT_PRODUCT | DQA | [100,200] scale=6 | [300,400] scale=6 | {11, scale=8} | Canonical: 110000→11 |
+| 11 | DOT_PRODUCT | DQA | [1,1,1,1,1] scale=7 | [2,2,2,2,2] scale=7 | {1, scale=13} | Canonical: 10→1 |
+| 12 | DOT_PRODUCT | DQA | [50,50] scale=8 | [50,50] scale=8 | {5, scale=13} | Canonical: 5000→5 |
 | 13 | DOT_PRODUCT | DQA | [1,1,1,1,1,1] scale=9 | [1,1,1,1,1,1] scale=9 | {6, scale=18} |
 | 14 | DOT_PRODUCT | DQA | [10,20,30] | [1,2,3] | {140, scale=0} |
-| 15 | DOT_PRODUCT | DQA | [5,15,25] scale=1 | [2,4,6] scale=1 | {200, scale=2} |
+| 15 | DOT_PRODUCT | DQA | [5,15,25] scale=1 | [2,4,6] scale=1 | {22, scale=1} | 5×2+15×4+25×6=220 |
 | 16 | DOT_PRODUCT | Decimal | [1] | [1] | {1, scale=0} |
 | 17 | DOT_PRODUCT | Decimal | [1,2] scale=1 | [3,4] scale=1 | {11, scale=2} |
-| 18 | DOT_PRODUCT | Decimal | [100] scale=2 | [100] scale=2 | {10000, scale=4} |
+| 18 | DOT_PRODUCT | Decimal | [100] scale=2 | [100] scale=2 | {1, scale=0} | Canonical: 10000→1 |
 | 19 | DOT_PRODUCT | Decimal | [1,2,3] scale=3 | [4,5,6] scale=3 | {32, scale=6} |
-| 20 | DOT_PRODUCT | Decimal | [10,20] scale=4 | [30,40] scale=4 | {1100, scale=8} |
+| 20 | DOT_PRODUCT | Decimal | [10,20] scale=4 | [30,40] scale=4 | {11, scale=6} | Canonical: 1100→11 |
 | 21 | DOT_PRODUCT | Decimal | [1,1,1,1] scale=5 | [1,1,1,1] scale=5 | {4, scale=10} |
-| 22 | DOT_PRODUCT | Decimal | [100,200] scale=6 | [300,400] scale=6 | {110000, scale=12} |
-| 23 | DOT_PRODUCT | Decimal | [1,1,1,1,1] scale=7 | [2,2,2,2,2] scale=7 | {10, scale=14} |
-| 24 | DOT_PRODUCT | Decimal | [50,50] scale=8 | [50,50] scale=8 | {5000, scale=16} |
+| 22 | DOT_PRODUCT | Decimal | [100,200] scale=6 | [300,400] scale=6 | {11, scale=8} | Canonical: 110000→11 |
+| 23 | DOT_PRODUCT | Decimal | [1,1,1,1,1] scale=7 | [2,2,2,2,2] scale=7 | {1, scale=13} | Canonical: 10→1 |
+| 24 | DOT_PRODUCT | Decimal | [50,50] scale=8 | [50,50] scale=8 | {5, scale=13} | Canonical: 5000→5 |
 | 25 | DOT_PRODUCT | Decimal | [1,1,1,1,1,1] scale=9 | [1,1,1,1,1,1] scale=9 | {6, scale=18} |
-| 26 | DOT_PRODUCT | Decimal | [10,20] scale=10 | [30,40] scale=10 | {1100, scale=20} |
+| 26 | DOT_PRODUCT | Decimal | [10,20] scale=10 | [30,40] scale=10 | {11, scale=18} | Canonical: 1100→11 |
 | 27 | DOT_PRODUCT | Decimal | [1,1,1,1,1,1,1,1] scale=12 | [1,1,1,1,1,1,1,1] scale=12 | {8, scale=24} |
 | 28 | DOT_PRODUCT | Decimal | [2,3] scale=14 | [4,5] scale=14 | {23, scale=28} |
 | 29 | DOT_PRODUCT | Decimal | [5,5,5] scale=16 | [5,5,5] scale=16 | {75, scale=32} |
 | 30 | DOT_PRODUCT | Decimal | [1,1] scale=18 | [1,1] scale=18 | {2, scale=36} |
-| 31 | DOT_PRODUCT | Decimal | [10,20] | [1,2] | {60, scale=0} |
+| 31 | DOT_PRODUCT | Decimal | [10,20] | [1,2] | {50, scale=0} | 10×1+20×2=50 |
 | 32 | SQUARED_DISTANCE | DQA | [0,0] | [3,4] | {25, scale=0} |
-| 33 | SQUARED_DISTANCE | DQA | [1,2] | [4,6] | {29, scale=0} |
+| 33 | SQUARED_DISTANCE | DQA | [1,2] | [4,6] | {25, scale=0} | (4-1)²+(6-2)²=9+16=25 |
 | 34 | SQUARED_DISTANCE | DQA | [0,0] scale=1 | [3,4] scale=1 | {25, scale=2} |
 | 35 | SQUARED_DISTANCE | DQA | [1,2] scale=2 | [1,2] scale=2 | {0, scale=0} |
-| 36 | SQUARED_DISTANCE | DQA | [10,20] scale=3 | [0,0] scale=3 | {500, scale=6} |
+| 36 | SQUARED_DISTANCE | DQA | [10,20] scale=3 | [0,0] scale=3 | {5, scale=4} | Canonical: 500→5 |
 | 37 | SQUARED_DISTANCE | DQA | [1] scale=4 | [0] scale=4 | {1, scale=8} |
 | 38 | SQUARED_DISTANCE | Decimal | [3,4] scale=5 | [0,0] scale=5 | {25, scale=10} |
 | 39 | SQUARED_DISTANCE | Decimal | [1,2,3] scale=6 | [0,0,0] scale=6 | {14, scale=12} |
@@ -513,7 +537,7 @@ fn dvec_probe_root(probe: &DVecProbe) -> [u8; 32] {
 3. Serialize result using canonical format
 4. Compute leaf hash: SHA256(leaf_input)
 5. Build Merkle tree from 57 leaves
-6. Verify root matches: `f2255b50e4b887cd97377a39ebf55b761b949d668d640c8424fa6dbb94402238`
+6. Verify root matches: `74a4c3b44b88bae483ae24b26d04980868a0cc26772b06fe2029c328c1118998`
 
 > **Note:** The verification probe uses the same Merkle tree structure as RFC-0111 (57 entries) to ensure consistency across the Numeric Tower.
 
@@ -544,6 +568,8 @@ fn dvec_probe_root(probe: &DVecProbe) -> [u8; 32] {
 - [x] raw_mantissa() method on NumericScalar trait
 
 ## Appendix A: Reference Python Implementation
+
+> **Note:** The canonical reference is `scripts/compute_dvec_probe_root.py`. In case of discrepancy, the script file takes precedence over this embedded copy.
 
 The following Python script implements the DVEC operations and computes the Merkle root for probe verification:
 
@@ -948,9 +974,13 @@ def encode_vector(elements: List[Tuple[int, int]], is_decimal: bool) -> bytes:
 
 def build_leaf(op_id: int, input_a: List[Tuple[int, int]], input_b: Optional[List[Tuple[int, int]]],
                result: any, is_decimal: bool = False) -> bytes:
-    """Build a Merkle leaf: op_id (8) + input_a + input_b + result."""
+    """Build a Merkle leaf: op_id (8) + type_id (1) + input_a + input_b + result."""
     # op_id as 8 bytes big-endian
     leaf = op_id.to_bytes(8, 'big')
+
+    # CRIT-1: Add type_id byte (1=DQA, 2=Decimal)
+    type_id = TYPES['DECIMAL'] if is_decimal else TYPES['DQA']
+    leaf += bytes([type_id])
 
     # input_a
     leaf += encode_vector(input_a, is_decimal)
@@ -1048,9 +1078,10 @@ def get_probe_entries() -> List[dict]:
         'expected': (11, 2),  # 0.1*0.3 + 0.2*0.4 = 0.03 + 0.08 = 0.11
     })
     # Entries 4-15: DOT_PRODUCT DQA unique cases (12 unique test cases)
+    # CRIT-2: Replaced duplicate with distinct test case
     dqa_dot_cases = [
         ([(1, 0)], [(1, 0)], (1, 0)),  # N=1, scale=0
-        ([(1, 1), (2, 1)], [(3, 1), (4, 1)], (11, 2)),  # N=2, scale=1
+        ([(3, 1), (5, 1)], [(2, 1), (4, 1)], (26, 2)),  # N=2, scale=1, distinct from Entry 1
         ([(100, 2)], [(100, 2)], (10000, 4)),  # scale=2
         ([(1, 3), (2, 3), (3, 3)], [(4, 3), (5, 3), (6, 3)], (32, 6)),  # N=3, scale=3
         ([(10, 4), (20, 4)], [(30, 4), (40, 4)], (1100, 8)),  # scale=4

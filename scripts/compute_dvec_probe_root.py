@@ -467,9 +467,13 @@ def encode_vector(elements: List[Tuple[int, int]], is_decimal: bool) -> bytes:
 
 def build_leaf(op_id: int, input_a: List[Tuple[int, int]], input_b: Optional[List[Tuple[int, int]]],
                result: any, is_decimal: bool = False) -> bytes:
-    """Build a Merkle leaf: op_id (8) + input_a + input_b + result."""
+    """Build a Merkle leaf: op_id (8) + type_id (1) + input_a + input_b + result."""
     # op_id as 8 bytes big-endian
     leaf = op_id.to_bytes(8, 'big')
+
+    # CRIT-1: Add type_id byte (1=DQA, 2=Decimal)
+    type_id = TYPES['DECIMAL'] if is_decimal else TYPES['DQA']
+    leaf += bytes([type_id])
 
     # input_a
     leaf += encode_vector(input_a, is_decimal)
@@ -567,19 +571,20 @@ def get_probe_entries() -> List[dict]:
         'expected': (11, 2),  # 0.1*0.3 + 0.2*0.4 = 0.03 + 0.08 = 0.11
     })
     # Entries 4-15: DOT_PRODUCT DQA unique cases (12 unique test cases)
+    # CRIT-2: Replaced duplicate with distinct test case
     dqa_dot_cases = [
         ([(1, 0)], [(1, 0)], (1, 0)),  # N=1, scale=0
-        ([(1, 1), (2, 1)], [(3, 1), (4, 1)], (11, 2)),  # N=2, scale=1
-        ([(100, 2)], [(100, 2)], (10000, 4)),  # scale=2
+        ([(3, 1), (5, 1)], [(2, 1), (4, 1)], (26, 2)),  # N=2, scale=1, distinct from Entry 1
+        ([(100, 2)], [(100, 2)], (1, 0)),  # CRIT-2: scale=2, 10000→canonical(1,0)
         ([(1, 3), (2, 3), (3, 3)], [(4, 3), (5, 3), (6, 3)], (32, 6)),  # N=3, scale=3
-        ([(10, 4), (20, 4)], [(30, 4), (40, 4)], (1100, 8)),  # scale=4
+        ([(10, 4), (20, 4)], [(30, 4), (40, 4)], (11, 6)),  # CRIT-2: scale=4, 1100→canonical(11,6)
         ([(1, 5)] * 4, [(1, 5)] * 4, (4, 10)),  # N=4, scale=5
-        ([(100, 6), (200, 6)], [(300, 6), (400, 6)], (110000, 12)),  # scale=6
-        ([(1, 7)] * 5, [(2, 7)] * 5, (10, 14)),  # N=5, scale=7
-        ([(50, 8), (50, 8)], [(50, 8), (50, 8)], (5000, 16)),  # scale=8
+        ([(100, 6), (200, 6)], [(300, 6), (400, 6)], (11, 8)),  # CRIT-2: scale=6, 110000→canonical(11,8)
+        ([(1, 7)] * 5, [(2, 7)] * 5, (1, 13)),  # CRIT-2: scale=7, 10→canonical(1,13)
+        ([(50, 8), (50, 8)], [(50, 8), (50, 8)], (5, 13)),  # CRIT-2: scale=8, 5000→canonical(5,13)
         ([(1, 9)] * 6, [(1, 9)] * 6, (6, 18)),  # N=6, scale=9 (max for DOT)
         ([(10, 0), (20, 0), (30, 0)], [(1, 0), (2, 0), (3, 0)], (140, 0)),  # N=3, scale=0
-        ([(5, 1), (15, 1), (25, 1)], [(2, 1), (4, 1), (6, 1)], (200, 2)),  # N=3, scale=1
+        ([(5, 1), (15, 1), (25, 1)], [(2, 1), (4, 1), (6, 1)], (22, 1)),  # CRIT-2: 5*2+15*4+25*6=220→(22,1)
     ]
     for i, (a, b, expected) in enumerate(dqa_dot_cases):
         entries.append({
@@ -595,20 +600,20 @@ def get_probe_entries() -> List[dict]:
     decimal_dot_cases = [
         ([(1, 0)], [(1, 0)], (1, 0)),  # N=1, scale=0
         ([(1, 1), (2, 1)], [(3, 1), (4, 1)], (11, 2)),  # N=2, scale=1
-        ([(100, 2)], [(100, 2)], (10000, 4)),  # scale=2
+        ([(100, 2)], [(100, 2)], (1, 0)),  # CRIT-2: scale=2, 10000→canonical(1,0)
         ([(1, 3), (2, 3), (3, 3)], [(4, 3), (5, 3), (6, 3)], (32, 6)),  # N=3
-        ([(10, 4), (20, 4)], [(30, 4), (40, 4)], (1100, 8)),
+        ([(10, 4), (20, 4)], [(30, 4), (40, 4)], (11, 6)),  # CRIT-2: scale=4, 1100→canonical(11,6)
         ([(1, 5)] * 4, [(1, 5)] * 4, (4, 10)),  # N=4
-        ([(100, 6), (200, 6)], [(300, 6), (400, 6)], (110000, 12)),
-        ([(1, 7)] * 5, [(2, 7)] * 5, (10, 14)),  # N=5
-        ([(50, 8), (50, 8)], [(50, 8), (50, 8)], (5000, 16)),
+        ([(100, 6), (200, 6)], [(300, 6), (400, 6)], (11, 8)),  # CRIT-2: scale=6, 110000→canonical(11,8)
+        ([(1, 7)] * 5, [(2, 7)] * 5, (1, 13)),  # CRIT-2: scale=7, 10→canonical(1,13)
+        ([(50, 8), (50, 8)], [(50, 8), (50, 8)], (5, 13)),  # CRIT-2: scale=8, 5000→canonical(5,13)
         ([(1, 9)] * 6, [(1, 9)] * 6, (6, 18)),  # scale=9
-        ([(10, 10), (20, 10)], [(30, 10), (40, 10)], (1100, 20)),  # scale=10
+        ([(10, 10), (20, 10)], [(30, 10), (40, 10)], (11, 18)),  # CRIT-2: scale=10, 1100→canonical(11,18)
         ([(1, 12)] * 8, [(1, 12)] * 8, (8, 24)),  # N=8, scale=12
         ([(2, 14), (3, 14)], [(4, 14), (5, 14)], (23, 28)),  # scale=14
         ([(5, 16)] * 3, [(5, 16)] * 3, (75, 32)),  # N=3, scale=16
         ([(1, 18)] * 2, [(1, 18)] * 2, (2, 36)),  # scale=18 (max for Decimal)
-        ([(10, 0), (20, 0)], [(1, 0), (2, 0)], (60, 0)),  # Different values
+        ([(10, 0), (20, 0)], [(1, 0), (2, 0)], (50, 0)),  # CRIT-2: 10*1+20*2=50
     ]
     for i, (a, b, expected) in enumerate(decimal_dot_cases):
         entries.append({
@@ -623,10 +628,10 @@ def get_probe_entries() -> List[dict]:
     # Entries 32-37: SQUARED_DISTANCE DQA (6 entries)
     sq_dist_dqa_cases = [
         ([(0, 0), (0, 0)], [(3, 0), (4, 0)], (25, 0)),  # 3^2 + 4^2
-        ([(1, 0), (2, 0)], [(4, 0), (6, 0)], (29, 0)),  # 3^2 + 4^2
+        ([(1, 0), (2, 0)], [(4, 0), (6, 0)], (25, 0)),  # CRIT-2: (4-1)^2+(6-2)^2=9+16=25
         ([(0, 1), (0, 1)], [(3, 1), (4, 1)], (25, 2)),  # scale=1
         ([(1, 2), (2, 2)], [(1, 2), (2, 2)], (0, 0)),  # Same vector = 0
-        ([(10, 3), (20, 3)], [(0, 3), (0, 3)], (500, 6)),  # scale=3
+        ([(10, 3), (20, 3)], [(0, 3), (0, 3)], (5, 4)),  # CRIT-2: 100+400=500→canonical(5,4)
         ([(1, 4)], [(0, 4)], (1, 8)),  # N=1, scale=4
     ]
     for i, (a, b, expected) in enumerate(sq_dist_dqa_cases):

@@ -32,3 +32,6 @@ Cargo.lock
 .python-version
 **/__pycache__/
 *.egg-info/
+
+# Claude Code
+.claude/plans/

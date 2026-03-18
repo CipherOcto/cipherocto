@@ -130,11 +130,20 @@ def dot_product_dqa(a: List[Tuple[int, int]], b: List[Tuple[int, int]]) -> Optio
     if len(a) > MAX_DVEC_DIM:
         return None  # TRAP DIMENSION
 
-    # Check scales match
-    if a and a[0][1] != b[0][1]:
-        return None  # TRAP SCALE_MISMATCH
+    # Get input_scale from a[0] (or b[0] if a is empty)
+    input_scale = a[0][1] if a else (b[0][1] if b else 0)
 
-    input_scale = a[0][1] if a else 0
+    # Check input scale constraint for DQA (per RFC precondition - must be first check)
+    if input_scale > 9:
+        return None  # TRAP INPUT_VALIDATION_ERROR
+
+    # Validate all elements in both vectors have the same scale
+    for elem in a:
+        if elem[1] != input_scale:
+            return None  # TRAP SCALE_MISMATCH
+    for elem in b:
+        if elem[1] != input_scale:
+            return None  # TRAP SCALE_MISMATCH
 
     # Accumulate using Python's arbitrary precision (simulating BigInt)
     accumulator = 0
@@ -167,9 +176,20 @@ def dot_product_decimal(a: List[Tuple[int, int]], b: List[Tuple[int, int]]) -> O
     if len(a) > MAX_DVEC_DIM:
         return None  # TRAP DIMENSION
 
-    # Check scales match
-    if a and a[0][1] != b[0][1]:
-        return None  # TRAP SCALE_MISMATCH
+    # Get input_scale from a[0] (or b[0] if a is empty)
+    input_scale = a[0][1] if a else (b[0][1] if b else 0)
+
+    # Check input scale constraint for Decimal (per RFC precondition)
+    if input_scale > 18:
+        return None  # TRAP INPUT_VALIDATION_ERROR
+
+    # Validate all elements in both vectors have the same scale
+    for elem in a:
+        if elem[1] != input_scale:
+            return None  # TRAP SCALE_MISMATCH
+    for elem in b:
+        if elem[1] != input_scale:
+            return None  # TRAP SCALE_MISMATCH
 
     # Accumulate using Python's arbitrary precision
     accumulator = 0
@@ -202,11 +222,20 @@ def squared_distance_dqa(a: List[Tuple[int, int]], b: List[Tuple[int, int]]) -> 
     if len(a) > MAX_DVEC_DIM:
         return None
 
-    input_scale = a[0][1] if a else 0
+    # Get input_scale from a[0] (or b[0] if a is empty)
+    input_scale = a[0][1] if a else (b[0][1] if b else 0)
 
-    # Check input scale constraint for DQA
+    # Check input scale constraint for DQA (per RFC precondition - must be first check)
     if input_scale > 9:
-        return None  # TRAP INPUT_SCALE
+        return None  # TRAP INPUT_VALIDATION_ERROR
+
+    # Validate all elements in both vectors have the same scale
+    for elem in a:
+        if elem[1] != input_scale:
+            return None  # TRAP SCALE_MISMATCH
+    for elem in b:
+        if elem[1] != input_scale:
+            return None  # TRAP SCALE_MISMATCH
 
     accumulator = 0
     for i in range(len(a)):
@@ -214,8 +243,8 @@ def squared_distance_dqa(a: List[Tuple[int, int]], b: List[Tuple[int, int]]) -> 
         product = diff * diff
         accumulator += product
 
-    # Check overflow
-    if accumulator < -MAX_DQA_MANTISSA or accumulator > MAX_DQA_MANTISSA:
+    # Check overflow (accumulator >= 0 since it's sum of squares)
+    if accumulator > MAX_DQA_MANTISSA:
         return None  # TRAP OVERFLOW
 
     # Result scale = input_scale * 2
@@ -236,11 +265,20 @@ def squared_distance_decimal(a: List[Tuple[int, int]], b: List[Tuple[int, int]])
     if len(a) > MAX_DVEC_DIM:
         return None
 
-    input_scale = a[0][1] if a else 0
+    # Get input_scale from a[0] (or b[0] if a is empty)
+    input_scale = a[0][1] if a else (b[0][1] if b else 0)
 
-    # Check input scale constraint for Decimal
+    # Check input scale constraint for Decimal (per RFC precondition - must be first check)
     if input_scale > 18:
-        return None  # TRAP INPUT_SCALE
+        return None  # TRAP INPUT_VALIDATION_ERROR
+
+    # Validate all elements in both vectors have the same scale
+    for elem in a:
+        if elem[1] != input_scale:
+            return None  # TRAP SCALE_MISMATCH
+    for elem in b:
+        if elem[1] != input_scale:
+            return None  # TRAP SCALE_MISMATCH
 
     accumulator = 0
     for i in range(len(a)):
@@ -248,7 +286,8 @@ def squared_distance_decimal(a: List[Tuple[int, int]], b: List[Tuple[int, int]])
         product = diff * diff
         accumulator += product
 
-    if abs(accumulator) > MAX_DECIMAL_MANTISSA:
+    # Check overflow (accumulator >= 0 since it's sum of squares)
+    if accumulator > MAX_DECIMAL_MANTISSA:
         return None
 
     result_scale = input_scale * 2
@@ -268,16 +307,43 @@ def integer_sqrt(n: int) -> int:
         return 0
     # Initial guess: 2^(bit_length(n)/2)
     x = 1 << ((n.bit_length() + 1) // 2)
-    # Fixed 40 iterations for determinism
+    # Fixed 40 iterations for determinism (per RFC-0111)
     for _ in range(40):
         x_new = (x + n // x) // 2
-        if x_new >= x:
-            break
         x = x_new
     # Off-by-one correction per RFC-0111
     if x * x > n:
         x = x - 1
     return x
+
+
+def decimal_sqrt_rfc0111(mantissa: int, scale: int) -> Optional[Tuple[int, int]]:
+    """RFC-0111 compliant SQRT for Decimal.
+
+    This is used by NORM to compute sqrt(dot(a, a)).
+    """
+    if mantissa < 0:
+        return None  # TRAP: sqrt of negative
+    if mantissa == 0:
+        return (0, 0)  # Zero case
+
+    # RFC-0111: P = min(36, scale + 6)
+    P = min(36, scale + 6)
+    scale_factor = 2 * P - scale
+
+    # Compute n = mantissa * 10^scale_factor
+    if scale_factor > 36:
+        # Split multiplication to avoid overflow
+        partial = mantissa * POW10[scale_factor - 36]
+        scaled_n = partial * POW10[36]
+    else:
+        scaled_n = mantissa * POW10[scale_factor]
+
+    # Compute integer sqrt
+    x = integer_sqrt(scaled_n)
+
+    # Return with precision P (RFC-0111 returns scale=P, not scale//2)
+    return canonicalize_decimal(x, P)
 
 
 def norm_decimal(a: List[Tuple[int, int]]) -> Optional[Tuple[int, int]]:
@@ -289,6 +355,11 @@ def norm_decimal(a: List[Tuple[int, int]]) -> Optional[Tuple[int, int]]:
     if not a:
         return (0, 0)  # Zero vector
 
+    # Validate input scale (per CRIT-5: input_scale <= 9)
+    input_scale = a[0][1]
+    if input_scale > 9:
+        return None  # TRAP: input scale exceeds SQRT limit
+
     # Compute dot product with self
     dot_result = dot_product_decimal(a, a)
     if dot_result is None:
@@ -299,12 +370,8 @@ def norm_decimal(a: List[Tuple[int, int]]) -> Optional[Tuple[int, int]]:
     if mantissa == 0:
         return (0, 0)
 
-    # Use RFC-0111 integer sqrt (Newton-Raphson, NOT floating-point)
-    int_sqrt = integer_sqrt(mantissa)
-    # Adjust scale (scale is always even for squared values)
-    new_scale = scale // 2
-
-    return canonicalize_decimal(int_sqrt, new_scale)
+    # Use RFC-0111 SQRT algorithm
+    return decimal_sqrt_rfc0111(mantissa, scale)
 
 
 def normalize_decimal(a: List[Tuple[int, int]]) -> Optional[List[Tuple[int, int]]]:
@@ -553,18 +620,16 @@ def get_probe_entries() -> List[dict]:
             'expected': expected,
         })
 
-    # Entries 32-39: SQUARED_DISTANCE unique cases
-    sq_dist_cases = [
+    # Entries 32-37: SQUARED_DISTANCE DQA (6 entries)
+    sq_dist_dqa_cases = [
         ([(0, 0), (0, 0)], [(3, 0), (4, 0)], (25, 0)),  # 3^2 + 4^2
         ([(1, 0), (2, 0)], [(4, 0), (6, 0)], (29, 0)),  # 3^2 + 4^2
         ([(0, 1), (0, 1)], [(3, 1), (4, 1)], (25, 2)),  # scale=1
         ([(1, 2), (2, 2)], [(1, 2), (2, 2)], (0, 0)),  # Same vector = 0
         ([(10, 3), (20, 3)], [(0, 3), (0, 3)], (500, 6)),  # scale=3
         ([(1, 4)], [(0, 4)], (1, 8)),  # N=1, scale=4
-        ([(3, 5), (4, 5)], [(0, 5), (0, 5)], (25, 10)),  # scale=5
-        ([(1, 6), (2, 6), (3, 6)], [(0, 6), (0, 6), (0, 6)], (14, 12)),  # N=3
     ]
-    for i, (a, b, expected) in enumerate(sq_dist_cases):
+    for i, (a, b, expected) in enumerate(sq_dist_dqa_cases):
         entries.append({
             'name': f'SQUARED_DISTANCE_{32+i}',
             'op': 'SQUARED_DISTANCE',
@@ -574,15 +639,30 @@ def get_probe_entries() -> List[dict]:
             'expected': expected,
         })
 
+    # Entries 38-39: SQUARED_DISTANCE Decimal (2 entries - MED-1)
+    sq_dist_decimal_cases = [
+        ([(3, 5), (4, 5)], [(0, 5), (0, 5)], (25, 10)),  # scale=5
+        ([(1, 6), (2, 6), (3, 6)], [(0, 6), (0, 6), (0, 6)], (14, 12)),  # N=3
+    ]
+    for i, (a, b, expected) in enumerate(sq_dist_decimal_cases):
+        entries.append({
+            'name': f'SQUARED_DISTANCE_DECIMAL_{38+i}',
+            'op': 'SQUARED_DISTANCE',
+            'decimal': True,
+            'input_a': a,
+            'input_b': b,
+            'expected': expected,
+        })
+
     # Entries 40-47: NORM unique cases
     norm_cases = [
-        ([(3, 0), (4, 0)], True, (5, 0)),  # Decimal: sqrt(9+16) = 5
+        ([(3, 0), (4, 0)], True, (5, 0)),  # Decimal: sqrt(9+16) = 5 (perfect square)
         ([(0, 0), (0, 0), (0, 0)], True, (0, 0)),  # Zero vector
         ([(3, 0), (4, 0)], False, None),  # DQA: TRAP (unsupported)
-        ([(1, 2), (2, 2)], True, (5, 1)),  # Decimal: sqrt(1+4) = sqrt(5)
-        ([(6, 0), (8, 0)], True, (10, 0)),  # 6-8-10 triangle
-        ([(1, 4)], True, (1, 2)),  # scale=4, sqrt(1) = 1
-        ([(2, 6), (2, 6)], True, (8, 6)),  # Decimal: sqrt(4+4) = sqrt(8)
+        ([(1, 2), (2, 2)], True, (223606797, 10)),  # RFC-0111 SQRT: sqrt(5*10^16) = 223606797, P=10
+        ([(6, 0), (8, 0)], True, (10, 0)),  # 6-8-10 triangle (perfect square)
+        ([(1, 4)], True, (1, 4)),  # RFC-0111 SQRT: sqrt(1*10^20) = 10^10, canonicalized to (1, 4)
+        ([(2, 6), (2, 6)], True, (2828427124746, 18)),  # RFC-0111 SQRT: sqrt(8*10^24), P=18
         ([(1, 0), (1, 0), (1, 0)], False, None),  # DQA: TRAP
     ]
     for i, (a, is_decimal, expected) in enumerate(norm_cases):
@@ -595,35 +675,35 @@ def get_probe_entries() -> List[dict]:
             'expected': expected,
         })
 
-    # Entries 48-51: Element-wise operations
+    # Entries 48-49: Element-wise Decimal operations (MED-2)
     entries.append({
-        'name': 'VEC_ADD_0',
+        'name': 'VEC_ADD_DECIMAL_0',
         'op': 'VEC_ADD',
-        'decimal': False,
+        'decimal': True,
         'input_a': [(1, 0), (2, 0)],
         'input_b': [(3, 0), (4, 0)],
         'expected': [(4, 0), (6, 0)],
     })
     entries.append({
-        'name': 'VEC_SUB_0',
+        'name': 'VEC_SUB_DECIMAL_0',
         'op': 'VEC_SUB',
-        'decimal': False,
+        'decimal': True,
         'input_a': [(4, 0), (6, 0)],
         'input_b': [(1, 0), (2, 0)],
         'expected': [(3, 0), (4, 0)],
     })
     entries.append({
-        'name': 'VEC_MUL_0',
+        'name': 'VEC_MUL_DECIMAL_0',
         'op': 'VEC_MUL',
-        'decimal': False,
+        'decimal': True,
         'input_a': [(2, 0), (3, 0)],
         'input_b': [(4, 0), (5, 0)],
         'expected': [(8, 0), (15, 0)],
     })
     entries.append({
-        'name': 'VEC_SCALE_0',
+        'name': 'VEC_SCALE_DECIMAL_0',
         'op': 'VEC_SCALE',
-        'decimal': False,
+        'decimal': True,
         'input_a': [(1, 0), (2, 0)],
         'input_b': [(2, 0)],  # scalar
         'expected': [(2, 0), (4, 0)],
@@ -639,12 +719,12 @@ def get_probe_entries() -> List[dict]:
         'expected': None,  # TRAP DIMENSION
     })
     entries.append({
-        'name': 'TRAP_SCALE',
+        'name': 'TRAP_INPUT_SCALE_GUARD',
         'op': 'DOT_PRODUCT',
         'decimal': False,
-        'input_a': [(1, 10), (1, 10)],  # scale 10 + 10 = 20 > 18
+        'input_a': [(1, 10), (1, 10)],  # scale 10 > 9 (input scale > 9)
         'input_b': [(1, 10), (1, 10)],
-        'expected': None,  # TRAP INVALID_SCALE
+        'expected': None,  # TRAP INPUT_VALIDATION_ERROR
     })
     entries.append({
         'name': 'TRAP_OVERFLOW',

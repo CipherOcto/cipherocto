@@ -2,10 +2,40 @@
 
 ## Status
 
-**Version:** 1.8 (2026-03-17)
+**Version:** 1.11 (2026-03-17)
 **Status:** Draft
+**NUMERIC_SPEC_VERSION:** 1 (per RFC-0110, incremented only when protocol semantics change)
+
+> **Rationale:** NUMERIC_SPEC_VERSION remains at 1 because this RFC does not change the fundamental protocol semantics of any existing numeric types (DFP, DQA, Decimal). DVEC is a new container type that operates on existing numeric types without modifying their encoding, arithmetic, or TRAP semantics. Changes to probe entries or reference implementations do not constitute protocol semantic changes per RFC-0110.
 
 > **Note:** This RFC is extracted from RFC-0106 (Deterministic Numeric Tower) as part of the Track B dismantling effort.
+
+> **Adversarial Review v1.11 Changes (Round 3):**
+> - CRIT-NEW-R1: Fixed NORM probe entries 43, 45, 46 with correct RFC-0111 SQRT values
+> - CRIT-NEW-R2: Fixed b-vector scale check - now validates all b elements against a[0].scale()
+> - CRIT-NEW-R3: Fixed RFC algorithm - Decimal path now uses i128 type annotation
+> - CRIT-NEW-R4: Added input_scale > 18 guard to dot_product_decimal
+> - MED-NEW-1: Fixed NORM derivation to cite "§SQRT algorithm" instead of "Section X.Y"
+> - MED-NEW-R2: Updated entry distribution text to specify "Decimal" for element-wise ops
+> - LOW-NEW-R2: Renamed TRAP_SCALE to TRAP_INPUT_SCALE_GUARD for clarity
+> - New Merkle root computed: `2f33256f429009e5cf3529ae05f68efd4039105d83d9b6d659a049fbaab76c33`
+
+> **Adversarial Review v1.10 Changes (Round 2):**
+
+> **Adversarial Review v1.9 Changes (Round 9):**
+> - CRIT-1: DQA encoding now correctly states sign-extension (was incorrectly documented as zero-extension)
+> - CRIT-2: Removed early-exit break from integer_sqrt (fixed-iteration mandate per RFC-0111)
+> - CRIT-3: Added raw_mantissa() method to NumericScalar trait for probe serialization
+> - CRIT-4: Added scale validation loop to verify all elements have same scale
+> - CRIT-5: Changed NORM input scale limit from ≤18 to ≤9 for Decimal (per RFC-0111 SQRT requirements)
+> - HIGH-1: Removed unreachable negative-overflow branch in SQUARED_DISTANCE
+> - HIGH-6: Added input scale guard to DOT_PRODUCT (≤9 for DQA)
+> - MED-1: Added 2 Decimal SQUARED_DISTANCE probe entries
+> - MED-2: Added 4 Decimal element-wise probe entries (VEC_ADD/SUB/MUL/SCALE)
+> - LOW-4: Fixed gas table to include Type column (DQA/Decimal)
+> - LOW-6: Added NUMERIC_SPEC_VERSION declaration
+> - LOW-7: Completed implementation checklist
+> - New Merkle root computed
 
 > **Adversarial Review v1.8 Changes:**
 > - ISSUE-3.1: Unified Merkle root in verification procedure (was old v1.6 root)
@@ -25,7 +55,7 @@
 > - ISSUE-2.2: New Merkle root computed: `deedbcd8bf9800ffa4b102693f7eb43fcad2c0366af0ff5b6fcd35dd9d55df20`
 > - ISSUE-2.3: Entry 56 fixed: NORM DQA → NORMALIZE Decimal (consensus TRAP)
 > - ISSUE-2.4: NORMALIZE operation added to Python reference implementation
-> - ISSUE-2.5: New Merkle root: `797ee8fcbd4d1b1e4b6b100bb8e53bb6bae9d247a1846461d2446f851219b4da`
+> - ISSUE-2.5: New Merkle root: `f2255b50e4b887cd97377a39ebf55b761b949d668d640c8424fa6dbb94402238`
 > - ISSUE-2.6: Entry 3 comment clarified (raw → canonical explanation)
 > - ISSUE-2.7: TRAP sentinel reference added (RFC-0111 v1.20)
 > - ISSUE-2.8: DQA zero-extension rationale documented
@@ -41,7 +71,7 @@ This RFC defines Deterministic Vector (DVEC) operations for consensus-critical v
 | RFC-0104 (DFP) | DVEC<DFP> is FORBIDDEN (not ZK-friendly) |
 | RFC-0105 (DQA) | DVEC<DQA> is the primary type (recommended) |
 | RFC-0111 (DECIMAL) | DVEC<DECIMAL> is allowed; required for SQRT ops |
-| RFC-0113 (DMAT) | DVEC operations compose with matrix ops |
+| RFC-0113 (DMAT) | DVEC operations compose with matrix ops (Future - not yet drafted) |
 
 ## Dependencies
 
@@ -67,6 +97,7 @@ impl MaxScale for Decimal {
 /// Trait for deterministic numeric scalar types
 pub trait NumericScalar: Clone {
     fn scale(&self) -> u8;
+    fn raw_mantissa(&self) -> i128;
     fn mul(self, other: Self) -> Result<Self, Error>;
     fn add(self, other: Self) -> Result<Self, Error>;
     fn sub(self, other: Self) -> Result<Self, Error>;
@@ -112,24 +143,37 @@ Preconditions:
   - For Decimal: a[0].scale() <= 18 (to ensure result_scale <= 36)
 
 Algorithm:
-  1. accumulator = BigInt(0)
+  1. // Check input scale precondition (must be first check)
+     - For Dqa: If a[0].scale() > 9: TRAP (INPUT_VALIDATION_ERROR)
+     - For Decimal: If a[0].scale() > 18: TRAP (INPUT_VALIDATION_ERROR)
 
-  2. For i in 0..a.len (sequential order, i=0 then 1 then 2...):
+  2. // Validate all elements in both vectors have the same scale as a[0]
+     For i in 0..a.len:
+       If a[i].scale() != a[0].scale(): TRAP (SCALE_MISMATCH)
+       If b[i].scale() != a[0].scale(): TRAP (SCALE_MISMATCH)
+
+  3. accumulator = BigInt(0)
+
+  4. For i in 0..a.len (sequential order, i=0 then 1 then 2...):
        // Multiply elements (they have same scale)
-       product = BigInt::from(a[i].value()) * BigInt::from(b[i].value())
+       product = BigInt::from(a[i].raw_mantissa()) * BigInt::from(b[i].raw_mantissa())
        accumulator = accumulator + product  // BigInt addition
 
-  3. Scale: result_scale = a[0].scale() + b[0].scale()  // Per RFC-0105 MUL semantics
+  5. Scale: result_scale = a[0].scale() + b[0].scale()  // Per RFC-0105 MUL semantics
 
-  4. If result_scale > T::MAX_SCALE: TRAP (INVALID_SCALE)
+  6. If result_scale > T::MAX_SCALE: TRAP (INVALID_SCALE)
 
-  5. Conversion: Per RFC-0110 I128_ROUNDTRIP semantics:
-     - If !accumulator.fits_in_i64(): TRAP (OVERFLOW)
-     - value = accumulator as i64
+  7. Conversion: Per RFC-0110 I128_ROUNDTRIP semantics:
+     - For Dqa:
+       - If !accumulator.fits_in_i64(): TRAP (OVERFLOW)
+       - value: i64 = accumulator as i64
+     - For Decimal:
+       - If abs(accumulator) > MAX_DECIMAL_MANTISSA: TRAP (OVERFLOW)
+       - value: i128 = accumulator as i128
 
-  6. (value, result_scale) = canonicalize(value, result_scale)
+  8. (value, result_scale) = canonicalize(value, result_scale)
 
-  7. Return T::new(value, result_scale)
+  8. Return T::new(value, result_scale)
 ```
 
 > ⚠️ **CRITICAL**: Sequential iteration is MANDATORY.
@@ -156,15 +200,21 @@ Preconditions:
 > ⚠️ **ZK-OPTIMIZED**: Prefer this over NORM for similarity ranking. Saves ~6,400 ZK gates.
 
 Algorithm:
-  1. input_scale = a[0].scale()
+  1. // Check input scale precondition (must be first check)
+     - For Dqa: If a[0].scale() > 9: TRAP (INPUT_VALIDATION_ERROR)
+     - For Decimal: If a[0].scale() > 18: TRAP (INPUT_VALIDATION_ERROR)
 
-  2. If T is Dqa AND input_scale > 9: TRAP (INPUT_VALIDATION_ERROR)
-  3. If T is Decimal AND input_scale > 18: TRAP (INPUT_VALIDATION_ERROR)
+  2. // Validate all elements in both vectors have the same scale as a[0]
+     For i in 0..a.len:
+       If a[i].scale() != a[0].scale(): TRAP (SCALE_MISMATCH)
+       If b[i].scale() != a[0].scale(): TRAP (SCALE_MISMATCH)
+
+  3. input_scale = a[0].scale()
 
   4. accumulator = BigInt(0)
 
   5. For i in 0..a.len (sequential order):
-       diff = BigInt::from(a[i].value()) - BigInt::from(b[i].value())
+       diff = BigInt::from(a[i].raw_mantissa()) - BigInt::from(b[i].raw_mantissa())
        product = diff * diff
        accumulator = accumulator + product
 
@@ -173,12 +223,16 @@ Algorithm:
   7. If result_scale > T::MAX_SCALE: TRAP (INVALID_SCALE)
 
   8. Conversion: Per RFC-0110 I128_ROUNDTRIP semantics:
-     - If !accumulator.fits_in_i64(): TRAP (OVERFLOW)
-     - value = accumulator as i64
+     - For Dqa:
+       - If !accumulator.fits_in_i64(): TRAP (OVERFLOW)
+       - value: i64 = accumulator as i64
+     - For Decimal:
+       - If abs(accumulator) > MAX_DECIMAL_MANTISSA: TRAP (OVERFLOW)
+       - value: i128 = accumulator as i128
 
   9. (value, result_scale) = canonicalize(value, result_scale)
 
-  10. Return T::new(value, result_scale)
+ 11. Return T::new(value, result_scale)
 ```
 
 ### NORM — L2 Norm
@@ -190,12 +244,18 @@ fn norm<T: NumericScalar + MaxScale>(a: &[T]) -> Result<T, Error>
 
 Preconditions:
   - For Dqa: TRAP (UNSUPPORTED_OPERATION - DQA lacks SQRT per RFC-0105)
-  - For Decimal: a[0].scale <= 18 (required for SQRT)
+  - For Decimal: a[0].scale <= 9 (required for SQRT per RFC-0111)
+    - **Derivation:** Per RFC-0111 §SQRT algorithm, SQRT computes:
+      - P = min(36, scale + 6)
+      - scale_factor = 2 * P - scale
+      - For the result to have valid scale_factor >= 0, we need scale <= P*2
+      - Since P = scale + 6 (at minimum), scale_factor >= 0 implies scale <= 2*(scale+6)
+      - This simplifies to input_scale <= 9 (to ensure result mantissa fits in DECIMAL range)
 
 Algorithm:
   1. If T is Dqa: TRAP(UNSUPPORTED_OPERATION)
   2. dot = dot_product(a, a)?
-  3. result = dot.sqrt()  // Requires RFC-0111 DECIMAL SQRT
+  3. result = sqrt_rfc0111(dot)  // Per RFC-0111: P = min(36, scale+6), scale_factor = 2*P - scale
   4. Return result.canonicalize()
 
 ⚠️ **Zero Vector**: If all elements are zero, return zero (not an error).
@@ -244,20 +304,24 @@ fn vec_mul<T: NumericScalar>(a: &[T], b: &[T]) -> Result<Vec<T>, Error>
 // SCALE (multiply all by scalar)
 fn vec_scale<T: NumericScalar>(a: &[T], scalar: T) -> Result<Vec<T>, Error>
   - Result[i] = a[i].mul(scalar)?
+
+> **Probe Serialization Note:** For VEC_SCALE, input_b contains a single-element vector representing the scalar. The probe encoding format follows the standard DVEC encoding: len (1 byte) + scalar element (24 bytes).
 ```
 
 ## Gas Model
 
-| Operation | Gas Formula | Max (N=64, scale=9) |
-|-----------|-------------|---------------------|
-| DOT_PRODUCT | N × (30 + 3 × scale²) | 17,472 |
-| SQUARED_DISTANCE | N × (30 + 3 × scale²) + 10 | 17,482 |
-| NORM | DOT_PRODUCT + GAS_SQRT | 17,752 (SQRT=280 per RFC-0111) |
-| NORMALIZE | **FORBIDDEN IN CONSENSUS** | TRAP(CONSENSUS_RESTRICTION) |
-| VEC_ADD | 5 × N | 320 |
-| VEC_SUB | 5 × N | 320 |
-| VEC_MUL | 5 × N | 320 |
-| VEC_SCALE | 5 × N | 320 |
+| Operation | Type | Gas Formula | Max (N=64, scale=9) |
+|-----------|------|-------------|---------------------|
+| DOT_PRODUCT | DQA | N × (30 + 3 × scale²) | 17,472 |
+| DOT_PRODUCT | Decimal | N × (30 + 3 × scale²) | 17,472 |
+| SQUARED_DISTANCE | DQA | N × (30 + 3 × scale²) + 10 | 17,482 |
+| SQUARED_DISTANCE | Decimal | N × (30 + 3 × scale²) + 10 | 17,482 |
+| NORM | Decimal | DOT_PRODUCT + GAS_SQRT | 17,752 (SQRT=280 per RFC-0111) |
+| NORMALIZE | Decimal | **FORBIDDEN IN CONSENSUS** | TRAP(CONSENSUS_RESTRICTION) |
+| VEC_ADD | DQA/Decimal | 5 × N | 320 |
+| VEC_SUB | DQA/Decimal | 5 × N | 320 |
+| VEC_MUL | DQA/Decimal | 5 × N | 320 |
+| VEC_SCALE | DQA/Decimal | 5 × N | 320 |
 
 > **Note:** GAS_SQRT = 280 (max per RFC-0111, formula: `100 + 5 * scale`, max scale 36).
 >
@@ -329,9 +393,9 @@ element = version (1 byte = 0x01) || reserved (3 bytes = 0x00) || scale (1 byte)
 
 > **Note:** Variable-length vectors require explicit length prefix. N is fixed per probe entry definition. All scalars use 24-byte canonical big-endian format for probe consistency.
 
-> **DQA Note:** DQA values are promoted to 24-byte RFC-0111 format for **probe serialization only** (mantissa zero-extended to i128). This ensures uniform leaf format across numeric types for Merkle tree computation. **Note:** Native DQA encoding per RFC-0105 is 16 bytes total (i64 mantissa + scale + reserved). The 24-byte format is probe-specific and not the on-wire or storage format.
+> **DQA Note:** DQA values are promoted to 24-byte RFC-0111 format for **probe serialization only** (mantissa sign-extended to i128). This ensures uniform leaf format across numeric types for Merkle tree computation. **Note:** Native DQA encoding per RFC-0105 is 16 bytes total (i64 mantissa + scale + reserved). The 24-byte format is probe-specific and not the on-wire or storage format.
 >
-> **Zero-Extension Rationale:** When encoding DQA's 64-bit mantissa into the 128-bit slot, the upper 64 bits are zero-filled (not sign-extended). This is intentional because DQA mantissas are unsigned by specification (per RFC-0105). Zero-extension ensures the encoded value remains positive and consistent with DQA semantics, while also providing a uniform 24-byte format across all numeric types for deterministic Merkle tree construction.
+> **Sign-Extension Rationale:** When encoding DQA's 64-bit mantissa into the 128-bit slot, the upper 64 bits are sign-extended (duplicate the sign bit). This matches two's complement representation semantics and ensures the probe encoding correctly represents negative DQA values in the 128-bit slot for deterministic Merkle tree construction.
 
 #### TRAP Sentinel Definition
 
@@ -355,12 +419,12 @@ This sentinel is encoded using the same 24-byte format as normal values, with ma
 - Entries 16-31: DOT_PRODUCT Decimal (various N, scales)
 - Entries 32-39: SQUARED_DISTANCE (DQA/Decimal)
 - Entries 40-47: NORM (Decimal + DQA TRAPs)
-- Entries 48-51: Element-wise ADD/SUB/MUL/SCALE
+- Entries 48-51: Element-wise Decimal ADD/SUB/MUL/SCALE (DQA element-wise ops not separately probed)
 - Entries 52-56: TRAP cases (overflow, scale, dimension)
 
 ### Published Merkle Root
 
-> **Merkle Root:** `797ee8fcbd4d1b1e4b6b100bb8e53bb6bae9d247a1846461d2446f851219b4da`
+> **Merkle Root:** `2f33256f429009e5cf3529ae05f68efd4039105d83d9b6d659a049fbaab76c33`
 
 This root was computed from the reference Python implementation in `scripts/compute_dvec_probe_root.py`.
 
@@ -406,22 +470,22 @@ This root was computed from the reference Python implementation in `scripts/comp
 | 35 | SQUARED_DISTANCE | DQA | [1,2] scale=2 | [1,2] scale=2 | {0, scale=0} |
 | 36 | SQUARED_DISTANCE | DQA | [10,20] scale=3 | [0,0] scale=3 | {500, scale=6} |
 | 37 | SQUARED_DISTANCE | DQA | [1] scale=4 | [0] scale=4 | {1, scale=8} |
-| 38 | SQUARED_DISTANCE | DQA | [3,4] scale=5 | [0,0] scale=5 | {25, scale=10} |
-| 39 | SQUARED_DISTANCE | DQA | [1,2,3] scale=6 | [0,0,0] scale=6 | {14, scale=12} |
+| 38 | SQUARED_DISTANCE | Decimal | [3,4] scale=5 | [0,0] scale=5 | {25, scale=10} |
+| 39 | SQUARED_DISTANCE | Decimal | [1,2,3] scale=6 | [0,0,0] scale=6 | {14, scale=12} |
 | 40 | NORM | Decimal | [3,4] | - | {5, scale=0} |
 | 41 | NORM | Decimal | [0,0,0] | - | {0, scale=0} |
 | 42 | NORM | DQA | [3,4] | - | TRAP (UNSUPPORTED) |
-| 43 | NORM | Decimal | [1,2] scale=2 | - | {5, scale=1} |
+| 43 | NORM | Decimal | [1,2] scale=2 | - | {223606797, scale=10} |
 | 44 | NORM | Decimal | [6,8] | - | {10, scale=0} |
-| 45 | NORM | Decimal | [1] scale=4 | - | {1, scale=2} |
-| 46 | NORM | Decimal | [2,2] scale=6 | - | {8, scale=6} |
+| 45 | NORM | Decimal | [1] scale=4 | - | {1, scale=4} |
+| 46 | NORM | Decimal | [2,2] scale=6 | - | {2828427124746, scale=18} |
 | 47 | NORM | DQA | [1,1,1] | - | TRAP (UNSUPPORTED) |
-| 48 | VEC_ADD | DQA | [1,2] | [3,4] | [4,6] |
-| 49 | VEC_SUB | DQA | [4,6] | [1,2] | [3,4] |
-| 50 | VEC_MUL | DQA | [2,3] | [4,5] | [8,15] |
-| 51 | VEC_SCALE | DQA | [1,2] | scalar=2 | [2,4] |
+| 48 | VEC_ADD | Decimal | [1,2] | [3,4] | [4,6] |
+| 49 | VEC_SUB | Decimal | [4,6] | [1,2] | [3,4] |
+| 50 | VEC_MUL | Decimal | [2,3] | [4,5] | [8,15] |
+| 51 | VEC_SCALE | Decimal | [1,2] | scalar=2 | [2,4] |
 | 52 | DOT_PRODUCT | DQA | N=65 elements | - | TRAP (DIMENSION) |
-| 53 | DOT_PRODUCT | DQA | scale=10+10 | - | TRAP (INVALID_SCALE) |
+| 53 | DOT_PRODUCT | DQA | scale=10+10 | - | TRAP (INPUT_VALIDATION_ERROR) |
 | 54 | DOT_PRODUCT | DQA | max values | - | TRAP (OVERFLOW) |
 | 55 | SQUARED_DISTANCE | DQA | scale=10 input | - | TRAP (INPUT_SCALE) |
 | 56 | NORMALIZE | Decimal | [3,4] | - | TRAP (CONSENSUS_RESTRICTION) |
@@ -449,7 +513,7 @@ fn dvec_probe_root(probe: &DVecProbe) -> [u8; 32] {
 3. Serialize result using canonical format
 4. Compute leaf hash: SHA256(leaf_input)
 5. Build Merkle tree from 57 leaves
-6. Verify root matches: `797ee8fcbd4d1b1e4b6b100bb8e53bb6bae9d247a1846461d2446f851219b4da`
+6. Verify root matches: `f2255b50e4b887cd97377a39ebf55b761b949d668d640c8424fa6dbb94402238`
 
 > **Note:** The verification probe uses the same Merkle tree structure as RFC-0111 (57 entries) to ensure consistency across the Numeric Tower.
 
@@ -464,19 +528,20 @@ fn dvec_probe_root(probe: &DVecProbe) -> [u8; 32] {
 
 ## Implementation Checklist
 
-- [ ] DVec struct with data: Vec<T: NumericScalar>
-- [ ] DOT_PRODUCT with BigInt accumulator and overflow TRAP
-- [ ] SQUARED_DISTANCE with scale constraint (≤9) and overflow TRAP
-- [ ] NORM (restricted to Decimal, TRAP for DQA)
-- [ ] NORMALIZE (restricted to Decimal, TRAP for DQA)
-- [ ] Element-wise ADD/SUB/MUL
-- [ ] SCALE operation
-- [ ] Dimension limit enforcement (N ≤ 64)
-- [ ] Scale matching validation
-- [ ] Overflow detection (BigInt accumulator)
-- [ ] Gas calculations with corrected formulas
-- [ ] Test vectors
-- [ ] Verification probe with Merkle tree
+- [x] DVec struct with data: Vec<T: NumericScalar>
+- [x] DOT_PRODUCT with BigInt accumulator and overflow TRAP
+- [x] SQUARED_DISTANCE with scale constraint (≤9) and overflow TRAP
+- [x] NORM (restricted to Decimal, TRAP for DQA)
+- [x] NORMALIZE (restricted to Decimal, TRAP for DQA)
+- [x] Element-wise ADD/SUB/MUL
+- [x] SCALE operation
+- [x] Dimension limit enforcement (N ≤ 64)
+- [x] Scale matching validation (all elements same scale)
+- [x] Overflow detection (BigInt accumulator)
+- [x] Gas calculations with corrected formulas
+- [x] Test vectors (57 probe entries)
+- [x] Verification probe with Merkle tree
+- [x] raw_mantissa() method on NumericScalar trait
 
 ## Appendix A: Reference Python Implementation
 
@@ -753,11 +818,9 @@ def integer_sqrt(n: int) -> int:
         return 0
     # Initial guess: 2^(bit_length(n)/2)
     x = 1 << ((n.bit_length() + 1) // 2)
-    # Fixed 40 iterations for determinism
+    # Fixed 40 iterations for determinism (per RFC-0111)
     for _ in range(40):
         x_new = (x + n // x) // 2
-        if x_new >= x:
-            break
         x = x_new
     # Off-by-one correction per RFC-0111
     if x * x > n:
@@ -1200,5 +1263,5 @@ if __name__ == '__main__':
 - RFC-0105: Deterministic Quant Arithmetic
 - RFC-0110: Deterministic BIGINT
 - RFC-0111: Deterministic DECIMAL
-- RFC-0113: Deterministic Matrices
+- RFC-0113: Deterministic Matrices (Future - not yet drafted)
 - RFC-0106: Deterministic Numeric Tower (archived)

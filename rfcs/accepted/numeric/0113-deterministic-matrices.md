@@ -103,8 +103,8 @@ For MAT_VEC_MUL where A is M×K with scale s_a, and V is K×1 with scale s_v:
 
 | Feature | Limit | Status |
 |---------|-------|--------|
-| DMAT<DQA> | M×N ≤ 64, M ≤ 8, N ≤ 8 | EXPERIMENTAL |
-| DMAT<Decimal> | M×N ≤ 64, M ≤ 8, N ≤ 8 | EXPERIMENTAL |
+| DMAT<DQA> | M×N ≤ 64, M ≤ 8, N ≤ 8 | ALLOWED |
+| DMAT<Decimal> | M×N ≤ 64, M ≤ 8, N ≤ 8 | ALLOWED |
 | DMAT<DFP> | DISABLED | FORBIDDEN |
 | DVEC (reference) | N ≤ 64 | ALLOWED |
 
@@ -185,21 +185,22 @@ Preconditions:
 - For Decimal: a[0][0].scale() <= 18 (ensure result_scale <= 36)
 
 Algorithm (naive triple loop with overflow TRAP):
-For i in 0..a.rows: // Row of result
-For j in 0..b.cols: // Column of result
+
+1. result_scale = a[0][0].scale() + b[0][0].scale() // Per RFC-0105 MUL
+2. if result_scale > T::MAX_SCALE: TRAP(INVALID_SCALE)
+
+For i in 0..a.rows: // Sequential: i=0, then 1, then 2...
+For j in 0..b.cols:
 accumulator = i128(0)
-For k in 0..a.cols: // Dot product of row i, col j
-// Per RFC-0105 MUL semantics
-product_scale = a[i][k].scale + b[k][j].scale
-if product_scale > T::MAX_SCALE: TRAP(INVALID_SCALE)
-if a[i][k].scale != a[0][0].scale(): TRAP(SCALE_MISMATCH)
-if b[k][j].scale != b[0][0].scale(): TRAP(SCALE_MISMATCH)
-product = a[i][k].mul(b[k][j])?
+For k in 0..a.cols: // Sequential: k=0, then 1, then 2...
+// TRAP priority: SCALE_MISMATCH checked first, then INVALID_SCALE, then OVERFLOW
+if a.data[i * a.cols + k].scale() != a.data[0].scale(): TRAP(SCALE_MISMATCH)
+if b.data[k * b.cols + j].scale() != b.data[0].scale(): TRAP(SCALE_MISMATCH)
+product = a.data[i * a.cols + k].mul(b.data[k * b.cols + j])?
 accumulator = accumulator + i128(product.raw_mantissa())
 
-      // Check accumulator fits in i64 for DQA
-      if !accumulator.fits_in_i64(): TRAP(OVERFLOW)
-      result[i][j] = Dqa { value: accumulator as i64, scale: result_scale }
+    if !accumulator.fits_in_i64(): TRAP(OVERFLOW)
+    result.data[i * result.cols + j] = Dqa { value: accumulator as i64, scale: result_scale }
 
 ```
 
@@ -246,21 +247,31 @@ For i in 0..a.rows:
 accumulator = i128(0)
 For j in 0..a.cols:
 // Scale check per RFC-0105
-if a[i][j].scale != a[0][0].scale(): TRAP(SCALE_MISMATCH)
-if v[j].scale != v[0].scale(): TRAP(SCALE_MISMATCH)
-product_scale = a[i][j].scale + v[j].scale
+if a.data[i * a.cols + j].scale() != a.data[0].scale(): TRAP(SCALE_MISMATCH)
+if v[j].scale() != v[0].scale(): TRAP(SCALE_MISMATCH)
+product_scale = a.data[i * a.cols + j].scale() + v[j].scale()
 if product_scale > T::MAX_SCALE: TRAP(INVALID_SCALE)
-accumulator = accumulator + i128(a[i][j].raw_mantissa() \* v[j].raw_mantissa())
+accumulator = accumulator + i128(a.data[i * a.cols + j].raw_mantissa() \* v[j].raw_mantissa())
 if !accumulator.fits_in_i64(): TRAP(OVERFLOW)
 result[i] = Dqa { value: accumulator as i64, scale: result_scale }
 
-```
+````
 
 ### Result Scale
 
 For MAT_VEC_MUL where A has scale s_a and V has scale s_v:
 - result_scale = s_a + s_v (per RFC-0105 MUL semantics)
 - If result_scale > MAX_SCALE: TRAP(INVALID_SCALE)
+
+### Equivalence to DVEC.dot_product
+
+MAT_VEC_MUL produces identical results to:
+```rust
+let row = &a.data[i * a.cols..(i+1) * a.cols];
+let result[i] = dot_product(row, v)?;
+````
+
+Where `dot_product` is defined per RFC-0112 §DOT_PRODUCT.
 
 ### MAT_TRANSPOSE — Matrix Transpose
 
@@ -303,7 +314,7 @@ Algorithm:
 For i in 0..a.rows:
 For j in 0..a.cols:
 if a[i][j].scale() != a[0][0].scale(): TRAP(SCALE_MISMATCH)
-product_scale = a[i][j].scale + scalar.scale
+product_scale = a[i][j].scale() + scalar.scale()
 if product_scale > T::MAX_SCALE: TRAP(INVALID_SCALE)
 result[i][j] = a[i][j].mul(scalar)?
 
@@ -322,103 +333,113 @@ Algorithm: Same as DVEC dot_product.
 ## Gas Model
 
 Gas derivation follows RFC-0105 where:
+
 - DQA MUL: `20 + 3 × scale_a × scale_b` gas
 - DQA ADD: `10 + 3 × max(scale_a, scale_b)` gas
 
 ### Per-Operation Gas
 
-| Operation | Formula | Derivation |
-|-----------|---------|------------|
-| MAT_ADD | `5 × M × N` | M×N element ADD operations |
-| MAT_SUB | `5 × M × N` | M×N element SUB operations |
-| MAT_MUL | `M × N × K × (30 + 3 × scale²)` | M×N×K dot products, each N elements |
-| MAT_VEC_MUL | `rows × cols × (30 + 3 × scale²)` | rows dot products, each cols elements |
-| MAT_TRANSPOSE | `2 × M × N` | M×N element copies |
-| MAT_SCALE | `5 × M × N` | M×N element MUL operations |
+| Operation     | Formula                           | Derivation                            |
+| ------------- | --------------------------------- | ------------------------------------- |
+| MAT_ADD       | `5 × M × N`                       | M×N element ADD operations            |
+| MAT_SUB       | `5 × M × N`                       | M×N element SUB operations            |
+| MAT_MUL       | `M × N × K × (30 + 3 × scale²)`   | M×N×K dot products, each N elements   |
+| MAT_VEC_MUL   | `rows × cols × (30 + 3 × scale²)` | rows dot products, each cols elements |
+| MAT_TRANSPOSE | `2 × M × N`                       | M×N element copies                    |
+| MAT_SCALE     | `5 × M × N`                       | M×N element MUL operations            |
+
+### Gas Notes
+
+- **MAT_MUL formula:** `M × N × K × (30 + 3 × scale²)` combines DQA MUL cost (20 + 3×scale²) + DQA ADD cost (10 + 3×scale²) per MAC
+- **Scale check overhead:** The two SCALE_MISMATCH checks per element are O(1) and absorbed into the base cost
+- **Per-block budget:** 139,776 gas exceeds 50k consensus budget; MAT_MUL is limited to M×N ≤ 64
 
 ### Gas Examples (scale=0, DQA)
 
-| Operation | Dimensions | Gas |
-|-----------|-----------|-----|
-| MAT_ADD | 8×8 | 320 |
-| MAT_MUL | 4×4 × 4×4 | 640 |
-| MAT_VEC_MUL | 4×4 × 4 | 160 |
-| MAT_TRANSPOSE | 8×8 | 128 |
-| MAT_SCALE | 8×8 | 320 |
+| Operation     | Dimensions | Gas |
+| ------------- | ---------- | --- |
+| MAT_ADD       | 8×8        | 320 |
+| MAT_MUL       | 4×4 × 4×4  | 640 |
+| MAT_VEC_MUL   | 4×4 × 4    | 160 |
+| MAT_TRANSPOSE | 8×8        | 128 |
+| MAT_SCALE     | 8×8        | 320 |
 
 ### Per-Block Budget
 
 MAT_MUL at MAX_DMAT_ELEMENTS (8×8=64) with K=8 and scale=9:
+
 - Per dot product: K × (30 + 3 × scale²) = 8 × (30 + 3 × 81) = 8 × 273 = 2184
 - Total: M × N × 2184 = 8 × 8 × 2184 = 139,776
 
-> This exceeds 50k consensus budget, confirming EXPERIMENTAL status.
+> This exceeds 50k consensus budget; MAT_MUL is limited to M×N ≤ 64 to stay within measurable bounds.
 
 ## Test Vectors
 
 ### MAT_ADD
 
-| A | B | Scale | Expected | Notes |
-|---|---|-------|----------|-------|
-| [[1, 2], [3, 4]] | [[5, 6], [7, 8]] | 0 | [[6, 8], [10, 12]] | Basic |
-| [[1, 2]] | [[3, 4]] | 0 | [[4, 6]] | 1×2 |
-| [[0, 0], [0, 0]] | [[1, 2], [3, 4]] | 0 | [[1, 2], [3, 4]] | Identity |
+| A                | B                | Scale | Expected           | Notes    |
+| ---------------- | ---------------- | ----- | ------------------ | -------- |
+| [[1, 2], [3, 4]] | [[5, 6], [7, 8]] | 0     | [[6, 8], [10, 12]] | Basic    |
+| [[1, 2]]         | [[3, 4]]         | 0     | [[4, 6]]           | 1×2      |
+| [[0, 0], [0, 0]] | [[1, 2], [3, 4]] | 0     | [[1, 2], [3, 4]]   | Identity |
 
 ### MAT_SUB
 
-| A | B | Scale | Expected | Notes |
-|---|---|-------|----------|-------|
-| [[5, 6], [7, 8]] | [[1, 2], [3, 4]] | 0 | [[4, 4], [4, 4]] | Basic |
-| [[1, 1], [1, 1]] | [[1, 1], [1, 1]] | 0 | [[0, 0], [0, 0]] | Zero result |
+| A                | B                | Scale | Expected         | Notes       |
+| ---------------- | ---------------- | ----- | ---------------- | ----------- |
+| [[5, 6], [7, 8]] | [[1, 2], [3, 4]] | 0     | [[4, 4], [4, 4]] | Basic       |
+| [[1, 1], [1, 1]] | [[1, 1], [1, 1]] | 0     | [[0, 0], [0, 0]] | Zero result |
 
 ### MAT_MUL
 
-| A | B | Scale | Expected | Notes |
-|---|---|-------|----------|-------|
-| [[1, 0], [0, 1]] | [[2, 3], [4, 5]] | 0 | [[2, 3], [4, 5]] | Identity |
-| [[1, 2], [3, 4]] | [[5, 6], [7, 8]] | 0 | [[19, 22], [43, 50]] | Standard |
-| [[1, 2, 3]] | [[1], [2], [3]] | 0 | [[14]] | Vector result |
-| [[2, 2], [2, 2]] | [[3, 3], [3, 3]] | 0 | [[12, 12], [12, 12]] | Uniform |
+| A                    | B                    | Scale | Expected                                            | Notes              |
+| -------------------- | -------------------- | ----- | --------------------------------------------------- | ------------------ |
+| [[1, 0], [0, 1]]     | [[2, 3], [4, 5]]     | 0     | [[2, 3], [4, 5]]                                    | Identity           |
+| [[1, 2], [3, 4]]     | [[5, 6], [7, 8]]     | 0     | [[19, 22], [43, 50]]                                | Standard           |
+| [[1, 2, 3]]          | [[1], [2], [3]]      | 0     | [[14]]                                              | Vector result      |
+| [[2, 2], [2, 2]]     | [[3, 3], [3, 3]]     | 0     | [[12, 12], [12, 12]]                                | Uniform            |
+| [[10, 20], [30, 40]] | [[10, 20], [30, 40]] | 0     | [[1400, 2200], [3000, 4600]] → [[14, 22], [30, 46]] | Canonical: 1400→14 |
 
 ### MAT_VEC_MUL
 
-| Matrix | Vector | Scale | Expected | Notes |
-|--------|--------|-------|----------|-------|
-| [[1, 2], [3, 4]] | [1, 1] | 0 | [3, 7] | Basic |
-| [[1, 0, 0], [0, 1, 0]] | [1, 2, 3] | 0 | [1, 2] | Sparse |
+| Matrix                 | Vector    | Scale | Expected | Notes  |
+| ---------------------- | --------- | ----- | -------- | ------ |
+| [[1, 2], [3, 4]]       | [1, 1]    | 0     | [3, 7]   | Basic  |
+| [[1, 0, 0], [0, 1, 0]] | [1, 2, 3] | 0     | [1, 2]   | Sparse |
 
 ### MAT_TRANSPOSE
 
-| Input | Scale | Expected | Notes |
-|-------|-------|----------|-------|
-| [[1, 2], [3, 4]] | 0 | [[1, 3], [2, 4]] | 2×2 |
-| [[1, 2, 3]] | 0 | [[1], [2], [3]] | Row to column |
+| Input            | Scale | Expected         | Notes         |
+| ---------------- | ----- | ---------------- | ------------- |
+| [[1, 2], [3, 4]] | 0     | [[1, 3], [2, 4]] | 2×2           |
+| [[1, 2, 3]]      | 0     | [[1], [2], [3]]  | Row to column |
 
 ### MAT_SCALE
 
-| Matrix | Scalar | Scale | Expected | Notes |
-|--------|--------|-------|----------|-------|
-| [[1, 2], [3, 4]] | 2 | 0 | [[2, 4], [6, 8]] | Basic |
-| [[1, 1], [1, 1]] | 0 | 0 | [[0, 0], [0, 0]] | Zero scalar |
+| Matrix           | Scalar | Scale | Expected         | Notes       |
+| ---------------- | ------ | ----- | ---------------- | ----------- |
+| [[1, 2], [3, 4]] | 2      | 0     | [[2, 4], [6, 8]] | Basic       |
+| [[1, 1], [1, 1]] | 0      | 0     | [[0, 0], [0, 0]] | Zero scalar |
 
 ### Boundary Cases
 
-| Operation | Input | Expected | TRAP Code |
-|-----------|-------|----------|-----------|
-| MAT_MUL | 9×9 matrix | REJECT | DIMENSION_ERROR |
-| MAT_MUL | a.cols != b.rows | REVERT | DIMENSION_MISMATCH |
-| MAT_ADD | Dimension mismatch | REVERT | DIMENSION_MISMATCH |
-| MAT_SUB | Dimension mismatch | REVERT | DIMENSION_MISMATCH |
-| MAT_VEC_MUL | a.cols != v.len | REVERT | DIMENSION_MISMATCH |
-| MAT_MUL | Scale > 9 (DQA) | TRAP | INVALID_SCALE |
-| MAT_ADD | Scale mismatch | TRAP | SCALE_MISMATCH |
-| MAT_MUL | Max values overflow | TRAP | OVERFLOW |
+| Operation   | Input               | Expected | TRAP Code          |
+| ----------- | ------------------- | -------- | ------------------ |
+| MAT_MUL     | 9×9 matrix          | REJECT   | DIMENSION_ERROR    |
+| MAT_MUL     | a.cols != b.rows    | REVERT   | DIMENSION_MISMATCH |
+| MAT_ADD     | Dimension mismatch  | REVERT   | DIMENSION_MISMATCH |
+| MAT_SUB     | Dimension mismatch  | REVERT   | DIMENSION_MISMATCH |
+| MAT_VEC_MUL | a.cols != v.len     | REVERT   | DIMENSION_MISMATCH |
+| MAT_MUL     | Scale > 9 (DQA)     | TRAP     | INVALID_SCALE      |
+| MAT_ADD     | Scale mismatch      | TRAP     | SCALE_MISMATCH     |
+| MAT_MUL     | Max values overflow | TRAP     | OVERFLOW           |
 
 ## Verification Probe
 
 ### Probe Entry Serialization Format (Canonical)
 
 **DMat Canonical Wire Format:**
+
 ```
 
 leaf_input = op_id (8 bytes) || type_id (1 byte) ||
@@ -429,20 +450,21 @@ result_rows (1 byte) || result_cols (1 byte) || result_elements...
 ```
 
 Where:
+
 - `op_id`: 8-byte operation identifier (see Operation IDs)
 - `type_id`: 1 byte (1=DQA, 2=Decimal)
 - Matrix elements serialized as 24-byte blocks per RFC-0105/0111
 
 ### Operation IDs
 
-| Operation | ID (hex) |
-|-----------|----------|
-| MAT_ADD | 0x0100 |
-| MAT_SUB | 0x0101 |
-| MAT_MUL | 0x0102 |
-| MAT_VEC_MUL | 0x0103 |
-| MAT_TRANSPOSE | 0x0104 |
-| MAT_SCALE | 0x0105 |
+| Operation     | ID (hex) |
+| ------------- | -------- |
+| MAT_ADD       | 0x0100   |
+| MAT_SUB       | 0x0101   |
+| MAT_MUL       | 0x0102   |
+| MAT_VEC_MUL   | 0x0103   |
+| MAT_TRANSPOSE | 0x0104   |
+| MAT_SCALE     | 0x0105   |
 
 ### TRAP Sentinel Definition
 
@@ -454,35 +476,69 @@ TRAP = { mantissa: 0x8000000000000000 (i64 min), scale: 0xFF }
 
 ### Published Merkle Root
 
-> **Merkle Root:** `5de6ac8e0a6c25c86b4fd27185959bd97fcd9b0b6bd8919a0ce4bf0b9c3bb703`
+> **Merkle Root:** `16851510fcd205f753f3f0b0aeed9b7015332632d455b468a0dd43d9610899ca`
 
 ### Probe Entry Details
 
-| Entry | Operation | Type | Input A | Input B | Expected |
-|-------|-----------|------|---------|---------|----------|
-| 0 | MAT_ADD | DQA | [[1,2],[3,4]] | [[5,6],[7,8]] | [[6,8],[10,12]] |
-| 1 | MAT_MUL | DQA | [[1,0],[0,1]] | [[2,3],[4,5]] | [[2,3],[4,5]] |
-| 2 | MAT_MUL | DQA | [[1,2],[3,4]] | [[5,6],[7,8]] | [[19,22],[43,50]] |
-| 3 | MAT_VEC_MUL | DQA | [[1,2],[3,4]] | [1,1] | [3,7] |
-| 4 | MAT_TRANSPOSE | DQA | [[1,2],[3,4]] | - | [[1,3],[2,4]] |
-| 5 | MAT_SCALE | DQA | [[1,2],[3,4]] | scalar=2 | [[2,4],[6,8]] |
-| 6 | MAT_ADD | Decimal | [[1,2],[3,4]] | [[5,6],[7,8]] | [[6,8],[10,12]] |
-| 7 | MAT_MUL | Decimal | [[1,0],[0,1]] | [[2,3],[4,5]] | [[2,3],[4,5]] |
-| 8 | MAT_MUL | Decimal | [[1,2],[3,4]] | [[5,6],[7,8]] | [[19,22],[43,50]] |
-| 9 | MAT_ADD | DQA | [[0,0],[0,0]] | [[1,2],[3,4]] | [[1,2],[3,4]] |
-| 10 | MAT_SUB | DQA | [[5,6],[7,8]] | [[1,2],[3,4]] | [[4,4],[4,4]] |
-| 11 | MAT_VEC_MUL | Decimal | [[1,2],[3,4]] | [1,1] | [3,7] |
-| 12 | MAT_TRANSPOSE | Decimal | [[1,2],[3,4]] | - | [[1,3],[2,4]] |
-| 13 | MAT_SCALE | Decimal | [[1,2],[3,4]] | scalar=2 | [[2,4],[6,8]] |
-| 14-18 | TRAP cases | DQA | various | - | TRAP |
-| 19-23 | MAT_ADD Decimal | Decimal | various | - | results |
-| 24-28 | MAT_SUB Decimal | Decimal | various | - | results |
-| 29-33 | MAT_MUL Decimal | Decimal | various | - | results |
-| 34-38 | MAT_VEC_MUL Decimal | Decimal | various | - | results |
-| 39-43 | MAT_SCALE Decimal | Decimal | various | - | results |
-| 44-48 | Boundary cases | DQA | 9x9, mismatch | - | DIMENSION_ERROR |
-| 49-53 | Scale overflow | DQA | scale=10 | - | INVALID_SCALE |
-| 54-56 | TRAP sentinels | various | various | - | TRAP |
+| Entry | Operation     | Type    | Input A                       | Input B                       | Expected                          |
+| ----- | ------------- | ------- | ----------------------------- | ----------------------------- | --------------------------------- |
+| 0     | MAT_ADD       | DQA     | [[1,2],[3,4]]                 | [[5,6],[7,8]]                 | [[6,8],[10,12]]                   |
+| 1     | MAT_MUL       | DQA     | [[1,0],[0,1]]                 | [[2,3],[4,5]]                 | [[2,3],[4,5]]                     |
+| 2     | MAT_MUL       | DQA     | [[1,2],[3,4]]                 | [[5,6],[7,8]]                 | [[19,22],[43,50]]                 |
+| 3     | MAT_VEC_MUL   | DQA     | [[1,2],[3,4]]                 | [1,1]                         | [3,7]                             |
+| 4     | MAT_TRANSPOSE | DQA     | [[1,2],[3,4]]                 | -                             | [[1,3],[2,4]]                     |
+| 5     | MAT_SCALE     | DQA     | [[1,2],[3,4]]                 | scalar=2                      | [[2,4],[6,8]]                     |
+| 6     | MAT_ADD       | Decimal | [[1,2],[3,4]]                 | [[5,6],[7,8]]                 | [[6,8],[10,12]]                   |
+| 7     | MAT_MUL       | Decimal | [[1,0],[0,1]]                 | [[2,3],[4,5]]                 | [[2,3],[4,5]]                     |
+| 8     | MAT_MUL       | Decimal | [[1,2],[3,4]]                 | [[5,6],[7,8]]                 | [[19,22],[43,50]]                 |
+| 9     | MAT_ADD       | DQA     | [[0,0],[0,0]]                 | [[1,2],[3,4]]                 | [[1,2],[3,4]]                     |
+| 10    | MAT_SUB       | DQA     | [[5,6],[7,8]]                 | [[1,2],[3,4]]                 | [[4,4],[4,4]]                     |
+| 11    | MAT_VEC_MUL   | Decimal | [[1,2],[3,4]]                 | [1,1]                         | [3,7]                             |
+| 12    | MAT_TRANSPOSE | Decimal | [[1,2],[3,4]]                 | -                             | [[1,3],[2,4]]                     |
+| 13    | MAT_SCALE     | Decimal | [[1,2],[3,4]]                 | scalar=2                      | [[2,4],[6,8]]                     |
+| 14    | MAT_MUL       | DQA     | [[1,2,3],[4,5,6]]             | [[1,2],[3,4],[5,6]]           | [[9,12,15],[19,26,33],[29,40,51]] |
+| 15    | MAT_MUL       | DQA     | [[1,0,0,0],[0,1,0,0]]         | [[1,2],[3,4],[5,6],[7,8]]     | [[5,6],[23,34]]                   |
+| 16    | MAT_MUL       | DQA     | [[10,20]]                     | [[3],[4]]                     | [[110]]                           |
+| 17    | MAT_MUL       | DQA     | [[3],[4]]                     | [[10,20]]                     | [[30,60],[40,80]]                 |
+| 18    | MAT_MUL       | DQA     | [[1],[2],[3]]                 | [[1,2,3]]                     | [[1,2,3],[2,4,6],[3,6,9]]         |
+| 19    | MAT_MUL       | DQA     | [[5,5],[5,5]]                 | [[5,5],[5,5]]                 | [[50,50],[50,50]]                 |
+| 20    | MAT_VEC_MUL   | DQA     | [[1,2],[3,4]]                 | [1,1]                         | [3,7]                             |
+| 21    | MAT_VEC_MUL   | DQA     | [[1,0,0],[0,1,0]]             | [1,2,3]                       | [1,2]                             |
+| 22    | MAT_VEC_MUL   | DQA     | [[1,2,3],[4,5,6],[7,8,9]]     | [1,1,1]                       | [12,15,18]                        |
+| 23    | MAT_VEC_MUL   | DQA     | [[2,4,6,8]]                   | [2]                           | [40]                              |
+| 24    | MAT_VEC_MUL   | DQA     | [[1],[2],[3],[4]]             | [1,2,3,4]                     | [30]                              |
+| 25    | MAT_TRANSPOSE | DQA     | [[1,2],[3,4]]                 | -                             | [[1,3],[2,4]]                     |
+| 26    | MAT_TRANSPOSE | DQA     | [[1,2,3]]                     | -                             | [[1],[2],[3]]                     |
+| 27    | MAT_TRANSPOSE | DQA     | [[1],[2],[3]]                 | -                             | [[1,2,3]]                         |
+| 28    | MAT_TRANSPOSE | DQA     | [[1,2,3],[4,5,6]]             | -                             | [[1,4],[2,5],[3,6]]               |
+| 29    | MAT_TRANSPOSE | DQA     | [[1,2],[3,4],[5,6],[7,8]]     | -                             | [[1,3,5,7],[2,4,6,8]]             |
+| 30    | MAT_SCALE     | DQA     | [[1,2],[3,4]]                 | scalar=2                      | [[2,4],[6,8]]                     |
+| 31    | MAT_SCALE     | DQA     | [[1,1],[1,1]]                 | scalar=0                      | [[0,0],[0,0]]                     |
+| 32    | MAT_SCALE     | DQA     | [[5,5],[5,5],[5,5]]           | scalar=3                      | [[15,15],[15,15],[15,15]]         |
+| 33    | MAT_SCALE     | DQA     | [[10,20,30,40]]               | scalar=2                      | [[20,40,60,80]]                   |
+| 34    | MAT_SCALE     | DQA     | [[3],[3],[3],[3]]             | scalar=3                      | [[9],[9],[9],[9]]                 |
+| 35    | MAT_ADD       | Decimal | [[1,2],[3,4]]                 | [[5,6],[7,8]]                 | [[6,8],[10,12]]                   |
+| 36    | MAT_SUB       | Decimal | [[5,6],[7,8]]                 | [[1,2],[3,4]]                 | [[4,4],[4,4]]                     |
+| 37    | MAT_MUL       | Decimal | [[1,0],[0,1]]                 | [[2,3],[4,5]]                 | [[2,3],[4,5]]                     |
+| 38    | MAT_MUL       | Decimal | [[1,2],[3,4]]                 | [[5,6],[7,8]]                 | [[19,22],[43,50]]                 |
+| 39    | MAT_VEC_MUL   | Decimal | [[1,2],[3,4]]                 | [1,1]                         | [3,7]                             |
+| 40    | MAT_VEC_MUL   | Decimal | [[1,2,3],[4,5,6],[7,8,9]]     | [1,1,1]                       | [12,15,18]                        |
+| 41    | MAT_TRANSPOSE | Decimal | [[1,2],[3,4]]                 | -                             | [[1,3],[2,4]]                     |
+| 42    | MAT_SCALE     | Decimal | [[1,2],[3,4]]                 | scalar=2                      | [[2,4],[6,8]]                     |
+| 43    | MAT_ADD       | Decimal | [[10,20],[30,40]]             | [[1,2],[3,4]]                 | [[11,22],[33,44]]                 |
+| 44    | MAT_SUB       | Decimal | [[100,200],[300,400]]         | [[10,20],[30,40]]             | [[90,180],[270,360]]              |
+| 45    | MAT_MUL       | Decimal | [[1,2,3]]                     | [[1],[2],[3]]                 | [[14]]                            |
+| 46    | MAT_MUL       | Decimal | [[1,2],[3,4],[5,6]]           | [[1,2],[3,4],[5,6]]           | [[9,12,15],[19,26,33],[29,40,51]] |
+| 47    | MAT_SCALE     | Decimal | [[10,20,30,40]]               | scalar=3                      | [[30,60,90,120]]                  |
+| 48    | MAT_MUL       | DQA     | 9×9 empty                     | 9×9 empty                     | TRAP (DIMENSION_ERROR)            |
+| 49    | MAT_MUL       | DQA     | 2×3                           | 2×3                           | TRAP (DIMENSION_MISMATCH)         |
+| 50    | MAT_ADD       | DQA     | 2×2                           | 2×3                           | TRAP (DIMENSION_MISMATCH)         |
+| 51    | MAT_VEC_MUL   | DQA     | 2×3                           | [1,2]                         | TRAP (DIMENSION_MISMATCH)         |
+| 52    | MAT_MUL       | DQA     | [[10^8,0],[0,10^8]]           | [[10^8,0],[0,10^8]]           | TRAP (OVERFLOW)                   |
+| 53    | MAT_SCALE     | DQA     | [[10^9×4]]                    | scalar=10^9                   | TRAP (OVERFLOW)                   |
+| 54    | MAT_ADD       | DQA     | [[1@scale10,2],[3,4]]         | [[5,6],[7,8]]                 | TRAP (SCALE_MISMATCH)             |
+| 55    | MAT_MUL       | DQA     | [[1@scale10,0],[0,1@scale10]] | [[1@scale10,0],[0,1@scale10]] | TRAP (INVALID_SCALE)              |
+| 56    | MAT_ADD       | DQA     | [TRAP]                        | [0]                           | TRAP (propagated)                 |
 
 > **Note:** Full 57 entries required per RFC-0110/NUMERIC_SPEC conventions.
 
@@ -491,6 +547,7 @@ TRAP = { mantissa: 0x8000000000000000 (i64 min), scale: 0xFF }
 ### Matrix Element Encoding (24 bytes)
 
 **For DQA:**
+
 ```
 
 element = version (1 byte = 0x01) || reserved (3 bytes = 0x00) ||
@@ -500,6 +557,7 @@ mantissa (16 bytes, big-endian i128)
 ```
 
 **For Decimal:**
+
 ```
 
 element = version (1 byte = 0x01) || reserved (3 bytes = 0x00) ||
@@ -507,6 +565,8 @@ scale (1 byte) || reserved (3 bytes = 0x00) ||
 mantissa (16 bytes, big-endian i128)
 
 ```
+
+> **Sign-Extension Rationale:** When encoding DQA's 64-bit mantissa into the 128-bit slot, the upper 64 bits are sign-extended (duplicate the sign bit). This matches two's complement representation semantics and ensures the probe encoding correctly represents negative DQA values in the 128-bit slot for deterministic Merkle tree construction.
 
 ### Type ID Byte
 
@@ -519,6 +579,20 @@ mantissa (16 bytes, big-endian i128)
 
 matrix = rows (1 byte) || cols (1 byte) || element[0] || element[1] || ...
 
+```
+
+### Scalar Encoding in Probes
+
+For MAT_SCALE and MAT_VEC_MUL, the scalar operand is encoded as a 1×1 matrix:
+
+```
+scalar = rows (1 byte = 0x01) || cols (1 byte = 0x01) || element (24 bytes)
+```
+
+For MAT_VEC_MUL, the vector is encoded as N×1:
+
+```
+vector = rows (1 byte) || cols (1 byte = 0x01) || element[0] || element[1] || ...
 ```
 
 ### Probe Leaf Computation
@@ -550,16 +624,28 @@ root = MerkleRoot(leaf[0], leaf[1], ..., leaf[56])
 
 ## TRAP Codes
 
-| Code | Condition | Reference |
-|------|-----------|----------|
-| OVERFLOW | i128 accumulator exceeds i64 range for DQA, or i128 for Decimal | RFC-0105 |
-| INVALID_SCALE | Result scale exceeds MAX_SCALE (18 DQA, 36 Decimal) | RFC-0105 |
-| SCALE_MISMATCH | Matrix/vector elements have different scales | RFC-0105 |
-| DIMENSION_ERROR | Matrix dimensions M×N > 64 | RFC-0113 |
-| DIMENSION_MISMATCH | Matrix dimensions incompatible for operation | RFC-0113 |
-| CANNOT_NORMALIZE_ZERO_VECTOR | NORM of zero vector | RFC-0112 |
-| CONSENSUS_RESTRICTION | Operation forbidden in consensus context | RFC-0113 |
-| UNSUPPORTED_OPERATION | Operation not supported for element type | RFC-0113 |
+| Code                         | Condition                                                       | Reference |
+| ---------------------------- | --------------------------------------------------------------- | --------- |
+| OVERFLOW                     | i128 accumulator exceeds i64 range for DQA, or i128 for Decimal | RFC-0105  |
+| INVALID_SCALE                | Result scale exceeds MAX_SCALE (18 DQA, 36 Decimal)             | RFC-0105  |
+| SCALE_MISMATCH               | Matrix/vector elements have different scales                    | RFC-0105  |
+| DIMENSION_ERROR              | Matrix dimensions M×N > 64                                      | RFC-0113  |
+| DIMENSION_MISMATCH           | Matrix dimensions incompatible for operation                    | RFC-0113  |
+| CANNOT_NORMALIZE_ZERO_VECTOR | NORM of zero vector                                             | RFC-0112  |
+| CONSENSUS_RESTRICTION        | Operation forbidden in consensus context                        | RFC-0113  |
+| UNSUPPORTED_OPERATION        | Operation not supported for element type                        | RFC-0113  |
+
+### TRAP Priority Order
+
+When multiple error conditions exist in a single operation:
+
+1. **SCALE_MISMATCH** - Element scale differs from matrix/vector scale
+2. **INVALID_SCALE** - Result scale exceeds MAX_SCALE
+3. **OVERFLOW** - Accumulator exceeds representable range
+4. **DIMENSION_MISMATCH** - Matrix dimensions incompatible for operation
+5. **DIMENSION_ERROR** - Matrix exceeds size limits
+
+> **Rationale:** Scale validation is checked first to catch semantic errors early. Dimension errors are checked last as they are configuration errors.
 
 ### TRAP Sentinel (for probe encoding)
 
@@ -603,4 +689,7 @@ Per RFC-0111 v1.20 Section 13.3.
 Run with: `python3 scripts/compute_dmat_probe_root.py`
 
 > **Note:** The canonical reference is the script file. This RFC takes precedence over embedded descriptions.
+
+```
+
 ```

@@ -294,6 +294,14 @@ PROBE_ENTRIES = [
     (OP_MAT_ADD, TYPE_DQA, mat(2, 2, dqa(1, 10), dqa(2), dqa(3), dqa(4)),
                             mat(2, 2, dqa(5), dqa(6), dqa(7), dqa(8)),
                             mat(2, 2, TRAP, TRAP, TRAP, TRAP)),  # SCALE_MISMATCH
+    # Entry 55: INVALID_SCALE - scale exceeds MAX_SCALE
+    (OP_MAT_MUL, TYPE_DQA, mat(2, 2, dqa(1, 10), dqa(0), dqa(0), dqa(1, 10)),
+                         mat(2, 2, dqa(1, 10), dqa(0), dqa(0), dqa(1, 10)),
+                         mat(2, 2, TRAP, TRAP, TRAP, TRAP)),  # INVALID_SCALE (10+10=20 > 18)
+    # Entry 56: TRAP sentinel verification
+    (OP_MAT_ADD, TYPE_DQA, mat(1, 1, TRAP),
+                         mat(1, 1, dqa(0)),
+                         mat(1, 1, TRAP)),  # TRAP propagated
 ]
 
 def compute_probe_root() -> str:

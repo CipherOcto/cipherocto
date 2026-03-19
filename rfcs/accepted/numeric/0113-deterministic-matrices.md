@@ -2,7 +2,7 @@
 
 ## Status
 
-**Version:** 1.7 (2026-03-18)
+**Version:** 1.8 (2026-03-18)
 **Status:** Accepted
 **NUMERIC_SPEC_VERSION:** 1 (per RFC-0110 §Spec Version & Replay Pinning)
 
@@ -11,6 +11,15 @@
 > on existing numeric types without modifying their encoding, arithmetic, or TRAP semantics.
 
 > **Note:** This RFC is extracted from RFC-0106 (Deterministic Numeric Tower) as part of the Track B dismantling effort.
+
+> **Adversarial Review v1.8 Changes (Round 7 - MEDIUM/LOW fixes):**
+>
+> - MED-1: Entry 55 uses uniform scale matrix for clean INVALID_SCALE test
+> - MED-2: MAT_TRANSPOSE has explicit Phase 1 dimension validation
+> - MED-3: MAT_SCALE separates validation from computation phases
+> - LOW-1: Removed duplicate type_id line in wire format
+> - LOW-3: Removed INPUT_VALIDATION_ERROR dead code from TRAP tables
+> - LOW-4: Fixed op_id encoding example (16 hex digits not 13)
 
 > **Adversarial Review v1.7 Changes (Round 6 - CRITICAL fixes):**
 >
@@ -490,7 +499,14 @@ For each element e in a.data:
   if e.scale() == 0xFF and e.raw_mantissa() == i64::MIN as i128: TRAP(TRAP_INPUT_ERROR)
 ```
 
-**Phase 1: Validate all element scales BEFORE computation (MED-6 fix: separate validation from computation)**
+**Phase 1: Validate dimensions (MED-2 fix)**
+
+```
+if a.rows * a.cols > MAX_DMAT_ELEMENTS (64): TRAP(DIMENSION_ERROR)
+if a.rows > 8 or a.cols > 8: TRAP(DIMENSION_ERROR)
+```
+
+**Phase 2: Validate all element scales (MED-6 fix: separate validation from computation)**
 
 ```
 For i in 0..a.rows:
@@ -498,7 +514,7 @@ For i in 0..a.rows:
     if a.data[i * a.cols + j].scale() != a.data[0].scale(): TRAP(SCALE_MISMATCH)
 ```
 
-**Phase 2: Compute**
+**Phase 3: Compute**
 
 ```
 result.rows = a.cols
@@ -551,14 +567,22 @@ if a.rows * a.cols > MAX_DMAT_ELEMENTS (64): TRAP(DIMENSION_ERROR)
 if a.rows > 8 or a.cols > 8: TRAP(DIMENSION_ERROR)
 ```
 
-**Phase 2: Validate element scales and compute (HIGH-3: combines scale check with computation)**
+**Phase 2: Validate all element scales BEFORE computation (MED-3 fix: separate validation from computation)**
 
 ```
 For i in 0..a.rows:
   For j in 0..a.cols:
     if a.data[i * a.cols + j].scale() != a.data[0].scale(): TRAP(SCALE_MISMATCH)
-    product_scale = a.data[i * a.cols + j].scale() + scalar.scale()
-    if product_scale > T::MAX_SCALE: TRAP(INVALID_SCALE)
+  // Validate result scale once (all elements have same scale after above check)
+  result_scale = a.data[0].scale() + scalar.scale()
+  if result_scale > T::MAX_SCALE: TRAP(INVALID_SCALE)
+```
+
+**Phase 3: Compute (MED-3 fix: no validation in compute phase)**
+
+```
+For i in 0..a.rows:
+  For j in 0..a.cols:
     result.data[i * result.cols + j] = a.data[i * a.cols + j].mul(&scalar)?
 ```
 
@@ -693,8 +717,7 @@ result_rows (1 byte) || result_cols (1 byte) || result_elements...
 
 Where:
 
-- `op_id`: 8-byte operation identifier, big-endian encoding of 16-bit value (MED-4: 0x0100 = MAT_ADD stored as 0x00000000000100)
-- `type_id`: 1 byte (1=DQA, 2=Decimal)
+- `op_id`: 8-byte operation identifier, big-endian encoding of 16-bit value (LOW-4: 0x0100 = MAT_ADD stored as 0x0000000000000100)
 - `type_id`: 1 byte (1=DQA, 2=Decimal)
 - Matrix elements serialized as 24-byte blocks per RFC-0105/0111
 
@@ -721,7 +744,7 @@ TRAP = { mantissa: 0x8000000000000000 (i64 min), scale: 0xFF }
 
 ### Published Merkle Root
 
-> **Merkle Root:** `377dfe5a3d391fc51d9d9dd32989ed0737f621ac640463f0e16e5326e3a18396` (v1.7 - Round 6 CRIT/HIGH fixes)
+> **Merkle Root:** `904223cdc4450b1b497bc24ac8856a529ea7bd9cd8ceae6c69b241ee664643ef` (v1.8 - Round 7 MEDIUM/LOW fixes)
 
 ### Probe Entry Details
 
@@ -782,7 +805,7 @@ TRAP = { mantissa: 0x8000000000000000 (i64 min), scale: 0xFF }
 | 52    | MAT_MUL       | DQA     | [[2^31,2^31],[2^31,2^31]]     | [[2^31,2^31],[2^31,2^31]]     | TRAP (OVERFLOW) (CRIT-2)           |
 | 53    | MAT_SCALE     | DQA     | [[9223372038×4]]              | scalar=10^9                   | TRAP (OVERFLOW) (CRIT-2)          |
 | 54    | MAT_ADD       | DQA     | [[1@scale10,2],[3,4]]         | [[5,6],[7,8]]                 | TRAP (SCALE_MISMATCH)             |
-| 55    | MAT_MUL       | DQA     | [[1@scale10,0],[0,1@scale10]] | [[1@scale10,0],[0,1@scale10]] | TRAP (INVALID_SCALE)              |
+| 55    | MAT_MUL       | DQA     | [[1@scale10,2@scale10],[3@scale10,4@scale10]] | [[1@scale10,2@scale10],[3@scale10,4@scale10]] | TRAP (INVALID_SCALE) (MED-1) |
 | 56    | MAT_ADD       | DQA     | [TRAP]                        | [0]                           | TRAP (propagated)                 |
 
 > **Note:** Full 57 entries required per RFC-0110/NUMERIC_SPEC conventions.
@@ -872,7 +895,6 @@ root = MerkleRoot(leaf[0], leaf[1], ..., leaf[56])
 | Code               | Condition                                                       | Reference |
 | ------------------ | --------------------------------------------------------------- | --------- |
 | TRAP_INPUT_ERROR   | Input contains TRAP sentinel                                   | RFC-0113  |
-| INPUT_VALIDATION_ERROR | Input scale exceeds type limits                                | RFC-0112  |
 | OVERFLOW           | i128 accumulator exceeds i64 range for DQA, or i128 for Decimal | RFC-0105  |
 | INVALID_SCALE      | Result scale exceeds MAX_SCALE (18 DQA, 36 Decimal)             | RFC-0105  |
 | SCALE_MISMATCH     | Matrix/vector elements have different scales                    | RFC-0105  |
@@ -886,14 +908,13 @@ root = MerkleRoot(leaf[0], leaf[1], ..., leaf[56])
 When multiple error conditions exist in a single operation:
 
 1. **TRAP_INPUT_ERROR** - Input contains TRAP sentinel (checked FIRST per RFC-0112)
-2. **INPUT_VALIDATION_ERROR** - Input scale exceeds type limits (per RFC-0112 DOT_PRODUCT)
-3. **DIMENSION_ERROR** - Matrix exceeds size limits (M×N > 64, M,N > 8)
-4. **DIMENSION_MISMATCH** - Matrix dimensions incompatible for operation
-5. **SCALE_MISMATCH** - Element scales differ
-6. **INVALID_SCALE** - Result scale exceeds MAX_SCALE
-7. **OVERFLOW** - Accumulator exceeds representable range
+2. **DIMENSION_ERROR** - Matrix exceeds size limits (M×N > 64, M,N > 8)
+3. **DIMENSION_MISMATCH** - Matrix dimensions incompatible for operation
+4. **SCALE_MISMATCH** - Element scales differ
+5. **INVALID_SCALE** - Result scale exceeds MAX_SCALE
+6. **OVERFLOW** - Accumulator exceeds representable range
 
-> **Rationale:** TRAP sentinel detection is a pre-validation check (malformed input). If TRAP sentinel is present, no further validation occurs (immediate TRAP). For non-TRAP inputs, INPUT_VALIDATION_ERROR is checked first per RFC-0112 DOT_PRODUCT. This two-phase approach ensures TRAP inputs don't trigger spurious validation errors.
+> **Rationale:** TRAP sentinel detection is a pre-validation check (malformed input). If TRAP sentinel is present, no further validation occurs (immediate TRAP).
 
 ### TRAP Sentinel (for probe encoding)
 

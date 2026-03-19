@@ -2,7 +2,7 @@
 
 ## Status
 
-**Version:** 1.11 (2026-03-19)
+**Version:** 1.12 (2026-03-19)
 **Status:** Accepted
 **NUMERIC_SPEC_VERSION:** 1 (per RFC-0110 §Spec Version & Replay Pinning)
 
@@ -11,6 +11,14 @@
 > on existing numeric types without modifying their encoding, arithmetic, or TRAP semantics.
 
 > **Note:** This RFC is extracted from RFC-0106 (Deterministic Numeric Tower) as part of the Track B dismantling effort.
+
+> **Adversarial Review v1.12 Changes (Round 12 - CRIT/HIGH/MED fixes):**
+>
+> - CRIT-NEW-1: Added M ≥ 1, N ≥ 1 enforcement to Production Limitations and all operation Phase 1 checks
+> - HIGH-NEW-1: Added explicit trait evolution note stating RFC-0113 supersedes NumericScalar in RFC-0112
+> - HIGH-NEW-2: Clarified MAT_VEC_MUL return type Vec<T> and DVec compatibility guarantees
+> - MED-NEW-1: Added global index column to TRAP Codes table with TBD placeholders
+> - MED-NEW-2: Added MAT_TRANSPOSE gas formula justification (1 gas per memory read/write)
 
 > **Adversarial Review v1.11 Changes (Round 11):**
 
@@ -158,6 +166,8 @@ pub struct DMat<T: NumericScalar> {
 ```
 
 > **Note:** This RFC uses `NumericScalar` trait for generic element operations, enabling composition with DVEC (RFC-0112). The trait approach replaces the earlier enum-based `Numeric` type for better composability across the Deterministic Numeric Tower.
+>
+> **Trait Evolution (HIGH-NEW-1):** This RFC **supersedes** the `NumericScalar` trait definition in RFC-0112 v1.12. RFC-0113 adds `MAX_MANTISSA: i128` constant and `new(mantissa: i128, scale: u8) -> Result<Self, TrapCode>` constructor. Implementations of RFC-0112 types (DQA/Decimal) must be updated to satisfy the RFC-0113 trait requirements when used with DMAT. The RFC-0112 trait definition remains valid for DVEC-only use cases that don't require the additional constants.
 
 ```
 
@@ -202,14 +212,16 @@ For MAT_VEC_MUL where A is M×K with scale s_a, and V is K×1 with scale s_v:
 
 | Feature | Limit | Status |
 |---------|-------|--------|
-| DMAT<DQA> | M×N ≤ 64, M ≤ 8, N ≤ 8 | ALLOWED |
-| DMAT<Decimal> | M×N ≤ 64, M ≤ 8, N ≤ 8 | ALLOWED |
+| DMAT<DQA> | M×N ≤ 64, M ≤ 8, N ≤ 8, **M ≥ 1, N ≥ 1** | ALLOWED |
+| DMAT<Decimal> | M×N ≤ 64, M ≤ 8, N ≤ 8, **M ≥ 1, N ≥ 1** | ALLOWED |
 | DMAT<DFP> | DISABLED | FORBIDDEN |
 | DVEC (reference) | N ≤ 64 | ALLOWED |
 
 > **Boundary:** Maximum single dimension is 8. A 9×8 matrix (72 elements) is REJECTED even though 8×9 would be valid. The per-dimension limit M,N ≤ 8 is stricter than the total element limit M×N ≤ 64.
 >
-> **Rationale:** The M×N ≤ 64 limit ensures worst-case gas stays within measurable bounds for debuggable execution. The M,N ≤ 8 per-dimension limit prevents pathological 1×64 or 64×1 matrices that could cause issues in certain algorithms.
+> **Dimension Enforcement (CRIT-NEW-1):** Matrices MUST have M ≥ 1 and N ≥ 1. Empty matrices (0×N or M×0) are REJECTED. This prevents out-of-bounds access to `data[0]` in validation phases and ensures deterministic TRAP behavior across implementations.
+>
+> **Rationale:** The M×N ≤ 64 limit ensures worst-case gas stays within measurable bounds for debuggable execution. The M,N ≤ 8 per-dimension limit prevents pathological 1×64 or 64×1 matrices that could cause issues in certain algorithms. The M,N ≥ 1 requirement prevents empty matrix edge cases that would cause OOB access during validation.
 
 ## Core Operations
 
@@ -247,6 +259,7 @@ For each element e in b.data:
 if a.rows != b.rows or a.cols != b.cols: TRAP(DIMENSION_MISMATCH)
 if a.rows * a.cols > MAX_DMAT_ELEMENTS (64): TRAP(DIMENSION_ERROR)
 if a.rows > 8 or a.cols > 8: TRAP(DIMENSION_ERROR)
+if a.rows < 1 or a.cols < 1: TRAP(DIMENSION_ERROR)  // CRIT-NEW-1: empty matrix
 ```
 
 **Phase 2: Validate all element scales BEFORE computation (MEDIUM-5)**
@@ -306,6 +319,7 @@ For each element e in b.data:
 if a.rows != b.rows or a.cols != b.cols: TRAP(DIMENSION_MISMATCH)
 if a.rows * a.cols > MAX_DMAT_ELEMENTS (64): TRAP(DIMENSION_ERROR)
 if a.rows > 8 or a.cols > 8: TRAP(DIMENSION_ERROR)
+if a.rows < 1 or a.cols < 1: TRAP(DIMENSION_ERROR)  // CRIT-NEW-1: empty matrix
 ```
 
 **Phase 2: Validate all element scales BEFORE computation (MEDIUM-5)**
@@ -357,6 +371,7 @@ For each element e in b.data:
 1. if a.cols != b.rows: TRAP(DIMENSION_MISMATCH)
 2. if a.rows * b.cols > MAX_DMAT_ELEMENTS (64): TRAP(DIMENSION_ERROR)
 3. if a.rows > 8 or a.cols > 8 or b.rows > 8 or b.cols > 8: TRAP(DIMENSION_ERROR)
+4. if a.rows < 1 or a.cols < 1 or b.rows < 1 or b.cols < 1: TRAP(DIMENSION_ERROR)  // CRIT-NEW-1: empty matrix
 ```
 
 **Phase 2: Validate element scales (CRIT-3: SCALE_MISMATCH before INVALID_SCALE)**
@@ -424,7 +439,7 @@ mat_vec_mul(a: &DMat<T>, v: &[T]) -> Vec<T>
 where
     T: NumericScalar<Scalar = T>,
 
-> **Note (MED-6):** Returns `Vec<T>` compatible with RFC-0112 `DVec<T>` data layout.
+> **Note (MED-6/HIGH-NEW-2):** Returns `Vec<T>` compatible with RFC-0112 `DVec<T>` data layout. The result length is `a.rows` which is guaranteed ≤ 8 per dimension constraints, satisfying DVec's N ≤ 64 requirement. The function returns `Vec<T>` rather than `DVec<T>` to avoid circular dependency between RFC-0112 and RFC-0113. Users requiring DVec guarantees can wrap the result: `DVec::try_from(result)?` where the TryFrom implementation verifies length ≤ 64 (which is always satisfied for valid DMAT inputs).
 
 **Phase 0: TRAP Sentinel Pre-check (CRIT-4)**
 
@@ -441,6 +456,7 @@ For each element e in v:
 1. if a.cols != v.len: TRAP(DIMENSION_MISMATCH)
 2. if a.rows * a.cols > MAX_DMAT_ELEMENTS (64): TRAP(DIMENSION_ERROR)
 3. if a.rows > 8 or a.cols > 8: TRAP(DIMENSION_ERROR)
+4. if a.rows < 1 or a.cols < 1: TRAP(DIMENSION_ERROR)  // CRIT-NEW-1: empty matrix
 ```
 
 **Phase 2: Validate matrix element scales (CRIT-3: SCALE_MISMATCH before INVALID_SCALE)**
@@ -526,6 +542,7 @@ For each element e in a.data:
 ```
 if a.rows * a.cols > MAX_DMAT_ELEMENTS (64): TRAP(DIMENSION_ERROR)
 if a.rows > 8 or a.cols > 8: TRAP(DIMENSION_ERROR)
+if a.rows < 1 or a.cols < 1: TRAP(DIMENSION_ERROR)  // CRIT-NEW-1: empty matrix
 ```
 
 **Phase 2: Validate all element scales (MED-6 fix: separate validation from computation)**
@@ -587,6 +604,7 @@ if scalar.scale() == 0xFF and scalar.raw_mantissa() == i64::MIN as i128: TRAP(TR
 ```
 if a.rows * a.cols > MAX_DMAT_ELEMENTS (64): TRAP(DIMENSION_ERROR)
 if a.rows > 8 or a.cols > 8: TRAP(DIMENSION_ERROR)
+if a.rows < 1 or a.cols < 1: TRAP(DIMENSION_ERROR)  // CRIT-NEW-1: empty matrix
 ```
 
 **Phase 2: Validate all element scales BEFORE computation (MED-3/HIGH-1 fix: separate validation from computation, result_scale check outside loop)**
@@ -626,7 +644,7 @@ Gas derivation follows RFC-0105 where:
 | MAT_SUB       | DQA/Decimal | `10 × M × N`                                         | M×N × RFC-0105 SUB (10 gas flat)                                 |
 | MAT_MUL       | DQA/Decimal | `M × N × K × (30 + 3 × s_a × s_b)`                  | Per MAC: DQA MUL (20 + 3×s_a×s_b) + DQA ADD (10)                 |
 | MAT_VEC_MUL   | DQA/Decimal | `rows × cols × (30 + 3 × s_a × s_v)`                | rows dot products, each cols elements                              |
-| MAT_TRANSPOSE | DQA/Decimal | `2 × M × N`                                         | M×N element copies                                                |
+| MAT_TRANSPOSE | DQA/Decimal | `2 × M × N`                                         | M×N reads + M×N writes (1 gas per memory operation)             |
 | MAT_SCALE     | DQA/Decimal | `M × N × (20 + 3 × s_a × s_scalar)`                 | M×N × RFC-0105 MUL (20 + 3×s_a×s_scalar)                         |
 
 Where `s_a` is the scale of matrix A and `s_b` is the scale of matrix B (for MAT_MUL), or `s_v` is the scale of vector V (for MAT_VEC_MUL).
@@ -638,6 +656,7 @@ See RFC-0112 §Gas Model for derivation.
 ### Gas Notes
 
 - **MAT_MUL formula:** `M × N × K × (30 + 3 × s_a × s_b)` combines DQA MUL cost (20 + 3×s_a×s_b) + DQA ADD cost (10 flat) per MAC
+- **MAT_TRANSPOSE formula (MED-NEW-2):** `2 × M × N` accounts for M×N element reads plus M×N element writes. Each memory operation (read or write) is counted as 1 gas unit, so 2×M×N represents the total memory bandwidth cost. This is lower than MAT_ADD (10×M×N) because transpose involves no arithmetic operations, only index remapping.
 - **Scale check overhead:** The two SCALE_MISMATCH checks per element are O(1) and absorbed into the base cost
 - **Per-block budget:** 139,776 gas exceeds 50k consensus budget; MAT_MUL is limited to M×N ≤ 64
 - **BigInt overhead (MED-6):** Per RFC-0112, BigInt operations have additional overhead for overflow detection. The `fits_in_i64()` check adds constant O(1) overhead per product and per accumulator.
@@ -850,20 +869,22 @@ root = MerkleRoot(leaf[0], leaf[1], ..., leaf[56])
 1. **Naive Algorithm Only**: No Strassen, no blocking optimization
 2. **Sequential Loops**: No SIMD, no parallelization
 3. **Row-Major Layout**: Must match specification
-4. **Dimension Enforcement**: M×N ≤ 64 for execution
+4. **Dimension Enforcement**: M×N ≤ 64 AND M,N ≤ 8 AND M,N ≥ 1 for execution
 5. **Scale Matching**: All elements in a matrix must have the same scale
 6. **Type Isolation**: No mixed-type operations (DMAT<DQA> vs DMAT<Decimal>)
 
 ## TRAP Codes
 
-| Code               | Condition                                                       | Reference |
-| ------------------ | --------------------------------------------------------------- | --------- |
-| TRAP_INPUT_ERROR   | Input contains TRAP sentinel                                   | RFC-0113  |
-| OVERFLOW           | i128 accumulator exceeds i64 range for DQA, or i128 for Decimal | RFC-0105  |
-| INVALID_SCALE      | Result scale exceeds MAX_SCALE (18 DQA, 36 Decimal)             | RFC-0105  |
-| SCALE_MISMATCH     | Matrix/vector elements have different scales                    | RFC-0105  |
-| DIMENSION_ERROR    | Matrix dimensions M×N > 64                                      | RFC-0113  |
-| DIMENSION_MISMATCH | Matrix dimensions incompatible for operation                    | RFC-0113  |
+| Code               | Condition                                                       | Reference | Global Index |
+| ------------------ | --------------------------------------------------------------- | --------- |--------------|
+| TRAP_INPUT_ERROR   | Input contains TRAP sentinel                                   | RFC-0113  | TBD          |
+| OVERFLOW           | i128 accumulator exceeds i64 range for DQA, or i128 for Decimal | RFC-0105  | TBD          |
+| INVALID_SCALE      | Result scale exceeds MAX_SCALE (18 DQA, 36 Decimal)             | RFC-0105  | TBD          |
+| SCALE_MISMATCH     | Matrix/vector elements have different scales                    | RFC-0105  | TBD          |
+| DIMENSION_ERROR    | Matrix dimensions M×N > 64, M,N > 8, or M,N < 1                | RFC-0113  | TBD          |
+| DIMENSION_MISMATCH | Matrix dimensions incompatible for operation                    | RFC-0113  | TBD          |
+
+> **Note (MED-NEW-1):** `DIMENSION_ERROR` and `DIMENSION_MISMATCH` require global error code indices assigned from the unified error registry (per RFC-01XX). The "TBD" indices will be finalized when the global error registry RFC is approved. DMAT-specific codes use the DMAT namespace (0x01xx) for operation IDs, but error codes should align with the global system.
 
 > **Note (MED-7/HIGH-2):** `CANNOT_NORMALIZE_ZERO_VECTOR`, `CONSENSUS_RESTRICTION`, `UNSUPPORTED_OPERATION`, and `INPUT_VALIDATION_ERROR` are defined in other RFCs but are NOT raised by DMAT operations. DMAT's input scale validation is handled entirely by SCALE_MISMATCH (Phase 2) and INVALID_SCALE (Phase 3) per the phase ordering above.
 
@@ -872,7 +893,7 @@ root = MerkleRoot(leaf[0], leaf[1], ..., leaf[56])
 When multiple error conditions exist in a single operation:
 
 1. **TRAP_INPUT_ERROR** - Input contains TRAP sentinel (checked FIRST per RFC-0112)
-2. **DIMENSION_ERROR** - Matrix exceeds size limits (M×N > 64, M,N > 8)
+2. **DIMENSION_ERROR** - Matrix exceeds size limits (M×N > 64, M,N > 8, or M,N < 1)
 3. **DIMENSION_MISMATCH** - Matrix dimensions incompatible for operation
 4. **SCALE_MISMATCH** - Element scales differ
 5. **INVALID_SCALE** - Result scale exceeds MAX_SCALE

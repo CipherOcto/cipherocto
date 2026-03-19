@@ -196,6 +196,9 @@ pub trait NumericScalar: Clone + PartialEq + Debug {
     fn mul(&self, other: &Self) -> Result<Self, Error>;
     // CRIT-5: raw_mantissa returns i128 to avoid truncating Decimal values
     fn raw_mantissa(&self) -> i128;
+    /// Returns true if this value is the TRAP sentinel.
+    /// CRIT-1: Using a trait method removes type-specific logic from Phase 0 checks.
+    fn is_trap(&self) -> bool;
 }
 
 /// Deterministic Matrix
@@ -268,7 +271,7 @@ For MAT_VEC_MUL where A is M×K with scale s_a, and V is K×1 with scale s_v:
 
 > **Note:** "Composition allowed" means operands may have different scales. "Strict equality required" means all elements within an operand AND both operands must have identical scales.
 
-> **MAX_SCALE Boundary Invariant (CRITICAL):** If `result_scale == MAX_SCALE` (18 for DQA, 36 for Decimal), canonicalization **MUST NOT** reduce the scale below MAX_SCALE. The result may remain at MAX_SCALE or overflow, but it must not be normalized to a lower scale. For example, `1×10^-18` stored as `(mantissa=1, scale=18)` is valid and must not be canonicalized to `(mantissa=1, scale=0)`.
+> **MAX_SCALE Boundary Invariant (CRITICAL):** When `result_scale == MAX_SCALE`, implementations **MUST NOT** canonicalize the result to a lower scale. The result may remain at MAX_SCALE or overflow, but it must not be normalized to a scale below MAX_SCALE. For example, `1×10^-18` stored as `(mantissa=1, scale=18)` is valid and must not be canonicalized to `(mantissa=1, scale=0)`.
 
 ### Canonicalization Requirements (CRITICAL)
 
@@ -321,9 +324,9 @@ Preconditions:
 
 ```
 For each element e in a.data:
-  if e.scale() == 0xFF and e.raw_mantissa() == i64::MIN as i128: TRAP(TRAP_INPUT_ERROR)
+  if e.is_trap(): TRAP(TRAP_INPUT_ERROR)
 For each element e in b.data:
-  if e.scale() == 0xFF and e.raw_mantissa() == i64::MIN as i128: TRAP(TRAP_INPUT_ERROR)
+  if e.is_trap(): TRAP(TRAP_INPUT_ERROR)
 ```
 
 **Phase 1: Validate dimensions (CRIT-3: prevents OOB access to .data[0])**
@@ -381,9 +384,9 @@ Preconditions:
 
 ```
 For each element e in a.data:
-  if e.scale() == 0xFF and e.raw_mantissa() == i64::MIN as i128: TRAP(TRAP_INPUT_ERROR)
+  if e.is_trap(): TRAP(TRAP_INPUT_ERROR)
 For each element e in b.data:
-  if e.scale() == 0xFF and e.raw_mantissa() == i64::MIN as i128: TRAP(TRAP_INPUT_ERROR)
+  if e.is_trap(): TRAP(TRAP_INPUT_ERROR)
 ```
 
 **Phase 1: Validate dimensions (CRIT-3: prevents OOB access to .data[0])**
@@ -433,9 +436,9 @@ where
 
 ```
 For each element e in a.data:
-  if e.scale() == 0xFF and e.raw_mantissa() == i64::MIN as i128: TRAP(TRAP_INPUT_ERROR)
+  if e.is_trap(): TRAP(TRAP_INPUT_ERROR)
 For each element e in b.data:
-  if e.scale() == 0xFF and e.raw_mantissa() == i64::MIN as i128: TRAP(TRAP_INPUT_ERROR)
+  if e.is_trap(): TRAP(TRAP_INPUT_ERROR)
 ```
 
 **Phase 1: Validate dimension preconditions (CRIT-3: prevents OOB access)**
@@ -518,9 +521,9 @@ where
 
 ```
 For each element e in a.data:
-  if e.scale() == 0xFF and e.raw_mantissa() == i64::MIN as i128: TRAP(TRAP_INPUT_ERROR)
+  if e.is_trap(): TRAP(TRAP_INPUT_ERROR)
 For each element e in v:
-  if e.scale() == 0xFF and e.raw_mantissa() == i64::MIN as i128: TRAP(TRAP_INPUT_ERROR)
+  if e.is_trap(): TRAP(TRAP_INPUT_ERROR)
 ```
 
 **Phase 1: Validate dimension preconditions (CRIT-3: prevents OOB access)**
@@ -609,7 +612,7 @@ Preconditions:
 
 ```
 For each element e in a.data:
-  if e.scale() == 0xFF and e.raw_mantissa() == i64::MIN as i128: TRAP(TRAP_INPUT_ERROR)
+  if e.is_trap(): TRAP(TRAP_INPUT_ERROR)
 ```
 
 **Phase 1: Validate dimensions (MED-2 fix)**
@@ -670,8 +673,8 @@ Preconditions:
 
 ```
 For each element e in a.data:
-  if e.scale() == 0xFF and e.raw_mantissa() == i64::MIN as i128: TRAP(TRAP_INPUT_ERROR)
-if scalar.scale() == 0xFF and scalar.raw_mantissa() == i64::MIN as i128: TRAP(TRAP_INPUT_ERROR)
+  if e.is_trap(): TRAP(TRAP_INPUT_ERROR)
+if scalar.is_trap(): TRAP(TRAP_INPUT_ERROR)
 ```
 
 **Phase 1: Validate dimensions (HIGH-3: explicit dimension pre-validation)**
@@ -710,6 +713,8 @@ Gas derivation follows RFC-0105 where:
 
 - DQA MUL: `20 + 3 × scale_a × scale_b` gas (per RFC-0105 MUL operation)
 - DQA ADD: `10` gas flat (per RFC-0105 ADD operation - no scale factor)
+
+> **Phase 0 Gas Note:** TRAP-path executions (Phase 0 pre-checks) are charged at one unit per element inspected, regardless of whether computation proceeds. This prevents DoS via malicious matrices that always fail Phase 0.
 
 ### Per-Operation Gas
 
@@ -807,11 +812,11 @@ MAT_MUL at MAX_DMAT_ELEMENTS (8×8=64) with K=8 and scale=9:
 
 | Operation   | Input               | Expected | TRAP Code          |
 | ----------- | ------------------- | -------- | ------------------ |
-| MAT_MUL     | 9×9 matrix          | REJECT   | DIMENSION_ERROR    |
-| MAT_MUL     | a.cols != b.rows    | REVERT   | DIMENSION_MISMATCH |
-| MAT_ADD     | Dimension mismatch  | REVERT   | DIMENSION_MISMATCH |
-| MAT_SUB     | Dimension mismatch  | REVERT   | DIMENSION_MISMATCH |
-| MAT_VEC_MUL | a.cols != v.len     | REVERT   | DIMENSION_MISMATCH |
+| MAT_MUL     | 9×9 matrix          | TRAP     | DIMENSION_ERROR    |
+| MAT_MUL     | a.cols != b.rows    | TRAP     | DIMENSION_MISMATCH |
+| MAT_ADD     | Dimension mismatch  | TRAP     | DIMENSION_MISMATCH |
+| MAT_SUB     | Dimension mismatch  | TRAP     | DIMENSION_MISMATCH |
+| MAT_VEC_MUL | a.cols != v.len     | TRAP     | DIMENSION_MISMATCH |
 | MAT_MUL     | Scale > 9 (DQA)     | TRAP     | INVALID_SCALE      |
 | MAT_ADD     | Scale mismatch      | TRAP     | SCALE_MISMATCH     |
 | MAT_MUL     | Max values overflow | TRAP     | OVERFLOW           |
@@ -940,7 +945,7 @@ root = MerkleRoot(leaf[0], leaf[1], ..., leaf[N-1]) where N = total entries
 
 ### Verification Procedure
 
-1. For each probe entry, serialize inputs using canonical format
+1. For each probe entry, serialize inputs using canonical format. For entries representing TRAP or error conditions (e.g., DIMENSION_ERROR, DIMENSION_MISMATCH), the matrix dimensions may describe the intended in-memory object; element data may be absent for matrices that are rejected before computation.
 2. Execute operation per algorithms in this RFC
 3. Serialize result using canonical format
 4. Compute leaf hash: SHA256(leaf_input)
@@ -992,7 +997,7 @@ The following properties hold under valid (non-TRAP) execution:
 All DMAT operations MUST enforce the following invariant:
 
 1. TRAP sentinel detection **MUST** occur before any other validation or computation step.
-2. TRAP detection **MUST** iterate elements in strict row-major order using index `(i * cols + j)`. Implementations **MUST NOT** reorder, parallelize, or short-circuit traversal in a way that changes which TRAP is detected first.
+2. TRAP detection **MUST** iterate elements in strict row-major order using index `(i * cols + j)`. For binary operations, all elements of operand `a` **MUST** be scanned before any element of operand `b`. Implementations **MUST NOT** reorder, parallelize, or short-circuit traversal in a way that changes which TRAP is detected first.
 3. If any input element matches the TRAP sentinel, the operation MUST immediately return `TRAP(TRAP_INPUT_ERROR)`.
 4. No further validation (dimension, scale, overflow) may be performed after TRAP detection.
 

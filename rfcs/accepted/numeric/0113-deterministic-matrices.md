@@ -796,7 +796,7 @@ TRAP = { mantissa: 0x8000000000000000 (i64 min), scale: 0xFF }
 
 ### Published Merkle Root
 
-> **Merkle Root:** `d69f3e2ecafd6adf0fd564f36348d5f7588052cea9677e2a7a4c1ade91885626` (computed from v1.11 script; unchanged through v1.13)
+> **Merkle Root:** `d69f3e2ecafd6adf0fd564f36348d5f7588052cea9677e2a7a4c1ade91885626` (computed from v1.11 script; unchanged through v1.14)
 
 > **Note (LOW-FINAL-1):** The verification probe entries do not include a mixed-scale MAT_VEC_MUL test vector. Mixed-scale support was added in v1.13; adding a probe entry for comprehensive coverage may be done in a future minor revision.
 

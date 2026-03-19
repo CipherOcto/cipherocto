@@ -128,7 +128,7 @@ def mat(rows: int, cols: int, *elements) -> Tuple[int, int, List[Tuple[int, int]
     """Helper to create matrix tuple."""
     return (rows, cols, list(elements))
 
-# Probe entries (57 total)
+# Probe entries (63 total)
 # Format: (op_id, type_id, a_mat, b_mat, c_mat)
 # b_mat is None for unary operations
 PROBE_ENTRIES = [

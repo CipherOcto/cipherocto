@@ -188,12 +188,12 @@ pub trait NumericScalar: Clone + PartialEq + Debug {
 
     fn scale(&self) -> u8;
     // CRIT-2/CRIT-5: new accepts i128 to support both DQA (i64-range) and Decimal (i128-range)
-    fn new(mantissa: i128, scale: u8) -> Result<Self, TrapCode>
+    fn new(mantissa: i128, scale: u8) -> Result<Self, Error>
     where
         Self: Sized;
-    fn add(&self, other: &Self) -> Result<Self, TrapCode>;
-    fn sub(&self, other: &Self) -> Result<Self, TrapCode>;
-    fn mul(&self, other: &Self) -> Result<Self, TrapCode>;
+    fn add(&self, other: &Self) -> Result<Self, Error>;
+    fn sub(&self, other: &Self) -> Result<Self, Error>;
+    fn mul(&self, other: &Self) -> Result<Self, Error>;
     // CRIT-5: raw_mantissa returns i128 to avoid truncating Decimal values
     fn raw_mantissa(&self) -> i128;
 }
@@ -934,7 +934,7 @@ vector = rows (1 byte) || cols (1 byte = 0x01) || element[0] || element[1] || ..
 ```
 
 leaf = SHA256(concat(leaf_input elements))
-root = MerkleRoot(leaf[0], leaf[1], ..., leaf[56])
+root = MerkleRoot(leaf[0], leaf[1], ..., leaf[N-1]) where N = total entries
 
 ```
 
@@ -1005,8 +1005,8 @@ This rule applies uniformly to ALL operations: MAT_ADD, MAT_SUB, MAT_MUL, MAT_VE
 When multiple error conditions exist in a single operation:
 
 1. **TRAP_INPUT_ERROR** - Input contains TRAP sentinel (checked FIRST per RFC-0112)
-2. **DIMENSION_ERROR** - Matrix exceeds size limits (M×N > 64, M,N > 8, or M,N < 1)
-3. **DIMENSION_MISMATCH** - Matrix dimensions incompatible for operation
+2. **DIMENSION_MISMATCH** - Matrix dimensions incompatible for operation (checked first in MAT_MUL)
+3. **DIMENSION_ERROR** - Matrix exceeds size limits (M×N > 64, M,N > 8, or M,N < 1)
 4. **SCALE_MISMATCH** - Element scales differ
 5. **INVALID_SCALE** - Result scale exceeds MAX_SCALE
 6. **OVERFLOW** - Accumulator exceeds representable range

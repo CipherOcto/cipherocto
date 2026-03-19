@@ -2,9 +2,14 @@
 
 ## Status
 
-Accepted
+**Version:** 1.9 (2026-03-19)
+**Status:** Accepted
 
 > **Note:** This RFC was originally numbered RFC-0105 under the legacy numbering system. It remains at 0105 as it belongs to the Numeric/Math category.
+
+> **Cross-RFC Amendment v1.9:**
+> - Added §NumericScalar Implementation — establishes Dqa as canonical implementation of the RFC-0113 NumericScalar trait
+> - Documents cross-RFC relationships: RFC-0112 (original trait), RFC-0113 (canonical trait), RFC-0105 (implementation)
 
 ## Summary
 
@@ -1104,6 +1109,64 @@ DQA_CMP(a, b):
 - In-game currency
 - Item pricing
 - Achievement scores
+
+## NumericScalar Implementation
+
+This RFC defines the concrete `Dqa` type with canonicalization and arithmetic operations. The `Dqa` type serves as the **canonical implementation** of the `NumericScalar` trait defined in RFC-0113 (which supersedes the earlier RFC-0112 definition).
+
+### Relationship to NumericScalar Trait
+
+| Property | Value |
+|----------|-------|
+| Type | Dqa (concrete, RFC-0105) |
+| NumericScalar Version | RFC-0113 (canonical, supersedes RFC-0112) |
+| MAX_SCALE | 18 |
+| SQRT Support | No (returns Error::Unsupported) |
+| Canonicalization | Enforced at construction and after every operation |
+
+### RFC-0113 Trait Implementation
+
+Dqa implements the RFC-0113 `NumericScalar` trait:
+
+```rust
+// Per RFC-0113 trait definition (canonical version)
+impl NumericScalar for Dqa {
+    const MAX_MANTISSA: i128 = 10_i128.pow(18); // 10^18 - 1
+
+    fn new(mantissa: i128, scale: u8) -> Result<Self, Error> {
+        // Canonicalizes: trailing zeros removed, scale minimized
+        // Example: (1000, 3) → (1, 0)
+        let (canon_mantissa, canon_scale) = canonicalize_i128(mantissa, scale)?;
+        Self::new_checked(canon_mantissa, canon_scale)
+    }
+
+    fn scale(&self) -> u8 { self.scale }
+    fn raw_mantissa(&self) -> i128 { self.value as i128 }
+    fn mul(self, other: Self) -> Result<Self, Error> { dqa_mul(self, other) }
+    fn add(self, other: Self) -> Result<Self, Error> { dqa_add(self, other) }
+    fn sub(self, other: Self) -> Result<Self, Error> { dqa_sub(self, other) }
+    fn div(self, other: Self) -> Result<Self, Error> { dqa_div(self, other) }
+    fn sqrt(self) -> Result<Self, Error> { Err(Error::Unsupported) } // DQA has no SQRT
+    fn is_zero(&self) -> bool { self.value == 0 }
+}
+```
+
+### Canonicalization Invariant (CRITICAL)
+
+> **Canonicalization is MANDATORY.** The `Dqa::new(...)` constructor **MUST** return a canonicalized value. Every DQA operation **MUST** canonicalize its result before returning.
+
+This invariant ensures:
+1. **Deterministic Merkle hashes** — same logical value always encodes identically
+2. **TRAP canonicalization** — TRAP sentinel `(0x8000000000000000, 0xFF)` is the canonical TRAP representation
+3. **Consensus safety** — no two distinct Dqa values can have identical encodings
+
+### Cross-RFC References
+
+| RFC | Relationship |
+|-----|--------------|
+| RFC-0112 | Original `NumericScalar` trait definition (superseded) |
+| RFC-0113 | Canonical `NumericScalar` trait definition; defines trait for DMAT composition |
+| RFC-0105 | Dqa provides the concrete implementation of NumericScalar |
 
 ## Related Use Cases
 

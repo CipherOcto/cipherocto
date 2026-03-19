@@ -2,13 +2,17 @@
 
 ## Status
 
-**Version:** 1.12 (2026-03-17)
+**Version:** 1.13 (2026-03-19)
 **Status:** Accepted
 **NUMERIC_SPEC_VERSION:** 1 (per RFC-0110, incremented only when protocol semantics change)
 
 > **Rationale:** NUMERIC_SPEC_VERSION remains at 1 because this RFC does not change the fundamental protocol semantics of any existing numeric types (DFP, DQA, Decimal). DVEC is a new container type that operates on existing numeric types without modifying their encoding, arithmetic, or TRAP semantics. Changes to probe entries or reference implementations do not constitute protocol semantic changes per RFC-0110.
 
 > **Note:** This RFC is extracted from RFC-0106 (Deterministic Numeric Tower) as part of the Track B dismantling effort.
+
+> **Cross-RFC Amendment v1.13:**
+> - Added NumericScalar trait version note in §Type System — clarifies RFC-0113 supersedes the trait definition in this RFC
+> - Added implementation reference to RFC-0105 Dqa as canonical NumericScalar implementation
 
 > **Adversarial Review v1.12 Changes (Round 5):**
 > - CRIT-1 (R5): Updated §Published Merkle Root from stale v1.11 value to new root `74a4c3b44b88bae483ae24b26d04980868a0cc26772b06fe2029c328c1118998`
@@ -124,6 +128,10 @@ pub struct DVec<T: NumericScalar> {
     pub data: Vec<T>,
 }
 ```
+
+> **Trait Version Note (RFC-0113):** The `NumericScalar` trait defined in this RFC (v1.12) was the **original** definition. RFC-0113 (Deterministic Matrices) defines the **canonical** trait version with additional members (`const MAX_MANTISSA` and `fn new(mantissa: i128, scale: u8) -> Self`). For consensus-critical DMAT operations, implementations **MUST** use the RFC-0113 trait version. See RFC-0113 §Trait Version Enforcement.
+
+> **Implementation Reference:** The concrete `Dqa` type (RFC-0105) provides the canonical implementation of the RFC-0113 `NumericScalar` trait.
 
 ### Mixed-Type Operations
 

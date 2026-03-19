@@ -2,7 +2,7 @@
 
 ## Status
 
-**Version:** 1.17 (2026-03-19)
+**Version:** 1.18 (2026-03-19)
 **Status:** Accepted
 **NUMERIC_SPEC_VERSION:** 1 (per RFC-0110 §Spec Version & Replay Pinning)
 
@@ -12,6 +12,14 @@
 
 > **Note:** This RFC is extracted from RFC-0106 (Deterministic Numeric Tower) as part of the Track B dismantling effort.
 
+> **Adversarial Review v1.18 Changes (Round 19 - Consensus Hardening):**
+>
+> - CRITICAL: Added Trait Version Enforcement with explicit prohibition on mixed versions
+> - CRITICAL: Added Global TRAP Invariant (Phase 0 must precede all validation)
+> - CRITICAL: Added Canonicalization Requirements binding T::new to RFC-0105 canonical form
+> - MED: Added Algebraic Properties section (informative)
+> - Reviewer note: CRIT-2 (iteration order) already fully specified with explicit i/j/k nesting in algorithm pseudocode
+
 > **Adversarial Review v1.17 Changes (Round 18):**
 >
 > - HIGH-1: Added Scale Compatibility Matrix documenting scale rules per operation
@@ -20,7 +28,7 @@
 > **Adversarial Review v1.16 Changes (Round 17):**
 >
 > - HIGH: Strengthened trait evolution note to explicitly require RFC-0113 trait for DMAT users
-> - MED: Added two mixed-scale MAT_VEC_MUL probe entries (57, 58) and recomputed Merkle root
+> - MED: Added two mixed-scale MAT_VEC_MUL probe entries (57, 58) and recomputed Merkle root (59 total)
 
 > **Adversarial Review v1.15 Changes (Round 16):**
 >
@@ -192,6 +200,11 @@ pub struct DMat<T: NumericScalar> {
 >
 > **Trait Evolution (HIGH-NEW-1):** This RFC **supersedes** the `NumericScalar` trait definition in RFC-0112 v1.12 by adding `const MAX_MANTISSA: i128` and `fn new(mantissa: i128, scale: u8) -> Self`.
 > **Normative requirement:** Any type implementing `NumericScalar` that is intended to be used inside `DMat<T>` (via MAT_MUL, MAT_VEC_MUL, MAT_SCALE, etc.) **MUST** implement the RFC-0113 version of the trait with `MAX_MANTISSA` and `new(...)`. Implementations that only target pure DVEC usage MAY continue using the RFC-0112 trait definition until they adopt matrix operations.
+>
+> **Trait Version Enforcement (CRITICAL):** The `NumericScalar` trait defined in this RFC is the **canonical and exclusive** trait definition for all consensus-critical numeric operations involving DMAT.
+> 1. A type implementing `NumericScalar` **MUST NOT** implement multiple versions of the trait across RFC-0112 and RFC-0113 in the same execution environment.
+> 2. Any `NumericScalar` implementation used in consensus-critical contexts **MUST** conform to the RFC-0113 trait definition.
+> 3. Mixing trait versions across modules, dynamic libraries, or execution boundaries (e.g., WASM, FFI) is **FORBIDDEN**.
 
 ```
 
@@ -244,6 +257,17 @@ For MAT_VEC_MUL where A is M×K with scale s_a, and V is K×1 with scale s_v:
 | MAT_TRANSPOSE | Preserves element scales | N/A (unary) |
 
 > **Note:** "Composition allowed" means operands may have different scales. "Strict equality required" means all elements within an operand AND both operands must have identical scales.
+
+### Canonicalization Requirements (CRITICAL)
+
+All scalar values stored in `DMat<T>` MUST be in canonical form as defined by RFC-0105.
+
+1. The constructor `T::new(mantissa, scale)` **MUST** return a canonicalized value.
+2. All results produced by DMAT operations **MUST** be canonical at the time of insertion into `result.data`.
+3. Implementations **MUST NOT** construct non-canonical values and defer normalization.
+4. Canonicalization behavior **MUST** be identical to RFC-0105 arithmetic operations.
+
+> **Rationale:** DMAT participates in canonical serialization and Merkle root computation. Non-canonical representations would lead to divergent hashes across implementations.
 
 ## Production Limitations
 
@@ -904,7 +928,7 @@ root = MerkleRoot(leaf[0], leaf[1], ..., leaf[56])
 2. Execute operation per algorithms in this RFC
 3. Serialize result using canonical format
 4. Compute leaf hash: SHA256(leaf_input)
-5. Build Merkle tree from 57 leaves
+5. Build Merkle tree from 59 leaves
 6. Verify root matches published Merkle root
 
 ## Determinism Rules
@@ -915,6 +939,17 @@ root = MerkleRoot(leaf[0], leaf[1], ..., leaf[56])
 4. **Dimension Enforcement**: M×N ≤ 64 AND M,N ≤ 8 AND M,N ≥ 1 for execution
 5. **Scale Matching**: All elements in a matrix must have the same scale
 6. **Type Isolation**: No mixed-type operations (DMAT<DQA> vs DMAT<Decimal>)
+
+## Algebraic Properties (Informative)
+
+The following properties hold under valid (non-TRAP) execution:
+
+- MAT_ADD is commutative and associative (given identical scale)
+- MAT_MUL is associative but NOT commutative
+- MAT_TRANSPOSE is involutive: transpose(transpose(A)) = A
+- MAT_SCALE distributes over MAT_ADD
+
+> **Note:** These properties are not enforced at runtime but may be used for testing and verification purposes.
 
 ## TRAP Codes
 
@@ -930,6 +965,18 @@ root = MerkleRoot(leaf[0], leaf[1], ..., leaf[56])
 > **Note (MED-NEW-1):** `DIMENSION_ERROR` and `DIMENSION_MISMATCH` require global error code indices assigned from the unified error registry (per RFC-01XX). The "TBD" indices will be finalized when the global error registry RFC is approved. DMAT-specific codes use the DMAT namespace (0x01xx) for operation IDs, but error codes should align with the global system.
 
 > **Note (MED-7/HIGH-2):** `CANNOT_NORMALIZE_ZERO_VECTOR`, `CONSENSUS_RESTRICTION`, `UNSUPPORTED_OPERATION`, and `INPUT_VALIDATION_ERROR` are defined in other RFCs but are NOT raised by DMAT operations. DMAT's input scale validation is handled entirely by SCALE_MISMATCH (Phase 2) and INVALID_SCALE (Phase 3) per the phase ordering above.
+
+### Global TRAP Invariant (CRITICAL)
+
+All DMAT operations MUST enforce the following invariant:
+
+1. TRAP sentinel detection **MUST** occur before any other validation or computation step.
+2. If any input element matches the TRAP sentinel, the operation MUST immediately return `TRAP(TRAP_INPUT_ERROR)`.
+3. No further validation (dimension, scale, overflow) may be performed after TRAP detection.
+
+This rule applies uniformly to ALL operations: MAT_ADD, MAT_SUB, MAT_MUL, MAT_VEC_MUL, MAT_TRANSPOSE, MAT_SCALE.
+
+> **Rationale:** TRAP propagation must be globally consistent and independent of operation-specific logic. This ensures deterministic failure behavior across implementations.
 
 ### TRAP Priority Order
 

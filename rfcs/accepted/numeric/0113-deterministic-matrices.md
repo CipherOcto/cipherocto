@@ -2,7 +2,7 @@
 
 ## Status
 
-**Version:** 1.20 (2026-03-19)
+**Version:** 1.21 (2026-03-19)
 **Status:** Accepted
 **NUMERIC_SPEC_VERSION:** 1 (per RFC-0110 §Spec Version & Replay Pinning)
 
@@ -13,6 +13,14 @@
 > **Note:** This RFC is extracted from RFC-0106 (Deterministic Numeric Tower) as part of the Track B dismantling effort.
 
 > **Normative Authority:** This RFC is the normative specification for DMAT operations. The reference script (`scripts/compute_dmat_probe_root.py`) is provided for verification and conformance testing. If any discrepancy exists between this RFC and the reference script, this RFC text takes precedence for consensus behavior.
+
+> **Adversarial Review v1.21 Changes (Round 24):**
+>
+> - CRIT-4: Added Protocol Invariant — `data.len() == rows * cols` enforced at construction
+> - CRIT-4: Reordered MAT_SCALE Phase 0 — scalar checked first, then matrix elements
+> - CRIT-4: Added entry 63 — TRAP scalar + oversized matrix probe
+> - HIGH-1: Clarified Trait Version Enforcement — scoped restriction allowing dual RFC-0112/0113 methods
+> - MED: Updated Merkle root with 64 total entries
 
 > **Adversarial Review v1.20 Changes (Round 22 - Gold Standard):**
 >
@@ -209,15 +217,19 @@ pub struct DMat<T: NumericScalar> {
 }
 ```
 
+> **Protocol Invariant (CRIT-4/MED-1):** It is a protocol invariant that `data.len() == rows * cols` for any well-formed `DMat`. Implementations **MUST** enforce this at construction time. If a `DMat` is received with `data.len() != rows * cols`, the behavior is undefined and MUST be treated as a protocol error prior to any operation dispatch.
+
 > **Note:** This RFC uses `NumericScalar` trait for generic element operations, enabling composition with DVEC (RFC-0112). The trait approach replaces the earlier enum-based `Numeric` type for better composability across the Deterministic Numeric Tower.
 >
 > **Trait Evolution (HIGH-NEW-1):** This RFC **supersedes** the `NumericScalar` trait definition in RFC-0112 v1.12 by adding `const MAX_MANTISSA: i128` and `fn new(mantissa: i128, scale: u8) -> Self`.
 > **Normative requirement:** Any type implementing `NumericScalar` that is intended to be used inside `DMat<T>` (via MAT_MUL, MAT_VEC_MUL, MAT_SCALE, etc.) **MUST** implement the RFC-0113 version of the trait with `MAX_MANTISSA` and `new(...)`. Implementations that only target pure DVEC usage MAY continue using the RFC-0112 trait definition until they adopt matrix operations.
 >
 > **Trait Version Enforcement (CRITICAL):** The `NumericScalar` trait defined in this RFC is the **canonical and exclusive** trait definition for all consensus-critical numeric operations involving DMAT.
-> 1. A type implementing `NumericScalar` **MUST NOT** implement multiple versions of the trait across RFC-0112 and RFC-0113 in the same execution environment.
-> 2. Any `NumericScalar` implementation used in consensus-critical contexts **MUST** conform to the RFC-0113 trait definition.
-> 3. Mixing trait versions across modules, dynamic libraries, or execution boundaries (e.g., WASM, FFI) is **FORBIDDEN**.
+>
+> Within a single execution context processing a DMAT operation, the `NumericScalar` implementation used **MUST** conform to the RFC-0113 trait definition (including `MAX_MANTISSA`, `new(...)`, and `is_trap()`). A type **MAY** additionally implement the RFC-0112 trait methods (`div`, `sqrt`) as separate trait items or via a subtrait, provided those methods are not invoked during DMAT operation execution. The prohibition is on *mixing trait versions within a single operation dispatch*, not on a type implementing methods from both definitions.
+>
+> 1. Any `NumericScalar` implementation used in consensus-critical DMAT contexts **MUST** conform to the RFC-0113 trait definition.
+> 2. Mixing trait versions across modules, dynamic libraries, or execution boundaries (e.g., WASM, FFI) is **FORBIDDEN**.
 
 ```
 
@@ -672,9 +684,10 @@ Preconditions:
 **Phase 0: TRAP Sentinel Pre-check (CRIT-4)**
 
 ```
+// Check scalar FIRST — scalar is O(1), matrix is O(M×N); cheapest-first
+if scalar.is_trap(): TRAP(TRAP_INPUT_ERROR)
 For each element e in a.data:
   if e.is_trap(): TRAP(TRAP_INPUT_ERROR)
-if scalar.is_trap(): TRAP(TRAP_INPUT_ERROR)
 ```
 
 **Phase 1: Validate dimensions (HIGH-3: explicit dimension pre-validation)**
@@ -865,7 +878,7 @@ TRAP = { mantissa: -(1 << 63), scale: 0xFF }  # i64::MIN as signed integer
 
 ### Published Merkle Root
 
-> **Merkle Root:** `3e83ddff2c07dc9eafef3e52ed2f3c6ac3363c90099745174721891d22dceaf6` (v1.20 - 63 entries, TRAP last-index probe added)
+> **Merkle Root:** `045cf8d1f50e5e67be8d8e63a76be93a40cfc383289a68b8aa585c7244a86b31` (v1.21 - 64 entries, scalar-first Phase 0 + TRAP scalar probe added)
 
 > **Probe Indexing Rule (CRITICAL):** Probe entries are **zero-indexed**. Previous version contained entries [0..58]. Entries [59..62] were added in v1.19 and v1.20. Total entries: 63. Independent implementations MUST use zero-indexed entries to reproduce the Merkle root.
 
@@ -949,12 +962,12 @@ root = MerkleRoot(leaf[0], leaf[1], ..., leaf[N-1]) where N = total entries
 2. Execute operation per algorithms in this RFC
 3. Serialize result using canonical format
 4. Compute leaf hash: SHA256(leaf_input)
-5. Build Merkle tree from 63 leaves
+5. Build Merkle tree from 64 leaves
 6. Verify root matches published Merkle root
 
 > **Invariant (CRITICAL):** The number of probe entries MUST equal the number of Merkle leaves. Any future addition of probe entries MUST update both the Merkle root and the leaf count in this procedure.
 
-> **Probe Indexing:** All probe entries are zero-indexed [0..61]. Entry 59 refers to the 60th entry.
+> **Probe Indexing:** All probe entries are zero-indexed [0..63]. Total entries: 64.
 
 ## Determinism Rules
 

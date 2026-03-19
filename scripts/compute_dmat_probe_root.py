@@ -358,6 +358,13 @@ PROBE_ENTRIES = [
      mat(2, 2, dqa(1, 0), dqa(2, 0), dqa(3, 0), TRAP),        # A: TRAP at [1][1] (last)
      mat(2, 2, dqa(4, 0), dqa(5, 0), dqa(6, 0), dqa(7, 0)),  # B: all valid
      mat(2, 2, TRAP, TRAP, TRAP, TRAP)),                        # Result: all TRAP
+
+    # Entry 63: TRAP scalar + oversized matrix — TRAP_INPUT_ERROR wins over DIMENSION_ERROR
+    # Scalar checked first in Phase 0; 9x9 dimension never evaluated by Phase 1
+    (OP_MAT_SCALE, TYPE_DQA,
+     mat(9, 9),         # oversized — would be DIMENSION_ERROR in Phase 1
+     TRAP,              # scalar is TRAP sentinel
+     mat(1, 1, TRAP)), # result: TRAP_INPUT_ERROR (not DIMENSION_ERROR)
 ]
 
 def compute_probe_root() -> str:

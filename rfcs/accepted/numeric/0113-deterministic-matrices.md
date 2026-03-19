@@ -2,7 +2,7 @@
 
 ## Status
 
-**Version:** 1.13 (2026-03-19)
+**Version:** 1.14 (2026-03-19)
 **Status:** Accepted
 **NUMERIC_SPEC_VERSION:** 1 (per RFC-0110 §Spec Version & Replay Pinning)
 
@@ -11,6 +11,11 @@
 > on existing numeric types without modifying their encoding, arithmetic, or TRAP semantics.
 
 > **Note:** This RFC is extracted from RFC-0106 (Deterministic Numeric Tower) as part of the Track B dismantling effort.
+
+> **Adversarial Review v1.14 Changes (Round 14 - Final):**
+>
+> - LOW-FINAL-1: Added note about missing mixed-scale MAT_VEC_MUL probe entry (non-blocking)
+> - LOW-FINAL-2: Updated Merkle Root note to reflect "(computed from v1.11 script; unchanged through v1.13)"
 
 > **Adversarial Review v1.13 Changes (Round 13 - Final):**
 >
@@ -791,7 +796,9 @@ TRAP = { mantissa: 0x8000000000000000 (i64 min), scale: 0xFF }
 
 ### Published Merkle Root
 
-> **Merkle Root:** `d69f3e2ecafd6adf0fd564f36348d5f7588052cea9677e2a7a4c1ade91885626` (v1.11 - Round 11 fixes)
+> **Merkle Root:** `d69f3e2ecafd6adf0fd564f36348d5f7588052cea9677e2a7a4c1ade91885626` (computed from v1.11 script; unchanged through v1.13)
+
+> **Note (LOW-FINAL-1):** The verification probe entries do not include a mixed-scale MAT_VEC_MUL test vector. Mixed-scale support was added in v1.13; adding a probe entry for comprehensive coverage may be done in a future minor revision.
 
 ### Probe Entry Details
 

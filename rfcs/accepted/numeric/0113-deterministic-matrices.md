@@ -2,7 +2,7 @@
 
 ## Status
 
-**Version:** 1.8 (2026-03-18)
+**Version:** 1.9 (2026-03-18)
 **Status:** Accepted
 **NUMERIC_SPEC_VERSION:** 1 (per RFC-0110 §Spec Version & Replay Pinning)
 
@@ -11,6 +11,12 @@
 > on existing numeric types without modifying their encoding, arithmetic, or TRAP semantics.
 
 > **Note:** This RFC is extracted from RFC-0106 (Deterministic Numeric Tower) as part of the Track B dismantling effort.
+
+> **Adversarial Review v1.9 Changes (Round 8 - CRITICAL/HIGH fixes):**
+>
+> - CRIT-1: Entries 22/40 correct result from [12,15,18] to [6,15,24]
+> - HIGH-1: MAT_SCALE Phase 2 result_scale check moved outside element loop
+> - HIGH-2: Added note clarifying INPUT_VALIDATION_ERROR not used in DMAT
 
 > **Adversarial Review v1.8 Changes (Round 7 - MEDIUM/LOW fixes):**
 >
@@ -567,15 +573,15 @@ if a.rows * a.cols > MAX_DMAT_ELEMENTS (64): TRAP(DIMENSION_ERROR)
 if a.rows > 8 or a.cols > 8: TRAP(DIMENSION_ERROR)
 ```
 
-**Phase 2: Validate all element scales BEFORE computation (MED-3 fix: separate validation from computation)**
+**Phase 2: Validate all element scales BEFORE computation (MED-3/HIGH-1 fix: separate validation from computation, result_scale check outside loop)**
 
 ```
 For i in 0..a.rows:
   For j in 0..a.cols:
     if a.data[i * a.cols + j].scale() != a.data[0].scale(): TRAP(SCALE_MISMATCH)
-  // Validate result scale once (all elements have same scale after above check)
-  result_scale = a.data[0].scale() + scalar.scale()
-  if result_scale > T::MAX_SCALE: TRAP(INVALID_SCALE)
+// Validate result scale once (after all scale mismatch checks, before any computation)
+result_scale = a.data[0].scale() + scalar.scale()
+if result_scale > T::MAX_SCALE: TRAP(INVALID_SCALE)
 ```
 
 **Phase 3: Compute (MED-3 fix: no validation in compute phase)**
@@ -744,7 +750,7 @@ TRAP = { mantissa: 0x8000000000000000 (i64 min), scale: 0xFF }
 
 ### Published Merkle Root
 
-> **Merkle Root:** `904223cdc4450b1b497bc24ac8856a529ea7bd9cd8ceae6c69b241ee664643ef` (v1.8 - Round 7 MEDIUM/LOW fixes)
+> **Merkle Root:** `9e388a316c91d8aeb1901f27bba1f7fa288c95afa3f19192299b84437d9be185` (v1.9 - Round 8 CRITICAL/HIGH fixes)
 
 ### Probe Entry Details
 
@@ -772,7 +778,7 @@ TRAP = { mantissa: 0x8000000000000000 (i64 min), scale: 0xFF }
 | 19    | MAT_MUL       | DQA     | [[5,5],[5,5]]                 | [[5,5],[5,5]]                 | [[50,50],[50,50]]                 |
 | 20    | MAT_VEC_MUL   | DQA     | [[1,2],[3,4]]                 | [1,1]                         | [3,7]                             |
 | 21    | MAT_VEC_MUL   | DQA     | [[1,0,0],[0,1,0]]             | [1,2,3]                       | [1,2]                             |
-| 22    | MAT_VEC_MUL   | DQA     | [[1,2,3],[4,5,6],[7,8,9]]     | [1,1,1]                       | [12,15,18]                        |
+| 22    | MAT_VEC_MUL   | DQA     | [[1,2,3],[4,5,6],[7,8,9]]     | [1,1,1]                       | [6,15,24] (CRIT-1)               |
 | 23    | MAT_VEC_MUL   | DQA     | [[2,4,6,8]] (1×4)            | [2] (1)                        | TRAP (DIMENSION_MISMATCH) (MED-1) |
 | 24    | MAT_VEC_MUL   | DQA     | [[1,2,3,4]] (1×4)            | [1,2,3,4] (4)                 | [30] (MED-2)                     |
 | 25    | MAT_TRANSPOSE | DQA     | [[1,2],[3,4]]                 | -                             | [[1,3],[2,4]]                     |
@@ -790,7 +796,7 @@ TRAP = { mantissa: 0x8000000000000000 (i64 min), scale: 0xFF }
 | 37    | MAT_MUL       | Decimal | [[1,0],[0,1]]                 | [[2,3],[4,5]]                 | [[2,3],[4,5]]                     |
 | 38    | MAT_MUL       | Decimal | [[1,2],[3,4]]                 | [[5,6],[7,8]]                 | [[19,22],[43,50]]                 |
 | 39    | MAT_VEC_MUL   | Decimal | [[1,2],[3,4]]                 | [1,1]                         | [3,7]                             |
-| 40    | MAT_VEC_MUL   | Decimal | [[1,2,3],[4,5,6],[7,8,9]]     | [1,1,1]                       | [12,15,18]                        |
+| 40    | MAT_VEC_MUL   | Decimal | [[1,2,3],[4,5,6],[7,8,9]]     | [1,1,1]                       | [6,15,24] (CRIT-1)               |
 | 41    | MAT_TRANSPOSE | Decimal | [[1,2],[3,4]]                 | -                             | [[1,3],[2,4]]                     |
 | 42    | MAT_SCALE     | Decimal | [[1,2],[3,4]]                 | scalar=2                      | [[2,4],[6,8]]                     |
 | 43    | MAT_ADD       | Decimal | [[10,20],[30,40]]             | [[1,2],[3,4]]                 | [[11,22],[33,44]]                 |
@@ -901,7 +907,7 @@ root = MerkleRoot(leaf[0], leaf[1], ..., leaf[56])
 | DIMENSION_ERROR    | Matrix dimensions M×N > 64                                      | RFC-0113  |
 | DIMENSION_MISMATCH | Matrix dimensions incompatible for operation                    | RFC-0113  |
 
-> **Note (MED-7):** `CANNOT_NORMALIZE_ZERO_VECTOR`, `CONSENSUS_RESTRICTION`, and `UNSUPPORTED_OPERATION` are removed - they are defined in other RFCs but not used in DMAT operations.
+> **Note (MED-7/HIGH-2):** `CANNOT_NORMALIZE_ZERO_VECTOR`, `CONSENSUS_RESTRICTION`, `UNSUPPORTED_OPERATION`, and `INPUT_VALIDATION_ERROR` are defined in other RFCs but are NOT raised by DMAT operations. DMAT's input scale validation is handled entirely by SCALE_MISMATCH (Phase 2) and INVALID_SCALE (Phase 3) per the phase ordering above.
 
 ### TRAP Priority Order
 

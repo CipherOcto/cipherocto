@@ -205,10 +205,11 @@ PROBE_ENTRIES = [
     (OP_MAT_VEC_MUL, TYPE_DQA, mat(2, 3, dqa(1), dqa(0), dqa(0), dqa(0), dqa(1), dqa(0)),
                          [dqa(1), dqa(2), dqa(3)],
                          [dqa(1), dqa(2)]),
+    # CRIT-1: [[1,2,3],[4,5,6],[7,8,9]] × [1,1,1] = [6,15,24] (not [12,15,18])
     (OP_MAT_VEC_MUL, TYPE_DQA, mat(3, 3, dqa(1), dqa(2), dqa(3), dqa(4), dqa(5), dqa(6), dqa(7), dqa(8), dqa(9)),
                          [dqa(1), dqa(1), dqa(1)],
-                         [dqa(12), dqa(15), dqa(18)]),
-    # MED-1: DIMENSION_MISMATCH - matrix 1×4, vector [2] has 1 element (cols=4 ≠ vec_len=1)
+                         [dqa(6), dqa(15), dqa(24)]),
+    # DIMENSION_MISMATCH - matrix 1×4, vector [2] has 1 element (cols=4 ≠ vec_len=1)
     (OP_MAT_VEC_MUL, TYPE_DQA, mat(1, 4, dqa(2), dqa(4), dqa(6), dqa(8)),
                          [dqa(2)],
                          [TRAP]),
@@ -262,9 +263,10 @@ PROBE_ENTRIES = [
                                [dqa(3), dqa(7)]),
 
     # Entries 40-49: Decimal continued and TRAP cases
+    # CRIT-1: [[1,2,3],[4,5,6],[7,8,9]] × [1,1,1] = [6,15,24] (same arithmetic as DQA)
     (OP_MAT_VEC_MUL, TYPE_DECIMAL, mat(3, 3, dqa(1), dqa(2), dqa(3), dqa(4), dqa(5), dqa(6), dqa(7), dqa(8), dqa(9)),
                                [dqa(1), dqa(1), dqa(1)],
-                               [dqa(12), dqa(15), dqa(18)]),
+                               [dqa(6), dqa(15), dqa(24)]),
     (OP_MAT_TRANSPOSE, TYPE_DECIMAL, mat(2, 2, dqa(1), dqa(2), dqa(3), dqa(4)), None,
                                 mat(2, 2, dqa(1), dqa(3), dqa(2), dqa(4))),
     (OP_MAT_SCALE, TYPE_DECIMAL, mat(2, 2, dqa(1), dqa(2), dqa(3), dqa(4)),

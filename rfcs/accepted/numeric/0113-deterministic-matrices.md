@@ -15,7 +15,7 @@
 > **Adversarial Review v1.19 Changes (Round 20):**
 >
 > - CRIT: Added Accumulation Semantics rule 7 to Determinism Rules — explicit prohibition on restructuring accumulation semantics
-> - MED: Added 3 adversarial probe entries (60: canonicalization, 61: MAX_SCALE boundary valid, 62: TRAP propagation chain)
+> - MED: Added 3 adversarial probe entries (59: canonicalization, 60: MAX_SCALE boundary valid, 61: TRAP propagation chain 2×2)
 > - MED: Recomputed Merkle root with 62 total entries
 
 > **Adversarial Review v1.18 Changes (Round 19 - Consensus Hardening):**
@@ -854,16 +854,18 @@ TRAP = { mantissa: -(1 << 63), scale: 0xFF }  # i64::MIN as signed integer
 
 ### Published Merkle Root
 
-> **Merkle Root:** `8a4d178fb3cc60d932126ee52b0db3b3eeff3cd68f9b3d87263c9a37daf9f876` (v1.19 - 62 entries, canonicalization/MAX_SCALE/TRAP-chain probes added)
+> **Merkle Root:** `c949123c5888b8ac924fe17ec499caa756798e52e852b70341c64be2823e1d10` (v1.19 - 62 entries, canonicalization/MAX_SCALE/TRAP-chain probes added)
+
+> **Probe Indexing Rule (CRITICAL):** Probe entries are **zero-indexed**. Previous version contained entries [0..58]. New entries extend the set to [0..61]. Total entries: 62. Independent implementations MUST use zero-indexed entries to reproduce the Merkle root.
 
 > **Note (v1.19 entries):**
 > - Entry 59: MAT_SCALE canonicalization (1000×10⁻³ → 1×10⁰)
 > - Entry 60: MAT_MUL at MAX_SCALE boundary (result_scale=18, valid)
-> - Entry 61: TRAP propagation chain (MAT_ADD following TRAP input)
+> - Entry 61: TRAP propagation chain (2×2 MAT_ADD with TRAP at [0][0])
 
 ### Probe Entry Details
 
-> **Canonical Reference:** The script `scripts/compute_dmat_probe_root.py` is the authoritative source for all 62 probe entries. The Merkle root above is computed from this script.
+> **Canonical Reference:** The script `scripts/compute_dmat_probe_root.py` is the authoritative source for all 62 probe entries (zero-indexed). The Merkle root above is computed from this script.
 >
 > See §Appendix B for the reference script.
 
@@ -946,7 +948,7 @@ root = MerkleRoot(leaf[0], leaf[1], ..., leaf[56])
 4. **Dimension Enforcement**: M×N ≤ 64 AND M,N ≤ 8 AND M,N ≥ 1 for execution
 5. **Scale Matching**: All elements in a matrix must have the same scale
 6. **Type Isolation**: No mixed-type operations (DMAT<DQA> vs DMAT<Decimal>)
-7. **Accumulation Semantics (CRITICAL)**: Intermediate accumulation MUST be performed in the exact sequence defined by the loop structure. Implementations MUST NOT restructure accumulation (e.g., buffering, reordering, or delayed writes).
+7. **Accumulation Semantics (CRITICAL)**: Intermediate accumulation MUST be performed in the exact sequence defined by the loop structure, strictly left-to-right per inner loop index. Implementations MUST NOT restructure accumulation (e.g., buffering, reordering, tree reduction, or delayed writes).
 
 ## Algebraic Properties (Informative)
 

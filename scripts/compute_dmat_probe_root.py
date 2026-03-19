@@ -343,13 +343,14 @@ PROBE_ENTRIES = [
      mat(1, 1, dqa(3, 9)),
      mat(1, 1, dqa(6, 18))),                                      # result_scale = 18 = MAX_SCALE (valid)
 
-    # Entry 61: TRAP propagation chain (MAT_ADD following MAT_MUL with TRAP)
-    # C[0][0] from MAT_MUL is TRAP → feeds into MAT_ADD with valid → result is TRAP
-    # This tests cross-operation TRAP propagation, not just single-operation TRAP
+    # Entry 61: TRAP propagation chain (MAT_ADD with TRAP at [0][0])
+    # Tests that TRAP at one position doesn't affect processing of other elements
+    # A has TRAP at [0][0], valid values elsewhere; B all valid
+    # Result must be TRAP, all elements must still be processed per phase ordering
     (OP_MAT_ADD, TYPE_DQA,
-     mat(1, 1, TRAP),                                             # A contains TRAP
-     mat(1, 1, dqa(5, 0)),                                       # B is valid
-     mat(1, 1, TRAP)),                                            # Result must be TRAP (not computed sum)
+     mat(2, 2, TRAP, dqa(1, 0), dqa(2, 0), dqa(3, 0)),        # A: TRAP at [0][0]
+     mat(2, 2, dqa(4, 0), dqa(5, 0), dqa(6, 0), dqa(7, 0)),  # B: all valid
+     mat(2, 2, TRAP, TRAP, TRAP, TRAP)),                        # Result: all TRAP
 ]
 
 def compute_probe_root() -> str:

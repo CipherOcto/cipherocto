@@ -12,7 +12,7 @@ import hashlib
 from typing import Tuple, List, Optional, Union
 
 # TRAP sentinel for probe encoding
-TRAP = (0x8000000000000000, 0xFF)
+TRAP = (-(1 << 63), 0xFF)   # i64::MIN as signed Python int
 
 def dqa_encode(mantissa: int, scale: int) -> bytes:
     """Encode DQA scalar as 24-byte probe element.
@@ -61,7 +61,7 @@ def encode_data(data):
         return vec_encode(data)
     elif isinstance(data, tuple) and len(data) == 2 and isinstance(data[1], int):
         # Scalar: tuple of (mantissa, scale) - single DQA value
-        return dqa_encode(data[0], data[1])
+        return bytes([1, 1]) + dqa_encode(data[0], data[1])  # MED-4: rows/cols prefix for wire format
     else:
         # Matrix: tuple of (rows, cols, elements)
         return mat_encode(*data)
@@ -180,9 +180,11 @@ PROBE_ENTRIES = [
     (OP_MAT_MUL, TYPE_DQA, mat(2, 3, dqa(1), dqa(2), dqa(3), dqa(4), dqa(5), dqa(6)),  # 2×3
                         mat(3, 2, dqa(1), dqa(2), dqa(3), dqa(4), dqa(5), dqa(6)),  # 3×2
                         mat(2, 2, dqa(22), dqa(28), dqa(49), dqa(64))),  # MED-3/4: 2×2 = [[22,28],[49,64]]
+    # MED-1: Result should be [[1,2],[3,4]] - A extracts rows 0,1 of B (identity rows)
+    # A = [[1,0,0,0],[0,1,0,0]] selects rows 0,1 of B = [[1,2],[3,4]]
     (OP_MAT_MUL, TYPE_DQA, mat(2, 4, dqa(1), dqa(0), dqa(0), dqa(0), dqa(0), dqa(1), dqa(0), dqa(0)),
                         mat(4, 2, dqa(1), dqa(2), dqa(3), dqa(4), dqa(5), dqa(6), dqa(7), dqa(8)),
-                        mat(2, 2, dqa(5), dqa(6), dqa(23), dqa(34))),
+                        mat(2, 2, dqa(1), dqa(2), dqa(3), dqa(4))),
     (OP_MAT_MUL, TYPE_DQA, mat(1, 2, dqa(10), dqa(20)),
                         mat(2, 1, dqa(3), dqa(4)),
                         mat(1, 1, dqa(110))),
@@ -206,10 +208,14 @@ PROBE_ENTRIES = [
     (OP_MAT_VEC_MUL, TYPE_DQA, mat(3, 3, dqa(1), dqa(2), dqa(3), dqa(4), dqa(5), dqa(6), dqa(7), dqa(8), dqa(9)),
                          [dqa(1), dqa(1), dqa(1)],
                          [dqa(12), dqa(15), dqa(18)]),
+    # MED-1: DIMENSION_MISMATCH - matrix 1×4, vector [2] has 1 element (cols=4 ≠ vec_len=1)
     (OP_MAT_VEC_MUL, TYPE_DQA, mat(1, 4, dqa(2), dqa(4), dqa(6), dqa(8)),
                          [dqa(2)],
-                         [dqa(40)]),
-    (OP_MAT_VEC_MUL, TYPE_DQA, mat(4, 1, dqa(1), dqa(2), dqa(3), dqa(4)),
+                         [TRAP]),
+    # MED-2: Change Input A from 4×1 to 1×4 to match vector [1,2,3,4]
+    # Result: 1×4 dot 1×4 = 1×1 = 1+4+9+16 = 30
+    # MED-3: Result should be [30] - 1×4 dot 4×1 = 1×1 = 1+4+9+16 = 30
+    (OP_MAT_VEC_MUL, TYPE_DQA, mat(1, 4, dqa(1), dqa(2), dqa(3), dqa(4)),
                          [dqa(1), dqa(2), dqa(3), dqa(4)],
                          [dqa(30)]),
     (OP_MAT_TRANSPOSE, TYPE_DQA, mat(2, 2, dqa(1), dqa(2), dqa(3), dqa(4)), None,
@@ -285,12 +291,16 @@ PROBE_ENTRIES = [
     (OP_MAT_MUL, TYPE_DQA, mat(9, 9), mat(9, 9), mat(1, 1, TRAP)),  # DIMENSION_ERROR
     (OP_MAT_MUL, TYPE_DQA, mat(2, 3), mat(2, 3), mat(1, 1, TRAP)),   # DIMENSION_MISMATCH
     (OP_MAT_ADD, TYPE_DQA, mat(2, 2), mat(2, 3), mat(1, 1, TRAP)),   # DIMENSION_MISMATCH
-    (OP_MAT_VEC_MUL, TYPE_DQA, mat(2, 3), [dqa(1), dqa(2)], [TRAP, TRAP]),  # DIMENSION_MISMATCH (MED-3)
-    (OP_MAT_MUL, TYPE_DQA, mat(2, 2, dqa(10**8), dqa(0), dqa(0), dqa(10**8)),
-                         mat(2, 2, dqa(10**8), dqa(0), dqa(0), dqa(10**8)),
+    # MED-2/LOW-2: Uniform TRAP encoding - all result elements are TRAP sentinel
+    # Expected output dimension = matrix rows (2), so [TRAP, TRAP]
+    (OP_MAT_VEC_MUL, TYPE_DQA, mat(2, 3), [dqa(1), dqa(2)], [TRAP, TRAP]),
+    # CRIT-2: C[0][0] = 2*(2^31)^2 = 2^63 = i64::MAX + 1 → OVERFLOW
+    (OP_MAT_MUL, TYPE_DQA, mat(2, 2, dqa(2147483648), dqa(2147483648), dqa(2147483648), dqa(2147483648)),
+                         mat(2, 2, dqa(2147483648), dqa(2147483648), dqa(2147483648), dqa(2147483648)),
                          mat(2, 2, TRAP, TRAP, TRAP, TRAP)),  # OVERFLOW
-    (OP_MAT_SCALE, TYPE_DQA, mat(2, 2, dqa(10**9), dqa(10**9), dqa(10**9), dqa(10**9)),
-                                dqa(10**9),
+    # CRIT-2: element * scalar = 9223372038 * 10^9 > i64::MAX → OVERFLOW
+    (OP_MAT_SCALE, TYPE_DQA, mat(2, 2, dqa(9223372038), dqa(9223372038), dqa(9223372038), dqa(9223372038)),
+                                dqa(1000000000),
                                 mat(2, 2, TRAP, TRAP, TRAP, TRAP)),  # OVERFLOW
     (OP_MAT_ADD, TYPE_DQA, mat(2, 2, dqa(1, 10), dqa(2), dqa(3), dqa(4)),
                             mat(2, 2, dqa(5), dqa(6), dqa(7), dqa(8)),

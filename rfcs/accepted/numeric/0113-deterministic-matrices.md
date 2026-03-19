@@ -2,7 +2,7 @@
 
 ## Status
 
-**Version:** 1.4 (2026-03-18)
+**Version:** 1.7 (2026-03-18)
 **Status:** Accepted
 **NUMERIC_SPEC_VERSION:** 1 (per RFC-0110 §Spec Version & Replay Pinning)
 
@@ -11,6 +11,25 @@
 > on existing numeric types without modifying their encoding, arithmetic, or TRAP semantics.
 
 > **Note:** This RFC is extracted from RFC-0106 (Deterministic Numeric Tower) as part of the Track B dismantling effort.
+
+> **Adversarial Review v1.7 Changes (Round 6 - CRITICAL fixes):**
+>
+> - CRIT-1: TRAP sentinel uses `-(1 << 63)` (Python signed int) not `0x8000000000000000`
+> - CRIT-2: Entries 52/53 use correct overflow test values (2^31 and 9223372038)
+> - CRIT-3: MAT_MUL/MAT_VEC_MUL phase order swapped (SCALE_MISMATCH before INVALID_SCALE)
+> - CRIT-4: Added Phase 0 TRAP Sentinel Pre-check to all operations
+> - HIGH-1: Gas formulas use explicit `s_a × s_b` not ambiguous `scale²`
+> - HIGH-2: Added `MAX_MANTISSA` associated constant to trait (removes `T == Dqa` branch)
+> - HIGH-3: MAT_SCALE has explicit Phase 1 dimension validation
+> - MED-4: Scalar encoding includes rows/cols prefix (wire format fix)
+
+> **Adversarial Review v1.6 Changes (Round 5 - MEDIUM/LOW fixes):**
+>
+> - MED-1: Removed contradictory MAT_MUL comment (intermediate check removed per RFC-0112)
+> - MED-3: Updated Merkle Root to v1.4 (verified)
+> - LOW-1: MAT_MUL scale derivation example clarifies canonicalization behavior
+> - LOW-2: Probe Entry 51 comment clarifies uniform TRAP encoding rationale
+> - LOW-3: TRAP priority rationale expanded with two-phase explanation
 
 > **Adversarial Review v1.4 Changes (Round 4 - MEDIUM/LOW fixes):**
 >
@@ -88,15 +107,19 @@ This RFC defines Deterministic Matrix (DMAT) operations for consensus-critical l
 pub trait NumericScalar: Clone + PartialEq + Debug {
     type Scalar;
     const MAX_SCALE: u8;
+    // HIGH-2: MAX_MANTISSA replaces T == Dqa branch for overflow detection
+    const MAX_MANTISSA: i128;
 
     fn scale(&self) -> u8;
-    fn new(mantissa: i64, scale: u8) -> Result<Self, TrapCode>
+    // CRIT-2/CRIT-5: new accepts i128 to support both DQA (i64-range) and Decimal (i128-range)
+    fn new(mantissa: i128, scale: u8) -> Result<Self, TrapCode>
     where
         Self: Sized;
     fn add(&self, other: &Self) -> Result<Self, TrapCode>;
     fn sub(&self, other: &Self) -> Result<Self, TrapCode>;
     fn mul(&self, other: &Self) -> Result<Self, TrapCode>;
-    fn raw_mantissa(&self) -> i64;
+    // CRIT-5: raw_mantissa returns i128 to avoid truncating Decimal values
+    fn raw_mantissa(&self) -> i128;
 }
 
 /// Deterministic Matrix
@@ -182,7 +205,24 @@ Preconditions:
 - All elements in b have same scale as b.data[0]
 - a.data[0].scale() == b.data[0].scale() // Scale must match
 
-**Phase 1: Validate all element scales BEFORE computation (MEDIUM-5)**
+**Phase 0: TRAP Sentinel Pre-check (CRIT-4)**
+
+```
+For each element e in a.data:
+  if e.scale() == 0xFF and e.raw_mantissa() == i64::MIN as i128: TRAP(TRAP_INPUT_ERROR)
+For each element e in b.data:
+  if e.scale() == 0xFF and e.raw_mantissa() == i64::MIN as i128: TRAP(TRAP_INPUT_ERROR)
+```
+
+**Phase 1: Validate dimensions (CRIT-3: prevents OOB access to .data[0])**
+
+```
+if a.rows != b.rows or a.cols != b.cols: TRAP(DIMENSION_MISMATCH)
+if a.rows * a.cols > MAX_DMAT_ELEMENTS (64): TRAP(DIMENSION_ERROR)
+if a.rows > 8 or a.cols > 8: TRAP(DIMENSION_ERROR)
+```
+
+**Phase 2: Validate all element scales BEFORE computation (MEDIUM-5)**
 
 ```
 For i in 0..a.rows:
@@ -191,7 +231,7 @@ For i in 0..a.rows:
     if b.data[i * b.cols + j].scale() != b.data[0].scale(): TRAP(SCALE_MISMATCH)
 ```
 
-**Phase 2: Compute**
+**Phase 3: Compute**
 
 ```
 For i in 0..a.rows:
@@ -222,7 +262,24 @@ Preconditions:
 - All elements in b have same scale as b.data[0]
 - a.data[0].scale() == b.data[0].scale() // Scale must match
 
-**Phase 1: Validate all element scales BEFORE computation (MEDIUM-5)**
+**Phase 0: TRAP Sentinel Pre-check (CRIT-4)**
+
+```
+For each element e in a.data:
+  if e.scale() == 0xFF and e.raw_mantissa() == i64::MIN as i128: TRAP(TRAP_INPUT_ERROR)
+For each element e in b.data:
+  if e.scale() == 0xFF and e.raw_mantissa() == i64::MIN as i128: TRAP(TRAP_INPUT_ERROR)
+```
+
+**Phase 1: Validate dimensions (CRIT-3: prevents OOB access to .data[0])**
+
+```
+if a.rows != b.rows or a.cols != b.cols: TRAP(DIMENSION_MISMATCH)
+if a.rows * a.cols > MAX_DMAT_ELEMENTS (64): TRAP(DIMENSION_ERROR)
+if a.rows > 8 or a.cols > 8: TRAP(DIMENSION_ERROR)
+```
+
+**Phase 2: Validate all element scales BEFORE computation (MEDIUM-5)**
 
 ```
 For i in 0..a.rows:
@@ -231,7 +288,7 @@ For i in 0..a.rows:
     if b.data[i * b.cols + j].scale() != b.data[0].scale(): TRAP(SCALE_MISMATCH)
 ```
 
-**Phase 2: Compute**
+**Phase 3: Compute**
 
 ```
 For i in 0..a.rows:
@@ -254,22 +311,24 @@ where
 
 > ⚠️ **REQUIREMENT**: Naive triple loop algorithm ONLY. No Strassen, no blocking.
 
-**Phase 1: Validate result scale FIRST (per RFC-0105 MUL semantics)**
+**Phase 0: TRAP Sentinel Pre-check (CRIT-4)**
 
 ```
-1. result_scale = a.data[0].scale() + b.data[0].scale()
-2. if result_scale > T::MAX_SCALE: TRAP(INVALID_SCALE)
+For each element e in a.data:
+  if e.scale() == 0xFF and e.raw_mantissa() == i64::MIN as i128: TRAP(TRAP_INPUT_ERROR)
+For each element e in b.data:
+  if e.scale() == 0xFF and e.raw_mantissa() == i64::MIN as i128: TRAP(TRAP_INPUT_ERROR)
 ```
 
-**Phase 2: Validate dimension preconditions**
+**Phase 1: Validate dimension preconditions (CRIT-3: prevents OOB access)**
 
 ```
-3. if a.cols != b.rows: TRAP(DIMENSION_MISMATCH)
-4. if a.rows * b.cols > MAX_DMAT_ELEMENTS (64): TRAP(DIMENSION_ERROR)
-5. if a.rows > 8 or a.cols > 8 or b.rows > 8 or b.cols > 8: TRAP(DIMENSION_ERROR)
+1. if a.cols != b.rows: TRAP(DIMENSION_MISMATCH)
+2. if a.rows * b.cols > MAX_DMAT_ELEMENTS (64): TRAP(DIMENSION_ERROR)
+3. if a.rows > 8 or a.cols > 8 or b.rows > 8 or b.cols > 8: TRAP(DIMENSION_ERROR)
 ```
 
-**Phase 3: Validate all element scales BEFORE computation (per RFC-0112)**
+**Phase 2: Validate element scales (CRIT-3: SCALE_MISMATCH before INVALID_SCALE)**
 
 ```
 For i in 0..a.rows:
@@ -278,6 +337,13 @@ For i in 0..a.rows:
 For k in 0..b.rows:
   For j in 0..b.cols:
     if b.data[k * b.cols + j].scale() != b.data[0].scale(): TRAP(SCALE_MISMATCH)
+```
+
+**Phase 3: Validate result scale (CRIT-3: INVALID_SCALE after SCALE_MISMATCH)**
+
+```
+4. result_scale = a.data[0].scale() + b.data[0].scale()
+5. if result_scale > T::MAX_SCALE: TRAP(INVALID_SCALE)
 ```
 
 **Phase 4: Compute with overflow detection (HIGH-1: add Decimal check per RFC-0112)**
@@ -290,15 +356,12 @@ For i in 0..a.rows:
       product = a.data[i * a.cols + k].mul(b.data[k * b.cols + j])?
       accumulator = accumulator + BigInt::from(product.raw_mantissa())
 
-    // MED-1: Intermediate product check removed - Dqa::mul already validates i64 range
-    // Final accumulator check (per RFC-0112 DOT_PRODUCT Step 7 - HIGH-1)
-    if T == Dqa and !accumulator.fits_in_i64(): TRAP(OVERFLOW)
-    if T == Decimal and abs(accumulator) > MAX_DECIMAL_MANTISSA: TRAP(OVERFLOW)
-    result.data[i * result.cols + j] = T::new(accumulator as i128, result_scale)?
+    // HIGH-2: Accumulator overflow check uses MAX_MANTISSA constant
+    if abs(accumulator) > T::MAX_MANTISSA: TRAP(OVERFLOW)
+    result.data[i * result.cols + j] = T::new(accumulator, result_scale)?
 ```
 
 > ⚠️ **CRITICAL**: Sequential loops only. No SIMD, no parallelization.
-> ⚠️ **CRITICAL**: Overflow detection must check intermediate product BEFORE accumulation, not after.
 
 ### Result Scale
 
@@ -307,17 +370,19 @@ For MAT_MUL(A, B) where A[i][k] has scale s_a and B[k][j] has scale s_b:
 - result_scale = s_a + s_b (per RFC-0105 MUL)
 - If result_scale > MAX_SCALE (18 for DQA, 36 for Decimal): TRAP(INVALID_SCALE)
 
-**Example:**
+**Example (HIGH-6 fix):**
 - A[i][k] scale = 4, B[k][j] scale = 5
 - product scale = 4 + 5 = 9
-- Each dot product element C[i][j] = sum of 8 products, each with scale 9
-- After canonicalization: result_scale = min(9, MAX_SCALE)
+- If result mantissa is 1000 at scale 9, canonicalization produces 1 at scale 6
+- Note: For scale=0 inputs, result_scale=0, so mantissa values are already canonical (no trailing zeros to remove)
 
 ### Overflow Detection
 
 Per RFC-0105 I128_ROUNDTRIP:
 - Accumulator uses i128 for intermediate computation
-- Final cast to i64 checks: `if !accumulator.fits_in_i64(): TRAP(OVERFLOW)`
+- Final overflow check uses `MAX_MANTISSA` constant: `if abs(accumulator) > T::MAX_MANTISSA: TRAP(OVERFLOW)`
+- For DQA: `MAX_MANTISSA = i64::MAX = 2^63 - 1`
+- For Decimal: `MAX_MANTISSA = MAX_DECIMAL_MANTISSA`
 
 ### MAT_VEC_MUL — Matrix-Vector Multiplication
 
@@ -330,22 +395,24 @@ where
 
 > **Note (MED-6):** Returns `Vec<T>` compatible with RFC-0112 `DVec<T>` data layout.
 
-**Phase 1: Validate input scale precondition FIRST (per RFC-0112 DOT_PRODUCT)**
+**Phase 0: TRAP Sentinel Pre-check (CRIT-4)**
 
 ```
-1. if T == Dqa and a.data[0].scale() > 9: TRAP(INPUT_VALIDATION_ERROR)
-2. if T == Decimal and a.data[0].scale() > 18: TRAP(INPUT_VALIDATION_ERROR)
+For each element e in a.data:
+  if e.scale() == 0xFF and e.raw_mantissa() == i64::MIN as i128: TRAP(TRAP_INPUT_ERROR)
+For each element e in v:
+  if e.scale() == 0xFF and e.raw_mantissa() == i64::MIN as i128: TRAP(TRAP_INPUT_ERROR)
 ```
 
-**Phase 2: Validate dimension preconditions**
+**Phase 1: Validate dimension preconditions (CRIT-3: prevents OOB access)**
 
 ```
-3. if a.cols != v.len: TRAP(DIMENSION_MISMATCH)
-4. if a.rows * a.cols > MAX_DMAT_ELEMENTS (64): TRAP(DIMENSION_ERROR)
-5. if a.rows > 8 or a.cols > 8: TRAP(DIMENSION_ERROR)
+1. if a.cols != v.len: TRAP(DIMENSION_MISMATCH)
+2. if a.rows * a.cols > MAX_DMAT_ELEMENTS (64): TRAP(DIMENSION_ERROR)
+3. if a.rows > 8 or a.cols > 8: TRAP(DIMENSION_ERROR)
 ```
 
-**Phase 3: Validate all matrix element scales BEFORE computation**
+**Phase 2: Validate matrix element scales (CRIT-3: SCALE_MISMATCH before INVALID_SCALE)**
 
 ```
 For i in 0..a.rows:
@@ -353,21 +420,21 @@ For i in 0..a.rows:
     if a.data[i * a.cols + j].scale() != a.data[0].scale(): TRAP(SCALE_MISMATCH)
 ```
 
-**Phase 4: Validate all vector element scales**
+**Phase 3: Validate vector element scales (CRIT-3: SCALE_MISMATCH before INVALID_SCALE)**
 
 ```
 For j in 0..v.len:
   if v[j].scale() != a.data[0].scale(): TRAP(SCALE_MISMATCH)
 ```
 
-**Phase 5: Validate result scale**
+**Phase 4: Validate result scale (CRIT-3: INVALID_SCALE after SCALE_MISMATCH)**
 
 ```
-6. result_scale = a.data[0].scale() + v[0].scale()
-7. if result_scale > T::MAX_SCALE: TRAP(INVALID_SCALE)
+4. result_scale = a.data[0].scale() + v[0].scale()
+5. if result_scale > T::MAX_SCALE: TRAP(INVALID_SCALE)
 ```
 
-**Phase 6: Compute dot products (per RFC-0112 - HIGH-1: add Decimal check)**
+**Phase 5: Compute dot products (HIGH-2: uses MAX_MANTISSA constant)**
 
 ⚠️ CRITICAL: Sequential loops only. No SIMD, no parallelization.
 ⚠️ CRITICAL: Fixed iteration order (i=0,1,2... then j=0,1,2...) per RFC-0112 DOT_PRODUCT.
@@ -381,9 +448,8 @@ For i in 0..a.rows:
     product = a.data[i * a.cols + j].mul(v[j])?
     accumulator = accumulator + BigInt::from(product.raw_mantissa())
 
-  if T == Dqa and !accumulator.fits_in_i64(): TRAP(OVERFLOW)
-  if T == Decimal and abs(accumulator) > MAX_DECIMAL_MANTISSA: TRAP(OVERFLOW)
-  result[i] = T::new(accumulator as i128, result_scale)?
+  if abs(accumulator) > T::MAX_MANTISSA: TRAP(OVERFLOW)
+  result[i] = T::new(accumulator, result_scale)?
 ````
 
 ### Result Scale
@@ -417,16 +483,33 @@ Preconditions:
 - a.rows <= 8 and a.cols <= 8 (HIGH-6: explicit per-dimension limits)
 - All elements in a have same scale as a.data[0]
 
-Algorithm:
+**Phase 0: TRAP Sentinel Pre-check (CRIT-4)**
+
+```
+For each element e in a.data:
+  if e.scale() == 0xFF and e.raw_mantissa() == i64::MIN as i128: TRAP(TRAP_INPUT_ERROR)
+```
+
+**Phase 1: Validate all element scales BEFORE computation (MED-6 fix: separate validation from computation)**
+
+```
+For i in 0..a.rows:
+  For j in 0..a.cols:
+    if a.data[i * a.cols + j].scale() != a.data[0].scale(): TRAP(SCALE_MISMATCH)
+```
+
+**Phase 2: Compute**
+
+```
 result.rows = a.cols
 result.cols = a.rows
 For i in 0..a.rows:
-For j in 0..a.cols:
-if a.data[i * a.cols + j].scale() != a.data[0].scale(): TRAP(SCALE_MISMATCH)
-// MED-1: Inputs guaranteed canonical per RFC-0111 Lazy Canonicalization.
-// Transpose preserves canonicality (no value change).
-result.data[j * result.cols + i] = a.data[i * a.cols + j].clone()
+  For j in 0..a.cols:
+    // MED-1: Inputs guaranteed canonical per RFC-0111 Lazy Canonicalization.
+    // Transpose preserves canonicality (no value change).
+    result.data[j * result.cols + i] = a.data[i * a.cols + j].clone()
 Return result
+```
 
 Note: Transpose does not change element values or scales, only layout.
 
@@ -447,30 +530,40 @@ where
 Preconditions:
 
 - a.rows \* a.cols <= MAX_DMAT_ELEMENTS (64)
+- **a.rows <= 8 and a.cols <= 8** (HIGH-2: explicit per-dimension limits)
 - All elements in a have same scale as a.data[0]
 - **scalar.scale() <= T::MAX_SCALE** (HIGH-2: validate scalar scale directly)
 - For DQA: a.data[0].scale() + scalar.scale() <= 18
 - For Decimal: a.data[0].scale() + scalar.scale() <= 36
 
-Algorithm:
+**Phase 0: TRAP Sentinel Pre-check (CRIT-4)**
+
+```
+For each element e in a.data:
+  if e.scale() == 0xFF and e.raw_mantissa() == i64::MIN as i128: TRAP(TRAP_INPUT_ERROR)
+if scalar.scale() == 0xFF and scalar.raw_mantissa() == i64::MIN as i128: TRAP(TRAP_INPUT_ERROR)
+```
+
+**Phase 1: Validate dimensions (HIGH-3: explicit dimension pre-validation)**
+
+```
+if a.rows * a.cols > MAX_DMAT_ELEMENTS (64): TRAP(DIMENSION_ERROR)
+if a.rows > 8 or a.cols > 8: TRAP(DIMENSION_ERROR)
+```
+
+**Phase 2: Validate element scales and compute (HIGH-3: combines scale check with computation)**
+
+```
 For i in 0..a.rows:
-For j in 0..a.cols:
-if a.data[i * a.cols + j].scale() != a.data[0].scale(): TRAP(SCALE_MISMATCH)
-product_scale = a.data[i * a.cols + j].scale() + scalar.scale()
-if product_scale > T::MAX_SCALE: TRAP(INVALID_SCALE)
-result.data[i * result.cols + j] = a.data[i * a.cols + j].mul(&scalar)?
+  For j in 0..a.cols:
+    if a.data[i * a.cols + j].scale() != a.data[0].scale(): TRAP(SCALE_MISMATCH)
+    product_scale = a.data[i * a.cols + j].scale() + scalar.scale()
+    if product_scale > T::MAX_SCALE: TRAP(INVALID_SCALE)
+    result.data[i * result.cols + j] = a.data[i * a.cols + j].mul(&scalar)?
+```
 
 ```
 
-### DOT_PRODUCT (Row × Column)
-
-```
-
-mat_dot_rows(a: &[Dqa], b: &[Dqa]) -> Dqa
-
-Algorithm: Same as DVEC dot_product.
-
-```
 
 ## Gas Model
 
@@ -481,14 +574,16 @@ Gas derivation follows RFC-0105 where:
 
 ### Per-Operation Gas
 
-| Operation     | Type        | Formula                              | Derivation                                              |
-| ------------- | ----------- | ------------------------------------ | ------------------------------------------------------- |
-| MAT_ADD       | DQA/Decimal | `5 × M × N`                         | M×N element ADD operations                              |
-| MAT_SUB       | DQA/Decimal | `5 × M × N`                         | M×N element SUB operations                              |
-| MAT_MUL       | DQA/Decimal | `M × N × K × (30 + 3 × scale²)`     | Per MAC: DQA MUL (20 + 3×scale²) + DQA ADD (10)        |
-| MAT_VEC_MUL   | DQA/Decimal | `rows × cols × (30 + 3 × scale²)`   | rows dot products, each cols elements                   |
-| MAT_TRANSPOSE | DQA/Decimal | `2 × M × N`                         | M×N element copies                                      |
-| MAT_SCALE     | DQA/Decimal | `5 × M × N`                         | M×N element MUL operations                              |
+| Operation     | Type        | Formula                                   | Derivation                                                   |
+| ------------- | ----------- | ----------------------------------------- | ------------------------------------------------------------ |
+| MAT_ADD       | DQA/Decimal | `5 × M × N`                              | M×N element ADD operations                                   |
+| MAT_SUB       | DQA/Decimal | `5 × M × N`                              | M×N element SUB operations                                   |
+| MAT_MUL       | DQA/Decimal | `M × N × K × (30 + 3 × s_a × s_b)`       | Per MAC: DQA MUL (20 + 3×s_a×s_b) + DQA ADD (10)           |
+| MAT_VEC_MUL   | DQA/Decimal | `rows × cols × (30 + 3 × s_a × s_v)`     | rows dot products, each cols elements                        |
+| MAT_TRANSPOSE | DQA/Decimal | `2 × M × N`                              | M×N element copies                                           |
+| MAT_SCALE     | DQA/Decimal | `5 × M × N`                              | M×N element MUL operations                                   |
+
+Where `s_a` is the scale of matrix A and `s_b` is the scale of matrix B (for MAT_MUL), or `s_v` is the scale of vector V (for MAT_VEC_MUL).
 
 **Note:** Gas formula applies to both DQA and Decimal. Decimal operations have slightly higher
 actual cost due to i128 arithmetic, but difference is absorbed into base cost for simplicity.
@@ -496,7 +591,7 @@ See RFC-0112 §Gas Model for derivation.
 
 ### Gas Notes
 
-- **MAT_MUL formula:** `M × N × K × (30 + 3 × scale²)` combines DQA MUL cost (20 + 3×scale²) + DQA ADD cost (10 flat) per MAC
+- **MAT_MUL formula:** `M × N × K × (30 + 3 × s_a × s_b)` combines DQA MUL cost (20 + 3×s_a×s_b) + DQA ADD cost (10 flat) per MAC
 - **Scale check overhead:** The two SCALE_MISMATCH checks per element are O(1) and absorbed into the base cost
 - **Per-block budget:** 139,776 gas exceeds 50k consensus budget; MAT_MUL is limited to M×N ≤ 64
 - **BigInt overhead (MED-6):** Per RFC-0112, BigInt operations have additional overhead for overflow detection. The `fits_in_i64()` check adds constant O(1) overhead per product and per accumulator.
@@ -511,14 +606,14 @@ See RFC-0112 §Gas Model for derivation.
 | MAT_TRANSPOSE | 8×8        | 128 |
 | MAT_SCALE     | 8×8        | 320 |
 
-### Per-Block Budget
+### Per-Block Budget (MED-8 fix)
 
 MAT_MUL at MAX_DMAT_ELEMENTS (8×8=64) with K=8 and scale=9:
 
-- Per dot product: K × (30 + 3 × scale²) = 8 × (30 + 3 × 81) = 8 × 273 = 2184
+- Per dot product: K × (30 + 3 × s_a × s_b) = 8 × (30 + 3 × 9 × 9) = 8 × 273 = 2184
 - Total: M × N × 2184 = 8 × 8 × 2184 = 139,776
 
-> This exceeds 50k consensus budget; MAT_MUL is limited to M×N ≤ 64 to stay within measurable bounds.
+> **Note:** This example shows worst-case gas (139,776) which exceeds typical 50k consensus budgets. The size limit M×N ≤ 64 limits maximum matrix size, but actual gas consumption depends on K and scale. Implementations may need additional batching or gas metering strategies for very large multiplications.
 
 ## Test Vectors
 
@@ -545,7 +640,7 @@ MAT_MUL at MAX_DMAT_ELEMENTS (8×8=64) with K=8 and scale=9:
 | [[1, 2], [3, 4]]     | [[5, 6], [7, 8]]     | 0     | [[19, 22], [43, 50]]                                | Standard           |
 | [[1, 2, 3]]          | [[1], [2], [3]]      | 0     | [[14]]                                              | Vector result      |
 | [[2, 2], [2, 2]]     | [[3, 3], [3, 3]]     | 0     | [[12, 12], [12, 12]]                                | Uniform            |
-| [[10, 20], [30, 40]] | [[10, 20], [30, 40]] | 0     | [[1400, 2200], [3000, 4600]] → [[14, 22], [30, 46]] | Canonical: 1400→14 |
+| [[10, 20], [30, 40]] | [[10, 20], [30, 40]] | 0     | [[1400, 2200], [3000, 4600]] (pre-canonical) | Canonical form: see note |
 
 ### MAT_VEC_MUL
 
@@ -598,7 +693,8 @@ result_rows (1 byte) || result_cols (1 byte) || result_elements...
 
 Where:
 
-- `op_id`: 8-byte operation identifier (see Operation IDs)
+- `op_id`: 8-byte operation identifier, big-endian encoding of 16-bit value (MED-4: 0x0100 = MAT_ADD stored as 0x00000000000100)
+- `type_id`: 1 byte (1=DQA, 2=Decimal)
 - `type_id`: 1 byte (1=DQA, 2=Decimal)
 - Matrix elements serialized as 24-byte blocks per RFC-0105/0111
 
@@ -613,6 +709,8 @@ Where:
 | MAT_TRANSPOSE | 0x0104   |
 | MAT_SCALE     | 0x0105   |
 
+> **Note (LOW-4):** These op_ids are in the DMAT namespace (0x01xx). RFC-0111 DVEC uses a separate namespace (0x00xx). Combined probe verifiers should use the type_id to dispatch to the correct namespace.
+
 ### TRAP Sentinel Definition
 
 ```
@@ -623,7 +721,7 @@ TRAP = { mantissa: 0x8000000000000000 (i64 min), scale: 0xFF }
 
 ### Published Merkle Root
 
-> **Merkle Root:** `ac56392598aa37ce68f1d3bf503642a3240349e9d8ce7099dc3fc561281eec6b` (v1.3 - Entry 51 fixed per MED-3)
+> **Merkle Root:** `377dfe5a3d391fc51d9d9dd32989ed0737f621ac640463f0e16e5326e3a18396` (v1.7 - Round 6 CRIT/HIGH fixes)
 
 ### Probe Entry Details
 
@@ -644,7 +742,7 @@ TRAP = { mantissa: 0x8000000000000000 (i64 min), scale: 0xFF }
 | 12    | MAT_TRANSPOSE | Decimal | [[1,2],[3,4]]                 | -                             | [[1,3],[2,4]]                     |
 | 13    | MAT_SCALE     | Decimal | [[1,2],[3,4]]                 | scalar=2                      | [[2,4],[6,8]]                     |
 | 14    | MAT_MUL       | DQA     | [[1,2,3],[4,5,6]] (2×3)       | [[1,2],[3,4],[5,6]] (3×2)       | [[22,28],[49,64]] (2×2) (MED-3) |
-| 15    | MAT_MUL       | DQA     | [[1,0,0,0],[0,1,0,0]]         | [[1,2],[3,4],[5,6],[7,8]]     | [[5,6],[23,34]]                   |
+| 15    | MAT_MUL       | DQA     | [[1,0,0,0],[0,1,0,0]] (2×4) | [[1,2],[3,4],[5,6],[7,8]] (4×2) | [[1,2],[3,4]] (2×2) (MED-3) |
 | 16    | MAT_MUL       | DQA     | [[10,20]]                     | [[3],[4]]                     | [[110]]                           |
 | 17    | MAT_MUL       | DQA     | [[3],[4]]                     | [[10,20]]                     | [[30,60],[40,80]]                 |
 | 18    | MAT_MUL       | DQA     | [[1],[2],[3]]                 | [[1,2,3]]                     | [[1,2,3],[2,4,6],[3,6,9]]         |
@@ -652,8 +750,8 @@ TRAP = { mantissa: 0x8000000000000000 (i64 min), scale: 0xFF }
 | 20    | MAT_VEC_MUL   | DQA     | [[1,2],[3,4]]                 | [1,1]                         | [3,7]                             |
 | 21    | MAT_VEC_MUL   | DQA     | [[1,0,0],[0,1,0]]             | [1,2,3]                       | [1,2]                             |
 | 22    | MAT_VEC_MUL   | DQA     | [[1,2,3],[4,5,6],[7,8,9]]     | [1,1,1]                       | [12,15,18]                        |
-| 23    | MAT_VEC_MUL   | DQA     | [[2,4,6,8]]                   | [2]                           | [40]                              |
-| 24    | MAT_VEC_MUL   | DQA     | [[1],[2],[3],[4]]             | [1,2,3,4]                     | [30]                              |
+| 23    | MAT_VEC_MUL   | DQA     | [[2,4,6,8]] (1×4)            | [2] (1)                        | TRAP (DIMENSION_MISMATCH) (MED-1) |
+| 24    | MAT_VEC_MUL   | DQA     | [[1,2,3,4]] (1×4)            | [1,2,3,4] (4)                 | [30] (MED-2)                     |
 | 25    | MAT_TRANSPOSE | DQA     | [[1,2],[3,4]]                 | -                             | [[1,3],[2,4]]                     |
 | 26    | MAT_TRANSPOSE | DQA     | [[1,2,3]]                     | -                             | [[1],[2],[3]]                     |
 | 27    | MAT_TRANSPOSE | DQA     | [[1],[2],[3]]                 | -                             | [[1,2,3]]                         |
@@ -681,8 +779,8 @@ TRAP = { mantissa: 0x8000000000000000 (i64 min), scale: 0xFF }
 | 49    | MAT_MUL       | DQA     | 2×3                           | 2×3                           | TRAP (DIMENSION_MISMATCH)         |
 | 50    | MAT_ADD       | DQA     | 2×2                           | 2×3                           | TRAP (DIMENSION_MISMATCH)         |
 | 51    | MAT_VEC_MUL   | DQA     | 2×3                           | [1,2]                         | TRAP (DIMENSION_MISMATCH)         |
-| 52    | MAT_MUL       | DQA     | [[10^8,0],[0,10^8]]           | [[10^8,0],[0,10^8]]           | TRAP (OVERFLOW)                   |
-| 53    | MAT_SCALE     | DQA     | [[10^9×4]]                    | scalar=10^9                   | TRAP (OVERFLOW)                   |
+| 52    | MAT_MUL       | DQA     | [[2^31,2^31],[2^31,2^31]]     | [[2^31,2^31],[2^31,2^31]]     | TRAP (OVERFLOW) (CRIT-2)           |
+| 53    | MAT_SCALE     | DQA     | [[9223372038×4]]              | scalar=10^9                   | TRAP (OVERFLOW) (CRIT-2)          |
 | 54    | MAT_ADD       | DQA     | [[1@scale10,2],[3,4]]         | [[5,6],[7,8]]                 | TRAP (SCALE_MISMATCH)             |
 | 55    | MAT_MUL       | DQA     | [[1@scale10,0],[0,1@scale10]] | [[1@scale10,0],[0,1@scale10]] | TRAP (INVALID_SCALE)              |
 | 56    | MAT_ADD       | DQA     | [TRAP]                        | [0]                           | TRAP (propagated)                 |
@@ -771,18 +869,17 @@ root = MerkleRoot(leaf[0], leaf[1], ..., leaf[56])
 
 ## TRAP Codes
 
-| Code                         | Condition                                                       | Reference |
-| ---------------------------- | --------------------------------------------------------------- | --------- |
-| TRAP_INPUT_ERROR             | Input contains TRAP sentinel                                   | RFC-0113  |
-| INPUT_VALIDATION_ERROR       | Input scale exceeds type limits                                | RFC-0112  |
-| OVERFLOW                     | i128 accumulator exceeds i64 range for DQA, or i128 for Decimal | RFC-0105  |
-| INVALID_SCALE                | Result scale exceeds MAX_SCALE (18 DQA, 36 Decimal)             | RFC-0105  |
-| SCALE_MISMATCH               | Matrix/vector elements have different scales                    | RFC-0105  |
-| DIMENSION_ERROR              | Matrix dimensions M×N > 64                                      | RFC-0113  |
-| DIMENSION_MISMATCH           | Matrix dimensions incompatible for operation                    | RFC-0113  |
-| CANNOT_NORMALIZE_ZERO_VECTOR | NORM of zero vector                                             | RFC-0112  |
-| CONSENSUS_RESTRICTION        | Operation forbidden in consensus context                        | RFC-0113  |
-| UNSUPPORTED_OPERATION        | Operation not supported for element type                        | RFC-0113  |
+| Code               | Condition                                                       | Reference |
+| ------------------ | --------------------------------------------------------------- | --------- |
+| TRAP_INPUT_ERROR   | Input contains TRAP sentinel                                   | RFC-0113  |
+| INPUT_VALIDATION_ERROR | Input scale exceeds type limits                                | RFC-0112  |
+| OVERFLOW           | i128 accumulator exceeds i64 range for DQA, or i128 for Decimal | RFC-0105  |
+| INVALID_SCALE      | Result scale exceeds MAX_SCALE (18 DQA, 36 Decimal)             | RFC-0105  |
+| SCALE_MISMATCH     | Matrix/vector elements have different scales                    | RFC-0105  |
+| DIMENSION_ERROR    | Matrix dimensions M×N > 64                                      | RFC-0113  |
+| DIMENSION_MISMATCH | Matrix dimensions incompatible for operation                    | RFC-0113  |
+
+> **Note (MED-7):** `CANNOT_NORMALIZE_ZERO_VECTOR`, `CONSENSUS_RESTRICTION`, and `UNSUPPORTED_OPERATION` are removed - they are defined in other RFCs but not used in DMAT operations.
 
 ### TRAP Priority Order
 
@@ -796,7 +893,7 @@ When multiple error conditions exist in a single operation:
 6. **INVALID_SCALE** - Result scale exceeds MAX_SCALE
 7. **OVERFLOW** - Accumulator exceeds representable range
 
-> **Rationale:** TRAP sentinel is checked first to handle edge cases. INPUT_VALIDATION_ERROR follows per RFC-0112 requirements. Dimension errors are checked before scale errors as they are configuration errors.
+> **Rationale:** TRAP sentinel detection is a pre-validation check (malformed input). If TRAP sentinel is present, no further validation occurs (immediate TRAP). For non-TRAP inputs, INPUT_VALIDATION_ERROR is checked first per RFC-0112 DOT_PRODUCT. This two-phase approach ensures TRAP inputs don't trigger spurious validation errors.
 
 ### TRAP Sentinel (for probe encoding)
 

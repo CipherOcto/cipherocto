@@ -328,6 +328,28 @@ PROBE_ENTRIES = [
      mat(2, 2, dqa(1,0), dqa(1,0), dqa(1,0), dqa(1,0)),       # matrix uniform scale=0
      [dqa(1,0), dqa(2,5)],                                       # vector mixed scales (0, 5)
      mat(2, 1, TRAP, TRAP)),                                      # SCALE_MISMATCH
+
+    # Entry 59: MAT_SCALE canonicalization test
+    # 1000 * 10^-3 * 1 * 10^0 = 1000 * 10^-3 = 1.0 → canonicalizes to (1, 0)
+    (OP_MAT_SCALE, TYPE_DQA,
+     mat(1, 1, dqa(1000, 3)),                                     # 1000 * 10^-3 = 1.0
+     dqa(1, 0),
+     mat(1, 1, dqa(1, 0))),                                       # must canonicalize to 1 * 10^0
+
+    # Entry 60: MAT_MUL at MAX_SCALE boundary (valid)
+    # 2 * 10^-9 * 3 * 10^-9 = 6 * 10^-18 → result_scale = 18 (MAX_SCALE, valid)
+    (OP_MAT_MUL, TYPE_DQA,
+     mat(1, 1, dqa(2, 9)),
+     mat(1, 1, dqa(3, 9)),
+     mat(1, 1, dqa(6, 18))),                                      # result_scale = 18 = MAX_SCALE (valid)
+
+    # Entry 61: TRAP propagation chain (MAT_ADD following MAT_MUL with TRAP)
+    # C[0][0] from MAT_MUL is TRAP → feeds into MAT_ADD with valid → result is TRAP
+    # This tests cross-operation TRAP propagation, not just single-operation TRAP
+    (OP_MAT_ADD, TYPE_DQA,
+     mat(1, 1, TRAP),                                             # A contains TRAP
+     mat(1, 1, dqa(5, 0)),                                       # B is valid
+     mat(1, 1, TRAP)),                                            # Result must be TRAP (not computed sum)
 ]
 
 def compute_probe_root() -> str:

@@ -2,7 +2,7 @@
 
 ## Status
 
-**Version:** 1.18 (2026-03-19)
+**Version:** 1.19 (2026-03-19)
 **Status:** Accepted
 **NUMERIC_SPEC_VERSION:** 1 (per RFC-0110 §Spec Version & Replay Pinning)
 
@@ -11,6 +11,12 @@
 > on existing numeric types without modifying their encoding, arithmetic, or TRAP semantics.
 
 > **Note:** This RFC is extracted from RFC-0106 (Deterministic Numeric Tower) as part of the Track B dismantling effort.
+
+> **Adversarial Review v1.19 Changes (Round 20):**
+>
+> - CRIT: Added Accumulation Semantics rule 7 to Determinism Rules — explicit prohibition on restructuring accumulation semantics
+> - MED: Added 3 adversarial probe entries (60: canonicalization, 61: MAX_SCALE boundary valid, 62: TRAP propagation chain)
+> - MED: Recomputed Merkle root with 62 total entries
 
 > **Adversarial Review v1.18 Changes (Round 19 - Consensus Hardening):**
 >
@@ -848,15 +854,16 @@ TRAP = { mantissa: -(1 << 63), scale: 0xFF }  # i64::MIN as signed integer
 
 ### Published Merkle Root
 
-> **Merkle Root:** `dae6df75537225cbe06b12579e2ebccde8e17b9852b438c4091f7526da889d22` (v1.16 - 59 entries, mixed-scale MAT_VEC_MUL probes added)
+> **Merkle Root:** `8a4d178fb3cc60d932126ee52b0db3b3eeff3cd68f9b3d87263c9a37daf9f876` (v1.19 - 62 entries, canonicalization/MAX_SCALE/TRAP-chain probes added)
 
-> **Note (LOW-FINAL-1 resolved):** Two mixed-scale MAT_VEC_MUL probe entries added in v1.16:
-> - Entry 57: Successful mixed-scale (matrix scale=3, vector scale=7, result scale=10)
-> - Entry 58: Vector internally non-uniform → SCALE_MISMATCH
+> **Note (v1.19 entries):**
+> - Entry 59: MAT_SCALE canonicalization (1000×10⁻³ → 1×10⁰)
+> - Entry 60: MAT_MUL at MAX_SCALE boundary (result_scale=18, valid)
+> - Entry 61: TRAP propagation chain (MAT_ADD following TRAP input)
 
 ### Probe Entry Details
 
-> **Canonical Reference:** The script `scripts/compute_dmat_probe_root.py` is the authoritative source for all 59 probe entries. The Merkle root above is computed from this script.
+> **Canonical Reference:** The script `scripts/compute_dmat_probe_root.py` is the authoritative source for all 62 probe entries. The Merkle root above is computed from this script.
 >
 > See §Appendix B for the reference script.
 
@@ -939,6 +946,7 @@ root = MerkleRoot(leaf[0], leaf[1], ..., leaf[56])
 4. **Dimension Enforcement**: M×N ≤ 64 AND M,N ≤ 8 AND M,N ≥ 1 for execution
 5. **Scale Matching**: All elements in a matrix must have the same scale
 6. **Type Isolation**: No mixed-type operations (DMAT<DQA> vs DMAT<Decimal>)
+7. **Accumulation Semantics (CRITICAL)**: Intermediate accumulation MUST be performed in the exact sequence defined by the loop structure. Implementations MUST NOT restructure accumulation (e.g., buffering, reordering, or delayed writes).
 
 ## Algebraic Properties (Informative)
 

@@ -2,13 +2,17 @@
 
 ## Status
 
-**Version:** 1.13 (2026-03-19)
+**Version:** 1.14 (2026-03-19)
 **Status:** Accepted
 **NUMERIC_SPEC_VERSION:** 1 (per RFC-0110, incremented only when protocol semantics change)
 
 > **Rationale:** NUMERIC_SPEC_VERSION remains at 1 because this RFC does not change the fundamental protocol semantics of any existing numeric types (DFP, DQA, Decimal). DVEC is a new container type that operates on existing numeric types without modifying their encoding, arithmetic, or TRAP semantics. Changes to probe entries or reference implementations do not constitute protocol semantic changes per RFC-0110.
 
 > **Note:** This RFC is extracted from RFC-0106 (Deterministic Numeric Tower) as part of the Track B dismantling effort.
+
+> **Cross-RFC Amendment v1.14:**
+> - CROSS-1: Updated RFC-0113 relationship — was "Future - not yet drafted", now "Accepted v1.21"
+> - CROSS-2: Added note on DOT_PRODUCT vs MAT_VEC_MUL input scale guard discrepancy
 
 > **Cross-RFC Amendment v1.13:**
 > - Added NumericScalar trait version note in §Type System — clarifies RFC-0113 supersedes the trait definition in this RFC
@@ -87,7 +91,12 @@ This RFC defines Deterministic Vector (DVEC) operations for consensus-critical v
 | RFC-0104 (DFP) | DVEC<DFP> is FORBIDDEN (not ZK-friendly) |
 | RFC-0105 (DQA) | DVEC<DQA> is the primary type (recommended) |
 | RFC-0111 (DECIMAL) | DVEC<DECIMAL> is allowed; required for SQRT ops |
-| RFC-0113 (DMAT) | DVEC operations compose with matrix ops (Future - not yet drafted) |
+| RFC-0113 (DMAT) | DVEC operations compose with matrix ops (Accepted v1.21) |
+
+> **CROSS-2 Note (Input Scale Guard Discrepancy):** DVEC's `DOT_PRODUCT` enforces an input scale precondition (`a[0].scale() <= 9` for DQA) that rejects high-scale inputs early. DMAT's `MAT_VEC_MUL` does not enforce this precondition — instead, it relies on Phase 4's `result_scale > MAX_SCALE` check. The same logical inputs may produce different TRAP codes depending on which operation is used:
+> - `DOT_PRODUCT` with `a.scale()=10, v.scale()=8` → `TRAP(INPUT_VALIDATION_ERROR)` (Phase 1)
+> - `MAT_VEC_MUL` with `a.scale()=10, v.scale()=8` → `TRAP(INVALID_SCALE)` (Phase 4)
+> This is a known inconsistency — `MAT_VEC_MUL` was designed for matrix-vector composition where per-element scale variance is expected. Implementations should document which path they use for mixed-scale workloads.
 
 ## Dependencies
 
@@ -591,5 +600,5 @@ Run with: `python3 scripts/compute_dvec_probe_root.py`
 - RFC-0105: Deterministic Quant Arithmetic
 - RFC-0110: Deterministic BIGINT
 - RFC-0111: Deterministic DECIMAL
-- RFC-0113: Deterministic Matrices (Future - not yet drafted)
+- RFC-0113: Deterministic Matrices (Accepted v1.21)
 - RFC-0106: Deterministic Numeric Tower (archived)

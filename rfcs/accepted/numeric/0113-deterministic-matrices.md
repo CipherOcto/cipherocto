@@ -15,7 +15,7 @@
 > **Adversarial Review v1.14 Changes (Round 14 - Final):**
 >
 > - LOW-FINAL-1: Added note about missing mixed-scale MAT_VEC_MUL probe entry (non-blocking)
-> - LOW-FINAL-2: Updated Merkle Root note to reflect "(computed from v1.11 script; unchanged through v1.13)"
+> - LOW-FINAL-2: Updated Merkle Root note to reflect "(computed from v1.11 script; unchanged through v1.14)"
 
 > **Adversarial Review v1.13 Changes (Round 13 - Final):**
 >

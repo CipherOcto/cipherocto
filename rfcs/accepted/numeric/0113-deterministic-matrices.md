@@ -947,6 +947,8 @@ root = MerkleRoot(leaf[0], leaf[1], ..., leaf[56])
 5. Build Merkle tree from 63 leaves
 6. Verify root matches published Merkle root
 
+> **Invariant (CRITICAL):** The number of probe entries MUST equal the number of Merkle leaves. Any future addition of probe entries MUST update both the Merkle root and the leaf count in this procedure.
+
 > **Probe Indexing:** All probe entries are zero-indexed [0..61]. Entry 59 refers to the 60th entry.
 
 ## Determinism Rules

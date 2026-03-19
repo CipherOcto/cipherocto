@@ -2,7 +2,7 @@
 
 ## Status
 
-**Version:** 1.15 (2026-03-19)
+**Version:** 1.16 (2026-03-19)
 **Status:** Accepted
 **NUMERIC_SPEC_VERSION:** 1 (per RFC-0110 §Spec Version & Replay Pinning)
 
@@ -11,6 +11,11 @@
 > on existing numeric types without modifying their encoding, arithmetic, or TRAP semantics.
 
 > **Note:** This RFC is extracted from RFC-0106 (Deterministic Numeric Tower) as part of the Track B dismantling effort.
+
+> **Adversarial Review v1.16 Changes (Round 17):**
+>
+> - HIGH: Strengthened trait evolution note to explicitly require RFC-0113 trait for DMAT users
+> - MED: Added two mixed-scale MAT_VEC_MUL probe entries (57, 58) and recomputed Merkle root
 
 > **Adversarial Review v1.15 Changes (Round 16):**
 >
@@ -120,7 +125,7 @@
 >
 > - CRIT-1: Added explicit scale handling per RFC-0105 semantics
 > - CRIT-2: Added overflow detection to MAT_MUL algorithm
-> - CRIT-3: Added full verification probe specification (57 entries)
+> - CRIT-3: Added full verification probe specification (59 entries)
 > - CRIT-4: Added complete serialization format
 > - HIGH-1: Fixed gas model with derivation from underlying DQA operations
 > - HIGH-2: Added explicit result_scale definition
@@ -180,7 +185,8 @@ pub struct DMat<T: NumericScalar> {
 
 > **Note:** This RFC uses `NumericScalar` trait for generic element operations, enabling composition with DVEC (RFC-0112). The trait approach replaces the earlier enum-based `Numeric` type for better composability across the Deterministic Numeric Tower.
 >
-> **Trait Evolution (HIGH-NEW-1):** This RFC **supersedes** the `NumericScalar` trait definition in RFC-0112 v1.12. RFC-0113 adds `MAX_MANTISSA: i128` constant and `new(mantissa: i128, scale: u8) -> Result<Self, TrapCode>` constructor. Implementations of RFC-0112 types (DQA/Decimal) must be updated to satisfy the RFC-0113 trait requirements when used with DMAT. The RFC-0112 trait definition remains valid for DVEC-only use cases that don't require the additional constants.
+> **Trait Evolution (HIGH-NEW-1):** This RFC **supersedes** the `NumericScalar` trait definition in RFC-0112 v1.12 by adding `const MAX_MANTISSA: i128` and `fn new(mantissa: i128, scale: u8) -> Self`.
+> **Normative requirement:** Any type implementing `NumericScalar` that is intended to be used inside `DMat<T>` (via MAT_MUL, MAT_VEC_MUL, MAT_SCALE, etc.) **MUST** implement the RFC-0113 version of the trait with `MAX_MANTISSA` and `new(...)`. Implementations that only target pure DVEC usage MAY continue using the RFC-0112 trait definition until they adopt matrix operations.
 
 ```
 
@@ -800,13 +806,15 @@ TRAP = { mantissa: -(1 << 63), scale: 0xFF }  # i64::MIN as signed integer
 
 ### Published Merkle Root
 
-> **Merkle Root:** `d69f3e2ecafd6adf0fd564f36348d5f7588052cea9677e2a7a4c1ade91885626` (computed from v1.11 script; unchanged through v1.14)
+> **Merkle Root:** `dae6df75537225cbe06b12579e2ebccde8e17b9852b438c4091f7526da889d22` (v1.16 - 59 entries, mixed-scale MAT_VEC_MUL probes added)
 
-> **Note (LOW-FINAL-1):** The verification probe entries do not include a mixed-scale MAT_VEC_MUL test vector. Mixed-scale support was added in v1.13; adding a probe entry for comprehensive coverage may be done in a future minor revision.
+> **Note (LOW-FINAL-1 resolved):** Two mixed-scale MAT_VEC_MUL probe entries added in v1.16:
+> - Entry 57: Successful mixed-scale (matrix scale=3, vector scale=7, result scale=10)
+> - Entry 58: Vector internally non-uniform → SCALE_MISMATCH
 
 ### Probe Entry Details
 
-> **Canonical Reference:** The script `scripts/compute_dmat_probe_root.py` is the authoritative source for all 57 probe entries. The Merkle root above is computed from this script.
+> **Canonical Reference:** The script `scripts/compute_dmat_probe_root.py` is the authoritative source for all 59 probe entries. The Merkle root above is computed from this script.
 >
 > See §Appendix B for the reference script.
 

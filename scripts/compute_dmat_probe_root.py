@@ -316,6 +316,18 @@ PROBE_ENTRIES = [
     (OP_MAT_ADD, TYPE_DQA, mat(1, 1, TRAP),
                          mat(1, 1, dqa(0)),
                          mat(1, 1, TRAP)),  # TRAP propagated
+    # MED-NEW-FINAL-1: Mixed-scale MAT_VEC_MUL tests
+    # Entry 57: Successful mixed-scale (matrix scale=3, vector scale=7)
+    # C[0][0] = 10*1 + 20*2 = 50, C[1][0] = 30*1 + 40*2 = 110, result_scale = 10
+    (OP_MAT_VEC_MUL, TYPE_DQA,
+     mat(2, 2, dqa(10,3), dqa(20,3), dqa(30,3), dqa(40,3)),   # matrix scale=3
+     [dqa(1,7), dqa(2,7)],                                        # vector scale=7
+     mat(2, 1, dqa(50,10), dqa(110,10))),                        # result scale=10
+    # Entry 58: Vector internally non-uniform → SCALE_MISMATCH
+    (OP_MAT_VEC_MUL, TYPE_DQA,
+     mat(2, 2, dqa(1,0), dqa(1,0), dqa(1,0), dqa(1,0)),       # matrix uniform scale=0
+     [dqa(1,0), dqa(2,5)],                                       # vector mixed scales (0, 5)
+     mat(2, 1, TRAP, TRAP)),                                      # SCALE_MISMATCH
 ]
 
 def compute_probe_root() -> str:

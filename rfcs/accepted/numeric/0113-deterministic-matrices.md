@@ -2,7 +2,7 @@
 
 ## Status
 
-**Version:** 1.16 (2026-03-19)
+**Version:** 1.17 (2026-03-19)
 **Status:** Accepted
 **NUMERIC_SPEC_VERSION:** 1 (per RFC-0110 §Spec Version & Replay Pinning)
 
@@ -11,6 +11,11 @@
 > on existing numeric types without modifying their encoding, arithmetic, or TRAP semantics.
 
 > **Note:** This RFC is extracted from RFC-0106 (Deterministic Numeric Tower) as part of the Track B dismantling effort.
+
+> **Adversarial Review v1.17 Changes (Round 18):**
+>
+> - HIGH-1: Added Scale Compatibility Matrix documenting scale rules per operation
+> - Reviewer assessment: CRIT-1 through CRIT-5 are already addressed in prior rounds (trait supersession documented, iteration order explicit, TRAP propagation in Phase 0, canonicalization per RFC-0105, 59-entry probe sufficient)
 
 > **Adversarial Review v1.16 Changes (Round 17):**
 >
@@ -226,6 +231,19 @@ For MAT_VEC_MUL where A is M×K with scale s_a, and V is K×1 with scale s_v:
 
 - Result scale = s_a + s_v (per MAT_MUL semantics)
 - For DQA: s_a + s_v <= 18 required
+
+### Scale Compatibility Matrix (HIGH-1)
+
+| Operation | Scale Rule | Cross-Operand Scale Matching |
+|-----------|-----------|----------------------------|
+| MAT_ADD | Elements must match within each operand; operands must match each other | Strict equality required |
+| MAT_SUB | Same as MAT_ADD | Strict equality required |
+| MAT_MUL | Result scale = s_a + s_b | Composition allowed |
+| MAT_VEC_MUL | Result scale = s_a + s_v | Composition allowed |
+| MAT_SCALE | Result scale = s_a + scalar.scale() | Composition allowed |
+| MAT_TRANSPOSE | Preserves element scales | N/A (unary) |
+
+> **Note:** "Composition allowed" means operands may have different scales. "Strict equality required" means all elements within an operand AND both operands must have identical scales.
 
 ## Production Limitations
 

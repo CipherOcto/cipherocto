@@ -12,6 +12,8 @@
 
 > **Note:** This RFC is extracted from RFC-0106 (Deterministic Numeric Tower) as part of the Track B dismantling effort.
 
+> **Normative Authority:** This RFC is the normative specification for DMAT operations. The reference script (`scripts/compute_dmat_probe_root.py`) is provided for verification and conformance testing. If any discrepancy exists between this RFC and the reference script, this RFC text takes precedence for consensus behavior.
+
 > **Adversarial Review v1.19 Changes (Round 20):**
 >
 > - CRIT: Added Accumulation Semantics rule 7 to Determinism Rules — explicit prohibition on restructuring accumulation semantics
@@ -263,6 +265,8 @@ For MAT_VEC_MUL where A is M×K with scale s_a, and V is K×1 with scale s_v:
 | MAT_TRANSPOSE | Preserves element scales | N/A (unary) |
 
 > **Note:** "Composition allowed" means operands may have different scales. "Strict equality required" means all elements within an operand AND both operands must have identical scales.
+
+> **MAX_SCALE Boundary Invariant (CRITICAL):** If `result_scale == MAX_SCALE` (18 for DQA, 36 for Decimal), the result **MUST** be preserved at that scale. Canonicalization **MUST NOT** reduce the scale in this case. For example, `1×10^-18` stored as `(mantissa=1, scale=18)` is valid and must not be canonicalized to `(mantissa=1, scale=0)`.
 
 ### Canonicalization Requirements (CRITICAL)
 
@@ -937,8 +941,10 @@ root = MerkleRoot(leaf[0], leaf[1], ..., leaf[56])
 2. Execute operation per algorithms in this RFC
 3. Serialize result using canonical format
 4. Compute leaf hash: SHA256(leaf_input)
-5. Build Merkle tree from 59 leaves
+5. Build Merkle tree from 62 leaves
 6. Verify root matches published Merkle root
+
+> **Probe Indexing:** All probe entries are zero-indexed [0..61]. Entry 59 refers to the 60th entry.
 
 ## Determinism Rules
 
@@ -981,8 +987,9 @@ The following properties hold under valid (non-TRAP) execution:
 All DMAT operations MUST enforce the following invariant:
 
 1. TRAP sentinel detection **MUST** occur before any other validation or computation step.
-2. If any input element matches the TRAP sentinel, the operation MUST immediately return `TRAP(TRAP_INPUT_ERROR)`.
-3. No further validation (dimension, scale, overflow) may be performed after TRAP detection.
+2. TRAP detection **MUST** iterate elements in strict row-major order using index `(i * cols + j)`. Implementations **MUST NOT** reorder, parallelize, or short-circuit traversal in a way that changes which TRAP is detected first.
+3. If any input element matches the TRAP sentinel, the operation MUST immediately return `TRAP(TRAP_INPUT_ERROR)`.
+4. No further validation (dimension, scale, overflow) may be performed after TRAP detection.
 
 This rule applies uniformly to ALL operations: MAT_ADD, MAT_SUB, MAT_MUL, MAT_VEC_MUL, MAT_TRANSPOSE, MAT_SCALE.
 

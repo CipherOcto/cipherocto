@@ -2,7 +2,7 @@
 
 ## Status
 
-**Version:** 1.19 (2026-03-19)
+**Version:** 1.20 (2026-03-19)
 **Status:** Accepted
 **NUMERIC_SPEC_VERSION:** 1 (per RFC-0110 §Spec Version & Replay Pinning)
 
@@ -14,11 +14,13 @@
 
 > **Normative Authority:** This RFC is the normative specification for DMAT operations. The reference script (`scripts/compute_dmat_probe_root.py`) is provided for verification and conformance testing. If any discrepancy exists between this RFC and the reference script, this RFC text takes precedence for consensus behavior.
 
-> **Adversarial Review v1.19 Changes (Round 20):**
+> **Adversarial Review v1.20 Changes (Round 22 - Gold Standard):**
 >
-> - CRIT: Added Accumulation Semantics rule 7 to Determinism Rules — explicit prohibition on restructuring accumulation semantics
-> - MED: Added 3 adversarial probe entries (59: canonicalization, 60: MAX_SCALE boundary valid, 61: TRAP propagation chain 2×2)
-> - MED: Recomputed Merkle root with 62 total entries
+> - MED: Added entry 62 — TRAP at last index [1][1] to force full traversal past first element
+> - MED: Tightened MAX_SCALE boundary wording — "must not reduce scale below MAX_SCALE"
+> - MED: Recomputed Merkle root with 63 total entries
+
+> **Adversarial Review v1.19 Changes (Round 20):**
 
 > **Adversarial Review v1.18 Changes (Round 19 - Consensus Hardening):**
 >
@@ -266,7 +268,7 @@ For MAT_VEC_MUL where A is M×K with scale s_a, and V is K×1 with scale s_v:
 
 > **Note:** "Composition allowed" means operands may have different scales. "Strict equality required" means all elements within an operand AND both operands must have identical scales.
 
-> **MAX_SCALE Boundary Invariant (CRITICAL):** If `result_scale == MAX_SCALE` (18 for DQA, 36 for Decimal), the result **MUST** be preserved at that scale. Canonicalization **MUST NOT** reduce the scale in this case. For example, `1×10^-18` stored as `(mantissa=1, scale=18)` is valid and must not be canonicalized to `(mantissa=1, scale=0)`.
+> **MAX_SCALE Boundary Invariant (CRITICAL):** If `result_scale == MAX_SCALE` (18 for DQA, 36 for Decimal), canonicalization **MUST NOT** reduce the scale below MAX_SCALE. The result may remain at MAX_SCALE or overflow, but it must not be normalized to a lower scale. For example, `1×10^-18` stored as `(mantissa=1, scale=18)` is valid and must not be canonicalized to `(mantissa=1, scale=0)`.
 
 ### Canonicalization Requirements (CRITICAL)
 
@@ -858,18 +860,19 @@ TRAP = { mantissa: -(1 << 63), scale: 0xFF }  # i64::MIN as signed integer
 
 ### Published Merkle Root
 
-> **Merkle Root:** `c949123c5888b8ac924fe17ec499caa756798e52e852b70341c64be2823e1d10` (v1.19 - 62 entries, canonicalization/MAX_SCALE/TRAP-chain probes added)
+> **Merkle Root:** `3e83ddff2c07dc9eafef3e52ed2f3c6ac3363c90099745174721891d22dceaf6` (v1.20 - 63 entries, TRAP last-index probe added)
 
-> **Probe Indexing Rule (CRITICAL):** Probe entries are **zero-indexed**. Previous version contained entries [0..58]. New entries extend the set to [0..61]. Total entries: 62. Independent implementations MUST use zero-indexed entries to reproduce the Merkle root.
+> **Probe Indexing Rule (CRITICAL):** Probe entries are **zero-indexed**. Previous version contained entries [0..58]. Entries [59..62] were added in v1.19 and v1.20. Total entries: 63. Independent implementations MUST use zero-indexed entries to reproduce the Merkle root.
 
-> **Note (v1.19 entries):**
+> **Note (v1.20 entries):**
 > - Entry 59: MAT_SCALE canonicalization (1000×10⁻³ → 1×10⁰)
 > - Entry 60: MAT_MUL at MAX_SCALE boundary (result_scale=18, valid)
-> - Entry 61: TRAP propagation chain (2×2 MAT_ADD with TRAP at [0][0])
+> - Entry 61: TRAP propagation chain (2×2, TRAP at [0][0])
+> - Entry 62: TRAP at last index [1][1] — forces full traversal
 
 ### Probe Entry Details
 
-> **Canonical Reference:** The script `scripts/compute_dmat_probe_root.py` is the authoritative source for all 62 probe entries (zero-indexed). The Merkle root above is computed from this script.
+> **Canonical Reference:** The script `scripts/compute_dmat_probe_root.py` is the authoritative source for all 63 probe entries (zero-indexed). The Merkle root above is computed from this script.
 >
 > See §Appendix B for the reference script.
 
@@ -941,7 +944,7 @@ root = MerkleRoot(leaf[0], leaf[1], ..., leaf[56])
 2. Execute operation per algorithms in this RFC
 3. Serialize result using canonical format
 4. Compute leaf hash: SHA256(leaf_input)
-5. Build Merkle tree from 62 leaves
+5. Build Merkle tree from 63 leaves
 6. Verify root matches published Merkle root
 
 > **Probe Indexing:** All probe entries are zero-indexed [0..61]. Entry 59 refers to the 60th entry.

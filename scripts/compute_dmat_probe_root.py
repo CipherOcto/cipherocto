@@ -351,6 +351,13 @@ PROBE_ENTRIES = [
      mat(2, 2, TRAP, dqa(1, 0), dqa(2, 0), dqa(3, 0)),        # A: TRAP at [0][0]
      mat(2, 2, dqa(4, 0), dqa(5, 0), dqa(6, 0), dqa(7, 0)),  # B: all valid
      mat(2, 2, TRAP, TRAP, TRAP, TRAP)),                        # Result: all TRAP
+
+    # Entry 62: TRAP at last index [1][1] — forces full traversal past first element
+    # Ensures traversal continues to last index, not just prefix scan
+    (OP_MAT_ADD, TYPE_DQA,
+     mat(2, 2, dqa(1, 0), dqa(2, 0), dqa(3, 0), TRAP),        # A: TRAP at [1][1] (last)
+     mat(2, 2, dqa(4, 0), dqa(5, 0), dqa(6, 0), dqa(7, 0)),  # B: all valid
+     mat(2, 2, TRAP, TRAP, TRAP, TRAP)),                        # Result: all TRAP
 ]
 
 def compute_probe_root() -> str:

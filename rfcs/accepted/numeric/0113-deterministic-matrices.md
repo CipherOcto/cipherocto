@@ -2,7 +2,7 @@
 
 ## Status
 
-**Version:** 1.9 (2026-03-18)
+**Version:** 1.11 (2026-03-19)
 **Status:** Accepted
 **NUMERIC_SPEC_VERSION:** 1 (per RFC-0110 §Spec Version & Replay Pinning)
 
@@ -11,6 +11,18 @@
 > on existing numeric types without modifying their encoding, arithmetic, or TRAP semantics.
 
 > **Note:** This RFC is extracted from RFC-0106 (Deterministic Numeric Tower) as part of the Track B dismantling effort.
+
+> **Adversarial Review v1.11 Changes (Round 11):**
+
+> - CRIT-1: Fixed stale gas examples table values
+> - MED-1: Added cross-matrix scale check to MAT_ADD/MAT_SUB Phase 2; replaced entry 2 with cross-scale TRAP test
+> - LOW-1: Removed empty code fence in Appendix B
+
+> **Adversarial Review v1.10 Changes (Round 10):**
+
+> - CRIT-1: Removed duplicate probe entry table; script is canonical reference
+> - MED-1: Fixed gas formulas for MAT_ADD/SUB (10×M×N) and MAT_SCALE (per RFC-0105 MUL cost)
+> - LOW-1: Clarified scale derivation comment
 
 > **Adversarial Review v1.9 Changes (Round 8 - CRITICAL/HIGH fixes):**
 >
@@ -175,7 +187,7 @@ For MAT_MUL where A is M×K with scale s_a, and B is K×N with scale s_b:
 
 - Each dot product element C[i][j] = sum(A[i][k] * B[k][j] for k in 0..K)
 - Per RFC-0105 MUL: scale(product) = s_a + s_b
-- Per RFC-0105 ADD: scale(sum) = max(s_a + s_b for all products)
+- Per RFC-0105 ADD: scale(sum) = s_a + s_b (all K products have equal scale, so max is trivially s_a + s_b)
 - For DQA: s_a + s_b <= 18 required (MAX_SCALE constraint)
 - For Decimal: s_a + s_b <= 36 required
 
@@ -244,6 +256,8 @@ For i in 0..a.rows:
   For j in 0..a.cols:
     if a.data[i * a.cols + j].scale() != a.data[0].scale(): TRAP(SCALE_MISMATCH)
     if b.data[i * b.cols + j].scale() != b.data[0].scale(): TRAP(SCALE_MISMATCH)
+// Cross-matrix scale check:
+if a.data[0].scale() != b.data[0].scale(): TRAP(SCALE_MISMATCH)
 ```
 
 **Phase 3: Compute**
@@ -301,6 +315,8 @@ For i in 0..a.rows:
   For j in 0..a.cols:
     if a.data[i * a.cols + j].scale() != a.data[0].scale(): TRAP(SCALE_MISMATCH)
     if b.data[i * b.cols + j].scale() != b.data[0].scale(): TRAP(SCALE_MISMATCH)
+// Cross-matrix scale check:
+if a.data[0].scale() != b.data[0].scale(): TRAP(SCALE_MISMATCH)
 ```
 
 **Phase 3: Compute**
@@ -604,14 +620,14 @@ Gas derivation follows RFC-0105 where:
 
 ### Per-Operation Gas
 
-| Operation     | Type        | Formula                                   | Derivation                                                   |
-| ------------- | ----------- | ----------------------------------------- | ------------------------------------------------------------ |
-| MAT_ADD       | DQA/Decimal | `5 × M × N`                              | M×N element ADD operations                                   |
-| MAT_SUB       | DQA/Decimal | `5 × M × N`                              | M×N element SUB operations                                   |
-| MAT_MUL       | DQA/Decimal | `M × N × K × (30 + 3 × s_a × s_b)`       | Per MAC: DQA MUL (20 + 3×s_a×s_b) + DQA ADD (10)           |
-| MAT_VEC_MUL   | DQA/Decimal | `rows × cols × (30 + 3 × s_a × s_v)`     | rows dot products, each cols elements                        |
-| MAT_TRANSPOSE | DQA/Decimal | `2 × M × N`                              | M×N element copies                                           |
-| MAT_SCALE     | DQA/Decimal | `5 × M × N`                              | M×N element MUL operations                                   |
+| Operation     | Type        | Formula                                              | Derivation                                                         |
+| ------------- | ----------- | ---------------------------------------------------- | ------------------------------------------------------------------ |
+| MAT_ADD       | DQA/Decimal | `10 × M × N`                                         | M×N × RFC-0105 ADD (10 gas flat)                                 |
+| MAT_SUB       | DQA/Decimal | `10 × M × N`                                         | M×N × RFC-0105 SUB (10 gas flat)                                 |
+| MAT_MUL       | DQA/Decimal | `M × N × K × (30 + 3 × s_a × s_b)`                  | Per MAC: DQA MUL (20 + 3×s_a×s_b) + DQA ADD (10)                 |
+| MAT_VEC_MUL   | DQA/Decimal | `rows × cols × (30 + 3 × s_a × s_v)`                | rows dot products, each cols elements                              |
+| MAT_TRANSPOSE | DQA/Decimal | `2 × M × N`                                         | M×N element copies                                                |
+| MAT_SCALE     | DQA/Decimal | `M × N × (20 + 3 × s_a × s_scalar)`                 | M×N × RFC-0105 MUL (20 + 3×s_a×s_scalar)                         |
 
 Where `s_a` is the scale of matrix A and `s_b` is the scale of matrix B (for MAT_MUL), or `s_v` is the scale of vector V (for MAT_VEC_MUL).
 
@@ -630,11 +646,11 @@ See RFC-0112 §Gas Model for derivation.
 
 | Operation     | Dimensions | Gas |
 | ------------- | ---------- | --- |
-| MAT_ADD       | 8×8        | 320 |
-| MAT_MUL       | 4×4 × 4×4  | 640 |
-| MAT_VEC_MUL   | 4×4 × 4    | 160 |
-| MAT_TRANSPOSE | 8×8        | 128 |
-| MAT_SCALE     | 8×8        | 320 |
+| MAT_ADD       | 8×8        | 640  |
+| MAT_MUL       | 4×4 × 4×4  | 1920 |
+| MAT_VEC_MUL   | 4×4 × 4    | 480  |
+| MAT_TRANSPOSE | 8×8        | 128  |
+| MAT_SCALE     | 8×8        | 1280 |
 
 ### Per-Block Budget (MED-8 fix)
 
@@ -750,71 +766,13 @@ TRAP = { mantissa: 0x8000000000000000 (i64 min), scale: 0xFF }
 
 ### Published Merkle Root
 
-> **Merkle Root:** `9e388a316c91d8aeb1901f27bba1f7fa288c95afa3f19192299b84437d9be185` (v1.9 - Round 8 CRITICAL/HIGH fixes)
+> **Merkle Root:** `d69f3e2ecafd6adf0fd564f36348d5f7588052cea9677e2a7a4c1ade91885626` (v1.11 - Round 11 fixes)
 
 ### Probe Entry Details
 
-| Entry | Operation     | Type    | Input A                       | Input B                       | Expected                          |
-| ----- | ------------- | ------- | ----------------------------- | ----------------------------- | --------------------------------- |
-| 0     | MAT_ADD       | DQA     | [[1,2],[3,4]]                 | [[5,6],[7,8]]                 | [[6,8],[10,12]]                   |
-| 1     | MAT_MUL       | DQA     | [[1,0],[0,1]]                 | [[2,3],[4,5]]                 | [[2,3],[4,5]]                     |
-| 2     | MAT_MUL       | DQA     | [[1,2],[3,4]]                 | [[5,6],[7,8]]                 | [[19,22],[43,50]]                 |
-| 3     | MAT_VEC_MUL   | DQA     | [[1,2],[3,4]]                 | [1,1]                         | [3,7]                             |
-| 4     | MAT_TRANSPOSE | DQA     | [[1,2],[3,4]]                 | -                             | [[1,3],[2,4]]                     |
-| 5     | MAT_SCALE     | DQA     | [[1,2],[3,4]]                 | scalar=2                      | [[2,4],[6,8]]                     |
-| 6     | MAT_ADD       | Decimal | [[1,2],[3,4]]                 | [[5,6],[7,8]]                 | [[6,8],[10,12]]                   |
-| 7     | MAT_MUL       | Decimal | [[1,0],[0,1]]                 | [[2,3],[4,5]]                 | [[2,3],[4,5]]                     |
-| 8     | MAT_MUL       | Decimal | [[1,2],[3,4]]                 | [[5,6],[7,8]]                 | [[19,22],[43,50]]                 |
-| 9     | MAT_ADD       | DQA     | [[0,0],[0,0]]                 | [[1,2],[3,4]]                 | [[1,2],[3,4]]                     |
-| 10    | MAT_SUB       | DQA     | [[5,6],[7,8]]                 | [[1,2],[3,4]]                 | [[4,4],[4,4]]                     |
-| 11    | MAT_VEC_MUL   | Decimal | [[1,2],[3,4]]                 | [1,1]                         | [3,7]                             |
-| 12    | MAT_TRANSPOSE | Decimal | [[1,2],[3,4]]                 | -                             | [[1,3],[2,4]]                     |
-| 13    | MAT_SCALE     | Decimal | [[1,2],[3,4]]                 | scalar=2                      | [[2,4],[6,8]]                     |
-| 14    | MAT_MUL       | DQA     | [[1,2,3],[4,5,6]] (2×3)       | [[1,2],[3,4],[5,6]] (3×2)       | [[22,28],[49,64]] (2×2) (MED-3) |
-| 15    | MAT_MUL       | DQA     | [[1,0,0,0],[0,1,0,0]] (2×4) | [[1,2],[3,4],[5,6],[7,8]] (4×2) | [[1,2],[3,4]] (2×2) (MED-3) |
-| 16    | MAT_MUL       | DQA     | [[10,20]]                     | [[3],[4]]                     | [[110]]                           |
-| 17    | MAT_MUL       | DQA     | [[3],[4]]                     | [[10,20]]                     | [[30,60],[40,80]]                 |
-| 18    | MAT_MUL       | DQA     | [[1],[2],[3]]                 | [[1,2,3]]                     | [[1,2,3],[2,4,6],[3,6,9]]         |
-| 19    | MAT_MUL       | DQA     | [[5,5],[5,5]]                 | [[5,5],[5,5]]                 | [[50,50],[50,50]]                 |
-| 20    | MAT_VEC_MUL   | DQA     | [[1,2],[3,4]]                 | [1,1]                         | [3,7]                             |
-| 21    | MAT_VEC_MUL   | DQA     | [[1,0,0],[0,1,0]]             | [1,2,3]                       | [1,2]                             |
-| 22    | MAT_VEC_MUL   | DQA     | [[1,2,3],[4,5,6],[7,8,9]]     | [1,1,1]                       | [6,15,24] (CRIT-1)               |
-| 23    | MAT_VEC_MUL   | DQA     | [[2,4,6,8]] (1×4)            | [2] (1)                        | TRAP (DIMENSION_MISMATCH) (MED-1) |
-| 24    | MAT_VEC_MUL   | DQA     | [[1,2,3,4]] (1×4)            | [1,2,3,4] (4)                 | [30] (MED-2)                     |
-| 25    | MAT_TRANSPOSE | DQA     | [[1,2],[3,4]]                 | -                             | [[1,3],[2,4]]                     |
-| 26    | MAT_TRANSPOSE | DQA     | [[1,2,3]]                     | -                             | [[1],[2],[3]]                     |
-| 27    | MAT_TRANSPOSE | DQA     | [[1],[2],[3]]                 | -                             | [[1,2,3]]                         |
-| 28    | MAT_TRANSPOSE | DQA     | [[1,2,3],[4,5,6]]             | -                             | [[1,4],[2,5],[3,6]]               |
-| 29    | MAT_TRANSPOSE | DQA     | [[1,2],[3,4],[5,6],[7,8]]     | -                             | [[1,3,5,7],[2,4,6,8]]             |
-| 30    | MAT_SCALE     | DQA     | [[1,2],[3,4]]                 | scalar=2                      | [[2,4],[6,8]]                     |
-| 31    | MAT_SCALE     | DQA     | [[1,1],[1,1]]                 | scalar=0                      | [[0,0],[0,0]]                     |
-| 32    | MAT_SCALE     | DQA     | [[5,5],[5,5],[5,5]]           | scalar=3                      | [[15,15],[15,15],[15,15]]         |
-| 33    | MAT_SCALE     | DQA     | [[10,20,30,40]]               | scalar=2                      | [[20,40,60,80]]                   |
-| 34    | MAT_SCALE     | DQA     | [[3],[3],[3],[3]]             | scalar=3                      | [[9],[9],[9],[9]]                 |
-| 35    | MAT_ADD       | Decimal | [[1,2],[3,4]]                 | [[5,6],[7,8]]                 | [[6,8],[10,12]]                   |
-| 36    | MAT_SUB       | Decimal | [[5,6],[7,8]]                 | [[1,2],[3,4]]                 | [[4,4],[4,4]]                     |
-| 37    | MAT_MUL       | Decimal | [[1,0],[0,1]]                 | [[2,3],[4,5]]                 | [[2,3],[4,5]]                     |
-| 38    | MAT_MUL       | Decimal | [[1,2],[3,4]]                 | [[5,6],[7,8]]                 | [[19,22],[43,50]]                 |
-| 39    | MAT_VEC_MUL   | Decimal | [[1,2],[3,4]]                 | [1,1]                         | [3,7]                             |
-| 40    | MAT_VEC_MUL   | Decimal | [[1,2,3],[4,5,6],[7,8,9]]     | [1,1,1]                       | [6,15,24] (CRIT-1)               |
-| 41    | MAT_TRANSPOSE | Decimal | [[1,2],[3,4]]                 | -                             | [[1,3],[2,4]]                     |
-| 42    | MAT_SCALE     | Decimal | [[1,2],[3,4]]                 | scalar=2                      | [[2,4],[6,8]]                     |
-| 43    | MAT_ADD       | Decimal | [[10,20],[30,40]]             | [[1,2],[3,4]]                 | [[11,22],[33,44]]                 |
-| 44    | MAT_SUB       | Decimal | [[100,200],[300,400]]         | [[10,20],[30,40]]             | [[90,180],[270,360]]              |
-| 45    | MAT_MUL       | Decimal | [[1,2,3]]                     | [[1],[2],[3]]                 | [[14]]                            |
-| 46    | MAT_MUL       | Decimal | [[1,2],[3,4],[5,6]] (3×2)       | [[1,2,3],[4,5,6]] (2×3)       | [[9,12,15],[19,26,33],[29,40,51]] |
-| 47    | MAT_SCALE     | Decimal | [[10,20,30,40]]               | scalar=3                      | [[30,60,90,120]]                  |
-| 48    | MAT_MUL       | DQA     | 9×9 empty                     | 9×9 empty                     | TRAP (DIMENSION_ERROR)            |
-| 49    | MAT_MUL       | DQA     | 2×3                           | 2×3                           | TRAP (DIMENSION_MISMATCH)         |
-| 50    | MAT_ADD       | DQA     | 2×2                           | 2×3                           | TRAP (DIMENSION_MISMATCH)         |
-| 51    | MAT_VEC_MUL   | DQA     | 2×3                           | [1,2]                         | TRAP (DIMENSION_MISMATCH)         |
-| 52    | MAT_MUL       | DQA     | [[2^31,2^31],[2^31,2^31]]     | [[2^31,2^31],[2^31,2^31]]     | TRAP (OVERFLOW) (CRIT-2)           |
-| 53    | MAT_SCALE     | DQA     | [[9223372038×4]]              | scalar=10^9                   | TRAP (OVERFLOW) (CRIT-2)          |
-| 54    | MAT_ADD       | DQA     | [[1@scale10,2],[3,4]]         | [[5,6],[7,8]]                 | TRAP (SCALE_MISMATCH)             |
-| 55    | MAT_MUL       | DQA     | [[1@scale10,2@scale10],[3@scale10,4@scale10]] | [[1@scale10,2@scale10],[3@scale10,4@scale10]] | TRAP (INVALID_SCALE) (MED-1) |
-| 56    | MAT_ADD       | DQA     | [TRAP]                        | [0]                           | TRAP (propagated)                 |
-
-> **Note:** Full 57 entries required per RFC-0110/NUMERIC_SPEC conventions.
+> **Canonical Reference:** The script `scripts/compute_dmat_probe_root.py` is the authoritative source for all 57 probe entries. The Merkle root above is computed from this script.
+>
+> See §Appendix B for the reference script.
 
 ## Serialization Format
 
@@ -965,7 +923,3 @@ Encoding: 24-byte canonical format per RFC-0111 §Canonical Byte Format.
 Run with: `python3 scripts/compute_dmat_probe_root.py`
 
 > **Note:** The canonical reference is the script file. This RFC takes precedence over embedded descriptions.
-
-```
-
-```

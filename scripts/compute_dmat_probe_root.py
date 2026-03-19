@@ -139,9 +139,10 @@ PROBE_ENTRIES = [
     (OP_MAT_ADD, TYPE_DQA, mat(1, 2, dqa(1), dqa(2)),
                         mat(1, 2, dqa(3), dqa(4)),
                         mat(1, 2, dqa(4), dqa(6))),
-    (OP_MAT_ADD, TYPE_DQA, mat(2, 2, dqa(0), dqa(0), dqa(0), dqa(0)),
-                        mat(2, 2, dqa(1), dqa(2), dqa(3), dqa(4)),
-                        mat(2, 2, dqa(1), dqa(2), dqa(3), dqa(4))),
+    # MED-1: Cross-matrix scale TRAP test — a has scale=5, b has scale=10
+    (OP_MAT_ADD, TYPE_DQA, mat(2, 2, dqa(1, 5), dqa(2, 5), dqa(3, 5), dqa(4, 5)),
+                        mat(2, 2, dqa(5, 10), dqa(6, 10), dqa(7, 10), dqa(8, 10)),
+                        mat(2, 2, TRAP, TRAP, TRAP, TRAP)),  # SCALE_MISMATCH
     (OP_MAT_ADD, TYPE_DQA, mat(2, 2, dqa(10), dqa(20), dqa(30), dqa(40)),
                         mat(2, 2, dqa(1), dqa(2), dqa(3), dqa(4)),
                         mat(2, 2, dqa(11), dqa(22), dqa(33), dqa(44))),

@@ -2,7 +2,7 @@
 
 ## Status
 
-**Version:** 1.14 (2026-03-19)
+**Version:** 1.15 (2026-03-19)
 **Status:** Accepted
 **NUMERIC_SPEC_VERSION:** 1 (per RFC-0110 §Spec Version & Replay Pinning)
 
@@ -11,6 +11,10 @@
 > on existing numeric types without modifying their encoding, arithmetic, or TRAP semantics.
 
 > **Note:** This RFC is extracted from RFC-0106 (Deterministic Numeric Tower) as part of the Track B dismantling effort.
+
+> **Adversarial Review v1.15 Changes (Round 16):**
+>
+> - CRITICAL-2: Standardize TRAP sentinel to `-(1 << 63)` (signed int) in RFC text, matching RFC-0111 and probe script
 
 > **Adversarial Review v1.14 Changes (Round 14 - Final):**
 >
@@ -790,7 +794,7 @@ Where:
 
 ```
 
-TRAP = { mantissa: 0x8000000000000000 (i64 min), scale: 0xFF }
+TRAP = { mantissa: -(1 << 63), scale: 0xFF }  # i64::MIN as signed integer
 
 ```
 
@@ -918,7 +922,7 @@ When multiple error conditions exist in a single operation:
 
 ```
 
-TRAP = { mantissa: 0x8000000000000000 (i64 min), scale: 0xFF }
+TRAP = { mantissa: -(1 << 63), scale: 0xFF }  # i64::MIN as signed integer
 
 ```
 

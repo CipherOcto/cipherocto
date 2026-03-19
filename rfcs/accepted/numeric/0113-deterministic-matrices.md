@@ -2,7 +2,7 @@
 
 ## Status
 
-**Version:** 1.12 (2026-03-19)
+**Version:** 1.13 (2026-03-19)
 **Status:** Accepted
 **NUMERIC_SPEC_VERSION:** 1 (per RFC-0110 §Spec Version & Replay Pinning)
 
@@ -11,6 +11,10 @@
 > on existing numeric types without modifying their encoding, arithmetic, or TRAP semantics.
 
 > **Note:** This RFC is extracted from RFC-0106 (Deterministic Numeric Tower) as part of the Track B dismantling effort.
+
+> **Adversarial Review v1.13 Changes (Round 13 - Final):**
+>
+> - HIGH-NEW-FINAL-1: Fixed MAT_VEC_MUL Phase 3 to validate vector internal uniformity only. Removed incorrect cross-scale check against matrix scale. Mixed-scale multiplication now works correctly.
 
 > **Adversarial Review v1.12 Changes (Round 12 - CRIT/HIGH/MED fixes):**
 >
@@ -467,12 +471,14 @@ For i in 0..a.rows:
     if a.data[i * a.cols + j].scale() != a.data[0].scale(): TRAP(SCALE_MISMATCH)
 ```
 
-**Phase 3: Validate vector element scales (CRIT-3: SCALE_MISMATCH before INVALID_SCALE)**
+**Phase 3: Validate vector element scales (HIGH-NEW-FINAL-1: internal uniformity only)**
 
 ```
 For j in 0..v.len:
-  if v[j].scale() != a.data[0].scale(): TRAP(SCALE_MISMATCH)
+  if v[j].scale() != v[0].scale(): TRAP(SCALE_MISMATCH)
 ```
+
+> **Note (HIGH-NEW-FINAL-1):** Phase 3 validates internal uniformity of vector `v` only. Unlike the previous version, it does NOT require `v.scale() == a.scale()`. Mixed-scale multiplication is allowed: result_scale = a.scale() + v.scale() per RFC-0105 MUL semantics. Matrix scale validation remains in Phase 2.
 
 **Phase 4: Validate result scale (CRIT-3: INVALID_SCALE after SCALE_MISMATCH)**
 

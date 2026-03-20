@@ -182,7 +182,11 @@ def serialize_trap_numeric() -> bytes:
     result += bytes([0xFF])
     # reserved = 3 bytes zero
     result += bytes([0, 0, 0])
-    # mantissa = i128::MIN in big-endian (16 bytes)
+    # mantissa = RFC-0112 defines TRAP as i64::MIN (0x8000000000000000) in lower 8 bytes
+    # For the 24-byte probe format, i64::MIN is zero-extended to 16 bytes:
+    #   i64::MIN (8 bytes) = 0x8000000000000000
+    #   zero-extended to 16 bytes = 0x00000000000000008000000000000000
+    # The probe encoding stores this as: [reserved:3][mantissa:16] = 19 bytes total
     result += (0x80000000000000000000000000000000).to_bytes(16, byteorder='big', signed=False)
     return result
 

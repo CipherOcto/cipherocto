@@ -2,10 +2,10 @@
 
 ## Status
 
-**Version:** 2.0
+**Version:** 2.1
 **Status:** Draft
 **Submission Date:** 2026-03-10
-**Adversarial Review Response:** v1.0 received comprehensive adversarial audit. This v2.0 incorporates all ACCEPTED fixes (see Rebuttal section for design decisions).
+**Adversarial Review Response:** v2.0 received second adversarial audit. This v2.1 is a surgical patch fixing 5 critical edge-condition determinism leaks identified in final adjudication (see Rebuttal Summary for valid rebuttals).
 
 > **Note:** This RFC was renumbered from RFC-0148 to RFC-0109 as part of the category-based numbering system.
 
@@ -94,7 +94,7 @@ struct DMat<T, const M: usize, const N: usize> {
 
 Storage layout: row-major
 Index calculation: `index = row * N + column`
-Maximum dimension: `MAX_MATRIX_DIM = 512`
+Consensus dimension limits are defined in the Consensus Limits section below.
 
 ### Execution Error Enum
 
@@ -116,7 +116,17 @@ pub enum ExecutionError {
 }
 ```
 
-**TRAP Sentinel:** Any sub-operation returning TRAP → entire operation TRAP immediately. No partial execution permitted. See Composite TRAP Propagation Rule below.
+**Canonical Encoding** (for serialization, hashing, cross-language reproducibility):
+
+| Variant            | Encoding |
+| ------------------ | -------- |
+| DimensionMismatch  | `0x01`   |
+| InvalidScale       | `0x02`   |
+| DivisionByZero     | `0x03`   |
+| Overflow           | `0x04`   |
+| TrapInput          | `0x05`   |
+
+> **SERIALIZATION**: ExecutionError is serialized as a single byte (`0x01`–`0x05`). When embedded in a TRAP result, it is appended after the TRAP sentinel byte. Ordering is significant: lower encoding = earlier variant in enum definition.
 
 ### Deterministic Reduction Rule
 
@@ -186,12 +196,11 @@ return acc
 
 Reduction order MUST be strictly sequential.
 
-#### Overflow Safety
+#### Overflow Handling
 
-For DQA elements:
+> ⚠️ **OVERFLOW RULE**: All arithmetic MUST use underlying `NumericScalar` operations as defined in RFC-0105. Custom accumulator widening is **FORBIDDEN** unless explicitly defined in RFC-0105.
 
-- Intermediate multiplication → i128 accumulator
-- Final result converted back to DQA with deterministic rounding
+Overflow behavior (including i128 accumulator widening if permitted) is governed entirely by RFC-0105. Any overflow MUST return `ExecutionError::Overflow` per RFC-0105 semantics.
 
 ### Distance Metrics
 
@@ -301,7 +310,7 @@ y = DVecAdd(y, b)
 
 > ⚠️ **ACTIVATION PHASE-BOUND**: Activation MUST execute after full linear computation completes. No interleaving or fusion allowed.
 
-Activations MUST use deterministic LUTs from RFC-0106.
+Activations MUST use deterministic LUTs from RFC-0114 (Activation Functions).
 
 Supported:
 
@@ -333,7 +342,7 @@ Using squared distance avoids sqrt cost.
 
 Must be deterministic.
 
-Canonical algorithm: partial insertion sort
+Canonical algorithm: **stable partial insertion sort only**
 
 ```
 for each element:
@@ -341,7 +350,7 @@ for each element:
     truncate to K
 ```
 
-Heaps may be used only if deterministic ordering is preserved.
+> ⚠️ **HEAP PROHIBITION**: Heaps (binary, Fibonacci, or any heap variant) are **FORBIDDEN in consensus paths**. Heaps have implementation-dependent behavior under equal keys and are not stable sort algorithms. Only stable insertion sort is consensus-safe.
 
 **Tie-break rule:**
 
@@ -357,6 +366,8 @@ compare(a, b):
 ```
 
 Any heap or sorting implementation MUST preserve this total ordering. Non-stable sorts MUST NOT be used.
+
+> **TOP-K RESULT BUFFER**: The result buffer MUST be a fixed-size structure of exactly K elements. Memory allocation MUST NOT depend on input size beyond K.
 
 ## Performance Targets
 
@@ -378,22 +389,31 @@ Operations have deterministic gas costs:
 | Vector add  | N × GAS_DQA_ADD                                       | 64 × 5 = 320        |
 | Vector sub  | N × GAS_DQA_ADD                                       | 64 × 5 = 320        |
 | Dot product | N × (GAS_DQA_MUL + GAS_DQA_ADD)                       | 64 × 13 = 832       |
-| L2Squared   | 2N × GAS_DQA_MUL + (2N-1) × GAS_DQA_ADD               | 64 × 21 = 1344      |
+| L2Squared   | N × (GAS_DQA_MUL + 2 × GAS_DQA_ADD)                   | 64 × 15 = 960       |
 | Matrix mul  | M × N × K × GAS_DQA_MUL + M × N × (K-1) × GAS_DQA_ADD | 8×8×8×8 = 4096 base |
+
+> **L2Squared derivation**: Per element: 1 SUB + 1 MUL + 1 ADD for accumulation = 1 MUL + 2 ADD per element. Total: N × (MUL + 2×ADD).
 
 Gas constants are defined in RFC-0106 (DVEC/DMAT gas formulas). Any discrepancy between this table and RFC-0106 should be resolved in favor of RFC-0106 as the authoritative source.
 
 ## SIMD Execution
 
-> ⚠️ **SIMD DETERMINISM RULE**: SIMD may be used only if output is identical to scalar execution.
+> ⚠️ **SIMD ALLOWANCE RULE**: SIMD is **FORBIDDEN** unless ALL of the following conditions are met:
 
-SIMD must preserve:
+**Permitted SIMD conditions (ALL must be true):**
 
-- Reduction order
-- Rounding semantics
-- Overflow behavior
+1. **Lane independence**: Each lane computes a scalar operation on independent data elements
+2. **No horizontal reduction**: No SIMD instruction computes cross-lane reduction (e.g., horizontal sum, horizontal min)
+3. **Canonical accumulation order**: Final scalar accumulation (if any) is performed in strict left-to-right order using scalar operations
 
-Otherwise the scalar reference implementation must be used.
+**Forbidden SIMD patterns:**
+
+- SIMD horizontal adds/mins/maxes
+- Tree reductions implemented in SIMD
+- Fused operations that change numerical results
+- Any SIMD that could reorder associative operations
+
+**Compliance**: If any condition cannot be met, the scalar reference implementation MUST be used. "Identical output" claims without specifying these conditions are not enforceable and constitute a consensus violation.
 
 ## Global Scale Policy Layer
 
@@ -404,10 +424,12 @@ Otherwise the scalar reference implementation must be used.
 | Operation   | Scale Policy | Enforcement |
 | ----------- | ------------ | ----------- |
 | Dot Product | STRICT       | Scale factors MUST match exactly; mismatch → `ExecutionError::InvalidScale` |
-| MatMul      | DEFERRED     | Scale validation deferred until after computation; result inherits output scale |
-| MatVec      | DEFERRED     | Scale validation deferred until after computation |
+| MatMul      | DEFERRED     | Scale validation deferred until after computation; result inherits output scale. **Post-computation**: if result violates scalar constraints (RFC-0105), return `ExecutionError::InvalidScale` |
+| MatVec      | DEFERRED     | Scale validation deferred until after computation. **Post-computation**: if result violates scalar constraints (RFC-0105), return `ExecutionError::InvalidScale` |
 | Cosine      | STRICT       | Scale factors MUST match exactly; mismatch → `ExecutionError::InvalidScale` |
 | Distance (L2, L2Squared) | STRICT | Scale factors MUST match exactly; mismatch → `ExecutionError::InvalidScale` |
+
+> **DEFERRED SCALE RULE**: For MatMul and MatVec, execution proceeds without intermediate scale validation. AFTER computation completes, the result is validated against scalar constraints defined in RFC-0105. If constraints are violated, `ExecutionError::InvalidScale` is returned. Intermediate overflow during DEFERRED operations MUST follow RFC-0105 overflow rules.
 
 ### Trait Authority Rule
 
@@ -419,12 +441,15 @@ Otherwise the scalar reference implementation must be used.
 
 ### Composite TRAP Propagation Rule
 
-> ⚠️ **TRAP PROPAGATION**: Any sub-operation returning TRAP → entire operation TRAP immediately.
+> ⚠️ **STRICT HALT MODEL** (chosen over two-phase model for simplicity and enforceability):
 
-- No partial execution permitted
-- All loops MUST iterate full bounds even if TRAP discovered at Phase 0
-- No early-exit allowed
-- Example: If `MatMul` detects overflow at element `[i,j]`, the entire `MatMul` TRAPs, not just that element
+- ANY TRAP condition detected → **immediate halt**
+- All loops MUST terminate immediately upon TRAP detection
+- No further iteration allowed after TRAP
+- No observable state mutation after TRAP point
+- Example: If `MatMul` detects overflow at element `[i,j]`, the entire `MatMul` TRAPs immediately; no remaining elements are computed
+
+**Input validation (Phase 0)**: Dimension checks, scale compatibility, and zero-vector pre-checks MUST be performed before any computation begins. If validation fails, operation TRAPs before any loop executes.
 
 ### Mandatory Canonicalization Rule
 
@@ -619,23 +644,39 @@ See Global Scale Policy Layer for scale validation rules.
 
 ---
 
-**Version:** 2.0
+**Version:** 2.1
 **Submission Date:** 2026-03-10
 **Changes:**
 
 - v1.0: Initial draft for DLAE specification
 - v2.0: Adversarial review response — incorporated all ACCEPTED fixes (CRIT-1 through CRIT-X5, HIGH-1 through HIGH-4, MED-1 through MED-4, MED-X1, MED-X2)
+- v2.1: **Surgical patch** — fixed 5 critical edge-condition determinism leaks + HIGH/MED issues:
+  - CRIT-R1: Resolved TRAP contradiction (STRICT HALT MODEL)
+  - CRIT-R2: Defined DEFERRED scale post-computation validation
+  - CRIT-R3: Added canonical ExecutionError encoding (0x01–0x05)
+  - CRIT-R4: Replaced vague SIMD rule with enforceable conditions
+  - HIGH-R1: Fixed L2Squared gas formula (was incorrectly 2N×MUL+(2N-1)×ADD, now N×(MUL+2×ADD))
+  - HIGH-R2: FORBIDDEN heaps in consensus paths (only stable insertion sort)
+  - HIGH-R3: Overflow handling now references RFC-0105 instead of local redefinition
+  - MED-R1: Fixed activation reference (RFC-0114, not RFC-0106)
+  - MED-R2: Removed duplicate MAX_MATRIX_DIM = 512
+  - MED-R3: Added Top-K result buffer size bound
 
-## Rebuttal Summary
+## Rebuttal Summary (v2.0) and Adjudication (v2.1)
 
-The following issues were reviewed and deemed **out of scope** or **design decisions**:
+### Rebuttals Upheld (v2.0)
 
 | ID | Issue | Rebuttal Rationale |
 |----|-------|-------------------|
-| CRIT-X4 | Unified Numeric Probe Root | Meta-architectural decision requiring coordinated revision across all numeric RFCs. Future "Unified Numeric Execution Contract RFC" can address when RFC-0126, RFC-0109, and probe verification are stable. |
-| HIGH-X4 | Probe Ecosystem Fragmentation | Same as CRIT-X4. Each probe verifies its own domain. |
 | HIGH-X1 | Reduction Order vs DMAT Loop Flexibility | DMAT's loop structure is specified. Any compiler reordering that preserves lexical i→j→k order is compliant. Issue is against DMAT, not DLAE. |
 | HIGH-X2 | ANN Determinism Not Fully Aligned | ANN is DLAE's domain. The tie-break rule (distance, vector_id) is already specified in DLAE. |
 | LOW-1, LOW-2, LOW-3 | Missing algebraic properties, complexity guarantees, reference implementation | Informational additions. Do not affect consensus safety or determinism. |
 
-**Proposed Path Forward for CRIT-X4/HIGH-X4**: Future meta-RFC addressing unified numeric execution contracts when all related RFCs (RFC-0126, RFC-0109, RFC-0113, probe verification) are stable.
+### Adjudication Updates (v2.1)
+
+| ID | Original Position | Reviewer Finding | v2.1 Action |
+|----|-------------------|------------------|-------------|
+| CRIT-X4 | Out of scope | Strategically wrong (not a blocker) | **Not addressed** — future meta-RFC acknowledged as needed but outside DLAE scope |
+| HIGH-X4 | Same as CRIT-X4 | Same as CRIT-X4 | **Not addressed** — same as above |
+
+**Path Forward for CRIT-X4/HIGH-X4**: Future "Unified Numeric Execution Contract RFC" (meta-RFC) addressing probe root unification when all related RFCs (RFC-0126, RFC-0109, RFC-0113, probe verification) are stable. This is a legitimate architectural gap but not a DLAE-specific issue.

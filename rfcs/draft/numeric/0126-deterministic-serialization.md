@@ -571,9 +571,7 @@ root = MerkleRoot(leaf_0, leaf_1, ..., leaf_14)
 | 11 | TRAP | Bool (1-byte) | Invalid bool `0xFF` | `0xFF` (TRAP sentinel) |
 | 12 | I128 | Positive | `42` | 16 bytes big-endian |
 | 13 | I128 | Negative | `-42` | 16 bytes big-endian |
-| 14 | (reserved) | Future extension | `0x00` | Future extension placeholder |
-
-**Entry 14 Reserved:** Entry 14 is reserved for future extensions (e.g., BIGINT support if needed). The reserved entry MUST serialize as a single `0x00` byte to maintain deterministic ordering. BIGINT is currently out of scope for DCS but may be added in a future RFC revision.
+| 14 | BIGINT | Positive | `42` | RFC-0110 BigIntEncoding (16 bytes) |
 
 **Note:** Entry 4 (DMAT column-major) was removed because serialization output is indistinguishable for valid row-major input. DMAT input validation ensures data is stored row-major per RFC-0113.
 
@@ -600,7 +598,7 @@ fn merkle_root(leaves: Vec<[u8; 32]>) -> [u8; 32] {
 }
 ```
 
-> **Published Merkle Root:** `a960865d48472a9f1e721c1e9a642e1cec9fd7f7c3caf0d3a18d481207ca5458`
+> **Published Merkle Root:** `9f0d9d982791e1bd4ca81a7cf1839e7fed4675449e4a2c75fba199f227cd41a3`
 
 #### Probe Entry Details
 
@@ -645,6 +643,13 @@ fn merkle_root(leaves: Vec<[u8; 32]>) -> [u8; 32] {
 - TRAP at validation, serialize TRAP sentinel
 - Serialize: `0xFF`
 
+**Entry 14: BIGINT Serialization (per RFC-0110)**
+- Input: `BigInt(42)`
+- Format: `[version:1][sign:1][reserved:2][num_limbs:1][reserved:3][limbs:n×8]`
+- BigInt(42) = limbs=[42], sign=false, num_limbs=1
+- Serialize: `0x01 || 0x00 || 0x00_00 || 0x01 || 0x00_00_00 || 0x00_00_00_00_00_00_00_2A`
+- Total: 16 bytes
+
 ### Cross-Language Determinism Guarantees
 
 To ensure identical serialization across implementations:
@@ -658,6 +663,7 @@ To ensure identical serialization across implementations:
 ### Implementation Checklist
 
 - [ ] Serialize primitives (u8, u32, i128, bool)
+- [ ] Serialize BIGINT with little-endian limbs (RFC-0110)
 - [ ] Serialize strings with UTF-8 validation
 - [ ] Serialize Option types
 - [ ] Serialize enums with tag dispatch
@@ -672,6 +678,7 @@ To ensure identical serialization across implementations:
 | RFC | Relationship |
 |-----|--------------|
 | RFC-0105 (DQA) | Canonicalization rules, TRAP sentinel |
+| RFC-0110 (BIGINT) | Integer structure, little-endian limbs, BigIntEncoding |
 | RFC-0112 (DVEC) | Vector structure, index ordering |
 | RFC-0113 (DMAT) | Matrix structure, row-major ordering |
 

@@ -31,6 +31,60 @@ def serialize_i128(v: int) -> bytes:
     return v.to_bytes(16, byteorder='big', signed=True)
 
 
+def serialize_bigint(value: int) -> bytes:
+    """
+    Serialize BIGINT per RFC-0110 BigIntEncoding.
+
+    Format: version(1) || sign(1) || reserved(2) || num_limbs(1) || reserved(3) || limbs(8*n bytes)
+    - version: 0x01
+    - sign: 0x00 (positive), 0xFF (negative)
+    - num_limbs: 1-64, number of u64 limbs
+    - limbs: little-endian u64 array, least significant limb first
+    - Canonical: no leading zero limbs, zero = [0] with sign=false
+    """
+    # Determine if negative
+    sign = value < 0
+    abs_value = abs(value)
+
+    # Convert to limbs (little-endian u64 array)
+    # We need to find how many limbs and their values
+    if abs_value == 0:
+        limbs = [0]
+    else:
+        limbs = []
+        remaining = abs_value
+        while remaining > 0:
+            limbs.append(remaining & 0xFFFFFFFFFFFFFFFF)  # Get lowest 64 bits
+            remaining >>= 64
+
+    # Strip leading zero limbs (canonical form)
+    while len(limbs) > 1 and limbs[-1] == 0:
+        limbs.pop()
+
+    # Build result
+    result = bytes([0x01])  # version
+    result += bytes([0xFF if sign else 0x00])  # sign
+    result += bytes([0, 0])  # reserved
+    result += bytes([len(limbs) & 0xFF])  # num_limbs
+    result += bytes([0, 0, 0])  # reserved
+
+    # Add limbs in little-endian order
+    for limb in limbs:
+        result += limb.to_bytes(8, byteorder='little')
+
+    return result
+
+
+def serialize_bigint_trap() -> bytes:
+    """
+    Serialize BIGINT TRAP sentinel per RFC-0110.
+
+    Uses 0xDEAD... pattern for TRAP entries in probe context.
+    12 bytes: 0xDEAD_DEAD_DEAD_DEAD_DEAD (little-endian u64 × 1.5)
+    """
+    return bytes([0xAD, 0xDE, 0xAD, 0xDE, 0xAD, 0xDE, 0xAD, 0xDE, 0xAD, 0xDE, 0xAD, 0xDE])
+
+
 def serialize_bool(v: bool) -> bytes:
     """Serialize bool: 0x00=false, 0x01=true."""
     return bytes([0x01 if v else 0x00])
@@ -277,9 +331,9 @@ def build_probe() -> List[bytes]:
     print(f"Entry 13: I128 negative (-42)")
     print(f"  Serialized: {entries[-1].hex()}")
 
-    # Entry 14: Reserved for future extension
-    entries.append(bytes([0x00]))  # Placeholder
-    print(f"Entry 14: (reserved)")
+    # Entry 14: BIGINT Positive (42) - RFC-0110 BigIntEncoding
+    entries.append(serialize_bigint(42))
+    print(f"Entry 14: BIGINT positive (42)")
     print(f"  Serialized: {entries[-1].hex()}")
 
     return entries
@@ -333,7 +387,7 @@ def main():
     print("=" * 70)
 
     # Verify against known root
-    EXPECTED_ROOT = "a960865d48472a9f1e721c1e9a642e1cec9fd7f7c3caf0d3a18d481207ca5458"
+    EXPECTED_ROOT = "9f0d9d982791e1bd4ca81a7cf1839e7fed4675449e4a2c75fba199f227cd41a3"
     assert root.hex() == EXPECTED_ROOT, f"Merkle root mismatch: got {root.hex()}"
     print(f"  ✓ Root matches EXPECTED_ROOT")
 

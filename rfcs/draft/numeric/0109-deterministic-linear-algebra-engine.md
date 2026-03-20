@@ -2,10 +2,10 @@
 
 ## Status
 
-**Version:** 2.1
+**Version:** 2.2
 **Status:** Draft
 **Submission Date:** 2026-03-10
-**Adversarial Review Response:** v2.0 received second adversarial audit. This v2.1 is a surgical patch fixing 5 critical edge-condition determinism leaks identified in final adjudication (see Rebuttal Summary for valid rebuttals).
+**Adversarial Review Response:** v2.1 passed consensus safety audit (GOLD- candidate). This v2.2 micro-patch addresses 6 remaining spec gaps for GOLD STANDARD certification (see Rebuttal Summary).
 
 > **Note:** This RFC was renumbered from RFC-0148 to RFC-0109 as part of the category-based numbering system.
 
@@ -127,6 +127,16 @@ pub enum ExecutionError {
 | TrapInput          | `0x05`   |
 
 > **SERIALIZATION**: ExecutionError is serialized as a single byte (`0x01`–`0x05`). When embedded in a TRAP result, it is appended after the TRAP sentinel byte. Ordering is significant: lower encoding = earlier variant in enum definition.
+
+> **TRAP ENCODING (CANONICAL)**: A TRAP result is encoded as:
+> ```
+> [16-byte DQA TRAP sentinel] + [1-byte error_code]
+> Total: 17 bytes
+> ```
+> - The 16-byte TRAP sentinel follows RFC-0105 DQA encoding (trap indicator in value field)
+> - The 1-byte error_code is one of `0x01`–`0x05` from the table above
+> - This layout ensures deterministic hashing and cross-language reproducibility
+> - Implementations MUST NOT use alternative layouts (e.g., structs, padding, or different byte orders)
 
 ### Deterministic Reduction Rule
 
@@ -289,6 +299,20 @@ for i in 0..M:
 
 These may change reduction order.
 
+#### Matrix-Vector Multiply
+
+```
+MatVecMul(A[M,N], x[N]) -> y[M]
+
+for i in 0..M:
+    acc = 0
+    for j in 0..N:
+        acc += A[i,j] * x[j]
+    y[i] = acc
+```
+
+> ⚠️ **EXPLICIT DEFINITION**: MatVecMul is a distinct primitive from MatMul. It is NOT the same as MatMul with a 1-column matrix. This explicit definition ensures consistent behavior across implementations. MatVecMul uses DEFERRED scale policy (see Scale Compatibility Matrix).
+
 ### Neural Inference Primitives
 
 #### Linear Layer
@@ -394,7 +418,7 @@ Operations have deterministic gas costs:
 
 > **L2Squared derivation**: Per element: 1 SUB + 1 MUL + 1 ADD for accumulation = 1 MUL + 2 ADD per element. Total: N × (MUL + 2×ADD).
 
-Gas constants are defined in RFC-0106 (DVEC/DMAT gas formulas). Any discrepancy between this table and RFC-0106 should be resolved in favor of RFC-0106 as the authoritative source.
+Gas constants are defined in RFC-0106 (DVEC/DMAT gas formulas). DLAE gas formulas MUST be derived from RFC-0106 atomic cost constants. DLAE defines the operation structure and iteration counts. RFC-0106 defines GAS_DQA_ADD, GAS_DQA_MUL atomic costs. No override relationship exists; both are normative.
 
 ## SIMD Execution
 
@@ -459,6 +483,20 @@ Gas constants are defined in RFC-0106 (DVEC/DMAT gas formulas). Any discrepancy 
 - Every output value MUST be canonicalized
 - Non-canonical outputs are consensus violations
 
+## Canonical Execution Phases
+
+All DLAE operations MUST adhere to this phase model:
+
+| Phase | Name | Description |
+|-------|------|-------------|
+| 0 | Input Validation | Dimension checks, scale compatibility, zero-vector pre-checks, TRAP sentinel detection |
+| 1 | Execution | Strict sequential computation, no early exit |
+| 2 | Post-Validation | DEFERRED scale validation (MatMul, MatVecMul), result constraint checking |
+| 3 | Canonicalization | All outputs canonicalized per RFC-0105 |
+| 4 | Serialization | TRAP encoding + result serialized per RFC-0126 |
+
+> **PHASE ORDERING**: No operation may violate phase ordering. No fusion between phases permitted. Each phase must complete fully before the next begins.
+
 ## Consensus Limits
 
 | Constant          | Value  | Purpose                                    |
@@ -512,7 +550,7 @@ Nodes MUST reject operations exceeding these limits with `ExecutionError::Dimens
 
 - [ ] Distance kernel
 - [ ] Top-K selection
-- [ ] Deterministic heap (if needed)
+- [ ] Alternative deterministic selection algorithms (heap-based approaches are FORBIDDEN in consensus paths)
 
 ## Key Files to Modify
 
@@ -577,7 +615,7 @@ The DLAE builds on RFC-0106's deterministic numeric types to provide linear alge
 #### Dot Product (Reference)
 
 ```rust
-fn dot_product<T: DeterministicNumeric, const N: usize>(
+fn dot_product<T: NumericScalar, const N: usize>(
     a: &[T; N],
     b: &[T; N]
 ) -> T {
@@ -594,7 +632,7 @@ fn dot_product<T: DeterministicNumeric, const N: usize>(
 #### L2Squared (Reference)
 
 ```rust
-fn l2_squared<T: DeterministicNumeric, const N: usize>(
+fn l2_squared<T: NumericScalar, const N: usize>(
     a: &[T; N],
     b: &[T; N]
 ) -> T {
@@ -644,7 +682,7 @@ See Global Scale Policy Layer for scale validation rules.
 
 ---
 
-**Version:** 2.1
+**Version:** 2.2
 **Submission Date:** 2026-03-10
 **Changes:**
 
@@ -661,6 +699,13 @@ See Global Scale Policy Layer for scale validation rules.
   - MED-R1: Fixed activation reference (RFC-0114, not RFC-0106)
   - MED-R2: Removed duplicate MAX_MATRIX_DIM = 512
   - MED-R3: Added Top-K result buffer size bound
+- v2.2: **Gold Standard micro-patch** — closure fixes for spec completeness:
+  - ISSUE-1: Defined explicit TRAP encoding layout (16-byte DQA sentinel + 1-byte error_code = 17 bytes total)
+  - ISSUE-2: Replaced all `DeterministicNumeric` with `NumericScalar (RFC-0113)` in appendix
+  - ISSUE-3: Added explicit MatVecMul primitive algorithm
+  - ISSUE-4: Added Canonical Execution Phases table (Phase 0-4)
+  - ISSUE-5: Clarified gas binding — DLAE defines structure, RFC-0106 defines atomic costs
+  - ISSUE-6: Fixed future work contradiction — removed "heap (if needed)"
 
 ## Rebuttal Summary (v2.0) and Adjudication (v2.1)
 

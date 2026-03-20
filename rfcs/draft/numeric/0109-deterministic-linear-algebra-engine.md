@@ -128,17 +128,20 @@ pub enum ExecutionError {
 
 > **SERIALIZATION**: ExecutionError is serialized as a single byte (`0x01`–`0x05`). When embedded in a TRAP result, it is appended after the TRAP sentinel byte. Ordering is significant: lower encoding = earlier variant in enum definition.
 
-> **TRAP ENCODING (CANONICAL)**: A TRAP result is encoded as:
+> **TRAP ENCODING (CORRECTED)**: A DLAE TRAP result is encoded as:
 > ```
-> [16-byte DQA TRAP sentinel] + [1-byte error_code]
-> Total: 17 bytes
+> [24-byte Numeric TRAP per RFC-0111/RFC-0126] + [1-byte error_code]
+> Total: 25 bytes
 > ```
-> - The 16-byte TRAP sentinel follows RFC-0105 DQA encoding (trap indicator in value field)
+> - The 24-byte TRAP sentinel follows RFC-0111 §Canonical Byte Format (per RFC-0126 §TRAP Sentinel Serialization):
+>   - Byte 0: version = 0x01
+>   - Bytes 1-3: reserved = 0x00
+>   - Byte 4: scale = 0xFF (TRAP indicator)
+>   - Bytes 5-7: reserved = 0x00
+>   - Bytes 8-23: mantissa = i64::MIN (0x8000000000000000)
 > - The 1-byte error_code is one of `0x01`–`0x05` from the table above
-> - This layout ensures deterministic hashing and cross-language reproducibility
-> - Implementations MUST NOT use alternative layouts (e.g., structs, padding, or different byte orders)
->
-> ⚠️ **RFC-0126 COORDINATION REQUIRED**: RFC-0126 (Serialization Protocol) MUST be updated to accommodate 17-byte TRAP payloads. Specifically, RFC-0126 Section X MUST define the exact serialization format for DLAE TRAP results. Until RFC-0126 is updated, implementations SHOULD use the layout defined above and MUST document any deviations.
+> - RFC-0126 §TRAP Sentinel Serialization is the authoritative reference
+> - This layout ensures compatibility with RFC-0126 serialization format
 
 ### Deterministic Reduction Rule
 
@@ -721,7 +724,7 @@ See Global Scale Policy Layer for scale validation rules.
   - ISSUE-4: Added Canonical Execution Phases table (Phase 0-4)
   - ISSUE-5: Clarified gas binding — DLAE defines structure, RFC-0106 defines atomic costs
   - ISSUE-6: Fixed future work contradiction — removed "heap (if needed)"
-- v2.3: **Third audit fixes** — CRIT-01 (Deferred Scale/Immediate Overflow clarification), CRIT-02 (SIMD disabled for consensus), CRIT-03 (vector_id source defined), HIGH-01 (ZK cost warning for sqrt), HIGH-02 (gas on TRAP defined), HIGH-03 (Motivation reframed for verifiable verification), MED-01 (RFC-0126 coordination note), MED-02 (no implicit casting), MED-03 rebutted (LUT size is RFC-0114 domain)
+- v2.3: **Third audit fixes** — CRIT-01 (Deferred Scale/Immediate Overflow clarification), CRIT-02 (SIMD disabled for consensus), CRIT-03 (vector_id source defined), HIGH-01 (ZK cost warning for sqrt), HIGH-02 (gas on TRAP defined), HIGH-03 (Motivation reframed for verifiable verification), MED-01 (RFC-0126 coordination note), MED-02 (no implicit casting), MED-03 rebutted (LUT size is RFC-0114 domain); **TRAP encoding corrected**: Now 25 bytes (24-byte RFC-0111 sentinel + 1-byte error_code) per RFC-0126
 
 ## Rebuttal Summary (v2.0) and Adjudication (v2.1)
 
@@ -752,6 +755,6 @@ See Global Scale Policy Layer for scale validation rules.
 | HIGH-01 | ZK cost of sqrt not warned | **ACCEPTED** | Added ZK COST WARNING; L2Squared recommended for ZK |
 | HIGH-02 | Gas metering on TRAP undefined | **ACCEPTED** | Defined: gas charged for completed iterations only |
 | HIGH-03 | Dimension limits too restrictive for full inference | **PARTIAL** | Reframed Motivation: DLAE is for "verifiable step verification", not full inference |
-| MED-01 | RFC-0126 alignment needed | **ACCEPTED** | Added RFC-0126 coordination note |
+| MED-01 | RFC-0126 alignment needed | **ACCEPTED** | TRAP encoding corrected to 25 bytes (24-byte RFC-0111 sentinel + 1-byte error) per RFC-0126
 | MED-02 | Type promotion edge cases | **ACCEPTED** | Added explicit "no implicit casting or promotion" |
 | MED-03 | LUT size not specified | **REBUTTAL** | LUT size is RFC-0114 domain, not RFC-0109 |

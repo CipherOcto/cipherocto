@@ -2,10 +2,10 @@
 
 ## Status
 
-**Version:** 2.2
+**Version:** 2.3
 **Status:** Draft
 **Submission Date:** 2026-03-10
-**Adversarial Review Response:** v2.1 passed consensus safety audit (GOLD- candidate). This v2.2 micro-patch addresses 6 remaining spec gaps for GOLD STANDARD certification (see Rebuttal Summary).
+**Adversarial Review Response:** v2.2 received third adversarial audit. This v2.3 patch addresses CRIT-01 (Deferred Scale ambiguity), CRIT-02 (SIMD disabled for consensus), CRIT-03 (vector_id source), HIGH-01 (ZK cost warning), HIGH-02 (gas on TRAP), HIGH-03 (Motivation reframe), MED-01 (RFC-0126 coordination), MED-02 (type enforcement). MED-03 rebutted (LUT size is RFC-0114 domain).
 
 > **Note:** This RFC was renumbered from RFC-0148 to RFC-0109 as part of the category-based numbering system.
 
@@ -26,12 +26,12 @@ This RFC defines the Deterministic Linear Algebra Engine (DLAE) for the CipherOc
 
 The CipherOcto VM requires deterministic linear algebra operations for:
 
-- Vector similarity search
-- Embedding comparisons
-- On-chain ML inference
-- Deterministic ANN
+- **Verifiable coordination of AI steps**: DLAE primitives enable consensus-safe verification of linear algebra computations performed off-chain
+- **Vector similarity search**: Deterministic Top-K selection for ANN queries
+- **Embedding comparisons**: Bit-identical results across all nodes
+- **Deterministic ANN**: Verifiable nearest-neighbor queries
 
-Current blockchain VMs lack deterministic linear algebra. This RFC provides the primitives needed for AI workloads while maintaining consensus safety.
+> **IMPORTANT**: DLAE is designed for **verifiable step verification** (not full model inference). The dimension limits (DVec ≤64, DMat ≤8×8) are intentionally conservative for consensus safety. Full model inference should occur off-chain with DLAE used to verify individual computation steps. This design ensures consensus determinism while enabling AI workloads through proof verification patterns.
 
 ## Specification
 
@@ -137,6 +137,8 @@ pub enum ExecutionError {
 > - The 1-byte error_code is one of `0x01`–`0x05` from the table above
 > - This layout ensures deterministic hashing and cross-language reproducibility
 > - Implementations MUST NOT use alternative layouts (e.g., structs, padding, or different byte orders)
+>
+> ⚠️ **RFC-0126 COORDINATION REQUIRED**: RFC-0126 (Serialization Protocol) MUST be updated to accommodate 17-byte TRAP payloads. Specifically, RFC-0126 Section X MUST define the exact serialization format for DLAE TRAP results. Until RFC-0126 is updated, implementations SHOULD use the layout defined above and MUST document any deviations.
 
 ### Deterministic Reduction Rule
 
@@ -245,6 +247,8 @@ L2(a, b) = sqrt(L2Squared(a, b))
 > ⚠️ **SQRT TYPE REQUIREMENT**: Cosine and L2 **REQUIRE** RFC-0111 Decimal path. DQA-only execution **MUST TRAP**. LUT approximations are **FORBIDDEN** in DLAE context.
 
 The sqrt operation MUST use the deterministic algorithm from RFC-0111 (Decimal).
+
+> ⚠️ **ZK COST WARNING**: Integer square root (sqrt) via RFC-0111 Decimal is extremely expensive in ZK circuits (requires bit decomposition). For ZK-friendly vector similarity, use `L2Squared` which preserves ordering for Top-K selection without sqrt. `Cosine` and `L2` (with sqrt) are **High Cost / Off-Chain Preferred** for ZK proofs.
 
 #### Zero Vector Semantics
 
@@ -380,6 +384,13 @@ for each element:
 
 > ⚠️ **DETERMINISTIC TIE-BREAK**: Comparator MUST be `(distance, vector_id)` lexicographic. Stable insertion is required.
 
+> ⚠️ **VECTOR_ID SOURCE (CRITICAL)**: `vector_id` MUST be a **canonical identifier**, NOT an implementation-specific handle. Permitted sources:
+> - RFC-0103 Storage Key (preferred)
+> - Content hash of the vector data
+> - On-chain assigned ID
+>
+> **FORBIDDEN sources**: Memory address, heap location, insertion order into non-deterministic structure, or any non-reproducible handle. Using forbidden sources will cause consensus splits when nodes assign different IDs to the same logical vector.
+
 Canonical comparator (pseudocode):
 ```
 compare(a, b):
@@ -422,22 +433,18 @@ Gas constants are defined in RFC-0106 (DVEC/DMAT gas formulas). DLAE gas formula
 
 ## SIMD Execution
 
-> ⚠️ **SIMD ALLOWANCE RULE**: SIMD is **FORBIDDEN** unless ALL of the following conditions are met:
+> ⚠️ **SIMD PROHIBITION (v2.3)**: SIMD is **FORBIDDEN** on all consensus paths.
 
-**Permitted SIMD conditions (ALL must be true):**
+Modern compilers (LLVM, GCC) aggressively auto-vectorize loops. Verifying that a specific SIMD instruction set (AVX2 vs NEON vs AltiVec) produces bit-identical results for quantized integer arithmetic is non-trivial. Auto-vectorization can silently introduce non-deterministic behavior through:
+- Different compiler versions producing different SIMD instructions
+- Hardware-specific SIMD behavior (e.g., overflow detection varies across architectures)
+- Compiler reordering of independent operations within lanes
 
-1. **Lane independence**: Each lane computes a scalar operation on independent data elements
-2. **No horizontal reduction**: No SIMD instruction computes cross-lane reduction (e.g., horizontal sum, horizontal min)
-3. **Canonical accumulation order**: Final scalar accumulation (if any) is performed in strict left-to-right order using scalar operations
+**Consensus Path**: All DLAE operations on consensus-critical paths MUST use the scalar reference implementation. No SIMD optimizations permitted.
 
-**Forbidden SIMD patterns:**
+**Non-Consensus Paths** (e.g., off-chain preprocessing, local inference): SIMD optimizations MAY be used for performance, but consensus-critical verification MUST use scalar paths.
 
-- SIMD horizontal adds/mins/maxes
-- Tree reductions implemented in SIMD
-- Fused operations that change numerical results
-- Any SIMD that could reorder associative operations
-
-**Compliance**: If any condition cannot be met, the scalar reference implementation MUST be used. "Identical output" claims without specifying these conditions are not enforceable and constitute a consensus violation.
+**Future Work**: When a deterministic SIMD whitelist is established (specific instruction sets, verified bit-identical across architectures), this prohibition may be revisited.
 
 ## Global Scale Policy Layer
 
@@ -453,7 +460,11 @@ Gas constants are defined in RFC-0106 (DVEC/DMAT gas formulas). DLAE gas formula
 | Cosine      | STRICT       | Scale factors MUST match exactly; mismatch → `ExecutionError::InvalidScale` |
 | Distance (L2, L2Squared) | STRICT | Scale factors MUST match exactly; mismatch → `ExecutionError::InvalidScale` |
 
-> **DEFERRED SCALE RULE**: For MatMul and MatVec, execution proceeds without intermediate scale validation. AFTER computation completes, the result is validated against scalar constraints defined in RFC-0105. If constraints are violated, `ExecutionError::InvalidScale` is returned. Intermediate overflow during DEFERRED operations MUST follow RFC-0105 overflow rules.
+> ⚠️ **DEFERRED SCALE RULE (CRITICAL)**: "Deferred" applies *only* to scale factor compatibility checks, NOT to arithmetic overflow. For MatMul and MatVec:
+> - **Scale validation**: Deferred until after computation completes
+> - **Arithmetic overflow**: **IMMEDIATE TRAP** per RFC-0105 — no wrap-around allowed
+>
+> Misinterpreting "Deferred" as permitting overflow wrap-around will cause consensus splits. The policy is: "Deferred Scale Validation, Immediate Overflow Trap."
 
 ### Trait Authority Rule
 
@@ -472,6 +483,8 @@ Gas constants are defined in RFC-0106 (DVEC/DMAT gas formulas). DLAE gas formula
 - No further iteration allowed after TRAP
 - No observable state mutation after TRAP point
 - Example: If `MatMul` detects overflow at element `[i,j]`, the entire `MatMul` TRAPs immediately; no remaining elements are computed
+
+> ⚠️ **GAS ON TRAP**: Gas is charged for **completed iterations only**. If `MatMul` traps at iteration `i=5` of `N=64`, the user is charged for 5 iterations (not 64). This requires deterministic gas metering based on actual execution progress. If a validator and prover disagree on the iteration count at TRAP, the transaction is invalid. **Partial execution gas must be deterministic.**
 
 **Input validation (Phase 0)**: Dimension checks, scale compatibility, and zero-vector pre-checks MUST be performed before any computation begins. If validation fails, operation TRAPs before any loop executes.
 
@@ -595,11 +608,13 @@ The DLAE builds on RFC-0106's deterministic numeric types to provide linear alge
 
 ## Homogeneous Type Requirement
 
-> ⚠️ **HOMOGENEOUS TYPE ENFORCEMENT**: All DLAE operations REQUIRE homogeneous scalar types.
+> ⚠️ **HOMOGENEOUS TYPE ENFORCEMENT**: All DLAE operations REQUIRE homogeneous scalar types. **No implicit casting or type promotion is allowed.**
 
 - All elements in a DVec, DMat, or any operand MUST use the same scalar type
 - Mixed-type operations (e.g., DVec<DQA> + DVec<INT>) are **FORBIDDEN** in consensus paths
+- **No implicit promotions**: INT + BIGINT, DQA + INT, or any implicit widening/promotion is **FORBIDDEN**
 - Type conversion MUST be explicit and occur before DLAE operations
+- Operands must be bit-for-bit identical type tags
 - Implementations MUST TRAP on mixed-type inputs with `ExecutionError::InvalidScale`
 
 ## Related Use Cases
@@ -706,6 +721,7 @@ See Global Scale Policy Layer for scale validation rules.
   - ISSUE-4: Added Canonical Execution Phases table (Phase 0-4)
   - ISSUE-5: Clarified gas binding — DLAE defines structure, RFC-0106 defines atomic costs
   - ISSUE-6: Fixed future work contradiction — removed "heap (if needed)"
+- v2.3: **Third audit fixes** — CRIT-01 (Deferred Scale/Immediate Overflow clarification), CRIT-02 (SIMD disabled for consensus), CRIT-03 (vector_id source defined), HIGH-01 (ZK cost warning for sqrt), HIGH-02 (gas on TRAP defined), HIGH-03 (Motivation reframed for verifiable verification), MED-01 (RFC-0126 coordination note), MED-02 (no implicit casting), MED-03 rebutted (LUT size is RFC-0114 domain)
 
 ## Rebuttal Summary (v2.0) and Adjudication (v2.1)
 
@@ -725,3 +741,17 @@ See Global Scale Policy Layer for scale validation rules.
 | HIGH-X4 | Same as CRIT-X4 | Same as CRIT-X4 | **Not addressed** — same as above |
 
 **Path Forward for CRIT-X4/HIGH-X4**: Future "Unified Numeric Execution Contract RFC" (meta-RFC) addressing probe root unification when all related RFCs (RFC-0126, RFC-0109, RFC-0113, probe verification) are stable. This is a legitimate architectural gap but not a DLAE-specific issue.
+
+### Third Audit Adjudication (v2.3)
+
+| ID | Reviewer Finding | Our Decision | Action |
+|----|-----------------|-------------|--------|
+| CRIT-01 | Deferred Scale ambiguity could allow overflow wrap-around | **ACCEPTED** | Clarified: "Deferred Scale Validation, Immediate Overflow Trap" |
+| CRIT-02 | SIMD enforceability impossible across compilers/hardware | **ACCEPTED** | SIMD **FORBIDDEN** on consensus paths; scalar only |
+| CRIT-03 | vector_id source not defined | **ACCEPTED** | Defined canonical sources (RFC-0103 Storage Key, content hash, on-chain ID); FORBIDDEN: memory address, heap location |
+| HIGH-01 | ZK cost of sqrt not warned | **ACCEPTED** | Added ZK COST WARNING; L2Squared recommended for ZK |
+| HIGH-02 | Gas metering on TRAP undefined | **ACCEPTED** | Defined: gas charged for completed iterations only |
+| HIGH-03 | Dimension limits too restrictive for full inference | **PARTIAL** | Reframed Motivation: DLAE is for "verifiable step verification", not full inference |
+| MED-01 | RFC-0126 alignment needed | **ACCEPTED** | Added RFC-0126 coordination note |
+| MED-02 | Type promotion edge cases | **ACCEPTED** | Added explicit "no implicit casting or promotion" |
+| MED-03 | LUT size not specified | **REBUTTAL** | LUT size is RFC-0114 domain, not RFC-0109 |

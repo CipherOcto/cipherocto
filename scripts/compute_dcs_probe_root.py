@@ -83,7 +83,7 @@ def serialize_trap_numeric() -> bytes:
     Serialize numeric TRAP sentinel per RFC-0112.
 
     24-byte format: version(1) || scale(1) || reserved(3) || mantissa(16)
-    TRAP = { mantissa: i64::MIN (0x8000000000000000), scale: 0xFF }
+    TRAP = { mantissa: i128::MIN, scale: 0xFF }
     """
     # version = 0x01
     result = bytes([0x01])
@@ -91,8 +91,8 @@ def serialize_trap_numeric() -> bytes:
     result += bytes([0xFF])
     # reserved = 3 bytes zero
     result += bytes([0, 0, 0])
-    # mantissa = i64::MIN in big-endian
-    result += (0x8000000000000000).to_bytes(8, byteorder='big', signed=False)
+    # mantissa = i128::MIN in big-endian (16 bytes)
+    result += (0x80000000000000000000000000000000).to_bytes(16, byteorder='big', signed=False)
     return result
 
 
@@ -331,6 +331,11 @@ def main():
     print("=" * 70)
     print(f"AUTHORITATIVE MERKLE ROOT: {root.hex()}")
     print("=" * 70)
+
+    # Verify against known root
+    EXPECTED_ROOT = "a960865d48472a9f1e721c1e9a642e1cec9fd7f7c3caf0d3a18d481207ca5458"
+    assert root.hex() == EXPECTED_ROOT, f"Merkle root mismatch: got {root.hex()}"
+    print(f"  ✓ Root matches EXPECTED_ROOT")
 
     return root.hex()
 

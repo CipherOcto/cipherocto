@@ -571,7 +571,9 @@ root = MerkleRoot(leaf_0, leaf_1, ..., leaf_14)
 | 11 | TRAP | Bool (1-byte) | Invalid bool `0xFF` | `0xFF` (TRAP sentinel) |
 | 12 | I128 | Positive | `42` | 16 bytes big-endian |
 | 13 | I128 | Negative | `-42` | 16 bytes big-endian |
-| 14 | (reserved) | Future extension | - | - |
+| 14 | (reserved) | Future extension | `0x00` | Future extension placeholder |
+
+**Entry 14 Reserved:** Entry 14 is reserved for future extensions (e.g., BIGINT support if needed). The reserved entry MUST serialize as a single `0x00` byte to maintain deterministic ordering. BIGINT is currently out of scope for DCS but may be added in a future RFC revision.
 
 **Note:** Entry 4 (DMAT column-major) was removed because serialization output is indistinguishable for valid row-major input. DMAT input validation ensures data is stored row-major per RFC-0113.
 
@@ -598,7 +600,7 @@ fn merkle_root(leaves: Vec<[u8; 32]>) -> [u8; 32] {
 }
 ```
 
-> **Published Merkle Root:** `0bfbb7e404c9a1412f3339a0d7515fa496b262b514a340484e2445512003cf85`
+> **Published Merkle Root:** `a960865d48472a9f1e721c1e9a642e1cec9fd7f7c3caf0d3a18d481207ca5458`
 
 #### Probe Entry Details
 

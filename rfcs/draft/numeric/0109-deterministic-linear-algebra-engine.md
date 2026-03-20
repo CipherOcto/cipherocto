@@ -2,9 +2,10 @@
 
 ## Status
 
-**Version:** 1.0
+**Version:** 2.0
 **Status:** Draft
 **Submission Date:** 2026-03-10
+**Adversarial Review Response:** v1.0 received comprehensive adversarial audit. This v2.0 incorporates all ACCEPTED fixes (see Rebuttal section for design decisions).
 
 > **Note:** This RFC was renumbered from RFC-0148 to RFC-0109 as part of the category-based numbering system.
 
@@ -94,6 +95,28 @@ struct DMat<T, const M: usize, const N: usize> {
 Storage layout: row-major
 Index calculation: `index = row * N + column`
 Maximum dimension: `MAX_MATRIX_DIM = 512`
+
+### Execution Error Enum
+
+All DLAE operations return `Result<T, ExecutionError>`:
+
+```rust
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ExecutionError {
+    /// Operands have incompatible dimensions
+    DimensionMismatch,
+    /// Scale factor invalid for operation
+    InvalidScale,
+    /// Division by zero (including zero vector normalization)
+    DivisionByZero,
+    /// Arithmetic overflow during computation
+    Overflow,
+    /// Input contains TRAP sentinel value
+    TrapInput,
+}
+```
+
+**TRAP Sentinel:** Any sub-operation returning TRAP → entire operation TRAP immediately. No partial execution permitted. See Composite TRAP Propagation Rule below.
 
 ### Deterministic Reduction Rule
 
@@ -200,13 +223,25 @@ Advantages:
 L2(a, b) = sqrt(L2Squared(a, b))
 ```
 
-The sqrt operation MUST use the deterministic algorithm from RFC-0106.
+> ⚠️ **SQRT TYPE REQUIREMENT**: Cosine and L2 **REQUIRE** RFC-0111 Decimal path. DQA-only execution **MUST TRAP**. LUT approximations are **FORBIDDEN** in DLAE context.
+
+The sqrt operation MUST use the deterministic algorithm from RFC-0111 (Decimal).
+
+#### Zero Vector Semantics
+
+> ⚠️ **ZERO VECTOR RULE**: Zero vector is valid input. Any normalization or division operation using a zero vector **MUST TRAP** with `ExecutionError::DivisionByZero`.
+
+- Zero vector is a valid input to all DLAE operations
+- If any intermediate computation (e.g., `|a|` or `|b|` in cosine) results in zero during normalization, the entire operation TRAPs
+- Zero vector in distance metrics: `L2Squared(a, zero_vector)` = valid computation of `sum(a_i²)`
 
 #### Cosine Similarity
 
 ```
 cos(a,b) = dot(a,b) / (|a| * |b|)
 ```
+
+> ⚠️ **SQRT TYPE REQUIREMENT**: Cosine **REQUIRES** RFC-0111 Decimal path. DQA-only execution **MUST TRAP**. LUT approximations are **FORBIDDEN**.
 
 Deterministic implementation:
 
@@ -217,7 +252,7 @@ nb = sqrt(Dot(b, b))
 return dot / (na * nb)
 ```
 
-Domain errors: If `|a| = 0` or `|b| = 0`, raise `ExecutionError::DivisionByZero`
+> ⚠️ **ZERO VECTOR TRAP**: If `|a| = 0` or `|b| = 0` (including zero vector inputs), raise `ExecutionError::DivisionByZero`. The operation TRAPs immediately; no partial execution.
 
 ### Matrix Operations
 
@@ -264,6 +299,8 @@ y = DVecAdd(y, b)
 
 #### Activation Functions
 
+> ⚠️ **ACTIVATION PHASE-BOUND**: Activation MUST execute after full linear computation completes. No interleaving or fusion allowed.
+
 Activations MUST use deterministic LUTs from RFC-0106.
 
 Supported:
@@ -308,8 +345,18 @@ Heaps may be used only if deterministic ordering is preserved.
 
 **Tie-break rule:**
 
-- distance first
-- vector_id second
+> ⚠️ **DETERMINISTIC TIE-BREAK**: Comparator MUST be `(distance, vector_id)` lexicographic. Stable insertion is required.
+
+Canonical comparator (pseudocode):
+```
+compare(a, b):
+    if a.distance != b.distance:
+        return a.distance < b.distance  // shorter distance wins
+    else:
+        return a.vector_id < b.vector_id  // lower ID wins
+```
+
+Any heap or sorting implementation MUST preserve this total ordering. Non-stable sorts MUST NOT be used.
 
 ## Performance Targets
 
@@ -322,6 +369,8 @@ Heaps may be used only if deterministic ordering is preserved.
 
 ## Gas Cost Model
 
+> ⚠️ **GAS BINDING**: DLAE gas formulas are bound to DVEC/DMAT gas formulas per RFC-0106. This table is normative, not abstract.
+
 Operations have deterministic gas costs:
 
 | Operation   | Gas Formula                                           | Example (N=64)      |
@@ -331,6 +380,8 @@ Operations have deterministic gas costs:
 | Dot product | N × (GAS_DQA_MUL + GAS_DQA_ADD)                       | 64 × 13 = 832       |
 | L2Squared   | 2N × GAS_DQA_MUL + (2N-1) × GAS_DQA_ADD               | 64 × 21 = 1344      |
 | Matrix mul  | M × N × K × GAS_DQA_MUL + M × N × (K-1) × GAS_DQA_ADD | 8×8×8×8 = 4096 base |
+
+Gas constants are defined in RFC-0106 (DVEC/DMAT gas formulas). Any discrepancy between this table and RFC-0106 should be resolved in favor of RFC-0106 as the authoritative source.
 
 ## SIMD Execution
 
@@ -344,16 +395,58 @@ SIMD must preserve:
 
 Otherwise the scalar reference implementation must be used.
 
+## Global Scale Policy Layer
+
+> ⚠️ **GLOBAL SCALE POLICY**: This section supersedes any container-level scale behavior where ambiguity exists. All DLAE operations MUST adhere to the following Scale Compatibility Matrix.
+
+### Scale Compatibility Matrix
+
+| Operation   | Scale Policy | Enforcement |
+| ----------- | ------------ | ----------- |
+| Dot Product | STRICT       | Scale factors MUST match exactly; mismatch → `ExecutionError::InvalidScale` |
+| MatMul      | DEFERRED     | Scale validation deferred until after computation; result inherits output scale |
+| MatVec      | DEFERRED     | Scale validation deferred until after computation |
+| Cosine      | STRICT       | Scale factors MUST match exactly; mismatch → `ExecutionError::InvalidScale` |
+| Distance (L2, L2Squared) | STRICT | Scale factors MUST match exactly; mismatch → `ExecutionError::InvalidScale` |
+
+### Trait Authority Rule
+
+> ⚠️ **TRAIT AUTHORITY**: RFC-0113 (`NumericScalar`) is the ONLY permitted trait for DLAE operations in consensus paths.
+
+- RFC-0112 trait is **FORBIDDEN** in consensus paths
+- All DLAE operations MUST use RFC-0113 `NumericScalar`
+- Implementations MUST TRAP if RFC-0112 is encountered
+
+### Composite TRAP Propagation Rule
+
+> ⚠️ **TRAP PROPAGATION**: Any sub-operation returning TRAP → entire operation TRAP immediately.
+
+- No partial execution permitted
+- All loops MUST iterate full bounds even if TRAP discovered at Phase 0
+- No early-exit allowed
+- Example: If `MatMul` detects overflow at element `[i,j]`, the entire `MatMul` TRAPs, not just that element
+
+### Mandatory Canonicalization Rule
+
+> ⚠️ **CANONICALIZATION MANDATORY**: All outputs MUST be canonicalized per RFC-0105 before serialization. No conditional language.
+
+- "if required" language is **FORBIDDEN** in DLAE specification
+- Every output value MUST be canonicalized
+- Non-canonical outputs are consensus violations
+
 ## Consensus Limits
 
-| Constant       | Value | Purpose                           |
-| -------------- | ----- | --------------------------------- |
-| MAX_VECTOR_DIM | 4096  | Maximum vector length             |
-| MAX_MATRIX_DIM | 512   | Maximum matrix dimension          |
-| MAX_DOT_DIM    | 4096  | Maximum dot product dimension     |
-| MAX_LAYER_DIM  | 1024  | Maximum neural network layer size |
+| Constant          | Value  | Purpose                                    |
+| ----------------- | ------ | ------------------------------------------ |
+| MAX_VECTOR_DIM    | 64     | Maximum vector length (inherits DVEC limit) |
+| MAX_MATRIX_DIM_M  | 8      | Maximum matrix rows (inherits DMAT limit)  |
+| MAX_MATRIX_DIM_N  | 8      | Maximum matrix columns (inherits DMAT limit)|
+| MAX_DOT_DIM       | 64     | Maximum dot product dimension               |
+| MAX_LAYER_DIM     | 64     | Maximum neural network layer size           |
 
-Nodes MUST reject operations exceeding these limits.
+> **Note:** DLAE inherits dimension limits from DVEC (N≤64) and DMAT (M,N≤8) per MED-1 and MED-X1. These are tighter than the v1.0 abstract limits to ensure cross-RFC consistency.
+
+Nodes MUST reject operations exceeding these limits with `ExecutionError::DimensionMismatch`.
 
 ## Adversarial Review
 
@@ -424,7 +517,10 @@ The DLAE builds on RFC-0106's deterministic numeric types to provide linear alge
 ## Related RFCs
 
 - RFC-0106 (Numeric/Math): Deterministic Numeric Tower (DNT) — Core numeric types (DQA, DVEC, DMAT)
-- RFC-0105 (Numeric/Math): Deterministic Quantized Arithmetic (DQA) — Scalar quantized operations
+- RFC-0105 (Numeric/Math): Deterministic Quantized Arithmetic (DQA) — Scalar quantized operations, **canonicalization rules**
+- RFC-0111 (Numeric/Math): Decimal Arithmetic — **Required for sqrt operations in DLAE**
+- RFC-0113 (Numeric/Math): NumericScalar Trait — **Only permitted trait for DLAE operations**
+- RFC-0126 (Serialization): Serialization Protocol — **Normative reference for DLAE output serialization**
 - RFC-0103 (Numeric/Math): Unified Vector SQL Storage — Vector storage and similarity search
 - RFC-0107 (Storage): Production Vector SQL Storage v2 — Vector operations in production
 - RFC-0120 (AI Execution): Deterministic AI VM — AI VM with linear algebra requirements
@@ -433,6 +529,15 @@ The DLAE builds on RFC-0106's deterministic numeric types to provide linear alge
 - RFC-0107 (Numeric/Math): Deterministic Transformer Circuit — Matrix multiplication, attention
 
 > **Note**: RFC-0148 serves as the canonical linear algebra layer that these RFCs depend on for deterministic operations.
+
+## Homogeneous Type Requirement
+
+> ⚠️ **HOMOGENEOUS TYPE ENFORCEMENT**: All DLAE operations REQUIRE homogeneous scalar types.
+
+- All elements in a DVec, DMat, or any operand MUST use the same scalar type
+- Mixed-type operations (e.g., DVec<DQA> + DVec<INT>) are **FORBIDDEN** in consensus paths
+- Type conversion MUST be explicit and occur before DLAE operations
+- Implementations MUST TRAP on mixed-type inputs with `ExecutionError::InvalidScale`
 
 ## Related Use Cases
 
@@ -495,17 +600,42 @@ Implementations MUST pass canonical test vectors:
 All DLAE operations return `Result<T, ExecutionError>`:
 
 ```rust
-pub enum DLAEError {
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ExecutionError {
+    /// Operands have incompatible dimensions
     DimensionMismatch,
+    /// Scale factor invalid for operation
+    InvalidScale,
+    /// Division by zero (including zero vector normalization)
+    DivisionByZero,
+    /// Arithmetic overflow during computation
     Overflow,
-    InvalidOperation,
+    /// Input contains TRAP sentinel value
+    TrapInput,
 }
 ```
 
+See Global Scale Policy Layer for scale validation rules.
+
 ---
 
-**Version:** 1.0
+**Version:** 2.0
 **Submission Date:** 2026-03-10
 **Changes:**
 
-- Initial draft for DLAE specification
+- v1.0: Initial draft for DLAE specification
+- v2.0: Adversarial review response — incorporated all ACCEPTED fixes (CRIT-1 through CRIT-X5, HIGH-1 through HIGH-4, MED-1 through MED-4, MED-X1, MED-X2)
+
+## Rebuttal Summary
+
+The following issues were reviewed and deemed **out of scope** or **design decisions**:
+
+| ID | Issue | Rebuttal Rationale |
+|----|-------|-------------------|
+| CRIT-X4 | Unified Numeric Probe Root | Meta-architectural decision requiring coordinated revision across all numeric RFCs. Future "Unified Numeric Execution Contract RFC" can address when RFC-0126, RFC-0109, and probe verification are stable. |
+| HIGH-X4 | Probe Ecosystem Fragmentation | Same as CRIT-X4. Each probe verifies its own domain. |
+| HIGH-X1 | Reduction Order vs DMAT Loop Flexibility | DMAT's loop structure is specified. Any compiler reordering that preserves lexical i→j→k order is compliant. Issue is against DMAT, not DLAE. |
+| HIGH-X2 | ANN Determinism Not Fully Aligned | ANN is DLAE's domain. The tie-break rule (distance, vector_id) is already specified in DLAE. |
+| LOW-1, LOW-2, LOW-3 | Missing algebraic properties, complexity guarantees, reference implementation | Informational additions. Do not affect consensus safety or determinism. |
+
+**Proposed Path Forward for CRIT-X4/HIGH-X4**: Future meta-RFC addressing unified numeric execution contracts when all related RFCs (RFC-0126, RFC-0109, RFC-0113, probe verification) are stable.

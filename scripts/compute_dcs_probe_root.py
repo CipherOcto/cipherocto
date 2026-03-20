@@ -2,7 +2,7 @@
 """
 DCS (Deterministic Canonical Serialization) Verification Probe Script
 
-Computes the Merkle root for the 9-entry DCS verification probe.
+Computes the Merkle root for the 15-entry DCS verification probe.
 
 Run with: python3 scripts/compute_dcs_probe_root.py
 """
@@ -75,6 +75,24 @@ def serialize_dqa(value: int, scale: int) -> bytes:
     # Append reserved: 7 bytes zero
     result += bytes([0] * 7)
 
+    return result
+
+
+def serialize_trap_numeric() -> bytes:
+    """
+    Serialize numeric TRAP sentinel per RFC-0112.
+
+    24-byte format: version(1) || scale(1) || reserved(3) || mantissa(16)
+    TRAP = { mantissa: i64::MIN (0x8000000000000000), scale: 0xFF }
+    """
+    # version = 0x01
+    result = bytes([0x01])
+    # scale = 0xFF (TRAP indicator)
+    result += bytes([0xFF])
+    # reserved = 3 bytes zero
+    result += bytes([0, 0, 0])
+    # mantissa = i64::MIN in big-endian
+    result += (0x8000000000000000).to_bytes(8, byteorder='big', signed=False)
     return result
 
 
@@ -163,9 +181,9 @@ def merkle_root(leaves: List[bytes]) -> bytes:
 
 def build_probe() -> List[bytes]:
     """
-    Build the 9-entry DCS verification probe.
+    Build the 15-entry DCS verification probe.
 
-    Returns list of 9 serialized entries.
+    Returns list of 15 serialized entries.
     """
     entries = []
 
@@ -229,11 +247,39 @@ def build_probe() -> List[bytes]:
     print(f"Entry 7: Enum::Variant2(42)")
     print(f"  Serialized: {entries[-1].hex()}")
 
-    # Entry 8: TRAP case (invalid bool 0xFF)
-    # Invalid bool values (not 0x00 or 0x01) TRAP before serialization
-    # For the probe, we serialize the TRAP sentinel
-    entries.append(bytes([0xFF]))  # TRAP sentinel
-    print(f"Entry 8: Invalid bool 0xFF -> TRAP sentinel")
+    # Entry 8: Bool True
+    entries.append(serialize_bool(True))
+    print(f"Entry 8: Bool true")
+    print(f"  Serialized: {entries[-1].hex()}")
+
+    # Entry 9: Bool False
+    entries.append(serialize_bool(False))
+    print(f"Entry 9: Bool false")
+    print(f"  Serialized: {entries[-1].hex()}")
+
+    # Entry 10: Numeric TRAP (24-byte format per RFC-0112)
+    entries.append(serialize_trap_numeric())
+    print(f"Entry 10: Numeric TRAP (24-byte per RFC-0112)")
+    print(f"  Serialized: {entries[-1].hex()}")
+
+    # Entry 11: Bool TRAP (1-byte 0xFF)
+    entries.append(bytes([0xFF]))  # TRAP sentinel for bool/enum
+    print(f"Entry 11: Bool TRAP (1-byte 0xFF)")
+    print(f"  Serialized: {entries[-1].hex()}")
+
+    # Entry 12: I128 Positive (42)
+    entries.append(serialize_i128(42))
+    print(f"Entry 12: I128 positive (42)")
+    print(f"  Serialized: {entries[-1].hex()}")
+
+    # Entry 13: I128 Negative (-42)
+    entries.append(serialize_i128(-42))
+    print(f"Entry 13: I128 negative (-42)")
+    print(f"  Serialized: {entries[-1].hex()}")
+
+    # Entry 14: Reserved for future extension
+    entries.append(bytes([0x00]))  # Placeholder
+    print(f"Entry 14: (reserved)")
     print(f"  Serialized: {entries[-1].hex()}")
 
     return entries
@@ -246,7 +292,7 @@ def main():
     print("=" * 70)
     print()
 
-    # Build the 9 probe entries
+    # Build the 15 probe entries
     entries = build_probe()
 
     print()

@@ -232,6 +232,7 @@ Once accepted:
 | RFC-0114 (Numeric) | Deterministic Activation Functions    | Accepted | ReLU, Sigmoid, Tanh for ML            |
 | RFC-0115 (Numeric) | Deterministic Tensors (DTENSOR)       | Planned | N-dimensional tensors (Phase 4)          |
 | RFC-0116 (Numeric) | Unified Deterministic Execution Model | Draft  | Unified execution framework                 |
+| RFC-0126 (Numeric) | Deterministic Canonical Serialization (DCS) | Accepted | Cross-language deterministic serialization for consensus |
 
 ### Storage (RFC-0200-0299)
 

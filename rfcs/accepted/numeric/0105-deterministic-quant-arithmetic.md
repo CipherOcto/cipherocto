@@ -1153,7 +1153,10 @@ impl NumericScalar for Dqa {
 
 ### Canonicalization Invariant (CRITICAL)
 
-> **Canonicalization is MANDATORY.** The `Dqa::new(...)` constructor **MUST** return a canonicalized value. Every DQA operation **MUST** canonicalize its result before returning.
+> **Canonicalization is MANDATORY at serialization time.** `Dqa::new(...)` does NOT canonicalize — it is a low-level constructor. Canonicalization happens at three points:
+> 1. **Arithmetic operations** (`add`, `sub`, `mul`, `div`) canonicalize results before returning
+> 2. **`DqaEncoding::from_dqa()`** canonicalizes before encoding to bytes
+> 3. **Before serialization**, users MUST call `canonicalize()` or use `DqaEncoding::from_dqa()`
 
 This invariant ensures:
 1. **Deterministic Merkle hashes** — same logical value always encodes identically

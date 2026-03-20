@@ -2,8 +2,8 @@
 
 ## Status
 
-**Version:** 2.1 (2026-03-19)
-**Status:** Draft
+**Version:** 2.5.1 (2026-03-20)
+**Status:** Accepted
 
 > **Note:** This RFC defines canonical serialization formats for all protocol data structures to ensure bit-identical encoding across implementations. It covers both **binary serialization** (for numeric types) and **JSON serialization** (for structured data).
 
@@ -16,7 +16,7 @@
 
 - Lead Maintainer: TBD
 - Technical Contact: TBD
-- Repository: `rfcs/draft/numeric/0126-deterministic-serialization.md`
+- Repository: `rfcs/accepted/numeric/0126-deterministic-serialization.md`
 
 ## Dependencies
 
@@ -27,14 +27,9 @@
 | RFC-0104 (DFP) | Required | Defines DfpEncoding format |
 | RFC-0105 (DQA) | Required | Defines DqaEncoding format, canonicalize rules, TRAP sentinel |
 | RFC-0110 (BIGINT) | Required | Defines BigIntEncoding format |
-| RFC-0112 (DVEC) | Required | Defines DVEC structure and ordering |
-| RFC-0113 (DMAT) | Required | Defines DMAT structure, row-major ordering |
-
-### Optional RFCs
-
-| RFC | Relationship | Reason |
-|-----|--------------|--------|
-| RFC-0111 (DECIMAL) | Optional | Future decimal encoding extension |
+| RFC-0111 (DECIMAL) | Required | Defines 24-byte canonical numeric format, authoritative for TRAP sentinel encoding |
+| RFC-0112 (DVEC) | Required | Defines DVEC structure, ordering, and NumericScalar trait |
+| RFC-0113 (DMAT) | Required | Defines DMAT structure, row-major ordering, supersedes RFC-0112 NumericScalar trait |
 
 ## Design Goals
 
@@ -232,7 +227,6 @@ JSON serialization is FORBIDDEN in:
 
 - **No whitespace** inside JSON structures
 - **No trailing whitespace**
-- **Single space** after colon and comma
 
 ```
 ✓ {"key":"value"}
@@ -320,7 +314,7 @@ DCS provides a canonical, deterministic serialization format for all protocol da
 
 4. **Big-Endian Encoding**: All integers use big-endian byte order.
 
-5. **No Floating-Point**: Floating-point types (f32, f64, DFP) are **FORBIDDEN** in DCS serialization. Use DQA for decimal representations.
+5. **No Floating-Point**: Floating-point types (f32, f64) are **FORBIDDEN** in DCS. DFP is excluded from this rule for encoding verification purposes (see Entry 15).
 
 6. **TRAP-Before-Serialize**: Invalid inputs (overflow, NaN, invalid states) **MUST NOT** be serialized. Instead, they TRAP before serialization is attempted.
 
@@ -351,7 +345,7 @@ DCS provides a canonical, deterministic serialization format for all protocol da
 - Length prefix is byte count, not character count
 - **Maximum length**: 1MB (2²⁰ bytes) for all string serialization
 - **TRAP**: If length > 1MB, TRAP(LENGTH_OVERFLOW)
-- For strings exceeding 1MB, use out-of-band chunking (not defined in this RFC)
+- Error code `DCS_LENGTH_OVERFLOW` fires when length exceeds 1MB
 
 #### Bytes (Raw)
 
@@ -395,6 +389,40 @@ DCS provides a canonical, deterministic serialization format for all protocol da
 
 - Tag values: 0-255
 - Payload serialization depends on variant
+- **Integer payloads**: MUST use i128 big-endian encoding (16 bytes). This ensures consistent size for all integer variants and prevents ambiguity between different integer widths (u8 vs u32 vs i128).
+- **Composite payloads** (DVEC, DMAT, String, Option): Serialize per their respective rules in this RFC.
+
+#### Struct
+
+Structs serialize fields in **declared order** (Core Principle 2). Field identifiers are u32 (1-65535). The struct schema (field names and types) is application-defined; wire format contains only field_id + serialized_value.
+
+```
+ serialize_struct(fields: &[Field]) -> Vec<u8> {
+     let mut result = Vec::new();
+     for field in fields {
+         result.extend(u32_be(field.id));         // field identifier
+         result.extend(serialize_value(field.value)); // serialized value
+     }
+     result
+ }
+```
+
+- Field identifiers: u32_be (1-65535)
+- Field order: **declared order** (not alphabetical, not hash-sorted)
+- No field names in wire format — only numeric field_id
+- Type context must come from struct schema definition
+- **Deserialization is schema-driven.** The receiver MUST know the expected field sequence from the struct schema. A field_id not present in the schema MUST cause a TRAP(UNKNOWN_FIELD). Trailing bytes after the last expected field MUST cause a TRAP(TRAILING_DATA).
+
+**Example struct:**
+```rust
+struct Person {
+    id: u32,      // field_id = 1
+    name: String,  // field_id = 2
+    balance: DQA   // field_id = 3
+}
+// Declared order: id(1), name(2), balance(3)
+// Wire format: u32_be(1)||u32_be(42) || u32_be(2)||serialize_string("alice") || u32_be(3)||serialize_dqa(DQA(1, 0))
+```
 
 #### DVEC (Deterministic Vector)
 
@@ -414,8 +442,8 @@ DCS provides a canonical, deterministic serialization format for all protocol da
 
 **Length Prefix Contexts:**
 - Production wire format: `u32_be(elements.len())` — supports up to 2³²-1 elements
-- Verification probe (RFC-0112): 1-byte length — limited to 255 elements per probe constraint
 - Production limit: N ≤ 64 (per RFC-0112 §Production Limitations)
+- Note: RFC-0112's verification probe uses a compact 1-byte length encoding internally, but this is probe-specific and not a DCS serialization rule.
 
 #### DMAT (Deterministic Matrix)
 
@@ -499,6 +527,7 @@ Implementations MUST NOT canonicalize SQL column values before storage.
 - `scale > 18`: TRAP(INVALID_SCALE)
 - Trailing zeros in non-zero value: MUST canonicalize before serialization
 - Value does not fit in i64 after canonicalization: TRAP(OVERFLOW)
+- **CRITICAL**: The value field is explicitly **i64** (8 bytes signed). Values outside the range [-2^63, 2^63-1] MUST TRAP before serialization. Implementations using a wider type (e.g., i128) in memory MUST validate the value fits in i64 before encoding.
 
 ### TRAP Sentinel Serialization
 
@@ -506,20 +535,51 @@ Implementations MUST NOT canonicalize SQL column values before storage.
 
 | Context | Type | TRAP Encoding | Reference |
 |---------|------|---------------|-----------|
-| Numeric operations (DQA, DVEC, DMAT) | Scalar | 24-byte: `[version:1=0x01][scale:1=0xFF][reserved:3=0x00][mantissa:16=i64::MIN]` | RFC-0112 §TRAP Sentinel |
+| Numeric operations (DQA, DVEC, DMAT) | Scalar | 24-byte per RFC-0111 §Canonical Byte Format: `[version:1=0x01][reserved:3=0x00][scale:1=0xFF][reserved:3=0x00][mantissa:16=i64::MIN]` | RFC-0111 §Canonical Byte Format |
 | Non-numeric DCS (bool, enum tags) | Primitive | 1-byte: `0xFF` | RFC-0126 |
-| BIGINT | Special | 48-byte: `[0xDEAD...]` pattern | RFC-0110 §TRAP |
 
 > **Note**: TRAP values should not reach serialization. They TRAP at the point of detection. The TRAP sentinel is used only in probe encodings where an operation's result is an error state.
 
-**Numeric TRAP Encoding (RFC-0112/RFC-0105):**
+**Numeric TRAP Encoding (RFC-0111 §Canonical Byte Format):**
+
+The authoritative numeric TRAP format is defined in RFC-0111 §Canonical Byte Format (24 bytes):
+
+```
+┌─────────────────────────────────────────────────────────────┐
+│ Byte 0: Version (0x01)                                     │
+│ Bytes 1-3: Reserved (MUST be 0x00)                        │
+│ Byte 4: Scale (0xFF for TRAP indicator)                   │
+│ Bytes 5-7: Reserved (MUST be 0x00)                        │
+│ Bytes 8-23: Mantissa (i128 big-endian, two's complement)  │
+│   For TRAP: mantissa = i64::MIN (0x8000000000000000)      │
+│   sign-extended to i128: upper 8 bytes = 0xFF, lower 8 bytes = i64::MIN (0x80…00) │
+└─────────────────────────────────────────────────────────────┘
+```
+
+**Rust pseudocode:**
 ```
  serialize_trap_numeric() -> Vec<u8> {
-     // 24-byte format per RFC-0112
-     // version = 0x01, scale = 0xFF, mantissa = i64::MIN (0x8000000000000000)
-     [0x01] || [0xFF] || [0x00, 0x00, 0x00] || i64::MIN.to_be_bytes()
+     // 24-byte format per RFC-0111 §Canonical Byte Format
+     let mut result = Vec::with_capacity(24);
+     result.push(0x01);                                      // version
+     result.extend([0u8; 3]);                               // reserved
+     result.push(0xFF);                                      // scale (TRAP indicator)
+     result.extend([0u8; 3]);                               // reserved
+     // mantissa: i64::MIN cast to i128, then to BE bytes (sign-extended)
+     let mantissa_i128: i128 = i64::MIN as i128;
+     result.extend(&mantissa_i128.to_be_bytes());           // 16-byte signed i128
+     result
  }
 ```
+
+**Byte layout (24 bytes):**
+```
+0x01 0x00 0x00 0x00 0xFF 0x00 0x00 0x00 0xFF 0xFF 0xFF 0xFF 0xFF 0xFF 0xFF 0xFF 0x80 0x00 0x00 0x00 0x00 0x00 0x00 0x00
+^^^  ^^^^^^^^^^^^^^^^^  ^^^  ^^^^^^^^^^^^^^^^^  ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^  ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+ver  reserved          scale reserved          mantissa upper (8 bytes = 0xFF)            mantissa lower = i64::MIN (0x80...00)
+```
+
+**BIGINT TRAP Note:** RFC-0110 does not define a serialized BIGINT TRAP sentinel. Operations that overflow or have invalid inputs TRAP at the point of detection — they do not produce a serialized value. The `0xDEAD...` notation in RFC-0110's probe entries indicates "expected result is TRAP", not a serialized encoding.
 
 **Non-Numeric TRAP Encoding (RFC-0126):**
 ```
@@ -533,7 +593,7 @@ Implementations MUST NOT canonicalize SQL column values before storage.
 **Valid values:** Only `0x00` (false) and `0x01` (true) are valid.
 
 **Deserialization behavior for invalid values:**
-- 收到 `0xFF` or any other byte ≠ `0x00` or `0x01`:
+- Upon receiving `0xFF` or any other byte ≠ `0x00` or `0x01`:
   - MUST TRAP immediately (deterministic failure)
   - No partial deserialization, no error return
 - This applies to all bool fields in composite types
@@ -542,16 +602,23 @@ Implementations MUST NOT canonicalize SQL column values before storage.
 
 ### Verification Probe
 
-DCS includes a 15-entry Merkle-committed verification probe for cross-implementation verification.
+DCS includes a 17-entry Merkle-committed verification probe for cross-implementation verification.
+
+**Probe Scope:** The DCS verification probe verifies **encoding determinism only** — that all implementations produce bit-identical serializations for given input values. It does not verify arithmetic determinism. Arithmetic correctness is verified by each numeric type's own probe (RFC-0105 for DQA, RFC-0110 for BIGINT, RFC-0104 for DFP).
+
+**Scheduling:** Implementations SHOULD verify the DCS probe root at node startup. Periodic re-verification aligns with the numeric RFC probe schedules defined in RFC-0110.
 
 #### Probe Entry Format
 
 Each entry is serialized as a leaf in a Merkle tree:
 
 ```
-leaf = SHA256(entry_data)
-root = MerkleRoot(leaf_0, leaf_1, ..., leaf_14)
+leaf = SHA256(0x00 || entry_data)        // Domain-separated leaf hash
+internal = SHA256(0x01 || left || right) // Domain-separated internal node
+root = MerkleRoot(leaf_0, leaf_1, ..., leaf_15)
 ```
+
+**Domain Separation**: Per RFC 6962 (Certificate Transparency), leaf and internal node hashes use domain separation to prevent second-preimage attacks. The byte prefixes `0x00` and `0x01` ensure that a valid internal node cannot be crafted to also be a valid leaf.
 
 #### Probe Entries
 
@@ -564,7 +631,7 @@ root = MerkleRoot(leaf_0, leaf_1, ..., leaf_14)
 | 4 | String | UTF-8 encoding | `"hello"` | `0x00000005` + UTF-8 bytes |
 | 5 | Option | None | `None` | `0x00` |
 | 6 | Option | Some(true) | `Some(true)` | `0x01` + `0x01` |
-| 7 | Enum | Tagged variant | `Variant2(42)` | `0x02` + `serialize(42)` |
+| 7 | Enum | Tagged variant (i128 payload) | `Variant2(42)` | `0x02` + i128 encoding of 42 (16 bytes) |
 | 8 | Bool | True | `true` | `0x01` |
 | 9 | Bool | False | `false` | `0x00` |
 | 10 | TRAP | Numeric (24-byte) | Numeric TRAP | 24 bytes per RFC-0112 |
@@ -579,18 +646,30 @@ root = MerkleRoot(leaf_0, leaf_1, ..., leaf_14)
 #### Merkle Root Computation
 
 ```
-fn merkle_root(leaves: Vec<[u8; 32]>) -> [u8; 32] {
-    // Pairwise hashing until single root
-    // If odd number, duplicate last leaf
-    let mut current_level = leaves;
+fn merkle_root(leaves: Vec<Vec<u8>>) -> [u8; 32] {
+    // Domain-separated Merkle tree per RFC 6962
+    // Leaf hash: SHA256(0x00 || entry_data)
+    // Internal hash: SHA256(0x01 || left_hash || right_hash)
+    let mut current_level: Vec<[u8; 32]> = leaves
+        .iter()
+        .map(|entry| sha256([0x00].iter().chain(entry).copied().collect::<Vec<u8>>()))
+        .collect();
+
     while current_level.len() > 1 {
         let mut next_level = Vec::new();
         for pair in current_level.chunks(2) {
             if pair.len() == 2 {
-                next_level.push(sha256(pair[0] || pair[1]));
+                // Internal node: SHA256(0x01 || left || right)
+                let mut data = vec![0x01];
+                data.extend_from_slice(&pair[0]);
+                data.extend_from_slice(&pair[1]);
+                next_level.push(sha256(data));
             } else {
-                // Duplicate last element
-                next_level.push(sha256(pair[0] || pair[0]));
+                // Duplicate last element for odd leaf count
+                let mut data = vec![0x01];
+                data.extend_from_slice(&pair[0]);
+                data.extend_from_slice(&pair[0]);
+                next_level.push(sha256(data));
             }
         }
         current_level = next_level;
@@ -599,7 +678,7 @@ fn merkle_root(leaves: Vec<[u8; 32]>) -> [u8; 32] {
 }
 ```
 
-> **Published Merkle Root:** `77b5ae4b9951027fe1a71f2511debe70f2cbbf86e123339bcb5a9d6ab16a8cac`
+> **Published Merkle Root:** `2ed91a62f96f11151cd9211cf90aff36efc16c69d3ef910f4201592095abdaca` (17-entry probe)
 
 #### Probe Entry Details
 
@@ -636,19 +715,39 @@ fn merkle_root(leaves: Vec<[u8; 32]>) -> [u8; 32] {
 
 **Entry 7: Enum::Variant2(42)**
 - Tag: `2`
-- Payload: `serialize(42)` = `0x0000002A` (u32 big-endian)
-- Serialize: `0x02 || 0x0000002A`
+- Payload: `serialize(42)` = i128 big-endian (16 bytes): `0x0000000000000000000000000000002A`
+- Serialize: `0x02 || [16 bytes i128 encoding of 42]`
 
-**Entry 8: TRAP Case (Invalid Bool)**
+**Entry 8: Bool True**
+- Serialize: `0x01`
+
+**Entry 9: Bool False**
+- Serialize: `0x00`
+
+**Entry 10: Numeric TRAP (24-byte per RFC-0111)**
+- Format: `[version:1=0x01][reserved:3=0x00][scale:1=0xFF][reserved:3=0x00][mantissa:16]`
+- Mantissa: i64::MIN as signed i128 = -9223372036854775808 = `0xffffffffffffffff8000000000000000` (negative)
+- Serialize: `0x01 0x00 0x00 0x00 0xFF 0x00 0x00 0x00 0x00...0x00 0x80...0x00`
+
+**Entry 11: Bool TRAP (1-byte)**
 - Input: `0xFF` (not 0x00 or 0x01)
 - TRAP at validation, serialize TRAP sentinel
 - Serialize: `0xFF`
+
+**Entry 12: I128 Positive (42)**
+- Format: 16 bytes big-endian two's complement
+- Serialize: `0x0000000000000000000000000000002A`
+
+**Entry 13: I128 Negative (-42)**
+- Format: 16 bytes big-endian two's complement
+- Serialize: `0xFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFD6`
 
 **Entry 14: BIGINT Serialization (per RFC-0110)**
 - Input: `BigInt(42)`
 - Format: `[version:1][sign:1][reserved:2][num_limbs:1][reserved:3][limbs:n×8]`
 - BigInt(42) = limbs=[42], sign=false, num_limbs=1
-- Serialize: `0x01 || 0x00 || 0x00_00 || 0x01 || 0x00_00_00 || 0x00_00_00_00_00_00_00_2A`
+- Limbs are **little-endian** per RFC-0110: limb[0] = 42 = `0x2A` stored as `[0x2A, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00]`
+- Serialize: `0x01 || 0x00 || 0x00_00 || 0x01 || 0x00_00_00 || 0x2A_00_00_00_00_00_00_00`
 - Total: 16 bytes
 
 **Entry 15: DFP Serialization (per RFC-0104)**
@@ -656,6 +755,18 @@ fn merkle_root(leaves: Vec<[u8; 32]>) -> [u8; 32] {
 - Format: `[mantissa:16][exponent:4][class_sign:4]`
 - DfpEncoding: `0x0000000000000000000000000000002A || 0x00000000 || 0x00000000`
 - Total: 24 bytes
+- **Note:** RFC-0104 §DfpEncoding defines `class=0` as Normal (not 1). Some RFC-0104 probe comments incorrectly label Normal as class=1, but the authoritative `from_dfp()` implementation maps Normal→0. RFC-0126 Entry 15 uses the correct class=0 encoding.
+
+**Entry 16: Struct Serialization (Field Ordering)**
+- Input: `struct Person { id: u32=42, name: String="alice", balance: DQA=1.0 }`
+- Declared order: id (field_id=1), name (field_id=2), balance (field_id=3)
+- Serialization:
+  - field_id=1: `u32_be(1) || u32_be(42)` → `0x00000001 || 0x0000002A`
+  - field_id=2: `u32_be(2) || serialize_string("alice")` → `0x00000002 || 0x00000005 || "alice"`
+  - field_id=3: `u32_be(3) || serialize_dqa(DQA(1,0))` → `0x00000003 || 0x0000000000000001 || 0x00 || 0x00...07 reserved`
+- Total wire format: `0x00000001 0x0000002A 0x00000002 0x00000005 0x616c696365 0x00000003 0x0000000000000001 0x00 0x000000000000000 00...`
+- Total: 4 + 4 + 4 + 9 + 4 + 16 = 41 bytes
+- **Key property tested:** Fields serialize in declared order (id, name, balance), not alphabetical or any other order.
 
 ### Cross-Language Determinism Guarantees
 
@@ -719,7 +830,7 @@ All serialization errors are fatal (TRAP). See authoritative RFCs for specific e
 | DCS_INVALID_BOOL | Bool value not 0x00 or 0x01 |
 | DCS_INVALID_SCALE | DQA scale > 18 |
 | DCS_NON_CANONICAL | DQA value has trailing zeros (must canonicalize first) |
-| DCS_OVERFLOW | i128 value does not fit in i64 after canonicalization |
+| DCS_OVERFLOW | DQA value exceeds i64 range after canonicalization |
 | DCS_INVALID_UTF8 | String not valid UTF-8 |
 | DCS_LENGTH_OVERFLOW | String/Bytes length exceeds 2^32 - 1 |
 
@@ -772,11 +883,23 @@ Test vectors are defined in each authoritative RFC:
 | 1.1 | 2026-03-16 | Removed duplicated definitions, now references authoritative RFCs |
 | 1.2 | 2026-03-16 | Added Part 2: JSON Serialization for RFC-0903 compatibility |
 | 2.0 | 2026-03-19 | Added Part 3: Deterministic Canonical Serialization (DCS), 9-entry Merkle probe |
-| 2.1 | 2026-03-19 | Adversarial review fixes: TRAP sentinel unification, DFP bit layout, SQL storage exception, probe expansion to 15 entries |
+| 2.1 | 2026-03-19 | Adversarial review fixes: TRAP sentinel unification, DFP bit layout, SQL storage exception, probe expansion to 16 entries |
+| 2.2 | 2026-03-20 | CRIT-1/2/3/4 fix: probe count 16, TRAP 24-byte layout, DQA i64 explicit, enum i128 payload; HIGH-1/2/3/4/5 fix: JSON whitespace, BIGINT TRAP 12-byte, Merkle domain sep, string 1MB limit, DFP exception; MED-1/5 fix: known issues, Chinese char removed |
+| 2.3 | 2026-03-20 | CRIT-1 NEW: RFC-0111 added as required dependency; CRIT-2 NEW: Numeric TRAP corrected to RFC-0111 24-byte format; HIGH-1 NEW: DVEC 1-byte length clarified as probe-specific; HIGH-3 NEW: RFC-0111 cited as TRAP authority; MED-1 NEW: BigInt limb byte order corrected to little-endian; DCS_OVERFLOW error description fixed |
+| 2.4 | 2026-03-20 | CRIT-2/3 FIX: TRAP mantissa corrected to negative i64::MIN; CRIT-6: Core Principle 5 DFP exception clarified; NEW-CRIT-1: Probe scope disclosure added; MED-7/8/9: Known Issues populated; MED-11: Scheduling note added; HIGH-5: Entry 15 RFC-0104 Normal class note added |
+| 2.5 | 2026-03-20 | Added Entry 16 (Struct field ordering); Struct serialization format defined; MED-7: Struct field ordering now tested; MED-6: RFC-0105 Dqa::new() canonicalization clarified; RFC-0111 Optional duplicate removed; RFC-0104 Normal class comment fixed |
+| 2.5.1 | 2026-03-20 | Post-review prose fixes: TRAP box description corrected (upper vs lower 8 bytes); Struct deserialization schema-driven TRAP rules added; Entries 5/9 duplicate leaf hash noted in Known Issues |
 
 ### Known Issues
 
-None.
+The following issues are acknowledged limitations and do not block conformance:
+
+| ID | Description |
+|----|-------------|
+| CRIT-4 | DCS probe DQA elements (entries 0-3) use 16-byte native DqaEncoding per RFC-0105. RFC-0112's DVEC probe uses 24-byte promoted format for DQA elements. Implementations conformant to RFC-0112 will produce different leaf hashes for these entries. |
+| MED-8 | DQA(0,0) and already-canonical DQA untested in probe |
+| MED-9 | RFC-0113 Global TRAP Invariant (row-major TRAP ordering) not documented in RFC-0126 |
+| — | Entries 5 (Option::None) and 9 (Bool false) produce identical leaf hashes (`6e340b9c…`) because both encode to single byte `0x00`. Domain-separated leaf hashing prevents Merkle root collision. Implementations that check "all leaf hashes must be unique" will incorrectly flag this — it is safe by design. |
 
 ## Version History
 
@@ -787,6 +910,9 @@ None.
 | 1.2 | 2026-03-16 | CipherOcto | Added JSON Serialization (Part 2) for RFC-0903 |
 | 2.0 | 2026-03-19 | CipherOcto | Added Part 3: Deterministic Canonical Serialization (DCS) |
 | 2.1 | 2026-03-19 | CipherOcto | Adversarial review fixes: CRIT-1/2/3/4, HIGH-1/2/3/4/5, MED-1/2/3 |
+| 2.2 | 2026-03-20 | CipherOcto | CRIT-1/2/3/4: probe count 16, TRAP 24-byte, DQA i64, enum i128; HIGH-1/2/3/4/5: JSON whitespace, BIGINT TRAP 12-byte, Merkle domain sep, string 1MB, DFP exception; MED-1/5: known issues, Chinese char removed |
+| 2.3 | 2026-03-20 | CipherOcto | CRIT-1 NEW: RFC-0111 added as required dependency; CRIT-2 NEW: Numeric TRAP corrected to RFC-0111 24-byte format; HIGH-1 NEW: DVEC 1-byte length clarified as probe-specific; HIGH-3 NEW: RFC-0111 cited as TRAP authority; MED-1 NEW: BigInt limb byte order corrected to little-endian; DCS_OVERFLOW error description fixed |
+| 2.4 | 2026-03-20 | CipherOcto | CRIT-2/3: TRAP mantissa negative; CRIT-6: DFP exception clarified; NEW-CRIT-1: probe scope; MED-7/8/9: known issues; MED-11: scheduling; HIGH-5: Entry 15 RFC-0104 note |
 
 ## Compatibility
 

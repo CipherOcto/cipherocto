@@ -1564,7 +1564,7 @@ const VERIFICATION_PROBE: &[ProbeEntry] = &[
                          0x00, 0x00, 0x00, 0x00,
                          0x00, 0x00, 0x00, 0x07,             // mantissa bytes 12-15: 7 in lowest byte
                          0xff, 0xff, 0xff, 0xff,             // exponent: -1 (0xffffffff in i32)
-                         0x00, 0x00, 0x00, 0x01],            // class_sign: Normal(1), sign: positive(0)
+                         0x00, 0x00, 0x00, 0x01],            // class_sign: class=0(Normal), sign=0(positive)
     },
     // Test: 3.0 * 2.0 = 6.0
     // a = 3.0 = mantissa=3, exponent=0; b = 2.0 = mantissa=2, exponent=0
@@ -1578,7 +1578,7 @@ const VERIFICATION_PROBE: &[ProbeEntry] = &[
                          0x00, 0x00, 0x00, 0x00,
                          0x00, 0x00, 0x00, 0x03,             // mantissa: 3
                          0x01, 0x00, 0x00, 0x00,             // exponent: 1
-                         0x00, 0x00, 0x00, 0x01],            // class_sign: Normal(1), sign: positive(0)
+                         0x00, 0x00, 0x00, 0x01],            // class_sign: class=0(Normal), sign=0(positive)
     },
     // Test: sqrt(4.0) = 2.0
     // Input: 4.0 = mantissa=1, exponent=2 (1*2^2 = 4, 1 is odd, canonical)
@@ -1592,7 +1592,7 @@ const VERIFICATION_PROBE: &[ProbeEntry] = &[
                          0x00, 0x00, 0x00, 0x00,
                          0x00, 0x00, 0x00, 0x01,             // mantissa: 1
                          0x01, 0x00, 0x00, 0x00,             // exponent: 1
-                         0x00, 0x00, 0x00, 0x01],            // class_sign: Normal(1), sign: positive(0)
+                         0x00, 0x00, 0x00, 0x01],            // class_sign: class=0(Normal), sign=0(positive)
     },
     // Test: NaN + 1.0 = NaN (NaN propagation)
     // NaN has class=NaN (2), exponent=0, mantissa=0
@@ -1619,7 +1619,7 @@ const VERIFICATION_PROBE: &[ProbeEntry] = &[
                          0xff, 0xff, 0xff, 0xff,
                          0xff, 0xff, 0xff, 0xff,
                          0xff, 0x03, 0x00, 0x00,             // exponent: 1023 (0x3ff)
-                         0x00, 0x00, 0x00, 0x01],            // class_sign: Normal(1), sign: positive(0)
+                         0x00, 0x00, 0x00, 0x01],            // class_sign: class=0(Normal), sign=0(positive)
     },
     // Test: Division by zero saturation - 1.0 / 0 = MAX (saturating)
     ProbeEntry {
@@ -1631,7 +1631,7 @@ const VERIFICATION_PROBE: &[ProbeEntry] = &[
                          0xff, 0xff, 0xff, 0xff,
                          0xff, 0xff, 0xff, 0xff,
                          0xff, 0x03, 0x00, 0x00,             // exponent: 1023
-                         0x00, 0x00, 0x00, 0x01],            // class_sign: Normal(1), sign: positive(0)
+                         0x00, 0x00, 0x00, 0x01],            // class_sign: class=0(Normal), sign=0(positive)
     },
     // Test: Zero result - 1.0 - 1.0 = 0
     // Result: class=Zero, mantissa=0, exponent=0, sign=positive

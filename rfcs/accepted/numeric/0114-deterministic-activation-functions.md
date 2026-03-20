@@ -632,7 +632,7 @@ Authoritative implementation for:
 - [RFC-0110: Deterministic Numeric Specification](../accepted/numeric/0110-deterministic-numeric-spec.md)
 - [RFC-0112: Deterministic Vectors](../accepted/numeric/0112-deterministic-vectors.md)
 - [RFC-0113: Deterministic Matrices](../accepted/numeric/0113-deterministic-matrices.md)
-- [RFC-0126: Deterministic Serialization](../draft/numeric/0126-deterministic-serialization.md)
+- [RFC-0126: Deterministic Serialization](../accepted/numeric/0126-deterministic-serialization.md)
 
 ---
 

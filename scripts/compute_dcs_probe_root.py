@@ -171,23 +171,30 @@ def serialize_dqa(value: int, scale: int) -> bytes:
 
 def serialize_trap_numeric() -> bytes:
     """
-    Serialize numeric TRAP sentinel per RFC-0112.
+    Serialize numeric TRAP sentinel per RFC-0111 (authoritative) and RFC-0112.
 
-    24-byte format: version(1) || scale(1) || reserved(3) || mantissa(16)
-    TRAP = { mantissa: i128::MIN, scale: 0xFF }
+    24-byte format: version(1) || reserved(3) || scale(1) || reserved(3) || mantissa(16)
+    TRAP = { mantissa: i64::MIN (as signed i128), scale: 0xFF }
+
+    Per RFC-0112: 'mantissa: 0x8000000000000000 (i64 min)'
+    Per RFC-0113: 'mantissa: -(1 << 63)' = i64::MIN (negative)
+
+    The 16-byte mantissa field contains i64::MIN as a signed i128:
+    - Value = -9223372036854775808 (negative)
+    - Big-endian two's complement: 0xffffffffffffffff8000000000000000
     """
     # version = 0x01
     result = bytes([0x01])
+    # reserved = 3 bytes zero
+    result += bytes([0, 0, 0])
     # scale = 0xFF (TRAP indicator)
     result += bytes([0xFF])
     # reserved = 3 bytes zero
     result += bytes([0, 0, 0])
-    # mantissa = RFC-0112 defines TRAP as i64::MIN (0x8000000000000000) in lower 8 bytes
-    # For the 24-byte probe format, i64::MIN is zero-extended to 16 bytes:
-    #   i64::MIN (8 bytes) = 0x8000000000000000
-    #   zero-extended to 16 bytes = 0x00000000000000008000000000000000
-    # The probe encoding stores this as: [reserved:3][mantissa:16] = 19 bytes total
-    result += (0x80000000000000000000000000000000).to_bytes(16, byteorder='big', signed=False)
+    # mantissa = i64::MIN as signed i128 (negative)
+    # This is -9223372036854775808, encoded as 16 bytes big-endian two's complement
+    mantissa = (-9223372036854775808).to_bytes(16, byteorder='big', signed=True)
+    result += mantissa
     return result
 
 
@@ -252,22 +259,26 @@ def serialize_dmat(rows: int, cols: int, elements: List[bytes]) -> bytes:
 
 def merkle_root(leaves: List[bytes]) -> bytes:
     """
-    Compute Merkle root from leaves.
+    Compute Merkle root from leaves using domain-separated hashing per RFC 6962.
 
-    Uses pairwise hashing until single root remains.
-    If odd number of leaves, duplicate last leaf.
+    - Leaf hash: SHA256(0x00 || entry_data)
+    - Internal node hash: SHA256(0x01 || left_hash || right_hash)
+
+    This prevents second-preimage attacks where a crafted leaf could match
+    an internal node hash.
     """
-    current_level = [sha256(leaf) for leaf in leaves]
+    # Domain-separated leaf hashing (0x00 prefix)
+    current_level = [sha256(bytes([0x00]) + leaf) for leaf in leaves]
 
     while len(current_level) > 1:
         next_level = []
         for i in range(0, len(current_level), 2):
             if i + 1 < len(current_level):
-                # Pair of two
-                next_level.append(sha256(current_level[i] + current_level[i + 1]))
+                # Pair of two - domain-separated internal node (0x01 prefix)
+                next_level.append(sha256(bytes([0x01]) + current_level[i] + current_level[i + 1]))
             else:
-                # Duplicate last element (uneven case)
-                next_level.append(sha256(current_level[i] + current_level[i]))
+                # Duplicate last element for odd leaf count
+                next_level.append(sha256(bytes([0x01]) + current_level[i] + current_level[i]))
 
         current_level = next_level
 
@@ -279,6 +290,7 @@ def build_probe() -> List[bytes]:
     Build the 16-entry DCS verification probe.
 
     Returns list of 16 serialized entries.
+    Entry 0-15 (16 total entries).
     """
     entries = []
 
@@ -337,8 +349,9 @@ def build_probe() -> List[bytes]:
     print(f"  Serialized: {entries[-1].hex()}")
 
     # Entry 7: Enum::Variant2(42)
-    # Tag = 2, payload = serialize(42) = u32 big-endian
-    entries.append(serialize_enum(2, serialize_u32(42)))
+    # Tag = 2, payload = serialize(42) = i128 big-endian (16 bytes)
+    # Per RFC-0126: Integer enum payloads MUST use i128 encoding
+    entries.append(serialize_enum(2, serialize_i128(42)))
     print(f"Entry 7: Enum::Variant2(42)")
     print(f"  Serialized: {entries[-1].hex()}")
 
@@ -383,6 +396,19 @@ def build_probe() -> List[bytes]:
     print(f"Entry 15: DFP 42.0 (mantissa=42, exp=0, class=Normal)")
     print(f"  Serialized: {entries[-1].hex()}")
 
+    # Entry 16: Struct Person { id: u32=42, name: String="alice", balance: DQA=1.0 }
+    # Declared order: id (field_id=1), name (field_id=2), balance (field_id=3)
+    struct_entry = b''
+    struct_entry += serialize_u32(1)                          # field_id = 1
+    struct_entry += serialize_u32(42)                         # id = 42
+    struct_entry += serialize_u32(2)                          # field_id = 2
+    struct_entry += serialize_string("alice")                 # name = "alice"
+    struct_entry += serialize_u32(3)                          # field_id = 3
+    struct_entry += serialize_dqa(1, 0)                       # balance = DQA(1, 0)
+    entries.append(struct_entry)
+    print(f"Entry 16: Struct Person {{ id=42, name=\"alice\", balance=DQA(1,0) }}")
+    print(f"  Serialized: {entries[-1].hex()}")
+
     return entries
 
 
@@ -393,7 +419,7 @@ def main():
     print("=" * 70)
     print()
 
-    # Build the 15 probe entries
+    # Build the 17 probe entries
     entries = build_probe()
 
     print()
@@ -434,7 +460,7 @@ def main():
     print("=" * 70)
 
     # Verify against known root
-    EXPECTED_ROOT = "77b5ae4b9951027fe1a71f2511debe70f2cbbf86e123339bcb5a9d6ab16a8cac"
+    EXPECTED_ROOT = "2ed91a62f96f11151cd9211cf90aff36efc16c69d3ef910f4201592095abdaca"
     assert root.hex() == EXPECTED_ROOT, f"Merkle root mismatch: got {root.hex()}"
     print(f"  ✓ Root matches EXPECTED_ROOT")
 

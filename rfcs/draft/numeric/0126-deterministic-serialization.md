@@ -150,9 +150,9 @@ Each type's encoding is structurally distinct, preventing Merkle hash collisions
 
 | Type A | Type B | Encoding Difference |
 |--------|--------|---------------------|
-| DQA(1.0) | BIGINT(1) | DQA: 16 bytes with scale; BIGINT: variable header + limbs |
+| DQA(1.0) | BIGINT(1) | DQA: 16 bytes total (8 value + 1 scale + 7 reserved); BIGINT: variable header + limbs |
 | DFP(1.0) | BIGINT(1) | DFP: 24 bytes with class_sign; BIGINT: variable header + limbs |
-| DQA(1) | I128(1) | DQA: 16 bytes with scale field; I128: 16 bytes raw |
+| DQA(1) | I128(1) | DQA: 16 bytes total with scale field; I128: 16 bytes raw |
 
 ### Version Byte Handling
 
@@ -464,12 +464,12 @@ RFC-0105 defines two distinct contexts:
 Implementations MUST NOT canonicalize SQL column values before storage.
 
 ```
- serialize_dqa(value: i128, scale: u8) -> Vec<u8> {
+ serialize_dqa(value: i64, scale: u8) -> Vec<u8> {
      // CRITICAL: Canonicalize BEFORE serialization
      let (canon_value, canon_scale) = canonicalize_dqa(value, scale);
 
      let mut result = Vec::new();
-     // value: 16 bytes, big-endian two's complement
+     // value: 8 bytes, big-endian two's complement (per RFC-0105 DqaEncoding)
      result.extend(canon_value.to_be_bytes());
      // scale: 1 byte
      result.push(canon_scale);
@@ -479,7 +479,7 @@ Implementations MUST NOT canonicalize SQL column values before storage.
      result
  }
 
- canonicalize_dqa(value: i128, scale: u8) -> (i128, u8) {
+ canonicalize_dqa(value: i64, scale: u8) -> (i64, u8) {
      // Per RFC-0105 §Canonical Representation
      if value == 0 {
          return (0, 0);
@@ -557,8 +557,8 @@ root = MerkleRoot(leaf_0, leaf_1, ..., leaf_14)
 
 | Index | Type | Description | Input | Expected Serialization |
 |-------|------|-------------|-------|----------------------|
-| 0 | DQA | Positive canonicalization | `DQA(1000, 3)` → canonicalize → `DQA(1, 0)` | 16 bytes value + 1 byte scale + 7 bytes reserved |
-| 1 | DQA | Negative canonicalization | `DQA(-5000, 4)` → canonicalize → `DQA(-5, 1)` | 16 bytes value + 1 byte scale + 7 bytes reserved |
+| 0 | DQA | Positive canonicalization | `DQA(1000, 3)` → canonicalize → `DQA(1, 0)` | 8 bytes value + 1 byte scale + 7 bytes reserved |
+| 1 | DQA | Negative canonicalization | `DQA(-5000, 4)` → canonicalize → `DQA(-5, 1)` | 8 bytes value + 1 byte scale + 7 bytes reserved |
 | 2 | DVEC | Length + index ordering | `[1, 2, 3]` | `0x00000003` + 3× DQA elements |
 | 3 | DMAT | Row-major traversal | `[[1, 2], [3, 4]]` (2×2) | rows + cols + 4× DQA elements |
 | 4 | String | UTF-8 encoding | `"hello"` | `0x00000005` + UTF-8 bytes |
@@ -599,19 +599,19 @@ fn merkle_root(leaves: Vec<[u8; 32]>) -> [u8; 32] {
 }
 ```
 
-> **Published Merkle Root:** `f9103bb1250213f895f3633bc68e2e15eeebad5372160a0c9266cb90837956af`
+> **Published Merkle Root:** `77b5ae4b9951027fe1a71f2511debe70f2cbbf86e123339bcb5a9d6ab16a8cac`
 
 #### Probe Entry Details
 
 **Entry 0: DQA Canonicalization (Positive)**
 - Input: `DQA(1000, 3)`
 - Canonicalize: `1000 × 10^-3 = 1.0 → DQA(1, 0)` (strip trailing zeros)
-- Serialize: `value=1 (16 bytes BE) || scale=0 || reserved=7 bytes zero`
+- Serialize: `value=1 (8 bytes BE per RFC-0105) || scale=0 || reserved=7 bytes zero`
 
 **Entry 1: DQA Canonicalization (Negative)**
 - Input: `DQA(-5000, 4)`
 - Canonicalize: `-5000 × 10^-4 = -0.5 → DQA(-5, 1)` (strip trailing zeros: -5000→-500→-50→-5)
-- Serialize: `value=-5 (16 bytes BE) || scale=1 || reserved=7 bytes zero`
+- Serialize: `value=-5 (8 bytes BE per RFC-0105) || scale=1 || reserved=7 bytes zero`
 
 **Entry 2: DVEC Serialization**
 - Input: `DVEC [DQA(1,0), DQA(2,0), DQA(3,0)]`

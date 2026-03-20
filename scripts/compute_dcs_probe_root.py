@@ -145,9 +145,10 @@ def canonicalize_dqa(value: int, scale: int) -> Tuple[int, int]:
 
 def serialize_dqa(value: int, scale: int) -> bytes:
     """
-    Serialize DQA per RFC-0105.
+    Serialize DQA per RFC-0105 DqaEncoding.
 
-    Format: value (16 bytes BE) || scale (1 byte) || reserved (7 bytes zero)
+    Format: value (8 bytes BE per RFC-0105) || scale (1 byte) || reserved (7 bytes zero)
+    Total: 16 bytes
 
     CRITICAL: Canonicalize BEFORE serialization.
     """
@@ -158,8 +159,8 @@ def serialize_dqa(value: int, scale: int) -> bytes:
     if canon_scale > 18:
         raise ValueError("DCS_INVALID_SCALE: scale > 18")
 
-    # Serialize value: 16 bytes big-endian signed
-    result = canon_value.to_bytes(16, byteorder='big', signed=True)
+    # Serialize value: 8 bytes big-endian signed (per RFC-0105 DqaEncoding)
+    result = canon_value.to_bytes(8, byteorder='big', signed=True)
     # Append scale: 1 byte
     result += bytes([canon_scale])
     # Append reserved: 7 bytes zero
@@ -429,7 +430,7 @@ def main():
     print("=" * 70)
 
     # Verify against known root
-    EXPECTED_ROOT = "f9103bb1250213f895f3633bc68e2e15eeebad5372160a0c9266cb90837956af"
+    EXPECTED_ROOT = "77b5ae4b9951027fe1a71f2511debe70f2cbbf86e123339bcb5a9d6ab16a8cac"
     assert root.hex() == EXPECTED_ROOT, f"Merkle root mismatch: got {root.hex()}"
     print(f"  ✓ Root matches EXPECTED_ROOT")
 

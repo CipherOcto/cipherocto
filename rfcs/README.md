@@ -229,7 +229,7 @@ Once accepted:
 | RFC-0111 (Numeric) | Deterministic DECIMAL                | Draft  | Extended precision decimals (i128)         |
 | RFC-0112 (Numeric) | Deterministic Vectors (DVEC)         | Draft  | Vector operations for AI inference         |
 | RFC-0113 (Numeric) | Deterministic Matrices (DMAT)         | Draft  | Matrix operations for linear algebra      |
-| RFC-0114 (Numeric) | Deterministic Activation Functions    | Draft  | ReLU, Sigmoid, Tanh for ML                |
+| RFC-0114 (Numeric) | Deterministic Activation Functions    | Accepted | ReLU, Sigmoid, Tanh for ML            |
 | RFC-0115 (Numeric) | Deterministic Tensors (DTENSOR)       | Planned | N-dimensional tensors (Phase 4)          |
 | RFC-0116 (Numeric) | Unified Deterministic Execution Model | Draft  | Unified execution framework                 |
 

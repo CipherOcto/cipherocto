@@ -2,7 +2,7 @@
 """
 compute_dact_probe_root.py — Deterministic Activation Functions probe verifier.
 
-RFC-0114 v2.2 canonical reference implementation.
+RFC-0114 v2.12 canonical reference implementation.
 
 Produces:
   - SIGMOID_LUT_V2_SHA256
@@ -43,6 +43,36 @@ def serialize_dqa(value: int, scale: int) -> bytes:
     """Serialize DQA to canonical 16-byte RFC-0105 DqaEncoding format."""
     return value.to_bytes(8, "big", signed=True) + bytes([scale]) + bytes(7)
 
+def canonicalize(value: int, scale: int) -> Tuple[int, int]:
+    """
+    Canonicalize a DQA value per RFC-0105 CANONICALIZE rules:
+    1. If value == 0: return (0, 0)
+    2. Strip trailing zeros: while value % 10 == 0 and scale > 0: value //= 10; scale -= 1
+    3. Return canonical form.
+    """
+    if value == 0:
+        return (0, 0)
+    while value % 10 == 0 and scale > 0:
+        value //= 10
+        scale -= 1
+    return (value, scale)
+
+def normalize_to_scale(value: int, current_scale: int, target_scale: int) -> Tuple[int, int]:
+    """
+    Normalize a DQA value to a target scale per RFC-0114 §normalize_to_scale.
+
+    If already at target scale, return as-is.
+    If delta > 0: upscale (multiply mantissa by 10^delta)
+    If delta < 0: downscale (floor divide mantissa by 10^|delta|)
+    """
+    if current_scale == target_scale:
+        return (value, current_scale)
+    delta = target_scale - current_scale
+    if delta > 0:
+        return (value * (10 ** delta), target_scale)
+    else:
+        return (value // (10 ** -delta), target_scale)
+
 def serialize_trap() -> bytes:
     """Serialize canonical TRAP sentinel (RFC-0105)."""
     return serialize_dqa(TRAP_VALUE, TRAP_SCALE)
@@ -62,7 +92,10 @@ def q88_to_dqa(q: int, target_scale: int = TARGET_SCALE) -> Tuple[int, int]:
     """
     Convert Q8.8 value to DQA (value, scale).
 
-    Uses floor division toward zero. Deterministic, no float.
+    Uses floor division (Python // semantics). Deterministic, no float.
+    Note: For negative inputs, floor division rounds toward negative infinity,
+    which differs from Rust's truncation toward zero. This matches the test
+    vectors and expected Merkle root.
     """
     return (q * (10 ** target_scale)) // 256, target_scale
 
@@ -121,41 +154,79 @@ def build_probe(sigmoid_lut: List[int], tanh_lut: List[int]) -> List[bytes]:
     """
     Build 16 probe leaves per RFC-0114 §Verification Probe.
 
-    All entries are serialized as specified in the RFC.
+    All DQA entries are CANONICALIZED before serialization per RFC-0105
+    VM Canonicalization Rule: values must be canonicalized before hashing.
     """
     leaves = []
 
-    # Entries 0-3: ReLU / ReLU6
-    leaves.append(serialize_dqa(500, 2))    # relu(5.0)   = 5.00
-    leaves.append(serialize_dqa(0, 2))       # relu(-5.0)  = 0.00
-    leaves.append(serialize_dqa(600, 2))    # relu6(10.0) → clamp → 6.00
-    leaves.append(serialize_dqa(300, 2))    # relu6(3.0)  = 3.00
+    # Entries 0-3: ReLU / ReLU6 — canonicalize (e.g., 500,2 → 5,0)
+    leaves.append(serialize_dqa(*canonicalize(500, 2)))    # relu(5.0)   = 5.00 → Dqa(5, 0)
+    leaves.append(serialize_dqa(*canonicalize(0, 2)))       # relu(-5.0)  = 0.00 → Dqa(0, 0)
+    leaves.append(serialize_dqa(*canonicalize(600, 2)))    # relu6(10.0) → clamp → 6.00 → Dqa(6, 0)
+    leaves.append(serialize_dqa(*canonicalize(300, 2)))    # relu6(3.0)  = 3.00 → Dqa(3, 0)
 
-    # Entries 4-6: Sigmoid outputs (Q8.8 → DQA converted)
+    # Entries 4-6: Sigmoid outputs (Q8.8 → DQA converted) — canonicalize
     for idx in [400, 800, 0]:  # 0.0, 4.0, -4.0
         val, sc = q88_to_dqa(sigmoid_lut[idx], TARGET_SCALE)
-        leaves.append(serialize_dqa(val, sc))
+        leaves.append(serialize_dqa(*canonicalize(val, sc)))
 
-    # Entries 7-9: Tanh outputs (Q8.8 → DQA converted)
+    # Entries 7-9: Tanh outputs (Q8.8 → DQA converted) — canonicalize
     for idx in [400, 600, 200]:  # 0.0, 2.0, -2.0
         val, sc = q88_to_dqa(tanh_lut[idx], TARGET_SCALE)
-        leaves.append(serialize_dqa(val, sc))
+        leaves.append(serialize_dqa(*canonicalize(val, sc)))
 
-    # Entries 10-11: LeakyReLU OUTPUTS (not inputs)
+    # Entries 10-11: LeakyReLU OUTPUTS (not inputs) — canonicalize
     lr_neg_val, lr_neg_sc = leaky_relu_output(-100, 2)  # -1.00 → -0.01
     lr_pos_val, lr_pos_sc = leaky_relu_output(100, 2)   # 1.00 → 1.00
-    leaves.append(serialize_dqa(lr_neg_val, lr_neg_sc))
-    leaves.append(serialize_dqa(lr_pos_val, lr_pos_sc))
+    leaves.append(serialize_dqa(*canonicalize(lr_neg_val, lr_neg_sc)))
+    leaves.append(serialize_dqa(*canonicalize(lr_pos_val, lr_pos_sc)))
 
-    # Entries 12-13: First 4 entries of each LUT (raw Q8.8 bytes)
+    # Entries 12-13: First 4 entries of each LUT (raw Q8.8 bytes — not DQA)
     leaves.append(lut_bytes(sigmoid_lut[:4]))
     leaves.append(lut_bytes(tanh_lut[:4]))
 
-    # Entry 14: Normalization invariant test value
-    leaves.append(serialize_dqa(12340, 3))  # 12.340
+    # Entry 14: Normalization invariant test value — canonicalize
+    leaves.append(serialize_dqa(*canonicalize(12340, 3)))  # 12.340 → Dqa(1234, 2)
 
-    # Entry 15: TRAP sentinel
+    # Entry 15: TRAP sentinel — already canonical
     leaves.append(serialize_trap())
+
+    # =============================================================================
+    # EXTENDED PROBE (entries 16-24 — non-normative verification aid)
+    # These additional entries are documented for completeness and can be used
+    # by implementations for extended self-verification. They are NOT part
+    # of the committed 16-entry Merkle root.
+    # =============================================================================
+
+    # Entries 16-17: Sigmoid clamp boundary outputs
+    # sigmoid(-4.5) → clamp → Dqa(0, 4)
+    leaves.append(serialize_dqa(*canonicalize(0, 4)))
+    # sigmoid(4.5) → clamp → Dqa(10000, 4)
+    leaves.append(serialize_dqa(*canonicalize(10000, 4)))
+
+    # Entries 18-19: Tanh clamp boundary outputs
+    # tanh(-4.5) → clamp → Dqa(-10000, 4)
+    leaves.append(serialize_dqa(*canonicalize(-10000, 4)))
+    # tanh(4.5) → clamp → Dqa(10000, 4)
+    leaves.append(serialize_dqa(*canonicalize(10000, 4)))
+
+    # Entries 20-22: TRAP propagation tests (TRAP input → TRAP output)
+    # ReLU(TRAP) → TRAP
+    leaves.append(serialize_trap())
+    # ReLU6(TRAP) → TRAP
+    leaves.append(serialize_trap())
+    # LeakyReLU(TRAP) → TRAP
+    leaves.append(serialize_trap())
+
+    # Entry 23: normalize_to_scale downscale — Dqa(25000, 4) normalized to scale=1 → Dqa(25, 1)
+    # normalize_to_scale(Dqa(25000, 4), 1): delta = -3, 25000 // 10^3 = 25 → Dqa(25, 1)
+    n23_val, n23_sc = normalize_to_scale(25000, 4, 1)
+    leaves.append(serialize_dqa(*canonicalize(n23_val, n23_sc)))
+
+    # Entry 24: normalize_to_scale downscale — Dqa(-153, 3) normalized to scale=2 → Dqa(-16, 2)
+    # normalize_to_scale(Dqa(-153, 3), 2): delta = -1, -153 // 10 = -16 → Dqa(-16, 2)
+    n24_val, n24_sc = normalize_to_scale(-153, 3, 2)
+    leaves.append(serialize_dqa(*canonicalize(n24_val, n24_sc)))
 
     return leaves
 
@@ -177,7 +248,7 @@ def main():
     tanh_hash = sha256(tanh_lut_b).hex()
 
     print("=" * 70)
-    print("RFC-0114 v2.2 — DACT Probe Verification")
+    print("RFC-0114 v2.12 — DACT Probe Verification")
     print("=" * 70)
     print()
     print(f";; LUT Configuration")
@@ -199,19 +270,22 @@ def main():
     # Build and serialize probe
     probe = build_probe(sigmoid_lut, tanh_lut)
 
-    print(f";; Probe Entries ({len(probe)} total)")
+    print(f";; Probe Entries ({len(probe)} total — entries 0-15 are normatively committed)")
     print()
     for i, leaf in enumerate(probe):
-        print(f"LEAF[{i:2d}] ({len(leaf):2d}B): {sha256(leaf).hex()}")
+        tag = " (committed)" if i < 16 else " (extended)"
+        print(f"LEAF[{i:2d}] ({len(leaf):2d}B){tag}: {sha256(leaf).hex()}")
 
-    # Merkle root
+    # Merkle root (computed over all {len(probe)} entries for completeness)
     root = merkle_root(probe)
     print()
-    print(f"MERKLE_ROOT = {root.hex()}")
+    print(f"FULL_PROBE_ROOT ({len(probe)} entries) = {root.hex()}")
+    print(f"MERKLE_ROOT (16 entries) = {merkle_root(probe[:16]).hex()}")
     print()
     print("=" * 70)
-    print(";; Verification: compare MERKLE_ROOT against RFC-0114 §Verification Probe")
-    print(";; Expected: 7a4b3b434b104f33ff823b988d28723fd24730b25f6784fd03d090c0be991eed")
+    print(";; Verification: compare MERKLE_ROOT (16 entries) against RFC-0114 §Verification Probe")
+    print(";; Expected: 4904af886aac5b581fefcf5d275c0753a0f804bc749d47bdd5bed74565c09fce")
+    print(";; Extended entries (16-24) are non-normative verification aid.")
     print("=" * 70)
 
     # Sanity checks
@@ -219,10 +293,12 @@ def main():
     assert len(tanh_lut) == N, f"tanh LUT has {len(tanh_lut)} entries, expected {N}"
     assert tanh_lut[200] == -247, f"tanh_lut[200]={tanh_lut[200]}, expected -247"
     assert tanh_lut[600] == 247, f"tanh_lut[600]={tanh_lut[600]}, expected 247"
-    assert len(probe) == 16, f"probe has {len(probe)} entries, expected 16"
+    assert len(probe) == 25, f"probe has {len(probe)} entries, expected 25"
 
-    expected_root = "7a4b3b434b104f33ff823b988d28723fd24730b25f6784fd03d090c0be991eed"
-    assert root.hex() == expected_root, f"Merkle root mismatch: got {root.hex()}, expected {expected_root}"
+    # Verify committed 16-entry Merkle root
+    committed_root = merkle_root(probe[:16])
+    expected_root = "4904af886aac5b581fefcf5d275c0753a0f804bc749d47bdd5bed74565c09fce"
+    assert committed_root.hex() == expected_root, f"Merkle root mismatch: got {committed_root.hex()}, expected {expected_root}"
 
     print()
     print(";; ALL CHECKS PASSED")

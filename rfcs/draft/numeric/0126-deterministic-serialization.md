@@ -572,6 +572,7 @@ root = MerkleRoot(leaf_0, leaf_1, ..., leaf_14)
 | 12 | I128 | Positive | `42` | 16 bytes big-endian |
 | 13 | I128 | Negative | `-42` | 16 bytes big-endian |
 | 14 | BIGINT | Positive | `42` | RFC-0110 BigIntEncoding (16 bytes) |
+| 15 | DFP | Positive Normal | `42.0` | RFC-0104 DfpEncoding (24 bytes) |
 
 **Note:** Entry 4 (DMAT column-major) was removed because serialization output is indistinguishable for valid row-major input. DMAT input validation ensures data is stored row-major per RFC-0113.
 
@@ -598,7 +599,7 @@ fn merkle_root(leaves: Vec<[u8; 32]>) -> [u8; 32] {
 }
 ```
 
-> **Published Merkle Root:** `9f0d9d982791e1bd4ca81a7cf1839e7fed4675449e4a2c75fba199f227cd41a3`
+> **Published Merkle Root:** `f9103bb1250213f895f3633bc68e2e15eeebad5372160a0c9266cb90837956af`
 
 #### Probe Entry Details
 
@@ -650,6 +651,12 @@ fn merkle_root(leaves: Vec<[u8; 32]>) -> [u8; 32] {
 - Serialize: `0x01 || 0x00 || 0x00_00 || 0x01 || 0x00_00_00 || 0x00_00_00_00_00_00_00_2A`
 - Total: 16 bytes
 
+**Entry 15: DFP Serialization (per RFC-0104)**
+- Input: `DFP(42.0)` = mantissa=42, exponent=0, class=Normal(0), sign=positive(0)
+- Format: `[mantissa:16][exponent:4][class_sign:4]`
+- DfpEncoding: `0x0000000000000000000000000000002A || 0x00000000 || 0x00000000`
+- Total: 24 bytes
+
 ### Cross-Language Determinism Guarantees
 
 To ensure identical serialization across implementations:
@@ -664,6 +671,7 @@ To ensure identical serialization across implementations:
 
 - [ ] Serialize primitives (u8, u32, i128, bool)
 - [ ] Serialize BIGINT with little-endian limbs (RFC-0110)
+- [ ] Serialize DFP with DfpEncoding (RFC-0104)
 - [ ] Serialize strings with UTF-8 validation
 - [ ] Serialize Option types
 - [ ] Serialize enums with tag dispatch
@@ -677,6 +685,7 @@ To ensure identical serialization across implementations:
 
 | RFC | Relationship |
 |-----|--------------|
+| RFC-0104 (DFP) | Decimal floating-point, DfpEncoding, deterministic NaN |
 | RFC-0105 (DQA) | Canonicalization rules, TRAP sentinel |
 | RFC-0110 (BIGINT) | Integer structure, little-endian limbs, BigIntEncoding |
 | RFC-0112 (DVEC) | Vector structure, index ordering |

@@ -2,7 +2,7 @@
 """
 DCS (Deterministic Canonical Serialization) Verification Probe Script
 
-Computes the Merkle root for the 15-entry DCS verification probe.
+Computes the Merkle root for the 16-entry DCS verification probe.
 
 Run with: python3 scripts/compute_dcs_probe_root.py
 """
@@ -83,6 +83,42 @@ def serialize_bigint_trap() -> bytes:
     12 bytes: 0xDEAD_DEAD_DEAD_DEAD_DEAD (little-endian u64 × 1.5)
     """
     return bytes([0xAD, 0xDE, 0xAD, 0xDE, 0xAD, 0xDE, 0xAD, 0xDE, 0xAD, 0xDE, 0xAD, 0xDE])
+
+
+def serialize_dfp(mantissa: int, exponent: int, dfp_class: int, sign: bool) -> bytes:
+    """
+    Serialize DFP per RFC-0104 DfpEncoding.
+
+    Format: [mantissa:16][exponent:4][class_sign:4] = 24 bytes
+    - mantissa: u128, big-endian
+    - exponent: i32, big-endian
+    - class_sign: u32, big-endian = [class:8][sign:8][reserved:16]
+      - class: 0=Normal, 1=Infinity, 2=NaN, 3=Zero
+      - sign: 0=positive, 1=negative
+    """
+    # Pack class_sign: [class:8][sign:8][reserved:16]
+    class_sign = (dfp_class << 24) | ((1 if sign else 0) << 16)
+
+    # Build result
+    result = mantissa.to_bytes(16, byteorder='big', signed=False)  # mantissa (unsigned)
+    result += exponent.to_bytes(4, byteorder='big', signed=True)    # exponent (signed)
+    result += class_sign.to_bytes(4, byteorder='big', signed=False)  # class_sign
+
+    return result
+
+
+def serialize_dfp_trap() -> bytes:
+    """
+    Serialize DFP TRAP sentinel per RFC-0104.
+
+    Uses class=NaN with mantissa=0 for TRAP representation.
+    24 bytes: all zeros except class_sign indicates NaN.
+    """
+    # DFP NaN: mantissa=0, exponent=0, class_sign=NaN(2)
+    result = bytes(16)  # mantissa = 0
+    result += bytes(4)  # exponent = 0
+    result += (2 << 24).to_bytes(4, byteorder='big')  # class_sign = NaN
+    return result
 
 
 def serialize_bool(v: bool) -> bytes:
@@ -235,9 +271,9 @@ def merkle_root(leaves: List[bytes]) -> bytes:
 
 def build_probe() -> List[bytes]:
     """
-    Build the 15-entry DCS verification probe.
+    Build the 16-entry DCS verification probe.
 
-    Returns list of 15 serialized entries.
+    Returns list of 16 serialized entries.
     """
     entries = []
 
@@ -336,6 +372,12 @@ def build_probe() -> List[bytes]:
     print(f"Entry 14: BIGINT positive (42)")
     print(f"  Serialized: {entries[-1].hex()}")
 
+    # Entry 15: DFP (42.0) - RFC-0104 DfpEncoding
+    # DFP(42.0) = mantissa=42, exponent=0, class=Normal(0), sign=positive(0)
+    entries.append(serialize_dfp(42, 0, 0, False))
+    print(f"Entry 15: DFP 42.0 (mantissa=42, exp=0, class=Normal)")
+    print(f"  Serialized: {entries[-1].hex()}")
+
     return entries
 
 
@@ -387,7 +429,7 @@ def main():
     print("=" * 70)
 
     # Verify against known root
-    EXPECTED_ROOT = "9f0d9d982791e1bd4ca81a7cf1839e7fed4675449e4a2c75fba199f227cd41a3"
+    EXPECTED_ROOT = "f9103bb1250213f895f3633bc68e2e15eeebad5372160a0c9266cb90837956af"
     assert root.hex() == EXPECTED_ROOT, f"Merkle root mismatch: got {root.hex()}"
     print(f"  ✓ Root matches EXPECTED_ROOT")
 

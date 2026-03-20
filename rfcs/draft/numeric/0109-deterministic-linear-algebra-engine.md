@@ -2,10 +2,10 @@
 
 ## Status
 
-**Version:** 2.3
+**Version:** 2.4
 **Status:** Draft
 **Submission Date:** 2026-03-10
-**Adversarial Review Response:** v2.2 received third adversarial audit. This v2.3 patch addresses CRIT-01 (Deferred Scale ambiguity), CRIT-02 (SIMD disabled for consensus), CRIT-03 (vector_id source), HIGH-01 (ZK cost warning), HIGH-02 (gas on TRAP), HIGH-03 (Motivation reframe), MED-01 (RFC-0126 coordination), MED-02 (type enforcement). MED-03 rebutted (LUT size is RFC-0114 domain).
+**Adversarial Review Response:** v2.3 received fourth adversarial audit. This v2.4 patch addresses CRIT-01 (verbatim TRAP layout), CRIT-02 (dimension enforcement at construction), HIGH-01 (gas per scalar op), HIGH-02 (intermediate overflow immediate TRAP), HIGH-03 (RFC-0112 grey area), MED-02 (RFC-0114 phase), MED-03 (vector_id external), MED-04 (gas citation). MED-01 (DLAE probe) scheduled for future spec version.
 
 > **Note:** This RFC was renumbered from RFC-0148 to RFC-0109 as part of the category-based numbering system.
 
@@ -77,10 +77,12 @@ struct DVec<T, const N: usize> {
 }
 ```
 
+> ⚠️ **CONSTRUCTION-TIME ENFORCEMENT**: DVec construction MUST TRAP with `ExecutionError::DimensionMismatch` if `N > 64`. Oversized vectors MUST NOT exist in memory on consensus paths. This mirrors RFC-0112 §Production Limitations.
+
 Constraints:
 
-- `1 ≤ N ≤ MAX_VECTOR_DIM`
-- Consensus constant: `MAX_VECTOR_DIM = 4096`
+- `1 ≤ N ≤ MAX_VECTOR_DIM` where `MAX_VECTOR_DIM = 64` (per Consensus Limits)
+- Construction-time check: if `N > 64`, immediately TRAP
 
 #### Deterministic Matrix
 
@@ -92,9 +94,11 @@ struct DMat<T, const M: usize, const N: usize> {
 }
 ```
 
+> ⚠️ **CONSTRUCTION-TIME ENFORCEMENT**: DMat construction MUST TRAP with `ExecutionError::DimensionMismatch` if `M > 8` or `N > 8`. Oversized matrices MUST NOT exist in memory on consensus paths. This mirrors RFC-0113 §Production Limitations.
+
 Storage layout: row-major
 Index calculation: `index = row * N + column`
-Consensus dimension limits are defined in the Consensus Limits section below.
+Consensus dimension limits: `M ≤ 8` and `N ≤ 8` (per Consensus Limits section)
 
 ### Execution Error Enum
 
@@ -130,18 +134,29 @@ pub enum ExecutionError {
 
 > **TRAP ENCODING (CORRECTED)**: A DLAE TRAP result is encoded as:
 > ```
-> [24-byte Numeric TRAP per RFC-0111/RFC-0126] + [1-byte error_code]
+> [24-byte Numeric TRAP] + [1-byte error_code]
 > Total: 25 bytes
 > ```
-> - The 24-byte TRAP sentinel follows RFC-0111 §Canonical Byte Format (per RFC-0126 §TRAP Sentinel Serialization):
->   - Byte 0: version = 0x01
->   - Bytes 1-3: reserved = 0x00
->   - Byte 4: scale = 0xFF (TRAP indicator)
->   - Bytes 5-7: reserved = 0x00
->   - Bytes 8-23: mantissa = i64::MIN (0x8000000000000000)
-> - The 1-byte error_code is one of `0x01`–`0x05` from the table above
-> - RFC-0126 §TRAP Sentinel Serialization is the authoritative reference
-> - This layout ensures compatibility with RFC-0126 serialization format
+>
+> **NORMATIVE REFERENCE**: RFC-0111 §Canonical Byte Format and RFC-0126 §TRAP Sentinel Serialization are the authoritative definitions. The verbatim byte layout is:
+>
+> | Byte(s) | Field | Value | Notes |
+> |---------|-------|-------|-------|
+> | 0 | version | `0x01` | Current format version |
+> | 1-3 | reserved | `0x00` | Must be zero |
+> | 4 | scale | `0xFF` | TRAP indicator |
+> | 5-7 | reserved | `0x00` | Must be zero |
+> | 8-23 | mantissa | `0x8000000000000000...0000` | i64::MIN, sign-extended to 16 bytes |
+>
+> **Byte layout (24 bytes hex):**
+> ```
+> 0x01 0x00 0x00 0x00 0xFF 0x00 0x00 0x00 0xFF 0xFF 0xFF 0xFF 0xFF 0xFF 0xFF 0xFF 0x80 0x00 0x00 0x00 0x00 0x00 0x00 0x00
+> ^^^^  ^^^^^^^^^^^  ^^^  ^^^^^^^^^^^  ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^  ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+> ver  reserved     scale reserved  mantissa upper (0xFF...FF)             mantissa lower = i64::MIN
+> ```
+>
+> - The 1-byte error_code is one of `0x01`–`0x05` from the ExecutionError table
+> - Implementations that reconstruct the sentinel differently will produce non-matching Merkle roots
 
 ### Deterministic Reduction Rule
 
@@ -255,7 +270,7 @@ The sqrt operation MUST use the deterministic algorithm from RFC-0111 (Decimal).
 
 #### Zero Vector Semantics
 
-> ⚠️ **ZERO VECTOR RULE**: Zero vector is valid input. Any normalization or division operation using a zero vector **MUST TRAP** with `ExecutionError::DivisionByZero`.
+> ⚠️ **ZERO VECTOR RULE**: Zero vector is valid input. Any normalization or division operation using a zero vector **MUST TRAP** with `ExecutionError::DivisionByZero` (per RFC-0105 canonical zero and RFC-0111 DivisionByZero TRAP semantics).
 
 - Zero vector is a valid input to all DLAE operations
 - If any intermediate computation (e.g., `|a|` or `|b|` in cosine) results in zero during normalization, the entire operation TRAPs
@@ -339,9 +354,7 @@ y = DVecAdd(y, b)
 
 #### Activation Functions
 
-> ⚠️ **ACTIVATION PHASE-BOUND**: Activation MUST execute after full linear computation completes. No interleaving or fusion allowed.
-
-Activations MUST use deterministic LUTs from RFC-0114 (Activation Functions).
+> ⚠️ **ACTIVATION PHASE-BOUND**: Activation MUST execute after full linear computation completes. No interleaving or fusion allowed. Per RFC-0114 §Phase Ordering, activations include a final CANONICALIZE step per RFC-0105 lazy-canonicalization contract.
 
 Supported:
 
@@ -393,6 +406,8 @@ for each element:
 > - On-chain assigned ID
 >
 > **FORBIDDEN sources**: Memory address, heap location, insertion order into non-deterministic structure, or any non-reproducible handle. Using forbidden sources will cause consensus splits when nodes assign different IDs to the same logical vector.
+>
+> **Top-K Comparator Requirement**: The Top-K comparator MUST be supplied externally with a canonical `vector_id` source. The DVec struct does not carry an internal `vector_id` field. Callers of Top-K MUST provide a deterministic mapping from vectors to canonical IDs.
 
 Canonical comparator (pseudocode):
 ```
@@ -432,7 +447,7 @@ Operations have deterministic gas costs:
 
 > **L2Squared derivation**: Per element: 1 SUB + 1 MUL + 1 ADD for accumulation = 1 MUL + 2 ADD per element. Total: N × (MUL + 2×ADD).
 
-Gas constants are defined in RFC-0106 (DVEC/DMAT gas formulas). DLAE gas formulas MUST be derived from RFC-0106 atomic cost constants. DLAE defines the operation structure and iteration counts. RFC-0106 defines GAS_DQA_ADD, GAS_DQA_MUL atomic costs. No override relationship exists; both are normative.
+Gas constants are defined in RFC-0105 §Gas Model and RFC-0111 §Gas Model. DLAE gas formulas MUST be derived from these atomic cost constants. DLAE defines the operation structure and iteration counts. RFC-0105/RFC-0111 define GAS_DQA_ADD, GAS_DQA_MUL atomic costs. RFC-0106 is historical only (superseded by RFC-0105/RFC-0111).
 
 ## SIMD Execution
 
@@ -467,6 +482,8 @@ Modern compilers (LLVM, GCC) aggressively auto-vectorize loops. Verifying that a
 > - **Scale validation**: Deferred until after computation completes
 > - **Arithmetic overflow**: **IMMEDIATE TRAP** per RFC-0105 — no wrap-around allowed
 >
+> **Any `NumericScalar::mul` or `NumericScalar::add` returning `Overflow` aborts the entire operation immediately (Phase 1 TRAP)**. The accumulation loop does NOT continue after an intermediate overflow. This aligns with RFC-0113 §Global TRAP Invariant.
+>
 > Misinterpreting "Deferred" as permitting overflow wrap-around will cause consensus splits. The policy is: "Deferred Scale Validation, Immediate Overflow Trap."
 
 ### Trait Authority Rule
@@ -476,6 +493,7 @@ Modern compilers (LLVM, GCC) aggressively auto-vectorize loops. Verifying that a
 - RFC-0112 trait is **FORBIDDEN** in consensus paths
 - All DLAE operations MUST use RFC-0113 `NumericScalar`
 - Implementations MUST TRAP if RFC-0112 is encountered
+- **Cross-reference**: Implementations MAY have RFC-0112 trait implementations for non-DLAE code, but RFC-0112 methods MUST NOT be called inside any DLAE primitive (MatMul, MatVec, Dot, Top-K, etc.)
 
 ### Composite TRAP Propagation Rule
 
@@ -487,7 +505,7 @@ Modern compilers (LLVM, GCC) aggressively auto-vectorize loops. Verifying that a
 - No observable state mutation after TRAP point
 - Example: If `MatMul` detects overflow at element `[i,j]`, the entire `MatMul` TRAPs immediately; no remaining elements are computed
 
-> ⚠️ **GAS ON TRAP**: Gas is charged for **completed iterations only**. If `MatMul` traps at iteration `i=5` of `N=64`, the user is charged for 5 iterations (not 64). This requires deterministic gas metering based on actual execution progress. If a validator and prover disagree on the iteration count at TRAP, the transaction is invalid. **Partial execution gas must be deterministic.**
+> ⚠️ **GAS ON TRAP**: Gas is charged **after each scalar NumericScalar operation completes**. For nested loops (e.g., MatMul outer-i + inner-k), gas is charged at the inner scalar operation boundary (each `A[i,k] * B[k,j]` multiplication or `acc += ...` addition). If a validator and prover disagree on the iteration count at TRAP, the transaction is invalid. This aligns with atomic GAS_DQA_ADD / GAS_DQA_MUL constants from RFC-0105/RFC-0111. **Partial execution gas must be deterministic and match across all implementations.**
 
 **Input validation (Phase 0)**: Dimension checks, scale compatibility, and zero-vector pre-checks MUST be performed before any computation begins. If validation fails, operation TRAPs before any loop executes.
 
@@ -725,6 +743,7 @@ See Global Scale Policy Layer for scale validation rules.
   - ISSUE-5: Clarified gas binding — DLAE defines structure, RFC-0106 defines atomic costs
   - ISSUE-6: Fixed future work contradiction — removed "heap (if needed)"
 - v2.3: **Third audit fixes** — CRIT-01 (Deferred Scale/Immediate Overflow clarification), CRIT-02 (SIMD disabled for consensus), CRIT-03 (vector_id source defined), HIGH-01 (ZK cost warning for sqrt), HIGH-02 (gas on TRAP defined), HIGH-03 (Motivation reframed for verifiable verification), MED-01 (RFC-0126 coordination note), MED-02 (no implicit casting), MED-03 rebutted (LUT size is RFC-0114 domain); **TRAP encoding corrected**: Now 25 bytes (24-byte RFC-0111 sentinel + 1-byte error_code) per RFC-0126
+- v2.4: **Fourth audit fixes** — CRIT-01 (added verbatim 24-byte TRAP layout table), CRIT-02 (dimension enforcement at construction), HIGH-01 (explicit gas per scalar operation), HIGH-02 (intermediate overflow = immediate TRAP), HIGH-03 (RFC-0112 dual impl grey area), MED-02 (RFC-0114 phase ordering), MED-03 (vector_id supplied externally), MED-04 (gas citation updated to RFC-0105/RFC-0111), LOW-02 (zero-vector consolidated); MED-01 rebutted (DLAE probe scheduled for future spec version)
 
 ## Rebuttal Summary (v2.0) and Adjudication (v2.1)
 

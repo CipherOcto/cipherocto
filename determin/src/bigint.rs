@@ -2561,11 +2561,7 @@ mod regression_tests {
         let (q, r) = bigint_divmod(a, b).expect("divmod should succeed");
 
         // 2^64 / 3 = 0x5555_5555_5555_5555 with remainder 1
-        assert_eq!(
-            q.limbs(),
-            &[0x5555_5555_5555_5555],
-            "2^64 / 3 quotient"
-        );
+        assert_eq!(q.limbs(), &[0x5555_5555_5555_5555], "2^64 / 3 quotient");
         assert_eq!(r.limbs(), &[1], "2^64 / 3 remainder = 1");
         assert!(!r.sign, "remainder sign should be positive");
     }
@@ -2584,7 +2580,8 @@ mod regression_tests {
         // 2^127 - 1 in little-endian: [0xFFFF_FFFF_FFFF_FFFF, 0x7FFF_FFFF_FFFF_FFFF]
         assert_eq!(q.limbs()[0], u64::MAX, "lower limb of quotient");
         assert_eq!(
-            q.limbs()[1], 0x7FFF_FFFF_FFFF_FFFF,
+            q.limbs()[1],
+            0x7FFF_FFFF_FFFF_FFFF,
             "upper limb of quotient (2^127 - 1)"
         );
         assert_eq!(r.limbs(), &[1], "remainder should be 1");

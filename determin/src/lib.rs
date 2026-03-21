@@ -29,8 +29,8 @@ pub const DECIMAL_SPEC_VERSION: u32 = 1;
 
 mod arithmetic;
 pub mod bigint;
-pub mod dqa;
 pub mod decimal;
+pub mod dqa;
 #[cfg(test)]
 mod fuzz;
 mod probe;
@@ -39,11 +39,11 @@ pub use arithmetic::{dfp_add, dfp_div, dfp_mul, dfp_sqrt, dfp_sub};
 pub use bigint::{
     bigint_add, bigint_div, bigint_divmod, bigint_mod, bigint_mul, bigint_sub, BigInt, BigIntError,
 };
-pub use dqa::{dqa_abs, dqa_assign_to_column, dqa_cmp, dqa_negate, Dqa, DqaEncoding, DqaError};
 pub use decimal::{
-    decimal_from_bytes, decimal_to_bytes, Decimal, DecimalError,
-    MAX_DECIMAL_MANTISSA, MAX_DECIMAL_OP_COST, MAX_DECIMAL_SCALE, MIN_DECIMAL_MANTISSA,
+    decimal_from_bytes, decimal_to_bytes, Decimal, DecimalError, MAX_DECIMAL_MANTISSA,
+    MAX_DECIMAL_OP_COST, MAX_DECIMAL_SCALE, MIN_DECIMAL_MANTISSA,
 };
+pub use dqa::{dqa_abs, dqa_assign_to_column, dqa_cmp, dqa_negate, Dqa, DqaEncoding, DqaError};
 
 use serde::{Deserialize, Serialize};
 

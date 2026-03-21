@@ -30,8 +30,8 @@ impl<S: KeyStorage> KeyMiddleware<S> {
         // Check Authorization header
         if let Some(auth) = request.headers().get("authorization") {
             if let Ok(auth_str) = auth.to_str() {
-                if auth_str.starts_with("Bearer ") {
-                    return Ok(Some(auth_str[7..].to_string()));
+                if let Some(stripped) = auth_str.strip_prefix("Bearer ") {
+                    return Ok(Some(stripped.to_string()));
                 }
             }
         }

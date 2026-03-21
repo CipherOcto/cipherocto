@@ -34,7 +34,7 @@ pub fn compute_key_hash(key: &str) -> [u8; 32] {
 /// Generate a cryptographically secure API key string
 /// Format: sk-qr-{64 hex characters}
 pub fn generate_key_string() -> String {
-    let mut rng = rand::thread_rng();
+    let mut rng = rand::rng();
     let bytes: Vec<u8> = (0..32).map(|_| rng.random()).collect();
 
     let hex_string = bytes
@@ -55,7 +55,7 @@ pub fn generate_key_id() -> String {
         .unwrap()
         .as_millis() as u64;
 
-    let mut rng = rand::thread_rng();
+    let mut rng = rand::rng();
     let random_bytes: Vec<u8> = (0..8).map(|_| rng.random()).collect();
 
     format!(

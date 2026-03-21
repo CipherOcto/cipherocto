@@ -239,7 +239,7 @@ impl Router {
 
     /// SimpleShuffle: Weighted random selection based on rpm/tpm/weight
     fn simple_shuffle_impl(providers: &[ProviderWithState]) -> usize {
-        let mut rng = rand::thread_rng();
+        let mut rng = rand::rng();
 
         // Check for explicit weights
         let weights: Vec<u32> = providers.iter().map(|p| p.get_routing_weight()).collect();

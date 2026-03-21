@@ -111,7 +111,7 @@ fn handle_request<B>(
         }
         // GET /api/keys?team_id=xxx - list keys by team
         if method == Method::GET && path.starts_with("/api/keys") {
-            return handle_list_keys(storage, extract_query_param(&uri, "team_id"));
+            return handle_list_keys(storage, extract_query_param(uri, "team_id"));
         }
         // PUT /api/keys/:id - update key
         if method == Method::PUT && path.starts_with("/api/keys/") {

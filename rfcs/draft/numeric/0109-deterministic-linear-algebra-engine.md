@@ -715,7 +715,7 @@ The DLAE builds on RFC-0106's deterministic numeric types to provide linear alge
 - RFC-0113 (Numeric/Math): NumericScalar Trait — **Only permitted trait for DLAE operations**
 - RFC-0126 (Serialization): Serialization Protocol — **Normative reference for DLAE output serialization**
 - RFC-0103 (Numeric/Math): Unified Vector SQL Storage — Vector storage and similarity search
-- RFC-0107 (Storage): Production Vector SQL Storage v2 — Vector operations in production
+- RFC-0200 (Storage): Production Vector SQL Storage v2 — Vector operations in production
 - RFC-0120 (AI Execution): Deterministic AI VM — AI VM with linear algebra requirements
 - RFC-0121 (AI Execution): Verifiable Large Model Execution — Matrix mul, neural network layers
 - RFC-0122 (AI Execution): Mixture of Experts — Linear layers, dot products

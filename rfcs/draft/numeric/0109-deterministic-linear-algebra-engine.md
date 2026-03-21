@@ -617,7 +617,7 @@ leaf = SHA256(0x00 || entry_data)        // Domain-separated leaf hash
 internal = SHA256(0x01 || left || right) // Domain-separated internal node
 ```
 
-### Entries (41 total)
+### Entries (42 total)
 
 | Index | Operation | Input | Expected |
 |-------|-----------|-------|----------|
@@ -721,7 +721,7 @@ The DLAE builds on RFC-0106's deterministic numeric types to provide linear alge
 - RFC-0122 (AI Execution): Mixture of Experts — Linear layers, dot products
 - RFC-0107 (Numeric/Math): Deterministic Transformer Circuit — Matrix multiplication, attention
 
-> **Note**: RFC-0148 serves as the canonical linear algebra layer that these RFCs depend on for deterministic operations.
+> **Note**: RFC-0109 serves as the canonical linear algebra layer that these RFCs depend on for deterministic operations.
 
 ## Homogeneous Type Requirement
 

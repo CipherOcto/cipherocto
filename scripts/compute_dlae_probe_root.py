@@ -353,8 +353,11 @@ def top_k_select(vectors: List[Tuple[int, List[Tuple[int, int]]]], query: List[T
     Top-K selection using distance kernel (L2Squared).
     Tie-break: (distance, vector_id) lexicographic.
     Returns list of (distance, scale, vector_id) tuples sorted by distance.
+    Raises DLAEError if k > len(vectors) (silent truncation is forbidden).
     """
     if len(vectors) != len(vector_ids):
+        raise DLAEError(ERR_DIMENSION_MISMATCH)
+    if k > len(vectors):
         raise DLAEError(ERR_DIMENSION_MISMATCH)
 
     distances = []
@@ -394,7 +397,7 @@ def merkle_root(leaves: List[bytes]) -> bytes:
 
 def build_probe() -> List[bytes]:
     """
-    Build the 41-entry DLAE verification probe.
+    Build the 42-entry DLAE verification probe.
 
     Entries 0-31: Core operations with scale=0
     Entries 32-40: Diverse scale entries (non-zero scales)
@@ -821,7 +824,7 @@ def main():
     print("=" * 70)
     print()
 
-    # Build the 41 probe entries
+    # Build the 42 probe entries
     entries = build_probe()
 
     print()

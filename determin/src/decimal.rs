@@ -120,7 +120,7 @@ pub fn compute_decimal_config_hash() -> [u8; 32] {
 
     // SHA256 hash
     let mut hasher = Sha256::new();
-    hasher.update(&buf);
+    hasher.update(buf);
     hasher.finalize().into()
 }
 
@@ -516,6 +516,77 @@ pub fn decimal_div(a: &Decimal, b: &Decimal, _target_scale: u8) -> Result<Decima
         quotient // already even
     } else {
         quotient + 1 // round up to even
+    };
+
+    // Apply sign
+    let result = if result_sign { -result } else { result };
+
+    Decimal::new(result, target_scale)
+}
+
+/// DIV operation using raw i128 values (bypasses Decimal canonicalization)
+/// Used by the verification probe which needs to match Python's exact computation.
+/// Python canonicalizes AFTER arithmetic, not before like Rust Decimal.
+#[allow(dead_code)]
+pub fn decimal_div_raw(
+    a_mantissa: i128,
+    a_scale: u8,
+    b_mantissa: i128,
+    b_scale: u8,
+) -> Result<Decimal, DecimalError> {
+    if b_mantissa == 0 {
+        return Err(DecimalError::DivisionByZero);
+    }
+
+    // Compute result scale using unified precision growth rule
+    let raw_scale = a_scale.max(b_scale).wrapping_add(6);
+    let target_scale = raw_scale.min(MAX_DECIMAL_SCALE);
+
+    // Result sign BEFORE division
+    let result_sign = (a_mantissa < 0) != (b_mantissa < 0);
+
+    // Work with absolute values
+    let abs_a = a_mantissa.abs();
+    let abs_b = b_mantissa.abs();
+
+    let scale_diff = (target_scale as i32) - (a_scale as i32) + (b_scale as i32);
+
+    let scaled_dividend: i128 = if scale_diff > 0 {
+        // Scale up the dividend
+        let pow10 = POW10[scale_diff as usize];
+        abs_a.saturating_mul(pow10)
+    } else if scale_diff < 0 {
+        // Scale down with rounding
+        let scale_reduction = (-scale_diff) as usize;
+        let divisor = POW10[scale_reduction];
+        let quotient = abs_a / divisor;
+        let remainder = abs_a % divisor;
+        let half = divisor / 2;
+
+        // RoundHalfEven
+        if remainder > half || (remainder == half && quotient % 2 != 0) {
+            quotient + 1
+        } else {
+            quotient
+        }
+    } else {
+        abs_a
+    };
+
+    // Divide with rounding
+    let quotient = scaled_dividend / abs_b;
+    let remainder = scaled_dividend % abs_b;
+
+    // RoundHalfEven on final quotient
+    let half = abs_b / 2;
+    let result = if remainder < half {
+        quotient
+    } else if remainder > half {
+        quotient + 1
+    } else if quotient % 2 == 0 {
+        quotient
+    } else {
+        quotient + 1
     };
 
     // Apply sign

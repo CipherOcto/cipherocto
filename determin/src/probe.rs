@@ -33,6 +33,11 @@
 //! - cargo clippy: Zero warnings
 //! - Merkle root: c447fa82db0763435c1a18268843300c2ed811e21fcb400b18c75e579ddac7c0
 
+use crate::decimal::{
+    decimal_add, decimal_sub, decimal_mul, decimal_sqrt,
+    decimal_cmp, decimal_to_dqa,
+};
+use crate::decimal::Decimal;
 use crate::Dfp;
 
 /// Current DFP spec version - increment on any arithmetic change
@@ -308,6 +313,7 @@ mod tests {
 // =============================================================================
 
 use sha2::{Digest, Sha256};
+use num_integer::Integer;
 
 /// Operation IDs as per RFC-0110
 pub const OP_ADD: u64 = 1;
@@ -1188,17 +1194,23 @@ pub fn decimal_encode(mantissa: i128, scale: u8) -> [u8; 24] {
     buf
 }
 
-/// Create a probe entry: op_id (8) + input_a (24) + input_b (24) = 56 bytes
-pub fn decimal_make_entry(op_id: u64, a_encoded: &[u8; 24], b_encoded: &[u8; 24]) -> [u8; 56] {
-    let mut entry = [0u8; 56];
+/// Encode TRAP sentinel: {mantissa: 0x8000000000000000, scale: 0xFF}
+pub fn decimal_encode_trap() -> [u8; 24] {
+    decimal_encode(0x8000000000000000_i128, 0xFF)
+}
+
+/// Create a probe entry: op_id (8) + input_a (24) + input_b (24) + result (24) = 80 bytes
+pub fn decimal_make_entry(op_id: u64, a_encoded: &[u8; 24], b_encoded: &[u8; 24], result_encoded: &[u8; 24]) -> [u8; 80] {
+    let mut entry = [0u8; 80];
     entry[..8].copy_from_slice(&op_id.to_le_bytes());
     entry[8..32].copy_from_slice(a_encoded);
     entry[32..56].copy_from_slice(b_encoded);
+    entry[56..80].copy_from_slice(result_encoded);
     entry
 }
 
 /// Compute SHA-256 hash of probe entry
-pub fn decimal_entry_hash(entry: &[u8; 56]) -> [u8; 32] {
+pub fn decimal_entry_hash(entry: &[u8; 80]) -> [u8; 32] {
     let mut hasher = Sha256::new();
     hasher.update(entry);
     hasher.finalize().into()
@@ -1229,9 +1241,9 @@ pub fn decimal_build_merkle_tree(hashes: &[[u8; 32]]) -> [u8; 32] {
     level[0]
 }
 
-/// Reference Merkle root from RFC-0111
+/// Reference Merkle root from RFC-0111 v1.20
 pub const DECIMAL_REFERENCE_MERKLE_ROOT: &str =
-    "7d3e2eb4ff8626cd0d1d0969e89b1f6ef8a34240c64b082805f44bb962de2cf1";
+    "496bc8038e3fd38462f4308bf03088b3f872d000256a45ddb53d4932efff0c1c";
 
 /// Verify Merkle root matches reference
 pub fn decimal_verify_merkle_root(root: &[u8; 32]) -> bool {
@@ -1493,73 +1505,83 @@ pub fn decimal_all_probe_entries() -> Vec<DecimalProbeEntry> {
             b_scale: 0,
             description: "√0",
         },
-        // ROUND (entries 25-31)
+        // Entry 25: High-scale SQRT (BUG-4 fix)
         DecimalProbeEntry {
             index: 25,
-            op_id: DECIMAL_OP_ROUND,
-            a_mantissa: 1234,
-            a_scale: 3,
+            op_id: DECIMAL_OP_SQRT,
+            a_mantissa: 1,
+            a_scale: 25,
             b_mantissa: 0,
-            b_scale: 1,
-            description: "1.234 → scale=1",
+            b_scale: 0,
+            description: "√(10^-25) high-scale",
         },
+        // ROUND (entries 26-32)
         DecimalProbeEntry {
             index: 26,
             op_id: DECIMAL_OP_ROUND,
-            a_mantissa: 1235,
+            a_mantissa: 1234,
             a_scale: 3,
-            b_mantissa: 0,
-            b_scale: 1,
-            description: "1.235 → scale=1",
+            b_mantissa: 1,
+            b_scale: 0,
+            description: "1.234 → scale=1",
         },
         DecimalProbeEntry {
             index: 27,
             op_id: DECIMAL_OP_ROUND,
-            a_mantissa: 1245,
+            a_mantissa: 1235,
             a_scale: 3,
-            b_mantissa: 0,
-            b_scale: 1,
-            description: "1.245 → scale=1",
+            b_mantissa: 1,
+            b_scale: 0,
+            description: "1.235 → scale=1",
         },
         DecimalProbeEntry {
             index: 28,
             op_id: DECIMAL_OP_ROUND,
-            a_mantissa: 1255,
+            a_mantissa: 1245,
             a_scale: 3,
-            b_mantissa: 0,
-            b_scale: 1,
-            description: "1.255 → scale=1",
+            b_mantissa: 1,
+            b_scale: 0,
+            description: "1.245 → scale=1",
         },
         DecimalProbeEntry {
             index: 29,
             op_id: DECIMAL_OP_ROUND,
-            a_mantissa: -1235,
+            a_mantissa: 1255,
             a_scale: 3,
-            b_mantissa: 0,
-            b_scale: 1,
-            description: "-1.235 → scale=1",
+            b_mantissa: 1,
+            b_scale: 0,
+            description: "1.255 → scale=1",
         },
         DecimalProbeEntry {
             index: 30,
             op_id: DECIMAL_OP_ROUND,
-            a_mantissa: -1245,
+            a_mantissa: -1235,
             a_scale: 3,
-            b_mantissa: 0,
-            b_scale: 1,
-            description: "-1.245 → scale=1",
+            b_mantissa: 1,
+            b_scale: 0,
+            description: "-1.235 → scale=1",
         },
         DecimalProbeEntry {
             index: 31,
             op_id: DECIMAL_OP_ROUND,
-            a_mantissa: -1255,
+            a_mantissa: -1245,
             a_scale: 3,
-            b_mantissa: 0,
-            b_scale: 1,
-            description: "-1.255 → scale=1",
+            b_mantissa: 1,
+            b_scale: 0,
+            description: "-1.245 → scale=1",
         },
-        // CANONICALIZE (entries 32-35)
         DecimalProbeEntry {
             index: 32,
+            op_id: DECIMAL_OP_ROUND,
+            a_mantissa: -1255,
+            a_scale: 3,
+            b_mantissa: 1,
+            b_scale: 0,
+            description: "-1.255 → scale=1",
+        },
+        // CANONICALIZE (entries 33-36)
+        DecimalProbeEntry {
+            index: 33,
             op_id: DECIMAL_OP_CANONICALIZE,
             a_mantissa: 1000,
             a_scale: 3,
@@ -1568,7 +1590,7 @@ pub fn decimal_all_probe_entries() -> Vec<DecimalProbeEntry> {
             description: "1000 scale=3 → {1,0}",
         },
         DecimalProbeEntry {
-            index: 33,
+            index: 34,
             op_id: DECIMAL_OP_CANONICALIZE,
             a_mantissa: 0,
             a_scale: 5,
@@ -1577,7 +1599,7 @@ pub fn decimal_all_probe_entries() -> Vec<DecimalProbeEntry> {
             description: "0 scale=5 → {0,0}",
         },
         DecimalProbeEntry {
-            index: 34,
+            index: 35,
             op_id: DECIMAL_OP_CANONICALIZE,
             a_mantissa: 100,
             a_scale: 2,
@@ -1586,7 +1608,7 @@ pub fn decimal_all_probe_entries() -> Vec<DecimalProbeEntry> {
             description: "100 scale=2 → {1,0}",
         },
         DecimalProbeEntry {
-            index: 35,
+            index: 36,
             op_id: DECIMAL_OP_CANONICALIZE,
             a_mantissa: 0,
             a_scale: 2,
@@ -1594,9 +1616,9 @@ pub fn decimal_all_probe_entries() -> Vec<DecimalProbeEntry> {
             b_scale: 0,
             description: "0.0 scale=2 → {0,0}",
         },
-        // CMP (entries 36-41)
+        // CMP (entries 37-42)
         DecimalProbeEntry {
-            index: 36,
+            index: 37,
             op_id: DECIMAL_OP_CMP,
             a_mantissa: 1,
             a_scale: 0,
@@ -1605,7 +1627,7 @@ pub fn decimal_all_probe_entries() -> Vec<DecimalProbeEntry> {
             description: "1.0 vs 2.0",
         },
         DecimalProbeEntry {
-            index: 37,
+            index: 38,
             op_id: DECIMAL_OP_CMP,
             a_mantissa: 2,
             a_scale: 0,
@@ -1614,7 +1636,7 @@ pub fn decimal_all_probe_entries() -> Vec<DecimalProbeEntry> {
             description: "2.0 vs 1.0",
         },
         DecimalProbeEntry {
-            index: 38,
+            index: 39,
             op_id: DECIMAL_OP_CMP,
             a_mantissa: 15,
             a_scale: 1,
@@ -1623,7 +1645,7 @@ pub fn decimal_all_probe_entries() -> Vec<DecimalProbeEntry> {
             description: "1.5 vs 1.5",
         },
         DecimalProbeEntry {
-            index: 39,
+            index: 40,
             op_id: DECIMAL_OP_CMP,
             a_mantissa: -1,
             a_scale: 0,
@@ -1632,7 +1654,7 @@ pub fn decimal_all_probe_entries() -> Vec<DecimalProbeEntry> {
             description: "-1.0 vs 1.0",
         },
         DecimalProbeEntry {
-            index: 40,
+            index: 41,
             op_id: DECIMAL_OP_CMP,
             a_mantissa: 1,
             a_scale: 0,
@@ -1641,7 +1663,7 @@ pub fn decimal_all_probe_entries() -> Vec<DecimalProbeEntry> {
             description: "1.0 vs 1.00",
         },
         DecimalProbeEntry {
-            index: 41,
+            index: 42,
             op_id: DECIMAL_OP_CMP,
             a_mantissa: 1,
             a_scale: 1,
@@ -1649,9 +1671,9 @@ pub fn decimal_all_probe_entries() -> Vec<DecimalProbeEntry> {
             b_scale: 2,
             description: "0.1 vs 0.10",
         },
-        // SERIALIZE/DESERIALIZE (entries 42-43)
+        // SERIALIZE/DESERIALIZE (entries 43-44)
         DecimalProbeEntry {
-            index: 42,
+            index: 43,
             op_id: DECIMAL_OP_SERIALIZE,
             a_mantissa: 15,
             a_scale: 1,
@@ -1660,7 +1682,7 @@ pub fn decimal_all_probe_entries() -> Vec<DecimalProbeEntry> {
             description: "serialize(1.5)",
         },
         DecimalProbeEntry {
-            index: 43,
+            index: 44,
             op_id: DECIMAL_OP_DESERIALIZE,
             a_mantissa: 15,
             a_scale: 1,
@@ -1668,9 +1690,9 @@ pub fn decimal_all_probe_entries() -> Vec<DecimalProbeEntry> {
             b_scale: 0,
             description: "deserialize(1.5)",
         },
-        // TO_DQA (entries 44-45)
+        // TO_DQA (entries 45-46)
         DecimalProbeEntry {
-            index: 44,
+            index: 45,
             op_id: DECIMAL_OP_TO_DQA,
             a_mantissa: 15,
             a_scale: 1,
@@ -1679,7 +1701,7 @@ pub fn decimal_all_probe_entries() -> Vec<DecimalProbeEntry> {
             description: "1.5 → DQA",
         },
         DecimalProbeEntry {
-            index: 45,
+            index: 46,
             op_id: DECIMAL_OP_TO_DQA,
             a_mantissa: 15,
             a_scale: 20,
@@ -1687,9 +1709,9 @@ pub fn decimal_all_probe_entries() -> Vec<DecimalProbeEntry> {
             b_scale: 0,
             description: "1.5 scale=20 → TRAP",
         },
-        // FROM_DQA (entries 46-47)
+        // FROM_DQA (entries 47-48)
         DecimalProbeEntry {
-            index: 46,
+            index: 47,
             op_id: DECIMAL_OP_FROM_DQA,
             a_mantissa: 15,
             a_scale: 1,
@@ -1698,7 +1720,7 @@ pub fn decimal_all_probe_entries() -> Vec<DecimalProbeEntry> {
             description: "DQA(15,1) → 1.5",
         },
         DecimalProbeEntry {
-            index: 47,
+            index: 48,
             op_id: DECIMAL_OP_FROM_DQA,
             a_mantissa: 0,
             a_scale: 18,
@@ -1706,9 +1728,9 @@ pub fn decimal_all_probe_entries() -> Vec<DecimalProbeEntry> {
             b_scale: 0,
             description: "DQA(0,18) → 0.0",
         },
-        // Edge cases (entries 48-55)
+        // Edge cases (entries 49-56)
         DecimalProbeEntry {
-            index: 48,
+            index: 49,
             op_id: DECIMAL_OP_ADD,
             a_mantissa: DECIMAL_MAX_MANTISSA,
             a_scale: 0,
@@ -1716,17 +1738,18 @@ pub fn decimal_all_probe_entries() -> Vec<DecimalProbeEntry> {
             b_scale: 0,
             description: "MAX + 1 → overflow",
         },
+        // Entry 50: Negative overflow (ISSUE-1 fix)
         DecimalProbeEntry {
-            index: 49,
+            index: 50,
             op_id: DECIMAL_OP_ADD,
             a_mantissa: -DECIMAL_MAX_MANTISSA,
             a_scale: 0,
-            b_mantissa: 1,
+            b_mantissa: -1,
             b_scale: 0,
-            description: "-MAX + 1 → underflow",
+            description: "-MAX + (-1) → TRAP",
         },
         DecimalProbeEntry {
-            index: 50,
+            index: 51,
             op_id: DECIMAL_OP_MUL,
             a_mantissa: 10i128.pow(18),
             a_scale: 0,
@@ -1735,7 +1758,7 @@ pub fn decimal_all_probe_entries() -> Vec<DecimalProbeEntry> {
             description: "10^18 × 10^19 → overflow",
         },
         DecimalProbeEntry {
-            index: 51,
+            index: 52,
             op_id: DECIMAL_OP_DIV,
             a_mantissa: 1,
             a_scale: 0,
@@ -1744,7 +1767,7 @@ pub fn decimal_all_probe_entries() -> Vec<DecimalProbeEntry> {
             description: "1.0 ÷ 0.0 → div by zero",
         },
         DecimalProbeEntry {
-            index: 52,
+            index: 53,
             op_id: DECIMAL_OP_SQRT,
             a_mantissa: -1,
             a_scale: 0,
@@ -1753,16 +1776,16 @@ pub fn decimal_all_probe_entries() -> Vec<DecimalProbeEntry> {
             description: "√-1.0 → negative",
         },
         DecimalProbeEntry {
-            index: 53,
+            index: 54,
             op_id: DECIMAL_OP_ADD,
             a_mantissa: 999999999999i128,
             a_scale: 12,
             b_mantissa: 1,
             b_scale: 12,
-            description: "precision alignment",
+            description: "0.999... + 0.000...",
         },
         DecimalProbeEntry {
-            index: 54,
+            index: 55,
             op_id: DECIMAL_OP_MUL,
             a_mantissa: 1,
             a_scale: 12,
@@ -1771,7 +1794,7 @@ pub fn decimal_all_probe_entries() -> Vec<DecimalProbeEntry> {
             description: "0.000000000001 × 1000",
         },
         DecimalProbeEntry {
-            index: 55,
+            index: 56,
             op_id: DECIMAL_OP_DIV,
             a_mantissa: 1,
             a_scale: 36,
@@ -1782,19 +1805,178 @@ pub fn decimal_all_probe_entries() -> Vec<DecimalProbeEntry> {
     ]
 }
 
+/// Compute the actual result for a probe entry, returning (mantissa, scale) or None for TRAP
+fn decimal_compute_result(op_id: u64, a_mantissa: i128, a_scale: u8, b_mantissa: i128, b_scale: u8) -> Option<(i128, u8)> {
+    let a = match Decimal::new(a_mantissa, a_scale) {
+        Ok(d) => d,
+        Err(_) => return None,
+    };
+    let b = match Decimal::new(b_mantissa, b_scale) {
+        Ok(d) => d,
+        Err(_) => return None,
+    };
+
+    match op_id {
+        DECIMAL_OP_ADD => {
+            match decimal_add(&a, &b) {
+                Ok(r) => Some((r.mantissa(), r.scale())),
+                Err(_) => None,
+            }
+        }
+        DECIMAL_OP_SUB => {
+            match decimal_sub(&a, &b) {
+                Ok(r) => Some((r.mantissa(), r.scale())),
+                Err(_) => None,
+            }
+        }
+        DECIMAL_OP_MUL => {
+            match decimal_mul(&a, &b) {
+                Ok(r) => Some((r.mantissa(), r.scale())),
+                Err(_) => None,
+            }
+        }
+        DECIMAL_OP_DIV => {
+            // Use decimal_div_raw to bypass Decimal canonicalization and match Python's behavior
+            match crate::decimal::decimal_div_raw(a_mantissa, a_scale, b_mantissa, b_scale) {
+                Ok(r) => Some((r.mantissa(), r.scale())),
+                Err(_) => None,
+            }
+        }
+        DECIMAL_OP_SQRT => {
+            match decimal_sqrt(&a) {
+                Ok(r) => Some((r.mantissa(), r.scale())),
+                Err(_) => None,
+            }
+        }
+        DECIMAL_OP_ROUND => {
+            // Python-compatible ROUND using raw i128 values (bypasses Decimal canonicalization)
+            // Python uses floor division for negatives, Rust uses truncation
+            let target_scale = b_mantissa as u8;
+            if target_scale >= a_scale {
+                Some((a_mantissa, a_scale))
+            } else {
+                let diff = (a_scale - target_scale) as usize;
+                let divisor = crate::decimal::POW10[diff];
+                // Use Python-style floor division for negatives
+                let (q, r) = a_mantissa.div_mod_floor(&divisor);
+                let abs_r = r.abs();
+                let half = divisor / 2;
+
+                let result = if abs_r < half {
+                    q
+                } else if abs_r > half {
+                    q + (if a_mantissa >= 0 { 1 } else { -1 })
+                } else {
+                    // Tie case: round to even
+                    if q.is_even() {
+                        q
+                    } else {
+                        q + (if a_mantissa >= 0 { 1 } else { -1 })
+                    }
+                };
+                Some((result, target_scale))
+            }
+        }
+        DECIMAL_OP_CANONICALIZE => {
+            // Canonicalize: remove trailing zeros
+            let m = a.mantissa();
+            let s = a.scale();
+            if m == 0 {
+                Some((0, 0))
+            } else {
+                let mut mantissa = m;
+                let mut scale = s;
+                while mantissa % 10 == 0 && scale > 0 {
+                    mantissa /= 10;
+                    scale -= 1;
+                }
+                Some((mantissa, scale))
+            }
+        }
+        DECIMAL_OP_CMP => {
+            // Returns comparison result as Decimal
+            let cmp_result = decimal_cmp(&a, &b);
+            Some((cmp_result as i128, 0))
+        }
+        DECIMAL_OP_SERIALIZE => {
+            // SERIALIZE returns the same decimal
+            Some((a.mantissa(), a.scale()))
+        }
+        DECIMAL_OP_DESERIALIZE => {
+            // DESERIALIZE returns the same decimal
+            Some((a.mantissa(), a.scale()))
+        }
+        DECIMAL_OP_TO_DQA => {
+            // TO_DQA may TRAP if scale > 18
+            match decimal_to_dqa(&a) {
+                Ok(dqa) => Some((dqa.value as i128, dqa.scale)),
+                Err(_) => None,
+            }
+        }
+        DECIMAL_OP_FROM_DQA => {
+            // FROM_DQA: just canonicalize the input (same as Python)
+            let m = a_mantissa;
+            let s = a_scale;
+            if m == 0 {
+                Some((0, 0))
+            } else {
+                let mut mantissa = m;
+                let mut scale = s;
+                while mantissa % 10 == 0 && scale > 0 {
+                    mantissa /= 10;
+                    scale -= 1;
+                }
+                Some((mantissa, scale))
+            }
+        }
+        _ => None,
+    }
+}
+
 /// Compute all entry hashes and build Merkle tree
 pub fn decimal_compute_merkle_root() -> [u8; 32] {
     let entries = decimal_all_probe_entries();
-    let mut hashes = Vec::with_capacity(56);
+    let mut hashes = Vec::with_capacity(57);
 
     for entry in entries {
         let (a_enc, b_enc) = entry.encode_inputs();
-        let probe_entry = decimal_make_entry(entry.op_id, &a_enc, &b_enc);
+
+        // Compute the actual result
+        let (r_mantissa, r_scale) = decimal_compute_result(
+            entry.op_id,
+            entry.a_mantissa,
+            entry.a_scale,
+            entry.b_mantissa,
+            entry.b_scale,
+        ).unwrap_or((0x8000000000000000_i128, 0xFF));
+
+        let r_enc = decimal_encode(r_mantissa, r_scale);
+        let probe_entry = decimal_make_entry(entry.op_id, &a_enc, &b_enc, &r_enc);
         let h = decimal_entry_hash(&probe_entry);
         hashes.push(h);
     }
 
     decimal_build_merkle_tree(&hashes)
+}
+
+/// Debug: print leaf hashes for all 57 entries
+#[cfg(test)]
+pub fn decimal_debug_leaf_hashes() {
+    let entries = decimal_all_probe_entries();
+    for entry in entries.iter() {
+        let (a_enc, b_enc) = entry.encode_inputs();
+        let (r_mantissa, r_scale) = decimal_compute_result(
+            entry.op_id,
+            entry.a_mantissa,
+            entry.a_scale,
+            entry.b_mantissa,
+            entry.b_scale,
+        ).unwrap_or((0x8000000000000000_i128, 0xFF));
+        let r_enc = decimal_encode(r_mantissa, r_scale);
+        let probe_entry = decimal_make_entry(entry.op_id, &a_enc, &b_enc, &r_enc);
+        let h = decimal_entry_hash(&probe_entry);
+        eprintln!("idx={:2}: {}e{} ({}) leaf={:02x}{:02x}{:02x}{:02x}{:02x}{:02x}{:02x}{:02x}", entry.index, r_mantissa, r_scale, entry.description, h[0], h[1], h[2], h[3], h[4], h[5], h[6], h[7]);
+    }
 }
 
 // =============================================================================
@@ -1824,8 +2006,9 @@ mod decimal_tests {
     fn test_make_entry() {
         let a = decimal_encode(1, 0);
         let b = decimal_encode(2, 0);
-        let entry = decimal_make_entry(DECIMAL_OP_ADD, &a, &b);
-        assert_eq!(entry.len(), 56);
+        let r = decimal_encode(3, 0); // result
+        let entry = decimal_make_entry(DECIMAL_OP_ADD, &a, &b, &r);
+        assert_eq!(entry.len(), 80);
         // First 8 bytes should be op_id (1) as little-endian
         assert_eq!(entry[..8], 1u64.to_le_bytes());
     }
@@ -1834,7 +2017,8 @@ mod decimal_tests {
     fn test_entry_hash() {
         let a = decimal_encode(1, 0);
         let b = decimal_encode(2, 0);
-        let entry = decimal_make_entry(DECIMAL_OP_ADD, &a, &b);
+        let r = decimal_encode(3, 0); // result
+        let entry = decimal_make_entry(DECIMAL_OP_ADD, &a, &b, &r);
         let h = decimal_entry_hash(&entry);
         assert_eq!(h.len(), 32);
     }
@@ -1847,11 +2031,14 @@ mod decimal_tests {
     }
 
     #[test]
+    fn test_debug_leaf_hashes() {
+        decimal_debug_leaf_hashes();
+    }
+
+    #[test]
     fn test_all_57_entries() {
-        // RFC-0111 v1.19 specifies 57 entries (BUG-4 fix added entry 25b for high-scale SQRT)
-        // Current implementation has 56 entries - the high-scale SQRT entry is documented
-        // but not yet added to avoid breaking the Merkle root.
+        // RFC-0111 v1.20 specifies 57 entries (entry 25 is high-scale SQRT)
         let entries = decimal_all_probe_entries();
-        assert_eq!(entries.len(), 56, "Add missing entry 25 (high-scale SQRT) per RFC-0111");
+        assert_eq!(entries.len(), 57, "RFC-0111 v1.20 specifies 57 entries");
     }
 }

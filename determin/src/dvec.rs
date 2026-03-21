@@ -1,0 +1,470 @@
+//! Deterministic Vector (DVEC) Implementation
+//!
+//! This module implements RFC-0112 v1.14: Deterministic Vectors (DVEC)
+//!
+//! Key design principles:
+//! - Generic over any `DvecScalar` type (DQA or Decimal)
+//! - DVEC<DFP> is FORBIDDEN (no impl of DvecScalar for Dfp)
+//! - All operations use sequential loops (no SIMD, no tree reduction)
+//! - BigInt accumulator prevents i128 overflow during accumulation
+//! - Canonical form required for all inputs/outputs
+//!
+//! ## Trait Version Note (RFC-0112 → RFC-0113)
+//!
+//! `DvecScalar` is the RFC-0112 original trait. RFC-0113 defines the canonical
+//! `NumericScalar` trait with two additional members: `const MAX_MANTISSA` and
+//! `fn new(mantissa: i128, scale: u8) -> Self`. When RFC-0113 (DMAT) is
+//! implemented, `NumericScalar` should extend `DvecScalar`:
+//!
+//!   pub trait NumericScalar: DvecScalar {
+//!       const MAX_MANTISSA: i128;
+//!       fn new(mantissa: i128, scale: u8) -> Self;
+//!   }
+//!
+//! DVEC algorithms do not use the RFC-0113 additions, so this migration
+//! is additive and non-breaking for DVEC.
+
+use crate::decimal::DecimalError;
+use crate::decimal::{self as decimal_mod, Decimal};
+use crate::dqa::DqaError;
+use crate::dqa::{self as dqa_mod, Dqa};
+
+// =============================================================================
+// Error Types
+// =============================================================================
+
+/// Unified DVEC error type — covers scalar errors and vector-level TRAP conditions.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum DvecError {
+    Dqa(DqaError),
+    Decimal(DecimalError),
+    DimensionMismatch,
+    DimensionExceeded,
+    ScaleMismatch,
+    /// DQA: scale > 9 (DOT_PRODUCT/SQUARED_DISTANCE input validation)
+    /// Maps to INPUT_VALIDATION_ERROR or INPUT_SCALE depending on operation.
+    InputScaleExceeded,
+    Overflow,
+    /// DQA NORM — DQA has no SQRT per RFC-0105.
+    Unsupported,
+    /// NORMALIZE is forbidden in consensus (exceeds gas budget).
+    ConsensusRestriction,
+    CannotNormalizeZeroVector,
+    DivisionByZero,
+}
+
+impl From<DqaError> for DvecError {
+    fn from(e: DqaError) -> Self {
+        DvecError::Dqa(e)
+    }
+}
+
+impl From<DecimalError> for DvecError {
+    fn from(e: DecimalError) -> Self {
+        DvecError::Decimal(e)
+    }
+}
+
+// =============================================================================
+// DvecScalar Trait
+// =============================================================================
+
+/// DVEC-compatible scalar trait (RFC-0112 original).
+///
+/// Implementors: `Dqa` (RFC-0105) and `Decimal` (RFC-0111).
+///
+/// **Not** the same as RFC-0113's `NumericScalar` — see module-level docstring
+/// for the relationship and migration path.
+pub trait DvecScalar: Clone {
+    /// Associated error type for arithmetic operations.
+    type Error: Into<DvecError> + std::fmt::Debug + PartialEq;
+
+    /// Return the decimal scale.
+    fn scale(&self) -> u8;
+
+    /// Return the raw mantissa as i128.
+    ///
+    /// For DQA: sign-extend i64 → i128 (two's complement).
+    /// For Decimal: return mantissa directly.
+    fn raw_mantissa(&self) -> i128;
+
+    fn mul(self, other: Self) -> Result<Self, Self::Error>;
+    fn add(self, other: Self) -> Result<Self, Self::Error>;
+    fn sub(self, other: Self) -> Result<Self, Self::Error>;
+    fn div(self, other: Self) -> Result<Self, Self::Error>;
+
+    /// Square root. Returns `Err(Unsupported)` for DQA (no SQRT per RFC-0105).
+    fn sqrt(self) -> Result<Self, Self::Error>;
+
+    fn is_zero(&self) -> bool;
+}
+
+// =============================================================================
+// DVec Type
+// =============================================================================
+
+/// Deterministic Vector — generic over any `DvecScalar` type.
+pub struct DVec<T: DvecScalar> {
+    pub data: Vec<T>,
+}
+
+impl<T: DvecScalar> DVec<T> {
+    /// Create a new DVEC from a Vec of scalars.
+    pub fn new(data: Vec<T>) -> Self {
+        Self { data }
+    }
+
+    /// Number of elements.
+    pub fn len(&self) -> usize {
+        self.data.len()
+    }
+
+    /// True if empty.
+    pub fn is_empty(&self) -> bool {
+        self.data.is_empty()
+    }
+}
+
+// =============================================================================
+// Validation Helpers
+// =============================================================================
+
+/// Validate that both vectors have the same length.
+fn validate_len(a_len: usize, b_len: usize) -> Result<(), DvecError> {
+    if a_len != b_len {
+        Err(DvecError::DimensionMismatch)
+    } else {
+        Ok(())
+    }
+}
+
+/// Validate that N <= 64.
+fn validate_max_dim(n: usize) -> Result<(), DvecError> {
+    if n > 64 {
+        Err(DvecError::DimensionExceeded)
+    } else {
+        Ok(())
+    }
+}
+
+/// Validate all elements in `a` and `b` share the same scale as `a[0]`.
+/// Returns the common scale on success.
+fn validate_uniform_scale<T: DvecScalar>(a: &[T], b: &[T]) -> Result<u8, DvecError> {
+    let common_scale = a[0].scale();
+    for elem in a.iter().skip(1) {
+        if elem.scale() != common_scale {
+            return Err(DvecError::ScaleMismatch);
+        }
+    }
+    for elem in b.iter() {
+        if elem.scale() != common_scale {
+            return Err(DvecError::ScaleMismatch);
+        }
+    }
+    Ok(common_scale)
+}
+
+// =============================================================================
+// Implement DvecScalar for Dqa
+// =============================================================================
+
+impl DvecScalar for Dqa {
+    type Error = DqaError;
+
+    fn scale(&self) -> u8 {
+        self.scale
+    }
+
+    fn raw_mantissa(&self) -> i128 {
+        i128::from(self.value)
+    }
+
+    fn mul(self, other: Self) -> Result<Self, Self::Error> {
+        dqa_mod::dqa_mul(self, other)
+    }
+
+    fn add(self, other: Self) -> Result<Self, Self::Error> {
+        dqa_mod::dqa_add(self, other)
+    }
+
+    fn sub(self, other: Self) -> Result<Self, Self::Error> {
+        dqa_mod::dqa_sub(self, other)
+    }
+
+    fn div(self, other: Self) -> Result<Self, Self::Error> {
+        dqa_mod::dqa_div(self, other)
+    }
+
+    fn sqrt(self) -> Result<Self, Self::Error> {
+        // DQA has no SQRT per RFC-0105.
+        Err(DqaError::InvalidInput)
+    }
+
+    fn is_zero(&self) -> bool {
+        self.value == 0
+    }
+}
+
+// =============================================================================
+// Implement DvecScalar for Decimal
+// =============================================================================
+
+impl DvecScalar for Decimal {
+    type Error = DecimalError;
+
+    fn scale(&self) -> u8 {
+        Decimal::scale(self)
+    }
+
+    fn raw_mantissa(&self) -> i128 {
+        Decimal::mantissa(self)
+    }
+
+    fn mul(self, other: Self) -> Result<Self, Self::Error> {
+        decimal_mod::decimal_mul(&self, &other)
+    }
+
+    fn add(self, other: Self) -> Result<Self, Self::Error> {
+        decimal_mod::decimal_add(&self, &other)
+    }
+
+    fn sub(self, other: Self) -> Result<Self, Self::Error> {
+        decimal_mod::decimal_sub(&self, &other)
+    }
+
+    fn div(self, other: Self) -> Result<Self, Self::Error> {
+        decimal_mod::decimal_div(&self, &other, 0)
+    }
+
+    fn sqrt(self) -> Result<Self, Self::Error> {
+        // dot_product returns a canonical Decimal; no raw variant needed.
+        decimal_mod::decimal_sqrt(&self)
+    }
+
+    fn is_zero(&self) -> bool {
+        Decimal::is_zero(self)
+    }
+}
+
+// =============================================================================
+// Operation: DOT_PRODUCT
+// =============================================================================
+
+/// Dot product of two vectors: Σ a[i] * b[i]
+///
+/// Preconditions:
+/// - a.len == b.len
+/// - N <= 64
+/// - All elements share the same scale
+/// - For DQA: a[0].scale() <= 9
+/// - For Decimal: a[0].scale() <= 18
+///
+/// Full implementation with BigInt accumulator — in the arithmetic mission.
+pub fn dot_product<T: DvecScalar>(a: &[T], b: &[T]) -> Result<T, DvecError>
+where
+    T::Error: Into<DvecError>,
+{
+    // STUB: validate inputs only; full algorithm in arithmetic mission
+    let n = a.len();
+    validate_len(n, b.len())?;
+    validate_max_dim(n)?;
+
+    if n == 0 {
+        return Err(DvecError::DimensionMismatch);
+    }
+
+    let input_scale = a[0].scale();
+    let max_scale = if std::any::type_name::<T>() == std::any::type_name::<Dqa>() {
+        9
+    } else {
+        18
+    };
+    if input_scale > max_scale {
+        return Err(DvecError::InputScaleExceeded);
+    }
+    validate_uniform_scale(a, b)?;
+
+    // Full algorithm (BigInt accumulator, overflow TRAP, canonicalization)
+    // is implemented in the arithmetic mission.
+    let _ = (a, b);
+    Err(DvecError::Unsupported)
+}
+
+impl<T: DvecScalar> DVec<T>
+where
+    T::Error: Into<DvecError>,
+{
+    /// Dot product of two DVECs.
+    pub fn dot_product(&self, other: &Self) -> Result<T, DvecError> {
+        dot_product(&self.data, &other.data)
+    }
+}
+
+// =============================================================================
+// Remaining operations (stubs — fill in arithmetic mission)
+// =============================================================================
+
+/// Squared Euclidean distance: Σ (a[i] - b[i])²
+///
+/// Full implementation in arithmetic mission.
+pub fn squared_distance<T: DvecScalar>(a: &[T], b: &[T]) -> Result<T, DvecError>
+where
+    T::Error: Into<DvecError>,
+{
+    let _ = (a, b);
+    Err(DvecError::Unsupported)
+}
+
+/// L2 norm: sqrt(Σ a[i]²)
+///
+/// TRAPs with `Unsupported` for DQA (no SQRT per RFC-0105).
+pub fn norm<T: DvecScalar>(a: &[T]) -> Result<T, DvecError>
+where
+    T::Error: Into<DvecError>,
+{
+    let _ = a;
+    Err(DvecError::Unsupported)
+}
+
+/// Normalize vector: [a[i] / norm(a)] for each element.
+///
+/// FORBIDDEN in consensus (exceeds 50k gas budget).
+pub fn normalize<T: DvecScalar>(a: &[T]) -> Result<Vec<T>, DvecError>
+where
+    T::Error: Into<DvecError>,
+{
+    let _ = a;
+    Err(DvecError::ConsensusRestriction)
+}
+
+/// Element-wise addition.
+pub fn vec_add<T: DvecScalar>(a: &[T], b: &[T]) -> Result<Vec<T>, DvecError>
+where
+    T::Error: Into<DvecError>,
+{
+    validate_len(a.len(), b.len())?;
+    validate_uniform_scale(a, b)?;
+    a.iter()
+        .zip(b.iter())
+        .map(|(x, y)| x.clone().add(y.clone()).map_err(|e| e.into()))
+        .collect()
+}
+
+/// Element-wise subtraction.
+pub fn vec_sub<T: DvecScalar>(a: &[T], b: &[T]) -> Result<Vec<T>, DvecError>
+where
+    T::Error: Into<DvecError>,
+{
+    validate_len(a.len(), b.len())?;
+    validate_uniform_scale(a, b)?;
+    a.iter()
+        .zip(b.iter())
+        .map(|(x, y)| x.clone().sub(y.clone()).map_err(|e| e.into()))
+        .collect()
+}
+
+/// Element-wise multiplication.
+pub fn vec_mul<T: DvecScalar>(a: &[T], b: &[T]) -> Result<Vec<T>, DvecError>
+where
+    T::Error: Into<DvecError>,
+{
+    validate_len(a.len(), b.len())?;
+    validate_uniform_scale(a, b)?;
+    a.iter()
+        .zip(b.iter())
+        .map(|(x, y)| x.clone().mul(y.clone()).map_err(|e| e.into()))
+        .collect()
+}
+
+/// Scale: multiply all elements by a scalar.
+pub fn vec_scale<T: DvecScalar>(a: &[T], scalar: T) -> Result<Vec<T>, DvecError>
+where
+    T::Error: Into<DvecError>,
+{
+    a.iter()
+        .map(|x| x.clone().mul(scalar.clone()).map_err(|e| e.into()))
+        .collect()
+}
+
+// =============================================================================
+// Tests
+// =============================================================================
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // DFP does NOT implement DvecScalar — verify DVec<Dfp> doesn't compile.
+    // This is a compile-time guarantee via the type system.
+
+    #[test]
+    fn test_dvec_scalar_impl_dqa() {
+        let dqa = Dqa::new(123, 2).unwrap();
+        assert_eq!(dqa.scale(), 2);
+        assert_eq!(dqa.raw_mantissa(), 123);
+        assert!(!dqa.is_zero());
+    }
+
+    #[test]
+    fn test_dvec_scalar_impl_decimal() {
+        let dec = Decimal::new(12345, 3).unwrap();
+        assert_eq!(Decimal::scale(&dec), 3); // scale not canonicalized here
+        assert_eq!(Decimal::mantissa(&dec), 12345);
+        assert!(!Decimal::is_zero(&dec));
+    }
+
+    #[test]
+    fn test_vec_add_basic() {
+        let a = vec![Dqa::new(1, 0).unwrap(), Dqa::new(2, 0).unwrap()];
+        let b = vec![Dqa::new(3, 0).unwrap(), Dqa::new(4, 0).unwrap()];
+        let result = vec_add(&a, &b).unwrap();
+        assert_eq!(result[0].raw_mantissa(), 4);
+        assert_eq!(result[1].raw_mantissa(), 6);
+    }
+
+    #[test]
+    fn test_vec_add_scale_mismatch() {
+        let a = vec![Dqa::new(1, 0).unwrap()];
+        let b = vec![Dqa::new(1, 1).unwrap()]; // different scale
+        let result = vec_add(&a, &b);
+        assert_eq!(result, Err(DvecError::ScaleMismatch));
+    }
+
+    #[test]
+    fn test_vec_add_dimension_mismatch() {
+        let a = vec![Dqa::new(1, 0).unwrap(), Dqa::new(2, 0).unwrap()];
+        let b = vec![Dqa::new(3, 0).unwrap()];
+        let result = vec_add(&a, &b);
+        assert_eq!(result, Err(DvecError::DimensionMismatch));
+    }
+
+    #[test]
+    fn test_dot_product_stub_returns_unsupported() {
+        let a = vec![Dqa::new(1, 0).unwrap(), Dqa::new(2, 0).unwrap()];
+        let b = vec![Dqa::new(3, 0).unwrap(), Dqa::new(4, 0).unwrap()];
+        let result = dot_product(&a, &b);
+        // Stub returns Unsupported — full impl in arithmetic mission
+        assert_eq!(result, Err(DvecError::Unsupported));
+    }
+
+    #[test]
+    fn test_norm_dqa_returns_unsupported() {
+        let a = vec![Dqa::new(3, 0).unwrap(), Dqa::new(4, 0).unwrap()];
+        let result = norm(&a);
+        assert_eq!(result, Err(DvecError::Unsupported));
+    }
+
+    #[test]
+    fn test_normalize_returns_consensus_restriction() {
+        let a = vec![Dqa::new(3, 0).unwrap(), Dqa::new(4, 0).unwrap()];
+        let result = normalize::<Dqa>(&a);
+        assert_eq!(result, Err(DvecError::ConsensusRestriction));
+    }
+
+    #[test]
+    fn test_dvec_new_and_len() {
+        let dvec: DVec<Dqa> = DVec::new(vec![Dqa::new(1, 0).unwrap()]);
+        assert_eq!(dvec.len(), 1);
+        assert!(!dvec.is_empty());
+    }
+}

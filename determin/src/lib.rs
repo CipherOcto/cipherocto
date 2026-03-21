@@ -1,10 +1,11 @@
-//! Deterministic Arithmetic (DFP/DQA/BigInt/DECIMAL) Implementation
+//! Deterministic Arithmetic (DFP/DQA/BigInt/DECIMAL/DVEC) Implementation
 //!
 //! This module implements:
 //! - RFC-0104: Deterministic Floating-Point (DFP)
 //! - RFC-0105: Deterministic Quant Arithmetic (DQA)
 //! - RFC-0110: Deterministic BIGINT
 //! - RFC-0111: Deterministic DECIMAL
+//! - RFC-0112: Deterministic Vectors (DVEC)
 //!
 //! Key design principles:
 //! - Pure integer arithmetic (no floating-point operations)
@@ -33,6 +34,7 @@ pub mod decimal;
 #[cfg(feature = "use-internal-bigint")]
 pub mod decimal_internal;
 pub mod dqa;
+pub mod dvec;
 #[cfg(test)]
 mod fuzz;
 mod probe;
@@ -46,6 +48,10 @@ pub use decimal::{
     MAX_DECIMAL_OP_COST, MAX_DECIMAL_SCALE, MIN_DECIMAL_MANTISSA,
 };
 pub use dqa::{dqa_abs, dqa_assign_to_column, dqa_cmp, dqa_negate, Dqa, DqaEncoding, DqaError};
+pub use dvec::{
+    dot_product, norm, normalize, squared_distance, vec_add, vec_mul, vec_scale, vec_sub, DVec,
+    DvecError, DvecScalar,
+};
 
 use serde::{Deserialize, Serialize};
 

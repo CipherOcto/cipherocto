@@ -617,7 +617,7 @@ leaf = SHA256(0x00 || entry_data)        // Domain-separated leaf hash
 internal = SHA256(0x01 || left || right) // Domain-separated internal node
 ```
 
-### Entries (32 total)
+### Entries (41 total)
 
 | Index | Operation | Input | Expected |
 |-------|-----------|-------|----------|
@@ -653,11 +653,20 @@ internal = SHA256(0x01 || left || right) // Domain-separated internal node
 | 29 | DVecAdd | 65 elements (>64) | TRAP(DIMENSION_MISMATCH) |
 | 30 | TRAP_INPUT | Sentinel | TRAP(TRAP_INPUT) |
 | 31 | OVERFLOW | Sentinel | TRAP(OVERFLOW) |
+| 32 | Dot | Non-zero scales | DQA(11, 2) |
+| 33 | L2Squared | Non-zero scales | DQA(13, 2) |
+| 34 | DVecAdd | Non-zero scales | [(4,1),(6,1)] |
+| 35 | Cosine | Unit [(10,1)] · [(10,1)] | DQA(1, 0) |
+| 36 | Cosine | Unit [(10,1)] · [(-10,1)] | DQA(-1, 0) |
+| 37 | MatMul | Mixed scales 1×2 × 2×1 | DQA(83, 3) |
+| 38 | Dot | Scale mismatch non-zero | TRAP(INVALID_SCALE) |
+| 39 | L2Squared | Scale mismatch non-zero | TRAP(INVALID_SCALE) |
+| 40 | DVecAdd | Scale mismatch non-zero | TRAP(INVALID_SCALE) |
 
 ### Authoritative Merkle Root
 
 ```
-d1bfe4e596f73ded2c3cc0d90909dfe1a05d9efe0d21cd785432e91f85e85078
+c35301102f57e967b752120cfeb34994d13d0aa272fae205c3f20d592aefc16d
 ```
 
 Computed via `scripts/compute_dlae_probe_root.py`.

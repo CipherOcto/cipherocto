@@ -326,24 +326,26 @@ def cosine_similarity(a: List[Tuple[int, int]], b: List[Tuple[int, int]]) -> Tup
     # Compute dot product
     dot_val, dot_scale = dot_product(a, b)
 
-    # For DQA cosine: we compute dot * 10^dot_scale / sqrt(mag_a_sq * mag_b_sq)
-    # Since DQA doesn't support division directly, we return dot/mag product
-    # For unit vectors (|a|=|b|=1), dot IS the cosine
-    # For non-unit vectors, this is the "raw cosine numerator" per RFC spec
-    # The receiver must handle division by magnitude product
-
     # Check if magnitudes are 1 (unit vectors) - then cosine = dot directly
-    # NOTE: This probe only covers unit-vector cosine where |a|=|b|=1.
+    # IMPORTANT: Must canonicalize before comparing, since magnitude may not be in canonical form
+    # e.g., [(10,1)] has mag_sq = (100, 2) which canonicalizes to (1, 0) = unit
+    canon_mag_a = canonicalize_dqa(mag_a_sq[0], mag_a_sq[1])
+    canon_mag_b = canonicalize_dqa(mag_b_sq[0], mag_b_sq[1])
+
+    # This probe only covers unit-vector cosine where |a|=|b|=1.
     # For non-unit vectors, proper cosine requires RFC-0111 Decimal sqrt division.
     # The probe entries (8,9,10,18,19) all use unit vectors by design.
-    if mag_a_sq == (1, 0) and mag_b_sq == (1, 0):
+    if canon_mag_a == (1, 0) and canon_mag_b == (1, 0):
         # Both are unit vectors - cosine = dot directly
         return (dot_val, dot_scale)
 
     # For non-unit vectors: this probe does NOT exercise this path.
     # Proper implementation requires RFC-0111 Decimal sqrt division.
-    # Returning dot product here would be incorrect for general vectors.
-    raise DLAEError(ERR_TRAP_INPUT)
+    # This is a probe scope limitation - not an error in the spec.
+    raise NotImplementedError(
+        "Non-unit vector cosine requires RFC-0111 sqrt — not in probe scope. "
+        "All cosine entries use unit vectors (scale=0 elements)."
+    )
 
 
 def top_k_select(vectors: List[Tuple[int, List[Tuple[int, int]]]], query: List[Tuple[int, int]], k: int, vector_ids: List[int]) -> List[Tuple[int, int, int]]:
@@ -392,7 +394,10 @@ def merkle_root(leaves: List[bytes]) -> bytes:
 
 def build_probe() -> List[bytes]:
     """
-    Build the 32-entry DLAE verification probe.
+    Build the 41-entry DLAE verification probe.
+
+    Entries 0-31: Core operations with scale=0
+    Entries 32-40: Diverse scale entries (non-zero scales)
     """
     entries = []
 
@@ -700,6 +705,96 @@ def build_probe() -> List[bytes]:
     print(f"Entry 31: OVERFLOW sentinel")
     print(f"  Serialized: {entries[-1].hex()}")
 
+    # === DIVERSE SCALE ENTRIES (testing non-zero scales) ===
+
+    # Entry 32: Dot product with non-zero scales - [(1,1),(2,1)] · [(3,1),(4,1)]
+    # Each element: 0.1, 0.2, 0.3, 0.4
+    # Dot = 0.1*0.3 + 0.2*0.4 = 0.03 + 0.08 = 0.11 = DQA(11, 2)
+    # But must canonicalize: 11 * 10^-2, trailing zeros? No -> (11, 2)
+    a_nz = [(1, 1), (2, 1)]
+    b_nz = [(3, 1), (4, 1)]
+    result = dot_product(a_nz, b_nz)
+    entries.append(serialize_dqa(result[0], result[1]))
+    print(f"Entry 32: Dot non-zero scales [(1,1),(2,1)] · [(3,1),(4,1)] = {result}")
+    print(f"  Serialized: {entries[-1].hex()}")
+
+    # Entry 33: L2Squared with non-zero scales - [(3,1),(4,1)] vs [(1,1),(1,1)]
+    # (0.3-0.1)^2 + (0.4-0.1)^2 = 0.04 + 0.09 = 0.13 = DQA(13, 2)
+    a_l2_nz = [(3, 1), (4, 1)]
+    b_l2_nz = [(1, 1), (1, 1)]
+    result = l2_squared(a_l2_nz, b_l2_nz)
+    entries.append(serialize_dqa(result[0], result[1]))
+    print(f"Entry 33: L2Squared non-zero scales = {result}")
+    print(f"  Serialized: {entries[-1].hex()}")
+
+    # Entry 34: DVecAdd with matching non-zero scales - [(1,1),(2,1)] + [(3,1),(4,1)] = [(4,1),(6,1)]
+    result = dvec_add(a_nz, b_nz)
+    flat = [serialize_dqa(v, s) for v, s in result]
+    entries.append(serialize_dvec(flat))
+    print(f"Entry 34: DVecAdd non-zero scales = {result}")
+    print(f"  Serialized: {entries[-1].hex()}")
+
+    # Entry 35: Cosine with non-zero scale unit vector - [(10,1)] · [(10,1)]
+    # (10,1) represents 10 * 10^-1 = 1.0 (unit vector)
+    # Unit magnitude squared = 1.0, so canonicalized magnitude = (1, 0)
+    # cosine should = dot = 1.0 * 1.0 = 1.0 = DQA(1, 0)
+    unit_nz = [(10, 1)]
+    result = cosine_similarity(unit_nz, unit_nz)
+    entries.append(serialize_dqa(result[0], result[1]))
+    print(f"Entry 35: Cosine unit [(10,1)] · [(10,1)] = {result}")
+    print(f"  Serialized: {entries[-1].hex()}")
+
+    # Entry 36: Cosine with orthogonal non-zero scale unit vectors - [(10,1)] · [(-10,1)]
+    # Both represent 1.0 and -1.0, dot = -1.0, cosine = -1.0
+    unit_neg = [(-10, 1)]
+    result = cosine_similarity(unit_nz, unit_neg)
+    entries.append(serialize_dqa(result[0], result[1]))
+    print(f"Entry 36: Cosine [(10,1)] · [(-10,1)] = {result}")
+    print(f"  Serialized: {entries[-1].hex()}")
+
+    # Entry 37: MatMul with mixed scales - 1x2 × 2x1
+    # [[(1,2),(2,1)]] × [[(3,1)],[(4,1)]]
+    # C[0,0] = (1,2)*(3,1) + (2,1)*(4,1) = (3,3) + (8,2) = scale-aligned: 3*10^1 + 8 = 38, scale=3
+    # Canonical: 38 * 10^-3 = 0.038 -> (38, 2) after canonicalize? trailing zeros? 38/10=3.8 no -> (38, 2)
+    mata_mix = [[(1, 2), (2, 1)]]
+    matb_mix = [[(3, 1)], [(4, 1)]]
+    result = mat_mul(mata_mix, matb_mix)
+    flat = [serialize_dqa(v, s) for row in result for v, s in row]
+    entries.append(b''.join(flat))
+    print(f"Entry 37: MatMul mixed scales")
+    print(f"  Serialized: {entries[-1].hex()}")
+
+    # Entry 38: Dot product - scale mismatch should TRAP even with non-zero scales
+    a_mismatch = [(1, 1), (2, 2)]  # scale=1 and scale=2
+    b_mismatch = [(3, 1), (4, 1)]
+    try:
+        dot_product(a_mismatch, b_mismatch)
+        entries.append(b"ERROR: Should have TRAPed")
+    except DLAEError as e:
+        entries.append(serialize_trap_result(e.error_code))
+    print(f"Entry 38: Dot scale mismatch (non-zero) -> TRAP")
+    print(f"  Serialized: {entries[-1].hex()}")
+
+    # Entry 39: L2Squared with scale mismatch -> TRAP
+    try:
+        l2_squared(a_mismatch, b_mismatch)
+        entries.append(b"ERROR: Should have TRAPed")
+    except DLAEError as e:
+        entries.append(serialize_trap_result(e.error_code))
+    print(f"Entry 39: L2Squared scale mismatch -> TRAP")
+    print(f"  Serialized: {entries[-1].hex()}")
+
+    # Entry 40: DVecAdd with scale mismatch -> TRAP
+    a_dvec_mismatch = [(1, 1), (2, 2)]
+    b_dvec_mismatch = [(3, 1), (4, 1)]
+    try:
+        dvec_add(a_dvec_mismatch, b_dvec_mismatch)
+        entries.append(b"ERROR: Should have TRAPed")
+    except DLAEError as e:
+        entries.append(serialize_trap_result(e.error_code))
+    print(f"Entry 40: DVecAdd scale mismatch -> TRAP")
+    print(f"  Serialized: {entries[-1].hex()}")
+
     return entries
 
 
@@ -710,7 +805,7 @@ def main():
     print("=" * 70)
     print()
 
-    # Build the 32 probe entries
+    # Build the 41 probe entries
     entries = build_probe()
 
     print()

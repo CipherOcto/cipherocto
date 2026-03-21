@@ -3,6 +3,9 @@
 //! RFC-0111: Deterministic DECIMAL
 //! i128 mantissa with 0-36 decimal scale.
 
+use num_bigint::BigInt;
+use num_integer::Integer;
+use num_traits::{Signed, ToPrimitive, Zero};
 use serde::{Deserialize, Serialize};
 
 /// DECIMAL specification version
@@ -77,6 +80,18 @@ pub enum DecimalError {
     NonCanonical,
     /// DECIMAL→DQA scale > 18, or DECIMAL→BIGINT scale != 0
     ConversionLoss,
+}
+
+/// Rounding mode for DECIMAL operations
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum RoundingMode {
+    /// Round half to even (banker's rounding) — required for financial
+    #[default]
+    RoundHalfEven,
+    /// Round toward zero (floor for positive, ceil for negative)
+    RoundDown,
+    /// Round away from zero
+    RoundUp,
 }
 
 /// Decimal: i128 mantissa with 0-36 decimal scale
@@ -216,6 +231,384 @@ impl TryFrom<[u8; 24]> for Decimal {
     }
 }
 
+// ─── Arithmetic Operations ────────────────────────────────────────────────────
+
+/// ADD — Addition with safe BigInt scale alignment
+///
+/// Algorithm (RFC-0111 §ADD):
+/// 1. Align scales using BigInt for scale multiplication
+/// 2. Add in BigInt, check range, then cast to i128
+/// 3. Canonicalize result
+pub fn decimal_add(a: &Decimal, b: &Decimal) -> Result<Decimal, DecimalError> {
+    let target_scale = a.scale.max(b.scale);
+    let diff_a = target_scale - a.scale;
+    let diff_b = target_scale - b.scale;
+
+    // Scale alignment in BigInt
+    let a_val = if diff_a > 0 {
+        let a_big = BigInt::from(a.mantissa);
+        let pow10_big = BigInt::from(POW10[diff_a as usize]);
+        a_big
+            .checked_mul(&pow10_big)
+            .ok_or(DecimalError::Overflow)?
+    } else {
+        BigInt::from(a.mantissa)
+    };
+
+    let b_val = if diff_b > 0 {
+        let b_big = BigInt::from(b.mantissa);
+        let pow10_big = BigInt::from(POW10[diff_b as usize]);
+        b_big
+            .checked_mul(&pow10_big)
+            .ok_or(DecimalError::Overflow)?
+    } else {
+        BigInt::from(b.mantissa)
+    };
+
+    let sum_big = a_val.checked_add(&b_val).ok_or(DecimalError::Overflow)?;
+
+    // Check range before casting to i128
+    let max_big = BigInt::from(MAX_DECIMAL_MANTISSA);
+    let neg_max_big = -max_big.clone();
+    if sum_big > max_big || sum_big < neg_max_big {
+        return Err(DecimalError::Overflow);
+    }
+
+    let sum = sum_big.to_i128().ok_or(DecimalError::Overflow)?;
+    Decimal::new(sum, target_scale)
+}
+
+/// SUB — Subtraction with safe BigInt scale alignment
+pub fn decimal_sub(a: &Decimal, b: &Decimal) -> Result<Decimal, DecimalError> {
+    let target_scale = a.scale.max(b.scale);
+    let diff_a = target_scale - a.scale;
+    let diff_b = target_scale - b.scale;
+
+    let a_val = if diff_a > 0 {
+        BigInt::from(a.mantissa)
+            .checked_mul(&BigInt::from(POW10[diff_a as usize]))
+            .ok_or(DecimalError::Overflow)?
+    } else {
+        BigInt::from(a.mantissa)
+    };
+
+    let b_val = if diff_b > 0 {
+        BigInt::from(b.mantissa)
+            .checked_mul(&BigInt::from(POW10[diff_b as usize]))
+            .ok_or(DecimalError::Overflow)?
+    } else {
+        BigInt::from(b.mantissa)
+    };
+
+    let diff_big = a_val.checked_sub(&b_val).ok_or(DecimalError::Overflow)?;
+
+    let max_big = BigInt::from(MAX_DECIMAL_MANTISSA);
+    let neg_max_big = -max_big.clone();
+    if diff_big > max_big || diff_big < neg_max_big {
+        return Err(DecimalError::Overflow);
+    }
+
+    let diff = diff_big.to_i128().ok_or(DecimalError::Overflow)?;
+    Decimal::new(diff, target_scale)
+}
+
+/// MUL — Multiplication with BigInt intermediate and RoundHalfEven normalization
+///
+/// Algorithm (RFC-0111 §MUL):
+/// 1. Calculate raw scale
+/// 2. If raw_scale > MAX, round the intermediate before scaling down
+/// 3. Canonicalize result
+pub fn decimal_mul(a: &Decimal, b: &Decimal) -> Result<Decimal, DecimalError> {
+    let raw_scale = a.scale.wrapping_add(b.scale);
+
+    if raw_scale > MAX_DECIMAL_SCALE {
+        // Scale normalization: round before scaling down
+        let scale_reduction = raw_scale - MAX_DECIMAL_SCALE;
+        let intermediate = BigInt::from(a.mantissa)
+            .checked_mul(&BigInt::from(b.mantissa))
+            .ok_or(DecimalError::Overflow)?;
+
+        let divisor = BigInt::from(POW10[scale_reduction as usize]);
+        let (product_big, remainder) = intermediate.div_rem(&divisor);
+
+        // RoundHalfEven on magnitude
+        let abs_remainder = remainder.abs();
+        let half = &divisor / 2;
+
+        let product_big = if abs_remainder > half {
+            // Round up (away from zero)
+            if product_big >= BigInt::from(0) {
+                product_big + BigInt::from(1)
+            } else {
+                product_big - BigInt::from(1)
+            }
+        } else if abs_remainder == half && !product_big.is_zero() {
+            // Tie: round to even (only round up if odd)
+            if &product_big % 2 != BigInt::from(0) {
+                if product_big >= BigInt::from(0) {
+                    product_big + BigInt::from(1)
+                } else {
+                    product_big - BigInt::from(1)
+                }
+            } else {
+                product_big
+            }
+        } else {
+            product_big
+        };
+
+        // Check overflow after rounding
+        let max_big = BigInt::from(MAX_DECIMAL_MANTISSA);
+        let neg_max_big = -max_big.clone();
+        if product_big > max_big || product_big < neg_max_big {
+            return Err(DecimalError::Overflow);
+        }
+
+        let product = product_big.to_i128().ok_or(DecimalError::Overflow)?;
+        Decimal::new(product, MAX_DECIMAL_SCALE)
+    } else {
+        // Normal case: no scale overflow
+        let intermediate = BigInt::from(a.mantissa)
+            .checked_mul(&BigInt::from(b.mantissa))
+            .ok_or(DecimalError::Overflow)?;
+
+        if intermediate.abs() > BigInt::from(MAX_DECIMAL_MANTISSA) {
+            return Err(DecimalError::Overflow);
+        }
+
+        let product = intermediate.to_i128().ok_or(DecimalError::Overflow)?;
+        Decimal::new(product, raw_scale)
+    }
+}
+
+/// DIV — Division with precision growth control and RoundHalfEven rounding
+///
+/// Algorithm (RFC-0111 §DIV):
+/// 1. Division by zero check
+/// 2. Compute result scale: min(36, max(a.scale, b.scale) + 6)
+/// 3. Work with absolute values, track sign separately
+/// 4. Scale dividend, divide, round, apply sign
+pub fn decimal_div(a: &Decimal, b: &Decimal, _target_scale: u8) -> Result<Decimal, DecimalError> {
+    if b.mantissa == 0 {
+        return Err(DecimalError::DivisionByZero);
+    }
+
+    // Compute result scale using unified precision growth rule
+    let raw_scale = a.scale.max(b.scale).wrapping_add(6);
+    let target_scale = raw_scale.min(MAX_DECIMAL_SCALE);
+
+    // Result sign BEFORE division
+    let result_sign = (a.mantissa < 0) != (b.mantissa < 0);
+
+    // Work with absolute values
+    let abs_a = a.mantissa.abs();
+    let abs_b = b.mantissa.abs();
+
+    let scale_diff = (target_scale as i32) - (a.scale as i32) + (b.scale as i32);
+
+    let scaled_dividend: i128 = if scale_diff > 0 {
+        // Increase dividend by multiplying to get more precision
+        let scaled = BigInt::from(POW10[scale_diff as usize])
+            .checked_mul(&BigInt::from(abs_a))
+            .ok_or(DecimalError::Overflow)?;
+        let max_i128 = BigInt::from(i128::MAX);
+        if scaled > max_i128 {
+            return Err(DecimalError::Overflow);
+        }
+        scaled.to_i128().ok_or(DecimalError::Overflow)?
+    } else if scale_diff < 0 {
+        // Decrease dividend by dividing to reduce scale (RoundHalfEven rounding)
+        let scale_reduction = (-scale_diff) as usize;
+        let divisor = POW10[scale_reduction];
+        let quotient = abs_a / divisor;
+        let remainder = abs_a % divisor;
+        let half = divisor / 2;
+
+        // RoundHalfEven: round up if remainder > half, or if tie and quotient is odd
+        if remainder > half || (remainder == half && quotient % 2 != 0) {
+            quotient + 1
+        } else {
+            quotient
+        }
+    } else {
+        abs_a
+    };
+
+    // Divide
+    let magnitude = scaled_dividend.abs();
+    let quotient = magnitude / abs_b;
+    let remainder = magnitude % abs_b;
+
+    // Round to target using RoundHalfEven on magnitude
+    let half = abs_b / 2;
+    let result = if remainder < half {
+        quotient
+    } else if remainder > half {
+        quotient + 1
+    } else if quotient % 2 == 0 {
+        quotient // already even
+    } else {
+        quotient + 1 // round up to even
+    };
+
+    // Apply sign
+    let result = if result_sign { -result } else { result };
+
+    Decimal::new(result, target_scale)
+}
+
+/// SQRT — Square root with Newton-Raphson (40 iterations)
+///
+/// Algorithm (RFC-0111 §SQRT):
+/// 1. Reject negative input
+/// 2. Scale mantissa to target precision P = min(36, a.scale + 6)
+/// 3. Compute integer sqrt using Newton-Raphson in BigInt
+/// 4. Handle off-by-one correction and overflow check
+pub fn decimal_sqrt(a: &Decimal) -> Result<Decimal, DecimalError> {
+    if a.mantissa < 0 {
+        return Err(DecimalError::InvalidScale); // sqrt of negative
+    }
+    if a.mantissa == 0 {
+        return Decimal::new(0, 0);
+    }
+
+    // Compute result precision: P = min(36, a.scale + 6)
+    let p = (a.scale as u16 + 6).min(MAX_DECIMAL_SCALE as u16) as u8;
+
+    // Scale factor = 2*P - a.scale
+    let scale_factor = (2 * p as i32) - (a.scale as i32);
+
+    // Scale mantissa: n = a.mantissa * 10^(2P-s)
+    // Use split multiplication when scale_factor > 36
+    let scaled_n = if scale_factor > 36 {
+        let lo = BigInt::from(POW10[(scale_factor - 36) as usize]);
+        let hi = BigInt::from(POW10[36]);
+        let partial = BigInt::from(a.mantissa)
+            .checked_mul(&lo)
+            .ok_or(DecimalError::Overflow)?;
+        partial.checked_mul(&hi).ok_or(DecimalError::Overflow)?
+    } else if scale_factor >= 0 {
+        BigInt::from(a.mantissa)
+            .checked_mul(&BigInt::from(POW10[scale_factor as usize]))
+            .ok_or(DecimalError::Overflow)?
+    } else {
+        return Err(DecimalError::Overflow); // scale_factor < 0 should not happen
+    };
+
+    // Newton-Raphson integer square root
+    // Initial guess: 2^(ceil(bit_length(n)/2))
+    let bit_len = scaled_n.bits();
+    let mut x = BigInt::from(1) << bit_len.div_ceil(2);
+
+    // Fixed 40 iterations (no early exit per RFC-0111)
+    for _ in 0..40 {
+        if x.is_zero() {
+            break;
+        }
+        let n_over_x = &scaled_n / &x;
+        x = (&x + n_over_x) >> 1; // divide by 2
+    }
+
+    // Off-by-one correction
+    if &x * &x > scaled_n {
+        x -= BigInt::from(1);
+    }
+
+    // Range check
+    let max_big = BigInt::from(MAX_DECIMAL_MANTISSA);
+    if x > max_big {
+        return Err(DecimalError::Overflow);
+    }
+
+    let mantissa = x.to_i128().ok_or(DecimalError::Overflow)?;
+    Decimal::new(mantissa, p)
+}
+
+/// ROUND — Rounding with configurable mode
+///
+/// Algorithm (RFC-0111 §ROUND):
+/// 1. If target_scale >= d.scale, return d (no rounding needed)
+/// 2. Compute divisor = 10^diff
+/// 3. Apply rounding per mode
+pub fn decimal_round(
+    d: &Decimal,
+    target_scale: u8,
+    mode: RoundingMode,
+) -> Result<Decimal, DecimalError> {
+    if target_scale >= d.scale {
+        return Ok(*d);
+    }
+
+    let diff = (d.scale - target_scale) as usize;
+    let divisor = POW10[diff];
+
+    let q = d.mantissa / divisor;
+    let r = d.mantissa % divisor;
+
+    let result = match mode {
+        RoundingMode::RoundHalfEven => {
+            let abs_r = r.abs();
+            let half = divisor / 2;
+            if abs_r < half {
+                q
+            } else if abs_r > half {
+                q + d.mantissa.signum()
+            } else if q % 2 == 0 {
+                q // already even
+            } else {
+                q + d.mantissa.signum() // round away from zero
+            }
+        }
+        RoundingMode::RoundDown => q,
+        RoundingMode::RoundUp => {
+            if r > 0 && d.mantissa > 0 {
+                q + 1
+            } else if r < 0 && d.mantissa < 0 {
+                q - 1
+            } else {
+                q
+            }
+        }
+    };
+
+    Decimal::new(result, target_scale)
+}
+
+/// CMP — Comparison using BigInt scale alignment
+///
+/// Returns: -1 (a < b), 0 (a == b), 1 (a > b)
+///
+/// Algorithm (RFC-0111 §CMP):
+/// 1. Fast path: if scales equal, compare directly
+/// 2. Scale alignment using BigInt (scale_diff up to 36)
+pub fn decimal_cmp(a: &Decimal, b: &Decimal) -> i32 {
+    // Fast path: same scale
+    if a.scale == b.scale {
+        if a.mantissa < b.mantissa {
+            return -1;
+        } else if a.mantissa > b.mantissa {
+            return 1;
+        }
+        return 0;
+    }
+
+    // Scale alignment using BigInt
+    let max_scale = a.scale.max(b.scale);
+    let diff_a = (max_scale - a.scale) as usize;
+    let diff_b = (max_scale - b.scale) as usize;
+
+    let compare_a = BigInt::from(a.mantissa) * BigInt::from(POW10[diff_a]);
+    let compare_b = BigInt::from(b.mantissa) * BigInt::from(POW10[diff_b]);
+
+    if compare_a < compare_b {
+        -1
+    } else if compare_a > compare_b {
+        1
+    } else {
+        0
+    }
+}
+
 #[cfg(test)]
 impl Decimal {
     /// For testing only — bypasses validation to create non-canonical values
@@ -224,6 +617,7 @@ impl Decimal {
     }
 
     /// For testing only — raw bytes without canonicalization
+    #[allow(clippy::wrong_self_convention)]
     fn to_bytes_raw(&self) -> [u8; 24] {
         let mut bytes = [0u8; 24];
         bytes[0..16].copy_from_slice(&self.mantissa.to_be_bytes());

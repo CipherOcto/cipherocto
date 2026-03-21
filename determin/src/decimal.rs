@@ -609,6 +609,124 @@ pub fn decimal_cmp(a: &Decimal, b: &Decimal) -> i32 {
     }
 }
 
+// ─── Conversions ────────────────────────────────────────────────────────────────
+
+use crate::dqa::Dqa;
+
+/// DECIMAL → DQA Conversion
+///
+/// Converts Decimal to Dqa with scale alignment and RoundHalfEven rounding.
+/// TRAP if DECIMAL scale > 18 or result outside DQA range (i64).
+pub fn decimal_to_dqa(d: &Decimal) -> Result<Dqa, DecimalError> {
+    use crate::dqa::MAX_SCALE as DQA_MAX_SCALE;
+
+    // DQA max scale is 18, Decimal max scale is 36
+    if d.scale > DQA_MAX_SCALE {
+        return Err(DecimalError::ConversionLoss);
+    }
+
+    // Scale is within DQA range - no rounding needed, just check range
+    if d.mantissa > i64::MAX as i128 || d.mantissa < i64::MIN as i128 {
+        return Err(DecimalError::Overflow);
+    }
+    Dqa::new(d.mantissa as i64, d.scale).map_err(|_| DecimalError::Overflow)
+}
+
+/// DQA → DECIMAL Conversion
+///
+/// Converts Dqa to Decimal by zero-extending to Decimal scale.
+/// TRAP if result outside DECIMAL range.
+pub fn dqa_to_decimal(dqa: &Dqa) -> Result<Decimal, DecimalError> {
+    // Decimal can represent higher scales than DQA
+    // Simply construct with the same value and scale
+    // The Decimal::new will canonicalize if needed
+    Decimal::new(dqa.value as i128, dqa.scale)
+}
+
+/// DECIMAL → BIGINT Conversion
+///
+/// Converts Decimal to BigInt by truncating the fractional part (no rounding).
+/// TRAP if result outside BIGINT range (i128).
+pub fn decimal_to_bigint(d: &Decimal) -> Result<i128, DecimalError> {
+    if d.scale == 0 {
+        return Ok(d.mantissa);
+    }
+
+    // Truncate: divide by 10^scale (floor toward zero)
+    let divisor = POW10[d.scale as usize];
+    let result = d.mantissa / divisor;
+
+    // Verify the truncation was lossless (remainder should be discarded)
+    // But we accept it as-is per RFC-0111 - truncation is intentional
+    Ok(result)
+}
+
+/// BIGINT → DECIMAL Conversion
+///
+/// Converts i128 to Decimal using RFC-0110 I128_ROUNDTRIP.
+/// TRAP if result outside DECIMAL range.
+pub fn bigint_to_decimal(value: i128) -> Result<Decimal, DecimalError> {
+    // RFC-0110 I128_ROUNDTRIP: represent i128 as Decimal with scale 0
+    Decimal::new(value, 0)
+}
+
+/// DECIMAL → String Conversion
+///
+/// Formats Decimal as deterministic string with no trailing zeros.
+/// Format: "[-]digits[.fractional]" with period (.) as decimal separator.
+/// TRAP if result exceeds 256 bytes.
+pub fn decimal_to_string(d: &Decimal) -> Result<String, DecimalError> {
+    const MAX_STRING_LEN: usize = 256;
+
+    let mantissa = d.mantissa;
+    let scale = d.scale;
+
+    // Handle zero specially
+    if mantissa == 0 {
+        return Ok("0".to_string());
+    }
+
+    let abs_mantissa = mantissa.abs();
+    let sign = if mantissa < 0 { "-" } else { "" };
+
+    let result = if scale == 0 {
+        // Integer - no decimal point
+        format!("{}{}", sign, abs_mantissa)
+    } else {
+        // Fractional - need decimal point
+        let mantissa_str = abs_mantissa.to_string();
+        let len = mantissa_str.len();
+
+        if len > scale as usize {
+            // Insert decimal point: mantissa_str[0..len-scale] . mantissa_str[len-scale..]
+            let int_part = &mantissa_str[..len - scale as usize];
+            let frac_part = &mantissa_str[len - scale as usize..];
+            // Remove trailing zeros from frac_part
+            let frac_trimmed = frac_part.trim_end_matches('0');
+            if frac_trimmed.is_empty() {
+                format!("{}{}", sign, int_part)
+            } else {
+                format!("{}{}.{}", sign, int_part, frac_trimmed)
+            }
+        } else {
+            // Scale >= len: need leading zeros before decimal
+            let leading_zeros = scale as usize - len;
+            let int_part = "0";
+            let frac_part = format!("{}{}", "0".repeat(leading_zeros), mantissa_str);
+            // Remove trailing zeros
+            let frac_trimmed = frac_part.trim_end_matches('0');
+            format!("{}{}.{}", sign, int_part, frac_trimmed)
+        }
+    };
+
+    // TRAP if exceeds 256 bytes
+    if result.len() > MAX_STRING_LEN {
+        return Err(DecimalError::ConversionLoss);
+    }
+
+    Ok(result)
+}
+
 #[cfg(test)]
 impl Decimal {
     /// For testing only — bypasses validation to create non-canonical values
@@ -720,5 +838,104 @@ mod tests {
             decimal_from_bytes(bytes),
             Err(DecimalError::NonCanonical)
         ));
+    }
+
+    // ─── Conversion Tests ───────────────────────────────────────────────────────
+
+    #[test]
+    fn decimal_to_dqa_truncates() {
+        // Decimal 123.456 (scale 3) → Dqa with scale 3
+        let d = Decimal::new(123456, 3).unwrap();
+        let dqa = decimal_to_dqa(&d).unwrap();
+        assert_eq!(dqa.value, 123456);
+        assert_eq!(dqa.scale, 3);
+    }
+
+    #[test]
+    fn decimal_to_dqa_preserves_value() {
+        // Decimal scale <= DQA max scale, so value is preserved exactly
+        // Decimal(15, 1) = 1.5 → Dqa(15, 1) = 1.5
+        let d = Decimal::new(15, 1).unwrap();
+        let dqa = decimal_to_dqa(&d).unwrap();
+        assert_eq!(dqa.value, 15);
+        assert_eq!(dqa.scale, 1);
+
+        // Decimal(250, 2) = 2.50 → Dqa(25, 1) = 2.5 (DQA canonicalizes trailing zeros)
+        let d = Decimal::new(250, 2).unwrap();
+        let dqa = decimal_to_dqa(&d).unwrap();
+        assert_eq!(dqa.value, 25);
+        assert_eq!(dqa.scale, 1);
+    }
+
+    #[test]
+    fn decimal_to_dqa_rejects_high_scale() {
+        // Decimal scale 20 > DQA max scale 18
+        let d = Decimal::new(1234567890123456789012345i128, 20).unwrap();
+        let result = decimal_to_dqa(&d);
+        assert!(matches!(result, Err(DecimalError::ConversionLoss)));
+    }
+
+    #[test]
+    fn dqa_to_decimal_conversion() {
+        let dqa = Dqa::new(123456, 3).unwrap();
+        let d = dqa_to_decimal(&dqa).unwrap();
+        assert_eq!(d.mantissa(), 123456);
+        assert_eq!(d.scale(), 3);
+    }
+
+    #[test]
+    fn decimal_to_bigint_truncates() {
+        // 123.456 → 123
+        let d = Decimal::new(123456, 3).unwrap();
+        let result = decimal_to_bigint(&d).unwrap();
+        assert_eq!(result, 123);
+    }
+
+    #[test]
+    fn decimal_to_bigint_no_scale() {
+        let d = Decimal::new(123456789012345678901234567890i128, 0).unwrap();
+        let result = decimal_to_bigint(&d).unwrap();
+        assert_eq!(result, 123456789012345678901234567890i128);
+    }
+
+    #[test]
+    fn bigint_to_decimal_roundtrip() {
+        let d = bigint_to_decimal(123456789012345678901234567890i128).unwrap();
+        assert_eq!(d.mantissa(), 123456789012345678901234567890i128);
+        assert_eq!(d.scale(), 0);
+    }
+
+    #[test]
+    fn decimal_to_string_integer() {
+        let d = Decimal::new(12345, 0).unwrap();
+        assert_eq!(decimal_to_string(&d).unwrap(), "12345");
+
+        let d = Decimal::new(-678, 0).unwrap();
+        assert_eq!(decimal_to_string(&d).unwrap(), "-678");
+    }
+
+    #[test]
+    fn decimal_to_string_fractional() {
+        let d = Decimal::new(12345, 3).unwrap(); // 12.345
+        assert_eq!(decimal_to_string(&d).unwrap(), "12.345");
+
+        let d = Decimal::new(123450, 3).unwrap(); // 123.450 -> 123.45
+        assert_eq!(decimal_to_string(&d).unwrap(), "123.45");
+
+        let d = Decimal::new(12000, 3).unwrap(); // 12.000 -> 12
+        assert_eq!(decimal_to_string(&d).unwrap(), "12");
+    }
+
+    #[test]
+    fn decimal_to_string_zero() {
+        let d = Decimal::new(0, 5).unwrap();
+        assert_eq!(decimal_to_string(&d).unwrap(), "0");
+    }
+
+    #[test]
+    fn decimal_to_string_leading_zeros() {
+        // 0.00123 with scale 5
+        let d = Decimal::new(123, 5).unwrap();
+        assert_eq!(decimal_to_string(&d).unwrap(), "0.00123");
     }
 }

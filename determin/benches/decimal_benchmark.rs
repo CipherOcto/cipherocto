@@ -13,8 +13,7 @@ use octo_determin::decimal::RoundingMode;
 // Import functions based on feature
 #[cfg(not(feature = "use-internal-bigint"))]
 use octo_determin::decimal::{
-    decimal_add, decimal_cmp, decimal_div, decimal_mul, decimal_round, decimal_sqrt,
-    decimal_sub,
+    decimal_add, decimal_cmp, decimal_div, decimal_mul, decimal_round, decimal_sqrt, decimal_sub,
 };
 
 #[cfg(feature = "use-internal-bigint")]
@@ -104,7 +103,7 @@ fn mul_high_scale(c: &mut Criterion) {
 
 fn mul_max_mantissa(c: &mut Criterion) {
     // Use smaller mantissa to avoid overflow in multiplication
-    let large_mantissa = 10i128.pow(18) - 1;  // Safe for multiplication
+    let large_mantissa = 10i128.pow(18) - 1; // Safe for multiplication
     let dec_a = create_decimal(large_mantissa, 18);
     let dec_b = create_decimal(large_mantissa, 18);
     c.bench_function("mul_max_mantissa", |bencher| {

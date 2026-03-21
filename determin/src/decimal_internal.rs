@@ -5,10 +5,11 @@
 //! Feature: `use-internal-bigint` enables this implementation.
 
 use crate::bigint::{
-    bigint_add, bigint_div, bigint_divmod, bigint_mul, bigint_shl, bigint_sub,
-    BigInt, BigIntError,
+    bigint_add, bigint_div, bigint_divmod, bigint_mul, bigint_shl, bigint_sub, BigInt, BigIntError,
 };
-use crate::decimal::{Decimal, DecimalError, RoundingMode, POW10, MAX_DECIMAL_MANTISSA, MAX_DECIMAL_SCALE};
+use crate::decimal::{
+    Decimal, DecimalError, RoundingMode, MAX_DECIMAL_MANTISSA, MAX_DECIMAL_SCALE, POW10,
+};
 
 // ─── Internal BigInt Helpers ───────────────────────────────────────────────────
 
@@ -19,7 +20,9 @@ fn i128_to_bigint(n: i128) -> BigInt {
 
 /// Convert internal BigInt back to i128
 fn bigint_to_i128(b: &BigInt) -> Result<i128, DecimalError> {
-    b.clone().try_into().map_err(|_: BigIntError| DecimalError::Overflow)
+    b.clone()
+        .try_into()
+        .map_err(|_: BigIntError| DecimalError::Overflow)
 }
 
 /// Check if internal BigInt is within DECIMAL mantissa range
@@ -104,8 +107,7 @@ pub fn decimal_mul_internal(a: &Decimal, b: &Decimal) -> Result<Decimal, Decimal
                 let (q, _) =
                     bigint_divmod(quotient.clone(), two).map_err(|_| DecimalError::Overflow)?;
                 !q.is_zero()
-            })
-        {
+            }) {
             if quotient.sign() {
                 bigint_sub(quotient, i128_to_bigint(1)).map_err(|_| DecimalError::Overflow)?
             } else {
@@ -148,8 +150,11 @@ pub fn decimal_div_internal(
     let scale_diff = (target_scale as i32) - (a.scale() as i32) + (b.scale() as i32);
 
     let scaled_dividend: i128 = if scale_diff > 0 {
-        let scaled = bigint_mul(i128_to_bigint(POW10[scale_diff as usize]), i128_to_bigint(abs_a))
-            .map_err(|_| DecimalError::Overflow)?;
+        let scaled = bigint_mul(
+            i128_to_bigint(POW10[scale_diff as usize]),
+            i128_to_bigint(abs_a),
+        )
+        .map_err(|_| DecimalError::Overflow)?;
         bigint_to_i128(&scaled)?
     } else if scale_diff < 0 {
         let scale_reduction = (-scale_diff) as usize;
@@ -200,11 +205,15 @@ pub fn decimal_sqrt_internal(a: &Decimal) -> Result<Decimal, DecimalError> {
     let scaled_n = if scale_factor > 36 {
         let lo = i128_to_bigint(POW10[(scale_factor - 36) as usize]);
         let hi = i128_to_bigint(POW10[36]);
-        let partial = bigint_mul(i128_to_bigint(a.mantissa()), lo).map_err(|_| DecimalError::Overflow)?;
+        let partial =
+            bigint_mul(i128_to_bigint(a.mantissa()), lo).map_err(|_| DecimalError::Overflow)?;
         bigint_mul(partial, hi).map_err(|_| DecimalError::Overflow)?
     } else if scale_factor >= 0 {
-        bigint_mul(i128_to_bigint(a.mantissa()), i128_to_bigint(POW10[scale_factor as usize]))
-            .map_err(|_| DecimalError::Overflow)?
+        bigint_mul(
+            i128_to_bigint(a.mantissa()),
+            i128_to_bigint(POW10[scale_factor as usize]),
+        )
+        .map_err(|_| DecimalError::Overflow)?
     } else {
         return Err(DecimalError::Overflow);
     };
@@ -222,8 +231,7 @@ pub fn decimal_sqrt_internal(a: &Decimal) -> Result<Decimal, DecimalError> {
             .map_err(|_| DecimalError::Overflow)?
             .0;
         let sum = bigint_add(x.clone(), n_over_x).map_err(|_| DecimalError::Overflow)?;
-        x = bigint_div(sum, i128_to_bigint(2))
-            .map_err(|_| DecimalError::Overflow)?;
+        x = bigint_div(sum, i128_to_bigint(2)).map_err(|_| DecimalError::Overflow)?;
     }
 
     // Off-by-one correction
@@ -299,10 +307,10 @@ pub fn decimal_cmp_internal(a: &Decimal, b: &Decimal) -> i32 {
     let diff_a = (max_scale - a.scale()) as usize;
     let diff_b = (max_scale - b.scale()) as usize;
 
-    let a_big = scale_mantissa(a.mantissa(), diff_a as u8)
-        .unwrap_or_else(|_| i128_to_bigint(i128::MAX));
-    let b_big = scale_mantissa(b.mantissa(), diff_b as u8)
-        .unwrap_or_else(|_| i128_to_bigint(i128::MAX));
+    let a_big =
+        scale_mantissa(a.mantissa(), diff_a as u8).unwrap_or_else(|_| i128_to_bigint(i128::MAX));
+    let b_big =
+        scale_mantissa(b.mantissa(), diff_b as u8).unwrap_or_else(|_| i128_to_bigint(i128::MAX));
 
     let diff = match bigint_sub(a_big, b_big) {
         Ok(d) => d,

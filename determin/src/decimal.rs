@@ -5,10 +5,10 @@
 
 use crate::bigint::bigint_mul as internal_mul;
 use num_bigint::BigInt;
-use sha2::{Digest, Sha256};
 use num_integer::Integer;
 use num_traits::{Signed, ToPrimitive, Zero};
 use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
 
 /// DECIMAL specification version
 pub const DECIMAL_SPEC_VERSION: u32 = 1;

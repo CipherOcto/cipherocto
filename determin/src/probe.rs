@@ -33,11 +33,10 @@
 //! - cargo clippy: Zero warnings
 //! - Merkle root: c447fa82db0763435c1a18268843300c2ed811e21fcb400b18c75e579ddac7c0
 
-use crate::decimal::{
-    decimal_add, decimal_sub, decimal_mul, decimal_sqrt,
-    decimal_cmp, decimal_to_dqa,
-};
 use crate::decimal::Decimal;
+use crate::decimal::{
+    decimal_add, decimal_cmp, decimal_mul, decimal_sqrt, decimal_sub, decimal_to_dqa,
+};
 use crate::Dfp;
 
 /// Current DFP spec version - increment on any arithmetic change
@@ -312,8 +311,8 @@ mod tests {
 // BigInt Verification Probe (RFC-0110)
 // =============================================================================
 
-use sha2::{Digest, Sha256};
 use num_integer::Integer;
+use sha2::{Digest, Sha256};
 
 /// Operation IDs as per RFC-0110
 pub const OP_ADD: u64 = 1;
@@ -1200,7 +1199,12 @@ pub fn decimal_encode_trap() -> [u8; 24] {
 }
 
 /// Create a probe entry: op_id (8) + input_a (24) + input_b (24) + result (24) = 80 bytes
-pub fn decimal_make_entry(op_id: u64, a_encoded: &[u8; 24], b_encoded: &[u8; 24], result_encoded: &[u8; 24]) -> [u8; 80] {
+pub fn decimal_make_entry(
+    op_id: u64,
+    a_encoded: &[u8; 24],
+    b_encoded: &[u8; 24],
+    result_encoded: &[u8; 24],
+) -> [u8; 80] {
     let mut entry = [0u8; 80];
     entry[..8].copy_from_slice(&op_id.to_le_bytes());
     entry[8..32].copy_from_slice(a_encoded);
@@ -1806,7 +1810,13 @@ pub fn decimal_all_probe_entries() -> Vec<DecimalProbeEntry> {
 }
 
 /// Compute the actual result for a probe entry, returning (mantissa, scale) or None for TRAP
-fn decimal_compute_result(op_id: u64, a_mantissa: i128, a_scale: u8, b_mantissa: i128, b_scale: u8) -> Option<(i128, u8)> {
+fn decimal_compute_result(
+    op_id: u64,
+    a_mantissa: i128,
+    a_scale: u8,
+    b_mantissa: i128,
+    b_scale: u8,
+) -> Option<(i128, u8)> {
     let a = match Decimal::new(a_mantissa, a_scale) {
         Ok(d) => d,
         Err(_) => return None,
@@ -1817,24 +1827,18 @@ fn decimal_compute_result(op_id: u64, a_mantissa: i128, a_scale: u8, b_mantissa:
     };
 
     match op_id {
-        DECIMAL_OP_ADD => {
-            match decimal_add(&a, &b) {
-                Ok(r) => Some((r.mantissa(), r.scale())),
-                Err(_) => None,
-            }
-        }
-        DECIMAL_OP_SUB => {
-            match decimal_sub(&a, &b) {
-                Ok(r) => Some((r.mantissa(), r.scale())),
-                Err(_) => None,
-            }
-        }
-        DECIMAL_OP_MUL => {
-            match decimal_mul(&a, &b) {
-                Ok(r) => Some((r.mantissa(), r.scale())),
-                Err(_) => None,
-            }
-        }
+        DECIMAL_OP_ADD => match decimal_add(&a, &b) {
+            Ok(r) => Some((r.mantissa(), r.scale())),
+            Err(_) => None,
+        },
+        DECIMAL_OP_SUB => match decimal_sub(&a, &b) {
+            Ok(r) => Some((r.mantissa(), r.scale())),
+            Err(_) => None,
+        },
+        DECIMAL_OP_MUL => match decimal_mul(&a, &b) {
+            Ok(r) => Some((r.mantissa(), r.scale())),
+            Err(_) => None,
+        },
         DECIMAL_OP_DIV => {
             // Use decimal_div_raw to bypass Decimal canonicalization and match Python's behavior
             match crate::decimal::decimal_div_raw(a_mantissa, a_scale, b_mantissa, b_scale) {
@@ -1842,12 +1846,10 @@ fn decimal_compute_result(op_id: u64, a_mantissa: i128, a_scale: u8, b_mantissa:
                 Err(_) => None,
             }
         }
-        DECIMAL_OP_SQRT => {
-            match decimal_sqrt(&a) {
-                Ok(r) => Some((r.mantissa(), r.scale())),
-                Err(_) => None,
-            }
-        }
+        DECIMAL_OP_SQRT => match decimal_sqrt(&a) {
+            Ok(r) => Some((r.mantissa(), r.scale())),
+            Err(_) => None,
+        },
         DECIMAL_OP_ROUND => {
             // Python-compatible ROUND using raw i128 values (bypasses Decimal canonicalization)
             // Python uses floor division for negatives, Rust uses truncation
@@ -1948,7 +1950,8 @@ pub fn decimal_compute_merkle_root() -> [u8; 32] {
             entry.a_scale,
             entry.b_mantissa,
             entry.b_scale,
-        ).unwrap_or((0x8000000000000000_i128, 0xFF));
+        )
+        .unwrap_or((0x8000000000000000_i128, 0xFF));
 
         let r_enc = decimal_encode(r_mantissa, r_scale);
         let probe_entry = decimal_make_entry(entry.op_id, &a_enc, &b_enc, &r_enc);
@@ -1971,11 +1974,26 @@ pub fn decimal_debug_leaf_hashes() {
             entry.a_scale,
             entry.b_mantissa,
             entry.b_scale,
-        ).unwrap_or((0x8000000000000000_i128, 0xFF));
+        )
+        .unwrap_or((0x8000000000000000_i128, 0xFF));
         let r_enc = decimal_encode(r_mantissa, r_scale);
         let probe_entry = decimal_make_entry(entry.op_id, &a_enc, &b_enc, &r_enc);
         let h = decimal_entry_hash(&probe_entry);
-        eprintln!("idx={:2}: {}e{} ({}) leaf={:02x}{:02x}{:02x}{:02x}{:02x}{:02x}{:02x}{:02x}", entry.index, r_mantissa, r_scale, entry.description, h[0], h[1], h[2], h[3], h[4], h[5], h[6], h[7]);
+        eprintln!(
+            "idx={:2}: {}e{} ({}) leaf={:02x}{:02x}{:02x}{:02x}{:02x}{:02x}{:02x}{:02x}",
+            entry.index,
+            r_mantissa,
+            r_scale,
+            entry.description,
+            h[0],
+            h[1],
+            h[2],
+            h[3],
+            h[4],
+            h[5],
+            h[6],
+            h[7]
+        );
     }
 }
 

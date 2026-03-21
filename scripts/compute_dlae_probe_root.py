@@ -130,6 +130,8 @@ def dvec_add(a: List[Tuple[int, int]], b: List[Tuple[int, int]]) -> List[Tuple[i
     """DVecAdd: element-wise addition of two DQA vectors."""
     if len(a) != len(b):
         raise DLAEError(ERR_DIMENSION_MISMATCH)
+    if len(a) > 64:
+        raise DLAEError(ERR_DIMENSION_MISMATCH)
     result = []
     for i in range(len(a)):
         val_a, scale_a = a[i]
@@ -493,7 +495,7 @@ def build_probe() -> List[bytes]:
         entry_data += serialize_dqa(dist, scale)
         entry_data += serialize_u32(vid)
     entries.append(entry_data)
-    print(f"Entry 11: Top-K K=3")
+    print(f"Entry 11: Top-K K=3 results: {result}")
     print(f"  Serialized: {entries[-1].hex()}")
 
     # Entry 12: Top-K - all equal distances (tie-break by vector_id)
@@ -511,7 +513,7 @@ def build_probe() -> List[bytes]:
         entry_data += serialize_dqa(dist, scale)
         entry_data += serialize_u32(vid)
     entries.append(entry_data)
-    print(f"Entry 12: Top-K tie-break")
+    print(f"Entry 12: Top-K tie-break results: {result}")
     print(f"  Serialized: {entries[-1].hex()}")
 
     # Entry 13: DVecAdd - basic
@@ -599,7 +601,7 @@ def build_probe() -> List[bytes]:
         entry_data += serialize_dqa(dist, scale)
         entry_data += serialize_u32(vid)
     entries.append(entry_data)
-    print(f"Entry 22: Top-K K=1")
+    print(f"Entry 22: Top-K K=1 result: {result}")
     print(f"  Serialized: {entries[-1].hex()}")
 
     # Entry 23: Top-K - K equals all
@@ -609,7 +611,7 @@ def build_probe() -> List[bytes]:
         entry_data += serialize_dqa(dist, scale)
         entry_data += serialize_u32(vid)
     entries.append(entry_data)
-    print(f"Entry 23: Top-K K=5 (all)")
+    print(f"Entry 23: Top-K K=5 (all) results: {result}")
     print(f"  Serialized: {entries[-1].hex()}")
 
     # Entry 24: Dot - single element vectors
@@ -658,15 +660,15 @@ def build_probe() -> List[bytes]:
     print(f"Entry 28: DVecAdd 8-element vectors")
     print(f"  Serialized: {entries[-1].hex()}")
 
-    # Entry 29: DVecAdd - 9 elements (exceeds limit) -> TRAP
-    nine_a = [(i, 0) for i in range(1, 10)]
-    nine_b = [(9 - i, 0) for i in range(1, 10)]
+    # Entry 29: DVecAdd - 65 elements (exceeds MAX_VECTOR_DIM=64) -> TRAP
+    oversized_a = [(i, 0) for i in range(1, 66)]
+    oversized_b = [(66 - i, 0) for i in range(1, 66)]
     try:
-        dvec_add(nine_a, nine_b)
+        dvec_add(oversized_a, oversized_b)
         entries.append(b"ERROR: Should have TRAPed")
     except DLAEError as e:
         entries.append(serialize_trap_result(e.error_code))
-    print(f"Entry 29: DVecAdd 9 elements -> TRAP")
+    print(f"Entry 29: DVecAdd 65 elements (>64) -> TRAP")
     print(f"  Serialized: {entries[-1].hex()}")
 
     # Entry 30: TRAP - TRAP_INPUT sentinel

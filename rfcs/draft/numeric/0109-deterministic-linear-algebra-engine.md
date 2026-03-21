@@ -632,8 +632,8 @@ internal = SHA256(0x01 || left || right) // Domain-separated internal node
 | 8 | Cosine | [1,0], [0,1] | DQA(0, 0) |
 | 9 | Cosine | [1,0], [1,0] | DQA(1, 0) |
 | 10 | Cosine | Zero vector | TRAP(DIVISION_BY_ZERO) |
-| 11 | Top-K | 5 vectors, K=3 | Top-3 by L2 |
-| 12 | Top-K | Tie-break test | Top-3 tie-break |
+| 11 | Top-K | 5 vectors, K=3 | [(5,0,100),(25,0,101),(61,0,102)] |
+| 12 | Top-K | Tie-break test | [(2,0,100),(2,0,150),(2,0,200)] |
 | 13 | DVecAdd | [1,2] + [3,4] | [4,6] |
 | 14 | DVecAdd | Dimension mismatch | TRAP(DIMENSION_MISMATCH) |
 | 15 | DVecAdd | Scale mismatch | TRAP(INVALID_SCALE) |
@@ -643,21 +643,21 @@ internal = SHA256(0x01 || left || right) // Domain-separated internal node
 | 19 | Cosine | Unit [1] · [-1] | DQA(-1, 0) |
 | 20 | MatMul | 1×2 × 2×1 | DQA(11, 0) |
 | 21 | MatMul | 2×1 × 1×2 | [[1,2],[2,4]] |
-| 22 | Top-K | K=1 | Top-1 |
-| 23 | Top-K | K=5 (all) | Top-5 |
+| 22 | Top-K | K=1 | [(5,0,100)] |
+| 23 | Top-K | K=5 (all) | [(5,0,100),(25,0,101),(61,0,102),(81,0,104),(113,0,103)] |
 | 24 | Dot | [5] · [3] | DQA(15, 0) |
 | 25 | L2Squared | [5], [3] | DQA(4, 0) |
 | 26 | MatMul | 1×1 × 1×1 | DQA(6, 0) |
 | 27 | MatMul | scale > MAX_SCALE | TRAP(INVALID_SCALE) |
 | 28 | DVecAdd | 8-element vectors | 8-element sum |
-| 29 | DVecAdd | 9 elements (>64) | N/A (no limit enforced in probe) |
+| 29 | DVecAdd | 65 elements (>64) | TRAP(DIMENSION_MISMATCH) |
 | 30 | TRAP_INPUT | Sentinel | TRAP(TRAP_INPUT) |
 | 31 | OVERFLOW | Sentinel | TRAP(OVERFLOW) |
 
 ### Authoritative Merkle Root
 
 ```
-850a045b6d5b5743dc45b62b1fe73fd88bfa8d7e65f6bdbfd993f2d0427b12d8
+d1bfe4e596f73ded2c3cc0d90909dfe1a05d9efe0d21cd785432e91f85e85078
 ```
 
 Computed via `scripts/compute_dlae_probe_root.py`.

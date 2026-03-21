@@ -5,6 +5,7 @@
 
 use crate::bigint::bigint_mul as internal_mul;
 use num_bigint::BigInt;
+use sha2::{Digest, Sha256};
 use num_integer::Integer;
 use num_traits::{Signed, ToPrimitive, Zero};
 use serde::{Deserialize, Serialize};
@@ -67,6 +68,72 @@ pub const POW10: [i128; 37] = [
     100000000000000000000000000000000000,
     1000000000000000000000000000000000000,
 ];
+
+/// SQRT iterations for Newton-Raphson convergence (part of config hash)
+pub const SQRT_ITERATIONS: u8 = 40;
+
+/// Precision cap for scale growth control (part of config hash)
+pub const PRECISION_CAP: u8 = 6;
+
+/// Canonical DECIMAL arithmetic configuration hash (RFC-0111)
+/// Hash of: 37×POW10 (592 bytes) + rounding modes + constants = 625 bytes
+pub const DECIMAL_ARITHMETIC_CONFIG_HASH: [u8; 32] = [
+    0xb0, 0x71, 0xfa, 0x37, 0xd6, 0x2a, 0x50, 0x31, 0x8f, 0xde, 0x35, 0xfa, 0x50, 0x64, 0x46, 0x4d,
+    0xb4, 0x9c, 0x2f, 0xaa, 0xf0, 0x3a, 0x5e, 0x2a, 0x58, 0xc2, 0x09, 0x25, 0x1f, 0x40, 0x0a, 0x14,
+];
+
+/// Compute DECIMAL arithmetic configuration hash from implementation constants.
+/// Serialization format (625 bytes):
+///   [0..592]:   POW10[0..36] — 37 × 16 bytes big-endian u128
+///   [592..605]: "RoundHalfEven" — 13 bytes ASCII (ADD/SUB/MUL/ROUND)
+///   [605..618]: "RoundHalfEven" — 13 bytes ASCII (DIV)
+///   [618]:      MAX_DECIMAL_SCALE = 36 — 1 byte u8
+///   [619..623]: "TRAP" — 4 bytes ASCII
+///   [623]:      SQRT_ITERATIONS = 40 — 1 byte u8
+///   [624]:      PRECISION_CAP = 6 — 1 byte u8
+pub fn compute_decimal_config_hash() -> [u8; 32] {
+    let mut buf = [0u8; 625];
+
+    // [0..592]: POW10[0..36] as big-endian u128 (37 × 16 = 592 bytes)
+    for (i, &pow) in POW10.iter().enumerate() {
+        let bytes = pow.to_be_bytes();
+        buf[i * 16..(i + 1) * 16].copy_from_slice(&bytes);
+    }
+
+    // [592..605]: "RoundHalfEven" for ADD/SUB/MUL/ROUND
+    buf[592..605].copy_from_slice(b"RoundHalfEven");
+
+    // [605..618]: "RoundHalfEven" for DIV
+    buf[605..618].copy_from_slice(b"RoundHalfEven");
+
+    // [618]: MAX_DECIMAL_SCALE = 36
+    buf[618] = MAX_DECIMAL_SCALE;
+
+    // [619..623]: "TRAP"
+    buf[619..623].copy_from_slice(b"TRAP");
+
+    // [623]: SQRT_ITERATIONS = 40
+    buf[623] = SQRT_ITERATIONS;
+
+    // [624]: PRECISION_CAP = 6
+    buf[624] = PRECISION_CAP;
+
+    // SHA256 hash
+    let mut hasher = Sha256::new();
+    hasher.update(&buf);
+    hasher.finalize().into()
+}
+
+/// Verify implementation config hash matches canonical value.
+/// Returns Ok(()) if match, Err with message if mismatch.
+pub fn verify_decimal_config_hash() -> Result<(), &'static str> {
+    let computed = compute_decimal_config_hash();
+    if computed == DECIMAL_ARITHMETIC_CONFIG_HASH {
+        Ok(())
+    } else {
+        Err("DECIMAL config hash mismatch")
+    }
+}
 
 /// DECIMAL error types
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -937,5 +1004,16 @@ mod tests {
         // 0.00123 with scale 5
         let d = Decimal::new(123, 5).unwrap();
         assert_eq!(decimal_to_string(&d).unwrap(), "0.00123");
+    }
+
+    #[test]
+    fn decimal_config_hash_verification() {
+        // Verify config hash matches canonical value per RFC-0111
+        verify_decimal_config_hash().expect("DECIMAL config hash must match canonical value");
+        let computed = compute_decimal_config_hash();
+        assert_eq!(
+            computed, DECIMAL_ARITHMETIC_CONFIG_HASH,
+            "Config hash must match RFC-0111 canonical value"
+        );
     }
 }

@@ -100,6 +100,24 @@ pub trait DvecScalar: Clone {
 }
 
 // =============================================================================
+// MaxScale Trait
+// =============================================================================
+
+/// Maximum scale for a DVEC scalar type.
+/// DQA: 18 (per RFC-0105). Decimal: 36 (per RFC-0111).
+pub trait MaxScale {
+    const MAX_SCALE: u8;
+}
+
+impl MaxScale for Dqa {
+    const MAX_SCALE: u8 = 18;
+}
+
+impl MaxScale for Decimal {
+    const MAX_SCALE: u8 = 36;
+}
+
+// =============================================================================
 // DVec Type
 // =============================================================================
 
@@ -259,12 +277,13 @@ impl DvecScalar for Decimal {
 /// - For DQA: a[0].scale() <= 9
 /// - For Decimal: a[0].scale() <= 18
 ///
-/// Full implementation with BigInt accumulator — in the arithmetic mission.
-pub fn dot_product<T: DvecScalar>(a: &[T], b: &[T]) -> Result<T, DvecError>
+/// Full implementation in the arithmetic mission.
+/// This stub validates inputs but delegates the core BigInt accumulation
+/// to type-specific implementations.
+pub fn dot_product<T: DvecScalar + MaxScale>(a: &[T], b: &[T]) -> Result<T, DvecError>
 where
     T::Error: Into<DvecError>,
 {
-    // STUB: validate inputs only; full algorithm in arithmetic mission
     let n = a.len();
     validate_len(n, b.len())?;
     validate_max_dim(n)?;
@@ -273,24 +292,23 @@ where
         return Err(DvecError::DimensionMismatch);
     }
 
+    // Input scale precondition (must be first check per RFC)
     let input_scale = a[0].scale();
-    let max_scale = if std::any::type_name::<T>() == std::any::type_name::<Dqa>() {
-        9
-    } else {
-        18
-    };
-    if input_scale > max_scale {
+    // DQA: input_scale <= 9; Decimal: input_scale <= 18
+    let input_scale_max = if T::MAX_SCALE == 18 { 9 } else { 18 };
+    if input_scale > input_scale_max {
         return Err(DvecError::InputScaleExceeded);
     }
+
+    // Validate uniform scale
     validate_uniform_scale(a, b)?;
 
-    // Full algorithm (BigInt accumulator, overflow TRAP, canonicalization)
+    // Full algorithm (BigInt accumulator, overflow TRAP, result construction)
     // is implemented in the arithmetic mission.
-    let _ = (a, b);
     Err(DvecError::Unsupported)
 }
 
-impl<T: DvecScalar> DVec<T>
+impl<T: DvecScalar + MaxScale> DVec<T>
 where
     T::Error: Into<DvecError>,
 {
@@ -306,12 +324,28 @@ where
 
 /// Squared Euclidean distance: Σ (a[i] - b[i])²
 ///
-/// Full implementation in arithmetic mission.
-pub fn squared_distance<T: DvecScalar>(a: &[T], b: &[T]) -> Result<T, DvecError>
+/// Full implementation in the arithmetic mission.
+/// This stub validates inputs only.
+pub fn squared_distance<T: DvecScalar + MaxScale>(a: &[T], b: &[T]) -> Result<T, DvecError>
 where
     T::Error: Into<DvecError>,
 {
-    let _ = (a, b);
+    let n = a.len();
+    validate_len(n, b.len())?;
+    validate_max_dim(n)?;
+
+    if n == 0 {
+        return Err(DvecError::DimensionMismatch);
+    }
+
+    let input_scale = a[0].scale();
+    let input_scale_max = if T::MAX_SCALE == 18 { 9 } else { 18 };
+    if input_scale > input_scale_max {
+        return Err(DvecError::InputScaleExceeded);
+    }
+
+    validate_uniform_scale(a, b)?;
+
     Err(DvecError::Unsupported)
 }
 

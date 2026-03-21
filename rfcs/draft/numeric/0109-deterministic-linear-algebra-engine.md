@@ -594,6 +594,60 @@ Nodes MUST reject operations exceeding these limits with `ExecutionError::Dimens
 | crates/octo-vm/src/gas.rs                | Gas cost updates            |
 | rfcs/0106-deterministic-numeric-tower.md | Reference DLAE dependencies |
 
+## DLAE Verification Probe (Scheduled for Future Spec Version)
+
+### Overview
+
+Unlike RFC-0105 (DQA), RFC-0110 (BIGINT), RFC-0111 (DECIMAL), RFC-0112 (DVEC), and RFC-0113 (DMAT), RFC-0109 does not yet define a Merkle-committed verification probe. While lower-layer probes cover scalar and container operations, the composite DLAE operations (MatMul, MatVec, Dot with DEFERRED scale, Top-K with vector_id tie-break) require a DLAE-specific probe.
+
+### Probe Scope
+
+The DLAE probe verifies:
+1. **Composite TRAP propagation**: Operations correctly propagate TRAP from sub-operations
+2. **Scale-policy enforcement**: MatMul/MatVec correctly apply DEFERRED scale validation
+3. **Top-K tie-break determinism**: Same inputs produce identical Top-K results
+4. **Gas metering correctness**: Completed iterations correctly calculated
+
+### Probe Format (Planned)
+
+Per RFC-0126 §Verification Probe format:
+
+```
+leaf = SHA256(0x00 || entry_data)        // Domain-separated leaf hash
+internal = SHA256(0x01 || left || right) // Domain-separated internal node
+```
+
+### Planned Entries (32 total)
+
+| Index | Operation | Input | Expected |
+|-------|-----------|-------|----------|
+| 0 | Dot | DVEC[1,2,3] · DVEC[4,5,6] | DQA(32, 0) |
+| 1 | Dot | TRAP sentinel input | TRAP |
+| 2 | L2Squared | DVEC[0,0], DVEC[3,4] | DQA(25, 0) |
+| 3 | MatMul | 2×2 × 2×2 | Per algorithm |
+| 4 | MatMul | Mismatch scale inputs | Post-validation TRAP |
+| 5 | MatVec | 2×2 matrix × 2-vector | Per algorithm |
+| 6 | Cosine | [1,0], [0,1] | DQA(0, 0) |
+| 7 | Cosine | Zero vector input | TRAP |
+| 8 | Top-K | 5 vectors, K=3 | Deterministic 3 |
+| 9 | Top-K | All equal distances | Tie-break by vector_id |
+| 10 | MatMul | Overflow intermediate | TRAP (immediate) |
+| ... | ... | ... | ... |
+
+> **Note**: Full 32-entry probe definition will be added in NUMERIC_SPEC_VERSION=2 update. This section documents the planned scope.
+
+### Cross-RFC Coordination
+
+The DLAE probe will be committed alongside probes from:
+- RFC-0105 (DQA): 57 entries
+- RFC-0110 (BIGINT): 80 entries
+- RFC-0111 (DECIMAL): 57 entries
+- RFC-0112 (DVEC): 64 entries
+- RFC-0113 (DMAT): 64 entries
+- RFC-0126 (DCS): 17 entries
+
+Combined probe root provides cross-implementation verification for the entire Deterministic Numeric Tower.
+
 ## Future Work
 
 - F1: Deterministic tensor operations

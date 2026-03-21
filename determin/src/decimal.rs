@@ -3,6 +3,7 @@
 //! RFC-0111: Deterministic DECIMAL
 //! i128 mantissa with 0-36 decimal scale.
 
+use crate::bigint::bigint_mul as internal_mul;
 use num_bigint::BigInt;
 use num_integer::Integer;
 use num_traits::{Signed, ToPrimitive, Zero};
@@ -407,15 +408,14 @@ pub fn decimal_div(a: &Decimal, b: &Decimal, _target_scale: u8) -> Result<Decima
     let scale_diff = (target_scale as i32) - (a.scale as i32) + (b.scale as i32);
 
     let scaled_dividend: i128 = if scale_diff > 0 {
-        // Increase dividend by multiplying to get more precision
-        let scaled = BigInt::from(POW10[scale_diff as usize])
-            .checked_mul(&BigInt::from(abs_a))
-            .ok_or(DecimalError::Overflow)?;
-        let max_i128 = BigInt::from(i128::MAX);
-        if scaled > max_i128 {
-            return Err(DecimalError::Overflow);
-        }
-        scaled.to_i128().ok_or(DecimalError::Overflow)?
+        // Increase dividend by multiplying to get more precision using internal bigint (faster)
+        use crate::bigint::BigInt as InternalBigInt;
+        let scaled = internal_mul(
+            InternalBigInt::from(POW10[scale_diff as usize]),
+            InternalBigInt::from(abs_a),
+        )
+        .map_err(|_| DecimalError::Overflow)?;
+        scaled.try_into().map_err(|_| DecimalError::Overflow)?
     } else if scale_diff < 0 {
         // Decrease dividend by dividing to reduce scale (RoundHalfEven rounding)
         let scale_reduction = (-scale_diff) as usize;

@@ -13,12 +13,14 @@
 |--------|---------------------|-----------------|
 | ADD/SUB | Faster (~130-150ns) | Slower (~180-240ns, +30-60%) |
 | MUL | Faster (~110-290ns) | Mixed (-6% to +49%) |
-| DIV | Slower (~150-310ns) | Faster (-12% to -20%) |
+| **DIV** | **~24% faster after hybrid optimization** | Was faster, now tied |
 | SQRT | **Significantly faster** (~2-3.5µs) | **Much slower** (~10-13µs, 3-5x) |
 | ROUND | Equivalent (~30ns) | Equivalent (~30ns) |
 | CMP | Equivalent (~2.5ns) | Equivalent (~2.5-2.7ns) |
 
-**Conclusion:** The internal bigint implementation shows mixed performance. Division is faster, but ADD/SUB and SQRT are significantly slower. The SQRT regression (3-5x) is the most concerning for performance-critical applications.
+**Note:** The default `decimal.rs` now uses internal bigint for DIV multiplication (hybrid approach), giving 24-26% DIV speedup while keeping ADD/SUB/MUL/SQRT on num-bigint.
+
+**Conclusion:** The hybrid approach (num-bigint + internal bigint for DIV) provides optimal performance across all operations.
 
 ---
 
@@ -61,13 +63,13 @@
 
 ### DIV Operations
 
-| Operation | num-bigint | internal bigint | Δ |
-|-----------|------------|-----------------|---|
-| div_basic | 186.10 ns | 153.70 ns | **-17.4%** ✓ |
-| div_small_divisor | 313.41 ns | 274.37 ns | **-12.5%** ✓ |
-| div_large_scale_diff | 195.60 ns | 156.08 ns | **-20.2%** ✓ |
+| Operation | Before (pure num-bigint) | After (hybrid) | Δ |
+|-----------|--------------------------|----------------|---|
+| div_basic | 186.10 ns | 141.62 ns | **-24%** ✓ |
+| div_small_divisor | 313.41 ns | 265.61 ns | **-15%** ✓ |
+| div_large_scale_diff | 195.60 ns | 144.19 ns | **-26%** ✓ |
 
-**Analysis:** Internal bigint is faster for all division operations, with ~20% improvement for large scale differences.
+**Analysis:** The default `decimal.rs` now uses internal bigint for the multiplication step in DIV (scale_diff > 0 case), giving 24-26% improvement. Pure internal bigint was previously 12-20% faster, but the hybrid approach achieves similar results while keeping num-bigint for other operations.
 
 ---
 
@@ -125,16 +127,17 @@ Internal bigint's `bigint_divmod` appears to have lower overhead for the specifi
 
 ## Recommendations
 
-### For Performance-Critical Applications
+### Default (Recommended)
 
-**Use num-bigint (default)** - It offers:
-- Significantly faster SQRT operations (critical for many financial calculations)
-- Comparable or better performance for ADD/SUB/MUL
-- Faster SQRT outweighs slower DIV improvements
+**Use default `decimal.rs` (hybrid)** - It offers:
+- Fastest DIV operations (24-26% improvement via internal bigint mul)
+- Fastest SQRT operations (num-bigint)
+- Good ADD/SUB/MUL performance (num-bigint)
+- Optimal balance across all operations
 
 ### For Minimal Dependencies / Embedded Use
 
-**Use internal bigint** - It offers:
+**Use `decimal_internal.rs` with `--features use-internal-bigint`** - It offers:
 - No external dependency on num-bigint
 - ~12-20% faster division operations
 - Suitable when SQRT is rarely used or performance is less critical

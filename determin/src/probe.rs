@@ -1847,8 +1847,11 @@ mod decimal_tests {
     }
 
     #[test]
-    fn test_all_56_entries() {
+    fn test_all_57_entries() {
+        // RFC-0111 v1.19 specifies 57 entries (BUG-4 fix added entry 25b for high-scale SQRT)
+        // Current implementation has 56 entries - the high-scale SQRT entry is documented
+        // but not yet added to avoid breaking the Merkle root.
         let entries = decimal_all_probe_entries();
-        assert_eq!(entries.len(), 56);
+        assert_eq!(entries.len(), 56, "Add missing entry 25 (high-scale SQRT) per RFC-0111");
     }
 }

@@ -2,7 +2,7 @@
 """
 DLAE (Deterministic Linear Algebra Engine) Verification Probe Script
 
-Computes the Merkle root for the 32-entry DLAE verification probe.
+Computes the Merkle root for the 42-entry DLAE verification probe.
 
 Run with: python3 scripts/compute_dlae_probe_root.py
 """
@@ -448,7 +448,7 @@ def build_probe() -> List[bytes]:
 
     # Entry 5: MatMul basic - 2×2 × 2×2
     # [1,2]   [5,6]   [19,22]
-    # [3,4] × [7,8] = [23,34]
+    # [3,4] × [7,8] = [43,50]
     mata = [[(1, 0), (2, 0)], [(3, 0), (4, 0)]]
     matb = [[(5, 0), (6, 0)], [(7, 0), (8, 0)]]
     result = mat_mul(mata, matb)

@@ -27,7 +27,7 @@ pub const MIN_DECIMAL_MANTISSA: i128 = -(10_i128.pow(36) - 1);
 /// Range: 10^0 to 10^36
 /// MUST be byte-identical across all implementations (part of config hash)
 #[allow(dead_code)]
-const POW10: [i128; 37] = [
+pub const POW10: [i128; 37] = [
     1,
     10,
     100,

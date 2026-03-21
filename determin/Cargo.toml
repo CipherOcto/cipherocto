@@ -41,6 +41,9 @@ num-traits = "0.2"
 [features]
 default = []
 non_consensus = []
+# Use internal bigint instead of num-bigint for DECIMAL arithmetic
+# When enabled, decimal_internal.rs is used; otherwise decimal.rs (num-bigint) is used
+use-internal-bigint = []
 
 [dev-dependencies]
 proptest = "1.4"

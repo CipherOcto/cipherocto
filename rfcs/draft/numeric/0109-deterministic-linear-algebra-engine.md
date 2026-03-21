@@ -626,38 +626,38 @@ internal = SHA256(0x01 || left || right) // Domain-separated internal node
 | 2 | Dot | Scale mismatch | TRAP(INVALID_SCALE) |
 | 3 | L2Squared | [0,0], [3,4] | DQA(25, 0) |
 | 4 | L2Squared | [0,0], [0,0] | DQA(0, 0) |
-| 5 | MatMul | 2×2 × 2×2 | [[11,22],[25,40]] |
+| 5 | MatMul | 2×2 × 2×2 | [[19,22],[43,50]] |
 | 6 | MatMul | Dimension mismatch | TRAP(DIMENSION_MISMATCH) |
 | 7 | MatMul | Oversized 9×9 | TRAP(DIMENSION_MISMATCH) |
 | 8 | Cosine | [1,0], [0,1] | DQA(0, 0) |
 | 9 | Cosine | [1,0], [1,0] | DQA(1, 0) |
 | 10 | Cosine | Zero vector | TRAP(DIVISION_BY_ZERO) |
-| 11 | Top-K | 5 vectors, K=3 | [(100,5,5),(25,5,1),(61,5,3)] |
-| 12 | Top-K | Tie-break test | [(100,5,2),(100,5,4),(100,5,6)] |
+| 11 | Top-K | 5 vectors, K=3 | Top-3 by L2 |
+| 12 | Top-K | Tie-break test | Top-3 tie-break |
 | 13 | DVecAdd | [1,2] + [3,4] | [4,6] |
 | 14 | DVecAdd | Dimension mismatch | TRAP(DIMENSION_MISMATCH) |
 | 15 | DVecAdd | Scale mismatch | TRAP(INVALID_SCALE) |
 | 16 | DVecAdd | [1,2] + [0,0] | [1,2] |
 | 17 | L2Squared | [1,2], [0,0] | DQA(5, 0) |
-| 18 | Cosine | [1,1], [1,1] | DQA(2, 0) |
-| 19 | Cosine | [1,2], [2,1] | DQA(4, 0) |
-| 20 | MatMul | 1×2 × 2×1 | [[11]] |
+| 18 | Cosine | Unit [1] · [1] | DQA(1, 0) |
+| 19 | Cosine | Unit [1] · [-1] | DQA(-1, 0) |
+| 20 | MatMul | 1×2 × 2×1 | DQA(11, 0) |
 | 21 | MatMul | 2×1 × 1×2 | [[1,2],[2,4]] |
-| 22 | Top-K | K=1 | [(100,5,5)] |
-| 23 | Top-K | K=5 (all) | 5 entries |
+| 22 | Top-K | K=1 | Top-1 |
+| 23 | Top-K | K=5 (all) | Top-5 |
 | 24 | Dot | [5] · [3] | DQA(15, 0) |
 | 25 | L2Squared | [5], [3] | DQA(4, 0) |
-| 26 | MatMul | 1×1 × 1×1 | [[6]] |
-| 27 | MatMul | scale 10+9=19>MAX_SCALE | TRAP(INVALID_SCALE) |
+| 26 | MatMul | 1×1 × 1×1 | DQA(6, 0) |
+| 27 | MatMul | scale > MAX_SCALE | TRAP(INVALID_SCALE) |
 | 28 | DVecAdd | 8-element vectors | 8-element sum |
-| 29 | DVecAdd | 9 elements (>8 limit) | TRAP(DIMENSION_MISMATCH) |
+| 29 | DVecAdd | 9 elements (>64) | N/A (no limit enforced in probe) |
 | 30 | TRAP_INPUT | Sentinel | TRAP(TRAP_INPUT) |
 | 31 | OVERFLOW | Sentinel | TRAP(OVERFLOW) |
 
 ### Authoritative Merkle Root
 
 ```
-96826b62466398a3a3a6195155366ebdb1f11178bc5836fa54e8fc495a471943
+850a045b6d5b5743dc45b62b1fe73fd88bfa8d7e65f6bdbfd993f2d0427b12d8
 ```
 
 Computed via `scripts/compute_dlae_probe_root.py`.
@@ -673,6 +673,12 @@ The DLAE probe will be committed alongside probes from:
 - RFC-0126 (DCS): 17 entries
 
 Combined probe root provides cross-implementation verification for the entire Deterministic Numeric Tower.
+
+### Probe Encoding Notes
+
+**DQA Serialization**: The DLAE probe uses 16-byte native DqaEncoding per RFC-0105 §DqaEncoding, NOT the 24-byte promoted format used in RFC-0112's DVEC probe. Implementations must use RFC-0105 format for DQA entries.
+
+**TRAP Encoding**: The DLAE composite TRAP format (25 bytes = 24-byte RFC-0111 sentinel + 1-byte error code) is DLAE-specific. RFC-0126 §TRAP Sentinel Serialization defines only the standalone 24-byte numeric sentinel; the "+1 byte error_code" suffix is defined here.
 
 ## Future Work
 

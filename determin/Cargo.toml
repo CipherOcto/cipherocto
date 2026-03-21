@@ -49,6 +49,11 @@ use-internal-bigint = []
 proptest = "1.4"
 softfloat-rs = "0.1"
 rand = "0.8"
+criterion = "0.5"
+
+[[bench]]
+name = "decimal_benchmark"
+harness = false
 
 [lib]
 name = "octo_determin"

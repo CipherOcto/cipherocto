@@ -333,13 +333,17 @@ def cosine_similarity(a: List[Tuple[int, int]], b: List[Tuple[int, int]]) -> Tup
     # The receiver must handle division by magnitude product
 
     # Check if magnitudes are 1 (unit vectors) - then cosine = dot directly
+    # NOTE: This probe only covers unit-vector cosine where |a|=|b|=1.
+    # For non-unit vectors, proper cosine requires RFC-0111 Decimal sqrt division.
+    # The probe entries (8,9,10,18,19) all use unit vectors by design.
     if mag_a_sq == (1, 0) and mag_b_sq == (1, 0):
         # Both are unit vectors - cosine = dot directly
         return (dot_val, dot_scale)
 
-    # For non-unit vectors, return dot with note that division is required
-    # This matches the RFC's "cosine numerator" interpretation
-    return (dot_val, dot_scale)
+    # For non-unit vectors: this probe does NOT exercise this path.
+    # Proper implementation requires RFC-0111 Decimal sqrt division.
+    # Returning dot product here would be incorrect for general vectors.
+    raise DLAEError(ERR_TRAP_INPUT)
 
 
 def top_k_select(vectors: List[Tuple[int, List[Tuple[int, int]]]], query: List[Tuple[int, int]], k: int, vector_ids: List[int]) -> List[Tuple[int, int, int]]:
@@ -357,7 +361,10 @@ def top_k_select(vectors: List[Tuple[int, List[Tuple[int, int]]]], query: List[T
         distances.append((dist_val, dist_scale, vector_ids[i]))
 
     # Sort by actual distance value (considering scale), then by vector_id for tie-break
-    distances.sort(key=lambda x: (x[0] * (10 ** x[1]), x[2]))
+    # DQA(value, scale) represents value × 10^(-scale)
+    # Sort key: integer × 10^(-scale), smaller is closer (better match)
+    from fractions import Fraction
+    distances.sort(key=lambda x: (Fraction(x[0], 10**x[1]), x[2]))
 
     return distances[:k]
 

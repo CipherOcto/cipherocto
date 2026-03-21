@@ -3,9 +3,10 @@
 ## Status
 
 **Version:** 2.4
-**Status:** Draft
+**Status:** Accepted
 **Submission Date:** 2026-03-10
-**Adversarial Review Response:** v2.3 received fourth adversarial audit. This v2.4 patch addresses CRIT-01 (verbatim TRAP layout), CRIT-02 (dimension enforcement at construction), HIGH-01 (gas per scalar op), HIGH-02 (intermediate overflow immediate TRAP), HIGH-03 (RFC-0112 grey area), MED-02 (RFC-0114 phase), MED-03 (vector_id external), MED-04 (gas citation). MED-01 (DLAE probe) scheduled for future spec version.
+**Acceptance Date:** 2026-03-21
+**Adversarial Review Response:** v2.4 passed ninth adversarial audit with all CRIT/HIGH/MED resolved. 42-entry verification probe with Merkle root `fa69010dc5238f79dfd410123c1b87fab9f1ea6de52424648672d003c562ff0e` confirmed.
 
 > **Note:** This RFC was renumbered from RFC-0148 to RFC-0109 as part of the category-based numbering system.
 

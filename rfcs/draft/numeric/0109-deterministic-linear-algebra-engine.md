@@ -659,14 +659,15 @@ internal = SHA256(0x01 || left || right) // Domain-separated internal node
 | 35 | Cosine | Unit [(10,1)] · [(10,1)] | DQA(1, 0) |
 | 36 | Cosine | Unit [(10,1)] · [(-10,1)] | DQA(-1, 0) |
 | 37 | MatMul | Mixed scales 1×2 × 2×1 | DQA(83, 3) |
-| 38 | Dot | Scale mismatch non-zero | TRAP(INVALID_SCALE) |
-| 39 | L2Squared | Scale mismatch non-zero | TRAP(INVALID_SCALE) |
-| 40 | DVecAdd | Scale mismatch non-zero | TRAP(INVALID_SCALE) |
+| 38 | MatMul | Positive-diff accumulation | DQA(101, 2) |
+| 39 | Dot | Scale mismatch non-zero | TRAP(INVALID_SCALE) |
+| 40 | L2Squared | Scale mismatch non-zero | TRAP(INVALID_SCALE) |
+| 41 | DVecAdd | Scale mismatch non-zero | TRAP(INVALID_SCALE) |
 
 ### Authoritative Merkle Root
 
 ```
-c35301102f57e967b752120cfeb34994d13d0aa272fae205c3f20d592aefc16d
+fa69010dc5238f79dfd410123c1b87fab9f1ea6de52424648672d003c562ff0e
 ```
 
 Computed via `scripts/compute_dlae_probe_root.py`.

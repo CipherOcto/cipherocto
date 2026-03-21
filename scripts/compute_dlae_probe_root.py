@@ -754,8 +754,10 @@ def build_probe() -> List[bytes]:
 
     # Entry 37: MatMul with mixed scales - 1x2 × 2x1
     # [[(1,2),(2,1)]] × [[(3,1)],[(4,1)]]
-    # C[0,0] = (1,2)*(3,1) + (2,1)*(4,1) = (3,3) + (8,2) = scale-aligned: 3*10^1 + 8 = 38, scale=3
-    # Canonical: 38 * 10^-3 = 0.038 -> (38, 2) after canonicalize? trailing zeros? 38/10=3.8 no -> (38, 2)
+    # k=0: (1,2)*(3,1) = 3, scale=3. acc=(3,3)
+    # k=1: (2,1)*(4,1) = 8, scale=2. diff=2-3=-1 (negative branch)
+    #   prod_val = 8 * 10^1 = 80. acc = (3+80, 3) = (83, 3)
+    # Result: (83, 3) = 0.083
     mata_mix = [[(1, 2), (2, 1)]]
     matb_mix = [[(3, 1)], [(4, 1)]]
     result = mat_mul(mata_mix, matb_mix)
@@ -764,7 +766,21 @@ def build_probe() -> List[bytes]:
     print(f"Entry 37: MatMul mixed scales")
     print(f"  Serialized: {entries[-1].hex()}")
 
-    # Entry 38: Dot product - scale mismatch should TRAP even with non-zero scales
+    # Entry 38: MatMul positive-diff accumulation (LOW-NEW-01 coverage gap)
+    # A=[[(1,0),(1,1)]], B=[[(1,0)],[(1,1)]]
+    # k=0: (1,0)*(1,0)=1, scale=0. acc=(1,0)
+    # k=1: (1,1)*(1,1)=1, scale=2. diff=2-0=2 (POSITIVE branch)
+    #   acc_val = 1 * 10^2 = 100. new_scale=2. acc=(100+1,2)=(101,2)
+    # Result: DQA(101, 2) = 1.01
+    mata_pos = [[(1, 0), (1, 1)]]
+    matb_pos = [[(1, 0)], [(1, 1)]]
+    result = mat_mul(mata_pos, matb_pos)
+    flat = [serialize_dqa(v, s) for row in result for v, s in row]
+    entries.append(b''.join(flat))
+    print(f"Entry 38: MatMul positive-diff accumulation")
+    print(f"  Serialized: {entries[-1].hex()}")
+
+    # Entry 39: Dot product - scale mismatch should TRAP even with non-zero scales
     a_mismatch = [(1, 1), (2, 2)]  # scale=1 and scale=2
     b_mismatch = [(3, 1), (4, 1)]
     try:
@@ -772,19 +788,19 @@ def build_probe() -> List[bytes]:
         entries.append(b"ERROR: Should have TRAPed")
     except DLAEError as e:
         entries.append(serialize_trap_result(e.error_code))
-    print(f"Entry 38: Dot scale mismatch (non-zero) -> TRAP")
+    print(f"Entry 39: Dot scale mismatch (non-zero) -> TRAP")
     print(f"  Serialized: {entries[-1].hex()}")
 
-    # Entry 39: L2Squared with scale mismatch -> TRAP
+    # Entry 40: L2Squared with scale mismatch -> TRAP
     try:
         l2_squared(a_mismatch, b_mismatch)
         entries.append(b"ERROR: Should have TRAPed")
     except DLAEError as e:
         entries.append(serialize_trap_result(e.error_code))
-    print(f"Entry 39: L2Squared scale mismatch -> TRAP")
+    print(f"Entry 40: L2Squared scale mismatch -> TRAP")
     print(f"  Serialized: {entries[-1].hex()}")
 
-    # Entry 40: DVecAdd with scale mismatch -> TRAP
+    # Entry 41: DVecAdd with scale mismatch -> TRAP
     a_dvec_mismatch = [(1, 1), (2, 2)]
     b_dvec_mismatch = [(3, 1), (4, 1)]
     try:
@@ -792,7 +808,7 @@ def build_probe() -> List[bytes]:
         entries.append(b"ERROR: Should have TRAPed")
     except DLAEError as e:
         entries.append(serialize_trap_result(e.error_code))
-    print(f"Entry 40: DVecAdd scale mismatch -> TRAP")
+    print(f"Entry 41: DVecAdd scale mismatch -> TRAP")
     print(f"  Serialized: {entries[-1].hex()}")
 
     return entries

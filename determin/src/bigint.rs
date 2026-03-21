@@ -2567,7 +2567,7 @@ mod regression_tests {
             "2^64 / 3 quotient"
         );
         assert_eq!(r.limbs(), &[1], "2^64 / 3 remainder = 1");
-        assert!(r.sign == false, "remainder sign should be positive");
+        assert!(!r.sign, "remainder sign should be positive");
     }
 
     /// DIV: large dividend, single-limb divisor (tests iteration count)

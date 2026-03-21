@@ -115,6 +115,9 @@ ERR_DIVISION_BY_ZERO = 0x03
 ERR_OVERFLOW = 0x04
 ERR_TRAP_INPUT = 0x05
 
+# Scale limits
+MAX_SCALE = 18
+
 
 class DLAEError(Exception):
     """DLAE operation error."""
@@ -234,6 +237,7 @@ def mat_mul(mata: List[List[Tuple[int, int]]], matb: List[List[Tuple[int, int]]]
         if len(row) != K:
             raise DLAEError(ERR_DIMENSION_MISMATCH)
 
+    scale_mismatchOccurred = False
     result = []
     for i in range(M):
         row_result = []
@@ -244,8 +248,7 @@ def mat_mul(mata: List[List[Tuple[int, int]]], matb: List[List[Tuple[int, int]]]
                 val_a, scale_a = mata[i][k]
                 val_b, scale_b = matb[k][j]
                 if scale_a != scale_b:
-                    # Under DEFERRED policy, we continue but track
-                    pass
+                    scale_mismatchOccurred = True
                 product = val_a * val_b
                 product_scale = scale_a + scale_b
                 # Accumulate (simplified - in reality would need proper DQA arithmetic)
@@ -261,11 +264,13 @@ def mat_mul(mata: List[List[Tuple[int, int]]], matb: List[List[Tuple[int, int]]]
                         acc_val = acc[0]
                         prod_val = product * (10 ** (-diff))
                     acc = (acc_val + prod_val, acc_scale)
-            row_result.append(canonicalize_dqa(acc[0], acc[1]))
+            canon_val, canon_scale = canonicalize_dqa(acc[0], acc[1])
+            # DEFERRED: Check scale after canonicalization
+            if scale_mismatchOccurred and canon_scale > MAX_SCALE:
+                raise DLAEError(ERR_INVALID_SCALE)
+            row_result.append((canon_val, canon_scale))
         result.append(row_result)
 
-    # Post-computation scale validation (DEFERRED policy)
-    # Check that all elements have consistent scales
     return result
 
 
@@ -491,8 +496,8 @@ def build_probe() -> List[bytes]:
     i = [(1, 0), (2, 0)]
     j = [(3, 0), (4, 0)]
     result = dvec_add(i, j)
-    flat = b''.join(serialize_dqa(v, s) for v, s in result)
-    entries.append(flat)
+    flat = [serialize_dqa(v, s) for v, s in result]
+    entries.append(serialize_dvec(flat))
     print(f"Entry 13: DVecAdd [1,2] + [3,4]")
     print(f"  Serialized: {entries[-1].hex()}")
 
@@ -519,8 +524,8 @@ def build_probe() -> List[bytes]:
     # Entry 16: DVecAdd - zero vector
     zero_vec = [(0, 0), (0, 0)]
     result = dvec_add(i, zero_vec)
-    flat = b''.join(serialize_dqa(v, s) for v, s in result)
-    entries.append(flat)
+    flat = [serialize_dqa(v, s) for v, s in result]
+    entries.append(serialize_dvec(flat))
     print(f"Entry 16: DVecAdd [1,2] + [0,0]")
     print(f"  Serialized: {entries[-1].hex()}")
 
@@ -606,18 +611,25 @@ def build_probe() -> List[bytes]:
     print(f"Entry 26: MatMul 1x1 * 1x1")
     print(f"  Serialized: {entries[-1].hex()}")
 
-    # Entry 27: Cosine - single element
-    result = cosine_similarity(single_a, single_b)
-    entries.append(serialize_dqa(result[0], result[1]))
-    print(f"Entry 27: Cosine [5], [3] = {result}")
+    # Entry 27: MatMul - deferred scale validation failure (HIGH-01)
+    # Two 1x1 matrices with scale mismatch: 10 + 9 = 19 > MAX_SCALE=18
+    # Computation completes but post-validation fails with ERR_INVALID_SCALE
+    mata_high = [[(1, 10)]]
+    matb_high = [[(1, 9)]]
+    try:
+        mat_mul(mata_high, matb_high)
+        entries.append(b"ERROR: Should have TRAPed")
+    except DLAEError as e:
+        entries.append(serialize_trap_result(e.error_code))
+    print(f"Entry 27: MatMul deferred scale > MAX_SCALE -> TRAP")
     print(f"  Serialized: {entries[-1].hex()}")
 
     # Entry 28: DVecAdd - max dimension (8 elements)
     eight_a = [(i, 0) for i in range(1, 9)]
     eight_b = [(8 - i, 0) for i in range(1, 9)]
     result = dvec_add(eight_a, eight_b)
-    flat = b''.join(serialize_dqa(v, s) for v, s in result)
-    entries.append(flat)
+    flat = [serialize_dqa(v, s) for v, s in result]
+    entries.append(serialize_dvec(flat))
     print(f"Entry 28: DVecAdd 8-element vectors")
     print(f"  Serialized: {entries[-1].hex()}")
 

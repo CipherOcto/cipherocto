@@ -648,7 +648,7 @@ internal = SHA256(0x01 || left || right) // Domain-separated internal node
 | 24 | Dot | [5] · [3] | DQA(15, 0) |
 | 25 | L2Squared | [5], [3] | DQA(4, 0) |
 | 26 | MatMul | 1×1 × 1×1 | [[6]] |
-| 27 | Cosine | [5], [3] | DQA(15, 0) |
+| 27 | MatMul | scale 10+9=19>MAX_SCALE | TRAP(INVALID_SCALE) |
 | 28 | DVecAdd | 8-element vectors | 8-element sum |
 | 29 | DVecAdd | 9 elements (>8 limit) | TRAP(DIMENSION_MISMATCH) |
 | 30 | TRAP_INPUT | Sentinel | TRAP(TRAP_INPUT) |
@@ -657,7 +657,7 @@ internal = SHA256(0x01 || left || right) // Domain-separated internal node
 ### Authoritative Merkle Root
 
 ```
-6efe7f9ada8c5435dcac6fcdf0e807059e1b541798ebd1f6bb42f9732c628006
+96826b62466398a3a3a6195155366ebdb1f11178bc5836fa54e8fc495a471943
 ```
 
 Computed via `scripts/compute_dlae_probe_root.py`.

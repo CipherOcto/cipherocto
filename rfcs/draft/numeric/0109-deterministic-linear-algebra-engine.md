@@ -594,7 +594,7 @@ Nodes MUST reject operations exceeding these limits with `ExecutionError::Dimens
 | crates/octo-vm/src/gas.rs                | Gas cost updates            |
 | rfcs/0106-deterministic-numeric-tower.md | Reference DLAE dependencies |
 
-## DLAE Verification Probe (Scheduled for Future Spec Version)
+## DLAE Verification Probe
 
 ### Overview
 
@@ -608,7 +608,7 @@ The DLAE probe verifies:
 3. **Top-K tie-break determinism**: Same inputs produce identical Top-K results
 4. **Gas metering correctness**: Completed iterations correctly calculated
 
-### Probe Format (Planned)
+### Probe Format
 
 Per RFC-0126 §Verification Probe format:
 
@@ -617,24 +617,50 @@ leaf = SHA256(0x00 || entry_data)        // Domain-separated leaf hash
 internal = SHA256(0x01 || left || right) // Domain-separated internal node
 ```
 
-### Planned Entries (32 total)
+### Entries (32 total)
 
 | Index | Operation | Input | Expected |
 |-------|-----------|-------|----------|
-| 0 | Dot | DVEC[1,2,3] · DVEC[4,5,6] | DQA(32, 0) |
-| 1 | Dot | TRAP sentinel input | TRAP |
-| 2 | L2Squared | DVEC[0,0], DVEC[3,4] | DQA(25, 0) |
-| 3 | MatMul | 2×2 × 2×2 | Per algorithm |
-| 4 | MatMul | Mismatch scale inputs | Post-validation TRAP |
-| 5 | MatVec | 2×2 matrix × 2-vector | Per algorithm |
-| 6 | Cosine | [1,0], [0,1] | DQA(0, 0) |
-| 7 | Cosine | Zero vector input | TRAP |
-| 8 | Top-K | 5 vectors, K=3 | Deterministic 3 |
-| 9 | Top-K | All equal distances | Tie-break by vector_id |
-| 10 | MatMul | Overflow intermediate | TRAP (immediate) |
-| ... | ... | ... | ... |
+| 0 | Dot | [1,2,3] · [4,5,6] | DQA(32, 0) |
+| 1 | Dot | Dimension mismatch | TRAP(DIMENSION_MISMATCH) |
+| 2 | Dot | Scale mismatch | TRAP(INVALID_SCALE) |
+| 3 | L2Squared | [0,0], [3,4] | DQA(25, 0) |
+| 4 | L2Squared | [0,0], [0,0] | DQA(0, 0) |
+| 5 | MatMul | 2×2 × 2×2 | [[11,22],[25,40]] |
+| 6 | MatMul | Dimension mismatch | TRAP(DIMENSION_MISMATCH) |
+| 7 | MatMul | Oversized 9×9 | TRAP(DIMENSION_MISMATCH) |
+| 8 | Cosine | [1,0], [0,1] | DQA(0, 0) |
+| 9 | Cosine | [1,0], [1,0] | DQA(1, 0) |
+| 10 | Cosine | Zero vector | TRAP(DIVISION_BY_ZERO) |
+| 11 | Top-K | 5 vectors, K=3 | [(100,5,5),(25,5,1),(61,5,3)] |
+| 12 | Top-K | Tie-break test | [(100,5,2),(100,5,4),(100,5,6)] |
+| 13 | DVecAdd | [1,2] + [3,4] | [4,6] |
+| 14 | DVecAdd | Dimension mismatch | TRAP(DIMENSION_MISMATCH) |
+| 15 | DVecAdd | Scale mismatch | TRAP(INVALID_SCALE) |
+| 16 | DVecAdd | [1,2] + [0,0] | [1,2] |
+| 17 | L2Squared | [1,2], [0,0] | DQA(5, 0) |
+| 18 | Cosine | [1,1], [1,1] | DQA(2, 0) |
+| 19 | Cosine | [1,2], [2,1] | DQA(4, 0) |
+| 20 | MatMul | 1×2 × 2×1 | [[11]] |
+| 21 | MatMul | 2×1 × 1×2 | [[1,2],[2,4]] |
+| 22 | Top-K | K=1 | [(100,5,5)] |
+| 23 | Top-K | K=5 (all) | 5 entries |
+| 24 | Dot | [5] · [3] | DQA(15, 0) |
+| 25 | L2Squared | [5], [3] | DQA(4, 0) |
+| 26 | MatMul | 1×1 × 1×1 | [[6]] |
+| 27 | Cosine | [5], [3] | DQA(15, 0) |
+| 28 | DVecAdd | 8-element vectors | 8-element sum |
+| 29 | DVecAdd | 9 elements (>8 limit) | TRAP(DIMENSION_MISMATCH) |
+| 30 | TRAP_INPUT | Sentinel | TRAP(TRAP_INPUT) |
+| 31 | OVERFLOW | Sentinel | TRAP(OVERFLOW) |
 
-> **Note**: Full 32-entry probe definition will be added in NUMERIC_SPEC_VERSION=2 update. This section documents the planned scope.
+### Authoritative Merkle Root
+
+```
+6efe7f9ada8c5435dcac6fcdf0e807059e1b541798ebd1f6bb42f9732c628006
+```
+
+Computed via `scripts/compute_dlae_probe_root.py`.
 
 ### Cross-RFC Coordination
 

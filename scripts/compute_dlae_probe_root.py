@@ -172,15 +172,17 @@ def dot_product(a: List[Tuple[int, int]], b: List[Tuple[int, int]]) -> Tuple[int
             acc_scale = acc[1]
             diff = product_scale - acc_scale
             if diff >= 0:
-                # Multiply acc by 10^diff
+                # Multiply acc by 10^diff, store at product_scale (higher)
                 acc_val = acc[0] * (10 ** diff)
-                product_val = product
-                product_scale = acc_scale
+                new_scale = product_scale
             else:
-                # Multiply product by 10^(-diff)
+                # Multiply product by 10^(-diff), store at acc_scale
                 acc_val = acc[0]
                 product_val = product * (10 ** (-diff))
-            acc = (acc_val + product_val, acc_scale)
+                new_scale = acc_scale
+                acc = (acc_val + product_val, new_scale)
+                continue
+            acc = (acc_val + product, new_scale)
     # Canonicalize result
     return canonicalize_dqa(acc[0], acc[1])
 
@@ -209,14 +211,17 @@ def l2_squared(a: List[Tuple[int, int]], b: List[Tuple[int, int]]) -> Tuple[int,
             acc_scale = acc[1]
             diff_s = squared_scale - acc_scale
             if diff_s >= 0:
+                # Scale acc up, store at higher scale
                 acc_val = acc[0] * (10 ** diff_s)
-                sq_val = squared
-                sq_scale = acc_scale
+                new_scale = squared_scale
             else:
+                # Scale squared down, store at acc_scale
                 acc_val = acc[0]
                 sq_val = squared * (10 ** (-diff_s))
-                sq_scale = acc_scale
-            acc = (acc_val + sq_val, sq_scale)
+                new_scale = acc_scale
+                acc = (acc_val + sq_val, new_scale)
+                continue
+            acc = (acc_val + squared, new_scale)
     return canonicalize_dqa(acc[0], acc[1])
 
 
@@ -243,33 +248,33 @@ def mat_mul(mata: List[List[Tuple[int, int]]], matb: List[List[Tuple[int, int]]]
     for i in range(M):
         row_result = []
         for j in range(K):
-            # Reset scale mismatch flag per inner product (HIGH-1 fix)
-            scale_mismatchOccurred = False
             # Inner product: sum of A[i,k] * B[k,j]
             acc = (0, 0)
             for k in range(N_K_check):
                 val_a, scale_a = mata[i][k]
                 val_b, scale_b = matb[k][j]
-                if scale_a != scale_b:
-                    scale_mismatchOccurred = True
                 product = val_a * val_b
                 product_scale = scale_a + scale_b
-                # Accumulate (simplified - in reality would need proper DQA arithmetic)
                 if k == 0:
                     acc = (product, product_scale)
                 else:
                     acc_scale = acc[1]
                     diff = product_scale - acc_scale
                     if diff >= 0:
+                        # Scale acc up, store at higher scale
                         acc_val = acc[0] * (10 ** diff)
-                        prod_val = product
+                        new_scale = product_scale
                     else:
+                        # Scale product down, store at acc_scale
                         acc_val = acc[0]
                         prod_val = product * (10 ** (-diff))
-                    acc = (acc_val + prod_val, acc_scale)
+                        new_scale = acc_scale
+                        acc = (acc_val + prod_val, new_scale)
+                        continue
+                    acc = (acc_val + product, new_scale)
             canon_val, canon_scale = canonicalize_dqa(acc[0], acc[1])
             # DEFERRED: Check scale after canonicalization
-            if scale_mismatchOccurred and canon_scale > MAX_SCALE:
+            if canon_scale > MAX_SCALE:
                 raise DLAEError(ERR_INVALID_SCALE)
             row_result.append((canon_val, canon_scale))
         result.append(row_result)
@@ -298,10 +303,17 @@ def cosine_similarity(a: List[Tuple[int, int]], b: List[Tuple[int, int]]) -> Tup
                 acc_scale = acc[1]
                 diff = squared_scale - acc_scale
                 if diff >= 0:
-                    acc_val = acc[0] * (10 ** diff) + squared
+                    # Scale acc up, store at higher scale
+                    acc_val = acc[0] * (10 ** diff)
+                    new_scale = squared_scale
                 else:
-                    acc_val = acc[0] + squared * (10 ** (-diff))
-                acc = (acc_val, acc_scale)
+                    # Scale squared down, store at acc_scale
+                    acc_val = acc[0]
+                    sq_val = squared * (10 ** (-diff))
+                    new_scale = acc_scale
+                    acc = (acc_val + sq_val, new_scale)
+                    continue
+                acc = (acc_val + squared, new_scale)
         return acc
 
     mag_a_sq = vector_magnitude_squared(a)
@@ -344,8 +356,8 @@ def top_k_select(vectors: List[Tuple[int, List[Tuple[int, int]]]], query: List[T
         dist_val, dist_scale = l2_squared(vec, query)
         distances.append((dist_val, dist_scale, vector_ids[i]))
 
-    # Sort by (distance, vector_id) - stable sort
-    distances.sort(key=lambda x: (x[0], x[2]))
+    # Sort by actual distance value (considering scale), then by vector_id for tie-break
+    distances.sort(key=lambda x: (x[0] * (10 ** x[1]), x[2]))
 
     return distances[:k]
 
@@ -701,7 +713,8 @@ def main():
 
     leaf_hashes = []
     for i, entry in enumerate(entries):
-        leaf_hash = sha256(entry)
+        # Domain-separated leaf hash (matches Merkle tree construction)
+        leaf_hash = sha256(bytes([0x00]) + entry)
         leaf_hashes.append(leaf_hash)
         print(f"  Entry {i:2d}: {leaf_hash.hex()}")
 

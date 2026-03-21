@@ -642,7 +642,7 @@ internal = SHA256(0x01 || left || right) // Domain-separated internal node
 | 18 | Cosine | Unit [1] · [1] | DQA(1, 0) |
 | 19 | Cosine | Unit [1] · [-1] | DQA(-1, 0) |
 | 20 | MatMul | 1×2 × 2×1 | DQA(11, 0) |
-| 21 | MatMul | 2×1 × 1×2 | [[1,2],[2,4]] |
+| 21 | MatMul | 2×1 × 1×2 | [[3,4],[6,8]] |
 | 22 | Top-K | K=1 | [(5,0,100)] |
 | 23 | Top-K | K=5 (all) | [(5,0,100),(25,0,101),(61,0,102),(81,0,104),(113,0,103)] |
 | 24 | Dot | [5] · [3] | DQA(15, 0) |

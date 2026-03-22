@@ -2,7 +2,7 @@
 
 ## Status
 
-**Version:** 1.2 (Draft)
+**Version:** 1.3 (Draft)
 **Status:** Proposed
 **Supersedes:** RFC-0124 (legacy, incomplete)
 **Depends On:** RFC-0104 (DFP), RFC-0105 (DQA), RFC-0113 (NumericScalar)
@@ -271,6 +271,35 @@ ROUND_HALF_EVEN_I1200(quotient, remainder, divisor, sign):
         RETURN quotient + sign             // Quotient is odd, round up
 ```
 
+#### Euclidean Division for i1200
+
+**CRITICAL: The lowering algorithm requires Euclidean (floor) division semantics, not truncating division.**
+
+Most systems languages (Rust, C, C++) provide truncating integer division where the quotient is truncated toward zero. This produces incorrect rounding results for negative numerators. The Coq formalization uses `Z.div` (Euclidean division) and is the ground truth.
+
+**Euclidean division definition:** For integers `a` and `b > 0`:
+- `a = q × b + r` where `0 ≤ r < b`
+- `q = floor(a / b)` (floor, not truncation)
+
+**Truncating division correction formula:**
+
+```rust
+fn div_rem_euclidean(a: I1200, b: I1200) -> (I1200, I1200) {
+    // Precondition: b > 0
+    let (q, r) = a.div_rem_truncating(b);  // Language-native truncating div
+    if r < 0 {
+        // Correct the truncating result to Euclidean
+        (q - 1, r + b)
+    } else {
+        (q, r)
+    }
+}
+```
+
+**Why this matters for RNE:** The RNE algorithm branches on `2 × abs(remainder)`. With Euclidean division, `abs(remainder) = remainder` (always non-negative). With truncating division, `remainder` can be negative, making `abs(remainder)` a different value — producing incorrect rounding for all negative numerators where the division conventions diverge.
+
+**Sign symmetry unblocked:** With Euclidean division, `sgn_z(numerator)` correctly tracks the rounded result's sign, making Theorem 5 (Sign Symmetry) provable.
+
 #### Target Scale Inference
 
 When no explicit column scale is provided (e.g., expression result), the target scale must be inferred deterministically using integer arithmetic (no floating-point):
@@ -291,11 +320,11 @@ INFER_TARGET_SCALE(dfp):
 
     1. Compute decimal digits in mantissa:
        // Uses bit_length(mantissa) to compute digits without FP
-       mantissa_digits = (bit_length(dfp.mantissa) * 789) >> 12  // Approx log10
-       // Note: 789/4096 ≈ 0.1926; the correct factor for log10(2) ≈ 0.30103
+       mantissa_digits = (bit_length(dfp.mantissa) * 1242) >> 12  // Approx log10
+       // Note: 1242/4096 ≈ 0.3032; the correct factor for log10(2) ≈ 0.30103
        //       is approximately 1242/4096 ≈ 0.303. This approximation is
-       //       acceptable for the small mantissa sizes used in DFP (≤ 113 bits).
-       // Or: use pre-computed table for small mantissas
+       //       correct for DFP mantissas (≤ 113 bits, ~34 decimal digits).
+       // Example: 113-bit mantissa → 113 * 1242 / 4096 ≈ 34 digits (correct)
 
     2. Compute decimal exponent using lookup table:
        // LOG10_2[dfp.exponent] = floor(exponent * log10(2) * 1000)
@@ -413,7 +442,7 @@ LOWER_EXPRESSION(expr_node, context_scale):
         left_result = LOWER_EXPRESSION(left, context_scale)
         right_result = LOWER_EXPRESSION(right, context_scale)
         result_scale = max(left_result.scale, right_result.scale)
-        // Re-lower children at the agreed scale if needed
+        // DQA_ADD (RFC-0105) handles scale alignment internally
         RETURN DqaAdd(left_result, right_result)
 
       DfpMul(left, right):
@@ -424,10 +453,11 @@ LOWER_EXPRESSION(expr_node, context_scale):
         RETURN DqaMul(left_result, right_result)
 
       DfpDiv(left, right):
-        // Result scale: max(left_scale, right_scale)
+        // Determine result scale: max(left_scale, right_scale)
         left_result = LOWER_EXPRESSION(left, context_scale)
         right_result = LOWER_EXPRESSION(right, context_scale)
         result_scale = max(left_result.scale, right_result.scale)
+        // DQA_DIV (RFC-0105) handles scale alignment and TARGET_SCALE internally
         RETURN DqaDiv(left_result, right_result)
 
       DfpCast(inner, target_dfp_type):
@@ -515,11 +545,70 @@ SELECT CAST(float_col AS DQA(6)) FROM analytics;
 SELECT CAST(price AS DQA(2)) FROM trades;  -- DQA(6) → DQA(2), deterministic
 ```
 
-### Gas Model Correction
+#### SQL Decimal Literal Parsing — Exact Decimal Path
 
-RFC-0104's gas model is **invalidated** by this architecture. Since DFP does not exist at runtime, DFP gas costs are irrelevant. The actual runtime costs are DQA costs.
+SQL decimal literals (e.g., `0.1`, `3.14159`) are parsed via **exact decimal-to-DFP conversion**, not via `from_f64()`. This ensures SQL decimal literals represent exact decimal values.
 
-#### Corrected Gas Table
+**Exact decimal parsing algorithm:**
+
+```
+PARSE_DECIMAL_TO_DFP(decimal_string):
+  // Example: "0.1" → DFP representing exactly 1/10
+  //
+  // 1. Parse the string as integer mantissa M and decimal exponent E
+  //    "0.1" → M = 1, E = -1 (one digit after decimal point)
+  //    "1.05" → M = 105, E = -2
+  //    "100" → M = 100, E = 0
+  //
+  // 2. Represent as exact rational: value = M × 10^E
+  //
+  // 3. Convert to DFP with RNE rounding to 113-bit mantissa:
+  //    - Compute binary representation of M × 10^E
+  //    - Round to nearest even at 113-bit precision
+  //    - Produce DFP { mantissa, exponent }
+
+  RETURN DFP(mantissa, exponent)  // Exact representation
+```
+
+**Key properties:**
+- `PARSE_DECIMAL_TO_DFP("0.1")` produces the DFP representing exactly 1/10
+- `PARSE_DECIMAL_TO_DFP("0.1")` ≠ `from_f64(0.1)` — the latter is IEEE-754 rounded
+- The difference matters at scale ≥ 17
+
+**Example:** The literal `0.1` in SQL is the **exact decimal** 1/10, not the IEEE-754 approximation. When lowered to DQA at scale 18, the result is `100000000000000000` (not `100000000000000006`).
+
+#### Explicit IEEE-754 Conversion Path
+
+Use `from_f64()` only when **explicitly converting from IEEE-754 sources**:
+
+```sql
+-- IEEE-754 source: FLOAT column cast to DFP
+SELECT CAST(float_col AS DFP) FROM analytics;
+
+-- IEEE-754 source: explicit f64 literal
+SELECT CAST(0.1 AS DFP) FROM dual;  -- Uses from_f64(), NOT exact decimal
+```
+
+**Test vector V044** demonstrates the `from_f64()` path:
+```
+| V044 | f64 literal 0.1 | DFP from_f64(0.1) | 18 | 100000000000000006, scale=18 |
+```
+This shows that `from_f64(0.1)` at scale 18 produces `100000000000000006` — the IEEE-754 rounding artifact, not a bug.
+
+**When exact decimal is required:**
+```sql
+-- Use DFP arithmetic for exact fractions
+SELECT CAST(1 AS DFP) / 10 * price FROM trades;  -- 1/10 is exact in DFP
+
+-- Use explicit DQA construction
+SELECT price * CAST(100000000000000000 AS DQA(18)) FROM trades;  -- Exact 0.1 at scale 18
+```
+
+### Gas Model
+
+See §DLP Gas Model — Two-Tier with Depth Bound for the complete DLP gas accounting specification.
+
+**Runtime DQA costs** (for reference, from RFC-0105):
 
 | Operation | Runtime Type | Relative Gas Cost | Notes |
 |-----------|-------------|-------------------|-------|
@@ -529,7 +618,6 @@ RFC-0104's gas model is **invalidated** by this architecture. Since DFP does not
 | DQA_DIV | DQA | 5-15x | Iterative division with RNE |
 | DQA_NEG | DQA | 1x | Negation |
 | DQA_CMP | DQA | 1-2x | Scale alignment for comparison |
-| DLP (compile-time) | N/A | N/A | Not charged at runtime |
 
 **Note:** DQA has no SQRT operation (RFC-0105). If DFP source code uses `SQRT`, the Expression Simplifier must either:
 1. Constant-fold it (if operand is a constant) using DFP's SQRT algorithm, then lower the result
@@ -606,7 +694,7 @@ Each vector specifies:
 | V022 | 1 | 62 | 0 | 4611686018427387904, scale=0 | 2^62 fits in i64 |
 | V023 | (1<<113)-1 | 1023 | 0 | DlpError::RangeOverflow | DFP_MAX way too large |
 | V024 | 1 | -100 | 18 | 0, scale=18 | 2^-100 rounds to 0 at scale 18 |
-| V025 | 1 | -50 | 18 | 0, scale=18 | 2^-50 ≈ 8.88e-16, rounds to 0 at scale 18 |
+| V025 | 1 | -50 | 18 | 888, scale=18 | 2^-50 * 10^18 ≈ 888.18, RNE rounds to 888 |
 
 #### Subnormal Vectors
 
@@ -637,8 +725,8 @@ These test the full expression tree lowering, not just single values.
 | V036 | 1.35 | 1 | 14, scale=1 | 1.4 (0.5 tie, odd→round up) |
 | V037 | 2.5 | 0 | 2, scale=0 | 2 (0.5 tie, even→keep) |
 | V038 | 3.5 | 0 | 4, scale=0 | 4 (0.5 tie, odd→round up) |
-| V039 | -1.25 | 1 | -12, scale=1 | -1.2 (symmetric RNE) |
-| V040 | -2.5 | 0 | -2, scale=0 | -2 (symmetric RNE) |
+| V039 | -1.25 | 1 | -14, scale=1 | -1.4 (Euclidean RNE tie→odd, sign=-1→up) |
+| V040 | -2.5 | 0 | -4, scale=0 | -4 (Euclidean RNE tie→odd, sign=-1→up) |
 
 #### Cross-Platform Consistency Vectors
 
@@ -649,7 +737,7 @@ These vectors use DFP values that could arise from different IEEE-754 hardware. 
 | V041 | x86 0.1 + 0.2 result | DFP canonical 0.3 | 6 | 300000, scale=6 | Both platforms produce same DFP |
 | V042 | ARM 0.1 + 0.2 result | DFP canonical 0.3 | 6 | 300000, scale=6 | Same as V041 |
 | V043 | f64 literal 0.30000000000000004 | DFP from_f64(0.30000000000000004) | 6 | 300000, scale=6 | Rounds to 0.3 at scale 6 |
-| V044 | f64 literal 0.1 | DFP from_f64(0.1) | 18 | 100000000000000000, scale=18 | 0.1 exact at scale 18 |
+| V044 | f64 literal 0.1 | DFP from_f64(0.1) | 18 | 100000000000000006, scale=18 | IEEE-754 double 0.1 ≈ 0.1000000000000000056; RNE at scale 18 |
 
 ### Continuous Verification
 
@@ -770,12 +858,92 @@ In case of conflict between this RFC and RFC-0104 or RFC-0105:
 ### Constraints
 
 - **Determinism:** All nodes MUST produce bit-identical DQA from identical DFP input
-- **Compile-time only:** DLP NEVER executes at runtime
+- **Compile-time only:** The DLP transformation runs at compile time; the DQA bytecode it emits runs at runtime. Note: This means DQA bytecode can fail at runtime (overflow) even though DLP itself doesn't execute at runtime — see §Bytecode Overflow Handling.
 - **No DFP in runtime:** Any DFP value after DLP is a compiler bug
 - **Canonical output:** All DQA outputs must be canonicalized before serialization
 - **RNE rounding:** All precision loss uses Round-to-Nearest-Even
 - **i1200 intermediate:** All intermediate arithmetic uses i1200 to prevent overflow
 - **Scale ≤ 18:** All target scales are capped at MAX_SCALE (18)
+- **Euclidean division:** All integer division in the lowering algorithm MUST use Euclidean (floor) division semantics, not truncating division. See §Euclidean Division for i1200.
+
+### Bytecode Overflow Handling — Transaction Revert
+
+DFP expression bytecode can overflow at runtime (e.g., `column * 1.05` where `column` holds values near `i64::MAX` at declared scale). DQA operations (RFC-0105) already return `Error::Overflow` — the bytecode VM must define the error handling policy.
+
+**Bytecode VM error semantics:**
+
+> When a DQA opcode returns an error (Overflow, DivideByZero, etc.), the transaction **reverts**. No state changes are committed. Gas is consumed.
+
+```
+Error handling policy:
+  1. Transaction status = REVERTED
+  2. All state changes from this transaction are discarded
+  3. Gas consumed = all gas up to and including the failing opcode
+  4. Error diagnostic logged: { opcode, error_type, operands }
+```
+
+**Why transaction revert:** This is deterministic across all nodes, standard industry practice (Ethereum-style), and makes overflow in lowered expressions a cost paid by the transaction submitter rather than a consensus-halting fault. No DQA spec changes required — DQA already returns errors.
+
+**Critical semantic gap — DFP saturation vs DQA revert:** RFC-0104 guarantees that DFP arithmetic uses **saturation semantics** (overflowing values clamp to MAX/MIN). However, after lowering to DQA, overflow produces a **transaction revert**, not saturation. This is a breaking semantic change from the DFP developer's perspective:
+
+| Scenario | DFP (RFC-0104) | DQA after lowering (this RFC) |
+|----------|-----------------|------------------------------|
+| Expression overflow | Saturates to MAX/MIN | Transaction reverts |
+| Division overflow | Saturates | Transaction reverts |
+
+Developers writing DFP expressions expect saturation behavior at runtime. The lowering architecture changes this to revert-on-overflow. This must be documented as a **breaking change** in the DFP-to-DQA lowering model, not merely an error handling detail.
+
+### DLP Gas Model — Two-Tier with Depth Bound
+
+The DLP runs at two different times with different gas accounting needs:
+
+#### Deployment Gas (Smart Contract / View Compilation)
+
+DLP cost is charged once at contract or deterministic view deployment:
+
+| Component | Gas Units | Notes |
+|-----------|-----------|-------|
+| Per-literal lowering | 10 | DFP → DQA for constant |
+| Per-expression node | 5 | Add, Mul, Div, etc. |
+| Per-column-ref | 2 | Schema lookup + validation |
+| Canonicalization | 20 | DqaEncoding::from_dqa |
+
+#### Query Submission Gas (Ad-Hoc Deterministic Queries)
+
+DLP cost for ad-hoc SELECT statements over deterministic views:
+
+| Component | Gas Units | Notes |
+|-----------|-----------|-------|
+| Expression tree traversal | 1 per node | Constant-folding analysis |
+| Per DQA opcode emitted | 3 | Final bytecode generation |
+
+#### Expression Depth Bound (DoS Prevention)
+
+**Maximum expression tree depth: 1000 nodes**
+
+Expressions exceeding this limit are rejected at compile time:
+
+```
+DlpError::ExpressionTooDeep {
+    depth: u32,      // Actual depth encountered
+    max_depth: 1000, // Hard limit
+}
+```
+
+This prevents:
+- Adversarial inputs: deeply nested constant expressions forcing expensive i1200 bignum work
+- Accidental complexity: correlated subqueries
+- Gas griefing: low gas price × high computation cost
+
+### Euclidean Division — Sign Symmetry Unblocked
+
+With Euclidean division specified in §Canonical Lowering Algorithm, **Theorem 5 (Sign Symmetry)** becomes **Provable** instead of Admitted:
+
+- Euclidean division: `(-a) div b = -(a div b)` with non-negative remainder
+- `sgn_z(numerator)` correctly tracks the rounded result's sign
+- The sign symmetry proof is now tractable
+
+This is documented in the algorithm specification and the Rust reference implementation now uses Euclidean division.
 
 ## Formal Verification Framework
 
@@ -791,7 +959,7 @@ In case of conflict between this RFC and RFC-0104 or RFC-0105:
 | 4 | Unbiasedness | Zero systematic rounding bias | Proven (discrete) |
 | 5 | Sign Symmetry | L(-x) = -L(x) | Proven |
 | 6 | Termination | O(1) time, no loops | Proven |
-| 7 | Overflow Completeness | No silent overflow, no false positives | Proven |
+| 7 | Overflow Completeness | No silent overflow, no false positives | Proof Sketched (admitted) |
 | 8 | Canonical Form | Canonicalization preserves value | Proven |
 | 9 | Scale Inference | Optimal scale within constraints | Proven (validity) |
 | 10 | Compositional | Expression lowering error propagation | Proof Sketched (admitted) |
@@ -810,7 +978,7 @@ In case of conflict between this RFC and RFC-0104 or RFC-0105:
 max_intermediate = (2^113 - 1) × 2^1023 × 10^18 ≈ 2^1195.79 bits
 ```
 
-**Normative override:** For the purposes of this RFC, DFP_MAX = (2^113 - 1) × 2^1023 ≈ 10^342. RFC-0104 states ~10^308 which is incorrect (that is the IEEE-754 double maximum, not the DFP maximum). Implementations MUST use the correct value.
+**RFC-0104 documentation error:** DFP_MAX = (2^113 - 1) × 2^1023 ≈ 10^342. RFC-0104 states ~10^308 which is incorrect (that is the IEEE-754 double maximum, not the DFP maximum). RFC-0104 requires an amendment to correct this value. Pending that amendment, implementations should use the value specified in this RFC.
 
 This requires at least **i1200** for the intermediate arithmetic:
 
@@ -827,8 +995,8 @@ This requires at least **i1200** for the intermediate arithmetic:
 ---
 
 **Submission Date:** 2026-03-23
-**Last Updated:** 2026-03-23
-**Revision:** v1.0 — Complete rewrite of legacy RFC-0124 with formal Coq proofs
+**Last Updated:** 2026-03-22
+**Revision:** v1.3 — Addressed all fifth review issues: (B1-B5) fixed test vectors V025/V044, canonicalization, DfpDiv/DfpAdd comments, SQL decimal parsing; (R1) clarified DfpDiv comment re: scale alignment; (R2) corrected Theorem 1 description to acknowledge it only proves Coq function determinism; (R3) fixed INFER_TARGET_SCALE approximation from 789 to 1242; (R4) changed RFC-0104 "Normative override" to "RFC-0104 documentation error" framing; (R5) clarified "DLP never executes at runtime" constraint; (A2) added bytecode overflow handling with transaction revert semantics; (A3) added two-tier DLP gas model with depth bound; (A4) specified Euclidean division with correction formula, recomputed V039/V040 with Euclidean RNE; added DFP saturation vs DQA revert semantic gap documentation
 
 ---
 
@@ -836,7 +1004,7 @@ This requires at least **i1200** for the intermediate arithmetic:
 
 ### A.1 Key Theorems
 
-**Theorem 1 (Determinism):** The lowering function `L` is a pure function — no side effects, no environment dependence. All intermediate values are computed using only i1200 integer arithmetic, which is deterministic on all platforms.
+**Theorem 1 (Determinism):** The Coq function `lower_dfp_to_dqa` returns identical results for identical inputs. Note: This is a property of the Coq specification (trivial by construction — all total Coq functions are deterministic). It does not prove anything about implementations. Cross-platform verification relies on test vectors V001-V044.
 
 **Theorem 2 (RNE Correctness):** The Round-to-Nearest-Even rounding produces the closest representable DQA value at the target scale, with ties broken to the even integer. (Proof sketched; admitted Q arithmetic lemmas)
 
@@ -1337,6 +1505,17 @@ impl I1200 {
 
         I1200 { limbs: result, negative: self.negative }
     }
+
+    /// Euclidean division: returns (quotient, remainder) where 0 <= remainder < divisor.
+    /// Implements the correction: if truncating remainder is negative, add divisor and decrement quotient.
+    fn div_rem_euclidean(self, divisor: &I1200) -> (I1200, I1200) {
+        let (q, r) = self.div_rem_truncating(divisor);
+        if r < I1200::zero() {
+            (q - I1200::one(), r + *divisor)
+        } else {
+            (q, r)
+        }
+    }
 }
 
 /// The canonical lowering function (implementing all proven theorems)
@@ -1346,7 +1525,7 @@ pub fn lower_dfp_to_dqa(dfp: &Dfp, target_scale: u8) -> Result<Dqa, DlpError> {
         DfpClass::Infinity => return Err(DlpError::RangeOverflow {
             reason: if dfp.sign { "negative infinity" } else { "positive infinity" },
         }),
-        DfpClass::Zero => return Ok(Dqa { value: 0, scale: target_scale }),
+        DfpClass::Zero => return Ok(DqaEncoding::from_dqa(&Dqa { value: 0, scale: target_scale })),
         DfpClass::Normal => {}
     }
 
@@ -1365,17 +1544,20 @@ pub fn lower_dfp_to_dqa(dfp: &Dfp, target_scale: u8) -> Result<Dqa, DlpError> {
 
     let numerator = if dfp.sign { numerator.negate() } else { numerator };
     let scaled_numerator = numerator.mul_pow10(target_scale);
-    let (quotient, remainder) = scaled_numerator.div_rem(&denominator);
+    let (quotient, remainder) = scaled_numerator.div_rem_euclidean(&denominator);
     let result_value = round_half_even_i1200(quotient, remainder, denominator, numerator.signum());
 
     if result_value > I1200::from_i64(i64::MAX) || result_value < I1200::from_i64(i64::MIN) {
         return Err(DlpError::RangeOverflow { reason: "result exceeds i64 range" });
     }
 
-    Ok(Dqa { value: result_value.to_i64(), scale: target_scale })
+    Ok(DqaEncoding::from_dqa(&Dqa { value: result_value.to_i64(), scale: target_scale }))
 }
 
 fn round_half_even_i1200(quotient: I1200, remainder: I1200, divisor: I1200, result_sign: i8) -> I1200 {
+    // Note: remainder is always non-negative due to Euclidean division.
+    // result_sign is +1 for positive, -1 for negative, 0 for zero.
+    // For zero, quotient + 0 = quotient, so rounding is identity.
     let abs_rem = remainder.abs();
     let abs_div = divisor.abs();
     let double_rem = abs_rem.mul_small(2);

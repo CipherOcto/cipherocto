@@ -229,6 +229,128 @@ impl<T: NumericScalar> DMat<T> {
 }
 
 // =============================================================================
+// MAT_ADD and MAT_SUB — Shared Validation
+// =============================================================================
+
+/// Validate inputs for MAT_ADD and MAT_SUB operations.
+///
+/// Phase 0: TRAP sentinel pre-check (scan a fully, then b — per RFC Global TRAP Invariant)
+/// Phase 1: Dimension validation
+/// Phase 2: Scale validation (uniform within each matrix, cross-matrix equality)
+///
+/// Returns `(rows, cols, common_scale)` on success.
+///
+/// # Global TRAP Invariant (CRITICAL)
+/// TRAP sentinel detection MUST iterate elements in strict row-major order using
+/// index `(i * cols + j)`. For binary operations, all elements of operand `a`
+/// MUST be scanned before any element of operand `b`. This ensures deterministic
+/// TRAP detection order across implementations.
+fn validate_additive_op<T: NumericScalar>(
+    a: &DMat<T>,
+    b: &DMat<T>,
+) -> Result<(usize, usize, u8), DmatError> {
+    // Phase 0: TRAP sentinel pre-check — scan a fully, then b
+    // Global TRAP Invariant: row-major order, a before b
+    for i in 0..a.rows {
+        for j in 0..a.cols {
+            if a.data[i * a.cols + j].is_trap() {
+                return Err(DmatError::TrapInput);
+            }
+        }
+    }
+    for i in 0..b.rows {
+        for j in 0..b.cols {
+            if b.data[i * b.cols + j].is_trap() {
+                return Err(DmatError::TrapInput);
+            }
+        }
+    }
+
+    // Phase 1: Dimension validation
+    if a.rows != b.rows || a.cols != b.cols {
+        return Err(DmatError::DimensionMismatch);
+    }
+    if a.rows * a.cols > 64 {
+        return Err(DmatError::DimensionError);
+    }
+    if a.rows > 8 || a.cols > 8 {
+        return Err(DmatError::DimensionError);
+    }
+    if a.rows < 1 || a.cols < 1 {
+        return Err(DmatError::DimensionError);
+    }
+
+    // Phase 2: Scale validation — uniform within each matrix, cross-matrix equality
+    let common_scale = a.data[0].scale();
+    for i in 0..a.rows {
+        for j in 0..a.cols {
+            if a.data[i * a.cols + j].scale() != common_scale {
+                return Err(DmatError::ScaleMismatch);
+            }
+        }
+    }
+    for i in 0..b.rows {
+        for j in 0..b.cols {
+            if b.data[i * b.cols + j].scale() != common_scale {
+                return Err(DmatError::ScaleMismatch);
+            }
+        }
+    }
+    // Cross-matrix scale check
+    if b.data[0].scale() != common_scale {
+        return Err(DmatError::ScaleMismatch);
+    }
+
+    Ok((a.rows, a.cols, common_scale))
+}
+
+// =============================================================================
+// MAT_ADD — Matrix Addition
+// =============================================================================
+
+/// Matrix addition: C = A + B
+///
+/// Both matrices must have the same dimensions and element scales.
+pub fn mat_add<T: NumericScalar>(a: &DMat<T>, b: &DMat<T>) -> Result<DMat<T>, DmatError> {
+    let (rows, cols, _scale) = validate_additive_op(a, b)?;
+
+    let mut result_data = Vec::with_capacity(rows * cols);
+    for i in 0..rows {
+        for j in 0..cols {
+            let sum = a.data[i * cols + j]
+                .add(&b.data[i * cols + j])
+                .map_err(|e| e.into())?;
+            result_data.push(sum);
+        }
+    }
+
+    DMat::new(rows, cols, result_data).map_err(|_| DmatError::DimensionError)
+}
+
+// =============================================================================
+// MAT_SUB — Matrix Subtraction
+// =============================================================================
+
+/// Matrix subtraction: C = A - B
+///
+/// Both matrices must have the same dimensions and element scales.
+pub fn mat_sub<T: NumericScalar>(a: &DMat<T>, b: &DMat<T>) -> Result<DMat<T>, DmatError> {
+    let (rows, cols, _scale) = validate_additive_op(a, b)?;
+
+    let mut result_data = Vec::with_capacity(rows * cols);
+    for i in 0..rows {
+        for j in 0..cols {
+            let diff = a.data[i * cols + j]
+                .sub(&b.data[i * cols + j])
+                .map_err(|e| e.into())?;
+            result_data.push(diff);
+        }
+    }
+
+    DMat::new(rows, cols, result_data).map_err(|_| DmatError::DimensionError)
+}
+
+// =============================================================================
 // Implement NumericScalar for Dqa
 // =============================================================================
 
@@ -314,6 +436,28 @@ impl NumericScalar for Decimal {
 
     fn mul(&self, other: &Self) -> Result<Self, Self::Error> {
         decimal_mod::decimal_mul(self, other)
+    }
+}
+
+// =============================================================================
+// Index trait for convenience: mat[(i, j)] syntax
+// =============================================================================
+
+/// Index type for DMat: (row, col)
+pub struct DMatIndex(usize, usize);
+
+impl From<(usize, usize)> for DMatIndex {
+    fn from((r, c): (usize, usize)) -> Self {
+        DMatIndex(r, c)
+    }
+}
+
+impl<T: NumericScalar, I: Into<DMatIndex>> std::ops::Index<I> for DMat<T> {
+    type Output = T;
+
+    fn index(&self, index: I) -> &Self::Output {
+        let idx = index.into();
+        &self.data[idx.0 * self.cols + idx.1]
     }
 }
 
@@ -539,4 +683,190 @@ mod tests {
             crate::decimal::MAX_DECIMAL_MANTISSA
         );
     }
+
+    // =============================================================================
+    // MAT_ADD Tests
+    // =============================================================================
+
+    #[test]
+    fn test_mat_add_dqa_basic() {
+        // [[1, 2], [3, 4]] + [[5, 6], [7, 8]] = [[6, 8], [10, 12]]
+        let a_data = vec![
+            Dqa::new(1, 0).unwrap(),
+            Dqa::new(2, 0).unwrap(),
+            Dqa::new(3, 0).unwrap(),
+            Dqa::new(4, 0).unwrap(),
+        ];
+        let b_data = vec![
+            Dqa::new(5, 0).unwrap(),
+            Dqa::new(6, 0).unwrap(),
+            Dqa::new(7, 0).unwrap(),
+            Dqa::new(8, 0).unwrap(),
+        ];
+        let a = DMat::new(2, 2, a_data).unwrap();
+        let b = DMat::new(2, 2, b_data).unwrap();
+        let result = mat_add(&a, &b).unwrap();
+        assert_eq!(result[(0, 0)], Dqa::new(6, 0).unwrap());
+        assert_eq!(result[(0, 1)], Dqa::new(8, 0).unwrap());
+        assert_eq!(result[(1, 0)], Dqa::new(10, 0).unwrap());
+        assert_eq!(result[(1, 1)], Dqa::new(12, 0).unwrap());
+    }
+
+    #[test]
+    fn test_mat_add_decimal_basic() {
+        let a_data = vec![
+            Decimal::new(1, 0).unwrap(),
+            Decimal::new(2, 0).unwrap(),
+            Decimal::new(3, 0).unwrap(),
+            Decimal::new(4, 0).unwrap(),
+        ];
+        let b_data = vec![
+            Decimal::new(5, 0).unwrap(),
+            Decimal::new(6, 0).unwrap(),
+            Decimal::new(7, 0).unwrap(),
+            Decimal::new(8, 0).unwrap(),
+        ];
+        let a = DMat::new(2, 2, a_data).unwrap();
+        let b = DMat::new(2, 2, b_data).unwrap();
+        let result = mat_add(&a, &b).unwrap();
+        assert_eq!(result[(0, 0)], Decimal::new(6, 0).unwrap());
+        assert_eq!(result[(1, 1)], Decimal::new(12, 0).unwrap());
+    }
+
+    #[test]
+    fn test_mat_add_with_scale() {
+        // [[1, 2], [3, 4]] + [[0.1, 0.2], [0.3, 0.4]] with scales 0 and 1
+        // Can't mix scales - should TRAP
+        let a_data = vec![
+            Dqa::new(1, 0).unwrap(),
+            Dqa::new(2, 0).unwrap(),
+            Dqa::new(3, 0).unwrap(),
+            Dqa::new(4, 0).unwrap(),
+        ];
+        let b_data = vec![
+            Dqa::new(1, 1).unwrap(), // scale 1
+            Dqa::new(2, 1).unwrap(),
+            Dqa::new(3, 1).unwrap(),
+            Dqa::new(4, 1).unwrap(),
+        ];
+        let a = DMat::new(2, 2, a_data).unwrap();
+        let b = DMat::new(2, 2, b_data).unwrap();
+        let result = mat_add(&a, &b);
+        assert!(matches!(result, Err(DmatError::ScaleMismatch)));
+    }
+
+    #[test]
+    fn test_mat_add_dimension_mismatch() {
+        let a_data = vec![Dqa::new(1, 0).unwrap(); 4];
+        let b_data = vec![Dqa::new(1, 0).unwrap(); 6];
+        let a = DMat::new(2, 2, a_data).unwrap();
+        let b = DMat::new(2, 3, b_data).unwrap();
+        assert!(matches!(mat_add(&a, &b), Err(DmatError::DimensionMismatch)));
+    }
+
+    #[test]
+    fn test_mat_add_trap_sentinel() {
+        // Create matrix with TRAP sentinel
+        let trap = Dqa { value: i64::MIN, scale: 0xFF };
+        let normal = Dqa::new(1, 0).unwrap();
+        let a_data = vec![normal, normal, normal, normal];
+        let b_data = vec![trap, normal, normal, normal];
+        let a = DMat::new(2, 2, a_data).unwrap();
+        let b = DMat::new(2, 2, b_data).unwrap();
+        assert!(matches!(mat_add(&a, &b), Err(DmatError::TrapInput)));
+    }
+
+    #[test]
+    fn test_mat_add_1x2() {
+        // 1×2 matrix: [[1, 2]] + [[3, 4]] = [[4, 6]]
+        let a_data = vec![Dqa::new(1, 0).unwrap(), Dqa::new(2, 0).unwrap()];
+        let b_data = vec![Dqa::new(3, 0).unwrap(), Dqa::new(4, 0).unwrap()];
+        let a = DMat::new(1, 2, a_data).unwrap();
+        let b = DMat::new(1, 2, b_data).unwrap();
+        let result = mat_add(&a, &b).unwrap();
+        assert_eq!(result[(0, 0)], Dqa::new(4, 0).unwrap());
+        assert_eq!(result[(0, 1)], Dqa::new(6, 0).unwrap());
+    }
+
+    // =============================================================================
+    // MAT_SUB Tests
+    // =============================================================================
+
+    #[test]
+    fn test_mat_sub_dqa_basic() {
+        // [[5, 6], [7, 8]] - [[1, 2], [3, 4]] = [[4, 4], [4, 4]]
+        let a_data = vec![
+            Dqa::new(5, 0).unwrap(),
+            Dqa::new(6, 0).unwrap(),
+            Dqa::new(7, 0).unwrap(),
+            Dqa::new(8, 0).unwrap(),
+        ];
+        let b_data = vec![
+            Dqa::new(1, 0).unwrap(),
+            Dqa::new(2, 0).unwrap(),
+            Dqa::new(3, 0).unwrap(),
+            Dqa::new(4, 0).unwrap(),
+        ];
+        let a = DMat::new(2, 2, a_data).unwrap();
+        let b = DMat::new(2, 2, b_data).unwrap();
+        let result = mat_sub(&a, &b).unwrap();
+        assert_eq!(result[(0, 0)], Dqa::new(4, 0).unwrap());
+        assert_eq!(result[(0, 1)], Dqa::new(4, 0).unwrap());
+        assert_eq!(result[(1, 0)], Dqa::new(4, 0).unwrap());
+        assert_eq!(result[(1, 1)], Dqa::new(4, 0).unwrap());
+    }
+
+    #[test]
+    fn test_mat_sub_decimal_basic() {
+        let a_data = vec![
+            Decimal::new(5, 0).unwrap(),
+            Decimal::new(6, 0).unwrap(),
+            Decimal::new(7, 0).unwrap(),
+            Decimal::new(8, 0).unwrap(),
+        ];
+        let b_data = vec![
+            Decimal::new(1, 0).unwrap(),
+            Decimal::new(2, 0).unwrap(),
+            Decimal::new(3, 0).unwrap(),
+            Decimal::new(4, 0).unwrap(),
+        ];
+        let a = DMat::new(2, 2, a_data).unwrap();
+        let b = DMat::new(2, 2, b_data).unwrap();
+        let result = mat_sub(&a, &b).unwrap();
+        assert_eq!(result[(0, 0)], Decimal::new(4, 0).unwrap());
+        assert_eq!(result[(1, 1)], Decimal::new(4, 0).unwrap());
+    }
+
+    #[test]
+    fn test_mat_sub_dimension_mismatch() {
+        let a_data = vec![Dqa::new(1, 0).unwrap(); 4];
+        let b_data = vec![Dqa::new(1, 0).unwrap(); 4];
+        let a = DMat::new(2, 2, a_data).unwrap();
+        let b = DMat::new(4, 1, b_data).unwrap();
+        assert!(matches!(mat_sub(&a, &b), Err(DmatError::DimensionMismatch)));
+    }
+
+    #[test]
+    fn test_mat_sub_trap_sentinel() {
+        let trap = Dqa { value: i64::MIN, scale: 0xFF };
+        let normal = Dqa::new(1, 0).unwrap();
+        let a_data = vec![normal, normal, normal, normal];
+        let b_data = vec![trap, normal, normal, normal];
+        let a = DMat::new(2, 2, a_data).unwrap();
+        let b = DMat::new(2, 2, b_data).unwrap();
+        assert!(matches!(mat_sub(&a, &b), Err(DmatError::TrapInput)));
+    }
+
+    #[test]
+    fn test_mat_sub_zero_result() {
+        // [[1, 1], [1, 1]] - [[1, 1], [1, 1]] = [[0, 0], [0, 0]]
+        let data = vec![Dqa::new(1, 0).unwrap(); 4];
+        let a = DMat::new(2, 2, data.clone()).unwrap();
+        let b = DMat::new(2, 2, data).unwrap();
+        let result = mat_sub(&a, &b).unwrap();
+        assert_eq!(result[(0, 0)], Dqa::new(0, 0).unwrap());
+        assert_eq!(result[(1, 1)], Dqa::new(0, 0).unwrap());
+    }
+
+
 }

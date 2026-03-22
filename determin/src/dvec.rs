@@ -97,6 +97,15 @@ pub trait DvecScalar: Clone {
     fn sqrt(self) -> Result<Self, Self::Error>;
 
     fn is_zero(&self) -> bool;
+
+    /// Construct a scalar from raw mantissa and scale.
+    ///
+    /// Used by DVEC operations (dot_product, squared_distance) to construct
+    /// results from accumulated i128 values after overflow checking.
+    ///
+    /// For DQA: `mantissa` must fit in i64 (enforced by overflow check upstream).
+    /// For Decimal: delegates to `Decimal::new(mantissa, scale)`.
+    fn from_parts(mantissa: i128, scale: u8) -> Result<Self, Self::Error>;
 }
 
 // =============================================================================
@@ -221,6 +230,15 @@ impl DvecScalar for Dqa {
     fn is_zero(&self) -> bool {
         self.value == 0
     }
+
+    fn from_parts(mantissa: i128, scale: u8) -> Result<Self, Self::Error> {
+        // The caller guarantees mantissa fits in i128, but Dqa stores i64.
+        // Overflow should have been caught upstream, but we validate anyway.
+        if mantissa > i64::MAX as i128 || mantissa < i64::MIN as i128 {
+            return Err(DqaError::Overflow);
+        }
+        Dqa::new(mantissa as i64, scale)
+    }
 }
 
 // =============================================================================
@@ -262,6 +280,10 @@ impl DvecScalar for Decimal {
     fn is_zero(&self) -> bool {
         Decimal::is_zero(self)
     }
+
+    fn from_parts(mantissa: i128, scale: u8) -> Result<Self, Self::Error> {
+        Decimal::new(mantissa, scale)
+    }
 }
 
 // =============================================================================
@@ -270,16 +292,12 @@ impl DvecScalar for Decimal {
 
 /// Dot product of two vectors: Σ a[i] * b[i]
 ///
-/// Preconditions:
-/// - a.len == b.len
-/// - N <= 64
-/// - All elements share the same scale
-/// - For DQA: a[0].scale() <= 9
-/// - For Decimal: a[0].scale() <= 18
-///
-/// Full implementation in the arithmetic mission.
-/// This stub validates inputs but delegates the core BigInt accumulation
-/// to type-specific implementations.
+/// Algorithm (per RFC-0112 §DOT_PRODUCT):
+/// 1. Input scale precondition (first check)
+/// 2. Uniform scale validation
+/// 3. Sequential i128 accumulation with overflow detection
+/// 4. result_scale = input_scale * 2
+/// 5. Construct result via T::from_parts
 pub fn dot_product<T: DvecScalar + MaxScale>(a: &[T], b: &[T]) -> Result<T, DvecError>
 where
     T::Error: Into<DvecError>,
@@ -292,7 +310,7 @@ where
         return Err(DvecError::DimensionMismatch);
     }
 
-    // Input scale precondition (must be first check per RFC)
+    // Step 1: Input scale precondition (must be first check per RFC)
     let input_scale = a[0].scale();
     // DQA: input_scale <= 9; Decimal: input_scale <= 18
     let input_scale_max = if T::MAX_SCALE == 18 { 9 } else { 18 };
@@ -300,12 +318,28 @@ where
         return Err(DvecError::InputScaleExceeded);
     }
 
-    // Validate uniform scale
+    // Step 2: Validate uniform scale
     validate_uniform_scale(a, b)?;
 
-    // Full algorithm (BigInt accumulator, overflow TRAP, result construction)
-    // is implemented in the arithmetic mission.
-    Err(DvecError::Unsupported)
+    // Step 3: Sequential i128 accumulation with overflow detection
+    // Per the RFC, each product fits in i128 given the scale constraints:
+    // - DQA (scale ≤ 9): max |product| ≈ (10^10)^2 = 10^20, sum of 64 ≈ 10^21 << i128::MAX
+    // - Decimal (scale ≤ 18): max |product| ≈ (10^18)^2 = 10^36, sum of 64 ≈ 10^37 << i128::MAX
+    // But we still check to be safe and to TRAP deterministically.
+    let mut acc: i128 = 0;
+    for i in 0..n {
+        let a_mant = a[i].raw_mantissa();
+        let b_mant = b[i].raw_mantissa();
+        // Check overflow: |acc + a_mant * b_mant| > i128::MAX
+        let prod = a_mant.checked_mul(b_mant).ok_or(DvecError::Overflow)?;
+        acc = acc.checked_add(prod).ok_or(DvecError::Overflow)?;
+    }
+
+    // Step 4: Result scale = a_scale + b_scale (both vectors have same scale)
+    let result_scale = input_scale * 2;
+
+    // Step 5: Construct result
+    T::from_parts(acc, result_scale).map_err(|e| e.into())
 }
 
 impl<T: DvecScalar + MaxScale> DVec<T>
@@ -324,8 +358,12 @@ where
 
 /// Squared Euclidean distance: Σ (a[i] - b[i])²
 ///
-/// Full implementation in the arithmetic mission.
-/// This stub validates inputs only.
+/// Algorithm (per RFC-0112 §SQUARED_DISTANCE):
+/// 1. Input scale precondition (first check)
+/// 2. Uniform scale validation
+/// 3. Sequential i128 accumulation of squared differences
+/// 4. result_scale = input_scale * 2
+/// 5. Construct result via T::from_parts
 pub fn squared_distance<T: DvecScalar + MaxScale>(a: &[T], b: &[T]) -> Result<T, DvecError>
 where
     T::Error: Into<DvecError>,
@@ -338,15 +376,31 @@ where
         return Err(DvecError::DimensionMismatch);
     }
 
+    // Step 1: Input scale precondition (must be first check per RFC)
     let input_scale = a[0].scale();
     let input_scale_max = if T::MAX_SCALE == 18 { 9 } else { 18 };
     if input_scale > input_scale_max {
         return Err(DvecError::InputScaleExceeded);
     }
 
+    // Step 2: Validate uniform scale
     validate_uniform_scale(a, b)?;
 
-    Err(DvecError::Unsupported)
+    // Step 3: Sequential i128 accumulation of squared differences
+    let mut acc: i128 = 0;
+    for i in 0..n {
+        let a_mant = a[i].raw_mantissa();
+        let b_mant = b[i].raw_mantissa();
+        let diff = a_mant - b_mant;
+        let sq = diff.checked_mul(diff).ok_or(DvecError::Overflow)?;
+        acc = acc.checked_add(sq).ok_or(DvecError::Overflow)?;
+    }
+
+    // Step 4: Result scale = input_scale * 2
+    let result_scale = input_scale * 2;
+
+    // Step 5: Construct result
+    T::from_parts(acc, result_scale).map_err(|e| e.into())
 }
 
 /// L2 norm: sqrt(Σ a[i]²)
@@ -473,12 +527,43 @@ mod tests {
     }
 
     #[test]
-    fn test_dot_product_stub_returns_unsupported() {
+    fn test_dot_product_basic() {
+        // [1, 2] · [3, 4] = 1*3 + 2*4 = 11
         let a = vec![Dqa::new(1, 0).unwrap(), Dqa::new(2, 0).unwrap()];
         let b = vec![Dqa::new(3, 0).unwrap(), Dqa::new(4, 0).unwrap()];
-        let result = dot_product(&a, &b);
-        // Stub returns Unsupported — full impl in arithmetic mission
-        assert_eq!(result, Err(DvecError::Unsupported));
+        let result = dot_product(&a, &b).unwrap();
+        assert_eq!(result.raw_mantissa(), 11);
+        assert_eq!(result.scale(), 0);
+    }
+
+    #[test]
+    fn test_dot_product_scale_2() {
+        // [1.0, 2.0] · [3.0, 4.0] with scale=1 -> [10, 20] · [30, 40] = 10*30 + 20*40 = 300 + 800 = 1100, scale=2 -> 11.00
+        let a = vec![Dqa::new(10, 1).unwrap(), Dqa::new(20, 1).unwrap()];
+        let b = vec![Dqa::new(30, 1).unwrap(), Dqa::new(40, 1).unwrap()];
+        let result = dot_product(&a, &b).unwrap();
+        assert_eq!(result.raw_mantissa(), 1100);
+        assert_eq!(result.scale(), 2);
+    }
+
+    #[test]
+    fn test_squared_distance_basic() {
+        // [3, 4] vs [0, 0] -> 3² + 4² = 9 + 16 = 25
+        let a = vec![Dqa::new(3, 0).unwrap(), Dqa::new(4, 0).unwrap()];
+        let b = vec![Dqa::new(0, 0).unwrap(), Dqa::new(0, 0).unwrap()];
+        let result = squared_distance(&a, &b).unwrap();
+        assert_eq!(result.raw_mantissa(), 25);
+        assert_eq!(result.scale(), 0);
+    }
+
+    #[test]
+    fn test_squared_distance_same_vector() {
+        // [1, 2] vs [1, 2] -> 0
+        let a = vec![Dqa::new(1, 0).unwrap(), Dqa::new(2, 0).unwrap()];
+        let b = vec![Dqa::new(1, 0).unwrap(), Dqa::new(2, 0).unwrap()];
+        let result = squared_distance(&a, &b).unwrap();
+        assert_eq!(result.raw_mantissa(), 0);
+        assert_eq!(result.scale(), 0);
     }
 
     #[test]

@@ -31,6 +31,8 @@ pub const DECIMAL_SPEC_VERSION: u32 = 1;
 mod arithmetic;
 pub mod bigint;
 pub mod consensus;
+pub mod dact;
+pub mod dact_lut;
 pub mod decimal;
 #[cfg(feature = "use-internal-bigint")]
 pub mod decimal_internal;
@@ -45,6 +47,7 @@ pub use arithmetic::{dfp_add, dfp_div, dfp_mul, dfp_sqrt, dfp_sub};
 pub use bigint::{
     bigint_add, bigint_div, bigint_divmod, bigint_mod, bigint_mul, bigint_sub, BigInt, BigIntError,
 };
+pub use dact::{leaky_relu, relu, relu6, sigmoid, tanh_dqa, DactError};
 pub use decimal::{
     decimal_from_bytes, decimal_to_bytes, Decimal, DecimalError, MAX_DECIMAL_MANTISSA,
     MAX_DECIMAL_OP_COST, MAX_DECIMAL_SCALE, MIN_DECIMAL_MANTISSA,

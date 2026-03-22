@@ -4053,3 +4053,189 @@ mod dmat_probe_tests {
         assert_eq!(root_hex, reference_root, "Merkle root mismatch!");
     }
 }
+
+// =============================================================================
+// DACT Verification Probe (RFC-0114)
+// =============================================================================
+
+/// DACT operation IDs
+const DACT_OP_RELU: u64 = 0x0200;
+const DACT_OP_RELU6: u64 = 0x0201;
+const DACT_OP_LEAKY_RELU: u64 = 0x0202;
+const DACT_OP_SIGMOID: u64 = 0x0203;
+const DACT_OP_TANH: u64 = 0x0204;
+
+#[cfg(test)]
+mod dact_probe_tests {
+
+    /// Serialize DQA for probe (16 bytes: value(8) + scale(1) + reserved(7))
+    fn dqa_serialize(value: i64, scale: u8) -> Vec<u8> {
+        let mut buf = Vec::with_capacity(16);
+        buf.extend_from_slice(&value.to_be_bytes());
+        buf.push(scale);
+        buf.resize(16, 0);
+        buf
+    }
+
+    /// Canonicalize DQA per RFC-0105
+    fn canonicalize(value: i64, scale: u8) -> (i64, u8) {
+        if value == 0 {
+            return (0, 0);
+        }
+        let mut v = value;
+        let mut s = scale;
+        while v % 10 == 0 && s > 0 {
+            v /= 10;
+            s -= 1;
+        }
+        (v, s)
+    }
+
+    /// DQA multiply per RFC-0105 (for leaky_relu)
+    fn dqa_mul(a_val: i64, a_scale: u8, b_val: i64, b_scale: u8) -> (i64, u8) {
+        (a_val * b_val, a_scale + b_scale)
+    }
+
+    /// leaky_relu output computation
+    fn leaky_relu_output(x_val: i64, x_scale: u8) -> (i64, u8) {
+        if x_val < 0 {
+            dqa_mul(x_val, x_scale, 1, 2) // alpha = Dqa(1, 2) = 0.01
+        } else {
+            (x_val, x_scale)
+        }
+    }
+
+    /// Compute SHA256 hash
+    fn sha256(data: &[u8]) -> [u8; 32] {
+        use sha2::{Digest, Sha256};
+        let mut hasher = Sha256::new();
+        hasher.update(data);
+        let result = hasher.finalize();
+        let mut hash = [0u8; 32];
+        hash.copy_from_slice(&result);
+        hash
+    }
+
+    /// Build Merkle tree and return root
+    fn merkle_root(leaves: &[Vec<u8>]) -> [u8; 32] {
+        let mut level: Vec<[u8; 32]> = leaves.iter().map(|l| sha256(l)).collect();
+        while level.len() > 1 {
+            if level.len() % 2 == 1 {
+                level.push(level[level.len() - 1]);
+            }
+            let mut next_level = Vec::new();
+            for pair in level.chunks(2) {
+                let mut combined = [0u8; 64];
+                combined[..32].copy_from_slice(&pair[0]);
+                combined[32..].copy_from_slice(&pair[1]);
+                next_level.push(sha256(&combined));
+            }
+            level = next_level;
+        }
+        level[0]
+    }
+
+    #[test]
+    fn test_dact_probe_merkle_root() {
+        // Reference Merkle root from Python script
+        let reference_root = "4904af886aac5b581fefcf5d275c0753a0f804bc749d47bdd5bed74565c09fce";
+
+        // Build 16 probe entries matching Python reference
+        let mut leaves = Vec::new();
+
+        // Entry 0: relu(5.0) = 5.00 -> Dqa(5, 0) canonicalized
+        let (v, s) = canonicalize(500, 2);
+        leaves.push(dqa_serialize(v, s));
+
+        // Entry 1: relu(-5.0) = 0.00 -> Dqa(0, 0) canonicalized
+        let (v, s) = canonicalize(0, 2);
+        leaves.push(dqa_serialize(v, s));
+
+        // Entry 2: relu6(10.0) -> clamp -> 6.00 -> Dqa(6, 0)
+        let (v, s) = canonicalize(600, 2);
+        leaves.push(dqa_serialize(v, s));
+
+        // Entry 3: relu6(3.0) = 3.00 -> Dqa(3, 0)
+        let (v, s) = canonicalize(300, 2);
+        leaves.push(dqa_serialize(v, s));
+
+        // Entry 4: sigmoid(0.0) -> Q8.8[400] = 128 -> 5000/10000 -> canonical -> 5/1
+        let sigmoid_q88_400: i16 = 128;
+        let sigmoid_val = (sigmoid_q88_400 as i64 * 10000) / 256;
+        let (v, s) = canonicalize(sigmoid_val, 4);
+        leaves.push(dqa_serialize(v, s));
+
+        // Entry 5: sigmoid(4.0) -> Q8.8[800] = 251 -> 9804/10000 -> 9804/4
+        let sigmoid_q88_800: i16 = 251;
+        let sigmoid_val = (sigmoid_q88_800 as i64 * 10000) / 256;
+        let (v, s) = canonicalize(sigmoid_val, 4);
+        leaves.push(dqa_serialize(v, s));
+
+        // Entry 6: sigmoid(-4.0) -> Q8.8[0] = 5 -> 195/10000 -> 195/4
+        let sigmoid_q88_0: i16 = 5;
+        let sigmoid_val = (sigmoid_q88_0 as i64 * 10000) / 256;
+        let (v, s) = canonicalize(sigmoid_val, 4);
+        leaves.push(dqa_serialize(v, s));
+
+        // Entry 7: tanh(0.0) = 0.00 -> Dqa(0, 0)
+        let (v, s) = canonicalize(0, 2);
+        leaves.push(dqa_serialize(v, s));
+
+        // Entry 8: tanh(2.0) -> Q8.8[600] = 247 -> 9648/10000 -> 9648/4
+        let tanh_q88_600: i16 = 247;
+        let tanh_val = (tanh_q88_600 as i64 * 10000) / 256;
+        let (v, s) = canonicalize(tanh_val, 4);
+        leaves.push(dqa_serialize(v, s));
+
+        // Entry 9: tanh(-2.0) -> Q8.8[200] = -247 -> floor(-9649)/10000
+        let tanh_q88_200: i16 = -247;
+        let tanh_val = -((-tanh_q88_200 as i64 * 10000 + 255) / 256);
+        let (v, s) = canonicalize(tanh_val, 4);
+        leaves.push(dqa_serialize(v, s));
+
+        // Entry 10: leaky_relu(-1.0) -> -1.0 * 0.01 = -0.01 = Dqa(-1, 2)
+        let (lr_val, lr_sc) = leaky_relu_output(-100, 2);
+        let (v, s) = canonicalize(lr_val, lr_sc);
+        leaves.push(dqa_serialize(v, s));
+
+        // Entry 11: leaky_relu(1.0) = 1.00 -> Dqa(1, 0)
+        let (lr_val, lr_sc) = leaky_relu_output(100, 2);
+        let (v, s) = canonicalize(lr_val, lr_sc);
+        leaves.push(dqa_serialize(v, s));
+
+        // Entry 12: First 4 sigmoid LUT entries (raw Q8.8 bytes, 8 bytes)
+        let mut sig_bytes = Vec::new();
+        for i in 0..4 {
+            let q: i16 = [5, 5, 5, 5][i];
+            sig_bytes.extend_from_slice(&q.to_be_bytes());
+        }
+        leaves.push(sig_bytes);
+
+        // Entry 13: First 4 tanh LUT entries (raw Q8.8 bytes, 8 bytes)
+        let mut tanh_bytes = Vec::new();
+        for i in 0..4 {
+            let q: i16 = [-256, -256, -256, -256][i];
+            tanh_bytes.extend_from_slice(&q.to_be_bytes());
+        }
+        leaves.push(tanh_bytes);
+
+        // Entry 14: Normalization invariant Dqa(1234, 2) = 12.34 -> 12340/1000
+        let (v, s) = canonicalize(12340, 3);
+        leaves.push(dqa_serialize(v, s));
+
+        // Entry 15: TRAP sentinel Dqa(-2^63, 0xFF)
+        leaves.push(dqa_serialize(i64::MIN, 0xFF));
+
+        // Verify we have 16 entries
+        assert_eq!(leaves.len(), 16);
+
+        // Compute Merkle root
+        let root = merkle_root(&leaves);
+        let root_hex = hex::encode(root);
+
+        println!("DACT Probe Merkle root: {}", root_hex);
+        println!("Reference Merkle root:  {}", reference_root);
+
+        assert_eq!(root_hex, reference_root, "Merkle root mismatch!");
+    }
+}

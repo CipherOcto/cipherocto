@@ -1,7 +1,8 @@
-//! DVEC and DMAT Consensus Integration Layer
+//! DVEC, DMAT, and DACT Consensus Integration Layer
 //!
 //! This module provides gas accounting and consensus-related constants
-//! for DVEC operations per RFC-0112 and DMAT operations per RFC-0113.
+//! for DVEC operations per RFC-0112, DMAT operations per RFC-0113,
+//! and DACT operations per RFC-0114.
 //!
 //! ## Gas Model (RFC-0112 §Gas Model) - DVEC
 //!
@@ -22,6 +23,16 @@
 //! | MAT_VEC_MUL | rows × cols × (30 + 3 × s_a × s_v) |
 //! | MAT_TRANSPOSE | 2 × M × N |
 //! | MAT_SCALE | M × N × (20 + 3 × s_a × s_scalar) |
+//!
+//! ## Gas Model (RFC-0114 §Gas Model) - DACT
+//!
+//! | Operation | Gas |
+//! |-----------|-----|
+//! | ReLU | 2 |
+//! | ReLU6 | 3 |
+//! | LeakyReLU | 3 |
+//! | Sigmoid | 10 |
+//! | Tanh | 10 |
 //!
 //! ## Consensus Restrictions
 //!
@@ -75,6 +86,24 @@ pub mod dmat_op_ids {
 }
 
 // =============================================================================
+// DACT Operation IDs (RFC-0114)
+// =============================================================================
+
+/// DACT Operation IDs (must match probe.rs DACT_OP_* constants)
+pub mod dact_op_ids {
+    /// ReLU activation
+    pub const RELU: u64 = 0x0200;
+    /// ReLU6 activation
+    pub const RELU6: u64 = 0x0201;
+    /// LeakyReLU activation
+    pub const LEAKY_RELU: u64 = 0x0202;
+    /// Sigmoid activation (LUT-based)
+    pub const SIGMOID: u64 = 0x0203;
+    /// Tanh activation (LUT-based)
+    pub const TANH: u64 = 0x0204;
+}
+
+// =============================================================================
 // Gas Constants
 // =============================================================================
 
@@ -116,6 +145,28 @@ pub const GAS_MAT_SCALE_BASE: u64 = 20;
 
 /// Base gas for MAT_MUL and MAT_VEC_MUL
 pub const GAS_MAT_MUL_BASE: u64 = 30;
+
+// =============================================================================
+// DACT Gas Constants (RFC-0114)
+// =============================================================================
+
+/// Gas for ReLU activation
+pub const GAS_RELU: u64 = 2;
+
+/// Gas for ReLU6 activation
+pub const GAS_RELU6: u64 = 3;
+
+/// Gas for LeakyReLU activation
+pub const GAS_LEAKY_RELU: u64 = 3;
+
+/// Gas for Sigmoid activation (LUT-based)
+pub const GAS_SIGMOID: u64 = 10;
+
+/// Gas for Tanh activation (LUT-based)
+pub const GAS_TANH: u64 = 10;
+
+/// Maximum gas for any single DACT operation (Sigmoid/Tanh)
+pub const MAX_DACT_GAS: u64 = 10;
 
 // =============================================================================
 // Gas Calculation Functions

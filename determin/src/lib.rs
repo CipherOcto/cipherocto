@@ -30,6 +30,7 @@ pub const DECIMAL_SPEC_VERSION: u32 = 1;
 
 mod arithmetic;
 pub mod bigint;
+pub mod consensus;
 pub mod decimal;
 #[cfg(feature = "use-internal-bigint")]
 pub mod decimal_internal;

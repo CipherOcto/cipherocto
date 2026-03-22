@@ -12,7 +12,9 @@ This RFC introduces Deterministic Floating-Point (DFP) — a numeric abstraction
 
 The design introduces a two-tier numeric model: non-deterministic FLOAT/DOUBLE for analytics, and deterministic DFP for consensus-critical computations. Type mixing requires explicit casting to prevent ambiguous semantics.
 
-> ⚠️ **EXPERIMENTAL WARNING**: DFP consensus usage is **experimental and carries high technical risk**. Most production blockchains avoid floating-point in consensus paths entirely. DFP should be considered **alpha-stage technology** until:
+> ⚠️ **ARCHITECTURE CHANGE (RFC-0124)**: DFP is a **source-level and IR-level type only**. DFP values MUST be lowered to DQA (RFC-0105) via the deterministic lowering pass (RFC-0124) before execution in consensus-critical paths. DFP MUST NOT exist in the runtime execution path. This supersedes earlier experimental guidance.
+
+> ⚠️ **EXPERIMENTAL WARNING**: DFP lowering for consensus usage is **experimental and carries high technical risk**. Most production blockchains avoid floating-point in consensus paths entirely. DFP should be considered **alpha-stage technology** until:
 >
 > - Hardware verification is proven robust over years of production
 > - Comprehensive test vectors are validated across architectures
@@ -840,12 +842,21 @@ INT    → ALLOWED (implicit to DFP)
 ### Execution Paths
 
 ```
-DFP Operation
+DFP Source/IR
     │
-    └─[Software Path]─→ Deterministic 128-bit integer arithmetic → DFP
+    └─[Static Lowering Pass (RFC-0124)]─→ DQA only
+                                            │
+                                            └─[Runtime Execution]─→ State/Proof
 ```
 
-> ⚠️ **ARCHITECTURE**: Hardware fast-path has been **removed**. DFP uses **pure integer arithmetic** (i128 operations) only. The CPU accelerates 128-bit integer operations, not floating-point. This ensures true determinism across x86, ARM, RISC-V, and virtualized environments.
+> ⚠️ **ARCHITECTURE (RFC-0124)**: DFP MUST NOT exist in the runtime execution path. All DFP values are lowered to DQA at compile time via RFC-0124's deterministic lowering pass. The runtime executes DQA only. This ensures:
+>
+> - Zero runtime overhead for lowering
+> - Single execution path (DQA only)
+> - Minimal consensus surface
+> - ZK-friendly execution
+>
+> Hardware fast-path has been **removed**. DFP uses **pure integer arithmetic** (i128 operations) only during lowering, not at runtime. The CPU accelerates 128-bit integer operations, not floating-point. This ensures true determinism across x86, ARM, RISC-V, and virtualized environments.
 
 ### Execution Verification
 

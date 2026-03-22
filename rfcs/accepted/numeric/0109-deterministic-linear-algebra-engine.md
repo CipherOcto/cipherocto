@@ -2,17 +2,20 @@
 
 ## Status
 
-**Version:** 2.4
+**Version:** 2.5
 **Status:** Accepted
 **Submission Date:** 2026-03-10
 **Acceptance Date:** 2026-03-21
+**Last Updated:** 2026-03-22
 **Adversarial Review Response:** v2.4 passed ninth adversarial audit with all CRIT/HIGH/MED resolved. 42-entry verification probe with Merkle root `fa69010dc5238f79dfd410123c1b87fab9f1ea6de52424648672d003c562ff0e` confirmed.
 
 > **Note:** This RFC was renumbered from RFC-0148 to RFC-0109 as part of the category-based numbering system.
 
 ## Summary
 
-This RFC defines the Deterministic Linear Algebra Engine (DLAE) for the CipherOcto VM. The DLAE provides consensus-safe primitives for vector and matrix operations, distance metrics, dot products, and neural inference. All operations produce bit-identical results across all nodes, building on the numeric types defined in RFC-0106 (DQA, DVEC, DMAT). No floating-point arithmetic is permitted.
+This RFC defines the Deterministic Linear Algebra Engine (DLAE) for the CipherOcto VM. The DLAE provides consensus-safe primitives for vector and matrix operations, distance metrics, dot products, and neural inference. All operations produce bit-identical results across all nodes, building on the numeric types defined in RFC-0105 (DQA, DVEC, DMAT). **All DLAE operations operate exclusively on DQA. No floating-point arithmetic is permitted in consensus-critical execution.**
+
+> ⚠️ **NUMERIC CONTRACT (RFC-0124)**: DLAE operations MUST use DQA only. Any floating-point-like representation (DFP, FLOAT, DOUBLE) MUST be compiled to DQA prior to DLAE execution via RFC-0124's deterministic lowering pass. DFP is a source-level type that does not reach the execution layer.
 
 ## Design Goals
 
@@ -40,7 +43,7 @@ The CipherOcto VM requires deterministic linear algebra operations for:
 
 ```mermaid
 graph TB
-    subgraph "RFC-0106 Numeric Types"
+    subgraph "RFC-0105 Numeric Types"
         INT[INT]
         BIGINT[BIGINT]
         DQA[DQA]
@@ -48,7 +51,7 @@ graph TB
         DMAT[DMAT]
     end
 
-    subgraph "DLAE Layer"
+    subgraph "DLAE Layer (DQA-only)"
         VEC_OPS[Vector Ops<br/>Add, Sub, Scale]
         MAT_OPS[Matrix Ops<br/>Mul, Transpose]
         DIST[Distance Metrics<br/>L2, Cosine]

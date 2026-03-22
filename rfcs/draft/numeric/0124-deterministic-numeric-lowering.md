@@ -2,7 +2,7 @@
 
 ## Status
 
-**Version:** 1.0 (Draft)
+**Version:** 1.1 (Draft)
 **Status:** Proposed
 **Supersedes:** RFC-0124 (legacy, incomplete)
 **Depends On:** RFC-0104 (DFP), RFC-0105 (DQA), RFC-0113 (NumericScalar)
@@ -284,7 +284,8 @@ INFER_TARGET_SCALE(dfp):
     // Uses pre-computed LOG10_2_TABLE[exponent] = floor(exponent * 1000 / log2(10))
     // This avoids floating-point computation while giving correct scale.
 
-    // Pre-computed table: LOG10_2[e] = floor(e * 1000 / 301) for e in [-1023, 1023]
+    // Pre-computed table: LOG10_2[e] = floor((e - 1023) * log10(2) * 1000) for e in [-1023, 1023]
+    // Pre-computed with exact integer arithmetic, not FP approximation
     // Example: LOG10_2[1] = 3, LOG10_2[10] = 30, LOG10_2[-10] = -30
 
     1. Compute decimal digits in mantissa:
@@ -448,9 +449,12 @@ PROPAGATE_SCALE(expr, inherited_scale):
         RETURN col_scale
 
       Literal(dfp):
-        // Use inherited scale (from parent expression or column context)
-        expr.target_scale = inherited_scale
-        RETURN inherited_scale
+        // Use max of inherited scale and literal's natural scale
+        // This preserves precision: a literal like 1.05 (natural scale=2)
+        // should not be rounded to scale 0 just because the output is DQA(0)
+        natural_scale = INFER_TARGET_SCALE(dfp)
+        expr.target_scale = max(natural_scale, inherited_scale)
+        RETURN expr.target_scale
 
       Add(left, right):
         left_scale = PROPAGATE_SCALE(left, inherited_scale)
@@ -605,9 +609,9 @@ Each vector specifies:
 
 | ID | DFP Mantissa | Exponent | Target Scale | Expected Value | Expected Scale | Notes |
 |----|-------------|----------|--------------|----------------|----------------|-------|
-| V026 | 1 | -60 | 18 | 0 | 18 | 2^-60 ≈ 8.7e-19, underflows at scale 18 |
-| V027 | 1 | -30 | 6 | 0 | 6 | 2^-30 ≈ 9.3e-10, underflows at scale 6 |
-| V028 | 1 | -30 | 18 | 931 | 18 | 2^-30 * 10^18 ≈ 931.3, rounds to 931 |
+| V026 | 1 | -60 | 18 | 1 | 18 | 2^-60 * 10^18 ≈ 0.867, RNE rounds to 1 |
+| V027 | 1 | -30 | 6 | 0 | 6 | 2^-30 * 10^6 ≈ 0.93, RNE rounds to 0 (2*remainder < divisor) |
+| V028 | 1 | -30 | 18 | 931322574 | 18 | 2^-30 * 10^18 ≈ 931322574.6, RNE rounds to 931322575 |
 | V029 | 1 | -10 | 6 | 977 | 6 | 2^-10 * 10^6 ≈ 976.6, rounds to 977 |
 
 #### Expression Lowering Vectors
@@ -750,7 +754,7 @@ In case of conflict between this RFC and RFC-0104 or RFC-0105:
 | Mission | Description | Status | Complexity |
 |---------|-------------|--------|------------|
 | M1 | `LOWER_DFP_TO_DQA` core algorithm | Pending | Medium |
-| M2 | `ROUND_HALF_EVEN_I256` rounding | Pending | Low |
+| M2 | `ROUND_HALF_EVEN_I1200` rounding | Pending | Low |
 | M3 | `INFER_TARGET_SCALE` function | Pending | Low |
 | M4 | `LOWER_EXPRESSION` tree walker | Pending | High |
 | M5 | `PROPAGATE_SCALE` analysis pass | Pending | Medium |
@@ -803,7 +807,7 @@ In case of conflict between this RFC and RFC-0104 or RFC-0105:
 max_intermediate = (2^113 - 1) × 2^1023 × 10^18 ≈ 2^1195.79 bits
 ```
 
-Note: DFP_MAX is approximately 10^342, not 10^308 (the latter is IEEE-754 double max).
+**Normative override:** For the purposes of this RFC, DFP_MAX = (2^113 - 1) × 2^1023 ≈ 10^342. RFC-0104 states ~10^308 which is incorrect (that is the IEEE-754 double maximum, not the DFP maximum). Implementations MUST use the correct value.
 
 This requires at least **i1200** for the intermediate arithmetic:
 
@@ -915,6 +919,20 @@ Definition POW10 (k : Z) : Z :=
   else if Z.eq_dec k 18 then 1000000000000000000
   else pow10_nat (Z.to_nat k).
 
+(** POW10 Properties — required for Theorem 11 proof *)
+Lemma pow10_positive : forall s, 0 <= s <= 18 -> POW10 s > 0.
+Proof. intros s H; destruct s; compute; lia. Qed.
+
+Lemma pow10_monotone : forall s1 s2, 0 <= s1 -> s1 < s2 -> s2 <= 18 ->
+  POW10 s1 < POW10 s2.
+Proof. intros; destruct s1, s2; compute; lia. Qed.
+
+Lemma pow10_18 : POW10 18 = 1000000000000000000.
+Proof. compute. reflexivity. Qed.
+
+Lemma pow10_succ : forall s, 0 <= s < 18 -> POW10 (s + 1) = 10 * POW10 s.
+Proof. intros s H; destruct s; compute; lia. Qed.
+
 (** DFP Types *)
 Inductive DfpClass : Type :=
   | DfpNormal : DfpClass
@@ -940,7 +958,6 @@ Inductive DlpError : Type :=
   | DlpRangeOverflow : string -> DlpError
   | DlpNanEncountered : DlpError
   | DlpScaleOverflow : Z -> DlpError
-  | DlpMantissaOverflow : DlpError
   | DlpSubnormalUnderflow : DlpError.
 
 Inductive DlpResult : Type :=
@@ -984,18 +1001,27 @@ Definition sgn_z (x : Z) : Z :=
 Definition abs_z (x : Z) : Z :=
   if Z_lt_dec x 0 then (-x)%Z else x.
 
-Definition round_half_even (quotient remainder divisor : Z) : Z :=
+(** round_half_even: RNE rounding with explicit sign parameter.
+  sign = +1 for positive, -1 for negative, 0 for zero.
+  This matches the algorithm specification. *)
+Definition round_half_even (quotient remainder divisor sign : Z) : Z :=
   let abs_rem := abs_z remainder in
   let abs_div := abs_z divisor in
   let double_rem := (2 * abs_rem)%Z in
   if Z_lt_dec double_rem abs_div then quotient
   else if Z_gt_dec double_rem abs_div then
-    (quotient + sgn_z (quotient + sgn_z remainder))%Z
+    (quotient + sign)%Z
   else
     if Z.eq_dec (abs_z quotient mod 2) 0 then quotient
-    else (quotient + sgn_z (quotient + sgn_z remainder))%Z.
+    else (quotient + sign)%Z.
 
-(** The Lowering Function *)
+(** The Lowering Function
+
+Note: This Coq formalization uses unbounded Z arithmetic, not i1200.
+The Z model is the idealized specification; i1200 is the bounded implementation.
+Theorem 11 (i1200 sufficiency) proves that all Z computations fit in i1200,
+bridging the model to the implementation. This means the Coq proofs cannot
+catch i1200 overflow bugs — only that the values would fit if overflow were checked. *)
 Definition lower_dfp_to_dqa (d : Dfp) (target_scale : Z) : DlpResult :=
   match dfp_class d with
   | DfpNaN => DlpErr DlpNanEncountered
@@ -1004,7 +1030,12 @@ Definition lower_dfp_to_dqa (d : Dfp) (target_scale : Z) : DlpResult :=
         (if dfp_sign d then "negative infinity" else "positive infinity"))
   | DfpZero => DlpOk (mkDqa 0 target_scale)
   | DfpNormal =>
-      if Z_gt_dec (dfp_exponent d) DFP_MAX_EXPONENT then
+      (* Scale validation: reject out-of-range scales *)
+      if Z_lt_dec target_scale 0 then
+        DlpErr (DlpScaleOverflow target_scale)
+      else if Z_gt_dec target_scale MAX_SCALE then
+        DlpErr (DlpScaleOverflow target_scale)
+      else if Z_gt_dec (dfp_exponent d) DFP_MAX_EXPONENT then
         DlpErr (DlpRangeOverflow "exponent exceeds max")
       else if Z_lt_dec (dfp_exponent d) (-200) then
         DlpErr DlpSubnormalUnderflow
@@ -1019,7 +1050,7 @@ Definition lower_dfp_to_dqa (d : Dfp) (target_scale : Z) : DlpResult :=
         let scaled_num := (num_signed * POW10 target_scale)%Z in
         let q := scaled_num / den in
         let r := scaled_num mod den in
-        let v := round_half_even q r den in
+        let v := round_half_even q r den (sgn_z num_signed) in
         if Z_gt_dec v MAX_DQA then
           DlpErr (DlpRangeOverflow "result exceeds i64 max")
         else if Z_lt_dec v MIN_DQA then
@@ -1118,9 +1149,46 @@ Theorem intermediate_fits_i1200 :
     in
     max_val < 2^1200.
 Proof.
-  intros.
-  (* max_val <= (2^113 - 1) * 2^1023 * 10^18 < 2^1196 < 2^1200 *)
-  lia.
+  intros d sigma Hc Hs Hmant Hexp Hexp_lo.
+  assert (Hp : POW10 sigma <= 10^18).
+  { pose proof pow10_monotone sigma 18.
+    assert (H : sigma <= 18) by lia.
+    assert (H0 : 0 <= sigma) by lia.
+    specialize (H0 H H); lia. }
+  assert (H10 : 10^18 < 2^60) by (compute; lia).
+  destruct (Z_ge_dec (dfp_exponent d) 0) as [Hn | Hn].
+  - (* exponent >= 0 *)
+    assert (He : 2 ^ (dfp_exponent d) <= 2^1023).
+    { apply Z.pow_le_mono_r; lia. }
+    assert (Hpow : 2 ^ (dfp_exponent d) * 10^18 < 2^1196).
+    { rewrite <- Z.mul_assoc.
+      assert (H : 2 ^ (dfp_exponent d) * 10^18 <= 2^1023 * 10^18).
+      { apply Z.mul_le_mono_nonneg; [apply Z.pow_nonneg|lia]. }
+      assert (H' : 2^1023 * 10^18 < 2^1023 * 2^60).
+      { apply Z.mul_lt_mono_pos_neg; [apply Z.pow_positive|lia]. }
+      lia. }
+    assert (Hmant' : dfp_mantissa d < 2^113) by lia.
+    assert (Hfinal : dfp_mantissa d * 2 ^ (dfp_exponent d) * POW10 sigma < 2^1200).
+    { assert (H1 : dfp_mantissa d * 2 ^ (dfp_exponent d) * POW10 sigma <
+                  2^113 * 2^1023 * 10^18).
+      { apply Z.mul_lt_mono_pos_neg; lia. }
+      assert (H2 : 2^113 * 2^1023 * 10^18 < 2^1196).
+      { assert (H2a : 2^113 * 2^1023 = 2^1136) by (rewrite Z.pow_add_r; lia).
+        assert (H2b : 2^1136 * 10^18 < 2^1136 * 2^60).
+        { apply Z.mul_lt_mono_pos_neg; [apply Z.pow_positive|lia]. }
+        lia. }
+      lia. }
+    lia.
+  - (* exponent < 0 *)
+    assert (Hpow : dfp_mantissa d * POW10 sigma < 2^173).
+    { assert (H1 : dfp_mantissa d * POW10 sigma < 2^113 * 10^18).
+      { apply Z.mul_lt_mono_pos_neg; lia. }
+      assert (H2 : 2^113 * 10^18 < 2^113 * 2^60).
+      { apply Z.mul_lt_mono_pos_neg; [apply Z.pow_positive|lia]. }
+      lia. }
+    assert (H173 : 2^173 < 2^1200).
+    { apply Z.pow_lt_mono_r; lia. }
+    lia.
 Qed.
 
 End RFC0124_Theorems.

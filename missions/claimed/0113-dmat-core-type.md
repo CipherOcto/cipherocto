@@ -1,7 +1,7 @@
 # Mission: DMAT Core Type Implementation
 
 ## Status
-Open (unclaimed)
+Claimed
 
 ## RFC
 RFC-0113 v1.21 (Numeric): Deterministic Matrices (DMAT)

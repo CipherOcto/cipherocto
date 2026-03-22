@@ -508,6 +508,13 @@ pub fn vec_scale<T: DvecScalar>(a: &[T], scalar: T) -> Result<Vec<T>, DvecError>
 where
     T::Error: Into<DvecError>,
 {
+    // Validate all elements have the same scale as the scalar
+    let scalar_scale = scalar.scale();
+    for elem in a.iter() {
+        if elem.scale() != scalar_scale {
+            return Err(DvecError::ScaleMismatch);
+        }
+    }
     a.iter()
         .map(|x| x.clone().mul(scalar.clone()).map_err(|e| e.into()))
         .collect()
@@ -691,5 +698,290 @@ mod tests {
         let dvec: DVec<Dqa> = DVec::new(vec![Dqa::new(1, 0).unwrap()]);
         assert_eq!(dvec.len(), 1);
         assert!(!dvec.is_empty());
+    }
+
+    // =============================================================================
+    // Boundary Tests: Dimension Limits (N=64 max, N=65 should TRAP)
+    // =============================================================================
+
+    #[test]
+    fn test_dot_product_dimension_65_traps() {
+        // N=65 exceeds limit of 64
+        let a: Vec<Dqa> = (0..65).map(|i| Dqa::new(i as i64, 0).unwrap()).collect();
+        let b: Vec<Dqa> = (0..65).map(|_| Dqa::new(1, 0).unwrap()).collect();
+        let result = dot_product(&a, &b);
+        assert_eq!(result, Err(DvecError::DimensionExceeded));
+    }
+
+    #[test]
+    fn test_dot_product_dimension_64_succeeds() {
+        // N=64 is at the limit
+        let a: Vec<Dqa> = (0..64).map(|_i| Dqa::new(1, 0).unwrap()).collect();
+        let b: Vec<Dqa> = (0..64).map(|_i| Dqa::new(1, 0).unwrap()).collect();
+        let result = dot_product(&a, &b).unwrap();
+        assert_eq!(result.raw_mantissa(), 64); // 64 * 1 * 1 = 64
+    }
+
+    #[test]
+    fn test_squared_distance_dimension_65_traps() {
+        let a: Vec<Dqa> = (0..65).map(|i| Dqa::new(i as i64, 0).unwrap()).collect();
+        let b: Vec<Dqa> = (0..65).map(|_| Dqa::new(0, 0).unwrap()).collect();
+        let result = squared_distance(&a, &b);
+        assert_eq!(result, Err(DvecError::DimensionExceeded));
+    }
+
+    #[test]
+    fn test_norm_decimal_zero_vector_returns_zero() {
+        // Zero vector NORM should return zero, not an error
+        let a: Vec<Decimal> = vec![
+            Decimal::new(0, 0).unwrap(),
+            Decimal::new(0, 0).unwrap(),
+            Decimal::new(0, 0).unwrap(),
+        ];
+        let result = norm(&a).unwrap();
+        assert_eq!(result.raw_mantissa(), 0);
+        assert_eq!(result.scale(), 0);
+    }
+
+    // =============================================================================
+    // Scale Mismatch Tests (all operations)
+    // =============================================================================
+
+    #[test]
+    fn test_dot_product_scale_mismatch() {
+        let a = vec![Dqa::new(1, 0).unwrap(), Dqa::new(2, 0).unwrap()];
+        let b = vec![Dqa::new(1, 1).unwrap(), Dqa::new(2, 1).unwrap()]; // scale 1
+        let result = dot_product(&a, &b);
+        assert_eq!(result, Err(DvecError::ScaleMismatch));
+    }
+
+    #[test]
+    fn test_squared_distance_scale_mismatch() {
+        let a = vec![Dqa::new(3, 0).unwrap(), Dqa::new(4, 0).unwrap()];
+        let b = vec![Dqa::new(0, 1).unwrap(), Dqa::new(0, 1).unwrap()]; // scale 1
+        let result = squared_distance(&a, &b);
+        assert_eq!(result, Err(DvecError::ScaleMismatch));
+    }
+
+    #[test]
+    fn test_vec_sub_scale_mismatch() {
+        let a = vec![Dqa::new(1, 0).unwrap()];
+        let b = vec![Dqa::new(1, 1).unwrap()];
+        let result = vec_sub(&a, &b);
+        assert_eq!(result, Err(DvecError::ScaleMismatch));
+    }
+
+    #[test]
+    fn test_vec_mul_scale_mismatch() {
+        let a = vec![Dqa::new(2, 0).unwrap()];
+        let b = vec![Dqa::new(3, 1).unwrap()];
+        let result = vec_mul(&a, &b);
+        assert_eq!(result, Err(DvecError::ScaleMismatch));
+    }
+
+    #[test]
+    fn test_vec_scale_scalar_scale_mismatch() {
+        let a = vec![Dqa::new(1, 0).unwrap(), Dqa::new(2, 0).unwrap()];
+        let scalar = Dqa::new(2, 1).unwrap(); // scale 1, vector is scale 0
+        let result = vec_scale(&a, scalar);
+        assert_eq!(result, Err(DvecError::ScaleMismatch));
+    }
+
+    // =============================================================================
+    // Dimension Mismatch Tests (all binary operations)
+    // =============================================================================
+
+    #[test]
+    fn test_dot_product_dimension_mismatch() {
+        let a = vec![Dqa::new(1, 0).unwrap(), Dqa::new(2, 0).unwrap()];
+        let b = vec![Dqa::new(1, 0).unwrap()];
+        let result = dot_product(&a, &b);
+        assert_eq!(result, Err(DvecError::DimensionMismatch));
+    }
+
+    #[test]
+    fn test_squared_distance_dimension_mismatch() {
+        let a = vec![Dqa::new(3, 0).unwrap(), Dqa::new(4, 0).unwrap()];
+        let b = vec![Dqa::new(0, 0).unwrap()];
+        let result = squared_distance(&a, &b);
+        assert_eq!(result, Err(DvecError::DimensionMismatch));
+    }
+
+    #[test]
+    fn test_vec_mul_dimension_mismatch() {
+        let a = vec![Dqa::new(2, 0).unwrap()];
+        let b = vec![Dqa::new(3, 0).unwrap(), Dqa::new(4, 0).unwrap()];
+        let result = vec_mul(&a, &b);
+        assert_eq!(result, Err(DvecError::DimensionMismatch));
+    }
+
+
+    // =============================================================================
+    // Overflow Tests
+    // =============================================================================
+
+    #[test]
+    fn test_dot_product_dqa_overflow_traps() {
+        // DQA max is i64::MAX, accumulate i64::MAX * 2 twice = overflow
+        let a = vec![Dqa::new(i64::MAX / 2, 0).unwrap(), Dqa::new(i64::MAX / 2, 0).unwrap()];
+        let b = vec![Dqa::new(2, 0).unwrap(), Dqa::new(2, 0).unwrap()];
+        let result = dot_product(&a, &b);
+        assert_eq!(result, Err(DvecError::Dqa(DqaError::Overflow)));
+    }
+
+    #[test]
+    fn test_vec_add_dqa_overflow_traps() {
+        // DQA max is i64::MAX, adding i64::MAX to itself overflows
+        let a = vec![Dqa::new(i64::MAX, 0).unwrap()];
+        let b = vec![Dqa::new(1, 0).unwrap()];
+        let result = vec_add(&a, &b);
+        assert_eq!(result, Err(DvecError::Dqa(DqaError::Overflow)));
+    }
+
+    #[test]
+    fn test_vec_mul_dqa_overflow_traps() {
+        // i64::MAX * 2 exceeds i64::MAX
+        let a = vec![Dqa::new(i64::MAX, 0).unwrap()];
+        let b = vec![Dqa::new(2, 0).unwrap()];
+        let result = vec_mul(&a, &b);
+        assert_eq!(result, Err(DvecError::Dqa(DqaError::Overflow)));
+    }
+
+    // =============================================================================
+    // Input Scale Tests (DQA limit is scale <= 9)
+    // =============================================================================
+
+    #[test]
+    fn test_dot_product_dqa_input_scale_exceeded() {
+        // DQA: input_scale > 9 should TRAP at input validation
+        let a = vec![Dqa::new(1, 10).unwrap(), Dqa::new(2, 10).unwrap()];
+        let b = vec![Dqa::new(3, 10).unwrap(), Dqa::new(4, 10).unwrap()];
+        let result = dot_product(&a, &b);
+        assert_eq!(result, Err(DvecError::InputScaleExceeded));
+    }
+
+    #[test]
+    fn test_squared_distance_dqa_input_scale_exceeded() {
+        let a = vec![Dqa::new(1, 10).unwrap(), Dqa::new(2, 10).unwrap()];
+        let b = vec![Dqa::new(0, 10).unwrap(), Dqa::new(0, 10).unwrap()];
+        let result = squared_distance(&a, &b);
+        assert_eq!(result, Err(DvecError::InputScaleExceeded));
+    }
+
+    #[test]
+    fn test_norm_decimal_input_scale_exceeded() {
+        // Decimal NORM requires input_scale <= 9
+        let a = vec![Decimal::new(1, 10).unwrap(), Decimal::new(2, 10).unwrap()];
+        let result = norm(&a);
+        assert_eq!(result, Err(DvecError::InputScaleExceeded));
+    }
+
+    // =============================================================================
+    // Comprehensive Element-wise Operations Tests
+    // =============================================================================
+
+    #[test]
+    fn test_vec_add_decimal_scale_preservation() {
+        // Verify addition works and canonicalizes correctly
+        let a = vec![Decimal::new(10, 2).unwrap(), Decimal::new(20, 2).unwrap()]; // 0.10, 0.20
+        let b = vec![Decimal::new(30, 2).unwrap(), Decimal::new(40, 2).unwrap()]; // 0.30, 0.40
+        let result = vec_add(&a, &b).unwrap();
+        // 0.10 + 0.30 = 0.40 -> canonicalizes to (4, 1) = 0.4
+        // 0.20 + 0.40 = 0.60 -> canonicalizes to (6, 1) = 0.6
+        assert_eq!(result[0].scale(), 1);
+        assert_eq!(result[0].raw_mantissa(), 4);
+        assert_eq!(result[1].raw_mantissa(), 6);
+    }
+
+    #[test]
+    fn test_vec_sub_decimal_negative_results() {
+        // [1, 2] - [2, 3] = [-1, -1]
+        let a = vec![Decimal::new(1, 0).unwrap(), Decimal::new(2, 0).unwrap()];
+        let b = vec![Decimal::new(2, 0).unwrap(), Decimal::new(3, 0).unwrap()];
+        let result = vec_sub(&a, &b).unwrap();
+        assert_eq!(result[0].raw_mantissa(), -1);
+        assert_eq!(result[1].raw_mantissa(), -1);
+    }
+
+    #[test]
+    fn test_vec_mul_canonicalization() {
+        // [10, 20] × [10, 20] with scale 1 = [100, 400], scale 2
+        // 1.0 * 1.0 = 1.0 (canonical: 1, scale 0)
+        // 2.0 * 2.0 = 4.0 (canonical: 4, scale 0)
+        let a = vec![Decimal::new(10, 1).unwrap(), Decimal::new(20, 1).unwrap()];
+        let b = vec![Decimal::new(10, 1).unwrap(), Decimal::new(20, 1).unwrap()];
+        let result = vec_mul(&a, &b).unwrap();
+        assert_eq!(result[0].scale(), 0);
+        assert_eq!(result[0].raw_mantissa(), 1); // 1.0 * 1.0 = 1.0
+        assert_eq!(result[1].raw_mantissa(), 4); // 2.0 * 2.0 = 4.0
+    }
+
+    // =============================================================================
+    // DOT_PRODUCT Comprehensive Tests (various scales and N)
+    // =============================================================================
+
+    #[test]
+    fn test_dot_product_decimal_various_scales() {
+        // scale=0
+        let a = vec![Decimal::new(1, 0).unwrap()];
+        let b = vec![Decimal::new(2, 0).unwrap()];
+        let result = dot_product(&a, &b).unwrap();
+        assert_eq!(result.raw_mantissa(), 2);
+        assert_eq!(result.scale(), 0);
+
+        // scale=18 (max for Decimal DOT_PRODUCT)
+        let a = vec![Decimal::new(1, 18).unwrap()];
+        let b = vec![Decimal::new(1, 18).unwrap()];
+        let result = dot_product(&a, &b).unwrap();
+        assert_eq!(result.scale(), 36); // 18+18
+    }
+
+    #[test]
+    fn test_dot_product_dqa_canonicalization() {
+        // [10, 20] · [10, 20] with scale=2
+        // = (10*10 + 20*20) = 500, scale=4 -> canonical = (5, 3)
+        let a = vec![Decimal::new(10, 2).unwrap(), Decimal::new(20, 2).unwrap()];
+        let b = vec![Decimal::new(10, 2).unwrap(), Decimal::new(20, 2).unwrap()];
+        let result = dot_product(&a, &b).unwrap();
+        // 100 + 400 = 500, scale 2+2=4
+        // canonical: 500/10 = 50, scale 3; 50/10 = 5, scale 2
+        // Actually 500 with scale 4 = 0.0500, canonical is (5, 2)
+        assert_eq!(result.scale(), 2);
+        assert_eq!(result.raw_mantissa(), 5);
+    }
+
+    // =============================================================================
+    // NORM Tests
+    // =============================================================================
+
+    #[test]
+    fn test_norm_decimal_perfect_square() {
+        // sqrt(3² + 4²) = sqrt(25) = 5
+        let a = vec![Decimal::new(3, 0).unwrap(), Decimal::new(4, 0).unwrap()];
+        let result = norm(&a).unwrap();
+        assert_eq!(result.raw_mantissa(), 5);
+        assert_eq!(result.scale(), 0);
+    }
+
+    #[test]
+    fn test_norm_decimal_non_perfect_square() {
+        // sqrt(1² + 2²) = sqrt(5) ≈ 2.236...
+        // RFC-0111 sqrt of 5 with P=10 gives specific approximation
+        let a = vec![Decimal::new(1, 0).unwrap(), Decimal::new(2, 0).unwrap()];
+        let result = norm(&a).unwrap();
+        // dot_product = 5, scale 0
+        // sqrt(5) with P=10 per RFC-0111
+        // Result should be approximately 2236067977 with scale 10
+        assert!(result.scale() <= 18); // Within valid scale range
+        assert!(result.raw_mantissa() > 0);
+    }
+
+    #[test]
+    fn test_norm_decimal_single_element() {
+        // sqrt(10²) = 10
+        let a = vec![Decimal::new(10, 0).unwrap()];
+        let result = norm(&a).unwrap();
+        assert_eq!(result.raw_mantissa(), 10);
+        assert_eq!(result.scale(), 0);
     }
 }

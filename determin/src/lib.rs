@@ -35,6 +35,7 @@ pub mod decimal;
 #[cfg(feature = "use-internal-bigint")]
 pub mod decimal_internal;
 pub mod dqa;
+pub mod dmat;
 pub mod dvec;
 #[cfg(test)]
 mod fuzz;
@@ -53,6 +54,7 @@ pub use dvec::{
     dot_product, norm, normalize, squared_distance, vec_add, vec_mul, vec_scale, vec_sub, DVec,
     DvecError, DvecScalar,
 };
+pub use dmat::{DMat, DmatError, NumericScalar};
 
 use serde::{Deserialize, Serialize};
 

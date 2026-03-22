@@ -600,6 +600,161 @@ pub fn gas_mat_vec_mul(rows: usize, cols: usize, scale_a: u8, scale_v: u8) -> u6
 }
 
 // =============================================================================
+// MAT_TRANSPOSE — Matrix Transpose
+// =============================================================================
+
+/// Matrix transpose: result[i,j] = a[j,i]
+///
+/// # Phase Model
+/// - Phase 0: TRAP sentinel pre-check
+/// - Phase 1: Dimension validation
+/// - Phase 2: Scale validation (uniform elements)
+/// - Phase 3: Compute with index swap
+///
+/// # Gas
+/// `2 × M × N`
+pub fn mat_transpose<T: NumericScalar>(a: &DMat<T>) -> Result<DMat<T>, DmatError> {
+    // Phase 0: TRAP sentinel pre-check
+    for i in 0..a.rows {
+        for j in 0..a.cols {
+            if a.data[i * a.cols + j].is_trap() {
+                return Err(DmatError::TrapInput);
+            }
+        }
+    }
+
+    // Phase 1: Dimension validation
+    let rows = a.rows;
+    let cols = a.cols;
+    if rows == 0 || cols == 0 {
+        return Err(DmatError::DimensionError);
+    }
+    if rows * cols > 64 {
+        return Err(DmatError::DimensionError);
+    }
+    if rows > 8 || cols > 8 {
+        return Err(DmatError::DimensionError);
+    }
+
+    // Phase 2: Scale validation — uniform within matrix
+    let common_scale = a.data[0].scale();
+    for i in 0..a.rows {
+        for j in 0..a.cols {
+            if a.data[i * a.cols + j].scale() != common_scale {
+                return Err(DmatError::ScaleMismatch);
+            }
+        }
+    }
+
+    // Phase 3: Compute — result[i,j] = a[j,i]
+    // Result is cols × rows
+    let mut result_data = Vec::with_capacity(rows * cols);
+    for i in 0..cols {
+        for j in 0..rows {
+            result_data.push(a.data[j * cols + i].clone());
+        }
+    }
+
+    DMat::new(cols, rows, result_data).map_err(|_| DmatError::DimensionError)
+}
+
+/// Calculate gas for MAT_TRANSPOSE.
+///
+/// Formula: 2 × M × N
+pub fn gas_mat_transpose(rows: usize, cols: usize) -> u64 {
+    2 * (rows * cols) as u64
+}
+
+// =============================================================================
+// MAT_SCALE — Scalar Multiplication
+// =============================================================================
+
+/// Matrix scalar multiplication: result[i,j] = a[i,j] × scalar
+///
+/// # Phase Model
+/// - Phase 0: TRAP sentinel pre-check (scalar FIRST, then matrix — per RFC)
+/// - Phase 1: Dimension validation
+/// - Phase 2: Scale validation + result_scale check (s_a + s_scalar ≤ MAX_SCALE)
+/// - Phase 3: Compute element-wise multiplication
+///
+/// # Gas
+/// `M × N × (20 + 3 × s_a × s_scalar)`
+pub fn mat_scale<T: NumericScalar>(a: &DMat<T>, scalar: &T) -> Result<DMat<T>, DmatError> {
+    // Phase 0: TRAP sentinel pre-check — scalar FIRST, then matrix
+    // Note: RFC requires scalar checked before matrix
+    if scalar.is_trap() {
+        return Err(DmatError::TrapInput);
+    }
+    for i in 0..a.rows {
+        for j in 0..a.cols {
+            if a.data[i * a.cols + j].is_trap() {
+                return Err(DmatError::TrapInput);
+            }
+        }
+    }
+
+    // Phase 1: Dimension validation
+    let rows = a.rows;
+    let cols = a.cols;
+    if rows == 0 || cols == 0 {
+        return Err(DmatError::DimensionError);
+    }
+    if rows * cols > 64 {
+        return Err(DmatError::DimensionError);
+    }
+    if rows > 8 || cols > 8 {
+        return Err(DmatError::DimensionError);
+    }
+
+    // Phase 2: Matrix scale validation + scalar scale + result_scale
+    let scale_a = a.data[0].scale();
+    for i in 0..a.rows {
+        for j in 0..a.cols {
+            if a.data[i * a.cols + j].scale() != scale_a {
+                return Err(DmatError::ScaleMismatch);
+            }
+        }
+    }
+    let scale_scalar = scalar.scale();
+    let result_scale = scale_a
+        .checked_add(scale_scalar)
+        .ok_or(DmatError::InvalidScale)?;
+    if result_scale > T::MAX_SCALE {
+        return Err(DmatError::InvalidScale);
+    }
+
+    // Phase 3: Compute element-wise multiplication
+    let mut result_data = Vec::with_capacity(rows * cols);
+    for i in 0..rows {
+        for j in 0..cols {
+            let product = a.data[i * cols + j]
+                .mul(scalar)
+                .map_err(|e| e.into())?;
+            result_data.push(product);
+        }
+    }
+
+    DMat::new(rows, cols, result_data).map_err(|_| DmatError::DimensionError)
+}
+
+/// Calculate gas for MAT_SCALE.
+///
+/// Formula: M × N × (20 + 3 × s_a × s_scalar)
+///
+/// # Arguments
+/// * `rows` - Matrix rows
+/// * `cols` - Matrix cols
+/// * `scale_a` - Element scale of matrix A
+/// * `scale_scalar` - Element scale of scalar
+pub fn gas_mat_scale(rows: usize, cols: usize, scale_a: u8, scale_scalar: u8) -> u64 {
+    let rows = rows as u64;
+    let cols = cols as u64;
+    let scale_a = scale_a as u64;
+    let scale_scalar = scale_scalar as u64;
+    rows * cols * (20 + 3 * scale_a * scale_scalar)
+}
+
+// =============================================================================
 // Implement NumericScalar for Dqa
 // =============================================================================
 
@@ -1458,5 +1613,191 @@ mod tests {
         // gas = 2 * 3 * (30 + 3 * 2 * 3) = 6 * (30 + 18) = 6 * 48 = 288
         let gas = gas_mat_vec_mul(2, 3, 2, 3);
         assert_eq!(gas, 288);
+    }
+
+    // =============================================================================
+    // MAT_TRANSPOSE Tests
+    // =============================================================================
+
+    #[test]
+    fn test_mat_transpose_dqa_basic() {
+        // 2×3 → 3×2
+        // A = [[1, 2, 3], [4, 5, 6]]
+        // A' = [[1, 4], [2, 5], [3, 6]]
+        let a_data = vec![
+            Dqa::new(1, 0).unwrap(),
+            Dqa::new(2, 0).unwrap(),
+            Dqa::new(3, 0).unwrap(),
+            Dqa::new(4, 0).unwrap(),
+            Dqa::new(5, 0).unwrap(),
+            Dqa::new(6, 0).unwrap(),
+        ];
+        let a = DMat::new(2, 3, a_data).unwrap();
+        let result = mat_transpose(&a).unwrap();
+        assert_eq!(result.rows, 3);
+        assert_eq!(result.cols, 2);
+        assert_eq!(result[(0, 0)], Dqa::new(1, 0).unwrap());
+        assert_eq!(result[(0, 1)], Dqa::new(4, 0).unwrap());
+        assert_eq!(result[(1, 0)], Dqa::new(2, 0).unwrap());
+        assert_eq!(result[(1, 1)], Dqa::new(5, 0).unwrap());
+        assert_eq!(result[(2, 0)], Dqa::new(3, 0).unwrap());
+        assert_eq!(result[(2, 1)], Dqa::new(6, 0).unwrap());
+    }
+
+    #[test]
+    fn test_mat_transpose_decimal_basic() {
+        // Square 2×2 → 2×2
+        let a_data = vec![
+            Decimal::new(1, 0).unwrap(),
+            Decimal::new(2, 0).unwrap(),
+            Decimal::new(3, 0).unwrap(),
+            Decimal::new(4, 0).unwrap(),
+        ];
+        let a = DMat::new(2, 2, a_data).unwrap();
+        let result = mat_transpose(&a).unwrap();
+        assert_eq!(result.rows, 2);
+        assert_eq!(result.cols, 2);
+        assert_eq!(result[(0, 0)], Decimal::new(1, 0).unwrap());
+        assert_eq!(result[(0, 1)], Decimal::new(3, 0).unwrap());
+        assert_eq!(result[(1, 0)], Decimal::new(2, 0).unwrap());
+        assert_eq!(result[(1, 1)], Decimal::new(4, 0).unwrap());
+    }
+
+    #[test]
+    fn test_mat_transpose_trap_sentinel() {
+        let trap = Dqa {
+            value: i64::MIN,
+            scale: 0xFF,
+        };
+        let normal = Dqa::new(1, 0).unwrap();
+        let a_data = vec![normal, normal, trap, normal, normal, normal]; // 2×3
+        let a = DMat::new(2, 3, a_data).unwrap();
+        assert!(matches!(mat_transpose(&a), Err(DmatError::TrapInput)));
+    }
+
+    #[test]
+    fn test_mat_transpose_scale_mismatch() {
+        let a_data = vec![
+            Dqa::new(1, 0).unwrap(),
+            Dqa::new(2, 0).unwrap(),
+            Dqa::new(3, 1).unwrap(), // scale 1
+            Dqa::new(4, 0).unwrap(),
+            Dqa::new(5, 0).unwrap(),
+            Dqa::new(6, 0).unwrap(),
+        ];
+        let a = DMat::new(2, 3, a_data).unwrap();
+        assert!(matches!(mat_transpose(&a), Err(DmatError::ScaleMismatch)));
+    }
+
+    #[test]
+    fn test_gas_mat_transpose() {
+        // M=2, N=3: gas = 2 * 2 * 3 = 12
+        let gas = gas_mat_transpose(2, 3);
+        assert_eq!(gas, 12);
+    }
+
+    // =============================================================================
+    // MAT_SCALE Tests
+    // =============================================================================
+
+    #[test]
+    fn test_mat_scale_dqa_basic() {
+        // [[1, 2], [3, 4]] × 2 = [[2, 4], [6, 8]]
+        let a_data = vec![
+            Dqa::new(1, 0).unwrap(),
+            Dqa::new(2, 0).unwrap(),
+            Dqa::new(3, 0).unwrap(),
+            Dqa::new(4, 0).unwrap(),
+        ];
+        let scalar = Dqa::new(2, 0).unwrap();
+        let a = DMat::new(2, 2, a_data).unwrap();
+        let result = mat_scale(&a, &scalar).unwrap();
+        assert_eq!(result[(0, 0)], Dqa::new(2, 0).unwrap());
+        assert_eq!(result[(0, 1)], Dqa::new(4, 0).unwrap());
+        assert_eq!(result[(1, 0)], Dqa::new(6, 0).unwrap());
+        assert_eq!(result[(1, 1)], Dqa::new(8, 0).unwrap());
+    }
+
+    #[test]
+    fn test_mat_scale_decimal_basic() {
+        // [[1.0, 2.0], [3.0, 4.0]] × 0.5 = [[0.5, 1.0], [1.5, 2.0]]
+        let a_data = vec![
+            Decimal::new(10, 1).unwrap(), // 1.0
+            Decimal::new(20, 1).unwrap(), // 2.0
+            Decimal::new(30, 1).unwrap(), // 3.0
+            Decimal::new(40, 1).unwrap(), // 4.0
+        ];
+        let scalar = Decimal::new(5, 1).unwrap(); // 0.5
+        let a = DMat::new(2, 2, a_data).unwrap();
+        let result = mat_scale(&a, &scalar).unwrap();
+        // 10*5=50 with scale 2 = 0.50
+        assert_eq!(result[(0, 0)], Decimal::new(50, 2).unwrap());
+        assert_eq!(result[(0, 1)], Decimal::new(100, 2).unwrap());
+        assert_eq!(result[(1, 0)], Decimal::new(150, 2).unwrap());
+        assert_eq!(result[(1, 1)], Decimal::new(200, 2).unwrap());
+    }
+
+    #[test]
+    fn test_mat_scale_trap_in_scalar() {
+        let trap = Dqa {
+            value: i64::MIN,
+            scale: 0xFF,
+        };
+        let normal = Dqa::new(1, 0).unwrap();
+        let a_data = vec![normal; 4];
+        let a = DMat::new(2, 2, a_data).unwrap();
+        // Scalar TRAP checked first
+        assert!(matches!(mat_scale(&a, &trap), Err(DmatError::TrapInput)));
+    }
+
+    #[test]
+    fn test_mat_scale_trap_in_matrix() {
+        let trap = Dqa {
+            value: i64::MIN,
+            scale: 0xFF,
+        };
+        let normal = Dqa::new(1, 0).unwrap();
+        let a_data = vec![normal, normal, trap, normal]; // 2×2
+        let scalar = Dqa::new(2, 0).unwrap();
+        let a = DMat::new(2, 2, a_data).unwrap();
+        assert!(matches!(mat_scale(&a, &scalar), Err(DmatError::TrapInput)));
+    }
+
+    #[test]
+    fn test_mat_scale_matrix_scale_mismatch() {
+        let a_data = vec![
+            Dqa::new(1, 0).unwrap(),
+            Dqa::new(2, 1).unwrap(), // scale 1
+            Dqa::new(3, 0).unwrap(),
+            Dqa::new(4, 0).unwrap(),
+        ];
+        let scalar = Dqa::new(2, 0).unwrap();
+        let a = DMat::new(2, 2, a_data).unwrap();
+        assert!(matches!(mat_scale(&a, &scalar), Err(DmatError::ScaleMismatch)));
+    }
+
+    #[test]
+    fn test_mat_scale_result_scale_exceeds_max() {
+        // DQA MAX_SCALE = 18, so 10 + 10 > 18 should fail
+        let a_data = vec![Dqa::new(1, 10).unwrap(); 4];
+        let scalar = Dqa::new(1, 10).unwrap();
+        let a = DMat::new(2, 2, a_data).unwrap();
+        assert!(matches!(mat_scale(&a, &scalar), Err(DmatError::InvalidScale)));
+    }
+
+    #[test]
+    fn test_gas_mat_scale() {
+        // M=2, N=2, scale_a=0, scale_scalar=0
+        // gas = 2 * 2 * (20 + 3 * 0 * 0) = 4 * 20 = 80
+        let gas = gas_mat_scale(2, 2, 0, 0);
+        assert_eq!(gas, 80);
+    }
+
+    #[test]
+    fn test_gas_mat_scale_with_scale() {
+        // M=2, N=2, scale_a=2, scale_scalar=3
+        // gas = 2 * 2 * (20 + 3 * 2 * 3) = 4 * (20 + 18) = 4 * 38 = 152
+        let gas = gas_mat_scale(2, 2, 2, 3);
+        assert_eq!(gas, 152);
     }
 }

@@ -214,8 +214,8 @@ LOWER_DFP_TO_DQA(dfp, target_scale):
            numerator = (dfp.mantissa as i1200) << dfp.exponent
            denominator = 1i1200
        ELSE:
-           numerator = dfp.mantissa as i256
-           denominator = 1i256 << (-dfp.exponent)
+           numerator = dfp.mantissa as i1200
+           denominator = 1i1200 << (-dfp.exponent)
 
     4. Apply sign:
 
@@ -227,7 +227,7 @@ LOWER_DFP_TO_DQA(dfp, target_scale):
        // We want: result_value / 10^target_scale ≈ numerator / denominator
        // So: result_value ≈ (numerator * 10^target_scale) / denominator
 
-       power10 = POW10_I256[target_scale]  // 10^target_scale as i256
+       power10 = POW10_I1200[target_scale]  // 10^target_scale as i1200
 
        // Multiply numerator by 10^target_scale
        scaled_numerator = numerator * power10
@@ -238,12 +238,12 @@ LOWER_DFP_TO_DQA(dfp, target_scale):
 
     6. Apply RoundHalfEven rounding:
 
-       result_value = ROUND_HALF_EVEN_I256(quotient, remainder, denominator,
+       result_value = ROUND_HALF_EVEN_I1200(quotient, remainder, denominator,
                                             sign(numerator))
 
     7. Check i64 range:
 
-       IF result_value > i64::MAX as i256 OR result_value < i64::MIN as i256:
+       IF result_value > i64::MAX as i1200 OR result_value < i64::MIN as i1200:
            RETURN DlpError::RangeOverflow { reason: "result exceeds i64 range" }
 
     8. Return DQA:
@@ -251,12 +251,12 @@ LOWER_DFP_TO_DQA(dfp, target_scale):
        RETURN Dqa { value: result_value as i64, scale: target_scale }
 ```
 
-#### RoundHalfEven for i256
+#### RoundHalfEven for i1200
 
 ```
-ROUND_HALF_EVEN_I256(quotient, remainder, divisor, sign):
-    // All inputs are i256
-    // Returns i256
+ROUND_HALF_EVEN_I1200(quotient, remainder, divisor, sign):
+    // All inputs are i1200
+    // Returns i1200
 
     abs_remainder = abs(remainder)
     abs_divisor = abs(divisor)
@@ -277,23 +277,24 @@ ROUND_HALF_EVEN_I256(quotient, remainder, divisor, sign):
 
 #### Target Scale Inference
 
-When no explicit column scale is provided (e.g., expression result), the target scale must be inferred deterministically:
+When no explicit column scale is provided (e.g., expression result), the target scale must be inferred deterministically using integer arithmetic (no floating-point):
 
 ```
 INFER_TARGET_SCALE(dfp):
-    // For DFP values, compute the number of significant decimal digits
-    // needed to represent the value without loss beyond DQA precision.
+    // Uses pre-computed LOG10_2_TABLE[exponent] = floor(exponent * 1000 / log2(10))
+    // This avoids floating-point computation while giving correct scale.
+
+    // Pre-computed table: LOG10_2[e] = floor(e * 1000 / 301) for e in [-1023, 1023]
+    // Example: LOG10_2[1] = 3, LOG10_2[10] = 30, LOG10_2[-10] = -30
 
     1. Compute decimal digits in mantissa:
-       mantissa_digits = floor(log10(dfp.mantissa)) + 1
+       // Uses bit_length(mantissa) to compute digits without FP
+       mantissa_digits = (bit_length(dfp.mantissa) * 789) >> 12  // Approx log10
+       // Or: use pre-computed table for small mantissas
 
-    2. Compute decimal exponent:
-       // value = mantissa * 2^exponent
-       // log10(value) = log10(mantissa) + exponent * log10(2)
-       //              ≈ log10(mantissa) + exponent * 0.30103
-
-       decimal_exponent_approx = mantissa_digits - 1 +
-                                  floor(dfp.exponent * 0.30103)
+    2. Compute decimal exponent using lookup table:
+       // LOG10_2[exponent] gives floor(exponent * log10(2)) * 1000
+       decimal_exponent_approx = mantissa_digits - 1 + LOG10_2[dfp.exponent] / 1000
 
     3. Determine scale:
        // If value < 1: scale = number of decimal places after the point
@@ -342,37 +343,9 @@ INFER_TARGET_SCALE(dfp):
 
 #### Subnormal DFP Values
 
-Subnormal DFP values (mantissa with leading zeros, very small exponent) may underflow DQA's minimum representable value.
+Subnormal DFP values are handled by Step 2's exponent threshold check. If `dfp.exponent < -200`, the algorithm returns `DlpError::SubnormalUnderflow`. For exponents >= -200, normal lowering proceeds (including rounding to zero if the result underflows at the target scale).
 
-```
-HANDLE_SUBNORMAL_DFP(dfp, target_scale):
-    // A DFP value is "subnormal-like" if its value is smaller than
-    // DQA can represent at the target scale.
-
-    // DQA minimum positive at scale S: value=1, scale=S
-    // Which represents 1 * 10^-S
-
-    // DFP value = mantissa * 2^exponent
-    // If mantissa * 2^exponent < 10^(-target_scale), it underflows
-
-    1. Compute DFP value magnitude:
-       IF dfp.exponent >= 0:
-           // Can't be subnormal
-           RETURN false
-       ELSE:
-           // Compare: mantissa * 2^exponent vs 10^(-target_scale)
-           // Equivalently: mantissa * 2^exponent * 10^target_scale vs 1
-           // Or: mantissa * 10^target_scale vs 2^(-exponent)
-
-           lhs = (dfp.mantissa as i256) * POW10_I256[target_scale]
-           rhs = 1i256 << (-dfp.exponent)
-
-           IF lhs < rhs:
-               // Underflows — round to zero
-               RETURN Dqa { value: 0, scale: target_scale }
-           ELSE:
-               // Does not underflow — proceed with normal lowering
-               RETURN LOWER_DFP_TO_DQA(dfp, target_scale)
+Note: The threshold of -200 is conservative. A DFP value with exponent -200 and mantissa 1 represents 2^-200 ≈ 6.4 × 10^-61, which is far below DQA's minimum representable value at any scale.
 ```
 
 #### Extreme Exponents
@@ -693,7 +666,7 @@ To ensure deterministic DLP behavior, all nodes must compile with:
 | All | `release` profile | Overflow checks off; deterministic integer behavior |
 | All | No `-ffast-math` equivalent | DLP uses pure integer arithmetic; FP flags irrelevant |
 
-**Note:** The DLP itself uses only i256 integer arithmetic (no floating-point). The compiler flags above ensure that any residual FP operations in the compiler (e.g., `log10` in scale inference) do not affect the lowering result. The scale inference function uses a pre-computed lookup table, not FP math.
+**Note:** The DLP itself uses only i1200 integer arithmetic (no floating-point). The compiler flags above ensure that any residual FP operations in the compiler do not affect the lowering result. The scale inference function uses a pre-computed lookup table, not FP math.
 
 ### Storage and Serialization
 
@@ -801,20 +774,20 @@ In case of conflict between this RFC and RFC-0104 or RFC-0105:
 
 ### Theorem Hierarchy
 
-All 16 theorems have been formally verified in Coq. See Appendix B for complete mechanized proofs.
+16 theorems specified. Core correctness theorems (1, 6, 11, 12, 16) are fully proven in Coq. Theorems 2, 3, 10 have structural proofs with admitted Q arithmetic lemmas. See Appendix B for details.
 
 | # | Theorem | Property | Status |
 |---|---------|----------|--------|
 | 1 | Determinism | Bit-identical results across platforms | Proven |
-| 2 | RNE Correctness | Closest representable value (RNE) | Proven |
-| 3 | Error Bound | ≤ 0.5 ULP at target scale | Proven |
-| 4 | Unbiasedness | Zero systematic rounding bias | Proven |
+| 2 | RNE Correctness | Closest representable value (RNE) | Proof Sketched (admitted) |
+| 3 | Error Bound | ≤ 0.5 ULP at target scale | Proof Sketched (admitted) |
+| 4 | Unbiasedness | Zero systematic rounding bias | Proven (discrete) |
 | 5 | Sign Symmetry | L(-x) = -L(x) | Proven |
 | 6 | Termination | O(1) time, no loops | Proven |
 | 7 | Overflow Completeness | No silent overflow, no false positives | Proven |
 | 8 | Canonical Form | Canonicalization preserves value | Proven |
-| 9 | Scale Inference | Optimal scale within constraints | Proven |
-| 10 | Compositional | Expression lowering error propagation | Proven |
+| 9 | Scale Inference | Optimal scale within constraints | Proven (validity) |
+| 10 | Compositional | Expression lowering error propagation | Proof Sketched (admitted) |
 | 11 | i1200 Sufficiency | Intermediates fit in i1200 | Proven |
 | 12 | Cross-Platform | Unsigned integer arithmetic equivalence | Proven |
 | 13 | Monotonicity | Order preservation | Proven |
@@ -827,8 +800,10 @@ All 16 theorems have been formally verified in Coq. See Appendix B for complete 
 **Theorem 11 (i1200 Sufficiency):**
 
 ```
-max_intermediate = DFP_MAX × 10^18 ≈ 1.7 × 10^326 ≈ 2^1084 bits
+max_intermediate = (2^113 - 1) × 2^1023 × 10^18 ≈ 2^1195.79 bits
 ```
+
+Note: DFP_MAX is approximately 10^342, not 10^308 (the latter is IEEE-754 double max).
 
 This requires at least **i1200** for the intermediate arithmetic:
 
@@ -854,11 +829,11 @@ This requires at least **i1200** for the intermediate arithmetic:
 
 ### A.1 Key Theorems
 
-**Theorem 1 (Determinism):** The lowering function `L` is a pure function — no side effects, no environment dependence. All intermediate values are computed using only integer arithmetic (i256/i1200), which is deterministic on all platforms.
+**Theorem 1 (Determinism):** The lowering function `L` is a pure function — no side effects, no environment dependence. All intermediate values are computed using only i1200 integer arithmetic, which is deterministic on all platforms.
 
-**Theorem 2 (RNE Correctness):** The Round-to-Nearest-Even rounding produces the closest representable DQA value at the target scale, with ties broken to the even integer.
+**Theorem 2 (RNE Correctness):** The Round-to-Nearest-Even rounding produces the closest representable DQA value at the target scale, with ties broken to the even integer. (Proof sketched; admitted Q arithmetic lemmas)
 
-**Theorem 3 (Error Bound):** For any DFP value `d` and target scale `σ`, if `L(d, σ) = DQA(v, σ)`, then `|val_DFP(d) - val_DQA(v, σ)| ≤ 0.5 × 10^(-σ)`. This is at most 0.5 ULP.
+**Theorem 3 (Error Bound):** For any DFP value `d` and target scale `σ`, if `L(d, σ) = DQA(v, σ)`, then `|val_DFP(d) - val_DQA(v, σ)| ≤ 0.5 × 10^(-σ)`. This is at most 0.5 ULP. (Proof sketched; admitted Q arithmetic lemmas)
 
 **Theorem 5 (Sign Symmetry):** `L(-x, σ) = -L(x, σ)` for all valid inputs.
 
@@ -1031,7 +1006,7 @@ Definition lower_dfp_to_dqa (d : Dfp) (target_scale : Z) : DlpResult :=
   | DfpNormal =>
       if Z_gt_dec (dfp_exponent d) DFP_MAX_EXPONENT then
         DlpErr (DlpRangeOverflow "exponent exceeds max")
-      else if Z_lt_dec (dfp_exponent d) (-200)) then
+      else if Z_lt_dec (dfp_exponent d) (-200) then
         DlpErr DlpSubnormalUnderflow
       else
         let '(num, den) :=

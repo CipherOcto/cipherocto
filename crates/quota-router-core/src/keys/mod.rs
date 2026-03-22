@@ -2,7 +2,7 @@ pub mod errors;
 pub mod models;
 
 pub use errors::KeyError;
-pub use models::{ApiKey, KeyType, KeyUpdates, KeySpend, Team};
+pub use models::{ApiKey, KeySpend, KeyType, KeyUpdates, Team};
 
 use hmac_sha256::HMAC;
 use rand::Rng;
@@ -61,8 +61,14 @@ pub fn generate_key_id() -> String {
     format!(
         "{:016x}-{:02x}{:02x}{:02x}{:02x}{:02x}{:02x}{:02x}{:02x}",
         now,
-        random_bytes[0], random_bytes[1], random_bytes[2], random_bytes[3],
-        random_bytes[4], random_bytes[5], random_bytes[6], random_bytes[7]
+        random_bytes[0],
+        random_bytes[1],
+        random_bytes[2],
+        random_bytes[3],
+        random_bytes[4],
+        random_bytes[5],
+        random_bytes[6],
+        random_bytes[7]
     )
 }
 

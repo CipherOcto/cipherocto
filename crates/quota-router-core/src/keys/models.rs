@@ -70,7 +70,7 @@ pub struct Team {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct KeySpend {
     pub key_id: String,
-    pub total_spend: i64,    // in cents/millicents
-    pub window_start: i64,    // timestamp when window started
+    pub total_spend: i64,  // in cents/millicents
+    pub window_start: i64, // timestamp when window started
     pub last_updated: i64,
 }

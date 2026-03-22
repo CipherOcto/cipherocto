@@ -1,7 +1,7 @@
 // Key validation middleware - validates API keys from HTTP requests
 
-use crate::keys::{validate_key, ApiKey, KeyError};
 use crate::key_rate_limiter::KeyRateLimiter;
+use crate::keys::{validate_key, ApiKey, KeyError};
 use crate::KeyStorage;
 use http;
 use std::sync::Arc;
@@ -21,12 +21,18 @@ impl<S: KeyStorage> KeyMiddleware<S> {
     }
 
     pub fn with_rate_limiter(storage: Arc<S>, rate_limiter: Arc<KeyRateLimiter>) -> Self {
-        Self { storage, rate_limiter }
+        Self {
+            storage,
+            rate_limiter,
+        }
     }
 
     /// Extract API key from request
     /// Supports: Authorization header (Bearer token), X-API-Key header
-    pub fn extract_key_from_request<B>(&self, request: &http::Request<B>) -> Result<Option<String>, KeyError> {
+    pub fn extract_key_from_request<B>(
+        &self,
+        request: &http::Request<B>,
+    ) -> Result<Option<String>, KeyError> {
         // Check Authorization header
         if let Some(auth) = request.headers().get("authorization") {
             if let Ok(auth_str) = auth.to_str() {
@@ -51,7 +57,9 @@ impl<S: KeyStorage> KeyMiddleware<S> {
         let key_hash = compute_key_hash(key_string);
         let key_prefix = key_string.chars().take(7).collect::<String>();
 
-        let mut key = self.storage.lookup_by_hash(&key_hash)?
+        let mut key = self
+            .storage
+            .lookup_by_hash(&key_hash)?
             .ok_or(KeyError::NotFound)?;
 
         // Set the key_prefix from the request
@@ -65,7 +73,8 @@ impl<S: KeyStorage> KeyMiddleware<S> {
 
     /// Extract and validate key from request in one step
     pub fn extract_and_validate<B>(&self, request: &http::Request<B>) -> Result<ApiKey, KeyError> {
-        let key_string = self.extract_key_from_request(request)?
+        let key_string = self
+            .extract_key_from_request(request)?
             .ok_or(KeyError::MissingKey)?;
 
         self.validate_request_key(&key_string)
@@ -153,9 +162,7 @@ mod tests {
     fn test_extract_key_no_header() {
         let middleware = create_test_middleware();
 
-        let req = http::Request::builder()
-            .body(())
-            .unwrap();
+        let req = http::Request::builder().body(()).unwrap();
 
         let key = middleware.extract_key_from_request(&req).unwrap();
         assert!(key.is_none());
@@ -179,7 +186,9 @@ mod tests {
     fn test_validate_request_key_not_found() {
         let middleware = create_test_middleware();
 
-        let result = middleware.validate_request_key("sk-qr-nonexistentkey12345678901234567890123456789012345678901234");
+        let result = middleware.validate_request_key(
+            "sk-qr-nonexistentkey12345678901234567890123456789012345678901234",
+        );
         assert!(result.is_err());
         assert!(matches!(result.unwrap_err(), KeyError::NotFound));
     }

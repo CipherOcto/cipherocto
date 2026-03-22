@@ -1,4 +1,4 @@
-use crate::keys::{ApiKey, KeyError, KeyType, KeyUpdates, KeySpend, Team};
+use crate::keys::{ApiKey, KeyError, KeySpend, KeyType, KeyUpdates, Team};
 
 pub trait KeyStorage: Send + Sync {
     // Key operations
@@ -46,25 +46,61 @@ impl StoolapKeyStorage {
         let key_hash = hex::decode(&key_hash_hex).map_err(|e| KeyError::Storage(e.to_string()))?;
 
         Ok(ApiKey {
-            key_id: row.get_by_name("key_id").map_err(|e| KeyError::Storage(e.to_string()))?,
+            key_id: row
+                .get_by_name("key_id")
+                .map_err(|e| KeyError::Storage(e.to_string()))?,
             key_hash,
-            key_prefix: row.get_by_name("key_prefix").map_err(|e| KeyError::Storage(e.to_string()))?,
-            team_id: row.get_by_name("team_id").map_err(|e| KeyError::Storage(e.to_string()))?,
-            budget_limit: row.get_by_name("budget_limit").map_err(|e| KeyError::Storage(e.to_string()))?,
-            rpm_limit: row.get_by_name("rpm_limit").map_err(|e| KeyError::Storage(e.to_string()))?,
-            tpm_limit: row.get_by_name("tpm_limit").map_err(|e| KeyError::Storage(e.to_string()))?,
-            created_at: row.get_by_name("created_at").map_err(|e| KeyError::Storage(e.to_string()))?,
-            expires_at: row.get_by_name("expires_at").map_err(|e| KeyError::Storage(e.to_string()))?,
-            revoked: row.get_by_name::<i32>("revoked").map_err(|e| KeyError::Storage(e.to_string()))? != 0,
-            revoked_at: row.get_by_name("revoked_at").map_err(|e| KeyError::Storage(e.to_string()))?,
-            revoked_by: row.get_by_name("revoked_by").map_err(|e| KeyError::Storage(e.to_string()))?,
-            revocation_reason: row.get_by_name("revocation_reason").map_err(|e| KeyError::Storage(e.to_string()))?,
+            key_prefix: row
+                .get_by_name("key_prefix")
+                .map_err(|e| KeyError::Storage(e.to_string()))?,
+            team_id: row
+                .get_by_name("team_id")
+                .map_err(|e| KeyError::Storage(e.to_string()))?,
+            budget_limit: row
+                .get_by_name("budget_limit")
+                .map_err(|e| KeyError::Storage(e.to_string()))?,
+            rpm_limit: row
+                .get_by_name("rpm_limit")
+                .map_err(|e| KeyError::Storage(e.to_string()))?,
+            tpm_limit: row
+                .get_by_name("tpm_limit")
+                .map_err(|e| KeyError::Storage(e.to_string()))?,
+            created_at: row
+                .get_by_name("created_at")
+                .map_err(|e| KeyError::Storage(e.to_string()))?,
+            expires_at: row
+                .get_by_name("expires_at")
+                .map_err(|e| KeyError::Storage(e.to_string()))?,
+            revoked: row
+                .get_by_name::<i32>("revoked")
+                .map_err(|e| KeyError::Storage(e.to_string()))?
+                != 0,
+            revoked_at: row
+                .get_by_name("revoked_at")
+                .map_err(|e| KeyError::Storage(e.to_string()))?,
+            revoked_by: row
+                .get_by_name("revoked_by")
+                .map_err(|e| KeyError::Storage(e.to_string()))?,
+            revocation_reason: row
+                .get_by_name("revocation_reason")
+                .map_err(|e| KeyError::Storage(e.to_string()))?,
             key_type,
-            allowed_routes: row.get_by_name("allowed_routes").map_err(|e| KeyError::Storage(e.to_string()))?,
-            auto_rotate: row.get_by_name::<i32>("auto_rotate").map_err(|e| KeyError::Storage(e.to_string()))? != 0,
-            rotation_interval_days: row.get_by_name("rotation_interval_days").map_err(|e| KeyError::Storage(e.to_string()))?,
-            description: row.get_by_name("description").map_err(|e| KeyError::Storage(e.to_string()))?,
-            metadata: row.get_by_name("metadata").map_err(|e| KeyError::Storage(e.to_string()))?,
+            allowed_routes: row
+                .get_by_name("allowed_routes")
+                .map_err(|e| KeyError::Storage(e.to_string()))?,
+            auto_rotate: row
+                .get_by_name::<i32>("auto_rotate")
+                .map_err(|e| KeyError::Storage(e.to_string()))?
+                != 0,
+            rotation_interval_days: row
+                .get_by_name("rotation_interval_days")
+                .map_err(|e| KeyError::Storage(e.to_string()))?,
+            description: row
+                .get_by_name("description")
+                .map_err(|e| KeyError::Storage(e.to_string()))?,
+            metadata: row
+                .get_by_name("metadata")
+                .map_err(|e| KeyError::Storage(e.to_string()))?,
         })
     }
 }
@@ -85,11 +121,13 @@ impl KeyStorage for StoolapKeyStorage {
 
         // Helper to convert Option<i64> to stoolap::Value (None = Null)
         let opt_i64_to_value = |opt: Option<i64>| -> stoolap::Value {
-            opt.map(|v| v.into()).unwrap_or(stoolap::Value::Null(stoolap::DataType::Null))
+            opt.map(|v| v.into())
+                .unwrap_or(stoolap::Value::Null(stoolap::DataType::Null))
         };
         // Helper to convert Option<i32> to stoolap::Value (None = Null)
         let opt_i32_to_value = |opt: Option<i32>| -> stoolap::Value {
-            opt.map(|v| v.into()).unwrap_or(stoolap::Value::Null(stoolap::DataType::Null))
+            opt.map(|v| v.into())
+                .unwrap_or(stoolap::Value::Null(stoolap::DataType::Null))
         };
 
         let params: Vec<stoolap::Value> = vec![
@@ -202,7 +240,11 @@ impl KeyStorage for StoolapKeyStorage {
         set_clauses.push(format!("key_id = ${}", params.len() + 1));
         params.push(key_id.into());
 
-        let sql = format!("UPDATE api_keys SET {} WHERE key_id = ${}", set_clauses.join(", "), params.len());
+        let sql = format!(
+            "UPDATE api_keys SET {} WHERE key_id = ${}",
+            set_clauses.join(", "),
+            params.len()
+        );
 
         self.db
             .execute(&sql, params)
@@ -258,10 +300,18 @@ impl KeyStorage for StoolapKeyStorage {
 
         if let Some(Ok(row)) = rows.into_iter().next() {
             let team = Team {
-                team_id: row.get_by_name("team_id").map_err(|e| KeyError::Storage(e.to_string()))?,
-                name: row.get_by_name("name").map_err(|e| KeyError::Storage(e.to_string()))?,
-                budget_limit: row.get_by_name("budget_limit").map_err(|e| KeyError::Storage(e.to_string()))?,
-                created_at: row.get_by_name("created_at").map_err(|e| KeyError::Storage(e.to_string()))?,
+                team_id: row
+                    .get_by_name("team_id")
+                    .map_err(|e| KeyError::Storage(e.to_string()))?,
+                name: row
+                    .get_by_name("name")
+                    .map_err(|e| KeyError::Storage(e.to_string()))?,
+                budget_limit: row
+                    .get_by_name("budget_limit")
+                    .map_err(|e| KeyError::Storage(e.to_string()))?,
+                created_at: row
+                    .get_by_name("created_at")
+                    .map_err(|e| KeyError::Storage(e.to_string()))?,
             };
             Ok(Some(team))
         } else {
@@ -279,10 +329,18 @@ impl KeyStorage for StoolapKeyStorage {
         for row in rows {
             let row = row.map_err(|e| KeyError::Storage(e.to_string()))?;
             let team = Team {
-                team_id: row.get_by_name("team_id").map_err(|e| KeyError::Storage(e.to_string()))?,
-                name: row.get_by_name("name").map_err(|e| KeyError::Storage(e.to_string()))?,
-                budget_limit: row.get_by_name("budget_limit").map_err(|e| KeyError::Storage(e.to_string()))?,
-                created_at: row.get_by_name("created_at").map_err(|e| KeyError::Storage(e.to_string()))?,
+                team_id: row
+                    .get_by_name("team_id")
+                    .map_err(|e| KeyError::Storage(e.to_string()))?,
+                name: row
+                    .get_by_name("name")
+                    .map_err(|e| KeyError::Storage(e.to_string()))?,
+                budget_limit: row
+                    .get_by_name("budget_limit")
+                    .map_err(|e| KeyError::Storage(e.to_string()))?,
+                created_at: row
+                    .get_by_name("created_at")
+                    .map_err(|e| KeyError::Storage(e.to_string()))?,
             };
             teams.push(team);
         }
@@ -294,14 +352,13 @@ impl KeyStorage for StoolapKeyStorage {
         // Check if any keys belong to this team
         let keys = self.list_keys(Some(team_id))?;
         if !keys.is_empty() {
-            return Err(KeyError::Storage("Cannot delete team with existing keys".to_string()));
+            return Err(KeyError::Storage(
+                "Cannot delete team with existing keys".to_string(),
+            ));
         }
 
         self.db
-            .execute(
-                "DELETE FROM teams WHERE team_id = $1",
-                vec![team_id.into()],
-            )
+            .execute("DELETE FROM teams WHERE team_id = $1", vec![team_id.into()])
             .map_err(|e| KeyError::Storage(e.to_string()))?;
         Ok(())
     }
@@ -359,10 +416,18 @@ impl KeyStorage for StoolapKeyStorage {
 
         if let Some(Ok(row)) = rows.into_iter().next() {
             let spend = KeySpend {
-                key_id: row.get_by_name("key_id").map_err(|e| KeyError::Storage(e.to_string()))?,
-                total_spend: row.get_by_name("total_spend").map_err(|e| KeyError::Storage(e.to_string()))?,
-                window_start: row.get_by_name("window_start").map_err(|e| KeyError::Storage(e.to_string()))?,
-                last_updated: row.get_by_name("last_updated").map_err(|e| KeyError::Storage(e.to_string()))?,
+                key_id: row
+                    .get_by_name("key_id")
+                    .map_err(|e| KeyError::Storage(e.to_string()))?,
+                total_spend: row
+                    .get_by_name("total_spend")
+                    .map_err(|e| KeyError::Storage(e.to_string()))?,
+                window_start: row
+                    .get_by_name("window_start")
+                    .map_err(|e| KeyError::Storage(e.to_string()))?,
+                last_updated: row
+                    .get_by_name("last_updated")
+                    .map_err(|e| KeyError::Storage(e.to_string()))?,
             };
             Ok(Some(spend))
         } else {
@@ -461,17 +526,22 @@ mod tests {
         storage.create_key(&key).unwrap();
 
         // Update the key
-        storage.update_key("test-key-update", &KeyUpdates {
-            budget_limit: Some(2000),
-            rpm_limit: Some(200),
-            tpm_limit: None,
-            expires_at: None,
-            revoked: None,
-            revoked_by: None,
-            revocation_reason: None,
-            key_type: None,
-            description: Some("Updated key".to_string()),
-        }).unwrap();
+        storage
+            .update_key(
+                "test-key-update",
+                &KeyUpdates {
+                    budget_limit: Some(2000),
+                    rpm_limit: Some(200),
+                    tpm_limit: None,
+                    expires_at: None,
+                    revoked: None,
+                    revoked_by: None,
+                    revocation_reason: None,
+                    key_type: None,
+                    description: Some("Updated key".to_string()),
+                },
+            )
+            .unwrap();
 
         // Lookup and verify
         let updated = storage.lookup_by_hash(&[4, 5, 6]).unwrap().unwrap();

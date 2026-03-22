@@ -58,25 +58,24 @@ impl ProxyServer {
                 tokio::spawn(async move {
                     let io = TokioIo::new(stream);
 
-                    if let Err(err) =
-                        http1::Builder::new()
-                            .serve_connection(
-                                io,
-                                service_fn(move |req| {
-                                    let balance = Arc::clone(&balance);
-                                    let provider = provider.clone();
-                                    let key_storage = key_storage.clone();
-                                    async move {
-                                        Ok::<_, Infallible>(handle_request(
-                                            req,
-                                            &balance,
-                                            &provider,
-                                            key_storage.as_ref(),
-                                        ))
-                                    }
-                                }),
-                            )
-                            .await
+                    if let Err(err) = http1::Builder::new()
+                        .serve_connection(
+                            io,
+                            service_fn(move |req| {
+                                let balance = Arc::clone(&balance);
+                                let provider = provider.clone();
+                                let key_storage = key_storage.clone();
+                                async move {
+                                    Ok::<_, Infallible>(handle_request(
+                                        req,
+                                        &balance,
+                                        &provider,
+                                        key_storage.as_ref(),
+                                    ))
+                                }
+                            }),
+                        )
+                        .await
                     {
                         eprintln!("Error serving connection: {}", err);
                     }
@@ -213,13 +212,16 @@ fn handle_create_key(storage: &StoolapKeyStorage) -> Response<String> {
 
     Response::builder()
         .status(StatusCode::CREATED)
-        .body(serde_json::json!({
-            "key_id": key_id,
-            "key": key_string,
-            "budget_limit": api_key.budget_limit,
-            "rpm_limit": api_key.rpm_limit,
-            "tpm_limit": api_key.tpm_limit,
-        }).to_string())
+        .body(
+            serde_json::json!({
+                "key_id": key_id,
+                "key": key_string,
+                "budget_limit": api_key.budget_limit,
+                "rpm_limit": api_key.rpm_limit,
+                "tpm_limit": api_key.tpm_limit,
+            })
+            .to_string(),
+        )
         .unwrap()
 }
 
@@ -292,10 +294,13 @@ fn handle_update_key(storage: &StoolapKeyStorage, key_id: &str) -> Response<Stri
 
     Response::builder()
         .status(StatusCode::OK)
-        .body(serde_json::json!({
-            "key_id": key_id,
-            "updated": true,
-        }).to_string())
+        .body(
+            serde_json::json!({
+                "key_id": key_id,
+                "updated": true,
+            })
+            .to_string(),
+        )
         .unwrap()
 }
 
@@ -321,10 +326,13 @@ fn handle_revoke_key(storage: &StoolapKeyStorage, key_id: &str) -> Response<Stri
 
     Response::builder()
         .status(StatusCode::OK)
-        .body(serde_json::json!({
-            "key_id": key_id,
-            "revoked": true,
-        }).to_string())
+        .body(
+            serde_json::json!({
+                "key_id": key_id,
+                "revoked": true,
+            })
+            .to_string(),
+        )
         .unwrap()
 }
 
@@ -388,11 +396,14 @@ fn handle_rotate_key(storage: &StoolapKeyStorage, key_id: &str) -> Response<Stri
 
     Response::builder()
         .status(StatusCode::OK)
-        .body(serde_json::json!({
-            "key_id": key_id,
-            "new_key_id": new_key_id,
-            "new_key": new_key_string,
-            "rotated": true,
-        }).to_string())
+        .body(
+            serde_json::json!({
+                "key_id": key_id,
+                "new_key_id": new_key_id,
+                "new_key": new_key_string,
+                "rotated": true,
+            })
+            .to_string(),
+        )
         .unwrap()
 }

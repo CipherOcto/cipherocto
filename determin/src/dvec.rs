@@ -565,6 +565,73 @@ mod tests {
         assert_eq!(result, Err(DvecError::DimensionMismatch));
     }
 
+    // Probe entry 48: VEC_ADD Decimal — [1,2] + [3,4] = [4,6]
+    #[test]
+    fn test_vec_add_decimal() {
+        let a = vec![Decimal::new(1, 0).unwrap(), Decimal::new(2, 0).unwrap()];
+        let b = vec![Decimal::new(3, 0).unwrap(), Decimal::new(4, 0).unwrap()];
+        let result = vec_add(&a, &b).unwrap();
+        assert_eq!(result[0].raw_mantissa(), 4);
+        assert_eq!(result[1].raw_mantissa(), 6);
+    }
+
+    // Probe entry 49: VEC_SUB Decimal — [4,6] - [1,2] = [3,4]
+    #[test]
+    fn test_vec_sub_decimal() {
+        let a = vec![Decimal::new(4, 0).unwrap(), Decimal::new(6, 0).unwrap()];
+        let b = vec![Decimal::new(1, 0).unwrap(), Decimal::new(2, 0).unwrap()];
+        let result = vec_sub(&a, &b).unwrap();
+        assert_eq!(result[0].raw_mantissa(), 3);
+        assert_eq!(result[1].raw_mantissa(), 4);
+    }
+
+    // Probe entry 50: VEC_MUL Decimal — [2,3] × [4,5] = [8,15]
+    #[test]
+    fn test_vec_mul_decimal() {
+        let a = vec![Decimal::new(2, 0).unwrap(), Decimal::new(3, 0).unwrap()];
+        let b = vec![Decimal::new(4, 0).unwrap(), Decimal::new(5, 0).unwrap()];
+        let result = vec_mul(&a, &b).unwrap();
+        assert_eq!(result[0].raw_mantissa(), 8);
+        assert_eq!(result[1].raw_mantissa(), 15);
+    }
+
+    // Probe entry 51: VEC_SCALE Decimal — [1,2] × scalar=2 = [2,4]
+    #[test]
+    fn test_vec_scale_decimal() {
+        let a = vec![Decimal::new(1, 0).unwrap(), Decimal::new(2, 0).unwrap()];
+        let scalar = Decimal::new(2, 0).unwrap();
+        let result = vec_scale(&a, scalar).unwrap();
+        assert_eq!(result[0].raw_mantissa(), 2);
+        assert_eq!(result[1].raw_mantissa(), 4);
+    }
+
+    #[test]
+    fn test_vec_sub_basic() {
+        let a = vec![Dqa::new(4, 0).unwrap(), Dqa::new(6, 0).unwrap()];
+        let b = vec![Dqa::new(1, 0).unwrap(), Dqa::new(2, 0).unwrap()];
+        let result = vec_sub(&a, &b).unwrap();
+        assert_eq!(result[0].raw_mantissa(), 3);
+        assert_eq!(result[1].raw_mantissa(), 4);
+    }
+
+    #[test]
+    fn test_vec_mul_basic() {
+        let a = vec![Dqa::new(2, 0).unwrap(), Dqa::new(3, 0).unwrap()];
+        let b = vec![Dqa::new(4, 0).unwrap(), Dqa::new(5, 0).unwrap()];
+        let result = vec_mul(&a, &b).unwrap();
+        assert_eq!(result[0].raw_mantissa(), 8);
+        assert_eq!(result[1].raw_mantissa(), 15);
+    }
+
+    #[test]
+    fn test_vec_scale_basic() {
+        let a = vec![Dqa::new(1, 0).unwrap(), Dqa::new(2, 0).unwrap()];
+        let scalar = Dqa::new(2, 0).unwrap();
+        let result = vec_scale(&a, scalar).unwrap();
+        assert_eq!(result[0].raw_mantissa(), 2);
+        assert_eq!(result[1].raw_mantissa(), 4);
+    }
+
     #[test]
     fn test_dot_product_basic() {
         // [1, 2] · [3, 4] = 1*3 + 2*4 = 11

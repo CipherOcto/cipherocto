@@ -1,9 +1,9 @@
-//! DVEC Consensus Integration Layer
+//! DVEC and DMAT Consensus Integration Layer
 //!
 //! This module provides gas accounting and consensus-related constants
-//! for DVEC operations per RFC-0112.
+//! for DVEC operations per RFC-0112 and DMAT operations per RFC-0113.
 //!
-//! ## Gas Model (RFC-0112 §Gas Model)
+//! ## Gas Model (RFC-0112 §Gas Model) - DVEC
 //!
 //! | Operation | Formula | Max (N=64, scale=9) |
 //! |-----------|---------|---------------------|
@@ -13,10 +13,20 @@
 //! | VEC_ADD/SUB/MUL/SCALE | 5 × N | 320 |
 //! | NORMALIZE | FORBIDDEN | - |
 //!
+//! ## Gas Model (RFC-0113 §Gas Model) - DMAT
+//!
+//! | Operation | Formula |
+//! |-----------|---------|
+//! | MAT_ADD/SUB | 10 × M × N |
+//! | MAT_MUL | M × N × K × (30 + 3 × s_a × s_b) |
+//! | MAT_VEC_MUL | rows × cols × (30 + 3 × s_a × s_v) |
+//! | MAT_TRANSPOSE | 2 × M × N |
+//! | MAT_SCALE | M × N × (20 + 3 × s_a × s_scalar) |
+//!
 //! ## Consensus Restrictions
 //!
 //! - NORMALIZE is FORBIDDEN in consensus (returns TRAP with ConsensusRestriction)
-//! - DVEC<DFP> is FORBIDDEN (type system prevents this)
+//! - DVEC<DFP> and DMAT<DFP> are FORBIDDEN (type system prevents this)
 //! - N <= 64 enforced (DimensionExceeded beyond)
 //! - Scale validation per operation (InputScaleExceeded)
 
@@ -42,6 +52,26 @@ pub mod op_ids {
     pub const VEC_SCALE: u64 = 7;
     /// Vector normalization (FORBIDDEN in consensus)
     pub const NORMALIZE: u64 = 8;
+}
+
+// =============================================================================
+// DMAT Operation IDs (RFC-0113)
+// =============================================================================
+
+/// DMAT Operation IDs (must match probe.rs DMAT_OP_* constants)
+pub mod dmat_op_ids {
+    /// Matrix addition
+    pub const MAT_ADD: u64 = 0x0100;
+    /// Matrix subtraction
+    pub const MAT_SUB: u64 = 0x0101;
+    /// Matrix multiplication
+    pub const MAT_MUL: u64 = 0x0102;
+    /// Matrix-vector multiplication
+    pub const MAT_VEC_MUL: u64 = 0x0103;
+    /// Matrix transpose
+    pub const MAT_TRANSPOSE: u64 = 0x0104;
+    /// Matrix scalar multiplication
+    pub const MAT_SCALE: u64 = 0x0105;
 }
 
 // =============================================================================
@@ -71,6 +101,21 @@ pub const DQA_MAX_INPUT_SCALE: u8 = 9;
 
 /// Maximum input scale for Decimal (DOT_PRODUCT, SQUARED_DISTANCE)
 pub const DECIMAL_MAX_INPUT_SCALE: u8 = 18;
+
+/// Maximum dimension for DMAT operations (M×N ≤ 64, M≤8, N≤8)
+pub const MAX_MATRIX_DIMENSION: usize = 8;
+
+/// Maximum matrix elements (M×N)
+pub const MAX_MATRIX_ELEMENTS: usize = 64;
+
+/// Base gas for MAT_ADD and MAT_SUB
+pub const GAS_MAT_ADD_PER_ELEMENT: u64 = 10;
+
+/// Base gas for MAT_SCALE
+pub const GAS_MAT_SCALE_BASE: u64 = 20;
+
+/// Base gas for MAT_MUL and MAT_VEC_MUL
+pub const GAS_MAT_MUL_BASE: u64 = 30;
 
 // =============================================================================
 // Gas Calculation Functions
@@ -167,6 +212,188 @@ pub fn is_allowed_in_consensus(op_id: u64) -> bool {
 /// Calculated as: gas_norm(64, 9) = 64 * (30 + 3 * 81) + 280 = 17_472 + 280 = 17_752
 pub const MAX_DVEC_GAS: u64 = 17_752;
 
+// =============================================================================
+// DMAT Gas Calculation Functions (RFC-0113)
+// =============================================================================
+
+/// Calculate gas for MAT_ADD and MAT_SUB operations.
+///
+/// Formula: 10 × M × N
+pub fn gas_mat_add_sub(rows: usize, cols: usize) -> u64 {
+    assert!(
+        rows <= MAX_MATRIX_DIMENSION,
+        "Rows {} exceeds maximum {}",
+        rows,
+        MAX_MATRIX_DIMENSION
+    );
+    assert!(
+        cols <= MAX_MATRIX_DIMENSION,
+        "Cols {} exceeds maximum {}",
+        cols,
+        MAX_MATRIX_DIMENSION
+    );
+    let elements = rows * cols;
+    assert!(
+        elements <= MAX_MATRIX_ELEMENTS,
+        "Matrix elements {} exceeds maximum {}",
+        elements,
+        MAX_MATRIX_ELEMENTS
+    );
+    (elements as u64) * GAS_MAT_ADD_PER_ELEMENT
+}
+
+/// Calculate gas for MAT_TRANSPOSE operation.
+///
+/// Formula: 2 × M × N
+pub fn gas_mat_transpose(rows: usize, cols: usize) -> u64 {
+    assert!(
+        rows <= MAX_MATRIX_DIMENSION,
+        "Rows {} exceeds maximum {}",
+        rows,
+        MAX_MATRIX_DIMENSION
+    );
+    assert!(
+        cols <= MAX_MATRIX_DIMENSION,
+        "Cols {} exceeds maximum {}",
+        cols,
+        MAX_MATRIX_DIMENSION
+    );
+    let elements = rows * cols;
+    assert!(
+        elements <= MAX_MATRIX_ELEMENTS,
+        "Matrix elements {} exceeds maximum {}",
+        elements,
+        MAX_MATRIX_ELEMENTS
+    );
+    2 * (elements as u64)
+}
+
+/// Calculate gas for MAT_SCALE operation.
+///
+/// Formula: M × N × (20 + 3 × s_a × s_scalar)
+pub fn gas_mat_scale(rows: usize, cols: usize, scale_a: u8, scale_scalar: u8) -> u64 {
+    assert!(
+        rows <= MAX_MATRIX_DIMENSION,
+        "Rows {} exceeds maximum {}",
+        rows,
+        MAX_MATRIX_DIMENSION
+    );
+    assert!(
+        cols <= MAX_MATRIX_DIMENSION,
+        "Cols {} exceeds maximum {}",
+        cols,
+        MAX_MATRIX_DIMENSION
+    );
+    let elements = rows * cols;
+    assert!(
+        elements <= MAX_MATRIX_ELEMENTS,
+        "Matrix elements {} exceeds maximum {}",
+        elements,
+        MAX_MATRIX_ELEMENTS
+    );
+    let elements = elements as u64;
+    let scale_a = scale_a as u64;
+    let scale_scalar = scale_scalar as u64;
+    elements * (GAS_MAT_SCALE_BASE + GAS_SCALE_FACTOR * scale_a * scale_scalar)
+}
+
+/// Calculate gas for MAT_MUL operation.
+///
+/// Formula: M × N × K × (30 + 3 × s_a × s_b)
+///
+/// # Arguments
+/// * `m` - Rows of matrix A
+/// * `n` - Columns of matrix A (also rows of matrix B)
+/// * `k` - Columns of matrix B
+/// * `scale_a` - Scale of matrix A
+/// * `scale_b` - Scale of matrix B
+pub fn gas_mat_mul(m: usize, n: usize, k: usize, scale_a: u8, scale_b: u8) -> u64 {
+    assert!(
+        m <= MAX_MATRIX_DIMENSION,
+        "M {} exceeds maximum {}",
+        m,
+        MAX_MATRIX_DIMENSION
+    );
+    assert!(
+        n <= MAX_MATRIX_DIMENSION,
+        "N {} exceeds maximum {}",
+        n,
+        MAX_MATRIX_DIMENSION
+    );
+    assert!(
+        k <= MAX_MATRIX_DIMENSION,
+        "K {} exceeds maximum {}",
+        k,
+        MAX_MATRIX_DIMENSION
+    );
+    let result_elements = m * k;
+    assert!(
+        result_elements <= MAX_MATRIX_ELEMENTS,
+        "Result elements {} exceeds maximum {}",
+        result_elements,
+        MAX_MATRIX_ELEMENTS
+    );
+    let m = m as u64;
+    let n = n as u64;
+    let k = k as u64;
+    let scale_a = scale_a as u64;
+    let scale_b = scale_b as u64;
+    m * n * k * (GAS_MAT_MUL_BASE + GAS_SCALE_FACTOR * scale_a * scale_b)
+}
+
+/// Calculate gas for MAT_VEC_MUL operation.
+///
+/// Formula: rows × cols × (30 + 3 × s_a × s_v)
+///
+/// # Arguments
+/// * `rows` - Matrix rows (also result vector length)
+/// * `cols` - Matrix columns (must equal vector length)
+/// * `scale_a` - Scale of matrix
+/// * `scale_v` - Scale of vector
+pub fn gas_mat_vec_mul(rows: usize, cols: usize, scale_a: u8, scale_v: u8) -> u64 {
+    assert!(
+        rows <= MAX_MATRIX_DIMENSION,
+        "Rows {} exceeds maximum {}",
+        rows,
+        MAX_MATRIX_DIMENSION
+    );
+    assert!(
+        cols <= MAX_MATRIX_DIMENSION,
+        "Cols {} exceeds maximum {}",
+        cols,
+        MAX_MATRIX_DIMENSION
+    );
+    let elements = rows * cols;
+    assert!(
+        elements <= MAX_MATRIX_ELEMENTS,
+        "Matrix elements {} exceeds maximum {}",
+        elements,
+        MAX_MATRIX_ELEMENTS
+    );
+    let elements = elements as u64;
+    let scale_a = scale_a as u64;
+    let scale_v = scale_v as u64;
+    elements * (GAS_MAT_MUL_BASE + GAS_SCALE_FACTOR * scale_a * scale_v)
+}
+
+/// Check if an operation is a DMAT operation.
+pub fn is_dmat_op(op_id: u64) -> bool {
+    matches!(
+        op_id,
+        dmat_op_ids::MAT_ADD
+            | dmat_op_ids::MAT_SUB
+            | dmat_op_ids::MAT_MUL
+            | dmat_op_ids::MAT_VEC_MUL
+            | dmat_op_ids::MAT_TRANSPOSE
+            | dmat_op_ids::MAT_SCALE
+    )
+}
+
+/// Check if DMAT<DFP> is allowed in consensus (it is FORBIDDEN).
+pub fn is_dmat_allowed_with_dfp() -> bool {
+    false // DMAT<DFP> is FORBIDDEN
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -233,5 +460,75 @@ mod tests {
     #[should_panic(expected = "exceeds maximum")]
     fn test_gas_element_wise_dimension_exceeded() {
         gas_element_wise(65);
+    }
+
+    // DMAT gas tests
+
+    #[test]
+    fn test_gas_mat_add_sub_max() {
+        // 8x8 = 64 elements: 64 * 10 = 640
+        assert_eq!(gas_mat_add_sub(8, 8), 640);
+    }
+
+    #[test]
+    fn test_gas_mat_add_sub_2x2() {
+        // 2x2 = 4 elements: 4 * 10 = 40
+        assert_eq!(gas_mat_add_sub(2, 2), 40);
+    }
+
+    #[test]
+    fn test_gas_mat_transpose() {
+        // 8x8 = 64 elements: 2 * 64 = 128
+        assert_eq!(gas_mat_transpose(8, 8), 128);
+    }
+
+    #[test]
+    fn test_gas_mat_scale() {
+        // 2x2 = 4 elements: 4 * (20 + 3 * 0 * 0) = 4 * 20 = 80
+        assert_eq!(gas_mat_scale(2, 2, 0, 0), 80);
+        // 2x2 = 4 elements: 4 * (20 + 3 * 3 * 5) = 4 * (20 + 45) = 4 * 65 = 260
+        assert_eq!(gas_mat_scale(2, 2, 3, 5), 260);
+    }
+
+    #[test]
+    fn test_gas_mat_mul() {
+        // 2x2 * 2x2 = 2x2: 2 * 2 * 2 * 30 = 240 (no scale factor)
+        assert_eq!(gas_mat_mul(2, 2, 2, 0, 0), 240);
+        // 2x3 * 3x2 = 2x2: 2 * 3 * 2 * (30 + 3 * 0 * 0) = 12 * 30 = 360
+        assert_eq!(gas_mat_mul(2, 3, 2, 0, 0), 360);
+    }
+
+    #[test]
+    fn test_gas_mat_vec_mul() {
+        // 2x3 matrix * 3-vector: 6 * (30 + 3 * 0 * 0) = 6 * 30 = 180
+        assert_eq!(gas_mat_vec_mul(2, 3, 0, 0), 180);
+    }
+
+    #[test]
+    fn test_is_dmat_op() {
+        assert!(is_dmat_op(dmat_op_ids::MAT_ADD));
+        assert!(is_dmat_op(dmat_op_ids::MAT_SUB));
+        assert!(is_dmat_op(dmat_op_ids::MAT_MUL));
+        assert!(is_dmat_op(dmat_op_ids::MAT_VEC_MUL));
+        assert!(is_dmat_op(dmat_op_ids::MAT_TRANSPOSE));
+        assert!(is_dmat_op(dmat_op_ids::MAT_SCALE));
+        assert!(!is_dmat_op(999)); // Not a DMAT op
+    }
+
+    #[test]
+    fn test_is_dmat_allowed_with_dfp() {
+        assert!(!is_dmat_allowed_with_dfp()); // Always false
+    }
+
+    #[test]
+    #[should_panic(expected = "exceeds maximum")]
+    fn test_gas_mat_add_elements_exceeded() {
+        gas_mat_add_sub(9, 8); // 72 elements > 64
+    }
+
+    #[test]
+    #[should_panic(expected = "exceeds maximum")]
+    fn test_gas_mat_mul_elements_exceeded() {
+        gas_mat_mul(9, 8, 1, 0, 0); // 9*1 = 9, but 9 > 8 dimension
     }
 }

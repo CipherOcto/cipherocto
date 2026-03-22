@@ -32,8 +32,8 @@
 //! data: [a00, a01, a02, a10, a11, a12]
 //! ```
 
-use crate::decimal::{self as decimal_mod, Decimal};
 use crate::decimal::DecimalError;
+use crate::decimal::{self as decimal_mod, Decimal};
 use crate::dqa::Dqa;
 use crate::dqa::DqaError;
 
@@ -386,7 +386,10 @@ mod tests {
     fn test_dmat_validate_dims_too_large() {
         let data = vec![Dqa::new(1, 0).unwrap(); 65];
         let mat = DMat::new(1, 65, data).unwrap();
-        assert!(matches!(mat.validate_dims(), Err(DmatError::DimensionError)));
+        assert!(matches!(
+            mat.validate_dims(),
+            Err(DmatError::DimensionError)
+        ));
     }
 
     #[test]
@@ -395,24 +398,33 @@ mod tests {
         let data = vec![Dqa::new(1, 0).unwrap(); 64];
         let mat = DMat::new(8, 8, data).unwrap();
         assert!(mat.validate_dims().is_ok()); // 8×8 is valid
-        // Now test a 9-row matrix (9>8)
+                                              // Now test a 9-row matrix (9>8)
         let data2 = vec![Dqa::new(1, 0).unwrap(); 63];
         let mat2 = DMat::new(9, 7, data2).unwrap();
-        assert!(matches!(mat2.validate_dims(), Err(DmatError::DimensionError)));
+        assert!(matches!(
+            mat2.validate_dims(),
+            Err(DmatError::DimensionError)
+        ));
     }
 
     #[test]
     fn test_dmat_validate_dims_zero() {
         let data: Vec<Dqa> = vec![];
         let mat = DMat::new(0, 0, data).unwrap();
-        assert!(matches!(mat.validate_dims(), Err(DmatError::DimensionError)));
+        assert!(matches!(
+            mat.validate_dims(),
+            Err(DmatError::DimensionError)
+        ));
     }
 
     #[test]
     fn test_numeric_scalar_dqa_trap() {
         // TRAP sentinel: value == i64::MIN, scale == 0xFF
         // Cannot use Dqa::new() because it validates scale <= 18
-        let trap = Dqa { value: i64::MIN, scale: 0xFF };
+        let trap = Dqa {
+            value: i64::MIN,
+            scale: 0xFF,
+        };
         assert!(trap.is_trap());
 
         let normal = Dqa::new(42, 0).unwrap();
@@ -507,7 +519,10 @@ mod tests {
     fn test_dmat_error_from_decimal() {
         let err = DecimalError::InvalidScale;
         let dmat_err: DmatError = err.into();
-        assert!(matches!(dmat_err, DmatError::Decimal(DecimalError::InvalidScale)));
+        assert!(matches!(
+            dmat_err,
+            DmatError::Decimal(DecimalError::InvalidScale)
+        ));
     }
 
     #[test]

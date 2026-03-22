@@ -87,7 +87,12 @@ pub const DECIMAL_MAX_INPUT_SCALE: u8 = 18;
 /// # Panics
 /// Panics if n > MAX_DIMENSION or scale > 18
 pub fn gas_dot_product(n: usize, scale: u8) -> u64 {
-    assert!(n <= MAX_DIMENSION, "Dimension {} exceeds maximum {}", n, MAX_DIMENSION);
+    assert!(
+        n <= MAX_DIMENSION,
+        "Dimension {} exceeds maximum {}",
+        n,
+        MAX_DIMENSION
+    );
     assert!(scale <= 18, "Scale {} exceeds maximum 18", scale);
 
     let n = n as u64;
@@ -99,7 +104,12 @@ pub fn gas_dot_product(n: usize, scale: u8) -> u64 {
 ///
 /// Formula: N × (30 + 3 × scale²) + 10
 pub fn gas_squared_distance(n: usize, scale: u8) -> u64 {
-    assert!(n <= MAX_DIMENSION, "Dimension {} exceeds maximum {}", n, MAX_DIMENSION);
+    assert!(
+        n <= MAX_DIMENSION,
+        "Dimension {} exceeds maximum {}",
+        n,
+        MAX_DIMENSION
+    );
     assert!(scale <= 18, "Scale {} exceeds maximum 18", scale);
 
     gas_dot_product(n, scale) + GAS_SQUARED_DISTANCE_OVERHEAD
@@ -112,7 +122,12 @@ pub fn gas_squared_distance(n: usize, scale: u8) -> u64 {
 /// Note: NORM for DQA returns Unsupported (DQA has no SQRT per RFC-0105).
 /// Decimal NORM uses this gas calculation.
 pub fn gas_norm(n: usize, scale: u8) -> u64 {
-    assert!(n <= MAX_DIMENSION, "Dimension {} exceeds maximum {}", n, MAX_DIMENSION);
+    assert!(
+        n <= MAX_DIMENSION,
+        "Dimension {} exceeds maximum {}",
+        n,
+        MAX_DIMENSION
+    );
     assert!(scale <= 18, "Scale {} exceeds maximum 18", scale);
 
     gas_dot_product(n, scale) + GAS_SQRT_MAX
@@ -122,7 +137,12 @@ pub fn gas_norm(n: usize, scale: u8) -> u64 {
 ///
 /// Formula: 5 × N
 pub fn gas_element_wise(n: usize) -> u64 {
-    assert!(n <= MAX_DIMENSION, "Dimension {} exceeds maximum {}", n, MAX_DIMENSION);
+    assert!(
+        n <= MAX_DIMENSION,
+        "Dimension {} exceeds maximum {}",
+        n,
+        MAX_DIMENSION
+    );
 
     (n as u64) * GAS_ELEMENT_WISE_PER_N
 }

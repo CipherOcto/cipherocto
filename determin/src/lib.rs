@@ -34,8 +34,8 @@ pub mod consensus;
 pub mod decimal;
 #[cfg(feature = "use-internal-bigint")]
 pub mod decimal_internal;
-pub mod dqa;
 pub mod dmat;
+pub mod dqa;
 pub mod dvec;
 #[cfg(test)]
 mod fuzz;
@@ -49,12 +49,12 @@ pub use decimal::{
     decimal_from_bytes, decimal_to_bytes, Decimal, DecimalError, MAX_DECIMAL_MANTISSA,
     MAX_DECIMAL_OP_COST, MAX_DECIMAL_SCALE, MIN_DECIMAL_MANTISSA,
 };
+pub use dmat::{DMat, DmatError, NumericScalar};
 pub use dqa::{dqa_abs, dqa_assign_to_column, dqa_cmp, dqa_negate, Dqa, DqaEncoding, DqaError};
 pub use dvec::{
     dot_product, norm, normalize, squared_distance, vec_add, vec_mul, vec_scale, vec_sub, DVec,
     DvecError, DvecScalar,
 };
-pub use dmat::{DMat, DmatError, NumericScalar};
 
 use serde::{Deserialize, Serialize};
 

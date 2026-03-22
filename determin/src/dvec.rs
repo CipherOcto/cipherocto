@@ -815,7 +815,6 @@ mod tests {
         assert_eq!(result, Err(DvecError::DimensionMismatch));
     }
 
-
     // =============================================================================
     // Overflow Tests
     // =============================================================================
@@ -823,7 +822,10 @@ mod tests {
     #[test]
     fn test_dot_product_dqa_overflow_traps() {
         // DQA max is i64::MAX, accumulate i64::MAX * 2 twice = overflow
-        let a = vec![Dqa::new(i64::MAX / 2, 0).unwrap(), Dqa::new(i64::MAX / 2, 0).unwrap()];
+        let a = vec![
+            Dqa::new(i64::MAX / 2, 0).unwrap(),
+            Dqa::new(i64::MAX / 2, 0).unwrap(),
+        ];
         let b = vec![Dqa::new(2, 0).unwrap(), Dqa::new(2, 0).unwrap()];
         let result = dot_product(&a, &b);
         assert_eq!(result, Err(DvecError::Dqa(DqaError::Overflow)));

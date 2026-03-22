@@ -405,18 +405,57 @@ where
 
 /// L2 norm: sqrt(Σ a[i]²)
 ///
-/// TRAPs with `Unsupported` for DQA (no SQRT per RFC-0105).
-pub fn norm<T: DvecScalar>(a: &[T]) -> Result<T, DvecError>
+/// Algorithm (per RFC-0112 §NORM):
+/// 1. Input scale precondition: a[0].scale <= 9 (for SQRT precision)
+/// 2. Uniform scale validation
+/// 3. dot_product(a, a) → squared_sum
+/// 4. squared_sum.sqrt() → norm
+///
+/// DQA: TRAPs with Unsupported at step 4 (no SQRT per RFC-0105).
+/// Decimal: scale precondition enforced at step 1.
+/// Zero vector: returns zero (not an error — sqrt(0) = 0 is well-defined).
+pub fn norm<T: DvecScalar + MaxScale>(a: &[T]) -> Result<T, DvecError>
 where
     T::Error: Into<DvecError>,
 {
-    let _ = a;
-    Err(DvecError::Unsupported)
+    let n = a.len();
+    if n == 0 {
+        return Err(DvecError::DimensionMismatch);
+    }
+    validate_max_dim(n)?;
+
+    // Step 1: Input scale precondition (must be FIRST per RFC)
+    let input_scale = a[0].scale();
+    // For SQRT precision: Decimal scale <= 9, DQA scale <= 9 (but DQA fails at sqrt anyway)
+    if input_scale > 9 {
+        return Err(DvecError::InputScaleExceeded);
+    }
+
+    // Step 2: Validate uniform scale
+    for elem in a.iter().skip(1) {
+        if elem.scale() != input_scale {
+            return Err(DvecError::ScaleMismatch);
+        }
+    }
+
+    // Step 3: dot_product(a, a) = Σ a[i]²
+    let squared_sum = dot_product(a, a)?;
+
+    // Step 4: sqrt(squared_sum) — DQA TRAPs with Unsupported (no SQRT per RFC-0105)
+    squared_sum.sqrt().map_err(|e| {
+        let err: DvecError = e.into();
+        match err {
+            DvecError::Dqa(DqaError::InvalidInput) => DvecError::Unsupported,
+            _ => err,
+        }
+    })
 }
 
 /// Normalize vector: [a[i] / norm(a)] for each element.
 ///
 /// FORBIDDEN in consensus (exceeds 50k gas budget).
+/// This function TRAPs with ConsensusRestriction to enforce this at the API level.
+/// Off-chain callers should use the gas-metered path instead.
 pub fn normalize<T: DvecScalar>(a: &[T]) -> Result<Vec<T>, DvecError>
 where
     T::Error: Into<DvecError>,

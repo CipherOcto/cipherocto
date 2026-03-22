@@ -4239,3 +4239,264 @@ mod dact_probe_tests {
         assert_eq!(root_hex, reference_root, "Merkle root mismatch!");
     }
 }
+
+// =============================================================================
+// DCS Probe Tests (RFC-0126)
+// =============================================================================
+
+#[cfg(test)]
+mod dcs_probe_tests {
+    use crate::dcs::{
+        dcs_serialize_bool, dcs_serialize_dmat, dcs_serialize_dvec, dcs_serialize_enum,
+        dcs_serialize_i128, dcs_serialize_option_none, dcs_serialize_option_some,
+        dcs_serialize_string, dcs_serialize_struct, dcs_serialize_trap, dcs_serialize_u32,
+        DcsSerializable,
+    };
+    use crate::Dqa;
+
+    /// Compute SHA256 hash with domain separation (RFC 6962)
+    fn sha256_with_domain(data: &[u8], domain: u8) -> [u8; 32] {
+        use sha2::{Digest, Sha256};
+        let mut hasher = Sha256::new();
+        hasher.update([domain]);
+        hasher.update(data);
+        let result = hasher.finalize();
+        let mut hash = [0u8; 32];
+        hash.copy_from_slice(&result);
+        hash
+    }
+
+    /// Domain-separated Merkle root computation (RFC 6962)
+    fn merkle_root(leaves: &[Vec<u8>]) -> [u8; 32] {
+        // Domain-separated leaf hashing (0x00 prefix)
+        let mut current_level: Vec<[u8; 32]> = leaves
+            .iter()
+            .map(|leaf| sha256_with_domain(leaf, 0x00))
+            .collect();
+
+        while current_level.len() > 1 {
+            let mut next_level = Vec::new();
+            for pair in current_level.chunks(2) {
+                if pair.len() == 2 {
+                    // Domain-separated internal node (0x01 prefix)
+                    let mut combined = Vec::with_capacity(64);
+                    combined.extend_from_slice(&pair[0]);
+                    combined.extend_from_slice(&pair[1]);
+                    next_level.push(sha256_with_domain(&combined, 0x01));
+                } else {
+                    // Duplicate last element for odd leaf count
+                    let mut combined = Vec::with_capacity(64);
+                    combined.extend_from_slice(&pair[0]);
+                    combined.extend_from_slice(&pair[0]);
+                    next_level.push(sha256_with_domain(&combined, 0x01));
+                }
+            }
+            current_level = next_level;
+        }
+        current_level[0]
+    }
+
+    /// Canonicalize DQA per RFC-0105
+    fn canonicalize_dqa(value: i64, scale: u8) -> (i64, u8) {
+        if value == 0 {
+            return (0, 0);
+        }
+        let mut v = value;
+        let mut s = scale;
+        while v % 10 == 0 && s > 0 {
+            v /= 10;
+            s -= 1;
+        }
+        (v, s)
+    }
+
+    /// Serialize DQA per RFC-0105 (16 bytes)
+    fn dqa_serialize(value: i64, scale: u8) -> Vec<u8> {
+        let (canon_value, canon_scale) = canonicalize_dqa(value, scale);
+        let mut result = Vec::with_capacity(16);
+        result.extend_from_slice(&canon_value.to_be_bytes());
+        result.push(canon_scale);
+        result.extend_from_slice(&[0u8; 7]);
+        result
+    }
+
+    /// Serialize BIGINT per RFC-0110 BigIntEncoding
+    fn bigint_serialize(value: i128) -> Vec<u8> {
+        use crate::BigInt;
+        // BigInt::new takes (limbs: Vec<u64>, sign: bool)
+        let sign = value < 0;
+        let abs_value = value.unsigned_abs();
+        let mut limbs = Vec::new();
+        let mut remaining = abs_value;
+        if remaining == 0 {
+            limbs.push(0);
+        } else {
+            while remaining != 0 {
+                limbs.push(remaining as u64);
+                remaining >>= 64;
+            }
+        }
+        let bi = BigInt::new(limbs, sign);
+        bi.serialize().to_bytes()
+    }
+
+    /// Serialize DFP per RFC-0104 DfpEncoding
+    /// Note: This produces the raw encoding without DFP normalization
+    fn dfp_serialize(mantissa: u128, exponent: i32, class: u8, sign: bool) -> Vec<u8> {
+        // Per RFC-0104 format: [mantissa:16][exponent:4][class_sign:4]
+        // class_sign: [class:8][sign:8][reserved:16]
+        let mut result = Vec::with_capacity(24);
+        result.extend_from_slice(&mantissa.to_be_bytes());
+        result.extend_from_slice(&exponent.to_be_bytes());
+        let class_sign = (class as u32) << 24 | ((if sign { 1u32 } else { 0u32 }) << 16);
+        result.extend_from_slice(&class_sign.to_be_bytes());
+        result
+    }
+
+    /// Serialize TRAP sentinel (24 bytes per RFC-0111)
+    fn trap_serialize() -> Vec<u8> {
+        let mut result = Vec::with_capacity(24);
+        result.push(0x01); // version
+        result.extend_from_slice(&[0u8; 3]); // reserved
+        result.push(0xFF); // scale (TRAP indicator)
+        result.extend_from_slice(&[0u8; 3]); // reserved
+                                             // mantissa = i64::MIN as signed i128
+        let mantissa_i128: i128 = i64::MIN as i128;
+        result.extend_from_slice(&mantissa_i128.to_be_bytes());
+        result
+    }
+
+    #[test]
+    fn test_dcs_probe_merkle_root() {
+        // Reference Merkle root from RFC-0126
+        let reference_root = "2ed91a62f96f11151cd9211cf90aff36efc16c69d3ef910f4201592095abdaca";
+
+        let mut leaves: Vec<Vec<u8>> = Vec::new();
+
+        // Entry 0: DQA(1000, 3) -> canonicalize -> DQA(1, 0)
+        leaves.push(dqa_serialize(1000, 3));
+
+        // Entry 1: DQA(-5000, 4) -> canonicalize -> DQA(-5, 1)
+        leaves.push(dqa_serialize(-5000, 4));
+
+        // Entry 2: DVEC [DQA(1,0), DQA(2,0), DQA(3,0)]
+        let dvec_elements = vec![
+            Dqa::new(1, 0).unwrap(),
+            Dqa::new(2, 0).unwrap(),
+            Dqa::new(3, 0).unwrap(),
+        ];
+        leaves.push(dcs_serialize_dvec(&dvec_elements));
+
+        // Entry 3: DMAT 2x2 [[1,2],[3,4]] (row-major: [1,2,3,4])
+        let dmat_elements = vec![
+            Dqa::new(1, 0).unwrap(),
+            Dqa::new(2, 0).unwrap(),
+            Dqa::new(3, 0).unwrap(),
+            Dqa::new(4, 0).unwrap(),
+        ];
+        leaves.push(dcs_serialize_dmat(2, 2, &dmat_elements));
+
+        // Entry 4: String "hello"
+        leaves.push(dcs_serialize_string("hello").unwrap());
+
+        // Entry 5: Option::None
+        leaves.push(dcs_serialize_option_none());
+
+        // Entry 6: Option::Some(true)
+        leaves.push(dcs_serialize_option_some(&dcs_serialize_bool(true)));
+
+        // Entry 7: Enum::Variant2(42) - tag 2 + i128 payload
+        leaves.push(dcs_serialize_enum(2, &dcs_serialize_i128(42)));
+
+        // Entry 8: Bool true
+        leaves.push(dcs_serialize_bool(true));
+
+        // Entry 9: Bool false
+        leaves.push(dcs_serialize_bool(false));
+
+        // Entry 10: Numeric TRAP (24 bytes per RFC-0111)
+        leaves.push(trap_serialize());
+
+        // Entry 11: Bool TRAP (1-byte 0xFF)
+        leaves.push(dcs_serialize_trap());
+
+        // Entry 12: I128 positive 42
+        leaves.push(dcs_serialize_i128(42));
+
+        // Entry 13: I128 negative -42
+        leaves.push(dcs_serialize_i128(-42));
+
+        // Entry 14: BIGINT(42)
+        leaves.push(bigint_serialize(42));
+
+        // Entry 15: DFP(42.0) - mantissa=42, exponent=0, class=Normal(0), sign=positive(0)
+        leaves.push(dfp_serialize(42, 0, 0, false));
+
+        // Entry 16: Struct { id: u32=42, name: String="alice", balance: DQA=1.0 }
+        // Declared order: id(1), name(2), balance(3) - NOT alphabetical
+        let id_bytes = dcs_serialize_u32(42);
+        let name_bytes = dcs_serialize_string("alice").unwrap();
+        let balance_bytes = Dqa::new(1, 0).unwrap().dcs_serialize();
+        let struct_fields = vec![
+            (1u32, id_bytes.as_slice()),
+            (2u32, name_bytes.as_slice()),
+            (3u32, balance_bytes.as_slice()),
+        ];
+        leaves.push(dcs_serialize_struct(&struct_fields));
+
+        // Verify we have 17 entries
+        assert_eq!(leaves.len(), 17);
+
+        // Compute Merkle root
+        let root = merkle_root(&leaves);
+        let root_hex = hex::encode(root);
+
+        assert_eq!(root_hex, reference_root, "Merkle root mismatch!");
+    }
+
+    #[test]
+    fn test_dcs_probe_entry_specific() {
+        // Test specific entries match expected serialization
+
+        // Entry 0: DQA(1000, 3) -> DQA(1, 0)
+        let entry0 = dqa_serialize(1000, 3);
+        assert_eq!(entry0.len(), 16);
+        // value=1, scale=0, 7 reserved bytes
+        assert_eq!(&entry0[0..8], &[0, 0, 0, 0, 0, 0, 0, 1]);
+        assert_eq!(entry0[8], 0);
+
+        // Entry 1: DQA(-5000, 4) -> DQA(-5, 1)
+        let entry1 = dqa_serialize(-5000, 4);
+        assert_eq!(entry1.len(), 16);
+        // -5 in 8-byte BE is 0xFFFFFFFFFFFFFFFB
+        assert_eq!(entry1[7], 0xFB);
+        assert_eq!(entry1[8], 1);
+
+        // Entry 12: I128 positive 42 = 16 bytes BE
+        let entry12 = dcs_serialize_i128(42);
+        assert_eq!(entry12.len(), 16);
+        assert_eq!(entry12[15], 42);
+
+        // Entry 13: I128 negative -42
+        let entry13 = dcs_serialize_i128(-42);
+        assert_eq!(entry13.len(), 16);
+        assert_eq!(entry13[15], 0xD6); // -42 in two's complement
+
+        // Entry 14: BIGINT(42) - should be 16 bytes per RFC-0110
+        let entry14 = bigint_serialize(42);
+        // BigInt(42) = limbs=[42], version=0x01, sign=0x00, num_limbs=1
+        assert_eq!(entry14.len(), 16);
+        assert_eq!(entry14[0], 0x01); // version
+        assert_eq!(entry14[1], 0x00); // sign (positive)
+        assert_eq!(entry14[4], 0x01); // num_limbs = 1
+                                      // limb 0 = 42 in little-endian = [0x2A, 0, 0, 0, 0, 0, 0, 0]
+        assert_eq!(entry14[8], 0x2A);
+
+        // Entry 15: DFP(42.0)
+        let entry15 = dfp_serialize(42, 0, 0, false);
+        assert_eq!(entry15.len(), 24);
+        // First 16 bytes = mantissa = 42 (16-byte BE: [0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,42])
+        // So bytes 8-16 contain the non-zero portion
+        assert_eq!(&entry15[8..16], &[0, 0, 0, 0, 0, 0, 0, 42]);
+    }
+}

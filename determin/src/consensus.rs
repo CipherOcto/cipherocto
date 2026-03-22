@@ -169,6 +169,97 @@ pub const GAS_TANH: u64 = 10;
 pub const MAX_DACT_GAS: u64 = 10;
 
 // =============================================================================
+// DCS Error Codes (RFC-0126 §DCS Serialization Errors)
+// =============================================================================
+
+/// DCS error codes - these are FATAL (TRAP) errors, no recovery
+/// All DCS errors use the TRAP-before-serialize semantics
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DcsErrorCode {
+    /// DCS_INVALID_BOOL: Bool value not 0x00 or 0x01
+    InvalidBool = 0x01,
+    /// DCS_INVALID_SCALE: DQA scale > 18
+    InvalidScale = 0x02,
+    /// DCS_NON_CANONICAL: DQA value has trailing zeros (not canonicalized)
+    NonCanonical = 0x03,
+    /// DCS_OVERFLOW: DQA value exceeds i64 range
+    Overflow = 0x04,
+    /// DCS_INVALID_UTF8: String is not valid UTF-8
+    InvalidUtf8 = 0x05,
+    /// DCS_LENGTH_OVERFLOW: String/Bytes exceeds 1MB
+    LengthOverflow = 0x06,
+}
+
+impl DcsErrorCode {
+    /// Convert to error message string
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            DcsErrorCode::InvalidBool => "DCS_INVALID_BOOL",
+            DcsErrorCode::InvalidScale => "DCS_INVALID_SCALE",
+            DcsErrorCode::NonCanonical => "DCS_NON_CANONICAL",
+            DcsErrorCode::Overflow => "DCS_OVERFLOW",
+            DcsErrorCode::InvalidUtf8 => "DCS_INVALID_UTF8",
+            DcsErrorCode::LengthOverflow => "DCS_LENGTH_OVERFLOW",
+        }
+    }
+}
+
+/// DCS Operation IDs (RFC-0126)
+pub mod dcs_op_ids {
+    /// Serialize a boolean
+    pub const SERIALIZE_BOOL: u64 = 0x0300;
+    /// Serialize a u32
+    pub const SERIALIZE_U32: u64 = 0x0301;
+    /// Serialize an i128
+    pub const SERIALIZE_I128: u64 = 0x0302;
+    /// Serialize a string
+    pub const SERIALIZE_STRING: u64 = 0x0303;
+    /// Serialize bytes
+    pub const SERIALIZE_BYTES: u64 = 0x0304;
+    /// Serialize a DVEC
+    pub const SERIALIZE_DVEC: u64 = 0x0305;
+    /// Serialize a DMAT
+    pub const SERIALIZE_DMAT: u64 = 0x0306;
+    /// Serialize an Option
+    pub const SERIALIZE_OPTION: u64 = 0x0307;
+    /// Serialize an Enum
+    pub const SERIALIZE_ENUM: u64 = 0x0308;
+    /// Serialize a Struct
+    pub const SERIALIZE_STRUCT: u64 = 0x0309;
+    /// Serialize a DQA value
+    pub const SERIALIZE_DQA: u64 = 0x030A;
+    /// Serialize a DFP value
+    pub const SERIALIZE_DFP: u64 = 0x030B;
+    /// Serialize a BIGINT value
+    pub const SERIALIZE_BIGINT: u64 = 0x030C;
+}
+
+// =============================================================================
+// DCS Gas Constants (RFC-0126)
+// =============================================================================
+
+/// DCS serialization is computationally cheap - gas is dominated by the
+/// underlying type serialization (DQA, DFP, BigInt, DVEC, DMAT).
+/// For consensus accounting, we use a simple per-byte cost model.
+///
+/// Gas per byte for DCS serialization operations
+pub const DCS_GAS_PER_BYTE: u64 = 1;
+
+/// Minimum gas cost for any DCS serialization operation
+pub const DCS_GAS_MIN: u64 = 5;
+
+/// Maximum gas for DCS serialization of a single value
+/// (1MB string worst case: 1_048_576 bytes at 1 gas/byte)
+pub const DCS_GAS_MAX: u64 = 1_048_576;
+
+/// Calculate gas for DCS serialization based on output size.
+///
+/// This is used for consensus gas accounting when serializing results.
+pub fn gas_dcs_serialize(output_bytes: usize) -> u64 {
+    (output_bytes as u64).clamp(DCS_GAS_MIN, DCS_GAS_MAX)
+}
+
+// =============================================================================
 // Gas Calculation Functions
 // =============================================================================
 
@@ -445,6 +536,26 @@ pub fn is_dmat_allowed_with_dfp() -> bool {
     false // DMAT<DFP> is FORBIDDEN
 }
 
+/// Check if an operation is a DCS serialization operation.
+pub fn is_dcs_op(op_id: u64) -> bool {
+    matches!(
+        op_id,
+        dcs_op_ids::SERIALIZE_BOOL
+            | dcs_op_ids::SERIALIZE_U32
+            | dcs_op_ids::SERIALIZE_I128
+            | dcs_op_ids::SERIALIZE_STRING
+            | dcs_op_ids::SERIALIZE_BYTES
+            | dcs_op_ids::SERIALIZE_DVEC
+            | dcs_op_ids::SERIALIZE_DMAT
+            | dcs_op_ids::SERIALIZE_OPTION
+            | dcs_op_ids::SERIALIZE_ENUM
+            | dcs_op_ids::SERIALIZE_STRUCT
+            | dcs_op_ids::SERIALIZE_DQA
+            | dcs_op_ids::SERIALIZE_DFP
+            | dcs_op_ids::SERIALIZE_BIGINT
+    )
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -581,5 +692,51 @@ mod tests {
     #[should_panic(expected = "exceeds maximum")]
     fn test_gas_mat_mul_elements_exceeded() {
         gas_mat_mul(9, 8, 1, 0, 0); // 9*1 = 9, but 9 > 8 dimension
+    }
+
+    // DCS tests
+
+    #[test]
+    fn test_is_dcs_op() {
+        assert!(is_dcs_op(dcs_op_ids::SERIALIZE_BOOL));
+        assert!(is_dcs_op(dcs_op_ids::SERIALIZE_U32));
+        assert!(is_dcs_op(dcs_op_ids::SERIALIZE_I128));
+        assert!(is_dcs_op(dcs_op_ids::SERIALIZE_STRING));
+        assert!(is_dcs_op(dcs_op_ids::SERIALIZE_BYTES));
+        assert!(is_dcs_op(dcs_op_ids::SERIALIZE_DVEC));
+        assert!(is_dcs_op(dcs_op_ids::SERIALIZE_DMAT));
+        assert!(is_dcs_op(dcs_op_ids::SERIALIZE_OPTION));
+        assert!(is_dcs_op(dcs_op_ids::SERIALIZE_ENUM));
+        assert!(is_dcs_op(dcs_op_ids::SERIALIZE_STRUCT));
+        assert!(is_dcs_op(dcs_op_ids::SERIALIZE_DQA));
+        assert!(is_dcs_op(dcs_op_ids::SERIALIZE_DFP));
+        assert!(is_dcs_op(dcs_op_ids::SERIALIZE_BIGINT));
+        assert!(!is_dcs_op(999)); // Not a DCS op
+        assert!(!is_dcs_op(dmat_op_ids::MAT_ADD)); // DMAT op, not DCS
+    }
+
+    #[test]
+    fn test_gas_dcs_serialize() {
+        // Small output: should return minimum
+        assert_eq!(gas_dcs_serialize(0), DCS_GAS_MIN);
+        assert_eq!(gas_dcs_serialize(1), DCS_GAS_MIN);
+        assert_eq!(gas_dcs_serialize(4), DCS_GAS_MIN);
+        // Normal output: should return actual bytes
+        assert_eq!(gas_dcs_serialize(5), 5);
+        assert_eq!(gas_dcs_serialize(16), 16);
+        assert_eq!(gas_dcs_serialize(100), 100);
+        // Large output: should return maximum
+        assert_eq!(gas_dcs_serialize(1_048_576), DCS_GAS_MAX);
+        assert_eq!(gas_dcs_serialize(2_000_000), DCS_GAS_MAX);
+    }
+
+    #[test]
+    fn test_dcs_error_code_strings() {
+        assert_eq!(DcsErrorCode::InvalidBool.as_str(), "DCS_INVALID_BOOL");
+        assert_eq!(DcsErrorCode::InvalidScale.as_str(), "DCS_INVALID_SCALE");
+        assert_eq!(DcsErrorCode::NonCanonical.as_str(), "DCS_NON_CANONICAL");
+        assert_eq!(DcsErrorCode::Overflow.as_str(), "DCS_OVERFLOW");
+        assert_eq!(DcsErrorCode::InvalidUtf8.as_str(), "DCS_INVALID_UTF8");
+        assert_eq!(DcsErrorCode::LengthOverflow.as_str(), "DCS_LENGTH_OVERFLOW");
     }
 }

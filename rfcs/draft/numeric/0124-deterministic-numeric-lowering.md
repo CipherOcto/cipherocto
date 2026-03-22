@@ -210,9 +210,9 @@ LOWER_DFP_TO_DQA(dfp, target_scale):
        //     denominator = 2^(-exponent)
 
        IF dfp.exponent >= 0:
-           // Use i256 arithmetic to avoid overflow in intermediate
-           numerator = (dfp.mantissa as i256) << dfp.exponent
-           denominator = 1i256
+           // Use i1200 arithmetic to avoid overflow in intermediate
+           numerator = (dfp.mantissa as i1200) << dfp.exponent
+           denominator = 1i1200
        ELSE:
            numerator = dfp.mantissa as i256
            denominator = 1i256 << (-dfp.exponent)
@@ -794,7 +794,7 @@ In case of conflict between this RFC and RFC-0104 or RFC-0105:
 - **No DFP in runtime:** Any DFP value after DLP is a compiler bug
 - **Canonical output:** All DQA outputs must be canonicalized before serialization
 - **RNE rounding:** All precision loss uses Round-to-Nearest-Even
-- **i256 intermediate:** All intermediate arithmetic uses i256 to prevent overflow
+- **i1200 intermediate:** All intermediate arithmetic uses i1200 to prevent overflow
 - **Scale ≤ 18:** All target scales are capped at MAX_SCALE (18)
 
 ## Formal Verification Framework
@@ -837,10 +837,10 @@ This requires at least **i1200** for the intermediate arithmetic:
 | i256 | 2^256 ≈ 1.16 × 10^77 | **NO** |
 | i512 | 2^512 ≈ 1.34 × 10^154 | **NO** |
 | i1024 | 2^1024 ≈ 1.80 × 10^308 | **NO** |
-| i1152 | 2^1152 ≈ 6.70 × 10^346 | **YES** |
-| i1200 | 2^1200 | **YES** (recommended) |
+| i1152 | 2^1152 ≈ 6.70 × 10^346 | **NO** (requires 1196 bits) |
+| i1200 | 2^1200 ≈ 10^361 | **YES** (minimum required) |
 
-**Normative requirement:** All implementations MUST use at least i1152 (or equivalent arbitrary-precision) for intermediate arithmetic. i1200 is recommended for safety margin.
+**Normative requirement:** All implementations MUST use at least i1200 (or equivalent arbitrary-precision) for intermediate arithmetic. i1152 is insufficient.
 
 ---
 
@@ -1231,29 +1231,29 @@ clean:
 ## Appendix C: Rust Implementation Reference
 
 ```rust
-/// 384-bit signed integer (3 × u128 limbs)
+/// 1200-bit signed integer (19 × u64 limbs)
 /// Sufficient for all intermediate values (proven in Theorem 11)
 #[derive(Clone, Copy, Debug)]
-struct I384 {
-    limbs: [u128; 3],
+struct I1200 {
+    limbs: [u64; 19],
     negative: bool,
 }
 
-impl I384 {
-    fn mul_pow10(self, k: u8) -> I384 {
-        let factor = POW10_U128[k as usize];
-        let mut result = [0u128; 3];
+impl I1200 {
+    fn mul_pow10(self, k: u8) -> I1200 {
+        let factor = POW10_U64[k as usize];
+        let mut result = [0u64; 19];
         let mut carry: u128 = 0;
 
-        for i in 0..3 {
-            let (lo, hi) = widening_mul(self.limbs[i], factor);
+        for i in 0..19 {
+            let (lo, hi) = widening_mul(self.limbs[i] as u128, factor as u128);
             let (sum, carry1) = lo.overflowing_add(carry);
-            let (sum2, carry2) = sum.overflowing_add(result[i]);
-            result[i] = sum2;
+            let (sum2, carry2) = sum.overflowing_add(result[i] as u128);
+            result[i] = sum2 as u64;
             carry = hi + carry1 as u128 + carry2 as u128;
         }
 
-        I384 { limbs: result, negative: self.negative }
+        I1200 { limbs: result, negative: self.negative }
     }
 }
 
@@ -1276,24 +1276,24 @@ pub fn lower_dfp_to_dqa(dfp: &Dfp, target_scale: u8) -> Result<Dqa, DlpError> {
     }
 
     let (numerator, denominator) = if dfp.exponent >= 0 {
-        (I384::from_u128(dfp.mantissa).shl(dfp.exponent as u32), I384::one())
+        (I1200::from_u128(dfp.mantissa).shl(dfp.exponent as u32), I1200::one())
     } else {
-        (I384::from_u128(dfp.mantissa), I384::one().shl((-dfp.exponent) as u32))
+        (I1200::from_u128(dfp.mantissa), I1200::one().shl((-dfp.exponent) as u32))
     };
 
     let numerator = if dfp.sign { numerator.negate() } else { numerator };
     let scaled_numerator = numerator.mul_pow10(target_scale);
     let (quotient, remainder) = scaled_numerator.div_rem(&denominator);
-    let result_value = round_half_even_i384(quotient, remainder, denominator, numerator.signum());
+    let result_value = round_half_even_i1200(quotient, remainder, denominator, numerator.signum());
 
-    if result_value > I384::from_i64(i64::MAX) || result_value < I384::from_i64(i64::MIN) {
+    if result_value > I1200::from_i64(i64::MAX) || result_value < I1200::from_i64(i64::MIN) {
         return Err(DlpError::RangeOverflow { reason: "result exceeds i64 range" });
     }
 
     Ok(Dqa { value: result_value.to_i64(), scale: target_scale })
 }
 
-fn round_half_even_i384(quotient: I384, remainder: I384, divisor: I384, result_sign: i8) -> I384 {
+fn round_half_even_i1200(quotient: I1200, remainder: I1200, divisor: I1200, result_sign: i8) -> I1200 {
     let abs_rem = remainder.abs();
     let abs_div = divisor.abs();
     let double_rem = abs_rem.mul_small(2);

@@ -725,7 +725,7 @@ pub const DFP_MAX_EXPONENT: i32 = 1023;
 pub const DFP_MIN_EXPONENT: i32 = -1074;
 
 /// Maximum finite DFP value (113-bit odd mantissa at max exponent)
-/// Value: (2^113 - 1) × 2^1023 ≈ 1.7 × 10^308
+/// Value: (2^113 - 1) × 2^1023 ≈ 10^342
 pub const DFP_MAX_MANTISSA: u128 = (1u128 << 113) - 1;  // All 113 bits set (odd)
 
 pub const DFP_MAX: Dfp = Dfp {

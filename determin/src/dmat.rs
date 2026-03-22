@@ -485,6 +485,121 @@ pub fn gas_mat_mul(m: usize, n: usize, k: usize, scale_a: u8, scale_b: u8) -> u6
 }
 
 // =============================================================================
+// MAT_VEC_MUL — Matrix-Vector Multiplication
+// =============================================================================
+
+/// Matrix-vector multiplication: y = A × x
+///
+/// # Phase Model (per RFC-0113)
+/// - Phase 0: TRAP sentinel pre-check (matrix fully, then vector)
+/// - Phase 1: Dimension validation (a.cols == v.len, result.len == a.rows)
+/// - Phase 2: Matrix scale validation (uniform within matrix)
+/// - Phase 3: Vector scale validation (uniform within vector)
+/// - Phase 4: Result scale = s_a + s_v ≤ MAX_SCALE
+/// - Phase 5: Compute dot products (sequential, row by row)
+///
+/// # Gas
+/// `rows × cols × (30 + 3 × s_a × s_v)` where rows = a.rows, cols = a.cols
+pub fn mat_vec_mul<T: NumericScalar>(a: &DMat<T>, v: &[T]) -> Result<Vec<T>, DmatError> {
+    // Phase 0: TRAP sentinel pre-check — scan matrix fully, then vector
+    // Global TRAP Invariant: row-major order, matrix before vector
+    for i in 0..a.rows {
+        for j in 0..a.cols {
+            if a.data[i * a.cols + j].is_trap() {
+                return Err(DmatError::TrapInput);
+            }
+        }
+    }
+    for elem in v {
+        if elem.is_trap() {
+            return Err(DmatError::TrapInput);
+        }
+    }
+
+    // Phase 1: Dimension validation
+    if a.cols != v.len() {
+        return Err(DmatError::DimensionMismatch);
+    }
+    let rows = a.rows;
+    let cols = a.cols;
+    if rows == 0 || cols == 0 {
+        return Err(DmatError::DimensionError);
+    }
+    if rows * cols > 64 {
+        return Err(DmatError::DimensionError);
+    }
+    if rows > 8 || cols > 8 {
+        return Err(DmatError::DimensionError);
+    }
+
+    // Phase 2: Matrix scale validation — uniform within matrix
+    let scale_a = a.data[0].scale();
+    for i in 0..a.rows {
+        for j in 0..a.cols {
+            if a.data[i * a.cols + j].scale() != scale_a {
+                return Err(DmatError::ScaleMismatch);
+            }
+        }
+    }
+
+    // Phase 3: Vector scale validation — uniform within vector
+    let scale_v = v[0].scale();
+    for elem in v {
+        if elem.scale() != scale_v {
+            return Err(DmatError::ScaleMismatch);
+        }
+    }
+
+    // Phase 4: Result scale = s_a + s_v ≤ MAX_SCALE
+    let result_scale = scale_a
+        .checked_add(scale_v)
+        .ok_or(DmatError::InvalidScale)?;
+    if result_scale > T::MAX_SCALE {
+        return Err(DmatError::InvalidScale);
+    }
+
+    // Phase 5: Compute dot products — y[i] = Σ_j A[i,j] × v[j]
+    let mut result = Vec::with_capacity(rows);
+    for i in 0..rows {
+        let mut accumulator = BigInt::from(0);
+        let row_start = i * cols;
+        for (j, v_val) in v.iter().enumerate() {
+            let a_val = &a.data[row_start + j];
+            let product = a_val.mul(v_val).map_err(|e| e.into())?;
+            accumulator += BigInt::from(product.raw_mantissa());
+        }
+        // Overflow check
+        let abs_acc = accumulator.abs();
+        let max_mantissa = BigInt::from(T::MAX_MANTISSA);
+        if abs_acc > max_mantissa {
+            return Err(DmatError::Overflow);
+        }
+        let result_mantissa = accumulator.to_i128().ok_or(DmatError::Overflow)?;
+        let result_elem = T::new(result_mantissa, result_scale).map_err(|_| DmatError::Overflow)?;
+        result.push(result_elem);
+    }
+
+    Ok(result)
+}
+
+/// Calculate gas for MAT_VEC_MUL operation.
+///
+/// Formula: rows × cols × (30 + 3 × s_a × s_v)
+///
+/// # Arguments
+/// * `rows` - Matrix rows (A.rows)
+/// * `cols` - Matrix cols (A.cols = vector length)
+/// * `scale_a` - Element scale of matrix A
+/// * `scale_v` - Element scale of vector x
+pub fn gas_mat_vec_mul(rows: usize, cols: usize, scale_a: u8, scale_v: u8) -> u64 {
+    let rows = rows as u64;
+    let cols = cols as u64;
+    let scale_a = scale_a as u64;
+    let scale_v = scale_v as u64;
+    rows * cols * (30 + 3 * scale_a * scale_v)
+}
+
+// =============================================================================
 // Implement NumericScalar for Dqa
 // =============================================================================
 
@@ -1183,6 +1298,140 @@ mod tests {
         // gas = 2 * 2 * 3 * (30 + 3 * 2 * 3) = 12 * (30 + 18) = 12 * 48 = 576
         let gas = gas_mat_mul(2, 2, 3, 2, 3);
         assert_eq!(gas, 576);
+    }
+
+    // =============================================================================
+    // MAT_VEC_MUL Tests
+    // =============================================================================
+
+    #[test]
+    fn test_mat_vec_mul_dqa_basic() {
+        // 2×3 matrix × 3-element vector = 2-element vector
+        // A = [[1, 2, 3], [4, 5, 6]], x = [1, 2, 3]
+        // y[0] = 1*1 + 2*2 + 3*3 = 14, y[1] = 4*1 + 5*2 + 6*3 = 32
+        let a_data = vec![
+            Dqa::new(1, 0).unwrap(),
+            Dqa::new(2, 0).unwrap(),
+            Dqa::new(3, 0).unwrap(),
+            Dqa::new(4, 0).unwrap(),
+            Dqa::new(5, 0).unwrap(),
+            Dqa::new(6, 0).unwrap(),
+        ];
+        let x = vec![
+            Dqa::new(1, 0).unwrap(),
+            Dqa::new(2, 0).unwrap(),
+            Dqa::new(3, 0).unwrap(),
+        ];
+        let a = DMat::new(2, 3, a_data).unwrap();
+        let result = mat_vec_mul(&a, &x).unwrap();
+        assert_eq!(result.len(), 2);
+        assert_eq!(result[0], Dqa::new(14, 0).unwrap());
+        assert_eq!(result[1], Dqa::new(32, 0).unwrap());
+    }
+
+    #[test]
+    fn test_mat_vec_mul_decimal_basic() {
+        // 2×2 × 2 = 2 (integer, no trailing zeros in mantissa)
+        // A = [[1, 2], [3, 4]], x = [5, 6]
+        // y[0] = 1*5 + 2*6 = 17, y[1] = 3*5 + 4*6 = 39
+        let a_data = vec![
+            Decimal::new(1, 0).unwrap(),
+            Decimal::new(2, 0).unwrap(),
+            Decimal::new(3, 0).unwrap(),
+            Decimal::new(4, 0).unwrap(),
+        ];
+        let x = vec![
+            Decimal::new(5, 0).unwrap(),
+            Decimal::new(6, 0).unwrap(),
+        ];
+        let a = DMat::new(2, 2, a_data).unwrap();
+        let result = mat_vec_mul(&a, &x).unwrap();
+        assert_eq!(result.len(), 2);
+        assert_eq!(result[0], Decimal::new(17, 0).unwrap());
+        assert_eq!(result[1], Decimal::new(39, 0).unwrap());
+    }
+
+    #[test]
+    fn test_mat_vec_mul_dimension_mismatch() {
+        // a.cols (3) != v.len (2)
+        let a_data = vec![Dqa::new(1, 0).unwrap(); 6]; // 2×3
+        let x = vec![Dqa::new(1, 0).unwrap(), Dqa::new(2, 0).unwrap()]; // 2 elements
+        let a = DMat::new(2, 3, a_data).unwrap();
+        assert!(matches!(mat_vec_mul(&a, &x), Err(DmatError::DimensionMismatch)));
+    }
+
+    #[test]
+    fn test_mat_vec_mul_trap_in_matrix() {
+        let trap = Dqa { value: i64::MIN, scale: 0xFF };
+        let normal = Dqa::new(1, 0).unwrap();
+        let a_data = vec![trap, normal, normal, normal, normal, normal]; // 2×3
+        let x = vec![Dqa::new(1, 0).unwrap(), Dqa::new(2, 0).unwrap(), Dqa::new(3, 0).unwrap()];
+        let a = DMat::new(2, 3, a_data).unwrap();
+        assert!(matches!(mat_vec_mul(&a, &x), Err(DmatError::TrapInput)));
+    }
+
+    #[test]
+    fn test_mat_vec_mul_trap_in_vector() {
+        let trap = Dqa { value: i64::MIN, scale: 0xFF };
+        let normal = Dqa::new(1, 0).unwrap();
+        let a_data = vec![normal; 6]; // 2×3
+        let x = vec![trap, normal, normal];
+        let a = DMat::new(2, 3, a_data).unwrap();
+        assert!(matches!(mat_vec_mul(&a, &x), Err(DmatError::TrapInput)));
+    }
+
+    #[test]
+    fn test_mat_vec_mul_matrix_scale_mismatch() {
+        // Matrix has non-uniform scale
+        let a_data = vec![
+            Dqa::new(1, 0).unwrap(),
+            Dqa::new(2, 0).unwrap(),
+            Dqa::new(3, 1).unwrap(), // scale 1
+            Dqa::new(4, 0).unwrap(),
+            Dqa::new(5, 0).unwrap(),
+            Dqa::new(6, 0).unwrap(),
+        ];
+        let x = vec![Dqa::new(1, 0).unwrap(), Dqa::new(2, 0).unwrap(), Dqa::new(3, 0).unwrap()];
+        let a = DMat::new(2, 3, a_data).unwrap();
+        assert!(matches!(mat_vec_mul(&a, &x), Err(DmatError::ScaleMismatch)));
+    }
+
+    #[test]
+    fn test_mat_vec_mul_vector_scale_mismatch() {
+        // Vector has non-uniform scale
+        let a_data = vec![Dqa::new(1, 0).unwrap(); 6]; // 2×3, all scale 0
+        let x = vec![
+            Dqa::new(1, 0).unwrap(),
+            Dqa::new(2, 0).unwrap(),
+            Dqa::new(3, 1).unwrap(), // scale 1 - not uniform
+        ];
+        let a = DMat::new(2, 3, a_data).unwrap();
+        assert!(matches!(mat_vec_mul(&a, &x), Err(DmatError::ScaleMismatch)));
+    }
+
+    #[test]
+    fn test_mat_vec_mul_result_scale_exceeds_max() {
+        // DQA MAX_SCALE = 18, so 10 + 10 > 18 should fail
+        let a_data = vec![Dqa::new(1, 10).unwrap(); 4]; // 2×2, scale 10
+        let x = vec![Dqa::new(1, 10).unwrap(), Dqa::new(2, 10).unwrap()];
+        let a = DMat::new(2, 2, a_data).unwrap();
+        assert!(matches!(mat_vec_mul(&a, &x), Err(DmatError::InvalidScale)));
+    }
+
+    #[test]
+    fn test_gas_mat_vec_mul() {
+        // rows=2, cols=3, scale_a=0, scale_v=0
+        // gas = 2 * 3 * (30 + 3 * 0 * 0) = 6 * 30 = 180
+        let gas = gas_mat_vec_mul(2, 3, 0, 0);
+        assert_eq!(gas, 180);
+    }
+
+    #[test]
+    fn test_gas_mat_vec_mul_with_scale() {
+        // rows=2, cols=3, scale_a=2, scale_v=3
+        // gas = 2 * 3 * (30 + 3 * 2 * 3) = 6 * (30 + 18) = 6 * 48 = 288
+        let gas = gas_mat_vec_mul(2, 3, 2, 3);
+        assert_eq!(gas, 288);
     }
 
 }

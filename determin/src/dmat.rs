@@ -727,9 +727,7 @@ pub fn mat_scale<T: NumericScalar>(a: &DMat<T>, scalar: &T) -> Result<DMat<T>, D
     let mut result_data = Vec::with_capacity(rows * cols);
     for i in 0..rows {
         for j in 0..cols {
-            let product = a.data[i * cols + j]
-                .mul(scalar)
-                .map_err(|e| e.into())?;
+            let product = a.data[i * cols + j].mul(scalar).map_err(|e| e.into())?;
             result_data.push(product);
         }
     }
@@ -1773,7 +1771,10 @@ mod tests {
         ];
         let scalar = Dqa::new(2, 0).unwrap();
         let a = DMat::new(2, 2, a_data).unwrap();
-        assert!(matches!(mat_scale(&a, &scalar), Err(DmatError::ScaleMismatch)));
+        assert!(matches!(
+            mat_scale(&a, &scalar),
+            Err(DmatError::ScaleMismatch)
+        ));
     }
 
     #[test]
@@ -1782,7 +1783,10 @@ mod tests {
         let a_data = vec![Dqa::new(1, 10).unwrap(); 4];
         let scalar = Dqa::new(1, 10).unwrap();
         let a = DMat::new(2, 2, a_data).unwrap();
-        assert!(matches!(mat_scale(&a, &scalar), Err(DmatError::InvalidScale)));
+        assert!(matches!(
+            mat_scale(&a, &scalar),
+            Err(DmatError::InvalidScale)
+        ));
     }
 
     #[test]

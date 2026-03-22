@@ -2914,3 +2914,1170 @@ mod dvec_tests {
         eprintln!("\nMerkle root from test: {:02x?}", root);
     }
 }
+
+// =============================================================================
+// DMAT Verification Probe (RFC-0113)
+// =============================================================================
+
+/// DMAT operation IDs
+const DMAT_OP_MAT_ADD: u64 = 0x0100;
+const DMAT_OP_MAT_SUB: u64 = 0x0101;
+const DMAT_OP_MAT_MUL: u64 = 0x0102;
+const DMAT_OP_MAT_VEC_MUL: u64 = 0x0103;
+const DMAT_OP_MAT_TRANSPOSE: u64 = 0x0104;
+const DMAT_OP_MAT_SCALE: u64 = 0x0105;
+
+/// DMAT type IDs
+const DMAT_TYPE_DQA: u8 = 1;
+const DMAT_TYPE_DECIMAL: u8 = 2;
+
+/// TRAP sentinel for DMAT probe encoding (i64::MIN mantissa, 0xFF scale)
+const DMAT_TRAP_MANTISSA: i64 = i64::MIN;
+const DMAT_TRAP_SCALE: u8 = 0xFF;
+
+/// Encode a DQA scalar as 24-byte probe element.
+/// Format: version(1) || reserved(3) || scale(1) || reserved(3) || mantissa(16)
+fn dmat_dqa_encode(mantissa: i64, scale: u8) -> [u8; 24] {
+    let mut buf = [0u8; 24];
+    buf[0] = 0x01; // version
+    buf[4] = scale; // scale at byte 4
+                    // mantissa as big-endian i128 (sign-extended)
+    let m: i128 = mantissa as i128;
+    buf[8..24].copy_from_slice(&m.to_be_bytes());
+    buf
+}
+
+/// Encode matrix for probe.
+/// Format: rows(1) || cols(1) || element[0] || element[1] || ...
+fn dmat_encode_matrix(rows: u8, cols: u8, elements: &[(i64, u8)]) -> Vec<u8> {
+    let mut result = vec![rows, cols];
+    for &(mantissa, scale) in elements {
+        result.extend_from_slice(&dmat_dqa_encode(mantissa, scale));
+    }
+    result
+}
+
+/// Encode vector for probe.
+/// Format: len(1) || 1(1) || element[0] || element[1] || ...
+fn dmat_encode_vector(elements: &[(i64, u8)]) -> Vec<u8> {
+    let mut result = vec![elements.len() as u8, 1u8]; // len and dummy cols
+    for &(mantissa, scale) in elements {
+        result.extend_from_slice(&dmat_dqa_encode(mantissa, scale));
+    }
+    result
+}
+
+/// Encode scalar for probe (used in MAT_SCALE).
+/// Format: 1(1) || 1(1) || dqa_encode(mantissa, scale)
+fn dmat_encode_scalar(mantissa: i64, scale: u8) -> Vec<u8> {
+    vec![1, 1]
+        .into_iter()
+        .chain(dmat_dqa_encode(mantissa, scale))
+        .collect()
+}
+
+/// DMAT probe operand - either a matrix or a vector
+#[derive(Clone)]
+pub struct DmatProbeOperand {
+    pub elements: Vec<(i64, u8)>, // (mantissa, scale)
+    pub rows: u8,
+    pub cols: u8,
+    pub is_vector: bool, // true = vector, false = matrix/scalar
+}
+
+/// DMAT probe result (always a matrix)
+#[derive(Clone)]
+pub struct DmatProbeResult {
+    pub elements: Vec<(i64, u8)>,
+    pub rows: u8,
+    pub cols: u8,
+}
+
+/// DMAT probe entry
+pub struct DmatProbeEntry {
+    pub op_id: u64,
+    pub is_decimal: bool,
+    pub input_a: DmatProbeOperand,
+    pub input_b: Option<DmatProbeOperand>, // None for unary ops
+    pub scalar: Option<(i64, u8)>,         // For MAT_SCALE
+    pub expected: DmatProbeResult,
+}
+
+impl DmatProbeEntry {
+    pub fn new(
+        op_id: u64,
+        is_decimal: bool,
+        input_a: DmatProbeOperand,
+        input_b: Option<DmatProbeOperand>,
+        scalar: Option<(i64, u8)>,
+        expected: DmatProbeResult,
+    ) -> Self {
+        Self {
+            op_id,
+            is_decimal,
+            input_a,
+            input_b,
+            scalar,
+            expected,
+        }
+    }
+}
+
+/// Compute SHA256 leaf hash for a DMAT probe entry.
+fn dmat_entry_hash(
+    op_id: u64,
+    type_id: u8,
+    a_data: &[u8],
+    b_data: &[u8],
+    c_data: &[u8],
+) -> [u8; 32] {
+    use sha2::{Digest, Sha256};
+    let mut hasher = Sha256::new();
+    hasher.update(op_id.to_be_bytes());
+    hasher.update([type_id]);
+    hasher.update(a_data);
+    hasher.update(b_data);
+    hasher.update(c_data);
+    hasher.finalize().into()
+}
+
+/// Build Merkle tree root from leaf hashes.
+fn dmat_build_merkle_tree(hashes: &[[u8; 32]]) -> [u8; 32] {
+    use sha2::{Digest, Sha256};
+    if hashes.is_empty() {
+        return [0u8; 32];
+    }
+    let mut current_level: Vec<[u8; 32]> = hashes.to_vec();
+    while current_level.len() > 1 {
+        if current_level.len() % 2 == 1 {
+            current_level.push(current_level[current_level.len() - 1]);
+        }
+        let mut next_level = Vec::new();
+        for pair in current_level.chunks(2) {
+            let mut hasher = Sha256::new();
+            hasher.update(pair[0]);
+            hasher.update(pair[1]);
+            next_level.push(hasher.finalize().into());
+        }
+        current_level = next_level;
+    }
+    current_level[0]
+}
+
+#[cfg(test)]
+mod dmat_probe_tests {
+    use super::*;
+
+    #[test]
+    fn test_dmat_probe_merkle_root() {
+        // Reference Merkle root from Python script
+        let reference_root = "045cf8d1f50e5e67be8d8e63a76be93a40cfc383289a68b8aa585c7244a86b31";
+
+        // TRAP sentinel
+        let trap = (DMAT_TRAP_MANTISSA, DMAT_TRAP_SCALE);
+
+        // Helper closures
+        let dqa = |m: i64, s: u8| (m, s);
+        let mat = |r: u8, c: u8, elems: Vec<(i64, u8)>| DmatProbeOperand {
+            rows: r,
+            cols: c,
+            elements: elems,
+            is_vector: false,
+        };
+        let vec = |elems: Vec<(i64, u8)>| DmatProbeOperand {
+            rows: elems.len() as u8,
+            cols: 1,
+            elements: elems,
+            is_vector: true,
+        };
+        let _scalar = |(m, s): (i64, u8)| DmatProbeOperand {
+            rows: 1,
+            cols: 1,
+            elements: vec![(m, s)],
+            is_vector: false,
+        };
+        let result = |r: u8, c: u8, elems: Vec<(i64, u8)>| DmatProbeResult {
+            rows: r,
+            cols: c,
+            elements: elems,
+        };
+
+        // Build 64 probe entries matching Python reference
+        let entries: Vec<DmatProbeEntry> = vec![
+            // Entries 0-9: MAT_ADD DQA
+            DmatProbeEntry::new(
+                DMAT_OP_MAT_ADD,
+                false,
+                mat(2, 2, vec![dqa(1, 0), dqa(2, 0), dqa(3, 0), dqa(4, 0)]),
+                Some(mat(2, 2, vec![dqa(5, 0), dqa(6, 0), dqa(7, 0), dqa(8, 0)])),
+                None,
+                result(2, 2, vec![dqa(6, 0), dqa(8, 0), dqa(10, 0), dqa(12, 0)]),
+            ),
+            DmatProbeEntry::new(
+                DMAT_OP_MAT_ADD,
+                false,
+                mat(1, 2, vec![dqa(1, 0), dqa(2, 0)]),
+                Some(mat(1, 2, vec![dqa(3, 0), dqa(4, 0)])),
+                None,
+                result(1, 2, vec![dqa(4, 0), dqa(6, 0)]),
+            ),
+            DmatProbeEntry::new(
+                DMAT_OP_MAT_ADD,
+                false,
+                mat(2, 2, vec![dqa(1, 5), dqa(2, 5), dqa(3, 5), dqa(4, 5)]),
+                Some(mat(
+                    2,
+                    2,
+                    vec![dqa(5, 10), dqa(6, 10), dqa(7, 10), dqa(8, 10)],
+                )),
+                None,
+                result(
+                    2,
+                    2,
+                    vec![trap, trap, trap, trap],
+                ),
+            ),
+            DmatProbeEntry::new(
+                DMAT_OP_MAT_ADD,
+                false,
+                mat(2, 2, vec![dqa(10, 0), dqa(20, 0), dqa(30, 0), dqa(40, 0)]),
+                Some(mat(2, 2, vec![dqa(1, 0), dqa(2, 0), dqa(3, 0), dqa(4, 0)])),
+                None,
+                result(2, 2, vec![dqa(11, 0), dqa(22, 0), dqa(33, 0), dqa(44, 0)]),
+            ),
+            DmatProbeEntry::new(
+                DMAT_OP_MAT_ADD,
+                false,
+                mat(
+                    3,
+                    2,
+                    vec![
+                        dqa(1, 0),
+                        dqa(2, 0),
+                        dqa(3, 0),
+                        dqa(4, 0),
+                        dqa(5, 0),
+                        dqa(6, 0),
+                    ],
+                ),
+                Some(mat(
+                    3,
+                    2,
+                    vec![
+                        dqa(1, 0),
+                        dqa(2, 0),
+                        dqa(3, 0),
+                        dqa(4, 0),
+                        dqa(5, 0),
+                        dqa(6, 0),
+                    ],
+                )),
+                None,
+                result(
+                    3,
+                    2,
+                    vec![
+                        dqa(2, 0),
+                        dqa(4, 0),
+                        dqa(6, 0),
+                        dqa(8, 0),
+                        dqa(10, 0),
+                        dqa(12, 0),
+                    ],
+                ),
+            ),
+            DmatProbeEntry::new(
+                DMAT_OP_MAT_ADD,
+                false,
+                mat(
+                    2,
+                    3,
+                    vec![
+                        dqa(1, 0),
+                        dqa(2, 0),
+                        dqa(3, 0),
+                        dqa(4, 0),
+                        dqa(5, 0),
+                        dqa(6, 0),
+                    ],
+                ),
+                Some(mat(
+                    2,
+                    3,
+                    vec![
+                        dqa(6, 0),
+                        dqa(5, 0),
+                        dqa(4, 0),
+                        dqa(3, 0),
+                        dqa(2, 0),
+                        dqa(1, 0),
+                    ],
+                )),
+                None,
+                result(
+                    2,
+                    3,
+                    vec![
+                        dqa(7, 0),
+                        dqa(7, 0),
+                        dqa(7, 0),
+                        dqa(7, 0),
+                        dqa(7, 0),
+                        dqa(7, 0),
+                    ],
+                ),
+            ),
+            DmatProbeEntry::new(
+                DMAT_OP_MAT_ADD,
+                false,
+                mat(4, 1, vec![dqa(1, 0), dqa(2, 0), dqa(3, 0), dqa(4, 0)]),
+                Some(mat(4, 1, vec![dqa(4, 0), dqa(3, 0), dqa(2, 0), dqa(1, 0)])),
+                None,
+                result(4, 1, vec![dqa(5, 0), dqa(5, 0), dqa(5, 0), dqa(5, 0)]),
+            ),
+            DmatProbeEntry::new(
+                DMAT_OP_MAT_ADD,
+                false,
+                mat(1, 4, vec![dqa(1, 0), dqa(2, 0), dqa(3, 0), dqa(4, 0)]),
+                Some(mat(1, 4, vec![dqa(1, 0), dqa(2, 0), dqa(3, 0), dqa(4, 0)])),
+                None,
+                result(1, 4, vec![dqa(2, 0), dqa(4, 0), dqa(6, 0), dqa(8, 0)]),
+            ),
+            DmatProbeEntry::new(
+                DMAT_OP_MAT_ADD,
+                false,
+                mat(
+                    2,
+                    2,
+                    vec![dqa(100, 0), dqa(200, 0), dqa(300, 0), dqa(400, 0)],
+                ),
+                Some(mat(2, 2, vec![dqa(1, 0), dqa(2, 0), dqa(3, 0), dqa(4, 0)])),
+                None,
+                result(
+                    2,
+                    2,
+                    vec![dqa(101, 0), dqa(202, 0), dqa(303, 0), dqa(404, 0)],
+                ),
+            ),
+            DmatProbeEntry::new(
+                DMAT_OP_MAT_ADD,
+                false,
+                mat(
+                    3,
+                    3,
+                    vec![
+                        dqa(1, 0),
+                        dqa(1, 0),
+                        dqa(1, 0),
+                        dqa(1, 0),
+                        dqa(1, 0),
+                        dqa(1, 0),
+                        dqa(1, 0),
+                        dqa(1, 0),
+                        dqa(1, 0),
+                    ],
+                ),
+                Some(mat(
+                    3,
+                    3,
+                    vec![
+                        dqa(2, 0),
+                        dqa(2, 0),
+                        dqa(2, 0),
+                        dqa(2, 0),
+                        dqa(2, 0),
+                        dqa(2, 0),
+                        dqa(2, 0),
+                        dqa(2, 0),
+                        dqa(2, 0),
+                    ],
+                )),
+                None,
+                result(
+                    3,
+                    3,
+                    vec![
+                        dqa(3, 0),
+                        dqa(3, 0),
+                        dqa(3, 0),
+                        dqa(3, 0),
+                        dqa(3, 0),
+                        dqa(3, 0),
+                        dqa(3, 0),
+                        dqa(3, 0),
+                        dqa(3, 0),
+                    ],
+                ),
+            ),
+            // Entries 10-19: MAT_MUL DQA
+            DmatProbeEntry::new(
+                DMAT_OP_MAT_MUL,
+                false,
+                mat(2, 2, vec![dqa(1, 0), dqa(0, 0), dqa(0, 0), dqa(1, 0)]),
+                Some(mat(2, 2, vec![dqa(2, 0), dqa(3, 0), dqa(4, 0), dqa(5, 0)])),
+                None,
+                result(2, 2, vec![dqa(2, 0), dqa(3, 0), dqa(4, 0), dqa(5, 0)]),
+            ),
+            DmatProbeEntry::new(
+                DMAT_OP_MAT_MUL,
+                false,
+                mat(2, 2, vec![dqa(1, 0), dqa(2, 0), dqa(3, 0), dqa(4, 0)]),
+                Some(mat(2, 2, vec![dqa(5, 0), dqa(6, 0), dqa(7, 0), dqa(8, 0)])),
+                None,
+                result(2, 2, vec![dqa(19, 0), dqa(22, 0), dqa(43, 0), dqa(50, 0)]),
+            ),
+            DmatProbeEntry::new(
+                DMAT_OP_MAT_MUL,
+                false,
+                mat(1, 3, vec![dqa(1, 0), dqa(2, 0), dqa(3, 0)]),
+                Some(mat(3, 1, vec![dqa(1, 0), dqa(2, 0), dqa(3, 0)])),
+                None,
+                result(1, 1, vec![dqa(14, 0)]),
+            ),
+            DmatProbeEntry::new(
+                DMAT_OP_MAT_MUL,
+                false,
+                mat(2, 2, vec![dqa(2, 0), dqa(2, 0), dqa(2, 0), dqa(2, 0)]),
+                Some(mat(2, 2, vec![dqa(3, 0), dqa(3, 0), dqa(3, 0), dqa(3, 0)])),
+                None,
+                result(2, 2, vec![dqa(12, 0), dqa(12, 0), dqa(12, 0), dqa(12, 0)]),
+            ),
+            DmatProbeEntry::new(
+                DMAT_OP_MAT_MUL,
+                false,
+                mat(
+                    2,
+                    3,
+                    vec![
+                        dqa(1, 0),
+                        dqa(2, 0),
+                        dqa(3, 0),
+                        dqa(4, 0),
+                        dqa(5, 0),
+                        dqa(6, 0),
+                    ],
+                ),
+                Some(mat(
+                    3,
+                    2,
+                    vec![
+                        dqa(1, 0),
+                        dqa(2, 0),
+                        dqa(3, 0),
+                        dqa(4, 0),
+                        dqa(5, 0),
+                        dqa(6, 0),
+                    ],
+                )),
+                None,
+                result(2, 2, vec![dqa(22, 0), dqa(28, 0), dqa(49, 0), dqa(64, 0)]),
+            ),
+            DmatProbeEntry::new(
+                DMAT_OP_MAT_MUL,
+                false,
+                mat(
+                    2,
+                    4,
+                    vec![
+                        dqa(1, 0),
+                        dqa(0, 0),
+                        dqa(0, 0),
+                        dqa(0, 0),
+                        dqa(0, 0),
+                        dqa(1, 0),
+                        dqa(0, 0),
+                        dqa(0, 0),
+                    ],
+                ),
+                Some(mat(
+                    4,
+                    2,
+                    vec![
+                        dqa(1, 0),
+                        dqa(2, 0),
+                        dqa(3, 0),
+                        dqa(4, 0),
+                        dqa(5, 0),
+                        dqa(6, 0),
+                        dqa(7, 0),
+                        dqa(8, 0),
+                    ],
+                )),
+                None,
+                result(2, 2, vec![dqa(1, 0), dqa(2, 0), dqa(3, 0), dqa(4, 0)]),
+            ),
+            DmatProbeEntry::new(
+                DMAT_OP_MAT_MUL,
+                false,
+                mat(1, 2, vec![dqa(10, 0), dqa(20, 0)]),
+                Some(mat(2, 1, vec![dqa(3, 0), dqa(4, 0)])),
+                None,
+                result(1, 1, vec![dqa(110, 0)]),
+            ),
+            DmatProbeEntry::new(
+                DMAT_OP_MAT_MUL,
+                false,
+                mat(2, 1, vec![dqa(3, 0), dqa(4, 0)]),
+                Some(mat(1, 2, vec![dqa(10, 0), dqa(20, 0)])),
+                None,
+                result(2, 2, vec![dqa(30, 0), dqa(60, 0), dqa(40, 0), dqa(80, 0)]),
+            ),
+            DmatProbeEntry::new(
+                DMAT_OP_MAT_MUL,
+                false,
+                mat(3, 1, vec![dqa(1, 0), dqa(2, 0), dqa(3, 0)]),
+                Some(mat(1, 3, vec![dqa(1, 0), dqa(2, 0), dqa(3, 0)])),
+                None,
+                result(
+                    3,
+                    3,
+                    vec![
+                        dqa(1, 0),
+                        dqa(2, 0),
+                        dqa(3, 0),
+                        dqa(2, 0),
+                        dqa(4, 0),
+                        dqa(6, 0),
+                        dqa(3, 0),
+                        dqa(6, 0),
+                        dqa(9, 0),
+                    ],
+                ),
+            ),
+            DmatProbeEntry::new(
+                DMAT_OP_MAT_MUL,
+                false,
+                mat(2, 2, vec![dqa(5, 0), dqa(5, 0), dqa(5, 0), dqa(5, 0)]),
+                Some(mat(2, 2, vec![dqa(5, 0), dqa(5, 0), dqa(5, 0), dqa(5, 0)])),
+                None,
+                result(2, 2, vec![dqa(50, 0), dqa(50, 0), dqa(50, 0), dqa(50, 0)]),
+            ),
+            // Entries 20-29: MAT_VEC_MUL and MAT_TRANSPOSE DQA
+            DmatProbeEntry::new(
+                DMAT_OP_MAT_VEC_MUL,
+                false,
+                mat(2, 2, vec![dqa(1, 0), dqa(2, 0), dqa(3, 0), dqa(4, 0)]),
+                Some(vec(vec![dqa(1, 0), dqa(1, 0)])),
+                None,
+                result(2, 1, vec![dqa(3, 0), dqa(7, 0)]),
+            ),
+            DmatProbeEntry::new(
+                DMAT_OP_MAT_VEC_MUL,
+                false,
+                mat(
+                    2,
+                    3,
+                    vec![
+                        dqa(1, 0),
+                        dqa(0, 0),
+                        dqa(0, 0),
+                        dqa(0, 0),
+                        dqa(1, 0),
+                        dqa(0, 0),
+                    ],
+                ),
+                Some(vec(vec![dqa(1, 0), dqa(2, 0), dqa(3, 0)])),
+                None,
+                result(2, 1, vec![dqa(1, 0), dqa(2, 0)]),
+            ),
+            DmatProbeEntry::new(
+                DMAT_OP_MAT_VEC_MUL,
+                false,
+                mat(
+                    3,
+                    3,
+                    vec![
+                        dqa(1, 0),
+                        dqa(2, 0),
+                        dqa(3, 0),
+                        dqa(4, 0),
+                        dqa(5, 0),
+                        dqa(6, 0),
+                        dqa(7, 0),
+                        dqa(8, 0),
+                        dqa(9, 0),
+                    ],
+                ),
+                Some(vec(vec![dqa(1, 0), dqa(1, 0), dqa(1, 0)])),
+                None,
+                result(3, 1, vec![dqa(6, 0), dqa(15, 0), dqa(24, 0)]),
+            ),
+            DmatProbeEntry::new(
+                DMAT_OP_MAT_VEC_MUL,
+                false,
+                mat(1, 4, vec![dqa(2, 0), dqa(4, 0), dqa(6, 0), dqa(8, 0)]),
+                Some(vec(vec![dqa(2, 0)])),
+                None,
+                result(1, 1, vec![trap]),
+            ),
+            DmatProbeEntry::new(
+                DMAT_OP_MAT_VEC_MUL,
+                false,
+                mat(1, 4, vec![dqa(1, 0), dqa(2, 0), dqa(3, 0), dqa(4, 0)]),
+                Some(vec(vec![dqa(1, 0), dqa(2, 0), dqa(3, 0), dqa(4, 0)])),
+                None,
+                result(1, 1, vec![dqa(30, 0)]),
+            ),
+            DmatProbeEntry::new(
+                DMAT_OP_MAT_TRANSPOSE,
+                false,
+                mat(2, 2, vec![dqa(1, 0), dqa(2, 0), dqa(3, 0), dqa(4, 0)]),
+                None,
+                None,
+                result(2, 2, vec![dqa(1, 0), dqa(3, 0), dqa(2, 0), dqa(4, 0)]),
+            ),
+            DmatProbeEntry::new(
+                DMAT_OP_MAT_TRANSPOSE,
+                false,
+                mat(1, 3, vec![dqa(1, 0), dqa(2, 0), dqa(3, 0)]),
+                None,
+                None,
+                result(3, 1, vec![dqa(1, 0), dqa(2, 0), dqa(3, 0)]),
+            ),
+            DmatProbeEntry::new(
+                DMAT_OP_MAT_TRANSPOSE,
+                false,
+                mat(3, 1, vec![dqa(1, 0), dqa(2, 0), dqa(3, 0)]),
+                None,
+                None,
+                result(1, 3, vec![dqa(1, 0), dqa(2, 0), dqa(3, 0)]),
+            ),
+            DmatProbeEntry::new(
+                DMAT_OP_MAT_TRANSPOSE,
+                false,
+                mat(
+                    2,
+                    3,
+                    vec![
+                        dqa(1, 0),
+                        dqa(2, 0),
+                        dqa(3, 0),
+                        dqa(4, 0),
+                        dqa(5, 0),
+                        dqa(6, 0),
+                    ],
+                ),
+                None,
+                None,
+                result(
+                    3,
+                    2,
+                    vec![
+                        dqa(1, 0),
+                        dqa(4, 0),
+                        dqa(2, 0),
+                        dqa(5, 0),
+                        dqa(3, 0),
+                        dqa(6, 0),
+                    ],
+                ),
+            ),
+            DmatProbeEntry::new(
+                DMAT_OP_MAT_TRANSPOSE,
+                false,
+                mat(
+                    4,
+                    2,
+                    vec![
+                        dqa(1, 0),
+                        dqa(2, 0),
+                        dqa(3, 0),
+                        dqa(4, 0),
+                        dqa(5, 0),
+                        dqa(6, 0),
+                        dqa(7, 0),
+                        dqa(8, 0),
+                    ],
+                ),
+                None,
+                None,
+                result(
+                    2,
+                    4,
+                    vec![
+                        dqa(1, 0),
+                        dqa(3, 0),
+                        dqa(5, 0),
+                        dqa(7, 0),
+                        dqa(2, 0),
+                        dqa(4, 0),
+                        dqa(6, 0),
+                        dqa(8, 0),
+                    ],
+                ),
+            ),
+            // Entries 30-34: MAT_SCALE DQA
+            DmatProbeEntry::new(
+                DMAT_OP_MAT_SCALE,
+                false,
+                mat(2, 2, vec![dqa(1, 0), dqa(2, 0), dqa(3, 0), dqa(4, 0)]),
+                None,
+                Some(dqa(2, 0)),
+                result(2, 2, vec![dqa(2, 0), dqa(4, 0), dqa(6, 0), dqa(8, 0)]),
+            ),
+            DmatProbeEntry::new(
+                DMAT_OP_MAT_SCALE,
+                false,
+                mat(2, 2, vec![dqa(1, 0), dqa(1, 0), dqa(1, 0), dqa(1, 0)]),
+                None,
+                Some(dqa(0, 0)),
+                result(2, 2, vec![dqa(0, 0), dqa(0, 0), dqa(0, 0), dqa(0, 0)]),
+            ),
+            DmatProbeEntry::new(
+                DMAT_OP_MAT_SCALE,
+                false,
+                mat(
+                    3,
+                    2,
+                    vec![
+                        dqa(5, 0),
+                        dqa(5, 0),
+                        dqa(5, 0),
+                        dqa(5, 0),
+                        dqa(5, 0),
+                        dqa(5, 0),
+                    ],
+                ),
+                None,
+                Some(dqa(3, 0)),
+                result(
+                    3,
+                    2,
+                    vec![
+                        dqa(15, 0),
+                        dqa(15, 0),
+                        dqa(15, 0),
+                        dqa(15, 0),
+                        dqa(15, 0),
+                        dqa(15, 0),
+                    ],
+                ),
+            ),
+            DmatProbeEntry::new(
+                DMAT_OP_MAT_SCALE,
+                false,
+                mat(1, 4, vec![dqa(10, 0), dqa(20, 0), dqa(30, 0), dqa(40, 0)]),
+                None,
+                Some(dqa(2, 0)),
+                result(1, 4, vec![dqa(20, 0), dqa(40, 0), dqa(60, 0), dqa(80, 0)]),
+            ),
+            DmatProbeEntry::new(
+                DMAT_OP_MAT_SCALE,
+                false,
+                mat(4, 1, vec![dqa(3, 0), dqa(3, 0), dqa(3, 0), dqa(3, 0)]),
+                None,
+                Some(dqa(3, 0)),
+                result(4, 1, vec![dqa(9, 0), dqa(9, 0), dqa(9, 0), dqa(9, 0)]),
+            ),
+            // Entries 35-39: Decimal operations
+            DmatProbeEntry::new(
+                DMAT_OP_MAT_ADD,
+                true,
+                mat(2, 2, vec![dqa(1, 0), dqa(2, 0), dqa(3, 0), dqa(4, 0)]),
+                Some(mat(2, 2, vec![dqa(5, 0), dqa(6, 0), dqa(7, 0), dqa(8, 0)])),
+                None,
+                result(2, 2, vec![dqa(6, 0), dqa(8, 0), dqa(10, 0), dqa(12, 0)]),
+            ),
+            DmatProbeEntry::new(
+                DMAT_OP_MAT_SUB,
+                true,
+                mat(2, 2, vec![dqa(5, 0), dqa(6, 0), dqa(7, 0), dqa(8, 0)]),
+                Some(mat(2, 2, vec![dqa(1, 0), dqa(2, 0), dqa(3, 0), dqa(4, 0)])),
+                None,
+                result(2, 2, vec![dqa(4, 0), dqa(4, 0), dqa(4, 0), dqa(4, 0)]),
+            ),
+            DmatProbeEntry::new(
+                DMAT_OP_MAT_MUL,
+                true,
+                mat(2, 2, vec![dqa(1, 0), dqa(0, 0), dqa(0, 0), dqa(1, 0)]),
+                Some(mat(2, 2, vec![dqa(2, 0), dqa(3, 0), dqa(4, 0), dqa(5, 0)])),
+                None,
+                result(2, 2, vec![dqa(2, 0), dqa(3, 0), dqa(4, 0), dqa(5, 0)]),
+            ),
+            DmatProbeEntry::new(
+                DMAT_OP_MAT_MUL,
+                true,
+                mat(2, 2, vec![dqa(1, 0), dqa(2, 0), dqa(3, 0), dqa(4, 0)]),
+                Some(mat(2, 2, vec![dqa(5, 0), dqa(6, 0), dqa(7, 0), dqa(8, 0)])),
+                None,
+                result(2, 2, vec![dqa(19, 0), dqa(22, 0), dqa(43, 0), dqa(50, 0)]),
+            ),
+            DmatProbeEntry::new(
+                DMAT_OP_MAT_VEC_MUL,
+                true,
+                mat(2, 2, vec![dqa(1, 0), dqa(2, 0), dqa(3, 0), dqa(4, 0)]),
+                Some(vec(vec![dqa(1, 0), dqa(1, 0)])),
+                None,
+                result(2, 1, vec![dqa(3, 0), dqa(7, 0)]),
+            ),
+            // Entries 40-49: Decimal continued
+            DmatProbeEntry::new(
+                DMAT_OP_MAT_VEC_MUL,
+                true,
+                mat(
+                    3,
+                    3,
+                    vec![
+                        dqa(1, 0),
+                        dqa(2, 0),
+                        dqa(3, 0),
+                        dqa(4, 0),
+                        dqa(5, 0),
+                        dqa(6, 0),
+                        dqa(7, 0),
+                        dqa(8, 0),
+                        dqa(9, 0),
+                    ],
+                ),
+                Some(vec(vec![dqa(1, 0), dqa(1, 0), dqa(1, 0)])),
+                None,
+                result(3, 1, vec![dqa(6, 0), dqa(15, 0), dqa(24, 0)]),
+            ),
+            DmatProbeEntry::new(
+                DMAT_OP_MAT_TRANSPOSE,
+                true,
+                mat(2, 2, vec![dqa(1, 0), dqa(2, 0), dqa(3, 0), dqa(4, 0)]),
+                None,
+                None,
+                result(2, 2, vec![dqa(1, 0), dqa(3, 0), dqa(2, 0), dqa(4, 0)]),
+            ),
+            DmatProbeEntry::new(
+                DMAT_OP_MAT_SCALE,
+                true,
+                mat(2, 2, vec![dqa(1, 0), dqa(2, 0), dqa(3, 0), dqa(4, 0)]),
+                None,
+                Some(dqa(2, 0)),
+                result(2, 2, vec![dqa(2, 0), dqa(4, 0), dqa(6, 0), dqa(8, 0)]),
+            ),
+            DmatProbeEntry::new(
+                DMAT_OP_MAT_ADD,
+                true,
+                mat(2, 2, vec![dqa(10, 0), dqa(20, 0), dqa(30, 0), dqa(40, 0)]),
+                Some(mat(2, 2, vec![dqa(1, 0), dqa(2, 0), dqa(3, 0), dqa(4, 0)])),
+                None,
+                result(2, 2, vec![dqa(11, 0), dqa(22, 0), dqa(33, 0), dqa(44, 0)]),
+            ),
+            DmatProbeEntry::new(
+                DMAT_OP_MAT_SUB,
+                true,
+                mat(
+                    2,
+                    2,
+                    vec![dqa(100, 0), dqa(200, 0), dqa(300, 0), dqa(400, 0)],
+                ),
+                Some(mat(
+                    2,
+                    2,
+                    vec![dqa(10, 0), dqa(20, 0), dqa(30, 0), dqa(40, 0)],
+                )),
+                None,
+                result(
+                    2,
+                    2,
+                    vec![dqa(90, 0), dqa(180, 0), dqa(270, 0), dqa(360, 0)],
+                ),
+            ),
+            DmatProbeEntry::new(
+                DMAT_OP_MAT_MUL,
+                true,
+                mat(1, 3, vec![dqa(1, 0), dqa(2, 0), dqa(3, 0)]),
+                Some(mat(3, 1, vec![dqa(1, 0), dqa(2, 0), dqa(3, 0)])),
+                None,
+                result(1, 1, vec![dqa(14, 0)]),
+            ),
+            DmatProbeEntry::new(
+                DMAT_OP_MAT_MUL,
+                true,
+                mat(
+                    3,
+                    2,
+                    vec![
+                        dqa(1, 0),
+                        dqa(2, 0),
+                        dqa(3, 0),
+                        dqa(4, 0),
+                        dqa(5, 0),
+                        dqa(6, 0),
+                    ],
+                ),
+                Some(mat(
+                    2,
+                    3,
+                    vec![
+                        dqa(1, 0),
+                        dqa(2, 0),
+                        dqa(3, 0),
+                        dqa(4, 0),
+                        dqa(5, 0),
+                        dqa(6, 0),
+                    ],
+                )),
+                None,
+                result(
+                    3,
+                    3,
+                    vec![
+                        dqa(9, 0),
+                        dqa(12, 0),
+                        dqa(15, 0),
+                        dqa(19, 0),
+                        dqa(26, 0),
+                        dqa(33, 0),
+                        dqa(29, 0),
+                        dqa(40, 0),
+                        dqa(51, 0),
+                    ],
+                ),
+            ),
+            DmatProbeEntry::new(
+                DMAT_OP_MAT_SCALE,
+                true,
+                mat(1, 4, vec![dqa(10, 0), dqa(20, 0), dqa(30, 0), dqa(40, 0)]),
+                None,
+                Some(dqa(3, 0)),
+                result(1, 4, vec![dqa(30, 0), dqa(60, 0), dqa(90, 0), dqa(120, 0)]),
+            ),
+            // Entries 50-56: TRAP and boundary cases
+            DmatProbeEntry::new(
+                DMAT_OP_MAT_MUL,
+                false,
+                mat(9, 9, vec![]),
+                Some(mat(9, 9, vec![])),
+                None,
+                result(1, 1, vec![trap]),
+            ),
+            DmatProbeEntry::new(
+                DMAT_OP_MAT_MUL,
+                false,
+                mat(2, 3, vec![]),
+                Some(mat(2, 3, vec![])),
+                None,
+                result(1, 1, vec![trap]),
+            ),
+            DmatProbeEntry::new(
+                DMAT_OP_MAT_ADD,
+                false,
+                mat(2, 2, vec![]),
+                Some(mat(2, 3, vec![])),
+                None,
+                result(1, 1, vec![trap]),
+            ),
+            DmatProbeEntry::new(
+                DMAT_OP_MAT_VEC_MUL,
+                false,
+                mat(2, 3, vec![]),
+                Some(vec(vec![dqa(1, 0), dqa(2, 0)])),
+                None,
+                result(2, 1, vec![trap, trap]),
+            ),
+            DmatProbeEntry::new(
+                DMAT_OP_MAT_MUL,
+                false,
+                mat(
+                    2,
+                    2,
+                    vec![
+                        dqa(2147483648, 0),
+                        dqa(2147483648, 0),
+                        dqa(2147483648, 0),
+                        dqa(2147483648, 0),
+                    ],
+                ),
+                Some(mat(
+                    2,
+                    2,
+                    vec![
+                        dqa(2147483648, 0),
+                        dqa(2147483648, 0),
+                        dqa(2147483648, 0),
+                        dqa(2147483648, 0),
+                    ],
+                )),
+                None,
+                result(
+                    2,
+                    2,
+                    vec![trap, trap, trap, trap],
+                ),
+            ),
+            DmatProbeEntry::new(
+                DMAT_OP_MAT_SCALE,
+                false,
+                mat(
+                    2,
+                    2,
+                    vec![
+                        dqa(9223372038, 0),
+                        dqa(9223372038, 0),
+                        dqa(9223372038, 0),
+                        dqa(9223372038, 0),
+                    ],
+                ),
+                None,
+                Some(dqa(1000000000, 0)),
+                result(
+                    2,
+                    2,
+                    vec![trap, trap, trap, trap],
+                ),
+            ),
+            DmatProbeEntry::new(
+                DMAT_OP_MAT_ADD,
+                false,
+                mat(2, 2, vec![dqa(1, 10), dqa(2, 0), dqa(3, 0), dqa(4, 0)]),
+                Some(mat(2, 2, vec![dqa(5, 0), dqa(6, 0), dqa(7, 0), dqa(8, 0)])),
+                None,
+                result(
+                    2,
+                    2,
+                    vec![trap, trap, trap, trap],
+                ),
+            ),
+            // Entries 57-63: More TRAP, scale boundary, and special cases
+            DmatProbeEntry::new(
+                DMAT_OP_MAT_MUL,
+                false,
+                mat(2, 2, vec![dqa(1, 10), dqa(2, 10), dqa(3, 10), dqa(4, 10)]),
+                Some(mat(
+                    2,
+                    2,
+                    vec![dqa(1, 10), dqa(2, 10), dqa(3, 10), dqa(4, 10)],
+                )),
+                None,
+                result(
+                    2,
+                    2,
+                    vec![trap, trap, trap, trap],
+                ),
+            ),
+            DmatProbeEntry::new(
+                DMAT_OP_MAT_ADD,
+                false,
+                mat(1, 1, vec![trap]),
+                Some(mat(1, 1, vec![dqa(0, 0)])),
+                None,
+                result(1, 1, vec![trap]),
+            ),
+            DmatProbeEntry::new(
+                DMAT_OP_MAT_VEC_MUL,
+                false,
+                mat(2, 2, vec![dqa(10, 3), dqa(20, 3), dqa(30, 3), dqa(40, 3)]),
+                Some(vec(vec![dqa(1, 7), dqa(2, 7)])),
+                None,
+                result(2, 1, vec![dqa(50, 10), dqa(110, 10)]),
+            ),
+            DmatProbeEntry::new(
+                DMAT_OP_MAT_VEC_MUL,
+                false,
+                mat(2, 2, vec![dqa(1, 0), dqa(1, 0), dqa(1, 0), dqa(1, 0)]),
+                Some(vec(vec![dqa(1, 0), dqa(2, 5)])),
+                None,
+                result(2, 1, vec![trap, trap]),
+            ),
+            DmatProbeEntry::new(
+                DMAT_OP_MAT_SCALE,
+                false,
+                mat(1, 1, vec![dqa(1000, 3)]),
+                None,
+                Some(dqa(1, 0)),
+                result(1, 1, vec![dqa(1, 0)]),
+            ),
+            DmatProbeEntry::new(
+                DMAT_OP_MAT_MUL,
+                false,
+                mat(1, 1, vec![dqa(2, 9)]),
+                Some(mat(1, 1, vec![dqa(3, 9)])),
+                None,
+                result(1, 1, vec![dqa(6, 18)]),
+            ),
+            DmatProbeEntry::new(
+                DMAT_OP_MAT_ADD,
+                false,
+                mat(2, 2, vec![trap, dqa(1, 0), dqa(2, 0), dqa(3, 0)]),
+                Some(mat(2, 2, vec![dqa(4, 0), dqa(5, 0), dqa(6, 0), dqa(7, 0)])),
+                None,
+                result(
+                    2,
+                    2,
+                    vec![trap, trap, trap, trap],
+                ),
+            ),
+            DmatProbeEntry::new(
+                DMAT_OP_MAT_ADD,
+                false,
+                mat(2, 2, vec![dqa(1, 0), dqa(2, 0), dqa(3, 0), trap]),
+                Some(mat(2, 2, vec![dqa(4, 0), dqa(5, 0), dqa(6, 0), dqa(7, 0)])),
+                None,
+                result(
+                    2,
+                    2,
+                    vec![trap, trap, trap, trap],
+                ),
+            ),
+            DmatProbeEntry::new(
+                DMAT_OP_MAT_SCALE,
+                false,
+                mat(9, 9, vec![]),
+                None,
+                Some((DMAT_TRAP_MANTISSA, DMAT_TRAP_SCALE)),
+                result(1, 1, vec![trap]),
+            ),
+        ];
+
+        // Verify entry count
+        assert_eq!(
+            entries.len(),
+            64,
+            "Expected 64 probe entries, got {}",
+            entries.len()
+        );
+
+        // Compute hashes
+        let mut hashes = Vec::new();
+        for entry in &entries {
+            let type_id = if entry.is_decimal {
+                DMAT_TYPE_DECIMAL
+            } else {
+                DMAT_TYPE_DQA
+            };
+
+            let a_data = dmat_encode_matrix(
+                entry.input_a.rows,
+                entry.input_a.cols,
+                &entry.input_a.elements,
+            );
+
+            let b_data = match &entry.input_b {
+                Some(b) if b.is_vector => dmat_encode_vector(&b.elements),
+                Some(b) => dmat_encode_matrix(b.rows, b.cols, &b.elements),
+                None => {
+                    if entry.op_id == DMAT_OP_MAT_SCALE {
+                        match entry.scalar {
+                            Some((mantissa, scale)) => dmat_encode_scalar(mantissa, scale),
+                            None => vec![0, 0],
+                        }
+                    } else {
+                        vec![0, 0] // unary op
+                    }
+                }
+            };
+
+            let c_data = dmat_encode_matrix(
+                entry.expected.rows,
+                entry.expected.cols,
+                &entry.expected.elements,
+            );
+
+            let hash = dmat_entry_hash(entry.op_id, type_id, &a_data, &b_data, &c_data);
+            hashes.push(hash);
+        }
+
+        let root = dmat_build_merkle_tree(&hashes);
+        let root_hex = hex::encode(root);
+
+        println!("DMAT Probe Merkle root: {}", root_hex);
+        println!("Reference Merkle root:  {}", reference_root);
+
+        assert_eq!(root_hex, reference_root, "Merkle root mismatch!");
+    }
+}

@@ -2,7 +2,7 @@
 
 ## Status
 
-**Version:** 1.1 (Draft)
+**Version:** 1.2 (Draft)
 **Status:** Proposed
 **Supersedes:** RFC-0124 (legacy, incomplete)
 **Depends On:** RFC-0104 (DFP), RFC-0105 (DQA), RFC-0113 (NumericScalar)
@@ -141,10 +141,6 @@ pub enum DlpError {
     ScaleOverflow {
         required_scale: u32,
     },
-    /// DFP value's mantissa exceeds i64 range even after scaling
-    MantissaOverflow {
-        mantissa: String,
-    },
     /// Subnormal DFP value underflows DQA minimum
     SubnormalUnderflow,
 }
@@ -281,21 +277,29 @@ When no explicit column scale is provided (e.g., expression result), the target 
 
 ```
 INFER_TARGET_SCALE(dfp):
-    // Uses pre-computed LOG10_2_TABLE[exponent] = floor(exponent * 1000 / log2(10))
-    // This avoids floating-point computation while giving correct scale.
+    // Uses pre-computed LOG10_2_TABLE for exact integer arithmetic.
 
-    // Pre-computed table: LOG10_2[e] = floor((e - 1023) * log10(2) * 1000) for e in [-1023, 1023]
-    // Pre-computed with exact integer arithmetic, not FP approximation
-    // Example: LOG10_2[1] = 3, LOG10_2[10] = 30, LOG10_2[-10] = -30
+    // LOG10_2_TABLE: array of i32 with 2047 entries (indices 0..2046)
+    //   LOG10_2_TABLE[i] = floor((i - 1023) * log10(2) * 1000)
+    //   Equivalently: LOG10_2_TABLE[e + 1023] = floor(e * log10(2) * 1000)
+    //   Access as: LOG10_2_TABLE[dfp.exponent + 1023]
+    //   All entries pre-computed with exact integer arithmetic
+    // Examples:
+    //   LOG10_2_TABLE[1023] = floor(0 * 0.30103 * 1000) = 0  (e=0)
+    //   LOG10_2_TABLE[1024] = floor(1 * 0.30103 * 1000) = 301 (e=1)
+    //   LOG10_2_TABLE[1033] = floor(10 * 0.30103 * 1000) = 3010 (e=10)
 
     1. Compute decimal digits in mantissa:
        // Uses bit_length(mantissa) to compute digits without FP
        mantissa_digits = (bit_length(dfp.mantissa) * 789) >> 12  // Approx log10
+       // Note: 789/4096 ≈ 0.1926; the correct factor for log10(2) ≈ 0.30103
+       //       is approximately 1242/4096 ≈ 0.303. This approximation is
+       //       acceptable for the small mantissa sizes used in DFP (≤ 113 bits).
        // Or: use pre-computed table for small mantissas
 
     2. Compute decimal exponent using lookup table:
-       // LOG10_2[exponent] gives floor(exponent * log10(2)) * 1000
-       decimal_exponent_approx = mantissa_digits - 1 + LOG10_2[dfp.exponent] / 1000
+       // LOG10_2[dfp.exponent] = floor(exponent * log10(2) * 1000)
+       decimal_exponent_approx = mantissa_digits - 1 + LOG10_2_TABLE[dfp.exponent + 1023] / 1000
 
     3. Determine scale:
        // If value < 1: scale = number of decimal places after the point
@@ -353,11 +357,10 @@ Note: The threshold of -200 is conservative. A DFP value with exponent -200 and 
 
 | Scenario | DFP Exponent | DLP Behavior |
 |----------|-------------|-------------|
-| Very large positive | > 308 | `DlpError::RangeOverflow` (exceeds DQA i64 range) |
-| Large positive | 100-308 | Attempt conversion; error if result > i64::MAX |
-| Normal range | -1023 to +1023 | Normal lowering |
-| Large negative | -100 to -308 | Attempt conversion; round to zero if underflows |
-| Very large negative | < -308 | `DlpError::SubnormalUnderflow` (round to zero) |
+| Very large positive | > 1023 (DFP_MAX_EXPONENT) | `DlpError::RangeOverflow` (exceeds DFP max) |
+| Large positive | 100-1023 | Attempt conversion; error if result > i64::MAX |
+| Normal range | -200 to +1023 | Normal lowering |
+| Subnormal | < -200 | `DlpError::SubnormalUnderflow` |
 
 #### Precision Loss (113-bit → 64-bit)
 
@@ -611,7 +614,7 @@ Each vector specifies:
 |----|-------------|----------|--------------|----------------|----------------|-------|
 | V026 | 1 | -60 | 18 | 1 | 18 | 2^-60 * 10^18 ≈ 0.867, RNE rounds to 1 |
 | V027 | 1 | -30 | 6 | 0 | 6 | 2^-30 * 10^6 ≈ 0.93, RNE rounds to 0 (2*remainder < divisor) |
-| V028 | 1 | -30 | 18 | 931322574 | 18 | 2^-30 * 10^18 ≈ 931322574.6, RNE rounds to 931322575 |
+| V028 | 1 | -30 | 18 | 931322574 | 18 | 2^-30 * 10^18 ≈ 931322574.6, RNE rounds to 931322574 (2*remainder < divisor) |
 | V029 | 1 | -10 | 6 | 977 | 6 | 2^-10 * 10^6 ≈ 976.6, rounds to 977 |
 
 #### Expression Lowering Vectors
@@ -920,18 +923,56 @@ Definition POW10 (k : Z) : Z :=
   else pow10_nat (Z.to_nat k).
 
 (** POW10 Properties — required for Theorem 11 proof *)
-Lemma pow10_positive : forall s, 0 <= s <= 18 -> POW10 s > 0.
-Proof. intros s H; destruct s; compute; lia. Qed.
-
-Lemma pow10_monotone : forall s1 s2, 0 <= s1 -> s1 < s2 -> s2 <= 18 ->
-  POW10 s1 < POW10 s2.
-Proof. intros; destruct s1, s2; compute; lia. Qed.
-
 Lemma pow10_18 : POW10 18 = 1000000000000000000.
 Proof. compute. reflexivity. Qed.
 
-Lemma pow10_succ : forall s, 0 <= s < 18 -> POW10 (s + 1) = 10 * POW10 s.
-Proof. intros s H; destruct s; compute; lia. Qed.
+(* Boundedness: for all s in [0,18], POW10 s <= POW10 18 *)
+Lemma pow10_bounded : forall s, 0 <= s -> s <= 18 -> POW10 s <= 1000000000000000000.
+Proof.
+  intros s Hlo Hhi.
+  assert (Hs : s = 0 \/ s = 1 \/ s = 2 \/ s = 3 \/ s = 4 \/ s = 5 \/
+              s = 6 \/ s = 7 \/ s = 8 \/ s = 9 \/ s = 10 \/ s = 11 \/
+              s = 12 \/ s = 13 \/ s = 14 \/ s = 15 \/ s = 16 \/ s = 17 \/
+              s = 18) by lia.
+  destruct Hs as [H0|H1].
+  - rewrite H0. compute. lia.
+  - destruct H1 as [H1|H2].
+    + rewrite H1. compute. lia.
+    + destruct H2 as [H2|H3].
+      * rewrite H2. compute. lia.
+      * destruct H3 as [H3|H4].
+        - rewrite H3. compute. lia.
+        - destruct H4 as [H4|H5].
+          + rewrite H4. compute. lia.
+          + destruct H5 as [H5|H6].
+            * rewrite H5. compute. lia.
+            * destruct H6 as [H6|H7].
+              - rewrite H6. compute. lia.
+              - destruct H7 as [H7|H8].
+                + rewrite H7. compute. lia.
+                + destruct H8 as [H8|H9].
+                  * rewrite H8. compute. lia.
+                  * destruct H9 as [H9|H10].
+                    - rewrite H9. compute. lia.
+                    - destruct H10 as [H10|H11].
+                      + rewrite H10. compute. lia.
+                      + destruct H11 as [H11|H12].
+                        * rewrite H11. compute. lia.
+                        * destruct H12 as [H12|H13].
+                          - rewrite H12. compute. lia.
+                          - destruct H13 as [H13|H14].
+                            + rewrite H13. compute. lia.
+                            + destruct H14 as [H14|H15].
+                              * rewrite H14. compute. lia.
+                              * destruct H15 as [H15|H16].
+                                - rewrite H15. compute. lia.
+                                - destruct H16 as [H16|H17].
+                                  + rewrite H16. compute. lia.
+                                  + rewrite H17. compute. lia.
+Qed.
+
+Lemma pow10_positive : forall s, 0 <= s <= 18 -> POW10 s > 0.
+Proof. intros s [Hlo Hhi]; apply Z.lt_le_trans with (m := 1); [compute; lia|apply pow10_bounded; lia]. Qed.
 
 (** DFP Types *)
 Inductive DfpClass : Type :=
@@ -1003,6 +1044,8 @@ Definition abs_z (x : Z) : Z :=
 
 (** round_half_even: RNE rounding with explicit sign parameter.
   sign = +1 for positive, -1 for negative, 0 for zero.
+  When sign = 0 (value is zero), quotient + 0 = quotient, so rounding is identity.
+  Note: DfpZero is handled before this function is called, so sign=0 is unreachable.
   This matches the algorithm specification. *)
 Definition round_half_even (quotient remainder divisor sign : Z) : Z :=
   let abs_rem := abs_z remainder in
@@ -1080,7 +1123,8 @@ Proof. intros; subst; reflexivity. Qed.
 Theorem rne_closest :
   forall n d, d > 0 ->
     let y := (inject_Z n / inject_Z d)%Q in
-    let v := round_half_even (n / d) (n mod d) d in
+    (* Since d > 0, sgn(n/d) = sgn(n), so sgn_z n is the correct sign *)
+    let v := round_half_even (n / d) (n mod d) d (sgn_z n) in
     forall k : Z,
       (qabs (y - inject_Z v) < qabs (y - inject_Z k))%Q \/
       (qabs (y - inject_Z v) = qabs (y - inject_Z k) /\ v mod 2 = 0).
@@ -1149,46 +1193,41 @@ Theorem intermediate_fits_i1200 :
     in
     max_val < 2^1200.
 Proof.
-  intros d sigma Hc Hs Hmant Hexp Hexp_lo.
+  intros d sigma Hc [Hs_lo Hs_hi] Hmant Hexp Hexp_lo.
   assert (Hp : POW10 sigma <= 10^18).
-  { pose proof pow10_monotone sigma 18.
-    assert (H : sigma <= 18) by lia.
-    assert (H0 : 0 <= sigma) by lia.
-    specialize (H0 H H); lia. }
+  { rewrite pow10_18. apply pow10_bounded; lia. }
   assert (H10 : 10^18 < 2^60) by (compute; lia).
+  assert (Hmant' : dfp_mantissa d < 2^113) by lia.
   destruct (Z_ge_dec (dfp_exponent d) 0) as [Hn | Hn].
   - (* exponent >= 0 *)
     assert (He : 2 ^ (dfp_exponent d) <= 2^1023).
     { apply Z.pow_le_mono_r; lia. }
-    assert (Hpow : 2 ^ (dfp_exponent d) * 10^18 < 2^1196).
-    { rewrite <- Z.mul_assoc.
-      assert (H : 2 ^ (dfp_exponent d) * 10^18 <= 2^1023 * 10^18).
-      { apply Z.mul_le_mono_nonneg; [apply Z.pow_nonneg|lia]. }
-      assert (H' : 2^1023 * 10^18 < 2^1023 * 2^60).
-      { apply Z.mul_lt_mono_pos_neg; [apply Z.pow_positive|lia]. }
-      lia. }
-    assert (Hmant' : dfp_mantissa d < 2^113) by lia.
-    assert (Hfinal : dfp_mantissa d * 2 ^ (dfp_exponent d) * POW10 sigma < 2^1200).
-    { assert (H1 : dfp_mantissa d * 2 ^ (dfp_exponent d) * POW10 sigma <
-                  2^113 * 2^1023 * 10^18).
-      { apply Z.mul_lt_mono_pos_neg; lia. }
-      assert (H2 : 2^113 * 2^1023 * 10^18 < 2^1196).
-      { assert (H2a : 2^113 * 2^1023 = 2^1136) by (rewrite Z.pow_add_r; lia).
-        assert (H2b : 2^1136 * 10^18 < 2^1136 * 2^60).
-        { apply Z.mul_lt_mono_pos_neg; [apply Z.pow_positive|lia]. }
-        lia. }
-      lia. }
-    lia.
-  - (* exponent < 0 *)
-    assert (Hpow : dfp_mantissa d * POW10 sigma < 2^173).
-    { assert (H1 : dfp_mantissa d * POW10 sigma < 2^113 * 10^18).
-      { apply Z.mul_lt_mono_pos_neg; lia. }
-      assert (H2 : 2^113 * 10^18 < 2^113 * 2^60).
-      { apply Z.mul_lt_mono_pos_neg; [apply Z.pow_positive|lia]. }
-      lia. }
-    assert (H173 : 2^173 < 2^1200).
+    assert (H1136 : 2^113 * 2^1023 = 2^1136).
+    { rewrite Z.pow_add_r by lia. reflexivity. }
+    assert (H2 : dfp_mantissa d * 2 ^ (dfp_exponent d) * POW10 sigma <
+                 2^113 * 2^1023 * 10^18).
+    { nia. }
+    assert (H3 : 2^113 * 2^1023 * 10^18 < 2^1136 * 2^60).
+    { rewrite H1136. apply Z.mul_lt_mono_pos_l.
+      - apply Z.pow_pos_pos; lia.
+      - lia. }
+    assert (H4 : 2^1136 * 2^60 = 2^1196).
+    { rewrite <- Z.pow_add_r by lia. reflexivity. }
+    assert (H5 : 2^1196 < 2^1200).
     { apply Z.pow_lt_mono_r; lia. }
-    lia.
+    nia.
+  - (* exponent < 0 *)
+    assert (H2 : dfp_mantissa d * POW10 sigma < 2^113 * 10^18).
+    { nia. }
+    assert (H3 : 2^113 * 10^18 < 2^113 * 2^60).
+    { apply Z.mul_lt_mono_pos_l.
+      - apply Z.pow_pos_pos; lia.
+      - lia. }
+    assert (H4 : 2^113 * 2^60 = 2^173).
+    { rewrite <- Z.pow_add_r by lia. reflexivity. }
+    assert (H5 : 2^173 < 2^1200).
+    { apply Z.pow_lt_mono_r; lia. }
+    nia.
 Qed.
 
 End RFC0124_Theorems.

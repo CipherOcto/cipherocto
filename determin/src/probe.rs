@@ -3131,11 +3131,7 @@ mod dmat_probe_tests {
                     vec![dqa(5, 10), dqa(6, 10), dqa(7, 10), dqa(8, 10)],
                 )),
                 None,
-                result(
-                    2,
-                    2,
-                    vec![trap, trap, trap, trap],
-                ),
+                result(2, 2, vec![trap, trap, trap, trap]),
             ),
             DmatProbeEntry::new(
                 DMAT_OP_MAT_ADD,
@@ -3894,11 +3890,7 @@ mod dmat_probe_tests {
                     ],
                 )),
                 None,
-                result(
-                    2,
-                    2,
-                    vec![trap, trap, trap, trap],
-                ),
+                result(2, 2, vec![trap, trap, trap, trap]),
             ),
             DmatProbeEntry::new(
                 DMAT_OP_MAT_SCALE,
@@ -3915,11 +3907,7 @@ mod dmat_probe_tests {
                 ),
                 None,
                 Some(dqa(1000000000, 0)),
-                result(
-                    2,
-                    2,
-                    vec![trap, trap, trap, trap],
-                ),
+                result(2, 2, vec![trap, trap, trap, trap]),
             ),
             DmatProbeEntry::new(
                 DMAT_OP_MAT_ADD,
@@ -3927,11 +3915,7 @@ mod dmat_probe_tests {
                 mat(2, 2, vec![dqa(1, 10), dqa(2, 0), dqa(3, 0), dqa(4, 0)]),
                 Some(mat(2, 2, vec![dqa(5, 0), dqa(6, 0), dqa(7, 0), dqa(8, 0)])),
                 None,
-                result(
-                    2,
-                    2,
-                    vec![trap, trap, trap, trap],
-                ),
+                result(2, 2, vec![trap, trap, trap, trap]),
             ),
             // Entries 57-63: More TRAP, scale boundary, and special cases
             DmatProbeEntry::new(
@@ -3944,11 +3928,7 @@ mod dmat_probe_tests {
                     vec![dqa(1, 10), dqa(2, 10), dqa(3, 10), dqa(4, 10)],
                 )),
                 None,
-                result(
-                    2,
-                    2,
-                    vec![trap, trap, trap, trap],
-                ),
+                result(2, 2, vec![trap, trap, trap, trap]),
             ),
             DmatProbeEntry::new(
                 DMAT_OP_MAT_ADD,
@@ -3996,11 +3976,7 @@ mod dmat_probe_tests {
                 mat(2, 2, vec![trap, dqa(1, 0), dqa(2, 0), dqa(3, 0)]),
                 Some(mat(2, 2, vec![dqa(4, 0), dqa(5, 0), dqa(6, 0), dqa(7, 0)])),
                 None,
-                result(
-                    2,
-                    2,
-                    vec![trap, trap, trap, trap],
-                ),
+                result(2, 2, vec![trap, trap, trap, trap]),
             ),
             DmatProbeEntry::new(
                 DMAT_OP_MAT_ADD,
@@ -4008,11 +3984,7 @@ mod dmat_probe_tests {
                 mat(2, 2, vec![dqa(1, 0), dqa(2, 0), dqa(3, 0), trap]),
                 Some(mat(2, 2, vec![dqa(4, 0), dqa(5, 0), dqa(6, 0), dqa(7, 0)])),
                 None,
-                result(
-                    2,
-                    2,
-                    vec![trap, trap, trap, trap],
-                ),
+                result(2, 2, vec![trap, trap, trap, trap]),
             ),
             DmatProbeEntry::new(
                 DMAT_OP_MAT_SCALE,

@@ -36,6 +36,8 @@ use crate::decimal::DecimalError;
 use crate::decimal::{self as decimal_mod, Decimal};
 use crate::dqa::Dqa;
 use crate::dqa::DqaError;
+use num_bigint::BigInt;
+use num_traits::{Signed, ToPrimitive};
 
 // =============================================================================
 // DMatError
@@ -348,6 +350,138 @@ pub fn mat_sub<T: NumericScalar>(a: &DMat<T>, b: &DMat<T>) -> Result<DMat<T>, Dm
     }
 
     DMat::new(rows, cols, result_data).map_err(|_| DmatError::DimensionError)
+}
+
+// =============================================================================
+// MAT_MUL — Matrix Multiplication
+// =============================================================================
+
+/// Matrix multiplication: C = A × B
+///
+/// # Algorithm
+/// Naive triple loop: C[i,j] = Σ_k A[i,k] × B[k,j]
+///
+/// # Phase Model (per RFC-0113)
+/// - Phase 0: TRAP sentinel pre-check (a fully, then b)
+/// - Phase 1: Dimension validation (a.cols == b.rows, M×N ≤ 64, M≤8, N≤8)
+/// - Phase 2: Scale validation (uniform within each matrix)
+/// - Phase 3: Result scale validation (s_a + s_b ≤ MAX_SCALE)
+/// - Phase 4: Naive triple loop with BigInt accumulator and overflow detection
+///
+/// # Gas
+/// `M × N × K × (30 + 3 × s_a × s_b)` where K = a.cols = b.rows
+pub fn mat_mul<T: NumericScalar>(a: &DMat<T>, b: &DMat<T>) -> Result<DMat<T>, DmatError> {
+    // Phase 0: TRAP sentinel pre-check — scan a fully, then b
+    // Global TRAP Invariant: row-major order, a before b
+    for i in 0..a.rows {
+        for j in 0..a.cols {
+            if a.data[i * a.cols + j].is_trap() {
+                return Err(DmatError::TrapInput);
+            }
+        }
+    }
+    for i in 0..b.rows {
+        for j in 0..b.cols {
+            if b.data[i * b.cols + j].is_trap() {
+                return Err(DmatError::TrapInput);
+            }
+        }
+    }
+
+    // Phase 1: Dimension validation
+    // Result is a.rows × b.cols
+    // Require a.cols == b.rows for valid multiplication
+    if a.cols != b.rows {
+        return Err(DmatError::DimensionMismatch);
+    }
+    let m = a.rows;
+    let k = a.cols;
+    let n = b.cols;
+    let result_rows = m;
+    let result_cols = n;
+
+    // Check result dimensions
+    if result_rows == 0 || result_cols == 0 {
+        return Err(DmatError::DimensionError);
+    }
+    if result_rows * result_cols > 64 {
+        return Err(DmatError::DimensionError);
+    }
+    if result_rows > 8 || result_cols > 8 {
+        return Err(DmatError::DimensionError);
+    }
+
+    // Phase 2: Scale validation — uniform within each matrix
+    let scale_a = a.data[0].scale();
+    for i in 0..a.rows {
+        for j in 0..a.cols {
+            if a.data[i * a.cols + j].scale() != scale_a {
+                return Err(DmatError::ScaleMismatch);
+            }
+        }
+    }
+    let scale_b = b.data[0].scale();
+    for i in 0..b.rows {
+        for j in 0..b.cols {
+            if b.data[i * b.cols + j].scale() != scale_b {
+                return Err(DmatError::ScaleMismatch);
+            }
+        }
+    }
+
+    // Phase 3: Result scale validation (s_a + s_b ≤ MAX_SCALE)
+    let result_scale = scale_a
+        .checked_add(scale_b)
+        .ok_or(DmatError::InvalidScale)?;
+    if result_scale > T::MAX_SCALE {
+        return Err(DmatError::InvalidScale);
+    }
+
+    // Phase 4: Naive triple loop with BigInt accumulator
+    // C[i,j] = Σ_k A[i,k] × B[k,j]
+    let mut result_data = Vec::with_capacity(result_rows * result_cols);
+
+    for i in 0..result_rows {
+        for j in 0..result_cols {
+            let mut accumulator = BigInt::from(0);
+            for x in 0..k {
+                let a_val = &a.data[i * k + x];
+                let b_val = &b.data[x * n + j];
+                let product = a_val.mul(b_val).map_err(|e| e.into())?;
+                accumulator += BigInt::from(product.raw_mantissa());
+            }
+            // Overflow check: abs(accumulator) > MAX_MANTISSA
+            let abs_acc = accumulator.abs();
+            let max_mantissa = BigInt::from(T::MAX_MANTISSA);
+            if abs_acc > max_mantissa {
+                return Err(DmatError::Overflow);
+            }
+            let result_mantissa = accumulator.to_i128().ok_or(DmatError::Overflow)?;
+            let result = T::new(result_mantissa, result_scale).map_err(|_| DmatError::Overflow)?;
+            result_data.push(result);
+        }
+    }
+
+    DMat::new(result_rows, result_cols, result_data).map_err(|_| DmatError::DimensionError)
+}
+
+/// Calculate gas for MAT_MUL operation.
+///
+/// Formula: M × N × K × (30 + 3 × s_a × s_b)
+///
+/// # Arguments
+/// * `m` - Result rows (A.rows)
+/// * `n` - Result cols (B.cols)
+/// * `k` - Inner dimension (A.cols = B.rows)
+/// * `scale_a` - Element scale of matrix A
+/// * `scale_b` - Element scale of matrix B
+pub fn gas_mat_mul(m: usize, n: usize, k: usize, scale_a: u8, scale_b: u8) -> u64 {
+    let m = m as u64;
+    let n = n as u64;
+    let k = k as u64;
+    let scale_a = scale_a as u64;
+    let scale_b = scale_b as u64;
+    m * n * k * (30 + 3 * scale_a * scale_b)
 }
 
 // =============================================================================
@@ -868,5 +1002,187 @@ mod tests {
         assert_eq!(result[(1, 1)], Dqa::new(0, 0).unwrap());
     }
 
+    // =============================================================================
+    // MAT_MUL Tests
+    // =============================================================================
+
+    #[test]
+    fn test_mat_mul_dqa_basic() {
+        // 2×2 × 2×2 matrix multiplication
+        // A = [[1, 2], [3, 4]], B = [[5, 6], [7, 8]]
+        // C[0,0] = 1*5 + 2*7 = 19, C[0,1] = 1*6 + 2*8 = 22
+        // C[1,0] = 3*5 + 4*7 = 43, C[1,1] = 3*6 + 4*8 = 50
+        let a_data = vec![
+            Dqa::new(1, 0).unwrap(),
+            Dqa::new(2, 0).unwrap(),
+            Dqa::new(3, 0).unwrap(),
+            Dqa::new(4, 0).unwrap(),
+        ];
+        let b_data = vec![
+            Dqa::new(5, 0).unwrap(),
+            Dqa::new(6, 0).unwrap(),
+            Dqa::new(7, 0).unwrap(),
+            Dqa::new(8, 0).unwrap(),
+        ];
+        let a = DMat::new(2, 2, a_data).unwrap();
+        let b = DMat::new(2, 2, b_data).unwrap();
+        let result = mat_mul(&a, &b).unwrap();
+        assert_eq!(result.rows, 2);
+        assert_eq!(result.cols, 2);
+        assert_eq!(result[(0, 0)], Dqa::new(19, 0).unwrap());
+        assert_eq!(result[(0, 1)], Dqa::new(22, 0).unwrap());
+        assert_eq!(result[(1, 0)], Dqa::new(43, 0).unwrap());
+        assert_eq!(result[(1, 1)], Dqa::new(50, 0).unwrap());
+    }
+
+    #[test]
+    fn test_mat_mul_rectangular() {
+        // 2×3 × 3×2 = 2×2
+        // A = [[1, 2, 3], [4, 5, 6]], B = [[7, 8], [9, 10], [11, 12]]
+        // C[0,0] = 1*7 + 2*9 + 3*11 = 58, C[0,1] = 1*8 + 2*10 + 3*12 = 64
+        // C[1,0] = 4*7 + 5*9 + 6*11 = 139, C[1,1] = 4*8 + 5*10 + 6*12 = 154
+        let a_data = vec![
+            Dqa::new(1, 0).unwrap(),
+            Dqa::new(2, 0).unwrap(),
+            Dqa::new(3, 0).unwrap(),
+            Dqa::new(4, 0).unwrap(),
+            Dqa::new(5, 0).unwrap(),
+            Dqa::new(6, 0).unwrap(),
+        ];
+        let b_data = vec![
+            Dqa::new(7, 0).unwrap(),
+            Dqa::new(8, 0).unwrap(),
+            Dqa::new(9, 0).unwrap(),
+            Dqa::new(10, 0).unwrap(),
+            Dqa::new(11, 0).unwrap(),
+            Dqa::new(12, 0).unwrap(),
+        ];
+        let a = DMat::new(2, 3, a_data).unwrap();
+        let b = DMat::new(3, 2, b_data).unwrap();
+        let result = mat_mul(&a, &b).unwrap();
+        assert_eq!(result.rows, 2);
+        assert_eq!(result.cols, 2);
+        assert_eq!(result[(0, 0)], Dqa::new(58, 0).unwrap());
+        assert_eq!(result[(0, 1)], Dqa::new(64, 0).unwrap());
+        assert_eq!(result[(1, 0)], Dqa::new(139, 0).unwrap());
+        assert_eq!(result[(1, 1)], Dqa::new(154, 0).unwrap());
+    }
+
+    #[test]
+    fn test_mat_mul_decimal_basic() {
+        // Decimal 2×2 × 2×2 with uniform scale 0 (integer matrix multiplication)
+        // A = [[1, 2], [3, 4]], B = [[5, 6], [7, 8]]
+        // C[0,0] = 1*5 + 2*7 = 19, C[0,1] = 1*6 + 2*8 = 22
+        // C[1,0] = 3*5 + 4*7 = 43, C[1,1] = 3*6 + 4*8 = 50
+        let a_data = vec![
+            Decimal::new(1, 0).unwrap(),
+            Decimal::new(2, 0).unwrap(),
+            Decimal::new(3, 0).unwrap(),
+            Decimal::new(4, 0).unwrap(),
+        ];
+        let b_data = vec![
+            Decimal::new(5, 0).unwrap(),
+            Decimal::new(6, 0).unwrap(),
+            Decimal::new(7, 0).unwrap(),
+            Decimal::new(8, 0).unwrap(),
+        ];
+        let a = DMat::new(2, 2, a_data).unwrap();
+        let b = DMat::new(2, 2, b_data).unwrap();
+        let result = mat_mul(&a, &b).unwrap();
+        assert_eq!(result.rows, 2);
+        assert_eq!(result.cols, 2);
+        assert_eq!(result[(0, 0)], Decimal::new(19, 0).unwrap());
+        assert_eq!(result[(0, 1)], Decimal::new(22, 0).unwrap());
+        assert_eq!(result[(1, 0)], Decimal::new(43, 0).unwrap());
+        assert_eq!(result[(1, 1)], Decimal::new(50, 0).unwrap());
+    }
+
+    #[test]
+    fn test_mat_mul_dimension_mismatch() {
+        // a.cols (3) != b.rows (2) — can't multiply
+        let a_data = vec![Dqa::new(1, 0).unwrap(); 6]; // 2×3
+        let b_data = vec![Dqa::new(1, 0).unwrap(); 6]; // 2×3
+        let a = DMat::new(2, 3, a_data).unwrap();
+        let b = DMat::new(2, 3, b_data).unwrap();
+        assert!(matches!(mat_mul(&a, &b), Err(DmatError::DimensionMismatch)));
+    }
+
+    #[test]
+    fn test_mat_mul_trap_sentinel() {
+        let trap = Dqa { value: i64::MIN, scale: 0xFF };
+        let normal = Dqa::new(1, 0).unwrap();
+        let a_data = vec![normal, normal, normal, normal]; // 2×2
+        let b_data = vec![trap, normal, normal, normal]; // 2×2
+        let a = DMat::new(2, 2, a_data).unwrap();
+        let b = DMat::new(2, 2, b_data).unwrap();
+        assert!(matches!(mat_mul(&a, &b), Err(DmatError::TrapInput)));
+    }
+
+    #[test]
+    fn test_mat_mul_trap_in_a() {
+        let trap = Dqa { value: i64::MIN, scale: 0xFF };
+        let normal = Dqa::new(1, 0).unwrap();
+        let a_data = vec![trap, normal, normal, normal]; // 2×2, trap in a
+        let b_data = vec![normal, normal, normal, normal]; // 2×2
+        let a = DMat::new(2, 2, a_data).unwrap();
+        let b = DMat::new(2, 2, b_data).unwrap();
+        assert!(matches!(mat_mul(&a, &b), Err(DmatError::TrapInput)));
+    }
+
+    #[test]
+    fn test_mat_mul_scale_mismatch() {
+        // a has uniform scale 0, but b has scale 1 - should fail
+        let a_data = vec![
+            Dqa::new(1, 0).unwrap(),
+            Dqa::new(2, 0).unwrap(),
+            Dqa::new(3, 0).unwrap(),
+            Dqa::new(4, 0).unwrap(),
+        ];
+        let b_data = vec![
+            Dqa::new(1, 1).unwrap(), // scale 1, not uniform with rest of b
+            Dqa::new(2, 1).unwrap(),
+            Dqa::new(3, 0).unwrap(), // scale 0 - not uniform within b
+            Dqa::new(4, 0).unwrap(),
+        ];
+        let a = DMat::new(2, 2, a_data).unwrap();
+        let b = DMat::new(2, 2, b_data).unwrap();
+        assert!(matches!(mat_mul(&a, &b), Err(DmatError::ScaleMismatch)));
+    }
+
+    #[test]
+    fn test_mat_mul_result_scale_exceeds_max() {
+        // DQA MAX_SCALE = 18, so 10 + 10 > 18 should fail
+        let a_data = vec![
+            Dqa::new(1, 10).unwrap(),
+            Dqa::new(2, 10).unwrap(),
+            Dqa::new(3, 10).unwrap(),
+            Dqa::new(4, 10).unwrap(),
+        ];
+        let b_data = vec![
+            Dqa::new(1, 10).unwrap(),
+            Dqa::new(2, 10).unwrap(),
+            Dqa::new(3, 10).unwrap(),
+            Dqa::new(4, 10).unwrap(),
+        ];
+        let a = DMat::new(2, 2, a_data).unwrap();
+        let b = DMat::new(2, 2, b_data).unwrap();
+        assert!(matches!(mat_mul(&a, &b), Err(DmatError::InvalidScale)));
+    }
+
+    #[test]
+    fn test_gas_mat_mul() {
+        // M=2, N=2, K=2, scale_a=0, scale_b=0
+        // gas = 2 * 2 * 2 * (30 + 3 * 0 * 0) = 8 * 30 = 240
+        let gas = gas_mat_mul(2, 2, 2, 0, 0);
+        assert_eq!(gas, 240);
+    }
+
+    #[test]
+    fn test_gas_mat_mul_with_scale() {
+        // M=2, N=2, K=3, scale_a=2, scale_b=3
+        // gas = 2 * 2 * 3 * (30 + 3 * 2 * 3) = 12 * (30 + 18) = 12 * 48 = 576
+        let gas = gas_mat_mul(2, 2, 3, 2, 3);
+        assert_eq!(gas, 576);
+    }
 
 }

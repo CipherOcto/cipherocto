@@ -1016,7 +1016,10 @@ mod tests {
     #[test]
     fn test_mat_add_trap_sentinel() {
         // Create matrix with TRAP sentinel
-        let trap = Dqa { value: i64::MIN, scale: 0xFF };
+        let trap = Dqa {
+            value: i64::MIN,
+            scale: 0xFF,
+        };
         let normal = Dqa::new(1, 0).unwrap();
         let a_data = vec![normal, normal, normal, normal];
         let b_data = vec![trap, normal, normal, normal];
@@ -1097,7 +1100,10 @@ mod tests {
 
     #[test]
     fn test_mat_sub_trap_sentinel() {
-        let trap = Dqa { value: i64::MIN, scale: 0xFF };
+        let trap = Dqa {
+            value: i64::MIN,
+            scale: 0xFF,
+        };
         let normal = Dqa::new(1, 0).unwrap();
         let a_data = vec![normal, normal, normal, normal];
         let b_data = vec![trap, normal, normal, normal];
@@ -1224,7 +1230,10 @@ mod tests {
 
     #[test]
     fn test_mat_mul_trap_sentinel() {
-        let trap = Dqa { value: i64::MIN, scale: 0xFF };
+        let trap = Dqa {
+            value: i64::MIN,
+            scale: 0xFF,
+        };
         let normal = Dqa::new(1, 0).unwrap();
         let a_data = vec![normal, normal, normal, normal]; // 2×2
         let b_data = vec![trap, normal, normal, normal]; // 2×2
@@ -1235,7 +1244,10 @@ mod tests {
 
     #[test]
     fn test_mat_mul_trap_in_a() {
-        let trap = Dqa { value: i64::MIN, scale: 0xFF };
+        let trap = Dqa {
+            value: i64::MIN,
+            scale: 0xFF,
+        };
         let normal = Dqa::new(1, 0).unwrap();
         let a_data = vec![trap, normal, normal, normal]; // 2×2, trap in a
         let b_data = vec![normal, normal, normal, normal]; // 2×2
@@ -1340,10 +1352,7 @@ mod tests {
             Decimal::new(3, 0).unwrap(),
             Decimal::new(4, 0).unwrap(),
         ];
-        let x = vec![
-            Decimal::new(5, 0).unwrap(),
-            Decimal::new(6, 0).unwrap(),
-        ];
+        let x = vec![Decimal::new(5, 0).unwrap(), Decimal::new(6, 0).unwrap()];
         let a = DMat::new(2, 2, a_data).unwrap();
         let result = mat_vec_mul(&a, &x).unwrap();
         assert_eq!(result.len(), 2);
@@ -1357,22 +1366,35 @@ mod tests {
         let a_data = vec![Dqa::new(1, 0).unwrap(); 6]; // 2×3
         let x = vec![Dqa::new(1, 0).unwrap(), Dqa::new(2, 0).unwrap()]; // 2 elements
         let a = DMat::new(2, 3, a_data).unwrap();
-        assert!(matches!(mat_vec_mul(&a, &x), Err(DmatError::DimensionMismatch)));
+        assert!(matches!(
+            mat_vec_mul(&a, &x),
+            Err(DmatError::DimensionMismatch)
+        ));
     }
 
     #[test]
     fn test_mat_vec_mul_trap_in_matrix() {
-        let trap = Dqa { value: i64::MIN, scale: 0xFF };
+        let trap = Dqa {
+            value: i64::MIN,
+            scale: 0xFF,
+        };
         let normal = Dqa::new(1, 0).unwrap();
         let a_data = vec![trap, normal, normal, normal, normal, normal]; // 2×3
-        let x = vec![Dqa::new(1, 0).unwrap(), Dqa::new(2, 0).unwrap(), Dqa::new(3, 0).unwrap()];
+        let x = vec![
+            Dqa::new(1, 0).unwrap(),
+            Dqa::new(2, 0).unwrap(),
+            Dqa::new(3, 0).unwrap(),
+        ];
         let a = DMat::new(2, 3, a_data).unwrap();
         assert!(matches!(mat_vec_mul(&a, &x), Err(DmatError::TrapInput)));
     }
 
     #[test]
     fn test_mat_vec_mul_trap_in_vector() {
-        let trap = Dqa { value: i64::MIN, scale: 0xFF };
+        let trap = Dqa {
+            value: i64::MIN,
+            scale: 0xFF,
+        };
         let normal = Dqa::new(1, 0).unwrap();
         let a_data = vec![normal; 6]; // 2×3
         let x = vec![trap, normal, normal];
@@ -1391,7 +1413,11 @@ mod tests {
             Dqa::new(5, 0).unwrap(),
             Dqa::new(6, 0).unwrap(),
         ];
-        let x = vec![Dqa::new(1, 0).unwrap(), Dqa::new(2, 0).unwrap(), Dqa::new(3, 0).unwrap()];
+        let x = vec![
+            Dqa::new(1, 0).unwrap(),
+            Dqa::new(2, 0).unwrap(),
+            Dqa::new(3, 0).unwrap(),
+        ];
         let a = DMat::new(2, 3, a_data).unwrap();
         assert!(matches!(mat_vec_mul(&a, &x), Err(DmatError::ScaleMismatch)));
     }
@@ -1433,5 +1459,4 @@ mod tests {
         let gas = gas_mat_vec_mul(2, 3, 2, 3);
         assert_eq!(gas, 288);
     }
-
 }

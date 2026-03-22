@@ -2,7 +2,8 @@
 
 **Project**: Stoolap - Modern Embedded SQL Database
 **Location**: https://github.com/stulast/stoolap
-**Date**: March 2026
+**Original Date**: March 2026
+**Last Updated**: March 2026 (with Quant/DFP types, Pub/Sub, Rollup, Gas Metering)
 
 ---
 
@@ -38,57 +39,78 @@ graph TB
         D[Rows]
     end
 
-    subgraph "Executor Layer"
+    subgraph "Execution Layer"
         E[Query Planner]
         F[Expression VM]
         G[Operators]
         H[Caches]
+        I[Gas Meter]
     end
 
     subgraph "Optimizer Layer"
-        I[Cost Estimation]
-        J[Join Optimization]
-        K[AQE]
-        L[Bloom Filters]
+        J[Cost Estimation]
+        K[Join Optimization]
+        L[AQE]
+        M[Bloom Filters]
     end
 
     subgraph "Storage Layer"
-        M[MVCC Engine]
-        N[Indexes]
-        O[WAL]
-        P[Persistence]
-        Q[Statistics]
+        N[MVCC Engine]
+        O[Indexes]
+        P[WAL]
+        Q[Persistence]
+        R[Vector Storage]
+    end
+
+    subgraph "Blockchain Layer"
+        S[Rollup]
+        T[Consensus]
+        U[ZK Proofs]
     end
 
     subgraph "Core"
-        R[Parser]
-        S[Functions]
-        T[Core Types]
+        V[Parser]
+        W[Functions]
+        X[Core Types]
+        Y[Deterministic Types]
+    end
+
+    subgraph "Events"
+        Z[Pub/Sub]
+        AA[Event Bus]
     end
 
     A --> E
-    E --> I
-    I --> M
-    M --> R
+    E --> J
+    J --> N
+    N --> V
     E --> F
     F --> G
     G --> H
+    E --> I
+    N --> R
+    N --> Z
+    Z --> AA
 ```
 
 ### 1.2 Main Source Modules
 
-| Module       | Purpose                                                      |
-| ------------ | ------------------------------------------------------------ |
-| `api/`       | Public database interface (Database, Statement, Transaction) |
-| `executor/`  | Query execution engine with parallel execution               |
-| `optimizer/` | Cost-based optimization, AQE, join planning                  |
-| `storage/`   | MVCC engine, indexes, WAL, persistence                       |
-| `parser/`    | SQL parser (lexer, AST, statements)                          |
-| `functions/` | 101+ built-in SQL functions                                  |
-| `core/`      | Core types (DataType, Value, Row, Schema)                    |
-| `consensus/` | Blockchain operation log (blocks, operations)                |
-| `trie/`      | Merkle trie for state verification                           |
-| `determ/`    | Deterministic value types                                    |
+| Module         | Purpose                                                      |
+| -------------- | ------------------------------------------------------------ |
+| `api/`         | Public database interface (Database, Statement, Transaction) |
+| `executor/`    | Query execution engine with parallel execution               |
+| `optimizer/`   | Cost-based optimization, AQE, join planning                  |
+| `storage/`     | MVCC engine, indexes, WAL, persistence, vector storage     |
+| `parser/`      | SQL parser (lexer, AST, statements)                          |
+| `functions/`   | 101+ built-in SQL functions                                  |
+| `core/`        | Core types (DataType, Value, Row, Schema)                    |
+| `execution/`   | Execution engine with gas metering                            |
+| `pubsub/`      | Event bus and WAL-based cache invalidation                   |
+| `rollup/`     | L2 rollup protocol (batch, fraud proof, withdrawal)         |
+| `consensus/`   | Blockchain operation log (blocks, operations)                |
+| `trie/`        | Merkle trie for state verification                           |
+| `determ/`      | Deterministic value types for blockchain (no Arc/pointers)    |
+| `zk/`          | Zero-knowledge proof integration (STWO plugin)              |
 
 ---
 
@@ -340,12 +362,14 @@ pub struct PersistenceManager {
 | ----------- | -------------------------------- |
 | `Null`      | NULL value                       |
 | `Integer`   | 64-bit signed integer            |
-| `Float`     | 64-bit floating point            |
+| `Float`     | 64-bit floating point (IEEE-754)|
 | `Text`      | UTF-8 string                     |
 | `Boolean`   | true/false                       |
 | `Timestamp` | Timestamp with timezone          |
 | `Json`      | JSON document                    |
 | `Vector`    | f32 vector for similarity search |
+| `Quant`     | DQA (Deterministic Quant) - RFC-0105 |
+| `Decimal`   | DFP (Deterministic Float) - RFC-0104 |
 
 ---
 
@@ -383,18 +407,47 @@ sequenceDiagram
 
 ```rust
 pub struct ExpressionVM {
-    // Compiled bytecode
-    instructions: Vec<Instruction>,
-    // Constant pool
-    constants: Vec<Value>,
+    // Stack-based execution (SmallVec<16>)
+    stack: SmallVec<[StackValue; STACK_INLINE_CAPACITY]>,
+    // Deterministic mode flag
+    deterministic: bool,
 }
 
-impl ExpressionVM {
-    // Compile expression to bytecode
-    pub fn compile(expr: &Expr) -> CompiledExpr {
-        // Zero-copy evaluation where possible
-        // Inline constant folding
-        // Short-circuit boolean evaluation
+pub struct ExecuteContext<'a> {
+    row: &'a Row,
+    row2: Option<&'a Row>,
+    outer_row: Option<&'a FxHashMap<CompactArc<str>, Value>>,
+    params: &'a [Value],
+    // ... subquery executor, transaction ID
+}
+```
+
+**Features**:
+- **Zero allocation** in hot path (SmallVec inline storage)
+- **Linear instruction dispatch** (switch-based opcode)
+- **Stack-based VM** with 16-slot inline capacity
+- **Deterministic mode**: Enforces DQA/DFP-only arithmetic, rejects FLOAT mixing
+- **INT → DFP promotion** in deterministic contexts
+
+**VM Opcodes**:
+| Category | Operations |
+| -------- | ---------- |
+| Standard | `Add`, `Sub`, `Mul`, `Div`, `Mod`, `Neg` |
+| DQA | `DqaAdd`, `DqaSub`, `DqaMul`, `DqaDiv`, `DqaNeg`, `DqaAbs`, `DqaCmp` |
+| Comparison | `Eq`, `Ne`, `Lt`, `Le`, `Gt`, `Ge`, `IsNull`, `Like`, `Between` |
+| Logical | `And`, `Or`, `Not`, `Xor` |
+| Load | `LoadColumn`, `LoadConst`, `LoadParam`, `LoadNull` |
+
+**DFP Arithmetic** (lines 3310-3359):
+```rust
+// DFP arithmetic - deterministic floating-point
+if let (Some(dfp_a), Some(dfp_b)) = (dfp_a, dfp_b) {
+    match op {
+        ArithmeticOp::Add => dfp_add(dfp_a, dfp_b),
+        ArithmeticOp::Sub => dfp_sub(dfp_a, dfp_b),
+        ArithmeticOp::Mul => dfp_mul(dfp_a, dfp_b),
+        ArithmeticOp::Div => dfp_div(dfp_a, dfp_b),
+        ArithmeticOp::Mod => dfp_mod(dfp_a, dfp_b),
     }
 }
 ```
@@ -511,6 +564,114 @@ Can be compiled to WebAssembly for browser and edge execution.
 
 ---
 
+## 6.5 Pub/Sub Module (NEW)
+
+**Implementation** (`src/pubsub/mod.rs`):
+
+Provides distributed cache invalidation through two mechanisms:
+
+| Component    | Purpose                                              |
+| ------------ | ---------------------------------------------------- |
+| `EventBus`   | Local broadcast for same-process cache invalidation    |
+| `WalPubSub`  | WAL-based pub/sub for cross-process cache invalidation |
+
+**Features**:
+- Event-driven cache invalidation on DML operations
+- Idempotency tracking to prevent duplicate event processing
+- Generates unique event IDs via SHA256 of timestamp
+
+### 6.6 Execution Gas Metering (NEW)
+
+**Implementation** (`src/execution/gas.rs`):
+
+Provides gas metering for transaction execution with configurable pricing:
+
+```rust
+pub struct GasMeter {
+    limit: u64,
+    used: u64,
+    price: GasPrice,
+}
+
+pub struct GasPrices {
+    pub byte_storage: u64,
+    pub write: u64,
+    pub read: u64,
+    pub compute: u64,
+}
+```
+
+### 6.7 FOR UPDATE Row Locking (NEW)
+
+**Implementation**: Recent commits added `FOR UPDATE` syntax and row locking support:
+
+```sql
+SELECT * FROM accounts WHERE id = 1 FOR UPDATE;
+```
+
+**Features**:
+- Blocking row locks
+- `FOR UPDATE NOWAIT` (fail immediately if locked)
+- `FOR UPDATE SKIP LOCKED` (skip locked rows)
+
+### 6.8 L2 Rollup Protocol (NEW)
+
+**Implementation** (`src/rollup/mod.rs`):
+
+Provides L2 rollup data structures for blockchain integration:
+
+| Component         | Purpose                                      |
+| ---------------- | -------------------------------------------- |
+| `RollupBatch`   | Batch of operations for L2 submission        |
+| `FraudProof`    | Fraud proof for invalid state transitions     |
+| `Withdrawal`     | User withdrawal requests                      |
+| `Submission`     | Batch submission to L1                       |
+
+**Parameters**:
+- `BATCH_INTERVAL`: Blocks between batches
+- `CHALLENGE_PERIOD`: Time window for fraud proofs
+- `MAX_BATCH_SIZE`: Maximum operations per batch
+- `SEQUENCER_BOND`: Bond required to be sequencer
+
+### 6.9 Deterministic Types (NEW)
+
+**Implementation** (`src/determ/mod.rs`):
+
+Provides deterministic types for blockchain SQL that:
+- Use no `Arc`/pointers for predictable memory layout
+- Support Merkle hashing for consistent state across nodes
+- Are fully serializable for network transmission
+- Have deterministic ordering for consensus
+
+```rust
+pub struct DetermValue { /* ... */ }
+pub struct DetermRow { /* ... */ }
+pub struct DetermMap { /* ... */ }
+pub struct DetermSet { /* ... */ }
+```
+
+### 6.10 Vector Storage with Quantization (EXPANDED)
+
+**Implementation** (`src/storage/vector/`):
+
+Full vector storage with multiple quantization strategies:
+
+| Component         | Purpose                                      |
+| ---------------- | -------------------------------------------- |
+| `VectorSegment`  | Immutable segments with Struct-of-Arrays layout |
+| `VectorMerkle`   | Merkle tree for blockchain verification         |
+| `VectorMvcc`     | Segment-level MVCC visibility                  |
+
+**Quantization Types**:
+
+| Type              | Description                           |
+| ---------------- | ------------------------------------- |
+| `ScalarQuantizer` | Linear quantization                   |
+| `ProductQuantizer`| PQ for high-dimensional vectors       |
+| `BinaryQuantizer` | Binary hashing for hamming distance    |
+
+---
+
 ## 7. Why Stoolap Works
 
 ### 7.1 Design Decisions
@@ -523,6 +684,8 @@ Can be compiled to WebAssembly for browser and edge execution.
 | **Semantic Caching**     | Higher cache hit rates through predicate understanding |
 | **Time-Travel**          | Built-in temporal queries without application logic    |
 | **Vector Search**        | Single database for SQL + AI workloads                 |
+| **Gas Metering**         | Deterministic execution cost for blockchain             |
+| **FOR UPDATE Locks**     | Serialized writes for critical operations             |
 
 ### 7.2 Performance Features
 
@@ -535,6 +698,18 @@ Can be compiled to WebAssembly for browser and edge execution.
 | Zone Maps           | Reduced I/O for analytical queries    |
 | Vector Quantization | Memory-efficient similarity search    |
 
+### 7.3 Recent Commits (March 2026)
+
+| Commit | Feature |
+|--------|---------|
+| `f5c76e7` | Event emission for DML operations |
+| `3075b8d` | Pub/Sub module for WAL-based cache invalidation |
+| `83ca0b8` | FOR UPDATE row locking |
+| `b8d20e5` | DQA opcodes to expression VM |
+| `f519d92` | Quant (DQA) arithmetic to expression VM |
+| `0d7031d` | DFP arithmetic into VM + RFC-0104 profiles |
+| `7b535f6` | DeterministicFloat (DFP) type added |
+
 ---
 
 ## 8. Conclusion
@@ -546,9 +721,30 @@ Stoolap is a comprehensive embedded SQL database that combines:
 - **Developer Experience**: Simple embedded API, prepared statements, rich type system
 - **Persistence**: WAL, snapshots, crash recovery
 - **Advanced Features**: Time-travel queries, vector search, adaptive execution
+- **Deterministic Execution**: DQA and DFP types for blockchain-compatible computation
+- **Blockchain Ready**: L2 rollup support, fraud proofs, ZK proof integration
+- **Event System**: Pub/Sub for cache invalidation, event emission
+- **Row Locking**: FOR UPDATE for serialized writes
 - **Pure Rust**: Memory-safe, no external dependencies, WASM-compatible
 
-The architecture demonstrates a well-thought-out balance between simplicity (embedded, no server) and sophistication (MVCC, cost-based optimizer, semantic cache).
+The architecture demonstrates a well-thought-out balance between simplicity (embedded, no server) and sophistication (MVCC, cost-based optimizer, semantic cache, deterministic types).
+
+### Key Differentiators (Updated)
+
+| Feature                      | Stoolap  | SQLite    | DuckDB    | PostgreSQL |
+| ---------------------------- | -------- | --------- | --------- | ---------- |
+| **Time-Travel Queries**      | Built-in | No        | No        | Extension  |
+| **MVCC Transactions**        | Yes      | No        | No        | Yes        |
+| **Cost-Based Optimizer**     | Yes      | No        | Yes       | Yes        |
+| **Adaptive Query Execution** | Yes      | No        | No        | Partial    |
+| **Semantic Query Caching**   | Yes      | No        | No        | No         |
+| **Parallel Query Execution** | Yes      | No        | Yes       | Yes        |
+| **Native Vector Search**     | Yes      | Extension | Extension | Extension  |
+| **Pure Rust**               | Yes      | No        | No        | No         |
+| **Deterministic Types**     | DQA/DFP  | No        | No        | No         |
+| **L2 Rollup Support**       | Yes      | No        | No        | No         |
+| **FOR UPDATE Locks**        | Yes      | No        | Yes       | Yes        |
+| **Gas Metering**            | Yes      | No        | No        | No         |
 
 ---
 

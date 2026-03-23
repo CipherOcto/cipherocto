@@ -21,7 +21,7 @@ DQA provides fixed-precision decimal arithmetic with i64 value and 0-18 scale. B
 
 Without a rigorous specification:
 - Two implementations could convert the same DQA to different BIGINT values
-- Scale handling could differ (truncation vs rounding)
+- Scale handling could differ (scale ignored vs rounding)
 
 ### Why This RFC Exists
 
@@ -63,26 +63,57 @@ pub enum DqaToBigIntOutput {
 
 ## Scale Context Propagation
 
-The scale in DQA represents decimal places. When converting to BIGINT (an integer type), the scale is **truncated**:
+The scale in DQA represents decimal places. When converting to BIGINT (an integer type), the scale is **ignored** — only the raw mantissa (i64 value) is extracted:
 
 | DQA Value | Scale | BIGINT Output | Rationale |
 |-----------|-------|---------------|-----------|
-| {42, 0} | 0 | 42 | Integer, no fractional part |
-| {42, 2} | 2 | 42 | Scale 2 means 0.42, truncated to 42 |
-| {4200, 2} | 2 | 4200 | Scale 2 means 42.00, truncated to 4200 |
-| {42000, 3} | 3 | 42000 | Scale 3 means 42.000, truncated to 42000 |
+| {42, 0} | 0 | 42 | Raw mantissa extracted |
+| {42, 2} | 2 | 42 | Raw mantissa (42) extracted, scale ignored |
+| {4200, 2} | 2 | 4200 | Raw mantissa (4200) extracted, scale ignored |
+| {42000, 3} | 3 | 42000 | Raw mantissa (42000) extracted, scale ignored |
 
-**Truncation vs Rounding:** BIGINT is an integer type, so scale truncation is the only sensible option. Rounding would imply the value is approximate, which contradicts BigInt being exact.
+**Important:** This is NOT truncation of a decimal value. DQA{42, 2} represents 0.42, but we extract the raw mantissa (42), not the decimal value (0.42). The conversion does not interpret the DQA as a decimal number — it simply copies the i64 value field.
+
+**This is a lossy conversion:** The scale information is discarded. The result BigInt(42) cannot be converted back to DQA{42, 2} — only to DQA{42, 0}.
 
 ## Constraints
 
 | Constraint Type | Description |
 |----------------|-------------|
 | **Always succeeds** | Any valid DQA input produces a valid BIGINT output |
-| **Scale truncation** | Scale is ignored (not preserved) in BIGINT |
+| **Scale ignored** | Scale is not preserved in BIGINT output |
 | **Sign preserved** | Negative DQA produces negative BIGINT |
 | **Zero canonicalization** | DQA{0, any} → BigInt::zero() |
 | **Determinism** | Identical DQA input always produces identical BIGINT output |
+| **No canonicalization of input** | Raw DQA mantissa used, no pre-canonicalization |
+
+## Canonicalization Policy
+
+**Question:** Should the DQA value be canonicalized before conversion?
+
+RFC-0105 requires canonicalization for deterministic serialization, but this applies to **storage/output**, not to **input for conversion**. This conversion operates on the raw DQA mantissa as stored in memory, not on its serialized form.
+
+Therefore:
+- `DQA{1000, 3}` (non-canonical) → BigInt(1000) — raw value extracted
+- `DQA{1, 0}` (canonical form of above) → BigInt(1) — raw value extracted
+
+Both produce different BIGINT values, which is correct behavior. The conversion preserves the raw mantissa value without interpreting it as a decimal number.
+
+## Round-Trip Asymmetry
+
+This conversion is NOT the inverse of RFC-0131's BIGINT→DQA:
+
+| Direction | Conversion | Result |
+|-----------|------------|--------|
+| Forward | `DQA{1999, 2}` → BIGINT | BigInt(1999) |
+| Reverse | `BigInt(1999), scale=2` → DQA | DQA{199900, 2} |
+
+Round-trip: `DQA{1999, 2}` → BigInt(1999) → `DQA{199900, 2}` ≠ original
+
+This asymmetry is intentional because:
+1. DQA→BIGINT extracts raw mantissa, ignoring scale
+2. BIGINT→DQA applies scale multiplication to the mantissa
+3. Scale information is LOST in the forward direction and cannot be recovered
 
 ## SQL Integration
 
@@ -180,7 +211,7 @@ STEPS:
 | {0, 0} | BigInt::zero() | Canonical zero |
 | {42, 0} | BigInt(42) | Simple positive |
 | {-42, 0} | BigInt(-42) | Simple negative |
-| {4200, 2} | BigInt(4200) | Scale truncated |
+| {4200, 2} | BigInt(4200) | Scale ignored, raw mantissa extracted |
 | {i64::MAX, 0} | BigInt(i64::MAX) | Maximum i64 |
 | {i64::MIN, 0} | BigInt(i64::MIN) | Minimum i64 |
 | {i64::MIN, 3} | BigInt(-9223372036854775808) | Scale truncated |
@@ -215,11 +246,12 @@ Input:  Dqa { value: -42, scale: 0 }
 Output: BigInt::from(-42i64)
 ```
 
-### V004: Positive with Scale (Truncated)
+### V004: Positive with Scale (Raw Mantissa Extraction)
 ```
 Input:  Dqa { value: 4200, scale: 2 }
 Output: BigInt::from(4200i64)
-Note: Scale 2 means value represents 42.00, but BIGINT truncates to 4200
+Note: Raw mantissa (4200) extracted, scale (2) is ignored.
+DQA{4200, 2} represents 42.00 but we extract raw mantissa 4200.
 ```
 
 ### V005: i64::MAX
@@ -251,7 +283,8 @@ Output: BigInt::from(-1999i64)
 ```
 Input:  Dqa { value: 1, scale: 18 }
 Output: BigInt::from(1i64)
-Note: Scale 18 (0.000000000000000001) truncated to 1
+Note: Raw mantissa (1) extracted, scale ignored.
+DQA{1, 18} represents 0.000000000000000001 but we extract raw mantissa 1.
 ```
 
 ### V010: Maximum DQA Value
@@ -270,21 +303,21 @@ Output: BigInt::from(i64::MIN)
 ```
 Input:  Dqa { value: -9223372036854775808, scale: 6 }
 Output: BigInt::from(-9223372036854775808i64)
-Note: Scale is truncated, value unchanged
+Note: Raw mantissa extracted, scale ignored.
 ```
 
 ### V013: Positive Value with Max Scale
 ```
 Input:  Dqa { value: 1234567890123456789, scale: 18 }
 Output: BigInt::from(1234567890123456789i64)
-Note: Scale 18 truncated
+Note: Raw mantissa extracted, scale ignored.
 ```
 
 ### V014: Negative Value with Max Scale
 ```
 Input:  Dqa { value: -1234567890123456789, scale: 18 }
 Output: BigInt::from(-1234567890123456789i64)
-Note: Scale 18 truncated, sign preserved
+Note: Raw mantissa extracted, scale ignored, sign preserved.
 ```
 
 ### V015: Large Positive Value
@@ -294,25 +327,27 @@ Output: BigInt::from(9223372036854775807i64)
 Note: Maximum i64 with max scale
 ```
 
-### V016: Scale 1 Truncation
+### V016: Scale 1 with Integer Value
 ```
 Input:  Dqa { value: 100, scale: 1 }
 Output: BigInt::from(100i64)
-Note: 100.0 → 100
+Note: Raw mantissa extracted, scale ignored.
 ```
 
 ### V017: Scale 1 with Small Value
 ```
 Input:  Dqa { value: 5, scale: 1 }
 Output: BigInt::from(5i64)
-Note: 0.5 → 0 (truncated)
+Note: Raw mantissa (5) extracted, scale ignored.
+DQA{5, 1} represents 0.5, but we extract raw mantissa 5, not 0.
 ```
 
-### V018: Negative Scale Truncation to Zero
+### V018: Negative with Scale 1
 ```
 Input:  Dqa { value: -1, scale: 1 }
 Output: BigInt::from(-1i64)
-Note: -0.1 → -1 (truncated toward negative infinity)
+Note: Raw mantissa (-1) extracted, scale ignored.
+DQA{-1, 1} represents -0.1, but we extract raw mantissa -1.
 ```
 
 ## Implementation Notes
@@ -370,7 +405,7 @@ GAS = 5  // Fixed cost, no variable component
 This is a fixed cost because:
 - No limb iteration needed (i64 is always 1-2 limbs)
 - No range checking needed (always succeeds)
-- No scale adjustment needed (truncation is identity for integer types)
+- No scale adjustment needed (scale is ignored)
 
 ## Error Handling and Diagnostics
 
@@ -422,7 +457,7 @@ SELECT CAST(dqa_col AS BIGINT) FROM any_table;
 |---------|-------------|--------|------------|
 | M1 | `dqa_to_bigint` core algorithm | Pending | Low |
 | M2 | i64::MIN special case handling | Pending | Low |
-| M3 | Scale truncation (discard scale) | Pending | Low |
+| M3 | Scale ignored (raw mantissa extraction) | Pending | Low |
 | M4 | Sign handling | Pending | Low |
 | M5 | Test vector suite (18 vectors) | Pending | Low |
 | M6 | Integration with BigInt type | Pending | Low |
@@ -437,6 +472,7 @@ SELECT CAST(dqa_col AS BIGINT) FROM any_table;
 
 | Version | Date | Changes |
 |---------|------|---------|
+| 1.2 | 2026-03-23 | Critical fix: Changed "truncation" to "raw mantissa extraction" throughout (CRITICAL-1), fixed V004/V017/V018 notes that contradicted output (CRITICAL-2/MEDIUM-1), added canonicalization policy section (HIGH-1), added round-trip asymmetry documentation |
 | 1.1 | 2026-03-23 | Enhanced: Added Input/Output Contract, Scale Context Propagation, SQL Integration, Constraints, Error Handling & Diagnostics, Formal Verification Framework (5 theorems), Implementation Checklist, expanded test vectors from 8 to 18 |
 | 1.0 | 2026-03-23 | Initial draft |
 

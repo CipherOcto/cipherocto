@@ -58,10 +58,14 @@ This RFC provides a canonical specification that:
 /// Error variants for BIGINT→DQA conversion
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum BigIntError {
-    /// BigInt value exceeds DQA's representable range (i64::MIN to i64::MAX)
+    /// BigInt value exceeds DQA's representable range (i64::MIN to i64::MAX).
+    /// This can occur from two sources:
+    /// (1) The BigInt itself exceeds i64 range before scaling
+    /// (2) The scaled value (BigInt × 10^scale) exceeds i64 range
     OutOfRange {
         attempted_magnitude: String,  // Debug representation of the BigInt
         max_magnitude: i64,
+        scale: u8,  // Scale that was applied when overflow occurred
     },
     /// Requested scale exceeds DQA's maximum scale (18)
     InvalidScale {
@@ -125,7 +129,7 @@ OUTPUT: Dqa { value: i64, scale: u8 } or error
 
 STEPS:
 
-1. RANGE_CHECK
+1. VALIDATE_INPUT
    If scale > 18:
      return Error(InvalidScale)
 
@@ -142,26 +146,77 @@ STEPS:
      Check magnitude against i64 boundary
      If overflow: return Error(OutOfRange)
 
-2. EXTRACT_I64
-   Convert b to i64:
-   - If b.sign == false: value = lo | (hi << 64)
-   - If b.sign == true: value = -(|lo| | (|hi| << 64))
-   (Two's complement handling for negative values)
+2. EXTRACT_UNSCALED_I64
+   // First extract the BigInt as i64 to check range before scaling
+   // The BigInt must fit in i64 range (not i64*10^scale yet)
 
-3. CONSTRUCT_DQA
-   Return Dqa { value: i64, scale: scale }
+   If b.limbs.length > 2:
+     // BigInt requires more than 128 bits — definitely overflows
+     return Error(OutOfRange)
+
+   If b.limbs.length == 2:
+     // Check if 2-limb value fits in i64
+     // For positive: if hi > 0x8000_0000_0000_0000, overflow
+     // For negative: if hi > 0x8000_0000_0000_0000, overflow
+     // If hi == 0x8000_0000_0000_0000 and lo > 0, overflow (for positive)
+     // If hi >= 0x8000_0000_0000_0001, overflow
+     Check magnitude against i64 boundary
+     If overflow: return Error(OutOfRange)
+
+   // Extract the i64 value
+   If b.sign == false:
+     unscanned = lo | (hi << 64)
+   Else:
+     // Handle i64::MIN special case: |i64::MIN| = 2^63 which doesn't fit in u64
+     If hi == 0x8000000000000000 and lo == 0:
+       unscanned = i64::MIN  // -9223372036854775808
+     Else:
+       mag = lo | (hi << 64)
+       // Check if negation would overflow
+       If mag == 0x8000000000000000:
+         return Error(OutOfRange)
+       unscanned = -(mag as i64)
+
+3. APPLY_SCALE_AND_CHECK_OVERFLOW
+   // Multiply by 10^scale and check for overflow
+   // i64::MAX = 9223372036854775807
+   // i64::MIN = -9223372036854775808
+   // Note: |i64::MIN| = i64::MAX + 1
+
+   If scale == 0:
+     scaled_value = unscanned
+   Else:
+     pow10 = 10^scale
+
+     // Check overflow before multiplying
+     // For positive: abs_unscanned * pow10 <= i64::MAX
+     // For negative: abs_unscanned * pow10 <= i64::MAX + 1
+
+     If unscanned >= 0:
+       max_allowed = i64::MAX
+     Else:
+       // Can represent |i64::MIN| = 2^63 = i64::MAX + 1
+       max_allowed = 9223372036854775808u128  // Use u128 for intermediate
+
+     abs_unscanned = |unscanned| as u128
+     If abs_unscanned * (pow10 as u128) > (max_allowed as u128):
+       return Error(OutOfRange)
+
+     scaled_value = unscanned * pow10
+
+4. CONSTRUCT_DQA
+   Return Dqa { value: scaled_value, scale: scale }
 ```
 
 ### Edge Cases
 
 | BigInt Input | Scale | DQA Output | Notes |
 |-------------|-------|------------|-------|
-| 0 | any | Dqa { 0, 0 } | Canonical zero has scale 0 |
+| 0 | any | Dqa { 0, scale } | Zero preserves scale |
 | i64::MAX | 0 | Dqa { i64::MAX, 0 } | Maximum representable |
 | i64::MIN | 0 | Dqa { i64::MIN, 0 } | Minimum representable |
-| i64::MAX + 1 | 0 | Error(OutOfRange) | Overflow |
-| i64::MIN - 1 | 0 | Error(OutOfRange) | Overflow |
-| 42 | 2 | Dqa { 4200, 2 } | Scale adjustment |
+| 42 | 2 | Dqa { 4200, 2 } | Scale adjustment (×10^2) |
+| 42 | 18 | Dqa { 4200000000000000000, 18 } | Scale ×10^18 |
 | -42 | 3 | Dqa { -42000, 3 } | Negative with scale |
 | BigInt with 3+ limbs | any | Error(OutOfRange) | Exceeds i64 |
 
@@ -179,16 +234,34 @@ The scale parameter in BIGINT→DQA conversion has specific semantics:
 
 | Scale Context | Behavior |
 |--------------|----------|
-| Explicit scale provided | Use provided scale (must be 0-18) |
+| Explicit scale provided | Value is multiplied by 10^scale |
 | Default scale (0) | Integer representation, no decimal places |
-| Scale 2 with BigInt(1999) | Represents currency: 19.99 (in cents: 199900) |
-| Scale 18 with BigInt(1) | Represents: 0.000000000000000001 |
+| Scale 2 with BigInt(1999) | DQA{199900, 2} represents $19.99 |
+| Scale 18 with BigInt(1) | DQA{1000000000000000000, 18} represents 1.0 |
 
-**Scale adjustment note:** The scale does NOT affect the BigInt value itself — it only determines how the i64 value is interpreted as a decimal. For example:
-- `BigInt(4200)` with scale 0 → DQA value 4200, represents integer 4200
-- `BigInt(4200)` with scale 2 → DQA value 4200, represents decimal 42.00
+**Scale adjustment:** The BigInt value is multiplied by 10^scale to produce the DQA mantissa. This is necessary because DQA's value = mantissa × 10^(-scale). For example:
+- `BigInt(1999)` with scale 2 → DQA mantissa = 1999 × 10^2 = 199900
+- DQA{199900, 2} = 199900 × 10^(-2) = 19.99
 
-This is different from DECIMAL where scale is metadata about precision. Here, scale is part of the DQA type definition per RFC-0105.
+This is different from DECIMAL where scale is metadata about precision. Here, scale is part of the DQA type definition per RFC-0105 and affects the mantissa value directly.
+
+## Round-Trip Asymmetry
+
+This conversion is NOT the inverse of RFC-0132's DQA→BIGINT:
+
+| Direction | Conversion | Result |
+|-----------|------------|--------|
+| Forward (RFC-0131) | `BigInt(1999), scale=2` → DQA | DQA{199900, 2} |
+| Reverse (RFC-0132) | `DQA{1999, 2}` → BIGINT | BigInt(1999) |
+
+Round-trip: `BigInt(1999), scale=2` → DQA{199900, 2} → BigInt(199900) ≠ original
+
+This asymmetry is intentional because:
+1. BIGINT→DQA (RFC-0131) **multiplies** the mantissa by 10^scale
+2. DQA→BIGINT (RFC-0132) **ignores** the scale, extracting raw mantissa
+3. Scale information is LOST in the DQA→BIGINT direction
+
+**Implication:** You cannot round-trip a scaled value through both conversions and expect to recover the original. If you need to preserve scale, you must track it separately.
 
 ### SQL Integration
 
@@ -226,7 +299,9 @@ SELECT CAST(huge_bigint_col AS DQA(0)) FROM large_values;
 | Constraint Type | Description |
 |----------------|-------------|
 | **Scale bounds** | 0 ≤ scale ≤ 18 (per RFC-0105 MAX_SCALE) |
-| **Value bounds** | \|value\| ≤ i64::MAX (9.2×10^18) |
+| **Value bounds (unscaled)** | \|BigInt\| ≤ i64::MAX for extraction |
+| **Scaled value bounds** | \|BigInt × 10^scale\| ≤ i64::MAX (or i64::MAX+1 for negatives) |
+| **Overflow policy** | Error on overflow (no truncation, no saturation) |
 | **BigInt size** | 1-2 limbs (64-128 bits). 3+ limbs always overflow. |
 | **Determinism** | Identical BigInt input always produces identical DQA output |
 | **No rounding** | BIGINT→DQA does not round; it traps on overflow |
@@ -309,8 +384,8 @@ Note: Represents $19.99 in cents
 ### V011: Maximum Scale (18)
 ```
 Input:  BigInt::from(1i64), scale = 18
-Output: Dqa { value: 1, scale: 18 }
-Note: Value 1 with 18 decimal places = 0.000000000000000001
+Output: Dqa { value: 1000000000000000000, scale: 18 }
+Note: 1 × 10^18 = 1000000000000000000, fits in i64
 ```
 
 ### V012: Negative with Scale
@@ -352,7 +427,8 @@ Note: 2^64 = 18446744073709551616 > i64::MAX
 ```
 Input:  BigInt { limbs: [0x0000000000000000, 0x0000000000000001], sign: false }, scale = 0
 Output: Error(OutOfRange)
-Note: 2^63 = 9223372036854775808 = i64::MIN (negative), but positive 2^63 overflows
+Note: 2^63 = 9223372036854775808. This magnitude equals |i64::MIN| but as a
+positive value it exceeds i64::MAX (9223372036854775807), causing overflow.
 ```
 
 ### V018: Negative Overflow — Magnitude Exceeds MAX
@@ -430,6 +506,41 @@ Note: Magnitude = 2^63 + 1 > i64::MAX
 Input:  BigInt { limbs: [1, 0x8000000000000000], sign: true }, scale = 0
 Output: Error(OutOfRange)
 Note: |value| = 2^63 + 1 > i64::MAX magnitude
+```
+
+### V029: Scale Multiplication Overflow — 93 × 10^17
+```
+Input:  BigInt::from(93i64), scale = 17
+Output: Error(OutOfRange)
+Note: 93 × 10^17 = 9.3 × 10^18 > i64::MAX (9.2 × 10^18)
+```
+
+### V030: Scale Multiplication Overflow — 10 × 10^18
+```
+Input:  BigInt::from(10i64), scale = 18
+Output: Error(OutOfRange)
+Note: 10 × 10^18 = 10^19 > i64::MAX (9.2 × 10^18)
+```
+
+### V031: Scale Multiplication Overflow — Negative
+```
+Input:  BigInt::from(-93i64), scale = 17
+Output: Error(OutOfRange)
+Note: |-93| × 10^17 = 9.3 × 10^18 > i64::MAX
+```
+
+### V032: Scale Multiplication Edge — 9 × 10^18 (Fits)
+```
+Input:  BigInt::from(9i64), scale = 18
+Output: Dqa { value: 9000000000000000000, scale: 18 }
+Note: 9 × 10^18 = 9 × 10^18, exactly equals i64::MAX - 2^63 + 9
+```
+
+### V033: Scale Multiplication Edge — 92 × 10^17 (Fits)
+```
+Input:  BigInt::from(92i64), scale = 17
+Output: Dqa { value: 9200000000000000000, scale: 17 }
+Note: 92 × 10^17 = 9.2 × 10^18 = i64::MAX
 ```
 
 ## Implementation Notes
@@ -538,6 +649,7 @@ When BIGINT→DQA conversion fails at runtime (e.g., computed value exceeds rang
 
 | Version | Date | Changes |
 |---------|------|---------|
+| 1.2 | 2026-03-23 | Critical fix: Added scale multiplication step to algorithm (was missing), added overflow check for scaled values, fixed V011 and Edge Cases zero handling to be consistent, fixed V017 note, added V029-V033 for scale overflow test vectors, added scale field to OutOfRange error |
 | 1.1 | 2026-03-23 | Enhanced: Added Input/Output Contract, Scale Context Propagation, SQL Integration, Constraints, Error Handling & Diagnostics, Formal Verification Framework (5 theorems), Implementation Checklist, expanded test vectors from 10 to 28 |
 | 1.0 | 2026-03-23 | Initial draft |
 

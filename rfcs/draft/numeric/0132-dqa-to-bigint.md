@@ -2,7 +2,7 @@
 
 ## Status
 
-**Version:** 1.7 (Draft)
+**Version:** 1.8 (Draft)
 **Status:** Draft
 **Depends On:** RFC-0110 (BIGINT), RFC-0105 (DQA)
 **Category:** Numeric/Math
@@ -11,7 +11,7 @@
 
 This RFC specifies the conversion algorithm from DQA (RFC-0105, i64 value with 0-18 decimal scale) to BIGINT (RFC-0110, arbitrary-precision integer up to 4096 bits). This conversion is necessary for the Numeric Tower to support operations that require DQA values to be used in BIGINT contexts, and for explicit CAST expressions between these types.
 
-This conversion always succeeds for well-formed DQA inputs (valid i64 value, scale 0-18 per RFC-0105) because DQA's i64 value trivially fits within BIGINT's arbitrary range.
+This conversion always succeeds for **canonical** DQA inputs (valid i64 value, scale 0-18, canonical form per RFC-0105). Non-canonical inputs MUST TRAP. The i64 value trivially fits within BIGINT's arbitrary range.
 
 ## Motivation
 
@@ -43,11 +43,11 @@ RFC-0105 defines DQA but does not define DQA→BIGINT conversion. RFC-0110 defin
 
 ```rust
 /// DQA→BIGINT conversion result
-/// Note: Unlike most conversions, this ALWAYS succeeds for well-formed DQA inputs
+/// Note: For canonical DQA inputs, this ALWAYS succeeds. Non-canonical inputs MUST TRAP.
 pub type DqaToBigIntResult = BigInt;
 ```
 
-**Important:** DQA→BIGINT conversion cannot fail for well-formed DQA inputs (valid i64 value, scale 0-18 per RFC-0105).
+**Important:** DQA→BIGINT conversion cannot fail for **canonical** DQA inputs. Non-canonical inputs MUST TRAP per RFC-0105 §VM Canonicalization Rule.
 
 ## Scale Context Propagation
 
@@ -71,15 +71,15 @@ The scale in DQA represents decimal places. When converting to BIGINT (an intege
 | **Always succeeds** | Any valid DQA input produces a valid BIGINT output |
 | **Scale ignored** | Scale is not preserved in BIGINT output |
 | **Sign preserved** | Negative DQA produces negative BIGINT |
-| **Zero canonicalization** | DQA{0, any} → BigInt::zero() |
+| **Zero canonicalization** | DQA{0, 0} → BigInt::zero(). Note: DQA{0, s} for s ≠ 0 is non-canonical and MUST TRAP |
 | **Determinism** | Identical DQA input always produces identical BIGINT output |
 | **Canonical input required** | Non-canonical DQA input is a precondition violation — implementations MUST TRAP per RFC-0105 and RFC-0110 |
 
 ## Canonicalization Policy
 
-**Input Canonicalization:** RFC-0105 guarantees all DQA values are canonical at all input boundaries. The VM mandates canonicalization before use in comparison, serialization, hashing, storage, and control-flow evaluation. Non-canonical DQA inputs are a precondition violation — implementations MUST TRAP on non-canonical DQA input per RFC-0105 §VM Canonicalization Rule and RFC-0110 §Input Canonicalization Requirement.
+**Input Canonicalization:** Non-canonical DQA inputs are a precondition violation. Implementations MUST verify canonical form at function entry and TRAP on non-canonical input (e.g., `Dqa { value: 1000, scale: 3 }` with trailing zeros, or `Dqa { value: 0, scale: 6 }` with non-zero scale). Do not rely on upstream components having canonicalized — the caller may bypass the VM canonicalization path (e.g., SQL CAST with non-canonical literal).
 
-This conversion operates on DQA values that have already passed the VM's canonicalization check. Since canonical DQA values have unique representations, no additional canonicalization is needed before conversion.
+RFC-0105 §VM Canonicalization Rule requires canonicalization before use, but explicit CAST expressions can receive values that haven't passed through that path. This function must defensively verify canonical form.
 
 **Output:** This conversion produces a BigInt from a canonical DQA input. The resulting BigInt correctly represents the same numeric value as the input DQA.
 
@@ -307,10 +307,10 @@ Output: BigInt::from(i64::MIN)
 ```
 Input:  Dqa { value: 1999, scale: 2 }  // Represents $19.99
 Output: BigInt::from(1999i64)
-Note: Scale is truncated, not rounded
+Note: scale ignored — raw mantissa extracted
 ```
 
-### V008: Negative Scale Truncation
+### V008: Negative with Scale
 ```
 Input:  Dqa { value: -1999, scale: 2 }
 Output: BigInt::from(-1999i64)
@@ -365,11 +365,11 @@ Output: BigInt::from(9223372036854775807i64)
 Note: Maximum i64 with max scale
 ```
 
-### V016: Scale 1 with Integer Value
+### V016: Scale 1 — Raw Mantissa Extraction
 ```
 Input:  Dqa { value: 100, scale: 1 }
 Output: BigInt::from(100i64)
-Note: Raw mantissa extracted, scale ignored.
+Note: Raw mantissa extracted, scale ignored. DQA{100,1} represents 10.0, not 100.
 ```
 
 ### V017: Scale 1 with Small Value
@@ -472,7 +472,7 @@ SELECT CAST(dqa_col AS BIGINT) FROM any_table;
 
 **Theorem T4 (Sign Preservation):** If `dqa.value < 0`, then `result.sign = true`; if `dqa.value ≥ 0`, then `result.sign = false`. For zero, T5 additionally canonicalizes to `BigInt::zero()`.
 
-**Theorem T5 (Zero Canonicalization):** `dqa_to_bigint(Dqa { value: 0, scale: s }) = BigInt::zero()` for any valid scale s.
+**Theorem T5 (Zero Canonicalization):** `dqa_to_bigint(Dqa { value: 0, scale: 0 }) = BigInt::zero()`. Note: `Dqa { value: 0, scale: s }` for s ≠ 0 is non-canonical per RFC-0105 and MUST TRAP.
 
 ## Implementation Checklist
 
@@ -496,7 +496,7 @@ SELECT CAST(dqa_col AS BIGINT) FROM any_table;
 
 | Version | Date | Changes |
 |---------|------|---------|
-| 1.7 | 2026-03-23 | CRITICAL: Rewrote Canonicalization Policy section — non-canonical input MUST TRAP per RFC-0105/RFC-0110 (R6-132-C1, C2). HIGH: Removed all "truncation" language — replaced with "scale ignored" throughout (R6-132-H2, H3). MEDIUM: Fixed v1.4 changelog accuracy; removed precedence override clause (R6-132-M2, R6-X1). LOW: Added negative round-trip test vector (R6-X2). |
+| 1.8 | 2026-03-23 | HIGH: V007 note "truncated" → "scale ignored"; V008 title removed "Truncation" (R7-132-H1). HIGH: Canonicalization Policy — removed VM pre-check reliance; added explicit entry-point check note (R7-132-H2). MEDIUM: Summary/Input-Output now state "canonical DQA inputs" + "non-canonical MUST TRAP" (R7-132-M1). MEDIUM: T5 and Constraints table — {0,s} for s≠0 is non-canonical and MUST TRAP (R7-132-M2). LOW: V016 renamed "Scale 1 with Integer Value" → "Scale 1 — Raw Mantissa Extraction" (R7-132-L1). |
 | 1.6 | 2026-03-23 | Process: Version header now matches history entry (R4H4). |
 | 1.5 | 2026-03-23 | MEDIUM: Fixed version header (was 1.3, now 1.4) (R3M5). Removed dangling DqaToBigIntInput struct (R3M6). LOW: Fixed relationship table "scale truncation" wording (R3L3). |
 | 1.4 | 2026-03-23 | MEDIUM: Changed "truncation" to "raw mantissa extraction" throughout. |

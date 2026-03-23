@@ -2,7 +2,7 @@
 
 ## Status
 
-**Version:** 1.0 (2026-03-23)
+**Version:** 1.2 (2026-03-23)
 **Status:** Draft
 
 ## Authors
@@ -15,7 +15,7 @@
 
 ## Summary
 
-This RFC specifies the implementation of BIGINT (RFC-0110) and DECIMAL (RFC-0111) types in Stoolap, completing the CipherOcto Numeric Tower integration. The implementation adds arbitrary-precision integers (up to 4096 bits) and high-precision decimals (i128 with 0-36 scale) to Stoolap's type system, with full conversion support to/from existing types (DFP, DQA, IEEE-754 Float).
+This RFC specifies the implementation of BIGINT (RFC-0110) and DECIMAL (RFC-0111) types in Stoolap, completing the CipherOcto Numeric Tower integration. BIGINT provides arbitrary-precision integers (up to 4096 bits) and DECIMAL provides high-precision decimals (i128 with 0-36 scale). Implementation uses the `determin` crate for core algorithms and adds Stoolap-specific integration.
 
 ## Dependencies
 
@@ -23,182 +23,337 @@ This RFC specifies the implementation of BIGINT (RFC-0110) and DECIMAL (RFC-0111
 
 - RFC-0104 (Numeric/Math): Deterministic Floating-Point (DFP) — Implemented in Stoolap
 - RFC-0105 (Numeric/Math): Deterministic Quant (DQA) — Implemented in Stoolap
-- RFC-0110 (Numeric/Math): Deterministic BIGINT — Accepted (reference spec)
-- RFC-0111 (Numeric/Math): Deterministic DECIMAL — Accepted (reference spec)
+- RFC-0110 (Numeric/Math): Deterministic BIGINT — **Accepted** (reference spec, algorithms in `determin` crate)
+- RFC-0111 (Numeric/Math): Deterministic DECIMAL — **Accepted** (reference spec, algorithms in `determin` crate)
+- RFC-0131 (Numeric/Math): BIGINT→DQA Conversion — **Draft** (conversion spec)
+- RFC-0132 (Numeric/Math): DQA→BIGINT Conversion — **Draft** (conversion spec)
+- RFC-0133 (Numeric/Math): BIGINT→DECIMAL Conversion — **Draft** (conversion spec)
+- RFC-0134 (Numeric/Math): DECIMAL→BIGINT Conversion — **Draft** (conversion spec)
+- RFC-0135 (Numeric/Math): DECIMAL↔DQA Conversion Review — **Draft** (review of existing functions)
 
 **Optional:**
 
-- RFC-0124 (Numeric/Math): Deterministic Numeric Lowering — DFP→DQA lowering
+- RFC-0124 (Numeric/Math): Deterministic Numeric Lowering — DFP→DQA→BIGINT lowering (future work)
 
 ## Design Goals
 
 | Goal | Target | Metric |
 |------|--------|--------|
-| G1 | Implement BIGINT type | SQL keyword `BIGINT` parsed to new type |
-| G2 | Implement DECIMAL type | SQL keyword `DECIMAL`/`NUMERIC` parsed to new type |
+| G1 | BIGINT type in Stoolap | SQL keyword `BIGINT` parsed to `DataType::Bigint` |
+| G2 | DECIMAL type in Stoolap | SQL keyword `DECIMAL`/`NUMERIC` parsed to `DataType::Decimal` |
 | G3 | Conversion functions | Explicit casts between all numeric types |
-| G4 | Lazy canonicalization | Zero = `{0, 0}`, trailing zeros stripped |
-| G5 | Gas metering | Consistent with DQA/DFP gas model |
+| G4 | Canonical serialization | Wire format matches RFC-0110/RFC-0111 exactly |
+| G5 | Gas metering | Consistent with determin crate gas model |
 
-## Motivation
+---
 
-The CipherOcto Numeric Tower requires BIGINT and DECIMAL for financial and high-precision computing use cases. Stoolap currently lacks these types despite accepted RFCs:
+## Architecture Overview
 
-- **BIGINT**: Arbitrary precision integers (up to 4096 bits) for exact arithmetic without overflow concerns
-- **DECIMAL**: i128 scaled integers (0-36 scale) for financial calculations where IEEE-754 binary floating-point introduces unacceptable rounding errors
+```
+┌─────────────────────────────────────────────────────────────────┐
+│                         Stoolap                                  │
+│  ┌─────────────┐  ┌─────────────┐  ┌─────────────────────────┐  │
+│  │ src/core/   │  │ src/core/   │  │ src/executor/expression/ │  │
+│  │ types.rs    │  │ value.rs    │  │ vm.rs                  │  │
+│  │             │  │             │  │                        │  │
+│  │ DataType::  │  │ Value::     │  │ BIGINT/DECIMAL ops     │  │
+│  │ Bigint      │  │ Extension   │  │ via determin crate     │  │
+│  │ Decimal     │  │ (encodes    │  │                        │  │
+│  │             │  │  determin   │  │                        │  │
+│  │ (10, 11)   │  │  types)     │  │                        │  │
+│  └─────────────┘  └─────────────┘  └─────────────────────────┘  │
+└─────────────────────────────────────────────────────────────────┘
+                              │
+                              ▼
+┌─────────────────────────────────────────────────────────────────┐
+│                     determin crate                               │
+│  ┌─────────────┐  ┌─────────────┐  ┌─────────────────────────┐  │
+│  │ bigint.rs   │  │ decimal.rs  │  │ dqa.rs                │  │
+│  │             │  │             │  │                       │  │
+│  │ RFC-0110    │  │ RFC-0111     │  │ RFC-0105              │  │
+│  │ algorithms  │  │ algorithms  │  │ (DQA↔DECIMAL)         │  │
+│  │             │  │             │  │                       │  │
+│  │ BIGINT ops  │  │ DECIMAL ops  │  │ Conversions            │  │
+│  │ serialization│  │ serialization│  │                       │  │
+│  │ gas costs   │  │ gas costs   │  │                       │  │
+│  └─────────────┘  └─────────────┘  └─────────────────────────┘  │
+└─────────────────────────────────────────────────────────────────┘
+```
 
-The existing Stoolap types:
-- `INTEGER` → i64 (fixed precision)
-- `FLOAT`/`DECIMAL`/`NUMERIC` → IEEE-754 (rounding errors)
-- `DFP` → 113-bit deterministic floating-point
-- `DQA` → i64 with 0-18 scale
+**Key principle:** Core algorithms (RFC-0110/RFC-0111) live in `determin` crate. Stoolap integration adds SQL parsing, type system integration, and VM execution.
 
-Neither BIGINT nor DECIMAL exist, creating a critical gap in the Numeric Tower.
+---
 
 ## Specification
 
-### 4.1 SQL Keyword Mapping
+### 1. DataType Enum Extension (Stoolap)
 
-Stoolap parser (`src/core/types.rs`) currently maps:
+**File:** `src/core/types.rs`
 
-```rust
-"FLOAT" | "DOUBLE" | "REAL" | "DECIMAL" | "NUMERIC" => DataType::Float
-```
-
-**Required changes:**
+**Required changes to `DataType` enum:**
 
 ```rust
-match upper.as_str() {
-    // Existing
-    "INTEGER" | "INT" | "BIGINT" | "SMALLINT" | "TINYINT" => DataType::Integer,
-    "FLOAT" | "DOUBLE" | "REAL" => DataType::Float,
-    "DFP" | "DETERMINISTICFLOAT" => DataType::DeterministicFloat,
-    "DQA" => DataType::Quant,
-    // New
-    "BIGINT" => DataType::Bigint,
-    "DECIMAL" | "NUMERIC" => DataType::Decimal,
-}
-```
-
-### 4.2 DataType Enum Extension
-
-```rust
-// src/core/types.rs
-
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Default)]
+#[repr(u8)]
 pub enum DataType {
-    // ... existing variants ...
-    Bigint,
-    Decimal { scale: u8 },  // scale 0-36
+    // ... existing variants (0-9) ...
+    Null = 0,
+    Integer = 1,
+    Float = 2,
+    Text = 3,
+    Boolean = 4,
+    Timestamp = 5,
+    Json = 6,
+    Vector = 7,
+    DeterministicFloat = 8,
+    Quant = 9,
+
+    // NEW variants (10-11)
+    /// Deterministic BIGINT per RFC-0110
+    /// Arbitrary precision integer (up to 4096 bits)
+    Bigint = 10,
+
+    /// Deterministic DECIMAL per RFC-0111
+    /// i128 scaled integer with 0-36 decimal places
+    Decimal = 11,
 }
 ```
 
-Note: `DECIMAL` and `NUMERIC` without explicit scale default to scale 0 (equivalent to BIGINT behavior for literals like `DECIMAL '123'`).
-
-### 4.3 Value Representation
-
-#### BIGINT
+**Updated `FromStr` implementation:**
 
 ```rust
-pub struct BigintValue {
-    limbs: Vec<u64>,  // Little-endian, 1 limb = 64 bits
-    sign: bool,       // true = negative
+impl FromStr for DataType {
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        let upper = s.to_uppercase();
+        if upper.starts_with("VECTOR") {
+            return Ok(DataType::Vector);
+        }
+        if upper.starts_with("DQA") {
+            return Ok(DataType::Quant);
+        }
+        match upper.as_str() {
+            "NULL" => Ok(DataType::Null),
+            "INTEGER" | "INT" | "SMALLINT" | "TINYINT" => Ok(DataType::Integer),
+            "BIGINT" => Ok(DataType::Bigint),           // NEW: was mapped to Integer
+            "FLOAT" | "DOUBLE" | "REAL" => Ok(DataType::Float),
+            "DECIMAL" | "NUMERIC" => Ok(DataType::Decimal),    // NEW: separate from Float
+            "TEXT" | "VARCHAR" | "CHAR" | "STRING" => Ok(DataType::Text),
+            "BOOLEAN" | "BOOL" => Ok(DataType::Boolean),
+            "TIMESTAMP" | "DATETIME" | "DATE" | "TIME" => Ok(DataType::Timestamp),
+            "JSON" | "JSONB" => Ok(DataType::Json),
+            "DFP" | "DETERMINISTICFLOAT" => Ok(DataType::DeterministicFloat),
+            _ => Err(Error::InvalidColumnType),
+        }
+    }
 }
 ```
 
-- Maximum size: 4096 bits (64 limbs)
-- Canonical form: No leading zero limbs, `{0}` for zero value
-- Serialization: Big-endian bytes with length prefix
-
-#### DECIMAL
+**Updated `as_u8` and `from_u8`:**
 
 ```rust
-pub struct DecimalValue {
-    mantissa: i128,
-    scale: u8,  // 0-36
+impl DataType {
+    pub fn from_u8(value: u8) -> Option<Self> {
+        match value {
+            0 => Some(DataType::Null),
+            1 => Some(DataType::Integer),
+            2 => Some(DataType::Float),
+            3 => Some(DataType::Text),
+            4 => Some(DataType::Boolean),
+            5 => Some(DataType::Timestamp),
+            6 => Some(DataType::Json),
+            7 => Some(DataType::Vector),
+            8 => Some(DataType::DeterministicFloat),
+            9 => Some(DataType::Quant),
+            10 => Some(DataType::Bigint),    // NEW
+            11 => Some(DataType::Decimal),     // NEW
+            _ => None,
+        }
+    }
+}
+
+impl fmt::Display for DataType {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            // ... existing matches ...
+            DataType::DeterministicFloat => write!(f, "DFP"),
+            DataType::Quant => write!(f, "DQA"),
+            DataType::Bigint => write!(f, "BIGINT"),    // NEW
+            DataType::Decimal => write!(f, "DECIMAL"),   // NEW
+        }
+    }
 }
 ```
 
-- Mantissa range: -(10^36 - 1) to (10^36 - 1)
-- Scale range: 0-36
-- Canonical form: Zero = `{0, 0}`, trailing zeros stripped from mantissa
+---
 
-### 4.4 POW10 Table
+### 2. Value Type Extension (Stoolap)
+
+**File:** `src/core/value.rs`
+
+**Extension variant usage for BIGINT and DECIMAL:**
+
+BIGINT and DECIMAL values are stored in the `Extension` variant using the determin crate's canonical serialization formats. This avoids duplicating type definitions.
 
 ```rust
-const DECIMAL_POW10: [i128; 37] = [
-    1_i128,
-    10_i128,
-    100_i128,
-    // ... through 10^36
-    1_000_000_000_000_000_000_000_000_000_000_000_000_i128,
-];
+// In src/core/value.rs, extend the import:
+use octo_determin::{BigInt, Decimal, Dfp, DfpClass, DfpEncoding, Dqa};
+
+// Add constructors:
+impl Value {
+    /// Create a BIGINT value from a determin crate BigInt
+    pub fn bigint(b: BigInt) -> Self {
+        let encoding = b.serialize(); // Returns BigIntEncoding per RFC-0110
+        let mut bytes = Vec::with_capacity(1 + encoding.len());
+        bytes.push(DataType::Bigint as u8);
+        bytes.extend_from_slice(&encoding.to_bytes());
+        Value::Extension(CompactArc::from(bytes))
+    }
+
+    /// Create a DECIMAL value from a determin crate Decimal
+    pub fn decimal(d: Decimal) -> Self {
+        let encoding = d.to_bytes(); // Returns [u8; 24] per RFC-0111
+        let mut bytes = Vec::with_capacity(1 + 24);
+        bytes.push(DataType::Decimal as u8);
+        bytes.extend_from_slice(&encoding);
+        Value::Extension(CompactArc::from(bytes))
+    }
+
+    /// Extract BIGINT as determin crate BigInt
+    pub fn as_bigint(&self) -> Option<BigInt> {
+        match self {
+            Value::Extension(data)
+                if data.first().copied() == Some(DataType::Bigint as u8) =>
+            {
+                let encoding_bytes = &data[1..];
+                BigInt::deserialize(encoding_bytes).ok()
+            }
+            _ => None,
+        }
+    }
+
+    /// Extract DECIMAL as determin crate Decimal
+    pub fn as_decimal(&self) -> Option<Decimal> {
+        match self {
+            Value::Extension(data)
+                if data.first().copied() == Some(DataType::Decimal as u8) =>
+            {
+                let encoding_bytes: [u8; 24] = data[1..25].try_into().ok()?;
+                Decimal::from_bytes(encoding_bytes).ok()
+            }
+            _ => None,
+        }
+    }
+}
 ```
 
-### 4.5 Serialization Format
+---
 
-#### BIGINT Wire Format
+### 3. Serialization Formats (determin crate)
 
-| Field | Size | Encoding |
-|-------|------|----------|
-| Length | 1 byte | Number of 8-byte limbs (1-64) |
-| Sign | 1 byte | 0x00 = positive, 0x01 = negative |
-| Limbs | N×8 bytes | Little-endian u64 array |
+These are defined in RFC-0110 and RFC-0111. The determin crate provides the canonical implementations.
 
-#### DECIMAL Wire Format
+#### BIGINT Wire Format (RFC-0110 §Canonical Byte Format)
 
-| Field | Size | Encoding |
-|-------|------|----------|
-| Mantissa | 16 bytes | Big-endian i128 |
-| Scale | 1 byte | 0-36 |
-| Reserved | 7 bytes | Must be zero (canonical check) |
+```
+┌─────────────────────────────────────────────────────────────┐
+│ Byte 0: Version (0x01)                                      │
+│ Byte 1: Sign (0x00 = positive, 0xFF = negative)            │
+│ Bytes 2-3: Reserved (0x0000)                              │
+│ Byte 4: Number of limbs (u8, range 1–64)                 │
+│ Bytes 5-7: Reserved (MUST be 0x00)                        │
+│ Byte 8+: Limb array (little-endian u64 × num_limbs)       │
+└─────────────────────────────────────────────────────────────┘
+```
 
-### 4.6 Conversion Matrix
+**Maximum size:** 8 + (64 × 8) = 520 bytes
 
-| From | To | Method | Notes |
-|------|----|--------|-------|
-| BIGINT | DECIMAL | `DECIMAL(BIGINT, 0)` | Scale 0 |
-| DECIMAL | BIGINT | Truncate to integer | Error if scale > 0 or precision loss |
-| BIGINT | DQA | `DQA(BIGINT, 0)` | Only if fits in i64 range |
-| DQA | DECIMAL | `DECIMAL(DQA.mantissa, DQA.scale)` | Scale preserved if ≤ 36 |
-| DECIMAL | DQA | Truncate scale | Error if scale > 18 |
-| DFP | DECIMAL | `DECIMAL(DFP mantissa, DFP exponent)` | Via lowering pass |
-| DFP | BIGINT | Truncate to integer | Via lowering pass |
-| INTEGER | BIGINT | Zero-extend | Always valid |
-| BIGINT | INTEGER | Truncate | Error if out of range |
+#### DECIMAL Wire Format (RFC-0111 §Canonical Byte Format)
 
-### 4.7 Arithmetic Operations
+```
+┌─────────────────────────────────────────────────────────────┐
+│ Byte 0: Version (0x01)                                     │
+│ Byte 1: Reserved (MUST be 0x00)                           │
+│ Bytes 2-3: Reserved (MUST be 0x00)                        │
+│ Byte 4: Scale (u8, range 0-36)                            │
+│ Bytes 5-7: Reserved (MUST be 0x00)                        │
+│ Bytes 8-23: Mantissa (i128 big-endian, two's complement)  │
+└─────────────────────────────────────────────────────────────┘
+```
 
-BIGINT arithmetic follows RFC-0110 exactly:
+**Total size:** 24 bytes
 
-- ADD: i256 intermediate, result truncated to 4096 bits
-- SUB: i256 intermediate, result truncated to 4096 bits
-- MUL: Schoolbook or Karatsuba based on size
-- DIV: Truncating division (toward zero)
-- MOD: Remainder matching dividend sign
-- CMP: Compare as magnitudes first, then signs
+---
 
-DECIMAL arithmetic follows RFC-0111 exactly:
+### 4. Conversion Matrix
 
-- Scale alignment via multiplication by POW10
-- RNE rounding on division
-- Canonicalization after every operation
+Conversion specifications are defined in separate RFCs:
 
-### 4.8 Gas Model
+| From | To | RFC | Notes |
+|------|----|-----|-------|
+| BIGINT | DECIMAL | RFC-0133 | Full BigInt→DECIMAL |
+| DECIMAL | BIGINT | RFC-0134 | TRAP if scale > 0 |
+| BIGINT | DQA | RFC-0131 | TRAP if exceeds i64 range |
+| DQA | BIGINT | RFC-0132 | Always valid |
+| DQA | DECIMAL | RFC-0135 | Existing impl verified correct |
+| DECIMAL | DQA | RFC-0135 | TRAP if scale > 18 |
+| DFP | DECIMAL | RFC-0124 | Via lowering pass |
+| DFP | BIGINT | RFC-0124 | Via lowering pass |
+| INTEGER | BIGINT | Via From impl | Always valid |
+| BIGINT | INTEGER | Via TryFrom | TRAP if out of range |
+| DECIMAL | String | RFC-0111 | Existing impl |
+| i128 | DECIMAL | RFC-0111 | Existing `bigint_to_decimal(i128)` |
+| DECIMAL | i128 | RFC-0111 | Existing `decimal_to_bigint` |
 
-| Operation | Gas Units |
-|-----------|-----------|
-| BIGINT ADD/SUB | 10 |
-| BIGINT MUL | 50 |
-| BIGINT DIV | 100 |
-| BIGINT CMP | 5 |
-| DECIMAL ADD/SUB | 15 (includes scale alignment) |
-| DECIMAL MUL | 80 |
-| DECIMAL DIV | 150 |
-| Conversion | 20 |
+---
 
-## Type Gap Analysis
+### 5. Arithmetic Operations
 
-### Current Stoolap State
+All arithmetic operations use the determin crate implementations:
+
+| Operation | BIGINT Function | DECIMAL Function |
+|-----------|----------------|------------------|
+| ADD | `bigint_add(a, b)` | `decimal_add(a, b)` |
+| SUB | `bigint_sub(a, b)` | `decimal_sub(a, b)` |
+| MUL | `bigint_mul(a, b)` | `decimal_mul(a, b)` |
+| DIV | `bigint_div(a, b)` | `decimal_div(a, b, target_scale)` |
+| MOD | `bigint_mod(a, b)` | N/A |
+| CMP | `a.compare(&b)` (method) | `decimal_cmp(a, b)` |
+| SQRT | N/A | `decimal_sqrt(a)` |
+| SHL | `bigint_shl(a, shift)` | N/A |
+| SHR | `bigint_shr(a, shift)` | N/A |
+
+---
+
+### 6. Gas Model
+
+Gas costs are defined in the determin crate per RFC-0110 and RFC-0111:
+
+**BIGINT Gas (RFC-0110):**
+
+| Operation | Formula | Example (64 limbs) |
+|-----------|---------|-------------------|
+| ADD/SUB | 10 + limbs | 74 |
+| MUL | 50 + 2 × limbs_a × limbs_b | 8,242 |
+| DIV/MOD | 50 + 3 × limbs_a × limbs_b | 12,362 |
+| CMP | 5 + limbs | 69 |
+| SHL/SHR | 10 + limbs | 74 |
+
+**DECIMAL Gas (RFC-0111):**
+
+| Operation | Formula | Max (scales=36) |
+|-----------|---------|------------------|
+| ADD/SUB | 10 + 2 × \|scale_a - scale_b\| | 82 |
+| MUL | 20 + 3 × scale_a × scale_b | 3,908 |
+| DIV | 50 + 3 × scale_a × scale_b | 3,938 |
+| SQRT | 100 + 5 × scale | 280 |
+
+**Per-block budget:** 50,000 gas (matches RFC-0110/RFC-0111)
+
+---
+
+### 7. Type Gap Analysis
+
+#### Current Stoolap State
 
 | Type | SQL Keyword | Internal | Status |
 |------|-------------|----------|--------|
@@ -206,150 +361,199 @@ DECIMAL arithmetic follows RFC-0111 exactly:
 | FLOAT | FLOAT, DOUBLE, REAL | IEEE-754 f64 | Implemented |
 | DFP | DFP, DETERMINISTICFLOAT | 113-bit | Implemented |
 | DQA | DQA | i64 + scale | Implemented |
-| BIGINT | BIGINT | BigintValue | **Missing** |
-| DECIMAL | DECIMAL, NUMERIC | DecimalValue | **Missing** |
+| BIGINT | BIGINT | BigInt | **Missing** |
+| DECIMAL | DECIMAL, NUMERIC | Decimal | **Missing** |
 
-### Target State
+#### Target State (After Implementation)
 
 | Type | SQL Keyword | Internal | Status |
 |------|-------------|----------|--------|
 | INTEGER | INTEGER, INT, SMALLINT, TINYINT | i64 | Implemented |
-| BIGINT | BIGINT | Vec<u64> (≤4096 bits) | Implemented |
+| BIGINT | BIGINT | BigInt (≤4096 bits) | Implemented |
 | FLOAT | FLOAT, DOUBLE, REAL | IEEE-754 f64 | Implemented |
 | DFP | DFP, DETERMINISTICFLOAT | 113-bit | Implemented |
 | DQA | DQA | i64 + scale (0-18) | Implemented |
 | DECIMAL | DECIMAL, NUMERIC | i128 + scale (0-36) | Implemented |
 
+---
+
 ## Implementation Phases
 
-### Phase 1: Core BIGINT
+### Phase 1: Conversion RFCs (0131-0135)
 
-- [ ] Add `DataType::Bigint` variant to enum
-- [ ] Implement `BigintValue` struct with limb vector
-- [ ] Implement canonical form enforcement
-- [ ] Implement serialization/deserialization
-- [ ] Implement ADD, SUB, CMP operations
-- [ ] Add BIGINT SQL parser support
+**Objective:** Create conversion specifications (see separate RFCs).
 
-### Phase 2: Core DECIMAL
+- [ ] RFC-0131: BIGINT→DQA Conversion
+- [ ] RFC-0132: DQA→BIGINT Conversion
+- [ ] RFC-0133: BIGINT→DECIMAL Conversion
+- [ ] RFC-0134: DECIMAL→BIGINT Conversion
+- [ ] RFC-0135: DECIMAL↔DQA Review
 
-- [ ] Add `DataType::Decimal { scale: u8 }` variant
-- [ ] Implement `DecimalValue` struct
-- [ ] Implement POW10 table
-- [ ] Implement canonicalization (trailing zeros)
-- [ ] Implement serialization/deserialization
-- [ ] Implement ADD, SUB, MUL, DIV operations
-- [ ] Add DECIMAL/NUMERIC SQL parser support
+### Phase 2: determin Crate Implementation
 
-### Phase 3: Conversions
+**Objective:** Implement conversion functions per RFC-0131, RFC-0132, RFC-0133, RFC-0134.
 
-- [ ] BIGINT ↔ DECIMAL conversion
-- [ ] BIGINT ↔ DQA conversion (bounds check)
-- [ ] DECIMAL ↔ DQA conversion
-- [ ] BIGINT ↔ INTEGER conversion
-- [ ] DECIMAL literal parsing with explicit scale
+- [ ] Implement `bigint_to_dqa` per RFC-0131
+- [ ] Implement `dqa_to_bigint` per RFC-0132
+- [ ] Implement `bigint_to_decimal_full` per RFC-0133
+- [ ] Implement `decimal_to_bigint_full` per RFC-0134
+- [ ] Verify all conversions pass RFC test vectors
 
-### Phase 4: Integration
+### Phase 3: Stoolap Core Types
 
-- [ ] Expression VM support for new types
-- [ ] Cost-based optimizer estimates
-- [ ] Semantic query caching compatibility
-- [ ] Gas metering integration
-- [ ] Integration tests with RFC-0110/RFC-0111 vectors
+**Objective:** Add BIGINT and DECIMAL to Stoolap's type system.
+
+- [ ] Add `DataType::Bigint = 10` and `DataType::Decimal = 11` to `src/core/types.rs`
+- [ ] Update `FromStr` to parse `BIGINT` and `DECIMAL`/`NUMERIC` keywords
+- [ ] Update `Display` to render `BIGINT` and `DECIMAL`
+- [ ] Add `Value::bigint()` and `Value::decimal()` constructors
+- [ ] Add `Value::as_bigint()` and `Value::as_decimal()` extractors
+
+### Phase 4: Expression VM Support
+
+**Objective:** Execute BIGINT and DECIMAL operations in the query VM.
+
+- [ ] Add BIGINT operation dispatch in `src/executor/expression/vm.rs`
+- [ ] Add DECIMAL operation dispatch
+- [ ] Wire up gas metering for new types
+- [ ] Add cost estimates for optimizer
+
+### Phase 5: Integration Testing
+
+**Objective:** Verify end-to-end functionality.
+
+- [ ] Integration tests with RFC-0110 test vectors
+- [ ] Integration tests with RFC-0111 test vectors
+- [ ] SQL parser tests for BIGINT and DECIMAL keywords
+- [ ] Cast expression tests
+
+---
 
 ## Security Considerations
 
 ### Overflow Handling
 
-- BIGINT operations that exceed 4096 bits MUST return TRAP
-- DECIMAL overflow MUST return error, not wrap
+- BIGINT operations that exceed 4096 bits MUST return error
+- DECIMAL operations that exceed ±(10^36 - 1) MUST return error
 - Division by zero MUST return error
+- All error handling uses determin crate error types
 
 ### Canonicalization Enforcement
 
-- Deserialized values MUST be checked for canonical form
-- Non-canonical representations MUST be rejected with `NonCanonical` error
-- Zero MUST be represented as `{0, 0}` for DECIMAL
+- The determin crate enforces canonical form after every operation
+- Stoolap's Value constructors use the determin crate's serialization
+- Non-canonical inputs are rejected at deserialization
 
 ### Determinism Requirements
 
-- All operations MUST be deterministic across implementations
-- No reliance on host architecture byte order (big-endian serialization)
-- Round-trip conversions MUST preserve exact values
+All operations MUST be deterministic per RFC-0110 and RFC-0111:
+
+1. Algorithm locked (no implementation variance)
+2. No Karatsuba for BIGINT multiplication
+3. No SIMD or hardware carry flags
+4. Fixed iteration bounds for division
+5. 128-bit intermediate arithmetic for limb operations
+6. Post-operation canonicalization
+
+---
 
 ## Test Vectors
 
-### BIGINT Tests
+### Reference Test Vectors
 
-| Input | Operation | Expected |
-|-------|-----------|----------|
-| `BIGINT '0'` | Canonical | `{0}` |
-| `BIGINT '12345678901234567890'` | Parse | limbs = [0x4F3B5E2F2A, 0xAB54A6] |
-| `BIGINT '-1'` | Parse | sign = true, limbs = [1] |
-| `2^4095 + 1` | Overflow check | TRAP |
+BIGINT test vectors are defined in RFC-0110 §Test Vectors (56 entries with Merkle root).
 
-### DECIMAL Tests
+DECIMAL test vectors are defined in RFC-0111 §Test Vectors (57 entries with Merkle root).
 
-| Input | Operation | Expected |
-|-------|-----------|----------|
-| `DECIMAL '0'` | Canonical | mantissa = 0, scale = 0 |
-| `DECIMAL '123.4500'` | Canonical | mantissa = 12345, scale = 2 |
-| `DECIMAL '1.25'` | ADD `DECIMAL '0.75'` | mantissa = 200, scale = 2 (2.00) |
-| Scale 37 | Parse | Error: InvalidScale |
+### Additional Integration Tests
 
-### Conversion Tests
+| Test | SQL | Expected |
+|------|-----|----------|
+| BIGINT literal | `SELECT BIGINT '12345678901234567890'` | BigInt with correct limbs |
+| DECIMAL literal | `SELECT DECIMAL '123.45'` | Decimal { mantissa: 12345, scale: 2 } |
+| BIGINT add | `SELECT BIGINT '1' + BIGINT '2'` | BigInt '3' |
+| DECIMAL add | `SELECT DECIMAL '1.5' + DECIMAL '2.5'` | Decimal '4.0' |
+| BIGINT overflow | `SELECT BIGINT '2' ^ 4096` | Error: overflow |
+| DECIMAL scale overflow | `SELECT DECIMAL '1' / DECIMAL '3'` | Canonical result with scale 6 |
 
-| From | To | Input | Expected |
-|------|----|-------|----------|
-| BIGINT | DECIMAL | 42 | mantissa = 42, scale = 0 |
-| DECIMAL (scale=2) | BIGINT | 123.45 | Error: scale > 0 |
-| DECIMAL (scale=0) | BIGINT | 123 | 123 |
-| DQA | DECIMAL | {mantissa=1234, scale=6} | mantissa=1234, scale=6 |
+---
 
 ## Alternatives Considered
 
 | Approach | Pros | Cons |
 |----------|------|------|
-| Use i256 only | Simpler implementation | Limited to 256 bits |
-| Use bigdecimal crate | Complete solution | Not deterministic, external dependency |
-| IEEE-754 Decimal | Standard | Not deterministic for all operations |
-| **Custom Bigint + Decimal** | Deterministic, no deps | More implementation work |
+| Re-implement RFC-0110/RFC-0111 in Stoolap | Full control | Duplication, consensus risk |
+| Use external bigint/decimal crates | Faster implementation | Not deterministic, dependency risk |
+| **Use determin crate** | RFC-compliant, consensus-safe | Requires conversion functions |
+
+**Decision:** Use determin crate for core algorithms, add Stoolap-specific integration. This is the only approach that guarantees consensus compatibility.
+
+---
 
 ## Key Files to Modify
 
+### determin crate
+
+Conversion implementations are specified in separate RFCs:
+- RFC-0131: BIGINT→DQA (`bigint_to_dqa`)
+- RFC-0132: DQA→BIGINT (`dqa_to_bigint`)
+- RFC-0133: BIGINT→DECIMAL (`bigint_to_decimal_full`)
+- RFC-0134: DECIMAL→BIGINT (`decimal_to_bigint_full`)
+
+### Stoolap
+
 | File | Change |
 |------|--------|
-| `src/core/types.rs` | Add Bigint and Decimal variants to DataType enum |
-| `src/core/value.rs` | Add BigintValue and DecimalValue structs |
-| `src/parser/lexer.rs` | Add BIGINT, DECIMAL, NUMERIC tokens |
-| `src/parser/ast.rs` | Add BigintLiteral, DecimalLiteral variants |
-| `src/expression/vm.rs` | Add Bigint and Decimal execution support |
-| `src/functions/arithmetic.rs` | Implement BIGINT/DECIMAL operations |
-| `src/storage/serialize.rs` | Add serialization for new types |
-| `src/optimizer/cost.rs` | Add cost estimates for new types |
+| `src/core/types.rs` | Add `DataType::Bigint`, `DataType::Decimal` |
+| `src/core/value.rs` | Add `Value::bigint()`, `Value::decimal()`, extractors |
+| `src/executor/expression/vm.rs` | Add BIGINT/DECIMAL operation dispatch |
+| `src/executor/expression/ops.rs` | Add BIGINT/DECIMAL operators |
+
+---
 
 ## Future Work
 
-- F1: RFC-0124 DFP→DQA lowering integration with DECIMAL
+- F1: RFC-0124 DFP→DQA→BIGINT lowering integration
 - F2: DECIMAL aggregate functions (SUM, AVG with exact arithmetic)
 - F3: Vectorized BIGINT/DECIMAL operations for analytical queries
+- F4: ZK circuit commitments for BIGINT/DECIMAL (per RFC-0110/RFC-0111)
+
+---
 
 ## Rationale
 
-BIGINT and DECIMAL are essential for financial and high-precision computing. The existing IEEE-754 FLOAT type introduces rounding errors unacceptable for monetary calculations. The DFP type provides deterministic floating-point but lacks the integer precision needed for large values. DQA provides scale but is limited to i64 range.
+### Why not re-implement RFC-0110/RFC-0111?
 
-By implementing RFC-0110 and RFC-0111 as specified, we gain:
-- Arbitrary precision integers without overflow concerns
-- Decimal arithmetic with exact rounding (no binary floating-point errors)
-- Full conversion support to/from existing Numeric Tower types
+Re-implementing the algorithms would introduce consensus risk. Two implementations of the same algorithm may produce different results due to:
+- Different iteration orders
+- Different overflow handling
+- Different rounding behavior
 
-The custom implementation (rather than external crates) ensures determinism and avoids dependency issues.
+The determin crate is the reference implementation. Using it ensures Stoolap produces identical results to other compliant implementations.
+
+### Why not use external crates like `bigdecimal`?
+
+External crates:
+- May change between versions
+- May not be deterministic
+- Introduce supply chain risk
+
+The determin crate's RFC-0110/RFC-0111 implementations are:
+- Algorithm-locked (no implementation variance)
+- Consensus-verified (Merkle root commitments)
+- Version-pinned (numeric_spec_version)
+
+---
 
 ## Version History
 
 | Version | Date | Changes |
 |---------|------|---------|
 | 1.0 | 2026-03-23 | Initial draft |
+| 1.1 | 2026-03-23 | Fixed critical issues: wire format references to RFC-0110/RFC-0111, removed duplicate algorithm specs, clarified determin crate role |
+| 1.2 | 2026-03-23 | Separated conversion specs into RFC-0131-0135, updated dependencies, revised conversion matrix to reference separate RFCs, restructured implementation phases |
+
+---
 
 ## Related RFCs
 
@@ -357,11 +561,12 @@ The custom implementation (rather than external crates) ensures determinism and 
 - RFC-0105 (Numeric/Math): Deterministic Quant (DQA)
 - RFC-0110 (Numeric/Math): Deterministic BIGINT
 - RFC-0111 (Numeric/Math): Deterministic DECIMAL
-- RFC-0124 (Numeric/Math): Deterministic Numeric Lowering
-
-## Related Use Cases
-
-- [Enhanced Quota Router Gateway](../../docs/use-cases/enhanced-quota-router-gateway.md)
+- RFC-0124 (Numeric/Math): Deterministic Numeric Lowering (optional)
+- RFC-0131 (Numeric/Math): BIGINT→DQA Conversion
+- RFC-0132 (Numeric/Math): DQA→BIGINT Conversion
+- RFC-0133 (Numeric/Math): BIGINT→DECIMAL Conversion
+- RFC-0134 (Numeric/Math): DECIMAL→BIGINT Conversion
+- RFC-0135 (Numeric/Math): DECIMAL↔DQA Conversion Review
 
 ---
 

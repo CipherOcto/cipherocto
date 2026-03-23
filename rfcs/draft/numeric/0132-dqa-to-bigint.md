@@ -2,7 +2,7 @@
 
 ## Status
 
-**Version:** 1.8 (Draft)
+**Version:** 1.9 (Draft)
 **Status:** Draft
 **Depends On:** RFC-0110 (BIGINT), RFC-0105 (DQA)
 **Category:** Numeric/Math
@@ -47,7 +47,13 @@ RFC-0105 defines DQA but does not define DQA→BIGINT conversion. RFC-0110 defin
 pub type DqaToBigIntResult = BigInt;
 ```
 
-**Important:** DQA→BIGINT conversion cannot fail for **canonical** DQA inputs. Non-canonical inputs MUST TRAP per RFC-0105 §VM Canonicalization Rule.
+**Important:** The return type is `BigInt`, not `Result<BigInt, Error>`. This is a deliberate design choice:
+- **Canonical inputs:** Always succeed → function returns `BigInt` directly
+- **Non-canonical inputs:** MUST TRAP → VM-level exception/abort (not a Result return)
+
+The `DqaToBigIntResult = BigInt` type alias makes it impossible to return an error value — any non-canonical input triggers a panic/abort at the VM level, not a domain-level error return. This is consistent with RFC-0105's "MUST TRAP" semantics for canonicalization violations.
+
+DQA→BIGINT conversion cannot fail for **canonical** DQA inputs. Non-canonical inputs MUST TRAP per RFC-0105 §VM Canonicalization Rule.
 
 ## Scale Context Propagation
 
@@ -57,8 +63,8 @@ The scale in DQA represents decimal places. When converting to BIGINT (an intege
 |-----------|-------|---------------|-----------|
 | {42, 0} | 0 | 42 | Raw mantissa extracted |
 | {42, 2} | 2 | 42 | Raw mantissa (42) extracted, scale ignored |
-| {4200, 2} | 2 | 4200 | Raw mantissa (4200) extracted, scale ignored |
-| {42000, 3} | 3 | 42000 | Raw mantissa (42000) extracted, scale ignored |
+| {1999, 2} | 2 | 1999 | Raw mantissa (1999) extracted, scale ignored |
+| {1, 18} | 18 | 1 | Raw mantissa (1) extracted, scale ignored |
 
 **Important:** This is NOT truncation of a decimal value. DQA{42, 2} represents 0.42, but we extract the raw mantissa (42), not the decimal value (0.42). The conversion does not interpret the DQA as a decimal number — it simply copies the i64 value field.
 
@@ -194,7 +200,7 @@ SELECT CAST(dqa_col AS BIGINT) FROM currency_amounts;
 ///
 /// # Example
 /// Dqa { value: 42, scale: 0 } → BigInt(42)
-/// Dqa { value: 4200, scale: 2 } → BigInt(4200) — scale ignored
+/// Dqa { value: 1999, scale: 2 } → BigInt(1999) — scale ignored
 ///
 /// # Notes
 /// The scale is ignored, not truncated or rounded. This is consistent
@@ -211,6 +217,17 @@ INPUT:  dqa (Dqa { value: i64, scale: u8 })
 OUTPUT: BigInt
 
 STEPS:
+
+0. VERIFY_CANONICAL
+   // Non-canonical DQA inputs are a precondition violation per RFC-0105.
+   // Do NOT rely on upstream canonicalization — verify at entry point.
+   If dqa.value == 0 and dqa.scale != 0:
+     // Non-canonical zero — MUST TRAP
+     TRAP
+   If dqa.value != 0 and dqa.value % 10 == 0:
+     // Has trailing decimal zeros — non-canonical per RFC-0105
+     // MUST TRAP
+     TRAP
 
 1. EXTRACT_VALUE
    Let i64_val = dqa.value
@@ -248,7 +265,7 @@ STEPS:
 | {0, 0} | BigInt::zero() | Canonical zero |
 | {42, 0} | BigInt(42) | Simple positive |
 | {-42, 0} | BigInt(-42) | Simple negative |
-| {4200, 2} | BigInt(4200) | Scale ignored, raw mantissa extracted |
+| {1999, 2} | BigInt(1999) | Scale ignored, raw mantissa extracted |
 | {i64::MAX, 0} | BigInt(i64::MAX) | Maximum i64 |
 | {i64::MIN, 0} | BigInt(i64::MIN) | Minimum i64 |
 | {i64::MIN, 3} | BigInt(-9223372036854775808) | Scale ignored, raw mantissa extracted |
@@ -285,10 +302,10 @@ Output: BigInt::from(-42i64)
 
 ### V004: Positive with Scale (Raw Mantissa Extraction)
 ```
-Input:  Dqa { value: 4200, scale: 2 }
-Output: BigInt::from(4200i64)
-Note: Raw mantissa (4200) extracted, scale (2) is ignored.
-DQA{4200, 2} represents 42.00 but we extract raw mantissa 4200.
+Input:  Dqa { value: 1999, scale: 2 }
+Output: BigInt::from(1999i64)
+Note: Raw mantissa (1999) extracted, scale (2) is ignored.
+DQA{1999, 2} represents 19.99 but we extract raw mantissa 1999.
 ```
 
 ### V005: i64::MAX
@@ -367,9 +384,9 @@ Note: Maximum i64 with max scale
 
 ### V016: Scale 1 — Raw Mantissa Extraction
 ```
-Input:  Dqa { value: 100, scale: 1 }
-Output: BigInt::from(100i64)
-Note: Raw mantissa extracted, scale ignored. DQA{100,1} represents 10.0, not 100.
+Input:  Dqa { value: 33, scale: 1 }
+Output: BigInt::from(33i64)
+Note: Raw mantissa extracted, scale ignored. DQA{33,1} represents 3.3, not 33.
 ```
 
 ### V017: Scale 1 with Small Value
@@ -496,6 +513,8 @@ SELECT CAST(dqa_col AS BIGINT) FROM any_table;
 
 | Version | Date | Changes |
 |---------|------|---------|
+| 1.9 | 2026-03-23 | CRITICAL: Clarified return type semantics — DqaToBigIntResult=BigInt means TRAP is panic/VM abort, not Result return (R8-132-C1). HIGH: Fixed docstring example — {4200,2} is non-canonical, changed to {1999,2} (R8-132-H1). MEDIUM: Added Step 0 VERIFY_CANONICAL to algorithm (R8-132-M1). MEDIUM: Fixed V004 — {4200,2} is non-canonical, changed to {1999,2} (R8-132-M2). MEDIUM: Fixed V016 — {100,1} is non-canonical, changed to {33,1} (R8-132-M3). LOW: Fixed Edge Cases and Scale Context Propagation tables — removed non-canonical {4200,2} and {42000,3} rows (R8-132-L1). |
+| 1.7 | 2026-03-23 | (Internal version — changes incorporated into v1.8) |
 | 1.8 | 2026-03-23 | HIGH: V007 note "truncated" → "scale ignored"; V008 title removed "Truncation" (R7-132-H1). HIGH: Canonicalization Policy — removed VM pre-check reliance; added explicit entry-point check note (R7-132-H2). MEDIUM: Summary/Input-Output now state "canonical DQA inputs" + "non-canonical MUST TRAP" (R7-132-M1). MEDIUM: T5 and Constraints table — {0,s} for s≠0 is non-canonical and MUST TRAP (R7-132-M2). LOW: V016 renamed "Scale 1 with Integer Value" → "Scale 1 — Raw Mantissa Extraction" (R7-132-L1). |
 | 1.6 | 2026-03-23 | Process: Version header now matches history entry (R4H4). |
 | 1.5 | 2026-03-23 | MEDIUM: Fixed version header (was 1.3, now 1.4) (R3M5). Removed dangling DqaToBigIntInput struct (R3M6). LOW: Fixed relationship table "scale truncation" wording (R3L3). |

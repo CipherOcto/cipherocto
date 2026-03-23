@@ -2,7 +2,7 @@
 
 ## Status
 
-**Version:** 1.12 (Draft)
+**Version:** 1.13 (Draft)
 **Status:** Draft
 **Depends On:** RFC-0110 (BIGINT), RFC-0105 (DQA)
 **Category:** Numeric/Math
@@ -100,7 +100,8 @@ pub type BigIntToDqaResult = Result<Dqa, BigIntError>;
 ///
 /// # Example
 /// BigInt(42) with scale 0 → Dqa { value: 42, scale: 0 }
-/// BigInt(42) with scale 2 → Dqa { value: 4200, scale: 2 }
+/// BigInt(42) with scale 2 → Dqa { value: 42, scale: 0 }
+/// Note: CANONICALIZE strips trailing zeros, so {4200, 2} becomes {42, 0}
 pub fn bigint_to_dqa(b: &BigInt, scale: u8) -> Result<Dqa, BigIntError>
 ```
 
@@ -125,7 +126,7 @@ STEPS:
 
    If b.limbs.length > 2:
      // BigInt requires more than 128 bits
-     return Error(OutOfRange { attempted_magnitude: b.to_string(), max_magnitude: i64::MAX as u64, scale })
+     return Error(OutOfRange { attempted_magnitude: magnitude_repr: "<magnitude>", max_magnitude: i64::MAX as u64, scale })
 
    // Extract limb values (per RFC-0110 little-endian convention defined above)
    lo = b.limbs[0]  // u64
@@ -140,14 +141,14 @@ STEPS:
    // i64::MAX = 0x7FFF_FFFF_FFFF_FFFF (2^63 - 1)
    If b.limbs.length == 1 and b.sign == false:
      If lo > 0x7FFF_FFFF_FFFF_FFFF:
-       return Error(OutOfRange { attempted_magnitude: b.to_string(), max_magnitude: i64::MAX as u64, scale })
+       return Error(OutOfRange { attempted_magnitude: magnitude_repr: "<magnitude>", max_magnitude: i64::MAX as u64, scale })
 
    // Single-limb negative range check
    // Valid negative range: i64::MIN (0x8000_0000_0000_0000) to -1
    // i64::MIN magnitude = 2^63; anything larger overflows
    If b.limbs.length == 1 and b.sign == true:
      If lo > 0x8000_0000_0000_0000:
-       return Error(OutOfRange { attempted_magnitude: b.to_string(), max_magnitude: 1u64 << 63, scale })
+       return Error(OutOfRange { attempted_magnitude: magnitude_repr: "<magnitude>", max_magnitude: 1u64 << 63, scale })
 
    // Two-limb range check
    // For positive two-limb values: ANY non-zero hi means magnitude >= 2^64 > i64::MAX
@@ -156,18 +157,19 @@ STEPS:
    If b.limbs.length == 2:
      // Positive: any hi > 0 means magnitude >= 2^64 > i64::MAX
      If b.sign == false and hi > 0:
-       return Error(OutOfRange { attempted_magnitude: b.to_string(), max_magnitude: i64::MAX as u64, scale })
+       return Error(OutOfRange { attempted_magnitude: magnitude_repr: "<magnitude>", max_magnitude: i64::MAX as u64, scale })
      // Negative: any 2-limb negative has magnitude >= 2^64 > |i64::MIN|
      If b.sign == true:
-       return Error(OutOfRange { attempted_magnitude: b.to_string(), max_magnitude: 1u64 << 63, scale })
+       return Error(OutOfRange { attempted_magnitude: magnitude_repr: "<magnitude>", max_magnitude: 1u64 << 63, scale })
 
 2. EXTRACT_UNSCALED_I64
    // Step 1 validated the value fits in i64 range and rejected all non-canonical inputs.
    // Step 2 only handles single-limb extraction. (All 2-limb values are rejected in Step 1.)
 
    // Extract the i64 value
-   // Single-limb: unscaled = lo (already range-checked in Step 1)
-   unscaled = lo as i64
+   // Single-limb: value is lo (already range-checked in Step 1)
+   // Apply sign: negative values have magnitude -(lo as i64)
+   unscaled = if b.sign { -(lo as i64) } else { lo as i64 }
 
 3. APPLY_SCALE_AND_CHECK_OVERFLOW
    // Multiply by 10^scale and check for overflow
@@ -220,7 +222,7 @@ STEPS:
      If abs_unscaled * (pow10 as u128) > max_allowed:
        // Use the correct limit: i64::MAX for positive, |i64::MIN| for negative
        limit = if unscaled >= 0 { i64::MAX as u64 } else { 1u64 << 63 };
-       return Error(OutOfRange { attempted_magnitude: b.to_string(), max_magnitude: limit, scale })
+       return Error(OutOfRange { attempted_magnitude: magnitude_repr: "<magnitude>", max_magnitude: limit, scale })
 
      // Use i128 intermediate to avoid pow10→i64 cast overflow.
      // The range check above guarantees the result fits in i64.
@@ -302,8 +304,6 @@ Round-trip is **lossless** when scale=0 or when the scaled mantissa has no trail
 | Scale > 0, trailing zeros | `BigInt(42), scale=2` → {42, 0} → BigInt(42) | ✓ Value recovered (scale lost) |
 
 **For SQL currency use-cases:** Use `DQA_ASSIGN_TO_COLUMN` after conversion to restore the target column's scale.
-
-### Negative Round-Trip
 
 ### Negative Round-Trip
 ```
@@ -417,9 +417,8 @@ Note: Requires 3 limbs (192 bits) > i64 range
 ### V008: Non-Canonical Two-Limb — hi=0 Overflow
 ```
 Input:  BigInt { limbs: [0x0000000000000001, 0x0000000000000000], sign: false }, scale = 0
-Output: Error(OutOfRange)
 Note: Non-canonical form of value 1. RFC-0110 requires canonical single-limb for
-values < 2^63. This is caught by the 2-limb hi==0 overflow check.
+values < 2^63. Non-canonical inputs are undefined behavior — implementations MUST TRAP.
 ```
 
 ### V009: Overflow — Negative 2^64 Magnitude
@@ -755,7 +754,8 @@ When BIGINT→DQA conversion fails at runtime (e.g., computed value exceeds rang
 
 | Version | Date | Changes |
 |---------|------|---------|
-| 1.12 | 2026-03-23 | CRITICAL: Removed hi==0 defensive block — non-canonical input MUST TRAP per RFC-0110 (R7-131-C1). CRITICAL: Updated Step 2 comment to reflect 2-limb fully handled in Step 1 (R7-131-C2). HIGH: Fixed Edge Cases table — 42,scale=18 is Error (42×10^18>i64::MAX) (R7-131-H1). V004/V010/V011 updated to show post-canonicalization outputs (R7-131-H2, H3). Scale Context Propagation table updated for post-canonicalization; added SQL use-case note (R7-131-H4, R7-X1, R7-X3). Round-Trip Asymmetry revised — with CANONICALIZE, asymmetry only arises from non-canonical input (R7-131-H5). MEDIUM: V011 corrected to post-canonicalization {1,0} (R7-131-M2). LOW: V028 note updated for unconditional 2-limb negative rejection (R7-131-L1). M6 checklist count fixed: 39 vectors (R7-131-L3). T4a corollary added "for canonical BigInt" precondition (R7-X2). |
+| 1.13 | 2026-03-23 | CRITICAL: Fixed sign application in Step 2 — apply sign after magnitude extraction (R8-131-H2). CRITICAL: V008 removed normative output — non-canonical input is UB (R8-131-C1). CRITICAL: Fixed Round-Trip Asymmetry forward example (R8-131-C2). HIGH: Fixed function docstring example — {42000,3} → {42,0} after CANONICALIZE (R8-131-H1). MEDIUM: Replaced b.to_string() with magnitude_repr placeholder in pseudocode (R8-131-M1). MEDIUM: Added missing v1.10 entry in version history (R8-131-M2). LOW: Fixed duplicate "Negative Round-Trip" section header (R8-131-L2). |
+| 1.10 | 2026-03-23 | (Internal version — changes incorporated into v1.12) |
 | 1.9 | 2026-03-23 | HIGH: Added missing single-limb negative range check (R5H2). MEDIUM: Replaced POW10_TABLE informal labels with exact u64 values (R5M1), added T4 corollary for 3+ limb BigInts (R5M3). LOW: Removed BigIntToDqaInput dead struct (R5L1), fixed pow10→i128 comment bound (R5L2), removed V008 normative output (R5H1 — UB cannot have expected output). |
 | 1.8 | 2026-03-23 | LOW: Fixed V027/V028 rejection criterion notes — "hi > 0" not "hi ≥ 2^63". |
 | 1.7 | 2026-03-23 | LOW: Added lossless round-trip case documentation — scale=0 preserves value exactly (R3L4). |

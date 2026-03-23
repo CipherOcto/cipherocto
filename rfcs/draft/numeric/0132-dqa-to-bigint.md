@@ -2,7 +2,7 @@
 
 ## Status
 
-**Version:** 1.2 (Draft)
+**Version:** 1.3 (Draft)
 **Status:** Draft
 **Depends On:** RFC-0110 (BIGINT), RFC-0105 (DQA)
 **Category:** Numeric/Math
@@ -52,11 +52,6 @@ pub struct DqaToBigIntInput {
     pub value: Dqa,
 }
 
-/// Output from the conversion
-pub enum DqaToBigIntOutput {
-    /// Successfully converted to BigInt
-    Success(BigInt),
-}
 ```
 
 **Important:** DQA→BIGINT conversion cannot fail. Any DQA value (including i64::MIN, i64::MAX) fits in BigInt. This is different from BIGINT→DQA which can fail on overflow.
@@ -399,7 +394,7 @@ GAS = 5  // Fixed cost, no variable component
 ```
 
 This is a fixed cost because:
-- No limb iteration needed (i64 is always 1-2 limbs)
+- No limb iteration needed (i64 always fits in 1 limb)
 - No range checking needed (always succeeds)
 - No scale adjustment needed (scale is ignored)
 
@@ -431,7 +426,7 @@ SELECT CAST(dqa_col AS BIGINT) FROM any_table;
 |---|---------|----------|--------|
 | T1 | Determinism | Bit-identical results across platforms | Required |
 | T2 | Range Preservation | Output BigInt can represent input value | Required |
-| T3 | Scale Truncation | Scale is ignored (not rounded) | Required |
+| T3 | Raw Mantissa Extraction | Scale is ignored — raw i64 value extracted | Required |
 | T4 | Sign Preservation | Negative DQA produces negative BigInt | Required |
 | T5 | Zero Canonicalization | DQA{0, any} → BigInt::zero() | Required |
 
@@ -469,6 +464,7 @@ SELECT CAST(dqa_col AS BIGINT) FROM any_table;
 
 | Version | Date | Changes |
 |---------|------|---------|
+| 1.4 | 2026-03-23 | MEDIUM: Fixed version header (was 1.2, now 1.3). Fixed gas comment ("1-2 limbs" → "always 1 limb"). Fixed T3 theorem table entry ("Scale Truncation" → "Raw Mantissa Extraction"). LOW: Removed dead DqaToBigIntOutput enum. |
 | 1.3 | 2026-03-23 | Critical fixes: Removed unreachable dead code from Step 3 (HIGH-H5), added non-standard SQL semantics warning (HIGH-H6), fixed version header (1.1→1.2), removed RFC-0131 from Future Work |
 | 1.2 | 2026-03-23 | Critical fix: Changed "truncation" to "raw mantissa extraction" throughout (CRITICAL-1), fixed V004/V017/V018 notes that contradicted output (CRITICAL-2/MEDIUM-1), added canonicalization policy section (HIGH-1), added round-trip asymmetry documentation |
 | 1.1 | 2026-03-23 | Enhanced: Added Input/Output Contract, Scale Context Propagation, SQL Integration, Constraints, Error Handling & Diagnostics, Formal Verification Framework (5 theorems), Implementation Checklist, expanded test vectors from 8 to 18 |

@@ -2,7 +2,7 @@
 
 ## Status
 
-**Version:** 1.2 (Draft)
+**Version:** 1.4 (Draft)
 **Status:** Draft
 **Depends On:** RFC-0110 (BIGINT), RFC-0105 (DQA)
 **Category:** Numeric/Math
@@ -64,17 +64,13 @@ pub enum BigIntError {
     /// (2) The scaled value (BigInt × 10^scale) exceeds i64 range
     OutOfRange {
         attempted_magnitude: String,  // Debug representation of the BigInt
-        max_magnitude: i64,
+        max_magnitude: u64,  // i64::MAX = 9223372036854775807 as u64 for comparison
         scale: u8,  // Scale that was applied when overflow occurred
     },
     /// Requested scale exceeds DQA's maximum scale (18)
     InvalidScale {
         requested: u8,
         max_scale: u8,
-    },
-    /// Input BigInt is not in canonical form per RFC-0110
-    NonCanonicalInput {
-        reason: &'static str,
     },
 }
 
@@ -127,37 +123,51 @@ BIGINT_TO_DQA(b: BigInt, scale: u8) -> Result<Dqa, BigIntError>
 INPUT:  b (BigInt), scale (u8, 0 ≤ scale ≤ 18)
 OUTPUT: Dqa { value: i64, scale: u8 } or error
 
+CONVENTION: Per RFC-0110 §Limbs, BigInt uses little-endian limb encoding:
+  lo = b.limbs[0]  // Least-significant 64 bits
+  hi = b.limbs[1]  // Most-significant 64 bits (if present)
+  Implementations MUST use this convention when reading limbs.
+
 STEPS:
 
 1. VALIDATE_INPUT
    If scale > 18:
-     return Error(InvalidScale)
+     return Error(InvalidScale { requested: scale, max_scale: 18 })
 
    If b.limbs.length > 2:
      // BigInt requires more than 128 bits
-     return Error(OutOfRange)
+     return Error(OutOfRange { attempted_magnitude: b.to_string(), max_magnitude: i64::MAX as u64, scale })
 
-   // Special case: positive 2^63 (hi=0x8000..., lo=0) overflows i64
-   // because i64::MAX = 2^63 - 1
-   // Note: negative 2^63 (hi=0x8000..., lo=0, sign=true) is valid (i64::MIN)
-   If b.limbs.length == 2 and b.sign == false:
-     If hi == 0x8000_0000_0000_0000 and lo == 0:
-       return Error(OutOfRange)
+   // Extract limb values (per RFC-0110 little-endian convention defined above)
+   lo = b.limbs[0]  // u64
 
    If b.limbs.length == 2:
-     // Check if magnitude fits in i64 range
-     // i64::MAX = 2^63 - 1, i64::MIN = -2^63
-     // Magnitude boundary: 2^63
-     // For positive: magnitude must be < 2^63 (magnitude >= 2^63 overflows)
-     // For negative: magnitude must be <= 2^63 (allows -2^63 = i64::MIN)
-     //
-     // Combined check: if hi > 0x8000... or (hi == 0x8000... and lo > 0)
-     // This catches all values with magnitude >= 2^63
+     hi = b.limbs[1]  // u64
+   Else:
+     hi = 0  // Single-limb case
+
+   // Range check for single-limb positive values
+   // A positive single limb with high bit set (>= 2^63) overflows i64::MAX
+   // i64::MAX = 0x7FFF_FFFF_FFFF_FFFF (2^63 - 1)
+   If b.limbs.length == 1 and b.sign == false:
+     If lo > 0x7FFF_FFFF_FFFF_FFFF:
+       return Error(OutOfRange { attempted_magnitude: b.to_string(), max_magnitude: i64::MAX as u64, scale })
+
+   // Two-limb range check
+   // i64::MAX = 2^63 - 1 = 0x7FFF_FFFF_FFFF_FFFF
+   // i64::MIN = -2^63 = 0x8000_0000_0000_0000 (as unsigned magnitude)
+   //
+   // For positive: magnitude must be < 2^63 (magnitude >= 2^63 overflows)
+   // For negative: magnitude must be <= 2^63 (allows -2^63 = i64::MIN)
+   //
+   // Check 1: hi > 0x8000_... catches all magnitudes > 2^63
+   // Check 2: hi == 0x8000_... AND lo > 0 catches magnitude == 2^63 for positive
+   // Note: hi == 0x8000_... AND lo == 0 is valid for negative (i64::MIN)
+   If b.limbs.length == 2:
      If hi > 0x8000_0000_0000_0000:
-       return Error(OutOfRange)
-     If hi == 0x8000_0000_0000_0000 and lo > 0:
-       return Error(OutOfRange)
-     // Note: hi >= 0x8000_...0001 is already caught by hi > 0x8000_...
+       return Error(OutOfRange { attempted_magnitude: b.to_string(), max_magnitude: i64::MAX as u64, scale })
+     If b.sign == false and hi == 0x8000_0000_0000_0000 and lo > 0:
+       return Error(OutOfRange { attempted_magnitude: b.to_string(), max_magnitude: i64::MAX as u64, scale })
 
 2. EXTRACT_UNSCALED_I64
    // Step 1 already validated that the value fits in i64 range
@@ -165,42 +175,44 @@ STEPS:
 
    // Extract the i64 value
    If b.sign == false:
-     unscanned = lo | (hi << 64)
+     unscaled = lo as i64  // Safe: already checked lo <= i64::MAX for positive
    Else:
      // Handle i64::MIN special case: |i64::MIN| = 2^63 which doesn't fit in u64
-     If hi == 0x8000000000000000 and lo == 0:
-       unscanned = i64::MIN  // -9223372036854775808
+     If b.limbs.length == 2 and hi == 0x8000000000000000 and lo == 0:
+       unscaled = i64::MIN  // -9223372036854775808
      Else:
        mag = lo | (hi << 64)
        // mag cannot be 0x8000000000000000 here because Step 1 would have caught it
-       unscanned = -(mag as i64)
+       unscaled = -(mag as i64)
 
 3. APPLY_SCALE_AND_CHECK_OVERFLOW
    // Multiply by 10^scale and check for overflow
    // i64::MAX = 9223372036854775807
    // i64::MIN = -9223372036854775808
-   // Note: |i64::MIN| = i64::MAX + 1
 
    If scale == 0:
-     scaled_value = unscanned
+     scaled_value = unscaled
    Else:
      pow10 = 10^scale
 
      // Check overflow before multiplying
-     // For positive: abs_unscanned * pow10 <= i64::MAX
-     // For negative: abs_unscanned * pow10 <= i64::MAX + 1
+     // For positive: abs(unscaled) * pow10 <= i64::MAX
+     // For negative: scale > 0 with non-zero value always overflows
+     //   because |i64::MIN| * 2 = -2^64 which doesn't fit in i64
 
-     If unscanned >= 0:
-       max_allowed = i64::MAX
+     If unscaled >= 0:
+       max_allowed = i64::MAX as u128
+       abs_unscaled = unscaled as u128
+       If abs_unscaled * (pow10 as u128) > max_allowed:
+         return Error(OutOfRange { attempted_magnitude: b.to_string(), max_magnitude: i64::MAX as u64, scale })
+       scaled_value = unscaled * (pow10 as i64)
      Else:
-       // Can represent |i64::MIN| = 2^63 = i64::MAX + 1
-       max_allowed = 9223372036854775808u128  // Use u128 for intermediate
-
-     abs_unscanned = |unscanned| as u128
-     If abs_unscanned * (pow10 as u128) > (max_allowed as u128):
-       return Error(OutOfRange)
-
-     scaled_value = unscanned * pow10
+       // Negative with scale > 0: |i64::MIN| * pow10 >= 2^64 > i64::MAX
+       // This overflows for ANY negative value when scale > 0
+       If unscaled != 0:
+         return Error(OutOfRange { attempted_magnitude: b.to_string(), max_magnitude: i64::MAX as u64, scale })
+       // Only unscaled == 0 (which is not negative) reaches here
+       scaled_value = 0
 
 4. CONSTRUCT_DQA
    Return Dqa { value: scaled_value, scale: scale }
@@ -222,9 +234,8 @@ STEPS:
 
 | Error | Condition | RFC Reference |
 |-------|-----------|--------------|
-| `BigIntError::OutOfRange` | Value exceeds i64 range | This RFC |
+| `BigIntError::OutOfRange` | Value exceeds i64 range (before or after scaling) | This RFC |
 | `BigIntError::InvalidScale` | Scale > 18 | This RFC |
-| `BigIntError::NonCanonicalInput` | Input BigInt not canonical | RFC-0110 |
 
 ### Scale Context Propagation
 
@@ -286,9 +297,9 @@ SELECT CAST(huge_bigint_col AS DQA(0)) FROM large_values;
 
 | Source Type | Target Type | Behavior | Notes |
 |-------------|-------------|----------|-------|
-| BIGINT | DQA(n) | Truncate if \|value\| > i64::MAX | Overflow → error |
-| BIGINT | DQA(0) | Truncate if \|value\| > i64::MAX | Integer representation |
-| BIGINT | DQA(18) | Truncate if \|value\| > i64::MAX | Maximum scale |
+| BIGINT | DQA(n) | Error if \|value\| > i64::MAX | Overflow → TRAP |
+| BIGINT | DQA(0) | Error if \|value\| > i64::MAX | Integer representation |
+| BIGINT | DQA(18) | Error if \|value\| > i64::MAX | Maximum scale |
 
 **Note:** Unlike DFP→DQA lowering (RFC-0124), BIGINT→DQA does not require rounding because BigInt is already an integer type. The only loss possible is range truncation (overflow).
 
@@ -416,17 +427,19 @@ Note: 10 * 10^1 = 100, represents 10.0
 
 ### V016: Overflow — 128-bit Value (2 limbs, exceeds i64)
 ```
-Input:  BigInt { limbs: [0x0000000000000001, 0x0000000000000000], sign: false }, scale = 0
+Input:  BigInt { limbs: [0x0000000000000000, 0x0000000000000001], sign: false }, scale = 0
 Output: Error(OutOfRange)
 Note: 2^64 = 18446744073709551616 > i64::MAX
+Note: limbs[0]=0 (lo), limbs[1]=1 (hi) per RFC-0110 little-endian
 ```
 
 ### V017: Overflow — 2^63 Exactly
 ```
-Input:  BigInt { limbs: [0x0000000000000000, 0x0000000000000001], sign: false }, scale = 0
+Input:  BigInt { limbs: [0x0000000000000000, 0x8000000000000000], sign: false }, scale = 0
 Output: Error(OutOfRange)
 Note: 2^63 = 9223372036854775808. This magnitude equals |i64::MIN| but as a
 positive value it exceeds i64::MAX (9223372036854775807), causing overflow.
+Note: limbs[0]=0 (lo), limbs[1]=0x8000... (hi) per RFC-0110 little-endian
 ```
 
 ### V018: Negative Overflow — Magnitude Exceeds MAX
@@ -436,11 +449,11 @@ Output: Error(OutOfRange)
 Note: (2^64 + 1) = 18446744073709551617 > i64::MAX
 ```
 
-### V019: Single Limb Positive
+### V019: Single Limb Positive (Within i64 Range)
 ```
 Input:  BigInt { limbs: [0x123456789ABCDEF0], sign: false }, scale = 0
 Output: Dqa { value: 0x123456789ABCDEF0, scale: 0 }
-Note: Single limb always fits in i64
+Note: Value 1311768467294899440 < i64::MAX, fits in i64
 ```
 
 ### V020: Single Limb Negative
@@ -448,6 +461,14 @@ Note: Single limb always fits in i64
 Input:  BigInt { limbs: [0x123456789ABCDEF0], sign: true }, scale = 0
 Output: Dqa { value: -0x123456789ABCDEF0, scale: 0 }
 Note: Fits in i64 range
+```
+
+### V020b: Single Limb Positive — Overflow at 2^63
+```
+Input:  BigInt { limbs: [0x8000000000000001], sign: false }, scale = 0
+Output: Error(OutOfRange)
+Note: 2^63 + 1 = 9223372036854775809 > i64::MAX
+This is the single-limb case: high bit set means magnitude > i64::MAX
 ```
 
 ### V021: Invalid Scale — Exceeds 18
@@ -531,7 +552,7 @@ Note: |-93| × 10^17 = 9.3 × 10^18 > i64::MAX
 ```
 Input:  BigInt::from(9i64), scale = 18
 Output: Dqa { value: 9000000000000000000, scale: 18 }
-Note: 9 × 10^18 = 9 × 10^18, exactly equals i64::MAX - 2^63 + 9
+Note: 9 × 10^18 = 9 × 10^18 = 9000000000000000000, fits in i64
 ```
 
 ### V033: Scale Multiplication Edge — 92 × 10^17 (Fits)
@@ -539,6 +560,14 @@ Note: 9 × 10^18 = 9 × 10^18, exactly equals i64::MAX - 2^63 + 9
 Input:  BigInt::from(92i64), scale = 17
 Output: Dqa { value: 9200000000000000000, scale: 17 }
 Note: 92 × 10^17 = 9.2 × 10^18 = 9200000000000000000, exactly fits in i64
+```
+
+### V034: Negative with Scale > 0 — Overflow
+```
+Input:  BigInt::from(-1i64), scale = 1
+Output: Error(OutOfRange)
+Note: Any negative value with scale > 0 overflows because
+|i64::MIN| * 10 = 2^63 * 10 = 2^64 which exceeds i64 range
 ```
 
 ## Implementation Notes
@@ -562,14 +591,15 @@ impl BigInt {
 
 ### Gas Cost
 
-BIGINT→DQA conversion is a O(n) operation where n = number of limbs. Gas cost should be:
+BIGINT→DQA conversion is a constant-time operation regardless of BigInt size because the algorithm only inspects the first 2 limbs. Gas cost should be:
 ```
-GAS = 10 + 2 * num_limbs
+GAS = 12  // Fixed cost, no variable component
 ```
 
 This accounts for:
-- 10 base cost (fixed overhead)
-- 2 per limb (memory access and range check)
+- Constant-time limb inspection (only 1-2 limbs accessed)
+- Range checks and scale validation
+- Note: BigInts with more than 2 limbs are rejected early without iterating
 
 ## Error Handling and Diagnostics
 
@@ -647,6 +677,7 @@ When BIGINT→DQA conversion fails at runtime (e.g., computed value exceeds rang
 
 | Version | Date | Changes |
 |---------|------|---------|
+| 1.4 | 2026-03-23 | Critical fixes: Added explicit limb convention per RFC-0110 (CRITICAL-C1), fixed single-limb range check hole (CRITICAL-C2), fixed unscanned typo (CRITICAL-C3), fixed negative×scale overflow (HIGH-H3), fixed max_magnitude type (HIGH-H4), fixed V016/V017 limb arrays (LOW-L1/L2), added V020b and V034 test vectors, updated gas model |
 | 1.3 | 2026-03-23 | Critical fix: Added sign-aware boundary check for positive 2^63 overflow (CRITICAL-1), fixed V025 which incorrectly claimed success for i64::MAX×scale-18, removed duplicate range check between Steps 1 and 2, fixed V033 note arithmetic |
 | 1.2 | 2026-03-23 | Critical fix: Added scale multiplication step to algorithm (was missing), added overflow check for scaled values, fixed V011 and Edge Cases zero handling to be consistent, fixed V017 note, added V029-V033 for scale overflow test vectors, added scale field to OutOfRange error |
 | 1.1 | 2026-03-23 | Enhanced: Added Input/Output Contract, Scale Context Propagation, SQL Integration, Constraints, Error Handling & Diagnostics, Formal Verification Framework (5 theorems), Implementation Checklist, expanded test vectors from 10 to 28 |

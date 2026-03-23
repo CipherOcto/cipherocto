@@ -2,7 +2,7 @@
 
 ## Status
 
-**Version:** 1.1 (Draft)
+**Version:** 1.2 (Draft)
 **Status:** Draft
 **Depends On:** RFC-0110 (BIGINT), RFC-0105 (DQA)
 **Category:** Numeric/Math
@@ -11,7 +11,7 @@
 
 This RFC specifies the conversion algorithm from DQA (RFC-0105, i64 value with 0-18 decimal scale) to BIGINT (RFC-0110, arbitrary-precision integer up to 4096 bits). This conversion is necessary for the Numeric Tower to support operations that require DQA values to be used in BIGINT contexts, and for explicit CAST expressions between these types.
 
-This conversion always succeeds because DQA's i64 value trivially fits within BIGINT's arbitrary range.
+This conversion always succeeds for well-formed DQA inputs (valid i64 value, scale 0-18 per RFC-0105) because DQA's i64 value trivially fits within BIGINT's arbitrary range.
 
 ## Motivation
 
@@ -125,10 +125,24 @@ SELECT CAST(dqa_col AS BIGINT) FROM account_balances;
 
 -- This is ALWAYS VALID: Any DQA value fits in BIGINT
 -- Dqa{9223372036854775807, 0} → BigInt(9223372036854775807)
+```
 
+**⚠ WARNING: Non-Standard SQL Semantics**
+
+This conversion does NOT follow standard SQL CAST behavior:
+
+| Standard SQL | This RFC |
+|-------------|----------|
+| `CAST(DQA(19.99) AS BIGINT)` → `19` (integer part) | `CAST(DQA(19.99) AS BIGINT)` → `1999` (raw mantissa) |
+
+Standard SQL interprets `CAST(19.99 AS BIGINT)` as extracting the integer part (19). This RFC extracts the **raw mantissa** (1999), ignoring the scale entirely.
+
+This behavior is intentional for the Numeric Tower's internal operations but will surprise SQL-familiar developers. Use this conversion only when "raw mantissa extraction" is the desired semantics.
+
+```sql
 -- Scale truncation in action
 SELECT CAST(dqa_col AS BIGINT) FROM currency_amounts;
--- Dqa{1999, 2} → BigInt(1999) represents $19.99 → 1999 cents
+-- Dqa{1999, 2} → BigInt(1999) — NOT 19 as standard SQL would give
 ```
 
 #### Cast Semantics in Deterministic Context
@@ -193,13 +207,9 @@ STEPS:
    If magnitude == 0:
      Return BigInt::zero()
 
-   If magnitude <= u64::MAX:
-     limbs = [magnitude as u64]
-   Else:
-     // magnitude has 2 limbs
-     lo = magnitude & 0xFFFFFFFFFFFFFFFF
-     hi = magnitude >> 64
-     limbs = [lo, hi]
+   // magnitude is always <= u64::MAX because it comes from an i64
+   // i64::MIN's magnitude is 2^63 which fits in u64
+   limbs = [magnitude as u64]
 
    Return BigInt { limbs: limbs, sign: sign }
 ```
@@ -287,10 +297,11 @@ Note: Raw mantissa (1) extracted, scale ignored.
 DQA{1, 18} represents 0.000000000000000001 but we extract raw mantissa 1.
 ```
 
-### V010: Maximum DQA Value
+### V010: i64::MAX with Non-Zero Scale
 ```
-Input:  Dqa { value: 9223372036854775807, scale: 0 }
+Input:  Dqa { value: 9223372036854775807, scale: 2 }
 Output: BigInt::from(i64::MAX)
+Note: Scale (2) is ignored — raw mantissa 9223372036854775807 extracted
 ```
 
 ### V011: Minimum DQA Value
@@ -354,7 +365,7 @@ DQA{-1, 1} represents -0.1, but we extract raw mantissa -1.
 
 ### In determin crate
 
-This conversion should be implemented in `determin/src/bigint.rs` as:
+This conversion is implemented in `determin/src/bigint.rs` as:
 
 ```rust
 use crate::dqa::Dqa;
@@ -367,7 +378,7 @@ use crate::dqa::Dqa;
 impl BigInt {
     /// Create a BigInt from a DQA value.
     ///
-    /// The scale is truncated (not rounded).
+    /// Scale is ignored — raw mantissa extraction per RFC-0132.
     /// This always succeeds since i64 fits in BigInt.
     pub fn from_dqa(dqa: &Dqa) -> BigInt {
         // Algorithm per RFC-0132
@@ -377,21 +388,6 @@ impl BigInt {
 /// Convert DQA to BigInt (free function form).
 pub fn dqa_to_bigint(dqa: &Dqa) -> BigInt {
     BigInt::from_dqa(dqa)
-}
-```
-
-Or alternatively in `determin/src/dqa.rs`:
-
-```rust
-use crate::bigint::BigInt;
-
-impl Dqa {
-    /// Convert DQA to BigInt.
-    ///
-    /// Scale is truncated. Always succeeds.
-    pub fn to_bigint(&self) -> BigInt {
-        // Algorithm per RFC-0132
-    }
 }
 ```
 
@@ -445,7 +441,7 @@ SELECT CAST(dqa_col AS BIGINT) FROM any_table;
 
 **Theorem T2 (Range Preservation):** For any valid DQA input, the output BigInt can represent the same integer value (i64 always fits in BigInt).
 
-**Theorem T3 (Scale Truncation):** The output BigInt is the integer part of the DQA value (scale is discarded).
+**Theorem T3 (Raw Mantissa Extraction):** The output BigInt equals `dqa.value` as an integer, without interpretation of the scale.
 
 **Theorem T4 (Sign Preservation):** If `dqa.value < 0`, then `result.sign = true`.
 
@@ -464,14 +460,16 @@ SELECT CAST(dqa_col AS BIGINT) FROM any_table;
 
 ## Future Work
 
-- F1: BIGINT→DQA conversion (see RFC-0131)
-- F2: BIGINT→DECIMAL conversion (see RFC-0133)
-- F3: DECIMAL→BIGINT conversion (see RFC-0134)
+- F1: BIGINT→DECIMAL conversion (see RFC-0133)
+- F2: DECIMAL→BIGINT conversion (see RFC-0134)
+
+**Note:** BIGINT→DQA conversion is specified in companion RFC-0131.
 
 ## Version History
 
 | Version | Date | Changes |
 |---------|------|---------|
+| 1.3 | 2026-03-23 | Critical fixes: Removed unreachable dead code from Step 3 (HIGH-H5), added non-standard SQL semantics warning (HIGH-H6), fixed version header (1.1→1.2), removed RFC-0131 from Future Work |
 | 1.2 | 2026-03-23 | Critical fix: Changed "truncation" to "raw mantissa extraction" throughout (CRITICAL-1), fixed V004/V017/V018 notes that contradicted output (CRITICAL-2/MEDIUM-1), added canonicalization policy section (HIGH-1), added round-trip asymmetry documentation |
 | 1.1 | 2026-03-23 | Enhanced: Added Input/Output Contract, Scale Context Propagation, SQL Integration, Constraints, Error Handling & Diagnostics, Formal Verification Framework (5 theorems), Implementation Checklist, expanded test vectors from 8 to 18 |
 | 1.0 | 2026-03-23 | Initial draft |

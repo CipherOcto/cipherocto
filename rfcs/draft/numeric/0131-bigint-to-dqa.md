@@ -2,7 +2,7 @@
 
 ## Status
 
-**Version:** 1.6 (Draft)
+**Version:** 1.7 (Draft)
 **Status:** Draft
 **Depends On:** RFC-0110 (BIGINT), RFC-0105 (DQA)
 **Category:** Numeric/Math
@@ -274,6 +274,17 @@ This asymmetry is intentional because:
 3. Scale information is LOST in the DQA→BIGINT direction
 
 **Implication:** You cannot round-trip a scaled value through both conversions and expect to recover the original. If you need to preserve scale, you must track it separately.
+
+### Lossless Round-Trip Case
+
+Despite the asymmetry above, round-trip IS lossless when **scale=0**:
+
+| Direction | Conversion | Result |
+|-----------|------------|--------|
+| Forward (RFC-0131) | `BigInt(42), scale=0` → DQA | DQA{42, 0} |
+| Reverse (RFC-0132) | `DQA{42, 0}` → BIGINT | BigInt(42) |
+
+**Lossless condition:** `BigInt(x) × 10^0 = x` and DQA extracts raw mantissa, so `BigInt(x)` is recovered exactly when `|x| ≤ i64::MAX` (DQA range).
 
 ### SQL Integration
 
@@ -679,6 +690,7 @@ When BIGINT→DQA conversion fails at runtime (e.g., computed value exceeds rang
 
 | Version | Date | Changes |
 |---------|------|---------|
+| 1.7 | 2026-03-23 | LOW: Added lossless round-trip case documentation — scale=0 preserves value exactly (R3L4). |
 | 1.6 | 2026-03-23 | CRITICAL: Fixed `pow10 as i64` overflow — Step 3 now uses i128 intermediate for multiplication (R3C1). HIGH: Fixed T4 theorem to use signed range (R3H1). MEDIUM: Fixed function doc error comment (R3M2), Constraints table (R3M1), V008/V009 limb arrays (R3M3). LOW: V020b→V035, checklist count 35 (R3L1/M4), removed dead BigIntToDqaOutput enum (R3L2). |
 | 1.4 | 2026-03-23 | Critical fixes: Added explicit limb convention per RFC-0110 (CRITICAL-C1), fixed single-limb range check hole (CRITICAL-C2), fixed unscanned typo (CRITICAL-C3), fixed negative×scale overflow (HIGH-H3), fixed max_magnitude type (HIGH-H4), fixed V016/V017 limb arrays (LOW-L1/L2), added V020b and V034 test vectors, updated gas model |
 | 1.3 | 2026-03-23 | Critical fix: Added sign-aware boundary check for positive 2^63 overflow (CRITICAL-1), fixed V025 which incorrectly claimed success for i64::MAX×scale-18, removed duplicate range check between Steps 1 and 2, fixed V033 note arithmetic |

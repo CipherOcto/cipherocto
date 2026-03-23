@@ -2,7 +2,7 @@
 
 ## Status
 
-**Version:** 1.4 (Draft)
+**Version:** 1.5 (Draft)
 **Status:** Draft
 **Depends On:** RFC-0110 (BIGINT), RFC-0105 (DQA)
 **Category:** Numeric/Math
@@ -126,6 +126,26 @@ This conversion does NOT follow standard SQL CAST behavior:
 Standard SQL interprets `CAST(19.99 AS BIGINT)` as extracting the integer part (19). This RFC extracts the **raw mantissa** (1999), ignoring the scale entirely.
 
 This behavior is intentional for the Numeric Tower's internal operations but will surprise SQL-familiar developers. Use this conversion only when "raw mantissa extraction" is the desired semantics.
+
+### Scale Context in Mixed BigInt + DQA Operations
+
+When a DQA value must be used in a BIGINT context (e.g., arithmetic with BIGINT operands), the scale is **not implicitly provided** — it must be explicitly specified by the caller:
+
+```rust
+// Correct: scale explicitly provided
+let dqa = Dqa::new(1999, 2)?;  // Represents 19.99
+let bigint = dqa_to_bigint_with_scale(&dqa, explicit_scale);
+
+// The dqa_to_bigint function (RFC-0132) ignores scale entirely.
+// Callers that need scale-aware conversion must provide it explicitly.
+```
+
+**Scale sourcing responsibility:**
+- For explicit CAST: Scale is specified in the target type (e.g., `CAST(... AS BIGINT)` — no scale needed since BIGINT is integer)
+- For mixed arithmetic: The operation's type coercion rules must specify which scale to use
+- For internal conversions: The calling context must provide scale if needed
+
+This RFC does not specify scale-coercion rules for mixed BigInt + DQA operations — that is the responsibility of the Numeric Tower's type system specification.
 
 ```sql
 -- Scale truncation in action
@@ -457,6 +477,7 @@ SELECT CAST(dqa_col AS BIGINT) FROM any_table;
 
 | Version | Date | Changes |
 |---------|------|---------|
+| 1.6 | 2026-03-23 | LOW: Added scale context in mixed BigInt + DQA operations section — clarifies scale sourcing for implicit coercion (R3L5). |
 | 1.5 | 2026-03-23 | MEDIUM: Fixed version header (was 1.3, now 1.4) (R3M5). Removed dangling DqaToBigIntInput struct (R3M6). LOW: Fixed relationship table "scale truncation" wording (R3L3). |
 | 1.3 | 2026-03-23 | Critical fixes: Removed unreachable dead code from Step 3 (HIGH-H5), added non-standard SQL semantics warning (HIGH-H6), fixed version header (1.1→1.2), removed RFC-0131 from Future Work |
 | 1.2 | 2026-03-23 | Critical fix: Changed "truncation" to "raw mantissa extraction" throughout (CRITICAL-1), fixed V004/V017/V018 notes that contradicted output (CRITICAL-2/MEDIUM-1), added canonicalization policy section (HIGH-1), added round-trip asymmetry documentation |

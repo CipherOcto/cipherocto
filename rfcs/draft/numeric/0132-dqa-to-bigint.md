@@ -2,7 +2,7 @@
 
 ## Status
 
-**Version:** 1.5 (Draft)
+**Version:** 1.6 (Draft)
 **Status:** Draft
 **Depends On:** RFC-0110 (BIGINT), RFC-0105 (DQA)
 **Category:** Numeric/Math
@@ -103,6 +103,17 @@ This asymmetry is intentional because:
 2. BIGINT→DQA applies scale multiplication to the mantissa
 3. Scale information is LOST in the forward direction and cannot be recovered
 
+### Lossless Round-Trip Case
+
+Despite the asymmetry above, round-trip IS lossless when **scale=0**:
+
+| Direction | Conversion | Result |
+|-----------|------------|--------|
+| Forward (RFC-0132) | `DQA{42, 0}` → BIGINT | BigInt(42) |
+| Reverse (RFC-0131) | `BigInt(42), scale=0` → DQA | DQA{42, 0} |
+
+**Lossless condition:** DQA{42, 0} extracts raw mantissa 42, and BigInt(42)×scale=0 produces DQA{42, 0}. The original DQA is recovered exactly.
+
 ## SQL Integration
 
 DQA→BIGINT conversion appears in SQL CAST expressions:
@@ -129,21 +140,23 @@ This behavior is intentional for the Numeric Tower's internal operations but wil
 
 ### Scale Context in Mixed BigInt + DQA Operations
 
-When a DQA value must be used in a BIGINT context (e.g., arithmetic with BIGINT operands), the scale is **not implicitly provided** — it must be explicitly specified by the caller:
+When a DQA value must be used in a BIGINT context (e.g., arithmetic with BIGINT operands), the scale is **not used** — the raw i64 mantissa is extracted directly:
 
 ```rust
-// Correct: scale explicitly provided
-let dqa = Dqa::new(1999, 2)?;  // Represents 19.99
-let bigint = dqa_to_bigint_with_scale(&dqa, explicit_scale);
+// DQA value with scale
+let dqa = Dqa::new(1999, 2)?;  // Represents 19.99 in decimal
 
-// The dqa_to_bigint function (RFC-0132) ignores scale entirely.
-// Callers that need scale-aware conversion must provide it explicitly.
+// Scale is ignored — raw mantissa extraction
+let bigint = dqa_to_bigint(&dqa);  // Returns BigInt(1999), NOT 19
+
+// Scale-aware conversion (if needed) requires explicit handling
+// by the calling context — this RFC does not specify such a function.
 ```
 
 **Scale sourcing responsibility:**
-- For explicit CAST: Scale is specified in the target type (e.g., `CAST(... AS BIGINT)` — no scale needed since BIGINT is integer)
+- For explicit CAST: `CAST(... AS BIGINT)` — no scale in target type, raw mantissa extracted
 - For mixed arithmetic: The operation's type coercion rules must specify which scale to use
-- For internal conversions: The calling context must provide scale if needed
+- For internal conversions: The calling context must handle scale explicitly if needed
 
 This RFC does not specify scale-coercion rules for mixed BigInt + DQA operations — that is the responsibility of the Numeric Tower's type system specification.
 
@@ -213,6 +226,9 @@ STEPS:
 
 3. CONSTRUCT_BIGINT
    If magnitude == 0:
+     // Note: BigInt::zero() returns canonical zero with sign=false.
+     // The sign variable from Step 2 is discarded, which is correct
+     // because DQA{0, s} should always produce canonical zero.
      Return BigInt::zero()
 
    // magnitude is always <= u64::MAX because it comes from an i64
@@ -477,7 +493,7 @@ SELECT CAST(dqa_col AS BIGINT) FROM any_table;
 
 | Version | Date | Changes |
 |---------|------|---------|
-| 1.6 | 2026-03-23 | LOW: Added scale context in mixed BigInt + DQA operations section — clarifies scale sourcing for implicit coercion (R3L5). |
+| 1.6 | 2026-03-23 | Process: Version header now matches history entry (R4H4). |
 | 1.5 | 2026-03-23 | MEDIUM: Fixed version header (was 1.3, now 1.4) (R3M5). Removed dangling DqaToBigIntInput struct (R3M6). LOW: Fixed relationship table "scale truncation" wording (R3L3). |
 | 1.3 | 2026-03-23 | Critical fixes: Removed unreachable dead code from Step 3 (HIGH-H5), added non-standard SQL semantics warning (HIGH-H6), fixed version header (1.1→1.2), removed RFC-0131 from Future Work |
 | 1.2 | 2026-03-23 | Critical fix: Changed "truncation" to "raw mantissa extraction" throughout (CRITICAL-1), fixed V004/V017/V018 notes that contradicted output (CRITICAL-2/MEDIUM-1), added canonicalization policy section (HIGH-1), added round-trip asymmetry documentation |

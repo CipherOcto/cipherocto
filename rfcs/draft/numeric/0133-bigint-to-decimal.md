@@ -2,7 +2,7 @@
 
 ## Status
 
-**Version:** 1.0 (Draft)
+**Version:** 1.1 (Draft)
 **Status:** Draft
 **Depends On:** RFC-0110 (BIGINT), RFC-0111 (DECIMAL)
 **Category:** Numeric/Math
@@ -28,7 +28,101 @@ Without a rigorous specification:
 
 RFC-0111 defines DECIMAL and includes a `bigint_to_decimal(value: i128)` function for i128→DECIMAL conversion. However, BIGINT can represent values up to 4096 bits (128 decimal digits), which far exceeds i128 (39 decimal digits). This RFC specifies the full BIGINT→DECIMAL conversion for arbitrary-precision integers.
 
-## Specification
+### RFC-0110 and RFC-0111 Coverage Analysis
+
+| Conversion | RFC-0110 (BIGINT) | RFC-0111 (DECIMAL) | This RFC |
+|------------|-------------------|--------------------|----------|
+| i128 → DECIMAL | `bigint_to_decimal(i128)` | Not specified | Not needed |
+| BigInt → DECIMAL | Not specified | Not specified | **This RFC** |
+
+**Key insight:** The existing `bigint_to_decimal(value: i128)` function handles i128→DECIMAL conversion but cannot handle values exceeding i128. This RFC specifies the arbitrary-precision version.
+
+## Input/Output Contract
+
+```rust
+/// Error variants for BIGINT→DECIMAL conversion
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum BigIntError {
+    /// BigInt value exceeds DECIMAL's representable range
+    OutOfRange {
+        attempted_magnitude: String,  // Debug representation
+        max_magnitude: String,      // MAX_DECIMAL_MANTISSA as string
+    },
+    /// Requested scale exceeds DECIMAL's maximum scale (36)
+    InvalidScale {
+        requested: u8,
+        max_scale: u8,
+    },
+}
+
+/// BIGINT→DECIMAL conversion result
+pub type BigIntToDecimalResult = Result<Decimal, BigIntError>;
+
+/// Input to the conversion
+pub struct BigIntToDecimalInput {
+    /// The BigInt value to convert
+    pub value: BigInt,
+    /// Target scale for the DECIMAL result (0-36)
+    pub scale: u8,
+}
+
+/// Output from the conversion
+pub enum BigIntToDecimalOutput {
+    /// Successfully converted to DECIMAL
+    Success(Decimal),
+    /// Conversion error with details
+    Error(BigIntError),
+}
+```
+
+## Scale Context Propagation
+
+The scale parameter in BIGINT→DECIMAL conversion determines decimal representation:
+
+| Scale | Effect | Example |
+|-------|--------|---------|
+| 0 | Integer, no decimal places | BigInt(42) → Decimal{42, 0} = 42 |
+| 2 | Two decimal places | BigInt(42) → Decimal{4200, 2} = 42.00 |
+| 18 | DQA-equivalent precision | BigInt(42) → Decimal{4200000000000000000, 18} |
+| 36 | Maximum DECIMAL scale | BigInt(42) → Decimal{420000...000, 36} |
+
+**Important:** The scale does NOT affect precision of the BigInt value itself — it only determines how the mantissa is interpreted as a decimal.
+
+## SQL Integration
+
+BIGINT→DECIMAL conversion appears in SQL CAST expressions:
+
+```sql
+-- Explicit CAST from BIGINT to DECIMAL with scale
+SELECT CAST(bigint_col AS DECIMAL(36, 6)) FROM account_balances;
+
+-- This is VALID: BigInt value must fit in DECIMAL range
+-- If bigint_col = 10^35, scale 2 → DECIMAL represents 10^37
+
+-- FORBIDDEN: Explicit CAST from oversized BigInt
+SELECT CAST(huge_bigint_col AS DECIMAL(36, 0)) FROM large_values;
+-- Error: BigIntError::OutOfRange
+
+-- DECIMAL with scale 0 (integer)
+SELECT CAST(bigint_col AS DECIMAL(36, 0)) FROM integer_values;
+```
+
+#### Cast Semantics in Deterministic Context
+
+| Source Type | Target Type | Behavior | Notes |
+|-------------|-------------|----------|-------|
+| BIGINT | DECIMAL(p, s) | Check range, apply scale | Scale s means p-s integer digits |
+| BIGINT | DECIMAL(36, 0) | Integer representation | No decimal places |
+
+## Constraints
+
+| Constraint Type | Description |
+|----------------|-------------|
+| **Scale bounds** | 0 ≤ scale ≤ 36 (per RFC-0111 MAX_SCALE) |
+| **Value bounds** | \|mantissa\| ≤ 10^36 - 1 (MAX_DECIMAL_MANTISSA) |
+| **Scale adjustment** | value × 10^scale must fit in DECIMAL range |
+| **Determinism** | Identical BigInt input always produces identical DECIMAL output |
+| **No rounding** | BIGINT→DECIMAL does not round; it traps on overflow |
 
 ### Relationship to Existing Functions
 
@@ -221,6 +315,79 @@ Output: Error(OutOfRange)
 Note: Even with scale 0, exceeds DECIMAL range
 ```
 
+### V010: Minimum DECIMAL (Negative)
+```
+Input:  BigInt::from(-MAX_DECIMAL_MANTISSA), scale = 0
+Output: Decimal { mantissa: -999999999999999999999999999999999999, scale: 0 }
+```
+
+### V011: Scale 1 Edge Case
+```
+Input:  BigInt::from(10i64), scale = 1
+Output: Decimal { mantissa: 100, scale: 1 }
+Note: 10 * 10^1 = 100
+```
+
+### V012: Scale Boundary — 18 (DQA max)
+```
+Input:  BigInt::from(1i64), scale = 18
+Output: Decimal { mantissa: 1000000000000000000, scale: 18 }
+```
+
+### V013: Scale Boundary — 36 (DECIMAL max)
+```
+Input:  BigInt::from(1i64), scale = 36
+Output: Decimal { mantissa: 1000000000000000000000000000000000000, scale: 36 }
+```
+
+### V014: Invalid Scale — Exceeds 36
+```
+Input:  BigInt::from(42i64), scale = 37
+Output: Error(InvalidScale)
+Note: DECIMAL max scale is 36
+```
+
+### V015: Zero with Non-Zero Scale
+```
+Input:  BigInt::zero(), scale = 6
+Output: Decimal { mantissa: 0, scale: 0 }
+Note: Canonical zero has scale 0
+```
+
+### V016: Large BigInt with Small Scale
+```
+Input:  BigInt::from(10_i128.pow(34)), scale = 0
+Output: Decimal { mantissa: 100000000000000000000000000000000000, scale: 0 }
+Note: 10^34 fits in DECIMAL
+```
+
+### V017: Boundary — One Less Than MAX
+```
+Input:  BigInt::from(10_i128.pow(36) - 1), scale = 0
+Output: Decimal { mantissa: 999999999999999999999999999999999999, scale: 0 }
+Note: MAX_DECIMAL - 1, fits
+```
+
+### V018: Overflow — One More Than MAX
+```
+Input:  BigInt::from(10_i128.pow(36)), scale = 0
+Output: Error(OutOfRange)
+Note: Equals MAX_DECIMAL + 1, overflows
+```
+
+### V019: Scale Multiplication Overflow
+```
+Input:  BigInt::from(10_i128.pow(35)), scale = 2
+Output: Error(OutOfRange)
+Note: 10^35 * 10^2 = 10^37 > 10^36 - 1
+```
+
+### V020: Small Value with Large Scale
+```
+Input:  BigInt::from(2i64), scale = 36
+Output: Decimal { mantissa: 2000000000000000000000000000000000000, scale: 36 }
+```
+
 ## Implementation Notes
 
 ### In determin crate
@@ -256,6 +423,73 @@ SCALE_GAS = 5 * scale  // Multiplication by POW10[scale]
 Total: BASE_GAS + SCALE_GAS
 ```
 
+## Error Handling and Diagnostics
+
+### Compile-Time Errors
+
+When BIGINT→DECIMAL conversion fails at compile time:
+
+```
+ERROR: Cannot convert BIGINT to DECIMAL
+  Expression: CAST(bigint_col AS DECIMAL(36, 0)) at line 42
+  Reason: BigIntError::OutOfRange — value 10^36 exceeds DECIMAL range
+  Hint: Use BIGINT type or reduce the value
+
+ERROR: Cannot convert BIGINT to DECIMAL
+  Expression: CAST(value AS DECIMAL(36, 37)) at line 15
+  Reason: BigIntError::InvalidScale — scale 37 exceeds maximum (36)
+  Hint: Use scale 0-36 for DECIMAL type
+```
+
+### Runtime Errors (Bytecode)
+
+When BIGINT→DECIMAL conversion fails at runtime:
+
+| Scenario | Behavior | Gas Consumed |
+|----------|----------|--------------|
+| Overflow | Transaction reverts | All gas up to failing opcode |
+| Invalid scale | Transaction reverts | All gas up to failing opcode |
+
+## Formal Verification Framework
+
+### Theorem Hierarchy
+
+| # | Theorem | Property | Status |
+|---|---------|----------|--------|
+| T1 | Determinism | Bit-identical results across platforms | Required |
+| T2 | Range Preservation | If result is Ok, mantissa within DECIMAL bounds | Required |
+| T3 | Scale Preservation | Output scale equals input scale | Required |
+| T4 | Overflow Completeness | Overflow always detected | Required |
+| T5 | Scale Bounds | Scale validation is correct | Required |
+| T6 | Zero Canonicalization | BigInt::zero → Decimal{0, 0} | Required |
+
+### Theorem Specifications
+
+**Theorem T1 (Determinism):** For identical BigInt input and scale, the conversion always produces identical DECIMAL output or identical error.
+
+**Theorem T2 (Range Preservation):** If `bigint_to_decimal_full(b, s) = Ok(decimal)`, then `|decimal.mantissa| ≤ MAX_DECIMAL_MANTISSA`.
+
+**Theorem T3 (Scale Preservation):** If `bigint_to_decimal_full(b, s) = Ok(decimal)`, then `decimal.scale = s`.
+
+**Theorem T4 (Overflow Completeness):** If `|b| * 10^s > MAX_DECIMAL_MANTISSA`, then `bigint_to_decimal_full(b, s) = Err(OutOfRange)`.
+
+**Theorem T5 (Scale Bounds):** If `s > 36`, then `bigint_to_decimal_full(b, s) = Err(InvalidScale)`.
+
+**Theorem T6 (Zero Canonicalization):** `bigint_to_decimal_full(BigInt::zero(), s) = Ok(Decimal { mantissa: 0, scale: 0 })`.
+
+## Implementation Checklist
+
+| Mission | Description | Status | Complexity |
+|---------|-------------|--------|------------|
+| M1 | `bigint_to_decimal_full` core algorithm | Pending | High |
+| M2 | Scale validation (0-36 bounds) | Pending | Low |
+| M3 | BigInt to i128 conversion | Pending | Medium |
+| M4 | POW10 multiplication for scale > 0 | Pending | Medium |
+| M5 | Range check against MAX_DECIMAL_MANTISSA | Pending | Medium |
+| M6 | Error type construction | Pending | Low |
+| M7 | Test vector suite (20 vectors) | Pending | Medium |
+| M8 | Integration with BigInt and Decimal types | Pending | Medium |
+
 ## Future Work
 
 - F1: BIGINT→DQA conversion (see RFC-0131)
@@ -266,6 +500,7 @@ Total: BASE_GAS + SCALE_GAS
 
 | Version | Date | Changes |
 |---------|------|---------|
+| 1.1 | 2026-03-23 | Enhanced: Added Input/Output Contract, Scale Context Propagation, SQL Integration, Constraints, Error Handling & Diagnostics, Formal Verification Framework (6 theorems), Implementation Checklist, expanded test vectors from 9 to 20 |
 | 1.0 | 2026-03-23 | Initial draft |
 
 ---

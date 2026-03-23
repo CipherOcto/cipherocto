@@ -2,7 +2,7 @@
 
 ## Status
 
-**Version:** 1.0 (Draft)
+**Version:** 1.1 (Draft)
 **Status:** Draft
 **Depends On:** RFC-0110 (BIGINT), RFC-0111 (DECIMAL)
 **Category:** Numeric/Math
@@ -28,7 +28,96 @@ Without a rigorous specification:
 
 RFC-0111 specifies `decimal_to_bigint(d: &Decimal) -> Result<i128, DecimalError>` which converts DECIMAL→i128 (not BigInt) and requires scale = 0. This function is for i128-range DECIMAL values. This RFC specifies the full DECIMAL→BIGINT conversion for arbitrary DECIMAL values.
 
-## Specification
+### RFC-0110 and RFC-0111 Coverage Analysis
+
+| Conversion | RFC-0111 (DECIMAL) | RFC-0110 (BIGINT) | This RFC |
+|------------|--------------------|--------------------|----------|
+| DECIMAL → i128 | `decimal_to_bigint()` | Not specified | Not needed |
+| DECIMAL → BigInt | Not specified | Not specified | **This RFC** |
+
+**Key insight:** The existing `decimal_to_bigint` returns i128, not BigInt. This RFC specifies the arbitrary-precision version that handles the full DECIMAL range.
+
+## Input/Output Contract
+
+```rust
+/// Error variants for DECIMAL→BIGINT conversion
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum DecimalError {
+    /// DECIMAL has non-zero fractional part (scale > 0)
+    ConversionLoss {
+        scale: u8,
+        mantissa: String,
+        reason: &'static str,
+    },
+}
+
+/// DECIMAL→BIGINT conversion result
+pub type DecimalToBigIntResult = Result<BigInt, DecimalError>;
+
+/// Input to the conversion
+pub struct DecimalToBigIntInput {
+    /// The DECIMAL value to convert
+    pub value: Decimal,
+}
+
+/// Output from the conversion
+pub enum DecimalToBigIntOutput {
+    /// Successfully converted to BIGINT
+    Success(BigInt),
+    /// Conversion error with details
+    Error(DecimalError),
+}
+```
+
+## Scale Context Propagation
+
+The scale in DECIMAL represents decimal places. When converting to BIGINT:
+
+| DECIMAL | Scale | BIGINT Output | Rationale |
+|---------|-------|---------------|-----------|
+| {42, 0} | 0 | 42 | Integer, no fractional part |
+| {42, 2} | 2 | Error | 4.2 has fractional part |
+| {4200, 2} | 2 | Error | 42.00 has fractional part |
+| {42000, 3} | 3 | Error | 42.000 has fractional part |
+
+**Critical:** Scale > 0 always fails because DECIMAL's scale indicates the value has fractional precision. Converting to BIGINT would lose that information.
+
+## SQL Integration
+
+DECIMAL→BIGINT conversion appears in SQL CAST expressions:
+
+```sql
+-- Explicit CAST from DECIMAL to BIGINT
+SELECT CAST(decimal_col AS BIGINT) FROM account_balances;
+
+-- This is VALID only when scale = 0:
+-- Decimal{42, 0} → BigInt(42)
+-- Decimal{-1999, 0} → BigInt(-1999)
+
+-- FORBIDDEN: DECIMAL with scale > 0
+SELECT CAST(decimal_col AS BIGINT) FROM currency_amounts;
+-- Decimal{1999, 2} represents $19.99 — error!
+-- Error: DecimalError::ConversionLoss
+
+-- Recommended: ROUND or CAST to integer first
+SELECT CAST(ROUND(decimal_col, 0) AS BIGINT) FROM currency_amounts;
+```
+
+#### Cast Semantics in Deterministic Context
+
+| Source Type | Target Type | Behavior | Notes |
+|-------------|-------------|----------|-------|
+| DECIMAL(36, 0) | BIGINT | Always succeeds | Integer representation |
+| DECIMAL(36, n) where n > 0 | BIGINT | **Error** | Fractional precision would be lost |
+
+## Constraints
+
+| Constraint Type | Description |
+|----------------|-------------|
+| **Scale must be 0** | scale > 0 → ConversionLoss error |
+| **Value bounds** | Any DECIMAL mantissa fits in BigInt |
+| **Determinism** | Identical DECIMAL input always produces identical BIGINT output |
+| **No truncation** | Scale > 0 is an error, not truncated |
 
 ### Relationship to Existing Functions
 
@@ -224,6 +313,83 @@ Output: Error(ConversionLoss)
 Note: Even though mantissa is multiple of 10^6, scale indicates fractional context
 ```
 
+### V010: Minimum DECIMAL Mantissa (Negative)
+```
+Input:  Decimal { mantissa: -MAX_DECIMAL_MANTISSA, scale: 0 }
+Output: BigInt { limbs: [MAX_DECIMAL_MANTISSA as u64, (MAX_DECIMAL_MANTISSA >> 64) as u64], sign: true }
+Note: Negative, requires 2 limbs
+```
+
+### V011: Small Positive with Scale 1 — Error
+```
+Input:  Decimal { mantissa: 5, scale: 1 }
+Output: Error(ConversionLoss)
+Note: Represents 0.5, fractional part exists
+```
+
+### V012: Small Negative with Scale 1 — Error
+```
+Input:  Decimal { mantissa: -5, scale: 1 }
+Output: Error(ConversionLoss)
+Note: Represents -0.5, fractional part exists
+```
+
+### V013: Scale 18 (DQA max) — Error
+```
+Input:  Decimal { mantissa: 42, scale: 18 }
+Output: Error(ConversionLoss)
+Note: Even though mantissa is integer, scale 18 indicates fractional context
+```
+
+### V014: Maximum DECIMAL with Scale 0
+```
+Input:  Decimal { mantissa: MAX_DECIMAL_MANTISSA, scale: 0 }
+Output: BigInt { limbs: [MAX_DECIMAL_MANTISSA as u64, (MAX_DECIMAL_MANTISSA >> 64) as u64], sign: false }
+Note: Maximum value, 2 limbs needed
+```
+
+### V015: i128::MIN with Scale 0
+```
+Input:  Decimal { mantissa: i128::MIN, scale: 0 }
+Output: BigInt { limbs: [0x8000000000000000, 0], sign: true }
+Note: i128::MIN = -2^127, special case
+```
+
+### V016: i128::MAX with Scale 0
+```
+Input:  Decimal { mantissa: i128::MAX, scale: 0 }
+Output: BigInt { limbs: [i128::MAX as u64, (i128::MAX >> 64) as u64], sign: false }
+Note: i128::MAX fits in 2 limbs
+```
+
+### V017: One with Scale 36 — Error
+```
+Input:  Decimal { mantissa: 1, scale: 36 }
+Output: Error(ConversionLoss)
+Note: Represents 0.000...001 (36 zeros), fractional part exists
+```
+
+### V018: Large Value with Scale 0
+```
+Input:  Decimal { mantissa: 10_i128.pow(35), scale: 0 }
+Output: BigInt { limbs: [10_i128.pow(35) as u64, (10_i128.pow(35) >> 64) as u64], sign: false }
+Note: 10^35 fits in BigInt
+```
+
+### V019: Negative Large Value with Scale 0
+```
+Input:  Decimal { mantissa: -10_i128.pow(35), scale: 0 }
+Output: BigInt { limbs: [10_i128.pow(35) as u64, (10_i128.pow(35) >> 64) as u64], sign: true }
+Note: Negative large value
+```
+
+### V020: Scale 2 Currency — Error
+```
+Input:  Decimal { mantissa: 199900, scale: 2 }
+Output: Error(ConversionLoss)
+Note: Represents $1,999.00 — must ROUND first before BIGINT
+```
+
 ## Implementation Notes
 
 ### In determin crate
@@ -257,6 +423,70 @@ DECIMAL→BIGINT conversion cost:
 BASE_GAS = 15  // Scale check + BigInt construction
 ```
 
+This is a fixed cost because:
+- Scale check is O(1)
+- i128 to BigInt conversion is O(1) (i128 always fits in 2 limbs)
+
+## Error Handling and Diagnostics
+
+### Compile-Time Errors
+
+When DECIMAL→BIGINT conversion fails at compile time:
+
+```
+ERROR: Cannot convert DECIMAL to BIGINT
+  Expression: CAST(decimal_col AS BIGINT) at line 42
+  Reason: DecimalError::ConversionLoss — scale=3 indicates fractional part
+  Hint: Use ROUND(decimal_col, 0) or CAST(decimal_col AS BIGINT) with scale=0 column
+```
+
+### Runtime Errors (Bytecode)
+
+When DECIMAL→BIGINT conversion fails at runtime:
+
+| Scenario | Behavior | Gas Consumed |
+|----------|----------|--------------|
+| Scale > 0 | Transaction reverts | All gas up to failing opcode |
+
+## Formal Verification Framework
+
+### Theorem Hierarchy
+
+| # | Theorem | Property | Status |
+|---|---------|----------|--------|
+| T1 | Determinism | Bit-identical results across platforms | Required |
+| T2 | Scale Zero Requirement | scale > 0 always produces error | Required |
+| T3 | Value Preservation | Valid conversion preserves mantissa value | Required |
+| T4 | Sign Preservation | Negative mantissa produces negative BigInt | Required |
+| T5 | Zero Canonicalization | Decimal{0, 0} → BigInt::zero() | Required |
+| T6 | i128 Range | All i128 mantissas fit in BigInt | Required |
+
+### Theorem Specifications
+
+**Theorem T1 (Determinism):** For identical DECIMAL input, the conversion always produces identical BIGINT output or identical error.
+
+**Theorem T2 (Scale Zero Requirement):** If `d.scale > 0`, then `decimal_to_bigint_full(d) = Err(ConversionLoss)`.
+
+**Theorem T3 (Value Preservation):** If `decimal_to_bigint_full(d) = Ok(b)`, then `b` represents the same integer value as `d.mantissa`.
+
+**Theorem T4 (Sign Preservation):** If `d.mantissa < 0`, then `result.sign = true`.
+
+**Theorem T5 (Zero Canonicalization):** `decimal_to_bigint_full(Decimal { mantissa: 0, scale: 0 }) = Ok(BigInt::zero())`.
+
+**Theorem T6 (i128 Range):** For any i128 mantissa `m`, `decimal_to_bigint_full(Decimal { mantissa: m, scale: 0 })` succeeds (i128 always fits in BigInt).
+
+## Implementation Checklist
+
+| Mission | Description | Status | Complexity |
+|---------|-------------|--------|------------|
+| M1 | `decimal_to_bigint_full` core algorithm | Pending | Medium |
+| M2 | Scale validation (must be 0) | Pending | Low |
+| M3 | i128 to BigInt conversion | Pending | Medium |
+| M4 | i128::MIN special case handling | Pending | Low |
+| M5 | Error type construction | Pending | Low |
+| M6 | Test vector suite (20 vectors) | Pending | Medium |
+| M7 | Integration with Decimal and BigInt types | Pending | Medium |
+
 ## Future Work
 
 - F1: BIGINT→DQA conversion (see RFC-0131)
@@ -267,6 +497,7 @@ BASE_GAS = 15  // Scale check + BigInt construction
 
 | Version | Date | Changes |
 |---------|------|---------|
+| 1.1 | 2026-03-23 | Enhanced: Added Input/Output Contract, Scale Context Propagation, SQL Integration, Constraints, Error Handling & Diagnostics, Formal Verification Framework (6 theorems), Implementation Checklist, expanded test vectors from 9 to 20 |
 | 1.0 | 2026-03-23 | Initial draft |
 
 ---

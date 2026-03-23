@@ -2,7 +2,7 @@
 
 ## Status
 
-**Version:** 1.7 (Draft)
+**Version:** 1.8 (Draft)
 **Status:** Draft
 **Depends On:** RFC-0110 (BIGINT), RFC-0105 (DQA)
 **Category:** Numeric/Math
@@ -531,14 +531,14 @@ Note: Minimum value with minimum scale
 ```
 Input:  BigInt { limbs: [1, 0x8000000000000000], sign: false }, scale = 0
 Output: Error(OutOfRange)
-Note: Magnitude = 2^63 + 1 > i64::MAX
+Note: Magnitude = 2^127 + 1 > i64::MAX. Any two-limb value with hi ≥ 2^63 overflows.
 ```
 
 ### V028: Negative Overflow — Exceeds i64::MIN by 1
 ```
 Input:  BigInt { limbs: [1, 0x8000000000000000], sign: true }, scale = 0
 Output: Error(OutOfRange)
-Note: |value| = 2^63 + 1 > i64::MAX magnitude
+Note: |value| = 2^127 + 1 > i64::MAX magnitude. Same overflow as V027.
 ```
 
 ### V029: Scale Multiplication Overflow — 93 × 10^17
@@ -690,6 +690,7 @@ When BIGINT→DQA conversion fails at runtime (e.g., computed value exceeds rang
 
 | Version | Date | Changes |
 |---------|------|---------|
+| 1.8 | 2026-03-23 | LOW: Fixed V027/V028 note arithmetic — magnitudes are 2^127+1 not 2^63+1. |
 | 1.7 | 2026-03-23 | LOW: Added lossless round-trip case documentation — scale=0 preserves value exactly (R3L4). |
 | 1.6 | 2026-03-23 | CRITICAL: Fixed `pow10 as i64` overflow — Step 3 now uses i128 intermediate for multiplication (R3C1). HIGH: Fixed T4 theorem to use signed range (R3H1). MEDIUM: Fixed function doc error comment (R3M2), Constraints table (R3M1), V008/V009 limb arrays (R3M3). LOW: V020b→V035, checklist count 35 (R3L1/M4), removed dead BigIntToDqaOutput enum (R3L2). |
 | 1.4 | 2026-03-23 | Critical fixes: Added explicit limb convention per RFC-0110 (CRITICAL-C1), fixed single-limb range check hole (CRITICAL-C2), fixed unscanned typo (CRITICAL-C3), fixed negative×scale overflow (HIGH-H3), fixed max_magnitude type (HIGH-H4), fixed V016/V017 limb arrays (LOW-L1/L2), added V020b and V034 test vectors, updated gas model |

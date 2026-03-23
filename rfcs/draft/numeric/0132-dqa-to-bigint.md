@@ -2,7 +2,7 @@
 
 ## Status
 
-**Version:** 1.6 (Draft)
+**Version:** 1.7 (Draft)
 **Status:** Draft
 **Depends On:** RFC-0110 (BIGINT), RFC-0105 (DQA)
 **Category:** Numeric/Math
@@ -73,19 +73,15 @@ The scale in DQA represents decimal places. When converting to BIGINT (an intege
 | **Sign preserved** | Negative DQA produces negative BIGINT |
 | **Zero canonicalization** | DQA{0, any} → BigInt::zero() |
 | **Determinism** | Identical DQA input always produces identical BIGINT output |
-| **No canonicalization of input** | Raw DQA mantissa used, no pre-canonicalization |
+| **Canonical input required** | Non-canonical DQA input is a precondition violation — implementations MUST TRAP per RFC-0105 and RFC-0110 |
 
 ## Canonicalization Policy
 
-**Question:** Should the DQA value be canonicalized before conversion?
+**Input Canonicalization:** RFC-0105 guarantees all DQA values are canonical at all input boundaries. The VM mandates canonicalization before use in comparison, serialization, hashing, storage, and control-flow evaluation. Non-canonical DQA inputs are a precondition violation — implementations MUST TRAP on non-canonical DQA input per RFC-0105 §VM Canonicalization Rule and RFC-0110 §Input Canonicalization Requirement.
 
-RFC-0105 requires canonicalization for deterministic serialization, but this applies to **storage/output**, not to **input for conversion**. This conversion operates on the raw DQA mantissa as stored in memory, not on its serialized form.
+This conversion operates on DQA values that have already passed the VM's canonicalization check. Since canonical DQA values have unique representations, no additional canonicalization is needed before conversion.
 
-Therefore:
-- `DQA{1000, 3}` (non-canonical) → BigInt(1000) — raw value extracted
-- `DQA{1, 0}` (canonical form of above) → BigInt(1) — raw value extracted
-
-Both produce different BIGINT values, which is correct behavior. The conversion preserves the raw mantissa value without interpreting it as a decimal number.
+**Output:** This conversion produces a BigInt from a canonical DQA input. The resulting BigInt correctly represents the same numeric value as the input DQA.
 
 ## Round-Trip Asymmetry
 
@@ -113,6 +109,13 @@ Despite the asymmetry above, round-trip IS lossless when **scale=0**:
 | Reverse (RFC-0131) | `BigInt(42), scale=0` → DQA | DQA{42, 0} |
 
 **Lossless condition:** For any DQA with scale=0 (i.e., `DQA{x, 0}`), the round-trip `DQA{x, 0} → BigInt(x) → DQA{x, 0}` is lossless. Since all DQA values satisfy `|x| ≤ i64::MAX` by definition, this holds for all scale-0 DQA values.
+
+### Negative Round-Trip
+```
+Input:  Dqa { value: -42, scale: 0 } → BIGINT → DQA
+Output: BigInt(-42) → Dqa { value: -42, scale: 0 } ✓
+Note: BigInt(-42) × 10^0 = -42, mantissa preserved.
+```
 
 ## SQL Integration
 
@@ -161,7 +164,7 @@ let bigint = dqa_to_bigint(&dqa);  // Returns BigInt(1999), NOT 19
 This RFC does not specify scale-coercion rules for mixed BigInt + DQA operations — that is the responsibility of the Numeric Tower's type system specification.
 
 ```sql
--- Scale truncation in action
+-- Scale ignored — raw mantissa extraction
 SELECT CAST(dqa_col AS BIGINT) FROM currency_amounts;
 -- Dqa{1999, 2} → BigInt(1999) — NOT 19 as standard SQL would give
 ```
@@ -170,9 +173,9 @@ SELECT CAST(dqa_col AS BIGINT) FROM currency_amounts;
 
 | Source Type | Target Type | Behavior | Notes |
 |-------------|-------------|----------|-------|
-| DQA(n) | BIGINT | Always succeeds | Scale truncated |
+| DQA(n) | BIGINT | Always succeeds | Scale ignored — raw mantissa extracted |
 | DQA(0) | BIGINT | Always succeeds | Integer representation |
-| DQA(18) | BIGINT | Always succeeds | Scale 18 → BigInt truncates |
+| DQA(18) | BIGINT | Always succeeds | Scale 18 → BigInt ignores scale, raw mantissa extracted |
 
 ### Function Signature
 
@@ -180,22 +183,22 @@ SELECT CAST(dqa_col AS BIGINT) FROM currency_amounts;
 /// Convert DQA to BigInt.
 ///
 /// This conversion always succeeds because DQA's i64 value fits
-/// in any BigInt. The decimal scale is ignored (the value is
-/// treated as an integer).
+/// in any BigInt. The decimal scale is ignored — only the raw
+/// i64 mantissa is extracted.
 ///
 /// # Arguments
 /// * `dqa` - The DQA value to convert
 ///
 /// # Returns
-/// BigInt representation of the DQA value (scale is truncated)
+/// BigInt representation of the DQA value (scale is ignored)
 ///
 /// # Example
 /// Dqa { value: 42, scale: 0 } → BigInt(42)
-/// Dqa { value: 4200, scale: 2 } → BigInt(4200) — scale truncated
+/// Dqa { value: 4200, scale: 2 } → BigInt(4200) — scale ignored
 ///
 /// # Notes
-/// The scale is truncated (not rounded). This is consistent with
-/// BIGINT being an integer type.
+/// The scale is ignored, not truncated or rounded. This is consistent
+/// with BIGINT being an integer type.
 pub fn dqa_to_bigint(dqa: &Dqa) -> BigInt
 ```
 
@@ -248,8 +251,8 @@ STEPS:
 | {4200, 2} | BigInt(4200) | Scale ignored, raw mantissa extracted |
 | {i64::MAX, 0} | BigInt(i64::MAX) | Maximum i64 |
 | {i64::MIN, 0} | BigInt(i64::MIN) | Minimum i64 |
-| {i64::MIN, 3} | BigInt(-9223372036854775808) | Scale truncated |
-| {-1, 18} | BigInt(-1) | Scale truncated |
+| {i64::MIN, 3} | BigInt(-9223372036854775808) | Scale ignored, raw mantissa extracted |
+| {-1, 18} | BigInt(-1) | Scale ignored, raw mantissa extracted |
 
 ## Relationship to Other RFCs
 
@@ -258,7 +261,7 @@ STEPS:
 | RFC-0105 (DQA) | Input type | DQA semantics preserved (scale ignored — raw mantissa extraction) |
 | RFC-0110 (BIGINT) | Output type | BIGINT operations apply after conversion |
 
-**Precedence Rule:** In case of conflict between this RFC and RFC-0105 or RFC-0110, this RFC takes precedence for the DQA→BIGINT conversion operation.
+**Precedence Rule:** This RFC does not override RFC-0105 or RFC-0110. All inputs must satisfy RFC-0105's canonical form requirements (non-canonical inputs MUST TRAP). All outputs satisfy RFC-0110's output requirements.
 
 ## Test Vectors
 
@@ -493,6 +496,7 @@ SELECT CAST(dqa_col AS BIGINT) FROM any_table;
 
 | Version | Date | Changes |
 |---------|------|---------|
+| 1.7 | 2026-03-23 | CRITICAL: Rewrote Canonicalization Policy section — non-canonical input MUST TRAP per RFC-0105/RFC-0110 (R6-132-C1, C2). HIGH: Removed all "truncation" language — replaced with "scale ignored" throughout (R6-132-H2, H3). MEDIUM: Fixed v1.4 changelog accuracy; removed precedence override clause (R6-132-M2, R6-X1). LOW: Added negative round-trip test vector (R6-X2). |
 | 1.6 | 2026-03-23 | Process: Version header now matches history entry (R4H4). |
 | 1.5 | 2026-03-23 | MEDIUM: Fixed version header (was 1.3, now 1.4) (R3M5). Removed dangling DqaToBigIntInput struct (R3M6). LOW: Fixed relationship table "scale truncation" wording (R3L3). |
 | 1.4 | 2026-03-23 | MEDIUM: Changed "truncation" to "raw mantissa extraction" throughout. |

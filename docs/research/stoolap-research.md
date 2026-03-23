@@ -375,6 +375,68 @@ pub struct PersistenceManager {
 
 ---
 
+## Numeric Type System
+
+### SQL Keyword to Stoolap Type Mapping
+
+| SQL Keyword(s) | Stoolap DataType | Internal Type | Notes |
+|---------------|------------------|--------------|-------|
+| `INTEGER`, `INT`, `BIGINT`, `SMALLINT`, `TINYINT` | `Integer` | i64 | All integer types map to i64 |
+| `FLOAT`, `DOUBLE`, `REAL`, `DECIMAL`, `NUMERIC` | `Float` | IEEE-754 f64 | Standard floating-point |
+| `DFP`, `DETERMINISTICFLOAT` | `DeterministicFloat` | DFP (RFC-0104) | Explicit keyword required |
+| `DQA`, `DQA(n)` | `Quant` | DQA (RFC-0105) | Scale stored in `SchemaColumn.quant_scale` |
+| `TEXT`, `VARCHAR`, `CHAR`, `STRING` | `Text` | UTF-8 | |
+| `BOOLEAN`, `BOOL` | `Boolean` | bool | |
+| `TIMESTAMP`, `DATETIME`, `DATE`, `TIME` | `Timestamp` | UTC | |
+| `JSON`, `JSONB` | `Json` | JSON doc | |
+| `VECTOR`, `VECTOR(n)` | `Vector` | f32[] | Dimensions in `SchemaColumn.vector_dimensions` |
+| `NULL` | `Null` | — | |
+
+### CipherOcto Numeric Tower (RFCs)
+
+| RFC | Type | Base | Scale | Status |
+|-----|------|------|-------|--------|
+| RFC-0104 | DFP (Deterministic Float) | 113-bit mantissa | variable | ✅ Implemented |
+| RFC-0105 | DQA (Deterministic Quant) | i64 | 0-18 | ✅ Implemented |
+| RFC-0110 | BIGINT (Arbitrary Precision) | ≤4096 bits | N/A | ❌ Not in Stoolap |
+| RFC-0111 | DECIMAL (High Precision) | i128 | 0-36 | ❌ Not in Stoolap |
+
+### Type Gap Matrix: Stoolap vs Numeric Tower
+
+| Feature | Stoolap | RFC-0104 (DFP) | RFC-0105 (DQA) | RFC-0110 (BIGINT) | RFC-0111 (DECIMAL) | Gap Severity |
+|---------|---------|----------------|-----------------|-------------------|-------------------|--------------|
+| i64 Integer | ✅ | — | — | — | — | None |
+| IEEE-754 Float | ✅ | — | — | — | — | None |
+| DFP (113-bit) | ✅ `DFP` | ✅ | — | — | — | None |
+| DQA (scale 0-18) | ✅ `DQA` | — | ✅ | — | — | None |
+| BIGINT (≤4096 bit) | ❌ | — | — | ✅ | — | **Missing** |
+| DECIMAL (i128, 0-36) | ❌ | — | — | — | ✅ | **Missing** |
+| DFP ↔ DQA conversion | ❌ | — | — | — | — | **Missing** |
+| BIGINT ↔ DECIMAL | ❌ | — | — | ✅ | ✅ | **Missing in Stoolap** |
+| DQA ↔ DECIMAL | ❌ | — | ✅ | — | ✅ | **Missing in Stoolap** |
+
+### Conversion Matrix (RFC-0110, RFC-0111)
+
+Conversions are defined in the RFCs but NOT implemented in Stoolap:
+
+| From | To | RFC | Stoolap Status | Notes |
+|------|----|-----|----------------|-------|
+| BIGINT | DECIMAL | RFC-0110 | ❌ Missing | Uses I128_ROUNDTRIP |
+| DECIMAL | BIGINT | RFC-0110 | ❌ Missing | Requires scale = 0 |
+| DQA | DECIMAL | RFC-0111 | ❌ Missing | Requires scale ≤ 18 |
+| DECIMAL | DQA | RFC-0111 | ❌ Missing | May lose precision if scale > 18 |
+| BIGINT | DQA | RFC-0110/0105 | ❌ Missing | Not documented in RFCs |
+| DFP | DQA | RFC-0104 | ❌ Missing | Deterministic lowering pass not in DB |
+| DFP | DECIMAL | RFC-0104/0111 | ❌ Missing | Would require lowering pass |
+
+### Required Extensions
+
+1. **BIGINT (RFC-0110)**: Add arbitrary precision integer type up to 4096 bits (64×u64 limbs)
+2. **DECIMAL (RFC-0111)**: Add i128 scaled integer with scale 0-36 (not IEEE-754)
+3. **Conversion functions**: Implement explicit conversion operators between numeric types
+
+---
+
 ## 4. Query Execution Pipeline
 
 ### 4.1 Execution Flow

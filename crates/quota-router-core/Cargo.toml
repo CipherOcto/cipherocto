@@ -40,7 +40,7 @@ anyhow.workspace = true
 thiserror.workspace = true
 
 # Database
-stoolap = { path = "/home/mmacedoeu/_w/databases/stoolap" }
+stoolap = { git = "https://github.com/CipherOcto/stoolap", branch = "feat/blockchain-sql" }
 
 # For HMAC-SHA256 key hashing
 hmac-sha256 = "1.1"

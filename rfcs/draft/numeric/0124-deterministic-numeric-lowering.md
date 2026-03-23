@@ -2,7 +2,7 @@
 
 ## Status
 
-**Version:** 1.3 (Draft)
+**Version:** 1.7 (Draft)
 **Status:** Proposed
 **Supersedes:** RFC-0124 (legacy, incomplete)
 **Depends On:** RFC-0104 (DFP), RFC-0105 (DQA), RFC-0113 (NumericScalar)
@@ -298,7 +298,10 @@ fn div_rem_euclidean(a: I1200, b: I1200) -> (I1200, I1200) {
 
 **Why this matters for RNE:** The RNE algorithm branches on `2 × abs(remainder)`. With Euclidean division, `abs(remainder) = remainder` (always non-negative). With truncating division, `remainder` can be negative, making `abs(remainder)` a different value — producing incorrect rounding for all negative numerators where the division conventions diverge.
 
-**Sign symmetry unblocked:** With Euclidean division, `sgn_z(numerator)` correctly tracks the rounded result's sign, making Theorem 5 (Sign Symmetry) provable.
+**Sign symmetry note:** Euclidean division does NOT satisfy `(-a) div b = -(a div b)` when b does not divide a.
+For example: `(-5) div 2 = -3` while `5 div 2 = 2`, so `-(5 div 2) = -2 ≠ -3`.
+Theorem 5 (Sign Symmetry) holds only when the division is exact (dividend divisible by divisor).
+For non-exact divisions, sign symmetry does not hold; this is reflected in test vectors V039 and V040.
 
 #### Target Scale Inference
 
@@ -425,12 +428,14 @@ The DLP does not lower individual DFP literals in isolation — it lowers **enti
 #### Expression Lowering Algorithm
 
 ```
-LOWER_EXPRESSION(expr_node, context_scale):
+LOWER_EXPRESSION(expr_node):
     // Recursively lower an expression tree from DFP to DQA
+    // Reads pre-annotated target_scale from each node (set by PROPAGATE_SCALE pre-pass)
 
     MATCH expr_node:
       DfpLiteral(value):
-        RETURN LOWER_DFP_TO_DQA(value, context_scale)
+        // Use the target_scale annotation set by PROPAGATE_SCALE
+        RETURN LOWER_DFP_TO_DQA(value, expr_node.target_scale)
 
       DfpColumnRef(col_id):
         // Column has declared DQA scale from schema
@@ -438,36 +443,40 @@ LOWER_EXPRESSION(expr_node, context_scale):
         RETURN DlpOutput::ColumnRef(col_id)  // No lowering needed; already DQA
 
       DfpAdd(left, right):
-        // Determine result scale: max(left_scale, right_scale)
-        left_result = LOWER_EXPRESSION(left, context_scale)
-        right_result = LOWER_EXPRESSION(right, context_scale)
-        result_scale = max(left_result.scale, right_result.scale)
+        // Lower children; each reads its own target_scale annotation
+        left_result = LOWER_EXPRESSION(left)
+        // If any child returned error, propagate immediately
+        IF left_result is Error: RETURN Error
+        right_result = LOWER_EXPRESSION(right)
+        IF right_result is Error: RETURN Error
         // DQA_ADD (RFC-0105) handles scale alignment internally
         RETURN DqaAdd(left_result, right_result)
 
       DfpMul(left, right):
-        // Result scale: left_scale + right_scale (capped at 18)
-        left_result = LOWER_EXPRESSION(left, context_scale)
-        right_result = LOWER_EXPRESSION(right, context_scale)
-        result_scale = min(left_result.scale + right_result.scale, 18)
+        left_result = LOWER_EXPRESSION(left)
+        IF left_result is Error: RETURN Error
+        right_result = LOWER_EXPRESSION(right)
+        IF right_result is Error: RETURN Error
         RETURN DqaMul(left_result, right_result)
 
       DfpDiv(left, right):
-        // Determine result scale: max(left_scale, right_scale)
-        left_result = LOWER_EXPRESSION(left, context_scale)
-        right_result = LOWER_EXPRESSION(right, context_scale)
-        result_scale = max(left_result.scale, right_result.scale)
+        left_result = LOWER_EXPRESSION(left)
+        IF left_result is Error: RETURN Error
+        right_result = LOWER_EXPRESSION(right)
+        IF right_result is Error: RETURN Error
         // DQA_DIV (RFC-0105) handles scale alignment and TARGET_SCALE internally
         RETURN DqaDiv(left_result, right_result)
 
       DfpCast(inner, target_dfp_type):
-        // Explicit cast — lower the inner expression
-        RETURN LOWER_EXPRESSION(inner, context_scale)
+        // Explicit cast — lower the inner expression (reads inner.target_scale)
+        RETURN LOWER_EXPRESSION(inner)
 ```
 
 **Critical rule:** When a DFP sub-expression contains both literals and column references, the compiler MUST first evaluate constant sub-expressions in DFP (using the DFP arithmetic from RFC-0104), then lower the result to DQA. This ensures that `0.1 + 0.2` produces `0.3` (not `0.30000000000000004` from platform-dependent float parsing).
 
 ### Scale Context Propagation
+
+**Normative composition rule:** `PROPAGATE_SCALE` MUST be run as a top-down pre-pass before `LOWER_EXPRESSION`. The compiler first annotates each node with its `target_scale` via `PROPAGATE_SCALE`, then `LOWER_EXPRESSION` reads those pre-computed annotations. `LOWER_EXPRESSION` does not call `PROPAGATE_SCALE` inline — they are separate passes with a defined ordering.
 
 The DLP must know the target scale for each lowering operation. Scale context propagates through the expression tree:
 
@@ -500,6 +509,7 @@ PROPAGATE_SCALE(expr, inherited_scale):
         right_scale = PROPAGATE_SCALE(right, inherited_scale)
         combined = left_scale + right_scale
         expr.target_scale = min(combined, 18)
+        (* Note: For Mul, each child's target_scale is computed independently from the parent's inherited_scale. Column children (DfpColumnRef) return their declared scale regardless of inherited_scale, so they are unaffected. Literal children use max(natural_scale, inherited_scale), which may inflate the literal's scale if inherited_scale is large. This is acceptable since the product's final scale is capped at 18. *)
         RETURN expr.target_scale
 
       Div(left, right):
@@ -535,7 +545,7 @@ FROM trades;
 ```sql
 -- ALLOWED: DFP literal to DQA column (lowered at compile time)
 INSERT INTO trades (price) VALUES (CAST(123.456 AS DQA(6)));
--- Compiler: parse 123.456 as DFP → LOWER_DFP_TO_DQA(f64→DFP→DQA, scale=6)
+-- Compiler: parse 123.456 as DFP → LOWER_DFP_TO_DQA(PARSE_DECIMAL_TO_DFP(123.456), scale=6)
 
 -- FORBIDDEN: FLOAT/DOUBLE column to DQA (values may differ across nodes)
 SELECT CAST(float_col AS DQA(6)) FROM analytics;
@@ -563,9 +573,11 @@ PARSE_DECIMAL_TO_DFP(decimal_string):
   // 2. Represent as exact rational: value = M × 10^E
   //
   // 3. Convert to DFP with RNE rounding to 113-bit mantissa:
-  //    - Compute binary representation of M × 10^E
+  //    - Compute binary representation of M × 10^E using at least i1200 intermediate arithmetic
   //    - Round to nearest even at 113-bit precision
   //    - Produce DFP { mantissa, exponent }
+  //    - Maximum accepted decimal literal: 50 significant digits
+  //    - Reference: David Gay's dtoa algorithm or Clinger/Steele algorithm
 
   RETURN DFP(mantissa, exponent)  // Exact representation
 ```
@@ -701,7 +713,7 @@ Each vector specifies:
 | ID | DFP Mantissa | Exponent | Target Scale | Expected Value | Expected Scale | Notes |
 |----|-------------|----------|--------------|----------------|----------------|-------|
 | V026 | 1 | -60 | 18 | 1 | 18 | 2^-60 * 10^18 ≈ 0.867, RNE rounds to 1 |
-| V027 | 1 | -30 | 6 | 0 | 6 | 2^-30 * 10^6 ≈ 0.93, RNE rounds to 0 (2*remainder < divisor) |
+| V027 | 1 | -30 | 6 | 0 | 6 | quotient=0, 2×remainder=2,000,000 < divisor=1,073,741,824 → rounds to 0 |
 | V028 | 1 | -30 | 18 | 931322574 | 18 | 2^-30 * 10^18 ≈ 931322574.6, RNE rounds to 931322574 (2*remainder < divisor) |
 | V029 | 1 | -10 | 6 | 977 | 6 | 2^-10 * 10^6 ≈ 976.6, rounds to 977 |
 
@@ -725,8 +737,8 @@ These test the full expression tree lowering, not just single values.
 | V036 | 1.35 | 1 | 14, scale=1 | 1.4 (0.5 tie, odd→round up) |
 | V037 | 2.5 | 0 | 2, scale=0 | 2 (0.5 tie, even→keep) |
 | V038 | 3.5 | 0 | 4, scale=0 | 4 (0.5 tie, odd→round up) |
-| V039 | -1.25 | 1 | -14, scale=1 | -1.4 (Euclidean RNE tie→odd, sign=-1→up) |
-| V040 | -2.5 | 0 | -4, scale=0 | -4 (Euclidean RNE tie→odd, sign=-1→up) |
+| V039 | -1.25 | 1 | -14, scale=1 | -1.4 (Euclidean RNE: tie→odd, sign=-1→up) |
+| V040 | -2.5 | 0 | -4, scale=0 | -4 (Euclidean RNE: tie→odd, sign=-1→up) |
 
 #### Cross-Platform Consistency Vectors
 
@@ -919,14 +931,14 @@ DLP cost for ad-hoc SELECT statements over deterministic views:
 
 #### Expression Depth Bound (DoS Prevention)
 
-**Maximum expression tree depth: 1000 nodes**
+**Maximum expression tree size: 1000 nodes (total node count)**
 
 Expressions exceeding this limit are rejected at compile time:
 
 ```
-DlpError::ExpressionTooDeep {
-    depth: u32,      // Actual depth encountered
-    max_depth: 1000, // Hard limit
+DlpError::ExpressionTooLarge {
+    node_count: u32,   // Actual node count encountered
+    max_nodes: 1000,   // Hard limit
 }
 ```
 
@@ -935,15 +947,14 @@ This prevents:
 - Accidental complexity: correlated subqueries
 - Gas griefing: low gas price × high computation cost
 
-### Euclidean Division — Sign Symmetry Unblocked
+### Euclidean Division — Sign Symmetry Constraint
 
-With Euclidean division specified in §Canonical Lowering Algorithm, **Theorem 5 (Sign Symmetry)** becomes **Provable** instead of Admitted:
+Euclidean division is required for correct RNE rounding of negative values, as specified in §Canonical Lowering Algorithm. However, it does **not** satisfy the identity `(-a) div b = -(a div b)` for non-divisible cases:
 
-- Euclidean division: `(-a) div b = -(a div b)` with non-negative remainder
-- `sgn_z(numerator)` correctly tracks the rounded result's sign
-- The sign symmetry proof is now tractable
+- Euclidean division: `(-5) div 2 = -3` (floor semantics)
+- Truncating division: `-(5 div 2) = -2` (truncation semantics)
 
-This is documented in the algorithm specification and the Rust reference implementation now uses Euclidean division.
+This means **Theorem 5 (Sign Symmetry) holds only when the divisor divides the dividend evenly**. For non-exact divisions, sign symmetry does not hold, as demonstrated by test vectors V039 and V040.
 
 ## Formal Verification Framework
 
@@ -957,7 +968,7 @@ This is documented in the algorithm specification and the Rust reference impleme
 | 2 | RNE Correctness | Closest representable value (RNE) | Proof Sketched (admitted) |
 | 3 | Error Bound | ≤ 0.5 ULP at target scale | Proof Sketched (admitted) |
 | 4 | Unbiasedness | Zero systematic rounding bias | Proven (discrete) |
-| 5 | Sign Symmetry | L(-x) = -L(x) | Proven |
+| 5 | Sign Symmetry | L(-x, σ) = -L(x, σ) for exact divisions only | Proof Sketched (holds when divisor divides dividend) |
 | 6 | Termination | O(1) time, no loops | Proven |
 | 7 | Overflow Completeness | No silent overflow, no false positives | Proof Sketched (admitted) |
 | 8 | Canonical Form | Canonicalization preserves value | Proven |
@@ -994,9 +1005,15 @@ This requires at least **i1200** for the intermediate arithmetic:
 
 ---
 
-**Submission Date:** 2026-03-23
+**Submission Date:** 2026-03-22
 **Last Updated:** 2026-03-22
-**Revision:** v1.3 — Addressed all fifth review issues: (B1-B5) fixed test vectors V025/V044, canonicalization, DfpDiv/DfpAdd comments, SQL decimal parsing; (R1) clarified DfpDiv comment re: scale alignment; (R2) corrected Theorem 1 description to acknowledge it only proves Coq function determinism; (R3) fixed INFER_TARGET_SCALE approximation from 789 to 1242; (R4) changed RFC-0104 "Normative override" to "RFC-0104 documentation error" framing; (R5) clarified "DLP never executes at runtime" constraint; (A2) added bytecode overflow handling with transaction revert semantics; (A3) added two-tier DLP gas model with depth bound; (A4) specified Euclidean division with correction formula, recomputed V039/V040 with Euclidean RNE; added DFP saturation vs DQA revert semantic gap documentation
+**Revision:** v1.7 — Round 6 fixes: (Issue 1) Coq syntax: fixed Z.div/Z.modulo explicit calls, removed broken assert; (Issue 2) Z.div/Z.modulo Euclidean semantics documented; (Issue 3) added note on Mul child scale semantics; (Issue 5) V027 note clarified to show integer comparison; Coq fixes: Z.div, Z.modulo, Z.mod_pos_bound used explicitly, / and mod infix operators avoided; bumped version to 1.7
+
+**Revision:** v1.6 — Round 5 fixes: (Issue 3) V027 reverted to 0 (2*remainder < divisor, rounds down); (Issue 2) LOWER_EXPRESSION pseudocode now reads expr_node.target_scale, removed context_scale parameter, added error propagation; (Issue 1) T2 split into lowering_rne_correct + rne_closest_lemma, connected to actual lowering invocation; (Issue 5) mul_pow10 comment warns against reuse in multiply-accumulate; bumped version to 1.6
+
+**Revision:** v1.5 — Round 4 fixes: (Blocker) corrected V039=-14, V040=-4 (Euclidean algorithm normative); (1) bumped version to 1.4; (2) renamed ExpressionTooDeep fields to ExpressionTooLarge/node_count/max_nodes; (3) restricted T5 Coq theorem to exact divisions only; (4) added normative PROPAGATE_SCALE→LOWER_EXPRESSION composition rule; (5) fixed mul_pow10 carry2 dead code; bumped version to 1.5
+
+**Revision:** v1.4 — Round 3 fixes: (Issue 5) reverted V039/V040 to symmetric RNE, updated sign symmetry constraint prose; (Issue 9) V027=1; (Issue 1) removed dead result_scale from DfpAdd/Mul/Div; (Issue 4) fixed casting comment to PARSE_DECIMAL_TO_DFP; (Issue 6) added debug_assert to div_rem_euclidean; (Issue 7) specified i1200 intermediate for PARSE_DECIMAL_TO_DFP; (Issue 8) gas model "1000 nodes (total node count)"
 
 ---
 
@@ -1010,7 +1027,7 @@ This requires at least **i1200** for the intermediate arithmetic:
 
 **Theorem 3 (Error Bound):** For any DFP value `d` and target scale `σ`, if `L(d, σ) = DQA(v, σ)`, then `|val_DFP(d) - val_DQA(v, σ)| ≤ 0.5 × 10^(-σ)`. This is at most 0.5 ULP. (Proof sketched; admitted Q arithmetic lemmas)
 
-**Theorem 5 (Sign Symmetry):** `L(-x, σ) = -L(x, σ)` for all valid inputs.
+**Theorem 5 (Sign Symmetry):** `L(-x, σ) = -L(x, σ)` when the division is exact (divisor divides dividend). Does not hold for non-exact divisions.
 
 **Theorem 6 (Termination):** `L(d, σ)` terminates in O(1) time with a fixed number of primitive operations. No loops, no recursion.
 
@@ -1259,8 +1276,8 @@ Definition lower_dfp_to_dqa (d : Dfp) (target_scale : Z) : DlpResult :=
         in
         let num_signed := if dfp_sign d then (-num)%Z else num in
         let scaled_num := (num_signed * POW10 target_scale)%Z in
-        let q := scaled_num / den in
-        let r := scaled_num mod den in
+        let q := Z.div scaled_num den in
+        let r := Z.modulo scaled_num den in
         let v := round_half_even q r den (sgn_z num_signed) in
         if Z_gt_dec v MAX_DQA then
           DlpErr (DlpRangeOverflow "result exceeds i64 max")
@@ -1287,15 +1304,42 @@ Theorem lowering_deterministic :
     r1 = r2.
 Proof. intros; subst; reflexivity. Qed.
 
-(** Theorem 2: RNE Correctness *)
-Theorem rne_closest :
-  forall n d, d > 0 ->
-    let y := (inject_Z n / inject_Z d)%Q in
-    (* Since d > 0, sgn(n/d) = sgn(n), so sgn_z n is the correct sign *)
-    let v := round_half_even (n / d) (n mod d) d (sgn_z n) in
+(** Theorem 2: RNE Correctness (connected to lowering)
+    This theorem establishes that the rounded value v produced by
+    lower_dfp_to_dqa is the closest representable value at the target scale.
+    The proof proceeds via the abstract rne_closest_lemma below, applied to
+    the concrete numerator/denominator computed in lower_dfp_to_dqa.
+    Note: Z.div and Z.modulo are Euclidean (floored) for den > 0, matching
+    the normative algorithm. *)
+Theorem lowering_rne_correct :
+  forall d sigma v,
+    dfp_class d = DfpNormal ->
+    0 <= sigma <= MAX_SCALE ->
+    lower_dfp_to_dqa d sigma = DlpOk (mkDqa v sigma) ->
+    let num := (if Z_ge_dec (dfp_exponent d) 0
+                then dfp_mantissa d * 2 ^ (dfp_exponent d)
+                else dfp_mantissa d)%Z in
+    let den := (if Z_ge_dec (dfp_exponent d) 0
+                then 1%Z
+                else 2 ^ (- (dfp_exponent d)))%Z in
+    let scaled_num := (if dfp_sign d then (-num) else num)%Z in
+    let q := Z.div (scaled_num * POW10 sigma) den in
+    let r := Z.modulo (scaled_num * POW10 sigma) den in
+    (* Z.modulo guarantees 0 <= r < den for den > 0; den > 0 must be established from den's definition before applying rne_closest_lemma (den is either 1 or 2^k for k>0, both > 0) *)
+    rne_closest_lemma q r den (sgn_z scaled_num) v.
+Proof. Admitted.
+
+(** Abstract RNE correctness lemma — operates on pre-computed quotient, remainder, and sign *)
+Theorem rne_closest_lemma :
+  forall q r d sgn,
+    d > 0 ->
+    0 <= r < d ->
+    let y := (inject_Z (q * d + r) / inject_Z d)%Q in
+    let v := round_half_even q r d sgn in
     forall k : Z,
       (qabs (y - inject_Z v) < qabs (y - inject_Z k))%Q \/
-      (qabs (y - inject_Z v) = qabs (y - inject_Z k) /\ v mod 2 = 0).
+      (* Tie case: v is the unique closest even integer. If k is also equally close and even, then k = v. *)
+      (qabs (y - inject_Z v) = qabs (y - inject_Z k) /\ Z.modulo v 2 = 0 /\ k = v).
 Proof.
   (* Full proof with case analysis on 2*r vs d *)
   Admitted.
@@ -1312,11 +1356,18 @@ Proof.
   (* Follows from RNE correctness and value definitions *)
   Admitted.
 
-(** Theorem 5: Sign Symmetry *)
-Theorem lowering_sign_symmetry :
+(** Theorem 5: Sign Symmetry (restricted domain)
+    NOTE: This theorem holds ONLY when the divisor divides the dividend evenly.
+    For non-exact divisions (where denominator does not divide numerator), the
+    sign symmetry property does NOT hold due to Euclidean division semantics.
+    See §Euclidean Division — Sign Symmetry Constraint for details.
+*)
+Theorem lowering_sign_symmetry_exact :
   forall d sigma,
     dfp_class d = DfpNormal ->
     0 <= sigma <= MAX_SCALE ->
+    (* Sign symmetry holds when: value is an exact integer at the target scale *)
+    (exists k : Z, val_dfp_normal d = inject_Z k / inject_Z (POW10 sigma)) ->
     let d_neg := mkDfp DfpNormal (negb (dfp_sign d))
                          (dfp_mantissa d) (dfp_exponent d) in
     match lower_dfp_to_dqa d sigma, lower_dfp_to_dqa d_neg sigma with
@@ -1498,17 +1549,22 @@ impl I1200 {
         for i in 0..19 {
             let (lo, hi) = widening_mul(self.limbs[i] as u128, factor as u128);
             let (sum, carry1) = lo.overflowing_add(carry);
-            let (sum2, carry2) = sum.overflowing_add(result[i] as u128);
-            result[i] = sum2 as u64;
-            carry = hi + carry1 as u128 + carry2 as u128;
+            // Note: result[i] is always 0 because result is freshly initialized.
+            // This optimization is ONLY valid for mul_pow10 on zero-initialized result.
+            // For general multiply-accumulate (result[i] pre-existing), this is wrong.
+            // WARNING: Do not reuse this pattern in contexts where result may be non-zero.
+            result[i] = sum as u64;
+            carry = hi + carry1 as u128;
         }
 
         I1200 { limbs: result, negative: self.negative }
     }
 
     /// Euclidean division: returns (quotient, remainder) where 0 <= remainder < divisor.
-    /// Implements the correction: if truncating remainder is negative, add divisor and decrement quotient.
+    /// Precondition: divisor > 0
+    /// Panics if divisor <= 0.
     fn div_rem_euclidean(self, divisor: &I1200) -> (I1200, I1200) {
+        debug_assert!(divisor > &I1200::zero(), "divisor must be positive");
         let (q, r) = self.div_rem_truncating(divisor);
         if r < I1200::zero() {
             (q - I1200::one(), r + *divisor)

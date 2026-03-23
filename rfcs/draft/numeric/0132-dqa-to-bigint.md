@@ -2,7 +2,7 @@
 
 ## Status
 
-**Version:** 1.3 (Draft)
+**Version:** 1.4 (Draft)
 **Status:** Draft
 **Depends On:** RFC-0110 (BIGINT), RFC-0105 (DQA)
 **Category:** Numeric/Math
@@ -43,18 +43,11 @@ RFC-0105 defines DQA but does not define DQA→BIGINT conversion. RFC-0110 defin
 
 ```rust
 /// DQA→BIGINT conversion result
-/// Note: Unlike most conversions, this ALWAYS succeeds
+/// Note: Unlike most conversions, this ALWAYS succeeds for well-formed DQA inputs
 pub type DqaToBigIntResult = BigInt;
-
-/// Input to the conversion
-pub struct DqaToBigIntInput {
-    /// The DQA value to convert
-    pub value: Dqa,
-}
-
 ```
 
-**Important:** DQA→BIGINT conversion cannot fail. Any DQA value (including i64::MIN, i64::MAX) fits in BigInt. This is different from BIGINT→DQA which can fail on overflow.
+**Important:** DQA→BIGINT conversion cannot fail for well-formed DQA inputs (valid i64 value, scale 0-18 per RFC-0105).
 
 ## Scale Context Propagation
 
@@ -226,7 +219,7 @@ STEPS:
 
 | RFC | Relationship | Precedence |
 |-----|-------------|------------|
-| RFC-0105 (DQA) | Input type | DQA semantics preserved (scale truncation) |
+| RFC-0105 (DQA) | Input type | DQA semantics preserved (scale ignored — raw mantissa extraction) |
 | RFC-0110 (BIGINT) | Output type | BIGINT operations apply after conversion |
 
 **Precedence Rule:** In case of conflict between this RFC and RFC-0105 or RFC-0110, this RFC takes precedence for the DQA→BIGINT conversion operation.
@@ -464,7 +457,7 @@ SELECT CAST(dqa_col AS BIGINT) FROM any_table;
 
 | Version | Date | Changes |
 |---------|------|---------|
-| 1.4 | 2026-03-23 | MEDIUM: Fixed version header (was 1.2, now 1.3). Fixed gas comment ("1-2 limbs" → "always 1 limb"). Fixed T3 theorem table entry ("Scale Truncation" → "Raw Mantissa Extraction"). LOW: Removed dead DqaToBigIntOutput enum. |
+| 1.5 | 2026-03-23 | MEDIUM: Fixed version header (was 1.3, now 1.4) (R3M5). Removed dangling DqaToBigIntInput struct (R3M6). LOW: Fixed relationship table "scale truncation" wording (R3L3). |
 | 1.3 | 2026-03-23 | Critical fixes: Removed unreachable dead code from Step 3 (HIGH-H5), added non-standard SQL semantics warning (HIGH-H6), fixed version header (1.1→1.2), removed RFC-0131 from Future Work |
 | 1.2 | 2026-03-23 | Critical fix: Changed "truncation" to "raw mantissa extraction" throughout (CRITICAL-1), fixed V004/V017/V018 notes that contradicted output (CRITICAL-2/MEDIUM-1), added canonicalization policy section (HIGH-1), added round-trip asymmetry documentation |
 | 1.1 | 2026-03-23 | Enhanced: Added Input/Output Contract, Scale Context Propagation, SQL Integration, Constraints, Error Handling & Diagnostics, Formal Verification Framework (5 theorems), Implementation Checklist, expanded test vectors from 8 to 18 |

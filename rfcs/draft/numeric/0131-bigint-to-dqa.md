@@ -2,7 +2,7 @@
 
 ## Status
 
-**Version:** 1.5 (Draft)
+**Version:** 1.6 (Draft)
 **Status:** Draft
 **Depends On:** RFC-0110 (BIGINT), RFC-0105 (DQA)
 **Category:** Numeric/Math
@@ -84,14 +84,6 @@ pub struct BigIntToDqaInput {
     /// Target scale for the DQA result (0-18)
     pub scale: u8,
 }
-
-/// Output from the conversion
-pub enum BigIntToDqaOutput {
-    /// Successfully converted to DQA
-    Success(Dqa),
-    /// Conversion error with details
-    Error(BigIntError),
-}
 ```
 
 ### Function Signature
@@ -107,7 +99,8 @@ pub enum BigIntToDqaOutput {
 /// * `scale` - Decimal scale for the DQA result (0-18)
 ///
 /// # Errors
-/// * `BigIntError::OutOfRange` if |b| > i64::MAX
+/// * `BigIntError::OutOfRange` if |b| > i64::MAX or |b × 10^scale| exceeds i64 range
+/// * `BigIntError::InvalidScale` if scale > 18
 ///
 /// # Example
 /// BigInt(42) with scale 0 → Dqa { value: 42, scale: 0 }
@@ -195,14 +188,13 @@ STEPS:
    If scale == 0:
      scaled_value = unscaled
    Else:
-     pow10 = 10^scale
+     // POW10_TABLE[scale] = 10^scale as u64
+     // Precomputed constant table: [1, 10, 100, ..., 10^18]
+     // Type is u64 because 10^18 = 10000000000000000000 < u64::MAX
+     pow10: u64 = POW10_TABLE[scale]
 
-     // Use u128 intermediate arithmetic to safely check overflow
-     // For positive: |result| <= i64::MAX = 2^63 - 1
-     // For negative: |result| <= |i64::MIN| = 2^63
-     //
-     // |i64::MIN| = 2^63 which doesn't fit in u64, so we use u128 for intermediate
-     // i64::MIN as u128 magnitude = 1u128 << 63 = 2^63
+     // Use u128 intermediate arithmetic for both range check and final multiply
+     // This avoids overflow when casting pow10 to i64
 
      If unscaled >= 0:
        max_allowed = i64::MAX as u128  // 2^63 - 1
@@ -221,7 +213,9 @@ STEPS:
      If abs_unscaled * (pow10 as u128) > max_allowed:
        return Error(OutOfRange { attempted_magnitude: b.to_string(), max_magnitude: i64::MAX as u64, scale })
 
-     scaled_value = unscaled * (pow10 as i64)
+     // Use i128 intermediate to avoid pow10→i64 cast overflow
+     // The range check above guarantees the result fits in i64
+     scaled_value = ((unscaled as i128) * (pow10 as i128)) as i64
 
 4. CONSTRUCT_DQA
    Return Dqa { value: scaled_value, scale: scale }
@@ -317,10 +311,10 @@ SELECT CAST(huge_bigint_col AS DQA(0)) FROM large_values;
 | Constraint Type | Description |
 |----------------|-------------|
 | **Scale bounds** | 0 ≤ scale ≤ 18 (per RFC-0105 MAX_SCALE) |
-| **Value bounds (unscaled)** | \|BigInt\| ≤ i64::MAX for extraction |
-| **Scaled value bounds** | \|BigInt × 10^scale\| ≤ 2^63-1 (positive) or ≤ 2^63 (negative) |
+| **Pre-scale range** | \|BigInt\| ≤ i64::MAX — checked in Step 1 before scaling |
+| **Post-scale range** | \|BigInt × 10^scale\| ≤ i64::MAX (positive) or ≤ \|i64::MIN\| (negative) — checked in Step 3 |
 | **Overflow policy** | Error on overflow (no truncation, no saturation) |
-| **BigInt size** | 1-2 limbs (64-128 bits). 3+ limbs always overflow. |
+| **BigInt size** | 1-2 limbs (64-128 bits). 3+ limbs always rejected in Step 1 |
 | **Determinism** | Identical BigInt input always produces identical DQA output |
 | **No rounding** | BIGINT→DQA does not round; it traps on overflow |
 
@@ -378,18 +372,18 @@ Output: Error(OutOfRange)
 Note: Requires 3 limbs (192 bits) > i64 range
 ```
 
-### V008: Overflow — i64::MAX + 1
+### V008: Overflow — 2^64 Magnitude
 ```
-Input:  BigInt { limbs: [0, 0x8000000000000001], sign: false }, scale = 0
+Input:  BigInt { limbs: [0, 1], sign: false }, scale = 0
 Output: Error(OutOfRange)
-Note: Magnitude exceeds i64::MAX
+Note: 2^64 > i64::MAX — little-endian: limbs[0]=0 (lo), limbs[1]=1 (hi)
 ```
 
-### V009: Overflow — Negative Beyond i64::MIN
+### V009: Overflow — Negative 2^64 Magnitude
 ```
-Input:  BigInt { limbs: [0, 0x8000000000000001], sign: true }, scale = 0
+Input:  BigInt { limbs: [0, 1], sign: true }, scale = 0
 Output: Error(OutOfRange)
-Note: |value| > i64::MAX after sign adjustment
+Note: |2^64| > i64::MAX after sign adjustment
 ```
 
 ### V010: Scale Adjustment for Currency
@@ -472,7 +466,7 @@ Output: Dqa { value: -0x123456789ABCDEF0, scale: 0 }
 Note: Fits in i64 range
 ```
 
-### V020b: Single Limb Positive — Overflow at 2^63
+### V035: Single Limb Positive — Overflow at 2^63
 ```
 Input:  BigInt { limbs: [0x8000000000000001], sign: false }, scale = 0
 Output: Error(OutOfRange)
@@ -658,7 +652,7 @@ When BIGINT→DQA conversion fails at runtime (e.g., computed value exceeds rang
 
 **Theorem T3 (Scale Preservation):** If `bigint_to_dqa(b, s) = Ok(dqa)`, then `dqa.scale = s`.
 
-**Theorem T4 (Overflow Completeness):** If `|b| > i64::MAX` OR `|b × 10^s| > 2^63-1` (positive) OR `|b × 10^s| > 2^63` (negative), then `bigint_to_dqa(b, s) = Err(OutOfRange)`.
+**Theorem T4 (Overflow Completeness):** If `b × 10^s < i64::MIN` OR `b × 10^s > i64::MAX`, then `bigint_to_dqa(b, s) = Err(OutOfRange)`.
 
 **Theorem T5 (Scale Bounds):** If `s > 18`, then `bigint_to_dqa(b, s) = Err(InvalidScale)`.
 
@@ -671,7 +665,7 @@ When BIGINT→DQA conversion fails at runtime (e.g., computed value exceeds rang
 | M3 | Limb inspection and range check | Pending | Medium |
 | M4 | i64::MIN special case handling | Pending | Low |
 | M5 | Error type construction | Pending | Low |
-| M6 | Test vector suite (34 vectors) | Pending | Medium |
+| M6 | Test vector suite (35 vectors) | Pending | Medium |
 | M7 | Integration with BigInt type | Pending | Medium |
 | M8 | Fuzz testing for edge cases | Pending | Medium |
 
@@ -685,7 +679,7 @@ When BIGINT→DQA conversion fails at runtime (e.g., computed value exceeds rang
 
 | Version | Date | Changes |
 |---------|------|---------|
-| 1.5 | 2026-03-23 | Critical fix: Corrected Step 3 negative×scale logic — symmetric u128 arithmetic, V034 now succeeds (CRITICAL-NC1). Fixed two-limb positive check to catch all hi>0 cases (HIGH-NH3). Added hi=0 invariant comment (HIGH-NH2). Fixed u64 shift-by-64 in Step 2 (NL2). Fixed V031 note. Updated test count to 34. |
+| 1.6 | 2026-03-23 | CRITICAL: Fixed `pow10 as i64` overflow — Step 3 now uses i128 intermediate for multiplication (R3C1). HIGH: Fixed T4 theorem to use signed range (R3H1). MEDIUM: Fixed function doc error comment (R3M2), Constraints table (R3M1), V008/V009 limb arrays (R3M3). LOW: V020b→V035, checklist count 35 (R3L1/M4), removed dead BigIntToDqaOutput enum (R3L2). |
 | 1.4 | 2026-03-23 | Critical fixes: Added explicit limb convention per RFC-0110 (CRITICAL-C1), fixed single-limb range check hole (CRITICAL-C2), fixed unscanned typo (CRITICAL-C3), fixed negative×scale overflow (HIGH-H3), fixed max_magnitude type (HIGH-H4), fixed V016/V017 limb arrays (LOW-L1/L2), added V020b and V034 test vectors, updated gas model |
 | 1.3 | 2026-03-23 | Critical fix: Added sign-aware boundary check for positive 2^63 overflow (CRITICAL-1), fixed V025 which incorrectly claimed success for i64::MAX×scale-18, removed duplicate range check between Steps 1 and 2, fixed V033 note arithmetic |
 | 1.2 | 2026-03-23 | Critical fix: Added scale multiplication step to algorithm (was missing), added overflow check for scaled values, fixed V011 and Edge Cases zero handling to be consistent, fixed V017 note, added V029-V033 for scale overflow test vectors, added scale field to OutOfRange error |

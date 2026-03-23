@@ -76,14 +76,6 @@ pub enum BigIntError {
 
 /// BIGINT→DQA conversion result
 pub type BigIntToDqaResult = Result<Dqa, BigIntError>;
-
-/// Input to the conversion
-pub struct BigIntToDqaInput {
-    /// The BigInt value to convert
-    pub value: BigInt,
-    /// Target scale for the DQA result (0-18)
-    pub scale: u8,
-}
 ```
 
 ### Function Signature
@@ -146,6 +138,13 @@ STEPS:
      If lo > 0x7FFF_FFFF_FFFF_FFFF:
        return Error(OutOfRange { attempted_magnitude: b.to_string(), max_magnitude: i64::MAX as u64, scale })
 
+   // Single-limb negative range check
+   // Valid negative range: i64::MIN (0x8000_0000_0000_0000) to -1
+   // i64::MIN magnitude = 2^63; anything larger overflows
+   If b.limbs.length == 1 and b.sign == true:
+     If lo > 0x8000_0000_0000_0000:
+       return Error(OutOfRange { attempted_magnitude: b.to_string(), max_magnitude: i64::MAX as u64, scale })
+
    // Two-limb range check
    // For positive two-limb values: ANY non-zero hi means magnitude >= 2^64 > i64::MAX
    // For negative two-limb values: magnitude > 2^63 overflows; magnitude == 2^63 is i64::MIN (valid)
@@ -192,10 +191,20 @@ STEPS:
      // Zero passes the range check (0 × pow10 = 0 ≤ max_allowed) and
      // scaled_value = 0. This is correct — 0 × 10^scale = 0 for any scale.
      // POW10_TABLE[scale] = 10^scale as u64
-     // Precomputed constant table:
-     //   scale:  0   1   2   3   4   5   6   7   8   9  10  11  12  13  14  15  16  17  18
-     //   10^n:   1  10 100 1K 10K 100K 1M 10M 100M 1B 10B 100B  1T 10T 100T  1Q 10Q 100Q  1Q^2
-     // Type is u64 because 10^18 = 10000000000000000000 < u64::MAX
+     // Exact precomputed values:
+     // scale:   0         1         2          3           4             5              6
+     // value:   1         10        100        1000        10000        100000        1000000
+     //
+     // scale:   7             8             9              10                 11
+     // value:   10000000       100000000      1000000000     10000000000      100000000000
+     //
+     // scale:  12                13                 14                  15
+     // value:  1000000000000      10000000000000      100000000000000      1000000000000000
+     //
+     // scale:  16                   17                    18
+     // value:  10000000000000000     100000000000000000    10000000000000000000
+     //
+     // All values fit in u64: max is 10^18 = 10000000000000000000 < u64::MAX
      pow10: u64 = POW10_TABLE[scale]
 
      // Use u128 intermediate arithmetic for both range check and final multiply.
@@ -223,7 +232,8 @@ STEPS:
 
      // Use i128 intermediate to avoid pow10→i64 cast overflow.
      // The range check above guarantees the result fits in i64.
-     // pow10 as i128 is safe: u64→i128 zero-extends to positive value < i64::MAX.
+     // pow10 as i128 is safe: u64→i128 zero-extends to positive value ≤ 10^18 < u64::MAX,
+     // which is always representable in i128 (i128 holds up to ~1.7×10^38).
      scaled_value = ((unscaled as i128) * (pow10 as i128)) as i64
 
 4. CONSTRUCT_DQA
@@ -396,10 +406,9 @@ Note: Requires 3 limbs (192 bits) > i64 range
 ### V008: Non-Canonical Two-Limb — hi=0 (Leading Zero Limb)
 ```
 Input:  BigInt { limbs: [0x0000000000000001, 0x0000000000000000], sign: false }, scale = 0
-Output: Dqa { value: 1, scale: 0 }
-Note: Non-canonical form of value 1. Algorithm extracts lo=1, unscaled=1, succeeds.
-RFC-0110 requires canonical form (single limb for small values). This case is
-included to document behavior on non-canonical input, which is undefined.
+Note: Non-canonical form of value 1. RFC-0110 requires canonical form (single limb
+for small values). Non-canonical input produces undefined behavior — this vector
+is informative only and is not for conformance testing.
 ```
 
 ### V009: Overflow — Negative 2^64 Magnitude
@@ -677,6 +686,8 @@ When BIGINT→DQA conversion fails at runtime (e.g., computed value exceeds rang
 
 **Theorem T4 (Overflow Completeness):** If `b × 10^s < i64::MIN` OR `b × 10^s > i64::MAX`, then `bigint_to_dqa(b, s) = Err(OutOfRange)`.
 
+**Corollary T4a:** Any BigInt with `b.limbs.length > 2` satisfies the overflow condition since `|b| ≥ 2^128 > i64::MAX`. The algorithm detects this in Step 1 (limb count check) before any scaled multiplication.
+
 **Theorem T5 (Scale Bounds):** If `s > 18`, then `bigint_to_dqa(b, s) = Err(InvalidScale)`.
 
 ## Implementation Checklist
@@ -702,6 +713,7 @@ When BIGINT→DQA conversion fails at runtime (e.g., computed value exceeds rang
 
 | Version | Date | Changes |
 |---------|------|---------|
+| 1.9 | 2026-03-23 | HIGH: Added missing single-limb negative range check (R5H2). MEDIUM: Replaced POW10_TABLE informal labels with exact u64 values (R5M1), added T4 corollary for 3+ limb BigInts (R5M3). LOW: Removed BigIntToDqaInput dead struct (R5L1), fixed pow10→i128 comment bound (R5L2), removed V008 normative output (R5H1 — UB cannot have expected output). |
 | 1.8 | 2026-03-23 | LOW: Fixed V027/V028 rejection criterion notes — "hi > 0" not "hi ≥ 2^63". |
 | 1.7 | 2026-03-23 | LOW: Added lossless round-trip case documentation — scale=0 preserves value exactly (R3L4). |
 | 1.6 | 2026-03-23 | CRITICAL: Fixed `pow10 as i64` overflow — Step 3 now uses i128 intermediate for multiplication (R3C1). HIGH: Fixed T4 theorem to use signed range (R3H1). MEDIUM: Fixed function doc error comment (R3M2), Constraints table (R3M1), V008/V009 limb arrays (R3M3). LOW: V020b→V035, checklist count 35 (R3L1/M4), removed dead BigIntToDqaOutput enum (R3L2). |

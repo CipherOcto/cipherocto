@@ -36,7 +36,7 @@ RFC-0105 defines DQA but does not define DQA→BIGINT conversion. RFC-0110 defin
 
 **Key insight:** DQA→BIGINT conversion always succeeds because:
 1. DQA's i64 value trivially fits in any BigInt (which has arbitrary precision)
-2. The scale is simply truncated (BigInt is an integer type)
+2. The scale is simply ignored — only the raw i64 mantissa is extracted
 3. No range checking is needed
 
 ## Input/Output Contract
@@ -112,7 +112,7 @@ Despite the asymmetry above, round-trip IS lossless when **scale=0**:
 | Forward (RFC-0132) | `DQA{42, 0}` → BIGINT | BigInt(42) |
 | Reverse (RFC-0131) | `BigInt(42), scale=0` → DQA | DQA{42, 0} |
 
-**Lossless condition:** DQA{42, 0} extracts raw mantissa 42, and BigInt(42)×scale=0 produces DQA{42, 0}. The original DQA is recovered exactly.
+**Lossless condition:** For any DQA with scale=0 (i.e., `DQA{x, 0}`), the round-trip `DQA{x, 0} → BigInt(x) → DQA{x, 0}` is lossless. Since all DQA values satisfy `|x| ≤ i64::MAX` by definition, this holds for all scale-0 DQA values.
 
 ## SQL Integration
 
@@ -467,7 +467,7 @@ SELECT CAST(dqa_col AS BIGINT) FROM any_table;
 
 **Theorem T3 (Raw Mantissa Extraction):** The output BigInt equals `dqa.value` as an integer, without interpretation of the scale.
 
-**Theorem T4 (Sign Preservation):** If `dqa.value < 0`, then `result.sign = true`.
+**Theorem T4 (Sign Preservation):** If `dqa.value < 0`, then `result.sign = true`; if `dqa.value ≥ 0`, then `result.sign = false`. For zero, T5 additionally canonicalizes to `BigInt::zero()`.
 
 **Theorem T5 (Zero Canonicalization):** `dqa_to_bigint(Dqa { value: 0, scale: s }) = BigInt::zero()` for any valid scale s.
 
@@ -495,6 +495,7 @@ SELECT CAST(dqa_col AS BIGINT) FROM any_table;
 |---------|------|---------|
 | 1.6 | 2026-03-23 | Process: Version header now matches history entry (R4H4). |
 | 1.5 | 2026-03-23 | MEDIUM: Fixed version header (was 1.3, now 1.4) (R3M5). Removed dangling DqaToBigIntInput struct (R3M6). LOW: Fixed relationship table "scale truncation" wording (R3L3). |
+| 1.4 | 2026-03-23 | MEDIUM: Changed "truncation" to "raw mantissa extraction" throughout. |
 | 1.3 | 2026-03-23 | Critical fixes: Removed unreachable dead code from Step 3 (HIGH-H5), added non-standard SQL semantics warning (HIGH-H6), fixed version header (1.1→1.2), removed RFC-0131 from Future Work |
 | 1.2 | 2026-03-23 | Critical fix: Changed "truncation" to "raw mantissa extraction" throughout (CRITICAL-1), fixed V004/V017/V018 notes that contradicted output (CRITICAL-2/MEDIUM-1), added canonicalization policy section (HIGH-1), added round-trip asymmetry documentation |
 | 1.1 | 2026-03-23 | Enhanced: Added Input/Output Contract, Scale Context Propagation, SQL Integration, Constraints, Error Handling & Diagnostics, Formal Verification Framework (5 theorems), Implementation Checklist, expanded test vectors from 8 to 18 |

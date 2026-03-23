@@ -2,7 +2,7 @@
 
 ## Status
 
-**Version:** 1.1 (Draft)
+**Version:** 1.2 (Draft)
 **Status:** Draft
 **Depends On:** RFC-0110 (BIGINT), RFC-0105 (DQA)
 **Category:** Numeric/Math
@@ -137,31 +137,31 @@ STEPS:
      // BigInt requires more than 128 bits
      return Error(OutOfRange)
 
+   // Special case: positive 2^63 (hi=0x8000..., lo=0) overflows i64
+   // because i64::MAX = 2^63 - 1
+   // Note: negative 2^63 (hi=0x8000..., lo=0, sign=true) is valid (i64::MIN)
+   If b.limbs.length == 2 and b.sign == false:
+     If hi == 0x8000_0000_0000_0000 and lo == 0:
+       return Error(OutOfRange)
+
    If b.limbs.length == 2:
-     // Check if value fits in i64 (128-bit value in 2 limbs)
-     // For positive: if hi > 0x8000_0000_0000_0000, overflow
-     // For negative: if hi > 0x8000_0000_0000_0000, overflow
-     // If hi == 0x8000_0000_0000_0000 and lo > 0, overflow (for positive)
-     // If hi >= 0x8000_0000_0000_0001, overflow
-     Check magnitude against i64 boundary
-     If overflow: return Error(OutOfRange)
+     // Check if magnitude fits in i64 range
+     // i64::MAX = 2^63 - 1, i64::MIN = -2^63
+     // Magnitude boundary: 2^63
+     // For positive: magnitude must be < 2^63 (magnitude >= 2^63 overflows)
+     // For negative: magnitude must be <= 2^63 (allows -2^63 = i64::MIN)
+     //
+     // Combined check: if hi > 0x8000... or (hi == 0x8000... and lo > 0)
+     // This catches all values with magnitude >= 2^63
+     If hi > 0x8000_0000_0000_0000:
+       return Error(OutOfRange)
+     If hi == 0x8000_0000_0000_0000 and lo > 0:
+       return Error(OutOfRange)
+     // Note: hi >= 0x8000_...0001 is already caught by hi > 0x8000_...
 
 2. EXTRACT_UNSCALED_I64
-   // First extract the BigInt as i64 to check range before scaling
-   // The BigInt must fit in i64 range (not i64*10^scale yet)
-
-   If b.limbs.length > 2:
-     // BigInt requires more than 128 bits — definitely overflows
-     return Error(OutOfRange)
-
-   If b.limbs.length == 2:
-     // Check if 2-limb value fits in i64
-     // For positive: if hi > 0x8000_0000_0000_0000, overflow
-     // For negative: if hi > 0x8000_0000_0000_0000, overflow
-     // If hi == 0x8000_0000_0000_0000 and lo > 0, overflow (for positive)
-     // If hi >= 0x8000_0000_0000_0001, overflow
-     Check magnitude against i64 boundary
-     If overflow: return Error(OutOfRange)
+   // Step 1 already validated that the value fits in i64 range
+   // This step only extracts the i64 value
 
    // Extract the i64 value
    If b.sign == false:
@@ -172,9 +172,7 @@ STEPS:
        unscanned = i64::MIN  // -9223372036854775808
      Else:
        mag = lo | (hi << 64)
-       // Check if negation would overflow
-       If mag == 0x8000000000000000:
-         return Error(OutOfRange)
+       // mag cannot be 0x8000000000000000 here because Step 1 would have caught it
        unscanned = -(mag as i64)
 
 3. APPLY_SCALE_AND_CHECK_OVERFLOW
@@ -480,11 +478,11 @@ Output: Dqa { value: -9223372036854775808, scale: 0 }
 Note: Special case -i64::MIN = i64::MIN in unsigned magnitude
 ```
 
-### V025: Scale Boundary — 18 (Max)
+### V025: Scale Multiplication Overflow — i64::MAX × 10^18
 ```
 Input:  BigInt::from(9223372036854775807i64), scale = 18
-Output: Dqa { value: 9223372036854775807, scale: 18 }
-Note: Maximum value with maximum scale
+Output: Error(OutOfRange)
+Note: i64::MAX × 10^18 = 9.22... × 10^36 > i64::MAX (9.22... × 10^18)
 ```
 
 ### V026: Scale Boundary — 0 (Min)
@@ -540,7 +538,7 @@ Note: 9 × 10^18 = 9 × 10^18, exactly equals i64::MAX - 2^63 + 9
 ```
 Input:  BigInt::from(92i64), scale = 17
 Output: Dqa { value: 9200000000000000000, scale: 17 }
-Note: 92 × 10^17 = 9.2 × 10^18 = i64::MAX
+Note: 92 × 10^17 = 9.2 × 10^18 = 9200000000000000000, exactly fits in i64
 ```
 
 ## Implementation Notes
@@ -649,6 +647,7 @@ When BIGINT→DQA conversion fails at runtime (e.g., computed value exceeds rang
 
 | Version | Date | Changes |
 |---------|------|---------|
+| 1.3 | 2026-03-23 | Critical fix: Added sign-aware boundary check for positive 2^63 overflow (CRITICAL-1), fixed V025 which incorrectly claimed success for i64::MAX×scale-18, removed duplicate range check between Steps 1 and 2, fixed V033 note arithmetic |
 | 1.2 | 2026-03-23 | Critical fix: Added scale multiplication step to algorithm (was missing), added overflow check for scaled values, fixed V011 and Edge Cases zero handling to be consistent, fixed V017 note, added V029-V033 for scale overflow test vectors, added scale field to OutOfRange error |
 | 1.1 | 2026-03-23 | Enhanced: Added Input/Output Contract, Scale Context Propagation, SQL Integration, Constraints, Error Handling & Diagnostics, Formal Verification Framework (5 theorems), Implementation Checklist, expanded test vectors from 10 to 28 |
 | 1.0 | 2026-03-23 | Initial draft |

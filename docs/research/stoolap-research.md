@@ -361,15 +361,17 @@ pub struct PersistenceManager {
 | Type        | Description                      |
 | ----------- | -------------------------------- |
 | `Null`      | NULL value                       |
-| `Integer`   | 64-bit signed integer            |
+| `Integer`   | 64-bit signed integer (i64)      |
 | `Float`     | 64-bit floating point (IEEE-754)|
 | `Text`      | UTF-8 string                     |
 | `Boolean`   | true/false                       |
 | `Timestamp` | Timestamp with timezone          |
 | `Json`      | JSON document                    |
 | `Vector`    | f32 vector for similarity search |
-| `Quant`     | DQA (Deterministic Quant) - RFC-0105 |
-| `Decimal`   | DFP (Deterministic Float) - RFC-0104 |
+| `DFP`       | Deterministic Float (RFC-0104)   |
+| `DQA`       | Deterministic Quant (RFC-0105)  |
+
+> **Note:** The SQL keyword `DECIMAL` or `NUMERIC` maps to `Float` (IEEE-754), not to DFP. Use the explicit `DFP` keyword for Deterministic Float per RFC-0104.
 
 ---
 

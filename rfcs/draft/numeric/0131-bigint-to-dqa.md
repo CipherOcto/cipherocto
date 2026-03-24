@@ -2,7 +2,7 @@
 
 ## Status
 
-**Version:** 1.22 (Draft)
+**Version:** 1.23 (Draft)
 **Status:** Draft
 **Depends On:** RFC-0110 (BIGINT), RFC-0105 (DQA)
 **Category:** Numeric/Math
@@ -87,35 +87,35 @@ pub type BigIntToDqaResult = Result<Dqa, BigIntToDqaError>;
 ### Function Signature
 
 ```rust
-/// Convert BigInt to DQA with the given decimal scale.
+/// Convert BigInt to DQA with the given overflow scale.
 ///
 /// TRAPs if the BigInt value does not fit in i64 range.
-/// The scale parameter sets the range limit for the intermediate scaled value
-/// (|b × 10^scale| must not exceed i64 bounds). The output scale is determined
+/// The overflow_scale parameter sets the range limit for the intermediate scaled value
+/// (|b × 10^overflow_scale| must not exceed i64 bounds). The output scale is determined
 /// by CANONICALIZE per RFC-0105, not by this parameter — trailing decimal zeros
 /// are always stripped, typically reducing output scale to 0.
 ///
 /// # Arguments
 /// * `b` - The BigInt value to convert
-/// * `scale` - Overflow threshold exponent (0-18); the actual output scale may be lower
+/// * `overflow_scale` - Overflow threshold exponent (0-18); the actual output scale may be lower
 ///
 /// # Errors
-/// * `BigIntToDqaError::OutOfRange` if |b| > i64::MAX or |b × 10^scale| exceeds i64 range
-/// * `BigIntToDqaError::InvalidScale` if scale > 18
+/// * `BigIntToDqaError::OutOfRange` if |b| > i64::MAX or |b × 10^overflow_scale| exceeds i64 range
+/// * `BigIntToDqaError::InvalidScale` if overflow_scale > 18
 ///
 /// # Example
-/// BigInt(42) with scale 0 → Dqa { value: 42, scale: 0 }
-/// BigInt(42) with scale 2 → Dqa { value: 42, scale: 0 }
+/// BigInt(42) with overflow_scale 0 → Dqa { value: 42, scale: 0 }
+/// BigInt(42) with overflow_scale 2 → Dqa { value: 42, scale: 0 }
 /// Note: CANONICALIZE strips trailing zeros, so {4200, 2} becomes {42, 0}
-pub fn bigint_to_dqa(b: &BigInt, scale: u8) -> Result<Dqa, BigIntToDqaError>
+pub fn bigint_to_dqa(b: &BigInt, overflow_scale: u8) -> Result<Dqa, BigIntToDqaError>
 ```
 
 ### Canonical Conversion Algorithm
 
 ```
-BIGINT_TO_DQA(b: BigInt, scale: u8) -> Result<Dqa, BigIntToDqaError>
+BIGINT_TO_DQA(b: BigInt, overflow_scale: u8) -> Result<Dqa, BigIntToDqaError>
 
-INPUT:  b (BigInt), scale (u8, 0 ≤ scale ≤ 18)
+INPUT:  b (BigInt), overflow_scale (u8, 0 ≤ overflow_scale ≤ 18)
 OUTPUT: Dqa { value: i64, scale: u8 } or error
 
 CONVENTION: Per RFC-0110 §Limbs, BigInt uses little-endian limb encoding:
@@ -143,12 +143,12 @@ STEPS:
    // Single-limb with lo=0 and sign=false is canonical zero — no action needed.
 
 1. VALIDATE_INPUT
-   If scale > 18:
-     return Error(InvalidScale { requested: scale, max_scale: 18 })
+   If overflow_scale > 18:
+     return Error(InvalidScale { requested: overflow_scale, max_scale: 18 })
 
    If b.limbs.length > 2:
      // BigInt requires more than 128 bits
-     return Error(OutOfRange { attempted_magnitude: "<magnitude>", max_magnitude: i64::MAX as u64, scale })
+     return Error(OutOfRange { attempted_magnitude: "<magnitude>", max_magnitude: i64::MAX as u64, overflow_scale })
 
    // Extract limb values (per RFC-0110 little-endian convention defined above)
    lo = b.limbs[0]  // u64
@@ -163,7 +163,7 @@ STEPS:
    // i64::MAX = 0x7FFF_FFFF_FFFF_FFFF (2^63 - 1)
    If b.limbs.length == 1 and b.sign == false:
      If lo > 0x7FFF_FFFF_FFFF_FFFF:
-       return Error(OutOfRange { attempted_magnitude: "<magnitude>", max_magnitude: i64::MAX as u64, scale })
+       return Error(OutOfRange { attempted_magnitude: "<magnitude>", max_magnitude: i64::MAX as u64, overflow_scale })
 
    // Single-limb negative range check
    // Valid negative range: i64::MIN (0x8000_0000_0000_0000) to -1
@@ -175,7 +175,7 @@ STEPS:
    // -(i64::MIN) would overflow). Do NOT change this to ">=" or you will reject i64::MIN.
    If b.limbs.length == 1 and b.sign == true:
      If lo > 0x8000_0000_0000_0000:
-       return Error(OutOfRange { attempted_magnitude: "<magnitude>", max_magnitude: 1u64 << 63, scale })
+       return Error(OutOfRange { attempted_magnitude: "<magnitude>", max_magnitude: 1u64 << 63, overflow_scale })
 
    // Two-limb range check
    // For positive two-limb values: ANY non-zero hi means magnitude >= 2^64 > i64::MAX
@@ -187,10 +187,10 @@ STEPS:
    If b.limbs.length == 2:
      // Positive: any hi > 0 means magnitude >= 2^64 > i64::MAX
      If b.sign == false and hi > 0:
-       return Error(OutOfRange { attempted_magnitude: "<magnitude>", max_magnitude: i64::MAX as u64, scale })
+       return Error(OutOfRange { attempted_magnitude: "<magnitude>", max_magnitude: i64::MAX as u64, overflow_scale })
      // Negative: any 2-limb negative has magnitude >= 2^64 > |i64::MIN|
      If b.sign == true:
-       return Error(OutOfRange { attempted_magnitude: "<magnitude>", max_magnitude: 1u64 << 63, scale })
+       return Error(OutOfRange { attempted_magnitude: "<magnitude>", max_magnitude: 1u64 << 63, overflow_scale })
 
 2. EXTRACT_UNSCALED_I64
    // Step 1 validated the value fits in i64 range and rejected all non-canonical inputs.
@@ -213,32 +213,32 @@ STEPS:
      unscaled = lo as i64
 
 3. APPLY_SCALE_AND_CHECK_OVERFLOW
-   // Multiply by 10^scale and check for overflow
+   // Multiply by 10^overflow_scale and check for overflow
    // i64::MAX = 9223372036854775807
    // i64::MIN = -9223372036854775808
 
-   If scale == 0:
+   If overflow_scale == 0:
      scaled_value = unscaled
    Else:
      // Note: When unscaled = 0, the positive branch sets abs_unscaled = 0.
      // Zero passes the range check (0 × pow10 = 0 ≤ max_allowed) and
-     // scaled_value = 0. This is correct — 0 × 10^scale = 0 for any scale.
-     // POW10_TABLE[scale] = 10^scale as u64
+     // scaled_value = 0. This is correct — 0 × 10^overflow_scale = 0 for any overflow_scale.
+     // POW10_TABLE[overflow_scale] = 10^overflow_scale as u64
      // Exact precomputed values:
-     // scale:   0         1         2          3           4             5              6
-     // value:   1         10        100        1000        10000        100000        1000000
+     // overflow_scale:   0         1         2          3           4             5              6
+     // value:            1         10        100        1000        10000        100000        1000000
      //
-     // scale:   7             8             9              10                 11
-     // value:   10000000       100000000      1000000000     10000000000      100000000000
+     // overflow_scale:   7             8             9              10                 11
+     // value:            10000000       100000000      1000000000     10000000000      100000000000
      //
-     // scale:  12                13                 14                  15
-     // value:  1000000000000      10000000000000      100000000000000      1000000000000000
+     // overflow_scale:  12                13                 14                  15
+     // value:           1000000000000      10000000000000      100000000000000      1000000000000000
      //
-     // scale:  16                   17                    18
-     // value:  10000000000000000     100000000000000000    1000000000000000000
+     // overflow_scale:  16                   17                    18
+     // value:           10000000000000000     100000000000000000    1000000000000000000
      //
      // All values fit in u64: max is 10^18 = 1000000000000000000 < u64::MAX
-     pow10: u64 = POW10_TABLE[scale]
+     pow10: u64 = POW10_TABLE[overflow_scale]
 
      // Use u128 intermediate arithmetic for both range check and final multiply.
      // pow10 as u128 is safe: u64→u128 is zero-extension, always positive and in range.
@@ -263,7 +263,7 @@ STEPS:
      If abs_unscaled * (pow10 as u128) > max_allowed:
        // Use the correct limit: i64::MAX for positive, |i64::MIN| for negative
        limit = if unscaled >= 0 { i64::MAX as u64 } else { 1u64 << 63 };
-       return Error(OutOfRange { attempted_magnitude: "<magnitude>", max_magnitude: limit, scale })
+       return Error(OutOfRange { attempted_magnitude: "<magnitude>", max_magnitude: limit, overflow_scale })
 
      // Use i128 intermediate to avoid pow10→i64 cast overflow.
      // The range check above guarantees the result fits in i64.
@@ -278,7 +278,7 @@ STEPS:
    // when the mantissa no longer ends in a decimal zero.
    // Note: CANONICALIZE never produces negative scale — if stripping
    // would reduce scale below 0, the value is kept as-is with scale=0.
-   dqa = Dqa { value: scaled_value, scale: scale }
+   dqa = Dqa { value: scaled_value, scale: overflow_scale }
    Return CANONICALIZE(dqa)
 ```
 
@@ -395,7 +395,7 @@ pub fn bigint_with_scale_to_dqa(bws: &BigIntWithScale) -> Result<Dqa, BigIntToDq
 
 ### Negative Round-Trip
 ```
-Input:  BigInt(-42), scale = 0 → DQA → BigInt
+Input:  BigInt(-42), overflow_scale = 0 → DQA → BigInt
 Output: Dqa { value: -42, scale: 0 } → BigInt(-42) ✓
 Note: BigInt(-42) × 10^0 = -42, mantissa preserved.
 ```
@@ -460,65 +460,65 @@ SELECT CAST(huge_bigint_col AS DQA(0)) FROM large_values;
 
 ### V001: Zero Conversion
 ```
-Input:  BigInt::zero(), scale = 0
+Input:  BigInt::zero(), overflow_scale = 0
 Output: Dqa { value: 0, scale: 0 }
 ```
 
 ### V002: Small Positive Integer
 ```
-Input:  BigInt::from(42i64), scale = 0
+Input:  BigInt::from(42i64), overflow_scale = 0
 Output: Dqa { value: 42, scale: 0 }
 ```
 
 ### V003: Small Negative Integer
 ```
-Input:  BigInt::from(-42i64), scale = 0
+Input:  BigInt::from(-42i64), overflow_scale = 0
 Output: Dqa { value: -42, scale: 0 }
 ```
 
 ### V004: Positive with Scale
 ```
-Input:  BigInt::from(42i64), scale = 3
+Input:  BigInt::from(42i64), overflow_scale = 3
 Output: Dqa { value: 42, scale: 0 }
 Note: 42 × 10^3 = 42000. CANONICALIZE strips three trailing zeros: 42000 → 42, scale: 3 → 0.
 ```
 
 ### V005: i64::MAX
 ```
-Input:  BigInt::from(i64::MAX), scale = 0
+Input:  BigInt::from(i64::MAX), overflow_scale = 0
 Output: Dqa { value: 9223372036854775807, scale: 0 }
 ```
 
 ### V006: i64::MIN
 ```
-Input:  BigInt::from(i64::MIN), scale = 0
+Input:  BigInt::from(i64::MIN), overflow_scale = 0
 Output: Dqa { value: -9223372036854775808, scale: 0 }
 ```
 
 ### V007: Overflow — Too Large
 ```
-Input:  BigInt { limbs: [0, 0, 1], sign: false }, scale = 0
+Input:  BigInt { limbs: [0, 0, 1], sign: false }, overflow_scale = 0
 Output: Error(OutOfRange)
 Note: Requires 3 limbs (192 bits) > i64 range
 ```
 
 ### V008: Non-Canonical Two-Limb — hi=0 Overflow
 ```
-Input:  BigInt { limbs: [0x0000000000000001, 0x0000000000000000], sign: false }, scale = 0
+Input:  BigInt { limbs: [0x0000000000000001, 0x0000000000000000], sign: false }, overflow_scale = 0
 Note: Non-canonical form of value 1. RFC-0110 requires canonical single-limb for
 values < 2^63. Non-canonical inputs are undefined behavior — implementations MUST TRAP.
 ```
 
 ### V009: Overflow — Negative 2^64 Magnitude
 ```
-Input:  BigInt { limbs: [0, 1], sign: true }, scale = 0
+Input:  BigInt { limbs: [0, 1], sign: true }, overflow_scale = 0
 Output: Error(OutOfRange)
 Note: Magnitude 2^64 exceeds |i64::MIN| = 2^63 for negative values
 ```
 
 ### V010: Scale Adjustment for Currency
 ```
-Input:  BigInt::from(1999i64), scale = 2
+Input:  BigInt::from(1999i64), overflow_scale = 2
 Output: Dqa { value: 1999, scale: 0 }
 Note: 1999 × 10^2 = 199900. CANONICALIZE strips two trailing zeros: 199900 → 1999, scale: 2 → 0.
 ⚠ For SQL currency, caller must re-apply target scale using RFC-0105 arithmetic.
@@ -526,42 +526,42 @@ Note: 1999 × 10^2 = 199900. CANONICALIZE strips two trailing zeros: 199900 → 
 
 ### V011: Maximum Scale (18)
 ```
-Input:  BigInt::from(1i64), scale = 18
+Input:  BigInt::from(1i64), overflow_scale = 18
 Output: Dqa { value: 1, scale: 0 }
 Note: 1 × 10^18 = 1000000000000000000. CANONICALIZE strips 18 trailing zeros: 1000000000000000000 → 1, scale: 18 → 0.
 ```
 
 ### V012: Negative with Scale
 ```
-Input:  BigInt::from(-100i64), scale = 4
+Input:  BigInt::from(-100i64), overflow_scale = 4
 Output: Dqa { value: -100, scale: 0 }
 Note: -100 * 10^4 = -1000000. CANONICALIZE strips trailing zeros: 1000000 → 100, scale: 4 → 0.
 ```
 
 ### V013: i64 Boundary — One Less Than MAX
 ```
-Input:  BigInt::from(9223372036854775806i64), scale = 0
+Input:  BigInt::from(9223372036854775806i64), overflow_scale = 0
 Output: Dqa { value: 9223372036854775806, scale: 0 }
 Note: i64::MAX - 1, still fits
 ```
 
 ### V014: i64 Boundary — One More Than MIN
 ```
-Input:  BigInt::from(-9223372036854775807i64), scale = 0
+Input:  BigInt::from(-9223372036854775807i64), overflow_scale = 0
 Output: Dqa { value: -9223372036854775807, scale: 0 }
 Note: i64::MIN + 1, still fits
 ```
 
 ### V015: Scale 1 Edge Case
 ```
-Input:  BigInt::from(10i64), scale = 1
+Input:  BigInt::from(10i64), overflow_scale = 1
 Output: Dqa { value: 10, scale: 0 }
 Note: 10 * 10^1 = 100. CANONICALIZE strips trailing zero: 100 → 10, scale: 1 → 0.
 ```
 
 ### V016: Overflow — 128-bit Value (2 limbs, exceeds i64)
 ```
-Input:  BigInt { limbs: [0x0000000000000000, 0x0000000000000001], sign: false }, scale = 0
+Input:  BigInt { limbs: [0x0000000000000000, 0x0000000000000001], sign: false }, overflow_scale = 0
 Output: Error(OutOfRange)
 Note: 2^64 = 18446744073709551616 > i64::MAX
 Note: limbs[0]=0 (lo), limbs[1]=1 (hi) per RFC-0110 little-endian
@@ -569,7 +569,7 @@ Note: limbs[0]=0 (lo), limbs[1]=1 (hi) per RFC-0110 little-endian
 
 ### V017: Overflow — 2^63 Exactly
 ```
-Input:  BigInt { limbs: [0x0000000000000000, 0x8000000000000000], sign: false }, scale = 0
+Input:  BigInt { limbs: [0x0000000000000000, 0x8000000000000000], sign: false }, overflow_scale = 0
 Output: Error(OutOfRange)
 Note: 2^63 = 9223372036854775808. This magnitude equals |i64::MIN| but as a
 positive value it exceeds i64::MAX (9223372036854775807), causing overflow.
@@ -578,28 +578,28 @@ Note: limbs[0]=0 (lo), limbs[1]=0x8000... (hi) per RFC-0110 little-endian
 
 ### V018: Negative Overflow — Magnitude Exceeds MAX
 ```
-Input:  BigInt { limbs: [0x0000000000000001, 0x0000000000000001], sign: true }, scale = 0
+Input:  BigInt { limbs: [0x0000000000000001, 0x0000000000000001], sign: true }, overflow_scale = 0
 Output: Error(OutOfRange)
 Note: (2^64 + 1) = 18446744073709551617 > i64::MAX
 ```
 
 ### V019: Single Limb Positive (Within i64 Range)
 ```
-Input:  BigInt { limbs: [0x123456789ABCDEF0], sign: false }, scale = 0
+Input:  BigInt { limbs: [0x123456789ABCDEF0], sign: false }, overflow_scale = 0
 Output: Dqa { value: 0x123456789ABCDEF0, scale: 0 }
 Note: Value 1311768467294899440 < i64::MAX, fits in i64
 ```
 
 ### V020: Single Limb Negative
 ```
-Input:  BigInt { limbs: [0x123456789ABCDEF0], sign: true }, scale = 0
+Input:  BigInt { limbs: [0x123456789ABCDEF0], sign: true }, overflow_scale = 0
 Output: Dqa { value: -0x123456789ABCDEF0, scale: 0 }
 Note: Fits in i64 range
 ```
 
 ### V035: Single Limb Positive — Overflow at 2^63
 ```
-Input:  BigInt { limbs: [0x8000000000000001], sign: false }, scale = 0
+Input:  BigInt { limbs: [0x8000000000000001], sign: false }, overflow_scale = 0
 Output: Error(OutOfRange)
 Note: 2^63 + 1 = 9223372036854775809 > i64::MAX
 This is the single-limb case: high bit set means magnitude > i64::MAX
@@ -607,42 +607,42 @@ This is the single-limb case: high bit set means magnitude > i64::MAX
 
 ### V036: Single Limb Positive Max — i64::MAX
 ```
-Input:  BigInt { limbs: [0x7FFF_FFFF_FFFF_FFFF], sign: false }, scale = 0
+Input:  BigInt { limbs: [0x7FFF_FFFF_FFFF_FFFF], sign: false }, overflow_scale = 0
 Output: Dqa { value: 9223372036854775807, scale: 0 }
 Note: i64::MAX exactly — canonical single-limb form
 ```
 
 ### V037: Single Limb Positive Overflow — i64::MAX + 1
 ```
-Input:  BigInt { limbs: [0x8000_0000_0000_0000], sign: false }, scale = 0
+Input:  BigInt { limbs: [0x8000_0000_0000_0000], sign: false }, overflow_scale = 0
 Output: Error(OutOfRange)
 Note: 2^63 = 9223372036854775808 = i64::MAX + 1, overflow
 ```
 
 ### V038: Single Limb Negative — i64::MIN Magnitude
 ```
-Input:  BigInt { limbs: [0x8000_0000_0000_0000], sign: true }, scale = 0
+Input:  BigInt { limbs: [0x8000_0000_0000_0000], sign: true }, overflow_scale = 0
 Output: Dqa { value: -9223372036854775808, scale: 0 }
 Note: i64::MIN exactly — valid negative value
 ```
 
 ### V039: Single Limb Negative Overflow — i64::MIN - 1
 ```
-Input:  BigInt { limbs: [0x8000_0000_0000_0001], sign: true }, scale = 0
+Input:  BigInt { limbs: [0x8000_0000_0000_0001], sign: true }, overflow_scale = 0
 Output: Error(OutOfRange)
 Note: Magnitude = 2^63 + 1 > 2^63 = |i64::MIN|, overflow
 ```
 
 ### V021: Invalid Scale — Exceeds 18
 ```
-Input:  BigInt::from(42i64), scale = 19
+Input:  BigInt::from(42i64), overflow_scale = 19
 Output: Error(InvalidScale)
 Note: DQA max scale is 18
 ```
 
 ### V022: Zero with Non-Zero Scale
 ```
-Input:  BigInt::zero(), scale = 6
+Input:  BigInt::zero(), overflow_scale = 6
 Output: Dqa { value: 0, scale: 0 }
 Note: 0 × 10^6 = 0, which is within i64 range, so conversion succeeds.
 CANONICALIZE produces canonical zero with scale=0 per RFC-0105.
@@ -651,77 +651,77 @@ Zero always canonicalizes to Dqa { 0, 0 } regardless of input scale.
 
 ### V023: Large Currency Value
 ```
-Input:  BigInt::from(1000000i64), scale = 2
+Input:  BigInt::from(1000000i64), overflow_scale = 2
 Output: Dqa { value: 1000000, scale: 0 }
 Note: 1000000 * 10^2 = 100000000. CANONICALIZE strips eight trailing zeros: 100000000 → 1000000, scale: 2 → 0.
 ```
 
 ### V024: i64::MIN Exactly
 ```
-Input:  BigInt::from(i64::MIN), scale = 0
+Input:  BigInt::from(i64::MIN), overflow_scale = 0
 Output: Dqa { value: -9223372036854775808, scale: 0 }
 Note: Special case -i64::MIN = i64::MIN in unsigned magnitude
 ```
 
 ### V025: Scale Multiplication Overflow — i64::MAX × 10^18
 ```
-Input:  BigInt::from(9223372036854775807i64), scale = 18
+Input:  BigInt::from(9223372036854775807i64), overflow_scale = 18
 Output: Error(OutOfRange)
 Note: i64::MAX × 10^18 = 9.22... × 10^36 > i64::MAX (9.22... × 10^18)
 ```
 
 ### V026: Scale Boundary — 0 (Min)
 ```
-Input:  BigInt::from(-9223372036854775808i64), scale = 0
+Input:  BigInt::from(-9223372036854775808i64), overflow_scale = 0
 Output: Dqa { value: -9223372036854775808, scale: 0 }
 Note: Minimum value with minimum scale
 ```
 
 ### V027: Overflow — Exceeds i64::MAX by 1
 ```
-Input:  BigInt { limbs: [1, 0x8000000000000000], sign: false }, scale = 0
+Input:  BigInt { limbs: [1, 0x8000000000000000], sign: false }, overflow_scale = 0
 Output: Error(OutOfRange)
 Note: Magnitude = 2^127 + 1 > i64::MAX. Rejected by positive two-limb check: hi > 0.
 ```
 
 ### V028: Negative Overflow — Exceeds i64::MIN by 1
 ```
-Input:  BigInt { limbs: [1, 0x8000000000000000], sign: true }, scale = 0
+Input:  BigInt { limbs: [1, 0x8000000000000000], sign: true }, overflow_scale = 0
 Output: Error(OutOfRange)
 Note: |value| = 2^127 + 1 > |i64::MIN|. All 2-limb negatives are unconditionally rejected.
 ```
 
 ### V029: Scale Multiplication Overflow — 93 × 10^17
 ```
-Input:  BigInt::from(93i64), scale = 17
+Input:  BigInt::from(93i64), overflow_scale = 17
 Output: Error(OutOfRange)
 Note: 93 × 10^17 = 9.3 × 10^18 > i64::MAX (9.2 × 10^18)
 ```
 
 ### V030: Scale Multiplication Overflow — 10 × 10^18
 ```
-Input:  BigInt::from(10i64), scale = 18
+Input:  BigInt::from(10i64), overflow_scale = 18
 Output: Error(OutOfRange)
 Note: 10 × 10^18 = 10^19 > i64::MAX (9.2 × 10^18)
 ```
 
 ### V031: Scale Multiplication Overflow — Negative
 ```
-Input:  BigInt::from(-93i64), scale = 17
+Input:  BigInt::from(-93i64), overflow_scale = 17
 Output: Error(OutOfRange)
 Note: |-93| × 10^17 = 9.3 × 10^18 > 2^63 = |i64::MIN|
 ```
 
 ### V032: Scale Multiplication Edge — 9 × 10^18 (Fits)
 ```
-Input:  BigInt::from(9i64), scale = 18
+Input:  BigInt::from(9i64), overflow_scale = 18
 Output: Dqa { value: 9, scale: 0 }
 Note: 9 × 10^18 = 9_000_000_000_000_000_000. CANONICALIZE strips 18 trailing zeros: 9_000_000_000_000_000_000 → 9, scale: 18 → 0.
 ```
 
 ### V033: Scale Multiplication Edge — 92 × 10^17 (Fits)
 ```
-Input:  BigInt::from(92i64), scale = 17
+Input:  BigInt::from(92i64), overflow_scale = 17
 Output: Dqa { value: 92, scale: 0 }
 Note: 92 × 10^17 = 9.2 × 10^18 = 9200000000000000000. CANONICALIZE strips
 trailing zeros: 9200000000000000000 → 92, scale: 17 → 0.
@@ -729,7 +729,7 @@ trailing zeros: 9200000000000000000 → 92, scale: 17 → 0.
 
 ### V034: Negative with Scale > 0 — Success
 ```
-Input:  BigInt::from(-1i64), scale = 1
+Input:  BigInt::from(-1i64), overflow_scale = 1
 Output: Dqa { value: -1, scale: 0 }
 Note: |-1| × 10^1 = 10. CANONICALIZE strips trailing zero: 10 → 1, scale: 1 → 0.
 ```
@@ -760,7 +760,7 @@ Round-trip: DQA{0, 6} → BigIntWithScale{0, 6} → DQA{0, 0}. Zero canonicalize
 
 ### V404: Two-Limb Negative Overflow
 ```
-Input:  BigInt { limbs: [1, 1], sign: true }, scale = 0
+Input:  BigInt { limbs: [1, 1], sign: true }, overflow_scale = 0
 Output: Error(OutOfRange)
 Note: Magnitude = 2^64 + 1 > |i64::MIN| = 2^63. All 2-limb negatives overflow.
 ```
@@ -774,35 +774,35 @@ Note: 93 × 10^17 = 9.3 × 10^18 > i64::MAX (9.2 × 10^18)
 
 ### V406: i64::MAX with Scale 1 — Overflow
 ```
-Input:  BigInt::from(9223372036854775807i64), scale = 1
+Input:  BigInt::from(9223372036854775807i64), overflow_scale = 1
 Output: Error(OutOfRange)
 Note: 9223372036854775807 × 10 = 92233720368547758070 > i64::MAX
 ```
 
 ### V407: -1 with Scale 18 — Success
 ```
-Input:  BigInt::from(-1i64), scale = 18
+Input:  BigInt::from(-1i64), overflow_scale = 18
 Output: Dqa { value: -1, scale: 0 }
 Note: |-1| × 10^18 = 10^18 < i64::MAX. CANONICALIZE strips 18 trailing zeros.
 ```
 
 ### V408: 9 with Scale 17 — Success
 ```
-Input:  BigInt::from(9i64), scale = 17
+Input:  BigInt::from(9i64), overflow_scale = 17
 Output: Dqa { value: 9, scale: 0 }
 Note: 9 × 10^17 = 9×10^17 = 900000000000000000 < i64::MAX (9.2×10^18). Fits.
 ```
 
 ### V409: 10 with Scale 17 — Success
 ```
-Input:  BigInt::from(10i64), scale = 17
+Input:  BigInt::from(10i64), overflow_scale = 17
 Output: Ok(Dqa { value: 10, scale: 0 })
 Note: 10 × 10^17 = 10^18 = 1000000000000000000 < i64::MAX (9.2×10^18). Fits.
 ```
 
 ### V410: 100 with Scale 17 — Overflow
 ```
-Input:  BigInt::from(100i64), scale = 17
+Input:  BigInt::from(100i64), overflow_scale = 17
 Output: Error(OutOfRange)
 Note: 100 × 10^17 = 10^19 = 10000000000000000000 > i64::MAX. Overflow.
 ```
@@ -919,7 +919,8 @@ When BIGINT→DQA conversion fails at runtime (e.g., computed value exceeds rang
 
 | Version | Date | Changes |
 |---------|------|---------|
-| 1.22 | 2026-03-24 | (Current) HIGH: Clarified BigIntWithScale round-trip preserves VALUE not SCALE (R17-131-H1). MEDIUM: Added test vectors V406-V410 (i64::MAX scale=1 overflow, -1 scale=18, boundary cases) (R17-131-M1). MEDIUM: Updated Implementation Checklist to 49 vectors (R17-131-L1). LOW: Fixed V409 — 10 × 10^17 fits in i64, not overflow (R18-131-L1). |
+| 1.23 | 2026-03-24 | (Current) CRITICAL: Renamed `scale` parameter to `overflow_scale` in `bigint_to_dqa` function to avoid confusion with PostgreSQL/rust_decimal semantics where scale controls output precision. The parameter sets overflow threshold for scaled multiplication, NOT output precision (R18-131-C1). |
+| 1.22 | 2026-03-24 | HIGH: Clarified BigIntWithScale round-trip preserves VALUE not SCALE (R17-131-H1). MEDIUM: Added test vectors V406-V410 (i64::MAX scale=1 overflow, -1 scale=18, boundary cases) (R17-131-M1). MEDIUM: Updated Implementation Checklist to 49 vectors (R17-131-L1). LOW: Fixed V409 — 10 × 10^17 fits in i64, not overflow (R18-131-L1). |
 | 1.21 | 2026-03-24 | CRITICAL: Fixed POW10_TABLE scale 18 entry from 10^19 to 10^18 (R16-131-M2). CRITICAL: Strengthened i64::MIN Step 1/Step 2 dependency documentation with CRITICAL warning (R16-131-C2). CRITICAL: Renamed BigIntError to BigIntToDqaError for consistency with DqaToBigIntError (R16-XC3). HIGH: Documented two-limb negative unconditional rejection reasoning (R16-131-C3). HIGH: Clarified Step 0 hi==0 check covers both signs (R16-131-H3). MEDIUM: Changed "inverse" to "complement" for bigint_with_scale_to_dqa (R16-131-M1). MEDIUM: Added gas note for error paths (R16-131-M3). MEDIUM: Added V404 (two-limb negative overflow) and V405 (BigIntWithScale overflow) (R16-131-M4). LOW: Clarified V022 note about 0 × 10^6 = 0 (R16-131-L3). |
 | 1.20 | 2026-03-24 | MEDIUM: Added test vectors V401-V403 for BigIntWithScale round-trip (R15-131-M1). LOW: Updated Implementation Checklist with M9 (bigint_with_scale_to_dqa) and corrected test vector count (42 vectors) (R15-131-L1). |
 | 1.19 | 2026-03-24 | FIXED: Added bigint_with_scale_to_dqa function specification to complete round-trip safe variant (R14-131-F1). |

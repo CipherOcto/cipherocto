@@ -387,6 +387,9 @@ The `BigIntWithScale` type from RFC-0132 preserves the numeric VALUE but NOT the
 /// BigIntWithScale { value: BigInt(1999), scale: 2 } → Dqa { value: 1999, scale: 0 }
 /// Note: CANONICALIZE strips trailing zeros, reducing scale from 2 to 0.
 pub fn bigint_with_scale_to_dqa(bws: &BigIntWithScale) -> Result<Dqa, BigIntToDqaError> {
+    // Note: BigIntWithScale.scale represents the original DQA scale, which is
+    // semantically equivalent to overflow_scale for bounds checking purposes.
+    // The original scale value is used directly as the overflow threshold.
     bigint_to_dqa(&bws.value, bws.scale)
 }
 ```
@@ -406,11 +409,15 @@ BIGINT→DQA conversion appears in SQL CAST expressions:
 
 ```sql
 -- Explicit CAST from BIGINT to DQA with scale
+-- Internally maps to: bigint_to_dqa(bigint_col, 6)
 SELECT CAST(bigint_col AS DQA(6)) FROM account_balances;
 
 -- This is VALID: BigInt value must fit in i64 range
 -- If bigint_col = 9223372036854775807 (i64::MAX), conversion succeeds
 -- If bigint_col = 9223372036854775808 (i64::MAX + 1), error
+```
+
+**Mapping:** `CAST(x AS DQA(n))` internally calls `bigint_to_dqa(x, n)` where `n` is the `overflow_scale` parameter.
 
 -- Scale 2 for currency representation
 SELECT CAST(bigint_col AS DQA(2)) FROM currency_amounts;
@@ -451,7 +458,7 @@ SELECT CAST(huge_bigint_col AS DQA(0)) FROM large_values;
 
 | RFC | Relationship | Precedence |
 |-----|-------------|------------|
-| RFC-0110 (BIGINT) | Input type | BIGINT operations apply before conversion |
+| RFC-0110 (BIGINT) | Input type | BIGINT operations apply before conversion. Note: RFC-0110's existing `bigint_to_dqa(i128)` function remains unchanged. |
 | RFC-0105 (DQA) | Output type | DQA semantics apply after conversion |
 
 **Precedence Rule:** This RFC does not override RFC-0105 or RFC-0110. All outputs satisfy RFC-0105's canonical form requirements. All inputs must satisfy RFC-0110's canonical form requirements.
@@ -849,13 +856,13 @@ When BIGINT→DQA conversion fails at compile time (e.g., explicit CAST), the co
 ```
 ERROR: Cannot convert BIGINT to DQA
   Expression: CAST(bigint_col AS DQA(0)) at line 42
-  Reason: BigIntToDqaError::OutOfRange — value 9223372036854775808 exceeds i64::MAX
+  Reason: BigIntToDqaError::OutOfRange — raw value 9223372036854775808 exceeds i64::MAX
   Hint: Use BIGINT type or reduce the value
 
 ERROR: Cannot convert BIGINT to DQA
   Expression: CAST(value AS DQA(19)) at line 15
-  Reason: BigIntToDqaError::InvalidScale — scale 19 exceeds maximum (18)
-  Hint: Use scale 0-18 for DQA type
+  Reason: BigIntToDqaError::InvalidScale — overflow_scale 19 exceeds maximum (18)
+  Hint: Use overflow_scale 0-18 for DQA type
 ```
 
 ### Runtime Errors (Bytecode)
@@ -919,7 +926,7 @@ When BIGINT→DQA conversion fails at runtime (e.g., computed value exceeds rang
 
 | Version | Date | Changes |
 |---------|------|---------|
-| 1.23 | 2026-03-24 | (Current) CRITICAL: Renamed `scale` parameter to `overflow_scale` in `bigint_to_dqa` function to avoid confusion with PostgreSQL/rust_decimal semantics where scale controls output precision. The parameter sets overflow threshold for scaled multiplication, NOT output precision (R18-131-C1). |
+| 1.23 | 2026-03-24 | (Current) CRITICAL: Renamed `scale` parameter to `overflow_scale` in `bigint_to_dqa` function to avoid confusion with PostgreSQL/rust_decimal semantics where scale controls output precision. The parameter sets overflow threshold for scaled multiplication, NOT output precision. Updated all 49 test vectors to use `overflow_scale` parameter (R18-131-C1). |
 | 1.22 | 2026-03-24 | HIGH: Clarified BigIntWithScale round-trip preserves VALUE not SCALE (R17-131-H1). MEDIUM: Added test vectors V406-V410 (i64::MAX scale=1 overflow, -1 scale=18, boundary cases) (R17-131-M1). MEDIUM: Updated Implementation Checklist to 49 vectors (R17-131-L1). LOW: Fixed V409 — 10 × 10^17 fits in i64, not overflow (R18-131-L1). |
 | 1.21 | 2026-03-24 | CRITICAL: Fixed POW10_TABLE scale 18 entry from 10^19 to 10^18 (R16-131-M2). CRITICAL: Strengthened i64::MIN Step 1/Step 2 dependency documentation with CRITICAL warning (R16-131-C2). CRITICAL: Renamed BigIntError to BigIntToDqaError for consistency with DqaToBigIntError (R16-XC3). HIGH: Documented two-limb negative unconditional rejection reasoning (R16-131-C3). HIGH: Clarified Step 0 hi==0 check covers both signs (R16-131-H3). MEDIUM: Changed "inverse" to "complement" for bigint_with_scale_to_dqa (R16-131-M1). MEDIUM: Added gas note for error paths (R16-131-M3). MEDIUM: Added V404 (two-limb negative overflow) and V405 (BigIntWithScale overflow) (R16-131-M4). LOW: Clarified V022 note about 0 × 10^6 = 0 (R16-131-L3). |
 | 1.20 | 2026-03-24 | MEDIUM: Added test vectors V401-V403 for BigIntWithScale round-trip (R15-131-M1). LOW: Updated Implementation Checklist with M9 (bigint_with_scale_to_dqa) and corrected test vector count (42 vectors) (R15-131-L1). |

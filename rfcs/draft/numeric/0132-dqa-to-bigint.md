@@ -2,9 +2,9 @@
 
 ## Status
 
-**Version:** 1.20 (Draft)
+**Version:** 1.21 (Draft)
 **Status:** Draft
-**Depends On:** RFC-0110 (BIGINT), RFC-0105 (DQA), RFC-0131 (BigInt→DQA for bigint_with_scale_to_dqa)
+**Depends On:** RFC-0110 (BIGINT), RFC-0105 (DQA)
 **Category:** Numeric/Math
 
 ## Summary
@@ -12,6 +12,8 @@
 This RFC specifies the conversion algorithm from DQA (RFC-0105, i64 value with 0-18 decimal scale) to BIGINT (RFC-0110, arbitrary-precision integer up to 4096 bits). This conversion is necessary for the Numeric Tower to support operations that require DQA values to be used in BIGINT contexts, and for explicit CAST expressions between these types.
 
 This conversion always succeeds for **canonical** DQA inputs (valid i64 value, scale 0-18, canonical form per RFC-0105). Non-canonical inputs MUST TRAP. The i64 value trivially fits within BIGINT's arbitrary range.
+
+**Cross-RFC Conformance:** Full DQA → BigIntWithScale → DQA round-trip requires passing RFC-0132 V201-V203 (forward) and RFC-0131 V401-V410 (backward) suites.
 
 ## Motivation
 
@@ -133,6 +135,8 @@ pub fn dqa_to_bigint_with_scale(dqa: &Dqa) -> Result<BigIntWithScale, DqaToBigIn
 - The pair `(value, scale)` can be converted back to DQA using `bigint_with_scale_to_dqa` from RFC-0131, but the output scale may differ from the original
 
 **Test vectors for BigIntWithScale:**
+
+**Note:** V201-V203 are in §BigIntWithScale Value-Preserving Variant.
 
 ```
 V201: Round-trip — Positive with scale
@@ -350,6 +354,8 @@ pub fn dqa_to_bigint_mode(dqa: &Dqa, mode: DqaToBigIntMode) -> DqaToBigIntResult
     }
 }
 
+/// See §SQL Compatibility Mode for the StandardSql algorithm specification.
+
 /// Standard SQL mode conversion.
 fn dqa_to_bigint_standard(dqa: &Dqa) -> DqaToBigIntResult {
     // Algorithm DQA_TO_BIGINT_STANDARD per RFC-0132
@@ -360,7 +366,7 @@ fn dqa_to_bigint_standard(dqa: &Dqa) -> DqaToBigIntResult {
 
 | Source Type | Target Type | Behavior | Notes |
 |-------------|-------------|----------|-------|
-| DQA(n) | BIGINT | Ok(BigInt) for canonical | Scale ignored — raw mantissa extracted |
+| DQA(n) | BIGINT | Ok(BigInt) for canonical | Scale ignored — raw mantissa extracted. Output scale is 0 after CANONICALIZE; caller must re-apply target scale. |
 | DQA(0) | BIGINT | Ok(BigInt) for canonical | Integer representation |
 | DQA(18) | BIGINT | Ok(BigInt) for canonical | Scale 18 → BigInt ignores scale, raw mantissa extracted |
 
@@ -510,6 +516,8 @@ Input:  Dqa { value: -9223372036854775808, scale: 0 }
 Output: Ok(BigInt::from(i64::MIN))
 ```
 
+**Note:** V007 was removed as a duplicate of V004 (both test raw mantissa extraction with a non-zero scale).
+
 ### V008: Negative with Scale
 ```
 Input:  Dqa { value: -1999, scale: 2 }
@@ -551,8 +559,6 @@ Output: Ok(BigInt::from(-9223372036854775808i64))
 Note: Maximum scale (18) with minimum value. Raw mantissa extracted, scale ignored.
 This boundary case explicitly confirms that scale does not affect the output.
 ```
-
-**Note:** V007 was removed as a duplicate of V004 (both test raw mantissa extraction with a non-zero scale).
 
 ### V013: Positive Value with Max Scale
 ```
@@ -650,7 +656,7 @@ Mode:   STANDARD
 Input:  Dqa { value: 1000, scale: 3 }
 Output: Err(NonCanonical { reason: "trailing decimal zeros" })
 Mode:   STANDARD
-Note: 1000 % 10 == 0, so trailing zeros exist
+Note: scale=3>0, value=1000≠0, and 1000%10==0 → non-canonical. All three conditions required.
 ```
 
 ### V108: Standard SQL — Scale exceeds maximum
@@ -810,7 +816,7 @@ SELECT CAST(dqa_col AS BIGINT) FROM any_table;
 | M2 | i64::MIN special case handling | Pending | Low |
 | M3 | Scale ignored (raw mantissa extraction) | Pending | Low |
 | M4 | Sign handling | Pending | Low |
-| M5 | Test vector suite (33 vectors: V001-V018, V101-V112, V201-V203) | Pending | Low |
+| M5 | Test vector suite (33 vectors: V001-V006, V008-V019, V101-V112, V201-V203) | Pending | Low |
 | M6 | Integration with BigInt type | Pending | Low |
 | M7 | `dqa_to_bigint_mode` with DqaToBigIntMode enum | Pending | Low |
 | M8 | `dqa_to_bigint_with_scale` with BigIntWithScale | Pending | Low |
@@ -826,7 +832,8 @@ SELECT CAST(dqa_col AS BIGINT) FROM any_table;
 
 | Version | Date | Changes |
 |---------|------|---------|
-| 1.20 | 2026-03-24 | (Current) CRITICAL: Added RFC-0131 to Depends On for bigint_with_scale_to_dqa (R10-X1). MEDIUM: Fixed divisor type ambiguity in Standard SQL Step 1 (R10-132-M1). MEDIUM: Moved DqaToBigIntMode enum to Input/Output Contract (R10-132-M3). MEDIUM: Updated Step 3 zero-path comment to reference Step 0 guarantee (R10-132-M5). LOW: Added V007 removal note (R10-132-L1). LOW: Renamed V012b to V019 to fix non-standard suffix (R10-132-L2). |
+| 1.21 | 2026-03-24 | (Current) MEDIUM: Added cross-ref note for StandardSql algorithm (R11-132-M1). MEDIUM: Removed RFC-0131 from Depends On (R11-132-M2). MEDIUM: Added V201-V203 location note in §Test Vectors (R11-132-M3). MEDIUM: V107 note added all three conditions (R11-132-M4). LOW: Moved V007 removal note to after V006 (R11-132-L1). LOW: M5 checklist range fixed to V001-V006, V008-V019, V101-V112, V201-V203 (R11-132-L2). Cross-RFC: Added round-trip conformance note (R11-X1). Cast Semantics: Added output-scale caveat (R11-X2). |
+| 1.20 | 2026-03-24 | CRITICAL: Added RFC-0131 to Depends On for bigint_with_scale_to_dqa (R10-X1). MEDIUM: Fixed divisor type ambiguity in Standard SQL Step 1 (R10-132-M1). MEDIUM: Moved DqaToBigIntMode enum to Input/Output Contract (R10-132-M3). MEDIUM: Updated Step 3 zero-path comment to reference Step 0 guarantee (R10-132-M5). LOW: Added V007 removal note (R10-132-L1). LOW: Renamed V012b to V019 to fix non-standard suffix (R10-132-L2). |
 | 1.19 | 2026-03-24 | HIGH: Clarified BigIntWithScale round-trip preserves VALUE not SCALE (R17-132-H1). MEDIUM: Added Standard SQL negative truncation test vectors V110-V112 (R17-132-M1). MEDIUM: Updated Implementation Checklist to 33 vectors (R17-132-L1). |
 | 1.18 | 2026-03-24 | CRITICAL: Removed misleading i64::MIN note in Standard SQL Step 1 (R16-132-C2). HIGH: Standardized canonical example to {1999, 2} throughout (R16-132-C1). HIGH: Added normative note about modulo truncating division for negative values (R16-132-H1). HIGH: Consolidated BigIntWithScale to single definition location (R16-132-H2). MEDIUM: Changed DQA(19.99) notation to DQA{1999, 2} (R16-132-M1). MEDIUM: Added non-canonical test vectors V106-V108 and i64::MIN test V109 (R16-132-M2). MEDIUM: Added gas note for error paths (R16-132-M3). MEDIUM: Strengthened round-trip asymmetry warning with concrete financial example (R16-132-M4). LOW: Updated Implementation Checklist to reflect 30 vectors (R16-132-L2). |
 | 1.17 | 2026-03-24 | MEDIUM: Added BigIntWithScale to Input/Output Contract and Constraints (R15-132-M1). LOW: Updated Gas Cost section with separate GAS_NUMERIC_TOWER (5) and GAS_STANDARD_SQL (7) costs (R15-132-L1). LOW: Updated Implementation Checklist with M7 (dqa_to_bigint_mode) and M8 (dqa_to_bigint_with_scale) and corrected test vector count (26 vectors) (R15-132-L2). |

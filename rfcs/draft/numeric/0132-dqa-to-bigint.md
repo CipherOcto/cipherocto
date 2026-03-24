@@ -2,7 +2,7 @@
 
 ## Status
 
-**Version:** 1.16 (Draft)
+**Version:** 1.18 (Draft)
 **Status:** Draft
 **Depends On:** RFC-0110 (BIGINT), RFC-0105 (DQA)
 **Category:** Numeric/Math
@@ -53,6 +53,17 @@ pub enum DqaToBigIntError {
 
 /// DQA→BIGINT conversion result
 pub type DqaToBigIntResult = Result<BigInt, DqaToBigIntError>;
+
+/// DQA with scale metadata for round-trip preservation.
+///
+/// This type pairs a BigInt value with its original DQA scale,
+/// allowing callers to recover the scale context after conversion.
+pub struct BigIntWithScale {
+    /// The BigInt value (raw mantissa)
+    pub value: BigInt,
+    /// The original DQA scale (0-18)
+    pub scale: u8,
+}
 ```
 
 **Contract:**
@@ -61,6 +72,8 @@ pub type DqaToBigIntResult = Result<BigInt, DqaToBigIntError>;
 - **If precondition violated:** Returns `Err` — caller can choose to TRAP or handle gracefully
 
 The return type is `Result<BigInt, DqaToBigIntError>`, not `BigInt`. This allows callers to handle non-canonical input gracefully. For VM-level TRAP semantics, callers can `.unwrap()` or use the `?` operator. This design is not a breaking change because the RFC is still in Draft status with no existing users.
+
+**BigIntWithScale variant:** For use cases requiring scale preservation, `dqa_to_bigint_with_scale` returns `BigIntWithScale` which pairs the BigInt value with the original DQA scale. This enables round-trip conversion back to DQA using `bigint_with_scale_to_dqa` from RFC-0131.
 
 ## Scale Context Propagation
 
@@ -75,30 +88,16 @@ where `v` is the raw i64 mantissa and `s` is the decimal scale. The function doe
 | DQA Value | Scale | BIGINT Output | Rationale |
 |-----------|-------|---------------|-----------|
 | {42, 0} | 0 | 42 | Raw mantissa extracted |
-| {42, 2} | 2 | 42 | Raw mantissa (42) extracted, scale ignored |
 | {1999, 2} | 2 | 1999 | Raw mantissa (1999) extracted, scale ignored |
 | {1, 18} | 18 | 1 | Raw mantissa (1) extracted, scale ignored |
 
-**Important:** This is NOT truncation of a decimal value. DQA{42, 2} represents 0.42, but we extract the raw mantissa (42), not the decimal value (0.42). The conversion does not interpret the DQA as a decimal number — it simply copies the i64 value field.
+**Important:** This is NOT truncation of a decimal value. DQA{1999, 2} represents 19.99, but we extract the raw mantissa (1999), not the decimal value (19). The conversion does not interpret the DQA as a decimal number — it simply copies the i64 value field.
 
 **This is a lossy conversion:** The scale information is discarded. The result BigInt(42) cannot be converted back to DQA{42, 2} — only to DQA{42, 0}.
 
 ## BigIntWithScale Round-Trip Variant
 
-For use cases requiring scale preservation, a `BigIntWithScale` type is provided:
-
-```rust
-/// DQA with scale metadata for round-trip preservation.
-///
-/// This type pairs a BigInt value with its original DQA scale,
-/// allowing callers to recover the scale context after conversion.
-pub struct BigIntWithScale {
-    /// The BigInt value (raw mantissa)
-    pub value: BigInt,
-    /// The original DQA scale (0-18)
-    pub scale: u8,
-}
-```
+For use cases requiring scale preservation, the `BigIntWithScale` type (defined in §Input/Output Contract) is used:
 
 **Formal specification:**
 
@@ -149,6 +148,7 @@ V203: Round-trip — Negative
 | **Zero canonicalization** | DQA{0, 0} → BigInt::zero(). Note: DQA{0, s} for s ≠ 0 is non-canonical and returns `Err` |
 | **Determinism** | Identical DQA input always produces identical BIGINT output |
 | **Regulated industries** | Scale is intentionally discarded. For financial audit requirements (e.g., MiFID II, Dodd-Frank), implementations should log original scale separately. |
+| **BigIntWithScale** | Scale is preserved in `BigIntWithScale.scale` field when using `dqa_to_bigint_with_scale`. The pair `(value, scale)` can be converted back to DQA using `bigint_with_scale_to_dqa` from RFC-0131. |
 
 ## Canonicalization Policy
 
@@ -206,7 +206,9 @@ SELECT bigint_to_dqa(bigint_col, 2) FROM accounts;
 -- BigInt(1999), scale=2 → DQA{1999, 0} (NOT DQA{1999, 2})
 ```
 
-**⚠ WARNING: Scale information is permanently lost in the RFC-0132 direction.** The composition `CAST(CAST(dqa_col AS BIGINT) AS DQA(2))` produces `DQA{1999, 0}`, not the original `DQA{1999, 2}`. This is a 100× magnitude difference that could cause catastrophic financial errors if the scale loss is not understood.
+**⚠ WARNING: Scale information is permanently lost in the RFC-0132 direction.** The composition `CAST(CAST(dqa_col AS BIGINT) AS DQA(2))` produces `DQA{1999, 0}`, not the original `DQA{1999, 2}`.
+
+Example: A $19.99 price stored as DQA{1999, 2} converts to BigInt(1999). Converting back with scale=2 produces DQA{1999, 0} (representing $1999.00, not $19.99) — a 100× error that could cause catastrophic financial losses if the scale loss is not understood.
 
 **For regulated industries:** Implementations should log the original scale separately if audit requirements mandate data provenance. The RFC-0132 conversion discards scale intentionally and irreversibly.
 
@@ -228,9 +230,9 @@ This conversion does NOT follow standard SQL CAST behavior:
 
 | Standard SQL | This RFC |
 |-------------|----------|
-| `CAST(DQA(19.99) AS BIGINT)` → `19` (integer part) | `CAST(DQA(19.99) AS BIGINT)` → `1999` (raw mantissa) |
+| `CAST(DQA{1999, 2} AS BIGINT)` → `19` (integer part) | `CAST(DQA{1999, 2} AS BIGINT)` → `1999` (raw mantissa) |
 
-Standard SQL interprets `CAST(19.99 AS BIGINT)` as extracting the integer part (19). This RFC extracts the **raw mantissa** (1999), ignoring the scale entirely.
+Standard SQL interprets `CAST(DQA{1999, 2} AS BIGINT)` as extracting the integer part (19). This RFC extracts the **raw mantissa** (1999), ignoring the scale entirely.
 
 This behavior is intentional for the Numeric Tower's internal operations but will surprise SQL-familiar developers. Use this conversion only when "raw mantissa extraction" is the desired semantics.
 
@@ -290,7 +292,15 @@ OUTPUT: Result<BigInt, DqaToBigIntError>
 STEPS:
 
 0. VERIFY_CANONICAL
-   // Same as main algorithm — Return Err on non-canonical input
+   If dqa.scale > 18:
+     Return Err(NonCanonical { reason: "scale exceeds maximum" })
+   If dqa.value == 0 and dqa.scale != 0:
+     Return Err(NonCanonical { reason: "zero with non-zero scale" })
+   If dqa.scale > 0 and dqa.value != 0 and dqa.value % 10 == 0:
+     // Note: The modulo operation uses truncating division (toward zero), consistent
+     // with Rust, C, and Java. In these languages, (-10) % 10 == 0, so negative values
+     // with trailing zeros (e.g., {-10, 1}) are correctly detected as non-canonical.
+     Return Err(NonCanonical { reason: "trailing decimal zeros" })
 
 1. EXTRACT_INTEGER_PART
    If dqa.scale == 0:
@@ -306,9 +316,9 @@ STEPS:
    Else:
      sign = true
      magnitude = (integer_part == i64::MIN) ? (1u64 << 63) : ((-integer_part) as u64)
+   // Note: Rust integer division truncates toward zero, matching standard SQL CAST behavior
 
 3. CONSTRUCT_BIGINT
-   // Same as main algorithm
    If magnitude == 0:
      Return Ok(BigInt::zero())
    limbs = [magnitude as u64]
@@ -620,6 +630,36 @@ Mode:   STANDARD
 Note: 1 / 10^18 = 0
 ```
 
+### V106: Standard SQL — Non-canonical zero with scale
+```
+Input:  Dqa { value: 0, scale: 6 }
+Output: Err(NonCanonical { reason: "zero with non-zero scale" })
+Mode:   STANDARD
+```
+
+### V107: Standard SQL — Non-canonical trailing zeros
+```
+Input:  Dqa { value: 1000, scale: 3 }
+Output: Err(NonCanonical { reason: "trailing decimal zeros" })
+Mode:   STANDARD
+Note: 1000 % 10 == 0, so trailing zeros exist
+```
+
+### V108: Standard SQL — Scale exceeds maximum
+```
+Input:  Dqa { value: 42, scale: 19 }
+Output: Err(NonCanonical { reason: "scale exceeds maximum" })
+Mode:   STANDARD
+```
+
+### V109: Standard SQL — i64::MIN with scale 1
+```
+Input:  Dqa { value: -9223372036854775808, scale: 1 }
+Output: Ok(BigInt::from(-922337203685477580i64))
+Mode:   STANDARD
+Note: -9223372036854775808 / 10 = -922337203685477580 (truncating toward zero)
+```
+
 ## Implementation Notes
 
 ### In determin crate
@@ -629,13 +669,9 @@ This conversion is implemented in `determin/src/bigint.rs` as:
 ```rust
 use crate::dqa::Dqa;
 
-/// DQA with scale metadata for round-trip preservation
-pub struct BigIntWithScale {
-    pub value: BigInt,
-    pub scale: u8,
-}
+// BigIntWithScale is defined in §Input/Output Contract.
 
-/// Convert DQA to BigInt.
+// Convert DQA to BigInt.
 ///
 /// For canonical DQA inputs, always returns Ok(BigInt).
 /// For non-canonical inputs, returns Err — caller can choose to TRAP
@@ -668,18 +704,26 @@ pub fn dqa_to_bigint_with_scale(dqa: &Dqa) -> Result<BigIntWithScale, DqaToBigIn
 
 ### Gas Cost
 
-DQA→BIGINT conversion is O(1) because i64 trivially fits in BigInt's arbitrary range. Gas cost should be:
+DQA→BIGINT conversion is O(1) because i64 trivially fits in BigInt's arbitrary range. Gas cost depends on the conversion mode:
+
 ```
-GAS = 5  // Fixed gas allocation per conversion
+GAS_NUMERIC_TOWER = 5  // Fixed gas allocation — raw mantissa extraction, no division
+GAS_STANDARD_SQL = 7   // Fixed gas allocation — requires division for integer part
 ```
 
-This is a fixed gas allocation because:
+**Numeric Tower mode (default):** Lower gas because Step 1 extracts the raw i64 value directly without any arithmetic.
+
+**Standard SQL mode:** Higher gas because Step 1 requires integer division (`dqa.value / POW10[dqa.scale]`) to extract the integer part.
+
+Both modes have fixed gas allocations because:
 - No limb iteration needed (i64 always fits in 1 limb)
 - Step 0 VERIFY_CANONICAL performs a constant number of O(1) operations (comparisons, one modulo)
-- No scale adjustment needed (scale is ignored)
-- Canonical inputs always succeed; non-canonical inputs TRAP
+- No scale adjustment beyond the optional division in Standard SQL mode
+- Canonical inputs always succeed; non-canonical inputs return Err
 
-**Note:** "O(1)" refers to algorithmic complexity (constant time), not the number of CPU operations. The modulo operation and comparisons are constant-time for i64 values.
+**Note:** "O(1)" refers to algorithmic complexity (constant time), not the number of CPU operations. The modulo operation, comparisons, and division are constant-time for i64 values.
+
+**Gas for error paths:** Gas is charged regardless of whether the conversion succeeds or returns Err. Both success and error paths consume the same fixed gas allocation.
 
 ## Error Handling and Diagnostics
 
@@ -734,8 +778,10 @@ SELECT CAST(dqa_col AS BIGINT) FROM any_table;
 | M2 | i64::MIN special case handling | Pending | Low |
 | M3 | Scale ignored (raw mantissa extraction) | Pending | Low |
 | M4 | Sign handling | Pending | Low |
-| M5 | Test vector suite (19 vectors) | Pending | Low |
+| M5 | Test vector suite (30 vectors: V001-V018, V101-V109, V201-V203) | Pending | Low |
 | M6 | Integration with BigInt type | Pending | Low |
+| M7 | `dqa_to_bigint_mode` with DqaToBigIntMode enum | Pending | Low |
+| M8 | `dqa_to_bigint_with_scale` with BigIntWithScale | Pending | Low |
 
 ## Future Work
 
@@ -748,7 +794,9 @@ SELECT CAST(dqa_col AS BIGINT) FROM any_table;
 
 | Version | Date | Changes |
 |---------|------|---------|
-| 1.16 | 2026-03-24 | (Current) FIXED: 15 malformed test vectors — added missing closing parentheses. FIXED: Standard SQL algorithm — completed Step 3 (CONSTRUCT_BIGINT) and added error propagation. FIXED: Added Rust API for Standard SQL mode (DqaToBigIntMode enum, dqa_to_bigint_mode function). FIXED: Added formal specification for BigIntWithScale (struct, constraints, test vectors). |
+| 1.18 | 2026-03-24 | (Current) CRITICAL: Removed misleading i64::MIN note in Standard SQL Step 1 (R16-132-C2). HIGH: Standardized canonical example to {1999, 2} throughout (R16-132-C1). HIGH: Added normative note about modulo truncating division for negative values (R16-132-H1). HIGH: Consolidated BigIntWithScale to single definition location (R16-132-H2). MEDIUM: Changed DQA(19.99) notation to DQA{1999, 2} (R16-132-M1). MEDIUM: Added non-canonical test vectors V106-V108 and i64::MIN test V109 (R16-132-M2). MEDIUM: Added gas note for error paths (R16-132-M3). MEDIUM: Strengthened round-trip asymmetry warning with concrete financial example (R16-132-M4). LOW: Updated Implementation Checklist to reflect 30 vectors (R16-132-L2). |
+| 1.17 | 2026-03-24 | MEDIUM: Added BigIntWithScale to Input/Output Contract and Constraints (R15-132-M1). LOW: Updated Gas Cost section with separate GAS_NUMERIC_TOWER (5) and GAS_STANDARD_SQL (7) costs (R15-132-L1). LOW: Updated Implementation Checklist with M7 (dqa_to_bigint_mode) and M8 (dqa_to_bigint_with_scale) and corrected test vector count (26 vectors) (R15-132-L2). |
+| 1.16 | 2026-03-24 | FIXED: 15 malformed test vectors — added missing closing parentheses. FIXED: Standard SQL algorithm — completed Step 3 (CONSTRUCT_BIGINT) and added error propagation. FIXED: Added Rust API for Standard SQL mode (DqaToBigIntMode enum, dqa_to_bigint_mode function). FIXED: Added formal specification for BigIntWithScale (struct, constraints, test vectors). |
 | 1.15 | 2026-03-24 | CRITICAL: Changed return type from BigInt to Result<BigInt, DqaToBigIntError> — not a breaking change in draft status (R13-132-C1). MEDIUM: Added SQL Compatibility Mode with STANDARD modifier for standard SQL semantics (R13-132-M1). MEDIUM: Added BigIntWithScale round-trip safe variant (R13-132-M2). |
 | 1.14 | 2026-03-24 | MEDIUM: Added V012b test vector for {i64::MIN, 18} — explicit boundary case for maximum scale with minimum value. MEDIUM: Added Composition Semantics section documenting chained conversion behavior and 100× magnitude warning. LOW: Added regulated industries constraint row (MiFID II, Dodd-Frank) noting scale should be logged separately. |
 | 1.13 | 2026-03-24 | LOW: Clarified "scale ignored" mathematical definition — added formal definition and note that conversion does NOT compute v × 10^(-s). MEDIUM: Added language-agnostic modulo specification to trailing-zero check (truncating division, consistent with Rust/C/Java). MEDIUM: Clarified gas cost wording — O(1) is constant-time algorithmic complexity, not same number of operations. |

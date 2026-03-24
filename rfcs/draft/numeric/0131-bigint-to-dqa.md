@@ -2,7 +2,7 @@
 
 ## Status
 
-**Version:** 1.25 (Draft)
+**Version:** 1.26 (Draft)
 **Status:** Draft
 **Depends On:** RFC-0110 (BIGINT), RFC-0105 (DQA), RFC-0132 (DQA→BigInt for BigIntWithScale type)
 **Category:** Numeric/Math
@@ -149,7 +149,12 @@ STEPS:
    // Single-limb with lo=0 and sign=false is canonical zero — no action needed.
    If b.limbs.length > 64:
      // Non-canonical: exceeds MAX_LIMBS per RFC-0110.
-     TRAP
+     // Note: This check and the Step 1 `> 2` check serve different purposes.
+     // Step 0's >64 guards against non-canonical BigInts that violate RFC-0110's
+     // maximum limb bound (pathological inputs). Step 1's >2 guards against values
+     // that exceed i64's representable range (overflow). Any input with >2 limbs
+     // fails both checks, but the >64 check catches non-canonical inputs earlier
+     // in Step 0 (TRAP) rather than later in Step 1 (Error).
 
 1. VALIDATE_INPUT
    If overflow_scale > 18:
@@ -193,6 +198,10 @@ STEPS:
    // Unlike positive 2-limb values (which need hi>0 check), ALL 2-limb negatives overflow
    // regardless of lo value. Note: i64::MIN's canonical BigInt representation is always
    // single-limb per RFC-0110.
+   //
+   // Note: Since Step 0 already traps on hi==0 (non-canonical), any two-limb input reaching
+   // Step 1 has hi ≥ 1. The hi > 0 check for positive is therefore redundant but kept for
+   // clarity and defense-in-depth.
    If b.limbs.length == 2:
      // Positive: any hi > 0 means magnitude >= 2^64 > i64::MAX
      If b.sign == false and hi > 0:
@@ -287,6 +296,11 @@ STEPS:
    // when the mantissa no longer ends in a decimal zero.
    // Note: CANONICALIZE never produces negative scale — if stripping
    // would reduce scale below 0, the value is kept as-is with scale=0.
+   // ⚠ CANONICALIZE halts at scale=0: once scale reaches 0, no further stripping
+   // occurs regardless of whether the mantissa contains digit zeros. This is because
+   // scale=0 means no decimal places exist — trailing zeros in the integer (e.g., 10, 100)
+   // are not decimal trailing zeros. For example, {100, 0} is canonical even though 100
+   // ends in two zeros, because scale=0 means these are integer digits, not decimal places.
    dqa = Dqa { value: scaled_value, scale: overflow_scale }
    Return CANONICALIZE(dqa)
 ```
@@ -388,6 +402,13 @@ The `BigIntWithScale` type from RFC-0132 preserves the numeric VALUE but NOT the
 /// trailing decimal zeros. For example, DQA{1999, 2} → BigIntWithScale{1999, 2} → DQA{1999, 0}.
 /// ⚠ The scale may be reduced by CANONICALIZE — the output scale may differ from input.
 ///
+/// # Input Assumptions
+/// This function assumes `BigIntWithScale` was obtained from `dqa_to_bigint_with_scale` in
+/// RFC-0132, which guarantees canonical DQA inputs. Direct construction of `BigIntWithScale`
+/// with non-canonical values (e.g., `BigIntWithScale { value: BigInt(100), scale: 2 }`)
+/// will produce unexpected results without error. Callers MUST ensure input conforms to
+/// the canonical DQA invariants that `dqa_to_bigint_with_scale` enforces.
+///
 /// # Arguments
 /// * `bws` - The BigIntWithScale containing value and original scale
 ///
@@ -461,7 +482,7 @@ SELECT CAST(huge_bigint_col AS DQA(0)) FROM large_values;
 | **Pre-scale range** | \|BigInt\| ≤ i64::MAX — checked in Step 1 before scaling |
 | **Post-scale range** | \|BigInt × 10^scale\| ≤ i64::MAX (positive) or ≤ \|i64::MIN\| (negative) — checked in Step 3 |
 | **Overflow policy** | Error on overflow (no truncation, no saturation) |
-| **BigInt size** | 1 limb after canonicalization. Step 0 rejects non-canonical hi==0 two-limb; Step 1 rejects 3+ limb |
+| **BigInt size** | 1-2 limbs. Step 0 rejects non-canonical hi==0 two-limb; Step 1 rejects 3+ limb and returns OutOfRange for canonical two-limb (overflow) |
 | **Determinism** | Identical BigInt input always produces identical DQA output |
 | **No rounding** | BIGINT→DQA does not round; it traps on overflow |
 | **Canonical input** | Algorithm assumes canonical BigInt per RFC-0110. Non-canonical inputs (e.g., two-limb with hi=0, or negative-zero) are undefined behavior. Implementations MUST TRAP on non-canonical input per RFC-0110 §Input Canonicalization Requirement. |
@@ -475,7 +496,7 @@ SELECT CAST(huge_bigint_col AS DQA(0)) FROM large_values;
 
 **Precedence Rule:** This RFC does not override RFC-0105 or RFC-0110. All outputs satisfy RFC-0105's canonical form requirements. All inputs must satisfy RFC-0110's canonical form requirements.
 
-## Test Vectors
+**Cross-RFC Type Dependency:** `BigIntWithScale` is defined in RFC-0132 §Input/Output Contract. If RFC-0132 changes the `BigIntWithScale` definition (e.g., adds a field, changes semantics), RFC-0131 §Value-Preserving Conversion and §Composition Semantics must be reviewed and updated accordingly.
 
 ### V001: Zero Conversion
 ```
@@ -576,6 +597,8 @@ Note: i64::MIN + 1, still fits
 Input:  BigInt::from(10i64), overflow_scale = 1
 Output: Dqa { value: 10, scale: 0 }
 Note: 10 * 10^1 = 100. CANONICALIZE strips trailing zero: 100 → 10, scale: 1 → 0.
+CANONICALIZE halts at scale=0; the trailing zero in 10 is not a decimal trailing zero
+since scale=0 means no decimal places.
 ```
 
 ### V016: Overflow — 128-bit Value (2 limbs, exceeds i64)
@@ -743,7 +766,7 @@ Note: 9 × 10^18 = 9_000_000_000_000_000_000. CANONICALIZE strips 18 trailing ze
 Input:  BigInt::from(92i64), overflow_scale = 17
 Output: Dqa { value: 92, scale: 0 }
 Note: 92 × 10^17 = 9.2 × 10^18 = 9200000000000000000. CANONICALIZE strips
-trailing zeros: 9200000000000000000 → 92, scale: 17 → 0.
+17 trailing zeros: 9200000000000000000 → 92, scale: 17 → 0.
 ```
 
 ### V034: Negative with Scale > 0 — Success
@@ -815,7 +838,7 @@ Note: 9 × 10^17 = 9×10^17 = 900000000000000000 < i64::MAX (9.2×10^18). Fits.
 ### V409: 10 with Scale 17 — Success
 ```
 Input:  BigInt::from(10i64), overflow_scale = 17
-Output: Ok(Dqa { value: 10, scale: 0 })
+Output: Dqa { value: 10, scale: 0 }
 Note: 10 × 10^17 = 10^18 = 1000000000000000000 < i64::MAX (9.2×10^18). Fits.
 ```
 
@@ -908,7 +931,9 @@ When BIGINT→DQA conversion fails at runtime (e.g., computed value exceeds rang
 
 **Theorem T3 (Scale Upper Bound):** If `bigint_to_dqa(b, s) = Ok(dqa)`, then `dqa.scale ≤ s`. CANONICALIZE may reduce scale by stripping trailing decimal zeros.
 
-**Theorem T4 (Overflow Completeness):** `bigint_to_dqa(b, s) = Err(OutOfRange) ⟺ (b is canonical AND (b × 10^s < i64::MIN OR b × 10^s > i64::MAX))`.
+**Theorem T4 (Overflow Completeness):** For canonical BigInt inputs `b` with `0 ≤ s ≤ 18`: `bigint_to_dqa(b, s) = Err(OutOfRange) ⟺ (b × 10^s < i64::MIN OR b × 10^s > i64::MAX)`.
+
+Note: Non-canonical inputs are outside this theorem's domain — they TRAP per Step 0, not return Err.
 
 **Corollary T4a:** For any canonical BigInt with `b.limbs.length > 2`, `|b| ≥ 2^128 > i64::MAX`. The algorithm detects this in Step 1 (limb count check) before any scaled multiplication.
 
@@ -938,7 +963,8 @@ When BIGINT→DQA conversion fails at runtime (e.g., computed value exceeds rang
 
 | Version | Date | Changes |
 |---------|------|---------|
-| 1.25 | 2026-03-24 | (Current) CRITICAL: Added b.limbs.length > 64 check in Step 0 (R11-131-C1). HIGH: V403 input changed to scale: 0 (R11-131-H1). HIGH: Moved V021/V022 before V023 to restore sequential order (R11-131-H2). MEDIUM: T4 biconditional: Err ⟺ (canonical AND overflow) (R11-131-M1). MEDIUM: Changed to_dqa stub param from scale to overflow_scale (R11-131-M2). LOW: V012 note clarified CANONICALIZE 4 iterations bounded by scale=4 (R11-131-L2). Cross-RFC: Added round-trip conformance note (R11-X1). |
+| 1.26 | 2026-03-24 | (Current) CRITICAL: CANONICALIZE stopping rule clarified — scale=0 means no decimal places, integer trailing zeros not stripped (R7C1). CRITICAL: V023 output {1000000,0} canonical per RFC-0105 explained (R7C2). HIGH: Two-limb hi>0 redundancy documented after Step 0 (R7H1). HIGH: bigint_with_scale_to_dqa input assumptions documented (R7H2). HIGH: Constraints table corrected to show 2-limb canonical handled in Step 1 (R7H3). MEDIUM: T4 biconditional domain clarified — canonical inputs only (R7M1). MEDIUM: V015 CANONICALIZE note clarified at scale=0 (R7M2). MEDIUM: V409 Ok() notation removed for consistency (R7M4). LOW: V033 note added trailing-zero count (R7L1). LOW: Step 0 >64 check vs Step 1 >2 check relationship documented (R7L2). Cross-RFC: Added BigIntWithScale change-propagation note (R7X2). |
+| 1.25 | 2026-03-24 | CRITICAL: Added b.limbs.length > 64 check in Step 0 (R11-131-C1). HIGH: V403 input changed to scale: 0 (R11-131-H1). HIGH: Moved V021/V022 before V023 to restore sequential order (R11-131-H2). MEDIUM: T4 biconditional: Err ⟺ (canonical AND overflow) (R11-131-M1). MEDIUM: Changed to_dqa stub param from scale to overflow_scale (R11-131-M2). LOW: V012 note clarified CANONICALIZE 4 iterations bounded by scale=4 (R11-131-L2). Cross-RFC: Added round-trip conformance note (R11-X1). |
 | 1.24 | 2026-03-24 | CRITICAL: Added empty limb slice check in Step 0 (R10-131-C1). CRITICAL: Added RFC-0132 to Depends On for BigIntWithScale type (R10-131-C2). HIGH: Fixed missing code fence in SQL Integration section (R10-131-H1). HIGH: Fixed V023 note — CANONICALIZE strips 2 scale units, not 8 decimal zeros (R10-131-H2). MEDIUM: Changed "value-preserving" to "mantissa-preserving" in bigint_with_scale_to_dqa (R10-131-M1). MEDIUM: Fixed M6 checklist description to include V035-V039 (R10-131-M4). |
 | 1.23 | 2026-03-24 | CRITICAL: Renamed `scale` parameter to `overflow_scale` in `bigint_to_dqa` function to avoid confusion with PostgreSQL/rust_decimal semantics. Updated all 49 test vectors to use `overflow_scale` parameter. MEDIUM: Added CAST(x AS DQA(n)) ↔ bigint_to_dqa(x, n) mapping documentation. MEDIUM: Added explanatory comment for BigIntWithScale.scale → overflow_scale. LOW: Updated error messages to clarify "raw value" vs "overflow_scale" overflow. LOW: Added note that RFC-0110's existing bigint_to_dqa(i128) is unchanged. |
 | 1.22 | 2026-03-24 | HIGH: Clarified BigIntWithScale round-trip preserves VALUE not SCALE (R17-131-H1). MEDIUM: Added test vectors V406-V410 (i64::MAX scale=1 overflow, -1 scale=18, boundary cases) (R17-131-M1). MEDIUM: Updated Implementation Checklist to 49 vectors (R17-131-L1). LOW: Fixed V409 — 10 × 10^17 fits in i64, not overflow (R18-131-L1). |

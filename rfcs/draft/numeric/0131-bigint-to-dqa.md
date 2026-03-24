@@ -2,9 +2,9 @@
 
 ## Status
 
-**Version:** 1.23 (Draft)
+**Version:** 1.24 (Draft)
 **Status:** Draft
-**Depends On:** RFC-0110 (BIGINT), RFC-0105 (DQA)
+**Depends On:** RFC-0110 (BIGINT), RFC-0105 (DQA), RFC-0132 (DQA→BigInt for BigIntWithScale type)
 **Category:** Numeric/Math
 
 ## Summary
@@ -129,6 +129,10 @@ STEPS:
    // Per RFC-0110 §Input Canonicalization Requirement, BigInt inputs MUST be canonical.
    // Non-canonical inputs are undefined behavior — implementations MUST TRAP.
    // Do NOT rely on upstream components having canonicalized.
+   If b.limbs.length == 0:
+     // Empty limb slice is non-canonical. RFC-0110 defines canonical zero as {limbs: [0], sign: false}.
+     // Accessing b.limbs[0] on an empty slice would panic — guard first.
+     TRAP
    If b.limbs.length == 2 and b.limbs[1] == 0:
      // Non-canonical: hi==0 means this should be a single-limb BigInt, regardless of sign.
      // Positive hi==0 is non-canonical (should use sign=false, lo=value);
@@ -374,8 +378,10 @@ The `BigIntWithScale` type from RFC-0132 preserves the numeric VALUE but NOT the
 /// Convert BigIntWithScale back to DQA.
 ///
 /// This complements `dqa_to_bigint_with_scale` from RFC-0132, reversing the value extraction.
-/// Value-preserving: DQA → BigIntWithScale → DQA recovers the numeric value.
-/// ⚠ Scale may be reduced by CANONICALIZE — the output scale may differ from input.
+/// Mantissa-preserving: DQA → BigIntWithScale → DQA recovers the numeric mantissa.
+/// The output DQA may have a different scale than the input due to CANONICALIZE stripping
+/// trailing decimal zeros. For example, DQA{1999, 2} → BigIntWithScale{1999, 2} → DQA{1999, 0}.
+/// ⚠ The scale may be reduced by CANONICALIZE — the output scale may differ from input.
 ///
 /// # Arguments
 /// * `bws` - The BigIntWithScale containing value and original scale
@@ -419,6 +425,7 @@ SELECT CAST(bigint_col AS DQA(6)) FROM account_balances;
 
 **Mapping:** `CAST(x AS DQA(n))` internally calls `bigint_to_dqa(x, n)` where `n` is the `overflow_scale` parameter.
 
+```sql
 -- Scale 2 for currency representation
 SELECT CAST(bigint_col AS DQA(2)) FROM currency_amounts;
 -- BigInt(1999) with scale 2 → DQA{1999, 0} (after CANONICALIZE)
@@ -660,7 +667,7 @@ Zero always canonicalizes to Dqa { 0, 0 } regardless of input scale.
 ```
 Input:  BigInt::from(1000000i64), overflow_scale = 2
 Output: Dqa { value: 1000000, scale: 0 }
-Note: 1000000 * 10^2 = 100000000. CANONICALIZE strips eight trailing zeros: 100000000 → 1000000, scale: 2 → 0.
+Note: 1000000 * 10^2 = 100000000. CANONICALIZE strips 2 scale units (bounded by scale=2), resulting in scale 0. The output mantissa 1000000 still contains trailing decimal zeros, but CANONICALIZE halts at scale=0.
 ```
 
 ### V024: i64::MIN Exactly
@@ -911,7 +918,7 @@ When BIGINT→DQA conversion fails at runtime (e.g., computed value exceeds rang
 | M3 | Limb inspection and range check | Pending | Medium |
 | M4 | i64::MIN special case handling | Pending | Low |
 | M5 | Error type construction | Pending | Low |
-| M6 | Test vector suite (49 vectors: V001-V034, V401-V410) | Pending | Medium |
+| M6 | Test vector suite (49 vectors: V001-V034, V035-V039, V401-V410) | Pending | Medium |
 | M7 | Integration with BigInt type | Pending | Medium |
 | M8 | Fuzz testing for edge cases | Pending | Medium |
 | M9 | `bigint_with_scale_to_dqa` with BigIntWithScale | Pending | Low |
@@ -926,7 +933,8 @@ When BIGINT→DQA conversion fails at runtime (e.g., computed value exceeds rang
 
 | Version | Date | Changes |
 |---------|------|---------|
-| 1.23 | 2026-03-24 | (Current) CRITICAL: Renamed `scale` parameter to `overflow_scale` in `bigint_to_dqa` function to avoid confusion with PostgreSQL/rust_decimal semantics where scale controls output precision. The parameter sets overflow threshold for scaled multiplication, NOT output precision. Updated all 49 test vectors to use `overflow_scale` parameter (R18-131-C1). |
+| 1.24 | 2026-03-24 | (Current) CRITICAL: Added empty limb slice check in Step 0 (R10-131-C1). CRITICAL: Added RFC-0132 to Depends On for BigIntWithScale type (R10-131-C2). HIGH: Fixed missing code fence in SQL Integration section (R10-131-H1). HIGH: Fixed V023 note — CANONICALIZE strips 2 scale units, not 8 decimal zeros (R10-131-H2). MEDIUM: Changed "value-preserving" to "mantissa-preserving" in bigint_with_scale_to_dqa (R10-131-M1). MEDIUM: Fixed M6 checklist description to include V035-V039 (R10-131-M4). |
+| 1.23 | 2026-03-24 | CRITICAL: Renamed `scale` parameter to `overflow_scale` in `bigint_to_dqa` function to avoid confusion with PostgreSQL/rust_decimal semantics. Updated all 49 test vectors to use `overflow_scale` parameter. MEDIUM: Added CAST(x AS DQA(n)) ↔ bigint_to_dqa(x, n) mapping documentation. MEDIUM: Added explanatory comment for BigIntWithScale.scale → overflow_scale. LOW: Updated error messages to clarify "raw value" vs "overflow_scale" overflow. LOW: Added note that RFC-0110's existing bigint_to_dqa(i128) is unchanged. |
 | 1.22 | 2026-03-24 | HIGH: Clarified BigIntWithScale round-trip preserves VALUE not SCALE (R17-131-H1). MEDIUM: Added test vectors V406-V410 (i64::MAX scale=1 overflow, -1 scale=18, boundary cases) (R17-131-M1). MEDIUM: Updated Implementation Checklist to 49 vectors (R17-131-L1). LOW: Fixed V409 — 10 × 10^17 fits in i64, not overflow (R18-131-L1). |
 | 1.21 | 2026-03-24 | CRITICAL: Fixed POW10_TABLE scale 18 entry from 10^19 to 10^18 (R16-131-M2). CRITICAL: Strengthened i64::MIN Step 1/Step 2 dependency documentation with CRITICAL warning (R16-131-C2). CRITICAL: Renamed BigIntError to BigIntToDqaError for consistency with DqaToBigIntError (R16-XC3). HIGH: Documented two-limb negative unconditional rejection reasoning (R16-131-C3). HIGH: Clarified Step 0 hi==0 check covers both signs (R16-131-H3). MEDIUM: Changed "inverse" to "complement" for bigint_with_scale_to_dqa (R16-131-M1). MEDIUM: Added gas note for error paths (R16-131-M3). MEDIUM: Added V404 (two-limb negative overflow) and V405 (BigIntWithScale overflow) (R16-131-M4). LOW: Clarified V022 note about 0 × 10^6 = 0 (R16-131-L3). |
 | 1.20 | 2026-03-24 | MEDIUM: Added test vectors V401-V403 for BigIntWithScale round-trip (R15-131-M1). LOW: Updated Implementation Checklist with M9 (bigint_with_scale_to_dqa) and corrected test vector count (42 vectors) (R15-131-L1). |

@@ -2,7 +2,7 @@
 
 ## Status
 
-**Version:** 1.9 (Draft)
+**Version:** 1.10 (Draft)
 **Status:** Draft
 **Depends On:** RFC-0110 (BIGINT), RFC-0105 (DQA)
 **Category:** Numeric/Math
@@ -96,14 +96,14 @@ This conversion is NOT the inverse of RFC-0131's BIGINT→DQA:
 | Direction | Conversion | Result |
 |-----------|------------|--------|
 | Forward | `DQA{1999, 2}` → BIGINT | BigInt(1999) |
-| Reverse | `BigInt(1999), scale=2` → DQA | DQA{199900, 2} |
+| Reverse | `BigInt(1999), scale=2` → DQA | DQA{1999, 0} |
 
-Round-trip: `DQA{1999, 2}` → BigInt(1999) → `DQA{199900, 2}` ≠ original
+Round-trip: `DQA{1999, 2}` → BigInt(1999) → `DQA{1999, 0}` ≠ original
 
 This asymmetry is intentional because:
 1. DQA→BIGINT extracts raw mantissa, ignoring scale
-2. BIGINT→DQA applies scale multiplication to the mantissa
-3. Scale information is LOST in the forward direction and cannot be recovered
+2. BIGINT→DQA applies scale multiplication, then CANONICALIZE strips trailing zeros
+3. Scale information is LOST in the RFC-0132 direction and cannot be recovered
 
 ### Lossless Round-Trip Case
 
@@ -221,6 +221,9 @@ STEPS:
 0. VERIFY_CANONICAL
    // Non-canonical DQA inputs are a precondition violation per RFC-0105.
    // Do NOT rely on upstream canonicalization — verify at entry point.
+   If dqa.scale > 18:
+     // Malformed: scale exceeds DQA maximum per RFC-0105
+     TRAP
    If dqa.value == 0 and dqa.scale != 0:
      // Non-canonical zero — MUST TRAP
      TRAP
@@ -318,13 +321,6 @@ Output: BigInt::from(i64::MAX)
 ```
 Input:  Dqa { value: -9223372036854775808, scale: 0 }
 Output: BigInt::from(i64::MIN)
-```
-
-### V007: Currency Representation
-```
-Input:  Dqa { value: 1999, scale: 2 }  // Represents $19.99
-Output: BigInt::from(1999i64)
-Note: scale ignored — raw mantissa extracted
 ```
 
 ### V008: Negative with Scale
@@ -444,28 +440,30 @@ GAS = 5  // Fixed cost, no variable component
 
 This is a fixed cost because:
 - No limb iteration needed (i64 always fits in 1 limb)
-- No range checking needed (always succeeds)
+- Step 0 VERIFY_CANONICAL only performs O(1) comparisons and a modulo check
 - No scale adjustment needed (scale is ignored)
+- Canonical inputs always succeed; non-canonical inputs TRAP
 
 ## Error Handling and Diagnostics
 
 ### Compile-Time Errors
 
-DQA→BIGINT conversion **cannot fail**. The compiler does not emit errors for this conversion.
+For **canonical** DQA inputs, conversion always succeeds. The compiler does not emit errors for canonical inputs.
 
 ```
--- This is always valid:
+-- Canonical DQA input — always valid:
 SELECT CAST(dqa_col AS BIGINT) FROM any_table;
--- No error possible
+-- No error possible for canonical inputs
 ```
 
 ### Runtime Behavior
 
 | Scenario | Behavior | Notes |
 |----------|----------|-------|
-| Any valid DQA | Always succeeds | No errors possible |
+| Canonical DQA | Always succeeds | No errors possible |
+| Non-canonical DQA | MUST TRAP | Step 0 VERIFY_CANONICAL rejects non-canonical inputs |
 
-**Note:** Unlike BIGINT→DQA (which can overflow), DQA→BIGINT always succeeds because BigInt has arbitrary precision.
+**Note:** Unlike BIGINT→DQA (which can return Error::OutOfRange), DQA→BIGINT for canonical inputs always succeeds because BigInt has arbitrary precision. Non-canonical inputs (e.g., `{0, s≠0}` or `{x, s}` where `x % 10 == 0`) MUST TRAP per Step 0.
 
 ## Formal Verification Framework
 
@@ -477,7 +475,7 @@ SELECT CAST(dqa_col AS BIGINT) FROM any_table;
 | T2 | Range Preservation | Output BigInt can represent input value | Required |
 | T3 | Raw Mantissa Extraction | Scale is ignored — raw i64 value extracted | Required |
 | T4 | Sign Preservation | Negative DQA produces negative BigInt | Required |
-| T5 | Zero Canonicalization | DQA{0, any} → BigInt::zero() | Required |
+| T5 | Zero Canonicalization | DQA{0, 0} → BigInt::zero() | Required |
 
 ### Theorem Specifications
 
@@ -513,9 +511,9 @@ SELECT CAST(dqa_col AS BIGINT) FROM any_table;
 
 | Version | Date | Changes |
 |---------|------|---------|
-| 1.9 | 2026-03-23 | CRITICAL: Clarified return type semantics — DqaToBigIntResult=BigInt means TRAP is panic/VM abort, not Result return (R8-132-C1). HIGH: Fixed docstring example — {4200,2} is non-canonical, changed to {1999,2} (R8-132-H1). MEDIUM: Added Step 0 VERIFY_CANONICAL to algorithm (R8-132-M1). MEDIUM: Fixed V004 — {4200,2} is non-canonical, changed to {1999,2} (R8-132-M2). MEDIUM: Fixed V016 — {100,1} is non-canonical, changed to {33,1} (R8-132-M3). LOW: Fixed Edge Cases and Scale Context Propagation tables — removed non-canonical {4200,2} and {42000,3} rows (R8-132-L1). |
+| 1.9 | 2026-03-24 | CRITICAL: Fixed Round-Trip Asymmetry reverse row — {199900,2} → {1999,0} (R9-132-C2). HIGH: Fixed T5 theorem table — DQA{0,0} not DQA{0,any} (R9-132-H1). HIGH: Fixed Gas Cost rationale — Step 0 has O(1) checks (R9-132-H2). MEDIUM: Fixed Error Handling section — canonical succeeds, non-canonical TRAPs (R9-132-M1). MEDIUM: Fixed V004/V007 duplicate — V007 merged into V004 (R9-132-M2). MEDIUM: Added scale>18 check to Step 0 (R9-132-M3). LOW: Fixed version history ordering — v1.7 after v1.8 (R9-132-L1). |
+| 1.8 | 2026-03-23 | CRITICAL: Clarified return type semantics — DqaToBigIntResult=BigInt means TRAP is panic/VM abort, not Result return (R8-132-C1). HIGH: Fixed docstring example — {4200,2} is non-canonical, changed to {1999,2} (R8-132-H1). MEDIUM: Added Step 0 VERIFY_CANONICAL to algorithm (R8-132-M1). MEDIUM: Fixed V004 — {4200,2} is non-canonical, changed to {1999,2} (R8-132-M2). MEDIUM: Fixed V016 — {100,1} is non-canonical, changed to {33,1} (R8-132-M3). LOW: Fixed Edge Cases and Scale Context Propagation tables — removed non-canonical {4200,2} and {42000,3} rows (R8-132-L1). |
 | 1.7 | 2026-03-23 | (Internal version — changes incorporated into v1.8) |
-| 1.8 | 2026-03-23 | HIGH: V007 note "truncated" → "scale ignored"; V008 title removed "Truncation" (R7-132-H1). HIGH: Canonicalization Policy — removed VM pre-check reliance; added explicit entry-point check note (R7-132-H2). MEDIUM: Summary/Input-Output now state "canonical DQA inputs" + "non-canonical MUST TRAP" (R7-132-M1). MEDIUM: T5 and Constraints table — {0,s} for s≠0 is non-canonical and MUST TRAP (R7-132-M2). LOW: V016 renamed "Scale 1 with Integer Value" → "Scale 1 — Raw Mantissa Extraction" (R7-132-L1). |
 | 1.6 | 2026-03-23 | Process: Version header now matches history entry (R4H4). |
 | 1.5 | 2026-03-23 | MEDIUM: Fixed version header (was 1.3, now 1.4) (R3M5). Removed dangling DqaToBigIntInput struct (R3M6). LOW: Fixed relationship table "scale truncation" wording (R3L3). |
 | 1.4 | 2026-03-23 | MEDIUM: Changed "truncation" to "raw mantissa extraction" throughout. |

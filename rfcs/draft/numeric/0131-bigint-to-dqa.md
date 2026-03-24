@@ -2,7 +2,7 @@
 
 ## Status
 
-**Version:** 1.15 (Draft)
+**Version:** 1.19 (Draft)
 **Status:** Draft
 **Depends On:** RFC-0110 (BIGINT), RFC-0105 (DQA)
 **Category:** Numeric/Math
@@ -166,6 +166,9 @@ STEPS:
    // Single-limb negative range check
    // Valid negative range: i64::MIN (0x8000_0000_0000_0000) to -1
    // i64::MIN magnitude = 2^63; anything larger overflows
+   // Note: We use ">" (strictly greater) because lo == 0x8000... is EXACTLY i64::MIN,
+   // which is valid. The special case lo == 0x8000... is handled in Step 2 where
+   // we need it for negation. Do NOT change this to ">=" or you will reject i64::MIN.
    If b.limbs.length == 1 and b.sign == true:
      If lo > 0x8000_0000_0000_0000:
        return Error(OutOfRange { attempted_magnitude: "<magnitude>", max_magnitude: 1u64 << 63, scale })
@@ -185,13 +188,15 @@ STEPS:
 2. EXTRACT_UNSCALED_I64
    // Step 1 validated the value fits in i64 range and rejected all non-canonical inputs.
    // Step 2 only handles single-limb extraction. (All 2-limb values are rejected in Step 1.)
+   // Key invariant: lo == 0x8000... with sign=true passed Step 1's check (it uses ">" not ">=")
+   // and is therefore exactly i64::MIN, which we handle specially here.
 
    // Extract the i64 value
    // Single-limb: value is lo (already range-checked in Step 1)
    // Apply sign: for negatives, negate the magnitude.
    // Special case: i64::MIN (0x8000_0000_0000_0000) cannot be negated directly
-   // because -i64::MIN overflows in two's complement. Since lo == 0x8000... with
-   // sign=true means the value is exactly i64::MIN (magnitude 2^63), which is valid.
+   // because -i64::MIN overflows in two's complement. Since Step 1 allows lo == 0x8000...
+   // (via ">" not ">="), this case is exactly i64::MIN and is handled by direct assignment.
    If b.sign:
      If lo == 0x8000_0000_0000_0000:
        unscaled = i64::MIN  // Can't negate directly; this IS the correct value
@@ -337,6 +342,50 @@ Round-trip is **lossless** when scale=0 or when the scaled mantissa has no trail
 | Scale > 0, input integer has trailing decimal zeros | `BigInt(42), scale=2` → {42, 0} → BigInt(42) | ✓ Value recovered (scale lost) |
 
 **For SQL currency use-cases:** Re-apply the target scale using RFC-0105 arithmetic operations after conversion.
+
+## Composition Semantics
+
+Chaining BIGINT→DQA with DQA→BIGINT does NOT recover the original scale context:
+
+```sql
+-- Step 1: BIGINT → DQA (RFC-0131, scale applied then canonicalized)
+SELECT bigint_to_dqa(bigint_col, 2) FROM accounts;
+-- BigInt(1999), scale=2 → DQA{1999, 0}
+
+-- Step 2: DQA → BIGINT (RFC-0132, scale ignored)
+SELECT CAST(dqa_col AS BIGINT) FROM accounts;
+-- DQA{1999, 0} → BigInt(1999)
+```
+
+**⚠ WARNING:** The composition `bigint_to_dqa(CAST(dqa_col AS BIGINT), 2)` produces `DQA{1999, 0}`, not the original DQA. This is a 100× magnitude error in financial calculations.
+
+**For round-trip safety:** Use `dqa_to_bigint_with_scale` from RFC-0132 and `bigint_with_scale_to_dqa` from this RFC.
+
+### Round-Trip Safe Conversion
+
+The `BigIntWithScale` type from RFC-0132 preserves scale metadata. To convert back to DQA:
+
+```rust
+/// Convert BigIntWithScale back to DQA.
+///
+/// This is the inverse of `dqa_to_bigint_with_scale` from RFC-0132.
+/// Round-trip: DQA → BigIntWithScale → DQA preserves the value (scale may be reduced by CANONICALIZE).
+///
+/// # Arguments
+/// * `bws` - The BigIntWithScale containing value and original scale
+///
+/// # Returns
+/// Ok(Dqa) on success, Err(BigIntError) on overflow
+///
+/// # Example
+/// BigIntWithScale { value: BigInt(1999), scale: 2 } → Dqa { value: 1999, scale: 0 }
+/// Note: CANONICALIZE strips trailing zeros, reducing scale from 2 to 0.
+pub fn bigint_with_scale_to_dqa(bws: &BigIntWithScale) -> Result<Dqa, BigIntError> {
+    bigint_to_dqa(&bws.value, bws.scale)
+}
+```
+
+**Note:** The round-trip is lossless for the value but the scale may be reduced by CANONICALIZE. To recover the original DQA exactly, multiply by `10^(original_scale - canonical_scale)` using RFC-0105 arithmetic.
 
 ### Negative Round-Trip
 ```
@@ -597,7 +646,7 @@ Zero always canonicalizes to Dqa { 0, 0 } regardless of input scale.
 ```
 Input:  BigInt::from(1000000i64), scale = 2
 Output: Dqa { value: 1000000, scale: 0 }
-Note: 1000000 * 10^2 = 100000000. CANONICALIZE strips two trailing zeros: 100000000 → 1000000, scale: 2 → 0.
+Note: 1000000 * 10^2 = 100000000. CANONICALIZE strips eight trailing zeros: 100000000 → 1000000, scale: 2 → 0.
 ```
 
 ### V024: i64::MIN Exactly
@@ -787,12 +836,15 @@ When BIGINT→DQA conversion fails at runtime (e.g., computed value exceeds rang
 
 | Version | Date | Changes |
 |---------|------|---------|
-| 1.14 | 2026-03-24 | (Current) CRITICAL: Fixed `-(lo as i64)` panic for i64::MIN — added i64::MIN special case in Step 2 (R9-131-C1). CRITICAL: Fixed Lossless Round-Trip Cases table — now shows {19,0} post-canonicalization (R9-131-C2). HIGH: Fixed two-limb hi==0 gap — added Step 0 VERIFY_CANONICAL (R9-131-H1). HIGH: Fixed malformed pseudocode syntax (R9-131-H2). LOW: Fixed function summary — scale is overflow threshold, not output precision (R9-131-L1). MEDIUM: Fixed version history citation (R9-131-M3). |
+| 1.19 | 2026-03-24 | (Current) FIXED: Added bigint_with_scale_to_dqa function specification to complete round-trip safe variant (R14-131-F1). |
+| 1.18 | 2026-03-24 | MEDIUM: Added Composition Semantics section documenting chained conversion behavior and 100× magnitude warning (R13-131-M1). |
+| 1.17 | 2026-03-24 | MEDIUM: Improved Step 1/Step 2 maintainability — added notes explaining why Step 1 uses ">" (not ">=") for i64::MIN boundary and why Step 2's special case is safe (R12-131-M1). |
+| 1.16 | 2026-03-24 | LOW: Fixed V023 note — "strips two trailing zeros" corrected to "strips eight trailing zeros" (math was wrong: 100000000 has 8 trailing zeros, not 2). LOW: Removed duplicate v1.9 version history entry (copy-paste artifact). |
+| 1.14 | 2026-03-24 | CRITICAL: Fixed `-(lo as i64)` panic for i64::MIN — added i64::MIN special case in Step 2 (R9-131-C1). CRITICAL: Fixed Lossless Round-Trip Cases table — now shows {19,0} post-canonicalization (R9-131-C2). HIGH: Fixed two-limb hi==0 gap — added Step 0 VERIFY_CANONICAL (R9-131-H1). HIGH: Fixed malformed pseudocode syntax (R9-131-H2). LOW: Fixed function summary — scale is overflow threshold, not output precision (R9-131-L1). MEDIUM: Fixed version history citation (R9-131-M3). |
 | 1.13 | 2026-03-23 | (Internal version — changes incorporated into v1.14) |
 | 1.12 | 2026-03-23 | (Internal version — changes incorporated into v1.14) |
 | 1.11 | 2026-03-23 | (Internal version — changes incorporated into v1.14) |
 | 1.10 | 2026-03-23 | (Internal version — changes incorporated into v1.14) |
-| 1.9 | 2026-03-23 | HIGH: Added missing single-limb negative range check (R5H2). MEDIUM: Replaced POW10_TABLE informal labels with exact u64 values (R5M1), added T4 corollary for 3+ limb BigInts (R5M3). LOW: Removed BigIntToDqaInput dead struct (R5L1), fixed pow10→i128 comment bound (R5L2), removed V008 normative output (R5H1 — UB cannot have expected output). |
 | 1.9 | 2026-03-23 | HIGH: Added missing single-limb negative range check (R5H2). MEDIUM: Replaced POW10_TABLE informal labels with exact u64 values (R5M1), added T4 corollary for 3+ limb BigInts (R5M3). LOW: Removed BigIntToDqaInput dead struct (R5L1), fixed pow10→i128 comment bound (R5L2), removed V008 normative output (R5H1 — UB cannot have expected output). |
 | 1.8 | 2026-03-23 | LOW: Fixed V027/V028 rejection criterion notes — "hi > 0" not "hi ≥ 2^63". |
 | 1.7 | 2026-03-23 | LOW: Added lossless round-trip case documentation — scale=0 preserves value exactly (R3L4). |

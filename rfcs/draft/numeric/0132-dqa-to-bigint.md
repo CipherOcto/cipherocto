@@ -2,7 +2,7 @@
 
 ## Status
 
-**Version:** 1.10 (Draft)
+**Version:** 1.11 (Draft)
 **Status:** Draft
 **Depends On:** RFC-0110 (BIGINT), RFC-0105 (DQA)
 **Category:** Numeric/Math
@@ -47,13 +47,12 @@ RFC-0105 defines DQA but does not define DQA→BIGINT conversion. RFC-0110 defin
 pub type DqaToBigIntResult = BigInt;
 ```
 
-**Important:** The return type is `BigInt`, not `Result<BigInt, Error>`. This is a deliberate design choice:
-- **Canonical inputs:** Always succeed → function returns `BigInt` directly
-- **Non-canonical inputs:** MUST TRAP → VM-level exception/abort (not a Result return)
+**Contract:**
+- **Precondition:** Input is canonical per RFC-0105 (scale ≤ 18, value=0 implies scale=0, value≠0 implies no trailing decimal zeros)
+- **If precondition satisfied:** Always succeeds → returns `BigInt`
+- **If precondition violated:** MUST TRAP → VM-level exception/abort
 
-The `DqaToBigIntResult = BigInt` type alias makes it impossible to return an error value — any non-canonical input triggers a panic/abort at the VM level, not a domain-level error return. This is consistent with RFC-0105's "MUST TRAP" semantics for canonicalization violations.
-
-DQA→BIGINT conversion cannot fail for **canonical** DQA inputs. Non-canonical inputs MUST TRAP per RFC-0105 §VM Canonicalization Rule.
+The return type is `BigInt`, not `Result<BigInt, Error>`. This is a deliberate design choice — non-canonical input triggers a panic/abort at the VM level, not a domain-level error return. This is consistent with RFC-0105's "MUST TRAP" semantics for canonicalization violations.
 
 ## Scale Context Propagation
 
@@ -227,9 +226,11 @@ STEPS:
    If dqa.value == 0 and dqa.scale != 0:
      // Non-canonical zero — MUST TRAP
      TRAP
-   If dqa.value != 0 and dqa.value % 10 == 0:
-     // Has trailing decimal zeros — non-canonical per RFC-0105
-     // MUST TRAP
+   If dqa.scale > 0 and dqa.value != 0 and dqa.value % 10 == 0:
+     // Has trailing decimal zeros — non-canonical per RFC-0105.
+     // Note: When scale=0, there are no decimal places, so trailing digit zeros
+     // in the integer value (e.g., {10,0}) are not decimal trailing zeros.
+     // Only check for trailing zeros when scale > 0.
      TRAP
 
 1. EXTRACT_VALUE
@@ -511,6 +512,8 @@ SELECT CAST(dqa_col AS BIGINT) FROM any_table;
 
 | Version | Date | Changes |
 |---------|------|---------|
+| 1.11 | 2026-03-24 | (Current) CRITICAL: Fixed trailing-zero check — must be `scale > 0 and value % 10 == 0` not `value % 10 == 0` (R6C4). MEDIUM: Fixed Input/Output Contract — now states precondition explicitly (R6M5). |
+| 1.10 | 2026-03-24 | (Internal version — changes incorporated into v1.11) |
 | 1.9 | 2026-03-24 | CRITICAL: Fixed Round-Trip Asymmetry reverse row — {199900,2} → {1999,0} (R9-132-C2). HIGH: Fixed T5 theorem table — DQA{0,0} not DQA{0,any} (R9-132-H1). HIGH: Fixed Gas Cost rationale — Step 0 has O(1) checks (R9-132-H2). MEDIUM: Fixed Error Handling section — canonical succeeds, non-canonical TRAPs (R9-132-M1). MEDIUM: Fixed V004/V007 duplicate — V007 merged into V004 (R9-132-M2). MEDIUM: Added scale>18 check to Step 0 (R9-132-M3). LOW: Fixed version history ordering — v1.7 after v1.8 (R9-132-L1). |
 | 1.8 | 2026-03-23 | CRITICAL: Clarified return type semantics — DqaToBigIntResult=BigInt means TRAP is panic/VM abort, not Result return (R8-132-C1). HIGH: Fixed docstring example — {4200,2} is non-canonical, changed to {1999,2} (R8-132-H1). MEDIUM: Added Step 0 VERIFY_CANONICAL to algorithm (R8-132-M1). MEDIUM: Fixed V004 — {4200,2} is non-canonical, changed to {1999,2} (R8-132-M2). MEDIUM: Fixed V016 — {100,1} is non-canonical, changed to {33,1} (R8-132-M3). LOW: Fixed Edge Cases and Scale Context Propagation tables — removed non-canonical {4200,2} and {42000,3} rows (R8-132-L1). |
 | 1.7 | 2026-03-23 | (Internal version — changes incorporated into v1.8) |

@@ -2,7 +2,7 @@
 
 ## Status
 
-**Version:** 1.14 (Draft)
+**Version:** 1.15 (Draft)
 **Status:** Draft
 **Depends On:** RFC-0110 (BIGINT), RFC-0105 (DQA)
 **Category:** Numeric/Math
@@ -12,6 +12,8 @@
 This RFC specifies the conversion algorithm from BIGINT (RFC-0110, arbitrary-precision integer up to 4096 bits) to DQA (RFC-0105, i64 with 0-18 decimal scale). This conversion is necessary for the Numeric Tower to support operations that require BIGINT values to be used in DQA contexts, and for explicit CAST expressions between these types.
 
 The conversion TRAPs if the BIGINT value exceeds the representable DQA range (i64::MIN to i64::MAX).
+
+**Important: CANONICALIZE is applied in Step 4.** After multiplying by 10^scale, CANONICALIZE per RFC-0105 strips trailing decimal zeros from the mantissa, typically reducing output scale to 0. The `scale` parameter is an overflow threshold exponent — it controls the range limit for the intermediate scaled value, not the output scale. The output scale is always determined by CANONICALIZE. Callers needing a specific output scale (e.g., SQL columns) must re-apply it after conversion using operations defined in RFC-0105.
 
 ## Motivation
 
@@ -131,12 +133,12 @@ STEPS:
      // Non-canonical: hi==0 means this should be a single-limb BigInt.
      // Values with magnitude < 2^63 must use single-limb representation.
      TRAP
-   If b.sign == false and b.limbs.length == 1 and b.limbs[0] == 0:
-     // Canonical zero is always represented as sign=false with zero limbs or sign=false, lo=0.
-     // This case is already handled correctly; no action needed.
-     pass
-   // Note: RFC-0110 canonical form also requires negative zero (sign=true, limbs=[0])
-   // to be canonicalized to positive zero. Implementations MUST TRAP on negative zero.
+   If b.sign == true and b.limbs.length == 1 and b.limbs[0] == 0:
+     // Negative zero (sign=true, limbs=[0]) is non-canonical per RFC-0110.
+     // Canonical zero is always sign=false. Implementations MUST TRAP.
+     TRAP
+   // Note: RFC-0110 canonical form also requires that positive zero uses sign=false.
+   // Single-limb with lo=0 and sign=false is canonical zero — no action needed.
 
 1. VALIDATE_INPUT
    If scale > 18:
@@ -190,15 +192,13 @@ STEPS:
    // Special case: i64::MIN (0x8000_0000_0000_0000) cannot be negated directly
    // because -i64::MIN overflows in two's complement. Since lo == 0x8000... with
    // sign=true means the value is exactly i64::MIN (magnitude 2^63), which is valid.
-   unscaled = if b.sign {
-     if lo == 0x8000_0000_0000_0000 {
-       i64::MIN  // Can't negate directly; this IS the correct value
-     } else {
-       -(lo as i64)
-     }
-   } else {
-     lo as i64
-   }
+   If b.sign:
+     If lo == 0x8000_0000_0000_0000:
+       unscaled = i64::MIN  // Can't negate directly; this IS the correct value
+     Else:
+       unscaled = -(lo as i64)
+   Else:
+     unscaled = lo as i64
 
 3. APPLY_SCALE_AND_CHECK_OVERFLOW
    // Multiply by 10^scale and check for overflow
@@ -262,6 +262,10 @@ STEPS:
 4. CONSTRUCT_DQA
    // Apply CANONICALIZE per RFC-0105 §Canonical Representation
    // This ensures trailing decimal zeros are stripped from the mantissa
+   // while decrementing scale. Stripping stops when scale reaches 0 or
+   // when the mantissa no longer ends in a decimal zero.
+   // Note: CANONICALIZE never produces negative scale — if stripping
+   // would reduce scale below 0, the value is kept as-is with scale=0.
    dqa = Dqa { value: scaled_value, scale: scale }
    Return CANONICALIZE(dqa)
 ```
@@ -300,11 +304,11 @@ The scale parameter in BIGINT→DQA conversion has specific semantics:
 - `BigInt(1999)` with scale 2 → 1999 × 10^2 = 199900 → CANONICALIZE → `{1999, 0}`
 - `BigInt(1)` with scale 18 → 1 × 10^18 = 1000000000000000000 → CANONICALIZE → `{1, 0}`
 
-**⚠ SQL Use-Case Note:** The CANONICALIZE step means the output scale is often reduced to 0, destroying the caller's intended decimal precision. For SQL column assignment, callers MUST apply `DQA_ASSIGN_TO_COLUMN(dqa, target_scale)` after conversion to re-establish the target column's scale. Example:
+**⚠ SQL Use-Case Note:** The CANONICALIZE step means the output scale is often reduced to 0, destroying the caller's intended decimal precision. For SQL column assignment, callers MUST re-apply the target scale using operations defined in RFC-0105 (e.g., multiply by 10^target_scale). Example:
 ```sql
 -- After RFC-0131 conversion, result is {1999, 0}, not {199900, 2}
--- To store as DQA(2) column, caller must:
-SELECT DQA_ASSIGN_TO_COLUMN(CAST(bigint_col AS DQA(0)), 2) FROM currency;
+-- To store as DQA(2) column, caller must multiply by 10^2:
+SELECT CAST(bigint_col AS DQA(0)) * CAST(100 AS DQA(0)) FROM currency;
 ```
 
 This is different from DECIMAL where scale is metadata about precision. Here, scale is part of the DQA type definition per RFC-0105 and affects the mantissa value directly.
@@ -332,7 +336,7 @@ Round-trip is **lossless** when scale=0 or when the scaled mantissa has no trail
 | Scale > 0, input integer has no trailing decimal zeros | `BigInt(19), scale=2` → {19, 0} → BigInt(19) | ✓ Value recovered (scale lost) |
 | Scale > 0, input integer has trailing decimal zeros | `BigInt(42), scale=2` → {42, 0} → BigInt(42) | ✓ Value recovered (scale lost) |
 
-**For SQL currency use-cases:** Use `DQA_ASSIGN_TO_COLUMN` after conversion to restore the target column's scale.
+**For SQL currency use-cases:** Re-apply the target scale using RFC-0105 arithmetic operations after conversion.
 
 ### Negative Round-Trip
 ```
@@ -356,9 +360,9 @@ SELECT CAST(bigint_col AS DQA(6)) FROM account_balances;
 -- Scale 2 for currency representation
 SELECT CAST(bigint_col AS DQA(2)) FROM currency_amounts;
 -- BigInt(1999) with scale 2 → DQA{1999, 0} (after CANONICALIZE)
--- ⚠ Note: Scale 2 intent ($19.99) is lost. Use DQA_ASSIGN_TO_COLUMN
--- to restore scale for column assignment:
-SELECT DQA_ASSIGN_TO_COLUMN(CAST(bigint_col AS DQA(0)), 2) FROM currency_amounts;
+-- ⚠ Note: Scale 2 intent ($19.99) is lost. To restore scale,
+-- multiply by 10^2 using RFC-0105 arithmetic:
+SELECT CAST(bigint_col AS DQA(0)) * CAST(100 AS DQA(0)) FROM currency_amounts;
 
 -- FORBIDDEN: Explicit CAST from oversized BigInt
 SELECT CAST(huge_bigint_col AS DQA(0)) FROM large_values;
@@ -383,7 +387,7 @@ SELECT CAST(huge_bigint_col AS DQA(0)) FROM large_values;
 | **Pre-scale range** | \|BigInt\| ≤ i64::MAX — checked in Step 1 before scaling |
 | **Post-scale range** | \|BigInt × 10^scale\| ≤ i64::MAX (positive) or ≤ \|i64::MIN\| (negative) — checked in Step 3 |
 | **Overflow policy** | Error on overflow (no truncation, no saturation) |
-| **BigInt size** | 1-2 limbs (64-128 bits). 3+ limbs always rejected in Step 1 |
+| **BigInt size** | 1 limb after canonicalization. Step 0 rejects non-canonical hi==0 two-limb; Step 1 rejects 3+ limb |
 | **Determinism** | Identical BigInt input always produces identical DQA output |
 | **No rounding** | BIGINT→DQA does not round; it traps on overflow |
 | **Canonical input** | Algorithm assumes canonical BigInt per RFC-0110. Non-canonical inputs (e.g., two-limb with hi=0, or negative-zero) are undefined behavior. Implementations MUST TRAP on non-canonical input per RFC-0110 §Input Canonicalization Requirement. |
@@ -454,7 +458,7 @@ values < 2^63. Non-canonical inputs are undefined behavior — implementations M
 ```
 Input:  BigInt { limbs: [0, 1], sign: true }, scale = 0
 Output: Error(OutOfRange)
-Note: |2^64| > i64::MAX after sign adjustment
+Note: Magnitude 2^64 exceeds |i64::MIN| = 2^63 for negative values
 ```
 
 ### V010: Scale Adjustment for Currency
@@ -462,7 +466,7 @@ Note: |2^64| > i64::MAX after sign adjustment
 Input:  BigInt::from(1999i64), scale = 2
 Output: Dqa { value: 1999, scale: 0 }
 Note: 1999 × 10^2 = 199900. CANONICALIZE strips two trailing zeros: 199900 → 1999, scale: 2 → 0.
-⚠ For SQL currency, caller must use DQA_ASSIGN_TO_COLUMN to restore scale.
+⚠ For SQL currency, caller must re-apply target scale using RFC-0105 arithmetic.
 ```
 
 ### V011: Maximum Scale (18)
@@ -783,9 +787,12 @@ When BIGINT→DQA conversion fails at runtime (e.g., computed value exceeds rang
 
 | Version | Date | Changes |
 |---------|------|---------|
-| 1.14 | 2026-03-24 | CRITICAL: Fixed `-(lo as i64)` panic for i64::MIN — added i64::MIN special case in Step 2 (R9-131-C1). CRITICAL: Fixed Lossless Round-Trip Cases table — now shows {19,0} post-canonicalization (R9-131-C2). HIGH: Fixed two-limb hi==0 gap — added Step 0 VERIFY_CANONICAL (R9-131-H1). HIGH: Fixed malformed pseudocode syntax — magnitude_repr: "<magnitude>" → "<magnitude>" (R9-131-H2). LOW: Fixed function summary — scale is overflow threshold, not output precision (R9-131-L1). MEDIUM: Fixed version history citation — R8-131-M2 → R8-131-M3 (R9-131-M3). |
-| 1.13 | 2026-03-23 | CRITICAL: Fixed sign application in Step 2 — apply sign after magnitude extraction (R8-131-H2). CRITICAL: V008 removed normative output — non-canonical input is UB (R8-131-C1). CRITICAL: Fixed Round-Trip Asymmetry forward example (R8-131-C2). HIGH: Fixed function docstring example — {42000,3} → {42,0} after CANONICALIZE (R8-131-H1). MEDIUM: Replaced b.to_string() with magnitude_repr placeholder in pseudocode (R8-131-M1). MEDIUM: Added missing v1.10 entry in version history (R8-131-M3). LOW: Fixed duplicate "Negative Round-Trip" section header (R8-131-L2). |
-| 1.10 | 2026-03-23 | (Internal version — changes incorporated into v1.12) |
+| 1.14 | 2026-03-24 | (Current) CRITICAL: Fixed `-(lo as i64)` panic for i64::MIN — added i64::MIN special case in Step 2 (R9-131-C1). CRITICAL: Fixed Lossless Round-Trip Cases table — now shows {19,0} post-canonicalization (R9-131-C2). HIGH: Fixed two-limb hi==0 gap — added Step 0 VERIFY_CANONICAL (R9-131-H1). HIGH: Fixed malformed pseudocode syntax (R9-131-H2). LOW: Fixed function summary — scale is overflow threshold, not output precision (R9-131-L1). MEDIUM: Fixed version history citation (R9-131-M3). |
+| 1.13 | 2026-03-23 | (Internal version — changes incorporated into v1.14) |
+| 1.12 | 2026-03-23 | (Internal version — changes incorporated into v1.14) |
+| 1.11 | 2026-03-23 | (Internal version — changes incorporated into v1.14) |
+| 1.10 | 2026-03-23 | (Internal version — changes incorporated into v1.14) |
+| 1.9 | 2026-03-23 | HIGH: Added missing single-limb negative range check (R5H2). MEDIUM: Replaced POW10_TABLE informal labels with exact u64 values (R5M1), added T4 corollary for 3+ limb BigInts (R5M3). LOW: Removed BigIntToDqaInput dead struct (R5L1), fixed pow10→i128 comment bound (R5L2), removed V008 normative output (R5H1 — UB cannot have expected output). |
 | 1.9 | 2026-03-23 | HIGH: Added missing single-limb negative range check (R5H2). MEDIUM: Replaced POW10_TABLE informal labels with exact u64 values (R5M1), added T4 corollary for 3+ limb BigInts (R5M3). LOW: Removed BigIntToDqaInput dead struct (R5L1), fixed pow10→i128 comment bound (R5L2), removed V008 normative output (R5H1 — UB cannot have expected output). |
 | 1.8 | 2026-03-23 | LOW: Fixed V027/V028 rejection criterion notes — "hi > 0" not "hi ≥ 2^63". |
 | 1.7 | 2026-03-23 | LOW: Added lossless round-trip case documentation — scale=0 preserves value exactly (R3L4). |

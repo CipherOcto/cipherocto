@@ -2,7 +2,7 @@
 
 ## Status
 
-**Version:** 1.26 (Draft)
+**Version:** 1.27 (Draft)
 **Status:** Draft
 **Depends On:** RFC-0110 (BIGINT), RFC-0105 (DQA), RFC-0132 (DQA→BigInt for BigIntWithScale type)
 **Category:** Numeric/Math
@@ -155,6 +155,7 @@ STEPS:
      // that exceed i64's representable range (overflow). Any input with >2 limbs
      // fails both checks, but the >64 check catches non-canonical inputs earlier
      // in Step 0 (TRAP) rather than later in Step 1 (Error).
+     TRAP
 
 1. VALIDATE_INPUT
    If overflow_scale > 18:
@@ -292,10 +293,11 @@ STEPS:
 4. CONSTRUCT_DQA
    // Apply CANONICALIZE per RFC-0105 §Canonical Representation
    // This ensures trailing decimal zeros are stripped from the mantissa
-   // while decrementing scale. Stripping stops when scale reaches 0 or
-   // when the mantissa no longer ends in a decimal zero.
-   // Note: CANONICALIZE never produces negative scale — if stripping
-   // would reduce scale below 0, the value is kept as-is with scale=0.
+   // while decrementing scale. Stripping follows this evaluation order at each step:
+   // (a) If scale == 0, stop — scale=0 means no decimal places exist;
+   // (b) If mantissa % 10 != 0, stop — no trailing decimal zero to strip;
+   // (c) Else strip one trailing zero and decrement scale, then repeat.
+   // Note: CANONICALIZE never produces negative scale.
    // ⚠ CANONICALIZE halts at scale=0: once scale reaches 0, no further stripping
    // occurs regardless of whether the mantissa contains digit zeros. This is because
    // scale=0 means no decimal places exist — trailing zeros in the integer (e.g., 10, 100)
@@ -368,28 +370,11 @@ Round-trip is **lossless** when scale=0 or when the scaled mantissa has no trail
 | Condition | Example | Round-trip |
 |----------|---------|------------|
 | scale=0 | `BigInt(42), scale=0` → {42, 0} → BigInt(42) | ✓ Lossless |
-| Scale > 0, input integer has no trailing decimal zeros | `BigInt(19), scale=2` → {19, 0} → BigInt(19) | ✓ Value recovered (scale lost) |
-| Scale > 0, input integer has trailing decimal zeros | `BigInt(42), scale=2` → {42, 0} → BigInt(42) | ✓ Value recovered (scale lost) |
+| Scale > 0 | `BigInt(19), scale=2` → {19, 0} → BigInt(19) | ✓ Value recovered (scale lost) |
 
 **For SQL currency use-cases:** Re-apply the target scale using RFC-0105 arithmetic operations after conversion.
 
-## Composition Semantics
-
-Chaining BIGINT→DQA with DQA→BIGINT does NOT recover the original scale context:
-
-```sql
--- Step 1: BIGINT → DQA (RFC-0131, scale applied then canonicalized)
-SELECT bigint_to_dqa(bigint_col, 2) FROM accounts;
--- BigInt(1999), scale=2 → DQA{1999, 0}
-
--- Step 2: DQA → BIGINT (RFC-0132, scale ignored)
-SELECT CAST(dqa_col AS BIGINT) FROM accounts;
--- DQA{1999, 0} → BigInt(1999)
-```
-
-**⚠ WARNING:** The composition `bigint_to_dqa(CAST(dqa_col AS BIGINT), 2)` produces `DQA{1999, 0}`, not the original DQA. This is a 100× magnitude error in financial calculations.
-
-### Value-Preserving Conversion
+## BigIntWithScale to DQA Conversion
 
 The `BigIntWithScale` type from RFC-0132 preserves the numeric VALUE but NOT the scale through the round-trip. The scale may be reduced by CANONICALIZE in Step 4. To convert back to DQA:
 
@@ -427,6 +412,22 @@ pub fn bigint_with_scale_to_dqa(bws: &BigIntWithScale) -> Result<Dqa, BigIntToDq
 ```
 
 **Note:** The value is recovered but the scale may be reduced by CANONICALIZE. To recover the original DQA scale, multiply the result by `10^(original_scale - canonical_scale)` using RFC-0105 arithmetic.
+
+## Composition Semantics
+
+Chaining BIGINT→DQA with DQA→BIGINT does NOT recover the original scale context:
+
+```sql
+-- Step 1: BIGINT → DQA (RFC-0131, scale applied then canonicalized)
+SELECT bigint_to_dqa(bigint_col, 2) FROM accounts;
+-- BigInt(1999), scale=2 → DQA{1999, 0}
+
+-- Step 2: DQA → BIGINT (RFC-0132, scale ignored)
+SELECT CAST(dqa_col AS BIGINT) FROM accounts;
+-- DQA{1999, 0} → BigInt(1999)
+```
+
+**⚠ WARNING:** The composition `bigint_to_dqa(CAST(dqa_col AS BIGINT), 2)` produces `DQA{1999, 0}`, not the original DQA. This is a 100× magnitude error in financial calculations.
 
 ### Negative Round-Trip
 ```
@@ -497,6 +498,8 @@ SELECT CAST(huge_bigint_col AS DQA(0)) FROM large_values;
 **Precedence Rule:** This RFC does not override RFC-0105 or RFC-0110. All outputs satisfy RFC-0105's canonical form requirements. All inputs must satisfy RFC-0110's canonical form requirements.
 
 **Cross-RFC Type Dependency:** `BigIntWithScale` is defined in RFC-0132 §Input/Output Contract. If RFC-0132 changes the `BigIntWithScale` definition (e.g., adds a field, changes semantics), RFC-0131 §Value-Preserving Conversion and §Composition Semantics must be reviewed and updated accordingly.
+
+## Test Vectors
 
 ### V001: Zero Conversion
 ```
@@ -576,6 +579,7 @@ Note: 1 × 10^18 = 1000000000000000000. CANONICALIZE strips 18 trailing zeros: 1
 Input:  BigInt::from(-100i64), overflow_scale = 4
 Output: Dqa { value: -100, scale: 0 }
 Note: -100 * 10^4 = -1000000. CANONICALIZE runs 4 iterations (bounded by scale=4), producing {-100, 0}.
+Output mantissa -100 contains trailing zeros but CANONICALIZE halts at scale=0 — these are integer digits, not decimal trailing zeros.
 ```
 
 ### V013: i64 Boundary — One Less Than MAX
@@ -776,7 +780,7 @@ Output: Dqa { value: -1, scale: 0 }
 Note: |-1| × 10^1 = 10. CANONICALIZE strips trailing zero: 10 → 1, scale: 1 → 0.
 ```
 
-### V401: BigIntWithScale Round-Trip — Positive
+### V401: BigIntWithScale Extraction — Positive
 ```
 Input:  BigIntWithScale { value: BigInt::from(1999i64), scale: 2 }
 Output: Ok(Dqa { value: 1999, scale: 0 })
@@ -784,7 +788,7 @@ Note: 1999 × 10^2 = 199900. CANONICALIZE strips two trailing zeros: 199900 → 
 Round-trip: DQA{1999, 2} → BigIntWithScale{1999, 2} → DQA{1999, 0}. Scale reduced by CANONICALIZE.
 ```
 
-### V402: BigIntWithScale Round-Trip — Negative
+### V402: BigIntWithScale Extraction — Negative
 ```
 Input:  BigIntWithScale { value: BigInt::from(-42i64), scale: 3 }
 Output: Ok(Dqa { value: -42, scale: 0 })
@@ -792,7 +796,7 @@ Note: -42 × 10^3 = -42000. CANONICALIZE strips three trailing zeros: -42000 →
 Round-trip: DQA{-42, 3} → BigIntWithScale{-42, 3} → DQA{-42, 0}. Scale reduced by CANONICALIZE.
 ```
 
-### V403: BigIntWithScale Round-Trip — Zero
+### V403: BigIntWithScale Extraction — Zero
 ```
 Input:  BigIntWithScale { value: BigInt::zero(), scale: 0 }
 Output: Ok(Dqa { value: 0, scale: 0 })
@@ -825,7 +829,7 @@ Note: 9223372036854775807 × 10 = 92233720368547758070 > i64::MAX
 ```
 Input:  BigInt::from(-1i64), overflow_scale = 18
 Output: Dqa { value: -1, scale: 0 }
-Note: |-1| × 10^18 = 10^18 < i64::MAX. CANONICALIZE strips 18 trailing zeros.
+Note: |-1| × 10^18 = 10^18 < |i64::MIN| = 2^63. CANONICALIZE strips 18 trailing zeros.
 ```
 
 ### V408: 9 with Scale 17 — Success
@@ -847,6 +851,16 @@ Note: 10 × 10^17 = 10^18 = 1000000000000000000 < i64::MAX (9.2×10^18). Fits.
 Input:  BigInt::from(100i64), overflow_scale = 17
 Output: Error(OutOfRange)
 Note: 100 × 10^17 = 10^19 = 10000000000000000000 > i64::MAX. Overflow.
+```
+
+### V411: BigIntWithScale — Oversized Value (Direct Construction Error Path)
+```
+Input:  BigIntWithScale { value: BigInt { limbs: [0, 1], sign: false }, scale: 0 }
+Output: Error(OutOfRange)
+Note: Directly constructed BigIntWithScale with value exceeding i64 range. This error path
+exercises the overflow check in bigint_with_scale_to_dqa when bws.value itself is too large
+(even with scale=0). Such a BigIntWithScale cannot be produced by dqa_to_bigint_with_scale
+since DQA values always fit in i64, but directly constructed inputs are still validated.
 ```
 
 ## Implementation Notes
@@ -948,7 +962,7 @@ Note: Non-canonical inputs are outside this theorem's domain — they TRAP per S
 | M3 | Limb inspection and range check | Pending | Medium |
 | M4 | i64::MIN special case handling | Pending | Low |
 | M5 | Error type construction | Pending | Low |
-| M6 | Test vector suite (49 vectors: V001-V034, V035-V039, V401-V410) | Pending | Medium |
+| M6 | Test vector suite (48 normative + 1 informational V008: V001-V034, V035-V039, V401-V410) | Pending | Medium |
 | M7 | Integration with BigInt type | Pending | Medium |
 | M8 | Fuzz testing for edge cases | Pending | Medium |
 | M9 | `bigint_with_scale_to_dqa` with BigIntWithScale | Pending | Low |
@@ -963,7 +977,8 @@ Note: Non-canonical inputs are outside this theorem's domain — they TRAP per S
 
 | Version | Date | Changes |
 |---------|------|---------|
-| 1.26 | 2026-03-24 | (Current) CRITICAL: CANONICALIZE stopping rule clarified — scale=0 means no decimal places, integer trailing zeros not stripped (R7C1). CRITICAL: V023 output {1000000,0} canonical per RFC-0105 explained (R7C2). HIGH: Two-limb hi>0 redundancy documented after Step 0 (R7H1). HIGH: bigint_with_scale_to_dqa input assumptions documented (R7H2). HIGH: Constraints table corrected to show 2-limb canonical handled in Step 1 (R7H3). MEDIUM: T4 biconditional domain clarified — canonical inputs only (R7M1). MEDIUM: V015 CANONICALIZE note clarified at scale=0 (R7M2). MEDIUM: V409 Ok() notation removed for consistency (R7M4). LOW: V033 note added trailing-zero count (R7L1). LOW: Step 0 >64 check vs Step 1 >2 check relationship documented (R7L2). Cross-RFC: Added BigIntWithScale change-propagation note (R7X2). |
+| 1.27 | 2026-03-24 | (Current) HIGH: Made CANONICALIZE stopping condition evaluation order explicit in Step 4 (R8H1). HIGH: Added ## Test Vectors section heading before V001 (R8H3). HIGH: Added V411 test vector for bigint_with_scale_to_dqa error path (R8H2). MEDIUM: Added TRAP to Step 0 b.limbs.length > 64 check (R8M1). MEDIUM: V012 note added scale=0 trailing-zero clarification (R8M2). MEDIUM: V407 note corrected bound to |i64::MIN| for negative (R8M3). MEDIUM: M6 checklist count corrected to 48 normative + 1 informational (R8M4). LOW: Merged Lossless Round-Trip table rows 2 and 3 (R8L1). LOW: Promoted bigint_with_scale_to_dqa to its own section (R8L2). LOW: V401-V403 headings changed to BigIntWithScale Extraction (R8X1). |
+| 1.26 | 2026-03-24 | CRITICAL: CANONICALIZE stopping rule clarified — scale=0 means no decimal places, integer trailing zeros not stripped (R7C1). CRITICAL: V023 output {1000000,0} canonical per RFC-0105 explained (R7C2). HIGH: Two-limb hi>0 redundancy documented after Step 0 (R7H1). HIGH: bigint_with_scale_to_dqa input assumptions documented (R7H2). HIGH: Constraints table corrected to show 2-limb canonical handled in Step 1 (R7H3). MEDIUM: T4 biconditional domain clarified — canonical inputs only (R7M1). MEDIUM: V015 CANONICALIZE note clarified at scale=0 (R7M2). MEDIUM: V409 Ok() notation removed for consistency (R7M4). LOW: V033 note added trailing-zero count (R7L1). LOW: Step 0 >64 check vs Step 1 >2 check relationship documented (R7L2). Cross-RFC: Added BigIntWithScale change-propagation note (R7X2). |
 | 1.25 | 2026-03-24 | CRITICAL: Added b.limbs.length > 64 check in Step 0 (R11-131-C1). HIGH: V403 input changed to scale: 0 (R11-131-H1). HIGH: Moved V021/V022 before V023 to restore sequential order (R11-131-H2). MEDIUM: T4 biconditional: Err ⟺ (canonical AND overflow) (R11-131-M1). MEDIUM: Changed to_dqa stub param from scale to overflow_scale (R11-131-M2). LOW: V012 note clarified CANONICALIZE 4 iterations bounded by scale=4 (R11-131-L2). Cross-RFC: Added round-trip conformance note (R11-X1). |
 | 1.24 | 2026-03-24 | CRITICAL: Added empty limb slice check in Step 0 (R10-131-C1). CRITICAL: Added RFC-0132 to Depends On for BigIntWithScale type (R10-131-C2). HIGH: Fixed missing code fence in SQL Integration section (R10-131-H1). HIGH: Fixed V023 note — CANONICALIZE strips 2 scale units, not 8 decimal zeros (R10-131-H2). MEDIUM: Changed "value-preserving" to "mantissa-preserving" in bigint_with_scale_to_dqa (R10-131-M1). MEDIUM: Fixed M6 checklist description to include V035-V039 (R10-131-M4). |
 | 1.23 | 2026-03-24 | CRITICAL: Renamed `scale` parameter to `overflow_scale` in `bigint_to_dqa` function to avoid confusion with PostgreSQL/rust_decimal semantics. Updated all 49 test vectors to use `overflow_scale` parameter. MEDIUM: Added CAST(x AS DQA(n)) ↔ bigint_to_dqa(x, n) mapping documentation. MEDIUM: Added explanatory comment for BigIntWithScale.scale → overflow_scale. LOW: Updated error messages to clarify "raw value" vs "overflow_scale" overflow. LOW: Added note that RFC-0110's existing bigint_to_dqa(i128) is unchanged. |

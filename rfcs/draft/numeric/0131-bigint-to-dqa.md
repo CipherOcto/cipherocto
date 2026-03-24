@@ -2,7 +2,7 @@
 
 ## Status
 
-**Version:** 1.21 (Draft)
+**Version:** 1.22 (Draft)
 **Status:** Draft
 **Depends On:** RFC-0110 (BIGINT), RFC-0105 (DQA)
 **Category:** Numeric/Math
@@ -366,17 +366,16 @@ SELECT CAST(dqa_col AS BIGINT) FROM accounts;
 
 **⚠ WARNING:** The composition `bigint_to_dqa(CAST(dqa_col AS BIGINT), 2)` produces `DQA{1999, 0}`, not the original DQA. This is a 100× magnitude error in financial calculations.
 
-**For round-trip safety:** Use `dqa_to_bigint_with_scale` from RFC-0132 and `bigint_with_scale_to_dqa` from this RFC.
+### Value-Preserving Conversion
 
-### Round-Trip Safe Conversion
-
-The `BigIntWithScale` type from RFC-0132 preserves scale metadata. To convert back to DQA:
+The `BigIntWithScale` type from RFC-0132 preserves the numeric VALUE but NOT the scale through the round-trip. The scale may be reduced by CANONICALIZE in Step 4. To convert back to DQA:
 
 ```rust
 /// Convert BigIntWithScale back to DQA.
 ///
 /// This complements `dqa_to_bigint_with_scale` from RFC-0132, reversing the value extraction.
-/// Round-trip: DQA → BigIntWithScale → DQA preserves the value (scale may be reduced by CANONICALIZE).
+/// Value-preserving: DQA → BigIntWithScale → DQA recovers the numeric value.
+/// ⚠ Scale may be reduced by CANONICALIZE — the output scale may differ from input.
 ///
 /// # Arguments
 /// * `bws` - The BigIntWithScale containing value and original scale
@@ -392,7 +391,7 @@ pub fn bigint_with_scale_to_dqa(bws: &BigIntWithScale) -> Result<Dqa, BigIntToDq
 }
 ```
 
-**Note:** The round-trip is lossless for the value but the scale may be reduced by CANONICALIZE. To recover the original DQA exactly, multiply by `10^(original_scale - canonical_scale)` using RFC-0105 arithmetic.
+**Note:** The value is recovered but the scale may be reduced by CANONICALIZE. To recover the original DQA scale, multiply the result by `10^(original_scale - canonical_scale)` using RFC-0105 arithmetic.
 
 ### Negative Round-Trip
 ```
@@ -773,6 +772,41 @@ Output: Error(OutOfRange)
 Note: 93 × 10^17 = 9.3 × 10^18 > i64::MAX (9.2 × 10^18)
 ```
 
+### V406: i64::MAX with Scale 1 — Overflow
+```
+Input:  BigInt::from(9223372036854775807i64), scale = 1
+Output: Error(OutOfRange)
+Note: 9223372036854775807 × 10 = 92233720368547758070 > i64::MAX
+```
+
+### V407: -1 with Scale 18 — Success
+```
+Input:  BigInt::from(-1i64), scale = 18
+Output: Dqa { value: -1, scale: 0 }
+Note: |-1| × 10^18 = 10^18 < i64::MAX. CANONICALIZE strips 18 trailing zeros.
+```
+
+### V408: 9 with Scale 17 — Success
+```
+Input:  BigInt::from(9i64), scale = 17
+Output: Dqa { value: 9, scale: 0 }
+Note: 9 × 10^17 = 9×10^17 = 900000000000000000 < i64::MAX (9.2×10^18). Fits.
+```
+
+### V409: 10 with Scale 17 — Success
+```
+Input:  BigInt::from(10i64), scale = 17
+Output: Ok(Dqa { value: 10, scale: 0 })
+Note: 10 × 10^17 = 10^18 = 1000000000000000000 < i64::MAX (9.2×10^18). Fits.
+```
+
+### V410: 100 with Scale 17 — Overflow
+```
+Input:  BigInt::from(100i64), scale = 17
+Output: Error(OutOfRange)
+Note: 100 × 10^17 = 10^19 = 10000000000000000000 > i64::MAX. Overflow.
+```
+
 ## Implementation Notes
 
 ### In determin crate
@@ -870,7 +904,7 @@ When BIGINT→DQA conversion fails at runtime (e.g., computed value exceeds rang
 | M3 | Limb inspection and range check | Pending | Medium |
 | M4 | i64::MIN special case handling | Pending | Low |
 | M5 | Error type construction | Pending | Low |
-| M6 | Test vector suite (44 vectors: V001-V034, V401-V405) | Pending | Medium |
+| M6 | Test vector suite (49 vectors: V001-V034, V401-V410) | Pending | Medium |
 | M7 | Integration with BigInt type | Pending | Medium |
 | M8 | Fuzz testing for edge cases | Pending | Medium |
 | M9 | `bigint_with_scale_to_dqa` with BigIntWithScale | Pending | Low |
@@ -885,7 +919,8 @@ When BIGINT→DQA conversion fails at runtime (e.g., computed value exceeds rang
 
 | Version | Date | Changes |
 |---------|------|---------|
-| 1.21 | 2026-03-24 | (Current) CRITICAL: Fixed POW10_TABLE scale 18 entry from 10^19 to 10^18 (R16-131-M2). CRITICAL: Strengthened i64::MIN Step 1/Step 2 dependency documentation with CRITICAL warning (R16-131-C2). CRITICAL: Renamed BigIntError to BigIntToDqaError for consistency with DqaToBigIntError (R16-XC3). HIGH: Documented two-limb negative unconditional rejection reasoning (R16-131-C3). HIGH: Clarified Step 0 hi==0 check covers both signs (R16-131-H3). MEDIUM: Changed "inverse" to "complement" for bigint_with_scale_to_dqa (R16-131-M1). MEDIUM: Added gas note for error paths (R16-131-M3). MEDIUM: Added V404 (two-limb negative overflow) and V405 (BigIntWithScale overflow) (R16-131-M4). LOW: Clarified V022 note about 0 × 10^6 = 0 (R16-131-L3). |
+| 1.22 | 2026-03-24 | (Current) HIGH: Clarified BigIntWithScale round-trip preserves VALUE not SCALE (R17-131-H1). MEDIUM: Added test vectors V406-V410 (i64::MAX scale=1 overflow, -1 scale=18, boundary cases) (R17-131-M1). MEDIUM: Updated Implementation Checklist to 49 vectors (R17-131-L1). LOW: Fixed V409 — 10 × 10^17 fits in i64, not overflow (R18-131-L1). |
+| 1.21 | 2026-03-24 | CRITICAL: Fixed POW10_TABLE scale 18 entry from 10^19 to 10^18 (R16-131-M2). CRITICAL: Strengthened i64::MIN Step 1/Step 2 dependency documentation with CRITICAL warning (R16-131-C2). CRITICAL: Renamed BigIntError to BigIntToDqaError for consistency with DqaToBigIntError (R16-XC3). HIGH: Documented two-limb negative unconditional rejection reasoning (R16-131-C3). HIGH: Clarified Step 0 hi==0 check covers both signs (R16-131-H3). MEDIUM: Changed "inverse" to "complement" for bigint_with_scale_to_dqa (R16-131-M1). MEDIUM: Added gas note for error paths (R16-131-M3). MEDIUM: Added V404 (two-limb negative overflow) and V405 (BigIntWithScale overflow) (R16-131-M4). LOW: Clarified V022 note about 0 × 10^6 = 0 (R16-131-L3). |
 | 1.20 | 2026-03-24 | MEDIUM: Added test vectors V401-V403 for BigIntWithScale round-trip (R15-131-M1). LOW: Updated Implementation Checklist with M9 (bigint_with_scale_to_dqa) and corrected test vector count (42 vectors) (R15-131-L1). |
 | 1.19 | 2026-03-24 | FIXED: Added bigint_with_scale_to_dqa function specification to complete round-trip safe variant (R14-131-F1). |
 | 1.18 | 2026-03-24 | MEDIUM: Added Composition Semantics section documenting chained conversion behavior and 100× magnitude warning (R13-131-M1). |

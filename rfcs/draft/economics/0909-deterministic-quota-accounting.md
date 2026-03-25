@@ -2,7 +2,7 @@
 
 ## Status
 
-Draft (v7 - consistent ledger)
+Draft (v8 - binary hash storage)
 
 ## Authors
 
@@ -140,9 +140,11 @@ pub enum TokenSource {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct UsageEvent {
     /// Deterministic event identifier (SHA256 hash - see compute_event_id)
-    pub event_id: String,
+    /// Stored as binary [u8; 32] for crypto-style storage efficiency
+    pub event_id: [u8; 32],
     /// Deterministic request ID (SHA256 of key_id + timestamp + nonce)
-    pub request_id: String,
+    /// Stored as binary [u8; 32] for crypto-style storage efficiency
+    pub request_id: [u8; 32],
     /// API key that made the request
     pub key_id: Uuid,
     /// Team ID (if applicable)
@@ -170,9 +172,10 @@ pub struct UsageEvent {
 }
 
 /// Generate deterministic event_id from request content
+/// Returns binary SHA256 hash for efficient storage
 /// This ensures identical event_id across all routers for the same request
 fn compute_event_id(
-    request_id: &str,
+    request_id: &[u8; 32],
     key_id: &Uuid,
     provider: &str,
     model: &str,
@@ -180,10 +183,10 @@ fn compute_event_id(
     output_tokens: u32,
     pricing_hash: &[u8; 32],
     token_source: TokenSource,
-) -> String {
+) -> [u8; 32] {
     use sha2::{Sha256, Digest};
     let mut hasher = Sha256::new();
-    hasher.update(request_id.as_bytes());
+    hasher.update(request_id);
     hasher.update(key_id.to_string().as_bytes());
     hasher.update(provider.as_bytes());
     hasher.update(model.as_bytes());
@@ -195,7 +198,7 @@ fn compute_event_id(
         TokenSource::CanonicalTokenizer => "tokenizer",
     };
     hasher.update(source_str.as_bytes());
-    format!("{:x}", hasher.finalize())
+    hasher.finalize().into()
 }
 ```
 
@@ -283,12 +286,12 @@ Each request receives a **deterministic request_id**.
 ```rust
 use sha2::{Sha256, Digest};
 
-fn compute_request_id(key_id: &Uuid, timestamp: u64, nonce: &str) -> String {
+fn compute_request_id(key_id: &Uuid, timestamp: u64, nonce: &str) -> [u8; 32] {
     let mut hasher = Sha256::new();
     hasher.update(key_id.to_string().as_bytes());
-    hasher.update(timestamp.to_string().as_bytes());
+    hasher.update(timestamp.to_le_bytes());
     hasher.update(nonce.as_bytes());
-    format!("{:x}", hasher.finalize())
+    hasher.finalize().into()
 }
 ```
 
@@ -307,24 +310,25 @@ All usage events are written to a **ledger table**.
 ```sql
 -- Usage ledger - THE authoritative economic record
 -- Token counts MUST originate from provider when available (see Canonical Token Accounting)
+-- Hash storage: BYTEA(32) for SHA256 hashes (32 bytes) instead of TEXT hex (64+ chars)
 CREATE TABLE usage_ledger (
-    event_id TEXT PRIMARY KEY,
-    request_id TEXT NOT NULL,
-    key_id TEXT NOT NULL,
+    event_id BYTEA(32) PRIMARY KEY,     -- SHA256 = 32 bytes (not 64-char hex string)
+    request_id BYTEA(32) NOT NULL,     -- SHA256 = 32 bytes (not 64-char hex string)
+    key_id TEXT NOT NULL,               -- UUID as text (36 chars with dashes)
     team_id TEXT,
-    timestamp BIGINT NOT NULL,
-    route TEXT NOT NULL,
-    provider TEXT NOT NULL,
-    model TEXT NOT NULL,
+    timestamp BIGINT NOT NULL,          -- Unix epoch (authoritative event time)
+    route TEXT NOT NULL,                -- Route path (e.g., "/v1/chat/completions")
+    provider TEXT NOT NULL,             -- Provider name
+    model TEXT NOT NULL,                -- Model name
     prompt_tokens INTEGER NOT NULL,
     completion_tokens INTEGER NOT NULL,
     cost_units BIGINT NOT NULL,
-    pricing_hash BYTEA(32) NOT NULL,  -- SHA256 = 32 bytes
+    pricing_hash BYTEA(32) NOT NULL,   -- SHA256 of pricing table used
     -- Token source for deterministic accounting (CRITICAL)
     token_source TEXT NOT NULL CHECK (token_source IN ('provider_usage', 'canonical_tokenizer')),
     tokenizer_version TEXT,
-    created_at INTEGER NOT NULL DEFAULT (strftime('%s', 'now')),
-    -- Scoped uniqueness: request_id unique per key
+    -- Note: created_at removed - timestamp is authoritative for determinism
+    -- Scoped uniqueness: request_id unique per key (idempotency constraint)
     UNIQUE(key_id, request_id),
     -- Foreign keys for integrity
     FOREIGN KEY(key_id) REFERENCES api_keys(key_id) ON DELETE CASCADE,
@@ -336,6 +340,8 @@ CREATE INDEX idx_usage_ledger_team_id ON usage_ledger(team_id);
 CREATE INDEX idx_usage_ledger_timestamp ON usage_ledger(timestamp);
 -- Composite index for efficient quota queries
 CREATE INDEX idx_usage_ledger_key_time ON usage_ledger(key_id, timestamp);
+-- Index for pricing verification queries
+CREATE INDEX idx_usage_ledger_pricing_hash ON usage_ledger(pricing_hash);
 ```
 
 ## Replay and Verification
@@ -349,7 +355,7 @@ pub fn replay_events(events: &[UsageEvent]) -> BTreeMap<Uuid, u64> {
     use std::collections::BTreeMap;
     let mut key_spend: BTreeMap<Uuid, u64> = BTreeMap::new();
 
-    // Events must be sorted by created_at (chronological), then event_id for determinism
+    // Events must be sorted by timestamp (chronological), then event_id for determinism
     let mut sorted_events = events.to_vec();
     sorted_events.sort_by(|a, b| {
         a.timestamp.cmp(&b.timestamp)
@@ -377,7 +383,7 @@ For audit and verification, deterministic replay MUST follow this procedure:
 
 ```
 1. Load all usage_ledger for a key_id
-2. Order by event_id (canonical identity)
+2. Order by timestamp ASC, then event_id ASC (canonical identity)
 3. Compute current_spend = SUM(events.cost_units)
 4. Verify equality: computed_spend == stored current_spend
 5. If mismatch, trust usage_ledger as authoritative
@@ -553,7 +559,7 @@ pub fn process_response(
     // Calculate cost using deterministic pricing
     let cost_units = calculate_cost(model, prompt_tokens, completion_tokens)?;
 
-    // Generate deterministic request_id
+    // Generate deterministic request_id (binary SHA256)
     let request_id = compute_request_id(key_id, response.timestamp, &response.id);
 
     // Generate deterministic event_id using SHA256 (not random UUID)
@@ -608,7 +614,7 @@ pub fn process_response(
         return Err(Error::BudgetExceeded { current: current as u64, limit: budget as u64 });
     }
 
-    // 4. Insert into ledger with correct ON CONFLICT target (key_id, request_id)
+    // 4. Insert into ledger (binary hash storage for event_id, request_id)
     tx.execute(
         "INSERT INTO usage_ledger (
             event_id, request_id, key_id, team_id, timestamp, route,
@@ -617,18 +623,18 @@ pub fn process_response(
         ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
         ON CONFLICT(key_id, request_id) DO NOTHING",
         params![
-            event.event_id,
-            event.request_id,
+            &event.event_id,                 -- BYTEA(32) binary
+            &event.request_id,                -- BYTEA(32) binary
             event.key_id.to_string(),
             event.team_id,
-            event.timestamp,
-            event.route,
-            event.provider,
-            event.model,
-            event.prompt_tokens,
-            event.completion_tokens,
+            event.timestamp as i64,
+            &event.route,
+            &event.provider,
+            &event.model,
+            event.prompt_tokens as i32,
+            event.completion_tokens as i32,
             event.cost_units as i64,
-            &event.pricing_hash,
+            &event.pricing_hash,             -- BYTEA(32) binary
             match event.token_source {
                 TokenSource::ProviderUsage => "provider_usage",
                 TokenSource::CanonicalTokenizer => "canonical_tokenizer",
@@ -706,21 +712,18 @@ pub struct MerkleNode {
 
 /// Build Merkle tree from usage events
 pub fn build_merkle_tree(events: &[UsageEvent]) -> MerkleNode {
-    // Sort events deterministically
+    // Sort events deterministically by event_id (binary comparison)
     let mut sorted = events.to_vec();
     sorted.sort_by(|a, b| a.event_id.cmp(&b.event_id));
 
-    // Build leaf nodes
+    // Build leaf nodes from binary event_id
     let mut leaves: Vec<[u8; 32]> = sorted
         .iter()
         .map(|e| {
             let mut hasher = Sha256::new();
-            hasher.update(e.event_id.to_string().as_bytes());
+            hasher.update(&e.event_id);  // Binary hash, not hex string
             hasher.update(e.cost_units.to_le_bytes());
-            let result = hasher.finalize();
-            let mut hash = [0u8; 32];
-            hash.copy_from_slice(&result);
-            hash
+            hasher.finalize().into()
         })
         .collect();
 
@@ -905,12 +908,12 @@ Without row locking, two routers can race and overspend. With `FOR UPDATE`, only
 **Deterministic replay:**
 
 ```
-1. SELECT * FROM usage_ledger ORDER BY created_at, event_id
+1. SELECT * FROM usage_ledger ORDER BY timestamp, event_id
 2. Recompute balances
 3. Verify equality with any cached balances
 ```
 
-Note: Ordering by `created_at` (chronology) then `event_id` (tiebreaker) ensures deterministic replay.
+Note: Ordering by `timestamp` (chronology from event itself) then `event_id` (tiebreaker) ensures deterministic replay. `timestamp` is authoritative; `created_at` was removed as it is database-insert-time which is non-deterministic across distributed nodes.
 
 **Long-term enablement:**
 
@@ -969,7 +972,7 @@ This RFC can be approved when:
 
 ---
 
-**Draft Date:** 2026-03-13
-**Version:** v7
+**Draft Date:** 2026-03-25
+**Version:** v8
 **Related Use Case:** Enhanced Quota Router Gateway
 **Related RFCs:** RFC-0903 (Virtual API Key System)

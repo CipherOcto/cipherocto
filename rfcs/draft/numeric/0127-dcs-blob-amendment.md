@@ -2,7 +2,7 @@
 
 ## Status
 
-Draft (v3, adversarial review round 2)
+Draft (v4, adversarial review round 3)
 
 ## Authors
 
@@ -73,7 +73,8 @@ Rename the section header from "Bytes (Raw)" to "Blob". The existing `serialize_
 - **Maximum length**: 4GB (2^32 - 1 bytes) -- given by u32 length prefix
 - **TRAP**: If length > 4GB, TRAP(DCS_BLOB_LENGTH_OVERFLOW)
 - **Byte-identical to Bytes (Raw)**: The serialization format is identical; the rename reflects first-class type status
-- **Typed-context requirement**: Blob deserialization MUST only be invoked in a typed context (schema-driven dispatch). Bare Blob/String concatenation without type context is forbidden. A Blob field deserialized where a String is expected (or vice versa) produces a TRAP. This prevents the semantic ambiguity described in NEW-KI-2.
+- **Public API boundary**: `serialize_blob` is the public, type-tagged entry point for the DCS Blob type. `serialize_bytes` is retained as an internal low-level primitive (also used by DVEC, DMAT, and Option for length-prefixing). In a typed context, use `serialize_blob`; `serialize_bytes` is not exposed as a public serialization API for Blob.
+- **Typed-context requirement**: Blob deserialization MUST only be invoked in a typed context (schema-driven dispatch). Bare Blob/String concatenation without type context is forbidden. A Blob field deserialized where a String is expected (or vice versa) produces a TRAP. This prevents the semantic ambiguity described in NEW-KI-2. See Change 13 for a concrete dispatcher example.
 
 #### Change 3: Probe Entries Table (Section Part 3, line ~625)
 
@@ -97,7 +98,7 @@ Add Entry 17 for Blob. Entries 0-16 are unchanged from RFC-0126 v2.5.1:
 | 13 | I128 | Negative | `-42` | 16 bytes big-endian |
 | 14 | BIGINT | Positive | `42` | RFC-0110 BigIntEncoding (16 bytes) |
 | 15 | DFP | Positive Normal | `42.0` | RFC-0104 DfpEncoding (24 bytes) |
-| 16 | Struct | Field ordering | `Struct { a: 1, b: true }` | `0x00` + field_0 + `0x01` + field_1 |
+| 16 | Struct | Field ordering | `Person { id: 42, name: "alice", balance: DQA(1,0) }` | `0x00` + field_0 + `0x01` + field_1 |
 | 17 | Blob | Length prefix + data | `b"hello"` | `0x00000005 0x68656c6c6f` |
 
 > **Note:** Entry 4 (DMAT column-major) was removed because serialization output is indistinguishable for valid row-major input. DMAT input validation ensures data is stored row-major per RFC-0113.
@@ -276,6 +277,13 @@ Adding Blob as a new DCS type with a new serialization encoding constitutes a ch
 
 **Activation governance:** RFC-0110 SectionVersion Increment Policy requires a minimum 2-epoch notice before activation at block H_upgrade, with a grace window for dual-version acceptance. This amendment does not set H_upgrade; a separate governance action per RFC-0110 policy is required to determine the activation block height. Nodes MUST NOT reject version-1 blocks before the governance-declared H_upgrade, even after upgrading to support Blob.
 
+**Activation checklist (for governance action):**
+1. Determine H_upgrade block height with >= 2 epoch notice per RFC-0110
+2. Set grace window [H_upgrade - grace, H_upgrade] for dual-version acceptance
+3. Announce to node operators to upgrade before H_upgrade
+4. At H_upgrade, nodes with NUMERIC_SPEC_VERSION >= 2 begin producing v2 blocks
+5. After grace window, nodes still on v1 are subject to rejection per RFC-0110 SectionReplay Rules
+
 #### Change 12: RFC-0126 Version Update
 
 Upon merge of this amendment, RFC-0126 version MUST be incremented to **v2.6.0** and the following entry added to RFC-0126's version history:
@@ -284,6 +292,59 @@ Upon merge of this amendment, RFC-0126 version MUST be incremented to **v2.6.0**
 |---------|------|--------|---------|
 | 2.6.0 | 2026-03-25 | CipherOcto | Added Blob as first-class DCS type (Entry 17), renamed Bytes (Raw) to Blob, split DCS_LENGTH_OVERFLOW into String/Blob-specific errors, added Blob deserialization, incremented NUMERIC_SPEC_VERSION to 2, corrected Entry 10 probe table reference from RFC-0112 to RFC-0111, corrected Known Issues leaf hash to domain-separated value |
 
+#### Change 13: Schema-Driven Dispatcher Requirement (Non-Normative Example)
+
+RFC-0126 defines deserialization functions for Bool and Struct. Blob deserialization follows the same model: a schema-driven dispatcher invokes `deserialize_blob` only when the schema specifies a Blob field. The dispatcher tracks the expected type for each field and routes deserialization accordingly.
+
+**Example dispatcher pseudocode:**
+
+```
+fn deserialize_field(input: &[u8], expected_type: Type) -> Result<(&[u8], Value), TRAP> {
+    match expected_type {
+        Type::String  => deserialize_string(input).map(|(v, rem)| (rem, Value::String(v))),
+        Type::Bool    => deserialize_bool(input).map(|(v, rem)| (rem, Value::Bool(v))),
+        Type::Blob    => deserialize_blob(input).map(|(v, rem)| (rem, Value::Blob(v))),
+        // ... other types
+    }
+}
+
+fn deserialize_struct(input: &[u8], schema: &StructSchema) -> Result<Value, TRAP> {
+    let mut remaining = input;
+    let mut fields = Vec::new();
+    for field in schema.fields.iter() {  // fields in declaration order
+        let (new_remaining, value) = deserialize_field(remaining, field.type_)?;
+        // Validate: new_remaining must equal the bytes consumed for this field
+        // If new_remaining == remaining (no progress), TRAP
+        if new_remaining == remaining {
+            TRAP(DCS_INVALID_STRUCT);  // field produced no bytes
+        }
+        remaining = new_remaining;
+        fields.push((field.id, value));
+    }
+    Ok(Value::Struct(fields))
+}
+```
+
+**Key properties:**
+
+1. **Type tracking**: The dispatcher knows the expected type for each field from the schema. It never guesses based on bytes alone.
+2. **Progress requirement**: Each field MUST consume at least 1 byte. Zero-progress deserialization produces a TRAP.
+3. **No cross-type byte passing**: The bytes returned from one field's deserialization are passed to the NEXT field's deserializer, never back to a different-type deserializer. Mixing Blob/String bytes without schema context is impossible by construction.
+4. **TRAP propagation**: Any deserialization error (TRAP) propagates immediately; partial results are discarded.
+
+This dispatcher pattern is how DCS deserialization is intended to be used. The alternative — calling `deserialize_blob` or `deserialize_string` directly on raw bytes with no schema context — is not conformant DCS usage.
+
+#### Change 14: Probe Extension Protocol (Non-Normative)
+
+Future amendments adding new DCS types to the verification probe MUST follow this protocol:
+
+1. **Append only**: New entries are added at the next sequential index (N+1, N+2, ...). Existing entries are never modified or reordered.
+2. **Root recomputation**: The new entry changes the leaf count from odd to even or vice versa, which changes the pairing structure and thus the Merkle root. The new root MUST be computed and published in the amendment.
+3. **Version increment**: Adding a new type constitutes a change to canonical encoding formats. `NUMERIC_SPEC_VERSION` MUST be incremented per RFC-0110 SectionVersion Increment Policy, including activation governance.
+4. **Announcement**: The amendment MUST list all prior leaf hashes alongside the new entry so that the full tree can be independently verified without requiring the implementer to run prior versions of the script.
+
+This ensures the probe is monotonically verifiable across amendments.
+
 ## Version History
 
 | Version | Date | Author | Changes |
@@ -291,6 +352,8 @@ Upon merge of this amendment, RFC-0126 version MUST be incremented to **v2.6.0**
 | 1.0 | 2026-03-25 | CipherOcto | Initial amendment draft -- adds Blob (Entry 17) to DCS type system |
 | 2.0 | 2026-03-25 | CipherOcto | Adversarial review fixes: CRIT-1 compute 18-entry Merkle root, CRIT-2 split DCS_LENGTH_OVERFLOW into String/Blob-specific errors with distinct limits, HIGH-1 add typed-context deserialization requirement, HIGH-2 retain serialize_bytes as low-level primitive, HIGH-3 verify leaf hash via compute_dcs_probe_root.py, HIGH-4 add deserialize_blob algorithm, MED-2 document odd-to-even tree structure change, MED-4 add length prefix endianness prose, MED-5 fix relationship table direction, MED-3 confirm BYTEA(32) suitability, LOW-1 specify RFC-0126 v2.6.0 target, LOW-2 address NUMERIC_SPEC_VERSION increment, LOW-3 fix table formatting and preserve historical note |
 | 3.0 | 2026-03-25 | CipherOcto | Round 2 fixes: HIGH-1 fix NUMERIC_SPEC_VERSION to u32 value 2 (not 2.0), MED-2 fix deserialize_blob return type and add DCS_INVALID_BLOB to error table, MED-3 add H_upgrade governance note, MED-1 publish all 18 leaf hashes and fix RFC-0111/RFC-0112 discrepancy, MED-4 add 4GB security consideration, LOW-1 document domain-separated hash correction for MED-10, LOW-3 change RFC-0201 label to (Storage), LOW-4 replace unwrap() with explicit bytes |
+| 3.0 | 2026-03-25 | CipherOcto | Round 2 fixes: HIGH-1 fix NUMERIC_SPEC_VERSION to u32 value 2 (not 2.0), MED-2 fix deserialize_blob return type and add DCS_INVALID_BLOB to error table, MED-3 add H_upgrade governance note, MED-1 publish all 18 leaf hashes and fix RFC-0111/RFC-0112 discrepancy, MED-4 add 4GB security consideration, LOW-1 document domain-separated hash correction for MED-10, LOW-3 change RFC-0201 label to (Storage), LOW-4 replace unwrap() with explicit bytes |
+| 4.0 | 2026-03-25 | CipherOcto | Round 3: CRIT-1 rebuttal (Entry 17 bhello identical to String is intentional, tests wire-format collision), CRIT-2 rebuttal (error split is bug fix not breaking change), CRIT-3 rebuttal (dispatcher is DCS layer boundary), HIGH-3 rebuttal (DCS_INVALID_BLOB unified error is better for debugging), MED-1 fix Entry 16 table description to match Person struct, MED-3 add Change 13 with concrete schema-driven dispatcher pseudocode example, MED-3 add Change 14 with probe extension protocol, HIGH-1 clarify serialize_blob vs serialize_bytes public API boundary, HIGH-2 add activation checklist to NUMERIC_SPEC_VERSION governance note |
 
 ## Related RFCs
 
@@ -301,6 +364,6 @@ Upon merge of this amendment, RFC-0126 version MUST be incremented to **v2.6.0**
 
 ---
 
-**Version:** 3.0
+**Version:** 4.0
 **Submission Date:** 2026-03-25
 **Last Updated:** 2026-03-25

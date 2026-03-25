@@ -2,7 +2,7 @@
 
 ## Status
 
-Draft (v6, adversarial review round 13)
+Draft (v6, adversarial review round 14)
 
 ## Authors
 
@@ -82,6 +82,36 @@ serialize_blob(data: &[u8]) -> Result<Vec<u8>, Err> {
 - **Byte-identical to Bytes (Raw)**: The serialization format is identical; the rename reflects first-class type status
 - **Public API boundary**: `serialize_blob` is the public, type-tagged entry point for the DCS Blob type. `serialize_bytes` is retained as a low-level primitive available for internal DCS use (DVEC, DMAT, Option) and for other RFCs requiring raw length-prefixed serialization. It MUST NOT be used as the serialization entry point for the Blob type in typed contexts. See RFC-0201 BYTEA(32) Suitability in the Motivation section for the primary use case.
 - **Typed-context requirement**: Blob deserialization MUST only be invoked in a typed context (schema-driven dispatch). Bare Blob/String concatenation without type context is forbidden. A Blob field deserialized where a String is expected (or vice versa) produces an error. This prevents the semantic ambiguity described in NEW-KI-2. See Change 13 for a concrete dispatcher example. **Ambiguity symmetry:** When a schema contains both Blob and String types, String deserialization also MUST use the schema-driven dispatcher. This is because the wire format `[length][bytes]` is shared by both types; without dispatcher context, an implementation cannot determine whether to apply UTF-8 validation (String) or skip it (Blob). An implementation that uses bare `deserialize_string` on bytes when Blob exists in the schema produces consensus-divergent results compared to one that uses the dispatcher. **Implementation note:** Schema validation is recommended at compile time where possible (e.g., struct field type annotations in the schema definition). Dynamic schema environments SHOULD perform schema validation before deserialization begins to prevent misconfiguration from reaching the dispatcher.
+
+#### Change 2.5: DCS Encoding Equivalence Classes (Normative)
+
+DCS types are grouped into **encoding equivalence classes** based on their wire format. Two types in the same class share an identical binary encoding.
+
+**Class: Length-Prefixed** -- types encoded as `u32_be(length) || payload`
+- `String`: UTF-8 bytes, 1MB max
+- `Blob`: arbitrary bytes, 4GB max
+- Any future DCS type with format `u32_be(length) || payload`
+
+Types in this class **share the same wire format** and are distinguishable only by schema context. The schema-driven dispatcher is **REQUIRED** to disambiguate them at deserialization time. Direct calls to `deserialize_string` or `deserialize_blob` on raw bytes in the presence of other Length-Prefixed types are not conformant.
+
+**Class: Fixed-Width Primitive** -- types with a determinable fixed size from the type alone
+- `u8`: 1 byte
+- `u32`: 4 bytes
+- `i128`: 16 bytes
+- `bool`: 1 byte
+- `DFP`: 24 bytes
+- `BigInt`: variable (per RFC-0110 limb encoding)
+
+Types in this class have unique encodings. The dispatcher is not required for these types; direct deserialization calls are conformant.
+
+**Class: Aggregate** -- compound types containing other types
+- `DVEC`: `u32_be(length) || element_0 || element_1 || ...`
+- `DMAT`: `u32_be(rows) || u32_be(cols) || element_0 || ...`
+- `Struct`: `field_id_0 || value_0 || field_id_1 || value_1 || ...`
+
+These types use length prefixes or field IDs internally. Whether they require the dispatcher depends on whether their element/field types belong to the Length-Prefixed class. A DVEC containing Strings requires the dispatcher; a DVEC containing i128 values does not.
+
+This classification prevents future RFCs from introducing ambiguity: any new type must be assigned to an encoding class, and if it belongs to Length-Prefixed, the dispatcher requirement applies.
 
 #### Change 3: Probe Entries Table (Section Part 3, line ~625)
 
@@ -193,7 +223,7 @@ Add Blob deserialization:
      if input.len() < 4 {
          return Err(DCS_INVALID_BLOB)  // need at least 4 bytes for length prefix
      }
-     let length = (input[0] << 24) | (input[1] << 16) | (input[2] << 8) | input[3];
+     let length = (u32(input[0]) << 24) | (u32(input[1]) << 16) | (u32(input[2]) << 8) | u32(input[3]);
      if length > input.len() - 4 {
          return Err(DCS_INVALID_BLOB)  // truncated: declared length exceeds remaining bytes
      }
@@ -219,7 +249,7 @@ Add Blob deserialization:
      if input.len() < 4 {
          return Err(DCS_INVALID_STRING)  // need at least 4 bytes for length prefix
      }
-     let length = (input[0] << 24) | (input[1] << 16) | (input[2] << 8) | input[3];
+     let length = (u32(input[0]) << 24) | (u32(input[1]) << 16) | (u32(input[2]) << 8) | u32(input[3]);
 
      if length > 1_048_576 {  // 1MB = 2^20
          return Err(DCS_STRING_LENGTH_OVERFLOW)
@@ -283,7 +313,7 @@ Add Blob deserialization:
 
 - **Minimum input**: 4 bytes (for the length prefix). If fewer than 4 bytes remain, return Err(DCS_INVALID_STRING).
 - **Length validation**: Declared length MUST NOT exceed 1MB. If exceeded, return Err(DCS_STRING_LENGTH_OVERFLOW).
-- **UTF-8 validation**: The byte sequence is validated as UTF-8 per RFC 3629 at deserialization time. This includes: valid byte structure for each sequence length, rejection of overlong encodings (minimum codepoint per length), rejection of surrogate codepoints (U+D800–U+DFFF), and rejection of codepoints above U+10FFFF. If invalid, return Err(DCS_INVALID_UTF8). **Validation order:** UTF-8 validation occurs after type resolution. The dispatcher resolves the type (String) before calling `deserialize_string`; therefore `deserialize_string` always receives bytes that are intended to be a String. If the dispatcher first decodes as Blob and then attempts to re-decode as String, the UTF-8 validation must still be applied at the String layer. Implementations that skip UTF-8 validation because bytes were first interpreted as Blob produce consensus-divergent results.
+- **UTF-8 validation**: The byte sequence is validated as UTF-8 per RFC 3629 at deserialization time. This includes: valid byte structure for each sequence length, rejection of overlong encodings (minimum codepoint per length), rejection of surrogate codepoints (U+D800–U+DFFF), and rejection of codepoints above U+10FFFF. If invalid, return Err(DCS_INVALID_UTF8). **Normalization:** Strings MUST NOT be normalized. Validation only checks UTF-8 correctness. The byte sequence is preserved exactly as provided -- no Unicode normalization (NFC, NFD, NFKC, NFKD) is applied. **Validation order:** UTF-8 validation occurs after type resolution. The dispatcher resolves the type (String) before calling `deserialize_string`; therefore `deserialize_string` always receives bytes that are intended to be a String. If the dispatcher first decodes as Blob and then attempts to re-decode as String, the UTF-8 validation must still be applied at the String layer. Implementations that skip UTF-8 validation because bytes were first interpreted as Blob produce consensus-divergent results.
 - **Return type**: `Result<(&str, &[u8]), Err>` -- returns `(string_slice, remaining_bytes)` on success.
 
 #### Change 9: Published Merkle Root
@@ -319,7 +349,8 @@ The existing 17-entry Merkle Root (`2ed91a62f96f11151cd9211cf90aff36efc16c69d3ef
 
 ```
 Entry 17 input bytes:  0x00 0x00 0x00 0x05 0x68 0x65 0x6c 0x6c 0x6f
-Domain-separated leaf:  SHA256(0x00 || 0x0000000568656c6c6f)
+Domain-separated leaf:  SHA256(DOMAIN_LEAF_PREFIX || 0x0000000568656c6c6f)
+                     = SHA256(0x00 || 0x0000000568656c6c6f)
                      = 01cc2c521e69293f581e0df49c071c2e9d44b16586b36024872d77244b405be6
 
 Verification:         python3 scripts/compute_dcs_probe_root.py @ 7b22f8a
@@ -412,6 +443,12 @@ fn deserialize_struct(input: &[u8], schema: &StructSchema) -> Result<Value, Err>
     let mut remaining = input;
     let fields = empty list;
     for field in schema.fields {  // fields in declaration order
+        // Read field_id from wire (u32_be, 4 bytes) before calling deserialize_field
+        if remaining.len() < 4 { return Err(DCS_INVALID_STRUCT); }
+        let wire_field_id = (u32(remaining[0]) << 24) | (u32(remaining[1]) << 16)
+                          | (u32(remaining[2]) << 8) | u32(remaining[3]);
+        remaining = remaining[4..];  // advance past field_id
+        if wire_field_id != field.id { return Err(DCS_INVALID_STRUCT); }  // field ID mismatch
         let field_result = deserialize_field(remaining, field.type_);
         match field_result {
             Err(e) => return Err(e),  // propagate error
@@ -493,7 +530,7 @@ This ensures the probe is monotonically verifiable across amendments.
 | 3.0 | 2026-03-25 | CipherOcto | Round 2 fixes: HIGH-1 fix NUMERIC_SPEC_VERSION to u32 value 2 (not 2.0), MED-2 fix deserialize_blob return type and add DCS_INVALID_BLOB to error table, MED-3 add H_upgrade governance note, MED-1 publish all 18 leaf hashes and fix RFC-0111/RFC-0112 discrepancy, MED-4 add 4GB security consideration, LOW-1 document domain-separated hash correction for MED-10, LOW-3 change RFC-0201 label to (Storage), LOW-4 replace unwrap() with explicit bytes |
 | 4.0 | 2026-03-25 | CipherOcto | Round 3: CRIT-1 rebuttal (Entry 17 bhello identical to String is intentional, tests wire-format collision), CRIT-2 rebuttal (error split is bug fix not breaking change), CRIT-3 rebuttal (dispatcher is DCS layer boundary), HIGH-3 rebuttal (DCS_INVALID_BLOB unified error is better for debugging), MED-1 fix Entry 16 table description to match Person struct, MED-3 add Change 13 with concrete schema-driven dispatcher pseudocode example, MED-3 add Change 14 with probe extension protocol, HIGH-1 clarify serialize_blob vs serialize_bytes public API boundary, HIGH-2 add activation checklist to NUMERIC_SPEC_VERSION governance note |
 | 5.0 | 2026-03-25 | CipherOcto | Round 4: NEW-CRIT-1 make Change 13 normative (schema-driven dispatcher conformance required), NEW-CRIT-2 document empty Blob + progress-check interaction, NEW-CRIT-3 add field_id wire-format note to Entry 16 table header, NEW-HIGH-1 clarify serialize_bytes visibility for other RFCs, NEW-HIGH-2 rebuttal (String 1MB enforcement pre-existing RFC-0126 gap, scope), NEW-HIGH-3 rebuttal (block versioning governed by RFC-0110, scope), NEW-MED-1 make Change 14 normative (probe extension protocol), NEW-MED-2 add negative-deserialization limitation note to NEW-KI-2, NEW-MED-3 cross-reference to existing Motivation section, NEW-MED-4 remove duplicate v3.0 version history row, NEW-MED-5 document UTF-8 acceptance as intentional in Change 8, NEW-LOW-1 add type definition note to dispatcher pseudocode, NEW-LOW-2 add script version note, NEW-LOW-3 note deferred to editorial pass |
-| 6.0 | 2026-03-25 | CipherOcto | Round 5 fixes: NEW-CRIT-4 add DCS_INVALID_STRUCT to error table, NEW-CRIT-5 add deserialize_string pseudocode (with DCS_INVALID_STRING, 1MB check, RFC 3629 UTF-8 validation), NEW-HIGH-4 clarify dispatcher requirement applies to Blob fields only, NEW-HIGH-5 rebuttal (negative deserialization tests scope + would break Merkle root), NEW-MED-6 document zero-byte-type constraint, NEW-MED-7 add explicit length check to serialize_blob pseudocode, NEW-MED-8 pin script to commit 7b22f8a, NEW-MED-9 clarify RFC-0201 relationship, NEW-LOW-4 address linear growth trade-off explicitly in Change 14, NEW-LOW-5 clarify error return semantics, NEW-LOW-6 add field_id-only-on-Entry-16 note; Round 6 fixes: NEW-CRIT-6 fix table header wire format description, NEW-HIGH-6 standardize all pseudocode to return Err(), NEW-HIGH-7 rewrite deserialize_string in language-agnostic pseudocode, remove all TRAP notation; Round 7 fixes: NEW-MED-10 replace Vec::new()/push() with language-agnostic list notation, NEW-MED-11 add codepoint upper-bound and surrogate checks to UTF-8 validation (RFC 3629 compliant), NEW-MED-12 add Result return type note for serialize_blob, NEW-LOW-7 cp variable now used for full codepoint validation (not just minimum), NEW-LOW-8 add field_ids to Entry 16 description, NEW-LOW-9 consolidate patch notes into single v6.0 entry; Round 8 fixes: NEW-LOW-10 replace u32::from_be_bytes with language-agnostic shift/or notation, NEW-LOW-11 update header to note rounds consolidated, NEW-LOW-12 fix Entry 16 probe table field_id to use u32_be(1) not 0x01; Round 9 fixes: NEW-LOW-13 add notation note for slice/input.len/cast syntax, NEW-LOW-14 same notation note covers as cast notation, NEW-LOW-15 same notation note covers input.len method; Round 10 (Grok external review): MED-2 add static schema validation recommendation to typed-context requirement, LOW-1 add big-endian network byte order to notation notes; Round 11 fixes: add explicit encoding policy statement to NEW-KI-2, add schema evolution rules to Change 13 (unknown/missing/trailing fields, field ID mismatch, optional fields, versioning), add streaming/chunking guidance to Motivation; Round 12 fixes: CRIT-3 add allocation safety note to deserialize_blob (no pre-allocation, return slice), HIGH-1 fix integer overflow in bounds check (4 + length -> length > input.len() - 4 in both deserialize_blob and deserialize_string), MED-2 add streaming decode SHOULD recommendation for large blobs, MED-6 add dispatcher recursion note (recursive by nature, terminates at primitives); Round 13 fixes: CRIT-NEW-1 add ambiguity symmetry (String also requires dispatcher when Blob present in schema), HIGH-NEW-1 add UTF-8 validation order note (type resolution before validation), HIGH-NEW-2 generalize shared-encoding rule, MED-NEW-1 add slice lifetime requirement, MED-NEW-2 add nested Blob example to dispatcher key properties, MED-NEW-3 make empty Blob canonicalization explicit |
+| 6.0 | 2026-03-25 | CipherOcto | Round 5 fixes: NEW-CRIT-4 add DCS_INVALID_STRUCT to error table, NEW-CRIT-5 add deserialize_string pseudocode (with DCS_INVALID_STRING, 1MB check, RFC 3629 UTF-8 validation), NEW-HIGH-4 clarify dispatcher requirement applies to Blob fields only, NEW-HIGH-5 rebuttal (negative deserialization tests scope + would break Merkle root), NEW-MED-6 document zero-byte-type constraint, NEW-MED-7 add explicit length check to serialize_blob pseudocode, NEW-MED-8 pin script to commit 7b22f8a, NEW-MED-9 clarify RFC-0201 relationship, NEW-LOW-4 address linear growth trade-off explicitly in Change 14, NEW-LOW-5 clarify error return semantics, NEW-LOW-6 add field_id-only-on-Entry-16 note; Round 6 fixes: NEW-CRIT-6 fix table header wire format description, NEW-HIGH-6 standardize all pseudocode to return Err(), NEW-HIGH-7 rewrite deserialize_string in language-agnostic pseudocode, remove all TRAP notation; Round 7 fixes: NEW-MED-10 replace Vec::new()/push() with language-agnostic list notation, NEW-MED-11 add codepoint upper-bound and surrogate checks to UTF-8 validation (RFC 3629 compliant), NEW-MED-12 add Result return type note for serialize_blob, NEW-LOW-7 cp variable now used for full codepoint validation (not just minimum), NEW-LOW-8 add field_ids to Entry 16 description, NEW-LOW-9 consolidate patch notes into single v6.0 entry; Round 8 fixes: NEW-LOW-10 replace u32::from_be_bytes with language-agnostic shift/or notation, NEW-LOW-11 update header to note rounds consolidated, NEW-LOW-12 fix Entry 16 probe table field_id to use u32_be(1) not 0x01; Round 9 fixes: NEW-LOW-13 add notation note for slice/input.len/cast syntax, NEW-LOW-14 same notation note covers as cast notation, NEW-LOW-15 same notation note covers input.len method; Round 10 (Grok external review): MED-2 add static schema validation recommendation to typed-context requirement, LOW-1 add big-endian network byte order to notation notes; Round 11 fixes: add explicit encoding policy statement to NEW-KI-2, add schema evolution rules to Change 13 (unknown/missing/trailing fields, field ID mismatch, optional fields, versioning), add streaming/chunking guidance to Motivation; Round 12 fixes: CRIT-3 add allocation safety note to deserialize_blob (no pre-allocation, return slice), HIGH-1 fix integer overflow in bounds check (4 + length -> length > input.len() - 4 in both deserialize_blob and deserialize_string), MED-2 add streaming decode SHOULD recommendation for large blobs, MED-6 add dispatcher recursion note (recursive by nature, terminates at primitives); Round 13 fixes: CRIT-NEW-1 add ambiguity symmetry (String also requires dispatcher when Blob present in schema), HIGH-NEW-1 add UTF-8 validation order note (type resolution before validation), HIGH-NEW-2 generalize shared-encoding rule, MED-NEW-1 add slice lifetime requirement, MED-NEW-2 add nested Blob example to dispatcher key properties, MED-NEW-3 make empty Blob canonicalization explicit; Round 14 fixes: HIGH-3 add UTF-8 non-normalization rule to deserialize_string, MED-1 add explicit u32 casts to shift/or notation in both deserialize functions, MED-2 add DOMAIN_LEAF_PREFIX reference to probe section, MED-4 clarify dispatcher reads field_id from wire before calling deserialize_field, CRIT-1 rebuttal (field_id authoritative, declaration order preserved in spec), CRIT-2 rebuttal (encoding classes formalize wire-format grouping), CRIT-3 rebuttal (NUMERIC_SPEC_VERSION coupling consistent with RFC-0104/0105), HIGH-1 rebuttal (4GB wire-level maximum, memory management is application-layer), HIGH-2 rebuttal (recursion depth is application-layer resource limit) |
 
 ## Related RFCs
 

@@ -76,7 +76,7 @@ Rename the section header from "Bytes (Raw)" to "Blob". The existing `serialize_
 - **Maximum length**: 4GB (2^32 - 1 bytes) -- given by u32 length prefix
 - **TRAP**: If length > 4GB, TRAP(DCS_BLOB_LENGTH_OVERFLOW)
 - **Byte-identical to Bytes (Raw)**: The serialization format is identical; the rename reflects first-class type status
-- **Public API boundary**: `serialize_blob` is the public, type-tagged entry point for the DCS Blob type. `serialize_bytes` is retained as a low-level primitive available for internal DCS use (DVEC, DMAT, Option) and for future RFCs requiring raw length-prefixed serialization. It MUST NOT be used as the serialization entry point for the Blob type in typed contexts. See RFC-0201 BYTEA(32) Suitability in the Motivation section for the primary use case.
+- **Public API boundary**: `serialize_blob` is the public, type-tagged entry point for the DCS Blob type. `serialize_bytes` is retained as a low-level primitive available for internal DCS use (DVEC, DMAT, Option) and for other RFCs requiring raw length-prefixed serialization. It MUST NOT be used as the serialization entry point for the Blob type in typed contexts. See RFC-0201 BYTEA(32) Suitability in the Motivation section for the primary use case.
 - **Typed-context requirement**: Blob deserialization MUST only be invoked in a typed context (schema-driven dispatch). Bare Blob/String concatenation without type context is forbidden. A Blob field deserialized where a String is expected (or vice versa) produces a TRAP. This prevents the semantic ambiguity described in NEW-KI-2. See Change 13 for a concrete dispatcher example.
 
 #### Change 3: Probe Entries Table (Section Part 3, line ~625)
@@ -294,7 +294,7 @@ Update the Known Issues table:
 |----|-------------|
 | MED-10 | Entries 5 (Option::None) and 9 (Bool false) produce identical leaf hashes (`96a296d224f285c67bee93c30f8a309157f0daa35dc5b87e410b78630a09cfc7`). Domain-separated leaf hashing prevents Merkle root collision. Note: RFC-0126 v2.5.1 published `6e340b9cffb37a989ca544e6bb780a2c78901d3fb33738768511a30617afa01d` (SHA256 of raw `0x00` without domain separation), which was incorrect. The correct domain-separated hash is `96a296d2...`. |
 | NEW-KI-1 | Blob entry (Entry 17) did not appear in RFC-0126 v2.5.1 Primitive Type Encodings table or Probe table. This amendment adds it. |
-| NEW-KI-2 | Entry 17 (Blob `"hello"`) and Entry 4 (String `"hello"`) produce identical leaf hashes (`01cc2c521e69293f581e0df49c071c2e9d44b16586b36024872d77244b405be6`) because they encode identically. Domain-separated leaf hashing prevents Merkle root collision -- this is safe by design, consistent with the existing Entry 5/Entry 9 collision. Typed-context deserialization (Change 8) prevents semantic ambiguity. The probe tests serialization equivalence only; it does not include negative deserialization test vectors (e.g., "deserialize Entry 17 bytes as String MUST TRAP"). Negative deserialization is verified by the typed-context requirement and the schema-driven dispatcher (Change 13), not by the probe. Future amendments may add negative deserialization test vectors if needed. |
+| NEW-KI-2 | Entry 17 (Blob `"hello"`) and Entry 4 (String `"hello"`) produce identical leaf hashes (`01cc2c521e69293f581e0df49c071c2e9d44b16586b36024872d77244b405be6`) because they encode identically. Domain-separated leaf hashing prevents Merkle root collision -- this is safe by design, consistent with the existing Entry 5/Entry 9 collision. Typed-context deserialization (Change 8) prevents semantic ambiguity. The probe tests serialization equivalence only; negative deserialization (rejecting Blob bytes when String is expected, or vice versa) is verified by the typed-context requirement and the schema-driven dispatcher (Change 13), not by the probe. |
 | NEW-KI-3 | Adding Entry 17 changes the Merkle tree from odd (17, last leaf duplicated) to even (18, no duplication) leaf count. This structural change affects the root. See Change 9. |
 
 #### Change 11: NUMERIC_SPEC_VERSION Increment
@@ -382,7 +382,7 @@ This dispatcher pattern is how DCS deserialization is intended to be used. The a
 
 #### Change 14: Probe Extension Protocol (Normative)
 
-Future amendments adding new DCS types to the verification probe MUST follow this protocol:
+Amendments adding new DCS types to the verification probe MUST follow this protocol:
 
 1. **Append only**: New entries are added at the next sequential index (N+1, N+2, ...). Existing entries are never modified or reordered.
 2. **Root recomputation**: The new entry changes the leaf count from odd to even or vice versa, which changes the pairing structure and thus the Merkle root. The new root MUST be computed and published in the amendment.
@@ -390,8 +390,6 @@ Future amendments adding new DCS types to the verification probe MUST follow thi
 4. **Announcement**: The amendment MUST list all prior leaf hashes alongside the new entry so that the full tree can be independently verified without requiring the implementer to run prior versions of the script.
 
 This ensures the probe is monotonically verifiable across amendments.
-
-> **Scalability note:** The linear growth in leaf hash publication is a known concern. Future RFCs may define a compact proof format (e.g., Merkle inclusion proofs) to reduce publication overhead as the probe grows.
 
 ## Version History
 

@@ -2,7 +2,7 @@
 
 ## Status
 
-Draft (v6, adversarial review round 17)
+Draft (v6.1, adversarial review round 18)
 
 ## Authors
 
@@ -99,9 +99,9 @@ Types in this class **share the same wire format** and are distinguishable only 
 - `i128`: 16 bytes
 - `bool`: 1 byte
 - `DFP`: 24 bytes
-- `BigInt`: variable (per RFC-0110 limb encoding)
+- `BigInt`: variable (per RFC-0110 limb encoding; 8-520 bytes)
 
-Types in this class have unique encodings. The dispatcher is not required for these types; direct deserialization calls are conformant.
+Types in this class have unique encodings. The dispatcher is not required for these types; direct deserialization calls are conformant. **Note:** `BigInt` is included here for dispatcher-requirement purposes only -- it does not need the dispatcher because its `0x01` version byte header distinguishes it unambiguously from all length-prefixed types. Its size is variable per RFC-0110, not fixed-width.
 
 **Class: Aggregate** -- compound types containing other types
 - `DVEC`: `u32_be(length) || element_0 || element_1 || ...`
@@ -196,6 +196,8 @@ Add Blob item:
 - [ ] Serialize DMAT with row-major ordering
 - [ ] Serialize Blob with length-prefix (Entry 17)
 - [ ] Deserialize Blob with buffer validation and error conditions
+- [ ] Deserialize String with buffer validation, 1MB limit, and RFC 3629 UTF-8 validation
+- [ ] Implement schema-driven dispatcher for Length-Prefixed types (Blob, String)
 - [ ] Canonicalize DQA before serialization
 - [ ] Return error on invalid inputs before serialization
 - [ ] Compute and verify Merkle probe root
@@ -211,7 +213,7 @@ Split the pre-existing combined String/Bytes error into type-specific errors. Ad
 | DCS_NON_CANONICAL | DQA value has trailing zeros (must canonicalize first) |
 | DCS_OVERFLOW | DQA value exceeds i64 range after canonicalization |
 | DCS_INVALID_UTF8 | String not valid UTF-8 |
-| DCS_STRING_LENGTH_OVERFLOW | String length exceeds 1MB (2^20 bytes) |
+| DCS_STRING_LENGTH_OVERFLOW | Declared string length (u32 length prefix) exceeds 1MB (1,048,576 bytes = 2^20). The check fires on the declared length value before buffer validation. |
 | DCS_INVALID_STRING | Input buffer too short for length prefix (fewer than 4 bytes), or declared length exceeds remaining buffer bytes |
 | DCS_INVALID_BLOB | Input buffer too short for length prefix (fewer than 4 bytes), or declared length exceeds remaining buffer bytes |
 | DCS_BLOB_LENGTH_OVERFLOW | Blob length exceeds 2^32 - 1 bytes (4GB) |
@@ -325,7 +327,7 @@ Add Blob deserialization:
 - **Length validation**: Declared length MUST NOT exceed 1MB. If exceeded, return Err(DCS_STRING_LENGTH_OVERFLOW).
 - **UTF-8 validation**: The byte sequence is validated as UTF-8 per RFC 3629 at deserialization time. This includes: valid byte structure for each sequence length, rejection of overlong encodings (minimum codepoint per length), rejection of surrogate codepoints (U+D800–U+DFFF), and rejection of codepoints above U+10FFFF. If invalid, return Err(DCS_INVALID_UTF8). **Normalization:** Strings MUST NOT be normalized. Validation only checks UTF-8 correctness. The byte sequence is preserved exactly as provided -- no Unicode normalization (NFC, NFD, NFKC, NFKD) is applied. **Validation order:** UTF-8 validation occurs after type resolution. The dispatcher resolves the type (String) before calling `deserialize_string`; therefore `deserialize_string` always receives bytes that are intended to be a String. If the dispatcher first decodes as Blob and then attempts to re-decode as String, the UTF-8 validation must still be applied at the String layer. Implementations that skip UTF-8 validation because bytes were first interpreted as Blob produce consensus-divergent results.
 - **Return type**: `Result<(&str, &[u8]), Err>` -- returns `(string_slice, remaining_bytes)` on success.
-- **Allocation safety (MEDIUM-1):** Deserializers MUST NOT pre-allocate a buffer of `length` bytes before validating that `length` bytes are available in the input. The buffer validation check (`(length as usize) > input.len() - 4`) MUST occur before any allocation. Implementations SHOULD return a view/slice of the input buffer rather than a copy where supported by the implementation language. **Cross-language consistency:** Returning a view/slice/span of the input buffer (rather than a copy) is the RECOMMENDED approach for String deserialization. Implementations SHOULD avoid copying String payloads to ensure consistent memory behavior across language bindings.
+- **Allocation safety (MEDIUM-1):** Deserializers MUST NOT pre-allocate a buffer of `length` bytes before validating that `length` bytes are available in the input. The buffer validation check (`(length as usize) > input.len() - 4`) MUST occur before any allocation. **Cross-language consistency:** Returning a view/slice/span of the input buffer (rather than a copy) is the RECOMMENDED approach for String deserialization. Implementations SHOULD avoid copying String payloads to ensure consistent memory behavior across language bindings. Where this is not possible, the semantic equivalent is a zero-copy view into the underlying buffer.
 
 #### Change 9: Published Merkle Root
 
@@ -347,7 +349,7 @@ The existing 17-entry Merkle Root (`2ed91a62f96f11151cd9211cf90aff36efc16c69d3ef
 | 9 | `00` | `96a296d224f285c67bee93c30f8a309157f0daa35dc5b87e410b78630a09cfc7` |
 | 10 | `01000000ff000000ffffffffffffffff8000000000000000` | `ff5a194d8b90088286a8c7f7de8de1ecc92e0c26c573b0e04bf8e6c0e9a507ed` |
 | 11 | `ff` | `06eb7d6a69ee19e5fbdf749018d3d2abfa04bcbd1365db312eb86dc7169389b8` |
-| 12 | `0000000000000000000000000000002a` | `170e5f45c1585c19f017f3c0df39c010e0904b0980fc8251ff4dd8eeef0376c` |
+| 12 | `0000000000000000000000000000002a` | `170e5f45c1585c19f017f3c0df39c010e09004b0980fc8251ff4dd8eeef0376c` |
 | 13 | `ffffffffffffffffffffffffffffffd6` | `340bdc8e30453799595c901721334ae5ff819a3e19f4ec6db4e6e9665454eb30` |
 | 14 | `01000000010000002a00000000000000` | `ba9bc680540d876003d8a04ed12363e87af3567283f73c5b0127f5ad40314063` |
 | 15 | `0000000000000000000000000000002a0000000000000000` | `7b0dc69a6bd9f3985e909871a6465971aef51b7c4b05051daefa0aa6d1b1fbc3` |
@@ -474,12 +476,16 @@ fn deserialize_struct(input: &[u8], schema: &StructSchema) -> Result<Value, Err>
                 // Validate: new_remaining must equal the bytes consumed for this field
                 // If new_remaining == remaining (no progress), return error
                 if new_remaining == remaining {
-                    return Err(DCS_INVALID_STRUCT);  // field produced no bytes
+                    return Err(DCS_INVALID_STRUCT);  // field value deserializer consumed zero bytes (malformed input or dispatcher logic error)
                 }
                 remaining = new_remaining;
                 append (field.id, value) to fields;
             }
         }
+    }
+    // Check for trailing bytes: all schema fields consumed, no bytes should remain
+    if remaining.len() != 0 {
+        return Err(DCS_TRAILING_BYTES);
     }
     return Ok(Value::Struct(fields));
 }
@@ -488,7 +494,7 @@ fn deserialize_struct(input: &[u8], schema: &StructSchema) -> Result<Value, Err>
 **Key properties:**
 
 1. **Type tracking**: The dispatcher knows the expected type for each field from the schema. It never guesses based on bytes alone.
-2. **Progress requirement**: Each field MUST consume at least 1 byte. Zero-progress deserialization produces an error.
+2. **Progress requirement**: Each field value deserialization MUST consume at least 1 byte from the value data (from `remaining` after the field_id has already been stripped). For fixed-width types (bool: 1 byte, i128: 16 bytes) this is always satisfied. For length-prefixed types (Blob, String), the minimum consumed is 4 bytes (the length prefix), regardless of payload size. The check `new_remaining == remaining` catches the case where a field deserializer returned the same buffer position it received -- indicating it consumed nothing.
 3. **Empty Blob note**: The progress check (`new_remaining != remaining`) validates that the length prefix was consumed (4 bytes). It does NOT validate payload presence. An empty Blob (`length=0`) consumes exactly 4 bytes (the length prefix) and passes this check -- this is correct behavior. The check guarantees forward progress, not data presence.
 4. **No cross-type byte passing**: The bytes returned from one field's deserialization are passed to the NEXT field's deserializer, never back to a different-type deserializer. Mixing Blob/String bytes without schema context is impossible by construction.
 5. **Error propagation**: Any deserialization error propagates immediately; partial results are discarded.
@@ -549,6 +555,7 @@ This ensures the probe is monotonically verifiable across amendments.
 
 | Version | Date | Author | Changes |
 |---------|------|--------|---------|
+| 6.2 | 2026-03-25 | CipherOcto | Round 18 (Round 4 adjudication): HIGH-1 add trailing-bytes check to deserialize_struct non-empty path, HIGH-2 clarify Key Property 2 progress requirement (minimum 4 bytes for length-prefixed, not 1 byte), MED-1 correct Entry 12 leaf hash (transcription error: 63→64 hex chars, missing leading zero in byte 28), MED-2 update DCS_STRING_LENGTH_OVERFLOW description to specify declared vs actual length, MED-3 add clarifying note to BigInt Fixed-Width Primitive classification, LOW-1 update version footer 6.0→6.1, LOW-2 align deserialize_string allocation safety wording with Blob's RECOMMENDED framing, LOW-3 add deserialize_string and schema-driven dispatcher to implementation checklist |
 | 6.1 | 2026-03-25 | CipherOcto | Round 17 (independent review Round 3): HIGH-1 add explicit (length as usize) cast to bounds checks, HIGH-2 replace i+N>= with bytes.len()<i+N in UTF-8 validation, MED-1 add allocation safety and zero-copy notes to deserialize_string, MED-2 correct Entry 1 DQA hex (extra high byte removed), MED-3 expand DCS_INVALID_STRUCT description to cover all three conditions, MED-4 add immutability guarantee for published leaf hashes, LOW-1 define cast_bytes_to_str in notation, LOW-2 add step 6 to activation checklist (non-upgraded nodes out of consensus), LOW-3 replace unmaintainable v6.0 run-on with structured summary |
 | 1.0 | 2026-03-25 | CipherOcto | Initial amendment draft -- adds Blob (Entry 17) to DCS type system |
 | 2.0 | 2026-03-25 | CipherOcto | Adversarial review fixes: CRIT-1 compute 18-entry Merkle root, CRIT-2 split DCS_LENGTH_OVERFLOW into String/Blob-specific errors with distinct limits, HIGH-1 add typed-context deserialization requirement, HIGH-2 retain serialize_bytes as low-level primitive, HIGH-3 verify leaf hash via compute_dcs_probe_root.py, HIGH-4 add deserialize_blob algorithm, MED-2 document odd-to-even tree structure change, MED-4 add length prefix endianness prose, MED-5 fix relationship table direction, MED-3 confirm BYTEA(32) suitability, LOW-1 specify RFC-0126 v2.6.0 target, LOW-2 address NUMERIC_SPEC_VERSION increment, LOW-3 fix table formatting and preserve historical note |
@@ -566,6 +573,6 @@ This ensures the probe is monotonically verifiable across amendments.
 
 ---
 
-**Version:** 6.0
+**Version:** 6.1
 **Submission Date:** 2026-03-25
 **Last Updated:** 2026-03-25

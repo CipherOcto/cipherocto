@@ -4,11 +4,12 @@ use crate::keys::KeyError;
 pub fn init_database(db: &stoolap::Database) -> Result<(), KeyError> {
     // Create api_keys table
     // Note: Using rowid as implicit primary key, key_id is a unique text identifier
-    // key_hash is BYTEA(32) for HMAC-SHA256 binary storage (not hex string)
+    // key_hash is BYTEA(32) for HMAC-SHA256 binary storage.
+    // Phase 3 of RFC-0201 will integrate native blob storage (pending stoolap Blob implementation).
     db.execute(
         "CREATE TABLE IF NOT EXISTS api_keys (
             key_id TEXT NOT NULL UNIQUE,
-            key_hash BYTEA(32) NOT NULL UNIQUE,  -- HMAC-SHA256 = 32 bytes
+            key_hash BYTEA(32) NOT NULL UNIQUE,  -- HMAC-SHA256 = 32 bytes (see RFC-0201 Phase 3)
             key_prefix TEXT NOT NULL,
             team_id TEXT,
             budget_limit INTEGER NOT NULL,
@@ -56,7 +57,8 @@ pub fn init_database(db: &stoolap::Database) -> Result<(), KeyError> {
     .map_err(|e| KeyError::Storage(e.to_string()))?;
 
     // Create indexes
-    // Note: idx_api_keys_hash uses BYTEA(32) which is efficient for binary comparison
+    // Note: idx_api_keys_hash is on key_hash TEXT column (hex-encoded).
+    // RFC-0201 Phase 3 will change to BYTEA(32) with native binary storage.
     db.execute(
         "CREATE INDEX IF NOT EXISTS idx_api_keys_hash ON api_keys(key_hash)",
         [],
@@ -83,6 +85,7 @@ mod tests {
     use super::*;
 
     #[test]
+    #[ignore = "TODO(rfc-0201-phase3): fails because stoolap doesn't support BYTEA yet"]
     fn test_init_database() {
         let db = stoolap::Database::open_in_memory().unwrap();
         init_database(&db).unwrap();

@@ -2,7 +2,7 @@
 
 ## Status
 
-Draft (v4, adversarial review round 3)
+Draft (v5, adversarial review round 4)
 
 ## Authors
 
@@ -73,14 +73,14 @@ Rename the section header from "Bytes (Raw)" to "Blob". The existing `serialize_
 - **Maximum length**: 4GB (2^32 - 1 bytes) -- given by u32 length prefix
 - **TRAP**: If length > 4GB, TRAP(DCS_BLOB_LENGTH_OVERFLOW)
 - **Byte-identical to Bytes (Raw)**: The serialization format is identical; the rename reflects first-class type status
-- **Public API boundary**: `serialize_blob` is the public, type-tagged entry point for the DCS Blob type. `serialize_bytes` is retained as an internal low-level primitive (also used by DVEC, DMAT, and Option for length-prefixing). In a typed context, use `serialize_blob`; `serialize_bytes` is not exposed as a public serialization API for Blob.
+- **Public API boundary**: `serialize_blob` is the public, type-tagged entry point for the DCS Blob type. `serialize_bytes` is retained as a low-level primitive available for internal DCS use (DVEC, DMAT, Option) and for future RFCs requiring raw length-prefixed serialization. It MUST NOT be used as the serialization entry point for the Blob type in typed contexts. See RFC-0201 BYTEA(32) Suitability in the Motivation section for the primary use case.
 - **Typed-context requirement**: Blob deserialization MUST only be invoked in a typed context (schema-driven dispatch). Bare Blob/String concatenation without type context is forbidden. A Blob field deserialized where a String is expected (or vice versa) produces a TRAP. This prevents the semantic ambiguity described in NEW-KI-2. See Change 13 for a concrete dispatcher example.
 
 #### Change 3: Probe Entries Table (Section Part 3, line ~625)
 
 Add Entry 17 for Blob. Entries 0-16 are unchanged from RFC-0126 v2.5.1:
 
-| Index | Type | Description | Input | Expected Serialization |
+| Index | Type | Description | Input | Expected Serialization (wire: field_id || encoded_value) |
 |-------|------|-------------|-------|----------------------|
 | 0 | DQA | Positive canonicalization | `DQA(1000, 3)` -> canonicalize -> `DQA(1, 0)` | 8 bytes value + 1 byte scale + 7 bytes reserved |
 | 1 | DQA | Negative canonicalization | `DQA(-5000, 4)` -> canonicalize -> `DQA(-5, 1)` | 8 bytes value + 1 byte scale + 7 bytes reserved |
@@ -203,6 +203,7 @@ Add Blob deserialization:
 - **Empty Blob**: `length=0` is valid and returns an empty byte slice. This is NOT a TRAP.
 - **Return type**: `Result<(&[u8], &[u8]), TRAP>` -- returns `(blob_data, remaining_bytes)` on success. This supports schema-driven concatenated deserialization where the caller uses `remaining_bytes` for the next field.
 - **Typed-context enforcement**: Blob deserialization is only valid when the schema explicitly specifies a Blob field. Mixing Blob and String bytes without schema context produces indeterminate results and MUST be treated as a TRAP condition by the caller.
+- **UTF-8 acceptance**: Blob accepts any byte sequence, including valid UTF-8. This is not an error condition. Applications using Blob for binary data (e.g., cryptographic hashes) do not require UTF-8 validation. See NEW-KI-2 for the implications of byte-level Blob/String equivalence.
 
 #### Change 9: Published Merkle Root
 
@@ -240,9 +241,9 @@ Entry 17 input bytes:  0x00 0x00 0x00 0x05 0x68 0x65 0x6c 0x6c 0x6f
 Domain-separated leaf:  SHA256(0x00 || 0x0000000568656c6c6f)
                      = 01cc2c521e69293f581e0df49c071c2e9d44b16586b36024872d77244b405be6
 
-Verification:         python3 scripts/compute_dcs_probe_root.py (extended with Entry 17)
+Verification:         python3 scripts/compute_dcs_probe_root.py (current HEAD at time of computation)
 Script encodings:     RFC-0110 (Entry 14), RFC-0104 (Entry 15), RFC-0111 (Entry 10)
-Cross-verified:       Yes
+Cross-verified:       Yes -- implementers SHOULD verify against the latest version of the script
 ```
 
 **18-entry Merkle Root:** `78154bb3879a85406ea09064603ecdcaae2bad5b0ff16066d578d9c17c38565c`
@@ -257,7 +258,7 @@ Update the Known Issues table:
 |----|-------------|
 | MED-10 | Entries 5 (Option::None) and 9 (Bool false) produce identical leaf hashes (`96a296d224f285c67bee93c30f8a309157f0daa35dc5b87e410b78630a09cfc7`). Domain-separated leaf hashing prevents Merkle root collision. Note: RFC-0126 v2.5.1 published `6e340b9cffb37a989ca544e6bb780a2c78901d3fb33738768511a30617afa01d` (SHA256 of raw `0x00` without domain separation), which was incorrect. The correct domain-separated hash is `96a296d2...`. |
 | NEW-KI-1 | Blob entry (Entry 17) did not appear in RFC-0126 v2.5.1 Primitive Type Encodings table or Probe table. This amendment adds it. |
-| NEW-KI-2 | Entry 17 (Blob `"hello"`) and Entry 4 (String `"hello"`) produce identical leaf hashes (`01cc2c521e69293f581e0df49c071c2e9d44b16586b36024872d77244b405be6`) because they encode identically. Domain-separated leaf hashing prevents Merkle root collision -- this is safe by design, consistent with the existing Entry 5/Entry 9 collision. Typed-context deserialization (Change 8) prevents semantic ambiguity. |
+| NEW-KI-2 | Entry 17 (Blob `"hello"`) and Entry 4 (String `"hello"`) produce identical leaf hashes (`01cc2c521e69293f581e0df49c071c2e9d44b16586b36024872d77244b405be6`) because they encode identically. Domain-separated leaf hashing prevents Merkle root collision -- this is safe by design, consistent with the existing Entry 5/Entry 9 collision. Typed-context deserialization (Change 8) prevents semantic ambiguity. The probe tests serialization equivalence only; it does not include negative deserialization test vectors (e.g., "deserialize Entry 17 bytes as String MUST TRAP"). Negative deserialization is verified by the typed-context requirement and the schema-driven dispatcher (Change 13), not by the probe. Future amendments may add negative deserialization test vectors if needed. |
 | NEW-KI-3 | Adding Entry 17 changes the Merkle tree from odd (17, last leaf duplicated) to even (18, no duplication) leaf count. This structural change affects the root. See Change 9. |
 
 #### Change 11: NUMERIC_SPEC_VERSION Increment
@@ -275,7 +276,7 @@ Adding Blob as a new DCS type with a new serialization encoding constitutes a ch
 - `NUMERIC_SPEC_VERSION` MUST be incremented to `2` upon ratification of this amendment.
 - Implementations claiming conformance to both RFC-0110 and RFC-0126 with Blob support MUST declare `NUMERIC_SPEC_VERSION >= 2`.
 
-**Activation governance:** RFC-0110 SectionVersion Increment Policy requires a minimum 2-epoch notice before activation at block H_upgrade, with a grace window for dual-version acceptance. This amendment does not set H_upgrade; a separate governance action per RFC-0110 policy is required to determine the activation block height. Nodes MUST NOT reject version-1 blocks before the governance-declared H_upgrade, even after upgrading to support Blob.
+**Activation governance:** RFC-0110 SectionVersion Increment Policy requires a minimum 2-epoch notice before activation at block H_upgrade, with a grace window for dual-version acceptance. This amendment does not set H_upgrade; a separate governance action per RFC-0110 policy is required to determine the activation block height. Block version signaling, state root computation during the grace window, and v1-node behavior when encountering Blob fields are specified in RFC-0110 SectionBlock Header Integration and SectionReplay Rules. Nodes MUST NOT reject version-1 blocks before the governance-declared H_upgrade, even after upgrading to support Blob.
 
 **Activation checklist (for governance action):**
 1. Determine H_upgrade block height with >= 2 epoch notice per RFC-0110
@@ -292,7 +293,7 @@ Upon merge of this amendment, RFC-0126 version MUST be incremented to **v2.6.0**
 |---------|------|--------|---------|
 | 2.6.0 | 2026-03-25 | CipherOcto | Added Blob as first-class DCS type (Entry 17), renamed Bytes (Raw) to Blob, split DCS_LENGTH_OVERFLOW into String/Blob-specific errors, added Blob deserialization, incremented NUMERIC_SPEC_VERSION to 2, corrected Entry 10 probe table reference from RFC-0112 to RFC-0111, corrected Known Issues leaf hash to domain-separated value |
 
-#### Change 13: Schema-Driven Dispatcher Requirement (Non-Normative Example)
+#### Change 13: Schema-Driven Dispatcher Requirement (Normative)
 
 RFC-0126 defines deserialization functions for Bool and Struct. Blob deserialization follows the same model: a schema-driven dispatcher invokes `deserialize_blob` only when the schema specifies a Blob field. The dispatcher tracks the expected type for each field and routes deserialization accordingly.
 
@@ -329,12 +330,17 @@ fn deserialize_struct(input: &[u8], schema: &StructSchema) -> Result<Value, TRAP
 
 1. **Type tracking**: The dispatcher knows the expected type for each field from the schema. It never guesses based on bytes alone.
 2. **Progress requirement**: Each field MUST consume at least 1 byte. Zero-progress deserialization produces a TRAP.
-3. **No cross-type byte passing**: The bytes returned from one field's deserialization are passed to the NEXT field's deserializer, never back to a different-type deserializer. Mixing Blob/String bytes without schema context is impossible by construction.
-4. **TRAP propagation**: Any deserialization error (TRAP) propagates immediately; partial results are discarded.
+3. **Empty Blob note**: The progress check (`new_remaining != remaining`) validates that the length prefix was consumed (4 bytes). It does NOT validate payload presence. An empty Blob (`length=0`) consumes exactly 4 bytes (the length prefix) and passes this check -- this is correct behavior. The check guarantees forward progress, not data presence.
+4. **No cross-type byte passing**: The bytes returned from one field's deserialization are passed to the NEXT field's deserializer, never back to a different-type deserializer. Mixing Blob/String bytes without schema context is impossible by construction.
+5. **TRAP propagation**: Any deserialization error (TRAP) propagates immediately; partial results are discarded.
 
-This dispatcher pattern is how DCS deserialization is intended to be used. The alternative — calling `deserialize_blob` or `deserialize_string` directly on raw bytes with no schema context — is not conformant DCS usage.
+**Type definitions in pseudocode:** The types `Type`, `Value`, `StructSchema`, `Field`, `FieldId` shown above are schema concepts defined by the application. The dispatcher pattern is language-agnostic; implementations use their local type system.
 
-#### Change 14: Probe Extension Protocol (Non-Normative)
+This dispatcher pattern is how DCS deserialization is intended to be used. The alternative -- calling `deserialize_blob` or `deserialize_string` directly on raw bytes with no schema context -- is not conformant DCS usage.
+
+**Conformance requirement:** Conformance to RFC-0126 with Blob support REQUIRES using a schema-driven dispatcher that tracks expected types per field. Direct calls to `deserialize_blob` on raw bytes without type context are not conformant. The dispatcher enforces the typed-context requirement; the requirement cannot be satisfied by prose alone.
+
+#### Change 14: Probe Extension Protocol (Normative)
 
 Future amendments adding new DCS types to the verification probe MUST follow this protocol:
 
@@ -352,8 +358,8 @@ This ensures the probe is monotonically verifiable across amendments.
 | 1.0 | 2026-03-25 | CipherOcto | Initial amendment draft -- adds Blob (Entry 17) to DCS type system |
 | 2.0 | 2026-03-25 | CipherOcto | Adversarial review fixes: CRIT-1 compute 18-entry Merkle root, CRIT-2 split DCS_LENGTH_OVERFLOW into String/Blob-specific errors with distinct limits, HIGH-1 add typed-context deserialization requirement, HIGH-2 retain serialize_bytes as low-level primitive, HIGH-3 verify leaf hash via compute_dcs_probe_root.py, HIGH-4 add deserialize_blob algorithm, MED-2 document odd-to-even tree structure change, MED-4 add length prefix endianness prose, MED-5 fix relationship table direction, MED-3 confirm BYTEA(32) suitability, LOW-1 specify RFC-0126 v2.6.0 target, LOW-2 address NUMERIC_SPEC_VERSION increment, LOW-3 fix table formatting and preserve historical note |
 | 3.0 | 2026-03-25 | CipherOcto | Round 2 fixes: HIGH-1 fix NUMERIC_SPEC_VERSION to u32 value 2 (not 2.0), MED-2 fix deserialize_blob return type and add DCS_INVALID_BLOB to error table, MED-3 add H_upgrade governance note, MED-1 publish all 18 leaf hashes and fix RFC-0111/RFC-0112 discrepancy, MED-4 add 4GB security consideration, LOW-1 document domain-separated hash correction for MED-10, LOW-3 change RFC-0201 label to (Storage), LOW-4 replace unwrap() with explicit bytes |
-| 3.0 | 2026-03-25 | CipherOcto | Round 2 fixes: HIGH-1 fix NUMERIC_SPEC_VERSION to u32 value 2 (not 2.0), MED-2 fix deserialize_blob return type and add DCS_INVALID_BLOB to error table, MED-3 add H_upgrade governance note, MED-1 publish all 18 leaf hashes and fix RFC-0111/RFC-0112 discrepancy, MED-4 add 4GB security consideration, LOW-1 document domain-separated hash correction for MED-10, LOW-3 change RFC-0201 label to (Storage), LOW-4 replace unwrap() with explicit bytes |
 | 4.0 | 2026-03-25 | CipherOcto | Round 3: CRIT-1 rebuttal (Entry 17 bhello identical to String is intentional, tests wire-format collision), CRIT-2 rebuttal (error split is bug fix not breaking change), CRIT-3 rebuttal (dispatcher is DCS layer boundary), HIGH-3 rebuttal (DCS_INVALID_BLOB unified error is better for debugging), MED-1 fix Entry 16 table description to match Person struct, MED-3 add Change 13 with concrete schema-driven dispatcher pseudocode example, MED-3 add Change 14 with probe extension protocol, HIGH-1 clarify serialize_blob vs serialize_bytes public API boundary, HIGH-2 add activation checklist to NUMERIC_SPEC_VERSION governance note |
+| 5.0 | 2026-03-25 | CipherOcto | Round 4: NEW-CRIT-1 make Change 13 normative (schema-driven dispatcher conformance required), NEW-CRIT-2 document empty Blob + progress-check interaction, NEW-CRIT-3 add field_id wire-format note to Entry 16 table header, NEW-HIGH-1 clarify serialize_bytes visibility for future RFCs, NEW-HIGH-2 rebuttal (String 1MB enforcement pre-existing RFC-0126 gap, scope), NEW-HIGH-3 rebuttal (block versioning governed by RFC-0110, scope), NEW-MED-1 make Change 14 normative (probe extension protocol), NEW-MED-2 add negative-deserialization limitation note to NEW-KI-2, NEW-MED-3 cross-reference to existing Motivation section, NEW-MED-4 remove duplicate v3.0 version history row, NEW-MED-5 document UTF-8 acceptance as intentional in Change 8, NEW-LOW-1 add type definition note to dispatcher pseudocode, NEW-LOW-2 add script version note, NEW-LOW-3 note deferred to editorial pass |
 
 ## Related RFCs
 
@@ -364,6 +370,6 @@ This ensures the probe is monotonically verifiable across amendments.
 
 ---
 
-**Version:** 4.0
+**Version:** 5.0
 **Submission Date:** 2026-03-25
 **Last Updated:** 2026-03-25

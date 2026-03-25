@@ -2,7 +2,7 @@
 
 ## Status
 
-Draft (v6, adversarial review round 5)
+Draft (v6, adversarial review round 6)
 
 ## Authors
 
@@ -64,26 +64,26 @@ Add Blob to the table:
 Rename the section header from "Bytes (Raw)" to "Blob". The existing `serialize_bytes` function is retained as the low-level primitive. `serialize_blob` is defined as calling `serialize_bytes`:
 
 ```
- serialize_blob(data: &[u8]) -> Vec<u8> {
+ serialize_blob(data: &[u8]) -> Result<Vec<u8>, Err> {
      if data.len() > 0xFFFFFFFF {
-         TRAP(DCS_BLOB_LENGTH_OVERFLOW)
+         return Err(DCS_BLOB_LENGTH_OVERFLOW)
      }
-     serialize_bytes(data)  // u32_be(data.len()) || data
+     return Ok(serialize_bytes(data))  // u32_be(data.len()) || data
  }
 ```
 
 - **Length prefix**: Big-endian u32 byte count (not character count)
 - **Maximum length**: 4GB (2^32 - 1 bytes) -- given by u32 length prefix
-- **TRAP**: If length > 4GB, TRAP(DCS_BLOB_LENGTH_OVERFLOW)
+- **Error**: If length > 4GB, return Err(DCS_BLOB_LENGTH_OVERFLOW)
 - **Byte-identical to Bytes (Raw)**: The serialization format is identical; the rename reflects first-class type status
 - **Public API boundary**: `serialize_blob` is the public, type-tagged entry point for the DCS Blob type. `serialize_bytes` is retained as a low-level primitive available for internal DCS use (DVEC, DMAT, Option) and for other RFCs requiring raw length-prefixed serialization. It MUST NOT be used as the serialization entry point for the Blob type in typed contexts. See RFC-0201 BYTEA(32) Suitability in the Motivation section for the primary use case.
-- **Typed-context requirement**: Blob deserialization MUST only be invoked in a typed context (schema-driven dispatch). Bare Blob/String concatenation without type context is forbidden. A Blob field deserialized where a String is expected (or vice versa) produces a TRAP. This prevents the semantic ambiguity described in NEW-KI-2. See Change 13 for a concrete dispatcher example.
+- **Typed-context requirement**: Blob deserialization MUST only be invoked in a typed context (schema-driven dispatch). Bare Blob/String concatenation without type context is forbidden. A Blob field deserialized where a String is expected (or vice versa) produces an error. This prevents the semantic ambiguity described in NEW-KI-2. See Change 13 for a concrete dispatcher example.
 
 #### Change 3: Probe Entries Table (Section Part 3, line ~625)
 
 Add Entry 17 for Blob. Entries 0-16 are unchanged from RFC-0126 v2.5.1:
 
-| Index | Type | Description | Input | Expected Serialization (wire: field_id || encoded_value) |
+| Index | Type | Description | Input | Expected Serialization |
 |-------|------|-------------|-------|----------------------|
 | 0 | DQA | Positive canonicalization | `DQA(1000, 3)` -> canonicalize -> `DQA(1, 0)` | 8 bytes value + 1 byte scale + 7 bytes reserved |
 | 1 | DQA | Negative canonicalization | `DQA(-5000, 4)` -> canonicalize -> `DQA(-5, 1)` | 8 bytes value + 1 byte scale + 7 bytes reserved |
@@ -152,9 +152,9 @@ Add Blob item:
 - [ ] Serialize DVEC with index ordering
 - [ ] Serialize DMAT with row-major ordering
 - [ ] Serialize Blob with length-prefix (Entry 17)
-- [ ] Deserialize Blob with buffer validation and TRAP conditions
+- [ ] Deserialize Blob with buffer validation and error conditions
 - [ ] Canonicalize DQA before serialization
-- [ ] TRAP on invalid inputs before serialization
+- [ ] Return error on invalid inputs before serialization
 - [ ] Compute and verify Merkle probe root
 
 #### Change 7: Error Handling Table (Section Part 3, SectionDCS Serialization Errors)
@@ -183,63 +183,75 @@ Add Blob deserialization:
 **Blob Deserialization**
 
 ```
- deserialize_blob(input: &[u8]) -> Result<(&[u8], &[u8]), TRAP> {
+ deserialize_blob(input: &[u8]) -> Result<(&[u8], &[u8]), Err> {
      if input.len() < 4 {
-         TRAP(DCS_INVALID_BLOB)  // need at least 4 bytes for length prefix
+         return Err(DCS_INVALID_BLOB)  // need at least 4 bytes for length prefix
      }
-     let (length_bytes, rest) = input.split_at(4);
-     // safe: length_bytes is exactly 4 bytes, no unwrap needed
-     let length = u32::from_be_bytes([
-         length_bytes[0], length_bytes[1], length_bytes[2], length_bytes[3]
-     ]);
-
-     if rest.len() < length as usize {
-         TRAP(DCS_INVALID_BLOB)  // truncated: declared length exceeds remaining bytes
+     let length = u32::from_be_bytes([input[0], input[1], input[2], input[3]]);
+     if input.len() < 4 + (length as usize) {
+         return Err(DCS_INVALID_BLOB)  // truncated: declared length exceeds remaining bytes
      }
-     let (data, leftover) = rest.split_at(length as usize);
-
-     // Empty blob (length=0) is valid and returns empty slice
-     // No minimum length requirement
-
-     Ok((data, leftover))  // returns (blob_data, remaining_input_for_next_field)
+     let data = input[4..4+(length as usize)];
+     let remaining = input[4+(length as usize)..];
+     return Ok((data, remaining))  // returns (blob_data, remaining_input_for_next_field)
  }
 ```
 
-- **Minimum input**: 4 bytes (for the length prefix). If fewer than 4 bytes remain, TRAP.
-- **Length validation**: Declared length MUST NOT exceed remaining buffer bytes. If exceeded, TRAP.
-- **Empty Blob**: `length=0` is valid and returns an empty byte slice. This is NOT a TRAP.
-- **Return type**: `Result<(&[u8], &[u8]), TRAP>` -- returns `(blob_data, remaining_bytes)` on success. This supports schema-driven concatenated deserialization where the caller uses `remaining_bytes` for the next field.
-- **Typed-context enforcement**: Blob deserialization is only valid when the schema explicitly specifies a Blob field. Mixing Blob and String bytes without schema context produces indeterminate results and MUST be treated as a TRAP condition by the caller.
+- **Minimum input**: 4 bytes (for the length prefix). If fewer than 4 bytes remain, return Err(DCS_INVALID_BLOB).
+- **Length validation**: Declared length MUST NOT exceed remaining buffer bytes. If exceeded, return Err(DCS_INVALID_BLOB).
+- **Empty Blob**: `length=0` is valid and returns an empty byte slice. This is NOT an error.
+- **Return type**: `Result<(&[u8], &[u8]), Err>` -- returns `(blob_data, remaining_bytes)` on success. This supports schema-driven concatenated deserialization where the caller uses `remaining_bytes` for the next field.
+- **Typed-context enforcement**: Blob deserialization is only valid when the schema explicitly specifies a Blob field. Mixing Blob and String bytes without schema context produces indeterminate results and MUST be treated as an error condition by the caller.
 - **UTF-8 acceptance**: Blob accepts any byte sequence, including valid UTF-8. This is not an error condition. Applications using Blob for binary data (e.g., cryptographic hashes) do not require UTF-8 validation. See NEW-KI-2 for the implications of byte-level Blob/String equivalence.
 
 **String Deserialization**
 
 ```
- deserialize_string(input: &[u8]) -> Result<(&str, &[u8]), TRAP> {
+ deserialize_string(input: &[u8]) -> Result<(&str, &[u8]), Err> {
      if input.len() < 4 {
-         TRAP(DCS_INVALID_STRING)  // need at least 4 bytes for length prefix
+         return Err(DCS_INVALID_STRING)  // need at least 4 bytes for length prefix
      }
-     let (length_bytes, rest) = input.split_at(4);
-     let length = u32::from_be_bytes([
-         length_bytes[0], length_bytes[1], length_bytes[2], length_bytes[3]
-     ]);
+     let length = u32::from_be_bytes([input[0], input[1], input[2], input[3]]);
 
      if length > 1_048_576 {  // 1MB = 2^20
-         TRAP(DCS_STRING_LENGTH_OVERFLOW)
+         return Err(DCS_STRING_LENGTH_OVERFLOW)
      }
-     if rest.len() < length as usize {
-         TRAP(DCS_INVALID_STRING)  // truncated: declared length exceeds remaining bytes
+     if input.len() < 4 + (length as usize) {
+         return Err(DCS_INVALID_STRING)  // truncated: declared length exceeds remaining bytes
      }
-     let (bytes, leftover) = rest.split_at(length as usize);
-     let s = core::str::from_utf8(bytes).map_err(|_| TRAP(DCS_INVALID_UTF8))?;
-     Ok((s, leftover))  // returns (string_slice, remaining_input_for_next_field)
+     let bytes = input[4..4+(length as usize)];
+     let remaining = input[4+(length as usize)..];
+     // Validate UTF-8: check each 4-byte sequence
+     let mut i = 0;
+     while i < bytes.len() {
+         let b = bytes[i];
+         if b < 0x80 {
+             i += 1;  // ASCII
+         } else if (b & 0xE0) == 0xC0 {
+             // 2-byte sequence
+             if i + 1 >= bytes.len() || (bytes[i+1] & 0xC0) != 0x80 { return Err(DCS_INVALID_UTF8) }
+             i += 2;
+         } else if (b & 0xF0) == 0xE0 {
+             // 3-byte sequence
+             if i + 2 >= bytes.len() || (bytes[i+1] & 0xC0) != 0x80 || (bytes[i+2] & 0xC0) != 0x80 { return Err(DCS_INVALID_UTF8) }
+             i += 3;
+         } else if (b & 0xF8) == 0xF0 {
+             // 4-byte sequence
+             if i + 3 >= bytes.len() || (bytes[i+1] & 0xC0) != 0x80 || (bytes[i+2] & 0xC0) != 0x80 || (bytes[i+3] & 0xC0) != 0x80 { return Err(DCS_INVALID_UTF8) }
+             i += 4;
+         } else {
+             return Err(DCS_INVALID_UTF8)  // invalid leading byte
+         }
+     }
+     let s = cast_bytes_to_str(bytes);  // bytes validated as UTF-8 above; language-specific cast
+     return Ok((s, remaining))  // returns (string_slice, remaining_input_for_next_field)
  }
 ```
 
-- **Minimum input**: 4 bytes (for the length prefix). If fewer than 4 bytes remain, TRAP.
-- **Length validation**: Declared length MUST NOT exceed 1MB. If exceeded, TRAP(DCS_STRING_LENGTH_OVERFLOW).
-- **UTF-8 validation**: The byte sequence is validated as UTF-8 at deserialization time. If invalid, TRAP(DCS_INVALID_UTF8).
-- **Return type**: `Result<(&str, &[u8]), TRAP>` -- returns `(string_slice, remaining_bytes)` on success.
+- **Minimum input**: 4 bytes (for the length prefix). If fewer than 4 bytes remain, return Err(DCS_INVALID_STRING).
+- **Length validation**: Declared length MUST NOT exceed 1MB. If exceeded, return Err(DCS_STRING_LENGTH_OVERFLOW).
+- **UTF-8 validation**: The byte sequence is validated as UTF-8 at deserialization time. If invalid, return Err(DCS_INVALID_UTF8).
+- **Return type**: `Result<(&str, &[u8]), Err>` -- returns `(string_slice, remaining_bytes)` on success.
 
 #### Change 9: Published Merkle Root
 
@@ -336,27 +348,50 @@ RFC-0126 defines deserialization functions for Bool and Struct. Blob deserializa
 **Example dispatcher pseudocode:**
 
 ```
-fn deserialize_field(input: &[u8], expected_type: Type) -> Result<(&[u8], Value), TRAP> {
+fn deserialize_field(input: &[u8], expected_type: Type) -> Result<(&[u8], Value), Err> {
     match expected_type {
-        Type::String  => deserialize_string(input).map(|(v, rem)| (rem, Value::String(v))),
-        Type::Bool    => deserialize_bool(input).map(|(v, rem)| (rem, Value::Bool(v))),
-        Type::Blob    => deserialize_blob(input).map(|(v, rem)| (rem, Value::Blob(v))),
+        Type::String => {
+            let result = deserialize_string(input);
+            match result {
+                Ok((v, rem)) => Ok((rem, Value::String(v))),
+                Err(e) => Err(e),
+            }
+        },
+        Type::Bool => {
+            let result = deserialize_bool(input);
+            match result {
+                Ok((v, rem)) => Ok((rem, Value::Bool(v))),
+                Err(e) => Err(e),
+            }
+        },
+        Type::Blob => {
+            let result = deserialize_blob(input);
+            match result {
+                Ok((v, rem)) => Ok((rem, Value::Blob(v))),
+                Err(e) => Err(e),
+            }
+        },
         // ... other types
     }
 }
 
-fn deserialize_struct(input: &[u8], schema: &StructSchema) -> Result<Value, TRAP> {
+fn deserialize_struct(input: &[u8], schema: &StructSchema) -> Result<Value, Err> {
     let mut remaining = input;
     let mut fields = Vec::new();
     for field in schema.fields.iter() {  // fields in declaration order
-        let (new_remaining, value) = deserialize_field(remaining, field.type_)?;
-        // Validate: new_remaining must equal the bytes consumed for this field
-        // If new_remaining == remaining (no progress), TRAP
-        if new_remaining == remaining {
-            TRAP(DCS_INVALID_STRUCT);  // field produced no bytes
+        let field_result = deserialize_field(remaining, field.type_);
+        match field_result {
+            Err(e) => return Err(e),  // propagate error
+            Ok((new_remaining, value)) => {
+                // Validate: new_remaining must equal the bytes consumed for this field
+                // If new_remaining == remaining (no progress), return error
+                if new_remaining == remaining {
+                    return Err(DCS_INVALID_STRUCT);  // field produced no bytes
+                }
+                remaining = new_remaining;
+                fields.push((field.id, value));
+            }
         }
-        remaining = new_remaining;
-        fields.push((field.id, value));
     }
     Ok(Value::Struct(fields))
 }
@@ -365,10 +400,10 @@ fn deserialize_struct(input: &[u8], schema: &StructSchema) -> Result<Value, TRAP
 **Key properties:**
 
 1. **Type tracking**: The dispatcher knows the expected type for each field from the schema. It never guesses based on bytes alone.
-2. **Progress requirement**: Each field MUST consume at least 1 byte. Zero-progress deserialization produces a TRAP.
+2. **Progress requirement**: Each field MUST consume at least 1 byte. Zero-progress deserialization produces an error.
 3. **Empty Blob note**: The progress check (`new_remaining != remaining`) validates that the length prefix was consumed (4 bytes). It does NOT validate payload presence. An empty Blob (`length=0`) consumes exactly 4 bytes (the length prefix) and passes this check -- this is correct behavior. The check guarantees forward progress, not data presence.
 4. **No cross-type byte passing**: The bytes returned from one field's deserialization are passed to the NEXT field's deserializer, never back to a different-type deserializer. Mixing Blob/String bytes without schema context is impossible by construction.
-5. **TRAP propagation**: Any deserialization error (TRAP) propagates immediately; partial results are discarded.
+5. **Error propagation**: Any deserialization error propagates immediately; partial results are discarded.
 
 **Type definitions in pseudocode:** The types `Type`, `Value`, `StructSchema`, `Field`, `FieldId` shown above are schema concepts defined by the application. The dispatcher pattern is language-agnostic; implementations use their local type system.
 
@@ -376,7 +411,7 @@ This dispatcher pattern is how DCS deserialization is intended to be used. The a
 
 **Conformance requirement:** Conformance to RFC-0126 with Blob support REQUIRES using a schema-driven dispatcher for Blob fields. Direct calls to `deserialize_blob` on raw bytes without type context are not conformant. Other DCS types MAY use direct deserialization calls; the dispatcher requirement applies to Blob deserialization only. The dispatcher enforces the typed-context requirement; the requirement cannot be satisfied by prose alone.
 
-**TRAP semantics:** `TRAP(X)` denotes a deterministic error state that aborts deserialization. In pseudocode, TRAP terminates the function and returns an error; it does not produce a value. Implementations MUST treat all TRAP conditions as fatal errors.
+**Error notation:** Pseudocode uses `return Err(ERROR_CODE)` for error returns. All error codes (`DCS_INVALID_STRING`, `DCS_STRING_LENGTH_OVERFLOW`, `DCS_INVALID_UTF8`, `DCS_INVALID_BLOB`, `DCS_BLOB_LENGTH_OVERFLOW`, `DCS_INVALID_STRUCT`) denote deterministic error states that abort deserialization. Implementations MUST treat all error conditions as fatal.
 
 **Zero-byte type constraint:** The progress check constrains future DCS type design: all DCS types used with this dispatcher MUST consume at least 1 byte during deserialization. Zero-byte types are incompatible with this dispatcher pattern.
 
@@ -402,7 +437,7 @@ This ensures the probe is monotonically verifiable across amendments.
 | 3.0 | 2026-03-25 | CipherOcto | Round 2 fixes: HIGH-1 fix NUMERIC_SPEC_VERSION to u32 value 2 (not 2.0), MED-2 fix deserialize_blob return type and add DCS_INVALID_BLOB to error table, MED-3 add H_upgrade governance note, MED-1 publish all 18 leaf hashes and fix RFC-0111/RFC-0112 discrepancy, MED-4 add 4GB security consideration, LOW-1 document domain-separated hash correction for MED-10, LOW-3 change RFC-0201 label to (Storage), LOW-4 replace unwrap() with explicit bytes |
 | 4.0 | 2026-03-25 | CipherOcto | Round 3: CRIT-1 rebuttal (Entry 17 bhello identical to String is intentional, tests wire-format collision), CRIT-2 rebuttal (error split is bug fix not breaking change), CRIT-3 rebuttal (dispatcher is DCS layer boundary), HIGH-3 rebuttal (DCS_INVALID_BLOB unified error is better for debugging), MED-1 fix Entry 16 table description to match Person struct, MED-3 add Change 13 with concrete schema-driven dispatcher pseudocode example, MED-3 add Change 14 with probe extension protocol, HIGH-1 clarify serialize_blob vs serialize_bytes public API boundary, HIGH-2 add activation checklist to NUMERIC_SPEC_VERSION governance note |
 | 5.0 | 2026-03-25 | CipherOcto | Round 4: NEW-CRIT-1 make Change 13 normative (schema-driven dispatcher conformance required), NEW-CRIT-2 document empty Blob + progress-check interaction, NEW-CRIT-3 add field_id wire-format note to Entry 16 table header, NEW-HIGH-1 clarify serialize_bytes visibility for other RFCs, NEW-HIGH-2 rebuttal (String 1MB enforcement pre-existing RFC-0126 gap, scope), NEW-HIGH-3 rebuttal (block versioning governed by RFC-0110, scope), NEW-MED-1 make Change 14 normative (probe extension protocol), NEW-MED-2 add negative-deserialization limitation note to NEW-KI-2, NEW-MED-3 cross-reference to existing Motivation section, NEW-MED-4 remove duplicate v3.0 version history row, NEW-MED-5 document UTF-8 acceptance as intentional in Change 8, NEW-LOW-1 add type definition note to dispatcher pseudocode, NEW-LOW-2 add script version note, NEW-LOW-3 note deferred to editorial pass |
-| 6.0 | 2026-03-25 | CipherOcto | Round 5: NEW-CRIT-4 add DCS_INVALID_STRUCT to error table, NEW-CRIT-5 add deserialize_string pseudocode (with DCS_INVALID_STRING, 1MB TRAP, UTF-8 validation), NEW-HIGH-4 clarify dispatcher requirement applies to Blob fields only, NEW-HIGH-5 rebuttal (negative deserialization tests scope + would break Merkle root), NEW-MED-6 document zero-byte-type constraint, NEW-MED-7 add explicit length TRAP to serialize_blob pseudocode, NEW-MED-8 pin script to commit 7b22f8a, NEW-MED-9 clarify RFC-0201 relationship, NEW-LOW-4 address linear growth trade-off explicitly in Change 14 (not deferred), NEW-LOW-5 clarify TRAP return semantics, NEW-LOW-6 add field_id-only-on-Entry-16 note; v6-patch: remove all "future" deferral language per directive (serialize_bytes visibility, Change 14 header, NEW-KI-2 trailing sentence) |
+| 6.0 | 2026-03-25 | CipherOcto | Round 5: NEW-CRIT-4 add DCS_INVALID_STRUCT to error table, NEW-CRIT-5 add deserialize_string pseudocode (with DCS_INVALID_STRING, 1MB check, UTF-8 validation), NEW-HIGH-4 clarify dispatcher requirement applies to Blob fields only, NEW-HIGH-5 rebuttal (negative deserialization tests scope + would break Merkle root), NEW-MED-6 document zero-byte-type constraint, NEW-MED-7 add explicit length check to serialize_blob pseudocode, NEW-MED-8 pin script to commit 7b22f8a, NEW-MED-9 clarify RFC-0201 relationship, NEW-LOW-4 address linear growth trade-off explicitly in Change 14 (not deferred), NEW-LOW-5 clarify error return semantics, NEW-LOW-6 add field_id-only-on-Entry-16 note; v6-patch: remove all "future" deferral language; v6-patch2: Round 6 fixes (NEW-CRIT-6: fix table header wire format description, NEW-HIGH-6: standardize all pseudocode to return Err(), NEW-HIGH-7: rewrite deserialize_string in language-agnostic pseudocode, remove all TRAP notation) |
 
 ## Related RFCs
 

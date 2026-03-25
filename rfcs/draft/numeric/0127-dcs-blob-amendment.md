@@ -2,7 +2,7 @@
 
 ## Status
 
-Draft (v6, adversarial review round 7)
+Draft (v6, adversarial review round 8 -- rounds 5 through 8 consolidated into v6.0)
 
 ## Authors
 
@@ -103,7 +103,7 @@ Add Entry 17 for Blob. Entries 0-16 are unchanged from RFC-0126 v2.5.1:
 | 13 | I128 | Negative | `-42` | 16 bytes big-endian |
 | 14 | BIGINT | Positive | `42` | RFC-0110 BigIntEncoding (16 bytes) |
 | 15 | DFP | Positive Normal | `42.0` | RFC-0104 DfpEncoding (24 bytes) |
-| 16 | Struct | Field ordering | `Person { id(field_id=1): 42, name(field_id=2): "alice", balance(field_id=3): DQA(1,0) }` | `0x01` + u32_be(42) + `0x02` + serialize_string("alice") + `0x03` + serialize_dqa(1,0) |
+| 16 | Struct | Field ordering | `Person { id(field_id=1): 42, name(field_id=2): "alice", balance(field_id=3): DQA(1,0) }` | `u32_be(1) + u32_be(42) + u32_be(2) + serialize_string("alice") + u32_be(3) + serialize_dqa(1,0)` |
 | 17 | Blob | Length prefix + data | `b"hello"` | `0x00000005 0x68656c6c6f` |
 
 > **Note:** Entry 4 (DMAT column-major) was removed because serialization output is indistinguishable for valid row-major input. DMAT input validation ensures data is stored row-major per RFC-0113.
@@ -189,7 +189,7 @@ Add Blob deserialization:
      if input.len() < 4 {
          return Err(DCS_INVALID_BLOB)  // need at least 4 bytes for length prefix
      }
-     let length = u32::from_be_bytes([input[0], input[1], input[2], input[3]]);
+     let length = (input[0] << 24) | (input[1] << 16) | (input[2] << 8) | input[3];
      if input.len() < 4 + (length as usize) {
          return Err(DCS_INVALID_BLOB)  // truncated: declared length exceeds remaining bytes
      }
@@ -213,7 +213,7 @@ Add Blob deserialization:
      if input.len() < 4 {
          return Err(DCS_INVALID_STRING)  // need at least 4 bytes for length prefix
      }
-     let length = u32::from_be_bytes([input[0], input[1], input[2], input[3]]);
+     let length = (input[0] << 24) | (input[1] << 16) | (input[2] << 8) | input[3];
 
      if length > 1_048_576 {  // 1MB = 2^20
          return Err(DCS_STRING_LENGTH_OVERFLOW)
@@ -464,7 +464,7 @@ This ensures the probe is monotonically verifiable across amendments.
 | 3.0 | 2026-03-25 | CipherOcto | Round 2 fixes: HIGH-1 fix NUMERIC_SPEC_VERSION to u32 value 2 (not 2.0), MED-2 fix deserialize_blob return type and add DCS_INVALID_BLOB to error table, MED-3 add H_upgrade governance note, MED-1 publish all 18 leaf hashes and fix RFC-0111/RFC-0112 discrepancy, MED-4 add 4GB security consideration, LOW-1 document domain-separated hash correction for MED-10, LOW-3 change RFC-0201 label to (Storage), LOW-4 replace unwrap() with explicit bytes |
 | 4.0 | 2026-03-25 | CipherOcto | Round 3: CRIT-1 rebuttal (Entry 17 bhello identical to String is intentional, tests wire-format collision), CRIT-2 rebuttal (error split is bug fix not breaking change), CRIT-3 rebuttal (dispatcher is DCS layer boundary), HIGH-3 rebuttal (DCS_INVALID_BLOB unified error is better for debugging), MED-1 fix Entry 16 table description to match Person struct, MED-3 add Change 13 with concrete schema-driven dispatcher pseudocode example, MED-3 add Change 14 with probe extension protocol, HIGH-1 clarify serialize_blob vs serialize_bytes public API boundary, HIGH-2 add activation checklist to NUMERIC_SPEC_VERSION governance note |
 | 5.0 | 2026-03-25 | CipherOcto | Round 4: NEW-CRIT-1 make Change 13 normative (schema-driven dispatcher conformance required), NEW-CRIT-2 document empty Blob + progress-check interaction, NEW-CRIT-3 add field_id wire-format note to Entry 16 table header, NEW-HIGH-1 clarify serialize_bytes visibility for other RFCs, NEW-HIGH-2 rebuttal (String 1MB enforcement pre-existing RFC-0126 gap, scope), NEW-HIGH-3 rebuttal (block versioning governed by RFC-0110, scope), NEW-MED-1 make Change 14 normative (probe extension protocol), NEW-MED-2 add negative-deserialization limitation note to NEW-KI-2, NEW-MED-3 cross-reference to existing Motivation section, NEW-MED-4 remove duplicate v3.0 version history row, NEW-MED-5 document UTF-8 acceptance as intentional in Change 8, NEW-LOW-1 add type definition note to dispatcher pseudocode, NEW-LOW-2 add script version note, NEW-LOW-3 note deferred to editorial pass |
-| 6.0 | 2026-03-25 | CipherOcto | Round 5 fixes: NEW-CRIT-4 add DCS_INVALID_STRUCT to error table, NEW-CRIT-5 add deserialize_string pseudocode (with DCS_INVALID_STRING, 1MB check, RFC 3629 UTF-8 validation), NEW-HIGH-4 clarify dispatcher requirement applies to Blob fields only, NEW-HIGH-5 rebuttal (negative deserialization tests scope + would break Merkle root), NEW-MED-6 document zero-byte-type constraint, NEW-MED-7 add explicit length check to serialize_blob pseudocode, NEW-MED-8 pin script to commit 7b22f8a, NEW-MED-9 clarify RFC-0201 relationship, NEW-LOW-4 address linear growth trade-off explicitly in Change 14, NEW-LOW-5 clarify error return semantics, NEW-LOW-6 add field_id-only-on-Entry-16 note; Round 6 fixes: NEW-CRIT-6 fix table header wire format description, NEW-HIGH-6 standardize all pseudocode to return Err(), NEW-HIGH-7 rewrite deserialize_string in language-agnostic pseudocode, remove all TRAP notation; Round 7 fixes: NEW-MED-10 replace Vec::new()/push() with language-agnostic list notation, NEW-MED-11 add codepoint upper-bound and surrogate checks to UTF-8 validation (RFC 3629 compliant), NEW-MED-12 add Result return type note for serialize_blob, NEW-LOW-7 cp variable now used for full codepoint validation (not just minimum), NEW-LOW-8 add field_ids to Entry 16 description, NEW-LOW-9 consolidate patch notes into single v6.0 entry |
+| 6.0 | 2026-03-25 | CipherOcto | Round 5 fixes: NEW-CRIT-4 add DCS_INVALID_STRUCT to error table, NEW-CRIT-5 add deserialize_string pseudocode (with DCS_INVALID_STRING, 1MB check, RFC 3629 UTF-8 validation), NEW-HIGH-4 clarify dispatcher requirement applies to Blob fields only, NEW-HIGH-5 rebuttal (negative deserialization tests scope + would break Merkle root), NEW-MED-6 document zero-byte-type constraint, NEW-MED-7 add explicit length check to serialize_blob pseudocode, NEW-MED-8 pin script to commit 7b22f8a, NEW-MED-9 clarify RFC-0201 relationship, NEW-LOW-4 address linear growth trade-off explicitly in Change 14, NEW-LOW-5 clarify error return semantics, NEW-LOW-6 add field_id-only-on-Entry-16 note; Round 6 fixes: NEW-CRIT-6 fix table header wire format description, NEW-HIGH-6 standardize all pseudocode to return Err(), NEW-HIGH-7 rewrite deserialize_string in language-agnostic pseudocode, remove all TRAP notation; Round 7 fixes: NEW-MED-10 replace Vec::new()/push() with language-agnostic list notation, NEW-MED-11 add codepoint upper-bound and surrogate checks to UTF-8 validation (RFC 3629 compliant), NEW-MED-12 add Result return type note for serialize_blob, NEW-LOW-7 cp variable now used for full codepoint validation (not just minimum), NEW-LOW-8 add field_ids to Entry 16 description, NEW-LOW-9 consolidate patch notes into single v6.0 entry; Round 8 fixes: NEW-LOW-10 replace u32::from_be_bytes with language-agnostic shift/or notation, NEW-LOW-11 update header to note rounds 5-8 consolidated into v6.0, NEW-LOW-12 fix Entry 16 probe table field_id to use u32_be(1) not 0x01 |
 
 ## Related RFCs
 

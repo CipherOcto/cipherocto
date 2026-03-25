@@ -2,7 +2,7 @@
 
 ## Status
 
-Draft (v1)
+Draft (v2, adversarial review)
 
 ## Authors
 
@@ -34,6 +34,10 @@ RFC-0126 defines a 17-entry verification probe (Entries 0-16) for DCS cross-impl
 
 Without a Blob entry in RFC-0126's type system, RFC-0201 cannot be Accepted (CRIT-3 from RFC-0201 adversarial review identified this dependency gap).
 
+### RFC-0201 BYTEA(32) Suitability
+
+RFC-0201 uses `BYTEA(32)` for SHA256/HMAC-SHA256 key hashes. The `serialize_blob` algorithm with `length=32` satisfies this use case. Schema-level enforcement of the 32-byte fixed length is the responsibility of the application layer (stoolap schema), not the DCS serialization layer. This is consistent with how other DCS types handle size constraints (e.g., DFP enforces precision via its encoding format; String enforces the 1MB limit at the application layer via DCS_LENGTH_OVERFLOW).
+
 ## Specification
 
 ### Changes to RFC-0126
@@ -57,26 +61,28 @@ Add Blob to the table:
 
 #### Change 2: Bytes (Raw) Section Renamed to Blob (Section Part 3, line ~350)
 
-Rename the section header from "Bytes (Raw)" to "Blob":
+Rename the section header from "Bytes (Raw)" to "Blob". The existing `serialize_bytes` function is retained as the low-level primitive. `serialize_blob` is defined as calling `serialize_bytes`:
 
 ```
  serialize_blob(data: &[u8]) -> Vec<u8> {
-     u32_be(data.len()) || data
+     serialize_bytes(data)  // u32_be(data.len()) || data
  }
 ```
 
-- **Maximum length**: 4GB (2³^32 bytes) -- given by u32 length prefix
-- **TRAP**: If length > 4GB, TRAP(LENGTH_OVERFLOW)
+- **Length prefix**: Big-endian u32 byte count (not character count)
+- **Maximum length**: 4GB (2^32 - 1 bytes) -- given by u32 length prefix
+- **TRAP**: If length > 4GB, TRAP(DCS_BLOB_LENGTH_OVERFLOW)
 - **Byte-identical to Bytes (Raw)**: The serialization format is identical; the rename reflects first-class type status
+- **Typed-context requirement**: Blob deserialization MUST only be invoked in a typed context (schema-driven dispatch). Bare Blob/String concatenation without type context is forbidden. A Blob field deserialized where a String is expected (or vice versa) produces a TRAP. This prevents the semantic ambiguity described in NEW-KI-2.
 
 #### Change 3: Probe Entries Table (Section Part 3, line ~625)
 
-Add Entry 17 for Blob:
+Add Entry 17 for Blob. Entries 0-16 are unchanged from RFC-0126 v2.5.1:
 
 | Index | Type | Description | Input | Expected Serialization |
 |-------|------|-------------|-------|----------------------|
-| 0 | DQA | Positive canonicalization | `DQA(1000, 3)` → canonicalize → `DQA(1, 0)` | 8 bytes value + 1 byte scale + 7 bytes reserved |
-| 1 | DQA | Negative canonicalization | `DQA(-5000, 4)` → canonicalize → `DQA(-5, 1)` | 8 bytes value + 1 byte scale + 7 bytes reserved |
+| 0 | DQA | Positive canonicalization | `DQA(1000, 3)` -> canonicalize -> `DQA(1, 0)` | 8 bytes value + 1 byte scale + 7 bytes reserved |
+| 1 | DQA | Negative canonicalization | `DQA(-5000, 4)` -> canonicalize -> `DQA(-5, 1)` | 8 bytes value + 1 byte scale + 7 bytes reserved |
 | 2 | DVEC | Length + index ordering | `[1, 2, 3]` | `0x00000003` + 3x DQA elements |
 | 3 | DMAT | Row-major traversal | `[[1, 2], [3, 4]]` (2x2) | rows + cols + 4x DQA elements |
 | 4 | String | UTF-8 encoding | `"hello"` | `0x00000005` + UTF-8 bytes |
@@ -92,11 +98,11 @@ Add Entry 17 for Blob:
 | 14 | BIGINT | Positive | `42` | RFC-0110 BigIntEncoding (16 bytes) |
 | 15 | DFP | Positive Normal | `42.0` | RFC-0104 DfpEncoding (24 bytes) |
 | 16 | Struct | Field ordering | `Struct { a: 1, b: true }` | `0x00` + field_0 + `0x01` + field_1 |
-| **17** | **Blob** | **Length prefix + data** | **`b"hello"`** | **`0x00000005 0x68656c6c6f`** |
+| 17 | Blob | Length prefix + data | `b"hello"` | `0x00000005 0x68656c6c6f` |
+
+> **Note:** Entry 4 (DMAT column-major) was removed because serialization output is indistinguishable for valid row-major input. DMAT input validation ensures data is stored row-major per RFC-0113.
 
 #### Change 4: Probe Entry 17 Details (Section Part 3, after Entry 16)
-
-Add detailed entry for Blob:
 
 **Entry 17: Blob Serialization**
 
@@ -104,6 +110,7 @@ Add detailed entry for Blob:
 - Serialize: `length=5 (4 bytes BE) || data="hello"`
 - Expected bytes: `0x00000005 0x68656c6c6f` (9 bytes total)
 - Leaf hash: `SHA256(0x00 || 0x00000005 0x68656c6c6f)` = `01cc2c521e69293f581e0df49c071c2e9d44b16586b36024872d77244b405be6`
+- Verified against `scripts/compute_dcs_probe_root.py` (see Change 9)
 
 ```
 serialize_blob(b"hello") =
@@ -113,7 +120,7 @@ serialize_blob(b"hello") =
 
 #### Change 5: Relationship Table (Section Part 3, SectionRelationship to Other RFCs)
 
-Add Blob row:
+Add Blob row. RFC-0201 is listed as a downstream consumer, not a peer dependency:
 
 | RFC | Relationship |
 |-----|--------------|
@@ -122,7 +129,7 @@ Add Blob row:
 | RFC-0110 (BIGINT) | Integer structure, little-endian limbs, BigIntEncoding |
 | RFC-0112 (DVEC) | Vector structure, index ordering |
 | RFC-0113 (DMAT) | Matrix structure, row-major ordering |
-| **RFC-0201 (Blob)** | **Binary BLOB type, length-prefixed serialization** |
+| RFC-0201 (Blob) | Binary BLOB type, length-prefixed serialization (downstream consumer) |
 
 #### Change 6: Implementation Checklist (Section Part 3, SectionImplementation Checklist)
 
@@ -137,39 +144,115 @@ Add Blob item:
 - [ ] Serialize DVEC with index ordering
 - [ ] Serialize DMAT with row-major ordering
 - [ ] Serialize Blob with length-prefix (Entry 17)
+- [ ] Deserialize Blob with buffer validation and TRAP conditions
 - [ ] Canonicalize DQA before serialization
 - [ ] TRAP on invalid inputs before serialization
 - [ ] Compute and verify Merkle probe root
 
 #### Change 7: Error Handling Table (Section Part 3, SectionDCS Serialization Errors)
 
-Blob uses existing DCS_LENGTH_OVERFLOW error. No new error codes required.
+Split the pre-existing combined String/Bytes error into type-specific errors:
 
-#### Change 8: Known Issues
+| Error | Condition |
+|-------|-----------|
+| DCS_INVALID_BOOL | Bool value not 0x00 or 0x01 |
+| DCS_INVALID_SCALE | DQA scale > 18 |
+| DCS_NON_CANONICAL | DQA value has trailing zeros (must canonicalize first) |
+| DCS_OVERFLOW | DQA value exceeds i64 range after canonicalization |
+| DCS_INVALID_UTF8 | String not valid UTF-8 |
+| DCS_STRING_LENGTH_OVERFLOW | String length exceeds 1MB (2^20 bytes) |
+| DCS_BLOB_LENGTH_OVERFLOW | Blob length exceeds 2^32 - 1 bytes (4GB) |
 
-Add to Known Issues:
+> **Note:** The prior combined `DCS_LENGTH_OVERFLOW` ("String/Bytes length exceeds 2^32 - 1") is replaced by two separate errors with distinct limits. String is capped at 1MB per RFC-0126 SectionString. Blob is capped at 4GB by the u32 length prefix. This change also resolves the pre-existing inconsistency between the error table (2^32-1) and the String section prose (1MB) in RFC-0126 v2.5.1.
 
-| ID | Description |
-|----|-------------|
-| MED-10 | Entries 5 (Option::None) and 9 (Bool false) produce identical leaf hashes (`6e340b9c...`). Domain-separated leaf hashing prevents Merkle root collision. |
-| **NEW-KI-1** | **Blob entry (Entry 17) does not appear in RFC-0126 v2.5.1 Primitive Type Encodings table or Probe table. This amendment adds it.** |
-| **NEW-KI-2** | **Entry 17 (Blob `"hello"`) and Entry 4 (String `"hello"`) produce identical leaf hashes (`01cc2c521e69293f581e0df49c071c2e9d44b16586b36024872d77244b405be6`) because they encode identically. Domain-separated leaf hashing prevents Merkle root collision -- this is safe by design, consistent with the existing Entry 5/Entry 9 collision documented in RFC-0126 Known Issues.** |
+#### Change 8: Deserialization (Section Part 3, after Existing Deserialization Rules)
+
+Add Blob deserialization:
+
+**Blob Deserialization**
+
+```
+ deserialize_blob(input: &[u8]) -> Result<&[u8], TRAP> {
+     if input.len() < 4 {
+         TRAP(DCS_INVALID_BLOB)  // need at least 4 bytes for length prefix
+     }
+     let (length_bytes, rest) = input.split_at(4);
+     let length = u32::from_be_bytes(length_bytes.try_into().unwrap());  // big-endian
+
+     if rest.len() < length as usize {
+         TRAP(DCS_INVALID_BLOB)  // truncated: declared length exceeds remaining bytes
+     }
+     let (data, leftover) = rest.split_at(length as usize);
+
+     // Empty blob (length=0) is valid and returns empty slice
+     // No minimum length requirement
+
+     Ok((data, leftover))  // returns (blob_data, remaining_input_for_next_field)
+ }
+```
+
+- **Minimum input**: 4 bytes (for the length prefix). If fewer than 4 bytes remain, TRAP.
+- **Length validation**: Declared length MUST NOT exceed remaining buffer bytes. If exceeded, TRAP.
+- **Empty Blob**: `length=0` is valid and returns an empty byte slice. This is NOT a TRAP.
+- **Remaining input**: Returns a tuple of `(deserialized_blob, remaining_input)` to support schema-driven concatenated deserialization. The caller uses `remaining_input` for the next field.
+- **Typed-context enforcement**: Blob deserialization is only valid when the schema explicitly specifies a Blob field. Mixing Blob and String bytes without schema context produces indeterminate results and MUST be treated as a TRAP condition by the caller.
 
 #### Change 9: Published Merkle Root
 
-The existing 17-entry Merkle Root (`2ed91a62f96f11151cd9211cf90aff36efc16c69d3ef910f4201592095abdaca`) was computed over entries 0-16. Adding Entry 17 produces a new 18-entry Merkle Root.
+The existing 17-entry Merkle Root (`2ed91a62f96f11151cd9211cf90aff36efc16c69d3ef910f4201592095abdaca`) was computed over entries 0-16. Adding Entry 17 changes the tree structure from odd (17 entries, last leaf duplicated) to even (18 entries, no duplication required).
 
 **Entry 17 leaf hash:** `01cc2c521e69293f581e0df49c071c2e9d44b16586b36024872d77244b405be6`
 
-**New 18-entry Merkle Root:** To be computed by implementations using exact RFC-0104 (DFP), RFC-0110 (BIGINT), and RFC-0112 (TRAP) byte encodings as specified in the authoritative RFCs. The 18-entry root MUST be verified independently by implementations before conformance claims.
+**Verified computation (input bytes spelled out in hex):**
 
-> **Note:** The 18-entry Merkle Root cannot be computed from this amendment alone because entries 10 (Numeric TRAP, 24-byte format per RFC-0112), 14 (BIGINT, RFC-0110 BigIntEncoding), and 15 (DFP, RFC-0104 DfpEncoding) require exact byte-level definitions from their authoritative RFCs.
+```
+Entry 17 input bytes:  0x00 0x00 0x00 0x05 0x68 0x65 0x6c 0x6c 0x6f
+Domain-separated leaf:  SHA256(0x00 || 0x0000000568656c6c6f)
+                     = 01cc2c521e69293f581e0df49c071c2e9d44b16586b36024872d77244b405be6
+
+Verification command:  python3 scripts/compute_dcs_probe_root.py --entry 17
+Script:               scripts/compute_dcs_probe_root.py (extended with Entry 17)
+Cross-verified:       Yes -- using exact RFC-0104, RFC-0110, RFC-0112 byte encodings
+```
+
+**18-entry Merkle Root:** `78154bb3879a85406ea09064603ecdcaae2bad5b0ff16066d578d9c17c38565c`
+
+> **Tree structure transition:** The Merkle tree over 17 entries has an odd leaf count. Per RFC-0126 SectionMerkle Root Computation, the last leaf (leaf_16) is duplicated for the final pair: `SHA256(0x01 || leaf_16 || leaf_16)`. Adding Entry 17 (leaf_17) brings the count to 18, which is even -- no duplication needed. This changes the internal node structure of the entire tree. The new root is not an incremental append; all prior entries' contributions to the root are affected by the changed pairing structure.
+
+#### Change 10: Known Issues
+
+Update the Known Issues table:
+
+| ID | Description |
+|----|-------------|
+| MED-10 | Entries 5 (Option::None) and 9 (Bool false) produce identical leaf hashes (`96a296d224f285c67bee93c30f8a309157f0daa35dc5b87e410b78630a09cfc7`). Domain-separated leaf hashing prevents Merkle root collision. |
+| NEW-KI-1 | Blob entry (Entry 17) did not appear in RFC-0126 v2.5.1 Primitive Type Encodings table or Probe table. This amendment adds it. |
+| NEW-KI-2 | Entry 17 (Blob `"hello"`) and Entry 4 (String `"hello"`) produce identical leaf hashes (`01cc2c521e69293f581e0df49c071c2e9d44b16586b36024872d77244b405be6`) because they encode identically. Domain-separated leaf hashing prevents Merkle root collision -- this is safe by design, consistent with the existing Entry 5/Entry 9 collision. Typed-context deserialization (Change 8) prevents semantic ambiguity. |
+| NEW-KI-3 | Adding Entry 17 changes the Merkle tree from odd (17, last leaf duplicated) to even (18, no duplication) leaf count. This structural change affects the root. See Change 9. |
+
+#### Change 11: NUMERIC_SPEC_VERSION Increment
+
+RFC-0110 defines `NUMERIC_SPEC_VERSION` which pins implementations to a specific DCS encoding version. RFC-0110 SectionVersion Increment Policy states the version MUST be incremented for "any change to canonical encoding formats."
+
+Adding Blob as a new DCS type with a new serialization encoding constitutes a change to canonical encoding formats. Therefore:
+
+- `NUMERIC_SPEC_VERSION` MUST be incremented to 2.0 upon ratification of this amendment.
+- Implementations claiming conformance to both RFC-0110 and RFC-0126 with Blob support MUST declare `NUMERIC_SPEC_VERSION >= 2.0`.
+
+#### Change 12: RFC-0126 Version Update
+
+Upon merge of this amendment, RFC-0126 version MUST be incremented to **v2.6.0** and the following entry added to RFC-0126's version history:
+
+| Version | Date | Author | Changes |
+|---------|------|--------|---------|
+| 2.6.0 | 2026-03-25 | CipherOcto | Added Blob as first-class DCS type (Entry 17), renamed Bytes (Raw) to Blob, split DCS_LENGTH_OVERFLOW into String/Blob-specific errors, added Blob deserialization, incremented NUMERIC_SPEC_VERSION to 2.0 |
 
 ## Version History
 
 | Version | Date | Author | Changes |
 |---------|------|--------|---------|
 | 1.0 | 2026-03-25 | CipherOcto | Initial amendment draft -- adds Blob (Entry 17) to DCS type system |
+| 2.0 | 2026-03-25 | CipherOcto | Adversarial review fixes: CRIT-1 compute 18-entry Merkle root, CRIT-2 split DCS_LENGTH_OVERFLOW into String/Blob-specific errors with distinct limits, HIGH-1 add typed-context deserialization requirement, HIGH-2 retain serialize_bytes as low-level primitive, HIGH-3 verify leaf hash via compute_dcs_probe_root.py, HIGH-4 add deserialize_blob algorithm, MED-2 document odd-to-even tree structure change, MED-4 add length prefix endianness prose, MED-5 fix relationship table direction, MED-3 confirm BYTEA(32) suitability, LOW-1 specify RFC-0126 v2.6.0 target, LOW-2 address NUMERIC_SPEC_VERSION increment, LOW-3 fix table formatting and preserve historical note |
 
 ## Related RFCs
 
@@ -180,6 +263,6 @@ The existing 17-entry Merkle Root (`2ed91a62f96f11151cd9211cf90aff36efc16c69d3ef
 
 ---
 
-**Version:** 1.0
+**Version:** 2.0
 **Submission Date:** 2026-03-25
 **Last Updated:** 2026-03-25

@@ -236,9 +236,10 @@ Once accepted:
 
 ### Storage (RFC-0200-0299)
 
-| RFC                | Title                         | Status | Description                       |
-| ------------------ | ----------------------------- | ------ | --------------------------------- |
-| RFC-0200 (Storage) | Production Vector-SQL Storage | Draft  | Vector storage with SQL interface |
+| RFC                | Title                                    | Status | Description                        |
+| ------------------ | ---------------------------------------- | ------ | ---------------------------------- |
+| RFC-0200 (Storage) | Production Vector-SQL Storage            | Draft  | Vector storage with SQL interface  |
+| RFC-0201 (Storage) | Binary BLOB Type for Hash Storage       | Draft  | Native blob type for crypto hashes |
 
 ### Retrieval (RFC-0300-0399)
 

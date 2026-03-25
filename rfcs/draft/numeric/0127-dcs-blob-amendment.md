@@ -2,7 +2,7 @@
 
 ## Status
 
-Draft (v5, adversarial review round 4)
+Draft (v6, adversarial review round 5)
 
 ## Authors
 
@@ -65,6 +65,9 @@ Rename the section header from "Bytes (Raw)" to "Blob". The existing `serialize_
 
 ```
  serialize_blob(data: &[u8]) -> Vec<u8> {
+     if data.len() > 0xFFFFFFFF {
+         TRAP(DCS_BLOB_LENGTH_OVERFLOW)
+     }
      serialize_bytes(data)  // u32_be(data.len()) || data
  }
 ```
@@ -104,6 +107,8 @@ Add Entry 17 for Blob. Entries 0-16 are unchanged from RFC-0126 v2.5.1:
 > **Note:** Entry 4 (DMAT column-major) was removed because serialization output is indistinguishable for valid row-major input. DMAT input validation ensures data is stored row-major per RFC-0113.
 >
 > **Correction:** RFC-0126 v2.5.1 Entry 10 in the probe table incorrectly states "per RFC-0112." The authoritative source is RFC-0111, which is correctly cited in the RFC-0126 dependencies table and Entry 10 detail section. This amendment corrects the probe table reference to RFC-0111.
+>
+> **Wire format note:** Only Entry 16 (Struct) includes field_id in the wire format (`field_id || encoded_value`). Entries 0-15 and 17 are top-level type serializations without field_id prefixes.
 
 #### Change 4: Probe Entry 17 Details (Section Part 3, after Entry 16)
 
@@ -132,7 +137,7 @@ Add Blob row. RFC-0201 is listed as a downstream consumer, not a peer dependency
 | RFC-0110 (BIGINT) | Integer structure, little-endian limbs, BigIntEncoding |
 | RFC-0112 (DVEC) | Vector structure, index ordering |
 | RFC-0113 (DMAT) | Matrix structure, row-major ordering |
-| RFC-0201 (Storage) | Binary BLOB type, length-prefixed serialization (downstream consumer) |
+| RFC-0201 (Storage) | Required By / downstream consumer -- depends on this amendment for Accepted status; uses `serialize_blob` for BYTEA(32) |
 
 #### Change 6: Implementation Checklist (Section Part 3, SectionImplementation Checklist)
 
@@ -164,8 +169,10 @@ Split the pre-existing combined String/Bytes error into type-specific errors. Ad
 | DCS_OVERFLOW | DQA value exceeds i64 range after canonicalization |
 | DCS_INVALID_UTF8 | String not valid UTF-8 |
 | DCS_STRING_LENGTH_OVERFLOW | String length exceeds 1MB (2^20 bytes) |
+| DCS_INVALID_STRING | Input buffer too short for length prefix (fewer than 4 bytes), or declared length exceeds remaining buffer bytes |
 | DCS_INVALID_BLOB | Input buffer too short for length prefix (fewer than 4 bytes), or declared length exceeds remaining buffer bytes |
 | DCS_BLOB_LENGTH_OVERFLOW | Blob length exceeds 2^32 - 1 bytes (4GB) |
+| DCS_INVALID_STRUCT | Zero-progress deserialization: a field consumed no bytes (new_remaining == remaining), indicating malformed input or dispatcher bug |
 
 > **Note:** The prior combined `DCS_LENGTH_OVERFLOW` ("String/Bytes length exceeds 2^32 - 1") is replaced by two separate errors with distinct limits. String is capped at 1MB per RFC-0126 SectionString. Blob is capped at 4GB by the u32 length prefix. `DCS_INVALID_BLOB` covers buffer-underrun and length-mismatch conditions during deserialization. This change also resolves the pre-existing inconsistency between the error table (2^32-1) and the String section prose (1MB) in RFC-0126 v2.5.1.
 
@@ -205,6 +212,35 @@ Add Blob deserialization:
 - **Typed-context enforcement**: Blob deserialization is only valid when the schema explicitly specifies a Blob field. Mixing Blob and String bytes without schema context produces indeterminate results and MUST be treated as a TRAP condition by the caller.
 - **UTF-8 acceptance**: Blob accepts any byte sequence, including valid UTF-8. This is not an error condition. Applications using Blob for binary data (e.g., cryptographic hashes) do not require UTF-8 validation. See NEW-KI-2 for the implications of byte-level Blob/String equivalence.
 
+**String Deserialization**
+
+```
+ deserialize_string(input: &[u8]) -> Result<(&str, &[u8]), TRAP> {
+     if input.len() < 4 {
+         TRAP(DCS_INVALID_STRING)  // need at least 4 bytes for length prefix
+     }
+     let (length_bytes, rest) = input.split_at(4);
+     let length = u32::from_be_bytes([
+         length_bytes[0], length_bytes[1], length_bytes[2], length_bytes[3]
+     ]);
+
+     if length > 1_048_576 {  // 1MB = 2^20
+         TRAP(DCS_STRING_LENGTH_OVERFLOW)
+     }
+     if rest.len() < length as usize {
+         TRAP(DCS_INVALID_STRING)  // truncated: declared length exceeds remaining bytes
+     }
+     let (bytes, leftover) = rest.split_at(length as usize);
+     let s = core::str::from_utf8(bytes).map_err(|_| TRAP(DCS_INVALID_UTF8))?;
+     Ok((s, leftover))  // returns (string_slice, remaining_input_for_next_field)
+ }
+```
+
+- **Minimum input**: 4 bytes (for the length prefix). If fewer than 4 bytes remain, TRAP.
+- **Length validation**: Declared length MUST NOT exceed 1MB. If exceeded, TRAP(DCS_STRING_LENGTH_OVERFLOW).
+- **UTF-8 validation**: The byte sequence is validated as UTF-8 at deserialization time. If invalid, TRAP(DCS_INVALID_UTF8).
+- **Return type**: `Result<(&str, &[u8]), TRAP>` -- returns `(string_slice, remaining_bytes)` on success.
+
 #### Change 9: Published Merkle Root
 
 The existing 17-entry Merkle Root (`2ed91a62f96f11151cd9211cf90aff36efc16c69d3ef910f4201592095abdaca`) was computed over entries 0-16. Adding Entry 17 changes the tree structure from odd (17 entries, last leaf duplicated) to even (18 entries, no duplication required).
@@ -241,9 +277,9 @@ Entry 17 input bytes:  0x00 0x00 0x00 0x05 0x68 0x65 0x6c 0x6c 0x6f
 Domain-separated leaf:  SHA256(0x00 || 0x0000000568656c6c6f)
                      = 01cc2c521e69293f581e0df49c071c2e9d44b16586b36024872d77244b405be6
 
-Verification:         python3 scripts/compute_dcs_probe_root.py (current HEAD at time of computation)
+Verification:         python3 scripts/compute_dcs_probe_root.py @ 7b22f8a
 Script encodings:     RFC-0110 (Entry 14), RFC-0104 (Entry 15), RFC-0111 (Entry 10)
-Cross-verified:       Yes -- implementers SHOULD verify against the latest version of the script
+Cross-verified:       Yes -- implementers MUST use the script at commit 7b22f8a to reproduce the root
 ```
 
 **18-entry Merkle Root:** `78154bb3879a85406ea09064603ecdcaae2bad5b0ff16066d578d9c17c38565c`
@@ -338,7 +374,11 @@ fn deserialize_struct(input: &[u8], schema: &StructSchema) -> Result<Value, TRAP
 
 This dispatcher pattern is how DCS deserialization is intended to be used. The alternative -- calling `deserialize_blob` or `deserialize_string` directly on raw bytes with no schema context -- is not conformant DCS usage.
 
-**Conformance requirement:** Conformance to RFC-0126 with Blob support REQUIRES using a schema-driven dispatcher that tracks expected types per field. Direct calls to `deserialize_blob` on raw bytes without type context are not conformant. The dispatcher enforces the typed-context requirement; the requirement cannot be satisfied by prose alone.
+**Conformance requirement:** Conformance to RFC-0126 with Blob support REQUIRES using a schema-driven dispatcher for Blob fields. Direct calls to `deserialize_blob` on raw bytes without type context are not conformant. Other DCS types MAY use direct deserialization calls; the dispatcher requirement applies to Blob deserialization only. The dispatcher enforces the typed-context requirement; the requirement cannot be satisfied by prose alone.
+
+**TRAP semantics:** `TRAP(X)` denotes a deterministic error state that aborts deserialization. In pseudocode, TRAP terminates the function and returns an error; it does not produce a value. Implementations MUST treat all TRAP conditions as fatal errors.
+
+**Zero-byte type constraint:** The progress check constrains future DCS type design: all DCS types used with this dispatcher MUST consume at least 1 byte during deserialization. Zero-byte types are incompatible with this dispatcher pattern.
 
 #### Change 14: Probe Extension Protocol (Normative)
 
@@ -351,6 +391,8 @@ Future amendments adding new DCS types to the verification probe MUST follow thi
 
 This ensures the probe is monotonically verifiable across amendments.
 
+> **Scalability note:** The linear growth in leaf hash publication is a known concern. Future RFCs may define a compact proof format (e.g., Merkle inclusion proofs) to reduce publication overhead as the probe grows.
+
 ## Version History
 
 | Version | Date | Author | Changes |
@@ -360,6 +402,7 @@ This ensures the probe is monotonically verifiable across amendments.
 | 3.0 | 2026-03-25 | CipherOcto | Round 2 fixes: HIGH-1 fix NUMERIC_SPEC_VERSION to u32 value 2 (not 2.0), MED-2 fix deserialize_blob return type and add DCS_INVALID_BLOB to error table, MED-3 add H_upgrade governance note, MED-1 publish all 18 leaf hashes and fix RFC-0111/RFC-0112 discrepancy, MED-4 add 4GB security consideration, LOW-1 document domain-separated hash correction for MED-10, LOW-3 change RFC-0201 label to (Storage), LOW-4 replace unwrap() with explicit bytes |
 | 4.0 | 2026-03-25 | CipherOcto | Round 3: CRIT-1 rebuttal (Entry 17 bhello identical to String is intentional, tests wire-format collision), CRIT-2 rebuttal (error split is bug fix not breaking change), CRIT-3 rebuttal (dispatcher is DCS layer boundary), HIGH-3 rebuttal (DCS_INVALID_BLOB unified error is better for debugging), MED-1 fix Entry 16 table description to match Person struct, MED-3 add Change 13 with concrete schema-driven dispatcher pseudocode example, MED-3 add Change 14 with probe extension protocol, HIGH-1 clarify serialize_blob vs serialize_bytes public API boundary, HIGH-2 add activation checklist to NUMERIC_SPEC_VERSION governance note |
 | 5.0 | 2026-03-25 | CipherOcto | Round 4: NEW-CRIT-1 make Change 13 normative (schema-driven dispatcher conformance required), NEW-CRIT-2 document empty Blob + progress-check interaction, NEW-CRIT-3 add field_id wire-format note to Entry 16 table header, NEW-HIGH-1 clarify serialize_bytes visibility for future RFCs, NEW-HIGH-2 rebuttal (String 1MB enforcement pre-existing RFC-0126 gap, scope), NEW-HIGH-3 rebuttal (block versioning governed by RFC-0110, scope), NEW-MED-1 make Change 14 normative (probe extension protocol), NEW-MED-2 add negative-deserialization limitation note to NEW-KI-2, NEW-MED-3 cross-reference to existing Motivation section, NEW-MED-4 remove duplicate v3.0 version history row, NEW-MED-5 document UTF-8 acceptance as intentional in Change 8, NEW-LOW-1 add type definition note to dispatcher pseudocode, NEW-LOW-2 add script version note, NEW-LOW-3 note deferred to editorial pass |
+| 6.0 | 2026-03-25 | CipherOcto | Round 5: NEW-CRIT-4 add DCS_INVALID_STRUCT to error table, NEW-CRIT-5 add deserialize_string pseudocode (with DCS_INVALID_STRING, 1MB TRAP, UTF-8 validation), NEW-HIGH-4 clarify dispatcher requirement applies to Blob fields only, NEW-HIGH-5 rebuttal (negative deserialization tests scope + would break Merkle root), NEW-MED-6 document zero-byte-type constraint, NEW-MED-7 add explicit length TRAP to serialize_blob pseudocode, NEW-MED-8 pin script to commit 7b22f8a, NEW-MED-9 clarify RFC-0201 relationship, NEW-LOW-4 add scalability note to Change 14, NEW-LOW-5 clarify TRAP return semantics, NEW-LOW-6 add field_id-only-on-Entry-16 note |
 
 ## Related RFCs
 
@@ -370,6 +413,6 @@ This ensures the probe is monotonically verifiable across amendments.
 
 ---
 
-**Version:** 5.0
+**Version:** 6.0
 **Submission Date:** 2026-03-25
 **Last Updated:** 2026-03-25

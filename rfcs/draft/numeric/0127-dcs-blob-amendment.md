@@ -2,7 +2,7 @@
 
 ## Status
 
-Draft (v6.8, adversarial review Round 10 candidate)
+Draft (v6.9, adversarial review Round 11 candidate)
 
 ## Authors
 
@@ -211,7 +211,7 @@ Add Blob item:
 - [ ] Serialize DMAT with row-major ordering
 - [ ] Serialize Blob with length-prefix (Entry 17)
 - [ ] Implement schema-driven dispatcher for Length-Prefixed types (Blob, String) **(REQUIRED for any schema containing both Blob and String fields; without this, deserialize calls are non-conformant per the shared-encoding rule)**
-- [ ] Enforce nesting depth maximum of 64 levels; return `DCS_RECURSION_LIMIT_EXCEEDED` on violation
+- [ ] Enforce nesting depth maximum: reject when `depth >= 64` (top-level depth = 0); return `DCS_RECURSION_LIMIT_EXCEEDED` on violation
 - [ ] Deserialize Blob with buffer validation and error conditions
 - [ ] Deserialize String with buffer validation, 1MB limit, and RFC 3629 UTF-8 validation
 - [ ] Canonicalize DQA before serialization
@@ -430,8 +430,8 @@ Script encodings:     RFC-0110 (Entry 14), RFC-0104 (Entry 15), RFC-0111 (Entry 
 **Full tree pairing (18 leaves → 1 root):**
 - Level 1: 9 pairs → 9 hashes (L1[0]..L1[8])
 - Level 2: 5 hashes (L2[0]..L2[4]) from 9 L1 inputs: 4 regular pairs (L1[0]+L1[1], ..., L1[6]+L1[7]) plus L1[8] self-paired
-- Level 3: 3 pairs (2 + dup of last) → 3 hashes (L3[0]..L3[2])
-- Level 4: 2 pairs (1 + dup of last) → 2 hashes (L4[0], L4[1])
+- Level 3: 3 hashes (L3[0]..L3[2]) from 5 L2 inputs: 2 regular pairs (L2[0]+L2[1], L2[2]+L2[3]) plus L2[4] self-paired
+- Level 4: 2 hashes (L4[0], L4[1]) from 3 L3 inputs: 1 regular pair (L3[0]+L3[1]) plus L3[2] self-paired
 - Level 5: Root = SHA256(0x01 || L4[0] || L4[1])
 
 **Independent verification (self-contained, all levels):**
@@ -439,11 +439,42 @@ Script encodings:     RFC-0110 (Entry 14), RFC-0104 (Entry 15), RFC-0111 (Entry 
 python3 -c "
 import hashlib
 
+def leaf(data_hex):
+    # Domain-separated leaf hash: SHA256(0x00 || entry_data)
+    return hashlib.sha256(bytes([0x00]) + bytes.fromhex(data_hex)).hexdigest()
+
 def h(a, b=None):
+    # Internal node hash: SHA256(0x01 || left || right)
     if b is None: b = a
     return hashlib.sha256(bytes([1]) + bytes.fromhex(a) + bytes.fromhex(b)).hexdigest()
 
-leaves = [
+# Entry data (from the table above) -- used to verify leaf hashes
+entry_data = [
+    '00000000000000010000000000000000',  # 0
+    'fffffffffffffffb0100000000000000',  # 1
+    '00000003000000000000000100000000000000000000000000000002000000000000000000000000000000030000000000000000',  # 2
+    '000000020000000200000000000000010000000000000000000000000000000200000000000000000000000000000003000000000000000000000000000000040000000000000000',  # 3
+    '0000000568656c6c6f',  # 4
+    '00',  # 5
+    '0101',  # 6
+    '020000000000000000000000000000002a',  # 7
+    '01',  # 8
+    '00',  # 9
+    '01000000ff000000ffffffffffffffff8000000000000000',  # 10
+    'ff',  # 11
+    '0000000000000000000000000000002a',  # 12
+    'ffffffffffffffffffffffffffffffd6',  # 13
+    '01000000010000002a00000000000000',  # 14
+    '0000000000000000000000000000002a0000000000000000',  # 15
+    '000000010000002a0000000200000005616c6963650000000300000000000000010000000000000000',  # 16
+    '00000020e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855',  # 17
+]
+assert len(entry_data) == 18, f'Expected 18 entries, got {len(entry_data)}'
+
+# Verify leaf hashes from entry data
+leaves = [leaf(d) for d in entry_data]
+# Known-good leaf hashes from the table (for assertion)
+expected_leaves = [
     '5590b4a4eb4b7a9dba75b0176d06fbdabd8798d4b444741bb8efff24ad5b63f1',  # 0
     'ad199dd0c6dc5752316d5e8318f37e777d4057d75a4a0f05cb8a491c7ee91b83',  # 1
     '1cf1fbfbd91a87824796799064ca622b1e859e9918f6b5e81a2c1ff49c10c633',  # 2
@@ -463,8 +494,10 @@ leaves = [
     '8ce4a58171d93997bec1861d361b1bfae9a376027dd65f5cb5b045b27a1de890',  # 16
     '6452f4eb98d65e5ce04903cf5079038dfdb85ed742a4e543a52fca27b508a7ec',  # 17
 ]
-assert len(leaves) == 18, f'Expected 18 leaves, got {len(leaves)}'
+assert leaves == expected_leaves, f'Leaf hash mismatch! Computed: {leaves}'
+print('Leaf hashes (entry_data -> SHA256(0x00 || data)) verified OK.')
 
+# Build tree from verified leaf hashes
 l1 = [h(leaves[i], leaves[i+1]) for i in range(0, 18, 2)]
 assert len(l1) == 9, f'Expected 9 L1 hashes, got {len(l1)}'
 l2 = [h(l1[i], l1[i+1] if i+1 < len(l1) else l1[i]) for i in range(0, len(l1), 2)]
@@ -607,8 +640,8 @@ fn deserialize_struct(input: &[u8], schema: &StructSchema, is_top_level: bool, d
                 // consumed zero bytes from the value data -- this indicates malformed input.
                 // Exception: an empty Struct field consumes 0 bytes and is valid; the
                 // is_empty_struct flag prevents false positives for the only permitted zero-byte type.
-                // is_empty_struct: true if field.type_ is Struct with zero fields
-                let is_empty_struct = field.type_ is Type::Struct && field.type_.fields.is_empty();
+                // is_empty_struct: true if field.type_ is Struct whose inner schema has zero fields
+                let is_empty_struct = field.type_ is Type::Struct(s) && s.fields.is_empty();
                 if !is_empty_struct && new_remaining == remaining_after_field_id {
                     return Err(DCS_INVALID_STRUCT);  // field value deserializer consumed zero bytes (malformed input or dispatcher logic error)
                 }
@@ -636,7 +669,7 @@ fn deserialize_struct(input: &[u8], schema: &StructSchema, is_top_level: bool, d
 
 1. **Type tracking**: The dispatcher knows the expected type for each field from the schema. It never guesses based on bytes alone.
 2. **Progress requirement**: Each field value deserialization MUST advance the buffer position. The check `new_remaining == remaining_after_field_id` detects zero-byte advancement, which indicates malformed input or a dispatcher logic error. The minimum advancement varies by type: fixed-width types (bool: 1 byte, i128: 16 bytes, DFP: 24 bytes) always advance by their fixed width; length-prefixed types (Blob, String) always advance by at least 4 bytes (the length prefix), plus payload bytes. Any non-zero advancement passes this check. Exception: an empty Struct field (`is_empty_struct` = true) consumes 0 bytes and is valid -- see the `is_empty_struct` flag in `deserialize_struct` above. See also: **Zero-byte type constraint** (below).
-3. **Empty Blob note**: The progress check (`new_remaining != remaining`) validates that the length prefix was consumed (4 bytes). It does NOT validate payload presence. An empty Blob (`length=0`) consumes exactly 4 bytes (the length prefix) and passes this check -- this is correct behavior. The check guarantees forward progress, not data presence.
+3. **Empty Blob note**: The progress check (`new_remaining != remaining_after_field_id`) validates that the length prefix was consumed (4 bytes). It does NOT validate payload presence. An empty Blob (`length=0`) consumes exactly 4 bytes (the length prefix) and passes this check -- this is correct behavior. The check guarantees forward progress, not data presence.
 4. **No cross-type byte passing**: The bytes returned from one field's deserialization are passed to the NEXT field's deserializer, never back to a different-type deserializer. Mixing Blob/String bytes without schema context is impossible by construction.
 5. **Error propagation**: Any deserialization error propagates immediately; partial results are discarded.
 
@@ -650,7 +683,7 @@ fn deserialize_struct(input: &[u8], schema: &StructSchema, is_top_level: bool, d
     }
     Wire: u32_be(1) || u32_be(32) || 32_bytes || u32_be(2) || serialize_string("alice")
     ```
-    The top-level caller invokes `deserialize_struct(wire, schema, true, 0)`. For field 1 (Blob), the dispatcher calls `deserialize_field(remaining, Blob, depth)`, which calls `deserialize_blob`. The 4-byte length prefix is consumed (advancing `remaining`), and 32 bytes are returned as a slice. For field 2 (String), the remaining bytes are passed to `deserialize_string`, which validates UTF-8 and returns the string slice. For a nested Struct, `deserialize_field` invokes `deserialize_struct(input, inner_schema, false, depth + 1)` -- the `false` flag prevents the trailing-bytes check from firing prematurely; `depth + 1` tracks the new nesting level. This recursion terminates at primitive types; the depth check at entry rejects pathological depths exceeding 64.
+    The top-level caller invokes `deserialize_struct(wire, schema, true, 0)`. For field 1 (Blob), the dispatcher calls `deserialize_field(remaining, Blob, depth)`, which calls `deserialize_blob`. The 4-byte length prefix is consumed (advancing `remaining`), and 32 bytes are returned as a slice. For field 2 (String), the remaining bytes are passed to `deserialize_string`, which validates UTF-8 and returns the string slice. For a nested Struct, `deserialize_field` invokes `deserialize_struct(input, inner_schema, false, depth + 1)` -- the `false` flag prevents the trailing-bytes check from firing prematurely; `depth + 1` tracks the new nesting level. This recursion terminates at primitive types; the depth check at entry rejects depth values of 64 or higher (i.e. a 65th or deeper struct deserialization call).
 
 **Schema evolution rules:** The dispatcher operates on a schema agreed upon by all participants. Schema evolution rules are outside the DCS layer -- they are application-layer concerns. However, for conformance:
 
@@ -696,6 +729,7 @@ This ensures the probe is monotonically verifiable across amendments.
 
 | Version | Date | Author | Changes |
 |---------|------|--------|---------|
+| 6.9 | 2026-03-26 | CipherOcto | Round 11: HIGH-1 add full leaf-from-entry-data verification to Python script, HIGH-2 fix remaining->remaining_after_field_id in Key Property 3, HIGH-3 fix "exceeding 64"->"64 or higher" in depth example, MED-1 fix is_empty_struct destructuring (Type::Struct(s)), MED-2 clarify checklist depth check as depth>=64, LOW-1 rewrite Level 3/4 pairing descriptions to match Level 2 format, LOW-2 rename footer to Original Submission Date |
 | 6.8 | 2026-03-26 | CipherOcto | Round 10: CRIT-1 update termination invariant to explain is_empty_struct exemption is schema-controlled, CRIT-2 replace stub verification block with complete Python script computing all levels, HIGH-1 simplify depth prose (remove 65th frame language), HIGH-2 add overflow-safe rationale to allocation safety note, MED-1 increment version to v6.8, MED-2 update Key Property 2 variable name to remaining_after_field_id, MED-3 replace Rust matches! macro with language-agnostic pseudocode, MED-4 rewrite Level 2 pairing description for clarity, LOW-1 fix negative verification command comment, LOW-2 add deserialize_bool cross-reference |
 | 6.7 | 2026-03-26 | CipherOcto | Round 24 (Round 9 continuation): CRIT-1 add is_empty_struct progress check exemption for empty nested structs, CRIT-2 reconcile depth boundary (64 levels = max 63 nested below top), MED-1 fix DCS_RECURSION_LIMIT_EXCEEDED error table description, MED-2 update Recursion depth prose for unambiguous boundary, MED-3 add L2-L4 intermediate hash tables for manual Merkle verification, MED-4 add UTF-8 invalidity explanation and make negative test normative, MED-5 update depth parameter prose for non-Struct arms, HIGH-1 add top-level return note warning about redundant trailing-bytes check, LOW-1 add v6.6 history row (was absent), LOW-2 move top-level call requirement from comment to normative prose |
 | 6.6 | 2026-03-26 | CipherOcto | Round 22 (Round 8): HIGH-1 remove stale "Intentional duplicate" note from probe table, replace with Blob vs String distinction note, HIGH-2 fix Type::Struct arm to pass v directly (not Value::Struct(v)), HIGH-3 change 64-level minimum to fixed universal maximum (all implementations reject at exactly 64 levels), MED-1 update deserialize_string allocation safety note to reference current bounds check form, MED-2 remove orphaned [^L-R4-1] footnote definition block, MED-3 clarify immutability rule applies to ratified entries only, LOW-1 add hex value to Entry 17 Input column, LOW-2 add normative is_top_level parameter prose, LOW-3 split LOW-R4-1 root change note into NEW-KI-2 |
@@ -720,6 +754,6 @@ This ensures the probe is monotonically verifiable across amendments.
 
 ---
 
-**Version:** 6.8
-**Submission Date:** 2026-03-25
+**Version:** 6.9
+**Original Submission Date:** 2026-03-25
 **Last Updated:** 2026-03-26

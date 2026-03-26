@@ -2,7 +2,7 @@
 
 ## Status
 
-Draft (v6.4, adversarial review Round 6 response)
+Draft (v6.5, adversarial review Round 7 response)
 
 ## Authors
 
@@ -66,7 +66,7 @@ Add Blob to the table:
 Rename the section header from "Bytes (Raw)" to "Blob". The existing `serialize_bytes` function is retained as the low-level primitive. `serialize_blob` is defined as calling `serialize_bytes`:
 
 ```
-serialize_blob(data: &[u8]) -> Result<Vec<u8>, Err> {
+serialize_blob(data: &[u8]) -> Result<Vec<u8>, DcsError> {
     if data.len() > 0xFFFFFFFF {
         return Err(DCS_BLOB_LENGTH_OVERFLOW)
     }
@@ -74,7 +74,7 @@ serialize_blob(data: &[u8]) -> Result<Vec<u8>, Err> {
 }
 ```
 
-**Result return type note:** `serialize_blob` is the first DCS serialization function to return `Result<Vec<u8>, Err>`. Other serialization functions in RFC-0126 (`serialize_i128`, `serialize_dqa`, etc.) return `Vec<u8>` directly because their validity constraints are enforced at the type-system level (e.g., DQA canonical form guarantees a valid representation). The 4GB limit for Blob cannot be expressed as a type constraint -- it is a protocol enforcement -- so `serialize_blob` performs the check internally and returns an error rather than relying on the caller to pre-validate. This is consistent with the TRAP-before-serialize principle: the function itself is the last line of defense.
+**Result return type note (MED-1):** `serialize_blob` is the first DCS serialization function to return `Result<Vec<u8>, DcsError>`. Other serialization functions in RFC-0126 (`serialize_i128`, `serialize_dqa`, etc.) return `Vec<u8>` directly because their validity constraints are enforced at the type-system level (e.g., DQA canonical form guarantees a valid representation). The 4GB limit for Blob cannot be expressed as a type constraint -- it is a protocol enforcement -- so `serialize_blob` performs the check internally and returns an error rather than relying on the caller to pre-validate. This is consistent with the TRAP-before-serialize principle: the function itself is the last line of defense. `DcsError` is the same opaque error type used by all DCS error codes; the only possible error on the serialization path is `DCS_BLOB_LENGTH_OVERFLOW`.
 
 - **Length prefix**: Big-endian u32 byte count (not character count)
 - **Maximum length**: 4GB (2^32 - 1 bytes = 4,294,967,295 bytes = 0xFFFFFFFF) -- given by u32 length prefix. The maximum valid Blob has length = 0xFFFFFFFF bytes. **Error:** If `length > 0xFFFFFFFF`, return `Err(DCS_BLOB_LENGTH_OVERFLOW)`. The boundary is exclusive: length = 0xFFFFFFFF is valid; length = 0x100000000 is not.
@@ -93,13 +93,13 @@ DCS types are grouped into **encoding equivalence classes** based on their wire 
 
 Types in this class **share the same wire format** and are distinguishable only by schema context. The schema-driven dispatcher is **REQUIRED** to disambiguate them at deserialization time. Direct calls to `deserialize_string` or `deserialize_blob` on raw bytes in the presence of other Length-Prefixed types are not conformant.
 
-**Class: Fixed-Width Primitive** -- types with a determinable fixed size from the type alone
-- `u8`: 1 byte
-- `u32`: 4 bytes
-- `i128`: 16 bytes
-- `bool`: 1 byte
-- `DFP`: 24 bytes
-- `BigInt`: variable (per RFC-0110 limb encoding; 8-520 bytes)
+**Class: Unambiguously Typed** -- types with self-identifying encodings that do not require a schema-driven dispatcher
+- `u8`: 1 byte (unique value range)
+- `u32`: 4 bytes (unique value range)
+- `i128`: 16 bytes (unique value range, signed two's complement)
+- `bool`: 1 byte (`0x00` vs `0x01`)
+- `DFP`: 24 bytes (unique structure with NaN class encoding)
+- `BigInt`: variable (per RFC-0110 limb encoding; distinguished by `0x01` version byte header)
 
 Types in this class have unique encodings. The dispatcher is not required for these types; direct deserialization calls are conformant. **Note:** `BigInt` is included here for dispatcher-requirement purposes only -- it does not need the dispatcher because its `0x01` version byte header distinguishes it unambiguously from all length-prefixed types. Its size is variable per RFC-0110, not fixed-width.
 
@@ -108,7 +108,7 @@ Types in this class have unique encodings. The dispatcher is not required for th
 - `DMAT`: `u32_be(rows) || u32_be(cols) || element_0 || ...`
 - `Struct`: `field_id_0 || value_0 || field_id_1 || value_1 || ...`
 
-These types use length prefixes or field IDs internally. Whether they require the dispatcher depends on whether their element/field types belong to the Length-Prefixed class. A DVEC containing Strings requires the dispatcher; a DVEC containing i128 values does not.
+These types use length prefixes or field IDs internally. Whether they require the dispatcher depends on whether their element/field types belong to the Length-Prefixed class. A DVEC containing Strings requires the dispatcher; a DVEC containing i128 values does not. **DVEC/DMAT dispatcher requirement (MED-2):** For DVEC and DMAT, each element MUST be deserialized using the element type's deserialization function as determined by the container schema. A `DVEC<Blob>` MUST call `deserialize_blob` for each element; a `DVEC<String>` MUST call `deserialize_string`. The schema-driven dispatcher applies to each element individually. Implementers MUST NOT call `deserialize_string` on DVEC element bytes when the schema declares `DVEC<Blob>`, and vice versa.
 
 This classification prevents future RFCs from introducing ambiguity: any new type must be assigned to an encoding class, and if it belongs to Length-Prefixed, the dispatcher requirement applies.
 
@@ -143,7 +143,7 @@ Add Entry 17 for Blob. Entries 0-16 are unchanged from RFC-0126 v2.5.1:
 | 14 | BIGINT | Positive | `42` | RFC-0110 BigIntEncoding (16 bytes) |
 | 15 | DFP | Positive Normal | `42.0` | RFC-0104 DfpEncoding (24 bytes) |
 | 16 | Struct | Field ordering | `Person { id(field_id=1): 42, name(field_id=2): "alice", balance(field_id=3): DQA(1,0) }` | `u32_be(1) + u32_be(42) + u32_be(2) + serialize_string("alice") + u32_be(3) + serialize_dqa(1,0)` |
-| 17 | Blob | Length prefix + data | `b"hello"` | `0x00000005 0x68656c6c6f` |
+| 17 | Blob | Length prefix + data | `SHA256(b"")` (32 bytes, not UTF-8) | `0x00000020 e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855` |
 
 > **Note:** Entry 4 (DMAT column-major) was removed because serialization output is indistinguishable for valid row-major input. DMAT input validation ensures data is stored row-major per RFC-0113.
 >
@@ -157,16 +157,17 @@ Add Entry 17 for Blob. Entries 0-16 are unchanged from RFC-0126 v2.5.1:
 
 **Entry 17: Blob Serialization**
 
-- Input: `b"hello"` (5 bytes)
-- Serialize: `length=5 (4 bytes BE) || data="hello"`
-- Expected bytes: `0x00000005 0x68656c6c6f` (9 bytes total)
-- Leaf hash: `SHA256(0x00 || 0x00000005 0x68656c6c6f)` = `01cc2c521e69293f581e0df49c071c2e9d44b16586b36024872d77244b405be6`
+- Input: `SHA256(b"")` — the SHA-256 hash of the empty string, `e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855` (32 bytes). This value is NOT valid UTF-8, which distinguishes it from Entry 4 (String `"hello"`).
+- Serialize: `length=32 (4 bytes BE) || data=empty_string_SHA256`
+- Expected bytes: `0x00000020 e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855` (36 bytes total)
+- Leaf hash: `SHA256(0x00 || 0x00000020 e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855)` = `6452f4eb98d65e5ce04903cf5079038dfdb85ed742a4e543a52fca27b508a7ec`
 - Verified via `scripts/compute_dcs_probe_root.py` (see Change 9)
+- **Negative verification:** Passing Entry 17's bytes to `deserialize_string` MUST return `Err(DCS_INVALID_UTF8)`. An implementation that deserializes this as String is non-conformant.
 
 ```
-serialize_blob(b"hello") =
-    u32_be(5) || [0x68, 0x65, 0x6c, 0x6c, 0x6f]
-  = [0x00, 0x00, 0x00, 0x05, 0x68, 0x65, 0x6c, 0x6c, 0x6f]
+serialize_blob(SHA256(b"")) =
+    u32_be(32) || [0xe3, 0xb0, 0xc4, 0x42, 0x98, 0xfc, 0x1c, 0x14, 0x9a, 0xfb, 0xf4, 0xc8, 0x99, 0x6f, 0xb9, 0x24, 0x27, 0xae, 0x41, 0xe4, 0x64, 0x9b, 0x93, 0x4c, 0xa4, 0x95, 0x99, 0x1b, 0x78, 0x52, 0xb8, 0x55]
+  = [0x00, 0x00, 0x00, 0x20, 0xe3, 0xb0, 0xc4, 0x42, 0x98, 0xfc, 0x1c, 0x14, 0x9a, 0xfb, 0xf4, 0xc8, 0x99, 0x6f, 0xb9, 0x24, 0x27, 0xae, 0x41, 0xe4, 0x64, 0x9b, 0x93, 0x4c, 0xa4, 0x95, 0x99, 0x1b, 0x78, 0x52, 0xb8, 0x55]
 ```
 
 #### Change 5: Relationship Table (Section Part 3, SectionRelationship to Other RFCs)
@@ -181,6 +182,8 @@ Add Blob row. RFC-0201 is listed as a downstream consumer, not a peer dependency
 | RFC-0112 (DVEC) | Vector structure, index ordering |
 | RFC-0113 (DMAT) | Matrix structure, row-major ordering |
 | RFC-0201 (Storage) | Required By / downstream consumer -- depends on this amendment for Accepted status; uses `serialize_blob` for BYTEA(32) |
+| RFC-0903 (Economics) | Requires Blob DCS entry for Virtual API Key System key material storage |
+| RFC-0909 (Economics) | Requires Blob DCS entry for Deterministic Quota Accounting |
 
 #### Change 6: Implementation Checklist (Section Part 3, SectionImplementation Checklist)
 
@@ -195,9 +198,9 @@ Add Blob item:
 - [ ] Serialize DVEC with index ordering
 - [ ] Serialize DMAT with row-major ordering
 - [ ] Serialize Blob with length-prefix (Entry 17)
+- [ ] Implement schema-driven dispatcher for Length-Prefixed types (Blob, String) **(REQUIRED for any schema containing both Blob and String fields; without this, deserialize calls are non-conformant per the shared-encoding rule)**
 - [ ] Deserialize Blob with buffer validation and error conditions
 - [ ] Deserialize String with buffer validation, 1MB limit, and RFC 3629 UTF-8 validation
-- [ ] Implement schema-driven dispatcher for Length-Prefixed types (Blob, String)
 - [ ] Canonicalize DQA before serialization
 - [ ] Return error on invalid inputs before serialization
 - [ ] Compute and verify Merkle probe root
@@ -219,6 +222,7 @@ Split the pre-existing combined String/Bytes error into type-specific errors. Ad
 | DCS_BLOB_LENGTH_OVERFLOW | Blob length exceeds 2^32 - 1 bytes (4GB) |
 | DCS_INVALID_STRUCT | Struct deserialization failed: buffer too short to read field_id (fewer than 4 bytes remaining), field_id in wire data does not match expected field_id in schema, or field produced zero bytes of progress |
 | DCS_TRAILING_BYTES | Bytes remain after all schema-required fields have been deserialized, indicating trailing garbage in the input |
+| DCS_RECURSION_LIMIT_EXCEEDED | Nesting depth exceeds the implementation's configured maximum (minimum 64 levels). Returned instead of crashing. Ensures consistent rejection of pathological inputs across implementations. |
 
 > **Note:** The prior combined `DCS_LENGTH_OVERFLOW` ("String/Bytes length exceeds 2^32 - 1") is replaced by two separate errors with distinct limits. String is capped at 1MB per RFC-0126 SectionString. Blob is capped at 4GB by the u32 length prefix. `DCS_INVALID_BLOB` covers buffer-underrun and length-mismatch conditions during deserialization. This change also resolves the pre-existing inconsistency between the error table (2^32-1) and the String section prose (1MB) in RFC-0126 v2.5.1.
 
@@ -228,7 +232,7 @@ Add Blob deserialization:
 
 **Blob Deserialization**
 
-**Notation:** All multi-byte integers use big-endian (network byte order). `input.len()` denotes the byte length of the input buffer. `input[a..b]` denotes the byte slice from index a (inclusive) to index b (exclusive). `as T` denotes type conversion to type T. **Cast semantics (HIGH-1):** `length as usize` converts the u32 length value to the platform's native pointer-width unsigned integer type for comparison against buffer lengths. On all platforms where DCS is intended to run (32-bit and 64-bit), this cast is safe and lossless -- u32::MAX (4,294,967,295) fits in usize on both 32-bit and 64-bit platforms. The comparison `(length as usize) > input.len() - 4` is unambiguous. Implementations in languages without explicit casting MUST ensure the comparison is performed in a type-wide enough to hold both operands. **Bounds checks (HIGH-2):** UTF-8 validation uses `bytes.len() < i + N` (checking total available bytes against needed bytes) rather than `i + N >= bytes.len()` (checking last needed index against length). This form avoids index arithmetic overflow on constrained platforms and is idiomatic across language bindings.
+**Notation:** All multi-byte integers use big-endian (network byte order). `input.len()` denotes the byte length of the input buffer. `input[a..b]` denotes the byte slice from index a (inclusive) to index b (exclusive). `as T` denotes type conversion to type T. **Cast semantics (HIGH-1 / CRIT-3):** `length as usize` converts the u32 length value to the platform's native pointer-width unsigned integer type for comparison against buffer lengths. On all platforms where DCS is intended to run (32-bit and 64-bit), this cast is safe and lossless -- u32::MAX (4,294,967,295) fits in usize on both 32-bit and 64-bit platforms. The safe bounds-check form is `4 + (length as usize) > input.len()`, which avoids unsigned subtraction underflow. The form `(length as usize) > input.len() - 4` is equivalent when the prior guard `input.len() < 4` has already returned an error, but is NOT safe if that guard were absent. Implementations MUST NOT omit or reorder the `input.len() < 4` guard. The preferred form `4 + (length as usize) > input.len()` is safe regardless of guard ordering and is used in the pseudocode below. **Bounds checks (HIGH-2):** UTF-8 validation uses `bytes.len() < i + N` (checking total available bytes against needed bytes) rather than `i + N >= bytes.len()` (checking last needed index against length). This form avoids index arithmetic overflow on constrained platforms and is idiomatic across language bindings.
 
 ```
  deserialize_blob(input: &[u8]) -> Result<(&[u8], &[u8]), Err> {
@@ -236,7 +240,7 @@ Add Blob deserialization:
          return Err(DCS_INVALID_BLOB)  // need at least 4 bytes for length prefix
      }
      let length = (u32(input[0]) << 24) | (u32(input[1]) << 16) | (u32(input[2]) << 8) | u32(input[3]);
-     if (length as usize) > input.len() - 4 {
+     if 4 + (length as usize) > input.len() {
          return Err(DCS_INVALID_BLOB)  // truncated: declared length exceeds remaining bytes
      }
      let data = input[4..4+(length as usize)];
@@ -254,7 +258,7 @@ Add Blob deserialization:
 
 **String Deserialization**
 
-**Notation:** All multi-byte integers use big-endian (network byte order). `input.len()` denotes the byte length of the input buffer. `input[a..b]` denotes the byte slice from index a (inclusive) to index b (exclusive). `as T` denotes type conversion to type T. **Cast semantics (HIGH-1):** `length as usize` converts the u32 length value to the platform's native pointer-width unsigned integer type for comparison against buffer lengths. On all platforms where DCS is intended to run (32-bit and 64-bit), this cast is safe and lossless -- u32::MAX (4,294,967,295) fits in usize on both 32-bit and 64-bit platforms. The comparison `(length as usize) > input.len() - 4` is unambiguous. Implementations in languages without explicit casting MUST ensure the comparison is performed in a type-wide enough to hold both operands. **Bounds checks (HIGH-2):** UTF-8 validation uses `bytes.len() < i + N` (checking total available bytes against needed bytes) rather than `i + N >= bytes.len()` (checking last needed index against length). This form avoids index arithmetic overflow on constrained platforms and is idiomatic across language bindings. **`cast_bytes_to_str(bytes)` (LOW-1):** A language-specific, zero-cost cast of a validated UTF-8 byte slice to a string reference type. In Rust: `std::str::from_utf8_unchecked(bytes)` (safe because UTF-8 validity was established by the validation loop above). In Go: `string(bytes)`. In Python: `bytes.decode('utf-8', errors='strict')`. No additional validation is performed -- the bytes have already been validated as UTF-8 by the loop above.
+**Notation:** Same as Blob Deserialization above (shared notation). **`cast_bytes_to_str(bytes)` (LOW-1):** A language-specific, zero-cost cast of a validated UTF-8 byte slice to a string reference type. In Rust: `std::str::from_utf8_unchecked(bytes)` (safe because UTF-8 validity was established by the validation loop above). In Go: `string(bytes)`. In Python: `bytes.decode('utf-8', errors='strict')`. No additional validation is performed -- the bytes have already been validated as UTF-8 by the loop above.
 
 ```
  deserialize_string(input: &[u8]) -> Result<(&str, &[u8]), Err> {
@@ -266,7 +270,7 @@ Add Blob deserialization:
      if length > 1_048_576 {  // max allowed string length = 1MB = 2^20 bytes; reject if declared length exceeds this
          return Err(DCS_STRING_LENGTH_OVERFLOW)
      }
-     if (length as usize) > input.len() - 4 {
+     if 4 + (length as usize) > input.len() {
          return Err(DCS_INVALID_STRING)  // truncated: declared length exceeds remaining bytes
      }
      let bytes = input[4..4+(length as usize)];
@@ -354,28 +358,49 @@ The existing 17-entry Merkle Root (`2ed91a62f96f11151cd9211cf90aff36efc16c69d3ef
 | 14 | `01000000010000002a00000000000000` | `ba9bc680540d876003d8a04ed12363e87af3567283f73c5b0127f5ad40314063` |
 | 15 | `0000000000000000000000000000002a0000000000000000` | `7b0dc69a6bd9f3985e909871a6465971aef51b7c4b05051daefa0aa6d1b1fbc3` |
 | 16 | `000000010000002a0000000200000005616c6963650000000300000000000000010000000000000000` | `8ce4a58171d93997bec1861d361b1bfae9a376027dd65f5cb5b045b27a1de890` |
-| 17 | `0000000568656c6c6f` | `01cc2c521e69293f581e0df49c071c2e9d44b16586b36024872d77244b405be6` |
+| 17 | `00000020e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855` | `6452f4eb98d65e5ce04903cf5079038dfdb85ed742a4e543a52fca27b508a7ec` |
 
-**Entry 17 leaf hash:** `01cc2c521e69293f581e0df49c071c2e9d44b16586b36024872d77244b405be6`
+**Entry 17 leaf hash:** `6452f4eb98d65e5ce04903cf5079038dfdb85ed742a4e543a52fca27b508a7ec`
 
 **Verified computation:**
 
 ```
-Entry 17 input bytes:  0x00 0x00 0x00 0x05 0x68 0x65 0x6c 0x6c 0x6f
-Domain-separated leaf:  SHA256(DOMAIN_LEAF_PREFIX || 0x0000000568656c6c6f)
-                     = SHA256(0x00 || 0x0000000568656c6c6f)
-                     = 01cc2c521e69293f581e0df49c071c2e9d44b16586b36024872d77244b405be6
+Entry 17 input bytes:  0x00 0x00 0x00 0x20 e3 b0 c4 42 98 fc 1c 14 9a fb f4 c8 99 6f b9 24 27 ae 41 e4 64 9b 93 4c a4 95 99 1b 78 52 b8 55
+Domain-separated leaf:  SHA256(0x00 || 0x00000020 e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855)
+                     = 6452f4eb98d65e5ce04903cf5079038dfdb85ed742a4e543a52fca27b508a7ec
 
-Verification:         python3 scripts/compute_dcs_probe_root.py @ 7b22f8a
+Verification:         python3 -c "import hashlib; data = bytes([0x00]) + bytes.fromhex('00000020e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855'); print(hashlib.sha256(data).hexdigest())"
 Script encodings:     RFC-0110 (Entry 14), RFC-0104 (Entry 15), RFC-0111 (Entry 10)
-Cross-verified:       Yes -- implementers MUST use the script at commit 7b22f8a to reproduce the root
 ```
 
-**18-entry Merkle Root:** `78154bb3879a85406ea09064603ecdcaae2bad5b0ff16066d578d9c17c38565c`
+**Level-1 intermediate hashes (for manual verification):**
+
+| Pair | Leaves | Hash |
+|------|--------|------|
+| L1[0] | leaves 0+1 | `45a3d9a4ce06f12a8961c1f55e788372ad370520cc6d8c7a06ce68f1d351dc00` |
+| L1[1] | leaves 2+3 | `ade4e53f84db243be465aa97107d9f941035d70523ad55ac27c1f3b353250b53` |
+| L1[2] | leaves 4+5 | `3385fd1e5909d1a9a409e5dcee0466336ce9f8be808b8e62843a187e05ab2298` |
+| L1[3] | leaves 6+7 | `5b7080d890c67187d45c4138afeedcde9e90a989ce3afdd19c1a0dbf63ba29b7` |
+| L1[4] | leaves 8+9 | `36abd67d0ff5e19ce187ffdac3608bd0c928675a67431af1a35fe0f4519b4e50` |
+| L1[5] | leaves 10+11 | `af12716eae513d040b0d7eb191fb2aaaf576e8d25270a1fce5f59b05a216b66f` |
+| L1[6] | leaves 12+13 | `cbc981e0f89aea9cad248d9aeb5b3259cd676cdcaa5a03238c47c1cfe6901cb7` |
+| L1[7] | leaves 14+15 | `b833c386f3132a57128334048b3b02bff6e8399b0b5d1ae4b5c6659ee9ac7fdf` |
+| L1[8] | leaves 16+17 | `4225d6d111bc553c9e03e6a657e0ef29b934a24a88c361e2b66af2e228adcc9d` |
+
+**18-entry Merkle Root:** `907f481e59ce67996f6c859c2cb6f8e5078245fee3baada58110489cdbdc0e47`
+
+**Merkle tree pairing (18 leaves → 1 root):**
+- Level 1 (9 pairs): L1[0]..L1[8] (see table above)
+- Level 2 (5 pairs + 1 duplicate of L1[8]): L2[0]..L2[4]
+- Level 3 (3 pairs + 1 duplicate of L2[4]): L3[0]..L3[2]
+- Level 4 (2 pairs + 1 duplicate of L3[2]): L4[0], L4[1]
+- Level 5: Root = `SHA256(0x01 || L4[0] || L4[1])` = `907f481e59ce67996f6c859c2cb6f8e5078245fee3baada58110489cdbdc0e47`
+
+**Negative verification (CRIT-1):** Passing Entry 17's bytes to `deserialize_string` MUST return `Err(DCS_INVALID_UTF8)`. Implementations SHOULD test this. The 32 payload bytes `e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855` are not valid UTF-8.
 
 > **Tree structure transition:** The Merkle tree over 17 entries has an odd leaf count. Per RFC-0126 SectionMerkle Root Computation, the last leaf (leaf_16) is duplicated for the final pair: `SHA256(0x01 || leaf_16 || leaf_16)`. Adding Entry 17 (leaf_17) brings the count to 18, which is even -- no duplication needed. This changes the internal node structure of the entire tree. The new root is not an incremental append; all prior entries' contributions to the root are affected by the changed pairing structure.
 
-[^L-R4-1]: **Entry 12 leaf hash correction (LOW-R4-1):** The hash displayed in RFC-0127 v6.1 and earlier was a transcription error: 63 hex characters missing a leading zero in byte 28 (`0904b0` instead of `09004b0`). The corrected value `170e5f45c1585c19f017f3c0df39c010e09004b0980fc8251ff4dd8eeef0376c` is the full 64-character SHA-256 output. **Verification:** `python3 -c "import hashlib; data = bytes([0x00]) + bytes.fromhex('0000000000000000000000000000002a'); print(hashlib.sha256(data).hexdigest())"` yields `170e5f45c1585c19f017f3c0df39c010e09004b0980fc8251ff4dd8eeef0376c`. The 18-entry Merkle root is unchanged because the reference script `compute_dcs_probe_root.py` computed from raw bytes throughout, not from the display string in the table.
+[^L-R4-1]: **Entry 12 leaf hash correction (LOW-R4-1):** The hash displayed in RFC-0127 v6.1 and earlier was a transcription error: 63 hex characters missing a leading zero in byte 28 (`0904b0` instead of `09004b0`). The corrected value `170e5f45c1585c19f017f3c0df39c010e09004b0980fc8251ff4dd8eeef0376c` is the full 64-character SHA-256 output. **Verification:** `python3 -c "import hashlib; data = bytes([0x00]) + bytes.fromhex('0000000000000000000000000000002a'); print(hashlib.sha256(data).hexdigest())"` yields `170e5f45c1585c19f017f3c0df39c010e09004b0980fc8251ff4dd8eeef0376c`. The Entry 12 correction did not change the Merkle root (the reference script computed from raw bytes). The root WAS later changed by the Entry 17 correction (CRIT-1, v6.5): new root is `907f481e59ce67996f6c859c2cb6f8e5078245fee3baada58110489cdbdc0e47`.
 
 #### Change 10: Known Issues
 
@@ -385,9 +410,9 @@ Update the Known Issues table:
 |----|-------------|
 | MED-10 | Entries 5 (Option::None) and 9 (Bool false) produce identical leaf hashes (`96a296d224f285c67bee93c30f8a309157f0daa35dc5b87e410b78630a09cfc7`). Domain-separated leaf hashing prevents Merkle root collision. Note: RFC-0126 v2.5.1 published `6e340b9cffb37a989ca544e6bb780a2c78901d3fb33738768511a30617afa01d` (SHA256 of raw `0x00` without domain separation), which was incorrect. The correct domain-separated hash is `96a296d2...`. |
 | NEW-KI-1 | Blob entry (Entry 17) did not appear in RFC-0126 v2.5.1 Primitive Type Encodings table or Probe table. This amendment adds it. |
-| NEW-KI-2 | Entry 17 (Blob `"hello"`) and Entry 4 (String `"hello"`) produce identical leaf hashes (`01cc2c521e69293f581e0df49c071c2e9d44b16586b36024872d77244b405be6`) because they encode identically. Domain-separated leaf hashing prevents Merkle root collision -- this is safe by design, consistent with the existing Entry 5/Entry 9 collision. **Encoding policy:** DCS intentionally allows byte-identical representations across distinct types. Type disambiguation is schema-driven and enforced at deserialization time; the wire format does not carry type information. Identical encoding across types is a known, acceptable trade-off. Typed-context deserialization (Change 8) prevents semantic ambiguity. The probe tests serialization equivalence only; negative deserialization (rejecting Blob bytes when String is expected, or vice versa) is verified by the typed-context requirement and the schema-driven dispatcher (Change 13), not by the probe. |
+| NEW-KI-2 | Prior versions of this RFC (v6.3 and earlier) used `b"hello"` as Entry 17's blob payload, which is valid UTF-8 and produces identical entry data and leaf hash to Entry 4 (String `"hello"`). This was corrected in v6.5 by replacing the payload with `SHA256(b"")` -- a 32-byte sequence that is NOT valid UTF-8 -- ensuring the probe distinguishes Blob from String serialization. The old Entry 17 hash `01cc2c521e69293f581e0df49c071c2e9d44b16586b36024872d77244b405be6` is superseded. **Encoding policy:** DCS intentionally allows byte-identical representations across distinct types. Type disambiguation is schema-driven and enforced at deserialization time; the wire format does not carry type information. The probe now correctly verifies that Blob serialization of non-UTF-8 data produces a distinct leaf hash from any String entry. |
 | NEW-KI-3 | Adding Entry 17 changes the Merkle tree from odd (17, last leaf duplicated) to even (18, no duplication) leaf count. This structural change affects the root. See Change 9. |
-| LOW-R4-1 | Entry 12 leaf hash had a transcription error in RFC-0127 v6.1 and earlier: displayed as 63 hex characters (missing a leading zero in byte 28: `0904b0` instead of `09004b0`). Corrected to the full 64-character value `170e5f45c1585c19f017f3c0df39c010e09004b0980fc8251ff4dd8eeef0376c` in v6.2. **Verification:** `python3 -c "import hashlib; data = bytes([0x00]) + bytes.fromhex('0000000000000000000000000000002a'); print(hashlib.sha256(data).hexdigest())"` yields `170e5f45c1585c19f017f3c0df39c010e09004b0980fc8251ff4dd8eeef0376c`. The 18-entry Merkle root `78154bb3879a85406ea09064603ecdcaae2bad5b0ff16066d578d9c17c38565c` is unchanged because the reference script computed from raw bytes, not from the display string. |
+| LOW-R4-1 | Entry 12 leaf hash had a transcription error in RFC-0127 v6.1 and earlier: displayed as 63 hex characters (missing a leading zero in byte 28: `0904b0` instead of `09004b0`). Corrected to the full 64-character value `170e5f45c1585c19f017f3c0df39c010e09004b0980fc8251ff4dd8eeef0376c` in v6.2. **Verification:** `python3 -c "import hashlib; data = bytes([0x00]) + bytes.fromhex('0000000000000000000000000000002a'); print(hashlib.sha256(data).hexdigest())"` yields `170e5f45c1585c19f017f3c0df39c010e09004b0980fc8251ff4dd8eeef0376c`. The Entry 12 correction alone did not change the Merkle root (the reference script computed from raw bytes). The root WAS later changed by CRIT-1 (Entry 17 payload replacement, v6.5): new root is `907f481e59ce67996f6c859c2cb6f8e5078245fee3baada58110489cdbdc0e47`. |
 
 #### Change 11: NUMERIC_SPEC_VERSION Increment
 
@@ -452,33 +477,42 @@ fn deserialize_field(input: &[u8], expected_type: Type) -> Result<(&[u8], Value)
                 Err(e) => Err(e),
             }
         },
+        Type::Struct(inner_schema) => {
+            let result = deserialize_struct(input, inner_schema, false);  // false = not top level
+            match result {
+                Ok((v, rem)) => Ok((rem, Value::Struct(v))),  // v is Value, rem is remaining bytes
+                Err(e) => Err(e),
+            }
+        },
         // ... other types
     }
 }
 
-fn deserialize_struct(input: &[u8], schema: &StructSchema) -> Result<Value, Err> {
+fn deserialize_struct(input: &[u8], schema: &StructSchema, is_top_level: bool) -> Result<(Value, &[u8]), Err> {
     let mut remaining = input;
     let fields = empty list;
-    // Empty struct: no fields to deserialize; wire must be empty (zero bytes)
-    // This is the only permitted zero-byte case; the progress check below does not apply
+    // Empty struct: no fields to deserialize; wire must be empty at top level (zero bytes).
+    // This is the only permitted zero-byte case; the progress check below does not apply.
+    // Trailing-bytes check is only performed at the top level -- in nested contexts,
+    // remaining bytes belong to the parent struct's subsequent fields.
     if schema.fields.is_empty() {
-        if remaining.len() != 0 { return Err(DCS_TRAILING_BYTES); }
-        return Ok(Value::Struct(fields));
+        if is_top_level && remaining.len() != 0 { return Err(DCS_TRAILING_BYTES); }
+        return Ok((Value::Struct(fields), remaining));
     }
     for field in schema.fields {  // fields in declaration order
         // Read field_id from wire (u32_be, 4 bytes) before calling deserialize_field
         if remaining.len() < 4 { return Err(DCS_INVALID_STRUCT); }
         let wire_field_id = (u32(remaining[0]) << 24) | (u32(remaining[1]) << 16)
                           | (u32(remaining[2]) << 8) | u32(remaining[3]);
-        remaining = remaining[4..];  // advance past field_id
+        let remaining_after_field_id = remaining[4..];  // advance past field_id
         if wire_field_id != field.id { return Err(DCS_INVALID_STRUCT); }  // field ID mismatch
-        let field_result = deserialize_field(remaining, field.type_);
+        let field_result = deserialize_field(remaining_after_field_id, field.type_);
         match field_result {
             Err(e) => return Err(e),  // propagate error
             Ok((new_remaining, value)) => {
-                // Progress check: if new_remaining == remaining, the deserializer consumed zero bytes
-                // from the value data -- this indicates malformed input or a dispatcher logic error
-                if new_remaining == remaining {
+                // Progress check: if new_remaining == remaining_after_field_id, the deserializer
+                // consumed zero bytes from the value data -- this indicates malformed input
+                if new_remaining == remaining_after_field_id {
                     return Err(DCS_INVALID_STRUCT);  // field value deserializer consumed zero bytes (malformed input or dispatcher logic error)
                 }
                 remaining = new_remaining;
@@ -486,12 +520,15 @@ fn deserialize_struct(input: &[u8], schema: &StructSchema) -> Result<Value, Err>
             }
         }
     }
-    // Check for trailing bytes: all schema fields consumed, no bytes should remain
-    if remaining.len() != 0 {
+    // Check for trailing bytes at top level only: all schema fields consumed, no bytes should remain.
+    // In nested calls, remaining bytes are returned to the parent for processing as subsequent fields.
+    if is_top_level && remaining.len() != 0 {
         return Err(DCS_TRAILING_BYTES);
     }
-    return Ok(Value::Struct(fields));
+    return Ok((Value::Struct(fields), remaining));
 }
+// Note: Top-level callers MUST invoke as: let (value, remaining) = deserialize_struct(input, schema, true)?;
+
 ```
 
 **Key properties:**
@@ -512,20 +549,20 @@ fn deserialize_struct(input: &[u8], schema: &StructSchema) -> Result<Value, Err>
     }
     Wire: u32_be(1) || u32_be(32) || 32_bytes || u32_be(2) || serialize_string("alice")
     ```
-    The dispatcher calls `deserialize_struct`, which iterates fields. For field 1 (Blob), it calls `deserialize_field(remaining, Blob)`, which calls `deserialize_blob`. The 4-byte length prefix is consumed (advancing `remaining`), and 32 bytes are returned as a slice. For field 2 (String), the remaining bytes are passed to `deserialize_string`, which validates UTF-8 and returns the string slice. This recursion terminates at primitive types; no stack overflow occurs for reasonable nesting depths.
+    The top-level caller invokes `deserialize_struct(wire, schema, true)`. For field 1 (Blob), the dispatcher calls `deserialize_field(remaining, Blob)`, which calls `deserialize_blob`. The 4-byte length prefix is consumed (advancing `remaining`), and 32 bytes are returned as a slice. For field 2 (String), the remaining bytes are passed to `deserialize_string`, which validates UTF-8 and returns the string slice. For a nested Struct, `deserialize_field` invokes `deserialize_struct(input, inner_schema, false)` -- the `false` flag prevents the trailing-bytes check from firing prematurely. This recursion terminates at primitive types; no stack overflow occurs for reasonable nesting depths.
 
 **Schema evolution rules:** The dispatcher operates on a schema agreed upon by all participants. Schema evolution rules are outside the DCS layer -- they are application-layer concerns. However, for conformance:
 
 - **Unknown field in input**: The dispatcher does not skip unknown fields. If a field ID in the wire data has no corresponding entry in the local schema, the dispatcher returns error. Implementations MAY provide a "strict mode" vs "lenient mode" at the application layer, but the DCS dispatcher itself is strict. **Error code for unknown/missing fields (MED-2):** When a field ID mismatch is detected (wire field_id ≠ expected field_id), the dispatcher returns `DCS_INVALID_STRUCT`. Callers that need to distinguish schema-evolution mismatches from data corruption SHOULD inspect the wire field_id value: a wire_field_id that is a recognized ID from a newer schema version indicates a schema mismatch; an unrecognized ID indicates corruption. This distinction is application-layer logic outside the DCS dispatcher.
 - **Missing field in input**: If the wire data ends before all schema-required fields are consumed, the dispatcher returns error (truncated input).
-- **Extra data after last field**: If bytes remain after all schema fields are deserialized, the dispatcher returns `Err(DCS_TRAILING_BYTES)`. Conformant data has no trailing bytes.
+- **Extra data after last field**: If bytes remain after all schema fields are deserialized at the top level, the dispatcher returns `Err(DCS_TRAILING_BYTES)`. Conformant data has no trailing bytes. In nested contexts, remaining bytes belong to the parent struct's subsequent fields and are returned to the caller.
 - **Field ordering (MEDIUM-NEW-1):** Wire data is structured as `field_id_0 || value_0 || field_id_1 || value_1 || ...` in **strictly ascending field_id order**. The dispatcher reads field_ids from the wire sequentially and matches them against the schema's expected field_ids. The wire order MUST be ascending field_id order. This is NOT declaration order -- declaration order is the order fields appear in the schema definition, which is coincidentally identical to ascending field_id order if the schema author assigned sequential IDs. The dispatcher does not use declaration index; it uses the wire field_id values to locate each field's data. A schema with non-sequential field_ids (e.g., 1, 3, 5) still serializes in ascending wire order.
-- **Optional fields**: Optional fields are a schema-layer concern. If a field is absent from the wire data and the schema marks it optional, the dispatcher MAY skip it. If absent and not optional, the dispatcher returns error.
+- **Optional fields (HIGH-4):** The DCS dispatcher is strict and does not skip fields. Optional fields MUST be handled at the application layer before invoking `deserialize_struct`, e.g. by constructing a schema that only includes the fields present in the wire data, or by pre-processing the wire data to set absent optional fields to default values. The dispatcher itself iterates over `schema.fields` in declaration order and requires a wire_field_id for each expected field; it cannot skip an absent field and continue matching subsequent field_ids.
 - **Versioning**: Schema versioning is handled at the application layer. The DCS dispatcher itself is stateless -- it applies the schema it is given without interpreting version numbers.
 
 **Dispatcher recursion:** The dispatcher is recursive by nature. When deserializing a Struct field, `deserialize_struct` calls `deserialize_field` for each sub-field; when `deserialize_field` encounters a nested Struct type, it calls `deserialize_struct` again. This recursion terminates at primitive types (i128, bool, DQA, Blob, String).
 
-**Recursion depth (CRITICAL-NEW-1):** Implementations MUST support nesting depth limited only by input size, not by any fixed constant. Each recursive call to `deserialize_struct` or `deserialize_option` consumes at least 1 byte (the field_id for Struct fields, the Option tag byte for Option). Since input is finite, recursion depth is bounded by input size -- there is no input that causes infinite recursion without also failing the progress check or running out of bytes. The spec prohibits fixed recursion-based depth limits; a stack overflow caused by an implementation using recursion without adequate stack limits is a **non-conformant implementation**, not a consensus split. The spec explicitly permits iterative implementations ("a iterative implementation is also valid but must produce identical results"), which eliminates any recursion depth concern entirely. The DCS layer specifies behavioral output (correct deserialization), not the algorithm used to achieve it.
+**Recursion depth (CRITICAL-NEW-1 / HIGH-3):** Implementations MUST NOT reject valid inputs due to an arbitrary fixed constant depth limit lower than 64 levels. Implementations MAY enforce a configurable maximum nesting depth and MUST return `Err(DCS_RECURSION_LIMIT_EXCEEDED)` when that limit is exceeded, rather than crashing. This is not a consensus-divergence risk because inputs deep enough to hit any reasonable limit are pathological and SHOULD be rejected consistently. The spec explicitly permits iterative implementations ("an iterative implementation is also valid but must produce identical results"). The DCS layer specifies behavioral output (correct deserialization), not the algorithm used to achieve it. A stack overflow caused by a recursive implementation without adequate stack limits is a **non-conformant implementation bug**, not a consensus split.
 
 **Type recursion termination invariant (HIGH-NEW-4):** Dispatcher recursion is inherently bounded because every recursive call consumes at least 1 byte from the input buffer. This is guaranteed by: (1) the per-field progress check (`new_remaining != remaining`) which requires each Struct field to consume at least 4 bytes (the field_id), and (2) the Option tag byte (1 byte) which is consumed before recursing into the payload. A schema with recursive types (e.g., `Option<A>` where `A` contains `Option<A>`) terminates correctly because each Option level consumes at least 1 byte. An infinite recursion attack would require consuming zero bytes per recursive call, which is prevented by the progress check -- a dispatcher that recurses without consuming bytes returns `Err(DCS_INVALID_STRUCT)`. This is the **termination invariant**: dispatcher recursion MUST consume input bytes. If recursion occurs without consuming bytes, the result is an error, not an infinite loop. This prevents schema cycles, zero-byte recursion, and ensures termination for all valid inputs.
 
@@ -535,7 +572,7 @@ This dispatcher pattern is how DCS deserialization is intended to be used. The a
 
 **Conformance requirement:** Conformance to RFC-0126 with Blob support REQUIRES using a schema-driven dispatcher for any DCS type that shares an encoding with another DCS type. This is the **shared-encoding rule**: if two DCS types have identical wire formats, the dispatcher is REQUIRED to disambiguate them. Blob and String share the format `[u32_be(length)][bytes]`; therefore both MUST be deserialized via the dispatcher when both are present in the schema. Other DCS types with unique encodings (i128, bool, DQA, DFP, BigInt) MAY use direct deserialization calls. The dispatcher enforces the typed-context requirement; the requirement cannot be satisfied by prose alone.
 
-**Error notation:** Pseudocode uses `return Err(ERROR_CODE)` for error returns. All error codes (`DCS_INVALID_STRING`, `DCS_STRING_LENGTH_OVERFLOW`, `DCS_INVALID_UTF8`, `DCS_INVALID_BLOB`, `DCS_BLOB_LENGTH_OVERFLOW`, `DCS_INVALID_STRUCT`, `DCS_TRAILING_BYTES`) denote deterministic error states that abort deserialization. Implementations MUST treat all error conditions as fatal.
+**Error notation:** Pseudocode uses `return Err(ERROR_CODE)` for error returns. All error codes (`DCS_INVALID_STRING`, `DCS_STRING_LENGTH_OVERFLOW`, `DCS_INVALID_UTF8`, `DCS_INVALID_BLOB`, `DCS_BLOB_LENGTH_OVERFLOW`, `DCS_INVALID_STRUCT`, `DCS_TRAILING_BYTES`, `DCS_RECURSION_LIMIT_EXCEEDED`) denote deterministic error states that abort deserialization. Implementations MUST treat all error conditions as fatal.
 
 **Zero-byte type constraint:** The progress check constrains future DCS type design: all DCS types used with this dispatcher MUST consume at least 1 byte during deserialization. Zero-byte types are incompatible with this dispatcher pattern. **Exception for empty Struct:** A Struct with zero fields (empty struct `{}`) consumes 0 bytes and therefore **requires special handling**: the dispatcher MUST detect the empty struct case before entering the per-field loop and return `Ok(Value::Struct(empty))` without applying the progress check. This is the only allowed zero-byte type; any new DCS type that consumes 0 bytes is non-conformant.
 
@@ -558,6 +595,7 @@ This ensures the probe is monotonically verifiable across amendments.
 
 | Version | Date | Author | Changes |
 |---------|------|--------|---------|
+| 6.5 | 2026-03-26 | CipherOcto | Round 21 (Round 7): CRIT-1 add is_top_level flag to deserialize_struct for empty struct trailing-bytes gating, CRIT-2 add recursion depth section with DCS_RECURSION_LIMIT_EXCEEDED error and 64-level minimum, CRIT-3 add Type::Struct case to deserialize_field dispatcher, HIGH-1 fix deserialize_blob bounds check from `(length as usize) > input.len() - 4` to `4 + (length as usize) > input.len()`, HIGH-2 rename progress check variable to remaining_after_field_id, MED-1 add DVEC/DMAT element-type dispatcher guidance (MED-2 note), MED-2 clarify serialize_blob returns DcsError not generic Err, MED-3 expand optional fields prose (application layer handles absent fields, not dispatcher), LOW-2 rename Fixed-Width Primitive class to Unambiguously Typed, LOW-3 add RFC-0903 and RFC-0909 rows to relationship table, LOW-4 verify v6.0 consolidation note already present |
 | 6.4 | 2026-03-25 | CipherOcto | Round 20 (Round 6): HIGH-1 fix verification command to use bytes([0x00]) form for unambiguous byte construction, add expected output to verification, ensure both footnote and Known Issues entries are consistent, MED-1 add missing v6.2 version history row (was absent between v6.1 and v6.3), MED-2 remove non-standard footnote syntax, replace with inline annotation on Entry 12 row pointing to LOW-R4-1, MED-3 fix header round number from "round 20" to "Round 5 response" (was already corrected to Round 5 response before this review), LOW-1 clarify 1MB comment (max allowed length vs error threshold), LOW-2 update RFC-0126 v2.6.0 version history to include deserialize_string, dispatcher, new error codes, LOW-3 fix grammatically confused comment above progress check |
 | 6.3 | 2026-03-25 | CipherOcto | Round 19 (Round 5): HIGH-1 confirm Entry 12 root unchanged (Scenario B: script computed from raw bytes), add footnote and Known Issues entry for correction, HIGH-2 fix header and footer to v6.2 (was v6.1), MED-1 fix Key Property 2 contradiction (replace "at least 1 byte" with precise zero-advancement detection), MED-2 add guidance on distinguishing schema mismatch vs data corruption via wire_field_id inspection, MED-3 differentiate DCS_INVALID_STRING and DCS_INVALID_BLOB descriptions with type-specific prefixes, LOW-1 add Known Issues entry for Entry 12 hash correction with verification command, LOW-2 Key Property 2 cross-reference to Zero-byte type constraint added, LOW-3 v6.2 footer update noted (6.1→6.2) |
 | 6.2 | 2026-03-25 | CipherOcto | Round 18 (Round 4 adjudication): HIGH-1 add trailing-bytes check to deserialize_struct non-empty path, HIGH-2 clarify Key Property 2 progress requirement (minimum varies by type; zero-advancement detection), MED-1 correct Entry 12 leaf hash (63→64 hex chars, missing leading zero in byte 28, Scenario B confirmed: root unchanged), MED-2 update DCS_STRING_LENGTH_OVERFLOW description to specify declared vs actual length, MED-3 add clarifying note to BigInt Fixed-Width Primitive classification, LOW-1 update version footer 6.1→6.2, LOW-2 align deserialize_string allocation safety wording with Blob RECOMMENDED framing, LOW-3 add deserialize_string and schema-driven dispatcher to implementation checklist |
@@ -578,6 +616,6 @@ This ensures the probe is monotonically verifiable across amendments.
 
 ---
 
-**Version:** 6.4
+**Version:** 6.5
 **Submission Date:** 2026-03-25
-**Last Updated:** 2026-03-25
+**Last Updated:** 2026-03-26

@@ -2,7 +2,7 @@
 
 ## Status
 
-Draft (v6.7, adversarial review Round 9 candidate)
+Draft (v6.8, adversarial review Round 10 candidate)
 
 ## Authors
 
@@ -344,7 +344,7 @@ Add Blob deserialization:
 - **Length validation**: Declared length MUST NOT exceed 1MB. If exceeded, return Err(DCS_STRING_LENGTH_OVERFLOW).
 - **UTF-8 validation**: The byte sequence is validated as UTF-8 per RFC 3629 at deserialization time. This includes: valid byte structure for each sequence length, rejection of overlong encodings (minimum codepoint per length), rejection of surrogate codepoints (U+D800–U+DFFF), and rejection of codepoints above U+10FFFF. If invalid, return Err(DCS_INVALID_UTF8). **Normalization:** Strings MUST NOT be normalized. Validation only checks UTF-8 correctness. The byte sequence is preserved exactly as provided -- no Unicode normalization (NFC, NFD, NFKC, NFKD) is applied. **Validation order:** UTF-8 validation occurs after type resolution. The dispatcher resolves the type (String) before calling `deserialize_string`; therefore `deserialize_string` always receives bytes that are intended to be a String. If the dispatcher first decodes as Blob and then attempts to re-decode as String, the UTF-8 validation must still be applied at the String layer. Implementations that skip UTF-8 validation because bytes were first interpreted as Blob produce consensus-divergent results.
 - **Return type**: `Result<(&str, &[u8]), Err>` -- returns `(string_slice, remaining_bytes)` on success.
-- **Allocation safety (MEDIUM-1):** Deserializers MUST NOT pre-allocate a buffer of `length` bytes before validating that `length` bytes are available in the input. The buffer validation check (`4 + (length as usize) > input.len()`) MUST occur before any allocation. This form avoids unsigned underflow -- see Notation note for cast semantics. **Cross-language consistency:** Returning a view/slice/span of the input buffer (rather than a copy) is the RECOMMENDED approach for String deserialization. Implementations SHOULD avoid copying String payloads to ensure consistent memory behavior across language bindings. Where this is not possible, the semantic equivalent is a zero-copy view into the underlying buffer.
+- **Allocation safety (MEDIUM-1):** Deserializers MUST NOT pre-allocate a buffer of `length` bytes before validating that `length` bytes are available in the input. The buffer validation check (`4 + (length as usize) > input.len()`) MUST occur before any allocation. Because the 1MB check above ensures `length ≤ 1,048,576`, the expression `4 + (length as usize)` cannot overflow on any supported platform (maximum value 1,048,580). This form avoids unsigned underflow -- see Notation note for cast semantics. **Cross-language consistency:** Returning a view/slice/span of the input buffer (rather than a copy) is the RECOMMENDED approach for String deserialization. Implementations SHOULD avoid copying String payloads to ensure consistent memory behavior across language bindings. Where this is not possible, the semantic equivalent is a zero-copy view into the underlying buffer.
 
 #### Change 9: Published Merkle Root
 
@@ -429,24 +429,65 @@ Script encodings:     RFC-0110 (Entry 14), RFC-0104 (Entry 15), RFC-0111 (Entry 
 
 **Full tree pairing (18 leaves → 1 root):**
 - Level 1: 9 pairs → 9 hashes (L1[0]..L1[8])
-- Level 2: 5 pairs (4 + dup of last) → 5 hashes (L2[0]..L2[4])
+- Level 2: 5 hashes (L2[0]..L2[4]) from 9 L1 inputs: 4 regular pairs (L1[0]+L1[1], ..., L1[6]+L1[7]) plus L1[8] self-paired
 - Level 3: 3 pairs (2 + dup of last) → 3 hashes (L3[0]..L3[2])
 - Level 4: 2 pairs (1 + dup of last) → 2 hashes (L4[0], L4[1])
 - Level 5: Root = SHA256(0x01 || L4[0] || L4[1])
 
-**Independent verification (one line per level):**
+**Independent verification (self-contained, all levels):**
 ```
-# L2
-python3 -c "import hashlib; l1=['45a3d9a4ce06f12a8961c1f55e788372ad370520cc6d8c7a06ce68f1d351dc00','ade4e53f84db243be465aa97107d9f941035d70523ad55ac27c1f3b353250b53']; print(hashlib.sha256(bytes([1])+bytes.fromhex(l1[0])+bytes.fromhex(l1[1])).hexdigest())"
-# L3: use L2[0],L2[1] from above
-# L4: use L3[0],L3[1] from above
-# Root: pair L4[0],L4[1]
+python3 -c "
+import hashlib
+
+def h(a, b=None):
+    if b is None: b = a
+    return hashlib.sha256(bytes([1]) + bytes.fromhex(a) + bytes.fromhex(b)).hexdigest()
+
+leaves = [
+    '5590b4a4eb4b7a9dba75b0176d06fbdabd8798d4b444741bb8efff24ad5b63f1',  # 0
+    'ad199dd0c6dc5752316d5e8318f37e777d4057d75a4a0f05cb8a491c7ee91b83',  # 1
+    '1cf1fbfbd91a87824796799064ca622b1e859e9918f6b5e81a2c1ff49c10c633',  # 2
+    'c06c930dbec5070902aaad36e2a3c835926b05e2a8016b3d85eab217b98cbcfe',  # 3
+    '01cc2c521e69293f581e0df49c071c2e9d44b16586b36024872d77244b405be6',  # 4
+    '96a296d224f285c67bee93c30f8a309157f0daa35dc5b87e410b78630a09cfc7',  # 5
+    'fbb59ed10e9cd4ff45a12c5bb92cbd80df984ba1fe60f26a30febf218e2f0f5e',  # 6
+    '1cb5e27134ac530c5113543332f27d3bea126fdc7c8f42487e2b05afe3065af9',  # 7
+    'b413f47d13ee2fe6c845b2ee141af81de858df4ec549a58b7970bb96645bc8d2',  # 8
+    '96a296d224f285c67bee93c30f8a309157f0daa35dc5b87e410b78630a09cfc7',  # 9
+    'ff5a194d8b90088286a8c7f7de8de1ecc92e0c26c573b0e04bf8e6c0e9a507ed',  # 10
+    '06eb7d6a69ee19e5fbdf749018d3d2abfa04bcbd1365db312eb86dc7169389b8',  # 11
+    '170e5f45c1585c19f017f3c0df39c010e09004b0980fc8251ff4dd8eeef0376c',  # 12
+    '340bdc8e30453799595c901721334ae5ff819a3e19f4ec6db4e6e9665454eb30',  # 13
+    'ba9bc680540d876003d8a04ed12363e87af3567283f73c5b0127f5ad40314063',  # 14
+    '7b0dc69a6bd9f3985e909871a6465971aef51b7c4b05051daefa0aa6d1b1fbc3',  # 15
+    '8ce4a58171d93997bec1861d361b1bfae9a376027dd65f5cb5b045b27a1de890',  # 16
+    '6452f4eb98d65e5ce04903cf5079038dfdb85ed742a4e543a52fca27b508a7ec',  # 17
+]
+assert len(leaves) == 18, f'Expected 18 leaves, got {len(leaves)}'
+
+l1 = [h(leaves[i], leaves[i+1]) for i in range(0, 18, 2)]
+assert len(l1) == 9, f'Expected 9 L1 hashes, got {len(l1)}'
+l2 = [h(l1[i], l1[i+1] if i+1 < len(l1) else l1[i]) for i in range(0, len(l1), 2)]
+assert len(l2) == 5, f'Expected 5 L2 hashes, got {len(l2)}'
+l3 = [h(l2[i], l2[i+1] if i+1 < len(l2) else l2[i]) for i in range(0, len(l2), 2)]
+assert len(l3) == 3, f'Expected 3 L3 hashes, got {len(l3)}'
+l4 = [h(l3[i], l3[i+1] if i+1 < len(l3) else l3[i]) for i in range(0, len(l3), 2)]
+assert len(l4) == 2, f'Expected 2 L4 hashes, got {len(l4)}'
+root = h(l4[0], l4[1])
+print('L1:', l1)
+print('L2:', l2)
+print('L3:', l3)
+print('L4:', l4)
+print('Root:', root)
+assert root == '907f481e59ce67996f6c859c2cb6f8e5078245fee3baada58110489cdbdc0e47', 'Root mismatch!'
+print('All levels verified OK.')
+"
 ```
 
 **Negative verification (CRIT-1):** Implementations MUST verify that their `deserialize_string` returns `Err(DCS_INVALID_UTF8)` for Entry 17's input. This negative test is part of normative conformance for Blob support -- it confirms that a Blob payload with non-UTF-8 bytes is correctly rejected by the String deserializer, verifying the dispatcher's type-routing is functional. The byte sequence begins `e3 b0 c4...`. `0xe3` is a 3-byte UTF-8 leading byte (pattern `1110xxxx`), requiring two continuation bytes (`10xxxxxx`). `0xb0` (`10110000`) is a valid continuation byte. But `0xc4` (`11000100`) is a 2-byte UTF-8 leading byte, not a continuation byte -- a structural UTF-8 violation at offset 2. Therefore the full 32-byte payload is not valid UTF-8. **Verification command:**
 ```
 python3 -c "b = bytes.fromhex('e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855'); b.decode('utf-8')"
-# Expected: UnicodeDecodeError -- confirms payload is not valid UTF-8
+# Expected: Python raises UnicodeDecodeError with traceback (exit code non-zero) -- confirms payload is not valid UTF-8
 ```
 
 > **Tree structure transition:** The Merkle tree over 17 entries has an odd leaf count. Per RFC-0126 SectionMerkle Root Computation, the last leaf (leaf_16) is duplicated for the final pair: `SHA256(0x01 || leaf_16 || leaf_16)`. Adding Entry 17 (leaf_17) brings the count to 18, which is even -- no duplication needed. This changes the internal node structure of the entire tree. The new root is not an incremental append; all prior entries' contributions to the root are affected by the changed pairing structure.
@@ -513,6 +554,7 @@ fn deserialize_field(input: &[u8], expected_type: Type, depth: usize) -> Result<
             }
         },
         Type::Bool => {
+            // `deserialize_bool` is defined in RFC-0126 Section Bool Deserialization and returns `Result<(bool, &[u8]), Err>`.
             let result = deserialize_bool(input);
             match result {
                 Ok((v, rem)) => Ok((rem, Value::Bool(v))),
@@ -565,7 +607,8 @@ fn deserialize_struct(input: &[u8], schema: &StructSchema, is_top_level: bool, d
                 // consumed zero bytes from the value data -- this indicates malformed input.
                 // Exception: an empty Struct field consumes 0 bytes and is valid; the
                 // is_empty_struct flag prevents false positives for the only permitted zero-byte type.
-                let is_empty_struct = matches!(field.type_, Type::Struct(s) if s.fields.is_empty());
+                // is_empty_struct: true if field.type_ is Struct with zero fields
+                let is_empty_struct = field.type_ is Type::Struct && field.type_.fields.is_empty();
                 if !is_empty_struct && new_remaining == remaining_after_field_id {
                     return Err(DCS_INVALID_STRUCT);  // field value deserializer consumed zero bytes (malformed input or dispatcher logic error)
                 }
@@ -587,12 +630,12 @@ fn deserialize_struct(input: &[u8], schema: &StructSchema, is_top_level: bool, d
 
 ```
 
-**`is_top_level` and `depth` parameters (LOW-2):** `is_top_level` controls whether trailing bytes after the last field cause an error. **Conformant top-level callers MUST pass `is_top_level = true` and `depth = 0`.** Nested callers (from `deserialize_field`'s `Type::Struct` arm) MUST pass `is_top_level = false`. The distinction is necessary because in nested contexts, bytes following the inner struct belong to the outer struct's subsequent fields. `depth` tracks nesting depth starting at 0 for the top-level `deserialize_struct` call, incrementing by 1 for each nested Struct. `depth` is received by `deserialize_field` but only consumed by the `Type::Struct` arm, where it is incremented by 1 before passing to the nested `deserialize_struct` call. Non-Struct type arms (`Type::Blob`, `Type::String`, `Type::Bool`, etc.) do not use the depth parameter; it is accepted to maintain a uniform function signature. The depth check (`depth >= 64`) is enforced at entry to each `deserialize_struct` call; a depth of 64 or higher (which corresponds to the 65th struct deserialization frame) returns `Err(DCS_RECURSION_LIMIT_EXCEEDED)`.
+**`is_top_level` and `depth` parameters (LOW-2):** `is_top_level` controls whether trailing bytes after the last field cause an error. **Conformant top-level callers MUST pass `is_top_level = true` and `depth = 0`.** Nested callers (from `deserialize_field`'s `Type::Struct` arm) MUST pass `is_top_level = false`. The distinction is necessary because in nested contexts, bytes following the inner struct belong to the outer struct's subsequent fields. `depth` tracks nesting depth starting at 0 for the top-level `deserialize_struct` call, incrementing by 1 for each nested Struct. `depth` is received by `deserialize_field` but only consumed by the `Type::Struct` arm, where it is incremented by 1 before passing to the nested `deserialize_struct` call. Non-Struct type arms (`Type::Blob`, `Type::String`, `Type::Bool`, etc.) do not use the depth parameter; it is accepted to maintain a uniform function signature. The depth check (`depth >= 64`) is enforced at entry to each `deserialize_struct` call; a depth of 64 or higher returns `Err(DCS_RECURSION_LIMIT_EXCEEDED)`. The maximum allowed depth value is 63 (reached at the 64th total struct deserialization call, counting the top-level call at depth 0).
 
 **Key properties:**
 
 1. **Type tracking**: The dispatcher knows the expected type for each field from the schema. It never guesses based on bytes alone.
-2. **Progress requirement**: Each field value deserialization MUST advance the buffer position. The check `new_remaining == remaining` detects zero-byte advancement, which indicates malformed input or a dispatcher logic error. The minimum advancement varies by type: fixed-width types (bool: 1 byte, i128: 16 bytes, DFP: 24 bytes) always advance by their fixed width; length-prefixed types (Blob, String) always advance by at least 4 bytes (the length prefix), plus payload bytes. Any non-zero advancement passes this check. See also: **Zero-byte type constraint** (below) -- the empty Struct is the only permitted exception to the non-zero advancement rule.
+2. **Progress requirement**: Each field value deserialization MUST advance the buffer position. The check `new_remaining == remaining_after_field_id` detects zero-byte advancement, which indicates malformed input or a dispatcher logic error. The minimum advancement varies by type: fixed-width types (bool: 1 byte, i128: 16 bytes, DFP: 24 bytes) always advance by their fixed width; length-prefixed types (Blob, String) always advance by at least 4 bytes (the length prefix), plus payload bytes. Any non-zero advancement passes this check. Exception: an empty Struct field (`is_empty_struct` = true) consumes 0 bytes and is valid -- see the `is_empty_struct` flag in `deserialize_struct` above. See also: **Zero-byte type constraint** (below).
 3. **Empty Blob note**: The progress check (`new_remaining != remaining`) validates that the length prefix was consumed (4 bytes). It does NOT validate payload presence. An empty Blob (`length=0`) consumes exactly 4 bytes (the length prefix) and passes this check -- this is correct behavior. The check guarantees forward progress, not data presence.
 4. **No cross-type byte passing**: The bytes returned from one field's deserialization are passed to the NEXT field's deserializer, never back to a different-type deserializer. Mixing Blob/String bytes without schema context is impossible by construction.
 5. **Error propagation**: Any deserialization error propagates immediately; partial results are discarded.
@@ -622,7 +665,7 @@ fn deserialize_struct(input: &[u8], schema: &StructSchema, is_top_level: bool, d
 
 **Recursion depth (CRITICAL-NEW-1 / HIGH-3):** All conformant implementations MUST reject when `depth >= 64` in `deserialize_struct` (top-level call = depth 0). Maximum allowed is 63 nested levels below the top-level call (64 total struct deserialization frames). The depth check is `if depth >= 64 { return Err(DCS_RECURSION_LIMIT_EXCEEDED) }`. This is a fixed universal maximum, not a configurable minimum. While the termination invariant proves that valid inputs terminate (each recursive call consumes at least 1 byte), the fixed depth maximum additionally bounds worst-case stack depth in recursive implementations and ensures consistent rejection of pathological schemas. This limit is chosen to be large enough that no valid real-world input reaches it. The spec explicitly permits iterative implementations ("an iterative implementation is also valid but must produce identical results"). The DCS layer specifies behavioral output (correct deserialization), not the algorithm used to achieve it. A stack overflow caused by a recursive implementation without adequate stack limits is a **non-conformant implementation bug**, not a consensus split.
 
-**Type recursion termination invariant (HIGH-NEW-4):** Dispatcher recursion is inherently bounded because every recursive call consumes at least 1 byte from the input buffer. This is guaranteed by: (1) the per-field progress check (`new_remaining != remaining`) which requires each Struct field to consume at least 4 bytes (the field_id), and (2) the Option tag byte (1 byte) which is consumed before recursing into the payload. A schema with recursive types (e.g., `Option<A>` where `A` contains `Option<A>`) terminates correctly because each Option level consumes at least 1 byte. An infinite recursion attack would require consuming zero bytes per recursive call, which is prevented by the progress check -- a dispatcher that recurses without consuming bytes returns `Err(DCS_INVALID_STRUCT)`. This is the **termination invariant**: dispatcher recursion MUST consume input bytes. If recursion occurs without consuming bytes, the result is an error, not an infinite loop. This prevents schema cycles, zero-byte recursion, and ensures termination for all valid inputs.
+**Type recursion termination invariant (HIGH-NEW-4):** Dispatcher recursion is inherently bounded because every recursive call consumes at least 1 byte from the input buffer. This is guaranteed by: (1) the per-field progress check (`new_remaining != remaining`) which requires each Struct field *value* to consume at least 1 byte, with the sole exception of empty-struct fields (`Type::Struct` with zero fields). The exemption is schema-controlled: the `is_empty_struct` flag is derived from the schema type, not from wire bytes, so it cannot be exploited by a malicious input to bypass the check. A 0-byte value is accepted only when the schema itself declares the field as an empty struct; and (2) the Option tag byte (1 byte) which is consumed before recursing into the payload. A schema with recursive types (e.g., `Option<A>` where `A` contains `Option<A>`) terminates correctly because each Option level consumes at least 1 byte. An infinite recursion attack would require consuming zero bytes per recursive call, which is prevented by the progress check -- a dispatcher that recurses without consuming bytes returns `Err(DCS_INVALID_STRUCT)`. This is the **termination invariant**: dispatcher recursion MUST consume input bytes. If recursion occurs without consuming bytes, the result is an error, not an infinite loop. This prevents schema cycles, zero-byte recursion, and ensures termination for all valid inputs.
 
 **Type definitions in pseudocode:** The types `Type`, `Value`, `StructSchema`, `Field`, `FieldId` shown above are schema concepts defined by the application. The dispatcher pattern is language-agnostic; implementations use their local type system.
 
@@ -653,6 +696,7 @@ This ensures the probe is monotonically verifiable across amendments.
 
 | Version | Date | Author | Changes |
 |---------|------|--------|---------|
+| 6.8 | 2026-03-26 | CipherOcto | Round 10: CRIT-1 update termination invariant to explain is_empty_struct exemption is schema-controlled, CRIT-2 replace stub verification block with complete Python script computing all levels, HIGH-1 simplify depth prose (remove 65th frame language), HIGH-2 add overflow-safe rationale to allocation safety note, MED-1 increment version to v6.8, MED-2 update Key Property 2 variable name to remaining_after_field_id, MED-3 replace Rust matches! macro with language-agnostic pseudocode, MED-4 rewrite Level 2 pairing description for clarity, LOW-1 fix negative verification command comment, LOW-2 add deserialize_bool cross-reference |
 | 6.7 | 2026-03-26 | CipherOcto | Round 24 (Round 9 continuation): CRIT-1 add is_empty_struct progress check exemption for empty nested structs, CRIT-2 reconcile depth boundary (64 levels = max 63 nested below top), MED-1 fix DCS_RECURSION_LIMIT_EXCEEDED error table description, MED-2 update Recursion depth prose for unambiguous boundary, MED-3 add L2-L4 intermediate hash tables for manual Merkle verification, MED-4 add UTF-8 invalidity explanation and make negative test normative, MED-5 update depth parameter prose for non-Struct arms, HIGH-1 add top-level return note warning about redundant trailing-bytes check, LOW-1 add v6.6 history row (was absent), LOW-2 move top-level call requirement from comment to normative prose |
 | 6.6 | 2026-03-26 | CipherOcto | Round 22 (Round 8): HIGH-1 remove stale "Intentional duplicate" note from probe table, replace with Blob vs String distinction note, HIGH-2 fix Type::Struct arm to pass v directly (not Value::Struct(v)), HIGH-3 change 64-level minimum to fixed universal maximum (all implementations reject at exactly 64 levels), MED-1 update deserialize_string allocation safety note to reference current bounds check form, MED-2 remove orphaned [^L-R4-1] footnote definition block, MED-3 clarify immutability rule applies to ratified entries only, LOW-1 add hex value to Entry 17 Input column, LOW-2 add normative is_top_level parameter prose, LOW-3 split LOW-R4-1 root change note into NEW-KI-2 |
 | 6.5 | 2026-03-26 | CipherOcto | Round 21 (Round 7): CRIT-1 replace Entry 17 payload from b"hello" to SHA256(b"") (non-UTF-8, distinguishes Blob from String probe entry), CRIT-2 add recursion depth section with DCS_RECURSION_LIMIT_EXCEEDED error and 64-level maximum, CRIT-3 add Type::Struct case to deserialize_field dispatcher, HIGH-1 fix deserialize_blob bounds check to 4+(length as usize)>input.len(), HIGH-2 rename progress check variable to remaining_after_field_id, MED-1 add DVEC/DMAT element-type dispatcher guidance, MED-2 clarify serialize_blob returns DcsError, MED-3 expand optional fields prose (application layer handles absent fields), LOW-2 rename Fixed-Width Primitive class to Unambiguously Typed, LOW-3 add RFC-0903 and RFC-0909 rows to relationship table, LOW-4 verify v6.0 consolidation note already present |
@@ -676,6 +720,6 @@ This ensures the probe is monotonically verifiable across amendments.
 
 ---
 
-**Version:** 6.7
+**Version:** 6.8
 **Submission Date:** 2026-03-25
 **Last Updated:** 2026-03-26

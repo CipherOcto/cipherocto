@@ -2,7 +2,7 @@
 
 ## Status
 
-Draft (v6.9, adversarial review Round 11 candidate)
+Draft (v6.10, adversarial review Round 12 candidate)
 
 ## Authors
 
@@ -233,7 +233,7 @@ Split the pre-existing combined String/Bytes error into type-specific errors. Ad
 | DCS_INVALID_STRING | String deserialization failed: input buffer too short for length prefix (fewer than 4 bytes available), or declared length exceeds remaining buffer bytes |
 | DCS_INVALID_BLOB | Blob deserialization failed: input buffer too short for length prefix (fewer than 4 bytes available), or declared length exceeds remaining buffer bytes |
 | DCS_BLOB_LENGTH_OVERFLOW | Blob length exceeds 2^32 - 1 bytes (4GB) |
-| DCS_INVALID_STRUCT | Struct deserialization failed: buffer too short to read field_id (fewer than 4 bytes remaining), field_id in wire data does not match expected field_id in schema, or field produced zero bytes of progress |
+| DCS_INVALID_STRUCT | Struct deserialization failed: buffer too short to read field_id (fewer than 4 bytes remaining), field_id in wire data does not match expected field_id in schema, or field produced zero bytes of progress (empty Struct fields are exempt -- they legitimately consume 0 bytes and do not trigger this error) |
 | DCS_TRAILING_BYTES | Bytes remain after all schema-required fields have been deserialized, indicating trailing garbage in the input |
 | DCS_RECURSION_LIMIT_EXCEEDED | Returned when `depth >= 64` in `deserialize_struct` (top-level call = depth 0). Maximum allowed is 63 nested levels below top-level (64 total struct deserialization frames). All conformant implementations use this exact threshold. |
 
@@ -383,7 +383,7 @@ Domain-separated leaf:  SHA256(0x00 || 0x00000020 e3b0c44298fc1c149afbf4c8996fb9
                      = 6452f4eb98d65e5ce04903cf5079038dfdb85ed742a4e543a52fca27b508a7ec
 
 Verification:         python3 -c "import hashlib; data = bytes([0x00]) + bytes.fromhex('00000020e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855'); print(hashlib.sha256(data).hexdigest())"
-Script encodings:     RFC-0110 (Entry 14), RFC-0104 (Entry 15), RFC-0111 (Entry 10)
+Note:                 Entry 14 (BigInt), Entry 15 (DFP), and Entry 10 (TRAP/DECIMAL) formats are defined by RFC-0110, RFC-0104, and RFC-0111 respectively. The entry data in the table above encodes these values per those RFCs; the inline verification script above computes leaf hashes from the raw entry data without re-implementing those encodings.
 ```
 
 **Level-1 intermediate hashes (9 pairs of consecutive leaves):**
@@ -494,7 +494,8 @@ expected_leaves = [
     '8ce4a58171d93997bec1861d361b1bfae9a376027dd65f5cb5b045b27a1de890',  # 16
     '6452f4eb98d65e5ce04903cf5079038dfdb85ed742a4e543a52fca27b508a7ec',  # 17
 ]
-assert leaves == expected_leaves, f'Leaf hash mismatch! Computed: {leaves}'
+for i, (computed, expected) in enumerate(zip(leaves, expected_leaves)):
+    assert computed == expected, f'Leaf hash mismatch at index {i}! Computed: {computed}, Expected: {expected}'
 print('Leaf hashes (entry_data -> SHA256(0x00 || data)) verified OK.')
 
 # Build tree from verified leaf hashes
@@ -640,8 +641,12 @@ fn deserialize_struct(input: &[u8], schema: &StructSchema, is_top_level: bool, d
                 // consumed zero bytes from the value data -- this indicates malformed input.
                 // Exception: an empty Struct field consumes 0 bytes and is valid; the
                 // is_empty_struct flag prevents false positives for the only permitted zero-byte type.
-                // is_empty_struct: true if field.type_ is Struct whose inner schema has zero fields
-                let is_empty_struct = field.type_ is Type::Struct(s) && s.fields.is_empty();
+                // is_empty_struct: true if this field's type is a Struct with zero declared fields
+                let is_empty_struct = false;
+                if field.type_ is Type::Struct {
+                    let inner_schema = field.type_ as Type::Struct;
+                    is_empty_struct = inner_schema.fields is empty;
+                }
                 if !is_empty_struct && new_remaining == remaining_after_field_id {
                     return Err(DCS_INVALID_STRUCT);  // field value deserializer consumed zero bytes (malformed input or dispatcher logic error)
                 }
@@ -698,7 +703,7 @@ fn deserialize_struct(input: &[u8], schema: &StructSchema, is_top_level: bool, d
 
 **Recursion depth (CRITICAL-NEW-1 / HIGH-3):** All conformant implementations MUST reject when `depth >= 64` in `deserialize_struct` (top-level call = depth 0). Maximum allowed is 63 nested levels below the top-level call (64 total struct deserialization frames). The depth check is `if depth >= 64 { return Err(DCS_RECURSION_LIMIT_EXCEEDED) }`. This is a fixed universal maximum, not a configurable minimum. While the termination invariant proves that valid inputs terminate (each recursive call consumes at least 1 byte), the fixed depth maximum additionally bounds worst-case stack depth in recursive implementations and ensures consistent rejection of pathological schemas. This limit is chosen to be large enough that no valid real-world input reaches it. The spec explicitly permits iterative implementations ("an iterative implementation is also valid but must produce identical results"). The DCS layer specifies behavioral output (correct deserialization), not the algorithm used to achieve it. A stack overflow caused by a recursive implementation without adequate stack limits is a **non-conformant implementation bug**, not a consensus split.
 
-**Type recursion termination invariant (HIGH-NEW-4):** Dispatcher recursion is inherently bounded because every recursive call consumes at least 1 byte from the input buffer. This is guaranteed by: (1) the per-field progress check (`new_remaining != remaining`) which requires each Struct field *value* to consume at least 1 byte, with the sole exception of empty-struct fields (`Type::Struct` with zero fields). The exemption is schema-controlled: the `is_empty_struct` flag is derived from the schema type, not from wire bytes, so it cannot be exploited by a malicious input to bypass the check. A 0-byte value is accepted only when the schema itself declares the field as an empty struct; and (2) the Option tag byte (1 byte) which is consumed before recursing into the payload. A schema with recursive types (e.g., `Option<A>` where `A` contains `Option<A>`) terminates correctly because each Option level consumes at least 1 byte. An infinite recursion attack would require consuming zero bytes per recursive call, which is prevented by the progress check -- a dispatcher that recurses without consuming bytes returns `Err(DCS_INVALID_STRUCT)`. This is the **termination invariant**: dispatcher recursion MUST consume input bytes. If recursion occurs without consuming bytes, the result is an error, not an infinite loop. This prevents schema cycles, zero-byte recursion, and ensures termination for all valid inputs.
+**Type recursion termination invariant (HIGH-NEW-4):** Dispatcher recursion is inherently bounded because every recursive call consumes at least 1 byte from the input buffer. This is guaranteed by: (1) the per-field progress check (`new_remaining != remaining_after_field_id`) which requires each Struct field *value* to consume at least 1 byte, with the sole exception of empty-struct fields (`Type::Struct` with zero fields). For empty-struct fields, the value deserialization consumes 0 bytes but the preceding field_id always consumes 4 bytes -- so every Struct field contributes at least 4 bytes of net forward progress regardless. The exemption is schema-controlled: the `is_empty_struct` flag is derived from the schema type, not from wire bytes, so it cannot be exploited by a malicious input to bypass the check. A 0-byte value is accepted only when the schema itself declares the field as an empty struct; and (2) the Option tag byte (1 byte) which is consumed before recursing into the payload. A schema with recursive types (e.g., `Option<A>` where `A` contains `Option<A>`) terminates correctly because each Option level consumes at least 1 byte. An infinite recursion attack would require consuming zero bytes per recursive call, which is prevented by the progress check -- a dispatcher that recurses without consuming bytes returns `Err(DCS_INVALID_STRUCT)`. This is the **termination invariant**: dispatcher recursion MUST consume input bytes. If recursion occurs without consuming bytes, the result is an error, not an infinite loop. This prevents schema cycles, zero-byte recursion, and ensures termination for all valid inputs.
 
 **Type definitions in pseudocode:** The types `Type`, `Value`, `StructSchema`, `Field`, `FieldId` shown above are schema concepts defined by the application. The dispatcher pattern is language-agnostic; implementations use their local type system.
 
@@ -729,6 +734,7 @@ This ensures the probe is monotonically verifiable across amendments.
 
 | Version | Date | Author | Changes |
 |---------|------|--------|---------|
+| 6.10 | 2026-03-26 | CipherOcto | Round 12: MED-1 fix remaining_after_field_id in termination invariant, MED-2 refactor is_empty_struct guard to explicit if/assign pattern, MED-3 per-index leaf mismatch assertion, LOW-1 add empty-struct exemption to DCS_INVALID_STRUCT description, LOW-2 clarify termination invariant net-progress guarantee (4 bytes per field_id even for empty-struct), LOW-3 replace script encodings note with inline script clarification |
 | 6.9 | 2026-03-26 | CipherOcto | Round 11: HIGH-1 add full leaf-from-entry-data verification to Python script, HIGH-2 fix remaining->remaining_after_field_id in Key Property 3, HIGH-3 fix "exceeding 64"->"64 or higher" in depth example, MED-1 fix is_empty_struct destructuring (Type::Struct(s)), MED-2 clarify checklist depth check as depth>=64, LOW-1 rewrite Level 3/4 pairing descriptions to match Level 2 format, LOW-2 rename footer to Original Submission Date |
 | 6.8 | 2026-03-26 | CipherOcto | Round 10: CRIT-1 update termination invariant to explain is_empty_struct exemption is schema-controlled, CRIT-2 replace stub verification block with complete Python script computing all levels, HIGH-1 simplify depth prose (remove 65th frame language), HIGH-2 add overflow-safe rationale to allocation safety note, MED-1 increment version to v6.8, MED-2 update Key Property 2 variable name to remaining_after_field_id, MED-3 replace Rust matches! macro with language-agnostic pseudocode, MED-4 rewrite Level 2 pairing description for clarity, LOW-1 fix negative verification command comment, LOW-2 add deserialize_bool cross-reference |
 | 6.7 | 2026-03-26 | CipherOcto | Round 24 (Round 9 continuation): CRIT-1 add is_empty_struct progress check exemption for empty nested structs, CRIT-2 reconcile depth boundary (64 levels = max 63 nested below top), MED-1 fix DCS_RECURSION_LIMIT_EXCEEDED error table description, MED-2 update Recursion depth prose for unambiguous boundary, MED-3 add L2-L4 intermediate hash tables for manual Merkle verification, MED-4 add UTF-8 invalidity explanation and make negative test normative, MED-5 update depth parameter prose for non-Struct arms, HIGH-1 add top-level return note warning about redundant trailing-bytes check, LOW-1 add v6.6 history row (was absent), LOW-2 move top-level call requirement from comment to normative prose |
@@ -754,6 +760,6 @@ This ensures the probe is monotonically verifiable across amendments.
 
 ---
 
-**Version:** 6.9
+**Version:** 6.10
 **Original Submission Date:** 2026-03-25
 **Last Updated:** 2026-03-26

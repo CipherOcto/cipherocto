@@ -2,7 +2,7 @@
 
 ## Status
 
-Draft (v6.3, adversarial review round 20)
+Draft (v6.4, adversarial review Round 6 response)
 
 ## Authors
 
@@ -263,7 +263,7 @@ Add Blob deserialization:
      }
      let length = (u32(input[0]) << 24) | (u32(input[1]) << 16) | (u32(input[2]) << 8) | u32(input[3]);
 
-     if length > 1_048_576 {  // 1MB = 2^20
+     if length > 1_048_576 {  // max allowed string length = 1MB = 2^20 bytes; reject if declared length exceeds this
          return Err(DCS_STRING_LENGTH_OVERFLOW)
      }
      if (length as usize) > input.len() - 4 {
@@ -349,7 +349,7 @@ The existing 17-entry Merkle Root (`2ed91a62f96f11151cd9211cf90aff36efc16c69d3ef
 | 9 | `00` | `96a296d224f285c67bee93c30f8a309157f0daa35dc5b87e410b78630a09cfc7` |
 | 10 | `01000000ff000000ffffffffffffffff8000000000000000` | `ff5a194d8b90088286a8c7f7de8de1ecc92e0c26c573b0e04bf8e6c0e9a507ed` |
 | 11 | `ff` | `06eb7d6a69ee19e5fbdf749018d3d2abfa04bcbd1365db312eb86dc7169389b8` |
-| 12 | `0000000000000000000000000000002a` | `170e5f45c1585c19f017f3c0df39c010e09004b0980fc8251ff4dd8eeef0376c` [^L-R4-1] |
+| 12 | `0000000000000000000000000000002a` | `170e5f45c1585c19f017f3c0df39c010e09004b0980fc8251ff4dd8eeef0376c` *(correction applied: prior entry was 63 hex chars, missing leading zero; see LOW-R4-1)* |
 | 13 | `ffffffffffffffffffffffffffffffd6` | `340bdc8e30453799595c901721334ae5ff819a3e19f4ec6db4e6e9665454eb30` |
 | 14 | `01000000010000002a00000000000000` | `ba9bc680540d876003d8a04ed12363e87af3567283f73c5b0127f5ad40314063` |
 | 15 | `0000000000000000000000000000002a0000000000000000` | `7b0dc69a6bd9f3985e909871a6465971aef51b7c4b05051daefa0aa6d1b1fbc3` |
@@ -371,11 +371,11 @@ Script encodings:     RFC-0110 (Entry 14), RFC-0104 (Entry 15), RFC-0111 (Entry 
 Cross-verified:       Yes -- implementers MUST use the script at commit 7b22f8a to reproduce the root
 ```
 
-**18-entry Merkle Root:** `78154bb3879a85406ea09064603ecdcaae2bad5b0ff16066d578d9c17c38565c` (unchanged after Entry 12 correction; see [^L-R4-1])
+**18-entry Merkle Root:** `78154bb3879a85406ea09064603ecdcaae2bad5b0ff16066d578d9c17c38565c`
 
 > **Tree structure transition:** The Merkle tree over 17 entries has an odd leaf count. Per RFC-0126 SectionMerkle Root Computation, the last leaf (leaf_16) is duplicated for the final pair: `SHA256(0x01 || leaf_16 || leaf_16)`. Adding Entry 17 (leaf_17) brings the count to 18, which is even -- no duplication needed. This changes the internal node structure of the entire tree. The new root is not an incremental append; all prior entries' contributions to the root are affected by the changed pairing structure.
 
-[^L-R4-1]: **Entry 12 leaf hash correction (LOW-R4-1):** The hash displayed in RFC-0127 v6.1 and earlier was a transcription error: 63 hex characters missing a leading zero in byte 28 (`0904b0` instead of `09004b0`). The corrected value `170e5f45c1585c19f017f3c0df39c010e09004b0980fc8251ff4dd8eeef0376c` is the full 64-character SHA-256 output. **Verification:** `python3 -c "import hashlib; print(hashlib.sha256(b'\\x00' + bytes.fromhex('0000000000000000000000000000002a')).hexdigest())"` yields `170e5f45c1585c19f017f3c0df39c010e09004b0980fc8251ff4dd8eeef0376c`. The 18-entry Merkle root is unchanged because the reference script `compute_dcs_probe_root.py` computed from raw bytes throughout, not from the display string in the table.
+[^L-R4-1]: **Entry 12 leaf hash correction (LOW-R4-1):** The hash displayed in RFC-0127 v6.1 and earlier was a transcription error: 63 hex characters missing a leading zero in byte 28 (`0904b0` instead of `09004b0`). The corrected value `170e5f45c1585c19f017f3c0df39c010e09004b0980fc8251ff4dd8eeef0376c` is the full 64-character SHA-256 output. **Verification:** `python3 -c "import hashlib; data = bytes([0x00]) + bytes.fromhex('0000000000000000000000000000002a'); print(hashlib.sha256(data).hexdigest())"` yields `170e5f45c1585c19f017f3c0df39c010e09004b0980fc8251ff4dd8eeef0376c`. The 18-entry Merkle root is unchanged because the reference script `compute_dcs_probe_root.py` computed from raw bytes throughout, not from the display string in the table.
 
 #### Change 10: Known Issues
 
@@ -387,7 +387,7 @@ Update the Known Issues table:
 | NEW-KI-1 | Blob entry (Entry 17) did not appear in RFC-0126 v2.5.1 Primitive Type Encodings table or Probe table. This amendment adds it. |
 | NEW-KI-2 | Entry 17 (Blob `"hello"`) and Entry 4 (String `"hello"`) produce identical leaf hashes (`01cc2c521e69293f581e0df49c071c2e9d44b16586b36024872d77244b405be6`) because they encode identically. Domain-separated leaf hashing prevents Merkle root collision -- this is safe by design, consistent with the existing Entry 5/Entry 9 collision. **Encoding policy:** DCS intentionally allows byte-identical representations across distinct types. Type disambiguation is schema-driven and enforced at deserialization time; the wire format does not carry type information. Identical encoding across types is a known, acceptable trade-off. Typed-context deserialization (Change 8) prevents semantic ambiguity. The probe tests serialization equivalence only; negative deserialization (rejecting Blob bytes when String is expected, or vice versa) is verified by the typed-context requirement and the schema-driven dispatcher (Change 13), not by the probe. |
 | NEW-KI-3 | Adding Entry 17 changes the Merkle tree from odd (17, last leaf duplicated) to even (18, no duplication) leaf count. This structural change affects the root. See Change 9. |
-| LOW-R4-1 | Entry 12 leaf hash had a transcription error in RFC-0127 v6.1 and earlier: displayed as 63 hex characters (missing a leading zero in byte 28: `0904b0` instead of `09004b0`). Corrected to the full 64-character value `170e5f45c1585c19f017f3c0df39c010e09004b0980fc8251ff4dd8eeef0376c` in v6.2. **Verification:** `SHA256(0x00 || 0x0000000000000000000000000000002a)` = `170e5f45c1585c19f017f3c0df39c010e09004b0980fc8251ff4dd8eeef0376c`. The 18-entry Merkle root `78154bb3879a85406ea09064603ecdcaae2bad5b0ff16066d578d9c17c38565c` is unchanged because the reference script computed from raw bytes, not from the display string. |
+| LOW-R4-1 | Entry 12 leaf hash had a transcription error in RFC-0127 v6.1 and earlier: displayed as 63 hex characters (missing a leading zero in byte 28: `0904b0` instead of `09004b0`). Corrected to the full 64-character value `170e5f45c1585c19f017f3c0df39c010e09004b0980fc8251ff4dd8eeef0376c` in v6.2. **Verification:** `python3 -c "import hashlib; data = bytes([0x00]) + bytes.fromhex('0000000000000000000000000000002a'); print(hashlib.sha256(data).hexdigest())"` yields `170e5f45c1585c19f017f3c0df39c010e09004b0980fc8251ff4dd8eeef0376c`. The 18-entry Merkle root `78154bb3879a85406ea09064603ecdcaae2bad5b0ff16066d578d9c17c38565c` is unchanged because the reference script computed from raw bytes, not from the display string. |
 
 #### Change 11: NUMERIC_SPEC_VERSION Increment
 
@@ -420,7 +420,7 @@ Upon merge of this amendment, RFC-0126 version MUST be incremented to **v2.6.0**
 
 | Version | Date | Author | Changes |
 |---------|------|--------|---------|
-| 2.6.0 | 2026-03-25 | CipherOcto | Added Blob as first-class DCS type (Entry 17), renamed Bytes (Raw) to Blob, split DCS_LENGTH_OVERFLOW into String/Blob-specific errors, added Blob deserialization, incremented NUMERIC_SPEC_VERSION to 2, corrected Entry 10 probe table reference from RFC-0112 to RFC-0111, corrected Known Issues leaf hash to domain-separated value |
+| 2.6.0 | 2026-03-25 | CipherOcto | Added Blob as first-class DCS type (Entry 17), renamed Bytes (Raw) to Blob, split DCS_LENGTH_OVERFLOW into String/Blob-specific errors, added Blob deserialization, added deserialize_string with RFC 3629 UTF-8 validation, added schema-driven dispatcher (Change 13) as normative with SharedEncoding formal definition and DCS encoding equivalence classes, added DCS_INVALID_STRUCT, DCS_INVALID_BLOB, DCS_TRAILING_BYTES error codes, added probe extension protocol (Change 14), incremented NUMERIC_SPEC_VERSION to 2, corrected Entry 10 probe table reference from RFC-0112 to RFC-0111, corrected Known Issues leaf hash to domain-separated value |
 
 #### Change 13: Schema-Driven Dispatcher Requirement (Normative)
 
@@ -476,8 +476,8 @@ fn deserialize_struct(input: &[u8], schema: &StructSchema) -> Result<Value, Err>
         match field_result {
             Err(e) => return Err(e),  // propagate error
             Ok((new_remaining, value)) => {
-                // Validate: new_remaining must equal the bytes consumed for this field
-                // If new_remaining == remaining (no progress), return error
+                // Progress check: if new_remaining == remaining, the deserializer consumed zero bytes
+                // from the value data -- this indicates malformed input or a dispatcher logic error
                 if new_remaining == remaining {
                     return Err(DCS_INVALID_STRUCT);  // field value deserializer consumed zero bytes (malformed input or dispatcher logic error)
                 }
@@ -558,7 +558,9 @@ This ensures the probe is monotonically verifiable across amendments.
 
 | Version | Date | Author | Changes |
 |---------|------|--------|---------|
+| 6.4 | 2026-03-25 | CipherOcto | Round 20 (Round 6): HIGH-1 fix verification command to use bytes([0x00]) form for unambiguous byte construction, add expected output to verification, ensure both footnote and Known Issues entries are consistent, MED-1 add missing v6.2 version history row (was absent between v6.1 and v6.3), MED-2 remove non-standard footnote syntax, replace with inline annotation on Entry 12 row pointing to LOW-R4-1, MED-3 fix header round number from "round 20" to "Round 5 response" (was already corrected to Round 5 response before this review), LOW-1 clarify 1MB comment (max allowed length vs error threshold), LOW-2 update RFC-0126 v2.6.0 version history to include deserialize_string, dispatcher, new error codes, LOW-3 fix grammatically confused comment above progress check |
 | 6.3 | 2026-03-25 | CipherOcto | Round 19 (Round 5): HIGH-1 confirm Entry 12 root unchanged (Scenario B: script computed from raw bytes), add footnote and Known Issues entry for correction, HIGH-2 fix header and footer to v6.2 (was v6.1), MED-1 fix Key Property 2 contradiction (replace "at least 1 byte" with precise zero-advancement detection), MED-2 add guidance on distinguishing schema mismatch vs data corruption via wire_field_id inspection, MED-3 differentiate DCS_INVALID_STRING and DCS_INVALID_BLOB descriptions with type-specific prefixes, LOW-1 add Known Issues entry for Entry 12 hash correction with verification command, LOW-2 Key Property 2 cross-reference to Zero-byte type constraint added, LOW-3 v6.2 footer update noted (6.1→6.2) |
+| 6.2 | 2026-03-25 | CipherOcto | Round 18 (Round 4 adjudication): HIGH-1 add trailing-bytes check to deserialize_struct non-empty path, HIGH-2 clarify Key Property 2 progress requirement (minimum varies by type; zero-advancement detection), MED-1 correct Entry 12 leaf hash (63→64 hex chars, missing leading zero in byte 28, Scenario B confirmed: root unchanged), MED-2 update DCS_STRING_LENGTH_OVERFLOW description to specify declared vs actual length, MED-3 add clarifying note to BigInt Fixed-Width Primitive classification, LOW-1 update version footer 6.1→6.2, LOW-2 align deserialize_string allocation safety wording with Blob RECOMMENDED framing, LOW-3 add deserialize_string and schema-driven dispatcher to implementation checklist |
 | 6.1 | 2026-03-25 | CipherOcto | Round 17 (independent review Round 3): HIGH-1 add explicit (length as usize) cast to bounds checks, HIGH-2 replace i+N>= with bytes.len()<i+N in UTF-8 validation, MED-1 add allocation safety and zero-copy notes to deserialize_string, MED-2 correct Entry 1 DQA hex (extra high byte removed), MED-3 expand DCS_INVALID_STRUCT description to cover all three conditions, MED-4 add immutability guarantee for published leaf hashes, LOW-1 define cast_bytes_to_str in notation, LOW-2 add step 6 to activation checklist (non-upgraded nodes out of consensus), LOW-3 replace unmaintainable v6.0 run-on with structured summary |
 | 1.0 | 2026-03-25 | CipherOcto | Initial amendment draft -- adds Blob (Entry 17) to DCS type system |
 | 2.0 | 2026-03-25 | CipherOcto | Adversarial review fixes: CRIT-1 compute 18-entry Merkle root, CRIT-2 split DCS_LENGTH_OVERFLOW into String/Blob-specific errors with distinct limits, HIGH-1 add typed-context deserialization requirement, HIGH-2 retain serialize_bytes as low-level primitive, HIGH-3 verify leaf hash via compute_dcs_probe_root.py, HIGH-4 add deserialize_blob algorithm, MED-2 document odd-to-even tree structure change, MED-4 add length prefix endianness prose, MED-5 fix relationship table direction, MED-3 confirm BYTEA(32) suitability, LOW-1 specify RFC-0126 v2.6.0 target, LOW-2 address NUMERIC_SPEC_VERSION increment, LOW-3 fix table formatting and preserve historical note |
@@ -576,6 +578,6 @@ This ensures the probe is monotonically verifiable across amendments.
 
 ---
 
-**Version:** 6.3
+**Version:** 6.4
 **Submission Date:** 2026-03-25
 **Last Updated:** 2026-03-25

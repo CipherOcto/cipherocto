@@ -2,7 +2,7 @@
 
 ## Status
 
-Draft (v6.5, adversarial review Round 7 response)
+Draft (v6.6, adversarial review Round 7 response)
 
 ## Authors
 
@@ -143,7 +143,7 @@ Add Entry 17 for Blob. Entries 0-16 are unchanged from RFC-0126 v2.5.1:
 | 14 | BIGINT | Positive | `42` | RFC-0110 BigIntEncoding (16 bytes) |
 | 15 | DFP | Positive Normal | `42.0` | RFC-0104 DfpEncoding (24 bytes) |
 | 16 | Struct | Field ordering | `Person { id(field_id=1): 42, name(field_id=2): "alice", balance(field_id=3): DQA(1,0) }` | `u32_be(1) + u32_be(42) + u32_be(2) + serialize_string("alice") + u32_be(3) + serialize_dqa(1,0)` |
-| 17 | Blob | Length prefix + data | `SHA256(b"")` (32 bytes, not UTF-8) | `0x00000020 e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855` |
+| 17 | Blob | Length prefix + data | `SHA256(b"")` = `e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855` (32 bytes, not valid UTF-8) | `0x00000020 e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855` |
 
 > **Note:** Entry 4 (DMAT column-major) was removed because serialization output is indistinguishable for valid row-major input. DMAT input validation ensures data is stored row-major per RFC-0113.
 >
@@ -151,7 +151,7 @@ Add Entry 17 for Blob. Entries 0-16 are unchanged from RFC-0126 v2.5.1:
 >
 > **Wire format note:** Only Entry 16 (Struct) includes field_id in the wire format (`field_id || encoded_value`). Entries 0-15 and 17 are top-level type serializations without field_id prefixes.
 >
-> **Intentional duplicate test vector (LOW-NEW-1):** Entry 17 (Blob `b"hello"`) and Entry 4 (String `"hello"`) produce identical leaf hashes (`01cc2c521e69293f581e0df49c071c2e9d44b16586b36024872d77244b405be6`) because they encode identically. This is an **intentional** test vector verifying that domain-separated leaf hashing prevents Merkle root collision despite wire-format equivalence. See NEW-KI-2 for full rationale and the encoding policy that permits byte-identical representations across types.
+> **Blob vs String distinction (CRIT-1):** Entry 17 uses `SHA256(b"")` as its payload -- 32 bytes that are NOT valid UTF-8. This ensures that passing Entry 17's bytes to `deserialize_string` returns `Err(DCS_INVALID_UTF8)`, verifying that the dispatcher correctly routes Blob and String fields to their respective deserializers. See NEW-KI-2 for the change history.
 
 #### Change 4: Probe Entry 17 Details (Section Part 3, after Entry 16)
 
@@ -222,7 +222,7 @@ Split the pre-existing combined String/Bytes error into type-specific errors. Ad
 | DCS_BLOB_LENGTH_OVERFLOW | Blob length exceeds 2^32 - 1 bytes (4GB) |
 | DCS_INVALID_STRUCT | Struct deserialization failed: buffer too short to read field_id (fewer than 4 bytes remaining), field_id in wire data does not match expected field_id in schema, or field produced zero bytes of progress |
 | DCS_TRAILING_BYTES | Bytes remain after all schema-required fields have been deserialized, indicating trailing garbage in the input |
-| DCS_RECURSION_LIMIT_EXCEEDED | Nesting depth exceeds the implementation's configured maximum (minimum 64 levels). Returned instead of crashing. Ensures consistent rejection of pathological inputs across implementations. |
+| DCS_RECURSION_LIMIT_EXCEEDED | Nesting depth exceeds the fixed maximum of 64 levels. Returned instead of crashing. All conformant implementations reject at exactly 64 levels. |
 
 > **Note:** The prior combined `DCS_LENGTH_OVERFLOW` ("String/Bytes length exceeds 2^32 - 1") is replaced by two separate errors with distinct limits. String is capped at 1MB per RFC-0126 SectionString. Blob is capped at 4GB by the u32 length prefix. `DCS_INVALID_BLOB` covers buffer-underrun and length-mismatch conditions during deserialization. This change also resolves the pre-existing inconsistency between the error table (2^32-1) and the String section prose (1MB) in RFC-0126 v2.5.1.
 
@@ -331,7 +331,7 @@ Add Blob deserialization:
 - **Length validation**: Declared length MUST NOT exceed 1MB. If exceeded, return Err(DCS_STRING_LENGTH_OVERFLOW).
 - **UTF-8 validation**: The byte sequence is validated as UTF-8 per RFC 3629 at deserialization time. This includes: valid byte structure for each sequence length, rejection of overlong encodings (minimum codepoint per length), rejection of surrogate codepoints (U+D800–U+DFFF), and rejection of codepoints above U+10FFFF. If invalid, return Err(DCS_INVALID_UTF8). **Normalization:** Strings MUST NOT be normalized. Validation only checks UTF-8 correctness. The byte sequence is preserved exactly as provided -- no Unicode normalization (NFC, NFD, NFKC, NFKD) is applied. **Validation order:** UTF-8 validation occurs after type resolution. The dispatcher resolves the type (String) before calling `deserialize_string`; therefore `deserialize_string` always receives bytes that are intended to be a String. If the dispatcher first decodes as Blob and then attempts to re-decode as String, the UTF-8 validation must still be applied at the String layer. Implementations that skip UTF-8 validation because bytes were first interpreted as Blob produce consensus-divergent results.
 - **Return type**: `Result<(&str, &[u8]), Err>` -- returns `(string_slice, remaining_bytes)` on success.
-- **Allocation safety (MEDIUM-1):** Deserializers MUST NOT pre-allocate a buffer of `length` bytes before validating that `length` bytes are available in the input. The buffer validation check (`(length as usize) > input.len() - 4`) MUST occur before any allocation. **Cross-language consistency:** Returning a view/slice/span of the input buffer (rather than a copy) is the RECOMMENDED approach for String deserialization. Implementations SHOULD avoid copying String payloads to ensure consistent memory behavior across language bindings. Where this is not possible, the semantic equivalent is a zero-copy view into the underlying buffer.
+- **Allocation safety (MEDIUM-1):** Deserializers MUST NOT pre-allocate a buffer of `length` bytes before validating that `length` bytes are available in the input. The buffer validation check (`4 + (length as usize) > input.len()`) MUST occur before any allocation. This form avoids unsigned underflow -- see Notation note for cast semantics. **Cross-language consistency:** Returning a view/slice/span of the input buffer (rather than a copy) is the RECOMMENDED approach for String deserialization. Implementations SHOULD avoid copying String payloads to ensure consistent memory behavior across language bindings. Where this is not possible, the semantic equivalent is a zero-copy view into the underlying buffer.
 
 #### Change 9: Published Merkle Root
 
@@ -400,8 +400,6 @@ Script encodings:     RFC-0110 (Entry 14), RFC-0104 (Entry 15), RFC-0111 (Entry 
 
 > **Tree structure transition:** The Merkle tree over 17 entries has an odd leaf count. Per RFC-0126 SectionMerkle Root Computation, the last leaf (leaf_16) is duplicated for the final pair: `SHA256(0x01 || leaf_16 || leaf_16)`. Adding Entry 17 (leaf_17) brings the count to 18, which is even -- no duplication needed. This changes the internal node structure of the entire tree. The new root is not an incremental append; all prior entries' contributions to the root are affected by the changed pairing structure.
 
-[^L-R4-1]: **Entry 12 leaf hash correction (LOW-R4-1):** The hash displayed in RFC-0127 v6.1 and earlier was a transcription error: 63 hex characters missing a leading zero in byte 28 (`0904b0` instead of `09004b0`). The corrected value `170e5f45c1585c19f017f3c0df39c010e09004b0980fc8251ff4dd8eeef0376c` is the full 64-character SHA-256 output. **Verification:** `python3 -c "import hashlib; data = bytes([0x00]) + bytes.fromhex('0000000000000000000000000000002a'); print(hashlib.sha256(data).hexdigest())"` yields `170e5f45c1585c19f017f3c0df39c010e09004b0980fc8251ff4dd8eeef0376c`. The Entry 12 correction did not change the Merkle root (the reference script computed from raw bytes). The root WAS later changed by the Entry 17 correction (CRIT-1, v6.5): new root is `907f481e59ce67996f6c859c2cb6f8e5078245fee3baada58110489cdbdc0e47`.
-
 #### Change 10: Known Issues
 
 Update the Known Issues table:
@@ -410,9 +408,9 @@ Update the Known Issues table:
 |----|-------------|
 | MED-10 | Entries 5 (Option::None) and 9 (Bool false) produce identical leaf hashes (`96a296d224f285c67bee93c30f8a309157f0daa35dc5b87e410b78630a09cfc7`). Domain-separated leaf hashing prevents Merkle root collision. Note: RFC-0126 v2.5.1 published `6e340b9cffb37a989ca544e6bb780a2c78901d3fb33738768511a30617afa01d` (SHA256 of raw `0x00` without domain separation), which was incorrect. The correct domain-separated hash is `96a296d2...`. |
 | NEW-KI-1 | Blob entry (Entry 17) did not appear in RFC-0126 v2.5.1 Primitive Type Encodings table or Probe table. This amendment adds it. |
-| NEW-KI-2 | Prior versions of this RFC (v6.3 and earlier) used `b"hello"` as Entry 17's blob payload, which is valid UTF-8 and produces identical entry data and leaf hash to Entry 4 (String `"hello"`). This was corrected in v6.5 by replacing the payload with `SHA256(b"")` -- a 32-byte sequence that is NOT valid UTF-8 -- ensuring the probe distinguishes Blob from String serialization. The old Entry 17 hash `01cc2c521e69293f581e0df49c071c2e9d44b16586b36024872d77244b405be6` is superseded. **Encoding policy:** DCS intentionally allows byte-identical representations across distinct types. Type disambiguation is schema-driven and enforced at deserialization time; the wire format does not carry type information. The probe now correctly verifies that Blob serialization of non-UTF-8 data produces a distinct leaf hash from any String entry. |
+| NEW-KI-2 | Prior versions of this RFC (v6.3 and earlier) used `b"hello"` as Entry 17's blob payload, which is valid UTF-8 and produces identical entry data and leaf hash to Entry 4 (String `"hello"`). This was corrected in v6.5 by replacing the payload with `SHA256(b"")` -- a 32-byte sequence that is NOT valid UTF-8 -- ensuring the probe distinguishes Blob from String serialization. The old Entry 17 hash `01cc2c521e69293f581e0df49c071c2e9d44b16586b36024872d77244b405be6` is superseded. The Merkle root `78154bb3...` published in versions 6.2-6.4 was replaced in v6.5 by `907f481e59ce67996f6c859c2cb6f8e5078245fee3baada58110489cdbdc0e47` due to the Entry 17 payload replacement. **Encoding policy:** DCS intentionally allows byte-identical representations across distinct types. Type disambiguation is schema-driven and enforced at deserialization time; the wire format does not carry type information. The probe now correctly verifies that Blob serialization of non-UTF-8 data produces a distinct leaf hash from any String entry. |
 | NEW-KI-3 | Adding Entry 17 changes the Merkle tree from odd (17, last leaf duplicated) to even (18, no duplication) leaf count. This structural change affects the root. See Change 9. |
-| LOW-R4-1 | Entry 12 leaf hash had a transcription error in RFC-0127 v6.1 and earlier: displayed as 63 hex characters (missing a leading zero in byte 28: `0904b0` instead of `09004b0`). Corrected to the full 64-character value `170e5f45c1585c19f017f3c0df39c010e09004b0980fc8251ff4dd8eeef0376c` in v6.2. **Verification:** `python3 -c "import hashlib; data = bytes([0x00]) + bytes.fromhex('0000000000000000000000000000002a'); print(hashlib.sha256(data).hexdigest())"` yields `170e5f45c1585c19f017f3c0df39c010e09004b0980fc8251ff4dd8eeef0376c`. The Entry 12 correction alone did not change the Merkle root (the reference script computed from raw bytes). The root WAS later changed by CRIT-1 (Entry 17 payload replacement, v6.5): new root is `907f481e59ce67996f6c859c2cb6f8e5078245fee3baada58110489cdbdc0e47`. |
+| LOW-R4-1 | Entry 12 leaf hash had a transcription error in RFC-0127 v6.1 and earlier: displayed as 63 hex characters (missing a leading zero in byte 28: `0904b0` instead of `09004b0`). Corrected to the full 64-character value `170e5f45c1585c19f017f3c0df39c010e09004b0980fc8251ff4dd8eeef0376c` in v6.2. **Verification:** `python3 -c "import hashlib; data = bytes([0x00]) + bytes.fromhex('0000000000000000000000000000002a'); print(hashlib.sha256(data).hexdigest())"` yields `170e5f45c1585c19f017f3c0df39c010e09004b0980fc8251ff4dd8eeef0376c`. The Entry 12 correction alone did not change the Merkle root (the reference script computed from raw bytes). See NEW-KI-2 for the subsequent root change. |
 
 #### Change 11: NUMERIC_SPEC_VERSION Increment
 
@@ -480,7 +478,7 @@ fn deserialize_field(input: &[u8], expected_type: Type) -> Result<(&[u8], Value)
         Type::Struct(inner_schema) => {
             let result = deserialize_struct(input, inner_schema, false);  // false = not top level
             match result {
-                Ok((v, rem)) => Ok((rem, Value::Struct(v))),  // v is Value, rem is remaining bytes
+                Ok((v, rem)) => Ok((rem, v)),  // v is already Value::Struct(...), pass through directly
                 Err(e) => Err(e),
             }
         },
@@ -531,6 +529,8 @@ fn deserialize_struct(input: &[u8], schema: &StructSchema, is_top_level: bool) -
 
 ```
 
+**`is_top_level` parameter (LOW-2):** This flag controls whether trailing bytes after the last field cause an error. Top-level callers (direct application deserialization) MUST pass `true`. Nested callers (when a field is itself a Struct, i.e., from `deserialize_field`'s `Type::Struct` arm) MUST pass `false`. The distinction is necessary because in nested contexts, bytes following the inner struct belong to the outer struct's subsequent fields and must be returned to the parent, not rejected.
+
 **Key properties:**
 
 1. **Type tracking**: The dispatcher knows the expected type for each field from the schema. It never guesses based on bytes alone.
@@ -562,7 +562,7 @@ fn deserialize_struct(input: &[u8], schema: &StructSchema, is_top_level: bool) -
 
 **Dispatcher recursion:** The dispatcher is recursive by nature. When deserializing a Struct field, `deserialize_struct` calls `deserialize_field` for each sub-field; when `deserialize_field` encounters a nested Struct type, it calls `deserialize_struct` again. This recursion terminates at primitive types (i128, bool, DQA, Blob, String).
 
-**Recursion depth (CRITICAL-NEW-1 / HIGH-3):** Implementations MUST NOT reject valid inputs due to an arbitrary fixed constant depth limit lower than 64 levels. Implementations MAY enforce a configurable maximum nesting depth and MUST return `Err(DCS_RECURSION_LIMIT_EXCEEDED)` when that limit is exceeded, rather than crashing. This is not a consensus-divergence risk because inputs deep enough to hit any reasonable limit are pathological and SHOULD be rejected consistently. The spec explicitly permits iterative implementations ("an iterative implementation is also valid but must produce identical results"). The DCS layer specifies behavioral output (correct deserialization), not the algorithm used to achieve it. A stack overflow caused by a recursive implementation without adequate stack limits is a **non-conformant implementation bug**, not a consensus split.
+**Recursion depth (CRITICAL-NEW-1 / HIGH-3):** All conformant implementations MUST reject inputs with nesting depth exceeding 64 levels with `Err(DCS_RECURSION_LIMIT_EXCEEDED)`. This is a fixed universal maximum, not a configurable minimum. A stack overflow caused by a recursive implementation without adequate stack limits is a **non-conformant implementation bug**, not a consensus split. The spec explicitly permits iterative implementations ("an iterative implementation is also valid but must produce identical results"). The DCS layer specifies behavioral output (correct deserialization), not the algorithm used to achieve it. Implementations MAY enforce a maximum lower than 64 levels internally but MUST NOT accept inputs that exceed 64 levels. Inputs deep enough to hit this limit are pathological and SHOULD be rejected consistently -- this limit is chosen to be large enough that no valid real-world input reaches it.
 
 **Type recursion termination invariant (HIGH-NEW-4):** Dispatcher recursion is inherently bounded because every recursive call consumes at least 1 byte from the input buffer. This is guaranteed by: (1) the per-field progress check (`new_remaining != remaining`) which requires each Struct field to consume at least 4 bytes (the field_id), and (2) the Option tag byte (1 byte) which is consumed before recursing into the payload. A schema with recursive types (e.g., `Option<A>` where `A` contains `Option<A>`) terminates correctly because each Option level consumes at least 1 byte. An infinite recursion attack would require consuming zero bytes per recursive call, which is prevented by the progress check -- a dispatcher that recurses without consuming bytes returns `Err(DCS_INVALID_STRUCT)`. This is the **termination invariant**: dispatcher recursion MUST consume input bytes. If recursion occurs without consuming bytes, the result is an error, not an infinite loop. This prevents schema cycles, zero-byte recursion, and ensures termination for all valid inputs.
 
@@ -580,7 +580,7 @@ This dispatcher pattern is how DCS deserialization is intended to be used. The a
 
 Amendments adding new DCS types to the verification probe MUST follow this protocol:
 
-1. **Append only**: New entries are added at the next sequential index (N+1, N+2, ...). Existing entries are never modified or reordered. **Existing entry leaf hashes are immutable once published:** A future amendment MAY NOT change the data or leaf hash of any prior entry. If an error is found in a prior entry, a separate errata amendment MUST be issued, which increments NUMERIC_SPEC_VERSION and replaces the affected root.
+1. **Append only**: New entries are added at the next sequential index (N+1, N+2, ...). Existing entries are never modified or reordered. **Existing entry leaf hashes are immutable once published:** A future amendment MAY NOT change the data or leaf hash of any prior entry published in a **ratified** RFC. If an error is found in a prior entry, a separate errata amendment MUST be issued, which increments NUMERIC_SPEC_VERSION and replaces the affected root. During the drafting process, entries MAY be corrected before ratification -- this immutability rule applies to entries in a ratified specification, not to draft entries under active development.
 2. **Root recomputation**: The new entry changes the leaf count from odd to even or vice versa, which changes the pairing structure and thus the Merkle root. The new root MUST be computed and published in the amendment.
 3. **Version increment**: Adding a new type constitutes a change to canonical encoding formats. `NUMERIC_SPEC_VERSION` MUST be incremented per RFC-0110 SectionVersion Increment Policy, including activation governance.
 4. **Announcement**: The amendment MUST list all prior leaf hashes alongside the new entry so that the full tree can be independently verified without requiring the implementer to run prior versions of the script.
@@ -595,7 +595,7 @@ This ensures the probe is monotonically verifiable across amendments.
 
 | Version | Date | Author | Changes |
 |---------|------|--------|---------|
-| 6.5 | 2026-03-26 | CipherOcto | Round 21 (Round 7): CRIT-1 add is_top_level flag to deserialize_struct for empty struct trailing-bytes gating, CRIT-2 add recursion depth section with DCS_RECURSION_LIMIT_EXCEEDED error and 64-level minimum, CRIT-3 add Type::Struct case to deserialize_field dispatcher, HIGH-1 fix deserialize_blob bounds check from `(length as usize) > input.len() - 4` to `4 + (length as usize) > input.len()`, HIGH-2 rename progress check variable to remaining_after_field_id, MED-1 add DVEC/DMAT element-type dispatcher guidance (MED-2 note), MED-2 clarify serialize_blob returns DcsError not generic Err, MED-3 expand optional fields prose (application layer handles absent fields, not dispatcher), LOW-2 rename Fixed-Width Primitive class to Unambiguously Typed, LOW-3 add RFC-0903 and RFC-0909 rows to relationship table, LOW-4 verify v6.0 consolidation note already present |
+| 6.6 | 2026-03-26 | CipherOcto | Round 22 (Round 7 continuation): HIGH-1 remove stale "Intentional duplicate" note from probe table, replace with Blob vs String distinction note, HIGH-2 fix Type::Struct arm to pass v directly (not Value::Struct(v)), HIGH-3 change 64-level minimum to fixed universal maximum (all implementations reject at exactly 64 levels), MED-1 update deserialize_string allocation safety note to reference current bounds check form, MED-2 remove orphaned [^L-R4-1] footnote definition block, MED-3 clarify immutability rule applies to ratified entries only, LOW-1 add hex value to Entry 17 Input column, LOW-2 add normative is_top_level parameter prose, LOW-3 split LOW-R4-1 root change note into NEW-KI-2 |
 | 6.4 | 2026-03-25 | CipherOcto | Round 20 (Round 6): HIGH-1 fix verification command to use bytes([0x00]) form for unambiguous byte construction, add expected output to verification, ensure both footnote and Known Issues entries are consistent, MED-1 add missing v6.2 version history row (was absent between v6.1 and v6.3), MED-2 remove non-standard footnote syntax, replace with inline annotation on Entry 12 row pointing to LOW-R4-1, MED-3 fix header round number from "round 20" to "Round 5 response" (was already corrected to Round 5 response before this review), LOW-1 clarify 1MB comment (max allowed length vs error threshold), LOW-2 update RFC-0126 v2.6.0 version history to include deserialize_string, dispatcher, new error codes, LOW-3 fix grammatically confused comment above progress check |
 | 6.3 | 2026-03-25 | CipherOcto | Round 19 (Round 5): HIGH-1 confirm Entry 12 root unchanged (Scenario B: script computed from raw bytes), add footnote and Known Issues entry for correction, HIGH-2 fix header and footer to v6.2 (was v6.1), MED-1 fix Key Property 2 contradiction (replace "at least 1 byte" with precise zero-advancement detection), MED-2 add guidance on distinguishing schema mismatch vs data corruption via wire_field_id inspection, MED-3 differentiate DCS_INVALID_STRING and DCS_INVALID_BLOB descriptions with type-specific prefixes, LOW-1 add Known Issues entry for Entry 12 hash correction with verification command, LOW-2 Key Property 2 cross-reference to Zero-byte type constraint added, LOW-3 v6.2 footer update noted (6.1→6.2) |
 | 6.2 | 2026-03-25 | CipherOcto | Round 18 (Round 4 adjudication): HIGH-1 add trailing-bytes check to deserialize_struct non-empty path, HIGH-2 clarify Key Property 2 progress requirement (minimum varies by type; zero-advancement detection), MED-1 correct Entry 12 leaf hash (63→64 hex chars, missing leading zero in byte 28, Scenario B confirmed: root unchanged), MED-2 update DCS_STRING_LENGTH_OVERFLOW description to specify declared vs actual length, MED-3 add clarifying note to BigInt Fixed-Width Primitive classification, LOW-1 update version footer 6.1→6.2, LOW-2 align deserialize_string allocation safety wording with Blob RECOMMENDED framing, LOW-3 add deserialize_string and schema-driven dispatcher to implementation checklist |
@@ -616,6 +616,6 @@ This ensures the probe is monotonically verifiable across amendments.
 
 ---
 
-**Version:** 6.5
+**Version:** 6.6
 **Submission Date:** 2026-03-25
 **Last Updated:** 2026-03-26

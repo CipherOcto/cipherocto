@@ -2,7 +2,7 @@
 
 ## Status
 
-Draft (v5.3, adversarial review)
+Draft (v5.4, adversarial review)
 
 ## Authors
 
@@ -595,8 +595,8 @@ fn test_empty_blob_is_4_bytes_not_zero() {
     assert_eq!(serialized.len(), 4);
     assert_eq!(&serialized[..], &u32::to_be_bytes(0));
 
-    // Deserialize: remaining first
-    let (remaining, blob_data) = deserialize_blob(&serialized).unwrap();
+    // Deserialize: blob_data first, remaining second (per deserialize_blob signature)
+    let (blob_data, remaining) = deserialize_blob(&serialized).unwrap();
     assert_eq!(blob_data, b"");
     assert_eq!(remaining, &[]);
 }
@@ -670,11 +670,13 @@ fn test_dispatch_struct_recursion_depth_limit() {
             (1u32, ColumnType::Text),
         ])),
     ];
-    let result = dispatch_struct(&[], /* is_top_level = */ true, /* depth = */ 64, &schema);
+    // Empty struct bytes: u32_be(0) terminator — valid input that reaches the depth check
+    let empty_struct_bytes = u32::to_be_bytes(0);
+    let result = dispatch_struct(&empty_struct_bytes, /* is_top_level = */ true, /* depth = */ 64, &schema);
     assert!(matches!(result, Err(DCS_RECURSION_LIMIT_EXCEEDED)));
-    // depth=63 should be ok (63 nested levels below top = 64 total frames)
-    let result_ok = dispatch_struct(&[], /* is_top_level = */ true, /* depth = */ 63, &schema);
-    assert!(result_ok.is_ok(), "depth=63 should be accepted (63 below top = 64 total)");
+    // depth=63 with valid empty struct bytes should succeed
+    let result_ok = dispatch_struct(&empty_struct_bytes, /* is_top_level = */ true, /* depth = */ 63, &schema);
+    assert!(result_ok.is_ok(), "depth=63 with valid data should be accepted (63 below top = 64 total)");
 }
 
 #[test]
@@ -695,6 +697,32 @@ fn test_bytea_32_length_assertion() {
     // The column schema (BYTEA(32)) enforces length; this is tested at the SQL layer
     // Here we verify the blob itself is valid regardless of length constraints
     assert_eq!(value.as_blob().unwrap().len(), 31);
+}
+
+#[test]
+fn test_dispatch_struct_rejects_unknown_field_id() {
+    // Wire data contains field_id=99 which is not in the schema
+    let schema = vec![(1u32, ColumnType::Text)];
+    let mut row = Vec::new();
+    row.extend_from_slice(&99u32.to_be_bytes()); // field_id = 99 (not in schema)
+    row.extend_from_slice(&1u32.to_be_bytes()); // string length = 1
+    row.push(b'x');
+    row.extend_from_slice(&0u32.to_be_bytes()); // terminator
+
+    let result = dispatch_struct(&row, /* is_top_level = */ true, /* depth = */ 0, &schema);
+    assert!(matches!(result, Err(DCS_INVALID_STRUCT)));
+}
+
+#[test]
+fn test_dispatch_struct_rejects_truncated_input() {
+    // Schema expects field_id + data but input ends after field_id
+    let schema = vec![(1u32, ColumnType::Text)];
+    let mut row = Vec::new();
+    row.extend_from_slice(&1u32.to_be_bytes()); // field_id = 1
+    // Missing: string length + data + terminator
+
+    let result = dispatch_struct(&row, /* is_top_level = */ true, /* depth = */ 0, &schema);
+    assert!(matches!(result, Err(DCS_INVALID_STRUCT)));
 }
 ```
 
@@ -911,7 +939,7 @@ pub enum ColumnType {
     Option(Box<ColumnType>),
     Enum(Vec<(u32, ColumnType)>),     // variant_id → type mapping
     Dvec(Box<ColumnType>),            // element type
-    Dmat { rows: usize, cols: usize, elem: Box<ColumnType> },
+    Dmat { rows: usize, cols: usize, elem_type: Box<ColumnType> },
 }
 ```
 
@@ -932,9 +960,12 @@ fn dispatch_field(input: &[u8], col_type: &ColumnType, depth: usize)
             .map(|(v, rem)| (rem, Value::String(v))),
         ColumnType::Bytea => deserialize_blob(input)
             .map(|(v, rem)| (rem, Value::Blob(Blob::from_slice(v)))),
-        ColumnType::Bool => /* ... deserialize_bool ... */,
-        ColumnType::I128 => /* ... deserialize_i128 ... */,
-        ColumnType::Dqa => /* ... deserialize_dqa ... */,
+        ColumnType::Bool => deserialize_bool(input)
+            .map(|(v, rem)| (rem, Value::Bool(v))),
+        ColumnType::I128 => deserialize_i128(input)
+            .map(|(v, rem)| (rem, Value::I128(v))),
+        ColumnType::Dqa => deserialize_dqa(input)
+            .map(|(v, rem)| (rem, Value::Dqa(v))),
         ColumnType::Struct(fields) => dispatch_struct(input, false, depth + 1, fields)
             .map(|(rem, v)| (rem, Value::Struct(v))),
         ColumnType::Option(inner) => {
@@ -958,12 +989,12 @@ fn dispatch_field(input: &[u8], col_type: &ColumnType, depth: usize)
             deserialize_dvec(input, elem_type, depth + 1)
                 .map(|(rem, v)| (rem, Value::Dvec(v)))
         },
-        ColumnType::Dmat { rows, cols, elem } => {
-            deserialize_dmat(input, *rows, *cols, elem, depth + 1)
+        ColumnType::Dmat { rows, cols, elem_type } => {
+            deserialize_dmat(input, elem_type, depth + 1)
                 .map(|(rem, v)| (rem, Value::Dmat(v)))
         },
-        ColumnType::Dfp => /* ... deserialize_dfp ... */,
-        ColumnType::BigInt => /* ... deserialize_bigint ... */,
+        ColumnType::Dfp => todo!("deserialize_dfp — deferred per dispatcher contract"),
+        ColumnType::BigInt => todo!("deserialize_bigint — deferred per dispatcher contract"),
         ColumnType::Enum(variants) => {
             // Enum encoded as u32 variant_id, then variant value
             if input.len() < 4 {
@@ -1006,6 +1037,15 @@ fn dispatch_struct(input: &[u8], is_top_level: bool, depth: usize,
 
         if field_id == 0 {
             break; // end of struct
+        }
+
+        // Ascending field_id enforcement: per RFC-0127 Change 13, fields must appear
+        // in strictly ascending field_id order in the wire format.
+        let is_ascending = fields.last()
+            .map(|(last_id, _)| field_id > *last_id)
+            .unwrap_or(true);
+        if !is_ascending {
+            return Err(DCS_INVALID_STRUCT); // non-ascending field_id
         }
 
         // Look up this field's type from the schema
@@ -1079,11 +1119,16 @@ fn deserialize_dvec(input: &[u8], elem_type: &ColumnType, depth: usize)
     Ok((remaining, elements))
 }
 
-fn deserialize_dmat(input: &[u8], rows: usize, cols: usize, elem_type: &ColumnType, depth: usize)
+fn deserialize_dmat(input: &[u8], elem_type: &ColumnType, depth: usize)
     -> Result<(&[u8], Vec<Vec<Value>>), DcsError>
 {
-    let total = rows * cols;
-    let mut remaining = input;
+    // Per RFC-0127 Change 2.5: u32_be(rows) || u32_be(cols) || elements...
+    if input.len() < 8 {
+        return Err(DCS_INVALID_STRUCT);
+    }
+    let rows = u32::from_be_bytes([input[0], input[1], input[2], input[3]]) as usize;
+    let cols = u32::from_be_bytes([input[4], input[5], input[6], input[7]]) as usize;
+    let mut remaining = &input[8..];
     let mut matrix: Vec<Vec<Value>> = Vec::with_capacity(rows);
 
     for _ in 0..rows {
@@ -1113,6 +1158,7 @@ fn deserialize_dmat(input: &[u8], rows: usize, cols: usize, elem_type: &ColumnTy
 
 | Version | Date | Changes |
 |---------|------|---------|
+| 5.4 | 2026-03-27 | Round 7 adversarial review fixes: CRIT-7.1 (replace placeholder comment arms with actual calls: Bool→deserialize_bool, I128→deserialize_i128, Dqa→deserialize_dqa; deferred Dfp/BigInt→todo!() per dispatcher contract), CRIT-7.2 (Dmat arm: remove * from *rows/*cols dereference of usize values), CRIT-7.3 (empty blob test: swap (remaining,blob_data)→(blob_data,remaining) per deserialize_blob signature), HIGH-7.1 (depth limit test: provide valid empty-struct bytes (u32_be(0)) so depth=63 test succeeds for correct reason), HIGH-7.2 (add ascending field_id enforcement to dispatch_struct per RFC-0127 Change 13), MED-7.1 (add test_dispatch_struct_rejects_unknown_field_id), MED-7.2 (add test_dispatch_struct_rejects_truncated_input), MED-7.3 (replace placeholder comments with actual deserializer calls), MED-7.4 (deserialize_dmat reads rows/cols from wire as u32_be per RFC-0127 Change 2.5; update call site), LOW-7.1 (note: Value::Dmat must be added to stoolap Value enum), LOW-7.3 (rename ColumnType::Dmat elem→elem_type for consistency with deserialize_dmat param). |
 | 5.3 | 2026-03-27 | Round 6 adversarial review fixes: CRIT-6.1 (fix stale deserialize_blob doc comment: Err→DcsError per RFC-0127 Change 8), CRIT-6.2 (Option tag: changed from 4 bytes to 1 byte per RFC-0127 Change 10 / termination invariant), CRIT-6.3 (depth limit: changed from 32 to 64 per RFC-0127 Change 13), HIGH-6.1 (round-trip test: swap destructuring to (deserialized, remaining) matching deserialize_blob signature), HIGH-6.2 (add missing Dqa match arm to dispatch_field), MED-6.1 (correct v5.2 changelog: depth check was 32, not "×2=64"), MED-6.2 (define deserialize_dmat function for DMAT arrays), MED-6.3 (document DCS_INVALID_STRUCT for enum variant lookup failure), MED-6.4 (serialize_string test: use String not Vec<u8> per RFC-0127 Change 8), LOW-6.1 (Dqa arm now present), LOW-6.2 (note: Value enum is external, defined in stoolap core/value.rs), LOW-6.3 (DcsError pseudocode note added), LOW-6.4 (bare error variant names acceptable in pseudocode). |
 | 5.2 | 2026-03-27 | Round 5 adversarial review fixes: CRIT-5.1 (define all types used in pseudocode: DcsError, ColumnType enum with all variants, StructValue struct), CRIT-5.2 (add is_empty_struct exemption to dispatch_struct progress check), CRIT-5.3 (depth check was 32; corrected to 64 per RFC-0127 Change 13), CRIT-5.4 (clarify Blob::from_slice copy semantics), HIGH-5.2 (fix dispatch_field Struct case), HIGH-5.3 (remove errant ?), HIGH-5.4 (correct v5.1 changelog), MED-5.1 (Phase 2d dispatcher: add Bool, I128, Option, Dvec, Dmat, Enum), MED-5.2 (add schema parameter), MED-5.3 (add conformance tests), MED-5.4 (BYTEA[] direct deserialize_blob), MED-5.5 (align return order), LOW-5.1 (case-insensitive tests), LOW-5.3 (depth type usize), LOW-5.4 (rename before_field→remaining_after_field_id). |
 | 5.1 | 2026-03-27 | Fix MED-3.6/3.7/3.4/3.3/3.2/3.1 deferred items: replaced 6 implementation architecture questions with normative specs. Removed duplicate Phase 2/Phase 3 checklist sections. |
@@ -1134,6 +1180,6 @@ fn deserialize_dmat(input: &[u8], rows: usize, cols: usize, elem_type: &ColumnTy
 
 ---
 
-**Version:** 5.3
+**Version:** 5.4
 **Original Submission Date:** 2026-03-25
 **Last Updated:** 2026-03-27

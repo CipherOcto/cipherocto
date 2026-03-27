@@ -308,8 +308,9 @@ Once accepted:
 | -------------------- | ------------------------------- | ------ | --------------------------------- |
 | RFC-0900 (Economics) | AI Quota Marketplace Protocol   | Draft  | Marketplace for AI compute quotas |
 | RFC-0901 (Economics) | Quota Router Agent              | Draft  | Agent for routing requests        |
-| RFC-0910 (Economics) | Inference Task Market           | Draft  | Market for inference tasks        |
-| RFC-0950 (Economics) | Agent Mission Marketplace (AMM) | Draft  | Mission marketplace               |
+| RFC-0910 (Economics) | Inference Task Market              | Draft  | Market for inference tasks              |
+| RFC-0914 (Economics) | Stoolap Partial Indexes            | Planned | `CREATE INDEX ... WHERE` support      |
+| RFC-0950 (Economics) | Agent Mission Marketplace (AMM)     | Draft  | Mission marketplace                     |
 | RFC-0955 (Economics) | Model Liquidity Layer           | Draft  | Tokenized AI models               |
 | RFC-0956 (Economics) | Model Liquidity Layer (MLL) v2  | Draft  | Tokenized AI models (updated)     |
 

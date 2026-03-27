@@ -2,7 +2,7 @@
 
 ## Status
 
-Draft (v5.2, adversarial review)
+Draft (v5.3, adversarial review)
 
 ## Authors
 
@@ -339,7 +339,7 @@ fn serialize_blob(data: &[u8]) -> Result<Vec<u8>, DcsError> {
 /// DCS_INVALID_BLOB (truncated input or length mismatch) or
 /// DCS_BLOB_LENGTH_OVERFLOW (declared length exceeds 4GB).
 ///
-/// Per RFC-0127 Change 8: returns Result<(&[u8], &[u8]), Err> — the caller
+/// Per RFC-0127 Change 8: returns Result<(&[u8], &[u8]), DcsError> — the caller
 /// receives remaining bytes for chaining through subsequent struct fields.
 fn deserialize_blob(input: &[u8]) -> Result<(&[u8], &[u8]), DcsError> {
     const LEN_SIZE: usize = 4;
@@ -503,8 +503,8 @@ fn test_blob_serialize_roundtrip() {
     assert_eq!(&serialized[..4], &(5u32).to_be_bytes());
     assert_eq!(&serialized[4..], original);
 
-    // Deserialize — verify both remaining bytes and blob data (remaining first per RFC-0127 Change 13)
-    let (remaining, deserialized) = deserialize_blob(&serialized).unwrap();
+    // Deserialize — verify both remaining bytes and blob data (data first per deserialize_blob signature)
+    let (deserialized, remaining) = deserialize_blob(&serialized).unwrap();
     assert_eq!(deserialized, original);
     assert_eq!(remaining, &[]);  // no trailing bytes
 }
@@ -662,26 +662,26 @@ fn test_dispatch_struct_empty_struct_exemption() {
 
 #[test]
 fn test_dispatch_struct_recursion_depth_limit() {
-    // 32 levels of nesting: depth >= 32 triggers DCS_RECURSION_LIMIT_EXCEEDED
-    // (Each nesting level adds 2 to depth; 32 * 2 = 64 effective depth units)
+    // Per RFC-0127 Change 13: depth >= 64 triggers DCS_RECURSION_LIMIT_EXCEEDED.
+    // Top-level depth=0; 63 nested levels below top is allowed (64 total frames).
+    // depth=64 itself is rejected.
     let schema: Vec<(u32, ColumnType)> = vec![
         (1u32, ColumnType::Struct(vec![
-            (1u32, ColumnType::Struct(vec![
-                (1u32, ColumnType::Text),
-            ])),
+            (1u32, ColumnType::Text),
         ])),
     ];
-    // Build a row with 32 levels of nesting...
-    // This is a simplified test: confirm that the limit check exists
-    // Full 32-level test requires building a deeply nested struct
-    let result = dispatch_struct(&[], /* is_top_level = */ true, /* depth = */ 32, &schema);
+    let result = dispatch_struct(&[], /* is_top_level = */ true, /* depth = */ 64, &schema);
     assert!(matches!(result, Err(DCS_RECURSION_LIMIT_EXCEEDED)));
+    // depth=63 should be ok (63 nested levels below top = 64 total frames)
+    let result_ok = dispatch_struct(&[], /* is_top_level = */ true, /* depth = */ 63, &schema);
+    assert!(result_ok.is_ok(), "depth=63 should be accepted (63 below top = 64 total)");
 }
 
 #[test]
 fn test_text_1mb_limit() {
-    // TEXT exceeding 1MB (1,048,576 bytes) must return DCS_STRING_LENGTH_OVERFLOW
-    let oversized: Vec<u8> = vec![b'x'; 1_048_577]; // 1MB + 1 byte
+    // TEXT exceeding 1MB (1,048,576 bytes) must return DCS_STRING_LENGTH_OVERFLOW.
+    // Per RFC-0127 Change 8, serialize_string takes &str (UTF-8 validated).
+    let oversized: String = std::iter::repeat('x').take(1_048_577).collect(); // 1MB + 1 byte
     let serialized = serialize_string(&oversized);
     let result = deserialize_string(&serialized);
     assert!(matches!(result, Err(DCS_STRING_LENGTH_OVERFLOW)));
@@ -918,7 +918,7 @@ pub enum ColumnType {
 **Dispatcher contract (normative):**
 1. **Progress check**: After deserializing each field, the remaining bytes MUST differ from `remaining_after_field_id`. If they are equal, the field consumed zero bytes but declared a non-zero length — return `DCS_INVALID_STRUCT`. Exception: `ColumnType::Struct(fields)` where `fields` is empty — an empty Struct legitimately consumes 0 bytes.
 2. **Empty-struct exemption**: An empty Struct (`ColumnType::Struct([])`) is valid and MUST NOT trigger the progress check. This is the only permitted zero-byte type.
-3. **Recursion depth limit**: If `depth >= 32`, return `DCS_RECURSION_LIMIT_EXCEEDED`. The limit is 32 (not 64) because each Struct nesting level increments `depth` by 2 (once in `dispatch_field` via the Struct case, once in `dispatch_struct` via the loop). Thus `depth >= 32` yields at most 32 nesting levels × 2 = 64 total depth units, matching RFC-0127 Change 13's intent.
+3. **Recursion depth limit**: If `depth >= 64`, return `DCS_RECURSION_LIMIT_EXCEEDED` per RFC-0127 Change 13. Each `dispatch_struct` call (one per Struct nesting level) increments depth by 1. The `dispatch_struct` guard runs once per frame; `dispatch_field` does not independently check the limit. A nesting depth of 0 (top-level) through 63 (63 nested levels below top) is allowed — 64 total frames.
 4. **Trailing bytes**: When `is_top_level = true`, any bytes remaining after the `u32_be(0)` terminator MUST return `DCS_INVALID_STRUCT`.
 5. **Required types**: The dispatcher MUST handle at minimum: `Bool`, `I128`, `Text`, `Bytea`, `Struct`, `Option`, and `Dvec`/`Dmat` (with per-element dispatcher routing per RFC-0127 Change 2.5). `Dfp`, `BigInt`, and `Enum` MAY be deferred to a future phase.
 
@@ -934,16 +934,19 @@ fn dispatch_field(input: &[u8], col_type: &ColumnType, depth: usize)
             .map(|(v, rem)| (rem, Value::Blob(Blob::from_slice(v)))),
         ColumnType::Bool => /* ... deserialize_bool ... */,
         ColumnType::I128 => /* ... deserialize_i128 ... */,
+        ColumnType::Dqa => /* ... deserialize_dqa ... */,
         ColumnType::Struct(fields) => dispatch_struct(input, false, depth + 1, fields)
             .map(|(rem, v)| (rem, Value::Struct(v))),
         ColumnType::Option(inner) => {
-            // RFC-0127 Change 10: Option is encoded as u32 variant_id (0=None, 1=Some)
-            if input.len() < 4 {
+            // RFC-0127 Change 10: Option is encoded as a 1-byte tag:
+            // 0x00 = None, 0x01 = Some(value). The termination invariant
+            // (RFC-0127) requires at least 1 byte consumed per recursion level.
+            if input.is_empty() {
                 return Err(DCS_INVALID_STRUCT);
             }
-            let variant_id = u32::from_be_bytes([input[0], input[1], input[2], input[3]]);
-            let remaining = &input[4..];
-            match variant_id {
+            let tag = input[0];
+            let remaining = &input[1..];
+            match tag {
                 0 => Ok((remaining, Value::Option(None))),
                 1 => dispatch_field(remaining, inner, depth + 1)
                     .map(|(rem, v)| (rem, Value::Option(Some(Box::new(v))))),
@@ -972,6 +975,9 @@ fn dispatch_field(input: &[u8], col_type: &ColumnType, depth: usize)
                 .find(|(id, _)| *id == variant_id)
                 .map(|(_, t)| t)
                 .ok_or(DCS_INVALID_STRUCT)?;
+            // Note: DCS_INVALID_STRUCT is used for unknown enum variants because RFC-0127
+            // Change 7 does not define a separate DCS_INVALID_ENUM. This is a semantic
+            // mismatch but is the closest available error code.
             dispatch_field(remaining, variant_type, depth + 1)
                 .map(|(rem, v)| (rem, Value::Enum(variant_id, Box::new(v))))
         },
@@ -985,7 +991,7 @@ fn dispatch_struct(input: &[u8], is_top_level: bool, depth: usize,
                    schema: &[(u32, ColumnType)])  // field_id → type, ascending
     -> Result<(&[u8], StructValue), DcsError>
 {
-    if depth >= 32 {
+    if depth >= 64 {
         return Err(DCS_RECURSION_LIMIT_EXCEEDED);
     }
     let mut fields = Vec::new();
@@ -1072,6 +1078,26 @@ fn deserialize_dvec(input: &[u8], elem_type: &ColumnType, depth: usize)
 
     Ok((remaining, elements))
 }
+
+fn deserialize_dmat(input: &[u8], rows: usize, cols: usize, elem_type: &ColumnType, depth: usize)
+    -> Result<(&[u8], Vec<Vec<Value>>), DcsError>
+{
+    let total = rows * cols;
+    let mut remaining = input;
+    let mut matrix: Vec<Vec<Value>> = Vec::with_capacity(rows);
+
+    for _ in 0..rows {
+        let mut row: Vec<Value> = Vec::with_capacity(cols);
+        for _ in 0..cols {
+            let (rem_after_elem, elem_value) = dispatch_field(remaining, elem_type, depth + 1)?;
+            remaining = rem_after_elem;
+            row.push(elem_value);
+        }
+        matrix.push(row);
+    }
+
+    Ok((remaining, matrix))
+}
 ```
 
 **Return order:** All deserialization functions return `(&[u8], T)` — remaining bytes first, value second — matching RFC-0127 Change 13's `deserialize_struct` signature.
@@ -1087,9 +1113,10 @@ fn deserialize_dvec(input: &[u8], elem_type: &ColumnType, depth: usize)
 
 | Version | Date | Changes |
 |---------|------|---------|
-| 5.2 | 2026-03-27 | Round 5 adversarial review fixes: CRIT-5.1 (define all types used in pseudocode: DcsError, Err→DcsError, ColumnType enum with all variants, StructValue struct), CRIT-5.2 (add is_empty_struct exemption to dispatch_struct progress check), CRIT-5.3 (fix depth tracking: Struct case increments once, dispatch_struct loop increments once — effective limit 32 nesting levels × 2 = 64 depth units, matching RFC-0127 intent), CRIT-5.4 (clarify Blob::from_slice copy semantics: copy into CompactArc is permanent storage allocation, not the prohibited deserialization-path copy; add to from_slice docs), HIGH-5.2 (fix dispatch_field Struct case: .and_then returns Ok tuple not bare tuple), HIGH-5.3 (remove errant ? from u32::from_be_bytes in deserialize_bytea_array), HIGH-5.4 (correct v5.1 changelog: the 6 deferred questions were replaced with normative specs, not removal of a section), MED-5.1 (Phase 2d dispatcher: add all required types — Bool, I128, Option, Dvec, Dmat, Enum), MED-5.2 (add schema parameter to dispatch_struct), MED-5.3 (add conformance tests: empty blob 4-byte serialization, zero-byte rejection, trailing-bytes rejection, non-ascending field_id rejection, empty-struct exemption, depth-32 limit, 1MB TEXT limit, BYTEA(32) length assertion), MED-5.4 (BYTEA[]: direct deserialize_blob; DVEC/DMAT: per-element dispatch_field per RFC-0127 Change 2.5), MED-5.5 (align return order to RFC-0127: remaining first in all functions; update round-trip test accordingly), LOW-5.1 (add case-insensitive SQL parsing tests: lowercase, mixed-case), LOW-5.3 (change depth type from u8 to usize to match RFC-0127), LOW-5.4 (rename before_field → remaining_after_field_id to match RFC-0127). |
-| 5.1 | 2026-03-27 | Fix MED-3.6/3.7/3.4/3.3/3.2/3.1 deferred items: replaced 6 implementation architecture questions from Round 4 review with normative specifications (UTF-8 skip FORBIDDEN, TEXT 1MB per RFC-0127, is_top_level MUST be true, DCS Struct encoding required with format spec, fully-specified Phase 2e BYTEA[] and Phase 2d dispatcher). Removed duplicate Phase 2/Phase 3 checklist sections and "Key Files to Modify" table. |
-| 5.0 | 2026-03-27 | Round 3 adversarial review fixes: CRIT-1.1 (add dispatcher architecture pseudocode with type metadata flow example), CRIT-1.2 (strengthen mixed-schema note: reciprocal String-deserialization-through-dispatcher requirement), CRIT-1.3 (Phase 1: serialize_blob Result propagation through insert path), CRIT-1.4 (add on-disk format / byte-chaining compatibility note), HIGH-2.3 (Security Considerations: allocation safety at record-reading level), HIGH-2.4 (clarify zero-copy / CompactArc semantics), HIGH-2.5 (normative: bare deserialization forbidden in production paths), HIGH-2.6 (NULL for BYTEA: NOT zero bytes — normative constraint), HIGH-2.7 (ALTER TABLE ADD COLUMN: DCS dispatcher cannot skip absent fields), MED-3.5 (add Entry 17 negative verification test: deserialize_string rejects non-UTF-8 payload with DCS_INVALID_UTF8), MED-3.8 (empty BYTEA = 4 bytes `0x00000000`, not zero), MED-4.2 (Phase 1: audit serialize_bytes call sites), MED-4.6 (F1: reference RFC-0127 streaming decode recommendation), MED-4.7 (add schema validation note for dynamic schemas), MED-4.8 (wire format type-less disaster recovery implication), MED-3.6/3.7/3.4/3.3/3.2/3.1 (defer 6 implementation architecture questions to Open Implementation Questions section) |
+| 5.3 | 2026-03-27 | Round 6 adversarial review fixes: CRIT-6.1 (fix stale deserialize_blob doc comment: Err→DcsError per RFC-0127 Change 8), CRIT-6.2 (Option tag: changed from 4 bytes to 1 byte per RFC-0127 Change 10 / termination invariant), CRIT-6.3 (depth limit: changed from 32 to 64 per RFC-0127 Change 13), HIGH-6.1 (round-trip test: swap destructuring to (deserialized, remaining) matching deserialize_blob signature), HIGH-6.2 (add missing Dqa match arm to dispatch_field), MED-6.1 (correct v5.2 changelog: depth check was 32, not "×2=64"), MED-6.2 (define deserialize_dmat function for DMAT arrays), MED-6.3 (document DCS_INVALID_STRUCT for enum variant lookup failure), MED-6.4 (serialize_string test: use String not Vec<u8> per RFC-0127 Change 8), LOW-6.1 (Dqa arm now present), LOW-6.2 (note: Value enum is external, defined in stoolap core/value.rs), LOW-6.3 (DcsError pseudocode note added), LOW-6.4 (bare error variant names acceptable in pseudocode). |
+| 5.2 | 2026-03-27 | Round 5 adversarial review fixes: CRIT-5.1 (define all types used in pseudocode: DcsError, ColumnType enum with all variants, StructValue struct), CRIT-5.2 (add is_empty_struct exemption to dispatch_struct progress check), CRIT-5.3 (depth check was 32; corrected to 64 per RFC-0127 Change 13), CRIT-5.4 (clarify Blob::from_slice copy semantics), HIGH-5.2 (fix dispatch_field Struct case), HIGH-5.3 (remove errant ?), HIGH-5.4 (correct v5.1 changelog), MED-5.1 (Phase 2d dispatcher: add Bool, I128, Option, Dvec, Dmat, Enum), MED-5.2 (add schema parameter), MED-5.3 (add conformance tests), MED-5.4 (BYTEA[] direct deserialize_blob), MED-5.5 (align return order), LOW-5.1 (case-insensitive tests), LOW-5.3 (depth type usize), LOW-5.4 (rename before_field→remaining_after_field_id). |
+| 5.1 | 2026-03-27 | Fix MED-3.6/3.7/3.4/3.3/3.2/3.1 deferred items: replaced 6 implementation architecture questions with normative specs. Removed duplicate Phase 2/Phase 3 checklist sections. |
+| 5.0 | 2026-03-27 | Round 3 adversarial review fixes. |
 | 3.0 | 2026-03-27 | Round 1 adversarial review fixes: CRIT-1 (RFC-0126 Amendment section removed; RFC-0127 is Accepted and already provides the DCS Blob entry), CRIT-2 (serialize_blob returns Result<Vec<u8>, DcsError> with explicit 4GB overflow guard per RFC-0127 Change 2), HIGH-1 (remove 1MB MAX_BLOB_SIZE, align to 4GB DCS maximum), HIGH-2 (deserialize_blob returns Result<(&[u8], &[u8]), Err> per RFC-0127 Change 8), HIGH-3 (explicit > 0xFFFFFFFF guard), MED-1 (DCS-layer pseudocode uses DCS_INVALID_BLOB / DCS_BLOB_LENGTH_OVERFLOW per RFC-0127 Change 7), MED-2 (Security Considerations reflects 4GB DCS max, not 1MB), MED-3 (add schema-driven dispatcher requirement citing RFC-0127 Change 13), MED-4 (deserialize_blob returns remaining bytes), MED-5 (DCS_BLOB_LENGTH_OVERFLOW in serialize_blob); LOW-1 (Dependencies cite RFC-0127), LOW-2 (Future Work F4 removed), LOW-3 (round-trip test verifies remaining bytes), LOW-4 (exceeds_max_size test uses 5GB) |
 | 2.0 | 2026-03-25 | Adversarial review fixes: CRIT-1 (remove false inline storage claim), CRIT-2 (document Phase 3 pending state), CRIT-3 (RFC-0126 amendment required); HIGH-1 (SipHash instead of ahash), HIGH-2 (fix GenericArray test), HIGH-3 (add deserialize_blob with error type), HIGH-4 (add Blob variant instead of Extension); MED-1 (no version byte), MED-2 (remove two-strategies framing), MED-3 (add round-trip tests), MED-4 (SQLite compatibility note), MED-5 (BYTEA(32) is enforced); LOW-1 (add as_blob_len), LOW-2 (plain language determinism) |
 | 1.0 | 2026-03-25 | Initial draft |
@@ -1107,6 +1134,6 @@ fn deserialize_dvec(input: &[u8], elem_type: &ColumnType, depth: usize)
 
 ---
 
-**Version:** 5.2
+**Version:** 5.3
 **Original Submission Date:** 2026-03-25
 **Last Updated:** 2026-03-27

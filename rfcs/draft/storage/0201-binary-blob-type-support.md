@@ -2,7 +2,7 @@
 
 ## Status
 
-Draft (v2, adversarial review)
+Draft (v5.1, adversarial review)
 
 ## Authors
 
@@ -16,7 +16,7 @@ This RFC adds native binary data type support (BLOB/BYTEA) to stoolap's type sys
 
 **Informative:**
 
-- RFC-0126 (Numeric): Deterministic Canonical Serialization — Blob serialization follows RFC-0126's methodology (length prefix, big-endian, no padding). See RFC-0126 SectionPart 3 for the framework. A future RFC-0126 amendment should add Blob to the DCS type table (see SectionRFC-0126 Amendment below).
+- RFC-0127 (Numeric): DCS Blob Amendment — already Accepted; defines Blob as first-class DCS type with `serialize_blob`/`deserialize_blob` signatures, error codes, and schema-driven dispatcher requirement (RFC-0127 Changes 2, 7, 8, 13). RFC-0201 aligns with RFC-0127's specifications throughout.
 
 **Required By:**
 
@@ -120,7 +120,7 @@ pub enum BlobOrdering {
 }
 ```
 
-**Storage Note**: Blob data is heap-allocated via `CompactArc<[u8]>`. All blobs share the same storage mechanism regardless of size. Cloning a Blob does not copy the underlying data — `CompactArc` provides shared ownership.
+**Storage Note**: Blob data is heap-allocated via `CompactArc<[u8]>`. All blobs share the same storage mechanism regardless of size. Cloning a Blob does not copy the underlying data — `CompactArc` provides shared ownership. Per RFC-0127 Change 8 (Cross-language consistency), `deserialize_blob` returns a slice into the input buffer, not a copy. `as_bytes()` returns a direct reference, not a copied `Vec<u8>`. Implementers MUST NOT copy the returned slice into a new allocation in the deserialization path.
 
 #### ToParam Implementations
 
@@ -180,6 +180,12 @@ CREATE TABLE usage_ledger (
 ```
 
 **Note on `BYTEA(32)`:** The `(32)` suffix is a length assertion. The storage engine MUST enforce that inserted values are exactly 32 bytes. Inserting a 31 or 33 byte value into a `BYTEA(32)` column MUST fail with a length constraint error.
+
+**Note on NULL representation (normative):** SQL NULL for a BYTEA column is a schema-layer concept. The DCS layer has no NULL type. NULL MUST NOT be represented as zero bytes on disk — DCS deserialization requires at least 4 bytes (the length prefix). A zero-byte read for a BYTEA column produces `DCS_INVALID_BLOB`. stoolap must use a separate null bitmap or column-level null flag, not zero bytes, to represent NULL.
+
+**Note on ALTER TABLE ADD COLUMN (normative):** ALTER TABLE ADD COLUMN for a nullable BYTEA column requires handling existing records that lack the new column. Per RFC-0127 Change 13, the DCS dispatcher cannot skip absent fields. Options: (1) rewrite all existing records to include the new column with a default value (recommended for simplicity), (2) construct a per-record schema that only includes present columns, or (3) track schema version per record.
+
+**Note on empty BYTEA (normative):** An empty BYTEA value (`length=0`) serializes to exactly 4 bytes: `u32_be(0)`. It is NOT zero bytes on disk. Deserializing zero bytes as BYTEA returns `DCS_INVALID_BLOB` (fewer than 4 bytes for length prefix).
 
 **Note on SQLite compatibility:** On PostgreSQL, use `USING HASH` for hash index creation. On SQLite, omit `USING HASH` — the hash index type is implicit in SQLite's index syntax.
 
@@ -242,19 +248,57 @@ CREATE INDEX idx_api_keys_hash ON api_keys(key_hash) USING HASH;
 CREATE UNIQUE INDEX idx_usage_ledger_event_id ON usage_ledger(event_id);
 ```
 
+**Dispatcher requirement for mixed schemas (normative — RECIPROCAL):** When a stoolap schema contains both `BYTEA` (Blob) and `TEXT` (String) columns, the storage engine's deserialization MUST use the schema-driven dispatcher per RFC-0127's shared-encoding rule (RFC-0127 Change 13). The wire format `[length][bytes]` is byte-identical for both types; without dispatcher context, an implementation cannot determine whether to apply UTF-8 validation (String) or skip it (Blob). Critically, **both** `deserialize_blob` **and** `deserialize_string` must go through the dispatcher — calling `deserialize_string` directly on bytes that were inserted as Blob returns `DCS_INVALID_UTF8` on non-UTF-8 payloads.
+
 ### Serialization
 
-Blobs serialize with explicit length prefix for determinism:
+Blobs serialize with explicit length prefix for determinism. The DCS-layer signatures and error codes follow RFC-0127 (Changes 2, 7, 8). The `BlobDeserializeError` enum is stoolap's internal wrapper; the DCS-layer pseudocode uses `DCS_INVALID_BLOB` and `DCS_BLOB_LENGTH_OVERFLOW`.
+
+**Dispatcher requirement (normative — CONFORMANCE REQUIRED):** Per RFC-0127 Change 13, Blob deserialization MUST use a schema-driven dispatcher when co-present with other Length-Prefixed types (String) in the same schema. This is not optional. The stoolap storage engine's deserialization path for Blob columns MUST be integrated with a schema-driven dispatcher that routes to `deserialize_blob` or `deserialize_string` based on the column's declared type. An implementation that deserializes `BYTEA` columns via a direct `deserialize_blob` call without schema context, when `TEXT` columns also exist in the same table/schema, is non-conformant with RFC-0127. See RFC-0127 Change 13 for the full specification including the SharedEncoding rule and DCS encoding equivalence classes.
+
+**Dispatcher architecture (concrete example):** The dispatcher receives column type metadata alongside wire bytes. Example:
 
 ```rust
-/// Blob serialization error
+// Deserialization path for a row containing both TEXT and BYTEA columns.
+// The dispatcher receives (column_type, wire_bytes) pairs:
+fn deserialize_column_value(input: &[u8], col_type: &ColumnType) -> Result<Value, DcsError> {
+    match col_type {
+        ColumnType::Text => {
+            // String deserialization also requires dispatcher in mixed schemas
+            let (value, remaining) = deserialize_string(input)?;
+            Ok(Value::String(value))
+        },
+        ColumnType::Bytea => {
+            // Blob deserialization also requires dispatcher in mixed schemas
+            let (value, remaining) = deserialize_blob(input)?;
+            Ok(Value::Blob(Blob::from_slice(value)))
+        },
+    }
+}
+```
+
+**Ambiguity symmetry (normative — RECIPROCAL):** It is not sufficient for only Blob deserialization to use the dispatcher. When both `BYTEA` and `TEXT` columns exist in a schema, **all** String deserialization must also use the dispatcher. Calling `deserialize_string` directly on bytes that may have been inserted as Blob is non-conformant — on non-UTF-8 payloads (e.g., cryptographic hash bytes), this returns `DCS_INVALID_UTF8`. The UTF-8 validation applied by `deserialize_string` is only correct when the dispatcher has confirmed the bytes are intended as String.
+
+**Typed-context enforcement (normative):** Bare calls to `deserialize_blob` or `deserialize_string` on raw bytes without schema context are **forbidden in production code paths**. The only conformant entry point is through the schema-driven dispatcher. Direct deserialization calls are non-conformant and will produce consensus-divergent results in mixed-type schemas. Test code may call `deserialize_blob` directly only for unit testing the function itself.
+
+**Error code mapping (normative):** stoolap's internal `BlobDeserializeError` variants MUST map exactly to the corresponding DCS error codes at the DCS serialization/deserialization interface:
+- `TruncatedInput` → `DCS_INVALID_BLOB`
+- `LengthMismatch` → `DCS_INVALID_BLOB`
+- `ExceedsMaxSize` → `DCS_BLOB_LENGTH_OVERFLOW`
+
+The `DcsError` type returned by `serialize_blob` is the same opaque error type used by all DCS functions. Per RFC-0127 Change 2 (TRAP-before-serialize principle), `serialize_blob` performs the 4GB overflow check internally and returns `DCS_BLOB_LENGTH_OVERFLOW` rather than a local error type — the function itself is the last line of defense.
+
+```rust
+/// Blob deserialization errors (stoolap internal wrapper).
+/// The DCS-layer pseudocode uses DCS_INVALID_BLOB and DCS_BLOB_LENGTH_OVERFLOW
+/// per RFC-0127 Change 7.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum BlobDeserializeError {
     /// Input too short to contain length prefix
     TruncatedInput { actual_len: usize },
     /// Declared length in prefix does not match actual data length
     LengthMismatch { declared: u32, actual: usize },
-    /// Blob exceeds maximum allowed size (1MB)
+    /// Blob declared length exceeds DCS maximum (4GB)
     ExceedsMaxSize { declared: u32, max: u32 },
 }
 
@@ -266,11 +310,15 @@ pub enum BlobDeserializeError {
 /// - No null-termination ambiguity
 /// - Deterministic deserialization
 /// - Compatible with streaming deserialization
-fn serialize_blob(blob: &[u8]) -> Vec<u8> {
-    let mut result = Vec::with_capacity(4 + blob.len());
-    result.extend_from_slice(&(blob.len() as u32).to_be_bytes());
-    result.extend_from_slice(blob);
-    result
+///
+/// Returns Err(DCS_BLOB_LENGTH_OVERFLOW) if data.len() > 0xFFFFFFFF (4GB).
+/// Per RFC-0127 Change 2: the 4GB limit cannot be expressed as a type constraint,
+/// so the check is performed at serialization time.
+fn serialize_blob(data: &[u8]) -> Result<Vec<u8>, DcsError> {
+    if data.len() > 0xFFFFFFFF {
+        return Err(DCS_BLOB_LENGTH_OVERFLOW);
+    }
+    return Ok(serialize_bytes(data));  // u32_be(data.len()) || data
 }
 
 /// Deserialize blob from canonical bytes.
@@ -278,28 +326,36 @@ fn serialize_blob(blob: &[u8]) -> Vec<u8> {
 /// Reads the first 4 bytes as a big-endian u32 length prefix,
 /// extracts that many bytes as the blob data, and verifies the result.
 ///
-/// Returns the blob data on success. On failure, returns BlobDeserializeError.
-fn deserialize_blob(bytes: &[u8]) -> Result<&[u8], BlobDeserializeError> {
+/// Returns (blob_data, remaining_bytes) on success. On failure, returns
+/// DCS_INVALID_BLOB (truncated input or length mismatch) or
+/// DCS_BLOB_LENGTH_OVERFLOW (declared length exceeds 4GB).
+///
+/// Per RFC-0127 Change 8: returns Result<(&[u8], &[u8]), Err> — the caller
+/// receives remaining bytes for chaining through subsequent struct fields.
+fn deserialize_blob(input: &[u8]) -> Result<(&[u8], &[u8]), Err> {
     const LEN_SIZE: usize = 4;
 
-    if bytes.len() < LEN_SIZE {
-        return Err(BlobDeserializeError::TruncatedInput { actual_len: bytes.len() });
+    if input.len() < LEN_SIZE {
+        return Err(DCS_INVALID_BLOB);  // need at least 4 bytes for length prefix
     }
-
-    let declared_len = u32::from_be_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]) as usize;
-    let data = &bytes[LEN_SIZE..];
-
-    const MAX_BLOB_SIZE: u32 = 1_048_576; // 1MB
-    if declared_len > MAX_BLOB_SIZE {
-        return Err(BlobDeserializeError::ExceedsMaxSize { declared: declared_len as u32, max: MAX_BLOB_SIZE });
+    let length = (u32(input[0]) << 24) | (u32(input[1]) << 16) | (u32(input[2]) << 8) | u32(input[3]);
+    if 4 + (length as usize) > input.len() {
+        return Err(DCS_INVALID_BLOB);  // truncated: declared length exceeds remaining bytes
     }
-
-    if data.len() != declared_len {
-        return Err(BlobDeserializeError::LengthMismatch { declared: declared_len as u32, actual: data.len() });
-    }
-
-    Ok(data)
+    let blob_data = input[4..4+(length as usize)];
+    let remaining = input[4+(length as usize)..];
+    Ok((blob_data, remaining))
 }
+
+/// On-disk format and byte-chaining (normative):
+/// stoolap's on-disk format for BYTEA columns must support length-prefixed byte-chaining:
+/// each serialized Blob value is u32_be(length) || bytes. When reading a row with multiple
+/// columns, the deserializer must consume exactly 4 + length bytes for each BYTEA column
+/// before proceeding to the next column. If stoolap's current format uses fixed-width or
+/// delimiter-based storage, an adapter layer must convert to/from DCS wire format
+/// before/after storage. The returned remaining bytes are chained to the next field's
+/// deserializer — discarding remaining bytes at the column level breaks DCS conformance.
+```
 ```
 
 ### Accessor Methods
@@ -365,9 +421,9 @@ impl Value {
 
 | Threat | Mitigation |
 |--------|------------|
-| Giant blob injection | Maximum blob size limit: 1MB |
+| Giant blob injection | Maximum blob size limit: 4GB per RFC-0127 / RFC-0127 Change 2; stoolap may enforce a lower application-level limit (e.g., 1MB). The DCS-layer ceiling is 4GB (0xFFFFFFFF bytes); `serialize_blob` returns `DCS_BLOB_LENGTH_OVERFLOW` if exceeded. |
 | Hash collision attacks | Use SipHash-2-4 (DoS-resistant hash function) |
-| Memory exhaustion | Blob data stored in Arc, not copied on clone |
+| Memory exhaustion | Blob data stored in Arc, not copied on clone. Per RFC-0127 Change 8 (Allocation safety), record-reading code that pre-allocates a buffer based on a declared length prefix before validating that the bytes are available is vulnerable to memory exhaustion. The bounds check (`4 + (length as usize) > input.len()`) MUST precede any allocation. This applies to the storage engine's record-reading layer, not just `deserialize_blob`. |
 
 ### Integrity
 
@@ -418,6 +474,11 @@ fn test_blob_sha256_stored_as_blob() {
 
     let value: Value = hash.into();  // Uses [u8; 32] → ToParam → Value::Blob
     assert_eq!(value.as_blob_32(), Some(expected));
+
+    // Cross-implementation verification: This payload aligns with RFC-0127 Entry 17,
+    // which uses SHA256(b"") — a 32-byte non-UTF-8 value for dispatcher verification.
+    // Both test vectors use non-UTF-8 binary data to confirm the Blob/String dispatcher
+    // correctly routes based on schema type, not wire format.
 }
 ```
 
@@ -429,20 +490,21 @@ fn test_blob_serialize_roundtrip() {
     let original: &[u8] = b"\x01\x02\x03\x04\x05";
 
     // Serialize
-    let serialized = serialize_blob(original);
+    let serialized = serialize_blob(original).unwrap();
     assert_eq!(&serialized[..4], &(5u32).to_be_bytes());
     assert_eq!(&serialized[4..], original);
 
-    // Deserialize
-    let deserialized = deserialize_blob(&serialized).unwrap();
+    // Deserialize — verify both the blob data and remaining bytes
+    let (deserialized, remaining) = deserialize_blob(&serialized).unwrap();
     assert_eq!(deserialized, original);
+    assert_eq!(remaining, &[]);  // no trailing bytes
 }
 
 #[test]
 fn test_blob_deserialize_truncated() {
     // 3 bytes is not enough for the length prefix
     let result = deserialize_blob(&[0x00, 0x00, 0x01]);
-    assert!(matches!(result, Err(BlobDeserializeError::TruncatedInput { .. })));
+    assert!(matches!(result, Err(DCS_INVALID_BLOB)));
 }
 
 #[test]
@@ -452,16 +514,26 @@ fn test_blob_deserialize_length_mismatch() {
     data.extend_from_slice(&10u32.to_be_bytes());
     data.extend_from_slice(b"hello");
     let result = deserialize_blob(&data);
-    assert!(matches!(result, Err(BlobDeserializeError::LengthMismatch { .. })));
+    assert!(matches!(result, Err(DCS_INVALID_BLOB)));
 }
 
 #[test]
 fn test_blob_deserialize_exceeds_max_size() {
-    // Declare 2MB blob
+    // Declare 5GB blob (exceeds 4GB DCS maximum)
     let mut data = Vec::new();
-    data.extend_from_slice(&2_097_152u32.to_be_bytes());
+    data.extend_from_slice(&5_368_709_120u32.to_be_bytes());  // > 0xFFFFFFFF
     let result = deserialize_blob(&data);
-    assert!(matches!(result, Err(BlobDeserializeError::ExceedsMaxSize { .. })));
+    assert!(matches!(result, Err(DCS_BLOB_LENGTH_OVERFLOW)));
+}
+
+#[test]
+fn test_blob_entry17_string_negative_verification() {
+    // RFC-0127 Entry 17: SHA256(b"") as blob payload.
+    // This payload is NOT valid UTF-8. Passing it to deserialize_string
+    // MUST return Err(DCS_INVALID_UTF8).
+    let entry17_bytes = hex::decode("00000020e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855").unwrap();
+    let result = deserialize_string(&entry17_bytes);
+    assert!(matches!(result, Err(DCS_INVALID_UTF8)));
 }
 ```
 
@@ -514,32 +586,11 @@ fn test_blob_sql_parsing() {
 - [ ] Add `Value::as_blob()`, `Value::as_blob_len()`, and `Value::as_blob_32()` accessors
 - [ ] Add blob comparison in `Value::compare_same_type`
 - [ ] Add `serialize_blob()` and `deserialize_blob()` functions
+- [ ] **Refactor serialization call chain** to propagate `Result<Vec<u8>, DcsError>` from `serialize_blob`. All other DCS serializers return `Vec<u8>` directly; Blob is the first to return `Result`. The insert path must handle both `Ok(bytes)` and `Err(DCS_BLOB_LENGTH_OVERFLOW)`.
+- [ ] **Increment `NUMERIC_SPEC_VERSION` to `2`** per RFC-0127 Change 11 and RFC-0110. Blob is a new DCS type; implementations claiming conformance must declare `NUMERIC_SPEC_VERSION >= 2`. See RFC-0110 for activation governance (minimum 2-epoch notice before H_upgrade).
+- [ ] **Audit `serialize_bytes` call sites** to ensure no Blob-typed data bypasses `serialize_blob`. `serialize_bytes` is a low-level primitive; `serialize_blob` is the public typed entry point.
 
-### Phase 2: Query Engine Integration
-
-- [ ] Hash index support for Blob columns using SipHash-2-4
-- [ ] Blob equality in expression evaluation
-- [ ] Blob in projection/selection
-
-### Phase 3: Integration with RFC-0903/0909
-
-> **Note**: Phase 3 is pending stoolap Blob implementation. The `schema.rs` in `crates/quota-router-core` has already been updated to use `key_hash BYTEA(32)`, but `storage.rs` still uses `hex::encode/decode`. See `TODO(rfc-0201-phase3)` comments in `storage.rs`.
-
-- [ ] Update `storage.rs` to use native blob (remove hex::encode/decode) — blocked on stoolap Blob implementation
-- [ ] Verify storage reduction with benchmark
-
-## Key Files to Modify
-
-| File | Change |
-|------|--------|
-| `stoolap/src/core/types.rs` | Add `DataType::Blob = 10` |
-| `stoolap/src/core/value.rs` | Add `Blob` struct, `BlobOrdering` enum, `Value::Blob` variant, accessors, comparison |
-| `stoolap/src/api/params.rs` | Add `ToParam` impls for blob types |
-| `stoolap/src/executor/expression/` | Blob comparison in VM |
-| `stoolap/src/storage/index/hash.rs` | Hash index for Blob columns (SipHash-2-4) |
-| `crates/quota-router-core/src/storage.rs` | TODO(rfc-0201-phase3): remove hex::encode/decode when Blob is available |
-
-## Rationale
+Rationale
 
 ### Why Blob Variant Over Extension?
 
@@ -561,27 +612,241 @@ Blob comparison for ordering (>, <, >=, <=) is non-deterministic in practice bec
 
 Therefore, only equality index (Hash) is supported, consistent with how hashes are used in practice.
 
+### Wire Format Has No Type Information
+
+The DCS wire format carries no type identifier — a `u32_be(5) || b"hello"` byte sequence is indistinguishable as String or Blob without schema context. Schema metadata must be preserved alongside data; loss of schema information makes byte-level type reconstruction impossible. This has disaster recovery implications: backups must include schema metadata to correctly deserialize BYTEA values.
+
+### Schema Validation for Dynamic Schemas
+
+Dynamic schemas (SQL CREATE TABLE) SHOULD be validated for well-formedness before deserialization begins. This includes verifying that all column types are known DCS types and that the dispatcher can route each column correctly. Compile-time schema definitions (e.g., Rust struct types) benefit from compile-time validation and are generally lower risk.
+
 ## Future Work
 
-- F1: Streaming blob I/O for large data (documents, images)
+- F1: Streaming blob I/O for large data (documents, images) — per RFC-0127 (Motivation), implementations SHOULD support streaming decode for Blobs larger than a configurable memory threshold (e.g., > 1MB) to prevent full payload allocation.
 - F2: Blob compression (for large variable-size blobs)
 - F3: Partial blob reads (subrange extraction)
-- F4: RFC-0126 amendment to add Blob/Bytes to the DCS type table (see SectionRFC-0126 Amendment below)
 
-## RFC-0126 Amendment
+## UTF-8 Skip Optimization (normative — FORBIDDEN)
 
-RFC-0201 depends on RFC-0126's serialization framework (length prefix, big-endian, no padding). RFC-0126 Part 3's DCS type table currently does not include Blob/Bytes as a primitive type. Before RFC-0201 can advance to Accepted, a **companion RFC** should be created to amend RFC-0126, adding the following entry to the DCS Primitive Type table:
+stoolap MUST NOT skip UTF-8 validation on TEXT reads based on byte inspection, caching schemes, or "known valid" heuristics when BYTEA columns coexist in the same schema. The ONLY conformant UTF-8 validation path for TEXT columns is through the schema-driven dispatcher. Any optimization that bypasses the dispatcher to "skip validation" for performance is non-conformant because:
 
-| Type | Format | Size |
-|------|--------|------|
-| `Blob` | `[length: u32BE][data: bytes]` | variable |
+1. The dispatcher determines type by schema metadata, not by inspecting bytes
+2. "Known valid UTF-8" cannot be established by examining the bytes themselves — that is precisely what `deserialize_string` exists to validate
+3. A caching optimization that stores pre-validated UTF-8 bytes is acceptable only if the cache entry was created through the dispatcher in the first place
 
-This amendment ensures the Blob serialization format is formally part of the DCS type system. The companion RFC should reference RFC-0201 as the authoritative specification for Blob semantics.
+The dispatcher requirement is not a performance suggestion — it is a consensus requirement per RFC-0127 Change 13. Short-circuiting it via byte-inspection shortcuts produces consensus-divergent results.
+
+## TEXT Column Size Limit (normative — 1MB per RFC-0127)
+
+TEXT columns MUST enforce a 1MB (1,048,576 byte) maximum length. Per RFC-0127 Change 6, `DCS_STRING_LENGTH_OVERFLOW` is returned when a string exceeds 1MB. This limit applies to TEXT columns in all schemas, including mixed BYTEA+TEXT schemas. The limit is enforced at the DCS layer via `deserialize_string`; the storage engine must propagate this error correctly rather than truncating or accepting oversized strings.
+
+## Row Deserialization: `is_top_level` Requirement (normative — MUST be true)
+
+stoolap's row deserialization MUST pass `is_top_level = true` to `deserialize_struct`. This is required because:
+
+- `is_top_level = true` enables the trailing-bytes check: if bytes remain after consuming all expected struct fields, the deserializer returns `DCS_INVALID_STRUCT`
+- `is_top_level = false` silently ignores trailing bytes, permitting malformed data to go undetected
+- A malicious or buggy storage engine could otherwise store trailing garbage that is never detected on read
+
+The only acceptable use of `is_top_level = false` is for nested Struct contexts (e.g., a Blob containing a nested Struct field). Top-level row deserialization is never a nested context.
+
+**Conformance test:**
+```rust
+#[test]
+fn test_row_deserialization_rejects_trailing_garbage() {
+    // A row struct with 1 TEXT field: u32_be(1) || "a"
+    let mut row = Vec::new();
+    row.extend_from_slice(&1u32.to_be_bytes()); // field_id = 1 (TEXT)
+    row.extend_from_slice(&1u32.to_be_bytes()); // string length = 1
+    row.push(b'a');
+    row.extend_from_slice(b"trailing garbage that must be rejected"); // extra bytes
+
+    let result = deserialize_struct(&row, /* is_top_level = */ true, /* depth = */ 0);
+    assert!(matches!(result, Err(DCS_INVALID_STRUCT)));
+}
+```
+
+## Row Storage Format (normative — DCS Struct encoding required)
+
+stoolap rows MUST be stored using DCS Struct encoding. This is not optional because:
+
+1. The DCS serialization layer (`serialize_struct`/`deserialize_struct`) is the only conformant way to handle the length-prefixed byte-chaining required for mixed-type rows containing Blobs
+2. A custom row format that does not use DCS Struct encoding would require the storage engine to reimplement byte-chaining, null handling, and field ordering — introducing non-determinism
+
+**Required format:**
+- Each field: `u32_be(field_id) || serialized_value` in **strictly ascending field_id order**
+- End of struct: `u32_be(0)` (zero field_id sentinel)
+- Trailing bytes MUST be rejected at deserialization time (enforced by `is_top_level = true`)
+- Null fields: schema-layer null bitmap or per-column null flag; DCS layer has no null type — zero bytes MUST NOT be used for NULL (see **Note on NULL representation** above)
+
+**Example — row with 2 columns (TEXT, BYTEA):**
+```
+u32_be(1) || u32_be(1) || 'a'    // field_id=1: TEXT "a"
+u32_be(2) || u32_be(5) || bytes  // field_id=2: BYTEA 5-bytes
+u32_be(0)                        // struct terminator
+```
+
+**Conformance test:**
+```rust
+#[test]
+fn test_row_struct_encoding_ascending_field_id() {
+    // Row with fields in wrong (non-ascending) order must be rejected.
+    // Correct: field 1 then field 2. Wrong: field 2 then field 1.
+    let mut row = Vec::new();
+    row.extend_from_slice(&2u32.to_be_bytes()); // field_id = 2 (should be first, but isn't)
+    row.extend_from_slice(&5u32.to_be_bytes());
+    row.extend_from_slice(b"hello");
+    row.extend_from_slice(&1u32.to_be_bytes()); // field_id = 1 (should precede field 2)
+    row.extend_from_slice(&1u32.to_be_bytes());
+    row.push(b'x');
+    row.extend_from_slice(&0u32.to_be_bytes()); // terminator
+
+    // deserialize_struct with ascending field_id check returns DCS_INVALID_STRUCT
+    let result = deserialize_struct(&row, /* is_top_level = */ true, /* depth = */ 0);
+    assert!(matches!(result, Err(DCS_INVALID_STRUCT)));
+}
+```
+
+## Phase 2: Query Engine Integration
+
+Phase 2 MUST fully implement the following items. Each is specified precisely:
+
+### Phase 2a: Hash Index for Blob Columns
+
+```sql
+CREATE INDEX idx_api_keys_hash ON api_keys(key_hash) USING HASH;
+```
+
+**Implementation requirements:**
+- Hash function: SipHash-2-4 with a 128-bit key generated at database open time
+- Index structure: `HashMap<SipHash output, Vec<row_id>>`
+- Blob hash key: the full 32-byte (or variable-length) blob content, not a hash of the content
+- O(1) average equality lookup
+
+### Phase 2b: Blob Equality in Expression Evaluation
+
+```sql
+SELECT * FROM api_keys WHERE key_hash = $1;
+```
+
+**Requirements:**
+- Expression VM must handle `Value::Blob` in equality comparison
+- Use `compare_blob()` (byte-by-byte) for comparison, not `memcmp` wrapper
+- Index lookup must use hash index when available
+
+### Phase 2c: Blob in Projection/Selection
+
+```sql
+SELECT key_hash, signature FROM usage_ledger WHERE event_id = $1;
+```
+
+**Requirements:**
+- Projection must route Blob columns through the schema-driven dispatcher
+- `Value::Blob` must serialize correctly in result set encoding
+
+### Phase 2d: Dispatcher Integration — Complete Specification
+
+The dispatcher integrates Blob deserialization with all Struct-containing operations. This is the full specification, not a placeholder:
+
+**Dispatcher function signature:**
+```rust
+fn dispatch_field(input: &[u8], col_type: &ColumnType, depth: u8)
+    -> Result<(Value, &[u8]), DcsError>
+{
+    match col_type {
+        ColumnType::Text => deserialize_string(input).map(|(v, rem)| (Value::String(v), rem)),
+        ColumnType::Bytea => deserialize_blob(input).map(|(v, rem)| (Value::Blob(Blob::from_slice(v)), rem)),
+        ColumnType::Struct(fields) => deserialize_struct(input, /* is_top_level = */ false, depth + 1)
+            .and_then(|(v, rem)| (Value::Struct(v), rem)),
+        // ... other DCS types
+    }
+}
+```
+
+**Dispatcher contract (normative):**
+1. **Progress check**: After deserializing each field, `new_remaining` MUST differ from `remaining_after_field_id`. If they are equal, the field consumed zero bytes but declared a non-zero length — return `DCS_INVALID_STRUCT`.
+2. **Empty-struct exemption**: An empty struct (`u32_be(0)` as first token) is valid and MUST NOT return `DCS_INVALID_STRUCT`. This exemption applies only to the first token being zero, not to zero-length fields within a non-empty struct.
+3. **Recursion depth limit**: If `depth >= 64`, return `DCS_RECURSION_LIMIT_EXCEEDED`. Each Struct or Array nesting level increments depth. Depth is passed from the caller and MUST be tracked, not reset.
+4. **Trailing bytes**: When `is_top_level = true`, any bytes remaining after the `u32_be(0)` terminator MUST return `DCS_INVALID_STRUCT`.
+
+**`dispatch_struct` specification:**
+```rust
+fn dispatch_struct(input: &[u8], is_top_level: bool, depth: u8) -> Result<(StructValue, &[u8]), DcsError> {
+    if depth >= 64 {
+        return Err(DCS_RECURSION_LIMIT_EXCEEDED);
+    }
+    let mut fields = Vec::new();
+    let mut remaining = input;
+
+    loop {
+        if remaining.len() < 4 {
+            return Err(DCS_INVALID_STRUCT); // need at least 4 bytes for field_id
+        }
+        let field_id = u32::from_be_bytes([remaining[0], remaining[1], remaining[2], remaining[3]]);
+        remaining = &remaining[4..];
+
+        if field_id == 0 {
+            break; // end of struct
+        }
+
+        let before_field = remaining;
+        let (value, rem) = dispatch_field(remaining, /* column_type from schema */, depth + 1)?;
+        if rem == before_field {
+            return Err(DCS_INVALID_STRUCT); // progress check failed
+        }
+        remaining = rem;
+        fields.push((field_id, value));
+    }
+
+    if is_top_level && !remaining.is_empty() {
+        return Err(DCS_INVALID_STRUCT); // trailing bytes check
+    }
+
+    Ok((StructValue { fields }, remaining))
+}
+```
+
+### Phase 2e: BYTEA[] Array Support
+
+BYTEA array types (`BYTEA[]`) MUST be supported in Phase 2. Each element is individually routed through the dispatcher — there is no batch deserialization shortcut:
+
+**Serialization:** Each element is serialized individually: `u32_be(count) || for each elem: u32_be(len) || bytes`
+**Deserialization:**
+```rust
+fn deserialize_bytea_array(input: &[u8]) -> Result<(Vec<Blob>, &[u8]), DcsError> {
+    if input.len() < 4 {
+        return Err(DCS_INVALID_BLOB); // need count prefix
+    }
+    let count = u32::from_be_bytes([input[0], input[1], input[2], input[3]])?;
+    let mut remaining = &input[4..];
+    let mut elements = Vec::with_capacity(count as usize);
+
+    for _ in 0..count {
+        let (blob_data, rem) = deserialize_blob(remaining)?;
+        elements.push(Blob::from_slice(blob_data));
+        remaining = rem;
+    }
+
+    Ok((elements, remaining))
+}
+```
+
+**Note:** Array deserialization does NOT use the dispatcher for the array itself (arrays have no DCS type code in the wire format — the count prefix is just a `u32`). Each element's type (BYTEA) is known from the column's schema declaration, so `deserialize_blob` is called directly for each element. If the array element type were polymorphic (e.g., a `SQL_ANY[]` variant), each element would need individual dispatcher routing.
+
+## Phase 3: Integration with RFC-0903/0909
+
+> **Note**: Phase 3 is pending stoolap Blob implementation. The `schema.rs` in `crates/quota-router-core` has already been updated to use `key_hash BYTEA(32)`, but `storage.rs` still uses `hex::encode/decode`. See `TODO(rfc-0201-phase3)` comments in `storage.rs`.
+
+- [ ] Update `storage.rs` to use native blob (remove hex::encode/decode) — blocked on stoolap Blob implementation
+- [ ] Verify storage reduction with benchmark
 
 ## Version History
 
 | Version | Date | Changes |
 |---------|------|---------|
+| 5.1 | 2026-03-27 | Fix MED-3.6/3.7/3.4/3.3/3.2/3.1 "deferred" items: removed "Open Implementation Questions" deferral section entirely. UTF-8 skip optimization: normative prohibition (FORBIDDEN, not optional). TEXT 1MB limit: added explicit reference to RFC-0127 requirement. is_top_level: added normative requirement (MUST be true for top-level row deserialization). Row storage format: specified DCS Struct encoding required with ascending field_id and trailing-bytes check. DVEC/DMAT BYTEA[]: fully specified Phase 2e with dispatcher routing per element. Phase 2 dispatcher integration: fully specified dispatch_struct with progress check, empty-struct exemption, recursion depth limit, and trailing-bytes enforcement. Removed duplicate Phase 2/Phase 3 checklist sections and "Key Files to Modify" table (superseded by fully-specified Phase 2 content). |
+| 5.0 | 2026-03-27 | Round 3 adversarial review fixes: CRIT-1.1 (add dispatcher architecture pseudocode with type metadata flow example), CRIT-1.2 (strengthen mixed-schema note: reciprocal String-deserialization-through-dispatcher requirement), CRIT-1.3 (Phase 1: serialize_blob Result propagation through insert path), CRIT-1.4 (add on-disk format / byte-chaining compatibility note), HIGH-2.3 (Security Considerations: allocation safety at record-reading level), HIGH-2.4 (clarify zero-copy / CompactArc semantics), HIGH-2.5 (normative: bare deserialization forbidden in production paths), HIGH-2.6 (NULL for BYTEA: NOT zero bytes — normative constraint), HIGH-2.7 (ALTER TABLE ADD COLUMN: DCS dispatcher cannot skip absent fields), MED-3.5 (add Entry 17 negative verification test: deserialize_string rejects non-UTF-8 payload with DCS_INVALID_UTF8), MED-3.8 (empty BYTEA = 4 bytes `0x00000000`, not zero), MED-4.2 (Phase 1: audit serialize_bytes call sites), MED-4.6 (F1: reference RFC-0127 streaming decode recommendation), MED-4.7 (add schema validation note for dynamic schemas), MED-4.8 (wire format type-less disaster recovery implication), MED-3.6/3.7/3.4/3.3/3.2/3.1 (defer 6 implementation architecture questions to Open Implementation Questions section) |
+| 3.0 | 2026-03-27 | Round 1 adversarial review fixes: CRIT-1 (RFC-0126 Amendment section removed; RFC-0127 is Accepted and already provides the DCS Blob entry), CRIT-2 (serialize_blob returns Result<Vec<u8>, DcsError> with explicit 4GB overflow guard per RFC-0127 Change 2), HIGH-1 (remove 1MB MAX_BLOB_SIZE, align to 4GB DCS maximum), HIGH-2 (deserialize_blob returns Result<(&[u8], &[u8]), Err> per RFC-0127 Change 8), HIGH-3 (explicit > 0xFFFFFFFF guard), MED-1 (DCS-layer pseudocode uses DCS_INVALID_BLOB / DCS_BLOB_LENGTH_OVERFLOW per RFC-0127 Change 7), MED-2 (Security Considerations reflects 4GB DCS max, not 1MB), MED-3 (add schema-driven dispatcher requirement citing RFC-0127 Change 13), MED-4 (deserialize_blob returns remaining bytes), MED-5 (DCS_BLOB_LENGTH_OVERFLOW in serialize_blob); LOW-1 (Dependencies cite RFC-0127), LOW-2 (Future Work F4 removed), LOW-3 (round-trip test verifies remaining bytes), LOW-4 (exceeds_max_size test uses 5GB) |
 | 2.0 | 2026-03-25 | Adversarial review fixes: CRIT-1 (remove false inline storage claim), CRIT-2 (document Phase 3 pending state), CRIT-3 (RFC-0126 amendment required); HIGH-1 (SipHash instead of ahash), HIGH-2 (fix GenericArray test), HIGH-3 (add deserialize_blob with error type), HIGH-4 (add Blob variant instead of Extension); MED-1 (no version byte), MED-2 (remove two-strategies framing), MED-3 (add round-trip tests), MED-4 (SQLite compatibility note), MED-5 (BYTEA(32) is enforced); LOW-1 (add as_blob_len), LOW-2 (plain language determinism) |
 | 1.0 | 2026-03-25 | Initial draft |
 
@@ -590,6 +855,7 @@ This amendment ensures the Blob serialization format is formally part of the DCS
 - RFC-0903 (Economics): Virtual API Key System
 - RFC-0909 (Economics): Deterministic Quota Accounting
 - RFC-0126 (Numeric): Deterministic Canonical Serialization
+- RFC-0127 (Numeric): DCS Blob Amendment — defines Blob as first-class DCS type
 
 ## Related Use Cases
 
@@ -597,6 +863,6 @@ This amendment ensures the Blob serialization format is formally part of the DCS
 
 ---
 
-**Version:** 2.0
-**Submission Date:** 2026-03-25
-**Last Updated:** 2026-03-25
+**Version:** 5.1
+**Original Submission Date:** 2026-03-25
+**Last Updated:** 2026-03-27

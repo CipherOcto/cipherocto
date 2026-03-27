@@ -2,7 +2,7 @@
 
 ## Status
 
-Draft (v6.12, adversarial review Round 14 candidate)
+Accepted (v6.12, adversarial review Round 14 — ratified)
 
 ## Authors
 

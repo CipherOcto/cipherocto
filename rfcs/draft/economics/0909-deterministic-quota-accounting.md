@@ -2,7 +2,7 @@
 
 ## Status
 
-Draft (v8 - binary hash storage)
+Draft (v9 - adopts RFC-0903 spend_ledger, removes parallel ledger schema)
 
 ## Authors
 
@@ -107,11 +107,11 @@ Cost is computed using deterministic rules.
 
 ```rust
 // Simple cost: just tokens
-let cost = prompt_tokens + completion_tokens;
+let cost = input_tokens + output_tokens;
 
 // Or rate-based cost:
-let cost = (prompt_tokens * prompt_rate) +
-           (completion_tokens * completion_rate);
+let cost = (input_tokens * prompt_rate) +
+           (output_tokens * completion_rate);
 ```
 
 Rates must be represented using **integer scaling**.
@@ -151,24 +151,24 @@ pub struct UsageEvent {
     pub team_id: Option<String>,
     /// Unix timestamp (seconds)
     pub timestamp: u64,
-    /// Route that was called
-    pub route: String,
     /// Provider name
     pub provider: String,
     /// Model name
     pub model: String,
     /// Number of prompt tokens
-    pub prompt_tokens: u32,
+    pub input_tokens: u32,
     /// Number of completion tokens
-    pub completion_tokens: u32,
+    pub output_tokens: u32,
     /// Total cost units (deterministic)
-    pub cost_units: u64,
+    pub cost_amount: u64,
     /// Pricing hash (SHA256 of pricing table used)
     pub pricing_hash: [u8; 32],
     /// Token source for deterministic accounting (CRITICAL for cross-router determinism)
     pub token_source: TokenSource,
     /// Canonical tokenizer version (if token_source is CanonicalTokenizer)
     pub tokenizer_version: Option<String>,
+    /// Raw provider usage JSON for audit
+    pub provider_usage_json: Option<String>,
 }
 
 /// Generate deterministic event_id from request content
@@ -308,26 +308,25 @@ Duplicate requests therefore cannot double charge.
 All usage events are written to a **ledger table**.
 
 ```sql
--- Usage ledger - THE authoritative economic record
+-- Spend ledger - THE authoritative economic record
+-- Adopted from RFC-0903 (Final) spend_ledger schema for consistency
 -- Token counts MUST originate from provider when available (see Canonical Token Accounting)
--- Hash storage: BYTEA(32) for SHA256 hashes (32 bytes) instead of TEXT hex (64+ chars)
-CREATE TABLE usage_ledger (
-    event_id BYTEA(32) PRIMARY KEY,     -- SHA256 = 32 bytes (not 64-char hex string)
-    request_id BYTEA(32) NOT NULL,     -- SHA256 = 32 bytes (not 64-char hex string)
-    key_id TEXT NOT NULL,               -- UUID as text (36 chars with dashes)
+CREATE TABLE spend_ledger (
+    event_id TEXT PRIMARY KEY,              -- UUID as text (36 chars with dashes)
+    request_id TEXT NOT NULL,               -- UUID as text
+    key_id TEXT NOT NULL,
     team_id TEXT,
-    timestamp BIGINT NOT NULL,          -- Unix epoch (authoritative event time)
-    route TEXT NOT NULL,                -- Route path (e.g., "/v1/chat/completions")
-    provider TEXT NOT NULL,             -- Provider name
-    model TEXT NOT NULL,                -- Model name
-    prompt_tokens INTEGER NOT NULL,
-    completion_tokens INTEGER NOT NULL,
-    cost_units BIGINT NOT NULL,
-    pricing_hash BYTEA(32) NOT NULL,   -- SHA256 of pricing table used
-    -- Token source for deterministic accounting (CRITICAL)
+    provider TEXT NOT NULL,                   -- Provider name
+    model TEXT NOT NULL,                     -- Model name
+    input_tokens INTEGER NOT NULL,            -- Prompt tokens
+    output_tokens INTEGER NOT NULL,           -- Completion tokens
+    cost_amount BIGINT NOT NULL,              -- Cost in smallest unit
+    pricing_hash BYTEA(32) NOT NULL,         -- SHA256 of pricing table used
+    timestamp INTEGER NOT NULL,                -- Unix epoch (authoritative event time)
     token_source TEXT NOT NULL CHECK (token_source IN ('provider_usage', 'canonical_tokenizer')),
     tokenizer_version TEXT,
-    -- Note: created_at removed - timestamp is authoritative for determinism
+    provider_usage_json TEXT,                  -- Raw provider usage for audit
+    created_at INTEGER NOT NULL DEFAULT (strftime('%s', 'now')),
     -- Scoped uniqueness: request_id unique per key (idempotency constraint)
     UNIQUE(key_id, request_id),
     -- Foreign keys for integrity
@@ -335,13 +334,13 @@ CREATE TABLE usage_ledger (
     FOREIGN KEY(team_id) REFERENCES teams(team_id) ON DELETE SET NULL
 );
 
-CREATE INDEX idx_usage_ledger_key_id ON usage_ledger(key_id);
-CREATE INDEX idx_usage_ledger_team_id ON usage_ledger(team_id);
-CREATE INDEX idx_usage_ledger_timestamp ON usage_ledger(timestamp);
+CREATE INDEX idx_spend_ledger_key_id ON spend_ledger(key_id);
+CREATE INDEX idx_spend_ledger_team_id ON spend_ledger(team_id);
+CREATE INDEX idx_spend_ledger_timestamp ON spend_ledger(timestamp);
 -- Composite index for efficient quota queries
-CREATE INDEX idx_usage_ledger_key_time ON usage_ledger(key_id, timestamp);
+CREATE INDEX idx_spend_ledger_key_time ON spend_ledger(key_id, timestamp);
 -- Index for pricing verification queries
-CREATE INDEX idx_usage_ledger_pricing_hash ON usage_ledger(pricing_hash);
+CREATE INDEX idx_spend_ledger_pricing_hash ON spend_ledger(pricing_hash);
 ```
 
 ## Replay and Verification
@@ -364,7 +363,7 @@ pub fn replay_events(events: &[UsageEvent]) -> BTreeMap<Uuid, u64> {
 
     for event in sorted_events {
         let entry = key_spend.entry(event.key_id).or_insert(0);
-        *entry = entry.saturating_add(event.cost_units);
+        *entry = entry.saturating_add(event.cost_amount);
     }
 
     key_spend
@@ -382,11 +381,11 @@ Verification nodes can reconstruct:
 For audit and verification, deterministic replay MUST follow this procedure:
 
 ```
-1. Load all usage_ledger for a key_id
+1. Load all spend_ledger for a key_id
 2. Order by timestamp ASC, then event_id ASC (canonical identity)
-3. Compute current_spend = SUM(events.cost_units)
+3. Compute current_spend = SUM(events.cost_amount)
 4. Verify equality: computed_spend == stored current_spend
-5. If mismatch, trust usage_ledger as authoritative
+5. If mismatch, trust spend_ledger as authoritative
 ```
 
 This ensures economic audit can always reconcile the ledger.
@@ -396,8 +395,8 @@ This ensures economic audit can always reconcile the ledger.
 The following invariants MUST hold at all times:
 
 ```
-1. usage_ledger are the authoritative economic record
-2. current_spend = SUM(usage_ledger.cost_units)
+1. spend_ledger are the authoritative economic record
+2. current_spend = SUM(spend_ledger.cost_amount)
 3. 0 ≤ current_spend ≤ budget_limit
 4. request_id uniqueness prevents double charging
 5. pricing_hash ensures deterministic cost calculation
@@ -450,15 +449,15 @@ pub fn get_pricing(model: &str) -> Option<PricingModel> {
 /// Calculate cost deterministically
 pub fn calculate_cost(
     model: &str,
-    prompt_tokens: u32,
-    completion_tokens: u32,
+    input_tokens: u32,
+    output_tokens: u32,
 ) -> Result<u64, Error> {
     let pricing = get_pricing(model)
         .ok_or_else(|| Error::UnknownModel(model.to_string()))?;
 
     // Integer math only - no floating point
-    let prompt_cost = (prompt_tokens as u64 * pricing.prompt_cost_per_1k) / 1000;
-    let completion_cost = (completion_tokens as u64 * pricing.completion_cost_per_1k) / 1000;
+    let prompt_cost = (input_tokens as u64 * pricing.prompt_cost_per_1k) / 1000;
+    let completion_cost = (output_tokens as u64 * pricing.completion_cost_per_1k) / 1000;
 
     Ok(prompt_cost + completion_cost)
 }
@@ -533,19 +532,20 @@ The router must recompute cost using **its own pricing tables**, ignoring provid
 ```rust
 /// Process response and record usage
 /// CRITICAL: Uses provider-reported tokens and deterministic event_id for cross-router determinism
+/// Note: ProviderResponse.provider_usage_json contains the raw provider usage JSON for audit
 pub fn process_response(
     db: &Database,
     key_id: &Uuid,
     team_id: Option<&str>,
     provider: &str,
     model: &str,
-    response: &ProviderResponse,
+    response: &ProviderResponse,  // Contains: usage, timestamp, id, provider_usage_json
     pricing_hash: [u8; 32],
 ) -> Result<UsageEvent, Error> {
     // CRITICAL: Use provider-reported tokens for deterministic accounting
     // This ensures all routers produce identical token counts
-    let prompt_tokens = response.prompt_tokens;
-    let completion_tokens = response.completion_tokens;
+    let input_tokens = response.input_tokens;
+    let output_tokens = response.output_tokens;
 
     // Determine token source: check if provider returned usage metadata
     // A provider may legitimately return 0 tokens, so check .is_some() not token count
@@ -557,7 +557,7 @@ pub fn process_response(
     };
 
     // Calculate cost using deterministic pricing
-    let cost_units = calculate_cost(model, prompt_tokens, completion_tokens)?;
+    let cost_amount = calculate_cost(model, input_tokens, output_tokens)?;
 
     // Generate deterministic request_id (binary SHA256)
     let request_id = compute_request_id(key_id, response.timestamp, &response.id);
@@ -568,8 +568,8 @@ pub fn process_response(
         key_id,
         provider,
         model,
-        prompt_tokens,
-        completion_tokens,
+        input_tokens,
+        output_tokens,
         &pricing_hash,
         token_source,
     );
@@ -581,15 +581,15 @@ pub fn process_response(
         key_id: *key_id,
         team_id: team_id.map(String::from),
         timestamp: response.timestamp,
-        route: response.route.clone(),
         provider: provider.to_string(),
         model: model.to_string(),
-        prompt_tokens,
-        completion_tokens,
-        cost_units,
+        input_tokens,
+        output_tokens,
+        cost_amount,
         pricing_hash,
         token_source,
         tokenizer_version,
+        provider_usage_json: response.provider_usage_json.clone(),
     };
 
     // Wrap in transaction for atomicity - prevents orphan ledger entries
@@ -604,42 +604,42 @@ pub fn process_response(
 
     // 2. Compute current spend from ledger
     let current: i64 = tx.query_row(
-        "SELECT COALESCE(SUM(cost_units), 0) FROM usage_ledger WHERE key_id = $1",
+        "SELECT COALESCE(SUM(cost_amount), 0) FROM spend_ledger WHERE key_id = $1",
         params![key_id.to_string()],
         |row| row.get(0),
     )?;
 
     // 3. Check budget
-    if current + cost_units as i64 > budget {
+    if current + cost_amount as i64 > budget {
         return Err(Error::BudgetExceeded { current: current as u64, limit: budget as u64 });
     }
 
-    // 4. Insert into ledger (binary hash storage for event_id, request_id)
+    // 4. Insert into ledger
     tx.execute(
-        "INSERT INTO usage_ledger (
-            event_id, request_id, key_id, team_id, timestamp, route,
-            provider, model, prompt_tokens, completion_tokens, cost_units,
-            pricing_hash, token_source, tokenizer_version
+        "INSERT INTO spend_ledger (
+            event_id, request_id, key_id, team_id, timestamp,
+            provider, model, input_tokens, output_tokens, cost_amount,
+            pricing_hash, token_source, tokenizer_version, provider_usage_json
         ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
         ON CONFLICT(key_id, request_id) DO NOTHING",
         params![
-            &event.event_id,                 -- BYTEA(32) binary
-            &event.request_id,                -- BYTEA(32) binary
+            &event.event_id,
+            &event.request_id,
             event.key_id.to_string(),
             event.team_id,
             event.timestamp as i64,
-            &event.route,
             &event.provider,
             &event.model,
-            event.prompt_tokens as i32,
-            event.completion_tokens as i32,
-            event.cost_units as i64,
-            &event.pricing_hash,             -- BYTEA(32) binary
+            event.input_tokens as i32,
+            event.output_tokens as i32,
+            event.cost_amount as i64,
+            &event.pricing_hash,
             match event.token_source {
                 TokenSource::ProviderUsage => "provider_usage",
                 TokenSource::CanonicalTokenizer => "canonical_tokenizer",
             },
             event.tokenizer_version,
+            &event.provider_usage_json,
         ],
     )?;
 
@@ -722,7 +722,7 @@ pub fn build_merkle_tree(events: &[UsageEvent]) -> MerkleNode {
         .map(|e| {
             let mut hasher = Sha256::new();
             hasher.update(&e.event_id);  // Binary hash, not hex string
-            hasher.update(e.cost_units.to_le_bytes());
+            hasher.update(e.cost_amount.to_le_bytes());
             hasher.finalize().into()
         })
         .collect();
@@ -832,7 +832,7 @@ RFC-0909 follows a **ledger-based architecture** for deterministic quota account
 **Core principle:**
 
 ```
-usage_ledger is the authoritative economic record.
+spend_ledger is the authoritative economic record.
 All balances MUST be derived from the ledger.
 ```
 
@@ -846,7 +846,7 @@ This simplifies the system and makes it more deterministic:
 
 **Key architectural points:**
 
-1. **Ledger is authoritative** - All economic events are appended to `usage_ledger`
+1. **Ledger is authoritative** - All economic events are appended to `spend_ledger`
 2. **Balances are derived** - `current_spend` is computed from ledger, not stored
 3. **Idempotent events** - `request_id UNIQUE` prevents double charging
 4. **Deterministic event_id** - SHA256 hash ensures same request = same event across routers
@@ -875,25 +875,25 @@ pub fn record_usage(
 
     // 2. Compute current spend from ledger (not a counter)
     let current: i64 = tx.query_row(
-        "SELECT COALESCE(SUM(cost_units), 0) FROM usage_ledger WHERE key_id = $1",
+        "SELECT COALESCE(SUM(cost_amount), 0) FROM spend_ledger WHERE key_id = $1",
         params![key_id.to_string()],
         |row| row.get(0),
     )?;
 
     // 3. Check budget with locked row
-    if current + event.cost_units as i64 > budget {
+    if current + event.cost_amount as i64 > budget {
         return Err(KeyError::BudgetExceeded { current: current as u64, limit: budget as u64 });
     }
 
     // 4. Insert into ledger (idempotent with ON CONFLICT - must match UNIQUE(key_id, request_id))
     tx.execute(
-        "INSERT INTO usage_ledger (
-            event_id, request_id, key_id, team_id, timestamp, route,
-            provider, model, prompt_tokens, completion_tokens, cost_units,
-            pricing_hash, token_source, tokenizer_version
+        "INSERT INTO spend_ledger (
+            event_id, request_id, key_id, team_id, timestamp,
+            provider, model, input_tokens, output_tokens, cost_amount,
+            pricing_hash, token_source, tokenizer_version, provider_usage_json
         ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
         ON CONFLICT(key_id, request_id) DO NOTHING",
-        params![...],
+        params![...],  // Same params as record_spend above
     )?;
 
     tx.commit()?;
@@ -908,7 +908,7 @@ Without row locking, two routers can race and overspend. With `FOR UPDATE`, only
 **Deterministic replay:**
 
 ```
-1. SELECT * FROM usage_ledger ORDER BY timestamp, event_id
+1. SELECT * FROM spend_ledger ORDER BY timestamp, event_id
 2. Recompute balances
 3. Verify equality with any cached balances
 ```
@@ -951,6 +951,7 @@ authentication
 authorization
 rate limits
 budgets
+spend_ledger table schema (Final)
 ```
 
 RFC-0909 defines:
@@ -959,6 +960,8 @@ RFC-0909 defines:
 how usage is measured and deducted
 ```
 
+**Ledger adoption (v9):** RFC-0909 previously defined a parallel `usage_ledger` table with different column names and types. As of v9, RFC-0909 adopts RFC-0903's `spend_ledger` schema as the canonical ledger. Both RFCs now share the same ledger table definition (`spend_ledger` with `input_tokens`/`output_tokens`/`cost_amount`/`provider_usage_json` columns). This eliminates the earlier inconsistency where the two RFCs had conflicting ledger schemas.
+
 Together they form the **quota router economic core**.
 
 ## Approval Criteria
@@ -966,13 +969,19 @@ Together they form the **quota router economic core**.
 This RFC can be approved when:
 
 - deterministic cost units are implemented
-- usage ledger is append-only
+- spend_ledger is append-only (per RFC-0903)
 - atomic quota deduction is implemented
 - idempotent request accounting exists
+
+## Changelog
+
+| Version | Date | Changes |
+|---------|------|---------|
+| v9 | 2026-03-27 | Adopt RFC-0903 `spend_ledger` schema; remove parallel `usage_ledger` table; rename columns (`prompt_tokens`→`input_tokens`, `completion_tokens`→`output_tokens`, `cost_units`→`cost_amount`); add `provider_usage_json` field; remove `route` column |
 
 ---
 
 **Draft Date:** 2026-03-25
-**Version:** v8
+**Version:** v9
 **Related Use Case:** Enhanced Quota Router Gateway
 **Related RFCs:** RFC-0903 (Virtual API Key System)

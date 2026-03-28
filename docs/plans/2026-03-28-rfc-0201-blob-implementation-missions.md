@@ -200,12 +200,14 @@ In `cast_to_type` FROM Blob → Text: hex encoding.
 
 ### 9. Serialization (`src/storage/mvcc/persistence.rs`)
 
-**Tag 12** is the next free tag for Blob:
+**Tag 12** is the next free tag for Blob.
+
+**Wire format** (per RFC-0201 §Serialization): `[u8: 12] [u32_be: length] [u8..len: data]`
 
 ```rust
 Value::Blob(data) => {
     buf.push(12);
-    buf.extend_from_slice(&(data.len() as u32).to_le_bytes());
+    buf.extend_from_slice(&(data.len() as u32).to_be_bytes());
     buf.extend_from_slice(data);
 }
 ```
@@ -214,11 +216,11 @@ Value::Blob(data) => {
 
 ```rust
 12 => {
-    // Blob
+    // Blob — per RFC-0201: u32_be length prefix, DCS_INVALID_BLOB on truncation
     if rest.len() < 4 {
         return Err(Error::internal("missing blob length"));
     }
-    let len = u32::from_le_bytes(rest[..4].try_into().unwrap()) as usize;
+    let len = u32::from_be_bytes(rest[..4].try_into().unwrap()) as usize;
     if rest.len() < 4 + len {
         return Err(Error::internal("missing blob data"));
     }

@@ -487,3 +487,15 @@ After RFC-0130-A (BigInt core):
 
 After RFC-0130-B (conversions):
 - CAST expressions work for BIGINT↔DQA, BIGINT↔DECIMAL, DECIMAL↔DQA
+
+---
+
+## Deferred / Follow-up Missions
+
+### Follow-up: 1MB TEXT Column Limit Enforcement
+
+**RFC reference:** RFC-0201 Phase 1 checklist item + RFC-0127 Change 6
+
+Per RFC-0127 Change 6, `DCS_STRING_LENGTH_OVERFLOW` fires at 1,048,576 bytes. TEXT columns in all schemas (including mixed BYTEA+TEXT) MUST enforce this limit. The limit is enforced at the DCS layer; the storage engine must propagate the error correctly.
+
+This was deferred from Mission A scope (BYTEA-focused). TEXT limit enforcement is a separate concern.

@@ -2,7 +2,7 @@
 
 ## Status
 
-Claimed
+Superseded
 
 ## RFC
 

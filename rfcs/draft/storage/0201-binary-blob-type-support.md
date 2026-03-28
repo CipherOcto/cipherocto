@@ -2,7 +2,7 @@
 
 ## Status
 
-Draft (v5.11, adversarial review)
+Draft (v5.12, adversarial review)
 
 ## Authors
 
@@ -379,8 +379,10 @@ fn serialize_blob(data: &[u8]) -> Result<Vec<u8>, DcsError> {
 /// u32_be(count) || [serialize_elem(elem) for each element]
 fn serialize_dvec(elems: &[Value], elem_type: &ColumnType) -> Result<Vec<u8>, DcsError> {
     // Guard against count overflow when casting usize → u32
+    // RFC-0127 defines no DCS_DVEC_LENGTH_OVERFLOW; DCS_INVALID_STRUCT is used because
+    // the wire format cannot represent a count that exceeds u32::MAX.
     if elems.len() > u32::MAX as usize {
-        return Err(DCS_INVALID_STRUCT);  // count exceeds u32::MAX — wire format cannot represent it
+        return Err(DCS_INVALID_STRUCT);  // count exceeds u32::MAX
     }
     // Element-type validation: each element is passed to serialize_value(elem, elem_type),
     // which returns DCS_INVALID_STRUCT on type mismatch. No partial serialization occurs —
@@ -753,13 +755,30 @@ fn test_serialize_struct_rejects_field_id_mismatch() {
 
 #[test]
 fn test_serialize_blob_small_blob_accepted() {
-    // The 4GB boundary check: if data.len() > 0xFFFFFFFF { return Err(DCS_BLOB_LENGTH_OVERFLOW) }
-    // Integration test: allocate exactly 0xFFFFFFFF + 1 bytes and verify DCS_BLOB_LENGTH_OVERFLOW.
-    // That allocation requires >= 8GB RAM and should run in integration tests only.
-    // Unit test: verify a representative small blob succeeds:
+    // Unit test: verify a representative small blob succeeds.
+    // The 4GB boundary (data.len() > 0xFFFFFFFF → DCS_BLOB_LENGTH_OVERFLOW) requires
+    // >= 8GB RAM for integration testing and is documented as a deferred integration test.
     let small_blob = vec![0u8; 10];
     assert!(serialize_blob(&small_blob).is_ok(), "10-byte blob is accepted");
-    // The full 4GB+ boundary test is documented for integration testing with adequate RAM.
+}
+
+#[test]
+fn test_struct_serialize_roundtrip() {
+    // Round-trip: serialize_struct → dispatch_struct produces same values
+    let schema = vec![
+        (1u32, ColumnType::Text),
+        (2u32, ColumnType::Bytea),
+    ];
+    let fields = vec![
+        (1u32, Value::String("hello".to_string())),
+        (2u32, Value::Blob(Blob::new(vec![0xDE, 0xAD]))),
+    ];
+    let serialized = serialize_struct(&fields, &schema).unwrap();
+    let (remaining, sv) = dispatch_struct(&serialized, /* is_top_level = */ true, /* depth = */ 0, &schema).unwrap();
+    assert!(remaining.is_empty(), "round-trip must consume all bytes");
+    assert_eq!(sv.fields.len(), 2);
+    assert_eq!(sv.fields[0].1, Value::String("hello".to_string()));
+    assert_eq!(sv.fields[1].1, Value::Blob(Blob::new(vec![0xDE, 0xAD])));
 }
 ```
 
@@ -1567,7 +1586,7 @@ pub enum ColumnType {
 1. **Progress check**: After deserializing each field, the remaining bytes MUST differ from `remaining_after_field_id`. If they are equal, the field consumed zero bytes but declared a non-zero length — return `DCS_INVALID_STRUCT`. Exception: `ColumnType::Struct(fields)` where `fields` is empty — an empty Struct legitimately consumes 0 bytes.
 2. **Empty-struct exemption**: An empty Struct (`ColumnType::Struct([])`) is valid and MUST NOT trigger the progress check. This is the only permitted zero-byte type.
 3. **Recursion depth limit**: If `depth >= 64`, return `DCS_RECURSION_LIMIT_EXCEEDED` per RFC-0127 Change 13. Each `dispatch_struct` call (one per Struct nesting level) increments depth by 1. The `dispatch_struct` guard runs once per frame; `dispatch_field` does not independently check the limit. A nesting depth of 0 (top-level) through 63 (63 nested levels below top) is allowed — 64 total frames.
-4. **Trailing bytes**: When `is_top_level = true`, any bytes remaining after the `u32_be(0)` terminator MUST return `DCS_INVALID_STRUCT`.
+4. **Trailing bytes**: When `is_top_level = true`, any bytes remaining after all schema fields are consumed MUST return `DCS_INVALID_STRUCT`.
 5. **Required types**: The dispatcher MUST handle at minimum: `Bool`, `I128`, `Dqa`, `Text`, `Bytea`, `Struct`, `Option`, `Dvec`, and `Dmat`. `Dfp`, `BigInt`, and `Enum` are fully specified in this RFC — `Dfp` and `BigInt` use `todo!()` as implementation placeholders. They are not required types for Blob conformance but MUST be implemented before general availability.
 
 **`dispatch_field` specification (depth: usize to match RFC-0127):**
@@ -1795,7 +1814,7 @@ fn deserialize_dmat(input: &[u8], schema_rows: usize, schema_cols: usize, elem_t
 
 | Version | Date | Changes |
 |---------|------|---------|
-| 5.11 | 2026-03-28 | Round 14 adversarial review fixes: CRIT-1 (Row Storage Format: remove u32_be(0) terminator from example and conformance test per RFC-0127 Change 13), CRIT-2 (footer version: update to v5.10), HIGH-1 (serialize_dmat: add matrix dimension validation: matrix.len() == rows and each row.len() == cols), HIGH-2 (serialize_dvec: add comment documenting per-element type validation via serialize_value), MED-1 (serialize_value Blob arm: add size pre-check for 4GB overflow before returning DCS_INVALID_STRUCT), MED-2 (add test_serialize_struct_rejects_field_id_mismatch), MED-3 (covered by HIGH-1), LOW-1 (rename test_dispatch_struct_rejects_non_ascending_field_ids → test_dispatch_struct_rejects_field_id_mismatch with clarifying comment), LOW-2 (rename test_serialize_blob_exceeds_4gb_boundary → test_serialize_blob_small_blob_accepted). |
+| 5.12 | 2026-03-28 | Round 15 adversarial review fixes: CRIT-1 (Dispatcher contract point 4: remove "u32_be(0) terminator" reference — no terminator exists per RFC-0127 Change 13), CRIT-2 (REBUTTAL: footer already v5.11 from Round 14), CRIT-3 (REBUTTAL: serialize_struct already validates field_id correspondence at line 474), MED-2 (serialize_dvec: add rationale comment: RFC-0127 defines no DCS_DVEC_LENGTH_OVERFLOW so DCS_INVALID_STRUCT is used), MED-3 (add test_struct_serialize_roundtrip), LOW-2 (simplify test_serialize_blob_small_blob_accepted doc comment to match actual test behavior). |
 | 5.7 | 2026-03-27 | Round 10 adversarial review fixes: CRIT-1 (remove terminator; iterate over schema in order per RFC-0127 Change 13), CRIT-2 (accept via CRIT-1), CRIT-3 (dispatcher example: from_slice → from_shared), CRIT-4 (strict positional matching; wire field_id must equal schema field_id per RFC-0127), HIGH-1 (remove vestigial 6-code DcsError paragraph; keep only 12-code paragraph), HIGH-2 (add test_dispatch_option_none_and_some, test_dispatch_enum_valid_and_invalid_variant, test_dispatch_dvec_with_blob_elements, test_dispatch_recursive_struct, test_dispatch_struct_with_blob_field), HIGH-3 (add Value::Dvec(Vec<Value>) to stoolap core Value enum note), HIGH-4 (from_shared: SHOULD → MUST with debug_assert), MED-1 (deserialize_dmat: use schema dimensions for iteration; wire only for validation), MED-2 (clarify null bitmap: NULL fields absent from wire, bitmap indicates which schema fields present), MED-3 (BYTEA(N): regex captures N, stored as ColumnConstraint::Length(N)), MED-4 (BYTEA(32) test: unit test for Blob construction; SQL enforcement at integration level), MED-5 (text_1mb_limit: note serialize_string/deserialize_string imported from RFC-0127), MED-6 (depth fix: dispatch_struct passes depth to dispatch_field; only Struct arm increments), LOW-1 (empty struct test: add outer/inner terminator labels), LOW-3 (test_blob_ordering: use Blob::new with compare_blob), LOW-4 (debug_assert for schema field_id ascending/unique already present). |
 | 5.6 | 2026-03-27 | Round 9 adversarial review fixes: CRIT-1 (remove deserialize_string stub; reference RFC-0127 only), CRIT-3 (Enum error: callers MUST NOT rely on error code specificity), CRIT-4 (depth: only Struct increments depth; Option/Dvec/Dmat/Enum pass depth unchanged), CRIT-5 (clarify CompactArc copies data; from_shared is not lifetime extension), CRIT-6 (REBUTTAL: non-contiguous field_ids valid for schema evolution), CRIT-7 (REBUTTAL: zero terminator IS in RFC-0127 Change 13), HIGH-1 (add HKDF-SHA256 params to SipHash key derivation), HIGH-3 (revert ToParam Vec<u8> to self.clone()), HIGH-4 (Struct field validation: MUST reject, not SHOULD), HIGH-5 (document DCS_INVALID_BLOB zero-read vs truncation distinction), HIGH-6 (fully specify null bitmap: offset, bit ordering, versioning, DCS interaction), HIGH-8 (add wire vs schema dimension validation in deserialize_dmat), MED-1 (document CompactArc heap-allocates and copies), MED-2 (add dispatcher routing prose test vectors), MED-3 (from_shared pointer-distinctness note), MED-4 (specify BYTEA(N) parsing), MED-5 (Dfp/BigInt not required for Blob conformance), MED-6 (clarify hash index only affects lookups, not comparison operators), MED-7 (correct DcsError to all 12 RFC-0127 codes), LOW-1 (replace 5GB allocation test with boundary test), LOW-3 (clarify USING HASH accepted by stoolap parser), LOW-4 (document Blob does not derive Ord; Value uses compare_blob), LOW-5 (add benchmark methodology). |
 | 5.5 | 2026-03-27 | Round 8 adversarial review fixes: CRIT-1 (SipHash key: specify persistent key storage/reload requirement), CRIT-2 (4GB blob: add application-level 1MB limit + memory exhaustion warning), CRIT-3 (add serialize_blob >4GB test), HIGH-1 (strengthen DcsError definition with all 6 canonical variant names), HIGH-2 (add Blob::from_shared zero-copy constructor for deserialization path), HIGH-3 (add deserialize_string definition reference to RFC-0127), HIGH-4 (add 1MB TEXT enforcement to Phase 1 checklist), MED-1 (specify null bitmap format normatively), MED-2 (add Phase 2 checkboxes to all sub-sections), MED-3 (document DCS_INVALID_ENUM semantic mismatch in Enum arm), MED-4 (add Struct field_id ascending/unique/no-gaps constraint), MED-5 (replace BYTEA(32) placeholder test with real conformance test), MED-6 (fix ToParam Vec<u8> redundant clone: use std::mem::take), LOW-1 (PostgreSQL USING HASH case-insensitivity note), LOW-2 (add Dqa to dispatcher contract required types), LOW-3 (add Value::Dmat note to type def), LOW-4 (fix v5.4 changelog: remove MED-7.1/7.2/7.3 self-references), LOW-5 (verify all test scenarios present), XRFC-1 (specify serialize_blob Result handling in INSERT path), XRFC-2 (coordinate NUMERIC_SPEC_VERSION with RFC-0110 governance), XRFC-3 (add Phase 3 acceptance criteria). |
@@ -1821,6 +1840,6 @@ fn deserialize_dmat(input: &[u8], schema_rows: usize, schema_cols: usize, elem_t
 
 ---
 
-**Version:** 5.11
+**Version:** 5.12
 **Original Submission Date:** 2026-03-25
 **Last Updated:** 2026-03-28

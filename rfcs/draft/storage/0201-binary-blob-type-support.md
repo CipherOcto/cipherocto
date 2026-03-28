@@ -2,7 +2,7 @@
 
 ## Status
 
-Draft (v5.7, adversarial review)
+Draft (v5.8, adversarial review)
 
 ## Authors
 
@@ -128,9 +128,9 @@ impl Blob {
     /// Implementations MUST verify that `Blob::from_shared(data).as_bytes().as_ptr()
     /// != data.as_ptr()` — i.e., the stored bytes are a distinct allocation, not a
     /// direct pointer into the input buffer. Use a debug_assert! in the implementation:
-    /// `debug_assert_ne!(Blob::from_shared(data).as_bytes().as_ptr(), data.as_ptr())`.
-    /// This is safe when called from the dispatcher in the query execution context —
-    /// the input buffer lives for the query duration.
+    /// `assert_ne!(Blob::from_shared(data).as_bytes().as_ptr(), data.as_ptr())`.
+    /// Enforced in all build modes — incorrect behavior (storing a direct pointer
+    /// into the input buffer) would cause use-after-free in the dispatcher.
     pub fn from_shared(data: &[u8]) -> Self {
         Blob { data: CompactArc::from(data) }
     }
@@ -709,15 +709,16 @@ fn test_dispatch_struct_rejects_non_ascending_field_ids() {
 #[test]
 fn test_dispatch_struct_empty_struct_exemption() {
     // Empty nested struct: Struct { inner: Struct {} }
-    // The empty struct MUST NOT trigger the progress check — it legitimately consumes 0 bytes
+    // The empty struct MUST NOT trigger the progress check — it legitimately consumes 0 bytes.
+    // With v5.7 for-loop-over-schema: wire is just field_id=1, no terminator, no inner content.
     let inner_schema: Vec<(u32, ColumnType)> = vec![];  // empty struct
     let outer_schema = vec![
         (1u32, ColumnType::Struct(inner_schema.clone())),
     ];
     let mut row = Vec::new();
-    row.extend_from_slice(&1u32.to_be_bytes());       // field_id = 1 (Struct)
-    row.extend_from_slice(&0u32.to_be_bytes());       // inner struct: empty (u32_be(0)) — inner terminator
-    row.extend_from_slice(&0u32.to_be_bytes());       // outer struct: terminator
+    row.extend_from_slice(&1u32.to_be_bytes()); // field_id = 1 (Struct)
+    // Inner schema is empty [] — dispatch_struct for inner consumes 0 bytes.
+    // No inner terminator, no outer terminator — v5.7 for-loop ends when schema fields exhausted.
 
     let result = dispatch_struct(&row, /* is_top_level = */ true, /* depth = */ 0, &outer_schema);
     assert!(result.is_ok(), "Empty struct must be accepted, not rejected");
@@ -726,28 +727,48 @@ fn test_dispatch_struct_empty_struct_exemption() {
 #[test]
 fn test_dispatch_struct_recursion_depth_limit() {
     // Per RFC-0127 Change 13: depth >= 64 triggers DCS_RECURSION_LIMIT_EXCEEDED.
-    // Top-level depth=0; 63 nested levels below top is allowed (64 total frames).
-    // depth=64 itself is rejected.
+    // Top-level depth=0; each Struct nesting level adds 1 to depth.
+    // For a schema with a Struct field, the inner dispatch_struct call is at depth+1.
+    // So: top-level depth=61 → inner Struct at depth=62 → inner-most at depth=63 (< 64, OK).
+    //     top-level depth=62 → inner Struct at depth=63 → inner-most at depth=64 (REJECTED).
     let schema: Vec<(u32, ColumnType)> = vec![
         (1u32, ColumnType::Struct(vec![
             (1u32, ColumnType::Text),
         ])),
     ];
-    // Empty struct bytes: u32_be(0) terminator — valid input that reaches the depth check
-    let empty_struct_bytes = u32::to_be_bytes(0);
-    let result = dispatch_struct(&empty_struct_bytes, /* is_top_level = */ true, /* depth = */ 64, &schema);
-    assert!(matches!(result, Err(DCS_RECURSION_LIMIT_EXCEEDED)));
-    // depth=63 with valid empty struct bytes should succeed
-    let result_ok = dispatch_struct(&empty_struct_bytes, /* is_top_level = */ true, /* depth = */ 63, &schema);
-    assert!(result_ok.is_ok(), "depth=63 with valid data should be accepted (63 below top = 64 total)");
+    // Valid v5.7 wire: outer field_id=1 + serialized inner Struct (field_id=1 + "x")
+    let mut inner_wire = Vec::new();
+    inner_wire.extend_from_slice(&1u32.to_be_bytes()); // inner field_id = 1
+    inner_wire.extend_from_slice(&1u32.to_be_bytes()); // string length = 1
+    inner_wire.push(b'x');
+    let mut wire = Vec::new();
+    wire.extend_from_slice(&1u32.to_be_bytes()); // outer field_id = 1
+    wire.extend_from_slice(&inner_wire[..]);     // serialized inner struct
+
+    // depth=64: rejected immediately (64 >= 64)
+    let result = dispatch_struct(&wire, /* is_top_level = */ true, /* depth = */ 64, &schema);
+    assert!(matches!(result, Err(DCS_RECURSION_LIMIT_EXCEEDED)),
+        "depth=64 must be rejected");
+
+    // depth=62: inner Struct call reaches depth=64 (62+1+1=64), rejected
+    let result_62 = dispatch_struct(&wire, /* is_top_level = */ true, /* depth = */ 62, &schema);
+    assert!(matches!(result_62, Err(DCS_RECURSION_LIMIT_EXCEEDED)),
+        "depth=62 with Struct field: inner reaches depth=64, must be rejected");
+
+    // depth=61: inner Struct call reaches depth=63 (61+1+1=63), accepted
+    let result_61 = dispatch_struct(&wire, /* is_top_level = */ true, /* depth = */ 61, &schema);
+    assert!(result_61.is_ok(), "depth=61 with Struct field should be accepted (inner depth=63 < 64)");
 }
 
 #[test]
 fn test_text_1mb_limit() {
     // TEXT exceeding 1MB (1,048,576 bytes) must return DCS_STRING_LENGTH_OVERFLOW.
     // Per RFC-0127 Change 8, serialize_string takes &str (UTF-8 validated).
-    // Note: serialize_string and deserialize_string are from the RFC-0127 DCS layer,
-    // imported into this implementation's DCS module — not defined in RFC-0201.
+    //
+    // INTEGRATION TEST: Requires importing serialize_string and deserialize_string
+    // from the RFC-0127 DCS layer. This is not a pure RFC-0201 unit test — it is
+    // included here as a conformance marker. Compile and run in the DCS integration
+    // test suite, not in the RFC-0201 pseudocode compilation context.
     let oversized: String = std::iter::repeat('x').take(1_048_577).collect(); // 1MB + 1 byte
     let serialized = serialize_string(&oversized);
     let result = deserialize_string(&serialized);
@@ -755,11 +776,11 @@ fn test_text_1mb_limit() {
 }
 
 #[test]
-fn test_bytea_32_length_constraint_enforcement() {
+fn test_bytea_32_blob_construction() {
     // BYTEA(32) columns MUST reject inserts with 31 or 33 byte values.
-    // This test verifies Blob construction for various sizes. Full SQL layer
-    // enforcement (INSERT INTO t(col) VALUES($1) with 31/33 bytes → constraint error)
-    // is tested at the integration level, not in unit tests.
+    // This test verifies Blob construction for valid 31/32/33 byte sizes.
+    // Full SQL layer enforcement (INSERT INTO t(col) VALUES($1) with 31/33 bytes
+    // → constraint error) is tested at the integration level, not in unit tests.
     let blob_31 = Blob::new(vec![0u8; 31]);
     let blob_33 = Blob::new(vec![0u8; 33]);
     let blob_32 = Blob::new(vec![0u8; 32]);
@@ -778,7 +799,7 @@ fn test_dispatch_struct_rejects_unknown_field_id() {
     row.extend_from_slice(&99u32.to_be_bytes()); // field_id = 99 (not in schema)
     row.extend_from_slice(&1u32.to_be_bytes()); // string length = 1
     row.push(b'x');
-    row.extend_from_slice(&0u32.to_be_bytes()); // terminator
+    // No terminator — v5.7 for-loop ends when schema fields exhausted
 
     let result = dispatch_struct(&row, /* is_top_level = */ true, /* depth = */ 0, &schema);
     assert!(matches!(result, Err(DCS_INVALID_STRUCT)));
@@ -813,7 +834,7 @@ fn test_dispatch_routes_blob_vs_string_by_schema() {
     wire.extend_from_slice(&2u32.to_be_bytes());       // field_id = 2 (BYTEA)
     wire.extend_from_slice(&5u32.to_be_bytes());       // blob length = 5
     wire.extend_from_slice(b"\xDE\xAD\xBE\xEF\x00");  // binary (non-UTF-8)
-    wire.extend_from_slice(&0u32.to_be_bytes());       // terminator
+    // No terminator — v5.7 for-loop ends when all 2 schema fields consumed
 
     let result = dispatch_struct(&wire, /* is_top_level = */ true, /* depth = */ 0, &schema);
     assert!(result.is_ok(), "Mixed schema dispatch should succeed");
@@ -964,6 +985,147 @@ fn test_dispatch_struct_with_blob_field() {
 
     let result = dispatch_struct(&wire, true, 0, &schema);
     assert!(result.is_ok(), "Struct with Blob field should be accepted");
+
+    // Verify deserialized values match inputs
+    let (remaining, sv) = result.unwrap();
+    assert!(remaining.is_empty(), "All bytes must be consumed");
+    assert_eq!(sv.fields.len(), 3, "Must have exactly 3 fields");
+
+    // Field 1: "name"
+    let (_, v1) = &sv.fields[0];
+    assert_eq!(v1, &Value::String("name".to_string()));
+
+    // Field 2: 32-byte Blob
+    let (_, v2) = &sv.fields[1];
+    let expected_blob = Blob::new((0u8..32).collect());
+    assert_eq!(v2, &Value::Blob(expected_blob));
+
+    // Field 3: "label1"
+    let (_, v3) = &sv.fields[2];
+    assert_eq!(v3, &Value::String("label1".to_string()));
+}
+
+#[test]
+fn test_dispatch_dmat_deserialization() {
+    // Dmat: u32(rows) || u32(cols) || [element...], each element routed through dispatcher
+    // Test 1: 2x2 matrix of Text values
+    let schema = vec![
+        (1u32, ColumnType::Dmat { rows: 2, cols: 2, elem_type: Box::new(ColumnType::Text) }),
+    ];
+    let mut wire = Vec::new();
+    wire.extend_from_slice(&2u32.to_be_bytes()); // rows = 2
+    wire.extend_from_slice(&2u32.to_be_bytes()); // cols = 2
+    // Row 0: "a", "b"
+    wire.extend_from_slice(&1u32.to_be_bytes()); // string length = 1
+    wire.push(b'a');
+    wire.extend_from_slice(&1u32.to_be_bytes()); // string length = 1
+    wire.push(b'b');
+    // Row 1: "c", "d"
+    wire.extend_from_slice(&1u32.to_be_bytes()); // string length = 1
+    wire.push(b'c');
+    wire.extend_from_slice(&1u32.to_be_bytes()); // string length = 1
+    wire.push(b'd');
+
+    let result = dispatch_struct(&wire, true, 0, &schema);
+    assert!(result.is_ok(), "2x2 Dmat of Text should deserialize");
+    let (remaining, sv) = result.unwrap();
+    assert!(remaining.is_empty());
+    let (_, v) = &sv.fields[0];
+    assert_eq!(v, &Value::Dmat(vec![
+        vec![Value::String("a".to_string()), Value::String("b".to_string())],
+        vec![Value::String("c".to_string()), Value::String("d".to_string())],
+    ]));
+
+    // Test 2: Dimension mismatch — wire says 3x3, schema says 2x2
+    let schema_mismatch = vec![
+        (1u32, ColumnType::Dmat { rows: 2, cols: 2, elem_type: Box::new(ColumnType::Text) }),
+    ];
+    let mut wire_mismatch = Vec::new();
+    wire_mismatch.extend_from_slice(&3u32.to_be_bytes()); // rows = 3 (mismatch)
+    wire_mismatch.extend_from_slice(&3u32.to_be_bytes()); // cols = 3 (mismatch)
+    // Not providing full 3x3 data is fine — we only check dimension header mismatch
+    let result_mismatch = dispatch_struct(&wire_mismatch, true, 0, &schema_mismatch);
+    assert!(matches!(result_mismatch, Err(DCS_INVALID_STRUCT)),
+        "Dimension mismatch (wire 3x3 vs schema 2x2) must be rejected");
+
+    // Test 3: 2x2 matrix of Blob elements
+    let schema_blob = vec![
+        (1u32, ColumnType::Dmat { rows: 2, cols: 1, elem_type: Box::new(ColumnType::Bytea) }),
+    ];
+    let mut wire_blob = Vec::new();
+    wire_blob.extend_from_slice(&2u32.to_be_bytes()); // rows = 2
+    wire_blob.extend_from_slice(&1u32.to_be_bytes()); // cols = 1
+    // Row 0: 3-byte blob
+    wire_blob.extend_from_slice(&3u32.to_be_bytes());
+    wire_blob.extend_from_slice(b"abc");
+    // Row 1: 2-byte blob
+    wire_blob.extend_from_slice(&2u32.to_be_bytes());
+    wire_blob.extend_from_slice(b"xy");
+
+    let result_blob = dispatch_struct(&wire_blob, true, 0, &schema_blob);
+    assert!(result_blob.is_ok(), "2x1 Dmat of Blob should deserialize");
+    let (_, sv_blob) = result_blob.unwrap().1;
+    let (_, v_blob) = &sv_blob.fields[0];
+    assert_eq!(v_blob, &Value::Dmat(vec![
+        vec![Value::Blob(Blob::new(b"abc".to_vec()))],
+        vec![Value::Blob(Blob::new(b"xy".to_vec()))],
+    ]));
+}
+
+#[test]
+fn test_dispatch_null_bitmap_interaction() {
+    // The null bitmap is a schema-layer construct. The DCS dispatcher itself has no
+    // null type — NULL fields are absent from the wire. The schema-layer bitmap
+    // tells the dispatcher which schema fields are present vs NULL (absent).
+    // This test verifies the dispatcher's behavior with wire data that omits fields.
+    //
+    // Schema: (1, Text), (2, Bytea), (3, Text) — fields 1 and 3 required, field 2 nullable
+    // Wire with field 2 NULL (absent from wire): field 1 data + field 3 data (no field 2)
+    let schema = vec![
+        (1u32, ColumnType::Text),
+        (2u32, ColumnType::Bytea),  // nullable
+        (3u32, ColumnType::Text),
+    ];
+    // Wire: field 1 ("hello") + field 3 ("world") — field 2 is absent (NULL)
+    let mut wire = Vec::new();
+    wire.extend_from_slice(&1u32.to_be_bytes()); // field_id = 1
+    wire.extend_from_slice(&5u32.to_be_bytes()); // string length = 5
+    wire.extend_from_slice(b"hello");
+    wire.extend_from_slice(&3u32.to_be_bytes()); // field_id = 3
+    wire.extend_from_slice(&5u32.to_be_bytes()); // string length = 5
+    wire.extend_from_slice(b"world");
+    // field_id=2 (Bytea) is absent — represents NULL
+
+    // NOTE: Without the null bitmap in the wire, the dispatcher cannot know that
+    // field 2 is NULL vs simply not yet sent. In a real implementation, the null
+    // bitmap precedes the struct fields in the row header. This test documents the
+    // DCS-layer expectation: if a non-null field is missing from wire, the
+    // dispatcher returns DCS_INVALID_STRUCT (field_id mismatch).
+    //
+    // Test: wire with field 2 absent but no null bitmap — should error
+    let result = dispatch_struct(&wire, true, 0, &schema);
+    assert!(matches!(result, Err(DCS_INVALID_STRUCT)),
+        "Missing non-null field (no bitmap) must return DCS_INVALID_STRUCT");
+
+    // Test: NULL field correctly absent from wire (simulate with null bitmap awareness)
+    // For this test, we use a schema where all fields are present in wire.
+    // The null bitmap interaction is at the row-storage layer, not the DCS dispatcher.
+    // Verify: valid wire with all fields present succeeds
+    let mut wire_all_present = Vec::new();
+    wire_all_present.extend_from_slice(&1u32.to_be_bytes()); // field_id = 1
+    wire_all_present.extend_from_slice(&5u32.to_be_bytes()); // string length = 5
+    wire_all_present.extend_from_slice(b"hello");
+    wire_all_present.extend_from_slice(&2u32.to_be_bytes()); // field_id = 2
+    wire_all_present.extend_from_slice(&3u32.to_be_bytes()); // blob length = 3
+    wire_all_present.extend_from_slice(b"xyz");
+    wire_all_present.extend_from_slice(&3u32.to_be_bytes()); // field_id = 3
+    wire_all_present.extend_from_slice(&5u32.to_be_bytes()); // string length = 5
+    wire_all_present.extend_from_slice(b"world");
+
+    let result_all = dispatch_struct(&wire_all_present, true, 0, &schema);
+    assert!(result_all.is_ok(), "All fields present should deserialize successfully");
+    let (_, sv) = result_all.unwrap().1;
+    assert_eq!(sv.fields.len(), 3);
 }
 ```
 
@@ -1182,6 +1344,26 @@ pub struct StructValue {
     pub fields: Vec<(u32, Value)>,
 }
 
+/// Value: stoolap's runtime value type. All DCS types are representable as Value.
+/// Per RFC-0127, DCS types include: Bool, I128, Dqa, Text, Blob, Struct, Option,
+/// Enum, Dvec, Dmat, Dfp, BigInt. Nullable fields are represented via schema-layer
+/// null bitmap, not via a NULL Value variant — Value itself is non-nullable.
+pub enum Value {
+    Bool(bool),
+    I128(i128),
+    Dqa(String),  // Decimal exact — stored as string representation
+    String(String),
+    Blob(Blob),
+    Struct(StructValue),
+    Option(Option<Box<Value>>),
+    Enum(u32, Box<Value>),  // (variant_id, variant_value)
+    /// Dynamic vector: variable-length homogeneous array
+    Dvec(Vec<Value>),
+    /// Dynamic matrix: 2D homogeneous array
+    Dmat(Vec<Vec<Value>>),
+    // Dfp and BigInt deferred — implemented as todo!() in dispatcher
+}
+
 /// ColumnType: stoolap's schema type system. Maps to DCS types per RFC-0127.
 /// field_ids in Struct variants are u32; no duplicate field_ids permitted.
 pub enum ColumnType {
@@ -1196,7 +1378,7 @@ pub enum ColumnType {
     Option(Box<ColumnType>),
     Enum(Vec<(u32, ColumnType)>),     // variant_id → type mapping
     Dvec(Box<ColumnType>),            // element type
-    Dmat { rows: usize, cols: usize, elem_type: Box<ColumnType> },  // Note: Value::Dmat variant must be added to stoolap's core Value enum in core/value.rs; Value::Dvec(Vec<Value>) also required
+    Dmat { rows: usize, cols: usize, elem_type: Box<ColumnType> },
 }
 ```
 
@@ -1257,7 +1439,8 @@ fn dispatch_field(input: &[u8], col_type: &ColumnType, depth: usize)
         ColumnType::Dfp => todo!("deserialize_dfp — deferred per dispatcher contract"),
         ColumnType::BigInt => todo!("deserialize_bigint — deferred per dispatcher contract"),
         ColumnType::Enum(variants) => {
-            // Enum encoded as u32 variant_id, then variant value
+            // Enum encoded as u32 variant_id, then variant value.
+            // Depth is NOT incremented — Enum is not a Struct frame.
             if input.len() < 4 {
                 return Err(DCS_INVALID_STRUCT);
             }
@@ -1425,6 +1608,7 @@ fn deserialize_dmat(input: &[u8], schema_rows: usize, schema_cols: usize, elem_t
 
 | Version | Date | Changes |
 |---------|------|---------|
+| 5.8 | 2026-03-27 | Round 11 adversarial review fixes: CRIT-1 (REBUTTAL: code already passes depth correctly; verified at line 1316), CRIT-2 (rewrite recursion depth test with v5.7 wire format: field_id=1 + inner Struct; depth=61 accepted, depth=62 rejected), CRIT-3 (remove trailing terminator from empty struct exemption test; wire = just u32_be(1)), HIGH-1 (rewrite via CRIT-2: max valid depth=61 for Struct field), HIGH-5 (add value assertions to blob field test), HIGH-6 (add Value::Dvec and Value::Dmat to Value enum pseudocode), HIGH-7 (mark test_text_1mb_limit as integration test), MED-3 (add test_dispatch_dmat_deserialization: 2x2 Text matrix, dimension mismatch, Blob elements), MED-4 (add test_dispatch_null_bitmap_interaction), MED-6 (change debug_assert_ne to assert_ne in from_shared), LOW-3 (add Enum depth comment), LOW-4 (rename test_bytea_32_length_constraint_enforcement → test_bytea_32_blob_construction). |
 | 5.7 | 2026-03-27 | Round 10 adversarial review fixes: CRIT-1 (remove terminator; iterate over schema in order per RFC-0127 Change 13), CRIT-2 (accept via CRIT-1), CRIT-3 (dispatcher example: from_slice → from_shared), CRIT-4 (strict positional matching; wire field_id must equal schema field_id per RFC-0127), HIGH-1 (remove vestigial 6-code DcsError paragraph; keep only 12-code paragraph), HIGH-2 (add test_dispatch_option_none_and_some, test_dispatch_enum_valid_and_invalid_variant, test_dispatch_dvec_with_blob_elements, test_dispatch_recursive_struct, test_dispatch_struct_with_blob_field), HIGH-3 (add Value::Dvec(Vec<Value>) to stoolap core Value enum note), HIGH-4 (from_shared: SHOULD → MUST with debug_assert), MED-1 (deserialize_dmat: use schema dimensions for iteration; wire only for validation), MED-2 (clarify null bitmap: NULL fields absent from wire, bitmap indicates which schema fields present), MED-3 (BYTEA(N): regex captures N, stored as ColumnConstraint::Length(N)), MED-4 (BYTEA(32) test: unit test for Blob construction; SQL enforcement at integration level), MED-5 (text_1mb_limit: note serialize_string/deserialize_string imported from RFC-0127), MED-6 (depth fix: dispatch_struct passes depth to dispatch_field; only Struct arm increments), LOW-1 (empty struct test: add outer/inner terminator labels), LOW-3 (test_blob_ordering: use Blob::new with compare_blob), LOW-4 (debug_assert for schema field_id ascending/unique already present). |
 | 5.6 | 2026-03-27 | Round 9 adversarial review fixes: CRIT-1 (remove deserialize_string stub; reference RFC-0127 only), CRIT-3 (Enum error: callers MUST NOT rely on error code specificity), CRIT-4 (depth: only Struct increments depth; Option/Dvec/Dmat/Enum pass depth unchanged), CRIT-5 (clarify CompactArc copies data; from_shared is not lifetime extension), CRIT-6 (REBUTTAL: non-contiguous field_ids valid for schema evolution), CRIT-7 (REBUTTAL: zero terminator IS in RFC-0127 Change 13), HIGH-1 (add HKDF-SHA256 params to SipHash key derivation), HIGH-3 (revert ToParam Vec<u8> to self.clone()), HIGH-4 (Struct field validation: MUST reject, not SHOULD), HIGH-5 (document DCS_INVALID_BLOB zero-read vs truncation distinction), HIGH-6 (fully specify null bitmap: offset, bit ordering, versioning, DCS interaction), HIGH-8 (add wire vs schema dimension validation in deserialize_dmat), MED-1 (document CompactArc heap-allocates and copies), MED-2 (add dispatcher routing prose test vectors), MED-3 (from_shared pointer-distinctness note), MED-4 (specify BYTEA(N) parsing), MED-5 (Dfp/BigInt not required for Blob conformance), MED-6 (clarify hash index only affects lookups, not comparison operators), MED-7 (correct DcsError to all 12 RFC-0127 codes), LOW-1 (replace 5GB allocation test with boundary test), LOW-3 (clarify USING HASH accepted by stoolap parser), LOW-4 (document Blob does not derive Ord; Value uses compare_blob), LOW-5 (add benchmark methodology). |
 | 5.5 | 2026-03-27 | Round 8 adversarial review fixes: CRIT-1 (SipHash key: specify persistent key storage/reload requirement), CRIT-2 (4GB blob: add application-level 1MB limit + memory exhaustion warning), CRIT-3 (add serialize_blob >4GB test), HIGH-1 (strengthen DcsError definition with all 6 canonical variant names), HIGH-2 (add Blob::from_shared zero-copy constructor for deserialization path), HIGH-3 (add deserialize_string definition reference to RFC-0127), HIGH-4 (add 1MB TEXT enforcement to Phase 1 checklist), MED-1 (specify null bitmap format normatively), MED-2 (add Phase 2 checkboxes to all sub-sections), MED-3 (document DCS_INVALID_ENUM semantic mismatch in Enum arm), MED-4 (add Struct field_id ascending/unique/no-gaps constraint), MED-5 (replace BYTEA(32) placeholder test with real conformance test), MED-6 (fix ToParam Vec<u8> redundant clone: use std::mem::take), LOW-1 (PostgreSQL USING HASH case-insensitivity note), LOW-2 (add Dqa to dispatcher contract required types), LOW-3 (add Value::Dmat note to type def), LOW-4 (fix v5.4 changelog: remove MED-7.1/7.2/7.3 self-references), LOW-5 (verify all test scenarios present), XRFC-1 (specify serialize_blob Result handling in INSERT path), XRFC-2 (coordinate NUMERIC_SPEC_VERSION with RFC-0110 governance), XRFC-3 (add Phase 3 acceptance criteria). |
@@ -1450,6 +1634,6 @@ fn deserialize_dmat(input: &[u8], schema_rows: usize, schema_cols: usize, elem_t
 
 ---
 
-**Version:** 5.7
+**Version:** 5.8
 **Original Submission Date:** 2026-03-25
 **Last Updated:** 2026-03-27

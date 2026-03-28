@@ -179,6 +179,21 @@ fn compare_blob(a: &[u8], b: &[u8]) -> BlobOrdering {
 
 ### 6. Value::compare Integration (`src/core/value.rs`)
 
+Also add `Value::Blob(_) => 10` to the `type_discriminant` function in the `Ord` impl (after the Extension case):
+```rust
+fn type_discriminant(v: &Value) -> u8 {
+    match v {
+        Value::Null(_) => 0,
+        Value::Boolean(_) => 1,
+        Value::Integer(_) | Value::Float(_) => 2,
+        Value::Text(_) => 3,
+        Value::Timestamp(_) => 4,
+        Value::Extension(_) => 5,
+        Value::Blob(_) => 10,  // NEW
+    }
+}
+```
+
 In `compare_same_type`, add:
 
 ```rust
@@ -200,7 +215,11 @@ In `PartialEq` for Value:
 In `Ord` for Value:
 
 ```rust
-(Value::Blob(a), Value::Blob(b)) => a.cmp(b),
+(Value::Blob(_), Value::Blob(_)) => Ordering::Equal,
+// Blob uses discriminant ordering only (per RFC-0201: "derived Ord on Value uses
+// the ordinal position of the Blob variant"). This matches Extension's behavior.
+// For BTree: all Blobs sort together by type, not by content.
+// For SQL ORDER BY on blobs: use compare_blob via Value::compare, not Ord.
 ```
 
 In `Hash` for Value:

@@ -2,7 +2,7 @@
 
 ## Status
 
-Draft (v5.23, adversarial review)
+Accepted (v5.24)
 
 ## Authors
 
@@ -2238,6 +2238,7 @@ fn deserialize_dmat(input: &[u8], schema_rows: u32, schema_cols: u32, elem_type:
 
 | Version | Date | Changes |
 |---------|------|---------|
+| 5.24 | 2026-03-28 | Moved to Accepted status — 26 rounds adversarial review (Rounds 1-26), all issues resolved. Phase 1 (core BYTEA), Phase 2d (dispatcher) fully specified and reviewed. Deferred: Phase 2a/2b/2c/2e (stoolap BYTEA implementation), Phase 2f (DFP/BigInt — blocked on RFC-0104/0110 wire format coordination), Phase 3 (storage.rs migration — blocked on stoolap + RFC-0903/0909). |
 | 5.23 | 2026-03-28 | Round 26 adversarial review fixes: CRIT-1 (version history: split corrupted v5.22 row into proper v5.22/v5.21/v5.20 entries — rounds 23/24/25 fixes were concatenated; also restore v5.18 to Round 21 content), HIGH-1 (ALTER TABLE ADD COLUMN BYTEA: add explicit MUST-reject normative text — null bitmap integration required before any BYTEA column addition; not just nullable but also NOT NULL BYTEA since existing rows lack column bytes), MED-1 (serialize_dvec: add clarifying comment noting element count is not bounded at serialize time (only u32::MAX guard), with explicit reference to MAX_CONTAINER_ELEMENTS as the deserialize-time bound). |
 | 5.22 | 2026-03-28 | Round 25 adversarial review fixes: HIGH-1 (test_hash_index_key_persistence_across_restarts: change Blob::new to Blob::from_slice — b"..." is &[u8], not Vec<u8>; Blob::new requires Vec<u8>), INFO-1 (validate_col_type Dvec arm: add clarifying comment explaining Dvec count asymmetry with Dmat — Dvec count is wire/runtime, not schema; MAX_CONTAINER_ELEMENTS enforced at deserialize time). |
 | 5.21 | 2026-03-28 | Round 24 adversarial review fixes: CRIT-1 (test_dispatch_dmat_depth_propagation: prepend field_id=1 outer prefix to wire — rows=1 and field_id=1 numerically coincided so test passed by accident, not correctness), HIGH-1 (MAX_CONTAINER_ELEMENTS: move constant declaration to Phase 2d before validate_col_type; rename from MAX_DVEC_ELEMENTS to accurately describe all three use sites (Dvec, Dmat, BYTEA[])), MED-1 (test_validate_schema_rejects_non_ascending_field_ids: add test cases for Dmat zero-dimension (rows=0, cols=0) and element-count overflow (rows*cols > MAX_CONTAINER_ELEMENTS) at schema registration time). |
@@ -2273,6 +2274,6 @@ fn deserialize_dmat(input: &[u8], schema_rows: u32, schema_cols: u32, elem_type:
 
 ---
 
-**Version:** 5.23
+**Version:** 5.24
 **Original Submission Date:** 2026-03-25
 **Last Updated:** 2026-03-28

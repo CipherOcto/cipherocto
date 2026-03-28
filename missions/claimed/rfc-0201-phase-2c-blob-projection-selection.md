@@ -2,7 +2,7 @@
 
 ## Status
 
-Claimed
+Complete
 
 ## Claimant
 
@@ -39,11 +39,11 @@ SELECT key_hash, signature FROM usage_ledger WHERE event_id = $1;
 
 ## Acceptance Criteria
 
-- [ ] Integration test: `CREATE TABLE t (id INTEGER, key_hash BYTEA(32)); INSERT INTO t VALUES (1, $1); SELECT key_hash FROM t WHERE id = 1;`
-- [ ] Verify result set correctly returns Blob value (hex-encoded in wire response)
-- [ ] Verify Blob equality works in WHERE clause with hash index available
-- [ ] `cargo test --lib` passes with 0 failures
-- [ ] `cargo clippy --all-targets --all-features -- -D warnings` passes
+- [x] Integration test: `CREATE TABLE t (id INTEGER, key_hash BYTEA(32)); INSERT INTO t VALUES (1, $1); SELECT key_hash FROM t WHERE id = 1;`
+- [x] Verify result set correctly returns Blob value (hex-encoded in wire response)
+- [x] Verify Blob equality works in WHERE clause with hash index available
+- [x] `cargo test --lib` passes with 0 failures
+- [x] `cargo clippy --all-targets --all-features -- -D warnings` passes
 
 ## Technical Notes
 

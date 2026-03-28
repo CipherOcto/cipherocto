@@ -2,7 +2,7 @@
 
 ## Status
 
-Draft (v5.8, adversarial review)
+Draft (v5.9, adversarial review)
 
 ## Authors
 
@@ -110,28 +110,29 @@ impl Blob {
         Blob { data: CompactArc::from_slice(data) }
     }
 
-    /// Shared-ownership constructor: wrap byte slice data in CompactArc.
+    /// Create a Blob from deserialized wire bytes.
     ///
     /// `CompactArc<[u8]>` heap-allocates and copies input data on construction.
-    /// Both `from_slice` and `from_shared` perform a single heap allocation and copy —
-    /// neither borrows from the input buffer. The "zero-copy" benefit applies to the
-    /// deserialization path (no intermediate Vec allocation between `deserialize_blob`
-    /// and `Blob`), not a lifetime extension. The input buffer's contents are copied
-    /// into CompactArc storage; the returned Blob owns its data independently.
+    /// Both `from_slice` and `from_deserialized` perform a single heap allocation
+    /// and copy — neither borrows from the input buffer. The "zero-copy" benefit
+    /// applies to the deserialization path (no intermediate Vec allocation between
+    /// `deserialize_blob` and `Blob`), not a lifetime extension. The input buffer's
+    /// contents are copied into CompactArc storage; the returned Blob owns its data
+    /// independently.
     ///
     /// This is the correct constructor for the deserialization path. The dispatcher
-    /// receives a slice into the input buffer (via `deserialize_blob`); calling
-    /// `from_shared(value)` copies those bytes into CompactArc storage. This is
+    /// receives a slice into the wire buffer (via `deserialize_blob`); calling
+    /// `from_deserialized(value)` copies those bytes into CompactArc storage. This is
     /// distinct from `Blob::new()` which is used for the storage path (from
     /// parameters where the Vec is already owned).
     ///
-    /// Implementations MUST verify that `Blob::from_shared(data).as_bytes().as_ptr()
+    /// Implementations MUST verify that `Blob::from_deserialized(data).as_bytes().as_ptr()`
     /// != data.as_ptr()` — i.e., the stored bytes are a distinct allocation, not a
-    /// direct pointer into the input buffer. Use a debug_assert! in the implementation:
-    /// `assert_ne!(Blob::from_shared(data).as_bytes().as_ptr(), data.as_ptr())`.
+    /// direct pointer into the input buffer. Use:
+    /// `assert_ne!(Blob::from_deserialized(data).as_bytes().as_ptr(), data.as_ptr())`.
     /// Enforced in all build modes — incorrect behavior (storing a direct pointer
     /// into the input buffer) would cause use-after-free in the dispatcher.
-    pub fn from_shared(data: &[u8]) -> Self {
+    pub fn from_deserialized(data: &[u8]) -> Self {
         Blob { data: CompactArc::from(data) }
     }
 
@@ -281,6 +282,17 @@ impl IndexType {
     /// info=db_identifier, len=16), or (3) stored in a database-wide key registry.
     /// Key rotation and multi-database key isolation are out of scope for this RFC
     /// and should be addressed in a future key management specification.
+    ///
+    /// **Key loss/corruption recovery:** If the SipHash key cannot be loaded (e.g.,
+    /// metadata file deleted or corrupted, HKDF derivation fails, key registry unavailable),
+    /// the hash index MUST be marked as corrupted and rebuilt from the underlying data.
+    /// The database MUST NOT silently generate a new key — doing so produces different hash
+    /// values, silently corrupting all existing index entries and causing blob hash lookups
+    /// to return incorrect results. Recovery procedure: (1) detect key load failure on open,
+    /// (2) mark hash index as corrupted, (3) rebuild index by scanning all rows and
+    /// recomputing hash values with the new key, or (4) refuse to open if rebuild is
+    /// not possible (e.g., insufficient space). Automatic key generation without
+    /// detection is a critical integrity failure.
 }
 ```
 
@@ -313,7 +325,7 @@ fn deserialize_column_value(input: &[u8], col_type: &ColumnType) -> Result<Value
         ColumnType::Bytea => {
             // Blob deserialization also requires dispatcher in mixed schemas
             let (value, remaining) = deserialize_blob(input)?;
-            Ok(Value::Blob(Blob::from_shared(value)))
+            Ok(Value::Blob(Blob::from_deserialized(value)))
         },
     }
 }
@@ -321,7 +333,7 @@ fn deserialize_column_value(input: &[u8], col_type: &ColumnType) -> Result<Value
 
 **Ambiguity symmetry (normative — RECIPROCAL):** It is not sufficient for only Blob deserialization to use the dispatcher. When both `BYTEA` and `TEXT` columns exist in a schema, **all** String deserialization must also use the dispatcher. Calling `deserialize_string` directly on bytes that may have been inserted as Blob is non-conformant — on non-UTF-8 payloads (e.g., cryptographic hash bytes), this returns `DCS_INVALID_UTF8`. The UTF-8 validation applied by `deserialize_string` is only correct when the dispatcher has confirmed the bytes are intended as String.
 
-**Typed-context enforcement (normative):** Bare calls to `deserialize_blob` or `deserialize_string` on raw bytes without schema context are **forbidden in production code paths**. The only conformant entry point is through the schema-driven dispatcher. Direct deserialization calls are non-conformant and will produce consensus-divergent results in mixed-type schemas. Test code may call `deserialize_blob` directly only for unit testing the function itself.
+**Typed-context enforcement (normative):** Bare calls to `deserialize_blob` or `deserialize_string` on raw bytes without schema context are **forbidden in production code paths**. The only conformant entry point is through the schema-driven dispatcher. Direct deserialization calls are non-conformant and will produce consensus-divergent results in mixed-type schemas. Test code may call `deserialize_blob` or `deserialize_string` directly only for unit testing the function itself.
 
 **Error code mapping (normative):** stoolap's internal `BlobDeserializeError` variants MUST map exactly to the corresponding DCS error codes at the DCS serialization/deserialization interface:
 - `TruncatedInput` → `DCS_INVALID_BLOB`
@@ -363,6 +375,86 @@ fn serialize_blob(data: &[u8]) -> Result<Vec<u8>, DcsError> {
     return Ok(serialize_bytes(data));  // u32_be(data.len()) || data
 }
 
+/// Serialize a dynamic array (Dvec). Per RFC-0127 Change 2.5:
+/// u32_be(count) || [serialize_elem(elem) for each element]
+fn serialize_dvec(elems: &[Value], elem_type: &ColumnType) -> Result<Vec<u8>, DcsError> {
+    let mut result = Vec::new();
+    result.extend_from_slice(&(elems.len() as u32).to_be_bytes());
+    for elem in elems {
+        let serialized = serialize_value(elem, elem_type)?;
+        result.extend_from_slice(&serialized);
+    }
+    Ok(result)
+}
+
+/// Serialize a dynamic matrix (Dmat). Per RFC-0127 Change 2.5:
+/// u32_be(rows) || u32_be(cols) || [serialize_elem(elem) for row-major order]
+fn serialize_dmat(matrix: &[Vec<Value>], rows: usize, cols: usize, elem_type: &ColumnType) -> Result<Vec<u8>, DcsError> {
+    let mut result = Vec::new();
+    result.extend_from_slice(&(rows as u32).to_be_bytes());
+    result.extend_from_slice(&(cols as u32).to_be_bytes());
+    for row in matrix {
+        for elem in row {
+            let serialized = serialize_value(elem, elem_type)?;
+            result.extend_from_slice(&serialized);
+        }
+    }
+    Ok(result)
+}
+
+/// Serialize an Enum variant. Per RFC-0127 Change 11:
+/// u32_be(variant_id) || serialize_variant_value(value, variant_type)
+/// Note: variant_id must match one of the schema's defined variants.
+fn serialize_enum(variant_id: u32, value: &Value, variants: &[(u32, ColumnType)]) -> Result<Vec<u8>, DcsError> {
+    let variant_type = variants.iter()
+        .find(|(id, _)| *id == variant_id)
+        .map(|(_, t)| t)
+        .ok_or(DCS_INVALID_STRUCT)?;
+    let mut result = Vec::new();
+    result.extend_from_slice(&variant_id.to_be_bytes());
+    result.extend_from_slice(&serialize_value(value, variant_type)?);
+    Ok(result)
+}
+
+/// Serialize a Value given its ColumnType. Dispatches to the appropriate serializer.
+fn serialize_value(value: &Value, col_type: &ColumnType) -> Result<Vec<u8>, DcsError> {
+    match (value, col_type) {
+        (Value::Blob(blob), ColumnType::Bytea) => serialize_blob(blob.as_bytes()),
+        (Value::String(s), ColumnType::Text) => serialize_string(s),
+        (Value::Bool(b), ColumnType::Bool) => serialize_bool(*b),
+        (Value::I128(i), ColumnType::I128) => serialize_i128(*i),
+        (Value::Dqa(s), ColumnType::Dqa) => serialize_dqa(s),
+        (Value::Struct(sv), ColumnType::Struct(fields)) => serialize_struct(&sv.fields, fields),
+        (Value::Option(None), ColumnType::Option(_)) => Ok(vec![0x00]),
+        (Value::Option(Some(v)), ColumnType::Option(inner)) => {
+            let mut result = vec![0x01];
+            result.extend_from_slice(&serialize_value(v, inner)?);
+            Ok(result)
+        },
+        (Value::Enum(variant_id, v), ColumnType::Enum(variants)) => {
+            serialize_enum(*variant_id, v, variants)
+        },
+        (Value::Dvec(elems), ColumnType::Dvec(elem_type)) => {
+            serialize_dvec(elems, elem_type)
+        },
+        (Value::Dmat(matrix), ColumnType::Dmat { rows, cols, elem_type }) => {
+            serialize_dmat(matrix, *rows, *cols, elem_type)
+        },
+        _ => Err(DCS_INVALID_STRUCT),  // type mismatch
+    }
+}
+
+/// Serialize a DCS Struct: field_id || serialized_value for each schema field in order.
+/// Per RFC-0127 Change 13: no terminator; struct ends when all schema fields consumed.
+fn serialize_struct(fields: &[(u32, Value)], schema: &[(u32, ColumnType)]) -> Result<Vec<u8>, DcsError> {
+    let mut result = Vec::new();
+    for ((field_id, col_type), (_, value)) in schema.iter().zip(fields.iter()) {
+        result.extend_from_slice(&field_id.to_be_bytes());
+        result.extend_from_slice(&serialize_value(value, col_type)?);
+    }
+    Ok(result)
+}
+
 /// Deserialize blob from canonical bytes.
 ///
 /// Reads the first 4 bytes as a big-endian u32 length prefix,
@@ -379,7 +471,9 @@ fn serialize_blob(data: &[u8]) -> Result<Vec<u8>, DcsError> {
 /// RFC-0127 implementation. RFC-0201 specifies only the Bytea dispatch arm
 /// and the conformance constraints on mixed-type routing. Per RFC-0127 Change 8,
 /// `deserialize_string` reads a u32_be length prefix, extracts that many bytes
-/// as UTF-8, and returns DCS_INVALID_UTF8 if bytes are not valid UTF-8.
+/// as UTF-8, validates the bytes are valid UTF-8, and returns `DCS_INVALID_UTF8`
+/// if validation fails. It returns `(&[u8], &str)` — remaining bytes and the
+/// decoded string — matching the `(&[u8], T)` signature pattern.
 
 fn deserialize_blob(input: &[u8]) -> Result<(&[u8], &[u8]), DcsError> {
     const LEN_SIZE: usize = 4;
@@ -533,10 +627,10 @@ fn test_blob_sha256_stored_as_blob() {
     let value: Value = hash.into();  // Uses [u8; 32] → ToParam → Value::Blob
     assert_eq!(value.as_blob_32(), Some(expected));
 
-    // Cross-implementation verification: This payload aligns with RFC-0127 Entry 17,
-    // which uses SHA256(b"") — a 32-byte non-UTF-8 value for dispatcher verification.
-    // Both test vectors use non-UTF-8 binary data to confirm the Blob/String dispatcher
-    // correctly routes based on schema type, not wire format.
+    // Cross-implementation verification: This test uses a SHA256 hash of "hello" as a
+    // representative 32-byte non-UTF-8 binary value to confirm the Blob/String dispatcher
+    // correctly routes based on schema type, not wire format. Any 32-byte non-UTF-8 value
+    // (e.g., SHA256 of any input) serves the same verification purpose.
 }
 ```
 
@@ -613,7 +707,7 @@ fn test_serialize_blob_exceeds_4gb_boundary() {
 ```rust
 #[test]
 fn test_blob_ordering() {
-    // Blob values via Blob::new for direct compare_blob testing
+    // Blob values via Blob::new for compare_blob testing
     let a = Blob::new(vec![0x00, 0x01]);
     let b = Blob::new(vec![0x00, 0x02]);
     let c = Blob::new(vec![0x00, 0x01, 0x00]);
@@ -622,6 +716,14 @@ fn test_blob_ordering() {
     assert!(compare_blob(&a, &b) == std::cmp::Ordering::Less);   // Byte at index 1: 0x01 < 0x02
     assert!(compare_blob(&a, &c) == std::cmp::Ordering::Less);  // Prefix shorter = less
     assert!(compare_blob(&b, &c) == std::cmp::Ordering::Greater); // Byte at index 1: 0x02 > 0x01
+
+    // Value::compare_same_type delegates to compare_blob — this is what the query engine uses
+    let va = Value::Blob(a.clone());
+    let vb = Value::Blob(b.clone());
+    let vc = Value::Blob(c.clone());
+    assert!(va.compare_same_type(&vb) == BlobOrdering::Less);
+    assert!(va.compare_same_type(&vc) == BlobOrdering::Less);
+    assert!(vb.compare_same_type(&vc) == BlobOrdering::Greater);
 }
 ```
 
@@ -1150,7 +1252,7 @@ fn test_dispatch_null_bitmap_interaction() {
 - [ ] Add `Value::as_blob()`, `Value::as_blob_len()`, and `Value::as_blob_32()` accessors
 - [ ] Add blob comparison in `Value::compare_same_type`
 - [ ] Add `serialize_blob()` and `deserialize_blob()` functions
-- [ ] **Refactor serialization call chain** to propagate `Result<Vec<u8>, DcsError>` from `serialize_blob`. All other DCS serializers return `Vec<u8>` directly; Blob is the first to return `Result`. The insert path must handle both `Ok(bytes)` (proceed with insert) and `Err(DCS_BLOB_LENGTH_OVERFLOW)` (reject the insert with a length error). The error MUST be propagated to the SQL caller, not silently discarded.
+- [ ] **4GB boundary integration test** — verify `serialize_blob` returns `DCS_BLOB_LENGTH_OVERFLOW` when `data.len() > 0xFFFFFFFF`. This requires a system with >= 8GB RAM or a mock-based test that simulates the boundary without allocating 8GB. The test is a Phase 1 acceptance criterion: it must pass before Blob conformance is claimed. All other DCS serializers return `Vec<u8>` directly; Blob is the first to return `Result`. The insert path must handle both `Ok(bytes)` (proceed with insert) and `Err(DCS_BLOB_LENGTH_OVERFLOW)` (reject the insert with a length error). The error MUST be propagated to the SQL caller, not silently discarded.
 - [ ] **Audit `serialize_bytes` call sites** to ensure no Blob-typed data bypasses `serialize_blob`. `serialize_bytes` is a low-level primitive; `serialize_blob` is the public typed entry point.
 - [ ] **Increment `NUMERIC_SPEC_VERSION` to `2`** per RFC-0127 Change 11 and RFC-0110. Blob is a new DCS type; implementations claiming conformance must declare `NUMERIC_SPEC_VERSION >= 2`. Coordinate with RFC-0110 governance: the version increment from 1 to 2 requires minimum 2-epoch notice before activation per RFC-0110's upgrade procedure. RFC-0110 must be updated to include Blob in the spec version table, or a separate governance RFC must specify the activation. The Blob type is Final in RFC-0127; this RFC's conformance claim activates according to RFC-0110's upgrade procedure.
 - [ ] **Enforce 1MB TEXT column limit** — per RFC-0127 Change 6, `DCS_STRING_LENGTH_OVERFLOW` fires at 1,048,576 bytes. TEXT columns in all schemas (including mixed BYTEA+TEXT) MUST enforce this limit. The limit is enforced at the DCS layer; the storage engine must propagate the error correctly.
@@ -1250,7 +1352,7 @@ stoolap rows MUST be stored using DCS Struct encoding. This is not optional beca
 - **DCS interaction with schema-iteration:** The dispatcher reads the null bitmap from the row header before processing struct fields. For each schema field, if the bitmap indicates NULL (bit = 1), the field is absent from the wire — the dispatcher sets the value to NULL and continues to the next schema field without reading wire data. If the bitmap indicates present (bit = 0), the dispatcher reads the field_id and value from the wire and validates the wire_field_id matches the expected schema field_id. The bitmap ensures completeness: if the wire is missing a non-null field, the dispatcher returns `DCS_INVALID_STRUCT`.
 Zero bytes MUST NOT be used to represent NULL for any column type including BYTEA.
 
-**Example — row with 2 columns (TEXT, BYTEA):**
+**Null bitmap integration (deferred):** The null bitmap format is fully specified above, but the integration between the row-storage layer and the DCS `dispatch_struct` is deferred to a future RFC. Specifically, `dispatch_struct` as specified in Phase 2d assumes all schema fields are present in the wire — it does not currently accept a null bitmap parameter. The row-storage layer must handle null bitmap parsing and the dispatcher must be extended to receive null bitmap context. This is tracked as a known gap in the current RFC-0201 specification; it does not block Blob conformance but prevents conformant NULL handling in mixed-type schemas.
 ```
 u32_be(1) || u32_be(1) || 'a'    // field_id=1: TEXT "a"
 u32_be(2) || u32_be(5) || bytes  // field_id=2: BYTEA 5-bytes
@@ -1364,6 +1466,17 @@ pub enum Value {
     // Dfp and BigInt deferred — implemented as todo!() in dispatcher
 }
 
+impl Value {
+    /// Compare two Values of the same type. Used for ORDER BY on Blob columns.
+    /// Panics if the values are of different types.
+    fn compare_same_type(&self, other: &Value) -> BlobOrdering {
+        match (self, other) {
+            (Value::Blob(a), Value::Blob(b)) => compare_blob(a.as_bytes(), b.as_bytes()),
+            _ => panic!("compare_same_type called on different types"),
+        }
+    }
+}
+
 /// ColumnType: stoolap's schema type system. Maps to DCS types per RFC-0127.
 /// field_ids in Struct variants are u32; no duplicate field_ids permitted.
 pub enum ColumnType {
@@ -1398,7 +1511,7 @@ fn dispatch_field(input: &[u8], col_type: &ColumnType, depth: usize)
         ColumnType::Text => deserialize_string(input)
             .map(|(v, rem)| (rem, Value::String(v))),
         ColumnType::Bytea => deserialize_blob(input)
-            .map(|(v, rem)| (rem, Value::Blob(Blob::from_shared(v)))),
+            .map(|(v, rem)| (rem, Value::Blob(Blob::from_deserialized(v)))),
         ColumnType::Bool => deserialize_bool(input)
             .map(|(v, rem)| (rem, Value::Bool(v))),
         ColumnType::I128 => deserialize_i128(input)
@@ -1474,8 +1587,10 @@ fn dispatch_struct(input: &[u8], is_top_level: bool, depth: usize,
     }
 
     // Validate schema: field_ids must be strictly ascending and unique
-    debug_assert!(schema.windows(2).all(|w| w[0].0 < w[1].0 && w[0].0 != w[1].0),
-        "Schema field_ids must be strictly ascending and unique");
+    // Runtime check (not debug_assert) — malformed schemas must be rejected in production
+    if !schema.windows(2).all(|w| w[0].0 < w[1].0 && w[0].0 != w[1].0) {
+        return Err(DCS_INVALID_STRUCT);  // invalid schema: field_ids not strictly ascending/unique
+    }
 
     let mut fields = Vec::new();
     let mut remaining = input;
@@ -1572,6 +1687,10 @@ fn deserialize_dmat(input: &[u8], schema_rows: usize, schema_cols: usize, elem_t
     let wire_rows = u32::from_be_bytes([input[0], input[1], input[2], input[3]]) as usize;
     let wire_cols = u32::from_be_bytes([input[4], input[5], input[6], input[7]]) as usize;
     // Wire dimensions MUST match schema dimensions — mismatch indicates corruption
+    // or wrong schema was used. DCS_INVALID_STRUCT (not DCS_INVALID_BLOB) is used
+    // because the issue is structural (dimension header doesn't match declared schema),
+    // not a Blob-specific error. RFC-0127 Change 7 defines no separate DCS_INVALID_DMAT;
+    // implementations may define a custom error code but DCS_INVALID_STRUCT is conformant.
     if wire_rows != schema_rows || wire_cols != schema_cols {
         return Err(DCS_INVALID_STRUCT);  // dimension mismatch: wire vs schema
     }
@@ -1608,7 +1727,7 @@ fn deserialize_dmat(input: &[u8], schema_rows: usize, schema_cols: usize, elem_t
 
 | Version | Date | Changes |
 |---------|------|---------|
-| 5.8 | 2026-03-27 | Round 11 adversarial review fixes: CRIT-1 (REBUTTAL: code already passes depth correctly; verified at line 1316), CRIT-2 (rewrite recursion depth test with v5.7 wire format: field_id=1 + inner Struct; depth=61 accepted, depth=62 rejected), CRIT-3 (remove trailing terminator from empty struct exemption test; wire = just u32_be(1)), HIGH-1 (rewrite via CRIT-2: max valid depth=61 for Struct field), HIGH-5 (add value assertions to blob field test), HIGH-6 (add Value::Dvec and Value::Dmat to Value enum pseudocode), HIGH-7 (mark test_text_1mb_limit as integration test), MED-3 (add test_dispatch_dmat_deserialization: 2x2 Text matrix, dimension mismatch, Blob elements), MED-4 (add test_dispatch_null_bitmap_interaction), MED-6 (change debug_assert_ne to assert_ne in from_shared), LOW-3 (add Enum depth comment), LOW-4 (rename test_bytea_32_length_constraint_enforcement → test_bytea_32_blob_construction). |
+| 5.9 | 2026-03-28 | Round 12 adversarial review fixes: CRIT-1 (complete truncated deserialize_string sentence: return type and remaining bytes), CRIT-2 (rename from_shared → from_deserialized; rename shared-ownership → deserialization-path; update all call sites), CRIT-3 (extend test-code exception to deserialize_string), HIGH-1 (add serialize_dmat, serialize_enum, serialize_value, serialize_struct, serialize_dvec with full pseudocode), HIGH-2 (add Value::compare_same_type and test Value-level blob comparison), HIGH-3 (test_bytea_32_blob_construction already renamed in Round 11), MED-1 (add rationale: DCS_INVALID_STRUCT used for dimension mismatch per RFC-0127), MED-2 (add null bitmap integration deferral note), MED-3 (add SipHash key loss recovery: mark corrupted, rebuild or refuse to open), MED-4 (convert schema debug_assert to runtime DCS_INVALID_STRUCT), LOW-1 (add 4GB boundary integration test to Phase 1 checklist), LOW-2 (fix Entry 17 cross-reference in SHA256 test comment). |
 | 5.7 | 2026-03-27 | Round 10 adversarial review fixes: CRIT-1 (remove terminator; iterate over schema in order per RFC-0127 Change 13), CRIT-2 (accept via CRIT-1), CRIT-3 (dispatcher example: from_slice → from_shared), CRIT-4 (strict positional matching; wire field_id must equal schema field_id per RFC-0127), HIGH-1 (remove vestigial 6-code DcsError paragraph; keep only 12-code paragraph), HIGH-2 (add test_dispatch_option_none_and_some, test_dispatch_enum_valid_and_invalid_variant, test_dispatch_dvec_with_blob_elements, test_dispatch_recursive_struct, test_dispatch_struct_with_blob_field), HIGH-3 (add Value::Dvec(Vec<Value>) to stoolap core Value enum note), HIGH-4 (from_shared: SHOULD → MUST with debug_assert), MED-1 (deserialize_dmat: use schema dimensions for iteration; wire only for validation), MED-2 (clarify null bitmap: NULL fields absent from wire, bitmap indicates which schema fields present), MED-3 (BYTEA(N): regex captures N, stored as ColumnConstraint::Length(N)), MED-4 (BYTEA(32) test: unit test for Blob construction; SQL enforcement at integration level), MED-5 (text_1mb_limit: note serialize_string/deserialize_string imported from RFC-0127), MED-6 (depth fix: dispatch_struct passes depth to dispatch_field; only Struct arm increments), LOW-1 (empty struct test: add outer/inner terminator labels), LOW-3 (test_blob_ordering: use Blob::new with compare_blob), LOW-4 (debug_assert for schema field_id ascending/unique already present). |
 | 5.6 | 2026-03-27 | Round 9 adversarial review fixes: CRIT-1 (remove deserialize_string stub; reference RFC-0127 only), CRIT-3 (Enum error: callers MUST NOT rely on error code specificity), CRIT-4 (depth: only Struct increments depth; Option/Dvec/Dmat/Enum pass depth unchanged), CRIT-5 (clarify CompactArc copies data; from_shared is not lifetime extension), CRIT-6 (REBUTTAL: non-contiguous field_ids valid for schema evolution), CRIT-7 (REBUTTAL: zero terminator IS in RFC-0127 Change 13), HIGH-1 (add HKDF-SHA256 params to SipHash key derivation), HIGH-3 (revert ToParam Vec<u8> to self.clone()), HIGH-4 (Struct field validation: MUST reject, not SHOULD), HIGH-5 (document DCS_INVALID_BLOB zero-read vs truncation distinction), HIGH-6 (fully specify null bitmap: offset, bit ordering, versioning, DCS interaction), HIGH-8 (add wire vs schema dimension validation in deserialize_dmat), MED-1 (document CompactArc heap-allocates and copies), MED-2 (add dispatcher routing prose test vectors), MED-3 (from_shared pointer-distinctness note), MED-4 (specify BYTEA(N) parsing), MED-5 (Dfp/BigInt not required for Blob conformance), MED-6 (clarify hash index only affects lookups, not comparison operators), MED-7 (correct DcsError to all 12 RFC-0127 codes), LOW-1 (replace 5GB allocation test with boundary test), LOW-3 (clarify USING HASH accepted by stoolap parser), LOW-4 (document Blob does not derive Ord; Value uses compare_blob), LOW-5 (add benchmark methodology). |
 | 5.5 | 2026-03-27 | Round 8 adversarial review fixes: CRIT-1 (SipHash key: specify persistent key storage/reload requirement), CRIT-2 (4GB blob: add application-level 1MB limit + memory exhaustion warning), CRIT-3 (add serialize_blob >4GB test), HIGH-1 (strengthen DcsError definition with all 6 canonical variant names), HIGH-2 (add Blob::from_shared zero-copy constructor for deserialization path), HIGH-3 (add deserialize_string definition reference to RFC-0127), HIGH-4 (add 1MB TEXT enforcement to Phase 1 checklist), MED-1 (specify null bitmap format normatively), MED-2 (add Phase 2 checkboxes to all sub-sections), MED-3 (document DCS_INVALID_ENUM semantic mismatch in Enum arm), MED-4 (add Struct field_id ascending/unique/no-gaps constraint), MED-5 (replace BYTEA(32) placeholder test with real conformance test), MED-6 (fix ToParam Vec<u8> redundant clone: use std::mem::take), LOW-1 (PostgreSQL USING HASH case-insensitivity note), LOW-2 (add Dqa to dispatcher contract required types), LOW-3 (add Value::Dmat note to type def), LOW-4 (fix v5.4 changelog: remove MED-7.1/7.2/7.3 self-references), LOW-5 (verify all test scenarios present), XRFC-1 (specify serialize_blob Result handling in INSERT path), XRFC-2 (coordinate NUMERIC_SPEC_VERSION with RFC-0110 governance), XRFC-3 (add Phase 3 acceptance criteria). |
@@ -1634,6 +1753,6 @@ fn deserialize_dmat(input: &[u8], schema_rows: usize, schema_cols: usize, elem_t
 
 ---
 
-**Version:** 5.8
+**Version:** 5.9
 **Original Submission Date:** 2026-03-25
 **Last Updated:** 2026-03-27

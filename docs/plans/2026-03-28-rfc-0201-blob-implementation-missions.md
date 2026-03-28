@@ -91,6 +91,51 @@ impl Value {
             _ => None,
         }
     }
+
+    /// Extract blob data as a slice and its length
+    pub fn as_blob_len(&self) -> Option<(&[u8], usize)> {
+        match self {
+            Value::Blob(data) => Some((data, data.len())),
+            _ => None,
+        }
+    }
+
+    /// Extract blob data as a 32-byte array (for SHA256 key_hash columns)
+    /// Returns None if the blob is not exactly 32 bytes.
+    pub fn as_blob_32(&self) -> Option<[u8; 32]> {
+        match self {
+            Value::Blob(data) if data.len() == 32 => {
+                let mut arr = [0u8; 32];
+                arr.copy_from_slice(data);
+                Some(arr)
+            }
+            _ => None,
+        }
+    }
+}
+```
+
+### 4b. ToParam Implementations (`src/api/params.rs`)
+
+Per RFC-0201 §ToParam Implementations — enables `$1` parameter binding for binary data:
+
+```rust
+impl ToParam for Vec<u8> {
+    fn to_param(&self) -> Value {
+        Value::Blob(Blob::from_slice(self))
+    }
+}
+
+impl<const N: usize> ToParam for [u8; N] {
+    fn to_param(&self) -> Value {
+        Value::Blob(Blob::from_slice(self))
+    }
+}
+
+impl ToParam for &[u8] {
+    fn to_param(&self) -> Value {
+        Value::Blob(Blob::from_slice(self))
+    }
 }
 ```
 

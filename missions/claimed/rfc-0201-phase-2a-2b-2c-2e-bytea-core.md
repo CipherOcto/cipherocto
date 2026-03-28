@@ -19,10 +19,12 @@ Implementation dependencies (must complete first):
 - [ ] `Value::Blob(CompactArc<[u8]>)` variant added in `src/core/value.rs` (first-class, NOT Extension)
 - [ ] `compare_blob` function implemented: bytes-first comparison, length as tiebreaker; returns `BlobOrdering`
 - [ ] `Value::compare` and `Value::Ord` integration for Blob
-- [ ] `Value::Blob` serialization (wire tag 12) and deserialization in `src/storage/mvcc/persistence.rs`
+- [ ] `Value::Blob` serialization (wire tag 12, BE length prefix) and deserialization in `src/storage/mvcc/persistence.rs`
 - [ ] `SchemaColumn.blob_length: Option<u32>` added for BYTEA(N) length constraint
 - [ ] DDL parser updated: `BYTEA`, `BLOB`, `BINARY`, `VARBINARY` → `DataType::Blob` (currently maps to Text)
 - [ ] `CREATE TABLE` with BYTEA column rejected with clear error (null bitmap not yet integrated)
+- [ ] `ToParam` implementations for `Vec<u8>`, `[u8; N]`, `&[u8]` in `src/api/params.rs`
+- [ ] `Value::as_blob()`, `Value::as_blob_len()`, `Value::as_blob_32()` accessors
 - [ ] Hash index (`CREATE INDEX ... USING HASH ON blob_column`) functional for equality lookups
 - [ ] `cargo test` passes including new Blob tests
 - [ ] `cargo clippy --all-targets --all-features -- -D warnings` passes
@@ -57,7 +59,16 @@ Blob(CompactArc<[u8]>),
 pub fn blob(data: &[u8]) -> Self          // from slice — copies into CompactArc
 pub fn blob_from_vec(data: Vec<u8>) -> Self // from owned vec
 pub fn blob_from_arc(data: CompactArc<[u8]>) -> Self // zero-copy
-pub fn as_blob(&self) -> Option<&[u8]>     // accessor
+pub fn as_blob(&self) -> Option<&[u8]>         // accessor
+pub fn as_blob_len(&self) -> Option<(&[u8], usize)> // accessor with length
+pub fn as_blob_32(&self) -> Option<[u8; 32]>  // for SHA256 key_hash columns
+```
+
+**ToParam implementations** (`src/api/params.rs`):
+```rust
+impl ToParam for Vec<u8> { ... }
+impl<const N: usize> ToParam for [u8; N] { ... }
+impl ToParam for &[u8] { ... }
 ```
 
 ### 3. compare_blob
@@ -76,9 +87,9 @@ Used in `Value::compare_same_type` and `Value::Ord`. `Value::PartialEq` uses dir
 
 ### 4. Serialization (`src/storage/mvcc/persistence.rs`)
 
-Wire format (wire tag 12):
+Wire format (wire tag 12, per RFC-0201 §Serialization — BE length prefix):
 ```
-[u8: 12] [u32_le: length] [u8..len: data]
+[u8: 12] [u32_be: length] [u8..len: data]
 ```
 
 Tag 12 is free — existing tags are 0-11.

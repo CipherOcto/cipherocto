@@ -25,6 +25,9 @@ Implementation dependencies (must complete first):
 - [ ] `CREATE TABLE` with BYTEA column rejected with clear error (null bitmap not yet integrated)
 - [ ] `ToParam` implementations for `Vec<u8>`, `[u8; N]`, `&[u8]` in `src/api/params.rs`
 - [ ] `Value::as_blob()`, `Value::as_blob_len()`, `Value::as_blob_32()` accessors
+- [ ] `serialize_blob()` and `deserialize_blob()` standalone DCS functions (per RFC-0201 §Serialization)
+- [ ] `validate_schema()` called at `CREATE TABLE` / schema registration time; returns `DCS_INVALID_STRUCT` for non-ascending field_ids
+- [ ] `serialize_bytes` call sites audited to ensure no Blob-typed data bypasses `serialize_blob`
 - [ ] Hash index (`CREATE INDEX ... USING HASH ON blob_column`) functional for equality lookups
 - [ ] `cargo test` passes including new Blob tests
 - [ ] `cargo clippy --all-targets --all-features -- -D warnings` passes
@@ -151,8 +154,9 @@ The existing `HashIndex` (`src/storage/index/hash.rs`) uses ahash. It already ha
 | `src/core/types.rs` | Add `Blob = 10`, update `FromStr`, update `is_orderable` |
 | `src/core/value.rs` | Add `Value::Blob` variant, constructors, `compare_blob`, integration |
 | `src/core/schema.rs` | Add `blob_length: Option<u32>` to `SchemaColumn` |
-| `src/storage/mvcc/persistence.rs` | Serialize/deserialize `Value::Blob` (tag 12) |
+| `src/storage/mvcc/persistence.rs` | Serialize/deserialize `Value::Blob` (tag 12), `serialize_blob`, `deserialize_blob`, `validate_schema` |
 | `src/executor/ddl.rs` | BYTEA/BLOB/BINARY/VARBINARY → `DataType::Blob` |
+| `src/api/params.rs` | `ToParam` for `Vec<u8>`, `[u8; N]`, `&[u8]` |
 
 ## Design Reference
 

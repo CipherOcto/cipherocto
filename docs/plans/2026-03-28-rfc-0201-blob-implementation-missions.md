@@ -249,6 +249,34 @@ In `cast_to_type` FROM Blob → Text: hex encoding.
 
 **Wire format** (per RFC-0201 §Serialization): `[u8: 12] [u32_be: length] [u8..len: data]`
 
+**`serialize_blob()`** (standalone DCS function per RFC-0201 §Serialization):
+```rust
+fn serialize_blob(data: &[u8]) -> Result<Vec<u8>, DcsError> {
+    if data.len() > 0xFFFFFFFF {
+        return Err(DCS_BLOB_LENGTH_OVERFLOW);
+    }
+    Ok(serialize_bytes(data))  // u32_be(data.len()) || data
+}
+```
+
+**`deserialize_blob()`** (standalone DCS function per RFC-0201):
+```rust
+fn deserialize_blob(input: &[u8]) -> Result<(&[u8], &[u8]), DcsError> {
+    const LEN_SIZE: usize = 4;
+    if input.len() < LEN_SIZE {
+        return Err(DCS_INVALID_BLOB);
+    }
+    let length = u32::from_be_bytes([input[0], input[1], input[2], input[3]]) as usize;
+    if 4 + length > input.len() {
+        return Err(DCS_INVALID_BLOB);
+    }
+    let blob_data = &input[4..4 + length];
+    let remaining = &input[4 + length..];
+    Ok((blob_data, remaining))
+}
+```
+
+**`serialize_value` arm** for `Value::Blob`:
 ```rust
 Value::Blob(data) => {
     buf.push(12);
@@ -257,7 +285,7 @@ Value::Blob(data) => {
 }
 ```
 
-**Deserialization** for tag 12:
+**`deserialize_value` arm** for tag 12:
 
 ```rust
 12 => {
@@ -273,6 +301,8 @@ Value::Blob(data) => {
     Ok(Value::Blob(blob_data))
 }
 ```
+
+**Audit requirement:** All `serialize_bytes` call sites in the codebase must be audited to ensure no Blob-typed data bypasses `serialize_blob`. `serialize_bytes` is a low-level primitive; `serialize_blob` is the required typed entry point.
 
 ### 10. DDL Parser (`src/executor/ddl.rs`)
 
@@ -313,6 +343,52 @@ Per RFC-0201 test vectors, implement:
 - `BYTEST` in SQL parser
 - `CREATE TABLE t(key_hash BYTEA(32) NOT NULL)` rejected
 - Hash index creation and lookup for BYTEA column
+- `validate_schema` rejects non-ascending and duplicate field_ids
+
+### 16. Schema Validation — `validate_schema()`
+
+Per RFC-0201 §Schema Validation for Dynamic Schemas — called at `CREATE TABLE` / schema registration time (not deserialization time):
+
+```rust
+pub fn validate_schema(schema: &[(u32, ColumnType)]) -> Result<(), DcsError> {
+    // Check strictly ascending field_ids (uniqueness implied by < ordering)
+    if !schema.windows(2).all(|w| w[0].0 < w[1].0) {
+        return Err(DCS_INVALID_STRUCT);
+    }
+    for (_, col_type) in schema {
+        validate_col_type(col_type)?;
+    }
+    Ok(())
+}
+
+fn validate_col_type(col_type: &ColumnType) -> Result<(), DcsError> {
+    match col_type {
+        ColumnType::Struct(inner) => validate_schema(inner)?,
+        ColumnType::Enum(variants) => {
+            let mut seen_ids: HashSet<u32> = HashSet::new();
+            for (variant_id, variant_type) in variants {
+                if !seen_ids.insert(variant_id) {
+                    return Err(DCS_INVALID_STRUCT); // duplicate variant_id
+                }
+                validate_col_type(variant_type)?;
+            }
+        }
+        ColumnType::Dvec(elem_type) => validate_col_type(elem_type)?,
+        ColumnType::Dmat { rows, cols, elem_type } => {
+            if *rows == 0 || *cols == 0 {
+                return Err(DCS_INVALID_STRUCT);
+            }
+            if (*rows as u64) * (*cols as u64) > MAX_CONTAINER_ELEMENTS as u64 {
+                return Err(DCS_INVALID_STRUCT);
+            }
+            validate_col_type(elem_type)?;
+        }
+        // Primitive types (Text, Bytea, Bool, I128, Dqa, Dfp) — valid as-is
+        _ => {}
+    }
+    Ok(())
+}
+```
 
 ---
 

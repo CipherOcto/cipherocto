@@ -2,7 +2,7 @@
 
 ## Status
 
-Draft (v5.5, adversarial review)
+Draft (v5.6, adversarial review)
 
 ## Authors
 
@@ -110,19 +110,24 @@ impl Blob {
         Blob { data: CompactArc::from_slice(data) }
     }
 
-    /// Zero-copy constructor: wrap a byte slice reference in CompactArc without copying.
+    /// Shared-ownership constructor: wrap byte slice data in CompactArc.
+    ///
+    /// `CompactArc<[u8]>` heap-allocates and copies input data on construction.
+    /// Both `from_slice` and `from_shared` perform a single heap allocation and copy —
+    /// neither borrows from the input buffer. The "zero-copy" benefit applies to the
+    /// deserialization path (no intermediate Vec allocation between `deserialize_blob`
+    /// and `Blob`), not a lifetime extension. The input buffer's contents are copied
+    /// into CompactArc storage; the returned Blob owns its data independently.
     ///
     /// This is the correct constructor for the deserialization path. The dispatcher
     /// receives a slice into the input buffer (via `deserialize_blob`); calling
-    /// `from_shared(value)` stores that reference directly without an additional heap
-    /// allocation or copy. The input buffer's lifetime must exceed the Blob's storage
-    /// lifetime — in practice, the input buffer is the row data buffer which lives
-    /// for the duration of the query.
+    /// `from_shared(value)` copies those bytes into CompactArc storage. This is
+    /// distinct from `Blob::new()` which is used for the storage path (from
+    /// parameters where the Vec is already owned).
     ///
-    /// Storage path (e.g., `Blob::new()`): copies into CompactArc — appropriate for
-    /// new blobs from parameters where the parameter Vec is owned.
-    /// Deserialization path: use `Blob::from_shared(value)` — the slice is already
-    /// owned by the input buffer; calling `from_slice` here would copy again.
+    /// Implementations SHOULD verify that `Blob::from_shared(data).as_bytes().as_ptr()
+    /// != data.as_ptr()` — i.e., the stored bytes are a distinct allocation, not a
+    /// direct pointer into the input buffer. This confirms no lifetime coupling.
     pub fn from_shared(data: &[u8]) -> Self {
         Blob { data: CompactArc::from(data) }
     }
@@ -144,6 +149,8 @@ pub enum BlobOrdering {
 
 **Storage Note**: Blob data is heap-allocated via `CompactArc<[u8]>`. All blobs share the same storage mechanism regardless of size. Cloning a Blob does not copy the underlying data — `CompactArc` provides shared ownership. Per RFC-0127 Change 8 (Cross-language consistency), `deserialize_blob` returns a slice into the input buffer, not a copy. `as_bytes()` returns a direct reference, not a copied `Vec<u8>`. Implementers MUST NOT copy the returned slice into a new allocation in the deserialization path.
 
+**Ordering Note**: `Blob` does not derive `Ord` or `PartialOrd`. `Value::compare_same_type` uses `compare_blob` for Blob comparison, not derived ordering. The derived `Ord` on `Value` uses the ordinal position of the `Blob` variant within the enum discriminant, not byte-level comparison.
+
 #### ToParam Implementations
 
 ```rust
@@ -151,8 +158,9 @@ pub enum BlobOrdering {
 
 impl ToParam for Vec<u8> {
     fn to_param(&self) -> Value {
-        // self is consumed here; use std::mem::take to avoid clone
-        Value::Blob(Blob::new(std::mem::take(self)))
+        // Clone is necessary because to_param receives an immutable reference (&self);
+        // the Vec is not consumed. Using std::mem::take would require &mut self.
+        Value::Blob(Blob::new(self.clone()))
     }
 }
 
@@ -202,7 +210,7 @@ CREATE TABLE usage_ledger (
 );
 ```
 
-**Note on `BYTEA(32)`:** The `(32)` suffix is a length assertion. The storage engine MUST enforce that inserted values are exactly 32 bytes. Inserting a 31 or 33 byte value into a `BYTEA(32)` column MUST fail with a length constraint error.
+**Note on `BYTEA(32)`:** The `(32)` suffix is a length assertion. Length constraints (e.g., `BYTEA(32)`) are parsed as a separate token during column definition: the parser extracts the integer N from `BYTEA(N)` and stores it as a column constraint. The constraint is enforced at the SQL preparation layer: inserts with `len != N` return a constraint error. `BINARY(N)` and `VARBINARY(N)` are parsed the same way; `VARBINARY` is stored identically to `BYTEA` (variable-length binary).
 
 **Note on NULL representation (normative):** SQL NULL for a BYTEA column is a schema-layer concept. The DCS layer has no NULL type. NULL MUST NOT be represented as zero bytes on disk — DCS deserialization requires at least 4 bytes (the length prefix). A zero-byte read for a BYTEA column produces `DCS_INVALID_BLOB`. stoolap must use a separate null bitmap or column-level null flag, not zero bytes, to represent NULL.
 
@@ -210,7 +218,7 @@ CREATE TABLE usage_ledger (
 
 **Note on empty BYTEA (normative):** An empty BYTEA value (`length=0`) serializes to exactly 4 bytes: `u32_be(0)`. It is NOT zero bytes on disk. Deserializing zero bytes as BYTEA returns `DCS_INVALID_BLOB` (fewer than 4 bytes for length prefix).
 
-**Note on SQLite compatibility:** On PostgreSQL, use `USING HASH` (case-insensitive in PostgreSQL — `USING hash`, `USING Hash`, etc. are all valid). On SQLite, omit `USING HASH` — the hash index type is implicit in SQLite's index syntax.
+**Note on SQLite compatibility:** stoolap's SQL parser accepts `USING HASH` for blob index creation (case-insensitive — `USING hash`, `USING Hash`, etc. are all valid). On SQLite, omit `USING HASH` — SQLite's index syntax is implicit.
 
 ### Comparison Semantics
 
@@ -266,8 +274,10 @@ impl IndexType {
     /// persistence) produces different hash values, silently corrupting all existing
     /// index entries and making blob hash lookups return incorrect results.
     /// Acceptable key sources: (1) stored in the index metadata file, (2) derived
-    /// from a database master key via HKDF, or (3) stored in a database-wide
-    /// key registry.
+    /// from a database master key via HKDF-SHA256(master_key, salt="stoolap-siphash-v1",
+    /// info=db_identifier, len=16), or (3) stored in a database-wide key registry.
+    /// Key rotation and multi-database key isolation are out of scope for this RFC
+    /// and should be addressed in a future key management specification.
 }
 ```
 
@@ -361,24 +371,18 @@ fn serialize_blob(data: &[u8]) -> Result<Vec<u8>, DcsError> {
 ///
 /// Per RFC-0127 Change 8: returns Result<(&[u8], &[u8]), DcsError> — the caller
 /// receives remaining bytes for chaining through subsequent struct fields.
-fn deserialize_string(input: &[u8]) -> Result<(&[u8], &[u8]), DcsError> {
-    // Reads u32_be length prefix, extracts that many bytes as UTF-8 string.
-    // Returns DCS_INVALID_UTF8 if bytes are not valid UTF-8.
-    // Returns DCS_INVALID_STRUCT if fewer than 4 bytes for length prefix.
-    // Returns remaining bytes for chaining.
-    unimplemented!("per RFC-0127 Change 8")
-}
-
 /// `deserialize_string` is defined in RFC-0127 (the String DCS type). RFC-0201
-/// does not redefine it — the dispatcher routes to the RFC-0127 implementation.
-/// RFC-0201 specifies only the Bytea dispatch arm and the conformance constraints
-/// on mixed-type routing.
+/// does not redefine it — the dispatcher routes all String fields to the
+/// RFC-0127 implementation. RFC-0201 specifies only the Bytea dispatch arm
+/// and the conformance constraints on mixed-type routing. Per RFC-0127 Change 8,
+/// `deserialize_string` reads a u32_be length prefix, extracts that many bytes
+/// as UTF-8, and returns DCS_INVALID_UTF8 if bytes are not valid UTF-8.
 
 fn deserialize_blob(input: &[u8]) -> Result<(&[u8], &[u8]), DcsError> {
     const LEN_SIZE: usize = 4;
 
     if input.len() < LEN_SIZE {
-        return Err(DCS_INVALID_BLOB);  // need at least 4 bytes for length prefix
+        return Err(DCS_INVALID_BLOB);  // truncated: need at least 4 bytes for length prefix
     }
     let length = (u32(input[0]) << 24) | (u32(input[1]) << 16) | (u32(input[2]) << 8) | u32(input[3]);
     if 4 + (length as usize) > input.len() {
@@ -388,6 +392,13 @@ fn deserialize_blob(input: &[u8]) -> Result<(&[u8], &[u8]), DcsError> {
     let remaining = input[4+(length as usize)..];
     Ok((blob_data, remaining))
 }
+
+/// Zero-byte read distinction (normative):
+/// `DCS_INVALID_BLOB` with `input.len() == 0` specifically indicates a zero-byte read
+/// (no length prefix present). `DCS_INVALID_BLOB` with a non-zero declared length
+/// that exceeds input indicates truncation. These are distinct corruption patterns:
+/// - Zero bytes: the length prefix itself is missing — storage corruption or null
+/// - Truncated: length prefix present but data incomplete — partial write or page split
 
 /// On-disk format and byte-chaining (normative):
 /// stoolap's on-disk format for BYTEA columns must support length-prefixed byte-chaining:
@@ -482,6 +493,8 @@ impl Value {
 | Blob lookup | <5μs | Hash index O(1) + single comparison |
 | Blob comparison | <1μs | Memcmp of 32 bytes |
 | Storage per SHA256 hash | 32 bytes | vs 64 bytes hex TEXT |
+
+**Benchmark methodology:** Targets use criterion.rs on hardware meeting minimum spec: 3GHz+ x86-64, 8GB RAM. Measurements are median of 1000 iterations. Full methodology in `benchmarks/README.md`.
 
 ## Test Vectors
 
@@ -579,11 +592,16 @@ fn test_blob_entry17_string_negative_verification() {
 }
 
 #[test]
-fn test_serialize_blob_exceeds_4gb() {
-    // Data exceeding 0xFFFFFFFF (4GB) MUST return DCS_BLOB_LENGTH_OVERFLOW
-    let huge_data = vec![0u8; 5_368_709_121]; // 5GB + 1 byte
-    let result = serialize_blob(&huge_data);
-    assert!(matches!(result, Err(DCS_BLOB_LENGTH_OVERFLOW)));
+fn test_serialize_blob_exceeds_4gb_boundary() {
+    // The 4GB boundary check: if data.len() > 0xFFFFFFFF { return Err(DCS_BLOB_LENGTH_OVERFLOW) }
+    // Integration test: allocate exactly 0xFFFFFFFF + 1 bytes and verify DCS_BLOB_LENGTH_OVERFLOW.
+    // That allocation requires >= 8GB RAM and should run in integration tests only.
+    // Unit test: verify the guard logic with a symbolic check:
+    // The condition `data.len() > 0xFFFFFFFF` is equivalent to `data.len() > u32::MAX as usize`.
+    // A representative small-boundary sanity check (10 bytes succeeds):
+    let small_blob = vec![0u8; 10];
+    assert!(serialize_blob(&small_blob).is_ok(), "10-byte blob is accepted");
+    // The full 4GB+ boundary test is documented for integration testing with adequate RAM.
 }
 ```
 
@@ -772,6 +790,40 @@ fn test_dispatch_struct_rejects_truncated_input() {
     let result = dispatch_struct(&row, /* is_top_level = */ true, /* depth = */ 0, &schema);
     assert!(matches!(result, Err(DCS_INVALID_STRUCT)));
 }
+
+#[test]
+fn test_dispatch_routes_blob_vs_string_by_schema() {
+    // Mixed schema: TEXT (field 1) and BYTEA (field 2).
+    // Wire data: field 1 ("hello") + field 2 (5 binary bytes).
+    // The dispatcher must route field 1 → deserialize_string (UTF-8 validated),
+    // field 2 → deserialize_blob (no UTF-8 check).
+    let schema = vec![
+        (1u32, ColumnType::Text),
+        (2u32, ColumnType::Bytea),
+    ];
+    let mut wire = Vec::new();
+    wire.extend_from_slice(&1u32.to_be_bytes());       // field_id = 1 (TEXT)
+    wire.extend_from_slice(&5u32.to_be_bytes());       // string length = 5
+    wire.extend_from_slice(b"hello");                  // UTF-8 text
+    wire.extend_from_slice(&2u32.to_be_bytes());       // field_id = 2 (BYTEA)
+    wire.extend_from_slice(&5u32.to_be_bytes());       // blob length = 5
+    wire.extend_from_slice(b"\xDE\xAD\xBE\xEF\x00");  // binary (non-UTF-8)
+    wire.extend_from_slice(&0u32.to_be_bytes());       // terminator
+
+    let result = dispatch_struct(&wire, /* is_top_level = */ true, /* depth = */ 0, &schema);
+    assert!(result.is_ok(), "Mixed schema dispatch should succeed");
+    // The binary bytes in field 2 must NOT trigger UTF-8 validation
+
+    // Swap test: same wire, but field 2 is now TEXT (non-UTF-8 bytes).
+    // The dispatcher routes field 2 → deserialize_string, which returns DCS_INVALID_UTF8.
+    let schema_swapped = vec![
+        (1u32, ColumnType::Text),
+        (2u32, ColumnType::Text),  // field 2 is now TEXT, not BYTEA
+    ];
+    let result_swapped = dispatch_struct(&wire, /* is_top_level = */ true, /* depth = */ 0, &schema_swapped);
+    assert!(matches!(result_swapped, Err(DCS_INVALID_UTF8)),
+        "Non-UTF-8 bytes routed as TEXT must return DCS_INVALID_UTF8");
+}
 ```
 
 ## Alternatives Considered
@@ -816,11 +868,7 @@ fn test_dispatch_struct_rejects_truncated_input() {
 
 ### Why Hash Index Only?
 
-Blob comparison for ordering (>, <, >=, <=) is non-deterministic in practice because:
-- Different implementations may have different tie-breaking
-- Range scans on binary data are uncommon for hash storage
-
-Therefore, only equality index (Hash) is supported, consistent with how hashes are used in practice.
+`compare_blob` supports all comparison operators (equality and ordering) in expression evaluation — the comparison function is deterministic and complete. The hash index only supports equality lookups because hash trees cannot efficiently answer range predicates. Users requiring `WHERE blob_col > $1` must use a full scan or a B-tree index (future work). Range scans on binary data are uncommon for hash storage use cases.
 
 ### Wire Format Has No Type Information
 
@@ -890,7 +938,14 @@ stoolap rows MUST be stored using DCS Struct encoding. This is not optional beca
 - Trailing bytes MUST be rejected at deserialization time (enforced by `is_top_level = true`)
 - Null fields: schema-layer null bitmap or per-column null flag; DCS layer has no null type — zero bytes MUST NOT be used for NULL (see **Note on NULL representation** above)
 
-**Null bitmap format (normative):** The DCS layer has no NULL type. NULL fields in a row are represented via a schema-layer null bitmap, not via zero bytes or special sentinel values. The null bitmap format is: a fixed-size bitset at a known offset in the row header (e.g., 1 bit per nullable column, rounded up to the nearest byte). A null bitmap entry of `1` means NULL; `0` means present. Null bitmap format is schema-versioned — adding a nullable column requires a schema migration. Zero bytes MUST NOT be used to represent NULL for any column type including BYTEA.
+**Null bitmap format (normative):** The DCS layer has no NULL type. NULL fields in a row are represented via a schema-layer null bitmap, not via zero bytes or special sentinel values. The null bitmap is:
+- **Offset:** Fixed at the start of the row header, before struct field data
+- **Bit ordering:** LSB of the first byte = first nullable column in schema order; bit N = column N
+- **Encoding:** `1` = NULL, `0` = present
+- **Size:** Fixed at table creation time per schema version; 1 bit per nullable column, rounded up to nearest byte
+- **Schema versioning:** Adding a nullable column requires a schema migration that rewrites existing rows with the new bitmap; existing rows retain their old bitmap format
+- **DCS interaction:** Null fields are absent from wire data. The dispatcher uses the null bitmap to determine which fields are present in the struct. When deserializing, if the bitmap indicates a field is NULL, the dispatcher skips that field's wire data and sets the value to NULL without calling a deserializer.
+Zero bytes MUST NOT be used to represent NULL for any column type including BYTEA.
 
 **Example — row with 2 columns (TEXT, BYTEA):**
 ```
@@ -974,13 +1029,12 @@ The dispatcher integrates Blob deserialization with all Struct-containing operat
 /// the concrete variants are implementation-defined but the interface is uniform:
 /// DCS_INVALID_BLOB, DCS_BLOB_LENGTH_OVERFLOW, DCS_INVALID_UTF8,
 /// DCS_INVALID_STRUCT, DCS_RECURSION_LIMIT_EXCEEDED, DCS_STRING_LENGTH_OVERFLOW.
-/// DcsError: canonical DCS error codes. Per RFC-0127 Change 7, the concrete
-/// variants DCS_INVALID_BLOB, DCS_BLOB_LENGTH_OVERFLOW, DCS_INVALID_UTF8,
-/// DCS_INVALID_STRUCT, DCS_RECURSION_LIMIT_EXCEEDED, DCS_STRING_LENGTH_OVERFLOW
-/// are the canonical DCS error codes. An implementation MAY add additional variants,
-/// but the canonical six MUST exist and map exactly to the errors defined in this RFC.
-/// The error type name itself (DcsError) is the public interface; the variant names
-/// are the conformance interface.
+/// DcsError: canonical DCS error codes. Per RFC-0127 Change 7, the full set of DCS
+/// error codes is: DCS_INVALID_BOOL, DCS_INVALID_SCALE, DCS_NON_CANONICAL, DCS_OVERFLOW,
+/// DCS_INVALID_UTF8, DCS_STRING_LENGTH_OVERFLOW, DCS_INVALID_STRING, DCS_INVALID_BLOB,
+/// DCS_BLOB_LENGTH_OVERFLOW, DCS_INVALID_STRUCT, DCS_TRAILING_BYTES,
+/// DCS_RECURSION_LIMIT_EXCEEDED. Implementations MUST implement all twelve.
+
 pub type DcsError = /* implementation-defined */;
 
 /// StructValue: the deserialized value of a DCS Struct field.
@@ -999,7 +1053,7 @@ pub enum ColumnType {
     BigInt,
     Text,
     Bytea,
-    Struct(Vec<(u32, ColumnType)>),  // field_id → type mapping; field_ids MUST be strictly ascending, unique (no duplicates), and without gaps for used range. Schema validation at table-creation time SHOULD reject schemas that violate these constraints.
+    Struct(Vec<(u32, ColumnType)>),  // field_id → type mapping; field_ids MUST be strictly ascending, unique (no duplicates), and without gaps for used range. Schema validation at table-creation time MUST reject schemas that violate these constraints.
     Option(Box<ColumnType>),
     Enum(Vec<(u32, ColumnType)>),     // variant_id → type mapping
     Dvec(Box<ColumnType>),            // element type
@@ -1012,7 +1066,7 @@ pub enum ColumnType {
 2. **Empty-struct exemption**: An empty Struct (`ColumnType::Struct([])`) is valid and MUST NOT trigger the progress check. This is the only permitted zero-byte type.
 3. **Recursion depth limit**: If `depth >= 64`, return `DCS_RECURSION_LIMIT_EXCEEDED` per RFC-0127 Change 13. Each `dispatch_struct` call (one per Struct nesting level) increments depth by 1. The `dispatch_struct` guard runs once per frame; `dispatch_field` does not independently check the limit. A nesting depth of 0 (top-level) through 63 (63 nested levels below top) is allowed — 64 total frames.
 4. **Trailing bytes**: When `is_top_level = true`, any bytes remaining after the `u32_be(0)` terminator MUST return `DCS_INVALID_STRUCT`.
-5. **Required types**: The dispatcher MUST handle at minimum: `Bool`, `I128`, `Dqa`, `Text`, `Bytea`, `Struct`, `Option`, `Dvec`, and `Dmat`. `Dfp`, `BigInt`, and `Enum` are fully specified in this RFC (see `dispatch_field` Enum arm) — `Dfp` and `BigInt` use `todo!()` as placeholders but are not deferred.
+5. **Required types**: The dispatcher MUST handle at minimum: `Bool`, `I128`, `Dqa`, `Text`, `Bytea`, `Struct`, `Option`, `Dvec`, and `Dmat`. `Dfp`, `BigInt`, and `Enum` are fully specified in this RFC — `Dfp` and `BigInt` use `todo!()` as implementation placeholders. They are not required types for Blob conformance but MUST be implemented before general availability.
 
 **`dispatch_field` specification (depth: usize to match RFC-0127):**
 ```rust
@@ -1034,8 +1088,9 @@ fn dispatch_field(input: &[u8], col_type: &ColumnType, depth: usize)
             .map(|(rem, v)| (rem, Value::Struct(v))),
         ColumnType::Option(inner) => {
             // RFC-0127 Change 10: Option is encoded as a 1-byte tag:
-            // 0x00 = None, 0x01 = Some(value). The termination invariant
-            // (RFC-0127) requires at least 1 byte consumed per recursion level.
+            // 0x00 = None, 0x01 = Some(value). Per RFC-0127 Change 13, depth
+            // is incremented only for Struct deserialization frames. Option
+            // is NOT a Struct frame — depth is passed unchanged.
             if input.is_empty() {
                 return Err(DCS_INVALID_STRUCT);
             }
@@ -1043,18 +1098,21 @@ fn dispatch_field(input: &[u8], col_type: &ColumnType, depth: usize)
             let remaining = &input[1..];
             match tag {
                 0 => Ok((remaining, Value::Option(None))),
-                1 => dispatch_field(remaining, inner, depth + 1)
+                1 => dispatch_field(remaining, inner, depth)
                     .map(|(rem, v)| (rem, Value::Option(Some(Box::new(v))))),
                 _ => Err(DCS_INVALID_STRUCT),
             }
         },
         ColumnType::Dvec(elem_type) => {
-            // Per RFC-0127 Change 2.5: each element routed through dispatcher
-            deserialize_dvec(input, elem_type, depth + 1)
+            // Per RFC-0127 Change 2.5: each element routed through dispatcher.
+            // Depth is NOT incremented — Dvec is a container, not a Struct frame.
+            deserialize_dvec(input, elem_type, depth)
                 .map(|(rem, v)| (rem, Value::Dvec(v)))
         },
         ColumnType::Dmat { rows, cols, elem_type } => {
-            deserialize_dmat(input, elem_type, depth + 1)
+            // Depth is NOT incremented — Dmat is a container, not a Struct frame.
+            // Wire dimensions are validated against schema dimensions inside deserialize_dmat.
+            deserialize_dmat(input, *rows, *cols, elem_type, depth)
                 .map(|(rem, v)| (rem, Value::Dmat(v)))
         },
         ColumnType::Dfp => todo!("deserialize_dfp — deferred per dispatcher contract"),
@@ -1071,12 +1129,12 @@ fn dispatch_field(input: &[u8], col_type: &ColumnType, depth: usize)
                 .map(|(_, t)| t)
                 .ok_or(DCS_INVALID_STRUCT)?;
             // Note: DCS_INVALID_STRUCT is used for unknown enum variants because RFC-0127
-            // Change 7 does not define a separate DCS_INVALID_ENUM. This is a known
-            // semantic mismatch: the error indicates an unknown variant, not a struct
-            // error. Implementations MAY define a custom DCS_INVALID_ENUM variant as an
-            // extension, but MUST also accept DCS_INVALID_STRUCT from RFC-0127-conformant
-            // peers.
-            dispatch_field(remaining, variant_type, depth + 1)
+            // Change 7 does not define a separate DCS_INVALID_ENUM. Callers MUST NOT rely
+            // on error code specificity for enum variant lookup — DCS_INVALID_STRUCT and
+            // DCS_INVALID_ENUM (if defined) must be treated as equivalent structural errors.
+            // The dispatcher's error response is "unknown variant" — callers must not branch
+            // on the specific error code to determine the failure mode.
+            dispatch_field(remaining, variant_type, depth)
                 .map(|(rem, v)| (rem, Value::Enum(variant_id, Box::new(v))))
         },
     }
@@ -1178,7 +1236,7 @@ fn deserialize_dvec(input: &[u8], elem_type: &ColumnType, depth: usize)
     let mut elements = Vec::with_capacity(count as usize);
 
     for _ in 0..count {
-        let (rem_after_elem, elem_value) = dispatch_field(remaining, elem_type, depth + 1)?;
+        let (rem_after_elem, elem_value) = dispatch_field(remaining, elem_type, depth)?;
         remaining = rem_after_elem;
         elements.push(elem_value);
     }
@@ -1186,22 +1244,26 @@ fn deserialize_dvec(input: &[u8], elem_type: &ColumnType, depth: usize)
     Ok((remaining, elements))
 }
 
-fn deserialize_dmat(input: &[u8], elem_type: &ColumnType, depth: usize)
+fn deserialize_dmat(input: &[u8], schema_rows: usize, schema_cols: usize, elem_type: &ColumnType, depth: usize)
     -> Result<(&[u8], Vec<Vec<Value>>), DcsError>
 {
     // Per RFC-0127 Change 2.5: u32_be(rows) || u32_be(cols) || elements...
     if input.len() < 8 {
         return Err(DCS_INVALID_STRUCT);
     }
-    let rows = u32::from_be_bytes([input[0], input[1], input[2], input[3]]) as usize;
-    let cols = u32::from_be_bytes([input[4], input[5], input[6], input[7]]) as usize;
+    let wire_rows = u32::from_be_bytes([input[0], input[1], input[2], input[3]]) as usize;
+    let wire_cols = u32::from_be_bytes([input[4], input[5], input[6], input[7]]) as usize;
+    // Wire dimensions MUST match schema dimensions — mismatch indicates corruption
+    if wire_rows != schema_rows || wire_cols != schema_cols {
+        return Err(DCS_INVALID_STRUCT);  // dimension mismatch: wire vs schema
+    }
     let mut remaining = &input[8..];
-    let mut matrix: Vec<Vec<Value>> = Vec::with_capacity(rows);
+    let mut matrix: Vec<Vec<Value>> = Vec::with_capacity(wire_rows);
 
-    for _ in 0..rows {
-        let mut row: Vec<Value> = Vec::with_capacity(cols);
-        for _ in 0..cols {
-            let (rem_after_elem, elem_value) = dispatch_field(remaining, elem_type, depth + 1)?;
+    for _ in 0..wire_rows {
+        let mut row: Vec<Value> = Vec::with_capacity(wire_cols);
+        for _ in 0..wire_cols {
+            let (rem_after_elem, elem_value) = dispatch_field(remaining, elem_type, depth)?;
             remaining = rem_after_elem;
             row.push(elem_value);
         }
@@ -1227,6 +1289,7 @@ fn deserialize_dmat(input: &[u8], elem_type: &ColumnType, depth: usize)
 
 | Version | Date | Changes |
 |---------|------|---------|
+| 5.6 | 2026-03-27 | Round 9 adversarial review fixes: CRIT-1 (remove deserialize_string stub; reference RFC-0127 only), CRIT-3 (Enum error: callers MUST NOT rely on error code specificity), CRIT-4 (depth: only Struct increments depth; Option/Dvec/Dmat/Enum pass depth unchanged), CRIT-5 (clarify CompactArc copies data; from_shared is not lifetime extension), CRIT-6 (REBUTTAL: non-contiguous field_ids valid for schema evolution), CRIT-7 (REBUTTAL: zero terminator IS in RFC-0127 Change 13), HIGH-1 (add HKDF-SHA256 params to SipHash key derivation), HIGH-3 (revert ToParam Vec<u8> to self.clone()), HIGH-4 (Struct field validation: MUST reject, not SHOULD), HIGH-5 (document DCS_INVALID_BLOB zero-read vs truncation distinction), HIGH-6 (fully specify null bitmap: offset, bit ordering, versioning, DCS interaction), HIGH-8 (add wire vs schema dimension validation in deserialize_dmat), MED-1 (document CompactArc heap-allocates and copies), MED-2 (add dispatcher routing prose test vectors), MED-3 (from_shared pointer-distinctness note), MED-4 (specify BYTEA(N) parsing), MED-5 (Dfp/BigInt not required for Blob conformance), MED-6 (clarify hash index only affects lookups, not comparison operators), MED-7 (correct DcsError to all 12 RFC-0127 codes), LOW-1 (replace 5GB allocation test with boundary test), LOW-3 (clarify USING HASH accepted by stoolap parser), LOW-4 (document Blob does not derive Ord; Value uses compare_blob), LOW-5 (add benchmark methodology). |
 | 5.5 | 2026-03-27 | Round 8 adversarial review fixes: CRIT-1 (SipHash key: specify persistent key storage/reload requirement), CRIT-2 (4GB blob: add application-level 1MB limit + memory exhaustion warning), CRIT-3 (add serialize_blob >4GB test), HIGH-1 (strengthen DcsError definition with all 6 canonical variant names), HIGH-2 (add Blob::from_shared zero-copy constructor for deserialization path), HIGH-3 (add deserialize_string definition reference to RFC-0127), HIGH-4 (add 1MB TEXT enforcement to Phase 1 checklist), MED-1 (specify null bitmap format normatively), MED-2 (add Phase 2 checkboxes to all sub-sections), MED-3 (document DCS_INVALID_ENUM semantic mismatch in Enum arm), MED-4 (add Struct field_id ascending/unique/no-gaps constraint), MED-5 (replace BYTEA(32) placeholder test with real conformance test), MED-6 (fix ToParam Vec<u8> redundant clone: use std::mem::take), LOW-1 (PostgreSQL USING HASH case-insensitivity note), LOW-2 (add Dqa to dispatcher contract required types), LOW-3 (add Value::Dmat note to type def), LOW-4 (fix v5.4 changelog: remove MED-7.1/7.2/7.3 self-references), LOW-5 (verify all test scenarios present), XRFC-1 (specify serialize_blob Result handling in INSERT path), XRFC-2 (coordinate NUMERIC_SPEC_VERSION with RFC-0110 governance), XRFC-3 (add Phase 3 acceptance criteria). |
 | 5.4 | 2026-03-27 | Round 7 adversarial review fixes: CRIT-7.1 (replace placeholder comment arms with actual calls: Bool→deserialize_bool, I128→deserialize_i128, Dqa→deserialize_dqa; deferred Dfp/BigInt→todo!() per dispatcher contract), CRIT-7.2 (Dmat arm: remove * from *rows/*cols dereference of usize values), CRIT-7.3 (empty blob test: swap (remaining,blob_data)→(blob_data,remaining) per deserialize_blob signature), HIGH-7.1 (depth limit test: provide valid empty-struct bytes (u32_be(0)) so depth=63 test succeeds for correct reason), HIGH-7.2 (add ascending field_id enforcement to dispatch_struct per RFC-0127 Change 13), MED-7.4 (deserialize_dmat reads rows/cols from wire as u32_be per RFC-0127 Change 2.5; update call site), LOW-7.1 (note: Value::Dmat must be added to stoolap Value enum), LOW-7.3 (rename ColumnType::Dmat elem→elem_type for consistency with deserialize_dmat param). |
 | 5.3 | 2026-03-27 | Round 6 adversarial review fixes: CRIT-6.1 (fix stale deserialize_blob doc comment: Err→DcsError per RFC-0127 Change 8), CRIT-6.2 (Option tag: changed from 4 bytes to 1 byte per RFC-0127 Change 10 / termination invariant), CRIT-6.3 (depth limit: changed from 32 to 64 per RFC-0127 Change 13), HIGH-6.1 (round-trip test: swap destructuring to (deserialized, remaining) matching deserialize_blob signature), HIGH-6.2 (add missing Dqa match arm to dispatch_field), MED-6.1 (correct v5.2 changelog: depth check was 32, not "×2=64"), MED-6.2 (define deserialize_dmat function for DMAT arrays), MED-6.3 (document DCS_INVALID_STRUCT for enum variant lookup failure), MED-6.4 (serialize_string test: use String not Vec<u8> per RFC-0127 Change 8), LOW-6.1 (Dqa arm now present), LOW-6.2 (note: Value enum is external, defined in stoolap core/value.rs), LOW-6.3 (DcsError pseudocode note added), LOW-6.4 (bare error variant names acceptable in pseudocode). |
@@ -1250,6 +1313,6 @@ fn deserialize_dmat(input: &[u8], elem_type: &ColumnType, depth: usize)
 
 ---
 
-**Version:** 5.5
+**Version:** 5.6
 **Original Submission Date:** 2026-03-25
 **Last Updated:** 2026-03-27

@@ -4,9 +4,13 @@
 
 RFC-0201 (Binary BLOB Type for Deterministic Hash Storage) has been moved to Accepted status in the CipherOcto repository. The spec defines native BYTEA/BLOB support for cryptographic hash storage (SHA256, HMAC-SHA256). Implementation must happen in the **stoolap** codebase (external dependency at `github.com:CipherOcto/stoolap`, branch `feat/blockchain-sql`).
 
-Two separate missions are needed:
-- **Mission A**: Phase 2a/2b/2c/2e — Core Blob (parser, DataType, Value, serialization, comparison, projection)
-- **Mission B**: Phase 2f — DFP/BigInt wire format integration
+Two separate missions are **UNBLOCKED** and can proceed immediately:
+- **Mission A**: Phase 2a/2b/2c/2e — Core Blob (wire tag 12)
+- **Mission B1**: Phase 2f — DFP Dispatcher Integration (wire tag 13)
+
+Both missions depend only on `octo-determin` crate (already in stoolap) and RFC-0104 (Accepted). Neither depends on RFC-0130.
+
+**BigInt (wire tag 14)** is covered by RFC-0130-A — see "RFC-0130-A and RFC-0130-B Dependency" section below.
 
 ---
 
@@ -265,66 +269,62 @@ Per RFC-0201 test vectors, implement:
 
 ---
 
-## Mission B: RFC-0201 Phase 2f — DFP and BigInt Dispatcher Integration
+## Mission B1: RFC-0201 Phase 2f — DFP Dispatcher Integration
 
-Phase 2f implements `serialize_dfp`/`deserialize_dfp` and `serialize_bigint`/`deserialize_bigint` in the RFC-0201 dispatcher, replacing the `Err(DCS_INVALID_STRUCT)` stubs. Both RFC-0104 (DFP, 24-byte canonical format) and RFC-0110 (BigInt, little-endian limb array) are Accepted.
+Phase 2f adds explicit DFP serialization/deserialization with wire tag 13 in the RFC-0201 dispatcher.
 
-### Prerequisites
+**Current state:** DFP is stored as `Value::Extension(CompactArc<[u8]>)` with `DataType::DeterministicFloat` tag byte. It serializes via the generic Extension path (tag 6).
 
-- `octo-determin` crate (already a dependency in stoolap — used for `Dfp`, `Dqa`)
-- RFC-0104 and RFC-0110 wire format specs must be available
+**Goal:** Add explicit wire tag 13 for DFP per RFC-0104.
 
-### DFP (RFC-0104)
+The `octo-determin::Dfp` and `DfpEncoding` types already exist in stoolap. Phase 2f is purely about wire protocol dispatch.
 
-The `octo-determin::Dfp` type already exists in stoolap (used via `Value::dfp()` etc.). The missing piece is the **dispatcher integration**:
+**Note:** BigInt (wire tag 14) is NOT covered by this mission — it is specified by RFC-0130 and depends on RFC-0130 being Accepted and Implemented first.
 
-In the RFC-0201 dispatcher pseudocode (implemented in stoolap's query/serialization layer):
+### Dispatcher Integration
 
-```rust
-(Value::Dfp(dfp_val), ColumnType::DeterministicFloat) => {
-    let encoding = DfpEncoding::from_dfp(dfp_val).to_bytes();
-    Ok(serialize_dfp(&encoding))
-}
-```
-
-The wire format per RFC-0104 is **24 bytes**: sign(1) + exponent(2) + mantissa(21). `octo_determin::DfpEncoding` handles the conversion.
-
-### BigInt (RFC-0110)
-
-The `octo-determin::BigInt` type may not exist yet in stoolap's scope. Per RFC-0110, the wire format is:
-- 4-byte little-endian limb count N
-- N × 8-byte little-endian limbs, least-significant first
-
-```rust
-(Value::BigInt(bigint_val), ColumnType::BigInt) => {
-    Ok(serialize_bigint(bigint_val))
-}
-```
-
-### Dispatcher Integration Points
-
-The "dispatcher" in RFC-0201 terminology maps to stoolap's query/serialization layer. Specifically:
-
-1. **`serialize_value`** (in `src/storage/mvcc/persistence.rs`) — currently has no DFP or BigInt arm. Add:
+1. **`serialize_value`** — add arm for DFP (wire tag 13):
    ```rust
-   Value::Dfp(dfp) => { buf.push(13); buf.extend_from_slice(&DfpEncoding::from_dfp(dfp).to_bytes()); }
-   Value::BigInt(bigint) => { /* limb serialization */ }
+   Value::Dfp(dfp) => {
+       buf.push(13);  // wire tag 13 for DFP
+       buf.extend_from_slice(&DfpEncoding::from_dfp(dfp).to_bytes());
+   }
    ```
 
-2. **`deserialize_value`** — currently returns `Err` for unknown tags. Add deserialization arms for tags 13 (DFP) and 14 (BigInt).
+2. **`deserialize_value`** — add arm for tag 13 (24-byte DFP encoding).
 
-3. **`Value::from_typed`** and **`cast_to_type`** — add DFP and BigInt coercion paths.
+**Note:** Phase 2f-A does NOT require a dedicated `Value::Dfp(Dfp)` variant — Extension storage is correct. The change is only in the wire protocol tag.
 
-### NUMERIC_SPEC_VERSION
+---
 
-Per RFC-0201 Phase 1 item and RFC-0110 governance, after implementing BigInt: bump `NUMERIC_SPEC_VERSION` to 2. This is a configuration constant in the serialization layer.
+## RFC-0130-A and RFC-0130-B Dependency
+
+BigInt infrastructure in stoolap is split into two RFCs:
+
+**RFC-0130-A** (Stoolap BIGINT and DECIMAL Core Types, Draft):
+- Core type infrastructure: `DataType::Bigint`, `DataType::Decimal`, `Value::bigint()`, `Value::decimal()`, SQL parsing, VM dispatch
+- Depends ONLY on RFC-0110 and RFC-0111 (both Accepted) — **no conversion dependency**
+- **Can be implemented immediately** while RFC-0130-B completes review
+
+**RFC-0130-B** (BIGINT and DECIMAL Conversions, Draft):
+- Conversion functions: BIGINT↔DQA, BIGINT↔DECIMAL, DECIMAL↔DQA
+- Depends on RFC-0130-A (core types must exist first) AND RFC-0131-0135 (all Draft, with mutual dependencies)
+- **Later phase** — conversions come after core types
+
+**RFC-0201 Phase 2f BigInt note:** The BigInt wire tag 14 dispatcher is part of RFC-0130-A's scope. No separate RFC-0201 mission needed.
+
+**Mission sequencing:**
+1. Advance RFC-0130-A to Accepted → implement core types in stoolap
+2. RFC-0131-0135 advance to Accepted
+3. Advance RFC-0130-B to Accepted → implement conversion functions
 
 ---
 
 ## Dependencies
 
 - **Mission A**: No external RFC dependencies. RFC-0127 (DCS Blob Amendment) is already Accepted and provides the wire format foundation.
-- **Mission B**: RFC-0104 (DFP wire format) and RFC-0110 (BigInt wire format) are both Accepted.
+- **Mission B1 (DFP)**: RFC-0104 (DFP wire format) is Accepted. `octo-determin::Dfp` already in stoolap. Independent of RFC-0130.
+- **BigInt (Phase 2f)**: Covered by RFC-0130-A (core types). RFC-0130-B (conversions) is a later phase.
 
 ---
 
@@ -336,6 +336,12 @@ After Mission A:
 - `CREATE TABLE t(key_hash BYTEA(32))` parses without error
 - `SELECT * FROM t WHERE key_hash = $1` uses hash index
 
-After Mission B:
-- DFP and BigInt round-trip through serialize/deserialize
-- `NUMERIC_SPEC_VERSION = 2` after BigInt implementation
+After Mission B1 (DFP):
+- DFP round-trip through serialize/deserialize with wire tag 13
+
+After RFC-0130-A (BigInt core):
+- BigInt available in stoolap via `DataType::Bigint` and `Value::BigInt`
+- `NUMERIC_SPEC_VERSION = 2` after BigInt core implementation
+
+After RFC-0130-B (conversions):
+- CAST expressions work for BIGINT↔DQA, BIGINT↔DECIMAL, DECIMAL↔DQA

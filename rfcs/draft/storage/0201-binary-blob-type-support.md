@@ -1041,19 +1041,22 @@ fn test_text_1mb_limit() {
 }
 
 #[test]
-fn test_bytea_32_blob_construction() {
-    // BYTEA(32) columns MUST reject inserts with 31 or 33 byte values.
-    // This test verifies Blob construction for valid 31/32/33 byte sizes.
-    // Full SQL layer enforcement (INSERT INTO t(col) VALUES($1) with 31/33 bytes
-    // → constraint error) is tested at the integration level, not in unit tests.
+fn test_blob_construction_all_lengths_accepted() {
+    // Blob::new accepts any Vec<u8> regardless of length — no length constraint at DCS layer.
+    // BYTEA(N) length enforcement is a SQL schema-layer concern: the schema stores
+    // N via ColumnConstraint::Length(N), and the SQL INSERT layer must validate that
+    // blob.len() == N before calling serialize_blob. This unit test verifies only that
+    // Blob construction itself (which copies bytes into CompactArc) works for any length.
     let blob_31 = Blob::new(vec![0u8; 31]);
     let blob_33 = Blob::new(vec![0u8; 33]);
     let blob_32 = Blob::new(vec![0u8; 32]);
-
-    // Verify blobs constructed correctly; SQL constraint layer rejects invalid lengths
     assert_eq!(blob_32.as_bytes().len(), 32);
     assert_eq!(blob_31.as_bytes().len(), 31);
     assert_eq!(blob_33.as_bytes().len(), 33);
+    // Serialization succeeds for any length — constraint checked at SQL layer
+    assert!(serialize_blob(blob_32.as_bytes()).is_ok());
+    assert!(serialize_blob(blob_31.as_bytes()).is_ok());
+    assert!(serialize_blob(blob_33.as_bytes()).is_ok());
 }
 
 #[test]
@@ -1614,7 +1617,7 @@ Zero bytes MUST NOT be used to represent NULL for any column type including BYTE
 
 **Null bitmap integration (deferred — known gap):** The null bitmap format is fully specified above, but the integration between the row-storage layer and the DCS `dispatch_struct` is deferred to a future RFC. Specifically, `dispatch_struct` as specified in Phase 2d assumes all schema fields are present in the wire — it does not currently accept a null bitmap parameter. The row-storage layer must handle null bitmap parsing and the dispatcher must be extended to receive null bitmap context.
 
-**Conformance implication:** Nullable BYTEA columns are **not supported** in the initial RFC-0201 implementation. Schemas with nullable BYTEA fields will not deserialize correctly — absent (NULL) fields will produce `DCS_INVALID_STRUCT` instead of NULL values. This is a known gap; the null bitmap integration is required before RFC-0201 advances to Accepted status.
+**Conformance implication:** Nullable BYTEA columns are **not supported** in the initial RFC-0201 implementation. The schema validation layer MUST reject `CREATE TABLE` with a nullable BYTEA column at table-creation time with a clear error (e.g., "nullable BYTEA not supported: use NOT NULL or defer schema until null bitmap integration is complete"). Without this validation, queries on tables with nullable BYTEA columns would produce `DCS_INVALID_STRUCT` at deserialization time, which is an unclear error for users.
 ```
 u32_be(1) || u32_be(1) || 'a'    // field_id=1: TEXT "a"
 u32_be(2) || u32_be(5) || bytes  // field_id=2: BYTEA 5-bytes

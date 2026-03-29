@@ -59,7 +59,7 @@ This separation allows the core type infrastructure to proceed independently whi
 │  │ Bigint      │  │ Extension   │  │ via determin crate     │  │
 │  │ Decimal     │  │ (encodes    │  │                        │  │
 │  │             │  │  determin   │  │                        │  │
-│  │ (10, 11)   │  │  types)     │  │                        │  │
+│  │ (13, 14)   │  │  types)     │  │                        │  │
 │  └─────────────┘  └─────────────┘  └─────────────────────────┘  │
 └─────────────────────────────────────────────────────────────────┘
                               │
@@ -100,14 +100,15 @@ pub enum DataType {
     DeterministicFloat = 8,
     Quant = 9,
 
-    // NEW variants (10-11)
+    // NEW variants (10-11 reserved for future use)
+    // Note: 12 = Blob (RFC-0201), 13 = DFP (RFC-0104), 14-15 available
     /// Deterministic BIGINT per RFC-0110
     /// Arbitrary precision integer (up to 4096 bits)
-    Bigint = 10,
+    Bigint = 13,
 
     /// Deterministic DECIMAL per RFC-0111
     /// i128 scaled integer with 0-36 decimal places
-    Decimal = 11,
+    Decimal = 14,
 }
 ```
 
@@ -156,8 +157,8 @@ impl DataType {
             7 => Some(DataType::Vector),
             8 => Some(DataType::DeterministicFloat),
             9 => Some(DataType::Quant),
-            10 => Some(DataType::Bigint),
-            11 => Some(DataType::Decimal),
+            13 => Some(DataType::Bigint),
+            14 => Some(DataType::Decimal),
             _ => None,
         }
     }
@@ -189,19 +190,21 @@ use octo_determin::{BigInt, Decimal, Dfp, DfpClass, DfpEncoding, Dqa};
 
 impl Value {
     /// Create a BIGINT value from a determin crate BigInt
+    /// Uses wire tag 13 per RFC-0110 wire format specification
     pub fn bigint(b: BigInt) -> Self {
         let encoding = b.serialize();
         let mut bytes = Vec::with_capacity(1 + encoding.len());
-        bytes.push(DataType::Bigint as u8);
+        bytes.push(DataType::Bigint as u8); // tag 13
         bytes.extend_from_slice(&encoding.to_bytes());
         Value::Extension(CompactArc::from(bytes))
     }
 
     /// Create a DECIMAL value from a determin crate Decimal
+    /// Uses wire tag 14 per RFC-0111 wire format specification
     pub fn decimal(d: Decimal) -> Self {
         let encoding = d.to_bytes();
         let mut bytes = Vec::with_capacity(1 + 24);
-        bytes.push(DataType::Decimal as u8);
+        bytes.push(DataType::Decimal as u8); // tag 14
         bytes.extend_from_slice(&encoding);
         Value::Extension(CompactArc::from(bytes))
     }
@@ -210,7 +213,7 @@ impl Value {
     pub fn as_bigint(&self) -> Option<BigInt> {
         match self {
             Value::Extension(data)
-                if data.first().copied() == Some(DataType::Bigint as u8) =>
+                if data.first().copied() == Some(DataType::Bigint as u8) => // tag 13
             {
                 let encoding_bytes = &data[1..];
                 BigInt::deserialize(encoding_bytes).ok()
@@ -223,7 +226,7 @@ impl Value {
     pub fn as_decimal(&self) -> Option<Decimal> {
         match self {
             Value::Extension(data)
-                if data.first().copied() == Some(DataType::Decimal as u8) =>
+                if data.first().copied() == Some(DataType::Decimal as u8) => // tag 14
             {
                 let encoding_bytes: [u8; 24] = data[1..25].try_into().ok()?;
                 Decimal::from_bytes(encoding_bytes).ok()
@@ -327,7 +330,7 @@ Gas costs are defined in the determin crate per RFC-0110 and RFC-0111:
 
 **Objective:** Add BIGINT and DECIMAL to Stoolap's type system.
 
-- [ ] Add `DataType::Bigint = 10` and `DataType::Decimal = 11` to `src/core/types.rs`
+- [ ] Add `DataType::Bigint = 13` and `DataType::Decimal = 14` to `src/core/types.rs`
 - [ ] Update `FromStr` to parse `BIGINT` and `DECIMAL`/`NUMERIC` keywords
 - [ ] Update `Display` to render `BIGINT` and `DECIMAL`
 - [ ] Add `Value::bigint()` and `Value::decimal()` constructors
@@ -444,6 +447,7 @@ Re-implementing the algorithms would introduce consensus risk. The determin crat
 
 | Version | Date | Changes |
 |---------|------|---------|
+| 1.1 | 2026-03-29 | Fix wire tag conflicts: Bigint=13, Decimal=14 (avoid conflicts with Vector=10, Extension=11, Blob=12) |
 | 1.0 | 2026-03-28 | Initial draft — core types only, conversions separated to RFC-0202-B |
 
 ---

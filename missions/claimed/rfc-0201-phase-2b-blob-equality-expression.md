@@ -2,7 +2,7 @@
 
 ## Status
 
-Claimed
+**Complete** ✅
 
 ## Claimant
 
@@ -26,69 +26,55 @@ SELECT * FROM events WHERE event_id = $1;
 SELECT * FROM api_keys WHERE key_hash = $1;
 ```
 
-**stoolap implementation status:**
-- `Value::Blob` has `PartialEq`, `Ord`, and `Hash` implemented
-- Byte-by-byte comparison is the default behavior
-- `Value::compare_same_type` handles Blob comparison
-- Expression VM should route `=` (Eq) and `<>` (NotEq) comparisons through existing `Value::compare` path
-
-**What's needed:**
-- Verify Blob equality works in WHERE clauses (may already work)
-- Add integration test for Blob equality in expression context
-
 ## Acceptance Criteria
 
-- [ ] Integration test: Blob equality in WHERE clause
-- [ ] Integration test: Blob inequality in WHERE clause
-- [ ] `cargo test --lib` passes with 0 failures
-- [ ] `cargo clippy --all-targets --all-features -- -D warnings` passes
+- [x] Integration test: Blob equality in WHERE clause
+- [x] Integration test: Blob inequality in WHERE clause
+- [x] `cargo test --lib` passes with 0 failures
+- [x] `cargo clippy --all-targets --all-features -- -D warnings` passes
 
-## Technical Notes
+## Bug Fixed
 
-### Blob Comparison
+**Root Cause:** `ComparisonValue::from_value()` converted `Value::Blob` to `ComparisonValue::Text(String::new())` (empty string), causing ALL blob comparisons in WHERE clauses to return 0 rows.
 
-```rust
-impl PartialEq for Value::Blob {
-    fn eq(&self, other: &Self) -> bool {
-        // Byte-by-byte comparison
-        self.0 == other.0
-    }
-}
-```
+**Fix Applied:**
+1. Added `ComparisonValue::Blob(Vec<u8>)` variant
+2. Proper conversion in `from_value()`: `Value::Blob(data) => ComparisonValue::Blob(data.to_vec())`
+3. Added `compare_blobs()` method for byte-by-byte comparison
+4. Added blob match arms in `evaluate()` and `evaluate_fast()`
 
-The expression VM's `evaluate_binary_op` for `=` should call `Value::eq` which uses this implementation.
+## Completed
 
-### Expected Behavior
+- ✅ **Bug fixed** in `src/storage/expression/comparison.rs`
+  - Added `ComparisonValue::Blob(Vec<u8>)` enum variant
+  - Added `compare_blobs()` method for operator-aware comparison
+  - Added blob handling in `evaluate()` and `evaluate_fast()`
+- ✅ Added blob comparison test in `src/core/value.rs`
+- ✅ Added integration tests in `tests/blob_integration_test.rs`:
+  - `test_blob_equality_in_where`
+  - `test_blob_inequality_in_where`
+  - `test_blob_param_comparison`
+  - `test_blob_row_comparison`
+- ✅ Clippy warnings fixed (removed useless `.into_iter()` calls)
+- ✅ All 14 blob tests pass
 
-```sql
-CREATE TABLE t (id INTEGER, key BYTEA(32));
-INSERT INTO t VALUES (1, x'0102030405060708091011121314151617181920212223242526272829303132');
-INSERT INTO t VALUES (2, x'0102030405060708091011121314151617181920212223242526272829303132');
-INSERT INTO t VALUES (3, x'FFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF');
-
--- Returns row 1 (exact match)
-SELECT * FROM t WHERE key = x'0102030405060708091011121314151617181920212223242526272829303132';
-
--- Returns rows 1 and 2 (both start with 01... but only 1 and 2 are identical)
-SELECT * FROM t WHERE key = key;
-
--- Returns row 3 (different from the other two)
-SELECT * FROM t WHERE key <> key;
-```
-
-## Key Files to Modify
+## Key Files Modified
 
 | File | Change |
 |------|--------|
-| `tests/` | Add integration tests for Blob equality in expressions |
+| `src/storage/expression/comparison.rs` | Added `ComparisonValue::Blob`, `compare_blobs()` |
+| `src/core/value.rs` | Added blob comparison test |
+| `tests/blob_integration_test.rs` | Added blob equality integration tests |
 
 ## Design Reference
 
 - RFC-0201 Phase 2b specification: `rfcs/accepted/storage/0201-binary-blob-type-support.md` §Phase 2b
-- Existing Blob implementation: `src/core/value.rs`
+- Blob implementation: `src/core/value.rs`
 
 ---
 
-**Mission Type:** Testing / Verification
-**Priority:** Medium
+**Mission Type:** Bug Fix + Testing
+**Priority:** High
 **Phase:** Phase 2b
+**Completed:** 2026-03-29
+**Commit:** `9f51a16`

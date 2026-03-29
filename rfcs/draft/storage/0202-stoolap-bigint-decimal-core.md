@@ -2,7 +2,7 @@
 
 ## Status
 
-**Version:** 1.0 (2026-03-28)
+**Version:** 1.1 (2026-03-29)
 **Status:** Draft
 
 ## Authors

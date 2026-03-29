@@ -1,4 +1,4 @@
-# RFC-0130-A (Storage): Stoolap BIGINT and DECIMAL Core Types
+# RFC-0202-A (Storage): Stoolap BIGINT and DECIMAL Core Types
 
 ## Status
 
@@ -15,7 +15,7 @@
 
 ## Summary
 
-This RFC specifies the integration of BIGINT (RFC-0110) and DECIMAL (RFC-0111) **core types** into Stoolap — DataType variants, Value constructors/extractors, SQL keyword parsing, and Expression VM dispatch. Conversion functions between numeric types are covered by **RFC-0130-B** (Conversions), which is a separate RFC for later implementation.
+This RFC specifies the integration of BIGINT (RFC-0110) and DECIMAL (RFC-0111) **core types** into Stoolap — DataType variants, Value constructors/extractors, SQL keyword parsing, and Expression VM dispatch. Conversion functions between numeric types are covered by **RFC-0202-B** (Conversions), which is a separate RFC for later implementation.
 
 This separation allows the core type infrastructure to proceed independently while the conversion RFCs (0131-0135) complete their adversarial review cycle.
 
@@ -29,7 +29,7 @@ This separation allows the core type infrastructure to proceed independently whi
 - RFC-0111 (Numeric/Math): Deterministic DECIMAL — **Accepted** (reference spec, algorithms in `determin` crate)
 
 **Does NOT depend on:**
-- RFC-0131, RFC-0132, RFC-0133, RFC-0134, RFC-0135 (conversions — separate RFC-0130-B)
+- RFC-0131, RFC-0132, RFC-0133, RFC-0134, RFC-0135 (conversions — separate RFC-0202-B)
 
 **Optional:**
 
@@ -74,7 +74,7 @@ This separation allows the core type infrastructure to proceed independently whi
 └─────────────────────────────────────────────────────────────────┘
 ```
 
-**Key principle:** Core algorithms (RFC-0110/RFC-0111) live in `determin` crate. Stoolap adds SQL parsing, type system integration, and VM execution. Conversion functions are NOT in scope (RFC-0130-B).
+**Key principle:** Core algorithms (RFC-0110/RFC-0111) live in `determin` crate. Stoolap adds SQL parsing, type system integration, and VM execution. Conversion functions are NOT in scope (RFC-0202-B).
 
 ---
 
@@ -417,7 +417,7 @@ DECIMAL test vectors are defined in RFC-0111 §Test Vectors (57 entries with Mer
 
 ## Future Work
 
-- RFC-0130-B: BIGINT and DECIMAL conversions (RFC-0131-0135)
+- RFC-0202-B: BIGINT and DECIMAL conversions (RFC-0131-0135)
 - RFC-0124: DFP→DQA→BIGINT lowering integration
 - DECIMAL aggregate functions (SUM, AVG with exact arithmetic)
 - Vectorized BIGINT/DECIMAL operations for analytical queries
@@ -426,7 +426,7 @@ DECIMAL test vectors are defined in RFC-0111 §Test Vectors (57 entries with Mer
 
 ## Rationale
 
-### Why conversions are separate (RFC-0130-B)
+### Why conversions are separate (RFC-0202-B)
 
 Conversion functions (BIGINT↔DQA, BIGINT↔DECIMAL) depend on RFCs 0131-0135 which are still in Draft status with mutual dependencies. Splitting them out allows:
 
@@ -444,7 +444,7 @@ Re-implementing the algorithms would introduce consensus risk. The determin crat
 
 | Version | Date | Changes |
 |---------|------|---------|
-| 1.0 | 2026-03-28 | Initial draft — core types only, conversions separated to RFC-0130-B |
+| 1.0 | 2026-03-28 | Initial draft — core types only, conversions separated to RFC-0202-B |
 
 ---
 
@@ -455,7 +455,7 @@ Re-implementing the algorithms would introduce consensus risk. The determin crat
 - RFC-0110 (Numeric/Math): Deterministic BIGINT
 - RFC-0111 (Numeric/Math): Deterministic DECIMAL
 - RFC-0124 (Numeric/Math): Deterministic Numeric Lowering (optional)
-- **RFC-0130-B** (Numeric/Math): BIGINT and DECIMAL Conversions (later phase)
+- **RFC-0202-B** (Numeric/Math): BIGINT and DECIMAL Conversions (later phase)
 
 ---
 

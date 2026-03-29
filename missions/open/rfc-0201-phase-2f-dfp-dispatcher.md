@@ -12,7 +12,7 @@ Open
 ## Dependencies
 
 - `octo-determin` crate in stoolap (provides `Dfp`, `DfpEncoding`)
-- Independent of BigInt work (BigInt is covered by RFC-0130)
+- Independent of BigInt work (BigInt is covered by RFC-0202)
 
 ## Context
 

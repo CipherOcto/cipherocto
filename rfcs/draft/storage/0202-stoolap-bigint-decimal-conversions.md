@@ -1,4 +1,4 @@
-# RFC-0130-B (Storage): BIGINT and DECIMAL Conversions
+# RFC-0202-B (Storage): BIGINT and DECIMAL Conversions
 
 ## Status
 
@@ -15,7 +15,7 @@
 
 ## Summary
 
-This RFC specifies conversion functions between BIGINT (RFC-0110), DECIMAL (RFC-0111), and DQA (RFC-0105) types. This RFC is the **second phase** of the Stoolap numeric tower — it depends on **RFC-0130-A** (Core Types) being implemented first, and on conversion RFCs **0131-0135** being **Accepted**.
+This RFC specifies conversion functions between BIGINT (RFC-0110), DECIMAL (RFC-0111), and DQA (RFC-0105) types. This RFC is the **second phase** of the Stoolap numeric tower — it depends on **RFC-0202-A** (Core Types) being implemented first, and on conversion RFCs **0131-0135** being **Accepted**.
 
 Conversions NOT covered by this RFC (handled by other mechanisms):
 - INTEGER ↔ BIGINT: handled by Rust `From`/`TryFrom` impls
@@ -25,7 +25,7 @@ Conversions NOT covered by this RFC (handled by other mechanisms):
 
 **Requires:**
 
-- **RFC-0130-A** (Numeric/Math): Stoolap BIGINT and DECIMAL Core Types — **Must be implemented first**
+- **RFC-0202-A** (Numeric/Math): Stoolap BIGINT and DECIMAL Core Types — **Must be implemented first**
 - RFC-0110 (Numeric/Math): Deterministic BIGINT — **Accepted**
 - RFC-0111 (Numeric/Math): Deterministic DECIMAL — **Accepted**
 - RFC-0105 (Numeric/Math): Deterministic Quant (DQA) — Implemented
@@ -207,13 +207,13 @@ Existing implementations verified correct in `determin/src/decimal.rs`:
 
 | Version | Date | Changes |
 |---------|------|---------|
-| 1.0 | 2026-03-28 | Initial draft — conversions only, core types are RFC-0130-A |
+| 1.0 | 2026-03-28 | Initial draft — conversions only, core types are RFC-0202-A |
 
 ---
 
 ## Related RFCs
 
-- **RFC-0130-A** (Numeric/Math): Stoolap BIGINT and DECIMAL Core Types (prerequisite)
+- **RFC-0202-A** (Numeric/Math): Stoolap BIGINT and DECIMAL Core Types (prerequisite)
 - RFC-0104 (Numeric/Math): Deterministic Floating-Point (DFP)
 - RFC-0105 (Numeric/Math): Deterministic Quant (DQA)
 - RFC-0110 (Numeric/Math): Deterministic BIGINT

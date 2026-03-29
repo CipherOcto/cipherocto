@@ -1,4 +1,4 @@
-# RFC-0130-B (Numeric/Math): BIGINT and DECIMAL Conversions
+# RFC-0130-B (Storage): BIGINT and DECIMAL Conversions
 
 ## Status
 

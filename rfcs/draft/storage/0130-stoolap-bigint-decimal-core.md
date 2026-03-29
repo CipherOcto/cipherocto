@@ -1,4 +1,4 @@
-# RFC-0130-A (Numeric/Math): Stoolap BIGINT and DECIMAL Core Types
+# RFC-0130-A (Storage): Stoolap BIGINT and DECIMAL Core Types
 
 ## Status
 

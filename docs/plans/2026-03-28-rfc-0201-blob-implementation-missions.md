@@ -8,9 +8,9 @@ Two separate missions are **UNBLOCKED** and can proceed immediately:
 - **Mission A**: Phase 2a/2b/2c/2e — Core Blob (wire tag 12)
 - **Mission B1**: Phase 2f — DFP Dispatcher Integration (wire tag 13)
 
-Both missions depend only on `octo-determin` crate (already in stoolap) and RFC-0104 (Accepted). Neither depends on RFC-0130.
+Both missions depend only on `octo-determin` crate (already in stoolap) and RFC-0104 (Accepted). Neither depends on RFC-0202.
 
-**BigInt (wire tag 14)** is covered by RFC-0130-A — see "RFC-0130-A and RFC-0130-B Dependency" section below.
+**BigInt (wire tag 14)** is covered by RFC-0202-A — see "RFC-0202-A and RFC-0202-B Dependency" section below.
 
 ---
 
@@ -421,7 +421,7 @@ Phase 2f adds explicit DFP serialization/deserialization with wire tag 13 in the
 
 The `octo-determin::Dfp` and `DfpEncoding` types already exist in stoolap. Phase 2f is purely about wire protocol dispatch.
 
-**Note:** BigInt (wire tag 14) is NOT covered by this mission — it is specified by RFC-0130 and depends on RFC-0130 being Accepted and Implemented first.
+**Note:** BigInt (wire tag 14) is NOT covered by this mission — it is specified by RFC-0202 and depends on RFC-0202 being Accepted and Implemented first.
 
 ### Dispatcher Integration
 
@@ -439,34 +439,34 @@ The `octo-determin::Dfp` and `DfpEncoding` types already exist in stoolap. Phase
 
 ---
 
-## RFC-0130-A and RFC-0130-B Dependency
+## RFC-0202-A and RFC-0202-B Dependency
 
 BigInt infrastructure in stoolap is split into two RFCs:
 
-**RFC-0130-A** (Stoolap BIGINT and DECIMAL Core Types, Draft):
+**RFC-0202-A** (Stoolap BIGINT and DECIMAL Core Types, Draft):
 - Core type infrastructure: `DataType::Bigint`, `DataType::Decimal`, `Value::bigint()`, `Value::decimal()`, SQL parsing, VM dispatch
 - Depends ONLY on RFC-0110 and RFC-0111 (both Accepted) — **no conversion dependency**
-- **Can be implemented immediately** while RFC-0130-B completes review
+- **Can be implemented immediately** while RFC-0202-B completes review
 
-**RFC-0130-B** (BIGINT and DECIMAL Conversions, Draft):
+**RFC-0202-B** (BIGINT and DECIMAL Conversions, Draft):
 - Conversion functions: BIGINT↔DQA, BIGINT↔DECIMAL, DECIMAL↔DQA
-- Depends on RFC-0130-A (core types must exist first) AND RFC-0131-0135 (all Draft, with mutual dependencies)
+- Depends on RFC-0202-A (core types must exist first) AND RFC-0131-0135 (all Draft, with mutual dependencies)
 - **Later phase** — conversions come after core types
 
-**RFC-0201 Phase 2f BigInt note:** The BigInt wire tag 14 dispatcher is part of RFC-0130-A's scope. No separate RFC-0201 mission needed.
+**RFC-0201 Phase 2f BigInt note:** The BigInt wire tag 14 dispatcher is part of RFC-0202-A's scope. No separate RFC-0201 mission needed.
 
 **Mission sequencing:**
-1. Advance RFC-0130-A to Accepted → implement core types in stoolap
+1. Advance RFC-0202-A to Accepted → implement core types in stoolap
 2. RFC-0131-0135 advance to Accepted
-3. Advance RFC-0130-B to Accepted → implement conversion functions
+3. Advance RFC-0202-B to Accepted → implement conversion functions
 
 ---
 
 ## Dependencies
 
 - **Mission A**: No external RFC dependencies. RFC-0127 (DCS Blob Amendment) is already Accepted and provides the wire format foundation.
-- **Mission B1 (DFP)**: RFC-0104 (DFP wire format) is Accepted. `octo-determin::Dfp` already in stoolap. Independent of RFC-0130.
-- **BigInt (Phase 2f)**: Covered by RFC-0130-A (core types). RFC-0130-B (conversions) is a later phase.
+- **Mission B1 (DFP)**: RFC-0104 (DFP wire format) is Accepted. `octo-determin::Dfp` already in stoolap. Independent of RFC-0202.
+- **BigInt (Phase 2f)**: Covered by RFC-0202-A (core types). RFC-0202-B (conversions) is a later phase.
 
 ---
 
@@ -481,11 +481,11 @@ After Mission A:
 After Mission B1 (DFP):
 - DFP round-trip through serialize/deserialize with wire tag 13
 
-After RFC-0130-A (BigInt core):
+After RFC-0202-A (BigInt core):
 - BigInt available in stoolap via `DataType::Bigint` and `Value::BigInt`
 - `NUMERIC_SPEC_VERSION = 2` after BigInt core implementation
 
-After RFC-0130-B (conversions):
+After RFC-0202-B (conversions):
 - CAST expressions work for BIGINT↔DQA, BIGINT↔DECIMAL, DECIMAL↔DQA
 
 ---

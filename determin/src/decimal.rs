@@ -236,23 +236,33 @@ impl Decimal {
     }
 }
 
-/// Serialize Decimal to 24-byte canonical wire format
+/// Serialize Decimal to 24-byte canonical wire format per RFC-0111 §Canonical Byte Format:
+/// Byte 0: Version (0x01)
+/// Byte 1: Reserved (0x00)
+/// Bytes 2-3: Reserved (0x00)
+/// Byte 4: Scale (u8, range 0-36)
+/// Bytes 5-7: Reserved (0x00)
+/// Bytes 8-23: Mantissa (i128 big-endian, two's complement)
 pub fn decimal_to_bytes(d: &Decimal) -> [u8; 24] {
     let mut bytes = [0u8; 24];
-    bytes[0..16].copy_from_slice(&d.mantissa.to_be_bytes());
-    // bytes[16..23] remain zero padding
-    bytes[23] = d.scale;
+    bytes[0] = 0x01; // Version
+    bytes[4] = d.scale;
+    bytes[8..24].copy_from_slice(&d.mantissa.to_be_bytes());
     bytes
 }
 
-/// Deserialize from 24-byte canonical wire format
+/// Deserialize from 24-byte canonical wire format per RFC-0111 §Canonical Byte Format
 pub fn decimal_from_bytes(bytes: [u8; 24]) -> Result<Decimal, DecimalError> {
-    // Verify zero padding
-    if bytes[16..23] != [0u8; 7] {
+    // Verify version
+    if bytes[0] != 0x01 {
         return Err(DecimalError::NonCanonical);
     }
-    let mantissa = i128::from_be_bytes(bytes[0..16].try_into().unwrap());
-    let scale = bytes[23];
+    // Verify reserved bytes
+    if bytes[1] != 0x00 || bytes[2..4] != [0x00, 0x00] || bytes[5..8] != [0x00, 0x00, 0x00] {
+        return Err(DecimalError::NonCanonical);
+    }
+    let scale = bytes[4];
+    let mantissa = i128::from_be_bytes(bytes[8..24].try_into().unwrap());
 
     // Check scale bounds first
     if scale > MAX_DECIMAL_SCALE {

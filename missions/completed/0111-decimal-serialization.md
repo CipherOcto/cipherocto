@@ -10,12 +10,15 @@ RFC-0111 (Numeric): Deterministic DECIMAL
 Implement DECIMAL serialization (to wire format) and deserialization (from wire format) per RFC-0111 §Canonical Byte Format.
 
 ## Acceptance Criteria
-- [ ] SERIALIZE: Decimal → 24-byte canonical wire format
-  - bytes 0-15: mantissa (big-endian i128, two's complement)
-  - bytes 16-22: zero padding
-  - byte 23: scale (u8)
+- [ ] SERIALIZE: Decimal → 24-byte canonical wire format per RFC-0111 §Canonical Byte Format
+  - Byte 0: Version (0x01)
+  - Byte 1: Reserved (0x00)
+  - Bytes 2-3: Reserved (0x00)
+  - Byte 4: Scale (u8, range 0-36)
+  - Bytes 5-7: Reserved (0x00)
+  - Bytes 8-23: Mantissa (i128 big-endian, two's complement)
 - [ ] DESERIALIZE: 24-byte → Decimal with validation
-  - Reject non-canonical representations
+  - Reject non-canonical representations (bytes 1-3, 5-7 must be 0x00)
   - Validate mantissa range
   - Validate scale ≤ 36
 - [ ] Byte format uses big-endian for network order

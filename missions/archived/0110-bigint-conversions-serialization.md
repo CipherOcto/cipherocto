@@ -113,17 +113,16 @@ Negative: "-9876543210"
 - [x] Deserialization: bytes → struct with canonical form verification
 - [x] Version byte: 0x01 for v1
 
-### Wire Format (RFC-0110 §BigIntEncoding)
+### Wire Format (RFC-0110 §Canonical Byte Format)
 ```
-┌─────────────────────────────────────────────┐
-│ BigIntEncoding (16 bytes)                  │
-├─────────────────────────────────────────────┤
-│ byte 0:    version (0x01)                 │
-│ byte 1:    sign (0x00 = positive, 0xFF = negative) │
-│ byte 2:    num_limbs (1-64)               │
-│ bytes 3-15: unused (0x00)                  │
-│ + limbs:    little-endian u64[1..num_limbs]│
-└─────────────────────────────────────────────┘
+┌─────────────────────────────────────────────────────────────┐
+│ Byte 0: Version (0x01)                                     │
+│ Byte 1: Sign (0 = positive, 0xFF = negative)               │
+│ Bytes 2-3: Reserved (MUST be 0x0000)                       │
+│ Byte 4: Number of limbs (u8, range 1-64)                   │
+│ Bytes 5-7: Reserved (MUST be 0x00)                         │
+│ Byte 8+: Limb array (little-endian u64 × num_limbs)        │
+└─────────────────────────────────────────────────────────────┘
 ```
 
 ### Serialization Algorithm
@@ -134,30 +133,32 @@ bigint_serialize(b: BigInt) -> Vec<u8>
 2. version = 0x01
 3. sign = 0xFF if b.sign else 0x00
 4. num_limbs = b.limbs.len() as u8
-5. Encode header bytes [version, sign, num_limbs, 0...0]
+5. Encode header: [version, sign, 0x00, 0x00, num_limbs, 0x00, 0x00, 0x00]
 6. Append little-endian limbs
 
-Total: 16 bytes + 8*num_limbs bytes
+Total: 8 bytes header + 8*num_limbs bytes
 ```
 
 ### Deserialization Algorithm
 ```
 bigint_deserialize(data: &[u8]) -> Result<BigInt, Error>
 
-1. If data.len() < 16: return Err(InvalidEncoding)
+1. If data.len() < 8: return Err(InvalidEncoding)
 2. version = data[0]; if version != 0x01: return Err(UnsupportedVersion)
 3. sign = data[1]; if sign != 0x00 && sign != 0xFF: return Err(InvalidSign)
-4. num_limbs = data[2]; if num_limbs == 0 || num_limbs > 64: return Err(InvalidLimbs)
-5. If data.len() != 16 + 8*num_limbs: return Err(InvalidLength)
+4. If bytes 2-3 != 0x00: return Err(NonCanonical)
+5. num_limbs = data[4]; if num_limbs == 0 || num_limbs > 64: return Err(InvalidLimbs)
+6. If bytes 5-7 != 0x00: return Err(NonCanonical)
+7. If data.len() != 8 + 8*num_limbs: return Err(InvalidLength)
 
-6. limbs = parse little-endian u64 from data[16..]
-7. b = BigInt { limbs, sign: sign == 0xFF }
+8. limbs = parse little-endian u64 from data[8..]
+9. b = BigInt { limbs, sign: sign == 0xFF }
 
-8. Verify canonical form:
-   a. If limbs.len() > 1 and limbs[last] == 0: return Err(NonCanonical)
-   b. If limbs == [0] and sign == 0xFF: return Err(NonCanonicalNegativeZero)
+10. Verify canonical form:
+    a. If limbs.len() > 1 and limbs[last] == 0: return Err(NonCanonical)
+    b. If limbs == [0] and sign == 0xFF: return Err(NonCanonicalNegativeZero)
 
-9. return Ok(b)
+11. return Ok(b)
 ```
 
 ## Phase 4: i128 Round-Trip Conversion

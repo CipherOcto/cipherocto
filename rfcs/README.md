@@ -234,8 +234,6 @@ Once accepted:
 | RFC-0116 (Numeric) | Unified Deterministic Execution Model | Draft  | Unified execution framework                 |
 | RFC-0126 (Numeric) | Deterministic Canonical Serialization (DCS) | Accepted | Cross-language deterministic serialization for consensus |
 | RFC-0127 (Numeric) | DCS Blob Amendment | Accepted | Adds Blob as first-class DCS type with schema-driven dispatcher |
-| RFC-0130-A (Numeric) | Stoolap BIGINT and DECIMAL Core Types | Draft | DataType, Value, SQL parsing, VM dispatch for BigInt/Decimal |
-| RFC-0130-B (Numeric) | BIGINT and DECIMAL Conversions | Draft | BIGINT↔DQA, BIGINT↔DECIMAL, DECIMAL↔DQA conversions |
 
 ### Storage (RFC-0200-0299)
 
@@ -243,6 +241,8 @@ Once accepted:
 | ------------------ | ---------------------------------------- | ------ | ---------------------------------- |
 | RFC-0200 (Storage) | Production Vector-SQL Storage            | Draft  | Vector storage with SQL interface  |
 | RFC-0201 (Storage) | Binary BLOB Type for Hash Storage       | Accepted | Native blob type for crypto hashes |
+| RFC-0202-A (Storage) | Stoolap BIGINT and DECIMAL Core Types | Draft | DataType, Value, SQL parsing, VM dispatch for BigInt/Decimal |
+| RFC-0202-B (Storage) | BIGINT and DECIMAL Conversions       | Draft | BIGINT↔DQA, BIGINT↔DECIMAL, DECIMAL↔DQA conversions |
 
 ### Retrieval (RFC-0300-0399)
 

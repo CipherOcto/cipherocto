@@ -1,8 +1,8 @@
-# RFC-0202-B (Storage): BIGINT and DECIMAL Conversions
+# RFC-0202-B (Storage): Stoolap BIGINT and DECIMAL Conversions
 
 ## Status
 
-**Version:** 1.0 (2026-03-28)
+**Version:** 1.4 (2026-03-30)
 **Status:** Draft
 
 ## Authors
@@ -25,7 +25,7 @@ Conversions NOT covered by this RFC (handled by other mechanisms):
 
 **Requires:**
 
-- **RFC-0202-A** (Numeric/Math): Stoolap BIGINT and DECIMAL Core Types — **Must be implemented first**
+- **RFC-0202-A** (Storage): Stoolap BIGINT and DECIMAL Core Types — **Must be implemented first**
 - RFC-0110 (Numeric/Math): Deterministic BIGINT — **Accepted**
 - RFC-0111 (Numeric/Math): Deterministic DECIMAL — **Accepted**
 - RFC-0105 (Numeric/Math): Deterministic Quant (DQA) — Implemented
@@ -50,10 +50,12 @@ Conversions NOT covered by this RFC (handled by other mechanisms):
 
 ## Conversion Matrix
 
+> **Note:** The implicit type coercion hierarchy (which conversions happen automatically vs require explicit CAST) is defined in RFC-0202-A §6.6. This matrix covers the explicit conversion functions used by CAST expressions and the VM.
+
 | From | To | RFC | Notes |
 |------|----|-----|-------|
 | BIGINT | DECIMAL | RFC-0133 | Full BigInt→DECIMAL |
-| DECIMAL | BIGINT | RFC-0134 | **TRAP if scale > 0** (lossless requires scale=0). `DECIMAL '123.45'` (scale=2) → TRAP; `DECIMAL '123.00'` (scale=0) → OK. Returns `DecimalError`. |
+| DECIMAL | BIGINT | RFC-0134 | **TRAP if scale > 0** (lossless requires scale=0). `DECIMAL '123.45'` (scale=2) → TRAP; `DECIMAL '123'` (scale=0) → OK. Returns `DecimalError`. |
 | BIGINT | DQA | RFC-0131 | TRAP if exceeds i64 range. Returns `BigIntToDqaError`. |
 | DQA | BIGINT | RFC-0132 | Always valid for canonical DQA inputs |
 | DQA | DECIMAL | RFC-0135 | Existing impl verified correct |
@@ -63,8 +65,8 @@ Conversions NOT covered by this RFC (handled by other mechanisms):
 | INTEGER | BIGINT | Via From impl | Always valid |
 | BIGINT | INTEGER | Via TryFrom | **TRAP if out of range**. Returns `TryFromBigIntError`. |
 | DECIMAL | String | RFC-0111 | Existing impl |
-| i128 | DECIMAL | RFC-0111 | Existing `bigint_to_decimal(i128)` |
-| DECIMAL | i128 | RFC-0111 | Existing `decimal_to_bigint` |
+| i128 | DECIMAL | RFC-0111 | Existing `bigint_to_decimal(value: i128)`. **Note:** takes `i128`, NOT `BigInt`. |
+| DECIMAL | i128 | RFC-0111 | Existing `decimal_to_bigint(d: &Decimal) -> Result<i128, DecimalError>`. **Note:** returns `i128`, NOT `BigInt`. |
 
 ---
 
@@ -91,7 +93,7 @@ pub fn bigint_to_dqa(b: &BigInt, overflow_scale: u8) -> Result<Dqa, BigIntToDqaE
 
 /// Round-trip safe conversion that preserves scale metadata.
 /// Uses BigIntWithScale from RFC-0132.
-pub fn bigint_with_scale_to_dqa(v: &BigIntWithScale) -> Result<Dqa, BigIntToDqaError>;
+pub fn bigint_with_scale_to_dqa(bws: &BigIntWithScale) -> Result<Dqa, BigIntToDqaError>;
 ```
 
 ### RFC-0132 v1.23 — DQA→BIGINT
@@ -132,7 +134,7 @@ pub fn decimal_to_bigint_full(d: &Decimal) -> Result<BigInt, DecimalError>;
 
 Existing implementations verified correct in `determin/src/decimal.rs`:
 - `decimal_to_dqa(d: &Decimal) -> Result<Dqa, DecimalError>`
-- `dqa_to_decimal(dqa: &Dqa) -> Decimal`
+- `dqa_to_decimal(dqa: &Dqa) -> Result<Decimal, DecimalError>`
 
 ---
 
@@ -142,8 +144,7 @@ Existing implementations verified correct in `determin/src/decimal.rs`:
 
 **Objective:** Ensure all conversion specifications (0131-0135) are Accepted.
 
-- [ ] RFC-0131: BIGINT→DQA Conversion (Draft v1.27) — **mutual dependency with RFC-0132**
-- [ ] RFC-0132: DQA→BIGINT Conversion (Draft v1.23) — **mutual dependency with RFC-0131**
+- [ ] RFC-0131 + RFC-0132: BIGINT↔DQA Conversion (Draft) — **MUST be Accepted as a pair** due to mutual `BigIntWithScale` dependency
 - [ ] RFC-0133: BIGINT→DECIMAL Conversion (Draft v1.1)
 - [ ] RFC-0134: DECIMAL→BIGINT Conversion (Draft v1.1)
 - [ ] RFC-0135: DECIMAL↔DQA Conversion Review (Draft v1.0 — review only)
@@ -158,7 +159,7 @@ Existing implementations verified correct in `determin/src/decimal.rs`:
 - [ ] Implement `dqa_to_bigint(dqa: &Dqa)` returning `DqaToBigIntResult` per RFC-0132 v1.23
 - [ ] Implement `dqa_to_bigint_with_scale(dqa: &Dqa)` per RFC-0132 v1.23
 - [ ] Implement `BigIntWithScale` struct per RFC-0132 §Input/Output Contract
-- [ ] Implement `bigint_with_scale_to_dqa(v: &BigIntWithScale)` per RFC-0131 v1.27
+- [ ] Implement `bigint_with_scale_to_dqa(bws: &BigIntWithScale)` per RFC-0131 v1.27
 - [ ] Implement `bigint_to_decimal_full(b: BigInt, scale: u8)` per RFC-0133 v1.1
 - [ ] Implement `decimal_to_bigint_full(d: &Decimal)` per RFC-0134 v1.1
 - [ ] Verify all conversions pass RFC test vectors
@@ -179,7 +180,7 @@ Existing implementations verified correct in `determin/src/decimal.rs`:
 
 | File | Change |
 |------|--------|
-| `src/bigint.rs` | Add `bigint_to_dqa`, `dqa_to_bigint`, `dqa_to_bigint_with_scale`, `BigIntWithScale` |
+| `src/bigint.rs` | Add `bigint_to_dqa`, `bigint_with_scale_to_dqa`, `dqa_to_bigint`, `dqa_to_bigint_with_scale`, `BigIntWithScale` (requires `use crate::dqa::Dqa;`). All conversion functions placed in `bigint.rs` to centralize BigInt-dependent logic — no changes to `dqa.rs` required. |
 | `src/decimal.rs` | Add `bigint_to_decimal_full`, `decimal_to_bigint_full` |
 
 ### Stoolap
@@ -193,13 +194,19 @@ Existing implementations verified correct in `determin/src/decimal.rs`:
 
 ## Gas Costs
 
-| Conversion | Gas |
-|------------|-----|
-| `bigint_to_dqa` | 12 (fixed) |
-| `dqa_to_bigint` (NumericTower) | 5 |
-| `dqa_to_bigint` (StandardSql) | 7 |
-| `bigint_to_decimal_full` | 20 + 5 × scale |
-| `decimal_to_bigint_full` | 15 (fixed) |
+| Conversion | Gas | Source |
+|------------|-----|--------|
+| `bigint_to_dqa` | 12 (fixed) | RFC-0131 v1.27 §Gas Model |
+| `dqa_to_bigint` (NumericTower) | 5 | RFC-0132 v1.23 §Gas Model |
+| `dqa_to_bigint` (StandardSql) | 7 | RFC-0132 v1.23 §Gas Model |
+| `dqa_to_bigint_with_scale` | 5 | RFC-0132 v1.23 §Gas Model (same as NumericTower) |
+| `bigint_with_scale_to_dqa` | 12 (fixed) | RFC-0131 v1.27 §Gas Model (same as bigint_to_dqa) |
+| `bigint_to_decimal_full` | 20 + 5 × scale | RFC-0133 v1.1 §Gas Model |
+| `decimal_to_bigint_full` | 15 (fixed) | RFC-0134 v1.1 §Gas Model |
+| `decimal_to_dqa` | 10 (fixed) | RFC-0135 / RFC-0111 impl |
+| `dqa_to_decimal` | 10 (fixed) | RFC-0135 / RFC-0111 impl |
+
+> **Note:** Gas costs are as specified in the cited RFC versions. If those RFCs are revised, these costs must be re-verified. Gas is formula-based (not counter-based) — see RFC-0202-A §8 for the integration model.
 
 ---
 
@@ -207,13 +214,17 @@ Existing implementations verified correct in `determin/src/decimal.rs`:
 
 | Version | Date | Changes |
 |---------|------|---------|
+| 1.4 | 2026-03-30 | Adversarial review round 4: M2 (param name `v`→`bws` matching RFC-0131), M3/M4 (add gas costs for `bigint_with_scale_to_dqa` and `dqa_to_bigint_with_scale`), L3 (conversion matrix example: `DECIMAL '123.00'`→`DECIMAL '123'`), L4 (clarify file placement — all conversions in bigint.rs, no dqa.rs changes). |
+| 1.3 | 2026-03-30 | Adversarial review round 3: fix dqa_to_decimal return type (Result, not bare Decimal), add gas costs for RFC-0135 conversions, add cross-module import note |
+| 1.2 | 2026-03-30 | Adversarial review round 2: fix bigint_to_decimal/decimal_to_bigint naming (i128 vs BigInt), add gas cost cross-references, merge RFC-0131/0132 into atomic acceptance |
+| 1.1 | 2026-03-30 | Fix category reference to RFC-0202-A (Storage), add coercion hierarchy cross-reference |
 | 1.0 | 2026-03-28 | Initial draft — conversions only, core types are RFC-0202-A |
 
 ---
 
 ## Related RFCs
 
-- **RFC-0202-A** (Numeric/Math): Stoolap BIGINT and DECIMAL Core Types (prerequisite)
+- **RFC-0202-A** (Storage): Stoolap BIGINT and DECIMAL Core Types (prerequisite)
 - RFC-0104 (Numeric/Math): Deterministic Floating-Point (DFP)
 - RFC-0105 (Numeric/Math): Deterministic Quant (DQA)
 - RFC-0110 (Numeric/Math): Deterministic BIGINT
@@ -224,6 +235,8 @@ Existing implementations verified correct in `determin/src/decimal.rs`:
 - RFC-0133 (Numeric/Math): BIGINT→DECIMAL Conversion
 - RFC-0134 (Numeric/Math): DECIMAL→BIGINT Conversion
 - RFC-0135 (Numeric/Math): DECIMAL↔DQA Conversion Review
+
+> **Note:** RFC-0135 exists in both `numeric/` (DECIMAL↔DQA Conversion) and `proof-systems/` (Proof Format Standard). This RFC references the numeric version.
 
 ---
 

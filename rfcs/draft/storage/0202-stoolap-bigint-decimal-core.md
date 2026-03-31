@@ -2,7 +2,7 @@
 
 ## Status
 
-**Version:** 1.5 (2026-03-30)
+**Version:** 1.6 (2026-03-30)
 **Status:** Draft
 
 ## Authors
@@ -99,7 +99,8 @@ pub enum DataType {
     Quant = 9,
 
     // Note: 10 = Blob (RFC-0201), 8 = DeterministicFloat (RFC-0104), 9 = Quant (RFC-0105)
-    // 11 = unused discriminant, 12+ available
+    // 11 = unused DataType discriminant (note: persistence wire tag 11 is used for generic Extension, but no DataType variant maps to discriminant 11)
+    // 12+ available
 
     /// Deterministic BIGINT per RFC-0110
     /// Arbitrary precision integer (up to 4096 bits)
@@ -138,7 +139,7 @@ impl FromStr for DataType {
             "NULL" => Ok(DataType::Null),
             "INTEGER" | "INT" | "SMALLINT" | "TINYINT" => Ok(DataType::Integer),
             "BIGINT" => Ok(DataType::Bigint),
-            "FLOAT" | "DOUBLE" | "REAL" => Ok(DataType::Float),
+            "FLOAT" | "DOUBLE" | "REAL" => Ok(DataType::Float),  // DECIMAL/NUMERIC removed — caught by starts_with above
             "TEXT" | "VARCHAR" | "CHAR" | "STRING" => Ok(DataType::Text),
             "BOOLEAN" | "BOOL" => Ok(DataType::Boolean),
             "TIMESTAMP" | "DATETIME" | "DATE" | "TIME" => Ok(DataType::Timestamp),
@@ -575,7 +576,7 @@ DECIMAL → FLOAT   (lossy, explicit CAST only)
 
 > **Note on `into_coerce_to_type()`:** All coercion rules above apply to both `coerce_to_type()` (borrowing) and `into_coerce_to_type()` (consuming/move). The consuming version avoids cloning when the source type already matches the target.
 
-> **Note on BIGINT→DECIMAL coercion:** This path requires `bigint_to_decimal_full()` from RFC-0133, which is in RFC-0202-B scope. Until RFC-0202-B is implemented, this coercion path returns `Value::Null(DataType::Decimal)` (treated as unsupported, not an error).
+> **Note on BIGINT→DECIMAL coercion:** This path requires `bigint_to_decimal_full()` from RFC-0133, which is in RFC-0202-B scope. Until RFC-0202-B is implemented, this coercion path returns `Value::Null(DataType::Decimal)` (treated as unsupported, not an error). Note: the existing `bigint_to_decimal(value: i128)` in the determin crate only handles i128-range values and is usable for INTEGER→DECIMAL coercion (i64 always fits in i128), NOT for arbitrary BIGINT→DECIMAL conversion where BigInt values may exceed i128 range. The full conversion requires `bigint_to_decimal_full(BigInt)` from RFC-0202-B.
 
 #### 6.8 from_typed() Update (H4)
 
@@ -598,6 +599,11 @@ DataType::Decimal => {
         // Note: the determin crate has no FromStr for Decimal.
         // Stoolap must provide its own parser that splits on '.',
         // computes mantissa and scale, then calls Decimal::new(mantissa, scale).
+        // Input must match: ^[+-]?\d+(\.\d+)?$
+        // Reject: multiple decimal points, scientific notation, empty string,
+        //         bare dot (e.g., ".5" or "5."), leading/trailing whitespace.
+        // Trailing zeros in the fractional part are stripped by Decimal::new
+        // during canonicalization (e.g., "1.50" → mantissa=15, scale=1).
         stoolap_parse_decimal(s)
             .map(Value::decimal)
             .unwrap_or(Value::Null(data_type))
@@ -638,7 +644,7 @@ NUMERIC(5,3)  → DataType::Decimal, decimal_scale=3
 
 The scale is enforced at INSERT time: values with more decimal places than `decimal_scale` are rounded using `decimal_round(d, decimal_scale, RoundHalfEven)` (matching PostgreSQL behavior).
 
-**Builder method:** A parallel `SchemaColumnBuilder::set_last_decimal_scale(&mut self, scale: u8)` method is required, following the existing pattern of `set_last_quant_scale()`, `set_last_vector_dimensions()`, and `set_last_blob_length()`.
+**Builder method:** A parallel `SchemaBuilder::set_last_decimal_scale(mut self, scale: u8) -> Self` method is required, following the existing consuming-builder pattern of `set_last_quant_scale()`, `set_last_vector_dimensions()`, and `set_last_blob_length()`. Note: the builder type is `SchemaBuilder` (not `SchemaColumnBuilder`), and the method takes `mut self` (consuming) returning `Self`, consistent with all existing builder methods in the codebase.
 
 #### 6.10 Index Type Selection (H6)
 
@@ -701,7 +707,7 @@ This gives **wrong numeric order** for BIGINT (limbs are little-endian) and DECI
 }
 ```
 
-> **Note:** The Ord implementation deserializes on every comparison. For BTree index operations with many keys, this is O(n × deserialize_cost). This is acceptable for the initial implementation; a future optimization could cache the deserialized value or store BIGINT/DECIMAL in a format that sorts lexicographically.
+> **Note:** The Ord implementation deserializes on every comparison. For BTree index operations with many keys, this is O(n × deserialize_cost). This is acceptable for the initial implementation; a future optimization could cache the deserialized value or use a lexicographically-sortable encoding for BTree keys (e.g., sign-magnitude big-endian with sign-flip for BIGINT, so that byte order matches numeric order without deserialization).
 
 #### 6.12 Cross-Type Numeric Comparison (C2)
 
@@ -738,7 +744,7 @@ if self.data_type().is_numeric() && other.data_type().is_numeric() {
 }
 ```
 
-> **Pre-existing note:** DFP and Quant already trigger the `as_float64().unwrap()` panic when compared cross-type with Integer/Float. This is a latent bug that should be fixed separately. The BIGINT/DECIMAL path above avoids the issue by coercing to the wider type before comparison.
+> **Pre-existing note:** DFP and Quant already trigger the `as_float64().unwrap()` panic when compared cross-type with Integer/Float. This is a latent bug that should be fixed separately (not in scope for this RFC). The BIGINT/DECIMAL path above avoids the issue by coercing to the wider type before comparison. This RFC recommends filing a separate issue for DFP/Quant cross-type comparison to be addressed in a follow-up.
 
 #### 6.13 as_int64()/as_float64() Extension (L4)
 
@@ -762,15 +768,18 @@ Value::Extension(data) if data.first() == Some(&(DataType::Decimal as u8)) => {
 
 > **Note:** BIGINT→f64 conversion is NOT provided because BigInt values may exceed f64 precision. Use explicit CAST through DECIMAL for lossy BIGINT→FLOAT conversion.
 
+> **Note on DECIMAL→f64 precision loss:** The `as_float64()` conversion for DECIMAL casts the i128 mantissa to f64, which loses precision for `|mantissa| > 2^53` (approximately 9 × 10^15). This is acceptable for the `as_float64()` method but callers requiring exact arithmetic should prefer `as_decimal()`. The cross-type comparison path (§6.12) avoids this by coercing to the wider type before comparison.
+
 #### 6.14 PartialEq Consistency (L6)
 
 The current `PartialEq` for `Value` has a special case for `Integer ↔ Float` equality (`Integer(5) == Float(5.0)`). BIGINT and DECIMAL Extension values do **NOT** compare equal to Integer/Float values via `PartialEq` — they match `(Extension, Extension)` which does raw byte comparison on different representations. This is a deliberate design choice: BIGINT/DECIMAL are strict types requiring explicit CAST for comparison. The cross-type comparison path (§6.12) handles this at the `compare()` level for SQL operations.
 
 #### 6.15 Public API Export Requirements
 
-Both RFC-0202-A and RFC-0202-B reference functions from the `determin` crate that are not currently publicly exported from `determin/src/lib.rs`. The implementation phase must add public exports for:
+Both RFC-0202-A and RFC-0202-B reference functions from the `determin` crate that are not currently publicly exported from `determin/src/lib.rs`. **These are compile-blocking prerequisites** — code in §6.3 (Display), §6.6 (compare_same_type), and §7 (VM dispatch) will not compile without them. These exports MUST be added to `determin/src/lib.rs` before any Stoolap implementation begins.
 
-- `decimal_cmp`, `decimal_to_string`, `decimal_add`, `decimal_sub`, `decimal_mul`, `decimal_div`, `decimal_round` — from `decimal.rs`
+- `decimal_cmp`, `decimal_to_string` — from `decimal.rs` (**blocking §6.3 and §6.6**)
+- `decimal_add`, `decimal_sub`, `decimal_mul`, `decimal_div`, `decimal_round` — from `decimal.rs` (**blocking §7**)
 - `BigIntEncoding`, `BigIntError` — from `bigint.rs`
 - `bigint_shl`, `bigint_shr`, `bigint_mod` — from `bigint.rs` (partially exported)
 - `decimal_to_dqa`, `dqa_to_decimal` — from `decimal.rs`
@@ -789,14 +798,14 @@ All arithmetic operations use the determin crate implementations:
 | ADD | `bigint_add(a: BigInt, b: BigInt)` | `decimal_add(a: &Decimal, b: &Decimal)` |
 | SUB | `bigint_sub(a: BigInt, b: BigInt)` | `decimal_sub(a: &Decimal, b: &Decimal)` |
 | MUL | `bigint_mul(a: BigInt, b: BigInt)` | `decimal_mul(a: &Decimal, b: &Decimal)` |
-| DIV | `bigint_div(a: BigInt, b: BigInt)` | `decimal_div(a: &Decimal, b: &Decimal, _target_scale: u8)` |
+| DIV | `bigint_div(a: BigInt, b: BigInt)` | `decimal_div(a: &Decimal, b: &Decimal, _unused_target_scale: u8)` — third parameter is ignored; pass `0` as placeholder |
 | MOD | `bigint_mod(a: BigInt, b: BigInt)` | N/A |
 | CMP | `a.compare(&b) → i32` (method) | `decimal_cmp(a: &Decimal, b: &Decimal) → i32` |
 | SQRT | N/A | `decimal_sqrt(a: &Decimal)` |
 | SHL | `bigint_shl(a: BigInt, shift: usize)` | N/A |
 | SHR | `bigint_shr(a: BigInt, shift: usize)` | N/A |
 
-> **Note on `decimal_div`:** The `_target_scale` parameter is currently unused (underscore prefix). The actual target scale is computed internally as `min(36, max(a.scale, b.scale) + 6)`. It is reserved for future explicit scale control.
+> **Note on `decimal_div`:** The `_unused_target_scale` parameter is completely ignored by the implementation (underscore prefix). The actual target scale is computed internally as `min(36, max(a.scale, b.scale) + 6)`. The VM must pass `0` as a placeholder value. This parameter is reserved for future explicit scale control.
 
 ---
 
@@ -810,7 +819,7 @@ Gas costs are defined in the determin crate per RFC-0110 and RFC-0111:
 |-----------|---------|-------------------|
 | ADD/SUB | 10 + limbs | 74 |
 | MUL | 50 + 2 × limbs_a × limbs_b | 8,242 |
-| DIV/MOD | 50 + 3 × limbs_a × limbs_b | 12,362 |
+| DIV/MOD | 50 + 3 × limbs_a × limbs_b | 12,338 |
 | CMP | 5 + limbs | 69 |
 | SHL/SHR | 10 + limbs | 74 |
 
@@ -943,7 +952,7 @@ DECIMAL test vectors are defined in RFC-0111 §Test Vectors (57 entries with Mer
 | BIGINT cmp neg | `SELECT BIGINT '-5' < BIGINT '5'` | true |
 | BIGINT cmp zero | `SELECT BIGINT '0' = BIGINT '-0'` | true (canonical) |
 | DECIMAL add | `SELECT DECIMAL '1.5' + DECIMAL '2.5'` | Decimal '4' (canonical: mantissa=4, scale=0) |
-| DECIMAL canonicalizes | `SELECT DECIMAL '1.50'` | Decimal { mantissa: 15, scale: 1 } (canonicalized from input — `Decimal::new` strips trailing zeros) |
+| DECIMAL canonicalizes | `SELECT DECIMAL '1.50'` | Decimal { mantissa: 15, scale: 1 } (parser yields mantissa=150, scale=2; `Decimal::new(150, 2)` canonicalizes to {15, 1}) |
 | DECIMAL mul scales | `SELECT DECIMAL '1.2' * DECIMAL '3.4'` | Decimal '4.08' (scale=2) |
 | BIGINT overflow | `SELECT BIGINT '2' ^ 4096` | Error: overflow |
 | DECIMAL scale overflow | `SELECT DECIMAL '1' / DECIMAL '3'` | Canonical result with scale 6 |
@@ -1028,6 +1037,7 @@ Re-implementing the algorithms would introduce consensus risk. The determin crat
 
 | Version | Date | Changes |
 |---------|------|---------|
+| 1.6 | 2026-03-30 | Adversarial review round 5: C-7 (SchemaBuilder consuming builder pattern — §6.9), C-8 (public API exports are compile-blocking prerequisites — §6.15), C-9 (decimal_div third param unused, pass 0 — §7), H-7 (DECIMAL/NUMERIC removal from Float match arm — §1), H-9 (bigint_to_decimal(i128) scope clarification — §6.7), M-9 (stoolap_parse_decimal edge cases — §6.8), M-10 (DECIMAL→f64 precision loss note — §6.13), M-11 (BTree lexicographic encoding recommendation — §6.11), M-12 (DFP/Quant cross-type panic filed as follow-up — §6.12), M-13 (DECIMAL '1.50' test vector clarification — §9), L-7 (discriminant 11 comment clarity — §1), L-8 (DIV/MOD gas formula fix 12,338 — §8). |
 | 1.5 | 2026-03-30 | Adversarial review round 4: H2 (as_string() for BIGINT/DECIMAL — §6.4), M4 (SchemaColumn builder method — §6.9), M5 (test vector: DECIMAL '1.50' canonicalizes, not rejected), L4 (as_int64/as_float64 extension — §6.13), L5 (compare_same_type unwrap→ok_or — §6.6), L6 (PartialEq consistency note — §6.14), X-3 (public API export requirements — §6.15). Renumbered §6.4–§6.15. |
 | 1.4 | 2026-03-30 | Adversarial review round 3: C1 (Ord numeric dispatch for BIGINT/DECIMAL), C2 (cross-type comparison — coerce to wider type), H1 (BIGINT deserialization — read header for exact length), M1 (from_str_versioned starts_with for parameterized types), M2 (test vector 4.0→4 canonical), M3 (per-block→per-query gas), L1 (FromStr import), L2 (rounded spec), L3 (coercion dependency note). New §6.10 Ord, §6.11 Cross-Type Comparison. |
 | 1.3 | 2026-03-30 | Adversarial review round 2: C1-C6 (i32→Ordering conversion, stoolap_parse_decimal, decimal_to_string, BigInt::from, formula-based gas), H1-H5 (ownership annotations, Result wrapping, into_coerce note, serialization order), M1-M8 (imports, test vectors, extraction consistency, wire format notes, dead parameter, gas metering, aggregate gas) |

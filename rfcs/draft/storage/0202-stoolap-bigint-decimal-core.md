@@ -2,7 +2,7 @@
 
 ## Status
 
-**Version:** 1.6 (2026-03-30)
+**Version:** 1.7 (2026-03-31)
 **Status:** Draft
 
 ## Authors
@@ -753,7 +753,7 @@ The existing `as_int64()` and `as_float64()` return `None` for all Extension typ
 ```rust
 // In as_int64():
 Value::Extension(data) if data.first() == Some(&(DataType::Bigint as u8)) => {
-    self.as_bigint().and_then(|bi| bi.to_i64())
+    self.as_bigint().and_then(|bi| i64::try_from(bi).ok())
 }
 
 // In as_float64():
@@ -780,10 +780,10 @@ Both RFC-0202-A and RFC-0202-B reference functions from the `determin` crate tha
 
 - `decimal_cmp`, `decimal_to_string` — from `decimal.rs` (**blocking §6.3 and §6.6**)
 - `decimal_add`, `decimal_sub`, `decimal_mul`, `decimal_div`, `decimal_round` — from `decimal.rs` (**blocking §7**)
-- `BigIntEncoding`, `BigIntError` — from `bigint.rs`
-- `bigint_shl`, `bigint_shr`, `bigint_mod` — from `bigint.rs` (partially exported)
+- `BigIntError` — from `bigint.rs` (note: `BigIntEncoding` does not need a direct export — it is accessed via `BigInt::serialize()` which returns it)
+- `bigint_shl`, `bigint_shr`, `bigint_mod` — from `bigint.rs` (not exported at all)
 - `decimal_to_dqa`, `dqa_to_decimal` — from `decimal.rs`
-- `TryFromBigIntError` — error type from `BigInt::try_into()` for i64 conversion
+- `BigIntError` — error type from `BigInt` operations, including `BigIntError::OutOfRange` for i64 conversion via `i64::try_from(bi)`
 
 ---
 
@@ -966,7 +966,7 @@ DECIMAL test vectors are defined in RFC-0111 §Test Vectors (57 entries with Mer
 | Display BIGINT | `SELECT BIGINT '12345678901234567890'` | Prints '12345678901234567890' |
 | Display DECIMAL | `SELECT DECIMAL '123.45'` | Prints '123.45' |
 | DECIMAL(p,s) DDL | `CREATE TABLE t (d DECIMAL(10,2))` | SchemaColumn.decimal_scale=2 |
-| BIGINT → INTEGER TRAP | `CAST(BIGINT '99999999999999999999' AS INTEGER)` | Error: TryFromBigIntError |
+| BIGINT → INTEGER TRAP | `CAST(BIGINT '99999999999999999999' AS INTEGER)` | Error: BigIntError::OutOfRange |
 | DECIMAL → BIGINT TRAP | `CAST(DECIMAL '123.45' AS BIGINT)` | Error: ConversionLoss (scale > 0) |
 | INTEGER → BIGINT | `CAST(42 AS BIGINT)` | BigInt '42' |
 | INTEGER → DECIMAL | `CAST(42 AS DECIMAL)` | Decimal { mantissa: 42, scale: 0 } |
@@ -1037,6 +1037,7 @@ Re-implementing the algorithms would introduce consensus risk. The determin crat
 
 | Version | Date | Changes |
 |---------|------|---------|
+| 1.7 | 2026-03-31 | Adversarial review round 6: R6-1 (§6.13 `bi.to_i64()` → `i64::try_from(bi).ok()`), R6-2 (§6.15 + §9 `TryFromBigIntError` → `BigIntError::OutOfRange`), R6-3 (§6.15 `BigIntEncoding` removed from export list — accessed via `BigInt::serialize()`), R6-5 (§6.15 `bigint_shl`/`bigint_shr` "partially exported" → "not exported at all"). |
 | 1.6 | 2026-03-30 | Adversarial review round 5: C-7 (SchemaBuilder consuming builder pattern — §6.9), C-8 (public API exports are compile-blocking prerequisites — §6.15), C-9 (decimal_div third param unused, pass 0 — §7), H-7 (DECIMAL/NUMERIC removal from Float match arm — §1), H-9 (bigint_to_decimal(i128) scope clarification — §6.7), M-9 (stoolap_parse_decimal edge cases — §6.8), M-10 (DECIMAL→f64 precision loss note — §6.13), M-11 (BTree lexicographic encoding recommendation — §6.11), M-12 (DFP/Quant cross-type panic filed as follow-up — §6.12), M-13 (DECIMAL '1.50' test vector clarification — §9), L-7 (discriminant 11 comment clarity — §1), L-8 (DIV/MOD gas formula fix 12,338 — §8). |
 | 1.5 | 2026-03-30 | Adversarial review round 4: H2 (as_string() for BIGINT/DECIMAL — §6.4), M4 (SchemaColumn builder method — §6.9), M5 (test vector: DECIMAL '1.50' canonicalizes, not rejected), L4 (as_int64/as_float64 extension — §6.13), L5 (compare_same_type unwrap→ok_or — §6.6), L6 (PartialEq consistency note — §6.14), X-3 (public API export requirements — §6.15). Renumbered §6.4–§6.15. |
 | 1.4 | 2026-03-30 | Adversarial review round 3: C1 (Ord numeric dispatch for BIGINT/DECIMAL), C2 (cross-type comparison — coerce to wider type), H1 (BIGINT deserialization — read header for exact length), M1 (from_str_versioned starts_with for parameterized types), M2 (test vector 4.0→4 canonical), M3 (per-block→per-query gas), L1 (FromStr import), L2 (rounded spec), L3 (coercion dependency note). New §6.10 Ord, §6.11 Cross-Type Comparison. |

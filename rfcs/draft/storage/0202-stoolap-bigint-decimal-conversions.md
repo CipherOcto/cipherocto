@@ -2,7 +2,7 @@
 
 ## Status
 
-**Version:** 1.5 (2026-03-30)
+**Version:** 1.6 (2026-03-31)
 **Status:** Draft
 
 ## Authors
@@ -37,6 +37,8 @@ Conversions NOT covered by this RFC (handled by other mechanisms):
 
 **⚠ Critical dependency note:** RFC-0131 and RFC-0132 have a mutual dependency via `BigIntWithScale` (defined in RFC-0132, used in RFC-0131). Both must be Accepted before this RFC's Phase 2 can complete.
 
+**Acceptance criteria for dependency RFCs:** RFCs 0131-0135 must complete adversarial review with zero open issues and receive maintainer approval before advancing from Draft to Accepted. Phase 1 of this RFC is blocked until all five are Accepted.
+
 ## Design Goals
 
 | Goal | Target | Metric |
@@ -55,21 +57,24 @@ Conversions NOT covered by this RFC (handled by other mechanisms):
 | From | To | RFC | Notes |
 |------|----|-----|-------|
 | BIGINT | DECIMAL | RFC-0133 | Full BigInt→DECIMAL |
-| DECIMAL | BIGINT | RFC-0134 | **TRAP if scale > 0** (lossless requires scale=0). `DECIMAL '123.45'` (scale=2) → TRAP; `DECIMAL '123'` (scale=0) → OK. Returns `DecimalError`. |
+| DECIMAL | BIGINT | RFC-0134 | **TRAP if scale > 0** (lossless requires scale=0). `DECIMAL '123.45'` (scale=2) → TRAP; `DECIMAL '123'` (scale=0) → OK. Returns `DecimalError`. **Warning:** The existing `decimal_to_bigint(d: &Decimal) -> Result<i128, DecimalError>` from RFC-0111 silently truncates the fractional part (returns `i128`, NOT `BigInt`). This conversion uses `decimal_to_bigint_full` (RFC-0134) which TRAPs on scale > 0 instead of silently truncating. Use `CAST(DECIMAL ... AS BIGINT)` for explicit conversion. |
 | BIGINT | DQA | RFC-0131 | TRAP if exceeds i64 range. Returns `BigIntToDqaError`. |
-| DQA | BIGINT | RFC-0132 | Always valid for canonical DQA inputs |
+| DQA | BIGINT | RFC-0132 | Always `Ok(BigInt)` for canonical DQA inputs. Returns `Err(DqaToBigIntError)` for non-canonical. |
 | DQA | DECIMAL | RFC-0135 | Existing impl verified correct |
 | DECIMAL | DQA | RFC-0135 | **TRAP if scale > 18**. Returns `DecimalError::ConversionLoss`. |
+| INTEGER | BIGINT | Via From impl | Always valid |
+| BIGINT | INTEGER | Via TryFrom | **TRAP if out of range**. Returns `BigIntError::OutOfRange`. |
+| DECIMAL | INTEGER | Via BIGINT | Two-step: `decimal_to_bigint_full` (RFC-0134, TRAP if scale > 0) then `TryFrom<BigInt>` for i64 (TRAP if exceeds i64 range). Error propagation: returns first error encountered — `DecimalError::ConversionLoss` if scale > 0, otherwise `BigIntError::OutOfRange` if BigInt exceeds i64. |
+| DECIMAL | String | RFC-0111 | Existing impl |
+| i128 | DECIMAL | RFC-0111 | Existing `bigint_to_decimal(value: i128)`. **Note:** takes `i128`, NOT `BigInt`. Consider renaming to `i128_to_decimal` in a future RFC-0111 revision to avoid confusion with `bigint_to_decimal_full`. |
+| DECIMAL | i128 | RFC-0111 | Existing `decimal_to_bigint(d: &Decimal) -> Result<i128, DecimalError>`. **Note:** returns `i128`, NOT `BigInt`. This function **silently truncates** the fractional part (scale > 0 is NOT an error) — differs from `decimal_to_bigint_full` (RFC-0134) which TRAPs on scale > 0. |
+
+#### Future Conversions (not yet actionable)
+
+| From | To | RFC | Notes |
+|------|----|-----|-------|
 | DFP | DECIMAL | RFC-0124 | Via lowering pass (Proposed — not yet actionable) |
 | DFP | BIGINT | RFC-0124 | Via lowering pass (Proposed — not yet actionable) |
-| INTEGER | BIGINT | Via From impl | Always valid |
-| BIGINT | INTEGER | Via TryFrom | **TRAP if out of range**. Returns `TryFromBigIntError`. |
-| DECIMAL | INTEGER | Via BIGINT | Two-step: RFC-0134 (TRAP if scale > 0) then `TryFrom<BigInt>` (TRAP if exceeds i64). |
-| DECIMAL | String | RFC-0111 | Existing impl |
-| i128 | DECIMAL | RFC-0111 | Existing `bigint_to_decimal(value: i128)`. **Note:** takes `i128`, NOT `BigInt`. |
-| DECIMAL | i128 | RFC-0111 | Existing `decimal_to_bigint(d: &Decimal) -> Result<i128, DecimalError>`. **Note:** returns `i128`, NOT `BigInt`. |
-
----
 
 ## Conversion Function Signatures
 
@@ -182,7 +187,7 @@ Existing implementations verified correct in `determin/src/decimal.rs`:
 | File | Change |
 |------|--------|
 | `src/bigint.rs` | Add `bigint_to_dqa`, `bigint_with_scale_to_dqa`, `dqa_to_bigint`, `dqa_to_bigint_with_scale`, `BigIntWithScale` (requires `use crate::dqa::Dqa;`). All conversion functions placed in `bigint.rs` to centralize BigInt-dependent logic — no changes to `dqa.rs` required. Exception: `bigint_to_decimal_full` is placed in `decimal.rs` per RFC-0133's implementation specification. |
-| `src/decimal.rs` | Add `bigint_to_decimal_full` (per RFC-0133), `decimal_to_bigint_full` |
+| `src/decimal.rs` | Add `bigint_to_decimal_full` (per RFC-0133), `decimal_to_bigint_full`. Rationale: `bigint_to_decimal_full` lives in `decimal.rs` because its output type is `Decimal`, placing it with other `Decimal` constructors. This overrides the general "BigInt-dependent logic in bigint.rs" rule. |
 
 ### Stoolap
 
@@ -215,6 +220,8 @@ Existing implementations verified correct in `determin/src/decimal.rs`:
 
 ### SQL-Level Integration Tests (CAST Path)
 
+> **Prerequisites:** These test vectors assume RFC-0202-A Phase 1 is complete (BIGINT/DECIMAL DataType variants, typed literals `BIGINT '...'` and `DECIMAL '...'` exist in Stoolap). The `DQA '...'` typed literal syntax is used for test clarity but is not yet formally specified in any RFC — the implementation must define DQA literal parsing as part of this phase or rely on programmatic value construction.
+
 | Test | SQL | Expected |
 |------|-----|----------|
 | BIGINT → DECIMAL | `CAST(BIGINT '123' AS DECIMAL)` | `DECIMAL '123'` (scale=0) |
@@ -224,13 +231,13 @@ Existing implementations verified correct in `determin/src/decimal.rs`:
 | BIGINT → DQA (overflow) | `CAST(BIGINT '9223372036854775808' AS DQA(0))` | Error: `BigIntToDqaError::OutOfRange` (exceeds i64) |
 | DQA → BIGINT | `CAST(DQA '12345' AS BIGINT)` | `BIGINT '12345'` (raw mantissa) |
 | DECIMAL → DQA (scale ≤ 18) | `CAST(DECIMAL '1.5' AS DQA)` | `DQA '1.5'` |
-| DECIMAL → DQA (TRAP) | `CAST(DECIMAL '1e19' AS DQA)` (scale=19) | Error: scale > 18 |
+| DECIMAL → DQA (TRAP) | `CAST(DECIMAL '1.0000000000000000001' AS DQA)` (scale=19) | Error: `DecimalError::ConversionLoss` (scale > 18) |
 | INTEGER → BIGINT | `CAST(42 AS BIGINT)` | `BIGINT '42'` |
 | INTEGER → DECIMAL | `CAST(42 AS DECIMAL)` | `DECIMAL '42'` (scale=0) |
 | BIGINT → INTEGER (in range) | `CAST(BIGINT '42' AS INTEGER)` | `42` (i64) |
-| BIGINT → INTEGER (TRAP) | `CAST(BIGINT '99999999999999999999' AS INTEGER)` | Error: `TryFromBigIntError` |
+| BIGINT → INTEGER (TRAP) | `CAST(BIGINT '99999999999999999999' AS INTEGER)` | Error: `BigIntError::OutOfRange` |
 | DECIMAL → INTEGER (via BIGINT) | `CAST(DECIMAL '123' AS INTEGER)` | `123` (i64) |
-| DECIMAL → INTEGER (TRAP scale) | `CAST(DECIMAL '123.45' AS INTEGER)` | Error: two-step fails at DECIMAL→BIGINT |
+| DECIMAL → INTEGER (TRAP scale) | `CAST(DECIMAL '123.45' AS INTEGER)` | Error: `DecimalError::ConversionLoss` (two-step fails at DECIMAL→BIGINT: scale > 0) |
 
 ---
 
@@ -238,6 +245,7 @@ Existing implementations verified correct in `determin/src/decimal.rs`:
 
 | Version | Date | Changes |
 |---------|------|---------|
+| 1.6 | 2026-03-31 | Adversarial review round 6: C1 (DECIMAL→BIGINT error: `DecimalError::ConversionLoss`), C2 (distinguish `decimal_to_bigint` truncating vs `decimal_to_bigint_full` strict), H2 (DQA→BIGINT clarify `Result` return), H3 (replace invalid `DECIMAL '1e19'` with valid literal), H4 (`bigint_to_decimal_full` file placement rationale), M1 (DFP rows moved to Future Conversions section), M3 (acceptance criteria for RFC-0131-0135), M4 (DECIMAL→INTEGER error propagation), M5 (DQA literal syntax prerequisite note), L1 (`bigint_to_decimal` rename recommendation), L2 (`decimal_to_bigint` truncation warning). |
 | 1.5 | 2026-03-30 | Adversarial review round 5: H1 (cast.rs → vm.rs), H2 (ddl.rs → compiler.rs), H3 (determin crate is external dep), H4 (RFC-0135 gas costs marked implementation-defined), M1 (RFC-0124 Proposed annotation), M2 (Phase 3 compiler.rs step), M3 (centralization rationale exception for bigint_to_decimal_full), M4 (DECIMAL→INTEGER path in conversion matrix), M5 (SQL-level integration test vectors section), L1 (RFC-0105 status → Accepted (implemented)), L2 (DECIMAL→DQA error type: DecimalError::ConversionLoss). |
 | 1.4 | 2026-03-30 | Adversarial review round 4: M2 (param name `v`→`bws` matching RFC-0131), M3/M4 (add gas costs for `bigint_with_scale_to_dqa` and `dqa_to_bigint_with_scale`), L3 (conversion matrix example: `DECIMAL '123.00'`→`DECIMAL '123'`), L4 (clarify file placement — all conversions in bigint.rs, no dqa.rs changes). |
 | 1.3 | 2026-03-30 | Adversarial review round 3: fix dqa_to_decimal return type (Result, not bare Decimal), add gas costs for RFC-0135 conversions, add cross-module import note |

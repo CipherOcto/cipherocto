@@ -1178,8 +1178,95 @@ This invariant ensures:
 
 ---
 
+## Appendix: Implementation Architecture Amendment (v2.14)
+
+> **Date:** 2026-04-01
+> **Status:** Accepted amendment based on code review findings
+
+### B1. Unified Runtime Dispatch (Resolves: S8)
+
+The original RFC specified 7 type-specific DQA opcodes (`OP_DQA_ADD/SUB/MUL/DIV/NEG/ABS/CMP`). After implementation review, the architecture uses **unified runtime dispatch** as the primary path:
+
+- All generic `Op::Add/Sub/Mul/Div/Mod/Neg/Abs` route through a single `arithmetic_op()` method
+- `arithmetic_op()` performs runtime type detection via `is_quant_value()` / `is_dfp()` byte checks
+- DQA-specific opcodes (`Op::DqaAdd`, etc.) are **reserved for future JIT optimization** — dispatched correctly in the VM main loop but never emitted by the current compiler
+
+**Rationale:** The 7 DQA opcodes are fully implemented and tested but the compiler emits only generic opcodes. Making the compiler type-aware would require schema inspection during compilation — a significant architectural change deferred to a future optimization pass.
+
+**Compiler requirement:** The expression compiler MUST ensure all generic arithmetic opcodes route through `arithmetic_op()`. Any bypass (like the old `div_op()`/`mod_op()` static methods) risks silently returning NULL for Extension types.
+
+### B2. Cross-Type Numeric Comparison (Resolves: S1, S10)
+
+**Previous behavior:** Cross-type comparison used `as_float64().unwrap()`, which:
+1. Returned `None` for all Extension types (including Quant), causing server panics
+2. For DQA: `(q.value as f64) / 10^q.scale` overflows f64 for large values with high scale
+
+**New behavior:** Cross-type comparison uses type promotion:
+
+| Left Type | Right Type | Comparison Strategy |
+|-----------|------------|---------------------|
+| Quant | Integer | Promote Integer → Quant(scale=0), compare via `dqa_cmp` |
+| Quant | Float | Convert Quant → f64 (lossy but explicit), compare as f64 |
+| Quant | DFP | `Error::IncomparableTypes` (explicit CAST required) |
+| Quant | Quant | Same-type `dqa_cmp` after canonicalization |
+
+**Warning:** Quant → f64 conversion for comparison is lossy for values exceeding f64 integer precision (2^53) at high scales. A query like `WHERE quant_col > 9007199254740993` may produce incorrect results for values near the precision boundary. This is documented as a known limitation — use `CAST(float_col AS DQA)` for exact comparison.
+
+### B3. Single Casting Truth (Resolves: S2, S3, S4, S7)
+
+Three code paths previously implemented independent type coercion for Quant:
+1. `Value::cast_to_type()` — borrowing, was a stub returning NULL
+2. `Value::into_coerce_to_type()` — consuming, was a stub returning NULL
+3. `CastExpr::perform_cast()` — was returning Error
+
+**Requirement:** All three paths delegate to a single implementation in `Value::cast_to_type()`:
+- `into_coerce_to_type()` calls `cast_to_type()` internally, inlining only the same-type fast-path
+- `perform_cast()` delegates to `Value::cast_to_type()` via `Ok(value.cast_to_type(target))`
+
+### B4. Validation on Extraction (Resolves: S9)
+
+`extract_dqa_from_extension()` previously used `Some(Dqa { value, scale })` (direct construction), bypassing `Dqa::new()` validation. A corrupted payload with `scale > 18` would be accepted.
+
+**Requirement:** All DQA extraction from byte data MUST use `Dqa::new(value, scale).ok()` or equivalent validation. Direct `Dqa { value, scale }` construction is only permitted in `Dqa::new()` itself and in the `CANONICAL_ZERO` constant.
+
+### B5. Persistence Validation (Resolves: S13)
+
+Wire tag 11 (generic extension) deserialization now validates DQA payloads:
+
+```
+if dt == DataType::Quant && len != 16:
+    return Err(Error::internal("corrupted DQA extension: expected 16 bytes, got {len}"));
+```
+
+DFP payloads are also validated (expected 24 bytes for `DfpEncoding`).
+
+### B6. Display and String Representation (Resolves: S5, S10)
+
+Quant values display as their decimal representation:
+- `Dqa { value: 123, scale: 2 }` → `"1.23"`
+- `Dqa { value: 42, scale: 0 }` → `"42"`
+- `Dqa { value: -100, scale: 2 }` → `"-1"`
+
+The `format_dqa()` and `parse_string_to_dqa()` helpers handle the bidirectional conversion.
+
+### B7. Verification Requirements
+
+DQA integration MUST include:
+
+| Category | Tests Required | Coverage |
+|----------|---------------|----------|
+| Value API | Round-trip, Display, as_string, as_float64, coercion | Per type conversion |
+| VM Arithmetic | add/sub/mul/div/mod (via arithmetic_op_quant) | Per operation |
+| Cross-type comparison | Quant vs Int, Quant vs Float | Per combination |
+| Format/parse | format_dqa ↔ parse_string_to_dqa round-trip | Scale 0, 1, 2, 9, 18 |
+| SQL round-trip | CREATE → INSERT → SELECT → WHERE | End-to-end |
+| Persistence | Serialization → deserialization with validation | Corrupted payloads rejected |
+
+---
+
 **Submission Date:** 2025-03-06
-**Last Updated:** 2026-03-08
+**Last Updated:** 2026-04-01
+**Revision:** v2.14 - Architecture amendment: unified runtime dispatch, cross-type comparison, single casting truth, validation on extraction, persistence validation, display/string representation, verification requirements
 **Revision:** v2.13 - Tightened MUL clamping wording, added large-value chain test, added >90% note to DQA_CMP fast-path
 **Revision:** v2.12 - Added SQL vs canonical representation clarification, fixed division rounding wording (TARGET_SCALE precision), strengthened SIMD determinism rule, enforced canonicalization in encoding API, added control-flow to VM canonicalization rule, added power<=36 invariant, added scale alignment overflow test vector
 **Revision:** v2.11 - Fixed DIV negative test vector (-12 not -13), added i64 range check to DQA_ASSIGN_TO_COLUMN, added CANONICALIZE to DIV return, unified scale overflow references, fixed test vector notes, added DIV canonicalization test vector, fixed MAX_I128_DIGITS to 39

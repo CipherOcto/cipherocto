@@ -368,8 +368,10 @@ DFP_DIV(a, b):
     // Quotient accumulator
     quotient = 0u128
 
-    // Fixed 256 iterations for determinism
-    for i in 0..256:
+    // Fixed 128 iterations for determinism (sufficient with pre-scaling guarantee)
+    // Pre-scaling ensures a.mantissa < b.mantissa, so 128 bits of quotient precision
+    // yields 15 guard bits above the 113 we keep — sufficient for correct RNE rounding.
+    for i in 0..128:
         // Shift dividend left by 1 (with carry between hi/lo)
         (dividend_hi, dividend_lo, carry) = shift_left_with_carry(
             dividend_hi, dividend_lo
@@ -388,7 +390,7 @@ DFP_DIV(a, b):
             quotient = quotient | 1
         // Else: quotient bit remains 0, dividend unchanged
 
-    // quotient now has 256-bit precision
+    // quotient now has 128-bit precision
     // CRITICAL: Align quotient for round_to_113
     // Find MSB position in 256-bit quotient (0-255)
     quotient_msb = 255 - quotient.leading_zeros()
@@ -1468,7 +1470,7 @@ Recommended CI matrix: x86_64-linux, arm64-linux, macOS, wasm
 
 2. **No f64 for SQRT Seed:** The initial approximation for SQRT must use bit-by-bit integer sqrt. Using `f64::sqrt(x)` as a seed is FORBIDDEN — it introduces non-determinism.
 
-3. **No Iteration Short-Circuiting:** Execute ALL iterations as specified (256 for division, 226 for SQRT). Compilers must NOT elide "useless" iterations via "fast-math" flags.
+3. **No Iteration Short-Circuiting:** Execute ALL iterations as specified (128 for division, 226 for SQRT). Compilers must NOT elide "useless" iterations via "fast-math" flags.
 
 ### Mission 1b: Additional Transcendental Functions (Future Phase)
 
@@ -1811,7 +1813,97 @@ None. DFP is a new type that does not modify existing FLOAT/DOUBLE behavior.
 
 ---
 
-**Version:** 1.16
+## Appendix: Implementation Architecture Amendment (v1.17)
+
+> **Date:** 2026-04-01
+> **Status:** Accepted amendment based on code review findings
+
+### A1. Unified Runtime Dispatch (Resolves: S11, S12)
+
+The original RFC specified type-specific DFP opcodes (`OP_DFP_ADD/SUB/MUL/DIV`). After implementation review, the architecture uses **unified runtime dispatch** as the primary path:
+
+- All generic `Op::Add/Sub/Mul/Div/Mod/Neg/Abs` route through a single `arithmetic_op()` method
+- `arithmetic_op()` performs runtime type detection (one byte comparison per operand)
+- Type-specific opcodes (`OP_DFP_ADD`, etc.) are **reserved for future JIT optimization** but not emitted by the current compiler
+
+**Rationale:** Runtime detection cost (one `match` on a byte) is negligible vs disk I/O in a database VM. The DQA review proved that type-specific opcodes (7 defined for DQA) become dead code when the compiler doesn't emit them.
+
+**Compiler requirement:** The expression compiler MUST ensure all generic arithmetic opcodes route through the type-aware `arithmetic_op()` dispatch. Any new arithmetic opcode added to `Op` must include Extension type handling.
+
+### A2. Cross-Type Numeric Comparison (Resolves: S7, F1)
+
+**Previous behavior:** Cross-type comparison (DFP vs Integer/Float) used `as_float64().unwrap()`, which:
+1. Panicked for Extension types (server crash)
+2. Lost DFP's 113-bit precision via lossy f64 conversion
+
+**New behavior:** Cross-type comparison uses **type promotion** instead of lossy conversion:
+
+| Left Type | Right Type | Comparison Strategy |
+|-----------|------------|---------------------|
+| DFP | Integer | Promote Integer → DFP, compare in DFP space |
+| DFP | Float | Promote Float → DFP, compare in DFP space |
+| DFP | DFP | Same-type `compare_dfp()` |
+| DFP | Quant | `Error::IncomparableTypes` (explicit CAST required) |
+
+**Implementation:** `as_float64()` still supports DFP for backward compatibility but the `compare()` method uses dedicated promotion paths that avoid precision loss.
+
+### A3. Division Iterations: 128 (Resolves: D1)
+
+The implementation uses **128 iterations** (not 256) for the long division loop. This is mathematically sufficient:
+
+- Pre-scaling guarantees `a.mantissa < b.mantissa`
+- 128 iterations yield 128 bits of quotient precision
+- 15 guard bits above the 113 kept — sufficient for correct RNE rounding
+- Golden Rule #3 updated: 128 for division (was 256)
+
+### A4. DFP SQRT Opcode (Resolves: S5)
+
+Add `Op::Sqrt` as a generic opcode (not DFP-specific):
+
+```
+Op::Sqrt => {
+    let v = self.stack.pop().unwrap_or_else(Value::null_unknown);
+    let result = match v {
+        Value::Integer(_) => Value::Null(DataType::Integer),  // sqrt not defined for integers
+        Value::Float(f) => Value::Float(f.sqrt()),
+        Value::Extension(data) if data.first() == Some(&(DataType::DeterministicFloat as u8)) => {
+            // DFP sqrt via dfp_sqrt()
+            ...
+        }
+        _ => Value::Null(DataType::Null),
+    };
+    self.stack.push(result);
+}
+```
+
+### A5. Single Casting Truth (Resolves: F3)
+
+Three code paths previously implemented independent type coercion:
+1. `Value::cast_to_type(&self, target)` — borrowing
+2. `Value::into_coerce_to_type(self, target)` — consuming
+3. `CastExpr::perform_cast(&self, value)` — storage expression
+
+**Requirement:** `perform_cast()` MUST delegate to `Value::cast_to_type()`. `into_coerce_to_type()` MUST use `cast_to_type()` internally, only inlining the same-type fast-path (no conversion needed, return self).
+
+### A6. DETERMINISTIC VIEW (Resolves: S10)
+
+Deferred to a separate RFC-0110. The VM's `deterministic` flag and `arithmetic_op_deterministic()` method are reserved infrastructure. The SQL surface (`CREATE DETERMINISTIC VIEW`) requires parser grammar changes beyond the scope of this amendment.
+
+### A7. Verification Requirements
+
+DFP integration MUST include:
+
+| Category | Tests Required | Coverage |
+|----------|---------------|----------|
+| Value API | Round-trip, Display, as_string, as_float64, coercion | Per type conversion |
+| VM Arithmetic | add/sub/mul/div/mod/neg/abs/cmp | Per opcode × per type |
+| Cross-type comparison | DFP vs Int, DFP vs Float | Per combination |
+| SQL round-trip | CREATE → INSERT → SELECT → WHERE → UPDATE → DELETE | End-to-end |
+| Persistence | Serialization → deserialization fidelity | Per wire format |
+
+---
+
+**Version:** 1.17
 **Submission Date:** 2025-03-06
 **Last Updated:** 2026-03-08
 **Changes:** v1.16 final fixes (10/10):

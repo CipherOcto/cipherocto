@@ -60,7 +60,7 @@ pub use decimal::{
     MAX_DECIMAL_OP_COST, MAX_DECIMAL_SCALE, MIN_DECIMAL_MANTISSA,
 };
 pub use dmat::{DMat, DmatError, NumericScalar};
-pub use dqa::{dqa_abs, dqa_assign_to_column, dqa_cmp, dqa_negate, Dqa, DqaEncoding, DqaError};
+pub use dqa::{dqa_abs, dqa_assign_to_column, dqa_cmp, dqa_negate, CANONICAL_ZERO, Dqa, DqaEncoding, DqaError};
 pub use dvec::{
     dot_product, norm, normalize, squared_distance, vec_add, vec_mul, vec_scale, vec_sub, DVec,
     DvecError, DvecScalar,
@@ -187,6 +187,23 @@ impl Dfp {
 
         // Mantissa should now be odd
         debug_assert!(self.mantissa % 2 == 1 || self.mantissa == 0);
+    }
+
+    /// Create DFP from signed mantissa and exponent
+    /// Extracts sign from the mantissa automatically
+    pub fn from_signed(mantissa: i128, exponent: i32) -> Self {
+        if mantissa == 0 {
+            return Dfp::zero();
+        }
+        let sign = mantissa < 0;
+        let mut dfp = Dfp {
+            mantissa: mantissa.unsigned_abs(),
+            exponent,
+            class: DfpClass::Normal,
+            sign,
+        };
+        dfp.normalize();
+        dfp
     }
 
     /// Create DFP from i64 (integer)
@@ -348,6 +365,14 @@ pub const DFP_MIN: Dfp = Dfp {
     sign: true,
     mantissa: DFP_MAX_MANTISSA,
     exponent: DFP_MAX_EXPONENT,
+};
+
+/// Canonical NaN value
+pub const DFP_CANONICAL_NAN: Dfp = Dfp {
+    class: DfpClass::NaN,
+    sign: false,
+    mantissa: 0,
+    exponent: 0,
 };
 
 /// DFP encoding for serialization (24 bytes)

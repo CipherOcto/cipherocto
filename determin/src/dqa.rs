@@ -109,6 +109,9 @@ pub struct Dqa {
     pub scale: u8,
 }
 
+/// Canonical zero value (value=0, scale=0)
+pub const CANONICAL_ZERO: Dqa = Dqa { value: 0, scale: 0 };
+
 impl Dqa {
     /// Create DQA from value and scale
     /// Returns Error::InvalidScale if scale > 18

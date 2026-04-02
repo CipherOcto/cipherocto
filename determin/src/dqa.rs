@@ -498,6 +498,9 @@ pub struct DqaEncoding {
     pub _reserved: [u8; 7], // Padding to 16 bytes
 }
 
+// Compile-time assertion that DqaEncoding is exactly 16 bytes (consensus wire format)
+const _: () = assert!(std::mem::size_of::<DqaEncoding>() == 16);
+
 impl DqaEncoding {
     /// Serialize DQA to canonical big-endian encoding
     /// CRITICAL: Canonicalizes before encoding to ensure deterministic Merkle hashes
@@ -577,6 +580,12 @@ mod tests {
         assert_eq!(dqa_mul(dqa(100, 2), dqa(2000, 3)).unwrap(), dqa(2, 0));
         // -0.5 × 0.4 = -0.20 → canonical -2,1
         assert_eq!(dqa_mul(dqa(-5, 1), dqa(4, 1)).unwrap(), dqa(-2, 1));
+        // RFC-0105 vector: 0.200 × 3.0 = 0.600 → canonical 6,1 (fractional result)
+        assert_eq!(dqa_mul(dqa(200, 3), dqa(30, 1)).unwrap(), dqa(6, 1));
+        // negative × negative: -0.5 × -0.3 = 0.15
+        assert_eq!(dqa_mul(dqa(-5, 1), dqa(-3, 1)).unwrap(), dqa(15, 2));
+        // mixed sign: -0.5 × 0.3 = -0.15
+        assert_eq!(dqa_mul(dqa(-5, 1), dqa(3, 1)).unwrap(), dqa(-15, 2));
     }
 
     /// Test division
@@ -744,5 +753,192 @@ mod tests {
         let recovered = encoding.to_dqa().unwrap();
         // Canonical form should match
         assert_eq!(canonicalize(recovered), canonicalize(original));
+    }
+
+    // ---- RFC-0105 Division Test Vectors (DQA D2) ----
+
+    /// RFC-0105 primary division test vectors that were missing
+    #[test]
+    fn test_div_rfc_vectors() {
+        // 1/3 = 0.333... → rounds down to 0
+        assert_eq!(dqa_div(dqa(1, 0), dqa(3, 0)).unwrap(), dqa(0, 0));
+        // -1/3 = -0.333... → rounds toward zero to 0
+        assert_eq!(dqa_div(dqa(-1, 0), dqa(3, 0)).unwrap(), dqa(0, 0));
+        // 2/3 = 0.666... → rounds up to 1
+        assert_eq!(dqa_div(dqa(2, 0), dqa(3, 0)).unwrap(), dqa(1, 0));
+        // 1/6 = 0.1666... → rounds down to 0
+        assert_eq!(dqa_div(dqa(1, 0), dqa(6, 0)).unwrap(), dqa(0, 0));
+        // 2.0/3 at scale 6 = 0.666667 → rounds up
+        assert_eq!(dqa_div(dqa(2000000, 6), dqa(3, 0)).unwrap(), dqa(666667, 6));
+        // -2.0/3 at scale 6 = -0.666667 → rounds toward zero
+        assert_eq!(dqa_div(dqa(-2000000, 6), dqa(3, 0)).unwrap(), dqa(-666667, 6));
+    }
+
+    /// RFC-0105 additional division test vectors
+    #[test]
+    fn test_div_additional_vectors() {
+        // i64::MAX / 1 = i64::MAX
+        assert_eq!(dqa_div(dqa(i64::MAX, 0), dqa(1, 0)).unwrap(), dqa(i64::MAX, 0));
+        // i64::MAX / 2: quotient=4611686018427387903, rem=1, tie → quotient odd → round up
+        assert_eq!(dqa_div(dqa(i64::MAX, 0), dqa(2, 0)).unwrap(), dqa(4611686018427387904, 0));
+        // 1 / i64::MAX (very small → rounds to 0)
+        assert_eq!(dqa_div(dqa(1, 0), dqa(i64::MAX, 0)).unwrap(), dqa(0, 0));
+        // i64::MAX / 3
+        assert_eq!(dqa_div(dqa(i64::MAX, 0), dqa(3, 0)).unwrap(), dqa(3074457345618258602, 0));
+        // 1e-18 / 2: TARGET_SCALE=18, scaled=1*10^0=1, 1/2=0 rem 1 → tie rounds to 0
+        // (10^-18 / 2 = 5×10^-19 is below precision at scale 18)
+        assert_eq!(dqa_div(dqa(1, 18), dqa(2, 0)).unwrap(), dqa(0, 0));
+        // i64::MAX scale 18 / 1 = i64::MAX
+        assert_eq!(dqa_div(dqa(i64::MAX, 18), dqa(1, 0)).unwrap(), dqa(i64::MAX, 18));
+        // 1/3 at scale 3 = 0.333
+        assert_eq!(dqa_div(dqa(1000, 3), dqa(3, 0)).unwrap(), dqa(333, 3));
+        // 0.2000 / 3 at scale 4 = 0.0667 → dqa(667, 4)
+        assert_eq!(dqa_div(dqa(2000, 4), dqa(3, 0)).unwrap(), dqa(667, 4));
+        // 1/7 at scale 6 = 0.142857
+        assert_eq!(dqa_div(dqa(1000000, 6), dqa(7, 0)).unwrap(), dqa(142857, 6));
+        // 0.25 / 2 = 0.125 → rounds to 0.12 at scale 2 (tie: 12 is even)
+        assert_eq!(dqa_div(dqa(25, 2), dqa(2, 0)).unwrap(), dqa(12, 2));
+        // 0.15 / 4 at scale 2: scaled=15/4=3 rem 3, round up → 4
+        assert_eq!(dqa_div(dqa(15, 2), dqa(4, 0)).unwrap(), dqa(4, 2));
+        // 0.35 / 8 at scale 2: scaled=35/8=4 rem 3, round down → 4
+        assert_eq!(dqa_div(dqa(35, 2), dqa(8, 0)).unwrap(), dqa(4, 2));
+        // -0.25 / 2 = -0.125, symmetric
+        assert_eq!(dqa_div(dqa(-25, 2), dqa(2, 0)).unwrap(), dqa(-12, 2));
+        // -0.15 / 4: symmetric rounding
+        assert_eq!(dqa_div(dqa(-15, 2), dqa(4, 0)).unwrap(), dqa(-4, 2));
+    }
+
+    /// RFC-0105 brutal edge case test vectors
+    #[test]
+    fn test_div_brutal_edge_cases() {
+        // i64::MIN / 1 = i64::MIN
+        assert_eq!(dqa_div(dqa(i64::MIN, 0), dqa(1, 0)).unwrap(), dqa(i64::MIN, 0));
+        // i64::MIN / -1 = overflow
+        assert_eq!(dqa_div(dqa(i64::MIN, 0), dqa(-1, 0)).unwrap_err(), DqaError::Overflow);
+        // DIV result canonicalization: 1000/1=1000, scale=3 → canonicalize to 1,0
+        assert_eq!(dqa_div(dqa(1000, 3), dqa(1, 0)).unwrap(), dqa(1, 0));
+        // 0.25 / 2 = 0.125, tie to even at scale 2
+        assert_eq!(dqa_div(dqa(25, 2), dqa(2, 0)).unwrap(), dqa(12, 2));
+        // -0.25 / 2 = -0.125, symmetric
+        assert_eq!(dqa_div(dqa(-25, 2), dqa(2, 0)).unwrap(), dqa(-12, 2));
+    }
+
+    /// RFC-0105 overflow test vectors
+    #[test]
+    fn test_overflow_vectors() {
+        // 10^18 × 10 = overflow
+        assert_eq!(dqa_mul(dqa(1_000_000_000_000_000_000, 0), dqa(10, 0)).unwrap_err(), DqaError::Overflow);
+        // i64::MAX + 1 = overflow
+        assert_eq!(dqa_add(dqa(i64::MAX, 0), dqa(1, 0)).unwrap_err(), DqaError::Overflow);
+        // i64::MIN - 1 = overflow
+        assert_eq!(dqa_sub(dqa(i64::MIN, 0), dqa(1, 0)).unwrap_err(), DqaError::Overflow);
+        // Near overflow multiplication: i64::MAX/2 * 2
+        assert_eq!(dqa_mul(dqa(4611686018427387903, 0), dqa(2, 0)).unwrap(), dqa(9223372036854775806, 0));
+        // i64::MAX * 2 = overflow
+        assert_eq!(dqa_mul(dqa(i64::MAX, 0), dqa(2, 0)).unwrap_err(), DqaError::Overflow);
+    }
+
+    /// RFC-0105 comparison test vectors
+    #[test]
+    fn test_comparison_vectors() {
+        // 1.2 == 1.20
+        assert_eq!(dqa_cmp(dqa(12, 1), dqa(120, 2)), 0);
+        // 1.2 > 1.10
+        assert_eq!(dqa_cmp(dqa(12, 1), dqa(110, 2)), 1);
+        // 1.2 < 1.30
+        assert_eq!(dqa_cmp(dqa(12, 1), dqa(130, 2)), -1);
+        // negative equality
+        assert_eq!(dqa_cmp(dqa(-15, 1), dqa(-15, 1)), 0);
+        // -1.5 > -2.5
+        assert_eq!(dqa_cmp(dqa(-15, 1), dqa(-25, 1)), 1);
+        // i64::MAX vs 1e-18
+        assert_eq!(dqa_cmp(dqa(i64::MAX, 0), dqa(1, 18)), 1);
+        // 1e-18 vs i64::MAX
+        assert_eq!(dqa_cmp(dqa(1, 18), dqa(i64::MAX, 0)), -1);
+        // near max comparison: 10^18 < i64::MAX-1
+        assert_eq!(dqa_cmp(dqa(1000000000000000000, 0), dqa(9223372036854775806, 0)), -1);
+        // i64::MIN comparison
+        assert_eq!(dqa_cmp(dqa(i64::MIN, 0), dqa(-1, 0)), -1);
+        // -0.5 == -0.50 (canonicalization)
+        assert_eq!(dqa_cmp(dqa(-5, 1), dqa(-50, 2)), 0);
+        // 1 == 10^18 × 10^-18 = 1 (canonicalization makes them equal)
+        assert_eq!(dqa_cmp(dqa(1, 0), dqa(1000000000000000000, 18)), 0);
+    }
+
+    /// RFC-0105 chain operation test vectors
+    #[test]
+    fn test_chain_operations() {
+        // mul→div: (10*5)/2 = 25
+        let r = dqa_mul(dqa(10, 0), dqa(5, 0)).unwrap();
+        assert_eq!(dqa_div(r, dqa(2, 0)).unwrap(), dqa(25, 0));
+
+        // add→canonicalize: 1.00 + 20.0 = 21.00 → canonical 21,0
+        let r = dqa_add(dqa(100, 2), dqa(200, 1)).unwrap();
+        assert_eq!(r, dqa(21, 0));
+
+        // mul→add: (2*3) + 1 = 7
+        let r = dqa_mul(dqa(2, 0), dqa(3, 0)).unwrap();
+        assert_eq!(dqa_add(r, dqa(1, 0)).unwrap(), dqa(7, 0));
+
+        // scale clamped: 1e-18 × 1000 = 1e-15, result_scale=21 clamped to 18
+        let r = dqa_mul(dqa(1, 18), dqa(1000, 3)).unwrap();
+        assert_eq!(r, dqa(1, 18));
+
+        // mul→div→canonicalize: 2.00 × 3.00 → 6.0000 / 4 = 1.5000 → canonical 3,1
+        let r = dqa_mul(dqa(200, 2), dqa(300, 2)).unwrap(); // 60000, scale=4 → canonical 6,0
+        let r = dqa_div(r, dqa(4, 0)).unwrap(); // 6/4 = 1 rem 2, round up → 2
+        assert_eq!(r, dqa(2, 0));
+
+        // division precision loss chain: 1/3≈0; 0*3=0; 0+0=0
+        let r = dqa_div(dqa(1, 0), dqa(3, 0)).unwrap();
+        let r = dqa_mul(r, dqa(3, 0)).unwrap();
+        assert_eq!(dqa_add(r, dqa(0, 0)).unwrap(), dqa(0, 0));
+
+        // add→canonicalize trailing zeros: 1.00 + 2.00 = 3.00 → canonical 3,0
+        assert_eq!(dqa_add(dqa(100, 2), dqa(200, 2)).unwrap(), dqa(3, 0));
+
+        // negative subtraction: -0.50 - 0.25 = -0.75
+        assert_eq!(dqa_sub(dqa(-50, 2), dqa(25, 2)).unwrap(), dqa(-75, 2));
+
+        // mul→div→add→canonicalize: (10*5)/2 + 1 = 26
+        let r = dqa_mul(dqa(10, 0), dqa(5, 0)).unwrap();
+        let r = dqa_div(r, dqa(2, 0)).unwrap();
+        assert_eq!(dqa_add(r, dqa(1, 0)).unwrap(), dqa(26, 0));
+
+        // large value canonicalization: 99999999999999999 * 10 = 999999999999999990 → canonical
+        let r = dqa_mul(dqa(99999999999999999, 0), dqa(10, 0)).unwrap();
+        assert_eq!(r, dqa(999999999999999990, 0));
+    }
+
+    /// RFC-0105 rounding test vectors (RoundHalfEven via dqa_assign_to_column)
+    #[test]
+    fn test_rounding_vectors() {
+        // 1.25 → scale 1 = 1.2 (tie to even: 2 is even)
+        assert_eq!(dqa_assign_to_column(dqa(125, 2), 1).unwrap(), dqa(12, 1));
+        // 1.35 → scale 1 = 1.4 (tie to even: 4 is even)
+        assert_eq!(dqa_assign_to_column(dqa(135, 2), 1).unwrap(), dqa(14, 1));
+        // 1.250 → scale 1 = 1.2
+        assert_eq!(dqa_assign_to_column(dqa(1250, 3), 1).unwrap(), dqa(12, 1));
+        // 1.150 → scale 1 = 1.2
+        assert_eq!(dqa_assign_to_column(dqa(1150, 3), 1).unwrap(), dqa(12, 1));
+        // 1.050 → scale 1 = 1.0 (tie to even: 0 is even)
+        assert_eq!(dqa_assign_to_column(dqa(1050, 3), 1).unwrap(), dqa(10, 1));
+    }
+
+    /// RFC-0105 canonicalization test vectors
+    #[test]
+    fn test_canonicalization_vectors() {
+        // 1000 scale 3 → 1 scale 0
+        assert_eq!(canonicalize(dqa(1000, 3)), dqa(1, 0));
+        // 50 scale 2 → 5 scale 1
+        assert_eq!(canonicalize(dqa(50, 2)), dqa(5, 1));
+        // 0 scale 5 → 0 scale 0
+        assert_eq!(canonicalize(dqa(0, 5)), dqa(0, 0));
+        // 100 scale 2 → 1 scale 0
+        assert_eq!(canonicalize(dqa(100, 2)), dqa(1, 0));
+        // large value with trailing zeros: 1200 scale 3 → canonical 12,1
+        assert_eq!(canonicalize(dqa(1200, 3)), dqa(12, 1));
+        // negative with trailing zeros: -100 scale 2 → canonical -1,0
+        assert_eq!(canonicalize(dqa(-100, 2)), dqa(-1, 0));
     }
 }

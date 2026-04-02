@@ -60,7 +60,10 @@ pub use decimal::{
     MAX_DECIMAL_OP_COST, MAX_DECIMAL_SCALE, MIN_DECIMAL_MANTISSA,
 };
 pub use dmat::{DMat, DmatError, NumericScalar};
-pub use dqa::{dqa_abs, dqa_assign_to_column, dqa_cmp, dqa_negate, CANONICAL_ZERO, Dqa, DqaEncoding, DqaError};
+pub use dqa::{
+    dqa_abs, dqa_add, dqa_assign_to_column, dqa_cmp, dqa_div, dqa_mul, dqa_negate, dqa_sub,
+    CANONICAL_ZERO, Dqa, DqaEncoding, DqaError,
+};
 pub use dvec::{
     dot_product, norm, normalize, squared_distance, vec_add, vec_mul, vec_scale, vec_sub, DVec,
     DvecError, DvecScalar,

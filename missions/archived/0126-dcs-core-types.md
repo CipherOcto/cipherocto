@@ -1,7 +1,7 @@
 # Mission: RFC-0126 DCS Core Types
 
 ## Status
-Open
+Completed (2026-03-22)
 
 ## RFC
 RFC-0126 v2.5.1 (Numeric): Deterministic Serialization

@@ -1,7 +1,7 @@
 # Mission: DFP Core Type Implementation
 
 ## Status
-Complete
+Archived
 
 ## RFC
 RFC-0104: Deterministic Floating-Point Abstraction

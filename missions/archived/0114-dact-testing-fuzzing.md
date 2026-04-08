@@ -1,7 +1,7 @@
 # Mission: DACT Testing and Fuzzing
 
 ## Status
-Claimed
+Archived
 
 ## RFC
 RFC-0114 v2.12 (Numeric): Deterministic Activation Functions (DACT)

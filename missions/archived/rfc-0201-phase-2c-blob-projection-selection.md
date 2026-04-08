@@ -1,7 +1,7 @@
 # Mission: RFC-0201 Phase 2c — Blob in Projection/Selection
 
 ## Status
-
+Archived
 Complete
 
 ## Claimant

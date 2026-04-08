@@ -1,7 +1,7 @@
 # Mission: Phase 7 - GPU Support (Future)
 
 ## Status
-Open
+Archived
 
 ## RFC
 RFC-0103: Unified Vector-SQL Storage Engine

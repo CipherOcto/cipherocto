@@ -1,7 +1,7 @@
 # Mission: DECIMAL Core Type Implementation
 
 ## Status
-Open
+Completed (2026-03-21)
 
 ## RFC
 RFC-0111 (Numeric): Deterministic DECIMAL

@@ -1,7 +1,7 @@
 # Mission: RFC-0126 DCS Consensus Integration
 
 ## Status
-Archived
+Open
 
 ## RFC
 RFC-0126 v2.5.1 (Numeric): Deterministic Serialization

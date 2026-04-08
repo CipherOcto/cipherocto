@@ -1,7 +1,7 @@
 # Mission: RFC-0902-c: Fallback Mechanisms
 
 ## Status
-
+Archived
 Claimed
 
 ## RFC

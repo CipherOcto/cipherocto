@@ -1,7 +1,7 @@
 # Mission: BigInt Verification Probe
 
 ## Status
-Done (claimed by agent/bigint-core-algorithms)
+Archived
 
 ## RFC
 RFC-0110 (Numeric): Deterministic BIGINT

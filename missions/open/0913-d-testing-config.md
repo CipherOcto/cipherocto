@@ -1,7 +1,7 @@
 # Mission: WAL Pub/Sub Testing & Configuration
 
 ## Status
-Pending
+Open
 
 ## RFC
 RFC-0913: Stoolap Pub/Sub for Cache Invalidation

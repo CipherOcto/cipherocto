@@ -1,7 +1,7 @@
 # Mission: DECIMAL Arithmetic Configuration Hash
 
 ## Status
-Open
+Claimed
 
 ## RFC
 RFC-0111 (Numeric): Deterministic DECIMAL

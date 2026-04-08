@@ -1,7 +1,7 @@
 # Mission: Phase 5 - Hybrid Query Planner
 
 ## Status
-Open
+Archived
 
 ## RFC
 RFC-0103: Unified Vector-SQL Storage Engine

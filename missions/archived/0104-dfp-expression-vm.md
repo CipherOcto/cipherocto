@@ -1,7 +1,7 @@
 # Mission: DFP Expression VM Opcodes
 
 ## Status
-Complete
+Archived
 
 ## RFC
 RFC-0104: Deterministic Floating-Point Abstraction

@@ -1,7 +1,7 @@
 # Mission: RFC-0201 Phase 2a/2b/2c/2e — BYTEA Core Blob Type
 
 ## Status
-
+Archived
 Superseded
 
 ## RFC

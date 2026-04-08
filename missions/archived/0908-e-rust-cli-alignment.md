@@ -1,7 +1,7 @@
 # Mission: Align Rust CLI/Library with Python SDK Exports
 
 ## Status
-
+Archived
 Completed
 
 ## RFC

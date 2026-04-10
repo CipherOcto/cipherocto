@@ -2,7 +2,7 @@
 
 ## Status
 
-**Version:** 1.14 (2026-04-10)
+**Version:** 1.15 (2026-04-10)
 **Status:** Draft
 
 ## Authors
@@ -373,6 +373,8 @@ pub const NUMERIC_SPEC_VERSION: u32 = 2;
 
 **Upgrade trigger:** When a version-1 database executes DDL that uses `BIGINT` or `DECIMAL` keywords, the header version is upgraded to 2 immediately before the DDL commits. This prevents schema inconsistency if a crash occurs between DDL execution and header upgrade. This is a one-way migration — once upgraded to version 2, the database cannot be reopened by pre-RFC code.
 
+> **WAL atomicity:** The header version upgrade and DDL commit are in the **same WAL transaction**. Stoolap's WAL implementation writes the header upgrade and the DDL commit record into the same WAL segment atomically — either both succeed or neither does. After a crash, WAL replay either commits both (DDL + header upgrade complete) or neither (DDL rolled back). There is no state where the header is upgraded but the DDL is not committed, or vice versa. This is standard database crash recovery semantics and does not require a separate two-phase protocol.
+
 > **Design note:** Using u32 little-endian at offset 0 avoids any ambiguity with other header fields. A 4-byte version field is sufficient for the foreseeable future (version values up to 4,294,967,295). **Coupling constraint:** NUMERIC_SPEC_VERSION occupies a **fixed byte offset** (0) in the WAL/snapshot header. This field cannot be relocated, renamed, or repurposed without breaking wire format compatibility. If a future RFC requires a different WAL header layout, the NUMERIC_SPEC_VERSION field must either remain at offset 0 (preferred) or a one-time migration of existing WAL headers must be performed.
 
 ---
@@ -403,7 +405,7 @@ The persistence layer (`serialize_value`/`deserialize_value` in `persistence.rs`
 | 13 | BIGINT | Raw `BigIntEncoding::to_bytes()` output (8-byte header + limb array) |
 | 14 | DECIMAL | Raw `decimal_to_bytes()` output (24-byte canonical format) |
 
-**Serialization (append to `serialize_value`):**
+**Persistence vs. index encoding distinction:** The wire formats in this section define the **persistence format** — how values are stored on disk and in the WAL. The **BTree index key encoding** (lexicographic format in §6.11) is a *separate* transformation applied at index build time, not a persistence wire format. A value is serialized using the persistence format, then if a BTree index is built on that column, the serialized bytes are transformed into lexicographic key format for index entries. This separation keeps the persistence format simple and canonical while allowing efficient index operations. No transformation between formats occurs during normal read/write paths — only at index creation time.
 
 ```rust
 Value::Extension(data) => {
@@ -532,7 +534,7 @@ Value::Extension(data) if data.first() == Some(&(DataType::Decimal as u8)) => {
 - `Value::Null(DataType::Bigint)` and `Value::Null(DataType::Decimal)` follow existing NULL patterns
 - `Value::Null(DataType::Bigint).as_bigint()` returns `None`
 - `Value::Null(DataType::Decimal).as_decimal()` returns `None`
-- NULLs in BIGINT/DECIMAL columns participate in three-valued logic as per existing Stoolap behavior
+- NULLs in BIGINT/DECIMAL columns participate in three-valued logic as per existing Stoolap behavior. Specifically, `NULL::BIGINT > BIGINT '5'` evaluates to `NULL` (not `FALSE` or an error). `IS NULL` and `IS NOT NULL` work as standard. For `ORDER BY` with NULLs: NULL sorts as lowest value (same as `INTEGER`). For `GROUP BY`: NULLs group into a single NULL group.
 
 #### 6.6 compare_same_type() for BIGINT/DECIMAL (M8)
 
@@ -1026,6 +1028,8 @@ Aggregate functions operate over column values during query execution. They are 
 | AVG | 15 + 2 × limbs | 15 + 3 × scale |
 
 > **Streaming aggregation:** SUM processes rows incrementally. Gas is consumed per-row. For a 1000-row aggregate at 64 limbs: 74,000 gas. Use `SET gas_limit = N` to raise the per-query budget for large aggregates.
+>
+> **Limb count extraction for gas:** For BIGINT gas formulas (`limbs`), extract the limb count from the BigIntEncoding header's `num_limbs` field (byte offset 5 of the 8-byte header, or via `BigInt::num_limbs()` method). For DECIMAL gas formulas (`scale`), extract from the 24-byte encoding's byte 23 (`decimal.scale()` method). Both are O(1) operations that do not require full deserialization.
 
 > **Note on `decimal_div`:** The `_target_scale` parameter is completely ignored by the implementation (underscore prefix). The actual target scale is computed internally as `min(36, max(a.scale, b.scale) + 6)`. The VM must pass `0` as a placeholder value. This parameter is reserved for future explicit scale control.
 
@@ -1270,7 +1274,7 @@ Total: 8 bytes header + 8 × num_limbs bytes
 
 ## Storage Overhead (L3)
 
-BIGINT stored as Extension: 1 byte tag + up to 520 bytes BigIntEncoding = **521 bytes max per value**. Compare with INTEGER at 8 bytes. A table with 10 BIGINT columns and 1M rows uses ~5.2 GB of Extension data vs ~80 MB for INTEGER.
+BIGINT stored as Extension: 1 byte tag + up to 520 bytes BigIntEncoding = **521 bytes max per value** (serialized form on disk/WAL). Compare with INTEGER at 8 bytes. A table with 10 BIGINT columns and 1M rows uses ~5.2 GB of Extension data vs ~80 MB for INTEGER. In-memory representation uses `CompactArc` (16 bytes on 64-bit) plus the byte buffer, but this does not affect storage calculations.
 
 This overhead is acceptable for the intended use cases (blockchain hashes, large numbers), but users should prefer INTEGER for values within i64 range. The `BIGINT` keyword remapping gate (NUMERIC_SPEC_VERSION) ensures existing databases are not affected.
 
@@ -1307,6 +1311,7 @@ Re-implementing the algorithms would introduce consensus risk. The determin crat
 
 | Version | Date | Changes |
 |---------|------|---------|
+| 1.15 | 2026-04-10 | Round 5 review fixes: (1) CRITICAL: Added persistence vs. index encoding distinction paragraph — clarifies §5 wire format (raw 24-byte) and §6.11 lexicographic encoding (transformed) serve different purposes; (2) CRITICAL: Added WAL atomicity note to §4a — header upgrade and DDL commit are in same WAL transaction, no crash recovery gap; (3) HIGH: Clarified storage overhead (521 bytes serialized) is distinct from in-memory CompactArc overhead; (4) MAJOR: Added limb count/scale extraction note for gas — num_limbs from BigIntEncoding header, scale from byte 23; (5) MODERATE: Added NULL three-valued logic specifics — NULL comparison, IS NULL, ORDER BY NULL, GROUP BY NULL. |
 | 1.14 | 2026-04-10 | Round 4 review fixes: (1) CRITICAL: Fixed DECIMAL lexicographic zero encoding description — zero sorts between negatives and positives, not below all negatives; confirmed canonicalization of negative zero; (2) CRITICAL: BIGINT lexicographic encoding changed to length-prefix format with 64-limb fixed-width padding — specifies comparison algorithm for variable-length keys; (3) BIGINT SUM overflow boundary corrected from ±(2^4095) to ±(2^4096 − 1) matching MAX_BIGINT_BITS=4096; (4) Added Phase 2 task for lexicographic key encoding implementation and REINDEX; (5) Added DECIMAL SQRT test vectors with result scale verification; (6) EXP removal (v1.12) is documented in v1.12 changelog entry. |
 | 1.13 | 2026-04-10 | Round 3 review follow-up fixes: (1) Wire format test vectors updated to show full persistence bytes `[tag][payload]`; (2) Added DECIMAL lexicographic encoding sign-transformation spec with zero-handling and migration note; (3) Added pre-flight bounds check note to gas model; (4) Added cross-type comparison test vectors (BIGINT vs Integer, DECIMAL vs Float, BIGINT vs DECIMAL, BIGINT vs DFP). |
 | 1.12 | 2026-04-10 | Moved aggregate functions (SUM, AVG, COUNT, MIN, MAX) from Future Work to §7a (Aggregate Operations). Added result types for BIGINT/DECIMAL aggregates, overflow behavior, and per-row gas formulas. Removed duplicate aggregate gas discussion from §8. Updated Future Work to remove resolved items. |

@@ -2,7 +2,7 @@
 
 ## Status
 
-**Version:** 1.12 (2026-04-10)
+**Version:** 1.13 (2026-04-10)
 **Status:** Draft
 
 ## Authors
@@ -842,7 +842,13 @@ This gives **wrong numeric order** for BIGINT (limbs are little-endian) and DECI
 
 > **Note:** The Ord implementation deserializes on every comparison. For BTree index operations with many keys, this is O(n × deserialize_cost). This is a **production performance risk**, not an acceptable initial tradeoff.
 >
-> **Required optimization before production deployment:** Implement lexicographic key encoding for BIGINT and DECIMAL in BTree indexes. The BIGINT encoding uses sign-magnitude big-endian limb representation with sign-flip (invert the high bit of the first byte) so that byte order matches numeric order without deserialization. Format: `[sign_bit_flipped][big-endian limbs]`. For DECIMAL, the 24-byte canonical format requires a sign-transformation for lexicographic sorting (since two's complement places -1 above +1 as unsigned bytes).
+> **Required optimization before production deployment:** Implement lexicographic key encoding for BIGINT and DECIMAL in BTree indexes.
+
+**BIGINT lexicographic encoding:** Sign-flip big-endian limbs. Format: `[sign_bit_flipped][limb0: BE][limb1: BE]...` where `sign_bit_flipped = limb0_bytes[0] ^ 0x80` for the high byte of the first limb. Positive values have sign bit = 0 (e.g., `0x00...01` → `0x80...01`), negative values have sign bit = 1 (e.g., `0xFF...FF` → `0x7F...FF`). This sorts negative values first, then zero, then positive values.
+
+**DECIMAL lexicographic encoding:** The 24-byte canonical format uses i128 big-endian two's complement mantissa (bytes 0-15), which sorts incorrectly as unsigned bytes (two's complement places -1 above +1). Sign-flip transformation: XOR byte 0 of the mantissa with `0x80` to invert the sign bit. Zero mantissa (`0x00...00`) is treated specially: encode as `0x80...00` (sign-bit set, magnitude zero) to sort below all negative values. Resulting BTree key format: `[mantissa_byte0_xor_0x80][mantissa_bytes_1_15][scale: BE u8]`. Example: `DECIMAL '0.0'` (mantissa=0, scale=0) → encoded mantissa `0x80` followed by 15 zeros; `DECIMAL '-12.3'` (mantissa=-123) → high byte `0xFF ^ 0x80 = 0x7F`, then `0x00...85`.
+
+> **Migration note:** Existing BTree indexes on BIGINT/DECIMAL columns must be rebuilt with the new encoding. Use `REINDEX` or equivalent after deploying the lexicographic encoding. Online migration via `CREATE INDEX ... USING btree (col) WITH (encoding = 'lexicographic')` is the recommended path for production systems.
 >
 > **Required implementation item:** Add a debug assertion (or static compile-time check) in `serialize_value` that verifies wire tag 13/14 values never reach the generic Extension branch. This is not optional — without it, a future contributor could silently reorder the match arms and cause a 5-byte-per-value storage overhead regression.
 
@@ -1071,6 +1077,8 @@ Gas costs are defined in the determin crate per RFC-0110 and RFC-0111:
 
 > **Note:** These serialization/conversion gas costs are estimates and should be benchmarked before production deployment. They are not yet specified in RFC-0110 or RFC-0111 and will be formally added to RFC-0202-B.
 
+**Bounded operations and pre-flight bounds checks:** Operations with bounded parameters (e.g., SHL, SHR with shift count) MUST perform a pre-flight bounds check before committing full gas. The pre-flight check charges a minimal fixed gas (10) to verify the operation is within valid bounds. If the check fails, the operation returns an error and only the pre-flight gas is consumed. If it passes, the full operation gas is charged and the operation executes. This prevents unbounded resource consumption from intentionally invalid parameters. Example: `bigint_shl(x, 8192)` on a 64-limb BigInt would fail the pre-flight check (limb overflow) and return an error after 10 gas, not 10 + 8192 gas.
+
 **Per-query budget:** 50,000 gas (configurable via `SET gas_limit = N`)
 
 **Gas metering integration (M6):**
@@ -1206,6 +1214,10 @@ DECIMAL test vectors are defined in RFC-0111 §Test Vectors (57 entries with Mer
 | DECIMAL → BIGINT TRAP | `CAST(DECIMAL '123.45' AS BIGINT)` | Error: ConversionLoss (scale > 0) |
 | INTEGER → BIGINT | `CAST(42 AS BIGINT)` | BigInt '42' |
 | INTEGER → DECIMAL | `CAST(42 AS DECIMAL)` | Decimal { mantissa: 42, scale: 0 } |
+| BIGINT vs Integer literal | `SELECT * FROM t WHERE bigint_col > 42` | BIGINT coerced to wider type, comparison succeeds |
+| DECIMAL vs Float literal | `SELECT * FROM t WHERE dec_col < 3.14` | Error: IncomparableTypes (DECIMAL vs Float not comparable) |
+| BIGINT vs DECIMAL | `SELECT * FROM t WHERE bigint_col = dec_col` | Error: IncomparableTypes (different numeric types) |
+| BIGINT vs DFP | `SELECT * FROM t WHERE bigint_col > dfp_col` | Error: IncomparableTypes with CAST suggestion |
 
 ### Wire Format Test Vectors
 
@@ -1215,17 +1227,18 @@ DECIMAL test vectors are defined in RFC-0111 §Test Vectors (57 entries with Mer
 Total: 8 bytes header + 8 × num_limbs bytes
 ```
 
+**Persistence format:** `[tag: u8][BigIntEncoding / DecimalEncoding bytes]`
+- Tag 13 = BIGINT, Tag 14 = DECIMAL
+
 | Type | Input | Wire Bytes (hex) | Notes |
 |------|-------|-----------------|-------|
-| BIGINT '1' | BigInt(1) | `01000000010000000100000000000000` | 1 limb, positive |
-| BIGINT '-1' | BigInt(-1) | `01FF0000010000000100000000000000` | 1 limb, negative (sign=0xFF) |
-| BIGINT '0' | BigInt(0) | `01000000010000000000000000000000` | Canonical zero |
-| BIGINT '2^64' | BigInt(2^64) | `010000000200000000000000000000000100000000000000` | 2 limbs, 18446744073709551616 |
-| DECIMAL '123.45' | `{mantissa: 12345, scale: 2}` | `00000000000000000000000000003039000000000000000002` | Bytes 0-15: mantissa BE; 16-22: zero padding; 23: scale |
-| DECIMAL '0' | `{mantissa: 0, scale: 0}` | `00000000000000000000000000000000000000000000000000` | Canonical zero |
-| DECIMAL '-12.3' | `{mantissa: -123, scale: 1}` | `FFFFFFFFFFFFFFFFFFFFFFFFFFFFFF85000000000000000001` | Negative mantissa two's complement |
-
-**Note on BIGINT wire encoding:** The wire tag (13) is prepended by the persistence layer, so the full serialized form is `[13][BigIntEncoding bytes]`. The test vectors above show only the BigIntEncoding payload (without the tag byte).
+| BIGINT '1' | BigInt(1) | `[13]01000000010000000100000000000000` | Tag 13 + 1 limb, positive |
+| BIGINT '-1' | BigInt(-1) | `[13]01FF0000010000000100000000000000` | Tag 13 + 1 limb, negative (sign=0xFF) |
+| BIGINT '0' | BigInt(0) | `[13]01000000010000000000000000000000` | Tag 13 + canonical zero |
+| BIGINT '2^64' | BigInt(2^64) | `[13]010000000200000000000000000000000100000000000000` | Tag 13 + 2 limbs |
+| DECIMAL '123.45' | `{mantissa: 12345, scale: 2}` | `[14]00000000000000000000000000003039000000000000000002` | Tag 14 + 24-byte decimal |
+| DECIMAL '0' | `{mantissa: 0, scale: 0}` | `[14]00000000000000000000000000000000000000000000000000` | Tag 14 + canonical zero |
+| DECIMAL '-12.3' | `{mantissa: -123, scale: 1}` | `[14]FFFFFFFFFFFFFFFFFFFFFFFFFFFFFF85000000000000000001` | Tag 14 + negative mantissa |
 
 ---
 
@@ -1291,7 +1304,7 @@ Re-implementing the algorithms would introduce consensus risk. The determin crat
 
 | Version | Date | Changes |
 |---------|------|---------|
-| 1.12 | 2026-04-10 | Adversarial review round 11 (third pass): CRITICAL FIXES: (1) bigint_exp REMOVED — does not exist in determin crate; test vectors use `<<` (shift) not `^`; EXP gas table entry removed; (2) §4 and §4a updated to match §1 — header upgrade on DDL not first write; (3) Added 4 BIGINT wire format test vectors with full persistence format explanation; (4) Fixed stoolap_parse_decimal whitespace spec: whitespace is silently stripped (not rejected), updated error table to remove stale "requires new variant" comments. MAJOR: (5) Added DECIMAL arithmetic result scale rules (ADD/SUB/MUL/DIV/SQRT); overflow chain example added; (6) Made wire tag assertion required not recommended; (7) Added Float to cross-type error message (was only DFP/Quant); (8) Added legacy DECIMAL(p,s) semantic note — existing columns remain Float after upgrade; (9) Added aggregate functions to Future Work (SUM/AVG/COUNT result types and overflow). |
+| 1.13 | 2026-04-10 | Round 3 review follow-up fixes: (1) Wire format test vectors updated to show full persistence bytes `[tag][payload]`; (2) Added DECIMAL lexicographic encoding sign-transformation spec with zero-handling and migration note; (3) Added pre-flight bounds check note to gas model; (4) Added cross-type comparison test vectors (BIGINT vs Integer, DECIMAL vs Float, BIGINT vs DECIMAL, BIGINT vs DFP). |
 | 1.12 | 2026-04-10 | Moved aggregate functions (SUM, AVG, COUNT, MIN, MAX) from Future Work to §7a (Aggregate Operations). Added result types for BIGINT/DECIMAL aggregates, overflow behavior, and per-row gas formulas. Removed duplicate aggregate gas discussion from §8. Updated Future Work to remove resolved items. |
 | 1.11 | 2026-04-10 | Adversarial review round 10 (second pass): CRITICAL FIXES: (1) Added BIGINT EXP operation to §7 with gas formula; fixed test vectors to use `EXP` not `^`; (2) Changed BIGINT→DECIMAL coercion to return error not NULL (silent failure blocked); (3) Added header version upgrade requirement before DDL with new type keywords (schema consistency); (4) §6.15 exports now resolved (commit 8cd4f89); DECIMALERROR::ParseError gap resolved. MAJOR: (5) Added division scale `+6` rationale; (6) Changed Ord perf from "acceptable" to "required before production" with lexicographic encoding; (7) Improved DFP/Quant error message to suggest explicit CAST; (8) Added serialization/conversion gas estimates; (9) Changed Error::Internal to Error::DataCorruption for corrupted values. MINOR: (10) Documented SQL dialect deviation for bare dot decimal input; (11) Added RFC-0201 as explicit dependency (Blob type); (12) Added CompactArc documentation; (13) Added wire tag ordering debug assertion recommendation. |
 | 1.10 | 2026-03-31 | Adversarial review round 9: M1 (§6.8a: added `stoolap_parse_decimal` function specification), M2 (§6.8a: scientific notation rejection rationale), M3 (§2: added `decimal_cmp` to import list), M4 (§Future Work: removed duplicate per-query gas budget), L1 (§9: BIGINT overflow test vector corrected), L2 (§9: added SHL/SHR test vectors), L3 (§9: leading zeros clarification). |

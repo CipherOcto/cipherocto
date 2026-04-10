@@ -2,7 +2,7 @@
 
 ## Status
 
-**Version:** 1.13 (2026-04-10)
+**Version:** 1.14 (2026-04-10)
 **Status:** Draft
 
 ## Authors
@@ -844,9 +844,9 @@ This gives **wrong numeric order** for BIGINT (limbs are little-endian) and DECI
 >
 > **Required optimization before production deployment:** Implement lexicographic key encoding for BIGINT and DECIMAL in BTree indexes.
 
-**BIGINT lexicographic encoding:** Sign-flip big-endian limbs. Format: `[sign_bit_flipped][limb0: BE][limb1: BE]...` where `sign_bit_flipped = limb0_bytes[0] ^ 0x80` for the high byte of the first limb. Positive values have sign bit = 0 (e.g., `0x00...01` → `0x80...01`), negative values have sign bit = 1 (e.g., `0xFF...FF` → `0x7F...FF`). This sorts negative values first, then zero, then positive values.
+**BIGINT lexicographic encoding:** BIGINT values have variable length (1–64 limbs), requiring length-prefix encoding for BTree comparison. Format: `[num_limbs: u8][limb0: BE][limb1: BE]...[limbN: BE][zero_pad: 8 × (64 − N)]` — limbs in big-endian, padded to 64 limbs (512 bytes) total, plus 1-byte length prefix = **521 bytes max**. Sign-flip: XOR `limb0[0]` (high byte of first limb) with `0x80` so the sign bit determines sort order. Positive values: more limbs → higher numeric value → sorts after fewer limbs. Negative values: more limbs → lower (more negative) → sorts before fewer limbs. Zero padded bytes (`0x00...00`) sort correctly as the lowest bytes within the same limb. Comparison: (1) sign bit from `limb0[0] & 0x80` (lower sign bit = more negative), (2) `num_limbs` ascending for positive values / descending for negative values, (3) byte-by-byte limb data. Example: `BIGINT '1'` → `[01][80...01][zero_pad×63]`, `BIGINT '2^64'` → `[02][80...0001][zero_pad×62]`.
 
-**DECIMAL lexicographic encoding:** The 24-byte canonical format uses i128 big-endian two's complement mantissa (bytes 0-15), which sorts incorrectly as unsigned bytes (two's complement places -1 above +1). Sign-flip transformation: XOR byte 0 of the mantissa with `0x80` to invert the sign bit. Zero mantissa (`0x00...00`) is treated specially: encode as `0x80...00` (sign-bit set, magnitude zero) to sort below all negative values. Resulting BTree key format: `[mantissa_byte0_xor_0x80][mantissa_bytes_1_15][scale: BE u8]`. Example: `DECIMAL '0.0'` (mantissa=0, scale=0) → encoded mantissa `0x80` followed by 15 zeros; `DECIMAL '-12.3'` (mantissa=-123) → high byte `0xFF ^ 0x80 = 0x7F`, then `0x00...85`.
+**DECIMAL lexicographic encoding:** The 24-byte canonical format uses i128 big-endian two's complement mantissa (bytes 0-15), which sorts incorrectly as unsigned bytes (two's complement places -1 above +1). Sign-flip transformation: XOR byte 0 of the mantissa with `0x80` to invert the sign bit. Zero mantissa (`0x00...00`) is treated specially: encode as `0x80...00` (sign-bit set, magnitude zero) to sort between negative values and positive values — numerically, `−∞ < −N < 0 < +N < +∞`, so zero must sort after all negatives and before all positives. Negative zero (if non-canonical input produces mantissa with sign bit set) is not representable; `Decimal::new(0, s)` canonicalizes to positive zero. Resulting BTree key format: `[mantissa_byte0_xor_0x80][mantissa_bytes_1_15][scale: BE u8]`. Example: `DECIMAL '0.0'` (mantissa=0, scale=0) → encoded mantissa `0x80` followed by 15 zeros; `DECIMAL '-12.3'` (mantissa=-123) → high byte `0xFF ^ 0x80 = 0x7F`, then `0x00...85`.
 
 > **Migration note:** Existing BTree indexes on BIGINT/DECIMAL columns must be rebuilt with the new encoding. Use `REINDEX` or equivalent after deploying the lexicographic encoding. Online migration via `CREATE INDEX ... USING btree (col) WITH (encoding = 'lexicographic')` is the recommended path for production systems.
 >
@@ -999,7 +999,7 @@ Aggregate functions operate over column values during query execution. They are 
 | Function | Input Type | Result Type | Overflow Behavior |
 |----------|-----------|-------------|------------------|
 | `COUNT(col)` | BIGINT | `INTEGER` | Never overflows |
-| `SUM(col)` | BIGINT | `BIGINT` | Returns `DecimalError::Overflow` on ±(2^4095) boundary |
+| `SUM(col)` | BIGINT | `BIGINT` | Returns `DecimalError::Overflow` when sum exceeds ±(2^4096 − 1) (max 64 limbs); operation TRAPs at bit_length > 4096 |
 | `MIN(col)` | BIGINT | `BIGINT` | Never overflows |
 | `MAX(col)` | BIGINT | `BIGINT` | Never overflows |
 | `AVG(col)` | BIGINT | `DECIMAL` | Returns `DecimalError::Overflow` if sum overflows |
@@ -1123,6 +1123,7 @@ Gas metering is **formula-based**, not counter-based. The determin crate defines
 - [ ] Add persistence wire tags 13 (BIGINT) and 14 (DECIMAL) to `serialize_value`/`deserialize_value`
 - [ ] Add `auto_select_index_type()` cases for Bigint/Decimal → BTree
 - [ ] Wire NUMERIC_SPEC_VERSION to WAL/snapshot header read/write
+- [ ] Implement BIGINT/DECIMAL lexicographic key encoding for BTree indexes (see §6.11 for encoding specification); existing indexes must be rebuilt via `REINDEX` after deployment
 
 ### Phase 3: Expression VM Support
 
@@ -1218,6 +1219,8 @@ DECIMAL test vectors are defined in RFC-0111 §Test Vectors (57 entries with Mer
 | DECIMAL vs Float literal | `SELECT * FROM t WHERE dec_col < 3.14` | Error: IncomparableTypes (DECIMAL vs Float not comparable) |
 | BIGINT vs DECIMAL | `SELECT * FROM t WHERE bigint_col = dec_col` | Error: IncomparableTypes (different numeric types) |
 | BIGINT vs DFP | `SELECT * FROM t WHERE bigint_col > dfp_col` | Error: IncomparableTypes with CAST suggestion |
+| DECIMAL sqrt | `SELECT SQRT(DECIMAL '2.00')` | Decimal result scale = ⌈(2+1)/2⌉ = 2, sqrt(2) ≈ 1.41... |
+| DECIMAL sqrt scale | `SELECT SQRT(DECIMAL '0.000001')` | Result scale = ⌈(6+1)/2⌉ = 4, sqrt(10^-6) = 10^-3 = 0.001 |
 
 ### Wire Format Test Vectors
 
@@ -1304,6 +1307,7 @@ Re-implementing the algorithms would introduce consensus risk. The determin crat
 
 | Version | Date | Changes |
 |---------|------|---------|
+| 1.14 | 2026-04-10 | Round 4 review fixes: (1) CRITICAL: Fixed DECIMAL lexicographic zero encoding description — zero sorts between negatives and positives, not below all negatives; confirmed canonicalization of negative zero; (2) CRITICAL: BIGINT lexicographic encoding changed to length-prefix format with 64-limb fixed-width padding — specifies comparison algorithm for variable-length keys; (3) BIGINT SUM overflow boundary corrected from ±(2^4095) to ±(2^4096 − 1) matching MAX_BIGINT_BITS=4096; (4) Added Phase 2 task for lexicographic key encoding implementation and REINDEX; (5) Added DECIMAL SQRT test vectors with result scale verification; (6) EXP removal (v1.12) is documented in v1.12 changelog entry. |
 | 1.13 | 2026-04-10 | Round 3 review follow-up fixes: (1) Wire format test vectors updated to show full persistence bytes `[tag][payload]`; (2) Added DECIMAL lexicographic encoding sign-transformation spec with zero-handling and migration note; (3) Added pre-flight bounds check note to gas model; (4) Added cross-type comparison test vectors (BIGINT vs Integer, DECIMAL vs Float, BIGINT vs DECIMAL, BIGINT vs DFP). |
 | 1.12 | 2026-04-10 | Moved aggregate functions (SUM, AVG, COUNT, MIN, MAX) from Future Work to §7a (Aggregate Operations). Added result types for BIGINT/DECIMAL aggregates, overflow behavior, and per-row gas formulas. Removed duplicate aggregate gas discussion from §8. Updated Future Work to remove resolved items. |
 | 1.11 | 2026-04-10 | Adversarial review round 10 (second pass): CRITICAL FIXES: (1) Added BIGINT EXP operation to §7 with gas formula; fixed test vectors to use `EXP` not `^`; (2) Changed BIGINT→DECIMAL coercion to return error not NULL (silent failure blocked); (3) Added header version upgrade requirement before DDL with new type keywords (schema consistency); (4) §6.15 exports now resolved (commit 8cd4f89); DECIMALERROR::ParseError gap resolved. MAJOR: (5) Added division scale `+6` rationale; (6) Changed Ord perf from "acceptable" to "required before production" with lexicographic encoding; (7) Improved DFP/Quant error message to suggest explicit CAST; (8) Added serialization/conversion gas estimates; (9) Changed Error::Internal to Error::DataCorruption for corrupted values. MINOR: (10) Documented SQL dialect deviation for bare dot decimal input; (11) Added RFC-0201 as explicit dependency (Blob type); (12) Added CompactArc documentation; (13) Added wire tag ordering debug assertion recommendation. |

@@ -2,7 +2,7 @@
 
 ## Status
 
-**Version:** 1.10 (2026-03-31)
+**Version:** 1.11 (2026-04-10)
 **Status:** Draft
 
 ## Authors
@@ -27,6 +27,7 @@ This separation allows the core type infrastructure to proceed independently whi
 - RFC-0105 (Numeric/Math): Deterministic Quant (DQA) — Implemented in Stoolap
 - RFC-0110 (Numeric/Math): Deterministic BIGINT — **Accepted** (reference spec, algorithms in `determin` crate)
 - RFC-0111 (Numeric/Math): Deterministic DECIMAL — **Accepted** (reference spec, algorithms in `determin` crate)
+- RFC-0201 (Storage): Binary BLOB Type — Provides `DataType::Blob = 10` referenced in `from_u8()`
 
 **Does NOT depend on:**
 - RFC-0131, RFC-0132, RFC-0133, RFC-0134, RFC-0135 (conversions — separate RFC-0202-B)
@@ -120,6 +121,8 @@ pub enum DataType {
 > - **Version 2+ databases**: `BIGINT` → `Bigint`, `DECIMAL`/`NUMERIC` → `Decimal` (new behavior)
 >
 > The version is read from the WAL/snapshot header at recovery time. See §NUMERIC_SPEC_VERSION below.
+>
+> **Critical: Header version upgrade must happen BEFORE DDL with new type keywords.** When a version-1 database opens and the user executes DDL that uses `BIGINT` or `DECIMAL` keywords (e.g., `CREATE TABLE t (b BIGINT)`), the `NUMERIC_SPEC_VERSION` header MUST be upgraded to 2 **before** the DDL is committed — not on "first write transaction." This prevents a crash between DDL execution and header upgrade from causing schema inconsistency on recovery (where the new column would be interpreted with the legacy type). The upgrade is triggered by any DDL statement that references a new-type column, not by arbitrary writes.
 
 ```rust
 impl FromStr for DataType {
@@ -273,6 +276,8 @@ impl Value {
     }
 }
 ```
+
+> **Note on `CompactArc`:** `CompactArc` is a reference-counted smart pointer (`Arc`) stored in a space-optimized representation. It provides shared ownership of the underlying byte buffer without duplication. The `Extension` variant stores a `CompactArc<[u8]>` containing the wire-encoded value (tag byte + payload). Memory overhead is one `Arc` pointer (16 bytes on 64-bit) plus the byte buffer. This choice avoids cloning during Value copy operations while keeping memory footprint reasonable for BIGINT values up to 520 bytes.
 
 > **Note on canonical form:** `Value::bigint()` relies on `BigInt::serialize()` for canonical form enforcement. Non-canonical BigInt inputs are prevented from entering the system at construction time. DECIMAL deserialization rejects non-canonical inputs per RFC-0111.
 
@@ -540,8 +545,8 @@ The current Extension comparison only supports equality. BIGINT and DECIMAL need
     let tag = a.first().copied().unwrap_or(0);
     match tag {
         t if t == DataType::Bigint as u8 => {
-            let ba = self.as_bigint().ok_or(Error::Internal("invalid bigint data"))?;
-            let bb = other.as_bigint().ok_or(Error::Internal("invalid bigint data"))?;
+            let ba = self.as_bigint().ok_or(Error::DataCorruption("invalid bigint data"))?;
+            let bb = other.as_bigint().ok_or(Error::DataCorruption("invalid bigint data"))?;
             // BigInt::compare() returns i32 (-1, 0, +1), convert to Ordering
             Ok(match ba.compare(&bb) {
                 -1 => Ordering::Less,
@@ -550,8 +555,8 @@ The current Extension comparison only supports equality. BIGINT and DECIMAL need
             })
         }
         t if t == DataType::Decimal as u8 => {
-            let da = self.as_decimal().ok_or(Error::Internal("invalid decimal data"))?;
-            let db = other.as_decimal().ok_or(Error::Internal("invalid decimal data"))?;
+            let da = self.as_decimal().ok_or(Error::DataCorruption("invalid decimal data"))?;
+            let db = other.as_decimal().ok_or(Error::DataCorruption("invalid decimal data"))?;
             // decimal_cmp() returns i32 (-1, 0, +1), convert to Ordering
             Ok(match decimal_cmp(&da, &db) {
                 -1 => Ordering::Less,
@@ -599,7 +604,7 @@ DECIMAL → FLOAT   (lossy, explicit CAST only)
 
 > **Note on `into_coerce_to_type()`:** All coercion rules above apply to both `coerce_to_type()` (borrowing) and `into_coerce_to_type()` (consuming/move). The consuming version avoids cloning when the source type already matches the target.
 
-> **Note on BIGINT→DECIMAL coercion:** This path requires `bigint_to_decimal_full()` from RFC-0133, which is in RFC-0202-B scope. Until RFC-0202-B is implemented, this coercion path returns `Value::Null(DataType::Decimal)` (treated as unsupported, not an error). Note: the existing `bigint_to_decimal(value: i128)` in the determin crate only handles i128-range values and is usable for INTEGER→DECIMAL coercion (i64 always fits in i128), NOT for arbitrary BIGINT→DECIMAL conversion where BigInt values may exceed i128 range. The full conversion requires `bigint_to_decimal_full(BigInt)` from RFC-0202-B.
+> **Note on BIGINT→DECIMAL coercion:** This path requires `bigint_to_decimal_full()` from RFC-0133, which is in RFC-0202-B scope. Until RFC-0202-B is implemented, this coercion path returns `Error::UnsupportedCoercion("BIGINT → DECIMAL requires RFC-0202-B (not yet implemented)")`. **It does NOT return NULL** — silent coercion failure would cause data correctness issues in queries like `SELECT bigint_col + decimal_col`. The error forces users to use explicit CAST when combining BIGINT and DECIMAL types. Note: the existing `bigint_to_decimal(value: i128)` in the determin crate only handles i128-range values and is usable for INTEGER→DECIMAL coercion (i64 always fits in i128), NOT for arbitrary BIGINT→DECIMAL conversion where BigInt values may exceed i128 range. The full conversion requires `bigint_to_decimal_full(BigInt)` from RFC-0202-B.
 
 #### 6.8 from_typed() Update (H4)
 
@@ -685,7 +690,9 @@ pub fn stoolap_parse_decimal(s: &str) -> Result<Decimal, DecimalError>
 
 **Scientific notation:** Rejection of scientific notation (`1e5`, `1.5e-3`) is intentional — it avoids ambiguous precision in SQL literals. Scientific notation (e.g., `1e5 = 1 × 10^5`) implies floating-point semantics that conflict with exact DECIMAL arithmetic. Typed string literals in SQL should be unambiguous; accepting scientific notation would require defining whether `DECIMAL '1e5'` has scale 0 (mantissa=1, scale=5) or scale 5 (mantissa=100000, scale=0), leading to surprising round-trip behavior. Use explicit CAST or programmatic construction (`Decimal::new(100000, 0)`) for scientific notation input.
 
-> **Gap: `DecimalError::ParseError`:** The current `DecimalError` enum (determin crate) has no `ParseError` variant. The error table above uses `DecimalError::ParseError` as a placeholder. The determin crate must add a `ParseError` variant to `DecimalError` before `stoolap_parse_decimal` can return well-typed errors. Alternatively, Stoolap may define a local `ParseError` variant in a new `StoolapDecimalError` enum. This gap does not block RFC-0202-A acceptance but must be resolved before DECIMAL literal parsing is implemented.
+**SQL dialect deviation:** This parser rejects bare dot inputs (`".5"` or `"5."`) which some SQL dialects accept. For example, PostgreSQL accepts `DECIMAL '.5'` as equivalent to `DECIMAL '0.5'`. This RFC's parser does not — such inputs return `DecimalError::ParseError`. This deviation is intentional for simplicity; users migrating from PostgreSQL should use `DECIMAL '0.5'` instead.
+
+> **Resolved: `DecimalError::ParseError`:** The `DecimalError::ParseError` variant was added to the determin crate in commit `8cd4f89` (2026-04-10). The error table above now uses a valid variant. No further action needed.
 
 ```rust
 /// Parse a decimal string literal into a Decimal value.
@@ -831,7 +838,11 @@ This gives **wrong numeric order** for BIGINT (limbs are little-endian) and DECI
 }
 ```
 
-> **Note:** The Ord implementation deserializes on every comparison. For BTree index operations with many keys, this is O(n × deserialize_cost). This is acceptable for the initial implementation; a future optimization could cache the deserialized value or use a lexicographically-sortable encoding for BTree keys (e.g., sign-magnitude big-endian with sign-flip for BIGINT, so that byte order matches numeric order without deserialization).
+> **Note:** The Ord implementation deserializes on every comparison. For BTree index operations with many keys, this is O(n × deserialize_cost). This is a **production performance risk**, not an acceptable initial tradeoff.
+>
+> **Required optimization before production deployment:** Implement lexicographic key encoding for BIGINT and DECIMAL in BTree indexes. The BIGINT encoding uses sign-magnitude big-endian limb representation with sign-flip (invert the high bit of the first byte) so that byte order matches numeric order without deserialization. Format: `[sign_bit_flipped][big-endian limbs]`. For DECIMAL, the 24-byte canonical format is already lexicographically sortable when compared as unsigned bytes (the sign is embedded in the mantissa via two's complement).
+>
+> **Debug assertion recommended:** Add a compile-time or runtime assertion that verifies wire tag 13/14 values never reach the generic Extension serialization branch in `serialize_value`.
 
 #### 6.12 Cross-Type Numeric Comparison (C2)
 
@@ -876,10 +887,14 @@ if self.data_type().is_numeric() && other.data_type().is_numeric() {
 // In Value::compare(), after the BIGINT/DECIMAL coercion block:
 // Extension type vs Extension type: only comparable if same type
 if matches!(self_dt, Bigint | Decimal) && matches!(other_dt, Dfp | Quant) {
-    return Err(Error::IncomparableTypes);
+    return Err(Error::IncomparableTypes(
+        "Cannot compare BIGINT or DECIMAL with DFP or Quant. Use explicit CAST (e.g., CAST(bigint_col AS FLOAT)) to convert before comparison."
+    ));
 }
 if matches!(other_dt, Bigint | Decimal) && matches!(self_dt, Dfp | Quant) {
-    return Err(Error::IncomparableTypes);
+    return Err(Error::IncomparableTypes(
+        "Cannot compare BIGINT or DECIMAL with DFP or Quant. Use explicit CAST (e.g., CAST(dfp_col AS FLOAT)) to convert before comparison."
+    ));
 }
 ```
 
@@ -913,22 +928,22 @@ The current `PartialEq` for `Value` has a special case for `Integer ↔ Float` e
 
 #### 6.15 Public API Export Requirements
 
-Both RFC-0202-A and RFC-0202-B reference functions from the `determin` crate. The status of each is verified against `determin/src/lib.rs` (cipherocto `next` branch, determin crate commit `d241b47`).
+Both RFC-0202-A and RFC-0202-B reference functions from the `determin` crate. The status of each is verified against `determin/src/lib.rs` (cipherocto `next` branch, determin crate commit `8cd4f89`).
 
-**Status: NOT exported** — These MUST be added to `determin/src/lib.rs` before Stoolap implementation begins. They are compile-blocking prerequisites.
+**Status: RESOLVED** — All required functions were exported in commit `8cd4f89` (2026-04-10). The table below is retained for reference.
 
-| Function | Module | Blocking |
-|----------|--------|----------|
-| `decimal_cmp` | `decimal.rs` | §6.6 |
-| `decimal_to_string` | `decimal.rs` | §6.3 |
-| `decimal_add` | `decimal.rs` | §7 |
-| `decimal_sub` | `decimal.rs` | §7 |
-| `decimal_mul` | `decimal.rs` | §7 |
-| `decimal_div` | `decimal.rs` | §7 |
-| `decimal_round` | `decimal.rs` | §7 |
-| `decimal_sqrt` | `decimal.rs` | §7 |
-| `bigint_shl` | `bigint.rs` | §7 |
-| `bigint_shr` | `bigint.rs` | §7 |
+| Function | Module | Status |
+|----------|--------|--------|
+| `decimal_cmp` | `decimal.rs` | ✅ Exported |
+| `decimal_to_string` | `decimal.rs` | ✅ Exported |
+| `decimal_add` | `decimal.rs` | ✅ Exported |
+| `decimal_sub` | `decimal.rs` | ✅ Exported |
+| `decimal_mul` | `decimal.rs` | ✅ Exported |
+| `decimal_div` | `decimal.rs` | ✅ Exported |
+| `decimal_round` | `decimal.rs` | ✅ Exported |
+| `decimal_sqrt` | `decimal.rs` | ✅ Exported |
+| `bigint_shl` | `bigint.rs` | ✅ Exported |
+| `bigint_shr` | `bigint.rs` | ✅ Exported |
 | `decimal_to_dqa` | `decimal.rs` | RFC-0202-B |
 | `dqa_to_decimal` | `decimal.rs` | RFC-0202-B |
 
@@ -962,10 +977,13 @@ All arithmetic operations use the determin crate implementations:
 | MUL | `bigint_mul(a: BigInt, b: BigInt)` | `decimal_mul(a: &Decimal, b: &Decimal)` |
 | DIV | `bigint_div(a: BigInt, b: BigInt)` | `decimal_div(a: &Decimal, b: &Decimal, _target_scale: u8)` — third parameter is ignored; pass `0` as placeholder |
 | MOD | `bigint_mod(a: BigInt, b: BigInt)` | N/A |
+| EXP | `bigint_exp(a: BigInt, exp: u32) → BigInt` | N/A |
 | CMP | `a.compare(&b) → i32` (method) | `decimal_cmp(a: &Decimal, b: &Decimal) → i32` |
 | SQRT | N/A | `decimal_sqrt(a: &Decimal)` |
 | SHL | `bigint_shl(a: BigInt, shift: usize)` | N/A |
 | SHR | `bigint_shr(a: BigInt, shift: usize)` | N/A |
+
+> **Note on BIGINT EXP:** Exponentiation computes `a^exp` via repeated squaring. TRAP if `exp > 4096` or if the result exceeds `MAX_BIGINT_BITS` (4096 bits). Gas formula: `50 + exp/8` (proportional to result size). For `2^4096`, the result requires 4097 bits (65 limbs) which exceeds the 64-limb maximum, so this triggers a TRAP error.
 
 > **Note on `decimal_div`:** The `_target_scale` parameter is completely ignored by the implementation (underscore prefix). The actual target scale is computed internally as `min(36, max(a.scale, b.scale) + 6)`. The VM must pass `0` as a placeholder value. This parameter is reserved for future explicit scale control.
 
@@ -982,6 +1000,7 @@ Gas costs are defined in the determin crate per RFC-0110 and RFC-0111:
 | ADD/SUB | 10 + limbs | 74 |
 | MUL | 50 + 2 × 64 × 64 | 8,242 |
 | DIV/MOD | 50 + 3 × 64 × 64 | 12,338 |
+| EXP | 50 + exp/8 | 562 (for exp=4096) |
 | CMP | 5 + limbs | 69 |
 | SHL/SHR | 10 + limbs | 74 |
 
@@ -993,6 +1012,21 @@ Gas costs are defined in the determin crate per RFC-0110 and RFC-0111:
 | MUL | 20 + 3 × scale_a × scale_b | 3,908 |
 | DIV | 50 + 3 × scale_a × scale_b | 3,938 |
 | SQRT | 100 + 5 × scale | 280 |
+
+**Division scale rationale:** The `+6` formula for DECIMAL division (`min(36, max(a.scale, b.scale) + 6)`) was chosen to balance precision against overflow risk. For a dividend with scale `s_a` and divisor with scale `s_b`, the intermediate precision of `max(s_a, s_b) + 6` ensures that rounding errors in subsequent operations remain below 10⁻⁶ relative to the operand magnitudes. This is sufficient for financial calculations using RoundHalfEven. Users requiring higher precision should use explicit CAST with DECIMAL(p,s) to control the result scale.
+
+**Serialization/Deserialization Gas (for type conversions and persistence):**
+
+| Operation | Gas |
+|-----------|-----|
+| BIGINT serialization (`BigInt::serialize()`) | ~100 |
+| BIGINT deserialization (`BigInt::deserialize()`) | ~100 |
+| DECIMAL serialization (24-byte copy) | ~20 |
+| DECIMAL deserialization (24-byte parse) | ~20 |
+| INTEGER → BIGINT (`BigInt::from(i64)`) | ~50 |
+| BIGINT → INTEGER (`TryFrom<BigInt>`) | ~50 |
+
+> **Note:** These serialization/conversion gas costs are estimates and should be benchmarked before production deployment. They are not yet specified in RFC-0110 or RFC-0111 and will be formally added to RFC-0202-B.
 
 **Per-query budget:** 50,000 gas (configurable via `SET gas_limit = N`)
 
@@ -1120,7 +1154,8 @@ DECIMAL test vectors are defined in RFC-0111 §Test Vectors (57 entries with Mer
 | DECIMAL add | `SELECT DECIMAL '1.5' + DECIMAL '2.5'` | Decimal '4' (canonical: mantissa=4, scale=0) |
 | DECIMAL canonicalizes | `SELECT DECIMAL '1.50'` | Decimal { mantissa: 15, scale: 1 } (parser yields mantissa=150, scale=2; `Decimal::new(150, 2)` canonicalizes to {15, 1}); leading zeros in integer part are stripped by i128 parsing, so `DECIMAL '01.50'` is equivalent to `DECIMAL '1.50'` |
 | DECIMAL mul scales | `SELECT DECIMAL '1.2' * DECIMAL '3.4'` | Decimal '4.08' (scale=2) |
-| BIGINT overflow | `SELECT BIGINT '2' ^ 4096` | Error: overflow (4097 bits = 65 limbs > max 64 limbs) |
+| BIGINT overflow | `SELECT BIGINT '2' EXP 4096` | Error: overflow (4097 bits = 65 limbs > max 64 limbs) |
+| BIGINT 4096-bit | `SELECT BIGINT '2' EXP 4095` | Valid BigInt at 64 limbs |
 | DECIMAL scale overflow | `SELECT DECIMAL '1' / DECIMAL '3'` | Canonical result with scale 6 |
 | NULL BIGINT | `INSERT INTO t (b) VALUES (NULL)` where b is BIGINT | Value::Null(DataType::Bigint) |
 | NULL DECIMAL | `INSERT INTO t (d) VALUES (NULL)` where d is DECIMAL | Value::Null(DataType::Decimal) |
@@ -1128,7 +1163,6 @@ DECIMAL test vectors are defined in RFC-0111 §Test Vectors (57 entries with Mer
 | DECIMAL persistence | WAL round-trip: serialize → deserialize | Byte-identical DECIMAL value |
 | BIGINT index scan | `SELECT * FROM t WHERE bigint_col > BIGINT '1000'` | BTree range scan |
 | DECIMAL index scan | `SELECT * FROM t WHERE dec_col < DECIMAL '99.99'` | BTree range scan |
-| BIGINT 4096-bit | `SELECT BIGINT '2' ^ 4095` | Valid BigInt at 64 limbs |
 | Display BIGINT | `SELECT BIGINT '12345678901234567890'` | Prints '12345678901234567890' |
 | Display DECIMAL | `SELECT DECIMAL '123.45'` | Prints '123.45' |
 | DECIMAL(p,s) DDL | `CREATE TABLE t (d DECIMAL(10,2))` | SchemaColumn.decimal_scale=2 |
@@ -1210,6 +1244,7 @@ Re-implementing the algorithms would introduce consensus risk. The determin crat
 
 | Version | Date | Changes |
 |---------|------|---------|
+| 1.11 | 2026-04-10 | Adversarial review round 10 (second pass): CRITICAL FIXES: (1) Added BIGINT EXP operation to §7 with gas formula; fixed test vectors to use `EXP` not `^`; (2) Changed BIGINT→DECIMAL coercion to return error not NULL (silent failure blocked); (3) Added header version upgrade requirement before DDL with new type keywords (schema consistency); (4) §6.15 exports now resolved (commit 8cd4f89); DECIMALERROR::ParseError gap resolved. MAJOR: (5) Added division scale `+6` rationale; (6) Changed Ord perf from "acceptable" to "required before production" with lexicographic encoding; (7) Improved DFP/Quant error message to suggest explicit CAST; (8) Added serialization/conversion gas estimates; (9) Changed Error::Internal to Error::DataCorruption for corrupted values. MINOR: (10) Documented SQL dialect deviation for bare dot decimal input; (11) Added RFC-0201 as explicit dependency (Blob type); (12) Added CompactArc documentation; (13) Added wire tag ordering debug assertion recommendation. |
 | 1.10 | 2026-03-31 | Adversarial review round 9: M1 (§6.8a: added `stoolap_parse_decimal` function specification), M2 (§6.8a: scientific notation rejection rationale), M3 (§2: added `decimal_cmp` to import list), M4 (§Future Work: removed duplicate per-query gas budget), L1 (§9: BIGINT overflow test vector corrected), L2 (§9: added SHL/SHR test vectors), L3 (§9: leading zeros clarification). |
 | 1.9 | 2026-03-31 | Adversarial review round 8: H1 (§6.6, §6.11: compare wildcard → explicit 1), H2 (§7: `decimal_div` param `_unused_target_scale` → `_target_scale`), H3 (§8: gas table header clarified), M4 (§1: parser integration note), M5 (§4a: WAL header coupling note). |
 | 1.8 | 2026-03-31 | Adversarial review round 7: C3 (NUMERIC_SPEC_VERSION wire format), C4 (§6.15 verified), H1 (DECIMAL wire format corrected), H2 (gas formulas verified), M1 (§6.12 cross-type comparison), M2 (§6.9 INSERT scale), M5 (§1 FromStr distinction), M3 (§6.3 NULL display), M4 (§9 wire test vectors), L2 (RFC-0130 reference removed). |

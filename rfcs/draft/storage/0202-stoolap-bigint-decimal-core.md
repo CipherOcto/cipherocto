@@ -2,7 +2,7 @@
 
 ## Status
 
-**Version:** 1.11 (2026-04-10)
+**Version:** 1.12 (2026-04-10)
 **Status:** Draft
 
 ## Authors
@@ -984,6 +984,43 @@ All arithmetic operations use the determin crate implementations:
 | SHL | `bigint_shl(a: BigInt, shift: usize)` | N/A |
 | SHR | `bigint_shr(a: BigInt, shift: usize)` | N/A |
 
+### 7a. Aggregate Operations
+
+Aggregate functions operate over column values during query execution. They are invoked per-row but maintain internal state across rows.
+
+**BIGINT aggregates:**
+
+| Function | Input Type | Result Type | Overflow Behavior |
+|----------|-----------|-------------|------------------|
+| `COUNT(col)` | BIGINT | `INTEGER` | Never overflows |
+| `SUM(col)` | BIGINT | `BIGINT` | Returns `DecimalError::Overflow` on ±(2^4095) boundary |
+| `MIN(col)` | BIGINT | `BIGINT` | Never overflows |
+| `MAX(col)` | BIGINT | `BIGINT` | Never overflows |
+| `AVG(col)` | BIGINT | `DECIMAL` | Returns `DecimalError::Overflow` if sum overflows |
+
+**DECIMAL aggregates:**
+
+| Function | Input Type | Result Type | Overflow Behavior |
+|----------|-----------|-------------|------------------|
+| `COUNT(col)` | DECIMAL | `INTEGER` | Never overflows |
+| `SUM(col)` | DECIMAL | `DECIMAL` | Returns `DecimalError::Overflow` if result exceeds ±(10^36 − 1) |
+| `MIN(col)` | DECIMAL | `DECIMAL` | Never overflows |
+| `MAX(col)` | DECIMAL | `DECIMAL` | Never overflows |
+| `AVG(col)` | DECIMAL | `DECIMAL` | Returns `DecimalError::Overflow` if sum overflows; result scale = `⌈(input_scale + 1) / 2⌉` |
+
+> **AVG result scale rationale:** For DECIMAL input with scale `s`, AVG divides by an integer row count `n`. The mathematically correct result may require up to `s + log10(n)` decimal places. Using `⌈(s + 1) / 2⌉` balances precision against overflow risk for typical aggregation sizes. For high-precision requirements, use explicit `SUM(col) / COUNT(col)` with a DECIMAL divisor and controlled target scale.
+
+**Aggregate gas (per row processed):**
+
+| Aggregate | BIGINT Gas | DECIMAL Gas |
+|-----------|-----------|-------------|
+| COUNT | 5 | 5 |
+| SUM | 10 + limbs | 10 + 2 × scale |
+| MIN/MAX | 5 + limbs | 5 + 2 × scale |
+| AVG | 15 + 2 × limbs | 15 + 3 × scale |
+
+> **Streaming aggregation:** SUM processes rows incrementally. Gas is consumed per-row. For a 1000-row aggregate at 64 limbs: 74,000 gas. Use `SET gas_limit = N` to raise the per-query budget for large aggregates.
+
 > **Note on `decimal_div`:** The `_target_scale` parameter is completely ignored by the implementation (underscore prefix). The actual target scale is computed internally as `min(36, max(a.scale, b.scale) + 6)`. The VM must pass `0` as a placeholder value. This parameter is reserved for future explicit scale control.
 
 > **DECIMAL arithmetic result scales:**
@@ -1046,14 +1083,7 @@ Gas metering is **formula-based**, not counter-based. The determin crate defines
 4. If the query's total exceeds a configurable per-query gas limit (default: 50,000), the query is aborted with a gas limit error
 5. The determin crate's `MAX_BIGINT_OP_COST` (15,000) and `MAX_DECIMAL_OP_COST` (5,000) constants serve as per-operation caps for pre-flight cost estimation
 
-**Aggregate function gas considerations (M7):**
-
-`SUM(bigint_col)` over N rows costs approximately `N × (10 + avg_limbs)` gas. For 1000 rows at 64 limbs each: 74,000 gas — exceeding the 50,000 budget. Two mitigation strategies:
-
-1. **Per-query gas budget** (not per-block): The 50,000 limit applies to a single query, not a single block. Aggregates may allocate a higher budget via `SET gas_limit = 200000`.
-2. **Streaming aggregation:** SUM processes rows incrementally — gas is checked after each row, allowing partial results or early termination.
-
-> **Out of scope:** Multi-row aggregate gas management is a Stoolap-level concern, not a determin crate concern. The determin crate only meters individual operations.
+> **Aggregate gas:** Per-row aggregate gas is specified in §7a. For large aggregates, use `SET gas_limit = N` to raise the per-query budget. Streaming aggregation allows incremental processing with gas checked per-row.
 
 ---
 
@@ -1219,9 +1249,7 @@ Total: 8 bytes header + 8 × num_limbs bytes
 
 - RFC-0202-B: BIGINT and DECIMAL conversions (RFC-0131-0135)
 - RFC-0124: DFP→DQA→BIGINT lowering integration
-- **Aggregate functions:** `SUM`, `AVG`, `COUNT`, `MIN`, `MAX` for BIGINT and DECIMAL columns. Open issues: (1) result types — `SUM(bigint_col)` returns BIGINT but may overflow for large sums; consider DECIMAL as accumulator; (2) `AVG(decimal_col)` result type — DECIMAL or Float?; (3) NULL handling follows standard SQL three-valued logic; (4) overflow for BIGINT SUM requires explicit TRAP or silent widening.
-- DECIMAL aggregate functions (SUM, AVG with exact arithmetic)
-- Vectorized BIGINT/DECIMAL operations for analytical queries
+- Vectorized BIGINT/DECIMAL operations for analytical queries (SIMD, GPU)
 - **Note:** Per-query gas budget (`SET gas_limit = N`) is specified in §8 and does not require additional Future Work items.
 
 ## Storage Overhead (L3)
@@ -1264,6 +1292,7 @@ Re-implementing the algorithms would introduce consensus risk. The determin crat
 | Version | Date | Changes |
 |---------|------|---------|
 | 1.12 | 2026-04-10 | Adversarial review round 11 (third pass): CRITICAL FIXES: (1) bigint_exp REMOVED — does not exist in determin crate; test vectors use `<<` (shift) not `^`; EXP gas table entry removed; (2) §4 and §4a updated to match §1 — header upgrade on DDL not first write; (3) Added 4 BIGINT wire format test vectors with full persistence format explanation; (4) Fixed stoolap_parse_decimal whitespace spec: whitespace is silently stripped (not rejected), updated error table to remove stale "requires new variant" comments. MAJOR: (5) Added DECIMAL arithmetic result scale rules (ADD/SUB/MUL/DIV/SQRT); overflow chain example added; (6) Made wire tag assertion required not recommended; (7) Added Float to cross-type error message (was only DFP/Quant); (8) Added legacy DECIMAL(p,s) semantic note — existing columns remain Float after upgrade; (9) Added aggregate functions to Future Work (SUM/AVG/COUNT result types and overflow). |
+| 1.12 | 2026-04-10 | Moved aggregate functions (SUM, AVG, COUNT, MIN, MAX) from Future Work to §7a (Aggregate Operations). Added result types for BIGINT/DECIMAL aggregates, overflow behavior, and per-row gas formulas. Removed duplicate aggregate gas discussion from §8. Updated Future Work to remove resolved items. |
 | 1.11 | 2026-04-10 | Adversarial review round 10 (second pass): CRITICAL FIXES: (1) Added BIGINT EXP operation to §7 with gas formula; fixed test vectors to use `EXP` not `^`; (2) Changed BIGINT→DECIMAL coercion to return error not NULL (silent failure blocked); (3) Added header version upgrade requirement before DDL with new type keywords (schema consistency); (4) §6.15 exports now resolved (commit 8cd4f89); DECIMALERROR::ParseError gap resolved. MAJOR: (5) Added division scale `+6` rationale; (6) Changed Ord perf from "acceptable" to "required before production" with lexicographic encoding; (7) Improved DFP/Quant error message to suggest explicit CAST; (8) Added serialization/conversion gas estimates; (9) Changed Error::Internal to Error::DataCorruption for corrupted values. MINOR: (10) Documented SQL dialect deviation for bare dot decimal input; (11) Added RFC-0201 as explicit dependency (Blob type); (12) Added CompactArc documentation; (13) Added wire tag ordering debug assertion recommendation. |
 | 1.10 | 2026-03-31 | Adversarial review round 9: M1 (§6.8a: added `stoolap_parse_decimal` function specification), M2 (§6.8a: scientific notation rejection rationale), M3 (§2: added `decimal_cmp` to import list), M4 (§Future Work: removed duplicate per-query gas budget), L1 (§9: BIGINT overflow test vector corrected), L2 (§9: added SHL/SHR test vectors), L3 (§9: leading zeros clarification). |
 | 1.9 | 2026-03-31 | Adversarial review round 8: H1 (§6.6, §6.11: compare wildcard → explicit 1), H2 (§7: `decimal_div` param `_unused_target_scale` → `_target_scale`), H3 (§8: gas table header clarified), M4 (§1: parser integration note), M5 (§4a: WAL header coupling note). |

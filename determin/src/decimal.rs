@@ -148,6 +148,9 @@ pub enum DecimalError {
     NonCanonical,
     /// DECIMAL→DQA scale > 18, or DECIMAL→BIGINT scale != 0
     ConversionLoss,
+    /// Malformed string input for decimal parsing
+    /// e.g., empty string, bare dot ("." or "1."), scientific notation, non-numeric chars
+    ParseError,
 }
 
 /// Rounding mode for DECIMAL operations

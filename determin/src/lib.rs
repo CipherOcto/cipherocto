@@ -56,8 +56,9 @@ pub use dcs::{
     dcs_serialize_u32, dcs_serialize_u8, DcsError, DcsSerializable, DCS_MAX_LENGTH,
 };
 pub use decimal::{
-    decimal_from_bytes, decimal_to_bytes, Decimal, DecimalError, MAX_DECIMAL_MANTISSA,
-    MAX_DECIMAL_OP_COST, MAX_DECIMAL_SCALE, MIN_DECIMAL_MANTISSA,
+    decimal_add, decimal_cmp, decimal_div, decimal_from_bytes, decimal_mul, decimal_round,
+    decimal_sqrt, decimal_sub, decimal_to_bytes, decimal_to_string, Decimal, DecimalError,
+    MAX_DECIMAL_MANTISSA, MAX_DECIMAL_OP_COST, MAX_DECIMAL_SCALE, MIN_DECIMAL_MANTISSA,
 };
 pub use dmat::{DMat, DmatError, NumericScalar};
 pub use dqa::{

@@ -2,7 +2,7 @@
 
 ## Status
 
-**Version:** 1.16 (2026-04-11)
+**Version:** 1.17 (2026-04-11)
 **Status:** Draft
 
 ## Authors
@@ -373,7 +373,7 @@ pub const NUMERIC_SPEC_VERSION: u32 = 2;
 
 **Upgrade trigger:** When a version-1 database executes DDL that uses `BIGINT` or `DECIMAL` keywords, the header version is upgraded to 2 immediately before the DDL commits. This prevents schema inconsistency if a crash occurs between DDL execution and header upgrade. This is a one-way migration — once upgraded to version 2, the database cannot be reopened by pre-RFC code.
 
-> **WAL atomicity:** The header version upgrade and DDL commit are in the **same WAL transaction**. Stoolap's WAL implementation writes the header upgrade and the DDL commit record into the same WAL segment atomically — either both succeed or neither does. The header upgrade and DDL commit are applied within the same WAL transaction; recovery replays them atomically. After a crash, WAL replay either commits both (DDL + header upgrade complete) or neither (DDL rolled back). There is no state where the header is upgraded but the DDL is not committed, or vice versa.
+> **WAL atomicity:** The header version upgrade and DDL commit are in the **same WAL transaction**. Stoolap's WAL implementation writes the header upgrade and the DDL commit record into the same WAL segment atomically — either both succeed or neither does. The header upgrade and DDL commit are applied within the same WAL transaction; recovery replays them atomically. After a crash, WAL replay either commits both (DDL + header upgrade complete) or neither (DDL rolled back). There is no state where the header is upgraded but the DDL is not committed, or vice versa. **Corrupt segment handling:** If a WAL segment is detected as corrupt (partial write, checksum failure), recovery skips the segment entirely — both the header upgrade and DDL are discarded, and the database remains at the prior version. No partial replay occurs.
 
 > **Design note:** Using u32 little-endian at offset 0 avoids any ambiguity with other header fields. A 4-byte version field is sufficient for the foreseeable future (version values up to 4,294,967,295). **Coupling constraint:** NUMERIC_SPEC_VERSION occupies a **fixed byte offset** (0) in the WAL/snapshot header. This field cannot be relocated, renamed, or repurposed without breaking wire format compatibility. If a future RFC requires a different WAL header layout, the NUMERIC_SPEC_VERSION field must either remain at offset 0 (preferred) or a one-time migration of existing WAL headers must be performed.
 
@@ -432,8 +432,9 @@ Value::Extension(data) => {
 ```rust
 13 => {
     // BIGINT: variable-length — must read header to determine exact byte count
-    // BigIntEncoding::deserialize validates data.len() == 8 + num_limbs * 8
-    // and REJECTS trailing bytes. Must slice exactly the right length.
+    // BigIntEncoding::deserialize validates that the *input slice* is exactly
+    // 8 + num_limbs * 8 bytes. The caller must slice `&rest[..total]` before
+    // passing to deserialize to exclude any trailing data (e.g., from batch reads).
     if rest.len() < 8 {
         return Err(Error::internal("truncated bigint header"));
     }
@@ -777,7 +778,7 @@ DECIMAL(10,2) → DataType::Decimal, decimal_scale=2
 NUMERIC(5,3)  → DataType::Decimal, decimal_scale=3
 ```
 
-The scale is enforced at INSERT time: values with more decimal places than `decimal_scale` are rounded using `decimal_round(d, decimal_scale, RoundHalfEven)` (matching PostgreSQL behavior). Rounding happens after the value is parsed and before it is stored. Since rounding reduces magnitude (scales down), overflow is not possible from rounding alone. If the input value itself exceeds the DECIMAL range (±(10^36 - 1)), `Decimal::new` returns `DecimalError::Overflow` before rounding occurs. Rounding is therefore a non-error transformation — it is the intended behavior for values with extra precision in `DECIMAL(p,s)` columns.
+The scale is enforced at INSERT time: values with more decimal places than `decimal_scale` are rounded using `decimal_round(d, decimal_scale, RoundHalfEven)` (matching PostgreSQL behavior). Values with fewer decimal places than `decimal_scale` are stored as-is — the scale is not padded. For example, inserting `DECIMAL '5'` into a `DECIMAL(10,2)` column stores `{mantissa: 5, scale: 0}`, not `{mantissa: 500, scale: 2}`. Rounding happens after the value is parsed and before it is stored. Since rounding reduces magnitude (scales down), overflow is not possible from rounding alone. If the input value itself exceeds the DECIMAL range (±(10^36 - 1)), `Decimal::new` returns `DecimalError::Overflow` before rounding occurs. Rounding is therefore a non-error transformation — it is the intended behavior for values with extra precision in `DECIMAL(p,s)` columns.
 
 **Builder method:** A parallel `SchemaBuilder::set_last_decimal_scale(mut self, scale: u8) -> Self` method is required, following the existing consuming-builder pattern of `set_last_quant_scale()`, `set_last_vector_dimensions()`, and `set_last_blob_length()`. Note: the builder type is `SchemaBuilder` (not `SchemaColumnBuilder`), and the method takes `mut self` (consuming) returning `Self`, consistent with all existing builder methods in the codebase.
 
@@ -846,7 +847,13 @@ This gives **wrong numeric order** for BIGINT (limbs are little-endian) and DECI
 >
 > **Required optimization before production deployment:** Implement lexicographic key encoding for BIGINT and DECIMAL in BTree indexes.
 
-**BIGINT lexicographic encoding:** BIGINT values have variable length (1–64 limbs), requiring length-prefix encoding for BTree comparison. Format: `[num_limbs: u8][limb0: BE][limb1: BE]...[limbN: BE][zero_pad: 8 × (64 − N)]` — limbs in big-endian, padded to 64 limbs (512 bytes) total, plus 1-byte length prefix = **521 bytes max**. Sign-flip: XOR `limb0[0]` (high byte of first limb) with `0x80` so the sign bit determines sort order. Positive values: more limbs → higher numeric value → sorts after fewer limbs. Negative values: more limbs → lower (more negative) → sorts before fewer limbs. Zero padded bytes (`0x00...00`) sort correctly as the lowest bytes within the same limb. Comparison: (1) sign bit from `limb0[0] & 0x80` (lower sign bit = more negative), (2) `num_limbs` ascending for positive values / descending for negative values, (3) byte-by-byte limb data. Example: `BIGINT '1'` → `[01][80...01][zero_pad×63]`, `BIGINT '2^64'` → `[02][80...0001][zero_pad×62]`.
+**BIGINT lexicographic encoding:** BIGINT values have variable length (1–64 limbs), requiring length-prefix encoding for BTree comparison. Format: `[limb_count_with_sign: u8][limb0: BE][limb1: BE]...[limbN: BE][zero_pad: 8 × (64 − N)]` — limbs in big-endian, padded to 64 limbs (512 bytes) total, plus 1 byte sign-prefix = **521 bytes max**.
+
+Sign-encoding in byte 0: For positive values, `byte0 = num_limbs | 0x80` (sets high bit). For negative values, `byte0 = 0x80 − num_limbs` (flips high bit and encodes count in lower bits). This ensures byte 0 determines sign ordering directly: all negative values (byte 0 in range `0x01..0x80`) sort before all positive values (byte 0 in range `0x81..0xFE`), with zero (byte 0 = `0x80`) sorted between negatives and positives.
+
+Within negative values: smaller magnitude (fewer limbs) is more negative. Within positive values: larger magnitude (more limbs) is larger. Zero padded bytes (`0x00...00`) sort correctly as the lowest bytes within the same limb.
+
+Comparison: (1) byte 0 (signed limb count) — negative < zero < positive; (2) if same sign, byte-by-byte limb data (sign-flip on `limb0[0]` XOR `0x80`). Example: `BIGINT '1'` → `[81][80...01][zero_pad×63]`, `BIGINT '-1'` → `[7F][7F...FF][zero_pad×63]`, `BIGINT '2^64'` → `[82][80...0001][zero_pad×62]`, `BIGINT '-2^64'` → `[7E][7F...FF][zero_pad×62]`.
 
 **DECIMAL lexicographic encoding:** The 24-byte canonical format uses i128 big-endian two's complement mantissa (bytes 0-15), which sorts incorrectly as unsigned bytes (two's complement places -1 above +1). Sign-flip transformation: XOR byte 0 of the mantissa with `0x80` to invert the sign bit. Zero mantissa (`0x00...00`) is treated specially: encode as `0x80...00` (sign-bit set, magnitude zero) to sort between negative values and positive values — numerically, `−∞ < −N < 0 < +N < +∞`, so zero must sort after all negatives and before all positives. Negative zero (if non-canonical input produces mantissa with sign bit set) is not representable; `Decimal::new(0, s)` canonicalizes to positive zero. Resulting BTree key format: `[mantissa_byte0_xor_0x80][mantissa_bytes_1_15][scale: BE u8]`. Example: `DECIMAL '0.0'` (mantissa=0, scale=0) → encoded mantissa `0x80` followed by 15 zeros; `DECIMAL '-12.3'` (mantissa=-123) → high byte `0xFF ^ 0x80 = 0x7F`, then `0x00...85`.
 
@@ -1001,10 +1008,10 @@ Aggregate functions operate over column values during query execution. They are 
 | Function | Input Type | Result Type | Overflow Behavior |
 |----------|-----------|-------------|------------------|
 | `COUNT(col)` | BIGINT | `INTEGER` | Never overflows |
-| `SUM(col)` | BIGINT | `BIGINT` | Returns `DecimalError::Overflow` when sum exceeds ±(2^4096 − 1) (max 64 limbs); operation TRAPs at bit_length > 4096 |
+| `SUM(col)` | BIGINT | `BIGINT` | Returns `BigIntError::OutOfRange` when sum exceeds ±(2^4096 − 1) (max 64 limbs); operation TRAPs at bit_length > 4096 |
 | `MIN(col)` | BIGINT | `BIGINT` | Never overflows |
 | `MAX(col)` | BIGINT | `BIGINT` | Never overflows |
-| `AVG(col)` | BIGINT | `DECIMAL` | Returns `DecimalError::Overflow` if sum overflows |
+| `AVG(col)` | BIGINT | `DECIMAL` | Returns `Error::NotSupported('AVG on BIGINT requires RFC-0202-B')` until RFC-0202-B is implemented; then returns `DecimalError::Overflow` if internal sum overflows |
 
 **DECIMAL aggregates:**
 
@@ -1025,7 +1032,7 @@ Aggregate functions operate over column values during query execution. They are 
 | COUNT | 5 | 5 |
 | SUM | 10 + limbs | 10 + 2 × scale |
 | MIN/MAX | 5 + limbs | 5 + 2 × scale |
-| AVG | 15 + 2 × limbs | 15 + 3 × scale |
+| AVG | 15 + 2 × limbs | 15 + 3 × scale (input column scale, not result scale) |
 
 > **Streaming aggregation:** SUM processes rows incrementally. Gas is consumed per-row. For a 1000-row aggregate at 64 limbs: 74,000 gas. Use `SET gas_limit = N` to raise the per-query budget for large aggregates.
 >
@@ -1065,6 +1072,8 @@ Gas costs are defined in the determin crate per RFC-0110 and RFC-0111:
 | MUL | 20 + 3 × scale_a × scale_b | 3,908 |
 | DIV | 50 + 3 × scale_a × scale_b | 3,938 | (gas based on **input** operand scales; internally computed target scale does not affect gas) |
 | SQRT | 100 + 5 × scale | 280 |
+
+> **Future RFC compatibility:** If a future RFC enables explicit target scale for DECIMAL DIV (using the currently-ignored `_target_scale` parameter), the gas formula will be updated to `50 + 3 × scale_a × scale_b + f(target_scale)` where `f` accounts for the additional precision cost.
 
 **Division scale rationale:** The `+6` formula for DECIMAL division (`min(36, max(a.scale, b.scale) + 6)`) was chosen to balance precision against overflow risk. For a dividend with scale `s_a` and divisor with scale `s_b`, the intermediate precision of `max(s_a, s_b) + 6` ensures that rounding errors in subsequent operations remain below 10⁻⁶ relative to the operand magnitudes. This is sufficient for financial calculations using RoundHalfEven. Users requiring higher precision should use explicit CAST with DECIMAL(p,s) to control the result scale.
 
@@ -1202,6 +1211,7 @@ DECIMAL test vectors are defined in RFC-0111 §Test Vectors (57 entries with Mer
 | BIGINT cmp zero | `SELECT BIGINT '0' = BIGINT '-0'` | true (canonical) |
 | DECIMAL add | `SELECT DECIMAL '1.5' + DECIMAL '2.5'` | Decimal '4' (canonical: mantissa=4, scale=0) |
 | DECIMAL canonicalizes | `SELECT DECIMAL '1.50'` | Decimal { mantissa: 15, scale: 1 } (parser yields mantissa=150, scale=2; `Decimal::new(150, 2)` canonicalizes to {15, 1}); leading zeros in integer part are stripped by i128 parsing, so `DECIMAL '01.50'` is equivalent to `DECIMAL '1.50'` |
+| DECIMAL negative zero | `SELECT DECIMAL '-0.00'` | Decimal { mantissa: 0, scale: 0 } (canonicalizes to positive zero; `Decimal::new(0, s)` always yields positive zero regardless of input sign) |
 | DECIMAL mul scales | `SELECT DECIMAL '1.2' * DECIMAL '3.4'` | Decimal '4.08' (scale=2) |
 | BIGINT overflow | `SELECT BIGINT '2' << 4096` | Error: overflow (4097 bits = 65 limbs > max 64 limbs) |
 | BIGINT 4096-bit | `SELECT BIGINT '2' << 4095` | Valid BigInt at 64 limbs |
@@ -1311,6 +1321,7 @@ Re-implementing the algorithms would introduce consensus risk. The determin crat
 
 | Version | Date | Changes |
 |---------|------|---------|
+| 1.17 | 2026-04-11 | Round 6 review fixes: (1) CRITICAL: BIGINT lexicographic encoding fixed — sign bit now encoded in byte 0 via `num_limbs | 0x80` (positive) / `0x80 - num_limbs` (negative), fixing wrong sort order for mixed-sign comparisons; (2) BIGINT SUM overflow corrected: `DecimalError::Overflow` → `BigIntError::OutOfRange`; (3) BIGINT AVG deferred: returns `Error::NotSupported` until RFC-0202-B implements internal BIGINT→DECIMAL conversion; (4) WAL corrupt segment handling: skip segment entirely on partial write/checksum failure; (5) DECIMAL AVG gas clarified: input column scale not result scale; (6) DECIMAL INSERT scale: fewer places stored as-is (no padding); (7) BIGINT deserialize comment clarified: caller must slice input; (8) Future RFC DIV gas compatibility note added. |
 | 1.16 | 2026-04-11 | Round 5 review follow-up: (1) WAL atomicity text made recovery replay assumption explicit; (2) Phase 2 lexicographic encoding task marked **blocking for production deployment**; (3) DECIMAL DIV gas note clarified: gas based on input operand scales, not internally computed target scale; (4) BIGINT→DECIMAL coercion error corrected: `Error::UnsupportedCoercion` → `Error::NotSupported` (verified in stoolap error.rs). |
 | 1.15 | 2026-04-10 | Round 5 review fixes: (1) CRITICAL: Added persistence vs. index encoding distinction paragraph — clarifies §5 wire format (raw 24-byte) and §6.11 lexicographic encoding (transformed) serve different purposes; (2) CRITICAL: Added WAL atomicity note to §4a — header upgrade and DDL commit are in same WAL transaction, no crash recovery gap; (3) HIGH: Clarified storage overhead (521 bytes serialized) is distinct from in-memory CompactArc overhead; (4) MAJOR: Added limb count/scale extraction note for gas — num_limbs from BigIntEncoding header, scale from byte 23; (5) MODERATE: Added NULL three-valued logic specifics — NULL comparison, IS NULL, ORDER BY NULL, GROUP BY NULL. |
 | 1.14 | 2026-04-10 | Round 4 review fixes: (1) CRITICAL: Fixed DECIMAL lexicographic zero encoding description — zero sorts between negatives and positives, not below all negatives; confirmed canonicalization of negative zero; (2) CRITICAL: BIGINT lexicographic encoding changed to length-prefix format with 64-limb fixed-width padding — specifies comparison algorithm for variable-length keys; (3) BIGINT SUM overflow boundary corrected from ±(2^4095) to ±(2^4096 − 1) matching MAX_BIGINT_BITS=4096; (4) Added Phase 2 task for lexicographic key encoding implementation and REINDEX; (5) Added DECIMAL SQRT test vectors with result scale verification; (6) EXP removal (v1.12) is documented in v1.12 changelog entry. |

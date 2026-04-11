@@ -2,7 +2,7 @@
 
 ## Status
 
-**Version:** 1.15 (2026-04-10)
+**Version:** 1.16 (2026-04-11)
 **Status:** Draft
 
 ## Authors
@@ -373,7 +373,7 @@ pub const NUMERIC_SPEC_VERSION: u32 = 2;
 
 **Upgrade trigger:** When a version-1 database executes DDL that uses `BIGINT` or `DECIMAL` keywords, the header version is upgraded to 2 immediately before the DDL commits. This prevents schema inconsistency if a crash occurs between DDL execution and header upgrade. This is a one-way migration — once upgraded to version 2, the database cannot be reopened by pre-RFC code.
 
-> **WAL atomicity:** The header version upgrade and DDL commit are in the **same WAL transaction**. Stoolap's WAL implementation writes the header upgrade and the DDL commit record into the same WAL segment atomically — either both succeed or neither does. After a crash, WAL replay either commits both (DDL + header upgrade complete) or neither (DDL rolled back). There is no state where the header is upgraded but the DDL is not committed, or vice versa. This is standard database crash recovery semantics and does not require a separate two-phase protocol.
+> **WAL atomicity:** The header version upgrade and DDL commit are in the **same WAL transaction**. Stoolap's WAL implementation writes the header upgrade and the DDL commit record into the same WAL segment atomically — either both succeed or neither does. The header upgrade and DDL commit are applied within the same WAL transaction; recovery replays them atomically. After a crash, WAL replay either commits both (DDL + header upgrade complete) or neither (DDL rolled back). There is no state where the header is upgraded but the DDL is not committed, or vice versa.
 
 > **Design note:** Using u32 little-endian at offset 0 avoids any ambiguity with other header fields. A 4-byte version field is sufficient for the foreseeable future (version values up to 4,294,967,295). **Coupling constraint:** NUMERIC_SPEC_VERSION occupies a **fixed byte offset** (0) in the WAL/snapshot header. This field cannot be relocated, renamed, or repurposed without breaking wire format compatibility. If a future RFC requires a different WAL header layout, the NUMERIC_SPEC_VERSION field must either remain at offset 0 (preferred) or a one-time migration of existing WAL headers must be performed.
 
@@ -608,7 +608,7 @@ DECIMAL → FLOAT   (lossy, explicit CAST only)
 
 > **Note on `into_coerce_to_type()`:** All coercion rules above apply to both `coerce_to_type()` (borrowing) and `into_coerce_to_type()` (consuming/move). The consuming version avoids cloning when the source type already matches the target.
 
-> **Note on BIGINT→DECIMAL coercion:** This path requires `bigint_to_decimal_full()` from RFC-0133, which is in RFC-0202-B scope. Until RFC-0202-B is implemented, this coercion path returns `Error::UnsupportedCoercion("BIGINT → DECIMAL requires RFC-0202-B (not yet implemented)")`. **It does NOT return NULL** — silent coercion failure would cause data correctness issues in queries like `SELECT bigint_col + decimal_col`. The error forces users to use explicit CAST when combining BIGINT and DECIMAL types. Note: the existing `bigint_to_decimal(value: i128)` in the determin crate only handles i128-range values and is usable for INTEGER→DECIMAL coercion (i64 always fits in i128), NOT for arbitrary BIGINT→DECIMAL conversion where BigInt values may exceed i128 range. The full conversion requires `bigint_to_decimal_full(BigInt)` from RFC-0202-B.
+> **Note on BIGINT→DECIMAL coercion:** This path requires `bigint_to_decimal_full()` from RFC-0133, which is in RFC-0202-B scope. Until RFC-0202-B is implemented, this coercion path returns `Error::NotSupported("BIGINT → DECIMAL requires RFC-0202-B (not yet implemented)")` (stoolap `Error::NotSupported` variant). **It does NOT return NULL** — silent coercion failure would cause data correctness issues in queries like `SELECT bigint_col + decimal_col`. The error forces users to use explicit CAST when combining BIGINT and DECIMAL types. Note: the existing `bigint_to_decimal(value: i128)` in the determin crate only handles i128-range values and is usable for INTEGER→DECIMAL coercion (i64 always fits in i128), NOT for arbitrary BIGINT→DECIMAL conversion where BigInt values may exceed i128 range. The full conversion requires `bigint_to_decimal_full(BigInt)` from RFC-0202-B.
 
 #### 6.8 from_typed() Update (H4)
 
@@ -1063,7 +1063,7 @@ Gas costs are defined in the determin crate per RFC-0110 and RFC-0111:
 |-----------|---------|------------------|
 | ADD/SUB | 10 + 2 × |scale_a - scale_b| | 82 |
 | MUL | 20 + 3 × scale_a × scale_b | 3,908 |
-| DIV | 50 + 3 × scale_a × scale_b | 3,938 |
+| DIV | 50 + 3 × scale_a × scale_b | 3,938 | (gas based on **input** operand scales; internally computed target scale does not affect gas) |
 | SQRT | 100 + 5 × scale | 280 |
 
 **Division scale rationale:** The `+6` formula for DECIMAL division (`min(36, max(a.scale, b.scale) + 6)`) was chosen to balance precision against overflow risk. For a dividend with scale `s_a` and divisor with scale `s_b`, the intermediate precision of `max(s_a, s_b) + 6` ensures that rounding errors in subsequent operations remain below 10⁻⁶ relative to the operand magnitudes. This is sufficient for financial calculations using RoundHalfEven. Users requiring higher precision should use explicit CAST with DECIMAL(p,s) to control the result scale.
@@ -1127,7 +1127,7 @@ Gas metering is **formula-based**, not counter-based. The determin crate defines
 - [ ] Add persistence wire tags 13 (BIGINT) and 14 (DECIMAL) to `serialize_value`/`deserialize_value`
 - [ ] Add `auto_select_index_type()` cases for Bigint/Decimal → BTree
 - [ ] Wire NUMERIC_SPEC_VERSION to WAL/snapshot header read/write
-- [ ] Implement BIGINT/DECIMAL lexicographic key encoding for BTree indexes (see §6.11 for encoding specification); existing indexes must be rebuilt via `REINDEX` after deployment
+- [ ] Implement and verify BIGINT/DECIMAL lexicographic key encoding for BTree indexes (see §6.11 for encoding specification) — **blocking for production deployment**; existing indexes must be rebuilt via `REINDEX` after deployment
 
 ### Phase 3: Expression VM Support
 
@@ -1311,6 +1311,7 @@ Re-implementing the algorithms would introduce consensus risk. The determin crat
 
 | Version | Date | Changes |
 |---------|------|---------|
+| 1.16 | 2026-04-11 | Round 5 review follow-up: (1) WAL atomicity text made recovery replay assumption explicit; (2) Phase 2 lexicographic encoding task marked **blocking for production deployment**; (3) DECIMAL DIV gas note clarified: gas based on input operand scales, not internally computed target scale; (4) BIGINT→DECIMAL coercion error corrected: `Error::UnsupportedCoercion` → `Error::NotSupported` (verified in stoolap error.rs). |
 | 1.15 | 2026-04-10 | Round 5 review fixes: (1) CRITICAL: Added persistence vs. index encoding distinction paragraph — clarifies §5 wire format (raw 24-byte) and §6.11 lexicographic encoding (transformed) serve different purposes; (2) CRITICAL: Added WAL atomicity note to §4a — header upgrade and DDL commit are in same WAL transaction, no crash recovery gap; (3) HIGH: Clarified storage overhead (521 bytes serialized) is distinct from in-memory CompactArc overhead; (4) MAJOR: Added limb count/scale extraction note for gas — num_limbs from BigIntEncoding header, scale from byte 23; (5) MODERATE: Added NULL three-valued logic specifics — NULL comparison, IS NULL, ORDER BY NULL, GROUP BY NULL. |
 | 1.14 | 2026-04-10 | Round 4 review fixes: (1) CRITICAL: Fixed DECIMAL lexicographic zero encoding description — zero sorts between negatives and positives, not below all negatives; confirmed canonicalization of negative zero; (2) CRITICAL: BIGINT lexicographic encoding changed to length-prefix format with 64-limb fixed-width padding — specifies comparison algorithm for variable-length keys; (3) BIGINT SUM overflow boundary corrected from ±(2^4095) to ±(2^4096 − 1) matching MAX_BIGINT_BITS=4096; (4) Added Phase 2 task for lexicographic key encoding implementation and REINDEX; (5) Added DECIMAL SQRT test vectors with result scale verification; (6) EXP removal (v1.12) is documented in v1.12 changelog entry. |
 | 1.13 | 2026-04-10 | Round 3 review follow-up fixes: (1) Wire format test vectors updated to show full persistence bytes `[tag][payload]`; (2) Added DECIMAL lexicographic encoding sign-transformation spec with zero-handling and migration note; (3) Added pre-flight bounds check note to gas model; (4) Added cross-type comparison test vectors (BIGINT vs Integer, DECIMAL vs Float, BIGINT vs DECIMAL, BIGINT vs DFP). |

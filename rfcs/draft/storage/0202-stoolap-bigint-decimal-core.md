@@ -2,7 +2,7 @@
 
 ## Status
 
-**Version:** 1.21 (2026-04-11)
+**Version:** 1.22 (2026-04-11)
 **Status:** Draft
 
 ## Authors
@@ -1267,7 +1267,7 @@ DECIMAL test vectors are defined in RFC-0111 §Test Vectors (57 entries with Mer
 | DECIMAL index scan | `SELECT * FROM t WHERE dec_col < DECIMAL '99.99'` | BTree range scan |
 | Display BIGINT | `SELECT BIGINT '12345678901234567890'` | Prints '12345678901234567890' |
 | Display DECIMAL | `SELECT DECIMAL '123.45'` | Prints '123.45' |
-| DECIMAL(p,s) DDL | `CREATE TABLE t (d DECIMAL(10,2))` | SchemaColumn.decimal_scale=2 |
+| DECIMAL(p,s) DDL | `CREATE TABLE t (d DECIMAL(10,2))` | SchemaColumn.decimal_scale=Some(2) |
 | BIGINT → INTEGER TRAP | `CAST(BIGINT '99999999999999999999' AS INTEGER)` | Error: BigIntError::OutOfRange |
 | DECIMAL → BIGINT TRAP | `CAST(DECIMAL '123.45' AS BIGINT)` | Error: ConversionLoss (scale > 0) |
 | INTEGER → BIGINT | `CAST(42 AS BIGINT)` | BigInt '42' |
@@ -1276,8 +1276,8 @@ DECIMAL test vectors are defined in RFC-0111 §Test Vectors (57 entries with Mer
 | DECIMAL vs Float literal | `SELECT * FROM t WHERE dec_col < 3.14` | Error: IncomparableTypes (DECIMAL vs Float not comparable) |
 | BIGINT vs DECIMAL | `SELECT * FROM t WHERE bigint_col = dec_col` | Error: IncomparableTypes (different numeric types) |
 | BIGINT vs DFP | `SELECT * FROM t WHERE bigint_col > dfp_col` | Error: IncomparableTypes with CAST suggestion |
-| DECIMAL sqrt | `SELECT SQRT(DECIMAL '2.00')` | Decimal result scale = ⌈(2+1)/2⌉ = 2, sqrt(2) ≈ 1.41... |
-| DECIMAL sqrt scale | `SELECT SQRT(DECIMAL '0.000001')` | Result scale = ⌈(6+1)/2⌉ = 4, sqrt(10^-6) = 10^-3 = 0.001 |
+| DECIMAL sqrt | `SELECT SQRT(DECIMAL '2.00')` | `Decimal { mantissa: 141, scale: 2 }` (scale = ⌈(2+1)/2⌉ = 2; sqrt(2) = 1.41421356..., rounded to 2 decimals with RoundHalfEven = 1.41 → mantissa 141) |
+| DECIMAL sqrt scale | `SELECT SQRT(DECIMAL '0.000001')` | `Decimal { mantissa: 10, scale: 4 }` (scale = ⌈(6+1)/2⌉ = 4; sqrt(10^-6) = 10^-3 = 0.001 exactly, mantissa 10) |
 
 ### Wire Format Test Vectors
 
@@ -1366,6 +1366,7 @@ Re-implementing the algorithms would introduce consensus risk. The determin crat
 
 | Version | Date | Changes |
 |---------|------|---------|
+| 1.22 | 2026-04-11 | Round 11 review fixes: (1) F1: DECIMAL(p,s) DDL test vector expected value updated to `SchemaColumn.decimal_scale=Some(2)` — consistent with field type `Option<u8>`; (2) F2: DECIMAL sqrt test vectors now include exact mantissa values (`Decimal { mantissa: 141, scale: 2 }` and `Decimal { mantissa: 10, scale: 4 }`) with RoundHalfEven noted. |
 | 1.21 | 2026-04-11 | Round 10 review fixes: (1) R1: Key Files table `schema.rs` row updated to `decimal_scale: Option<u8>` — matches §6.9 and Phase 1 checklist; (2) R2: Fixed `stoolap_parse_decimal` doc comment — `DecimalError::ConversionLoss` → `DecimalError::InvalidScale`; (3) R3: Added Phase 4 integration testing item to verify `BigInt::from_str("-0")` produces canonical zero. |
 | 1.20 | 2026-04-11 | Round 9 review fixes: (1) N1: `from_typed()` else arm for BIGINT/DECIMAL returns `Ok(Value::Null(data_type))` — type mismatches produce NULL, not errors; parse failures for String input return errors; (2) N2: DECIMAL(p,s) parsing table uses `Some(0)`, `Some(2)` consistently with `decimal_scale: Option<u8>`; Phase 1 checklist updated; (3) N3: Added wildcard arms with `debug_assert!` to `Ord::cmp` inner matches (§6.11), consistent with §6.6; (4) N4: Wire bytes added for DECIMAL '1' and DECIMAL '3'; (5) N5: Added zero canonicalization note in §6.9 — `Decimal::new(0, s)` always yields `{0, 0}`; (6) N6: Added `from_typed()` return type note to Key Files table. |
 | 1.19 | 2026-04-11 | Round 8 fixes: C1 zero limb explicit; C2 from_typed error not NULL; C3 i128 overflow DecimalError::Overflow; H1 precision deviation documented; H2 debug_assert Ord fallback; H3 gas benchmarking task; H4 wildcard arms; M1 AVG scale min(36,s+6); M2 Display limitation; M3 coercion scope clarified; M4 decimal_scale Option<u8>; M5 from_str comment; L1 exact DIV test; L2 Ord divergence note; L3 is_orderable task; L4 Decimal::new(0,s) canonicalization |

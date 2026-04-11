@@ -2,7 +2,7 @@
 
 ## Status
 
-**Version:** 1.19 (2026-04-11)
+**Version:** 1.20 (2026-04-11)
 **Status:** Draft
 
 ## Authors
@@ -631,7 +631,7 @@ DataType::Bigint => {
     } else if let Some(&i) = v.downcast_ref::<i64>() {
         Ok(Value::bigint(BigInt::from(i)))
     } else {
-        Err(Error::invalid_argument("cannot convert to BIGINT"))
+        Ok(Value::Null(data_type)) // type mismatch: caller did not provide a compatible type
     }
 }
 DataType::Decimal => {
@@ -648,10 +648,12 @@ DataType::Decimal => {
     } else if let Some(&i) = v.downcast_ref::<i64>() {
         Ok(Value::decimal(Decimal::new(i as i128, 0).expect("i64 always fits in Decimal")))
     } else {
-        Err(Error::invalid_argument("cannot convert to DECIMAL"))
+        Ok(Value::Null(data_type)) // type mismatch: caller did not provide a compatible type
     }
 }
 ```
+
+> **Note:** Parse failures for String input are errors; type mismatches (non-String, non-i64 input) return NULL as per the existing `from_typed()` contract for other types.
 
 > **Note:** This changes the behavior for BIGINT/DECIMAL from existing types (Integer/Float), which return NULL on parse failure. The difference is intentional: for established types, broad compatibility favors silent NULL; for new types, explicit error on malformed input is the safer default. Callers of `from_typed()` for BIGINT/DECIMAL must handle `Result`.
 
@@ -786,15 +788,17 @@ pub struct SchemaColumn {
 **DECIMAL(p,s) parsing:** The `FromStr` implementation uses `starts_with("DECIMAL")` to handle parameterized forms. Precision and scale are extracted by the DDL parser:
 
 ```
-DECIMAL       → DataType::Decimal, decimal_scale=0
-DECIMAL(10)   → DataType::Decimal, decimal_scale=0  (precision only)
-DECIMAL(10,2) → DataType::Decimal, decimal_scale=2
-NUMERIC(5,3)  → DataType::Decimal, decimal_scale=3
+DECIMAL       → DataType::Decimal, decimal_scale=Some(0)
+DECIMAL(10)   → DataType::Decimal, decimal_scale=Some(0)  (precision only)
+DECIMAL(10,2) → DataType::Decimal, decimal_scale=Some(2)
+NUMERIC(5,3)  → DataType::Decimal, decimal_scale=Some(3)
 ```
 
 **Known deviation from standard SQL:** Precision (`p`) is not enforced at INSERT time. Only scale (`s`) is enforced. This is a deliberate simplification — Stoolap stores `DECIMAL(p,s)` with `p` silently discarded and only `s` preserved in `decimal_scale`. A user creating `DECIMAL(5,2)` and inserting `999999.99` (which exceeds the 5-digit precision) will not receive an error, unlike standard SQL (PostgreSQL, MySQL). Only values whose fractional part exceeds `s` digits are rounded. This matches the behavior of some other databases (e.g., SQLite) and is documented here to prevent surprises during migration.
 
 The scale is enforced at INSERT time: values with more decimal places than `decimal_scale` are rounded using `decimal_round(d, decimal_scale, RoundHalfEven)` (matching PostgreSQL behavior). Values with fewer decimal places than `decimal_scale` are stored as-is — the scale is not padded. For example, inserting `DECIMAL '5'` into a `DECIMAL(10,2)` column stores `{mantissa: 5, scale: 0}`, not `{mantissa: 500, scale: 2}`. Rounding happens after the value is parsed and before it is stored. Since rounding reduces magnitude (scales down), overflow is not possible from rounding alone. If the input value itself exceeds the DECIMAL range (±(10^36 - 1)), `Decimal::new` returns `DecimalError::Overflow` before rounding occurs. Rounding is therefore a non-error transformation — it is the intended behavior for values with extra precision in `DECIMAL(p,s)` columns.
+
+> **Zero canonicalization:** `Decimal::new(0, s)` always canonicalizes to `{mantissa: 0, scale: 0}` regardless of the input scale `s`. This means inserting `DECIMAL '0'` (or `DECIMAL '0.00'`, `DECIMAL '-0.00'`) into any DECIMAL column stores `{0, 0}` — the column's declared scale is overwritten by the canonical zero form. This is a property of `Decimal::new`, not of Stoolap's INSERT handling.
 
 **Builder method:** A parallel `SchemaBuilder::set_last_decimal_scale(mut self, scale: u8) -> Self` method is required, following the existing consuming-builder pattern of `set_last_quant_scale()`, `set_last_vector_dimensions()`, and `set_last_blob_length()`. Note: the builder type is `SchemaBuilder` (not `SchemaColumnBuilder`), and the method takes `mut self` (consuming) returning `Self`, consistent with all existing builder methods in the codebase.
 
@@ -839,6 +843,10 @@ This gives **wrong numeric order** for BIGINT (limbs are little-endian) and DECI
                     -1 => Ordering::Less,
                     0 => Ordering::Equal,
                     1 => Ordering::Greater,
+                    n => {
+                        debug_assert!(false, "unexpected BigInt::compare result: {}", n);
+                        Ordering::Greater
+                    }
                 },
                 // Data corruption detected: deserialization returned None for a valid BIGINT extension.
                 // This should never happen for uncorrupted data. Fall back to byte comparison (for debug
@@ -856,6 +864,10 @@ This gives **wrong numeric order** for BIGINT (limbs are little-endian) and DECI
                     -1 => Ordering::Less,
                     0 => Ordering::Equal,
                     1 => Ordering::Greater,
+                    n => {
+                        debug_assert!(false, "unexpected decimal_cmp result: {}", n);
+                        Ordering::Greater
+                    }
                 },
                 // Data corruption detected: deserialization returned None for a valid DECIMAL extension.
                 _ => {
@@ -1150,7 +1162,7 @@ Gas metering is **formula-based**, not counter-based. The determin crate defines
 - [ ] Add `is_orderable()` update: include `Bigint | Decimal` (both are orderable types; `DataType::is_orderable` returns `true` for all numeric types)
 - [ ] Add `from_u8()` entries for discriminants 13 and 14
 - [ ] Add `NUMERIC_SPEC_VERSION: u32 = 2` constant to `src/storage/mvcc/persistence.rs`
-- [ ] Add `SchemaColumn.decimal_scale: u8` field
+- [ ] Add `SchemaColumn.decimal_scale: Option<u8>` field (None = not a DECIMAL column, Some(s) = DECIMAL with scale s)
 - [ ] Add `Value::bigint()` and `Value::decimal()` constructors (using free functions for Decimal)
 - [ ] Add `Value::as_bigint()` and `Value::as_decimal()` extractors
 - [ ] Update `Value::from_typed()` for Bigint/Decimal cases
@@ -1284,6 +1296,8 @@ Total: 8 bytes header + 8 × num_limbs bytes
 | BIGINT '0' | BigInt(0) | `[13]01000000010000000000000000000000` | Tag 13 + canonical zero |
 | BIGINT '2^64' | BigInt(2^64) | `[13]010000000200000000000000000000000100000000000000` | Tag 13 + 2 limbs |
 | DECIMAL '123.45' | `{mantissa: 12345, scale: 2}` | `[14]00000000000000000000000000003039000000000000000002` | Tag 14 + 24-byte decimal |
+| DECIMAL '1' | `{mantissa: 1, scale: 0}` | `[14]00000000000000000000000000000001000000000000000000` | Tag 14 + mantissa=1 |
+| DECIMAL '3' | `{mantissa: 3, scale: 0}` | `[14]00000000000000000000000000000003000000000000000000` | Tag 14 + mantissa=3 |
 | DECIMAL '0' | `{mantissa: 0, scale: 0}` | `[14]00000000000000000000000000000000000000000000000000` | Tag 14 + canonical zero |
 | DECIMAL '-12.3' | `{mantissa: -123, scale: 1}` | `[14]FFFFFFFFFFFFFFFFFFFFFFFFFFFFFF85000000000000000001` | Tag 14 + negative mantissa |
 
@@ -1296,7 +1310,7 @@ Total: 8 bytes header + 8 × num_limbs bytes
 | File | Change |
 |------|--------|
 | `src/core/types.rs` | Add `DataType::Bigint = 13`, `DataType::Decimal = 14`, update `is_numeric()`, `from_u8()`, `FromStr` (with version gating), `Display` |
-| `src/core/value.rs` | Add `Value::bigint()`, `Value::decimal()`, extractors, `from_typed()`, `coerce_to_type()`, `cast_to_type()`, `Display`, `as_string()`, `as_int64()`, `as_float64()`, `compare_same_type()` |
+| `src/core/value.rs` | Add `Value::bigint()`, `Value::decimal()`, extractors, `from_typed()` (returns `Result<Value, Error>` for BIGINT/DECIMAL — callers must handle parse errors), `coerce_to_type()`, `cast_to_type()`, `Display`, `as_string()`, `as_int64()`, `as_float64()`, `compare_same_type()` |
 | `src/core/schema.rs` | Add `SchemaColumn.decimal_scale: u8`, `set_last_decimal_scale()` builder |
 | `src/storage/mvcc/persistence.rs` | Add `NUMERIC_SPEC_VERSION`, wire tags 13/14, header read/write, `from_str_versioned()` dispatcher |
 | `src/storage/mvcc/table.rs` | Add `auto_select_index_type()` cases for Bigint/Decimal |
@@ -1351,6 +1365,7 @@ Re-implementing the algorithms would introduce consensus risk. The determin crat
 
 | Version | Date | Changes |
 |---------|------|---------|
+| 1.20 | 2026-04-11 | Round 9 review fixes: (1) N1: `from_typed()` else arm for BIGINT/DECIMAL returns `Ok(Value::Null(data_type))` — type mismatches produce NULL, not errors; parse failures for String input return errors; (2) N2: DECIMAL(p,s) parsing table uses `Some(0)`, `Some(2)` consistently with `decimal_scale: Option<u8>`; Phase 1 checklist updated; (3) N3: Added wildcard arms with `debug_assert!` to `Ord::cmp` inner matches (§6.11), consistent with §6.6; (4) N4: Wire bytes added for DECIMAL '1' and DECIMAL '3'; (5) N5: Added zero canonicalization note in §6.9 — `Decimal::new(0, s)` always yields `{0, 0}`; (6) N6: Added `from_typed()` return type note to Key Files table. |
 | 1.19 | 2026-04-11 | Round 8 fixes: C1 zero limb explicit; C2 from_typed error not NULL; C3 i128 overflow DecimalError::Overflow; H1 precision deviation documented; H2 debug_assert Ord fallback; H3 gas benchmarking task; H4 wildcard arms; M1 AVG scale min(36,s+6); M2 Display limitation; M3 coercion scope clarified; M4 decimal_scale Option<u8>; M5 from_str comment; L1 exact DIV test; L2 Ord divergence note; L3 is_orderable task; L4 Decimal::new(0,s) canonicalization |
 | 1.18 | 2026-04-11 | Round 7 review: zero byte 0 description corrected — zero has `byte 0 = 0x81` (1 limb \| 0x80), same as BIGINT '1'; zero sorts before '1' via limb data tiebreak; added zero to encoding examples. |
 | 1.17 | 2026-04-11 | Round 6 review fixes: (1) CRITICAL: BIGINT lexicographic encoding fixed — sign bit now encoded in byte 0 via `num_limbs | 0x80` (positive) / `0x80 - num_limbs` (negative), fixing wrong sort order for mixed-sign comparisons; (2) BIGINT SUM overflow corrected: `DecimalError::Overflow` → `BigIntError::OutOfRange`; (3) BIGINT AVG deferred: returns `Error::NotSupported` until RFC-0202-B implements internal BIGINT→DECIMAL conversion; (4) WAL corrupt segment handling: skip segment entirely on partial write/checksum failure; (5) DECIMAL AVG gas clarified: input column scale not result scale; (6) DECIMAL INSERT scale: fewer places stored as-is (no padding); (7) BIGINT deserialize comment clarified: caller must slice input; (8) Future RFC DIV gas compatibility note added. |

@@ -31,7 +31,7 @@ Add BIGINT and DECIMAL operation dispatch in Stoolap's expression VM with formul
   - MIN/MAX: returns DECIMAL, never overflows
   - AVG: returns DECIMAL; result scale = `min(36, input_scale + 6)`; returns `DecimalError::Overflow` if sum overflows
 - [ ] Gas metering wired per RFC §8 formulas:
-  - BIGINT: ADD/SUB = 10 + limbs; MUL = 50 + 2 × limbs × limbs; DIV/MOD = 50 + 3 × limbs × limbs; CMP = 5 + limbs; SHL/SHR = 10 + limbs; BITLEN = 10 + limbs (conservative estimate — verify against RFC-0110 reference before production)
+  - BIGINT: ADD/SUB = 10 + limbs; MUL = 50 + 2 × limbs × limbs; DIV/MOD = 50 + 3 × limbs × limbs; CMP = 5 + limbs; SHL/SHR = 10 + limbs; BITLEN = 10 + limbs (per RFC-0110 §8 v2.14 — confirmed normative)
   - DECIMAL: ADD/SUB = 10 + 2 × |scale_a − scale_b|; MUL = 20 + 3 × scale_a × scale_b; DIV = 50 + 3 × scale_a × scale_b; SQRT = 100 + 5 × scale; CMP uses `decimal_cmp`
   - Per-operation caps: `MAX_BIGINT_OP_COST` (15,000) and `MAX_DECIMAL_OP_COST` (5,000) from determin crate
 - [ ] Per-operation gas accumulated in query gas accumulator
@@ -53,7 +53,7 @@ Add BIGINT and DECIMAL operation dispatch in Stoolap's expression VM with formul
 
 ## Dependencies
 
-- Mission: 0202-c-bigint-decimal-persistence (open)
+- Mission: 0202-c-bigint-decimal-persistence (open) — **blocking**; wire tags 13/14 and serialize/deserialize must be finalized before 0202-d implementation begins
 - Mission: 0110-bigint-mul-div-test-coverage (completed) — algorithms verified
 - Mission: 0111-decimal-arithmetic (completed) — algorithms verified
 

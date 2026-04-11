@@ -42,6 +42,7 @@ Integrate BIGINT and DECIMAL into Stoolap's core type system: DataType enum exte
 - Mission: 0110-bigint-core-algorithms (completed) — provides BigInt type
 - Mission: 0111-decimal-core-type (completed) — provides Decimal type
 - Mission: 0110-wal-numeric-spec-version (open) — WAL header integration
+  - **Note:** WAL header integration is normative in RFC-0110 §4a (Accepted). Point `from_str_versioned` implementation to RFC-0110 §4a for the wire format specification.
 
 ## Location
 
@@ -54,6 +55,7 @@ Medium — primarily type system extension and parser integration
 
 ## Reference
 
+- RFC-0111 (Numeric/Math): Deterministic DECIMAL — DECIMAL wire format reference
 - RFC-0202-A §1 (DataType discriminants)
 - RFC-0202-A §4a (NUMERIC_SPEC_VERSION migration gate)
 - RFC-0202-A §6.1 (FromStr update)

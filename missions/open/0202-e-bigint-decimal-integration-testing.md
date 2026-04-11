@@ -30,7 +30,7 @@ End-to-end integration testing and benchmarking for BIGINT/DECIMAL in stoolap. V
 - [ ] **Canonical zero verification:** `BigInt::from_str("-0")` and `BigInt::from_str("0")` must produce byte-identical serialization:
   - Serialize both to wire format
   - Assert wire bytes are identical: `[13]01000000010000000000000000000000`
-  - If bytes differ, update RFC §9 test vectors to reflect actual canonical form and file issue against determin crate
+  - **Note:** RFC-0110 §10.2 requires rejecting non-canonical inputs. If `BigInt::from_str("-0")` returns `Error` rather than canonical bytes, update this AC to expect error for "-0" input. Verify determin crate behavior before writing tests. If bytes differ, update RFC §9 test vectors to reflect actual canonical form and file issue against determin crate.
 - [ ] Cross-type comparison tests: **execute only after Phase 3 (mission 0202-d) is complete** — these tests will panic during Phase 1-2 via `as_float64().unwrap()`. Phase 3 implements the safe cross-type comparison dispatch that avoids the panic.
   - BIGINT vs Integer
   - DECIMAL vs Float
@@ -50,7 +50,7 @@ End-to-end integration testing and benchmarking for BIGINT/DECIMAL in stoolap. V
 - [ ] **Benchmark serialization/deserialization gas costs** per RFC §8:
   - BIGINT: measure `BigInt::serialize()` and `BigInt::deserialize()` gas across 1-limb, 16-limb, 32-limb, 64-limb payloads
   - DECIMAL: measure `decimal_to_bytes()` and `decimal_from_bytes()` gas across scale 0, 12, 24, 36
-  - Compare measured values against RFC §8 estimates (serialize ~100, deserialize ~100 for BIGINT; ~20 each for DECIMAL)
+  - Compare measured values against RFC-0202-A §8 estimates (serialize ~100, deserialize ~100 for BIGINT; ~20 each for DECIMAL)
   - If measured/estimated ratio exceeds 2× in either direction, update the RFC §8 formulas before production deployment
   - Document benchmark methodology and results
 - [ ] BTree index range scan tests with lexicographic ordering verification:
@@ -59,7 +59,7 @@ End-to-end integration testing and benchmarking for BIGINT/DECIMAL in stoolap. V
   - Within-negative ordering (per RFC §6.11: more limbs = more negative): `BIGINT '-2^64' < BIGINT '-1'` (2 limbs vs 1 limb, both negative)
   - Within-positive ordering (per RFC §6.11: more limbs = larger): `BIGINT '2^64' > BIGINT '1'` (2 limbs vs 1 limb, both positive)
   - Zero vs positive: `BIGINT '0' < BIGINT '1'` — byte comparison confirms zero's all-zero limb array sorts before non-zero limbs
-  - DECIMAL within-negative: verify different negative mantissas sort correctly after sign-flip transformation
+  - DECIMAL within-negative: `DECIMAL '-2' < DECIMAL '-1'` (both negative; -2 sorts below -1 after sign-flip encoding); `DECIMAL '-100' < DECIMAL '-1'` (3-digit vs 1-digit mantissa, both negative); verify sign-flip: `DECIMAL '-1'` (mantissa = -1) → encoded byte0 = 0x80 XOR 0x7F = 0xFF → sorts among negatives
   - Verify range scan returns correctly ordered results (not just non-empty results)
   - `WHERE bigint_col > BIGINT '1000'`, `WHERE dec_col < DECIMAL '99.99'`
 - [ ] Aggregate operation tests for BIGINT:

@@ -22,6 +22,7 @@ Add persistence layer support for BIGINT and DECIMAL: wire tags 13/14 in seriali
   - Bounds-check: return `Error::internal("truncated bigint data")` if `rest.len() < total`
   - Slice `&rest[..total]` before passing to `BigInt::deserialize()` — do NOT pass entire `rest` slice
   - Caller must advance buffer by `total` bytes after deserialization
+  - **Must appear before the generic Extension handler (tag 11) in the match chain**
 - [ ] Wire tag 14 handler added to `deserialize_value` reconstructing Decimal from 24-byte encoding
 - [ ] Debug assertion added: place inside the generic Extension arm (tag 11 branch) — if tag byte is 13 or 14 and the code reaches the generic arm, the assertion fires. **Note:** With correct arm ordering (see Mission Notes), wire tags 13/14 are handled by dedicated arms before the generic branch, so this assertion is a defensive check against future arm-reordering bugs.
 - [ ] `auto_select_index_type()` updated: `DataType::Bigint | DataType::Decimal → IndexType::BTree`
@@ -36,7 +37,7 @@ Add persistence layer support for BIGINT and DECIMAL: wire tags 13/14 in seriali
   - Sign encoding: positive = `num_limbs | 0x80`; negative = `0x80 − num_limbs`
   - Ordering: negative < zero < positive; limb-by-limb big-endian within same sign
   - Verification test vectors: `-2^64 < -1 < 0 < 1 < 2^64` in encoded key space
-  - **Verify encoded key length:** 1 byte sign-prefix + 64 × 8 bytes padded limbs = **521 bytes max** (per RFC §6.11 stated maximum). Note: the format description `[limb_count_with_sign: u8][limb0: BE]...[limbN: BE][zero_pad: 8 × (64 − N)]` implies 1 + 8×N + 8×(64−N) = 513 bytes for N limbs, but RFC §6.11 and §Storage Overhead both specify 521 bytes max. **The implementer must verify against RFC-0110 if the byte count differs from the format description** — flag any discrepancy to RFC maintainers.
+  - **Verify encoded key length:** 1 byte sign-prefix + 8(N+1) actual limbs + 8(63−N) zero-padding = **513 bytes** for any N (0–63). The format description is mathematically authoritative. RFC-0202-A §6.11 text says "521 bytes max" but this refers to the **serialized persistence format** (tag 13 + BigIntEncoding = 1 + 520 = 521 bytes), not the lexicographic key format. **If byte count differs from 513, flag to RFC-0202-A maintainers.**
 - [ ] **Lexicographic key encoding implemented and verified for DECIMAL** (§6.11 format):
   - Format: `[mantissa_byte0_xor_0x80][mantissa_bytes_1_15][scale: BE u8]` — 17 bytes total
   - Sign-flip: XOR byte 0 of mantissa with `0x80`; zero mantissa encodes as `0x80...00`

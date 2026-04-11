@@ -15,7 +15,7 @@ Extend Stoolap's SchemaColumn and Value types with BIGINT/DECIMAL support: decim
 ## Acceptance Criteria
 
 - [ ] `SchemaColumn.decimal_scale: Option<u8>` field added (None = not a DECIMAL column, Some(s) = DECIMAL with scale s)
-- [ ] `SchemaBuilder::set_last_decimal_scale()` builder method added (consuming builder pattern)
+- [ ] `SchemaBuilder::set_last_decimal_scale()` builder method added with correct consuming-builder signature (consuming builder pattern)
 - [ ] `Value::bigint()` constructor added (wraps BigInt in Value::Extension with tag 13). **BIGINT is variable-length** (1–520 bytes payload): the constructor uses `b.serialize().to_bytes()` producing `BigIntEncoding` format `[version:1][sign:1][reserved:2][num_limbs:1][reserved:3][limb0:8]...[limbN:8]`
 - [ ] `Value::decimal()` constructor added (wraps Decimal in Value::Extension with tag 14). **DECIMAL is fixed-length** (24 bytes payload): uses `decimal_to_bytes(&d)` which returns exactly 24 bytes `[mantissa:16][reserved:7][scale:1]`
 - [ ] `Value::as_bigint()` extractor added. Uses `&data[1..]` (variable-length slice) passed to `BigInt::deserialize()` — do NOT use a fixed slice bound
@@ -33,6 +33,7 @@ Extend Stoolap's SchemaColumn and Value types with BIGINT/DECIMAL support: decim
   - INTEGER→BIGINT (always valid via `BigInt::from(i64)`)
   - INTEGER→DECIMAL (always valid via `Decimal::new(i128, 0)`)
   - BIGINT→DECIMAL: returns `Error::NotSupported("BIGINT → DECIMAL requires RFC-0202-B")` — do NOT return NULL
+  - DECIMAL→INTEGER: via DECIMAL→BIGINT (blocked by RFC-0202-B); returns `Error::NotSupported("DECIMAL → INTEGER requires RFC-0202-B")` when scale > 0 or value out of i64 range
   - BIGINT/DECIMAL→FLOAT: blocked, use explicit CAST
 - [ ] `Value::cast_to_type()` updated for explicit CAST per RFC §6.7:
   - AC-9a: BIGINT→INTEGER: uses `i64::try_from(&BigInt)`, returns `Error::invalid_argument("bigint out of range")` on overflow (maps `BigIntError::OutOfRange`)
@@ -52,7 +53,7 @@ Extend Stoolap's SchemaColumn and Value types with BIGINT/DECIMAL support: decim
   - DECIMAL: deserialize both values, use `decimal_cmp()` for ordering
   - If deserialization fails (corrupt data), fall back to byte comparison with debug assertion
   - **Note:** `Ord` cannot return errors — unlike `compare_same_type()`, it must provide a total ordering. Corrupt BIGINT/DECIMAL data falls back to byte comparison.
-- [ ] `as_int64()` updated for BIGINT Extension per RFC §6.13: `BigInt::try_from(&bi).ok()` — returns `None` for BIGINT values exceeding i64 range
+- [ ] `as_int64()` updated for BIGINT Extension per RFC §6.13: `i64::try_from(&bi).ok()` — returns `None` for BIGINT values exceeding i64 range
 - [ ] `as_float64()` updated for DECIMAL Extension per RFC §6.13: `mantissa as f64 / 10f64.powi(scale as i32)` — precision loss for |mantissa| > 2^53 is expected; BIGINT→f64 not provided (values may exceed f64 range)
 
 ## Dependencies
@@ -89,5 +90,7 @@ Medium — Value layer extension with type coercion rules
 - RFC-0202-A §6.8 (from_typed update — Result semantics)
 - RFC-0202-A §6.8a (stoolap_parse_decimal — standalone parser function)
 - RFC-0202-A §6.9 (SchemaColumn extension — decimal_scale: Option<u8>)
-- RFC-0202-A §6.11 (Ord for Value — BIGINT/DECIMAL lexicographic ordering for BTree indexes)
+- RFC-0202-A §6.10 (Index Type Selection — auto_select_index_type for BIGINT/DECIMAL → BTree)
+- RFC-0202-A §6.11 (Ord for Value — BIGINT/DECIMAL numeric ordering; lexicographic key encoding for BTree indexes — blocking for production)
+- RFC-0202-A §6.12 (Cross-Type Numeric Comparison — is_numeric() update triggers as_float64 panic hazard during Phase 1-2)
 - RFC-0202-A §6.13 (as_int64/as_float64 Extension methods)

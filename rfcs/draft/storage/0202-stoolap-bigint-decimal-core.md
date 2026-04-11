@@ -2,7 +2,7 @@
 
 ## Status
 
-**Version:** 1.20 (2026-04-11)
+**Version:** 1.21 (2026-04-11)
 **Status:** Draft
 
 ## Authors
@@ -711,7 +711,7 @@ pub fn stoolap_parse_decimal(s: &str) -> Result<Decimal, DecimalError>
 ```rust
 /// Parse a decimal string literal into a Decimal value.
 /// Returns DecimalError::ParseError for malformed input.
-/// Returns DecimalError::ConversionLoss if scale exceeds 36.
+/// Returns DecimalError::InvalidScale if scale exceeds 36.
 pub fn stoolap_parse_decimal(s: &str) -> Result<Decimal, DecimalError> {
     let s = s.trim();
     if s.is_empty() {
@@ -1195,6 +1195,7 @@ Gas metering is **formula-based**, not counter-based. The determin crate defines
 - [ ] Integration tests with RFC-0110 test vectors
 - [ ] Integration tests with RFC-0111 test vectors
 - [ ] SQL parser tests for BIGINT and DECIMAL keywords
+- [ ] **Verify `BigInt::from_str("-0")` produces canonical zero** (same zero encoding as `BigInt::from_str("0")`) — this is a determin crate contract relied upon by the `BIGINT cmp zero` test vector; if the behavior differs, the test vector must be updated
 - [ ] **Benchmark serialization/deserialization gas costs:** Measure actual gas consumption for BIGINT serialize/deserialize and DECIMAL serialize/deserialize across representative payload sizes (1-limb through 64-limb BIGINT; scale 0 through scale 36 DECIMAL). Update §8 gas estimates to match measured values. Confirm estimates do not diverge from real costs by more than 2× — if they do, update the formulas before production deployment.
 
 ---
@@ -1311,7 +1312,7 @@ Total: 8 bytes header + 8 × num_limbs bytes
 |------|--------|
 | `src/core/types.rs` | Add `DataType::Bigint = 13`, `DataType::Decimal = 14`, update `is_numeric()`, `from_u8()`, `FromStr` (with version gating), `Display` |
 | `src/core/value.rs` | Add `Value::bigint()`, `Value::decimal()`, extractors, `from_typed()` (returns `Result<Value, Error>` for BIGINT/DECIMAL — callers must handle parse errors), `coerce_to_type()`, `cast_to_type()`, `Display`, `as_string()`, `as_int64()`, `as_float64()`, `compare_same_type()` |
-| `src/core/schema.rs` | Add `SchemaColumn.decimal_scale: u8`, `set_last_decimal_scale()` builder |
+| `src/core/schema.rs` | Add `SchemaColumn.decimal_scale: Option<u8>`, `set_last_decimal_scale()` builder |
 | `src/storage/mvcc/persistence.rs` | Add `NUMERIC_SPEC_VERSION`, wire tags 13/14, header read/write, `from_str_versioned()` dispatcher |
 | `src/storage/mvcc/table.rs` | Add `auto_select_index_type()` cases for Bigint/Decimal |
 | `src/executor/expression/vm.rs` | Add BIGINT/DECIMAL operation dispatch, gas metering |
@@ -1365,6 +1366,7 @@ Re-implementing the algorithms would introduce consensus risk. The determin crat
 
 | Version | Date | Changes |
 |---------|------|---------|
+| 1.21 | 2026-04-11 | Round 10 review fixes: (1) R1: Key Files table `schema.rs` row updated to `decimal_scale: Option<u8>` — matches §6.9 and Phase 1 checklist; (2) R2: Fixed `stoolap_parse_decimal` doc comment — `DecimalError::ConversionLoss` → `DecimalError::InvalidScale`; (3) R3: Added Phase 4 integration testing item to verify `BigInt::from_str("-0")` produces canonical zero. |
 | 1.20 | 2026-04-11 | Round 9 review fixes: (1) N1: `from_typed()` else arm for BIGINT/DECIMAL returns `Ok(Value::Null(data_type))` — type mismatches produce NULL, not errors; parse failures for String input return errors; (2) N2: DECIMAL(p,s) parsing table uses `Some(0)`, `Some(2)` consistently with `decimal_scale: Option<u8>`; Phase 1 checklist updated; (3) N3: Added wildcard arms with `debug_assert!` to `Ord::cmp` inner matches (§6.11), consistent with §6.6; (4) N4: Wire bytes added for DECIMAL '1' and DECIMAL '3'; (5) N5: Added zero canonicalization note in §6.9 — `Decimal::new(0, s)` always yields `{0, 0}`; (6) N6: Added `from_typed()` return type note to Key Files table. |
 | 1.19 | 2026-04-11 | Round 8 fixes: C1 zero limb explicit; C2 from_typed error not NULL; C3 i128 overflow DecimalError::Overflow; H1 precision deviation documented; H2 debug_assert Ord fallback; H3 gas benchmarking task; H4 wildcard arms; M1 AVG scale min(36,s+6); M2 Display limitation; M3 coercion scope clarified; M4 decimal_scale Option<u8>; M5 from_str comment; L1 exact DIV test; L2 Ord divergence note; L3 is_orderable task; L4 Decimal::new(0,s) canonicalization |
 | 1.18 | 2026-04-11 | Round 7 review: zero byte 0 description corrected — zero has `byte 0 = 0x81` (1 limb \| 0x80), same as BIGINT '1'; zero sorts before '1' via limb data tiebreak; added zero to encoding examples. |

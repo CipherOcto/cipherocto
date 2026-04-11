@@ -3,7 +3,7 @@
 ## Status
 
 **Version:** 1.22 (2026-04-11)
-**Status:** Draft
+**Status:** Accepted
 
 ## Authors
 

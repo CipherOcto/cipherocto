@@ -241,7 +241,7 @@ Once accepted:
 | ------------------ | ---------------------------------------- | ------ | ---------------------------------- |
 | RFC-0200 (Storage) | Production Vector-SQL Storage            | Draft  | Vector storage with SQL interface  |
 | RFC-0201 (Storage) | Binary BLOB Type for Hash Storage       | Accepted | Native blob type for crypto hashes |
-| RFC-0202-A (Storage) | Stoolap BIGINT and DECIMAL Core Types | Draft | DataType, Value, SQL parsing, VM dispatch for BigInt/Decimal |
+| RFC-0202-A (Storage) | Stoolap BIGINT and DECIMAL Core Types | Accepted | DataType, Value, SQL parsing, VM dispatch for BigInt/Decimal |
 | RFC-0202-B (Storage) | BIGINT and DECIMAL Conversions       | Draft | BIGINT↔DQA, BIGINT↔DECIMAL, DECIMAL↔DQA conversions |
 
 ### Retrieval (RFC-0300-0399)

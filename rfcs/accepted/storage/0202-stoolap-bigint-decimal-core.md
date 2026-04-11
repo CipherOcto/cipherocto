@@ -2,7 +2,7 @@
 
 ## Status
 
-**Version:** 1.22 (2026-04-11)
+**Version:** 1.23 (2026-04-11)
 **Status:** Accepted
 
 ## Authors
@@ -887,7 +887,7 @@ This gives **wrong numeric order** for BIGINT (limbs are little-endian) and DECI
 >
 > **Required optimization before production deployment:** Implement lexicographic key encoding for BIGINT and DECIMAL in BTree indexes.
 
-**BIGINT lexicographic encoding:** BIGINT values have variable length (1–64 limbs), requiring length-prefix encoding for BTree comparison. Format: `[limb_count_with_sign: u8][limb0: BE][limb1: BE]...[limbN: BE][zero_pad: 8 × (64 − N)]` — limbs in big-endian, padded to 64 limbs (512 bytes) total, plus 1 byte sign-prefix = **521 bytes max**. **Zero limb data:** In the lexicographic format, zero's limb value is `0x0000000000000000` (all-zero bytes). This means zero and `BIGINT '1'` both have `byte 0 = 0x81` (1 limb | 0x80); zero sorts before `1` because its limb bytes (`0x00...00`) are all less than `1`'s limb bytes (`0x00...01`) — the byte 0 tiebreak is resolved by byte-by-byte limb comparison.
+**BIGINT lexicographic encoding:** BIGINT values have variable length (1–64 limbs), requiring length-prefix encoding for BTree comparison. Format: `[limb_count_with_sign: u8][limb0: BE][limb1: BE]...[limbN: BE][zero_pad: 8 × (63 − N)]` — limbs in big-endian. With N limbs (limb0 through limbN = N+1 limbs total), zero-padding fills to constant total size: 1 byte sign-prefix + 8(N+1) actual limb bytes + 8(63−N) zero-padding bytes = **513 bytes constant** (for any N, 0–63). Note: the serialized persistence format (tag 13 + BigIntEncoding) is **521 bytes max** (see §Storage Overhead) — this is a different format from the lexicographic key encoding. **Zero limb data:** In the lexicographic format, zero's limb value is `0x0000000000000000` (all-zero bytes). This means zero and `BIGINT '1'` both have `byte 0 = 0x81` (1 limb | 0x80); zero sorts before `1` because its limb bytes (`0x00...00`) are all less than `1`'s limb bytes (`0x00...01`) — the byte 0 tiebreak is resolved by byte-by-byte limb comparison.
 
 Sign-encoding in byte 0: For positive values, `byte0 = num_limbs | 0x80` (sets high bit). For negative values, `byte0 = 0x80 − num_limbs` (flips high bit and encodes count in lower bits). This ensures byte 0 determines sign ordering directly: all negative values (byte 0 in range `0x01..0x80`) sort before all positive values (byte 0 in range `0x81..0xFE`). Zero (`num_limbs = 1`, `byte 0 = 0x81`) sorts before `BIGINT '1'` (also `byte 0 = 0x81`) because zero's limb data (all zeros) sorts before `1`'s limb data (non-zero) — no special case needed for zero.
 
@@ -1296,11 +1296,11 @@ Total: 8 bytes header + 8 × num_limbs bytes
 | BIGINT '-1' | BigInt(-1) | `[13]01FF0000010000000100000000000000` | Tag 13 + 1 limb, negative (sign=0xFF) |
 | BIGINT '0' | BigInt(0) | `[13]01000000010000000000000000000000` | Tag 13 + canonical zero |
 | BIGINT '2^64' | BigInt(2^64) | `[13]010000000200000000000000000000000100000000000000` | Tag 13 + 2 limbs |
-| DECIMAL '123.45' | `{mantissa: 12345, scale: 2}` | `[14]00000000000000000000000000003039000000000000000002` | Tag 14 + 24-byte decimal |
-| DECIMAL '1' | `{mantissa: 1, scale: 0}` | `[14]00000000000000000000000000000001000000000000000000` | Tag 14 + mantissa=1 |
-| DECIMAL '3' | `{mantissa: 3, scale: 0}` | `[14]00000000000000000000000000000003000000000000000000` | Tag 14 + mantissa=3 |
-| DECIMAL '0' | `{mantissa: 0, scale: 0}` | `[14]00000000000000000000000000000000000000000000000000` | Tag 14 + canonical zero |
-| DECIMAL '-12.3' | `{mantissa: -123, scale: 1}` | `[14]FFFFFFFFFFFFFFFFFFFFFFFFFFFFFF85000000000000000001` | Tag 14 + negative mantissa |
+| DECIMAL '123.45' | `{mantissa: 12345, scale: 2}` | `[14]000000000000000000000000000030390000000000000002` | Tag 14 + 24-byte decimal |
+| DECIMAL '1' | `{mantissa: 1, scale: 0}` | `[14]000000000000000000000000000000010000000000000000` | Tag 14 + mantissa=1 |
+| DECIMAL '3' | `{mantissa: 3, scale: 0}` | `[14]000000000000000000000000000000030000000000000000` | Tag 14 + mantissa=3 |
+| DECIMAL '0' | `{mantissa: 0, scale: 0}` | `[14]000000000000000000000000000000000000000000000000` | Tag 14 + canonical zero |
+| DECIMAL '-12.3' | `{mantissa: -123, scale: 1}` | `[14]FFFFFFFFFFFFFFFFFFFFFFFFFFFFFF850000000000000001` | Tag 14 + negative mantissa |
 
 ---
 
@@ -1366,6 +1366,7 @@ Re-implementing the algorithms would introduce consensus risk. The determin crat
 
 | Version | Date | Changes |
 |---------|------|---------|
+| 1.23 | 2026-04-11 | Round 12 review fixes: (1) DECIMAL wire format test vectors corrected to 24 bytes (removed extra byte from '123.45', '1', '3', '0', '-12.3' entries); (2) BIGINT lexicographic encoding corrected: format notation changed from `8 × (64 − N)` to `8 × (63 − N)`, yielding 513 bytes constant (not 521); added note distinguishing lexicographic key format from serialized persistence format. |
 | 1.22 | 2026-04-11 | Round 11 review fixes: (1) F1: DECIMAL(p,s) DDL test vector expected value updated to `SchemaColumn.decimal_scale=Some(2)` — consistent with field type `Option<u8>`; (2) F2: DECIMAL sqrt test vectors now include exact mantissa values (`Decimal { mantissa: 141, scale: 2 }` and `Decimal { mantissa: 10, scale: 4 }`) with RoundHalfEven noted. |
 | 1.21 | 2026-04-11 | Round 10 review fixes: (1) R1: Key Files table `schema.rs` row updated to `decimal_scale: Option<u8>` — matches §6.9 and Phase 1 checklist; (2) R2: Fixed `stoolap_parse_decimal` doc comment — `DecimalError::ConversionLoss` → `DecimalError::InvalidScale`; (3) R3: Added Phase 4 integration testing item to verify `BigInt::from_str("-0")` produces canonical zero. |
 | 1.20 | 2026-04-11 | Round 9 review fixes: (1) N1: `from_typed()` else arm for BIGINT/DECIMAL returns `Ok(Value::Null(data_type))` — type mismatches produce NULL, not errors; parse failures for String input return errors; (2) N2: DECIMAL(p,s) parsing table uses `Some(0)`, `Some(2)` consistently with `decimal_scale: Option<u8>`; Phase 1 checklist updated; (3) N3: Added wildcard arms with `debug_assert!` to `Ord::cmp` inner matches (§6.11), consistent with §6.6; (4) N4: Wire bytes added for DECIMAL '1' and DECIMAL '3'; (5) N5: Added zero canonicalization note in §6.9 — `Decimal::new(0, s)` always yields `{0, 0}`; (6) N6: Added `from_typed()` return type note to Key Files table. |

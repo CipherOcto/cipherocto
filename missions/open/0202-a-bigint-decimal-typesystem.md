@@ -61,6 +61,7 @@ Medium — primarily type system extension and parser integration
 - RFC-0202-A §6.1 (FromStr update)
 - RFC-0202-A §6.2 (Display update)
 - RFC-0202-A §6.3 (is_numeric, is_orderable, from_u8)
+- RFC-0202-A §6.7 (coercion hierarchy — explicit citation)
 - RFC-0202-A §6.4–§6.9 (Value layer extensions — implemented in mission 0202-b)
 - RFC-0202-A §6.13 (as_int64/as_float64 Extension methods — implemented in mission 0202-b)
 

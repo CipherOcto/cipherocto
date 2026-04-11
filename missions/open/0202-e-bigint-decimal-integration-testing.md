@@ -4,6 +4,8 @@
 
 Open
 
+**Blocked by:** Missions 0202-a, 0202-b, 0202-c, 0202-d (all must complete before any AC can be executed). All prerequisite missions are currently Open.
+
 ## RFC
 
 RFC-0202-A (Storage): Stoolap BIGINT and DECIMAL Core Types
@@ -16,22 +18,26 @@ End-to-end integration testing and benchmarking for BIGINT/DECIMAL in stoolap. V
 
 - [ ] Integration tests with RFC-0110 test vectors (56 entries with Merkle root):
   - Execute all 56 test vectors for BIGINT (arithmetic, overflow, SHL, SHR, bitlen, cmp)
-  - Verify Merkle root of test vector outputs matches RFC-0110 §Test Vectors Merkle root
-  - Document Merkle verification result (pass/fail with root hash)
+  - Verify Merkle root of test vector outputs matches RFC-0110 §Test Vectors Merkle root using SHA-256
+  - **Expected root:** `c447fa82db0763435c1a18268843300c2ed811e21fcb400b18c75e579ddac7c0`
+  - Document Merkle verification result (pass/fail with computed root hash)
 - [ ] Integration tests with RFC-0111 test vectors (57 entries with Merkle root):
   - Execute all 57 test vectors for DECIMAL (arithmetic, sqrt, overflow, canonicalization)
-  - Verify Merkle root of test vector outputs matches RFC-0111 §Test Vectors Merkle root
+  - Verify Merkle root of test vector outputs matches RFC-0111 §Test Vectors Merkle root using SHA-256
+  - **Expected root:** `496bc8038e3fd38462f4308bf03088b3f872d000256a45ddb53d4932efff0c1c`
   - Include explicit DECIMAL SQRT test vectors from RFC-0202-A §9:
     - `SQRT(DECIMAL '2.00')` → `{mantissa: 141, scale: 2}` (scale = ⌈(2+1)/2⌉ = 2)
     - `SQRT(DECIMAL '0.000001')` → `{mantissa: 10, scale: 4}` (scale = ⌈(6+1)/2⌉ = 4)
     - Verify result scale computation matches `⌈(input_scale + 1) / 2⌉`
 - [ ] SQL parser tests for `BIGINT '...'` and `DECIMAL '...'` literals
 - [ ] SQL parser tests for `DECIMAL(p,s)` and `NUMERIC(p,s)` DDL column creation
-- [ ] **Canonical zero verification:** `BigInt::from_str("-0")` and `BigInt::from_str("0")` must produce byte-identical serialization:
-  - Serialize both to wire format
-  - Assert wire bytes are identical: `[13]01000000010000000000000000000000`
-  - **Note:** RFC-0110 §10.2 requires rejecting non-canonical inputs. If `BigInt::from_str("-0")` returns `Error` rather than canonical bytes, update this AC to expect error for "-0" input. Verify determin crate behavior before writing tests. If bytes differ, update RFC §9 test vectors to reflect actual canonical form and file issue against determin crate.
-- [ ] Cross-type comparison tests: **execute only after Phase 3 (mission 0202-d) is complete** — these tests will panic during Phase 1-2 via `as_float64().unwrap()`. Phase 3 implements the safe cross-type comparison dispatch that avoids the panic.
+- [ ] **Canonical zero verification:** Two-part check — verify determin crate behavior first, then execute:
+  - **Part A:** Determine `BigInt::from_str("-0")` behavior in determin crate: returns `Error` or canonical bytes
+    - If `Error`: then `BigInt::from_str("-0")` is rejected per RFC-0110 §10.2 (TRAP). Part B uses only `BigInt::from_str("0")`.
+    - If canonical bytes: both "-0" and "0" produce identical wire bytes `[13]01000000010000000000000000000000`. Verify both parse and serialize identically.
+  - **Part B:** Execute canonical zero verification per above determination.
+  - **Note:** If `BigInt::from_str("-0")` returns `Error`, this is NOT a failure — it is correct per RFC-0110 §10.2. Update RFC §9 test vectors to reflect actual canonical form if needed and file issue against determin crate.
+- [ ] Cross-type comparison tests: **execute only after Phase 3 (mission 0202-d) is complete** — these tests will panic during Phase 1-2 via `as_float64().unwrap()`. Phase 3 implements the safe cross-type comparison dispatch that avoids the panic. **Prerequisite:** Phase 3 (0202-d) MUST implement safe cross-type comparison dispatch that avoids the `as_float64().unwrap()` panic described in 0202-d Notes.
   - BIGINT vs Integer
   - DECIMAL vs Float
   - BIGINT vs DECIMAL
@@ -42,10 +48,11 @@ End-to-end integration testing and benchmarking for BIGINT/DECIMAL in stoolap. V
   - BIGINT '2^64' serializes to `[13]010000000200000000000000000000000100000000000000`
   - BIGINT → serialize → deserialize → same value (byte-identical)
 - [ ] Serialization round-trip tests for DECIMAL (verify against RFC §9 wire format test vectors):
-  - DECIMAL '123.45' serializes to `[14]00000000000000000000000000003039000000000000000002`
-  - DECIMAL '1' serializes to `[14]00000000000000000000000000000001000000000000000000`
-  - DECIMAL '0' serializes to `[14]00000000000000000000000000000000000000000000000000`
-  - DECIMAL '-12.3' serializes to `[14]FFFFFFFFFFFFFFFFFFFFFFFFFFFFFF85000000000000000001`
+  - DECIMAL '123.45' serializes to `[14]000000000000000000000000000030390000000000000002`
+  - DECIMAL '1' serializes to `[14]000000000000000000000000000000010000000000000000`
+  - DECIMAL '3' serializes to `[14]000000000000000000000000000000030000000000000000`
+  - DECIMAL '0' serializes to `[14]000000000000000000000000000000000000000000000000`
+  - DECIMAL '-12.3' serializes to `[14]FFFFFFFFFFFFFFFFFFFFFFFFFFFFFF850000000000000001`
   - DECIMAL → serialize → deserialize → same value (byte-identical)
 - [ ] **Benchmark serialization/deserialization gas costs** per RFC §8:
   - BIGINT: measure `BigInt::serialize()` and `BigInt::deserialize()` gas across 1-limb, 16-limb, 32-limb, 64-limb payloads
@@ -79,8 +86,8 @@ End-to-end integration testing and benchmarking for BIGINT/DECIMAL in stoolap. V
   - Verify NULL sorts as lowest in MIN/MAX
 - [ ] NULL handling tests: BIGINT/DECIMAL NULL in expressions, IS NULL, ORDER BY NULL
 - [ ] Division by zero tests:
-  - `BIGINT '1' / BIGINT '0'` → Error
-  - `DECIMAL '1.0' / DECIMAL '0.0'` → Error
+  - `BIGINT '1' / BIGINT '0'` → `Error::invalid_argument("division by zero")`
+  - `DECIMAL '1.0' / DECIMAL '0.0'` → `Error::invalid_argument("division by zero")`
   - Verify error is returned, not panic or incorrect value
 - [ ] `as_int64()` and `as_float64()` round-trip tests:
   - `BIGINT '42'.as_int64()` → `Some(42)`

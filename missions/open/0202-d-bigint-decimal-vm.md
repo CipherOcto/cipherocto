@@ -44,7 +44,7 @@ Add BIGINT and DECIMAL operation dispatch in Stoolap's expression VM with formul
   - DECIMAL COUNT: 5 gas per row
   - DECIMAL SUM: 10 + 2 × scale per row
   - DECIMAL MIN/MAX: 5 + 2 × scale per row
-  - DECIMAL AVG: 15 + 3 × scale per row (input column scale, not result scale)
+  - DECIMAL AVG: 15 + 3 × scale per row (input column scale, not result scale) — **AVG gas includes sum computation; do not bill SUM gas separately.** If sum exceeds ±(10^36 − 1), return `DecimalError::Overflow` before computing average.
 - [ ] Cost estimates added for optimizer (plan cost modeling):
   - Use per-operation gas formulas as the cost unit
   - BIGINT: cost scales with limb count (1–64 limbs)
@@ -53,7 +53,7 @@ Add BIGINT and DECIMAL operation dispatch in Stoolap's expression VM with formul
 
 ## Dependencies
 
-- Mission: 0202-c-bigint-decimal-persistence (open) — **blocking**; wire tags 13/14 and serialize/deserialize must be finalized before 0202-d implementation begins
+- Mission: 0202-c-bigint-decimal-persistence (open) — **partially blocking**; wire tags 13/14 and serialize/deserialize must be finalized before the BIGINT/DECIMAL *serialization* AC items (AC-1, AC-2) can be verified. The VM *expression* operations (DQA/DFP arithmetic, aggregates) operate on in-memory `Value` types and do not require persistence — those AC items can proceed independently once DataType::Bigint/Decimal exist.
 - Mission: 0110-bigint-mul-div-test-coverage (completed) — algorithms verified
 - Mission: 0111-decimal-arithmetic (completed) — algorithms verified
 
@@ -73,5 +73,6 @@ Medium — VM dispatch and gas integration
 - RFC-0202-A §7a (Aggregate Operations)
 - RFC-0202-A §8 (Gas Metering Model)
 - RFC-0110 §Operations (BigInt ADD, SUB, MUL, DIV, MOD, CMP, SHL, SHR, BITLEN — SQRT is N/A for BIGINT per RFC §7)
+- RFC-0110 §7 (BigInt NEG, ABS — defined but NOT VM-dispatchable via 0202-d; excluded from this mission — `Op::DqaNeg`/`Op::DqaAbs` exist for future use)
 - RFC-0111 §Operations (Decimal ADD, SUB, MUL, DIV, SQRT, CMP)
 - **BITLEN gas:** RFC-0110 §8 specifies `10 + limbs` (v2.14). No amendment needed — implement per RFC.

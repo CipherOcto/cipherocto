@@ -8,6 +8,10 @@
 
 ---
 
+**Resolution:** Issues C1 (SQRT under BigInt), C2 (MIN/MAX gas missing), C3 (BITLEN placeholder) were resolved in mission update commit dceb19c (2026-04-11). See [round-4 review](round-4-0202-d-vm.md) for details.
+
+---
+
 ## Executive Summary
 
 Round 1 and round 2 reviews identified 9 issues total. Both rounds' fixes were applied to the mission. This Round 3 review verifies fixes and finds **three issues: one MODERATE (Reference lists SQRT under BigInt), one MODERATE (aggregate MIN/MAX gas missing from AC), and one LOW (streaming aggregation COUNT gas not specified)**.

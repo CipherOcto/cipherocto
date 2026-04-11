@@ -1,4 +1,4 @@
-# Mission: RFC-0202-A Phase 1b — SchemaColumn and Value Layer
+# Mission: RFC-0202-A Phase 1b — SchemaColumn and Value Layer (BIGINT/DECIMAL)
 
 ## Status
 
@@ -94,3 +94,4 @@ Medium — Value layer extension with type coercion rules
 - RFC-0202-A §6.11 (Ord for Value — BIGINT/DECIMAL numeric ordering; lexicographic key encoding for BTree indexes — blocking for production)
 - RFC-0202-A §6.12 (Cross-Type Numeric Comparison — is_numeric() update triggers as_float64 panic hazard during Phase 1-2)
 - RFC-0202-A §6.13 (as_int64/as_float64 Extension methods)
+- **Aggregate operations (COUNT, SUM, MIN, MAX, AVG) — out of scope; deferred to mission 0202-d**

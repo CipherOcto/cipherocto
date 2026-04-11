@@ -36,10 +36,14 @@ Add BIGINT and DECIMAL operation dispatch in Stoolap's expression VM with formul
   - Per-operation caps: `MAX_BIGINT_OP_COST` (15,000) and `MAX_DECIMAL_OP_COST` (5,000) from determin crate
 - [ ] Per-operation gas accumulated in query gas accumulator
 - [ ] `Error::OutOfGas` returned when query exceeds configurable per-query limit (default: 50,000)
-- [ ] Streaming aggregation gas checked per-row (SUM, AVG) per RFC §7a:
+- [ ] Streaming aggregation gas checked per-row (COUNT, SUM, MIN/MAX, AVG) per RFC §7a:
+  - BIGINT COUNT: 5 gas per row
   - BIGINT SUM: 10 + limbs per row
-  - DECIMAL SUM: 10 + 2 × scale per row
+  - BIGINT MIN/MAX: 5 + limbs per row
   - BIGINT AVG: 15 + 2 × limbs per row
+  - DECIMAL COUNT: 5 gas per row
+  - DECIMAL SUM: 10 + 2 × scale per row
+  - DECIMAL MIN/MAX: 5 + 2 × scale per row
   - DECIMAL AVG: 15 + 3 × scale per row (input column scale, not result scale)
 - [ ] Cost estimates added for optimizer (plan cost modeling):
   - Use per-operation gas formulas as the cost unit
@@ -68,5 +72,6 @@ Medium — VM dispatch and gas integration
 - RFC-0202-A §7 (Arithmetic Operations)
 - RFC-0202-A §7a (Aggregate Operations)
 - RFC-0202-A §8 (Gas Metering Model)
-- RFC-0110 §Operations (BigInt ADD, SUB, MUL, DIV, MOD, CMP, SHL, SHR, BITLEN, SQRT)
+- RFC-0110 §Operations (BigInt ADD, SUB, MUL, DIV, MOD, CMP, SHL, SHR, BITLEN — SQRT is N/A for BIGINT per RFC §7)
 - RFC-0111 §Operations (Decimal ADD, SUB, MUL, DIV, SQRT, CMP)
+- **BITLEN gas note:** RFC-0110 §8 does not yet specify a gas formula for BITLEN; use `10 + limbs` as a conservative estimate pending RFC-0110 amendment

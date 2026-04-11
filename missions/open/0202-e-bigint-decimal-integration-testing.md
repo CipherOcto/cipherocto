@@ -54,10 +54,29 @@ End-to-end integration testing and benchmarking for BIGINT/DECIMAL in stoolap. V
   - If measured/estimated ratio exceeds 2× in either direction, update the RFC §8 formulas before production deployment
   - Document benchmark methodology and results
 - [ ] BTree index range scan tests with lexicographic ordering verification:
-  - BIGINT: verify `BIGINT '-100' < BIGINT '0' < BIGINT '100'` in index scan results
-  - DECIMAL: verify `DECIMAL '-12.3' < DECIMAL '0' < DECIMAL '12.3'` in index scan results
+  - Cross-sign ordering: `BIGINT '-100' < BIGINT '0' < BIGINT '100'`
+  - Cross-sign ordering: `DECIMAL '-12.3' < DECIMAL '0' < DECIMAL '12.3'`
+  - Within-negative ordering (per RFC §6.11: more limbs = more negative): `BIGINT '-2^64' < BIGINT '-1'` (2 limbs vs 1 limb, both negative)
+  - Within-positive ordering (per RFC §6.11: more limbs = larger): `BIGINT '2^64' > BIGINT '1'` (2 limbs vs 1 limb, both positive)
+  - Zero vs positive: `BIGINT '0' < BIGINT '1'` — byte comparison confirms zero's all-zero limb array sorts before non-zero limbs
+  - DECIMAL within-negative: verify different negative mantissas sort correctly after sign-flip transformation
   - Verify range scan returns correctly ordered results (not just non-empty results)
   - `WHERE bigint_col > BIGINT '1000'`, `WHERE dec_col < DECIMAL '99.99'`
+- [ ] Aggregate operation tests for BIGINT:
+  - `COUNT(BIGINT col)` on NULL-only column → `0` (COUNT never returns NULL for empty sets)
+  - `SUM(BIGINT col)` on NULL-only column → NULL
+  - `MIN/MAX(BIGINT col)` on NULL-only column → NULL
+  - `SUM` overflow: `SUM` of values exceeding ±(2^4096 − 1) → `BigIntError::OutOfRange`
+  - `AVG(BIGINT col)` → `Error::NotSupported("AVG on BIGINT requires RFC-0202-B")`
+- [ ] Aggregate operation tests for DECIMAL:
+  - `COUNT(DECIMAL col)` on NULL-only column → `0`
+  - `SUM(DECIMAL col)` on NULL-only column → NULL
+  - `MIN/MAX(DECIMAL col)` on NULL-only column → NULL
+  - `SUM` overflow: `SUM` of values exceeding ±(10^36 − 1) → `DecimalError::Overflow`
+  - `AVG(DECIMAL '1.000000')` → result scale ≥ 6 (input_scale + 6 capped at 36)
+- [ ] Aggregate operation tests for mixed NULL/data columns:
+  - Verify NULLs are excluded from SUM/AVG/MIN/MAX but counted by COUNT
+  - Verify NULL sorts as lowest in MIN/MAX
 - [ ] NULL handling tests: BIGINT/DECIMAL NULL in expressions, IS NULL, ORDER BY NULL
 - [ ] Division by zero tests:
   - `BIGINT '1' / BIGINT '0'` → Error

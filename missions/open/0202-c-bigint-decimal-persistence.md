@@ -32,11 +32,11 @@ Add persistence layer support for BIGINT and DECIMAL: wire tags 13/14 in seriali
   - Header upgrade and DDL commit occur in the same WAL transaction (atomic)
   - If WAL segment is corrupt (checksum failure), skip entire segment — no partial replay
 - [ ] **Lexicographic key encoding implemented and verified for BIGINT** (§6.11 format):
-  - Format: `[limb_count_with_sign: u8][limb0: BE][limb1: BE]...[limbN: BE][zero_pad: 8 × (64 − N)]` — 521 bytes max
+  - Format: `[limb_count_with_sign: u8][limb0: BE][limb1: BE]...[limbN: BE][zero_pad: 8 × (64 − N)]`
   - Sign encoding: positive = `num_limbs | 0x80`; negative = `0x80 − num_limbs`
   - Ordering: negative < zero < positive; limb-by-limb big-endian within same sign
   - Verification test vectors: `-2^64 < -1 < 0 < 1 < 2^64` in encoded key space
-  - Verify encoded key length is 521 bytes (1 byte sign-prefix + 64 × 8 bytes padded limbs)
+  - **Verify encoded key length:** 1 byte sign-prefix + 64 × 8 bytes padded limbs = **521 bytes max** (per RFC §6.11 stated maximum). Note: the format description `[limb_count_with_sign: u8][limb0: BE]...[limbN: BE][zero_pad: 8 × (64 − N)]` implies 1 + 8×N + 8×(64−N) = 513 bytes for N limbs, but RFC §6.11 and §Storage Overhead both specify 521 bytes max. **The implementer must verify against RFC-0110 if the byte count differs from the format description** — flag any discrepancy to RFC maintainers.
 - [ ] **Lexicographic key encoding implemented and verified for DECIMAL** (§6.11 format):
   - Format: `[mantissa_byte0_xor_0x80][mantissa_bytes_1_15][scale: BE u8]` — 17 bytes total
   - Sign-flip: XOR byte 0 of mantissa with `0x80`; zero mantissa encodes as `0x80...00`
@@ -72,6 +72,7 @@ High — lexicographic encoding requires careful implementation; blocking for pr
 
 ## Reference
 
+- RFC-0202-A §4a (NUMERIC_SPEC_VERSION wire format and upgrade trigger)
 - RFC-0202-A §5 (Persistence Wire Format)
 - RFC-0202-A §6.10 (BTree index type selection)
 - RFC-0202-A §6.11 (Lexicographic key encoding)

@@ -35,8 +35,7 @@ Integrate BIGINT and DECIMAL into Stoolap's core type system: DataType enum exte
   - `from_str_versioned("DECIMAL", 2)` → `Ok(DataType::Decimal)`
   - `from_str_versioned("DECIMAL(10,2)", 1)` → `Ok(DataType::Float)` (legacy parameterized form)
   - `from_str_versioned("DECIMAL(10,2)", 2)` → `Ok(DataType::Decimal)`
-- [ ] `as_int64()` updated for BIGINT Extension per RFC §6.13: `BigInt::try_from(&bi).ok()` — returns `None` for BIGINT values exceeding i64 range
-- [ ] `as_float64()` updated for DECIMAL Extension per RFC §6.13: `mantissa as f64 / 10f64.powi(scale as i32)` — note: precision loss for |mantissa| > 2^53
+  - **Note:** `as_int64()` and `as_float64()` Extension methods are in mission 0202-b scope (value.rs), not types.rs — per RFC §6.13 Key Files table
 
 ## Dependencies
 
@@ -56,10 +55,12 @@ Medium — primarily type system extension and parser integration
 ## Reference
 
 - RFC-0202-A §1 (DataType discriminants)
+- RFC-0202-A §4a (NUMERIC_SPEC_VERSION migration gate)
 - RFC-0202-A §6.1 (FromStr update)
 - RFC-0202-A §6.2 (Display update)
 - RFC-0202-A §6.3 (is_numeric, is_orderable, from_u8)
-- RFC-0202-A §4a (NUMERIC_SPEC_VERSION migration gate)
+- RFC-0202-A §6.4–§6.9 (Value layer extensions — implemented in mission 0202-b)
+- RFC-0202-A §6.13 (as_int64/as_float64 Extension methods — implemented in mission 0202-b)
 
 ## Notes
 

@@ -47,6 +47,11 @@ Extend Stoolap's SchemaColumn and Value types with BIGINT/DECIMAL support: decim
   - BIGINT: calls `ba.compare(&bb)` returning Ordering via match with explicit -1/0/1/ wildcard arms
   - DECIMAL: calls `decimal_cmp(&da, &db)` returning Ordering via match with explicit -1/0/1/ wildcard arms
   - The wildcard arms (`n => { debug_assert!(false, ...); Ordering::Greater }`) must be included per RFC
+- [ ] `Ord for Value` updated for BIGINT/DECIMAL per RFC §6.11:
+  - BIGINT: deserialize both values, use `BigInt::compare()` for ordering
+  - DECIMAL: deserialize both values, use `decimal_cmp()` for ordering
+  - If deserialization fails (corrupt data), fall back to byte comparison with debug assertion
+  - **Note:** `Ord` cannot return errors — unlike `compare_same_type()`, it must provide a total ordering. Corrupt BIGINT/DECIMAL data falls back to byte comparison.
 - [ ] `as_int64()` updated for BIGINT Extension per RFC §6.13: `BigInt::try_from(&bi).ok()` — returns `None` for BIGINT values exceeding i64 range
 - [ ] `as_float64()` updated for DECIMAL Extension per RFC §6.13: `mantissa as f64 / 10f64.powi(scale as i32)` — precision loss for |mantissa| > 2^53 is expected; BIGINT→f64 not provided (values may exceed f64 range)
 
@@ -76,6 +81,7 @@ Medium — Value layer extension with type coercion rules
 ## Reference
 
 - RFC-0202-A §2 (Value constructors/extractors — BigIntEncoding wire format)
+- RFC-0202-A §6.3 (Display update — Value::Display for BIGINT/DECIMAL)
 - RFC-0202-A §6.4 (as_string update)
 - RFC-0202-A §6.5 (NULL handling)
 - RFC-0202-A §6.6 (compare_same_type — includes wildcard arm requirement)
@@ -83,3 +89,5 @@ Medium — Value layer extension with type coercion rules
 - RFC-0202-A §6.8 (from_typed update — Result semantics)
 - RFC-0202-A §6.8a (stoolap_parse_decimal — standalone parser function)
 - RFC-0202-A §6.9 (SchemaColumn extension — decimal_scale: Option<u8>)
+- RFC-0202-A §6.11 (Ord for Value — BIGINT/DECIMAL lexicographic ordering for BTree indexes)
+- RFC-0202-A §6.13 (as_int64/as_float64 Extension methods)

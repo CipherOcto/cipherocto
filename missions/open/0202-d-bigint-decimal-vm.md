@@ -74,4 +74,4 @@ Medium — VM dispatch and gas integration
 - RFC-0202-A §8 (Gas Metering Model)
 - RFC-0110 §Operations (BigInt ADD, SUB, MUL, DIV, MOD, CMP, SHL, SHR, BITLEN — SQRT is N/A for BIGINT per RFC §7)
 - RFC-0111 §Operations (Decimal ADD, SUB, MUL, DIV, SQRT, CMP)
-- **BITLEN gas note:** RFC-0110 §8 does not yet specify a gas formula for BITLEN; use `10 + limbs` as a conservative estimate pending RFC-0110 amendment
+- **BITLEN gas:** RFC-0110 §8 specifies `10 + limbs` (v2.14). No amendment needed — implement per RFC.

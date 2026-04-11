@@ -2,7 +2,7 @@
 
 ## Status
 
-**Version:** 2.13 (2026-03-16)
+**Version:** 2.14 (2026-04-11)
 **Status:** Accepted
 
 > **Note:** This RFC is extracted from RFC-0106 (Deterministic Numeric Tower) as part of the Track B dismantling effort.
@@ -973,6 +973,7 @@ BIGINT operations MUST scale gas costs with operand size to prevent DoS attacks:
 | CMP       | 5 + limbs                  | 69                 |
 | SHL       | 10 + limbs                 | 74                 |
 | SHR       | 10 + limbs                 | 74                 |
+| BITLEN    | 10 + limbs                 | 74                 | (Scans all limbs to find most significant set bit; worst case scans all 64 limbs.) |
 
 **Unified Limits:**
 
@@ -990,12 +991,14 @@ Operations must reject if `limbs > MAX_LIMBS`.
 | Operation | Max Formula  | Max (64 limbs) |
 | --------- | ------------ | -------------- |
 | ADD/SUB   | 10 + 64      | 74             |
+| SHL/SHR/BITLEN | 10 + 64 | 74             |
 | MUL       | 50 + 2×64×64 | 8,242          |
 | DIV/MOD   | 50 + 3×64×64 | 12,362         |
 | CMP       | 5 + 64       | 69             |
 
 **Proof:** All operations are ≤ 12,362 gas < MAX_BIGINT_OP_COST (15,000). ✓
 The worst case is a 64-limb DIV: 50 + 3×4096 = 12,362.
+SHL/SHR/BITLEN share the same worst-case (74) as ADD/SUB.
 
 **Per-Block BIGINT Gas Budget:** 50,000 gas hard limit per block for all BIGINT operations combined.
 [TBD: This limit will be calibrated against target block time and expected transaction
@@ -1498,6 +1501,12 @@ Increment requires:
 - After H_upgrade, reject version N blocks
 
 Version 0 is reserved and MUST NOT be used.
+
+## Version History
+
+| Version | Date | Changes |
+|---------|------|---------|
+| 2.14 | 2026-04-11 | Added BITLEN to gas model table with formula `10 + limbs` and worst-case bound proof. Added SHL/SHR/BITLEN row to worst-case proof table. |
 
 ## References
 

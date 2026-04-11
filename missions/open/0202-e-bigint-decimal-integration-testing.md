@@ -14,17 +14,60 @@ End-to-end integration testing and benchmarking for BIGINT/DECIMAL in stoolap. V
 
 ## Acceptance Criteria
 
-- [ ] Integration tests with RFC-0110 test vectors: bigint arithmetic, overflow, SHL/SHR, bitlen, cmp
-- [ ] Integration tests with RFC-0111 test vectors: decimal arithmetic, sqrt, overflow, canonicalization
+- [ ] Integration tests with RFC-0110 test vectors (56 entries with Merkle root):
+  - Execute all 56 test vectors for BIGINT (arithmetic, overflow, SHL, SHR, bitlen, cmp)
+  - Verify Merkle root of test vector outputs matches RFC-0110 §Test Vectors Merkle root
+  - Document Merkle verification result (pass/fail with root hash)
+- [ ] Integration tests with RFC-0111 test vectors (57 entries with Merkle root):
+  - Execute all 57 test vectors for DECIMAL (arithmetic, sqrt, overflow, canonicalization)
+  - Verify Merkle root of test vector outputs matches RFC-0111 §Test Vectors Merkle root
+  - Include explicit DECIMAL SQRT test vectors from RFC-0202-A §9:
+    - `SQRT(DECIMAL '2.00')` → `{mantissa: 141, scale: 2}` (scale = ⌈(2+1)/2⌉ = 2)
+    - `SQRT(DECIMAL '0.000001')` → `{mantissa: 10, scale: 4}` (scale = ⌈(6+1)/2⌉ = 4)
+    - Verify result scale computation matches `⌈(input_scale + 1) / 2⌉`
 - [ ] SQL parser tests for `BIGINT '...'` and `DECIMAL '...'` literals
 - [ ] SQL parser tests for `DECIMAL(p,s)` and `NUMERIC(p,s)` DDL column creation
-- [ ] **Verify `BigInt::from_str("-0")` produces canonical zero** — compare zero encoding with `BigInt::from_str("0")`; if different, update test vectors accordingly
-- [ ] Cross-type comparison tests: BIGINT vs Integer, DECIMAL vs Float, BIGINT vs DECIMAL
-- [ ] Serialization round-trip tests: BIGINT → serialize → deserialize → same value
-- [ ] Serialization round-trip tests: DECIMAL → serialize → deserialize → same value
-- [ ] **Benchmark serialization/deserialization gas costs** across representative payload sizes (1-limb through 64-limb BIGINT; scale 0 through scale 36 DECIMAL). Compare measured values against §8 formulas. If divergence exceeds 2×, update formulas.
-- [ ] BTree index range scan tests: `WHERE bigint_col > BIGINT '1000'`, `WHERE dec_col < DECIMAL '99.99'`
+- [ ] **Canonical zero verification:** `BigInt::from_str("-0")` and `BigInt::from_str("0")` must produce byte-identical serialization:
+  - Serialize both to wire format
+  - Assert wire bytes are identical: `[13]01000000010000000000000000000000`
+  - If bytes differ, update RFC §9 test vectors to reflect actual canonical form and file issue against determin crate
+- [ ] Cross-type comparison tests: **execute only after Phase 3 (mission 0202-d) is complete** — these tests will panic during Phase 1-2 via `as_float64().unwrap()`. Phase 3 implements the safe cross-type comparison dispatch that avoids the panic.
+  - BIGINT vs Integer
+  - DECIMAL vs Float
+  - BIGINT vs DECIMAL
+- [ ] Serialization round-trip tests for BIGINT (verify against RFC §9 wire format test vectors):
+  - BIGINT '1' serializes to `[13]01000000010000000100000000000000`
+  - BIGINT '-1' serializes to `[13]01FF0000010000000100000000000000`
+  - BIGINT '0' serializes to `[13]01000000010000000000000000000000`
+  - BIGINT '2^64' serializes to `[13]010000000200000000000000000000000100000000000000`
+  - BIGINT → serialize → deserialize → same value (byte-identical)
+- [ ] Serialization round-trip tests for DECIMAL (verify against RFC §9 wire format test vectors):
+  - DECIMAL '123.45' serializes to `[14]00000000000000000000000000003039000000000000000002`
+  - DECIMAL '1' serializes to `[14]00000000000000000000000000000001000000000000000000`
+  - DECIMAL '0' serializes to `[14]00000000000000000000000000000000000000000000000000`
+  - DECIMAL '-12.3' serializes to `[14]FFFFFFFFFFFFFFFFFFFFFFFFFFFFFF85000000000000000001`
+  - DECIMAL → serialize → deserialize → same value (byte-identical)
+- [ ] **Benchmark serialization/deserialization gas costs** per RFC §8:
+  - BIGINT: measure `BigInt::serialize()` and `BigInt::deserialize()` gas across 1-limb, 16-limb, 32-limb, 64-limb payloads
+  - DECIMAL: measure `decimal_to_bytes()` and `decimal_from_bytes()` gas across scale 0, 12, 24, 36
+  - Compare measured values against RFC §8 estimates (serialize ~100, deserialize ~100 for BIGINT; ~20 each for DECIMAL)
+  - If measured/estimated ratio exceeds 2× in either direction, update the RFC §8 formulas before production deployment
+  - Document benchmark methodology and results
+- [ ] BTree index range scan tests with lexicographic ordering verification:
+  - BIGINT: verify `BIGINT '-100' < BIGINT '0' < BIGINT '100'` in index scan results
+  - DECIMAL: verify `DECIMAL '-12.3' < DECIMAL '0' < DECIMAL '12.3'` in index scan results
+  - Verify range scan returns correctly ordered results (not just non-empty results)
+  - `WHERE bigint_col > BIGINT '1000'`, `WHERE dec_col < DECIMAL '99.99'`
 - [ ] NULL handling tests: BIGINT/DECIMAL NULL in expressions, IS NULL, ORDER BY NULL
+- [ ] Division by zero tests:
+  - `BIGINT '1' / BIGINT '0'` → Error
+  - `DECIMAL '1.0' / DECIMAL '0.0'` → Error
+  - Verify error is returned, not panic or incorrect value
+- [ ] `as_int64()` and `as_float64()` round-trip tests:
+  - `BIGINT '42'.as_int64()` → `Some(42)`
+  - `BIGINT '99999999999999999999'.as_int64()` → `None` (out of i64 range)
+  - `DECIMAL '0.1'.as_float64()` → `10.0` (exact representable)
+  - `DECIMAL '12345678901234567890.0'.as_float64()` → f64 value (precision loss acceptable per RFC §6.13)
 
 ## Dependencies
 

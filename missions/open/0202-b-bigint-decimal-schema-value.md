@@ -47,6 +47,8 @@ Extend Stoolap's SchemaColumn and Value types with BIGINT/DECIMAL support: decim
   - BIGINT: calls `ba.compare(&bb)` returning Ordering via match with explicit -1/0/1/ wildcard arms
   - DECIMAL: calls `decimal_cmp(&da, &db)` returning Ordering via match with explicit -1/0/1/ wildcard arms
   - The wildcard arms (`n => { debug_assert!(false, ...); Ordering::Greater }`) must be included per RFC
+- [ ] `as_int64()` updated for BIGINT Extension per RFC §6.13: `BigInt::try_from(&bi).ok()` — returns `None` for BIGINT values exceeding i64 range
+- [ ] `as_float64()` updated for DECIMAL Extension per RFC §6.13: `mantissa as f64 / 10f64.powi(scale as i32)` — precision loss for |mantissa| > 2^53 is expected; BIGINT→f64 not provided (values may exceed f64 range)
 
 ## Dependencies
 
@@ -68,6 +70,8 @@ Medium — Value layer extension with type coercion rules
 **Cross-type comparison hazard:** RFC-0202-A §6.12 warns that adding BigInt/Decimal to is_numeric() (Phase 1) creates a latent as_float64().unwrap() panic for cross-type comparisons. This mission (Phase 1b) implements compare_same_type() but Phase 3 (mission 0202-d) implements the safe cross-type comparison dispatch. During Phase 1-2, comparing BigInt/Decimal with other numeric types will panic. No such tests should be written or executed until Phase 3 is complete.
 
 **Integer→DECIMAL shortcut:** RFC §6.7 specifies an INTEGER→DECIMAL shortcut (`Decimal::new(i128::from(i), 0)`) separate from the full coercion hierarchy. This is a direct From implementation, not via BIGINT. AC-8 must implement this shortcut.
+
+**NULL values:** `Value::Null(DataType::Bigint)` and `Value::Null(DataType::Decimal)` follow existing typed NULL patterns. No special constructors needed — `Value::Null(dt)` where `dt` is the column's DataType. The extractors `as_bigint()` and `as_decimal()` return `None` for NULL values.
 
 ## Reference
 

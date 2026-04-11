@@ -28,6 +28,15 @@ Integrate BIGINT and DECIMAL into Stoolap's core type system: DataType enum exte
   - `test_datatype_u8_conversion`: add `from_u8(13)` → `Bigint` and `from_u8(14)` → `Decimal`
   - `test_datatype_from_str`: add cases for `"BIGINT"`, `"DECIMAL"`, `"NUMERIC(10,2)"`, `"NUMERIC"` → Decimal
   - `test_datatype_display`: assert `Bigint.display()` → "BIGINT" and `Decimal.display()` → "DECIMAL"
+- [ ] Unit tests for `from_str_versioned()` in persistence layer:
+  - `from_str_versioned("BIGINT", 1)` → `Ok(DataType::Integer)`
+  - `from_str_versioned("DECIMAL", 1)` → `Ok(DataType::Float)`
+  - `from_str_versioned("BIGINT", 2)` → `Ok(DataType::Bigint)`
+  - `from_str_versioned("DECIMAL", 2)` → `Ok(DataType::Decimal)`
+  - `from_str_versioned("DECIMAL(10,2)", 1)` → `Ok(DataType::Float)` (legacy parameterized form)
+  - `from_str_versioned("DECIMAL(10,2)", 2)` → `Ok(DataType::Decimal)`
+- [ ] `as_int64()` updated for BIGINT Extension per RFC §6.13: `BigInt::try_from(&bi).ok()` — returns `None` for BIGINT values exceeding i64 range
+- [ ] `as_float64()` updated for DECIMAL Extension per RFC §6.13: `mantissa as f64 / 10f64.powi(scale as i32)` — note: precision loss for |mantissa| > 2^53
 
 ## Dependencies
 

@@ -14,14 +14,38 @@ Add BIGINT and DECIMAL operation dispatch in Stoolap's expression VM with formul
 
 ## Acceptance Criteria
 
-- [ ] BIGINT operation dispatch added in `src/executor/expression/vm.rs`: ADD, SUB, MUL, DIV, MOD, CMP, SHL, SHR, BITLEN, SQRT
+- [ ] BIGINT operation dispatch added in `src/executor/expression/vm.rs`: ADD, SUB, MUL, DIV, MOD, CMP, SHL, SHR, BITLEN
+  - Division by zero check: before executing DIV, verify divisor is non-zero. If zero, return `Error::invalid_argument("division by zero")` and consume pre-flight gas only (10 gas), not full operation gas.
+  - Pre-flight bounds check for SHL/SHR: verify shift count is within valid bounds (0 ≤ shift < 8 × num_limbs). Pre-flight check consumes 10 gas. If bounds check fails, return error without executing full operation.
 - [ ] DECIMAL operation dispatch added: ADD, SUB, MUL, DIV, SQRT, CMP
-- [ ] Gas metering wired: compute gas per RFC-0110/RFC-0111 formulas using operand sizes (limb count for BIGINT, scales for DECIMAL)
+  - Division by zero check: before executing DIV, verify divisor is non-zero. If zero, return `Error::invalid_argument("division by zero")` and consume pre-flight gas only.
+  - `decimal_div(a, b, 0)`: the third parameter `_target_scale` is ignored by the implementation — pass `0` as placeholder per RFC §7.
+- [ ] BIGINT aggregate dispatch: COUNT, SUM, MIN, MAX, AVG
+  - COUNT: returns INTEGER, never overflows
+  - SUM: returns BIGINT, returns `BigIntError::OutOfRange` when sum exceeds ±(2^4096 − 1); map to `Error::OutOfGas`
+  - MIN/MAX: returns BIGINT, never overflows
+  - AVG: blocked — returns `Error::NotSupported("AVG on BIGINT requires RFC-0202-B")` until RFC-0202-B implements internal BIGINT→DECIMAL conversion
+- [ ] DECIMAL aggregate dispatch: COUNT, SUM, MIN, MAX, AVG
+  - COUNT: returns INTEGER, never overflows
+  - SUM: returns DECIMAL, returns `DecimalError::Overflow` if sum exceeds ±(10^36 − 1)
+  - MIN/MAX: returns DECIMAL, never overflows
+  - AVG: returns DECIMAL; result scale = `min(36, input_scale + 6)`; returns `DecimalError::Overflow` if sum overflows
+- [ ] Gas metering wired per RFC §8 formulas:
+  - BIGINT: ADD/SUB = 10 + limbs; MUL = 50 + 2 × limbs × limbs; DIV/MOD = 50 + 3 × limbs × limbs; CMP = 5 + limbs; SHL/SHR = 10 + limbs; BITLEN = 10 + limbs (conservative estimate — verify against RFC-0110 reference before production)
+  - DECIMAL: ADD/SUB = 10 + 2 × |scale_a − scale_b|; MUL = 20 + 3 × scale_a × scale_b; DIV = 50 + 3 × scale_a × scale_b; SQRT = 100 + 5 × scale; CMP uses `decimal_cmp`
+  - Per-operation caps: `MAX_BIGINT_OP_COST` (15,000) and `MAX_DECIMAL_OP_COST` (5,000) from determin crate
 - [ ] Per-operation gas accumulated in query gas accumulator
 - [ ] `Error::OutOfGas` returned when query exceeds configurable per-query limit (default: 50,000)
-- [ ] `MAX_BIGINT_OP_COST` (15,000) and `MAX_DECIMAL_OP_COST` (5,000) as per-operation caps
-- [ ] Cost estimates added for optimizer (plan cost modeling)
-- [ ] Streaming aggregation gas checked per-row (SUM, AVG)
+- [ ] Streaming aggregation gas checked per-row (SUM, AVG) per RFC §7a:
+  - BIGINT SUM: 10 + limbs per row
+  - DECIMAL SUM: 10 + 2 × scale per row
+  - BIGINT AVG: 15 + 2 × limbs per row
+  - DECIMAL AVG: 15 + 3 × scale per row (input column scale, not result scale)
+- [ ] Cost estimates added for optimizer (plan cost modeling):
+  - Use per-operation gas formulas as the cost unit
+  - BIGINT: cost scales with limb count (1–64 limbs)
+  - DECIMAL: cost scales with scale (0–36)
+  - Provide estimated costs for query planning (e.g., index scan vs. table scan decisions involving BIGINT/DECIMAL columns)
 
 ## Dependencies
 

@@ -2,7 +2,7 @@
 
 ## Status
 
-**Version:** 1.17 (2026-04-11)
+**Version:** 1.18 (2026-04-11)
 **Status:** Draft
 
 ## Authors
@@ -849,11 +849,11 @@ This gives **wrong numeric order** for BIGINT (limbs are little-endian) and DECI
 
 **BIGINT lexicographic encoding:** BIGINT values have variable length (1–64 limbs), requiring length-prefix encoding for BTree comparison. Format: `[limb_count_with_sign: u8][limb0: BE][limb1: BE]...[limbN: BE][zero_pad: 8 × (64 − N)]` — limbs in big-endian, padded to 64 limbs (512 bytes) total, plus 1 byte sign-prefix = **521 bytes max**.
 
-Sign-encoding in byte 0: For positive values, `byte0 = num_limbs | 0x80` (sets high bit). For negative values, `byte0 = 0x80 − num_limbs` (flips high bit and encodes count in lower bits). This ensures byte 0 determines sign ordering directly: all negative values (byte 0 in range `0x01..0x80`) sort before all positive values (byte 0 in range `0x81..0xFE`), with zero (byte 0 = `0x80`) sorted between negatives and positives.
+Sign-encoding in byte 0: For positive values, `byte0 = num_limbs | 0x80` (sets high bit). For negative values, `byte0 = 0x80 − num_limbs` (flips high bit and encodes count in lower bits). This ensures byte 0 determines sign ordering directly: all negative values (byte 0 in range `0x01..0x80`) sort before all positive values (byte 0 in range `0x81..0xFE`). Zero (`num_limbs = 1`, `byte 0 = 0x81`) sorts before `BIGINT '1'` (also `byte 0 = 0x81`) because zero's limb data (all zeros) sorts before `1`'s limb data (non-zero) — no special case needed for zero.
 
 Within negative values: smaller magnitude (fewer limbs) is more negative. Within positive values: larger magnitude (more limbs) is larger. Zero padded bytes (`0x00...00`) sort correctly as the lowest bytes within the same limb.
 
-Comparison: (1) byte 0 (signed limb count) — negative < zero < positive; (2) if same sign, byte-by-byte limb data (sign-flip on `limb0[0]` XOR `0x80`). Example: `BIGINT '1'` → `[81][80...01][zero_pad×63]`, `BIGINT '-1'` → `[7F][7F...FF][zero_pad×63]`, `BIGINT '2^64'` → `[82][80...0001][zero_pad×62]`, `BIGINT '-2^64'` → `[7E][7F...FF][zero_pad×62]`.
+Comparison: (1) byte 0 (signed limb count) — negative < zero < positive; (2) if same sign, byte-by-byte limb data. Example: `BIGINT '1'` → `[81][80...01][zero_pad×63]`, `BIGINT '0'` → `[81][00...00][zero_pad×63]` (sorts before `1` due to limb data), `BIGINT '-1'` → `[7F][7F...FF][zero_pad×63]`, `BIGINT '2^64'` → `[82][80...0001][zero_pad×62]`, `BIGINT '-2^64'` → `[7E][7F...FF][zero_pad×62]`.
 
 **DECIMAL lexicographic encoding:** The 24-byte canonical format uses i128 big-endian two's complement mantissa (bytes 0-15), which sorts incorrectly as unsigned bytes (two's complement places -1 above +1). Sign-flip transformation: XOR byte 0 of the mantissa with `0x80` to invert the sign bit. Zero mantissa (`0x00...00`) is treated specially: encode as `0x80...00` (sign-bit set, magnitude zero) to sort between negative values and positive values — numerically, `−∞ < −N < 0 < +N < +∞`, so zero must sort after all negatives and before all positives. Negative zero (if non-canonical input produces mantissa with sign bit set) is not representable; `Decimal::new(0, s)` canonicalizes to positive zero. Resulting BTree key format: `[mantissa_byte0_xor_0x80][mantissa_bytes_1_15][scale: BE u8]`. Example: `DECIMAL '0.0'` (mantissa=0, scale=0) → encoded mantissa `0x80` followed by 15 zeros; `DECIMAL '-12.3'` (mantissa=-123) → high byte `0xFF ^ 0x80 = 0x7F`, then `0x00...85`.
 
@@ -1321,6 +1321,7 @@ Re-implementing the algorithms would introduce consensus risk. The determin crat
 
 | Version | Date | Changes |
 |---------|------|---------|
+| 1.18 | 2026-04-11 | Round 7 review: zero byte 0 description corrected — zero has `byte 0 = 0x81` (1 limb \| 0x80), same as BIGINT '1'; zero sorts before '1' via limb data tiebreak; added zero to encoding examples. |
 | 1.17 | 2026-04-11 | Round 6 review fixes: (1) CRITICAL: BIGINT lexicographic encoding fixed — sign bit now encoded in byte 0 via `num_limbs | 0x80` (positive) / `0x80 - num_limbs` (negative), fixing wrong sort order for mixed-sign comparisons; (2) BIGINT SUM overflow corrected: `DecimalError::Overflow` → `BigIntError::OutOfRange`; (3) BIGINT AVG deferred: returns `Error::NotSupported` until RFC-0202-B implements internal BIGINT→DECIMAL conversion; (4) WAL corrupt segment handling: skip segment entirely on partial write/checksum failure; (5) DECIMAL AVG gas clarified: input column scale not result scale; (6) DECIMAL INSERT scale: fewer places stored as-is (no padding); (7) BIGINT deserialize comment clarified: caller must slice input; (8) Future RFC DIV gas compatibility note added. |
 | 1.16 | 2026-04-11 | Round 5 review follow-up: (1) WAL atomicity text made recovery replay assumption explicit; (2) Phase 2 lexicographic encoding task marked **blocking for production deployment**; (3) DECIMAL DIV gas note clarified: gas based on input operand scales, not internally computed target scale; (4) BIGINT→DECIMAL coercion error corrected: `Error::UnsupportedCoercion` → `Error::NotSupported` (verified in stoolap error.rs). |
 | 1.15 | 2026-04-10 | Round 5 review fixes: (1) CRITICAL: Added persistence vs. index encoding distinction paragraph — clarifies §5 wire format (raw 24-byte) and §6.11 lexicographic encoding (transformed) serve different purposes; (2) CRITICAL: Added WAL atomicity note to §4a — header upgrade and DDL commit are in same WAL transaction, no crash recovery gap; (3) HIGH: Clarified storage overhead (521 bytes serialized) is distinct from in-memory CompactArc overhead; (4) MAJOR: Added limb count/scale extraction note for gas — num_limbs from BigIntEncoding header, scale from byte 23; (5) MODERATE: Added NULL three-valued logic specifics — NULL comparison, IS NULL, ORDER BY NULL, GROUP BY NULL. |

@@ -437,6 +437,10 @@ CREATE TABLE teams (
 -- CRITICAL: Index on key_hash for lookup path (not key_id)
 -- This accelerates the actual lookup: WHERE key_hash = $1 AND revoked = 0
 CREATE INDEX idx_api_keys_hash_active ON api_keys(key_hash) WHERE revoked = 0;
+-- Note: This partial index provides storage savings (~10% of revoked keys excluded)
+-- but does NOT accelerate the superset query WHERE key_hash = $1 AND revoked = 0
+-- in Phase 1 (exact-match only). Phase 2 implication matching would enable index usage.
+-- See RFC-0914 Future Work item F7.
 -- Ensure no duplicate key hashes
 CREATE UNIQUE INDEX idx_api_keys_key_hash_unique ON api_keys(key_hash);
 CREATE INDEX idx_api_keys_team_id ON api_keys(team_id);
@@ -2072,6 +2076,7 @@ The following features are documented but NOT yet implemented:
 - F4: Team-based access control (RBAC)
 - F5: Access group management (LiteLLM compatible)
 - F6: Model-level budget controls
+- F7: **RFC-0914 Partial Indexes (Phase 2)** — Implication-based superset matching for partial index to be selected by queries. Deferred until Phase 2 implementation. Phase 1 exact-match partial indexes provide marginal storage savings (~10%) without query speedup for the superset access pattern used here. See RFC-0914 for details.
 
 ## Rationale
 

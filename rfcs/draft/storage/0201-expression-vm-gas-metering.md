@@ -120,6 +120,10 @@ If `charge` returns `Error::OutOfGas`, the VM returns `Err(Error::OutOfGas { ...
 |-------|-----------|----------|
 | OutOfGas | `meter.charge()` fails | `Err(Error::OutOfGas)` from dispatch |
 
+## Open Questions
+
+None at this time.
+
 ## Performance Targets
 
 | Metric | Target | Notes |
@@ -221,4 +225,4 @@ Not all consumers of the expression VM are blockchain nodes. SQL engines and tes
 
 ## Related Use Cases
 
-- [Mission 0202-d: Expression VM Bug Fixes + Gas Integration](../../missions/claimed/0202-d-expression-vm-bug-fixes.md)
+- [Mission 0202-d: Expression VM Bug Fixes + Gas Integration](../../missions/claimed/0202-d-bigint-decimal-vm.md)

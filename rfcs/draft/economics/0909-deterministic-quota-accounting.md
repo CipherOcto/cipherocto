@@ -942,6 +942,15 @@ Merkle ledger snapshots.
 
 Publishing usage proofs to settlement layers.
 
+### Decimal cost representation
+
+RFC-0903 and this RFC use integer cost units (e.g., nanodollars) to avoid floating-point determinism. RFC-0903 predates RFC-0202 (BIGINT/DECIMAL) and RFC-0202-B (DQA). A future revision could explore DFP or DQA for `cost_amount` to represent real pricing like `$0.0016` directly, requiring:
+- Canonical unit definition (store in smallest unit)
+- Avoid division by pre-computing cost tables  
+- Commit unit interpretation via `pricing_hash`
+
+This is a breaking change to the ledger schema and requires cross-RFC coordination.
+
 ## Relationship to RFC-0903
 
 RFC-0903 defines:

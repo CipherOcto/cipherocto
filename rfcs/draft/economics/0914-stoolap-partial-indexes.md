@@ -2,7 +2,7 @@
 
 ## Status
 
-Draft (v12.0)
+Draft (v13.0)
 
 ## Authors
 
@@ -197,6 +197,8 @@ predicate_binary ::= VERSION (u8) + LENGTH (u16) + rkyv(Expression)
 - New code reading old format: if Expression structure unchanged, deserialize normally
 - If Expression structure changes in a future version, version header allows graceful error
 
+**Operational requirement:** Before downgrading from v4.0+ to pre-v4.0, users MUST drop all partial indexes first. Failure to do so will result in corrupted partial indexes — old code will misinterpret the VERSION byte as rkyv data, causing deserialization failures and potential data corruption. Implementation MUST provide a `stoolap index-convert` tool to convert partial indexes to full indexes as part of the downgrade workflow.
+
 **Note on serialization format:** The RFC uses `rkyv` because stoolap already uses rkyv for zero-copy serialization elsewhere. If `Expression` does not implement `rkyv::Archive`, a fallback to `serde` serialization with `bincode` may be used, at the cost of zero-copy properties. Implementation should verify which serialization format is available and document the choice.
 
 ### Storage Format
@@ -218,7 +220,7 @@ The `predicate_hash` stored in `IndexMetadata` is used for **query planning only
 3. Since entries don't contain predicate metadata, we must evaluate the predicate against each row
 4. The `predicate_hash` enables O(1) lookup to find candidate indexes during planning; actual filtering happens at execution time
 
-**Exception: Index-only scan.** If the query predicate exactly matches the index predicate AND all columns in the predicate are indexed columns, no re-evaluation is needed — the index itself guarantees the predicate is satisfied.
+**Exception: Index-only scan.** If the query predicate exactly matches the index predicate AND all columns in the predicate are indexed columns, no re-evaluation is needed — the index itself guarantees the predicate is satisfied. **However, MVCC visibility checks still apply:** index-only scans must verify row visibility against the current transaction snapshot, not just return indexed entries blindly.
 
 **Predicate hash computation:**
 
@@ -473,21 +475,21 @@ A query predicate Q **implies** an index predicate P if all rows satisfying Q al
 
 ### Error Handling
 
-| Code   | Condition                                            | Handling                                                                         |
-| ------ | ---------------------------------------------------- | -------------------------------------------------------------------------------- |
-| `E001` | Predicate references non-existent column             | Parser error: "column 'x' does not exist in table 't'"                           |
-| `E002` | Predicate contains subquery                          | Parser error: "subqueries not allowed in partial index predicates"               |
-| `E003` | Predicate contains function call                     | Parser error: "function calls not allowed in partial index predicates"           |
-| `E004` | Predicate exceeds depth limit                        | Parser error: "predicate too complex (max depth 20)"                             |
-| `E005` | Predicate IN list too large                          | Parser error: "IN list exceeds 32 items"                                         |
-| `E006` | Predicate serialization fails                        | Internal error: "predicate encoding failed"                                      |
-| `E007` | Predicate evaluation error                           | DML: operation succeeds, row not indexed, warning logged; Query: return error    |
-| `E008` | Unique partial index with mutable predicate          | Parser error: "predicate contains mutable operator ('>', '>=', '<', '<=', '!=')" |
-| `E009` | Predicate contains EXISTS                            | Parser error: "EXISTS not allowed in partial index predicates"                   |
-| `E010` | Predicate contains LIKE/ILIKE                        | Parser error: "LIKE/ILIKE not allowed in partial index predicates"               |
-| `E011` | Multiple BETWEEN on same column                      | Parser error: "multiple BETWEEN on same column in predicate"                     |
-| `E012` | Unsupported serialization format version             | Runtime error: "predicate format version not supported"                          |
-| `W001` | IF NOT EXISTS: index exists with different predicate | Success with warning: "index 'idx' already exists with different predicate"      |
+| Code   | Condition                                            | Handling                                                                                                                                                                                                                                                                                                                                                                          |
+| ------ | ---------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `E001` | Predicate references non-existent column             | Parser error: "column 'x' does not exist in table 't'"                                                                                                                                                                                                                                                                                                                            |
+| `E002` | Predicate contains subquery                          | Parser error: "subqueries not allowed in partial index predicates"                                                                                                                                                                                                                                                                                                                |
+| `E003` | Predicate contains function call                     | Parser error: "function calls not allowed in partial index predicates"                                                                                                                                                                                                                                                                                                            |
+| `E004` | Predicate exceeds depth limit                        | Parser error: "predicate too complex (max depth 20)"                                                                                                                                                                                                                                                                                                                              |
+| `E005` | Predicate IN list too large                          | Parser error: "IN list exceeds 32 items"                                                                                                                                                                                                                                                                                                                                          |
+| `E006` | Predicate serialization fails                        | Internal error: "predicate encoding failed"                                                                                                                                                                                                                                                                                                                                       |
+| `E007` | Predicate evaluation error                           | DML: operation succeeds, row not indexed, warning logged; Query: return error. **For UNIQUE partial indexes:** DML operation fails and is rolled back — a row that cannot be evaluated for the predicate cannot be indexed, and allowing it to exist would risk silent uniqueness violations (e.g., two rows with same key both fail predicate evaluation but succeed as INSERT). |
+| `E008` | Unique partial index with mutable predicate          | Parser error: "predicate contains mutable operator ('>', '>=', '<', '<=', '!=')"                                                                                                                                                                                                                                                                                                  |
+| `E009` | Predicate contains EXISTS                            | Parser error: "EXISTS not allowed in partial index predicates"                                                                                                                                                                                                                                                                                                                    |
+| `E010` | Predicate contains LIKE/ILIKE                        | Parser error: "LIKE/ILIKE not allowed in partial index predicates"                                                                                                                                                                                                                                                                                                                |
+| `E011` | Multiple BETWEEN on same column                      | Parser error: "multiple BETWEEN on same column in predicate"                                                                                                                                                                                                                                                                                                                      |
+| `E012` | Unsupported serialization format version             | Runtime error: "predicate format version not supported"                                                                                                                                                                                                                                                                                                                           |
+| `W001` | IF NOT EXISTS: index exists with different predicate | Success with warning: "index 'idx' already exists with different predicate"                                                                                                                                                                                                                                                                                                       |
 
 ### Transactional Consistency
 
@@ -511,11 +513,15 @@ Partial index maintenance is atomic with DML operations:
 
 **Recovery semantics:** The rebuild uses current row values from the table (not a historical state). If WAL entries are unflushed at crash time, the table reflects the committed state; any inconsistency between index and table is resolved by the rebuild. After rebuild completes, the partial index is consistent with the table.
 
+**Recommended recovery implementation:** The implementation SHOULD log rebuild progress periodically (e.g., every 100,000 rows) to allow restart from checkpoint. On restart, if a partial index is detected as incomplete, the rebuild SHOULD resume from the last checkpoint rather than restarting from row 1. A partial index is considered incomplete if predicate evaluation on sample rows shows mismatch rate significantly different from expected selectivity.
+
 **Note:** For large tables, index rebuild may take significant time. This is expected behavior.
 
 **On E007 (predicate evaluation error):**
 
-The DML operation succeeds but the row is not indexed. A warning is logged with details of the evaluation failure. The row remains accessible via table scan but will not be found via the partial index. This enables applications to recover data even if predicate evaluation fails for edge cases (e.g., type coercion issues).
+For **non-UNIQUE partial indexes**: The DML operation succeeds but the row is not indexed. A warning is logged with details of the evaluation failure. The row remains accessible via table scan but will not be found via the partial index. This enables applications to recover data even if predicate evaluation fails for edge cases (e.g., type coercion issues).
+
+For **UNIQUE partial indexes**: The DML operation fails and is rolled back. A predicate evaluation error on a UNIQUE partial index indicates a data integrity risk — allowing the operation to succeed would risk silent uniqueness violations if another row with the same key also fails predicate evaluation. Applications must resolve the underlying issue (e.g., fix type mismatches) before retrying.
 
 ### Column and Table Rename Impact
 
@@ -534,7 +540,9 @@ The index becomes invalid. The predicate now references non-existent column `sta
 
 **Post-rename DML behavior:** After column rename, any DML operation that would evaluate the partial index predicate (INSERT, UPDATE, DELETE) returns error E001 (COLUMN_NOT_FOUND). The application must execute `DROP INDEX idx` and `CREATE INDEX idx ON t(c) WHERE status = 0` (with new column name) before normal DML resumes.
 
-**Mitigation:** Applications should use `ALTER TABLE ... RENAME COLUMN` within transactions that also update any dependent indexes, or use schema migration tools that detect partial index dependencies.
+**Design rationale:** This is a consequence of storing column names (not column IDs) in predicates. An alternative design using column IDs would avoid this issue but adds complexity and is out of scope for Phase 1. **Future work (F5):** `ALTER INDEX ... RENAME COLUMN` syntax would allow renaming columns in predicates without dropping/recreating indexes.
+
+**Recommendation:** Applications using partial indexes SHOULD NOT rename columns that appear in partial index predicates. For UNIQUE partial indexes, column rename blocks ALL DML on the table until the index is fixed — this can cause production downtime. Schema migration tools MUST detect partial index dependencies before renaming columns.
 
 **Table rename:**
 
@@ -749,7 +757,7 @@ Not applicable — this is a storage optimization, not an economic mechanism.
 | C07  | UPSERT: UPDATE existing row leaving predicate                         | Index entry deleted                                                                                                                                                                                                           |
 | C08  | UPSERT: UPDATE existing row entering predicate                        | Index entry inserted                                                                                                                                                                                                          |
 
-### Multiple Partial Index Test
+**Concurrency note:** Partial index maintenance (predicate re-evaluation during INSERT/UPDATE/DELETE) follows standard MVCC isolation semantics. Under the default isolation level, a scan sees all rows committed before the scan began. If a row's predicate state changes (e.g., `status` changes from `'active'` to `'revoked'`) during a concurrent transaction, the index maintenance operation sees the committed state at the time of evaluation. For UNIQUE partial indexes, Phase 1 relies on application-level guarantees; concurrent transactions that violate uniqueness will not be blocked by the index itself but will be detected and rejected by the application layer.
 
 | Test | SQL                                                                                                        | Expected                                          |
 | ---- | ---------------------------------------------------------------------------------------------------------- | ------------------------------------------------- |
@@ -924,6 +932,7 @@ Phase 2 adds triggers for applications that cannot guarantee immutability.
 
 | Version | Date       | Changes                                                                                                                                                                                                                                                                                                                      |
 | ------- | ---------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 13.0    | 2026-04-13 | Round 13 (external review): clarify index-only scan MVCC visibility checks, add rebuild checkpoint recommendation, add column rename mitigation note, add downgrade tooling operational note                                                                                                                                 |
 | 12.0    | 2026-04-13 | Round 12 fixes: fix RFC-0912 link path from ../accepted/ to ../final/ to match Dependencies (Final) status                                                                                                                                                                                                                   |
 | 11.0    | 2026-04-13 | Round 11 fixes: add planner/index_select.rs to Phase 1 key files, quote operators in E008 error message, change RFC-0912 status from Accepted to Final to match Related RFCs path                                                                                                                                            |
 | 10.0    | 2026-04-13 | Round 10 fixes: fix Phase 1 key file paths (add src/ prefix), change Error column to Code for W001, remove stale RFC-0903 version number, clarify partial index rebuild detection, clarify N14 cross-column BETWEEN explanation                                                                                              |

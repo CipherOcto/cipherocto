@@ -199,6 +199,17 @@ predicate_binary ::= VERSION (u8) + LENGTH (u16) + rkyv(Expression)
 
 **Operational requirement:** Before downgrading from v4.0+ to pre-v4.0, users MUST drop all partial indexes first. Failure to do so will result in corrupted partial indexes — old code will misinterpret the VERSION byte as rkyv data, causing deserialization failures and potential data corruption. Implementation MUST provide a `stoolap index-convert` tool to convert partial indexes to full indexes as part of the downgrade workflow.
 
+**`stoolap index-convert` tool specification:**
+
+- **Purpose:** Converts one or more partial indexes to equivalent full indexes before downgrading
+- **Operation:** For each partial index `idx` on table `t` with columns `(c1, c2, ...)` and predicate `P`, creates a new full index `idx_full` on `(c1, c2, ...)` and drops the original partial index `idx`
+- **Command syntax:** `stoolap index-convert --db <path> [--index <name>] [--all]`
+  - `--all` (default): converts all partial indexes in the database
+  - `--index <name>`: converts only the named partial index
+- **Preservation:** The new full index preserves the original's name with `_full` suffix appended (e.g., `idx_active` → `idx_active_full`). The original partial index is dropped after the full index is successfully created.
+- **Behavior:** Operates offline (database must not be open for writes); returns error if any conversion fails; on error, no changes are made (atomic)
+- **Example workflow:** `stoolap index-convert --db prod.db --all && stoolap dump-prod.db-v4-schema > prod-v4.sql`
+
 **Note on serialization format:** The RFC uses `rkyv` because stoolap already uses rkyv for zero-copy serialization elsewhere. If `Expression` does not implement `rkyv::Archive`, a fallback to `serde` serialization with `bincode` may be used, at the cost of zero-copy properties. Implementation should verify which serialization format is available and document the choice.
 
 ### Storage Format
@@ -513,7 +524,7 @@ Partial index maintenance is atomic with DML operations:
 
 **Recovery semantics:** The rebuild uses current row values from the table (not a historical state). If WAL entries are unflushed at crash time, the table reflects the committed state; any inconsistency between index and table is resolved by the rebuild. After rebuild completes, the partial index is consistent with the table.
 
-**Recommended recovery implementation:** The implementation SHOULD log rebuild progress periodically (e.g., every 100,000 rows) to allow restart from checkpoint. On restart, if a partial index is detected as incomplete, the rebuild SHOULD resume from the last checkpoint rather than restarting from row 1. A partial index is considered incomplete if predicate evaluation on sample rows shows mismatch rate significantly different from expected selectivity.
+**Recommended recovery implementation:** The implementation SHOULD log rebuild progress periodically (e.g., every 100,000 rows) to a persistent checkpoint marker (separate from WAL). On restart, if a partial index is detected as incomplete (checkpoint marker exists but index is not fully populated), the rebuild SHOULD resume from the last checkpoint rather than restarting from row 1. A partial index is considered incomplete if predicate evaluation on sample rows shows mismatch rate significantly different from expected selectivity. Checkpoint persistence uses a sidecar file (not WAL) to avoid WAL pollution during bulk rebuilds.
 
 **Note:** For large tables, index rebuild may take significant time. This is expected behavior.
 
@@ -622,16 +633,16 @@ For RFC-0903 `api_keys` table with 10% revocation rate:
 
 ### Failure Modes and Mitigations
 
-| Failure Mode                                         | Probability | Impact                          | Mitigation                                                                                                                                                                                                                                                                                                     |
-| ---------------------------------------------------- | ----------- | ------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Predicate canonicalization bug                       | Low         | Index selects wrong entries     | Test vectors for all canonicalization rules                                                                                                                                                                                                                                                                    |
-| Hash collision                                       | Negligible  | False positive index match      | Acceptable risk; 2^-256 probability                                                                                                                                                                                                                                                                            |
-| Predicate evaluation error on edge case              | Medium      | Row not indexed                 | E007: operation succeeds, warning logged, row accessible via table scan                                                                                                                                                                                                                                        |
-| UNIQUE partial index with duplicate non-indexed keys | Medium      | Silent uniqueness violation     | Phase 1 requires application-level immutability guarantee; Phase 2 triggers                                                                                                                                                                                                                                    |
-| Partial index not used due to complex query          | High        | Performance regression          | Phase 1 requires exact match; Phase 2 adds implication logic                                                                                                                                                                                                                                                   |
-| Serialization format version mismatch                | Low         | Index unusable after upgrade    | Version header allows graceful error; user can recreate index                                                                                                                                                                                                                                                  |
-| Column renamed without index update                  | Low         | Index becomes invalid           | Applications must drop/recreate dependent indexes                                                                                                                                                                                                                                                              |
-| Crash during index rebuild                           | Low         | Partial index may be incomplete | Rebuild is not a WAL-logged operation; on next access, detect incomplete index (by comparing predicate match rate vs expected) and restart rebuild. Note: For partial indexes, row count > entry count is expected; detection uses predicate re-evaluation on sample rows rather than simple count comparison. |
+| Failure Mode                                         | Probability | Impact                          | Mitigation                                                                                                                                                                                                                                                                                                                       |
+| ---------------------------------------------------- | ----------- | ------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Predicate canonicalization bug                       | Low         | Index selects wrong entries     | Test vectors for all canonicalization rules                                                                                                                                                                                                                                                                                      |
+| Hash collision                                       | Negligible  | False positive index match      | Acceptable risk; 2^-256 probability                                                                                                                                                                                                                                                                                              |
+| Predicate evaluation error on edge case              | Medium      | Row not indexed                 | E007: operation succeeds, warning logged, row accessible via table scan                                                                                                                                                                                                                                                          |
+| UNIQUE partial index with duplicate non-indexed keys | Medium      | Silent uniqueness violation     | Phase 1 requires application-level immutability guarantee; Phase 2 triggers                                                                                                                                                                                                                                                      |
+| Partial index not used due to complex query          | High        | Performance regression          | Phase 1 requires exact match; Phase 2 adds implication logic                                                                                                                                                                                                                                                                     |
+| Serialization format version mismatch                | Low         | Index unusable after upgrade    | Version header allows graceful error; user can recreate index                                                                                                                                                                                                                                                                    |
+| Column renamed without index update                  | Low         | Index becomes invalid           | Applications must drop/recreate dependent indexes                                                                                                                                                                                                                                                                                |
+| Crash during index rebuild                           | Low         | Partial index may be incomplete | Rebuild entries are not WAL-logged (for performance); however, a checkpoint marker (last processed row ID/page) is persisted to a sidecar file. On next access, if checkpoint exists but index is incomplete, resume from checkpoint. Detection uses predicate re-evaluation on sample rows rather than simple count comparison. |
 
 ### Predicate Rejection Validation
 
@@ -881,7 +892,7 @@ Requires separate RFC design for vector partial indexes (see RFC-0202).
 - **F1:** Phase 2 implication-based selection with post-filtering
 - **F2:** RFC-0202: HNSW/vector partial indexes (separate RFC)
 - **F3:** Parameterized partial index predicates (using constants, not runtime parameters)
-- **F4:** Partial index introspection (`SELECT * FROM pg_indexes WHERE predicates IS NOT NULL`)
+- **F4:** Partial index introspection (`SELECT * FROM stoolap_indexes WHERE predicate IS NOT NULL`)
 - **F5:** `ALTER INDEX ... SET WHERE predicate` for predicate changes
 - **F6:** Partial index advisor (auto-suggest partial indexes based on query patterns)
 - **F7:** Trigger mechanism for UNIQUE partial index duplicate detection
@@ -932,7 +943,7 @@ Phase 2 adds triggers for applications that cannot guarantee immutability.
 
 | Version | Date       | Changes                                                                                                                                                                                                                                                                                                                      |
 | ------- | ---------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| 13.0    | 2026-04-13 | Round 13 (external review): clarify index-only scan MVCC visibility checks, add rebuild checkpoint recommendation, add column rename mitigation note, add downgrade tooling operational note                                                                                                                                 |
+| 13.0    | 2026-04-13 | Round 13 (external review): clarify index-only scan MVCC visibility checks, add rebuild checkpoint recommendation, add column rename mitigation note, add downgrade tooling requirement (MUST), add E007 UNIQUE-specific behavior (DML fails and rolls back)                                                                 |
 | 12.0    | 2026-04-13 | Round 12 fixes: fix RFC-0912 link path from ../accepted/ to ../final/ to match Dependencies (Final) status                                                                                                                                                                                                                   |
 | 11.0    | 2026-04-13 | Round 11 fixes: add planner/index_select.rs to Phase 1 key files, quote operators in E008 error message, change RFC-0912 status from Accepted to Final to match Related RFCs path                                                                                                                                            |
 | 10.0    | 2026-04-13 | Round 10 fixes: fix Phase 1 key file paths (add src/ prefix), change Error column to Code for W001, remove stale RFC-0903 version number, clarify partial index rebuild detection, clarify N14 cross-column BETWEEN explanation                                                                                              |
@@ -1088,6 +1099,8 @@ The implementation checks that the predicate uses only immutable operators. The 
 Reject predicates containing: `>`, `>=`, `<`, `<=`, `!=`, `LIKE`, `ILIKE`
 
 Allow predicates containing: `=`, `IN`, `IS NULL`, `IS NOT NULL`
+
+**Canonicalization timing:** E008 validation runs **after** canonicalization. Since `col IN (1)` canonicalizes to `col = 1` before validation, single-item IN lists are allowed for UNIQUE partial indexes. Multi-item IN lists (`col IN (1, 2)`) are rejected because they cannot be verified as cycling-safe.
 
 **Application guarantee:**
 

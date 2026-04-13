@@ -945,12 +945,12 @@ A single row can be indexed in multiple partial indexes if it matches multiple p
 
 ### Unique Partial Index Duplicate Test
 
-| Test | Scenario                                                                                                          | Expected                                                                                                                                                                                    |
-| ---- | ----------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| D01  | Two rows with key='abc', both with status='active'                                                                | UNIQUE partial index violation at INSERT of second row                                                                                                                                      |
-| D02  | One row in index (key='abc', status='active'), second row same key but status='revoked'                           | No violation; second row not indexed                                                                                                                                                        |
-| D03  | One row in index (key='abc', status='active'), second row updated from status='revoked' to 'active' with same key | **Phase 1:** No enforcement; application guarantee relied upon — UPDATE succeeds silently and uniqueness may be violated. **Phase 2:** Trigger-based detection returns error at UPDATE time |
-| D04  | Row leaves predicate (status='revoked'), later re-enters (status='active') with same key                          | Allowed; first departure deleted index entry, re-entry inserts new entry                                                                                                                    |
+| Test | Scenario                                                                                                          | Expected                                                                                                                                                                                                                                                                      |
+| ---- | ----------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| D01  | Two rows with key='abc', both with status='active'                                                                | UNIQUE partial index violation at INSERT of second row                                                                                                                                                                                                                        |
+| D02  | One row in index (key='abc', status='active'), second row same key but status='revoked'                           | No violation; second row not indexed                                                                                                                                                                                                                                          |
+| D03  | One row in index (key='abc', status='active'), second row updated from status='revoked' to 'active' with same key | **Phase 1:** No enforcement; application guarantee relied upon — UPDATE succeeds silently and uniqueness may be violated. **Phase 2:** Trigger-based detection returns error at UPDATE time (requires trigger infrastructure — no trigger system currently exists in stoolap) |
+| D04  | Row leaves predicate (status='revoked'), later re-enters (status='active') with same key                          | Allowed; first departure deleted index entry, re-entry inserts new entry                                                                                                                                                                                                      |
 
 ### Display Round-Trip Test Cases
 
@@ -1012,8 +1012,11 @@ A single row can be indexed in multiple partial indexes if it matches multiple p
 
 ### Phase 2: Enhanced (Implication-Based Selection + Triggers)
 
+**Prerequisite:** Phase 2 requires a trigger infrastructure to be added to stoolap first. No trigger system currently exists. An RFC for trigger support must be completed before Phase 2 can begin. The implication algorithm can proceed independently of the trigger system.
+
 **Acceptance criteria:**
 
+- [ ] Trigger infrastructure RFC completed and implemented (prerequisite)
 - [ ] Predicate implication algorithm implemented
 - [ ] Query with superset predicate uses index with post-filter
 - [ ] Query with subset predicate uses index-only scan
@@ -1021,7 +1024,7 @@ A single row can be indexed in multiple partial indexes if it matches multiple p
 - [ ] Range predicates (`>`, `<`, `>=`, `<=`) handled in implication
 - [ ] Trigger mechanism to prevent duplicate keys in non-indexed rows for UNIQUE partial indexes
 
-**Estimated effort:** 2-3 weeks
+**Estimated effort:** Trigger infrastructure: 3-4 weeks; Implication logic: 2-3 weeks
 
 ### Phase 3: HNSW Partial Indexes (Out of Scope for Phase 1)
 
@@ -1043,7 +1046,7 @@ Requires separate RFC design for vector partial indexes (note: RFC-0202 is alrea
 
 ## Future Work
 
-- **F1:** Phase 2 implication-based selection with post-filtering
+- **F1:** Phase 2 implication-based selection with post-filtering (requires trigger infrastructure RFC first)
 - **F2:** HNSW/vector partial indexes (separate RFC — RFC-0202 is already allocated to BIGINT/DECIMAL types; new RFC number required)
 - **F3:** Parameterized partial index predicates (using constants, not runtime parameters)
 - **F4:** Partial index introspection (`SELECT * FROM stoolap_indexes WHERE predicate IS NOT NULL`)
@@ -1091,7 +1094,7 @@ The overhead is acceptable because:
 
 Unlike database-enforced constraints, column immutability after row creation cannot be enforced by the database alone — it requires application-level discipline. By making this an explicit application-level guarantee, we avoid the complexity of trigger-based duplicate detection while enabling the common UNIQUE partial index patterns (e.g., `WHERE tenant_id = N`).
 
-Phase 2 adds triggers for applications that cannot guarantee immutability.
+Phase 2 adds trigger-based duplicate detection for applications that cannot guarantee immutability. **Note:** Trigger infrastructure does not currently exist in stoolap — a separate trigger RFC is a prerequisite for Phase 2 UNIQUE enforcement.
 
 ## Version History
 

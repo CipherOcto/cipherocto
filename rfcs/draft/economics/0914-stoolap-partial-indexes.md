@@ -212,6 +212,7 @@ predicate_binary ::= VERSION (u8) + LENGTH (u16) + rkyv(Expression)
   - If `--drop-unique` is not specified: skips the index and logs a warning; does not fail the entire operation
   - Best practice: manually handle UNIQUE partial indexes before running `--all`
 - **Preservation:** The new full index preserves the original's name with `_full` suffix appended (e.g., `idx_active` → `idx_active_full`). The original partial index is dropped after the full index is successfully created.
+- **Collision handling:** If `idx_full` already exists, the tool returns error and stops before making any changes. The operator must manually resolve the naming conflict (e.g., drop `idx_active_full` first) before re-running. This prevents accidental data loss from name collisions on retry.
 - **Atomicity:** Indexes are processed sequentially. If conversion of any single index fails, the tool stops and reports the failure. Previously converted indexes in the same run are retained (they have already been converted to the compatible format); the user must manually drop these if they wish to revert. This is not full atomicity across the batch — it is per-index atomicity with best-effort batch completion.
 - **Example workflow:** `stoolap index-convert --db prod.db --all --drop-unique && stoolap dump-prod.db-v4-schema > prod-v4.sql`
 
@@ -491,22 +492,26 @@ A query predicate Q **implies** an index predicate P if all rows satisfying Q al
 
 ### Error Handling
 
-| Code   | Condition                                            | Handling                                                                                                                                                                                                                                                                                                                                                                          |
-| ------ | ---------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `E001` | Predicate references non-existent column             | Parser error: "column 'x' does not exist in table 't'"                                                                                                                                                                                                                                                                                                                            |
-| `E002` | Predicate contains subquery                          | Parser error: "subqueries not allowed in partial index predicates"                                                                                                                                                                                                                                                                                                                |
-| `E003` | Predicate contains function call                     | Parser error: "function calls not allowed in partial index predicates"                                                                                                                                                                                                                                                                                                            |
-| `E004` | Predicate exceeds depth limit                        | Parser error: "predicate too complex (max depth 20)"                                                                                                                                                                                                                                                                                                                              |
-| `E005` | Predicate IN list too large                          | Parser error: "IN list exceeds 32 items"                                                                                                                                                                                                                                                                                                                                          |
-| `E006` | Predicate serialization fails                        | Internal error: "predicate encoding failed"                                                                                                                                                                                                                                                                                                                                       |
-| `E007` | Predicate evaluation error                           | DML: operation succeeds, row not indexed, warning logged; Query: return error. **For UNIQUE partial indexes:** DML operation fails and is rolled back — a row that cannot be evaluated for the predicate cannot be indexed, and allowing it to exist would risk silent uniqueness violations (e.g., two rows with same key both fail predicate evaluation but succeed as INSERT). |
-| `E008` | Unique partial index with mutable predicate          | Parser error: "predicate contains mutable operator ('>', '>=', '<', '<=', '!=')"                                                                                                                                                                                                                                                                                                  |
-| `E009` | Predicate contains EXISTS                            | Parser error: "EXISTS not allowed in partial index predicates"                                                                                                                                                                                                                                                                                                                    |
-| `E010` | Predicate contains LIKE/ILIKE                        | Parser error: "LIKE/ILIKE not allowed in partial index predicates"                                                                                                                                                                                                                                                                                                                |
-| `E011` | Multiple BETWEEN on same column                      | Parser error: "multiple BETWEEN on same column in predicate"                                                                                                                                                                                                                                                                                                                      |
-| `E012` | Unsupported serialization format version             | Runtime error: "predicate format version not supported"                                                                                                                                                                                                                                                                                                                           |
-| `E013` | Column rename blocked due to dependent partial index | Parser error: "Cannot rename column 'x': partial index 'idx' depends on it. Drop the index first, rename the column, then recreate the index."                                                                                                                                                                                                                                    |
-| `W001` | IF NOT EXISTS: index exists with different predicate | Success with warning: "index 'idx' already exists with different predicate"                                                                                                                                                                                                                                                                                                       |
+| Code   | Condition                                            | Handling                                                                                                                                                                                                                                                                                                                                                                                                                       |
+| ------ | ---------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `E001` | Predicate references non-existent column             | Parser error: "column 'x' does not exist in table 't'"                                                                                                                                                                                                                                                                                                                                                                         |
+| `E002` | Predicate contains subquery                          | Parser error: "subqueries not allowed in partial index predicates"                                                                                                                                                                                                                                                                                                                                                             |
+| `E003` | Predicate contains function call                     | Parser error: "function calls not allowed in partial index predicates"                                                                                                                                                                                                                                                                                                                                                         |
+| `E004` | Predicate exceeds depth limit                        | Parser error: "predicate too complex (max depth 20)"                                                                                                                                                                                                                                                                                                                                                                           |
+| `E005` | Predicate IN list too large                          | Parser error: "IN list exceeds 32 items"                                                                                                                                                                                                                                                                                                                                                                                       |
+| `E006` | Predicate serialization fails                        | Internal error: "predicate encoding failed"                                                                                                                                                                                                                                                                                                                                                                                    |
+| `E007` | Predicate evaluation error                           | DML: operation succeeds, row not indexed, **warning sent to client connection** (not just server log); Query: return error. **For UNIQUE partial indexes:** DML operation fails and is rolled back — a row that cannot be evaluated for the predicate cannot be indexed, and allowing it to exist would risk silent uniqueness violations (e.g., two rows with same key both fail predicate evaluation but succeed as INSERT). |
+| `E008` | Unique partial index with mutable predicate          | Parser error: "predicate contains mutable operator ('>', '>=', '<', '<=', '!=')"                                                                                                                                                                                                                                                                                                                                               |
+| `E009` | Predicate contains EXISTS                            | Parser error: "EXISTS not allowed in partial index predicates"                                                                                                                                                                                                                                                                                                                                                                 |
+| `E010` | Predicate contains LIKE/ILIKE                        | Parser error: "LIKE/ILIKE not allowed in partial index predicates"                                                                                                                                                                                                                                                                                                                                                             |
+| `E011` | Multiple BETWEEN on same column                      | Parser error: "multiple BETWEEN on same column in predicate"                                                                                                                                                                                                                                                                                                                                                                   |
+| `E012` | Unsupported serialization format version             | Runtime error: "predicate format version not supported"                                                                                                                                                                                                                                                                                                                                                                        |
+| `E013` | Column rename blocked due to dependent partial index | Parser error: "Cannot rename column 'x': partial index 'idx' depends on it. Drop the index first, rename the column, then recreate the index."                                                                                                                                                                                                                                                                                 |
+| `E014` | Column drop blocked due to dependent partial index   | Parser error: "Cannot drop column 'x': partial index 'idx' depends on it. Drop the index first, then drop the column."                                                                                                                                                                                                                                                                                                         |
+| `E015` | Type coercion failure in predicate                   | Parser error: "cannot coerce 'value' to type column_type for column 'col'" (e.g., `col = 'not_a_number'` where col is INTEGER)                                                                                                                                                                                                                                                                                                 |
+| `W001` | IF NOT EXISTS: index exists with different predicate | Success with warning: "index 'idx' already exists with different predicate"                                                                                                                                                                                                                                                                                                                                                    |
+| `W002` | UNIQUE partial index startup warning                 | Startup: "UNIQUE partial index 'idx' relies on application-level monotonicity guarantee. Silent violations possible if monotonicity is violated."                                                                                                                                                                                                                                                                              |
+| `W003` | Constant-false predicate warning at CREATE           | CREATE INDEX: "predicate always evaluates to false; index will be empty"                                                                                                                                                                                                                                                                                                                                                       |
 
 ### Transactional Consistency
 
@@ -530,7 +535,7 @@ Partial index maintenance is atomic with DML operations:
 
 **Recovery semantics:** The rebuild uses current row values from the table (not a historical state). If WAL entries are unflushed at crash time, the table reflects the committed state; any inconsistency between index and table is resolved by the rebuild. After rebuild completes, the partial index is consistent with the table.
 
-**Recommended recovery implementation:** The implementation SHOULD log rebuild progress periodically (e.g., every 100,000 rows) to a persistent checkpoint marker (separate from WAL). On restart, if a partial index is detected as incomplete (checkpoint marker exists but index is not fully populated), the rebuild SHOULD resume from the last checkpoint rather than restarting from row 1. A partial index is considered incomplete if predicate evaluation on sample rows shows mismatch rate significantly different from expected selectivity. Checkpoint persistence uses a sidecar file (not WAL) to avoid WAL pollution during bulk rebuilds.
+**Recommended recovery implementation:** The implementation SHOULD log rebuild progress periodically (e.g., every 100,000 rows) to a persistent checkpoint marker (separate from WAL). On restart, if a partial index is detected as incomplete (checkpoint marker exists but index is not fully populated), the rebuild SHOULD resume from the last checkpoint rather than restarting from row 1. Checkpoint persistence uses a sidecar file (not WAL) to avoid WAL pollution during bulk rebuilds.
 
 **Rebuild checkpoint sidecar file specification:**
 
@@ -558,6 +563,12 @@ Partial index maintenance is atomic with DML operations:
 For **non-UNIQUE partial indexes**: The DML operation succeeds but the row is not indexed. A warning is logged with details of the evaluation failure. The row remains accessible via table scan but will not be found via the partial index. This enables applications to recover data even if predicate evaluation fails for edge cases (e.g., type coercion issues).
 
 For **UNIQUE partial indexes**: The DML operation fails and is rolled back. A predicate evaluation error on a UNIQUE partial index indicates a data integrity risk — allowing the operation to succeed would risk silent uniqueness violations if another row with the same key also fails predicate evaluation. Applications must resolve the underlying issue (e.g., fix type mismatches) before retrying.
+
+**Startup warning for UNIQUE partial indexes:** On database startup, if any UNIQUE partial index exists, the implementation MUST emit a **W002 warning** to the server log and (if possible) to the client connection:
+
+> "W002: UNIQUE partial index 'idx' on table 't' relies on application-level monotonicity guarantee. Phase 1 does not enforce uniqueness via triggers. If the application violates monotonicity (e.g., updates tenant_id back to a prior value), silent uniqueness violations may occur. Consider Phase 2 trigger-based enforcement when available."
+
+This warning is informational only and does not block startup. It ensures operators are aware of the Phase 1 limitation for UNIQUE partial indexes.
 
 ### Column and Table Rename Impact
 
@@ -604,6 +615,31 @@ ALTER TABLE old_name RENAME TO new_name;
 ```
 
 The index remains valid. The `IndexMetadata.table_name` is updated to `new_name` by the `ALTER TABLE` rename operation. The predicate references columns by name, not table name.
+
+**Column drop:**
+
+If a column referenced in a partial index predicate is dropped:
+
+```sql
+CREATE INDEX idx ON t(c) WHERE status = 0;
+ALTER TABLE t DROP COLUMN status;  -- BLOCKED
+```
+
+`ALTER TABLE ... DROP COLUMN` returns error **E014** (COLUMN_DROP_BLOCKED) if any partial index depends on the column being dropped. This is identical to the rename blocking behavior — dropping a column that a partial index depends on would leave the index with a dangling reference to a non-existent column.
+
+> "E014: Cannot drop column 'status': partial index 'idx' depends on it. Drop the index first, drop the column, then recreate the index if needed."
+
+**Required workflow for dropping a column in a partial index:**
+
+1. `DROP INDEX idx` (where `idx` is the partial index depending on column)
+2. `ALTER TABLE t DROP COLUMN status`
+3. If the index is still needed with a different column, recreate it
+
+**E014 error code:**
+
+```
+E014 | COLUMN_DROP_BLOCKED | ALTER TABLE ... DROP COLUMN blocked due to dependent partial index(es); drop dependent indexes first, then drop column
+```
 
 ### Determinism Requirements
 
@@ -672,16 +708,16 @@ For RFC-0903 `api_keys` table with 10% revocation rate:
 
 ### Failure Modes and Mitigations
 
-| Failure Mode                                         | Probability | Impact                          | Mitigation                                                                                                                                                                                                                                                                                                                       |
-| ---------------------------------------------------- | ----------- | ------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Predicate canonicalization bug                       | Low         | Index selects wrong entries     | Test vectors for all canonicalization rules                                                                                                                                                                                                                                                                                      |
-| Hash collision                                       | Negligible  | False positive index match      | Acceptable risk; 2^-256 probability                                                                                                                                                                                                                                                                                              |
-| Predicate evaluation error on edge case              | Medium      | Row not indexed                 | E007: operation succeeds, warning logged, row accessible via table scan                                                                                                                                                                                                                                                          |
-| UNIQUE partial index with duplicate non-indexed keys | Medium      | Silent uniqueness violation     | Phase 1 requires application-level immutability guarantee; Phase 2 triggers                                                                                                                                                                                                                                                      |
-| Partial index not used due to complex query          | High        | Performance regression          | Phase 1 requires exact match; Phase 2 adds implication logic                                                                                                                                                                                                                                                                     |
-| Serialization format version mismatch                | Low         | Index unusable after upgrade    | Version header allows graceful error; user can recreate index                                                                                                                                                                                                                                                                    |
-| Column renamed without index update                  | Low         | Index becomes invalid           | E013: ALTER TABLE ... RENAME COLUMN blocked until dependent indexes are dropped; must drop/recreate indexes to proceed                                                                                                                                                                                                           |
-| Crash during index rebuild                           | Low         | Partial index may be incomplete | Rebuild entries are not WAL-logged (for performance); however, a checkpoint marker (last processed row ID/page) is persisted to a sidecar file. On next access, if checkpoint exists but index is incomplete, resume from checkpoint. Detection uses predicate re-evaluation on sample rows rather than simple count comparison. |
+| Failure Mode                                         | Probability | Impact                          | Mitigation                                                                                                                                                                                                     |
+| ---------------------------------------------------- | ----------- | ------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Predicate canonicalization bug                       | Low         | Index selects wrong entries     | Test vectors for all canonicalization rules                                                                                                                                                                    |
+| Hash collision                                       | Negligible  | False positive index match      | Acceptable risk; 2^-256 probability                                                                                                                                                                            |
+| Predicate evaluation error on edge case              | Medium      | Row not indexed                 | E007: operation succeeds, warning logged, row accessible via table scan                                                                                                                                        |
+| UNIQUE partial index with duplicate non-indexed keys | Medium      | Silent uniqueness violation     | Phase 1 requires application-level immutability guarantee; Phase 2 triggers                                                                                                                                    |
+| Partial index not used due to complex query          | High        | Performance regression          | Phase 1 requires exact match; Phase 2 adds implication logic                                                                                                                                                   |
+| Serialization format version mismatch                | Low         | Index unusable after upgrade    | Version header allows graceful error; user can recreate index                                                                                                                                                  |
+| Column renamed without index update                  | Low         | Index becomes invalid           | E013: ALTER TABLE ... RENAME COLUMN blocked until dependent indexes are dropped; must drop/recreate indexes to proceed                                                                                         |
+| Crash during index rebuild                           | Low         | Partial index may be incomplete | Sidecar checkpoint file persists last processed row; on restart, if checkpoint exists but index is incomplete, rebuild resumes from checkpoint. Orphan sidecars (valid index found) are cleaned up on startup. |
 
 ### Predicate Rejection Validation
 
@@ -754,9 +790,9 @@ Not applicable — this is a storage optimization, not an economic mechanism.
 | N04  | `CREATE INDEX idx ON t(c) WHERE c IN (1, 2, ..., 100)` (100 items)                          | E005: IN list exceeds 32 items                                                                    |
 | N05  | `CREATE INDEX idx ON t(c) WHERE a > 1 AND b > 2 AND c > 3 AND d > 4 AND ...` (33 AND terms) | E004: predicate too complex                                                                       |
 | N06  | `CREATE INDEX idx ON t(c) WHERE (a = 1 AND b = 2) OR (c = 3 AND d = 4)` (complex nesting)   | E004: predicate too deep                                                                          |
-| N07  | `CREATE INDEX idx ON t(c) WHERE a = 1 AND a = 2`                                            | Valid (index will be empty, but no error)                                                         |
-| N08  | `CREATE INDEX idx ON t(c) WHERE 1 = 0`                                                      | Valid (index always empty)                                                                        |
-| N09  | `CREATE INDEX idx ON t(c) WHERE 1 = 1`                                                      | Valid (index includes all rows, acts as full index)                                               |
+| N07  | `CREATE INDEX idx ON t(c) WHERE a = 1 AND a = 2`                                            | Valid (index will be empty, but no error; W003 warning: "predicate always evaluates to false")    |
+| N08  | `CREATE INDEX idx ON t(c) WHERE 1 = 0`                                                      | Valid (index always empty; W003 warning: "predicate always evaluates to false")                   |
+| N09  | `CREATE INDEX idx ON t(c) WHERE 1 = 1`                                                      | Valid (index includes all rows, acts as full index; no warning)                                   |
 | N10  | `SELECT * FROM t WHERE status = 0` when index is `WHERE status = 0 AND type = 'a'`          | No index (Phase 1: partial overlap not matched)                                                   |
 | N11  | `CREATE INDEX idx ON t(c) WHERE c LIKE 'prefix%'`                                           | E010: LIKE not allowed                                                                            |
 | N12  | `CREATE INDEX idx ON t(c) WHERE EXISTS (SELECT 1)`                                          | E009: EXISTS not allowed                                                                          |
@@ -768,22 +804,22 @@ Not applicable — this is a storage optimization, not an economic mechanism.
 
 ### Canonicalization Test Cases
 
-| Input                                          | Canonical Output                                    |
-| ---------------------------------------------- | --------------------------------------------------- |
-| `b = 1 AND a = 1`                              | `a = 1 AND b = 1`                                   |
-| `c IN (3, 1, 2, 1)`                            | `c IN (1, 2, 3)`                                    |
-| `c IN (5)`                                     | `c = 5` (single-item IN normalizes to EQ)           |
-| `5 < col` (col > 5)                            | `col > 5`                                           |
-| `col != 5`                                     | `col != 5` (already canonical: constant on right)   |
-| `NOT (a IS NULL)`                              | `a IS NOT NULL`                                     |
-| `NOT (a = 1 OR b = 2)`                         | `(a != 1) AND (b != 2)`                             |
-| `NOT ((a = 1 AND b = 2) OR (a = 3 AND b = 4))` | `(a != 1 OR b != 2) AND (a != 3 OR b != 4)`         |
-| `b = 1 OR a = 1`                               | `a = 1 OR b = 1` (sorted by column name)            |
-| `col BETWEEN 1 AND 10`                         | `(col >= 1) AND (col <= 10)` (expanded, sorted)     |
-| `col BETWEEN 5 AND 5`                          | `col = 5` (degenerate BETWEEN collapses to EQ)      |
-| `col BETWEEN 10 AND 5`                         | `Constant(False)` (reversed bounds → impossible)    |
-| `col = 0` (BIGINT column, INTEGER literal)     | `col = BIGINT '0'` (type coerced to column type)    |
-| `a >= 5 AND a <= 5`                            | `a >= 5 AND a <= 5` (sorted by operator precedence) |
+| Input                                          | Canonical Output                                                                                              |
+| ---------------------------------------------- | ------------------------------------------------------------------------------------------------------------- |
+| `b = 1 AND a = 1`                              | `a = 1 AND b = 1`                                                                                             |
+| `c IN (3, 1, 2, 1)`                            | `c IN (1, 2, 3)`                                                                                              |
+| `c IN (5)`                                     | `c = 5` (single-item IN normalizes to EQ)                                                                     |
+| `5 < col` (col > 5)                            | `col > 5`                                                                                                     |
+| `col != 5`                                     | `col != 5` (already canonical: constant on right)                                                             |
+| `NOT (a IS NULL)`                              | `a IS NOT NULL`                                                                                               |
+| `NOT (a = 1 OR b = 2)`                         | `(a != 1) AND (b != 2)`                                                                                       |
+| `NOT ((a = 1 AND b = 2) OR (a = 3 AND b = 4))` | `(a != 1 OR b != 2) AND (a != 3 OR b != 4)`                                                                   |
+| `b = 1 OR a = 1`                               | `a = 1 OR b = 1` (sorted by column name)                                                                      |
+| `col BETWEEN 1 AND 10`                         | `(col >= 1) AND (col <= 10)` (expanded, sorted)                                                               |
+| `col BETWEEN 5 AND 5`                          | `col = 5` (degenerate BETWEEN collapses to EQ)                                                                |
+| `col BETWEEN 10 AND 5`                         | `Constant(False)` (reversed bounds → impossible)                                                              |
+| `col = 0` (BIGINT column, INTEGER literal)     | `col = BIGINT '0'` (type coerced to column type)                                                              |
+| `a >= 5 AND a <= 5`                            | `a = 5` (range with equal bounds collapses to equality; `BETWEEN 5 AND 5` already canonicalizes to this form) |
 
 ### Index Selection Test Cases (Phase 1)
 
@@ -795,18 +831,60 @@ Not applicable — this is a storage optimization, not an economic mechanism.
 | `status = 0`                | `status = 0 AND type = 'a'` | **No**      | Phase 1: subset not matched                      |
 | `status = 0 AND type = 'a'` | `status = 0 AND type = 'b'` | **No**      | Disjoint predicates                              |
 
+### EXPLAIN Output for Partial Index Usage
+
+When a query uses a partial index, `EXPLAIN` output MUST indicate that a partial index was selected and include the predicate. This allows operators to verify index selection behavior.
+
+**Required EXPLAIN output format:**
+
+```
+Index Scan using <index_name> on <table_name> (Partial Index)
+  Predicate: <predicate>  [partial]
+  Index Predicate: <stored_predicate>
+```
+
+**Example:**
+
+```
+EXPLAIN SELECT * FROM api_keys WHERE status = 'active' AND key = 'abc123';
+```
+
+Expected output:
+
+```
+Index Scan using idx_active_key on api_keys (Partial Index)
+  Predicate: (status = 'active') AND (key = 'abc123')  [partial]
+  Index Predicate: status = 'active'
+```
+
+If no partial index is used and a full table scan occurs:
+
+```
+Seq Scan on api_keys
+  Reason: no partial index matches query predicate
+```
+
+If the query predicate is a superset of the index predicate (Phase 1: not used):
+
+```
+Index Scan using idx_active_key on api_keys (Partial Index)
+  Predicate: (status = 'active') AND (type = 'premium')  [partial]
+  Index Predicate: status = 'active'
+  Note: superset predicate — Phase 1 requires exact match; post-filter may apply
+```
+
 ### Concurrency Test Cases
 
-| Test | Scenario                                                              | Expected                                                                                                                                                                                                                      |
-| ---- | --------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| C01  | Concurrent INSERT while CREATE INDEX running                          | Index includes all committed inserts at time of scan                                                                                                                                                                          |
-| C02  | UPDATE changes predicate from true→false during concurrent scan       | Scan may read entry before delete completes (isolation level). If row is re-evaluated, predicate is false and row excluded from results. If not re-evaluated, row may appear in results (acceptable under default isolation). |
-| C03  | Two partial indexes on same table, different predicates               | Each index maintained independently based on its predicate                                                                                                                                                                    |
-| C04  | Unique partial index: two rows with same key, one revoked, one active | Only active row indexed; no violation reported (Phase 1, application guarantee)                                                                                                                                               |
-| C05  | Column renamed without dropping index                                 | E013: ALTER TABLE ... RENAME COLUMN blocked; must drop index first                                                                                                                                                            |
-| C06  | UPSERT: INSERT new row matching index                                 | Index entry inserted                                                                                                                                                                                                          |
-| C07  | UPSERT: UPDATE existing row leaving predicate                         | Index entry deleted                                                                                                                                                                                                           |
-| C08  | UPSERT: UPDATE existing row entering predicate                        | Index entry inserted                                                                                                                                                                                                          |
+| Test | Scenario                                                              | Expected                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                       |
+| ---- | --------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| C01  | Concurrent INSERT while CREATE INDEX running                          | Index includes all committed inserts at time of scan                                                                                                                                                                                                                                                                                                                                                                                                                                                           |
+| C02  | UPDATE changes predicate from true→false during concurrent scan       | Under **READ COMMITTED** (default isolation): scan may read entry before delete completes — row appears in results even though predicate is now false (committed state at scan start). Under **REPEATABLE READ**: row is excluded from results if predicate evaluates to false at scan time. Applications using partial indexes for correctness-critical filtering (e.g., active/revoked status) should use REPEATABLE READ or understand that concurrent UPDATEs may produce stale entries in the result set. |
+| C03  | Two partial indexes on same table, different predicates               | Each index maintained independently based on its predicate                                                                                                                                                                                                                                                                                                                                                                                                                                                     |
+| C04  | Unique partial index: two rows with same key, one revoked, one active | Only active row indexed; no violation reported (Phase 1, application guarantee)                                                                                                                                                                                                                                                                                                                                                                                                                                |
+| C05  | Column renamed without dropping index                                 | E013: ALTER TABLE ... RENAME COLUMN blocked; must drop index first                                                                                                                                                                                                                                                                                                                                                                                                                                             |
+| C06  | UPSERT: INSERT new row matching index                                 | Index entry inserted                                                                                                                                                                                                                                                                                                                                                                                                                                                                                           |
+| C07  | UPSERT: UPDATE existing row leaving predicate                         | Index entry deleted                                                                                                                                                                                                                                                                                                                                                                                                                                                                                            |
+| C08  | UPSERT: UPDATE existing row entering predicate                        | Index entry inserted                                                                                                                                                                                                                                                                                                                                                                                                                                                                                           |
 
 **Concurrency note:** Partial index maintenance (predicate re-evaluation during INSERT/UPDATE/DELETE) follows standard MVCC isolation semantics. Under the default isolation level, a scan sees all rows committed before the scan began. If a row's predicate state changes (e.g., `status` changes from `'active'` to `'revoked'`) during a concurrent transaction, the index maintenance operation sees the committed state at the time of evaluation. For UNIQUE partial indexes, Phase 1 relies on application-level guarantees; concurrent transactions that violate uniqueness will not be blocked by the index itself but will be detected and rejected by the application layer.
 
@@ -1063,20 +1141,72 @@ function push_not_down(NOT, expr):
 
 // Sort by column name, then by operator precedence (LT<LTE<EQ<NE<GTE<GT), then by value
 function sort_by_operator(op, left, right):
-    if compare_column(left, right) < 0:
+    if compare_expression(left, right) < 0:
         return BinOp(op, left, right)
     else:
         return BinOp(op, right, left)
 
-function compare_column(a, b):
+// Compare two expressions for deterministic ordering.
+// Handles both leaf comparisons (col op val) and compound expressions (AND/OR nodes).
+function compare_expression(a, b):
+    // Canonicalize both sides first (recursive canonicalization ensures children are also canonical)
+    a = canonicalize(a)
+    b = canonicalize(b)
+
+    // Both are constant false: equal
+    if a == Constant(False) and b == Constant(False):
+        return 0
+    // Constant False sorts before everything
+    if a == Constant(False):
+        return -1
+    if b == Constant(False):
+        return 1
+
+    // Both are constant true: equal
+    if a == Constant(True) and b == Constant(True):
+        return 0
+    // Constant True sorts before comparisons but after False
+    if a == Constant(True):
+        return -1
+    if b == Constant(True):
+        return 1
+
+    // Both are simple comparisons: compare by column, then operator, then value
+    if is Comparison(a) and is Comparison(b):
+        return compare_comparison(a, b)
+
+    // Both are In expressions: compare by column, then values
+    if is In(a) and is In(b):
+        if a.col.name != b.col.name:
+            return a.col.name <=> b.col.name
+        return a.values <=> b.values  // sorted and deduped per canonicalize()
+
+    // Both are IsNull/IsNotNull: sort by column name
+    if is IsNull(a) and is IsNull(b):
+        return a.col.name <=> b.col.name
+    if is IsNotNull(a) and is IsNotNull(b):
+        return a.col.name <=> b.col.name
+
+    // One is compound AND/OR, one is leaf: compound (AND/OR) sorts before leaf
+    if is BinOp(a) and not is BinOp(b):
+        return -1
+    if not is BinOp(a) and is BinOp(b):
+        return 1
+
+    // Both are compound AND/OR: compare by structure hash (deterministic per canonical form)
+    // Each compound node's string representation is deterministic after canonicalization,
+    // so string comparison of the serialized form gives a total ordering
+    return serialize(a) <=> serialize(b)
+
+function compare_comparison(a, b):
     // Column comparison for sorting: column name primary key
-    if a.column.name != b.column.name:
-        return a.column.name <=> b.column.name
+    if a.col.name != b.col.name:
+        return a.col.name <=> b.col.name
     // Same column: sort by operator precedence
     if a.op != b.op:
         return operator_precedence(a.op) <=> operator_precedence(b.op)
     // Same column and operator: sort by value
-    return a.value <=> b.value
+    return a.val <=> b.val
 
 function operator_precedence(op):
     // Lower value = sorts first

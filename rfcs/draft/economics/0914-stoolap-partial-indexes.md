@@ -733,11 +733,11 @@ For RFC-0903 `api_keys` table with 10% revocation rate:
 
 ### Determinism Violations
 
-| Violation Path                           | Mitigation                                                                   |
-| ---------------------------------------- | ---------------------------------------------------------------------------- |
-| Non-deterministic canonicalization       | Algorithm specified in RFC; test vectors enforce determinism                 |
-| Platform-dependent expression evaluation | Expression evaluator already platform-consistent (per RFC-0104)              |
-| Time-dependent predicates                | `now()` etc. explicitly unsupported; would produce non-deterministic results |
+| Violation Path                           | Mitigation                                                                                                    |
+| ---------------------------------------- | ------------------------------------------------------------------------------------------------------------- |
+| Non-deterministic canonicalization       | Algorithm specified in RFC; test vectors enforce determinism                                                  |
+| Platform-dependent expression evaluation | Expression evaluator must be platform-consistent for predicate evaluation to be deterministic across restarts |
+| Time-dependent predicates                | `now()` etc. explicitly unsupported; would produce non-deterministic results                                  |
 
 ## Adversarial Review
 

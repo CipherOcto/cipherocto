@@ -756,7 +756,7 @@ Not applicable — this is a storage optimization, not an economic mechanism.
 - **B-tree indexes:** Fully compatible with partial indexes
 - **HNSW/vector indexes:** Partial index support is **out of scope** for Phase 1; HNSW indexes must not be created with WHERE clauses
 
-**Rationale:** HNSW indexes have different physical structure and search semantics. Adding partial support would require separate design. A separate RFC (RFC-0202) should address vector partial indexes.
+**Rationale:** HNSW indexes have different physical structure and search semantics. Adding partial support would require separate design. A separate RFC should address vector partial indexes (RFC-0202 is already allocated to BIGINT/DECIMAL types — vector partial indexes need a new RFC number).
 
 ## Test Vectors
 
@@ -990,7 +990,7 @@ A single row can be indexed in multiple partial indexes if it matches multiple p
 
 ### Phase 3: HNSW Partial Indexes (Out of Scope for Phase 1)
 
-Requires separate RFC design for vector partial indexes (see RFC-0202).
+Requires separate RFC design for vector partial indexes (note: RFC-0202 is already allocated to BIGINT/DECIMAL types — a new RFC number is needed).
 
 ## Key Files to Modify
 
@@ -1009,7 +1009,7 @@ Requires separate RFC design for vector partial indexes (see RFC-0202).
 ## Future Work
 
 - **F1:** Phase 2 implication-based selection with post-filtering
-- **F2:** RFC-0202: HNSW/vector partial indexes (separate RFC)
+- **F2:** HNSW/vector partial indexes (separate RFC — RFC-0202 is already allocated to BIGINT/DECIMAL types; new RFC number required)
 - **F3:** Parameterized partial index predicates (using constants, not runtime parameters)
 - **F4:** Partial index introspection (`SELECT * FROM stoolap_indexes WHERE predicate IS NOT NULL`)
 - **F5:** `ALTER INDEX ... SET WHERE predicate` for predicate changes
@@ -1084,7 +1084,7 @@ Phase 2 adds triggers for applications that cannot guarantee immutability.
 - [RFC-0903: Virtual API Key System](../final/economics/0903-virtual-api-key-system.md) — primary use case driver
 - [RFC-0912: FOR UPDATE Row Locking](../final/economics/0912-stoolap-for-update-row-locking.md) — orthogonal stoolap SQL feature
 - [RFC-0913: WAL-Only Pub/Sub](../accepted/economics/0913-stoolap-pubsub-cache-invalidation.md) — orthogonal
-- [RFC-0202: Vector Partial Indexes](../planned/storage/0202-vector-partial-indexes.md) — future work (HNSW partial indexes) _(Note: verify file exists before finalizing)_
+- **[RFC-0202: Vector Partial Indexes]** — future work (HNSW partial indexes) _(Note: RFC-0202 is already allocated to BIGINT/DECIMAL types in accepted/storage/; this reference will be updated when vector partial indexes RFC is assigned a number; no draft file exists yet)_
 
 ## Related Use Cases
 

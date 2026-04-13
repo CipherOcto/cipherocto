@@ -2,7 +2,7 @@
 
 ## Status
 
-Open
+Completed (commit a506e45) — gas metering deferred to RFC-0201
 
 ## RFC
 

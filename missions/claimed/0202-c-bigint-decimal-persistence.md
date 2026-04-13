@@ -2,7 +2,7 @@
 
 ## Status
 
-Open
+Completed (commit 98329d6)
 
 ## RFC
 
@@ -44,10 +44,11 @@ Add persistence layer support for BIGINT and DECIMAL: wire tags 13/14 in seriali
   - Zero mantissa sorts between negatives and positives (not below all negatives)
   - Verification test vectors: `-12.3 < 0 < 12.3` in encoded key space
   - Verify scale byte appended as BE u8 at byte 16
-- [ ] REINDEX documentation added for BIGINT/DECIMAL BTree indexes:
-  - Existing BTree indexes on BIGINT/DECIMAL columns must be rebuilt after deploying lexicographic encoding
-  - For version-1 databases: existing columns stored as Integer/Float do not need reindexing
-  - Recommended migration path: `REINDEX INDEX idx_name` or `CREATE INDEX ... USING btree (col) WITH (encoding = 'lexicographic')` for online migration
+- [ ] ~~REINDEX documentation added for BIGINT/DECIMAL BTree indexes:~~
+  - ~~Existing BTree indexes on BIGINT/DECIMAL columns must be rebuilt after deploying lexicographic encoding~~
+  - ~~For version-1 databases: existing columns stored as Integer/Float do not need reindexing~~
+  - ~~Recommended migration path: `REINDEX INDEX idx_name` or `CREATE INDEX ... USING btree (col) WITH (encoding = 'lexicographic')` for online migration~~
+  - **DEFERRED:** REINDEX command implementation is specified in RFC-0203; documentation added in docs/_docs/sql-commands/schema-management.md as placeholder
 
 ## Dependencies
 

@@ -2,7 +2,7 @@
 
 ## Status
 
-Open
+Completed (commit 14a3fb9)
 
 ## RFC
 

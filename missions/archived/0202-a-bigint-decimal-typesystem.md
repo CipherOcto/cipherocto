@@ -2,7 +2,7 @@
 
 ## Status
 
-Open
+Completed (commit be57039)
 
 ## RFC
 

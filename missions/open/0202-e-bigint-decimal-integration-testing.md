@@ -2,9 +2,13 @@
 
 ## Status
 
-Open
+Open — **unblocked** (all prerequisite missions 0202-a/b/c/d resolved as of 2026-04-11)
 
-**Blocked by:** Missions 0202-a, 0202-b, 0202-c, 0202-d (all must complete before any AC can be executed). All prerequisite missions are currently Open.
+**Previously blocked by:** Missions 0202-a, 0202-b, 0202-c, 0202-d. All prerequisite missions are now complete:
+- 0202-a: Completed (typesystem)
+- 0202-b: Completed (schema/value)
+- 0202-c: Completed (persistence, commit 98329d6)
+- 0202-d: Completed (VM dispatch, commit a506e45 — gas metering deferred to RFC-0201)
 
 ## RFC
 
@@ -99,6 +103,12 @@ End-to-end integration testing and benchmarking for BIGINT/DECIMAL in stoolap. V
 
 - Mission: 0202-c-bigint-decimal-persistence (for serialization tests)
 - Mission: 0202-d-bigint-decimal-vm (for arithmetic and gas tests)
+
+## Gas Blockers
+
+**Gas-blocked (deferred to RFC-0201):** AC-9 (gas benchmarking), AC-10 (optimizer cost estimates), AC-11 (gas calibration)
+
+**Gas-free (doable now):** AC-1, AC-2, AC-3, AC-4, AC-5, AC-6, AC-7, AC-8, AC-12, AC-13, AC-14, AC-15, AC-16, AC-17, AC-18
 
 ## Location
 

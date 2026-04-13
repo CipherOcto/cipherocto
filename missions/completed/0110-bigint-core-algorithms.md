@@ -1,7 +1,7 @@
 # Mission: BigInt Core Algorithms (Phase 1-3)
 
 ## Status
-Claimed
+Completed
 
 ## RFC
 RFC-0110 (Numeric): Deterministic BIGINT

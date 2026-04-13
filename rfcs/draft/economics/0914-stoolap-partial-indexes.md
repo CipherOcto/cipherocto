@@ -203,12 +203,17 @@ predicate_binary ::= VERSION (u8) + LENGTH (u16) + rkyv(Expression)
 
 - **Purpose:** Converts one or more partial indexes to equivalent full indexes before downgrading
 - **Operation:** For each partial index `idx` on table `t` with columns `(c1, c2, ...)` and predicate `P`, creates a new full index `idx_full` on `(c1, c2, ...)` and drops the original partial index `idx`
-- **Command syntax:** `stoolap index-convert --db <path> [--index <name>] [--all]`
+- **Command syntax:** `stoolap index-convert --db <path> [--index <name>] [--all] [--drop-unique]`
   - `--all` (default): converts all partial indexes in the database
   - `--index <name>`: converts only the named partial index
+  - `--drop-unique`: required when converting UNIQUE partial indexes; converts to non-unique full index (uniqueness not preserved)
+- **UNIQUE partial index handling:** Converting a UNIQUE partial index to a full index applies the UNIQUE constraint to ALL rows, not just those matching the predicate. This may cause duplicate key errors during conversion. For UNIQUE partial indexes:
+  - If `--drop-unique` is specified: creates a non-unique full index (uniqueness dropped)
+  - If `--drop-unique` is not specified: skips the index and logs a warning; does not fail the entire operation
+  - Best practice: manually handle UNIQUE partial indexes before running `--all`
 - **Preservation:** The new full index preserves the original's name with `_full` suffix appended (e.g., `idx_active` → `idx_active_full`). The original partial index is dropped after the full index is successfully created.
-- **Behavior:** Operates offline (database must not be open for writes); returns error if any conversion fails; on error, no changes are made (atomic)
-- **Example workflow:** `stoolap index-convert --db prod.db --all && stoolap dump-prod.db-v4-schema > prod-v4.sql`
+- **Atomicity:** Indexes are processed sequentially. If conversion of any single index fails, the tool stops and reports the failure. Previously converted indexes in the same run are retained (they have already been converted to the compatible format); the user must manually drop these if they wish to revert. This is not full atomicity across the batch — it is per-index atomicity with best-effort batch completion.
+- **Example workflow:** `stoolap index-convert --db prod.db --all --drop-unique && stoolap dump-prod.db-v4-schema > prod-v4.sql`
 
 **Note on serialization format:** The RFC uses `rkyv` because stoolap already uses rkyv for zero-copy serialization elsewhere. If `Expression` does not implement `rkyv::Archive`, a fallback to `serde` serialization with `bincode` may be used, at the cost of zero-copy properties. Implementation should verify which serialization format is available and document the choice.
 
@@ -500,6 +505,7 @@ A query predicate Q **implies** an index predicate P if all rows satisfying Q al
 | `E010` | Predicate contains LIKE/ILIKE                        | Parser error: "LIKE/ILIKE not allowed in partial index predicates"                                                                                                                                                                                                                                                                                                                |
 | `E011` | Multiple BETWEEN on same column                      | Parser error: "multiple BETWEEN on same column in predicate"                                                                                                                                                                                                                                                                                                                      |
 | `E012` | Unsupported serialization format version             | Runtime error: "predicate format version not supported"                                                                                                                                                                                                                                                                                                                           |
+| `E013` | Column rename blocked due to dependent partial index | Parser error: "Cannot rename column 'x': partial index 'idx' depends on it. Drop the index first, rename the column, then recreate the index."                                                                                                                                                                                                                                    |
 | `W001` | IF NOT EXISTS: index exists with different predicate | Success with warning: "index 'idx' already exists with different predicate"                                                                                                                                                                                                                                                                                                       |
 
 ### Transactional Consistency
@@ -526,6 +532,25 @@ Partial index maintenance is atomic with DML operations:
 
 **Recommended recovery implementation:** The implementation SHOULD log rebuild progress periodically (e.g., every 100,000 rows) to a persistent checkpoint marker (separate from WAL). On restart, if a partial index is detected as incomplete (checkpoint marker exists but index is not fully populated), the rebuild SHOULD resume from the last checkpoint rather than restarting from row 1. A partial index is considered incomplete if predicate evaluation on sample rows shows mismatch rate significantly different from expected selectivity. Checkpoint persistence uses a sidecar file (not WAL) to avoid WAL pollution during bulk rebuilds.
 
+**Rebuild checkpoint sidecar file specification:**
+
+- **Sidecar file naming:** `<database>.partial_idx_rebuild_<index_name>.ckpt` (e.g., `prod.db.partial_idx_rebuild_idx_active.ckpt`)
+- **Creation:** Sidecar file is created atomically at rebuild start (using rename-from-tmp to ensure file either exists fully or not at all)
+- **Checkpoint format (binary):**
+  ```
+  [magic: 4 bytes = 0x50 0x49 0x44 0x58 ("PIDX")]
+  [version: u8 = 0x01]
+  [index_name_length: u16]
+  [index_name: index_name_length bytes (UTF-8)]
+  [last_row_id: i64]          -- last committed row ID processed
+  [row_count: i64]            -- total rows processed at checkpoint
+  [timestamp: i64]            -- Unix timestamp of checkpoint
+  ```
+- **Cleanup:** Sidecar file is deleted atomically after rebuild completes successfully (rename-to-dev/null pattern)
+- **Orphan cleanup:** On database startup, if a sidecar file exists but the corresponding index has entry_count matching expected row count (within selectivity tolerance), the sidecar is presumed orphaned and is deleted
+- **Corrupted sidecar:** If the sidecar file cannot be read (magic/version mismatch, truncated), the rebuild restarts from row 1 (not from the corrupted checkpoint)
+- **Multiple crashes:** If the database crashes during a resumed rebuild, the new sidecar file overwrites the old one atomically; the last checkpoint always reflects the most recent progress
+
 **Note:** For large tables, index rebuild may take significant time. This is expected behavior.
 
 **On E007 (predicate evaluation error):**
@@ -538,22 +563,36 @@ For **UNIQUE partial indexes**: The DML operation fails and is rolled back. A pr
 
 **Column rename:**
 
-If a column referenced in a partial index predicate is renamed:
+If a column referenced in a partial index predicate is renamed without first dropping the dependent index:
 
 ```sql
 CREATE INDEX idx ON t(c) WHERE status = 0;
-ALTER TABLE t RENAME COLUMN status TO active_status;
+ALTER TABLE t RENAME COLUMN status TO active_status;  -- BLOCKED
 ```
 
-The index becomes invalid. The predicate now references non-existent column `status`.
+**Rename-time blocking:** `ALTER TABLE ... RENAME COLUMN` returns error **E013** (COLUMN_RENAME_BLOCKED) if any partial index depends on the column being renamed. The error message lists all dependent indexes:
 
-**This is expected behavior.** Partial indexes reference column names directly in their predicates. When a column is renamed, the index must be dropped and recreated with the new column name.
+> "E013: Cannot rename column 'status': partial index 'idx' depends on it. Drop the index first, rename the column, then recreate the index."
 
-**Post-rename DML behavior:** After column rename, any DML operation that would evaluate the partial index predicate (INSERT, UPDATE, DELETE) returns error E001 (COLUMN_NOT_FOUND). The application must execute `DROP INDEX idx` and `CREATE INDEX idx ON t(c) WHERE status = 0` (with new column name) before normal DML resumes.
+This prevents the worse failure mode where rename succeeds but all subsequent DML fails with E001.
+
+**E013 error code:**
+
+```
+E013 | COLUMN_RENAME_BLOCKED | ALTER TABLE ... RENAME COLUMN blocked due to dependent partial index(es); drop dependent indexes first, then retry
+```
+
+**Required workflow for renaming a column in a partial index:**
+
+1. `DROP INDEX idx` (where `idx` is the partial index depending on column)
+2. `ALTER TABLE t RENAME COLUMN status TO active_status`
+3. `CREATE INDEX idx ON t(c) WHERE active_status = 0` (with new column name)
+
+**For UNIQUE partial indexes:** The rename-time blocking is especially important because the blocking-at-DDL approach prevents production downtime that would occur if rename succeeded but all subsequent DML on the table failed.
 
 **Design rationale:** This is a consequence of storing column names (not column IDs) in predicates. An alternative design using column IDs would avoid this issue but adds complexity and is out of scope for Phase 1. **Future work (F5):** `ALTER INDEX ... RENAME COLUMN` syntax would allow renaming columns in predicates without dropping/recreating indexes.
 
-**Recommendation:** Applications using partial indexes SHOULD NOT rename columns that appear in partial index predicates. For UNIQUE partial indexes, column rename blocks ALL DML on the table until the index is fixed — this can cause production downtime. Schema migration tools MUST detect partial index dependencies before renaming columns.
+**Schema migration tools:** Tools that perform column renames (e.g., `ALTER TABLE ... RENAME COLUMN`) MUST detect partial index dependencies before executing the rename and report them to the user, or automatically drop and recreate dependent indexes within the same transaction.
 
 **Table rename:**
 
@@ -641,7 +680,7 @@ For RFC-0903 `api_keys` table with 10% revocation rate:
 | UNIQUE partial index with duplicate non-indexed keys | Medium      | Silent uniqueness violation     | Phase 1 requires application-level immutability guarantee; Phase 2 triggers                                                                                                                                                                                                                                                      |
 | Partial index not used due to complex query          | High        | Performance regression          | Phase 1 requires exact match; Phase 2 adds implication logic                                                                                                                                                                                                                                                                     |
 | Serialization format version mismatch                | Low         | Index unusable after upgrade    | Version header allows graceful error; user can recreate index                                                                                                                                                                                                                                                                    |
-| Column renamed without index update                  | Low         | Index becomes invalid           | Applications must drop/recreate dependent indexes                                                                                                                                                                                                                                                                                |
+| Column renamed without index update                  | Low         | Index becomes invalid           | E013: ALTER TABLE ... RENAME COLUMN blocked until dependent indexes are dropped; must drop/recreate indexes to proceed                                                                                                                                                                                                           |
 | Crash during index rebuild                           | Low         | Partial index may be incomplete | Rebuild entries are not WAL-logged (for performance); however, a checkpoint marker (last processed row ID/page) is persisted to a sidecar file. On next access, if checkpoint exists but index is incomplete, resume from checkpoint. Detection uses predicate re-evaluation on sample rows rather than simple count comparison. |
 
 ### Predicate Rejection Validation
@@ -687,22 +726,23 @@ Not applicable — this is a storage optimization, not an economic mechanism.
 
 ### Positive Test Cases
 
-| Test | SQL                                                                              | Expected                                                                   |
-| ---- | -------------------------------------------------------------------------------- | -------------------------------------------------------------------------- |
-| T01  | `CREATE INDEX idx_active ON t(c) WHERE status = 0`                               | Index created; `where_clause = status = 0`; `partial_index_hash` populated |
-| T02  | `CREATE UNIQUE INDEX idx_active ON t(c) WHERE active = 1`                        | Unique partial index created (predicate is immutable)                      |
-| T03  | `INSERT INTO t VALUES (1, 0)` → `SELECT * FROM t WHERE c = 1`                    | Index entry written for row (1, 0)                                         |
-| T04  | `INSERT INTO t VALUES (1, 1)`                                                    | Row (1, 1) inserted; no index entry written (status = 1)                   |
-| T05  | `UPDATE t SET status = 1 WHERE c = 1`                                            | Index entry deleted for row where c=1                                      |
-| T06  | `UPDATE t SET c = 2 WHERE c = 1`                                                 | Index entry updated (old deleted, new inserted)                            |
-| T07  | `SELECT * FROM t WHERE status = 0`                                               | Uses partial index                                                         |
-| T08  | `DELETE FROM t WHERE c = 1`                                                      | Index entry removed                                                        |
-| T09  | `DROP INDEX idx_active`                                                          | Partial index dropped cleanly                                              |
-| T10  | Display round-trip                                                               | `CREATE INDEX idx ON t(c) WHERE x > 5` → Display → same SQL                |
-| T11  | `CREATE INDEX idx ON t(c) WHERE a BETWEEN 1 AND 10`                              | Index created with BETWEEN predicate                                       |
-| T12  | `CREATE INDEX IF NOT EXISTS idx ON t(c) WHERE p` (idx exists with identical p)   | Succeeds silently                                                          |
-| T13  | `CREATE INDEX IF NOT EXISTS idx ON t(c) WHERE p1` (idx exists with different p2) | Succeeds with W001 warning                                                 |
-| T14  | `CREATE UNIQUE INDEX idx ON t(c) WHERE c IS NOT NULL`                            | Unique partial index created for non-null keys                             |
+| Test | SQL                                                                              | Expected                                                                                                                          |
+| ---- | -------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------- |
+| T01  | `CREATE INDEX idx_active ON t(c) WHERE status = 0`                               | Index created; `where_clause = status = 0`; `partial_index_hash` populated                                                        |
+| T02  | `CREATE UNIQUE INDEX idx_active ON t(c) WHERE active = 1`                        | Unique partial index created (predicate is immutable)                                                                             |
+| T03  | `INSERT INTO t VALUES (1, 0)` → `SELECT * FROM t WHERE c = 1`                    | Index entry written for row (1, 0)                                                                                                |
+| T04  | `INSERT INTO t VALUES (1, 1)`                                                    | Row (1, 1) inserted; no index entry written (status = 1)                                                                          |
+| T05  | `UPDATE t SET status = 1 WHERE c = 1`                                            | Index entry deleted for row where c=1                                                                                             |
+| T06  | `UPDATE t SET c = 2 WHERE c = 1`                                                 | Index entry updated (old deleted, new inserted)                                                                                   |
+| T07  | `SELECT * FROM t WHERE status = 0`                                               | Uses partial index                                                                                                                |
+| T08  | `DELETE FROM t WHERE c = 1`                                                      | Index entry removed                                                                                                               |
+| T09  | `DROP INDEX idx_active`                                                          | Partial index dropped cleanly                                                                                                     |
+| T10  | Display round-trip                                                               | `CREATE INDEX idx ON t(c) WHERE x > 5` → Display → same SQL                                                                       |
+| T11  | `CREATE INDEX idx ON t(c) WHERE a BETWEEN 1 AND 10`                              | Index created with BETWEEN predicate                                                                                              |
+| T12  | `CREATE INDEX IF NOT EXISTS idx ON t(c) WHERE p` (idx exists with identical p)   | Succeeds silently                                                                                                                 |
+| T13  | `CREATE INDEX IF NOT EXISTS idx ON t(c) WHERE p1` (idx exists with different p2) | Succeeds with W001 warning                                                                                                        |
+| T14  | `CREATE UNIQUE INDEX idx ON t(c) WHERE c IS NOT NULL`                            | Unique partial index created for non-null keys                                                                                    |
+| T15  | `CREATE UNIQUE INDEX idx ON t(c) WHERE status IN ('active')`                     | Unique partial index created; single-item IN canonicalizes to `= 'active'` (E008 runs after canonicalization, so this is allowed) |
 
 ### Negative Test Cases
 
@@ -763,7 +803,7 @@ Not applicable — this is a storage optimization, not an economic mechanism.
 | C02  | UPDATE changes predicate from true→false during concurrent scan       | Scan may read entry before delete completes (isolation level). If row is re-evaluated, predicate is false and row excluded from results. If not re-evaluated, row may appear in results (acceptable under default isolation). |
 | C03  | Two partial indexes on same table, different predicates               | Each index maintained independently based on its predicate                                                                                                                                                                    |
 | C04  | Unique partial index: two rows with same key, one revoked, one active | Only active row indexed; no violation reported (Phase 1, application guarantee)                                                                                                                                               |
-| C05  | Column renamed without dropping index                                 | Index becomes invalid; subsequent DML on index returns error                                                                                                                                                                  |
+| C05  | Column renamed without dropping index                                 | E013: ALTER TABLE ... RENAME COLUMN blocked; must drop index first                                                                                                                                                            |
 | C06  | UPSERT: INSERT new row matching index                                 | Index entry inserted                                                                                                                                                                                                          |
 | C07  | UPSERT: UPDATE existing row leaving predicate                         | Index entry deleted                                                                                                                                                                                                           |
 | C08  | UPSERT: UPDATE existing row entering predicate                        | Index entry inserted                                                                                                                                                                                                          |
@@ -842,6 +882,7 @@ A single row can be indexed in multiple partial indexes if it matches multiple p
 - [ ] `IF NOT EXISTS` behavior correct (warning on predicate mismatch)
 - [ ] UNIQUE partial index restricted to immutable predicates (+ IS NOT NULL allowed)
 - [ ] Serialization format includes version header
+- [ ] `stoolap index-convert` tool available for downgrade workflow (converts partial indexes to full indexes; handles UNIQUE via `--drop-unique` flag)
 
 **Key files:**
 
@@ -1086,6 +1127,7 @@ Bytes 3+: rkyv(CanonicalExpression)
 | E010 | LIKE_NOT_ALLOWED                | LIKE/ILIKE not permitted in partial index predicates                                                                                              |
 | E011 | MULTIPLE_BETWEEN_ON_SAME_COLUMN | Multiple BETWEEN on same column in predicate                                                                                                      |
 | E012 | UNSUPPORTED_FORMAT_VERSION      | Predicate serialization format version not supported. Currently only version 0x01 is supported; E012 fires for 0x00 (reserved) or future versions |
+| E013 | COLUMN_RENAME_BLOCKED           | ALTER TABLE ... RENAME COLUMN blocked due to dependent partial index(es); must drop dependent indexes first, then rename, then recreate indexes   |
 | W001 | INDEX_EXISTS_DIFFERENT_PRED     | CREATE INDEX IF NOT EXISTS: index exists with different predicate; succeeds with warning                                                          |
 
 ### D. UNIQUE Partial Index Immutability

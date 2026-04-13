@@ -54,11 +54,11 @@ This partial index ensures:
 
 The current stoolap `CreateIndexStatement` AST has no `where_clause` field. Binary storage (BYTEA) for `key_hash` aside, **partial indexes are the only SQL feature gap** preventing RFC-0903 schema compliance.
 
-**RFC-0903 superset query note (Phase 1 limitation):** RFC-0903's primary lookup query is `WHERE key_hash = $1 AND revoked = 0`. The partial index predicate is `WHERE revoked = 0`. Under Phase 1 **exact predicate matching**, the query predicate is a **superset** of the index predicate and will not use the partial index — the planner falls back to the full `(key_hash)` index. RFC-0903's partial index motivation (reducing index size by excluding revoked keys) is fully realized in **Phase 2** with implication-based superset matching. In Phase 1, the full `(key_hash)` index is used; the partial index can be created but will not be selected for the superset query pattern until Phase 2.
+**RFC-0903 superset query note (Phase 1 limitation):** RFC-0903's primary lookup query is `WHERE key_hash = $1 AND revoked = 0`. The partial index predicate is `WHERE revoked = 0`. Under Phase 1 **exact predicate matching**, the query predicate is a **superset** of the index predicate and will not use the partial index — the planner falls back to the full `(key_hash)` index. However, RFC-0903's **uniqueness is enforced by a separate FULL unique index** (`CREATE UNIQUE INDEX idx_api_keys_key_hash_unique ON api_keys(key_hash)` without WHERE clause). RFC-0903 does **not** require Phase 2 for correctness — it uses the full unique index for enforcement and the partial index purely for performance optimization. Phase 2 implication matching is needed only for the performance optimization (using the partial index for superset queries).
 
 **Use cases:**
 
-- Active API key lookup: `WHERE revoked = 0` (Phase 2 for superset queries; Phase 1 exact-match equivalent: full index)
+- Active API key lookup (RFC-0903): `WHERE revoked = 0` — Phase 1 works; uniqueness enforced by FULL unique index, partial index for performance only
 - Soft-delete patterns: `WHERE deleted_at IS NULL`
 - Multi-tenant isolation: `WHERE tenant_id = 1` (tenant ID is set at row creation and immutable)
 
@@ -480,7 +480,7 @@ Exact matching is:
 
 1. Simple to implement and verify
 2. Deterministic (no false positives/negatives from complex implication logic)
-3. Sufficient for RFC-0903 use case (`WHERE revoked = 0` queries use `WHERE revoked = 0` indexes)
+3. Sufficient for RFC-0903 use case — RFC-0903 uses a FULL unique index (`CREATE UNIQUE INDEX idx_api_keys_key_hash_unique ON api_keys(key_hash)`) for uniqueness enforcement; the partial index is for performance only (reducing index size). RFC-0903 does not require Phase 2 for correctness.
 
 **Implication algorithm (Phase 2):**
 

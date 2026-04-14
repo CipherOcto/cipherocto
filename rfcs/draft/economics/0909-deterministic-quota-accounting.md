@@ -2,7 +2,7 @@
 
 ## Status
 
-Draft (v15 — aligned with RFC-0903 Final v29, RFC-0126)
+Draft (v16 — aligned with RFC-0903 Final v29, RFC-0126)
 
 ## Authors
 
@@ -1112,10 +1112,37 @@ The `&'static str` return type eliminates heap allocation on every call.
 
 For highest throughput in hot paths, consider batching multiple events through a single hasher context, but this does not affect determinism.
 
+### Numeric Tower Integration (Future Enhancement)
+
+The current implementation uses `u64` micro-units for all cost calculations. The CipherOcto Numeric Tower (DQA, BigInt, Decimal — RFC-0105/0110/0111) offers deterministic numeric types designed for this exact domain.
+
+**Why DQA fits quota accounting (RFC-0105):**
+
+DQA represents numbers as `i64 + explicit_scale` (0–18 decimal places), purpose-built for financial/pricing work. Current micro-unit accounting uses an implicit scale=6 convention:
+```
+$0.03/1K tokens → 30_000 micro-units (scale=6 assumed)
+```
+
+DQA makes the scale explicit in the type system:
+```
+$0.03/1K tokens → DQA(30_000, scale=6)
+```
+
+**Benefits when RFC-0903 adopts DQA for cost_amount:**
+- Scale is enforced by the type — no implicit convention errors
+- DQA_ADD/MUL/DIV are 10-40x faster than DFP for bounded-range arithmetic (RFC-0105 benchmark)
+- Scale tracking prevents mixed-scale arithmetic errors across providers
+- Natural domain fit: DQA was designed for pricing/financial work exactly like quota accounting
+
+**Current limitation:** `SpendEvent.cost_amount` is `u64` per RFC-0903 Final. A future RFC-0903 revision could adopt `cost_amount: DQA`, enabling the full Numeric Tower stack for quota arithmetic.
+
+**Note:** The `key_id` field is `TEXT NOT NULL` per RFC-0903 Final schema. Storing as binary `[u8; 16]` would reduce storage but requires a breaking schema change to RFC-0903.
+
 ## Changelog
 
 | Version | Date       | Changes |
 | ------- | ---------- | ------- |
+| v16     | 2026-04-14 | Add Numeric Tower (DQA) integration note for future cost_amount enhancement; note key_id TEXT storage per RFC-0903 |
 | v15     | 2026-04-14 | Round 5 fixes: replace record_spend_ledger prose refs with record_spend/record_spend_with_team, add ASC to §Ledger-Based replay SQL, add CANONICAL_TOKENIZER_VERSION const, fix Merkle tree odd-leaf comment, add request_id length bound, RFC-8785 crate reference |
 | v14     | 2026-04-14 | Round 4 fixes: rename calculate_cost→compute_cost, clarify process_response as pseudocode calling record_spend, fix lock ordering scope, fix replay_events comment, add model lookup O(1) optimization, update Implementation Notes |
 | v13     | 2026-04-14 | Round 3 fixes: use KeyError, call record_spend_ledger, fix Error types, add PricingTable caching note, add key_created index, fix TEXT comment, fix Merkle tree comment, clarify TokenSource methods |
@@ -1128,6 +1155,6 @@ For highest throughput in hot paths, consider batching multiple events through a
 ---
 
 **Draft Date:** 2026-04-14
-**Version:** v15
+**Version:** v16
 **Related Use Case:** Enhanced Quota Router Gateway
 **Related RFCs:** RFC-0903 (Virtual API Key System), RFC-0126 (Deterministic Serialization)

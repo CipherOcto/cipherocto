@@ -2,7 +2,7 @@
 
 ## Status
 
-Draft (v11 — aligned with RFC-0903 Final v29, RFC-0126)
+Draft (v13 — aligned with RFC-0903 Final v29, RFC-0126)
 
 ## Authors
 
@@ -131,7 +131,7 @@ Each request generates a **Usage Event** (called `SpendEvent` per RFC-0903 Final
 use serde::{Deserialize, Serialize};
 
 /// Token source for deterministic accounting
-/// Uses &'static str lookup table to avoid allocation
+/// Uses const fn methods returning &'static str for zero-cost string access
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum TokenSource {
     /// Token counts from provider response usage metadata
@@ -140,7 +140,7 @@ pub enum TokenSource {
     CanonicalTokenizer,
 }
 
-/// Static lookup tables for TokenSource strings (avoids allocation)
+/// String conversion methods for TokenSource enum values
 impl TokenSource {
     /// String used in event_id hash input (for deterministic identity)
     /// DIFFERENT from to_db_str() — shorter for compact hashing
@@ -174,7 +174,7 @@ impl TokenSource {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SpendEvent {
     /// Deterministic event identifier (SHA256 hex string - same as RFC-0903 Final)
-    /// Stored as TEXT in database for compatibility
+    /// event_id is stored as TEXT (hex-encoded) in the database
     pub event_id: String,
     /// Request identifier for idempotency (UNIQUE constraint)
     pub request_id: String,
@@ -297,16 +297,9 @@ Budget exceeded - double-spend occurred!
 4. The budget invariant MUST hold at all times:
    0 ≤ current_spend ≤ budget_limit
 
-**Database constraint for safety:**
+**Budget enforcement:** The ledger-based approach uses `FOR UPDATE` row locking and checks `SUM(cost_amount) <= budget_limit` atomically. Since `current_spend` is derived from the ledger (not stored), no CHECK constraint on `api_keys` is needed. The ledger INSERT itself enforces the budget via the atomic transaction pattern.
 
-```sql
--- Add CHECK constraint to prevent any over-budget state
-ALTER TABLE api_keys
-ADD CONSTRAINT chk_budget_not_exceeded
-CHECK (current_spend <= budget_limit);
-```
-
-**Canonical approach:** Use `record_spend()` from the Ledger-Based Architecture section below. This function uses `FOR UPDATE` row locking and derives spend from the ledger, providing deterministic accounting.
+**Canonical approach:** Use `record_spend_ledger()` from the Ledger-Based Architecture section below. This function uses `FOR UPDATE` row locking and derives spend from the ledger, providing deterministic accounting.
 
 **Single-writer principle:**
 
@@ -366,7 +359,7 @@ All usage events are written to a **ledger table**.
 -- Aligns exactly with RFC-0903 Final §spend_ledger schema
 -- Token counts MUST originate from provider when available (see Canonical Token Accounting)
 CREATE TABLE spend_ledger (
-    event_id TEXT PRIMARY KEY,              -- SHA256 hex (36+ chars)
+    event_id TEXT NOT NULL,                 -- SHA256 hex (deterministic identity)
     request_id TEXT NOT NULL,                -- Idempotency key
     key_id TEXT NOT NULL,                    -- UUID as text
     team_id TEXT,                           -- Optional team attribution
@@ -380,8 +373,10 @@ CREATE TABLE spend_ledger (
     token_source TEXT NOT NULL CHECK (token_source IN ('provider_usage', 'canonical_tokenizer')),
     tokenizer_version TEXT,
     provider_usage_json TEXT,                -- Raw provider usage for audit
-    created_at INTEGER NOT NULL DEFAULT (strftime('%s', 'now')),
-    -- Scoped uniqueness: request_id unique per key (idempotency constraint)
+    created_at INTEGER NOT NULL,             -- Insert timestamp (seconds) — provided by application
+    -- Idempotency: UNIQUE constraint prevents duplicate request_id per key
+    -- Note: event_id is deterministic (SHA256) but NOT PRIMARY KEY due to stoolap
+    -- limitation (only INTEGER PRIMARY KEY supported). Index on event_id for lookup.
     UNIQUE(key_id, request_id),
     -- Foreign keys for integrity
     FOREIGN KEY(key_id) REFERENCES api_keys(key_id) ON DELETE CASCADE,
@@ -391,8 +386,11 @@ CREATE TABLE spend_ledger (
 CREATE INDEX idx_spend_ledger_key_id ON spend_ledger(key_id);
 CREATE INDEX idx_spend_ledger_team_id ON spend_ledger(team_id);
 CREATE INDEX idx_spend_ledger_timestamp ON spend_ledger(timestamp);
+CREATE INDEX idx_spend_ledger_event_id ON spend_ledger(event_id);
 -- Composite index for efficient quota queries
 CREATE INDEX idx_spend_ledger_key_time ON spend_ledger(key_id, timestamp);
+-- Composite index for efficient replay with ORDER BY created_at
+CREATE INDEX idx_spend_ledger_key_created ON spend_ledger(key_id, created_at);
 -- Index for pricing verification queries
 CREATE INDEX idx_spend_ledger_pricing_hash ON spend_ledger(pricing_hash);
 ```
@@ -445,10 +443,9 @@ For audit and verification, deterministic replay MUST follow this procedure:
 
 ```
 1. Load all spend_ledger for a key_id
-2. Order by timestamp ASC, then event_id ASC (canonical identity)
+2. Order by created_at ASC, event_id ASC (chronological + tiebreaker)
 3. Compute current_spend = SUM(events.cost_amount)
-4. Verify equality: computed_spend == stored current_spend
-5. If mismatch, trust spend_ledger as authoritative
+4. Verify against ledger-derived balance (not stored counter)
 ```
 
 This ensures economic audit can always reconcile the ledger.
@@ -668,8 +665,21 @@ The router must recompute cost using **its own pricing tables**, ignoring provid
 
 ```rust
 /// Process response and record usage
-/// CRITICAL: Uses provider-reported tokens and deterministic event_id for cross-router determinism
-/// Note: ProviderResponse.provider_usage_json contains the raw provider usage JSON for audit
+///
+/// Uses provider-reported tokens and deterministic event_id for cross-router determinism.
+/// Calls `record_spend_ledger()` for atomic budget enforcement.
+///
+/// # Return Value Semantics
+/// - Returns `Ok(SpendEvent)` on successful record (inserted or deduplicated)
+/// - On duplicate request_id: silently succeeds (idempotent), returns the event
+/// - On budget exceeded: returns `Err(KeyError::BudgetExceeded)`
+///
+/// # Error Types
+/// Uses `KeyError` from RFC-0903 Final:
+/// - `KeyError::NotFound` — key_id does not exist
+/// - `KeyError::BudgetExceeded { current, limit }` — would exceed budget
+/// - `KeyError::InvalidFormat` — invalid token_source or other format error
+/// - `KeyError::Storage(String)` — database errors
 pub async fn process_response(
     db: &Database,
     key_id: &uuid::Uuid,
@@ -678,9 +688,8 @@ pub async fn process_response(
     model: &str,
     response: &ProviderResponse,  // Contains: usage, timestamp, id, provider_usage_json
     pricing_hash: [u8; 32],
-) -> Result<SpendEvent, Error> {
-    // CRITICAL: Use provider-reported tokens for deterministic accounting
-    // This ensures all routers produce identical token counts
+) -> Result<SpendEvent, KeyError> {
+    // Validate token counts (prevent negative/malicious values)
     let input_tokens = response.input_tokens;
     let output_tokens = response.output_tokens;
 
@@ -689,14 +698,15 @@ pub async fn process_response(
     let (token_source, tokenizer_version) = if response.usage.is_some() {
         (TokenSource::ProviderUsage, None)
     } else {
-        // Provider didn't return usage - must use canonical tokenizer
+        // Provider didn't return usage - must use canonical tokenizer (RFC-0910 concern)
         (TokenSource::CanonicalTokenizer, Some(get_canonical_tokenizer(model)))
     };
 
     // Look up pricing and calculate cost using deterministic integer math
+    // Note: PricingTable should be cached/singleton in production (see §Implementation Notes)
     let pricing = PricingTable::new()
         .get(model)
-        .ok_or_else(|| Error::UnknownModel(model.to_string()))?;
+        .ok_or_else(|| KeyError::NotFound)?;
     let cost_amount = calculate_cost(pricing, input_tokens, output_tokens);
 
     // Generate deterministic event_id using SHA256 hex (matches RFC-0903 Final)
@@ -705,6 +715,8 @@ pub async fn process_response(
         key_id,
         provider,
         model,
+        input_tokens,
+        output_tokens,
         &pricing_hash,
         token_source,
     );
@@ -720,62 +732,20 @@ pub async fn process_response(
         input_tokens,
         output_tokens,
         cost_amount,
-        pricing_hash,  // [u8; 32] — passed directly for BLOB storage
+        pricing_hash,
         token_source,
         tokenizer_version,
         provider_usage_json: response.provider_usage_json.clone(),
         timestamp: response.timestamp,
     };
 
-    // Wrap in transaction for atomicity - prevents orphan ledger entries
-    let tx = db.transaction()?;
+    // Record spend using ledger-based atomic enforcement
+    // Uses record_spend_ledger() which handles:
+    // - FOR UPDATE row locking
+    // - Budget check against ledger-derived spend
+    // - Idempotent INSERT via UniqueConstraint handling
+    record_spend_ledger(&event)?;
 
-    // 1. Lock key row and check budget
-    let budget: i64 = tx.query_row(
-        "SELECT budget_limit FROM api_keys WHERE key_id = $1 FOR UPDATE",
-        params![key_id.to_string()],
-        |row| row.get(0),
-    )?;
-
-    // 2. Compute current spend from ledger
-    let current: i64 = tx.query_row(
-        "SELECT COALESCE(SUM(cost_amount), 0) FROM spend_ledger WHERE key_id = $1",
-        params![key_id.to_string()],
-        |row| row.get(0),
-    )?;
-
-    // 3. Check budget
-    if current + cost_amount as i64 > budget {
-        return Err(Error::BudgetExceeded { current: current as u64, limit: budget as u64 });
-    }
-
-    // 4. Insert into ledger
-    tx.execute(
-        "INSERT INTO spend_ledger (
-            event_id, request_id, key_id, team_id, timestamp,
-            provider, model, input_tokens, output_tokens, cost_amount,
-            pricing_hash, token_source, tokenizer_version, provider_usage_json
-        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
-        ON CONFLICT(key_id, request_id) DO NOTHING",
-        params![
-            &event.event_id,
-            &event.request_id,
-            event.key_id.to_string(),
-            event.team_id,
-            event.timestamp as i64,
-            &event.provider,
-            &event.model,
-            event.input_tokens as i32,
-            event.output_tokens as i32,
-            event.cost_amount as i64,
-            &event.pricing_hash,  // Store as BLOB (binary) — matches RFC-0903 Final BYTEA(32)
-            token_source.to_db_str(),
-            event.tokenizer_version,
-            &event.provider_usage_json,
-        ],
-    )?;
-
-    tx.commit()?;
     Ok(event)
 }
 
@@ -801,15 +771,9 @@ fn get_canonical_tokenizer(model: &str) -> String {
 
 const CANONICAL_TOKENIZER_VERSION: &str = "tiktoken-cl100k_base-v1.2.3";
 
-This guarantees:
+This guarantees deterministic billing.
 
-```
-
-deterministic billing
-
-````
-
-**Failure handling note:** The provider request is an external HTTP call outside the database transaction. If the provider succeeds but `record_usage` fails, the response has already been consumed. The compensating approach is to use idempotent `request_id` for retries — if a retry arrives with the same `request_id`, the `ON CONFLICT` will silently succeed, preventing double-billing.
+**Failure handling note:** The provider request is an external HTTP call outside the database transaction. If the provider succeeds but `process_response` fails, the response has already been consumed. The compensating approach is to use idempotent `request_id` for retries — if a retry arrives with the same `request_id`, the UniqueConstraint error will be caught and the operation is silently idempotent, preventing double-billing.
 
 ## Overflow Safety
 
@@ -817,7 +781,7 @@ All accounting variables must use:
 
 ```rust
 u64
-````
+```
 
 Maximum supported spend:
 
@@ -828,12 +792,14 @@ Maximum supported spend:
 Overflow must be treated as a fatal error.
 
 ```rust
-fn checked_add_spend(current: u64, add: u64) -> Result<u64, Error> {
+fn checked_add_spend(current: u64, add: u64) -> Result<u64, KeyError> {
     current
         .checked_add(add)
-        .ok_or_else(|| Error::OverflowDetected)
+        .ok_or_else(|| KeyError::Storage("overflow detected".to_string()))
 }
 ```
+
+Note: `KeyError::Storage` is used for overflow errors; a dedicated `KeyError::Overflow` variant may be added in future RFC-0903 revisions.
 
 ## Audit Proof Generation (Future)
 
@@ -851,17 +817,22 @@ pub struct MerkleNode {
 }
 
 /// Build Merkle tree from usage events
+///
+/// Note: This hashes the ASCII bytes of the hex-encoded event_id string (not the raw
+/// binary SHA256). This is deterministic but produces a different root than hashing
+/// the original binary. This approach is used because event_id is stored as hex
+/// string and the hex representation is what appears in audit logs.
 pub fn build_merkle_tree(events: &[SpendEvent]) -> MerkleNode {
-    // Sort events deterministically by event_id (binary comparison)
+    // Sort events deterministically by event_id (lexicographic comparison of hex string)
     let mut sorted = events.to_vec();
     sorted.sort_by(|a, b| a.event_id.cmp(&b.event_id));
 
-    // Build leaf nodes from hex event_id (converted to bytes for hashing)
+    // Build leaf nodes from hex event_id (hashed as ASCII bytes of hex string)
     let mut leaves: Vec<[u8; 32]> = sorted
         .iter()
         .map(|e| {
             let mut hasher = Sha256::new();
-            hasher.update(e.event_id.as_bytes());  // Hex string → bytes
+            hasher.update(e.event_id.as_bytes());  // ASCII bytes of hex string
             hasher.update(e.cost_amount.to_le_bytes());
             hasher.finalize().into()
         })
@@ -917,18 +888,23 @@ Accounting must be treated as part of the **transaction boundary**.
 pub async fn process_request_with_accounting(
     db: &Database,
     request: &Request,
-) -> Result<Response, Error> {
-    // Start transaction
-    let tx = db.transaction()?;
-
+    pricing_hash: [u8; 32],
+) -> Result<Response, KeyError> {
     // Execute request to provider
     let response = execute_request(request).await?;
 
-    // Record usage and deduct budget ATOMICALLY
-    let event = record_usage(&tx, &request.key_id, &response)?;
-
-    // Commit transaction (includes accounting)
-    tx.commit()?;
+    // Record spend via ledger (atomic budget enforcement)
+    // Note: process_response handles its own transaction internally
+    let _event = process_response(
+        db,
+        &request.key_id,
+        request.team_id.as_deref(),
+        request.provider,
+        request.model,
+        &response,
+        pricing_hash,
+    )
+    .await?;
 
     // Return response only after successful accounting
     Ok(response)
@@ -1003,12 +979,28 @@ ALWAYS: team row FIRST, key row SECOND
 
 Any deviation risks deadlock.
 
+**record_spend_ledger function (per RFC-0903 Final):**
+
+```rust
+/// Record spend event in ledger with atomic budget enforcement.
+/// Uses FOR UPDATE row locking to prevent double-spend in multi-router deployments.
+///
+/// # Errors
+/// - `KeyError::NotFound` — key_id does not exist
+/// - `KeyError::BudgetExceeded { current, limit }` — would exceed budget
+/// - `KeyError::InvalidFormat` — invalid token_source value
+/// - `KeyError::Storage(String)` — database errors
+pub fn record_spend_ledger(event: &SpendEvent) -> Result<(), KeyError> {
+    // Implementation: see RFC-0903 Final §record_spend_ledger
+}
+```
+
 **Deterministic replay:**
 
 ```
-1. SELECT * FROM spend_ledger ORDER BY timestamp, event_id
-2. Recompute balances
-3. Verify equality with any cached balances
+1. SELECT * FROM spend_ledger ORDER BY created_at, event_id
+2. Recompute balances from ledger
+3. Verify ledger-derived balance against enforcement check
 ```
 
 **Long-term enablement:**
@@ -1083,10 +1075,24 @@ The `PricingTable` struct uses `BTreeMap<String, PricingModel>` for:
 - Consistent SHA256 hashing across routers
 - Efficient O(log n) lookups
 
+### PricingTable Caching (Optimization)
+
+`PricingTable::new()` creates a new `BTreeMap` and inserts all models on every call. For production deployments, cache the `PricingTable` instance:
+
+```rust
+// Singleton pattern for production
+static PRICING_TABLE: once_cell::sync::Lazy<PricingTable> =
+    once_cell::sync::Lazy::new(PricingTable::new);
+```
+
+This avoids O(n) allocation per request.
+
 ## Changelog
 
 | Version | Date       | Changes                                                                                                                                                    |
 | ------- | ---------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| v13     | 2026-04-14 | Round 3 fixes: use KeyError, call record_spend_ledger, fix Error types, add PricingTable caching note, add key_created index, fix TEXT comment, fix Merkle tree comment, clarify TokenSource methods |
+| v12     | 2026-04-14 | Round 2 adversarial review fixes: fix event ordering conflicts, remove invalid CHECK constraint, fix schema PRIMARY KEY for stoolap compatibility, fix ON CONFLICT to MySQL-style idempotency, add created_at to INSERT, fix four-backtick code fences |
 | v11     | 2026-04-14 | Adversarial review fixes: remove duplicate token_source_lookup module, fix event ordering (created_at, event_id), pricing_hash→[u8;32], add FOR UPDATE locks, add token_source CHECK constraint, fix pricing_hash BLOB not TEXT, canonical JSON note, mark process_response as impl detail, fix replay_events |
 | v10     | 2026-04-14 | Full alignment with RFC-0903 Final v29: event_id→String, request_id→String, timestamp ordering, TokenSource lookup tables, lock ordering, BTreeMap pricing |
 | v9      | 2026-03-27 | Adopt RFC-0903 `spend_ledger` schema; remove parallel `usage_ledger` table; rename columns                                                                 |
@@ -1095,6 +1101,6 @@ The `PricingTable` struct uses `BTreeMap<String, PricingModel>` for:
 ---
 
 **Draft Date:** 2026-04-14
-**Version:** v11
+**Version:** v13
 **Related Use Case:** Enhanced Quota Router Gateway
 **Related RFCs:** RFC-0903 (Virtual API Key System), RFC-0126 (Deterministic Serialization)

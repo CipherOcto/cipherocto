@@ -2,7 +2,7 @@
 
 ## Status
 
-Draft (v17 — aligned with RFC-0903 Final v29 + RFC-0903-B1 amendment, RFC-0126, RFC-0201)
+Draft (v18 — aligned with RFC-0903 Final v29 + RFC-0903-B1 amendment, RFC-0126, RFC-0201)
 
 ## Authors
 
@@ -171,15 +171,23 @@ impl TokenSource {
 }
 
 /// Complete spend event for deterministic accounting
-/// Aligns with RFC-0903 Final §SpendEvent
+/// Aligns with RFC-0903 Final §SpendEvent and RFC-0903-B1 amendment
+///
+/// Storage encoding per RFC-0903-B1:
+/// - event_id: BLOB(32) — raw 32-byte SHA256 binary. Struct field is hex String for API compat.
+/// - request_id: BLOB(32) — raw 32-byte binary. Struct field is hex String for API compat.
+///   (Gateway provides request_id as hex string; storage converts hex→raw binary at insert.)
+/// - key_id: BLOB(16) — raw 16-byte UUID binary. Struct field is uuid::Uuid for type safety.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SpendEvent {
-    /// Deterministic event identifier (SHA256 hex string - same as RFC-0903 Final)
-    /// event_id is stored as TEXT (hex-encoded) in the database
+    /// Deterministic event identifier (SHA256 hex string — hex for API/debug compat)
+    /// Stored as BLOB(32) per RFC-0903-B1; conversion: hex→raw at insert, raw→hex at read.
     pub event_id: String,
     /// Request identifier for idempotency (UNIQUE constraint)
+    /// Stored as BLOB(32) per RFC-0903-B1; conversion: hex→raw at insert, raw→hex at read.
     pub request_id: String,
     /// API key that made the request
+    /// Stored as BLOB(16) per RFC-0903-B1; uuid::Uuid↔[u8;16] conversion at storage boundary.
     pub key_id: uuid::Uuid,
     /// Team ID (if applicable)
     pub team_id: Option<String>,
@@ -232,6 +240,39 @@ pub fn compute_event_id(
     hasher.update(token_source.to_hash_str().as_bytes());
     // Return hex string (TEXT storage compatible with RFC-0903 Final)
     format!("{:x}", hasher.finalize())
+}
+
+/// Convert event_id/request_id from hex String (struct/API layer) to raw [u8; 32] for BLOB storage.
+/// Used at the storage boundary before INSERT per RFC-0903-B1.
+#[inline]
+pub fn hex_to_blob_32(hex_str: &str) -> [u8; 32] {
+    // hex_str is the ASCII hex representation (64 chars) of a 32-byte binary.
+    // This is the format returned by compute_event_id() and stored in event_id/request_id fields.
+    let bytes = hex::decode(hex_str).expect("valid hex event_id/request_id");
+    let mut blob = [0u8; 32];
+    blob.copy_from_slice(&bytes);
+    blob
+}
+
+/// Convert event_id/request_id from raw [u8; 32] (BLOB storage) to hex String for struct/API layer.
+/// Used at the storage boundary after SELECT per RFC-0903-B1.
+#[inline]
+pub fn blob_32_to_hex(blob: &[u8; 32]) -> String {
+    hex::encode(blob)
+}
+
+/// Convert key_id from uuid::Uuid (struct/API layer) to raw [u8; 16] for BLOB(16) storage.
+/// Used at the storage boundary before INSERT per RFC-0903-B1.
+#[inline]
+pub fn uuid_to_blob_16(uuid: &uuid::Uuid) -> [u8; 16] {
+    *uuid.as_bytes()
+}
+
+/// Convert key_id from raw [u8; 16] (BLOB(16) storage) to uuid::Uuid for struct/API layer.
+/// Used at the storage boundary after SELECT per RFC-0903-B1.
+#[inline]
+pub fn blob_16_to_uuid(blob: &[u8; 16]) -> uuid::Uuid {
+    uuid::Uuid::from_bytes(*blob)
 }
 
 Events represent the **canonical accounting record**.
@@ -365,7 +406,7 @@ Duplicate requests therefore cannot double charge.
 
 All usage events are written to a **ledger table**.
 
-**Schema note:** Per RFC-0903-B1 amendment, `event_id` and `request_id` are stored as `BLOB(32)` (raw SHA256 binary), and `key_id` is stored as `BLOB(16)` (raw UUID bytes). This eliminates the 2x hex-encoding overhead of `TEXT` storage. See RFC-0903-B1 §Schema Amendments for the full specification.
+**Schema note:** Per RFC-0903-B1 amendment, `event_id` and `request_id` are stored as `BLOB(32)` (raw SHA256 binary), and `key_id` is stored as `BLOB(16)` (raw UUID bytes). The application struct uses `String` (hex) for API/debug compatibility; storage converts at the boundary. See RFC-0903-B1 §Schema Amendments for the full specification including the hex↔binary conversion rules.
 
 ```sql
 -- Spend ledger - THE authoritative economic record
@@ -1098,12 +1139,16 @@ The `PricingTable` struct uses `BTreeMap<String, PricingModel>` for:
 `PricingTable::new()` creates a new `BTreeMap` and inserts all models on every call. For production deployments, cache the `PricingTable` instance:
 
 ```rust
-// Singleton pattern for production
+// Singleton pattern for production — zero allocation per request
 static PRICING_TABLE: once_cell::sync::Lazy<PricingTable> =
     once_cell::sync::Lazy::new(PricingTable::new);
 ```
 
-This avoids O(n) allocation per request.
+This avoids O(n) allocation per request. Usage in pseudocode:
+
+```rust
+let pricing = PRICING_TABLE.get(model).ok_or(KeyError::NotFound)?;
+```
 
 ### Model Family Lookup Optimization (Optimization)
 
@@ -1124,24 +1169,28 @@ const CANONICAL_TOKENIZER_VERSION: &str = "tiktoken-cl100k_base-v1.2.3";
 /// Get canonical tokenizer for a model family — O(1) per call
 /// Returns static str reference — zero allocation
 ///
-/// Note: RFC-0910 implementation concern; defined here for completeness.
-/// GPT-4 family (gpt-*) uses cl100k_base; o1/o3 use o200k_base (different vocab).
+/// Note: RFC-0910 is the authoritative source for tokenizer assignments.
+/// This function is an approximation for quota accounting pseudocode only.
+/// Actual implementation MUST use RFC-0910's tokenizer registry at runtime.
 pub fn get_canonical_tokenizer(model: &str) -> &'static str {
+    // Prefix-based dispatch: O(1) but coarse — RFC-0910 registry is definitive.
+    // Known mappings (approximate, RFC-0910 may refine):
+    //   gpt-4*, gpt-3.5*  → cl100k_base
+    //   o1, o3             → o200k_base (OpenAI o-series vocab)
+    //   o1-mini, o1-preview → different vocab (verify with RFC-0910)
+    //   claude-*           → cl100k_base (Anthropic BPE, compatible vocab)
+    //   gemini-*           → cl100k_base (Google BPE)
     match model.chars().next() {
-        // GPT-4/3.5 family: gpt-* uses cl100k_base
-        'g' => "tiktoken-cl100k_base",
-        // o1/o3 models: different vocabulary (o200k_base) — NOT cl100k_base
-        'o' => {
-            // Distinguish "o1-*"/"o3-*" from "o1-mini", "o1-preview", etc.
-            // All o* models use o200k_base (tiktoken's OpenAI vocabulary).
-            "tiktoken-o200k_base"
-        }
-        // claude-* models — Anthropic uses BPE (cl100k_base compatible vocab)
-        'c' => "tiktoken-cl100k_base",
-        // Default fallback — all currently use the same tokenizer
+        'g' => "tiktoken-cl100k_base",     // gpt-* family
+        'o' => "tiktoken-o200k_base",      // o1/o3 — NOT all o* variants
+        'c' => "tiktoken-cl100k_base",     // claude-* family
         _ => CANONICAL_TOKENIZER_VERSION,
     }
 }
+/// WARNING: This function is pseudocode for quota accounting only.
+/// Production code MUST use the RFC-0910 tokenizer registry which maps
+/// exact model names to tokenizer versions. The prefix-match above
+/// is NOT authoritative — RFC-0910 defines the real mapping.
 ```
 
 The `&'static str` return type eliminates heap allocation on every call.
@@ -1179,12 +1228,13 @@ $0.03/1K tokens → DQA(30_000, scale=6)
 
 **Current limitation:** `SpendEvent.cost_amount` is `u64` per RFC-0903 Final. A future RFC-0903 revision could adopt `cost_amount: DQA`, enabling the full Numeric Tower stack for quota arithmetic.
 
-**Note:** The `key_id` field is `TEXT NOT NULL` per RFC-0903 Final schema. Storing as binary `[u8; 16]` would reduce storage but requires a breaking schema change to RFC-0903.
+**Note:** `key_id` storage is `BLOB(16)` per RFC-0903-B1. The `uuid::Uuid` struct field converts to/from raw bytes at the storage boundary via `uuid_to_blob_16()` / `blob_16_to_uuid()`.
 
 ## Changelog
 
 | Version | Date       | Changes |
 | ------- | ---------- | ------- |
+| v18     | 2026-04-14 | Round 7 fixes: add hex_to_blob/blob_32_to_hex/uuid_to_blob_16/blob_16_to_uuid helpers, fix event_id comment (BLOB not TEXT), add storage encoding comment to SpendEvent, fix stale key_id TEXT note, add request_id encoding rules to RFC-0903-B1, remove stale created_at DEFAULT entry, remove stale PRIMARY KEY comment, fix get_canonical_tokenizer (add RFC-0910 disclaimer) |
 | v17     | 2026-04-14 | Round 6 fixes: fix process_response return type to match record_spend (returns Ok(())), add RFC-0903-B1 amendment section, update schema to BYTEA storage (event_id BLOB(32), request_id BLOB(32), key_id BLOB(16)), mark RFC-0903-B1 ext indexes, add compute_cost truncation note, fix o1/o3 tokenizer (o200k_base), update Merkle tree for BLOB storage, add RFC-0903-B1 approval criteria |
 | v16     | 2026-04-14 | Add Numeric Tower (DQA) integration note for future cost_amount enhancement; note key_id TEXT storage per RFC-0903 |
 | v15     | 2026-04-14 | Round 5 fixes: replace record_spend_ledger prose refs with record_spend/record_spend_with_team, add ASC to §Ledger-Based replay SQL, add CANONICAL_TOKENIZER_VERSION const, fix Merkle tree odd-leaf comment, add request_id length bound, RFC-8785 crate reference |
@@ -1199,6 +1249,6 @@ $0.03/1K tokens → DQA(30_000, scale=6)
 ---
 
 **Draft Date:** 2026-04-14
-**Version:** v17
+**Version:** v18
 **Related Use Case:** Enhanced Quota Router Gateway
 **Related RFCs:** RFC-0903 (Virtual API Key System), RFC-0126 (Deterministic Serialization)

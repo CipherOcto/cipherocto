@@ -2,7 +2,7 @@
 
 ## Status
 
-Draft (v1 — Amendment to RFC-0903 Final v29)
+Draft (v2 — Amendment to RFC-0903 Final v29)
 
 ## Authors
 
@@ -104,7 +104,9 @@ CREATE TABLE spend_ledger (
     provider_usage_json TEXT,                -- Unchanged
     created_at INTEGER NOT NULL,              -- Unchanged (stoolap: INTEGER NOT NULL, app provides value)
     -- Idempotency: UNIQUE constraint prevents duplicate request_id per key
-    -- Note: event_id is BLOB(32) PRIMARY KEY — stoolap BLOB PK supported; RFC-0201
+    -- Note: event_id is BLOB(32) NOT NULL, NOT a PRIMARY KEY (stoolap quirk).
+    -- The RFC-0903 Final PRIMARY KEY on event_id is replaced by a regular
+    -- index (idx_spend_ledger_event_id) and the UNIQUE(key_id, request_id) constraint.
     UNIQUE(key_id, request_id),              -- Unchanged
     FOREIGN KEY(key_id) REFERENCES api_keys(key_id) ON DELETE CASCADE,
     FOREIGN KEY(team_id) REFERENCES teams(team_id) ON DELETE SET NULL
@@ -126,12 +128,14 @@ The `api_keys` table schema in RFC-0903 Final is unchanged by this amendment. `k
 
 | Field/Index | RFC-0903 Final | RFC-0903-B1 | Delta |
 |------------|----------------|-------------|-------|
-| `event_id` | `TEXT` (64 chars hex) | `BLOB(32)` (raw bytes) | −32 bytes/row |
+| `event_id` | `TEXT` (hex, 64 chars) | `BLOB(32)` (raw bytes) | −32 bytes/row |
 | `request_id` | `TEXT` (variable) | `BLOB(32)` (raw bytes) | Variable; up to −32 bytes |
-| `key_id` | `TEXT` (36+ chars UUID) | `BLOB(16)` (raw bytes) | −20+ bytes/row |
+| `key_id` | `TEXT` (UUID hex, 36 chars) | `BLOB(16)` (raw bytes) | −20+ bytes/row |
 | `idx_spend_ledger_event_id` | *(absent)* | Added | New |
 | `idx_spend_ledger_key_created` | *(absent)* | Added | New |
 | `idx_spend_ledger_pricing_hash` | *(absent)* | Added | New |
+
+> **Note on `created_at`:** RFC-0903 Final specifies `created_at INTEGER NOT NULL DEFAULT (strftime('%s', 'now'))`. RFC-0903-B1 does not change this — stoolap uses `INTEGER NOT NULL` with application-provided values. The Change Summary does not list `created_at` because no change applies.
 
 **Storage savings per spend_ledger row:** ~52 bytes minimum (event_id 32 + key_id 20) plus up to 32 more for request_id.
 
@@ -152,12 +156,38 @@ params![stoolap::core::Value::blob(hex::decode(&event_id).unwrap())]
 
 ### request_id
 
-`request_id` is provided by the API gateway. If the gateway provides it as text (UUID or string), encode to fixed 32 bytes:
-- If `request_id` is a UUID: `uuid.as_bytes()` (16 bytes) — zero conversion
-- If `request_id` is a string < 32 bytes: pad with zeros, or hash to 32 bytes
-- If `request_id` is >= 32 bytes: truncate or hash to 32 bytes
+`request_id` is provided by the API gateway as a text string. It is stored as `BLOB(32)` (32 raw bytes).
 
-**Note:** `UNIQUE(key_id, request_id)` requires consistent encoding. All routers must use the same encoding scheme.
+**Encoding rules (all routers MUST use the same scheme):**
+
+| Gateway format | Encoding to 32 bytes |
+|----------------|----------------------|
+| UUID (36 chars) | Take first 16 bytes of UUID bytes; zero-pad remaining 16 |
+| String < 32 bytes | SHA256 of the string, take first 32 bytes |
+| String == 32 bytes | Raw bytes (already 32 bytes) |
+| String > 32 bytes | SHA256 of the string (output is 32 bytes) |
+
+**Implementation:**
+
+```rust
+/// Encode a gateway-provided request_id string to 32 raw bytes for BLOB(32) storage.
+/// Uses SHA256 to hash variable-length strings deterministically.
+pub fn encode_request_id(request_id: &str) -> [u8; 32] {
+    let bytes = request_id.as_bytes();
+    if bytes.len() == 32 {
+        let mut out = [0u8; 32];
+        out.copy_from_slice(bytes);
+        out
+    } else {
+        use sha2::{Digest, Sha256};
+        let mut hasher = Sha256::new();
+        hasher.update(bytes);
+        hasher.finalize().into()
+    }
+}
+```
+
+**Important:** The encoding scheme must be consistent across all routers. A router that changes encoding schemes will produce different `request_id` values for the same logical request, breaking idempotency. Document the chosen scheme in the deployment runbook.
 
 ### key_id
 

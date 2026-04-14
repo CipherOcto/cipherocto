@@ -2,7 +2,7 @@
 
 ## Status
 
-Draft (v13 — aligned with RFC-0903 Final v29, RFC-0126)
+Draft (v14 — aligned with RFC-0903 Final v29, RFC-0126)
 
 ## Authors
 
@@ -311,7 +311,7 @@ Router → Primary DB (strong consistency) → Usage Event Recorded
 
 ## Lock Ordering Invariant
 
-**CRITICAL for multi-key transactions:**
+**CRITICAL for transactions that lock BOTH team and key rows:**
 
 ALL transactions that lock both `teams` and `api_keys` rows MUST acquire the team lock BEFORE the key lock to prevent deadlocks:
 
@@ -320,7 +320,11 @@ ALL transactions that lock both `teams` and `api_keys` rows MUST acquire the tea
 2. SELECT ... FROM api_keys WHERE ... FOR UPDATE
 ```
 
-This order must be followed consistently across ALL code paths. Any code that violates this order risks deadlock under concurrent load.
+This order must be followed consistently across ALL code paths that lock both rows. Any code that violates this order risks deadlock under concurrent load.
+
+> **Note:** `record_spend()` (key-level only) does NOT lock a team row — it locks only the key row.
+> The lock ordering rule applies ONLY to `record_spend_with_team()` and similar functions that
+> enforce both team and key budgets simultaneously.
 
 See RFC-0903 Final §Lock Ordering Invariant for full specification.
 
@@ -400,20 +404,20 @@ CREATE INDEX idx_spend_ledger_pricing_hash ON spend_ledger(pricing_hash);
 Quota state must be reproducible via replay.
 
 ```rust
-/// Reconstruct quota state from events
+/// Reconstruct quota state from events (in-memory struct replay)
 /// Uses BTreeMap for deterministic iteration ordering
 ///
-/// Note: created_at is in the database schema but NOT in the in-memory SpendEvent struct.
-/// For database-level replay with ordering, use: ORDER BY created_at, event_id
-/// For in-memory struct replay (this function), use event_id for canonical ordering.
+/// Note: The SpendEvent struct has no `created_at` field (it is DB schema only).
+/// Therefore in-memory replay uses event_id for canonical ordering.
+/// For database-level replay (SQL), use: ORDER BY created_at ASC, event_id ASC
+/// (created_at is the authoritative insertion order; event_id is the tiebreaker).
 pub fn replay_events(events: &[SpendEvent]) -> std::collections::BTreeMap<String, u64> {
     use std::collections::BTreeMap;
 
     let mut key_spend: BTreeMap<String, u64> = BTreeMap::new();
 
-    // Events must be sorted by event_id for deterministic ordering
-    // Per RFC-0903 Final §Deterministic Replay Procedure: ORDER BY event_id
-    // Note: timestamp is provider event time (not used for replay ordering)
+    // In-memory struct replay: sort by event_id for deterministic ordering
+    // (SpendEvent has no created_at field — DB-level replay uses different ordering)
     let mut sorted_events = events.to_vec();
     sorted_events.sort_by(|a, b| {
         a.event_id.cmp(&b.event_id)
@@ -582,8 +586,9 @@ impl Default for PricingTable {
     }
 }
 
-/// Calculate cost deterministically using integer arithmetic
-pub fn calculate_cost(
+/// Compute cost deterministically using integer arithmetic
+/// Name aligns with RFC-0903 Final §compute_cost
+pub fn compute_cost(
     pricing: &PricingModel,
     input_tokens: u32,
     output_tokens: u32,
@@ -594,10 +599,6 @@ pub fn calculate_cost(
 
     prompt_cost.saturating_add(completion_cost)
 }
-
-/// Note: TokenSource string lookup is implemented via const fn methods on the
-/// TokenSource enum (to_hash_str, to_db_str). These provide zero-cost static
-/// string access without requiring a separate lookup table module.
 
 All values stored as integer micro-units.
 
@@ -658,70 +659,61 @@ Upstream provider responses may contain usage metadata.
 
 The router must recompute cost using **its own pricing tables**, ignoring provider cost fields.
 
-> **Implementation Note:** The `process_response` function below is implementation detail
-> not defined in RFC-0903 Final. RFC-0903 Final only specifies `record_spend()` and
-> `record_spend_with_team()`. The `ProviderResponse` type and tokenizer detection
-> logic are Quota Router implementation concerns, not quota accounting specification.
+> **IMPORTANT:** `process_response` below is **PSEUDOCODE** demonstrating how RFC-0903 Final's
+> `record_spend` integrates into the request lifecycle. It is NOT a specification of a new function.
+> RFC-0903 Final defines `record_spend(db, key_id, event)` and `record_spend_with_team(db, key_id, team_id, event)`.
+> The `ProviderResponse` type and tokenizer detection logic are Quota Router implementation concerns,
+> not quota accounting specification (see RFC-0910 for tokenizer management).
+
+**Pseudocode — DO NOT COPY AS-IS:**
 
 ```rust
-/// Process response and record usage
+/// Process response and record usage (pseudocode per RFC-0903 Final)
 ///
 /// Uses provider-reported tokens and deterministic event_id for cross-router determinism.
-/// Calls `record_spend_ledger()` for atomic budget enforcement.
+/// Calls `record_spend()` from RFC-0903 Final for atomic budget enforcement.
 ///
-/// # Return Value Semantics
-/// - Returns `Ok(SpendEvent)` on successful record (inserted or deduplicated)
-/// - On duplicate request_id: silently succeeds (idempotent), returns the event
-/// - On budget exceeded: returns `Err(KeyError::BudgetExceeded)`
+/// # Integration Pattern
+/// 1. Execute provider request
+/// 2. Build SpendEvent from response
+/// 3. Call record_spend() (or record_spend_with_team()) atomically
 ///
-/// # Error Types
-/// Uses `KeyError` from RFC-0903 Final:
-/// - `KeyError::NotFound` — key_id does not exist
-/// - `KeyError::BudgetExceeded { current, limit }` — would exceed budget
-/// - `KeyError::InvalidFormat` — invalid token_source or other format error
-/// - `KeyError::Storage(String)` — database errors
+/// # Error Handling
+/// - `KeyError::BudgetExceeded` → return 429 to client, do NOT return provider response
+/// - `KeyError::Storage` → return 500 to client, do NOT return provider response
+/// - Duplicate request_id → silently idempotent (safe to retry)
 pub async fn process_response(
     db: &Database,
     key_id: &uuid::Uuid,
     team_id: Option<&str>,
     provider: &str,
     model: &str,
-    response: &ProviderResponse,  // Contains: usage, timestamp, id, provider_usage_json
+    response: &ProviderResponse,
     pricing_hash: [u8; 32],
 ) -> Result<SpendEvent, KeyError> {
-    // Validate token counts (prevent negative/malicious values)
-    let input_tokens = response.input_tokens;
-    let output_tokens = response.output_tokens;
-
-    // Determine token source: check if provider returned usage metadata
-    // A provider may legitimately return 0 tokens, so check .is_some() not token count
-    let (token_source, tokenizer_version) = if response.usage.is_some() {
-        (TokenSource::ProviderUsage, None)
-    } else {
-        // Provider didn't return usage - must use canonical tokenizer (RFC-0910 concern)
-        (TokenSource::CanonicalTokenizer, Some(get_canonical_tokenizer(model)))
+    // 1. Determine token source (provider usage vs canonical tokenizer)
+    let (token_source, tokenizer_version) = match response.usage.is_some() {
+        true => (TokenSource::ProviderUsage, None),
+        false => (TokenSource::CanonicalTokenizer, Some(get_canonical_tokenizer(model)?)),
     };
 
-    // Look up pricing and calculate cost using deterministic integer math
-    // Note: PricingTable should be cached/singleton in production (see §Implementation Notes)
-    let pricing = PricingTable::new()
-        .get(model)
-        .ok_or_else(|| KeyError::NotFound)?;
-    let cost_amount = calculate_cost(pricing, input_tokens, output_tokens);
+    // 2. Look up pricing (should be cached singleton in production — see §PricingTable Caching)
+    let pricing = PRICING_TABLE.get(model).ok_or(KeyError::NotFound)?;
+    let cost_amount = compute_cost(pricing, response.input_tokens, response.output_tokens);
 
-    // Generate deterministic event_id using SHA256 hex (matches RFC-0903 Final)
+    // 3. Generate deterministic event_id (matches RFC-0903 Final §compute_event_id)
     let event_id = compute_event_id(
         &response.request_id,
         key_id,
         provider,
         model,
-        input_tokens,
-        output_tokens,
+        response.input_tokens,
+        response.output_tokens,
         &pricing_hash,
         token_source,
     );
 
-    // Create spend event with token source for deterministic replay
+    // 4. Build SpendEvent (matches RFC-0903 Final §SpendEvent)
     let event = SpendEvent {
         event_id,
         request_id: response.request_id.clone(),
@@ -729,8 +721,8 @@ pub async fn process_response(
         team_id: team_id.map(String::from),
         provider: provider.to_string(),
         model: model.to_string(),
-        input_tokens,
-        output_tokens,
+        input_tokens: response.input_tokens,
+        output_tokens: response.output_tokens,
         cost_amount,
         pricing_hash,
         token_source,
@@ -739,41 +731,23 @@ pub async fn process_response(
         timestamp: response.timestamp,
     };
 
-    // Record spend using ledger-based atomic enforcement
-    // Uses record_spend_ledger() which handles:
-    // - FOR UPDATE row locking
-    // - Budget check against ledger-derived spend
-    // - Idempotent INSERT via UniqueConstraint handling
-    record_spend_ledger(&event)?;
+    // 5. Record spend via RFC-0903 Final ledger-based function
+    //    - record_spend(db, key_id, &event) for key-level budget
+    //    - record_spend_with_team(db, key_id, team_id, &event) for team-level budget
+    match team_id {
+        Some(tid) => record_spend_with_team(db, key_id, tid, &event)?,
+        None => record_spend(db, key_id, &event)?,
+    };
 
     Ok(event)
 }
+```
 
-> **RFC-0910 Concern:** The `get_canonical_tokenizer` function and tokenizer version
-> management are properly part of RFC-0910 (Pricing Table Registry), not RFC-0909.
+> **RFC-0910 Concern:** The `get_canonical_tokenizer()` function and tokenizer version
+> management are part of RFC-0910 (Pricing Table Registry), not RFC-0909.
 > RFC-0909 only specifies that `token_source` must be included in event_id hashing.
 
-/// Get canonical tokenizer for a model family
-/// Note: This is RFC-0910 implementation detail — here for completeness
-fn get_canonical_tokenizer(model: &str) -> String {
-    // Different model families need different tokenizers
-    if model.starts_with("gpt-") || model.starts_with("o1") || model.starts_with("o3") {
-        "tiktoken-cl100k_base".to_string()
-    } else if model.starts_with("claude-") {
-        "tiktoken-cl100k_base".to_string() // Anthropic uses BPE
-    } else if model.starts_with("gemini-") {
-        "tiktoken-cl100k_base".to_string() // Google uses BPE
-    } else {
-        // Default fallback
-        CANONICAL_TOKENIZER_VERSION.to_string()
-    }
-}
-
-const CANONICAL_TOKENIZER_VERSION: &str = "tiktoken-cl100k_base-v1.2.3";
-
-This guarantees deterministic billing.
-
-**Failure handling note:** The provider request is an external HTTP call outside the database transaction. If the provider succeeds but `process_response` fails, the response has already been consumed. The compensating approach is to use idempotent `request_id` for retries — if a retry arrives with the same `request_id`, the UniqueConstraint error will be caught and the operation is silently idempotent, preventing double-billing.
+**Failure handling note:** The provider request is an external HTTP call outside the database transaction. If the provider succeeds but `process_response` fails, the response has already been consumed. The compensating approach is to use idempotent `request_id` for retries — if a retry arrives with the same `request_id`, the UniqueConstraint error causes the ledger INSERT to be silently skipped, preventing double-billing.
 
 ## Overflow Safety
 
@@ -979,20 +953,20 @@ ALWAYS: team row FIRST, key row SECOND
 
 Any deviation risks deadlock.
 
-**record_spend_ledger function (per RFC-0903 Final):**
+**record_spend function (per RFC-0903 Final §record_spend):**
 
 ```rust
 /// Record spend event in ledger with atomic budget enforcement.
 /// Uses FOR UPDATE row locking to prevent double-spend in multi-router deployments.
 ///
-/// # Errors
-/// - `KeyError::NotFound` — key_id does not exist
-/// - `KeyError::BudgetExceeded { current, limit }` — would exceed budget
-/// - `KeyError::InvalidFormat` — invalid token_source value
-/// - `KeyError::Storage(String)` — database errors
-pub fn record_spend_ledger(event: &SpendEvent) -> Result<(), KeyError> {
-    // Implementation: see RFC-0903 Final §record_spend_ledger
-}
+/// Implementation: see RFC-0903 Final §record_spend and §record_spend_with_team
+///
+/// # Key-Level (no team budget)
+/// record_spend(db, key_id, &event) → locks only the key row
+///
+/// # Team-Level (team budget enforcement)
+/// record_spend_with_team(db, key_id, team_id, &event) → locks team FIRST, key SECOND
+/// (Lock ordering is ONLY relevant for team+key transactions — single-key uses key-only lock)
 ```
 
 **Deterministic replay:**
@@ -1058,7 +1032,7 @@ This RFC can be approved when:
 
 ### Lookup Table Optimization (Implemented)
 
-The RFC uses `const fn` methods for TokenSource string lookup, which enables compile-time evaluation and zero-cost abstraction:
+The RFC uses `const fn` methods for TokenSource string lookup, enabling compile-time evaluation and zero-cost abstraction:
 
 ```rust
 pub const fn to_hash_str(&self) -> &'static str { ... }
@@ -1087,20 +1061,61 @@ static PRICING_TABLE: once_cell::sync::Lazy<PricingTable> =
 
 This avoids O(n) allocation per request.
 
+### Model Family Lookup Optimization (Optimization)
+
+The naive approach uses repeated `model.starts_with()` calls:
+
+```rust
+// O(n) string comparisons — inefficient for many prefixes
+if model.starts_with("gpt-") || model.starts_with("o1") || model.starts_with("o3") { ... }
+else if model.starts_with("claude-") { ... }
+```
+
+A faster approach matches on the first character, then does a single comparison:
+
+```rust
+/// Get canonical tokenizer for a model family — O(1) per call
+/// Returns static str reference — zero allocation
+///
+/// Note: RFC-0910 implementation concern; defined here for completeness.
+pub fn get_canonical_tokenizer(model: &str) -> &'static str {
+    match model.chars().next() {
+        // GPT models: gpt-*, o1-*, o3-* — all use cl100k_base
+        'g' | 'o' => "tiktoken-cl100k_base",
+        // claude-* models — Anthropic uses BPE
+        'c' => "tiktoken-cl100k_base",
+        // Default fallback — all currently use the same tokenizer
+        _ => CANONICAL_TOKENIZER_VERSION,
+    }
+}
+```
+
+The `&'static str` return type eliminates heap allocation on every call.
+
+### Event ID Hashing (Optimization)
+
+`compute_event_id` uses a stack-allocated `Sha256` hasher. This is already near-optimal:
+- No heap allocation per call
+- `Sha256::new()` is a `const fn` on most digest crates
+- Each input component is a single `update()` call
+
+For highest throughput in hot paths, consider batching multiple events through a single hasher context, but this does not affect determinism.
+
 ## Changelog
 
-| Version | Date       | Changes                                                                                                                                                    |
-| ------- | ---------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Version | Date       | Changes |
+| ------- | ---------- | ------- |
+| v14     | 2026-04-14 | Round 4 fixes: rename calculate_cost→compute_cost, clarify process_response as pseudocode calling record_spend, fix lock ordering scope, fix replay_events comment, add model lookup O(1) optimization, update Implementation Notes |
 | v13     | 2026-04-14 | Round 3 fixes: use KeyError, call record_spend_ledger, fix Error types, add PricingTable caching note, add key_created index, fix TEXT comment, fix Merkle tree comment, clarify TokenSource methods |
 | v12     | 2026-04-14 | Round 2 adversarial review fixes: fix event ordering conflicts, remove invalid CHECK constraint, fix schema PRIMARY KEY for stoolap compatibility, fix ON CONFLICT to MySQL-style idempotency, add created_at to INSERT, fix four-backtick code fences |
 | v11     | 2026-04-14 | Adversarial review fixes: remove duplicate token_source_lookup module, fix event ordering (created_at, event_id), pricing_hash→[u8;32], add FOR UPDATE locks, add token_source CHECK constraint, fix pricing_hash BLOB not TEXT, canonical JSON note, mark process_response as impl detail, fix replay_events |
 | v10     | 2026-04-14 | Full alignment with RFC-0903 Final v29: event_id→String, request_id→String, timestamp ordering, TokenSource lookup tables, lock ordering, BTreeMap pricing |
-| v9      | 2026-03-27 | Adopt RFC-0903 `spend_ledger` schema; remove parallel `usage_ledger` table; rename columns                                                                 |
-| v1      | 2026-03-25 | Initial draft                                                                                                                                              |
+| v9      | 2026-03-27 | Adopt RFC-0903 `spend_ledger` schema; remove parallel `usage_ledger` table; rename columns |
+| v1      | 2026-03-25 | Initial draft |
 
 ---
 
 **Draft Date:** 2026-04-14
-**Version:** v13
+**Version:** v14
 **Related Use Case:** Enhanced Quota Router Gateway
 **Related RFCs:** RFC-0903 (Virtual API Key System), RFC-0126 (Deterministic Serialization)

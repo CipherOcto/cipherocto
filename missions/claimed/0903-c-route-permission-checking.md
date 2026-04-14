@@ -2,7 +2,7 @@
 
 ## Status
 
-Open
+Claimed
 
 ## RFC
 
@@ -72,3 +72,7 @@ Low-Medium — focused security hardening with clear attack vectors to test
 - RFC-0903 §Authorization Route Mapping (lines 741-788)
 - RFC-0903 §Route Normalization (lines 1187-1222)
 - RFC-0903 §Prefix Usage (lines 2114-2117)
+
+## Claimant
+
+@claude-code

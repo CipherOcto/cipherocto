@@ -34,4 +34,7 @@ pub enum KeyError {
 
     #[error("Missing API key")]
     MissingKey,
+
+    #[error("Route not allowed: {0}")]
+    RouteNotAllowed(String),
 }

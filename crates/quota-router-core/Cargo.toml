@@ -54,6 +54,9 @@ sha2 = "0.10"
 # For hex encoding of key hashes
 hex = "0.4"
 
+# For percent decoding (path normalization security)
+percent-encoding = "2.1"
+
 [lib]
 name = "quota_router_core"
 path = "src/lib.rs"

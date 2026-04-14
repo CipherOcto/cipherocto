@@ -80,6 +80,28 @@ impl<S: KeyStorage> KeyMiddleware<S> {
         self.validate_request_key(&key_string)
     }
 
+    /// Validate key AND check route permission in one step.
+    ///
+    /// This combines validate_request_key() with check_route_permission()
+    /// to ensure the key is valid AND has access to the requested route.
+    ///
+    /// Returns Err(KeyError::RouteNotAllowed) if route permission check fails.
+    pub fn validate_request_key_for_route(
+        &self,
+        key_string: &str,
+        route: &str,
+    ) -> Result<ApiKey, KeyError> {
+        use crate::keys::check_route_permission;
+
+        let key = self.validate_request_key(key_string)?;
+
+        if !check_route_permission(&key, route) {
+            return Err(KeyError::RouteNotAllowed(route.to_string()));
+        }
+
+        Ok(key)
+    }
+
     /// Check if key has remaining budget
     pub fn check_budget(&self, key: &ApiKey) -> Result<(), KeyError> {
         let spend = self.storage.get_spend(&key.key_id)?;

@@ -2,7 +2,7 @@
 
 ## Status
 
-Draft (v14 — aligned with RFC-0903 Final v29, RFC-0126)
+Draft (v15 — aligned with RFC-0903 Final v29, RFC-0126)
 
 ## Authors
 
@@ -299,7 +299,7 @@ Budget exceeded - double-spend occurred!
 
 **Budget enforcement:** The ledger-based approach uses `FOR UPDATE` row locking and checks `SUM(cost_amount) <= budget_limit` atomically. Since `current_spend` is derived from the ledger (not stored), no CHECK constraint on `api_keys` is needed. The ledger INSERT itself enforces the budget via the atomic transaction pattern.
 
-**Canonical approach:** Use `record_spend_ledger()` from the Ledger-Based Architecture section below. This function uses `FOR UPDATE` row locking and derives spend from the ledger, providing deterministic accounting.
+**Canonical approach:** Use `record_spend()` (key-level) or `record_spend_with_team()` (team+key) from the Ledger-Based Architecture section below. These use `FOR UPDATE` row locking and derive spend from the ledger, providing deterministic accounting.
 
 **Single-writer principle:**
 
@@ -335,11 +335,17 @@ To support retries, event recording must be idempotent.
 Each request receives a **deterministic request_id**.
 
 ```rust
-/// Compute deterministic request_id
+/// Validate request_id format and bounds
 /// The request_id is provided by the API gateway, not generated here.
 /// It serves as the idempotency key for deduplication.
 pub fn validate_request_id(request_id: &str) -> Result<(), KeyError> {
     if request_id.is_empty() {
+        return Err(KeyError::InvalidFormat);
+    }
+    // Reject unreasonably long request_ids to prevent storage abuse.
+    // Typical provider request_ids are 16–64 bytes.
+    const MAX_REQUEST_ID_LEN: usize = 256;
+    if request_id.len() > MAX_REQUEST_ID_LEN {
         return Err(KeyError::InvalidFormat);
     }
     Ok(())
@@ -561,7 +567,8 @@ impl PricingTable {
     /// Note: For full RFC-0126 determinism, a canonical JSON serializer is required.
     /// BTreeMap guarantees sorted key iteration at the map level, but struct field
     /// ordering in JSON serialization is not guaranteed by serde_json.
-    /// A proper canonical JSON implementation (e.g., RFC-8785) should be used.
+    /// A proper canonical JSON implementation (RFC-8785, e.g., `serde_json_raw` crate)
+    /// should be used in production to ensure cross-router hash consistency.
     pub fn compute_pricing_hash(&self) -> [u8; 32] {
         use sha2::{Digest, Sha256};
 
@@ -814,6 +821,7 @@ pub fn build_merkle_tree(events: &[SpendEvent]) -> MerkleNode {
 
     // Build tree bottom-up
     while leaves.len() > 1 {
+        // Duplicate the last leaf if odd count (keeps tree balanced and deterministic)
         if leaves.len() % 2 == 1 {
             leaves.push(leaves.last().unwrap().clone());
         }
@@ -972,7 +980,7 @@ Any deviation risks deadlock.
 **Deterministic replay:**
 
 ```
-1. SELECT * FROM spend_ledger ORDER BY created_at, event_id
+1. SELECT * FROM spend_ledger ORDER BY created_at ASC, event_id ASC
 2. Recompute balances from ledger
 3. Verify ledger-derived balance against enforcement check
 ```
@@ -1074,6 +1082,9 @@ else if model.starts_with("claude-") { ... }
 A faster approach matches on the first character, then does a single comparison:
 
 ```rust
+/// Canonical tokenizer version for fallback (RFC-0910)
+const CANONICAL_TOKENIZER_VERSION: &str = "tiktoken-cl100k_base-v1.2.3";
+
 /// Get canonical tokenizer for a model family — O(1) per call
 /// Returns static str reference — zero allocation
 ///
@@ -1105,6 +1116,7 @@ For highest throughput in hot paths, consider batching multiple events through a
 
 | Version | Date       | Changes |
 | ------- | ---------- | ------- |
+| v15     | 2026-04-14 | Round 5 fixes: replace record_spend_ledger prose refs with record_spend/record_spend_with_team, add ASC to §Ledger-Based replay SQL, add CANONICAL_TOKENIZER_VERSION const, fix Merkle tree odd-leaf comment, add request_id length bound, RFC-8785 crate reference |
 | v14     | 2026-04-14 | Round 4 fixes: rename calculate_cost→compute_cost, clarify process_response as pseudocode calling record_spend, fix lock ordering scope, fix replay_events comment, add model lookup O(1) optimization, update Implementation Notes |
 | v13     | 2026-04-14 | Round 3 fixes: use KeyError, call record_spend_ledger, fix Error types, add PricingTable caching note, add key_created index, fix TEXT comment, fix Merkle tree comment, clarify TokenSource methods |
 | v12     | 2026-04-14 | Round 2 adversarial review fixes: fix event ordering conflicts, remove invalid CHECK constraint, fix schema PRIMARY KEY for stoolap compatibility, fix ON CONFLICT to MySQL-style idempotency, add created_at to INSERT, fix four-backtick code fences |
@@ -1116,6 +1128,6 @@ For highest throughput in hot paths, consider batching multiple events through a
 ---
 
 **Draft Date:** 2026-04-14
-**Version:** v14
+**Version:** v15
 **Related Use Case:** Enhanced Quota Router Gateway
 **Related RFCs:** RFC-0903 (Virtual API Key System), RFC-0126 (Deterministic Serialization)

@@ -2,7 +2,7 @@
 
 ## Status
 
-Open
+Claimed
 
 ## RFC
 
@@ -79,3 +79,7 @@ Medium — algorithmic change from simple counter to token bucket with memory ma
 - RFC-0903 §Rate Limiting Determinism (lines 1672-1680)
 - RFC-0903 §Rate Limiter Memory Management (lines 2165-2186)
 - RFC-0903 §Lock Ordering Invariant (lines 1700-1711)
+
+## Claimant
+
+@claude-code

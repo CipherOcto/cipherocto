@@ -1,6 +1,7 @@
 // quota-router-core - Core library for quota-router
 // Contains business logic shared between CLI and PyO3 bindings
 
+pub mod admin;
 pub mod balance;
 pub mod cache;
 pub mod config;

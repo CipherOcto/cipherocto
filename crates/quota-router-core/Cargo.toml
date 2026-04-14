@@ -63,6 +63,9 @@ dashmap = "5.0"
 # For monotonic time in TokenBucket
 instant = "0.1"
 
+# For L1 key cache LRU
+lru = "0.12"
+
 [lib]
 name = "quota_router_core"
 path = "src/lib.rs"

@@ -52,7 +52,7 @@ impl StoolapKeyStorage {
         Self { db }
     }
 
-    fn row_to_api_key(&self, row: &stoolap::ResultRow) -> Result<ApiKey, KeyError> {
+    pub fn row_to_api_key(&self, row: &stoolap::ResultRow) -> Result<ApiKey, KeyError> {
         let key_type_str: String = row
             .get_by_name("key_type")
             .map_err(|e| KeyError::Storage(e.to_string()))?;

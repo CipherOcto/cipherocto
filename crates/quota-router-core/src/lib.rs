@@ -16,7 +16,10 @@ pub mod router;
 pub mod schema;
 pub mod storage;
 
-pub use cache::CacheInvalidation;
+pub use cache::{
+    check_budget_soft_limit, rotation_worker, validate_key_with_cache, CacheInvalidation, KeyCache,
+    CACHE_SIZE, CACHE_TTL_SECS,
+};
 pub use key_rate_limiter::RateLimiterStore;
 pub use keys::models::{
     ApiKey, CreateTeamRequest, GenerateKeyRequest, GenerateKeyResponse, KeySpend, KeyType,

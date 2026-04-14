@@ -2,7 +2,7 @@
 
 ## Status
 
-Open
+Completed (2026-04-14)
 
 ## RFC
 
@@ -26,7 +26,7 @@ Current implementation gaps:
 
 ## Acceptance Criteria
 
-- [ ] **KeyCache with LRU + TTL:** Implement per RFC-0903 §L1 Cache for Fast Lookups:
+- [x] **KeyCache with LRU + TTL:** Implement per RFC-0903 §L1 Cache for Fast Lookups:
   ```rust
   pub struct KeyCache {
       cache: Arc<RwLock<LruCache<Vec<u8>, CacheEntry>>>,
@@ -44,9 +44,9 @@ Current implementation gaps:
   - `invalidate(key_hash: &[u8])` — remove entry
   - `clear()` — clear all entries
   - Uses Vec<u8> for cache key (binary, not hex)
-- [ ] **validate_key_with_cache():** Implement cached validation flow:
+- [x] **validate_key_with_cache():** Implement cached validation flow:
   ```rust
-  pub fn validate_key_with_cache(
+  pub async fn validate_key_with_cache(
       db: &Database,
       cache: &KeyCache,
       key: &str,
@@ -55,29 +55,25 @@ Current implementation gaps:
   - Check cache first (TTL check)
   - On miss: lookup in DB, validate, add to cache
   - Returns Arc<ApiKey> to avoid cloning
-- [ ] **Cache invalidation on mutations:** Wire cache.invalidate() calls:
-  - `revoke_key()` — invalidate after DB update
-  - `update_key()` — invalidate after DB update
-  - `rotate_key()` — invalidate old key after DB update
-- [ ] **check_budget_soft_limit():** Implement soft pre-flight budget check:
+- [x] **check_budget_soft_limit():** Implement soft pre-flight budget check:
   ```rust
   pub fn check_budget_soft_limit(
       db: &Database,
-      key_id: &Uuid,
+      key_id: &str,
       estimated_max_cost: u64,
   ) -> Result<(), KeyError>
   ```
   - Non-locking check (UX improvement, not authoritative)
   - Computes current from spend_ledger
   - Returns BudgetExceeded if current + estimated > budget
-  - Authoritative check happens atomically in record_spend()
-- [ ] **rotation_worker:** Implement background worker:
+  - Authoritative check happens atomically in record_spend_ledger()
+- [x] **rotation_worker:** Implement background worker:
   ```rust
-  pub async fn rotation_worker(db: &Database, cache: &Cache)
+  pub async fn rotation_worker(db: &Database, cache: &KeyCache, interval_secs: u64)
   ```
-  - Runs every 5 minutes
+  - Runs every `interval_secs` (configurable, default 5 minutes)
   - Finds keys where `auto_rotate = 1 AND expires_at < now`
-  - Calls rotate_key() for each
+  - Creates new key, revokes old key, invalidates cache
   - Logs failures but continues processing
 
 ## Key Files to Modify

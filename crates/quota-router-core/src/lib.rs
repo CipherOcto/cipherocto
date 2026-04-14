@@ -23,8 +23,8 @@ pub use keys::models::{
     KeyUpdates, RevokeKeyRequest, SpendEvent, Team, TokenSource, UpdateTeamRequest,
 };
 pub use keys::{
-    check_team_key_limit, compute_event_id, compute_key_hash, generate_key_id,
-    generate_key_string, validate_key, KeyError,
+    check_team_key_limit, compute_event_id, compute_key_hash, generate_key_id, generate_key_string,
+    validate_key, KeyError,
 };
 pub use middleware::KeyMiddleware;
 pub use schema::init_database;

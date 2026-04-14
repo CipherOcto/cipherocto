@@ -25,8 +25,9 @@
 //! | GET | /key/info | handle_get_key_info |
 
 use crate::keys::{
-    check_team_key_limit, compute_key_hash, generate_key_id, generate_key_string, ApiKey, CreateTeamRequest,
-    GenerateKeyRequest, GenerateKeyResponse, KeyType, KeyUpdates, RevokeKeyRequest, Team, UpdateTeamRequest,
+    check_team_key_limit, compute_key_hash, generate_key_id, generate_key_string, ApiKey,
+    CreateTeamRequest, GenerateKeyRequest, GenerateKeyResponse, KeyType, KeyUpdates,
+    RevokeKeyRequest, Team, UpdateTeamRequest,
 };
 use crate::storage::{KeyStorage, StoolapKeyStorage};
 use http::{HeaderMap, Request, StatusCode, Uri};
@@ -34,7 +35,7 @@ use http_body::Body as HttpBody;
 use http_body_util::BodyExt;
 use hyper::server::conn::http1;
 use hyper::service::service_fn;
-use hyper::{Response};
+use hyper::Response;
 use hyper_util::rt::TokioIo;
 use std::net::SocketAddr;
 use std::sync::Arc;
@@ -80,11 +81,9 @@ impl AdminServer {
                             service_fn(move |req| {
                                 let storage = Arc::clone(&storage);
                                 async move {
-                                    Ok::<_, std::convert::Infallible>(handle_request(
-                                        req,
-                                        storage.as_ref(),
+                                    Ok::<_, std::convert::Infallible>(
+                                        handle_request(req, storage.as_ref()).await,
                                     )
-                                    .await)
                                 }
                             }),
                         )
@@ -102,10 +101,7 @@ impl AdminServer {
 }
 
 /// Handle admin API requests - routes to appropriate handler.
-async fn handle_request<B>(
-    req: Request<B>,
-    storage: &StoolapKeyStorage,
-) -> Response<String>
+async fn handle_request<B>(req: Request<B>, storage: &StoolapKeyStorage) -> Response<String>
 where
     B: HttpBody + Send,
     B::Data: Send,
@@ -149,10 +145,14 @@ where
         }
 
         // PUT /key/:id - update key
-        ("PUT", p) if p.starts_with("/key/") && !p.starts_with("/key/list") && !p.contains("/regenerate") => {
+        ("PUT", p)
+            if p.starts_with("/key/")
+                && !p.starts_with("/key/list")
+                && !p.contains("/regenerate") =>
+        {
             let key_id = p.trim_start_matches("/key/");
             if !key_id.is_empty() && !key_id.contains('/') {
-                    let bytes = match body.collect().await {
+                let bytes = match body.collect().await {
                     Ok(b) => b.to_bytes(),
                     Err(_) => {
                         return Response::builder()
@@ -178,7 +178,7 @@ where
         ("DELETE", p) if p.starts_with("/key/") && !p.contains("/regenerate") => {
             let key_id = p.trim_start_matches("/key/");
             if !key_id.is_empty() && !key_id.contains('/') {
-                    let bytes = match body.collect().await {
+                let bytes = match body.collect().await {
                     Ok(b) => b.to_bytes(),
                     Err(_) => {
                         return Response::builder()
@@ -204,7 +204,7 @@ where
         // POST /key/:id/regenerate - rotate key
         ("POST", p) if p.starts_with("/key/") && p.contains("/regenerate") => {
             if let Some(key_id) = extract_key_id_from_regenerate_path(p) {
-                    let bytes = match body.collect().await {
+                let bytes = match body.collect().await {
                     Ok(b) => b.to_bytes(),
                     Err(_) => {
                         return Response::builder()
@@ -254,7 +254,7 @@ where
         ("PUT", p) if p.starts_with("/team/") => {
             let team_id = p.trim_start_matches("/team/");
             if !team_id.is_empty() && !team_id.contains('/') {
-                    let bytes = match body.collect().await {
+                let bytes = match body.collect().await {
                     Ok(b) => b.to_bytes(),
                     Err(_) => {
                         return Response::builder()
@@ -326,7 +326,9 @@ fn handle_create_key(storage: &StoolapKeyStorage, req: &GenerateKeyRequest) -> R
         .as_secs() as i64;
 
     // Compute expiration if rotation_interval_days is set
-    let expires_at = req.rotation_interval_days.map(|days| now + (days as i64 * 86400));
+    let expires_at = req
+        .rotation_interval_days
+        .map(|days| now + (days as i64 * 86400));
 
     let api_key = ApiKey {
         key_id: key_id.clone(),
@@ -405,7 +407,11 @@ fn handle_list_keys(storage: &StoolapKeyStorage, team_id: Option<&str>) -> Respo
         .unwrap()
 }
 
-fn handle_update_key(storage: &StoolapKeyStorage, key_id: &str, updates: KeyUpdates) -> Response<String> {
+fn handle_update_key(
+    storage: &StoolapKeyStorage,
+    key_id: &str,
+    updates: KeyUpdates,
+) -> Response<String> {
     if let Err(e) = storage.update_key(key_id, &updates) {
         return Response::builder()
             .status(StatusCode::INTERNAL_SERVER_ERROR)
@@ -425,7 +431,11 @@ fn handle_update_key(storage: &StoolapKeyStorage, key_id: &str, updates: KeyUpda
         .unwrap()
 }
 
-fn handle_revoke_key(storage: &StoolapKeyStorage, key_id: &str, req: RevokeKeyRequest) -> Response<String> {
+fn handle_revoke_key(
+    storage: &StoolapKeyStorage,
+    key_id: &str,
+    req: RevokeKeyRequest,
+) -> Response<String> {
     let updates = KeyUpdates {
         budget_limit: None,
         rpm_limit: None,
@@ -463,21 +473,38 @@ fn handle_rotate_key(
     gen_req: Option<GenerateKeyRequest>,
 ) -> Response<String> {
     // Use provided values or defaults
-    let (budget_limit, rpm_limit, tpm_limit, team_id, key_type, auto_rotate, rotation_interval_days, description) =
-        if let Some(ref req) = gen_req {
-            (
-                req.budget_limit as i64,
-                req.rpm_limit.map(|r| r as i32),
-                req.tpm_limit.map(|t| t as i32),
-                req.team_id.clone(),
-                req.key_type,
-                req.auto_rotate.unwrap_or(false),
-                req.rotation_interval_days.map(|d| d as i32),
-                req.description.clone(),
-            )
-        } else {
-            (1000, Some(60), Some(1000), None, KeyType::Default, false, None, None)
-        };
+    let (
+        budget_limit,
+        rpm_limit,
+        tpm_limit,
+        team_id,
+        key_type,
+        auto_rotate,
+        rotation_interval_days,
+        description,
+    ) = if let Some(ref req) = gen_req {
+        (
+            req.budget_limit as i64,
+            req.rpm_limit.map(|r| r as i32),
+            req.tpm_limit.map(|t| t as i32),
+            req.team_id.clone(),
+            req.key_type,
+            req.auto_rotate.unwrap_or(false),
+            req.rotation_interval_days.map(|d| d as i32),
+            req.description.clone(),
+        )
+    } else {
+        (
+            1000,
+            Some(60),
+            Some(1000),
+            None,
+            KeyType::Default,
+            false,
+            None,
+            None,
+        )
+    };
 
     // Generate new key
     let new_key_string = generate_key_string();
@@ -617,7 +644,11 @@ fn handle_get_team(storage: &StoolapKeyStorage, team_id: &str) -> Response<Strin
     }
 }
 
-fn handle_update_team(storage: &StoolapKeyStorage, team_id: &str, req: UpdateTeamRequest) -> Response<String> {
+fn handle_update_team(
+    storage: &StoolapKeyStorage,
+    team_id: &str,
+    req: UpdateTeamRequest,
+) -> Response<String> {
     let (name, budget_limit) = (req.name.as_deref(), req.budget_limit);
 
     if name.is_none() && budget_limit.is_none() {

@@ -84,11 +84,12 @@ pub enum TokenSource {
 }
 
 impl TokenSource {
-    /// String used in event_id hash input (different from DB storage strings)
+    /// String used in event_id hash input (compact, for SHA256)
+    /// DIFFERENT from to_db_str() - hash strings are compact for efficient hashing
     pub fn to_hash_str(&self) -> &'static str {
         match self {
-            TokenSource::ProviderUsage => "provider_usage",
-            TokenSource::CanonicalTokenizer => "canonical_tokenizer",
+            TokenSource::ProviderUsage => "provider",
+            TokenSource::CanonicalTokenizer => "tokenizer",
         }
     }
 

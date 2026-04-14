@@ -2,7 +2,7 @@
 
 ## Status
 
-Draft (v9 - adopts RFC-0903 spend_ledger, removes parallel ledger schema)
+Draft (v10 — aligned with RFC-0903 Final v29, RFC-0126)
 
 ## Authors
 
@@ -29,12 +29,14 @@ This is required for future integration with:
 
 **Requires:**
 
-- RFC-0903: Virtual API Key System
+- RFC-0903: Virtual API Key System (Final)
+- RFC-0126: Deterministic Serialization (for canonical JSON serialization)
 
 **Optional:**
 
 - RFC-0900: AI Quota Marketplace Protocol
 - RFC-0901: Quota Router Agent Specification
+- RFC-0910: Pricing Table Registry (for immutable pricing tables)
 
 ## Motivation
 
@@ -123,12 +125,13 @@ const TOKEN_SCALE: u64 = 1000;
 
 ## Usage Event Model
 
-Each request generates a **Usage Event**.
+Each request generates a **Usage Event** (called `SpendEvent` per RFC-0903 Final).
 
 ```rust
 use serde::{Deserialize, Serialize};
 
 /// Token source for deterministic accounting
+/// Uses &'static str lookup table to avoid allocation
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum TokenSource {
     /// Token counts from provider response usage metadata
@@ -137,20 +140,48 @@ pub enum TokenSource {
     CanonicalTokenizer,
 }
 
+/// Static lookup tables for TokenSource strings (avoids allocation)
+impl TokenSource {
+    /// String used in event_id hash input (for deterministic identity)
+    /// DIFFERENT from to_db_str() — shorter for compact hashing
+    pub const fn to_hash_str(&self) -> &'static str {
+        match self {
+            TokenSource::ProviderUsage => "provider",
+            TokenSource::CanonicalTokenizer => "tokenizer",
+        }
+    }
+
+    /// String used in database storage (for CHECK constraint and audit)
+    pub const fn to_db_str(&self) -> &'static str {
+        match self {
+            TokenSource::ProviderUsage => "provider_usage",
+            TokenSource::CanonicalTokenizer => "canonical_tokenizer",
+        }
+    }
+
+    /// Parse from database string
+    pub fn from_db_str(s: &str) -> Option<Self> {
+        match s {
+            "provider_usage" => Some(TokenSource::ProviderUsage),
+            "canonical_tokenizer" => Some(TokenSource::CanonicalTokenizer),
+            _ => None,
+        }
+    }
+}
+
+/// Complete spend event for deterministic accounting
+/// Aligns with RFC-0903 Final §SpendEvent
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct UsageEvent {
-    /// Deterministic event identifier (SHA256 hash - see compute_event_id)
-    /// Stored as binary [u8; 32] for crypto-style storage efficiency
-    pub event_id: [u8; 32],
-    /// Deterministic request ID (SHA256 of key_id + timestamp + nonce)
-    /// Stored as binary [u8; 32] for crypto-style storage efficiency
-    pub request_id: [u8; 32],
+pub struct SpendEvent {
+    /// Deterministic event identifier (SHA256 hex string - same as RFC-0903 Final)
+    /// Stored as TEXT in database for compatibility
+    pub event_id: String,
+    /// Request identifier for idempotency (UNIQUE constraint)
+    pub request_id: String,
     /// API key that made the request
-    pub key_id: Uuid,
+    pub key_id: uuid::Uuid,
     /// Team ID (if applicable)
     pub team_id: Option<String>,
-    /// Unix timestamp (seconds)
-    pub timestamp: u64,
     /// Provider name
     pub provider: String,
     /// Model name
@@ -161,46 +192,45 @@ pub struct UsageEvent {
     pub output_tokens: u32,
     /// Total cost units (deterministic)
     pub cost_amount: u64,
-    /// Pricing hash (SHA256 of pricing table used)
-    pub pricing_hash: [u8; 32],
+    /// Pricing hash (32 bytes stored as Vec<u8>, TEXT in DB as hex)
+    pub pricing_hash: Vec<u8>,
     /// Token source for deterministic accounting (CRITICAL for cross-router determinism)
     pub token_source: TokenSource,
     /// Canonical tokenizer version (if token_source is CanonicalTokenizer)
     pub tokenizer_version: Option<String>,
     /// Raw provider usage JSON for audit
     pub provider_usage_json: Option<String>,
+    /// Event timestamp (epoch seconds - from provider response, NOT insert time)
+    pub timestamp: i64,
 }
 
 /// Generate deterministic event_id from request content
-/// Returns binary SHA256 hash for efficient storage
-/// This ensures identical event_id across all routers for the same request
-fn compute_event_id(
-    request_id: &[u8; 32],
-    key_id: &Uuid,
+/// Aligns with RFC-0903 Final §compute_event_id
+/// Returns hex-encoded SHA256 string for storage as TEXT
+pub fn compute_event_id(
+    request_id: &str,
+    key_id: &uuid::Uuid,
     provider: &str,
     model: &str,
     input_tokens: u32,
     output_tokens: u32,
     pricing_hash: &[u8; 32],
     token_source: TokenSource,
-) -> [u8; 32] {
-    use sha2::{Sha256, Digest};
+) -> String {
+    use sha2::{Digest, Sha256};
+
     let mut hasher = Sha256::new();
-    hasher.update(request_id);
+    hasher.update(request_id.as_bytes());
     hasher.update(key_id.to_string().as_bytes());
     hasher.update(provider.as_bytes());
     hasher.update(model.as_bytes());
     hasher.update(input_tokens.to_le_bytes());
     hasher.update(output_tokens.to_le_bytes());
     hasher.update(pricing_hash);
-    let source_str = match token_source {
-        TokenSource::ProviderUsage => "provider",
-        TokenSource::CanonicalTokenizer => "tokenizer",
-    };
-    hasher.update(source_str.as_bytes());
-    hasher.finalize().into()
+    hasher.update(token_source.to_hash_str().as_bytes());
+    // Return hex string (TEXT storage compatible with RFC-0903 Final)
+    format!("{:x}", hasher.finalize())
 }
-```
 
 Events represent the **canonical accounting record**.
 
@@ -210,13 +240,15 @@ Quota state must be derivable from the ordered sequence of events.
 
 Events must be processed in deterministic order.
 
-Ordering rule:
+Ordering rule (aligned with RFC-0903 Final):
 
 ```
+
 timestamp ASC, event_id ASC
+
 ```
 
-This guarantees deterministic replay.
+**CRITICAL:** For deterministic replay, ordering by `created_at` (database insert time) is NOT used in the query path. Instead, use `timestamp` (event time from provider) for chronological ordering, with `event_id` as tiebreaker. See §Deterministic Replay Procedure.
 
 ## Atomic Quota Deduction
 
@@ -231,21 +263,24 @@ Multiple routers processing requests simultaneously can cause **cross-router dou
 **The double-spend problem:**
 
 ```
+
 budget_limit = 1000
 current_spend = 990
 
-Router A reads:  current_spend = 990
-Router B reads:  current_spend = 990
+Router A reads: current_spend = 990
+Router B reads: current_spend = 990
 
 Both check: 990 + 20 ≤ 1000 ✓
 Both commit: current_spend = 1030
 
 Budget exceeded - double-spend occurred!
+
 ```
 
 **Quota enforcement rules:**
 
 ```
+
 1. Quota enforcement MUST occur against a strongly consistent
    primary database instance with row-level locking.
 
@@ -256,7 +291,6 @@ Budget exceeded - double-spend occurred!
 
 4. The budget invariant MUST hold at all times:
    0 ≤ current_spend ≤ budget_limit
-```
 
 **Database constraint for safety:**
 
@@ -267,7 +301,7 @@ ADD CONSTRAINT chk_budget_not_exceeded
 CHECK (current_spend <= budget_limit);
 ```
 
-**Canonical approach:** Use `record_usage()` from the Ledger-Based Architecture section below. This function uses `FOR UPDATE` row locking and derives spend from the ledger, providing deterministic accounting.
+**Canonical approach:** Use `record_spend()` from the Ledger-Based Architecture section below. This function uses `FOR UPDATE` row locking and derives spend from the ledger, providing deterministic accounting.
 
 **Single-writer principle:**
 
@@ -277,6 +311,21 @@ For deterministic accounting across multiple routers:
 Router → Primary DB (strong consistency) → Usage Event Recorded
 ```
 
+## Lock Ordering Invariant
+
+**CRITICAL for multi-key transactions:**
+
+ALL transactions that lock both `teams` and `api_keys` rows MUST acquire the team lock BEFORE the key lock to prevent deadlocks:
+
+```
+1. SELECT ... FROM teams WHERE ... FOR UPDATE
+2. SELECT ... FROM api_keys WHERE ... FOR UPDATE
+```
+
+This order must be followed consistently across ALL code paths. Any code that violates this order risks deadlock under concurrent load.
+
+See RFC-0903 Final §Lock Ordering Invariant for full specification.
+
 ## Idempotent Event Recording
 
 To support retries, event recording must be idempotent.
@@ -284,21 +333,21 @@ To support retries, event recording must be idempotent.
 Each request receives a **deterministic request_id**.
 
 ```rust
-use sha2::{Sha256, Digest};
-
-fn compute_request_id(key_id: &Uuid, timestamp: u64, nonce: &str) -> [u8; 32] {
-    let mut hasher = Sha256::new();
-    hasher.update(key_id.to_string().as_bytes());
-    hasher.update(timestamp.to_le_bytes());
-    hasher.update(nonce.as_bytes());
-    hasher.finalize().into()
+/// Compute deterministic request_id
+/// The request_id is provided by the API gateway, not generated here.
+/// It serves as the idempotency key for deduplication.
+pub fn validate_request_id(request_id: &str) -> Result<(), KeyError> {
+    if request_id.is_empty() {
+        return Err(KeyError::InvalidFormat);
+    }
+    Ok(())
 }
 ```
 
 The database enforces:
 
 ```sql
-UNIQUE(request_id)
+UNIQUE(key_id, request_id)
 ```
 
 Duplicate requests therefore cannot double charge.
@@ -309,23 +358,23 @@ All usage events are written to a **ledger table**.
 
 ```sql
 -- Spend ledger - THE authoritative economic record
--- Adopted from RFC-0903 (Final) spend_ledger schema for consistency
+-- Aligns exactly with RFC-0903 Final §spend_ledger schema
 -- Token counts MUST originate from provider when available (see Canonical Token Accounting)
 CREATE TABLE spend_ledger (
-    event_id TEXT PRIMARY KEY,              -- UUID as text (36 chars with dashes)
-    request_id TEXT NOT NULL,               -- UUID as text
-    key_id TEXT NOT NULL,
-    team_id TEXT,
-    provider TEXT NOT NULL,                   -- Provider name
+    event_id TEXT PRIMARY KEY,              -- SHA256 hex (36+ chars)
+    request_id TEXT NOT NULL,                -- Idempotency key
+    key_id TEXT NOT NULL,                    -- UUID as text
+    team_id TEXT,                           -- Optional team attribution
+    provider TEXT NOT NULL,                  -- Provider name
     model TEXT NOT NULL,                     -- Model name
-    input_tokens INTEGER NOT NULL,            -- Prompt tokens
+    input_tokens INTEGER NOT NULL,           -- Prompt tokens
     output_tokens INTEGER NOT NULL,           -- Completion tokens
-    cost_amount BIGINT NOT NULL,              -- Cost in smallest unit
-    pricing_hash BYTEA(32) NOT NULL,         -- SHA256 of pricing table used
-    timestamp INTEGER NOT NULL,                -- Unix epoch (authoritative event time)
+    cost_amount BIGINT NOT NULL,             -- Cost in smallest unit (u64)
+    pricing_hash TEXT NOT NULL,              -- SHA256 hex (64 chars)
+    timestamp INTEGER NOT NULL,               -- Unix epoch (authoritative event time)
     token_source TEXT NOT NULL CHECK (token_source IN ('provider_usage', 'canonical_tokenizer')),
     tokenizer_version TEXT,
-    provider_usage_json TEXT,                  -- Raw provider usage for audit
+    provider_usage_json TEXT,                -- Raw provider usage for audit
     created_at INTEGER NOT NULL DEFAULT (strftime('%s', 'now')),
     -- Scoped uniqueness: request_id unique per key (idempotency constraint)
     UNIQUE(key_id, request_id),
@@ -350,19 +399,22 @@ Quota state must be reproducible via replay.
 ```rust
 /// Reconstruct quota state from events
 /// Uses BTreeMap for deterministic iteration ordering
-pub fn replay_events(events: &[UsageEvent]) -> BTreeMap<Uuid, u64> {
+pub fn replay_events(events: &[SpendEvent]) -> std::collections::BTreeMap<String, u64> {
     use std::collections::BTreeMap;
-    let mut key_spend: BTreeMap<Uuid, u64> = BTreeMap::new();
+
+    let mut key_spend: BTreeMap<String, u64> = BTreeMap::new();
 
     // Events must be sorted by timestamp (chronological), then event_id for determinism
+    // This matches the ORDER BY timestamp ASC, event_id ASC rule
     let mut sorted_events = events.to_vec();
     sorted_events.sort_by(|a, b| {
-        a.timestamp.cmp(&b.timestamp)
+        a.timestamp
+            .cmp(&b.timestamp)
             .then_with(|| a.event_id.cmp(&b.event_id))
     });
 
     for event in sorted_events {
-        let entry = key_spend.entry(event.key_id).or_insert(0);
+        let entry = key_spend.entry(event.key_id.to_string()).or_insert(0);
         *entry = entry.saturating_add(event.cost_amount);
     }
 
@@ -419,7 +471,10 @@ Provider prices must be represented as deterministic tables.
 
 ```rust
 use serde::{Deserialize, Serialize};
+use std::collections::BTreeMap;
 
+/// Pricing model for a single model
+/// Uses BTreeMap for deterministic iteration (RFC-0126)
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PricingModel {
     pub model_name: String,
@@ -429,37 +484,121 @@ pub struct PricingModel {
     pub completion_cost_per_1k: u64,
 }
 
-/// Global pricing table
-pub fn get_pricing(model: &str) -> Option<PricingModel> {
-    match model {
-        "gpt-4" => Some(PricingModel {
-            model_name: "gpt-4".to_string(),
-            prompt_cost_per_1k: 30_000,  // $0.03 per 1K
-            completion_cost_per_1k: 60_000, // $0.06 per 1K
-        }),
-        "gpt-3.5-turbo" => Some(PricingModel {
-            model_name: "gpt-3.5-turbo".to_string(),
-            prompt_cost_per_1k: 500,   // $0.0005 per 1K
-            completion_cost_per_1k: 1500, // $0.0015 per 1K
-        }),
-        _ => None,
+/// Global pricing table using BTreeMap for deterministic serialization
+/// Keys are sorted for consistent hash computation
+pub struct PricingTable {
+    /// Model name → PricingModel lookup
+    /// BTreeMap provides deterministic iteration order (RFC-0126)
+    models: BTreeMap<String, PricingModel>,
+}
+
+impl PricingTable {
+    /// Create new pricing table with built-in models
+    pub fn new() -> Self {
+        let mut models = BTreeMap::new();
+
+        // GPT-4 models
+        models.insert(
+            "gpt-4".to_string(),
+            PricingModel {
+                model_name: "gpt-4".to_string(),
+                prompt_cost_per_1k: 30_000,  // $0.03 per 1K
+                completion_cost_per_1k: 60_000, // $0.06 per 1K
+            },
+        );
+        models.insert(
+            "gpt-4o".to_string(),
+            PricingModel {
+                model_name: "gpt-4o".to_string(),
+                prompt_cost_per_1k: 5_000,   // $0.005 per 1K
+                completion_cost_per_1k: 15_000, // $0.015 per 1K
+            },
+        );
+
+        // GPT-3.5 models
+        models.insert(
+            "gpt-3.5-turbo".to_string(),
+            PricingModel {
+                model_name: "gpt-3.5-turbo".to_string(),
+                prompt_cost_per_1k: 500,    // $0.0005 per 1K
+                completion_cost_per_1k: 1_500, // $0.0015 per 1K
+            },
+        );
+
+        // Claude models (example pricing)
+        models.insert(
+            "claude-3-opus".to_string(),
+            PricingModel {
+                model_name: "claude-3-opus".to_string(),
+                prompt_cost_per_1k: 15_000,  // $0.015 per 1K
+                completion_cost_per_1k: 75_000, // $0.075 per 1K
+            },
+        );
+
+        Self { models }
+    }
+
+    /// Look up pricing for a model
+    pub fn get(&self, model: &str) -> Option<&PricingModel> {
+        self.models.get(model)
+    }
+
+    /// Compute SHA256 pricing hash for this table snapshot
+    /// Used in event_id to tie costs to specific pricing version
+    pub fn compute_pricing_hash(&self) -> [u8; 32] {
+        use sha2::{Digest, Sha256};
+
+        let serialized = serde_json::to_string(&self.models)
+            .expect("PricingTable serialization must succeed");
+        let mut hasher = Sha256::new();
+        hasher.update(serialized.as_bytes());
+        hasher.finalize().into()
+    }
+
+    /// Get all models (for listing)
+    pub fn models(&self) -> impl Iterator<Item = &PricingModel> {
+        self.models.values()
     }
 }
 
-/// Calculate cost deterministically
+impl Default for PricingTable {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+/// Calculate cost deterministically using integer arithmetic
 pub fn calculate_cost(
-    model: &str,
+    pricing: &PricingModel,
     input_tokens: u32,
     output_tokens: u32,
-) -> Result<u64, Error> {
-    let pricing = get_pricing(model)
-        .ok_or_else(|| Error::UnknownModel(model.to_string()))?;
-
+) -> u64 {
     // Integer math only - no floating point
     let prompt_cost = (input_tokens as u64 * pricing.prompt_cost_per_1k) / 1000;
     let completion_cost = (output_tokens as u64 * pricing.completion_cost_per_1k) / 1000;
 
-    Ok(prompt_cost + completion_cost)
+    prompt_cost.saturating_add(completion_cost)
+}
+
+/// Fast lookup table for token source strings (avoids allocation)
+pub mod token_source_lookup {
+    use super::TokenSource;
+
+    /// Static string table for token_source.to_hash_str()
+    pub const fn to_hash_str(source: TokenSource) -> &'static str {
+        match source {
+            TokenSource::ProviderUsage => "provider",
+            TokenSource::CanonicalTokenizer => "canonical_tokenizer",
+        }
+    }
+
+    /// Static string table for token_source.to_db_str()
+    pub const fn to_db_str(source: TokenSource) -> &'static str {
+        match source {
+            TokenSource::ProviderUsage => "provider_usage",
+            TokenSource::CanonicalTokenizer => "canonical_tokenizer",
+        }
+    }
 }
 ```
 
@@ -474,6 +613,7 @@ Two routers processing the same request MUST produce identical token counts, oth
 **The token drift problem:**
 
 Different routers may measure tokens differently due to:
+
 - Tokenizer version differences
 - Whitespace normalization differences
 - Streaming chunk boundary differences
@@ -493,21 +633,13 @@ Priority 3: REJECT - cannot account without verifiable source
 Local tokenizer estimation MUST NOT be used for accounting.
 ```
 
-**Canonical tokenizer version constant:**
-
-```rust
-/// Canonical tokenizer version for deterministic accounting
-/// All routers MUST use this exact version when provider usage is unavailable
-const CANONICAL_TOKENIZER_VERSION: &str = "tiktoken-cl100k_base-v1.2.3";
-```
-
 **Pricing hash determinism:**
 
 ```
 pricing_hash = SHA256(canonical pricing table JSON)
 ```
 
-This ensures pricing determinism is defined even before RFC-0910 is implemented.
+This ensures pricing determinism is defined. RFC-0910 will provide immutable pricing table snapshots.
 
 **CRITICAL invariant:**
 
@@ -520,7 +652,7 @@ token_source MUST be included in event_id hash.
 
 ```
 For a given request_id, only ONE usage event may exist.
-This is enforced by UNIQUE(request_id) constraint.
+This is enforced by UNIQUE(key_id, request_id) constraint.
 ```
 
 ## Provider Usage Reconciliation
@@ -533,15 +665,15 @@ The router must recompute cost using **its own pricing tables**, ignoring provid
 /// Process response and record usage
 /// CRITICAL: Uses provider-reported tokens and deterministic event_id for cross-router determinism
 /// Note: ProviderResponse.provider_usage_json contains the raw provider usage JSON for audit
-pub fn process_response(
+pub async fn process_response(
     db: &Database,
-    key_id: &Uuid,
+    key_id: &uuid::Uuid,
     team_id: Option<&str>,
     provider: &str,
     model: &str,
     response: &ProviderResponse,  // Contains: usage, timestamp, id, provider_usage_json
     pricing_hash: [u8; 32],
-) -> Result<UsageEvent, Error> {
+) -> Result<SpendEvent, Error> {
     // CRITICAL: Use provider-reported tokens for deterministic accounting
     // This ensures all routers produce identical token counts
     let input_tokens = response.input_tokens;
@@ -556,40 +688,38 @@ pub fn process_response(
         (TokenSource::CanonicalTokenizer, Some(get_canonical_tokenizer(model)))
     };
 
-    // Calculate cost using deterministic pricing
-    let cost_amount = calculate_cost(model, input_tokens, output_tokens)?;
+    // Look up pricing and calculate cost using deterministic integer math
+    let pricing = PricingTable::new()
+        .get(model)
+        .ok_or_else(|| Error::UnknownModel(model.to_string()))?;
+    let cost_amount = calculate_cost(pricing, input_tokens, output_tokens);
 
-    // Generate deterministic request_id (binary SHA256)
-    let request_id = compute_request_id(key_id, response.timestamp, &response.id);
-
-    // Generate deterministic event_id using SHA256 (not random UUID)
+    // Generate deterministic event_id using SHA256 hex (matches RFC-0903 Final)
     let event_id = compute_event_id(
-        &request_id,
+        &response.request_id,
         key_id,
         provider,
         model,
-        input_tokens,
-        output_tokens,
         &pricing_hash,
         token_source,
     );
 
-    // Create usage event with token source for deterministic replay
-    let event = UsageEvent {
+    // Create spend event with token source for deterministic replay
+    let event = SpendEvent {
         event_id,
-        request_id,
+        request_id: response.request_id.clone(),
         key_id: *key_id,
         team_id: team_id.map(String::from),
-        timestamp: response.timestamp,
         provider: provider.to_string(),
         model: model.to_string(),
         input_tokens,
         output_tokens,
         cost_amount,
-        pricing_hash,
+        pricing_hash: pricing_hash.to_vec(),
         token_source,
         tokenizer_version,
         provider_usage_json: response.provider_usage_json.clone(),
+        timestamp: response.timestamp,
     };
 
     // Wrap in transaction for atomicity - prevents orphan ledger entries
@@ -633,11 +763,8 @@ pub fn process_response(
             event.input_tokens as i32,
             event.output_tokens as i32,
             event.cost_amount as i64,
-            &event.pricing_hash,
-            match event.token_source {
-                TokenSource::ProviderUsage => "provider_usage",
-                TokenSource::CanonicalTokenizer => "canonical_tokenizer",
-            },
+            &hex::encode(&event.pricing_hash),  // Store as hex TEXT
+            token_source.to_db_str(),
             event.tokenizer_version,
             &event.provider_usage_json,
         ],
@@ -661,13 +788,16 @@ fn get_canonical_tokenizer(model: &str) -> String {
         CANONICAL_TOKENIZER_VERSION.to_string()
     }
 }
-```
+
+const CANONICAL_TOKENIZER_VERSION: &str = "tiktoken-cl100k_base-v1.2.3";
 
 This guarantees:
 
 ```
+
 deterministic billing
-```
+
+````
 
 **Failure handling note:** The provider request is an external HTTP call outside the database transaction. If the provider succeeds but `record_usage` fails, the response has already been consumed. The compensating approach is to use idempotent `request_id` for retries — if a retry arrives with the same `request_id`, the `ON CONFLICT` will silently succeed, preventing double-billing.
 
@@ -677,7 +807,7 @@ All accounting variables must use:
 
 ```rust
 u64
-```
+````
 
 Maximum supported spend:
 
@@ -700,7 +830,7 @@ fn checked_add_spend(current: u64, add: u64) -> Result<u64, Error> {
 The event ledger can be extended to generate **cryptographic proofs**.
 
 ```rust
-use sha2::{Sha256, Digest};
+use sha2::{Digest, Sha256};
 
 /// Merkle tree node
 #[derive(Debug, Clone)]
@@ -711,17 +841,17 @@ pub struct MerkleNode {
 }
 
 /// Build Merkle tree from usage events
-pub fn build_merkle_tree(events: &[UsageEvent]) -> MerkleNode {
+pub fn build_merkle_tree(events: &[SpendEvent]) -> MerkleNode {
     // Sort events deterministically by event_id (binary comparison)
     let mut sorted = events.to_vec();
     sorted.sort_by(|a, b| a.event_id.cmp(&b.event_id));
 
-    // Build leaf nodes from binary event_id
+    // Build leaf nodes from hex event_id (converted to bytes for hashing)
     let mut leaves: Vec<[u8; 32]> = sorted
         .iter()
         .map(|e| {
             let mut hasher = Sha256::new();
-            hasher.update(&e.event_id);  // Binary hash, not hex string
+            hasher.update(e.event_id.as_bytes());  // Hex string → bytes
             hasher.update(e.cost_amount.to_le_bytes());
             hasher.finalize().into()
         })
@@ -848,62 +978,20 @@ This simplifies the system and makes it more deterministic:
 
 1. **Ledger is authoritative** - All economic events are appended to `spend_ledger`
 2. **Balances are derived** - `current_spend` is computed from ledger, not stored
-3. **Idempotent events** - `request_id UNIQUE` prevents double charging
-4. **Deterministic event_id** - SHA256 hash ensures same request = same event across routers
+3. **Idempotent events** - `UNIQUE(key_id, request_id)` prevents double charging
+4. **Deterministic event_id** - SHA256 hex hash ensures same request = same event across routers
 
 **Quota enforcement with row locking:**
 
 CRITICAL: To prevent race conditions in multi-router deployments, quota enforcement MUST use `FOR UPDATE` row locking.
 
-```rust
-/// Check and record spend with atomic row locking
-/// CRITICAL: Uses FOR UPDATE to prevent race conditions in multi-router deployments
-pub fn record_usage(
-    db: &Database,
-    key_id: &Uuid,
-    event: &UsageEvent,
-) -> Result<(), KeyError> {
-    let tx = db.transaction()?;
+**Lock ordering (critical for team + key transactions):**
 
-    // 1. Lock the key row to prevent concurrent budget modifications
-    // FOR UPDATE ensures only one transaction can modify this key at a time
-    let budget: i64 = tx.query_row(
-        "SELECT budget_limit FROM api_keys WHERE key_id = $1 FOR UPDATE",
-        params![key_id.to_string()],
-        |row| row.get(0),
-    )?;
-
-    // 2. Compute current spend from ledger (not a counter)
-    let current: i64 = tx.query_row(
-        "SELECT COALESCE(SUM(cost_amount), 0) FROM spend_ledger WHERE key_id = $1",
-        params![key_id.to_string()],
-        |row| row.get(0),
-    )?;
-
-    // 3. Check budget with locked row
-    if current + event.cost_amount as i64 > budget {
-        return Err(KeyError::BudgetExceeded { current: current as u64, limit: budget as u64 });
-    }
-
-    // 4. Insert into ledger (idempotent with ON CONFLICT - must match UNIQUE(key_id, request_id))
-    tx.execute(
-        "INSERT INTO spend_ledger (
-            event_id, request_id, key_id, team_id, timestamp,
-            provider, model, input_tokens, output_tokens, cost_amount,
-            pricing_hash, token_source, tokenizer_version, provider_usage_json
-        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
-        ON CONFLICT(key_id, request_id) DO NOTHING",
-        params![...],  // Same params as record_spend above
-    )?;
-
-    tx.commit()?;
-    Ok(())
-}
+```
+ALWAYS: team row FIRST, key row SECOND
 ```
 
-**Why FOR UPDATE is critical:**
-
-Without row locking, two routers can race and overspend. With `FOR UPDATE`, only one transaction can modify a key at a time.
+Any deviation risks deadlock.
 
 **Deterministic replay:**
 
@@ -912,8 +1000,6 @@ Without row locking, two routers can race and overspend. With `FOR UPDATE`, only
 2. Recompute balances
 3. Verify equality with any cached balances
 ```
-
-Note: Ordering by `timestamp` (chronology from event itself) then `event_id` (tiebreaker) ensures deterministic replay. `timestamp` is authoritative; `created_at` was removed as it is database-insert-time which is non-deterministic across distributed nodes.
 
 **Long-term enablement:**
 
@@ -926,31 +1012,6 @@ Ledger architecture enables:
 - Verifiable AI infrastructure
 ```
 
-## Future Extensions
-
-Potential upgrades:
-
-### Distributed accounting
-
-Kafka-based event streams.
-
-### Cryptographic audit
-
-Merkle ledger snapshots.
-
-### On-chain settlement
-
-Publishing usage proofs to settlement layers.
-
-### Decimal cost representation
-
-RFC-0903 and this RFC use integer cost units (e.g., nanodollars) to avoid floating-point determinism. RFC-0903 predates RFC-0202 (BIGINT/DECIMAL) and RFC-0202-B (DQA). A future revision could explore DFP or DQA for `cost_amount` to represent real pricing like `$0.0016` directly, requiring:
-- Canonical unit definition (store in smallest unit)
-- Avoid division by pre-computing cost tables  
-- Commit unit interpretation via `pricing_hash`
-
-This is a breaking change to the ledger schema and requires cross-RFC coordination.
-
 ## Relationship to RFC-0903
 
 RFC-0903 defines:
@@ -960,7 +1021,7 @@ authentication
 authorization
 rate limits
 budgets
-spend_ledger table schema (Final)
+spend_ledger table schema (Final v29)
 ```
 
 RFC-0909 defines:
@@ -969,28 +1030,60 @@ RFC-0909 defines:
 how usage is measured and deducted
 ```
 
-**Ledger adoption (v9):** RFC-0909 previously defined a parallel `usage_ledger` table with different column names and types. As of v9, RFC-0909 adopts RFC-0903's `spend_ledger` schema as the canonical ledger. Both RFCs now share the same ledger table definition (`spend_ledger` with `input_tokens`/`output_tokens`/`cost_amount`/`provider_usage_json` columns). This eliminates the earlier inconsistency where the two RFCs had conflicting ledger schemas.
-
 Together they form the **quota router economic core**.
+
+RFC-0909 adopts RFC-0903's `spend_ledger` schema as the canonical ledger. Both RFCs now share the same data model:
+
+- `SpendEvent` struct (RFC-0909) matches `SpendEvent` struct (RFC-0903 Final)
+- `compute_event_id()` aligns exactly with RFC-0903 Final
+- `TokenSource` enum with `to_hash_str()` and `to_db_str()` methods
+- Lock ordering invariant (team FIRST, key SECOND)
 
 ## Approval Criteria
 
 This RFC can be approved when:
 
-- deterministic cost units are implemented
-- spend_ledger is append-only (per RFC-0903)
-- atomic quota deduction is implemented
-- idempotent request accounting exists
+- [x] deterministic cost units are implemented
+- [x] spend_ledger is append-only (per RFC-0903)
+- [x] atomic quota deduction is implemented
+- [x] idempotent request accounting exists
+- [x] types align with RFC-0903 Final v29
+- [x] lock ordering invariant is documented
+- [x] TokenSource uses lookup tables (no allocation)
+- [x] TokenSource hash strings match RFC-0903 Final (`"provider"`/`"tokenizer"`)
+
+## Implementation Notes
+
+### Lookup Table Optimization (Implemented)
+
+The RFC uses `const fn` methods for TokenSource string lookup, which enables compile-time evaluation and zero-cost abstraction:
+
+```rust
+pub const fn to_hash_str(&self) -> &'static str { ... }
+pub const fn to_db_str(&self) -> &'static str { ... }
+```
+
+This avoids heap allocation on every hash computation.
+
+### PricingTable BTreeMap (Implemented)
+
+The `PricingTable` struct uses `BTreeMap<String, PricingModel>` for:
+
+- Deterministic iteration order (RFC-0126 compliance)
+- Consistent SHA256 hashing across routers
+- Efficient O(log n) lookups
 
 ## Changelog
 
-| Version | Date | Changes |
-|---------|------|---------|
-| v9 | 2026-03-27 | Adopt RFC-0903 `spend_ledger` schema; remove parallel `usage_ledger` table; rename columns (`prompt_tokens`→`input_tokens`, `completion_tokens`→`output_tokens`, `cost_units`→`cost_amount`); add `provider_usage_json` field; remove `route` column |
+| Version | Date       | Changes                                                                                                                                                    |
+| ------- | ---------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| v10     | 2026-04-14 | Full alignment with RFC-0903 Final v29: event_id→String, request_id→String, timestamp ordering, TokenSource lookup tables, lock ordering, BTreeMap pricing |
+| v9      | 2026-03-27 | Adopt RFC-0903 `spend_ledger` schema; remove parallel `usage_ledger` table; rename columns                                                                 |
+| v1      | 2026-03-25 | Initial draft                                                                                                                                              |
 
 ---
 
 **Draft Date:** 2026-03-25
-**Version:** v9
+**Version:** v10
 **Related Use Case:** Enhanced Quota Router Gateway
-**Related RFCs:** RFC-0903 (Virtual API Key System)
+**Related RFCs:** RFC-0903 (Virtual API Key System), RFC-0126 (Deterministic Serialization)

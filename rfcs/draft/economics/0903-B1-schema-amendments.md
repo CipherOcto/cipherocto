@@ -2,7 +2,7 @@
 
 ## Status
 
-Draft (v2 — Amendment to RFC-0903 Final v29)
+Draft (v3 — Amendment to RFC-0903 Final v29)
 
 ## Authors
 
@@ -156,22 +156,28 @@ params![stoolap::core::Value::blob(hex::decode(&event_id).unwrap())]
 
 ### request_id
 
-`request_id` is provided by the API gateway as a text string. It is stored as `BLOB(32)` (32 raw bytes).
+`request_id` is provided by the API gateway as a text string. It is stored as `BLOB(32)` (32 raw bytes). **The gateway provides request_id as raw text (NOT hex-encoded).** Encoding to 32 bytes uses SHA256 hashing for variable-length inputs.
 
 **Encoding rules (all routers MUST use the same scheme):**
 
 | Gateway format | Encoding to 32 bytes |
 |----------------|----------------------|
-| UUID (36 chars) | Take first 16 bytes of UUID bytes; zero-pad remaining 16 |
 | String < 32 bytes | SHA256 of the string, take first 32 bytes |
 | String == 32 bytes | Raw bytes (already 32 bytes) |
 | String > 32 bytes | SHA256 of the string (output is 32 bytes) |
+
+> **Note:** UUID strings from the gateway (36 chars) fall into the "String > 32 bytes" category and are SHA256-hashed. The UUID variant in earlier drafts of this amendment was removed — no special UUID handling is needed since all gateway inputs are text strings processed identically.
 
 **Implementation:**
 
 ```rust
 /// Encode a gateway-provided request_id string to 32 raw bytes for BLOB(32) storage.
-/// Uses SHA256 to hash variable-length strings deterministically.
+/// All inputs are treated as raw text strings (not hex). Variable-length strings
+/// are hashed via SHA256 to produce a deterministic 32-byte output.
+///
+/// WARNING: The gateway's input format (raw text vs hex) must be consistent across
+/// all routers. A router that changes input format will produce different request_id
+/// values for the same logical request, breaking idempotency.
 pub fn encode_request_id(request_id: &str) -> [u8; 32] {
     let bytes = request_id.as_bytes();
     if bytes.len() == 32 {
@@ -187,7 +193,7 @@ pub fn encode_request_id(request_id: &str) -> [u8; 32] {
 }
 ```
 
-**Important:** The encoding scheme must be consistent across all routers. A router that changes encoding schemes will produce different `request_id` values for the same logical request, breaking idempotency. Document the chosen scheme in the deployment runbook.
+**Important:** The encoding scheme must be consistent across all routers. Document the input format (raw text string) in the deployment runbook.
 
 ### key_id
 
@@ -232,13 +238,15 @@ RFC-0909 (Deterministic Quota Accounting) adopts this amended schema. All `Spend
 ## Changelog
 
 | Version | Date       | Changes |
-| ------- | ---------- | ------- |
+|---------|------------|---------|
+| v3      | 2026-04-14 | Round 8 fixes: remove UUID encoding from request_id table (gateway provides raw text), fix encode_request_id to match actual encoding logic, clarify gateway input format (raw text, not hex) |
+| v2      | 2026-04-14 | Round 7 fixes: add request_id encoding rules table + encode_request_id() function |
 | v1      | 2026-04-14 | Initial amendment: event_id TEXT→BLOB(32), request_id TEXT→BLOB(32), key_id TEXT→BLOB(16); add idx_spend_ledger_event_id, idx_spend_ledger_key_created, idx_spend_ledger_pricing_hash |
 
 ---
 
 **Draft Date:** 2026-04-14
-**Version:** v1
+**Version:** v3
 **Amends:** RFC-0903 Final v29
 **Required By:** RFC-0909 (Deterministic Quota Accounting)
 **Related RFCs:** RFC-0201 (Binary BLOB Type)

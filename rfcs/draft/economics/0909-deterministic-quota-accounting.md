@@ -2,7 +2,7 @@
 
 ## Status
 
-Draft (v18 — aligned with RFC-0903 Final v29 + RFC-0903-B1 amendment, RFC-0126, RFC-0201)
+Draft (v19 — aligned with RFC-0903 Final v29 + RFC-0903-B1 amendment, RFC-0126, RFC-0201)
 
 ## Authors
 
@@ -216,7 +216,8 @@ pub struct SpendEvent {
 
 /// Generate deterministic event_id from request content
 /// Aligns with RFC-0903 Final §compute_event_id
-/// Returns hex-encoded SHA256 string for storage as TEXT
+/// Returns hex-encoded SHA256 string for API compatibility.
+/// Storage uses BLOB(32) per RFC-0903-B1; hex→binary conversion occurs at the storage boundary.
 pub fn compute_event_id(
     request_id: &str,
     key_id: &uuid::Uuid,
@@ -291,9 +292,10 @@ created_at ASC, event_id ASC
 
 ```
 
-- `created_at` is the database insert timestamp — provides chronological ordering
+- `created_at` is the database insert timestamp — provides chronological ordering at the DB level
 - `event_id` serves as tiebreaker for deterministic replay
-- `timestamp` (provider event time) is metadata only and does NOT participate in event ordering
+- `timestamp` (provider event time) is metadata only and does **NOT** participate in event ordering
+- **Important:** `SpendEvent` struct has **no `created_at` field** — it only exists in the DB schema. In-memory replay (via `replay_events()`) sorts by `event_id` only since `created_at` is not available. DB-level replay uses `ORDER BY created_at ASC, event_id ASC`.
 
 This matches RFC-0903 Final which uses `created_at` (chronological) not `timestamp` (event time) for deterministic replay ordering.
 
@@ -422,7 +424,7 @@ CREATE TABLE spend_ledger (
     input_tokens INTEGER NOT NULL,            -- Prompt tokens
     output_tokens INTEGER NOT NULL,           -- Completion tokens
     cost_amount BIGINT NOT NULL,             -- Cost in smallest unit (u64)
-    pricing_hash BLOB NOT NULL,              -- Raw SHA256 binary (32 bytes)
+    pricing_hash BYTEA(32) NOT NULL,       -- Raw SHA256 binary (32 bytes) — matches RFC-0903-B1
     timestamp INTEGER NOT NULL,               -- Unix epoch (authoritative event time)
     token_source TEXT NOT NULL CHECK (token_source IN ('provider_usage', 'canonical_tokenizer')),
     tokenizer_version TEXT,
@@ -755,11 +757,14 @@ pub async fn process_response(
         false => (TokenSource::CanonicalTokenizer, Some(get_canonical_tokenizer(model)?)),
     };
 
-    // 2. Look up pricing (should be cached singleton in production — see §PricingTable Caching)
+    // 2. Validate request_id (for idempotency integrity)
+    validate_request_id(&response.request_id)?;
+
+    // 3. Look up pricing (should be cached singleton in production — see §PricingTable Caching)
     let pricing = PRICING_TABLE.get(model).ok_or(KeyError::NotFound)?;
     let cost_amount = compute_cost(pricing, response.input_tokens, response.output_tokens);
 
-    // 3. Generate deterministic event_id (matches RFC-0903 Final §compute_event_id)
+    // 4. Generate deterministic event_id (matches RFC-0903 Final §compute_event_id)
     let event_id = compute_event_id(
         &response.request_id,
         key_id,
@@ -771,7 +776,7 @@ pub async fn process_response(
         token_source,
     );
 
-    // 4. Build SpendEvent (matches RFC-0903 Final §SpendEvent)
+    // 5. Build SpendEvent (matches RFC-0903 Final §SpendEvent)
     let event = SpendEvent {
         event_id,
         request_id: response.request_id.clone(),
@@ -789,7 +794,7 @@ pub async fn process_response(
         timestamp: response.timestamp,
     };
 
-    // 5. Record spend via RFC-0903 Final ledger-based function
+    // 6. Record spend via RFC-0903 Final ledger-based function
     //    - record_spend(db, key_id, &event) for key-level budget
     //    - record_spend_with_team(db, key_id, team_id, &event) for team-level budget
     match team_id {
@@ -850,15 +855,15 @@ pub struct MerkleNode {
 
 /// Build Merkle tree from usage events
 ///
-/// Note: With TEXT storage (hex-encoded event_id), this hashes the ASCII bytes of
-/// the hex string. With BLOB storage (raw 32 bytes, per RFC-0903-B1), hash the raw
-/// binary bytes instead. Both are deterministic but produce different roots — the
-/// chosen approach must be documented and consistent across all routers.
-/// The hex-string approach is used here because it matches what appears in logs.
+/// Note: event_id is stored as BLOB(32) (raw 32-byte binary) per RFC-0903-B1.
+/// The Merkle tree hashes the hex representation from the application struct's
+/// String field (e.event_id, which is hex). This produces consistent roots across
+/// routers since the hex string is derived from the raw binary deterministically
+/// (compute_event_id returns hex; the same binary always yields the same hex).
+///
+/// Hashing the raw binary directly would produce different roots — the hex approach
+/// is used here because it matches what routers can independently compute from logs.
 pub fn build_merkle_tree(events: &[SpendEvent]) -> MerkleNode {
-    // Sort events deterministically by event_id (lexicographic comparison)
-    // Note: event_id stored as TEXT uses normal string comparison.
-    // event_id stored as BLOB(32) would use byte comparison (different ordering).
     let mut sorted = events.to_vec();
     sorted.sort_by(|a, b| a.event_id.cmp(&b.event_id));
 
@@ -867,9 +872,7 @@ pub fn build_merkle_tree(events: &[SpendEvent]) -> MerkleNode {
         .iter()
         .map(|e| {
             let mut hasher = Sha256::new();
-            // If event_id is stored as BLOB(32), use hex::encode first to get the
-            // canonical ASCII representation for cross-router consistency:
-            // hasher.update(hex::encode(&e.event_id).as_bytes());
+            // Hash hex-encoded event_id (from application struct String field)
             hasher.update(e.event_id.as_bytes()); // hex string as ASCII bytes
             hasher.update(e.cost_amount.to_le_bytes());
             hasher.finalize().into()
@@ -1092,7 +1095,7 @@ RFC-0903-B1 (an amendment to RFC-0903 Final) makes the following changes to the 
 | `idx_spend_ledger_key_created` | *(none)* | Added | Efficient `ORDER BY created_at` queries |
 | `idx_spend_ledger_event_id` | *(none)* | Added | Equality lookup on event_id |
 | `idx_spend_ledger_pricing_hash` | *(none)* | Added | Pricing verification queries |
-| `created_at` | *(no default)* | `DEFAULT UNIXEPOCH()` | Automatic population; stoolap compatible |
+| `created_at` | *(no default; app provides value)* | *(unchanged)* | No DEFAULT added per RFC-0903-B1; app provides value at insert |
 
 > **Note:** `event_id` is stored as raw binary (32 bytes) per RFC-0201, not hex-encoded text. For display/debugging, convert using `hex::encode(event_id)`. The `compute_event_id()` function continues to return `String` (hex) for API compatibility; storage uses binary. API key material (key_hash) is already stored as `BLOB(32)` per RFC-0903 Final.
 
@@ -1234,6 +1237,7 @@ $0.03/1K tokens → DQA(30_000, scale=6)
 
 | Version | Date       | Changes |
 | ------- | ---------- | ------- |
+| v19     | 2026-04-14 | Round 8 fixes: fix created_at DEFAULT UNIXEPOCH() claim, fix compute_event_id TEXT storage comment, fix Merkle tree BLOB vs TEXT comment, fix pricing_hash BLOB→BYTEA(32), fix event_id BLOB vs TEXT comment, fix created_at ordering (struct lacks created_at), add validate_request_id call in process_response, fix step numbering |
 | v18     | 2026-04-14 | Round 7 fixes: add hex_to_blob/blob_32_to_hex/uuid_to_blob_16/blob_16_to_uuid helpers, fix event_id comment (BLOB not TEXT), add storage encoding comment to SpendEvent, fix stale key_id TEXT note, add request_id encoding rules to RFC-0903-B1, remove stale created_at DEFAULT entry, remove stale PRIMARY KEY comment, fix get_canonical_tokenizer (add RFC-0910 disclaimer) |
 | v17     | 2026-04-14 | Round 6 fixes: fix process_response return type to match record_spend (returns Ok(())), add RFC-0903-B1 amendment section, update schema to BYTEA storage (event_id BLOB(32), request_id BLOB(32), key_id BLOB(16)), mark RFC-0903-B1 ext indexes, add compute_cost truncation note, fix o1/o3 tokenizer (o200k_base), update Merkle tree for BLOB storage, add RFC-0903-B1 approval criteria |
 | v16     | 2026-04-14 | Add Numeric Tower (DQA) integration note for future cost_amount enhancement; note key_id TEXT storage per RFC-0903 |
@@ -1249,6 +1253,6 @@ $0.03/1K tokens → DQA(30_000, scale=6)
 ---
 
 **Draft Date:** 2026-04-14
-**Version:** v18
+**Version:** v19
 **Related Use Case:** Enhanced Quota Router Gateway
 **Related RFCs:** RFC-0903 (Virtual API Key System), RFC-0126 (Deterministic Serialization)

@@ -17,6 +17,9 @@ pub enum KeyError {
     #[error("Team budget exceeded: current={current}, limit={limit}")]
     TeamBudgetExceeded { current: u64, limit: u64 },
 
+    #[error("Team key limit exceeded: current={current}, limit={limit}")]
+    TeamKeyLimitExceeded { current: u32, limit: u32 },
+
     #[error("Rate limited")]
     RateLimited,
 

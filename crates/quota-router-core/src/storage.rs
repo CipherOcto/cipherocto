@@ -6,10 +6,12 @@ pub trait KeyStorage: Send + Sync {
     fn lookup_by_hash(&self, key_hash: &[u8]) -> Result<Option<ApiKey>, KeyError>;
     fn update_key(&self, key_id: &str, updates: &KeyUpdates) -> Result<(), KeyError>;
     fn list_keys(&self, team_id: Option<&str>) -> Result<Vec<ApiKey>, KeyError>;
+    fn count_keys_for_team(&self, team_id: &str) -> Result<i64, KeyError>;
 
     // Team operations
     fn create_team(&self, team: &Team) -> Result<(), KeyError>;
     fn get_team(&self, team_id: &str) -> Result<Option<Team>, KeyError>;
+    fn update_team(&self, team_id: &str, name: &str, budget_limit: i64) -> Result<(), KeyError>;
     fn list_teams(&self) -> Result<Vec<Team>, KeyError>;
     fn delete_team(&self, team_id: &str) -> Result<(), KeyError>;
 
@@ -296,6 +298,24 @@ impl KeyStorage for StoolapKeyStorage {
         Ok(keys)
     }
 
+    fn count_keys_for_team(&self, team_id: &str) -> Result<i64, KeyError> {
+        let mut rows = self
+            .db
+            .query(
+                "SELECT COUNT(*) FROM api_keys WHERE team_id = $1 AND revoked = 0",
+                vec![team_id.into()],
+            )
+            .map_err(|e| KeyError::Storage(e.to_string()))?;
+
+        let count: i64 = rows
+            .next()
+            .ok_or(KeyError::Storage("Expected row".to_string()))?
+            .map_err(|e| KeyError::Storage(e.to_string()))?
+            .get(0)
+            .map_err(|e| KeyError::Storage(e.to_string()))?;
+        Ok(count)
+    }
+
     fn create_team(&self, team: &Team) -> Result<(), KeyError> {
         self.db
             .execute(
@@ -339,6 +359,16 @@ impl KeyStorage for StoolapKeyStorage {
         } else {
             Ok(None)
         }
+    }
+
+    fn update_team(&self, team_id: &str, name: &str, budget_limit: i64) -> Result<(), KeyError> {
+        self.db
+            .execute(
+                "UPDATE teams SET name = $1, budget_limit = $2 WHERE team_id = $3",
+                vec![name.into(), budget_limit.into(), team_id.into()],
+            )
+            .map_err(|e| KeyError::Storage(e.to_string()))?;
+        Ok(())
     }
 
     fn list_teams(&self) -> Result<Vec<Team>, KeyError> {

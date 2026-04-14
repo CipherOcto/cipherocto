@@ -85,6 +85,22 @@ pub fn compute_event_id(
     hex::encode(result)
 }
 
+/// Maximum keys per team (per RFC-0903 §Maximum Key Limits)
+const MAX_KEYS_PER_TEAM: u32 = 100;
+
+/// Check team key limit before creating a new key.
+///
+/// Returns Ok(()) if under the limit, Err(KeyError::TeamKeyLimitExceeded) otherwise.
+pub fn check_team_key_limit(key_count: u32) -> Result<(), KeyError> {
+    if key_count >= MAX_KEYS_PER_TEAM {
+        return Err(KeyError::TeamKeyLimitExceeded {
+            current: key_count,
+            limit: MAX_KEYS_PER_TEAM,
+        });
+    }
+    Ok(())
+}
+
 /// Generate a new key_id using UUIDv7-like format
 /// Format: {timestamp_hex}-{random_hex}
 pub fn generate_key_id() -> String {

@@ -2,7 +2,7 @@ use crate::balance::Balance;
 use crate::keys::{generate_key_id, generate_key_string, ApiKey, KeyType, KeyUpdates};
 use crate::providers::Provider;
 use crate::storage::{KeyStorage, StoolapKeyStorage};
-use http::{Method, Request, Uri};
+use http::{HeaderMap, Method, Request, Uri};
 use hyper::server::conn::http1;
 use hyper::service::service_fn;
 use hyper::{Response, StatusCode};
@@ -119,9 +119,10 @@ fn handle_request<B>(
                 return handle_update_key(storage, key_id);
             }
         }
-        // POST /api/keys/:id/revoke - revoke key
-        if method == Method::POST && path.contains("/api/keys/") && path.contains("/revoke") {
-            if let Some(key_id) = extract_key_id_from_path(path, "/revoke") {
+        // DELETE /api/keys/:id - revoke key (RFC: DELETE /key/{key_id})
+        if method == Method::DELETE && path.starts_with("/api/keys/") {
+            let key_id = path.trim_start_matches("/api/keys/");
+            if !key_id.is_empty() && !key_id.contains('/') {
                 return handle_revoke_key(storage, key_id);
             }
         }
@@ -130,6 +131,32 @@ fn handle_request<B>(
             if let Some(key_id) = extract_key_id_from_path(path, "/rotate") {
                 return handle_rotate_key(storage, key_id);
             }
+        }
+
+        // Team routes
+        // POST /api/team - create team
+        if method == Method::POST && path == "/api/team" {
+            return handle_create_team(storage);
+        }
+        // GET /api/team/:team_id - get team info
+        if method == Method::GET && path.starts_with("/api/team/") {
+            let team_id = path.trim_start_matches("/api/team/");
+            if !team_id.is_empty() && !team_id.contains('/') {
+                return handle_get_team(storage, team_id);
+            }
+        }
+        // PUT /api/team/:team_id - update team
+        if method == Method::PUT && path.starts_with("/api/team/") {
+            let team_id = path.trim_start_matches("/api/team/");
+            if !team_id.is_empty() && !team_id.contains('/') {
+                return handle_update_team(storage, team_id);
+            }
+        }
+
+        // GET /api/key/info - LiteLLM-compatible key info from token
+        // Extracts key from Authorization header and returns key info
+        if method == Method::GET && path == "/api/key/info" {
+            return handle_get_key_info(storage, req.headers());
         }
     }
 
@@ -406,4 +433,96 @@ fn handle_rotate_key(storage: &StoolapKeyStorage, key_id: &str) -> Response<Stri
             .to_string(),
         )
         .unwrap()
+}
+
+fn handle_create_team(_storage: &StoolapKeyStorage) -> Response<String> {
+    // For team creation we need request body parsing, but we don't have a full HTTP body reader
+    // For now, create a placeholder team - in full implementation this would parse JSON body
+    Response::builder()
+        .status(StatusCode::BAD_REQUEST)
+        .body("Team creation requires JSON body: {\"team_id\": ..., \"name\": ..., \"budget_limit\": ...}".to_string())
+        .unwrap()
+}
+
+fn handle_get_team(storage: &StoolapKeyStorage, team_id: &str) -> Response<String> {
+    match storage.get_team(team_id) {
+        Ok(Some(team)) => Response::builder()
+            .status(StatusCode::OK)
+            .body(
+                serde_json::json!({
+                    "team_id": team.team_id,
+                    "name": team.name,
+                    "budget_limit": team.budget_limit,
+                    "created_at": team.created_at,
+                })
+                .to_string(),
+            )
+            .unwrap(),
+        Ok(None) => Response::builder()
+            .status(StatusCode::NOT_FOUND)
+            .body(format!("Team {} not found", team_id))
+            .unwrap(),
+        Err(e) => Response::builder()
+            .status(StatusCode::INTERNAL_SERVER_ERROR)
+            .body(format!("Failed to get team: {}", e))
+            .unwrap(),
+    }
+}
+
+fn handle_update_team(_storage: &StoolapKeyStorage, _team_id: &str) -> Response<String> {
+    // For team update we need request body parsing
+    // For now, return error indicating full implementation needed
+    Response::builder()
+        .status(StatusCode::BAD_REQUEST)
+        .body("Team update requires JSON body: {\"name\": ..., \"budget_limit\": ...}".to_string())
+        .unwrap()
+}
+
+fn handle_get_key_info(storage: &StoolapKeyStorage, headers: &HeaderMap) -> Response<String> {
+    // Extract key from Authorization header
+    let auth_header = headers
+        .get("authorization")
+        .and_then(|v| v.to_str().ok())
+        .and_then(|v| v.strip_prefix("Bearer "));
+
+    let key_string = match auth_header {
+        Some(key) => key,
+        None => {
+            return Response::builder()
+                .status(StatusCode::UNAUTHORIZED)
+                .body("Missing Authorization header".to_string())
+                .unwrap();
+        }
+    };
+
+    // Hash the key and lookup
+    let key_hash = crate::keys::compute_key_hash(key_string);
+
+    match storage.lookup_by_hash(&key_hash) {
+        Ok(Some(api_key)) => Response::builder()
+            .status(StatusCode::OK)
+            .body(
+                serde_json::json!({
+                    "key_id": api_key.key_id,
+                    "key_prefix": api_key.key_prefix,
+                    "team_id": api_key.team_id,
+                    "budget_limit": api_key.budget_limit,
+                    "rpm_limit": api_key.rpm_limit,
+                    "tpm_limit": api_key.tpm_limit,
+                    "expires_at": api_key.expires_at,
+                    "key_type": api_key.key_type.to_string(),
+                    "auto_rotate": api_key.auto_rotate,
+                })
+                .to_string(),
+            )
+            .unwrap(),
+        Ok(None) => Response::builder()
+            .status(StatusCode::NOT_FOUND)
+            .body("Key not found or revoked".to_string())
+            .unwrap(),
+        Err(e) => Response::builder()
+            .status(StatusCode::INTERNAL_SERVER_ERROR)
+            .body(format!("Failed to lookup key: {}", e))
+            .unwrap(),
+    }
 }

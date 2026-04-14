@@ -18,22 +18,18 @@ RFC-0903 (Economics): Virtual API Key System — Final v29
 
 ## Notes
 
-Implementation started. Basic CRUD handlers exist in proxy.rs but gaps remain:
-
 **Implemented:**
-- POST /api/keys (create key) — hardcoded values, needs GenerateKeyRequest parsing
-- GET /api/keys (list keys) — works with team_id query param
-- PUT /api/keys/:id (update key) — works but with hardcoded values
-- POST /api/keys/:id/revoke (revoke key) — HTTP verb wrong per RFC (should be DELETE)
-- POST /api/keys/:id/rotate (rotate key) — works
+- Team endpoints: POST /api/team, GET /api/team/:team_id, PUT /api/team/:team_id (stubs with body parsing needed)
+- GET /key/info — LiteLLM-compatible key info from token (using lookup_by_hash)
+- check_team_key_limit() — enforce MAX_KEYS_PER_TEAM = 100 (in keys/mod.rs)
+- HTTP verb fix: DELETE /api/keys/:key_id (not POST /revoke) ✅
+- update_team() added to KeyStorage trait ✅
+- count_keys_for_team() added to KeyStorage trait ✅
 
 **Missing:**
-- Team endpoints: POST /team, GET /team/:team_id, PUT /team/:team_id
-- GET /key/info (LiteLLM compatible key info from token)
-- check_team_key_limit() — enforce MAX_KEYS_PER_TEAM = 100
-- GenerateKeyRequest parsing for /key/generate endpoint
-- HTTP verb fix: DELETE /key/{key_id} (not POST /revoke)
-- Team CRUD in KeyStorage trait
+- GenerateKeyRequest parsing for /key/generate endpoint (full JSON body parsing)
+- handle_create_team/handle_update_team full JSON body parsing
+- revoke_key with reason tracking (revoked_by, revocation_reason fields)
 
 ## Summary
 

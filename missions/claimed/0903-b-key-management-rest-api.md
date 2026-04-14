@@ -2,11 +2,38 @@
 
 ## Status
 
-Open
+Claimed
 
 ## RFC
 
 RFC-0903 (Economics): Virtual API Key System — Final v29
+
+## Dependencies
+
+- Mission: 0903-a-ledger-based-budget-enforcement (ledger must exist before route integration)
+
+## Claimant
+
+@claude-code
+
+## Notes
+
+Implementation started. Basic CRUD handlers exist in proxy.rs but gaps remain:
+
+**Implemented:**
+- POST /api/keys (create key) — hardcoded values, needs GenerateKeyRequest parsing
+- GET /api/keys (list keys) — works with team_id query param
+- PUT /api/keys/:id (update key) — works but with hardcoded values
+- POST /api/keys/:id/revoke (revoke key) — HTTP verb wrong per RFC (should be DELETE)
+- POST /api/keys/:id/rotate (rotate key) — works
+
+**Missing:**
+- Team endpoints: POST /team, GET /team/:team_id, PUT /team/:team_id
+- GET /key/info (LiteLLM compatible key info from token)
+- check_team_key_limit() — enforce MAX_KEYS_PER_TEAM = 100
+- GenerateKeyRequest parsing for /key/generate endpoint
+- HTTP verb fix: DELETE /key/{key_id} (not POST /revoke)
+- Team CRUD in KeyStorage trait
 
 ## Summary
 

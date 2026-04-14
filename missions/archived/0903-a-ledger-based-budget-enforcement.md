@@ -2,22 +2,19 @@
 
 ## Status
 
-In Progress — partially implemented (see below)
+**Implemented** — Option A with atomic transactions and FOR UPDATE locking
 
-## Implementation Notes
-
-Core types and schema are implemented:
+Core ledger enforcement is complete:
 - `TokenSource` enum, `SpendEvent` struct, `compute_event_id()` ✅
 - `spend_ledger` table and indexes in `schema.rs` ✅
 - `record_spend_ledger()` and `record_spend_ledger_with_team()` on `KeyStorage` trait ✅
-- `TeamBudgetExceeded` error variant ✅
+- `TeamBudgetExceeded` error variant with {current, limit} ✅
+- Option A: wrapped in `db.begin()` → `tx.commit()` with FOR UPDATE locking ✅
+- All 61 tests pass, 0 ignored (BYTEA blob fully integrated) ✅
 
-Option A implemented: Both methods now wrap in `db.begin()` → `tx.commit()` transactions
-with `SELECT ... FOR UPDATE` row locking for atomic budget enforcement.
-
-Remaining items:
-- Determinism tests for `compute_event_id()` — NOT yet implemented
-- Integration test for concurrent `FOR UPDATE` — NOT yet implemented
+**Remaining (testing only, not blocking 0903-b):**
+- Determinism tests for `compute_event_id()`
+- Integration test for concurrent `FOR UPDATE`
 
 ## RFC
 

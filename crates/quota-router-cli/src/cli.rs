@@ -26,7 +26,10 @@ pub enum Commands {
     /// Start proxy server
     Proxy {
         #[arg(short, long, default_value = "8080")]
-        port: u16,
+        proxy_port: u16,
+        /// Admin API server port (default: 8081)
+        #[arg(long, default_value = "8081")]
+        admin_port: u16,
     },
     /// Route a test request
     Route {

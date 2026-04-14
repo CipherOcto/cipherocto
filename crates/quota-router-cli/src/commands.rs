@@ -3,6 +3,8 @@ use crate::config::Config;
 use crate::providers::{default_endpoint, Provider};
 use crate::proxy::ProxyServer;
 use anyhow::Result;
+use quota_router_core::admin::AdminServer;
+use quota_router_core::{init_database, StoolapKeyStorage};
 use tracing::info;
 
 pub async fn init() -> Result<()> {
@@ -35,17 +37,42 @@ pub async fn list(prompts: u64, price: u64) -> Result<()> {
     Ok(())
 }
 
-pub async fn proxy(port: u16) -> Result<()> {
+pub async fn proxy(proxy_port: u16, admin_port: u16) -> Result<()> {
     let config = Config::load()?;
+
+    // Ensure db_path parent directory exists
+    if let Some(parent) = config.db_path.parent() {
+        std::fs::create_dir_all(parent)?;
+    }
+
+    // Open database and initialize schema
+    let db = stoolap::Database::open(&format!("file://{}", config.db_path.display()))?;
+    init_database(&db)?;
+
+    // Create storage and admin server
+    let storage = StoolapKeyStorage::new(db);
+    let mut admin_server = AdminServer::new(storage, admin_port);
+
+    // Get provider for proxy
     let provider = config
         .providers
         .first()
         .cloned()
         .unwrap_or_else(|| Provider::new("openai", "https://api.openai.com/v1"));
     let balance = Balance::new(config.balance);
+    let mut proxy_server = ProxyServer::new(balance, provider, proxy_port);
 
-    let mut server = ProxyServer::new(balance, provider, port);
-    server
+    // Run both servers
+    tokio::spawn(async move {
+        if let Err(e) = admin_server.run().await {
+            eprintln!("Admin server error: {}", e);
+        }
+    });
+
+    info!("Starting proxy server on port {}", proxy_port);
+    info!("Starting admin API server on port {}", admin_port);
+
+    proxy_server
         .run()
         .await
         .map_err(|e| anyhow::anyhow!("Proxy error: {}", e))?;

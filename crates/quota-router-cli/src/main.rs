@@ -14,7 +14,10 @@ async fn main() -> Result<()> {
         Commands::AddProvider { name } => cmd::add_provider(&name).await?,
         Commands::Balance => cmd::balance().await?,
         Commands::List { prompts, price } => cmd::list(prompts, price).await?,
-        Commands::Proxy { port } => cmd::proxy(port).await?,
+        Commands::Proxy {
+            proxy_port,
+            admin_port,
+        } => cmd::proxy(proxy_port, admin_port).await?,
         Commands::Route { provider, prompt } => cmd::route(&provider, &prompt).await?,
     }
 

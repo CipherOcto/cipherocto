@@ -9,6 +9,9 @@ license.workspace = true
 # Core library
 quota-router-core = { path = "../quota-router-core" }
 
+# Database
+stoolap = { git = "https://github.com/CipherOcto/stoolap", branch = "feat/blockchain-sql" }
+
 # CLI
 clap.workspace = true
 

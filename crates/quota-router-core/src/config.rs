@@ -41,6 +41,8 @@ pub struct Config {
     pub balance: u64,
     pub providers: Vec<Provider>,
     pub proxy_port: u16,
+    /// Database path for key storage
+    pub db_path: PathBuf,
     /// WAL pub/sub configuration
     #[serde(default)]
     pub wal_pubsub: WalPubSubConfig,
@@ -58,6 +60,7 @@ impl Config {
                 balance: 100, // Mock balance
                 providers: vec![],
                 proxy_port: 8080,
+                db_path: Self::default_db_path(),
                 wal_pubsub: WalPubSubConfig {
                     enabled: true,
                     poll_interval_ms: 50,
@@ -81,6 +84,12 @@ impl Config {
         let proj_dirs = ProjectDirs::from("com", "cipherocto", "quota-router")
             .ok_or(ConfigError::NoConfigDir)?;
         Ok(proj_dirs.config_dir().join("config.json"))
+    }
+
+    fn default_db_path() -> PathBuf {
+        let proj_dirs = ProjectDirs::from("com", "cipherocto", "quota-router")
+            .expect("Failed to get project directories");
+        proj_dirs.data_dir().join("quota-router.db")
     }
 }
 
@@ -107,6 +116,7 @@ mod tests {
             balance: 100,
             providers: vec![],
             proxy_port: 8080,
+            db_path: PathBuf::from("/tmp/test-db-path"),
             wal_pubsub: WalPubSubConfig {
                 enabled: true,
                 poll_interval_ms: 50,

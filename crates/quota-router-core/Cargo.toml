@@ -14,7 +14,6 @@ async-trait.workspace = true
 hyper.workspace = true
 hyper-util.workspace = true
 http.workspace = true
-http-body-util.workspace = true
 rustls.workspace = true
 rustls-pemfile.workspace = true
 reqwest.workspace = true
@@ -41,6 +40,10 @@ thiserror.workspace = true
 
 # Database
 stoolap = { git = "https://github.com/CipherOcto/stoolap", branch = "feat/blockchain-sql" }
+
+# HTTP body parsing
+http-body = "1.0"
+http-body-util.workspace = true
 
 # For HMAC-SHA256 key hashing
 hmac-sha256 = "1.1"

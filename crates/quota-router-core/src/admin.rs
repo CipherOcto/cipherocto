@@ -24,12 +24,17 @@
 //! | PUT | /api/team/:team_id | handle_update_team |
 //! | GET | /api/key/info | handle_get_key_info |
 
-use crate::keys::{generate_key_id, generate_key_string, ApiKey, KeyType, KeyUpdates};
+use crate::keys::{
+    check_team_key_limit, compute_key_hash, generate_key_id, generate_key_string, ApiKey, CreateTeamRequest,
+    GenerateKeyRequest, GenerateKeyResponse, KeyType, KeyUpdates, RevokeKeyRequest, Team, UpdateTeamRequest,
+};
 use crate::storage::{KeyStorage, StoolapKeyStorage};
-use http::{HeaderMap, Method, Request, StatusCode, Uri};
+use http::{HeaderMap, Request, StatusCode, Uri};
+use http_body::Body as HttpBody;
+use http_body_util::BodyExt;
 use hyper::server::conn::http1;
 use hyper::service::service_fn;
-use hyper::Response;
+use hyper::{Response};
 use hyper_util::rt::TokioIo;
 use std::net::SocketAddr;
 use std::sync::Arc;
@@ -78,7 +83,8 @@ impl AdminServer {
                                     Ok::<_, std::convert::Infallible>(handle_request(
                                         req,
                                         storage.as_ref(),
-                                    ))
+                                    )
+                                    .await)
                                 }
                             }),
                         )
@@ -96,53 +102,148 @@ impl AdminServer {
 }
 
 /// Handle admin API requests - routes to appropriate handler.
-fn handle_request<B>(req: Request<B>, storage: &StoolapKeyStorage) -> Response<String> {
-    let uri = req.uri();
-    let path = uri.path();
-    let method = req.method();
+async fn handle_request<B>(
+    req: Request<B>,
+    storage: &StoolapKeyStorage,
+) -> Response<String>
+where
+    B: HttpBody + Send,
+    B::Data: Send,
+{
+    // Split request into parts and body upfront
+    let (parts, body) = req.into_parts();
+    let path = parts.uri.path();
+    let method_str: &str = parts.method.as_ref();
 
     // Key routes
-    match (method, path) {
+    match (method_str, path) {
         // POST /api/keys - create key
-        (&Method::POST, "/api/keys") => return handle_create_key(storage),
+        ("POST", "/api/keys") => {
+            let bytes = match body.collect().await {
+                Ok(b) => b.to_bytes(),
+                Err(_) => {
+                    return Response::builder()
+                        .status(StatusCode::BAD_REQUEST)
+                        .body("Failed to read request body".to_string())
+                        .unwrap();
+                }
+            };
+            let req: GenerateKeyRequest = match serde_json::from_slice(&bytes) {
+                Ok(r) => r,
+                Err(e) => {
+                    return Response::builder()
+                        .status(StatusCode::BAD_REQUEST)
+                        .body(format!("Invalid JSON: {}", e))
+                        .unwrap();
+                }
+            };
+            return handle_create_key(storage, &req);
+        }
 
         // GET /api/keys - list all keys
-        (&Method::GET, "/api/keys") => return handle_list_keys(storage, None),
+        ("GET", "/api/keys") => return handle_list_keys(storage, None),
 
         // GET /api/keys?team_id=xxx - list keys by team
-        (&Method::GET, p) if p.starts_with("/api/keys") => {
-            return handle_list_keys(storage, extract_query_param(uri, "team_id"));
+        ("GET", p) if p.starts_with("/api/keys") => {
+            return handle_list_keys(storage, extract_query_param(&parts.uri, "team_id"));
         }
 
         // PUT /api/keys/:id - update key
-        (&Method::PUT, p) if p.starts_with("/api/keys/") => {
+        ("PUT", p) if p.starts_with("/api/keys/") => {
             let key_id = p.trim_start_matches("/api/keys/");
             if !key_id.is_empty() && !key_id.contains('/') {
-                return handle_update_key(storage, key_id);
+                    let bytes = match body.collect().await {
+                    Ok(b) => b.to_bytes(),
+                    Err(_) => {
+                        return Response::builder()
+                            .status(StatusCode::BAD_REQUEST)
+                            .body("Failed to read request body".to_string())
+                            .unwrap();
+                    }
+                };
+                let updates: KeyUpdates = match serde_json::from_slice(&bytes) {
+                    Ok(u) => u,
+                    Err(e) => {
+                        return Response::builder()
+                            .status(StatusCode::BAD_REQUEST)
+                            .body(format!("Invalid JSON: {}", e))
+                            .unwrap();
+                    }
+                };
+                return handle_update_key(storage, key_id, updates);
             }
         }
 
         // DELETE /api/keys/:id - revoke key
-        (&Method::DELETE, p) if p.starts_with("/api/keys/") => {
+        ("DELETE", p) if p.starts_with("/api/keys/") => {
             let key_id = p.trim_start_matches("/api/keys/");
             if !key_id.is_empty() && !key_id.contains('/') {
-                return handle_revoke_key(storage, key_id);
+                    let bytes = match body.collect().await {
+                    Ok(b) => b.to_bytes(),
+                    Err(_) => {
+                        return Response::builder()
+                            .status(StatusCode::BAD_REQUEST)
+                            .body("Failed to read request body".to_string())
+                            .unwrap();
+                    }
+                };
+                let revoke_req: RevokeKeyRequest = match serde_json::from_slice(&bytes) {
+                    Ok(r) => r,
+                    Err(_) => {
+                        // If no body, use defaults
+                        RevokeKeyRequest {
+                            revoked_by: Some("api".to_string()),
+                            reason: Some("Revoked via API".to_string()),
+                        }
+                    }
+                };
+                return handle_revoke_key(storage, key_id, revoke_req);
             }
         }
 
         // POST /api/keys/:id/rotate - rotate key
-        (&Method::POST, p) if p.starts_with("/api/keys/") && p.contains("/rotate") => {
+        ("POST", p) if p.starts_with("/api/keys/") && p.contains("/rotate") => {
             if let Some(key_id) = extract_key_id_from_revocation_path(p) {
-                return handle_rotate_key(storage, key_id);
+                    let bytes = match body.collect().await {
+                    Ok(b) => b.to_bytes(),
+                    Err(_) => {
+                        return Response::builder()
+                            .status(StatusCode::BAD_REQUEST)
+                            .body("Failed to read request body".to_string())
+                            .unwrap();
+                    }
+                };
+                let gen_req: Option<GenerateKeyRequest> = serde_json::from_slice(&bytes).ok();
+                return handle_rotate_key(storage, key_id, gen_req);
             }
         }
 
         // Team routes
         // POST /api/team - create team
-        (&Method::POST, "/api/team") => return handle_create_team(storage),
+        ("POST", "/api/team") => {
+            let bytes = match body.collect().await {
+                Ok(b) => b.to_bytes(),
+                Err(_) => {
+                    return Response::builder()
+                        .status(StatusCode::BAD_REQUEST)
+                        .body("Failed to read request body".to_string())
+                        .unwrap();
+                }
+            };
+            let req: CreateTeamRequest = match serde_json::from_slice(&bytes) {
+                Ok(r) => r,
+                Err(e) => {
+                    return Response::builder()
+                        .status(StatusCode::BAD_REQUEST)
+                        .body(format!("Invalid JSON: {}", e))
+                        .unwrap();
+                }
+            };
+            return handle_create_team(storage, req);
+        }
 
         // GET /api/team/:team_id - get team info
-        (&Method::GET, p) if p.starts_with("/api/team/") => {
+        ("GET", p) if p.starts_with("/api/team/") => {
             let team_id = p.trim_start_matches("/api/team/");
             if !team_id.is_empty() && !team_id.contains('/') {
                 return handle_get_team(storage, team_id);
@@ -150,16 +251,34 @@ fn handle_request<B>(req: Request<B>, storage: &StoolapKeyStorage) -> Response<S
         }
 
         // PUT /api/team/:team_id - update team
-        (&Method::PUT, p) if p.starts_with("/api/team/") => {
+        ("PUT", p) if p.starts_with("/api/team/") => {
             let team_id = p.trim_start_matches("/api/team/");
             if !team_id.is_empty() && !team_id.contains('/') {
-                return handle_update_team(storage, team_id);
+                    let bytes = match body.collect().await {
+                    Ok(b) => b.to_bytes(),
+                    Err(_) => {
+                        return Response::builder()
+                            .status(StatusCode::BAD_REQUEST)
+                            .body("Failed to read request body".to_string())
+                            .unwrap();
+                    }
+                };
+                let update_req: UpdateTeamRequest = match serde_json::from_slice(&bytes) {
+                    Ok(u) => u,
+                    Err(e) => {
+                        return Response::builder()
+                            .status(StatusCode::BAD_REQUEST)
+                            .body(format!("Invalid JSON: {}", e))
+                            .unwrap();
+                    }
+                };
+                return handle_update_team(storage, team_id, update_req);
             }
         }
 
         // GET /api/key/info - key info from token
-        (&Method::GET, "/api/key/info") => {
-            return handle_get_key_info(storage, req.headers());
+        ("GET", "/api/key/info") => {
+            return handle_get_key_info(storage, &parts.headers);
         }
 
         _ => {}
@@ -176,37 +295,59 @@ fn handle_request<B>(req: Request<B>, storage: &StoolapKeyStorage) -> Response<S
 // Key management handlers
 // =============================================================================
 
-fn handle_create_key(storage: &StoolapKeyStorage) -> Response<String> {
-    // TODO(rfc-0903-b): Parse GenerateKeyRequest from JSON body instead of hardcoded values
-    // When body parsing is implemented, accept: budget_limit, rpm_limit, tpm_limit,
-    // key_type, auto_rotate, rotation_interval_days, team_id, metadata
+fn handle_create_key(storage: &StoolapKeyStorage, req: &GenerateKeyRequest) -> Response<String> {
+    // Check team key limit if team_id is specified
+    if let Some(ref team_id) = req.team_id {
+        match storage.count_keys_for_team(team_id) {
+            Ok(count) => {
+                if let Err(e) = check_team_key_limit(count as u32) {
+                    return Response::builder()
+                        .status(StatusCode::BAD_REQUEST)
+                        .body(format!("Team key limit exceeded: {}", e))
+                        .unwrap();
+                }
+            }
+            Err(e) => {
+                return Response::builder()
+                    .status(StatusCode::INTERNAL_SERVER_ERROR)
+                    .body(format!("Failed to count team keys: {}", e))
+                    .unwrap();
+            }
+        }
+    }
+
     let key_string = generate_key_string();
     let key_id = generate_key_id();
-    let key_hash = crate::keys::compute_key_hash(&key_string);
+    let key_hash = compute_key_hash(&key_string);
+
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_secs() as i64;
+
+    // Compute expiration if rotation_interval_days is set
+    let expires_at = req.rotation_interval_days.map(|days| now + (days as i64 * 86400));
 
     let api_key = ApiKey {
         key_id: key_id.clone(),
         key_hash: key_hash.to_vec(),
         key_prefix: key_string.chars().take(7).collect(),
-        team_id: None,
-        budget_limit: 1000,
-        rpm_limit: Some(60),
-        tpm_limit: Some(1000),
-        created_at: std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap()
-            .as_secs() as i64,
-        expires_at: None,
+        team_id: req.team_id.clone(),
+        budget_limit: req.budget_limit as i64,
+        rpm_limit: req.rpm_limit.map(|r| r as i32),
+        tpm_limit: req.tpm_limit.map(|t| t as i32),
+        created_at: now,
+        expires_at,
         revoked: false,
         revoked_at: None,
         revoked_by: None,
         revocation_reason: None,
-        key_type: KeyType::Default,
+        key_type: req.key_type,
         allowed_routes: None,
-        auto_rotate: false,
-        rotation_interval_days: None,
-        description: None,
-        metadata: None,
+        auto_rotate: req.auto_rotate.unwrap_or(false),
+        rotation_interval_days: req.rotation_interval_days.map(|d| d as i32),
+        description: req.description.clone(),
+        metadata: req.metadata.as_ref().map(|v| v.to_string()),
     };
 
     if let Err(e) = storage.create_key(&api_key) {
@@ -216,18 +357,18 @@ fn handle_create_key(storage: &StoolapKeyStorage) -> Response<String> {
             .unwrap();
     }
 
+    let response = GenerateKeyResponse {
+        key: key_string,
+        key_id: key_id.clone(),
+        expires: expires_at,
+        team_id: req.team_id.clone(),
+        key_type: req.key_type,
+        created_at: now,
+    };
+
     Response::builder()
         .status(StatusCode::CREATED)
-        .body(
-            serde_json::json!({
-                "key_id": key_id,
-                "key": key_string,
-                "budget_limit": api_key.budget_limit,
-                "rpm_limit": api_key.rpm_limit,
-                "tpm_limit": api_key.tpm_limit,
-            })
-            .to_string(),
-        )
+        .body(serde_json::to_string(&response).unwrap())
         .unwrap()
 }
 
@@ -264,21 +405,7 @@ fn handle_list_keys(storage: &StoolapKeyStorage, team_id: Option<&str>) -> Respo
         .unwrap()
 }
 
-fn handle_update_key(storage: &StoolapKeyStorage, key_id: &str) -> Response<String> {
-    // TODO(rfc-0903-b): Parse KeyUpdates from JSON body instead of hardcoded values
-    // When body parsing is implemented, accept: budget_limit, rpm_limit, tpm_limit, expires_at
-    let updates = KeyUpdates {
-        budget_limit: Some(1000), // Default update for now
-        rpm_limit: Some(60),
-        tpm_limit: Some(1000),
-        expires_at: None,
-        revoked: None,
-        revoked_by: None,
-        revocation_reason: None,
-        key_type: None,
-        description: None,
-    };
-
+fn handle_update_key(storage: &StoolapKeyStorage, key_id: &str, updates: KeyUpdates) -> Response<String> {
     if let Err(e) = storage.update_key(key_id, &updates) {
         return Response::builder()
             .status(StatusCode::INTERNAL_SERVER_ERROR)
@@ -298,15 +425,15 @@ fn handle_update_key(storage: &StoolapKeyStorage, key_id: &str) -> Response<Stri
         .unwrap()
 }
 
-fn handle_revoke_key(storage: &StoolapKeyStorage, key_id: &str) -> Response<String> {
+fn handle_revoke_key(storage: &StoolapKeyStorage, key_id: &str, req: RevokeKeyRequest) -> Response<String> {
     let updates = KeyUpdates {
         budget_limit: None,
         rpm_limit: None,
         tpm_limit: None,
         expires_at: None,
         revoked: Some(true),
-        revoked_by: Some("api".to_string()),
-        revocation_reason: Some("Revoked via API".to_string()),
+        revoked_by: req.revoked_by,
+        revocation_reason: req.reason,
         key_type: None,
         description: None,
     };
@@ -330,35 +457,59 @@ fn handle_revoke_key(storage: &StoolapKeyStorage, key_id: &str) -> Response<Stri
         .unwrap()
 }
 
-fn handle_rotate_key(storage: &StoolapKeyStorage, key_id: &str) -> Response<String> {
-    // TODO(rfc-0903-b): Parse rotation options from JSON body
+fn handle_rotate_key(
+    storage: &StoolapKeyStorage,
+    key_id: &str,
+    gen_req: Option<GenerateKeyRequest>,
+) -> Response<String> {
+    // Use provided values or defaults
+    let (budget_limit, rpm_limit, tpm_limit, team_id, key_type, auto_rotate, rotation_interval_days, description) =
+        if let Some(ref req) = gen_req {
+            (
+                req.budget_limit as i64,
+                req.rpm_limit.map(|r| r as i32),
+                req.tpm_limit.map(|t| t as i32),
+                req.team_id.clone(),
+                req.key_type,
+                req.auto_rotate.unwrap_or(false),
+                req.rotation_interval_days.map(|d| d as i32),
+                req.description.clone(),
+            )
+        } else {
+            (1000, Some(60), Some(1000), None, KeyType::Default, false, None, None)
+        };
+
     // Generate new key
     let new_key_string = generate_key_string();
     let new_key_id = generate_key_id();
-    let new_key_hash = crate::keys::compute_key_hash(&new_key_string);
+    let new_key_hash = compute_key_hash(&new_key_string);
+
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_secs() as i64;
+
+    let expires_at = rotation_interval_days.map(|days| now + (days as i64 * 86400));
 
     let new_api_key = ApiKey {
         key_id: new_key_id.clone(),
         key_hash: new_key_hash.to_vec(),
         key_prefix: new_key_string.chars().take(7).collect(),
-        team_id: None,
-        budget_limit: 1000,
-        rpm_limit: Some(60),
-        tpm_limit: Some(1000),
-        created_at: std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap()
-            .as_secs() as i64,
-        expires_at: None,
+        team_id,
+        budget_limit,
+        rpm_limit,
+        tpm_limit,
+        created_at: now,
+        expires_at,
         revoked: false,
         revoked_at: None,
         revoked_by: None,
         revocation_reason: None,
-        key_type: KeyType::Default,
+        key_type,
         allowed_routes: None,
-        auto_rotate: false,
-        rotation_interval_days: None,
-        description: None,
+        auto_rotate,
+        rotation_interval_days,
+        description,
         metadata: None,
     };
 
@@ -407,12 +558,37 @@ fn handle_rotate_key(storage: &StoolapKeyStorage, key_id: &str) -> Response<Stri
 // Team management handlers
 // =============================================================================
 
-fn handle_create_team(_storage: &StoolapKeyStorage) -> Response<String> {
-    // TODO(rfc-0903-b): Parse team creation request from JSON body
-    // Required fields: team_id, name, budget_limit
+fn handle_create_team(storage: &StoolapKeyStorage, req: CreateTeamRequest) -> Response<String> {
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_secs() as i64;
+
+    let team = Team {
+        team_id: req.team_id.clone(),
+        name: req.name,
+        budget_limit: req.budget_limit,
+        created_at: now,
+    };
+
+    if let Err(e) = storage.create_team(&team) {
+        return Response::builder()
+            .status(StatusCode::INTERNAL_SERVER_ERROR)
+            .body(format!("Failed to create team: {}", e))
+            .unwrap();
+    }
+
     Response::builder()
-        .status(StatusCode::BAD_REQUEST)
-        .body("Team creation requires JSON body: {\"team_id\": ..., \"name\": ..., \"budget_limit\": ...}".to_string())
+        .status(StatusCode::CREATED)
+        .body(
+            serde_json::json!({
+                "team_id": team.team_id,
+                "name": team.name,
+                "budget_limit": team.budget_limit,
+                "created_at": team.created_at,
+            })
+            .to_string(),
+        )
         .unwrap()
 }
 
@@ -441,12 +617,52 @@ fn handle_get_team(storage: &StoolapKeyStorage, team_id: &str) -> Response<Strin
     }
 }
 
-fn handle_update_team(_storage: &StoolapKeyStorage, _team_id: &str) -> Response<String> {
-    // TODO(rfc-0903-b): Parse team update request from JSON body
-    // Required fields: name, budget_limit
+fn handle_update_team(storage: &StoolapKeyStorage, team_id: &str, req: UpdateTeamRequest) -> Response<String> {
+    let (name, budget_limit) = (req.name.as_deref(), req.budget_limit);
+
+    if name.is_none() && budget_limit.is_none() {
+        return Response::builder()
+            .status(StatusCode::BAD_REQUEST)
+            .body("No updates provided".to_string())
+            .unwrap();
+    }
+
+    // For partial updates, get current team and merge
+    let current = match storage.get_team(team_id) {
+        Ok(Some(t)) => t,
+        Ok(None) => {
+            return Response::builder()
+                .status(StatusCode::NOT_FOUND)
+                .body(format!("Team {} not found", team_id))
+                .unwrap();
+        }
+        Err(e) => {
+            return Response::builder()
+                .status(StatusCode::INTERNAL_SERVER_ERROR)
+                .body(format!("Failed to get team: {}", e))
+                .unwrap();
+        }
+    };
+
+    let new_name = name.unwrap_or(&current.name);
+    let new_budget = budget_limit.unwrap_or(current.budget_limit);
+
+    if let Err(e) = storage.update_team(team_id, new_name, new_budget) {
+        return Response::builder()
+            .status(StatusCode::INTERNAL_SERVER_ERROR)
+            .body(format!("Failed to update team: {}", e))
+            .unwrap();
+    }
+
     Response::builder()
-        .status(StatusCode::BAD_REQUEST)
-        .body("Team update requires JSON body: {\"name\": ..., \"budget_limit\": ...}".to_string())
+        .status(StatusCode::OK)
+        .body(
+            serde_json::json!({
+                "team_id": team_id,
+                "updated": true,
+            })
+            .to_string(),
+        )
         .unwrap()
 }
 
@@ -472,7 +688,7 @@ fn handle_get_key_info(storage: &StoolapKeyStorage, headers: &HeaderMap) -> Resp
     };
 
     // Hash the key and lookup
-    let key_hash = crate::keys::compute_key_hash(key_string);
+    let key_hash = compute_key_hash(key_string);
 
     match storage.lookup_by_hash(&key_hash) {
         Ok(Some(api_key)) => Response::builder()

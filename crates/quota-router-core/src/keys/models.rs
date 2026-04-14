@@ -131,3 +131,66 @@ pub struct SpendEvent {
     pub provider_usage_json: Option<String>,
     pub timestamp: i64,
 }
+
+/// Key generation request (LiteLLM compatible) per RFC-0903 §GenerateKeyRequest
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct GenerateKeyRequest {
+    /// Optional existing key (for regeneration)
+    pub key: Option<String>,
+    /// Budget limit in deterministic cost units
+    pub budget_limit: u64,
+    /// Rate limits
+    pub rpm_limit: Option<u32>,
+    pub tpm_limit: Option<u32>,
+    /// Key type (default: Default)
+    #[serde(default)]
+    pub key_type: KeyType,
+    /// Auto-rotation
+    pub auto_rotate: Option<bool>,
+    /// Rotation interval in days
+    pub rotation_interval_days: Option<u32>,
+    /// Team ID
+    pub team_id: Option<String>,
+    /// Metadata
+    pub metadata: Option<serde_json::Value>,
+    pub description: Option<String>,
+}
+
+/// Key generation response per RFC-0903 §GenerateKeyResponse
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct GenerateKeyResponse {
+    /// The actual API key (sk-qr-...)
+    pub key: String,
+    /// Public key identifier
+    pub key_id: String,
+    /// Expiration timestamp (epoch seconds)
+    pub expires: Option<i64>,
+    /// Team ID if associated
+    pub team_id: Option<String>,
+    /// Key type
+    pub key_type: KeyType,
+    /// Created timestamp (epoch seconds)
+    pub created_at: i64,
+}
+
+/// Team creation request
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CreateTeamRequest {
+    pub team_id: String,
+    pub name: String,
+    pub budget_limit: i64,
+}
+
+/// Team update request
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct UpdateTeamRequest {
+    pub name: Option<String>,
+    pub budget_limit: Option<i64>,
+}
+
+/// Revoke key request
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RevokeKeyRequest {
+    pub revoked_by: Option<String>,
+    pub reason: Option<String>,
+}

@@ -19,6 +19,9 @@ RFC-0903 (Economics): Virtual API Key System — Final v29
 ## Notes
 
 **Implemented:**
+- Admin API extracted to `admin.rs` — proper separation from proxy.rs
+- AdminServer wired up in commands.rs — runs on --admin-port (default 8081)
+- ProxyServer runs on --proxy-port (default 8080)
 - Team endpoints: POST /api/team, GET /api/team/:team_id, PUT /api/team/:team_id (stubs with body parsing needed)
 - GET /key/info — LiteLLM-compatible key info from token (using lookup_by_hash)
 - check_team_key_limit() — enforce MAX_KEYS_PER_TEAM = 100 (in keys/mod.rs)
@@ -120,10 +123,13 @@ RFC-0903 specifies a REST API for key management that does not exist in the curr
 
 | File | Change |
 |------|--------|
-| `crates/quota-router-core/src/keys/mod.rs` | Implement generate_key, rotate_key, revoke_key, check_team_key_limit |
-| `crates/quota-router-core/src/storage.rs` | Add delete_key, update_team to KeyStorage trait |
-| `crates/quota-router-cli/src/commands.rs` | Add HTTP route handlers for key/team CRUD |
-| `crates/quota-router-cli/src/main.rs` | Wire up new routes |
+| `crates/quota-router-core/src/admin.rs` | Admin API HTTP handlers (key/team CRUD) |
+| `crates/quota-router-core/src/proxy.rs` | LLM proxy only (separated from admin) |
+| `crates/quota-router-core/src/keys/mod.rs` | check_team_key_limit |
+| `crates/quota-router-core/src/storage.rs` | update_team, count_keys_for_team |
+| `crates/quota-router-core/src/config.rs` | Added db_path for database location |
+| `crates/quota-router-cli/src/commands.rs` | Wire up AdminServer with database |
+| `crates/quota-router-cli/src/cli.rs` | Added --admin-port option |
 
 ## Complexity
 

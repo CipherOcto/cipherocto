@@ -14,15 +14,15 @@
 //!
 //! | Method | Path | Handler |
 //! |--------|------|---------|
-//! | POST | /api/keys | handle_create_key |
-//! | GET | /api/keys | handle_list_keys |
-//! | PUT | /api/keys/:id | handle_update_key |
-//! | DELETE | /api/keys/:id | handle_revoke_key |
-//! | POST | /api/keys/:id/rotate | handle_rotate_key |
-//! | POST | /api/team | handle_create_team |
-//! | GET | /api/team/:team_id | handle_get_team |
-//! | PUT | /api/team/:team_id | handle_update_team |
-//! | GET | /api/key/info | handle_get_key_info |
+//! | POST | /key/generate | handle_create_key |
+//! | GET | /key/list | handle_list_keys |
+//! | PUT | /key/:id | handle_update_key |
+//! | DELETE | /key/:id | handle_revoke_key |
+//! | POST | /key/:id/regenerate | handle_rotate_key |
+//! | POST | /team | handle_create_team |
+//! | GET | /team/:team_id | handle_get_team |
+//! | PUT | /team/:team_id | handle_update_team |
+//! | GET | /key/info | handle_get_key_info |
 
 use crate::keys::{
     check_team_key_limit, compute_key_hash, generate_key_id, generate_key_string, ApiKey, CreateTeamRequest,
@@ -117,8 +117,8 @@ where
 
     // Key routes
     match (method_str, path) {
-        // POST /api/keys - create key
-        ("POST", "/api/keys") => {
+        // POST /key/generate - create key
+        ("POST", "/key/generate") => {
             let bytes = match body.collect().await {
                 Ok(b) => b.to_bytes(),
                 Err(_) => {
@@ -140,17 +140,17 @@ where
             return handle_create_key(storage, &req);
         }
 
-        // GET /api/keys - list all keys
-        ("GET", "/api/keys") => return handle_list_keys(storage, None),
+        // GET /key/list - list all keys
+        ("GET", "/key/list") => return handle_list_keys(storage, None),
 
-        // GET /api/keys?team_id=xxx - list keys by team
-        ("GET", p) if p.starts_with("/api/keys") => {
+        // GET /key/list?team_id=xxx - list keys by team
+        ("GET", p) if p.starts_with("/key/list") => {
             return handle_list_keys(storage, extract_query_param(&parts.uri, "team_id"));
         }
 
-        // PUT /api/keys/:id - update key
-        ("PUT", p) if p.starts_with("/api/keys/") => {
-            let key_id = p.trim_start_matches("/api/keys/");
+        // PUT /key/:id - update key
+        ("PUT", p) if p.starts_with("/key/") && !p.starts_with("/key/list") && !p.contains("/regenerate") => {
+            let key_id = p.trim_start_matches("/key/");
             if !key_id.is_empty() && !key_id.contains('/') {
                     let bytes = match body.collect().await {
                     Ok(b) => b.to_bytes(),
@@ -174,9 +174,9 @@ where
             }
         }
 
-        // DELETE /api/keys/:id - revoke key
-        ("DELETE", p) if p.starts_with("/api/keys/") => {
-            let key_id = p.trim_start_matches("/api/keys/");
+        // DELETE /key/:id - revoke key
+        ("DELETE", p) if p.starts_with("/key/") && !p.contains("/regenerate") => {
+            let key_id = p.trim_start_matches("/key/");
             if !key_id.is_empty() && !key_id.contains('/') {
                     let bytes = match body.collect().await {
                     Ok(b) => b.to_bytes(),
@@ -201,9 +201,9 @@ where
             }
         }
 
-        // POST /api/keys/:id/rotate - rotate key
-        ("POST", p) if p.starts_with("/api/keys/") && p.contains("/rotate") => {
-            if let Some(key_id) = extract_key_id_from_revocation_path(p) {
+        // POST /key/:id/regenerate - rotate key
+        ("POST", p) if p.starts_with("/key/") && p.contains("/regenerate") => {
+            if let Some(key_id) = extract_key_id_from_regenerate_path(p) {
                     let bytes = match body.collect().await {
                     Ok(b) => b.to_bytes(),
                     Err(_) => {
@@ -219,8 +219,8 @@ where
         }
 
         // Team routes
-        // POST /api/team - create team
-        ("POST", "/api/team") => {
+        // POST /team - create team
+        ("POST", "/team") => {
             let bytes = match body.collect().await {
                 Ok(b) => b.to_bytes(),
                 Err(_) => {
@@ -242,17 +242,17 @@ where
             return handle_create_team(storage, req);
         }
 
-        // GET /api/team/:team_id - get team info
-        ("GET", p) if p.starts_with("/api/team/") => {
-            let team_id = p.trim_start_matches("/api/team/");
+        // GET /team/:team_id - get team info
+        ("GET", p) if p.starts_with("/team/") => {
+            let team_id = p.trim_start_matches("/team/");
             if !team_id.is_empty() && !team_id.contains('/') {
                 return handle_get_team(storage, team_id);
             }
         }
 
-        // PUT /api/team/:team_id - update team
-        ("PUT", p) if p.starts_with("/api/team/") => {
-            let team_id = p.trim_start_matches("/api/team/");
+        // PUT /team/:team_id - update team
+        ("PUT", p) if p.starts_with("/team/") => {
+            let team_id = p.trim_start_matches("/team/");
             if !team_id.is_empty() && !team_id.contains('/') {
                     let bytes = match body.collect().await {
                     Ok(b) => b.to_bytes(),
@@ -276,8 +276,8 @@ where
             }
         }
 
-        // GET /api/key/info - key info from token
-        ("GET", "/api/key/info") => {
+        // GET /key/info - key info from token
+        ("GET", "/key/info") => {
             return handle_get_key_info(storage, &parts.headers);
         }
 
@@ -732,7 +732,7 @@ fn extract_query_param<'a>(uri: &'a Uri, param: &str) -> Option<&'a str> {
     })
 }
 
-fn extract_key_id_from_revocation_path(path: &str) -> Option<&str> {
-    let without_suffix = path.trim_end_matches("/rotate");
-    without_suffix.strip_prefix("/api/keys/")
+fn extract_key_id_from_regenerate_path(path: &str) -> Option<&str> {
+    let without_suffix = path.trim_end_matches("/regenerate");
+    without_suffix.strip_prefix("/key/")
 }

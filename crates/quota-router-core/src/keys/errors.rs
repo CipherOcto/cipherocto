@@ -11,8 +11,11 @@ pub enum KeyError {
     #[error("Key revoked: {0}")]
     Revoked(String),
 
-    #[error("Budget exceeded")]
-    BudgetExceeded,
+    #[error("Budget exceeded: current={current}, limit={limit}")]
+    BudgetExceeded { current: u64, limit: u64 },
+
+    #[error("Team budget exceeded: current={current}, limit={limit}")]
+    TeamBudgetExceeded { current: u64, limit: u64 },
 
     #[error("Rate limited")]
     RateLimited,

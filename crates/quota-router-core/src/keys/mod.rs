@@ -2,10 +2,11 @@ pub mod errors;
 pub mod models;
 
 pub use errors::KeyError;
-pub use models::{ApiKey, KeySpend, KeyType, KeyUpdates, Team};
+pub use models::{ApiKey, KeySpend, KeyType, KeyUpdates, SpendEvent, Team, TokenSource};
 
 use hmac_sha256::HMAC;
 use rand::Rng;
+use sha2::{Digest, Sha256};
 use std::sync::OnceLock;
 
 /// Default server secret for key hashing (fallback)
@@ -43,6 +44,45 @@ pub fn generate_key_string() -> String {
         .collect::<String>();
 
     format!("sk-qr-{}", hex_string)
+}
+
+/// Compute deterministic event_id for a spend event.
+#[allow(clippy::too_many_arguments)]
+///
+/// This function is deterministic: the same inputs always produce the same event_id.
+/// This enables cross-router idempotency — the same request processed by different
+/// routers produces the same event_id, so duplicate requests are safely ignored.
+///
+/// # Arguments
+/// * `request_id` - Unique request identifier (from the API gateway)
+/// * `key_id` - The API key used for this request
+/// * `provider` - LLM provider name (e.g., "openai")
+/// * `model` - Model name (e.g., "gpt-4o")
+/// * `input_tokens` - Number of input tokens
+/// * `output_tokens` - Number of output tokens
+/// * `pricing_hash` - 32-byte pricing hash (from pricing table lookup)
+/// * `token_source` - How tokens were counted
+pub fn compute_event_id(
+    request_id: &str,
+    key_id: &uuid::Uuid,
+    provider: &str,
+    model: &str,
+    input_tokens: u32,
+    output_tokens: u32,
+    pricing_hash: &[u8; 32],
+    token_source: TokenSource,
+) -> String {
+    let mut hasher = Sha256::new();
+    hasher.update(request_id.as_bytes());
+    hasher.update(key_id.as_bytes());
+    hasher.update(provider.as_bytes());
+    hasher.update(model.as_bytes());
+    hasher.update(input_tokens.to_be_bytes());
+    hasher.update(output_tokens.to_be_bytes());
+    hasher.update(pricing_hash);
+    hasher.update(token_source.to_hash_str().as_bytes());
+    let result = hasher.finalize();
+    hex::encode(result)
 }
 
 /// Generate a new key_id using UUIDv7-like format

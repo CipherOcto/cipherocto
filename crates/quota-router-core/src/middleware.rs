@@ -87,7 +87,10 @@ impl<S: KeyStorage> KeyMiddleware<S> {
         if let Some(s) = spend {
             let remaining = key.budget_limit - s.total_spend;
             if remaining <= 0 {
-                return Err(KeyError::BudgetExceeded);
+                return Err(KeyError::BudgetExceeded {
+                    current: s.total_spend as u64,
+                    limit: key.budget_limit as u64,
+                });
             }
         }
 
@@ -131,7 +134,6 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "TODO(rfc-0201-phase3): fails because stoolap doesn't support BYTEA yet"]
     fn test_extract_key_from_bearer_header() {
         let middleware = create_test_middleware();
 
@@ -146,7 +148,6 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "TODO(rfc-0201-phase3): fails because stoolap doesn't support BYTEA yet"]
     fn test_extract_key_from_api_key_header() {
         let middleware = create_test_middleware();
 
@@ -161,7 +162,6 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "TODO(rfc-0201-phase3): fails because stoolap doesn't support BYTEA yet"]
     fn test_extract_key_no_header() {
         let middleware = create_test_middleware();
 
@@ -172,7 +172,6 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "TODO(rfc-0201-phase3): fails because stoolap doesn't support BYTEA yet"]
     fn test_extract_key_bearer_takes_precedence() {
         let middleware = create_test_middleware();
 
@@ -187,7 +186,6 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "TODO(rfc-0201-phase3): fails because stoolap doesn't support BYTEA yet"]
     fn test_validate_request_key_not_found() {
         let middleware = create_test_middleware();
 
@@ -199,7 +197,6 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "TODO(rfc-0201-phase3): fails because stoolap doesn't support BYTEA yet"]
     fn test_validate_request_key_expired() {
         let middleware = create_test_middleware();
 
@@ -234,7 +231,6 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "TODO(rfc-0201-phase3): fails because stoolap doesn't support BYTEA yet"]
     fn test_check_budget_no_spend() {
         let middleware = create_test_middleware();
 
@@ -269,7 +265,6 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "TODO(rfc-0201-phase3): fails because stoolap doesn't support BYTEA yet"]
     fn test_check_budget_exceeded() {
         let middleware = create_test_middleware();
 
@@ -304,11 +299,16 @@ mod tests {
         // Should fail - exceeded budget
         let result = middleware.check_budget(&key);
         assert!(result.is_err());
-        assert!(matches!(result.unwrap_err(), KeyError::BudgetExceeded));
+        assert!(matches!(
+            result.unwrap_err(),
+            KeyError::BudgetExceeded {
+                current: _,
+                limit: _
+            }
+        ));
     }
 
     #[test]
-    #[ignore = "TODO(rfc-0201-phase3): fails because stoolap doesn't support BYTEA yet"]
     fn test_record_spend() {
         let middleware = create_test_middleware();
 
@@ -347,7 +347,6 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "TODO(rfc-0201-phase3): fails because stoolap doesn't support BYTEA yet"]
     fn test_check_rate_limits_rpm() {
         let middleware = create_test_middleware();
 
@@ -385,7 +384,6 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "TODO(rfc-0201-phase3): fails because stoolap doesn't support BYTEA yet"]
     fn test_check_rate_limits_tpm() {
         let middleware = create_test_middleware();
 

@@ -17,8 +17,11 @@ pub mod storage;
 
 pub use cache::CacheInvalidation;
 pub use key_rate_limiter::KeyRateLimiter;
-pub use keys::models::{ApiKey, KeySpend, KeyType, KeyUpdates};
-pub use keys::{compute_key_hash, generate_key_id, generate_key_string, validate_key, KeyError};
+pub use keys::models::{ApiKey, KeySpend, KeyType, KeyUpdates, SpendEvent, TokenSource};
+pub use keys::{
+    compute_event_id, compute_key_hash, generate_key_id, generate_key_string, validate_key,
+    KeyError,
+};
 pub use middleware::KeyMiddleware;
 pub use schema::init_database;
 pub use storage::KeyStorage;

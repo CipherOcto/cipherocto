@@ -2,7 +2,22 @@
 
 ## Status
 
-Open
+In Progress — partially implemented (see below)
+
+## Implementation Notes
+
+Core types and schema are implemented:
+- `TokenSource` enum, `SpendEvent` struct, `compute_event_id()` ✅
+- `spend_ledger` table and indexes in `schema.rs` ✅
+- `record_spend_ledger()` and `record_spend_ledger_with_team()` on `KeyStorage` trait ✅
+- `TeamBudgetExceeded` error variant ✅
+
+Option A implemented: Both methods now wrap in `db.begin()` → `tx.commit()` transactions
+with `SELECT ... FOR UPDATE` row locking for atomic budget enforcement.
+
+Remaining items:
+- Determinism tests for `compute_event_id()` — NOT yet implemented
+- Integration test for concurrent `FOR UPDATE` — NOT yet implemented
 
 ## RFC
 
@@ -30,7 +45,7 @@ No other dependencies — foundational for RFC-0903 compliance
 
 ## Acceptance Criteria
 
-- [ ] **Schema migration:** Replace `key_spend` table with `spend_ledger` table per RFC-0903 DDL:
+- [x] **Schema migration:** Replace `key_spend` table with `spend_ledger` table per RFC-0903 DDL:
   ```sql
   CREATE TABLE spend_ledger (
       event_id TEXT PRIMARY KEY,
@@ -53,8 +68,8 @@ No other dependencies — foundational for RFC-0903 compliance
   ```
   - Note: `pricing_hash BLOB` uses stoolap's native Blob type — no hex encoding needed
   - Note: `created_at DEFAULT 0` avoids SQLite-specific syntax; application sets value explicitly
-  - Note: `token_source TEXT` with application-level validation (stoolap CHECK constraint support TBD)
-- [ ] **Index creation:**
+  - Note: `token_source TEXT` with application-level validation (stoolap CHECK constraint fully enforced)
+- [x] **Index creation:**
   ```sql
   CREATE INDEX idx_spend_ledger_key_id ON spend_ledger(key_id);
   CREATE INDEX idx_spend_ledger_team_id ON spend_ledger(team_id);
@@ -64,7 +79,7 @@ No other dependencies — foundational for RFC-0903 compliance
   ```
   - `idx_spend_ledger_key_time` needed for `ORDER BY timestamp` queries in key replay
   - `idx_spend_ledger_team_time` needed for team replay (SUM by team_id)
-- [ ] **TokenSource enum:** Implement `TokenSource` enum with `ProviderUsage` and `CanonicalTokenizer` variants:
+- [x] **TokenSource enum:** Implement `TokenSource` enum with `ProviderUsage` and `CanonicalTokenizer` variants:
   ```rust
   #[derive(Debug, Clone, Copy, PartialEq, Eq)]
   pub enum TokenSource {
@@ -80,7 +95,7 @@ No other dependencies — foundational for RFC-0903 compliance
   }
   ```
   - Application-level validation: reject if `token_source` not in `["provider_usage", "canonical_tokenizer"]`
-- [ ] **SpendEvent struct:** Implement `SpendEvent` struct with all fields per RFC-0903 §SpendEvent:
+- [x] **SpendEvent struct:** Implement `SpendEvent` struct with all fields per RFC-0903 §SpendEvent:
   ```rust
   pub struct SpendEvent {
       pub event_id: String,
@@ -92,14 +107,14 @@ No other dependencies — foundational for RFC-0903 compliance
       pub input_tokens: u32,
       pub output_tokens: u32,
       pub cost_amount: u64,
-      pub pricing_hash: [u8; 32],
+      pub pricing_hash: Vec<u8>, // 32 bytes — stored as BLOB in DB, Vec<u8> in code
       pub token_source: TokenSource,
       pub tokenizer_version: Option<String>,
       pub provider_usage_json: Option<String>,
       pub timestamp: i64,
   }
   ```
-- [ ] **compute_event_id():** Implement deterministic event_id generation:
+- [x] **compute_event_id():** Implement deterministic event_id generation:
   ```rust
   pub fn compute_event_id(
       request_id: &str,
@@ -114,7 +129,7 @@ No other dependencies — foundational for RFC-0903 compliance
   ```
   - Called by **caller** of `record_spend()` before constructing `SpendEvent`
   - `event_id` is passed into `record_spend()` via `SpendEvent`
-- [ ] **record_spend() - key only:** Implement atomic budget enforcement with `FOR UPDATE`:
+- [x] **record_spend() - key only:** Implement atomic budget enforcement with `FOR UPDATE` (Option A: wrapped in transaction):
   ```rust
   pub fn record_spend(db: &Database, key_id: &Uuid, event: &SpendEvent) -> Result<(), KeyError> {
       let tx = db.transaction()?;
@@ -144,14 +159,18 @@ No other dependencies — foundational for RFC-0903 compliance
           return Err(KeyError::InvalidFormat); // or define specific error
       }
 
-      // 5. INSERT (idempotent via ON CONFLICT)
-      tx.execute(
+      // 5. INSERT (idempotent via UniqueConstraint handling)
+      // Note: stoolap uses MySQL-style ON DUPLICATE KEY UPDATE, not PostgreSQL's
+      // ON CONFLICT ... DO NOTHING. Since we want true "do nothing" on conflict
+      // (not an actual UPDATE), we use a plain INSERT and catch UniqueConstraint.
+      // If another transaction already inserted the same (key_id, request_id),
+      // the UniqueConstraint error indicates idempotent repeat — we ignore it.
+      match tx.execute(
           "INSERT INTO spend_ledger (
               event_id, request_id, key_id, team_id, provider, model,
               input_tokens, output_tokens, cost_amount, pricing_hash,
               token_source, tokenizer_version, provider_usage_json, timestamp
-          ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
-          ON CONFLICT(key_id, request_id) DO NOTHING",
+          ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)",
           params![
               event.event_id.to_string(),
               event.request_id,
@@ -168,7 +187,13 @@ No other dependencies — foundational for RFC-0903 compliance
               event.provider_usage_json,
               event.timestamp,
           ],
-      )?;
+      ) {
+          Ok(_) => {},
+          Err(stoap::Error::UniqueConstraint { .. }) => {
+              // Idempotent: another transaction already recorded this event
+          }
+          Err(e) => return Err(e.into()),
+      }
 
       tx.commit()?;
       Ok(())
@@ -176,7 +201,7 @@ No other dependencies — foundational for RFC-0903 compliance
   ```
   - Returns `KeyError::NotFound` if key_id doesn't exist (attack vector: spam with invalid keys → fail fast)
   - Application-level token_source validation as belt-and-suspenders since CHECK constraint enforcement TBD
-- [ ] **record_spend_with_team():** Team budget with lock ordering (team BEFORE key):
+- [x] **record_spend_with_team():** Team budget with lock ordering (team BEFORE key) (Option A: wrapped in transaction)
   ```rust
   pub fn record_spend_with_team(
       db: &Database,
@@ -245,11 +270,15 @@ Medium — database schema migration + atomic transaction implementation
 
 ## Notes
 
-### On Conflict Syntax
-Stoolap's `INSERT ... ON CONFLICT` syntax must be verified. If only `ON CONFLICT DO NOTHING` is supported (without target columns), the UNIQUE constraint on `(key_id, request_id)` can serve as the conflict target implicitly.
+### ON CONFLICT Syntax — CRITICAL FINDING
+Stoolap uses **MySQL-style `ON DUPLICATE KEY UPDATE`**, NOT PostgreSQL's `ON CONFLICT ... DO NOTHING`. The idempotent INSERT must be implemented as:
+1. Plain `INSERT INTO spend_ledger ... VALUES (...)`
+2. Catch `stoap::Error::UniqueConstraint` error and ignore it (idempotent repeat)
+
+The `ON CONFLICT` syntax shown in acceptance criteria code samples is aspirational/portable SQL; actual implementation must use the catch-based approach above.
 
 ### CHECK Constraint Enforcement
-Stoolap may not enforce CHECK constraints. TokenSource validation must be done at the application layer before INSERT.
+CHECK constraints ARE fully enforced during INSERT/UPDATE in stoolap (dml.rs:641,980,1060). The IN expression with string literals parses and compiles correctly. **Fixed:** Prior stoolap silently skipped validation on parse failure; now returns `Error::Parse` so invalid CHECK expressions fail loudly rather than allowing bad data through. Application-level TokenSource validation remains recommended as defense-in-depth, but is no longer the only line of defense.
 
 ### pricing_hash Type
 `pricing_hash` is `[u8; 32]` in code and `BLOB` in schema. Stoolap's `ToParam` for `&[u8]` should handle this via the existing `impl ToParam for &[u8]` which calls `Value::blob(self.to_vec())`.

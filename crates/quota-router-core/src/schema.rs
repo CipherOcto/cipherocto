@@ -9,7 +9,7 @@ pub fn init_database(db: &stoolap::Database) -> Result<(), KeyError> {
     db.execute(
         "CREATE TABLE IF NOT EXISTS api_keys (
             key_id TEXT NOT NULL UNIQUE,
-            key_hash BYTEA(32) NOT NULL UNIQUE,  -- HMAC-SHA256 = 32 bytes (see RFC-0201 Phase 3)
+            key_hash BYTEA(32) NOT NULL UNIQUE,
             key_prefix TEXT NOT NULL,
             team_id TEXT,
             budget_limit INTEGER NOT NULL,
@@ -77,6 +77,62 @@ pub fn init_database(db: &stoolap::Database) -> Result<(), KeyError> {
     )
     .map_err(|e| KeyError::Storage(e.to_string()))?;
 
+    // Create spend_ledger table for ledger-based budget enforcement (RFC-0903)
+    // pricing_hash is stored as BLOB (32 bytes) — stoolap supports native Blob type
+    db.execute(
+        "CREATE TABLE IF NOT EXISTS spend_ledger (
+            event_id TEXT NOT NULL,
+            request_id TEXT NOT NULL,
+            key_id TEXT NOT NULL,
+            UNIQUE(key_id, request_id),
+            team_id TEXT,
+            provider TEXT NOT NULL,
+            model TEXT NOT NULL,
+            input_tokens INTEGER NOT NULL,
+            output_tokens INTEGER NOT NULL,
+            cost_amount INTEGER NOT NULL,
+            pricing_hash BLOB NOT NULL,
+            token_source TEXT NOT NULL,
+            tokenizer_version TEXT,
+            provider_usage_json TEXT,
+            timestamp INTEGER NOT NULL,
+            created_at INTEGER NOT NULL DEFAULT 0
+        )",
+        [],
+    )
+    .map_err(|e| KeyError::Storage(e.to_string()))?;
+
+    // Create indexes for spend_ledger
+    db.execute(
+        "CREATE INDEX IF NOT EXISTS idx_spend_ledger_key_id ON spend_ledger(key_id)",
+        [],
+    )
+    .map_err(|e| KeyError::Storage(e.to_string()))?;
+
+    db.execute(
+        "CREATE INDEX IF NOT EXISTS idx_spend_ledger_team_id ON spend_ledger(team_id)",
+        [],
+    )
+    .map_err(|e| KeyError::Storage(e.to_string()))?;
+
+    db.execute(
+        "CREATE INDEX IF NOT EXISTS idx_spend_ledger_timestamp ON spend_ledger(timestamp)",
+        [],
+    )
+    .map_err(|e| KeyError::Storage(e.to_string()))?;
+
+    db.execute(
+        "CREATE INDEX IF NOT EXISTS idx_spend_ledger_key_time ON spend_ledger(key_id, timestamp)",
+        [],
+    )
+    .map_err(|e| KeyError::Storage(e.to_string()))?;
+
+    db.execute(
+        "CREATE INDEX IF NOT EXISTS idx_spend_ledger_team_time ON spend_ledger(team_id, timestamp)",
+        [],
+    )
+    .map_err(|e| KeyError::Storage(e.to_string()))?;
+
     Ok(())
 }
 
@@ -85,7 +141,6 @@ mod tests {
     use super::*;
 
     #[test]
-    #[ignore = "TODO(rfc-0201-phase3): fails because stoolap doesn't support BYTEA yet"]
     fn test_init_database() {
         let db = stoolap::Database::open_in_memory().unwrap();
         init_database(&db).unwrap();

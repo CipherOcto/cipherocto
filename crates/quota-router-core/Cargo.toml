@@ -45,9 +45,20 @@ stoolap = { git = "https://github.com/CipherOcto/stoolap", branch = "feat/blockc
 # For HMAC-SHA256 key hashing
 hmac-sha256 = "1.1"
 
+# For SHA256 (used in event_id computation)
+sha2 = "0.10"
+
 # For hex encoding of key hashes
 hex = "0.4"
 
 [lib]
 name = "quota_router_core"
 path = "src/lib.rs"
+
+[[bench]]
+name = "key_hash_storage_bench"
+harness = false
+
+[dev-dependencies]
+criterion = "0.5"
+tempfile = "3"

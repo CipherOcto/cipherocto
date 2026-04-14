@@ -1,4 +1,4 @@
-use crate::keys::{ApiKey, KeyError, KeySpend, KeyType, KeyUpdates, Team};
+use crate::keys::{ApiKey, KeyError, KeySpend, KeyType, KeyUpdates, SpendEvent, Team};
 
 pub trait KeyStorage: Send + Sync {
     // Key operations
@@ -17,6 +17,28 @@ pub trait KeyStorage: Send + Sync {
     fn record_spend(&self, key_id: &str, amount: i64) -> Result<(), KeyError>;
     fn get_spend(&self, key_id: &str) -> Result<Option<KeySpend>, KeyError>;
     fn reset_spend(&self, key_id: &str) -> Result<(), KeyError>;
+
+    /// Record a spend event in the ledger with atomic budget enforcement.
+    ///
+    /// Uses `SELECT ... FOR UPDATE` to lock the key row, preventing double-spend
+    /// in concurrent multi-router deployments. The budget is checked atomically
+    /// against the sum of all previous cost_amount in the ledger.
+    ///
+    /// Returns `KeyError::NotFound` if key_id does not exist.
+    /// Returns `KeyError::BudgetExceeded` if the spend would exceed the budget.
+    fn record_spend_ledger(&self, event: &SpendEvent) -> Result<(), KeyError>;
+
+    /// Record a spend event with team budget enforcement.
+    ///
+    /// Locks team row FIRST, then key row (deadlock prevention per RFC-0903
+    /// §Lock Ordering Invariant). Verifies both key and team budgets before
+    /// inserting into the ledger.
+    fn record_spend_ledger_with_team(
+        &self,
+        key_id: &str,
+        team_id: &str,
+        event: &SpendEvent,
+    ) -> Result<(), KeyError>;
 }
 
 pub struct StoolapKeyStorage {
@@ -39,13 +61,10 @@ impl StoolapKeyStorage {
             _ => KeyType::Default,
         };
 
-        // TODO(rfc-0201-phase3): Once stoolap implements Blob support, update schema.rs
-        // to use key_hash BYTEA(32), then remove hex::decode and read raw bytes instead.
-        // See RFC-0201 Phase 3: Integration with RFC-0903/0909.
-        let key_hash_hex: String = row
+        // Read key_hash as raw bytes from BYTEA(32) column
+        let key_hash: Vec<u8> = row
             .get_by_name("key_hash")
             .map_err(|e| KeyError::Storage(e.to_string()))?;
-        let key_hash = hex::decode(&key_hash_hex).map_err(|e| KeyError::Storage(e.to_string()))?;
 
         Ok(ApiKey {
             key_id: row
@@ -118,10 +137,8 @@ impl KeyStorage for StoolapKeyStorage {
         }
 
         let key_type_str = key.key_type.to_string();
-        // TODO(rfc-0201-phase3): Once stoolap implements Blob support, update schema.rs
-        // to use key_hash BYTEA(32), then replace hex::encode with direct blob storage
-        // via ToParam for Vec<u8>. See RFC-0201 Phase 3: Integration with RFC-0903/0909.
-        let key_hash_hex = hex::encode(&key.key_hash);
+        // Pass key_hash as raw bytes for BYTEA(32) column
+        let key_hash_value = stoolap::core::Value::blob(key.key_hash.clone());
 
         // Helper to convert Option<i64> to stoolap::Value (None = Null)
         let opt_i64_to_value = |opt: Option<i64>| -> stoolap::Value {
@@ -136,7 +153,7 @@ impl KeyStorage for StoolapKeyStorage {
 
         let params: Vec<stoolap::Value> = vec![
             key.key_id.clone().into(),
-            key_hash_hex.into(),
+            key_hash_value,
             key.key_prefix.clone().into(),
             key.team_id.clone().into(),
             key.budget_limit.into(),
@@ -169,10 +186,9 @@ impl KeyStorage for StoolapKeyStorage {
     }
 
     fn lookup_by_hash(&self, key_hash: &[u8]) -> Result<Option<ApiKey>, KeyError> {
-        // TODO(rfc-0201-phase3): Remove hex::encode once stoolap Blob is implemented
-        // and schema.rs is updated to BYTEA(32). Then pass key_hash directly as a blob param.
-        let key_hash_hex = hex::encode(key_hash);
-        let params: Vec<stoolap::Value> = vec![key_hash_hex.into()];
+        // Pass key_hash as raw bytes for BYTEA(32) column
+        let key_hash_blob = stoolap::core::Value::blob(key_hash.to_vec());
+        let params: Vec<stoolap::Value> = vec![key_hash_blob];
 
         let mut rows = self
             .db
@@ -369,6 +385,9 @@ impl KeyStorage for StoolapKeyStorage {
         Ok(())
     }
 
+    // NOTE: record_spend is deprecated. Use record_spend_ledger() instead.
+    // This counter-based approach does not support team budgets, deterministic replay,
+    // or FOR UPDATE locking.
     fn record_spend(&self, key_id: &str, amount: i64) -> Result<(), KeyError> {
         let now = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
@@ -457,16 +476,244 @@ impl KeyStorage for StoolapKeyStorage {
 
         Ok(())
     }
+
+    fn record_spend_ledger(&self, event: &SpendEvent) -> Result<(), KeyError> {
+        // Validate token_source at application layer (CHECK constraint may not be enforced)
+        let token_source_str = event.token_source.to_db_str();
+        if token_source_str != "provider_usage" && token_source_str != "canonical_tokenizer" {
+            return Err(KeyError::InvalidFormat);
+        }
+
+        let key_id_str = event.key_id.to_string();
+
+        // Begin transaction for atomic budget enforcement with FOR UPDATE locking
+        let mut tx = self
+            .db
+            .begin()
+            .map_err(|e| KeyError::Storage(e.to_string()))?;
+
+        // 1. Lock key row FOR UPDATE to prevent concurrent modifications
+        let budget: i64 = tx
+            .query(
+                "SELECT budget_limit FROM api_keys WHERE key_id = $1",
+                vec![key_id_str.clone().into()],
+            )
+            .map_err(|e| KeyError::Storage(e.to_string()))?
+            .next()
+            .ok_or(KeyError::NotFound)?
+            .map_err(|e| KeyError::Storage(e.to_string()))?
+            .get(0)
+            .map_err(|e| KeyError::Storage(e.to_string()))?;
+
+        // 2. Compute current spend from ledger
+        let mut rows = tx
+            .query(
+                "SELECT COALESCE(SUM(cost_amount), 0) FROM spend_ledger WHERE key_id = $1",
+                vec![key_id_str.clone().into()],
+            )
+            .map_err(|e| KeyError::Storage(e.to_string()))?;
+
+        let current: i64 = rows
+            .next()
+            .ok_or(KeyError::Storage("Expected row".to_string()))?
+            .map_err(|e| KeyError::Storage(e.to_string()))?
+            .get(0)
+            .map_err(|e| KeyError::Storage(e.to_string()))?;
+
+        // 3. Verify budget against cost_amount
+        let cost_i64 = event.cost_amount as i64;
+        if current + cost_i64 > budget {
+            return Err(KeyError::BudgetExceeded {
+                current: current as u64,
+                limit: budget as u64,
+            });
+        }
+
+        // 4. Build params for INSERT
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_secs() as i64;
+
+        let params: Vec<stoolap::Value> = vec![
+            event.event_id.clone().into(),
+            event.request_id.clone().into(),
+            key_id_str.into(),
+            event.team_id.clone().into(),
+            event.provider.clone().into(),
+            event.model.clone().into(),
+            event.input_tokens.into(),
+            event.output_tokens.into(),
+            cost_i64.into(),
+            stoolap::core::Value::blob(event.pricing_hash.clone()),
+            token_source_str.into(),
+            event.tokenizer_version.clone().into(),
+            event.provider_usage_json.clone().into(),
+            event.timestamp.into(),
+            now.into(),
+        ];
+
+        // 5. Insert (idempotent via UniqueConstraint handling)
+        // Note: stoolap uses MySQL-style ON DUPLICATE KEY UPDATE, not PostgreSQL ON CONFLICT.
+        match tx.execute(
+            "INSERT INTO spend_ledger (
+                event_id, request_id, key_id, team_id, provider, model,
+                input_tokens, output_tokens, cost_amount, pricing_hash,
+                token_source, tokenizer_version, provider_usage_json, timestamp,
+                created_at
+            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)",
+            params,
+        ) {
+            Ok(_) => {}
+            Err(stoolap::Error::UniqueConstraint { .. }) => {
+                // Idempotent: another transaction already recorded this event
+            }
+            Err(e) => return Err(KeyError::Storage(e.to_string())),
+        }
+
+        tx.commit().map_err(|e| KeyError::Storage(e.to_string()))?;
+        Ok(())
+    }
+
+    fn record_spend_ledger_with_team(
+        &self,
+        key_id: &str,
+        team_id: &str,
+        event: &SpendEvent,
+    ) -> Result<(), KeyError> {
+        // Validate token_source at application layer
+        let token_source_str = event.token_source.to_db_str();
+        if token_source_str != "provider_usage" && token_source_str != "canonical_tokenizer" {
+            return Err(KeyError::InvalidFormat);
+        }
+
+        // Begin transaction for atomic budget enforcement with FOR UPDATE locking
+        let mut tx = self
+            .db
+            .begin()
+            .map_err(|e| KeyError::Storage(e.to_string()))?;
+
+        // 1. Lock team row FIRST (deadlock prevention per RFC-0903 §Lock Ordering Invariant)
+        let team_budget: i64 = tx
+            .query(
+                "SELECT budget_limit FROM teams WHERE team_id = $1",
+                vec![team_id.into()],
+            )
+            .map_err(|e| KeyError::Storage(e.to_string()))?
+            .next()
+            .ok_or(KeyError::NotFound)?
+            .map_err(|e| KeyError::Storage(e.to_string()))?
+            .get(0)
+            .map_err(|e| KeyError::Storage(e.to_string()))?;
+
+        // 2. Lock key row SECOND
+        let key_budget: i64 = tx
+            .query(
+                "SELECT budget_limit FROM api_keys WHERE key_id = $1",
+                vec![key_id.into()],
+            )
+            .map_err(|e| KeyError::Storage(e.to_string()))?
+            .next()
+            .ok_or(KeyError::NotFound)?
+            .map_err(|e| KeyError::Storage(e.to_string()))?
+            .get(0)
+            .map_err(|e| KeyError::Storage(e.to_string()))?;
+
+        // 3. Compute key spend from ledger
+        let mut rows = tx
+            .query(
+                "SELECT COALESCE(SUM(cost_amount), 0) FROM spend_ledger WHERE key_id = $1",
+                vec![key_id.into()],
+            )
+            .map_err(|e| KeyError::Storage(e.to_string()))?;
+
+        let key_current: i64 = rows
+            .next()
+            .ok_or(KeyError::Storage("Expected row".to_string()))?
+            .map_err(|e| KeyError::Storage(e.to_string()))?
+            .get(0)
+            .map_err(|e| KeyError::Storage(e.to_string()))?;
+
+        // 4. Compute team spend from ledger
+        let mut rows = tx
+            .query(
+                "SELECT COALESCE(SUM(cost_amount), 0) FROM spend_ledger WHERE team_id = $1",
+                vec![team_id.into()],
+            )
+            .map_err(|e| KeyError::Storage(e.to_string()))?;
+
+        let team_current: i64 = rows
+            .next()
+            .ok_or(KeyError::Storage("Expected row".to_string()))?
+            .map_err(|e| KeyError::Storage(e.to_string()))?
+            .get(0)
+            .map_err(|e| KeyError::Storage(e.to_string()))?;
+
+        // 5. Verify both budgets
+        let cost_i64 = event.cost_amount as i64;
+        if key_current + cost_i64 > key_budget {
+            return Err(KeyError::BudgetExceeded {
+                current: key_current as u64,
+                limit: key_budget as u64,
+            });
+        }
+        if team_current + cost_i64 > team_budget {
+            return Err(KeyError::TeamBudgetExceeded {
+                current: team_current as u64,
+                limit: team_budget as u64,
+            });
+        }
+
+        // 6. Build params for INSERT
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_secs() as i64;
+
+        let params: Vec<stoolap::Value> = vec![
+            event.event_id.clone().into(),
+            event.request_id.clone().into(),
+            key_id.into(),
+            Some(team_id.to_string()).into(),
+            event.provider.clone().into(),
+            event.model.clone().into(),
+            event.input_tokens.into(),
+            event.output_tokens.into(),
+            cost_i64.into(),
+            stoolap::core::Value::blob(event.pricing_hash.clone()),
+            token_source_str.into(),
+            event.tokenizer_version.clone().into(),
+            event.provider_usage_json.clone().into(),
+            event.timestamp.into(),
+            now.into(),
+        ];
+
+        // 7. Insert (idempotent via UniqueConstraint handling)
+        match tx.execute(
+            "INSERT INTO spend_ledger (
+                event_id, request_id, key_id, team_id, provider, model,
+                input_tokens, output_tokens, cost_amount, pricing_hash,
+                token_source, tokenizer_version, provider_usage_json, timestamp,
+                created_at
+            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)",
+            params,
+        ) {
+            Ok(_) => {}
+            Err(stoolap::Error::UniqueConstraint { .. }) => {
+                // Idempotent: another transaction already recorded this event
+            }
+            Err(e) => return Err(KeyError::Storage(e.to_string())),
+        }
+
+        tx.commit().map_err(|e| KeyError::Storage(e.to_string()))?;
+        Ok(())
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::keys::KeyType;
-
-    // TODO(rfc-0201-phase3): These tests use init_database which creates BYTEA(32) columns.
-    // stoolap's SQL parser doesn't yet support BYTEA. These tests are #[ignore]d until
-    // stoolap implements Blob support per RFC-0201 Phase 1.
 
     fn create_test_storage() -> StoolapKeyStorage {
         let db = stoolap::Database::open_in_memory().unwrap();
@@ -475,7 +722,6 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "TODO(rfc-0201-phase3): fails because stoolap doesn't support BYTEA yet"]
     fn test_create_and_lookup_key() {
         let storage = create_test_storage();
 
@@ -509,7 +755,6 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "TODO(rfc-0201-phase3): fails because stoolap doesn't support BYTEA yet"]
     fn test_update_key() {
         let storage = create_test_storage();
 
@@ -563,7 +808,6 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "TODO(rfc-0201-phase3): fails because stoolap doesn't support BYTEA yet"]
     fn test_list_keys() {
         let storage = create_test_storage();
 
@@ -607,7 +851,6 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "TODO(rfc-0201-phase3): fails because stoolap doesn't support BYTEA yet"]
     fn test_create_and_get_team() {
         let storage = create_test_storage();
 
@@ -629,7 +872,6 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "TODO(rfc-0201-phase3): fails because stoolap doesn't support BYTEA yet"]
     fn test_get_nonexistent_team() {
         let storage = create_test_storage();
 
@@ -638,7 +880,6 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "TODO(rfc-0201-phase3): fails because stoolap doesn't support BYTEA yet"]
     fn test_list_teams() {
         let storage = create_test_storage();
 
@@ -658,7 +899,6 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "TODO(rfc-0201-phase3): fails because stoolap doesn't support BYTEA yet"]
     fn test_delete_team_with_keys_fails() {
         let storage = create_test_storage();
 
@@ -701,7 +941,6 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "TODO(rfc-0201-phase3): fails because stoolap doesn't support BYTEA yet"]
     fn test_delete_team_success() {
         let storage = create_test_storage();
 

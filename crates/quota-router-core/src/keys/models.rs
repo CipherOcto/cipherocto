@@ -74,3 +74,60 @@ pub struct KeySpend {
     pub window_start: i64, // timestamp when window started
     pub last_updated: i64,
 }
+
+/// Token source for spend events — determines how tokens were counted
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+pub enum TokenSource {
+    #[default]
+    ProviderUsage,
+    CanonicalTokenizer,
+}
+
+impl TokenSource {
+    /// String used in event_id hash input (different from DB storage strings)
+    pub fn to_hash_str(&self) -> &'static str {
+        match self {
+            TokenSource::ProviderUsage => "provider_usage",
+            TokenSource::CanonicalTokenizer => "canonical_tokenizer",
+        }
+    }
+
+    /// String used in database storage and CHECK constraint validation
+    pub fn to_db_str(&self) -> &'static str {
+        match self {
+            TokenSource::ProviderUsage => "provider_usage",
+            TokenSource::CanonicalTokenizer => "canonical_tokenizer",
+        }
+    }
+
+    /// Parse from database string
+    pub fn from_db_str(s: &str) -> Option<Self> {
+        match s {
+            "provider_usage" => Some(TokenSource::ProviderUsage),
+            "canonical_tokenizer" => Some(TokenSource::CanonicalTokenizer),
+            _ => None,
+        }
+    }
+}
+
+/// A single spend event recorded in the ledger.
+///
+/// This is the canonical record of a billing event. event_id is deterministic
+/// based on the inputs — the same request on any router produces the same event_id.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SpendEvent {
+    pub event_id: String,
+    pub request_id: String,
+    pub key_id: uuid::Uuid,
+    pub team_id: Option<String>,
+    pub provider: String,
+    pub model: String,
+    pub input_tokens: u32,
+    pub output_tokens: u32,
+    pub cost_amount: u64,
+    pub pricing_hash: Vec<u8>, // 32 bytes — stored as BLOB in DB, Vec<u8> in code
+    pub token_source: TokenSource,
+    pub tokenizer_version: Option<String>,
+    pub provider_usage_json: Option<String>,
+    pub timestamp: i64,
+}

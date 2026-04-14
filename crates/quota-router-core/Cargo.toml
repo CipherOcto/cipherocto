@@ -57,6 +57,12 @@ hex = "0.4"
 # For percent decoding (path normalization security)
 percent-encoding = "2.1"
 
+# For TokenBucket rate limiter (DashMap for concurrent access)
+dashmap = "5.0"
+
+# For monotonic time in TokenBucket
+instant = "0.1"
+
 [lib]
 name = "quota_router_core"
 path = "src/lib.rs"

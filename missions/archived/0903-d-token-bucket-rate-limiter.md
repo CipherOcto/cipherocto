@@ -2,7 +2,7 @@
 
 ## Status
 
-Claimed
+Completed (2026-04-14)
 
 ## RFC
 
@@ -26,7 +26,7 @@ Current implementation gaps:
 
 ## Acceptance Criteria
 
-- [ ] **TokenBucket struct:** Implement per RFC-0903:
+- [x] **TokenBucket struct:** Implement per RFC-0903:
   ```rust
   pub struct TokenBucket {
       capacity: u64,
@@ -41,7 +41,7 @@ Current implementation gaps:
   - `retry_after() -> u64` — calculate seconds until next token available
   - `is_stale(now_ms: u64, max_idle_ms: u64) -> bool` — check if bucket is idle
   - Uses integer arithmetic only (deterministic)
-- [ ] **RateLimiterStore with DashMap:** Replace `KeyRateLimiter` with:
+- [x] **RateLimiterStore with DashMap:** Replace `KeyRateLimiter` with:
   ```rust
   pub struct RateLimiterStore {
       buckets: DashMap<Uuid, (TokenBucket, TokenBucket)>, // (RPM, TPM)
@@ -50,15 +50,15 @@ Current implementation gaps:
   - `check_rate_limit(key: &ApiKey, tokens: u32) -> Result<(), KeyError>`
   - `invalidate(key_id: &Uuid)` — remove rate limiter for key
   - `cleanup_stale_buckets(max_idle_ms: u64, max_size: usize)` — evict stale buckets
-- [ ] **cleanup_stale_buckets():** Periodic cleanup worker:
+- [x] **cleanup_stale_buckets():** Periodic cleanup worker:
   - Remove buckets idle > max_idle_ms (default 10 minutes)
   - Enforce max_size cap by removing oldest entries
   - Call periodically (e.g., every 5 minutes)
-- [ ] **record_spend_with_team() — existing implementation:** Ensure already-implemented in 0903-a is wired correctly with team lock ordering:
+- [x] **record_spend_with_team() — existing implementation:** Ensure already-implemented in 0903-a is wired correctly with team lock ordering:
   - Lock team row BEFORE key row (deadlock prevention)
   - Verify both key_budget and team_budget not exceeded
   - Insert into spend_ledger with team_id
-- [ ] **Rate Limiting Determinism disclaimer:** Document that rate limiting is NOT deterministic across router nodes and MUST NOT influence accounting logic
+- [x] **Rate Limiting Determinism disclaimer:** Document that rate limiting is NOT deterministic across router nodes and MUST NOT influence accounting logic
 
 ## Key Files to Modify
 

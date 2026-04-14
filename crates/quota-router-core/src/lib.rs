@@ -17,7 +17,7 @@ pub mod schema;
 pub mod storage;
 
 pub use cache::CacheInvalidation;
-pub use key_rate_limiter::KeyRateLimiter;
+pub use key_rate_limiter::RateLimiterStore;
 pub use keys::models::{
     ApiKey, CreateTeamRequest, GenerateKeyRequest, GenerateKeyResponse, KeySpend, KeyType,
     KeyUpdates, RevokeKeyRequest, SpendEvent, Team, TokenSource, UpdateTeamRequest,

@@ -1,6 +1,6 @@
 // Key validation middleware - validates API keys from HTTP requests
 
-use crate::key_rate_limiter::KeyRateLimiter;
+use crate::key_rate_limiter::RateLimiterStore;
 use crate::keys::{validate_key, ApiKey, KeyError};
 use crate::KeyStorage;
 use http;
@@ -9,18 +9,18 @@ use std::sync::Arc;
 /// Middleware state containing key storage
 pub struct KeyMiddleware<S: KeyStorage> {
     storage: Arc<S>,
-    rate_limiter: Arc<KeyRateLimiter>,
+    rate_limiter: Arc<RateLimiterStore>,
 }
 
 impl<S: KeyStorage> KeyMiddleware<S> {
     pub fn new(storage: Arc<S>) -> Self {
         Self {
             storage,
-            rate_limiter: Arc::new(KeyRateLimiter::new()),
+            rate_limiter: Arc::new(RateLimiterStore::new()),
         }
     }
 
-    pub fn with_rate_limiter(storage: Arc<S>, rate_limiter: Arc<KeyRateLimiter>) -> Self {
+    pub fn with_rate_limiter(storage: Arc<S>, rate_limiter: Arc<RateLimiterStore>) -> Self {
         Self {
             storage,
             rate_limiter,
@@ -124,21 +124,16 @@ impl<S: KeyStorage> KeyMiddleware<S> {
         self.storage.record_spend(key_id, amount)
     }
 
-    /// Check rate limits for key (RPM and TPM)
-    pub fn check_rate_limits(&self, key: &ApiKey, tokens: Option<u32>) -> Result<(), KeyError> {
-        // Check RPM
-        self.rate_limiter.check_rpm(&key.key_id, key.rpm_limit)?;
-
-        // Check TPM if tokens provided
-        if let Some(t) = tokens {
-            self.rate_limiter.check_tpm(&key.key_id, t, key.tpm_limit)?;
-        }
-
-        Ok(())
+    /// Check rate limits for key (RPM and TPM) using TokenBucket algorithm.
+    ///
+    /// Uses the new RateLimiterStore with TokenBucket per RFC-0903.
+    /// Tokens are required for TPM check; pass 0 if only RPM matters.
+    pub fn check_rate_limits(&self, key: &ApiKey, tokens: u32) -> Result<(), KeyError> {
+        self.rate_limiter.check_rate_limit(key, tokens)
     }
 
     /// Get rate limiter for external use
-    pub fn rate_limiter(&self) -> &KeyRateLimiter {
+    pub fn rate_limiter(&self) -> &RateLimiterStore {
         &self.rate_limiter
     }
 }
@@ -395,13 +390,13 @@ mod tests {
             metadata: None,
         };
 
-        // Should allow up to limit
+        // Should allow up to limit (0 tokens for TPM means only RPM check)
         for _ in 0..5 {
-            middleware.check_rate_limits(&key, None).unwrap();
+            middleware.check_rate_limits(&key, 0).unwrap();
         }
 
         // 6th should fail
-        let result = middleware.check_rate_limits(&key, None);
+        let result = middleware.check_rate_limits(&key, 0);
         assert!(result.is_err());
     }
 
@@ -432,13 +427,13 @@ mod tests {
             metadata: None,
         };
 
-        // Should allow up to limit
+        // Should allow up to 5 requests with 100 tokens each (500 total)
         for _ in 0..5 {
-            middleware.check_rate_limits(&key, Some(100)).unwrap();
+            middleware.check_rate_limits(&key, 100).unwrap();
         }
 
         // 6th should fail (600 tokens > 500 limit)
-        let result = middleware.check_rate_limits(&key, Some(100));
+        let result = middleware.check_rate_limits(&key, 100);
         assert!(result.is_err());
     }
 }

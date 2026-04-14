@@ -20,8 +20,8 @@ pub enum KeyError {
     #[error("Team key limit exceeded: current={current}, limit={limit}")]
     TeamKeyLimitExceeded { current: u32, limit: u32 },
 
-    #[error("Rate limited")]
-    RateLimited,
+    #[error("Rate limited, retry after {retry_after} seconds")]
+    RateLimited { retry_after: u64 },
 
     #[error("Storage error: {0}")]
     Storage(String),

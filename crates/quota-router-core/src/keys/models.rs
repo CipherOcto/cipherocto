@@ -126,7 +126,7 @@ pub struct SpendEvent {
     pub input_tokens: u32,
     pub output_tokens: u32,
     pub cost_amount: u64,
-    pub pricing_hash: Vec<u8>, // 32 bytes — stored as BLOB in DB, Vec<u8> in code
+    pub pricing_hash: [u8; 32], // 32 bytes — fixed-size array, stored as BLOB in DB
     pub token_source: TokenSource,
     pub tokenizer_version: Option<String>,
     pub provider_usage_json: Option<String>,

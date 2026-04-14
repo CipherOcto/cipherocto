@@ -2,7 +2,7 @@
 
 ## Status
 
-Draft (v10 — aligned with RFC-0903 Final v29, RFC-0126)
+Draft (v11 — aligned with RFC-0903 Final v29, RFC-0126)
 
 ## Authors
 
@@ -192,8 +192,9 @@ pub struct SpendEvent {
     pub output_tokens: u32,
     /// Total cost units (deterministic)
     pub cost_amount: u64,
-    /// Pricing hash (32 bytes stored as Vec<u8>, TEXT in DB as hex)
-    pub pricing_hash: Vec<u8>,
+    /// Pricing hash (32 bytes — fixed-size array, stored as BLOB in DB)
+    /// Matches RFC-0903 Final type: [u8; 32]
+    pub pricing_hash: [u8; 32],
     /// Token source for deterministic accounting (CRITICAL for cross-router determinism)
     pub token_source: TokenSource,
     /// Canonical tokenizer version (if token_source is CanonicalTokenizer)
@@ -240,15 +241,19 @@ Quota state must be derivable from the ordered sequence of events.
 
 Events must be processed in deterministic order.
 
-Ordering rule (aligned with RFC-0903 Final):
+Ordering rule (per RFC-0903 Final §Deterministic Replay Procedure):
 
 ```
 
-timestamp ASC, event_id ASC
+created_at ASC, event_id ASC
 
 ```
 
-**CRITICAL:** For deterministic replay, ordering by `created_at` (database insert time) is NOT used in the query path. Instead, use `timestamp` (event time from provider) for chronological ordering, with `event_id` as tiebreaker. See §Deterministic Replay Procedure.
+- `created_at` is the database insert timestamp — provides chronological ordering
+- `event_id` serves as tiebreaker for deterministic replay
+- `timestamp` (provider event time) is metadata only and does NOT participate in event ordering
+
+This matches RFC-0903 Final which uses `created_at` (chronological) not `timestamp` (event time) for deterministic replay ordering.
 
 ## Atomic Quota Deduction
 
@@ -370,7 +375,7 @@ CREATE TABLE spend_ledger (
     input_tokens INTEGER NOT NULL,           -- Prompt tokens
     output_tokens INTEGER NOT NULL,           -- Completion tokens
     cost_amount BIGINT NOT NULL,             -- Cost in smallest unit (u64)
-    pricing_hash TEXT NOT NULL,              -- SHA256 hex (64 chars)
+    pricing_hash BLOB NOT NULL,              -- SHA256 binary (32 bytes) — matches RFC-0903 Final BYTEA(32)
     timestamp INTEGER NOT NULL,               -- Unix epoch (authoritative event time)
     token_source TEXT NOT NULL CHECK (token_source IN ('provider_usage', 'canonical_tokenizer')),
     tokenizer_version TEXT,
@@ -399,22 +404,28 @@ Quota state must be reproducible via replay.
 ```rust
 /// Reconstruct quota state from events
 /// Uses BTreeMap for deterministic iteration ordering
+///
+/// Note: created_at is in the database schema but NOT in the in-memory SpendEvent struct.
+/// For database-level replay with ordering, use: ORDER BY created_at, event_id
+/// For in-memory struct replay (this function), use event_id for canonical ordering.
 pub fn replay_events(events: &[SpendEvent]) -> std::collections::BTreeMap<String, u64> {
     use std::collections::BTreeMap;
 
     let mut key_spend: BTreeMap<String, u64> = BTreeMap::new();
 
-    // Events must be sorted by timestamp (chronological), then event_id for determinism
-    // This matches the ORDER BY timestamp ASC, event_id ASC rule
+    // Events must be sorted by event_id for deterministic ordering
+    // Per RFC-0903 Final §Deterministic Replay Procedure: ORDER BY event_id
+    // Note: timestamp is provider event time (not used for replay ordering)
     let mut sorted_events = events.to_vec();
     sorted_events.sort_by(|a, b| {
-        a.timestamp
-            .cmp(&b.timestamp)
-            .then_with(|| a.event_id.cmp(&b.event_id))
+        a.event_id.cmp(&b.event_id)
     });
 
     for event in sorted_events {
-        let entry = key_spend.entry(event.key_id.to_string()).or_insert(0);
+        // key_id is uuid::Uuid — to_string() creates a String each iteration
+        // BTreeMap<String, u64> requires String keys
+        let key = event.key_id.to_string();
+        let entry = key_spend.entry(key).or_insert(0);
         *entry = entry.saturating_add(event.cost_amount);
     }
 
@@ -545,9 +556,16 @@ impl PricingTable {
 
     /// Compute SHA256 pricing hash for this table snapshot
     /// Used in event_id to tie costs to specific pricing version
+    ///
+    /// Note: For full RFC-0126 determinism, a canonical JSON serializer is required.
+    /// BTreeMap guarantees sorted key iteration at the map level, but struct field
+    /// ordering in JSON serialization is not guaranteed by serde_json.
+    /// A proper canonical JSON implementation (e.g., RFC-8785) should be used.
     pub fn compute_pricing_hash(&self) -> [u8; 32] {
         use sha2::{Digest, Sha256};
 
+        // BTreeMap provides sorted key ordering, but field order within structs
+        // is not guaranteed by serde_json. For production, use RFC-8785 canonical JSON.
         let serialized = serde_json::to_string(&self.models)
             .expect("PricingTable serialization must succeed");
         let mut hasher = Sha256::new();
@@ -580,27 +598,9 @@ pub fn calculate_cost(
     prompt_cost.saturating_add(completion_cost)
 }
 
-/// Fast lookup table for token source strings (avoids allocation)
-pub mod token_source_lookup {
-    use super::TokenSource;
-
-    /// Static string table for token_source.to_hash_str()
-    pub const fn to_hash_str(source: TokenSource) -> &'static str {
-        match source {
-            TokenSource::ProviderUsage => "provider",
-            TokenSource::CanonicalTokenizer => "canonical_tokenizer",
-        }
-    }
-
-    /// Static string table for token_source.to_db_str()
-    pub const fn to_db_str(source: TokenSource) -> &'static str {
-        match source {
-            TokenSource::ProviderUsage => "provider_usage",
-            TokenSource::CanonicalTokenizer => "canonical_tokenizer",
-        }
-    }
-}
-```
+/// Note: TokenSource string lookup is implemented via const fn methods on the
+/// TokenSource enum (to_hash_str, to_db_str). These provide zero-cost static
+/// string access without requiring a separate lookup table module.
 
 All values stored as integer micro-units.
 
@@ -661,6 +661,11 @@ Upstream provider responses may contain usage metadata.
 
 The router must recompute cost using **its own pricing tables**, ignoring provider cost fields.
 
+> **Implementation Note:** The `process_response` function below is implementation detail
+> not defined in RFC-0903 Final. RFC-0903 Final only specifies `record_spend()` and
+> `record_spend_with_team()`. The `ProviderResponse` type and tokenizer detection
+> logic are Quota Router implementation concerns, not quota accounting specification.
+
 ```rust
 /// Process response and record usage
 /// CRITICAL: Uses provider-reported tokens and deterministic event_id for cross-router determinism
@@ -715,7 +720,7 @@ pub async fn process_response(
         input_tokens,
         output_tokens,
         cost_amount,
-        pricing_hash: pricing_hash.to_vec(),
+        pricing_hash,  // [u8; 32] — passed directly for BLOB storage
         token_source,
         tokenizer_version,
         provider_usage_json: response.provider_usage_json.clone(),
@@ -763,7 +768,7 @@ pub async fn process_response(
             event.input_tokens as i32,
             event.output_tokens as i32,
             event.cost_amount as i64,
-            &hex::encode(&event.pricing_hash),  // Store as hex TEXT
+            &event.pricing_hash,  // Store as BLOB (binary) — matches RFC-0903 Final BYTEA(32)
             token_source.to_db_str(),
             event.tokenizer_version,
             &event.provider_usage_json,
@@ -774,7 +779,12 @@ pub async fn process_response(
     Ok(event)
 }
 
+> **RFC-0910 Concern:** The `get_canonical_tokenizer` function and tokenizer version
+> management are properly part of RFC-0910 (Pricing Table Registry), not RFC-0909.
+> RFC-0909 only specifies that `token_source` must be included in event_id hashing.
+
 /// Get canonical tokenizer for a model family
+/// Note: This is RFC-0910 implementation detail — here for completeness
 fn get_canonical_tokenizer(model: &str) -> String {
     // Different model families need different tokenizers
     if model.starts_with("gpt-") || model.starts_with("o1") || model.starts_with("o3") {
@@ -1077,13 +1087,14 @@ The `PricingTable` struct uses `BTreeMap<String, PricingModel>` for:
 
 | Version | Date       | Changes                                                                                                                                                    |
 | ------- | ---------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| v11     | 2026-04-14 | Adversarial review fixes: remove duplicate token_source_lookup module, fix event ordering (created_at, event_id), pricing_hash→[u8;32], add FOR UPDATE locks, add token_source CHECK constraint, fix pricing_hash BLOB not TEXT, canonical JSON note, mark process_response as impl detail, fix replay_events |
 | v10     | 2026-04-14 | Full alignment with RFC-0903 Final v29: event_id→String, request_id→String, timestamp ordering, TokenSource lookup tables, lock ordering, BTreeMap pricing |
 | v9      | 2026-03-27 | Adopt RFC-0903 `spend_ledger` schema; remove parallel `usage_ledger` table; rename columns                                                                 |
 | v1      | 2026-03-25 | Initial draft                                                                                                                                              |
 
 ---
 
-**Draft Date:** 2026-03-25
-**Version:** v10
+**Draft Date:** 2026-04-14
+**Version:** v11
 **Related Use Case:** Enhanced Quota Router Gateway
 **Related RFCs:** RFC-0903 (Virtual API Key System), RFC-0126 (Deterministic Serialization)

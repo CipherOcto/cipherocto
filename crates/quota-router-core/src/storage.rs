@@ -525,7 +525,7 @@ impl KeyStorage for StoolapKeyStorage {
         // 1. Lock key row FOR UPDATE to prevent concurrent modifications
         let budget: i64 = tx
             .query(
-                "SELECT budget_limit FROM api_keys WHERE key_id = $1",
+                "SELECT budget_limit FROM api_keys WHERE key_id = $1 FOR UPDATE",
                 vec![key_id_str.clone().into()],
             )
             .map_err(|e| KeyError::Storage(e.to_string()))?
@@ -575,7 +575,7 @@ impl KeyStorage for StoolapKeyStorage {
             event.input_tokens.into(),
             event.output_tokens.into(),
             cost_i64.into(),
-            stoolap::core::Value::blob(event.pricing_hash.clone()),
+            stoolap::core::Value::blob(event.pricing_hash.to_vec()),
             token_source_str.into(),
             event.tokenizer_version.clone().into(),
             event.provider_usage_json.clone().into(),
@@ -626,7 +626,7 @@ impl KeyStorage for StoolapKeyStorage {
         // 1. Lock team row FIRST (deadlock prevention per RFC-0903 §Lock Ordering Invariant)
         let team_budget: i64 = tx
             .query(
-                "SELECT budget_limit FROM teams WHERE team_id = $1",
+                "SELECT budget_limit FROM teams WHERE team_id = $1 FOR UPDATE",
                 vec![team_id.into()],
             )
             .map_err(|e| KeyError::Storage(e.to_string()))?
@@ -639,7 +639,7 @@ impl KeyStorage for StoolapKeyStorage {
         // 2. Lock key row SECOND
         let key_budget: i64 = tx
             .query(
-                "SELECT budget_limit FROM api_keys WHERE key_id = $1",
+                "SELECT budget_limit FROM api_keys WHERE key_id = $1 FOR UPDATE",
                 vec![key_id.into()],
             )
             .map_err(|e| KeyError::Storage(e.to_string()))?
@@ -710,7 +710,7 @@ impl KeyStorage for StoolapKeyStorage {
             event.input_tokens.into(),
             event.output_tokens.into(),
             cost_i64.into(),
-            stoolap::core::Value::blob(event.pricing_hash.clone()),
+            stoolap::core::Value::blob(event.pricing_hash.to_vec()),
             token_source_str.into(),
             event.tokenizer_version.clone().into(),
             event.provider_usage_json.clone().into(),

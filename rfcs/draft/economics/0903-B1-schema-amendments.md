@@ -2,7 +2,7 @@
 
 ## Status
 
-Draft (v12 — Amendment to RFC-0903 Final v29)
+Draft (v13 — Amendment to RFC-0903 Final v29)
 
 ## Authors
 
@@ -45,7 +45,7 @@ This wastes 2x storage (32 raw bytes → 64 hex chars). RFC-0201 (Accepted) defi
 key_id TEXT NOT NULL  -- key_id: UUID text "550e8400-e29b-41d4-a716-446655440000" (36 chars)
 ```
 
-UUIDs are 16 bytes. Text storage requires 36+ bytes. `BLOB(16)` reduces storage by 44%.
+UUIDs are 16 bytes. Text storage requires 36+ bytes. `BLOB(16)` reduces storage by 56% (BLOB(16) is 44% of TEXT(36) size; savings = 20 bytes/row).
 
 ### Problem 3: Missing Composite Indexes
 
@@ -164,36 +164,27 @@ params![stoolap::core::Value::blob(hex::decode(&event_id).unwrap())]  // BLOB(32
 
 | Gateway format | Encoding to 32 bytes | Example |
 |----------------|----------------------|---------|
-| String < 32 bytes | SHA256 of the string | `"req-123"` → SHA256 |
-| String == 32 bytes | Raw bytes (already 32 bytes) | 32 raw bytes passed through |
-| String > 32 bytes | SHA256 of the string | `"long-request-id-..."` → SHA256 |
+| Any string (any length) | SHA256 of the string | `"req-123"` → SHA256 |
 
-> **⚠️ Hex-formatted input is not supported.** If the gateway sends a 64-char hex string (e.g., `"a1b2c3d4..."`) as input, it is SHA256-hashed as raw ASCII bytes — NOT hex-decoded first. This produces a **different** 32-byte value than hex-decoding first. Gateways MUST send raw binary/text, not hex. There is no hex-decoding path for request_id in this RFC.
->
-> **⚠️ Edge case: 32-char ASCII strings (hex or non-hex) are ambiguous.** If the gateway sends exactly 32 ASCII characters that happen to look like hex (e.g., `"a1b2c3d4e5f6789012345678901234ab"`), it is treated as raw text and SHA256-hashed, NOT hex-decoded. Similarly, a 32-byte ASCII string that is NOT hex-formatted is passed through as raw bytes (not hashed) at runtime, but the migration path would SHA256-hash it (since TEXT len != 32 in storage). Both cases could produce unintended results. Gateways MUST use raw text or their own encoding scheme — this RFC does not add a hex layer.
+> **Design note:** SHA256 is always used regardless of input length. A previous 32-byte pass-through optimization (copying raw bytes for exactly-32-byte inputs) was removed to eliminate the encoding discontinuity and edge cases it created. All gateway request_id strings — regardless of length — are SHA256-hashed to 32 bytes.
+
+> **⚠️ Hex-formatted input is not supported.** If the gateway sends a hex string as input, it is SHA256-hashed as raw ASCII bytes — NOT hex-decoded first. This produces a **different** 32-byte value than hex-decoding first. Gateways MUST send raw binary/text, not hex. There is no hex-decoding path for request_id in this RFC.
 
 **Implementation:**
 
 ```rust
 /// Encode a gateway-provided request_id string to 32 raw bytes for BLOB(32) storage.
-/// All inputs are treated as raw text strings (not hex). Variable-length strings
-/// are hashed via SHA256 to produce a deterministic 32-byte output.
+/// All inputs are treated as raw text strings (not hex). Always uses SHA256 regardless
+/// of input length — uniform encoding for all gateway request_id formats.
 ///
 /// WARNING: The gateway's input format (raw text vs hex) must be consistent across
 /// all routers. A router that changes input format will produce different request_id
 /// values for the same logical request, breaking idempotency.
 pub fn encode_request_id(request_id: &str) -> [u8; 32] {
-    let bytes = request_id.as_bytes();
-    if bytes.len() == 32 {
-        let mut out = [0u8; 32];
-        out.copy_from_slice(bytes);
-        out
-    } else {
-        use sha2::{Digest, Sha256};
-        let mut hasher = Sha256::new();
-        hasher.update(bytes);
-        hasher.finalize().into()
-    }
+    use sha2::{Digest, Sha256};
+    let mut hasher = Sha256::new();
+    hasher.update(request_id.as_bytes());
+    hasher.finalize().into()
 }
 ```
 
@@ -238,8 +229,7 @@ fn migrate_event_id(hex_str: &str) -> [u8; 32] {
 
 /// Migrate request_id: raw TEXT string → raw BLOB(32).
 /// RFC-0903 Final stores the raw gateway text string.
-/// encode_request_id() is deterministic: len==32 copies raw, else SHA256(bytes).
-/// Applying this to TEXT (raw string) produces the same value as runtime inserts.
+/// encode_request_id() always uses SHA256 — produces the same value as runtime inserts.
 fn migrate_request_id(text: &str) -> [u8; 32] {
     encode_request_id(text) // see §request_id for definition
 }
@@ -293,6 +283,7 @@ If `record_spend()` continues to use TEXT encoding while other parts of the syst
 
 | Version | Date       | Changes |
 |---------|------------|---------|
+| v13     | 2026-04-15 | Round 18 fixes: fix key_id storage reduction "44%" → "56%" (BLOB(16) is 44% of TEXT size, saving 56%); simplify encode_request_id to always SHA256 (remove 32-byte pass-through — eliminates discontinuity and all 32-char edge case warnings); update encoding rules table to single row; update migrate_request_id docstring |
 | v12     | 2026-04-15 | Round 17 fixes: rewrite migration steps 7-10 as parameterized queries (remove SQL UDF syntax; all migrate_* calls are Rust, not SQL); add row identifier (rowid) to migration step 1 for per-row parameterized UPDATEs |
 | v11     | 2026-04-15 | Round 16 fixes: clarify key_id UUID example in Problem 2 (remove stale "+ null"), add cross-RFC determinism warning for get_canonical_tokenizer |
 | v10     | 2026-04-15 | Round 15 fixes: split multi-column ALTER TABLE into separate per-column statements (PostgreSQL/MySQL compatible), add SQLite ALTER COLUMN limitation note |
@@ -309,7 +300,7 @@ If `record_spend()` continues to use TEXT encoding while other parts of the syst
 ---
 
 **Draft Date:** 2026-04-15
-**Version:** v12
+**Version:** v13
 **Amends:** RFC-0903 Final v29
 **Required By:** RFC-0909 (Deterministic Quota Accounting)
 **Related RFCs:** RFC-0201 (Binary BLOB Type)

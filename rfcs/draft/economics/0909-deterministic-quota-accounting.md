@@ -2,7 +2,7 @@
 
 ## Status
 
-Draft (v28 — aligned with RFC-0903 Final v29 + RFC-0903-B1 amendment v12, RFC-0126, RFC-0201)
+Draft (v29 — aligned with RFC-0903 Final v29 + RFC-0903-B1 amendment v13, RFC-0126, RFC-0201)
 
 ## Authors
 
@@ -350,6 +350,8 @@ Budget exceeded - double-spend occurred!
 
 4. The budget invariant MUST hold at all times:
    0 ≤ current_spend ≤ budget_limit
+
+```
 
 **Budget enforcement:** The ledger-based approach uses `FOR UPDATE` row locking and checks `SUM(cost_amount) <= budget_limit` atomically. Since `current_spend` is derived from the ledger (not stored), no CHECK constraint on `api_keys` is needed. The ledger INSERT itself enforces the budget via the atomic transaction pattern.
 
@@ -715,6 +717,9 @@ pub fn compute_cost(
     let prompt_cost = (input_tokens as u64 * pricing.prompt_cost_per_1k) / 1000;
     let completion_cost = (output_tokens as u64 * pricing.completion_cost_per_1k) / 1000;
 
+    // saturating_add: overflow requires >1.8×10^19 micro-units in a single request —
+    // effectively impossible in practice. Live record_spend (RFC-0903 Final) uses
+    // checked arithmetic on the per-key budget accumulation.
     prompt_cost.saturating_add(completion_cost)
 }
 
@@ -1334,6 +1339,7 @@ $0.03/1K tokens → DQA(30_000, scale=6)
 
 | Version | Date       | Changes |
 | ------- | ---------- | ------- |
+| v29     | 2026-04-15 | Round 18 fixes: add missing closing code fence in §Quota Consistency Model (Budget enforcement prose was inside code block); add saturating_add rationale to compute_cost; align with RFC-0903-B1 v13 (always-SHA256 encode_request_id) |
 | v28     | 2026-04-15 | Round 17 fixes: fix get_canonical_tokenizer(model)? compile error (remove ?, add .to_string()); fix pricing_hash schema comment (unchanged from RFC-0903 Final, not changed by RFC-0903-B1); add saturating_add rationale to replay_events; add DB-based router BLOB→hex Merkle note; add RFC-0903-B1 cross-refs for encode_request_id; add pseudocode caveat to process_request_with_accounting; align with RFC-0903-B1 v12 |
 | v27     | 2026-04-15 | Round 16 fixes: add replay_events_for_proof() for Merkle proof path, fix stale "(BYTEA storage)" header comment, add cross-RFC get_canonical_tokenizer determinism warning, align with RFC-0903-B1 v11 |
 | v26     | 2026-04-15 | Round 15 fixes: remove non-substantive file-existence approval criterion, align with RFC-0903-B1 v10 |
@@ -1359,6 +1365,6 @@ $0.03/1K tokens → DQA(30_000, scale=6)
 ---
 
 **Draft Date:** 2026-04-15
-**Version:** v28
+**Version:** v29
 **Related Use Case:** Enhanced Quota Router Gateway
 **Related RFCs:** RFC-0903 (Virtual API Key System), RFC-0903-B1 (Schema Amendments), RFC-0126 (Deterministic Serialization), RFC-0201 (Binary BLOB Type)

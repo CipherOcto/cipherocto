@@ -2,7 +2,7 @@
 
 ## Status
 
-Draft (v30 — aligned with RFC-0903 Final v29 + RFC-0903-B1 amendment v14, RFC-0126, RFC-0201)
+Draft (v31 — aligned with RFC-0903 Final v29 + RFC-0903-B1 amendment v14, RFC-0126, RFC-0201)
 
 ## Authors
 
@@ -1193,6 +1193,7 @@ RFC-0903-B1 (an amendment to RFC-0903 Final) makes the following changes to the 
 | `event_id` | `TEXT` (hex, 64 chars) | `BLOB(32)` (raw SHA256) | 50% storage reduction; RFC-0201 |
 | `request_id` | `TEXT` (variable) | `BLOB(32)` (raw SHA256 bytes) | Consistent 32-byte storage; RFC-0201 |
 | `key_id` | `TEXT` (UUID hex, 36 chars) | `BLOB(16)` (raw UUID bytes) | 56% storage reduction; RFC-0903-B1 |
+| `idx_spend_ledger_key_time` | *(none)* | *(unchanged)* | Pre-existing legacy index (not used in deterministic replay path) |
 | `idx_spend_ledger_key_created` | *(none)* | Added | Efficient `ORDER BY created_at` queries |
 | `idx_spend_ledger_event_id` | *(none)* | Added | Equality lookup on event_id |
 | `idx_spend_ledger_pricing_hash` | *(none)* | Added | Pricing verification queries |
@@ -1344,8 +1345,8 @@ $0.03/1K tokens → DQA(30_000, scale=6)
 
 | Version | Date       | Changes |
 | ------- | ---------- | ------- |
+| v31     | 2026-04-15 | Round 20 fixes: add idx_spend_ledger_key_time to RFC-0903-B1 amendment table and schema examples (was missing from both); align all RFC-0903-B1 cross-references to v14 |
 | v30     | 2026-04-15 | Round 19 fixes: fix §Event ID Hashing heap-allocation claim (key_id.to_string() is unavoidable); add round-trip note to SpendEvent.request_id; fix RFC-0903-B1 amendment table created_at RFC-0903 Final column (was missing DEFAULT); cross-reference TOKEN_SCALE in compute_cost; add u64 cast to simple cost example |
-| v29     | 2026-04-15 | Round 18 fixes: add missing closing code fence in §Quota Consistency Model (Budget enforcement prose was inside code block); add saturating_add rationale to compute_cost; align with RFC-0903-B1 v13 (always-SHA256 encode_request_id) |
 | v28     | 2026-04-15 | Round 17 fixes: fix get_canonical_tokenizer(model)? compile error (remove ?, add .to_string()); fix pricing_hash schema comment (unchanged from RFC-0903 Final, not changed by RFC-0903-B1); add saturating_add rationale to replay_events; add DB-based router BLOB→hex Merkle note; add RFC-0903-B1 cross-refs for encode_request_id; add pseudocode caveat to process_request_with_accounting; align with RFC-0903-B1 v12 |
 | v27     | 2026-04-15 | Round 16 fixes: add replay_events_for_proof() for Merkle proof path, fix stale "(BYTEA storage)" header comment, add cross-RFC get_canonical_tokenizer determinism warning, align with RFC-0903-B1 v11 |
 | v26     | 2026-04-15 | Round 15 fixes: remove non-substantive file-existence approval criterion, align with RFC-0903-B1 v10 |
@@ -1371,6 +1372,6 @@ $0.03/1K tokens → DQA(30_000, scale=6)
 ---
 
 **Draft Date:** 2026-04-15
-**Version:** v30
+**Version:** v31
 **Related Use Case:** Enhanced Quota Router Gateway
 **Related RFCs:** RFC-0903 (Virtual API Key System), RFC-0903-B1 (Schema Amendments), RFC-0126 (Deterministic Serialization), RFC-0201 (Binary BLOB Type)

@@ -2,7 +2,7 @@
 
 ## Status
 
-Draft (v13 — Amendment to RFC-0903 Final v29)
+Draft (v14 — Amendment to RFC-0903 Final v29)
 
 ## Authors
 
@@ -115,6 +115,7 @@ CREATE TABLE spend_ledger (
 CREATE INDEX idx_spend_ledger_key_id ON spend_ledger(key_id);
 CREATE INDEX idx_spend_ledger_team_id ON spend_ledger(team_id);
 CREATE INDEX idx_spend_ledger_timestamp ON spend_ledger(timestamp);
+CREATE INDEX idx_spend_ledger_key_time ON spend_ledger(key_id, timestamp);  -- pre-existing legacy (not used in deterministic replay path)
 CREATE INDEX idx_spend_ledger_event_id ON spend_ledger(event_id);          -- RFC-0903-B1 ext
 CREATE INDEX idx_spend_ledger_key_created ON spend_ledger(key_id, created_at); -- RFC-0903-B1 ext
 CREATE INDEX idx_spend_ledger_pricing_hash ON spend_ledger(pricing_hash); -- RFC-0903-B1 ext
@@ -279,6 +280,7 @@ ALTER TABLE spend_ledger_new RENAME TO spend_ledger;
 CREATE INDEX idx_spend_ledger_key_id ON spend_ledger(key_id);
 CREATE INDEX idx_spend_ledger_team_id ON spend_ledger(team_id);
 CREATE INDEX idx_spend_ledger_timestamp ON spend_ledger(timestamp);
+CREATE INDEX idx_spend_ledger_key_time ON spend_ledger(key_id, timestamp);
 CREATE INDEX idx_spend_ledger_event_id ON spend_ledger(event_id);
 CREATE INDEX idx_spend_ledger_key_created ON spend_ledger(key_id, created_at);
 CREATE INDEX idx_spend_ledger_pricing_hash ON spend_ledger(pricing_hash);
@@ -315,7 +317,7 @@ If `record_spend()` continues to use TEXT encoding while other parts of the syst
 
 | Version | Date       | Changes |
 |---------|------------|---------|
-| v14     | 2026-04-15 | Round 19 fixes: rewrite migration procedure to use shadow-column approach (eliminates rowid dependency and ALTER COLUMN TYPE incompatibility across SQLite/PostgreSQL); add Phase 3 column-swap SQL for both SQLite and PostgreSQL/MySQL |
+| v14     | 2026-04-15 | Round 20 fixes: add missing idx_spend_ledger_key_time to both schema examples and Phase 3 SQLite index recreation; update Status v13→v14 |
 | v13     | 2026-04-15 | Round 18 fixes: fix key_id storage reduction "44%" → "56%" (BLOB(16) is 44% of TEXT size, saving 56%); simplify encode_request_id to always SHA256 (remove 32-byte pass-through — eliminates discontinuity and all 32-char edge case warnings); update encoding rules table to single row; update migrate_request_id docstring |
 | v12     | 2026-04-15 | Round 17 fixes: rewrite migration steps 7-10 as parameterized queries (remove SQL UDF syntax; all migrate_* calls are Rust, not SQL); add row identifier (rowid) to migration step 1 for per-row parameterized UPDATEs |
 | v11     | 2026-04-15 | Round 16 fixes: clarify key_id UUID example in Problem 2 (remove stale "+ null"), add cross-RFC determinism warning for get_canonical_tokenizer |

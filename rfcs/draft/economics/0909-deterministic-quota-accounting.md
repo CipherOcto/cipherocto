@@ -2,7 +2,7 @@
 
 ## Status
 
-Draft (v22 — aligned with RFC-0903 Final v29 + RFC-0903-B1 amendment, RFC-0126, RFC-0201)
+Draft (v23 — aligned with RFC-0903 Final v29 + RFC-0903-B1 amendment v7, RFC-0126, RFC-0201)
 
 ## Authors
 
@@ -387,6 +387,25 @@ See RFC-0903 Final §Lock Ordering Invariant for full specification.
 To support retries, event recording must be idempotent.
 
 Each request receives a **deterministic request_id**.
+
+### event_id vs request_id: Two Identifiers, Two Purposes
+
+Every `SpendEvent` carries two distinct identifiers with different encodings:
+
+| Field | What it identifies | Encoding in struct | Storage (BLOB) | Encoding path |
+|-------|--------------------|--------------------|-----------------|---------------|
+| `event_id` | The complete spend event (all fields) | `String` (hex) | `BLOB(32)` | `compute_event_id()` → hex → `hex_to_blob_32()` |
+| `request_id` | The provider request (idempotency key) | `String` (raw text) | `BLOB(32)` | `encode_request_id()` (SHA256 of raw text) |
+
+**event_id** is derived from ALL event fields including `request_id`, `key_id`, `provider`, `model`, token counts, `pricing_hash`, and `token_source`. It is the SHA256 hash of the complete event content — two events with identical `event_id` are economically identical.
+
+**request_id** is the gateway-provided idempotency key. It is stored as SHA256 of the raw gateway text (not hex). The `UNIQUE(key_id, request_id)` constraint prevents duplicate charging for the same logical request.
+
+**Why two encodings?**
+- `event_id` uses hex encoding because it is displayed in API responses, logs, and audit trails — hex is the human-readable form. The raw binary is for storage.
+- `request_id` uses raw SHA256 because gateway text is variable-length (16–256 bytes) and must be deterministically mapped to 32 bytes. SHA256 is the canonical 32-byte encoding for variable-length text.
+
+**Cross-router determinism:** Both encodings are deterministic. The same gateway `request_id` string always produces the same SHA256 `request_id` BLOB, and the same event content always produces the same hex `event_id`. Two routers processing identical requests independently produce identical `SpendEvent` records.
 
 ```rust
 /// Validate request_id format and bounds
@@ -873,7 +892,7 @@ pub struct MerkleNode {
 ///
 /// Hashing the raw binary directly would produce different roots — the hex approach
 /// is used here because it matches what routers can independently compute from logs.
-pub fn build_merkle_tree(events: &[SpendEvent]) -> MerkleNode {
+pub fn build_merkle_tree(events: &[SpendEvent]) -> Option<MerkleNode> {
     let mut sorted = events.to_vec();
     sorted.sort_by(|a, b| a.event_id.cmp(&b.event_id));
 
@@ -889,11 +908,17 @@ pub fn build_merkle_tree(events: &[SpendEvent]) -> MerkleNode {
         })
         .collect();
 
+    // Empty ledger — return None (no root to publish)
+    if leaves.is_empty() {
+        return None;
+    }
+
     // Build tree bottom-up
     while leaves.len() > 1 {
         // Duplicate the last leaf if odd count (keeps tree balanced and deterministic)
         if leaves.len() % 2 == 1 {
-            leaves.push(leaves.last().unwrap().clone());
+            let last = leaves[leaves.len() - 1]; // safe: leaves.len() >= 1 at this point
+            leaves.push(last);
         }
 
         let mut parents = Vec::new();
@@ -909,11 +934,11 @@ pub fn build_merkle_tree(events: &[SpendEvent]) -> MerkleNode {
         leaves = parents;
     }
 
-    MerkleNode {
-        hash: leaves[0],
+    Some(MerkleNode {
+        hash: leaves.remove(0),
         left: None,
         right: None,
-    }
+    })
 }
 ```
 
@@ -1247,6 +1272,7 @@ $0.03/1K tokens → DQA(30_000, scale=6)
 
 | Version | Date       | Changes |
 | ------- | ---------- | ------- |
+| v23     | 2026-04-15 | Round 12 fixes: fix Merkle tree panic on empty events (returns Option), add event_id vs request_id duality section, align with RFC-0903-B1 v7 |
 | v22     | 2026-04-15 | Round 11 fixes: fix stale TEXT→BLOB comment in compute_event_id, fix hex_to_blob_32/blob_32_to_hex comments (only for event_id, not request_id) |
 | v21     | 2026-04-15 | Round 10 fixes: fix created_at comment (no DEFAULT added), clarify event_id vs request_id encoding distinction, update event_id example comment |
 | v20     | 2026-04-15 | Round 9 fixes: fix request_id comment (hex→raw is wrong; gateway raw text + SHA256), fix approval criteria (BLOB not BYTEA), fix schema comment consistency (dashes + phrasing) |
@@ -1266,6 +1292,6 @@ $0.03/1K tokens → DQA(30_000, scale=6)
 ---
 
 **Draft Date:** 2026-04-15
-**Version:** v22
+**Version:** v23
 **Related Use Case:** Enhanced Quota Router Gateway
 **Related RFCs:** RFC-0903 (Virtual API Key System), RFC-0126 (Deterministic Serialization)

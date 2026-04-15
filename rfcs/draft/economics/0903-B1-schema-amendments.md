@@ -2,7 +2,7 @@
 
 ## Status
 
-Draft (v6 — Amendment to RFC-0903 Final v29)
+Draft (v7 — Amendment to RFC-0903 Final v29)
 
 ## Authors
 
@@ -129,7 +129,7 @@ The `api_keys` table schema in RFC-0903 Final is unchanged by this amendment. `k
 | Field/Index | RFC-0903 Final | RFC-0903-B1 | Delta |
 |------------|----------------|-------------|-------|
 | `event_id` | `TEXT` (hex, 64 chars) | `BLOB(32)` (raw bytes) | −32 bytes/row |
-| `request_id` | `TEXT` (variable) | `BLOB(32)` (raw bytes) | Variable; up to −32 bytes |
+| `request_id` | `TEXT` (variable) | `BLOB(32)` (raw SHA256 bytes) | Variable; up to −32 bytes |
 | `key_id` | `TEXT` (UUID hex, 36 chars) | `BLOB(16)` (raw bytes) | −20+ bytes/row |
 | `idx_spend_ledger_event_id` | *(absent)* | Added | New |
 | `idx_spend_ledger_key_created` | *(absent)* | Added | New |
@@ -162,13 +162,15 @@ params![stoolap::core::Value::blob(hex::decode(&event_id).unwrap())]  // BLOB(32
 
 **Encoding rules (all routers MUST use the same scheme):**
 
-| Gateway format | Encoding to 32 bytes |
-|----------------|----------------------|
-| String < 32 bytes | SHA256 of the string |
-| String == 32 bytes | Raw bytes (already 32 bytes) |
-| String > 32 bytes | SHA256 of the string |
+| Gateway format | Encoding to 32 bytes | Example |
+|----------------|----------------------|---------|
+| String < 32 bytes | SHA256 of the string | `"req-123"` → SHA256 |
+| String == 32 bytes | Raw bytes (already 32 bytes) | 32 raw bytes passed through |
+| String > 32 bytes | SHA256 of the string | `"long-request-id-..."` → SHA256 |
 
-> **⚠️ Hex-formatted input is not supported.** If the gateway sends a 64-char hex string (e.g., `"a1b2c3d4..."`), it is SHA256-hashed as raw ASCII bytes — NOT hex-decoded first. This produces a different 32-byte value than decoding first. Gateways MUST send raw binary/text, not hex. There is no hex-decoding path for request_id in this RFC.
+> **⚠️ Hex-formatted input is not supported.** If the gateway sends a 64-char hex string (e.g., `"a1b2c3d4..."`) as input, it is SHA256-hashed as raw ASCII bytes — NOT hex-decoded first. This produces a **different** 32-byte value than hex-decoding first. Gateways MUST send raw binary/text, not hex. There is no hex-decoding path for request_id in this RFC.
+>
+> **⚠️ Edge case: 32-char ASCII hex is ambiguous.** If the gateway sends exactly 32 ASCII characters that happen to look like hex (e.g., `"a1b2c3d4e5f6789012345678901234ab"`), it is treated as raw text and SHA256-hashed, NOT hex-decoded. This could produce unintended results if gateways send hex-formatted IDs without their own hex layer. Gateways MUST use raw text or their own hex-encoding scheme — this RFC does not add a hex layer.
 
 **Implementation:**
 
@@ -222,20 +224,51 @@ If stoolap does not support length-specified BLOBs (`BLOB(32)` vs unconstrained 
 
 ## Backward Compatibility
 
-These are **breaking schema changes**. Existing deployments must run a migration:
+These are **breaking schema changes**. Existing deployments must run an application-layer migration (the functions below are Rust pseudocode — they cannot be called as SQL UDFs).
 
-```sql
--- Migration: TEXT → BLOB for spend_ledger
--- event_id: RFC-0903 Final stores hex-encoded TEXT (64 chars). hex_to_blob decodes hex → raw bytes.
--- request_id: RFC-0903 Final stores raw text. encode_request_id() hashes via SHA256 → 32 bytes.
--- key_id: RFC-0903 Final stores UUID hex string. uuid_to_blob parses UUID bytes directly.
-ALTER TABLE spend_ledger
-    ALTER COLUMN event_id TYPE BLOB(32) USING hex_to_blob(event_id),
-    ALTER COLUMN request_id TYPE BLOB(32) USING encode_request_id(request_id),  -- SHA256
-    ALTER COLUMN key_id TYPE BLOB(16) USING uuid_to_blob(key_id);
+```rust
+/// Migrate event_id: hex-encoded TEXT (64 chars) → raw BLOB(32).
+/// RFC-0903 Final stores hex "a1b2c3..." (64 chars). hex::decode → 32 raw bytes.
+fn migrate_event_id(hex_str: &str) -> [u8; 32] {
+    let bytes = hex::decode(hex_str).expect("valid hex event_id");
+    let mut blob = [0u8; 32];
+    blob.copy_from_slice(&bytes);
+    blob
+}
+
+/// Migrate request_id: raw TEXT string → raw BLOB(32).
+/// RFC-0903 Final stores the raw gateway text string.
+/// encode_request_id() is deterministic: len==32 copies raw, else SHA256(bytes).
+/// Applying this to TEXT (raw string) produces the same value as runtime inserts.
+fn migrate_request_id(text: &str) -> [u8; 32] {
+    encode_request_id(text) // see §request_id for definition
+}
+
+/// Migrate key_id: UUID hex string (36 chars "550e8400-e29b-41d4-a716-446655440000") → raw BLOB(16).
+/// uuid::Uuid::parse_str() decodes hex → 16 raw bytes.
+fn migrate_key_id(hex_str: &str) -> [u8; 16] {
+    let uuid = uuid::Uuid::parse_str(hex_str).expect("valid UUID hex string");
+    *uuid.as_bytes()
+}
 ```
 
-> **Note:** `encode_request_id()` is a deterministic function: `bytes.len() == 32` copies raw bytes, otherwise outputs `SHA256(bytes)`. For migration from TEXT (where RFC-0903 Final stores the raw string), applying SHA256 produces the same 32-byte value that runtime inserts use.
+**Application-layer migration procedure:**
+
+```
+1. SELECT event_id, request_id, key_id FROM spend_ledger;  -- read TEXT values
+2. For each row, compute migrate_event_id(event_id), migrate_request_id(request_id), migrate_key_id(key_id)
+3. BEGIN;
+4.   ALTER TABLE spend_ledger ALTER COLUMN event_id TYPE BLOB(32),
+5.   ALTER COLUMN request_id TYPE BLOB(32),
+6.   ALTER COLUMN key_id TYPE BLOB(16);
+7.   UPDATE spend_ledger SET
+8.       event_id = migrate_event_id(old_event_id_text),
+9.       request_id = migrate_request_id(old_request_id_text),
+10.      key_id = migrate_key_id(old_key_id_text);
+11. COMMIT;
+```
+
+> **Alternative (zero-downtime):** Use a shadow column approach — add new BLOB columns alongside TEXT columns, backfill in batches, then swap columns in a subsequent release. This avoids the ALTER TYPE locking issue.
 
 Implementations must also update `compute_event_id()` to store hex-to-binary conversion at insert time, and binary-to-hex conversion at read time.
 
@@ -243,10 +276,18 @@ Implementations must also update `compute_event_id()` to store hex-to-binary con
 
 RFC-0909 (Deterministic Quota Accounting) adopts this amended schema. All `SpendEvent` construction and ledger recording code in RFC-0909 implementations must use the BLOB types described above.
 
+**CRITICAL:** RFC-0903 Final's `record_spend()` and `record_spend_with_team()` functions MUST be updated to adopt RFC-0903-B1 encoding before any deployment that uses the new BLOB schema. Specifically:
+- `event_id`: encode hex string → raw `BLOB(32)` via `hex_to_blob_32()` before INSERT
+- `request_id`: encode raw gateway text → raw `BLOB(32)` via `encode_request_id()` before INSERT
+- `key_id`: encode `uuid::Uuid` → raw `BLOB(16)` via `uuid_to_blob_16()` before INSERT
+
+If `record_spend()` continues to use TEXT encoding while other parts of the system use BLOB encoding, the ledger will contain mixed-encoding records, breaking deterministic replay and Merkle tree construction. The entire ledger must use one encoding consistently. RFC-0903 Final must be amended (or this RFC-0903-B1 amendment explicitly scopes the required changes to `record_spend`) before deployment.
+
 ## Changelog
 
 | Version | Date       | Changes |
 |---------|------------|---------|
+| v7      | 2026-04-15 | Round 12 fixes: rewrite migration as application-layer pseudocode (Rust functions not SQL UDFs), add explicit 32-char ASCII hex edge case in encoding table, add B1 adoption requirement for record_spend, update request_id Change Summary to note SHA256 |
 | v6      | 2026-04-15 | Round 11 fixes: clarify request_id schema comment (SHA256 of gateway text) |
 | v5      | 2026-04-15 | Round 10 fixes: fix stale string_to_blob reference in migration comment, improve event_id before/after example, add hex-formatted request_id warning |
 | v4      | 2026-04-15 | Round 9 fixes: remove stale PRIMARY KEY from stoolap compat (replaced by index), fix request_id migration SQL (pad/truncate → SHA256 encode_request_id) |
@@ -257,7 +298,7 @@ RFC-0909 (Deterministic Quota Accounting) adopts this amended schema. All `Spend
 ---
 
 **Draft Date:** 2026-04-15
-**Version:** v6
+**Version:** v7
 **Amends:** RFC-0903 Final v29
 **Required By:** RFC-0909 (Deterministic Quota Accounting)
 **Related RFCs:** RFC-0201 (Binary BLOB Type)

@@ -2,7 +2,7 @@
 
 ## Status
 
-Draft (v20 — aligned with RFC-0903 Final v29 + RFC-0903-B1 amendment, RFC-0126, RFC-0201)
+Draft (v21 — aligned with RFC-0903 Final v29 + RFC-0903-B1 amendment, RFC-0126, RFC-0201)
 
 ## Authors
 
@@ -181,7 +181,9 @@ impl TokenSource {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SpendEvent {
     /// Deterministic event identifier (SHA256 hex string — hex for API/debug compat)
-    /// Stored as BLOB(32) per RFC-0903-B1; conversion: hex→raw at insert, raw→hex at read.
+    /// Stored as BLOB(32) per RFC-0903-B1; hex→raw via hex_to_blob_32() at insert, raw→hex via blob_32_to_hex() at read.
+    /// NOTE: event_id uses hex encoding (compute_event_id returns hex). For request_id, the gateway provides
+    /// raw text and storage uses SHA256 — see RFC-0903-B1 §request_id. These are different encodings.
     pub event_id: String,
     /// Request identifier for idempotency (UNIQUE constraint)
     /// Stored as BLOB(32) per RFC-0903-B1; gateway provides raw text, SHA256-encoded at insert
@@ -430,7 +432,7 @@ CREATE TABLE spend_ledger (
     token_source TEXT NOT NULL CHECK (token_source IN ('provider_usage', 'canonical_tokenizer')),
     tokenizer_version TEXT,
     provider_usage_json TEXT,               -- Raw provider usage for audit
-    created_at INTEGER NOT NULL,              -- Insert timestamp — RFC-0903-B1 adds DEFAULT (see below)
+    created_at INTEGER NOT NULL,              -- Insert timestamp (app provides value at insert; no DEFAULT added per RFC-0903-B1)
     -- Idempotency: UNIQUE constraint prevents duplicate request_id per key
     -- Note: event_id is BLOB so no PRIMARY KEY (stoolap BLOB PK is supported; RFC-0903-B1
     -- uses BLOB(32) which stoolap stores as VARBINARY). Index on event_id for lookup.
@@ -1238,6 +1240,7 @@ $0.03/1K tokens → DQA(30_000, scale=6)
 
 | Version | Date       | Changes |
 | ------- | ---------- | ------- |
+| v21     | 2026-04-15 | Round 10 fixes: fix created_at comment (no DEFAULT added), clarify event_id vs request_id encoding distinction, update event_id example comment |
 | v20     | 2026-04-15 | Round 9 fixes: fix request_id comment (hex→raw is wrong; gateway raw text + SHA256), fix approval criteria (BLOB not BYTEA), fix schema comment consistency (dashes + phrasing) |
 | v19     | 2026-04-14 | Round 8 fixes: fix created_at DEFAULT UNIXEPOCH() claim, fix compute_event_id TEXT storage comment, fix Merkle tree BLOB vs TEXT comment, fix pricing_hash BLOB→BYTEA(32), fix event_id BLOB vs TEXT comment, fix created_at ordering (struct lacks created_at), add validate_request_id call in process_response, fix step numbering |
 | v18     | 2026-04-14 | Round 7 fixes: add hex_to_blob/blob_32_to_hex/uuid_to_blob_16/blob_16_to_uuid helpers, fix event_id comment (BLOB not TEXT), add storage encoding comment to SpendEvent, fix stale key_id TEXT note, add request_id encoding rules to RFC-0903-B1, remove stale created_at DEFAULT entry, remove stale PRIMARY KEY comment, fix get_canonical_tokenizer (add RFC-0910 disclaimer) |
@@ -1255,6 +1258,6 @@ $0.03/1K tokens → DQA(30_000, scale=6)
 ---
 
 **Draft Date:** 2026-04-15
-**Version:** v20
+**Version:** v21
 **Related Use Case:** Enhanced Quota Router Gateway
 **Related RFCs:** RFC-0903 (Virtual API Key System), RFC-0126 (Deterministic Serialization)

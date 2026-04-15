@@ -2,7 +2,7 @@
 
 ## Status
 
-Draft (v4 — Amendment to RFC-0903 Final v29)
+Draft (v5 — Amendment to RFC-0903 Final v29)
 
 ## Authors
 
@@ -147,11 +147,13 @@ The `api_keys` table schema in RFC-0903 Final is unchanged by this amendment. `k
 - **RFC-0903-B1:** `compute_event_id()` **still returns `String` (hex-encoded)** for API/debugging compatibility. Storage uses `BLOB(32)`. When inserting, encode the hex string to raw bytes: `hex::decode(event_id)`.
 
 ```rust
-// Before (RFC-0903 Final): TEXT storage
-params![event_id.clone().into()]  // inserts hex string
+// Before (RFC-0903 Final): TEXT storage of hex string
+// The String from compute_event_id() was bound directly to a TEXT column.
+params![event_id.clone().into()]  // TEXT: stores "a1b2c3d4..." (64 hex chars)
 
-// After (RFC-0903-B1): BLOB storage
-params![stoolap::core::Value::blob(hex::decode(&event_id).unwrap())]
+// After (RFC-0903-B1): BLOB storage of raw binary
+// hex::decode() converts the hex String to 32 raw bytes before INSERT.
+params![stoolap::core::Value::blob(hex::decode(&event_id).unwrap())]  // BLOB(32): stores raw 32 bytes
 ```
 
 ### request_id
@@ -162,11 +164,11 @@ params![stoolap::core::Value::blob(hex::decode(&event_id).unwrap())]
 
 | Gateway format | Encoding to 32 bytes |
 |----------------|----------------------|
-| String < 32 bytes | SHA256 of the string, take first 32 bytes |
+| String < 32 bytes | SHA256 of the string |
 | String == 32 bytes | Raw bytes (already 32 bytes) |
-| String > 32 bytes | SHA256 of the string (output is 32 bytes) |
+| String > 32 bytes | SHA256 of the string |
 
-> **Note:** UUID strings from the gateway (36 chars) fall into the "String > 32 bytes" category and are SHA256-hashed. The UUID variant in earlier drafts of this amendment was removed — no special UUID handling is needed since all gateway inputs are text strings processed identically.
+> **⚠️ Hex-formatted input is not supported.** If the gateway sends a 64-char hex string (e.g., `"a1b2c3d4..."`), it is SHA256-hashed as raw ASCII bytes — NOT hex-decoded first. This produces a different 32-byte value than decoding first. Gateways MUST send raw binary/text, not hex. There is no hex-decoding path for request_id in this RFC.
 
 **Implementation:**
 
@@ -225,7 +227,7 @@ These are **breaking schema changes**. Existing deployments must run a migration
 ```sql
 -- Migration: TEXT → BLOB for spend_ledger
 -- event_id: RFC-0903 Final stores hex-encoded TEXT (64 chars). hex_to_blob decodes hex → raw bytes.
--- request_id: RFC-0903 Final stores raw text. string_to_blob hashes via SHA256 to produce 32 bytes.
+-- request_id: RFC-0903 Final stores raw text. encode_request_id() hashes via SHA256 → 32 bytes.
 -- key_id: RFC-0903 Final stores UUID hex string. uuid_to_blob parses UUID bytes directly.
 ALTER TABLE spend_ledger
     ALTER COLUMN event_id TYPE BLOB(32) USING hex_to_blob(event_id),
@@ -245,6 +247,7 @@ RFC-0909 (Deterministic Quota Accounting) adopts this amended schema. All `Spend
 
 | Version | Date       | Changes |
 |---------|------------|---------|
+| v5      | 2026-04-15 | Round 10 fixes: fix stale string_to_blob reference in migration comment, improve event_id before/after example, add hex-formatted request_id warning |
 | v4      | 2026-04-15 | Round 9 fixes: remove stale PRIMARY KEY from stoolap compat (replaced by index), fix request_id migration SQL (pad/truncate → SHA256 encode_request_id) |
 | v3      | 2026-04-14 | Round 8 fixes: remove UUID encoding from request_id table (gateway provides raw text), fix encode_request_id to match actual encoding logic, clarify gateway input format (raw text, not hex) |
 | v2      | 2026-04-14 | Round 7 fixes: add request_id encoding rules table + encode_request_id() function |
@@ -253,7 +256,7 @@ RFC-0909 (Deterministic Quota Accounting) adopts this amended schema. All `Spend
 ---
 
 **Draft Date:** 2026-04-15
-**Version:** v4
+**Version:** v5
 **Amends:** RFC-0903 Final v29
 **Required By:** RFC-0909 (Deterministic Quota Accounting)
 **Related RFCs:** RFC-0201 (Binary BLOB Type)

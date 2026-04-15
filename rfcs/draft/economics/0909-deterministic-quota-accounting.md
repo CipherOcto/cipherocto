@@ -2,7 +2,7 @@
 
 ## Status
 
-Draft (v21 — aligned with RFC-0903 Final v29 + RFC-0903-B1 amendment, RFC-0126, RFC-0201)
+Draft (v22 — aligned with RFC-0903 Final v29 + RFC-0903-B1 amendment, RFC-0126, RFC-0201)
 
 ## Authors
 
@@ -242,24 +242,31 @@ pub fn compute_event_id(
     hasher.update(output_tokens.to_le_bytes());
     hasher.update(pricing_hash);
     hasher.update(token_source.to_hash_str().as_bytes());
-    // Return hex string (TEXT storage compatible with RFC-0903 Final)
+    // Return hex string (BLOB(32) storage per RFC-0903-B1; hex→raw conversion at insert)
     format!("{:x}", hasher.finalize())
 }
 
-/// Convert event_id/request_id from hex String (struct/API layer) to raw [u8; 32] for BLOB storage.
+/// Convert event_id from hex String (struct/API layer) to raw [u8; 32] for BLOB(32) storage.
 /// Used at the storage boundary before INSERT per RFC-0903-B1.
+///
+/// NOTE: For request_id, use encode_request_id() (SHA256) — NOT this function.
+/// This function hex-decodes its input. Applying it to request_id (which is SHA256-hashed,
+/// not hex) would produce wrong results.
 #[inline]
 pub fn hex_to_blob_32(hex_str: &str) -> [u8; 32] {
     // hex_str is the ASCII hex representation (64 chars) of a 32-byte binary.
-    // This is the format returned by compute_event_id() and stored in event_id/request_id fields.
-    let bytes = hex::decode(hex_str).expect("valid hex event_id/request_id");
+    // This is the format returned by compute_event_id() for event_id (64 hex chars).
+    let bytes = hex::decode(hex_str).expect("valid hex event_id");
     let mut blob = [0u8; 32];
     blob.copy_from_slice(&bytes);
     blob
 }
 
-/// Convert event_id/request_id from raw [u8; 32] (BLOB storage) to hex String for struct/API layer.
+/// Convert event_id from raw [u8; 32] (BLOB(32) storage) to hex String for struct/API layer.
 /// Used at the storage boundary after SELECT per RFC-0903-B1.
+///
+/// NOTE: For request_id, the stored value is raw SHA256 binary — there is no hex representation
+/// and this function does NOT apply to request_id. Request_id has no API-compatible hex form.
 #[inline]
 pub fn blob_32_to_hex(blob: &[u8; 32]) -> String {
     hex::encode(blob)
@@ -1240,6 +1247,7 @@ $0.03/1K tokens → DQA(30_000, scale=6)
 
 | Version | Date       | Changes |
 | ------- | ---------- | ------- |
+| v22     | 2026-04-15 | Round 11 fixes: fix stale TEXT→BLOB comment in compute_event_id, fix hex_to_blob_32/blob_32_to_hex comments (only for event_id, not request_id) |
 | v21     | 2026-04-15 | Round 10 fixes: fix created_at comment (no DEFAULT added), clarify event_id vs request_id encoding distinction, update event_id example comment |
 | v20     | 2026-04-15 | Round 9 fixes: fix request_id comment (hex→raw is wrong; gateway raw text + SHA256), fix approval criteria (BLOB not BYTEA), fix schema comment consistency (dashes + phrasing) |
 | v19     | 2026-04-14 | Round 8 fixes: fix created_at DEFAULT UNIXEPOCH() claim, fix compute_event_id TEXT storage comment, fix Merkle tree BLOB vs TEXT comment, fix pricing_hash BLOB→BYTEA(32), fix event_id BLOB vs TEXT comment, fix created_at ordering (struct lacks created_at), add validate_request_id call in process_response, fix step numbering |
@@ -1258,6 +1266,6 @@ $0.03/1K tokens → DQA(30_000, scale=6)
 ---
 
 **Draft Date:** 2026-04-15
-**Version:** v21
+**Version:** v22
 **Related Use Case:** Enhanced Quota Router Gateway
 **Related RFCs:** RFC-0903 (Virtual API Key System), RFC-0126 (Deterministic Serialization)

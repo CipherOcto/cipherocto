@@ -2,7 +2,7 @@
 
 ## Status
 
-Draft (v5 — Amendment to RFC-0903 Final v29)
+Draft (v6 — Amendment to RFC-0903 Final v29)
 
 ## Authors
 
@@ -89,7 +89,7 @@ CREATE INDEX idx_spend_ledger_timestamp ON spend_ledger(timestamp);
 ```sql
 CREATE TABLE spend_ledger (
     event_id BLOB(32) NOT NULL,              -- Raw SHA256 binary (32 bytes) — RFC-0201
-    request_id BLOB(32) NOT NULL,            -- Raw binary (32 bytes) — RFC-0201
+    request_id BLOB(32) NOT NULL,            -- Raw binary (32 bytes, SHA256 of gateway text) — RFC-0201
     key_id BLOB(16) NOT NULL,                -- Raw UUID bytes (16 bytes) — RFC-0903-B1
     team_id TEXT,                            -- Unchanged
     provider TEXT NOT NULL,                   -- Unchanged
@@ -247,6 +247,7 @@ RFC-0909 (Deterministic Quota Accounting) adopts this amended schema. All `Spend
 
 | Version | Date       | Changes |
 |---------|------------|---------|
+| v6      | 2026-04-15 | Round 11 fixes: clarify request_id schema comment (SHA256 of gateway text) |
 | v5      | 2026-04-15 | Round 10 fixes: fix stale string_to_blob reference in migration comment, improve event_id before/after example, add hex-formatted request_id warning |
 | v4      | 2026-04-15 | Round 9 fixes: remove stale PRIMARY KEY from stoolap compat (replaced by index), fix request_id migration SQL (pad/truncate → SHA256 encode_request_id) |
 | v3      | 2026-04-14 | Round 8 fixes: remove UUID encoding from request_id table (gateway provides raw text), fix encode_request_id to match actual encoding logic, clarify gateway input format (raw text, not hex) |
@@ -256,7 +257,7 @@ RFC-0909 (Deterministic Quota Accounting) adopts this amended schema. All `Spend
 ---
 
 **Draft Date:** 2026-04-15
-**Version:** v5
+**Version:** v6
 **Amends:** RFC-0903 Final v29
 **Required By:** RFC-0909 (Deterministic Quota Accounting)
 **Related RFCs:** RFC-0201 (Binary BLOB Type)

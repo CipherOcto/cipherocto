@@ -2,7 +2,7 @@
 
 ## Status
 
-Draft (v8 — Amendment to RFC-0903 Final v29)
+Draft (v9 — Amendment to RFC-0903 Final v29)
 
 ## Authors
 
@@ -90,7 +90,7 @@ CREATE INDEX idx_spend_ledger_timestamp ON spend_ledger(timestamp);
 CREATE TABLE spend_ledger (
     event_id BLOB(32) NOT NULL,              -- Raw SHA256 binary (32 bytes) — RFC-0201
     request_id BLOB(32) NOT NULL,            -- Raw binary (32 bytes, SHA256 of gateway text) — RFC-0201
-    key_id BLOB(16) NOT NULL,                -- Raw UUID bytes (16 bytes) — RFC-0903-B1
+    key_id BLOB(16) NOT NULL,                -- Raw UUID bytes (16 bytes) — was TEXT in RFC-0903 Final, BLOB per RFC-0903-B1
     team_id TEXT,                            -- Unchanged
     provider TEXT NOT NULL,                   -- Unchanged
     model TEXT NOT NULL,                      -- Unchanged
@@ -115,9 +115,9 @@ CREATE TABLE spend_ledger (
 CREATE INDEX idx_spend_ledger_key_id ON spend_ledger(key_id);
 CREATE INDEX idx_spend_ledger_team_id ON spend_ledger(team_id);
 CREATE INDEX idx_spend_ledger_timestamp ON spend_ledger(timestamp);
-CREATE INDEX idx_spend_ledger_event_id ON spend_ledger(event_id);          -- NEW: RFC-0903-B1
-CREATE INDEX idx_spend_ledger_key_created ON spend_ledger(key_id, created_at); -- NEW: RFC-0903-B1
-CREATE INDEX idx_spend_ledger_pricing_hash ON spend_ledger(pricing_hash); -- NEW: RFC-0903-B1
+CREATE INDEX idx_spend_ledger_event_id ON spend_ledger(event_id);          -- RFC-0903-B1 ext
+CREATE INDEX idx_spend_ledger_key_created ON spend_ledger(key_id, created_at); -- RFC-0903-B1 ext
+CREATE INDEX idx_spend_ledger_pricing_hash ON spend_ledger(pricing_hash); -- RFC-0903-B1 ext
 ```
 
 ### api_keys Table (unchanged)
@@ -287,6 +287,7 @@ If `record_spend()` continues to use TEXT encoding while other parts of the syst
 
 | Version | Date       | Changes |
 |---------|------------|---------|
+| v9      | 2026-04-15 | Round 14 fixes: fix key_id comment (cite source RFC-0903 not circular RFC-0903-B1), align index comments with RFC-0909 style ("RFC-0903-B1 ext") |
 | v8      | 2026-04-15 | Round 13 fixes: fix pricing_hash BYTEA(32) misleading comment (not RFC-0201), extend 32-char ASCII edge case warning to cover non-hex 32-byte strings, fix schema column spacing |
 | v7      | 2026-04-15 | Round 12 fixes: rewrite migration as application-layer pseudocode (Rust functions not SQL UDFs), add explicit 32-char ASCII hex edge case in encoding table, add B1 adoption requirement for record_spend, update request_id Change Summary to note SHA256 |
 | v6      | 2026-04-15 | Round 11 fixes: clarify request_id schema comment (SHA256 of gateway text) |
@@ -299,7 +300,7 @@ If `record_spend()` continues to use TEXT encoding while other parts of the syst
 ---
 
 **Draft Date:** 2026-04-15
-**Version:** v8
+**Version:** v9
 **Amends:** RFC-0903 Final v29
 **Required By:** RFC-0909 (Deterministic Quota Accounting)
 **Related RFCs:** RFC-0201 (Binary BLOB Type)

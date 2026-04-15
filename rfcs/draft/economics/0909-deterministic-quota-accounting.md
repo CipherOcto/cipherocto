@@ -2,7 +2,7 @@
 
 ## Status
 
-Draft (v24 — aligned with RFC-0903 Final v29 + RFC-0903-B1 amendment v8, RFC-0126, RFC-0201)
+Draft (v25 — aligned with RFC-0903 Final v29 + RFC-0903-B1 amendment v9, RFC-0126, RFC-0201)
 
 ## Authors
 
@@ -1140,7 +1140,7 @@ RFC-0903-B1 (an amendment to RFC-0903 Final) makes the following changes to the 
 | Field | RFC-0903 Final | RFC-0903-B1 | Reason |
 |-------|---------------|-------------|--------|
 | `event_id` | `TEXT` (hex, 64 chars) | `BLOB(32)` (raw SHA256) | 50% storage reduction; RFC-0201 |
-| `request_id` | `TEXT` (variable) | `BLOB(32)` (raw binary) | Consistent 32-byte storage; RFC-0201 |
+| `request_id` | `TEXT` (variable) | `BLOB(32)` (raw SHA256 bytes) | Consistent 32-byte storage; RFC-0201 |
 | `key_id` | `TEXT` (UUID hex, 36 chars) | `BLOB(16)` (raw UUID bytes) | 56% storage reduction; RFC-0903-B1 |
 | `idx_spend_ledger_key_created` | *(none)* | Added | Efficient `ORDER BY created_at` queries |
 | `idx_spend_ledger_event_id` | *(none)* | Added | Equality lookup on event_id |
@@ -1287,6 +1287,7 @@ $0.03/1K tokens → DQA(30_000, scale=6)
 
 | Version | Date       | Changes |
 | ------- | ---------- | ------- |
+| v25     | 2026-04-15 | Round 14 fixes: update request_id entry in RFC-0903-B1 table to note SHA256 encoding, align with RFC-0903-B1 v9 |
 | v24     | 2026-04-15 | Round 13 fixes: fix Merkle tree to build navigable structure (children now populated), mark idx_spend_ledger_key_time as pre-existing legacy index, add RFC-0201 to Related RFCs footer, align with RFC-0903-B1 v8 |
 | v23     | 2026-04-15 | Round 12 fixes: fix Merkle tree panic on empty events (returns Option), add event_id vs request_id duality section, align with RFC-0903-B1 v7 |
 | v22     | 2026-04-15 | Round 11 fixes: fix stale TEXT→BLOB comment in compute_event_id, fix hex_to_blob_32/blob_32_to_hex comments (only for event_id, not request_id) |
@@ -1308,6 +1309,6 @@ $0.03/1K tokens → DQA(30_000, scale=6)
 ---
 
 **Draft Date:** 2026-04-15
-**Version:** v24
+**Version:** v25
 **Related Use Case:** Enhanced Quota Router Gateway
 **Related RFCs:** RFC-0903 (Virtual API Key System), RFC-0903-B1 (Schema Amendments), RFC-0126 (Deterministic Serialization), RFC-0201 (Binary BLOB Type)

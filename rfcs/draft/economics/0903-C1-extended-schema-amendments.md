@@ -2,7 +2,7 @@
 
 ## Status
 
-Draft (v1 — Amendment to RFC-0903 Final v29 + RFC-0903-B1 amendment)
+Draft (v1 — Amendment to RFC-0903 Final v29 + RFC-0903-B1 amendment v15)
 
 ## Authors
 

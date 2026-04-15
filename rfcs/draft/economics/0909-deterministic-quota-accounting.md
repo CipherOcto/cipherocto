@@ -2,7 +2,7 @@
 
 ## Status
 
-Draft (v33 — aligned with RFC-0903 Final v29 + RFC-0903-B1 v15 + RFC-0903-C1 v14, RFC-0126, RFC-0201)
+Draft (v33 — aligned with RFC-0903 Final v29 + RFC-0903-B1 v15 + RFC-0903-C1 v1, RFC-0126, RFC-0201)
 
 ## Authors
 
@@ -29,7 +29,7 @@ This is required for future integration with:
 
 **Requires:**
 
-- RFC-0903: Virtual API Key System (Final v29 + RFC-0903-B1 amendment v15 + RFC-0903-C1 amendment)
+- RFC-0903: Virtual API Key System (Final v29 + RFC-0903-B1 amendment v15 + RFC-0903-C1 amendment v1)
 - RFC-0126: Deterministic Serialization (for canonical JSON serialization)
 - RFC-0201: Binary BLOB Type for Deterministic Hash Storage (Accepted)
 
@@ -1263,7 +1263,7 @@ This RFC can be approved when:
 - [x] lock ordering invariant is documented
 - [x] TokenSource uses lookup tables (no allocation)
 - [x] TokenSource hash strings match RFC-0903 Final (`"provider"`/`"tokenizer"`)
-- [x] schema adopts RFC-0903-B1 BLOB storage (event_id BLOB(32), request_id BLOB(32), key_id BLOB(16), pricing_hash BYTEA(32))
+- [x] schema adopts RFC-0903-B1/C1 BLOB storage (event_id BLOB(32), request_id BLOB(32), key_id BLOB(16), team_id BLOB(16), tokenizer_id BLOB(16), pricing_hash BYTEA(32))
 
 ## Implementation Notes
 
@@ -1393,8 +1393,8 @@ $0.03/1K tokens → DQA(30_000, scale=6)
 
 | Version | Date       | Changes |
 | ------- | ---------- | ------- |
+| v34     | 2026-04-15 | Round 23 fixes: align RFC-0903-B1 version to v15 and RFC-0903-C1 to v1 throughout (was referencing wrong C1 version); update Approval Criteria to reflect RFC-0903-C1 team_id BLOB(16); add RFC-0903-B1/B1/C1 version references to Dependencies |
 | v33     | 2026-04-15 | Round 22 fixes: normalize tokenizer_version to tokenizer_id FK (BLOB(16) via BLAKE3); add tokenizers table to RFC-0903-B1 schema; update SpendEvent to use Option<[u8;16]> tokenizer_id; update RFC-0903-B1 v15 cross-refs |
-| v32     | 2026-04-15 | Round 21 fixes: add RFC-0903-C1 amendment section (extends BLOB consolidation to api_keys and teams, fixes FK type mismatch); update Status and Dependencies to reflect RFC-0903-C1 |
 | v28     | 2026-04-15 | Round 17 fixes: fix get_canonical_tokenizer(model)? compile error (remove ?, add .to_string()); fix pricing_hash schema comment (unchanged from RFC-0903 Final, not changed by RFC-0903-B1); add saturating_add rationale to replay_events; add DB-based router BLOB→hex Merkle note; add RFC-0903-B1 cross-refs for encode_request_id; add pseudocode caveat to process_request_with_accounting; align with RFC-0903-B1 v12 |
 | v27     | 2026-04-15 | Round 16 fixes: add replay_events_for_proof() for Merkle proof path, fix stale "(BYTEA storage)" header comment, add cross-RFC get_canonical_tokenizer determinism warning, align with RFC-0903-B1 v11 |
 | v26     | 2026-04-15 | Round 15 fixes: remove non-substantive file-existence approval criterion, align with RFC-0903-B1 v10 |
@@ -1420,6 +1420,6 @@ $0.03/1K tokens → DQA(30_000, scale=6)
 ---
 
 **Draft Date:** 2026-04-15
-**Version:** v33
+**Version:** v34
 **Related Use Case:** Enhanced Quota Router Gateway
 **Related RFCs:** RFC-0903 (Virtual API Key System), RFC-0903-B1 (Schema Amendments), RFC-0903-C1 (Extended Schema Amendments), RFC-0126 (Deterministic Serialization), RFC-0201 (Binary BLOB Type)

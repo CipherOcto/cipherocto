@@ -2,7 +2,7 @@
 
 ## Status
 
-Draft (v19 — aligned with RFC-0903 Final v29 + RFC-0903-B1 amendment, RFC-0126, RFC-0201)
+Draft (v20 — aligned with RFC-0903 Final v29 + RFC-0903-B1 amendment, RFC-0126, RFC-0201)
 
 ## Authors
 
@@ -175,8 +175,8 @@ impl TokenSource {
 ///
 /// Storage encoding per RFC-0903-B1:
 /// - event_id: BLOB(32) — raw 32-byte SHA256 binary. Struct field is hex String for API compat.
-/// - request_id: BLOB(32) — raw 32-byte binary. Struct field is hex String for API compat.
-///   (Gateway provides request_id as hex string; storage converts hex→raw binary at insert.)
+/// - request_id: BLOB(32) — raw 32-byte binary (SHA256 of gateway text). Struct field is String.
+///   (Gateway provides raw text; storage encodes via SHA256 per RFC-0903-B1 §request_id.)
 /// - key_id: BLOB(16) — raw 16-byte UUID binary. Struct field is uuid::Uuid for type safety.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SpendEvent {
@@ -184,7 +184,8 @@ pub struct SpendEvent {
     /// Stored as BLOB(32) per RFC-0903-B1; conversion: hex→raw at insert, raw→hex at read.
     pub event_id: String,
     /// Request identifier for idempotency (UNIQUE constraint)
-    /// Stored as BLOB(32) per RFC-0903-B1; conversion: hex→raw at insert, raw→hex at read.
+    /// Stored as BLOB(32) per RFC-0903-B1; gateway provides raw text, SHA256-encoded at insert
+    /// via encode_request_id() — NOT hex-encoded. See RFC-0903-B1 §request_id encoding.
     pub request_id: String,
     /// API key that made the request
     /// Stored as BLOB(16) per RFC-0903-B1; uuid::Uuid↔[u8;16] conversion at storage boundary.
@@ -416,7 +417,7 @@ All usage events are written to a **ledger table**.
 -- Token counts MUST originate from provider when available (see Canonical Token Accounting)
 CREATE TABLE spend_ledger (
     event_id BLOB(32) NOT NULL,              -- Raw SHA256 binary (32 bytes) — RFC-0903-B1
-    request_id BLOB(32) NOT NULL,           -- Raw binary (32 bytes) — RFC-0903-B1
+    request_id BLOB(32) NOT NULL,           -- Raw binary (32 bytes, SHA256 of gateway text) — RFC-0903-B1
     key_id BLOB(16) NOT NULL,                -- Raw UUID bytes (16 bytes) — RFC-0903-B1
     team_id TEXT,                            -- Optional team attribution
     provider TEXT NOT NULL,                  -- Provider name
@@ -1113,7 +1114,7 @@ This RFC can be approved when:
 - [x] lock ordering invariant is documented
 - [x] TokenSource uses lookup tables (no allocation)
 - [x] TokenSource hash strings match RFC-0903 Final (`"provider"`/`"tokenizer"`)
-- [x] schema adopts RFC-0903-B1 BYTEA storage (event_id, request_id, key_id)
+- [x] schema adopts RFC-0903-B1 BLOB storage (event_id BLOB(32), request_id BLOB(32), key_id BLOB(16), pricing_hash BYTEA(32))
 - [x] RFC-0903-B1 amendment document exists at `rfcs/draft/economics/0903-B1-schema-amendments.md`
 
 ## Implementation Notes
@@ -1237,6 +1238,7 @@ $0.03/1K tokens → DQA(30_000, scale=6)
 
 | Version | Date       | Changes |
 | ------- | ---------- | ------- |
+| v20     | 2026-04-15 | Round 9 fixes: fix request_id comment (hex→raw is wrong; gateway raw text + SHA256), fix approval criteria (BLOB not BYTEA), fix schema comment consistency (dashes + phrasing) |
 | v19     | 2026-04-14 | Round 8 fixes: fix created_at DEFAULT UNIXEPOCH() claim, fix compute_event_id TEXT storage comment, fix Merkle tree BLOB vs TEXT comment, fix pricing_hash BLOB→BYTEA(32), fix event_id BLOB vs TEXT comment, fix created_at ordering (struct lacks created_at), add validate_request_id call in process_response, fix step numbering |
 | v18     | 2026-04-14 | Round 7 fixes: add hex_to_blob/blob_32_to_hex/uuid_to_blob_16/blob_16_to_uuid helpers, fix event_id comment (BLOB not TEXT), add storage encoding comment to SpendEvent, fix stale key_id TEXT note, add request_id encoding rules to RFC-0903-B1, remove stale created_at DEFAULT entry, remove stale PRIMARY KEY comment, fix get_canonical_tokenizer (add RFC-0910 disclaimer) |
 | v17     | 2026-04-14 | Round 6 fixes: fix process_response return type to match record_spend (returns Ok(())), add RFC-0903-B1 amendment section, update schema to BYTEA storage (event_id BLOB(32), request_id BLOB(32), key_id BLOB(16)), mark RFC-0903-B1 ext indexes, add compute_cost truncation note, fix o1/o3 tokenizer (o200k_base), update Merkle tree for BLOB storage, add RFC-0903-B1 approval criteria |
@@ -1252,7 +1254,7 @@ $0.03/1K tokens → DQA(30_000, scale=6)
 
 ---
 
-**Draft Date:** 2026-04-14
-**Version:** v19
+**Draft Date:** 2026-04-15
+**Version:** v20
 **Related Use Case:** Enhanced Quota Router Gateway
 **Related RFCs:** RFC-0903 (Virtual API Key System), RFC-0126 (Deterministic Serialization)

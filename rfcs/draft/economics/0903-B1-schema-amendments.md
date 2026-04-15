@@ -2,7 +2,7 @@
 
 ## Status
 
-Draft (v3 — Amendment to RFC-0903 Final v29)
+Draft (v4 — Amendment to RFC-0903 Final v29)
 
 ## Authors
 
@@ -213,7 +213,8 @@ let key_id = uuid::Uuid::from_bytes(bytes);
 
 These changes require stoolap to support:
 1. `BLOB(n)` where `n` is a length specifier (stoolap already has `BLOB` type per RFC-0201)
-2. `PRIMARY KEY` on `BLOB(32)` columns (event_id)
+
+Note: The PRIMARY KEY on `event_id` from RFC-0903 Final is **not retained** in RFC-0903-B1. It is replaced by `idx_spend_ledger_event_id` and `UNIQUE(key_id, request_id)`. The PRIMARY KEY is not needed for BLOB columns in stoolap's implementation.
 
 If stoolap does not support length-specified BLOBs (`BLOB(32)` vs unconstrained `BLOB`), use `VARBINARY(32)` or unconstrained `BLOB` with application-layer length validation.
 
@@ -223,11 +224,16 @@ These are **breaking schema changes**. Existing deployments must run a migration
 
 ```sql
 -- Migration: TEXT → BLOB for spend_ledger
+-- event_id: RFC-0903 Final stores hex-encoded TEXT (64 chars). hex_to_blob decodes hex → raw bytes.
+-- request_id: RFC-0903 Final stores raw text. string_to_blob hashes via SHA256 to produce 32 bytes.
+-- key_id: RFC-0903 Final stores UUID hex string. uuid_to_blob parses UUID bytes directly.
 ALTER TABLE spend_ledger
     ALTER COLUMN event_id TYPE BLOB(32) USING hex_to_blob(event_id),
-    ALTER COLUMN request_id TYPE BLOB(32) USING string_to_blob(request_id),  -- pad/truncate
+    ALTER COLUMN request_id TYPE BLOB(32) USING encode_request_id(request_id),  -- SHA256
     ALTER COLUMN key_id TYPE BLOB(16) USING uuid_to_blob(key_id);
 ```
+
+> **Note:** `encode_request_id()` is a deterministic function: `bytes.len() == 32` copies raw bytes, otherwise outputs `SHA256(bytes)`. For migration from TEXT (where RFC-0903 Final stores the raw string), applying SHA256 produces the same 32-byte value that runtime inserts use.
 
 Implementations must also update `compute_event_id()` to store hex-to-binary conversion at insert time, and binary-to-hex conversion at read time.
 
@@ -239,14 +245,15 @@ RFC-0909 (Deterministic Quota Accounting) adopts this amended schema. All `Spend
 
 | Version | Date       | Changes |
 |---------|------------|---------|
+| v4      | 2026-04-15 | Round 9 fixes: remove stale PRIMARY KEY from stoolap compat (replaced by index), fix request_id migration SQL (pad/truncate → SHA256 encode_request_id) |
 | v3      | 2026-04-14 | Round 8 fixes: remove UUID encoding from request_id table (gateway provides raw text), fix encode_request_id to match actual encoding logic, clarify gateway input format (raw text, not hex) |
 | v2      | 2026-04-14 | Round 7 fixes: add request_id encoding rules table + encode_request_id() function |
 | v1      | 2026-04-14 | Initial amendment: event_id TEXT→BLOB(32), request_id TEXT→BLOB(32), key_id TEXT→BLOB(16); add idx_spend_ledger_event_id, idx_spend_ledger_key_created, idx_spend_ledger_pricing_hash |
 
 ---
 
-**Draft Date:** 2026-04-14
-**Version:** v3
+**Draft Date:** 2026-04-15
+**Version:** v4
 **Amends:** RFC-0903 Final v29
 **Required By:** RFC-0909 (Deterministic Quota Accounting)
 **Related RFCs:** RFC-0201 (Binary BLOB Type)

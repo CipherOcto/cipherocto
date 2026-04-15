@@ -2,7 +2,7 @@
 
 ## Status
 
-Draft (v25 — aligned with RFC-0903 Final v29 + RFC-0903-B1 amendment v9, RFC-0126, RFC-0201)
+Draft (v26 — aligned with RFC-0903 Final v29 + RFC-0903-B1 amendment v10, RFC-0126, RFC-0201)
 
 ## Authors
 
@@ -1164,7 +1164,6 @@ This RFC can be approved when:
 - [x] TokenSource uses lookup tables (no allocation)
 - [x] TokenSource hash strings match RFC-0903 Final (`"provider"`/`"tokenizer"`)
 - [x] schema adopts RFC-0903-B1 BLOB storage (event_id BLOB(32), request_id BLOB(32), key_id BLOB(16), pricing_hash BYTEA(32))
-- [x] RFC-0903-B1 amendment document exists at `rfcs/draft/economics/0903-B1-schema-amendments.md`
 
 ## Implementation Notes
 
@@ -1287,6 +1286,7 @@ $0.03/1K tokens → DQA(30_000, scale=6)
 
 | Version | Date       | Changes |
 | ------- | ---------- | ------- |
+| v26     | 2026-04-15 | Round 15 fixes: remove non-substantive file-existence approval criterion, align with RFC-0903-B1 v10 |
 | v25     | 2026-04-15 | Round 14 fixes: update request_id entry in RFC-0903-B1 table to note SHA256 encoding, align with RFC-0903-B1 v9 |
 | v24     | 2026-04-15 | Round 13 fixes: fix Merkle tree to build navigable structure (children now populated), mark idx_spend_ledger_key_time as pre-existing legacy index, add RFC-0201 to Related RFCs footer, align with RFC-0903-B1 v8 |
 | v23     | 2026-04-15 | Round 12 fixes: fix Merkle tree panic on empty events (returns Option), add event_id vs request_id duality section, align with RFC-0903-B1 v7 |
@@ -1309,6 +1309,6 @@ $0.03/1K tokens → DQA(30_000, scale=6)
 ---
 
 **Draft Date:** 2026-04-15
-**Version:** v25
+**Version:** v26
 **Related Use Case:** Enhanced Quota Router Gateway
 **Related RFCs:** RFC-0903 (Virtual API Key System), RFC-0903-B1 (Schema Amendments), RFC-0126 (Deterministic Serialization), RFC-0201 (Binary BLOB Type)

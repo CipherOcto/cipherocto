@@ -2,7 +2,7 @@
 
 ## Status
 
-Draft (v9 — Amendment to RFC-0903 Final v29)
+Draft (v10 — Amendment to RFC-0903 Final v29)
 
 ## Authors
 
@@ -258,9 +258,9 @@ fn migrate_key_id(hex_str: &str) -> [u8; 16] {
 1. SELECT event_id, request_id, key_id FROM spend_ledger;  -- read TEXT values
 2. For each row, compute migrate_event_id(event_id), migrate_request_id(request_id), migrate_key_id(key_id)
 3. BEGIN;
-4.   ALTER TABLE spend_ledger ALTER COLUMN event_id TYPE BLOB(32),
-5.   ALTER COLUMN request_id TYPE BLOB(32),
-6.   ALTER COLUMN key_id TYPE BLOB(16);
+4.   ALTER TABLE spend_ledger ALTER COLUMN event_id TYPE BLOB(32);
+5.   ALTER TABLE spend_ledger ALTER COLUMN request_id TYPE BLOB(32);
+6.   ALTER TABLE spend_ledger ALTER COLUMN key_id TYPE BLOB(16);
 7.   UPDATE spend_ledger SET
 8.       event_id = migrate_event_id(old_event_id_text),
 9.       request_id = migrate_request_id(old_request_id_text),
@@ -268,7 +268,7 @@ fn migrate_key_id(hex_str: &str) -> [u8; 16] {
 11. COMMIT;
 ```
 
-> **Alternative (zero-downtime):** Use a shadow column approach — add new BLOB columns alongside TEXT columns, backfill in batches, then swap columns in a subsequent release. This avoids the ALTER TYPE locking issue.
+> **Note:** The ALTER TABLE statements above use separate per-column statements (compatible with PostgreSQL and MySQL). SQLite does not support `ALTER COLUMN TYPE` — SQLite deployments must use the zero-downtime shadow column approach instead: add new BLOB columns alongside TEXT columns, backfill in batches, then swap columns in a subsequent release. This avoids the ALTER TYPE locking issue.
 
 Implementations must also update `compute_event_id()` to store hex-to-binary conversion at insert time, and binary-to-hex conversion at read time.
 
@@ -287,6 +287,7 @@ If `record_spend()` continues to use TEXT encoding while other parts of the syst
 
 | Version | Date       | Changes |
 |---------|------------|---------|
+| v10     | 2026-04-15 | Round 15 fixes: split multi-column ALTER TABLE into separate per-column statements (PostgreSQL/MySQL compatible), add SQLite ALTER COLUMN limitation note |
 | v9      | 2026-04-15 | Round 14 fixes: fix key_id comment (cite source RFC-0903 not circular RFC-0903-B1), align index comments with RFC-0909 style ("RFC-0903-B1 ext") |
 | v8      | 2026-04-15 | Round 13 fixes: fix pricing_hash BYTEA(32) misleading comment (not RFC-0201), extend 32-char ASCII edge case warning to cover non-hex 32-byte strings, fix schema column spacing |
 | v7      | 2026-04-15 | Round 12 fixes: rewrite migration as application-layer pseudocode (Rust functions not SQL UDFs), add explicit 32-char ASCII hex edge case in encoding table, add B1 adoption requirement for record_spend, update request_id Change Summary to note SHA256 |
@@ -300,7 +301,7 @@ If `record_spend()` continues to use TEXT encoding while other parts of the syst
 ---
 
 **Draft Date:** 2026-04-15
-**Version:** v9
+**Version:** v10
 **Amends:** RFC-0903 Final v29
 **Required By:** RFC-0909 (Deterministic Quota Accounting)
 **Related RFCs:** RFC-0201 (Binary BLOB Type)

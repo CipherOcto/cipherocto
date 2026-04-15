@@ -121,9 +121,11 @@ CREATE INDEX idx_spend_ledger_key_created ON spend_ledger(key_id, created_at); -
 CREATE INDEX idx_spend_ledger_pricing_hash ON spend_ledger(pricing_hash); -- RFC-0903-B1 ext
 ```
 
-### api_keys Table (unchanged)
+### api_keys Table (unchanged by RFC-0903-B1)
 
 The `api_keys` table schema in RFC-0903 Final is unchanged by this amendment. `key_hash BYTEA(32)` (HMAC-SHA256) is already binary and requires no amendment.
+
+> **Note (RFC-0903-C1):** RFC-0903-C1 amends `api_keys.key_id` and `api_keys.team_id` to `BLOB(16)` for FK consistency. After RFC-0903-C1, the FK `spend_ledger.key_id → api_keys.key_id` is type-consistent `BLOB(16) → BLOB(16)`.
 
 ## Change Summary
 

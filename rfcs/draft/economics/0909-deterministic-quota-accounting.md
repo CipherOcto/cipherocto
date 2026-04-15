@@ -2,7 +2,7 @@
 
 ## Status
 
-Draft (v31 — aligned with RFC-0903 Final v29 + RFC-0903-B1 amendment v14, RFC-0126, RFC-0201)
+Draft (v32 — aligned with RFC-0903 Final v29 + RFC-0903-B1 + RFC-0903-C1, RFC-0126, RFC-0201)
 
 ## Authors
 
@@ -29,7 +29,7 @@ This is required for future integration with:
 
 **Requires:**
 
-- RFC-0903: Virtual API Key System (Final v29 + RFC-0903-B1 amendment v14)
+- RFC-0903: Virtual API Key System (Final v29 + RFC-0903-B1 amendment + RFC-0903-C1 amendment)
 - RFC-0126: Deterministic Serialization (for canonical JSON serialization)
 - RFC-0201: Binary BLOB Type for Deterministic Hash Storage (Accepted)
 
@@ -197,7 +197,8 @@ pub struct SpendEvent {
     /// Stored as BLOB(16) per RFC-0903-B1; uuid::Uuid↔[u8;16] conversion at storage boundary.
     pub key_id: uuid::Uuid,
     /// Team ID (if applicable)
-    pub team_id: Option<String>,
+    /// Stored as BLOB(16) per RFC-0903-C1; uuid::Uuid↔[u8;16] conversion at storage boundary.
+    pub team_id: Option<uuid::Uuid>,
     /// Provider name
     pub provider: String,
     /// Model name
@@ -453,7 +454,7 @@ CREATE TABLE spend_ledger (
     event_id BLOB(32) NOT NULL,              -- Raw SHA256 binary (32 bytes) — RFC-0903-B1
     request_id BLOB(32) NOT NULL,           -- Raw binary (32 bytes, SHA256 of gateway text) — RFC-0903-B1
     key_id BLOB(16) NOT NULL,                -- Raw UUID bytes (16 bytes) — RFC-0903-B1
-    team_id TEXT,                            -- Optional team attribution
+    team_id BLOB(16),                        -- Raw UUID bytes (16 bytes) — RFC-0903-C1 (was TEXT)
     provider TEXT NOT NULL,                  -- Provider name
     model TEXT NOT NULL,                     -- Model name
     input_tokens INTEGER NOT NULL,            -- Prompt tokens
@@ -470,8 +471,8 @@ CREATE TABLE spend_ledger (
     -- uses BLOB(32) which stoolap stores as VARBINARY). Index on event_id for lookup.
     UNIQUE(key_id, request_id),
     -- Foreign keys for integrity
-    FOREIGN KEY(key_id) REFERENCES api_keys(key_id) ON DELETE CASCADE,
-    FOREIGN KEY(team_id) REFERENCES teams(team_id) ON DELETE SET NULL
+    FOREIGN KEY(key_id) REFERENCES api_keys(key_id) ON DELETE CASCADE,    -- BLOB(16) → BLOB(16) — RFC-0903-C1
+    FOREIGN KEY(team_id) REFERENCES teams(team_id) ON DELETE SET NULL    -- BLOB(16) → BLOB(16) — RFC-0903-C1
 );
 
 CREATE INDEX idx_spend_ledger_key_id ON spend_ledger(key_id);
@@ -818,7 +819,7 @@ The router must recompute cost using **its own pricing tables**, ignoring provid
 pub async fn process_response(
     db: &Database,
     key_id: &uuid::Uuid,
-    team_id: Option<&str>,
+    team_id: Option<&uuid::Uuid>,
     provider: &str,
     model: &str,
     response: &ProviderResponse,
@@ -854,7 +855,7 @@ pub async fn process_response(
         event_id,
         request_id: response.request_id.clone(),
         key_id: *key_id,
-        team_id: team_id.map(String::from),
+        team_id: team_id.copied(),
         provider: provider.to_string(),
         model: model.to_string(),
         input_tokens: response.input_tokens,
@@ -1201,6 +1202,24 @@ RFC-0903-B1 (an amendment to RFC-0903 Final) makes the following changes to the 
 
 > **Note:** `event_id` is stored as raw binary (32 bytes) per RFC-0201, not hex-encoded text. For display/debugging, convert using `hex::encode(event_id)`. The `compute_event_id()` function continues to return `String` (hex) for API compatibility; storage uses binary. API key material (key_hash) is already stored as `BLOB(32)` per RFC-0903 Final.
 
+### RFC-0903-C1 Amendment (FK Consistency)
+
+RFC-0903-C1 extends RFC-0903-B1 to amend `api_keys` and `teams` tables, fixing the FK type mismatch created by RFC-0903-B1 (which amended `spend_ledger.key_id` to `BLOB(16)` but left `api_keys.key_id` as `TEXT`).
+
+RFC-0903-C1 changes:
+
+| Field | RFC-0903 Final | RFC-0903-C1 | Reason |
+|-------|---------------|-------------|--------|
+| `teams.team_id` | `TEXT` (UUID hex, 36 chars) | `BLOB(16)` (raw UUID bytes) | 56% storage reduction; consistent FK |
+| `api_keys.key_id` | `TEXT` (UUID hex, 36 chars) | `BLOB(16)` (raw UUID bytes) | 56% storage reduction; consistent FK |
+| `api_keys.team_id` | `TEXT` (UUID nullable) | `BLOB(16)` (raw UUID bytes) | 56% storage reduction; consistent FK |
+| `idx_teams_team_id` | *(on TEXT)* | *(on BLOB(16))* | Updated index |
+| `idx_api_keys_team_id` | *(on TEXT)* | *(on BLOB(16))* | Updated index |
+
+After RFC-0903-C1, all UUID primary keys and their foreign keys are `BLOB(16)`, and all FK relationships are type-consistent.
+
+> **Note:** RFC-0903-B1 defined `team_id TEXT` in `spend_ledger` as unchanged to avoid amending `teams`. RFC-0903-C1 resolves this by also amending `teams.team_id`, allowing `spend_ledger.team_id` to be `BLOB(16)` consistently.
+
 See `rfcs/draft/economics/0903-B1-schema-amendments.md` for the full RFC-0903-B1 amendment text.
 
 ## Approval Criteria
@@ -1345,8 +1364,8 @@ $0.03/1K tokens → DQA(30_000, scale=6)
 
 | Version | Date       | Changes |
 | ------- | ---------- | ------- |
+| v32     | 2026-04-15 | Round 21 fixes: add RFC-0903-C1 amendment section (extends BLOB consolidation to api_keys and teams, fixes FK type mismatch); update Status and Dependencies to reflect RFC-0903-C1 |
 | v31     | 2026-04-15 | Round 20 fixes: add idx_spend_ledger_key_time to RFC-0903-B1 amendment table and schema examples (was missing from both); align all RFC-0903-B1 cross-references to v14 |
-| v30     | 2026-04-15 | Round 19 fixes: fix §Event ID Hashing heap-allocation claim (key_id.to_string() is unavoidable); add round-trip note to SpendEvent.request_id; fix RFC-0903-B1 amendment table created_at RFC-0903 Final column (was missing DEFAULT); cross-reference TOKEN_SCALE in compute_cost; add u64 cast to simple cost example |
 | v28     | 2026-04-15 | Round 17 fixes: fix get_canonical_tokenizer(model)? compile error (remove ?, add .to_string()); fix pricing_hash schema comment (unchanged from RFC-0903 Final, not changed by RFC-0903-B1); add saturating_add rationale to replay_events; add DB-based router BLOB→hex Merkle note; add RFC-0903-B1 cross-refs for encode_request_id; add pseudocode caveat to process_request_with_accounting; align with RFC-0903-B1 v12 |
 | v27     | 2026-04-15 | Round 16 fixes: add replay_events_for_proof() for Merkle proof path, fix stale "(BYTEA storage)" header comment, add cross-RFC get_canonical_tokenizer determinism warning, align with RFC-0903-B1 v11 |
 | v26     | 2026-04-15 | Round 15 fixes: remove non-substantive file-existence approval criterion, align with RFC-0903-B1 v10 |
@@ -1372,6 +1391,6 @@ $0.03/1K tokens → DQA(30_000, scale=6)
 ---
 
 **Draft Date:** 2026-04-15
-**Version:** v31
+**Version:** v32
 **Related Use Case:** Enhanced Quota Router Gateway
-**Related RFCs:** RFC-0903 (Virtual API Key System), RFC-0903-B1 (Schema Amendments), RFC-0126 (Deterministic Serialization), RFC-0201 (Binary BLOB Type)
+**Related RFCs:** RFC-0903 (Virtual API Key System), RFC-0903-B1 (Schema Amendments), RFC-0903-C1 (Extended Schema Amendments), RFC-0126 (Deterministic Serialization), RFC-0201 (Binary BLOB Type)

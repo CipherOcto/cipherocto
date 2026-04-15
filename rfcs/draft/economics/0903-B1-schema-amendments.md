@@ -2,7 +2,7 @@
 
 ## Status
 
-Draft (v7 — Amendment to RFC-0903 Final v29)
+Draft (v8 — Amendment to RFC-0903 Final v29)
 
 ## Authors
 
@@ -94,15 +94,15 @@ CREATE TABLE spend_ledger (
     team_id TEXT,                            -- Unchanged
     provider TEXT NOT NULL,                   -- Unchanged
     model TEXT NOT NULL,                      -- Unchanged
-    input_tokens INTEGER NOT NULL,            -- Unchanged
+    input_tokens INTEGER NOT NULL,           -- Unchanged
     output_tokens INTEGER NOT NULL,           -- Unchanged
-    cost_amount BIGINT NOT NULL,              -- Unchanged
-    pricing_hash BYTEA(32) NOT NULL,         -- Unchanged (already binary)
-    timestamp INTEGER NOT NULL,               -- Unchanged
+    cost_amount BIGINT NOT NULL,             -- Unchanged
+    pricing_hash BYTEA(32) NOT NULL,         -- Unchanged (pre-existing binary type, not affected by this amendment)
+    timestamp INTEGER NOT NULL,              -- Unchanged
     token_source TEXT NOT NULL CHECK (token_source IN ('provider_usage', 'canonical_tokenizer')),
     tokenizer_version TEXT,                   -- Unchanged
-    provider_usage_json TEXT,                -- Unchanged
-    created_at INTEGER NOT NULL,              -- Unchanged (stoolap: INTEGER NOT NULL, app provides value)
+    provider_usage_json TEXT,                 -- Unchanged
+    created_at INTEGER NOT NULL,             -- Unchanged (stoolap: INTEGER NOT NULL, app provides value)
     -- Idempotency: UNIQUE constraint prevents duplicate request_id per key
     -- Note: event_id is BLOB(32) NOT NULL, NOT a PRIMARY KEY (stoolap quirk).
     -- The RFC-0903 Final PRIMARY KEY on event_id is replaced by a regular
@@ -170,7 +170,7 @@ params![stoolap::core::Value::blob(hex::decode(&event_id).unwrap())]  // BLOB(32
 
 > **⚠️ Hex-formatted input is not supported.** If the gateway sends a 64-char hex string (e.g., `"a1b2c3d4..."`) as input, it is SHA256-hashed as raw ASCII bytes — NOT hex-decoded first. This produces a **different** 32-byte value than hex-decoding first. Gateways MUST send raw binary/text, not hex. There is no hex-decoding path for request_id in this RFC.
 >
-> **⚠️ Edge case: 32-char ASCII hex is ambiguous.** If the gateway sends exactly 32 ASCII characters that happen to look like hex (e.g., `"a1b2c3d4e5f6789012345678901234ab"`), it is treated as raw text and SHA256-hashed, NOT hex-decoded. This could produce unintended results if gateways send hex-formatted IDs without their own hex layer. Gateways MUST use raw text or their own hex-encoding scheme — this RFC does not add a hex layer.
+> **⚠️ Edge case: 32-char ASCII strings (hex or non-hex) are ambiguous.** If the gateway sends exactly 32 ASCII characters that happen to look like hex (e.g., `"a1b2c3d4e5f6789012345678901234ab"`), it is treated as raw text and SHA256-hashed, NOT hex-decoded. Similarly, a 32-byte ASCII string that is NOT hex-formatted is passed through as raw bytes (not hashed) at runtime, but the migration path would SHA256-hash it (since TEXT len != 32 in storage). Both cases could produce unintended results. Gateways MUST use raw text or their own encoding scheme — this RFC does not add a hex layer.
 
 **Implementation:**
 
@@ -287,6 +287,7 @@ If `record_spend()` continues to use TEXT encoding while other parts of the syst
 
 | Version | Date       | Changes |
 |---------|------------|---------|
+| v8      | 2026-04-15 | Round 13 fixes: fix pricing_hash BYTEA(32) misleading comment (not RFC-0201), extend 32-char ASCII edge case warning to cover non-hex 32-byte strings, fix schema column spacing |
 | v7      | 2026-04-15 | Round 12 fixes: rewrite migration as application-layer pseudocode (Rust functions not SQL UDFs), add explicit 32-char ASCII hex edge case in encoding table, add B1 adoption requirement for record_spend, update request_id Change Summary to note SHA256 |
 | v6      | 2026-04-15 | Round 11 fixes: clarify request_id schema comment (SHA256 of gateway text) |
 | v5      | 2026-04-15 | Round 10 fixes: fix stale string_to_blob reference in migration comment, improve event_id before/after example, add hex-formatted request_id warning |
@@ -298,7 +299,7 @@ If `record_spend()` continues to use TEXT encoding while other parts of the syst
 ---
 
 **Draft Date:** 2026-04-15
-**Version:** v7
+**Version:** v8
 **Amends:** RFC-0903 Final v29
 **Required By:** RFC-0909 (Deterministic Quota Accounting)
 **Related RFCs:** RFC-0201 (Binary BLOB Type)

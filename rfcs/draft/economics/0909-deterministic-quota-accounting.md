@@ -2,7 +2,7 @@
 
 ## Status
 
-Draft (v23 — aligned with RFC-0903 Final v29 + RFC-0903-B1 amendment v7, RFC-0126, RFC-0201)
+Draft (v24 — aligned with RFC-0903 Final v29 + RFC-0903-B1 amendment v8, RFC-0126, RFC-0201)
 
 ## Authors
 
@@ -471,9 +471,9 @@ CREATE TABLE spend_ledger (
 CREATE INDEX idx_spend_ledger_key_id ON spend_ledger(key_id);
 CREATE INDEX idx_spend_ledger_team_id ON spend_ledger(team_id);
 CREATE INDEX idx_spend_ledger_timestamp ON spend_ledger(timestamp);
-CREATE INDEX idx_spend_ledger_event_id ON spend_ledger(event_id);  -- RFC-0903-B1 ext
--- Composite index for efficient quota queries
+-- Pre-existing index from RFC-0903 Final (not used in deterministic replay path)
 CREATE INDEX idx_spend_ledger_key_time ON spend_ledger(key_id, timestamp);
+CREATE INDEX idx_spend_ledger_event_id ON spend_ledger(event_id);  -- RFC-0903-B1 ext
 -- Composite index for efficient replay with ORDER BY created_at — RFC-0903-B1 ext
 CREATE INDEX idx_spend_ledger_key_created ON spend_ledger(key_id, created_at);
 -- Index for pricing verification queries — RFC-0903-B1 ext
@@ -874,73 +874,88 @@ The event ledger can be extended to generate **cryptographic proofs**.
 ```rust
 use sha2::{Digest, Sha256};
 
-/// Merkle tree node
+/// Merkle tree node — each node stores its hash and child references.
+/// The root node's hash is the published Merkle root.
 #[derive(Debug, Clone)]
 pub struct MerkleNode {
+    /// Hash of this node (leaf: event hash, internal: hash of children)
     pub hash: [u8; 32],
+    /// Left child (None for leaf nodes)
     pub left: Option<Box<MerkleNode>>,
+    /// Right child (None for leaf nodes)
     pub right: Option<Box<MerkleNode>>,
 }
 
-/// Build Merkle tree from usage events
+/// Build Merkle tree from usage events.
 ///
-/// Note: event_id is stored as BLOB(32) (raw 32-byte binary) per RFC-0903-B1.
-/// The Merkle tree hashes the hex representation from the application struct's
-/// String field (e.event_id, which is hex). This produces consistent roots across
-/// routers since the hex string is derived from the raw binary deterministically
-/// (compute_event_id returns hex; the same binary always yields the same hex).
+/// Each leaf is the SHA256 hash of: event_id (hex String as ASCII bytes) + cost_amount.
+/// Internal nodes are the SHA256 hash of their two child hashes concatenated.
+/// The root hash is published for cryptographic proofs.
 ///
-/// Hashing the raw binary directly would produce different roots — the hex approach
-/// is used here because it matches what routers can independently compute from logs.
+/// Note: In the database, event_id is stored as BLOB(32) (raw binary) per RFC-0903-B1.
+/// In the application struct (SpendEvent), event_id is String (hex). This pseudocode
+/// uses the application struct's hex String field — routers can compute identical roots
+/// from their logs without needing database access. Hashing the raw BLOB would produce
+/// different results than what routers can independently derive.
 pub fn build_merkle_tree(events: &[SpendEvent]) -> Option<MerkleNode> {
     let mut sorted = events.to_vec();
     sorted.sort_by(|a, b| a.event_id.cmp(&b.event_id));
 
-    // Build leaf nodes: hash event_id (as hex string) + cost_amount
-    let mut leaves: Vec<[u8; 32]> = sorted
-        .iter()
-        .map(|e| {
-            let mut hasher = Sha256::new();
-            // Hash hex-encoded event_id (from application struct String field)
-            hasher.update(e.event_id.as_bytes()); // hex string as ASCII bytes
-            hasher.update(e.cost_amount.to_le_bytes());
-            hasher.finalize().into()
-        })
-        .collect();
-
     // Empty ledger — return None (no root to publish)
-    if leaves.is_empty() {
+    if sorted.is_empty() {
         return None;
     }
 
-    // Build tree bottom-up
-    while leaves.len() > 1 {
-        // Duplicate the last leaf if odd count (keeps tree balanced and deterministic)
-        if leaves.len() % 2 == 1 {
-            let last = leaves[leaves.len() - 1]; // safe: leaves.len() >= 1 at this point
-            leaves.push(last);
-        }
-
-        let mut parents = Vec::new();
-        for pair in leaves.chunks(2) {
+    // Build leaf nodes: hash(event_id_hex_as_bytes || cost_amount)
+    let leaves: Vec<MerkleNode> = sorted
+        .iter()
+        .map(|e| {
             let mut hasher = Sha256::new();
-            hasher.update(&pair[0]);
-            hasher.update(&pair[1]);
+            hasher.update(e.event_id.as_bytes()); // hex string as ASCII bytes
+            hasher.update(e.cost_amount.to_le_bytes());
             let result = hasher.finalize();
             let mut hash = [0u8; 32];
             hash.copy_from_slice(&result);
-            parents.push(hash);
+            MerkleNode { hash, left: None, right: None }
+        })
+        .collect();
+
+    // Recursively build internal nodes from leaf pairs
+    fn build_parent_level(children: Vec<MerkleNode>) -> Vec<MerkleNode> {
+        if children.is_empty() {
+            return Vec::new();
         }
-        leaves = parents;
+        // Pad with duplicate of last child if odd count (keeps tree balanced and deterministic)
+        let mut nodes: Vec<MerkleNode> = children;
+        if nodes.len() % 2 == 1 {
+            let last = nodes.last().unwrap().clone();
+            nodes.push(last);
+        }
+        let mut parents = Vec::new();
+        for pair in nodes.chunks(2) {
+            let mut hasher = Sha256::new();
+            hasher.update(&pair[0].hash);
+            hasher.update(&pair[1].hash);
+            let result = hasher.finalize();
+            let mut hash = [0u8; 32];
+            hash.copy_from_slice(&result);
+            parents.push(MerkleNode {
+                hash,
+                left: Some(Box::new(pair[0].clone())),
+                right: Some(Box::new(pair[1].clone())),
+            });
+        }
+        parents
     }
 
-    Some(MerkleNode {
-        hash: leaves.remove(0),
-        left: None,
-        right: None,
-    })
+    // Build tree bottom-up until a single root remains
+    let mut level = leaves;
+    while level.len() > 1 {
+        level = build_parent_level(level);
+    }
+
+    level.pop()
 }
-```
 
 Root hashes can be published periodically.
 
@@ -1272,6 +1287,7 @@ $0.03/1K tokens → DQA(30_000, scale=6)
 
 | Version | Date       | Changes |
 | ------- | ---------- | ------- |
+| v24     | 2026-04-15 | Round 13 fixes: fix Merkle tree to build navigable structure (children now populated), mark idx_spend_ledger_key_time as pre-existing legacy index, add RFC-0201 to Related RFCs footer, align with RFC-0903-B1 v8 |
 | v23     | 2026-04-15 | Round 12 fixes: fix Merkle tree panic on empty events (returns Option), add event_id vs request_id duality section, align with RFC-0903-B1 v7 |
 | v22     | 2026-04-15 | Round 11 fixes: fix stale TEXT→BLOB comment in compute_event_id, fix hex_to_blob_32/blob_32_to_hex comments (only for event_id, not request_id) |
 | v21     | 2026-04-15 | Round 10 fixes: fix created_at comment (no DEFAULT added), clarify event_id vs request_id encoding distinction, update event_id example comment |
@@ -1292,6 +1308,6 @@ $0.03/1K tokens → DQA(30_000, scale=6)
 ---
 
 **Draft Date:** 2026-04-15
-**Version:** v23
+**Version:** v24
 **Related Use Case:** Enhanced Quota Router Gateway
-**Related RFCs:** RFC-0903 (Virtual API Key System), RFC-0126 (Deterministic Serialization)
+**Related RFCs:** RFC-0903 (Virtual API Key System), RFC-0903-B1 (Schema Amendments), RFC-0126 (Deterministic Serialization), RFC-0201 (Binary BLOB Type)

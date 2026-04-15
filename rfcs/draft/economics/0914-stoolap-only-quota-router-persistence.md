@@ -111,10 +111,10 @@ Goal: Single persistence layer (Stoolap) for all quota router data.
 
 ```sql
 CREATE TABLE api_keys (
-    key_id TEXT NOT NULL UNIQUE,
-    key_hash TEXT NOT NULL UNIQUE,
-    key_prefix TEXT NOT NULL,
-    team_id TEXT,
+    key_id BLOB(16) NOT NULL,            -- Raw UUID bytes (16 bytes) — per RFC-0903-B1/C1
+    key_hash BYTEA(32) NOT NULL,          -- HMAC-SHA256 (unchanged)
+    key_prefix TEXT NOT NULL,             -- Unchanged
+    team_id BLOB(16),                     -- Raw UUID bytes (16 bytes) — per RFC-0903-C1
     budget_limit INTEGER NOT NULL,
     rpm_limit INTEGER,
     tpm_limit INTEGER,
@@ -125,14 +125,17 @@ CREATE TABLE api_keys (
 );
 ```
 
-### key_spend Table (Budget Ledger)
+### key_spend Table (Budget Ledger — DEPRECATED)
+
+> **NOTE:** `key_spend` is DEPRECATED. Budget enforcement now uses ledger-based `spend_ledger`. This table is retained for legacy rate limiter state. See RFC-0903 Final §Ledger-Based Architecture.
 
 ```sql
 CREATE TABLE key_spend (
-    key_id TEXT NOT NULL UNIQUE,
+    key_id BLOB(16) NOT NULL,            -- Raw UUID bytes (16 bytes) — per RFC-0903-B1/C1 (FK to api_keys.key_id)
     total_spend INTEGER NOT NULL DEFAULT 0,
     window_start INTEGER NOT NULL,
-    last_updated INTEGER NOT NULL
+    last_updated INTEGER NOT NULL,
+    UNIQUE(key_id)
 );
 ```
 
@@ -140,11 +143,13 @@ CREATE TABLE key_spend (
 
 ```sql
 CREATE TABLE teams (
-    team_id TEXT NOT NULL UNIQUE,
-    name TEXT NOT NULL,
+    team_id BLOB(16) NOT NULL,           -- Raw UUID bytes (16 bytes) — per RFC-0903-C1
+    name TEXT NOT NULL,                    -- Unchanged
     budget_limit INTEGER NOT NULL,
-    created_at INTEGER NOT NULL
+    created_at INTEGER NOT NULL,
+    PRIMARY KEY (team_id)
 );
+```
 ```
 
 ## Why Needed

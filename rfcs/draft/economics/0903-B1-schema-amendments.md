@@ -247,24 +247,56 @@ fn migrate_key_id(hex_str: &str) -> [u8; 16] {
 This is application-level pseudocode — the migrate_* functions run in Rust, not as SQL UDFs.
 The UPDATE uses parameterized queries with `?` placeholders (JDBC/SQLite style; PostgreSQL uses `$1`, `$2`, ...).
 
+**Migration uses shadow columns to avoid ALTER COLUMN TYPE locking and SQLite incompatibility.**
+RFC-0903 Final defines `event_id TEXT PRIMARY KEY`, which is a stable unique row identifier for WHERE clauses throughout migration — no `rowid` dependency.
+
 ```
-1. SELECT rowid, event_id, request_id, key_id FROM spend_ledger;  -- read TEXT values + row id
-2. For each row, compute in Rust:
-      new_event_id    = migrate_event_id(event_id)    -- [u8; 32]
-      new_request_id  = migrate_request_id(request_id) -- [u8; 32]
-      new_key_id      = migrate_key_id(key_id)         -- [u8; 16]
-3. BEGIN;
-4.   ALTER TABLE spend_ledger ALTER COLUMN event_id TYPE BLOB(32);
-5.   ALTER TABLE spend_ledger ALTER COLUMN request_id TYPE BLOB(32);
-6.   ALTER TABLE spend_ledger ALTER COLUMN key_id TYPE BLOB(16);
-7.   For each (old_rowid, new_event_id, new_request_id, new_key_id) from step 2, issue:
-8.     UPDATE spend_ledger
-9.         SET event_id = ?, request_id = ?, key_id = ?   -- bind pre-computed binary values
-10.        WHERE rowid = ?;                                -- bind old_rowid from step 1
-11. COMMIT;
+-- Phase 1: Add BLOB shadow columns (no data modification)
+ALTER TABLE spend_ledger ADD COLUMN event_id_new BLOB(32);
+ALTER TABLE spend_ledger ADD COLUMN request_id_new BLOB(32);
+ALTER TABLE spend_ledger ADD COLUMN key_id_new BLOB(16);
+
+-- Phase 2: Populate shadow columns in batches (application code, repeatable)
+SELECT event_id, request_id, key_id FROM spend_ledger
+    WHERE event_id_new IS NULL LIMIT 1000;
+For each row, compute in Rust:
+    new_event_id    = migrate_event_id(event_id)         -- [u8; 32]
+    new_request_id  = migrate_request_id(request_id)     -- [u8; 32]
+    new_key_id      = migrate_key_id(key_id)             -- [u8; 16]
+UPDATE spend_ledger
+    SET event_id_new = ?, request_id_new = ?, key_id_new = ?
+    WHERE event_id = ?;  -- event_id TEXT was PRIMARY KEY in RFC-0903 Final
+
+Repeat until all rows migrated. The WHERE clause uses event_id (PRIMARY KEY in RFC-0903 Final).
+
+-- Phase 3: Column swap (database-specific)
+-- SQLite:
+CREATE TABLE spend_ledger_new (LIKE spend_ledger);
+INSERT INTO spend_ledger_new SELECT ..., event_id_new, request_id_new, key_id_new, ... FROM spend_ledger;
+DROP TABLE spend_ledger;
+ALTER TABLE spend_ledger_new RENAME TO spend_ledger;
+-- Recreate indexes (dropped by CREATE TABLE LIKE in some DBs)
+CREATE INDEX idx_spend_ledger_key_id ON spend_ledger(key_id);
+CREATE INDEX idx_spend_ledger_team_id ON spend_ledger(team_id);
+CREATE INDEX idx_spend_ledger_timestamp ON spend_ledger(timestamp);
+CREATE INDEX idx_spend_ledger_event_id ON spend_ledger(event_id);
+CREATE INDEX idx_spend_ledger_key_created ON spend_ledger(key_id, created_at);
+CREATE INDEX idx_spend_ledger_pricing_hash ON spend_ledger(pricing_hash);
+
+-- PostgreSQL/MySQL:
+BEGIN;
+ALTER TABLE spend_ledger DROP COLUMN event_id;
+ALTER TABLE spend_ledger DROP COLUMN request_id;
+ALTER TABLE spend_ledger DROP COLUMN key_id;
+ALTER TABLE spend_ledger RENAME COLUMN event_id_new TO event_id;
+ALTER TABLE spend_ledger RENAME COLUMN request_id_new TO request_id;
+ALTER TABLE spend_ledger RENAME COLUMN key_id_new TO key_id;
+-- Recreate UNIQUE and FK constraints
+ALTER TABLE spend_ledger ADD CONSTRAINT spend_ledger_key_request_uniq UNIQUE(key_id, request_id);
+COMMIT;
 ```
 
-> **Note:** The ALTER TABLE statements above use separate per-column statements (compatible with PostgreSQL and MySQL). SQLite does not support `ALTER COLUMN TYPE` — SQLite deployments must use the zero-downtime shadow column approach instead: add new BLOB columns alongside TEXT columns, backfill in batches, then swap columns in a subsequent release. This avoids the ALTER TYPE locking issue.
+> **Why shadow columns?** ALTER COLUMN TYPE locks the table in PostgreSQL/MySQL for the duration of data conversion. For large tables this can be minutes to hours. The shadow-column approach allows zero-downtime migration: application code populates shadow columns in batches while the old columns remain active. Column swap is a fast metadata operation. SQLite does not support ALTER COLUMN TYPE at all — shadow columns are the only path.
 
 Implementations must also update `compute_event_id()` to store hex-to-binary conversion at insert time, and binary-to-hex conversion at read time.
 
@@ -283,6 +315,7 @@ If `record_spend()` continues to use TEXT encoding while other parts of the syst
 
 | Version | Date       | Changes |
 |---------|------------|---------|
+| v14     | 2026-04-15 | Round 19 fixes: rewrite migration procedure to use shadow-column approach (eliminates rowid dependency and ALTER COLUMN TYPE incompatibility across SQLite/PostgreSQL); add Phase 3 column-swap SQL for both SQLite and PostgreSQL/MySQL |
 | v13     | 2026-04-15 | Round 18 fixes: fix key_id storage reduction "44%" → "56%" (BLOB(16) is 44% of TEXT size, saving 56%); simplify encode_request_id to always SHA256 (remove 32-byte pass-through — eliminates discontinuity and all 32-char edge case warnings); update encoding rules table to single row; update migrate_request_id docstring |
 | v12     | 2026-04-15 | Round 17 fixes: rewrite migration steps 7-10 as parameterized queries (remove SQL UDF syntax; all migrate_* calls are Rust, not SQL); add row identifier (rowid) to migration step 1 for per-row parameterized UPDATEs |
 | v11     | 2026-04-15 | Round 16 fixes: clarify key_id UUID example in Problem 2 (remove stale "+ null"), add cross-RFC determinism warning for get_canonical_tokenizer |
@@ -300,7 +333,7 @@ If `record_spend()` continues to use TEXT encoding while other parts of the syst
 ---
 
 **Draft Date:** 2026-04-15
-**Version:** v13
+**Version:** v14
 **Amends:** RFC-0903 Final v29
 **Required By:** RFC-0909 (Deterministic Quota Accounting)
 **Related RFCs:** RFC-0201 (Binary BLOB Type)

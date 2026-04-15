@@ -2,7 +2,7 @@
 
 ## Status
 
-Draft (v29 — aligned with RFC-0903 Final v29 + RFC-0903-B1 amendment v13, RFC-0126, RFC-0201)
+Draft (v30 — aligned with RFC-0903 Final v29 + RFC-0903-B1 amendment v14, RFC-0126, RFC-0201)
 
 ## Authors
 
@@ -29,7 +29,7 @@ This is required for future integration with:
 
 **Requires:**
 
-- RFC-0903: Virtual API Key System (Final v29 + RFC-0903-B1 amendment)
+- RFC-0903: Virtual API Key System (Final v29 + RFC-0903-B1 amendment v14)
 - RFC-0126: Deterministic Serialization (for canonical JSON serialization)
 - RFC-0201: Binary BLOB Type for Deterministic Hash Storage (Accepted)
 
@@ -109,8 +109,8 @@ The conversion from provider billing to CU must be **deterministic and integer-b
 Cost is computed using deterministic rules.
 
 ```rust
-// Simple cost: just tokens
-let cost = input_tokens + output_tokens;
+// Simple cost: just tokens (result is u32; cast to u64 to match CostUnit)
+let cost = (input_tokens as u64) + (output_tokens as u64);
 
 // Or rate-based cost:
 let cost = (input_tokens * prompt_rate) +
@@ -188,6 +188,10 @@ pub struct SpendEvent {
     /// Request identifier for idempotency (UNIQUE constraint)
     /// Stored as BLOB(32) per RFC-0903-B1; gateway provides raw text, SHA256-encoded at insert
     /// via encode_request_id() (defined in RFC-0903-B1 §request_id) — NOT hex-encoded. See RFC-0903-B1 §request_id encoding.
+    ///
+    /// **Round-trip note:** request_id encoding is one-way (SHA256). The original gateway text is
+    /// NOT recoverable from stored BLOB(32). After DB round-trip, populate this field with
+    /// `hex::encode(stored_blob)` for API/debug compatibility. Replay functions do not use this field.
     pub request_id: String,
     /// API key that made the request
     /// Stored as BLOB(16) per RFC-0903-B1; uuid::Uuid↔[u8;16] conversion at storage boundary.
@@ -714,6 +718,7 @@ pub fn compute_cost(
     // Integer math only — no floating point
     // Uses integer division (truncates toward zero). For micro-unit pricing,
     // truncation occurs only when cost < 0.5 micro-units (effectively free).
+    // 1000 = TOKEN_SCALE (micro-units per token)
     let prompt_cost = (input_tokens as u64 * pricing.prompt_cost_per_1k) / 1000;
     let completion_cost = (output_tokens as u64 * pricing.completion_cost_per_1k) / 1000;
 
@@ -1191,7 +1196,7 @@ RFC-0903-B1 (an amendment to RFC-0903 Final) makes the following changes to the 
 | `idx_spend_ledger_key_created` | *(none)* | Added | Efficient `ORDER BY created_at` queries |
 | `idx_spend_ledger_event_id` | *(none)* | Added | Equality lookup on event_id |
 | `idx_spend_ledger_pricing_hash` | *(none)* | Added | Pricing verification queries |
-| `created_at` | *(no default; app provides value)* | *(unchanged)* | No DEFAULT added per RFC-0903-B1; app provides value at insert |
+| `created_at` | `INTEGER NOT NULL DEFAULT (strftime('%s', 'now'))` | *(unchanged)* | No DEFAULT added per RFC-0903-B1; app provides value at insert |
 
 > **Note:** `event_id` is stored as raw binary (32 bytes) per RFC-0201, not hex-encoded text. For display/debugging, convert using `hex::encode(event_id)`. The `compute_event_id()` function continues to return `String` (hex) for API compatibility; storage uses binary. API key material (key_hash) is already stored as `BLOB(32)` per RFC-0903 Final.
 
@@ -1303,7 +1308,7 @@ The `&'static str` return type eliminates heap allocation on every call.
 ### Event ID Hashing (Optimization)
 
 `compute_event_id` uses a stack-allocated `Sha256` hasher. This is already near-optimal:
-- No heap allocation per call
+- `Sha256` hasher is stack-allocated; `key_id.to_string()` makes one `String` heap allocation per call (unavoidable given the hyphenated UUID format the hash commits to)
 - `Sha256::new()` is a `const fn` on most digest crates
 - Each input component is a single `update()` call
 
@@ -1339,6 +1344,7 @@ $0.03/1K tokens → DQA(30_000, scale=6)
 
 | Version | Date       | Changes |
 | ------- | ---------- | ------- |
+| v30     | 2026-04-15 | Round 19 fixes: fix §Event ID Hashing heap-allocation claim (key_id.to_string() is unavoidable); add round-trip note to SpendEvent.request_id; fix RFC-0903-B1 amendment table created_at RFC-0903 Final column (was missing DEFAULT); cross-reference TOKEN_SCALE in compute_cost; add u64 cast to simple cost example |
 | v29     | 2026-04-15 | Round 18 fixes: add missing closing code fence in §Quota Consistency Model (Budget enforcement prose was inside code block); add saturating_add rationale to compute_cost; align with RFC-0903-B1 v13 (always-SHA256 encode_request_id) |
 | v28     | 2026-04-15 | Round 17 fixes: fix get_canonical_tokenizer(model)? compile error (remove ?, add .to_string()); fix pricing_hash schema comment (unchanged from RFC-0903 Final, not changed by RFC-0903-B1); add saturating_add rationale to replay_events; add DB-based router BLOB→hex Merkle note; add RFC-0903-B1 cross-refs for encode_request_id; add pseudocode caveat to process_request_with_accounting; align with RFC-0903-B1 v12 |
 | v27     | 2026-04-15 | Round 16 fixes: add replay_events_for_proof() for Merkle proof path, fix stale "(BYTEA storage)" header comment, add cross-RFC get_canonical_tokenizer determinism warning, align with RFC-0903-B1 v11 |
@@ -1365,6 +1371,6 @@ $0.03/1K tokens → DQA(30_000, scale=6)
 ---
 
 **Draft Date:** 2026-04-15
-**Version:** v29
+**Version:** v30
 **Related Use Case:** Enhanced Quota Router Gateway
 **Related RFCs:** RFC-0903 (Virtual API Key System), RFC-0903-B1 (Schema Amendments), RFC-0126 (Deterministic Serialization), RFC-0201 (Binary BLOB Type)

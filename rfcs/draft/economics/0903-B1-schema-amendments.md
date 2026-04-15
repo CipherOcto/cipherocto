@@ -2,7 +2,7 @@
 
 ## Status
 
-Draft (v10 — Amendment to RFC-0903 Final v29)
+Draft (v11 — Amendment to RFC-0903 Final v29)
 
 ## Authors
 
@@ -42,7 +42,7 @@ This wastes 2x storage (32 raw bytes → 64 hex chars). RFC-0201 (Accepted) defi
 `key_id` is stored as `TEXT` containing a UUID:
 
 ```sql
-key_id TEXT NOT NULL  -- "550e8400-e29b-41d4-a716-446655440000" (36 chars + null)
+key_id TEXT NOT NULL  -- key_id: UUID text "550e8400-e29b-41d4-a716-446655440000" (36 chars)
 ```
 
 UUIDs are 16 bytes. Text storage requires 36+ bytes. `BLOB(16)` reduces storage by 44%.
@@ -287,6 +287,7 @@ If `record_spend()` continues to use TEXT encoding while other parts of the syst
 
 | Version | Date       | Changes |
 |---------|------------|---------|
+| v11     | 2026-04-15 | Round 16 fixes: clarify key_id UUID example in Problem 2 (remove stale "+ null"), add cross-RFC determinism warning for get_canonical_tokenizer |
 | v10     | 2026-04-15 | Round 15 fixes: split multi-column ALTER TABLE into separate per-column statements (PostgreSQL/MySQL compatible), add SQLite ALTER COLUMN limitation note |
 | v9      | 2026-04-15 | Round 14 fixes: fix key_id comment (cite source RFC-0903 not circular RFC-0903-B1), align index comments with RFC-0909 style ("RFC-0903-B1 ext") |
 | v8      | 2026-04-15 | Round 13 fixes: fix pricing_hash BYTEA(32) misleading comment (not RFC-0201), extend 32-char ASCII edge case warning to cover non-hex 32-byte strings, fix schema column spacing |
@@ -301,7 +302,7 @@ If `record_spend()` continues to use TEXT encoding while other parts of the syst
 ---
 
 **Draft Date:** 2026-04-15
-**Version:** v10
+**Version:** v11
 **Amends:** RFC-0903 Final v29
 **Required By:** RFC-0909 (Deterministic Quota Accounting)
 **Related RFCs:** RFC-0201 (Binary BLOB Type)

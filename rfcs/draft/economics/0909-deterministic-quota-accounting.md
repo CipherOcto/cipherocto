@@ -2,7 +2,7 @@
 
 ## Status
 
-Draft (v26 — aligned with RFC-0903 Final v29 + RFC-0903-B1 amendment v10, RFC-0126, RFC-0201)
+Draft (v27 — aligned with RFC-0903 Final v29 + RFC-0903-B1 amendment v11, RFC-0126, RFC-0201)
 
 ## Authors
 
@@ -441,7 +441,7 @@ All usage events are written to a **ledger table**.
 
 ```sql
 -- Spend ledger - THE authoritative economic record
--- Schema per RFC-0903 Final v29 + RFC-0903-B1 amendment (BYTEA storage)
+-- Schema per RFC-0903 Final v29 + RFC-0903-B1 amendment (BLOB storage)
 -- Token counts MUST originate from provider when available (see Canonical Token Accounting)
 CREATE TABLE spend_ledger (
     event_id BLOB(32) NOT NULL,              -- Raw SHA256 binary (32 bytes) — RFC-0903-B1
@@ -492,6 +492,10 @@ Quota state must be reproducible via replay.
 /// Therefore in-memory replay uses event_id for canonical ordering.
 /// For database-level replay (SQL), use: ORDER BY created_at ASC, event_id ASC
 /// (created_at is the authoritative insertion order; event_id is the tiebreaker).
+///
+/// NOTE: This function returns per-key spend aggregates suitable for quota
+/// enforcement and budget checks. It is NOT suitable for Merkle proof
+/// generation — see replay_events_for_proof() instead.
 pub fn replay_events(events: &[SpendEvent]) -> std::collections::BTreeMap<String, u64> {
     use std::collections::BTreeMap;
 
@@ -514,7 +518,33 @@ pub fn replay_events(events: &[SpendEvent]) -> std::collections::BTreeMap<String
 
     key_spend
 }
-```
+
+/// Reconstruct per-key event list from ledger entries (for Merkle proof generation).
+///
+/// Returns events sorted by event_id, grouped by key_id. Each event retains its
+/// event_id (hex String) and cost_amount — the data needed to reconstruct leaf
+/// nodes for Merkle proof generation.
+///
+/// Use this for Merkle tree construction or any verification that requires
+/// per-event detail, not just aggregates. For budget enforcement, use
+/// replay_events() instead.
+pub fn replay_events_for_proof(
+    events: &[SpendEvent],
+) -> std::collections::BTreeMap<String, Vec<(String, u64)>> {
+    use std::collections::BTreeMap;
+
+    let mut result: BTreeMap<String, Vec<(String, u64)>> = BTreeMap::new();
+
+    let mut sorted = events.to_vec();
+    sorted.sort_by(|a, b| a.event_id.cmp(&b.event_id));
+
+    for event in sorted {
+        let key = event.key_id.to_string();
+        result.entry(key).or_insert_with(Vec::new).push((event.event_id.clone(), event.cost_amount));
+    }
+
+    result
+}
 
 Verification nodes can reconstruct:
 
@@ -1243,6 +1273,13 @@ pub fn get_canonical_tokenizer(model: &str) -> &'static str {
 /// Production code MUST use the RFC-0910 tokenizer registry which maps
 /// exact model names to tokenizer versions. The prefix-match above
 /// is NOT authoritative — RFC-0910 defines the real mapping.
+///
+/// ⚠️ CRITICAL: For cross-router determinism, this function's output MUST be
+/// bit-for-bit identical to RFC-0903 Final's get_canonical_tokenizer().
+/// If the two implementations differ (different tokenizer names, different
+/// dispatch logic), the same request_id will produce different token_source
+/// values on different routers, breaking event_id determinism. Any change to
+/// this function MUST be mirrored in RFC-0903 Final simultaneously.
 ```
 
 The `&'static str` return type eliminates heap allocation on every call.
@@ -1286,6 +1323,7 @@ $0.03/1K tokens → DQA(30_000, scale=6)
 
 | Version | Date       | Changes |
 | ------- | ---------- | ------- |
+| v27     | 2026-04-15 | Round 16 fixes: add replay_events_for_proof() for Merkle proof path, fix stale "(BYTEA storage)" header comment, add cross-RFC get_canonical_tokenizer determinism warning, align with RFC-0903-B1 v11 |
 | v26     | 2026-04-15 | Round 15 fixes: remove non-substantive file-existence approval criterion, align with RFC-0903-B1 v10 |
 | v25     | 2026-04-15 | Round 14 fixes: update request_id entry in RFC-0903-B1 table to note SHA256 encoding, align with RFC-0903-B1 v9 |
 | v24     | 2026-04-15 | Round 13 fixes: fix Merkle tree to build navigable structure (children now populated), mark idx_spend_ledger_key_time as pre-existing legacy index, add RFC-0201 to Related RFCs footer, align with RFC-0903-B1 v8 |
@@ -1309,6 +1347,6 @@ $0.03/1K tokens → DQA(30_000, scale=6)
 ---
 
 **Draft Date:** 2026-04-15
-**Version:** v26
+**Version:** v27
 **Related Use Case:** Enhanced Quota Router Gateway
 **Related RFCs:** RFC-0903 (Virtual API Key System), RFC-0903-B1 (Schema Amendments), RFC-0126 (Deterministic Serialization), RFC-0201 (Binary BLOB Type)

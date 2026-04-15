@@ -2,7 +2,7 @@
 
 ## Status
 
-Draft (v1 — Amendment to RFC-0903 Final v29 + RFC-0903-B1 amendment v15)
+Draft (v3 — Amendment to RFC-0903 Final v29 + RFC-0903-B1 amendment v17)
 
 ## Authors
 
@@ -211,11 +211,13 @@ CREATE INDEX idx_spend_ledger_tokenizer ON spend_ledger(tokenizer_id);   -- RFC-
 
 | Field/Index | RFC-0903 Final | RFC-0903-C1 | Delta |
 |------------|----------------|-------------|-------|
-| `teams.team_id` | `TEXT` (UUID hex, 36 chars) | `BLOB(16)` (raw UUID bytes) | −20 bytes/row |
-| `api_keys.key_id` | `TEXT` (UUID hex, 36 chars) | `BLOB(16)` (raw UUID bytes) | −20 bytes/row |
-| `api_keys.team_id` | `TEXT` (UUID nullable) | `BLOB(16)` (raw UUID bytes) | −20 bytes/row (nullable) |
+| `teams.team_id` | `TEXT` (UUID hex with hyphens, 36 chars) | `BLOB(16)` (raw UUID bytes) | −20 bytes/row (UUID hex 36 chars → raw 16 bytes) |
+| `api_keys.key_id` | `TEXT` (UUID hex with hyphens, 36 chars) | `BLOB(16)` (raw UUID bytes) | −20 bytes/row |
+| `api_keys.team_id` | `TEXT` (UUID nullable, 36 chars) | `BLOB(16)` (raw UUID bytes) | −20 bytes/row (nullable) |
 | `idx_teams_team_id` | *(on TEXT)* | *(on BLOB(16))* | Updated |
 | `idx_api_keys_team_id` | *(on TEXT)* | *(on BLOB(16))* | Updated |
+
+**Note:** "−20 bytes" assumes RFC-4122 hyphenated UUID format (36 chars). If the UUID were stored without hyphens (32 chars), savings would be −16 bytes. The 20-byte figure uses the hyphenated form as the reference case per RFC-0903 Final.
 
 **FK consistency after RFC-0903-C1:**
 
@@ -250,14 +252,18 @@ let key_id = uuid::Uuid::from_bytes(bytes);
 let team_id_blob: Vec<u8> = team_id.as_bytes().to_vec();
 params![stoolap::core::Value::blob(team_id_blob)]
 
-// Insert (nullable): Option<Uuid> → Option<Vec<u8>>
+// Insert (nullable, for api_keys.team_id): Option<Uuid> → Option<Vec<u8>>
+// api_keys.team_id is nullable; teams.team_id is NOT NULL.
+// Always use the nullable form when inserting into nullable columns.
 let team_id_blob: Option<Vec<u8>> = team_id.map(|t| t.as_bytes().to_vec());
 params![team_id_blob.map(stoolap::core::Value::blob)]
 
-// Lookup: BLOB(16) → UUID
+// Lookup: BLOB(16) → UUID (nullable path)
 let bytes: [u8; 16] = row.get("team_id")?;
 let team_id = uuid::Uuid::from_bytes(bytes);
 ```
+
+**Note on nullable vs non-nullable `team_id`:**
 
 ## Relationship to RFC-0903-B1
 
@@ -273,19 +279,47 @@ After both amendments:
 | Table | Bytes saved per row |
 |-------|---------------------|
 | `spend_ledger` | ~52 bytes minimum (event_id 32 + key_id 20) + up to 32 for request_id + 20 for team_id |
-| `api_keys` | 20 bytes (key_id 20) + up to 20 for team_id |
+| `api_keys` | 20 bytes (key_id 20) + up to 20 for team_id (nullable) |
 | `teams` | 20 bytes (team_id 20) |
+
+> **Note:** All "20 bytes" figures assume RFC-4122 hyphenated UUID format (36 chars text → 16 bytes). If stored without hyphens (32 chars), savings would be 16 bytes.
+
+## Dependency Ordering
+
+RFC-0903-B1 and RFC-0903-C1 are co-draft amendments with a dependency chain:
+
+```
+RFC-0903 Final (Accepted, base schema)
+    ↓
+RFC-0903-B1 (Draft) — amends spend_ledger to BLOB types
+    ↓
+RFC-0903-C1 (Draft) — amends api_keys/teams to BLOB types (depends on B1's FK definitions)
+
+RFC-0909 (Draft) — depends on BOTH B1 and C1
+```
+
+**Acceptance ordering:** RFC-0903-B1 must be accepted before RFC-0903-C1. RFC-0909 requires both B1 and C1 to be accepted before it can be accepted. This ordering is enforced by the `Required By` metadata in each RFC. A concurrent acceptance of B1 and C1 is acceptable as long as B1 is accepted first (C1's amendment extends B1's definitions).
+
+## Deployment Scope
+
+**This amendment applies to greenfield deployments only.** The schema changes described in this amendment (amending `api_keys.key_id`, `api_keys.team_id`, and `teams.team_id` to `BLOB(16)`) assume a fresh database with no pre-existing data.
+
+**For existing deployments migrating from RFC-0903 Final TEXT schema:** A separate migration procedure is required. The `api_keys` and `teams` tables are hot tables (high-frequency reads and writes). SQLite does not support `ALTER COLUMN TYPE` — shadow column migration is the only path. PostgreSQL and MySQL would require `ALTER COLUMN` which locks the table for the duration of data conversion.
+
+The migration procedure for existing deployments is out of scope for this amendment and must be specified in a future RFC-0903-C2 amendment. The acceptance of RFC-0903-C1 does not imply that a migration path exists — deployments already running RFC-0903 Final must wait for RFC-0903-C2 or perform the migration independently.
 
 ## Changelog
 
 | Version | Date       | Changes |
 |---------|------------|---------|
+| v3      | 2026-04-15 | Round 25 fixes (continued): add Deployment Scope section explicitly limiting to greenfield; migration for existing deployments deferred to future RFC-0903-C2 |
+| v2      | 2026-04-15 | Round 25 fixes: clarify byte savings (hyphenated UUID 36→16, 20 bytes; without hyphens 32→16, 16 bytes); add nullable team_id code example clarification; add dependency ordering section; update Required By note |
 | v1      | 2026-04-15 | Initial: amend teams.team_id, api_keys.key_id, api_keys.team_id to BLOB(16); fix FK type mismatch caused by RFC-0903-B1 leaving api_keys/teams unchanged |
 
 ---
 
 **Draft Date:** 2026-04-15
-**Version:** v1
+**Version:** v3
 **Amends:** RFC-0903 Final v29 + RFC-0903-B1
 **Required By:** RFC-0909 (Deterministic Quota Accounting)
 **Related RFCs:** RFC-0201 (Binary BLOB Type), RFC-0903-B1 (Schema Amendments)

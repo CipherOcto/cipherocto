@@ -2,7 +2,7 @@
 
 ## Status
 
-Draft (v2) - Updated scope to match implementation
+Draft (v3) — Updated schema references and scope clarification
 
 ## Authors
 
@@ -17,6 +17,8 @@ Define the architecture for eliminating Redis dependency from the quota router b
 **Requires:**
 
 - RFC-0903: Virtual API Key System (Final)
+- RFC-0903-B1: Schema Amendments to RFC-0903 Final (for BLOB types on key_id, event_id, request_id)
+- RFC-0903-C1: Extended Schema Amendments to RFC-0903 Final (for BLOB types on team_id, api_keys.key_id, api_keys.team_id)
 - RFC-0912: Stoolap FOR UPDATE Row Locking
 - RFC-0913: Stoolap Pub/Sub for Cache Invalidation
 
@@ -43,7 +45,7 @@ Goal: Single persistence layer (Stoolap) for all quota router data.
 ### In Scope
 
 - Key storage and validation ✅ (RFC-0903)
-- Budget ledger (key_spend table) ✅
+- Budget ledger (key_spend table) — DEPRECATED ✅ (replaced by spend_ledger; key_spend retained for migration compatibility only, not for budget enforcement)
 - Rate limiting state (in-memory KeyRateLimiter) ✅
 - Distributed cache invalidation via WAL pub/sub ✅ (RFC-0913)
 - Row locking via FOR UPDATE ✅ (RFC-0912)
@@ -59,6 +61,7 @@ Goal: Single persistence layer (Stoolap) for all quota router data.
 ## Architecture
 
 ```
+Target Architecture (not all components implemented — see Scope)
 ┌─────────────────────────────────────────────────────────────┐
 │                   Quota Router                              │
 │  ┌─────────────┐  ┌─────────────┐  ┌─────────────┐        │
@@ -74,8 +77,18 @@ Goal: Single persistence layer (Stoolap) for all quota router data.
 │  │  │         │ │ ledger  │ │ table   │ │ limit   │    │   │
 │  │  └─────────┘ └─────────┘ └─────────┘ └─────────┘    │   │
 │  └─────────────────────────────────────────────────────┘   │
+│       ✅ IMPL      ✅ IMPL      ❌ OUT     ❌ OUT          │
 └─────────────────────────────────────────────────────────────┘
+
+Legend: ✅ IMPL = implemented; ❌ OUT = deferred to future phase (see Out of Scope)
 ```
+
+**Note on diagram:** The `cache table` and `rate_limit table` components are
+**deferred to a future phase** (see Out of Scope). The diagram shows the
+target architecture as a goal; the currently implemented components are
+`api_keys` and `spend_ledger` only. Do not use this diagram as an
+implementation guide — use the schema blocks in RFC-0903-B1 and the
+in-scope/out-of-scope sections as the authoritative specification.
 
 ### Data Flow
 
@@ -162,17 +175,23 @@ CREATE TABLE teams (
 ## Constraints
 
 - Must not break RFC-0903 API contracts
-- Must maintain <1ms P50 key lookup latency
+- Must maintain <1ms P50 key lookup latency (cache hit path; cache miss requires DB lookup)
 - Must preserve MVCC consistency guarantees
+- Cache invalidation via WAL pub/sub must propagate within **<100ms** P99 under normal load
+  (P50 is typically <5ms; the 100ms P99 bound covers high-throughput key mutation bursts)
+  — stale cache entries during this window may allow revoked keys to be used;
+  the revocation window is bounded by this staleness limit
 
 ## Approval Criteria
 
 - [x] RFC-0903 (Virtual API Key System) - Final
+- [x] RFC-0903-B1 (Schema Amendments) - Draft, required for BLOB(16) key_id, event_id, request_id
+- [x] RFC-0903-C1 (Extended Schema Amendments) - Draft, required for BLOB(16) team_id, api_keys.key_id, api_keys.team_id
 - [x] RFC-0912 (FOR UPDATE) - Accepted, 3/3 missions complete
 - [x] RFC-0913 (Pub/Sub) - Accepted, 4/4 missions complete
 - [x] Key storage and validation working
-- [x] Budget ledger (key_spend) implemented
-- [x] Rate limiting (in-memory) implemented
+- [x] Budget ledger (spend_ledger, ledger-based) implemented — key_spend DEPRECATED and NOT used for budget enforcement
+- [x] Rate limiting (in-memory KeyRateLimiter) implemented — state is lost on restart; acceptable for single-node current scale; distributed rate limiting requires future rate_limit state table
 - [x] Key management HTTP routes (Mission 0903-f)
 - [ ] L1 cache table (future phase - optional)
 - [ ] Rate limit state table (future phase - optional)
@@ -195,5 +214,7 @@ Future enhancements (optional):
 ## Related RFCs
 
 - RFC-0903: Virtual API Key System (Final)
-- RFC-0912: Stoolap FOR UPDATE Row Locking
-- RFC-0913: Stoolap Pub/Sub for Cache Invalidation
+- RFC-0903-B1: Schema Amendments to RFC-0903 Final (storage types)
+- RFC-0903-C1: Extended Schema Amendments to RFC-0903 Final (storage types)
+- RFC-0912: Stoolap FOR UPDATE Row Locking (Final)
+- RFC-0913: Stoolap Pub/Sub for Cache Invalidation (Accepted)

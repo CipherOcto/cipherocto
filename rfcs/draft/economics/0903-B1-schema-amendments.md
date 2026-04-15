@@ -2,7 +2,7 @@
 
 ## Status
 
-Draft (v15 — Amendment to RFC-0903 Final v29)
+Draft (v17 — Amendment to RFC-0903 Final v29)
 
 ## Authors
 
@@ -21,6 +21,7 @@ This is a **formal amendment** to an Accepted/Final RFC. It does not supersede R
 
 **Required By:**
 - RFC-0909: Deterministic Quota Accounting (depends on these schema changes)
+- RFC-0903-C1: Extended Schema Amendments (uses these FK definitions as base)
 
 **Informative:**
 - RFC-0201: Binary BLOB Type for Deterministic Hash Storage (Accepted) — defines BLOB as first-class type
@@ -95,6 +96,25 @@ CREATE TABLE tokenizers (
     PRIMARY KEY (tokenizer_id)
 );
 
+**Population mechanism:** `tokenizer_id` is derived from the version string via BLAKE3 at insert time — no pre-population of the `tokenizers` table is required. When a `spend_ledger` INSERT arrives with `tokenizer_id` set (i.e., `token_source = CanonicalTokenizer`), the application derives `tokenizer_id = BLAKE3(version_string)` and inserts it. If the corresponding row does not yet exist in `tokenizers`, the application inserts it on-demand:
+
+```rust
+// On-demand tokenizer population (application-level, not FK-enforced at INSERT)
+fn ensure_tokenizer(db: &Database, version: &str) -> [u8; 16] {
+    let tokenizer_id = tokenizer_version_to_id(version); // BLAKE3 of version
+    // Insert if not exists (upsert pattern; idempotent)
+    db.execute(
+        "INSERT OR IGNORE INTO tokenizers (tokenizer_id, version) VALUES (?, ?)",
+        [tokenizer_id, version],
+    )?;
+    tokenizer_id
+}
+```
+
+This is an application-level upsert, not a FK-triggered auto-population. The `ON DELETE SET NULL` FK behavior means that if a `tokenizers` row is deleted, existing `spend_ledger` rows with that `tokenizer_id` will have NULL values — this is the intended behavior (orphan tokenizer references become unresolvable without deleting the ledger entries).
+
+> **Note:** RFC-0910 (Pricing Table Registry) is the authoritative source for tokenizer version assignments and registry management. This RFC defines the storage schema (BLOB(16) FK and on-demand population pattern); RFC-0910 defines the version assignment and lifecycle management. This RFC does not depend on RFC-0910 for the storage mechanism — the FK relationship is valid without RFC-0910 being implemented.
+
 CREATE TABLE spend_ledger (
     event_id BLOB(32) NOT NULL,              -- Raw SHA256 binary (32 bytes) — RFC-0201
     request_id BLOB(32) NOT NULL,            -- Raw binary (32 bytes, SHA256 of gateway text) — RFC-0201
@@ -126,6 +146,14 @@ CREATE INDEX idx_spend_ledger_team_id ON spend_ledger(team_id);
 CREATE INDEX idx_spend_ledger_timestamp ON spend_ledger(timestamp);
 CREATE INDEX idx_spend_ledger_key_time ON spend_ledger(key_id, timestamp);  -- pre-existing legacy (not used in deterministic replay path)
 CREATE INDEX idx_spend_ledger_event_id ON spend_ledger(event_id);          -- RFC-0903-B1 ext
+-- NOTE: event_id is functionally unique (SHA256 of request content), but no UNIQUE
+-- constraint is added due to stoolap BLOB compatibility (BLOB columns cannot be PRIMARY KEY
+-- in stoolap; a UNIQUE index is equivalent to PRIMARY KEY in most DBs and carries the same
+-- restriction). The application layer MUST enforce event_id uniqueness at insert time —
+-- duplicate event_id values indicate either a hash collision or a bug in compute_event_id.
+-- If two rows with identical event_id are inserted, deterministic replay and Merkle tree
+-- construction are silently corrupted. The UNIQUE(key_id, request_id) constraint prevents
+-- duplicate request recording for a given key; event_id uniqueness is a separate concern.
 CREATE INDEX idx_spend_ledger_key_created ON spend_ledger(key_id, created_at); -- RFC-0903-B1 ext
 CREATE INDEX idx_spend_ledger_pricing_hash ON spend_ledger(pricing_hash); -- RFC-0903-B1 ext
 CREATE INDEX idx_spend_ledger_tokenizer ON spend_ledger(tokenizer_id);   -- RFC-0903-B1 ext
@@ -187,6 +215,8 @@ params![stoolap::core::Value::blob(hex::decode(&event_id).unwrap())]  // BLOB(32
 > **Design note:** SHA256 is always used regardless of input length. A previous 32-byte pass-through optimization (copying raw bytes for exactly-32-byte inputs) was removed to eliminate the encoding discontinuity and edge cases it created. All gateway request_id strings — regardless of length — are SHA256-hashed to 32 bytes.
 
 > **⚠️ Hex-formatted input is not supported.** If the gateway sends a hex string as input, it is SHA256-hashed as raw ASCII bytes — NOT hex-decoded first. This produces a **different** 32-byte value than hex-decoding first. Gateways MUST send raw binary/text, not hex. There is no hex-decoding path for request_id in this RFC.
+
+> **Audit trail:** The original gateway `request_id` text is not recoverable from the stored BLOB(32) (SHA256 is one-way). For forensic duplicate-suppression auditing, the gateway's raw `request_id` value is preserved in the `provider_usage_json` field (or a dedicated audit column if the implementation adds one). Applications MUST NOT rely on decoding the stored BLOB back to the original gateway string.
 
 **Implementation:**
 
@@ -268,6 +298,15 @@ The UPDATE uses parameterized queries with `?` placeholders (JDBC/SQLite style; 
 **Migration uses shadow columns to avoid ALTER COLUMN TYPE locking and SQLite incompatibility.**
 RFC-0903 Final defines `event_id TEXT PRIMARY KEY`, which is a stable unique row identifier for WHERE clauses throughout migration — no `rowid` dependency.
 
+**CRITICAL: Write quiesce required during Phase 2 population.**
+Phase 2 (populating shadow columns) requires a dual-write or write-quiesce strategy to prevent new BLOB-encoded rows from being inserted while migration is in progress. Without this, rows inserted during the migration window using the new BLOB path will coexist with partially-migrated TEXT rows after the column swap, silently breaking deterministic replay. Options:
+
+1. **Dual-write:** During migration, the application writes to both TEXT columns (old path) and BLOB shadow columns (new path) simultaneously. On completion, the column swap is instantaneous.
+2. **Write-quiesce:** Quiesce all writes to `spend_ledger` (block new INSERTs at the application layer) during Phase 2 population, then perform the column swap, then unblock writes. Suitable for maintenance windows with zero new writes.
+3. **Cutover-only:** If the database is initially empty (greenfield deployment per RFC-0914), no migration is needed — the BLOB schema is created directly and no dual-write or quiesce is required.
+
+If neither dual-write nor write-quiesce is feasible, the migration must be deferred until a maintenance window allows it. A partial migration that leaves concurrent writes active will produce silent data corruption.
+
 ```
 -- Phase 1: Add BLOB shadow columns (no data modification)
 ALTER TABLE spend_ledger ADD COLUMN event_id_new BLOB(32);
@@ -330,10 +369,24 @@ RFC-0909 (Deterministic Quota Accounting) adopts this amended schema. All `Spend
 
 If `record_spend()` continues to use TEXT encoding while other parts of the system use BLOB encoding, the ledger will contain mixed-encoding records, breaking deterministic replay and Merkle tree construction. The entire ledger must use one encoding consistently. RFC-0903 Final must be amended (or this RFC-0903-B1 amendment explicitly scopes the required changes to `record_spend`) before deployment.
 
+## Constraints
+
+### Idempotency Scope (Known Limitation)
+
+The `UNIQUE(key_id, request_id)` constraint scopes `request_id` to a single key. A single key issuing requests to multiple providers with the same gateway-assigned `request_id` is treated as a duplicate at the gateway layer — not a schema issue.
+
+**Scenario:** A client key is configured to route to Provider A (primary) and Provider B (fallback). The client sends `request_id: "req-abc123"` to Provider A, then sends a second request (different logical operation, different provider) that also arrives with `request_id: "req-abc123"`. The second request is silently deduplicated.
+
+**Assessment:** This is correct behavior per RFC-0903 Final's idempotency design. Both requests from the same client with the same `request_id` are treated as the same logical request by the client's own labeling. If multi-provider key scoping is required, a `(key_id, provider, request_id)` unique constraint would be needed — this is a future RFC-0903 extension, not this amendment.
+
+If multi-provider key scoping becomes required, a future RFC-0903 amendment must change the constraint scope before this can be adopted as a budget enforcement guarantee.
+
 ## Changelog
 
 | Version | Date       | Changes |
 |---------|------------|---------|
+| v17     | 2026-04-15 | Round 25 fixes (continued): move idempotency scope note to explicit Constraints section |
+| v16     | 2026-04-15 | Round 25 fixes: add audit trail note for request_id (provider_usage_json); add write-quiesce requirement to migration; add tokenizer on-demand population mechanism; add uniqueness scope note for request_id; add event_id uniqueness enforcement note (application-layer); add RFC-0903-C1 to Required By |
 | v15     | 2026-04-15 | Round 22 fixes: add tokenizers table and tokenizer_id FK (normalize tokenizer_version from TEXT to BLOB(16)); add idx_spend_ledger_tokenizer index; update Change Summary and storage savings |
 | v14     | 2026-04-15 | Round 20 fixes: add missing idx_spend_ledger_key_time to both schema examples and Phase 3 SQLite index recreation; update Status v13→v14 |
 | v12     | 2026-04-15 | Round 17 fixes: rewrite migration steps 7-10 as parameterized queries (remove SQL UDF syntax; all migrate_* calls are Rust, not SQL); add row identifier (rowid) to migration step 1 for per-row parameterized UPDATEs |
@@ -352,7 +405,7 @@ If `record_spend()` continues to use TEXT encoding while other parts of the syst
 ---
 
 **Draft Date:** 2026-04-15
-**Version:** v15
+**Version:** v17
 **Amends:** RFC-0903 Final v29
-**Required By:** RFC-0909 (Deterministic Quota Accounting)
+**Required By:** RFC-0909 (Deterministic Quota Accounting), RFC-0903-C1 (Extended Schema Amendments)
 **Related RFCs:** RFC-0201 (Binary BLOB Type)

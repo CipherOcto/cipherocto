@@ -2,7 +2,7 @@
 
 ## Status
 
-Draft (v27 — aligned with RFC-0903 Final v29 + RFC-0903-B1 amendment v11, RFC-0126, RFC-0201)
+Draft (v28 — aligned with RFC-0903 Final v29 + RFC-0903-B1 amendment v12, RFC-0126, RFC-0201)
 
 ## Authors
 
@@ -187,7 +187,7 @@ pub struct SpendEvent {
     pub event_id: String,
     /// Request identifier for idempotency (UNIQUE constraint)
     /// Stored as BLOB(32) per RFC-0903-B1; gateway provides raw text, SHA256-encoded at insert
-    /// via encode_request_id() — NOT hex-encoded. See RFC-0903-B1 §request_id encoding.
+    /// via encode_request_id() (defined in RFC-0903-B1 §request_id) — NOT hex-encoded. See RFC-0903-B1 §request_id encoding.
     pub request_id: String,
     /// API key that made the request
     /// Stored as BLOB(16) per RFC-0903-B1; uuid::Uuid↔[u8;16] conversion at storage boundary.
@@ -395,7 +395,7 @@ Every `SpendEvent` carries two distinct identifiers with different encodings:
 | Field | What it identifies | Encoding in struct | Storage (BLOB) | Encoding path |
 |-------|--------------------|--------------------|-----------------|---------------|
 | `event_id` | The complete spend event (all fields) | `String` (hex) | `BLOB(32)` | `compute_event_id()` → hex → `hex_to_blob_32()` |
-| `request_id` | The provider request (idempotency key) | `String` (raw text) | `BLOB(32)` | `encode_request_id()` (SHA256 of raw text) |
+| `request_id` | The provider request (idempotency key) | `String` (raw text) | `BLOB(32)` | `encode_request_id()` (SHA256 of raw text) — defined in RFC-0903-B1 §request_id |
 
 **event_id** is derived from ALL event fields including `request_id`, `key_id`, `provider`, `model`, token counts, `pricing_hash`, and `token_source`. It is the SHA256 hash of the complete event content — two events with identical `event_id` are economically identical.
 
@@ -453,7 +453,7 @@ CREATE TABLE spend_ledger (
     input_tokens INTEGER NOT NULL,            -- Prompt tokens
     output_tokens INTEGER NOT NULL,           -- Completion tokens
     cost_amount BIGINT NOT NULL,             -- Cost in smallest unit (u64)
-    pricing_hash BYTEA(32) NOT NULL,       -- Raw SHA256 binary (32 bytes) — matches RFC-0903-B1
+    pricing_hash BYTEA(32) NOT NULL,       -- Raw SHA256 binary (32 bytes) — unchanged from RFC-0903 Final (pre-existing BYTEA type, not affected by RFC-0903-B1)
     timestamp INTEGER NOT NULL,               -- Unix epoch (authoritative event time)
     token_source TEXT NOT NULL CHECK (token_source IN ('provider_usage', 'canonical_tokenizer')),
     tokenizer_version TEXT,
@@ -513,6 +513,10 @@ pub fn replay_events(events: &[SpendEvent]) -> std::collections::BTreeMap<String
         // BTreeMap<String, u64> requires String keys
         let key = event.key_id.to_string();
         let entry = key_spend.entry(key).or_insert(0);
+        // saturating_add: in-memory replay uses saturation for best-effort audit.
+        // Live quota enforcement (record_spend in RFC-0903 Final) uses checked arithmetic
+        // and returns Err on overflow. Overflow here requires >1.8×10^19 micro-units total
+        // spend — effectively impossible in practice.
         *entry = entry.saturating_add(event.cost_amount);
     }
 
@@ -813,7 +817,7 @@ pub async fn process_response(
     // 1. Determine token source (provider usage vs canonical tokenizer)
     let (token_source, tokenizer_version) = match response.usage.is_some() {
         true => (TokenSource::ProviderUsage, None),
-        false => (TokenSource::CanonicalTokenizer, Some(get_canonical_tokenizer(model)?)),
+        false => (TokenSource::CanonicalTokenizer, Some(get_canonical_tokenizer(model).to_string())),
     };
 
     // 2. Validate request_id (for idempotency integrity)
@@ -927,6 +931,11 @@ pub struct MerkleNode {
 /// uses the application struct's hex String field — routers can compute identical roots
 /// from their logs without needing database access. Hashing the raw BLOB would produce
 /// different results than what routers can independently derive.
+///
+/// DB-based routers (reading event_id from storage rather than in-memory structs) MUST
+/// convert BLOB(32) → hex string via `blob_32_to_hex()` before computing Merkle leaves.
+/// Hashing the raw 32-byte BLOB directly produces a different leaf hash than hashing the
+/// 64-char hex string — roots built from different representations will not match.
 pub fn build_merkle_tree(events: &[SpendEvent]) -> Option<MerkleNode> {
     let mut sorted = events.to_vec();
     sorted.sort_by(|a, b| a.event_id.cmp(&b.event_id));
@@ -1005,8 +1014,10 @@ request result must not be returned
 
 Accounting must be treated as part of the **transaction boundary**.
 
+**Pseudocode — calls `process_response` which is also pseudocode. DO NOT COPY AS-IS.**
+
 ```rust
-/// Process request with accounting as part of transaction
+/// Process request with accounting as part of transaction (pseudocode)
 pub async fn process_request_with_accounting(
     db: &Database,
     request: &Request,
@@ -1323,6 +1334,7 @@ $0.03/1K tokens → DQA(30_000, scale=6)
 
 | Version | Date       | Changes |
 | ------- | ---------- | ------- |
+| v28     | 2026-04-15 | Round 17 fixes: fix get_canonical_tokenizer(model)? compile error (remove ?, add .to_string()); fix pricing_hash schema comment (unchanged from RFC-0903 Final, not changed by RFC-0903-B1); add saturating_add rationale to replay_events; add DB-based router BLOB→hex Merkle note; add RFC-0903-B1 cross-refs for encode_request_id; add pseudocode caveat to process_request_with_accounting; align with RFC-0903-B1 v12 |
 | v27     | 2026-04-15 | Round 16 fixes: add replay_events_for_proof() for Merkle proof path, fix stale "(BYTEA storage)" header comment, add cross-RFC get_canonical_tokenizer determinism warning, align with RFC-0903-B1 v11 |
 | v26     | 2026-04-15 | Round 15 fixes: remove non-substantive file-existence approval criterion, align with RFC-0903-B1 v10 |
 | v25     | 2026-04-15 | Round 14 fixes: update request_id entry in RFC-0903-B1 table to note SHA256 encoding, align with RFC-0903-B1 v9 |
@@ -1347,6 +1359,6 @@ $0.03/1K tokens → DQA(30_000, scale=6)
 ---
 
 **Draft Date:** 2026-04-15
-**Version:** v27
+**Version:** v28
 **Related Use Case:** Enhanced Quota Router Gateway
 **Related RFCs:** RFC-0903 (Virtual API Key System), RFC-0903-B1 (Schema Amendments), RFC-0126 (Deterministic Serialization), RFC-0201 (Binary BLOB Type)

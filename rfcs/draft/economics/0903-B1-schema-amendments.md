@@ -2,7 +2,7 @@
 
 ## Status
 
-Draft (v11 — Amendment to RFC-0903 Final v29)
+Draft (v12 — Amendment to RFC-0903 Final v29)
 
 ## Authors
 
@@ -254,17 +254,23 @@ fn migrate_key_id(hex_str: &str) -> [u8; 16] {
 
 **Application-layer migration procedure:**
 
+This is application-level pseudocode — the migrate_* functions run in Rust, not as SQL UDFs.
+The UPDATE uses parameterized queries with `?` placeholders (JDBC/SQLite style; PostgreSQL uses `$1`, `$2`, ...).
+
 ```
-1. SELECT event_id, request_id, key_id FROM spend_ledger;  -- read TEXT values
-2. For each row, compute migrate_event_id(event_id), migrate_request_id(request_id), migrate_key_id(key_id)
+1. SELECT rowid, event_id, request_id, key_id FROM spend_ledger;  -- read TEXT values + row id
+2. For each row, compute in Rust:
+      new_event_id    = migrate_event_id(event_id)    -- [u8; 32]
+      new_request_id  = migrate_request_id(request_id) -- [u8; 32]
+      new_key_id      = migrate_key_id(key_id)         -- [u8; 16]
 3. BEGIN;
 4.   ALTER TABLE spend_ledger ALTER COLUMN event_id TYPE BLOB(32);
 5.   ALTER TABLE spend_ledger ALTER COLUMN request_id TYPE BLOB(32);
 6.   ALTER TABLE spend_ledger ALTER COLUMN key_id TYPE BLOB(16);
-7.   UPDATE spend_ledger SET
-8.       event_id = migrate_event_id(old_event_id_text),
-9.       request_id = migrate_request_id(old_request_id_text),
-10.      key_id = migrate_key_id(old_key_id_text);
+7.   For each (old_rowid, new_event_id, new_request_id, new_key_id) from step 2, issue:
+8.     UPDATE spend_ledger
+9.         SET event_id = ?, request_id = ?, key_id = ?   -- bind pre-computed binary values
+10.        WHERE rowid = ?;                                -- bind old_rowid from step 1
 11. COMMIT;
 ```
 
@@ -287,6 +293,7 @@ If `record_spend()` continues to use TEXT encoding while other parts of the syst
 
 | Version | Date       | Changes |
 |---------|------------|---------|
+| v12     | 2026-04-15 | Round 17 fixes: rewrite migration steps 7-10 as parameterized queries (remove SQL UDF syntax; all migrate_* calls are Rust, not SQL); add row identifier (rowid) to migration step 1 for per-row parameterized UPDATEs |
 | v11     | 2026-04-15 | Round 16 fixes: clarify key_id UUID example in Problem 2 (remove stale "+ null"), add cross-RFC determinism warning for get_canonical_tokenizer |
 | v10     | 2026-04-15 | Round 15 fixes: split multi-column ALTER TABLE into separate per-column statements (PostgreSQL/MySQL compatible), add SQLite ALTER COLUMN limitation note |
 | v9      | 2026-04-15 | Round 14 fixes: fix key_id comment (cite source RFC-0903 not circular RFC-0903-B1), align index comments with RFC-0909 style ("RFC-0903-B1 ext") |
@@ -302,7 +309,7 @@ If `record_spend()` continues to use TEXT encoding while other parts of the syst
 ---
 
 **Draft Date:** 2026-04-15
-**Version:** v11
+**Version:** v12
 **Amends:** RFC-0903 Final v29
 **Required By:** RFC-0909 (Deterministic Quota Accounting)
 **Related RFCs:** RFC-0201 (Binary BLOB Type)

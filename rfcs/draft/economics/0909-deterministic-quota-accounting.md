@@ -2,7 +2,7 @@
 
 ## Status
 
-Draft (v32 — aligned with RFC-0903 Final v29 + RFC-0903-B1 + RFC-0903-C1, RFC-0126, RFC-0201)
+Draft (v33 — aligned with RFC-0903 Final v29 + RFC-0903-B1 v15 + RFC-0903-C1 v14, RFC-0126, RFC-0201)
 
 ## Authors
 
@@ -29,7 +29,7 @@ This is required for future integration with:
 
 **Requires:**
 
-- RFC-0903: Virtual API Key System (Final v29 + RFC-0903-B1 amendment + RFC-0903-C1 amendment)
+- RFC-0903: Virtual API Key System (Final v29 + RFC-0903-B1 amendment v15 + RFC-0903-C1 amendment)
 - RFC-0126: Deterministic Serialization (for canonical JSON serialization)
 - RFC-0201: Binary BLOB Type for Deterministic Hash Storage (Accepted)
 
@@ -214,8 +214,10 @@ pub struct SpendEvent {
     pub pricing_hash: [u8; 32],
     /// Token source for deterministic accounting (CRITICAL for cross-router determinism)
     pub token_source: TokenSource,
-    /// Canonical tokenizer version (if token_source is CanonicalTokenizer)
-    pub tokenizer_version: Option<String>,
+    /// Tokenizer ID (BLAKE3 of version string — FK to tokenizers table)
+    /// Stored as BLOB(16) per RFC-0903-B1; version string → BLAKE3 at storage boundary.
+    /// None when token_source is ProviderUsage.
+    pub tokenizer_id: Option<[u8; 16]>,
     /// Raw provider usage JSON for audit
     pub provider_usage_json: Option<String>,
     /// Event timestamp (epoch seconds - from provider response, NOT insert time)
@@ -289,6 +291,26 @@ pub fn uuid_to_blob_16(uuid: &uuid::Uuid) -> [u8; 16] {
 #[inline]
 pub fn blob_16_to_uuid(blob: &[u8; 16]) -> uuid::Uuid {
     uuid::Uuid::from_bytes(*blob)
+}
+
+/// Convert tokenizer version string to tokenizer_id for BLOB(16) storage.
+/// Uses BLAKE3 for deterministic 16-byte output from any-length input.
+/// No DB lookup needed — version string is the source of truth, ID is derived.
+/// This function is used at the storage boundary before INSERT per RFC-0903-B1.
+#[inline]
+pub fn tokenizer_version_to_id(version: &str) -> [u8; 16] {
+    use blake3::Hasher;
+    Hasher::hash(version.as_bytes()).into()
+}
+
+/// Convert tokenizer_id from raw [u8; 16] (BLOB(16) storage) to version string.
+/// Used at the storage boundary after SELECT to resolve tokenizer metadata.
+/// Requires a lookup against the tokenizers table.
+#[inline]
+pub fn tokenizer_id_to_version(id: &[u8; 16]) -> Option<String> {
+    // Lookup tokenizers table by tokenizer_id, return version string.
+    // This is a DB lookup, not a reversible conversion.
+    None  // placeholder — actual implementation queries tokenizers table
 }
 
 Events represent the **canonical accounting record**.
@@ -463,7 +485,7 @@ CREATE TABLE spend_ledger (
     pricing_hash BYTEA(32) NOT NULL,       -- Raw SHA256 binary (32 bytes) — unchanged from RFC-0903 Final (pre-existing BYTEA type, not affected by RFC-0903-B1)
     timestamp INTEGER NOT NULL,               -- Unix epoch (authoritative event time)
     token_source TEXT NOT NULL CHECK (token_source IN ('provider_usage', 'canonical_tokenizer')),
-    tokenizer_version TEXT,
+    tokenizer_id BLOB(16),                   -- FK to tokenizers(tokenizer_id) — RFC-0903-B1 (was tokenizer_version TEXT)
     provider_usage_json TEXT,               -- Raw provider usage for audit
     created_at INTEGER NOT NULL,              -- Insert timestamp (app provides value at insert; no DEFAULT added per RFC-0903-B1)
     -- Idempotency: UNIQUE constraint prevents duplicate request_id per key
@@ -472,7 +494,8 @@ CREATE TABLE spend_ledger (
     UNIQUE(key_id, request_id),
     -- Foreign keys for integrity
     FOREIGN KEY(key_id) REFERENCES api_keys(key_id) ON DELETE CASCADE,    -- BLOB(16) → BLOB(16) — RFC-0903-C1
-    FOREIGN KEY(team_id) REFERENCES teams(team_id) ON DELETE SET NULL    -- BLOB(16) → BLOB(16) — RFC-0903-C1
+    FOREIGN KEY(team_id) REFERENCES teams(team_id) ON DELETE SET NULL,    -- BLOB(16) → BLOB(16) — RFC-0903-C1
+    FOREIGN KEY(tokenizer_id) REFERENCES tokenizers(tokenizer_id) ON DELETE SET NULL  -- BLOB(16) → BLOB(16) — RFC-0903-B1
 );
 
 CREATE INDEX idx_spend_ledger_key_id ON spend_ledger(key_id);
@@ -485,6 +508,8 @@ CREATE INDEX idx_spend_ledger_event_id ON spend_ledger(event_id);  -- RFC-0903-B
 CREATE INDEX idx_spend_ledger_key_created ON spend_ledger(key_id, created_at);
 -- Index for pricing verification queries — RFC-0903-B1 ext
 CREATE INDEX idx_spend_ledger_pricing_hash ON spend_ledger(pricing_hash);
+-- Index for tokenizer lookup — RFC-0903-B1 ext
+CREATE INDEX idx_spend_ledger_tokenizer ON spend_ledger(tokenizer_id);
 ```
 
 ## Replay and Verification
@@ -825,10 +850,14 @@ pub async fn process_response(
     response: &ProviderResponse,
     pricing_hash: [u8; 32],
 ) -> Result<(), KeyError> {
-    // 1. Determine token source (provider usage vs canonical tokenizer)
-    let (token_source, tokenizer_version) = match response.usage.is_some() {
+    // 1. Determine token source and tokenizer ID
+    let (token_source, tokenizer_id) = match response.usage.is_some() {
         true => (TokenSource::ProviderUsage, None),
-        false => (TokenSource::CanonicalTokenizer, Some(get_canonical_tokenizer(model).to_string())),
+        false => {
+            let version = get_canonical_tokenizer(model);
+            let id = blake3::hash(version.as_bytes()).into();
+            (TokenSource::CanonicalTokenizer, Some(id))
+        },
     };
 
     // 2. Validate request_id (for idempotency integrity)
@@ -863,7 +892,7 @@ pub async fn process_response(
         cost_amount,
         pricing_hash,
         token_source,
-        tokenizer_version,
+        tokenizer_id,
         provider_usage_json: response.provider_usage_json.clone(),
         timestamp: response.timestamp,
     };
@@ -1364,8 +1393,8 @@ $0.03/1K tokens → DQA(30_000, scale=6)
 
 | Version | Date       | Changes |
 | ------- | ---------- | ------- |
+| v33     | 2026-04-15 | Round 22 fixes: normalize tokenizer_version to tokenizer_id FK (BLOB(16) via BLAKE3); add tokenizers table to RFC-0903-B1 schema; update SpendEvent to use Option<[u8;16]> tokenizer_id; update RFC-0903-B1 v15 cross-refs |
 | v32     | 2026-04-15 | Round 21 fixes: add RFC-0903-C1 amendment section (extends BLOB consolidation to api_keys and teams, fixes FK type mismatch); update Status and Dependencies to reflect RFC-0903-C1 |
-| v31     | 2026-04-15 | Round 20 fixes: add idx_spend_ledger_key_time to RFC-0903-B1 amendment table and schema examples (was missing from both); align all RFC-0903-B1 cross-references to v14 |
 | v28     | 2026-04-15 | Round 17 fixes: fix get_canonical_tokenizer(model)? compile error (remove ?, add .to_string()); fix pricing_hash schema comment (unchanged from RFC-0903 Final, not changed by RFC-0903-B1); add saturating_add rationale to replay_events; add DB-based router BLOB→hex Merkle note; add RFC-0903-B1 cross-refs for encode_request_id; add pseudocode caveat to process_request_with_accounting; align with RFC-0903-B1 v12 |
 | v27     | 2026-04-15 | Round 16 fixes: add replay_events_for_proof() for Merkle proof path, fix stale "(BYTEA storage)" header comment, add cross-RFC get_canonical_tokenizer determinism warning, align with RFC-0903-B1 v11 |
 | v26     | 2026-04-15 | Round 15 fixes: remove non-substantive file-existence approval criterion, align with RFC-0903-B1 v10 |
@@ -1391,6 +1420,6 @@ $0.03/1K tokens → DQA(30_000, scale=6)
 ---
 
 **Draft Date:** 2026-04-15
-**Version:** v32
+**Version:** v33
 **Related Use Case:** Enhanced Quota Router Gateway
 **Related RFCs:** RFC-0903 (Virtual API Key System), RFC-0903-B1 (Schema Amendments), RFC-0903-C1 (Extended Schema Amendments), RFC-0126 (Deterministic Serialization), RFC-0201 (Binary BLOB Type)

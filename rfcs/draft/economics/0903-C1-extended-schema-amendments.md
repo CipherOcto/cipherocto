@@ -162,9 +162,17 @@ CREATE INDEX idx_api_keys_expires ON api_keys(expires_at);  -- Unchanged
 
 ### Section: spend_ledger Table (RFC-0903-B1 + RFC-0903-C1 compatibility)
 
-The `spend_ledger` schema from RFC-0903-B1 already uses `BLOB(16)` for `key_id` and `team_id`. RFC-0903-C1 ensures the foreign keys reference BLOB(16) columns consistently:
+The `spend_ledger` schema from RFC-0903-B1 includes `tokenizers` table and `tokenizer_id FK`. RFC-0903-C1 adds `BLOB(16)` for `key_id` and `team_id`:
 
 ```sql
+CREATE TABLE tokenizers (
+    tokenizer_id BLOB(16) NOT NULL,         -- Raw BLAKE3 hash of version string (16 bytes)
+    version TEXT NOT NULL,                   -- e.g., "tiktoken-cl100k_base-v1.2.3"
+    vocab_size INTEGER,
+    encoding_type TEXT,                      -- e.g., "bpe", "sentencepiece"
+    PRIMARY KEY (tokenizer_id)
+);
+
 CREATE TABLE spend_ledger (
     event_id BLOB(32) NOT NULL,              -- Raw SHA256 binary (32 bytes) — RFC-0903-B1
     request_id BLOB(32) NOT NULL,           -- Raw binary (32 bytes, SHA256 of gateway text) — RFC-0903-B1
@@ -178,12 +186,13 @@ CREATE TABLE spend_ledger (
     pricing_hash BYTEA(32) NOT NULL,          -- Unchanged
     timestamp INTEGER NOT NULL,               -- Unchanged
     token_source TEXT NOT NULL CHECK (token_source IN ('provider_usage', 'canonical_tokenizer')),  -- Unchanged
-    tokenizer_version TEXT,                  -- Unchanged
+    tokenizer_id BLOB(16),                  -- FK to tokenizers(tokenizer_id) — RFC-0903-B1
     provider_usage_json TEXT,                -- Unchanged
     created_at INTEGER NOT NULL,             -- Unchanged
     UNIQUE(key_id, request_id),
     FOREIGN KEY(key_id) REFERENCES api_keys(key_id) ON DELETE CASCADE,    -- BLOB(16) → BLOB(16) ✓
-    FOREIGN KEY(team_id) REFERENCES teams(team_id) ON DELETE SET NULL    -- BLOB(16) → BLOB(16) ✓
+    FOREIGN KEY(team_id) REFERENCES teams(team_id) ON DELETE SET NULL,    -- BLOB(16) → BLOB(16) ✓
+    FOREIGN KEY(tokenizer_id) REFERENCES tokenizers(tokenizer_id) ON DELETE SET NULL  -- BLOB(16) → BLOB(16) ✓
 );
 
 CREATE INDEX idx_spend_ledger_key_id ON spend_ledger(key_id);           -- on BLOB(16)
@@ -193,6 +202,7 @@ CREATE INDEX idx_spend_ledger_key_time ON spend_ledger(key_id, timestamp);
 CREATE INDEX idx_spend_ledger_event_id ON spend_ledger(event_id);        -- RFC-0903-B1
 CREATE INDEX idx_spend_ledger_key_created ON spend_ledger(key_id, created_at);  -- RFC-0903-B1
 CREATE INDEX idx_spend_ledger_pricing_hash ON spend_ledger(pricing_hash);         -- RFC-0903-B1
+CREATE INDEX idx_spend_ledger_tokenizer ON spend_ledger(tokenizer_id);   -- RFC-0903-B1
 ```
 
 > **Note:** RFC-0903-B1 defined `team_id TEXT` as unchanged to avoid amending `teams`. RFC-0903-C1 completes this by also amending `teams.team_id` and `api_keys.team_id`, allowing `spend_ledger.team_id` to be BLOB(16) consistently.

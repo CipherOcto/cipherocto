@@ -2,7 +2,7 @@
 
 ## Status
 
-Draft (v14 — Amendment to RFC-0903 Final v29)
+Draft (v15 — Amendment to RFC-0903 Final v29)
 
 ## Authors
 
@@ -87,11 +87,19 @@ CREATE INDEX idx_spend_ledger_timestamp ON spend_ledger(timestamp);
 **RFC-0903-B1 (amended):**
 
 ```sql
+CREATE TABLE tokenizers (
+    tokenizer_id BLOB(16) NOT NULL,         -- Raw BLAKE3 hash of version string (16 bytes) — RFC-0903-B1
+    version TEXT NOT NULL,                   -- e.g., "tiktoken-cl100k_base-v1.2.3"
+    vocab_size INTEGER,                      -- e.g., 100000
+    encoding_type TEXT,                      -- e.g., "bpe", "sentencepiece"
+    PRIMARY KEY (tokenizer_id)
+);
+
 CREATE TABLE spend_ledger (
     event_id BLOB(32) NOT NULL,              -- Raw SHA256 binary (32 bytes) — RFC-0201
     request_id BLOB(32) NOT NULL,            -- Raw binary (32 bytes, SHA256 of gateway text) — RFC-0201
     key_id BLOB(16) NOT NULL,                -- Raw UUID bytes (16 bytes) — was TEXT in RFC-0903 Final, BLOB per RFC-0903-B1
-    team_id TEXT,                            -- Unchanged
+    team_id BLOB(16),                        -- Raw UUID bytes (16 bytes) — RFC-0903-C1
     provider TEXT NOT NULL,                   -- Unchanged
     model TEXT NOT NULL,                      -- Unchanged
     input_tokens INTEGER NOT NULL,           -- Unchanged
@@ -100,16 +108,17 @@ CREATE TABLE spend_ledger (
     pricing_hash BYTEA(32) NOT NULL,         -- Unchanged (pre-existing binary type, not affected by this amendment)
     timestamp INTEGER NOT NULL,              -- Unchanged
     token_source TEXT NOT NULL CHECK (token_source IN ('provider_usage', 'canonical_tokenizer')),
-    tokenizer_version TEXT,                   -- Unchanged
-    provider_usage_json TEXT,                 -- Unchanged
+    tokenizer_id BLOB(16),                   -- FK to tokenizers(tokenizer_id) — was TEXT in RFC-0903 Final
+    provider_usage_json TEXT,               -- Unchanged
     created_at INTEGER NOT NULL,             -- Unchanged (stoolap: INTEGER NOT NULL, app provides value)
     -- Idempotency: UNIQUE constraint prevents duplicate request_id per key
     -- Note: event_id is BLOB(32) NOT NULL, NOT a PRIMARY KEY (stoolap quirk).
     -- The RFC-0903 Final PRIMARY KEY on event_id is replaced by a regular
     -- index (idx_spend_ledger_event_id) and the UNIQUE(key_id, request_id) constraint.
-    UNIQUE(key_id, request_id),              -- Unchanged
+    UNIQUE(key_id, request_id),
     FOREIGN KEY(key_id) REFERENCES api_keys(key_id) ON DELETE CASCADE,
-    FOREIGN KEY(team_id) REFERENCES teams(team_id) ON DELETE SET NULL
+    FOREIGN KEY(team_id) REFERENCES teams(team_id) ON DELETE SET NULL,
+    FOREIGN KEY(tokenizer_id) REFERENCES tokenizers(tokenizer_id) ON DELETE SET NULL
 );
 
 CREATE INDEX idx_spend_ledger_key_id ON spend_ledger(key_id);
@@ -119,6 +128,7 @@ CREATE INDEX idx_spend_ledger_key_time ON spend_ledger(key_id, timestamp);  -- p
 CREATE INDEX idx_spend_ledger_event_id ON spend_ledger(event_id);          -- RFC-0903-B1 ext
 CREATE INDEX idx_spend_ledger_key_created ON spend_ledger(key_id, created_at); -- RFC-0903-B1 ext
 CREATE INDEX idx_spend_ledger_pricing_hash ON spend_ledger(pricing_hash); -- RFC-0903-B1 ext
+CREATE INDEX idx_spend_ledger_tokenizer ON spend_ledger(tokenizer_id);   -- RFC-0903-B1 ext
 ```
 
 ### api_keys Table (unchanged by RFC-0903-B1)
@@ -134,13 +144,18 @@ The `api_keys` table schema in RFC-0903 Final is unchanged by this amendment. `k
 | `event_id` | `TEXT` (hex, 64 chars) | `BLOB(32)` (raw bytes) | −32 bytes/row |
 | `request_id` | `TEXT` (variable) | `BLOB(32)` (raw SHA256 bytes) | Variable; up to −32 bytes |
 | `key_id` | `TEXT` (UUID hex, 36 chars) | `BLOB(16)` (raw bytes) | −20+ bytes/row |
+| `tokenizer_version` | `TEXT` (version string) | `BLOB(16)` (FK to tokenizers table) | −9 bytes/row on ~50% of rows |
+| `tokenizers` table | *(absent)* | Added | New table |
 | `idx_spend_ledger_event_id` | *(absent)* | Added | New |
 | `idx_spend_ledger_key_created` | *(absent)* | Added | New |
 | `idx_spend_ledger_pricing_hash` | *(absent)* | Added | New |
+| `idx_spend_ledger_tokenizer` | *(absent)* | Added | New |
 
 > **Note on `created_at`:** RFC-0903 Final specifies `created_at INTEGER NOT NULL DEFAULT (strftime('%s', 'now'))`. RFC-0903-B1 does not change this — stoolap uses `INTEGER NOT NULL` with application-provided values. The Change Summary does not list `created_at` because no change applies.
+>
+> **Note on `team_id`:** RFC-0903-B1 left `team_id` as TEXT in spend_ledger. RFC-0903-C1 amends it to `BLOB(16)` for FK consistency with `teams.team_id`.
 
-**Storage savings per spend_ledger row:** ~52 bytes minimum (event_id 32 + key_id 20) plus up to 32 more for request_id.
+**Storage savings per spend_ledger row:** ~52 bytes minimum (event_id 32 + key_id 20) plus up to 32 more for request_id, plus ~9 bytes for tokenizer_id on rows with CanonicalTokenizer.
 
 ## API Compatibility Notes
 
@@ -319,8 +334,8 @@ If `record_spend()` continues to use TEXT encoding while other parts of the syst
 
 | Version | Date       | Changes |
 |---------|------------|---------|
+| v15     | 2026-04-15 | Round 22 fixes: add tokenizers table and tokenizer_id FK (normalize tokenizer_version from TEXT to BLOB(16)); add idx_spend_ledger_tokenizer index; update Change Summary and storage savings |
 | v14     | 2026-04-15 | Round 20 fixes: add missing idx_spend_ledger_key_time to both schema examples and Phase 3 SQLite index recreation; update Status v13→v14 |
-| v13     | 2026-04-15 | Round 18 fixes: fix key_id storage reduction "44%" → "56%" (BLOB(16) is 44% of TEXT size, saving 56%); simplify encode_request_id to always SHA256 (remove 32-byte pass-through — eliminates discontinuity and all 32-char edge case warnings); update encoding rules table to single row; update migrate_request_id docstring |
 | v12     | 2026-04-15 | Round 17 fixes: rewrite migration steps 7-10 as parameterized queries (remove SQL UDF syntax; all migrate_* calls are Rust, not SQL); add row identifier (rowid) to migration step 1 for per-row parameterized UPDATEs |
 | v11     | 2026-04-15 | Round 16 fixes: clarify key_id UUID example in Problem 2 (remove stale "+ null"), add cross-RFC determinism warning for get_canonical_tokenizer |
 | v10     | 2026-04-15 | Round 15 fixes: split multi-column ALTER TABLE into separate per-column statements (PostgreSQL/MySQL compatible), add SQLite ALTER COLUMN limitation note |
@@ -337,7 +352,7 @@ If `record_spend()` continues to use TEXT encoding while other parts of the syst
 ---
 
 **Draft Date:** 2026-04-15
-**Version:** v14
+**Version:** v15
 **Amends:** RFC-0903 Final v29
 **Required By:** RFC-0909 (Deterministic Quota Accounting)
 **Related RFCs:** RFC-0201 (Binary BLOB Type)

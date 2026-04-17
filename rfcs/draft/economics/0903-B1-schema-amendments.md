@@ -2,7 +2,7 @@
 
 ## Status
 
-Draft (v21 — Amendment to RFC-0903 Final v29)
+Draft (v22 — Amendment to RFC-0903 Final v29)
 
 ## Authors
 
@@ -148,17 +148,11 @@ CREATE INDEX idx_spend_ledger_timestamp ON spend_ledger(timestamp);
 CREATE INDEX idx_spend_ledger_key_time ON spend_ledger(key_id, timestamp);  -- pre-existing legacy (not used in deterministic replay path)
 CREATE INDEX idx_spend_ledger_event_id ON spend_ledger(event_id);          -- RFC-0903-B1 ext
 -- NOTE: event_id is functionally unique (SHA256 of request content), but no UNIQUE
--- constraint is added due to stoolap BLOB compatibility (BLOB columns cannot be PRIMARY KEY
--- in stoolap; a UNIQUE index is equivalent to PRIMARY KEY in most DBs and carries the same
--- restriction). The application layer MUST enforce event_id uniqueness at insert time —
--- duplicate event_id values indicate either a hash collision or a bug in compute_event_id.
--- If two rows with identical event_id are inserted, deterministic replay and Merkle tree
--- construction are silently corrupted. The UNIQUE(key_id, request_id) constraint prevents
+-- constraint is added on event_id. The UNIQUE(key_id, request_id) constraint prevents
 -- duplicate request recording for a given key; event_id uniqueness is a separate concern.
---
--- STOOLAP LIMITATION: If stoolap adds UNIQUE/BLOB support in a future version, a
--- UNIQUE INDEX on event_id SHOULD be added to provide schema-level enforcement. The
--- application-layer enforcement is a workaround, not a substitute for schema integrity.
+-- Application-layer enforcement is required: duplicate event_id values indicate either
+-- a hash collision or a bug in compute_event_id — either corrupts deterministic replay
+-- and Merkle tree construction silently.
 CREATE INDEX idx_spend_ledger_key_created ON spend_ledger(key_id, created_at); -- RFC-0903-B1 ext
 CREATE INDEX idx_spend_ledger_pricing_hash ON spend_ledger(pricing_hash); -- RFC-0903-B1 ext
 CREATE INDEX idx_spend_ledger_tokenizer ON spend_ledger(tokenizer_id);   -- RFC-0903-B1 ext
@@ -390,6 +384,7 @@ If multi-provider key scoping becomes required, a future RFC-0903 amendment must
 
 | Version | Date       | Changes |
 |---------|------------|-------|
+| v22     | 2026-04-17 | Round 30: remove erroneous "stoolap UNIQUE/BLOB limitation" claim — stoolap fully enforces UNIQUE on BLOB columns; only INTEGER PRIMARY KEY is restricted, not UNIQUE on BLOB |
 | v21     | 2026-04-17 | Round 29 fixes: fix R29C3 (footer v19→v20); update RFC-0909 ref to v40 |
 | v20     | 2026-04-17 | Round 28 fixes: remove erroneous "BLAKE3 truncation code" from v19 changelog (already fixed in v18) |
 | v19     | 2026-04-17 | Round 27 fixes: mark ensure_tokenizer as pseudocode (add ```ignore fence) |
@@ -414,7 +409,7 @@ If multi-provider key scoping becomes required, a future RFC-0903 amendment must
 ---
 
 **Draft Date:** 2026-04-17
-**Version:** v21
+**Version:** v22
 **Amends:** RFC-0903 Final v29
 **Required By:** RFC-0909 (Deterministic Quota Accounting), RFC-0903-C1 (Extended Schema Amendments)
 **Related RFCs:** RFC-0201 (Binary BLOB Type)

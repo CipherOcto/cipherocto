@@ -24,7 +24,7 @@ sled = "0.34"
 # UUID generation
 uuid = { version = "1.6", features = ["v4", "serde"] }
 # Cryptography
-sha2 = "0.10"
+sha2 = "0.11"
 # Async traits
 async-trait = "0.1"
 # Logging

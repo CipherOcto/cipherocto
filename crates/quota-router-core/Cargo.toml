@@ -49,7 +49,7 @@ http-body-util.workspace = true
 hmac-sha256 = "1.1"
 
 # For SHA256 (used in event_id computation)
-sha2 = "0.10"
+sha2 = "0.11"
 
 # For hex encoding of key hashes
 hex = "0.4"

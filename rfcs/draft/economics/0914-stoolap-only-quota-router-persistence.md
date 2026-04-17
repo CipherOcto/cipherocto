@@ -2,7 +2,7 @@
 
 ## Status
 
-Draft (v3) — Updated schema references and scope clarification
+Draft (v6) — Updated schema references and scope clarification
 
 ## Authors
 
@@ -128,7 +128,7 @@ CREATE TABLE api_keys (
     key_hash BYTEA(32) NOT NULL,          -- HMAC-SHA256 (unchanged)
     key_prefix TEXT NOT NULL,             -- Unchanged
     team_id BLOB(16),                     -- Raw UUID bytes (16 bytes) — per RFC-0903-C1
-    budget_limit INTEGER NOT NULL,
+    budget_limit BIGINT NOT NULL,           -- Per RFC-0903-B1/C1 (was INTEGER in RFC-0903 Final)
     rpm_limit INTEGER,
     tpm_limit INTEGER,
     created_at INTEGER NOT NULL,
@@ -138,9 +138,26 @@ CREATE TABLE api_keys (
 );
 ```
 
-### key_spend Table (Budget Ledger — DEPRECATED)
+### teams Table
 
-> **NOTE:** `key_spend` is DEPRECATED. Budget enforcement now uses ledger-based `spend_ledger`. This table is retained for legacy rate limiter state. See RFC-0903 Final §Ledger-Based Architecture.
+```sql
+CREATE TABLE teams (
+    team_id BLOB(16) NOT NULL,           -- Raw UUID bytes (16 bytes) — per RFC-0903-C1
+    name TEXT NOT NULL,                    -- Unchanged
+    budget_limit BIGINT NOT NULL,           -- Per RFC-0903-C1 (was INTEGER in RFC-0903 Final)
+    created_at INTEGER NOT NULL,
+    PRIMARY KEY (team_id)
+);
+```
+```
+
+## Legacy Data Model
+
+> **NOTE:** The following table is DEPRECATED and NOT used for budget enforcement. It is retained for migration compatibility only. Do not use in new implementations.
+
+### key_spend Table (DEPRECATED)
+
+Budget enforcement now uses ledger-based `spend_ledger`. The `key_spend` table is retained for legacy rate limiter state. See RFC-0903 Final §Ledger-Based Architecture.
 
 ```sql
 CREATE TABLE key_spend (
@@ -150,19 +167,6 @@ CREATE TABLE key_spend (
     last_updated INTEGER NOT NULL,
     UNIQUE(key_id)
 );
-```
-
-### teams Table
-
-```sql
-CREATE TABLE teams (
-    team_id BLOB(16) NOT NULL,           -- Raw UUID bytes (16 bytes) — per RFC-0903-C1
-    name TEXT NOT NULL,                    -- Unchanged
-    budget_limit INTEGER NOT NULL,
-    created_at INTEGER NOT NULL,
-    PRIMARY KEY (team_id)
-);
-```
 ```
 
 ## Why Needed
@@ -210,6 +214,15 @@ This RFC describes the current architecture of quota-router. The core functional
 Future enhancements (optional):
 - L1 cache table for higher cache hit rates
 - Rate limit state table for distributed rate limiting
+
+## Changelog
+
+| Version | Date       | Changes |
+|---------|------------|---------|
+| v6      | 2026-04-17 | Round 28 fixes: remove duplicate "## Related RFCs" header causing formatting error |
+| v5      | 2026-04-17 | Round 27 fixes: move key_spend to Legacy Data Model section (not in-scope/Implemented); updated version footer |
+| v4      | 2026-04-16 | Round 26 fixes: align budget_limit to BIGINT per RFC-0903-B1/C1 (was INTEGER); fix api_keys and teams tables |
+| v3      | 2026-04-15 | Add RFC-0903-B1 and RFC-0903-C1 to Dependencies; clarify key_spend DEPRECATED; add diagram legend; update Constraints and Approval Criteria |
 
 ## Related RFCs
 

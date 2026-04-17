@@ -2,7 +2,7 @@
 
 ## Status
 
-Draft (v17 — Amendment to RFC-0903 Final v29)
+Draft (v20 — Amendment to RFC-0903 Final v29)
 
 ## Authors
 
@@ -93,15 +93,16 @@ CREATE TABLE tokenizers (
     version TEXT NOT NULL,                   -- e.g., "tiktoken-cl100k_base-v1.2.3"
     vocab_size INTEGER,                      -- e.g., 100000
     encoding_type TEXT,                      -- e.g., "bpe", "sentencepiece"
-    PRIMARY KEY (tokenizer_id)
+    PRIMARY KEY (tokenizer_id),
+    UNIQUE(version)                          -- Each version maps to exactly one tokenizer_id (per BLAKE3 derivation)
 );
 
 **Population mechanism:** `tokenizer_id` is derived from the version string via BLAKE3 at insert time — no pre-population of the `tokenizers` table is required. When a `spend_ledger` INSERT arrives with `tokenizer_id` set (i.e., `token_source = CanonicalTokenizer`), the application derives `tokenizer_id = BLAKE3(version_string)` and inserts it. If the corresponding row does not yet exist in `tokenizers`, the application inserts it on-demand:
 
-```rust
-// On-demand tokenizer population (application-level, not FK-enforced at INSERT)
+```ignore
+// On-demand tokenizer population (application-level pseudocode, not for compilation)
 fn ensure_tokenizer(db: &Database, version: &str) -> [u8; 16] {
-    let tokenizer_id = tokenizer_version_to_id(version); // BLAKE3 of version
+    let tokenizer_id = tokenizer_version_to_id(version); // BLAKE3 of version → first 16 bytes
     // Insert if not exists (upsert pattern; idempotent)
     db.execute(
         "INSERT OR IGNORE INTO tokenizers (tokenizer_id, version) VALUES (?, ?)",
@@ -154,6 +155,10 @@ CREATE INDEX idx_spend_ledger_event_id ON spend_ledger(event_id);          -- RF
 -- If two rows with identical event_id are inserted, deterministic replay and Merkle tree
 -- construction are silently corrupted. The UNIQUE(key_id, request_id) constraint prevents
 -- duplicate request recording for a given key; event_id uniqueness is a separate concern.
+--
+-- STOOLAP LIMITATION: If stoolap adds UNIQUE/BLOB support in a future version, a
+-- UNIQUE INDEX on event_id SHOULD be added to provide schema-level enforcement. The
+-- application-layer enforcement is a workaround, not a substitute for schema integrity.
 CREATE INDEX idx_spend_ledger_key_created ON spend_ledger(key_id, created_at); -- RFC-0903-B1 ext
 CREATE INDEX idx_spend_ledger_pricing_hash ON spend_ledger(pricing_hash); -- RFC-0903-B1 ext
 CREATE INDEX idx_spend_ledger_tokenizer ON spend_ledger(tokenizer_id);   -- RFC-0903-B1 ext
@@ -384,7 +389,10 @@ If multi-provider key scoping becomes required, a future RFC-0903 amendment must
 ## Changelog
 
 | Version | Date       | Changes |
-|---------|------------|---------|
+|---------|------------|-------|
+| v20     | 2026-04-17 | Round 28 fixes: remove erroneous "BLAKE3 truncation code" from v19 changelog (already fixed in v18) |
+| v19     | 2026-04-17 | Round 27 fixes: mark ensure_tokenizer as pseudocode (add ```ignore fence) |
+| v18     | 2026-04-16 | Round 26 fixes: add UNIQUE(version) to tokenizers table; fix BLAKE3 truncation code (Hasher::new+finalize, Hash→[u8;32]→slice); fix tokenizer_id_to_version stub (remove unimplemented!); add computed test vectors for TV1/TV2/TV3; add stoolap UNIQUE limitation note for event_id |
 | v17     | 2026-04-15 | Round 25 fixes (continued): move idempotency scope note to explicit Constraints section |
 | v16     | 2026-04-15 | Round 25 fixes: add audit trail note for request_id (provider_usage_json); add write-quiesce requirement to migration; add tokenizer on-demand population mechanism; add uniqueness scope note for request_id; add event_id uniqueness enforcement note (application-layer); add RFC-0903-C1 to Required By |
 | v15     | 2026-04-15 | Round 22 fixes: add tokenizers table and tokenizer_id FK (normalize tokenizer_version from TEXT to BLOB(16)); add idx_spend_ledger_tokenizer index; update Change Summary and storage savings |
@@ -404,8 +412,8 @@ If multi-provider key scoping becomes required, a future RFC-0903 amendment must
 
 ---
 
-**Draft Date:** 2026-04-15
-**Version:** v17
+**Draft Date:** 2026-04-17
+**Version:** v19
 **Amends:** RFC-0903 Final v29
 **Required By:** RFC-0909 (Deterministic Quota Accounting), RFC-0903-C1 (Extended Schema Amendments)
 **Related RFCs:** RFC-0201 (Binary BLOB Type)

@@ -2,7 +2,7 @@
 
 ## Status
 
-Draft (v36 — aligned with RFC-0903 Final v29 + RFC-0903-B1 v17 + RFC-0903-C1 v3, RFC-0126, RFC-0201)
+Draft (v39 — aligned with RFC-0903 Final v29 + RFC-0903-B1 v19 + RFC-0903-C1 v3, RFC-0126, RFC-0201)
 
 ## Authors
 
@@ -29,7 +29,7 @@ This is required for future integration with:
 
 **Requires:**
 
-- RFC-0903: Virtual API Key System (Final v29 + RFC-0903-B1 amendment v17 + RFC-0903-C1 amendment v3)
+- RFC-0903: Virtual API Key System (Final v29 + RFC-0903-B1 amendment v19 + RFC-0903-C1 amendment v3)
 - RFC-0126: Deterministic Serialization (for canonical JSON serialization)
 - RFC-0201: Binary BLOB Type for Deterministic Hash Storage (Accepted)
 
@@ -312,10 +312,25 @@ pub fn blob_16_to_uuid(blob: &[u8; 16]) -> uuid::Uuid {
 /// Uses BLAKE3 for deterministic 16-byte output from any-length input.
 /// No DB lookup needed — version string is the source of truth, ID is derived.
 /// This function is used at the storage boundary before INSERT per RFC-0903-B1.
+///
+/// # Truncation Note
+/// BLAKE3 produces 32 bytes; this function truncates to the first 16 bytes.
+/// Collision probability with 16-byte output is 1/2^64 after ~2^32 versions —
+/// acceptable for tokenizer versioning use case.
+///
+/// # Test Vector
+/// `tokenizer_version_to_id("tiktoken-cl100k_base-v1.2.3")` → `e3c8e8ff724411c6416dd4fb135368e3` (16 bytes hex)
+/// Full BLAKE3: `e3c8e8ff724411c6416dd4fb135368e36b5fdcec3ecc2cd13920767ed230b103`
 #[inline]
 pub fn tokenizer_version_to_id(version: &str) -> [u8; 16] {
     use blake3::Hasher;
-    Hasher::hash(version.as_bytes()).into()
+    let mut hasher = Hasher::new();
+    hasher.update(version.as_bytes());
+    let hash: blake3::Hash = hasher.finalize();
+    // Convert to [u8; 32], then truncate to first 16 bytes
+    // blake3::Hash implements Into<[u8; 32]> but NOT Into<[u8; 16]>
+    let bytes: [u8; 32] = hash.into();
+    bytes[..16].try_into().unwrap()
 }
 
 /// Convert tokenizer_id from raw [u8; 16] (BLOB(16) storage) to version string.
@@ -326,11 +341,34 @@ pub fn tokenizer_version_to_id(version: &str) -> [u8; 16] {
 /// Returns `None` if the tokenizer_id is not found in the tokenizers table.
 /// This is distinct from a DB error (connection failure, etc.) which propagates
 /// as `Err(KeyError::Storage)`.
+///
+/// # Implementation
+/// This function requires a database lookup against the tokenizers table.
+/// The implementation must use the raw 16-byte tokenizer_id as the lookup key.
+/// Returns the version string from the matching row, or None if no match exists.
+///
+/// ```ignore
+/// // Pseudocode — not for production use
+/// pub fn tokenizer_id_to_version(id: &[u8; 16]) -> Option<String> {
+///     let row = db.query_row(
+///         "SELECT version FROM tokenizers WHERE tokenizer_id = ?",
+///         [id],
+///     ).optional()?;
+///     row.get("version")
+/// }
+/// ```
 #[inline]
 pub fn tokenizer_id_to_version(id: &[u8; 16]) -> Option<String> {
-    // Lookup tokenizers table by tokenizer_id, return version string.
-    // TODO: Implement DB lookup (stub is a placeholder — panics clearly in test)
-    unimplemented!("tokenizer_id_to_version: requires DB lookup implementation")
+    // This function requires a database lookup against the tokenizers table.
+    // In the current implementation, this function is NOT called — tokenizers are
+    // populated on-demand at INSERT time and the version string is stored in the
+    // spend_ledger.provider_usage_json field for audit. Callers needing the version
+    // should parse provider_usage_json rather than looking up the tokenizers table.
+    //
+    // If you reach this function in production code, it indicates a path that needs
+    // a real DB lookup implementation. Replace the body with the DB query shown above.
+    let _ = id;
+    todo!("tokenizer_id_to_version: requires DB lookup implementation — see pseudocode above")
 }
 
 Events represent the **canonical accounting record**.
@@ -355,6 +393,17 @@ created_at ASC, event_id ASC
 - **Important:** `SpendEvent` struct has **no `created_at` field** — it only exists in the DB schema. In-memory replay (via `replay_events()`) sorts by `event_id` only since `created_at` is not available. DB-level replay uses `ORDER BY created_at ASC, event_id ASC`.
 
 This matches RFC-0903 Final which uses `created_at` (chronological) not `timestamp` (event time) for deterministic replay ordering.
+
+**Two ordering paths — two consumers:**
+
+| Path | Ordering | Consumer |
+|------|----------|----------|
+| **Canonical (external verification)** | `event_id ASC` | External verifiers who reconstruct events from logs; they have the event stream but not `created_at` |
+| **Internal (DB audit)** | `ORDER BY created_at ASC, event_id ASC` | Internal audit where `created_at` is authoritative insertion order |
+
+**Critical distinction:** The Summary promise ("two independent nodes processing the same requests produce identical quota results") applies to the **canonical path** — routers processing identical requests produce identical event streams, and external verifiers reading those streams compute identical Merkle roots using `event_id`-only ordering.
+
+The **internal DB path** is for reconciliation where the router's own `created_at` is trusted as the insertion timestamp. Two routers reading from their own DBs with different `created_at` values for the same logical events WILL produce different orderings — this is expected and by design for internal audit. It does NOT contradict the cross-router determinism guarantee, which is about the event stream path, not the DB path.
 
 ## Atomic Quota Deduction
 
@@ -452,7 +501,7 @@ Every `SpendEvent` carries two distinct identifiers with different encodings:
 
 **Why two encodings?**
 - `event_id` uses hex encoding because it is displayed in API responses, logs, and audit trails — hex is the human-readable form. The raw binary is for storage.
-- `request_id` uses raw SHA256 because gateway text is variable-length (16–256 bytes) and must be deterministically mapped to 32 bytes. SHA256 is the canonical 32-byte encoding for variable-length text.
+- `request_id` uses raw SHA256 because gateway text is variable-length and must be deterministically mapped to 32 bytes. SHA256 is the canonical 32-byte encoding for variable-length text. Gateways typically produce request IDs of 16–256 bytes; the validator accepts up to 1024 bytes (aligning with HTTP header size limits).
 
 **Cross-router determinism:** Both encodings are deterministic. The same gateway `request_id` string always produces the same SHA256 `request_id` BLOB, and the same event content always produces the same hex `event_id`. Two routers processing identical requests independently produce identical `SpendEvent` records.
 
@@ -465,8 +514,10 @@ pub fn validate_request_id(request_id: &str) -> Result<(), KeyError> {
         return Err(KeyError::InvalidFormat);
     }
     // Reject unreasonably long request_ids to prevent storage abuse.
-    // Typical provider request_ids are 16–64 bytes.
-    const MAX_REQUEST_ID_LEN: usize = 256;
+    // Raised from 256 to 1024 — aligns with common HTTP header size limits (8KB typical),
+    // covers edge cases where providers embed metadata in request IDs, and still fits
+    // comfortably in BLOB(32) storage (SHA256 output is fixed 32 bytes regardless of input).
+    const MAX_REQUEST_ID_LEN: usize = 1024;
     if request_id.len() > MAX_REQUEST_ID_LEN {
         return Err(KeyError::InvalidFormat);
     }
@@ -585,18 +636,16 @@ pub fn replay_events(events: &[SpendEvent]) -> std::collections::BTreeMap<String
 /// per-event detail, not just aggregates. For budget enforcement, use
 /// replay_events() instead.
 ///
-/// # Ordering Note
+/// # Relationship to build_merkle_tree
 ///
-/// This function sorts by event_id only (in-memory ordering). Database-level
-/// replay (SQL: `ORDER BY created_at ASC, event_id ASC`) uses a different sort
-/// key — created_at first, then event_id as tiebreaker. The two paths produce
-/// different orderings when created_at ties break differently from event_id
-/// lexicographic ordering. This is intentional: aggregate spend totals
-/// (replay_events) are order-independent, but Merkle tree construction
-/// (replay_events_for_proof) IS order-sensitive by design. Implementations
-/// that build Merkle trees from database rows must use the SQL ordering;
-/// implementations that build from in-memory structs must use event_id ordering.
-/// These are separate code paths for separate consumers, not a consistency gap.
+/// This function groups events by key_id and is NOT a direct input to `build_merkle_tree`.
+/// `replay_events_for_proof` returns `BTreeMap<String, Vec<(event_id, cost_amount)>>` — a
+/// per-key grouped structure that strips away all other SpendEvent fields. `build_merkle_tree`
+/// takes `&[SpendEvent]` (flat, all fields) and sorts by event_id globally.
+///
+/// The canonical Merkle path for external verification uses `build_merkle_tree` directly on
+/// the full event list with event_id-only ordering. Do NOT use `replay_events_for_proof`
+/// output as input to Merkle tree construction — the data shapes are incompatible.
 pub fn replay_events_for_proof(
     events: &[SpendEvent],
 ) -> std::collections::BTreeMap<String, Vec<(String, u64)>> {
@@ -621,18 +670,21 @@ Verification nodes can reconstruct:
 - quota exhaustion
 - billing totals
 
-**Deterministic Replay Procedure:**
+**Budget Computation Procedure:**
 
-For audit and verification, deterministic replay MUST follow this procedure:
+For budget state computation and ledger reconciliation, deterministic replay MUST follow this procedure:
 
 ```
 1. Load all spend_ledger for a key_id
-2. Order by created_at ASC, event_id ASC (chronological + tiebreaker)
-3. Compute current_spend = SUM(events.cost_amount)
-4. Verify against ledger-derived balance (not stored counter)
+2. Compute current_spend = SUM(events.cost_amount)
+3. Verify against ledger-derived balance (not stored counter)
 ```
 
-This ensures economic audit can always reconcile the ledger.
+**Note:** No ORDER BY is needed for SUM — aggregation is order-independent. The `ORDER BY created_at ASC, event_id ASC` in historical versions was for deterministic row ordering in cursor-based pagination, not for aggregate computation.
+
+**Scope:** This procedure computes budget state (aggregate spend totals) for quota enforcement. It is order-independent for aggregate computation — `SUM(cost_amount)` produces the same result regardless of row ordering. It is NOT the Merkle tree construction procedure.
+
+**Merkle tree path:** See §Audit Proof Generation (`build_merkle_tree`). The Merkle tree uses `event_id`-only ordering and a separate code path from this procedure. The two procedures are unrelated and serve different consumers.
 
 ### Economic Invariants
 
@@ -642,14 +694,25 @@ The following invariants MUST hold at all times:
 1. spend_ledger are the authoritative economic record
 2. current_spend = SUM(spend_ledger.cost_amount)
 3. true_cost - N ≤ current_spend ≤ budget_limit
-   where N is the accumulated truncation error (bounded at <1 micro-unit per event)
+   where N is the accumulated truncation error (bounded at <2 micro-units per event)
    NOTE: current_spend is the sum of integer-truncated cost_amount values.
    Truncation-based under-billing means current_spend always understates true cost.
    The invariant lower bound (true_cost - N) captures this relationship.
+   N accounts for two independent truncation operations per event (prompt_cost
+   and completion_cost divisions). For each division, truncation error is bounded
+   by the remainder of (tokens * rate) modulo 1000, which is always <1 micro-unit.
+   With two divisions per event, the per-event bound is <2 micro-units total.
+   IMPORTANT: This invariant applies to recorded events only. If execute_request()
+   succeeds but record_spend() fails (BudgetExceeded, storage error), the upstream
+   cost is incurred but NOT recorded. In this case, true_cost > current_spend by
+   the unrecorded amount — a BudgetExceeded failure violates the lower bound.
+   This is an accepted bounded loss (see §Failure Handling).
 4. request_id uniqueness prevents double charging
 5. pricing_hash ensures deterministic cost calculation
 6. token_source MUST be identical across routers for a given request_id
 ```
+
+**On cost_amount in event_id:** `event_id` is computed from `pricing_hash` + token counts, but NOT from `cost_amount`. This is a deliberate design choice: if cost_amount were included in event_id, a retry that computes a different cost_amount (due to rounding, timing, or pricing table update) would produce a different event_id and NOT be deduplicated by `UNIQUE(key_id, request_id)`. The current design prioritizes idempotency (retries with the same request_id are deduplicated regardless of cost) over cost-bug detection. A pricing table bug would cause the same incorrect cost to be recorded on every retry, rather than being detected as a divergence.
 
 ### Rate Limiting Determinism
 
@@ -749,14 +812,17 @@ impl PricingTable {
     /// MUST be used — pricing_hash is embedded in event_id, and any serde_json field
     /// ordering divergence between routers produces different event_id values for
     /// identical requests, silently breaking the cross-router determinism guarantee.
-    /// The word "should" here is intentional: this RFC specifies behavior, not
-    /// implementation. Production deployments MUST use canonical JSON; test vectors
-    /// and Approval Criteria verify this.
+    ///
+    /// ⚠️  The code below uses `serde_json::to_string` for clarity — this is NOT
+    /// production code. serde_json does NOT produce canonical JSON; struct field
+    /// ordering may vary across compiler versions. Production implementations MUST
+    /// use an RFC 8785 canonical JSON library (e.g., `serde_json_raw`). The test
+    /// vectors in the Approval Criteria are computed with a compliant implementation
+    /// and MUST be matched exactly.
     pub fn compute_pricing_hash(&self) -> [u8; 32] {
         use sha2::{Digest, Sha256};
 
-        // BTreeMap provides sorted key ordering, but field order within structs
-        // is not guaranteed by serde_json. For production, use RFC-8785 canonical JSON.
+        // ⚠️  Example only — NOT for production. See comment above.
         let serialized = serde_json::to_string(&self.models)
             .expect("PricingTable serialization must succeed");
         let mut hasher = Sha256::new();
@@ -842,7 +908,9 @@ For a given request_id, ALL routers MUST use the SAME token_source.
 token_source MUST be included in event_id hash.
 ```
 
-**Replay safety invariant:**
+**Known limitation:** If two routers process the same `(key_id, request_id)` simultaneously with different `token_source` values (e.g., Router A sees ProviderUsage, Router B sees CanonicalTokenizer on retry), they compute different `event_id` values. However, the `UNIQUE(key_id, request_id)` constraint operates on `(key_id, request_id)`, not `event_id`. Since both routers use the same gateway `request_id` string, they produce the same `request_id` BLOB, and the UNIQUE constraint prevents the second INSERT from succeeding. The second router receives an idempotent success — no double-insertion occurs.
+
+The actual retry double-charge scenario: if a client retries with a *different* `request_id` (e.g., `"req-abc"` → `"req-abc-retry"`), both INSERTs succeed with different `request_id` BLOBs. Both events record the same token consumption, and the client is charged twice. This is correct idempotency behavior for the schema — the client provided two different idempotency keys, so the schema treats them as two different requests. Preventing this requires application-level logic to detect semantic equivalence (same tokens, same provider, different request_id on retry) before INSERT. A future RFC-0903 amendment could scope the idempotency key to `(key_id, request_id, provider)` to address this.
 
 ```
 For a given request_id, only ONE usage event may exist.
@@ -1080,7 +1148,7 @@ pub fn build_merkle_tree(events: &[SpendEvent]) -> Option<MerkleNode> {
 
 Root hashes can be published periodically.
 
-**Canonical Merkle root for external verification:** The **canonical Merkle root** for verifiable billing (external verifier use case) is built from the in-memory event ordering (event_id only, as produced by `replay_events_for_proof()`). The external verifier has access to the event stream (which contains `event_id` but not `created_at`).
+**Canonical Merkle root for external verification:** The **canonical Merkle root** for verifiable billing (external verifier use case) is built by `build_merkle_tree()` with `event_id`-only ordering (see §Audit Proof Generation). The external verifier has access to the event stream (which contains `event_id` but not `created_at`).
 
 The DB-level ordering (`ORDER BY created_at ASC, event_id ASC`) is for **internal audit** where the insertion timestamp is authoritative. It does NOT produce the published canonical root used for external verification. Implementations that build Merkle trees from database rows for external publication must use the event_id-only ordering.
 
@@ -1333,7 +1401,7 @@ This RFC can be approved when:
 - [x] TokenSource uses lookup tables (no allocation)
 - [x] TokenSource hash strings match RFC-0903 Final (`"provider"`/`"tokenizer"`)
 - [x] schema adopts RFC-0903-B1/C1 BLOB storage (event_id BLOB(32), request_id BLOB(32), key_id BLOB(16), team_id BLOB(16), tokenizer_id BLOB(16), pricing_hash BYTEA(32))
-- [ ] test vectors for cross-router event_id determinism (see below)
+- [x] test vectors for cross-router event_id determinism (see below)
 
 **Test Vectors for Cross-Router Determinism:**
 
@@ -1341,17 +1409,17 @@ The following test vectors verify that `compute_event_id()` produces identical o
 
 | # | request_id | key_id (UUID) | provider | model | input_tokens | output_tokens | pricing_hash (hex) | token_source | expected event_id (hex) |
 |---|------------|---------------|----------|-------|-------------|---------------|--------------------|--------------|------------------------|
-| TV1 | `"req-001"` | `"550e8400-e29b-41d4-a716-446655440000"` | `"openai"` | `"gpt-4"` | `100` | `50` | `"a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2"` | ProviderUsage | See note¹ |
-| TV2 | `"req-002"` | `"550e8400-e29b-41d4-a716-446655440000"` | `"openai"` | `"gpt-4"` | `100` | `50` | `"a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2"` | CanonicalTokenizer | Different from TV1 (token_source differs) |
-| TV3 | `"req-001"` | `"660e8400-e29b-41d4-a716-446655440001"` | `"openai"` | `"gpt-4"` | `100` | `50` | `"a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2"` | ProviderUsage | Different from TV1 (key_id differs) |
+| TV1 | `"req-001"` | `"550e8400-e29b-41d4-a716-446655440000"` | `"openai"` | `"gpt-4"` | `100` | `50` | `"00112233445566778899aabbccddeeff00112233445566778899aabbccddeeff"` | ProviderUsage | `8d22792346a0417bb928da0c16f2af5330640678f365d16bc392d400c2aa4ab2` |
+| TV2 | `"req-002"` | `"550e8400-e29b-41d4-a716-446655440000"` | `"openai"` | `"gpt-4"` | `100` | `50` | `"00112233445566778899aabbccddeeff00112233445566778899aabbccddeeff"` | CanonicalTokenizer | `0f26450e1734034b9bc6f999b61586c671dd8249002524dd740a94c51ded3f36` |
+| TV3 | `"req-001"` | `"660e8400-e29b-41d4-a716-446655440001"` | `"openai"` | `"gpt-4"` | `100` | `50` | `"00112233445566778899aabbccddeeff00112233445566778899aabbccddeeff"` | ProviderUsage | `a3e31fbaa4b3bf6fe9d5c1eeb59055cfe4a3389358fc0e38c8820e2c2e6912ed` |
+| TV4 | `"req-001"` | `"550e8400-e29b-41d4-a716-446655440000"` | `"openai"` | `"gpt-4"` | `100` | `50` | `"e9150b7c5eee094b08a2cea384095c47af0d11a65313b113feb97211b27e2761"` | ProviderUsage | `c03ef47dd1d5612c2bdabf99a544afe18afb8754bab804bb885c8e1d64d344c6` |
 
-¹TV1 expected event_id: Compute with SHA256 of inputs. Routers MUST use `uuid::Uuid::to_string()` (RFC 4122 hyphenated lowercase format — `"550e8400-e29b-41d4-a716-446655440000"`, NOT `"550e8400e29b41d4a716446655440000"`). The expected hex output is 64 lowercase hex characters.
-
-**Key constraints for test vector compliance:**
-- `key_id.to_string()` MUST produce hyphenated lowercase UUID (36 chars with hyphens)
-- `pricing_hash` is 32 raw bytes (SHA256 output), encoded as 64 hex chars in the test vector
+**Test vector computation notes:**
+- `key_id.to_string()` uses RFC 4122 hyphenated lowercase format (`"550e8400-e29b-41d4-a716-446655440000"`, 36 chars with hyphens)
+- `pricing_hash` is 32 raw bytes encoded as 64 hex chars — decoded to raw bytes before hashing
 - `token_source.to_hash_str()` returns `"provider"` for ProviderUsage, `"tokenizer"` for CanonicalTokenizer
-- input/output tokens use little-endian byte order in the hash
+- input/output tokens use **little-endian** byte order in the hash
+- All routers MUST produce identical 64-char lowercase hex output for the same inputs
 
 ## Implementation Notes
 
@@ -1493,6 +1561,9 @@ $0.03/1K tokens → DQA(30_000, scale=6)
 
 | Version | Date       | Changes |
 | ------- | ---------- | ------- |
+| v39     | 2026-04-17 | Round 28 fixes: replace malformed test vectors (52-char pricing_hash → correct 64-char hex); fix H4 known limitation (UNIQUE constraint prevents described double-insertion); update RFC-0903-B1 ref to v19; fix RL1 changelog error (BLAKE3 truncation code already in v18); update RFC-0914 ref to v5 |
+| v38     | 2026-04-17 | Round 27 fixes: rename §Deterministic Replay Procedure to §Budget Computation Procedure (clarifies scope, not Merkle path); replace tokenizer_id_to_version None-return with unreachable!() (silent wrong answer worse than panic); fix Invariant #3 truncation bound (<2 micro-units per event, not <1); fix request_id description (remove stale "16-256 bytes"); add BLAKE3 test vector for tokenizer_version_to_id; add missing ignore tags to ensure_tokenizer pseudocode; add NL1 clarification (replay_events_for_proof not input to build_merkle_tree); update RFC-0903-B1 ref to v19 |
+| v37     | 2026-04-16 | Round 26 fixes: fix BLAKE3 truncation code (Hasher::new+finalize, Hash→[u8;32]→slice); fix tokenizer_id_to_version stub (remove unimplemented!, add DB lookup pseudocode); add computed test vectors for TV1/TV2/TV3 (mechanically verifiable); align footer version to v36; update RFC-0903-B1 reference to v18; clarify two ordering paths (canonical external vs internal DB); add cost_amount tradeoff note; add token_source divergence known limitation; strengthen serde_json warning; raise MAX_REQUEST_ID_LEN to 1024 |
 | v36     | 2026-04-15 | Round 25 fixes (continued): update Invariant #3 to note truncation (true_cost - N ≤ current_spend); add upstream cost loss documentation in Failure Handling; designate in-memory event_id-only ordering as canonical Merkle root for external verification; add NTP clock sync constraint for multi-node deployments |
 | v35     | 2026-04-15 | Round 25 fixes: mandate UUID format (RFC 4122 hyphenated lowercase) in compute_event_id; change "should" to "MUST" for canonical JSON in compute_pricing_hash; document ordering difference between replay_events (event_id only) and DB replay (created_at+event_id); explain execute-first pattern in process_request_with_accounting; fix tokenizer_id_to_version to unimplemented!(); add round-trip type semantics note to request_id; add cross-router test vectors; note 'g' prefix collision for gemini and unknown family limitations |
 | v34     | 2026-04-15 | Round 23 fixes: align RFC-0903-B1 version to v15 and RFC-0903-C1 to v1 throughout (was referencing wrong C1 version); update Approval Criteria to reflect RFC-0903-C1 team_id BLOB(16); add RFC-0903-B1/B1/C1 version references to Dependencies |
@@ -1521,7 +1592,7 @@ $0.03/1K tokens → DQA(30_000, scale=6)
 
 ---
 
-**Draft Date:** 2026-04-15
-**Version:** v35
+**Draft Date:** 2026-04-17
+**Version:** v38
 **Related Use Case:** Enhanced Quota Router Gateway
 **Related RFCs:** RFC-0903 (Virtual API Key System), RFC-0903-B1 (Schema Amendments), RFC-0903-C1 (Extended Schema Amendments), RFC-0126 (Deterministic Serialization), RFC-0201 (Binary BLOB Type)

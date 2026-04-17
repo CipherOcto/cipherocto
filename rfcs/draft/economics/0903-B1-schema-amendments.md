@@ -2,7 +2,7 @@
 
 ## Status
 
-Draft (v20 — Amendment to RFC-0903 Final v29)
+Draft (v21 — Amendment to RFC-0903 Final v29)
 
 ## Authors
 
@@ -390,6 +390,7 @@ If multi-provider key scoping becomes required, a future RFC-0903 amendment must
 
 | Version | Date       | Changes |
 |---------|------------|-------|
+| v21     | 2026-04-17 | Round 29 fixes: fix R29C3 (footer v19→v20); update RFC-0909 ref to v40 |
 | v20     | 2026-04-17 | Round 28 fixes: remove erroneous "BLAKE3 truncation code" from v19 changelog (already fixed in v18) |
 | v19     | 2026-04-17 | Round 27 fixes: mark ensure_tokenizer as pseudocode (add ```ignore fence) |
 | v18     | 2026-04-16 | Round 26 fixes: add UNIQUE(version) to tokenizers table; fix BLAKE3 truncation code (Hasher::new+finalize, Hash→[u8;32]→slice); fix tokenizer_id_to_version stub (remove unimplemented!); add computed test vectors for TV1/TV2/TV3; add stoolap UNIQUE limitation note for event_id |
@@ -413,7 +414,7 @@ If multi-provider key scoping becomes required, a future RFC-0903 amendment must
 ---
 
 **Draft Date:** 2026-04-17
-**Version:** v19
+**Version:** v21
 **Amends:** RFC-0903 Final v29
 **Required By:** RFC-0909 (Deterministic Quota Accounting), RFC-0903-C1 (Extended Schema Amendments)
 **Related RFCs:** RFC-0201 (Binary BLOB Type)

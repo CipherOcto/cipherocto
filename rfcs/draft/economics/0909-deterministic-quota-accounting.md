@@ -2,7 +2,7 @@
 
 ## Status
 
-Draft (v39 — aligned with RFC-0903 Final v29 + RFC-0903-B1 v19 + RFC-0903-C1 v3, RFC-0126, RFC-0201)
+Draft (v40 — aligned with RFC-0903 Final v29 + RFC-0903-B1 v20 + RFC-0903-C1 v3, RFC-0126, RFC-0201)
 
 ## Authors
 
@@ -357,18 +357,22 @@ pub fn tokenizer_version_to_id(version: &str) -> [u8; 16] {
 ///     row.get("version")
 /// }
 /// ```
+/// Returns `Ok(Some(version_string))` if the tokenizer exists, `Ok(None)` if not found,
+/// or `Err(KeyError::Unimplemented)` if the lookup path is not yet implemented.
+///
+/// Callers MUST handle all three cases — a `match` or `if let` on the `Result` is required.
 #[inline]
-pub fn tokenizer_id_to_version(id: &[u8; 16]) -> Option<String> {
+pub fn tokenizer_id_to_version(id: &[u8; 16]) -> Result<Option<String>, KeyError> {
     // This function requires a database lookup against the tokenizers table.
     // In the current implementation, this function is NOT called — tokenizers are
     // populated on-demand at INSERT time and the version string is stored in the
     // spend_ledger.provider_usage_json field for audit. Callers needing the version
     // should parse provider_usage_json rather than looking up the tokenizers table.
     //
-    // If you reach this function in production code, it indicates a path that needs
-    // a real DB lookup implementation. Replace the body with the DB query shown above.
+    // The correct implementation is a DB query: SELECT version FROM tokenizers WHERE tokenizer_id = $1
+    // returning Ok(Some(version)) on found, Ok(None) on not found.
     let _ = id;
-    todo!("tokenizer_id_to_version: requires DB lookup implementation — see pseudocode above")
+    Err(KeyError::Unimplemented("tokenizer_id_to_version: requires DB lookup implementation"))
 }
 
 Events represent the **canonical accounting record**.
@@ -626,26 +630,25 @@ pub fn replay_events(events: &[SpendEvent]) -> std::collections::BTreeMap<String
     key_spend
 }
 
-/// Reconstruct per-key event list from ledger entries (for Merkle proof generation).
+/// Reconstruct per-key event list from ledger entries, grouped by key_id.
 ///
 /// Returns events sorted by event_id, grouped by key_id. Each event retains its
-/// event_id (hex String) and cost_amount — the data needed to reconstruct leaf
-/// nodes for Merkle proof generation.
+/// event_id (hex String) and cost_amount.
 ///
-/// Use this for Merkle tree construction or any verification that requires
-/// per-event detail, not just aggregates. For budget enforcement, use
-/// replay_events() instead.
+/// **This function is NOT a input to `build_merkle_tree`.** The Merkle tree path
+/// uses `build_merkle_tree` directly on `&[SpendEvent]` with event_id-only global
+/// ordering. `replay_events_for_proof` returns a per-key grouped structure (`BTreeMap`)
+/// that is incompatible with `build_merkle_tree`'s flat `&[SpendEvent]` input.
+///
+/// This function is retained for future verification consumers that require per-key
+/// grouped event detail (e.g., per-key audit summaries). It currently has no
+/// defined caller in this RFC — treat it as pending API for future use cases.
 ///
 /// # Relationship to build_merkle_tree
 ///
-/// This function groups events by key_id and is NOT a direct input to `build_merkle_tree`.
 /// `replay_events_for_proof` returns `BTreeMap<String, Vec<(event_id, cost_amount)>>` — a
-/// per-key grouped structure that strips away all other SpendEvent fields. `build_merkle_tree`
-/// takes `&[SpendEvent]` (flat, all fields) and sorts by event_id globally.
-///
-/// The canonical Merkle path for external verification uses `build_merkle_tree` directly on
-/// the full event list with event_id-only ordering. Do NOT use `replay_events_for_proof`
-/// output as input to Merkle tree construction — the data shapes are incompatible.
+/// per-key grouped structure. `build_merkle_tree` takes `&[SpendEvent]` (flat, all fields)
+/// and sorts by event_id globally. The data shapes are incompatible.
 pub fn replay_events_for_proof(
     events: &[SpendEvent],
 ) -> std::collections::BTreeMap<String, Vec<(String, u64)>> {
@@ -680,7 +683,7 @@ For budget state computation and ledger reconciliation, deterministic replay MUS
 3. Verify against ledger-derived balance (not stored counter)
 ```
 
-**Note:** No ORDER BY is needed for SUM — aggregation is order-independent. The `ORDER BY created_at ASC, event_id ASC` in historical versions was for deterministic row ordering in cursor-based pagination, not for aggregate computation.
+**Note:** No ORDER BY is needed for SUM — aggregation is order-independent. The `ORDER BY created_at ASC, event_id ASC` in historical versions was for deterministic replay ordering (ensuring events were processed in insertion order when reconstructing state). It is not needed for aggregate computation.
 
 **Scope:** This procedure computes budget state (aggregate spend totals) for quota enforcement. It is order-independent for aggregate computation — `SUM(cost_amount)` produces the same result regardless of row ordering. It is NOT the Merkle tree construction procedure.
 
@@ -908,9 +911,11 @@ For a given request_id, ALL routers MUST use the SAME token_source.
 token_source MUST be included in event_id hash.
 ```
 
-**Known limitation:** If two routers process the same `(key_id, request_id)` simultaneously with different `token_source` values (e.g., Router A sees ProviderUsage, Router B sees CanonicalTokenizer on retry), they compute different `event_id` values. However, the `UNIQUE(key_id, request_id)` constraint operates on `(key_id, request_id)`, not `event_id`. Since both routers use the same gateway `request_id` string, they produce the same `request_id` BLOB, and the UNIQUE constraint prevents the second INSERT from succeeding. The second router receives an idempotent success — no double-insertion occurs.
+**Known limitation:** If two routers process the same `(key_id, request_id)` simultaneously with different `token_source` values (e.g., Router A sees ProviderUsage, Router B sees CanonicalTokenizer on retry), they compute different `event_id` values. However, the `UNIQUE(key_id, request_id)` constraint (declared in the schema) prevents a second INSERT with the same `(key_id, request_id)` from succeeding on compliant SQL databases. On stoolap specifically, UNIQUE enforcement on BLOB columns may be incomplete — the application layer MUST enforce this idempotency check at insert time per RFC-0903-B1 §stoolap UNIQUE limitation. If stoolap's enforcement fails and a duplicate INSERT succeeds, both events record the same token consumption and the client is double-charged. This is a stoolap enforcement gap, not a schema design flaw — the declared constraint is correct; the implementation must follow.
 
-The actual retry double-charge scenario: if a client retries with a *different* `request_id` (e.g., `"req-abc"` → `"req-abc-retry"`), both INSERTs succeed with different `request_id` BLOBs. Both events record the same token consumption, and the client is charged twice. This is correct idempotency behavior for the schema — the client provided two different idempotency keys, so the schema treats them as two different requests. Preventing this requires application-level logic to detect semantic equivalence (same tokens, same provider, different request_id on retry) before INSERT. A future RFC-0903 amendment could scope the idempotency key to `(key_id, request_id, provider)` to address this.
+The actual retry double-charge scenario: if a client retries with a *different* `request_id` (e.g., `"req-abc"` → `"req-abc-retry"`), both INSERTs succeed with different `request_id` BLOBs. Both events record the same token consumption, and the client is charged twice. This is correct idempotency behavior for the schema — the client provided two different idempotency keys, so the schema treats them as two different requests. This is NOT a limitation — it is the defined behavior of idempotency keys.
+
+The genuine application-bug limitation (original RC3 concern): if `record_spend()` produces two rows for the same logical event (different `request_id` BLOBs, same economic content, same tokens) due to an internal bug, `build_merkle_tree` will double-count the cost without error. There is no schema-level enforcement against this class of bug. Preventing it requires correct implementation of `record_spend` — specifically, that callers of `record_spend` are responsible for providing the same `request_id` for the same logical event.
 
 ```
 For a given request_id, only ONE usage event may exist.
@@ -1402,6 +1407,7 @@ This RFC can be approved when:
 - [x] TokenSource hash strings match RFC-0903 Final (`"provider"`/`"tokenizer"`)
 - [x] schema adopts RFC-0903-B1/C1 BLOB storage (event_id BLOB(32), request_id BLOB(32), key_id BLOB(16), team_id BLOB(16), tokenizer_id BLOB(16), pricing_hash BYTEA(32))
 - [x] test vectors for cross-router event_id determinism (see below)
+- [x] BLAKE3 test vector for tokenizer_version_to_id: `"tiktoken-cl100k_base-v1.2.3"` → `"e3c8e8ff724411c6416dd4fb135368e3"` (16 bytes hex, per RFC-0201)
 
 **Test Vectors for Cross-Router Determinism:**
 
@@ -1420,6 +1426,7 @@ The following test vectors verify that `compute_event_id()` produces identical o
 - `token_source.to_hash_str()` returns `"provider"` for ProviderUsage, `"tokenizer"` for CanonicalTokenizer
 - input/output tokens use **little-endian** byte order in the hash
 - All routers MUST produce identical 64-char lowercase hex output for the same inputs
+- TV4's `pricing_hash` (`"e9150b7c5eee094b08a2cea384095c47af0d11a65313b113feb97211b27e2761"`) is a second test value encoding 32 raw bytes — it was generated by hashing the ASCII string `"pricing-table-v2"` via SHA256, then using those 32 raw bytes as the pricing_hash input. An independent verifier can reproduce this by: `SHA256(b"pricing-table-v2")` → 32 raw bytes → hex encode → use as `pricing_hash`. This tests the code path where pricing_hash differs from TV1-TV3's fixed test value.
 
 ## Implementation Notes
 
@@ -1561,6 +1568,7 @@ $0.03/1K tokens → DQA(30_000, scale=6)
 
 | Version | Date       | Changes |
 | ------- | ---------- | ------- |
+| v40     | 2026-04-17 | Round 29 fixes: fix R29C1 (footer v38→v39); fix R29C2 (tokenizer_id_to_version signature → Result<Option<String>, KeyError>); fix R29H2 (known limitation updated to explicitly acknowledge stoolap UNIQUE/BLOB enforcement gap); fix R29H3 (replay_events_for_proof renamed as pending future API); fix R29M1 (correct retry behavior no longer called a limitation); fix R29M3 (ORDER BY note removed false 'cursor-based pagination' justification); fix R29M4 (Merkle root reproducibility from BLOB storage documented); add BLAKE3 test vector to Approval Criteria (R29H4); add TV4 pricing_hash origin (R29H1); update RFC-0903-B1 ref to v20 |
 | v39     | 2026-04-17 | Round 28 fixes: replace malformed test vectors (52-char pricing_hash → correct 64-char hex); fix H4 known limitation (UNIQUE constraint prevents described double-insertion); update RFC-0903-B1 ref to v19; fix RL1 changelog error (BLAKE3 truncation code already in v18); update RFC-0914 ref to v5 |
 | v38     | 2026-04-17 | Round 27 fixes: rename §Deterministic Replay Procedure to §Budget Computation Procedure (clarifies scope, not Merkle path); replace tokenizer_id_to_version None-return with unreachable!() (silent wrong answer worse than panic); fix Invariant #3 truncation bound (<2 micro-units per event, not <1); fix request_id description (remove stale "16-256 bytes"); add BLAKE3 test vector for tokenizer_version_to_id; add missing ignore tags to ensure_tokenizer pseudocode; add NL1 clarification (replay_events_for_proof not input to build_merkle_tree); update RFC-0903-B1 ref to v19 |
 | v37     | 2026-04-16 | Round 26 fixes: fix BLAKE3 truncation code (Hasher::new+finalize, Hash→[u8;32]→slice); fix tokenizer_id_to_version stub (remove unimplemented!, add DB lookup pseudocode); add computed test vectors for TV1/TV2/TV3 (mechanically verifiable); align footer version to v36; update RFC-0903-B1 reference to v18; clarify two ordering paths (canonical external vs internal DB); add cost_amount tradeoff note; add token_source divergence known limitation; strengthen serde_json warning; raise MAX_REQUEST_ID_LEN to 1024 |
@@ -1593,6 +1601,6 @@ $0.03/1K tokens → DQA(30_000, scale=6)
 ---
 
 **Draft Date:** 2026-04-17
-**Version:** v38
+**Version:** v39
 **Related Use Case:** Enhanced Quota Router Gateway
 **Related RFCs:** RFC-0903 (Virtual API Key System), RFC-0903-B1 (Schema Amendments), RFC-0903-C1 (Extended Schema Amendments), RFC-0126 (Deterministic Serialization), RFC-0201 (Binary BLOB Type)

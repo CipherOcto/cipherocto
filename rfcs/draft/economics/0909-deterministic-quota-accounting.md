@@ -2,7 +2,7 @@
 
 ## Status
 
-Draft (v44 — aligned with RFC-0903 Final v29 + RFC-0903-B1 v22 + RFC-0903-C1 v3, RFC-0126, RFC-0201)
+Draft (v47 — aligned with RFC-0903 Final v29 + RFC-0903-B1 v22 + RFC-0903-C1 v3, RFC-0126, RFC-0201)
 
 ## Authors
 
@@ -247,14 +247,29 @@ pub struct SpendEvent {
 /// `compute_event_id` concatenates fields without length prefixes or delimiters.
 /// A constructed `request_id` equal to `key_id_str + provider_bytes + model_bytes`
 /// could theoretically collide with a different field combination. In practice:
-/// - `key_id` is always a 36-char RFC 4122 hyphenated UUID
-/// - `provider` and `model` are bounded short strings from a known provider/model list
-/// - In single-tenant or internally-trusted deployments, `request_id` is not user-controlled
-/// - In multi-tenant deployments where clients control `request_id`, a malicious tenant who
-///   knows another tenant's `key_id` could craft a request_id causing cross-tenant event_id
-///   collision — producing identical event_id for different `(key_id, request_id)` pairs
-/// If multi-tenant threat model applies, length-prefixed encoding or field separators
-/// MUST be used to maintain domain separation.
+/// - `key_id` is always a 36-char RFC 4122 hyphenated UUID (not user-controlled)
+/// - `provider` and `model` are specified by the client in the API request
+/// - In single-tenant or internally-trusted deployments, this construction is safe
+///
+/// **Deployments processing multi-tenant requests MUST either:**
+/// 1. **Use length-prefixed encoding or field separators** in a custom `compute_event_id` variant, **or**
+/// 2. **Isolate each tenant's events** so that `build_merkle_tree` is called with events
+///    filtered to a single tenant's `key_id` scope — whether events reside in separate
+///    tables, separate databases, or a tenant-filtered query on `spend_ledger`
+///    (e.g., `WHERE key_id IN (SELECT key_id FROM api_keys WHERE team_id = $tenant_id)`).
+///    A filtered view over a unified ledger is sufficient **only if** the filter is
+///    applied consistently to every call that builds or verifies a Merkle proof.
+/// 
+/// This RFC's primary stated integration targets ("verifiable billing," "decentralized compute
+/// markets," "cryptographic settlement") are inherently multi-tenant — multiple independent
+/// parties who cannot be assumed to be non-adversarial. In these contexts, a malicious client
+/// who knows another tenant's `key_id` could craft a `request_id` causing cross-tenant event_id
+/// collision: both INSERTs succeed (different `key_id` values bypass `UNIQUE(key_id, request_id)`),
+/// `build_merkle_tree` receives two leaves with identical hex strings, sorts them, and produces
+/// a corrupted Merkle root — the billing proof is invalid and verification fails.
+///
+/// If field constraints ever relax, field separators or length-prefixed encoding
+/// MUST be added immediately.
 pub fn compute_event_id(
     request_id: &str,
     key_id: &uuid::Uuid,
@@ -350,38 +365,21 @@ pub fn tokenizer_version_to_id(version: &str) -> [u8; 16] {
 /// Requires a lookup against the tokenizers table.
 ///
 /// # Error Handling
-/// Returns `Ok(None)` if the tokenizer_id is not found in the tokenizers table.
-/// Returns `Err(&'static str)` if the lookup path is not yet implemented.
+/// When fully implemented, returns `Ok(Some(version_string))` if the tokenizer exists,
+/// `Ok(None)` if no matching row is found, or `Err("...")` if the lookup path is not
+/// implemented. A DB-level error (connection failure, etc.) would propagate via a
+/// different error path — callers should substitute `Err(KeyError::Storage)` in the
+/// error arm until a unified error strategy is defined.
 ///
-/// In a complete implementation, DB errors (connection failure, etc.) would propagate
-/// via a different error path — callers should substitute `Err(KeyError::Storage)` in
-/// the error arm until a unified error strategy is defined.
+/// **Current stub:** always returns `Err("tokenizer_id_to_version: requires DB lookup
+/// implementation")`. The `Ok(Some)` and `Ok(None)` cases are only reached in a real DB
+/// implementation.
 ///
 /// # Implementation
-/// This function requires a database lookup against the tokenizers table.
 /// The implementation must use the raw 16-byte tokenizer_id as the lookup key.
-/// Returns the version string from the matching row, or None if no match exists.
+/// The SQL query is: `SELECT version FROM tokenizers WHERE tokenizer_id = ?`.
+/// When implemented: `Ok(Some(version_string))` on a match, `Ok(None)` on no match.
 ///
-/// ```ignore
-/// // Pseudocode — not for production use
-/// pub fn tokenizer_id_to_version(id: &[u8; 16]) -> Result<Option<String>, &'static str> {
-///     let row = db.query_row(
-///         "SELECT version FROM tokenizers WHERE tokenizer_id = ?",
-///         [id],
-///     ).optional()?;
-///
-///     match row.get("version") {
-///         Ok(Some(version)) => Ok(Some(version)),
-///         Ok(None) => Ok(None),          // tokenizer not found
-///         Err(_) => Err("tokenizer_id_to_version: requires DB lookup implementation"),
-///     }
-/// }
-/// ```
-/// Returns `Ok(Some(version_string))` if the tokenizer exists, `Ok(None)` if not found,
-/// or `Err("tokenizer_id_to_version: requires DB lookup implementation")` if the lookup
-/// path is not yet implemented.
-///
-/// Callers MUST handle all three cases — a `match` or `if let` on the `Result` is required.
 #[inline]
 pub fn tokenizer_id_to_version(id: &[u8; 16]) -> Result<Option<String>, &'static str> {
     // This function requires a database lookup against the tokenizers table.
@@ -889,7 +887,7 @@ For a given request_id, ALL routers MUST use the SAME token_source.
 token_source MUST be included in event_id hash.
 ```
 
-**Known limitation:** If two routers process the same `(key_id, request_id)` simultaneously with different `token_source` values (e.g., Router A sees ProviderUsage, Router B sees CanonicalTokenizer on retry), they compute different `event_id` values. However, the `UNIQUE(key_id, request_id)` constraint prevents a second INSERT with the same `(key_id, request_id)` from succeeding — stoolap fully enforces UNIQUE constraints on BLOB columns (verified in stoolap at commit `28e3e51`). The second router receives an idempotent success — no double-insertion occurs.
+**Known limitation:** If two routers process the same `(key_id, request_id)` simultaneously with different `token_source` values (e.g., Router A sees ProviderUsage, Router B sees CanonicalTokenizer on retry), they compute different `event_id` values. However, the `UNIQUE(key_id, request_id)` constraint prevents a second INSERT with the same `(key_id, request_id)` from succeeding — stoolap fully enforces UNIQUE constraints on BLOB columns (verified in stoolap at commit `28e3e513baf2a34d7989ff2c2cdce84f5b6178fb`). The second router receives an idempotent success — no double-insertion occurs.
 
 The actual retry double-charge scenario: if a client retries with a *different* `request_id` (e.g., `"req-abc"` → `"req-abc-retry"`), both INSERTs succeed with different `request_id` BLOBs. Both events record the same token consumption, and the client is charged twice. This is correct idempotency behavior for the schema — the client provided two different idempotency keys, so the schema treats them as two different requests. This is NOT a limitation — it is the defined behavior of idempotency keys.
 
@@ -1546,6 +1544,9 @@ $0.03/1K tokens → DQA(30_000, scale=6)
 
 | Version | Date       | Changes |
 | ------- | ---------- | ------- |
+| v47     | 2026-04-18 | Round 37: fix R36C1 (v45 row already existed — but Round 34 fixes were incorrectly labeled "Round 34" instead of "Round 35"; footer v47 consistent); fix R36M1 (tokenizer_id_to_version doc: "When fully implemented" + "Current stub" note); fix R36M2 (separate storage defined: build_merkle_tree requires tenant-filtered events) |
+| v46     | 2026-04-18 | Round 36: fix R35C1 (v45 changelog row added; footer v45→v46); fix R35M1 (tokenizer_id_to_version doc clarified); fix R35M2 (separate storage option defined); fix R35L2 (changelog space removed) |
+| v45     | 2026-04-18 | Round 35: fix R34H1 (tokenizer_id_to_version pseudocode removed); fix R34M1 ("not client-controlled" → "specified by the client in the API request"); fix R34M2 (either/or multi-tenant MUST framing added); fix R34M3 (stoolap full SHA1 in normative text, not short hash in changelog); fix R34L1 (inaccurate optional() comment removed) |
 | v44     | 2026-04-18 | Round 33: fix R32H1 (security note moved into compute_event_id doc comment, before fn signature); fix R32H2 (security note rewritten to accurately describe multi-tenant threat model); fix R32M3 (tokenizer_id_to_version pseudocode updated to show Result<Option<String>, &'static str>); fix R32M4 (detached /// note removed); fix R32M1 (RFC-0914 v8 changelog entry for v6 now complete); fix R32L1 (RFC-0914 Approval Criteria pinned to RFC-0903-B1 v22) |
 | v43     | 2026-04-18 | Round 32: fix R31H1 (KeyError::Storage removed from Error Handling doc); fix R31H2 (add compute_event_id security note documenting no-delimiter construction); fix R31M1 (replay_events_for_proof removal converted to > blockquote); fix R31L2 (§Audit Proof Generation "(Future)" designation clarified); fix R31M3 (RFC-0914 v7 version-pin B1 to v22); update request_id round-trip note to clarify stored data cannot re-derive event_id without original gateway text |
 | v42     | 2026-04-18 | Round 31: fix R30C1 (TV4 corrected — pricing_hash=SHA256("pricing-table-v2")=8b48fe37, event_id=06a6eb1c); fix R30C2 (KeyError::Unimplemented → &'static str return type); fix R30C3 (§Event Ordering rewritten to resolve contradiction with §Budget Computation Procedure); fix R30H2 (intro "deterministic replay" → "budget state computation"); fix R30H3 (remove replay_events_for_proof pending spec debt); fix R30M3 (Invariant #4 corrected to reflect UNIQUE scope); update provider_usage_json comment to note "format is provider-dependent" (R30M2) |
@@ -1583,6 +1584,6 @@ $0.03/1K tokens → DQA(30_000, scale=6)
 ---
 
 **Draft Date:** 2026-04-18
-**Version:** v44
+**Version:** v47
 **Related Use Case:** Enhanced Quota Router Gateway
 **Related RFCs:** RFC-0903 (Virtual API Key System), RFC-0903-B1 (Schema Amendments), RFC-0903-C1 (Extended Schema Amendments), RFC-0126 (Deterministic Serialization), RFC-0201 (Binary BLOB Type)

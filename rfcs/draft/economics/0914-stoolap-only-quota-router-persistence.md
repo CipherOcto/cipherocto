@@ -2,7 +2,7 @@
 
 ## Status
 
-Draft (v7) — Updated schema references and scope clarification
+Draft (v8) — Updated schema references and scope clarification
 
 ## Authors
 
@@ -189,7 +189,7 @@ CREATE TABLE key_spend (
 ## Approval Criteria
 
 - [x] RFC-0903 (Virtual API Key System) - Final
-- [x] RFC-0903-B1 (Schema Amendments) - Draft, required for BLOB(16) key_id, event_id, request_id
+- [x] RFC-0903-B1 (Schema Amendments) v22 - Draft, required for BLOB(16) key_id, event_id, request_id
 - [x] RFC-0903-C1 (Extended Schema Amendments) - Draft, required for BLOB(16) team_id, api_keys.key_id, api_keys.team_id
 - [x] RFC-0912 (FOR UPDATE) - Accepted, 3/3 missions complete
 - [x] RFC-0913 (Pub/Sub) - Accepted, 4/4 missions complete
@@ -219,8 +219,8 @@ Future enhancements (optional):
 
 | Version | Date       | Changes |
 |---------|------------|---------|
+| v8      | 2026-04-18 | Round 32: fix R32M1 (v6 changelog now has full entry text); fix R32L1 (Approval Criteria pinned to RFC-0903-B1 v22) |
 | v7      | 2026-04-18 | Round 31: version-pin RFC-0903-B1 dependency to v22; update RFC-0914 footer; update Related RFCs section |
-| v6      | 2026-04-17 | Round 28 fixes:
 | v5      | 2026-04-17 | Round 27 fixes: move key_spend to Legacy Data Model section (not in-scope/Implemented); updated version footer |
 | v4      | 2026-04-16 | Round 26 fixes: align budget_limit to BIGINT per RFC-0903-B1/C1 (was INTEGER); fix api_keys and teams tables |
 | v3      | 2026-04-15 | Add RFC-0903-B1 and RFC-0903-C1 to Dependencies; clarify key_spend DEPRECATED; add diagram legend; update Constraints and Approval Criteria |

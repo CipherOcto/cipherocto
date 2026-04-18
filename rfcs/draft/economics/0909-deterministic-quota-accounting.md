@@ -2,7 +2,7 @@
 
 ## Status
 
-Draft (v43 — aligned with RFC-0903 Final v29 + RFC-0903-B1 v22 + RFC-0903-C1 v3, RFC-0126, RFC-0201)
+Draft (v44 — aligned with RFC-0903 Final v29 + RFC-0903-B1 v22 + RFC-0903-C1 v3, RFC-0126, RFC-0201)
 
 ## Authors
 
@@ -241,6 +241,20 @@ pub struct SpendEvent {
 /// A single router using a different UUID format will produce different event_id values
 /// for identical requests, silently breaking cross-router determinism.
 /// Test vectors in the Approval Criteria verify hyphenated lowercase format compliance.
+///
+/// # Security Note — No Field Delimiters
+///
+/// `compute_event_id` concatenates fields without length prefixes or delimiters.
+/// A constructed `request_id` equal to `key_id_str + provider_bytes + model_bytes`
+/// could theoretically collide with a different field combination. In practice:
+/// - `key_id` is always a 36-char RFC 4122 hyphenated UUID
+/// - `provider` and `model` are bounded short strings from a known provider/model list
+/// - In single-tenant or internally-trusted deployments, `request_id` is not user-controlled
+/// - In multi-tenant deployments where clients control `request_id`, a malicious tenant who
+///   knows another tenant's `key_id` could craft a request_id causing cross-tenant event_id
+///   collision — producing identical event_id for different `(key_id, request_id)` pairs
+/// If multi-tenant threat model applies, length-prefixed encoding or field separators
+/// MUST be used to maintain domain separation.
 pub fn compute_event_id(
     request_id: &str,
     key_id: &uuid::Uuid,
@@ -265,19 +279,6 @@ pub fn compute_event_id(
     // Return hex string (BLOB(32) storage per RFC-0903-B1; hex→raw conversion at insert)
     format!("{:x}", hasher.finalize())
 }
-
-/// **Security note — no field delimiters:** `compute_event_id` concatenates fields
-/// without length prefixes or delimiters. Variable-length fields (`request_id`,
-/// `provider`, `model`) are hashed as raw bytes. A constructed input where
-/// `request_id` equals the concatenation of two other field values could in
-/// principle collide with a different field combination. However, current field
-/// constraints prevent practical exploitation:
-/// - `key_id` is always a 36-char RFC 4122 hyphenated UUID
-/// - `provider` and `model` are bounded short strings from a known provider/model list
-/// - `request_id` is 1–1024 bytes from the gateway, not user-controlled in a way that
-///   allows embedding of the exact 36-char UUID format
-/// If field constraints ever relax, field separators or length-prefixed encoding
-/// should be added to maintain domain separation.
 
 /// Convert event_id from hex String (struct/API layer) to raw [u8; 32] for BLOB(32) storage.
 /// Used at the storage boundary before INSERT per RFC-0903-B1.
@@ -363,12 +364,17 @@ pub fn tokenizer_version_to_id(version: &str) -> [u8; 16] {
 ///
 /// ```ignore
 /// // Pseudocode — not for production use
-/// pub fn tokenizer_id_to_version(id: &[u8; 16]) -> Option<String> {
+/// pub fn tokenizer_id_to_version(id: &[u8; 16]) -> Result<Option<String>, &'static str> {
 ///     let row = db.query_row(
 ///         "SELECT version FROM tokenizers WHERE tokenizer_id = ?",
 ///         [id],
 ///     ).optional()?;
-///     row.get("version")
+///
+///     match row.get("version") {
+///         Ok(Some(version)) => Ok(Some(version)),
+///         Ok(None) => Ok(None),          // tokenizer not found
+///         Err(_) => Err("tokenizer_id_to_version: requires DB lookup implementation"),
+///     }
 /// }
 /// ```
 /// Returns `Ok(Some(version_string))` if the tokenizer exists, `Ok(None)` if not found,
@@ -883,7 +889,7 @@ For a given request_id, ALL routers MUST use the SAME token_source.
 token_source MUST be included in event_id hash.
 ```
 
-**Known limitation:** If two routers process the same `(key_id, request_id)` simultaneously with different `token_source` values (e.g., Router A sees ProviderUsage, Router B sees CanonicalTokenizer on retry), they compute different `event_id` values. However, the `UNIQUE(key_id, request_id)` constraint prevents a second INSERT with the same `(key_id, request_id)` from succeeding — stoolap fully enforces UNIQUE constraints on BLOB columns (verified by codebase inspection). The second router receives an idempotent success — no double-insertion occurs.
+**Known limitation:** If two routers process the same `(key_id, request_id)` simultaneously with different `token_source` values (e.g., Router A sees ProviderUsage, Router B sees CanonicalTokenizer on retry), they compute different `event_id` values. However, the `UNIQUE(key_id, request_id)` constraint prevents a second INSERT with the same `(key_id, request_id)` from succeeding — stoolap fully enforces UNIQUE constraints on BLOB columns (verified in stoolap at commit `28e3e51`). The second router receives an idempotent success — no double-insertion occurs.
 
 The actual retry double-charge scenario: if a client retries with a *different* `request_id` (e.g., `"req-abc"` → `"req-abc-retry"`), both INSERTs succeed with different `request_id` BLOBs. Both events record the same token consumption, and the client is charged twice. This is correct idempotency behavior for the schema — the client provided two different idempotency keys, so the schema treats them as two different requests. This is NOT a limitation — it is the defined behavior of idempotency keys.
 
@@ -1540,6 +1546,7 @@ $0.03/1K tokens → DQA(30_000, scale=6)
 
 | Version | Date       | Changes |
 | ------- | ---------- | ------- |
+| v44     | 2026-04-18 | Round 33: fix R32H1 (security note moved into compute_event_id doc comment, before fn signature); fix R32H2 (security note rewritten to accurately describe multi-tenant threat model); fix R32M3 (tokenizer_id_to_version pseudocode updated to show Result<Option<String>, &'static str>); fix R32M4 (detached /// note removed); fix R32M1 (RFC-0914 v8 changelog entry for v6 now complete); fix R32L1 (RFC-0914 Approval Criteria pinned to RFC-0903-B1 v22) |
 | v43     | 2026-04-18 | Round 32: fix R31H1 (KeyError::Storage removed from Error Handling doc); fix R31H2 (add compute_event_id security note documenting no-delimiter construction); fix R31M1 (replay_events_for_proof removal converted to > blockquote); fix R31L2 (§Audit Proof Generation "(Future)" designation clarified); fix R31M3 (RFC-0914 v7 version-pin B1 to v22); update request_id round-trip note to clarify stored data cannot re-derive event_id without original gateway text |
 | v42     | 2026-04-18 | Round 31: fix R30C1 (TV4 corrected — pricing_hash=SHA256("pricing-table-v2")=8b48fe37, event_id=06a6eb1c); fix R30C2 (KeyError::Unimplemented → &'static str return type); fix R30C3 (§Event Ordering rewritten to resolve contradiction with §Budget Computation Procedure); fix R30H2 (intro "deterministic replay" → "budget state computation"); fix R30H3 (remove replay_events_for_proof pending spec debt); fix R30M3 (Invariant #4 corrected to reflect UNIQUE scope); update provider_usage_json comment to note "format is provider-dependent" (R30M2) |
 | v41     | 2026-04-17 | Round 30: correct R29H2 — stoolap fully enforces UNIQUE on BLOB columns; only INTEGER PRIMARY KEY is restricted; RFC-0903-B1 ref updated to v22; also update RFC-0903-B1 ref in known limitation text |
@@ -1576,6 +1583,6 @@ $0.03/1K tokens → DQA(30_000, scale=6)
 ---
 
 **Draft Date:** 2026-04-18
-**Version:** v43
+**Version:** v44
 **Related Use Case:** Enhanced Quota Router Gateway
 **Related RFCs:** RFC-0903 (Virtual API Key System), RFC-0903-B1 (Schema Amendments), RFC-0903-C1 (Extended Schema Amendments), RFC-0126 (Deterministic Serialization), RFC-0201 (Binary BLOB Type)

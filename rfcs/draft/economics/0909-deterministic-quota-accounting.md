@@ -2,7 +2,7 @@
 
 ## Status
 
-Draft (v42 — aligned with RFC-0903 Final v29 + RFC-0903-B1 v22 + RFC-0903-C1 v3, RFC-0126, RFC-0201)
+Draft (v43 — aligned with RFC-0903 Final v29 + RFC-0903-B1 v22 + RFC-0903-C1 v3, RFC-0126, RFC-0201)
 
 ## Authors
 
@@ -189,9 +189,7 @@ pub struct SpendEvent {
     /// Stored as BLOB(32) per RFC-0903-B1; gateway provides raw text, SHA256-encoded at insert
     /// via encode_request_id() (defined in RFC-0903-B1 §request_id) — NOT hex-encoded. See RFC-0903-B1 §request_id encoding.
     ///
-    /// **Round-trip note:** request_id encoding is one-way (SHA256). The original gateway text is
-    /// NOT recoverable from stored BLOB(32). After DB round-trip, populate this field with
-    /// `hex::encode(stored_blob)` for API/debug compatibility. Replay functions do not use this field.
+    /// **Round-trip note:** request_id encoding is one-way (SHA256). The original gateway text is NOT recoverable from stored BLOB(32). An auditor verifying event_id must obtain the original gateway request_id text from the event stream — it cannot be reconstructed from spend_ledger alone. This has implications for §Audit Proof Generation: external auditors who can observe the event stream (which contains raw request_id) can verify event_id independently; auditors with only spend_ledger access cannot re-derive event_id without the original gateway text.
     ///
     /// **Type semantics:** Before persistence: raw gateway text String. After round-trip: hex-encoded
     /// SHA256 bytes. This field has different meaning before and after persistence — callers MUST NOT
@@ -268,6 +266,19 @@ pub fn compute_event_id(
     format!("{:x}", hasher.finalize())
 }
 
+/// **Security note — no field delimiters:** `compute_event_id` concatenates fields
+/// without length prefixes or delimiters. Variable-length fields (`request_id`,
+/// `provider`, `model`) are hashed as raw bytes. A constructed input where
+/// `request_id` equals the concatenation of two other field values could in
+/// principle collide with a different field combination. However, current field
+/// constraints prevent practical exploitation:
+/// - `key_id` is always a 36-char RFC 4122 hyphenated UUID
+/// - `provider` and `model` are bounded short strings from a known provider/model list
+/// - `request_id` is 1–1024 bytes from the gateway, not user-controlled in a way that
+///   allows embedding of the exact 36-char UUID format
+/// If field constraints ever relax, field separators or length-prefixed encoding
+/// should be added to maintain domain separation.
+
 /// Convert event_id from hex String (struct/API layer) to raw [u8; 32] for BLOB(32) storage.
 /// Used at the storage boundary before INSERT per RFC-0903-B1.
 ///
@@ -338,9 +349,12 @@ pub fn tokenizer_version_to_id(version: &str) -> [u8; 16] {
 /// Requires a lookup against the tokenizers table.
 ///
 /// # Error Handling
-/// Returns `None` if the tokenizer_id is not found in the tokenizers table.
-/// This is distinct from a DB error (connection failure, etc.) which propagates
-/// as `Err(KeyError::Storage)`.
+/// Returns `Ok(None)` if the tokenizer_id is not found in the tokenizers table.
+/// Returns `Err(&'static str)` if the lookup path is not yet implemented.
+///
+/// In a complete implementation, DB errors (connection failure, etc.) would propagate
+/// via a different error path — callers should substitute `Err(KeyError::Storage)` in
+/// the error arm until a unified error strategy is defined.
 ///
 /// # Implementation
 /// This function requires a database lookup against the tokenizers table.
@@ -623,12 +637,7 @@ pub fn replay_events(events: &[SpendEvent]) -> std::collections::BTreeMap<String
     key_spend
 }
 
-/// `replay_events_for_proof` is removed from this RFC pending a defined consumer.
-/// Per-key grouped event detail (its return type) is not currently required by any
-/// verification path in the spec. It may be re-introduced in a future RFC when a
-/// concrete use case is specified.
-///
-/// See §Audit Proof Generation for the canonical Merkle tree path.
+> **Note:** `replay_events_for_proof` is removed pending a defined consumer. Per-key grouped event detail is not currently required by any verification path in this spec. It may be re-introduced in a future RFC when a concrete use case is specified. See §Audit Proof Generation for the canonical Merkle tree path.
 
 Verification nodes can reconstruct:
 
@@ -1019,9 +1028,9 @@ fn checked_add_spend(current: u64, add: u64) -> Result<u64, KeyError> {
 
 Note: `KeyError::Storage` is used for overflow errors; a dedicated `KeyError::Overflow` variant may be added in future RFC-0903 revisions.
 
-## Audit Proof Generation (Future)
+## Audit Proof Generation
 
-The event ledger can be extended to generate **cryptographic proofs**.
+The event ledger can be extended to generate **cryptographic proofs**. The `build_merkle_tree()` function below is fully specified. The "(Future)" designation on this section refers to the full verification system integration (proof relay, challenge protocol, verifier enrollment) — the deterministic Merkle tree construction itself is a specified component.
 
 ```rust
 use sha2::{Digest, Sha256};
@@ -1531,6 +1540,7 @@ $0.03/1K tokens → DQA(30_000, scale=6)
 
 | Version | Date       | Changes |
 | ------- | ---------- | ------- |
+| v43     | 2026-04-18 | Round 32: fix R31H1 (KeyError::Storage removed from Error Handling doc); fix R31H2 (add compute_event_id security note documenting no-delimiter construction); fix R31M1 (replay_events_for_proof removal converted to > blockquote); fix R31L2 (§Audit Proof Generation "(Future)" designation clarified); fix R31M3 (RFC-0914 v7 version-pin B1 to v22); update request_id round-trip note to clarify stored data cannot re-derive event_id without original gateway text |
 | v42     | 2026-04-18 | Round 31: fix R30C1 (TV4 corrected — pricing_hash=SHA256("pricing-table-v2")=8b48fe37, event_id=06a6eb1c); fix R30C2 (KeyError::Unimplemented → &'static str return type); fix R30C3 (§Event Ordering rewritten to resolve contradiction with §Budget Computation Procedure); fix R30H2 (intro "deterministic replay" → "budget state computation"); fix R30H3 (remove replay_events_for_proof pending spec debt); fix R30M3 (Invariant #4 corrected to reflect UNIQUE scope); update provider_usage_json comment to note "format is provider-dependent" (R30M2) |
 | v41     | 2026-04-17 | Round 30: correct R29H2 — stoolap fully enforces UNIQUE on BLOB columns; only INTEGER PRIMARY KEY is restricted; RFC-0903-B1 ref updated to v22; also update RFC-0903-B1 ref in known limitation text |
 | v40     | 2026-04-17 | Round 29 fixes: fix R29C1 (footer v38→v39); fix R29C2 (tokenizer_id_to_version signature → Result<Option<String>, KeyError>); fix R29H2 (known limitation updated to explicitly acknowledge stoolap UNIQUE/BLOB enforcement gap); fix R29H3 (replay_events_for_proof renamed as pending future API); fix R29M1 (correct retry behavior no longer called a limitation); fix R29M3 (ORDER BY note removed false 'cursor-based pagination' justification); fix R29M4 (Merkle root reproducibility from BLOB storage documented); add BLAKE3 test vector to Approval Criteria (R29H4); add TV4 pricing_hash origin (R29H1); update RFC-0903-B1 ref to v20 |
@@ -1566,6 +1576,6 @@ $0.03/1K tokens → DQA(30_000, scale=6)
 ---
 
 **Draft Date:** 2026-04-18
-**Version:** v42
+**Version:** v43
 **Related Use Case:** Enhanced Quota Router Gateway
 **Related RFCs:** RFC-0903 (Virtual API Key System), RFC-0903-B1 (Schema Amendments), RFC-0903-C1 (Extended Schema Amendments), RFC-0126 (Deterministic Serialization), RFC-0201 (Binary BLOB Type)

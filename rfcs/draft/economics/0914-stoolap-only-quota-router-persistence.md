@@ -2,7 +2,7 @@
 
 ## Status
 
-Draft (v6) — Updated schema references and scope clarification
+Draft (v7) — Updated schema references and scope clarification
 
 ## Authors
 
@@ -17,7 +17,7 @@ Define the architecture for eliminating Redis dependency from the quota router b
 **Requires:**
 
 - RFC-0903: Virtual API Key System (Final)
-- RFC-0903-B1: Schema Amendments to RFC-0903 Final (for BLOB types on key_id, event_id, request_id)
+- RFC-0903-B1: Schema Amendments to RFC-0903 Final v22 (for BLOB types on key_id, event_id, request_id)
 - RFC-0903-C1: Extended Schema Amendments to RFC-0903 Final (for BLOB types on team_id, api_keys.key_id, api_keys.team_id)
 - RFC-0912: Stoolap FOR UPDATE Row Locking
 - RFC-0913: Stoolap Pub/Sub for Cache Invalidation
@@ -219,7 +219,8 @@ Future enhancements (optional):
 
 | Version | Date       | Changes |
 |---------|------------|---------|
-| v6      | 2026-04-17 | Round 28 fixes: remove duplicate "## Related RFCs" header causing formatting error |
+| v7      | 2026-04-18 | Round 31: version-pin RFC-0903-B1 dependency to v22; update RFC-0914 footer; update Related RFCs section |
+| v6      | 2026-04-17 | Round 28 fixes:
 | v5      | 2026-04-17 | Round 27 fixes: move key_spend to Legacy Data Model section (not in-scope/Implemented); updated version footer |
 | v4      | 2026-04-16 | Round 26 fixes: align budget_limit to BIGINT per RFC-0903-B1/C1 (was INTEGER); fix api_keys and teams tables |
 | v3      | 2026-04-15 | Add RFC-0903-B1 and RFC-0903-C1 to Dependencies; clarify key_spend DEPRECATED; add diagram legend; update Constraints and Approval Criteria |
@@ -227,7 +228,7 @@ Future enhancements (optional):
 ## Related RFCs
 
 - RFC-0903: Virtual API Key System (Final)
-- RFC-0903-B1: Schema Amendments to RFC-0903 Final (storage types)
+- RFC-0903-B1: Schema Amendments to RFC-0903 Final v22 (storage types)
 - RFC-0903-C1: Extended Schema Amendments to RFC-0903 Final (storage types)
 - RFC-0912: Stoolap FOR UPDATE Row Locking (Final)
 - RFC-0913: Stoolap Pub/Sub for Cache Invalidation (Accepted)

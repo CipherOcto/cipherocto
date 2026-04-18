@@ -2,7 +2,7 @@
 
 ## Status
 
-Draft (v41 — aligned with RFC-0903 Final v29 + RFC-0903-B1 v22 + RFC-0903-C1 v3, RFC-0126, RFC-0201)
+Draft (v42 — aligned with RFC-0903 Final v29 + RFC-0903-B1 v22 + RFC-0903-C1 v3, RFC-0126, RFC-0201)
 
 ## Authors
 
@@ -358,21 +358,21 @@ pub fn tokenizer_version_to_id(version: &str) -> [u8; 16] {
 /// }
 /// ```
 /// Returns `Ok(Some(version_string))` if the tokenizer exists, `Ok(None)` if not found,
-/// or `Err(KeyError::Unimplemented)` if the lookup path is not yet implemented.
+/// or `Err("tokenizer_id_to_version: requires DB lookup implementation")` if the lookup
+/// path is not yet implemented.
 ///
 /// Callers MUST handle all three cases — a `match` or `if let` on the `Result` is required.
 #[inline]
-pub fn tokenizer_id_to_version(id: &[u8; 16]) -> Result<Option<String>, KeyError> {
+pub fn tokenizer_id_to_version(id: &[u8; 16]) -> Result<Option<String>, &'static str> {
     // This function requires a database lookup against the tokenizers table.
     // In the current implementation, this function is NOT called — tokenizers are
     // populated on-demand at INSERT time and the version string is stored in the
-    // spend_ledger.provider_usage_json field for audit. Callers needing the version
-    // should parse provider_usage_json rather than looking up the tokenizers table.
-    //
+    // spend_ledger.provider_usage_json field for audit (format is provider-dependent;
+    // no structured retrieval path is defined in this RFC).
     // The correct implementation is a DB query: SELECT version FROM tokenizers WHERE tokenizer_id = $1
     // returning Ok(Some(version)) on found, Ok(None) on not found.
     let _ = id;
-    Err(KeyError::Unimplemented("tokenizer_id_to_version: requires DB lookup implementation"))
+    Err("tokenizer_id_to_version: requires DB lookup implementation")
 }
 
 Events represent the **canonical accounting record**.
@@ -381,22 +381,15 @@ Quota state must be derivable from the ordered sequence of events.
 
 ## Event Ordering
 
-Events must be processed in deterministic order.
+Events must be processed in deterministic order. Two paths exist with different ordering requirements:
 
-Ordering rule (per RFC-0903 Final §Deterministic Replay Procedure):
+**Canonical path (external verification):** `event_id ASC` only. This is the authoritative cross-router ordering — external verifiers reconstruct events from the log stream (which contains `event_id` but not `created_at`) and compute identical Merkle roots.
 
-```
+**Internal DB audit path:** `ORDER BY created_at ASC, event_id ASC`. Used when the router's own insertion timestamp is trusted for reconciliation. This path is described in RFC-0903 Final's §Deterministic Replay Procedure.
 
-created_at ASC, event_id ASC
+**Important:** `SpendEvent` struct has **no `created_at` field** — it only exists in the DB schema. In-memory replay (via `replay_events()`) sorts by `event_id` only since `created_at` is not available. The canonical Merkle path uses `event_id`-only ordering throughout.
 
-```
-
-- `created_at` is the database insert timestamp — provides chronological ordering at the DB level
-- `event_id` serves as tiebreaker for deterministic replay
-- `timestamp` (provider event time) is metadata only and does **NOT** participate in event ordering
-- **Important:** `SpendEvent` struct has **no `created_at` field** — it only exists in the DB schema. In-memory replay (via `replay_events()`) sorts by `event_id` only since `created_at` is not available. DB-level replay uses `ORDER BY created_at ASC, event_id ASC`.
-
-This matches RFC-0903 Final which uses `created_at` (chronological) not `timestamp` (event time) for deterministic replay ordering.
+**No ORDER BY is needed for budget state computation** (`SUM(cost_amount)`) — aggregation is order-independent. See §Budget Computation Procedure.
 
 **Two ordering paths — two consumers:**
 
@@ -630,42 +623,12 @@ pub fn replay_events(events: &[SpendEvent]) -> std::collections::BTreeMap<String
     key_spend
 }
 
-/// Reconstruct per-key event list from ledger entries, grouped by key_id.
+/// `replay_events_for_proof` is removed from this RFC pending a defined consumer.
+/// Per-key grouped event detail (its return type) is not currently required by any
+/// verification path in the spec. It may be re-introduced in a future RFC when a
+/// concrete use case is specified.
 ///
-/// Returns events sorted by event_id, grouped by key_id. Each event retains its
-/// event_id (hex String) and cost_amount.
-///
-/// **This function is NOT a input to `build_merkle_tree`.** The Merkle tree path
-/// uses `build_merkle_tree` directly on `&[SpendEvent]` with event_id-only global
-/// ordering. `replay_events_for_proof` returns a per-key grouped structure (`BTreeMap`)
-/// that is incompatible with `build_merkle_tree`'s flat `&[SpendEvent]` input.
-///
-/// This function is retained for future verification consumers that require per-key
-/// grouped event detail (e.g., per-key audit summaries). It currently has no
-/// defined caller in this RFC — treat it as pending API for future use cases.
-///
-/// # Relationship to build_merkle_tree
-///
-/// `replay_events_for_proof` returns `BTreeMap<String, Vec<(event_id, cost_amount)>>` — a
-/// per-key grouped structure. `build_merkle_tree` takes `&[SpendEvent]` (flat, all fields)
-/// and sorts by event_id globally. The data shapes are incompatible.
-pub fn replay_events_for_proof(
-    events: &[SpendEvent],
-) -> std::collections::BTreeMap<String, Vec<(String, u64)>> {
-    use std::collections::BTreeMap;
-
-    let mut result: BTreeMap<String, Vec<(String, u64)>> = BTreeMap::new();
-
-    let mut sorted = events.to_vec();
-    sorted.sort_by(|a, b| a.event_id.cmp(&b.event_id));
-
-    for event in sorted {
-        let key = event.key_id.to_string();
-        result.entry(key).or_insert_with(Vec::new).push((event.event_id.clone(), event.cost_amount));
-    }
-
-    result
-}
+/// See §Audit Proof Generation for the canonical Merkle tree path.
 
 Verification nodes can reconstruct:
 
@@ -675,7 +638,7 @@ Verification nodes can reconstruct:
 
 **Budget Computation Procedure:**
 
-For budget state computation and ledger reconciliation, deterministic replay MUST follow this procedure:
+For budget state computation and ledger reconciliation, budget state computation MUST follow this procedure:
 
 ```
 1. Load all spend_ledger for a key_id
@@ -710,7 +673,7 @@ The following invariants MUST hold at all times:
    cost is incurred but NOT recorded. In this case, true_cost > current_spend by
    the unrecorded amount — a BudgetExceeded failure violates the lower bound.
    This is an accepted bounded loss (see §Failure Handling).
-4. request_id uniqueness prevents double charging
+4. For the same `(key_id, request_id)` pair, `UNIQUE` constraint ensures exactly one INSERT succeeds — duplicate requests are deduplicated at the schema level. Double-charging via different `request_id` values for the same logical event is the caller's responsibility to prevent (see §Known Limitations).
 5. pricing_hash ensures deterministic cost calculation
 6. token_source MUST be identical across routers for a given request_id
 ```
@@ -1418,7 +1381,7 @@ The following test vectors verify that `compute_event_id()` produces identical o
 | TV1 | `"req-001"` | `"550e8400-e29b-41d4-a716-446655440000"` | `"openai"` | `"gpt-4"` | `100` | `50` | `"00112233445566778899aabbccddeeff00112233445566778899aabbccddeeff"` | ProviderUsage | `8d22792346a0417bb928da0c16f2af5330640678f365d16bc392d400c2aa4ab2` |
 | TV2 | `"req-002"` | `"550e8400-e29b-41d4-a716-446655440000"` | `"openai"` | `"gpt-4"` | `100` | `50` | `"00112233445566778899aabbccddeeff00112233445566778899aabbccddeeff"` | CanonicalTokenizer | `0f26450e1734034b9bc6f999b61586c671dd8249002524dd740a94c51ded3f36` |
 | TV3 | `"req-001"` | `"660e8400-e29b-41d4-a716-446655440001"` | `"openai"` | `"gpt-4"` | `100` | `50` | `"00112233445566778899aabbccddeeff00112233445566778899aabbccddeeff"` | ProviderUsage | `a3e31fbaa4b3bf6fe9d5c1eeb59055cfe4a3389358fc0e38c8820e2c2e6912ed` |
-| TV4 | `"req-001"` | `"550e8400-e29b-41d4-a716-446655440000"` | `"openai"` | `"gpt-4"` | `100` | `50` | `"e9150b7c5eee094b08a2cea384095c47af0d11a65313b113feb97211b27e2761"` | ProviderUsage | `c03ef47dd1d5612c2bdabf99a544afe18afb8754bab804bb885c8e1d64d344c6` |
+| TV4 | `"req-001"` | `"550e8400-e29b-41d4-a716-446655440000"` | `"openai"` | `"gpt-4"` | `100` | `50` | `"8b48fe37e84565f99285690a835a881fe2d580ec63775aa5f9465ba38a5a2f60"` | ProviderUsage | `06a6eb1c68f8a75287d0ac45b1ede9f00cd770f106c505685c299cf3b593726c` |
 
 **Test vector computation notes:**
 - `key_id.to_string()` uses RFC 4122 hyphenated lowercase format (`"550e8400-e29b-41d4-a716-446655440000"`, 36 chars with hyphens)
@@ -1426,7 +1389,7 @@ The following test vectors verify that `compute_event_id()` produces identical o
 - `token_source.to_hash_str()` returns `"provider"` for ProviderUsage, `"tokenizer"` for CanonicalTokenizer
 - input/output tokens use **little-endian** byte order in the hash
 - All routers MUST produce identical 64-char lowercase hex output for the same inputs
-- TV4's `pricing_hash` (`"e9150b7c5eee094b08a2cea384095c47af0d11a65313b113feb97211b27e2761"`) is a second test value encoding 32 raw bytes — it was generated by hashing the ASCII string `"pricing-table-v2"` via SHA256, then using those 32 raw bytes as the pricing_hash input. An independent verifier can reproduce this by: `SHA256(b"pricing-table-v2")` → 32 raw bytes → hex encode → use as `pricing_hash`. This tests the code path where pricing_hash differs from TV1-TV3's fixed test value.
+- TV4's `pricing_hash` (`"8b48fe37e84565f99285690a835a881fe2d580ec63775aa5f9465ba38a5a2f60"`) is a second test value encoding 32 raw bytes — generated by `SHA256(b"pricing-table-v2")` (UTF-8, no trailing newline). An independent verifier can reproduce this by: `SHA256(b"pricing-table-v2")` → 32 raw bytes → hex encode → use as `pricing_hash`. This tests the code path where pricing_hash differs from TV1-TV3's fixed test value.
 
 ## Implementation Notes
 
@@ -1568,6 +1531,7 @@ $0.03/1K tokens → DQA(30_000, scale=6)
 
 | Version | Date       | Changes |
 | ------- | ---------- | ------- |
+| v42     | 2026-04-18 | Round 31: fix R30C1 (TV4 corrected — pricing_hash=SHA256("pricing-table-v2")=8b48fe37, event_id=06a6eb1c); fix R30C2 (KeyError::Unimplemented → &'static str return type); fix R30C3 (§Event Ordering rewritten to resolve contradiction with §Budget Computation Procedure); fix R30H2 (intro "deterministic replay" → "budget state computation"); fix R30H3 (remove replay_events_for_proof pending spec debt); fix R30M3 (Invariant #4 corrected to reflect UNIQUE scope); update provider_usage_json comment to note "format is provider-dependent" (R30M2) |
 | v41     | 2026-04-17 | Round 30: correct R29H2 — stoolap fully enforces UNIQUE on BLOB columns; only INTEGER PRIMARY KEY is restricted; RFC-0903-B1 ref updated to v22; also update RFC-0903-B1 ref in known limitation text |
 | v40     | 2026-04-17 | Round 29 fixes: fix R29C1 (footer v38→v39); fix R29C2 (tokenizer_id_to_version signature → Result<Option<String>, KeyError>); fix R29H2 (known limitation updated to explicitly acknowledge stoolap UNIQUE/BLOB enforcement gap); fix R29H3 (replay_events_for_proof renamed as pending future API); fix R29M1 (correct retry behavior no longer called a limitation); fix R29M3 (ORDER BY note removed false 'cursor-based pagination' justification); fix R29M4 (Merkle root reproducibility from BLOB storage documented); add BLAKE3 test vector to Approval Criteria (R29H4); add TV4 pricing_hash origin (R29H1); update RFC-0903-B1 ref to v20 |
 | v39     | 2026-04-17 | Round 28 fixes: replace malformed test vectors (52-char pricing_hash → correct 64-char hex); fix H4 known limitation (UNIQUE constraint prevents described double-insertion); update RFC-0903-B1 ref to v19; fix RL1 changelog error (BLAKE3 truncation code already in v18); update RFC-0914 ref to v5 |
@@ -1601,7 +1565,7 @@ $0.03/1K tokens → DQA(30_000, scale=6)
 
 ---
 
-**Draft Date:** 2026-04-17
-**Version:** v41
+**Draft Date:** 2026-04-18
+**Version:** v42
 **Related Use Case:** Enhanced Quota Router Gateway
 **Related RFCs:** RFC-0903 (Virtual API Key System), RFC-0903-B1 (Schema Amendments), RFC-0903-C1 (Extended Schema Amendments), RFC-0126 (Deterministic Serialization), RFC-0201 (Binary BLOB Type)

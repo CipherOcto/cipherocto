@@ -2,7 +2,7 @@
 
 ## Status
 
-Draft (v5 — aligns with RFC-0903 Final v29 + RFC-0903-B1 v22 + RFC-0903-C1 v3 + RFC-0909 v54)
+Draft (v5 — aligns with RFC-0903 Final v29 + RFC-0903-B1 v22 + RFC-0903-C1 v3 + RFC-0909 v55)
 
 ## Authors
 
@@ -691,6 +691,7 @@ Floating point produces non-deterministic results across architectures (x87 vs S
 
 | Version | Date | Changes |
 |---------|------|---------|
+| v6 | 2026-04-19 | Round 52 fixes: fix 912-L1 (Status header: RFC-0909 version updated from v54 to v55 to match current RFC-0909 version); fix 913-L1 (Related RFCs: RFC-0909 version updated from v54 to v55 to match current RFC-0909 version) |
 | v5 | 2026-04-19 | Round 51 fixes: fix 910-H1 (Related RFCs: RFC-0909 version updated from v53 to v54 to match current RFC-0909 version) |
 | v4 | 2026-04-19 | Round 50 fixes: fix 910-H1/M3 (remove false "aligns with RFC-0909 §compute_cost" claim from compute_cost doc comment — RFC-0910's PricingTable is a different type from RFC-0909's PricingModel; added clarifying note that this is a registry struct, not RFC-0909's struct); fix 910-M2 (add note about dual PricingTable definitions: RFC-0910 uses single-row struct for registry; RFC-0909 uses BTreeMap+inner-struct for internal pricing — same name, different types); fix 910-L1 (expand Truncation Note: add two-division breakdown matching RFC-0909's Invariant #3 detail) |
 | v3 | 2026-04-19 | Round 49 fixes: fix 910-H1 (add coarse-prefix note to 'o' arm: only o1/o3 verified for o200k_base per Tokenizer Assignment Table; future o* models with different vocabs will incorrectly match until exact model matching replaces prefix dispatch); fix 910-M1 (clarify compute_pricing_hash pseudocode: serde_json used for illustration only, not production; canonical serializer required per RFC 8785); fix 910-L1 (add RFC-0913 and RFC-0914 to Related RFCs — RFC-0914 lists RFC-0910 as optional; both target quota-router implementation) |
@@ -700,7 +701,7 @@ Floating point produces non-deterministic results across architectures (x87 vs S
 ## Related RFCs
 
 - RFC-0903: Virtual API Key System (Final v29 + RFC-0903-B1 amendment v22 + RFC-0903-C1 amendment v3)
-- RFC-0909: Deterministic Quota Accounting (Draft v54)
+- RFC-0909: Deterministic Quota Accounting (Draft v55)
 - RFC-0913: Stoolap Pub/Sub for Cache Invalidation (Accepted — quota router cache invalidation via WAL pub/sub; related to registry update propagation)
 - RFC-0914: Stoolap-Only Quota Router Persistence (Draft v8 — lists RFC-0910 as optional dependency; both RFCs target the same quota-router implementation)
 - RFC-0126: Deterministic Serialization (Accepted v2.5.1)
@@ -712,6 +713,6 @@ Floating point produces non-deterministic results across architectures (x87 vs S
 
 ---
 
-**Version:** v5
+**Version:** v6
 **Draft Date:** 2026-04-19
 **Last Updated:** 2026-04-19

@@ -2,7 +2,7 @@
 
 ## Status
 
-Draft (v2 — aligns with RFC-0903 Final v29 + RFC-0903-B1 v22 + RFC-0903-C1 v3 + RFC-0909 v50)
+Draft (v2 — aligns with RFC-0903 Final v29 + RFC-0903-B1 v22 + RFC-0903-C1 v3 + RFC-0909 v52)
 
 ## Authors
 
@@ -23,7 +23,7 @@ This RFC provides the tokenizer registry referenced by RFC-0909's `get_canonical
 **Requires:**
 
 - RFC-0903: Virtual API Key System (Final v29 + RFC-0903-B1 amendment v22 + RFC-0903-C1 amendment v3)
-- RFC-0909: Deterministic Quota Accounting (Draft v50)
+- RFC-0909: Deterministic Quota Accounting (Draft v52)
 - RFC-0126: Deterministic Serialization (Accepted v2.5.1)
 
 **Required By:**
@@ -580,12 +580,13 @@ Floating point produces non-deterministic results across architectures (x87 vs S
 
 | Version | Date | Changes |
 |---------|------|---------|
+| v2 | 2026-04-19 | Round 43 fixes: align tokenizer assignments with RFC-0909 get_canonical_tokenizer (o200k_base unversioned); tokenizers schema RFC-0903-B1 reference; SpendReceipt.token_source→TokenSource; request_id encoding clarification; RFC-0909 v50 cross-reference updates; add RFC-0126 to Dependencies; RFC-0903 references include B1/C1 amendments; tokenizer_assignments "(future extension)" removed; add test vectors / Round 44 fixes: fix C2 (footer "Version: 2" → "Version: v2"); update circular RFC-0909 reference from v50 to v52 |
 | v1 | 2026-04-19 | Initial Draft: expand from Planned v2 to full Blueprint template; add canonical tokenizer registry; add test vectors; add Security Considerations and Adversarial Review |
 
 ## Related RFCs
 
 - RFC-0903: Virtual API Key System (Final v29 + RFC-0903-B1 amendment v22 + RFC-0903-C1 amendment v3)
-- RFC-0909: Deterministic Quota Accounting (Draft v50)
+- RFC-0909: Deterministic Quota Accounting (Draft v52)
 - RFC-0126: Deterministic Serialization (Accepted v2.5.1)
 - RFC-0201: Binary BLOB Type for Deterministic Hash Storage (Accepted v5.24)
 
@@ -595,6 +596,6 @@ Floating point produces non-deterministic results across architectures (x87 vs S
 
 ---
 
-**Version:** 2
+**Version:** v2
 **Draft Date:** 2026-04-19
 **Last Updated:** 2026-04-19

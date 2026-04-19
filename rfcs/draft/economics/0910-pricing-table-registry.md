@@ -347,7 +347,7 @@ pub fn get_canonical_tokenizer(model: &str) -> &'static str {
         'g' => {
             // gpt-* family — NOT gemini-* (gemini may use SentencePiece)
             // This is an approximation; verify before production use
-            "tiktoken-cl100k_base-v1.2.3"
+            "tiktoken-cl100k_base-v1.2.3"  // version aligned with Tokenizer Assignment Table
         },
         'o' => {
             // o1, o3 — OpenAI o-series with o200k_base vocab
@@ -505,7 +505,20 @@ Expected `compute_cost()` output: `3000 + 3000 = 6000` micro-units
 | Input | Expected Output |
 |-------|---------------|
 | `"tiktoken-cl100k_base-v1.2.3"` | `e3c8e8ff724411c6416dd4fb135368e3` (16 bytes hex) |
-| `"tiktoken-o200k_base"` | *(defined at implementation)* |
+| `"tiktoken-o200k_base"` | `be1b3be0a2698c863b31edc1b7809a9c` (16 bytes hex) |
+
+### Tokenizer Assignment End-to-End Test Vector
+
+The following test vectors verify the complete path from model family to `tokenizer_id`
+for use in `event_id` computation (RFC-0909 §compute_event_id).
+
+| Model | Canonical Tokenizer Version | tokenizer_id (BLAKE3-16) | token_source |
+|-------|---------------------------|--------------------------|-------------|
+| `"gpt-4"` | `"tiktoken-cl100k_base-v1.2.3"` | `e3c8e8ff724411c6416dd4fb135368e3` | CanonicalTokenizer |
+| `"o3"` | `"tiktoken-o200k_base"` | `be1b3be0a2698c863b31edc1b7809a9c` | CanonicalTokenizer |
+| `"claude-3-opus"` | `"tiktoken-cl100k_base-v1.2.3"` | `e3c8e8ff724411c6416dd4fb135368e3` | CanonicalTokenizer |
+| `"gemini-2.0-flash"` | `"tiktoken-cl100k_base-v1.2.3"` (fallback) | `e3c8e8ff724411c6416dd4fb135368e3` | CanonicalTokenizer |
+| `"unknown-model"` | `"tiktoken-cl100k_base-v1.2.3"` (default) | `e3c8e8ff724411c6416dd4fb135368e3` | CanonicalTokenizer |
 
 ## Alternatives Considered
 
@@ -580,7 +593,7 @@ Floating point produces non-deterministic results across architectures (x87 vs S
 
 | Version | Date | Changes |
 |---------|------|---------|
-| v2 | 2026-04-19 | Round 43 fixes: align tokenizer assignments with RFC-0909 get_canonical_tokenizer (o200k_base unversioned); tokenizers schema RFC-0903-B1 reference; SpendReceipt.token_source→TokenSource; request_id encoding clarification; RFC-0909 v50 cross-reference updates; add RFC-0126 to Dependencies; RFC-0903 references include B1/C1 amendments; tokenizer_assignments "(future extension)" removed; add test vectors / Round 44 fixes: fix C2 (footer "Version: 2" → "Version: v2"); update circular RFC-0909 reference from v50 to v52 |
+| v2 | 2026-04-19 | Round 46 fixes: fix C1 (add BLAKE3-16 expected output for tiktoken-o200k_base: be1b3be0a2698c863b31edc1b7809a9c); fix C2 (add Tokenizer Assignment End-to-End Test Vector table) / Round 43 fixes: align tokenizer assignments with RFC-0909 get_canonical_tokenizer (o200k_base unversioned); tokenizers schema RFC-0903-B1 reference; SpendReceipt.token_source→TokenSource; request_id encoding clarification; RFC-0909 v50 cross-reference updates; add RFC-0126 to Dependencies; RFC-0903 references include B1/C1 amendments; tokenizer_assignments "(future extension)" removed; add test vectors / Round 44 fixes: fix C2 (footer "Version: 2" → "Version: v2"); update circular RFC-0909 reference from v50 to v52 / Round 45 fixes: fix C2 ('g' arm get_canonical_tokenizer: version suffix added to align with Tokenizer Assignment Table) |
 | v1 | 2026-04-19 | Initial Draft: expand from Planned v2 to full Blueprint template; add canonical tokenizer registry; add test vectors; add Security Considerations and Adversarial Review |
 
 ## Related RFCs

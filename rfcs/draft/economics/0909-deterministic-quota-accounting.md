@@ -2,7 +2,7 @@
 
 ## Status
 
-Draft (v47 — aligned with RFC-0903 Final v29 + RFC-0903-B1 v22 + RFC-0903-C1 v3, RFC-0126, RFC-0201)
+Draft (v49 — aligned with RFC-0903 Final v29 + RFC-0903-B1 v22 + RFC-0903-C1 v3, RFC-0126, RFC-0201)
 
 ## Authors
 
@@ -29,7 +29,7 @@ This is required for future integration with:
 
 **Requires:**
 
-- RFC-0903: Virtual API Key System (Final v29 + RFC-0903-B1 amendment v19 + RFC-0903-C1 amendment v3)
+- RFC-0903: Virtual API Key System (Final v29 + RFC-0903-B1 amendment v22 + RFC-0903-C1 amendment v3)
 - RFC-0126: Deterministic Serialization (for canonical JSON serialization)
 - RFC-0201: Binary BLOB Type for Deterministic Hash Storage (Accepted)
 
@@ -615,7 +615,7 @@ Quota state must be reproducible via replay.
 ///
 /// NOTE: This function returns per-key spend aggregates suitable for quota
 /// enforcement and budget checks. It is NOT suitable for Merkle proof
-/// generation — see replay_events_for_proof() instead.
+/// generation — see `build_merkle_tree()` instead.
 pub fn replay_events(events: &[SpendEvent]) -> std::collections::BTreeMap<String, u64> {
     use std::collections::BTreeMap;
 
@@ -823,8 +823,22 @@ impl Default for PricingTable {
     }
 }
 
-/// Compute cost deterministically using integer arithmetic
-/// Name aligns with RFC-0903 Final §compute_cost
+/// Compute cost deterministically using integer arithmetic.
+/// Name aligns with RFC-0903 Final §compute_cost.
+///
+/// # Parameters
+/// - `pricing`: the PricingModel for the model being charged
+/// - `input_tokens`: number of prompt tokens consumed
+/// - `output_tokens`: number of completion tokens generated
+///
+/// # Returns
+/// Total cost in micro-units (u64). Uses integer division with truncation.
+/// Cost is computed as: `(input_tokens * prompt_cost_per_1k / 1000) + (output_tokens * completion_cost_per_1k / 1000)`
+///
+/// # Truncation Note
+/// Integer division truncates toward zero. For micro-unit pricing, truncation
+/// error is bounded at <2 micro-units per event (<1 per division step). This is
+/// the same truncation bound documented in §Economic Invariants (Invariant #3).
 pub fn compute_cost(
     pricing: &PricingModel,
     input_tokens: u32,
@@ -941,14 +955,14 @@ pub async fn process_response(
     provider: &str,
     model: &str,
     response: &ProviderResponse,
-    pricing_hash: [u8; 32],
+    pricing_hash: [u8; 32], // obtained by: PRICING_TABLE.get(model).compute_pricing_hash()
 ) -> Result<(), KeyError> {
     // 1. Determine token source and tokenizer ID
     let (token_source, tokenizer_id) = match response.usage.is_some() {
         true => (TokenSource::ProviderUsage, None),
         false => {
-            let version = get_canonical_tokenizer(model);
-            let id = blake3::hash(version.as_bytes()).into();
+            let version = get_canonical_tokenizer(model); // defined at line 1469
+            let id = tokenizer_version_to_id(version); // BLAKE3 truncated to 16 bytes (see line 352)
             (TokenSource::CanonicalTokenizer, Some(id))
         },
     };
@@ -1204,6 +1218,28 @@ For horizontal scaling with `ORDER BY created_at ASC, event_id ASC` to produce i
 
 **Mitigation:** Deploy NTP time synchronization across all router instances. Clock skew between nodes greater than 1 second may cause deterministic replay divergence.
 
+## Known Limitations
+
+The following limitations are inherent to the current design and are NOT resolvable without architectural changes:
+
+### Upstream cost loss on record_spend failure
+
+If `execute_request()` succeeds (upstream provider has charged the account) but `record_spend()` fails (BudgetExceeded, storage error, lock timeout), the ledger is not updated but the upstream cost is unrecoverable. This is an accepted bounded loss for the current design. A future two-phase commit pattern (pre-execution budget reservation) could eliminate this limitation.
+
+### Application bug double-charge (internal record_spend bug)
+
+If `record_spend()` produces two rows for the same logical event (different `request_id` BLOBs, same economic content, same tokens) due to an internal bug, `build_merkle_tree` will double-count the cost without error. There is no schema-level enforcement against this class of bug. Correct implementation of `record_spend` is the caller's responsibility.
+
+### Token source divergence on retry
+
+If two routers process the same `(key_id, request_id)` simultaneously with different `token_source` values (e.g., Router A sees ProviderUsage, Router B sees CanonicalTokenizer on retry), they compute different `event_id` values. The `UNIQUE(key_id, request_id)` constraint prevents a second INSERT — the second router receives idempotent success. No double-insertion occurs, but one router's Merkle root will not include that event in the same position as the other.
+
+### BLAKE3 truncation for tokenizer_id
+
+`tokenizer_version_to_id` truncates BLAKE3 to 16 bytes (line 352). Collision probability becomes non-negligible after ~2^32 versions — acceptable for tokenizer versioning but documented for completeness.
+
+**Note on NTP constraint:** See `## Constraints § Multi-Node Clock Synchronization`. The NTP clock synchronization requirement is fully documented there and is not repeated here.
+
 ## Security Considerations
 
 ### Replay protection
@@ -1386,7 +1422,8 @@ This RFC can be approved when:
 - [x] schema adopts RFC-0903-B1/C1 BLOB storage (event_id BLOB(32), request_id BLOB(32), key_id BLOB(16), team_id BLOB(16), tokenizer_id BLOB(16), pricing_hash BYTEA(32))
 - [x] test vectors for cross-router event_id determinism (see below)
 - [x] BLAKE3 test vector for tokenizer_version_to_id: `"tiktoken-cl100k_base-v1.2.3"` → `"e3c8e8ff724411c6416dd4fb135368e3"` (16 bytes hex, per RFC-0201)
-- [x] multi-tenant collision risk documented with two compliant mitigation paths specified: (1) length-prefixed `compute_event_id` variant, or (2) per-tenant `build_merkle_tree` scoping — see §Security Note — No Field Delimiters; deployers MUST implement one path before production use
+- [x] multi-tenant collision risk documented with two compliant mitigation paths specified: (1) length-prefixed `compute_event_id` variant, or (2) per-tenant event filtering applied by the caller before passing events to `build_merkle_tree` — see §Security Note — No Field Delimiters; deployers MUST implement one path before production use
+- [x] NTP clock synchronization deployed across all router instances (required for cross-node replay determinism)
 
 **Test Vectors for Cross-Router Determinism:**
 
@@ -1547,6 +1584,7 @@ $0.03/1K tokens → DQA(30_000, scale=6)
 
 | Version | Date       | Changes |
 | ------- | ---------- | ------- |
+| v48     | 2026-04-19 | Comprehensive review fixes: fix C1 (Dependencies RFC-0903-B1 v19→v22); fix H1 (process_response uses tokenizer_version_to_id, not untruncated blake3::hash); fix H2 (Known Limitations section added: upstream cost loss, app bug double-charge, NTP sync, token_source divergence, BLAKE3 truncation); fix M1 (NTP sync now in Approval Criteria); fix M2 (get_canonical_tokenizer call site notes "defined at line 1469"); fix M3 (pricing_hash derivation path documented in comment); fix M4 (test vector computation clarification); fix M5 (Approval Criteria: caller, not build_merkle_tree, does tenant filtering) |
 | v47     | 2026-04-18 | Round 35 post-review: fix R36M1 (lower bound cross-reference added to §Quota Consistency Model — now in blockquote, not code block); fix R36M2 (multi-tenant MUST added to Approval Criteria); fix R36L1 (changelog labeled "self-review" to distinguish internal passes from adversarial review rounds) |
 | v46     | 2026-04-18 | Round 35 fixes applied: fix R35C1 (v45 row added; footer v45→v46); fix R35M1 (tokenizer_id_to_version doc: "When fully implemented" + "Current stub" note); fix R35M2 (separate storage defined: build_merkle_tree requires tenant-filtered events); fix R35L2 (changelog space removed) |
 | v45     | 2026-04-18 | Round 35: fix R34H1 (tokenizer_id_to_version pseudocode removed); fix R34M1 ("not client-controlled" → "specified by the client in the API request"); fix R34M2 (either/or multi-tenant MUST framing added); fix R34M3 (stoolap full SHA1 in normative text, not short hash in changelog); fix R34L1 (inaccurate optional() comment removed) |
@@ -1587,6 +1625,6 @@ $0.03/1K tokens → DQA(30_000, scale=6)
 ---
 
 **Draft Date:** 2026-04-18
-**Version:** v47
+**Version:** v49
 **Related Use Case:** Enhanced Quota Router Gateway
 **Related RFCs:** RFC-0903 (Virtual API Key System), RFC-0903-B1 (Schema Amendments), RFC-0903-C1 (Extended Schema Amendments), RFC-0126 (Deterministic Serialization), RFC-0201 (Binary BLOB Type)

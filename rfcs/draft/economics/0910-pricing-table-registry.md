@@ -345,13 +345,17 @@ pub fn get_canonical_tokenizer(model: &str) -> &'static str {
 
     match model.chars().next() {
         'g' => {
-            // gpt-* family — NOT gemini-* (gemini may use SentencePiece)
-            // This is an approximation; verify before production use
+            // ⚠ 'g' prefix matches BOTH gpt-* (GPT) and gemini-* (uncertain).
+            // This arm uses cl100k_base as an approximation for GPT models.
+            // gemini-* may use SentencePiece (not cl100k_base) — assignment is UNCERTAIN.
+            // For gemini-* production use, verify tokenizer compatibility before deployment.
+            // See Tokenizer Assignment Table §gemini-* note.
             "tiktoken-cl100k_base-v1.2.3"  // version aligned with Tokenizer Assignment Table
         },
         'o' => {
-            // o1, o3 — OpenAI o-series with o200k_base vocab
-            // o1-mini, o1-preview use different vocabs; verify
+            // o1, o3 — OpenAI o-series with o200k_base vocab (VERIFIED)
+            // o1-mini, o1-preview — DIFFERENT vocab from o200k_base; assignment UNCERTAIN.
+            // See Tokenizer Assignment Table §o1-mini/o1-preview note.
             "tiktoken-o200k_base"
         },
         'c' => {
@@ -391,6 +395,12 @@ CREATE TABLE tokenizer_assignments (
 
 CREATE INDEX idx_tokenizer_assignments_pattern ON tokenizer_assignments(model_pattern);
 ```
+
+> **Phase 1 vs Phase 2 note:** The `tokenizer_assignments` table above defines the schema for DB-backed
+> lookups. Phase 1 (`get_canonical_tokenizer` in §Tokenizer Lookup Function) uses in-memory first-character
+> prefix dispatch only — it does NOT query this table. Phase 2 populates the table with rows corresponding
+> to the Tokenizer Assignment Table and replaces the in-memory dispatch with a DB-backed lookup. See
+> Implementation Phases §Phase 2.
 
 ## Determinism Requirements
 
@@ -593,7 +603,7 @@ Floating point produces non-deterministic results across architectures (x87 vs S
 
 | Version | Date | Changes |
 |---------|------|---------|
-| v2 | 2026-04-19 | Round 46 fixes: fix C1 (add BLAKE3-16 expected output for tiktoken-o200k_base: be1b3be0a2698c863b31edc1b7809a9c); fix C2 (add Tokenizer Assignment End-to-End Test Vector table) / Round 43 fixes: align tokenizer assignments with RFC-0909 get_canonical_tokenizer (o200k_base unversioned); tokenizers schema RFC-0903-B1 reference; SpendReceipt.token_source→TokenSource; request_id encoding clarification; RFC-0909 v50 cross-reference updates; add RFC-0126 to Dependencies; RFC-0903 references include B1/C1 amendments; tokenizer_assignments "(future extension)" removed; add test vectors / Round 44 fixes: fix C2 (footer "Version: 2" → "Version: v2"); update circular RFC-0909 reference from v50 to v52 / Round 45 fixes: fix C2 ('g' arm get_canonical_tokenizer: version suffix added to align with Tokenizer Assignment Table) |
+| v2 | 2026-04-19 | Round 47 fixes: fix C1 ('g' arm: add gemini-* uncertainty note; 'o' arm: add o1-mini/o1-preview uncertainty note); fix C2 (add Phase 1 vs Phase 2 note clarifying tokenizer_assignments table is DB-backed Phase 2, Phase 1 uses in-memory dispatch) / Round 46 fixes: fix C1 (add BLAKE3-16 expected output for tiktoken-o200k_base: be1b3be0a2698c863b31edc1b7809a9c); fix C2 (add Tokenizer Assignment End-to-End Test Vector table) / Round 43 fixes: align tokenizer assignments with RFC-0909 get_canonical_tokenizer (o200k_base unversioned); tokenizers schema RFC-0903-B1 reference; SpendReceipt.token_source→TokenSource; request_id encoding clarification; RFC-0909 v50 cross-reference updates; add RFC-0126 to Dependencies; RFC-0903 references include B1/C1 amendments; tokenizer_assignments "(future extension)" removed; add test vectors / Round 44 fixes: fix C2 (footer "Version: 2" → "Version: v2"); update circular RFC-0909 reference from v50 to v52 / Round 45 fixes: fix C2 ('g' arm get_canonical_tokenizer: version suffix added to align with Tokenizer Assignment Table) |
 | v1 | 2026-04-19 | Initial Draft: expand from Planned v2 to full Blueprint template; add canonical tokenizer registry; add test vectors; add Security Considerations and Adversarial Review |
 
 ## Related RFCs

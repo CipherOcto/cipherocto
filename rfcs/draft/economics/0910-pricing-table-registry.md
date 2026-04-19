@@ -23,12 +23,11 @@ This RFC provides the tokenizer registry referenced by RFC-0909's `get_canonical
 **Requires:**
 
 - RFC-0903: Virtual API Key System (Final v29 + RFC-0903-B1 amendment v22 + RFC-0903-C1 amendment v3)
-- RFC-0909: Deterministic Quota Accounting (Draft v52)
 - RFC-0126: Deterministic Serialization (Accepted v2.5.1)
 
 **Required By:**
 
-- RFC-0909: Deterministic Quota Accounting (depends on canonical tokenizer assignments)
+- RFC-0909: Deterministic Quota Accounting (depends on canonical tokenizer assignments for Priority 2 fallback — see RFC-0909 §Canonical Token Accounting)
 
 ## Design Goals
 
@@ -94,6 +93,8 @@ PricingTable {
 
 When a request is processed, the router selects the **exact table version** at that time. Cost is permanently tied to that pricing version via `pricing_hash`.
 
+> **Note on `effective_from`:** This field is a registration-time **immutability constraint** — a new version with `effective_from` earlier than the current latest would retroactively change historical pricing. It is NOT a time-based query parameter. Runtime pricing selection uses `pricing_hash` as the anchor (see §Determinism Requirements). Historical spend events reference their `pricing_hash` and are verified via `get_by_hash()`, not via `effective_from`.
+
 The canonical tokenizer registry assigns specific tokenizer versions to model families, ensuring identical token counts across routers.
 
 ## Specification
@@ -121,7 +122,10 @@ pub struct PricingTable {
     pub prompt_cost_per_1k: u64,
     /// Price per 1K completion tokens (in deterministic micro-units)
     pub completion_cost_per_1k: u64,
-    /// Timestamp when this pricing becomes effective (Unix epoch)
+    /// Timestamp when this pricing becomes effective (Unix epoch).
+    /// Used for immutability enforcement: a registered table with effective_from=T cannot be
+    /// replaced by a table with effective_from≤T (would create a retroactive price change).
+    /// NOT used for time-based query (see Note below).
     pub effective_from: i64,
     /// Additional metadata (reserved for future use)
     pub metadata: BTreeMap<String, String>,
@@ -129,8 +133,15 @@ pub struct PricingTable {
 
 impl PricingTable {
     /// Compute deterministic SHA256 hash of the pricing table.
-    /// Field order follows struct declaration; BTreeMap ensures sorted iteration.
-    /// Uses RFC 8785 canonical JSON serialization for cross-router determinism.
+    /// ⚠️  This requires a canonical JSON serializer (RFC 8785, e.g., serde_json_raw crate).
+    ///
+    /// BTreeMap determinism scope: The `metadata: BTreeMap` field guarantees sorted iteration
+    /// for that field's key-value pairs. The struct's other fields (`table_id`, `version`,
+    /// `provider`, `model`, `prompt_cost_per_1k`, `completion_cost_per_1k`, `effective_from`)
+    /// are serialized in **declaration order** by serde_json — this order is NOT specified by Rust
+    /// and may vary across compiler versions. A canonical JSON serializer (RFC 8785) MUST be used
+    /// to ensure identical output across implementations. The test vector below is computed
+    /// with an RFC 8785-compliant implementation and MUST be matched exactly.
     ///
     /// ⚠️  This requires a canonical JSON serializer (RFC 8785, e.g., serde_json_raw crate).
     /// serde_json field ordering is NOT guaranteed across compiler versions.
@@ -151,59 +162,114 @@ impl PricingTable {
 ### PricingTable Registry
 
 ```rust
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashMap};
+use std::sync::Arc;
 
-/// Global pricing registry using BTreeMap for deterministic iteration.
-/// Maps (provider, model) → PricingTable.
-pub struct PricingRegistry {
-    /// (provider, model) → PricingTable, sorted by provider then model
-    tables: BTreeMap<(String, String), PricingTable>,
+/// Registry operation errors.
+#[derive(Debug, Clone, PartialEq)]
+pub enum RegistryError {
+    /// Tried to register a (provider, model, version) that already exists.
+    DuplicateVersion { provider: String, model: String, version: u32 },
+    /// Tried to register a version lower than the current latest.
+    VersionNotIncrement { provider: String, model: String, existing_version: u32, attempted_version: u32 },
 }
 
-impl PricingRegistry {
-    /// Register a new pricing table (immutable after registration).
-    /// Returns the computed pricing_hash for use in spend events.
-    ///
-    /// # Panics
-    /// Panics if a table with the same (provider, model, version) already exists.
-    /// To update pricing, register a new table with version+1.
-    pub fn register(&mut self, table: PricingTable) -> [u8; 32] {
-        let key = (table.provider.clone(), table.model.clone());
-        let hash = table.compute_pricing_hash();
-        let existing = self.tables.get(&key);
-        if let Some(current) = existing {
-            assert!(
-                table.version > current.version,
-                "PricingTable version must increment: existing={}, new={}",
-                current.version,
-                table.version
-            );
-        }
-        self.tables.insert(key, table);
-        hash
-    }
-
-    /// Get the active (latest version) pricing for a provider/model.
-    pub fn get_pricing(&self, provider: &str, model: &str) -> Option<&PricingTable> {
-        self.tables.get(&(provider.to_string(), model.to_string()))
-    }
-
-    /// Get pricing by hash for verification.
-    pub fn get_by_hash(&self, hash: &[u8; 32]) -> Option<&PricingTable> {
-        self.tables.values().find(|t| &t.compute_pricing_hash() == hash)
-    }
-
-    /// List all registered (provider, model) pairs.
-    pub fn list_models(&self) -> impl Iterator<Item = (&str, &str)> {
-        self.tables.keys().map(|(p, m)| (p.as_str(), m.as_str()))
-    }
+/// Global pricing registry using BTreeMap for deterministic iteration.
+/// Maps (provider, model) → Vec<PricingTable> (all versions, sorted desc by version).
+/// Secondary index: pricing_hash → Arc<PricingTable> for O(1) historical lookup.
+/// Both indices are populated at registration time; superseded versions are
+/// retained so get_by_hash() can resolve any historical pricing_hash.
+pub struct PricingRegistry {
+    /// (provider, model) → Vec<PricingTable> (all versions, sorted desc by version)
+    tables: BTreeMap<(String, String), Vec<PricingTable>>,
+    /// pricing_hash → Arc<PricingTable> for O(1) historical verification
+    by_hash: HashMap<[u8; 32], Arc<PricingTable>>,
 }
 
 impl Default for PricingRegistry {
     fn default() -> Self {
         Self {
             tables: BTreeMap::new(),
+            by_hash: HashMap::new(),
         }
+    }
+}
+
+impl PricingRegistry {
+    /// Register a new pricing table (immutable after registration).
+    /// Returns the computed pricing_hash for use in spend events.
+    ///
+    /// # Errors
+    /// Returns `RegistryError::DuplicateVersion` if a table with identical
+    /// (provider, model, version) is already registered.
+    /// Returns `RegistryError::VersionNotIncrement` if the attempted version
+    /// is not strictly greater than the current latest version.
+    pub fn register(&mut self, table: PricingTable) -> Result<[u8; 32], RegistryError> {
+        let key = (table.provider.clone(), table.model.clone());
+        let hash = table.compute_pricing_hash();
+
+        let entries = self.tables.entry(key).or_insert_with(Vec::new);
+
+        // Check version constraints against the latest (last in vec, since sorted desc)
+        if let Some(latest) = entries.last() {
+            if latest.version == table.version {
+                return Err(RegistryError::DuplicateVersion {
+                    provider: table.provider.clone(),
+                    model: table.model.clone(),
+                    version: table.version,
+                });
+            }
+            if table.version < latest.version {
+                return Err(RegistryError::VersionNotIncrement {
+                    provider: table.provider.clone(),
+                    model: table.model.clone(),
+                    existing_version: latest.version,
+                    attempted_version: table.version,
+                });
+            }
+            // table.version > latest.version: index ALL superseded entries by their hashes
+            for superseded in entries.iter() {
+                let h = superseded.compute_pricing_hash();
+                self.by_hash.insert(h, Arc::new(superseded.clone()));
+            }
+            entries.clear();
+        }
+
+        entries.push(table);
+        // Keep entries sorted desc by version (newest first)
+        entries.sort_by(|a, b| b.version.cmp(&a.version));
+
+        // Index new entry by hash
+        self.by_hash.insert(hash, Arc::new(entries[0].clone()));
+
+        Ok(hash)
+    }
+
+    /// Get the active (latest version) pricing for a provider/model.
+    /// Returns the newest registered version, or None if no table exists.
+    pub fn get_pricing(&self, provider: &str, model: &str) -> Option<&PricingTable> {
+        self.tables
+            .get(&(provider.to_string(), model.to_string()))
+            .and_then(|v| v.first())
+    }
+
+    /// Get pricing by exact pricing_hash for verification.
+    /// O(1) lookup — can resolve any historical pricing_hash, including superseded versions.
+    pub fn get_by_hash(&self, hash: &[u8; 32]) -> Option<&PricingTable> {
+        self.by_hash.get(hash).map(|arc| arc.as_ref())
+    }
+
+    /// Returns all registered versions for a (provider, model) pair, newest first.
+    pub fn get_versions(&self, provider: &str, model: &str) -> Vec<&PricingTable> {
+        self.tables
+            .get(&(provider.to_string(), model.to_string()))
+            .map(|v| v.iter().collect())
+            .unwrap_or_default()
+    }
+
+    /// List all registered (provider, model) pairs (from latest version only).
+    pub fn list_models(&self) -> impl Iterator<Item = (&str, &str)> {
+        self.tables.keys().map(|(p, m)| (p.as_str(), m.as_str()))
     }
 }
 ```
@@ -251,8 +317,12 @@ use serde::{Deserialize, Serialize};
 /// the event_id. The hex-encoded SHA256 form cannot be reversed to recover the original.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SpendReceipt {
-    /// Unique receipt identifier
+    /// Unique receipt identifier — locally generated (UUID v4), not cross-router reproducible.
+    /// Not part of the deterministic event record. Used for receipt issuance and lookup only.
     pub receipt_id: uuid::Uuid,
+    /// Deterministic event identifier — links receipt to the canonical SpendEvent.
+    /// Matches SpendEvent.event_id (hex String).
+    pub event_id: String,
     /// API key that made the request
     pub key_id: uuid::Uuid,
     /// Provider request identifier — original gateway text (NOT hex-encoded SHA256)
@@ -390,7 +460,8 @@ CREATE TABLE tokenizer_assignments (
     model_pattern TEXT NOT NULL,             -- e.g., "gpt-4*", "claude-3*"
     tokenizer_id BLOB(16) NOT NULL,         -- FK to tokenizers(tokenizer_id)
     effective_from INTEGER NOT NULL,        -- Unix epoch
-    PRIMARY KEY (assignment_id)
+    PRIMARY KEY (assignment_id),
+    UNIQUE(model_pattern)                   -- prevent ambiguous multi-row matches
 );
 
 CREATE INDEX idx_tokenizer_assignments_pattern ON tokenizer_assignments(model_pattern);
@@ -497,7 +568,9 @@ CREATE INDEX idx_tokenizer_assignments_pattern ON tokenizer_assignments(model_pa
 | effective_from | `1704067200` (2024-01-01) |
 | metadata | `{}` |
 
-Expected `compute_pricing_hash()` output: *(computed with canonical JSON serializer)*
+Expected `compute_pricing_hash()` output: `a127db97a3695861f7a34ab2abe821ed0b8d7ec47e3dc579d7a5ca8cfb7a0641`
+
+> **Canonical JSON input:** `{"table_id":"openai-gpt4-v1","version":1,"provider":"openai","model":"gpt-4","prompt_cost_per_1k":30000,"completion_cost_per_1k":60000,"effective_from":1704067200,"metadata":{}}` (RFC 8785 canonical form — definition-order fields, compact separators, minimal number representation)
 
 ### Cost Calculation Test Vector
 
@@ -603,7 +676,7 @@ Floating point produces non-deterministic results across architectures (x87 vs S
 
 | Version | Date | Changes |
 |---------|------|---------|
-| v2 | 2026-04-19 | Round 47 fixes: fix C1 ('g' arm: add gemini-* uncertainty note; 'o' arm: add o1-mini/o1-preview uncertainty note); fix C2 (add Phase 1 vs Phase 2 note clarifying tokenizer_assignments table is DB-backed Phase 2, Phase 1 uses in-memory dispatch) / Round 46 fixes: fix C1 (add BLAKE3-16 expected output for tiktoken-o200k_base: be1b3be0a2698c863b31edc1b7809a9c); fix C2 (add Tokenizer Assignment End-to-End Test Vector table) / Round 43 fixes: align tokenizer assignments with RFC-0909 get_canonical_tokenizer (o200k_base unversioned); tokenizers schema RFC-0903-B1 reference; SpendReceipt.token_source→TokenSource; request_id encoding clarification; RFC-0909 v50 cross-reference updates; add RFC-0126 to Dependencies; RFC-0903 references include B1/C1 amendments; tokenizer_assignments "(future extension)" removed; add test vectors / Round 44 fixes: fix C2 (footer "Version: 2" → "Version: v2"); update circular RFC-0909 reference from v50 to v52 / Round 45 fixes: fix C2 ('g' arm get_canonical_tokenizer: version suffix added to align with Tokenizer Assignment Table) |
+| v2 | 2026-04-19 | Round 48 fixes (ext review R38): fix 910-C1 (PricingRegistry: store all versions via Vec values; add Arc-indexed by_hash for O(1) historical get_by_hash; add RegistryError enum); fix 910-C3 (remove RFC-0909 from Requires list — RFC-0910 is a provider not a consumer of RFC-0909; clarify Required By note); fix 910-H1 (register returns Result<[u8; 32], RegistryError> instead of panicking; add DuplicateVersion/VersionNotIncrement variants); fix 910-H2 (get_by_hash now O(1) via by_hash HashMap); fix 910-H3 (compute pricing_hash test vector: a127db97a3695861f7a34ab2abe821ed0b8d7ec47e3dc579d7a5ca8cfb7a0641); fix 910-M1 (effective_from: add note clarifying it is registration-time immutability constraint, not a time-based query parameter); fix 910-M2 (add UNIQUE(model_pattern) to tokenizer_assignments); fix 910-M3 (add event_id to SpendReceipt; clarify receipt_id is locally-generated, not reproducible); fix 910-M4 (compute_pricing_hash comment: clarify BTreeMap only ensures sorted iteration for metadata field, not entire struct) / Round 47 fixes: fix C1 ('g' arm: add gemini-* uncertainty note; 'o' arm: add o1-mini/o1-preview uncertainty note); fix C2 (add Phase 1 vs Phase 2 note clarifying tokenizer_assignments table is DB-backed Phase 2, Phase 1 uses in-memory dispatch) / Round 46 fixes: fix C1 (add BLAKE3-16 expected output for tiktoken-o200k_base: be1b3be0a2698c863b31edc1b7809a9c); fix C2 (add Tokenizer Assignment End-to-End Test Vector table) / Round 43 fixes: align tokenizer assignments with RFC-0909 get_canonical_tokenizer (o200k_base unversioned); tokenizers schema RFC-0903-B1 reference; SpendReceipt.token_source→TokenSource; request_id encoding clarification; RFC-0909 v50 cross-reference updates; add RFC-0126 to Dependencies; RFC-0903 references include B1/C1 amendments; tokenizer_assignments "(future extension)" removed; add test vectors / Round 44 fixes: fix C2 (footer "Version: 2" → "Version: v2"); update circular RFC-0909 reference from v50 to v52 / Round 45 fixes: fix C2 ('g' arm get_canonical_tokenizer: version suffix added to align with Tokenizer Assignment Table) |
 | v1 | 2026-04-19 | Initial Draft: expand from Planned v2 to full Blueprint template; add canonical tokenizer registry; add test vectors; add Security Considerations and Adversarial Review |
 
 ## Related RFCs

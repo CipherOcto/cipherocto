@@ -2,7 +2,7 @@
 
 ## Status
 
-Draft (v49 — aligned with RFC-0903 Final v29 + RFC-0903-B1 v22 + RFC-0903-C1 v3, RFC-0126, RFC-0201)
+Draft (v50 — aligned with RFC-0903 Final v29 + RFC-0903-B1 v22 + RFC-0903-C1 v3, RFC-0126 (Accepted v2.5.1), RFC-0201 (Accepted v5.24))
 
 ## Authors
 
@@ -30,14 +30,14 @@ This is required for future integration with:
 **Requires:**
 
 - RFC-0903: Virtual API Key System (Final v29 + RFC-0903-B1 amendment v22 + RFC-0903-C1 amendment v3)
-- RFC-0126: Deterministic Serialization (for canonical JSON serialization)
-- RFC-0201: Binary BLOB Type for Deterministic Hash Storage (Accepted)
+- RFC-0126: Deterministic Serialization (Accepted v2.5.1 — for canonical JSON serialization)
+- RFC-0201: Binary BLOB Type for Deterministic Hash Storage (Accepted v5.24)
 
 **Optional:**
 
 - RFC-0900: AI Quota Marketplace Protocol
 - RFC-0901: Quota Router Agent Specification
-- RFC-0910: Pricing Table Registry (for immutable pricing tables)
+- RFC-0910: Pricing Table Registry (Draft v1 — for immutable pricing tables)
 
 ## Motivation
 
@@ -1584,6 +1584,7 @@ $0.03/1K tokens → DQA(30_000, scale=6)
 
 | Version | Date       | Changes |
 | ------- | ---------- | ------- |
+| v50     | 2026-04-19 | Round 42 fixes: fix C1 (RFC-0910 Pricing Table Registry moved to Draft v1, resolving get_canonical_tokenizer MUST requirement); fix C2 (RFC-0126 version-pinned to Accepted v2.5.1 in Dependencies); fix C3 (RFC-0126 and RFC-0201 version-pinned in Status header) |
 | v48     | 2026-04-19 | Comprehensive review fixes: fix C1 (Dependencies RFC-0903-B1 v19→v22); fix H1 (process_response uses tokenizer_version_to_id, not untruncated blake3::hash); fix H2 (Known Limitations section added: upstream cost loss, app bug double-charge, NTP sync, token_source divergence, BLAKE3 truncation); fix M1 (NTP sync now in Approval Criteria); fix M2 (get_canonical_tokenizer call site notes "defined at line 1469"); fix M3 (pricing_hash derivation path documented in comment); fix M4 (test vector computation clarification); fix M5 (Approval Criteria: caller, not build_merkle_tree, does tenant filtering) |
 | v47     | 2026-04-18 | Round 35 post-review: fix R36M1 (lower bound cross-reference added to §Quota Consistency Model — now in blockquote, not code block); fix R36M2 (multi-tenant MUST added to Approval Criteria); fix R36L1 (changelog labeled "self-review" to distinguish internal passes from adversarial review rounds) |
 | v46     | 2026-04-18 | Round 35 fixes applied: fix R35C1 (v45 row added; footer v45→v46); fix R35M1 (tokenizer_id_to_version doc: "When fully implemented" + "Current stub" note); fix R35M2 (separate storage defined: build_merkle_tree requires tenant-filtered events); fix R35L2 (changelog space removed) |
@@ -1624,7 +1625,7 @@ $0.03/1K tokens → DQA(30_000, scale=6)
 
 ---
 
-**Draft Date:** 2026-04-18
-**Version:** v49
+**Draft Date:** 2026-04-19
+**Version:** v50
 **Related Use Case:** Enhanced Quota Router Gateway
-**Related RFCs:** RFC-0903 (Virtual API Key System), RFC-0903-B1 (Schema Amendments), RFC-0903-C1 (Extended Schema Amendments), RFC-0126 (Deterministic Serialization), RFC-0201 (Binary BLOB Type)
+**Related RFCs:** RFC-0903 (Virtual API Key System), RFC-0903-B1 (Schema Amendments), RFC-0903-C1 (Extended Schema Amendments), RFC-0126 (Deterministic Serialization v2.5.1), RFC-0201 (Binary BLOB Type v5.24), RFC-0910 (Pricing Table Registry)

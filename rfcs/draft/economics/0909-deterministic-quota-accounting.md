@@ -961,7 +961,7 @@ pub async fn process_response(
     let (token_source, tokenizer_id) = match response.usage.is_some() {
         true => (TokenSource::ProviderUsage, None),
         false => {
-            let version = get_canonical_tokenizer(model); // defined at line 1469
+            let version = get_canonical_tokenizer(model);
             let id = tokenizer_version_to_id(version); // BLAKE3 truncated to 16 bytes (see line 352)
             (TokenSource::CanonicalTokenizer, Some(id))
         },
@@ -1584,6 +1584,7 @@ $0.03/1K tokens → DQA(30_000, scale=6)
 
 | Version | Date       | Changes |
 | ------- | ---------- | ------- |
+| v51     | 2026-04-19 | Round 43 fixes: fix 909-C2 (remove stale "defined at line 1469" comment from process_response); RFC-0910 v2 cross-reference updates (910-C1: RFC-0909-B1→RFC-0903-B1 in tokenizers schema; 910-C2: SpendReceipt.token_source→TokenSource; 910-C3: request_id encoding clarification; 910-C4: o200k_base version aligned (unversioned); 910-C5: RFC-0909 v49→v50; 910-C6: RFC-0903 refs include B1/C1 amendments; 910-C7: tokenizer_assignments "(future extension)" removed) |
 | v50     | 2026-04-19 | Round 42 fixes: fix C1 (RFC-0910 Pricing Table Registry moved to Draft v1, resolving get_canonical_tokenizer MUST requirement); fix C2 (RFC-0126 version-pinned to Accepted v2.5.1 in Dependencies); fix C3 (RFC-0126 and RFC-0201 version-pinned in Status header) |
 | v49     | 2026-04-19 | Round 41 fixes: fix H1 (stale replay_events_for_proof reference → build_merkle_tree at line 618); fix L1 (compute_cost doc comment header added); fix L2 (NTP constraint removed from Known Limitations — cross-referenced to §Constraints) |
 | v48     | 2026-04-19 | Comprehensive review fixes: fix C1 (Dependencies RFC-0903-B1 v19→v22); fix H1 (process_response uses tokenizer_version_to_id, not untruncated blake3::hash); fix H2 (Known Limitations section added: upstream cost loss, app bug double-charge, NTP sync, token_source divergence, BLAKE3 truncation); fix M1 (NTP sync now in Approval Criteria); fix M2 (get_canonical_tokenizer call site notes "defined at line 1469"); fix M3 (pricing_hash derivation path documented in comment); fix M4 (test vector computation clarification); fix M5 (Approval Criteria: caller, not build_merkle_tree, does tenant filtering) |
@@ -1627,6 +1628,6 @@ $0.03/1K tokens → DQA(30_000, scale=6)
 ---
 
 **Draft Date:** 2026-04-19
-**Version:** v50
+**Version:** v51
 **Related Use Case:** Enhanced Quota Router Gateway
-**Related RFCs:** RFC-0903 (Virtual API Key System), RFC-0903-B1 (Schema Amendments), RFC-0903-C1 (Extended Schema Amendments), RFC-0126 (Deterministic Serialization v2.5.1), RFC-0201 (Binary BLOB Type v5.24), RFC-0910 (Pricing Table Registry)
+**Related RFCs:** RFC-0903 (Virtual API Key System), RFC-0903-B1 (Schema Amendments), RFC-0903-C1 (Extended Schema Amendments), RFC-0126 (Deterministic Serialization v2.5.1), RFC-0201 (Binary BLOB Type v5.24), RFC-0910 (Pricing Table Registry v2)

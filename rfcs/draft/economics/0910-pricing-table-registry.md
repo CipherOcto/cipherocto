@@ -2,7 +2,7 @@
 
 ## Status
 
-Draft (v1 — aligns with RFC-0903 Final v29 + RFC-0909 v49)
+Draft (v2 — aligns with RFC-0903 Final v29 + RFC-0903-B1 v22 + RFC-0903-C1 v3 + RFC-0909 v50)
 
 ## Authors
 
@@ -22,8 +22,8 @@ This RFC provides the tokenizer registry referenced by RFC-0909's `get_canonical
 
 **Requires:**
 
-- RFC-0903: Virtual API Key System (Final v29)
-- RFC-0909: Deterministic Quota Accounting (Draft v49)
+- RFC-0903: Virtual API Key System (Final v29 + RFC-0903-B1 amendment v22 + RFC-0903-C1 amendment v3)
+- RFC-0909: Deterministic Quota Accounting (Draft v50)
 - RFC-0126: Deterministic Serialization (Accepted v2.5.1)
 
 **Required By:**
@@ -244,13 +244,18 @@ use serde::{Deserialize, Serialize};
 
 /// Spend receipt for audit and verification.
 /// Links a spend event to the specific pricing table version used.
+///
+/// **Encoding note:** `request_id` in `SpendReceipt` stores the **original gateway text**
+/// (not the hex-encoded SHA256 stored in `SpendEvent.request_id`). This is necessary
+/// because external auditors need the original request_id text to independently verify
+/// the event_id. The hex-encoded SHA256 form cannot be reversed to recover the original.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SpendReceipt {
     /// Unique receipt identifier
     pub receipt_id: uuid::Uuid,
     /// API key that made the request
     pub key_id: uuid::Uuid,
-    /// Provider request identifier (idempotency key)
+    /// Provider request identifier — original gateway text (NOT hex-encoded SHA256)
     pub request_id: String,
     /// Provider name
     pub provider: String,
@@ -266,8 +271,8 @@ pub struct SpendReceipt {
     pub total_cost: u64,
     /// Event timestamp (Unix epoch)
     pub timestamp: i64,
-    /// Token source used for this request
-    pub token_source: String,
+    /// Token source used for this request (per RFC-0909 TokenSource enum)
+    pub token_source: TokenSource,
 }
 ```
 
@@ -284,7 +289,7 @@ The canonical tokenizer registry assigns specific tokenizer versions to model fa
 | Model Family | Canonical Tokenizer Version | Encoding | Notes |
 |-------------|---------------------------|----------|-------|
 | `gpt-4*`, `gpt-3.5*` | `tiktoken-cl100k_base-v1.2.3` | cl100k_base | OpenAI models |
-| `o1`, `o3` | `tiktoken-o200k_base-v1.0.0` | o200k_base | OpenAI o-series |
+| `o1`, `o3` | `tiktoken-o200k_base` | o200k_base | OpenAI o-series |
 | `o1-mini`, `o1-preview` | *(see notes)* | — | Verify with provider |
 | `claude-*` | `tiktoken-cl100k_base-v1.2.3` | cl100k_base | Anthropic models |
 | `gemini-*` | *(see notes)* | — | May use SentencePiece; requires verification |
@@ -347,7 +352,7 @@ pub fn get_canonical_tokenizer(model: &str) -> &'static str {
         'o' => {
             // o1, o3 — OpenAI o-series with o200k_base vocab
             // o1-mini, o1-preview use different vocabs; verify
-            "tiktoken-o200k_base-v1.0.0"
+            "tiktoken-o200k_base"
         },
         'c' => {
             // claude-* family — uses cl100k_base (Anthropic BPE)
@@ -364,7 +369,7 @@ pub fn get_canonical_tokenizer(model: &str) -> &'static str {
 -- Tokenizers table for canonical tokenizer version lookup
 -- Per RFC-0909 §tokenizer_id: tokenizer_id is BLAKE3(version_string) truncated to 16 bytes
 CREATE TABLE tokenizers (
-    tokenizer_id BLOB(16) NOT NULL,         -- Raw BLAKE3 hash (16 bytes) — per RFC-0909-B1
+    tokenizer_id BLOB(16) NOT NULL,         -- Raw BLAKE3 hash (16 bytes) — per RFC-0903-B1
     version TEXT NOT NULL,                   -- Human-readable version (e.g., "tiktoken-cl100k_base-v1.2.3")
     vocab_size INTEGER,                      -- Vocabulary size (optional)
     encoding_type TEXT,                      -- Encoding type (e.g., "bpe", "sentencepiece")
@@ -374,7 +379,7 @@ CREATE TABLE tokenizers (
 
 CREATE UNIQUE INDEX idx_tokenizers_version ON tokenizers(version);
 
--- Canonical tokenizer assignment table (future extension)
+-- Canonical tokenizer assignment table
 -- Maps model patterns to tokenizer versions
 CREATE TABLE tokenizer_assignments (
     assignment_id BLOB(16) NOT NULL,
@@ -500,7 +505,7 @@ Expected `compute_cost()` output: `3000 + 3000 = 6000` micro-units
 | Input | Expected Output |
 |-------|---------------|
 | `"tiktoken-cl100k_base-v1.2.3"` | `e3c8e8ff724411c6416dd4fb135368e3` (16 bytes hex) |
-| `"tiktoken-o200k_base-v1.0.0"` | *(defined at implementation)* |
+| `"tiktoken-o200k_base"` | *(defined at implementation)* |
 
 ## Alternatives Considered
 
@@ -579,8 +584,8 @@ Floating point produces non-deterministic results across architectures (x87 vs S
 
 ## Related RFCs
 
-- RFC-0903: Virtual API Key System (Final v29)
-- RFC-0909: Deterministic Quota Accounting (Draft v49)
+- RFC-0903: Virtual API Key System (Final v29 + RFC-0903-B1 amendment v22 + RFC-0903-C1 amendment v3)
+- RFC-0909: Deterministic Quota Accounting (Draft v50)
 - RFC-0126: Deterministic Serialization (Accepted v2.5.1)
 - RFC-0201: Binary BLOB Type for Deterministic Hash Storage (Accepted v5.24)
 
@@ -590,6 +595,6 @@ Floating point produces non-deterministic results across architectures (x87 vs S
 
 ---
 
-**Version:** 1
+**Version:** 2
 **Draft Date:** 2026-04-19
 **Last Updated:** 2026-04-19

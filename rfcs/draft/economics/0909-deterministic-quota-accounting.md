@@ -2,7 +2,7 @@
 
 ## Status
 
-Draft (v52 — aligned with RFC-0903 Final v29 + RFC-0903-B1 v22 + RFC-0903-C1 v3, RFC-0126 (Accepted v2.5.1), RFC-0201 (Accepted v5.24))
+Draft (v54 — aligned with RFC-0903 Final v29 + RFC-0903-B1 v22 + RFC-0903-C1 v3, RFC-0126 (Accepted v2.5.1), RFC-0201 (Accepted v5.24), RFC-0910 (Draft v4))
 
 ## Authors
 
@@ -37,7 +37,7 @@ This is required for future integration with:
 
 - RFC-0900: AI Quota Marketplace Protocol
 - RFC-0901: Quota Router Agent Specification
-- RFC-0910: Pricing Table Registry (Draft v2 — for immutable pricing tables)
+- RFC-0910: Pricing Table Registry (Draft v3 — for immutable pricing tables)
 
 ## Motivation
 
@@ -1422,8 +1422,9 @@ This RFC can be approved when:
 - [x] schema adopts RFC-0903-B1/C1 BLOB storage (event_id BLOB(32), request_id BLOB(32), key_id BLOB(16), team_id BLOB(16), tokenizer_id BLOB(16), pricing_hash BYTEA(32))
 - [x] test vectors for cross-router event_id determinism (see below)
 - [x] BLAKE3 test vector for tokenizer_version_to_id: `"tiktoken-cl100k_base-v1.2.3"` → `"e3c8e8ff724411c6416dd4fb135368e3"` (16 bytes hex, per RFC-0201)
-- [x] multi-tenant collision risk documented with two compliant mitigation paths specified: (1) length-prefixed `compute_event_id` variant, or (2) per-tenant event filtering applied by the caller before passing events to `build_merkle_tree` — see §Security Note — No Field Delimiters; deployers MUST implement one path before production use
+- [x] multi-tenant collision risk documented with two deployer-side mitigation options identified: (1) length-prefixed `compute_event_id` variant, or (2) per-tenant event filtering applied by the caller before passing events to `build_merkle_tree` — see §Security Note — No Field Delimiters; deployers MUST implement one path before production use (the RFC identifies the options but does not specify the implementation details)
 - [x] NTP clock synchronization deployed across all router instances (required for cross-node replay determinism)
+- [ ] Numeric Tower (DQA) integration for cost_amount: future RFC-0903 revision should adopt DQA type for `SpendEvent.cost_amount` to make scale explicit in the type system (see §Numeric Tower Integration)
 
 **Test Vectors for Cross-Router Determinism:**
 
@@ -1524,10 +1525,10 @@ pub fn get_canonical_tokenizer(model: &str) -> &'static str {
     // CANONICAL_TOKENIZER_VERSION constant. This is explicitly NOT verified for any
     // family outside OpenAI/Anthropic. RFC-0910 must provide authoritative mappings.
     match model.chars().next() {
-        'g' => "tiktoken-cl100k_base",     // gpt-* family ONLY (gemini-* collision noted)
-        'o' => "tiktoken-o200k_base",      // o1/o3 — NOT all o* variants
-        'c' => "tiktoken-cl100k_base",     // claude-* family
-        _ => CANONICAL_TOKENIZER_VERSION,  // UNKNOWN: requires RFC-0910 registry
+        'g' => "tiktoken-cl100k_base-v1.2.3",  // gpt-* family ONLY (gemini-* collision noted); version per RFC-0910 Tokenizer Assignment Table
+        'o' => "tiktoken-o200k_base",           // o1/o3 — VERIFIED per RFC-0910 Tokenizer Assignment Table; ⚠️ NOTE: 'o' prefix is coarse — any model starting with 'o' matches; only o1 and o3 are verified for o200k_base; future o* models with different vocabs will incorrectly use this assignment until RFC-0910 registry is updated
+        'c' => "tiktoken-cl100k_base-v1.2.3",  // claude-* family; version per RFC-0910 Tokenizer Assignment Table
+        _ => CANONICAL_TOKENIZER_VERSION,       // UNKNOWN: requires RFC-0910 registry
     }
 }
 /// WARNING: This function is pseudocode for quota accounting only.
@@ -1584,6 +1585,8 @@ $0.03/1K tokens → DQA(30_000, scale=6)
 
 | Version | Date       | Changes |
 | ------- | ---------- | ------- |
+| v54     | 2026-04-19 | Round 50 fixes: fix 909-H1 (Optional Dependencies: RFC-0910 version updated from v2 to v3 to match current RFC-0910 version) |
+| v53     | 2026-04-19 | Round 49 fixes: fix 909-C1 (get_canonical_tokenizer: 'g' and 'c' arms now return "tiktoken-cl100k_base-v1.2.3" to match RFC-0910 Tokenizer Assignment Table; 'o' arm added note about coarse prefix-match limitation); fix 909-M3 (Approval Criteria: "two compliant mitigation paths specified" → "two deployer-side mitigation options identified" — clarifies RFC identifies options but does not specify implementation); add 909-L2 (Numeric Tower/DQA integration added to Approval Criteria as tracked future enhancement) |
 | v52     | 2026-04-19 | Round 44 fixes: fix C1 (RFC-0910 version updated from Draft v1 to Draft v2 in Dependencies) |
 | v51     | 2026-04-19 | Round 43 fixes: fix 909-C2 (remove stale "defined at line 1469" comment from process_response); RFC-0910 v2 cross-reference updates (910-C1: RFC-0909-B1→RFC-0903-B1 in tokenizers schema; 910-C2: SpendReceipt.token_source→TokenSource; 910-C3: request_id encoding clarification; 910-C4: o200k_base version aligned (unversioned); 910-C5: RFC-0909 v49→v50; 910-C6: RFC-0903 refs include B1/C1 amendments; 910-C7: tokenizer_assignments "(future extension)" removed) |
 | v50     | 2026-04-19 | Round 42 fixes: fix C1 (RFC-0910 Pricing Table Registry moved to Draft v1, resolving get_canonical_tokenizer MUST requirement); fix C2 (RFC-0126 version-pinned to Accepted v2.5.1 in Dependencies); fix C3 (RFC-0126 and RFC-0201 version-pinned in Status header) |
@@ -1629,6 +1632,6 @@ $0.03/1K tokens → DQA(30_000, scale=6)
 ---
 
 **Draft Date:** 2026-04-19
-**Version:** v52
+**Version:** v54
 **Related Use Case:** Enhanced Quota Router Gateway
-**Related RFCs:** RFC-0903 (Virtual API Key System), RFC-0903-B1 (Schema Amendments), RFC-0903-C1 (Extended Schema Amendments), RFC-0126 (Deterministic Serialization v2.5.1), RFC-0201 (Binary BLOB Type v5.24), RFC-0910 (Pricing Table Registry v2)
+**Related RFCs:** RFC-0903 (Virtual API Key System), RFC-0903-B1 (Schema Amendments), RFC-0903-C1 (Extended Schema Amendments), RFC-0126 (Deterministic Serialization v2.5.1), RFC-0201 (Binary BLOB Type v5.24), RFC-0910 (Pricing Table Registry v4)

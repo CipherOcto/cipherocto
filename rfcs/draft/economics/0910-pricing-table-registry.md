@@ -2,7 +2,7 @@
 
 ## Status
 
-Draft (v2 — aligns with RFC-0903 Final v29 + RFC-0903-B1 v22 + RFC-0903-C1 v3 + RFC-0909 v52)
+Draft (v4 — aligns with RFC-0903 Final v29 + RFC-0903-B1 v22 + RFC-0903-C1 v3 + RFC-0909 v54)
 
 ## Authors
 
@@ -149,7 +149,12 @@ impl PricingTable {
     pub fn compute_pricing_hash(&self) -> [u8; 32] {
         use sha2::{Digest, Sha256};
 
-        // ⚠️  Example only — NOT for production. See comment above.
+        // ⚠️  Example only — NOT for production.
+        // This uses serde_json::to_string to illustrate the hashing pattern only.
+        // serde_json does NOT produce RFC 8785 canonical JSON — field ordering is
+        // compiler-dependent. Production MUST use an RFC 8785-compliant serializer
+        // (e.g., serde_json_raw). The test vector was computed with a compliant
+        // implementation and MUST be matched exactly.
         let serialized = serde_json::to_string(&self)
             .expect("PricingTable serialization must succeed");
         let mut hasher = Sha256::new();
@@ -274,14 +279,15 @@ impl PricingRegistry {
 }
 ```
 
+> **Note on naming collision:** RFC-0910 defines `PricingTable` as a single-row struct (one row per provider/model/version in the registry). RFC-0909 §Deterministic Pricing Tables also defines a `PricingTable` struct, which wraps a `BTreeMap<String, PricingModel>` — a fundamentally different type. Both names are used independently within each RFC's scope. Implementers integrating both RFCs must not conflate these two structs; they serve different purposes (registry vs. internal pricing table).
+
 ### Cost Calculation with Pricing Hash
 
 ```rust
 /// Compute cost deterministically using integer arithmetic.
-/// Name and semantics align with RFC-0909 §compute_cost.
 ///
 /// # Parameters
-/// - `pricing`: the PricingTable for the model being charged
+/// - `pricing`: the PricingTable for the model being charged (this RFC's struct, not RFC-0909's PricingModel)
 /// - `input_tokens`: number of prompt tokens consumed
 /// - `output_tokens`: number of completion tokens generated
 ///
@@ -292,6 +298,11 @@ impl PricingRegistry {
 /// # Truncation Note
 /// Integer division truncates toward zero. For micro-unit pricing, truncation
 /// error is bounded at <2 micro-units per event (<1 per division step).
+/// N accounts for two independent truncation operations per event (prompt_cost
+/// and completion_cost divisions). For each division, truncation error is bounded
+/// by the remainder of (tokens * rate) modulo 1000, which is always <1 micro-unit.
+/// With two divisions per event, the per-event bound is <2 micro-units total.
+/// This is the same truncation bound documented in RFC-0909 §Economic Invariants (Invariant #3).
 pub fn compute_cost(
     pricing: &PricingTable,
     input_tokens: u32,
@@ -423,9 +434,13 @@ pub fn get_canonical_tokenizer(model: &str) -> &'static str {
             "tiktoken-cl100k_base-v1.2.3"  // version aligned with Tokenizer Assignment Table
         },
         'o' => {
-            // o1, o3 — OpenAI o-series with o200k_base vocab (VERIFIED)
+            // o1, o3 — OpenAI o-series with o200k_base vocab (per Tokenizer Assignment Table above)
             // o1-mini, o1-preview — DIFFERENT vocab from o200k_base; assignment UNCERTAIN.
             // See Tokenizer Assignment Table §o1-mini/o1-preview note.
+            // ⚠️ NOTE: 'o' prefix is a coarse approximation — any model starting with 'o'
+            // matches this arm. Only o1 and o3 are verified for o200k_base per the Tokenizer
+            // Assignment Table. Future OpenAI 'o' models with different vocabs will incorrectly
+            // use o200k_base until this dispatch is replaced with exact model matching.
             "tiktoken-o200k_base"
         },
         'c' => {
@@ -676,13 +691,17 @@ Floating point produces non-deterministic results across architectures (x87 vs S
 
 | Version | Date | Changes |
 |---------|------|---------|
+| v4 | 2026-04-19 | Round 50 fixes: fix 910-H1/M3 (remove false "aligns with RFC-0909 §compute_cost" claim from compute_cost doc comment — RFC-0910's PricingTable is a different type from RFC-0909's PricingModel; added clarifying note that this is a registry struct, not RFC-0909's struct); fix 910-M2 (add note about dual PricingTable definitions: RFC-0910 uses single-row struct for registry; RFC-0909 uses BTreeMap+inner-struct for internal pricing — same name, different types); fix 910-L1 (expand Truncation Note: add two-division breakdown matching RFC-0909's Invariant #3 detail) |
+| v3 | 2026-04-19 | Round 49 fixes: fix 910-H1 (add coarse-prefix note to 'o' arm: only o1/o3 verified for o200k_base per Tokenizer Assignment Table; future o* models with different vocabs will incorrectly match until exact model matching replaces prefix dispatch); fix 910-M1 (clarify compute_pricing_hash pseudocode: serde_json used for illustration only, not production; canonical serializer required per RFC 8785); fix 910-L1 (add RFC-0913 and RFC-0914 to Related RFCs — RFC-0914 lists RFC-0910 as optional; both target quota-router implementation) |
 | v2 | 2026-04-19 | Round 48 fixes (ext review R38): fix 910-C1 (PricingRegistry: store all versions via Vec values; add Arc-indexed by_hash for O(1) historical get_by_hash; add RegistryError enum); fix 910-C3 (remove RFC-0909 from Requires list — RFC-0910 is a provider not a consumer of RFC-0909; clarify Required By note); fix 910-H1 (register returns Result<[u8; 32], RegistryError> instead of panicking; add DuplicateVersion/VersionNotIncrement variants); fix 910-H2 (get_by_hash now O(1) via by_hash HashMap); fix 910-H3 (compute pricing_hash test vector: a127db97a3695861f7a34ab2abe821ed0b8d7ec47e3dc579d7a5ca8cfb7a0641); fix 910-M1 (effective_from: add note clarifying it is registration-time immutability constraint, not a time-based query parameter); fix 910-M2 (add UNIQUE(model_pattern) to tokenizer_assignments); fix 910-M3 (add event_id to SpendReceipt; clarify receipt_id is locally-generated, not reproducible); fix 910-M4 (compute_pricing_hash comment: clarify BTreeMap only ensures sorted iteration for metadata field, not entire struct) / Round 47 fixes: fix C1 ('g' arm: add gemini-* uncertainty note; 'o' arm: add o1-mini/o1-preview uncertainty note); fix C2 (add Phase 1 vs Phase 2 note clarifying tokenizer_assignments table is DB-backed Phase 2, Phase 1 uses in-memory dispatch) / Round 46 fixes: fix C1 (add BLAKE3-16 expected output for tiktoken-o200k_base: be1b3be0a2698c863b31edc1b7809a9c); fix C2 (add Tokenizer Assignment End-to-End Test Vector table) / Round 43 fixes: align tokenizer assignments with RFC-0909 get_canonical_tokenizer (o200k_base unversioned); tokenizers schema RFC-0903-B1 reference; SpendReceipt.token_source→TokenSource; request_id encoding clarification; RFC-0909 v50 cross-reference updates; add RFC-0126 to Dependencies; RFC-0903 references include B1/C1 amendments; tokenizer_assignments "(future extension)" removed; add test vectors / Round 44 fixes: fix C2 (footer "Version: 2" → "Version: v2"); update circular RFC-0909 reference from v50 to v52 / Round 45 fixes: fix C2 ('g' arm get_canonical_tokenizer: version suffix added to align with Tokenizer Assignment Table) |
 | v1 | 2026-04-19 | Initial Draft: expand from Planned v2 to full Blueprint template; add canonical tokenizer registry; add test vectors; add Security Considerations and Adversarial Review |
 
 ## Related RFCs
 
 - RFC-0903: Virtual API Key System (Final v29 + RFC-0903-B1 amendment v22 + RFC-0903-C1 amendment v3)
-- RFC-0909: Deterministic Quota Accounting (Draft v52)
+- RFC-0909: Deterministic Quota Accounting (Draft v53)
+- RFC-0913: Stoolap Pub/Sub for Cache Invalidation (Accepted — quota router cache invalidation via WAL pub/sub; related to registry update propagation)
+- RFC-0914: Stoolap-Only Quota Router Persistence (Draft v8 — lists RFC-0910 as optional dependency; both RFCs target the same quota-router implementation)
 - RFC-0126: Deterministic Serialization (Accepted v2.5.1)
 - RFC-0201: Binary BLOB Type for Deterministic Hash Storage (Accepted v5.24)
 
@@ -692,6 +711,6 @@ Floating point produces non-deterministic results across architectures (x87 vs S
 
 ---
 
-**Version:** v2
+**Version:** v4
 **Draft Date:** 2026-04-19
 **Last Updated:** 2026-04-19

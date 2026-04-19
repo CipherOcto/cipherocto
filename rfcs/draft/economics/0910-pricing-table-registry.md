@@ -2,7 +2,7 @@
 
 ## Status
 
-Draft (v5 — aligns with RFC-0903 Final v29 + RFC-0903-B1 v22 + RFC-0903-C1 v3 + RFC-0909 v55)
+Draft (v6 — aligns with RFC-0903 Final v29 + RFC-0903-B1 v22 + RFC-0903-C1 v3 + RFC-0909 v55)
 
 ## Authors
 

@@ -462,9 +462,9 @@ Budget exceeded - double-spend occurred!
 4. The budget invariant MUST hold at all times:
    0 ≤ current_spend ≤ budget_limit
 
-**Note on lower bound:** The `0 ≤ current_spend` condition describes the accounting lower bound for recorded events — since `cost_amount` values are non-negative, `current_spend` (a sum of recorded costs) can never go negative. However, when an upstream request incurs cost but the ledger recording fails (e.g., BudgetExceeded error, storage failure), the true incurred cost exceeds the recorded `current_spend`. In this case `true_cost > current_spend` by the unrecorded amount, violating the stronger lower bound `true_cost - N ≤ current_spend` from §Economic Invariants. This bounded divergence is an accepted loss (§Failure Handling).
-
 ```
+
+> **Note on lower bound:** The `0 ≤ current_spend` condition describes the accounting lower bound for recorded events — since `cost_amount` values are non-negative, `current_spend` (a sum of recorded costs) can never go negative. However, when an upstream request incurs cost but the ledger recording fails (e.g., BudgetExceeded error, storage failure), the true incurred cost exceeds the recorded `current_spend`. In this case `true_cost > current_spend` by the unrecorded amount, violating the stronger lower bound `true_cost - N ≤ current_spend` from §Economic Invariants. This bounded divergence is an accepted loss (§Failure Handling).
 
 **Budget enforcement:** The ledger-based approach uses `FOR UPDATE` row locking and checks `SUM(cost_amount) <= budget_limit` atomically. Since `current_spend` is derived from the ledger (not stored), no CHECK constraint on `api_keys` is needed. The ledger INSERT itself enforces the budget via the atomic transaction pattern.
 
@@ -1386,7 +1386,7 @@ This RFC can be approved when:
 - [x] schema adopts RFC-0903-B1/C1 BLOB storage (event_id BLOB(32), request_id BLOB(32), key_id BLOB(16), team_id BLOB(16), tokenizer_id BLOB(16), pricing_hash BYTEA(32))
 - [x] test vectors for cross-router event_id determinism (see below)
 - [x] BLAKE3 test vector for tokenizer_version_to_id: `"tiktoken-cl100k_base-v1.2.3"` → `"e3c8e8ff724411c6416dd4fb135368e3"` (16 bytes hex, per RFC-0201)
-- [x] multi-tenant deployment path documented: either a length-prefixed `compute_event_id` variant is used, **or** `build_merkle_tree` is called with events filtered to a single tenant's `key_id` scope (see §Security Note — No Field Delimiters)
+- [x] multi-tenant collision risk documented with two compliant mitigation paths specified: (1) length-prefixed `compute_event_id` variant, or (2) per-tenant `build_merkle_tree` scoping — see §Security Note — No Field Delimiters; deployers MUST implement one path before production use
 
 **Test Vectors for Cross-Router Determinism:**
 
@@ -1547,7 +1547,7 @@ $0.03/1K tokens → DQA(30_000, scale=6)
 
 | Version | Date       | Changes |
 | ------- | ---------- | ------- |
-| v47     | 2026-04-18 | Round 35 self-review: fix R36M1 (lower bound cross-reference added to §Quota Consistency Model); fix R36M2 (multi-tenant MUST added to Approval Criteria); fix R36L1 (changelog "Round 37" → "Round 35 self-review" to distinguish internal passes from adversarial review rounds) |
+| v47     | 2026-04-18 | Round 35 post-review: fix R36M1 (lower bound cross-reference added to §Quota Consistency Model — now in blockquote, not code block); fix R36M2 (multi-tenant MUST added to Approval Criteria); fix R36L1 (changelog labeled "self-review" to distinguish internal passes from adversarial review rounds) |
 | v46     | 2026-04-18 | Round 35 fixes applied: fix R35C1 (v45 row added; footer v45→v46); fix R35M1 (tokenizer_id_to_version doc: "When fully implemented" + "Current stub" note); fix R35M2 (separate storage defined: build_merkle_tree requires tenant-filtered events); fix R35L2 (changelog space removed) |
 | v45     | 2026-04-18 | Round 35: fix R34H1 (tokenizer_id_to_version pseudocode removed); fix R34M1 ("not client-controlled" → "specified by the client in the API request"); fix R34M2 (either/or multi-tenant MUST framing added); fix R34M3 (stoolap full SHA1 in normative text, not short hash in changelog); fix R34L1 (inaccurate optional() comment removed) |
 | v44     | 2026-04-18 | Round 33: fix R32H1 (security note moved into compute_event_id doc comment, before fn signature); fix R32H2 (security note rewritten to accurately describe multi-tenant threat model); fix R32M3 (tokenizer_id_to_version pseudocode updated to show Result<Option<String>, &'static str>); fix R32M4 (detached /// note removed); fix R32M1 (RFC-0914 v8 changelog entry for v6 now complete); fix R32L1 (RFC-0914 Approval Criteria pinned to RFC-0903-B1 v22) |

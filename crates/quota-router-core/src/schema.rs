@@ -3,14 +3,14 @@ use crate::keys::KeyError;
 /// Initialize database with api_keys and teams tables
 pub fn init_database(db: &stoolap::Database) -> Result<(), KeyError> {
     // Create api_keys table
-    // Note: Using rowid as implicit primary key, key_id is a unique text identifier
+    // key_id and team_id are BLOB(16) per RFC-0903-C1 (raw UUID bytes).
     // key_hash is BYTEA(32) for HMAC-SHA256 binary storage.
     db.execute(
         "CREATE TABLE IF NOT EXISTS api_keys (
-            key_id TEXT NOT NULL UNIQUE,
+            key_id BLOB(16) NOT NULL,
             key_hash BYTEA(32) NOT NULL UNIQUE,
             key_prefix TEXT NOT NULL,
-            team_id TEXT,
+            team_id BLOB(16),
             budget_limit INTEGER NOT NULL,
             rpm_limit INTEGER,
             tpm_limit INTEGER,
@@ -25,7 +25,8 @@ pub fn init_database(db: &stoolap::Database) -> Result<(), KeyError> {
             auto_rotate INTEGER DEFAULT 0,
             rotation_interval_days INTEGER,
             description TEXT,
-            metadata TEXT
+            metadata TEXT,
+            UNIQUE(key_id)
         )",
         [],
     )
@@ -34,10 +35,11 @@ pub fn init_database(db: &stoolap::Database) -> Result<(), KeyError> {
     // Create teams table
     db.execute(
         "CREATE TABLE IF NOT EXISTS teams (
-            team_id TEXT NOT NULL UNIQUE,
+            team_id BLOB(16) NOT NULL,
             name TEXT NOT NULL,
             budget_limit INTEGER NOT NULL,
-            created_at INTEGER NOT NULL
+            created_at INTEGER NOT NULL,
+            UNIQUE(team_id)
         )",
         [],
     )
@@ -56,7 +58,6 @@ pub fn init_database(db: &stoolap::Database) -> Result<(), KeyError> {
     .map_err(|e| KeyError::Storage(e.to_string()))?;
 
     // Create indexes
-    // Note: idx_api_keys_hash is on key_hash BYTEA(32) column (binary).
     db.execute(
         "CREATE INDEX IF NOT EXISTS idx_api_keys_hash ON api_keys(key_hash)",
         [],
@@ -76,14 +77,15 @@ pub fn init_database(db: &stoolap::Database) -> Result<(), KeyError> {
     .map_err(|e| KeyError::Storage(e.to_string()))?;
 
     // Create spend_ledger table for ledger-based budget enforcement (RFC-0903)
-    // pricing_hash is stored as BLOB (32 bytes) — stoolap supports native Blob type
+    // BLOB storage per RFC-0903-B1/C1: event_id (raw SHA256 32B), request_id (raw SHA256 32B),
+    // key_id (raw UUID 16B), team_id (raw UUID 16B), pricing_hash (raw SHA256 32B).
     db.execute(
         "CREATE TABLE IF NOT EXISTS spend_ledger (
-            event_id TEXT NOT NULL,
-            request_id TEXT NOT NULL,
-            key_id TEXT NOT NULL,
+            event_id BLOB(32) NOT NULL,
+            request_id BLOB(32) NOT NULL,
+            key_id BLOB(16) NOT NULL,
             UNIQUE(key_id, request_id),
-            team_id TEXT,
+            team_id BLOB(16),
             provider TEXT NOT NULL,
             model TEXT NOT NULL,
             input_tokens INTEGER NOT NULL,
@@ -91,6 +93,7 @@ pub fn init_database(db: &stoolap::Database) -> Result<(), KeyError> {
             cost_amount INTEGER NOT NULL,
             pricing_hash BLOB NOT NULL,
             token_source TEXT NOT NULL CHECK (token_source IN ('provider_usage', 'canonical_tokenizer')),
+            tokenizer_id BLOB(16),
             tokenizer_version TEXT,
             provider_usage_json TEXT,
             timestamp INTEGER NOT NULL,
@@ -100,7 +103,7 @@ pub fn init_database(db: &stoolap::Database) -> Result<(), KeyError> {
     )
     .map_err(|e| KeyError::Storage(e.to_string()))?;
 
-    // Create indexes for spend_ledger
+    // Create indexes for spend_ledger per RFC-0909
     db.execute(
         "CREATE INDEX IF NOT EXISTS idx_spend_ledger_key_id ON spend_ledger(key_id)",
         [],
@@ -127,6 +130,31 @@ pub fn init_database(db: &stoolap::Database) -> Result<(), KeyError> {
 
     db.execute(
         "CREATE INDEX IF NOT EXISTS idx_spend_ledger_team_time ON spend_ledger(team_id, timestamp)",
+        [],
+    )
+    .map_err(|e| KeyError::Storage(e.to_string()))?;
+
+    // RFC-0909 additional indexes
+    db.execute(
+        "CREATE INDEX IF NOT EXISTS idx_spend_ledger_event_id ON spend_ledger(event_id)",
+        [],
+    )
+    .map_err(|e| KeyError::Storage(e.to_string()))?;
+
+    db.execute(
+        "CREATE INDEX IF NOT EXISTS idx_spend_ledger_key_created ON spend_ledger(key_id, created_at)",
+        [],
+    )
+    .map_err(|e| KeyError::Storage(e.to_string()))?;
+
+    db.execute(
+        "CREATE INDEX IF NOT EXISTS idx_spend_ledger_pricing_hash ON spend_ledger(pricing_hash)",
+        [],
+    )
+    .map_err(|e| KeyError::Storage(e.to_string()))?;
+
+    db.execute(
+        "CREATE INDEX IF NOT EXISTS idx_spend_ledger_tokenizer ON spend_ledger(tokenizer_id)",
         [],
     )
     .map_err(|e| KeyError::Storage(e.to_string()))?;

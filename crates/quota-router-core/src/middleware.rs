@@ -284,7 +284,7 @@ mod tests {
         // Create an expired key directly in storage
         let storage = middleware.storage.clone();
         let key = ApiKey {
-            key_id: "expired-key".to_string(),
+            key_id: "550e8400-e29b-41d4-a716-446655440101".to_string(),
             key_hash: vec![1, 2, 3],
             key_prefix: "sk-qr-tes".to_string(),
             team_id: None,
@@ -318,7 +318,7 @@ mod tests {
         // Create a key with budget
         let storage = middleware.storage.clone();
         let key = ApiKey {
-            key_id: "budget-key".to_string(),
+            key_id: "550e8400-e29b-41d4-a716-446655440102".to_string(),
             key_hash: vec![10, 20, 30],
             key_prefix: "sk-qr-bud".to_string(),
             team_id: None,
@@ -352,7 +352,7 @@ mod tests {
         // Create a key with budget
         let storage = middleware.storage.clone();
         let key = ApiKey {
-            key_id: "budget-key-2".to_string(),
+            key_id: "550e8400-e29b-41d4-a716-446655440103".to_string(),
             key_hash: vec![11, 21, 31],
             key_prefix: "sk-qr-bud".to_string(),
             team_id: None,
@@ -396,7 +396,7 @@ mod tests {
         // Create a key
         let storage = middleware.storage.clone();
         let key = ApiKey {
-            key_id: "spend-key".to_string(),
+            key_id: "550e8400-e29b-41d4-a716-446655440104".to_string(),
             key_hash: vec![12, 22, 32],
             key_prefix: "sk-qr-spe".to_string(),
             team_id: None,
@@ -433,7 +433,7 @@ mod tests {
 
         // Create a key with RPM limit
         let key = ApiKey {
-            key_id: "rate-key".to_string(),
+            key_id: "550e8400-e29b-41d4-a716-446655440105".to_string(),
             key_hash: vec![13, 23, 33],
             key_prefix: "sk-qr-rat".to_string(),
             team_id: None,
@@ -470,7 +470,7 @@ mod tests {
 
         // Create a key with TPM limit
         let key = ApiKey {
-            key_id: "tpm-key".to_string(),
+            key_id: "550e8400-e29b-41d4-a716-446655440106".to_string(),
             key_hash: vec![14, 24, 34],
             key_prefix: "sk-qr-tpm".to_string(),
             team_id: None,

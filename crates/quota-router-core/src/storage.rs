@@ -1,6 +1,6 @@
 use crate::keys::{
-    hex_to_blob_32, tokenizer_version_to_id, uuid_to_blob_16, ApiKey, KeyError, KeySpend, KeyType,
-    KeyUpdates, SpendEvent, Team,
+    blob_16_to_uuid, hex_to_blob_32, tokenizer_version_to_id, uuid_to_blob_16, ApiKey, KeyError,
+    KeySpend, KeyType, KeyUpdates, SpendEvent, Team,
 };
 use sha2::{Digest, Sha256};
 
@@ -72,17 +72,28 @@ impl StoolapKeyStorage {
             .get_by_name("key_hash")
             .map_err(|e| KeyError::Storage(e.to_string()))?;
 
+        // Read key_id and team_id as BLOB(16) and convert to String per RFC-0903-C1
+        let key_id_blob: Vec<u8> = row
+            .get_by_name("key_id")
+            .map_err(|e| KeyError::Storage(e.to_string()))?;
+        let key_id_bytes: [u8; 16] = key_id_blob.try_into().expect("key_id must be 16 bytes");
+        let key_id = blob_16_to_uuid(&key_id_bytes).to_string();
+
+        let team_id_blob: Option<Vec<u8>> = row
+            .get_by_name("team_id")
+            .map_err(|e| KeyError::Storage(e.to_string()))?;
+        let team_id = team_id_blob.map(|blob| {
+            let bytes: [u8; 16] = blob.try_into().expect("team_id must be 16 bytes");
+            blob_16_to_uuid(&bytes).to_string()
+        });
+
         Ok(ApiKey {
-            key_id: row
-                .get_by_name("key_id")
-                .map_err(|e| KeyError::Storage(e.to_string()))?,
+            key_id,
             key_hash,
             key_prefix: row
                 .get_by_name("key_prefix")
                 .map_err(|e| KeyError::Storage(e.to_string()))?,
-            team_id: row
-                .get_by_name("team_id")
-                .map_err(|e| KeyError::Storage(e.to_string()))?,
+            team_id,
             budget_limit: row
                 .get_by_name("budget_limit")
                 .map_err(|e| KeyError::Storage(e.to_string()))?,
@@ -157,11 +168,20 @@ impl KeyStorage for StoolapKeyStorage {
                 .unwrap_or(stoolap::Value::Null(stoolap::DataType::Null))
         };
 
+        // Convert key_id and team_id to BLOB(16) for storage per RFC-0903-C1
+        let key_id_blob =
+            uuid_to_blob_16(&uuid::Uuid::parse_str(&key.key_id).expect("valid key_id UUID"));
+        let team_id_blob: Option<Vec<u8>> = key.team_id.as_ref().map(|t| {
+            uuid_to_blob_16(&uuid::Uuid::parse_str(t).expect("valid team_id UUID")).to_vec()
+        });
+
         let params: Vec<stoolap::Value> = vec![
-            key.key_id.clone().into(),
+            stoolap::core::Value::blob(key_id_blob.to_vec()),
             key_hash_value,
             key.key_prefix.clone().into(),
-            key.team_id.clone().into(),
+            team_id_blob
+                .map(stoolap::core::Value::blob)
+                .unwrap_or_else(|| stoolap::Value::Null(stoolap::DataType::Null)),
             key.budget_limit.into(),
             opt_i32_to_value(key.rpm_limit),
             opt_i32_to_value(key.tpm_limit),
@@ -265,8 +285,13 @@ impl KeyStorage for StoolapKeyStorage {
             return Ok(());
         }
 
+        // key_id is BLOB(16) per RFC-0903-C1
+        let key_id_blob =
+            uuid_to_blob_16(&uuid::Uuid::parse_str(key_id).expect("valid key_id UUID"));
+
+        // Note: updating key_id itself changes the primary key - this is allowed
         set_clauses.push(format!("key_id = ${}", params.len() + 1));
-        params.push(key_id.into());
+        params.push(stoolap::core::Value::blob(key_id_blob.to_vec()));
 
         let sql = format!(
             "UPDATE api_keys SET {} WHERE key_id = ${}",
@@ -283,7 +308,11 @@ impl KeyStorage for StoolapKeyStorage {
 
     fn list_keys(&self, team_id: Option<&str>) -> Result<Vec<ApiKey>, KeyError> {
         let rows = if let Some(tid) = team_id {
-            let params: Vec<stoolap::Value> = vec![tid.into()];
+            // Convert team_id to BLOB(16) per RFC-0903-C1
+            let team_id_blob =
+                uuid_to_blob_16(&uuid::Uuid::parse_str(tid).expect("valid team_id UUID"));
+            let params: Vec<stoolap::Value> =
+                vec![stoolap::core::Value::blob(team_id_blob.to_vec())];
             self.db
                 .query("SELECT * FROM api_keys WHERE team_id = $1", params)
                 .map_err(|e| KeyError::Storage(e.to_string()))?
@@ -303,11 +332,14 @@ impl KeyStorage for StoolapKeyStorage {
     }
 
     fn count_keys_for_team(&self, team_id: &str) -> Result<i64, KeyError> {
+        // Convert team_id to BLOB(16) per RFC-0903-C1
+        let team_id_blob =
+            uuid_to_blob_16(&uuid::Uuid::parse_str(team_id).expect("valid team_id UUID"));
         let mut rows = self
             .db
             .query(
                 "SELECT COUNT(*) FROM api_keys WHERE team_id = $1 AND revoked = 0",
-                vec![team_id.into()],
+                vec![stoolap::core::Value::blob(team_id_blob.to_vec())],
             )
             .map_err(|e| KeyError::Storage(e.to_string()))?;
 
@@ -321,11 +353,14 @@ impl KeyStorage for StoolapKeyStorage {
     }
 
     fn create_team(&self, team: &Team) -> Result<(), KeyError> {
+        // Convert team_id to BLOB(16) for storage per RFC-0903-C1
+        let team_id_blob =
+            uuid_to_blob_16(&uuid::Uuid::parse_str(&team.team_id).expect("valid team_id UUID"));
         self.db
             .execute(
                 "INSERT INTO teams (team_id, name, budget_limit, created_at) VALUES ($1, $2, $3, $4)",
                 vec![
-                    team.team_id.clone().into(),
+                    stoolap::core::Value::blob(team_id_blob.to_vec()),
                     team.name.clone().into(),
                     team.budget_limit.into(),
                     team.created_at.into(),
@@ -336,19 +371,28 @@ impl KeyStorage for StoolapKeyStorage {
     }
 
     fn get_team(&self, team_id: &str) -> Result<Option<Team>, KeyError> {
+        // Convert team_id to BLOB(16) per RFC-0903-C1
+        let team_id_blob =
+            uuid_to_blob_16(&uuid::Uuid::parse_str(team_id).expect("valid team_id UUID"));
         let rows = self
             .db
             .query(
                 "SELECT * FROM teams WHERE team_id = $1",
-                vec![team_id.into()],
+                vec![stoolap::core::Value::blob(team_id_blob.to_vec())],
             )
             .map_err(|e| KeyError::Storage(e.to_string()))?;
 
         if let Some(Ok(row)) = rows.into_iter().next() {
+            // Read team_id as BLOB(16) and convert to String per RFC-0903-C1
+            let team_id_blob: Vec<u8> = row
+                .get_by_name("team_id")
+                .map_err(|e| KeyError::Storage(e.to_string()))?;
+            let team_id_bytes: [u8; 16] =
+                team_id_blob.try_into().expect("team_id must be 16 bytes");
+            let team_id = blob_16_to_uuid(&team_id_bytes).to_string();
+
             let team = Team {
-                team_id: row
-                    .get_by_name("team_id")
-                    .map_err(|e| KeyError::Storage(e.to_string()))?,
+                team_id,
                 name: row
                     .get_by_name("name")
                     .map_err(|e| KeyError::Storage(e.to_string()))?,
@@ -366,10 +410,17 @@ impl KeyStorage for StoolapKeyStorage {
     }
 
     fn update_team(&self, team_id: &str, name: &str, budget_limit: i64) -> Result<(), KeyError> {
+        // Convert team_id to BLOB(16) per RFC-0903-C1
+        let team_id_blob =
+            uuid_to_blob_16(&uuid::Uuid::parse_str(team_id).expect("valid team_id UUID"));
         self.db
             .execute(
                 "UPDATE teams SET name = $1, budget_limit = $2 WHERE team_id = $3",
-                vec![name.into(), budget_limit.into(), team_id.into()],
+                vec![
+                    name.into(),
+                    budget_limit.into(),
+                    stoolap::core::Value::blob(team_id_blob.to_vec()),
+                ],
             )
             .map_err(|e| KeyError::Storage(e.to_string()))?;
         Ok(())
@@ -413,8 +464,14 @@ impl KeyStorage for StoolapKeyStorage {
             ));
         }
 
+        // Convert team_id to BLOB(16) for storage per RFC-0903-C1
+        let team_id_blob =
+            uuid_to_blob_16(&uuid::Uuid::parse_str(team_id).expect("valid team_id UUID"));
         self.db
-            .execute("DELETE FROM teams WHERE team_id = $1", vec![team_id.into()])
+            .execute(
+                "DELETE FROM teams WHERE team_id = $1",
+                vec![stoolap::core::Value::blob(team_id_blob.to_vec())],
+            )
             .map_err(|e| KeyError::Storage(e.to_string()))?;
         Ok(())
     }
@@ -807,7 +864,7 @@ mod tests {
         let storage = create_test_storage();
 
         let key = ApiKey {
-            key_id: "test-key-1".to_string(),
+            key_id: "550e8400-e29b-41d4-a716-446655440001".to_string(),
             key_hash: vec![1, 2, 3],
             key_prefix: "sk-qr-tes".to_string(),
             team_id: None,
@@ -832,7 +889,10 @@ mod tests {
 
         let lookup = storage.lookup_by_hash(&[1, 2, 3]).unwrap();
         assert!(lookup.is_some());
-        assert_eq!(lookup.unwrap().key_id, "test-key-1");
+        assert_eq!(
+            lookup.unwrap().key_id,
+            "550e8400-e29b-41d4-a716-446655440001"
+        );
     }
 
     #[test]
@@ -840,7 +900,7 @@ mod tests {
         let storage = create_test_storage();
 
         let key = ApiKey {
-            key_id: "test-key-update".to_string(),
+            key_id: "550e8400-e29b-41d4-a716-446655440002".to_string(),
             key_hash: vec![4, 5, 6],
             key_prefix: "sk-qr-tes".to_string(),
             team_id: None,
@@ -866,7 +926,7 @@ mod tests {
         // Update the key
         storage
             .update_key(
-                "test-key-update",
+                "550e8400-e29b-41d4-a716-446655440002",
                 &KeyUpdates {
                     budget_limit: Some(2000),
                     rpm_limit: Some(200),
@@ -892,13 +952,15 @@ mod tests {
     fn test_list_keys() {
         let storage = create_test_storage();
 
+        let team_uuid = "660e8400-e29b-41d4-a716-446655440001";
+
         // Create keys
         for i in 0..3 {
             let key = ApiKey {
-                key_id: format!("test-key-{}", i),
+                key_id: format!("550e8400-e29b-41d4-a716-4466554400{:02}", 10 + i),
                 key_hash: vec![i as u8],
                 key_prefix: "sk-qr-tes".to_string(),
-                team_id: Some("team1".to_string()),
+                team_id: Some(team_uuid.to_string()),
                 budget_limit: 1000,
                 rpm_limit: None,
                 tpm_limit: None,
@@ -923,11 +985,13 @@ mod tests {
         assert_eq!(all_keys.len(), 3);
 
         // List by team
-        let team_keys = storage.list_keys(Some("team1")).unwrap();
+        let team_keys = storage.list_keys(Some(team_uuid)).unwrap();
         assert_eq!(team_keys.len(), 3);
 
         // List by non-existent team
-        let other_keys = storage.list_keys(Some("nonexistent")).unwrap();
+        let other_keys = storage
+            .list_keys(Some("00000000-0000-0000-0000-000000000000"))
+            .unwrap();
         assert_eq!(other_keys.len(), 0);
     }
 
@@ -936,7 +1000,7 @@ mod tests {
         let storage = create_test_storage();
 
         let team = Team {
-            team_id: "team-1".to_string(),
+            team_id: "660e8400-e29b-41d4-a716-446655440001".to_string(),
             name: "Test Team".to_string(),
             budget_limit: 10000,
             created_at: 100,
@@ -944,10 +1008,12 @@ mod tests {
 
         storage.create_team(&team).unwrap();
 
-        let retrieved = storage.get_team("team-1").unwrap();
+        let retrieved = storage
+            .get_team("660e8400-e29b-41d4-a716-446655440001")
+            .unwrap();
         assert!(retrieved.is_some());
         let t = retrieved.unwrap();
-        assert_eq!(t.team_id, "team-1");
+        assert_eq!(t.team_id, "660e8400-e29b-41d4-a716-446655440001");
         assert_eq!(t.name, "Test Team");
         assert_eq!(t.budget_limit, 10000);
     }
@@ -956,7 +1022,9 @@ mod tests {
     fn test_get_nonexistent_team() {
         let storage = create_test_storage();
 
-        let retrieved = storage.get_team("nonexistent").unwrap();
+        let retrieved = storage
+            .get_team("00000000-0000-0000-0000-000000000000")
+            .unwrap();
         assert!(retrieved.is_none());
     }
 
@@ -967,7 +1035,7 @@ mod tests {
         // Create multiple teams
         for i in 0..3 {
             let team = Team {
-                team_id: format!("team-{}", i),
+                team_id: format!("660e8400-e29b-41d4-a716-4466554400{:02}", 10 + i),
                 name: format!("Team {}", i),
                 budget_limit: 1000 * (i + 1) as i64,
                 created_at: 100 + i as i64,
@@ -983,9 +1051,12 @@ mod tests {
     fn test_delete_team_with_keys_fails() {
         let storage = create_test_storage();
 
+        let team_uuid = "660e8400-e29b-41d4-a716-446655440020";
+        let key_uuid = "550e8400-e29b-41d4-a716-446655440020";
+
         // Create a team
         let team = Team {
-            team_id: "team-with-keys".to_string(),
+            team_id: team_uuid.to_string(),
             name: "Team With Keys".to_string(),
             budget_limit: 10000,
             created_at: 100,
@@ -994,10 +1065,10 @@ mod tests {
 
         // Create a key belonging to this team
         let key = ApiKey {
-            key_id: "test-key".to_string(),
+            key_id: key_uuid.to_string(),
             key_hash: vec![1, 2, 3],
             key_prefix: "sk-qr-tes".to_string(),
-            team_id: Some("team-with-keys".to_string()),
+            team_id: Some(team_uuid.to_string()),
             budget_limit: 1000,
             rpm_limit: None,
             tpm_limit: None,
@@ -1017,7 +1088,7 @@ mod tests {
         storage.create_key(&key).unwrap();
 
         // Delete should fail
-        let result = storage.delete_team("team-with-keys");
+        let result = storage.delete_team(team_uuid);
         assert!(result.is_err());
     }
 
@@ -1027,7 +1098,7 @@ mod tests {
 
         // Create a team with no keys
         let team = Team {
-            team_id: "orphan-team".to_string(),
+            team_id: "660e8400-e29b-41d4-a716-446655440099".to_string(),
             name: "Orphan Team".to_string(),
             budget_limit: 5000,
             created_at: 100,
@@ -1035,10 +1106,14 @@ mod tests {
         storage.create_team(&team).unwrap();
 
         // Delete should succeed
-        storage.delete_team("orphan-team").unwrap();
+        storage
+            .delete_team("660e8400-e29b-41d4-a716-446655440099")
+            .unwrap();
 
         // Verify deleted
-        let retrieved = storage.get_team("orphan-team").unwrap();
+        let retrieved = storage
+            .get_team("660e8400-e29b-41d4-a716-446655440099")
+            .unwrap();
         assert!(retrieved.is_none());
     }
 }

@@ -2,7 +2,7 @@
 
 ## Status
 
-Draft (v6 — aligns with RFC-0903 Final v29 + RFC-0903-B1 v22 + RFC-0903-C1 v3 + RFC-0909 v55)
+Draft (v7 — aligns with RFC-0903 Final v29 + RFC-0903-B1 v22 + RFC-0903-C1 v3 + RFC-0909 v56)
 
 ## Authors
 
@@ -177,6 +177,9 @@ pub enum RegistryError {
     DuplicateVersion { provider: String, model: String, version: u32 },
     /// Tried to register a version lower than the current latest.
     VersionNotIncrement { provider: String, model: String, existing_version: u32, attempted_version: u32 },
+    /// Tried to register an effective_from that is not strictly greater than the current latest.
+    /// Prevents retroactive pricing changes.
+    EffectiveFromNotIncrement { provider: String, model: String, existing_effective_from: i64, attempted_effective_from: i64 },
 }
 
 /// Global pricing registry using BTreeMap for deterministic iteration.
@@ -209,14 +212,16 @@ impl PricingRegistry {
     /// (provider, model, version) is already registered.
     /// Returns `RegistryError::VersionNotIncrement` if the attempted version
     /// is not strictly greater than the current latest version.
+    /// Returns `RegistryError::EffectiveFromNotIncrement` if the attempted
+    /// effective_from is not strictly greater than the current latest effective_from.
     pub fn register(&mut self, table: PricingTable) -> Result<[u8; 32], RegistryError> {
         let key = (table.provider.clone(), table.model.clone());
         let hash = table.compute_pricing_hash();
 
         let entries = self.tables.entry(key).or_insert_with(Vec::new);
 
-        // Check version constraints against the latest (last in vec, since sorted desc)
-        if let Some(latest) = entries.last() {
+        // Check version/effective_from constraints against the latest (first in vec, since sorted desc by version)
+        if let Some(latest) = entries.first() {
             if latest.version == table.version {
                 return Err(RegistryError::DuplicateVersion {
                     provider: table.provider.clone(),
@@ -232,12 +237,21 @@ impl PricingRegistry {
                     attempted_version: table.version,
                 });
             }
-            // table.version > latest.version: index ALL superseded entries by their hashes
+            // effective_from must be strictly greater than the current latest — prevents retroactive pricing
+            if table.effective_from <= latest.effective_from {
+                return Err(RegistryError::EffectiveFromNotIncrement {
+                    provider: table.provider.clone(),
+                    model: table.model.clone(),
+                    existing_effective_from: latest.effective_from,
+                    attempted_effective_from: table.effective_from,
+                });
+            }
+            // table.version > latest.version AND table.effective_from > latest.effective_from:
+            // index ALL superseded entries by their hashes for historical get_by_hash() lookup
             for superseded in entries.iter() {
                 let h = superseded.compute_pricing_hash();
                 self.by_hash.insert(h, Arc::new(superseded.clone()));
             }
-            entries.clear();
         }
 
         entries.push(table);
@@ -673,7 +687,7 @@ for use in `event_id` computation (RFC-0909 §compute_event_id).
 
 ### Why BTreeMap for PricingRegistry?
 
-`BTreeMap<(String, String), PricingTable>` ensures deterministic iteration order (sorted by provider, then model). This is required for consistent `pricing_hash` computation when the registry itself is hashed. `HashMap` iteration order is implementation-defined.
+`BTreeMap<(String, String), Vec<PricingTable>>` ensures deterministic iteration order (sorted by provider, then model key). This provides deterministic output from `get_versions()` and `list_models()`, which is useful for audit tooling and reproducible registry enumeration. `HashMap` iteration order is implementation-defined.
 
 ### Why BLAKE3 for tokenizer_id?
 
@@ -691,6 +705,7 @@ Floating point produces non-deterministic results across architectures (x87 vs S
 
 | Version | Date | Changes |
 |---------|------|---------|
+| v7 | 2026-04-20 | Round 54 fixes (ext review R39): fix 910-C1 (remove entries.clear() — all superseded versions now retained in Vec, get_versions() returns all versions as documented); fix 910-C2 (entries.last()→entries.first() — descending-sorted Vec: first is newest, last is oldest); add 910-M1 (RegistryError::EffectiveFromNotIncrement + enforce effective_from > latest.effective_from constraint in register()); fix 910-M2 (Rationale: update stale PricingTable type to Vec<PricingTable>, remove wrong registry-hashing claim); fix 910-M3 (Status header + Related RFCs: RFC-0909 v55→v56) |
 | v6 | 2026-04-19 | Round 52 fixes: fix 912-L1 (Status header: RFC-0909 version updated from v54 to v55 to match current RFC-0909 version); fix 913-L1 (Related RFCs: RFC-0909 version updated from v54 to v55 to match current RFC-0909 version) |
 | v5 | 2026-04-19 | Round 51 fixes: fix 910-H1 (Related RFCs: RFC-0909 version updated from v53 to v54 to match current RFC-0909 version) |
 | v4 | 2026-04-19 | Round 50 fixes: fix 910-H1/M3 (remove false "aligns with RFC-0909 §compute_cost" claim from compute_cost doc comment — RFC-0910's PricingTable is a different type from RFC-0909's PricingModel; added clarifying note that this is a registry struct, not RFC-0909's struct); fix 910-M2 (add note about dual PricingTable definitions: RFC-0910 uses single-row struct for registry; RFC-0909 uses BTreeMap+inner-struct for internal pricing — same name, different types); fix 910-L1 (expand Truncation Note: add two-division breakdown matching RFC-0909's Invariant #3 detail) |
@@ -701,7 +716,7 @@ Floating point produces non-deterministic results across architectures (x87 vs S
 ## Related RFCs
 
 - RFC-0903: Virtual API Key System (Final v29 + RFC-0903-B1 amendment v22 + RFC-0903-C1 amendment v3)
-- RFC-0909: Deterministic Quota Accounting (Draft v55)
+- RFC-0909: Deterministic Quota Accounting (Draft v56)
 - RFC-0913: Stoolap Pub/Sub for Cache Invalidation (Accepted — quota router cache invalidation via WAL pub/sub; related to registry update propagation)
 - RFC-0914: Stoolap-Only Quota Router Persistence (Draft v8 — lists RFC-0910 as optional dependency; both RFCs target the same quota-router implementation)
 - RFC-0126: Deterministic Serialization (Accepted v2.5.1)
@@ -713,6 +728,6 @@ Floating point produces non-deterministic results across architectures (x87 vs S
 
 ---
 
-**Version:** v6
+**Version:** v7
 **Draft Date:** 2026-04-19
 **Last Updated:** 2026-04-19

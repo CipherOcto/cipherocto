@@ -2,7 +2,7 @@
 
 ## Status
 
-Draft (v9 — aligns with RFC-0903 Final v29 + RFC-0903-B1 v22 + RFC-0903-C1 v3)
+Draft (v10 — aligns with RFC-0903 Final v29 + RFC-0903-B1 v22 + RFC-0903-C1 v3)
 
 ## Authors
 
@@ -134,7 +134,6 @@ pub struct PricingTable {
 
 impl PricingTable {
     /// Compute deterministic SHA256 hash of the pricing table.
-    /// ⚠️  This requires a canonical JSON serializer (RFC 8785, e.g., serde_json_raw crate).
     ///
     /// BTreeMap determinism scope: The `metadata: BTreeMap` field guarantees sorted iteration
     /// for that field's key-value pairs. The struct's other fields (`table_id`, `version`,
@@ -144,18 +143,24 @@ impl PricingTable {
     /// to ensure identical output across implementations. The test vector below is computed
     /// with an RFC 8785-compliant implementation and MUST be matched exactly.
     ///
-    /// ⚠️  This requires a canonical JSON serializer (RFC 8785, e.g., serde_json_raw crate).
-    /// serde_json field ordering is NOT guaranteed across compiler versions.
-    /// All router implementations MUST use the same canonical JSON library.
+    /// ⚠️  You MUST use an RFC 8785-compliant canonical JSON serializer.
+    /// serde_json is NOT RFC 8785-compliant — field ordering is compiler-dependent.
+    /// Using serde_json will produce incorrect pricing_hash values.
+    /// Example with a compliant serializer (pseudocode):
+    ///
+    /// ```ignore
+    /// let serialized = canonical_json::to_string(&self)
+    ///     .expect("canonical JSON serialization must succeed");
+    /// let mut hasher = Sha256::new();
+    /// hasher.update(serialized.as_bytes());
+    /// hasher.finalize().into()
+    /// ```
     pub fn compute_pricing_hash(&self) -> [u8; 32] {
         use sha2::{Digest, Sha256};
 
-        // ⚠️  Example only — NOT for production.
-        // This uses serde_json::to_string to illustrate the hashing pattern only.
-        // serde_json does NOT produce RFC 8785 canonical JSON — field ordering is
-        // compiler-dependent. Production MUST use an RFC 8785-compliant serializer
-        // (e.g., serde_json_raw). The test vector was computed with a compliant
-        // implementation and MUST be matched exactly.
+        // ⚠️  REPLACE THIS WITH AN RFC 8785-COMPLIANT SERIALIZER.
+        // serde_json is NOT compliant — field ordering is compiler-dependent.
+        // The test vector was computed with a compliant implementation.
         let serialized = serde_json::to_string(&self)
             .expect("PricingTable serialization must succeed");
         let mut hasher = Sha256::new();
@@ -294,7 +299,7 @@ impl PricingRegistry {
     /// Get pricing by exact pricing_hash for verification.
     /// O(1) lookup — can resolve any historical pricing_hash, including superseded versions.
     pub fn get_by_hash(&self, hash: &[u8; 32]) -> Option<&PricingTable> {
-        self.by_hash.get(hash).map(|arc| arc.as_ref())
+        self.by_hash.get(hash).map(|arc| &**arc)
     }
 
     /// Returns all registered versions for a (provider, model) pair, newest first.
@@ -350,6 +355,9 @@ pub fn compute_cost(
 ) -> u64 {
     let prompt_cost = (input_tokens as u64 * pricing.prompt_cost_per_1k) / 1000;
     let completion_cost = (output_tokens as u64 * pricing.completion_cost_per_1k) / 1000;
+    // Note: saturating_add caps at u64::MAX (~18M dollars per event) — overflow is not a
+    // realistic concern for token counts; the truncation bound (<2 micro-units per event) is
+    // the operative precision limit.
     prompt_cost.saturating_add(completion_cost)
 }
 ```
@@ -457,6 +465,12 @@ pub fn tokenizer_version_to_id(version: &str) -> [u8; 16] {
 /// implementations. If two routers return different tokenizer versions for the
 /// same model, event_id determinism breaks (different token_source values
 /// produce different event_id hashes for identical requests).
+///
+/// # Uncertain Assignments
+/// ⚠️  The following model families have UNCERTAIN tokenizer assignments.
+/// Routers MUST verify before production use; these may change in future versions:
+/// - `gemini-*` — may use SentencePiece encoding, not cl100k_base
+/// - `o1-mini`, `o1-preview` — different vocab from o200k_base; verify with provider
 ///
 /// # Implementation Notes
 /// - This function is the single source of truth for canonical tokenizer assignment
@@ -810,7 +824,7 @@ This design allows the registry to be treated as a cache of known-good pricing s
 
 | Version | Date | Changes |
 |---------|------|---------|
-| v9 | 2026-04-20 | Round 56 adversarial fixes: fix 910-C1 (effective_from constraint: < not <= allows same-second registrations); fix 910-C2 (try_into().unwrap() → expect()); fix 910-C3 (document case-sensitivity as caller responsibility); add 910-H1 (Approval Criteria section); fix 910-H2 (pattern matching: exact match, not glob; remove redundant idx); fix 910-H3 (add MAX_TABLE_ID_LEN=128 and TableIdTooLong error); fix 910-H5 (encoding_type is informational only); fix 910-H6 (add UNIQUE(version, provider) to tokenizers); add 910-M2 (get_version() method); fix 910-M3 (tokenizer_id_to_version is in RFC-0909, not this RFC); add Phase 2 migration items; fix 910-M5 (RFC-0909 Related RFCs: Draft → Accepted); add 910-M6 (Integration section showing registry in request pipeline); add registry persistence model note; update RFC-0909 Related RFCs to (Accepted) |
+| v10 | 2026-04-20 | Round 57 adversarial fixes: fix R1 (remove stale footer — version history table and Status header are authoritative); fix R2 (remove footer dates); fix H1 (get_by_hash: simplify redundant arc.as_ref() to &**arc); fix M1 (compute_pricing_hash: replace serde_json example with pseudocode + stronger warning); fix M2 (compute_cost: clarify saturating_add overflow not a concern); fix L1 (add Uncertain Assignments section to get_canonical_tokenizer doc comment — gemini-*, o1-mini, o1-preview flagged); fix L2 (same Uncertain Assignments section surfaces o1-mini/o1-preview uncertainty) | fix 910-C1 (effective_from constraint: < not <= allows same-second registrations); fix 910-C2 (try_into().unwrap() → expect()); fix 910-C3 (document case-sensitivity as caller responsibility); add 910-H1 (Approval Criteria section); fix 910-H2 (pattern matching: exact match, not glob; remove redundant idx); fix 910-H3 (add MAX_TABLE_ID_LEN=128 and TableIdTooLong error); fix 910-H5 (encoding_type is informational only); fix 910-H6 (add UNIQUE(version, provider) to tokenizers); add 910-M2 (get_version() method); fix 910-M3 (tokenizer_id_to_version is in RFC-0909, not this RFC); add Phase 2 migration items; fix 910-M5 (RFC-0909 Related RFCs: Draft → Accepted); add 910-M6 (Integration section showing registry in request pipeline); add registry persistence model note; update RFC-0909 Related RFCs to (Accepted) |
 | v8 | 2026-04-20 | Round 55 fixes: break circular version pin — remove RFC-0909 peer version from Status header and Related RFCs footer; RFC-0909 is referenced by status only (no version pin) |
 | v7 | 2026-04-20 | Round 54 fixes (ext review R39): fix 910-C1 (remove entries.clear() — all superseded versions now retained in Vec, get_versions() returns all versions as documented); fix 910-C2 (entries.last()→entries.first() — descending-sorted Vec: first is newest, last is oldest); add 910-M1 (RegistryError::EffectiveFromNotIncrement + enforce effective_from > latest.effective_from constraint in register()); fix 910-M2 (Rationale: update stale PricingTable type to Vec<PricingTable>, remove wrong registry-hashing claim); fix 910-M3 (Status header + Related RFCs: RFC-0909 v55→v56) |
 | v6 | 2026-04-19 | Round 52 fixes: fix 912-L1 (Status header: RFC-0909 version updated from v54 to v55 to match current RFC-0909 version); fix 913-L1 (Related RFCs: RFC-0909 version updated from v54 to v55 to match current RFC-0909 version) |
@@ -833,8 +847,3 @@ This design allows the registry to be treated as a cache of known-good pricing s
 
 - `docs/use-cases/enhanced-quota-router-gateway.md`
 
----
-
-**Version:** v8
-**Draft Date:** 2026-04-19
-**Last Updated:** 2026-04-19

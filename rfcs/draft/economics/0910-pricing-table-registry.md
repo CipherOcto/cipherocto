@@ -2,7 +2,7 @@
 
 ## Status
 
-Draft (v10 — aligns with RFC-0903 Final v29 + RFC-0903-B1 v22 + RFC-0903-C1 v3)
+Draft (v11 — aligns with RFC-0903 Final v29 + RFC-0903-B1 v22 + RFC-0903-C1 v3)
 
 ## Authors
 
@@ -156,8 +156,6 @@ impl PricingTable {
     /// hasher.finalize().into()
     /// ```
     pub fn compute_pricing_hash(&self) -> [u8; 32] {
-        use sha2::{Digest, Sha256};
-
         // ⚠️  REPLACE THIS WITH AN RFC 8785-COMPLIANT SERIALIZER.
         // serde_json is NOT compliant — field ordering is compiler-dependent.
         // The test vector was computed with a compliant implementation.
@@ -534,8 +532,8 @@ CREATE TABLE tokenizers (
 CREATE TABLE tokenizer_assignments (
     assignment_id BLOB(16) NOT NULL,
     model_pattern TEXT NOT NULL,             -- e.g., "gpt-4", "o1-preview" (exact match, not glob)
-    tokenizer_id BLOB(16) NOT NULL,         -- FK to tokenizers(tokenizer_id)
-    effective_from INTEGER NOT NULL,        -- Unix epoch
+    tokenizer_id BLOB(16) NOT NULL,          -- FK to tokenizers(tokenizer_id)
+    effective_from INTEGER NOT NULL,         -- Unix epoch
     PRIMARY KEY (assignment_id),
     UNIQUE(model_pattern)                   -- prevent ambiguous multi-row matches
 );
@@ -571,7 +569,7 @@ CREATE TABLE tokenizer_assignments (
 
 | Error | Response | Recovery |
 |-------|----------|----------|
-| Unknown model, no fallback | Use default tokenizer | Log warning; proceed |
+| Unknown model | Return default tokenizer (cl100k_base) | Silent fallthrough; no warning logged |
 | Pricing table not found | Return `None` / `KeyError::NotFound` | Caller must handle; do not fall back |
 | Canonical tokenizer unknown | Use default fallback | Log warning; proceed |
 | Serialization failure | Panic | Fatal; indicates implementation bug |
@@ -593,6 +591,7 @@ This RFC can be accepted when:
 - [x] get_pricing() returns latest version for (provider, model)
 - [x] get_by_hash() resolves any historical pricing_hash in O(1)
 - [x] get_versions() returns all versions for (provider, model), newest first
+- [x] get_version() returns a specific version for (provider, model)
 - [x] compute_pricing_hash() produces deterministic SHA256 (RFC 8785-compliant canonical JSON)
 - [x] compute_cost() uses integer-only arithmetic (no floating point)
 - [x] get_canonical_tokenizer() is deterministic across all router implementations
@@ -600,8 +599,8 @@ This RFC can be accepted when:
 - [x] BLAKE3-16 test vectors: "tiktoken-cl100k_base-v1.2.3" → "e3c8e8ff724411c6416dd4fb135368e3", "tiktoken-o200k_base" → "be1b3be0a2698c863b31edc1b7809a9c"
 - [x] Pricing hash test vector: compute_pricing_hash() on test table → a127db97a3695861f7a34ab2abe821ed0b8d7ec47e3dc579d7a5ca8cfb7a0641
 - [x] Tokenizer assignment test vectors: all rows in Tokenizer Assignment End-to-End table produce correct tokenizer_id and token_source
-- [x] Phase 1 (in-memory registry) implemented and tested
-- [ ] Phase 2 (DB-backed registry with tokenizer_assignments table) implemented
+- [ ] Phase 1 implemented (PricingTable + PricingRegistry + compute_cost + tokenizer functions + test vectors)
+- [ ] Phase 2 (DB-backed registry with tokenizer_assignments table) — blocked until RFC-0903-B1 is Accepted; requires B1's BLOB(16) types
 - [ ] Phase 3 (routing integration with RFC-0909) implemented
 
 ## Security Considerations
@@ -706,30 +705,42 @@ for use in `event_id` computation (RFC-0909 §compute_event_id).
 
 The registry is integrated into the RFC-0909 request lifecycle as follows:
 
-```
-1. get_pricing(provider, model) → Option<PricingTable>
-   ↑ returns latest version for (provider, model)
-   ↑ used to compute cost via compute_cost()
+```mermaid
+sequenceDiagram
+    participant Router
+    participant PricingRegistry
+    participant Tokenizer
 
-2. pricing_hash = table.compute_pricing_hash()
-   ↑ ties cost to specific pricing version
+    Router->>PricingRegistry: get_pricing(provider, model)
+    PricingRegistry-->>Router: Option<PricingTable>
 
-3. get_canonical_tokenizer(model) → &'static str
-   ↑ canonical tokenizer version for token counting fallback
+    Router->>PricingRegistry: table.compute_pricing_hash()
+    PricingRegistry-->>Router: pricing_hash
 
-4. tokenizer_version_to_id(version) → [u8; 16]
-   ↑ converts to BLAKE3-16 tokenizer_id for spend event
+    Router->>Tokenizer: get_canonical_tokenizer(model)
+    Tokenizer-->>Router: tokenizer_version
 
-5. get_by_hash(pricing_hash) → Option<&PricingTable>
-   ↑ verifies historical pricing_hash during audit replay
+    Router->>Tokenizer: tokenizer_version_to_id(version)
+    Tokenizer-->>Router: tokenizer_id
+
+    Router->>PricingRegistry: get_by_hash(pricing_hash)
+    PricingRegistry-->>Router: Option<PricingTable> (verification)
 ```
 
 Example usage:
 ```rust
 // Get pricing for cost calculation
-let pricing = registry.get_pricing("openai", "gpt-4").unwrap();
-let cost = compute_cost(pricing, input_tokens, output_tokens);
-let pricing_hash = pricing.compute_pricing_hash();
+match registry.get_pricing("openai", "gpt-4") {
+    Some(pricing) => {
+        let cost = compute_cost(pricing, input_tokens, output_tokens);
+        let pricing_hash = pricing.compute_pricing_hash();
+        // ... use cost and pricing_hash
+    }
+    None => {
+        // Pricing not found — caller must handle (get_pricing returns Option, not panic)
+        // Do not fall back to live pricing; fail closed
+    }
+}
 
 // Get canonical tokenizer for token counting
 let tokenizer_version = get_canonical_tokenizer("gpt-4");
@@ -824,6 +835,7 @@ This design allows the registry to be treated as a cache of known-good pricing s
 
 | Version | Date | Changes |
 |---------|------|---------|
+| v11 | 2026-04-20 | Round 58 adversarial fixes: fix R1 (Approval Criteria: Phase 1 checkbox unchecked; Phase 2 notes dependency on RFC-0903-B1 acceptance; added get_version() to criteria); fix H1 (Integration example: replace .unwrap() panic with match/Option handling; Error Handling table updated to match); fix H2 (Phase 2 acceptance notes blocked on RFC-0903-B1); fix M1 (Error Handling: rename "Unknown model, no fallback" to "Unknown model" — silent fallthrough, no warning); fix M2 (Approval Criteria: replace vague "in-memory registry" with specific checklist items); fix L1 (remove duplicate use sha2 import in compute_pricing_hash); fix L2 (Integration: replace ASCII art with Mermaid diagram) |
 | v10 | 2026-04-20 | Round 57 adversarial fixes: fix R1 (remove stale footer — version history table and Status header are authoritative); fix R2 (remove footer dates); fix H1 (get_by_hash: simplify redundant arc.as_ref() to &**arc); fix M1 (compute_pricing_hash: replace serde_json example with pseudocode + stronger warning); fix M2 (compute_cost: clarify saturating_add overflow not a concern); fix L1 (add Uncertain Assignments section to get_canonical_tokenizer doc comment — gemini-*, o1-mini, o1-preview flagged); fix L2 (same Uncertain Assignments section surfaces o1-mini/o1-preview uncertainty) |
 | v9 | 2026-04-20 | Round 56 adversarial fixes: fix 910-C1 (effective_from constraint: < not <= allows same-second registrations); fix 910-C2 (try_into().unwrap() → expect()); fix 910-C3 (document case-sensitivity as caller responsibility); add 910-H1 (Approval Criteria section); fix 910-H2 (pattern matching: exact match, not glob; remove redundant idx); fix 910-H3 (add MAX_TABLE_ID_LEN=128 and TableIdTooLong error); fix 910-H5 (encoding_type is informational only); fix 910-H6 (add UNIQUE(version, provider) to tokenizers); add 910-M2 (get_version() method); fix 910-M3 (tokenizer_id_to_version is in RFC-0909, not this RFC); add Phase 2 migration items; fix 910-M5 (RFC-0909 Related RFCs: Draft → Accepted); add 910-M6 (Integration section showing registry in request pipeline); add registry persistence model note; update RFC-0909 Related RFCs to (Accepted) |
 | v8 | 2026-04-20 | Round 55 fixes: break circular version pin — remove RFC-0909 peer version from Status header and Related RFCs footer; RFC-0909 is referenced by status only (no version pin) |
@@ -847,4 +859,3 @@ This design allows the registry to be treated as a cache of known-good pricing s
 ## Related Use Cases
 
 - `docs/use-cases/enhanced-quota-router-gateway.md`
-

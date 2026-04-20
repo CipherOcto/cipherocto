@@ -41,7 +41,7 @@ Implement `compute_event_id()` — the deterministic SHA256 hex function that pr
   - Expected output: `"06a6eb1c68f8a75287d0ac45b1ede9f00cd770f106c505685c299cf3b593726c"`
 - [x] UUID format mandate documented: MUST use `uuid::Uuid::to_string()` (hyphenated lowercase), NOT `to_simple().to_string()` (32-char no hyphen)
 - [x] `validate_request_id(request_id: &str) -> Result<(), KeyError>` — returns `Ok(())` if 1 ≤ len ≤ 1024 bytes, `Err(KeyError::InvalidFormat)` otherwise (H1 + M2)
-- [ ] `validate_request_id()` called in `process_response` before `compute_event_id` (M3)
+- [ ] `validate_request_id()` called in `process_response` before `compute_event_id` (M3) — **DEFERRED**: `process_response` function does not exist in the codebase; blocked on proxy layer implementation
 
 ## Implementation Notes
 

@@ -2,7 +2,7 @@
 
 ## Status
 
-Open (v3)
+Open (v4)
 
 ## RFC
 
@@ -28,7 +28,7 @@ Implement `compute_cost()` — a standalone function that computes total cost in
 - `PricingModel` struct: `model_name: String`, `prompt_cost_per_1k: u64`, `completion_cost_per_1k: u64`
 - Division is integer division (truncates toward zero). For micro-unit pricing, truncation occurs only when cost < 0.5 micro-units — effectively free. Error is bounded at <2 micro-units per event (H1).
 - 1000 = TOKEN_SCALE (micro-units per token)
-- `saturating_add`: local per-event cost computation cannot overflow (would require >1.8×10¹⁹ tokens in a single request). This differs from `record_spend` budget accumulation which uses checked arithmetic (per RFC-0909 §Overflow Safety)
+- `saturating_add`: local per-event cost computation cannot overflow (would require >1.8×10¹⁹ tokens in a single request). This differs from `record_spend` budget accumulation which uses checked arithmetic (per RFC-0909 §Overflow Safety). `record_spend()` is defined in RFC-0903 Final §record_spend (M1).
 - `compute_cost` takes `&PricingModel` (RFC-0909's type), NOT `&PricingTable` from RFC-0910
 
 ## Reference
@@ -41,7 +41,7 @@ Implement `compute_cost()` — a standalone function that computes total cost in
 
 ## Dependencies
 
-- `serde = "1.x"` (with `derive` feature) for Serialize/Deserialize derives on PricingModel
+- `serde = { version = "1.x", features = ["derive"] }` for Serialize/Deserialize derives on PricingModel (H1)
 
 ## Complexity
 
@@ -56,6 +56,7 @@ Low — straightforward integer arithmetic
 
 | Version | Date | Changes |
 |---------|------|---------|
+| v4 | 2026-04-20 | Round 3 adversarial review fixes: fix H1 (serde dependency fixed to `serde = { version = "1.x", features = ["derive"] }`); fix M1 (add record_spend cross-reference to RFC-0903 Final §record_spend) |
 | v3 | 2026-04-20 | Round 2 adversarial review fixes: fix C1 (add Serialize/Deserialize derives to PricingModel); fix H1 (add truncation context — error <0.5 micro-units per step); fix H2 (show two-step computation matching RFC pseudocode); fix M1 (add RFC-0201 §Integer Scaling reference); fix M2 (add serde dependency); fix L1 (show actual assert_eq! test code) |
 | v2 | 2026-04-20 | Round 1 adversarial review fixes: fix C1 (add PricingModel struct to acceptance criteria); fix H1 (add saturating_add vs checked arithmetic distinction note); fix M1 (explicit test assertion); fix M2 (add TOKEN_SCALE micro-unit note) |
 | v1 | 2026-04-20 | Initial |

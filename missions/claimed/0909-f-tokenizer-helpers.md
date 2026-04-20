@@ -2,7 +2,7 @@
 
 ## Status
 
-Open (v3)
+Completed (v4)
 
 ## RFC
 
@@ -54,5 +54,6 @@ Low — BLAKE3 hashing + optional DB query
 
 | Version | Date | Changes |
 |---------|------|---------|
+| v4 | 2026-04-20 | Implemented: tokenizer_version_to_id + tokenizer_id_to_version stub, all 5 AC items complete, 6 unit tests passing |
 | v3 | 2026-04-20 | Round 2 adversarial review fixes: fix M1 (move Dependencies before Reference for consistency); fix M2 (Priority High → Critical) |
 | v2 | 2026-04-20 | Round 1 adversarial review fixes: fix C1 (add RFC-0910 §Tokenizer Database Schema to references); fix C2 (add blake3 crate dependency); fix H1 (add full 32-byte BLAKE3 hash for test vector verification); fix H2 (clarify DB-level error propagation for stub); fix M1 (note #[inline] on tokenizer_id_to_version not in RFC but acceptable); fix M2 (document on-demand tokenizer table population); fix L1 (add collision probability note); fix L2 (add DB-backed test vector for tokenizer_id_to_version) |

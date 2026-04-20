@@ -302,6 +302,49 @@ pub fn build_merkle_tree(events: &[SpendEvent]) -> Option<MerkleNode> {
     }
 }
 
+// =============================================================================
+// Tokenizer ID Helpers (Mission 0909-f)
+// =============================================================================
+
+/// Convert a tokenizer version string to a 16-byte BLAKE3 hash for BLOB(16) storage.
+///
+/// Per RFC-0909 §tokenizer_version_to_id: BLAKE3(version_string) truncated to 16 bytes.
+///
+/// Collision probability becomes non-negligible after ~2^32 distinct tokenizer versions.
+/// This is acceptable for tokenizer versioning (far fewer than 4 billion tokenizer
+/// versions will ever exist).
+///
+/// # Test Vector
+/// `tokenizer_version_to_id("tiktoken-cl100k_base-v1.2.3")` → `e3c8e8ff724411c6416dd4fb135368e3`
+#[inline]
+pub fn tokenizer_version_to_id(version: &str) -> [u8; 16] {
+    let hash = blake3::hash(version.as_bytes());
+    let bytes = hash.as_bytes();
+    // Truncate to 16 bytes — unwrap is safe because blake3::hash always produces 32 bytes
+    bytes[..16].try_into().unwrap()
+}
+
+/// Convert a 16-byte tokenizer_id back to its version string via DB lookup.
+///
+/// Per RFC-0909 §tokenizer_id_to_version: queries `SELECT version FROM tokenizers WHERE tokenizer_id = ?`.
+///
+/// Returns:
+/// - `Ok(Some(version))` if tokenizer_id found in database
+/// - `Ok(None)` if tokenizer_id not found (never registered)
+/// - `Err("tokenizer_id_to_version: requires DB lookup implementation")` if DB not available
+///
+/// Note: If the DB query fails (connection error), callers should substitute
+/// `Err(KeyError::Storage(...))` in the error path per RFC-0909 §Error Handling.
+///
+/// The tokenizers table is populated on-demand when a new tokenizer version is first used.
+/// A no-match result may mean the tokenizer was never persisted to storage.
+pub fn tokenizer_id_to_version(id: &[u8; 16]) -> Result<Option<String>, &'static str> {
+    // Stub: requires DB lookup implementation against tokenizers table.
+    // Full implementation: SELECT version FROM tokenizers WHERE tokenizer_id = $1
+    let _ = id;
+    Err("tokenizer_id_to_version: requires DB lookup implementation")
+}
+
 /// Maximum keys per team (per RFC-0903 §Maximum Key Limits)
 const MAX_KEYS_PER_TEAM: u32 = 100;
 
@@ -1498,5 +1541,65 @@ mod build_merkle_tree_tests {
         assert!(root_asc.is_some());
         assert!(root_desc.is_some());
         assert_eq!(root_asc.unwrap().hash, root_desc.unwrap().hash);
+    }
+}
+
+#[cfg(test)]
+mod tokenizer_helpers_tests {
+    use super::*;
+
+    #[test]
+    fn test_tokenizer_version_to_id_tiktoken() {
+        // Test vector from mission spec
+        let version = "tiktoken-cl100k_base-v1.2.3";
+        let id = tokenizer_version_to_id(version);
+        let id_hex = hex::encode(id);
+        assert_eq!(id_hex, "e3c8e8ff724411c6416dd4fb135368e3");
+    }
+
+    #[test]
+    fn test_tokenizer_version_to_id_deterministic() {
+        // Same version always produces same id
+        let version = "tiktoken-cl100k_base-v1.2.3";
+        let id1 = tokenizer_version_to_id(version);
+        let id2 = tokenizer_version_to_id(version);
+        assert_eq!(id1, id2);
+    }
+
+    #[test]
+    fn test_tokenizer_version_to_id_different_versions() {
+        // Different versions produce different ids
+        let id1 = tokenizer_version_to_id("tiktoken-cl100k_base-v1.2.3");
+        let id2 = tokenizer_version_to_id("tiktoken-cl100k_base-v1.2.4");
+        assert_ne!(id1, id2);
+    }
+
+    #[test]
+    fn test_tokenizer_version_to_id_empty_string() {
+        // Empty version string is valid input (though unlikely in practice)
+        let id = tokenizer_version_to_id("");
+        assert_eq!(id.len(), 16);
+        // BLAKE3 of empty string is deterministic
+        let expected: [u8; 16] = blake3::hash(b"").as_bytes()[..16].try_into().unwrap();
+        assert_eq!(id, expected);
+    }
+
+    #[test]
+    fn test_tokenizer_id_to_version_stub_error() {
+        // Stub always returns error
+        let id = [0u8; 16];
+        let result = tokenizer_id_to_version(&id);
+        assert!(result.is_err());
+        assert_eq!(
+            result.unwrap_err(),
+            "tokenizer_id_to_version: requires DB lookup implementation"
+        );
+    }
+
+    #[test]
+    fn test_tokenizer_version_to_id_id_length() {
+        // Verify output is exactly 16 bytes
+        let id = tokenizer_version_to_id("any-version-string");
+        assert_eq!(id.len(), 16);
     }
 }

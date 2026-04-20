@@ -77,15 +77,31 @@ pub fn compute_event_id(
 ) -> String {
     let mut hasher = Sha256::new();
     hasher.update(request_id.as_bytes());
-    hasher.update(key_id.as_bytes());
+    // RFC 4122 hyphenated lowercase — MUST use to_string(), NOT as_bytes()
+    hasher.update(key_id.to_string().as_bytes());
     hasher.update(provider.as_bytes());
     hasher.update(model.as_bytes());
-    hasher.update(input_tokens.to_be_bytes());
-    hasher.update(output_tokens.to_be_bytes());
+    // Little-endian for cross-router determinism per RFC-0909
+    hasher.update(input_tokens.to_le_bytes());
+    hasher.update(output_tokens.to_le_bytes());
     hasher.update(pricing_hash);
     hasher.update(token_source.to_hash_str().as_bytes());
     let result = hasher.finalize();
     hex::encode(result)
+}
+
+/// Validate a request_id string.
+///
+/// Returns Ok(()) if 1 ≤ len ≤ 1024 bytes, Err(KeyError::InvalidFormat) otherwise.
+/// Must be called in process_response before compute_event_id.
+#[inline]
+pub fn validate_request_id(request_id: &str) -> Result<(), KeyError> {
+    let len = request_id.len();
+    if (1..=1024).contains(&len) {
+        Ok(())
+    } else {
+        Err(KeyError::InvalidFormat)
+    }
 }
 
 /// Maximum keys per team (per RFC-0903 §Maximum Key Limits)
@@ -633,5 +649,132 @@ mod security_tests {
         assert!(check_route_permission(&key, "/v1/chat/completions"));
         assert!(check_route_permission(&key, "/v1/embeddings"));
         assert!(!check_route_permission(&key, "/v1/completions"));
+    }
+}
+
+#[cfg(test)]
+mod compute_event_id_tests {
+    use super::*;
+
+    /// Decode a 64-char hex string to [u8; 32]
+    fn hex_to_32_bytes(hex_str: &str) -> [u8; 32] {
+        let bytes = hex::decode(hex_str).expect("valid 64-char hex");
+        bytes.try_into().expect("must be 32 bytes")
+    }
+
+    #[test]
+    fn test_compute_event_id_tv1() {
+        // TV1: base inputs
+        let request_id = "req-001";
+        let key_id = uuid::Uuid::parse_str("550e8400-e29b-41d4-a716-446655440000").unwrap();
+        let provider = "openai";
+        let model = "gpt-4";
+        let input_tokens = 100u32;
+        let output_tokens = 50u32;
+        let pricing_hash = hex_to_32_bytes("00112233445566778899aabbccddeeff00112233445566778899aabbccddeeff");
+        let token_source = TokenSource::ProviderUsage;
+
+        let event_id = compute_event_id(
+            request_id, &key_id, provider, model, input_tokens, output_tokens, &pricing_hash, token_source,
+        );
+
+        assert_eq!(
+            event_id, "8d22792346a0417bb928da0c16f2af5330640678f365d16bc392d400c2aa4ab2",
+            "TV1 failed: expected deterministic event_id for base inputs"
+        );
+    }
+
+    #[test]
+    fn test_compute_event_id_tv2() {
+        // TV2: same as TV1 but request_id="req-002" and token_source=CanonicalTokenizer
+        let request_id = "req-002";
+        let key_id = uuid::Uuid::parse_str("550e8400-e29b-41d4-a716-446655440000").unwrap();
+        let provider = "openai";
+        let model = "gpt-4";
+        let input_tokens = 100u32;
+        let output_tokens = 50u32;
+        let pricing_hash = hex_to_32_bytes("00112233445566778899aabbccddeeff00112233445566778899aabbccddeeff");
+        let token_source = TokenSource::CanonicalTokenizer;
+
+        let event_id = compute_event_id(
+            request_id, &key_id, provider, model, input_tokens, output_tokens, &pricing_hash, token_source,
+        );
+
+        assert_eq!(
+            event_id, "0f26450e1734034b9bc6f999b61586c671dd8249002524dd740a94c51ded3f36",
+            "TV2 failed: request_id and token_source change must produce different event_id"
+        );
+    }
+
+    #[test]
+    fn test_compute_event_id_tv3() {
+        // TV3: same as TV1 but key_id changes to 660e8400-e29b-41d4-a716-446655440001
+        let request_id = "req-001";
+        let key_id = uuid::Uuid::parse_str("660e8400-e29b-41d4-a716-446655440001").unwrap();
+        let provider = "openai";
+        let model = "gpt-4";
+        let input_tokens = 100u32;
+        let output_tokens = 50u32;
+        let pricing_hash = hex_to_32_bytes("00112233445566778899aabbccddeeff00112233445566778899aabbccddeeff");
+        let token_source = TokenSource::ProviderUsage;
+
+        let event_id = compute_event_id(
+            request_id, &key_id, provider, model, input_tokens, output_tokens, &pricing_hash, token_source,
+        );
+
+        assert_eq!(
+            event_id, "a3e31fbaa4b3bf6fe9d5c1eeb59055cfe4a3389358fc0e38c8820e2c2e6912ed",
+            "TV3 failed: only key_id change must produce different event_id"
+        );
+    }
+
+    #[test]
+    fn test_compute_event_id_tv4() {
+        // TV4: same as TV1 but pricing_hash changed to SHA256(b"pricing-table-v2")
+        // hex of SHA256(b"pricing-table-v2"): 8b48fe37e84565f99285690a835a881fe2d580ec63775aa5f9465ba38a5a2f60
+        let request_id = "req-001";
+        let key_id = uuid::Uuid::parse_str("550e8400-e29b-41d4-a716-446655440000").unwrap();
+        let provider = "openai";
+        let model = "gpt-4";
+        let input_tokens = 100u32;
+        let output_tokens = 50u32;
+        let pricing_hash = hex_to_32_bytes("8b48fe37e84565f99285690a835a881fe2d580ec63775aa5f9465ba38a5a2f60");
+        let token_source = TokenSource::ProviderUsage;
+
+        let event_id = compute_event_id(
+            request_id, &key_id, provider, model, input_tokens, output_tokens, &pricing_hash, token_source,
+        );
+
+        assert_eq!(
+            event_id, "06a6eb1c68f8a75287d0ac45b1ede9f00cd770f106c505685c299cf3b593726c",
+            "TV4 failed: pricing_hash change must produce different event_id"
+        );
+    }
+
+    #[test]
+    fn test_validate_request_id_valid() {
+        assert!(validate_request_id("req-001").is_ok());
+        assert!(validate_request_id("a").is_ok());
+        assert!(validate_request_id(&"x".repeat(1024)).is_ok());
+    }
+
+    #[test]
+    fn test_validate_request_id_empty_rejected() {
+        assert!(validate_request_id("").is_err());
+    }
+
+    #[test]
+    fn test_validate_request_id_too_long_rejected() {
+        assert!(validate_request_id(&"x".repeat(1025)).is_err());
+    }
+
+    #[test]
+    fn test_validate_request_id_boundary_1024_ok() {
+        assert!(validate_request_id(&"x".repeat(1024)).is_ok());
+    }
+
+    #[test]
+    fn test_validate_request_id_boundary_1025_rejected() {
+        assert!(validate_request_id(&"x".repeat(1025)).is_err());
     }
 }

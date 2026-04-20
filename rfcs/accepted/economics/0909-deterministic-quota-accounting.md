@@ -2,7 +2,7 @@
 
 ## Status
 
-Draft (v59 — aligned with RFC-0903 Final v29 + RFC-0903-B1 v22 + RFC-0903-C1 v3, RFC-0126 (Accepted v2.5.1), RFC-0201 (Accepted v5.24))
+Accepted (v59 — aligned with RFC-0903 Final v29 + RFC-0903-B1 v22 + RFC-0903-C1 v3, RFC-0126 (Accepted v2.5.1), RFC-0201 (Accepted v5.24))
 
 ## Authors
 
@@ -1634,7 +1634,5 @@ $0.03/1K tokens → DQA(30_000, scale=6)
 
 ---
 
-**Draft Date:** 2026-04-20
-**Version:** v59
-**Related Use Case:** Enhanced Quota Router Gateway
+**Accepted Version:** v59 (2026-04-20)
 **Related RFCs:** RFC-0903 (Virtual API Key System), RFC-0903-B1 (Schema Amendments), RFC-0903-C1 (Extended Schema Amendments), RFC-0126 (Deterministic Serialization v2.5.1), RFC-0201 (Binary BLOB Type v5.24), RFC-0910 (Pricing Table Registry)

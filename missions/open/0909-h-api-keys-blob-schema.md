@@ -2,7 +2,7 @@
 
 ## Status
 
-Open (v3)
+Open (v4)
 
 ## RFC
 
@@ -34,7 +34,7 @@ Migrate `api_keys` and `teams` tables to BLOB storage for UUID primary/foreign k
 - `teams.team_id` is NOT NULL → always use `uuid_to_blob_16()` (non-nullable)
 - `api_keys.team_id` is nullable → use `Option<uuid::Uuid>` → `Option<Vec<u8>>` at storage boundary
 - `api_keys.key_id` is NOT NULL → always use `uuid_to_blob_16()` (non-nullable)
-- After migration: `row.get::<_, Vec<u8>>("key_id")` → convert to `uuid::Uuid::from_bytes`
+- After migration: `row.get::<_, Vec<u8>>("key_id")` → `let bytes: [u8; 16] = raw.try_into().expect("key_id must be 16 bytes")` → `blob_16_to_uuid(&bytes)` (from Mission 0909-c). Do NOT call `uuid::Uuid::from_bytes` directly on `Vec<u8>` — the intermediate `try_into::<[u8; 16]>()` step is required.
 - `lookup_by_hash()` in `storage.rs` uses `key_hash` (BYTEA, unchanged) — not affected by this migration
 - `create_key()` in `storage.rs` MUST be updated to use `uuid_to_blob_16()` for key_id
 - `lookup_by_key_id()` in `storage.rs` MUST be updated to use BLOB helpers for key_id (H1)
@@ -65,5 +65,6 @@ High — requires migration of hot tables (high-frequency reads/writes) and all 
 
 | Version | Date | Changes |
 |---------|------|---------|
+| v4 | 2026-04-20 | Round 3 adversarial review fixes: fix L1 (clarify row.get pattern — Vec<u8> requires try_into before blob_16_to_uuid; direct uuid::Uuid::from_bytes on Vec<u8> is a type error) |
 | v3 | 2026-04-20 | Round 2 adversarial review fixes: fix H1 (add lookup_by_key_id to storage functions to update); fix M1 (add Dependencies section for consistency) |
 | v2 | 2026-04-20 | Round 1 adversarial review fixes: fix C1 (document PRIMARY KEY ambiguity for api_keys.key_id); fix C2 (add all unchanged api_keys columns to AC); fix C3 (add all unchanged teams columns to AC); fix H1 (add pre-existing idx_api_keys_expires); fix H2 (add pre-existing idx_api_keys_key_hash_unique); fix H3 (reference 5-step shadow column procedure from mission 0909-g); fix M1 (clarify idx_api_keys_team_id recreate after rename); fix M2 (clarify idx_teams_team_id recreate after rename); fix M3 (add RFC-0903-C1 draft dependency risk note); add L1 (add changelog) |

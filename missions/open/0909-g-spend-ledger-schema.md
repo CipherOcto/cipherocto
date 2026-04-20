@@ -2,7 +2,7 @@
 
 ## Status
 
-Open (v3)
+Open (v4)
 
 ## RFC
 
@@ -50,6 +50,11 @@ Migrate `spend_ledger` table schema from TEXT storage to BLOB storage per RFC-09
 - FK constraints for `key_id` reference `api_keys(key_id)` — api_keys.key_id must also be BLOB(16) per RFC-0903-C1 (see Mission 0909-h)
 - **Post-migration verification (M3):** After copying data but before dropping old columns, verify: `SELECT hex_to_blob_32(event_id) == original_event_id_string` for a sample. Run existing integration tests only after confirmed data integrity.
 
+## Dependencies
+
+- `hex = "0.4"` for `hex::decode()` used in tokenizer_id migration step (TEXT hex → BLOB(16))
+- `uuid = "1.x"` for uuid_to_blob_16() helper (via Mission 0909-c BLOB helpers)
+
 ## Reference
 
 - RFC-0909 §Usage Ledger (schema)
@@ -72,5 +77,6 @@ High — requires careful data migration and FK consistency across tables
 
 | Version | Date | Changes |
 |---------|------|---------|
+| v4 | 2026-04-20 | Round 3 adversarial review fixes: fix L1 (add Dependencies section — hex and uuid crates used in migration but not previously listed) |
 | v3 | 2026-04-20 | Round 2 adversarial review fixes: fix M1 (clarify AC5 — pre-existing idx_spend_ledger_key_time is preserved, not added) |
 | v2 | 2026-04-20 | Round 1 adversarial review fixes: fix C1 (document request_id is raw binary, not hex — no hex conversion needed); fix C2 (add hex_to_blob_32 helper name for event_id conversion); fix H1 (add provider_usage_json TEXT column to AC); fix H2 (add pre-existing idx_spend_ledger_key_time to impl notes); fix M1 (pricing_hash BYTEA(32) not BLOB per RFC); fix M2 (detail step 5 recreate indexes with specific index list); fix M3 (add post-migration data verification step); fix L1 (add timestamp/created_at columns to AC); fix L2 (add provider/model columns to AC) |

@@ -2,7 +2,7 @@
 
 ## Status
 
-Open (v3)
+Open (v4)
 
 ## RFC
 
@@ -64,6 +64,7 @@ Implement `compute_event_id()` — the deterministic SHA256 hex function that pr
 - TokenSource enum with `to_hash_str()` is defined in RFC-0909 §Usage Event Model (already in `models.rs` — no external dependency)
 - `sha2 = "0.10"` (for SHA256 in compute_event_id)
 - `uuid = "1.x"` (for uuid::Uuid)
+- `KeyError` enum (pre-existing — defines `KeyError::InvalidFormat` variant used by `validate_request_id`)
 
 ## Complexity
 
@@ -78,6 +79,7 @@ Medium — requires understanding of deterministic hashing, exact test vector ma
 
 | Version | Date | Changes |
 |---------|------|---------|
+| v4 | 2026-04-20 | Round 3 adversarial review fixes: fix H1 (add KeyError enum dependency documentation) |
 | v3 | 2026-04-20 | Round 2 adversarial review fixes: fix C1 (add sha2 crate dependency); fix H1 (specify KeyError::InvalidFormat for validate_request_id); fix M1 (fix TokenSource dependency description — RFC-0909 defines it, not external); fix M2 (add validate_request_id as explicit AC item); fix M3 (note validate_request_id called in process_response); fix L1 (add event_id vs request_id encoding distinction) |
 | v2 | 2026-04-20 | Round 1 adversarial review fixes: fix C1/C2 (TV2 uses request_id="req-002", restore correct expected output); fix C3 (TV3 description clarifies only key_id changed); fix C4 (TV4: pricing_hash is hex notation for 32 raw bytes, decode before calling); add validate_request_id to acceptance criteria; add test vector setup notes; clarify single-tenant scope; add TokenSource dependency note |
 | v1 | 2026-04-20 | Initial |

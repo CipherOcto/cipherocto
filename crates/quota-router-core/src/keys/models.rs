@@ -208,3 +208,17 @@ pub struct PricingModel {
     /// Completion cost per 1000 tokens, in micro-units.
     pub completion_cost_per_1k: u64,
 }
+
+/// A node in a Merkle tree built from SpendEvents.
+///
+/// Leaf nodes contain event data. Internal nodes are hashes of their children.
+/// Used for cryptographic proof generation per RFC-0909 §build_merkle_tree.
+#[derive(Debug, Clone)]
+pub struct MerkleNode {
+    /// The SHA256 hash of this node's content.
+    pub hash: [u8; 32],
+    /// Left child (None for leaf nodes).
+    pub left: Option<Box<MerkleNode>>,
+    /// Right child (None for leaf nodes).
+    pub right: Option<Box<MerkleNode>>,
+}

@@ -2,7 +2,7 @@
 
 ## Status
 
-Open (v5)
+Completed (v7)
 
 ## RFC
 
@@ -61,6 +61,8 @@ Medium — iterative bottom-up tree construction with SHA256 hashing
 
 | Version | Date | Changes |
 |---------|------|---------|
+| v7 | 2026-04-20 | Implemented: build_merkle_tree + MerkleNode, all 9 AC items complete, 6 unit tests passing |
+| v6 | 2026-04-20 | Round 5 adversarial review fixes: fix C1 (update Status header to Claimed v6) |
 | v5 | 2026-04-20 | Round 4 adversarial review fixes: fix L1 (Complexity section: "recursive" → "iterative bottom-up" — implementation is iterative, not recursive) |
 | v4 | 2026-04-20 | Round 3 adversarial review fixes: fix M1 (specify cost_amount: u64 in leaf hash formula — 8-byte LE width required for cross-router determinism) |
 | v3 | 2026-04-20 | Round 2 adversarial review fixes: fix H1 (add record_spend cross-reference to RFC-0903 Final §record_spend); fix M1 (move Dependencies before Reference for consistency); fix L1 (add two-different-hashes test vector) |

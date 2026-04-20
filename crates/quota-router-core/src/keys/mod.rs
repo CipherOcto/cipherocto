@@ -4,7 +4,8 @@ pub mod models;
 pub use errors::KeyError;
 pub use models::{
     ApiKey, CreateTeamRequest, GenerateKeyRequest, GenerateKeyResponse, KeySpend, KeyType,
-    KeyUpdates, PricingModel, RevokeKeyRequest, SpendEvent, Team, TokenSource, UpdateTeamRequest,
+    KeyUpdates, MerkleNode, PricingModel, RevokeKeyRequest, SpendEvent, Team, TokenSource,
+    UpdateTeamRequest,
 };
 
 use hmac_sha256::HMAC;
@@ -217,6 +218,88 @@ pub fn replay_events(events: &[SpendEvent]) -> BTreeMap<String, u64> {
             .or_insert(event.cost_amount);
     }
     result
+}
+
+// =============================================================================
+// Merkle Tree (Mission 0909-e)
+// =============================================================================
+
+/// Build a Merkle tree from SpendEvents for cryptographic proof generation.
+///
+/// This function is deterministic: the same events always produce the same root.
+///
+/// NOT for budget computation — only for cryptographic proof generation.
+/// NOT for multi-tenant use — caller MUST filter events to single tenant scope
+/// before calling (per RFC-0909 §Security Note — No Field Delimiters).
+///
+/// # Arguments
+/// * `events` - Slice of SpendEvents to build tree from
+///
+/// Returns `Option<MerkleNode>` — `None` if events is empty (no root to publish).
+///
+/// # Leaf Hash
+/// `SHA256(event_id.as_bytes() || cost_amount.to_le_bytes())`
+/// where cost_amount is 8-byte little-endian encoding (per RFC-0909).
+///
+/// # Internal Node Hash
+/// `SHA256(left_hash || right_hash)`
+///
+/// # Odd Leaf Padding
+/// If odd number of leaves, pad by duplicating the last leaf (deterministic).
+pub fn build_merkle_tree(events: &[SpendEvent]) -> Option<MerkleNode> {
+    if events.is_empty() {
+        return None;
+    }
+
+    // Sort by event_id ascending (same ordering as replay_events)
+    let mut sorted_events = events.to_vec();
+    sorted_events.sort_by(|a, b| a.event_id.cmp(&b.event_id));
+
+    // Build leaf nodes
+    let mut nodes: Vec<MerkleNode> = sorted_events
+        .iter()
+        .map(|e| {
+            let mut hasher = Sha256::new();
+            hasher.update(e.event_id.as_bytes());
+            hasher.update(e.cost_amount.to_le_bytes());
+            let result = hasher.finalize();
+            let hash: [u8; 32] = result.into();
+            MerkleNode {
+                hash,
+                left: None,
+                right: None,
+            }
+        })
+        .collect();
+
+    // Bottom-up tree construction
+    loop {
+        if nodes.len() == 1 {
+            return Some(nodes.remove(0));
+        }
+
+        // Pad odd count by duplicating last leaf
+        if !nodes.len().is_multiple_of(2) {
+            let last = nodes.last().cloned().unwrap();
+            nodes.push(last);
+        }
+
+        // Pair up nodes and compute parent hashes
+        let mut new_level = Vec::new();
+        for pair in nodes.chunks(2) {
+            debug_assert_eq!(pair.len(), 2);
+            let mut hasher = Sha256::new();
+            hasher.update(pair[0].hash);
+            hasher.update(pair[1].hash);
+            let hash: [u8; 32] = hasher.finalize().into();
+            new_level.push(MerkleNode {
+                hash,
+                left: Some(Box::new(pair[0].clone())),
+                right: Some(Box::new(pair[1].clone())),
+            });
+        }
+        nodes = new_level;
+    }
 }
 
 /// Maximum keys per team (per RFC-0903 §Maximum Key Limits)
@@ -1210,5 +1293,210 @@ mod replay_events_tests {
             result.get("550e8400-e29b-41d4-a716-446655440000"),
             Some(&u64::MAX)
         );
+    }
+}
+
+#[cfg(test)]
+mod build_merkle_tree_tests {
+    use super::*;
+
+    fn make_event(event_id: &str, key_id: &str, cost: u64) -> SpendEvent {
+        SpendEvent {
+            event_id: event_id.to_string(),
+            request_id: "req-001".to_string(),
+            key_id: uuid::Uuid::parse_str(key_id).unwrap(),
+            team_id: None,
+            provider: "openai".to_string(),
+            model: "gpt-4".to_string(),
+            input_tokens: 100,
+            output_tokens: 50,
+            cost_amount: cost,
+            pricing_hash: [0u8; 32],
+            token_source: TokenSource::ProviderUsage,
+            tokenizer_version: None,
+            provider_usage_json: None,
+            timestamp: 0,
+        }
+    }
+
+    #[test]
+    fn test_build_merkle_tree_empty() {
+        // Empty events → None
+        let events: &[SpendEvent] = &[];
+        let result = build_merkle_tree(events);
+        assert!(result.is_none());
+    }
+
+    #[test]
+    fn test_build_merkle_tree_single_event() {
+        // Single event → root equals leaf hash
+        let event = make_event(
+            "0000000000000000000000000000000000000000000000000000000000000001",
+            "550e8400-e29b-41d4-a716-446655440000",
+            1000,
+        );
+        let result = build_merkle_tree(std::slice::from_ref(&event));
+        assert!(result.is_some());
+        let root = result.unwrap();
+        // Root should have no children (leaf node)
+        assert!(root.left.is_none());
+        assert!(root.right.is_none());
+        // Root hash should be SHA256(event_id.as_bytes() || cost.to_le_bytes())
+        let mut expected_hasher = Sha256::new();
+        expected_hasher.update(b"0000000000000000000000000000000000000000000000000000000000000001");
+        expected_hasher.update(1000u64.to_le_bytes());
+        let expected_hash: [u8; 32] = expected_hasher.finalize().into();
+        assert_eq!(root.hash, expected_hash);
+    }
+
+    #[test]
+    fn test_build_merkle_tree_two_identical_events() {
+        // Two identical events → parent = SHA256(leaf_hash || leaf_hash)
+        let event1 = make_event(
+            "0000000000000000000000000000000000000000000000000000000000000001",
+            "550e8400-e29b-41d4-a716-446655440000",
+            1000,
+        );
+        let event2 = make_event(
+            "0000000000000000000000000000000000000000000000000000000000000001",
+            "550e8400-e29b-41d4-a716-446655440000",
+            1000,
+        );
+        let result = build_merkle_tree(&[event1, event2]);
+        assert!(result.is_some());
+        let root = result.unwrap();
+        assert!(root.left.is_some());
+        assert!(root.right.is_some());
+        // Parent hash = SHA256(leaf_hash || leaf_hash)
+        let mut leaf_hasher = Sha256::new();
+        leaf_hasher.update(b"0000000000000000000000000000000000000000000000000000000000000001");
+        leaf_hasher.update(1000u64.to_le_bytes());
+        let leaf_hash: [u8; 32] = leaf_hasher.finalize().into();
+        let mut parent_hasher = Sha256::new();
+        parent_hasher.update(leaf_hash);
+        parent_hasher.update(leaf_hash);
+        let expected_parent: [u8; 32] = parent_hasher.finalize().into();
+        assert_eq!(root.hash, expected_parent);
+    }
+
+    #[test]
+    fn test_build_merkle_tree_two_different_events() {
+        // Two different events → parent = SHA256(hash_A || hash_B) where hash_A ≠ hash_B
+        let event1 = make_event(
+            "0000000000000000000000000000000000000000000000000000000000000001",
+            "550e8400-e29b-41d4-a716-446655440000",
+            1000,
+        );
+        let event2 = make_event(
+            "0000000000000000000000000000000000000000000000000000000000000002",
+            "550e8400-e29b-41d4-a716-446655440000",
+            2000,
+        );
+        let result = build_merkle_tree(&[event1, event2]);
+        assert!(result.is_some());
+        let root = result.unwrap();
+        assert!(root.left.is_some());
+        assert!(root.right.is_some());
+        // Compute expected leaf hashes
+        let mut hasher1 = Sha256::new();
+        hasher1.update(b"0000000000000000000000000000000000000000000000000000000000000001");
+        hasher1.update(1000u64.to_le_bytes());
+        let hash1: [u8; 32] = hasher1.finalize().into();
+        let mut hasher2 = Sha256::new();
+        hasher2.update(b"0000000000000000000000000000000000000000000000000000000000000002");
+        hasher2.update(2000u64.to_le_bytes());
+        let hash2: [u8; 32] = hasher2.finalize().into();
+        // hash1 ≠ hash2
+        assert_ne!(hash1, hash2);
+        // Parent = SHA256(hash1 || hash2)
+        let mut parent_hasher = Sha256::new();
+        parent_hasher.update(hash1);
+        parent_hasher.update(hash2);
+        let expected_parent: [u8; 32] = parent_hasher.finalize().into();
+        assert_eq!(root.hash, expected_parent);
+    }
+
+    #[test]
+    fn test_build_merkle_tree_odd_count_padded() {
+        // 3 leaves → padded to 4, last leaf duplicated
+        let event1 = make_event(
+            "0000000000000000000000000000000000000000000000000000000000000001",
+            "550e8400-e29b-41d4-a716-446655440000",
+            1000,
+        );
+        let event2 = make_event(
+            "0000000000000000000000000000000000000000000000000000000000000002",
+            "550e8400-e29b-41d4-a716-446655440000",
+            2000,
+        );
+        let event3 = make_event(
+            "0000000000000000000000000000000000000000000000000000000000000003",
+            "550e8400-e29b-41d4-a716-446655440000",
+            3000,
+        );
+        let result = build_merkle_tree(&[event1.clone(), event2.clone(), event3.clone()]);
+        assert!(result.is_some());
+        // 3 leaves → pairs: (leaf1, leaf2), (leaf3, leaf3)
+        // Level 1: parent1 = SHA256(hash1 || hash2), parent2 = SHA256(hash3 || hash3)
+        // Level 2: root = SHA256(parent1 || parent2)
+        let mut h1 = Sha256::new();
+        h1.update(b"0000000000000000000000000000000000000000000000000000000000000001");
+        h1.update(1000u64.to_le_bytes());
+        let hash1: [u8; 32] = h1.finalize().into();
+        let mut h2 = Sha256::new();
+        h2.update(b"0000000000000000000000000000000000000000000000000000000000000002");
+        h2.update(2000u64.to_le_bytes());
+        let hash2: [u8; 32] = h2.finalize().into();
+        let mut h3 = Sha256::new();
+        h3.update(b"0000000000000000000000000000000000000000000000000000000000000003");
+        h3.update(3000u64.to_le_bytes());
+        let hash3: [u8; 32] = h3.finalize().into();
+        let mut p1_hasher = Sha256::new();
+        p1_hasher.update(hash1);
+        p1_hasher.update(hash2);
+        let parent1: [u8; 32] = p1_hasher.finalize().into();
+        let mut p2_hasher = Sha256::new();
+        p2_hasher.update(hash3);
+        p2_hasher.update(hash3);
+        let parent2: [u8; 32] = p2_hasher.finalize().into();
+        let mut root_hasher = Sha256::new();
+        root_hasher.update(parent1);
+        root_hasher.update(parent2);
+        let expected_root: [u8; 32] = root_hasher.finalize().into();
+        assert_eq!(result.unwrap().hash, expected_root);
+    }
+
+    #[test]
+    fn test_build_merkle_tree_deterministic_sort() {
+        // Events in reverse order should produce identical root
+        let events_asc = [
+            make_event(
+                "0000000000000000000000000000000000000000000000000000000000000001",
+                "550e8400-e29b-41d4-a716-446655440000",
+                1000,
+            ),
+            make_event(
+                "0000000000000000000000000000000000000000000000000000000000000002",
+                "550e8400-e29b-41d4-a716-446655440000",
+                2000,
+            ),
+        ];
+        let events_desc = [
+            make_event(
+                "0000000000000000000000000000000000000000000000000000000000000002",
+                "550e8400-e29b-41d4-a716-446655440000",
+                2000,
+            ),
+            make_event(
+                "0000000000000000000000000000000000000000000000000000000000000001",
+                "550e8400-e29b-41d4-a716-446655440000",
+                1000,
+            ),
+        ];
+        let root_asc = build_merkle_tree(&events_asc);
+        let root_desc = build_merkle_tree(&events_desc);
+        assert!(root_asc.is_some());
+        assert!(root_desc.is_some());
+        assert_eq!(root_asc.unwrap().hash, root_desc.unwrap().hash);
     }
 }

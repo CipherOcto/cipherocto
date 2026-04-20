@@ -2,7 +2,7 @@
 
 ## Status
 
-Open (v3)
+Open (v4)
 
 ## RFC
 
@@ -16,7 +16,7 @@ Implement `build_merkle_tree()` — builds a Merkle tree from SpendEvents for cr
 
 - [ ] `build_merkle_tree(events: &[SpendEvent]) -> Option<MerkleNode>` — returns root node or None if empty
 - [ ] Sort events by event_id (hex string, ascending) — same as replay_events
-- [ ] Leaf hash: `SHA256(event_id.as_bytes() || cost_amount.to_le_bytes())` (little-endian encoding required for cross-router determinism)
+- [ ] Leaf hash: `SHA256(event_id.as_bytes() || cost_amount.to_le_bytes())` where `cost_amount: u64` (8-byte little-endian encoding required for cross-router determinism)
 - [ ] Internal node hash: `SHA256(left_hash || right_hash)`
 - [ ] Odd leaf count: pad by duplicating last leaf (deterministic, keeps tree balanced)
 - [ ] Build bottom-up until single root remains
@@ -61,5 +61,6 @@ Medium — recursive tree construction with SHA256 hashing
 
 | Version | Date | Changes |
 |---------|------|---------|
+| v4 | 2026-04-20 | Round 3 adversarial review fixes: fix M1 (specify cost_amount: u64 in leaf hash formula — 8-byte LE width required for cross-router determinism) |
 | v3 | 2026-04-20 | Round 2 adversarial review fixes: fix H1 (add record_spend cross-reference to RFC-0903 Final §record_spend); fix M1 (move Dependencies before Reference for consistency); fix L1 (add two-different-hashes test vector) |
 | v2 | 2026-04-20 | Round 1 adversarial review fixes: fix C1 (explicit MerkleNode struct AC with derive); fix C2 (add DB→hex conversion requirement); fix H1 (add sha2 crate dependency); fix H2 (document double-charge known limitation); fix M1 (clarify little-endian requirement in AC); fix M2 (Priority High→Critical); fix L1 (add test vectors); fix L2 (add RFC-0903-B1 §SpendEvent reference) |

@@ -2,7 +2,7 @@
 
 ## Status
 
-Open (v4)
+Open (v5)
 
 ## RFC
 
@@ -17,7 +17,7 @@ Implement BLOB storage boundary helper functions for converting between applicat
 - [ ] `hex_to_blob_32(hex_str: &str) -> [u8; 32]` — hex string (64 chars) → raw 32 bytes for event_id BLOB(32) storage
 - [ ] `blob_32_to_hex(blob: &[u8; 32]) -> String` — raw 32 bytes → hex string for event_id API responses. **Critical constraint:** This function does NOT apply to request_id, which is stored as raw binary BLOB(32), not hex. Never use `blob_32_to_hex` on request_id data.
 - [ ] `uuid_to_blob_16(uuid: &uuid::Uuid) -> [u8; 16]` — Uuid → raw 16 bytes for key_id BLOB(16) storage
-- [ ] `blob_16_to_uuid(blob: &[u8; 16]) -> uuid::Uuid` — raw 16 bytes → Uuid from key_id BLOB(16) retrieval. **Important:** `uuid::Uuid::from_bytes` has undefined behavior for invalid 16-byte sequences (invalid version/variant bits). Per RFC-0903-B1: "UUIDs with invalid version or variant bits MUST be rejected." Implement validation before construction, or document that downstream validation will catch invalid UUIDs.
+- [ ] `blob_16_to_uuid(blob: &[u8; 16]) -> uuid::Uuid` — raw 16 bytes → Uuid from key_id BLOB(16) retrieval. **Important:** `uuid::Uuid::from_bytes` silently accepts any 16-byte sequence without validating RFC 4122 version or variant bits — the resulting Uuid may be structurally invalid per the UUID spec, but no Rust undefined behavior occurs (this is safe Rust). Per RFC-0903-B1: "UUIDs with invalid version or variant bits MUST be rejected." Implement validation before construction, or document that downstream validation will catch invalid UUIDs.
 - [ ] All functions are `#[inline]` for zero-cost abstraction
 - [ ] `hex_to_blob_32` uses `hex::decode` and panics on invalid hex (implementation bug, not user input)
 
@@ -59,6 +59,7 @@ Low — pure conversion functions with direct byte manipulation
 
 | Version | Date | Changes |
 |---------|------|---------|
+| v5 | 2026-04-20 | Round 4 adversarial review fixes: fix M1 (replace incorrect "undefined behavior" Rust terminology with accurate "silently accepts any 16-byte sequence without validating RFC 4122 version or variant bits") |
 | v4 | 2026-04-20 | Round 3 adversarial review fixes: fix M1 (Dependencies section now correctly placed before Reference) |
 | v3 | 2026-04-20 | Round 2 adversarial review fixes: fix M1 (remove redundant AC line 23 — function signature already guarantees 16 bytes); fix L1 (move Dependencies before Reference for consistency with other missions) |
 | v2 | 2026-04-20 | Round 1 adversarial review fixes: fix C1/H2 (add RFC-0903-B1 §request_id to references + impl notes); fix C2 (document uuid::Uuid::from_bytes undefined behavior on invalid bytes); fix H1 (add blob_32_to_hex must-not-be-used-for-request_id constraint); fix M1 (document panic vs silent failure asymmetry); fix M2 (add wrong-data-path note); fix L1 (add uuid crate dependency); fix L2 (clarify request_id is raw SHA256 binary, not hex) |

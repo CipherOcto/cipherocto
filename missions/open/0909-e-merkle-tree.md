@@ -2,7 +2,7 @@
 
 ## Status
 
-Open (v4)
+Open (v5)
 
 ## RFC
 
@@ -50,7 +50,7 @@ Implement `build_merkle_tree()` — builds a Merkle tree from SpendEvents for cr
 
 ## Complexity
 
-Medium — recursive tree construction with SHA256 hashing
+Medium — iterative bottom-up tree construction with SHA256 hashing
 
 ---
 **Mission Type:** Implementation
@@ -61,6 +61,7 @@ Medium — recursive tree construction with SHA256 hashing
 
 | Version | Date | Changes |
 |---------|------|---------|
+| v5 | 2026-04-20 | Round 4 adversarial review fixes: fix L1 (Complexity section: "recursive" → "iterative bottom-up" — implementation is iterative, not recursive) |
 | v4 | 2026-04-20 | Round 3 adversarial review fixes: fix M1 (specify cost_amount: u64 in leaf hash formula — 8-byte LE width required for cross-router determinism) |
 | v3 | 2026-04-20 | Round 2 adversarial review fixes: fix H1 (add record_spend cross-reference to RFC-0903 Final §record_spend); fix M1 (move Dependencies before Reference for consistency); fix L1 (add two-different-hashes test vector) |
 | v2 | 2026-04-20 | Round 1 adversarial review fixes: fix C1 (explicit MerkleNode struct AC with derive); fix C2 (add DB→hex conversion requirement); fix H1 (add sha2 crate dependency); fix H2 (document double-charge known limitation); fix M1 (clarify little-endian requirement in AC); fix M2 (Priority High→Critical); fix L1 (add test vectors); fix L2 (add RFC-0903-B1 §SpendEvent reference) |

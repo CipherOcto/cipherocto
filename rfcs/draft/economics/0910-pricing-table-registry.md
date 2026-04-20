@@ -2,7 +2,7 @@
 
 ## Status
 
-Draft (v12 — aligns with RFC-0903 Final v29 + RFC-0903-B1 v22 + RFC-0903-C1 v3)
+Draft (v13 — aligns with RFC-0903 Final v29 + RFC-0903-B1 v22 + RFC-0903-C1 v3)
 
 ## Authors
 
@@ -158,6 +158,7 @@ impl PricingTable {
     pub fn compute_pricing_hash(&self) -> [u8; 32] {
         // ⚠️  REPLACE THIS WITH AN RFC 8785-COMPLIANT SERIALIZER.
         // The test vector was computed with a compliant implementation.
+        // ⚠️  PSEUDOCODE — serde_json below is NOT RFC 8785-compliant; replace before use.
         let serialized = serde_json::to_string(&self)
             .expect("PricingTable serialization must succeed");
         let mut hasher = Sha256::new();
@@ -571,8 +572,8 @@ CREATE TABLE tokenizer_assignments (
 | Error | Response | Recovery |
 |-------|----------|----------|
 | Unknown model | Return default tokenizer (cl100k_base) | Silent fallthrough; no warning logged |
+| Known model with uncertain assignment (gemini-*, o1-mini, o1-preview) | Return assigned tokenizer (cl100k_base or o200k_base) | Silent; no runtime warning logged — uncertainty is an implementation-time concern (see §Tokenizer Lookup Function Uncertain Assignments) |
 | Pricing table not found | Return `None` / `KeyError::NotFound` | Caller must handle; do not fall back |
-| Canonical tokenizer unknown | Use default fallback | Log warning; proceed |
 | Serialization failure | Panic | Fatal; indicates implementation bug |
 
 ## Performance Targets
@@ -836,6 +837,7 @@ This design allows the registry to be treated as a cache of known-good pricing s
 
 | Version | Date | Changes |
 |---------|------|---------|
+| v13 | 2026-04-20 | Round 60 adversarial fixes: fix L1 (compute_pricing_hash: add explicit PSEUDOCODE comment above serde_json line); fix M1 (Error Handling table: add row for "Known model with uncertain assignment" — gemini-*, o1-mini, o1-preview; removed stale "Canonical tokenizer unknown" row which mischaracterized uncertain assignments as "unknown" models; new row clarifies silent runtime behavior with reference to implementation-time concern) |
 | v12 | 2026-04-20 | Round 59 adversarial fixes: fix R1 (remove duplicate serde_json warning in compute_pricing_hash function body); fix H1 (SpendReceipt: add TokenSource import path comment); fix H2 (Related RFCs: RFC-0914 is Required dependency not Optional — registry persistence model depends on it); fix M1 (compute_cost: clarify standalone function with doc comment; Integration example updated); fix M2 (Phase 2 acceptance blocked on BOTH RFC-0903-B1 and RFC-0903-C1); fix L1 (get_canonical_tokenizer: "zero allocation" → "static string literal — no heap allocation") |
 | v11 | 2026-04-20 | Round 58 adversarial fixes: fix R1 (Approval Criteria: Phase 1 checkbox unchecked; Phase 2 notes dependency on RFC-0903-B1 acceptance; added get_version() to criteria); fix H1 (Integration example: replace .unwrap() panic with match/Option handling; Error Handling table updated to match); fix H2 (Phase 2 acceptance notes blocked on RFC-0903-B1); fix M1 (Error Handling: rename "Unknown model, no fallback" to "Unknown model" — silent fallthrough, no warning); fix M2 (Approval Criteria: replace vague "in-memory registry" with specific checklist items); fix L1 (remove duplicate use sha2 import in compute_pricing_hash); fix L2 (Integration: replace ASCII art with Mermaid diagram) |
 | v10 | 2026-04-20 | Round 57 adversarial fixes: fix R1 (remove stale footer — version history table and Status header are authoritative); fix R2 (remove footer dates); fix H1 (get_by_hash: simplify redundant arc.as_ref() to &**arc); fix M1 (compute_pricing_hash: replace serde_json example with pseudocode + stronger warning); fix M2 (compute_cost: clarify saturating_add overflow not a concern); fix L1 (add Uncertain Assignments section to get_canonical_tokenizer doc comment — gemini-*, o1-mini, o1-preview flagged); fix L2 (same Uncertain Assignments section surfaces o1-mini/o1-preview uncertainty) |

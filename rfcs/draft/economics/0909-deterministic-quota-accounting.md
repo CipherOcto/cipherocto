@@ -2,7 +2,7 @@
 
 ## Status
 
-Draft (v56 — aligned with RFC-0903 Final v29 + RFC-0903-B1 v22 + RFC-0903-C1 v3, RFC-0126 (Accepted v2.5.1), RFC-0201 (Accepted v5.24), RFC-0910 (Draft v6))
+Draft (v59 — aligned with RFC-0903 Final v29 + RFC-0903-B1 v22 + RFC-0903-C1 v3, RFC-0126 (Accepted v2.5.1), RFC-0201 (Accepted v5.24))
 
 ## Authors
 
@@ -37,7 +37,7 @@ This is required for future integration with:
 
 - RFC-0900: AI Quota Marketplace Protocol
 - RFC-0901: Quota Router Agent Specification
-- RFC-0910: Pricing Table Registry (Draft v6 — for immutable pricing tables)
+- RFC-0910: Pricing Table Registry (Draft — for immutable pricing tables)
 
 ## Motivation
 
@@ -1585,7 +1585,8 @@ $0.03/1K tokens → DQA(30_000, scale=6)
 
 | Version | Date       | Changes |
 | ------- | ---------- | ------- |
-| v56     | 2026-04-19 | Round 53 fixes: fix 914-L1 (Status header + Optional Dependencies: RFC-0910 version updated from v4 to v6 to match current RFC-0910 version; Related RFCs footer updated) |
+| v59     | 2026-04-20 | Round 55 fixes: break circular version pin — remove RFC-0910 peer version from Status header, Optional Dependencies, and Related RFCs footer; RFC-0910 is referenced by status only (no version pin) |
+| v57     | 2026-04-20 | Round 55 fixes: fix 909-L1 (Status header + Optional Dependencies + Related RFCs footer: RFC-0910 version updated from v6 to v7 to match current RFC-0910 version) |
 | v55     | 2026-04-19 | Round 51 fixes: fix 909-H1 (Optional Dependencies: RFC-0910 version updated from v3 to v4 to match current RFC-0910 version) |
 | v54     | 2026-04-19 | Round 50 fixes: fix 909-H1 (Optional Dependencies: RFC-0910 version updated from v2 to v3 to match current RFC-0910 version) |
 | v53     | 2026-04-19 | Round 49 fixes: fix 909-C1 (get_canonical_tokenizer: 'g' and 'c' arms now return "tiktoken-cl100k_base-v1.2.3" to match RFC-0910 Tokenizer Assignment Table; 'o' arm added note about coarse prefix-match limitation); fix 909-M3 (Approval Criteria: "two compliant mitigation paths specified" → "two deployer-side mitigation options identified" — clarifies RFC identifies options but does not specify implementation); add 909-L2 (Numeric Tower/DQA integration added to Approval Criteria as tracked future enhancement) |
@@ -1633,7 +1634,7 @@ $0.03/1K tokens → DQA(30_000, scale=6)
 
 ---
 
-**Draft Date:** 2026-04-19
-**Version:** v56
+**Draft Date:** 2026-04-20
+**Version:** v59
 **Related Use Case:** Enhanced Quota Router Gateway
-**Related RFCs:** RFC-0903 (Virtual API Key System), RFC-0903-B1 (Schema Amendments), RFC-0903-C1 (Extended Schema Amendments), RFC-0126 (Deterministic Serialization v2.5.1), RFC-0201 (Binary BLOB Type v5.24), RFC-0910 (Pricing Table Registry v6)
+**Related RFCs:** RFC-0903 (Virtual API Key System), RFC-0903-B1 (Schema Amendments), RFC-0903-C1 (Extended Schema Amendments), RFC-0126 (Deterministic Serialization v2.5.1), RFC-0201 (Binary BLOB Type v5.24), RFC-0910 (Pricing Table Registry)

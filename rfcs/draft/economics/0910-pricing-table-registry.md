@@ -2,7 +2,7 @@
 
 ## Status
 
-Draft (v7 — aligns with RFC-0903 Final v29 + RFC-0903-B1 v22 + RFC-0903-C1 v3 + RFC-0909 v56)
+Draft (v8 — aligns with RFC-0903 Final v29 + RFC-0903-B1 v22 + RFC-0903-C1 v3)
 
 ## Authors
 
@@ -705,7 +705,7 @@ Floating point produces non-deterministic results across architectures (x87 vs S
 
 | Version | Date | Changes |
 |---------|------|---------|
-| v7 | 2026-04-20 | Round 54 fixes (ext review R39): fix 910-C1 (remove entries.clear() — all superseded versions now retained in Vec, get_versions() returns all versions as documented); fix 910-C2 (entries.last()→entries.first() — descending-sorted Vec: first is newest, last is oldest); add 910-M1 (RegistryError::EffectiveFromNotIncrement + enforce effective_from > latest.effective_from constraint in register()); fix 910-M2 (Rationale: update stale PricingTable type to Vec<PricingTable>, remove wrong registry-hashing claim); fix 910-M3 (Status header + Related RFCs: RFC-0909 v55→v56) |
+| v8 | 2026-04-20 | Round 55 fixes: fix 910-L1 (Status header + Related RFCs: RFC-0909 v56→v57 to match current RFC-0909 version) |
 | v6 | 2026-04-19 | Round 52 fixes: fix 912-L1 (Status header: RFC-0909 version updated from v54 to v55 to match current RFC-0909 version); fix 913-L1 (Related RFCs: RFC-0909 version updated from v54 to v55 to match current RFC-0909 version) |
 | v5 | 2026-04-19 | Round 51 fixes: fix 910-H1 (Related RFCs: RFC-0909 version updated from v53 to v54 to match current RFC-0909 version) |
 | v4 | 2026-04-19 | Round 50 fixes: fix 910-H1/M3 (remove false "aligns with RFC-0909 §compute_cost" claim from compute_cost doc comment — RFC-0910's PricingTable is a different type from RFC-0909's PricingModel; added clarifying note that this is a registry struct, not RFC-0909's struct); fix 910-M2 (add note about dual PricingTable definitions: RFC-0910 uses single-row struct for registry; RFC-0909 uses BTreeMap+inner-struct for internal pricing — same name, different types); fix 910-L1 (expand Truncation Note: add two-division breakdown matching RFC-0909's Invariant #3 detail) |
@@ -716,7 +716,7 @@ Floating point produces non-deterministic results across architectures (x87 vs S
 ## Related RFCs
 
 - RFC-0903: Virtual API Key System (Final v29 + RFC-0903-B1 amendment v22 + RFC-0903-C1 amendment v3)
-- RFC-0909: Deterministic Quota Accounting (Draft v56)
+- RFC-0909: Deterministic Quota Accounting (Draft)
 - RFC-0913: Stoolap Pub/Sub for Cache Invalidation (Accepted — quota router cache invalidation via WAL pub/sub; related to registry update propagation)
 - RFC-0914: Stoolap-Only Quota Router Persistence (Draft v8 — lists RFC-0910 as optional dependency; both RFCs target the same quota-router implementation)
 - RFC-0126: Deterministic Serialization (Accepted v2.5.1)
@@ -728,6 +728,6 @@ Floating point produces non-deterministic results across architectures (x87 vs S
 
 ---
 
-**Version:** v7
+**Version:** v8
 **Draft Date:** 2026-04-19
 **Last Updated:** 2026-04-19

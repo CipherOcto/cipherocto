@@ -703,11 +703,19 @@ mod compute_event_id_tests {
         let model = "gpt-4";
         let input_tokens = 100u32;
         let output_tokens = 50u32;
-        let pricing_hash = hex_to_32_bytes("00112233445566778899aabbccddeeff00112233445566778899aabbccddeeff");
+        let pricing_hash =
+            hex_to_32_bytes("00112233445566778899aabbccddeeff00112233445566778899aabbccddeeff");
         let token_source = TokenSource::ProviderUsage;
 
         let event_id = compute_event_id(
-            request_id, &key_id, provider, model, input_tokens, output_tokens, &pricing_hash, token_source,
+            request_id,
+            &key_id,
+            provider,
+            model,
+            input_tokens,
+            output_tokens,
+            &pricing_hash,
+            token_source,
         );
 
         assert_eq!(
@@ -725,11 +733,19 @@ mod compute_event_id_tests {
         let model = "gpt-4";
         let input_tokens = 100u32;
         let output_tokens = 50u32;
-        let pricing_hash = hex_to_32_bytes("00112233445566778899aabbccddeeff00112233445566778899aabbccddeeff");
+        let pricing_hash =
+            hex_to_32_bytes("00112233445566778899aabbccddeeff00112233445566778899aabbccddeeff");
         let token_source = TokenSource::CanonicalTokenizer;
 
         let event_id = compute_event_id(
-            request_id, &key_id, provider, model, input_tokens, output_tokens, &pricing_hash, token_source,
+            request_id,
+            &key_id,
+            provider,
+            model,
+            input_tokens,
+            output_tokens,
+            &pricing_hash,
+            token_source,
         );
 
         assert_eq!(
@@ -747,11 +763,19 @@ mod compute_event_id_tests {
         let model = "gpt-4";
         let input_tokens = 100u32;
         let output_tokens = 50u32;
-        let pricing_hash = hex_to_32_bytes("00112233445566778899aabbccddeeff00112233445566778899aabbccddeeff");
+        let pricing_hash =
+            hex_to_32_bytes("00112233445566778899aabbccddeeff00112233445566778899aabbccddeeff");
         let token_source = TokenSource::ProviderUsage;
 
         let event_id = compute_event_id(
-            request_id, &key_id, provider, model, input_tokens, output_tokens, &pricing_hash, token_source,
+            request_id,
+            &key_id,
+            provider,
+            model,
+            input_tokens,
+            output_tokens,
+            &pricing_hash,
+            token_source,
         );
 
         assert_eq!(
@@ -770,11 +794,19 @@ mod compute_event_id_tests {
         let model = "gpt-4";
         let input_tokens = 100u32;
         let output_tokens = 50u32;
-        let pricing_hash = hex_to_32_bytes("8b48fe37e84565f99285690a835a881fe2d580ec63775aa5f9465ba38a5a2f60");
+        let pricing_hash =
+            hex_to_32_bytes("8b48fe37e84565f99285690a835a881fe2d580ec63775aa5f9465ba38a5a2f60");
         let token_source = TokenSource::ProviderUsage;
 
         let event_id = compute_event_id(
-            request_id, &key_id, provider, model, input_tokens, output_tokens, &pricing_hash, token_source,
+            request_id,
+            &key_id,
+            provider,
+            model,
+            input_tokens,
+            output_tokens,
+            &pricing_hash,
+            token_source,
         );
 
         assert_eq!(

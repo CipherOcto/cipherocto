@@ -2,7 +2,7 @@
 
 ## Status
 
-Open (v2)
+Open (v3)
 
 ## RFC
 
@@ -32,7 +32,8 @@ Implement `compute_event_id()` — the deterministic SHA256 hex function that pr
   - Input: same as TV1 except `pricing_hash="8b48fe37e84565f99285690a835a881fe2d580ec63775aa5f9465ba38a5a2f60"` (hex→32 raw bytes); `pricing_hash` derived from `SHA256(b"pricing-table-v2")` (UTF-8, no trailing newline)
   - Expected output: `"06a6eb1c68f8a75287d0ac45b1ede9f00cd770f106c505685c299cf3b593726c"`
 - [ ] UUID format mandate documented: MUST use `uuid::Uuid::to_string()` (hyphenated lowercase), NOT `to_simple().to_string()` (32-char no hyphen)
-- [ ] `validate_request_id()` function must also be implemented per RFC-0909 §validate_request_id (validates 1–1024 bytes, rejects empty and oversized)
+- [ ] `validate_request_id(request_id: &str) -> Result<(), KeyError>` — returns `Ok(())` if 1 ≤ len ≤ 1024 bytes, `Err(KeyError::InvalidFormat)` otherwise (H1 + M2)
+- [ ] `validate_request_id()` called in `process_response` before `compute_event_id` (M3)
 
 ## Implementation Notes
 
@@ -41,8 +42,9 @@ Implement `compute_event_id()` — the deterministic SHA256 hex function that pr
 - `pricing_hash` is passed as `&[u8; 32]` (32 raw bytes) — NOT a hex string
 - `token_source` is `TokenSource` enum variant
 - `TokenSource::to_hash_str()` must return `"provider"` (ProviderUsage) or `"tokenizer"` (CanonicalTokenizer)
-- `validate_request_id(request_id: &str) -> Result<(), KeyError>` validates: rejects empty string, rejects >1024 bytes
+- `validate_request_id(request_id: &str) -> Result<(), KeyError>` validates: rejects empty string, rejects >1024 bytes; returns `Err(KeyError::InvalidFormat)` on rejection. Called in `process_response` before `compute_event_id`.
 - **Single-tenant scope** (this mission): function concatenates fields WITHOUT length prefixes or delimiters. This is safe for single-tenant deployments. Multi-tenant deployments require additional mitigations (see RFC-0909 §Security Note — No Field Delimiters).
+- **event_id vs request_id encoding (L1):** event_id is hex-encoded (compute_event_id returns 64-char hex String for API compat). request_id is raw SHA256 binary stored as BLOB(32) — gateway text is hashed, not hex-encoded. These are different encodings: do not confuse them.
 
 ## Test Vector Setup Notes
 
@@ -59,7 +61,9 @@ Implement `compute_event_id()` — the deterministic SHA256 hex function that pr
 
 ## Dependencies
 
-- TokenSource enum with `to_hash_str()` must exist (already in `models.rs` — verify before implementing compute_event_id)
+- TokenSource enum with `to_hash_str()` is defined in RFC-0909 §Usage Event Model (already in `models.rs` — no external dependency)
+- `sha2 = "0.10"` (for SHA256 in compute_event_id)
+- `uuid = "1.x"` (for uuid::Uuid)
 
 ## Complexity
 
@@ -74,5 +78,6 @@ Medium — requires understanding of deterministic hashing, exact test vector ma
 
 | Version | Date | Changes |
 |---------|------|---------|
+| v3 | 2026-04-20 | Round 2 adversarial review fixes: fix C1 (add sha2 crate dependency); fix H1 (specify KeyError::InvalidFormat for validate_request_id); fix M1 (fix TokenSource dependency description — RFC-0909 defines it, not external); fix M2 (add validate_request_id as explicit AC item); fix M3 (note validate_request_id called in process_response); fix L1 (add event_id vs request_id encoding distinction) |
 | v2 | 2026-04-20 | Round 1 adversarial review fixes: fix C1/C2 (TV2 uses request_id="req-002", restore correct expected output); fix C3 (TV3 description clarifies only key_id changed); fix C4 (TV4: pricing_hash is hex notation for 32 raw bytes, decode before calling); add validate_request_id to acceptance criteria; add test vector setup notes; clarify single-tenant scope; add TokenSource dependency note |
 | v1 | 2026-04-20 | Initial |

@@ -2,7 +2,7 @@
 
 ## Status
 
-Open (v2)
+Open (v3)
 
 ## RFC
 
@@ -26,9 +26,12 @@ Implement bidirectional tokenizer ID conversion: version string → BLAKE3-16 by
 - `tokenizer_version_to_id`: Uses `blake3::Hasher::new()`, `hasher.update()`, `hasher.finalize()` → `[u8; 32]` → `bytes[..16].try_into().unwrap()`
 - Truncation note: collision probability non-negligible after ~2^32 versions — acceptable for tokenizer versioning
 - `tokenizer_id_to_version`: The stub always returns an error. The DB-backed version requires a Stoolap query against the `tokenizers` table (schema per RFC-0910 §Tokenizer Database Schema)
-- **Dependencies (C2):** Add `blake3 = "1.x"` to `Cargo.toml` dependencies
 - **Tokenizer table population (M2):** The `tokenizers` table is populated on-demand at INSERT time (when a new tokenizer version is first used). The version string is stored in `provider_usage_json` for audit. When implementing `tokenizer_id_to_version`, the row may or may not exist depending on whether the tokenizer was used in a request that reached storage.
 - **DB-backed test vector (L2):** When `tokenizer_id_to_version` DB implementation is complete, add test: given tokenizer_id bytes `e3c8e8ff724411c6416dd4fb135368e3`, `SELECT version FROM tokenizers WHERE tokenizer_id = ?` returns `Ok(Some("tiktoken-cl100k_base-v1.2.3"))`
+
+## Dependencies
+
+- `blake3 = "1.x"` for BLAKE3 hashing
 
 ## Reference
 
@@ -44,11 +47,12 @@ Low — BLAKE3 hashing + optional DB query
 
 ---
 **Mission Type:** Implementation
-**Priority:** High
+**Priority:** Critical
 **Phase:** RFC-0909 Phase 1 Core
 
 ## Changelog
 
 | Version | Date | Changes |
 |---------|------|---------|
+| v3 | 2026-04-20 | Round 2 adversarial review fixes: fix M1 (move Dependencies before Reference for consistency); fix M2 (Priority High → Critical) |
 | v2 | 2026-04-20 | Round 1 adversarial review fixes: fix C1 (add RFC-0910 §Tokenizer Database Schema to references); fix C2 (add blake3 crate dependency); fix H1 (add full 32-byte BLAKE3 hash for test vector verification); fix H2 (clarify DB-level error propagation for stub); fix M1 (note #[inline] on tokenizer_id_to_version not in RFC but acceptable); fix M2 (document on-demand tokenizer table population); fix L1 (add collision probability note); fix L2 (add DB-backed test vector for tokenizer_id_to_version) |

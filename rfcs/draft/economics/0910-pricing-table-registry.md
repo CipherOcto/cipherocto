@@ -2,7 +2,7 @@
 
 ## Status
 
-Draft (v11 — aligns with RFC-0903 Final v29 + RFC-0903-B1 v22 + RFC-0903-C1 v3)
+Draft (v12 — aligns with RFC-0903 Final v29 + RFC-0903-B1 v22 + RFC-0903-C1 v3)
 
 ## Authors
 
@@ -157,7 +157,6 @@ impl PricingTable {
     /// ```
     pub fn compute_pricing_hash(&self) -> [u8; 32] {
         // ⚠️  REPLACE THIS WITH AN RFC 8785-COMPLIANT SERIALIZER.
-        // serde_json is NOT compliant — field ordering is compiler-dependent.
         // The test vector was computed with a compliant implementation.
         let serialized = serde_json::to_string(&self)
             .expect("PricingTable serialization must succeed");
@@ -328,6 +327,7 @@ impl PricingRegistry {
 
 ```rust
 /// Compute cost deterministically using integer arithmetic.
+/// This is a standalone function (not a method on PricingTable).
 ///
 /// # Parameters
 /// - `pricing`: the PricingTable for the model being charged (this RFC's struct, not RFC-0909's PricingModel)
@@ -364,6 +364,7 @@ pub fn compute_cost(
 
 ```rust
 use serde::{Deserialize, Serialize};
+use crate::tokenizer::TokenSource;  // Imported from RFC-0909 crate
 
 /// Spend receipt for audit and verification.
 /// Links a spend event to the specific pricing table version used.
@@ -398,7 +399,7 @@ pub struct SpendReceipt {
     pub total_cost: u64,
     /// Event timestamp (Unix epoch)
     pub timestamp: i64,
-    /// Token source used for this request (per RFC-0909 TokenSource enum — imported from RFC-0909)
+    /// Token source used for this request (per RFC-0909 TokenSource enum)
     pub token_source: TokenSource,
 }
 ```
@@ -456,7 +457,7 @@ pub fn tokenizer_version_to_id(version: &str) -> [u8; 16] {
 
 ```rust
 /// Get canonical tokenizer version for a model family.
-/// Returns static str reference — zero allocation.
+/// Returns a static string literal — no heap allocation.
 ///
 /// # Determinism Requirement
 /// This function's output MUST be bit-for-bit identical across all router
@@ -532,8 +533,8 @@ CREATE TABLE tokenizers (
 CREATE TABLE tokenizer_assignments (
     assignment_id BLOB(16) NOT NULL,
     model_pattern TEXT NOT NULL,             -- e.g., "gpt-4", "o1-preview" (exact match, not glob)
-    tokenizer_id BLOB(16) NOT NULL,          -- FK to tokenizers(tokenizer_id)
-    effective_from INTEGER NOT NULL,         -- Unix epoch
+    tokenizer_id BLOB(16) NOT NULL,        -- FK to tokenizers(tokenizer_id)
+    effective_from INTEGER NOT NULL,        -- Unix epoch
     PRIMARY KEY (assignment_id),
     UNIQUE(model_pattern)                   -- prevent ambiguous multi-row matches
 );
@@ -600,7 +601,7 @@ This RFC can be accepted when:
 - [x] Pricing hash test vector: compute_pricing_hash() on test table → a127db97a3695861f7a34ab2abe821ed0b8d7ec47e3dc579d7a5ca8cfb7a0641
 - [x] Tokenizer assignment test vectors: all rows in Tokenizer Assignment End-to-End table produce correct tokenizer_id and token_source
 - [ ] Phase 1 implemented (PricingTable + PricingRegistry + compute_cost + tokenizer functions + test vectors)
-- [ ] Phase 2 (DB-backed registry with tokenizer_assignments table) — blocked until RFC-0903-B1 is Accepted; requires B1's BLOB(16) types
+- [ ] Phase 2 (DB-backed registry with tokenizer_assignments table) — blocked until RFC-0903-B1 and RFC-0903-C1 are Accepted; requires both amendments' BLOB(16) types
 - [ ] Phase 3 (routing integration with RFC-0909) implemented
 
 ## Security Considerations
@@ -729,7 +730,7 @@ sequenceDiagram
 
 Example usage:
 ```rust
-// Get pricing for cost calculation
+// compute_cost is a standalone function, not a method on PricingTable
 match registry.get_pricing("openai", "gpt-4") {
     Some(pricing) => {
         let cost = compute_cost(pricing, input_tokens, output_tokens);
@@ -742,7 +743,7 @@ match registry.get_pricing("openai", "gpt-4") {
     }
 }
 
-// Get canonical tokenizer for token counting
+// get_canonical_tokenizer is a standalone function
 let tokenizer_version = get_canonical_tokenizer("gpt-4");
 let tokenizer_id = tokenizer_version_to_id(tokenizer_version);
 ```
@@ -835,6 +836,7 @@ This design allows the registry to be treated as a cache of known-good pricing s
 
 | Version | Date | Changes |
 |---------|------|---------|
+| v12 | 2026-04-20 | Round 59 adversarial fixes: fix R1 (remove duplicate serde_json warning in compute_pricing_hash function body); fix H1 (SpendReceipt: add TokenSource import path comment); fix H2 (Related RFCs: RFC-0914 is Required dependency not Optional — registry persistence model depends on it); fix M1 (compute_cost: clarify standalone function with doc comment; Integration example updated); fix M2 (Phase 2 acceptance blocked on BOTH RFC-0903-B1 and RFC-0903-C1); fix L1 (get_canonical_tokenizer: "zero allocation" → "static string literal — no heap allocation") |
 | v11 | 2026-04-20 | Round 58 adversarial fixes: fix R1 (Approval Criteria: Phase 1 checkbox unchecked; Phase 2 notes dependency on RFC-0903-B1 acceptance; added get_version() to criteria); fix H1 (Integration example: replace .unwrap() panic with match/Option handling; Error Handling table updated to match); fix H2 (Phase 2 acceptance notes blocked on RFC-0903-B1); fix M1 (Error Handling: rename "Unknown model, no fallback" to "Unknown model" — silent fallthrough, no warning); fix M2 (Approval Criteria: replace vague "in-memory registry" with specific checklist items); fix L1 (remove duplicate use sha2 import in compute_pricing_hash); fix L2 (Integration: replace ASCII art with Mermaid diagram) |
 | v10 | 2026-04-20 | Round 57 adversarial fixes: fix R1 (remove stale footer — version history table and Status header are authoritative); fix R2 (remove footer dates); fix H1 (get_by_hash: simplify redundant arc.as_ref() to &**arc); fix M1 (compute_pricing_hash: replace serde_json example with pseudocode + stronger warning); fix M2 (compute_cost: clarify saturating_add overflow not a concern); fix L1 (add Uncertain Assignments section to get_canonical_tokenizer doc comment — gemini-*, o1-mini, o1-preview flagged); fix L2 (same Uncertain Assignments section surfaces o1-mini/o1-preview uncertainty) |
 | v9 | 2026-04-20 | Round 56 adversarial fixes: fix 910-C1 (effective_from constraint: < not <= allows same-second registrations); fix 910-C2 (try_into().unwrap() → expect()); fix 910-C3 (document case-sensitivity as caller responsibility); add 910-H1 (Approval Criteria section); fix 910-H2 (pattern matching: exact match, not glob; remove redundant idx); fix 910-H3 (add MAX_TABLE_ID_LEN=128 and TableIdTooLong error); fix 910-H5 (encoding_type is informational only); fix 910-H6 (add UNIQUE(version, provider) to tokenizers); add 910-M2 (get_version() method); fix 910-M3 (tokenizer_id_to_version is in RFC-0909, not this RFC); add Phase 2 migration items; fix 910-M5 (RFC-0909 Related RFCs: Draft → Accepted); add 910-M6 (Integration section showing registry in request pipeline); add registry persistence model note; update RFC-0909 Related RFCs to (Accepted) |
@@ -852,7 +854,7 @@ This design allows the registry to be treated as a cache of known-good pricing s
 - RFC-0903: Virtual API Key System (Final v29 + RFC-0903-B1 amendment v22 + RFC-0903-C1 amendment v3)
 - RFC-0909: Deterministic Quota Accounting (Accepted — defines SpendEvent, TokenSource, and uses this RFC's canonical tokenizer assignments)
 - RFC-0913: Stoolap Pub/Sub for Cache Invalidation (Accepted — quota router cache invalidation via WAL pub/sub; related to registry update propagation)
-- RFC-0914: Stoolap-Only Quota Router Persistence (Draft v8 — lists RFC-0910 as optional dependency; both RFCs target the same quota-router implementation)
+- RFC-0914: Stoolap-Only Quota Router Persistence (Draft v8 — required for registry persistence model; registry startup sequence loads from Stoolap per RFC-0914 integration)
 - RFC-0126: Deterministic Serialization (Accepted v2.5.1)
 - RFC-0201: Binary BLOB Type for Deterministic Hash Storage (Accepted v5.24)
 

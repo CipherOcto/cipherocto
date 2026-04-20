@@ -2,7 +2,7 @@
 
 ## Status
 
-Open
+Open (v2)
 
 ## RFC
 
@@ -16,12 +16,12 @@ Implement `build_merkle_tree()` — builds a Merkle tree from SpendEvents for cr
 
 - [ ] `build_merkle_tree(events: &[SpendEvent]) -> Option<MerkleNode>` — returns root node or None if empty
 - [ ] Sort events by event_id (hex string, ascending) — same as replay_events
-- [ ] Leaf hash: `SHA256(event_id.as_bytes() || cost_amount.to_le_bytes())`
+- [ ] Leaf hash: `SHA256(event_id.as_bytes() || cost_amount.to_le_bytes())` (little-endian encoding required for cross-router determinism)
 - [ ] Internal node hash: `SHA256(left_hash || right_hash)`
 - [ ] Odd leaf count: pad by duplicating last leaf (deterministic, keeps tree balanced)
 - [ ] Build bottom-up until single root remains
 - [ ] Returns `Option<MerkleNode>` — `None` for empty events (no root to publish)
-- [ ] `MerkleNode` struct: `{ hash: [u8; 32], left: Option<Box<MerkleNode>>, right: Option<Box<MerkleNode>> }`
+- [ ] `MerkleNode` struct: `#[derive(Debug, Clone)] pub struct MerkleNode { pub hash: [u8; 32], pub left: Option<Box<MerkleNode>>, pub right: Option<Box<MerkleNode>> }` (per RFC-0909 pseudocode)
 - [ ] Multi-tenant safety: caller MUST filter events to single tenant scope before calling (RFC-0909 §Security Note — No Field Delimiters)
 
 ## Implementation Notes
@@ -32,6 +32,10 @@ Implement `build_merkle_tree()` — builds a Merkle tree from SpendEvents for cr
 - `event_id` is hex String in struct (64 ASCII chars) — hashing the raw bytes would produce different results; this uses the application-layer hex String
 - Odd leaf padding: duplicate last element before chunking into pairs
 - This function is NOT used for budget computation — only for cryptographic proof generation
+- **DB→hex conversion (C2):** If building the tree from database rows (BLOB(32) storage), MUST convert event_id BLOB to hex via `blob_32_to_hex()` before hashing. Hashing raw BLOB bytes produces a different leaf hash than hashing the 64-char hex string — roots built from different representations will not match. Routers using in-memory `SpendEvent` structs already have hex String and are unaffected. See RFC-0909 §Audit Proof Generation.
+- **Known limitation (H2):** If `record_spend()` has an internal bug producing duplicate logical events (same economic content, different request_id), the Merkle tree double-counts the cost with no error. Schema enforces `UNIQUE(key_id, request_id)` but cannot prevent same-cost duplicates from an application bug. Correct `record_spend` implementation is the caller's responsibility.
+- **Test vectors (L1):** (1) empty events → `None`; (2) single event → root equals leaf hash; (3) two identical events → parent hash = SHA256(leaf_hash || leaf_hash); (4) odd count (3 leaves) → padded to 4, last leaf duplicated.
+- **Dependencies:** Add `sha2 = "0.10"` to `Cargo.toml` if not already present.
 
 ## Reference
 
@@ -39,6 +43,7 @@ Implement `build_merkle_tree()` — builds a Merkle tree from SpendEvents for cr
 - RFC-0909 §Audit Proof Generation
 - RFC-0909 §Canonical Merkle root (event_id-only ordering for external verification)
 - RFC-0909 §Security Note — No Field Delimiters (multi-tenant caller filtering requirement)
+- RFC-0903-B1 §SpendEvent (struct definition, BLOB(32) event_id encoding)
 
 ## Complexity
 
@@ -46,5 +51,11 @@ Medium — recursive tree construction with SHA256 hashing
 
 ---
 **Mission Type:** Implementation
-**Priority:** High
+**Priority:** Critical
 **Phase:** RFC-0909 Phase 1 Core
+
+## Changelog
+
+| Version | Date | Changes |
+|---------|------|---------|
+| v2 | 2026-04-20 | Round 1 adversarial review fixes: fix C1 (explicit MerkleNode struct AC with derive); fix C2 (add DB→hex conversion requirement); fix H1 (add sha2 crate dependency); fix H2 (document double-charge known limitation); fix M1 (clarify little-endian requirement in AC); fix M2 (Priority High→Critical); fix L1 (add test vectors); fix L2 (add RFC-0903-B1 §SpendEvent reference) |

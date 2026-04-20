@@ -1,4 +1,8 @@
-use crate::keys::{ApiKey, KeyError, KeySpend, KeyType, KeyUpdates, SpendEvent, Team};
+use crate::keys::{
+    hex_to_blob_32, tokenizer_version_to_id, uuid_to_blob_16, ApiKey, KeyError, KeySpend, KeyType,
+    KeyUpdates, SpendEvent, Team,
+};
+use sha2::{Digest, Sha256};
 
 pub trait KeyStorage: Send + Sync {
     // Key operations
@@ -514,7 +518,8 @@ impl KeyStorage for StoolapKeyStorage {
             return Err(KeyError::InvalidFormat);
         }
 
-        let key_id_str = event.key_id.to_string();
+        let key_id_blob = uuid_to_blob_16(&event.key_id);
+        let key_id_hex = event.key_id.to_string();
 
         // Begin transaction for atomic budget enforcement with FOR UPDATE locking
         let mut tx = self
@@ -526,7 +531,7 @@ impl KeyStorage for StoolapKeyStorage {
         let budget: i64 = tx
             .query(
                 "SELECT budget_limit FROM api_keys WHERE key_id = $1 FOR UPDATE",
-                vec![key_id_str.clone().into()],
+                vec![key_id_hex.clone().into()],
             )
             .map_err(|e| KeyError::Storage(e.to_string()))?
             .next()
@@ -536,10 +541,12 @@ impl KeyStorage for StoolapKeyStorage {
             .map_err(|e| KeyError::Storage(e.to_string()))?;
 
         // 2. Compute current spend from ledger
+        // Note: After BLOB migration, key_id is stored as binary BLOB(16).
+        // Query uses key_id_blob (Vec<u8>) which SQLite treats as raw bytes for BLOB comparison.
         let mut rows = tx
             .query(
                 "SELECT COALESCE(SUM(cost_amount), 0) FROM spend_ledger WHERE key_id = $1",
-                vec![key_id_str.clone().into()],
+                vec![stoolap::core::Value::blob(key_id_blob.to_vec())],
             )
             .map_err(|e| KeyError::Storage(e.to_string()))?;
 
@@ -560,16 +567,33 @@ impl KeyStorage for StoolapKeyStorage {
         }
 
         // 4. Build params for INSERT
+        // BLOB storage per RFC-0903-B1/C1: event_id (SHA256 hex → raw 32B), request_id (raw 32B),
+        // key_id (UUID → raw 16B), team_id (UUID → raw 16B), tokenizer_id (BLAKE3-16).
         let now = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap()
             .as_secs() as i64;
 
+        // Hash request_id to get raw SHA256 binary for BLOB(32) storage
+        let request_id_bytes: [u8; 32] = Sha256::digest(event.request_id.as_bytes()).into();
+
+        let team_id_blob: Option<Vec<u8>> = event
+            .team_id
+            .as_ref()
+            .map(|t| uuid_to_blob_16(&uuid::Uuid::parse_str(t).unwrap()).to_vec());
+
+        let tokenizer_id_blob: Option<Vec<u8>> = event
+            .tokenizer_version
+            .as_ref()
+            .map(|v| tokenizer_version_to_id(v).to_vec());
+
         let params: Vec<stoolap::Value> = vec![
-            event.event_id.clone().into(),
-            event.request_id.clone().into(),
-            key_id_str.into(),
-            event.team_id.clone().into(),
+            stoolap::core::Value::blob(hex_to_blob_32(&event.event_id).to_vec()),
+            stoolap::core::Value::blob(request_id_bytes.to_vec()),
+            stoolap::core::Value::blob(key_id_blob.to_vec()),
+            team_id_blob
+                .map(stoolap::core::Value::blob)
+                .unwrap_or_else(|| stoolap::Value::Null(stoolap::DataType::Null)),
             event.provider.clone().into(),
             event.model.clone().into(),
             event.input_tokens.into(),
@@ -577,6 +601,9 @@ impl KeyStorage for StoolapKeyStorage {
             cost_i64.into(),
             stoolap::core::Value::blob(event.pricing_hash.to_vec()),
             token_source_str.into(),
+            tokenizer_id_blob
+                .map(stoolap::core::Value::blob)
+                .unwrap_or_else(|| stoolap::Value::Null(stoolap::DataType::Null)),
             event.tokenizer_version.clone().into(),
             event.provider_usage_json.clone().into(),
             event.timestamp.into(),
@@ -589,9 +616,9 @@ impl KeyStorage for StoolapKeyStorage {
             "INSERT INTO spend_ledger (
                 event_id, request_id, key_id, team_id, provider, model,
                 input_tokens, output_tokens, cost_amount, pricing_hash,
-                token_source, tokenizer_version, provider_usage_json, timestamp,
-                created_at
-            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)",
+                token_source, tokenizer_id, tokenizer_version, provider_usage_json,
+                timestamp, created_at
+            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)",
             params,
         ) {
             Ok(_) => {}
@@ -617,6 +644,12 @@ impl KeyStorage for StoolapKeyStorage {
             return Err(KeyError::InvalidFormat);
         }
 
+        // Convert UUID strings to binary for spend_ledger BLOB columns
+        let key_uuid = uuid::Uuid::parse_str(key_id).map_err(|_| KeyError::InvalidFormat)?;
+        let team_uuid = uuid::Uuid::parse_str(team_id).map_err(|_| KeyError::InvalidFormat)?;
+        let key_id_blob = uuid_to_blob_16(&key_uuid);
+        let team_id_blob = uuid_to_blob_16(&team_uuid);
+
         // Begin transaction for atomic budget enforcement with FOR UPDATE locking
         let mut tx = self
             .db
@@ -624,6 +657,7 @@ impl KeyStorage for StoolapKeyStorage {
             .map_err(|e| KeyError::Storage(e.to_string()))?;
 
         // 1. Lock team row FIRST (deadlock prevention per RFC-0903 §Lock Ordering Invariant)
+        // Note: teams table still uses TEXT for team_id (migrated separately)
         let team_budget: i64 = tx
             .query(
                 "SELECT budget_limit FROM teams WHERE team_id = $1 FOR UPDATE",
@@ -637,6 +671,7 @@ impl KeyStorage for StoolapKeyStorage {
             .map_err(|e| KeyError::Storage(e.to_string()))?;
 
         // 2. Lock key row SECOND
+        // Note: api_keys table still uses TEXT for key_id (migrated separately in 0909-h)
         let key_budget: i64 = tx
             .query(
                 "SELECT budget_limit FROM api_keys WHERE key_id = $1 FOR UPDATE",
@@ -650,10 +685,11 @@ impl KeyStorage for StoolapKeyStorage {
             .map_err(|e| KeyError::Storage(e.to_string()))?;
 
         // 3. Compute key spend from ledger
+        // spend_ledger.key_id is BLOB(16) — use binary blob for comparison
         let mut rows = tx
             .query(
                 "SELECT COALESCE(SUM(cost_amount), 0) FROM spend_ledger WHERE key_id = $1",
-                vec![key_id.into()],
+                vec![stoolap::core::Value::blob(key_id_blob.to_vec())],
             )
             .map_err(|e| KeyError::Storage(e.to_string()))?;
 
@@ -665,10 +701,11 @@ impl KeyStorage for StoolapKeyStorage {
             .map_err(|e| KeyError::Storage(e.to_string()))?;
 
         // 4. Compute team spend from ledger
+        // spend_ledger.team_id is BLOB(16) — use binary blob for comparison
         let mut rows = tx
             .query(
                 "SELECT COALESCE(SUM(cost_amount), 0) FROM spend_ledger WHERE team_id = $1",
-                vec![team_id.into()],
+                vec![stoolap::core::Value::blob(team_id_blob.to_vec())],
             )
             .map_err(|e| KeyError::Storage(e.to_string()))?;
 
@@ -695,16 +732,27 @@ impl KeyStorage for StoolapKeyStorage {
         }
 
         // 6. Build params for INSERT
+        // BLOB storage per RFC-0903-B1/C1: event_id (SHA256 hex → raw 32B),
+        // request_id (raw 32B SHA256), key_id (UUID → raw 16B),
+        // team_id (UUID → raw 16B), tokenizer_id (BLAKE3-16).
         let now = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap()
             .as_secs() as i64;
 
+        // Hash request_id to get raw SHA256 binary for BLOB(32) storage
+        let request_id_bytes: [u8; 32] = Sha256::digest(event.request_id.as_bytes()).into();
+
+        let tokenizer_id_blob: Option<Vec<u8>> = event
+            .tokenizer_version
+            .as_ref()
+            .map(|v| tokenizer_version_to_id(v).to_vec());
+
         let params: Vec<stoolap::Value> = vec![
-            event.event_id.clone().into(),
-            event.request_id.clone().into(),
-            key_id.into(),
-            Some(team_id.to_string()).into(),
+            stoolap::core::Value::blob(hex_to_blob_32(&event.event_id).to_vec()),
+            stoolap::core::Value::blob(request_id_bytes.to_vec()),
+            stoolap::core::Value::blob(key_id_blob.to_vec()),
+            stoolap::core::Value::blob(team_id_blob.to_vec()),
             event.provider.clone().into(),
             event.model.clone().into(),
             event.input_tokens.into(),
@@ -712,6 +760,9 @@ impl KeyStorage for StoolapKeyStorage {
             cost_i64.into(),
             stoolap::core::Value::blob(event.pricing_hash.to_vec()),
             token_source_str.into(),
+            tokenizer_id_blob
+                .map(stoolap::core::Value::blob)
+                .unwrap_or_else(|| stoolap::Value::Null(stoolap::DataType::Null)),
             event.tokenizer_version.clone().into(),
             event.provider_usage_json.clone().into(),
             event.timestamp.into(),
@@ -723,9 +774,9 @@ impl KeyStorage for StoolapKeyStorage {
             "INSERT INTO spend_ledger (
                 event_id, request_id, key_id, team_id, provider, model,
                 input_tokens, output_tokens, cost_amount, pricing_hash,
-                token_source, tokenizer_version, provider_usage_json, timestamp,
-                created_at
-            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)",
+                token_source, tokenizer_id, tokenizer_version, provider_usage_json,
+                timestamp, created_at
+            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)",
             params,
         ) {
             Ok(_) => {}

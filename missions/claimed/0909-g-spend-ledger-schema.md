@@ -2,7 +2,7 @@
 
 ## Status
 
-Open (v6)
+Completed (v7)
 
 ## RFC
 
@@ -80,6 +80,7 @@ High — requires careful data migration and FK consistency across tables
 
 | Version | Date | Changes |
 |---------|------|---------|
+| v7 | 2026-04-20 | Implemented: updated record_spend_ledger and record_spend_ledger_with_team to use BLOB storage helpers for event_id/request_id/key_id/team_id/tokenizer_id; schema migration function deferred to future migration script |
 | v6 | 2026-04-20 | Round 5 adversarial review fixes: fix M1 (add AC item for tokenizer_id storage boundary — tokenizer_version_to_id at INSERT, tokenizer_id_to_version at SELECT, referencing Mission 0909-f); fix L1 (post-migration verification M3: replace pseudo-SQL using Rust function name with correct Rust-side blob_32_to_hex verification pattern); fix L2 (add request_id format verification recommendation before migrating — type-cast assumption must be validated against actual old schema data) |
 | v5 | 2026-04-20 | Round 4 adversarial review fixes: fix M1 (add AC item for team_id storage boundary helpers — uuid_to_blob_16/blob_16_to_uuid required at INSERT/SELECT, parallel to key_id AC item); fix L1 (tokenizer_id migration: replace bytes[..16] slicing with explicit try_into and panic on wrong length — silent truncation risk documented) |
 | v4 | 2026-04-20 | Round 3 adversarial review fixes: fix L1 (add Dependencies section — hex and uuid crates used in migration but not previously listed) |

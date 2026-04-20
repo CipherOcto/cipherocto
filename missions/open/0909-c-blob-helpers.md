@@ -2,7 +2,7 @@
 
 ## Status
 
-Open (v3)
+Open (v4)
 
 ## RFC
 
@@ -32,6 +32,11 @@ Implement BLOB storage boundary helper functions for converting between applicat
 - **Wrong-data path (M2):** These helpers are low-level conversion functions with no type checking. Callers MUST ensure the correct helper is used for each field. Using `blob_32_to_hex` on a request_id BLOB produces garbage (raw SHA256 → 64 hex chars that don't match original gateway text).
 - **request_id constraint (H1 + L2):** request_id is stored as raw SHA256 binary (BLOB(32)), NOT hex. This differs from event_id which is stored as hex-encoded SHA256. Per RFC-0903-B1: `encode_request_id()` = `SHA256(gateway_request_id_text)` → raw bytes stored directly. `encode_request_id()` is defined in RFC-0903-B1 §request_id, not RFC-0909.
 
+## Dependencies
+
+- `uuid = "1.x"` for uuid::Uuid
+- `hex = "0.4"` for hex encode/decode
+
 ## Reference
 
 - RFC-0909 §hex_to_blob_32
@@ -40,11 +45,6 @@ Implement BLOB storage boundary helper functions for converting between applicat
 - RFC-0909 §blob_16_to_uuid
 - RFC-0903-B1 §Storage Encoding
 - RFC-0903-B1 §request_id (encode_request_id function, not defined in RFC-0909)
-
-## Dependencies
-
-- `uuid = "1.x"` for uuid::Uuid
-- `hex = "0.4"` for hex encode/decode
 
 ## Complexity
 
@@ -59,5 +59,6 @@ Low — pure conversion functions with direct byte manipulation
 
 | Version | Date | Changes |
 |---------|------|---------|
+| v4 | 2026-04-20 | Round 3 adversarial review fixes: fix M1 (Dependencies section now correctly placed before Reference) |
 | v3 | 2026-04-20 | Round 2 adversarial review fixes: fix M1 (remove redundant AC line 23 — function signature already guarantees 16 bytes); fix L1 (move Dependencies before Reference for consistency with other missions) |
 | v2 | 2026-04-20 | Round 1 adversarial review fixes: fix C1/H2 (add RFC-0903-B1 §request_id to references + impl notes); fix C2 (document uuid::Uuid::from_bytes undefined behavior on invalid bytes); fix H1 (add blob_32_to_hex must-not-be-used-for-request_id constraint); fix M1 (document panic vs silent failure asymmetry); fix M2 (add wrong-data-path note); fix L1 (add uuid crate dependency); fix L2 (clarify request_id is raw SHA256 binary, not hex) |

@@ -2,7 +2,7 @@
 
 ## Status
 
-Open (v2)
+Open (v3)
 
 ## RFC
 
@@ -37,6 +37,7 @@ Migrate `api_keys` and `teams` tables to BLOB storage for UUID primary/foreign k
 - After migration: `row.get::<_, Vec<u8>>("key_id")` → convert to `uuid::Uuid::from_bytes`
 - `lookup_by_hash()` in `storage.rs` uses `key_hash` (BYTEA, unchanged) — not affected by this migration
 - `create_key()` in `storage.rs` MUST be updated to use `uuid_to_blob_16()` for key_id
+- `lookup_by_key_id()` in `storage.rs` MUST be updated to use BLOB helpers for key_id (H1)
 - `get_team()` and `create_team()` in `storage.rs` MUST be updated to use BLOB helpers for team_id
 - **RFC-0903-C1 draft dependency (M3):** RFC-0903-C1 (currently Draft) must reach Accepted status before this migration is considered stable. Monitor RFC-0903-C1 for changes — if the RFC is amended before acceptance, this mission's schema targets may need adjustment.
 
@@ -45,6 +46,10 @@ Migrate `api_keys` and `teams` tables to BLOB storage for UUID primary/foreign k
 - RFC-0903-C1 §Schema Amendments (api_keys.key_id, api_keys.team_id, teams.team_id → BLOB(16))
 - RFC-0909 §Relationship to RFC-0903 (FK consistency requirement)
 - RFC-0909 §spend_ledger FK constraints (key_id → api_keys.key_id, team_id → teams.team_id)
+
+## Dependencies
+
+- `uuid = "1.x"` (already required from Mission 0909-c BLOB helpers)
 
 ## Complexity
 
@@ -60,4 +65,5 @@ High — requires migration of hot tables (high-frequency reads/writes) and all 
 
 | Version | Date | Changes |
 |---------|------|---------|
+| v3 | 2026-04-20 | Round 2 adversarial review fixes: fix H1 (add lookup_by_key_id to storage functions to update); fix M1 (add Dependencies section for consistency) |
 | v2 | 2026-04-20 | Round 1 adversarial review fixes: fix C1 (document PRIMARY KEY ambiguity for api_keys.key_id); fix C2 (add all unchanged api_keys columns to AC); fix C3 (add all unchanged teams columns to AC); fix H1 (add pre-existing idx_api_keys_expires); fix H2 (add pre-existing idx_api_keys_key_hash_unique); fix H3 (reference 5-step shadow column procedure from mission 0909-g); fix M1 (clarify idx_api_keys_team_id recreate after rename); fix M2 (clarify idx_teams_team_id recreate after rename); fix M3 (add RFC-0903-C1 draft dependency risk note); add L1 (add changelog) |

@@ -2,7 +2,7 @@
 
 ## Status
 
-Open (v5)
+Open (v6)
 
 ## RFC
 
@@ -10,7 +10,7 @@ RFC-0909 v59 (Economics): Deterministic Quota Accounting
 
 ## Summary
 
-Implement BLOB storage boundary helper functions for converting between application-layer types (String, uuid::Uuid) and database-layer raw bytes (BLOB). Required for RFC-0903-B1/B1 compliance in SpendEvent storage.
+Implement BLOB storage boundary helper functions for converting between application-layer types (String, uuid::Uuid) and database-layer raw bytes (BLOB). Required for RFC-0903-B1/C1 compliance in SpendEvent storage.
 
 ## Acceptance Criteria
 
@@ -19,7 +19,7 @@ Implement BLOB storage boundary helper functions for converting between applicat
 - [ ] `uuid_to_blob_16(uuid: &uuid::Uuid) -> [u8; 16]` — Uuid → raw 16 bytes for key_id BLOB(16) storage
 - [ ] `blob_16_to_uuid(blob: &[u8; 16]) -> uuid::Uuid` — raw 16 bytes → Uuid from key_id BLOB(16) retrieval. **Important:** `uuid::Uuid::from_bytes` silently accepts any 16-byte sequence without validating RFC 4122 version or variant bits — the resulting Uuid may be structurally invalid per the UUID spec, but no Rust undefined behavior occurs (this is safe Rust). Per RFC-0903-B1: "UUIDs with invalid version or variant bits MUST be rejected." Implement validation before construction, or document that downstream validation will catch invalid UUIDs.
 - [ ] All functions are `#[inline]` for zero-cost abstraction
-- [ ] `hex_to_blob_32` uses `hex::decode` and panics on invalid hex (implementation bug, not user input)
+- [ ] `hex_to_blob_32` uses `hex::decode` and panics on invalid hex or wrong length — must be exactly 64 hex chars (32 bytes); both conditions are implementation bugs, not user input
 
 ## Implementation Notes
 
@@ -59,6 +59,7 @@ Low — pure conversion functions with direct byte manipulation
 
 | Version | Date | Changes |
 |---------|------|---------|
+| v6 | 2026-04-20 | Round 5 adversarial review fixes: fix L1 (Summary typo "RFC-0903-B1/B1" → "RFC-0903-B1/C1"); fix L2 (AC panic condition: add wrong-length case — hex::decode succeeds on valid-but-short hex, try_into fails; now reads "panics on invalid hex or wrong length, must be exactly 64 hex chars") |
 | v5 | 2026-04-20 | Round 4 adversarial review fixes: fix M1 (replace incorrect "undefined behavior" Rust terminology with accurate "silently accepts any 16-byte sequence without validating RFC 4122 version or variant bits") |
 | v4 | 2026-04-20 | Round 3 adversarial review fixes: fix M1 (Dependencies section now correctly placed before Reference) |
 | v3 | 2026-04-20 | Round 2 adversarial review fixes: fix M1 (remove redundant AC line 23 — function signature already guarantees 16 bytes); fix L1 (move Dependencies before Reference for consistency with other missions) |

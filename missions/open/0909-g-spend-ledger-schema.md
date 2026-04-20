@@ -2,7 +2,7 @@
 
 ## Status
 
-Open (v5)
+Open (v6)
 
 ## RFC
 
@@ -29,6 +29,7 @@ Migrate `spend_ledger` table schema from TEXT storage to BLOB storage per RFC-09
 - [ ] Storage boundary helpers: use `hex_to_blob_32()` / `blob_32_to_hex()` for event_id at INSERT/SELECT
 - [ ] Storage boundary helpers: use `uuid_to_blob_16()` / `blob_16_to_uuid()` for key_id at INSERT/SELECT
 - [ ] Storage boundary helpers: use `uuid_to_blob_16()` / `blob_16_to_uuid()` for team_id at INSERT/SELECT
+- [ ] Storage boundary: use `tokenizer_version_to_id()` (Mission 0909-f) to produce BLOB(16) for tokenizer_id at INSERT; retrieve as `[u8; 16]` and pass to `tokenizer_id_to_version()` (Mission 0909-f) at SELECT
 - [ ] `token_source` CHECK constraint unchanged: `'provider_usage', 'canonical_tokenizer'`
 - [ ] `UNIQUE(key_id, request_id)` constraint maintained
 - [ ] All existing tests pass after migration
@@ -49,7 +50,8 @@ Migrate `spend_ledger` table schema from TEXT storage to BLOB storage per RFC-09
 - Existing `record_spend_ledger()` and `record_spend_ledger_with_team()` in `storage.rs` MUST be updated to use BLOB helpers
 - FK constraints for `tokenizer_id` reference the `tokenizers` table (defined in RFC-0910 schema)
 - FK constraints for `key_id` reference `api_keys(key_id)` — api_keys.key_id must also be BLOB(16) per RFC-0903-C1 (see Mission 0909-h)
-- **Post-migration verification (M3):** After copying data but before dropping old columns, verify: `SELECT hex_to_blob_32(event_id) == original_event_id_string` for a sample. Run existing integration tests only after confirmed data integrity.
+- **Post-migration verification (M3):** After copying data but before dropping old columns, fetch a migrated row in Rust and verify `blob_32_to_hex(event_id_blob) == original_event_id_text` for a sample. Run existing integration tests only after confirmed data integrity.
+- **request_id format verification (L2):** Before migrating, inspect a sample of old request_id TEXT values. If they appear as hex strings or human-readable text (not raw binary), the "type-cast only" instruction is wrong — the migration strategy must be revised to account for the actual encoding.
 
 ## Dependencies
 
@@ -78,6 +80,7 @@ High — requires careful data migration and FK consistency across tables
 
 | Version | Date | Changes |
 |---------|------|---------|
+| v6 | 2026-04-20 | Round 5 adversarial review fixes: fix M1 (add AC item for tokenizer_id storage boundary — tokenizer_version_to_id at INSERT, tokenizer_id_to_version at SELECT, referencing Mission 0909-f); fix L1 (post-migration verification M3: replace pseudo-SQL using Rust function name with correct Rust-side blob_32_to_hex verification pattern); fix L2 (add request_id format verification recommendation before migrating — type-cast assumption must be validated against actual old schema data) |
 | v5 | 2026-04-20 | Round 4 adversarial review fixes: fix M1 (add AC item for team_id storage boundary helpers — uuid_to_blob_16/blob_16_to_uuid required at INSERT/SELECT, parallel to key_id AC item); fix L1 (tokenizer_id migration: replace bytes[..16] slicing with explicit try_into and panic on wrong length — silent truncation risk documented) |
 | v4 | 2026-04-20 | Round 3 adversarial review fixes: fix L1 (add Dependencies section — hex and uuid crates used in migration but not previously listed) |
 | v3 | 2026-04-20 | Round 2 adversarial review fixes: fix M1 (clarify AC5 — pre-existing idx_spend_ledger_key_time is preserved, not added) |

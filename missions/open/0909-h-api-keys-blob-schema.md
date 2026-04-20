@@ -2,7 +2,7 @@
 
 ## Status
 
-Open (v5)
+Open (v6)
 
 ## RFC
 
@@ -16,7 +16,7 @@ Migrate `api_keys` and `teams` tables to BLOB storage for UUID primary/foreign k
 
 - [ ] `api_keys.key_id`: TEXT (UUID string) → BLOB(16) (raw UUID bytes, 16 bytes). **Note (C1):** RFC-0903-C1 defines `BLOB(16) NOT NULL` with no explicit PRIMARY KEY. Verify PRIMARY KEY constraint status — if required, add `PRIMARY KEY (key_id)` during migration.
 - [ ] `api_keys.team_id`: TEXT (UUID string, nullable) → BLOB(16) (raw UUID bytes, nullable)
-- [ ] `teams.team_id`: TEXT (UUID string) → BLOB(16) (raw UUID bytes)
+- [ ] `teams.team_id`: TEXT (UUID string) → BLOB(16) (raw UUID bytes). **Note:** RFC-0903-C1 does not explicitly state whether teams.team_id is PRIMARY KEY. Verify PRIMARY KEY constraint status — if required, preserve `PRIMARY KEY (team_id)` during migration (same ambiguity as api_keys.key_id Note C1).
 - [ ] Recreate `idx_api_keys_team_id` on `team_id` BLOB(16) after column rename (M1)
 - [ ] Recreate `idx_teams_team_id` on `team_id` BLOB(16) after column rename (M2)
 - [ ] Storage boundary helpers: use `uuid_to_blob_16()` / `blob_16_to_uuid()` for all UUID columns
@@ -30,7 +30,7 @@ Migrate `api_keys` and `teams` tables to BLOB storage for UUID primary/foreign k
 ## Implementation Notes
 
 - Location: `crates/quota-router-core/src/schema.rs`
-- Migration: shadow column pattern (same as Mission 0909-g). Follow the 5-step shadow column migration procedure defined in Mission 0909-g §Implementation Notes (H3): (1) Add new BLOB(16) columns with temporary names; (2) Copy data with `uuid_to_blob_16()` for UUID columns; (3) Drop old TEXT columns; (4) Rename new columns to original names; (5) Recreate indexes on new BLOB(16) columns.
+- Migration: shadow column pattern (same as Mission 0909-g). Follow the 5-step shadow column migration procedure defined in Mission 0909-g §Implementation Notes (H3): (1) Add new BLOB(16) columns with temporary names; (2) Copy data — for each non-NULL UUID TEXT value, parse with `uuid::Uuid::from_str(old_text).expect("valid UUID")` then call `uuid_to_blob_16(&parsed)`; leave NULL values as NULL (applies to nullable api_keys.team_id); (3) Drop old TEXT columns; (4) Rename new columns to original names; (5) Recreate indexes on new BLOB(16) columns.
 - `teams.team_id` is NOT NULL → always use `uuid_to_blob_16()` (non-nullable)
 - `api_keys.team_id` is nullable → use `Option<uuid::Uuid>` → `Option<[u8; 16]>` at storage boundary (via `option.map(|u| uuid_to_blob_16(&u))`); coerce to the stoolap BLOB parameter type at binding time
 - `api_keys.key_id` is NOT NULL → always use `uuid_to_blob_16()` (non-nullable)
@@ -65,6 +65,7 @@ High — requires migration of hot tables (high-frequency reads/writes) and all 
 
 | Version | Date | Changes |
 |---------|------|---------|
+| v6 | 2026-04-20 | Round 5 adversarial review fixes: fix L1 (add PRIMARY KEY ambiguity note to teams.team_id AC item, parallel to api_keys.key_id Note C1); fix L2 (migration step 2: add explicit NULL handling for nullable api_keys.team_id — leave NULL rows as NULL, only convert non-NULL values); fix L3 (migration step 2: add uuid::Uuid::from_str() parsing step before uuid_to_blob_16 — function takes &uuid::Uuid, not &str) |
 | v5 | 2026-04-20 | Round 4 adversarial review fixes: fix L1 (nullable team_id: Option<Vec<u8>> → Option<[u8; 16]> — matches uuid_to_blob_16 return type, avoids unnecessary heap allocation); fix L2 (add team_id retrieval pattern with try_into chain — same as key_id, prevents direct uuid::Uuid::from_bytes on Vec<u8> mistake) |
 | v4 | 2026-04-20 | Round 3 adversarial review fixes: fix L1 (clarify row.get pattern — Vec<u8> requires try_into before blob_16_to_uuid; direct uuid::Uuid::from_bytes on Vec<u8> is a type error) |
 | v3 | 2026-04-20 | Round 2 adversarial review fixes: fix H1 (add lookup_by_key_id to storage functions to update); fix M1 (add Dependencies section for consistency) |

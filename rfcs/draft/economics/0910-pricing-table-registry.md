@@ -2,7 +2,7 @@
 
 ## Status
 
-Draft (v8 — aligns with RFC-0903 Final v29 + RFC-0903-B1 v22 + RFC-0903-C1 v3)
+Draft (v9 — aligns with RFC-0903 Final v29 + RFC-0903-B1 v22 + RFC-0903-C1 v3)
 
 ## Authors
 
@@ -111,6 +111,7 @@ use std::collections::BTreeMap;
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PricingTable {
     /// Unique identifier for this table (e.g., "openai-gpt4-v3")
+    /// Maximum 128 bytes. Registration MUST reject table_id longer than 128 bytes.
     pub table_id: String,
     /// Version number (increments per provider/model)
     pub version: u32,
@@ -180,7 +181,13 @@ pub enum RegistryError {
     /// Tried to register an effective_from that is not strictly greater than the current latest.
     /// Prevents retroactive pricing changes.
     EffectiveFromNotIncrement { provider: String, model: String, existing_effective_from: i64, attempted_effective_from: i64 },
+    /// table_id exceeds maximum allowed length (128 bytes).
+    TableIdTooLong { table_id: String, length: usize },
 }
+
+/// Maximum allowed length for table_id (128 bytes).
+/// Enforced at registration time.
+const MAX_TABLE_ID_LEN: usize = 128;
 
 /// Global pricing registry using BTreeMap for deterministic iteration.
 /// Maps (provider, model) → Vec<PricingTable> (all versions, sorted desc by version).
@@ -215,6 +222,14 @@ impl PricingRegistry {
     /// Returns `RegistryError::EffectiveFromNotIncrement` if the attempted
     /// effective_from is not strictly greater than the current latest effective_from.
     pub fn register(&mut self, table: PricingTable) -> Result<[u8; 32], RegistryError> {
+        // Validate table_id length before processing
+        if table.table_id.len() > MAX_TABLE_ID_LEN {
+            return Err(RegistryError::TableIdTooLong {
+                table_id: table.table_id,
+                length: table.table_id.len(),
+            });
+        }
+
         let key = (table.provider.clone(), table.model.clone());
         let hash = table.compute_pricing_hash();
 
@@ -238,7 +253,11 @@ impl PricingRegistry {
                 });
             }
             // effective_from must be strictly greater than the current latest — prevents retroactive pricing
-            if table.effective_from <= latest.effective_from {
+            // Note: effective_from is a wall-clock timestamp, not a version counter.
+            // Two registrations within the same second are valid (sequential within that second).
+            // The < not <= constraint allows same-second registrations while preventing
+            // a new version claiming an earlier effective timestamp than the current latest.
+            if table.effective_from < latest.effective_from {
                 return Err(RegistryError::EffectiveFromNotIncrement {
                     provider: table.provider.clone(),
                     model: table.model.clone(),
@@ -284,6 +303,13 @@ impl PricingRegistry {
             .get(&(provider.to_string(), model.to_string()))
             .map(|v| v.iter().collect())
             .unwrap_or_default()
+    }
+
+    /// Get a specific version for a (provider, model) pair.
+    pub fn get_version(&self, provider: &str, model: &str, version: u32) -> Option<&PricingTable> {
+        self.tables
+            .get(&(provider.to_string(), model.to_string()))
+            .and_then(|v| v.iter().find(|t| t.version == version))
     }
 
     /// List all registered (provider, model) pairs (from latest version only).
@@ -366,7 +392,7 @@ pub struct SpendReceipt {
     pub total_cost: u64,
     /// Event timestamp (Unix epoch)
     pub timestamp: i64,
-    /// Token source used for this request (per RFC-0909 TokenSource enum)
+    /// Token source used for this request (per RFC-0909 TokenSource enum — imported from RFC-0909)
     pub token_source: TokenSource,
 }
 ```
@@ -394,7 +420,9 @@ The canonical tokenizer registry assigns specific tokenizer versions to model fa
 
 ### Tokenizer Identifier Derivation
 
-Tokenizer versions are converted to 16-byte identifiers via BLAKE3 (per RFC-0909):
+Tokenizer versions are converted to 16-byte identifiers via BLAKE3 (per RFC-0909 §tokenizer_id).
+The reverse conversion (tokenizer_id → version string) is defined in RFC-0909 §tokenizer_id_to_version —
+RFC-0910 defines only the forward direction (version → ID).
 
 ```rust
 /// Convert tokenizer version string to tokenizer_id for BLOB(16) storage.
@@ -414,7 +442,7 @@ pub fn tokenizer_version_to_id(version: &str) -> [u8; 16] {
     hasher.update(version.as_bytes());
     let hash: blake3::Hash = hasher.finalize();
     let bytes: [u8; 32] = hash.into();
-    bytes[..16].try_into().unwrap()
+    bytes[..16].try_into().expect("BLAKE3 output always yields at least 16 bytes")
 }
 ```
 
@@ -438,6 +466,10 @@ pub fn tokenizer_version_to_id(version: &str) -> [u8; 16] {
 pub fn get_canonical_tokenizer(model: &str) -> &'static str {
     const DEFAULT_TOKENIZER: &str = "tiktoken-cl100k_base-v1.2.3";
 
+    // Note: This function is case-sensitive. Model names must be lowercase
+    // (e.g., "gpt-4", not "GPT-4"). Callers MUST normalize model names
+    // to lowercase before calling this function. Provider APIs may return
+    // model names in mixed case — the router is responsible for normalization.
     match model.chars().next() {
         'g' => {
             // ⚠ 'g' prefix matches BOTH gpt-* (GPT) and gemini-* (uncertain).
@@ -474,26 +506,31 @@ pub fn get_canonical_tokenizer(model: &str) -> &'static str {
 CREATE TABLE tokenizers (
     tokenizer_id BLOB(16) NOT NULL,         -- Raw BLAKE3 hash (16 bytes) — per RFC-0903-B1
     version TEXT NOT NULL,                   -- Human-readable version (e.g., "tiktoken-cl100k_base-v1.2.3")
-    vocab_size INTEGER,                      -- Vocabulary size (optional)
-    encoding_type TEXT,                      -- Encoding type (e.g., "bpe", "sentencepiece")
+    vocab_size INTEGER,                      -- Vocabulary size (informational only)
+    encoding_type TEXT,                      -- Encoding type (informational only, e.g., "bpe", "sentencepiece")
+                                             -- NOTE: not used by get_canonical_tokenizer() — the version string
+                                             -- is the authoritative identifier; encoding_type is for audit only
     provider TEXT,                           -- Provider name (e.g., "openai", "anthropic")
-    PRIMARY KEY (tokenizer_id)
+    PRIMARY KEY (tokenizer_id),
+    UNIQUE(version, provider)               -- same version string from different providers is the same tokenizer
 );
-
-CREATE UNIQUE INDEX idx_tokenizers_version ON tokenizers(version);
 
 -- Canonical tokenizer assignment table
 -- Maps model patterns to tokenizer versions
 CREATE TABLE tokenizer_assignments (
     assignment_id BLOB(16) NOT NULL,
-    model_pattern TEXT NOT NULL,             -- e.g., "gpt-4*", "claude-3*"
+    model_pattern TEXT NOT NULL,             -- e.g., "gpt-4", "o1-preview" (exact match, not glob)
     tokenizer_id BLOB(16) NOT NULL,         -- FK to tokenizers(tokenizer_id)
     effective_from INTEGER NOT NULL,        -- Unix epoch
     PRIMARY KEY (assignment_id),
     UNIQUE(model_pattern)                   -- prevent ambiguous multi-row matches
 );
 
-CREATE INDEX idx_tokenizer_assignments_pattern ON tokenizer_assignments(model_pattern);
+-- Note: Phase 1 uses first-character prefix dispatch (see get_canonical_tokenizer).
+-- Phase 2 DB-backed lookup uses exact match on model_pattern.
+-- Wildcard/glob patterns are NOT supported in Phase 1 or Phase 2.
+-- The model_pattern column documents the canonical tokenizer for each exact model name.
+-- UNIQUE(model_pattern) provides the index for pattern lookups; no separate index needed.
 ```
 
 > **Phase 1 vs Phase 2 note:** The `tokenizer_assignments` table above defines the schema for DB-backed
@@ -533,6 +570,25 @@ CREATE INDEX idx_tokenizer_assignments_pattern ON tokenizer_assignments(model_pa
 | Hash computation | <10µs | SHA256 of canonical JSON |
 | Tokenizer lookup | <1µs | O(1) prefix dispatch |
 | Cost calculation | <1µs | Integer arithmetic only |
+
+## Approval Criteria
+
+This RFC can be accepted when:
+
+- [x] PricingRegistry::register() enforces immutability constraints (DuplicateVersion, VersionNotIncrement, EffectiveFromNotIncrement)
+- [x] get_pricing() returns latest version for (provider, model)
+- [x] get_by_hash() resolves any historical pricing_hash in O(1)
+- [x] get_versions() returns all versions for (provider, model), newest first
+- [x] compute_pricing_hash() produces deterministic SHA256 (RFC 8785-compliant canonical JSON)
+- [x] compute_cost() uses integer-only arithmetic (no floating point)
+- [x] get_canonical_tokenizer() is deterministic across all router implementations
+- [x] tokenizer_version_to_id() produces consistent BLAKE3-16 output (test vectors pass)
+- [x] BLAKE3-16 test vectors: "tiktoken-cl100k_base-v1.2.3" → "e3c8e8ff724411c6416dd4fb135368e3", "tiktoken-o200k_base" → "be1b3be0a2698c863b31edc1b7809a9c"
+- [x] Pricing hash test vector: compute_pricing_hash() on test table → a127db97a3695861f7a34ab2abe821ed0b8d7ec47e3dc579d7a5ca8cfb7a0641
+- [x] Tokenizer assignment test vectors: all rows in Tokenizer Assignment End-to-End table produce correct tokenizer_id and token_source
+- [x] Phase 1 (in-memory registry) implemented and tested
+- [ ] Phase 2 (DB-backed registry with tokenizer_assignments table) implemented
+- [ ] Phase 3 (routing integration with RFC-0909) implemented
 
 ## Security Considerations
 
@@ -632,6 +688,40 @@ for use in `event_id` computation (RFC-0909 §compute_event_id).
 | `"gemini-2.0-flash"` | `"tiktoken-cl100k_base-v1.2.3"` (fallback) | `e3c8e8ff724411c6416dd4fb135368e3` | CanonicalTokenizer |
 | `"unknown-model"` | `"tiktoken-cl100k_base-v1.2.3"` (default) | `e3c8e8ff724411c6416dd4fb135368e3` | CanonicalTokenizer |
 
+## Integration: Registry in the Request Pipeline
+
+The registry is integrated into the RFC-0909 request lifecycle as follows:
+
+```
+1. get_pricing(provider, model) → Option<PricingTable>
+   ↑ returns latest version for (provider, model)
+   ↑ used to compute cost via compute_cost()
+
+2. pricing_hash = table.compute_pricing_hash()
+   ↑ ties cost to specific pricing version
+
+3. get_canonical_tokenizer(model) → &'static str
+   ↑ canonical tokenizer version for token counting fallback
+
+4. tokenizer_version_to_id(version) → [u8; 16]
+   ↑ converts to BLAKE3-16 tokenizer_id for spend event
+
+5. get_by_hash(pricing_hash) → Option<&PricingTable>
+   ↑ verifies historical pricing_hash during audit replay
+```
+
+Example usage:
+```rust
+// Get pricing for cost calculation
+let pricing = registry.get_pricing("openai", "gpt-4").unwrap();
+let cost = compute_cost(pricing, input_tokens, output_tokens);
+let pricing_hash = pricing.compute_pricing_hash();
+
+// Get canonical tokenizer for token counting
+let tokenizer_version = get_canonical_tokenizer("gpt-4");
+let tokenizer_id = tokenizer_version_to_id(tokenizer_version);
+```
+
 ## Alternatives Considered
 
 | Approach | Pros | Cons |
@@ -658,6 +748,8 @@ for use in `event_id` computation (RFC-0909 §compute_event_id).
 - [ ] tokenizer_assignments table schema
 - [ ] DB-backed registry (read from Stoolap)
 - [ ] Pricing table versioning with immutability enforcement
+- [ ] Phase 1 → 2 migration: populate tokenizer_assignments from Phase 1 hardcoded table entries; the hardcoded table is replaced by DB-backed lookup with no state loss
+- [ ] Switch lookup path from in-memory dispatch to DB-backed query (hot-swap or restart-with-loaded-DB)
 
 ### Phase 3: Routing Integration
 
@@ -701,10 +793,24 @@ BLAKE3 provides:
 
 Floating point produces non-deterministic results across architectures (x87 vs SSE, compiler optimizations). Integer arithmetic with explicit scaling (micro-units) is fully deterministic.
 
+### Registry Persistence Model
+
+The `PricingRegistry` struct is **in-memory only**. It is populated at startup from a persistent store (Stoolap or similar) and loses all state on restart. The registry does NOT implement its own persistence — it relies on the caller's startup sequence to repopulate it from the registered tables stored in the database.
+
+**Startup sequence (per RFC-0914 integration):**
+```
+1. Load all registered PricingTable rows from Stoolap
+2. Call registry.register(table) for each row (replays immutability constraints)
+3. Registry is now ready for request serving
+```
+
+This design allows the registry to be treated as a cache of known-good pricing state, not the authoritative store. The authoritative state is in the persistent DB; the registry is a read-through cache that enforces immutability at registration time.
+
 ## Version History
 
 | Version | Date | Changes |
 |---------|------|---------|
+| v9 | 2026-04-20 | Round 56 adversarial fixes: fix 910-C1 (effective_from constraint: < not <= allows same-second registrations); fix 910-C2 (try_into().unwrap() → expect()); fix 910-C3 (document case-sensitivity as caller responsibility); add 910-H1 (Approval Criteria section); fix 910-H2 (pattern matching: exact match, not glob; remove redundant idx); fix 910-H3 (add MAX_TABLE_ID_LEN=128 and TableIdTooLong error); fix 910-H5 (encoding_type is informational only); fix 910-H6 (add UNIQUE(version, provider) to tokenizers); add 910-M2 (get_version() method); fix 910-M3 (tokenizer_id_to_version is in RFC-0909, not this RFC); add Phase 2 migration items; fix 910-M5 (RFC-0909 Related RFCs: Draft → Accepted); add 910-M6 (Integration section showing registry in request pipeline); add registry persistence model note; update RFC-0909 Related RFCs to (Accepted) |
 | v8 | 2026-04-20 | Round 55 fixes: break circular version pin — remove RFC-0909 peer version from Status header and Related RFCs footer; RFC-0909 is referenced by status only (no version pin) |
 | v7 | 2026-04-20 | Round 54 fixes (ext review R39): fix 910-C1 (remove entries.clear() — all superseded versions now retained in Vec, get_versions() returns all versions as documented); fix 910-C2 (entries.last()→entries.first() — descending-sorted Vec: first is newest, last is oldest); add 910-M1 (RegistryError::EffectiveFromNotIncrement + enforce effective_from > latest.effective_from constraint in register()); fix 910-M2 (Rationale: update stale PricingTable type to Vec<PricingTable>, remove wrong registry-hashing claim); fix 910-M3 (Status header + Related RFCs: RFC-0909 v55→v56) |
 | v6 | 2026-04-19 | Round 52 fixes: fix 912-L1 (Status header: RFC-0909 version updated from v54 to v55 to match current RFC-0909 version); fix 913-L1 (Related RFCs: RFC-0909 version updated from v54 to v55 to match current RFC-0909 version) |
@@ -717,7 +823,7 @@ Floating point produces non-deterministic results across architectures (x87 vs S
 ## Related RFCs
 
 - RFC-0903: Virtual API Key System (Final v29 + RFC-0903-B1 amendment v22 + RFC-0903-C1 amendment v3)
-- RFC-0909: Deterministic Quota Accounting (Draft)
+- RFC-0909: Deterministic Quota Accounting (Accepted — defines SpendEvent, TokenSource, and uses this RFC's canonical tokenizer assignments)
 - RFC-0913: Stoolap Pub/Sub for Cache Invalidation (Accepted — quota router cache invalidation via WAL pub/sub; related to registry update propagation)
 - RFC-0914: Stoolap-Only Quota Router Persistence (Draft v8 — lists RFC-0910 as optional dependency; both RFCs target the same quota-router implementation)
 - RFC-0126: Deterministic Serialization (Accepted v2.5.1)

@@ -10,6 +10,7 @@ pub use models::{
 use hmac_sha256::HMAC;
 use rand::Rng;
 use sha2::{Digest, Sha256};
+use std::collections::BTreeMap;
 use std::sync::OnceLock;
 
 /// Default server secret for key hashing (fallback)
@@ -181,6 +182,41 @@ pub fn compute_cost(pricing: &PricingModel, input_tokens: u32, output_tokens: u3
     // saturating_add: single-request overflow is impossible (>1.8×10¹⁹ tokens required)
     // This differs from record_spend budget accumulation which uses checked arithmetic.
     prompt_cost.saturating_add(completion_cost)
+}
+
+/// Reconstruct per-key spend aggregates from an ordered slice of SpendEvents.
+///
+/// This function is deterministic: the same events always produce the same aggregates.
+/// Used for audit, historical reconciliation, and budget state verification.
+///
+/// NOT for live quota enforcement — use `record_spend` for that (per RFC-0903 Final).
+///
+/// NOT for Merkle proof generation — use `build_merkle_tree` for that (Mission 0909-e).
+///
+/// # Arguments
+/// * `events` - Slice of SpendEvents to aggregate
+///
+/// Returns a BTreeMap of key_id (as String) → total accumulated cost in micro-units.
+/// BTreeMap provides deterministic iteration order (sorted by key).
+///
+/// # Sorting
+/// Events are sorted by event_id (hex string, ascending) for deterministic ordering.
+/// Note: the sort is required for audit/replay determinism, NOT because aggregation
+/// math requires it — SUM is order-independent.
+#[inline]
+pub fn replay_events(events: &[SpendEvent]) -> BTreeMap<String, u64> {
+    let mut sorted_events = events.to_vec();
+    sorted_events.sort_by(|a, b| a.event_id.cmp(&b.event_id));
+
+    let mut result: BTreeMap<String, u64> = BTreeMap::new();
+    for event in sorted_events {
+        let key = event.key_id.to_string();
+        result
+            .entry(key)
+            .and_modify(|v| *v = v.saturating_add(event.cost_amount))
+            .or_insert(event.cost_amount);
+    }
+    result
 }
 
 /// Maximum keys per team (per RFC-0903 §Maximum Key Limits)
@@ -1033,5 +1069,146 @@ mod blob_helpers_tests {
         let blob = [0xffu8; 16];
         let uuid = blob_16_to_uuid(&blob);
         assert_eq!(uuid.as_bytes(), &[0xffu8; 16]);
+    }
+}
+
+#[cfg(test)]
+mod replay_events_tests {
+    use super::*;
+
+    fn make_event(event_id: &str, key_id: &str, cost: u64) -> SpendEvent {
+        SpendEvent {
+            event_id: event_id.to_string(),
+            request_id: "req-001".to_string(),
+            key_id: uuid::Uuid::parse_str(key_id).unwrap(),
+            team_id: None,
+            provider: "openai".to_string(),
+            model: "gpt-4".to_string(),
+            input_tokens: 100,
+            output_tokens: 50,
+            cost_amount: cost,
+            pricing_hash: [0u8; 32],
+            token_source: TokenSource::ProviderUsage,
+            tokenizer_version: None,
+            provider_usage_json: None,
+            timestamp: 0,
+        }
+    }
+
+    #[test]
+    fn test_replay_events_empty() {
+        let events: &[SpendEvent] = &[];
+        let result = replay_events(events);
+        assert!(result.is_empty());
+    }
+
+    #[test]
+    fn test_replay_events_single_key_single_event() {
+        let events = [make_event(
+            "0000000000000000000000000000000000000000000000000000000000000001",
+            "550e8400-e29b-41d4-a716-446655440000",
+            1000,
+        )];
+        let result = replay_events(&events);
+        assert_eq!(result.len(), 1);
+        assert_eq!(
+            result.get("550e8400-e29b-41d4-a716-446655440000"),
+            Some(&1000)
+        );
+    }
+
+    #[test]
+    fn test_replay_events_single_key_multiple_events() {
+        let events = [
+            make_event(
+                "0000000000000000000000000000000000000000000000000000000000000001",
+                "550e8400-e29b-41d4-a716-446655440000",
+                1000,
+            ),
+            make_event(
+                "0000000000000000000000000000000000000000000000000000000000000002",
+                "550e8400-e29b-41d4-a716-446655440000",
+                2000,
+            ),
+        ];
+        let result = replay_events(&events);
+        assert_eq!(result.len(), 1);
+        assert_eq!(
+            result.get("550e8400-e29b-41d4-a716-446655440000"),
+            Some(&3000)
+        );
+    }
+
+    #[test]
+    fn test_replay_events_multiple_keys() {
+        let events = [
+            make_event(
+                "0000000000000000000000000000000000000000000000000000000000000001",
+                "550e8400-e29b-41d4-a716-446655440000",
+                1000,
+            ),
+            make_event(
+                "0000000000000000000000000000000000000000000000000000000000000002",
+                "660e8400-e29b-41d4-a716-446655440001",
+                3000,
+            ),
+        ];
+        let result = replay_events(&events);
+        assert_eq!(result.len(), 2);
+        assert_eq!(
+            result.get("550e8400-e29b-41d4-a716-446655440000"),
+            Some(&1000)
+        );
+        assert_eq!(
+            result.get("660e8400-e29b-41d4-a716-446655440001"),
+            Some(&3000)
+        );
+    }
+
+    #[test]
+    fn test_replay_events_deterministic_sort() {
+        // Same events in reverse order — replay_events should produce identical result
+        let events_asc = [
+            make_event(
+                "0000000000000000000000000000000000000000000000000000000000000001",
+                "550e8400-e29b-41d4-a716-446655440000",
+                1000,
+            ),
+            make_event(
+                "0000000000000000000000000000000000000000000000000000000000000002",
+                "660e8400-e29b-41d4-a716-446655440001",
+                2000,
+            ),
+        ];
+        let events_desc = [
+            make_event(
+                "0000000000000000000000000000000000000000000000000000000000000002",
+                "660e8400-e29b-41d4-a716-446655440001",
+                2000,
+            ),
+            make_event(
+                "0000000000000000000000000000000000000000000000000000000000000001",
+                "550e8400-e29b-41d4-a716-446655440000",
+                1000,
+            ),
+        ];
+        let result_asc = replay_events(&events_asc);
+        let result_desc = replay_events(&events_desc);
+        assert_eq!(result_asc, result_desc);
+    }
+
+    #[test]
+    fn test_replay_events_saturating_add() {
+        // Verify saturating_add doesn't panic on large values
+        let events = [make_event(
+            "0000000000000000000000000000000000000000000000000000000000000001",
+            "550e8400-e29b-41d4-a716-446655440000",
+            u64::MAX,
+        )];
+        let result = replay_events(&events);
+        assert_eq!(
+            result.get("550e8400-e29b-41d4-a716-446655440000"),
+            Some(&u64::MAX)
+        );
     }
 }

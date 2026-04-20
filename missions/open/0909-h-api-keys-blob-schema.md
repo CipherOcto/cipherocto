@@ -2,7 +2,7 @@
 
 ## Status
 
-Open (v6)
+Open (v7)
 
 ## RFC
 
@@ -38,7 +38,7 @@ Migrate `api_keys` and `teams` tables to BLOB storage for UUID primary/foreign k
 - `lookup_by_hash()` in `storage.rs` uses `key_hash` (BYTEA, unchanged) — not affected by this migration
 - `create_key()` in `storage.rs` MUST be updated to use `uuid_to_blob_16()` for key_id
 - `lookup_by_key_id()` in `storage.rs` MUST be updated to use BLOB helpers for key_id (H1)
-- `get_team()` and `create_team()` in `storage.rs` MUST be updated to use BLOB helpers for team_id. Retrieval pattern: `row.get::<_, Vec<u8>>("team_id")` → `let bytes: [u8; 16] = raw.try_into().expect("team_id must be 16 bytes")` → `blob_16_to_uuid(&bytes)`. Same try_into chain as key_id — do NOT call `uuid::Uuid::from_bytes` directly on `Vec<u8>`.
+- `get_team()` and `create_team()` in `storage.rs` MUST be updated to use BLOB helpers for team_id. Creation: parse input string with `uuid::Uuid::from_str(&team_id_str).expect("valid UUID")` then call `uuid_to_blob_16(&parsed)`. Retrieval pattern: `row.get::<_, Vec<u8>>("team_id")` → `let bytes: [u8; 16] = raw.try_into().expect("team_id must be 16 bytes")` → `blob_16_to_uuid(&bytes)`. Same try_into chain as key_id — do NOT call `uuid::Uuid::from_bytes` directly on `Vec<u8>`.
 - **RFC-0903-C1 draft dependency (M3):** RFC-0903-C1 (currently Draft) must reach Accepted status before this migration is considered stable. Monitor RFC-0903-C1 for changes — if the RFC is amended before acceptance, this mission's schema targets may need adjustment.
 
 ## Reference
@@ -65,6 +65,7 @@ High — requires migration of hot tables (high-frequency reads/writes) and all 
 
 | Version | Date | Changes |
 |---------|------|---------|
+| v7 | 2026-04-20 | Round 6 adversarial review fixes: fix L1 (create_team: add explicit Uuid::from_str() parsing step before uuid_to_blob_16 — same as key_id, prevents passing raw string directly to helper) |
 | v6 | 2026-04-20 | Round 5 adversarial review fixes: fix L1 (add PRIMARY KEY ambiguity note to teams.team_id AC item, parallel to api_keys.key_id Note C1); fix L2 (migration step 2: add explicit NULL handling for nullable api_keys.team_id — leave NULL rows as NULL, only convert non-NULL values); fix L3 (migration step 2: add uuid::Uuid::from_str() parsing step before uuid_to_blob_16 — function takes &uuid::Uuid, not &str) |
 | v5 | 2026-04-20 | Round 4 adversarial review fixes: fix L1 (nullable team_id: Option<Vec<u8>> → Option<[u8; 16]> — matches uuid_to_blob_16 return type, avoids unnecessary heap allocation); fix L2 (add team_id retrieval pattern with try_into chain — same as key_id, prevents direct uuid::Uuid::from_bytes on Vec<u8> mistake) |
 | v4 | 2026-04-20 | Round 3 adversarial review fixes: fix L1 (clarify row.get pattern — Vec<u8> requires try_into before blob_16_to_uuid; direct uuid::Uuid::from_bytes on Vec<u8> is a type error) |

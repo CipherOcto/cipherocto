@@ -49,6 +49,53 @@ pub fn generate_key_string() -> String {
     format!("sk-qr-{}", hex_string)
 }
 
+// =============================================================================
+// BLOB Storage Boundary Helpers
+// =============================================================================
+// These functions are the storage boundary — they should be called ONLY at the
+// INSERT/SELECT boundary, not inside business logic.
+
+/// Convert a 64-char hex string to 32 raw bytes for event_id BLOB(32) storage.
+///
+/// Panics if the input is not exactly 64 hex chars (32 bytes).
+/// Invalid hex or wrong length are both implementation bugs, not user input.
+#[inline]
+pub fn hex_to_blob_32(hex_str: &str) -> [u8; 32] {
+    let bytes = hex::decode(hex_str).expect("invalid hex in event_id");
+    bytes
+        .try_into()
+        .expect("event_id hex must be exactly 64 chars (32 bytes)")
+}
+
+/// Convert 32 raw bytes to a 64-char hex string for event_id API responses.
+///
+/// **Critical:** This function does NOT apply to request_id, which is stored
+/// as raw binary BLOB(32), not hex. Never use `blob_32_to_hex` on request_id data.
+#[inline]
+pub fn blob_32_to_hex(blob: &[u8; 32]) -> String {
+    hex::encode(blob)
+}
+
+/// Convert a Uuid to 16 raw bytes for key_id/team_id BLOB(16) storage.
+#[inline]
+pub fn uuid_to_blob_16(uuid: &uuid::Uuid) -> [u8; 16] {
+    *uuid.as_bytes()
+}
+
+/// Convert 16 raw bytes from key_id/team_id BLOB(16) retrieval to a Uuid.
+///
+/// **Important:** `uuid::Uuid::from_bytes` silently accepts any 16-byte sequence
+/// without validating RFC 4122 version or variant bits — the resulting Uuid may
+/// be structurally invalid per the UUID spec, but no Rust undefined behavior
+/// occurs (this is safe Rust). Per RFC-0903-B1: "UUIDs with invalid version
+/// or variant bits MUST be rejected." Downstream validation will catch invalid UUIDs.
+#[inline]
+pub fn blob_16_to_uuid(blob: &[u8; 16]) -> uuid::Uuid {
+    // SAFETY: from_bytes is safe Rust — it never causes undefined behavior.
+    // Invalid UUIDs (bad version/variant) are caught by downstream validation.
+    uuid::Uuid::from_bytes(*blob)
+}
+
 /// Compute deterministic event_id for a spend event.
 #[allow(clippy::too_many_arguments)]
 ///
@@ -903,5 +950,88 @@ mod compute_cost_tests {
         // 1M input * 30_000 / 1000 = 30_000_000; 1M output * 60_000 / 1000 = 60_000_000
         // total = 90_000_000 micro-units
         assert_eq!(compute_cost(&pricing, 1_000_000, 1_000_000), 90_000_000);
+    }
+}
+
+#[cfg(test)]
+mod blob_helpers_tests {
+    use super::*;
+
+    #[test]
+    fn test_hex_to_blob_32_valid() {
+        let hex = "00112233445566778899aabbccddeeff00112233445566778899aabbccddeeff";
+        let blob = hex_to_blob_32(hex);
+        assert_eq!(blob.len(), 32);
+        assert_eq!(blob[0], 0x00);
+        assert_eq!(blob[1], 0x11);
+        assert_eq!(blob[31], 0xff);
+    }
+
+    #[test]
+    fn test_blob_32_to_hex_roundtrip() {
+        let original = "00112233445566778899aabbccddeeff00112233445566778899aabbccddeeff";
+        let blob = hex_to_blob_32(original);
+        let roundtripped = blob_32_to_hex(&blob);
+        assert_eq!(roundtripped, original);
+    }
+
+    #[test]
+    fn test_blob_32_to_hex_all_zeros() {
+        let blob = [0u8; 32];
+        let hex = blob_32_to_hex(&blob);
+        assert_eq!(hex.len(), 64);
+        assert!(hex.chars().all(|c| c == '0'));
+    }
+
+    #[test]
+    fn test_blob_32_to_hex_all_ff() {
+        let blob = [0xffu8; 32];
+        let hex = blob_32_to_hex(&blob);
+        assert_eq!(hex.len(), 64);
+        assert!(hex.chars().all(|c| c == 'f'));
+    }
+
+    #[test]
+    #[should_panic(expected = "invalid hex in event_id")]
+    fn test_hex_to_blob_32_invalid_hex_panics() {
+        hex_to_blob_32("not_valid_hex!");
+    }
+
+    #[test]
+    #[should_panic(expected = "event_id hex must be exactly 64 chars")]
+    fn test_hex_to_blob_32_wrong_length_panics() {
+        // 60 chars, not 64 — valid hex but wrong byte length
+        hex_to_blob_32("00112233445566778899aabbccddeeff00112233445566778899aabbccddee");
+    }
+
+    #[test]
+    fn test_uuid_to_blob_16_roundtrip() {
+        let uuid = uuid::Uuid::parse_str("550e8400-e29b-41d4-a716-446655440000").unwrap();
+        let blob = uuid_to_blob_16(&uuid);
+        assert_eq!(blob.len(), 16);
+        let roundtripped = blob_16_to_uuid(&blob);
+        assert_eq!(roundtripped, uuid);
+    }
+
+    #[test]
+    fn test_blob_16_to_uuid_from_raw_bytes() {
+        let uuid = uuid::Uuid::parse_str("660e8400-e29b-41d4-a716-446655440001").unwrap();
+        let blob = uuid_to_blob_16(&uuid);
+        let result = blob_16_to_uuid(&blob);
+        assert_eq!(result, uuid);
+    }
+
+    #[test]
+    fn test_blob_16_to_uuid_all_zeros() {
+        let blob = [0u8; 16];
+        let uuid = blob_16_to_uuid(&blob);
+        assert_eq!(uuid.as_bytes(), &[0u8; 16]);
+    }
+
+    #[test]
+    fn test_blob_16_to_uuid_all_ff() {
+        let blob = [0xffu8; 16];
+        let uuid = blob_16_to_uuid(&blob);
+        assert_eq!(uuid.as_bytes(), &[0xffu8; 16]);
     }
 }

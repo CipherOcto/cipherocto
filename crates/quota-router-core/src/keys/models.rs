@@ -195,3 +195,16 @@ pub struct RevokeKeyRequest {
     pub revoked_by: Option<String>,
     pub reason: Option<String>,
 }
+
+/// Pricing model for cost computation per RFC-0909 §PricingModel.
+///
+/// Contains per-token micro-unit pricing. TOKEN_SCALE = 1000 (micro-units per token).
+/// Truncation error is bounded at <2 micro-units per event.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PricingModel {
+    pub model_name: String,
+    /// Prompt cost per 1000 tokens, in micro-units.
+    pub prompt_cost_per_1k: u64,
+    /// Completion cost per 1000 tokens, in micro-units.
+    pub completion_cost_per_1k: u64,
+}

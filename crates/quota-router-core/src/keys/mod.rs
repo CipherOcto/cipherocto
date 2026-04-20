@@ -4,7 +4,7 @@ pub mod models;
 pub use errors::KeyError;
 pub use models::{
     ApiKey, CreateTeamRequest, GenerateKeyRequest, GenerateKeyResponse, KeySpend, KeyType,
-    KeyUpdates, RevokeKeyRequest, SpendEvent, Team, TokenSource, UpdateTeamRequest,
+    KeyUpdates, PricingModel, RevokeKeyRequest, SpendEvent, Team, TokenSource, UpdateTeamRequest,
 };
 
 use hmac_sha256::HMAC;
@@ -102,6 +102,38 @@ pub fn validate_request_id(request_id: &str) -> Result<(), KeyError> {
     } else {
         Err(KeyError::InvalidFormat)
     }
+}
+
+/// Compute total cost in micro-units for a request using integer-only arithmetic.
+///
+/// Uses the formula: cost = (input_tokens * prompt_cost_per_1k / 1000)
+///                        + (output_tokens * completion_cost_per_1k / 1000)
+///
+/// TOKEN_SCALE = 1000 (micro-units per token). Truncation error is bounded
+/// at <2 micro-units per event (truncation occurs when cost < 0.5 micro-units
+/// per step, which is effectively free).
+///
+/// This function is NOT a method — it is a standalone function per RFC-0909.
+///
+/// # Arguments
+/// * `pricing` - PricingModel containing per-1k token pricing in micro-units
+/// * `input_tokens` - Number of input tokens
+/// * `output_tokens` - Number of output tokens
+///
+/// Returns total cost in micro-units.
+#[inline]
+pub fn compute_cost(pricing: &PricingModel, input_tokens: u32, output_tokens: u32) -> u64 {
+    // Two-step integer computation matching RFC-0909 pseudocode structure.
+    // Division is integer division — truncates toward zero.
+    let prompt_cost = (input_tokens as u64)
+        .saturating_mul(pricing.prompt_cost_per_1k)
+        .saturating_div(1000);
+    let completion_cost = (output_tokens as u64)
+        .saturating_mul(pricing.completion_cost_per_1k)
+        .saturating_div(1000);
+    // saturating_add: single-request overflow is impossible (>1.8×10¹⁹ tokens required)
+    // This differs from record_spend budget accumulation which uses checked arithmetic.
+    prompt_cost.saturating_add(completion_cost)
 }
 
 /// Maximum keys per team (per RFC-0903 §Maximum Key Limits)
@@ -776,5 +808,68 @@ mod compute_event_id_tests {
     #[test]
     fn test_validate_request_id_boundary_1025_rejected() {
         assert!(validate_request_id(&"x".repeat(1025)).is_err());
+    }
+}
+
+#[cfg(test)]
+mod compute_cost_tests {
+    use super::*;
+
+    /// Test vector from RFC-0909 §compute_cost:
+    /// prompt_cost_per_1k = 30_000, completion_cost_per_1k = 60_000
+    /// input_tokens = 100, output_tokens = 50
+    /// Expected: (100 * 30_000 / 1000) + (50 * 60_000 / 1000) = 3000 + 3000 = 6000
+    #[test]
+    fn test_compute_cost_tv1() {
+        let pricing = PricingModel {
+            model_name: "test".into(),
+            prompt_cost_per_1k: 30_000,
+            completion_cost_per_1k: 60_000,
+        };
+        assert_eq!(compute_cost(&pricing, 100, 50), 6000);
+    }
+
+    #[test]
+    fn test_compute_cost_zero_tokens() {
+        let pricing = PricingModel {
+            model_name: "test".into(),
+            prompt_cost_per_1k: 30_000,
+            completion_cost_per_1k: 60_000,
+        };
+        assert_eq!(compute_cost(&pricing, 0, 0), 0);
+    }
+
+    #[test]
+    fn test_compute_cost_input_only() {
+        let pricing = PricingModel {
+            model_name: "test".into(),
+            prompt_cost_per_1k: 30_000,
+            completion_cost_per_1k: 60_000,
+        };
+        // 1000 tokens * 30_000 / 1000 = 30_000
+        assert_eq!(compute_cost(&pricing, 1000, 0), 30_000);
+    }
+
+    #[test]
+    fn test_compute_cost_output_only() {
+        let pricing = PricingModel {
+            model_name: "test".into(),
+            prompt_cost_per_1k: 30_000,
+            completion_cost_per_1k: 60_000,
+        };
+        // 1000 tokens * 60_000 / 1000 = 60_000
+        assert_eq!(compute_cost(&pricing, 0, 1000), 60_000);
+    }
+
+    #[test]
+    fn test_compute_cost_large_tokens() {
+        let pricing = PricingModel {
+            model_name: "test".into(),
+            prompt_cost_per_1k: 30_000,
+            completion_cost_per_1k: 60_000,
+        };
+        // 1M input * 30_000 / 1000 = 30_000_000; 1M output * 60_000 / 1000 = 60_000_000
+        // total = 90_000_000 micro-units
+        assert_eq!(compute_cost(&pricing, 1_000_000, 1_000_000), 90_000_000);
     }
 }

@@ -1,7 +1,7 @@
 // Key validation middleware - validates API keys from HTTP requests
 
 use crate::key_rate_limiter::RateLimiterStore;
-use crate::keys::{validate_key, ApiKey, KeyError};
+use crate::keys::{validate_key, ApiKey, KeyError, SpendEvent, TokenSource};
 use crate::KeyStorage;
 use http;
 use std::sync::Arc;
@@ -122,6 +122,70 @@ impl<S: KeyStorage> KeyMiddleware<S> {
     /// Record spend for a key after a request
     pub fn record_spend(&self, key_id: &str, amount: i64) -> Result<(), KeyError> {
         self.storage.record_spend(key_id, amount)
+    }
+
+    /// Process an LLM response and record the spend event to the ledger.
+    ///
+    /// Validates request_id, computes the deterministic event_id, and records
+    /// to spend_ledger. This is called after receiving the provider response.
+    ///
+    /// Returns the computed event_id on success.
+    #[allow(clippy::too_many_arguments)]
+    pub fn process_response(
+        &self,
+        request_id: &str,
+        key_id: uuid::Uuid,
+        team_id: Option<String>,
+        provider: &str,
+        model: &str,
+        input_tokens: u32,
+        output_tokens: u32,
+        cost_amount: u64,
+        pricing_hash: [u8; 32],
+        token_source: TokenSource,
+        tokenizer_version: Option<String>,
+        provider_usage_json: Option<String>,
+    ) -> Result<String, KeyError> {
+        // Validate request_id first — must be 1..=1024 bytes
+        crate::keys::validate_request_id(request_id)?;
+
+        // Compute deterministic event_id
+        let event_id = crate::keys::compute_event_id(
+            request_id,
+            &key_id,
+            provider,
+            model,
+            input_tokens,
+            output_tokens,
+            &pricing_hash,
+            token_source,
+        );
+
+        // Build the SpendEvent
+        let event = SpendEvent {
+            event_id: event_id.clone(),
+            request_id: request_id.to_string(),
+            key_id,
+            team_id,
+            provider: provider.to_string(),
+            model: model.to_string(),
+            input_tokens,
+            output_tokens,
+            cost_amount,
+            pricing_hash,
+            token_source,
+            tokenizer_version,
+            provider_usage_json,
+            timestamp: std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_secs() as i64,
+        };
+
+        // Record to the ledger
+        self.storage.record_spend_ledger(&event)?;
+
+        Ok(event_id)
     }
 
     /// Check rate limits for key (RPM and TPM) using TokenBucket algorithm.

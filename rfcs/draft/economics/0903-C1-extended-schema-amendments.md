@@ -10,7 +10,7 @@ Draft (v4 — Amendment to RFC-0903 Final v30 + RFC-0903-B1 amendment v23)
 
 ## Summary
 
-This document specifies **additional amendments** to RFC-0903 Final v29 extending RFC-0903-B1. RFC-0903-B1 amended `spend_ledger` columns but explicitly left `api_keys` and `teams` unchanged. This created a type mismatch: `spend_ledger.key_id` is now `BLOB(16)` but `api_keys.key_id` remained `TEXT`, making the foreign key relationship `BLOB(16) → TEXT` — invalid in strict databases.
+This document specifies **additional amendments** to RFC-0903 Final v30 extending RFC-0903-B1. RFC-0903-B1 amended `spend_ledger` columns but explicitly left `api_keys` and `teams` unchanged. This created a type mismatch: `spend_ledger.key_id` is now `BLOB(16)` but `api_keys.key_id` remained `TEXT`, making the foreign key relationship `BLOB(16) → TEXT` — invalid in strict databases.
 
 RFC-0903-C1 completes the consolidation by amending `api_keys.key_id`, `api_keys.team_id`, and `teams.team_id` to `BLOB(16)`, ensuring all foreign key relationships are type-consistent.
 
@@ -19,7 +19,7 @@ This is a **formal amendment** to an Accepted/Final RFC. It does not supersede R
 ## Dependencies
 
 **Amends:**
-- RFC-0903 Final v29: Virtual API Key System
+- RFC-0903 Final v30: Virtual API Key System
 - RFC-0903-B1 (Schema Amendments to RFC-0903 Final) — extends BLOB consolidation to `api_keys` and `teams`
 
 **Required By:**
@@ -172,7 +172,9 @@ CREATE TABLE tokenizers (
     version TEXT NOT NULL,                   -- e.g., "tiktoken-cl100k_base-v1.2.3"
     vocab_size INTEGER,
     encoding_type TEXT,                      -- e.g., "bpe", "sentencepiece"
-    PRIMARY KEY (tokenizer_id)
+    provider TEXT,                           -- e.g., "openai", "anthropic" — per RFC-0910
+    PRIMARY KEY (tokenizer_id),
+    UNIQUE(version, provider)              -- Per RFC-0910 §Tokenizer Database Schema
 );
 
 CREATE TABLE spend_ledger (

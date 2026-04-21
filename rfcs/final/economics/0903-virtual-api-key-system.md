@@ -376,14 +376,14 @@ pub fn check_budget_soft_limit(db: &Database, key_id: &Uuid, estimated_max_cost:
     // Query returns BIGINT (i64); cast to u64 is safe since cost_amount is non-negative
     let current: u64 = db.query_row(
         "SELECT COALESCE(SUM(cost_amount), 0) FROM spend_ledger WHERE key_id = $1",
-        params![key_id.to_string()],
+        params![uuid_to_blob_16(key_id)],
         |row| row.get::<_, i64>(0),
     ).map(|v: i64| v.try_into().unwrap_or(u64::MAX))?;
 
     // budget_limit is BIGINT NOT NULL CHECK (budget_limit >= 0), so always non-negative
     let budget: u64 = db.query_row(
         "SELECT budget_limit FROM api_keys WHERE key_id = $1",
-        params![key_id.to_string()],
+        params![uuid_to_blob_16(key_id)],
         |row| row.get::<_, i64>(0),
     ).map(|v: i64| v.try_into().unwrap_or(u64::MAX))?;
 
@@ -709,10 +709,10 @@ pub fn rotate_key(
             rotated_from
         ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)",
         params![
-            new_key_id.to_string(),
+            uuid_to_blob_16(&new_key_id),
             new_key_hash,
             new_key_prefix,
-            old_key.team_id.map(|t| t.to_string()),
+            old_key.team_id.map(|t| uuid_to_blob_16(&t)),
             old_key.budget_limit,
             old_key.rpm_limit,
             old_key.tpm_limit,
@@ -724,7 +724,7 @@ pub fn rotate_key(
             old_key.rotation_interval_days,
             old_key.description,
             serde_json::to_string(&old_key.metadata).unwrap_or_default(),
-            key_id.to_string(),  // rotated_from = old key ID
+            uuid_to_blob_16(&key_id),  // rotated_from = old key ID
         ],
     )?;
 
@@ -950,6 +950,18 @@ fn generate_key_string() -> String {
     format!("sk-qr-{}", hex_string)
 }
 
+/// Convert Uuid to BLOB(16) for storage
+#[inline]
+fn uuid_to_blob_16(id: &Uuid) -> Vec<u8> {
+    id.as_bytes().to_vec()
+}
+
+/// Convert event UUID to BLOB(32) for storage
+#[inline]
+fn uuid_to_blob_32(id: &Uuid) -> Vec<u8> {
+    id.as_bytes().to_vec()  // 16 bytes, but we need 32 for event_id per RFC-0903-B1
+}
+
 /// Generate a new API key
 pub fn generate_key(db: &Database, req: GenerateKeyRequest) -> Result<GenerateKeyResponse, Error> {
     // Capture timestamp once for all time-related fields
@@ -974,10 +986,10 @@ pub fn generate_key(db: &Database, req: GenerateKeyRequest) -> Result<GenerateKe
             rotation_interval_days, description, metadata
         ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)",
         params![
-            key_id.to_string(),
+            uuid_to_blob_16(&key_id),
             key_hash,
             key_prefix,
-            req.team_id.map(|t| t.to_string()),
+            req.team_id.as_ref().map(|t| uuid_to_blob_16(t)),
             req.budget_limit,
             req.rpm_limit,
             req.tpm_limit,
@@ -1144,7 +1156,7 @@ pub fn revoke_key(
     // This prevents a crash scenario where cache is cleared but DB still has active key
     db.execute(
         "UPDATE api_keys SET revoked = 1, revoked_at = $1, revoked_by = $2, revocation_reason = $3 WHERE key_id = $4",
-        params![Utc::now().timestamp(), revoked_by, reason, key_id.to_string()],
+        params![Utc::now().timestamp(), revoked_by, reason, uuid_to_blob_16(key_id)],
     )?;
 
     // Invalidate cache AFTER DB update (safe now that source of truth is updated)
@@ -1589,7 +1601,7 @@ pub fn record_spend_with_event(
          SET current_spend = current_spend + $1
          WHERE key_id = $2
          AND current_spend + $1 <= budget_limit",
-        params![event.cost_amount as i64, key_id.to_string()],
+        params![event.cost_amount as i64, uuid_to_blob_16(key_id)],
     )?;
 
     // If budget exceeded, rollback immediately (no orphan events)
@@ -1609,12 +1621,12 @@ pub fn record_spend_with_event(
         "INSERT INTO spend_ledger (
             event_id, key_id, request_id, provider, model,
             input_tokens, output_tokens, cost_amount, pricing_hash, timestamp,
-            token_source, tokenizer_version
+            token_source, tokenizer_id
         ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
         ON CONFLICT(key_id, request_id) DO NOTHING",
         params![
-            event.event_id.to_string(),
-            event.key_id.to_string(),
+            uuid_to_blob_32(&event.event_id),
+            uuid_to_blob_16(&event.key_id),
             event.request_id,
             event.provider,
             event.model,
@@ -1627,7 +1639,7 @@ pub fn record_spend_with_event(
                 TokenSource::ProviderUsage => "provider_usage",
                 TokenSource::CanonicalTokenizer => "canonical_tokenizer",
             },
-            event.tokenizer_version,
+            event.tokenizer_id.map(|id| uuid_to_blob_16(&id)),
         ],
     )?;
 
@@ -1806,14 +1818,14 @@ pub fn record_spend(
     // FOR UPDATE ensures only one transaction can modify this key at a time
     let budget: i64 = tx.query_row(
         "SELECT budget_limit FROM api_keys WHERE key_id = $1 FOR UPDATE",
-        params![key_id.to_string()],
+        params![uuid_to_blob_16(key_id)],
         |row| row.get(0),
     )?;
 
     // 2. Compute current spend from ledger (not a counter)
     let current: i64 = tx.query_row(
         "SELECT COALESCE(SUM(cost_amount), 0) FROM spend_ledger WHERE key_id = $1",
-        params![key_id.to_string()],
+        params![uuid_to_blob_16(key_id)],
         |row| row.get(0),
     )?;
 
@@ -1827,14 +1839,14 @@ pub fn record_spend(
         "INSERT INTO spend_ledger (
             event_id, request_id, key_id, team_id, provider, model,
             input_tokens, output_tokens, cost_amount, pricing_hash,
-            token_source, tokenizer_version, provider_usage_json, timestamp
+            token_source, tokenizer_id, provider_usage_json, timestamp
         ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
         ON CONFLICT(key_id, request_id) DO NOTHING",
         params![
-            event.event_id.to_string(),
-            event.request_id,
-            event.key_id.to_string(),
-            event.team_id.as_ref().map(|t| t.to_string()),
+            uuid_to_blob_32(&event.event_id),
+            event.request_id.as_ref().map(|r| r.to_vec()),
+            uuid_to_blob_16(&event.key_id),
+            event.team_id.as_ref().map(|t| uuid_to_blob_16(t)),
             event.provider,
             event.model,
             event.input_tokens,
@@ -1845,7 +1857,7 @@ pub fn record_spend(
                 TokenSource::ProviderUsage => "provider_usage",
                 TokenSource::CanonicalTokenizer => "canonical_tokenizer",
             },
-            event.tokenizer_version,
+            event.tokenizer_id.map(|id| uuid_to_blob_16(&id)),
             event.provider_usage_json,
             event.timestamp,
         ],
@@ -1880,27 +1892,27 @@ pub fn record_spend_with_team(
     // 1. Lock team row FIRST (prevents team overspend)
     let team_budget: i64 = tx.query_row(
         "SELECT budget_limit FROM teams WHERE team_id = $1 FOR UPDATE",
-        params![team_id.to_string()],
+        params![uuid_to_blob_16(team_id)],
         |row| row.get(0),
     )?;
 
     // 2. Lock key row
     let key_budget: i64 = tx.query_row(
         "SELECT budget_limit FROM api_keys WHERE key_id = $1 FOR UPDATE",
-        params![key_id.to_string()],
+        params![uuid_to_blob_16(key_id)],
         |row| row.get(0),
     )?;
 
     // 3. Compute current spends from ledger
     let key_current: i64 = tx.query_row(
         "SELECT COALESCE(SUM(cost_amount), 0) FROM spend_ledger WHERE key_id = $1",
-        params![key_id.to_string()],
+        params![uuid_to_blob_16(key_id)],
         |row| row.get(0),
     )?;
 
     let team_current: i64 = tx.query_row(
         "SELECT COALESCE(SUM(cost_amount), 0) FROM spend_ledger WHERE team_id = $1",
-        params![team_id.to_string()],
+        params![uuid_to_blob_16(team_id)],
         |row| row.get(0),
     )?;
 
@@ -1918,14 +1930,14 @@ pub fn record_spend_with_team(
         "INSERT INTO spend_ledger (
             event_id, request_id, key_id, team_id, provider, model,
             input_tokens, output_tokens, cost_amount, pricing_hash,
-            token_source, tokenizer_version, provider_usage_json, timestamp
+            token_source, tokenizer_id, provider_usage_json, timestamp
         ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
         ON CONFLICT(key_id, request_id) DO NOTHING",
         params![
-            event.event_id.to_string(),
-            event.request_id,
-            event.key_id.to_string(),
-            event.team_id.as_ref().map(|t| t.to_string()),
+            uuid_to_blob_32(&event.event_id),
+            event.request_id.as_ref().map(|r| r.to_vec()),
+            uuid_to_blob_16(&event.key_id),
+            event.team_id.as_ref().map(|t| uuid_to_blob_16(t)),
             event.provider,
             event.model,
             event.input_tokens,
@@ -1936,7 +1948,7 @@ pub fn record_spend_with_team(
                 TokenSource::ProviderUsage => "provider_usage",
                 TokenSource::CanonicalTokenizer => "canonical_tokenizer",
             },
-            event.tokenizer_version,
+            event.tokenizer_id.map(|id| uuid_to_blob_16(&id)),
             event.provider_usage_json,
             event.timestamp,
         ],
@@ -2227,7 +2239,7 @@ const MAX_KEYS_PER_TEAM: u32 = 100;
 pub fn check_team_key_limit(db: &Database, team_id: &Uuid) -> Result<(), KeyError> {
     let count: i64 = db.query(
         "SELECT COUNT(*) as cnt FROM api_keys WHERE team_id = $1",
-        params![team_id.to_string()],
+        params![uuid_to_blob_16(team_id)],
     )?.next()?.get("cnt")?;
 
     if count >= MAX_KEYS_PER_TEAM as i64 {
@@ -2253,7 +2265,9 @@ pub fn check_team_key_limit(db: &Database, team_id: &Uuid) -> Result<(), KeyErro
 - **v30 (2026-04-20):** Fix C2 — SpendEvent.team_id type mismatch with RFC-0909
   - Changed `team_id: Option<String>` → `team_id: Option<Uuid>` in SpendEvent struct
   - Changed `team_id: &str` → `team_id: &Uuid` in `record_spend_with_team()` function signature
-  - Updated all params![] bindings to use `.as_ref().map(|t| t.to_string())` for optional Uuid→String conversion
+  - Updated all params![] bindings to use `uuid_to_blob_16()` / `uuid_to_blob_32()` helper functions for BLOB storage
+  - Changed `tokenizer_version` → `tokenizer_id` in INSERT statements (FK to tokenizers table per RFC-0903-B1)
+  - Added `uuid_to_blob_16()` and `uuid_to_blob_32()` helper functions at line 952
   - This aligns RFC-0903 Final with RFC-0909's `Option<uuid::Uuid>` type, fixing the type mismatch found in adversarial review
 
 - **v29 (2026-03-13):** Stoolap compatibility

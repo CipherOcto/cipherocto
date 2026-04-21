@@ -2,7 +2,7 @@
 
 ## Status
 
-Final (Phase 1, 2, and 4 Complete)
+Accepted (Phase 1, 2, and 4 Complete; Phase 3 Pending)
 
 ## Authors
 

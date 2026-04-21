@@ -45,6 +45,15 @@ pub trait KeyStorage: Send + Sync {
         team_id: &str,
         event: &SpendEvent,
     ) -> Result<(), KeyError>;
+
+    /// Resolve a tokenizer_id (BLAKE3-16) back to its version string via DB lookup.
+    ///
+    /// Per RFC-0909 §tokenizer_id_to_version and RFC-0910 §Tokenizer Database Schema.
+    fn resolve_tokenizer(&self, tokenizer_id: &[u8; 16]) -> Result<Option<String>, KeyError>;
+
+    /// Ensure a tokenizer version exists in the tokenizers table (on-demand population).
+    fn ensure_tokenizer(&self, version: &str, provider: Option<&str>)
+        -> Result<[u8; 16], KeyError>;
 }
 
 pub struct StoolapKeyStorage {
@@ -843,6 +852,80 @@ impl KeyStorage for StoolapKeyStorage {
         tx.commit().map_err(|e| KeyError::Storage(e.to_string()))?;
         Ok(())
     }
+
+    /// Resolve a tokenizer_id (BLAKE3-16) back to its version string via DB lookup.
+    ///
+    /// Per RFC-0909 §tokenizer_id_to_version and RFC-0910 §Tokenizer Database Schema:
+    /// `SELECT version FROM tokenizers WHERE tokenizer_id = ?`
+    ///
+    /// Returns:
+    /// - `Ok(Some(version))` if the tokenizer_id exists in the tokenizers table
+    /// - `Ok(None)` if the tokenizer_id is not found (never registered)
+    /// - `Err(KeyError::Storage(...))` on DB errors
+    ///
+    /// This is the DB-backed implementation of the stub in `keys/mod.rs::tokenizer_id_to_version`.
+    fn resolve_tokenizer(&self, tokenizer_id: &[u8; 16]) -> Result<Option<String>, KeyError> {
+        let param = stoolap::core::Value::blob(tokenizer_id.to_vec());
+        let mut rows = self
+            .db
+            .query(
+                "SELECT version FROM tokenizers WHERE tokenizer_id = $1",
+                vec![param],
+            )
+            .map_err(|e| KeyError::Storage(e.to_string()))?;
+
+        match rows.next() {
+            Some(row) => {
+                let version: String = row
+                    .map_err(|e| KeyError::Storage(e.to_string()))?
+                    .get(0)
+                    .map_err(|e| KeyError::Storage(e.to_string()))?;
+                Ok(Some(version))
+            }
+            None => Ok(None),
+        }
+    }
+
+    /// Ensure a tokenizer version exists in the tokenizers table.
+    ///
+    /// Used for on-demand population when a new tokenizer version is first used
+    /// in a spend_ledger INSERT. If the tokenizer already exists, this is a no-op.
+    ///
+    /// Returns the tokenizer_id (BLAKE3-16) for use in the spend event.
+    fn ensure_tokenizer(
+        &self,
+        version: &str,
+        provider: Option<&str>,
+    ) -> Result<[u8; 16], KeyError> {
+        use crate::keys::tokenizer_version_to_id;
+
+        let tokenizer_id = tokenizer_version_to_id(version);
+
+        // Upsert: insert only if not exists
+        // provider is optional — if None, only version is used for UNIQUE constraint
+        let version_param: String = version.into();
+        let provider_param: Option<String> = provider.map(|p| p.to_string());
+
+        let params: Vec<stoolap::Value> = vec![
+            stoolap::core::Value::blob(tokenizer_id.to_vec()),
+            version_param.into(),
+            provider_param.into(),
+        ];
+
+        let result = self.db.execute(
+            "INSERT INTO tokenizers (tokenizer_id, version, provider) VALUES ($1, $2, $3)",
+            params,
+        );
+        // Idempotent: if UNIQUE constraint violated (same version+provider already registered),
+        // that's fine — the tokenizer_id is the same anyway. All other errors propagate.
+        if let Err(stoolap::Error::UniqueConstraint { .. }) = result {
+            // Already registered — OK
+        } else if let Err(e) = result {
+            return Err(KeyError::Storage(e.to_string()));
+        }
+
+        Ok(tokenizer_id)
+    }
 }
 
 #[cfg(test)]
@@ -1112,5 +1195,72 @@ mod tests {
             .get_team("660e8400-e29b-41d4-a716-446655440099")
             .unwrap();
         assert!(retrieved.is_none());
+    }
+
+    #[test]
+    fn test_resolve_tokenizer_not_found() {
+        let storage = create_test_storage();
+
+        let id: [u8; 16] = [
+            0xe3, 0xc8, 0xe8, 0xff, 0x72, 0x44, 0x11, 0xc6, 0x41, 0x6d, 0xd4, 0xfb, 0x13, 0x53,
+            0x68, 0xe3,
+        ];
+        let result = storage.resolve_tokenizer(&id).unwrap();
+        assert!(result.is_none());
+    }
+
+    #[test]
+    fn test_ensure_tokenizer_and_resolve() {
+        let storage = create_test_storage();
+
+        // Ensure a tokenizer exists
+        let tokenizer_id = storage
+            .ensure_tokenizer("tiktoken-cl100k_base-v1.2.3", Some("openai"))
+            .unwrap();
+
+        // Verify it's the expected BLAKE3-16 value
+        let expected: [u8; 16] = [
+            0xe3, 0xc8, 0xe8, 0xff, 0x72, 0x44, 0x11, 0xc6, 0x41, 0x6d, 0xd4, 0xfb, 0x13, 0x53,
+            0x68, 0xe3,
+        ];
+        assert_eq!(tokenizer_id, expected);
+
+        // Resolve should now return Some
+        let version = storage.resolve_tokenizer(&tokenizer_id).unwrap();
+        assert_eq!(version, Some("tiktoken-cl100k_base-v1.2.3".to_string()));
+    }
+
+    #[test]
+    fn test_ensure_tokenizer_idempotent() {
+        let storage = create_test_storage();
+
+        // Call ensure twice with same version
+        let id1 = storage
+            .ensure_tokenizer("tiktoken-o200k_base", Some("openai"))
+            .unwrap();
+        let id2 = storage
+            .ensure_tokenizer("tiktoken-o200k_base", Some("openai"))
+            .unwrap();
+
+        // Should return same tokenizer_id
+        assert_eq!(id1, id2);
+
+        // Should still resolve
+        let version = storage.resolve_tokenizer(&id1).unwrap();
+        assert_eq!(version, Some("tiktoken-o200k_base".to_string()));
+    }
+
+    #[test]
+    fn test_resolve_tokenizer_storage() {
+        let storage = create_test_storage();
+
+        // Insert a tokenizer row directly via ensure_tokenizer
+        let tid = storage
+            .ensure_tokenizer("tiktoken-cl100k_base-v1.2.3", Some("anthropic"))
+            .unwrap();
+
+        // Resolve should find it
+        let result = storage.resolve_tokenizer(&tid).unwrap();
+        assert_eq!(result, Some("tiktoken-cl100k_base-v1.2.3".to_string()));
     }
 }

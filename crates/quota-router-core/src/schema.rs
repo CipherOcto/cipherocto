@@ -161,6 +161,22 @@ pub fn init_database(db: &stoolap::Database) -> Result<(), KeyError> {
     )
     .map_err(|e| KeyError::Storage(e.to_string()))?;
 
+    // Create tokenizers table per RFC-0910 §Tokenizer Database Schema
+    // tokenizer_id is BLAKE3(version) truncated to 16 bytes — FK target from spend_ledger.tokenizer_id
+    db.execute(
+        "CREATE TABLE IF NOT EXISTS tokenizers (
+            tokenizer_id BLOB(16) NOT NULL,
+            version TEXT NOT NULL,
+            vocab_size INTEGER,
+            encoding_type TEXT,
+            provider TEXT,
+            PRIMARY KEY (tokenizer_id),
+            UNIQUE(version, provider)
+        )",
+        [],
+    )
+    .map_err(|e| KeyError::Storage(e.to_string()))?;
+
     Ok(())
 }
 

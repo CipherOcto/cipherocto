@@ -51,9 +51,10 @@ pub use bigint::{
 pub use dact::{leaky_relu, relu, relu6, sigmoid, tanh_dqa, DactError};
 pub use dcs::{
     dcs_deserialize_bool, dcs_serialize_bool, dcs_serialize_bytes, dcs_serialize_dmat,
-    dcs_serialize_dvec, dcs_serialize_enum, dcs_serialize_i128, dcs_serialize_option_none,
-    dcs_serialize_option_some, dcs_serialize_string, dcs_serialize_struct, dcs_serialize_trap,
-    dcs_serialize_u32, dcs_serialize_u8, DcsError, DcsSerializable, DCS_MAX_LENGTH,
+    dcs_serialize_dvec, dcs_serialize_enum, dcs_serialize_i128, dcs_serialize_i64,
+    dcs_serialize_option_none, dcs_serialize_option_some, dcs_serialize_string,
+    dcs_serialize_struct, dcs_serialize_trap, dcs_serialize_u32, dcs_serialize_u64,
+    dcs_serialize_u8, DcsError, DcsSerializable, DCS_MAX_LENGTH,
 };
 pub use decimal::{
     decimal_add, decimal_cmp, decimal_div, decimal_from_bytes, decimal_mul, decimal_round,

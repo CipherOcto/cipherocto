@@ -46,6 +46,18 @@ pub fn dcs_serialize_u32(val: u32) -> Vec<u8> {
     val.to_be_bytes().to_vec()
 }
 
+/// Serialize u64 (8 bytes big-endian)
+#[inline]
+pub fn dcs_serialize_u64(val: u64) -> Vec<u8> {
+    val.to_be_bytes().to_vec()
+}
+
+/// Serialize i64 (8 bytes big-endian, two's complement)
+#[inline]
+pub fn dcs_serialize_i64(val: i64) -> Vec<u8> {
+    val.to_be_bytes().to_vec()
+}
+
 /// Serialize i128 (16 bytes big-endian two's complement)
 #[inline]
 pub fn dcs_serialize_i128(val: i128) -> Vec<u8> {
@@ -367,6 +379,7 @@ pub fn dcs_serialize_dmat<T: DcsSerializable>(rows: usize, cols: usize, elements
 #[cfg(test)]
 mod tests {
     use super::*;
+    use sha2::Digest;
 
     // =====================================================================
     // Primitive Tests
@@ -385,6 +398,26 @@ mod tests {
         assert_eq!(dcs_serialize_u32(1), vec![0, 0, 0, 1]);
         assert_eq!(dcs_serialize_u32(256), vec![0, 0, 1, 0]);
         assert_eq!(dcs_serialize_u32(0xDEADBEEF), vec![0xDE, 0xAD, 0xBE, 0xEF]);
+    }
+
+    #[test]
+    fn test_serialize_u64() {
+        assert_eq!(dcs_serialize_u64(0), vec![0, 0, 0, 0, 0, 0, 0, 0]);
+        assert_eq!(dcs_serialize_u64(1), vec![0, 0, 0, 0, 0, 0, 0, 1]);
+        assert_eq!(dcs_serialize_u64(256), vec![0, 0, 0, 0, 0, 0, 1, 0]);
+        assert_eq!(dcs_serialize_u64(30000), vec![0, 0, 0, 0, 0, 0, 0x75, 0x30]);
+        assert_eq!(dcs_serialize_u64(u64::MAX), vec![0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF]);
+    }
+
+    #[test]
+    fn test_serialize_i64() {
+        assert_eq!(dcs_serialize_i64(0), vec![0, 0, 0, 0, 0, 0, 0, 0]);
+        assert_eq!(dcs_serialize_i64(1), vec![0, 0, 0, 0, 0, 0, 0, 1]);
+        assert_eq!(dcs_serialize_i64(-1), vec![0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF]);
+        assert_eq!(dcs_serialize_i64(30000), vec![0, 0, 0, 0, 0, 0, 0x75, 0x30]);
+        assert_eq!(dcs_serialize_i64(-30000), vec![0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0x8A, 0xD0]);
+        // Verify 1704067200 (2024-01-01 Unix timestamp)
+        assert_eq!(dcs_serialize_i64(1704067200), vec![0x00, 0x00, 0x00, 0x00, 0x65, 0x92, 0x00, 0x80]);
     }
 
     #[test]
@@ -562,6 +595,45 @@ mod tests {
         assert_eq!(&result[21..25], &[0, 0, 0, 3]);
         // Bytes 25-32: DQA(1,0) value (8 bytes) = 1
         assert_eq!(&result[25..33], &[0, 0, 0, 0, 0, 0, 0, 1]);
+    }
+
+    #[test]
+    fn test_serialize_pricing_table_rfc0910() {
+        // RFC-0910 PricingTable test vector:
+        // table_id="openai-gpt4-v1", version=1, provider="openai", model="gpt-4",
+        // prompt_cost_per_1k=30000, completion_cost_per_1k=60000,
+        // effective_from=1704067200, metadata={}
+        // Expected: SHA256(DCS bytes) = 4a065c51147d4730379d600c4a491778b98f66a8e381c5dfdf51f42052c32f60
+
+        // Serialize each field first to avoid temporary lifetime issues
+        let field1 = dcs_serialize_string("openai-gpt4-v1").unwrap();
+        let field2 = dcs_serialize_u32(1);
+        let field3 = dcs_serialize_string("openai").unwrap();
+        let field4 = dcs_serialize_string("gpt-4").unwrap();
+        let field5 = dcs_serialize_u64(30000);
+        let field6 = dcs_serialize_u64(60000);
+        let field7 = dcs_serialize_i64(1704067200);
+        let field8 = dcs_serialize_u32(0); // empty BTreeMap = 0 entries
+
+        let fields = vec![
+            (1, field1.as_slice()),
+            (2, field2.as_slice()),
+            (3, field3.as_slice()),
+            (4, field4.as_slice()),
+            (5, field5.as_slice()),
+            (6, field6.as_slice()),
+            (7, field7.as_slice()),
+            (8, field8.as_slice()),
+        ];
+
+        let buf = dcs_serialize_struct(&fields);
+        let hash = sha2::Sha256::digest(&buf);
+        let hash_hex = hex::encode(hash);
+
+        assert_eq!(
+            hash_hex, "4a065c51147d4730379d600c4a491778b98f66a8e381c5dfdf51f42052c32f60",
+            "RFC-0910 test vector failed: DCS encoding mismatch"
+        );
     }
 
     // =====================================================================

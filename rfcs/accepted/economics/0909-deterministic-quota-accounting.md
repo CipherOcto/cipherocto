@@ -2,7 +2,7 @@
 
 ## Status
 
-Accepted (v61 — aligned with RFC-0903 Final v30 + RFC-0903-B1 v23 + RFC-0903-C1 v4, RFC-0126 (Accepted v2.5.1), RFC-0201 (Accepted v5.24))
+Accepted (v62 — aligned with RFC-0903 Final v30 + RFC-0903-B1 v23 + RFC-0903-C1 v4, RFC-0126 (Accepted v2.5.1), RFC-0201 (Accepted v5.24))
 
 ## Authors
 
@@ -794,20 +794,27 @@ impl InternalPricingTable {
     /// Compute SHA256 pricing hash for this table snapshot
     /// Used in event_id to tie costs to specific pricing version
     ///
-    /// Note: For full RFC-0126 determinism, a canonical JSON serializer is required.
-    /// BTreeMap guarantees sorted key iteration at the map level, but struct field
-    /// ordering in JSON serialization is not guaranteed by serde_json.
-    /// A proper canonical JSON implementation (RFC-8785, e.g., `serde_json_raw` crate)
-    /// MUST be used — pricing_hash is embedded in event_id, and any serde_json field
-    /// ordering divergence between routers produces different event_id values for
-    /// identical requests, silently breaking the cross-router determinism guarantee.
+    /// Uses `canon-json` crate (RFC 8785-compliant canonical JSON serializer)
+    /// for deterministic serialization. BTreeMap guarantees sorted key iteration
+    /// at the map level; canon-json guarantees RFC 8785 field ordering and
+    /// number formatting at the serialization level.
     ///
-    /// ⚠️  The code below uses `serde_json::to_string` for clarity — this is NOT
-    /// production code. serde_json does NOT produce canonical JSON; struct field
-    /// ordering may vary across compiler versions. Production implementations MUST
-    /// use an RFC 8785 canonical JSON library (e.g., `serde_json_raw`). The test
-    /// vectors in the Approval Criteria are computed with a compliant implementation
-    /// and MUST be matched exactly.
+    /// ⚠️  NOTE: The pseudocode below shows serde_json for illustration only.
+    /// Production code MUST use canon-json as shown:
+    ///
+    /// ```ignore
+    /// use canon_json::{CanonicalFormatter, CanonJsonSerialize};
+    /// use sha2::{Digest, Sha256};
+    ///
+    /// pub fn compute_pricing_hash(&self) -> [u8; 32] {
+    ///     let mut buf = Vec::new();
+    ///     self.models.serialize(&mut buf, CanonicalFormatter::new())
+    ///         .expect("PricingTable serialization must succeed");
+    ///     let mut hasher = Sha256::new();
+    ///     hasher.update(&buf);
+    ///     hasher.finalize().into()
+    /// }
+    /// ```
     pub fn compute_pricing_hash(&self) -> [u8; 32] {
         use sha2::{Digest, Sha256};
 
@@ -1597,8 +1604,9 @@ $0.03/1K tokens → DQA(30_000, scale=6)
 
 | Version | Date       | Changes |
 | ------- | ---------- | ------- |
-| v60     | 2026-04-20 | Round 56 fixes: fix N-M4 (remove unverified VARBINARY claim from DDL comment — storage representation is implementation-defined, not normative per RFC-0201); fix N-H2 (rename PricingTable → InternalPricingTable to avoid naming collision with RFC-0910's canonical PricingTable struct) |
+| v62     | 2026-04-20 | Round 59 fixes: fix N-H3 (compute_pricing_hash: replace stale serde_json pseudocode with canon-json usage example — canon-json is RFC 8785-compliant, cross-tested against olpc-cjson; BTreeMap provides key ordering, canon-json guarantees field ordering and number formatting; production code MUST use canon-json) |
 | v61     | 2026-04-20 | Round 57 fixes: fix C5 (add event_id uniqueness enforcement note to DDL comment — application-layer enforcement required per RFC-0903-B1); fix N-H1 (clarify BLOB conversion happens at record_spend storage boundary, not in process_response); fix C2 (update RFC-0903 Final reference from v29 to v30 — RFC-0903 amended to change SpendEvent.team_id from Option<String> to Option<Uuid>, aligning with RFC-0909's Option<uuid::Uuid>); update RFC-0903-C1 reference to v4 (rotated_from/rotation_grace_until columns restored) |
+| v60     | 2026-04-20 | Round 56 fixes: fix N-M4 (remove unverified VARBINARY claim from DDL comment — storage representation is implementation-defined, not normative per RFC-0201); fix N-H2 (rename PricingTable → InternalPricingTable to avoid naming collision with RFC-0910's canonical PricingTable struct) |
 | v58     | 2026-04-20 | Break circular version pin between RFC-0909 and RFC-0910 — RFC-0910 version removed from Status header and Related RFCs footer; RFC-0910 referenced only in Optional Dependencies without version pin |
 | v56     | 2026-04-19 | Round 53 fixes: fix 914-L1 (Status header + Optional Dependencies: RFC-0910 version updated from v4 to v6 to match current RFC-0910 version; Related RFCs footer updated) |
 | v57     | 2026-04-20 | Round 55 fixes: fix 909-L1 (Status header + Optional Dependencies + Related RFCs footer: RFC-0910 version updated from v6 to v7 to match current RFC-0910 version) |
@@ -1649,5 +1657,5 @@ $0.03/1K tokens → DQA(30_000, scale=6)
 
 ---
 
-**Accepted Version:** v61 (2026-04-20)
+**Accepted Version:** v62 (2026-04-20)
 **Related RFCs:** RFC-0903 (Virtual API Key System), RFC-0903-B1 (Schema Amendments), RFC-0903-C1 (Extended Schema Amendments), RFC-0126 (Deterministic Serialization v2.5.1), RFC-0201 (Binary BLOB Type v5.24), RFC-0910 (Pricing Table Registry)

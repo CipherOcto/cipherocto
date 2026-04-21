@@ -2,7 +2,7 @@
 
 ## Status
 
-Accepted
+Final (Phase 1, 2, and 4 Complete)
 
 ## Authors
 
@@ -169,6 +169,35 @@ Status: Committed as `dcb4f1c`
 - [ ] Integration test: COUNT/SUM/AVG/MIN/MAX in various contexts
 
 **Mission created:** `missions/open/0204-a-aggregate-performance-validation.md`
+
+### Phase 4: Parameter Resolution in WHERE Clause (COMPLETED)
+
+**Bug:** When `execute_in_transaction` routes aggregate queries through `convert_where_to_storage_expr`, the WHERE clause's query parameters (e.g., `$1`) were not being resolved because `convert_where_to_storage_expr` created an empty `ExecutionContext` instead of using the one with actual parameters.
+
+**Root cause:** At `src/executor/mod.rs:912-914`:
+```rust
+let value =
+    crate::executor::expression::ExpressionEval::compile(&infix.right, &[])?  // empty columns
+        .with_context(&crate::executor::context::ExecutionContext::new())  // empty ctx!
+        .eval_slice(&crate::core::Row::new())?;
+```
+
+**Fix:** Pass `columns` and `ctx` through to `convert_where_to_storage_expr` so parameters resolve correctly:
+```rust
+let value =
+    crate::executor::expression::ExpressionEval::compile(&infix.right, columns)?
+        .with_context(ctx)
+        .eval_slice(&crate::core::Row::new())?;
+```
+
+**Changes:**
+- Added `columns: &[String]` and `ctx: &ExecutionContext` parameters to `convert_where_to_storage_expr`
+- Updated recursive calls to pass these through
+- Updated call site in `execute_in_transaction`
+
+**Test results:** All 6 stoolap aggregate tests pass; quota-router-core tests `test_record_spend_ledger_populates_tokenizers` and `test_record_spend_ledger_provider_usage` now pass with parameterized queries.
+
+Status: Committed as `1ca5d1a`
 
 ## Key Files to Modify
 

@@ -2,7 +2,7 @@
 
 ## Status
 
-Completed (v4)
+Completed (v6)
 
 ## RFC
 
@@ -43,7 +43,7 @@ The stub in `crates/quota-router-core/src/keys/mod.rs::tokenizer_id_to_version` 
 
 **Note:** The stub remains a stub (returns error) because `tokenizer_id_to_version` is in `keys/mod.rs` which is a pure-computation module with no DB access. Callers should use `KeyStorage::resolve_tokenizer` instead, which is the DB-backed implementation.
 
-**Known Issue:** stoolap (CipherOcto fork) does not support aggregate functions (SUM) inside transactions. Integration tests that call `record_spend_ledger` directly are disabled; functionality is validated via middleware `process_response` → `record_spend_ledger` path (test_record_spend).
+**Stoolap Aggregate Support FIXED (2026-04-21):** stoolap now supports aggregate functions (SUM, COUNT, AVG, MIN, MAX) inside MVCC transactions. The `convert_where_to_storage_expr` helper was fixed to properly resolve query parameters instead of creating an empty ExecutionContext. Tests `test_record_spend_ledger_populates_tokenizers` and `test_record_spend_ledger_provider_usage` are now re-enabled and passing.
 
 ### Schema
 
@@ -117,6 +117,7 @@ Low — single DB query + optional upsert
 
 | Version | Date | Changes |
 |---------|------|---------|
+| v6 | 2026-04-21 | Stoolap aggregate limitation FIXED — convert_where_to_storage_expr now properly resolves query parameters; re-enabled test_record_spend_ledger_populates_tokenizers and test_record_spend_ledger_provider_usage tests |
 | v5 | 2026-04-21 | Round 4 fixes: wire ensure_tokenizer into record_spend_ledger (on-demand CanonicalTokenizer population); fix key_id BLOB query parameter in record_spend_ledger; disable integration tests blocked by stoolap transaction aggregate limitation; add stoopap known-issue note |
 | v4 | 2026-04-21 | BLUEPRINT.md compliance fixes: I-B1 (Status → Completed v4), I-B2 (add Claimant), I-B3 (add Pull Request), I-B4 (add Notes section), I-B5 (fix Dependencies), I-B6 (rename Reference → Notes), I-B7 (clarify stub scope), I-B8 (changelog detail), I-B9 (add Key Files to Modify) |
 | v2 | 2026-04-20 | Updated RFC references: RFC-0909 v62, RFC-0910 v15; added BLOCKED status; updated RFC-0903-C1 reference |

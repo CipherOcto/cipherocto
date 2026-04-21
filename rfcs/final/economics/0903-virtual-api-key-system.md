@@ -2,7 +2,7 @@
 
 ## Status
 
-Final (v29 - Stoolap compatibility)
+Final (v30 - Stoolap compatibility)
 
 ## Authors
 
@@ -1425,7 +1425,7 @@ pub struct SpendEvent {
     /// API key that made the request
     pub key_id: Uuid,
     /// Team (if key belongs to a team)
-    pub team_id: Option<String>,
+    pub team_id: Option<Uuid>,
     /// Provider name (e.g., "openai", "anthropic")
     pub provider: String,
     /// Model used (e.g., "gpt-4", "claude-3-opus")
@@ -1834,7 +1834,7 @@ pub fn record_spend(
             event.event_id.to_string(),
             event.request_id,
             event.key_id.to_string(),
-            event.team_id,
+            event.team_id.as_ref().map(|t| t.to_string()),
             event.provider,
             event.model,
             event.input_tokens,
@@ -1872,7 +1872,7 @@ pub fn record_spend(
 pub fn record_spend_with_team(
     db: &Database,
     key_id: &Uuid,
-    team_id: &str,
+    team_id: &Uuid,
     event: &SpendEvent,
 ) -> Result<(), KeyError> {
     let tx = db.transaction()?;
@@ -1880,7 +1880,7 @@ pub fn record_spend_with_team(
     // 1. Lock team row FIRST (prevents team overspend)
     let team_budget: i64 = tx.query_row(
         "SELECT budget_limit FROM teams WHERE team_id = $1 FOR UPDATE",
-        params![team_id],
+        params![team_id.to_string()],
         |row| row.get(0),
     )?;
 
@@ -1900,7 +1900,7 @@ pub fn record_spend_with_team(
 
     let team_current: i64 = tx.query_row(
         "SELECT COALESCE(SUM(cost_amount), 0) FROM spend_ledger WHERE team_id = $1",
-        params![team_id],
+        params![team_id.to_string()],
         |row| row.get(0),
     )?;
 
@@ -1925,7 +1925,7 @@ pub fn record_spend_with_team(
             event.event_id.to_string(),
             event.request_id,
             event.key_id.to_string(),
-            event.team_id,
+            event.team_id.as_ref().map(|t| t.to_string()),
             event.provider,
             event.model,
             event.input_tokens,
@@ -2249,6 +2249,12 @@ pub fn check_team_key_limit(db: &Database, team_id: &Uuid) -> Result<(), KeyErro
 ---
 
 ## Changelog
+
+- **v30 (2026-04-20):** Fix C2 — SpendEvent.team_id type mismatch with RFC-0909
+  - Changed `team_id: Option<String>` → `team_id: Option<Uuid>` in SpendEvent struct
+  - Changed `team_id: &str` → `team_id: &Uuid` in `record_spend_with_team()` function signature
+  - Updated all params![] bindings to use `.as_ref().map(|t| t.to_string())` for optional Uuid→String conversion
+  - This aligns RFC-0903 Final with RFC-0909's `Option<uuid::Uuid>` type, fixing the type mismatch found in adversarial review
 
 - **v29 (2026-03-13):** Stoolap compatibility
   - Removed PostgreSQL trigger (plpgsql) from DDL - not supported in Stoolap

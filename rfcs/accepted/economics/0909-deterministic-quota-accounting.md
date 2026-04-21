@@ -2,7 +2,7 @@
 
 ## Status
 
-Accepted (v61 — aligned with RFC-0903 Final v29 + RFC-0903-B1 v23 + RFC-0903-C1 v4, RFC-0126 (Accepted v2.5.1), RFC-0201 (Accepted v5.24))
+Accepted (v61 — aligned with RFC-0903 Final v30 + RFC-0903-B1 v23 + RFC-0903-C1 v4, RFC-0126 (Accepted v2.5.1), RFC-0201 (Accepted v5.24))
 
 ## Authors
 
@@ -29,7 +29,7 @@ This is required for future integration with:
 
 **Requires:**
 
-- RFC-0903: Virtual API Key System (Final v29 + RFC-0903-B1 amendment v23 + RFC-0903-C1 amendment v4)
+- RFC-0903: Virtual API Key System (Final v30 + RFC-0903-B1 amendment v23 + RFC-0903-C1 amendment v4)
 - RFC-0126: Deterministic Serialization (Accepted v2.5.1 — for canonical JSON serialization)
 - RFC-0201: Binary BLOB Type for Deterministic Hash Storage (Accepted v5.24)
 
@@ -1598,7 +1598,7 @@ $0.03/1K tokens → DQA(30_000, scale=6)
 | Version | Date       | Changes |
 | ------- | ---------- | ------- |
 | v60     | 2026-04-20 | Round 56 fixes: fix N-M4 (remove unverified VARBINARY claim from DDL comment — storage representation is implementation-defined, not normative per RFC-0201); fix N-H2 (rename PricingTable → InternalPricingTable to avoid naming collision with RFC-0910's canonical PricingTable struct) |
-| v61     | 2026-04-20 | Round 57 fixes: fix C5 (add event_id uniqueness enforcement note to DDL comment — application-layer enforcement required per RFC-0903-B1); fix N-H1 (clarify BLOB conversion happens at record_spend storage boundary, not in process_response); update RFC-0903-C1 reference to v4 (rotated_from/rotation_grace_until columns restored) |
+| v61     | 2026-04-20 | Round 57 fixes: fix C5 (add event_id uniqueness enforcement note to DDL comment — application-layer enforcement required per RFC-0903-B1); fix N-H1 (clarify BLOB conversion happens at record_spend storage boundary, not in process_response); fix C2 (update RFC-0903 Final reference from v29 to v30 — RFC-0903 amended to change SpendEvent.team_id from Option<String> to Option<Uuid>, aligning with RFC-0909's Option<uuid::Uuid>); update RFC-0903-C1 reference to v4 (rotated_from/rotation_grace_until columns restored) |
 | v58     | 2026-04-20 | Break circular version pin between RFC-0909 and RFC-0910 — RFC-0910 version removed from Status header and Related RFCs footer; RFC-0910 referenced only in Optional Dependencies without version pin |
 | v56     | 2026-04-19 | Round 53 fixes: fix 914-L1 (Status header + Optional Dependencies: RFC-0910 version updated from v4 to v6 to match current RFC-0910 version; Related RFCs footer updated) |
 | v57     | 2026-04-20 | Round 55 fixes: fix 909-L1 (Status header + Optional Dependencies + Related RFCs footer: RFC-0910 version updated from v6 to v7 to match current RFC-0910 version) |

@@ -2,7 +2,7 @@
 
 ## Status
 
-Draft (v14 — aligns with RFC-0903 Final v29 + RFC-0903-B1 v23 + RFC-0903-C1 v4)
+Draft (v14 — aligns with RFC-0903 Final v30 + RFC-0903-B1 v23 + RFC-0903-C1 v4)
 
 ## Authors
 
@@ -22,7 +22,7 @@ This RFC provides the tokenizer registry referenced by RFC-0909's `get_canonical
 
 **Requires:**
 
-- RFC-0903: Virtual API Key System (Final v29 + RFC-0903-B1 amendment v23 + RFC-0903-C1 amendment v3)
+- RFC-0903: Virtual API Key System (Final v30 + RFC-0903-B1 amendment v23 + RFC-0903-C1 amendment v4)
 - RFC-0126: Deterministic Serialization (Accepted v2.5.1)
 
 **Required By:**
@@ -856,7 +856,7 @@ This design allows the registry to be treated as a cache of known-good pricing s
 
 ## Related RFCs
 
-- RFC-0903: Virtual API Key System (Final v29 + RFC-0903-B1 amendment v23 + RFC-0903-C1 amendment v3)
+- RFC-0903: Virtual API Key System (Final v30 + RFC-0903-B1 amendment v23 + RFC-0903-C1 amendment v4)
 - RFC-0909: Deterministic Quota Accounting (Accepted — defines SpendEvent, TokenSource, and uses this RFC's canonical tokenizer assignments)
 - RFC-0913: Stoolap Pub/Sub for Cache Invalidation (Accepted — quota router cache invalidation via WAL pub/sub; related to registry update propagation)
 - RFC-0914: Stoolap-Only Quota Router Persistence (Draft v8 — required for registry persistence model; registry startup sequence loads from Stoolap per RFC-0914 integration)

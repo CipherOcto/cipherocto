@@ -2,7 +2,7 @@
 
 ## Status
 
-Draft (v15 — aligns with RFC-0903 Final v30 + RFC-0903-B1 v23 + RFC-0903-C1 v4)
+Draft (v16 — aligns with RFC-0903 Final v30 + RFC-0903-B1 v23 + RFC-0903-C1 v4)
 
 ## Authors
 
@@ -639,7 +639,7 @@ This RFC can be accepted when:
 - [x] get_canonical_tokenizer() is deterministic across all router implementations
 - [x] tokenizer_version_to_id() produces consistent BLAKE3-16 output (test vectors pass)
 - [x] BLAKE3-16 test vectors: "tiktoken-cl100k_base-v1.2.3" → "e3c8e8ff724411c6416dd4fb135368e3", "tiktoken-o200k_base" → "be1b3be0a2698c863b31edc1b7809a9c"
-- [x] Pricing hash test vector: compute_pricing_hash() on test table → a127db97a3695861f7a34ab2abe821ed0b8d7ec47e3dc579d7a5ca8cfb7a0641
+- [x] Pricing hash test vector: compute_pricing_hash() on test table → `4a065c51147d4730379d600c4a491778b98f66a8e381c5dfdf51f42052c32f60` (DCS Entry 16 binary encoding per RFC-0126 Part 3)
 - [x] Tokenizer assignment test vectors: all rows in Tokenizer Assignment End-to-End table produce correct tokenizer_id and token_source
 - [ ] Phase 1 implemented (PricingTable + PricingRegistry + compute_cost + tokenizer functions + test vectors)
 - [ ] Phase 2 (DB-backed registry with tokenizer_assignments table) — blocked until RFC-0903-B1 and RFC-0903-C1 are Accepted; requires both amendments' BLOB(16) types
@@ -708,9 +708,9 @@ This RFC can be accepted when:
 | effective_from | `1704067200` (2024-01-01) |
 | metadata | `{}` |
 
-Expected `compute_pricing_hash()` output: `076d2278719ca59aae444d7a62ed9894d4904c3efdedf294195dab7d55afe9e6`
+Expected `compute_pricing_hash()` output: `4a065c51147d4730379d600c4a491778b98f66a8e381c5dfdf51f42052c32f60`
 
-> **DCS Entry 16 binary encoding:** `pricing_hash` feeds into `event_id` (a Merkle leaf), and RFC-0126 §JSON Allowed Contexts explicitly forbids JSON for Merkle tree leaves. The test vector above is computed using DCS Entry 16 binary serialization: field_id||value in declaration order (1-8), strings as length-prefixed UTF-8, integers as binary big-endian, BTreeMap as sorted key-value entries.
+> **DCS Entry 16 binary encoding:** `pricing_hash` feeds into `event_id` (a Merkle leaf), and RFC-0126 §JSON Allowed Contexts explicitly forbids JSON for Merkle tree leaves. The test vector above is computed using DCS Entry 16 binary serialization: field_id||value in declaration order (1-8), strings as length-prefixed UTF-8 (u32_be length + bytes), integers as binary big-endian (u32_be for u32, u64_be for u64, i64_be for i64), BTreeMap as u32_be(count)||sorted key-value entries. Verified against independent implementation.
 
 ### Cost Calculation Test Vector
 
@@ -879,7 +879,7 @@ This design allows the registry to be treated as a cache of known-good pricing s
 
 | Version | Date | Changes |
 |---------|------|---------|
-| v16 | 2026-04-21 | Fix RFC126-C1/C2/C3: replace canon-json pseudocode with DCS Entry 16 binary encoding — RFC-0126 §JSON Allowed Contexts explicitly forbids JSON for Merkle tree leaves; pricing_hash uses DCS Part 3 binary (field_id||value, binary integers, length-prefixed strings); update test vector to DCS output `076d2278719ca59aae444d7a62ed9894d4904c3efdedf294195dab7d55afe9e6`; add ASCII/UTF-16 ordering clarification |
+| v16 | 2026-04-21 | Fix RFC126-C1/C2/C3: replace canon-json pseudocode with DCS Entry 16 binary encoding — RFC-0126 §JSON Allowed Contexts explicitly forbids JSON for Merkle tree leaves; pricing_hash uses DCS Part 3 binary (field_id||value, binary integers, length-prefixed strings); fix test vector to correct DCS output `4a065c51147d4730379d600c4a491778b98f66a8e381c5dfdf51f42052c32f60` (was incorrect `076d2278...`); add ASCII/UTF-16 ordering clarification; update Status header v15→v16 |
 | v15 | 2026-04-20 | Round 59 fixes: fix N-H3 (compute_pricing_hash: replace serde_json PSEUDOCODE with canon-json usage example — canon-json is RFC 8785-compliant, cross-tested against olpc-cjson; RFC-0126 Part 2 provides the canonical JSON rules; production code MUST use canon-json; test vector computed with compliant implementation) |
 | v14 | 2026-04-20 | Round 61 fixes: fix N-H4 (Phase 1 acceptance does NOT require RFC-0914 — registry persistence model startup sequence is Phase 2+ only; Phase 1 (in-memory-only registry) is independently implementable); update Dependencies to reference RFC-0903-C1 v4 |
 | v12 | 2026-04-20 | Round 59 adversarial fixes: fix R1 (remove duplicate serde_json warning in compute_pricing_hash function body); fix H1 (SpendReceipt: add TokenSource import path comment); fix H2 (Related RFCs: RFC-0914 is Required dependency not Optional — registry persistence model depends on it); fix M1 (compute_cost: clarify standalone function with doc comment; Integration example updated); fix M2 (Phase 2 acceptance blocked on BOTH RFC-0903-B1 and RFC-0903-C1); fix L1 (get_canonical_tokenizer: "zero allocation" → "static string literal — no heap allocation") |

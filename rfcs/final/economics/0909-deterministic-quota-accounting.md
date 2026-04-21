@@ -2,7 +2,7 @@
 
 ## Status
 
-Accepted (v62 — aligned with RFC-0903 Final v30 + RFC-0903-B1 v23 + RFC-0903-C1 v4, RFC-0126 (Accepted v2.5.1), RFC-0201 (Accepted v5.24))
+Accepted (v63 — aligned with RFC-0903 Final v30 + RFC-0903-B1 v23 + RFC-0903-C1 v4, RFC-0126 (Accepted v2.5.1), RFC-0201 (Accepted v5.24))
 
 ## Authors
 
@@ -1614,7 +1614,7 @@ $0.03/1K tokens → DQA(30_000, scale=6)
 
 | Version | Date       | Changes |
 | ------- | ---------- | ------- |
-| v63     | 2026-04-21 | Fix RFC126-C1: replace canon-json pseudocode with DCS Entry 16 binary encoding — RFC-0126 §JSON Allowed Contexts explicitly forbids JSON for Merkle tree leaves; pricing_hash uses DCS Part 3 binary (BTreeMap as u32_be(count)||sorted entries, each field u32_be(field_id)||binary value); update pricing_hash = SHA256(DCS) note accordingly |
+| v63     | 2026-04-21 | Fix RFC126-C1: replace canon-json pseudocode with DCS Entry 16 binary encoding — RFC-0126 §JSON Allowed Contexts explicitly forbids JSON for Merkle tree leaves; pricing_hash uses DCS Part 3 binary (BTreeMap as u32_be(count)||sorted entries, each field u32_be(field_id)||binary value); update pricing_hash = SHA256(DCS) note accordingly; update Status header v62→v63 |
 | v62     | 2026-04-20 | Round 59 fixes: fix N-H3 (compute_pricing_hash: replace stale serde_json pseudocode with canon-json usage example — canon-json is RFC 8785-compliant, cross-tested against olpc-cjson; BTreeMap provides key ordering, canon-json guarantees field ordering and number formatting; production code MUST use canon-json) |
 | v61     | 2026-04-20 | Round 57 fixes: fix C5 (add event_id uniqueness enforcement note to DDL comment — application-layer enforcement required per RFC-0903-B1); fix N-H1 (clarify BLOB conversion happens at record_spend storage boundary, not in process_response); fix C2 (update RFC-0903 Final reference from v29 to v30 — RFC-0903 amended to change SpendEvent.team_id from Option<String> to Option<Uuid>, aligning with RFC-0909's Option<uuid::Uuid>); update RFC-0903-C1 reference to v4 (rotated_from/rotation_grace_until columns restored) |
 | v60     | 2026-04-20 | Round 56 fixes: fix N-M4 (remove unverified VARBINARY claim from DDL comment — storage representation is implementation-defined, not normative per RFC-0201); fix N-H2 (rename PricingTable → InternalPricingTable to avoid naming collision with RFC-0910's canonical PricingTable struct) |

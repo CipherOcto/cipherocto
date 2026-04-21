@@ -362,6 +362,8 @@ COMMIT;
 
 Implementations must also update `compute_event_id()` to store hex-to-binary conversion at insert time, and binary-to-hex conversion at read time.
 
+> **Note on RFC-0201 ALTER TABLE restriction:** RFC-0201's design notes mention "ALTER TABLE ADD COLUMN BYTEA is prohibited" as a planned restriction. Direct code inspection of stoolap confirms this restriction is **not implemented** — `ALTER TABLE ADD COLUMN BLOB(...)` is fully supported. This RFC's shadow-column migration uses `ALTER TABLE ADD COLUMN` which is confirmed working in stoolap. If future stoolap versions implement the RFC-0201 restriction, this migration procedure must be updated.
+
 ## Relationship to RFC-0909
 
 RFC-0909 (Deterministic Quota Accounting) adopts this amended schema. All `SpendEvent` construction and ledger recording code in RFC-0909 implementations must use the BLOB types described above.

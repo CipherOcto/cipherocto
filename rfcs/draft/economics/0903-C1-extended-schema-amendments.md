@@ -2,7 +2,7 @@
 
 ## Status
 
-Draft (v4 — Amendment to RFC-0903 Final v30 + RFC-0903-B1 amendment v23)
+Draft (v5 — Amendment to RFC-0903 Final v30 + RFC-0903-B1 amendment v23)
 
 ## Authors
 
@@ -172,7 +172,7 @@ CREATE TABLE tokenizers (
     version TEXT NOT NULL,                   -- e.g., "tiktoken-cl100k_base-v1.2.3"
     vocab_size INTEGER,
     encoding_type TEXT,                      -- e.g., "bpe", "sentencepiece"
-    provider TEXT,                           -- e.g., "openai", "anthropic" — per RFC-0910
+    provider TEXT NOT NULL,                  -- e.g., "openai", "anthropic" — per RFC-0910
     PRIMARY KEY (tokenizer_id),
     UNIQUE(version, provider)              -- Per RFC-0910 §Tokenizer Database Schema
 );
@@ -218,6 +218,7 @@ CREATE INDEX idx_spend_ledger_tokenizer ON spend_ledger(tokenizer_id);   -- RFC-
 | `teams.team_id` | `TEXT` (UUID hex with hyphens, 36 chars) | `BLOB(16)` (raw UUID bytes) | −20 bytes/row (UUID hex 36 chars → raw 16 bytes) |
 | `api_keys.key_id` | `TEXT` (UUID hex with hyphens, 36 chars) | `BLOB(16)` (raw UUID bytes) | −20 bytes/row |
 | `api_keys.team_id` | `TEXT` (UUID nullable, 36 chars) | `BLOB(16)` (raw UUID bytes) | −20 bytes/row (nullable) |
+| `api_keys.key_hash` | `BYTEA NOT NULL` | `BYTEA(32) NOT NULL` | Explicit size (pre-existing binary type) |
 | `idx_teams_team_id` | *(on TEXT)* | *(on BLOB(16))* | Updated |
 | `idx_api_keys_team_id` | *(on TEXT)* | *(on BLOB(16))* | Updated |
 
@@ -268,6 +269,10 @@ let team_id = uuid::Uuid::from_bytes(bytes);
 ```
 
 **Note on nullable vs non-nullable `team_id`:**
+- `teams.team_id` is `BLOB(16) NOT NULL` — the team primary key, always required
+- `api_keys.team_id` is `BLOB(16)` (nullable) — an api_key may belong to a team or be unassigned
+- `spend_ledger.team_id` is `BLOB(16)` (nullable) — an event may or may not have a team attribution
+- The nullable form uses `Option<Vec<u8>>` in params, not `Option<Uuid>` directly
 
 ## Relationship to RFC-0903-B1
 
@@ -316,6 +321,7 @@ The migration procedure for existing deployments is out of scope for this amendm
 
 | Version | Date       | Changes |
 |---------|------------|---------|
+| v5      | 2026-04-21 | Round 4 fixes: fix C1 footer (Amends: v29→v30); complete truncated nullable team_id note; add key_hash BYTEA→BYTEA(32) to Change Summary; fix N-M1 (provider NOT NULL in tokenizers UNIQUE); fix RFC-0126 structural issues (RFC126-C1/C2/C3 addressed separately in RFC-0909) |
 | v4      | 2026-04-20 | Round 56 fixes: fix C3 (add missing rotated_from and rotation_grace_until columns to api_keys DDL — these were present in RFC-0903 Final but absent from C1 DDL; rotated_from is now BLOB(16) per C1's UUID→BLOB conversion); update RFC-0903-B1 reference to v23 |
 | v3      | 2026-04-15 | Round 25 fixes (continued): add Deployment Scope section explicitly limiting to greenfield; migration for existing deployments deferred to future RFC-0903-C2 |
 | v2      | 2026-04-15 | Round 25 fixes: clarify byte savings (hyphenated UUID 36→16, 20 bytes; without hyphens 32→16, 16 bytes); add nullable team_id code example clarification; add dependency ordering section; update Required By note |
@@ -325,6 +331,6 @@ The migration procedure for existing deployments is out of scope for this amendm
 
 **Draft Date:** 2026-04-15
 **Version:** v4
-**Amends:** RFC-0903 Final v29 + RFC-0903-B1
+**Amends:** RFC-0903 Final v30 + RFC-0903-B1
 **Required By:** RFC-0909 (Deterministic Quota Accounting)
 **Related RFCs:** RFC-0201 (Binary BLOB Type), RFC-0903-B1 (Schema Amendments)

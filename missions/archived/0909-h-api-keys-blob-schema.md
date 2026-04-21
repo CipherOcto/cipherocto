@@ -2,15 +2,34 @@
 
 ## Status
 
-Open (v7)
+Completed (v8) — BROKEN per code audit 2026-04-20
 
 ## RFC
 
-RFC-0909 v59 (Economics): Deterministic Quota Accounting
+RFC-0909 v62 (Economics): Deterministic Quota Accounting
+RFC-0903-C1 v4 (Economics): Extended Schema Amendments (Accepted per v4)
 
 ## Summary
 
 Migrate `api_keys` and `teams` tables to BLOB storage for UUID primary/foreign keys per RFC-0903-C1. This is required for FK consistency: `spend_ledger.key_id` (BLOB(16)) references `api_keys.key_id` (must also be BLOB(16)).
+
+## BROKEN (2026-04-20)
+
+This mission's code has the following unresolved issues:
+
+1. **team_id type mismatch (BROKEN):** `ApiKey.team_id` and `SpendEvent.team_id` are `Option<String>` in code but should be `Option<uuid::Uuid>` per RFC-0903 Final v30. The API will return UUIDs as strings but internal storage uses raw BLOB(16) bytes — the type in the struct must be `Option<Uuid>` not `Option<String>`.
+
+2. **Missing schema columns (BROKEN):** `api_keys` table is missing `rotated_from BLOB(16)` and `rotation_grace_until INTEGER` columns per RFC-0903-C1 v4 §Schema Amendments.
+
+3. **Mission 0909-i blocked (BLOCKED):** Mission 0909-i (tokenizer reverse lookup) depends on `tokenizers` table which requires RFC-0910 v15 schema — this mission does not implement that dependency.
+
+**Fixes applied (2026-04-20):**
+- `models.rs`: `team_id: Option<String>` → `Option<uuid::Uuid>` in ApiKey, SpendEvent, GenerateKeyRequest, GenerateKeyResponse ✓
+- `schema.rs`: added `rotated_from BLOB(16), rotation_grace_until INTEGER` to api_keys ✓
+- `storage.rs`: fixed UUID BLOB conversion helpers ✓
+- `middleware.rs`: `process_response` team_id param changed to `Option<uuid::Uuid>` ✓
+- `cache.rs`: removed `.clone()` on `Option<Uuid>` ✓
+- `admin.rs`: fixed team_id handling, removed unnecessary clones ✓
 
 ## Acceptance Criteria
 
@@ -65,6 +84,7 @@ High — requires migration of hot tables (high-frequency reads/writes) and all 
 
 | Version | Date | Changes |
 |---------|------|---------|
+| v8 | 2026-04-20 | Code audit fix: RFC-0903 Final v30 team_id type → Uuid; RFC-0903-C1 v4 api_keys columns rotated_from/rotation_grace_until added to schema.rs; storage/middleware/admin/cache fixes applied; clippy clean; 124 tests pass |
 | v7 | 2026-04-20 | Round 6 adversarial review fixes: fix L1 (create_team: add explicit Uuid::from_str() parsing step before uuid_to_blob_16 — same as key_id, prevents passing raw string directly to helper) |
 | v6 | 2026-04-20 | Round 5 adversarial review fixes: fix L1 (add PRIMARY KEY ambiguity note to teams.team_id AC item, parallel to api_keys.key_id Note C1); fix L2 (migration step 2: add explicit NULL handling for nullable api_keys.team_id — leave NULL rows as NULL, only convert non-NULL values); fix L3 (migration step 2: add uuid::Uuid::from_str() parsing step before uuid_to_blob_16 — function takes &uuid::Uuid, not &str) |
 | v5 | 2026-04-20 | Round 4 adversarial review fixes: fix L1 (nullable team_id: Option<Vec<u8>> → Option<[u8; 16]> — matches uuid_to_blob_16 return type, avoids unnecessary heap allocation); fix L2 (add team_id retrieval pattern with try_into chain — same as key_id, prevents direct uuid::Uuid::from_bytes on Vec<u8> mistake) |

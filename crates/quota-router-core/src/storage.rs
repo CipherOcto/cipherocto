@@ -171,7 +171,8 @@ impl KeyStorage for StoolapKeyStorage {
         // Convert key_id and team_id to BLOB(16) for storage per RFC-0903-C1
         let key_id_blob =
             uuid_to_blob_16(&uuid::Uuid::parse_str(&key.key_id).expect("valid key_id UUID"));
-        let team_id_blob: Option<Vec<u8>> = key.team_id.as_ref().map(|t| uuid_to_blob_16(t).to_vec());
+        let team_id_blob: Option<Vec<u8>> =
+            key.team_id.as_ref().map(|t| uuid_to_blob_16(t).to_vec());
 
         let params: Vec<stoolap::Value> = vec![
             stoolap::core::Value::blob(key_id_blob.to_vec()),
@@ -632,10 +633,8 @@ impl KeyStorage for StoolapKeyStorage {
         // Hash request_id to get raw SHA256 binary for BLOB(32) storage
         let request_id_bytes: [u8; 32] = Sha256::digest(event.request_id.as_bytes()).into();
 
-        let team_id_blob: Option<Vec<u8>> = event
-            .team_id
-            .as_ref()
-            .map(|t| uuid_to_blob_16(t).to_vec());
+        let team_id_blob: Option<Vec<u8>> =
+            event.team_id.as_ref().map(|t| uuid_to_blob_16(t).to_vec());
 
         let tokenizer_id_blob: Option<Vec<u8>> = event
             .tokenizer_version

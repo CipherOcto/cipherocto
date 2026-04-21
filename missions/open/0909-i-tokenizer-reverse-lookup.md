@@ -2,16 +2,24 @@
 
 ## Status
 
-Open (v1)
+Open (v2) — BLOCKED by RFC-0910 v15 adoption
 
 ## RFC
 
-RFC-0909 v59 (Economics): Deterministic Quota Accounting
-RFC-0910 v13 (Economics): Pricing Table Registry
+RFC-0909 v62 (Economics): Deterministic Quota Accounting
+RFC-0910 v15 (Economics): Pricing Table Registry
 
 ## Summary
 
-Implement the DB-backed version of `tokenizer_id_to_version(id: &[u8; 16]) -> Result<Option<String>, &'static str>` that queries the `tokenizers` table to resolve a tokenizer_id (BLAKE3-16) back to its version string. The current stub always returns an error; the implementation requires a real Stoolap query.
+Implement the DB-backed version of `tokenizer_id_to_version(id: &[u8; 16]) -> Result<Option<String>, KeyError>` that queries the `tokenizers` table to resolve a tokenizer_id (BLAKE3-16) back to its version string. The current stub always returns an error; the implementation requires a real Stoolap query.
+
+## BLOCKED (2026-04-20)
+
+This mission is BLOCKED pending RFC-0910 v15 adoption. The `tokenizers` table schema required by this mission is defined in RFC-0910 v15 which was recently updated to clarify Phase 1 independence from RFC-0914. Once RFC-0910 reaches Accepted status, this mission can proceed.
+
+**Dependencies:**
+- RFC-0910 v15 (or higher): defines `tokenizers` table schema with `tokenizer_id BLOB(16), version TEXT NOT NULL`
+- Mission 0909-h: api_keys schema must be finalized (this mission does not depend on it directly but shares the DB schema context)
 
 ## Background
 
@@ -93,4 +101,5 @@ Low — single DB query + optional upsert
 
 | Version | Date | Changes |
 |---------|------|---------|
+| v2 | 2026-04-20 | Updated RFC references: RFC-0909 v62, RFC-0910 v15; added BLOCKED status; updated RFC-0903-C1 reference |
 | v1 | 2026-04-20 | Initial draft |

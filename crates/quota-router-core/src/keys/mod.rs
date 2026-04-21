@@ -153,6 +153,21 @@ pub fn validate_request_id(request_id: &str) -> Result<(), KeyError> {
     }
 }
 
+/// Encode a gateway-provided request_id string to 32 raw bytes for BLOB(32) storage.
+///
+/// All inputs are treated as raw text strings (not hex). Always uses SHA256 regardless
+/// of input length — uniform encoding for all gateway request_id formats.
+///
+/// WARNING: The gateway's input format (raw text vs hex) must be consistent across
+/// all routers. A router that changes input format will produce different request_id
+/// values for the same logical request, breaking idempotency.
+///
+/// This function is defined in RFC-0903-B1 §request_id.
+#[inline]
+pub fn encode_request_id(request_id: &str) -> [u8; 32] {
+    Sha256::digest(request_id.as_bytes()).into()
+}
+
 /// Compute total cost in micro-units for a request using integer-only arithmetic.
 ///
 /// Uses the formula: cost = (input_tokens * prompt_cost_per_1k / 1000)

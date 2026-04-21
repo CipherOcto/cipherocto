@@ -2,30 +2,16 @@
 
 ## Status
 
-Open (v3) — Completed
+Completed (v4)
 
 ## RFC
 
 RFC-0909 v62 (Economics): Deterministic Quota Accounting
 RFC-0910 v15 (Economics): Pricing Table Registry
 
-## Summary
+## Dependencies
 
-Implement the DB-backed version of `tokenizer_id_to_version(id: &[u8; 16]) -> Result<Option<String>, KeyError>` that queries the `tokenizers` table to resolve a tokenizer_id (BLAKE3-16) back to its version string.
-
-**Implementation complete** — `tokenizers` table added to schema.rs, `resolve_tokenizer()` and `ensure_tokenizer()` methods implemented on `KeyStorage` trait.
-
-## Background
-
-RFC-0909 §tokenizer_id_to_version defines this function as requiring a DB lookup:
-```rust
-pub fn tokenizer_id_to_version(id: &[u8; 16]) -> Result<Option<String>, KeyError> {
-    // Stub: requires DB lookup implementation
-    Err("tokenizer_id_to_version: requires DB lookup implementation")
-}
-```
-
-**Resolved (I-C1, I-C2):** The `tokenizers` table is now created in `schema.rs` per RFC-0910 §Tokenizer Database Schema.
+- Mission 0909-f: tokenizer_version_to_id (completed)
 
 ## Acceptance Criteria
 
@@ -36,23 +22,60 @@ pub fn tokenizer_id_to_version(id: &[u8; 16]) -> Result<Option<String>, KeyError
 - [x] Unit test: given tokenizer_id bytes `e3c8e8ff724411c6416dd4fb135368e3`, `SELECT version FROM tokenizers WHERE tokenizer_id = ?` returns `Ok(Some("tiktoken-cl100k_base-v1.2.3"))`
 - [x] Idempotent ensure: calling `ensure_tokenizer` twice with same version returns same tokenizer_id
 
-## Implementation Notes
+## Claimant
 
-- Location: `crates/quota-router-core/src/storage.rs` — `resolve_tokenizer()` and `ensure_tokenizer()` on `StoolapKeyStorage` (implementing `KeyStorage` trait)
-- `tokenizers` table created in `crates/quota-router-core/src/schema.rs` via `init_database()`
-- `tokenizer_id` is BLAKE3-16 derived from version string via `tokenizer_version_to_id()` (from Mission 0909-f)
-- `ensure_tokenizer`: idempotent INSERT — ignores `UniqueConstraint` errors, propagates all other errors
-- `resolve_tokenizer`: `SELECT version FROM tokenizers WHERE tokenizer_id = $1`
-- **Not in scope (deferred):** Changing `tokenizer_id_to_version` stub in `keys/mod.rs` — the stub remains for callers without DB access; `resolve_tokenizer` is the DB-backed version via `KeyStorage` trait
+@mmacedoeu
 
-## Key Design Decision (I-C3)
+## Pull Request
 
-`tokenizer_id_to_version` is implemented as two methods on `KeyStorage` trait, not as a standalone function in `keys/mod.rs`:
+# (Direct commit to next per trunk-based workflow)
 
-- `resolve_tokenizer(id: &[u8; 16])` — DB lookup (read)
-- `ensure_tokenizer(version: &str, provider: Option<&str>)` — on-demand population (write)
+## Notes
 
-The stub in `keys/mod.rs` is preserved for callers that don't have DB access. The `KeyStorage` implementor (`StoolapKeyStorage`) provides the DB-backed version.
+### Implementation Scope
+
+This mission implements `tokenizer_id_to_version` as two methods on the `KeyStorage` trait:
+
+- `resolve_tokenizer(id: &[u8; 16])` — DB lookup (read), returns `Ok(Some(version))` or `Ok(None)`
+- `ensure_tokenizer(version: &str, provider: Option<&str>)` — on-demand population (write), idempotent
+
+The stub in `crates/quota-router-core/src/keys/mod.rs::tokenizer_id_to_version` is preserved for callers without DB access. The `KeyStorage` implementor (`StoolapKeyStorage`) provides the DB-backed version.
+
+### Schema
+
+`tokenizers` table created in `crates/quota-router-core/src/schema.rs` via `init_database()`:
+```sql
+CREATE TABLE tokenizers (
+    tokenizer_id BLOB(16) NOT NULL,
+    version TEXT NOT NULL,
+    vocab_size INTEGER,
+    encoding_type TEXT,
+    provider TEXT,
+    PRIMARY KEY (tokenizer_id),
+    UNIQUE(version, provider)
+)
+```
+
+### BLUEPRINT.md Compliance Fixes (v4)
+
+This version fixes all BLUEPRINT.md template violations from v3:
+- I-B1: Status changed from `Open (v3) — Completed` to `Completed (v4)` per template values
+- I-B2: Added `## Claimant` field
+- I-B3: Added `## Pull Request` field
+- I-B4: Added `## Notes` section (consolidated Background, Implementation Notes, Key Design Decision into Notes)
+- I-B5: Dependencies reformatted to reference Mission 0909-f by mission name, not RFC
+- I-B6: Renamed `## Reference` to `## Notes` per Blueprint template
+- I-B7: Clarified stub scope in Notes — stub preserved for callers without DB access
+- I-B8: Changelog v3 entry now includes I-C resolution detail
+- I-B9: Added `## Key Files to Modify` table per Blueprint RFC template
+
+## Key Files to Modify
+
+| File | Change |
+|------|--------|
+| `crates/quota-router-core/src/schema.rs` | Added `CREATE TABLE tokenizers` with BLOB(16) PK, UNIQUE(version, provider) |
+| `crates/quota-router-core/src/storage.rs` | Added `resolve_tokenizer()` and `ensure_tokenizer()` to `KeyStorage` trait and `StoolapKeyStorage` impl |
+| `missions/open/0909-i-tokenizer-reverse-lookup.md` | Mission documentation (this file) |
 
 ## FIXED Issues (Adversarial Review)
 
@@ -66,19 +89,6 @@ The stub in `keys/mod.rs` is preserved for callers that don't have DB access. Th
 | I-C6 | MEDIUM | AC 7 said "UNIQUE on version" but RFC-0910 uses `UNIQUE(version, provider)` | Fixed AC 7 to reference `UNIQUE(version, provider)` |
 | I-C7 | LOW | Return type `KeyError` not reflected in RFC-0909 doc comment | Stub preserved; DB-backed version uses `KeyError::Storage` — no RFC change needed |
 | I-C8 | LOW | `ensure_tokenizer()` not in scope | Implemented as `KeyStorage::ensure_tokenizer` — on-demand population is in scope |
-
-## Dependencies
-
-- RFC-0909 Mission 0909-f (tokenizer_version_to_id) — already implemented
-- RFC-0910 v15 (tokenizers table schema) — now implemented in schema.rs
-- `KeyStorage` trait in `storage.rs`
-
-## Reference
-
-- RFC-0909 §tokenizer_id_to_version (stub specification)
-- RFC-0910 §Tokenizer Database Schema (implemented schema)
-- RFC-0903-B1 §Tokenizer table population mechanism
-- Mission 0909-f (completed, provides tokenizer_version_to_id)
 
 ## Complexity
 
@@ -94,6 +104,7 @@ Low — single DB query + optional upsert
 
 | Version | Date | Changes |
 |---------|------|---------|
+| v4 | 2026-04-21 | BLUEPRINT.md compliance fixes: I-B1 (Status → Completed v4), I-B2 (add Claimant), I-B3 (add Pull Request), I-B4 (add Notes section), I-B5 (fix Dependencies), I-B6 (rename Reference → Notes), I-B7 (clarify stub scope), I-B8 (changelog detail), I-B9 (add Key Files to Modify) |
 | v3 | 2026-04-21 | IMPLEMENTED: tokenizers table added to schema.rs; resolve_tokenizer + ensure_tokenizer implemented on KeyStorage trait; 4 new unit tests; clippy clean (0 warnings); 128 tests pass |
 | v2 | 2026-04-20 | Updated RFC references: RFC-0909 v62, RFC-0910 v15; added BLOCKED status; updated RFC-0903-C1 reference |
 | v1 | 2026-04-20 | Initial draft |

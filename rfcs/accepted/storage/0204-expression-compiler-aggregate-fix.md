@@ -2,7 +2,7 @@
 
 ## Status
 
-Draft
+Accepted
 
 ## Authors
 
@@ -133,52 +133,42 @@ Avoid SUM inside transactions by computing budget client-side:
 ### Phase 1: Better Aggregate Detection (COMPLETED)
 
 - [x] Modify `compiler.rs` to check aggregate registry when scalar lookup fails (APPLIED)
-- [x] Add regression test: `tests/aggregate_in_transaction_test.rs` (6 tests, all fail as expected)
-- [ ] Verify aggregation pushdown still works for eligible queries
+- [x] Add regression test: `tests/aggregate_in_transaction_test.rs` (6 tests)
+- [x] Verify aggregation pushdown still works for eligible queries
+- Status: Committed as `35cafe9`
 
-### Phase 2: Full Aggregate Compilation Support (IN PROGRESS)
+### Phase 2: Route Aggregate Queries Through Executor (COMPLETED)
 
-**Investigation Findings (2026-04-21):**
+**Approach:** Path B - Give Transaction access to Executor for routing aggregate queries.
 
-The original plan was to route transaction SELECT with aggregates to `execute_select_with_aggregation()`, which is `pub(crate)` on `Executor`. Investigation revealed a structural issue:
+**Changes implemented:**
 
-1. **`execute_select_with_aggregation()` is an Executor method:**
-   - It's `impl Executor { pub(crate) fn execute_select_with_aggregation(...) }`
-   - Uses `self.function_registry` internally for `get_aggregate()`
-   - Requires an Executor instance to call
+1. **`src/api/database.rs`:**
+   - Changed `DatabaseInner::executor` from `Mutex<Executor>` to `Arc<Mutex<Executor>>`
+   - Modified `begin_with_isolation()` to create new `Executor` for each transaction
 
-2. **Transaction path has no Executor access:**
-   - `Transaction` wraps a `Box<dyn StorageTransaction>` directly
-   - No `Executor` instance is available in transaction context
-   - The storage transaction is accessed via `tx.get_table()`, not through Executor
+2. **`src/api/transaction.rs`:**
+   - Added `executor: Arc<Executor>` field to `Transaction` struct
+   - Added `QueryClassification` detection for aggregate queries
+   - Route aggregate queries to `Executor::execute_in_transaction()`
 
-3. **Failed approach: Making `execute_select_with_aggregation` standalone**
-   ```rust
-   // Tried: pub fn execute_select_with_aggregation(...) // instead of pub(crate)
-   // Error: uses self.function_registry.get_aggregate() which requires Executor
-   ```
+3. **`src/executor/mod.rs`:**
+   - Added `pub(crate) fn execute_in_transaction()` method
+   - Added WHERE clause to storage expression conversion
+   - Added in-memory filtering fallback for complex WHERE
+   - Made `aggregation` and `query_classification` modules public
 
-4. **Possible paths forward:**
-   - **Path A**: Extract standalone aggregation functions that take `&FunctionRegistry` directly
-     - Extract `parse_aggregations()`, `execute_global_aggregation()`, etc. as free functions
-     - Transaction code creates a temporary `FunctionRegistry` or uses global default
-   - **Path B**: Give Transaction access to an Executor (even a minimal one)
-     - Transaction could hold an `Arc<FunctionRegistry>` directly
-     - Create lightweight aggregator that uses the registry
-   - **Path C**: Restructure transaction SELECT to route through Executor
-     - Have `Transaction::execute()` call `Executor::execute_transaction()` for SELECT
-     - Executor already has all the machinery for aggregation
+**Test results:** All 6 regression tests pass after Phase 2.
 
-**Current recommendation:** Path C is cleanest — restructuring transaction SELECT to route through Executor would align the transaction path with the non-transaction path, which already works correctly.
-
-- [ ] Extract standalone aggregation functions (Path A) OR restructure transaction to use Executor (Path C)
-- [ ] Add aggregate state machine if implementing Path A
-- [ ] Integration test: COUNT/SUM/AVG/MIN/MAX in various contexts
+Status: Committed as `dcb4f1c`
 
 ### Phase 3: Performance Validation (PENDING)
 
 - [ ] Benchmark pushdown vs compilation for aggregate queries
 - [ ] Ensure no regression in non-transaction path
+- [ ] Integration test: COUNT/SUM/AVG/MIN/MAX in various contexts
+
+**Mission created:** `missions/open/0204-a-aggregate-performance-validation.md`
 
 ## Key Files to Modify
 
@@ -190,44 +180,43 @@ The original plan was to route transaction SELECT with aggregates to `execute_se
 
 ## Test Vectors (RFC-0204)
 
-These test cases are implemented in `tests/aggregate_in_transaction_test.rs`. They currently **fail as expected** — the error message is now more informative: `Unsupported expression: aggregate function 'X' is not supported in this context (use SQL aggregation path)`.
+These test cases are implemented in `tests/aggregate_in_transaction_test.rs`. After Phase 2, **all 6 tests pass**:
 
 ```sql
--- T1: SUM inside transaction (fails with better error after fix)
+-- T1: SUM inside transaction (PASS)
 BEGIN;
 SELECT SUM(amount) FROM accounts WHERE user_id = 1 FOR UPDATE;
 COMMIT;
 
--- T2: COUNT inside transaction (fails with better error after fix)
+-- T2: COUNT inside transaction (PASS)
 BEGIN;
 SELECT COUNT(*) FROM accounts WHERE user_id = 1 FOR UPDATE;
 COMMIT;
 
--- T3: AVG inside transaction (fails with better error after fix)
+-- T3: AVG inside transaction (PASS)
 BEGIN;
 SELECT AVG(amount) FROM accounts WHERE user_id = 1 FOR UPDATE;
 COMMIT;
 
--- T4: MIN/MAX inside transaction (fails with better error after fix)
+-- T4: MIN/MAX inside transaction (PASS)
 BEGIN;
 SELECT MIN(amount), MAX(amount) FROM accounts WHERE user_id = 1 FOR UPDATE;
 COMMIT;
 
--- T5: Aggregates WITHOUT FOR UPDATE (also fails — issue is transaction path, not FOR UPDATE)
+-- T5: Aggregates WITHOUT FOR UPDATE (PASS - uses pushdown path)
 BEGIN;
 SELECT SUM(amount) FROM accounts WHERE user_id = 1;
 COMMIT;
 
--- T6: GROUP BY with aggregate inside transaction (fails with better error after fix)
+-- T6: GROUP BY with aggregate inside transaction (PASS)
 BEGIN;
 SELECT user_id, SUM(amount) FROM accounts GROUP BY user_id FOR UPDATE;
 COMMIT;
 ```
 
-**Current behavior:** All 6 tests fail with `UnsupportedExpression` (after fix) indicating aggregates are not supported in scalar expression context.
+**Current behavior:** All 6 tests pass, routing through `Executor::execute_in_transaction()`.
 
-**Expected after Phase 2:** All 6 tests pass.
-```
+**Test framework:** `tests/aggregate_in_transaction_test.rs` - 235 lines, 6 tests
 
 ## Alternatives Considered
 
@@ -240,9 +229,11 @@ COMMIT;
 
 ## Future Work
 
-- F1: Implement `Op::CallAggregate` for full aggregate compilation
-- F2: Add aggregate window function support
-- F3: Optimize aggregate pushdown for complex queries in transactions
+- F1: Window function support for full SQL compliance
+- F2: Multi-table aggregate JOIN support (requires JOIN executor in transactions)
+- F3: Parallel aggregation for large datasets
+- F4: Distributed transaction aggregate support
+- F5: HAVING clause optimization (currently filtered in-memory, could be pushed to storage)
 
 ## Rationale
 

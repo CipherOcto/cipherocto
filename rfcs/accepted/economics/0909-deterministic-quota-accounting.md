@@ -1588,6 +1588,8 @@ $0.03/1K tokens → DQA(30_000, scale=6)
 | Version | Date       | Changes |
 | ------- | ---------- | ------- |
 | v60     | 2026-04-20 | Round 56 fixes: fix N-M4 (remove unverified VARBINARY claim from DDL comment — storage representation is implementation-defined, not normative per RFC-0201); fix N-H2 (rename PricingTable → InternalPricingTable to avoid naming collision with RFC-0910's canonical PricingTable struct) |
+| v58     | 2026-04-20 | Break circular version pin between RFC-0909 and RFC-0910 — RFC-0910 version removed from Status header and Related RFCs footer; RFC-0910 referenced only in Optional Dependencies without version pin |
+| v56     | 2026-04-19 | Round 53 fixes: fix 914-L1 (Status header + Optional Dependencies: RFC-0910 version updated from v4 to v6 to match current RFC-0910 version; Related RFCs footer updated) |
 | v57     | 2026-04-20 | Round 55 fixes: fix 909-L1 (Status header + Optional Dependencies + Related RFCs footer: RFC-0910 version updated from v6 to v7 to match current RFC-0910 version) |
 | v55     | 2026-04-19 | Round 51 fixes: fix 909-H1 (Optional Dependencies: RFC-0910 version updated from v3 to v4 to match current RFC-0910 version) |
 | v54     | 2026-04-19 | Round 50 fixes: fix 909-H1 (Optional Dependencies: RFC-0910 version updated from v2 to v3 to match current RFC-0910 version) |

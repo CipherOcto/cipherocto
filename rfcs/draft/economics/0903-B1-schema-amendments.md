@@ -390,6 +390,7 @@ If multi-provider key scoping becomes required, a future RFC-0903 amendment must
 | Version | Date       | Changes |
 |---------|------------|-------|
 | v23     | 2026-04-20 | Round 56 fixes: fix N-C3 (add supersession note to tokenizers table — RFC-0910 §Tokenizer Database Schema supersedes this definition with `provider TEXT` column and `UNIQUE(version, provider)`; RFC-0910 also adds `tokenizer_assignments` table); fix N-C1 (RFC-0201 ALTER TABLE BYTEA restriction is unimplemented design intent, not runtime behavior — migration procedure using `ALTER TABLE ADD COLUMN BLOB(...)` is fully valid on current stoolap); fix C1 (spend_ledger DDL now shows `team_id TEXT` to resolve the contradiction — RFC-0903-B1 does NOT amend team_id; RFC-0903-C1 amends it to BLOB(16), shown per C1's amendment scope) |
+| v22     | 2026-04-17 | Round 30: remove erroneous "stoolap UNIQUE/BLOB limitation" claim — stoolap fully enforces UNIQUE on BLOB columns; only INTEGER PRIMARY KEY is restricted, not UNIQUE on BLOB |
 | v21     | 2026-04-17 | Round 29 fixes: fix R29C3 (footer v19→v20); update RFC-0909 ref to v40 |
 | v20     | 2026-04-17 | Round 28 fixes: remove erroneous "BLAKE3 truncation code" from v19 changelog (already fixed in v18) |
 | v19     | 2026-04-17 | Round 27 fixes: mark ensure_tokenizer as pseudocode (add ```ignore fence) |

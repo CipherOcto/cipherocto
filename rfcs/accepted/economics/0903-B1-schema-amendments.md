@@ -2,7 +2,7 @@
 
 ## Status
 
-Draft (v23 — Amendment to RFC-0903 Final v29)
+Accepted (v23 — Amendment to RFC-0903 Final v29)
 
 ## Authors
 

@@ -2,7 +2,7 @@
 
 ## Status
 
-Draft (v14 — aligns with RFC-0903 Final v29 + RFC-0903-B1 v23 + RFC-0903-C1 v3)
+Draft (v14 — aligns with RFC-0903 Final v29 + RFC-0903-B1 v23 + RFC-0903-C1 v4)
 
 ## Authors
 
@@ -824,7 +824,9 @@ Floating point produces non-deterministic results across architectures (x87 vs S
 
 The `PricingRegistry` struct is **in-memory only**. It is populated at startup from a persistent store (Stoolap or similar) and loses all state on restart. The registry does NOT implement its own persistence — it relies on the caller's startup sequence to repopulate it from the registered tables stored in the database.
 
-**Startup sequence (per RFC-0914 integration):**
+**Phase 1 acceptance:** Phase 1 (in-memory registry with hardcoded tokenizer lookup) does NOT require RFC-0914 and is independently implementable.
+
+**Startup sequence (per RFC-0914 integration — Phase 2+ only):**
 ```
 1. Load all registered PricingTable rows from Stoolap
 2. Call registry.register(table) for each row (replays immutability constraints)
@@ -837,6 +839,7 @@ This design allows the registry to be treated as a cache of known-good pricing s
 
 | Version | Date | Changes |
 |---------|------|---------|
+| v14 | 2026-04-20 | Round 61 fixes: fix N-H4 (Phase 1 acceptance does NOT require RFC-0914 — registry persistence model startup sequence is Phase 2+ only; Phase 1 (in-memory-only registry) is independently implementable); update Dependencies to reference RFC-0903-C1 v4 |
 | v13 | 2026-04-20 | Round 60 adversarial fixes: fix L1 (compute_pricing_hash: add explicit PSEUDOCODE comment above serde_json line); fix M1 (Error Handling table: add row for "Known model with uncertain assignment" — gemini-*, o1-mini, o1-preview; removed stale "Canonical tokenizer unknown" row which mischaracterized uncertain assignments as "unknown" models; new row clarifies silent runtime behavior with reference to implementation-time concern) |
 | v12 | 2026-04-20 | Round 59 adversarial fixes: fix R1 (remove duplicate serde_json warning in compute_pricing_hash function body); fix H1 (SpendReceipt: add TokenSource import path comment); fix H2 (Related RFCs: RFC-0914 is Required dependency not Optional — registry persistence model depends on it); fix M1 (compute_cost: clarify standalone function with doc comment; Integration example updated); fix M2 (Phase 2 acceptance blocked on BOTH RFC-0903-B1 and RFC-0903-C1); fix L1 (get_canonical_tokenizer: "zero allocation" → "static string literal — no heap allocation") |
 | v11 | 2026-04-20 | Round 58 adversarial fixes: fix R1 (Approval Criteria: Phase 1 checkbox unchecked; Phase 2 notes dependency on RFC-0903-B1 acceptance; added get_version() to criteria); fix H1 (Integration example: replace .unwrap() panic with match/Option handling; Error Handling table updated to match); fix H2 (Phase 2 acceptance notes blocked on RFC-0903-B1); fix M1 (Error Handling: rename "Unknown model, no fallback" to "Unknown model" — silent fallthrough, no warning); fix M2 (Approval Criteria: replace vague "in-memory registry" with specific checklist items); fix L1 (remove duplicate use sha2 import in compute_pricing_hash); fix L2 (Integration: replace ASCII art with Mermaid diagram) |

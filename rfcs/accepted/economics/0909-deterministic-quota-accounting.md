@@ -2,7 +2,7 @@
 
 ## Status
 
-Accepted (v60 — aligned with RFC-0903 Final v29 + RFC-0903-B1 v23 + RFC-0903-C1 v3, RFC-0126 (Accepted v2.5.1), RFC-0201 (Accepted v5.24))
+Accepted (v61 — aligned with RFC-0903 Final v29 + RFC-0903-B1 v23 + RFC-0903-C1 v4, RFC-0126 (Accepted v2.5.1), RFC-0201 (Accepted v5.24))
 
 ## Authors
 
@@ -29,7 +29,7 @@ This is required for future integration with:
 
 **Requires:**
 
-- RFC-0903: Virtual API Key System (Final v29 + RFC-0903-B1 amendment v23 + RFC-0903-C1 amendment v3)
+- RFC-0903: Virtual API Key System (Final v29 + RFC-0903-B1 amendment v23 + RFC-0903-C1 amendment v4)
 - RFC-0126: Deterministic Serialization (Accepted v2.5.1 — for canonical JSON serialization)
 - RFC-0201: Binary BLOB Type for Deterministic Hash Storage (Accepted v5.24)
 
@@ -591,6 +591,12 @@ CREATE INDEX idx_spend_ledger_timestamp ON spend_ledger(timestamp);
 -- Pre-existing index from RFC-0903 Final (not used in deterministic replay path)
 CREATE INDEX idx_spend_ledger_key_time ON spend_ledger(key_id, timestamp);
 CREATE INDEX idx_spend_ledger_event_id ON spend_ledger(event_id);  -- RFC-0903-B1 ext
+-- NOTE: event_id is functionally unique (SHA256 of request content), but no UNIQUE
+-- constraint is added on event_id. The UNIQUE(key_id, request_id) constraint prevents
+-- duplicate request recording for a given key; event_id uniqueness is a separate concern.
+-- Application-layer enforcement is required: duplicate event_id values indicate either
+-- a hash collision or a bug in compute_event_id — either corrupts deterministic replay
+-- and Merkle tree construction silently.
 -- Composite index for efficient replay with ORDER BY created_at — RFC-0903-B1 ext
 CREATE INDEX idx_spend_ledger_key_created ON spend_ledger(key_id, created_at);
 -- Index for pricing verification queries — RFC-0903-B1 ext
@@ -1009,6 +1015,10 @@ pub async fn process_response(
     // 6. Record spend via RFC-0903 Final ledger-based function
     //    - record_spend(db, key_id, &event) for key-level budget
     //    - record_spend_with_team(db, key_id, team_id, &event) for team-level budget
+    //    - Note: BLOB conversion (uuid_to_blob_16, hex_to_blob_32) happens at the
+    //      storage boundary inside record_spend() — not shown in this pseudocode.
+    //      The helpers uuid_to_blob_16, blob_32_to_hex, hex_to_blob_32 are defined
+    //      in §Helper Functions above and used by record_spend internally.
     match team_id {
         Some(tid) => record_spend_with_team(db, key_id, tid, &event)?,
         None => record_spend(db, key_id, &event)?,
@@ -1588,6 +1598,7 @@ $0.03/1K tokens → DQA(30_000, scale=6)
 | Version | Date       | Changes |
 | ------- | ---------- | ------- |
 | v60     | 2026-04-20 | Round 56 fixes: fix N-M4 (remove unverified VARBINARY claim from DDL comment — storage representation is implementation-defined, not normative per RFC-0201); fix N-H2 (rename PricingTable → InternalPricingTable to avoid naming collision with RFC-0910's canonical PricingTable struct) |
+| v61     | 2026-04-20 | Round 57 fixes: fix C5 (add event_id uniqueness enforcement note to DDL comment — application-layer enforcement required per RFC-0903-B1); fix N-H1 (clarify BLOB conversion happens at record_spend storage boundary, not in process_response); update RFC-0903-C1 reference to v4 (rotated_from/rotation_grace_until columns restored) |
 | v58     | 2026-04-20 | Break circular version pin between RFC-0909 and RFC-0910 — RFC-0910 version removed from Status header and Related RFCs footer; RFC-0910 referenced only in Optional Dependencies without version pin |
 | v56     | 2026-04-19 | Round 53 fixes: fix 914-L1 (Status header + Optional Dependencies: RFC-0910 version updated from v4 to v6 to match current RFC-0910 version; Related RFCs footer updated) |
 | v57     | 2026-04-20 | Round 55 fixes: fix 909-L1 (Status header + Optional Dependencies + Related RFCs footer: RFC-0910 version updated from v6 to v7 to match current RFC-0910 version) |
@@ -1638,5 +1649,5 @@ $0.03/1K tokens → DQA(30_000, scale=6)
 
 ---
 
-**Accepted Version:** v60 (2026-04-20)
+**Accepted Version:** v61 (2026-04-20)
 **Related RFCs:** RFC-0903 (Virtual API Key System), RFC-0903-B1 (Schema Amendments), RFC-0903-C1 (Extended Schema Amendments), RFC-0126 (Deterministic Serialization v2.5.1), RFC-0201 (Binary BLOB Type v5.24), RFC-0910 (Pricing Table Registry)

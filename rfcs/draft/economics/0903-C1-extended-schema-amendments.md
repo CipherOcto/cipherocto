@@ -2,7 +2,7 @@
 
 ## Status
 
-Draft (v3 — Amendment to RFC-0903 Final v29 + RFC-0903-B1 amendment v17)
+Draft (v4 — Amendment to RFC-0903 Final v29 + RFC-0903-B1 amendment v23)
 
 ## Authors
 
@@ -151,6 +151,8 @@ CREATE TABLE api_keys (
     rotation_interval_days INTEGER,       -- Unchanged
     description TEXT,                     -- Unchanged
     metadata TEXT,                         -- Unchanged
+    rotated_from BLOB(16),               -- Raw UUID bytes (16 bytes) — was TEXT in RFC-0903 Final, BLOB per RFC-0903-C1
+    rotation_grace_until INTEGER,         -- Unchanged (grace period end timestamp)
     PRIMARY KEY (key_id),
     FOREIGN KEY (team_id) REFERENCES teams(team_id) ON DELETE SET NULL  -- BLOB(16) → BLOB(16)
 );
@@ -312,6 +314,7 @@ The migration procedure for existing deployments is out of scope for this amendm
 
 | Version | Date       | Changes |
 |---------|------------|---------|
+| v4      | 2026-04-20 | Round 56 fixes: fix C3 (add missing rotated_from and rotation_grace_until columns to api_keys DDL — these were present in RFC-0903 Final but absent from C1 DDL; rotated_from is now BLOB(16) per C1's UUID→BLOB conversion); update RFC-0903-B1 reference to v23 |
 | v3      | 2026-04-15 | Round 25 fixes (continued): add Deployment Scope section explicitly limiting to greenfield; migration for existing deployments deferred to future RFC-0903-C2 |
 | v2      | 2026-04-15 | Round 25 fixes: clarify byte savings (hyphenated UUID 36→16, 20 bytes; without hyphens 32→16, 16 bytes); add nullable team_id code example clarification; add dependency ordering section; update Required By note |
 | v1      | 2026-04-15 | Initial: amend teams.team_id, api_keys.key_id, api_keys.team_id to BLOB(16); fix FK type mismatch caused by RFC-0903-B1 leaving api_keys/teams unchanged |
@@ -319,7 +322,7 @@ The migration procedure for existing deployments is out of scope for this amendm
 ---
 
 **Draft Date:** 2026-04-15
-**Version:** v3
+**Version:** v4
 **Amends:** RFC-0903 Final v29 + RFC-0903-B1
 **Required By:** RFC-0909 (Deterministic Quota Accounting)
 **Related RFCs:** RFC-0201 (Binary BLOB Type), RFC-0903-B1 (Schema Amendments)

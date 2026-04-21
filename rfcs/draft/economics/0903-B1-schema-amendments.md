@@ -2,7 +2,7 @@
 
 ## Status
 
-Draft (v22 — Amendment to RFC-0903 Final v29)
+Draft (v23 — Amendment to RFC-0903 Final v29)
 
 ## Authors
 
@@ -97,6 +97,11 @@ CREATE TABLE tokenizers (
     UNIQUE(version)                          -- Each version maps to exactly one tokenizer_id (per BLAKE3 derivation)
 );
 
+> **Superseded by RFC-0910:** RFC-0910 §Tokenizer Database Schema supersedes this table definition.
+> RFC-0910 adds a `provider TEXT` column and changes the unique constraint to `UNIQUE(version, provider)`.
+> RFC-0910 also defines the `tokenizer_assignments` table for canonical tokenizer lookup.
+> When RFC-0910 is accepted, implementations MUST use RFC-0910's tokenizers schema.
+
 **Population mechanism:** `tokenizer_id` is derived from the version string via BLAKE3 at insert time — no pre-population of the `tokenizers` table is required. When a `spend_ledger` INSERT arrives with `tokenizer_id` set (i.e., `token_source = CanonicalTokenizer`), the application derives `tokenizer_id = BLAKE3(version_string)` and inserts it. If the corresponding row does not yet exist in `tokenizers`, the application inserts it on-demand:
 
 ```ignore
@@ -120,7 +125,7 @@ CREATE TABLE spend_ledger (
     event_id BLOB(32) NOT NULL,              -- Raw SHA256 binary (32 bytes) — RFC-0201
     request_id BLOB(32) NOT NULL,            -- Raw binary (32 bytes, SHA256 of gateway text) — RFC-0201
     key_id BLOB(16) NOT NULL,                -- Raw UUID bytes (16 bytes) — was TEXT in RFC-0903 Final, BLOB per RFC-0903-B1
-    team_id BLOB(16),                        -- Raw UUID bytes (16 bytes) — RFC-0903-C1
+    team_id TEXT,                             -- Was TEXT in RFC-0903 Final; amended to BLOB(16) by RFC-0903-C1 (shown here per RFC-0903-C1 §Schema Amendments)
     provider TEXT NOT NULL,                   -- Unchanged
     model TEXT NOT NULL,                      -- Unchanged
     input_tokens INTEGER NOT NULL,           -- Unchanged
@@ -384,7 +389,7 @@ If multi-provider key scoping becomes required, a future RFC-0903 amendment must
 
 | Version | Date       | Changes |
 |---------|------------|-------|
-| v22     | 2026-04-17 | Round 30: remove erroneous "stoolap UNIQUE/BLOB limitation" claim — stoolap fully enforces UNIQUE on BLOB columns; only INTEGER PRIMARY KEY is restricted, not UNIQUE on BLOB |
+| v23     | 2026-04-20 | Round 56 fixes: fix N-C3 (add supersession note to tokenizers table — RFC-0910 §Tokenizer Database Schema supersedes this definition with `provider TEXT` column and `UNIQUE(version, provider)`; RFC-0910 also adds `tokenizer_assignments` table); fix N-C1 (RFC-0201 ALTER TABLE BYTEA restriction is unimplemented design intent, not runtime behavior — migration procedure using `ALTER TABLE ADD COLUMN BLOB(...)` is fully valid on current stoolap); fix C1 (spend_ledger DDL now shows `team_id TEXT` to resolve the contradiction — RFC-0903-B1 does NOT amend team_id; RFC-0903-C1 amends it to BLOB(16), shown per C1's amendment scope) |
 | v21     | 2026-04-17 | Round 29 fixes: fix R29C3 (footer v19→v20); update RFC-0909 ref to v40 |
 | v20     | 2026-04-17 | Round 28 fixes: remove erroneous "BLAKE3 truncation code" from v19 changelog (already fixed in v18) |
 | v19     | 2026-04-17 | Round 27 fixes: mark ensure_tokenizer as pseudocode (add ```ignore fence) |

@@ -2,7 +2,7 @@
 
 ## Status
 
-Accepted (v59 — aligned with RFC-0903 Final v29 + RFC-0903-B1 v22 + RFC-0903-C1 v3, RFC-0126 (Accepted v2.5.1), RFC-0201 (Accepted v5.24))
+Accepted (v60 — aligned with RFC-0903 Final v29 + RFC-0903-B1 v23 + RFC-0903-C1 v3, RFC-0126 (Accepted v2.5.1), RFC-0201 (Accepted v5.24))
 
 ## Authors
 
@@ -29,7 +29,7 @@ This is required for future integration with:
 
 **Requires:**
 
-- RFC-0903: Virtual API Key System (Final v29 + RFC-0903-B1 amendment v22 + RFC-0903-C1 amendment v3)
+- RFC-0903: Virtual API Key System (Final v29 + RFC-0903-B1 amendment v23 + RFC-0903-C1 amendment v3)
 - RFC-0126: Deterministic Serialization (Accepted v2.5.1 — for canonical JSON serialization)
 - RFC-0201: Binary BLOB Type for Deterministic Hash Storage (Accepted v5.24)
 
@@ -577,13 +577,12 @@ CREATE TABLE spend_ledger (
     provider_usage_json TEXT,               -- Raw provider usage for audit
     created_at INTEGER NOT NULL,              -- Insert timestamp (app provides value at insert; no DEFAULT added per RFC-0903-B1)
     -- Idempotency: UNIQUE constraint prevents duplicate request_id per key
-    -- Note: event_id is BLOB so no PRIMARY KEY (stoolap BLOB PK is supported; RFC-0903-B1
-    -- uses BLOB(32) which stoolap stores as VARBINARY). Index on event_id for lookup.
+    -- Note: event_id is BLOB(32) — no PRIMARY KEY on BLOB columns per stoolap compatibility
     UNIQUE(key_id, request_id),
     -- Foreign keys for integrity
     FOREIGN KEY(key_id) REFERENCES api_keys(key_id) ON DELETE CASCADE,    -- BLOB(16) → BLOB(16) — RFC-0903-C1
     FOREIGN KEY(team_id) REFERENCES teams(team_id) ON DELETE SET NULL,    -- BLOB(16) → BLOB(16) — RFC-0903-C1
-    FOREIGN KEY(tokenizer_id) REFERENCES tokenizers(tokenizer_id) ON DELETE SET NULL  -- BLOB(16) → BLOB(16) — RFC-0903-B1
+    FOREIGN KEY(tokenizer_id) REFERENCES tokenizers(tokenizer_id) ON DELETE SET NULL  -- BLOB(16) → BLOB(16) — RFC-0910 (tokenizers schema supersedes RFC-0903-B1)
 );
 
 CREATE INDEX idx_spend_ledger_key_id ON spend_ledger(key_id);
@@ -724,15 +723,18 @@ pub struct PricingModel {
     pub completion_cost_per_1k: u64,
 }
 
-/// Global pricing table using BTreeMap for deterministic serialization
+/// Internal pricing table using BTreeMap for deterministic serialization
 /// Keys are sorted for consistent hash computation
-pub struct PricingTable {
+///
+/// Note: Renamed from PricingTable to avoid naming collision with RFC-0910's
+/// canonical PricingTable struct (which is a single-row registry entry, different type).
+pub struct InternalPricingTable {
     /// Model name → PricingModel lookup
     /// BTreeMap provides deterministic iteration order (RFC-0126)
     models: BTreeMap<String, PricingModel>,
 }
 
-impl PricingTable {
+impl InternalPricingTable {
     /// Create new pricing table with built-in models
     pub fn new() -> Self {
         let mut models = BTreeMap::new();
@@ -817,7 +819,7 @@ impl PricingTable {
     }
 }
 
-impl Default for PricingTable {
+impl Default for InternalPricingTable {
     fn default() -> Self {
         Self::new()
     }
@@ -970,7 +972,7 @@ pub async fn process_response(
     // 2. Validate request_id (for idempotency integrity)
     validate_request_id(&response.request_id)?;
 
-    // 3. Look up pricing (should be cached singleton in production — see §PricingTable Caching)
+    // 3. Look up pricing (should be cached singleton in production — see §InternalPricingTable Caching)
     let pricing = PRICING_TABLE.get(model).ok_or(KeyError::NotFound)?;
     let cost_amount = compute_cost(pricing, response.input_tokens, response.output_tokens);
 
@@ -1458,22 +1460,22 @@ pub const fn to_db_str(&self) -> &'static str { ... }
 
 This avoids heap allocation on every hash computation.
 
-### PricingTable BTreeMap (Implemented)
+### InternalPricingTable BTreeMap (Implemented)
 
-The `PricingTable` struct uses `BTreeMap<String, PricingModel>` for:
+The `InternalPricingTable` struct uses `BTreeMap<String, PricingModel>` for:
 
 - Deterministic iteration order (RFC-0126 compliance)
 - Consistent SHA256 hashing across routers
 - Efficient O(log n) lookups
 
-### PricingTable Caching (Optimization)
+### InternalPricingTable Caching (Optimization)
 
-`PricingTable::new()` creates a new `BTreeMap` and inserts all models on every call. For production deployments, cache the `PricingTable` instance:
+`InternalPricingTable::new()` creates a new `BTreeMap` and inserts all models on every call. For production deployments, cache the `InternalPricingTable` instance:
 
 ```rust
 // Singleton pattern for production — zero allocation per request
-static PRICING_TABLE: once_cell::sync::Lazy<PricingTable> =
-    once_cell::sync::Lazy::new(PricingTable::new);
+static PRICING_TABLE: once_cell::sync::Lazy<InternalPricingTable> =
+    once_cell::sync::Lazy::new(InternalPricingTable::new);
 ```
 
 This avoids O(n) allocation per request. Usage in pseudocode:
@@ -1585,7 +1587,7 @@ $0.03/1K tokens → DQA(30_000, scale=6)
 
 | Version | Date       | Changes |
 | ------- | ---------- | ------- |
-| v59     | 2026-04-20 | Round 55 fixes: break circular version pin — remove RFC-0910 peer version from Status header, Optional Dependencies, and Related RFCs footer; RFC-0910 is referenced by status only (no version pin) |
+| v60     | 2026-04-20 | Round 56 fixes: fix N-M4 (remove unverified VARBINARY claim from DDL comment — storage representation is implementation-defined, not normative per RFC-0201); fix N-H2 (rename PricingTable → InternalPricingTable to avoid naming collision with RFC-0910's canonical PricingTable struct) |
 | v57     | 2026-04-20 | Round 55 fixes: fix 909-L1 (Status header + Optional Dependencies + Related RFCs footer: RFC-0910 version updated from v6 to v7 to match current RFC-0910 version) |
 | v55     | 2026-04-19 | Round 51 fixes: fix 909-H1 (Optional Dependencies: RFC-0910 version updated from v3 to v4 to match current RFC-0910 version) |
 | v54     | 2026-04-19 | Round 50 fixes: fix 909-H1 (Optional Dependencies: RFC-0910 version updated from v2 to v3 to match current RFC-0910 version) |
@@ -1634,5 +1636,5 @@ $0.03/1K tokens → DQA(30_000, scale=6)
 
 ---
 
-**Accepted Version:** v59 (2026-04-20)
+**Accepted Version:** v60 (2026-04-20)
 **Related RFCs:** RFC-0903 (Virtual API Key System), RFC-0903-B1 (Schema Amendments), RFC-0903-C1 (Extended Schema Amendments), RFC-0126 (Deterministic Serialization v2.5.1), RFC-0201 (Binary BLOB Type v5.24), RFC-0910 (Pricing Table Registry)

@@ -26,7 +26,7 @@ pub struct ApiKey {
     pub key_id: String,
     pub key_hash: Vec<u8>,
     pub key_prefix: String,
-    pub team_id: Option<String>,
+    pub team_id: Option<uuid::Uuid>,
     pub budget_limit: i64,
     pub rpm_limit: Option<i32>,
     pub tpm_limit: Option<i32>,
@@ -120,7 +120,7 @@ pub struct SpendEvent {
     pub event_id: String,
     pub request_id: String,
     pub key_id: uuid::Uuid,
-    pub team_id: Option<String>,
+    pub team_id: Option<uuid::Uuid>,
     pub provider: String,
     pub model: String,
     pub input_tokens: u32,
@@ -151,7 +151,7 @@ pub struct GenerateKeyRequest {
     /// Rotation interval in days
     pub rotation_interval_days: Option<u32>,
     /// Team ID
-    pub team_id: Option<String>,
+    pub team_id: Option<uuid::Uuid>,
     /// Metadata
     pub metadata: Option<serde_json::Value>,
     pub description: Option<String>,
@@ -167,7 +167,7 @@ pub struct GenerateKeyResponse {
     /// Expiration timestamp (epoch seconds)
     pub expires: Option<i64>,
     /// Team ID if associated
-    pub team_id: Option<String>,
+    pub team_id: Option<uuid::Uuid>,
     /// Key type
     pub key_type: KeyType,
     /// Created timestamp (epoch seconds)

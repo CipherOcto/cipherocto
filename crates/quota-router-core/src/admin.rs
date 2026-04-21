@@ -298,7 +298,7 @@ where
 fn handle_create_key(storage: &StoolapKeyStorage, req: &GenerateKeyRequest) -> Response<String> {
     // Check team key limit if team_id is specified
     if let Some(ref team_id) = req.team_id {
-        match storage.count_keys_for_team(team_id) {
+        match storage.count_keys_for_team(&team_id.to_string()) {
             Ok(count) => {
                 if let Err(e) = check_team_key_limit(count as u32) {
                     return Response::builder()
@@ -334,7 +334,7 @@ fn handle_create_key(storage: &StoolapKeyStorage, req: &GenerateKeyRequest) -> R
         key_id: key_id.clone(),
         key_hash: key_hash.to_vec(),
         key_prefix: key_string.chars().take(7).collect(),
-        team_id: req.team_id.clone(),
+        team_id: req.team_id,
         budget_limit: req.budget_limit as i64,
         rpm_limit: req.rpm_limit.map(|r| r as i32),
         tpm_limit: req.tpm_limit.map(|t| t as i32),
@@ -363,7 +363,7 @@ fn handle_create_key(storage: &StoolapKeyStorage, req: &GenerateKeyRequest) -> R
         key: key_string,
         key_id: key_id.clone(),
         expires: expires_at,
-        team_id: req.team_id.clone(),
+        team_id: req.team_id,
         key_type: req.key_type,
         created_at: now,
     };
@@ -487,7 +487,7 @@ fn handle_rotate_key(
             req.budget_limit as i64,
             req.rpm_limit.map(|r| r as i32),
             req.tpm_limit.map(|t| t as i32),
-            req.team_id.clone(),
+            req.team_id,
             req.key_type,
             req.auto_rotate.unwrap_or(false),
             req.rotation_interval_days.map(|d| d as i32),
@@ -592,7 +592,7 @@ fn handle_create_team(storage: &StoolapKeyStorage, req: CreateTeamRequest) -> Re
         .as_secs() as i64;
 
     let team = Team {
-        team_id: req.team_id.clone(),
+        team_id: req.team_id,
         name: req.name,
         budget_limit: req.budget_limit,
         created_at: now,

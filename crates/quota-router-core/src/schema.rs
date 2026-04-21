@@ -26,6 +26,8 @@ pub fn init_database(db: &stoolap::Database) -> Result<(), KeyError> {
             rotation_interval_days INTEGER,
             description TEXT,
             metadata TEXT,
+            rotated_from BLOB(16),
+            rotation_grace_until INTEGER,
             UNIQUE(key_id)
         )",
         [],

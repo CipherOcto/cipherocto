@@ -281,7 +281,7 @@ pub async fn rotation_worker(db: &stoolap::Database, cache: &KeyCache, interval_
                 key_id: new_key_id,
                 key_hash: new_key_hash.to_vec(),
                 key_prefix: new_key_string.chars().take(7).collect(),
-                team_id: old_key.team_id.clone(),
+                team_id: old_key.team_id,
                 budget_limit: old_key.budget_limit,
                 rpm_limit: old_key.rpm_limit,
                 tpm_limit: old_key.tpm_limit,

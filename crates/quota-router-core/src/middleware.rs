@@ -135,7 +135,7 @@ impl<S: KeyStorage> KeyMiddleware<S> {
         &self,
         request_id: &str,
         key_id: uuid::Uuid,
-        team_id: Option<String>,
+        team_id: Option<uuid::Uuid>,
         provider: &str,
         model: &str,
         input_tokens: u32,

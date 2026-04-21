@@ -84,7 +84,7 @@ impl StoolapKeyStorage {
             .map_err(|e| KeyError::Storage(e.to_string()))?;
         let team_id = team_id_blob.map(|blob| {
             let bytes: [u8; 16] = blob.try_into().expect("team_id must be 16 bytes");
-            blob_16_to_uuid(&bytes).to_string()
+            blob_16_to_uuid(&bytes)
         });
 
         Ok(ApiKey {
@@ -171,9 +171,7 @@ impl KeyStorage for StoolapKeyStorage {
         // Convert key_id and team_id to BLOB(16) for storage per RFC-0903-C1
         let key_id_blob =
             uuid_to_blob_16(&uuid::Uuid::parse_str(&key.key_id).expect("valid key_id UUID"));
-        let team_id_blob: Option<Vec<u8>> = key.team_id.as_ref().map(|t| {
-            uuid_to_blob_16(&uuid::Uuid::parse_str(t).expect("valid team_id UUID")).to_vec()
-        });
+        let team_id_blob: Option<Vec<u8>> = key.team_id.as_ref().map(|t| uuid_to_blob_16(t).to_vec());
 
         let params: Vec<stoolap::Value> = vec![
             stoolap::core::Value::blob(key_id_blob.to_vec()),
@@ -637,7 +635,7 @@ impl KeyStorage for StoolapKeyStorage {
         let team_id_blob: Option<Vec<u8>> = event
             .team_id
             .as_ref()
-            .map(|t| uuid_to_blob_16(&uuid::Uuid::parse_str(t).unwrap()).to_vec());
+            .map(|t| uuid_to_blob_16(t).to_vec());
 
         let tokenizer_id_blob: Option<Vec<u8>> = event
             .tokenizer_version
@@ -952,7 +950,7 @@ mod tests {
     fn test_list_keys() {
         let storage = create_test_storage();
 
-        let team_uuid = "660e8400-e29b-41d4-a716-446655440001";
+        let team_uuid = uuid::Uuid::parse_str("660e8400-e29b-41d4-a716-446655440001").unwrap();
 
         // Create keys
         for i in 0..3 {
@@ -960,7 +958,7 @@ mod tests {
                 key_id: format!("550e8400-e29b-41d4-a716-4466554400{:02}", 10 + i),
                 key_hash: vec![i as u8],
                 key_prefix: "sk-qr-tes".to_string(),
-                team_id: Some(team_uuid.to_string()),
+                team_id: Some(team_uuid),
                 budget_limit: 1000,
                 rpm_limit: None,
                 tpm_limit: None,
@@ -985,7 +983,7 @@ mod tests {
         assert_eq!(all_keys.len(), 3);
 
         // List by team
-        let team_keys = storage.list_keys(Some(team_uuid)).unwrap();
+        let team_keys = storage.list_keys(Some(&team_uuid.to_string())).unwrap();
         assert_eq!(team_keys.len(), 3);
 
         // List by non-existent team
@@ -1068,7 +1066,7 @@ mod tests {
             key_id: key_uuid.to_string(),
             key_hash: vec![1, 2, 3],
             key_prefix: "sk-qr-tes".to_string(),
-            team_id: Some(team_uuid.to_string()),
+            team_id: Some(team_uuid.parse().unwrap()),
             budget_limit: 1000,
             rpm_limit: None,
             tpm_limit: None,

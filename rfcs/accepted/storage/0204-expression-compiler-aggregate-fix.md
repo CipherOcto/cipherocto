@@ -267,3 +267,47 @@ COMMIT;
 ## Rationale
 
 The expression compiler was written before aggregate function support was complete. The scalar-only lookup was an oversight — the aggregate registry exists and is properly populated (via `registry.register_aggregate::<SumFunction>()`), but the compiler never checks it. Adding the fallback is the minimal fix to enable the compiler to at least recognize aggregate function names, even if full execution isn't yet implemented.
+
+## Security Considerations
+
+| Threat | Impact | Mitigation |
+|--------|--------|------------|
+| Aggregate injection via malformed column aliases | Low - Aggregate functions are registered in a fixed registry | Input validation on column expressions prevents alias injection |
+| Transaction rollback after aggregate computation | Low - Aggregate read-only, no economic impact | MVCC ensures consistent reads |
+| Denial of service via expensive aggregates | Medium - Large scans could consume resources | Query timeout configurable via ExecutionContext |
+
+## Adversarial Review
+
+| Attack Vector | Likelihood | Impact | Mitigation |
+|---------------|------------|--------|------------|
+| Large GROUP BY causing memory exhaustion | Low | High | Phase 3 will add memory limits |
+| Malformed aggregate function names bypassing filters | Low | Medium | Function registry is pre-populated, not user-configurable |
+| Transaction ID enumeration via timing attacks | Very Low | Low | MVCC transaction IDs are opaque |
+
+## Compatibility
+
+**Backward Compatibility:** Fully backward compatible. This change only adds functionality (aggregate support inside transactions) and improves error messages. Existing scalar function behavior is unchanged.
+
+**Forward Compatibility:** No breaking changes to the protocol. Aggregate queries inside transactions will work once stoolap is upgraded.
+
+**Dependency Compatibility:** Requires stoolap `feat/blockchain-sql` branch. Quota-router-core dependency updated to reference latest stoolap commit.
+
+## Version History
+
+| Version | Date | Changes |
+|---------|------|---------|
+| 1.3 | 2026-04-21 | Add Phase 4: parameter resolution fix for WHERE clause |
+| 1.2 | 2026-04-21 | Add Phase 2: route aggregates through Executor |
+| 1.1 | 2026-04-20 | Add Phase 1: better aggregate detection |
+| 1.0 | 2026-04-19 | Initial accepted version |
+
+## Related RFCs
+
+- [RFC-0200 (Storage): Production Vector-SQL Storage Engine](../../rfcs/accepted/storage/0200-vector-sql-storage.md) — MVCC transaction foundation
+- [RFC-0202 (Storage): Stoolap BIGINT and DECIMAL Core Types](../../rfcs/accepted/storage/0202-bigint-decimal-core-types.md) — Type system baseline
+- [RFC-0909 (Economics): Deterministic Quota Accounting](../../rfcs/accepted/economics/0909-deterministic-quota-accounting.md) — Primary use case driver
+
+## Related Use Cases
+
+- [Stoolap MVCC Transaction Aggregate Support](../../docs/use-cases/stoolap-mvcc-transaction-aggregate-support.md) — Documents the original problem
+- [Enhanced Quota Router Gateway](../../docs/use-cases/enhanced-quota-router-gateway.md) — Requires atomic budget updates

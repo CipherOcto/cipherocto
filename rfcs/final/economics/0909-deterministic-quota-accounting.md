@@ -794,35 +794,42 @@ impl InternalPricingTable {
     /// Compute SHA256 pricing hash for this table snapshot
     /// Used in event_id to tie costs to specific pricing version
     ///
-    /// Uses `canon-json` crate (RFC 8785-compliant canonical JSON serializer)
-    /// for deterministic serialization. BTreeMap guarantees sorted key iteration
-    /// at the map level; canon-json guarantees RFC 8785 field ordering and
-    /// number formatting at the serialization level.
+    /// **Merkle leaf requirement:** RFC-0126 §JSON Allowed Contexts explicitly forbids JSON
+    /// serialization for Merkle tree leaves. Since `pricing_hash` is used in `event_id` (a Merkle
+    /// leaf input), this function MUST use DCS (Entry 16, Part 3) binary encoding — NOT JSON.
     ///
-    /// ⚠️  NOTE: The pseudocode below shows serde_json for illustration only.
-    /// Production code MUST use canon-json as shown:
-    ///
-    /// ```ignore
-    /// use canon_json::{CanonicalFormatter, CanonJsonSerialize};
-    /// use sha2::{Digest, Sha256};
-    ///
-    /// pub fn compute_pricing_hash(&self) -> [u8; 32] {
-    ///     let mut buf = Vec::new();
-    ///     self.models.serialize(&mut buf, CanonicalFormatter::new())
-    ///         .expect("PricingTable serialization must succeed");
-    ///     let mut hasher = Sha256::new();
-    ///     hasher.update(&buf);
-    ///     hasher.finalize().into()
-    /// }
-    /// ```
+    /// DCS Entry 16 struct serialization (RFC-0126 Part 3):
+    /// - BTreeMap: `u32_be(count) || for each (key, value) in sorted key order: serialize(key) || serialize(value)`
+    /// - PricingModel fields in declaration order: field_id 1=model_name(String), 2=prompt_cost(u64), 3=completion_cost(u64)
+    /// - String: `u32_be(byte_length) || UTF-8 bytes`
+    /// - Integer: binary big-endian (u64_be for u64)
     pub fn compute_pricing_hash(&self) -> [u8; 32] {
         use sha2::{Digest, Sha256};
 
-        // ⚠️  Example only — NOT for production. See comment above.
-        let serialized = serde_json::to_string(&self.models)
-            .expect("PricingTable serialization must succeed");
+        let mut buf = Vec::new();
+
+        // BTreeMap count
+        buf.extend_from_slice(&u32::to_be(self.models.len() as u32));
+
+        // BTreeMap entries in sorted key order (BTreeMap iterates sorted)
+        for (model_name, pricing) in &self.models {
+            // Field 1: model_name (String)
+            buf.extend_from_slice(&u32::to_be(1));
+            let key_bytes = model_name.as_bytes();
+            buf.extend_from_slice(&u32::to_be(key_bytes.len() as u32));
+            buf.extend_from_slice(key_bytes);
+
+            // Field 2: prompt_cost_per_1k (u64)
+            buf.extend_from_slice(&u32::to_be(2));
+            buf.extend_from_slice(&u64::to_be(pricing.prompt_cost_per_1k));
+
+            // Field 3: completion_cost_per_1k (u64)
+            buf.extend_from_slice(&u32::to_be(3));
+            buf.extend_from_slice(&u64::to_be(pricing.completion_cost_per_1k));
+        }
+
         let mut hasher = Sha256::new();
-        hasher.update(serialized.as_bytes());
+        hasher.update(&buf);
         hasher.finalize().into()
     }
 
@@ -906,8 +913,11 @@ Local tokenizer estimation MUST NOT be used for accounting.
 **Pricing hash determinism:**
 
 ```
-pricing_hash = SHA256(canonical pricing table JSON)
+pricing_hash = SHA256(DCS Entry 16 binary encoding of pricing table)
 ```
+
+> RFC-0126 §JSON Allowed Contexts forbids JSON for Merkle tree leaves. Since `pricing_hash` feeds
+> into `event_id` (a Merkle leaf input), it MUST use DCS binary encoding per Entry 16 (Part 3).
 
 This ensures pricing determinism is defined. RFC-0910 will provide immutable pricing table snapshots.
 
@@ -1604,6 +1614,7 @@ $0.03/1K tokens → DQA(30_000, scale=6)
 
 | Version | Date       | Changes |
 | ------- | ---------- | ------- |
+| v63     | 2026-04-21 | Fix RFC126-C1: replace canon-json pseudocode with DCS Entry 16 binary encoding — RFC-0126 §JSON Allowed Contexts explicitly forbids JSON for Merkle tree leaves; pricing_hash uses DCS Part 3 binary (BTreeMap as u32_be(count)||sorted entries, each field u32_be(field_id)||binary value); update pricing_hash = SHA256(DCS) note accordingly |
 | v62     | 2026-04-20 | Round 59 fixes: fix N-H3 (compute_pricing_hash: replace stale serde_json pseudocode with canon-json usage example — canon-json is RFC 8785-compliant, cross-tested against olpc-cjson; BTreeMap provides key ordering, canon-json guarantees field ordering and number formatting; production code MUST use canon-json) |
 | v61     | 2026-04-20 | Round 57 fixes: fix C5 (add event_id uniqueness enforcement note to DDL comment — application-layer enforcement required per RFC-0903-B1); fix N-H1 (clarify BLOB conversion happens at record_spend storage boundary, not in process_response); fix C2 (update RFC-0903 Final reference from v29 to v30 — RFC-0903 amended to change SpendEvent.team_id from Option<String> to Option<Uuid>, aligning with RFC-0909's Option<uuid::Uuid>); update RFC-0903-C1 reference to v4 (rotated_from/rotation_grace_until columns restored) |
 | v60     | 2026-04-20 | Round 56 fixes: fix N-M4 (remove unverified VARBINARY claim from DDL comment — storage representation is implementation-defined, not normative per RFC-0201); fix N-H2 (rename PricingTable → InternalPricingTable to avoid naming collision with RFC-0910's canonical PricingTable struct) |

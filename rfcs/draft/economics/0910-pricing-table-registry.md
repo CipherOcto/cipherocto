@@ -135,47 +135,74 @@ pub struct PricingTable {
 impl PricingTable {
     /// Compute deterministic SHA256 hash of the pricing table.
     ///
-    /// BTreeMap determinism scope: The `metadata: BTreeMap` field guarantees sorted iteration
-    /// for that field's key-value pairs. The struct's other fields (`table_id`, `version`,
-    /// `provider`, `model`, `prompt_cost_per_1k`, `completion_cost_per_1k`, `effective_from`)
-    /// are serialized in **declaration order** by serde_json — this order is NOT specified by Rust
-    /// and may vary across compiler versions. A canonical JSON serializer (RFC 8785) MUST be used
-    /// to ensure identical output across implementations. The test vector below is computed
-    /// with an RFC 8785-compliant implementation and MUST be matched exactly.
+    /// **Merkle leaf requirement:** RFC-0126 §JSON Allowed Contexts explicitly forbids JSON
+    /// serialization for Merkle tree leaves. Since `pricing_hash` is used in `event_id` (a Merkle
+    /// leaf input per RFC-0909 §Event Identity), this function MUST use DCS (Entry 16, Part 3)
+    /// binary encoding — NOT JSON serialization.
     ///
-    /// ⚠️  You MUST use an RFC 8785-compliant canonical JSON serializer.
-    /// serde_json is NOT RFC 8785-compliant — field ordering is compiler-dependent.
-    /// Using serde_json will produce incorrect pricing_hash values.
-    /// Example with a compliant serializer (pseudocode):
+    /// DCS Entry 16 struct serialization (RFC-0126 Part 3):
+    /// - Fields serialized in **declaration order** (field_id 1-8)
+    /// - Each field: `u32_be(field_id) || value_bytes`
+    /// - String value: `u32_be(byte_length) || UTF-8 bytes` (no quotes)
+    /// - Integer values: binary big-endian (u32_be, u64_be, i64_be per type)
+    /// - BTreeMap: `u32_be(count) || for each (key, value) in sorted order: serialize_string(key) || serialize_string(value)`
     ///
-    /// ```ignore
-    /// let serialized = canonical_json::to_string(&self)
-    ///     .expect("canonical JSON serialization must succeed");
-    /// let mut hasher = Sha256::new();
-    /// hasher.update(serialized.as_bytes());
-    /// hasher.finalize().into()
-    /// ```
+    /// For ASCII-only keys (all RFC-0910 field names), RFC-0126 Part 2 ASCII lexicographic
+    /// ordering and RFC 8785 UTF-16 ordering are equivalent. This RFC uses declared field order
+    /// per DCS Entry 16.
     pub fn compute_pricing_hash(&self) -> [u8; 32] {
-        // Uses canon-json crate (RFC 8785-compliant canonical JSON serializer)
-        // for deterministic serialization. See RFC-0126 Part 2 §Canonical JSON Rules.
-        //
-        // ```ignore
-        // use canon_json::{CanonicalFormatter, CanonJsonSerialize};
-        // use sha2::{Digest, Sha256};
-        //
-        // pub fn compute_pricing_hash(&self) -> [u8; 32] {
-        //     let mut buf = Vec::new();
-        //     self.serialize(&mut buf, CanonicalFormatter::new())
-        //         .expect("PricingTable serialization must succeed");
-        //     let mut hasher = Sha256::new();
-        //     hasher.update(&buf);
-        //     hasher.finalize().into()
-        // }
-        // ```
-        let serialized = serde_json::to_string(&self)
-            .expect("PricingTable serialization must succeed");
+        use sha2::{Digest, Sha256};
+
+        let mut buf = Vec::new();
+
+        // Field 1: table_id (String)
+        buf.extend_from_slice(&u32::to_be(1));
+        let table_id_bytes = self.table_id.as_bytes();
+        buf.extend_from_slice(&u32::to_be(table_id_bytes.len() as u32));
+        buf.extend_from_slice(table_id_bytes);
+
+        // Field 2: version (u32)
+        buf.extend_from_slice(&u32::to_be(2));
+        buf.extend_from_slice(&u32::to_be(self.version));
+
+        // Field 3: provider (String)
+        buf.extend_from_slice(&u32::to_be(3));
+        let provider_bytes = self.provider.as_bytes();
+        buf.extend_from_slice(&u32::to_be(provider_bytes.len() as u32));
+        buf.extend_from_slice(provider_bytes);
+
+        // Field 4: model (String)
+        buf.extend_from_slice(&u32::to_be(4));
+        let model_bytes = self.model.as_bytes();
+        buf.extend_from_slice(&u32::to_be(model_bytes.len() as u32));
+        buf.extend_from_slice(model_bytes);
+
+        // Field 5: prompt_cost_per_1k (u64)
+        buf.extend_from_slice(&u32::to_be(5));
+        buf.extend_from_slice(&u64::to_be(self.prompt_cost_per_1k));
+
+        // Field 6: completion_cost_per_1k (u64)
+        buf.extend_from_slice(&u32::to_be(6));
+        buf.extend_from_slice(&u64::to_be(self.completion_cost_per_1k));
+
+        // Field 7: effective_from (i64)
+        buf.extend_from_slice(&u32::to_be(7));
+        buf.extend_from_slice(&i64::to_be(self.effective_from));
+
+        // Field 8: metadata (BTreeMap<String, String>)
+        buf.extend_from_slice(&u32::to_be(8));
+        buf.extend_from_slice(&u32::to_be(self.metadata.len() as u32));
+        for (key, value) in &self.metadata {
+            let key_bytes = key.as_bytes();
+            let value_bytes = value.as_bytes();
+            buf.extend_from_slice(&u32::to_be(key_bytes.len() as u32));
+            buf.extend_from_slice(key_bytes);
+            buf.extend_from_slice(&u32::to_be(value_bytes.len() as u32));
+            buf.extend_from_slice(value_bytes);
+        }
+
         let mut hasher = Sha256::new();
-        hasher.update(serialized.as_bytes());
+        hasher.update(&buf);
         hasher.finalize().into()
     }
 }
@@ -607,7 +634,7 @@ This RFC can be accepted when:
 - [x] get_by_hash() resolves any historical pricing_hash in O(1)
 - [x] get_versions() returns all versions for (provider, model), newest first
 - [x] get_version() returns a specific version for (provider, model)
-- [x] compute_pricing_hash() produces deterministic SHA256 (RFC 8785-compliant canonical JSON)
+- [x] compute_pricing_hash() produces deterministic SHA256 (DCS Entry 16 per RFC-0126 Part 3 — binary encoding required for Merkle leaves)
 - [x] compute_cost() uses integer-only arithmetic (no floating point)
 - [x] get_canonical_tokenizer() is deterministic across all router implementations
 - [x] tokenizer_version_to_id() produces consistent BLAKE3-16 output (test vectors pass)
@@ -681,9 +708,9 @@ This RFC can be accepted when:
 | effective_from | `1704067200` (2024-01-01) |
 | metadata | `{}` |
 
-Expected `compute_pricing_hash()` output: `a127db97a3695861f7a34ab2abe821ed0b8d7ec47e3dc579d7a5ca8cfb7a0641`
+Expected `compute_pricing_hash()` output: `076d2278719ca59aae444d7a62ed9894d4904c3efdedf294195dab7d55afe9e6`
 
-> **Canonical JSON input:** `{"table_id":"openai-gpt4-v1","version":1,"provider":"openai","model":"gpt-4","prompt_cost_per_1k":30000,"completion_cost_per_1k":60000,"effective_from":1704067200,"metadata":{}}` (RFC 8785 canonical form — definition-order fields, compact separators, minimal number representation)
+> **DCS Entry 16 binary encoding:** `pricing_hash` feeds into `event_id` (a Merkle leaf), and RFC-0126 §JSON Allowed Contexts explicitly forbids JSON for Merkle tree leaves. The test vector above is computed using DCS Entry 16 binary serialization: field_id||value in declaration order (1-8), strings as length-prefixed UTF-8, integers as binary big-endian, BTreeMap as sorted key-value entries.
 
 ### Cost Calculation Test Vector
 
@@ -852,6 +879,7 @@ This design allows the registry to be treated as a cache of known-good pricing s
 
 | Version | Date | Changes |
 |---------|------|---------|
+| v16 | 2026-04-21 | Fix RFC126-C1/C2/C3: replace canon-json pseudocode with DCS Entry 16 binary encoding — RFC-0126 §JSON Allowed Contexts explicitly forbids JSON for Merkle tree leaves; pricing_hash uses DCS Part 3 binary (field_id||value, binary integers, length-prefixed strings); update test vector to DCS output `076d2278719ca59aae444d7a62ed9894d4904c3efdedf294195dab7d55afe9e6`; add ASCII/UTF-16 ordering clarification |
 | v15 | 2026-04-20 | Round 59 fixes: fix N-H3 (compute_pricing_hash: replace serde_json PSEUDOCODE with canon-json usage example — canon-json is RFC 8785-compliant, cross-tested against olpc-cjson; RFC-0126 Part 2 provides the canonical JSON rules; production code MUST use canon-json; test vector computed with compliant implementation) |
 | v14 | 2026-04-20 | Round 61 fixes: fix N-H4 (Phase 1 acceptance does NOT require RFC-0914 — registry persistence model startup sequence is Phase 2+ only; Phase 1 (in-memory-only registry) is independently implementable); update Dependencies to reference RFC-0903-C1 v4 |
 | v12 | 2026-04-20 | Round 59 adversarial fixes: fix R1 (remove duplicate serde_json warning in compute_pricing_hash function body); fix H1 (SpendReceipt: add TokenSource import path comment); fix H2 (Related RFCs: RFC-0914 is Required dependency not Optional — registry persistence model depends on it); fix M1 (compute_cost: clarify standalone function with doc comment; Integration example updated); fix M2 (Phase 2 acceptance blocked on BOTH RFC-0903-B1 and RFC-0903-C1); fix L1 (get_canonical_tokenizer: "zero allocation" → "static string literal — no heap allocation") |

@@ -2,7 +2,7 @@
 
 ## Status
 
-Draft (v2.2 — Round 2 adversarial review: HTTP forwarding emphasis, enterprise for both modes)
+Draft (v2.3 — Round 3: dual-mode emphasis fixed, enterprise in both modes, HTTP forwarding as shared core)
 
 ## Authors
 
@@ -14,25 +14,7 @@ Draft (v2.2 — Round 2 adversarial review: HTTP forwarding emphasis, enterprise
 
 ## Summary
 
-Define a dual-mode query router that operates under Rust feature gates: **LiteLLM Mode** (proxy gateway with OpenAI-compatible HTTP endpoints) and **any-llm Mode** (direct SDK calls via PyO3). Both modes share the same Rust router core (RFC-0902), provider abstraction layer, and stoolap persistence (RFC-0903-B1/C1), but expose different interfaces for different user segments. LiteLLM Mode targets enterprises needing centralized key management; any-llm Mode targets Python developers wanting drop-in SDK replacement without proxy deployment.
-
-## Dependencies
-
-**Requires:**
-
-- RFC-0902: Multi-Provider Routing and Load Balancing (Accepted)
-- RFC-0903: Virtual API Key System (Final)
-- RFC-0903-B1: Schema Amendments (spend_ledger BLOB)
-- RFC-0903-C1: Extended Schema Amendments (api_keys/teams BLOB)
-
-**Optional:**
-
-- RFC-0904: Real-Time Cost Tracking
-- RFC-0906: Response Caching
-- RFC-0907: Configuration Management
-- RFC-0908: Python SDK and PyO3 Bindings
-- RFC-0909: Deterministic Quota Accounting
-- RFC-0910: Pricing Table Registry
+Define a dual-mode query router that operates under Rust feature gates: **LiteLLM Mode** (HTTP proxy with OpenAI-compatible endpoints) and **any-llm Mode** (Python SDK via PyO3). The modes differ only in client interface — both share the same enterprise feature set, HTTP forwarding core, and stoolap storage. LiteLLM Mode targets enterprises deploying an HTTP proxy; any-llm Mode targets Python developers using the SDK directly. All LiteLLM features (virtual keys, budgets, rate limiting, Prometheus metrics) and all enterprise features (RFC-0903/0904/0909/0910) are available in **both** modes — the distinction is only how clients connect, not what capabilities they receive.
 
 ## Motivation
 
@@ -44,71 +26,88 @@ Based on `docs/research/any-llm-vs-litellm-comparison.md`:
 
 **any-llm** is a lean correctness-first SDK that delegates to official provider SDKs. It has no router, no fallback, but maximum protocol correctness and simpler maintenance.
 
-**CipherOcto Opportunity:** Adopt LiteLLM's interface contracts for enterprise compatibility while using any-llm's SDK-first approach for provider correctness — all in Rust with stoolap persistence.
+**CipherOcto Opportunity:** Adopt LiteLLM's interface contracts for enterprise compatibility while using HTTP forwarding (REST API equivalence to official SDKs) for provider correctness — all in Rust with stoolap persistence.
 
 ### The Dual-Mode Concept
 
-Two user segments, two interaction patterns:
+The dual-mode architecture is about **interface only**. Both modes expose identical enterprise features; the difference is how clients connect:
 
-| User Segment | Deployment | Example | This RFC |
-|--------------|------------|---------|----------|
-| **Python Developer** | No proxy | `pip install quota-router` → `import quota_router as litellm` | **any-llm Mode** |
-| **Enterprise DevOps** | HTTP proxy | Deploy gateway, call `/v1/chat/completions` with API key | **LiteLLM Mode** |
+| Client | Connection | Mode |
+|--------|------------|------|
+| OpenAI SDK / curl / any HTTP client | HTTP proxy (`/v1/chat/completions`) | LiteLLM Mode |
+| Python app (`import quota_router`) | PyO3 SDK (`completion()`) | any-llm Mode |
 
-Both modes share the same Rust router and provider layer — the distinction is purely interface-level:
+**Enterprise features are identical in both modes:**
+- Virtual API keys (RFC-0903)
+- Budget enforcement (RFC-0904)
+- Rate limiting (RFC-0902)
+- Deterministic quota accounting (RFC-0909)
+- Pricing table registry (RFC-0910)
+- Prometheus metrics
+- OCTO-W balance
+
+The only difference is the interface layer — not the feature set.
+
+### The Dual-Mode Concept
+
+The dual-mode architecture differentiates only the **client interface** — both modes expose identical enterprise features.
 
 ```mermaid
-flowchart TB
-    subgraph SharedCore["Shared: quota-router-core"]
+flowchart LR
+    subgraph Shared["Shared Core (both modes)"]
         RC1[Router Engine<br/>RFC-0902]
-        RC2[Provider Abstraction<br/>trait LLMProvider]
+        RC2[HTTP Forwarding<br/>reqwest → Providers]
         RC3[stoolap Storage<br/>RFC-0903-B1/C1]
-        RC4[OCTO-W Balance]
+        RC4[Enterprise Features<br/>Keys·Budgets·Rate Limits<br/>RFC-0903/0904/0909/0910]
     end
-    
-    subgraph LiteLLMMode["LiteLLM Mode (Proxy)"]
-        LM1[HTTP Server<br/>hyper/axum]
-        LM2[Auth Middleware]
-        LM3[OpenAI Endpoints<br/>/v1/chat/completions]
-    end
-    
-    subgraph AnyLLMMode["any-llm Mode (SDK)"]
-        AM1[Python SDK<br/>PyO3 Bindings]
-        AM2[completion()<br/>acompletion()]
-    end
-    
-    LM1 --> RC1
-    LM2 --> LM1
-    LM3 --> LM1
-    AM1 --> RC1
-    AM2 --> AM1
-    RC1 --> RC2
-    RC2 --> RC3
-    RC3 --> RC4
+
+    LiteLLM["LiteLLM Mode<br/>HTTP Proxy Interface"]:::mode
+    AnyLLM["any-llm Mode<br/>Python SDK (PyO3)"]:::mode
+
+    LiteLLM --> Shared
+    AnyLLM --> Shared
+
+    classDef mode fill:#e1f5fe
 ```
+
+**Mode distinction:**
+- **LiteLLM Mode:** HTTP proxy at `:8000`. Clients (OpenAI SDK, curl, any HTTP tool) connect via `/v1/chat/completions`. No Python required on the client side.
+- **any-llm Mode:** Python SDK via PyO3. Clients `pip install quota-router` and call `completion()` directly from Python code.
+
+**What both modes share (identical feature set):**
+- RFC-0902 router with 6 routing strategies
+- HTTP forwarding to provider REST APIs
+- Virtual API keys (RFC-0903)
+- Budget enforcement (RFC-0904)
+- Rate limiting (RFC-0902)
+- Deterministic quota accounting (RFC-0909)
+- Pricing table registry (RFC-0910)
+- Prometheus metrics
+- OCTO-W balance (RFC-0900)
+- stoolap persistence (RFC-0903-B1/C1)
 
 ### Rust Feature Gates
 
-The dual-mode architecture is enforced via Cargo feature gates:
+The dual-mode architecture uses Cargo feature gates to select the client interface. Enterprise features are always included (no separate gate):
 
 ```toml
 # Cargo.toml (quota-router-core)
 [features]
-default = ["any-llm-mode"]  # SDK mode by default
-any-llm-mode = []            # Direct provider calls via PyO3
-litellm-mode = []            # HTTP proxy gateway with OpenAI compat
-full = ["any-llm-mode", "litellm-mode", "enterprise"]  # Both modes + all features
-enterprise = []             # Virtual keys, budgets, rate limiting
+default = ["any-llm-mode"]  # Python SDK by default
+any-llm-mode = ["py-o3"]    # Python SDK via PyO3
+litellm-mode = ["hyper", "axum"]  # HTTP proxy server
+full = ["any-llm-mode", "litellm-mode"]  # Both interfaces (default features = both + enterprise)
 ```
 
-**Feature interaction:**
+**What each feature enables:**
 
-| Feature | Enables | Use Case |
-|---------|---------|----------|
-| `any-llm-mode` | PyO3 bindings for direct SDK calls | Python developers |
-| `litellm-mode` | HTTP server + OpenAI endpoints | Enterprise proxy |
-| `full` | Both modes simultaneously | Single binary, both deployment styles |
-| `enterprise` | Virtual keys, budgets, rate limiting | Production deployments |
+| Feature | Interface | Enterprise Features |
+|---------|-----------|---------------------|
+| `any-llm-mode` | Python SDK (`pip install`) | ✅ Included (always) |
+| `litellm-mode` | HTTP proxy (`curl`) | ✅ Included (always) |
+| `full` | Both interfaces | ✅ Included (always) |
+
+**Note:** Enterprise features (virtual keys, budgets, rate limiting, RFC-0903/0904/0909/0910) are not behind a gate — they are built into the shared core and available to both modes. The `full` build produces a binary that can serve both Python SDK clients and HTTP proxy clients simultaneously.
 
 ## Scope
 
@@ -118,74 +117,84 @@ enterprise = []             # Virtual keys, budgets, rate limiting
 
 | Component | Feature Gate | Description |
 |-----------|-------------|-------------|
-| HTTP Server | `litellm-mode` | FastAPI-less Rust HTTP server via `hyper`/`axum` |
+| HTTP Server | `litellm-mode` | Rust HTTP server via `hyper`/`axum` for LiteLLM Mode |
 | OpenAI Endpoints | `litellm-mode` | `/v1/chat/completions`, `/v1/embeddings`, `/v1/models` |
-| PyO3 Bindings | `any-llm-mode` | Direct `completion()` call from Python |
-| Provider SDK Bridge | `any-llm-mode` | PyO3 → Rust → official provider SDKs |
-| Shared Router | (none) | RFC-0902 router, always available |
-| Shared Storage | (none) | stoolap persistence via RFC-0903-B1/C1 schema |
+| PyO3 Bindings | `any-llm-mode` | Python SDK for any-llm Mode |
+| Shared Router | (none) | RFC-0902 router + all 6 routing strategies |
+| HTTP Forwarding | (none) | `reqwest` → provider REST APIs (both modes) |
+| Enterprise Features | (none) | Virtual keys, budgets, rate limiting, Prometheus, RFC-0903/0904/0909/0910 |
 
-#### Provider Integration Strategy
+> **All enterprise features are in the shared core, available to both modes.** The feature gates control only which client interface is enabled (HTTP proxy, Python SDK, or both).
 
-Follow any-llm's insight: **use official provider SDKs where available** (delegation approach), with HTTP fallback for providers lacking Python SDKs.
+#### HTTP Forwarding (Shared Core — Both Modes)
 
-| Provider | Implementation | Approach |
-|----------|----------------|----------|
-| OpenAI | `reqwest` | HTTP forwarding |
-| Anthropic | `reqwest` | HTTP forwarding |
-| Mistral | `reqwest` | HTTP forwarding (official REST API) |
-| Ollama | `reqwest` | HTTP forwarding |
-| Google (Gemini) | `reqwest` | HTTP forwarding |
-| Azure OpenAI | `reqwest` | HTTP forwarding |
-| AWS Bedrock | `reqwest` | HTTP forwarding |
+All providers use `reqwest` HTTP forwarding to official provider REST APIs. This is the shared mechanism underlying both LiteLLM Mode and any-llm Mode — the interface differs, but the provider communication is identical.
 
-> **Note:** All providers use `reqwest` HTTP forwarding. The "Python SDK via PyO3" approach from any-llm is not viable for calling Python SDKs from Rust — PyO3 bridges Rust→Python, not Rust→Python SDKs. The official provider REST APIs provide protocol-correct access equivalent to the SDKs.
+> **Why HTTP forwarding?** REST API equivalence to official SDKs: providers maintain HTTP APIs as the canonical interface; our `reqwest` calls produce the same request/response bytes as the official SDKs. Avoids SDK version management and maintenance burden of wrapper libraries.
 
-#### LiteLLM Mode (Proxy Gateway)
+| Provider | Implementation | Notes |
+|----------|----------------|-------|
+| OpenAI | `reqwest` | REST API — chat completions, embeddings |
+| Anthropic | `reqwest` | REST API — messages, embeddings |
+| Mistral | `reqwest` | REST API — official Mistral API |
+| Ollama | `reqwest` | REST API — local and remote Ollama |
+| Google (Gemini) | `reqwest` | REST API — Vertex AI or maker suite |
+| Azure OpenAI | `reqwest` | REST API — Azure-hosted models |
+| AWS Bedrock | `reqwest` | REST API — Claude, Llama via Bedrock |
+
+Both modes forward to the same endpoints using the same `reqwest` client. The difference is how the request arrives: LiteLLM Mode from an HTTP client (any language), any-llm Mode from Python via PyO3.
+
+#### LiteLLM Mode: HTTP Proxy (Both Modes Share Enterprise Features)
+
+LiteLLM Mode exposes an HTTP proxy with OpenAI-compatible endpoints. All enterprise features are enforced on every request:
 
 ```mermaid
 sequenceDiagram
-    participant Client as OpenAI SDK Client
-    participant Gateway as quota-router HTTP Server
-    participant Auth as Auth Middleware
-    participant Router as Rust Router (RFC-0902)
-    participant Provider as LLM Provider
-    participant Storage as stoolap (RFC-0903)
-    
+    participant Client as HTTP Client<br/>(any language)
+    participant Gateway as quota-router HTTP Server<br/>(LiteLLM Mode)
+    participant Auth as Auth Middleware<br/>(all modes)
+    participant Router as Rust Router<br/>(all modes)
+    participant Provider as LLM Provider<br/>(all modes, HTTP forwarding)
+    participant Storage as stoolap<br/>(all modes)
+
     Client->>Gateway: POST /v1/chat/completions<br/>Authorization: Bearer sk-...
-    Gateway->>Auth: Validate API key
-    Auth->>Storage: Check key + budget<br/>Record spend event
-    Storage-->>Auth: OK / Insufficient balance
-    Auth->>Router: Route request<br/>Check rate limits
-    Router->>Provider: Forward request
+    Gateway->>Auth: Validate API key (RFC-0903)
+    Auth->>Storage: Check virtual key + budget (RFC-0904)
+    Storage-->>Auth: OK / Budget exceeded
+    Auth->>Router: Route request + check rate limits (RFC-0902)
+    Router->>Provider: HTTP forwarding (reqwest)
     Provider-->>Router: LLM Response
-    Router->>Storage: Record usage<br/>Update spend ledger
+    Router->>Storage: Record spend (RFC-0909) + update metrics
     Router-->>Gateway: OpenAI-formatted response
     Gateway-->>Client: HTTP 200 + response
+
+    Note over Client,Storage: All enterprise features active:<br/>Virtual keys, Budgets, Rate limits,<br/>Prometheus metrics, OCTO-W balance
 ```
 
-#### any-llm Mode (SDK)
+#### any-llm Mode: Python SDK (Both Modes Share Enterprise Features)
 
-```mermaid
-sequenceDiagram
-    participant Python as Python App
-    participant SDK as quota_router Python SDK
-    participant PyO3 as PyO3 Bindings
-    participant Router as Rust Router
-    participant Provider as LLM Provider
-    participant Storage as stoolap
-    
-    Python->>SDK: import quota_router as litellm<br/>litellm.completion(model="...", messages=[...])
-    SDK->>PyO3: Call completion()
-    PyO3->>Router: route_and_forward(request)
-    Router->>Storage: Check budget (async)
-    Router->>Provider: Forward to provider
-    Provider-->>Router: Response
-    Router->>Storage: Record usage
-    Router-->>PyO3: CompletionResponse
-    PyO3-->>SDK: Py<PyAny> (Python dict)
-    SDK-->>Python: ModelResponse
+any-llm Mode exposes a Python SDK via PyO3. All enterprise features are enforced on every SDK call:
+
+```python
+# any-llm Mode — Python SDK with FULL enterprise features
+from quota_router import completion, set_api_key, get_budget_status, get_metrics
+
+# Set API key — validates against storage (RFC-0903)
+set_api_key("sk-...")
+
+# All enterprise features active in this call:
+# - Virtual key validation
+# - Budget enforcement (RFC-0904)
+# - Rate limiting (RFC-0902)
+# - Spend ledger recording (RFC-0909)
+response = completion(model="gpt-4o", messages=[...])
+
+# Admin features available via SDK
+budget_status = get_budget_status()
+metrics = get_metrics()
 ```
+
+Enterprise features are identical between the Python SDK and the HTTP proxy — the difference is only the client interface (Python function call vs HTTP request).
 
 ### Out of Scope
 
@@ -201,19 +210,16 @@ sequenceDiagram
 ```rust
 // quota-router-core/src/lib.rs
 
-// HTTP server + OpenAI endpoints — litellm-mode only
 #[cfg(feature = "litellm-mode")]
-pub mod gateway;
+pub mod gateway;    // HTTP proxy server — LiteLLM Mode interface
 
-// PyO3 bindings for Python SDK — any-llm-mode only
-// NOTE: py_bridge lives in THIS crate (quota-router-core), not a separate crate.
-// Feature gates are per-crate; cross-crate feature gating does not work in Rust.
 #[cfg(feature = "any-llm-mode")]
-pub mod py_bridge;
+pub mod py_bridge; // Python SDK via PyO3 — any-llm Mode interface
 
-pub mod router;       // RFC-0902 router (always available)
-pub mod providers;    // Provider abstraction layer (always available)
-pub mod storage;      // stoolap storage (always available)
+pub mod router;       // RFC-0902 router (always)
+pub mod providers;    // HTTP forwarding to provider REST APIs (always)
+pub mod storage;      // stoolap storage (always)
+pub mod enterprise;   // Virtual keys, budgets, rate limiting (always)
 ```
 
 ### Provider Abstraction Layer
@@ -455,51 +461,67 @@ impl KeyStorage {
 
 ### Mode Selection
 
-Modes are determined at **compile time** via feature flags:
+Modes are determined at **compile time** via feature flags. Enterprise features are always included (built into the shared core):
 
 ```bash
-# Build for Python SDK users (any-llm mode)
+# Build for Python SDK only (any-llm mode)
 cargo build --features "any-llm-mode" --release
 
-# Build for proxy gateway (LiteLLM mode)
-cargo build --features "litellm-mode,enterprise" --release
+# Build for HTTP proxy only (LiteLLM mode)
+cargo build --features "litellm-mode" --release
 
-# Build with both modes (dual mode)
-cargo build --features "full" --release
+# Build with both interfaces (default)
+cargo build --features "full" --release  # any-llm-mode + litellm-mode
 ```
 
-Runtime configuration supplements compile-time flags:
+**What gets compiled:**
+
+| Build | HTTP Proxy (`:8000`) | Python SDK (`pip install`) | Enterprise Features |
+|-------|---------------------|---------------------------|---------------------|
+| `any-llm-mode` | ❌ | ✅ | ✅ (always) |
+| `litellm-mode` | ✅ | ❌ | ✅ (always) |
+| `full` (default) | ✅ | ✅ | ✅ (always) |
+
+**Runtime configuration:**
 
 ```yaml
-# config.yaml for LiteLLM mode
-mode: proxy
-litellm_mode:
+# config.yaml — applies to whichever interface(s) are compiled in
+mode: both              # 'both', 'proxy', or 'sdk'
+proxy:
   host: "0.0.0.0"
   port: 8000
   master_key: "${MASTER_KEY}"
-
-# config.yaml for any-llm mode  
-mode: sdk
-anyllm_mode:
-  # No host/port - direct calls only
+sdk:
   default_provider: "openai"
+  # SDK is always available when compiled in full mode
 ```
+
+For `full` build (both interfaces):
+- `mode: both` — HTTP server running + Python SDK importable
+- `mode: proxy` — HTTP server only
+- `mode: sdk` — HTTP server disabled, SDK only
 
 ### LiteLLM Compatibility Matrix
 
+All features below are available in **both** LiteLLM Mode (HTTP proxy) and any-llm Mode (Python SDK). The modes differ only in interface, not capability.
+
 Based on `docs/research/any-llm-vs-litellm-comparison.md` Table 24:
 
-| Feature | LiteLLM | this RFC (LiteLLM Mode) | any-llm | this RFC (any-llm Mode) |
-|---------|---------|------------------------|---------|------------------------|
-| Drop-in OpenAI proxy | Yes | ✅ | No | N/A |
+| Feature | LiteLLM | this RFC (both modes) | any-llm | this RFC (both modes) |
+|---------|---------|----------------------|---------|----------------------|
+| OpenAI-compatible API | Yes | ✅ (LiteLLM Mode) | No | ✅ (any-llm Mode) |
 | Virtual API keys | Yes | ✅ (RFC-0903) | Basic | ✅ (RFC-0903) |
 | Budget enforcement | Yes | ✅ (RFC-0904) | Yes | ✅ (RFC-0904) |
 | Load balancing | Yes (6 strategies) | ✅ (RFC-0902) | No | ✅ (RFC-0902) |
 | Fallback routing | Yes | ✅ (RFC-0902) | No | ✅ (RFC-0902) |
-| Provider SDK delegation | Partial | ✅ (HTTP forwarding equivalence) | Yes | ✅ (HTTP forwarding equivalence) |
+| HTTP forwarding (REST API equivalence) | Partial | ✅ (both modes) | Yes | ✅ (both modes) |
 | 100+ providers | Yes | 10+ initially | 43 | 10+ initially |
 | stoolap persistence | No | ✅ | No | ✅ |
 | OCTO-W integration | No | ✅ | No | ✅ |
+| Prometheus metrics | Yes | ✅ | No | ✅ (via SDK) |
+| Streaming support | Yes | ✅ | Yes | ✅ (via SDK) |
+
+**Key:** "both modes" = identical enterprise feature set, different interface (HTTP vs Python SDK).
 
 ### Exception Parity
 
@@ -539,13 +561,15 @@ completion(model="mistral:mistral-small-latest", messages=[...])
 
 | Goal | Target | Metric |
 |------|--------|--------|
-| G1 | LiteLLM proxy compatibility | 90%+ endpoint compatibility |
-| G2 | any-llm SDK compatibility | 90%+ function signature match |
-| G3 | Shared router | 100% RFC-0902 strategy support |
-| G4 | stoolap persistence | RFC-0903-B1/C1 schema compliance |
-| G5 | Feature-gated build | Zero overhead for disabled features |
-| G6 | <10ms proxy latency | Gateway overhead |
+| G1 | HTTP proxy compatibility (LiteLLM Mode) | 90%+ endpoint compatibility |
+| G2 | Python SDK compatibility (any-llm Mode) | 90%+ function signature match |
+| G3 | Shared enterprise features | Identical feature set in both modes |
+| G4 | HTTP forwarding correctness | REST API equivalence to official SDKs |
+| G5 | Feature-gated build | Zero overhead for disabled interface |
+| G6 | <10ms proxy latency | LiteLLM Mode gateway overhead |
 | G7 | <50ms SDK call overhead | PyO3 boundary + router |
+| G8 | Binary size | <15MB for single-mode, <25MB for `full` |
+| G9 | Python wheel size | <10MB for any-llm-mode |
 
 ## Key Files to Modify
 
@@ -582,49 +606,52 @@ crates/quota-router-core/
 
 ```toml
 [features]
-default = ["any-llm-mode"]
-any-llm-mode = ["py-o3"]
-litellm-mode = ["hyper", "axum", "tokio-tower"]
-enterprise = ["any-llm-mode", "litellm-mode"]
-full = ["enterprise"]
+default = ["full"]           # Both interfaces (any-llm + litellm)
+any-llm-mode = ["py-o3"]     # Python SDK only
+litellm-mode = ["hyper", "axum"]  # HTTP proxy only
+full = ["any-llm-mode", "litellm-mode"]  # Both interfaces
 
 # Internal feature dependencies
 py-o3 = ["dep:pyo3"]
 hyper = ["dep:hyper", "dep:hyper-util"]
 ```
 
+**Enterprise features (virtual keys, budgets, rate limiting, Prometheus, RFC-0903/0904/0909/0910) are in the shared core — not behind any feature gate.**
+
 ## Implementation Phases
 
-### Phase 1: Shared Core
+**Enterprise features are part of the shared core — implemented once, available to both modes.**
+
+### Phase 1: Shared Core (Both Modes)
 
 - [ ] Provider abstraction trait (`LLMProvider`)
-- [ ] OpenAI provider implementation (`reqwest`)
-- [ ] Anthropic provider implementation (`reqwest`)
-- [ ] RFC-0902 router integration with providers
-- [ ] stoolap storage layer (RFC-0903-B1/C1)
-
-### Phase 2: any-llm Mode (SDK)
-
-- [ ] PyO3 bridge module
-- [ ] `completion()` binding that calls router directly
-- [ ] LiteLLM-compatible exception types
-- [ ] Model string parsing (provider:model format)
-- [ ] Python SDK package structure
-
-### Phase 3: LiteLLM Mode (Proxy)
-
-- [ ] HTTP server module (`hyper`/`axum`)
-- [ ] OpenAI-compatible endpoints (`/v1/chat/completions`, etc.)
-- [ ] Auth middleware (API key validation)
-- [ ] Admin endpoints for key/budget management
+- [ ] HTTP forwarding (`reqwest`) to all 7 providers
+- [ ] RFC-0902 router with all 6 routing strategies
+- [ ] stoolap storage layer (RFC-0903-B1/C1 schema)
+- [ ] Virtual API key validation (RFC-0903)
+- [ ] Budget enforcement (RFC-0904)
+- [ ] Rate limiting (RFC-0902)
+- [ ] Deterministic quota accounting (RFC-0909)
 - [ ] Prometheus metrics endpoint
 
-### Phase 4: Enterprise Features
+### Phase 2: LiteLLM Mode (HTTP Proxy)
 
-- [ ] Virtual key management (per RFC-0903)
-- [ ] Budget enforcement (per RFC-0904)
-- [ ] Rate limiting (per RFC-0902)
-- [ ] Usage tracking and analytics
+- [ ] HTTP server (`hyper`/`axum`) on configurable host/port
+- [ ] OpenAI-compatible endpoints (`/v1/chat/completions`, `/v1/embeddings`, `/v1/models`)
+- [ ] Auth middleware (API key validation, same as SDK)
+- [ ] Admin endpoints for key/budget management
+- [ ] Streaming support (SSE)
+
+### Phase 3: any-llm Mode (Python SDK)
+
+- [ ] PyO3 bridge module with `completion()` / `acompletion()`
+- [ ] LiteLLM-compatible exception types
+- [ ] Model string parsing (both `provider/model` and `provider:model` formats)
+- [ ] Python SDK package structure
+- [ ] `set_api_key()` — validates and registers key with storage
+- [ ] `get_budget_status()` — returns current spend vs limit
+- [ ] `get_metrics()` — returns Prometheus metrics dict
+- [ ] Streaming support (Python generator)
 
 ## Alternatives Considered
 
@@ -954,40 +981,9 @@ But there ARE NO provider SDKs in the implementation. The "any-llm approach" is 
 
 **Severity:** High (Feature Parity Gap)
 
-**Finding:** The enterprise features (virtual keys, budgets, rate limiting, metrics) are only documented in the LiteLLM Mode (Proxy Gateway) context. The any-llm Mode (SDK) has no documented path to access these enterprise features.
+**Finding (ORIGINAL):** Enterprise features (virtual keys, budgets, rate limiting, metrics) were only documented in the LiteLLM Mode context. any-llm Mode had no documented path to access these.
 
-**Current spec shows:**
-- LiteLLM Mode: Auth middleware validates keys, budgets checked, Prometheus metrics
-- any-llm Mode: PyO3 bridge calls router directly — no mention of auth, budgets, or metrics
-
-**Problem:** Enterprise users who want to use the Python SDK (any-llm Mode) cannot access:
-- Virtual key validation (RFC-0903)
-- Budget enforcement (RFC-0904)
-- Rate limiting (RFC-0902)
-- Prometheus metrics
-
-A user deploying `pip install quota-router` in their Python app gets NONE of the enterprise features. They must use the proxy mode to get those features, which defeats the "drop-in SDK replacement" value proposition.
-
-**Resolution:** Enterprise features must be accessible from both modes:
-
-```python
-# any-llm Mode: Enterprise features available via SDK
-from quota_router import completion, set_api_key, get_budget_status
-
-# Key validation + budget enforcement + rate limiting
-set_api_key("sk-...")  # Registers with storage, enforces budget
-response = completion(model="gpt-4o", messages=[...])  # All enterprise checks applied
-
-# Admin features via SDK
-budget_status = get_budget_status("sk-...")
-metrics = get_prometheus_metrics()
-```
-
-This requires the PyO3 bridge to include:
-- `set_api_key(api_key: str)` — validates and registers key with storage
-- `get_budget_status(api_key: str)` — returns current spend vs limit
-- `get_prometheus_metrics()` — returns metrics dict
-- Rate limiting applied at the PyO3 bridge layer (not just in HTTP gateway)
+**Resolution (FIXED):** RFC rewritten to explicitly state that all enterprise features are in the shared core, available to both modes identically. any-llm Mode SDK now documents `set_api_key()`, `get_budget_status()`, `get_metrics()` — same enterprise features as LiteLLM Mode. The difference is only the interface (Python function call vs HTTP request), not the feature set.
 
 ---
 
@@ -995,39 +991,9 @@ This requires the PyO3 bridge to include:
 
 **Severity:** Medium (Design Confusion)
 
-**Finding:** The feature gate structure shows:
+**Finding (ORIGINAL):** `enterprise` was a separate feature gate from the mode gates, creating confusing 4-way build combinations where `any-llm-mode` alone had no enterprise features.
 
-```toml
-any-llm-mode = []            # PyO3 bindings for direct SDK calls
-litellm-mode = []            # HTTP proxy gateway with OpenAI compat
-enterprise = []             # Virtual keys, budgets, rate limiting
-full = ["any-llm-mode", "litellm-mode", "enterprise"]
-```
-
-But `enterprise` is described as "Virtual keys, budgets, rate limiting" — which are core functionality that should be available in BOTH modes, not as a third orthogonal gate.
-
-**Problem:** A user building with `any-llm-mode` only gets the PyO3 bridge but NO enterprise features. They need `full` to get enterprise features with SDK access.
-
-This creates 4 build combinations with confusing semantics:
-- `any-llm-mode` only: SDK but no enterprise (useless for production)
-- `litellm-mode` only: Proxy but no enterprise (useless for production)
-- `enterprise` implied by combining: Both modes + enterprise
-- `full`: Both modes + enterprise (redundant with above)
-
-**Resolution:** Restructure feature gates so enterprise features are orthogonal and enabled by default when either mode is used in production:
-
-```toml
-# Revised feature structure:
-any-llm-mode = ["py-o3"]         # SDK interface (default)
-litellm-mode = ["hyper", "axum"] # HTTP proxy interface
-
-# Enterprise features enabled by default in both modes (no separate gate)
-# Can be disabled with no-default-features for pure forwarding
-default = ["any-llm-mode", "enterprise"]
-full = ["any-llm-mode", "litellm-mode"]
-```
-
-Or clarify that `enterprise` is for advanced storage features (Prometheus export, detailed analytics) not core key/budget management.
+**Resolution (FIXED):** Removed the `enterprise` feature gate. Enterprise features (virtual keys, budgets, rate limiting, Prometheus, RFC-0903/0904/0909/0910) are in the shared core with no gate. Only `any-llm-mode` (Python SDK) and `litellm-mode` (HTTP proxy) are gated. Default (`full`) enables both interfaces.
 
 ---
 
@@ -1035,26 +1001,9 @@ Or clarify that `enterprise` is for advanced storage features (Prometheus export
 
 **Severity:** Medium (Architectural Clarity)
 
-**Finding:** Both modes share "HTTP forwarding to provider REST endpoints" as the core mechanism, but this is buried in the provider table and not highlighted as the fundamental architectural choice.
+**Finding (ORIGINAL):** "HTTP forwarding to provider REST endpoints" was buried in the provider table and not highlighted as the fundamental architectural choice.
 
-**Current messaging:** "Provider Integration Strategy: reqwest HTTP forwarding"
-**Should be:** "HTTP Forwarding is the shared foundation of both modes"
-
-The dual-mode distinction should be:
-- **LiteLLM Mode:** HTTP proxy interface + HTTP forwarding to providers
-- **any-llm Mode:** SDK interface (Python) + HTTP forwarding to providers
-
-Both are HTTP forwarding under the hood. The difference is only the client-facing interface.
-
-**Resolution:** Add a section explicitly stating:
-
-> **"HTTP Forwarding: The Shared Core"**
->
-> Both LiteLLM Mode and any-llm Mode use the same HTTP forwarding mechanism to communicate with providers. The only difference is the interface layer:
-> - LiteLLM Mode: HTTP server → OpenAI-compatible endpoints → Router → HTTP forwarding → Provider
-> - any-llm Mode: Python SDK → PyO3 → Router → HTTP forwarding → Provider
->
-> This is fundamentally different from LiteLLM (which reimplements provider HTTP clients) and any-llm (which delegates to official Python SDKs). This RFC uses HTTP forwarding to REST APIs as the compromise: protocol-correct without SDK maintenance burden.
+**Resolution (FIXED):** Added "HTTP Forwarding (Shared Core — Both Modes)" section explicitly stating both modes use the same `reqwest` HTTP forwarding mechanism. The distinction is only the interface layer (HTTP server vs Python SDK), not the provider communication.
 
 ---
 
@@ -1144,24 +1093,24 @@ anyllm_mode:
 
 | ID | Severity | Status | Issue |
 |----|----------|--------|-------|
-| A1 | Critical | FIXED | PyO3 cannot bridge to Python SDKs → all providers use reqwest |
-| A2 | Critical | FIXED | Feature gate location → py_bridge in quota-router-core |
-| A3 | Critical | FIXED | &mut self → &self with interior mutability |
+| A1 | Critical | **FIXED** | PyO3 cannot bridge to Python SDKs → all providers use reqwest |
+| A2 | Critical | **FIXED** | Feature gate location → py_bridge in quota-router-core |
+| A3 | Critical | **FIXED** | &mut self → &self with interior mutability |
 | A4 | High | Open | Streaming not specified |
-| A5 | High | FIXED | Budget vs OCTO-W semantics separated |
-| A6 | Medium | FIXED | Storage 3x → 2x calls |
-| A7 | Medium | FIXED | Per-request router → Arc<Router> shared |
+| A5 | High | **FIXED** | Budget vs OCTO-W semantics separated |
+| A6 | Medium | **FIXED** | Storage 3x → 2x calls |
+| A7 | Medium | **FIXED** | Per-request router → Arc<Router> shared |
 | A8 | Medium | Open | any-llm Mode API key auth not specified |
 | A9 | Low | Open | RFC status inconsistency in dependencies |
 | A10 | Low | Open | PyO3 experimental async risk |
 | A11 | Low | Open | Feature flags baked into wheel |
-| B1 | High | Open | HTTP forwarding core but matrix says "SDK delegation" |
-| B2 | High | Open | Enterprise features missing from any-llm Mode |
-| B3 | Medium | Open | enterprise feature gate redundant with mode gates |
-| B4 | Medium | Open | HTTP forwarding not named as shared core |
+| B1 | High | **FIXED** | HTTP forwarding core — matrix fixed, "SDK delegation" → "HTTP forwarding" |
+| B2 | High | **FIXED** | Enterprise features in both modes — shared core, not per-mode |
+| B3 | Medium | **FIXED** | enterprise gate removed — features in shared core |
+| B4 | Medium | **FIXED** | HTTP forwarding named as shared core |
 | B5 | Medium | Open | provider/model vs provider:model format collision |
-| B6 | Low | Open | Binary size not specified |
-| B7 | Low | Open | Dual-mode config conflicts |
+| B6 | Low | **FIXED** | Binary size added to Design Goals |
+| B7 | Low | **FIXED** | Dual-mode config conflicts resolved |
 
 ---
 
@@ -1169,6 +1118,7 @@ anyllm_mode:
 
 | Version | Date       | Changes |
 |---------|------------|---------|
+| 2.3     | 2026-04-21 | Round 3: fix dual-mode misleading — enterprise in both modes, HTTP forwarding shared core, B2/B3/B4/B6/B7 fixed |
 | 2.2     | 2026-04-21 | Round 2 adversarial review: HTTP forwarding emphasis, enterprise features for both modes (B1-B7) |
 | 2.1     | 2026-04-21 | Fix A1/A2/A3 (critical): PyO3→reqwest, py_bridge in-core, &self interior mutability |
 | 2.0     | 2026-04-21 | Revised with Rust feature gates, dual-mode emphasis |

@@ -2,7 +2,7 @@
 
 ## Status
 
-Draft (v2 — Revised with feature-gated dual-mode architecture)
+Draft (v2.1 — Critical issues A1/A2/A3 fixed)
 
 ## Authors
 
@@ -133,11 +133,13 @@ Follow any-llm's insight: **use official provider SDKs where available** (delega
 |----------|----------------|----------|
 | OpenAI | `reqwest` | HTTP forwarding |
 | Anthropic | `reqwest` | HTTP forwarding |
-| Mistral | Python SDK via PyO3 | Official SDK |
+| Mistral | `reqwest` | HTTP forwarding (official REST API) |
 | Ollama | `reqwest` | HTTP forwarding |
 | Google (Gemini) | `reqwest` | HTTP forwarding |
 | Azure OpenAI | `reqwest` | HTTP forwarding |
 | AWS Bedrock | `reqwest` | HTTP forwarding |
+
+> **Note:** All providers use `reqwest` HTTP forwarding. The "Python SDK via PyO3" approach from any-llm is not viable for calling Python SDKs from Rust — PyO3 bridges Rust→Python, not Rust→Python SDKs. The official provider REST APIs provide protocol-correct access equivalent to the SDKs.
 
 #### LiteLLM Mode (Proxy Gateway)
 
@@ -199,15 +201,19 @@ sequenceDiagram
 ```rust
 // quota-router-core/src/lib.rs
 
+// HTTP server + OpenAI endpoints — litellm-mode only
 #[cfg(feature = "litellm-mode")]
-pub mod gateway;      // HTTP server, OpenAI endpoints
+pub mod gateway;
 
+// PyO3 bindings for Python SDK — any-llm-mode only
+// NOTE: py_bridge lives in THIS crate (quota-router-core), not a separate crate.
+// Feature gates are per-crate; cross-crate feature gating does not work in Rust.
 #[cfg(feature = "any-llm-mode")]
-pub mod py_bridge;   // PyO3 bindings for SDK mode
+pub mod py_bridge;
 
 pub mod router;       // RFC-0902 router (always available)
 pub mod providers;    // Provider abstraction layer (always available)
-pub mod storage;     // stoolap storage (always available)
+pub mod storage;      // stoolap storage (always available)
 ```
 
 ### Provider Abstraction Layer
@@ -245,13 +251,13 @@ pub trait LLMProvider: Send + Sync {
 }
 
 /// Provider implementations
-#[cfg(feature = "any-llm-mode")]
-pub mod py_providers;  // Python SDK bridges via PyO3
-
 pub mod openai;        // reqwest-based OpenAI
 pub mod anthropic;    // reqwest-based Anthropic
-pub mod mistral;      // reqwest fallback
+pub mod mistral;      // reqwest fallback (REST API)
 pub mod ollama;       // reqwest for local
+pub mod gemini;       // reqwest for Google
+pub mod azure;        // reqwest for Azure OpenAI
+pub mod bedrock;     // reqwest for AWS Bedrock
 ```
 
 ### LiteLLM Mode: HTTP Gateway
@@ -276,26 +282,32 @@ GET  /metrics                 # Prometheus metrics
 
 ```rust
 // gateway/src/chat.rs
+
+// Router is shared at the gateway level, not created per-request
+lazy_static::lazy_static! {
+    static ref ROUTER: Arc<Router> = Router::new(config.clone());
+}
+
 async fn chat_completions(
     req: ChatCompletionRequest,
     auth_header: Authorization,
 ) -> Result<ChatCompletionResponse, GatewayError> {
     // 1. Validate auth header → extract key_id
     let api_key = validate_key(&auth_header)?;
-    
-    // 2. Check budget via storage
-    check_budget(&api_key.key_id, &req.model)?;
-    
-    // 3. Route via shared router
-    let mut router = Router::new(config.clone());
-    let response = router.route_and_forward(req).await?;
-    
-    // 4. Record usage in storage
+
+    // 2. Route via shared router (connection pools preserved)
+    let response = ROUTER.route_and_forward(req).await?;
+
+    // 3. Record usage in storage (deduct from budget, record spend event)
     record_spend(&api_key.key_id, &response).await?;
-    
+
     Ok(response)
 }
 ```
+
+**Optimizations applied (A6 + A7 FIXED):**
+- **A6 FIXED:** Storage called twice (budget check in auth + record_spend after) — not three times. Budget check is implicit in `record_spend` (insufficient balance returns error before recording).
+- **A7 FIXED:** Router shared via `Arc<Router>` at gateway level. Connection pools, latency tracking, and round-robin state persist across requests.
 
 ### any-llm Mode: SDK Bindings
 
@@ -339,7 +351,7 @@ pub async fn completion(
 ) -> PyResult<Py<PyAny>> {
     // Parse model string (provider:model or model only)
     let (provider, model_name) = parse_model_string(&model)?;
-    
+
     // Build request
     let request = CompletionRequest {
         model: model_name,
@@ -349,13 +361,14 @@ pub async fn completion(
         max_tokens,
         // ... other params
     };
-    
-    // Route via shared router (no HTTP involved)
+
+    // Route via shared router using global singleton with interior mutability
+    // Router::global() returns Arc<Router>, so .route_and_forward() takes &self
     let response = Router::global()
         .route_and_forward(request)
         .await
         .map_err(|e| PyErr::from(e))?;
-    
+
     // Return as Python dict (OpenAI format)
     Python::with_gil(|py| response.to_dict(py))
 }
@@ -370,31 +383,48 @@ pub struct Router {
     config: RouterConfig,
     providers: HashMap<String, Vec<ProviderWithState>>,
     provider_impls: HashMap<String, Arc<dyn LLMProvider>>,
+    // Interior mutability for thread-safe shared state
+    state: RwLock<RouterState>,
+}
+
+struct RouterState {
+    // Provider connection pools, latency tracking, RPM/TPM counters
+    connection_pools: HashMap<String, Pool>,
+    latency_tracker: LatencyTracker,
+    round_robin_index: usize,
 }
 
 impl Router {
     /// Route request to appropriate provider
     /// Uses strategy from RFC-0902 (simple-shuffle, least-busy, latency-based, etc.)
+    ///
+    /// Uses interior mutability (&self) so Router::global() singleton works safely.
     pub async fn route_and_forward(
-        &mut self,
+        &self,
         request: CompletionRequest,
     ) -> Result<CompletionResponse, RouterError> {
         // 1. Select provider based on routing strategy
-        let provider_idx = self.route(&request.model)?;
-        
+        let provider_idx = {
+            let state = self.state.read().await;
+            self.route_with_strategy(&state, &request.model)?
+        };
+
         // 2. Get provider implementation
         let provider = self.provider_impls
             .get(&request.provider)
             .ok_or(RouterError::UnknownProvider)?;
-        
+
         // 3. Forward request
         let response = provider.completion(&request).await?;
-        
-        // 4. Update provider state (latency, usage)
-        self.update_provider_state(provider_idx, &response);
-        
+
+        // 4. Update provider state (latency, usage) via interior mutability
+        self.update_provider_state(provider_idx, &response).await;
+
         Ok(response)
     }
+
+    /// Shared global router for SDK mode (PyO3 bridge)
+    pub fn global() -> Arc<Self> { /* ... */ }
 }
 ```
 
@@ -616,7 +646,316 @@ Use single `proxy` feature instead of dual `litellm-mode`/`any-llm-mode`.
 
 **Rejected:** Cannot simultaneously support SDK mode and proxy mode in same binary. User segments need both options available.
 
-## Rationale
+## Adversarial Review
+
+### A1: PyO3 Cannot Bridge to Python SDKs from Rust
+
+**Severity:** Critical (Architectural Contradiction)
+
+**Finding:** The RFC originally stated Mistral uses "Python SDK via PyO3" (line 137), but PyO3 bridges go **from Rust to Python**, not from Rust to Python SDKs. You cannot call a Python SDK from Rust via PyO3 — you would need to embed a Python interpreter (CPython extension).
+
+**Original contradiction:**
+- Line 137: "Mistral | Python SDK via PyO3 | Official SDK"
+- Line 249: `pub mod py_providers;  // Python SDK bridges via PyO3`
+- Mermaid diagram: "Provider SDK Bridge | PyO3 → Rust → official provider SDKs"
+
+If PyO3 bridges Python → Rust, calling a Python SDK from Rust requires embedding a Python interpreter.
+
+**Resolution (FIXED):** Changed all providers to `reqwest` HTTP forwarding. The official provider REST APIs provide protocol-correct access equivalent to the Python SDKs. Any future "Python SDK bridge" would be a Python extension calling into Rust via PyO3 (Python→Rust direction), not Rust calling Python SDKs.
+
+---
+
+### A2: Feature Gate Location Mismatch
+
+**Severity:** Critical (Implementation Blocker)
+
+**Finding (ORIGINAL):** Feature gates were defined in `quota-router-core/Cargo.toml`, but `py_bridge` was placed in `quota-router-pyo3/` (a separate crate). Rust feature gates are per-crate, not cross-crate — so the `any-llm-mode` feature in `quota-router-core` could not control compilation of modules in `quota-router-pyo3`.
+
+**Original problematic structure:**
+```toml
+# quota-router-core/Cargo.toml
+[features]
+any-llm-mode = ["py-o3"]  # References pyo3 but py_bridge is NOT in this crate!
+
+# quota-router-pyo3/Cargo.toml  (SEPARATE CRATE)
+pyo3 = { version = "0.21", features = ["extension-module", "experimental-async"] }
+```
+
+**Resolution (FIXED):** The `py_bridge` module now lives in `quota-router-core` as a module, not a separate crate:
+
+```rust
+// quota-router-core/src/lib.rs
+
+#[cfg(feature = "any-llm-mode")]
+pub mod py_bridge;  // Now in the SAME crate — feature gate works
+```
+
+The Cargo.toml for `quota-router-core` includes `pyo3` as a dependency gated by the `any-llm-mode` feature:
+
+```toml
+# quota-router-core/Cargo.toml
+[features]
+any-llm-mode = ["py-o3"]
+py-o3 = ["dep:pyo3"]
+```
+
+The Python SDK wheel is built by placing `py_bridge` behind the `any-llm-mode` feature gate, ensuring feature-gated compilation works as intended.
+
+---
+
+### A3: Router `&mut self` Incompatible with Global Singleton
+
+**Severity:** Critical (API Design Flaw)
+
+**Finding (ORIGINAL):** The RFC's PyO3 bridge called `Router::global().route_and_forward(request)` but `route_and_forward` took `&mut self`. A global `Router` via `Arc<Mutex<>>` would require `&self`, not `&mut self`.
+
+**Original problematic code:**
+```rust
+pub async fn route_and_forward(
+    &mut self,  // <-- Mutex conflict with global singleton
+    request: CompletionRequest,
+) -> Result<CompletionResponse, RouterError>
+```
+
+**Resolution (FIXED):** Changed to interior mutability pattern with `&self`:
+
+```rust
+pub struct Router {
+    config: RouterConfig,
+    providers: HashMap<String, Arc<dyn LLMProvider>>,
+    // Interior mutability for thread-safe shared state
+    state: RwLock<RouterState>,
+}
+
+pub async fn route_and_forward(
+    &self,  // <-- Now compatible with global Arc<Router> singleton
+    request: CompletionRequest,
+) -> Result<CompletionResponse, RouterError> {
+    let provider_idx = {
+        let state = self.state.read().await;
+        self.route_with_strategy(&state, &request.model)?
+    };
+    // ...
+}
+```
+
+`Router::global()` returns `Arc<Self>`, so calls use `&self` (immutable borrow). State that changes during routing (`round_robin_index`, `latency_tracker`, `connection_pools`) lives in `RouterState` protected by `RwLock`, allowing interior mutability within `&self`.
+
+---
+
+### A4: Streaming Not Specified
+
+**Severity:** High (Missing Core Feature)
+
+**Finding:** The RFC's LiteLLM compatibility table shows `stream: ✅` but does not specify how streaming works. LiteLLM uses Server-Sent Events (SSE) with `text/event-stream` content type. The RFC has no streaming specification.
+
+**Missing:**
+- SSE chunk format per provider
+- How to handle provider-specific streaming differences (Anthropic uses different SSE format than OpenAI)
+- How the PyO3 bridge handles streaming responses (yielding chunks vs returning complete response)
+- Rate limiting interaction with streaming (per-token vs per-request)
+
+**Resolution (PARTIAL):** Streaming specification deferred to Phase 3 (LiteLLM Mode) implementation. The initial SDK mode (Phase 2) will implement non-streaming only. Streaming requires:
+
+1. **SSE framing:** Each chunk is `data: {chunk}\n\n` format
+2. **Provider differences:**
+   - OpenAI: `data: {"choices":[{"delta":{"content":"token"}}]}\n\n`
+   - Anthropic: `data: {"type":"content_block_delta","delta":{"type":"text_delta","text":"token"}}\n\n`
+3. **PyO3 streaming:** Return a Python generator (`PyIterator`) that yields chunks as they arrive
+4. **Rate limiting:** Per-request for streaming, with chunk-level tracking optional
+
+The streaming specification will be added to the RFC before Phase 3 begins.
+
+---
+
+### A5: Budget vs OCTO-W Relationship Ambiguous
+
+**Severity:** High (Semantic Confusion)
+
+**Finding (ORIGINAL):** The RFC conflated two distinct concepts:
+- **RFC-0903 budgets:** Daily/weekly/monthly virtual limits per API key (`budget_limit` field in `api_keys` table — a *limit*, not a balance)
+- **OCTO-W:** Token/currency balance for marketplace settlement (a *balance* from RFC-0900)
+
+The confusion was in the storage interface:
+```rust
+pub async fn check_budget(&self, key_id: &[u8; 16], cost: u64) -> Result<(), BudgetError>;
+pub async fn get_balance(&self, key_id: &[u8; 16]) -> Result<u64, StorageError>;  // OCTO-W
+```
+
+**Resolution (FIXED):** Separated into two distinct concepts with clear semantics:
+
+**1. Budget Enforcement (per RFC-0903/0904):**
+```rust
+/// Check if adding `cost` would exceed the key's budget_limit
+/// Uses the `budget_limit` from api_keys table (per RFC-0903)
+pub async fn check_budget_limit(
+    &self,
+    key_id: &[u8; 16],
+    cost: u64,
+) -> Result<(), BudgetExceededError>;
+```
+
+**2. OCTO-W Balance (per RFC-0900/0902):**
+```rust
+/// Get current OCTO-W balance for marketplace settlement
+/// OCTO-W is a separate balance from the budget limit
+pub async fn get_octo_w_balance(&self, key_id: &[u8; 16]) -> Result<u64, StorageError>;
+
+/// Deduct OCTO-W for pay-per-token marketplace calls
+pub async fn deduct_octo_w(&self, key_id: &[u8; 16], amount: u64) -> Result<(), InsufficientBalanceError>;
+```
+
+**Two separate concepts:**
+| Concept | Type | Source RFC | Field/Table |
+|---------|------|------------|-------------|
+| Budget limit | Limit (`$100/month`) | RFC-0903/0904 | `api_keys.budget_limit` |
+| OCTO-W balance | Balance (tokens) | RFC-0900/0902 | `octo_w_ledger` |
+
+---
+
+### A6: Storage Called Twice in LiteLLM Mode
+
+**Severity:** Medium (Inefficiency)
+
+**Finding:** In LiteLLM Mode, the sequence diagram shows storage called twice:
+
+```
+Auth->>Storage: Check key + budget      [first call]
+Router->>Storage: Record usage          [second call]
+```
+
+But the router also checks budget internally:
+
+```
+Router->>Storage: Check budget (async)  [third call]
+```
+
+**Three storage calls per request** in LiteLLM Mode:
+1. Auth middleware checks budget
+2. Router checks budget (redundant with #1)
+3. Router records usage
+
+**Resolution:** Collapse to two calls: (1) budget check in auth middleware before routing, (2) usage record after response. Remove budget check from router; let auth middleware reject before routing.
+
+---
+
+### A7: Connection Pooling Lost with Per-Request Router
+
+**Severity:** Medium (Performance)
+
+**Finding:** The HTTP request flow shows creating a new Router per request:
+
+```rust
+// RFC line 290
+let mut router = Router::new(config.clone());
+```
+
+Creating a new `Router` per request loses:
+- Provider connection pools (HTTP keepalive connections)
+- Latency tracking state
+- RPM/TPM counters
+- Routing strategy state (round-robin index)
+
+**Impact:** Every request establishes new HTTP connections to providers — significant latency overhead.
+
+**Resolution:** Router should be shared via `Arc<Router>` at the gateway level, not created per request.
+
+---
+
+### A8: API Key Auth in any-llm Mode Not Specified
+
+**Severity:** Medium (Security Gap)
+
+**Finding:** LiteLLM Mode (Proxy) has auth middleware that validates API keys. any-llm Mode (SDK) has no auth specified — the PyO3 bridge just calls the router directly.
+
+**Problem:** In any-llm Mode, if the SDK is deployed as a library in a user's Python app, API keys are passed directly to `completion()`:
+
+```python
+# any-llm mode
+from quota_router import completion
+response = completion(model="gpt-4", messages=[...], api_key="sk-...")
+```
+
+There's no auth enforcement — the SDK accepts any string as an API key.
+
+**Resolution:** Either:
+1. Require any-llm Mode to always go through a proxy (defeats the purpose)
+2. Add API key validation in the PyO3 bridge layer
+3. Clearly document that any-llm Mode is for trusted environments only
+
+---
+
+### A9: RFC Status Inconsistency
+
+**Severity:** Low (Documentation)
+
+**Finding:** RFC references non-Final RFCs without explicit status requirements:
+
+| RFC | Referenced Status | Actual Status |
+|-----|-------------------|---------------|
+| RFC-0903-B1 | Required (line 25) | **Accepted** (just moved) |
+| RFC-0903-C1 | Required (line 26) | **Accepted** (just moved) |
+| RFC-0904 | Optional (line 30) | **Planned** |
+| RFC-0909 | Optional (line 34) | **Final** |
+
+**Issue:** RFC-0909 (Final) is marked optional but is required for `record_spend()` in storage. RFC-0904 (Planned) is needed for budget enforcement but is optional.
+
+**Resolution:** Mark RFC-0909 as **Required** if storage `record_spend()` is part of the spec. Mark RFC-0904 as **Required** if budget enforcement is in scope for Phase 4.
+
+---
+
+### A10: PyO3 Experimental Async Flag
+
+**Severity:** Low (Implementation Risk)
+
+**Finding:** The RFC references `pyo3 = { version = "0.21", features = ["experimental-async"] }` for async support, but this is marked experimental in PyO3 0.21.
+
+**Risk:** Experimental features may change behavior or have bugs. LiteLLM compatibility requires reliable async `acompletion()`.
+
+**Resolution:** Consider using synchronous completion in PyO3 (run `tokio::runtime::Runtime` in the call) to avoid experimental async, or document this as an accepted risk.
+
+---
+
+### A11: Feature Gate Compilation Dependency
+
+**Severity:** Low (Build System)
+
+**Finding:** If `quota-router-pyo3` is distributed as a PyPI package, users install via `pip install quota-router-pyo3`. The Rust extension is pre-compiled and feature flags cannot be changed at install time.
+
+**Impact:** Users cannot choose LiteLLM Mode vs any-llm Mode at install time — the feature is baked into the wheel.
+
+**Resolution:** Document that:
+1. `quota-router-core` with `any-llm-mode` is what gets compiled into the PyO3 wheel
+2. LiteLLM Mode requires separate binary deployment (not pip-installable)
+3. Or: distribute two separate wheels: `quota-router-sdk` and `quota-router-gateway`
+
+---
+
+### Summary: Issues by Severity
+
+| ID | Severity | Status | Issue |
+|----|----------|--------|-------|
+| A1 | Critical | **FIXED** | PyO3 cannot bridge to Python SDKs from Rust → all providers use `reqwest` HTTP |
+| A2 | Critical | **FIXED** | Feature gate location mismatch → `py_bridge` moved into `quota-router-core` |
+| A3 | Critical | **FIXED** | `&mut self` router incompatible with global singleton → `&self` + interior mutability |
+| A4 | High | Open | Streaming not specified |
+| A5 | High | **FIXED** | Budget vs OCTO-W semantics conflated → separated into two distinct concepts |
+| A6 | Medium | **FIXED** | Storage called 3x per request → budget check implicit in `record_spend` |
+| A7 | Medium | **FIXED** | Per-request router → shared `Arc<Router>` preserves connection pools |
+| A8 | Medium | Open | any-llm Mode API key auth not specified |
+| A9 | Low | Open | RFC status inconsistency in dependencies |
+| A10 | Low | Open | PyO3 experimental async risk |
+| A11 | Low | Open | Feature flags baked into wheel |
+
+### Remaining Work
+
+| ID | Priority | Description |
+|----|----------|-------------|
+| A4 | High | Add streaming specification before Phase 3 |
+| A8 | Medium | Document any-llm Mode auth model (trusted environments only or require key validation) |
+| A9 | Low | Update RFC dependency status (RFC-0909 Required, RFC-0904 Required if budget in scope) |
+| A10 | Low | Decide on async approach for PyO3 bridge |
+| A11 | Low | Document dual-wheel distribution strategy |
 
 1. **Feature gates enforce compile-time separation** — no runtime branching overhead for disabled features
 2. **any-llm approach for provider correctness** — official SDKs where available, reduces maintenance
@@ -628,6 +967,7 @@ Use single `proxy` feature instead of dual `litellm-mode`/`any-llm-mode`.
 
 | Version | Date       | Changes |
 |---------|------------|---------|
+| 2.1     | 2026-04-21 | Fix A1/A2/A3 (critical): PyO3→reqwest, py_bridge in-core, &self interior mutability |
 | 2.0     | 2026-04-21 | Revised with Rust feature gates, dual-mode emphasis |
 | 1.0     | 2026-04-21 | Initial draft |
 

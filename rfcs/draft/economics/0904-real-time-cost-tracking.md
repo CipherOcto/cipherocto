@@ -2,7 +2,7 @@
 
 ## Status
 
-Draft (v1.3 — depends on RFC-0903 Final v30, RFC-0903-B1 v23, RFC-0903-C1 v4, RFC-0909 Final, RFC-0910 Draft)
+Draft (v1.4 — depends on RFC-0903 Final v30, RFC-0903-B1 v23, RFC-0903-C1 v4, RFC-0909 Final, RFC-0910 Draft)
 
 ## Authors
 
@@ -230,6 +230,13 @@ This RFC describes the budget enforcement layer. The existing `KeyStorage::recor
 
 When the event has a `team_id`, `record_spend_ledger_with_team` is used instead, which locks team FIRST then key (deadlock prevention per RFC-0903 §Lock Ordering Invariant).
 
+**Note:** The existing codebase also has a simpler `record_spend(key_id, amount)` (middleware.rs line 123) which inserts an amount **without budget check**. This is used for:
+- Scenarios where budget enforcement is handled separately
+- Test injection of spend without triggering budget checks
+- Fallback after explicit budget-exceeded acknowledgment
+
+The RFC's `record_spend_atomic` (using `record_spend_ledger`) is the normal path for production budget enforcement.
+
 ```rust
 /// Atomic spend recording with budget enforcement (existing implementation).
 ///
@@ -294,22 +301,12 @@ pub fn record_spend_with_team(
 pub fn get_current_spend(
     storage: &dyn KeyStorage,
     key_id: &Uuid,
-) -> Result<Option<KeySpend>, BudgetError> {
-    storage.get_spend(key_id).map_err(Into::into)
+) -> Result<Option<KeySpend>, KeyError> {
+    storage.get_spend(key_id)
 }
 ```
 
-**Query team spend:**
-
-```rust
-/// Get total spend for all keys in a team.
-pub fn get_team_spend(
-    storage: &dyn KeyStorage,
-    team_id: &Uuid,
-) -> Result<i64, BudgetError> {
-    storage.get_team_spend(team_id).map_err(Into::into)
-}
-```
+**Query team spend:** Deferred to Phase 2 (no implementation exists).
 
 ## Error Types
 
@@ -430,6 +427,8 @@ No new `BudgetStorage` implementation is needed — the existing `KeyStorage` me
 
 **Mitigation:** The soft check is purely informational. The **authoritative enforcement** is always in `record_spend_ledger` which uses `FOR UPDATE` locking. Callers must handle `BudgetExceeded` from `record_spend_ledger` even when the soft check passed.
 
+**Note on error types:** The existing `check_budget(&ApiKey)` returns `KeyError::BudgetExceeded` because it predates `BudgetError`. This is existing behavior — the soft check and atomic check both surface budget errors via `KeyError` (since both are called through the middleware). `BudgetError` is defined for the RFC's public API surface but the internal implementation uses `KeyError`.
+
 ## LiteLLM Compatibility
 
 This RFC provides budget tracking compatible with LiteLLM's `max_budget` feature:
@@ -451,7 +450,7 @@ This RFC provides budget tracking compatible with LiteLLM's `max_budget` feature
 - [x] Confirm `record_spend_ledger` covers key-only atomic enforcement (existing storage.rs)
 - [x] Confirm `record_spend_ledger_with_team` covers team-enabled atomic enforcement (existing storage.rs)
 - [x] Unit tests for cost calculation (`compute_cost`)
-- [ ] Add `CostError` type or clarify `BudgetError::ModelNotFound` usage in `get_pricing`
+- [x] Use `BudgetError::ModelNotFound` in `get_pricing` (resolved in B10)
 
 ### Phase 2: Budget Queries
 
@@ -467,10 +466,8 @@ This RFC provides budget tracking compatible with LiteLLM's `max_budget` feature
 
 | File | Change |
 |------|--------|
-| `crates/quota-router-core/src/storage.rs` | Add `BudgetStorage` trait |
-| `crates/quota-router-core/src/middleware.rs` | Add `check_budget_soft_limit()`, `record_spend_atomic()` |
-| `crates/quota-router-core/src/keys/errors.rs` | Add `BudgetError` variants |
-| `crates/quota-router-core/src/budget.rs` | New — cost calculation, budget enforcement |
+| `crates/quota-router-core/src/storage.rs` | Confirm `record_spend_ledger` and `record_spend_ledger_with_team` cover atomic enforcement |
+| `crates/quota-router-core/src/middleware.rs` | Confirm `check_budget(&ApiKey)` as soft pre-check (line 106) |
 
 ## Future Work
 
@@ -506,6 +503,7 @@ The soft check is non-locking — it's possible (though unlikely) that another c
 
 | Version | Date       | Changes |
 |---------|------------|---------|
+| 1.4     | 2026-04-22 | Round 3 adversarial review: archive Planned RFC-0904 placeholder; fix Phase 1 checklist; fix Key Files section; document record_spend (no budget check); remove get_team_spend; fix get_current_spend return type; add C1-C9 review section |
 | 1.3     | 2026-04-22 | Round 2 adversarial review: fix B1-B12 (remove check_budget_soft_limit, replace InsufficientBudget, remove get_team_spend, clarify record_spend dispatch, fix KeySpend unit, document soft check staleness, update Phase 1 checklist, fix CostError→BudgetError) |
 | 1.2     | 2026-04-22 | Round 1 fixes continued (A8-A12): add per-model ceiling cost table; standardize budget_limit resolution; clarify idempotency via UNIQUE constraint; specify timestamp semantics; define KeyError/BudgetError separation |
 | 1.1     | 2026-04-22 | Round 1 adversarial review: fix A1-A7 (critical type errors, nonexistent methods, trait mismatches) |
@@ -921,6 +919,98 @@ let key_id = uuid::Uuid::from_bytes(bytes);
 
 ---
 
+## Round 3 Adversarial Review
+
+### C1: STALE PLANNED RFC-0904 PLACEHOLDER — Same Number, Conflicting Design
+
+**Severity:** Critical (Process Violation)
+
+**Finding:** There were **two RFC-0904 files** with the same number but completely different designs. The Planned placeholder (2026-03-12) used `f64`, `async fn`, `ModelPricing`, while the Draft v1.3 uses integer micro-units, sync functions.
+
+**Resolution:** Archived the Planned placeholder to `rfcs/archived/economics/0904-real-time-cost-tracking.md`. No duplicate RFC numbers allowed.
+
+---
+
+### C2: Phase 1 Checklist References Resolved `CostError` Item
+
+**Severity:** Medium (Stale Documentation)
+
+**Finding:** Phase 1 checklist item "Add `CostError` type or clarify..." was stale — B10 resolved this by using `BudgetError::ModelNotFound`.
+
+**Resolution:** Marked item as completed.
+
+---
+
+### C3: `Key Files to Modify` References Removed Methods
+
+**Severity:** Medium (Stale Documentation)
+
+**Finding:** Key Files section listed `check_budget_soft_limit()` which B1 removed.
+
+**Resolution:** Updated to reflect actual methods: `check_budget(&ApiKey)` and `record_spend_ledger`/`record_spend_ledger_with_team`.
+
+---
+
+### C4: `record_spend` (No Budget Check) Exists but Is Not Documented
+
+**Severity:** Medium (Missing Documentation)
+
+**Finding:** The codebase has two record_spend methods:
+- `middleware.record_spend(key_id, amount)` — simple insert, **no budget check**
+- `middleware.process_response(...)` — computes `event_id`, calls `record_spend_ledger` with budget check
+
+The RFC documented only the budget-checked version.
+
+**Resolution:** Added documentation noting the simple `record_spend` exists as an alternative path when budget enforcement is handled separately.
+
+---
+
+### C5: `get_team_spend` Function Calls Nonexistent Storage Method
+
+**Severity:** Low (Dead Code)
+
+**Finding:** `get_team_spend` function called `storage.get_team_spend(team_id)` which doesn't exist in `KeyStorage`. B3 deferred this to Phase 2.
+
+**Resolution:** Removed `get_team_spend` from Spend Query section. Team spend queries deferred to Phase 2.
+
+---
+
+### C6: `check_budget` Returns `KeyError` But RFC Says `BudgetError` for Cost Ops
+
+**Severity:** Low (Design Clarification)
+
+**Finding:** The existing `check_budget(&ApiKey)` returns `KeyError::BudgetExceeded`, but A12 says `BudgetError` is for cost-tracking operations. The soft check predates `BudgetError` — this is existing behavior.
+
+**Resolution:** Documented that the existing implementation predates `BudgetError`. Future implementations may use `BudgetError` for cost-tracking operations.
+
+---
+
+### C7: `get_current_spend` Wraps `KeyError` → `BudgetError` Without `From` Impl
+
+**Severity:** Low (Type Error)
+
+**Finding:** `get_current_spend` returned `Result<..., BudgetError>` but underlying storage returns `KeyError`. The `.map_err(Into::into)` conversion requires `impl From<KeyError> for BudgetError`.
+
+**Resolution:** Changed return type to `Result<Option<KeySpend>, KeyError>` to match underlying storage.
+
+---
+
+### C8: F2 Budget Auto-Reset Has No RFC Placeholder
+
+**Severity:** Medium (Deferred Work)
+
+**Finding:** F2 (budget auto-reset) has no Planned RFC. No action taken — this is a planning decision.
+
+---
+
+### C9: Lock Ordering in `record_spend_ledger_with_team` Verified
+
+**Severity:** Medium (Verification)
+
+**Finding:** Verified in storage.rs `record_spend_ledger_with_team` — team lock acquired first, then key lock. Lock ordering invariant is correctly implemented.
+
+---
+
 ## Issues Summary
 
 | ID | Severity | Issue | Status |
@@ -949,6 +1039,15 @@ let key_id = uuid::Uuid::from_bytes(bytes);
 | B10 | Low | `CostError` referenced but never defined | Fixed |
 | B11 | Low | `BudgetError` Uuid vs DB `BLOB(16)` mapping not documented | Fixed |
 | B12 | Low | G4 `<5ms` metric not specified or verified | Fixed |
+| C1 | Critical | Two RFC-0904 files with same number, conflicting designs | Fixed (archived Planned placeholder) |
+| C2 | Medium | Phase 1 checklist references resolved `CostError` item | Fixed |
+| C3 | Medium | Key Files section references removed `check_budget_soft_limit` | Fixed |
+| C4 | Medium | `record_spend` (no budget check) exists but undocumented | Fixed |
+| C5 | Low | `get_team_spend` function calls nonexistent storage method | Fixed |
+| C6 | Low | `check_budget` returns `KeyError` but RFC says `BudgetError` for cost ops | Documented |
+| C7 | Low | `get_current_spend` wraps `KeyError` → `BudgetError` without `From` impl | Fixed |
+| C8 | Medium | F2 Budget auto-reset has no RFC placeholder | Flagged for planning |
+| C9 | Medium | Lock ordering in `record_spend_ledger_with_team` not verified | Verified in storage.rs |
 
 ---
 

@@ -2,7 +2,7 @@
 
 ## Status
 
-Draft (v1.16 — depends on RFC-0903 Final v30, RFC-0903-B1 v23, RFC-0903-C1 v4, RFC-0909 Final, RFC-0910 Draft)
+Draft (v1.17 — depends on RFC-0903 Final v30, RFC-0903-B1 v23, RFC-0903-C1 v4, RFC-0909 Final, RFC-0910 Draft)
 
 ## Authors
 
@@ -404,6 +404,30 @@ The SQL JOIN aggregates all `cost_amount` values from `spend_ledger` for keys be
 
 **Backward compatibility note (S4):** R14-03 added `period_start` and `period_end` parameters to support billing period filtering. Call sites that previously called `get_team_spend(storage, team_id)` must be updated to pass the billing period boundaries. For current-period queries, derive `period_start`/`period_end` from the billing period definition (calendar month start/end UTC).
 
+**Period derivation formula:** Compute `period_start`/`period_end` for a given billing period as:
+
+```rust
+// Monthly (default): start of current calendar month, start of next calendar month
+let now = Utc::now();
+let period_start = now.date().with_day(1).unwrap().and_hms_opt(0, 0, 0).unwrap().timestamp();
+// Next month: add 1 month, then set day to 1
+let next_month = (now.date().with_day(1).unwrap() + chrono::Duration::days(32)).date();
+let period_end = next_month.with_day(1).unwrap().and_hms_opt(0, 0, 0).unwrap().timestamp();
+
+// Weekly: start of current week (Monday 00:00 UTC)
+let days_since_monday = now.weekday().num_days_from_monday();
+let period_start = (now - chrono::Duration::days(days_since_monday as i64)).date()
+    .and_hms_opt(0, 0, 0).unwrap().timestamp();
+let period_end = (now - chrono::Duration::days(days_since_monday as i64) + chrono::Duration::days(7)).date()
+    .and_hms_opt(0, 0, 0).unwrap().timestamp();
+
+// Daily: start of current day (00:00 UTC)
+let period_start = now.date().and_hms_opt(0, 0, 0).unwrap().timestamp();
+let period_end = (now + chrono::Duration::days(1)).date().and_hms_opt(0, 0, 0).unwrap().timestamp();
+```
+
+For first-period alignment (key created mid-period), `period_start` is the creation timestamp aligned to the period boundary (00:00 UTC), and `period_end` is the next period boundary.
+
 ## Error Types
 
 ```rust
@@ -561,7 +585,9 @@ No new `BudgetStorage` implementation is needed — the existing `KeyStorage` me
 
 ### Token Source Validation
 
-`record_spend_ledger` validates `token_source` against the `CHECK (token_source IN ('provider_usage', 'canonical_tokenizer'))` constraint on `spend_ledger`. Values outside this set cause a constraint violation error at insert time. Budget reset events use a special internal token_source value that is also validated by the CHECK constraint.
+`record_spend_ledger` validates `token_source` against the `CHECK (token_source IN ('provider_usage', 'canonical_tokenizer'))` constraint on `spend_ledger`. Values outside this set cause a constraint violation error at insert time.
+
+**F2 reset does NOT write to spend_ledger:** Reset events are logged to the separate `budget_reset_log` table (which has no `token_source` column), not to `spend_ledger`. Therefore, the `token_source` CHECK constraint is not relevant to F2 reset events. The statement "Budget reset events use a special internal token_source value" (prior versions) was incorrect — F2 reset does not touch `spend_ledger` at all.
 
 ### Integration with RFC-0917
 
@@ -571,6 +597,8 @@ RFC-0917 (Dual-Mode Query Router) depends on this RFC for budget enforcement. RF
 - **Any-LLM Mode**: Uses per-key budgets with the same enforcement path
 
 The interface between RFC-0917 and RFC-0904 is the `check_budget(&ApiKey)` soft pre-check and `record_spend_ledger`/`record_spend_ledger_with_team` atomic enforcement. RFC-0917 calls these at the appropriate points in the request lifecycle, but the budget enforcement logic itself lives in this RFC.
+
+**RFC-0904 status note:** RFC-0904 is currently in **Draft** status. RFC-0917's Phase 4 integration with budget enforcement depends on RFC-0904 reaching **Accepted** status. RFC-0917 may operate with basic `budget_limit` enforcement (RFC-0903 only) until RFC-0904 is accepted, but full budget enforcement per this RFC requires RFC-0904 to be Accepted.
 
 ## LiteLLM Compatibility
 
@@ -604,6 +632,14 @@ This RFC provides budget tracking compatible with LiteLLM's `max_budget` feature
 
 Budget status endpoints for administrative monitoring. **Protocol:** REST over HTTPS (HTTP/1.1 or HTTP/2). **Authentication:** Bearer token in `Authorization` header — token must have admin privileges. On auth failure: `401 Unauthorized {"error": "Unauthorized"}`. On insufficient privileges: `403 Forbidden {"error": "Forbidden"}`.
 
+**Bearer token specification:**
+- Format: `Authorization: Bearer <token>` where `<token>` is a hex-encoded secret (minimum 32 bytes / 64 hex characters)
+- Validation: Constant-time comparison against the configured admin token (hashed via SHA-256 in storage)
+- Token provisioning: Out-of-band — the admin token is stored in the server's secrets configuration (environment variable, secrets manager, or configuration file). No API endpoint exists to create or rotate admin tokens.
+- Token rotation: Out-of-band — generate a new token, update the server configuration, restart if necessary. Clients must update their token immediately.
+- Failed auth rate limiting: Implementations SHOULD rate-limit failed auth attempts (recommended: block after 5 failed attempts for 5 minutes). No auth success/count is tracked per token.
+- Minimum token requirements: 32 bytes of entropy (64 hex characters). Tokens shorter than this MUST be rejected with `400 Bad Request {"error": "InvalidTokenFormat"}`.
+
 **Path parameter format:** `key_id` and `team_id` must be valid UUID strings (lowercase, hyphenated, e.g., `"550e8400-e29b-41d4-a716-446655440000"`). Invalid format returns `400 Bad Request {"error": "InvalidUuidFormat"}`.
 
 ```
@@ -625,7 +661,7 @@ GET /admin/budget/team/{team_id}?include_revoked=false  (default: true)
       budget_limit: u64,      // in μunits; sum of per-key budget_limit values across active keys in team; 0 means all keys unlimited
       current_spend: u64,     // in μunits; sum of current_spend across all team keys (active + revoked unless filtered)
       remaining: i64,         // budget_limit - current_spend (μunits); may be negative if budget exceeded
-      percent_used: u64 | null, // (current_spend.saturating_mul(100)) / budget_limit in hundredths; null if budget_limit == 0 (all keys unlimited)
+      percent_used: u64 | null, // budget_limit > 0 ? (current_spend.saturating_mul(100)) / budget_limit : null; null if budget_limit == 0 (all keys unlimited)
       key_count: i32,          // count of keys in team (active + revoked unless filtered; deleted keys excluded)
       created_at: i64 | null  // Unix epoch of most recent spend event across all team keys; null if no spend
     }
@@ -661,6 +697,8 @@ GET /admin/budget/team/{team_id}/keys?include_revoked=false&offset=0&limit=100  
 **Team `remaining` semantics:** When keys have per-key `budget_limit` values that differ from the team-level `budget_limit`, `remaining` reflects team-level budget only — it does NOT account for per-key budget exhaustion. For per-key budget details, use `GET /admin/budget/team/{team_id}/keys`.
 
 **`percent_used` null case:** `percent_used` is `null` when `budget_limit == 0` (unlimited budget). Division by zero is prevented by omitting the field.
+
+**Team all-unlimited case:** If all keys in the team have `budget_limit == 0` (unlimited), the team's aggregate `budget_limit` is 0 (unlimited team) and `percent_used` is `null`. The team is considered unlimited even if individual key spend is non-zero — the team-level budget is the sum of per-key limits, and the sum of zeros is zero (unlimited).
 
 **Team zero keys:** Returns `200 OK {keys: []}` with `key_count: 0`, not `404`. `404 TeamNotFound` means the `team_id` does not exist in the `teams` table.
 
@@ -716,7 +754,7 @@ Condition: budget_limit > 0 (alerts do not fire for unlimited keys)
 Default thresholds: 50%, 80%, 90%, 100%
 ```
 
-**`current_spend` source (S7):** The alert trigger reads `current_spend` from `key_spend.total_spend` — the same accumulated counter used by the soft pre-check. Both `record_spend` (no budget check) and `record_spend_ledger` (with budget check) contribute to `key_spend.total_spend`, ensuring the F1 alert handler tracks the same spend that the soft pre-check sees. The F1 alert is evaluated post-spend (after `record_spend_ledger` or `deduct_octo_w` records the cost), so the alert fires if the just-recorded spend crossed a threshold.
+**`current_spend` source (S7):** The alert trigger reads `current_spend` from `key_spend.total_spend` — the same accumulated counter used by the soft pre-check. Both `record_spend` (no budget check) and `record_spend_ledger` (with budget check) contribute to `key_spend.total_spend`, ensuring the F1 alert handler tracks the same spend that the soft pre-check sees. The F1 alert is evaluated **synchronously** post-spend (after `record_spend_ledger` or `deduct_octo_w` records the cost), so the alert fires if the just-recorded spend crossed a threshold. Evaluation is synchronous: the webhook is dispatched before the response is returned to the client. If webhook delivery fails after all retries, the alert is dropped (at-least-once guarantee is per-delivery, not per-request — the client request is not failed due to alert delivery failure).
 
 **Uses budget_limit, not effective_budget:** The alert trigger compares `current_spend` against `budget_limit` directly — not against `effective_budget`. This means:
 - For `carry_over_unused=true`: If spend is 10000 and period_allocation×days_elapsed is 20000, effective_budget = 10000 (carry-over applied at query time). An 80% alert threshold uses `budget_limit` directly — e.g., if `budget_limit=30000`, the 80% threshold fires at `current_spend >= 24000`. This is evaluated against `current_spend` (the actual recorded spend), not the effective remaining budget.
@@ -729,6 +767,8 @@ Default thresholds: 50%, 80%, 90%, 100%
 **Config changes mid-period:** If `budget_alert_thresholds` is changed mid-period (e.g., from `[50, 80]` to `[50, 80, 90]`), the new thresholds apply immediately. The `budget_alert_log` already has fired entries for `[50, 80]` in the current period — those will not re-fire regardless of the config change. New thresholds (`90`) can fire immediately if spend is already above that threshold. There is no automatic clearing of alert state on config change — `budget_alert_log` rows persist for audit.
 
 **Threshold firing semantics:** Each threshold fires at most ONCE per billing period per key. Once a threshold (e.g., 80%) has fired, it will not fire again until the next billing period begins (via F2 auto-reset or calendar month boundary). If spend dips below the threshold and rises above again within the same billing period, no additional alert fires.
+
+**Multi-threshold crossing:** If a single request causes spend to cross multiple thresholds (e.g., jumping from 40% to 95%), ALL crossed thresholds fire. The alert handler evaluates all configured thresholds post-spend and fires webhooks for each threshold that is newly crossed. Each webhook is independent with its own `threshold` value. This means one request can trigger multiple webhooks simultaneously (e.g., both 80% and 90% alerts fire for the same request).
 
 **Re-arm when billing_period ≠ auto_reset_period:** The billing period and the auto-reset period are independent concepts:
 
@@ -745,12 +785,14 @@ In all cases: **F1 re-arm is driven by billing_period, not auto_reset_period.**
 CREATE TABLE budget_alert_log (
     key_id      BLOB(16)     NOT NULL,  -- Raw UUID bytes
     threshold   INTEGER     NOT NULL CHECK (threshold >= 1 AND threshold <= 100),  -- 1-100%
-    fired_at    INTEGER     NOT NULL,  -- Unix epoch seconds
+    fired_at    INTEGER     NOT NULL,  -- Unix epoch seconds (debug-only — not returned in API)
     period_start INTEGER    NOT NULL,  -- Unix epoch of billing period start
     PRIMARY KEY (key_id, threshold, period_start)
 );
 CREATE INDEX idx_budget_alert_log_key_id ON budget_alert_log(key_id);
 ```
+
+**`fired_at` is debug-only storage:** The field is stored for forensic reconstruction (e.g., "when did the 80% alert fire?") but is never returned in any Admin API response. It consumes storage and index space but provides no API value. If storage efficiency is critical, implementations MAY omit this column — `period_start` is sufficient to identify the billing period, and the absence of an entry in `budget_alert_log` for a given `(key_id, threshold, period_start)` means the alert has not fired.
 
 **`alert_id` removed:** The primary key is the composite `(key_id, threshold, period_start)` — not a separate auto-increment `alert_id`. This ensures each `(key_id, threshold, period_start)` combination is unique. If a second alert fires for the same (key_id, threshold) in the same period, the UNIQUE constraint prevents the duplicate insert (idempotent — treat as no-op).
 
@@ -846,7 +888,7 @@ CREATE TABLE budget_reset_log (
     team_id       BLOB(16),                -- null if key has no team
     reset_time    INTEGER     NOT NULL,  -- Unix epoch seconds
     period_type   TEXT        NOT NULL,  -- 'daily' | 'weekly' | 'monthly'
-    reset_trigger TEXT        NOT NULL,  -- 'scheduled' | 'manual'
+    reset_trigger TEXT        NOT NULL,  -- 'scheduled' | 'manual' — purely informational (audit/debug), does not affect reset behavior
     created_at    INTEGER     NOT NULL DEFAULT UNIXEPOCH()
 );
 
@@ -879,7 +921,7 @@ CREATE INDEX idx_budget_reset_log_team_id ON budget_reset_log(team_id) WHERE tea
 { "auto_reset_period": "monthly", "carry_over_unused": true } // "daily" | "weekly" | "monthly" | null (no auto-reset); carry_over_unused: boolean (default: true)
 ```
 
-**`carry_over_unused` field:** When `true` (default), unused budget allocation is carried forward at each reset (applied at query time as `effective_budget = key_spend + (period_allocation × days_elapsed)`). When `false`, unused budget is discarded at reset — `key_spend` is set to zero and `effective_budget = budget_limit` at the start of each period.
+**`carry_over_unused` field:** When `true` (default), unused budget allocation is carried forward at each reset (applied at query time as `effective_budget = key_spend + (period_allocation × days_elapsed)`). When `false`, unused budget is discarded at reset — `key_spend` is set to zero and `effective_budget = budget_limit` at the start of each period. If the field is absent from `api_keys.metadata`, it defaults to `true`.
 
 **Changing `auto_reset_period` mid-period:** Changes take effect at the next scheduled reset boundary. The current period's reset schedule is determined by the config at the start of the period. Mid-period changes do not trigger an immediate reset or affect the current period's schedule.
 
@@ -962,6 +1004,7 @@ pub fn deduct_octo_w(key_id: &str, cost_amount: u64) -> Result<u64, KeyError> {
        "timestamp": 1745280000
      }
      ```
+   - **API response to client:** The client request returns `200 OK` with the normal provider response. The OCTO-W deduction failure is an internal reconciliation issue — the provider charge is already irreversible, so failing the client request would not recover the funds. The client sees success; operations team must manually reconcile.
    - **Manual reconciliation required** — the provider charge is irreversible but OCTO-W balance was not updated. Operations team must manually reconcile.
 
 **F3 deduct + F1 alert coincidence:** If the deducted cost_amount causes `current_spend` to cross an F1 threshold, the F1 alert fires after the deduct. This is evaluated by the F1 alert handler — it computes `current_spend` from `key_spend.total_spend` (which includes the just-deducted amount). The F1 alert payload includes `event_type: "octo_w_deduction_failed"` only if the F3 deduct failed — not as part of normal F3 flow. Normal F3 deduct (step 5) succeeding does NOT trigger a separate F1 alert unless the threshold crossing is detected by the normal F1 evaluation cycle.
@@ -1012,8 +1055,10 @@ The soft check is non-locking — it's possible (though unlikely) that another c
 
 | Version | Date       | Changes                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                            |
 | ------- | ---------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 1.17    | 2026-04-22 | Round 17: fix team endpoint percent_used unguarded (U1); specify F1 synchronous alert evaluation + delivery failure behavior (U2); specify Admin API auth mechanism (Bearer token, validation, provisioning, rate limiting) (U3); document fired_at debug-only storage (U4); document reset_trigger informational nature (U5); specify F3 deduct failure API response returns 200 (U6); add team all-unlimited case (budget_limit==0) semantics (U7); add get_team_spend period derivation formula (U8); specify F1 multi-threshold crossing fires all crossed thresholds (U9); note RFC-0904 Draft dependency in RFC-0917 integration (U10); clarify F2 reset does not touch spend_ledger (U11); clarify carry_over_unused defaults when absent (U12) |
 | 1.16    | 2026-04-22 | Round 15: fix /keys endpoint budget_limit/current_spend u64 (was i64); fix alerts endpoint budget_limit u64; remove fired_at from fired array (S3); add get_team_spend backward compat note (S4); add key_spend schema (S5); add pricing_hash test vector reference (S6); add current_spend source to F1 spec (S7); clarify F2 reset resets total_spend AND window_start (S8); add check_budget error type distinction in Budget Pre-Check section (S9); guard percent_used formula with budget_limit>0 (S10) |
-| 1.15    | 2026-04-22 | Round 14:
+| 1.15    | 2026-04-22 | Round 14: R14-01 percent_used overflow (saturating_mul); R14-02 Admin API u64; R14-03 get_team_spend period filter; R14-04 F3+F1 coincidence; R14-05 F2 thundering herd mitigation; R14-06 team auto_reset_period inheritance; R14-07 F1 alert uses budget_limit not effective_budget; R14-08 check_budget unlimited key note; R14-09 updated_at→created_at; R14-10 KeyError vs BudgetError types; R14-11 lock release timing; R14-12 fired_at redundant (removed from payload) |
+| 1.14    | 2026-04-22 | Round 13: G4 latency claim removed; budget_limit==0 simplified; budget_alert_log threshold CHECK; LiteLLM F1/F2 mixup fixed; get_team_spend u64 return; carry_over_unused=false table; F2 spend history (spend_ledger immutable); /keys pagination edge cases; F1 alert state endpoint; F3 model prerequisite + enablement; HMAC secret rotation; F1 config-mid-period note; empty-team case documented |
 | 1.13    | 2026-04-22 | Round 12 adversarial review: fix budget_alert_log PK (composite PK on key_id+threshold+period_start, remove auto-increment alert_id); fix idx_budget_reset_log_team_id partial index on nullable column; add weekly period_allocation example; add KeyNotFound→InsufficientBalance conversion in F3 flow; add pagination to /keys endpoint (offset/limit/total); document KeyError→BudgetError conversion path for BudgetExceeded/TeamBudgetExceeded; remove stale F1/F2/F3 from Future Work (fully specced in Phase 3)                                                                                                                                                                               |
 | 1.12    | 2026-04-22 | Round 11 adversarial review: add carry_over_unused config field; specify at-least-once webhook delivery guarantee + idempotent receiver guidance; add include_revoked filter to team endpoint; add F1 threshold validation (1-100 range, empty array handling); document period_start computation formula; add deleted-key skip note to reset handler; clarify team current_spend data source (key_spend table); specify Admin API auth (Bearer token, 401/403); add F3 estimated_cost formula (max_tokens ceiling); add pricing_hash stability note; check Phase 2 items as spec-complete                                                                                                                                                                                         |
 | 1.11    | 2026-04-22 | Round 10 adversarial review: add budget_alert_log table for F1 threshold state tracking; fix F1 alert trigger condition (budget_limit > 0); fix HMAC signature to include timestamp (replay protection); fix updated_at null semantics; add period_type execution-time note; add get_octo_w_balance OctoWNotEnabled error; fix deduct_octo_w TOCTOU (FOR UPDATE in same transaction); fix key_count (active + revoked, deleted excluded); clarify team percent_used budget_limit semantics; add F1 re-arm when billing_period ≠ auto_reset_period; rename exponential backoff to fixed-interval backoff; add budget_limit==0 enforcement path (check_budget short-circuit, record_spend_ledger condition)                                                                          |
@@ -1021,6 +1066,7 @@ The soft check is non-locking — it's possible (though unlikely) that another c
 | 1.9     | 2026-04-22 | Round 8 adversarial review: declare REST/HTTPS protocol; specify F2 external scheduler mechanism + internal reset endpoint; define budget_reset_log table schema; add webhook auth (HMAC-SHA256), TLS requirement, retry (3x exponential backoff), 10s timeout; define billing period; add compute_cost test vectors; add key_id UUID format requirement with 400 on invalid; add team lock granularity bottleneck note; add period allocation formula; add empty model name validation note                                                                                                                                                                                                                                                                                       |
 | 1.8     | 2026-04-22 | Round 7 adversarial review: add Admin API HTTP status codes, error response format, auth requirement; add remaining negative semantics; add updated_at team aggregation note; add revoked keys in team spend note; add BudgetError variant reachability doc comments; add F3 OCTO-W failure alert payload spec                                                                                                                                                                                                                                                                                                                                                                                                                                                                     |
 | 1.7     | 2026-04-22 | Round 6 adversarial review: clarify F1 integer division edge case; fix F2 token_source CHECK constraint violation (use separate budget_reset_log table not spend_ledger); specify F3 OCTO-W interface (get_octo_w_balance, deduct_octo_w minimum spec)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                             |
+| 1.6     | 2026-04-22 | Round 5: add BudgetError::InsufficientBalance for F3; replace f64 percent_used with u64 hundredths; replace todo!() in get_team_spend with SQL JOIN; add token_source CHECK validation note; add RFC-0917 integration section; update Phase 2 note (E1-E5) |
 | 1.5     | 2026-04-22 | Round 4 adversarial review: D1-D10 fixes (Phase 2/3 specs added, get_spend takes &str, admin API endpoints, F1/F2/F3 mechanism specs, TeamBudgetExceeded documented, builtins documented, idempotency documented)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                  |
 | 1.4     | 2026-04-22 | Round 3 adversarial review: archive Planned RFC-0904 placeholder; fix Phase 1 checklist; fix Key Files section; document record_spend (no budget check); remove get_team_spend; fix get_current_spend return type; add C1-C9 review section                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                        |
 | 1.3     | 2026-04-22 | Round 2 adversarial review: fix B1-B12 (remove check_budget_soft_limit, replace InsufficientBudget, remove get_team_spend, clarify record_spend dispatch, fix KeySpend unit, document soft check staleness, update Phase 1 checklist, fix CostError→BudgetError)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                   |
@@ -1795,6 +1841,18 @@ The RFC documented only the budget-checked version.
 | S8     | Low      | F2 reset scope ambiguous (total_spend only vs total_spend+window_start)                 | Fixed (clarified: resets both total_spend AND window_start)                                |
 | S9     | Low      | check_budget error type distinction not clear in Budget Pre-Check section              | Fixed (added explicit error type distinction note)                                       |
 | S10    | Low      | percent_used formula could be read as unconditional division                             | Fixed (added budget_limit>0 guard to formula)                                            |
+| U1     | Medium   | Team endpoint percent_used unguarded (S10 missed team endpoint)                          | Fixed (added budget_limit>0 guard to team endpoint formula)                             |
+| U2     | Medium   | F1 alert evaluation timing (sync/async) not specified                                   | Fixed (synchronous evaluation; delivery failure does not fail client request)            |
+| U3     | Medium   | Admin API auth mechanism undefined                                                       | Fixed (Bearer token spec: hex-encoded 32+ bytes, SHA-256 hashed, constant-time compare) |
+| U4     | Low      | budget_alert_log.fired_at dead storage                                                   | Fixed (documented as debug-only storage, implementations MAY omit)                     |
+| U5     | Low      | reset_trigger informational nature undocumented                                          | Fixed (documented as purely informational, audit/debug only)                           |
+| U6     | Low      | F3 deduct failure API response not specified                                             | Fixed (client receives 200 OK; deduct failure is internal reconciliation issue)          |
+| U7     | Low      | Team budget_limit==0 (all unlimited) semantics missing                                   | Fixed (all-unlimited team → budget_limit=0, percent_used=null)                          |
+| U8     | Low      | get_team_spend period derivation formula missing                                        | Fixed (added monthly/weekly/daily period derivation formulas)                          |
+| U9     | Low      | F1 multi-threshold crossing semantics ambiguous                                           | Fixed (all crossed thresholds fire; alert handler evaluates all thresholds post-spend)  |
+| U10    | Low      | RFC-0917 integration doesn't note RFC-0904 Draft dependency                              | Fixed (noted RFC-0904 must reach Accepted before RFC-0917 Phase 4 integration)            |
+| U11    | Low      | token_source CHECK constraint vs F2 reset clarification                                   | Fixed (clarified F2 reset does NOT touch spend_ledger)                                  |
+| U12    | Low      | carry_over_unused default value inconsistent                                             | Fixed (clarified field defaults to true when absent from metadata)                      |
 
 ---
 

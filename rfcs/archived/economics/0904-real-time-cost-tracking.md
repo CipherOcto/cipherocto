@@ -2,6 +2,8 @@
 
 ## Status
 
+Archived (superseded by RFC-0904 Draft v1.3)
+
 Planned
 
 ## Authors

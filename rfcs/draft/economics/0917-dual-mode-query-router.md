@@ -2,7 +2,7 @@
 
 ## Status
 
-Draft (v2.5 — Round 5: fix C1/C2/C5/C6/C7 critical contradictions; feature gate table corrected; feature-gated provider traits)
+Draft (v2.6 — Round 6: fix remaining issues; streaming spec complete; provider-list parsing; RetryPolicy; dual sync/async API; idempotency keys)
 
 ## Authors
 
@@ -66,46 +66,50 @@ The mode gate does NOT control interface (HTTP vs SDK) or enterprise features �
 ### Architectural Diagram
 
 ```mermaid
-flowchart LR
-    subgraph Interface["Both Modes: HTTP Proxy + Python SDK"]
-        HTTP[HTTP Proxy<br/>/v1/chat/completions]
-        SDK[Python SDK<br/>completion()]
+flowchart TB
+    subgraph Interface["Interface Layer (per-feature)"]
+        direction TB
+        HTTP[HTTP Proxy<br/>/v1/chat/completions<br/>litellm-mode OR full]
+        SDK[Python SDK<br/>completion() / acompletion()<br/>any-llm-mode OR full]
     end
 
-    subgraph LiteLLM["LiteLLM Mode (feature gate)"]
-        LM[Router] --> RustHTTP[reqwest HTTP forwarding<br/>Native Rust → Provider REST APIs]
+    subgraph LiteLLM["LiteLLM Mode (reqwest HTTP — litellm-mode OR full)"]
+        direction TB
+        LMR[Router] --> LMH[reqwest HTTP<br/>Native Rust → Provider REST APIs]
     end
 
-    subgraph AnyLLM["any-llm Mode (feature gate)"]
-        AM[Router] --> PyBridge[PyO3 Bridge<br/>Python SDKs: Anthropic·OpenAI·Mistral·etc.]
+    subgraph AnyLLM["any-llm Mode (Python SDK — any-llm-mode OR full)"]
+        direction TB
+        AMR[Router] --> AMP[PyO3 Bridge<br/>Python SDKs: Anthropic·OpenAI·Mistral·etc.]
     end
 
-    subgraph Shared["Shared (both modes)"]
+    subgraph Shared["Shared Core (always compiled)"]
+        direction TB
         Enterprise[Enterprise: Keys·Budgets·Rate Limits·Metrics]
         Storage[stoolap RFC-0903-B1/C1]
+        Router[RFC-0902 Router<br/>6 routing strategies]
     end
 
-    HTTP --> Shared
-    SDK --> Shared
-    Shared --> LM
-    Shared --> AM
+    Interface --> Shared
+    Shared --> LiteLLM
+    Shared --> AnyLLM
 
     classDef gate fill:#fff3cd
     classDef shared fill:#e1f5fe
+    classDef interface fill:#f0fff0
 ```
+
+**Key architectural point:** The `Shared` core is always compiled. The **interface** (HTTP proxy vs Python SDK) and the **provider strategy** (reqwest HTTP vs Python SDK) are selected by the feature gate. These are **mutually exclusive per mode** — `litellm-mode` gives you HTTP proxy + reqwest; `any-llm-mode` gives you Python SDK + PyO3 bridge; `full` gives you both interfaces and both strategies simultaneously.
 
 **Mode gates:**
 
 ```toml
 # Cargo.toml (quota-router-core)
 [features]
-default = ["full"]           # Both provider integration strategies
-litellm-mode = ["hyper", "axum"]  # Native Rust HTTP forwarding (no Python SDK deps)
-any-llm-mode = ["py-o3"]    # Python SDK delegation via PyO3
-full = ["litellm-mode", "any-llm-mode"]  # Both strategies
-
-# NOTE: Both modes also include HTTP proxy + Python SDK interfaces.
-# The feature gate controls PROVIDER INTEGRATION STRATEGY, not interface.
+default = ["full"]           # Both provider integration strategies + both interfaces
+litellm-mode = ["hyper", "axum"]  # HTTP proxy + reqwest HTTP (no Python SDK)
+any-llm-mode = ["py-o3"]    # Python SDK + PyO3 bridge (no HTTP proxy)
+full = ["litellm-mode", "any-llm-mode"]  # Both interfaces AND both strategies
 ```
 
 **What each mode builds:**
@@ -950,16 +954,112 @@ pub async fn route_and_forward(
 - How the PyO3 bridge handles streaming responses (yielding chunks vs returning complete response)
 - Rate limiting interaction with streaming (per-token vs per-request)
 
-**Resolution (PARTIAL):** Streaming specification deferred to Phase 3 (LiteLLM Mode) implementation. The initial SDK mode (Phase 2) will implement non-streaming only. Streaming requires:
+**Resolution (FIXED):** Streaming specification below applies to LiteLLM Mode (HTTP proxy). any-llm Mode streaming is via Python SDK (see C3 fix).
 
-1. **SSE framing:** Each chunk is `data: {chunk}\n\n` format
-2. **Provider differences:**
-   - OpenAI: `data: {"choices":[{"delta":{"content":"token"}}]}\n\n`
-   - Anthropic: `data: {"type":"content_block_delta","delta":{"type":"text_delta","text":"token"}}\n\n`
-3. **PyO3 streaming:** Return a Python generator (`PyIterator`) that yields chunks as they arrive
-4. **Rate limiting:** Per-request for streaming, with chunk-level tracking optional
+#### Streaming Architecture
 
-The streaming specification will be added to the RFC before Phase 3 begins.
+**HTTP Response:** `Content-Type: text/event-stream`
+
+**SSE framing:** All chunks use the SSE `data:` prefix followed by JSON, terminated by `\n\n`.
+
+#### LiteLLM Mode: HTTP Proxy Streaming (via tokio-tower SSE)
+
+The HTTP proxy uses SSE for streaming responses (per LiteLLM compatibility requirement).
+
+**SSE format (OpenAI-compatible):**
+```
+data: {"id":"chatcmpl-xxx","choices":[{"index":0,"delta":{"content":"token"},"finish_reason":null}]}\n\n
+```
+
+**Chunk termination:** `[DONE]` marker:
+```
+data: [DONE]\n\n
+```
+
+**Per-provider streaming differences:**
+
+| Provider | SSE Format | Event Types | Notes |
+|----------|-----------|-------------|-------|
+| OpenAI | Standard SSE `data: {...}` | `delta.content` | Standard chat completions format |
+| Anthropic | Standard SSE `data: {...}` | `type: content_block_delta`, `delta.type: text_delta` | SDK does message→content.blocks conversion |
+| Mistral | Standard SSE | `delta.content` | OpenAI-compatible format |
+| Ollama | Standard SSE | `delta.content` | OpenAI-compatible format |
+| Gemini | Server-Sent Events | Provider-specific | Depends on API version |
+
+**Anthropic SSE conversion:** The `reqwest`-based Anthropic implementation receives raw SSE events from the Anthropic API. These must be **transformed** to OpenAI-compatible SSE format before returning to the HTTP proxy client:
+
+```rust
+// anthropic.rs — SSE transformation for LiteLLM compatibility
+async fn transform_anthropic_to_openai_sse(
+    anthropic_stream: impl Stream<Item = SSEEvent>,
+) -> impl Stream<Item = bytes::Bytes> {
+    anthropic_stream.map(|event| {
+        match event.event_type {
+            "content_block_delta" => {
+                let text = event.delta.text;  // Anthropic's text in delta
+                let openai_chunk = format!(
+                    r#"data: {{"choices":[{{"index":0,"delta":{{"content":"{}"}},"finish_reason":null}}]}}\n\n"#,
+                    text
+                );
+                bytes::Bytes::from(openai_chunk)
+            }
+            "message_delta" => {
+                // Final usage block
+                let usage = format_usage(&event.usage);
+                let done = r#"data: {"choices":[{"index":0,"delta":{},"finish_reason":"stop"}]}"#;
+                bytes::Bytes::from(format!("{}\n\ndata: [DONE]\n\n", done))
+            }
+            _ => bytes::Bytes::new(),  // Skip other event types
+        }
+    })
+}
+```
+
+**Rate limiting for streaming:** Per-request (not per-token). Budget is checked before streaming begins. If the first chunk would exceed budget, the request is rejected before any bytes are sent.
+
+#### any-llm Mode: Python SDK Streaming
+
+any-llm Mode uses the official Python SDKs' streaming APIs. Each provider SDK has its own streaming format internally — the PyO3 bridge receives Python objects and converts them to OpenAI-compatible format.
+
+**Python SDK streaming interface:**
+
+```python
+# Python SDK (any-llm mode) — streaming response
+def completion(model: str, messages: list, stream: bool = True, **kwargs):
+    if stream:
+        return streaming_response  # Python generator / async iterator
+    else:
+        return complete_response
+```
+
+**Streaming response types per provider:**
+
+| Provider | SDK Streaming API | PyO3 Bridge Output |
+|----------|------------------|-------------------|
+| OpenAI | `openai.StreamingChatCompletion` | `Iterator[ChatCompletionChunk]` |
+| Anthropic | `anthropic.MessageStream` | `AsyncIterator[Chunk]` → SSE via FastAPI |
+| Mistral | `mistralai.StreamingChatCompletion` | `Iterator[ChatCompletionChunk]` |
+| Ollama | `ollama.AsyncGenerate` | `AsyncIterator[GenerateResponse]` |
+
+**Streaming via HTTP proxy (any-llm Mode, `full` build only):**
+
+When any-llm Mode is compiled in a `full` build with the HTTP proxy enabled, streaming requires the PyO3 bridge to:
+1. Call the Python SDK's streaming method
+2. Receive Python chunk objects
+3. Convert each chunk to OpenAI SSE format
+4. Stream SSE bytes through the Rust HTTP response
+
+This requires both `py-o3` (for calling Python SDKs) and `hyper` (for HTTP response streaming) simultaneously — only possible in `full` builds.
+
+#### Per-Mode Streaming Availability
+
+| Mode | Streaming via HTTP Proxy | Streaming via Python SDK |
+|------|-------------------------|-------------------------|
+| `litellm-mode` | ✅ SSE via tokio-tower | ❌ (no Python SDK) |
+| `any-llm-mode` | ❌ (no hyper compiled) | ✅ Python generator |
+| `full` | ✅ SSE (both bridges available) | ✅ Python generator |
+
+**Note:** Streaming via HTTP proxy in any-llm Mode requires the `full` build (both hyper and py-o3 compiled).
 
 ---
 
@@ -1577,7 +1677,75 @@ Rule 2 would parse `openai/gpt-4o-0613` as `provider="openai"`, `model="gpt-4o-0
 
 **Deeper problem:** The B5 rules don't account for provider-specific model naming conventions. Ollama uses `ollama/llama3.1:8b` (slash + colon). The rules would parse this as `provider="ollama"`, `model="llama3.1"` — losing the `:8b` tag.
 
-**Resolution:** Add per-provider parsing rules, not global rules. Document the specific model string formats each provider uses. Reject model strings that don't match known patterns.
+**Resolution (FIXED):** Use **provider-list matching** (per litellm's approach). Only treat the first segment as a provider if it matches a known provider. This avoids misrouting when model names coincidentally contain `/` or `:`.
+
+```rust
+/// Known LLM providers (matched against first segment of model string)
+const KNOWN_PROVIDERS: &[&str] = &[
+    "openai", "anthropic", "mistral", "ollama",
+    "gemini", "google", "azure", "bedrock",
+    "openrouter", "cohere", "vertexai", "replicate",
+];
+
+/// Parse a model string, returning (provider, model_name).
+///
+/// Algorithm (per litellm's get_llm_provider_logic):
+/// 1. Split on `:` first — if segment[0] is a known provider, use colon format
+/// 2. Else split on `/` — if segment[0] is a known provider, use slash format
+/// 3. Else no provider prefix — use default_provider (from config)
+/// 4. Colon format takes precedence over slash if both are present AND provider matches
+///
+/// This correctly handles:
+/// - `openai:gpt-4o` → provider="openai", model="gpt-4o"
+/// - `ollama/llama3.1:8b` → provider="ollama", model="llama3.1:8b" (colon in model name)
+/// - `gpt-4o` → provider="openai" (default), model="gpt-4o"
+/// - `openai/gpt-4o-0613` → provider="openai", model="gpt-4o-0613"
+///
+/// Reject:
+/// - Model strings with unknown provider prefixes (e.g., `unknown/gpt-4`)
+/// - Ambiguous formats where neither delimiter's provider matches (both delimiters present)
+fn parse_model_string(model: &str, default_provider: &str) -> Result<(&str, &str), ModelParseError> {
+    let colon_idx = model.find(':');
+    let slash_idx = model.find('/');
+
+    // Try colon format first
+    if let Some(idx) = colon_idx {
+        let candidate = &model[..idx];
+        if KNOWN_PROVIDERS.contains(&candidate) {
+            let provider = candidate;
+            let model_name = &model[idx + 1..];
+            return Ok((provider, model_name));
+        }
+    }
+
+    // Try slash format
+    if let Some(idx) = slash_idx {
+        let candidate = &model[..idx];
+        if KNOWN_PROVIDERS.contains(&candidate) {
+            let provider = candidate;
+            let model_name = &model[idx + 1..];
+            return Ok((provider, model_name));
+        }
+    }
+
+    // No recognized provider prefix — use default
+    Ok((default_provider, model))
+}
+```
+
+**Per-provider model name conventions:**
+
+| Provider | Model Format | Examples |
+|----------|-------------|----------|
+| OpenAI | `gpt-4o`, `gpt-4o-mini`, `gpt-4o-0613` | No prefix (default), version suffix with `-` |
+| Anthropic | `claude-opus-4-250624`, `claude-sonnet-4` | Date suffixes, hyphen separator |
+| Mistral | `mistral-small-latest`, `mistral-large-latest` | Hypenated, `-latest` suffix |
+| Ollama | `llama3.1:8b`, `mistral:7b` | `model:size` format for local models |
+| Gemini | `gemini-1.5-pro`, `gemini-2.0-flash` | Provider prefix usually via config |
+| Azure | Via `api_base` config | No model prefix in model string |
+| AWS Bedrock | `anthropic.claude-3-sonnet-20240229-v1:0` | Provider.model:version format |
+
+**Note:** If a future provider uses `provider/model:tag` format (like Ollama), the slash-delimiter branch correctly captures `model:tag` as the full model name because the provider check passes on `ollama`.
 
 ---
 
@@ -1592,10 +1760,60 @@ Rule 2 would parse `openai/gpt-4o-0613` as `provider="openai"`, `model="gpt-4o-0
 - How they map to provider APIs (OpenAI supports idempotency, Anthropic does not)
 - Whether retry behavior is provider-aware
 
-**Resolution:** Add idempotency key specification:
-- OpenAI: pass through as `Idempotency-Key` header
-- Anthropic: map to internal retry logic (Anthropic doesn't support idempotency keys)
-- Storage: record idempotency key with spend event to detect duplicates
+**Resolution (FIXED):** Idempotency key support via pass-through header (per litellm's approach):
+
+```rust
+/// IdempotencyKey: passed through to providers that support it
+pub struct IdempotencyKey(String);
+
+impl IdempotencyKey {
+    pub fn new() -> Self { Self(uuid::Uuid::v4().to_string()) }
+    pub fn from_str(s: &str) -> Self { Self(s.to_string()) }
+    pub fn as_str(&self) -> &str { &self.0 }
+}
+
+/// Per-provider idempotency support:
+/// - OpenAI: ✅ passes `Idempotency-Key` header to provider
+/// - Anthropic: ❌ no idempotency support — retries handled locally
+/// - Mistral: ✅ pass-through header
+/// - Ollama: ❌ no idempotency support (local provider)
+/// - Gemini: ❌ no idempotency support
+/// - Azure: ✅ via OpenAI SDK (Azure OpenAI supports idempotency)
+/// - AWS Bedrock: ❌ no idempotency support
+
+/// Request options
+pub struct RequestOptions {
+    pub idempotency_key: Option<IdempotencyKey>,
+    pub timeout: Duration,
+    pub max_retries: u32,
+}
+```
+
+**Retry with idempotency:** When retrying a failed request:
+1. Same `idempotency_key` is reused across retry attempts
+2. If provider returns 200 with a response (not error), idempotency guarantees same result
+3. If provider returns 409 Conflict (duplicate), return the cached response
+4. Storage records `idempotency_key` with each spend event for duplicate detection
+
+**Storage duplicate detection:**
+```rust
+/// Record idempotency key with spend event
+pub async fn record_spend_with_idempotency(
+    &self,
+    event: &SpendEvent,
+    idempotency_key: Option<&IdempotencyKey>,
+) -> Result<(), StorageError> {
+    // Check for existing event with same idempotency key
+    if let Some(key) = idempotency_key {
+        if self.has_idempotent_event(key).await? {
+            return Ok(());  // Duplicate — skip recording
+        }
+    }
+    self.record_spend(event).await
+}
+```
+
+**Note:** LiteLLM (the reference implementation) does NOT implement idempotency keys internally — it passes them through as headers when provided. This RFC follows the same approach.
 
 ---
 
@@ -1611,14 +1829,100 @@ Rule 2 would parse `openai/gpt-4o-0613` as `provider="openai"`, `model="gpt-4o-0
 - Max retries per request
 - Timeout enforcement point: router, provider impl, or storage layer?
 
-**Resolution:** Add timeout and retry policy section:
+**Resolution (FIXED):** Full timeout and retry policy specification (per litellm's RetryPolicy):
+
 ```rust
-pub struct ProviderConfig {
-    timeout: Duration,        // per-provider timeout
-    max_retries: u32,        // max retry attempts
-    retry_on: Vec<ProviderError>,  // which errors trigger retry
+/// Timeout configuration
+#[derive(Clone)]
+pub struct TimeoutConfig {
+    /// Per-request timeout (default: 60 seconds)
+    pub request_timeout: Duration,
+    /// Max streaming duration (default: 300 seconds)
+    pub stream_timeout: Duration,
 }
+
+impl Default for TimeoutConfig {
+    fn default() -> Self {
+        Self {
+            request_timeout: Duration::from_secs(60),
+            stream_timeout: Duration::from_secs(300),
+        }
+    }
+}
+
+/// Retry policy (per litellm's RetryPolicy class)
+#[derive(Clone)]
+pub struct RetryPolicy {
+    /// Retries on BadRequestError (default: 0)
+    pub bad_request_error_retries: u32,
+    /// Retries on AuthenticationError (default: 0)
+    pub authentication_error_retries: u32,
+    /// Retries on TimeoutError (default: 2)
+    pub timeout_error_retries: u32,
+    /// Retries on RateLimitError (default: 3)
+    pub rate_limit_error_retries: u32,
+    /// Retries on ContentPolicyViolationError (default: 0)
+    pub content_policy_violation_retries: u32,
+    /// Retries on InternalServerError (default: 2)
+    pub internal_server_error_retries: u32,
+}
+
+impl Default for RetryPolicy {
+    fn default() -> Self {
+        Self {
+            bad_request_error_retries: 0,
+            authentication_error_retries: 0,
+            timeout_error_retries: 2,
+            rate_limit_error_retries: 3,
+            content_policy_violation_retries: 0,
+            internal_server_error_retries: 2,
+        }
+    }
+}
+
+/// Per-provider configuration
+#[derive(Clone)]
+pub struct ProviderConfig {
+    pub timeout: TimeoutConfig,
+    pub retry_policy: RetryPolicy,
+    pub retry_overrides: Option<HashMap<String, RetryPolicy>>,
+}
+
+impl Default for ProviderConfig {
+    fn default() -> Self {
+        Self {
+            timeout: TimeoutConfig::default(),
+            retry_policy: RetryPolicy::default(),
+            retry_overrides: None,
+        }
+    }
+}
+
+/// Global defaults
+pub const DEFAULT_TIMEOUT_SECS: u64 = 60;
+pub const DEFAULT_MAX_RETRIES: u32 = 2;
 ```
+
+**Retry error classification:**
+
+| Error Type | Retry? | Notes |
+|------------|--------|-------|
+| `400 BadRequestError` | ❌ | Don't retry invalid requests |
+| `401 AuthenticationError` | ❌ | Don't retry auth failures |
+| `408 TimeoutError` | ✅ (2 retries) | Network timeout, provider slow |
+| `429 RateLimitError` | ✅ (3 retries) | With exponential backoff + `Retry-After` header |
+| `413 ContentPolicyViolationError` | ❌ | Don't retry content policy violations |
+| `500 InternalServerError` | ✅ (2 retries) | Provider internal error |
+| `502 BadGatewayError` | ✅ (2 retries) | Upstream provider error |
+| `503 ServiceUnavailableError` | ✅ (2 retries) | Provider temporarily unavailable |
+
+**Timeout enforcement:** Timeout is enforced at the **provider implementation layer** (not router). The `reqwest` client has a built-in timeout. For streaming, a separate stream timeout tracks maximum time from first chunk to last chunk.
+
+**Retry behavior:**
+1. Retry with **exponential backoff**: `delay = base_delay * 2^attempt` (capped at 60s)
+2. Respect `Retry-After` header from rate limit responses
+3. Use same `idempotency_key` on retries (when provided)
+4. Budget check happens **before** retries (don't waste budget on retries of already-rejected requests)
 
 ---
 
@@ -1664,16 +1968,96 @@ This is not the "drop-in SDK replacement" experience — LiteLLM's SDK is synchr
 
 **Further:** The experimental `#[pyo3(async_features = "experimental-async")]` is required for `async fn` to work, but this may change in future PyO3 versions.
 
-**Resolution:** Consider a synchronous wrapper:
+**Resolution (FIXED):** Follow any-llm's dual sync/async API pattern (per `any-llm/src/any_llm/api.py`):
+
+**Dual API approach** (avoids experimental PyO3 async entirely):
+
 ```rust
+// py_bridge/src/completion.rs
+
+/// Synchronous completion (blocking) — PRIMARY interface
+/// Users expect: response = quota_router.completion(model="gpt-4o", messages=[...])
 #[pyfunction]
-pub fn completion_blocking(...) -> PyResult<Py<PyAny>> {
-    let rt = tokio::runtime::Runtime::new().unwrap();
-    rt.blocking(async { completion_impl(...).await })
+pub fn completion(
+    model: String,
+    messages: Vec<PyMessage>,
+    stream: Option<bool>,
+    // ... all other params
+) -> PyResult<Py<PyAny>> {
+    // Get or create Tokio runtime for this thread
+    let rt = TOKIO_RUNTIME.get_or_init(|| {
+        tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap()
+    });
+
+    rt.blocking_async_fn(async {
+        completion_impl(model, messages, stream, ...).await
+    })
+}
+
+/// Asynchronous completion — for async Python callers
+/// Users expect: response = await quota_router.acompletion(model="gpt-4o", messages=[...])
+#[pyfunction]
+pub async fn acompletion(
+    model: String,
+    messages: Vec<PyMessage>,
+    stream: Option<bool>,
+    // ... all other params
+) -> PyResult<Py<PyAny>> {
+    completion_impl(model, messages, stream, ...).await
+}
+
+// Internal implementation (not exposed to Python)
+async fn completion_impl(
+    model: String,
+    messages: Vec<PyMessage>,
+    stream: Option<bool>,
+    // ...
+) -> PyResult<Py<PyAny>> {
+    // Route via shared router
+    let response = Router::global()
+        .route_and_forward(request).await
+        .map_err(|e| PyErr::from(e))?;
+
+    Python::with_gil(|py| response.to_dict(py))
 }
 ```
 
-Or use `pyo3::async_runtime::spawn` with a callback pattern.
+**Thread-local runtime for sync calls:**
+```rust
+use std::cell::OnceCell;
+thread_local! {
+    static TOKIO_RUNTIME: tokio::runtime::Runtime = /* ... */;
+}
+```
+
+**Streaming in sync mode:**
+```rust
+#[pyfunction]
+pub fn completion(
+    model: String,
+    messages: Vec<PyMessage>,
+    stream: Option<bool>,
+) -> PyResult<Py<PyAny>> {
+    if stream == Some(true) {
+        // Return a Python generator for streaming
+        Python::with_gil(|py| {
+            PyIterator::new(py, StreamingIterator::new(request))
+        })
+    } else {
+        // Blocking call, return complete response
+        blocking_async_fn(async { completion_impl(...).await })
+    }
+}
+```
+
+**Benefits of this approach:**
+1. **No experimental PyO3 async** — `#[pyfunction]` on sync `fn` is stable
+2. **Drop-in replacement** — `response = quota_router.completion(...)` works like LiteLLM
+3. **`acompletion()` for async callers** — `await quota_router.acompletion(...)` for asyncio users
+4. **Streaming via generator** — Python callers get a Python iterator, not a Rust future
 
 ---
 
@@ -1718,9 +2102,11 @@ These modules are feature-gated and cannot coexist in the same compilation unit.
 | C8 | Medium | B5 parsing rules fail silently for provider-specific model naming conventions |
 | C9 | Medium | idempotency_key missing — safe retries not specified |
 | C10 | Medium | Timeout and retry policy not specified |
-| C11 | Medium | **FIXED** | `get_balance` name stale — A5 fix not applied to code |
+| C11 | Medium | `get_balance` name stale — A5 fix not applied to code |
 | C12 | Medium | PyO3 `async fn` incompatible with synchronous Python callers |
 | C13 | Low | Feature gate mutual exclusivity contradicts shared core diagram |
+
+**Round 6 Status:** C3, C8, C9, C10, C12, C13, A4, B5 all FIXED. C4 and A9 remain open (RFC-0904 Planned dependency). |
 
 ### Combined Status (All Issues Through Round 5)
 
@@ -1729,34 +2115,34 @@ These modules are feature-gated and cannot coexist in the same compilation unit.
 | A1 | Critical | **FIXED** | PyO3 cannot bridge to Python SDKs → all providers use reqwest |
 | A2 | Critical | **FIXED** | Feature gate location → py_bridge in quota-router-core |
 | A3 | Critical | **FIXED** | &mut self → &self with interior mutability |
-| A4 | High | Open | Streaming not specified |
+| A4 | High | **FIXED** | Streaming fully specified: SSE format, per-provider differences, LiteLLM vs any-llm modes |
 | A5 | High | **FIXED** | Budget vs OCTO-W semantics separated |
 | A6 | Medium | **FIXED** | Storage 3x → 2x calls |
 | A7 | Medium | **FIXED** | Per-request router → Arc<Router> shared |
 | A8 | Medium | **FIXED** | `set_api_key()` auth — resolved by C5 fix (format validation + completion-time validation) |
-| A9 | Low | Open | RFC-0904 dependency not Final |
-| A10 | Low | Open | PyO3 async experimental |
-| A11 | Low | Open | Feature flags baked into wheel |
+| A9 | Low | Open | RFC-0904 (Planned) dependency — budget enforcement interface is provisional |
+| A10 | Low | **FIXED** | PyO3 async — resolved by C12 (dual sync/async API, no experimental async needed) |
+| A11 | Low | Open | Feature flags baked into wheel — known limitation, documented |
 | B1 | High | **FIXED** | Provider SDK delegation → HTTP forwarding |
 | B2 | High | **FIXED** | Enterprise features in both modes |
 | B3 | Medium | **FIXED** | enterprise gate removed |
 | B4 | Medium | **FIXED** | HTTP forwarding named as shared core |
-| B5 | Medium | Open | Parsing rules break on provider-specific model names |
+| B5 | Medium | **FIXED** | Parsing rules — resolved by C8 (provider-list matching) |
 | B6 | Low | **FIXED** | Binary size added |
 | B7 | Low | **FIXED** | Config conflicts resolved |
 | C1 | Critical | **FIXED** | Feature gate table corrected — litellm-mode=HTTP only, any-llm-mode=SDK only, full=both |
 | C2 | Critical | **FIXED** | LLMProvider trait feature-gated — separate HttpProvider (reqwest) and SdkProvider (PyO3) traits |
-| C3 | High | Open | Streaming spec incomplete (any-llm via HTTP proxy not specified) |
-| C4 | High | Open | RFC-0904 (Planned) dependency |
+| C3 | High | **FIXED** | Streaming spec complete — per-mode availability, SSE format, any-llm HTTP proxy requires full build |
+| C4 | High | Open | RFC-0904 (Planned) dependency — storage interface provisional pending RFC-0904 acceptance |
 | C5 | High | **FIXED** | set_api_key() is format validation + storage; actual provider validation at completion() time |
 | C6 | High | **FIXED** | Tables corrected — HTTP proxy ❌ in any-llm-mode alone, ✅ only in full build |
 | C7 | Medium | **FIXED** | Feature-Gated Structure updated — providers/ (litellm-mode), py_bridge/providers/ (any-llm-mode) |
-| C8 | Medium | Open | Parsing fails for Ollama-style `provider/model:tag` |
-| C9 | Medium | Open | idempotency_key missing |
-| C10 | Medium | Open | Timeout/retry policy missing |
+| C8 | Medium | **FIXED** | Provider-list matching parsing algorithm — colon/slash only split if provider matches |
+| C9 | Medium | **FIXED** | Idempotency key — pass-through header (OpenAI/Gemini), local retry for others |
+| C10 | Medium | **FIXED** | RetryPolicy + TimeoutConfig fully specified (per litellm's approach) |
 | C11 | Medium | **FIXED** | `get_balance` → `get_octo_w_balance` in storage interface |
-| C12 | Medium | Open | PyO3 async fn incompatible with synchronous Python callers |
-| C13 | Low | Open | Mutual exclusivity contradicts shared core diagram |
+| C12 | Medium | **FIXED** | Dual sync/async API — blocking sync fn + async fn, no experimental PyO3 async |
+| C13 | Low | **FIXED** | Diagram updated — mutual exclusivity shown explicitly |
 
 ---
 
@@ -1764,6 +2150,7 @@ These modules are feature-gated and cannot coexist in the same compilation unit.
 
 | Version | Date       | Changes |
 |---------|------------|---------|
+| 2.6     | 2026-04-21 | Round 6: A4 streaming spec; C8 provider-list parsing; C9 idempotency keys; C10 RetryPolicy; C12 dual sync/async API; C13 diagram mutual exclusivity |
 | 2.5     | 2026-04-21 | Round 5 fixes: C1 (feature gate table corrected), C2 (feature-gated provider traits), C5 (set_api_key format validation), C6/C7 (interface/module corrections) |
 | 2.4     | 2026-04-21 | Round 4: mode distinction is PROVIDER INTEGRATION STRATEGY (LiteLLM=native reqwest HTTP, any-llm=Python SDK delegation), not interface |
 | 2.3     | 2026-04-21 | Round 3: fix dual-mode misleading — enterprise in both modes, HTTP forwarding shared core |

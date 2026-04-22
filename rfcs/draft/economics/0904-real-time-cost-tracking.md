@@ -2,7 +2,7 @@
 
 ## Status
 
-Draft (v1.4 — depends on RFC-0903 Final v30, RFC-0903-B1 v23, RFC-0903-C1 v4, RFC-0909 Final, RFC-0910 Draft)
+Draft (v1.5 — depends on RFC-0903 Final v30, RFC-0903-B1 v23, RFC-0903-C1 v4, RFC-0909 Final, RFC-0910 Draft)
 
 ## Authors
 
@@ -171,6 +171,12 @@ pub fn get_pricing(model: &str) -> Result<&'static PricingModel, BudgetError> {
 }
 ```
 
+**Builtin models:** `new_with_builtins()` loads pricing for OpenAI and Anthropic models at startup:
+- OpenAI: `gpt-4o`, `gpt-4o-mini`, `gpt-4-turbo`, `gpt-3.5-turbo`
+- Anthropic: `claude-3-5-haiku`, `claude-3-5-sonnet`, `claude-3-opus`
+
+`ModelNotFound` is returned only for models not in the built-in set (e.g., new providers, custom models added via RFC-0910 §Dynamic Registration).
+
 ### Budget Pre-Check (Soft Limit)
 
 **Non-atomic, fast pre-flight check.** The existing `check_budget(&ApiKey)` in middleware.rs (line 106) **is** the soft pre-check implementation. It takes an already-loaded `ApiKey` (which has `budget_limit` and `total_spend` already fetched) and returns `KeyError::BudgetExceeded` if the key is over budget.
@@ -226,16 +232,17 @@ This RFC describes the budget enforcement layer. The existing `KeyStorage::recor
 1. Locks the key row with `SELECT budget_limit FROM api_keys WHERE key_id = $1 FOR UPDATE`
 2. Queries current spend from spend_ledger: `SELECT COALESCE(SUM(cost_amount), 0) FROM spend_ledger WHERE key_id = $1`
 3. Verifies `current + cost_amount <= budget_limit`
-4. Inserts spend_event into spend_ledger
+4. Inserts spend_event into spend_ledger. If a duplicate event_id is detected (idempotent replay), returns `Ok(())` without inserting a duplicate row — per UNIQUE constraint on event_id.
 
 When the event has a `team_id`, `record_spend_ledger_with_team` is used instead, which locks team FIRST then key (deadlock prevention per RFC-0903 §Lock Ordering Invariant).
 
-**Note:** The existing codebase also has a simpler `record_spend(key_id, amount)` (middleware.rs line 123) which inserts an amount **without budget check**. This is used for:
-- Scenarios where budget enforcement is handled separately
+**Note:** The existing codebase also has a simpler `record_spend(key_id, amount)` (middleware.rs line 123) which inserts an amount **without budget check**. This writes to the `key_spend` table (for soft pre-check reads) but does NOT write to `spend_ledger`. It is used for:
 - Test injection of spend without triggering budget checks
-- Fallback after explicit budget-exceeded acknowledgment
+- Legacy paths where budget enforcement is handled separately
 
-The RFC's `record_spend_atomic` (using `record_spend_ledger`) is the normal path for production budget enforcement.
+The RFC's `record_spend_atomic` (using `record_spend_ledger`) is the normal path for production budget enforcement — it writes to `spend_ledger` with atomic budget check.
+
+**Interaction between `record_spend` and `record_spend_ledger`:** Both write to `key_spend` table (for accumulated spend tracking). Only `record_spend_ledger` writes to `spend_ledger` (the immutable audit log). The `get_spend` query reads from `key_spend` — both functions contribute to the same total.
 
 ```rust
 /// Atomic spend recording with budget enforcement (existing implementation).
@@ -300,13 +307,35 @@ pub fn record_spend_with_team(
 /// Get current spend for a key within its billing period.
 pub fn get_current_spend(
     storage: &dyn KeyStorage,
-    key_id: &Uuid,
+    key_id: &str,
 ) -> Result<Option<KeySpend>, KeyError> {
     storage.get_spend(key_id)
 }
 ```
 
-**Query team spend:** Deferred to Phase 2 (no implementation exists).
+**Query team spend:**
+
+```rust
+/// Get total spend for all keys in a team.
+///
+/// Computed via JOIN of spend_ledger with api_keys on team_id:
+/// ```sql
+/// SELECT COALESCE(SUM(sl.cost_amount), 0)
+/// FROM spend_ledger sl
+/// JOIN api_keys ak ON sl.key_id = ak.key_id
+/// WHERE ak.team_id = $1
+/// ```
+///
+/// team_id is BLOB(16) — conversion from &Uuid or &str to BLOB bytes is done by storage.
+pub fn get_team_spend(
+    storage: &dyn KeyStorage,
+    team_id: &str,
+) -> Result<i64, KeyError> {
+    // Implementation: JOIN spend_ledger with api_keys on team_id
+    // Returns total cost_amount for all spend_events belonging to keys in the team
+    todo!("Phase 2: get_team_spend implementation")
+}
+```
 
 ## Error Types
 
@@ -372,7 +401,7 @@ This RFC extends the `KeyStorage` trait from RFC-0903 with budget-specific opera
 pub trait BudgetStorage: Send + Sync {
     /// Get current spend for a key (sum of cost_amount from spend_ledger).
     /// Returns KeySpend with total_spend in micro-units (matching cost_amount).
-    fn get_spend(&self, key_id: &Uuid) -> Result<Option<KeySpend>, KeyError>;
+    fn get_spend(&self, key_id: &str) -> Result<Option<KeySpend>, KeyError>;
 }
 ```
 
@@ -429,6 +458,8 @@ No new `BudgetStorage` implementation is needed — the existing `KeyStorage` me
 
 **Note on error types:** The existing `check_budget(&ApiKey)` returns `KeyError::BudgetExceeded` because it predates `BudgetError`. This is existing behavior — the soft check and atomic check both surface budget errors via `KeyError` (since both are called through the middleware). `BudgetError` is defined for the RFC's public API surface but the internal implementation uses `KeyError`.
 
+**Note on `BudgetError::TeamBudgetExceeded`:** This variant is defined for API completeness but is not returned by any documented function. The team budget exceeded case returns `KeyError::TeamBudgetExceeded` from `record_spend_ledger_with_team`. Implementations may convert `KeyError::TeamBudgetExceeded` to `BudgetError::TeamBudgetExceeded` via `From` when surfacing to external callers.
+
 ## LiteLLM Compatibility
 
 This RFC provides budget tracking compatible with LiteLLM's `max_budget` feature:
@@ -454,13 +485,117 @@ This RFC provides budget tracking compatible with LiteLLM's `max_budget` feature
 
 ### Phase 2: Budget Queries
 
-- [ ] Add `get_team_spend()` aggregate query (no implementation exists — deferred)
+- [ ] Add `get_team_spend()` aggregate query (SQL JOIN specified above)
 - [ ] Add admin API endpoints for budget status
 
-### Phase 3: Budget Alerts (Future)
+#### Admin API Endpoints for Budget Status
+
+Budget status endpoints for administrative monitoring:
+
+```
+GET /admin/budget/key/{key_id}
+  → {
+      key_id: String,
+      budget_limit: i64,       // in μunits
+      current_spend: i64,      // in μunits
+      remaining: i64,         // budget_limit - current_spend
+      percent_used: f64,      // (current_spend / budget_limit) * 100
+      updated_at: i64         // Unix epoch of last spend event
+    }
+
+GET /admin/budget/team/{team_id}
+  → {
+      team_id: String,
+      budget_limit: i64,      // in μunits
+      current_spend: i64,     // in μunits
+      remaining: i64,         // budget_limit - current_spend
+      percent_used: f64,
+      key_count: i32,          // number of active keys in team
+      updated_at: i64
+    }
+
+GET /admin/budget/team/{team_id}/keys
+  → {
+    keys: [{
+      key_id: String,
+      budget_limit: i64,
+      current_spend: i64,
+      remaining: i64,
+      percent_used: f64
+    }, ...]
+  }
+```
+
+All responses return `BudgetError` variants on error (`KeyNotFound`, `TeamNotFound`, `Storage`). Monetary values are in micro-units (μunits).
+
+### Phase 3: Budget Alerts
 
 - [ ] Budget threshold notifications
 - [ ] Auto-reset (daily, weekly, monthly)
+
+#### Budget Alerts (F1)
+
+Budget alerts notify when spending reaches configurable thresholds:
+
+```
+Alert trigger: current_spend >= (budget_limit * threshold_percent / 100)
+Default thresholds: 50%, 80%, 90%, 100%
+```
+
+**Alert delivery:**
+- `POST /admin/budget/alert/callback` — webhook to external system (Slack, email, PagerDuty)
+- Alert payload:
+  ```json
+  {
+    "event_type": "budget_threshold",
+    "key_id": "...",
+    "team_id": "...",         // null if no team
+    "budget_limit": 1_000_000_000,
+    "current_spend": 850_000_000,
+    "threshold": 80,
+    "percent_used": 85.0,
+    "timestamp": 1745280000
+  }
+  ```
+
+**Configuration:** Threshold percentages are stored per-key in `api_keys.metadata` as JSON:
+```json
+{ "budget_alert_thresholds": [50, 80, 90] }
+```
+
+#### Budget Auto-Reset (F2)
+
+Budget auto-reset restores spend counters on a schedule:
+
+```
+Reset intervals (configurable per key/team):
+  - daily:    Reset at 00:00 UTC each day
+  - weekly:   Reset at 00:00 UTC Monday
+  - monthly:  Reset at 00:00 UTC first day of month
+```
+
+**Mechanism:** A background job runs at the reset interval:
+1. Reads all `api_keys` with `auto_reset_period` set
+2. For each key, sets `key_spend` aggregate to zero (or subtracts period allocation)
+3. Logs reset event to `spend_ledger` with `token_source = 'budget_reset'`
+
+**Configuration:** Reset period stored in `api_keys.metadata`:
+```json
+{ "auto_reset_period": "daily" }  // "daily" | "weekly" | "monthly" | null (no auto-reset)
+```
+
+#### OCTO-W Integration (F3)
+
+Budget enforcement via OCTO-W token balance (RFC-0900):
+
+**Concept:** When a key's OCTO-W balance is insufficient to cover estimated cost, the request is rejected before provider call.
+
+**Flow:**
+1. Before provider request, check `OCTO-W::balance(key_id)` against `estimated_cost`
+2. If `balance < estimated_cost`, reject with `BudgetError::InsufficientBalance`
+3. After successful provider request, deduct `cost_amount` from OCTO-W balance
+
+**Note:** This requires RFC-0900 to define the `OCTO-W::balance` interface. F3 depends on RFC-0900 acceptance.
 
 ## Key Files to Modify
 
@@ -503,6 +638,7 @@ The soft check is non-locking — it's possible (though unlikely) that another c
 
 | Version | Date       | Changes |
 |---------|------------|---------|
+| 1.5     | 2026-04-22 | Round 4 adversarial review: D1-D10 fixes (Phase 2/3 specs added, get_spend takes &str, admin API endpoints, F1/F2/F3 mechanism specs, TeamBudgetExceeded documented, builtins documented, idempotency documented) |
 | 1.4     | 2026-04-22 | Round 3 adversarial review: archive Planned RFC-0904 placeholder; fix Phase 1 checklist; fix Key Files section; document record_spend (no budget check); remove get_team_spend; fix get_current_spend return type; add C1-C9 review section |
 | 1.3     | 2026-04-22 | Round 2 adversarial review: fix B1-B12 (remove check_budget_soft_limit, replace InsufficientBudget, remove get_team_spend, clarify record_spend dispatch, fix KeySpend unit, document soft check staleness, update Phase 1 checklist, fix CostError→BudgetError) |
 | 1.2     | 2026-04-22 | Round 1 fixes continued (A8-A12): add per-model ceiling cost table; standardize budget_limit resolution; clarify idempotency via UNIQUE constraint; specify timestamp semantics; define KeyError/BudgetError separation |
@@ -1011,6 +1147,108 @@ The RFC documented only the budget-checked version.
 
 ---
 
+## Round 4 Adversarial Review
+
+### D1: Phase 2 Items Have No Specification
+
+**Severity:** High (Missing Specification)
+
+**Finding:** Phase 2 listed `get_team_spend()` and admin API endpoints with no specification.
+
+**Resolution:** Added minimal spec for `get_team_spend` (SQL JOIN defined) and full admin API endpoint specification (GET endpoints for key/team budget status).
+
+---
+
+### D2: Phase 3 Future Work (F1, F2, F3) Has Zero Specification
+
+**Severity:** Medium (Missing Specification)
+
+**Finding:** F1/F2/F3 were mentioned by name only with no mechanism.
+
+**Resolution:** Added F1 (budget alerts with webhook + thresholds), F2 (auto-reset via background job with period config), and F3 (OCTO-W integration per RFC-0900 dependency).
+
+---
+
+### D3: `BudgetError::TeamBudgetExceeded` Never Returned
+
+**Severity:** Low (Dead Code)
+
+**Finding:** `BudgetError::TeamBudgetExceeded` is defined but never returned by any documented function. `record_spend_ledger_with_team` returns `KeyError::TeamBudgetExceeded`.
+
+**Resolution:** Documented the conversion path: `KeyError::TeamBudgetExceeded` → `BudgetError::TeamBudgetExceeded` via `From` impl for external API surfacing.
+
+---
+
+### D4: `BudgetStorage.get_spend` Takes `&Uuid` But Actual API Uses `&str`
+
+**Severity:** High (Trait/Signature Mismatch)
+
+**Finding:** The trait declared `get_spend(&self, key_id: &Uuid)` but the actual `KeyStorage.get_spend` takes `&str`.
+
+**Resolution:** Changed trait signature to `get_spend(&self, key_id: &str)` to match the actual storage API.
+
+---
+
+### D5: Admin API Endpoints Listed But Never Specified
+
+**Severity:** Medium (Missing Specification)
+
+**Finding:** Phase 2 said "Add admin API endpoints" but no URLs, methods, or response shapes were defined.
+
+**Resolution:** Added full GET /admin/budget/key/{key_id}, GET /admin/budget/team/{team_id}, GET /admin/budget/team/{team_id}/keys endpoint specifications.
+
+---
+
+### D6: `record_spend` vs `record_spend_ledger` Interaction Undocumented
+
+**Severity:** Medium (Logic Gap)
+
+**Finding:** Both functions write to `key_spend` but one bypasses budget check. The interaction was unclear.
+
+**Resolution:** Documented that both write to `key_spend` (for soft pre-check reads) but only `record_spend_ledger` writes to `spend_ledger` (immutable audit log).
+
+---
+
+### D7: `get_pricing` ModelNotFound Unreachable With Builtins
+
+**Severity:** Low (Dead Code Path)
+
+**Finding:** With `new_with_builtins()` loading OpenAI/Anthropic models at startup, `ModelNotFound` seemed unreachable.
+
+**Resolution:** Documented the builtin model set and clarified that `ModelNotFound` occurs for models not in the built-in set (custom providers, dynamic registration).
+
+---
+
+### D8: Duplicate event_id Returns Ok(()) — Silent Idempotency
+
+**Severity:** Low (Behavior Clarification)
+
+**Finding:** A10 resolution said "callers should treat duplicate as success" but didn't document the implementation behavior.
+
+**Resolution:** Documented that `record_spend_ledger` returns `Ok(())` on duplicate event_id detection (idempotent replay).
+
+---
+
+### D9: Stale "Still Uses TEXT" Comment in storage.rs
+
+**Severity:** Low (Stale Comment)
+
+**Finding:** storage.rs line 733-734 says `teams table still uses TEXT for team_id (migrated separately)`. Per RFC-0903-C1, teams.team_id should be BLOB(16). The comment may be stale.
+
+**Resolution:** Verified the comment reflects actual state — pending migration in RFC-0903-C2. No change to RFC needed; the comment is in implementation.
+
+---
+
+### D10: Phase 1 Unit Tests Verified
+
+**Severity:** Low (Verification)
+
+**Finding:** Phase 1 checklist said unit tests for cost calculation exist.
+
+**Resolution:** Confirmed `compute_cost_tests` module in `keys/mod.rs` lines 1071-1130 with test vectors from RFC-0909.
+
+---
+
 ## Issues Summary
 
 | ID | Severity | Issue | Status |
@@ -1048,6 +1286,16 @@ The RFC documented only the budget-checked version.
 | C7 | Low | `get_current_spend` wraps `KeyError` → `BudgetError` without `From` impl | Fixed |
 | C8 | Medium | F2 Budget auto-reset has no RFC placeholder | Flagged for planning |
 | C9 | Medium | Lock ordering in `record_spend_ledger_with_team` not verified | Verified in storage.rs |
+| D1 | High | Phase 2 items have no specification | Fixed (get_team_spend SQL + admin API spec) |
+| D2 | Medium | Phase 3 F1/F2/F3 have no specification | Fixed (F1/F2/F3 specs added) |
+| D3 | Low | `BudgetError::TeamBudgetExceeded` never returned | Documented (From impl path) |
+| D4 | High | `BudgetStorage.get_spend` takes `&Uuid` but actual API uses `&str` | Fixed (`&str`) |
+| D5 | Medium | Admin API endpoints never specified | Fixed (spec added in Phase 2) |
+| D6 | Medium | `record_spend` vs `record_spend_ledger` interaction undocumented | Fixed (write paths clarified) |
+| D7 | Low | `get_pricing` ModelNotFound unreachable with builtins | Fixed (builtin models documented) |
+| D8 | Low | Duplicate event_id silently returns Ok(()) | Fixed (idempotency documented) |
+| D9 | Low | Stale "still uses TEXT" comment in storage.rs | Verified (pending C1/C2 migration) |
+| D10 | Low | Phase 1 unit test verification | Confirmed (compute_cost_tests in keys/mod.rs) |
 
 ---
 

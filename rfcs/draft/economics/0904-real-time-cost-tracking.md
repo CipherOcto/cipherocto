@@ -2,7 +2,7 @@
 
 ## Status
 
-Draft (v1.13 — depends on RFC-0903 Final v30, RFC-0903-B1 v23, RFC-0903-C1 v4, RFC-0909 Final, RFC-0910 Draft)
+Draft (v1.14 — depends on RFC-0903 Final v30, RFC-0903-B1 v23, RFC-0903-C1 v4, RFC-0909 Final, RFC-0910 Draft)
 
 ## Authors
 
@@ -37,7 +37,7 @@ Define the real-time cost tracking system for the quota router, including model 
 | G1   | Atomic budget enforcement      | No overspend under concurrent requests                       |
 | G2   | Deterministic cost calculation | Identical cost across all router implementations             |
 | G3   | Integer-only arithmetic        | No floating point in cost or budget accounting               |
-| G4   | Fast budget pre-check          | Non-locking, <1ms (storage-dependent)                        |
+| G4   | Fast budget pre-check          | Non-locking (storage-dependent latency)                        |
 | G5   | Soft budget pre-check          | Reject obviously over-budget keys before provider round-trip |
 | G6   | Per-key and per-team budgets   | Both enforced atomically                                     |
 
@@ -222,7 +222,7 @@ pub fn check_budget(&self, key: &ApiKey) -> Result<(), KeyError> {
 }
 ```
 
-**budget_limit == 0 (unlimited) enforcement:** When `budget_limit == 0`, the soft pre-check passes without error — unlimited keys are not subject to budget enforcement. This is because `budget_limit == 0` means "no budget limit," not "zero budget." The `check_budget` function above handles this correctly: when `budget_limit == 0`, the spend query returns a `KeySpend` with `total_spend >= 0`, so `remaining = 0 - total_spend <= 0` is true AND `budget_limit == 0` is also true, so the function returns `BudgetExceeded` — but this is wrong for unlimited keys.
+**budget_limit == 0 (unlimited) enforcement:** When `budget_limit == 0`, the soft pre-check passes without error — unlimited keys are not subject to budget enforcement. `budget_limit == 0` means "no budget limit," not "zero budget."
 
 The correct behavior: `check_budget` must short-circuit when `budget_limit == 0`:
 
@@ -369,11 +369,12 @@ pub fn get_current_spend(
 /// Get total spend for all keys in a team.
 ///
 /// team_id is BLOB(16) in the database — storage layer handles UUID→BLOB conversion.
+/// Returns total spend in micro-units (non-negative u64, zero if team has no keys).
 pub fn get_team_spend(
     storage: &dyn KeyStorage,
     team_id: &str,
-) -> Result<i64, KeyError> {
-    let team_spend: i64 = storage
+) -> Result<u64, KeyError> {
+    let team_spend: u64 = storage
         .query_row(
             "SELECT COALESCE(SUM(sl.cost_amount), 0)
              FROM spend_ledger sl
@@ -387,6 +388,8 @@ pub fn get_team_spend(
 ```
 
 The SQL JOIN aggregates all `cost_amount` values from `spend_ledger` for keys belonging to the team.
+
+**Empty team case:** If `team_id` exists in the `teams` table but has no keys (or all keys have been deleted), the SQL returns `COALESCE(SUM(...), 0)` = 0. This returns `Ok(0)`, not an error. `404 TeamNotFound` means the team does not exist in `teams`, not that the team is empty.
 
 ## Error Types
 
@@ -565,7 +568,7 @@ This RFC provides budget tracking compatible with LiteLLM's `max_budget` feature
 | Soft pre-check     | Optional           | `check_budget(&ApiKey)` (middleware.rs line 106)        |
 | Atomic enforcement | Built-in           | `record_spend_ledger` / `record_spend_ledger_with_team` |
 | Spend tracking     | Database           | spend_ledger                                            |
-| Budget reset       | Via config         | Future (F1)                                             |
+| Budget reset       | Via config         | F2 auto-reset (daily/weekly/monthly)                                             |
 
 ## Implementation Phases
 
@@ -646,7 +649,28 @@ GET /admin/budget/team/{team_id}/keys?include_revoked=false&offset=0&limit=100  
 
 **Team zero keys:** Returns `200 OK {keys: []}` with `key_count: 0`, not `404`. `404 TeamNotFound` means the `team_id` does not exist in the `teams` table.
 
+**Pagination edge cases:** `limit=0` returns an empty `keys` array with `total` still populated (valid request). If `limit` exceeds a maximum (implementation-defined, recommended 1000), clamp to the maximum. `offset >= total` returns an empty `keys` array (no wrap-around).
+
 **Team `current_spend` data source:** Team `current_spend` is the sum of `key_spend.total_spend` across all relevant team keys (active + revoked unless filtered). This is consistent with how the soft pre-check reads work — `get_spend` queries `key_spend`, not `spend_ledger` directly. Both `record_spend` (no budget check) and `record_spend_ledger` (with budget check) write to `key_spend`, so this aggregation reflects all recorded spend.
+
+**F1 alert state endpoint:**
+
+```
+GET /admin/budget/key/{key_id}/alerts
+  → 200 OK {
+      key_id: String,
+      budget_limit: i64,       // in μunits
+      thresholds: [50, 80, 90],  // configured thresholds from metadata
+      fired: [{threshold: 80, fired_at: 1745280000, period_start: 1743465600}, ...],
+      period_start: i64          // current billing period start (Unix epoch)
+    }
+  → 404 Not Found {"error": "KeyNotFound", "key_id": "..."}
+  → 500 Internal Server Error {"error": "Storage", "detail": "..."}
+```
+
+**`fired` array:** Lists thresholds that have already fired in the current billing period. Each entry is `(threshold, fired_at, period_start)` from `budget_alert_log`. Empty array means no alerts have fired yet. The response does NOT include thresholds that haven't fired — the caller infers unfired thresholds from the `thresholds` config.
+
+**`thresholds` source:** Read from `api_keys.metadata` → `budget_alert_thresholds` JSON array. Returns empty array if not configured.
 
 ### Phase 3: Budget Alerts
 
@@ -667,6 +691,8 @@ Default thresholds: 50%, 80%, 90%, 100%
 
 **Threshold validation:** Threshold values must be integers between 1 and 100 (inclusive). Values outside this range are ignored by the alert handler. If `budget_alert_thresholds` is empty, no alerts fire. If `budget_limit == 0` (unlimited key), no alerts fire regardless of threshold configuration.
 
+**Config changes mid-period:** If `budget_alert_thresholds` is changed mid-period (e.g., from `[50, 80]` to `[50, 80, 90]`), the new thresholds apply immediately. The `budget_alert_log` already has fired entries for `[50, 80]` in the current period — those will not re-fire regardless of the config change. New thresholds (`90`) can fire immediately if spend is already above that threshold. There is no automatic clearing of alert state on config change — `budget_alert_log` rows persist for audit.
+
 **Threshold firing semantics:** Each threshold fires at most ONCE per billing period per key. Once a threshold (e.g., 80%) has fired, it will not fire again until the next billing period begins (via F2 auto-reset or calendar month boundary). If spend dips below the threshold and rises above again within the same billing period, no additional alert fires.
 
 **Re-arm when billing_period ≠ auto_reset_period:** The billing period and the auto-reset period are independent concepts:
@@ -683,7 +709,7 @@ In all cases: **F1 re-arm is driven by billing_period, not auto_reset_period.**
 ```sql
 CREATE TABLE budget_alert_log (
     key_id      BLOB(16)     NOT NULL,  -- Raw UUID bytes
-    threshold   INTEGER     NOT NULL,  -- e.g., 50, 80, 90, 100
+    threshold   INTEGER     NOT NULL CHECK (threshold >= 1 AND threshold <= 100),  -- 1-100%
     fired_at    INTEGER     NOT NULL,  -- Unix epoch seconds
     period_start INTEGER    NOT NULL,  -- Unix epoch of billing period start
     PRIMARY KEY (key_id, threshold, period_start)
@@ -749,6 +775,8 @@ For weekly billing: start of current week (Monday 00:00 UTC). For daily: start o
 { "budget_alert_thresholds": [50, 80, 90] }
 ```
 
+**HMAC secret rotation:** Secret rotation is out-of-band — generate a new secret, update the receiver first (to accept both old and new signatures), then update the key's metadata. During the transition window, the receiver should accept signatures from either secret. After the transition window (recommended: 24 hours), the old secret can be discarded. Storing secrets in `api_keys.metadata` is acceptable for development; production deployments should use a secrets manager and reference secrets by key identifier rather than embedding the secret value in metadata.
+
 #### Budget Auto-Reset (F2)
 
 Budget auto-reset restores spend counters on a schedule:
@@ -789,13 +817,24 @@ CREATE INDEX idx_budget_reset_log_key_id ON budget_reset_log(key_id);
 CREATE INDEX idx_budget_reset_log_team_id ON budget_reset_log(team_id) WHERE team_id IS NOT NULL;
 ```
 
-**Period allocation:** `period_allocation = budget_limit / days_in_period` where `days_in_period` is: 1 for daily, 7 for weekly, 30 for monthly. At reset, `key_spend` is ALWAYS set to zero (not subtracted). The "carry-over" is applied at spend QUERY time: `effective_budget = key_spend + (period_allocation × days_elapsed_in_period)`. This correctly accumulates unused allocation without corrupting the `key_spend` accumulator.
+**Period allocation:** `period_allocation = budget_limit / days_in_period` where `days_in_period` is: 1 for daily, 7 for weekly, 30 for monthly. At reset, `key_spend` is ALWAYS set to zero (not subtracted).
 
-**Example (monthly, budget_limit=30000, no spend in first 15 days):** At day 15, key_spend=0. Effective budget = 0 + (30000/30 × 15) = 15000. After 10000 spend, effective remaining = 5000. At month reset (day 30), key_spend is set to 0 and effective_budget resets to full 30000.
+**Effective budget formula (applied at spend query time):**
 
-**Example (weekly, budget_limit=30000, no spend in first 3 days):** At day 3, key_spend=0. Effective budget = 0 + (30000/7 × 3) = 12857. After 5000 spend, effective remaining = 7857. At weekly reset (day 7), key_spend is set to 0 and effective_budget resets to full 30000.
+| `carry_over_unused` | Formula | Description |
+|---------------------|---------|-------------|
+| `true` (default) | `effective_budget = key_spend + (period_allocation × days_elapsed)` | Unused allocation carried forward |
+| `false` | `effective_budget = budget_limit` | No carry-over; full budget at each period start |
+
+**Example (monthly, carry_over_unused=true, budget_limit=30000, no spend in first 15 days):** At day 15, key_spend=0. Effective budget = 0 + (30000/30 × 15) = 15000. After 10000 spend, effective remaining = 5000. At month reset (day 30), key_spend is set to 0 and effective_budget resets to full 30000.
+
+**Example (monthly, carry_over_unused=false, budget_limit=30000):** At day 15, key_spend=5000 (from earlier spend). At period start, key_spend is set to 0 and effective_budget = 30000 (no carry-over). Only 30000 is available, not 35000.
+
+**Example (weekly, carry_over_unused=true, budget_limit=30000, no spend in first 3 days):** At day 3, key_spend=0. Effective budget = 0 + (30000/7 × 3) = 12857. After 5000 spend, effective remaining = 7857. At weekly reset (day 7), key_spend is set to 0 and effective_budget resets to full 30000.
 
 **Note:** Auto-reset does NOT write to `spend_ledger` — reset events are logged to a separate `budget_reset_log` table to avoid violating the `CHECK (token_source IN ('provider_usage', 'canonical_tokenizer'))` constraint defined in RFC-0909 §SpendEvent. Budget reset is an administrative action, not a spend event.
+
+**Spend history:** F2 reset does not delete `spend_ledger` records — they are immutable per RFC-0909. Historical period spend can be reconstructed from `spend_ledger` using `timestamp` filters for the billing period boundaries. The `budget_reset_log.reset_time` provides the reset timestamp for computing period boundaries.
 
 **Configuration:** Reset period and carry-over behavior stored in `api_keys.metadata`:
 
@@ -833,7 +872,13 @@ Budget enforcement via OCTO-W token balance (RFC-0900):
 
 **Concept:** When a key's OCTO-W balance is insufficient to cover estimated cost, the request is rejected before provider call. **F3 is a standalone enforcement mode** — when F3 is enabled for a key, `record_spend_ledger` is NOT called (OCTO-W balance IS the budget enforcement, replacing `budget_limit`).
 
-**Relationship with F1 (Soft Pre-Check):** F3 can be enabled alongside F1 or standalone. When both are enabled: pre-request flow is (1) `check_budget` soft check (budget_limit), then (2) `get_octo_w_balance` check. Both must pass for the request to proceed.
+**F3 enablement:** F3 is enabled per-key via `api_keys.metadata`:
+```json
+{ "octo_w_enforcement": true }
+```
+When `octo_w_enforcement` is `true`, the F3 path is used for budget enforcement. When absent or `false`, standard `budget_limit` enforcement applies. F3 can be enabled alongside F1 (soft pre-check) or standalone.
+
+**Relationship with F1 (Soft Pre-Check):** When both F3 and F1 are enabled: pre-request flow is (1) `check_budget` soft check (budget_limit), then (2) `get_octo_w_balance` check. Both must pass for the request to proceed. Note: the `check_budget` soft check is informational only when F3 is active — it does not block requests. The OCTO-W balance check is the authoritative pre-check.
 
 **OCTO-W Interface (minimum spec required for F3 implementation):**
 
@@ -857,11 +902,14 @@ pub fn deduct_octo_w(key_id: &str, cost_amount: u64) -> Result<u64, KeyError> {
 
 **Flow (F3 standalone mode):**
 
-1. **Estimate cost before provider request** using `max_tokens × pricing.prompt_cost_per_1k / 1000` (conservative overestimate). For models with known context windows, use the provider's max token limit as the overestimate — same ceiling formula used for the F1 soft pre-check. Compare `get_octo_w_balance(key_id)` against this `estimated_cost`
-2. If `get_octo_w_balance` returns `KeyError::KeyNotFound` (key doesn't exist), treat as insufficient balance — reject with `BudgetError::InsufficientBalance { key_id, available: 0, estimated }`
-3. If `balance < estimated_cost`, reject with `BudgetError::InsufficientBalance { key_id, available, estimated }`
-4. After successful provider request, call `deduct_octo_w(key_id, cost_amount)`
-4. If deduct fails after provider success (edge case):
+**Prerequisite: model must be known.** F3 pre-check requires `estimated_cost` computed from the model-specific pricing. This means the F3 check happens AFTER model selection. In routing strategies where model is selected based on cost (least-cost routing), the model IS known at selection time — so F3 pre-check can proceed. In strategies where model is selected after budget pre-check passes, the F3 check happens after model selection but before the provider call.
+
+1. **Model selected** — routing strategy picks a specific model (e.g., `gpt-4o`)
+2. **Estimate cost** using `max_tokens × pricing.prompt_cost_per_1k / 1000` for the selected model (conservative overestimate). For models with known context windows, use the provider's max token limit as the overestimate — same ceiling formula used for the F1 soft pre-check. Compare `get_octo_w_balance(key_id)` against this `estimated_cost`
+3. If `get_octo_w_balance` returns `KeyError::KeyNotFound` (key doesn't exist), treat as insufficient balance — reject with `BudgetError::InsufficientBalance { key_id, available: 0, estimated }`
+4. If `balance < estimated_cost`, reject with `BudgetError::InsufficientBalance { key_id, available, estimated }`
+5. After successful provider request, call `deduct_octo_w(key_id, cost_amount)`
+6. If deduct fails after provider success (edge case):
    - Log error to application error log with key_id, cost_amount, failure reason
    - Send alert via `POST /admin/budget/alert/callback` with `event_type: "octo_w_deduction_failed"`:
      ```json
@@ -912,7 +960,7 @@ A micro-unit is 1/1,000,000 of a dollar — smaller than any billing unit. Integ
 
 With soft pre-check:
 
-1. Check budget in <1ms (no provider round-trip)
+1. Check budget (no provider round-trip)
 2. Fail immediately with 402 if over budget
 
 The soft check is non-locking — it's possible (though unlikely) that another concurrent request uses the last budget. The atomic `record_spend_atomic()` is the authoritative check.
@@ -921,6 +969,7 @@ The soft check is non-locking — it's possible (though unlikely) that another c
 
 | Version | Date       | Changes                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                            |
 | ------- | ---------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 1.14    | 2026-04-22 | Round 13 adversarial review: fix G4 <1ms unverified (storage-dependent); fix budget_limit==0 confusing description; add CHECK constraint on budget_alert_log.threshold (1-100); fix LiteLLM table F1/F2 mix-up; change get_team_spend return to u64; fix carry_over_unused=false formula (no carry when false); add F2 spend history note (spend_ledger immutable); add /keys pagination edge cases; add F1 alert state endpoint; fix F3 model-prerequisite positioning + enablement config; add HMAC secret rotation; add F1 config-change-mid-period note; document empty-team case |
 | 1.13    | 2026-04-22 | Round 12 adversarial review: fix budget_alert_log PK (composite PK on key_id+threshold+period_start, remove auto-increment alert_id); fix idx_budget_reset_log_team_id partial index on nullable column; add weekly period_allocation example; add KeyNotFound→InsufficientBalance conversion in F3 flow; add pagination to /keys endpoint (offset/limit/total); document KeyError→BudgetError conversion path for BudgetExceeded/TeamBudgetExceeded; remove stale F1/F2/F3 from Future Work (fully specced in Phase 3)                                                                                                                                                                               |
 | 1.12    | 2026-04-22 | Round 11 adversarial review: add carry_over_unused config field; specify at-least-once webhook delivery guarantee + idempotent receiver guidance; add include_revoked filter to team endpoint; add F1 threshold validation (1-100 range, empty array handling); document period_start computation formula; add deleted-key skip note to reset handler; clarify team current_spend data source (key_spend table); specify Admin API auth (Bearer token, 401/403); add F3 estimated_cost formula (max_tokens ceiling); add pricing_hash stability note; check Phase 2 items as spec-complete                                                                                                                                                                                         |
 | 1.11    | 2026-04-22 | Round 10 adversarial review: add budget_alert_log table for F1 threshold state tracking; fix F1 alert trigger condition (budget_limit > 0); fix HMAC signature to include timestamp (replay protection); fix updated_at null semantics; add period_type execution-time note; add get_octo_w_balance OctoWNotEnabled error; fix deduct_octo_w TOCTOU (FOR UPDATE in same transaction); fix key_count (active + revoked, deleted excluded); clarify team percent_used budget_limit semantics; add F1 re-arm when billing_period ≠ auto_reset_period; rename exponential backoff to fixed-interval backoff; add budget_limit==0 enforcement path (check_budget short-circuit, record_spend_ledger condition)                                                                          |
@@ -1666,6 +1715,20 @@ The RFC documented only the budget-checked version.
 | R12-10 | Medium   | /keys endpoint returns all keys — no pagination for large teams                         | Fixed (added offset/limit/total pagination params + response field)                       |
 | R12-11 | Medium   | check_budget returns KeyError::BudgetExceeded but BudgetError::KeyBudgetExceeded defined | Fixed (documented KeyError→BudgetError conversion path)                                  |
 | R12-12 | Low      | Future Work lists F1/F2/F3 despite Phase 3 fully specifying them                        | Fixed (Future Work section updated to show no remaining items)                            |
+| R13-01 | Low      | G4 `<1ms` still unverified after B12 fix                                                | Fixed (removed specific latency claim, qualitative "storage-dependent")                     |
+| R13-02 | Medium   | budget_limit==0 explanation self-contradictory (describes buggy then correct code)      | Fixed (simplified to show only correct implementation)                                      |
+| R13-03 | Medium   | budget_alert_log threshold lacks CHECK constraint (1-100 enforced only at app layer)     | Fixed (added CHECK (threshold >= 1 AND threshold <= 100) to DDL)                           |
+| R13-04 | Low      | LiteLLM table says "Future (F1)" for F2 budget reset                                     | Fixed (corrected to F2 auto-reset)                                                        |
+| R13-05 | Medium   | get_team_spend returns i64 but spend is non-negative (u64 correct)                       | Fixed (return type changed to u64 with note)                                               |
+| R13-06 | High     | carry_over_unused=false formula wrong (applied carry-over formula when no carry)          | Fixed (added explicit table: true=carry formula, false=budget_limit only)                  |
+| R13-07 | Medium   | F2 reset destroys period spend history — audit gap                                       | Fixed (added spend_ledger is immutable + reset_time provides period boundary for queries)   |
+| R13-08 | Low      | /keys pagination limit=0 edge case undefined                                             | Fixed (limit=0 returns empty array, offset>=total returns empty, limit max clamp noted)     |
+| R13-09 | Low      | No admin endpoint to query active F1 alert state                                          | Fixed (added GET /admin/budget/key/{key_id}/alerts endpoint)                               |
+| R13-10 | Medium   | F3 estimated_cost — model may not be known at pre-check time                              | Fixed (F3 flow now shows model selection prerequisite + post-model-positioned check)        |
+| R13-11 | Low      | F3 OCTO-W enablement per-key — how configured?                                             | Fixed (added octo_w_enforcement metadata field + relationship with F1)                     |
+| R13-12 | Low      | F1 webhook HMAC secret rotation unspecified                                              | Fixed (added rotation procedure + secrets manager note)                                  |
+| R13-13 | Low      | F1 config change mid-period alert state unclear                                          | Fixed (added config-mid-period note: old entries persist, new thresholds can fire)           |
+| R13-14 | Low      | get_team_spend empty team case not explicitly documented                                 | Fixed (added note: team exists but no keys → Ok(0), not TeamNotFound)                    |
 
 ---
 

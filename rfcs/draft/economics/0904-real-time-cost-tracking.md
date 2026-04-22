@@ -2,7 +2,7 @@
 
 ## Status
 
-Draft (v1.6 — depends on RFC-0903 Final v30, RFC-0903-B1 v23, RFC-0903-C1 v4, RFC-0909 Final, RFC-0910 Draft)
+Draft (v1.7 — depends on RFC-0903 Final v30, RFC-0903-B1 v23, RFC-0903-C1 v4, RFC-0909 Final, RFC-0910 Draft)
 
 ## Authors
 
@@ -570,6 +570,8 @@ Alert trigger: current_spend >= (budget_limit * threshold_percent / 100)
 Default thresholds: 50%, 80%, 90%, 100%
 ```
 
+**Integer division note:** The trigger formula uses integer division (truncates toward zero). With typical μunit budget limits and threshold_percent values (multiples of 50), truncation is ≤1 μunit — well within tolerance. The trigger fires at the truncated integer result (current_spend ≥ result).
+
 **Alert delivery:**
 
 - `POST /admin/budget/alert/callback` — webhook to external system (Slack, email, PagerDuty)
@@ -609,8 +611,10 @@ Reset intervals (configurable per key/team):
 **Mechanism:** A background job runs at the reset interval:
 
 1. Reads all `api_keys` with `auto_reset_period` set
-2. For each key, sets `key_spend` aggregate to zero (or subtracts period allocation)
-3. Logs reset event to `spend_ledger` with `token_source = 'budget_reset'`
+2. For each key, sets `key_spend` aggregate to zero (or subtracts period allocation based on config)
+3. Logs reset event to an internal `budget_reset_log` table (not `spend_ledger`) with metadata: key_id, team_id, reset_time, period_type
+
+**Note:** Auto-reset does NOT write to `spend_ledger` — reset events are logged to a separate `budget_reset_log` table to avoid violating the `CHECK (token_source IN ('provider_usage', 'canonical_tokenizer'))` constraint defined in RFC-0909 §SpendEvent. Budget reset is an administrative action, not a spend event.
 
 **Configuration:** Reset period stored in `api_keys.metadata`:
 
@@ -624,13 +628,30 @@ Budget enforcement via OCTO-W token balance (RFC-0900):
 
 **Concept:** When a key's OCTO-W balance is insufficient to cover estimated cost, the request is rejected before provider call.
 
+**OCTO-W Interface (minimum spec required for F3 implementation):**
+
+```rust
+/// Get OCTO-W balance for a key.
+/// Returns balance in μunits, or KeyError::KeyNotFound if key doesn't exist.
+pub fn get_octo_w_balance(key_id: &str) -> Result<u64, KeyError>;
+
+/// Deduct cost_amount from OCTO-W balance atomically.
+/// Returns Err if balance insufficient (pre-check should catch this, but defensive).
+/// Returns KeyError::InsufficientBalance with current balance on failure.
+pub fn deduct_octo_w(key_id: &str, cost_amount: u64) -> Result<(), KeyError> {
+    // Implementation: atomic decrement with balance check
+    // Uses FOR UPDATE on key row to prevent concurrent deduct overruns
+}
+```
+
 **Flow:**
 
-1. Before provider request, check `OCTO-W::balance(key_id)` against `estimated_cost`
-2. If `balance < estimated_cost`, reject with `BudgetError::InsufficientBalance`
-3. After successful provider request, deduct `cost_amount` from OCTO-W balance
+1. Before provider request, check `get_octo_w_balance(key_id)` against `estimated_cost`
+2. If `balance < estimated_cost`, reject with `BudgetError::InsufficientBalance { key_id, available, estimated }`
+3. After successful provider request, call `deduct_octo_w(key_id, cost_amount)`
+4. If deduct fails after provider success (edge case), log error and alert — provider call succeeded but OCTO-W deduction failed; manual reconciliation required
 
-**Note:** This requires RFC-0900 to define the `OCTO-W::balance` interface. F3 depends on RFC-0900 acceptance.
+**Note:** This requires RFC-0900 to define the `OCTO-W::balance` interface. F3 depends on RFC-0900 acceptance. The interface above is the minimum spec; RFC-0900 may extend it.
 
 ## Key Files to Modify
 
@@ -674,15 +695,15 @@ The soft check is non-locking — it's possible (though unlikely) that another c
 
 ## Version History
 
-| Version | Date       | Changes                                                                                                                                                                                                                                                                                                       |
-| ------- | ---------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| 1.6     | 2026-04-22 | Round 5 adversarial review: add BudgetError::InsufficientBalance for F3 OCTO-W integration; replace f64 percent_used with u64 hundredths (8500=85.00%) in Admin API; replace todo!() in get_team_spend with actual SQL JOIN implementation; add token_source validation note; add RFC-0917 integration detail |
-| 1.5     | 2026-04-22 | Round 4 adversarial review: D1-D10 fixes (Phase 2/3 specs added, get_spend takes &str, admin API endpoints, F1/F2/F3 mechanism specs, TeamBudgetExceeded documented, builtins documented, idempotency documented)                                                                                             |
-| 1.4     | 2026-04-22 | Round 3 adversarial review: archive Planned RFC-0904 placeholder; fix Phase 1 checklist; fix Key Files section; document record_spend (no budget check); remove get_team_spend; fix get_current_spend return type; add C1-C9 review section                                                                   |
-| 1.3     | 2026-04-22 | Round 2 adversarial review: fix B1-B12 (remove check_budget_soft_limit, replace InsufficientBudget, remove get_team_spend, clarify record_spend dispatch, fix KeySpend unit, document soft check staleness, update Phase 1 checklist, fix CostError→BudgetError)                                              |
-| 1.2     | 2026-04-22 | Round 1 fixes continued (A8-A12): add per-model ceiling cost table; standardize budget_limit resolution; clarify idempotency via UNIQUE constraint; specify timestamp semantics; define KeyError/BudgetError separation                                                                                       |
-| 1.1     | 2026-04-22 | Round 1 adversarial review: fix A1-A7 (critical type errors, nonexistent methods, trait mismatches)                                                                                                                                                                                                           |
-| 1.0     | 2026-04-22 | Initial draft                                                                                                                                                                                                                                                                                                 |
+| Version | Date       | Changes                                                                                                                                                                                                                                                          |
+| ------- | ---------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 1.7     | 2026-04-22 | Round 6 adversarial review: clarify F1 integer division edge case; fix F2 token_source CHECK constraint violation (use separate budget_reset_log table not spend_ledger); specify F3 OCTO-W interface (get_octo_w_balance, deduct_octo_w minimum spec)           |
+| 1.5     | 2026-04-22 | Round 4 adversarial review: D1-D10 fixes (Phase 2/3 specs added, get_spend takes &str, admin API endpoints, F1/F2/F3 mechanism specs, TeamBudgetExceeded documented, builtins documented, idempotency documented)                                                |
+| 1.4     | 2026-04-22 | Round 3 adversarial review: archive Planned RFC-0904 placeholder; fix Phase 1 checklist; fix Key Files section; document record_spend (no budget check); remove get_team_spend; fix get_current_spend return type; add C1-C9 review section                      |
+| 1.3     | 2026-04-22 | Round 2 adversarial review: fix B1-B12 (remove check_budget_soft_limit, replace InsufficientBudget, remove get_team_spend, clarify record_spend dispatch, fix KeySpend unit, document soft check staleness, update Phase 1 checklist, fix CostError→BudgetError) |
+| 1.2     | 2026-04-22 | Round 1 fixes continued (A8-A12): add per-model ceiling cost table; standardize budget_limit resolution; clarify idempotency via UNIQUE constraint; specify timestamp semantics; define KeyError/BudgetError separation                                          |
+| 1.1     | 2026-04-22 | Round 1 adversarial review: fix A1-A7 (critical type errors, nonexistent methods, trait mismatches)                                                                                                                                                              |
+| 1.0     | 2026-04-22 | Initial draft                                                                                                                                                                                                                                                    |
 
 ## Adversarial Review
 
@@ -1350,6 +1371,9 @@ The RFC documented only the budget-checked version.
 | E3  | High     | `get_team_spend` has `todo!()` placeholder — won't compile                               | Fixed (replaced with actual SQL JOIN implementation)           |
 | E4  | Low      | Token source CHECK constraint validation not documented                                  | Fixed (added Token Source Validation section)                  |
 | E5  | Low      | RFC-0917 integration detail missing                                                      | Fixed (added Integration with RFC-0917 section)                |
+| F1  | Medium   | F1 alert trigger formula uses ambiguous integer division                                 | Fixed (clarified truncation behavior and tolerance)            |
+| F2  | Medium   | F2 budget reset logs to spend_ledger with invalid token_source 'budget_reset'            | Fixed (logs to separate budget_reset_log table instead)        |
+| F3  | Low      | F3 OCTO-W interface underspecified (no balance/deduct signatures)                        | Fixed (added get_octo_w_balance, deduct_octo_w minimum spec)   |
 
 ---
 

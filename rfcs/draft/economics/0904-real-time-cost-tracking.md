@@ -2,7 +2,7 @@
 
 ## Status
 
-Draft (v1.12 — depends on RFC-0903 Final v30, RFC-0903-B1 v23, RFC-0903-C1 v4, RFC-0909 Final, RFC-0910 Draft)
+Draft (v1.13 — depends on RFC-0903 Final v30, RFC-0903-B1 v23, RFC-0903-C1 v4, RFC-0909 Final, RFC-0910 Draft)
 
 ## Authors
 
@@ -537,7 +537,7 @@ No new `BudgetStorage` implementation is needed — the existing `KeyStorage` me
 
 **Mitigation:** The soft check is purely informational. The **authoritative enforcement** is always in `record_spend_ledger` which uses `FOR UPDATE` locking. Callers must handle `BudgetExceeded` from `record_spend_ledger` even when the soft check passed.
 
-**Note on error types:** The existing `check_budget(&ApiKey)` returns `KeyError::BudgetExceeded` because it predates `BudgetError`. This is existing behavior — the soft check and atomic check both surface budget errors via `KeyError` (since both are called through the middleware). `BudgetError` is defined for the RFC's public API surface but the internal implementation uses `KeyError`.
+**Note on error types:** The existing `check_budget(&ApiKey)` returns `KeyError::BudgetExceeded` because it predates `BudgetError`. This is existing behavior — the soft check and atomic check both surface budget errors via `KeyError` (since both are called through the middleware). `BudgetError` is defined for the RFC's public API surface but the internal implementation uses `KeyError`. Callers converting `KeyError` to `BudgetError` should use `KeyError::BudgetExceeded` → `BudgetError::KeyBudgetExceeded` (with same `current`/`limit`/`requested` fields) and `KeyError::TeamBudgetExceeded` → `BudgetError::TeamBudgetExceeded`.
 
 **Note on `BudgetError::TeamBudgetExceeded`:** This variant is defined for API completeness but is not returned by any documented function. The team budget exceeded case returns `KeyError::TeamBudgetExceeded` from `record_spend_ledger_with_team`. Implementations may convert `KeyError::TeamBudgetExceeded` to `BudgetError::TeamBudgetExceeded` via `From` when surfacing to external callers.
 
@@ -616,7 +616,7 @@ GET /admin/budget/team/{team_id}?include_revoked=false  (default: true)
 
 **`include_revoked` query parameter:** When `true` (default, backwards-compatible), `current_spend` and `key_count` include revoked keys. When `false`, only active (non-revoked) keys are included in the aggregation.
 
-GET /admin/budget/team/{team_id}/keys?include_revoked=false  (default: false)
+GET /admin/budget/team/{team_id}/keys?include_revoked=false&offset=0&limit=100  (defaults: include_revoked=false, offset=0, limit=100)
   → 200 OK {
     keys: [{
       key_id: String,
@@ -624,10 +624,15 @@ GET /admin/budget/team/{team_id}/keys?include_revoked=false  (default: false)
       current_spend: i64,
       remaining: i64,
       percent_used: u64 | null
-    }, ...]
+    }, ...],
+    pagination: {
+      offset: i64,    // requested offset
+      limit: i64,    // requested limit
+      total: i64      // total keys matching filter (active + revoked unless filtered)
+    }
   }
   → 404 Not Found {"error": "TeamNotFound", "team_id": "..."}  // team_id does not exist
-  → 200 OK {keys: []}  // team exists but has no keys matching the filter
+  → 200 OK {keys: [], pagination: {offset: 0, limit: 100, total: 0}}  // team exists but has no keys matching the filter
   → 500 Internal Server Error {"error": "Storage", "detail": "..."}
 ```
 
@@ -677,17 +682,17 @@ In all cases: **F1 re-arm is driven by billing_period, not auto_reset_period.**
 
 ```sql
 CREATE TABLE budget_alert_log (
-    alert_id    INTEGER PRIMARY KEY AUTOINCREMENT,
     key_id      BLOB(16)     NOT NULL,  -- Raw UUID bytes
     threshold   INTEGER     NOT NULL,  -- e.g., 50, 80, 90, 100
     fired_at    INTEGER     NOT NULL,  -- Unix epoch seconds
     period_start INTEGER    NOT NULL,  -- Unix epoch of billing period start
-    CONSTRAINT uq_key_threshold_period UNIQUE (key_id, threshold, period_start)
+    PRIMARY KEY (key_id, threshold, period_start)
 );
 CREATE INDEX idx_budget_alert_log_key_id ON budget_alert_log(key_id);
 ```
 
-Before firing an alert, the handler checks if a row exists for `(key_id, threshold, period_start)`. If it exists, the alert is skipped. On firing, a row is inserted. At the start of each billing period, old rows are retained (for audit) but the unique constraint allows re-firing in new periods.
+**`alert_id` removed:** The primary key is the composite `(key_id, threshold, period_start)` — not a separate auto-increment `alert_id`. This ensures each `(key_id, threshold, period_start)` combination is unique. If a second alert fires for the same (key_id, threshold) in the same period, the UNIQUE constraint prevents the duplicate insert (idempotent — treat as no-op).
+
 
 **`period_start` computation:** `period_start` is the Unix epoch of the start of the current billing period. For monthly billing (default), this is `00:00 UTC on the 1st of the current calendar month`. The handler computes this as:
 
@@ -781,12 +786,14 @@ CREATE TABLE budget_reset_log (
 );
 
 CREATE INDEX idx_budget_reset_log_key_id ON budget_reset_log(key_id);
-CREATE INDEX idx_budget_reset_log_team_id ON budget_reset_log(team_id);
+CREATE INDEX idx_budget_reset_log_team_id ON budget_reset_log(team_id) WHERE team_id IS NOT NULL;
 ```
 
 **Period allocation:** `period_allocation = budget_limit / days_in_period` where `days_in_period` is: 1 for daily, 7 for weekly, 30 for monthly. At reset, `key_spend` is ALWAYS set to zero (not subtracted). The "carry-over" is applied at spend QUERY time: `effective_budget = key_spend + (period_allocation × days_elapsed_in_period)`. This correctly accumulates unused allocation without corrupting the `key_spend` accumulator.
 
 **Example (monthly, budget_limit=30000, no spend in first 15 days):** At day 15, key_spend=0. Effective budget = 0 + (30000/30 × 15) = 15000. After 10000 spend, effective remaining = 5000. At month reset (day 30), key_spend is set to 0 and effective_budget resets to full 30000.
+
+**Example (weekly, budget_limit=30000, no spend in first 3 days):** At day 3, key_spend=0. Effective budget = 0 + (30000/7 × 3) = 12857. After 5000 spend, effective remaining = 7857. At weekly reset (day 7), key_spend is set to 0 and effective_budget resets to full 30000.
 
 **Note:** Auto-reset does NOT write to `spend_ledger` — reset events are logged to a separate `budget_reset_log` table to avoid violating the `CHECK (token_source IN ('provider_usage', 'canonical_tokenizer'))` constraint defined in RFC-0909 §SpendEvent. Budget reset is an administrative action, not a spend event.
 
@@ -851,8 +858,9 @@ pub fn deduct_octo_w(key_id: &str, cost_amount: u64) -> Result<u64, KeyError> {
 **Flow (F3 standalone mode):**
 
 1. **Estimate cost before provider request** using `max_tokens × pricing.prompt_cost_per_1k / 1000` (conservative overestimate). For models with known context windows, use the provider's max token limit as the overestimate — same ceiling formula used for the F1 soft pre-check. Compare `get_octo_w_balance(key_id)` against this `estimated_cost`
-2. If `balance < estimated_cost`, reject with `BudgetError::InsufficientBalance { key_id, available, estimated }`
-3. After successful provider request, call `deduct_octo_w(key_id, cost_amount)`
+2. If `get_octo_w_balance` returns `KeyError::KeyNotFound` (key doesn't exist), treat as insufficient balance — reject with `BudgetError::InsufficientBalance { key_id, available: 0, estimated }`
+3. If `balance < estimated_cost`, reject with `BudgetError::InsufficientBalance { key_id, available, estimated }`
+4. After successful provider request, call `deduct_octo_w(key_id, cost_amount)`
 4. If deduct fails after provider success (edge case):
    - Log error to application error log with key_id, cost_amount, failure reason
    - Send alert via `POST /admin/budget/alert/callback` with `event_type: "octo_w_deduction_failed"`:
@@ -880,9 +888,7 @@ pub fn deduct_octo_w(key_id: &str, cost_amount: u64) -> Result<u64, KeyError> {
 
 ## Future Work
 
-- **F1: Budget alerts**: Slack/email notifications at threshold percentages
-- **F2: Budget auto-reset**: Daily/weekly/monthly budget reset cycles
-- **F3: OCTO-W integration**: Budget enforcement via OCTO-W token balance (RFC-0900)
+No future work items remain — F1 (Budget alerts), F2 (Budget auto-reset), and F3 (OCTO-W integration) are fully specified in Phase 3 above.
 
 ## Rationale
 
@@ -915,6 +921,7 @@ The soft check is non-locking — it's possible (though unlikely) that another c
 
 | Version | Date       | Changes                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                            |
 | ------- | ---------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 1.13    | 2026-04-22 | Round 12 adversarial review: fix budget_alert_log PK (composite PK on key_id+threshold+period_start, remove auto-increment alert_id); fix idx_budget_reset_log_team_id partial index on nullable column; add weekly period_allocation example; add KeyNotFound→InsufficientBalance conversion in F3 flow; add pagination to /keys endpoint (offset/limit/total); document KeyError→BudgetError conversion path for BudgetExceeded/TeamBudgetExceeded; remove stale F1/F2/F3 from Future Work (fully specced in Phase 3)                                                                                                                                                                               |
 | 1.12    | 2026-04-22 | Round 11 adversarial review: add carry_over_unused config field; specify at-least-once webhook delivery guarantee + idempotent receiver guidance; add include_revoked filter to team endpoint; add F1 threshold validation (1-100 range, empty array handling); document period_start computation formula; add deleted-key skip note to reset handler; clarify team current_spend data source (key_spend table); specify Admin API auth (Bearer token, 401/403); add F3 estimated_cost formula (max_tokens ceiling); add pricing_hash stability note; check Phase 2 items as spec-complete                                                                                                                                                                                         |
 | 1.11    | 2026-04-22 | Round 10 adversarial review: add budget_alert_log table for F1 threshold state tracking; fix F1 alert trigger condition (budget_limit > 0); fix HMAC signature to include timestamp (replay protection); fix updated_at null semantics; add period_type execution-time note; add get_octo_w_balance OctoWNotEnabled error; fix deduct_octo_w TOCTOU (FOR UPDATE in same transaction); fix key_count (active + revoked, deleted excluded); clarify team percent_used budget_limit semantics; add F1 re-arm when billing_period ≠ auto_reset_period; rename exponential backoff to fixed-interval backoff; add budget_limit==0 enforcement path (check_budget short-circuit, record_spend_ledger condition)                                                                          |
 | 1.10    | 2026-04-22 | Round 9 adversarial review: fix F3 OCTO-W as standalone mode (replaces budget_limit, not supplements); fix carry_over_unused semantics (carry-over applied at query time, not reset); add TOCTOU mitigation with FOR UPDATE lock in reset; fix HMAC secret config (hex-encoded per-key); add HMAC algorithm (SHA256, replay protection via timestamp header, timing-safe compare); add percent_used null case for unlimited budget; add F1 threshold once-per-period semantics; add internal reset endpoint spec; add billing period first-period alignment; add pricing_hash reference to RFC-0910; add reset_trigger field; add include_revoked filter to /keys; add team zero-keys 200 vs 404 clarification; add team remaining per-key budget note; add orphaned team row note |
@@ -1647,6 +1654,18 @@ The RFC documented only the budget-checked version.
 | R11-12 | Medium   | F3 `estimated_cost` not defined — which formula?                                         | Fixed (specified pre-request estimate: max_tokens ceiling formula)                        |
 | R11-13 | Low      | Phase 2 get_team_spend SQL spec'd but checklist unchecked                                | Fixed (checked Phase 2 items as spec-complete)                                            |
 | R11-14 | Low      | `pricing_hash` cross-RFC stability risk                                                  | Fixed (added stability note: RFC-0910 must be stable, breaking changes require amendment) |
+| R12-01 | High     | budget_alert_log UNIQUE on (key_id, threshold, period_start) with auto-increment alert_id allows duplicates | Fixed (composite PK on key_id+threshold+period_start, removed alert_id) |
+| R12-02 | Low      | idx_budget_reset_log_team_id on nullable column — inefficient                             | Fixed (partial index WHERE team_id IS NOT NULL)                                             |
+| R12-03 | Medium   | get_team_spend orphaned key case (JOIN on api_keys.team_id) not handled                   | Documented (orphaned key returns 0, team FK guarantees consistency)                     |
+| R12-04 | Low      | BudgetError::Storage(String) not redacted in Admin API — may leak DB details            | Not changed (storage layer should redact before surfacing; RFC does not define redaction) |
+| R12-05 | Low      | check_budget budget_limit==0 short-circuit comment vs implementation mismatch           | Not changed (RFC code example correct; existing middleware comment stale)                 |
+| R12-06 | Low      | weekly period_allocation example missing                                                 | Fixed (added weekly example: day 3, budget 30000, effective=12857)                       |
+| R12-07 | Low      | billing_period first-period alignment lacks timezone documentation                       | Not changed (already UTC-aligned; timezone implied by Unix epoch)                        |
+| R12-08 | Low      | team_id nullable BLOB(16) index efficiency concern                                       | Not changed (index on nullable column acceptable for current scale)                       |
+| R12-09 | High     | F3 get_octo_w_balance KeyNotFound vs BudgetError::InsufficientBalance inconsistency      | Fixed (added step 2: KeyNotFound→InsufficientBalance with available=0)                  |
+| R12-10 | Medium   | /keys endpoint returns all keys — no pagination for large teams                         | Fixed (added offset/limit/total pagination params + response field)                       |
+| R12-11 | Medium   | check_budget returns KeyError::BudgetExceeded but BudgetError::KeyBudgetExceeded defined | Fixed (documented KeyError→BudgetError conversion path)                                  |
+| R12-12 | Low      | Future Work lists F1/F2/F3 despite Phase 3 fully specifying them                        | Fixed (Future Work section updated to show no remaining items)                            |
 
 ---
 

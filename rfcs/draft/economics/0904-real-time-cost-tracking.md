@@ -2,7 +2,7 @@
 
 ## Status
 
-Draft (v1.5 — depends on RFC-0903 Final v30, RFC-0903-B1 v23, RFC-0903-C1 v4, RFC-0909 Final, RFC-0910 Draft)
+Draft (v1.6 — depends on RFC-0903 Final v30, RFC-0903-B1 v23, RFC-0903-C1 v4, RFC-0909 Final, RFC-0910 Draft)
 
 ## Authors
 
@@ -32,14 +32,14 @@ Define the real-time cost tracking system for the quota router, including model 
 
 ## Design Goals
 
-| Goal | Target | Metric |
-|------|--------|--------|
-| G1 | Atomic budget enforcement | No overspend under concurrent requests |
-| G2 | Deterministic cost calculation | Identical cost across all router implementations |
-| G3 | Integer-only arithmetic | No floating point in cost or budget accounting |
-| G4 | Fast budget pre-check | Non-locking, <1ms (storage-dependent) |
-| G5 | Soft budget pre-check | Reject obviously over-budget keys before provider round-trip |
-| G6 | Per-key and per-team budgets | Both enforced atomically |
+| Goal | Target                         | Metric                                                       |
+| ---- | ------------------------------ | ------------------------------------------------------------ |
+| G1   | Atomic budget enforcement      | No overspend under concurrent requests                       |
+| G2   | Deterministic cost calculation | Identical cost across all router implementations             |
+| G3   | Integer-only arithmetic        | No floating point in cost or budget accounting               |
+| G4   | Fast budget pre-check          | Non-locking, <1ms (storage-dependent)                        |
+| G5   | Soft budget pre-check          | Reject obviously over-budget keys before provider round-trip |
+| G6   | Per-key and per-team budgets   | Both enforced atomically                                     |
 
 ## Motivation
 
@@ -96,6 +96,7 @@ RFC-0903 defines `budget_limit` on `api_keys` and `teams` tables. RFC-0909 defin
 RFC-0909 uses `cost_amount BIGINT NOT NULL` in spend_ledger. This RFC specifies that `cost_amount` is in **micro-units**.
 
 **Why micro-units?**
+
 - Integer arithmetic — deterministic, no floating-point inconsistency
 - Sufficient precision: 1 μunit = $0.000001, less than any provider's minimum billing unit
 - Fits in i64/u64 without overflow
@@ -138,12 +139,12 @@ pub fn compute_cost(
 
 **Example:**
 
-| Field | Value |
-|-------|-------|
-| Model | gpt-4o |
-| Prompt tokens | 1,500 |
-| Completion tokens | 500 |
-| prompt_cost_per_1k | 10000 μunits ($0.01/1K) |
+| Field                  | Value                   |
+| ---------------------- | ----------------------- |
+| Model                  | gpt-4o                  |
+| Prompt tokens          | 1,500                   |
+| Completion tokens      | 500                     |
+| prompt_cost_per_1k     | 10000 μunits ($0.01/1K) |
 | completion_cost_per_1k | 30000 μunits ($0.03/1K) |
 
 ```
@@ -172,6 +173,7 @@ pub fn get_pricing(model: &str) -> Result<&'static PricingModel, BudgetError> {
 ```
 
 **Builtin models:** `new_with_builtins()` loads pricing for OpenAI and Anthropic models at startup:
+
 - OpenAI: `gpt-4o`, `gpt-4o-mini`, `gpt-4-turbo`, `gpt-3.5-turbo`
 - Anthropic: `claude-3-5-haiku`, `claude-3-5-sonnet`, `claude-3-opus`
 
@@ -216,10 +218,10 @@ The soft pre-check is informational — it does NOT block requests. It returns a
 
 For `estimated_cost`, use the **maximum possible cost for one request** based on provider rate limits:
 
-| Provider | Model | Max Tokens | Ceiling Formula |
-|----------|-------|-------------|-----------------|
-| OpenAI | gpt-4o | 128,000 | max(128000 × prompt_cost_per_1k, 128000 × completion_cost_per_1k) / 1000 |
-| Anthropic | claude-3-5 | 200,000 | max(200000 × prompt_cost_per_1k, 200000 × completion_cost_per_1k) / 1000 |
+| Provider  | Model      | Max Tokens | Ceiling Formula                                                          |
+| --------- | ---------- | ---------- | ------------------------------------------------------------------------ |
+| OpenAI    | gpt-4o     | 128,000    | max(128000 × prompt_cost_per_1k, 128000 × completion_cost_per_1k) / 1000 |
+| Anthropic | claude-3-5 | 200,000    | max(200000 × prompt_cost_per_1k, 200000 × completion_cost_per_1k) / 1000 |
 
 A safe conservative overestimate is `budget_limit` itself — the soft check passes for all requests that could possibly fit within budget.
 
@@ -237,6 +239,7 @@ This RFC describes the budget enforcement layer. The existing `KeyStorage::recor
 When the event has a `team_id`, `record_spend_ledger_with_team` is used instead, which locks team FIRST then key (deadlock prevention per RFC-0903 §Lock Ordering Invariant).
 
 **Note:** The existing codebase also has a simpler `record_spend(key_id, amount)` (middleware.rs line 123) which inserts an amount **without budget check**. This writes to the `key_spend` table (for soft pre-check reads) but does NOT write to `spend_ledger`. It is used for:
+
 - Test injection of spend without triggering budget checks
 - Legacy paths where budget enforcement is handled separately
 
@@ -318,24 +321,25 @@ pub fn get_current_spend(
 ```rust
 /// Get total spend for all keys in a team.
 ///
-/// Computed via JOIN of spend_ledger with api_keys on team_id:
-/// ```sql
-/// SELECT COALESCE(SUM(sl.cost_amount), 0)
-/// FROM spend_ledger sl
-/// JOIN api_keys ak ON sl.key_id = ak.key_id
-/// WHERE ak.team_id = $1
-/// ```
-///
-/// team_id is BLOB(16) — conversion from &Uuid or &str to BLOB bytes is done by storage.
+/// team_id is BLOB(16) in the database — storage layer handles UUID→BLOB conversion.
 pub fn get_team_spend(
     storage: &dyn KeyStorage,
     team_id: &str,
 ) -> Result<i64, KeyError> {
-    // Implementation: JOIN spend_ledger with api_keys on team_id
-    // Returns total cost_amount for all spend_events belonging to keys in the team
-    todo!("Phase 2: get_team_spend implementation")
+    let team_spend: i64 = storage
+        .query_row(
+            "SELECT COALESCE(SUM(sl.cost_amount), 0)
+             FROM spend_ledger sl
+             JOIN api_keys ak ON sl.key_id = ak.key_id
+             WHERE ak.team_id = $1",
+            [team_id],
+        )
+        .map_err(Into::into)?;
+    Ok(team_spend)
 }
 ```
+
+The SQL JOIN aggregates all `cost_amount` values from `spend_ledger` for keys belonging to the team.
 
 ## Error Types
 
@@ -366,6 +370,12 @@ pub enum BudgetError {
     ModelNotFound(String),
     /// Cost computation overflow
     CostOverflow,
+    /// Insufficient OCTO-W balance for estimated cost (F3 OCTO-W integration)
+    InsufficientBalance {
+        key_id: Uuid,
+        available: u64,
+        estimated: u64,
+    },
     /// Storage error
     Storage(String),
 }
@@ -384,6 +394,9 @@ impl std::fmt::Display for BudgetError {
             }
             BudgetError::ModelNotFound(m) => write!(f, "Model not found in pricing table: {}", m),
             BudgetError::CostOverflow => write!(f, "Cost computation overflow"),
+            BudgetError::InsufficientBalance { key_id, available, estimated } => {
+                write!(f, "Insufficient OCTO-W balance for key {}: available={}, estimated={}", key_id, available, estimated)
+            }
             BudgetError::Storage(s) => write!(f, "Storage error: {}", s),
         }
     }
@@ -405,9 +418,10 @@ pub trait BudgetStorage: Send + Sync {
 }
 ```
 
-**Note:** `get_team_spend` (team aggregate) is **not included** — no implementation exists. It is deferred to Phase 2.
+**Note:** `get_team_spend` is not part of the `BudgetStorage` trait — it is a standalone function defined in the Spend Query section above with SQL JOIN implementation.
 
 The existing `KeyStorage` trait already provides:
+
 - `record_spend_ledger(event)` — atomic insert with FOR UPDATE key locking (key-only)
 - `record_spend_ledger_with_team(key_id, team_id, event)` — atomic insert with team+key locking per RFC-0903 §Lock Ordering Invariant (team-enabled)
 
@@ -423,6 +437,7 @@ No new `BudgetStorage` implementation is needed — the existing `KeyStorage` me
 4. **Identical cost formula**: `cost = (tokens × price_per_1k) / 1000` using integer division
 
 **Verification:** Any two router implementations processing the same:
+
 - `model`
 - `input_tokens`
 - `output_tokens`
@@ -460,18 +475,31 @@ No new `BudgetStorage` implementation is needed — the existing `KeyStorage` me
 
 **Note on `BudgetError::TeamBudgetExceeded`:** This variant is defined for API completeness but is not returned by any documented function. The team budget exceeded case returns `KeyError::TeamBudgetExceeded` from `record_spend_ledger_with_team`. Implementations may convert `KeyError::TeamBudgetExceeded` to `BudgetError::TeamBudgetExceeded` via `From` when surfacing to external callers.
 
+### Token Source Validation
+
+`record_spend_ledger` validates `token_source` against the `CHECK (token_source IN ('provider_usage', 'canonical_tokenizer'))` constraint on `spend_ledger`. Values outside this set cause a constraint violation error at insert time. Budget reset events use a special internal token_source value that is also validated by the CHECK constraint.
+
+### Integration with RFC-0917
+
+RFC-0917 (Dual-Mode Query Router) depends on this RFC for budget enforcement. RFC-0917 operates in two modes:
+
+- **LiteLLM Mode**: Uses per-key budgets from `api_keys.budget_limit` with soft pre-check + atomic enforcement
+- **Any-LLM Mode**: Uses per-key budgets with the same enforcement path
+
+The interface between RFC-0917 and RFC-0904 is the `check_budget(&ApiKey)` soft pre-check and `record_spend_ledger`/`record_spend_ledger_with_team` atomic enforcement. RFC-0917 calls these at the appropriate points in the request lifecycle, but the budget enforcement logic itself lives in this RFC.
+
 ## LiteLLM Compatibility
 
 This RFC provides budget tracking compatible with LiteLLM's `max_budget` feature:
 
-| Feature | LiteLLM | This RFC |
-|---------|---------|----------|
-| Per-key budget | `max_budget` param | `api_keys.budget_limit` |
-| Team budget | Via_org_budget | `teams.budget_limit` |
-| Soft pre-check | Optional | `check_budget(&ApiKey)` (middleware.rs line 106) |
-| Atomic enforcement | Built-in | `record_spend_ledger` / `record_spend_ledger_with_team` |
-| Spend tracking | Database | spend_ledger |
-| Budget reset | Via config | Future (F1) |
+| Feature            | LiteLLM            | This RFC                                                |
+| ------------------ | ------------------ | ------------------------------------------------------- |
+| Per-key budget     | `max_budget` param | `api_keys.budget_limit`                                 |
+| Team budget        | Via_org_budget     | `teams.budget_limit`                                    |
+| Soft pre-check     | Optional           | `check_budget(&ApiKey)` (middleware.rs line 106)        |
+| Atomic enforcement | Built-in           | `record_spend_ledger` / `record_spend_ledger_with_team` |
+| Spend tracking     | Database           | spend_ledger                                            |
+| Budget reset       | Via config         | Future (F1)                                             |
 
 ## Implementation Phases
 
@@ -498,8 +526,8 @@ GET /admin/budget/key/{key_id}
       key_id: String,
       budget_limit: i64,       // in μunits
       current_spend: i64,      // in μunits
-      remaining: i64,         // budget_limit - current_spend
-      percent_used: f64,      // (current_spend / budget_limit) * 100
+      remaining: i64,         // budget_limit - current_spend (μunits)
+      percent_used: u64,      // (current_spend * 100) / budget_limit in hundredths (e.g., 8500 = 85.00%)
       updated_at: i64         // Unix epoch of last spend event
     }
 
@@ -508,8 +536,8 @@ GET /admin/budget/team/{team_id}
       team_id: String,
       budget_limit: i64,      // in μunits
       current_spend: i64,     // in μunits
-      remaining: i64,         // budget_limit - current_spend
-      percent_used: f64,
+      remaining: i64,         // budget_limit - current_spend (μunits)
+      percent_used: u64,      // (current_spend * 100) / budget_limit in hundredths
       key_count: i32,          // number of active keys in team
       updated_at: i64
     }
@@ -521,7 +549,7 @@ GET /admin/budget/team/{team_id}/keys
       budget_limit: i64,
       current_spend: i64,
       remaining: i64,
-      percent_used: f64
+      percent_used: u64
     }, ...]
   }
 ```
@@ -543,22 +571,26 @@ Default thresholds: 50%, 80%, 90%, 100%
 ```
 
 **Alert delivery:**
+
 - `POST /admin/budget/alert/callback` — webhook to external system (Slack, email, PagerDuty)
 - Alert payload:
   ```json
   {
     "event_type": "budget_threshold",
     "key_id": "...",
-    "team_id": "...",         // null if no team
+    "team_id": "...", // null if no team
     "budget_limit": 1_000_000_000,
     "current_spend": 850_000_000,
     "threshold": 80,
-    "percent_used": 85.0,
+    "percent_used": 8500,
     "timestamp": 1745280000
   }
   ```
 
+**percent_used format:** Integer hundredths (8500 = 85.00%) to avoid floating-point inconsistency.
+
 **Configuration:** Threshold percentages are stored per-key in `api_keys.metadata` as JSON:
+
 ```json
 { "budget_alert_thresholds": [50, 80, 90] }
 ```
@@ -575,13 +607,15 @@ Reset intervals (configurable per key/team):
 ```
 
 **Mechanism:** A background job runs at the reset interval:
+
 1. Reads all `api_keys` with `auto_reset_period` set
 2. For each key, sets `key_spend` aggregate to zero (or subtracts period allocation)
 3. Logs reset event to `spend_ledger` with `token_source = 'budget_reset'`
 
 **Configuration:** Reset period stored in `api_keys.metadata`:
+
 ```json
-{ "auto_reset_period": "daily" }  // "daily" | "weekly" | "monthly" | null (no auto-reset)
+{ "auto_reset_period": "daily" } // "daily" | "weekly" | "monthly" | null (no auto-reset)
 ```
 
 #### OCTO-W Integration (F3)
@@ -591,6 +625,7 @@ Budget enforcement via OCTO-W token balance (RFC-0900):
 **Concept:** When a key's OCTO-W balance is insufficient to cover estimated cost, the request is rejected before provider call.
 
 **Flow:**
+
 1. Before provider request, check `OCTO-W::balance(key_id)` against `estimated_cost`
 2. If `balance < estimated_cost`, reject with `BudgetError::InsufficientBalance`
 3. After successful provider request, deduct `cost_amount` from OCTO-W balance
@@ -599,10 +634,10 @@ Budget enforcement via OCTO-W token balance (RFC-0900):
 
 ## Key Files to Modify
 
-| File | Change |
-|------|--------|
-| `crates/quota-router-core/src/storage.rs` | Confirm `record_spend_ledger` and `record_spend_ledger_with_team` cover atomic enforcement |
-| `crates/quota-router-core/src/middleware.rs` | Confirm `check_budget(&ApiKey)` as soft pre-check (line 106) |
+| File                                         | Change                                                                                     |
+| -------------------------------------------- | ------------------------------------------------------------------------------------------ |
+| `crates/quota-router-core/src/storage.rs`    | Confirm `record_spend_ledger` and `record_spend_ledger_with_team` cover atomic enforcement |
+| `crates/quota-router-core/src/middleware.rs` | Confirm `check_budget(&ApiKey)` as soft pre-check (line 106)                               |
 
 ## Future Work
 
@@ -615,6 +650,7 @@ Budget enforcement via OCTO-W token balance (RFC-0900):
 ### Why Micro-Units?
 
 Micro-units (μunits) provide sufficient precision for all current provider pricing:
+
 - OpenAI GPT-4o: $0.01/1K prompt, $0.03/1K completion → 10,000/30,000 μunits
 - Anthropic Claude 3.5: $0.01/1K prompt, $0.03/1K completion → 10,000/30,000 μunits
 
@@ -623,12 +659,14 @@ A micro-unit is 1/1,000,000 of a dollar — smaller than any billing unit. Integ
 ### Why Two Budget Check Modes?
 
 **Soft pre-check** is a UX optimization. Without it, an over-budget key would:
+
 1. Send a request to the LLM provider
 2. Wait for response
 3. Record spend
 4. Fail with 402
 
 With soft pre-check:
+
 1. Check budget in <1ms (no provider round-trip)
 2. Fail immediately with 402 if over budget
 
@@ -636,14 +674,15 @@ The soft check is non-locking — it's possible (though unlikely) that another c
 
 ## Version History
 
-| Version | Date       | Changes |
-|---------|------------|---------|
-| 1.5     | 2026-04-22 | Round 4 adversarial review: D1-D10 fixes (Phase 2/3 specs added, get_spend takes &str, admin API endpoints, F1/F2/F3 mechanism specs, TeamBudgetExceeded documented, builtins documented, idempotency documented) |
-| 1.4     | 2026-04-22 | Round 3 adversarial review: archive Planned RFC-0904 placeholder; fix Phase 1 checklist; fix Key Files section; document record_spend (no budget check); remove get_team_spend; fix get_current_spend return type; add C1-C9 review section |
-| 1.3     | 2026-04-22 | Round 2 adversarial review: fix B1-B12 (remove check_budget_soft_limit, replace InsufficientBudget, remove get_team_spend, clarify record_spend dispatch, fix KeySpend unit, document soft check staleness, update Phase 1 checklist, fix CostError→BudgetError) |
-| 1.2     | 2026-04-22 | Round 1 fixes continued (A8-A12): add per-model ceiling cost table; standardize budget_limit resolution; clarify idempotency via UNIQUE constraint; specify timestamp semantics; define KeyError/BudgetError separation |
-| 1.1     | 2026-04-22 | Round 1 adversarial review: fix A1-A7 (critical type errors, nonexistent methods, trait mismatches) |
-| 1.0     | 2026-04-22 | Initial draft |
+| Version | Date       | Changes                                                                                                                                                                                                                                                                                                       |
+| ------- | ---------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 1.6     | 2026-04-22 | Round 5 adversarial review: add BudgetError::InsufficientBalance for F3 OCTO-W integration; replace f64 percent_used with u64 hundredths (8500=85.00%) in Admin API; replace todo!() in get_team_spend with actual SQL JOIN implementation; add token_source validation note; add RFC-0917 integration detail |
+| 1.5     | 2026-04-22 | Round 4 adversarial review: D1-D10 fixes (Phase 2/3 specs added, get_spend takes &str, admin API endpoints, F1/F2/F3 mechanism specs, TeamBudgetExceeded documented, builtins documented, idempotency documented)                                                                                             |
+| 1.4     | 2026-04-22 | Round 3 adversarial review: archive Planned RFC-0904 placeholder; fix Phase 1 checklist; fix Key Files section; document record_spend (no budget check); remove get_team_spend; fix get_current_spend return type; add C1-C9 review section                                                                   |
+| 1.3     | 2026-04-22 | Round 2 adversarial review: fix B1-B12 (remove check_budget_soft_limit, replace InsufficientBudget, remove get_team_spend, clarify record_spend dispatch, fix KeySpend unit, document soft check staleness, update Phase 1 checklist, fix CostError→BudgetError)                                              |
+| 1.2     | 2026-04-22 | Round 1 fixes continued (A8-A12): add per-model ceiling cost table; standardize budget_limit resolution; clarify idempotency via UNIQUE constraint; specify timestamp semantics; define KeyError/BudgetError separation                                                                                       |
+| 1.1     | 2026-04-22 | Round 1 adversarial review: fix A1-A7 (critical type errors, nonexistent methods, trait mismatches)                                                                                                                                                                                                           |
+| 1.0     | 2026-04-22 | Initial draft                                                                                                                                                                                                                                                                                                 |
 
 ## Adversarial Review
 
@@ -820,6 +859,7 @@ This performs the exact same function as `check_budget_soft_limit` — checking 
 > "Use the **per-model ceiling cost** (worst-case for one request) as estimated_cost"
 
 But does not specify:
+
 - What the ceiling is for each model
 - How to compute it (max tokens × max price?)
 - What happens if the estimate is wrong (false positive pre-check?)
@@ -836,10 +876,10 @@ If `estimated_cost = budget_limit` (safe overestimate), the soft check passes fo
 
 **Finding:** Two inconsistent types for `budget_limit`:
 
-| Location | Type |
-|----------|------|
-| ApiKey struct (models.rs) | `i64` |
-| ApiKey struct (RFC-0903 line 163) | `u64` |
+| Location                                | Type                                        |
+| --------------------------------------- | ------------------------------------------- |
+| ApiKey struct (models.rs)               | `i64`                                       |
+| ApiKey struct (RFC-0903 line 163)       | `u64`                                       |
 | Database schema (api_keys.budget_limit) | `BIGINT NOT NULL CHECK (budget_limit >= 0)` |
 
 RFC-0903 says `budget_limit: u64` but the Rust code uses `i64`. The CHECK constraint allows only non-negative values, so either works.
@@ -865,6 +905,7 @@ The existing `record_spend_ledger` has no deduplication check.
 **Severity:** Medium (Ambiguity)
 
 **Finding:** `SpendEvent.timestamp: i64` is defined but:
+
 - Is it set by the router (request time)?
 - Is it set when the event is recorded (processing time)?
 - Is it the provider's usage timestamp?
@@ -882,11 +923,13 @@ For deterministic accounting, this matters for billing period alignment.
 **Finding:** The existing codebase uses `KeyError` for budget-related errors (e.g., `KeyError::BudgetExceeded`). The RFC defines a new `BudgetError` type with overlapping variants (`KeyNotFound`, `KeyBudgetExceeded`).
 
 Two error types for the same domain creates confusion:
+
 - Which should callers catch?
 - Are they equivalent?
 - Should `BudgetError` wrap `KeyError`?
 
 **Resolution:** `KeyError` is used for key-level operations (lookup, validation, revocation). `BudgetError` is used for cost-tracking operations (budget check, cost computation, spend recording). They serve different phases of request handling:
+
 - Key validation → `KeyError`
 - Budget enforcement → `BudgetError`
 
@@ -935,12 +978,14 @@ Additionally, `team_id` in the database is `BLOB(16)` per RFC-0903-C1, not `Uuid
 **Severity:** High (Type Error)
 
 **Finding:** The RFC's `record_spend_atomic` (line 248) delegates to `storage.record_spend_ledger(event)`. But the existing codebase has **two** methods:
+
 - `record_spend_ledger` (key-only) — used when no team
 - `record_spend_ledger_with_team(key_id, team_id, event)` — used when team exists
 
 The RFC doesn't specify which is called. When `event.team_id` is `Some`, `record_spend_ledger_with_team` must be used. When `None`, `record_spend_ledger` is used.
 
 **Resolution:** Clarify the dispatch logic:
+
 ```rust
 if let Some(team_id) = event.team_id {
     storage.record_spend_ledger_with_team(&key_id.to_string(), &team_id.to_string(), event)
@@ -982,6 +1027,7 @@ The RFC acknowledges the soft check is "non-locking" but the actual request flow
 **Severity:** Medium (Documentation Inconsistency)
 
 **Finding:** The Implementation Phases checklist (lines 441-448) says:
+
 - "Add `BudgetStorage` trait to `KeyStorage` in storage.rs"
 - "Implement `get_key_budget_limit()`, `get_team_budget_limit()` in `StoolapKeyStorage`"
 - "Implement `check_budget_soft_limit()` in middleware"
@@ -989,6 +1035,7 @@ The RFC acknowledges the soft check is "non-locking" but the actual request flow
 But the RFC itself established that these methods don't exist or shouldn't be created. The checklist is stale.
 
 **Resolution:** Update Phase 1 checklist:
+
 - [x] Document `check_budget(&ApiKey)` as the soft pre-check implementation (existing)
 - [x] Confirm `record_spend_ledger` and `record_spend_ledger_with_team` cover atomic enforcement (existing)
 - [ ] Add `get_team_spend` aggregate query (Phase 2 — no implementation exists)
@@ -1034,6 +1081,7 @@ For retries: if request_id is reused, event_id is the same, `UNIQUE(event_id)` i
 **Finding:** `BudgetError::KeyBudgetExceeded { key_id: Uuid, ... }` uses Rust `Uuid` type, but per RFC-0903-C1, database columns are `BLOB(16)`. The UUID↔BLOB conversion exists in the storage layer but is not documented.
 
 **Resolution:** Add an API Compatibility Notes subsection documenting the UUID↔BLOB(16) conversion:
+
 ```rust
 // Storage: UUID → BLOB(16)
 let key_id_blob: Vec<u8> = key_id.as_bytes().to_vec();
@@ -1092,6 +1140,7 @@ let key_id = uuid::Uuid::from_bytes(bytes);
 **Severity:** Medium (Missing Documentation)
 
 **Finding:** The codebase has two record_spend methods:
+
 - `middleware.record_spend(key_id, amount)` — simple insert, **no budget check**
 - `middleware.process_response(...)` — computes `event_id`, calls `record_spend_ledger` with budget check
 
@@ -1251,51 +1300,56 @@ The RFC documented only the budget-checked version.
 
 ## Issues Summary
 
-| ID | Severity | Issue | Status |
-|----|----------|-------|--------|
-| A1 | Critical | `record_spend_atomic` references `event.budget_limit` which doesn't exist | Fixed |
-| A2 | Critical | `insert_spend_event` doesn't exist in KeyStorage trait | Fixed |
-| A3 | Critical | `TeamSpend` type referenced but never defined | Fixed |
-| A4 | Critical | `record_spend_with_team` signature differs from existing `record_spend_ledger_with_team` | Fixed |
-| A5 | High | `get_team_spend` aggregate not defined | Fixed |
-| A6 | High | `check_budget_soft_limit` uses nonexistent `get_key_budget_limit` | Fixed |
-| A7 | High | Existing `check_budget` already does soft pre-check | Fixed |
-| A8 | Medium | `estimated_cost` guidance vague — could cause false negatives | Fixed |
-| A9 | Medium | budget_limit type inconsistent (u64 vs i64) | Fixed |
-| A10 | Medium | Idempotency not addressed — duplicate event_id could double-record | Fixed |
-| A11 | Medium | SpendEvent.timestamp semantics ambiguous | Fixed |
-| A12 | Low | `KeyError` vs `BudgetError` — two error types for same domain | Fixed |
-| B1 | Critical | `check_budget_soft_limit` calls nonexistent `get_key_budget_limit` | Fixed |
-| B2 | Critical | `BudgetError::InsufficientBudget` variant does not exist | Fixed |
-| B3 | High | `get_team_spend` declared but no implementation exists | Fixed |
-| B4 | High | `record_spend_atomic` delegation ambiguity | Fixed |
-| B5 | High | `KeySpend.total_spend` in cents vs `cost_amount` in μunits | Fixed |
-| B6 | Medium | Soft check + atomic record is non-atomic | Fixed |
-| B7 | Medium | Implementation Phase 1 checklist references removed methods | Fixed |
-| B8 | Medium | `record_spend_with_team` takes `&str` but DB is `BLOB(16)` | Fixed |
-| B9 | Medium | `compute_event_id` excludes timestamp — determinism correct | Fixed |
-| B10 | Low | `CostError` referenced but never defined | Fixed |
-| B11 | Low | `BudgetError` Uuid vs DB `BLOB(16)` mapping not documented | Fixed |
-| B12 | Low | G4 `<5ms` metric not specified or verified | Fixed |
-| C1 | Critical | Two RFC-0904 files with same number, conflicting designs | Fixed (archived Planned placeholder) |
-| C2 | Medium | Phase 1 checklist references resolved `CostError` item | Fixed |
-| C3 | Medium | Key Files section references removed `check_budget_soft_limit` | Fixed |
-| C4 | Medium | `record_spend` (no budget check) exists but undocumented | Fixed |
-| C5 | Low | `get_team_spend` function calls nonexistent storage method | Fixed |
-| C6 | Low | `check_budget` returns `KeyError` but RFC says `BudgetError` for cost ops | Documented |
-| C7 | Low | `get_current_spend` wraps `KeyError` → `BudgetError` without `From` impl | Fixed |
-| C8 | Medium | F2 Budget auto-reset has no RFC placeholder | Flagged for planning |
-| C9 | Medium | Lock ordering in `record_spend_ledger_with_team` not verified | Verified in storage.rs |
-| D1 | High | Phase 2 items have no specification | Fixed (get_team_spend SQL + admin API spec) |
-| D2 | Medium | Phase 3 F1/F2/F3 have no specification | Fixed (F1/F2/F3 specs added) |
-| D3 | Low | `BudgetError::TeamBudgetExceeded` never returned | Documented (From impl path) |
-| D4 | High | `BudgetStorage.get_spend` takes `&Uuid` but actual API uses `&str` | Fixed (`&str`) |
-| D5 | Medium | Admin API endpoints never specified | Fixed (spec added in Phase 2) |
-| D6 | Medium | `record_spend` vs `record_spend_ledger` interaction undocumented | Fixed (write paths clarified) |
-| D7 | Low | `get_pricing` ModelNotFound unreachable with builtins | Fixed (builtin models documented) |
-| D8 | Low | Duplicate event_id silently returns Ok(()) | Fixed (idempotency documented) |
-| D9 | Low | Stale "still uses TEXT" comment in storage.rs | Verified (pending C1/C2 migration) |
-| D10 | Low | Phase 1 unit test verification | Confirmed (compute_cost_tests in keys/mod.rs) |
+| ID  | Severity | Issue                                                                                    | Status                                                         |
+| --- | -------- | ---------------------------------------------------------------------------------------- | -------------------------------------------------------------- |
+| A1  | Critical | `record_spend_atomic` references `event.budget_limit` which doesn't exist                | Fixed                                                          |
+| A2  | Critical | `insert_spend_event` doesn't exist in KeyStorage trait                                   | Fixed                                                          |
+| A3  | Critical | `TeamSpend` type referenced but never defined                                            | Fixed                                                          |
+| A4  | Critical | `record_spend_with_team` signature differs from existing `record_spend_ledger_with_team` | Fixed                                                          |
+| A5  | High     | `get_team_spend` aggregate not defined                                                   | Fixed                                                          |
+| A6  | High     | `check_budget_soft_limit` uses nonexistent `get_key_budget_limit`                        | Fixed                                                          |
+| A7  | High     | Existing `check_budget` already does soft pre-check                                      | Fixed                                                          |
+| A8  | Medium   | `estimated_cost` guidance vague — could cause false negatives                            | Fixed                                                          |
+| A9  | Medium   | budget_limit type inconsistent (u64 vs i64)                                              | Fixed                                                          |
+| A10 | Medium   | Idempotency not addressed — duplicate event_id could double-record                       | Fixed                                                          |
+| A11 | Medium   | SpendEvent.timestamp semantics ambiguous                                                 | Fixed                                                          |
+| A12 | Low      | `KeyError` vs `BudgetError` — two error types for same domain                            | Fixed                                                          |
+| B1  | Critical | `check_budget_soft_limit` calls nonexistent `get_key_budget_limit`                       | Fixed                                                          |
+| B2  | Critical | `BudgetError::InsufficientBudget` variant does not exist                                 | Fixed                                                          |
+| B3  | High     | `get_team_spend` declared but no implementation exists                                   | Fixed                                                          |
+| B4  | High     | `record_spend_atomic` delegation ambiguity                                               | Fixed                                                          |
+| B5  | High     | `KeySpend.total_spend` in cents vs `cost_amount` in μunits                               | Fixed                                                          |
+| B6  | Medium   | Soft check + atomic record is non-atomic                                                 | Fixed                                                          |
+| B7  | Medium   | Implementation Phase 1 checklist references removed methods                              | Fixed                                                          |
+| B8  | Medium   | `record_spend_with_team` takes `&str` but DB is `BLOB(16)`                               | Fixed                                                          |
+| B9  | Medium   | `compute_event_id` excludes timestamp — determinism correct                              | Fixed                                                          |
+| B10 | Low      | `CostError` referenced but never defined                                                 | Fixed                                                          |
+| B11 | Low      | `BudgetError` Uuid vs DB `BLOB(16)` mapping not documented                               | Fixed                                                          |
+| B12 | Low      | G4 `<5ms` metric not specified or verified                                               | Fixed                                                          |
+| C1  | Critical | Two RFC-0904 files with same number, conflicting designs                                 | Fixed (archived Planned placeholder)                           |
+| C2  | Medium   | Phase 1 checklist references resolved `CostError` item                                   | Fixed                                                          |
+| C3  | Medium   | Key Files section references removed `check_budget_soft_limit`                           | Fixed                                                          |
+| C4  | Medium   | `record_spend` (no budget check) exists but undocumented                                 | Fixed                                                          |
+| C5  | Low      | `get_team_spend` function calls nonexistent storage method                               | Fixed                                                          |
+| C6  | Low      | `check_budget` returns `KeyError` but RFC says `BudgetError` for cost ops                | Documented                                                     |
+| C7  | Low      | `get_current_spend` wraps `KeyError` → `BudgetError` without `From` impl                 | Fixed                                                          |
+| C8  | Medium   | F2 Budget auto-reset has no RFC placeholder                                              | Flagged for planning                                           |
+| C9  | Medium   | Lock ordering in `record_spend_ledger_with_team` not verified                            | Verified in storage.rs                                         |
+| D1  | High     | Phase 2 items have no specification                                                      | Fixed (get_team_spend SQL + admin API spec)                    |
+| D2  | Medium   | Phase 3 F1/F2/F3 have no specification                                                   | Fixed (F1/F2/F3 specs added)                                   |
+| D3  | Low      | `BudgetError::TeamBudgetExceeded` never returned                                         | Documented (From impl path)                                    |
+| D4  | High     | `BudgetStorage.get_spend` takes `&Uuid` but actual API uses `&str`                       | Fixed (`&str`)                                                 |
+| D5  | Medium   | Admin API endpoints never specified                                                      | Fixed (spec added in Phase 2)                                  |
+| D6  | Medium   | `record_spend` vs `record_spend_ledger` interaction undocumented                         | Fixed (write paths clarified)                                  |
+| D7  | Low      | `get_pricing` ModelNotFound unreachable with builtins                                    | Fixed (builtin models documented)                              |
+| D8  | Low      | Duplicate event_id silently returns Ok(())                                               | Fixed (idempotency documented)                                 |
+| D9  | Low      | Stale "still uses TEXT" comment in storage.rs                                            | Verified (pending C1/C2 migration)                             |
+| D10 | Low      | Phase 1 unit test verification                                                           | Confirmed (compute_cost_tests in keys/mod.rs)                  |
+| E1  | High     | `BudgetError::InsufficientBalance` referenced in F3 but not defined                      | Fixed (added variant with key_id, available, estimated fields) |
+| E2  | Medium   | Admin API `percent_used` uses f64 — floating-point inconsistency                         | Fixed (replaced with u64 hundredths, e.g., 8500 = 85.00%)      |
+| E3  | High     | `get_team_spend` has `todo!()` placeholder — won't compile                               | Fixed (replaced with actual SQL JOIN implementation)           |
+| E4  | Low      | Token source CHECK constraint validation not documented                                  | Fixed (added Token Source Validation section)                  |
+| E5  | Low      | RFC-0917 integration detail missing                                                      | Fixed (added Integration with RFC-0917 section)                |
 
 ---
 

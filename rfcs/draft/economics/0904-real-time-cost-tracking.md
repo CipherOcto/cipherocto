@@ -410,9 +410,13 @@ The SQL JOIN aggregates all `cost_amount` values from `spend_ledger` for keys be
 // Monthly (default): start of current calendar month, start of next calendar month
 let now = Utc::now();
 let period_start = now.date().with_day(1).unwrap().and_hms_opt(0, 0, 0).unwrap().timestamp();
-// Next month: add 1 month, then set day to 1
-let next_month = (now.date().with_day(1).unwrap() + chrono::Duration::days(32)).date();
-let period_end = next_month.with_day(1).unwrap().and_hms_opt(0, 0, 0).unwrap().timestamp();
+// Next month: advance month by 1, wrap year at December, set day to 1
+let year = now.date().year();
+let month = now.date().month();
+let next_year = if month == 12 { year + 1 } else { year };
+let next_month_num = if month == 12 { 1 } else { month + 1 };
+let period_end = NaiveDate::from_ymd_opt(next_year, next_month_num, 1)
+    .unwrap().and_hms_opt(0, 0, 0).unwrap().timestamp();
 
 // Weekly: start of current week (Monday 00:00 UTC)
 let days_since_monday = now.weekday().num_days_from_monday();
@@ -440,10 +444,6 @@ pub enum BudgetError {
     /// **Used by:** Admin API GET /admin/budget/team/{team_id} when no keys exist for the team.
     /// **Note:** get_team_spend returns 0 (not error) when team has no keys.
     TeamNotFound,
-    /// Key requires team membership for this operation.
-    /// **Reserved for future use** — no current code path returns this variant.
-    /// Planned for: operations that require team context (e.g., team-level budget enforcement without a key).
-    TeamRequired,
     /// Key budget would be exceeded.
     /// **Used by:** record_spend_ledger (atomic enforcement) when key budget check fails.
     KeyBudgetExceeded {
@@ -485,7 +485,6 @@ impl std::fmt::Display for BudgetError {
         match self {
             BudgetError::KeyNotFound => write!(f, "API key not found"),
             BudgetError::TeamNotFound => write!(f, "Team not found"),
-            BudgetError::TeamRequired => write!(f, "Team membership required"),
             BudgetError::KeyBudgetExceeded { current, limit, requested } => {
                 write!(f, "Budget exceeded: current={}, limit={}, requested={}", current, limit, requested)
             }
@@ -710,7 +709,7 @@ GET /admin/budget/team/{team_id}/keys?include_revoked=false&offset=0&limit=100  
 
 ```sql
 CREATE TABLE key_spend (
-    key_id TEXT NOT NULL UNIQUE,
+    key_id BLOB(16) NOT NULL UNIQUE,  -- Raw UUID bytes (16 bytes) — matches api_keys.key_id per RFC-0903-C1
     total_spend INTEGER NOT NULL DEFAULT 0,  -- accumulated spend in μunits
     window_start INTEGER NOT NULL,            -- period start (reset boundary)
     last_updated INTEGER NOT NULL             -- last modification time
@@ -728,8 +727,8 @@ GET /admin/budget/key/{key_id}/alerts
       key_id: String,
       budget_limit: u64,       // in μunits; 0 means unlimited
       thresholds: [50, 80, 90],  // configured thresholds from metadata
-      fired: [{threshold: 80, period_start: 1743465600}, ...],
-      period_start: i64          // current billing period start (Unix epoch)
+      fired: [{threshold: 80, period_start: 1743465600}, ...],  // threshold value + billing period when it fired
+      period_start: i64        // current billing period start (Unix epoch) — this response covers this period
     }
   → 404 Not Found {"error": "KeyNotFound", "key_id": "..."}
   → 500 Internal Server Error {"error": "Storage", "detail": "..."}
@@ -741,8 +740,8 @@ GET /admin/budget/key/{key_id}/alerts
 
 ### Phase 3: Budget Alerts
 
-- [ ] Budget threshold notifications
-- [ ] Auto-reset (daily, weekly, monthly)
+- [x] Budget threshold notifications (F1 — fully specced above)
+- [x] Auto-reset (daily, weekly, monthly) (F2 — fully specced above)
 
 #### Budget Alerts (F1)
 
@@ -1007,8 +1006,6 @@ pub fn deduct_octo_w(key_id: &str, cost_amount: u64) -> Result<u64, KeyError> {
    - **API response to client:** The client request returns `200 OK` with the normal provider response. The OCTO-W deduction failure is an internal reconciliation issue — the provider charge is already irreversible, so failing the client request would not recover the funds. The client sees success; operations team must manually reconcile.
    - **Manual reconciliation required** — the provider charge is irreversible but OCTO-W balance was not updated. Operations team must manually reconcile.
 
-**F3 deduct + F1 alert coincidence:** If the deducted cost_amount causes `current_spend` to cross an F1 threshold, the F1 alert fires after the deduct. This is evaluated by the F1 alert handler — it computes `current_spend` from `key_spend.total_spend` (which includes the just-deducted amount). The F1 alert payload includes `event_type: "octo_w_deduction_failed"` only if the F3 deduct failed — not as part of normal F3 flow. Normal F3 deduct (step 5) succeeding does NOT trigger a separate F1 alert unless the threshold crossing is detected by the normal F1 evaluation cycle.
-
 **Lock release timing (R14-11):** Both `record_spend_ledger_with_team` and `deduct_octo_w` hold their FOR UPDATE locks for the **entire transaction duration** — from lock acquisition through commit or rollback. For `record_spend_ledger_with_team`: the team lock is acquired first, the key lock second, both are held through the INSERT, and both are released on transaction commit. For `deduct_octo_w`: the key lock is acquired, balance check and deduct happen atomically in the same locked context, then the lock is released on commit. There is no window between team-check and key-check where locks are released.
 
 **Note:** When F3 is active, `record_spend_ledger` is NOT called — the OCTO-W deduction IS the budget enforcement. Do NOT call both `deduct_octo_w` AND `record_spend_ledger` for the same request.
@@ -1055,6 +1052,7 @@ The soft check is non-locking — it's possible (though unlikely) that another c
 
 | Version | Date       | Changes                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                            |
 | ------- | ---------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 1.18    | 2026-04-22 | Round 18: fix monthly period derivation formula (V1 — use month+1/year wrap instead of +32d); remove BudgetError::TeamRequired (deferred without spec, V2); update key_spend.key_id to BLOB(16) per RFC-0903-C1 (V3); mark Phase 3 checklist [x] (V4); add team_id to GET /admin/budget/team/{team_id} response (V6); clarify fired[].period_start vs outer period_start (V7); verify Phase 2 D1 items resolved, confirm no remaining future work (V8); remove redundant F3+F1 coincidence paragraph (V10) |
 | 1.17    | 2026-04-22 | Round 17: fix team endpoint percent_used unguarded (U1); specify F1 synchronous alert evaluation + delivery failure behavior (U2); specify Admin API auth mechanism (Bearer token, validation, provisioning, rate limiting) (U3); document fired_at debug-only storage (U4); document reset_trigger informational nature (U5); specify F3 deduct failure API response returns 200 (U6); add team all-unlimited case (budget_limit==0) semantics (U7); add get_team_spend period derivation formula (U8); specify F1 multi-threshold crossing fires all crossed thresholds (U9); note RFC-0904 Draft dependency in RFC-0917 integration (U10); clarify F2 reset does not touch spend_ledger (U11); clarify carry_over_unused defaults when absent (U12) |
 | 1.16    | 2026-04-22 | Round 15: fix /keys endpoint budget_limit/current_spend u64 (was i64); fix alerts endpoint budget_limit u64; remove fired_at from fired array (S3); add get_team_spend backward compat note (S4); add key_spend schema (S5); add pricing_hash test vector reference (S6); add current_spend source to F1 spec (S7); clarify F2 reset resets total_spend AND window_start (S8); add check_budget error type distinction in Budget Pre-Check section (S9); guard percent_used formula with budget_limit>0 (S10) |
 | 1.15    | 2026-04-22 | Round 14: R14-01 percent_used overflow (saturating_mul); R14-02 Admin API u64; R14-03 get_team_spend period filter; R14-04 F3+F1 coincidence; R14-05 F2 thundering herd mitigation; R14-06 team auto_reset_period inheritance; R14-07 F1 alert uses budget_limit not effective_budget; R14-08 check_budget unlimited key note; R14-09 updated_at→created_at; R14-10 KeyError vs BudgetError types; R14-11 lock release timing; R14-12 fired_at redundant (removed from payload) |

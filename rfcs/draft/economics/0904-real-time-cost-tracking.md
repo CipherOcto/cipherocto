@@ -2,7 +2,7 @@
 
 ## Status
 
-Draft (v1.18 — depends on RFC-0903 Final v30, RFC-0903-B1 v23, RFC-0903-C1 v4, RFC-0909 Final, RFC-0910 Draft)
+Draft (v1.19 — depends on RFC-0903 Final v30, RFC-0903-B1 v23, RFC-0903-C1 v4, RFC-0909 Final, RFC-0910 Draft)
 
 ## Authors
 
@@ -281,6 +281,8 @@ This RFC describes the budget enforcement layer. The existing `KeyStorage::recor
 2. Queries current spend from spend_ledger: `SELECT COALESCE(SUM(cost_amount), 0) FROM spend_ledger WHERE key_id = $1`
 3. Verifies `current + cost_amount <= budget_limit`
 4. Inserts spend_event into spend_ledger. If a duplicate event_id is detected (idempotent replay), returns `Ok(())` without inserting a duplicate row — per UNIQUE constraint on event_id.
+
+**event_id computation (determinism requirement):** `event_id` is computed as `SHA256(request_id || model || timestamp)` where `||` is concatenation of raw bytes. The `timestamp` is the router's Unix epoch seconds atSpendEvent creation time. This ensures identical `event_id` across router implementations for the same request_id + model + timestamp tuple. Retries with the same `request_id` produce identical `event_id`, enabling idempotent replay via the UNIQUE constraint on event_id.
 
 When the event has a `team_id`, `record_spend_ledger_with_team` is used instead, which locks team FIRST then key (deadlock prevention per RFC-0903 §Lock Ordering Invariant).
 
@@ -692,7 +694,7 @@ GET /admin/budget/team/{team_id}/keys?include_revoked=false&offset=0&limit=100  
   → 500 Internal Server Error {"error": "Storage", "detail": "..."}
 ```
 
-**`remaining` semantics:** `budget_limit - current_spend`. May be negative if `current_spend > budget_limit` (e.g., concurrent requests exhausted budget). Negative `remaining` indicates the budget is already exceeded.
+**`remaining` semantics:** If `current_spend <= budget_limit`, `remaining = (budget_limit - current_spend) as i64`. If `current_spend > budget_limit`, `remaining = -((current_spend - budget_limit) as i64)`. This produces a negative value when budget is exceeded without relying on u64→i64 wrapping semantics.
 
 **`created_at` for teams:** Returns the Unix epoch of the most recent spend event across all keys in the team (computed as `MAX(created_at)` across all team keys via SQL aggregation).
 
@@ -751,10 +753,12 @@ GET /admin/budget/key/{key_id}/alerts
 Budget alerts notify when spending reaches configurable thresholds:
 
 ```
-Alert trigger: current_spend >= (budget_limit * threshold_percent / 100)
+Alert trigger: current_spend >= (budget_limit.saturating_mul(threshold_percent) / 100)
 Condition: budget_limit > 0 (alerts do not fire for unlimited keys)
 Default thresholds: 50%, 80%, 90%, 100%
 ```
+
+**Overflow handling:** `budget_limit.saturating_mul(threshold_percent)` prevents overflow on large budget_limit values. If the saturated product exceeds u64::MAX, the trigger evaluates with `u64::MAX` as the threshold — ensuring consistent behavior across router implementations. For typical budget_limit values (under 1e12 μunits), saturation does not occur.
 
 **`current_spend` source (S7):** The alert trigger reads `current_spend` from `key_spend.total_spend` — the same accumulated counter used by the soft pre-check. Both `record_spend` (no budget check) and `record_spend_ledger` (with budget check) contribute to `key_spend.total_spend`, ensuring the F1 alert handler tracks the same spend that the soft pre-check sees. The F1 alert is evaluated **synchronously** post-spend (after `record_spend_ledger` or `deduct_octo_w` records the cost), so the alert fires if the just-recorded spend crossed a threshold. Evaluation is synchronous: the webhook is dispatched before the response is returned to the client. If webhook delivery fails after all retries, the alert is dropped (at-least-once guarantee is per-delivery, not per-request — the client request is not failed due to alert delivery failure).
 
@@ -874,8 +878,15 @@ Reset intervals (configurable per key/team):
 The reset handler executes:
 
 1. Reads all `api_keys` with `auto_reset_period` set
-2. For each key, acquires `FOR UPDATE` lock on the key row, sets `key_spend.total_spend = 0` and `key_spend.window_start = now` (resetting both the spend counter and the period boundary marker), then releases lock
+2. For each key, acquires `FOR UPDATE` lock on the key row, sets `key_spend.total_spend = 0` and `key_spend.window_start = period_start_ts` (resetting both the spend counter and the period boundary marker to the aligned period start), then releases lock
 3. Logs reset event to `budget_reset_log` table (not `spend_ledger`) with metadata: key_id, team_id, reset_time, period_type
+
+**`window_start` alignment (determinism requirement):** `window_start` is set to the **aligned period start** (UTC midnight of the current reset period boundary), NOT to `now` (wall-clock time). This ensures two routers with different clock times produce identical `window_start` values when resetting at the same period boundary, giving identical `days_elapsed` and therefore identical `effective_budget` for `carry_over_unused=true`. The period alignment is:
+- **daily:** `now.date().and_hms_opt(0, 0, 0).unwrap().timestamp()` (00:00 UTC today)
+- **weekly:** `(now - chrono::Duration::days(now.weekday().num_days_from_monday() as i64)).date().and_hms_opt(0, 0, 0).unwrap().timestamp()` (00:00 UTC Monday of current week)
+- **monthly:** `now.date().with_day(1).unwrap().and_hms_opt(0, 0, 0).unwrap().timestamp()` (00:00 UTC on the 1st of the current month)
+
+Use the period-aligned timestamp (not `now`) as `window_start` and as the `reset_time` stored in `budget_reset_log`. This ensures deterministic `days_elapsed` computation across routers with clock skew.
 
 **Thundering herd mitigation:** On large deployments (10,000+ keys with auto_reset_period), processing all keys sequentially in a single handler invocation can cause database connection exhaustion and increased latency for other queries. The handler SHOULD process keys in batches (recommended: 100-500 keys per batch) with a brief sleep between batches (recommended: 10-50ms stagger). A timeout per key (recommended: 100ms max) prevents a single slow key from blocking the entire batch. Deployers SHOULD configure their scheduler to invoke the reset endpoint at slightly randomized times (e.g., ±30s jitter) to spread load across the deployment.
 
@@ -906,10 +917,10 @@ CREATE INDEX idx_budget_reset_log_team_id ON budget_reset_log(team_id) WHERE tea
 
 | `carry_over_unused` | Formula | Description |
 |---------------------|---------|-------------|
-| `true` (default) | `effective_budget = key_spend + (period_allocation × days_elapsed)` | Unused allocation carried forward |
+| `true` (default) | `effective_budget = key_spend.total_spend + (period_allocation × days_elapsed)` | Unused allocation carried forward |
 | `false` | `effective_budget = budget_limit` | No carry-over; full budget at each period start |
 
-**`days_elapsed` computation:** `days_elapsed = (current_unix_timestamp - key_spend.window_start) / 86400` (integer division, seconds per day = 86400). For monthly billing, `days_elapsed` uses 30 as the divisor (not calendar days), since `period_allocation = budget_limit / 30`. For weekly: 7. For daily: 1.
+**`days_elapsed` computation:** `days_elapsed = (current_unix_timestamp - key_spend.window_start) / 86400` (integer division, seconds per day = 86400). `key_spend.window_start` is set to the period-aligned reset boundary (UTC midnight of the period start), ensuring identical `days_elapsed` across routers with clock skew. For monthly billing, `days_elapsed` uses 30 as the divisor (not calendar days), since `period_allocation = budget_limit / 30`. For weekly: 7. For daily: 1.
 
 **Example (monthly, carry_over_unused=true, budget_limit=30000, no spend in first 15 days):** At day 15, key_spend=0. Effective budget = 0 + (30000/30 × 15) = 15000. After 10000 spend, effective remaining = 5000. At month reset (day 30), key_spend is set to 0 and effective_budget resets to full 30000.
 
@@ -1061,6 +1072,7 @@ The soft check is non-locking — it's possible (though unlikely) that another c
 
 | Version | Date       | Changes                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                            |
 | ------- | ---------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 1.20    | 2026-04-22 | Round 20: fix Status header v1.18→v1.19 (X1); add saturating_mul to F1 alert trigger formula (X4); specify period-aligned window_start in F2 reset handler for cross-router determinism (X5/X13); document event_id computation (SHA256 of request_id\|\|model\|\|timestamp) in main spec (X11); fix remaining computation to avoid u64→i64 wrapping (X7); clarify carry_over_unused formula uses key_spend.total_spend (X14) |
 | 1.19    | 2026-04-22 | Round 19: fix Status header v1.17→v1.18 (W1); replace budget_reset_log auto-increment reset_id with composite PK (key_id, reset_time) per budget_alert_log pattern (W2); align percent_used comment in key endpoint to match team endpoint (W3); add team_id resolution note to F1 webhook spec (W5); specify FOR UPDATE lock level on team row (W8); document get_current_spend works for unlimited keys (W9); update RFC-0917 status note to reflect v1.18 progress (W10); add internal reset endpoint auth requirements (W11); add days_elapsed computation from window_start (W12) |
 | 1.18    | 2026-04-22 | Round 18: fix monthly period derivation formula (V1 — use month+1/year wrap instead of +32d); remove BudgetError::TeamRequired (deferred without spec, V2); update key_spend.key_id to BLOB(16) per RFC-0903-C1 (V3); mark Phase 3 checklist [x] (V4); add team_id to GET /admin/budget/team/{team_id} response (V6); clarify fired[].period_start vs outer period_start (V7); verify Phase 2 D1 items resolved, confirm no remaining future work (V8); remove redundant F3+F1 coincidence paragraph (V10) |
 | 1.17    | 2026-04-22 | Round 17: fix team endpoint percent_used unguarded (U1); specify F1 synchronous alert evaluation + delivery failure behavior (U2); specify Admin API auth mechanism (Bearer token, validation, provisioning, rate limiting) (U3); document fired_at debug-only storage (U4); document reset_trigger informational nature (U5); specify F3 deduct failure API response returns 200 (U6); add team all-unlimited case (budget_limit==0) semantics (U7); add get_team_spend period derivation formula (U8); specify F1 multi-threshold crossing fires all crossed thresholds (U9); note RFC-0904 Draft dependency in RFC-0917 integration (U10); clarify F2 reset does not touch spend_ledger (U11); clarify carry_over_unused defaults when absent (U12) |

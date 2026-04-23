@@ -2,7 +2,7 @@
 
 ## Status
 
-Draft (v17 — aligns with RFC-0903 Final v30 + RFC-0903-B1 v23 + RFC-0903-C1 v5)
+Draft (v18 — aligns with RFC-0903 Final v30 + RFC-0903-B1 v23 + RFC-0903-C1 v5; fix M4 stale schema comment "first-char"→"4-char"; add o3-* UNCERTAIN; fix H1 gpt-*/clau-* scope disclaimer; add o3-mini/o3-pro to Uncertain Assignments)
 
 ## Authors
 
@@ -518,10 +518,14 @@ RFC-0910 defines only the forward direction (version → ID).
 /// Collision probability becomes non-negligible after ~2^32 versions — acceptable
 /// for tokenizer versioning.
 ///
-/// **Collision prevention:** Registration MUST reject duplicate tokenizer_id values
-/// (hash collision detection). If `tokenizer_version_to_id(new_version)` matches an
-/// existing `tokenizer_id` in the registry but the version string is different, reject
-/// registration with an error — do not silently overwrite.
+/// **Phase 2 collision prevention (DB-backed registry only):** When Phase 2 populates
+/// the `tokenizers` table via `PricingRegistry::register()`, the DB's `PRIMARY KEY
+/// (tokenizer_id)` rejects duplicate tokenizer_id values at the DB level. If a new
+/// `tokenizer_version_to_id(new_version)` matches an existing `tokenizer_id` in the
+/// table but the version string is different, DB insertion fails and the error propagates.
+/// No in-memory collision check is needed — the DB is the authority. Phase 1 (pure
+/// in-memory registry) uses hardcoded entries only; no dynamic registration of
+/// tokenizer versions occurs in Phase 1.
 ///
 /// # Test Vector
 /// `tokenizer_version_to_id("tiktoken-cl100k_base-v1.2.3")` → `e3c8e8ff724411c6416dd4fb135368e3` (16 bytes hex)
@@ -553,6 +557,7 @@ pub fn tokenizer_version_to_id(version: &str) -> [u8; 16] {
 /// Routers MUST verify before production use; these may change in future versions:
 /// - `gemini-*` — may use SentencePiece encoding, not cl100k_base
 /// - `o1-mini`, `o1-preview` — different vocab from o200k_base; verify with provider
+/// - `o3-mini`, `o3-pro` — unknown vocab; Tokenizer Assignment Table does not list o3-* models
 ///
 /// # Implementation Notes
 /// - This function is the single source of truth for canonical tokenizer assignment
@@ -576,7 +581,11 @@ pub fn get_canonical_tokenizer(model: &str) -> &'static str {
             DEFAULT_TOKENIZER
         },
         "gpt-" => {
-            // gpt-* family — verified cl100k_base (OpenAI BPE)
+            // gpt-* family (OpenAI) — verified cl100k_base (OpenAI BPE)
+            // Note: This dispatch covers known OpenAI gpt-* models. Other providers
+            // with models starting "gpt-" should be verified independently as this
+            // dispatch assumes OpenAI family. This is intentional for major commercial
+            // models only — minor providers are out of scope for canonical assignment.
             "tiktoken-cl100k_base-v1.2.3"
         },
         "o1-m" | "o1-p" => {
@@ -587,6 +596,12 @@ pub fn get_canonical_tokenizer(model: &str) -> &'static str {
         "o1" | "o3" => {
             // o1, o3 — OpenAI o-series with o200k_base vocab (per Tokenizer Assignment Table)
             "tiktoken-o200k_base"
+        },
+        "o3-" => {
+            // o3-mini, o3-pro — UNCERTAIN. The Tokenizer Assignment Table does not list o3-*
+            // models. o3 uses o200k_base per OpenAI general documentation, but o3-mini/o3-pro
+            // may use different vocab. Default to cl100k_base to avoid false precision.
+            DEFAULT_TOKENIZER
         },
         _ => {
             // Check for claude-* (clau prefix) or default
@@ -628,7 +643,7 @@ CREATE TABLE tokenizer_assignments (
     UNIQUE(model_pattern)                   -- prevent ambiguous multi-row matches
 );
 
--- Note: Phase 1 uses first-character prefix dispatch (see get_canonical_tokenizer).
+-- Note: Phase 1 uses 4-character prefix dispatch (see get_canonical_tokenizer).
 -- Phase 2 DB-backed lookup uses exact match on model_pattern.
 -- Wildcard/glob patterns are NOT supported in Phase 1 or Phase 2.
 -- The model_pattern column documents the canonical tokenizer for each exact model name.
@@ -636,7 +651,7 @@ CREATE TABLE tokenizer_assignments (
 ```
 
 > **Phase 1 vs Phase 2 note:** The `tokenizer_assignments` table above defines the schema for DB-backed
-> lookups. Phase 1 (`get_canonical_tokenizer` in §Tokenizer Lookup Function) uses in-memory first-character
+> lookups. Phase 1 (`get_canonical_tokenizer` in §Tokenizer Lookup Function) uses in-memory 4-character
 > prefix dispatch only — it does NOT query this table. Phase 2 populates the table with rows corresponding
 > to the Tokenizer Assignment Table and replaces the in-memory dispatch with a DB-backed lookup. See
 > Implementation Phases §Phase 2.
@@ -941,6 +956,7 @@ This design allows the registry to be treated as a cache of known-good pricing s
 
 | Version | Date | Changes |
 |---------|------|---------|
+| v18 | 2026-04-23 | Round 24 adversarial fixes: fix M4 (stale schema comment "first-character"→"4-character" dispatch); add o3-* arm to get_canonical_tokenizer (o3-mini/o3-pro → DEFAULT_TOKENIZER with UNCERTAIN flag); add o3-mini/o3-pro to Uncertain Assignments; add scope disclaimer to gpt-* dispatch (major commercial models only); update Status header v17→v18 |
 | v17 | 2026-04-23 | Round 23 adversarial fixes: fix 0910-C1 (Determinism Requirements: remove canonical JSON/RFC 8785 reference — pricing_hash uses DCS Entry 16 binary per RFC-0126 Part 3); fix 0910-C2 (get_canonical_tokenizer: use 4-char prefix dispatch ["gem-","gpt-","o1","o1-m","o1-p","clau"] to disambiguate gpt-* from gemini-*, o1* from o1-mini/o1-preview); fix 0910-C3 (effective_from: clarify as ordering constraint expressed as Unix epoch seconds, not wall-clock timestamp; same-second registrations allowed via < not <=); fix 0910-H1 (PricingTable naming collision: add type alias guidance for dual-RFC integrations); fix 0910-H2 (register thread safety: document startup-before-serving pattern; dynamic registration needs Arc<RwLock>); fix 0910-H3 (compute_cost saturating_add: add realistic bounds analysis — not a practical overflow concern); fix 0910-H4 (Phase 2 blocked: confirmed RFC-0903-B1 and RFC-0903-C1 are both Accepted — Phase 2 can proceed); fix 0910-M1 (BLAKE3 collision: add collision detection requirement at registration time); fix 0910-M2 (Phase 2 migration: document per-model exact-match population requirement ~15-20 rows); fix 0910-M4 (metadata size limit: add MAX_METADATA_SIZE=4096 and RegistryError::MetadataTooLarge); fix 0910-M5 (get_pricing ignores effective_from: clarify effective_from is ordering constraint not time-based query); add error case test vectors; add o1-mini to tokenizer test vectors with UNCERTAIN flag |
 | v16 | 2026-04-21 | Fix RFC126-C1/C2/C3: replace canon-json pseudocode with DCS Entry 16 binary encoding — RFC-0126 §JSON Allowed Contexts explicitly forbids JSON for Merkle tree leaves; pricing_hash uses DCS Part 3 binary (field_id||value, binary integers, length-prefixed strings); fix test vector to correct DCS output `4a065c51147d4730379d600c4a491778b98f66a8e381c5dfdf51f42052c32f60` (was incorrect `076d2278...`); add ASCII/UTF-16 ordering clarification; update Status header v15→v16 |
 | v15 | 2026-04-20 | Round 59 fixes: fix N-H3 (compute_pricing_hash: replace serde_json PSEUDOCODE with canon-json usage example — canon-json is RFC 8785-compliant, cross-tested against olpc-cjson; RFC-0126 Part 2 provides the canonical JSON rules; production code MUST use canon-json; test vector computed with compliant implementation) |

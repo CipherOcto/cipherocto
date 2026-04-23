@@ -1,10 +1,10 @@
-# RFC-0910 (Economics): Inference Task Market
+# RFC-0918 (Economics): Inference Task Market
 
 ## Status
 
 Draft
 
-> **Note:** This RFC was renumbered from RFC-0144 to RFC-0910 as part of the category-based numbering system.
+> **Note:** This RFC was renumbered from RFC-0144 to RFC-0918 as part of the category-based numbering system.
 
 ## Summary
 

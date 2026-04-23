@@ -110,7 +110,7 @@ graph TD
 
     subgraph Network
         RFC0143[RFC-0843 (Networking): OCTO-Network]
-        RFC0144[RFC-0910 (Economics): Task Market]
+        RFC0144[RFC-0918 (Economics): Task Market]
     end
 
     subgraph Agents
@@ -281,7 +281,7 @@ libp2p-based P2P networking.
 
 ---
 
-### 11. Inference Task Market (RFC-0910 (Economics))
+### 11. Inference Task Market (RFC-0918 (Economics))
 
 Economic protocol for task allocation.
 
@@ -423,7 +423,7 @@ sequenceDiagram
 - [RFC-0741 (Consensus): Parallel Block DAG](../rfcs/0741-parallel-block-dag.md)
 - [RFC-0742 (Consensus): Data Availability Sampling](../rfcs/0742-data-availability-sampling.md)
 - [RFC-0843 (Networking): OCTO-Network Protocol](../rfcs/0843-octo-network-protocol.md)
-- [RFC-0910 (Economics): Inference Task Market](../rfcs/0910-inference-task-market.md)
+- [RFC-0918 (Economics): Inference Task Market](../rfcs/0918-inference-task-market.md)
 
 ### Use Cases
 

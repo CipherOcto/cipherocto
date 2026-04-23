@@ -2,7 +2,7 @@
 
 ## Status
 
-Draft (v1.19 — depends on RFC-0903 Final v30, RFC-0903-B1 v23, RFC-0903-C1 v4, RFC-0909 Final, RFC-0910 Draft)
+Draft (v1.20 — depends on RFC-0903 Final v30, RFC-0903-B1 v23, RFC-0903-C1 v5, RFC-0909 Final, RFC-0910 Draft)
 
 ## Authors
 
@@ -282,7 +282,7 @@ This RFC describes the budget enforcement layer. The existing `KeyStorage::recor
 3. Verifies `current + cost_amount <= budget_limit`
 4. Inserts spend_event into spend_ledger. If a duplicate event_id is detected (idempotent replay), returns `Ok(())` without inserting a duplicate row — per UNIQUE constraint on event_id.
 
-**event_id computation (determinism requirement):** `event_id` is computed as `SHA256(request_id || model || timestamp)` where `||` is concatenation of raw bytes. The `timestamp` is the router's Unix epoch seconds atSpendEvent creation time. This ensures identical `event_id` across router implementations for the same request_id + model + timestamp tuple. Retries with the same `request_id` produce identical `event_id`, enabling idempotent replay via the UNIQUE constraint on event_id.
+**event_id computation (determinism requirement):** `event_id` is computed as `SHA256(request_id || model || timestamp)` where `||` is concatenation of raw bytes. The `timestamp` is the router's Unix epoch seconds at SpendEvent creation time. This ensures identical `event_id` across router implementations for the same request_id + model + timestamp tuple. Retries with the same `request_id` produce identical `event_id`, enabling idempotent replay via the UNIQUE constraint on event_id.
 
 When the event has a `team_id`, `record_spend_ledger_with_team` is used instead, which locks team FIRST then key (deadlock prevention per RFC-0903 §Lock Ordering Invariant).
 
@@ -602,7 +602,7 @@ RFC-0917 (Dual-Mode Query Router) depends on this RFC for budget enforcement. RF
 
 The interface between RFC-0917 and RFC-0904 is the `check_budget(&ApiKey)` soft pre-check and `record_spend_ledger`/`record_spend_ledger_with_team` atomic enforcement. RFC-0917 calls these at the appropriate points in the request lifecycle, but the budget enforcement logic itself lives in this RFC.
 
-**RFC-0904 status note:** RFC-0904 is currently in **Draft** status (v1.18, 19 rounds of adversarial review). RFC-0917's Phase 4 integration with budget enforcement depends on RFC-0904 reaching **Accepted** status. RFC-0917 may operate with basic `budget_limit` enforcement (RFC-0903 only) until RFC-0904 is accepted, but full budget enforcement per this RFC (F1 alerts, F2 auto-reset, F3 OCTO-W integration) requires RFC-0904 to be Accepted.
+**RFC-0904 status note:** RFC-0904 is currently in **Draft** status (v1.20, 21 rounds of adversarial review). RFC-0917's Phase 4 integration with budget enforcement depends on RFC-0904 reaching **Accepted** status. RFC-0917 may operate with basic `budget_limit` enforcement (RFC-0903 only) until RFC-0904 is accepted, but full budget enforcement per this RFC (F1 alerts, F2 auto-reset, F3 OCTO-W integration) requires RFC-0904 to be Accepted.
 
 ## LiteLLM Compatibility
 
@@ -1072,6 +1072,7 @@ The soft check is non-locking — it's possible (though unlikely) that another c
 
 | Version | Date       | Changes                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                            |
 | ------- | ---------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 1.21    | 2026-04-22 | Round 21: fix Status header v1.19→v1.20 (Y1); fix atSpendEvent→at SpendEvent typo (Y2); update RFC-0903-C1 version v4→v5 to match Accepted RFC (Y3); update RFC-0917 version note v1.18→v2.6 to match current Draft (Y4)
 | 1.20    | 2026-04-22 | Round 20: fix Status header v1.18→v1.19 (X1); add saturating_mul to F1 alert trigger formula (X4); specify period-aligned window_start in F2 reset handler for cross-router determinism (X5/X13); document event_id computation (SHA256 of request_id\|\|model\|\|timestamp) in main spec (X11); fix remaining computation to avoid u64→i64 wrapping (X7); clarify carry_over_unused formula uses key_spend.total_spend (X14) |
 | 1.19    | 2026-04-22 | Round 19: fix Status header v1.17→v1.18 (W1); replace budget_reset_log auto-increment reset_id with composite PK (key_id, reset_time) per budget_alert_log pattern (W2); align percent_used comment in key endpoint to match team endpoint (W3); add team_id resolution note to F1 webhook spec (W5); specify FOR UPDATE lock level on team row (W8); document get_current_spend works for unlimited keys (W9); update RFC-0917 status note to reflect v1.18 progress (W10); add internal reset endpoint auth requirements (W11); add days_elapsed computation from window_start (W12) |
 | 1.18    | 2026-04-22 | Round 18: fix monthly period derivation formula (V1 — use month+1/year wrap instead of +32d); remove BudgetError::TeamRequired (deferred without spec, V2); update key_spend.key_id to BLOB(16) per RFC-0903-C1 (V3); mark Phase 3 checklist [x] (V4); add team_id to GET /admin/budget/team/{team_id} response (V6); clarify fired[].period_start vs outer period_start (V7); verify Phase 2 D1 items resolved, confirm no remaining future work (V8); remove redundant F3+F1 coincidence paragraph (V10) |
@@ -1873,6 +1874,10 @@ The RFC documented only the budget-checked version.
 | U10    | Low      | RFC-0917 integration doesn't note RFC-0904 Draft dependency                              | Fixed (noted RFC-0904 must reach Accepted before RFC-0917 Phase 4 integration)            |
 | U11    | Low      | token_source CHECK constraint vs F2 reset clarification                                   | Fixed (clarified F2 reset does NOT touch spend_ledger)                                  |
 | U12    | Low      | carry_over_unused default value inconsistent                                             | Fixed (clarified field defaults to true when absent from metadata)                      |
+| Y1    | Low      | Status header v1.19 but version history shows v1.20 — mismatch                    | Fixed (updated Status header to v1.20)                                                                   |
+| Y2    | Low      | atSpendEvent typo — missing space before "creation time"                              | Fixed (changed to "at SpendEvent creation time")                                                            |
+| Y3    | Low      | RFC-0903-C1 version v4 in Status header but Accepted RFC is v5                       | Fixed (updated Status header and Dependencies to v5)                                                |
+| Y4    | Low      | RFC-0917 status note says v1.18 but current Draft is v2.6                              | Fixed (updated note to v2.6)                                                                         |
 
 ---
 

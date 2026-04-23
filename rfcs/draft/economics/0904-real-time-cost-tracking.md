@@ -2,7 +2,7 @@
 
 ## Status
 
-Draft (v1.20 — depends on RFC-0903 Final v30, RFC-0903-B1 v23, RFC-0903-C1 v5, RFC-0909 Final, RFC-0910 Draft)
+Draft (v1.21 — depends on RFC-0903 Final v30, RFC-0903-B1 v23, RFC-0903-C1, RFC-0909 Final, RFC-0910 Draft)
 
 ## Authors
 
@@ -20,11 +20,11 @@ Define the real-time cost tracking system for the quota router, including model 
 
 **Requires:**
 
-- RFC-0903 Final v30: Virtual API Key System (schema: `api_keys.budget_limit`, `teams.budget_limit`)
-- RFC-0903-B1 v23: Schema Amendments (spend_ledger with BLOB types)
-- RFC-0903-C1 v4: Extended Schema Amendments (api_keys/teams BLOB types)
-- RFC-0909 Final: Deterministic Quota Accounting (spend_ledger, event_id, pricing_hash)
-- RFC-0910 Draft: Pricing Table Registry (pricing table structure, `compute_pricing_hash`)
+- RFC-0903: Virtual API Key System (schema: `api_keys.budget_limit`, `teams.budget_limit`)
+- RFC-0903-B1: Schema Amendments (spend_ledger with BLOB types)
+- RFC-0903-C1: Extended Schema Amendments (api_keys/teams BLOB types)
+- RFC-0909: Deterministic Quota Accounting (spend_ledger, event_id, pricing_hash)
+- RFC-0910: Pricing Table Registry (pricing table structure, `compute_pricing_hash`)
 
 **Required By:**
 
@@ -1072,6 +1072,7 @@ The soft check is non-locking — it's possible (though unlikely) that another c
 
 | Version | Date       | Changes                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                            |
 | ------- | ---------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 1.22    | 2026-04-23 | Round 22: fix RFC-0903-C1 version pin in Dependencies (Z1) — remove v5 per RFC referencing rule; update Status header to v1.21
 | 1.21    | 2026-04-22 | Round 21: fix Status header v1.19→v1.20 (Y1); fix atSpendEvent→at SpendEvent typo (Y2); update RFC-0903-C1 version v4→v5 to match Accepted RFC (Y3); update RFC-0917 version note v1.18→v2.6 to match current Draft (Y4)
 | 1.20    | 2026-04-22 | Round 20: fix Status header v1.18→v1.19 (X1); add saturating_mul to F1 alert trigger formula (X4); specify period-aligned window_start in F2 reset handler for cross-router determinism (X5/X13); document event_id computation (SHA256 of request_id\|\|model\|\|timestamp) in main spec (X11); fix remaining computation to avoid u64→i64 wrapping (X7); clarify carry_over_unused formula uses key_spend.total_spend (X14) |
 | 1.19    | 2026-04-22 | Round 19: fix Status header v1.17→v1.18 (W1); replace budget_reset_log auto-increment reset_id with composite PK (key_id, reset_time) per budget_alert_log pattern (W2); align percent_used comment in key endpoint to match team endpoint (W3); add team_id resolution note to F1 webhook spec (W5); specify FOR UPDATE lock level on team row (W8); document get_current_spend works for unlimited keys (W9); update RFC-0917 status note to reflect v1.18 progress (W10); add internal reset endpoint auth requirements (W11); add days_elapsed computation from window_start (W12) |
@@ -1878,6 +1879,7 @@ The RFC documented only the budget-checked version.
 | Y2    | Low      | atSpendEvent typo — missing space before "creation time"                              | Fixed (changed to "at SpendEvent creation time")                                                            |
 | Y3    | Low      | RFC-0903-C1 version v4 in Status header but Accepted RFC is v5                       | Fixed (updated Status header and Dependencies to v5)                                                |
 | Y4    | Low      | RFC-0917 status note says v1.18 but current Draft is v2.6                              | Fixed (updated note to v2.6)                                                                         |
+| Z1    | Low      | RFC-0903-C1 version pin in Dependencies section says v4 but Status header correctly says v5 — missed in Round 21                          | Fixed (removed version pin per RFC referencing rule; Dependencies should use RFC number only)                                          |
 
 ---
 

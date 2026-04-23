@@ -2,7 +2,7 @@
 
 ## Status
 
-Draft (v18 — aligns with RFC-0903 Final v30 + RFC-0903-B1 v23 + RFC-0903-C1 v5; fix M4 stale schema comment "first-char"→"4-char"; add o3-* UNCERTAIN; fix H1 gpt-*/clau-* scope disclaimer; add o3-mini/o3-pro to Uncertain Assignments)
+Draft (v19 — aligns with RFC-0903 Final v30 + RFC-0903-B1 v23 + RFC-0903-C1 v5; Round 25 fixes: fix C1/C2 dead "o3-" arm (never matches 4-char prefix) → add "o3-m"/"o3-p" arms; add o3-mini/o3-pro to Tokenizer Assignment Table; add o3-mini/o3-pro test vectors; fix H4 Phase 2 blocking note (both amendments now Accepted); fix H4 effective_from equal-value tiebreaker documentation)
 
 ## Authors
 
@@ -326,6 +326,8 @@ impl PricingRegistry {
             // Two registrations within the same second are valid (sequential within that second).
             // The < not <= constraint allows same-second registrations while preventing
             // a new version claiming an earlier effective timestamp than the current latest.
+            // Tiebreaker: when effective_from values are equal, version number comparison
+            // determines ordering (get_pricing returns highest version).
             if table.effective_from < latest.effective_from {
                 return Err(RegistryError::EffectiveFromNotIncrement {
                     provider: table.provider.clone(),
@@ -497,6 +499,7 @@ The canonical tokenizer registry assigns specific tokenizer versions to model fa
 | `gpt-4*`, `gpt-3.5*` | `tiktoken-cl100k_base-v1.2.3` | cl100k_base | OpenAI models |
 | `o1`, `o3` | `tiktoken-o200k_base` | o200k_base | OpenAI o-series |
 | `o1-mini`, `o1-preview` | *(see notes)* | — | Verify with provider |
+| `o3-mini`, `o3-pro` | *(see notes)* | — | Verify with provider — assignment UNCERTAIN |
 | `claude-*` | `tiktoken-cl100k_base-v1.2.3` | cl100k_base | Anthropic models |
 | `gemini-*` | *(see notes)* | — | May use SentencePiece; requires verification |
 | All other models | `tiktoken-cl100k_base-v1.2.3` | cl100k_base | Default fallback |
@@ -597,7 +600,7 @@ pub fn get_canonical_tokenizer(model: &str) -> &'static str {
             // o1, o3 — OpenAI o-series with o200k_base vocab (per Tokenizer Assignment Table)
             "tiktoken-o200k_base"
         },
-        "o3-" => {
+        "o3-m" | "o3-p" => {
             // o3-mini, o3-pro — UNCERTAIN. The Tokenizer Assignment Table does not list o3-*
             // models. o3 uses o200k_base per OpenAI general documentation, but o3-mini/o3-pro
             // may use different vocab. Default to cl100k_base to avoid false precision.
@@ -705,7 +708,7 @@ This RFC can be accepted when:
 - [x] Pricing hash test vector: compute_pricing_hash() on test table → `4a065c51147d4730379d600c4a491778b98f66a8e381c5dfdf51f42052c32f60` (DCS Entry 16 binary encoding per RFC-0126 Part 3)
 - [x] Tokenizer assignment test vectors: all rows in Tokenizer Assignment End-to-End table produce correct tokenizer_id and token_source
 - [ ] Phase 1 implemented (PricingTable + PricingRegistry + compute_cost + tokenizer functions + test vectors)
-- [ ] Phase 2 (DB-backed registry with tokenizer_assignments table) — blocked until RFC-0903-B1 and RFC-0903-C1 are Accepted; requires both amendments' BLOB(16) types
+- [ ] Phase 2 (DB-backed registry with tokenizer_assignments table) — RFC-0903-B1 (v23) and RFC-0903-C1 (v5) both Accepted; Phase 2 can proceed
 - [ ] Phase 3 (routing integration with RFC-0909) implemented
 
 ## Security Considerations
@@ -802,6 +805,8 @@ for use in `event_id` computation (RFC-0909 §compute_event_id).
 |-------|---------------------------|--------------------------|-------------|-------|
 | `"gpt-4"` | `"tiktoken-cl100k_base-v1.2.3"` | `e3c8e8ff724411c6416dd4fb135368e3` | CanonicalTokenizer | Verified |
 | `"o3"` | `"tiktoken-o200k_base"` | `be1b3be0a2698c863b31edc1b7809a9c` | CanonicalTokenizer | Verified |
+| `"o3-mini"` | `"tiktoken-cl100k_base-v1.2.3"` (default) | `e3c8e8ff724411c6416dd4fb135368e3` | CanonicalTokenizer | **UNCERTAIN** — o3-mini vocab may differ from o200k_base |
+| `"o3-pro"` | `"tiktoken-cl100k_base-v1.2.3"` (default) | `e3c8e8ff724411c6416dd4fb135368e3` | CanonicalTokenizer | **UNCERTAIN** — o3-pro vocab may differ from o200k_base |
 | `"claude-3-opus"` | `"tiktoken-cl100k_base-v1.2.3"` | `e3c8e8ff724411c6416dd4fb135368e3` | CanonicalTokenizer | Verified (4-char prefix "clau") |
 | `"gemini-2.0-flash"` | `"tiktoken-cl100k_base-v1.2.3"` (default) | `e3c8e8ff724411c6416dd4fb135368e3` | CanonicalTokenizer | **UNCERTAIN** — gemini-* may use SentencePiece |
 | `"o1-mini"` | `"tiktoken-cl100k_base-v1.2.3"` (default) | `e3c8e8ff724411c6416dd4fb135368e3` | CanonicalTokenizer | **UNCERTAIN** — o1-mini vocab differs from o200k_base |
@@ -956,6 +961,7 @@ This design allows the registry to be treated as a cache of known-good pricing s
 
 | Version | Date | Changes |
 |---------|------|---------|
+| v19 | 2026-04-23 | Round 25 fixes: fix C1/C2 dead "o3-" arm (never matches 4-char prefix) → add "o3-m"/"o3-p" arms for o3-mini/o3-pro; add o3-mini/o3-pro to Tokenizer Assignment Table with UNCERTAIN flag; add o3-mini/o3-pro test vectors; fix H4 Phase 2 blocking note (RFC-0903-B1 v23 and RFC-0903-C1 v5 both Accepted); fix H4 effective_from equal-value tiebreaker documentation (version number provides ordering when timestamps equal) |
 | v18 | 2026-04-23 | Round 24 adversarial fixes: fix M4 (stale schema comment "first-character"→"4-character" dispatch); add o3-* arm to get_canonical_tokenizer (o3-mini/o3-pro → DEFAULT_TOKENIZER with UNCERTAIN flag); add o3-mini/o3-pro to Uncertain Assignments; add scope disclaimer to gpt-* dispatch (major commercial models only); update Status header v17→v18 |
 | v17 | 2026-04-23 | Round 23 adversarial fixes: fix 0910-C1 (Determinism Requirements: remove canonical JSON/RFC 8785 reference — pricing_hash uses DCS Entry 16 binary per RFC-0126 Part 3); fix 0910-C2 (get_canonical_tokenizer: use 4-char prefix dispatch ["gem-","gpt-","o1","o1-m","o1-p","clau"] to disambiguate gpt-* from gemini-*, o1* from o1-mini/o1-preview); fix 0910-C3 (effective_from: clarify as ordering constraint expressed as Unix epoch seconds, not wall-clock timestamp; same-second registrations allowed via < not <=); fix 0910-H1 (PricingTable naming collision: add type alias guidance for dual-RFC integrations); fix 0910-H2 (register thread safety: document startup-before-serving pattern; dynamic registration needs Arc<RwLock>); fix 0910-H3 (compute_cost saturating_add: add realistic bounds analysis — not a practical overflow concern); fix 0910-H4 (Phase 2 blocked: confirmed RFC-0903-B1 and RFC-0903-C1 are both Accepted — Phase 2 can proceed); fix 0910-M1 (BLAKE3 collision: add collision detection requirement at registration time); fix 0910-M2 (Phase 2 migration: document per-model exact-match population requirement ~15-20 rows); fix 0910-M4 (metadata size limit: add MAX_METADATA_SIZE=4096 and RegistryError::MetadataTooLarge); fix 0910-M5 (get_pricing ignores effective_from: clarify effective_from is ordering constraint not time-based query); add error case test vectors; add o1-mini to tokenizer test vectors with UNCERTAIN flag |
 | v16 | 2026-04-21 | Fix RFC126-C1/C2/C3: replace canon-json pseudocode with DCS Entry 16 binary encoding — RFC-0126 §JSON Allowed Contexts explicitly forbids JSON for Merkle tree leaves; pricing_hash uses DCS Part 3 binary (field_id||value, binary integers, length-prefixed strings); fix test vector to correct DCS output `4a065c51147d4730379d600c4a491778b98f66a8e381c5dfdf51f42052c32f60` (was incorrect `076d2278...`); add ASCII/UTF-16 ordering clarification; update Status header v15→v16 |

@@ -2,7 +2,7 @@
 
 ## Status
 
-Draft (v2.8 — Round 8: fix C1 Feature Gate Architecture code block; fix H3 redundant Python::with_gil; add RouterConfig struct definition; from external adversarial review)
+Draft (v2.9 — Round 9: fix C1/C2 undefined LLMProvider/CompletionRequest types — add ProviderRequest/ProviderResponse/Message/Usage unified types, ProviderHandle enum dispatch in Router; fix C4 undefined sdk_types module — define SdkMessage/SdkUsage types; from external adversarial review)
 
 ## Authors
 
@@ -375,7 +375,7 @@ pub mod py_providers {
     /// Request type for Python SDK completions (mirrors official SDK interfaces)
     pub struct SdkCompletionRequest {
         pub model: String,
-        pub messages: Vec<sdk_types::Message>,
+        pub messages: Vec<SdkMessage>,
         pub temperature: Option<f64>,
         pub max_tokens: Option<i32>,
         pub top_p: Option<f64>,
@@ -386,8 +386,21 @@ pub mod py_providers {
     pub struct SdkCompletionResponse {
         pub id: String,
         pub model: String,
-        pub message: sdk_types::Message,
-        pub usage: sdk_types::Usage,
+        pub message: SdkMessage,
+        pub usage: SdkUsage,
+    }
+
+    /// Message format for Python SDK (simplified OpenAI-compatible format)
+    pub struct SdkMessage {
+        pub role: String,       // "user", "assistant", "system"
+        pub content: String,    // message text
+    }
+
+    /// Usage stats for Python SDK responses
+    pub struct SdkUsage {
+        pub prompt_tokens: u32,
+        pub completion_tokens: u32,
+        pub total_tokens: u32,
     }
 
     /// Request type for Python SDK embeddings
@@ -399,7 +412,7 @@ pub mod py_providers {
     /// Response type for Python SDK embeddings
     pub struct SdkEmbeddingResponse {
         pub embeddings: Vec<Vec<f32>>,
-        pub usage: sdk_types::Usage,
+        pub usage: SdkUsage,
     }
 
     // Python SDK wrappers (called via PyO3)
@@ -542,15 +555,30 @@ pub async fn completion(
 
 ### Shared Router (RFC-0902 Extension)
 
+The Router's `provider_impls` type is **feature-gated per mode**:
+
+- **LiteLLM Mode** (`HashMap<String, Arc<dyn native_http::HttpProvider>>`): reqwest HTTP forwarding to provider REST APIs
+- **any-llm Mode** (`HashMap<String, Arc<dyn py_providers::SdkProvider>>`): Python SDK delegation via PyO3 to official provider SDKs
+- **full Mode**: Provider selection is per-request via `ProviderHandle` enum — the router delegates to the appropriate strategy based on model/provider configuration
+
 ```rust
 // router/src/lib.rs
 
 pub struct Router {
     config: RouterConfig,
     providers: HashMap<String, Vec<ProviderWithState>>,
-    provider_impls: HashMap<String, Arc<dyn LLMProvider>>,
+    // Feature-gated: LiteLLM mode uses HttpProvider, any-llm mode uses SdkProvider
+    // In full builds, this HashMap stores the active strategy per provider
+    provider_impls: HashMap<String, ProviderHandle>,
     // Interior mutability for thread-safe shared state
     state: RwLock<RouterState>,
+}
+
+/// Unified provider handle for full builds (both strategies available)
+/// Routes to either HttpProvider or SdkProvider based on model/provider config
+pub enum ProviderHandle {
+    Http(Box<dyn crate::native_http::HttpProvider>),
+    Sdk(Box<dyn crate::py_providers::SdkProvider>),
 }
 
 /// Router configuration — loaded from config file path provided at startup.
@@ -578,21 +606,32 @@ impl Router {
     /// Uses interior mutability (&self) so Router::global() singleton works safely.
     pub async fn route_and_forward(
         &self,
-        request: CompletionRequest,
-    ) -> Result<CompletionResponse, RouterError> {
+        request: &ProviderRequest,
+    ) -> Result<ProviderResponse, RouterError> {
         // 1. Select provider based on routing strategy
         let provider_idx = {
             let state = self.state.read().await;
             self.route_with_strategy(&state, &request.model)?
         };
 
-        // 2. Get provider implementation
-        let provider = self.provider_impls
+        // 2. Get provider handle (Http or Sdk variant)
+        let handle = self.provider_impls
             .get(&request.provider)
             .ok_or(RouterError::UnknownProvider)?;
 
-        // 3. Forward request
-        let response = provider.completion(&request).await?;
+        // 3. Forward request via ProviderHandle dispatch
+        let response = match handle {
+            ProviderHandle::Http(http_provider) => {
+                // Convert to HttpCompletionRequest for litellm-mode providers
+                let http_req = HttpCompletionRequest::from(request);
+                http_provider.completion(&http_req).await?
+            }
+            ProviderHandle::Sdk(sdk_provider) => {
+                // Convert to SdkCompletionRequest for any-llm-mode providers
+                let sdk_req = SdkCompletionRequest::from(request);
+                sdk_provider.completion(&sdk_req).await?
+            }
+        };
 
         // 4. Update provider state (latency, usage) via interior mutability
         self.update_provider_state(provider_idx, &response).await;
@@ -602,6 +641,38 @@ impl Router {
 
     /// Shared global router for SDK mode (PyO3 bridge)
     pub fn global() -> Arc<Self> { /* ... */ }
+}
+
+/// Unified request type consumed by the router's route_and_forward method.
+/// Mode-specific request types (HttpCompletionRequest, SdkCompletionRequest)
+/// are derived from this type per the active provider strategy.
+pub struct ProviderRequest {
+    pub model: String,
+    pub provider: String,
+    pub messages: Vec<Message>,
+    pub temperature: Option<f64>,
+    pub max_tokens: Option<i32>,
+}
+
+/// Unified response type returned by the router's route_and_forward method.
+pub struct ProviderResponse {
+    pub id: String,
+    pub model: String,
+    pub message: Message,
+    pub usage: Usage,
+}
+
+/// Message format (OpenAI-compatible)
+pub struct Message {
+    pub role: String,
+    pub content: String,
+}
+
+/// Usage stats
+pub struct Usage {
+    pub prompt_tokens: u32,
+    pub completion_tokens: u32,
+    pub total_tokens: u32,
 }
 ```
 
@@ -927,25 +998,33 @@ pub async fn route_and_forward(
 ) -> Result<CompletionResponse, RouterError>
 ```
 
-**Resolution (FIXED):** Changed to interior mutability pattern with `&self`:
+**Resolution (FIXED):** Changed to interior mutability pattern with `&self` using `ProviderHandle` enum dispatch:
 
 ```rust
 pub struct Router {
     config: RouterConfig,
-    providers: HashMap<String, Arc<dyn LLMProvider>>,
-    // Interior mutability for thread-safe shared state
+    providers: HashMap<String, Vec<ProviderWithState>>,
+    // Feature-gated: uses HttpProvider (litellm-mode) or SdkProvider (any-llm-mode)
+    // full builds use ProviderHandle enum for per-request dispatch
+    provider_impls: HashMap<String, ProviderHandle>,
     state: RwLock<RouterState>,
 }
 
 pub async fn route_and_forward(
-    &self,  // <-- Now compatible with global Arc<Router> singleton
-    request: CompletionRequest,
-) -> Result<CompletionResponse, RouterError> {
+    &self,  // <-- Uses &self with interior mutability
+    request: &ProviderRequest,
+) -> Result<ProviderResponse, RouterError> {
     let provider_idx = {
         let state = self.state.read().await;
         self.route_with_strategy(&state, &request.model)?
     };
-    // ...
+    let handle = self.provider_impls.get(&request.provider).ok_or(...)?;
+    let response = match handle {
+        ProviderHandle::Http(http) => http.completion(&HttpCompletionRequest::from(request)).await?,
+        ProviderHandle::Sdk(sdk) => sdk.completion(&SdkCompletionRequest::from(request)).await?,
+    };
+    self.update_provider_state(provider_idx, &response).await;
+    Ok(response)
 }
 ```
 
@@ -2161,8 +2240,8 @@ These modules are feature-gated and cannot coexist in the same compilation unit.
 
 | Version | Date       | Changes |
 |---------|------------|---------|
+| 2.9     | 2026-04-23 | Round 9: fix C1/C2 undefined LLMProvider/CompletionRequest types — add ProviderRequest/ProviderResponse/Message/Usage unified types, ProviderHandle enum dispatch in Router; fix C4 undefined sdk_types module — define SdkMessage/SdkUsage types; from external adversarial review |
 | 2.8     | 2026-04-23 | Round 8: fix C1 Feature Gate Architecture code block (gateway/python_sdk feature gates); fix C2 dynamic module shadowing (use crate:: paths); fix H3 redundant Python::with_gil; add RouterConfig struct definition; from external adversarial review |
-| 2.7     | 2026-04-23 | Round 7: fix C1 Summary contradiction (LiteLLM Mode=HTTP only, any-llm Mode=SDK only, full=both; corrected interface gating claim); from external adversarial review |
 | 2.6     | 2026-04-21 | Round 6: A4 streaming spec; C8 provider-list parsing; C9 idempotency keys; C10 RetryPolicy; C12 dual sync/async API; C13 diagram mutual exclusivity |
 | 2.5     | 2026-04-21 | Round 5 fixes: C1 (feature gate table corrected), C2 (feature-gated provider traits), C5 (set_api_key format validation), C6/C7 (interface/module corrections) |
 | 2.4     | 2026-04-21 | Round 4: mode distinction is PROVIDER INTEGRATION STRATEGY (LiteLLM=native reqwest HTTP, any-llm=Python SDK delegation), not interface |

@@ -313,7 +313,7 @@ Once accepted:
 | RFC-0901 (Economics) | Quota Router Agent              | Draft  | Agent for routing requests        |
 | RFC-0909 (Economics) | Deterministic Quota Accounting     | Accepted | Deterministic quota accounting    |
 | RFC-0910 (Economics) | Pricing Table Registry            | Draft  | Versioned immutable pricing tables |
-| RFC-0914 (Economics) | Stoolap Partial Indexes            | Planned | `CREATE INDEX ... WHERE` support      |
+| RFC-0919 (Economics) | Stoolap Partial Indexes            | Planned | `CREATE INDEX ... WHERE` support      |
 | RFC-0950 (Economics) | Agent Mission Marketplace (AMM)     | Draft  | Mission marketplace                     |
 | RFC-0955 (Economics) | Model Liquidity Layer           | Draft  | Tokenized AI models               |
 | RFC-0956 (Economics) | Model Liquidity Layer (MLL) v2  | Draft  | Tokenized AI models (updated)     |

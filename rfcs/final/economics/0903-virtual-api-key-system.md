@@ -2088,7 +2088,7 @@ The following features are documented but NOT yet implemented:
 - F4: Team-based access control (RBAC)
 - F5: Access group management (LiteLLM compatible)
 - F6: Model-level budget controls
-- F7: **RFC-0914 Partial Indexes (Phase 2)** — Implication-based superset matching for partial index to be selected by queries. Deferred until Phase 2 implementation. Phase 1 exact-match partial indexes provide marginal storage savings (~10%) without query speedup for the superset access pattern used here. See RFC-0914 for details.
+- F7: **RFC-0919 Partial Indexes (Phase 2)** — Implication-based superset matching for partial index to be selected by queries. Deferred until Phase 2 implementation. Phase 1 exact-match partial indexes provide marginal storage savings (~10%) without query speedup for the superset access pattern used here. See RFC-0919 for details.
 
 ## Rationale
 

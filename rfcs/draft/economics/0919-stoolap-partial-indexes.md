@@ -1,4 +1,4 @@
-# RFC-0914: Stoolap Partial Indexes
+# RFC-0919: Stoolap Partial Indexes
 
 ## Status
 

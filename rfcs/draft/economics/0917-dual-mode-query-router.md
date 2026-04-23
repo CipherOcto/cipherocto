@@ -2,7 +2,7 @@
 
 ## Status
 
-Draft (v2.6 — Round 6: fix remaining issues; streaming spec complete; provider-list parsing; RetryPolicy; dual sync/async API; idempotency keys)
+Draft (v2.7 — Round 7: fix C1 Summary contradiction (interface gating); fixes from external adversarial review)
 
 ## Authors
 
@@ -14,7 +14,12 @@ Draft (v2.6 — Round 6: fix remaining issues; streaming spec complete; provider
 
 ## Summary
 
-Define a dual-mode query router that operates under Rust feature gates: **LiteLLM Mode** (native Rust HTTP forwarding to provider REST APIs, like LiteLLM's custom HTTP clients) and **any-llm Mode** (Python SDK delegation via PyO3 to official provider SDKs, like any-llm's delegation approach). The modes differ in **how providers are called**, not in which interface is exposed. Both modes can serve clients via HTTP proxy (OpenAI-compatible endpoints) and via Python SDK (`pip install`). Enterprise features (virtual keys, budgets, rate limiting, Prometheus, RFC-0903/0904/0909/0910) are available in **both** modes. The mode gate controls whether providers are called via native Rust HTTP (`reqwest`) or via official Python SDKs through PyO3.
+Define a dual-mode query router that operates under Rust feature gates: **LiteLLM Mode** (native Rust HTTP forwarding to provider REST APIs, like LiteLLM's custom HTTP clients) and **any-llm Mode** (Python SDK delegation via PyO3 to official provider SDKs, like any-llm's delegation approach). The modes differ in **how providers are called** and **which interface is exposed**:
+- **LiteLLM Mode** exposes HTTP proxy only (OpenAI-compatible endpoints).
+- **any-llm Mode** exposes Python SDK only (`pip install quota_router` → `completion()`).
+- **`full`** (both feature gates enabled) exposes **both** HTTP proxy and Python SDK simultaneously.
+
+Enterprise features (virtual keys, budgets, rate limiting, Prometheus, RFC-0903/0904/0909/0910) are available in **all** modes. The mode gate controls both provider integration strategy (`reqwest` vs. PyO3) **and** which interface is exposed (HTTP vs. SDK).
 
 ## Motivation
 
@@ -30,7 +35,7 @@ Based on `docs/research/any-llm-vs-litellm-comparison.md`:
 - **LiteLLM Mode:** Native Rust HTTP forwarding (like LiteLLM's custom HTTP approach, but in Rust) — no Python SDK dependency for provider calls, protocol control, lightweight
 - **any-llm Mode:** Python SDK delegation via PyO3 (like any-llm's SDK delegation approach) — maximum correctness via official SDKs, familiar Python API
 
-Both modes expose identical interfaces (HTTP proxy + Python SDK) and identical enterprise features. The only difference is the **provider integration strategy**.
+Enterprise features are available in all modes (interface differs per mode). The mode gate controls both the interface exposed (HTTP vs. SDK) and the provider integration strategy (`reqwest` vs. PyO3).
 
 ### The Dual-Mode Concept
 
@@ -44,14 +49,14 @@ The dual-mode architecture differentiates **how providers are called**, not whic
 | Protocol control | Full (custom HTTP implementation) | Delegated to SDK |
 | Correctness guarantee | Via audit + test | Via official SDK |
 
-**Both modes expose identical interfaces:**
+**Interface availability differs by mode:**
 
-| Interface | Availability | Description |
-|-----------|-------------|-------------|
-| HTTP proxy | Both modes | OpenAI-compatible endpoints (`/v1/chat/completions`) |
-| Python SDK | Both modes | `pip install quota_router` → `completion()` |
+| Interface | LiteLLM Mode | any-llm Mode | `full` |
+|-----------|:------------:|:------------:|:------:|
+| HTTP proxy (`/v1/chat/completions`) | ✅ | ❌ | ✅ |
+| Python SDK (`pip install`) | ❌ | ✅ | ✅ |
 
-**Both modes share identical enterprise features:**
+**Both modes enforce identical enterprise features** (interface differs by mode):
 - Virtual API keys (RFC-0903)
 - Budget enforcement (RFC-0904)
 - Rate limiting (RFC-0902)
@@ -61,7 +66,7 @@ The dual-mode architecture differentiates **how providers are called**, not whic
 - OCTO-W balance (RFC-0900)
 - stoolap persistence (RFC-0903-B1/C1)
 
-The mode gate does NOT control interface (HTTP vs SDK) or enterprise features — it controls **how providers are called internally**.
+The mode gate controls **both** interface exposure (HTTP vs. SDK) and provider integration strategy (`reqwest` vs. PyO3).
 
 ### Architectural Diagram
 
@@ -2150,6 +2155,7 @@ These modules are feature-gated and cannot coexist in the same compilation unit.
 
 | Version | Date       | Changes |
 |---------|------------|---------|
+| 2.7     | 2026-04-23 | Round 7: fix C1 Summary contradiction (LiteLLM Mode=HTTP only, any-llm Mode=SDK only, full=both; corrected interface gating claim); from external adversarial review |
 | 2.6     | 2026-04-21 | Round 6: A4 streaming spec; C8 provider-list parsing; C9 idempotency keys; C10 RetryPolicy; C12 dual sync/async API; C13 diagram mutual exclusivity |
 | 2.5     | 2026-04-21 | Round 5 fixes: C1 (feature gate table corrected), C2 (feature-gated provider traits), C5 (set_api_key format validation), C6/C7 (interface/module corrections) |
 | 2.4     | 2026-04-21 | Round 4: mode distinction is PROVIDER INTEGRATION STRATEGY (LiteLLM=native reqwest HTTP, any-llm=Python SDK delegation), not interface |

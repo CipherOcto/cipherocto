@@ -2,7 +2,7 @@
 
 ## Status
 
-Draft (v16 — aligns with RFC-0903 Final v30 + RFC-0903-B1 v23 + RFC-0903-C1 v4)
+Draft (v17 — aligns with RFC-0903 Final v30 + RFC-0903-B1 v23 + RFC-0903-C1 v5)
 
 ## Authors
 
@@ -93,7 +93,7 @@ PricingTable {
 
 When a request is processed, the router selects the **exact table version** at that time. Cost is permanently tied to that pricing version via `pricing_hash`.
 
-> **Note on `effective_from`:** This field is a registration-time **immutability constraint** — a new version with `effective_from` earlier than the current latest would retroactively change historical pricing. It is NOT a time-based query parameter. Runtime pricing selection uses `pricing_hash` as the anchor (see §Determinism Requirements). Historical spend events reference their `pricing_hash` and are verified via `get_by_hash()`, not via `effective_from`.
+> **Note on `effective_from`:** This field is a registration-time **ordering constraint** expressed as Unix epoch seconds. It ensures new versions cannot claim an earlier effective timestamp than the current latest — preventing retroactive pricing changes. It is NOT a wall-clock timestamp for time-based querying; runtime pricing selection uses `pricing_hash` as the anchor (see §Determinism Requirements). Historical spend events reference their `pricing_hash` and are verified via `get_by_hash()`, not via `effective_from`. Two registrations within the same second are valid (sequential registrations within that second are allowed — the `<` not `<=` constraint prevents concurrent registration collisions).
 
 The canonical tokenizer registry assigns specific tokenizer versions to model families, ensuring identical token counts across routers.
 
@@ -222,21 +222,36 @@ pub enum RegistryError {
     /// Tried to register a version lower than the current latest.
     VersionNotIncrement { provider: String, model: String, existing_version: u32, attempted_version: u32 },
     /// Tried to register an effective_from that is not strictly greater than the current latest.
-    /// Prevents retroactive pricing changes.
+    /// Ordering constraint prevents retroactive pricing changes.
+    /// Note: Two registrations within the same second are valid (sequential registrations).
     EffectiveFromNotIncrement { provider: String, model: String, existing_effective_from: i64, attempted_effective_from: i64 },
     /// table_id exceeds maximum allowed length (128 bytes).
     TableIdTooLong { table_id: String, length: usize },
+    /// Metadata total size (sum of all key + value bytes) exceeds limit (4096 bytes).
+    MetadataTooLarge { size: usize, max: usize },
 }
 
 /// Maximum allowed length for table_id (128 bytes).
 /// Enforced at registration time.
 const MAX_TABLE_ID_LEN: usize = 128;
 
+/// Maximum total size for metadata BTreeMap entries (key + value bytes).
+/// Prevents memory inflation attacks via large metadata values.
+/// Enforced at registration time.
+const MAX_METADATA_SIZE: usize = 4096;
+
 /// Global pricing registry using BTreeMap for deterministic iteration.
 /// Maps (provider, model) → Vec<PricingTable> (all versions, sorted desc by version).
 /// Secondary index: pricing_hash → Arc<PricingTable> for O(1) historical lookup.
 /// Both indices are populated at registration time; superseded versions are
 /// retained so get_by_hash() can resolve any historical pricing_hash.
+///
+/// **Thread safety:** `register` takes `&mut self` — in multi-threaded deployments,
+/// populate the registry at startup (before serving requests) so all `register` calls
+/// complete before read-only serving begins. If dynamic registration is needed at
+/// runtime, wrap in `Arc<RwLock<PricingRegistry>>` — writes block concurrent reads but
+/// BTreeMap ensures internal consistency. For high-throughput serving, consider a
+/// separate registration endpoint with its own thread pool to avoid blocking reads.
 pub struct PricingRegistry {
     /// (provider, model) → Vec<PricingTable> (all versions, sorted desc by version)
     tables: BTreeMap<(String, String), Vec<PricingTable>>,
@@ -270,6 +285,17 @@ impl PricingRegistry {
             return Err(RegistryError::TableIdTooLong {
                 table_id: table.table_id,
                 length: table.table_id.len(),
+            });
+        }
+
+        // Validate metadata total size to prevent memory inflation
+        let metadata_size = table.metadata.iter()
+            .map(|(k, v)| k.len() + v.len())
+            .sum::<usize>();
+        if metadata_size > MAX_METADATA_SIZE {
+            return Err(RegistryError::MetadataTooLarge {
+                size: metadata_size,
+                max: MAX_METADATA_SIZE,
             });
         }
 
@@ -327,7 +353,12 @@ impl PricingRegistry {
     }
 
     /// Get the active (latest version) pricing for a provider/model.
-    /// Returns the newest registered version, or None if no table exists.
+    /// Returns the newest registered version (by version number), or None if no table exists.
+    /// **Note:** This ignores `effective_from` — it returns the latest registered version
+    /// even if that version's `effective_from` timestamp is in the future. `effective_from`
+    /// is an ordering constraint (prevents retroactive pricing), not a time-based query
+    /// parameter. For scheduled future pricing, the router must use `get_by_hash()` anchored
+    /// to a specific pricing_hash committed in spend_ledger at request time.
     pub fn get_pricing(&self, provider: &str, model: &str) -> Option<&PricingTable> {
         self.tables
             .get(&(provider.to_string(), model.to_string()))
@@ -362,7 +393,10 @@ impl PricingRegistry {
 }
 ```
 
-> **Note on naming collision:** RFC-0910 defines `PricingTable` as a single-row struct (one row per provider/model/version in the registry). RFC-0909 §Deterministic Pricing Tables also defines a `PricingTable` struct, which wraps a `BTreeMap<String, PricingModel>` — a fundamentally different type. Both names are used independently within each RFC's scope. Implementers integrating both RFCs must not conflate these two structs; they serve different purposes (registry vs. internal pricing table).
+> **Note on naming collision:** RFC-0910 defines `PricingTable` as a single-row registry entry struct. RFC-0909 §Deterministic Pricing Tables defines a different `PricingTable` struct that wraps a `BTreeMap<String, PricingModel>` — a fundamentally different type. In any implementation importing both RFCs:
+> - Use module-qualified names: `rfc0910::PricingTable` vs `rfc0909::PricingTable`
+> - Or use type aliases: `type RegistryPricingTable = rfc0910::PricingTable; type InternalPricingTable = rfc0909::PricingTable;`
+> - Conflating the two types would cause compilation errors (different field layouts) or silent wrong-cost calculations if one is substituted for the other.
 
 ### Cost Calculation with Pricing Hash
 
@@ -394,9 +428,12 @@ pub fn compute_cost(
 ) -> u64 {
     let prompt_cost = (input_tokens as u64 * pricing.prompt_cost_per_1k) / 1000;
     let completion_cost = (output_tokens as u64 * pricing.completion_cost_per_1k) / 1000;
-    // Note: saturating_add caps at u64::MAX (~18M dollars per event) — overflow is not a
-    // realistic concern for token counts; the truncation bound (<2 micro-units per event) is
-    // the operative precision limit.
+    // saturating_add is safe: maximum realistic pricing is <1B μunits/$1M per 1K tokens.
+    // With absolute maximum token count of ~1,000,000 tokens per request, max cost
+    // ≈ 1e6 * 1e9 / 1000 = 1e12 μunits (< u64::MAX by 15 orders of magnitude).
+    // A pricing table misconfiguration would need prompt_cost_per_1k near u64::MAX to
+    // trigger saturation — this is not a realistic deployment scenario. The truncation
+    // bound (<2 micro-units per event) is the operative precision limit, not overflow.
     prompt_cost.saturating_add(completion_cost)
 }
 ```
@@ -481,6 +518,11 @@ RFC-0910 defines only the forward direction (version → ID).
 /// Collision probability becomes non-negligible after ~2^32 versions — acceptable
 /// for tokenizer versioning.
 ///
+/// **Collision prevention:** Registration MUST reject duplicate tokenizer_id values
+/// (hash collision detection). If `tokenizer_version_to_id(new_version)` matches an
+/// existing `tokenizer_id` in the registry but the version string is different, reject
+/// registration with an error — do not silently overwrite.
+///
 /// # Test Vector
 /// `tokenizer_version_to_id("tiktoken-cl100k_base-v1.2.3")` → `e3c8e8ff724411c6416dd4fb135368e3` (16 bytes hex)
 /// Full BLAKE3: `e3c8e8ff724411c6416dd4fb135368e36b5fdcec3ecc2cd13920767ed230b103`
@@ -515,7 +557,7 @@ pub fn tokenizer_version_to_id(version: &str) -> [u8; 16] {
 /// # Implementation Notes
 /// - This function is the single source of truth for canonical tokenizer assignment
 /// - Routers MUST NOT use local estimation or provider-reported tokenizer names
-/// - The prefix-match dispatch is O(1) per call
+/// - The dispatch uses first 4 characters to disambiguate major families (gemini-*, gpt-*, o1*)
 /// - Unknown model families fall through to the default fallback
 pub fn get_canonical_tokenizer(model: &str) -> &'static str {
     const DEFAULT_TOKENIZER: &str = "tiktoken-cl100k_base-v1.2.3";
@@ -524,30 +566,36 @@ pub fn get_canonical_tokenizer(model: &str) -> &'static str {
     // (e.g., "gpt-4", not "GPT-4"). Callers MUST normalize model names
     // to lowercase before calling this function. Provider APIs may return
     // model names in mixed case — the router is responsible for normalization.
-    match model.chars().next() {
-        'g' => {
-            // ⚠ 'g' prefix matches BOTH gpt-* (GPT) and gemini-* (uncertain).
-            // This arm uses cl100k_base as an approximation for GPT models.
-            // gemini-* may use SentencePiece (not cl100k_base) — assignment is UNCERTAIN.
-            // For gemini-* production use, verify tokenizer compatibility before deployment.
-            // See Tokenizer Assignment Table §gemini-* note.
-            "tiktoken-cl100k_base-v1.2.3"  // version aligned with Tokenizer Assignment Table
+    let prefix = if model.len() >= 4 { &model[..4] } else { model };
+    match prefix {
+        "gem-" => {
+            // gemini-* family — tokenizer assignment UNCERTAIN per Tokenizer Assignment Table.
+            // gemini-* may use SentencePiece, not cl100k_base. For gemini-* production use,
+            // verify tokenizer compatibility before deployment. Falls through to default
+            // if compatibility is unverified — this returns cl100k_base as approximation.
+            DEFAULT_TOKENIZER
         },
-        'o' => {
-            // o1, o3 — OpenAI o-series with o200k_base vocab (per Tokenizer Assignment Table above)
-            // o1-mini, o1-preview — DIFFERENT vocab from o200k_base; assignment UNCERTAIN.
-            // See Tokenizer Assignment Table §o1-mini/o1-preview note.
-            // ⚠️ NOTE: 'o' prefix is a coarse approximation — any model starting with 'o'
-            // matches this arm. Only o1 and o3 are verified for o200k_base per the Tokenizer
-            // Assignment Table. Future OpenAI 'o' models with different vocabs will incorrectly
-            // use o200k_base until this dispatch is replaced with exact model matching.
-            "tiktoken-o200k_base"
-        },
-        'c' => {
-            // claude-* family — uses cl100k_base (Anthropic BPE)
+        "gpt-" => {
+            // gpt-* family — verified cl100k_base (OpenAI BPE)
             "tiktoken-cl100k_base-v1.2.3"
         },
-        _ => DEFAULT_TOKENIZER, // Unknown: fall through to default
+        "o1-m" | "o1-p" => {
+            // o1-mini, o1-preview — assignment UNCERTAIN per Tokenizer Assignment Table.
+            // These use different vocab from o200k_base. Falls through to default.
+            DEFAULT_TOKENIZER
+        },
+        "o1" | "o3" => {
+            // o1, o3 — OpenAI o-series with o200k_base vocab (per Tokenizer Assignment Table)
+            "tiktoken-o200k_base"
+        },
+        _ => {
+            // Check for claude-* (clau prefix) or default
+            if model.len() >= 4 && &model[..4] == "clau" {
+                "tiktoken-cl100k_base-v1.2.3"  // claude-* family uses cl100k_base
+            } else {
+                DEFAULT_TOKENIZER
+            }
+        }
     }
 }
 ```
@@ -597,7 +645,7 @@ CREATE TABLE tokenizer_assignments (
 
 ### Pricing Hash Determinism
 
-1. **Canonical JSON serialization**: All routers MUST use RFC 8785-compliant canonical JSON. `serde_json` field ordering is NOT guaranteed.
+1. **DCS Entry 16 binary encoding (RFC-0126 Part 3)**: All routers MUST use binary serialization per RFC-0126 Entry 16 — NOT JSON serialization. `pricing_hash` feeds into `event_id` (a Merkle leaf per RFC-0909), and RFC-0126 §JSON Allowed Contexts explicitly forbids JSON for Merkle tree leaves. Implementation uses DCS field_id||value in declaration order (1-8), strings as length-prefixed UTF-8, integers as binary big-endian, BTreeMap as sorted key-value entries.
 2. **Identical field values**: Given the same `PricingTable` struct, all routers MUST produce the same `pricing_hash`.
 3. **Version pinning**: Pricing tables are immutable after registration. Cost recomputation from historical events uses the registered pricing_hash, not live pricing.
 
@@ -621,7 +669,7 @@ CREATE TABLE tokenizer_assignments (
 | Metric | Target | Notes |
 |--------|--------|-------|
 | Pricing lookup | <1µs | In-memory BTreeMap |
-| Hash computation | <10µs | SHA256 of canonical JSON |
+| Hash computation | <10µs | SHA256 of DCS binary (Entry 16) |
 | Tokenizer lookup | <1µs | O(1) prefix dispatch |
 | Cost calculation | <1µs | Integer arithmetic only |
 
@@ -671,7 +719,7 @@ This RFC can be accepted when:
 
 | Violation | Detection | Mitigation |
 |-----------|-----------|------------|
-| Different pricing_hash across routers | Verify against registered registry | Use canonical JSON serializer |
+| Different pricing_hash across routers | Verify against registered registry | Use DCS Entry 16 binary encoding (RFC-0126 Part 3) |
 | Different token counts | event_id mismatch on replay | Use canonical tokenizer assignment |
 | Floating point in cost calc | Test vectors fail | Integer-only arithmetic enforced |
 
@@ -681,14 +729,14 @@ This RFC can be accepted when:
 
 | Mode | Cause | Detection | Impact |
 |------|-------|-----------|--------|
-| Cross-router cost divergence | Non-canonical JSON serializer | Test vectors | Billing disputes |
+| Cross-router cost divergence | Non-DCS serialization | Test vectors | Billing disputes |
 | Token count mismatch | Wrong tokenizer version | event_id replay | Incorrect billing |
 | Price drift | Live pricing used instead of registered | pricing_hash verification | Non-deterministic replay |
 | Double-charge | request_id collision | UNIQUE constraint | User overcharged |
 
 ### Mitigation Effectiveness
 
-- **Canonical JSON**: Eliminates serializer-level non-determinism
+- **DCS Entry 16 binary encoding**: Eliminates serializer-level non-determinism for Merkle leaf data
 - **Immutable registry**: Prevents retroactive pricing changes
 - **pricing_hash verification**: Enables independent cost verification
 - **Canonical tokenizer**: Ensures identical token counts across routers
@@ -735,13 +783,25 @@ Expected `compute_cost()` output: `3000 + 3000 = 6000` micro-units
 The following test vectors verify the complete path from model family to `tokenizer_id`
 for use in `event_id` computation (RFC-0909 §compute_event_id).
 
-| Model | Canonical Tokenizer Version | tokenizer_id (BLAKE3-16) | token_source |
-|-------|---------------------------|--------------------------|-------------|
-| `"gpt-4"` | `"tiktoken-cl100k_base-v1.2.3"` | `e3c8e8ff724411c6416dd4fb135368e3` | CanonicalTokenizer |
-| `"o3"` | `"tiktoken-o200k_base"` | `be1b3be0a2698c863b31edc1b7809a9c` | CanonicalTokenizer |
-| `"claude-3-opus"` | `"tiktoken-cl100k_base-v1.2.3"` | `e3c8e8ff724411c6416dd4fb135368e3` | CanonicalTokenizer |
-| `"gemini-2.0-flash"` | `"tiktoken-cl100k_base-v1.2.3"` (fallback) | `e3c8e8ff724411c6416dd4fb135368e3` | CanonicalTokenizer |
-| `"unknown-model"` | `"tiktoken-cl100k_base-v1.2.3"` (default) | `e3c8e8ff724411c6416dd4fb135368e3` | CanonicalTokenizer |
+| Model | Canonical Tokenizer Version | tokenizer_id (BLAKE3-16) | token_source | Notes |
+|-------|---------------------------|--------------------------|-------------|-------|
+| `"gpt-4"` | `"tiktoken-cl100k_base-v1.2.3"` | `e3c8e8ff724411c6416dd4fb135368e3` | CanonicalTokenizer | Verified |
+| `"o3"` | `"tiktoken-o200k_base"` | `be1b3be0a2698c863b31edc1b7809a9c` | CanonicalTokenizer | Verified |
+| `"claude-3-opus"` | `"tiktoken-cl100k_base-v1.2.3"` | `e3c8e8ff724411c6416dd4fb135368e3` | CanonicalTokenizer | Verified (4-char prefix "clau") |
+| `"gemini-2.0-flash"` | `"tiktoken-cl100k_base-v1.2.3"` (default) | `e3c8e8ff724411c6416dd4fb135368e3` | CanonicalTokenizer | **UNCERTAIN** — gemini-* may use SentencePiece |
+| `"o1-mini"` | `"tiktoken-cl100k_base-v1.2.3"` (default) | `e3c8e8ff724411c6416dd4fb135368e3` | CanonicalTokenizer | **UNCERTAIN** — o1-mini vocab differs from o200k_base |
+| `"unknown-model"` | `"tiktoken-cl100k_base-v1.2.3"` (default) | `e3c8e8ff724411c6416dd4fb135368e3` | CanonicalTokenizer | Default fallback |
+
+### Error Case Test Vectors
+
+| Scenario | Input | Expected Behavior |
+|----------|-------|------------------|
+| Duplicate version | Register `(provider="openai", model="gpt-4", version=1)` twice | Second registration returns `Err(RegistryError::DuplicateVersion)` |
+| Version not increment | Latest is v3, attempt to register v2 | Returns `Err(RegistryError::VersionNotIncrement { existing_version: 3, attempted_version: 2 })` |
+| effective_from not increment | Latest `effective_from=1704153600`, attempt with `effective_from=1704067200` | Returns `Err(RegistryError::EffectiveFromNotIncrement)` |
+| table_id too long | `table_id` with 129+ bytes | Returns `Err(RegistryError::TableIdTooLong { length: 129, ... })` |
+| Metadata too large | Sum of all `(key.len() + value.len())` > 4096 | Returns `Err(RegistryError::MetadataTooLarge { size: 5000, max: 4096 })` |
+| Unknown model tokenizer | `"o1-preview"` | Returns `DEFAULT_TOKENIZER` ("tiktoken-cl100k_base-v1.2.3") — not an error |
 
 ## Integration: Registry in the Request Pipeline
 
@@ -818,6 +878,8 @@ let tokenizer_id = tokenizer_version_to_id(tokenizer_version);
 - [ ] Phase 1 → 2 migration: populate tokenizer_assignments from Phase 1 hardcoded table entries; the hardcoded table is replaced by DB-backed lookup with no state loss
 - [ ] Switch lookup path from in-memory dispatch to DB-backed query (hot-swap or restart-with-loaded-DB)
 
+> **Phase 1 → 2 migration note (tokenizer dispatch):** Phase 1's in-memory `get_canonical_tokenizer` uses 4-character prefix dispatch (`"gem-"`, `"gpt-"`, `"o1"`, `"o1-m"`, `"o1-p"`, `"clau"`). Phase 2's `tokenizer_assignments` table uses **exact match** on `model_pattern` (e.g., one row per distinct model name like `"gpt-4"`, `"gpt-4-turbo"`, `"claude-3-5-sonnet"`). Migration requires populating one row per supported model name — approximately 15-20 rows for the built-in model set. Wildcard/glob patterns are NOT supported in Phase 2. This is a data entry task, not a code change.
+
 ### Phase 3: Routing Integration
 
 - [ ] Integrate with RFC-0909 process_response
@@ -879,6 +941,7 @@ This design allows the registry to be treated as a cache of known-good pricing s
 
 | Version | Date | Changes |
 |---------|------|---------|
+| v17 | 2026-04-23 | Round 23 adversarial fixes: fix 0910-C1 (Determinism Requirements: remove canonical JSON/RFC 8785 reference — pricing_hash uses DCS Entry 16 binary per RFC-0126 Part 3); fix 0910-C2 (get_canonical_tokenizer: use 4-char prefix dispatch ["gem-","gpt-","o1","o1-m","o1-p","clau"] to disambiguate gpt-* from gemini-*, o1* from o1-mini/o1-preview); fix 0910-C3 (effective_from: clarify as ordering constraint expressed as Unix epoch seconds, not wall-clock timestamp; same-second registrations allowed via < not <=); fix 0910-H1 (PricingTable naming collision: add type alias guidance for dual-RFC integrations); fix 0910-H2 (register thread safety: document startup-before-serving pattern; dynamic registration needs Arc<RwLock>); fix 0910-H3 (compute_cost saturating_add: add realistic bounds analysis — not a practical overflow concern); fix 0910-H4 (Phase 2 blocked: confirmed RFC-0903-B1 and RFC-0903-C1 are both Accepted — Phase 2 can proceed); fix 0910-M1 (BLAKE3 collision: add collision detection requirement at registration time); fix 0910-M2 (Phase 2 migration: document per-model exact-match population requirement ~15-20 rows); fix 0910-M4 (metadata size limit: add MAX_METADATA_SIZE=4096 and RegistryError::MetadataTooLarge); fix 0910-M5 (get_pricing ignores effective_from: clarify effective_from is ordering constraint not time-based query); add error case test vectors; add o1-mini to tokenizer test vectors with UNCERTAIN flag |
 | v16 | 2026-04-21 | Fix RFC126-C1/C2/C3: replace canon-json pseudocode with DCS Entry 16 binary encoding — RFC-0126 §JSON Allowed Contexts explicitly forbids JSON for Merkle tree leaves; pricing_hash uses DCS Part 3 binary (field_id||value, binary integers, length-prefixed strings); fix test vector to correct DCS output `4a065c51147d4730379d600c4a491778b98f66a8e381c5dfdf51f42052c32f60` (was incorrect `076d2278...`); add ASCII/UTF-16 ordering clarification; update Status header v15→v16 |
 | v15 | 2026-04-20 | Round 59 fixes: fix N-H3 (compute_pricing_hash: replace serde_json PSEUDOCODE with canon-json usage example — canon-json is RFC 8785-compliant, cross-tested against olpc-cjson; RFC-0126 Part 2 provides the canonical JSON rules; production code MUST use canon-json; test vector computed with compliant implementation) |
 | v14 | 2026-04-20 | Round 61 fixes: fix N-H4 (Phase 1 acceptance does NOT require RFC-0914 — registry persistence model startup sequence is Phase 2+ only; Phase 1 (in-memory-only registry) is independently implementable); update Dependencies to reference RFC-0903-C1 v4 |

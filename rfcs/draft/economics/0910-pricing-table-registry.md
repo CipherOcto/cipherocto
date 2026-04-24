@@ -2,7 +2,7 @@
 
 ## Status
 
-Draft (v23)
+Draft (v24)
 
 ## Authors
 
@@ -882,7 +882,7 @@ for use in `event_id` computation (RFC-0909 §compute_event_id).
 | Metadata too large | Sum of all `(key.len() + value.len())` > 4096 | Returns `Err(RegistryError::MetadataTooLarge { size: 5000, max: 4096 })` |
 | Too many versions | Register 1001st version for a single (provider, model) | Returns `Err(RegistryError::TooManyVersions { current_count: 1000, max: 1000 })` |
 | Cost overflow | `compute_cost` with pricing values that overflow u64 | Returns `Err(CostError::Overflow { ... })` — checked_add instead of saturating_add |
-| Unknown model tokenizer | `"o1-preview"` | Returns `DEFAULT_TOKENIZER` ("tiktoken-cl100k_base-v1.2.3") — not an error |
+| Unknown model tokenizer | `"nonexistent-model-v2"` | Returns `DEFAULT_TOKENIZER` ("tiktoken-cl100k_base-v1.2.3") — not an error |
 
 ## Integration: Registry in the Request Pipeline
 
@@ -1022,8 +1022,8 @@ This design allows the registry to be treated as a cache of known-good pricing s
 
 | Version | Date | Changes |
 |---------|------|---------|
+| v23    | 2026-04-24 | Round 34: fix Critical o1-preview error-case test vector — changed input from "o1-preview" (a known model in EXACT_TABLE) to "nonexistent-model-v2" (truly unknown) to test actual fallback path; o1-preview is known and would return o200k_base via exact match, not DEFAULT_TOKENIZER |
 | v22    | 2026-04-24 | Round 33: fix critical tokenizer_id mismatch — o1-mini test vector had wrong tokenizer_id (be1b3be07264be1b95d6c2f8405ca8d1 instead of be1b3be0a2698c863b31edc1b7809a9c); now matches tokenizer_id for tiktoken-o200k_base; this was a leftover from previous assignment |
-| v21    | 2026-04-24 | Round 30: fix 2.1 (Critical) — align o1-mini test vector with EXACT_TABLE: update tokenizer from "tiktoken-cl100k_base-v1.2.3" to "tiktoken-o200k_base", tokenizer_id from e3c8e8ff... to be1b3be0...; both EXACT_TABLE and test vector now mark o1-mini UNCERTAIN (o-series family) |
 | v20 | 2026-04-23 | Round 26 fixes: fix 1.2/1.3 o3-mini/o3-pro tokenizer three-way inconsistency — EXACT_TABLE now matches test vectors (cl100k_base); Tokenizer Assignment Table row updated; o1-mini corrected to o200k_base; fix 3.3 (saturating_add → checked_add with CostError::Overflow); fix 3.2 (MAX_VERSIONS_PER_MODEL=1000 + TooManyVersions error); fix 3.4 (case-insensitive prefix fallback via model.to_lowercase()); from comprehensive adversarial review |
 | v19 | 2026-04-23 | Round 25 fixes: fix C1/C2 dead "o3-" arm (never matches 4-char prefix) → add "o3-m"/"o3-p" arms for o3-mini/o3-pro; add o3-mini/o3-pro to Tokenizer Assignment Table with UNCERTAIN flag; add o3-mini/o3-pro test vectors; fix H4 Phase 2 blocking note (RFC-0903-B1 v23 and RFC-0903-C1 v5 both Accepted); fix H4 effective_from equal-value tiebreaker documentation (version number provides ordering when timestamps equal) |
 | v18 | 2026-04-23 | Round 24 adversarial fixes: fix M4 (stale schema comment "first-character"→"4-character" dispatch); add o3-* arm to get_canonical_tokenizer (o3-mini/o3-pro → DEFAULT_TOKENIZER with UNCERTAIN flag); add o3-mini/o3-pro to Uncertain Assignments; add scope disclaimer to gpt-* dispatch (major commercial models only); update Status header v17→v18 |

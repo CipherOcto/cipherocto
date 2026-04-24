@@ -2,7 +2,7 @@
 
 ## Status
 
-Final (v33 - Stoolap compatibility)
+Final (v34 - Stoolap compatibility)
 
 ## Authors
 
@@ -1654,7 +1654,7 @@ pub fn record_spend_with_event(
                 TokenSource::ProviderUsage => "provider_usage",
                 TokenSource::CanonicalTokenizer => "canonical_tokenizer",
             },
-            event.tokenizer_id.map(|id| uuid_to_blob_16(&id)),
+            event.tokenizer_id.map(|id| id.to_vec()),
         ],
     )?;
 
@@ -1872,7 +1872,7 @@ pub fn record_spend(
                 TokenSource::ProviderUsage => "provider_usage",
                 TokenSource::CanonicalTokenizer => "canonical_tokenizer",
             },
-            event.tokenizer_id.map(|id| uuid_to_blob_16(&id)),
+            event.tokenizer_id.map(|id| id.to_vec()),
             event.provider_usage_json,
             event.timestamp,
         ],
@@ -1963,7 +1963,7 @@ pub fn record_spend_with_team(
                 TokenSource::ProviderUsage => "provider_usage",
                 TokenSource::CanonicalTokenizer => "canonical_tokenizer",
             },
-            event.tokenizer_id.map(|id| uuid_to_blob_16(&id)),
+            event.tokenizer_id.map(|id| id.to_vec()),
             event.provider_usage_json,
             event.timestamp,
         ],
@@ -2276,6 +2276,12 @@ pub fn check_team_key_limit(db: &Database, team_id: &Uuid) -> Result<(), KeyErro
 ---
 
 ## Changelog
+
+- **v34 (2026-04-24):** Fix Critical compilation bug — replace `uuid_to_blob_16(&id)` with `id.to_vec()` for `tokenizer_id` field in all INSERT calls:
+  - `record_spend()` at line 1657 — was `uuid_to_blob_16(&id)` expecting `Uuid`, now `id.to_vec()` for `[u8; 16]`
+  - `record_spend_with_team()` at line 1875 — same fix
+  - `record_spend_with_event()` at line 1966 — same fix (deprecated but still present)
+  - `[u8; 16].to_vec()` copies raw bytes into `Vec<u8>` for `BYTEA(16)` / `BLOB(16)` storage
 
 - **v33 (2026-04-24):** Correct tokenizer_id type — revert from `Option<Uuid>` to `Option<[u8; 16]>` per RFC-0909 and RFC-0903-B1:
   - Changed `SpendEvent.tokenizer_id: Option<Uuid>` → `Option<[u8; 16]>` (opaque 16-byte binary, not UUID)

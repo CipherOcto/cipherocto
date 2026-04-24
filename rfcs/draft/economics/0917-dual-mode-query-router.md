@@ -2,7 +2,7 @@
 
 ## Status
 
-Draft (v2.16 — Round 30: fix 4.2 (Medium) — remove misleading "same derivation pattern as RFC-0903 virtual key generation" from SDK mode key derivation; clarify HMAC-SHA256 rationale (arbitrary provider key input, not virtual key object); add note that HMAC-SHA256 is used (not BLAKE3) because input is arbitrary provider key string)
+Draft (v2.17 — Round 32: fix R2-5 (Design) per deferred-work rule — add QuotaRouterError unified error type to Phase 3 checklist; must be spec-ed (not just "deferred") per memory/deferred-vs-unspecified.md; defines enum wrapper with From implementations for KeyError, BudgetError, RouterError, StorageError; retrofitted across RFC-0903/0904/0909/0910/0917)
 
 ## Authors
 
@@ -933,6 +933,7 @@ py-o3 = ["dep:pyo3", "dep:pyo3-ffi"]
 - [ ] `get_budget_status()` — returns current spend vs limit
 - [ ] `get_metrics()` — returns Prometheus metrics dict
 - [ ] Model string parsing (both `provider/model` and `provider:model` formats)
+- [ ] **QuotaRouterError unified error type** — define `enum QuotaRouterError { Key(KeyError), Budget(BudgetError), Router(RouterError), Storage(StorageError), ... }` with `From` implementations; retrofitted across all public API return types in RFC-0903, RFC-0904, RFC-0909, RFC-0910, and RFC-0917; maps to HTTP status codes (Python: `QuotaRouterException` subclass)
 
 ## Alternatives Considered
 
@@ -2275,6 +2276,7 @@ In `full` builds, both modules are compiled simultaneously and selected at runti
 
 | Version | Date       | Changes |
 |---------|------------|---------|
+| 2.17    | 2026-04-24 | Round 32: fix R2-5 (Design) per deferred-work rule — add QuotaRouterError unified error type to Phase 3 checklist; must be spec-ed (not just "deferred") per memory/deferred-vs-unspecified.md; defines enum wrapper with From implementations for KeyError, BudgetError, RouterError, StorageError; retrofitted across RFC-0903/0904/0909/0910/0917 |
 | 2.16    | 2026-04-24 | Round 30: fix 4.2 (Medium) — remove misleading "same derivation pattern as RFC-0903 virtual key generation" from SDK mode key derivation; clarify HMAC-SHA256 rationale (arbitrary provider key input, not virtual key object); add note that HMAC-SHA256 is used (not BLAKE3) because input is arbitrary provider key string |
 | 2.13    | 2026-04-23 | Round 13: fix 1.1 virtual keys self-contradiction — virtual keys apply to HTTP proxy callers only (Python SDK callers bypass proxy, no virtual key enforcement in any SDK path); corrected Summary and enterprise feature list; from comprehensive adversarial review |
 | 2.12    | 2026-04-23 | Round 12: fix 1.1 virtual keys self-contradiction — clarify in Summary and enterprise feature list that virtual keys (RFC-0903) apply only in LiteLLM Mode HTTP proxy, not in any-llm Mode SDK; from comprehensive adversarial review |

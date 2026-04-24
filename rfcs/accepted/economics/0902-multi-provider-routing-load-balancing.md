@@ -123,7 +123,7 @@ class RoutingStrategy(enum.Enum):
     PROVIDER_BUDGET_LIMITING = "provider-budget-routing"
 ```
 
-### Configuration
+> **ProviderBudgetLimiting disposition:** This strategy (per-provider budget limits) is **out of scope** for this RFC. It is not present in the Rust `RoutingStrategy` enum above. Rationale: Per-provider budget limiting is a separate enforcement dimension from request routing — it is handled by the budget enforcement layer (RFC-0904) rather than the routing layer. `CostBased` routing (lowest-cost provider selection) is the closest equivalent in scope and is included. `ProviderBudgetLimiting` would require a per-provider quota management system that is beyond this RFC's scope.
 
 ```yaml
 # router_settings in config.yaml
@@ -198,10 +198,15 @@ struct ProviderState {
     name: String,
     status: ProviderStatus,  // Available, RateLimited, Error, Cooldown
 
-    // Metrics
+    // Metrics — all integer to avoid floating-point non-determinism (per RFC-0104)
     active_requests: u32,
-    avg_latency_ms: f64,
-    success_rate: f64,
+    /// Rolling average latency in microseconds (integer). Updated via integer rolling average
+    /// computation. Display/alerting can convert to ms via division if needed.
+    avg_latency_us: u64,
+    /// Success and total counts (integer). Ratio computed at display time only —
+    /// never used for routing decisions (avoids f64 non-determinism per RFC-0104).
+    success_count: u64,
+    total_count: u64,
 
     // Rate limiting (LiteLLM-inspired)
     rpm_limit: u32,          // Requests per minute limit
@@ -341,10 +346,17 @@ Multi-provider routing is essential for:
 3. **Rate limit avoidance** - Distribute across providers
 4. **LiteLLM migration** - Match LiteLLM's routing capabilities
 
+### Determinism Note (NM-2)
+
+**Architectural tension:** RFC-0902 requires routing **diversity** (different routers may select different providers for load distribution), while RFC-0909 requires routing **determinism** (same `provider` per request for `event_id` stability). These requirements can conflict when `LatencyBased` or `UsageBased` strategies select different providers on different router instances.
+
+**Resolution:** RFC-0909's `event_id` determinism applies to **identical requests processed by the same router instance** (enabling idempotent replay via `UNIQUE(key_id, request_id)`). Cross-router `event_id` convergence is not a stated RFC-0909 requirement — different router instances may record different `provider` values for the same logical request, producing different `event_id` values, but each individual router's `event_id` is deterministic for its own request history. The deduplication key `(key_id, request_id)` handles cross-router duplicate detection at the storage layer. `CostBased` routing (selecting lowest-cost provider) is the strategy most likely to produce consistent cross-router selections for the same model/pricing inputs, and is recommended when cross-router `event_id` consistency is desired.
+
 ## Version History
 
 | Version | Date       | Changes |
 | ------- | ---------- | --------|
+| 1.3     | 2026-04-24 | Round 36: fix NH-1 (avg_latency_ms: f64→avg_latency_us: u64, success_rate: f64→success_count/total_count: u64 — eliminate floating-point non-determinism per RFC-0104); fix NM-6 (document ProviderBudgetLimiting as explicitly out of scope); fix NM-2 (add determinism note on routing diversity vs RFC-0909 event_id stability) |
 | 1.0     | 2026-03-12 | Initial draft with LiteLLM research |
 | 1.1     | 2026-03-12 | Moved to Draft, added routing strategies, fallback mechanisms |
 | 1.2     | 2026-03-12 | Changed to Accepted status |

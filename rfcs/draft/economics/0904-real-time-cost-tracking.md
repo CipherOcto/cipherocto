@@ -2,7 +2,7 @@
 
 ## Status
 
-Draft (v1.26)
+Draft (v1.27)
 
 ## Authors
 
@@ -103,43 +103,33 @@ RFC-0909 uses `cost_amount BIGINT NOT NULL` in spend_ledger. This RFC specifies 
 
 ### Cost Calculation
 
-**Per RFC-0910 §Cost Computation:**
+**Delegates to RFC-0910 §Cost Computation:**
 
 ```rust
-/// TOKEN_SCALE = 1000 (tokens per pricing unit)
-/// pricing.prompt_cost_per_1k is in μunits per 1000 tokens
-///
-/// Example: prompt_cost_per_1k = 10000 μunits = $0.01 per 1K tokens
-/// 1500 input tokens: (1500 × 10000) / 1000 = 15000 μunits = $0.015
-///
-/// Uses integer division (truncates toward zero).
-/// Maximum truncation error: <1 pricing unit per component (<1000 μunits).
-const TOKEN_SCALE: u64 = 1000;
-
-/// Compute cost in micro-units from token counts and pricing.
-/// Returns cost_amount for spend_ledger.
-///
-/// # Errors
-/// Returns `BudgetError::CostOverflow` if the computation overflows u64
-/// (would require prompt_cost_per_1k or completion_cost_per_1k near u64::MAX).
+// compute_cost delegates to rfc0910::compute_cost (RFC-0910 §Cost Calculation).
+// Uses the same integer arithmetic (checked_mul, checked_div, checked_add).
+// Error conversion: CostError::Overflow → BudgetError::CostOverflow.
 pub fn compute_cost(
     pricing: &PricingModel,
     input_tokens: u32,
     output_tokens: u32,
 ) -> Result<u64, BudgetError> {
-    // prompt_cost = input_tokens × prompt_cost_per_1k / TOKEN_SCALE
-    let prompt_cost = (input_tokens as u64)
-        .checked_mul(pricing.prompt_cost_per_1k)
-        .ok_or(BudgetError::CostOverflow)?
-        / TOKEN_SCALE;
+    rfc0910::compute_cost(pricing, input_tokens, output_tokens)
+        .map_err(|e| match e {
+            CostError::Overflow { .. } => BudgetError::CostOverflow,
+        })
+}
+```
 
-    // completion_cost = output_tokens × completion_cost_per_1k / TOKEN_SCALE
-    let completion_cost = (output_tokens as u64)
-        .checked_mul(pricing.completion_cost_per_1k)
-        .ok_or(BudgetError::CostOverflow)?
-        / TOKEN_SCALE;
+**Error conversion:**
 
-    prompt_cost.checked_add(completion_cost).ok_or(BudgetError::CostOverflow)
+```rust
+impl From<CostError> for BudgetError {
+    fn from(e: CostError) -> Self {
+        match e {
+            CostError::Overflow { .. } => BudgetError::CostOverflow,
+        }
+    }
 }
 ```
 
@@ -319,9 +309,10 @@ pub fn record_spend_atomic(
 ) -> Result<(), KeyError> {
     match event.team_id {
         Some(ref team_id) => {
+            // Pass raw UUID bytes for BLOB(16) columns — per RFC-0903-C1 schema
             storage.record_spend_ledger_with_team(
-                &event.key_id.to_string(),
-                &team_id.to_string(),
+                event.key_id.as_bytes(),    // &[u8; 16] — matches BLOB(16)
+                team_id.as_bytes(),         // &[u8; 16] — matches BLOB(16)
                 event,
             )
         }
@@ -347,15 +338,13 @@ When a key belongs to a team, both key budget AND team budget must be enforced. 
 /// - Team budget exceeded
 pub fn record_spend_with_team(
     storage: &dyn KeyStorage,
-    key_id: &str,
-    team_id: &str,
+    key_id: &[u8; 16],  // Raw UUID bytes — matches BLOB(16) per RFC-0903-C1
+    team_id: &[u8; 16], // Raw UUID bytes — matches BLOB(16) per RFC-0903-C1
     event: &SpendEvent,
 ) -> Result<(), KeyError> {
     storage.record_spend_ledger_with_team(key_id, team_id, event)
 }
 ```
-
-**Note:** The existing `record_spend_ledger_with_team` takes `&str` for key_id and team_id (matching the database schema), not `&Uuid`.
 
 ### Spend Query
 
@@ -573,7 +562,7 @@ No new `BudgetStorage` implementation is needed — the existing `KeyStorage` me
 
 **Threat:** Using `f64` for cost calculation produces different results across implementations due to rounding.
 
-**Mitigation:** Integer micro-unit arithmetic. Cost is computed as `(tokens × price) / 1000` using u64 arithmetic with `checked_mul` and `checked_div` (returning `CostError::Overflow` on arithmetic failure) to prevent silent overflow.
+**Mitigation:** Integer micro-unit arithmetic. Cost is computed as `(tokens × price) / 1000` using u64 arithmetic with `checked_mul` and `checked_div` (returning `BudgetError::CostOverflow` on arithmetic failure) to prevent silent overflow.
 
 ### Budget Lock Ordering Deadlock
 
@@ -974,7 +963,7 @@ If `trigger` is omitted, defaults to `"scheduled"` for backward compatibility.
 
 #### OCTO-W Integration (F3)
 
-Budget enforcement via OCTO-W token balance (RFC-0900):
+**RFC-0900 relationship note (NC-2):** RFC-0900 (Draft) defines OCTO-W as a marketplace escrow protocol with wallet addresses and P2P listing flows. It has **no Rust API surface** — it is a TypeScript specification with no defined interfaces for external callers. F3's OCTO-W is a **local key-level balance counter** that is **independent** of RFC-0900's marketplace protocol. It uses the same token name (OCTO-W) for the balance but has no integration path with RFC-0900's wallet/escrow model. F3 tracks per-key OCTO-W balance for budget enforcement; RFC-0900 tracks per-wallet OCTO-W for marketplace trading. A future RFC (RFC-0903-C2 or dedicated F3 extension) may define the bridge between F3's local balance and RFC-0900's marketplace escrow.
 
 **Concept:** When a key's OCTO-W balance is insufficient to cover estimated cost, the request is rejected before provider call. **F3 is a standalone enforcement mode** — when F3 is enabled for a key, `record_spend_ledger` is NOT called (OCTO-W balance IS the budget enforcement, replacing `budget_limit`).
 
@@ -986,24 +975,43 @@ When `octo_w_enforcement` is `true`, the F3 path is used for budget enforcement.
 
 **Relationship with F1 (Soft Pre-Check):** When both F3 and F1 are enabled: pre-request flow is (1) `check_budget` soft check (budget_limit), then (2) `get_octo_w_balance` check. Both must pass for the request to proceed. Note: the `check_budget` soft check is informational only when F3 is active — it does not block requests. The OCTO-W balance check is the authoritative pre-check.
 
+**OCTO-W Storage Table (DDL):**
+
+```sql
+-- Per-key OCTO-W balance for F3 budget enforcement.
+-- This table is LOCAL to the router and is NOT part of RFC-0900's marketplace escrow protocol.
+-- RFC-0900 defines wallet-based OCTO-W; F3 defines per-key OCTO-W for budget enforcement.
+-- These are independent models with no defined integration bridge.
+CREATE TABLE octo_w_balances (
+    key_id         BLOB(16) NOT NULL PRIMARY KEY,  -- Raw UUID bytes — matches api_keys.key_id per RFC-0903-C1
+    balance        INTEGER NOT NULL DEFAULT 0,    -- Balance in μunits (micro-units)
+    last_updated   INTEGER NOT NULL,               -- Unix epoch seconds
+    CONSTRAINT balance_non_negative CHECK (balance >= 0)
+);
+
+-- Index for balance-ordered lookups (if needed for ranking)
+CREATE INDEX idx_octo_w_balance ON octo_w_balances(balance DESC);
+```
+
 **OCTO-W Interface (minimum spec required for F3 implementation):**
+
+The interface matches RFC-0917's `KeyStorage` trait signature for compatibility:
 
 ```rust
 /// Get OCTO-W balance for a key.
 /// Returns balance in μunits.
-/// Returns KeyError::KeyNotFound if key doesn't exist.
-/// Returns KeyError::OctoWNotEnabled if key exists but OCTO-W is not configured for this key.
-pub fn get_octo_w_balance(key_id: &str) -> Result<u64, KeyError>;
+/// Returns StorageError::KeyNotFound if key doesn't exist.
+/// Returns StorageError::OctoWNotEnabled if key exists but OCTO-W is not configured for this key.
+pub async fn get_octo_w_balance(&self, key_id: &[u8; 16]) -> Result<u64, StorageError>;
 
 /// Deduct cost_amount from OCTO-W balance atomically.
 /// Implementation: SELECT FOR UPDATE on key row, then atomic pre-check + deduct in single transaction.
 /// TOCTOU prevention: balance check and deduct are in the same locked transaction — no separate
 /// pre-check call needed. The FOR UPDATE lock is held for the duration of the atomic operation.
-pub fn deduct_octo_w(key_id: &str, cost_amount: u64) -> Result<u64, KeyError> {
-    // Returns Ok(new_balance) on success.
-    // Returns Err(KeyError::InsufficientBalance { available: u64 }) if balance < cost_amount.
-    // Returns Err(KeyError::OctoWNotEnabled) if OCTO-W not configured for this key.
-}
+/// Returns Ok(new_balance) on success.
+/// Returns Err(StorageError::InsufficientBalance { available, requested }) if balance < cost_amount.
+/// Returns Err(StorageError::OctoWNotEnabled) if OCTO-W not configured for this key.
+pub async fn deduct_octo_w(&self, key_id: &[u8; 16], cost_amount: u64) -> Result<u64, StorageError>;
 ```
 
 **Flow (F3 standalone mode):**
@@ -1012,7 +1020,7 @@ pub fn deduct_octo_w(key_id: &str, cost_amount: u64) -> Result<u64, KeyError> {
 
 1. **Model selected** — routing strategy picks a specific model (e.g., `gpt-4o`)
 2. **Estimate cost** using `max_tokens × pricing.prompt_cost_per_1k / 1000` for the selected model (conservative overestimate). For models with known context windows, use the provider's max token limit as the overestimate — same ceiling formula used for the F1 soft pre-check. Compare `get_octo_w_balance(key_id)` against this `estimated_cost`
-3. If `get_octo_w_balance` returns `KeyError::KeyNotFound` (key doesn't exist), treat as insufficient balance — reject with `BudgetError::InsufficientBalance { key_id, available: 0, estimated }`
+3. If `get_octo_w_balance` returns `StorageError::KeyNotFound` (key doesn't exist in `octo_w_balances`), treat as insufficient balance — reject with `BudgetError::InsufficientBalance { key_id, available: 0, estimated }`
 4. If `balance < estimated_cost`, reject with `BudgetError::InsufficientBalance { key_id, available, estimated }`
 5. After successful provider request, call `deduct_octo_w(key_id, cost_amount)`
 6. If deduct fails after provider success (edge case):
@@ -1078,6 +1086,7 @@ The soft check is non-locking — it's possible (though unlikely) that another c
 
 | Version | Date       | Changes                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                            |
 | ------- | ---------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 1.27    | 2026-04-24 | Round 36: fix NM-1 (line 576: CostError::Overflow → BudgetError::CostOverflow — stale reference after v1.3 CostError→BudgetError rename); fix NC-2+NH-3 (OCTO-W interface: key_id &str→&[u8; 16], sync→async, StorageError; define octo_w_balances DDL; clarify RFC-0900 relationship — F3 is independent local balance counter, no marketplace integration); fix XC-3 (compute_cost: removed duplicate implementation; delegates to rfc0910::compute_cost per §Cost Computation; added From<CostError> for BudgetError); fix XC-4 (record_spend_atomic: change key_id/team_id from &str (TEXT) to &[u8; 16] (BLOB(16)) — matches RFC-0903-C1 schema; removed stale note claiming &str matches schema) |
 | 1.26    | 2026-04-24 | Round 32: update RFC-0903 Final ref from v33 to v34 (tokenizer_id INSERT bug fix: uuid_to_blob_16 → id.to_vec()) |
 | 1.25    | 2026-04-24 | Round 31: fix Critical type mismatch — update RFC-0903 Final ref from v32 to v33 (tokenizer_id is now `Option<[u8; 16]>`, not `Option<Uuid>`) |
 | 1.24    | 2026-04-24 | Round 30: fix 4.1 (Medium) — replace remaining `saturating_mul` with `checked_mul(...).unwrap_or(u64::MAX)` for consistency with checked arithmetic; update F1 alert trigger formula and overflow handling prose |

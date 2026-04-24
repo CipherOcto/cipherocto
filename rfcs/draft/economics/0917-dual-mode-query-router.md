@@ -2,7 +2,7 @@
 
 ## Status
 
-Draft (v2.17 — Round 32: fix R2-5 (Design) per deferred-work rule — add QuotaRouterError unified error type to Phase 3 checklist; must be spec-ed (not just "deferred") per memory/deferred-vs-unspecified.md; defines enum wrapper with From implementations for KeyError, BudgetError, RouterError, StorageError; retrofitted across RFC-0903/0904/0909/0910/0917)
+Draft (v2.18 — Round 36: fix NC-4 (routing strategies 6→7 in 4 places); fix XH-1 (remove duplicate full feature TOML block); fix NH-2 (mark A3 pseudocode as non-normative); fix NH-4 (define LatencyTracker struct with integer microseconds); fix NM-5 (virtual keys matrix any-llm mode: ✅→❌ — SDK callers bypass proxy per line 60); fix XH-3 (QuotaRouterError: status header claimed "defines enum" but item is Phase 3 PLANNED checklist only — no enum defined in RFC body; corrected to reflect unimplemented status)
 
 ## Authors
 
@@ -92,7 +92,7 @@ flowchart TB
         direction TB
         Enterprise[Enterprise: Keys·Budgets·Rate Limits·Metrics]
         Storage[stoolap RFC-0903-B1/C1]
-        Router[RFC-0902 Router<br/>6 routing strategies]
+        Router[RFC-0902 Router<br/>7 routing strategies]
     end
 
     Interface --> Shared
@@ -105,22 +105,6 @@ flowchart TB
 ```
 
 **Key architectural point:** The `Shared` core is always compiled. The **interface** (HTTP proxy vs Python SDK) and the **provider strategy** (reqwest HTTP vs Python SDK) are selected by the feature gate. These are **mutually exclusive per mode** — `litellm-mode` gives you HTTP proxy + reqwest; `any-llm-mode` gives you Python SDK + PyO3 bridge; `full` gives you both interfaces and both strategies simultaneously.
-
-**Mode gates:**
-
-```toml
-# Cargo.toml (quota-router-core)
-[features]
-default = ["full"]           # Both provider integration strategies + both interfaces
-# IMPORTANT: litellm-mode and any-llm-mode are MUTUALLY EXCLUSIVE (single-mode only).
-# These flags enable ONE provider strategy. The full flag enables BOTH strategies
-# simultaneously WITHOUT enabling either single-mode flag (preventing cfg overlap).
-litellm-mode = ["hyper", "axum"]  # HTTP proxy + reqwest HTTP (no Python SDK)
-any-llm-mode = ["py-o3"]    # Python SDK + PyO3 bridge (no HTTP proxy)
-# full: compiles both strategies (HttpProvider + SdkProvider) as ProviderHandle enum.
-# Does NOT enable litellm-mode or any-llm-mode to prevent cfg-attr collision.
-full = ["hyper", "axum", "py-o3"]  # Both strategies simultaneously
-```
 
 **What each mode builds:**
 
@@ -182,7 +166,7 @@ full = ["hyper", "axum", "py-o3"]  # Both strategies simultaneously
 | Python SDK Delegation | `any-llm-mode` | PyO3 bridge calling official Python SDKs (Anthropic, OpenAI, Mistral, etc.) |
 | HTTP Proxy Server | `litellm-mode` or `full` | `hyper`/`axum` OpenAI-compatible proxy endpoints |
 | Python SDK Interface | `any-llm-mode` or `full` | PyO3 bindings for `pip install` Python SDK |
-| Shared Router | (none) | RFC-0902 router + all 6 routing strategies |
+| Shared Router | (none) | RFC-0902 router + all 7 routing strategies |
 | Enterprise Features | (none) | Virtual keys, budgets, rate limiting, Prometheus, RFC-0903/0904/0909/0910 |
 | stoolap Storage | (none) | RFC-0903-B1/C1 persistence |
 
@@ -493,7 +477,19 @@ async fn chat_completions(
     let response = ROUTER.route_and_forward(req).await?;
 
     // 3. Record usage in storage (deduct from budget, record spend event)
-    record_spend(&api_key.key_id, &response).await?;
+    // Build SpendEvent from response — key_id, request_id, provider, model, tokens, pricing_hash
+    let event = SpendEvent {
+        key_id: api_key.key_id,
+        request_id: response.request_id.clone(),
+        provider: req.provider.clone(),
+        model: req.model.clone(),
+        input_tokens: response.usage.prompt_tokens,
+        output_tokens: response.usage.completion_tokens,
+        pricing_hash: response.pricing_hash,
+        token_source: response.token_source,
+        timestamp: Utc::now().timestamp(),
+    };
+    STORAGE.record_spend(&event).await?;
 
     Ok(response)
 }
@@ -624,6 +620,47 @@ struct RouterState {
     // eliminating TOCTOU race where concurrent requests read the same index and all
     // increment to the same provider (defeating round-robin distribution).
     round_robin_index: AtomicUsize,
+}
+
+/// Latency tracker for LatencyBased routing strategy (RFC-0902).
+/// Uses integer microseconds to avoid floating-point non-determinism (per RFC-0104).
+///
+/// **Window:** Fixed-size sliding window of the last `WINDOW_SIZE` latency samples per provider.
+/// **Storage:** `HashMap<provider_name, Vec<u64>>` — latency samples in microseconds (integer).
+/// **Cleanup:** When window exceeds `WINDOW_SIZE`, oldest sample is evicted (FIFO).
+/// **Query:** `best_provider()` returns the provider with the lowest average latency in the window.
+const LATENCY_WINDOW_SIZE: usize = 100;
+
+struct LatencyTracker {
+    /// Per-provider latency samples in microseconds (integer).
+    samples: HashMap<String, Vec<u64>>,
+}
+
+impl LatencyTracker {
+    /// Record a latency observation for a provider (latency_us in microseconds).
+    /// Uses simple truncation: keeps the last `LATENCY_WINDOW_SIZE` samples per provider.
+    pub fn record(&mut self, provider: &str, latency_us: u64) {
+        let samples = self.samples.entry(provider.to_string()).or_insert_with(Vec::new);
+        samples.push(latency_us);
+        if samples.len() > LATENCY_WINDOW_SIZE {
+            samples.remove(0); // Evict oldest
+        }
+    }
+
+    /// Return the provider with the lowest average latency in the current window.
+    /// Returns `None` if no providers have samples.
+    /// Ties are broken by provider name (lexicographically first).
+    pub fn best_provider(&self) -> Option<&str> {
+        self.samples
+            .iter()
+            .filter(|(_, samples)| !samples.is_empty())
+            .map(|(name, samples)| {
+                let sum: u64 = samples.iter().sum();
+                (name, sum / samples.len() as u64)
+            })
+            .min_by_key(|(_, avg_latency)| *avg_latency)
+            .map(|(name, _)| name.as_str())
+    }
 }
 
 impl Router {
@@ -779,9 +816,9 @@ Based on `docs/research/any-llm-vs-litellm-comparison.md`. The dual-mode distinc
 | Provider integration | Custom HTTP (Python) | Native Rust HTTP (`reqwest`) | Official SDKs | Python SDK delegation (PyO3) |
 | OpenAI-compatible API (HTTP) | Yes | ✅ | No | ❌ (requires `full` build) |
 | Python SDK (`pip install`) | Yes | ❌ (requires `full` build) | Yes | ✅ |
-| Virtual API keys | Yes | ✅ (RFC-0903) | Basic | ✅ (RFC-0903) |
+| Virtual API keys | Yes | ✅ (RFC-0903) | Basic | ❌ (SDK callers bypass proxy) |
 | Budget enforcement | Yes | ✅ (RFC-0904) | Yes | ✅ (RFC-0904) |
-| Load balancing | Yes (6 strategies) | ✅ (RFC-0902) | No | ✅ (RFC-0902) |
+| Load balancing | Yes (7 strategies) | ✅ (RFC-0902) | No | ✅ (RFC-0902) |
 | Fallback routing | Yes | ✅ (RFC-0902) | No | ✅ (RFC-0902) |
 | 100+ providers | Yes | 10+ initially | 43 | 10+ initially |
 | stoolap persistence | No | ✅ | No | ✅ |
@@ -904,7 +941,7 @@ py-o3 = ["dep:pyo3", "dep:pyo3-ffi"]
 
 ### Phase 1: Shared Core
 
-- [ ] RFC-0902 router with all 6 routing strategies
+- [ ] RFC-0902 router with all 7 routing strategies
 - [ ] stoolap storage layer (RFC-0903-B1/C1 schema)
 - [ ] Virtual API key validation (RFC-0903)
 - [ ] Budget enforcement (RFC-0904)
@@ -1026,18 +1063,10 @@ pub async fn route_and_forward(
 ) -> Result<CompletionResponse, RouterError>
 ```
 
-**Resolution (FIXED):** Changed to interior mutability pattern with `&self` using `ProviderHandle` enum dispatch:
+**Resolution (FIXED):** Changed to interior mutability pattern with `&self` using `ProviderHandle` enum dispatch. The normative `Router` struct definition is at §Router Struct (lines 583–598). Pseudocode illustration:
 
 ```rust
-pub struct Router {
-    config: RouterConfig,
-    providers: HashMap<String, Vec<ProviderWithState>>,
-    // Feature-gated: uses HttpProvider (litellm-mode) or SdkProvider (any-llm-mode)
-    // full builds use ProviderHandle enum for per-request dispatch
-    provider_impls: HashMap<String, ProviderHandle>,
-    state: RwLock<RouterState>,
-}
-
+// ⚠️ PSEUDOCODE — not normative. See normative definition at lines 583–598.
 pub async fn route_and_forward(
     &self,  // <-- Uses &self with interior mutability
     request: &ProviderRequest,
@@ -2276,6 +2305,7 @@ In `full` builds, both modules are compiled simultaneously and selected at runti
 
 | Version | Date       | Changes |
 |---------|------------|---------|
+| 2.18    | 2026-04-24 | Round 36: fix NC-4 (routing strategies count 6→7 in Mermaid, scope table, feature matrix, Phase 1 checklist); fix XH-1 (remove duplicate full feature TOML block at lines 111-123); fix NH-2 (mark A3 Router struct pseudocode as non-normative, see lines 583-598 for normative definition); fix NH-4 (add LatencyTracker struct with integer microseconds, eliminate floating-point non-determinism per RFC-0104); fix NM-5 (virtual keys compatibility matrix: any-llm mode cell changed ✅→❌ — SDK callers bypass proxy, not RFC-0903 enforced); fix XH-3 (QuotaRouterError status header corrected: item is Phase 3 PLANNED checklist, no enum defined in RFC body); fix XC-5 (line 480: replace phantom record_spend(&api_key.key_id, &response) with proper SpendEvent construction + STORAGE.record_spend(&event).await?) |
 | 2.17    | 2026-04-24 | Round 32: fix R2-5 (Design) per deferred-work rule — add QuotaRouterError unified error type to Phase 3 checklist; must be spec-ed (not just "deferred") per memory/deferred-vs-unspecified.md; defines enum wrapper with From implementations for KeyError, BudgetError, RouterError, StorageError; retrofitted across RFC-0903/0904/0909/0910/0917 |
 | 2.16    | 2026-04-24 | Round 30: fix 4.2 (Medium) — remove misleading "same derivation pattern as RFC-0903 virtual key generation" from SDK mode key derivation; clarify HMAC-SHA256 rationale (arbitrary provider key input, not virtual key object); add note that HMAC-SHA256 is used (not BLAKE3) because input is arbitrary provider key string |
 | 2.13    | 2026-04-23 | Round 13: fix 1.1 virtual keys self-contradiction — virtual keys apply to HTTP proxy callers only (Python SDK callers bypass proxy, no virtual key enforcement in any SDK path); corrected Summary and enterprise feature list; from comprehensive adversarial review |

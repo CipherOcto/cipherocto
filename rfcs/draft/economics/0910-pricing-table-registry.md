@@ -2,7 +2,7 @@
 
 ## Status
 
-Draft (v24)
+Draft (v25)
 
 ## Authors
 
@@ -22,7 +22,7 @@ This RFC provides the tokenizer registry referenced by RFC-0909's `get_canonical
 
 **Requires:**
 
-- RFC-0903: Virtual API Key System (Final v30 + RFC-0903-B1 amendment v23 + RFC-0903-C1 amendment v4)
+- RFC-0903: Virtual API Key System (Final v30 + RFC-0903-B1 amendment v23 + RFC-0903-C1 amendment v5)
 - RFC-0126: Deterministic Serialization (Accepted v2.5.1)
 
 **Required By:**
@@ -156,48 +156,48 @@ impl PricingTable {
         let mut buf = Vec::new();
 
         // Field 1: table_id (String)
-        buf.extend_from_slice(&u32::to_be(1));
+        buf.extend_from_slice(&1u32.to_be_bytes());
         let table_id_bytes = self.table_id.as_bytes();
-        buf.extend_from_slice(&u32::to_be(table_id_bytes.len() as u32));
+        buf.extend_from_slice(&(table_id_bytes.len() as u32).to_be_bytes());
         buf.extend_from_slice(table_id_bytes);
 
         // Field 2: version (u32)
-        buf.extend_from_slice(&u32::to_be(2));
-        buf.extend_from_slice(&u32::to_be(self.version));
+        buf.extend_from_slice(&2u32.to_be_bytes());
+        buf.extend_from_slice(&self.version.to_be_bytes());
 
         // Field 3: provider (String)
-        buf.extend_from_slice(&u32::to_be(3));
+        buf.extend_from_slice(&3u32.to_be_bytes());
         let provider_bytes = self.provider.as_bytes();
-        buf.extend_from_slice(&u32::to_be(provider_bytes.len() as u32));
+        buf.extend_from_slice(&(provider_bytes.len() as u32).to_be_bytes());
         buf.extend_from_slice(provider_bytes);
 
         // Field 4: model (String)
-        buf.extend_from_slice(&u32::to_be(4));
+        buf.extend_from_slice(&4u32.to_be_bytes());
         let model_bytes = self.model.as_bytes();
-        buf.extend_from_slice(&u32::to_be(model_bytes.len() as u32));
+        buf.extend_from_slice(&(model_bytes.len() as u32).to_be_bytes());
         buf.extend_from_slice(model_bytes);
 
         // Field 5: prompt_cost_per_1k (u64)
-        buf.extend_from_slice(&u32::to_be(5));
-        buf.extend_from_slice(&u64::to_be(self.prompt_cost_per_1k));
+        buf.extend_from_slice(&5u32.to_be_bytes());
+        buf.extend_from_slice(&self.prompt_cost_per_1k.to_be_bytes());
 
         // Field 6: completion_cost_per_1k (u64)
-        buf.extend_from_slice(&u32::to_be(6));
-        buf.extend_from_slice(&u64::to_be(self.completion_cost_per_1k));
+        buf.extend_from_slice(&6u32.to_be_bytes());
+        buf.extend_from_slice(&self.completion_cost_per_1k.to_be_bytes());
 
         // Field 7: effective_from (i64)
-        buf.extend_from_slice(&u32::to_be(7));
-        buf.extend_from_slice(&i64::to_be(self.effective_from));
+        buf.extend_from_slice(&7u32.to_be_bytes());
+        buf.extend_from_slice(&self.effective_from.to_be_bytes());
 
         // Field 8: metadata (BTreeMap<String, String>)
-        buf.extend_from_slice(&u32::to_be(8));
-        buf.extend_from_slice(&u32::to_be(self.metadata.len() as u32));
+        buf.extend_from_slice(&8u32.to_be_bytes());
+        buf.extend_from_slice(&(self.metadata.len() as u32).to_be_bytes());
         for (key, value) in &self.metadata {
             let key_bytes = key.as_bytes();
             let value_bytes = value.as_bytes();
-            buf.extend_from_slice(&u32::to_be(key_bytes.len() as u32));
+            buf.extend_from_slice(&(key_bytes.len() as u32).to_be_bytes());
             buf.extend_from_slice(key_bytes);
-            buf.extend_from_slice(&u32::to_be(value_bytes.len() as u32));
+            buf.extend_from_slice(&(value_bytes.len() as u32).to_be_bytes());
             buf.extend_from_slice(value_bytes);
         }
 
@@ -1022,6 +1022,7 @@ This design allows the registry to be treated as a cache of known-good pricing s
 
 | Version | Date | Changes |
 |---------|------|---------|
+| v25 | 2026-04-24 | Round 35: fix NC-1 (compute_pricing_hash: replace u32::to_be(n)/u64::to_be(n)/i64::to_be(n) with n.to_be_bytes() — 18 occurrences; code was non-compiling); fix NM-4 (stale RFC-0903-C1 v4 → v5 in Dependencies and Related RFCs) |
 | v23    | 2026-04-24 | Round 34: fix Critical o1-preview error-case test vector — changed input from "o1-preview" (a known model in EXACT_TABLE) to "nonexistent-model-v2" (truly unknown) to test actual fallback path; o1-preview is known and would return o200k_base via exact match, not DEFAULT_TOKENIZER |
 | v22    | 2026-04-24 | Round 33: fix critical tokenizer_id mismatch — o1-mini test vector had wrong tokenizer_id (be1b3be07264be1b95d6c2f8405ca8d1 instead of be1b3be0a2698c863b31edc1b7809a9c); now matches tokenizer_id for tiktoken-o200k_base; this was a leftover from previous assignment |
 | v20 | 2026-04-23 | Round 26 fixes: fix 1.2/1.3 o3-mini/o3-pro tokenizer three-way inconsistency — EXACT_TABLE now matches test vectors (cl100k_base); Tokenizer Assignment Table row updated; o1-mini corrected to o200k_base; fix 3.3 (saturating_add → checked_add with CostError::Overflow); fix 3.2 (MAX_VERSIONS_PER_MODEL=1000 + TooManyVersions error); fix 3.4 (case-insensitive prefix fallback via model.to_lowercase()); from comprehensive adversarial review |
@@ -1046,7 +1047,7 @@ This design allows the registry to be treated as a cache of known-good pricing s
 
 ## Related RFCs
 
-- RFC-0903: Virtual API Key System (Final v30 + RFC-0903-B1 amendment v23 + RFC-0903-C1 amendment v4)
+- RFC-0903: Virtual API Key System (Final v30 + RFC-0903-B1 amendment v23 + RFC-0903-C1 amendment v5)
 - RFC-0909: Deterministic Quota Accounting (Accepted — defines SpendEvent, TokenSource, and uses this RFC's canonical tokenizer assignments)
 - RFC-0913: Stoolap Pub/Sub for Cache Invalidation (Accepted — quota router cache invalidation via WAL pub/sub; related to registry update propagation)
 - RFC-0914: Stoolap-Only Quota Router Persistence (Draft v8 — required for registry persistence model; registry startup sequence loads from Stoolap per RFC-0914 integration)

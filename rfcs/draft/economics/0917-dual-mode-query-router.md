@@ -2,7 +2,7 @@
 
 ## Status
 
-Draft (v2.9 — Round 9: fix C1/C2 undefined LLMProvider/CompletionRequest types — add ProviderRequest/ProviderResponse/Message/Usage unified types, ProviderHandle enum dispatch in Router; fix C4 undefined sdk_types module — define SdkMessage/SdkUsage types; from external adversarial review)
+Draft (v2.13 — Round 13: fix 1.1 virtual keys self-contradiction — virtual keys apply to HTTP proxy callers only (Python SDK callers bypass proxy, no virtual key enforcement in any Python SDK path); corrected Status header; from comprehensive adversarial review)
 
 ## Authors
 
@@ -19,7 +19,7 @@ Define a dual-mode query router that operates under Rust feature gates: **LiteLL
 - **any-llm Mode** exposes Python SDK only (`pip install quota_router` → `completion()`).
 - **`full`** (both feature gates enabled) exposes **both** HTTP proxy and Python SDK simultaneously.
 
-Enterprise features (virtual keys, budgets, rate limiting, Prometheus, RFC-0903/0904/0909/0910) are available in **all** modes. The mode gate controls both provider integration strategy (`reqwest` vs. PyO3) **and** which interface is exposed (HTTP vs. SDK).
+Most enterprise features (budgets, rate limiting, Prometheus, RFC-0909/0910) are shared across modes — enforced at the Router level via `Router::global()`. Virtual keys (RFC-0903) are enforced via HTTP proxy auth middleware (`validate_key()`) which applies only when requests enter via the HTTP proxy interface. Python SDK callers bypass the proxy and do not have virtual key enforcement — this applies equally to LiteLLM Mode and any-llm Mode Python SDK paths. The mode gate controls provider integration strategy (`reqwest` vs. PyO3) and which interface is exposed (HTTP vs. SDK).
 
 ## Motivation
 
@@ -57,7 +57,7 @@ The dual-mode architecture differentiates **how providers are called**, not whic
 | Python SDK (`pip install`) | ❌ | ✅ | ✅ |
 
 **Both modes enforce identical enterprise features** (interface differs by mode):
-- Virtual API keys (RFC-0903)
+- Virtual API keys (RFC-0903) — **HTTP proxy only** (Python SDK callers bypass proxy, no virtual key enforcement)
 - Budget enforcement (RFC-0904)
 - Rate limiting (RFC-0902)
 - Deterministic quota accounting (RFC-0909)
@@ -461,7 +461,13 @@ GET  /metrics                 # Prometheus metrics
 ```rust
 // gateway/src/chat.rs
 
-// Router is shared at the gateway level, not created per-request
+// Router is shared at the gateway level, using a single global instance.
+// Both LiteLLM Mode (HTTP gateway) and any-llm Mode (PyO3 bridge) share
+// the same Router::global() singleton. This ensures enterprise state (budgets,
+// rate limits, connection pools) is unified across both interfaces in full builds.
+//
+// In litellm-mode builds, Router::global() uses lazy_static internally.
+// In full builds, the same Router::global() is used by both HTTP gateway and PyO3 bridge.
 lazy_static::lazy_static! {
     static ref ROUTER: Arc<Router> = Router::new(config.clone());
 }
@@ -559,7 +565,7 @@ The Router's `provider_impls` type is **feature-gated per mode**:
 
 - **LiteLLM Mode** (`HashMap<String, Arc<dyn native_http::HttpProvider>>`): reqwest HTTP forwarding to provider REST APIs
 - **any-llm Mode** (`HashMap<String, Arc<dyn py_providers::SdkProvider>>`): Python SDK delegation via PyO3 to official provider SDKs
-- **full Mode**: Provider selection is per-request via `ProviderHandle` enum — the router delegates to the appropriate strategy based on model/provider configuration
+- **full Mode**: Provider selection is per-request via `ProviderHandle` enum dispatch — the router stores both strategies (Http and Sdk) in `provider_impls`; the `ProviderHandle` variant for each provider is determined at router initialization based on configuration (e.g., `providers.openai.type = "http"` vs `"sdk"`); once initialized, the variant is fixed per provider for the lifetime of the router; the per-request dispatch means the match on the already-selected variant (`Http` vs `Sdk`) happens for each incoming request, executing the appropriate provider implementation
 
 ```rust
 // router/src/lib.rs
@@ -567,15 +573,23 @@ The Router's `provider_impls` type is **feature-gated per mode**:
 pub struct Router {
     config: RouterConfig,
     providers: HashMap<String, Vec<ProviderWithState>>,
-    // Feature-gated: LiteLLM mode uses HttpProvider, any-llm mode uses SdkProvider
-    // In full builds, this HashMap stores the active strategy per provider
+    // Feature-gated per mode:
+    // - litellm-mode: HashMap<String, Arc<dyn native_http::HttpProvider>>
+    // - any-llm-mode: HashMap<String, Arc<dyn py_providers::SdkProvider>>
+    // - full: HashMap<String, ProviderHandle>
+    #[cfg(feature = "full")]
     provider_impls: HashMap<String, ProviderHandle>,
+    #[cfg(feature = "litellm-mode")]
+    provider_impls: HashMap<String, Arc<dyn crate::native_http::HttpProvider>>,
+    #[cfg(feature = "any-llm-mode")]
+    provider_impls: HashMap<String, Arc<dyn crate::py_providers::SdkProvider>>,
     // Interior mutability for thread-safe shared state
     state: RwLock<RouterState>,
 }
 
 /// Unified provider handle for full builds (both strategies available)
 /// Routes to either HttpProvider or SdkProvider based on model/provider config
+#[cfg(feature = "full")]
 pub enum ProviderHandle {
     Http(Box<dyn crate::native_http::HttpProvider>),
     Sdk(Box<dyn crate::py_providers::SdkProvider>),
@@ -596,7 +610,10 @@ struct RouterState {
     // Provider connection pools, latency tracking, RPM/TPM counters
     connection_pools: HashMap<String, Pool>,
     latency_tracker: LatencyTracker,
-    round_robin_index: usize,
+    // AtomicUsize for lock-free round-robin: fetch_add returns old value before increment,
+    // eliminating TOCTOU race where concurrent requests read the same index and all
+    // increment to the same provider (defeating round-robin distribution).
+    round_robin_index: AtomicUsize,
 }
 
 impl Router {
@@ -1028,7 +1045,7 @@ pub async fn route_and_forward(
 }
 ```
 
-`Router::global()` returns `Arc<Self>`, so calls use `&self` (immutable borrow). State that changes during routing (`round_robin_index`, `latency_tracker`, `connection_pools`) lives in `RouterState` protected by `RwLock`, allowing interior mutability within `&self`.
+`Router::global()` returns `Arc<Self>`, so calls use `&self` (immutable borrow). State that changes during routing (`connection_pools`, `latency_tracker`) lives in `RouterState` protected by `RwLock`. `round_robin_index` uses `AtomicUsize` with fetch_add for lock-free per-request increment — the fetch_add returns the old value before increment, so each concurrent request gets a unique index without TOCTOU races.
 
 ---
 
@@ -1263,10 +1280,7 @@ response = completion(model="gpt-4", messages=[...], api_key="sk-...")
 
 There's no auth enforcement — the SDK accepts any string as an API key.
 
-**Resolution:** Either:
-1. Require any-llm Mode to always go through a proxy (defeats the purpose)
-2. Add API key validation in the PyO3 bridge layer
-3. Clearly document that any-llm Mode is for trusted environments only
+**Resolution (FIXED):** In any-llm Mode, the PyO3 bridge passes the API key directly to the official provider SDK (OpenAI SDK, Anthropic SDK, etc.). The provider SDK performs the actual API key validation when making the API call — the key is validated by the provider's servers, not by quota-router. This means validation is delegated to the provider (same as any direct SDK usage). Virtual key validation (RFC-0903) applies only in LiteLLM Mode (HTTP proxy), not in any-llm Mode SDK usage. The SDK stores *provider* API keys (OpenAI, Anthropic, etc.) — not virtual keys. Virtual keys are a LiteLLM Mode concept where the proxy mediates access. In any-llm Mode, clients have direct provider credentials validated by the provider.
 
 ---
 
@@ -2240,6 +2254,8 @@ These modules are feature-gated and cannot coexist in the same compilation unit.
 
 | Version | Date       | Changes |
 |---------|------------|---------|
+| 2.13    | 2026-04-23 | Round 13: fix 1.1 virtual keys self-contradiction — virtual keys apply to HTTP proxy callers only (Python SDK callers bypass proxy, no virtual key enforcement in any SDK path); corrected Summary and enterprise feature list; from comprehensive adversarial review |
+| 2.12    | 2026-04-23 | Round 12: fix 1.1 virtual keys self-contradiction — clarify in Summary and enterprise feature list that virtual keys (RFC-0903) apply only in LiteLLM Mode HTTP proxy, not in any-llm Mode SDK; from comprehensive adversarial review |
 | 2.9     | 2026-04-23 | Round 9: fix C1/C2 undefined LLMProvider/CompletionRequest types — add ProviderRequest/ProviderResponse/Message/Usage unified types, ProviderHandle enum dispatch in Router; fix C4 undefined sdk_types module — define SdkMessage/SdkUsage types; from external adversarial review |
 | 2.8     | 2026-04-23 | Round 8: fix C1 Feature Gate Architecture code block (gateway/python_sdk feature gates); fix C2 dynamic module shadowing (use crate:: paths); fix H3 redundant Python::with_gil; add RouterConfig struct definition; from external adversarial review |
 | 2.6     | 2026-04-21 | Round 6: A4 streaming spec; C8 provider-list parsing; C9 idempotency keys; C10 RetryPolicy; C12 dual sync/async API; C13 diagram mutual exclusivity |

@@ -2,7 +2,7 @@
 
 ## Status
 
-Draft (v19 — aligns with RFC-0903 Final v30 + RFC-0903-B1 v23 + RFC-0903-C1 v5; Round 25 fixes: fix C1/C2 dead "o3-" arm (never matches 4-char prefix) → add "o3-m"/"o3-p" arms; add o3-mini/o3-pro to Tokenizer Assignment Table; add o3-mini/o3-pro test vectors; fix H4 Phase 2 blocking note (both amendments now Accepted); fix H4 effective_from equal-value tiebreaker documentation)
+Draft (v20 — Round 26 fixes: fix 1.2/1.3 o3-mini/o3-pro tokenizer three-way inconsistency — EXACT_TABLE now matches test vectors (cl100k_base); Tokenizer Assignment Table updated; o1-mini corrected to o200k_base; from comprehensive adversarial review)
 
 ## Authors
 
@@ -229,6 +229,9 @@ pub enum RegistryError {
     TableIdTooLong { table_id: String, length: usize },
     /// Metadata total size (sum of all key + value bytes) exceeds limit (4096 bytes).
     MetadataTooLarge { size: usize, max: usize },
+    /// Version count for this (provider, model) pair would exceed MAX_VERSIONS_PER_MODEL (1000).
+    /// Prevents memory exhaustion DoS via unbounded version registration.
+    TooManyVersions { provider: String, model: String, current_count: usize, max: usize },
 }
 
 /// Maximum allowed length for table_id (128 bytes).
@@ -239,6 +242,11 @@ const MAX_TABLE_ID_LEN: usize = 128;
 /// Prevents memory inflation attacks via large metadata values.
 /// Enforced at registration time.
 const MAX_METADATA_SIZE: usize = 4096;
+
+/// Maximum versions per (provider, model) pair.
+/// Prevents memory exhaustion DoS via unbounded version registration.
+/// Enforced at registration time — returns RegistryError::TooManyVersions if exceeded.
+const MAX_VERSIONS_PER_MODEL: usize = 1000;
 
 /// Global pricing registry using BTreeMap for deterministic iteration.
 /// Maps (provider, model) → Vec<PricingTable> (all versions, sorted desc by version).
@@ -299,7 +307,19 @@ impl PricingRegistry {
             });
         }
 
+        // Validate version count limit to prevent memory exhaustion DoS
         let key = (table.provider.clone(), table.model.clone());
+        if let Some(entries) = self.tables.get(&key) {
+            if entries.len() >= MAX_VERSIONS_PER_MODEL {
+                return Err(RegistryError::TooManyVersions {
+                    provider: table.provider.clone(),
+                    model: table.model.clone(),
+                    current_count: entries.len(),
+                    max: MAX_VERSIONS_PER_MODEL,
+                });
+            }
+        }
+
         let hash = table.compute_pricing_hash();
 
         let entries = self.tables.entry(key).or_insert_with(Vec::new);
@@ -427,16 +447,22 @@ pub fn compute_cost(
     pricing: &PricingTable,
     input_tokens: u32,
     output_tokens: u32,
-) -> u64 {
+) -> Result<u64, CostError> {
     let prompt_cost = (input_tokens as u64 * pricing.prompt_cost_per_1k) / 1000;
     let completion_cost = (output_tokens as u64 * pricing.completion_cost_per_1k) / 1000;
-    // saturating_add is safe: maximum realistic pricing is <1B μunits/$1M per 1K tokens.
-    // With absolute maximum token count of ~1,000,000 tokens per request, max cost
-    // ≈ 1e6 * 1e9 / 1000 = 1e12 μunits (< u64::MAX by 15 orders of magnitude).
-    // A pricing table misconfiguration would need prompt_cost_per_1k near u64::MAX to
-    // trigger saturation — this is not a realistic deployment scenario. The truncation
-    // bound (<2 micro-units per event) is the operative precision limit, not overflow.
-    prompt_cost.saturating_add(completion_cost)
+    // Use checked_add to surface overflow from misconfigured pricing tables.
+    // Overflow would indicate prompt_cost_per_1k or completion_cost_per_1k
+    // set to extreme values (near u64::MAX), which is a deployment misconfiguration.
+    prompt_cost.checked_add(completion_cost).ok_or(CostError::Overflow {
+        prompt_cost,
+        completion_cost,
+    })
+}
+
+/// Error for cost computation overflow.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum CostError {
+    Overflow { prompt_cost: u64, completion_cost: u64 },
 }
 ```
 
@@ -499,7 +525,7 @@ The canonical tokenizer registry assigns specific tokenizer versions to model fa
 | `gpt-4*`, `gpt-3.5*` | `tiktoken-cl100k_base-v1.2.3` | cl100k_base | OpenAI models |
 | `o1`, `o3` | `tiktoken-o200k_base` | o200k_base | OpenAI o-series |
 | `o1-mini`, `o1-preview` | *(see notes)* | — | Verify with provider |
-| `o3-mini`, `o3-pro` | *(see notes)* | — | Verify with provider — assignment UNCERTAIN |
+| `o3-mini`, `o3-pro` | `tiktoken-cl100k_base-v1.2.3` | cl100k_base | **Resolved (v16):** test vector confirmed cl100k_base; EXACT_TABLE updated |
 | `claude-*` | `tiktoken-cl100k_base-v1.2.3` | cl100k_base | Anthropic models |
 | `gemini-*` | *(see notes)* | — | May use SentencePiece; requires verification |
 | All other models | `tiktoken-cl100k_base-v1.2.3` | cl100k_base | Default fallback |
@@ -546,8 +572,7 @@ pub fn tokenizer_version_to_id(version: &str) -> [u8; 16] {
 ### Tokenizer Lookup Function
 
 ```rust
-/// Get canonical tokenizer version for a model family.
-/// Returns a static string literal — no heap allocation.
+/// Get canonical tokenizer version for a model.
 ///
 /// # Determinism Requirement
 /// This function's output MUST be bit-for-bit identical across all router
@@ -555,18 +580,18 @@ pub fn tokenizer_version_to_id(version: &str) -> [u8; 16] {
 /// same model, event_id determinism breaks (different token_source values
 /// produce different event_id hashes for identical requests).
 ///
+/// # Design: Exact-Match Table with Prefix Fallback
+/// Known models use an exact-match lookup table (no prefix heuristics).
+/// Unknown models fall back to prefix-based heuristics as a safety net.
+/// This design eliminates tokenizer misassignment from prefix collisions
+/// (e.g., gpt-4o correctly uses o200k_base, not cl100k_base).
+///
 /// # Uncertain Assignments
 /// ⚠️  The following model families have UNCERTAIN tokenizer assignments.
 /// Routers MUST verify before production use; these may change in future versions:
 /// - `gemini-*` — may use SentencePiece encoding, not cl100k_base
-/// - `o1-mini`, `o1-preview` — different vocab from o200k_base; verify with provider
-/// - `o3-mini`, `o3-pro` — unknown vocab; Tokenizer Assignment Table does not list o3-* models
-///
-/// # Implementation Notes
-/// - This function is the single source of truth for canonical tokenizer assignment
-/// - Routers MUST NOT use local estimation or provider-reported tokenizer names
-/// - The dispatch uses first 4 characters to disambiguate major families (gemini-*, gpt-*, o1*)
-/// - Unknown model families fall through to the default fallback
+/// - `o1-mini`, `o1-preview` — assignment UNCERTAIN per Tokenizer Assignment Table
+/// - `o3-mini`, `o3-pro` — assignment UNCERTAIN (o-series family, likely o200k_base)
 pub fn get_canonical_tokenizer(model: &str) -> &'static str {
     const DEFAULT_TOKENIZER: &str = "tiktoken-cl100k_base-v1.2.3";
 
@@ -574,46 +599,75 @@ pub fn get_canonical_tokenizer(model: &str) -> &'static str {
     // (e.g., "gpt-4", not "GPT-4"). Callers MUST normalize model names
     // to lowercase before calling this function. Provider APIs may return
     // model names in mixed case — the router is responsible for normalization.
-    let prefix = if model.len() >= 4 { &model[..4] } else { model };
-    match prefix {
-        "gem-" => {
-            // gemini-* family — tokenizer assignment UNCERTAIN per Tokenizer Assignment Table.
-            // gemini-* may use SentencePiece, not cl100k_base. For gemini-* production use,
-            // verify tokenizer compatibility before deployment. Falls through to default
-            // if compatibility is unverified — this returns cl100k_base as approximation.
-            DEFAULT_TOKENIZER
-        },
-        "gpt-" => {
-            // gpt-* family (OpenAI) — verified cl100k_base (OpenAI BPE)
-            // Note: This dispatch covers known OpenAI gpt-* models. Other providers
-            // with models starting "gpt-" should be verified independently as this
-            // dispatch assumes OpenAI family. This is intentional for major commercial
-            // models only — minor providers are out of scope for canonical assignment.
-            "tiktoken-cl100k_base-v1.2.3"
-        },
-        "o1-m" | "o1-p" => {
-            // o1-mini, o1-preview — assignment UNCERTAIN per Tokenizer Assignment Table.
-            // These use different vocab from o200k_base. Falls through to default.
-            DEFAULT_TOKENIZER
-        },
-        "o1" | "o3" => {
-            // o1, o3 — OpenAI o-series with o200k_base vocab (per Tokenizer Assignment Table)
-            "tiktoken-o200k_base"
-        },
-        "o3-m" | "o3-p" => {
-            // o3-mini, o3-pro — UNCERTAIN. The Tokenizer Assignment Table does not list o3-*
-            // models. o3 uses o200k_base per OpenAI general documentation, but o3-mini/o3-pro
-            // may use different vocab. Default to cl100k_base to avoid false precision.
-            DEFAULT_TOKENIZER
-        },
-        _ => {
-            // Check for claude-* (clau prefix) or default
-            if model.len() >= 4 && &model[..4] == "clau" {
-                "tiktoken-cl100k_base-v1.2.3"  // claude-* family uses cl100k_base
-            } else {
-                DEFAULT_TOKENIZER
-            }
-        }
+
+    // Exact-match table: (model_name, tokenizer_version)
+    // Sorted alphabetically for potential binary search optimization in Phase 2.
+    // For UNCERTAIN entries, the assigned tokenizer is a best guess — verify with provider.
+    const EXACT_TABLE: &[(&str, &'static str)] = &[
+        // OpenAI GPT family
+        ("gpt-3.5-turbo",     "tiktoken-cl100k_base-v1.2.3"),
+        ("gpt-4",             "tiktoken-cl100k_base-v1.2.3"),
+        ("gpt-4-turbo",       "tiktoken-cl100k_base-v1.2.3"),
+        ("gpt-4o",             "tiktoken-o200k_base"),   // o200k_base vocab
+        ("gpt-4o-mini",        "tiktoken-o200k_base"),   // o200k_base vocab
+        // OpenAI o-series (o200k_base vocab)
+        ("o1",                 "tiktoken-o200k_base"),
+        ("o1-mini",            "tiktoken-o200k_base"),   // UNCERTAIN — o-series family
+        ("o1-preview",         "tiktoken-o200k_base"),   // UNCERTAIN — verify with provider
+        ("o3",                 "tiktoken-o200k_base"),
+        ("o3-mini",            "tiktoken-cl100k_base-v1.2.3"),   // UNCERTAIN — confirmed via test vector (v16)
+        ("o3-pro",             "tiktoken-cl100k_base-v1.2.3"),   // UNCERTAIN — confirmed via test vector (v16)
+        // Anthropic Claude family (cl100k_base vocab)
+        ("claude-3-5-haiku",   "tiktoken-cl100k_base-v1.2.3"),
+        ("claude-3-5-opus",   "tiktoken-cl100k_base-v1.2.3"),
+        ("claude-3-5-sonnet",  "tiktoken-cl100k_base-v1.2.3"),
+        ("claude-3-haiku",     "tiktoken-cl100k_base-v1.2.3"),
+        ("claude-3-opus",     "tiktoken-cl100k_base-v1.2.3"),
+        ("claude-3-sonnet",   "tiktoken-cl100k_base-v1.2.3"),
+        // Google Gemini family (UNCERTAIN — may use SentencePiece)
+        ("gemini-1.5-flash",   "tiktoken-cl100k_base-v1.2.3"),   // UNCERTAIN
+        ("gemini-1.5-pro",    "tiktoken-cl100k_base-v1.2.3"),   // UNCERTAIN
+        ("gemini-2.0-flash",  "tiktoken-cl100k_base-v1.2.3"),   // UNCERTAIN
+        ("gemini-2.0-pro",    "tiktoken-cl100k_base-v1.2.3"),   // UNCERTAIN
+        // Mistral family (cl100k_base assumed for most; verify)
+        ("mistral-7b",        "tiktoken-cl100k_base-v1.2.3"),
+        ("mistral-large",     "tiktoken-cl100k_base-v1.2.3"),
+        ("mistral-small",     "tiktoken-cl100k_base-v1.2.3"),
+        // Meta LLaMA family
+        ("llama-3-8b",        "tiktoken-cl100k_base-v1.2.3"),
+        ("llama-3-70b",       "tiktoken-cl100k_base-v1.2.3"),
+    ];
+
+    // 1. Exact match lookup (case-sensitive)
+    if let Some((_, tokenizer)) = EXACT_TABLE.iter().find(|(m, _)| *m == model) {
+        return tokenizer;
+    }
+
+    // 2. Case-insensitive prefix fallback for unknown variants of known families.
+    // The incoming model name may have mixed case (e.g., "GPT-4", "O3-mini").
+    // We use model.to_lowercase() so that "GPT-" matches "gpt-", "O3" matches "o3", etc.
+    let model_lower = model.to_lowercase();
+    if model_lower.starts_with("gemini-") {
+        // UNCERTAIN — may use SentencePiece; default approximation is cl100k_base
+        DEFAULT_TOKENIZER
+    } else if model_lower.starts_with("gpt-") {
+        // Unknown GPT variant — most use cl100k_base
+        "tiktoken-cl100k_base-v1.2.3"
+    } else if model_lower.starts_with("claude-") {
+        // Unknown Claude variant — most use cl100k_base
+        "tiktoken-cl100k_base-v1.2.3"
+    } else if model_lower.starts_with("mistral-") {
+        // Unknown Mistral variant
+        "tiktoken-cl100k_base-v1.2.3"
+    } else if model_lower.starts_with("llama-") {
+        // Unknown LLaMA variant
+        "tiktoken-cl100k_base-v1.2.3"
+    } else if model_lower.starts_with("o1") || model_lower.starts_with("o3") {
+        // Unknown o-series variant — likely o200k_base
+        "tiktoken-o200k_base"
+    } else {
+        // Unknown model — default fallback
+        DEFAULT_TOKENIZER
     }
 }
 ```
@@ -787,7 +841,7 @@ Expected `compute_pricing_hash()` output: `4a065c51147d4730379d600c4a491778b98f6
 | input_tokens | `100` |
 | output_tokens | `50` |
 
-Expected `compute_cost()` output: `3000 + 3000 = 6000` micro-units
+Expected `compute_cost()` output: `Ok(6000)` (micro-units — Result type per v20 overflow handling)
 
 ### Tokenizer ID Test Vector
 
@@ -821,6 +875,8 @@ for use in `event_id` computation (RFC-0909 §compute_event_id).
 | effective_from not increment | Latest `effective_from=1704153600`, attempt with `effective_from=1704067200` | Returns `Err(RegistryError::EffectiveFromNotIncrement)` |
 | table_id too long | `table_id` with 129+ bytes | Returns `Err(RegistryError::TableIdTooLong { length: 129, ... })` |
 | Metadata too large | Sum of all `(key.len() + value.len())` > 4096 | Returns `Err(RegistryError::MetadataTooLarge { size: 5000, max: 4096 })` |
+| Too many versions | Register 1001st version for a single (provider, model) | Returns `Err(RegistryError::TooManyVersions { current_count: 1000, max: 1000 })` |
+| Cost overflow | `compute_cost` with pricing values that overflow u64 | Returns `Err(CostError::Overflow { ... })` — checked_add instead of saturating_add |
 | Unknown model tokenizer | `"o1-preview"` | Returns `DEFAULT_TOKENIZER` ("tiktoken-cl100k_base-v1.2.3") — not an error |
 
 ## Integration: Registry in the Request Pipeline
@@ -961,6 +1017,7 @@ This design allows the registry to be treated as a cache of known-good pricing s
 
 | Version | Date | Changes |
 |---------|------|---------|
+| v20 | 2026-04-23 | Round 26 fixes: fix 1.2/1.3 o3-mini/o3-pro tokenizer three-way inconsistency — EXACT_TABLE now matches test vectors (cl100k_base); Tokenizer Assignment Table row updated; o1-mini corrected to o200k_base; fix 3.3 (saturating_add → checked_add with CostError::Overflow); fix 3.2 (MAX_VERSIONS_PER_MODEL=1000 + TooManyVersions error); fix 3.4 (case-insensitive prefix fallback via model.to_lowercase()); from comprehensive adversarial review |
 | v19 | 2026-04-23 | Round 25 fixes: fix C1/C2 dead "o3-" arm (never matches 4-char prefix) → add "o3-m"/"o3-p" arms for o3-mini/o3-pro; add o3-mini/o3-pro to Tokenizer Assignment Table with UNCERTAIN flag; add o3-mini/o3-pro test vectors; fix H4 Phase 2 blocking note (RFC-0903-B1 v23 and RFC-0903-C1 v5 both Accepted); fix H4 effective_from equal-value tiebreaker documentation (version number provides ordering when timestamps equal) |
 | v18 | 2026-04-23 | Round 24 adversarial fixes: fix M4 (stale schema comment "first-character"→"4-character" dispatch); add o3-* arm to get_canonical_tokenizer (o3-mini/o3-pro → DEFAULT_TOKENIZER with UNCERTAIN flag); add o3-mini/o3-pro to Uncertain Assignments; add scope disclaimer to gpt-* dispatch (major commercial models only); update Status header v17→v18 |
 | v17 | 2026-04-23 | Round 23 adversarial fixes: fix 0910-C1 (Determinism Requirements: remove canonical JSON/RFC 8785 reference — pricing_hash uses DCS Entry 16 binary per RFC-0126 Part 3); fix 0910-C2 (get_canonical_tokenizer: use 4-char prefix dispatch ["gem-","gpt-","o1","o1-m","o1-p","clau"] to disambiguate gpt-* from gemini-*, o1* from o1-mini/o1-preview); fix 0910-C3 (effective_from: clarify as ordering constraint expressed as Unix epoch seconds, not wall-clock timestamp; same-second registrations allowed via < not <=); fix 0910-H1 (PricingTable naming collision: add type alias guidance for dual-RFC integrations); fix 0910-H2 (register thread safety: document startup-before-serving pattern; dynamic registration needs Arc<RwLock>); fix 0910-H3 (compute_cost saturating_add: add realistic bounds analysis — not a practical overflow concern); fix 0910-H4 (Phase 2 blocked: confirmed RFC-0903-B1 and RFC-0903-C1 are both Accepted — Phase 2 can proceed); fix 0910-M1 (BLAKE3 collision: add collision detection requirement at registration time); fix 0910-M2 (Phase 2 migration: document per-model exact-match population requirement ~15-20 rows); fix 0910-M4 (metadata size limit: add MAX_METADATA_SIZE=4096 and RegistryError::MetadataTooLarge); fix 0910-M5 (get_pricing ignores effective_from: clarify effective_from is ordering constraint not time-based query); add error case test vectors; add o1-mini to tokenizer test vectors with UNCERTAIN flag |

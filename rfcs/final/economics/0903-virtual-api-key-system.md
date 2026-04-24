@@ -2,7 +2,7 @@
 
 ## Status
 
-Final (v31 - Stoolap compatibility)
+Final (v33 - Stoolap compatibility)
 
 ## Authors
 
@@ -1468,7 +1468,7 @@ pub struct SpendEvent {
     /// Token source for determining token count origin
     pub token_source: TokenSource,
     /// Canonical tokenizer identifier (if token_source is CanonicalTokenizer)
-    pub tokenizer_id: Option<Uuid>,
+    pub tokenizer_id: Option<[u8; 16]>,
     /// Raw provider usage JSON for audit (optional)
     pub provider_usage_json: Option<String>,
     /// Event timestamp (epoch seconds)
@@ -2277,11 +2277,17 @@ pub fn check_team_key_limit(db: &Database, team_id: &Uuid) -> Result<(), KeyErro
 
 ## Changelog
 
-- **v32 (2026-04-24):** Retire `tokenizer_version` field — unify on `tokenizer_id: Option<Uuid>` per RFC-0903-C1/RFC-0909:
-  - Renamed `SpendEvent.tokenizer_version: Option<String>` → `tokenizer_id: Option<Uuid>` in struct definition
+- **v33 (2026-04-24):** Correct tokenizer_id type — revert from `Option<Uuid>` to `Option<[u8; 16]>` per RFC-0909 and RFC-0903-B1:
+  - Changed `SpendEvent.tokenizer_id: Option<Uuid>` → `Option<[u8; 16]>` (opaque 16-byte binary, not UUID)
+  - UUID is RFC 4122 structured layout; tokenizer_id is a BLAKE3 hash (opaque 16 bytes) — using UUID for a hash is type misuse
+  - Aligns with RFC-0909 v65, RFC-0903-B1 v15, and RFC-0903-C1 v5 which all use `[u8; 16]`
+  - v32 changelog note about `Option<Uuid>` is corrected; struct field and DDL remain consistent with B1/B1/C1
+
+- **v32 (2026-04-24):** Retire `tokenizer_version` field — unify on `tokenizer_id: Option<[u8; 16]>` per RFC-0903-C1/RFC-0909:
+  - Renamed `SpendEvent.tokenizer_version: Option<String>` → `tokenizer_id: Option<[u8; 16]>` in struct definition
   - Updated DDL in both SQLite (§`spend_ledger` SQLite) and PostgreSQL (§`spend_ledger` PostgreSQL) schemas: `tokenizer_version TEXT` → `tokenizer_id BYTEA(16)`
   - INSERT statements already use `tokenizer_id` (from v30), but struct field name is now consistent
-  - This resolves Round 3 issue 3.1: field is now `Option<Uuid>` (matches RFC-0909) instead of `Option<String>`
+  - This resolves Round 3 issue 3.1: field is now `Option<[u8; 16]>` (matches RFC-0909) instead of `Option<String>`
 
 - **v31 (2026-04-24):** Fix encoding bugs in record_spend/record_spend_with_team per RFC-0903-B1 amendment:
   - `event_id`: changed from `uuid_to_blob_32()` → `hex_to_blob_32()` (event_id is hex String, not Uuid)

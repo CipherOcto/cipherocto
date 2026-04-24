@@ -2,7 +2,7 @@
 
 ## Status
 
-Final (v30 - Stoolap compatibility)
+Final (v31 - Stoolap compatibility)
 
 ## Authors
 
@@ -324,6 +324,8 @@ pub enum KeyError {
     RateLimited { retry_after: u64 },
     TeamBudgetExceeded { current: u64, limit: u64 },
     TeamKeyLimitExceeded { team_id: Uuid, current: u32, limit: u32 },
+    /// OCTO-W balance check failed — key not found or insufficient balance (RFC-0904 F3).
+    OctoWNotEnabled,
 }
 
 /// Validate API key middleware
@@ -956,10 +958,23 @@ fn uuid_to_blob_16(id: &Uuid) -> Vec<u8> {
     id.as_bytes().to_vec()
 }
 
-/// Convert event UUID to BLOB(32) for storage
+/// Convert event_id from hex String (struct/API layer) to raw [u8; 32] for BLOB(32) storage.
+/// event_id is SHA256 hex (64 chars) in the SpendEvent struct; storage requires raw binary.
+/// Per RFC-0903-B1 §event_id.
 #[inline]
-fn uuid_to_blob_32(id: &Uuid) -> Vec<u8> {
-    id.as_bytes().to_vec()  // 16 bytes, but we need 32 for event_id per RFC-0903-B1
+fn hex_to_blob_32(hex_str: &str) -> Vec<u8> {
+    let bytes = hex::decode(hex_str).expect("valid 64-char hex event_id");
+    bytes
+}
+
+/// Encode a gateway-provided request_id string to 32 raw bytes for BLOB(32) storage.
+/// All inputs are treated as raw text strings (not hex). Always uses SHA256 regardless
+/// of input length — uniform encoding for all gateway request_id formats.
+/// Per RFC-0903-B1 §request_id.
+#[inline]
+fn encode_request_id(request_id: &str) -> [u8; 32] {
+    use sha2::{Digest, Sha256};
+    Sha256::digest(request_id.as_bytes()).into()
 }
 
 /// Generate a new API key
@@ -1625,9 +1640,9 @@ pub fn record_spend_with_event(
         ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
         ON CONFLICT(key_id, request_id) DO NOTHING",
         params![
-            uuid_to_blob_32(&event.event_id),
+            hex_to_blob_32(&event.event_id),
             uuid_to_blob_16(&event.key_id),
-            event.request_id,
+            encode_request_id(&event.request_id),
             event.provider,
             event.model,
             event.input_tokens,
@@ -1843,8 +1858,8 @@ pub fn record_spend(
         ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
         ON CONFLICT(key_id, request_id) DO NOTHING",
         params![
-            uuid_to_blob_32(&event.event_id),
-            event.request_id.as_ref().map(|r| r.to_vec()),
+            hex_to_blob_32(&event.event_id),
+            encode_request_id(&event.request_id),
             uuid_to_blob_16(&event.key_id),
             event.team_id.as_ref().map(|t| uuid_to_blob_16(t)),
             event.provider,
@@ -1934,8 +1949,8 @@ pub fn record_spend_with_team(
         ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
         ON CONFLICT(key_id, request_id) DO NOTHING",
         params![
-            uuid_to_blob_32(&event.event_id),
-            event.request_id.as_ref().map(|r| r.to_vec()),
+            hex_to_blob_32(&event.event_id),
+            encode_request_id(&event.request_id),
             uuid_to_blob_16(&event.key_id),
             event.team_id.as_ref().map(|t| uuid_to_blob_16(t)),
             event.provider,
@@ -2261,6 +2276,14 @@ pub fn check_team_key_limit(db: &Database, team_id: &Uuid) -> Result<(), KeyErro
 ---
 
 ## Changelog
+
+- **v31 (2026-04-24):** Fix encoding bugs in record_spend/record_spend_with_team per RFC-0903-B1 amendment:
+  - `event_id`: changed from `uuid_to_blob_32()` → `hex_to_blob_32()` (event_id is hex String, not Uuid)
+  - `request_id`: changed from `event.request_id.as_ref().map(|r| r.to_vec())` → `encode_request_id()` (SHA256 of raw gateway text)
+  - `encode_request_id()` return type changed from `Vec<u8>` → `[u8; 32]` to match RFC-0903-B1
+  - Added `KeyError::OctoWNotEnabled` variant (referenced in RFC-0904 F3 but missing from enum)
+  - Added `hex_to_blob_32()` and `encode_request_id()` helper functions (RFC-0903-B1 §event_id, §request_id)
+  - Also fixed deprecated `record_spend_with_event()` at line 1642-1645
 
 - **v30 (2026-04-20):** Fix C2 — SpendEvent.team_id type mismatch with RFC-0909
   - Changed `team_id: Option<String>` → `team_id: Option<Uuid>` in SpendEvent struct

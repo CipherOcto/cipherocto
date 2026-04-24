@@ -2,7 +2,7 @@
 
 ## Status
 
-Accepted (v63 — aligned with RFC-0903 Final v30 + RFC-0903-B1 v23 + RFC-0903-C1 v4, RFC-0126 (Accepted v2.5.1), RFC-0201 (Accepted v5.24))
+Accepted (v65 — aligned with RFC-0903 Final v31 + RFC-0903-B1 v23 + RFC-0903-C1 v4, RFC-0126 (Accepted v2.5.1), RFC-0201 (Accepted v5.24))
 
 ## Authors
 
@@ -857,6 +857,10 @@ impl Default for InternalPricingTable {
 /// Total cost in micro-units (u64). Uses integer division with truncation.
 /// Cost is computed as: `(input_tokens * prompt_cost_per_1k / 1000) + (output_tokens * completion_cost_per_1k / 1000)`
 ///
+/// # Errors
+/// Returns `CostError::Overflow` if either multiplication overflows u64 or
+/// if the sum of prompt_cost and completion_cost overflows u64.
+///
 /// # Truncation Note
 /// Integer division truncates toward zero. For micro-unit pricing, truncation
 /// error is bounded at <2 micro-units per event (<1 per division step). This is
@@ -865,18 +869,29 @@ pub fn compute_cost(
     pricing: &PricingModel,
     input_tokens: u32,
     output_tokens: u32,
-) -> u64 {
+) -> Result<u64, CostError> {
     // Integer math only — no floating point
     // Uses integer division (truncates toward zero). For micro-unit pricing,
     // truncation occurs only when cost < 0.5 micro-units (effectively free).
     // 1000 = TOKEN_SCALE (micro-units per token)
-    let prompt_cost = (input_tokens as u64 * pricing.prompt_cost_per_1k) / 1000;
-    let completion_cost = (output_tokens as u64 * pricing.completion_cost_per_1k) / 1000;
+    let prompt_cost = (input_tokens as u64)
+        .checked_mul(pricing.prompt_cost_per_1k)
+        .ok_or(CostError::Overflow)?;
+    let prompt_cost = prompt_cost / 1000;
 
-    // saturating_add: overflow requires >1.8×10^19 micro-units in a single request —
-    // effectively impossible in practice. Live record_spend (RFC-0903 Final) uses
-    // checked arithmetic on the per-key budget accumulation.
-    prompt_cost.saturating_add(completion_cost)
+    let completion_cost = (output_tokens as u64)
+        .checked_mul(pricing.completion_cost_per_1k)
+        .ok_or(CostError::Overflow)?;
+    let completion_cost = completion_cost / 1000;
+
+    prompt_cost.checked_add(completion_cost).ok_or(CostError::Overflow)
+}
+
+/// Error for cost computation overflow.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum CostError {
+    /// Multiplication or addition overflowed u64.
+    Overflow,
 }
 
 All values stored as integer micro-units.
@@ -997,7 +1012,8 @@ pub async fn process_response(
 
     // 3. Look up pricing (should be cached singleton in production — see §InternalPricingTable Caching)
     let pricing = PRICING_TABLE.get(model).ok_or(KeyError::NotFound)?;
-    let cost_amount = compute_cost(pricing, response.input_tokens, response.output_tokens);
+    let cost_amount = compute_cost(pricing, response.input_tokens, response.output_tokens)
+        .map_err(|e| KeyError::Storage(format!("compute_cost overflow: {:?}", e)))?;
 
     // 4. Generate deterministic event_id (matches RFC-0903 Final §compute_event_id)
     let event_id = compute_event_id(
@@ -1524,53 +1540,16 @@ else if model.starts_with("claude-") { ... }
 A faster approach matches on the first character, then does a single comparison:
 
 ```rust
-/// Canonical tokenizer version for fallback (RFC-0910)
-const CANONICAL_TOKENIZER_VERSION: &str = "tiktoken-cl100k_base-v1.2.3";
-
-/// Get canonical tokenizer for a model family — O(1) per call
-/// Returns static str reference — zero allocation
+/// WARNING: This function has been REMOVED.
+/// Production code MUST use RFC-0910's get_canonical_tokenizer() —
+/// the authoritative tokenizer registry with exact-match table and prefix fallback.
+/// The prefix-match approach above is NOT authoritative and may produce different
+/// results than RFC-0910's implementation, breaking cross-router determinism.
 ///
-/// Note: RFC-0910 is the authoritative source for tokenizer assignments.
-/// This function is an approximation for quota accounting pseudocode only.
-/// Actual implementation MUST use RFC-0910's tokenizer registry at runtime.
-pub fn get_canonical_tokenizer(model: &str) -> &'static str {
-    // Prefix-based dispatch: O(1) but coarse — RFC-0910 registry is definitive.
-    // Known mappings (approximate, RFC-0910 may refine):
-    //   gpt-4*, gpt-3.5*  → cl100k_base
-    //   o1, o3             → o200k_base (OpenAI o-series vocab)
-    //   o1-mini, o1-preview → different vocab (verify with RFC-0910)
-    //   claude-*           → cl100k_base (Anthropic BPE, compatible vocab)
-    //   gemini-*           → cl100k_base (Google BPE — NOTE: may be wrong for Gemini,
-    //                          which uses SentencePiece, not BPE; fallthrough is intentional)
-    //   Other prefixes (m, l, etc.) → fall through to CANONICAL_TOKENIZER_VERSION
-    //
-    // ⚠️ 'g' prefix collision: models starting with 'g' (gpt-*, gemini-*) both hit the
-    // 'g' arm. This is an approximation — the 'g' arm targets GPT (most common 'g' prefix
-    // in AI APIs). Gemini tokenizer assignment is uncertain (SentencePiece vs BPE) and
-    // requires RFC-0910 clarification. The fallthrough path (CANONICAL_TOKENIZER_VERSION)
-    // is NOT known to be correct for any 'g' family beyond GPT.
-    //
-    // ⚠️ Unknown model families (Mistral 'm', Llama 'l', etc.): fall through to the
-    // CANONICAL_TOKENIZER_VERSION constant. This is explicitly NOT verified for any
-    // family outside OpenAI/Anthropic. RFC-0910 must provide authoritative mappings.
-    match model.chars().next() {
-        'g' => "tiktoken-cl100k_base-v1.2.3",  // gpt-* family ONLY (gemini-* collision noted); version per RFC-0910 Tokenizer Assignment Table
-        'o' => "tiktoken-o200k_base",           // o1/o3 — VERIFIED per RFC-0910 Tokenizer Assignment Table; ⚠️ NOTE: 'o' prefix is coarse — any model starting with 'o' matches; only o1 and o3 are verified for o200k_base; future o* models with different vocabs will incorrectly use this assignment until RFC-0910 registry is updated
-        'c' => "tiktoken-cl100k_base-v1.2.3",  // claude-* family; version per RFC-0910 Tokenizer Assignment Table
-        _ => CANONICAL_TOKENIZER_VERSION,       // UNKNOWN: requires RFC-0910 registry
-    }
-}
-/// WARNING: This function is pseudocode for quota accounting only.
-/// Production code MUST use the RFC-0910 tokenizer registry which maps
-/// exact model names to tokenizer versions. The prefix-match above
-/// is NOT authoritative — RFC-0910 defines the real mapping.
-///
-/// ⚠️ CRITICAL: For cross-router determinism, this function's output MUST be
-/// bit-for-bit identical to RFC-0903 Final's get_canonical_tokenizer().
-/// If the two implementations differ (different tokenizer names, different
-/// dispatch logic), the same request_id will produce different token_source
-/// values on different routers, breaking event_id determinism. Any change to
-/// this function MUST be mirrored in RFC-0903 Final simultaneously.
+/// For cross-router determinism, all routers MUST use the same tokenizer assignment.
+/// RFC-0910's Tokenizer Assignment Table is the single source of truth.
+/// See RFC-0910 §Tokenizer Assignment and get_canonical_tokenizer() for the
+/// authoritative implementation (exact-match + prefix fallback).
 ```
 
 The `&'static str` return type eliminates heap allocation on every call.
@@ -1614,6 +1593,8 @@ $0.03/1K tokens → DQA(30_000, scale=6)
 
 | Version | Date       | Changes |
 | ------- | ---------- | ------- |
+| v65     | 2026-04-24 | Round 29: fix R2-03 (High) — make compute_cost fallible (checked_mul on both multiplications, Result<u64, CostError> return type); update process_response pseudocode to handle error; update Status header v64→v65 |
+| v64     | 2026-04-24 | Round 28: remove duplicate get_canonical_tokenizer function block — RFC-0910 is authoritative single source of truth; add normative reference to RFC-0910's implementation; update Status header v63→v64 |
 | v63     | 2026-04-21 | Fix RFC126-C1: replace canon-json pseudocode with DCS Entry 16 binary encoding — RFC-0126 §JSON Allowed Contexts explicitly forbids JSON for Merkle tree leaves; pricing_hash uses DCS Part 3 binary (BTreeMap as u32_be(count)||sorted entries, each field u32_be(field_id)||binary value); update pricing_hash = SHA256(DCS) note accordingly; update Status header v62→v63 |
 | v62     | 2026-04-20 | Round 59 fixes: fix N-H3 (compute_pricing_hash: replace stale serde_json pseudocode with canon-json usage example — canon-json is RFC 8785-compliant, cross-tested against olpc-cjson; BTreeMap provides key ordering, canon-json guarantees field ordering and number formatting; production code MUST use canon-json) |
 | v61     | 2026-04-20 | Round 57 fixes: fix C5 (add event_id uniqueness enforcement note to DDL comment — application-layer enforcement required per RFC-0903-B1); fix N-H1 (clarify BLOB conversion happens at record_spend storage boundary, not in process_response); fix C2 (update RFC-0903 Final reference from v29 to v30 — RFC-0903 amended to change SpendEvent.team_id from Option<String> to Option<Uuid>, aligning with RFC-0909's Option<uuid::Uuid>); update RFC-0903-C1 reference to v4 (rotated_from/rotation_grace_until columns restored) |

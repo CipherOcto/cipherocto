@@ -2,7 +2,7 @@
 
 ## Status
 
-Draft (v2.13 — Round 13: fix 1.1 virtual keys self-contradiction — virtual keys apply to HTTP proxy callers only (Python SDK callers bypass proxy, no virtual key enforcement in any Python SDK path); corrected Status header; from comprehensive adversarial review)
+Draft (v2.15 — Round 29: fix R2-04 (High) — clarify SDK mode budget identity derivation using HMAC-SHA256 (not BLAKE3), specify key_hash population, clarify set_api_key() flow, document limitation when key not provisioned; update Status header v2.14→v2.15; from comprehensive adversarial review)
 
 ## Authors
 
@@ -112,9 +112,14 @@ flowchart TB
 # Cargo.toml (quota-router-core)
 [features]
 default = ["full"]           # Both provider integration strategies + both interfaces
+# IMPORTANT: litellm-mode and any-llm-mode are MUTUALLY EXCLUSIVE (single-mode only).
+# These flags enable ONE provider strategy. The full flag enables BOTH strategies
+# simultaneously WITHOUT enabling either single-mode flag (preventing cfg overlap).
 litellm-mode = ["hyper", "axum"]  # HTTP proxy + reqwest HTTP (no Python SDK)
 any-llm-mode = ["py-o3"]    # Python SDK + PyO3 bridge (no HTTP proxy)
-full = ["litellm-mode", "any-llm-mode"]  # Both interfaces AND both strategies
+# full: compiles both strategies (HttpProvider + SdkProvider) as ProviderHandle enum.
+# Does NOT enable litellm-mode or any-llm-mode to prevent cfg-attr collision.
+full = ["hyper", "axum", "py-o3"]  # Both strategies simultaneously
 ```
 
 **What each mode builds:**
@@ -138,7 +143,10 @@ The dual-mode architecture uses Cargo feature gates to select the **provider int
 default = ["full"]           # Both provider integration strategies + both interfaces
 litellm-mode = ["hyper", "axum"]  # Native Rust HTTP forwarding (no Python SDK deps for providers)
 any-llm-mode = ["py-o3"]    # Python SDK delegation via PyO3 (official provider SDKs)
-full = ["litellm-mode", "any-llm-mode"]  # Both provider strategies
+# IMPORTANT: litellm-mode and any-llm-mode are MUTUALLY EXCLUSIVE (single-mode only).
+# These flags enable ONE provider strategy. The full flag enables BOTH strategies
+# simultaneously WITHOUT enabling either single-mode flag (preventing cfg overlap).
+full = ["hyper", "axum", "py-o3"]  # Both strategies simultaneously
 
 # Interface availability:
 # - HTTP proxy (hyper/axum): compiled when litellm-mode OR full
@@ -283,12 +291,14 @@ response = completion(model="anthropic/claude-opus-4", messages=[...])
 ```rust
 // quota-router-core/src/lib.rs
 
-// Provider integration strategies (mutually exclusive per provider call path):
-#[cfg(feature = "litellm-mode")]
-pub mod native_http;  // reqwest HTTP forwarding — LiteLLM Mode
+// Provider integration strategies:
+// In single-mode builds: exactly one is compiled (litellm-mode OR any-llm-mode).
+// In full builds: BOTH are compiled, selected at runtime via ProviderHandle enum.
+#[cfg(any(feature = "litellm-mode", feature = "full"))]
+pub mod native_http;  // reqwest HTTP forwarding — LiteLLM Mode / full
 
-#[cfg(feature = "any-llm-mode")]
-pub mod py_bridge;    // PyO3 → official Python SDKs — any-llm Mode
+#[cfg(any(feature = "any-llm-mode", feature = "full"))]
+pub mod py_bridge;    // PyO3 → official Python SDKs — any-llm Mode / full
 
 #[cfg(any(feature = "litellm-mode", feature = "full"))]
 pub mod gateway;      // HTTP proxy server (hyper/axum) — LiteLLM Mode
@@ -577,11 +587,11 @@ pub struct Router {
     // - litellm-mode: HashMap<String, Arc<dyn native_http::HttpProvider>>
     // - any-llm-mode: HashMap<String, Arc<dyn py_providers::SdkProvider>>
     // - full: HashMap<String, ProviderHandle>
-    #[cfg(feature = "full")]
+    #[cfg(all(feature = "full", not(any(feature = "litellm-mode", feature = "any-llm-mode"))))]
     provider_impls: HashMap<String, ProviderHandle>,
-    #[cfg(feature = "litellm-mode")]
+    #[cfg(all(feature = "litellm-mode", not(feature = "full")))]
     provider_impls: HashMap<String, Arc<dyn crate::native_http::HttpProvider>>,
-    #[cfg(feature = "any-llm-mode")]
+    #[cfg(all(feature = "any-llm-mode", not(feature = "full")))]
     provider_impls: HashMap<String, Arc<dyn crate::py_providers::SdkProvider>>,
     // Interior mutability for thread-safe shared state
     state: RwLock<RouterState>,
@@ -1280,7 +1290,20 @@ response = completion(model="gpt-4", messages=[...], api_key="sk-...")
 
 There's no auth enforcement — the SDK accepts any string as an API key.
 
-**Resolution (FIXED):** In any-llm Mode, the PyO3 bridge passes the API key directly to the official provider SDK (OpenAI SDK, Anthropic SDK, etc.). The provider SDK performs the actual API key validation when making the API call — the key is validated by the provider's servers, not by quota-router. This means validation is delegated to the provider (same as any direct SDK usage). Virtual key validation (RFC-0903) applies only in LiteLLM Mode (HTTP proxy), not in any-llm Mode SDK usage. The SDK stores *provider* API keys (OpenAI, Anthropic, etc.) — not virtual keys. Virtual keys are a LiteLLM Mode concept where the proxy mediates access. In any-llm Mode, clients have direct provider credentials validated by the provider.
+**Resolution (FIXED):** In any-llm Mode, the PyO3 bridge passes the API key directly to the official provider SDK (OpenAI SDK, Anthropic SDK, etc.). The provider SDK validates the key on the provider's servers — not by quota-router. This is delegated validation, same as any direct SDK usage.
+
+**Budget identity in SDK mode:** Virtual key validation (RFC-0903) applies only in LiteLLM Mode (HTTP proxy). In SDK mode, budgets are tracked using the provider API key as the budget identity.
+
+**Key derivation for SDK mode:**
+1. `set_api_key(provider_key)` is called with the provider API key (e.g., `sk-...`)
+2. `key_id = HMAC-SHA256(server_secret, provider_key)[..16]` — same derivation pattern as RFC-0903 virtual key generation
+3. `key_hash = HMAC-SHA256(server_secret, provider_key)` — stored in `api_keys.key_hash` for validation
+4. The router inserts/updates an `api_keys` row with `key_id`, `key_hash`, `budget_limit`, `rpm_limit`, `tpm_limit`
+5. Subsequent requests use this `key_id` in all `record_spend()` calls for budget tracking
+
+**Note:** `HMAC-SHA256` (not BLAKE3) is used — BLAKE3 is used only for `tokenizer_id` derivation (per RFC-0903-B1), not for key identity. The router calls `record_spend()` for budget enforcement the same way as LiteLLM Mode — the only difference is how the `key_id` is derived (from provider key, not from virtual key in Authorization header).
+
+**Limitation:** If a provider key is used directly without calling `set_api_key()` first, no budget entry exists and budget enforcement is bypassed. The SDK caller must provision budget identity before making tracked requests.
 
 ---
 
@@ -2179,16 +2202,14 @@ AnyLLM --> Shared
 Both modes feed into the same `Shared` core. But the feature gate architecture shows:
 
 ```rust
-#[cfg(feature = "litellm-mode")]
-pub mod native_http;   // LiteLLM Mode ONLY
+#[cfg(any(feature = "litellm-mode", feature = "full"))]
+pub mod native_http;   // LiteLLM Mode / full (both strategies compiled)
 
-#[cfg(feature = "any-llm-mode")]
-pub mod py_bridge;     // any-llm Mode ONLY
+#[cfg(any(feature = "any-llm-mode", feature = "full"))]
+pub mod py_bridge;    // any-llm Mode / full (both strategies compiled)
 ```
 
-These modules are feature-gated and cannot coexist in the same compilation unit. The diagram's "Shared" implies both can be compiled simultaneously and route through shared code. In reality, the provider call path is mutually exclusive — you can't have both `native_http` and `py_bridge` active simultaneously.
-
-**Resolution:** Update diagram to show mutual exclusivity explicitly, or restructure so the shared router truly can accept both provider implementation types at runtime (via dynamic dispatch with feature-gated compilation of each implementation).
+In `full` builds, both modules are compiled simultaneously and selected at runtime via `ProviderHandle` enum dispatch. In single-mode builds, only the relevant module is compiled (the other cfg gate evaluates to false).
 
 ---
 

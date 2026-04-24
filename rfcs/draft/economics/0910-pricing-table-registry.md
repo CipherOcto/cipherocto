@@ -2,7 +2,7 @@
 
 ## Status
 
-Draft (v20 — Round 26 fixes: fix 1.2/1.3 o3-mini/o3-pro tokenizer three-way inconsistency — EXACT_TABLE now matches test vectors (cl100k_base); Tokenizer Assignment Table updated; o1-mini corrected to o200k_base; from comprehensive adversarial review)
+Draft (v21 — Round 29: fix R2-03 (High) — add checked_mul to both multiplication steps in compute_cost (was only checked_add); match RFC-0909/RFC-0904 overflow handling; update Status header v20→v21; from comprehensive adversarial review)
 
 ## Authors
 
@@ -357,18 +357,15 @@ impl PricingRegistry {
                 });
             }
             // table.version > latest.version AND table.effective_from > latest.effective_from:
-            // index ALL superseded entries by their hashes for historical get_by_hash() lookup
-            for superseded in entries.iter() {
-                let h = superseded.compute_pricing_hash();
-                self.by_hash.insert(h, Arc::new(superseded.clone()));
-            }
+            // All superseded versions were already indexed when they were first registered.
+            // Only the new version needs to be indexed here.
         }
 
         entries.push(table);
         // Keep entries sorted desc by version (newest first)
         entries.sort_by(|a, b| b.version.cmp(&a.version));
 
-        // Index new entry by hash
+        // Index new entry by hash (superseded entries already indexed at their registration time)
         self.by_hash.insert(hash, Arc::new(entries[0].clone()));
 
         Ok(hash)
@@ -448,8 +445,16 @@ pub fn compute_cost(
     input_tokens: u32,
     output_tokens: u32,
 ) -> Result<u64, CostError> {
-    let prompt_cost = (input_tokens as u64 * pricing.prompt_cost_per_1k) / 1000;
-    let completion_cost = (output_tokens as u64 * pricing.completion_cost_per_1k) / 1000;
+    // Use checked_mul for both multiplication steps to catch overflow.
+    // checked_add catches overflow in the final sum.
+    let prompt_cost = (input_tokens as u64)
+        .checked_mul(pricing.prompt_cost_per_1k)
+        .ok_or(CostError::Overflow)?
+        / 1000;
+    let completion_cost = (output_tokens as u64)
+        .checked_mul(pricing.completion_cost_per_1k)
+        .ok_or(CostError::Overflow)?
+        / 1000;
     // Use checked_add to surface overflow from misconfigured pricing tables.
     // Overflow would indicate prompt_cost_per_1k or completion_cost_per_1k
     // set to extreme values (near u64::MAX), which is a deployment misconfiguration.

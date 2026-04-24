@@ -2,7 +2,7 @@
 
 ## Status
 
-Draft (v1.21 — depends on RFC-0903 Final v30, RFC-0903-B1 v23, RFC-0903-C1, RFC-0909 Final, RFC-0910 Draft)
+Draft (v1.23 — depends on RFC-0903 Final v31, RFC-0903-B1 v23, RFC-0903-C1, RFC-0909 Final, RFC-0910 Draft)
 
 ## Authors
 
@@ -118,22 +118,28 @@ const TOKEN_SCALE: u64 = 1000;
 
 /// Compute cost in micro-units from token counts and pricing.
 /// Returns cost_amount for spend_ledger.
+///
+/// # Errors
+/// Returns `BudgetError::CostOverflow` if the computation overflows u64
+/// (would require prompt_cost_per_1k or completion_cost_per_1k near u64::MAX).
 pub fn compute_cost(
     pricing: &PricingModel,
     input_tokens: u32,
     output_tokens: u32,
-) -> u64 {
+) -> Result<u64, BudgetError> {
     // prompt_cost = input_tokens × prompt_cost_per_1k / TOKEN_SCALE
     let prompt_cost = (input_tokens as u64)
-        .saturating_mul(pricing.prompt_cost_per_1k)
-        .saturating_div(TOKEN_SCALE);
+        .checked_mul(pricing.prompt_cost_per_1k)
+        .ok_or(BudgetError::CostOverflow)?
+        / TOKEN_SCALE;
 
     // completion_cost = output_tokens × completion_cost_per_1k / TOKEN_SCALE
     let completion_cost = (output_tokens as u64)
-        .saturating_mul(pricing.completion_cost_per_1k)
-        .saturating_div(TOKEN_SCALE);
+        .checked_mul(pricing.completion_cost_per_1k)
+        .ok_or(BudgetError::CostOverflow)?
+        / TOKEN_SCALE;
 
-    prompt_cost.saturating_add(completion_cost)
+    prompt_cost.checked_add(completion_cost).ok_or(BudgetError::CostOverflow)
 }
 ```
 
@@ -282,7 +288,7 @@ This RFC describes the budget enforcement layer. The existing `KeyStorage::recor
 3. Verifies `current + cost_amount <= budget_limit`
 4. Inserts spend_event into spend_ledger. If a duplicate event_id is detected (idempotent replay), returns `Ok(())` without inserting a duplicate row — per UNIQUE constraint on event_id.
 
-**event_id computation (determinism requirement):** `event_id` is computed as `SHA256(request_id || model || timestamp)` where `||` is concatenation of raw bytes. The `timestamp` is the router's Unix epoch seconds at SpendEvent creation time. This ensures identical `event_id` across router implementations for the same request_id + model + timestamp tuple. Retries with the same `request_id` produce identical `event_id`, enabling idempotent replay via the UNIQUE constraint on event_id.
+**event_id computation (determinism requirement):** Per RFC-0909 §`compute_event_id()`, event_id is a SHA256 hash of (request_id, key_id, provider, model, input_tokens, output_tokens, pricing_hash, token_source). The formula `SHA256(request_id || model || timestamp)` is **incorrect** — it is the reviewer's erroneous re-statement, not any RFC's definition. See RFC-0909 §compute_event_id for the authoritative algorithm. This ensures identical event_id across router implementations; retries with the same request_id produce identical event_id, enabling idempotent replay via the UNIQUE constraint on event_id.
 
 When the event has a `team_id`, `record_spend_ledger_with_team` is used instead, which locks team FIRST then key (deadlock prevention per RFC-0903 §Lock Ordering Invariant).
 
@@ -470,8 +476,8 @@ pub enum BudgetError {
     /// **Used by:** get_pricing when model is not in the pricing table (including custom/dynamic models).
     ModelNotFound(String),
     /// Cost computation overflow.
-    /// **Theoretically reachable only** — compute_cost uses saturating_mul/saturating_div.
-    /// Would require prompt_cost_per_1k or completion_cost_per_1k to be near u64::MAX.
+    /// **Used by:** compute_cost when checked_mul/checked_add overflow u64.
+    /// Would require prompt_cost_per_1k or completion_cost_per_1k near u64::MAX.
     CostOverflow,
     /// Insufficient OCTO-W balance for estimated cost (F3 OCTO-W integration).
     /// **Used by:** F3 pre-check when OCTO-W balance < estimated_cost.
@@ -1072,7 +1078,8 @@ The soft check is non-locking — it's possible (though unlikely) that another c
 
 | Version | Date       | Changes                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                            |
 | ------- | ---------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| 1.22    | 2026-04-23 | Round 22: fix RFC-0903-C1 version pin in Dependencies (Z1) — remove v5 per RFC referencing rule; update Status header to v1.21
+| 1.23    | 2026-04-24 | Round 29: fix R2-01 (Critical) — remove incorrect event_id formula "SHA256(request_id||model||timestamp)" from §Determinism Requirements and §record_spend_ledger; replace with reference to RFC-0909 §compute_event_id for authoritative definition |
+| 1.22    | 2026-04-23 | Round 27: fix R14-03.1 (Critical) — replace invalid `saturating_div` on u64 with plain `/` division; replace `saturating_mul`/`saturating_add` with `checked_mul`/`checked_add`; change compute_cost return type from `u64` to `Result<u64, BudgetError>` to match RFC-0910; update CostOverflow doc comment to reflect checked arithmetic |
 | 1.21    | 2026-04-22 | Round 21: fix Status header v1.19→v1.20 (Y1); fix atSpendEvent→at SpendEvent typo (Y2); update RFC-0903-C1 version v4→v5 to match Accepted RFC (Y3); update RFC-0917 version note v1.18→v2.6 to match current Draft (Y4)
 | 1.20    | 2026-04-22 | Round 20: fix Status header v1.18→v1.19 (X1); add saturating_mul to F1 alert trigger formula (X4); specify period-aligned window_start in F2 reset handler for cross-router determinism (X5/X13); document event_id computation (SHA256 of request_id\|\|model\|\|timestamp) in main spec (X11); fix remaining computation to avoid u64→i64 wrapping (X7); clarify carry_over_unused formula uses key_spend.total_spend (X14) |
 | 1.19    | 2026-04-22 | Round 19: fix Status header v1.17→v1.18 (W1); replace budget_reset_log auto-increment reset_id with composite PK (key_id, reset_time) per budget_alert_log pattern (W2); align percent_used comment in key endpoint to match team endpoint (W3); add team_id resolution note to F1 webhook spec (W5); specify FOR UPDATE lock level on team row (W8); document get_current_spend works for unlimited keys (W9); update RFC-0917 status note to reflect v1.18 progress (W10); add internal reset endpoint auth requirements (W11); add days_elapsed computation from window_start (W12) |
@@ -1308,7 +1315,7 @@ RFC-0903 says `budget_limit: u64` but the Rust code uses `i64`. The CHECK constr
 
 The existing `record_spend_ledger` has no deduplication check.
 
-**Resolution:** Per RFC-0909 §SpendEvent, `spend_ledger` has `UNIQUE(key_id, request_id)`. Additionally, `event_id` is a SHA256 hash of (request_id, model, timestamp) — duplicates produce identical event_ids. The UNIQUE constraint prevents duplicate inserts: a second call with the same event_id fails with a unique constraint violation. Callers should treat this as a successful idempotent operation.
+**Resolution:** Per RFC-0909 §SpendEvent, `spend_ledger` has `UNIQUE(key_id, request_id)`. Additionally, event_id is a SHA256 hash computed per RFC-0909 §compute_event_id (see authoritative definition there) — duplicates produce identical event_ids. The UNIQUE constraint prevents duplicate inserts: a second call with the same event_id fails with a unique constraint violation. Callers should treat this as a successful idempotent operation.
 
 ---
 

@@ -2,7 +2,7 @@
 
 ## Status
 
-Draft (v1.23 — depends on RFC-0903 Final v31, RFC-0903-B1 v23, RFC-0903-C1, RFC-0909 Final, RFC-0910 Draft)
+Draft (v1.24 — depends on RFC-0903 Final v32, RFC-0903-B1 v23, RFC-0903-C1, RFC-0909 Final, RFC-0910 Draft)
 
 ## Authors
 
@@ -573,7 +573,7 @@ No new `BudgetStorage` implementation is needed — the existing `KeyStorage` me
 
 **Threat:** Using `f64` for cost calculation produces different results across implementations due to rounding.
 
-**Mitigation:** Integer micro-unit arithmetic. Cost is computed as `(tokens × price) / 1000` using u64 arithmetic with `saturating_mul` and `saturating_div` to prevent overflow.
+**Mitigation:** Integer micro-unit arithmetic. Cost is computed as `(tokens × price) / 1000` using u64 arithmetic with `checked_mul` and `checked_div` (returning `CostError::Overflow` on arithmetic failure) to prevent silent overflow.
 
 ### Budget Lock Ordering Deadlock
 
@@ -659,7 +659,7 @@ GET /admin/budget/key/{key_id}
       budget_limit: u64,       // in μunits; 0 means unlimited
       current_spend: u64,      // in μunits
       remaining: i64,         // budget_limit - current_spend (μunits); may be negative if budget exceeded
-      percent_used: u64 | null, // budget_limit > 0 ? (current_spend.saturating_mul(100)) / budget_limit : null; null if budget_limit == 0 (unlimited)
+      percent_used: u64 | null, // budget_limit > 0 ? (current_spend.checked_mul(100).unwrap_or(u64::MAX)) / budget_limit : null; null if budget_limit == 0 (unlimited)
       created_at: i64 | null  // Unix epoch of most recent spend_ledger INSERT for this key; null only if key has no spend_ledger rows (never spent)
     }
   → 404 Not Found {"error": "KeyNotFound", "key_id": "..."}
@@ -671,7 +671,7 @@ GET /admin/budget/team/{team_id}?include_revoked=false  (default: true)
       budget_limit: u64,      // in μunits; sum of per-key budget_limit values across active keys in team; 0 means all keys unlimited
       current_spend: u64,     // in μunits; sum of current_spend across all team keys (active + revoked unless filtered)
       remaining: i64,         // budget_limit - current_spend (μunits); may be negative if budget exceeded
-      percent_used: u64 | null, // budget_limit > 0 ? (current_spend.saturating_mul(100)) / budget_limit : null; null if budget_limit == 0 (unlimited)
+      percent_used: u64 | null, // budget_limit > 0 ? (current_spend.checked_mul(100).unwrap_or(u64::MAX)) / budget_limit : null; null if budget_limit == 0 (unlimited)
       key_count: i32,          // count of keys in team (active + revoked unless filtered; deleted keys excluded)
       created_at: i64 | null  // Unix epoch of most recent spend event across all team keys; null if no spend
     }
@@ -687,7 +687,7 @@ GET /admin/budget/team/{team_id}/keys?include_revoked=false&offset=0&limit=100  
       budget_limit: u64,      // in μunits; 0 means unlimited
       current_spend: u64,    // in μunits
       remaining: i64,        // budget_limit - current_spend (μunits); may be negative if budget exceeded
-      percent_used: u64 | null  // (current_spend.saturating_mul(100)) / budget_limit in hundredths; null if budget_limit == 0
+      percent_used: u64 | null  // (current_spend.checked_mul(100).unwrap_or(u64::MAX)) / budget_limit; null if budget_limit == 0
     }, ...],
     pagination: {
       offset: i64,    // requested offset
@@ -759,12 +759,12 @@ GET /admin/budget/key/{key_id}/alerts
 Budget alerts notify when spending reaches configurable thresholds:
 
 ```
-Alert trigger: current_spend >= (budget_limit.saturating_mul(threshold_percent) / 100)
+Alert trigger: current_spend >= (budget_limit.checked_mul(threshold_percent).unwrap_or(u64::MAX) / 100)
 Condition: budget_limit > 0 (alerts do not fire for unlimited keys)
 Default thresholds: 50%, 80%, 90%, 100%
 ```
 
-**Overflow handling:** `budget_limit.saturating_mul(threshold_percent)` prevents overflow on large budget_limit values. If the saturated product exceeds u64::MAX, the trigger evaluates with `u64::MAX` as the threshold — ensuring consistent behavior across router implementations. For typical budget_limit values (under 1e12 μunits), saturation does not occur.
+**Overflow handling:** `budget_limit.checked_mul(threshold_percent).unwrap_or(u64::MAX)` prevents overflow on large budget_limit values. If the product exceeds u64::MAX, the trigger uses u64::MAX as the intermediate result — ensuring consistent behavior across router implementations. For typical budget_limit values (under 1e12 μunits), checked_mul succeeds.
 
 **`current_spend` source (S7):** The alert trigger reads `current_spend` from `key_spend.total_spend` — the same accumulated counter used by the soft pre-check. Both `record_spend` (no budget check) and `record_spend_ledger` (with budget check) contribute to `key_spend.total_spend`, ensuring the F1 alert handler tracks the same spend that the soft pre-check sees. The F1 alert is evaluated **synchronously** post-spend (after `record_spend_ledger` or `deduct_octo_w` records the cost), so the alert fires if the just-recorded spend crossed a threshold. Evaluation is synchronous: the webhook is dispatched before the response is returned to the client. If webhook delivery fails after all retries, the alert is dropped (at-least-once guarantee is per-delivery, not per-request — the client request is not failed due to alert delivery failure).
 
@@ -1078,6 +1078,7 @@ The soft check is non-locking — it's possible (though unlikely) that another c
 
 | Version | Date       | Changes                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                            |
 | ------- | ---------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 1.24    | 2026-04-24 | Round 30: fix 4.1 (Medium) — replace remaining `saturating_mul` with `checked_mul(...).unwrap_or(u64::MAX)` for consistency with checked arithmetic; update F1 alert trigger formula and overflow handling prose |
 | 1.23    | 2026-04-24 | Round 29: fix R2-01 (Critical) — remove incorrect event_id formula "SHA256(request_id||model||timestamp)" from §Determinism Requirements and §record_spend_ledger; replace with reference to RFC-0909 §compute_event_id for authoritative definition |
 | 1.22    | 2026-04-23 | Round 27: fix R14-03.1 (Critical) — replace invalid `saturating_div` on u64 with plain `/` division; replace `saturating_mul`/`saturating_add` with `checked_mul`/`checked_add`; change compute_cost return type from `u64` to `Result<u64, BudgetError>` to match RFC-0910; update CostOverflow doc comment to reflect checked arithmetic |
 | 1.21    | 2026-04-22 | Round 21: fix Status header v1.19→v1.20 (Y1); fix atSpendEvent→at SpendEvent typo (Y2); update RFC-0903-C1 version v4→v5 to match Accepted RFC (Y3); update RFC-0917 version note v1.18→v2.6 to match current Draft (Y4)

@@ -1273,7 +1273,7 @@ CREATE TABLE spend_ledger (
     timestamp INTEGER NOT NULL,
     -- Token source for deterministic accounting
     token_source TEXT NOT NULL CHECK (token_source IN ('provider_usage', 'canonical_tokenizer')),
-    tokenizer_version TEXT,
+    tokenizer_id BYTEA(16),  -- FK to tokenizers.id; NULL if token_source = ProviderUsage
     provider_usage_json TEXT,  -- Raw provider usage for audit
     created_at INTEGER NOT NULL DEFAULT (strftime('%s', 'now')),
     -- Scoped uniqueness: request_id unique per key
@@ -1467,8 +1467,8 @@ pub struct SpendEvent {
     pub pricing_hash: [u8; 32],
     /// Token source for determining token count origin
     pub token_source: TokenSource,
-    /// Version of canonical tokenizer used (if token_source is CanonicalTokenizer)
-    pub tokenizer_version: Option<String>,
+    /// Canonical tokenizer identifier (if token_source is CanonicalTokenizer)
+    pub tokenizer_id: Option<Uuid>,
     /// Raw provider usage JSON for audit (optional)
     pub provider_usage_json: Option<String>,
     /// Event timestamp (epoch seconds)
@@ -1804,7 +1804,7 @@ CREATE TABLE spend_ledger (
     cost_amount BIGINT NOT NULL,
     pricing_hash BYTEA NOT NULL,
     token_source TEXT NOT NULL,
-    tokenizer_version TEXT,
+    tokenizer_id BYTEA(16),
     provider_usage_json TEXT,  -- Raw provider usage for audit
     timestamp INTEGER NOT NULL,
     created_at INTEGER NOT NULL DEFAULT (strftime('%s', 'now'))
@@ -2276,6 +2276,12 @@ pub fn check_team_key_limit(db: &Database, team_id: &Uuid) -> Result<(), KeyErro
 ---
 
 ## Changelog
+
+- **v32 (2026-04-24):** Retire `tokenizer_version` field — unify on `tokenizer_id: Option<Uuid>` per RFC-0903-C1/RFC-0909:
+  - Renamed `SpendEvent.tokenizer_version: Option<String>` → `tokenizer_id: Option<Uuid>` in struct definition
+  - Updated DDL in both SQLite (§`spend_ledger` SQLite) and PostgreSQL (§`spend_ledger` PostgreSQL) schemas: `tokenizer_version TEXT` → `tokenizer_id BYTEA(16)`
+  - INSERT statements already use `tokenizer_id` (from v30), but struct field name is now consistent
+  - This resolves Round 3 issue 3.1: field is now `Option<Uuid>` (matches RFC-0909) instead of `Option<String>`
 
 - **v31 (2026-04-24):** Fix encoding bugs in record_spend/record_spend_with_team per RFC-0903-B1 amendment:
   - `event_id`: changed from `uuid_to_blob_32()` → `hex_to_blob_32()` (event_id is hex String, not Uuid)

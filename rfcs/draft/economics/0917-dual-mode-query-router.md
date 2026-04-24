@@ -2,7 +2,7 @@
 
 ## Status
 
-Draft (v2.15 — Round 29: fix R2-04 (High) — clarify SDK mode budget identity derivation using HMAC-SHA256 (not BLAKE3), specify key_hash population, clarify set_api_key() flow, document limitation when key not provisioned; update Status header v2.14→v2.15; from comprehensive adversarial review)
+Draft (v2.16 — Round 30: fix 4.2 (Medium) — remove misleading "same derivation pattern as RFC-0903 virtual key generation" from SDK mode key derivation; clarify HMAC-SHA256 rationale (arbitrary provider key input, not virtual key object); add note that HMAC-SHA256 is used (not BLAKE3) because input is arbitrary provider key string)
 
 ## Authors
 
@@ -1296,7 +1296,7 @@ There's no auth enforcement — the SDK accepts any string as an API key.
 
 **Key derivation for SDK mode:**
 1. `set_api_key(provider_key)` is called with the provider API key (e.g., `sk-...`)
-2. `key_id = HMAC-SHA256(server_secret, provider_key)[..16]` — same derivation pattern as RFC-0903 virtual key generation
+2. `key_id = HMAC-SHA256(server_secret, provider_key)[..16]` — 16-byte budget identity; HMAC-SHA256 is used (not BLAKE3) because the input is an arbitrary provider API key string, not a virtual key object
 3. `key_hash = HMAC-SHA256(server_secret, provider_key)` — stored in `api_keys.key_hash` for validation
 4. The router inserts/updates an `api_keys` row with `key_id`, `key_hash`, `budget_limit`, `rpm_limit`, `tpm_limit`
 5. Subsequent requests use this `key_id` in all `record_spend()` calls for budget tracking
@@ -2275,6 +2275,7 @@ In `full` builds, both modules are compiled simultaneously and selected at runti
 
 | Version | Date       | Changes |
 |---------|------------|---------|
+| 2.16    | 2026-04-24 | Round 30: fix 4.2 (Medium) — remove misleading "same derivation pattern as RFC-0903 virtual key generation" from SDK mode key derivation; clarify HMAC-SHA256 rationale (arbitrary provider key input, not virtual key object); add note that HMAC-SHA256 is used (not BLAKE3) because input is arbitrary provider key string |
 | 2.13    | 2026-04-23 | Round 13: fix 1.1 virtual keys self-contradiction — virtual keys apply to HTTP proxy callers only (Python SDK callers bypass proxy, no virtual key enforcement in any SDK path); corrected Summary and enterprise feature list; from comprehensive adversarial review |
 | 2.12    | 2026-04-23 | Round 12: fix 1.1 virtual keys self-contradiction — clarify in Summary and enterprise feature list that virtual keys (RFC-0903) apply only in LiteLLM Mode HTTP proxy, not in any-llm Mode SDK; from comprehensive adversarial review |
 | 2.9     | 2026-04-23 | Round 9: fix C1/C2 undefined LLMProvider/CompletionRequest types — add ProviderRequest/ProviderResponse/Message/Usage unified types, ProviderHandle enum dispatch in Router; fix C4 undefined sdk_types module — define SdkMessage/SdkUsage types; from external adversarial review |

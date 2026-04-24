@@ -2,7 +2,7 @@
 
 ## Status
 
-Draft (v1.25 — depends on RFC-0903 Final v33, RFC-0903-B1 v23, RFC-0903-C1, RFC-0909 Final, RFC-0910 Draft)
+Draft (v1.26 — depends on RFC-0903 Final v34, RFC-0903-B1 v23, RFC-0903-C1, RFC-0909 Final, RFC-0910 Draft)
 
 ## Authors
 
@@ -1078,6 +1078,7 @@ The soft check is non-locking — it's possible (though unlikely) that another c
 
 | Version | Date       | Changes                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                            |
 | ------- | ---------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 1.26    | 2026-04-24 | Round 32: update RFC-0903 Final ref from v33 to v34 (tokenizer_id INSERT bug fix: uuid_to_blob_16 → id.to_vec()) |
 | 1.25    | 2026-04-24 | Round 31: fix Critical type mismatch — update RFC-0903 Final ref from v32 to v33 (tokenizer_id is now `Option<[u8; 16]>`, not `Option<Uuid>`) |
 | 1.24    | 2026-04-24 | Round 30: fix 4.1 (Medium) — replace remaining `saturating_mul` with `checked_mul(...).unwrap_or(u64::MAX)` for consistency with checked arithmetic; update F1 alert trigger formula and overflow handling prose |
 | 1.23    | 2026-04-24 | Round 29: fix R2-01 (Critical) — remove incorrect event_id formula "SHA256(request_id||model||timestamp)" from §Determinism Requirements and §record_spend_ledger; replace with reference to RFC-0909 §compute_event_id for authoritative definition |

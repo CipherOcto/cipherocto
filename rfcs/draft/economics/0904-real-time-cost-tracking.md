@@ -2,7 +2,7 @@
 
 ## Status
 
-Draft (v1.26 — depends on RFC-0903 Final v34, RFC-0903-B1 v23, RFC-0903-C1, RFC-0909 Final, RFC-0910 Draft)
+Draft (v1.26)
 
 ## Authors
 

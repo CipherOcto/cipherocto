@@ -2,7 +2,7 @@
 
 ## Status
 
-Accepted (v65 — aligned with RFC-0903 Final v31 + RFC-0903-B1 v23 + RFC-0903-C1 v4, RFC-0126 (Accepted v2.5.1), RFC-0201 (Accepted v5.24))
+Accepted (v65)
 
 ## Authors
 

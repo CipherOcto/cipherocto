@@ -2,7 +2,7 @@
 
 ## Status
 
-Accepted (v5 — Amendment to RFC-0903 Final v30 + RFC-0903-B1 amendment v23)
+Accepted (v5)
 
 ## Authors
 

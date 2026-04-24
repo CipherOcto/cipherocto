@@ -2,7 +2,7 @@
 
 ## Status
 
-Draft (v22 — Round 30: fix 2.1 (Critical) — align o1-mini test vector with EXACT_TABLE: update tokenizer from "tiktoken-cl100k_base-v1.2.3" to "tiktoken-o200k_base", tokenizer_id from e3c8e8ff... to be1b3be0...; both EXACT_TABLE and test vector now mark o1-mini UNCERTAIN (o-series family); update Status header v21→v22)
+Draft (v22)
 
 ## Authors
 

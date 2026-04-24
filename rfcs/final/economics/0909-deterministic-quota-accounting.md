@@ -2,7 +2,7 @@
 
 ## Status
 
-Accepted (v65)
+Accepted (v66)
 
 ## Authors
 
@@ -797,42 +797,6 @@ impl InternalPricingTable {
     /// **Merkle leaf requirement:** RFC-0126 §JSON Allowed Contexts explicitly forbids JSON
     /// serialization for Merkle tree leaves. Since `pricing_hash` is used in `event_id` (a Merkle
     /// leaf input), this function MUST use DCS (Entry 16, Part 3) binary encoding — NOT JSON.
-    ///
-    /// DCS Entry 16 struct serialization (RFC-0126 Part 3):
-    /// - BTreeMap: `u32_be(count) || for each (key, value) in sorted key order: serialize(key) || serialize(value)`
-    /// - PricingModel fields in declaration order: field_id 1=model_name(String), 2=prompt_cost(u64), 3=completion_cost(u64)
-    /// - String: `u32_be(byte_length) || UTF-8 bytes`
-    /// - Integer: binary big-endian (u64_be for u64)
-    pub fn compute_pricing_hash(&self) -> [u8; 32] {
-        use sha2::{Digest, Sha256};
-
-        let mut buf = Vec::new();
-
-        // BTreeMap count
-        buf.extend_from_slice(&u32::to_be(self.models.len() as u32));
-
-        // BTreeMap entries in sorted key order (BTreeMap iterates sorted)
-        for (model_name, pricing) in &self.models {
-            // Field 1: model_name (String)
-            buf.extend_from_slice(&u32::to_be(1));
-            let key_bytes = model_name.as_bytes();
-            buf.extend_from_slice(&u32::to_be(key_bytes.len() as u32));
-            buf.extend_from_slice(key_bytes);
-
-            // Field 2: prompt_cost_per_1k (u64)
-            buf.extend_from_slice(&u32::to_be(2));
-            buf.extend_from_slice(&u64::to_be(pricing.prompt_cost_per_1k));
-
-            // Field 3: completion_cost_per_1k (u64)
-            buf.extend_from_slice(&u32::to_be(3));
-            buf.extend_from_slice(&u64::to_be(pricing.completion_cost_per_1k));
-        }
-
-        let mut hasher = Sha256::new();
-        hasher.update(&buf);
-        hasher.finalize().into()
-    }
-
     /// Get all models (for listing)
     pub fn models(&self) -> impl Iterator<Item = &PricingModel> {
         self.models.values()
@@ -995,7 +959,7 @@ pub async fn process_response(
     provider: &str,
     model: &str,
     response: &ProviderResponse,
-    pricing_hash: [u8; 32], // obtained by: PRICING_TABLE.get(model).compute_pricing_hash()
+    pricing_hash: [u8; 32], // obtained by: PricingRegistry::get(provider, model)?.compute_pricing_hash() per RFC-0910 §PricingTable.compute_pricing_hash — caller computes this before calling process_response
 ) -> Result<(), KeyError> {
     // 1. Determine token source and tokenizer ID
     let (token_source, tokenizer_id) = match response.usage.is_some() {
@@ -1593,6 +1557,7 @@ $0.03/1K tokens → DQA(30_000, scale=6)
 
 | Version | Date       | Changes |
 | ------- | ---------- | ------- |
+| v66     | 2026-04-24 | Round 35 fixes: fix XC-1 (remove InternalPricingTable.compute_pricing_hash — RFC-0909 no longer defines pricing_hash; caller must obtain via RFC-0910 PricingRegistry::get(...).compute_pricing_hash()); fix XC-2 (update process_response pricing_hash comment: PRICING_TABLE.get(model).compute_pricing_hash() was invalid call, PricingModel has no such method — now documents correct call path); update Status header v65→v66 |
 | v65     | 2026-04-24 | Round 29: fix R2-03 (High) — make compute_cost fallible (checked_mul on both multiplications, Result<u64, CostError> return type); update process_response pseudocode to handle error; update Status header v64→v65 |
 | v64     | 2026-04-24 | Round 28: remove duplicate get_canonical_tokenizer function block — RFC-0910 is authoritative single source of truth; add normative reference to RFC-0910's implementation; update Status header v63→v64 |
 | v63     | 2026-04-21 | Fix RFC126-C1: replace canon-json pseudocode with DCS Entry 16 binary encoding — RFC-0126 §JSON Allowed Contexts explicitly forbids JSON for Merkle tree leaves; pricing_hash uses DCS Part 3 binary (BTreeMap as u32_be(count)||sorted entries, each field u32_be(field_id)||binary value); update pricing_hash = SHA256(DCS) note accordingly; update Status header v62→v63 |

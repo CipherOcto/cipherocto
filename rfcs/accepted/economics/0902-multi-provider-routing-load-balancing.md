@@ -93,7 +93,9 @@ enum RoutingStrategy {
     /// LiteLLM: "usage-based-routing" / "usage-based-routing-v2"
     UsageBased,
 
-    /// Weighted distribution based on configured weights
+    /// Weighted distribution based on explicitly configured weights
+    /// Distinct from SimpleShuffle: SimpleShuffle derives weights from rpm/tpm config;
+    /// Weighted uses explicit per-provider weights from router.weights config.
     Weighted,
 }
 ```
@@ -328,9 +330,11 @@ response = await router.acompletion(
 
 | File | Change |
 |------|--------|
-| `crates/quota-router-cli/src/router.rs` | New - routing logic |
-| `crates/quota-router-cli/src/config.rs` | Add router settings |
-| `crates/quota-router-cli/src/providers.rs` | Add health checking |
+| `crates/quota-router-core/src/router.rs` | Routing strategies, ProviderWithState, Router |
+| `crates/quota-router-core/src/providers.rs` | Provider definitions, health checking |
+| `crates/quota-router-core/src/config.rs` | RouterConfig, routing settings |
+
+> **Note:** The code uses `ProviderWithState` (not `ProviderState` as shown in the pseudocode). The struct name difference is a pre-existing discrepancy; the field semantics match RFC-0902 v1.3.
 
 ## Future Work
 
@@ -356,6 +360,7 @@ Multi-provider routing is essential for:
 
 | Version | Date       | Changes |
 | ------- | ---------- | --------|
+| 1.4     | 2026-04-25 | Fix Key Files table (stale paths: quota-router-cli→quota-router-core); clarify Weighted vs SimpleShuffle (Weighted uses explicit config weights, SimpleShuffle uses rpm/tpm-derived weights); add ProviderWithState naming note |
 | 1.3     | 2026-04-24 | Round 36: fix NH-1 (avg_latency_ms: f64→avg_latency_us: u64, success_rate: f64→success_count/total_count: u64 — eliminate floating-point non-determinism per RFC-0104); fix NM-6 (document ProviderBudgetLimiting as explicitly out of scope); fix NM-2 (add determinism note on routing diversity vs RFC-0909 event_id stability) |
 | 1.0     | 2026-03-12 | Initial draft with LiteLLM research |
 | 1.1     | 2026-03-12 | Moved to Draft, added routing strategies, fallback mechanisms |

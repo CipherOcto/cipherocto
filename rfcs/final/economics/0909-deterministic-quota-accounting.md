@@ -2,7 +2,7 @@
 
 ## Status
 
-Accepted (v66)
+Accepted (v67)
 
 ## Authors
 
@@ -268,8 +268,15 @@ pub struct SpendEvent {
 /// `build_merkle_tree` receives two leaves with identical hex strings, sorts them, and produces
 /// a corrupted Merkle root — the billing proof is invalid and verification fails.
 ///
-/// If field constraints ever relax, field separators or length-prefixed encoding
+/// MUST NOT be relaxed. If field constraints ever relax, field separators or length-prefixed encoding
 /// MUST be added immediately.
+///
+/// **Normalization requirement:** Callers MUST normalize `provider` and `model` before passing
+/// them to this function: (1) lowercase ASCII for all `provider`/`model` names (e.g., "OpenAI"→"openai",
+/// "GPT-4"→"gpt-4") — RFC-0910 tokenizer assignments use lowercase; (2) Unicode NFC normalization
+/// via `unicode-normalization` crate for any non-ASCII characters. These rules ensure this function
+/// produces identical output across all router instances. The router MUST apply normalization at the
+/// gateway input boundary before storage and before calling this function.
 pub fn compute_event_id(
     request_id: &str,
     key_id: &uuid::Uuid,
@@ -323,6 +330,14 @@ pub fn blob_32_to_hex(blob: &[u8; 32]) -> String {
 
 /// Convert key_id from uuid::Uuid (struct/API layer) to raw [u8; 16] for BLOB(16) storage.
 /// Used at the storage boundary before INSERT per RFC-0903-B1.
+///
+/// **Byte order preservation (HIGH-4):** This function copies the 16 raw bytes of a RFC 4122
+/// UUID in network byte order (MSB-first for fields 1–4, LSB-first for field 5). The `uuid::Uuid`
+/// library stores bytes internally in this representation — `as_bytes()` returns the bytes
+/// exactly as they appear in the RFC 4122 binary layout, with no byte swapping. Converting
+/// the same UUID to hex (via `to_string()`) and back (via `uuid::Uuid::parse_str()`) produces
+/// an identical `Uuid` with the same 16 raw bytes. Storage MUST preserve this byte order
+/// for correct cross-router event_id determinism (same UUID → same blob on all instances).
 #[inline]
 pub fn uuid_to_blob_16(uuid: &uuid::Uuid) -> [u8; 16] {
     *uuid.as_bytes()
@@ -330,6 +345,12 @@ pub fn uuid_to_blob_16(uuid: &uuid::Uuid) -> [u8; 16] {
 
 /// Convert key_id from raw [u8; 16] (BLOB(16) storage) to uuid::Uuid for struct/API layer.
 /// Used at the storage boundary after SELECT per RFC-0903-B1.
+///
+/// **Byte order preservation (HIGH-4):** This function reconstructs a UUID from its raw 16 bytes
+/// using `uuid::Uuid::from_bytes`, which interprets them as RFC 4122 network byte order
+/// (same as `uuid::Uuid::as_bytes()`). The reconstructed `Uuid` is byte-for-byte identical to
+/// the original: `uuid == blob_16_to_uuid(uuid_to_blob_16(&uuid))`. This symmetry ensures
+/// round-trip storage does not alter `key_id` and does not break `compute_event_id` determinism.
 #[inline]
 pub fn blob_16_to_uuid(blob: &[u8; 16]) -> uuid::Uuid {
     uuid::Uuid::from_bytes(*blob)
@@ -565,8 +586,16 @@ CREATE TABLE spend_ledger (
     request_id BLOB(32) NOT NULL,           -- Raw binary (32 bytes, SHA256 of gateway text) — RFC-0903-B1
     key_id BLOB(16) NOT NULL,                -- Raw UUID bytes (16 bytes) — RFC-0903-B1
     team_id BLOB(16),                        -- Raw UUID bytes (16 bytes) — RFC-0903-C1 (was TEXT)
-    provider TEXT NOT NULL,                  -- Provider name
-    model TEXT NOT NULL,                     -- Model name
+    provider TEXT NOT NULL,                  -- Provider name (MUST be stored as-is; case-sensitive)
+    model TEXT NOT NULL,                     -- Model name (MUST be stored as-is; case-sensitive)
+    -- **Normalization requirement (HIGH-3):** All TEXT field comparisons (UNIQUE constraints,
+    -- foreign keys, event_id computation) use **binary byte comparison**. Router implementations
+    -- MUST normalize `provider` and `model` values at the gateway input boundary before storage:
+    -- (1) **Case normalization**: lowercase ASCII for all `provider`/`model` names (e.g., "OpenAI"→"openai",
+    -- "GPT-4"→"gpt-4") — provider APIs return mixed case but all RFC-0910 tokenizer assignments
+    -- use lowercase; (2) **Unicode NFC**: if any non-ASCII characters appear, normalize to NFC form
+    -- via `unicode-normalization` crate. These normalization rules ensure that
+    -- `compute_event_id` sees consistent byte sequences across all router instances.
     input_tokens INTEGER NOT NULL,            -- Prompt tokens
     output_tokens INTEGER NOT NULL,           -- Completion tokens
     cost_amount BIGINT NOT NULL,             -- Cost in smallest unit (u64)
@@ -1557,6 +1586,7 @@ $0.03/1K tokens → DQA(30_000, scale=6)
 
 | Version | Date       | Changes |
 | ------- | ---------- | ------- |
+| v67     | 2026-04-24 | Round 36: fix HIGH-3 (add normalization requirement to compute_event_id doc comment and DDL comment for provider/model TEXT fields); fix HIGH-4 (add RFC 4122 byte order preservation note to uuid_to_blob_16/blob_16_to_uuid); update Status header v66→v67 |
 | v66     | 2026-04-24 | Round 35 fixes: fix XC-1 (remove InternalPricingTable.compute_pricing_hash — RFC-0909 no longer defines pricing_hash; caller must obtain via RFC-0910 PricingRegistry::get(...).compute_pricing_hash()); fix XC-2 (update process_response pricing_hash comment: PRICING_TABLE.get(model).compute_pricing_hash() was invalid call, PricingModel has no such method — now documents correct call path); update Status header v65→v66 |
 | v65     | 2026-04-24 | Round 29: fix R2-03 (High) — make compute_cost fallible (checked_mul on both multiplications, Result<u64, CostError> return type); update process_response pseudocode to handle error; update Status header v64→v65 |
 | v64     | 2026-04-24 | Round 28: remove duplicate get_canonical_tokenizer function block — RFC-0910 is authoritative single source of truth; add normative reference to RFC-0910's implementation; update Status header v63→v64 |

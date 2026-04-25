@@ -2,7 +2,7 @@
 
 ## Status
 
-Accepted (v68)
+Accepted (v69)
 
 ## Authors
 
@@ -897,7 +897,7 @@ All values stored as integer micro-units.
 
 **Critical determinism rule:**
 
-Two routers processing the same request MUST produce identical token counts, otherwise deterministic accounting fails.
+Two routers processing the same request on the same router instance MUST produce identical token counts, otherwise deterministic accounting fails for that instance.
 
 **The token drift problem:**
 
@@ -918,6 +918,19 @@ Priority 2: Canonical tokenizer (pinned implementation per RFC-0910)
 Priority 3: REJECT - cannot account without verifiable source
 ```
 
+**CONSISTENCY GOAL (Best-Effort):**
+
+```
+For a given request_id, routers SHOULD use the same token_source.
+
+This property is not guaranteed under all conditions due to:
+- Provider response variability (usage metadata present vs. missing)
+- Partial failures (timeout, retry, incomplete response)
+- Independent router execution (no coordination between router instances)
+
+The system tolerates divergence via storage-layer idempotency, not output equivalence.
+```
+
 ```
 Local tokenizer estimation MUST NOT be used for accounting.
 ```
@@ -933,24 +946,73 @@ pricing_hash = SHA256(DCS Entry 16 binary encoding of pricing table)
 
 This ensures pricing determinism is defined. RFC-0910 will provide immutable pricing table snapshots.
 
-**CRITICAL invariant:**
+**CONSISTENCY GOAL:**
 
 ```
-For a given request_id, ALL routers MUST use the SAME token_source.
+For a given request_id, routers SHOULD use the SAME token_source.
 token_source MUST be included in event_id hash.
+
+This is a consistency goal, not a hard invariant. Divergence is possible
+and is resolved by the storage layer as described below.
 ```
 
-**Known limitation:** If two routers process the same `(key_id, request_id)` simultaneously with different `token_source` values (e.g., Router A sees ProviderUsage, Router B sees CanonicalTokenizer on retry), they compute different `event_id` values. However, the `UNIQUE(key_id, request_id)` constraint prevents a second INSERT with the same `(key_id, request_id)` from succeeding — stoolap fully enforces UNIQUE constraints on BLOB columns (verified in stoolap at commit `28e3e513baf2a34d7989ff2c2cdce84f5b6178fb`). The second router receives an idempotent success — no double-insertion occurs.
+**Token Source Divergence Handling:**
+
+When multiple routers process the same `(key_id, request_id)` and derive different `token_source` or token counts, the system resolves the conflict via storage-layer idempotency:
+
+- The first successfully committed record defines the canonical ledger entry
+- Subsequent attempts MUST fail due to `UNIQUE(key_id, request_id)`
+
+This results in a **"first-writer-wins"** resolution model. The selected record is NOT guaranteed to be globally optimal or consistent across all routers — it is only guaranteed to be: unique (no duplication) and internally self-consistent.
 
 The actual retry double-charge scenario: if a client retries with a *different* `request_id` (e.g., `"req-abc"` → `"req-abc-retry"`), both INSERTs succeed with different `request_id` BLOBs. Both events record the same token consumption, and the client is charged twice. This is correct idempotency behavior for the schema — the client provided two different idempotency keys, so the schema treats them as two different requests. This is NOT a limitation — it is the defined behavior of idempotency keys.
 
-The genuine application-bug limitation (original RC3 concern): if `record_spend()` produces two rows for the same logical event (different `request_id` BLOBs, same economic content, same tokens) due to an internal bug, `build_merkle_tree` will double-count the cost without error. There is no schema-level enforcement against this class of bug. Preventing it requires correct implementation of `record_spend` — specifically, that callers of `record_spend` are responsible for providing the same `request_id` for the same logical event.
+The genuine application-bug limitation: if `record_spend()` produces two rows for the same logical event (different `request_id` BLOBs, same economic content, same tokens) due to an internal bug, `build_merkle_tree` will double-count the cost without error. There is no schema-level enforcement against this class of bug. Preventing it requires correct implementation of `record_spend` — specifically, that callers of `record_spend` are responsible for providing the same `request_id` for the same logical event.
 
 ```
 For a given request_id, only ONE usage event may exist.
 This is enforced by UNIQUE(key_id, request_id) constraint.
 ```
 
+### Definition: Deterministic Accounting (RFC-0909 Scope)
+
+**Determinism in this RFC means:**
+
+```
+Given:
+- identical inputs (key_id, request_id, provider, model, tokens, pricing_hash, token_source)
+- processed by the SAME router instance
+
+The system produces identical outputs (event_id, ledger state).
+```
+
+This definition explicitly **excludes**:
+- Cross-router execution — different router instances may produce different outputs
+- Race conditions — storage-layer conflict resolution is non-deterministic
+- Provider variability — token counts may differ across providers
+
+Cross-router consistency is achieved via **idempotent deduplication** (UNIQUE constraint), not output equivalence.
+
+### Strict Mode (Optional Deterministic Path)
+
+Deployments requiring cross-router deterministic token counts MAY enable **Strict Mode**:
+
+```
+When Strict Mode is enabled:
+- token_source MUST be CanonicalTokenizer
+- ProviderUsage MUST be ignored for cost computation
+- All routers compute tokens using the same canonical tokenizer
+
+This guarantees:
+- Cross-router deterministic token counts
+- Replay equivalence across all router instances
+
+Trade-off:
+- Computed tokens may diverge from provider billing
+- Provider-reported tokens are stored in provider_usage_json for audit only
+```
+
+Strict Mode is a **per-deployment configuration choice**. The RFC does not mandate it; it is provided as an optional path for deployments requiring stricter determinism guarantees.
 ## Provider Usage Reconciliation
 
 Upstream provider responses may contain usage metadata.
@@ -1274,7 +1336,9 @@ If `record_spend()` produces two rows for the same logical event (different `req
 
 ### Token source divergence on retry
 
-If two routers process the same `(key_id, request_id)` simultaneously with different `token_source` values (e.g., Router A sees ProviderUsage, Router B sees CanonicalTokenizer on retry), they compute different `event_id` values. The `UNIQUE(key_id, request_id)` constraint prevents a second INSERT — the second router receives idempotent success. No double-insertion occurs, but one router's Merkle root will not include that event in the same position as the other.
+If two routers process the same `(key_id, request_id)` simultaneously with different `token_source` values (e.g., Router A sees ProviderUsage, Router B sees CanonicalTokenizer on retry), they compute different `event_id` values. The `UNIQUE(key_id, request_id)` constraint prevents a second INSERT — the second router receives idempotent success. No double-insertion occurs.
+
+**RACE-DEPENDENT OUTCOME:** The final recorded token count MAY depend on arrival order at the storage layer — whichever router's INSERT commits first wins. This means the system does NOT guarantee cross-router deterministic token counts. The system guarantees idempotency (no duplication), not canonical equivalence (identical outputs across routers). This behavior is within the NM-2 determinism boundary (per-router determinism only).
 
 ### BLAKE3 truncation for tokenizer_id
 
@@ -1605,6 +1669,7 @@ $0.03/1K tokens → DQA(30_000, scale=6)
 
 | Version | Date       | Changes |
 | ------- | ---------- | ------- |
+| v69     | 2026-04-25 | Round 38: fix spec/inconsistency (reviewer R9) — reclassify token_source MUST as CONSISTENCY GOAL (SHOULD); add Token Source Divergence Handling section (first-writer-wins via UNIQUE constraint); add Definition of Deterministic (RFC-0909 Scope); add Strict Mode option for cross-router deterministic deployments; update Known Limitation to make race-dependent outcome explicit; update Status header v68→v69 |
 | v68     | 2026-04-25 | Round 37: fix reviewer timestamp comment (clarify gateway-generated, not provider-generated); add L1-L5 verification methodology as recommended testing approach; update Status header v67→v68 |
 | v67     | 2026-04-24 | Round 36: fix HIGH-3 (add normalization requirement to compute_event_id doc comment and DDL comment for provider/model TEXT fields); fix HIGH-4 (add RFC 4122 byte order preservation note to uuid_to_blob_16/blob_16_to_uuid); update Status header v66→v67 |
 | v66     | 2026-04-24 | Round 35 fixes: fix XC-1 (remove InternalPricingTable.compute_pricing_hash — RFC-0909 no longer defines pricing_hash; caller must obtain via RFC-0910 PricingRegistry::get(...).compute_pricing_hash()); fix XC-2 (update process_response pricing_hash comment: PRICING_TABLE.get(model).compute_pricing_hash() was invalid call, PricingModel has no such method — now documents correct call path); update Status header v65→v66 |

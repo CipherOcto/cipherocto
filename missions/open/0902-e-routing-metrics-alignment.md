@@ -109,7 +109,7 @@ pub struct RouterConfig {
     pub routing_strategy: RoutingStrategy,
     pub latency_window: usize,
     pub verbose: bool,
-    /// Global weights map for Weighted strategy: model_name → weight
+    /// Global weights map for Weighted strategy: provider.name → weight
     /// Example YAML:
     ///   weights:
     ///     openai: 10

@@ -26,10 +26,14 @@ Update `crates/quota-router-core/src/router.rs` to match RFC-0902 v1.3 changes:
 - [ ] Add `avg_latency_us()` method that computes rolling average from samples (not stored separately)
 - [ ] `ProviderWithState` add `success_count: u64, total_count: u64` fields
 - [ ] `total_count` incremented on every `request_ended` call
-- [ ] `success_count` incremented on `request_ended` when request succeeds (HTTP 2xx)
+- [ ] `success_count` incremented when `record_success()` is called (HTTP 2xx response)
 - [ ] `request_ended` signature: `latency_ms: f64` → `latency_us: u64` (microseconds)
 - [ ] `avg_latency()` removed (replaced by `avg_latency_us()` returning `u64`)
-- [ ] `Weighted` routing strategy added (distinct from `SimpleShuffle` — see below)
+- [ ] `RouterConfig` add `weights: HashMap<String, u32>` — global model-name→weight map for Weighted strategy
+- [ ] `Weighted` routing strategy added using global `weights` config (distinct from `SimpleShuffle`)
+- [ ] `latency_based_impl` updated to call `avg_latency_us()` instead of `avg_latency()`
+- [ ] `record_success(&mut self)` method added to `ProviderWithState` — increments `success_count`
+- [ ] Success tracking is **external to Router**: router client calls `record_success()` after provider response succeeds, then calls `record_request_end()` to record latency
 - [ ] `ProviderBudgetLimiting` disposition documented in code comment (out of scope per RFC-0902 v1.3)
 - [ ] `Display` and `FromStr` updated for `Weighted` variant
 - [ ] `cargo clippy --all-targets --all-features -- -D warnings` passes with zero warnings
@@ -87,25 +91,73 @@ impl ProviderWithState {
 }
 ```
 
-### Weighted vs SimpleShuffle (HIGH-1 Resolution)
+### Weighted vs SimpleShuffle
 
 `Weighted` is semantically distinct from `SimpleShuffle`:
 - `SimpleShuffle`: Weights derived from provider's rpm/tpm configuration (`get_routing_weight()`)
-- `Weighted`: Weights explicitly configured via separate `weights` config map
+- `Weighted`: Weights explicitly configured via global `RouterConfig.weights` map (model_name → u32)
 
-If a provider has `rpm: 900` configured but no explicit weight, `SimpleShuffle` uses 900 as the weight. If `weights: {openai: 10}` is explicitly configured, `Weighted` uses 10.
+**RouterConfig needs this new field:**
+```rust
+pub struct RouterConfig {
+    pub routing_strategy: RoutingStrategy,
+    pub latency_window: usize,
+    pub verbose: bool,
+    /// Global weights map for Weighted strategy: model_name → weight
+    /// Example YAML:
+    ///   weights:
+    ///     openai: 10
+    ///     anthropic: 5
+    pub weights: HashMap<String, u32>,
+}
+```
 
-In the current code, `get_routing_weight()` returns `self.provider.rpm.unwrap_or(1)`, which is effectively the same as rpm-based weighting. The distinction between explicit `Weighted` and rpm-based `SimpleShuffle` may be subtle — implement `Weighted` using explicit weights from config, falling back to `SimpleShuffle`'s rpm-based behavior if no explicit weights are set.
+`Weighted` strategy implementation:
+1. For each provider, look up `config.weights.get(provider.model_name)`
+2. If found, use that weight
+3. If not found, fall back to `get_routing_weight()` (rpm/tpm-derived)
+
+This way `Weighted` can override specific providers while falling back to rpm-based behavior for others.
 
 ### success_count/total_count Increment Logic
 
 - `total_count`: incremented on every `request_ended` call
 - `success_count`: incremented only when `record_success()` is called (HTTP 2xx response)
-- The router calls `record_success()` after a successful provider response, before `request_ended()`
+
+**Call flow (SUCCESS case):**
+```rust
+// Router client (external to Router) receives successful provider response
+router.get_provider(model_group, idx).unwrap().record_success(); // ← success_count++
+router.record_request_end(model_group, idx, latency_us, tokens); // ← total_count++, latency recorded
+```
+
+**Call flow (FAILURE case):**
+```rust
+// Router client handles error — no record_success() call
+// Failure is tracked separately; total_count is NOT incremented for failures
+```
+
+**Note:** The Router itself does NOT track success — it only tracks latency via `record_request_end()`. Success tracking is the router client's responsibility.
 
 ### API Breaking Change
 
 `request_ended` signature changes from `latency_ms: f64` to `latency_us: u64`. All internal callers (internal `Router` methods) must convert before calling. This is a contained breaking change — no external callers exist outside this crate.
+
+### latency_based_impl Update Required
+
+`latency_based_impl` calls `avg_latency()` on line 284 of router.rs. When `avg_latency()` is removed and replaced by `avg_latency_us()`, update this call site:
+
+```rust
+// BEFORE (f64):
+.min_by(|(_, a), (_, b)| {
+    a.avg_latency()
+        .partial_cmp(&b.avg_latency())
+        .unwrap_or(std::cmp::Ordering::Equal)
+})
+
+// AFTER (u64):
+.min_by_key(|(_, a)| a.avg_latency_us())
+```
 
 ### ProviderBudgetLimiting Disposition
 

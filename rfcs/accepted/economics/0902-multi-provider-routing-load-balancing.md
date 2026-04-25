@@ -140,7 +140,9 @@ router_settings:
     backoff_multiplier: 2.0
     max_backoff_ms: 5000
 
-  # Provider weights for weighted routing
+  # Provider weights for weighted routing (GLOBAL weights map — model_name → weight)
+  # NOT per-provider weight. Weighted strategy uses this global map to select providers.
+  # If a model_name is not in weights, falls back to SimpleShuffle behavior (rpm-based).
   weights:
     openai: 10
     anthropic: 5
@@ -360,6 +362,7 @@ Multi-provider routing is essential for:
 
 | Version | Date       | Changes |
 | ------- | ---------- | --------|
+| 1.5     | 2026-04-25 | Clarify Weighted strategy requires global `weights: HashMap<String, u32>` in RouterConfig (not per-provider weight); add implementation note for Weighted fallback behavior |
 | 1.4     | 2026-04-25 | Fix Key Files table (stale paths: quota-router-cli→quota-router-core); clarify Weighted vs SimpleShuffle (Weighted uses explicit config weights, SimpleShuffle uses rpm/tpm-derived weights); add ProviderWithState naming note |
 | 1.3     | 2026-04-24 | Round 36: fix NH-1 (avg_latency_ms: f64→avg_latency_us: u64, success_rate: f64→success_count/total_count: u64 — eliminate floating-point non-determinism per RFC-0104); fix NM-6 (document ProviderBudgetLimiting as explicitly out of scope); fix NM-2 (add determinism note on routing diversity vs RFC-0909 event_id stability) |
 | 1.0     | 2026-03-12 | Initial draft with LiteLLM research |

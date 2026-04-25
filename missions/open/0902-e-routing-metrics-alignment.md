@@ -36,8 +36,12 @@ Update `crates/quota-router-core/src/router.rs` to match RFC-0902 v1.5 changes:
 - [ ] `latency_based_impl` updated to call `avg_latency_us()` instead of `avg_latency()`
 - [ ] `record_success(&mut self)` method added to `ProviderWithState` — increments `success_count`
 - [ ] Success tracking is **external to Router**: router client calls `record_success()` after provider response succeeds, then calls `record_request_end()` to record latency
-- [ ] `ProviderBudgetLimiting` disposition documented in code comment (out of scope per RFC-0902 v1.3)
+- [ ] `ProviderBudgetLimiting` disposition documented in code comment (out of scope per RFC-0902 v1.5)
 - [ ] `Display` and `FromStr` updated for `Weighted` variant
+- [ ] `Default` impl for `RouterConfig` updated to initialize `weights: HashMap::new()`
+- [ ] Tests updated: all `vec![f64]` latency literals → `vec![u64]` microseconds; `record_request_end(..., f64, ...)` → `record_request_end(..., u64, ...)`
+- [ ] Test for `Weighted` strategy: `"weighted".parse::<RoutingStrategy>()` round-trip test added
+- [ ] Tests for `success_count`/`total_count`: `record_success()` and `request_ended()` behavior verified
 - [ ] `cargo clippy --all-targets --all-features -- -D warnings` passes with zero warnings
 - [ ] `cargo test --lib` passes
 
@@ -146,9 +150,12 @@ router.record_request_end(model_group, idx, latency_us, tokens); // ← total_co
 
 **Call flow (FAILURE case):**
 ```rust
-// Router client handles error — no record_success() call
-// Failure is tracked separately; total_count is NOT incremented for failures
+// Router client handles error — record_success() NOT called
+// BUT record_request_end() IS still called to track failure latency
+router.record_request_end(model_group, idx, latency_us, tokens); // ← total_count++ (success_count unchanged)
 ```
+
+**Note:** Failures still call `record_request_end()` to track latency (e.g., timeout latencies). This provides visibility into failure behavior. `total_count` increments but `success_count` stays unchanged — giving an accurate success rate when computed as `success_count / total_count`.
 
 **Note:** The Router itself does NOT track success — it only tracks latency via `record_request_end()`. Success tracking is the router client's responsibility.
 

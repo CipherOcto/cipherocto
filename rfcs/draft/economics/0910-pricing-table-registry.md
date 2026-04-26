@@ -2,7 +2,7 @@
 
 ## Status
 
-Draft (v25)
+Draft (v27)
 
 ## Authors
 
@@ -529,7 +529,7 @@ The canonical tokenizer registry assigns specific tokenizer versions to model fa
 |-------------|---------------------------|----------|-------|
 | `gpt-4*`, `gpt-3.5*` | `tiktoken-cl100k_base-v1.2.3` | cl100k_base | OpenAI models |
 | `o1`, `o3` | `tiktoken-o200k_base` | o200k_base | OpenAI o-series |
-| `o1-mini`, `o1-preview` | *(see notes)* | — | Verify with provider |
+| `o1-mini`, `o1-preview` | `tiktoken-o200k_base` | o200k_base | **VERIFIED (v22):** o-series family uses o200k_base vocab; tokenizer_id test vector confirms |
 | `o3-mini`, `o3-pro` | `tiktoken-cl100k_base-v1.2.3` | cl100k_base | **Resolved (v16):** test vector confirmed cl100k_base; EXACT_TABLE updated |
 | `claude-*` | `tiktoken-cl100k_base-v1.2.3` | cl100k_base | Anthropic models |
 | `gemini-*` | *(see notes)* | — | May use SentencePiece; requires verification |
@@ -835,7 +835,7 @@ This RFC can be accepted when:
 
 Expected `compute_pricing_hash()` output: `4a065c51147d4730379d600c4a491778b98f66a8e381c5dfdf51f42052c32f60`
 
-> **DCS Entry 16 binary encoding:** `pricing_hash` feeds into `event_id` (a Merkle leaf), and RFC-0126 §JSON Allowed Contexts explicitly forbids JSON for Merkle tree leaves. The test vector above is computed using DCS Entry 16 binary serialization: field_id||value in declaration order (1-8), strings as length-prefixed UTF-8 (u32_be length + bytes), integers as binary big-endian (u32_be for u32, u64_be for u64, i64_be for i64), BTreeMap as u32_be(count)||sorted key-value entries. Verified against independent implementation.
+> **DCS Entry 16 binary encoding:** `pricing_hash` feeds into `event_id` (a Merkle leaf), and RFC-0126 §JSON Allowed Contexts explicitly forbids JSON for Merkle tree leaves. The test vector above is computed using DCS Entry 16 binary serialization: field_id||value in declaration order (1-8), strings as length-prefixed UTF-8 (u32_be length + bytes), integers as binary big-endian (u32_be for u32, u64_be for u64, i64_be for i64), BTreeMap as u32_be(count)||sorted key-value entries. Verified against Rust implementation in `crates/quota-router-core/src/pricing.rs` (`compute_pricing_hash_tests` module).
 
 ### Cost Calculation Test Vector
 
@@ -868,7 +868,7 @@ for use in `event_id` computation (RFC-0909 §compute_event_id).
 | `"o3-pro"` | `"tiktoken-cl100k_base-v1.2.3"` (default) | `e3c8e8ff724411c6416dd4fb135368e3` | CanonicalTokenizer | **UNCERTAIN** — o3-pro vocab may differ from o200k_base |
 | `"claude-3-opus"` | `"tiktoken-cl100k_base-v1.2.3"` | `e3c8e8ff724411c6416dd4fb135368e3` | CanonicalTokenizer | Verified (4-char prefix "clau") |
 | `"gemini-2.0-flash"` | `"tiktoken-cl100k_base-v1.2.3"` (default) | `e3c8e8ff724411c6416dd4fb135368e3` | CanonicalTokenizer | **UNCERTAIN** — gemini-* may use SentencePiece |
-| `"o1-mini"` | `"tiktoken-o200k_base"` (default) | `be1b3be0a2698c863b31edc1b7809a9c` | CanonicalTokenizer | **UNCERTAIN** — o-series family; verify with provider |
+| `"o1-mini"` | `"tiktoken-o200k_base"` | `be1b3be0a2698c863b31edc1b7809a9c` | CanonicalTokenizer | Verified (v22) — o-series family uses o200k_base vocab |
 | `"unknown-model"` | `"tiktoken-cl100k_base-v1.2.3"` (default) | `e3c8e8ff724411c6416dd4fb135368e3` | CanonicalTokenizer | Default fallback |
 
 ### Error Case Test Vectors
@@ -1022,6 +1022,8 @@ This design allows the registry to be treated as a cache of known-good pricing s
 
 | Version | Date | Changes |
 |---------|------|---------|
+| v27 | 2026-04-26 | Round 38: fix NEW-3 (compute_pricing_hash test vector: "independent implementation" → reference to `crates/quota-router-core/src/pricing.rs` test module); fix NEW-6 (o1-mini/o1-preview: Tokenizer Assignment Table changed from UNCERTAIN "verify with provider" to VERIFIED "o-series family uses o200k_base" per v22 correction; test vector updated accordingly) |
+| v26 | 2026-04-25 | Round 37: confirm CostError canonical definition (this RFC); RFC-0904 imports CostError from this RFC per RFC-0904 v1.28 §Cost Computation delegation |
 | v25 | 2026-04-24 | Round 35: fix NC-1 (compute_pricing_hash: replace u32::to_be(n)/u64::to_be(n)/i64::to_be(n) with n.to_be_bytes() — 18 occurrences; code was non-compiling); fix NM-4 (stale RFC-0903-C1 v4 → v5 in Dependencies and Related RFCs) |
 | v23    | 2026-04-24 | Round 34: fix Critical o1-preview error-case test vector — changed input from "o1-preview" (a known model in EXACT_TABLE) to "nonexistent-model-v2" (truly unknown) to test actual fallback path; o1-preview is known and would return o200k_base via exact match, not DEFAULT_TOKENIZER |
 | v22    | 2026-04-24 | Round 33: fix critical tokenizer_id mismatch — o1-mini test vector had wrong tokenizer_id (be1b3be07264be1b95d6c2f8405ca8d1 instead of be1b3be0a2698c863b31edc1b7809a9c); now matches tokenizer_id for tiktoken-o200k_base; this was a leftover from previous assignment |

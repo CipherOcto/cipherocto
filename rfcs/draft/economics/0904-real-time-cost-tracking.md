@@ -2,7 +2,7 @@
 
 ## Status
 
-Draft (v1.27)
+Draft (v1.29)
 
 ## Authors
 
@@ -106,6 +106,10 @@ RFC-0909 uses `cost_amount BIGINT NOT NULL` in spend_ledger. This RFC specifies 
 **Delegates to RFC-0910 §Cost Computation:**
 
 ```rust
+// CostError imported from RFC-0910 (Pricing Table Registry) — canonical definition.
+// CostError is NOT defined in this RFC; it is imported to enable error conversion below.
+use crate::rfc0910::CostError;
+
 // compute_cost delegates to rfc0910::compute_cost (RFC-0910 §Cost Calculation).
 // Uses the same integer arithmetic (checked_mul, checked_div, checked_add).
 // Error conversion: CostError::Overflow → BudgetError::CostOverflow.
@@ -983,7 +987,7 @@ When `octo_w_enforcement` is `true`, the F3 path is used for budget enforcement.
 -- RFC-0900 defines wallet-based OCTO-W; F3 defines per-key OCTO-W for budget enforcement.
 -- These are independent models with no defined integration bridge.
 CREATE TABLE octo_w_balances (
-    key_id         BLOB(16) NOT NULL PRIMARY KEY,  -- Raw UUID bytes — matches api_keys.key_id per RFC-0903-C1
+    key_id         BLOB(16) NOT NULL PRIMARY KEY REFERENCES api_keys(key_id) ON DELETE CASCADE,  -- Raw UUID bytes — matches api_keys.key_id per RFC-0903-C1; FK ensures orphan balance rows are deleted with the API key
     balance        INTEGER NOT NULL DEFAULT 0,    -- Balance in μunits (micro-units)
     last_updated   INTEGER NOT NULL,               -- Unix epoch seconds
     CONSTRAINT balance_non_negative CHECK (balance >= 0)
@@ -1086,6 +1090,8 @@ The soft check is non-locking — it's possible (though unlikely) that another c
 
 | Version | Date       | Changes                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                            |
 | ------- | ---------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 1.29    | 2026-04-26 | Round 38: fix NEW-4 (CostError import: add explicit `use crate::rfc0910::CostError` comment in §Cost Calculation to clarify CostError is imported from RFC-0910, not defined locally) |
+| 1.28    | 2026-04-25 | Round 37 fixes from external review: fix NEW-C2 (octo_w_balances DDL: add `FOREIGN KEY (key_id) REFERENCES api_keys(key_id) ON DELETE CASCADE` to prevent orphan balance rows on key deletion) |
 | 1.27    | 2026-04-24 | Round 36: fix NM-1 (line 576: CostError::Overflow → BudgetError::CostOverflow — stale reference after v1.3 CostError→BudgetError rename); fix NC-2+NH-3 (OCTO-W interface: key_id &str→&[u8; 16], sync→async, StorageError; define octo_w_balances DDL; clarify RFC-0900 relationship — F3 is independent local balance counter, no marketplace integration); fix XC-3 (compute_cost: removed duplicate implementation; delegates to rfc0910::compute_cost per §Cost Computation; added From<CostError> for BudgetError); fix XC-4 (record_spend_atomic: change key_id/team_id from &str (TEXT) to &[u8; 16] (BLOB(16)) — matches RFC-0903-C1 schema; removed stale note claiming &str matches schema) |
 | 1.26    | 2026-04-24 | Round 32: update RFC-0903 Final ref from v33 to v34 (tokenizer_id INSERT bug fix: uuid_to_blob_16 → id.to_vec()) |
 | 1.25    | 2026-04-24 | Round 31: fix Critical type mismatch — update RFC-0903 Final ref from v32 to v33 (tokenizer_id is now `Option<[u8; 16]>`, not `Option<Uuid>`) |

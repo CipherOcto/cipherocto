@@ -2,7 +2,7 @@
 
 ## Status
 
-Draft (v2.18 — Round 36: fix NC-4 (routing strategies 6→7 in 4 places); fix XH-1 (remove duplicate full feature TOML block); fix NH-2 (mark A3 pseudocode as non-normative); fix NH-4 (define LatencyTracker struct with integer microseconds); fix NM-5 (virtual keys matrix any-llm mode: ✅→❌ — SDK callers bypass proxy per line 60); fix XH-3 (QuotaRouterError: status header claimed "defines enum" but item is Phase 3 PLANNED checklist only — no enum defined in RFC body; corrected to reflect unimplemented status)
+Draft (v2.21)
 
 ## Authors
 
@@ -573,6 +573,8 @@ The Router's `provider_impls` type is **feature-gated per mode**:
 - **any-llm Mode** (`HashMap<String, Arc<dyn py_providers::SdkProvider>>`): Python SDK delegation via PyO3 to official provider SDKs
 - **full Mode**: Provider selection is per-request via `ProviderHandle` enum dispatch — the router stores both strategies (Http and Sdk) in `provider_impls`; the `ProviderHandle` variant for each provider is determined at router initialization based on configuration (e.g., `providers.openai.type = "http"` vs `"sdk"`); once initialized, the variant is fixed per provider for the lifetime of the router; the per-request dispatch means the match on the already-selected variant (`Http` vs `Sdk`) happens for each incoming request, executing the appropriate provider implementation
 
+#### Router Struct Definition (Normative)
+
 ```rust
 // router/src/lib.rs
 
@@ -926,7 +928,7 @@ crates/quota-router-core/
 default = ["full"]           # Both provider integration strategies
 litellm-mode = ["hyper", "axum"]  # Native Rust HTTP forwarding (reqwest)
 any-llm-mode = ["py-o3"]    # Python SDK delegation via PyO3
-full = ["litellm-mode", "any-llm-mode"]  # Both strategies
+full-mode = ["litellm-mode", "any-llm-mode"]  # Compile both strategies simultaneously — 'full' is the default feature, 'full-mode' is an alias for convenience
 
 # Interface layers (always available when respective mode is enabled):
 hyper = ["dep:hyper", "dep:hyper-util", "dep:axum"]
@@ -970,7 +972,245 @@ py-o3 = ["dep:pyo3", "dep:pyo3-ffi"]
 - [ ] `get_budget_status()` — returns current spend vs limit
 - [ ] `get_metrics()` — returns Prometheus metrics dict
 - [ ] Model string parsing (both `provider/model` and `provider:model` formats)
-- [ ] **QuotaRouterError unified error type** — define `enum QuotaRouterError { Key(KeyError), Budget(BudgetError), Router(RouterError), Storage(StorageError), ... }` with `From` implementations; retrofitted across all public API return types in RFC-0903, RFC-0904, RFC-0909, RFC-0910, and RFC-0917; maps to HTTP status codes (Python: `QuotaRouterException` subclass)
+- [x] **QuotaRouterError unified error type** — fully specified below
+
+#### QuotaRouterError Unified Error Type
+
+This section specifies the unified error type for RFC-0917's public API surface. The enum wraps error variants from constituent RFCs, providing a single error type across all public API return types.
+
+**Source error types (wrapped):**
+
+| Error Type | Source RFC | Variant in QuotaRouterError |
+|------------|------------|---------------------------|
+| `KeyError` | RFC-0903 | `Key(KeyError)` |
+| `BudgetError` | RFC-0904 | `Budget(BudgetError)` |
+| `RouterError` | RFC-0917 (fallback.rs) | `Router(RouterError)` |
+| `RegistryError` | RFC-0910 | `Registry(RegistryError)` |
+| `StorageError` | RFC-0903/0904 | `Storage(StorageError)` |
+
+**StorageError enum (RFC-0903/0904):**
+
+```rust
+/// Storage and database operation errors.
+/// Defined here for completeness; used by RFC-0904's OCTO-W interface and
+/// RFC-0903's key storage operations.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum StorageError {
+    /// Key not found in storage.
+    KeyNotFound,
+    /// OCTO-W not enabled for this key.
+    OctoWNotEnabled,
+    /// Insufficient OCTO-W balance for the requested operation.
+    InsufficientBalance { available: u64, requested: u64 },
+    /// General database or storage error.
+    Database(String),
+}
+```
+
+**Enum definition:**
+
+```rust
+/// Unified error type for RFC-0917 public API.
+///
+/// Wraps error types from constituent RFCs:
+/// - RFC-0903: KeyError (API key validation, team operations)
+/// - RFC-0904: BudgetError (budget enforcement, spend tracking)
+/// - RFC-0910: RegistryError (pricing table registration)
+/// - RFC-0917: RouterError (routing, provider dispatch)
+/// - RFC-0903/0904: StorageError (database operations)
+///
+/// This enum is retrofitted across all public API return types in
+/// RFC-0903, RFC-0904, RFC-0909, RFC-0910, and RFC-0917.
+#[derive(Debug, Clone)]
+pub enum QuotaRouterError {
+    /// API key validation or team operation error.
+    Key(KeyError),
+    /// Budget enforcement or cost computation error.
+    Budget(BudgetError),
+    /// Routing or provider dispatch error.
+    Router(RouterError),
+    /// Pricing table registry error.
+    Registry(RegistryError),
+    /// Database or storage operation error.
+    Storage(StorageError),
+    /// Provider returned an error during request execution.
+    /// Contains the provider name and the provider-specific error message.
+    ProviderError { provider: String, message: String },
+}
+
+impl std::fmt::Display for QuotaRouterError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            // KeyError and BudgetError implement Display (via thiserror)
+            QuotaRouterError::Key(e) => write!(f, "Key error: {}", e),
+            QuotaRouterError::Budget(e) => write!(f, "Budget error: {}", e),
+            // RouterError, RegistryError, StorageError: Display impls should be added via
+            // thiserror in Phase 3. For now, format as Debug.
+            QuotaRouterError::Router(e) => write!(f, "Router error: {:?}", e),
+            QuotaRouterError::Registry(e) => write!(f, "Registry error: {:?}", e),
+            QuotaRouterError::Storage(e) => write!(f, "Storage error: {:?}", e),
+            QuotaRouterError::ProviderError { provider, message } => {
+                write!(f, "Provider {} error: {}", provider, message)
+            }
+        }
+    }
+}
+
+impl std::error::Error for QuotaRouterError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        match self {
+            // Only KeyError and BudgetError currently implement std::error::Error (via thiserror).
+            // RouterError, RegistryError, and StorageError are simple enums without Error impls.
+            // Implementations should add Error impls (via thiserror) for all wrapped types in Phase 3.
+            QuotaRouterError::Key(e) => Some(e),
+            QuotaRouterError::Budget(e) => Some(e),
+            QuotaRouterError::Router(_) => None,
+            QuotaRouterError::Registry(_) => None,
+            QuotaRouterError::Storage(_) => None,
+            QuotaRouterError::ProviderError { .. } => None,
+        }
+    }
+}
+```
+
+**From implementations (enables `?` operator and `into()` conversion):**
+
+```rust
+// From KeyError (RFC-0903)
+impl From<KeyError> for QuotaRouterError {
+    fn from(e: KeyError) -> Self {
+        QuotaRouterError::Key(e)
+    }
+}
+
+// From BudgetError (RFC-0904)
+impl From<BudgetError> for QuotaRouterError {
+    fn from(e: BudgetError) -> Self {
+        QuotaRouterError::Budget(e)
+    }
+}
+
+// From RouterError (RFC-0917)
+impl From<RouterError> for QuotaRouterError {
+    fn from(e: RouterError) -> Self {
+        QuotaRouterError::Router(e)
+    }
+}
+
+// From RegistryError (RFC-0910)
+impl From<RegistryError> for QuotaRouterError {
+    fn from(e: RegistryError) -> Self {
+        QuotaRouterError::Registry(e)
+    }
+}
+
+// From StorageError (RFC-0903/0904)
+impl From<StorageError> for QuotaRouterError {
+    fn from(e: StorageError) -> Self {
+        QuotaRouterError::Storage(e)
+    }
+}
+```
+
+**HTTP status code mapping:**
+
+| QuotaRouterError Variant | HTTP Status | Condition |
+|-------------------------|-------------|-----------|
+| `Key(KeyError::NotFound)` | 404 | API key not found |
+| `Key(KeyError::Expired(_))` | 401 | API key expired |
+| `Key(KeyError::Revoked(_))` | 401 | API key revoked |
+| `Key(KeyError::BudgetExceeded { .. })` | 403 | Budget exceeded |
+| `Key(KeyError::RateLimited { .. })` | 429 | Rate limited |
+| `Key(KeyError::InvalidFormat)` | 400 | Invalid key format |
+| `Key(KeyError::MissingKey)` | 401 | Missing API key |
+| `Budget(BudgetError::KeyBudgetExceeded { .. })` | 403 | Per-key budget exceeded |
+| `Budget(BudgetError::TeamBudgetExceeded { .. })` | 403 | Team budget exceeded |
+| `Budget(BudgetError::InsufficientBalance { .. })` | 403 | OCTO-W balance insufficient |
+| `Budget(BudgetError::CostOverflow)` | 500 | Cost computation overflow (deployment error) |
+| `Budget(BudgetError::ModelNotFound(_))` | 404 | Model not in pricing table |
+| `Router(RouterError::RateLimit)` | 429 | Provider rate limited |
+| `Router(RouterError::ProviderUnavailable)` | 503 | Provider unavailable |
+| `Router(RouterError::AuthError)` | 401 | Provider auth failed |
+| `Router(RouterError::ContextWindowExceeded)` | 400 | Context window exceeded |
+| `Router(RouterError::Timeout)` | 504 | Provider timeout |
+| `Router(RouterError::Unknown)` | 500 | Unknown router error |
+| `Registry(RegistryError::DuplicateVersion { .. })` | 409 | Duplicate version registration |
+| `Registry(RegistryError::VersionNotIncrement { .. })` | 409 | Version not incrementing |
+| `Registry(RegistryError::EffectiveFromNotIncrement { .. })` | 409 | effective_from not incrementing |
+| `Registry(RegistryError::TableIdTooLong { .. })` | 400 | table_id exceeds 128 bytes |
+| `Registry(RegistryError::MetadataTooLarge { .. })` | 400 | metadata exceeds 4096 bytes |
+| `Registry(RegistryError::TooManyVersions { .. })` | 500 | Version count exceeded |
+| `Storage(StorageError::KeyNotFound)` | 404 | Key not found in storage |
+| `Storage(StorageError::OctoWNotEnabled)` | 403 | OCTO-W not enabled for key |
+| `Storage(StorageError::InsufficientBalance { .. })` | 403 | Insufficient balance |
+| `Storage(StorageError::Database(_))` | 500 | Database error |
+| `ProviderError { .. }` | 502 | Provider returned error |
+
+**Python exception mapping (any-llm Mode SDK):**
+
+```python
+class QuotaRouterException(Exception):
+    """Base exception for QuotaRouterError variants."""
+    def __init__(self, message: str, code: str, status: int, details: dict | None = None):
+        super().__init__(message)
+        self.code = code
+        self.status = status
+        self.details = details or {}
+
+class KeyException(QuotaRouterException):
+    """Raised for KeyError variants."""
+    pass
+
+class BudgetException(QuotaRouterException):
+    """Raised for BudgetError variants."""
+    pass
+
+class RouterException(QuotaRouterException):
+    """Raised for RouterError variants."""
+    pass
+
+class RegistryException(QuotaRouterException):
+    """Raised for RegistryError variants."""
+    pass
+
+class StorageException(QuotaRouterException):
+    """Raised for StorageError variants."""
+    pass
+
+class ProviderException(QuotaRouterException):
+    """Raised for provider errors during request execution."""
+    pass
+
+# Mapping from QuotaRouterError variant to Python exception class:
+EXCEPTION_MAP = {
+    ("Key", "NotFound"): (KeyException, 404),
+    ("Key", "Expired"): (KeyException, 401),
+    ("Key", "Revoked"): (KeyException, 401),
+    ("Key", "BudgetExceeded"): (BudgetException, 403),
+    ("Key", "RateLimited"): (KeyException, 429),
+    ("Key", "InvalidFormat"): (KeyException, 400),
+    ("Key", "MissingKey"): (KeyException, 401),
+    ("Budget", "KeyBudgetExceeded"): (BudgetException, 403),
+    ("Budget", "TeamBudgetExceeded"): (BudgetException, 403),
+    ("Budget", "InsufficientBalance"): (BudgetException, 403),
+    ("Budget", "CostOverflow"): (BudgetException, 500),
+    ("Budget", "ModelNotFound"): (BudgetException, 404),
+    ("Router", "RateLimit"): (RouterException, 429),
+    ("Router", "ProviderUnavailable"): (RouterException, 503),
+    ("Router", "AuthError"): (RouterException, 401),
+    ("Router", "ContextWindowExceeded"): (RouterException, 400),
+    ("Router", "Timeout"): (RouterException, 504),
+    ("Router", "Unknown"): (RouterException, 500),
+    ("Registry", _): (RegistryException, ...),  # status varies by variant
+    ("Storage", "KeyNotFound"): (StorageException, 404),
+    ("Storage", "OctoWNotEnabled"): (StorageException, 403),
+    ("Storage", "InsufficientBalance"): (StorageException, 403),
+    ("Storage", "Database"): (StorageException, 500),
+    ("ProviderError", _): (ProviderException, 502),
+}
+```
+
+**Retrofit requirement:** All public API functions in RFC-0903, RFC-0904, RFC-0909, RFC-0910, and RFC-0917 that currently return multiple error types (e.g., `Result<T, KeyError | BudgetError | StorageError>`) MUST be updated to return `Result<T, QuotaRouterError>` using the `From` implementations above.
 
 ## Alternatives Considered
 
@@ -1161,6 +1401,43 @@ async fn transform_anthropic_to_openai_sse(
     })
 }
 ```
+
+**SSEEvent struct definition:**
+
+```rust
+/// Raw SSE event from Anthropic API (per Anthropic SSE format).
+/// Used in transform_anthropic_to_openai_sse().
+struct SSEEvent {
+    /// Event type: "content_block_delta", "message_delta", "message_start", "message_stop", etc.
+    event_type: String,
+    /// Delta content (present for content_block_delta events).
+    delta: Ssedelta,
+    /// Usage statistics (present for message_delta events).
+    usage: Option<SseUsage>,
+}
+
+/// SSE delta for content_block_delta events.
+struct Ssedelta {
+    /// Text content in delta (Anthropic's delta.text equivalent).
+    text: String,
+}
+
+/// SSE usage block for message_delta events.
+struct SseUsage {
+    /// Tokens in the completion.
+    output_tokens: u32,
+    /// Tokens in the prompt.
+    input_tokens: u32,
+}
+
+/// Format usage as OpenAI-compatible usage block in SSE.
+/// Used in message_delta → final chunk transformation.
+fn format_usage(usage: &SseUsage) -> String {
+    format!(
+        r#"data: {{"choices":[{{"index":0,"delta":{{}},"finish_reason":"stop","usage":{{"prompt_tokens":{},"completion_tokens":{},"total_tokens":{}}}}}]}}\n\n"#,
+        usage.input_tokens, usage.output_tokens, usage.input_tokens + usage.output_tokens
+    )
+}
 
 **Rate limiting for streaming:** Per-request (not per-token). Budget is checked before streaming begins. If the first chunk would exceed budget, the request is rejected before any bytes are sent.
 
@@ -2305,7 +2582,8 @@ In `full` builds, both modules are compiled simultaneously and selected at runti
 
 | Version | Date       | Changes |
 |---------|------------|---------|
-| 2.18    | 2026-04-24 | Round 36: fix NC-4 (routing strategies count 6→7 in Mermaid, scope table, feature matrix, Phase 1 checklist); fix XH-1 (remove duplicate full feature TOML block at lines 111-123); fix NH-2 (mark A3 Router struct pseudocode as non-normative, see lines 583-598 for normative definition); fix NH-4 (add LatencyTracker struct with integer microseconds, eliminate floating-point non-determinism per RFC-0104); fix NM-5 (virtual keys compatibility matrix: any-llm mode cell changed ✅→❌ — SDK callers bypass proxy, not RFC-0903 enforced); fix XH-3 (QuotaRouterError status header corrected: item is Phase 3 PLANNED checklist, no enum defined in RFC body); fix XC-5 (line 480: replace phantom record_spend(&api_key.key_id, &response) with proper SpendEvent construction + STORAGE.record_spend(&event).await?) |
+| 2.19 | 2026-04-25 | Round 37: fix XH-1 (line 929: rename duplicate `full` feature to `full-mode` to avoid collision with §Rust Feature Gates definition at line 133) |
+| 2.18 | 2026-04-24 | Round 36: fix NC-4 (routing strategies count 6→7 in Mermaid, scope table, feature matrix, Phase 1 checklist); fix XH-1 (remove duplicate full feature TOML block at lines 111-123); fix NH-2 (mark A3 Router struct pseudocode as non-normative, see lines 583-598 for normative definition); fix NH-4 (add LatencyTracker struct with integer microseconds, eliminate floating-point non-determinism per RFC-0104); fix NM-5 (virtual keys compatibility matrix: any-llm mode cell changed ✅→❌ — SDK callers bypass proxy, not RFC-0903 enforced); fix XH-3 (QuotaRouterError status header corrected: item is Phase 3 PLANNED checklist, no enum defined in RFC body); fix XC-5 (line 480: replace phantom record_spend(&api_key.key_id, &response) with proper SpendEvent construction + STORAGE.record_spend(&event).await?) |
 | 2.17    | 2026-04-24 | Round 32: fix R2-5 (Design) per deferred-work rule — add QuotaRouterError unified error type to Phase 3 checklist; must be spec-ed (not just "deferred") per memory/deferred-vs-unspecified.md; defines enum wrapper with From implementations for KeyError, BudgetError, RouterError, StorageError; retrofitted across RFC-0903/0904/0909/0910/0917 |
 | 2.16    | 2026-04-24 | Round 30: fix 4.2 (Medium) — remove misleading "same derivation pattern as RFC-0903 virtual key generation" from SDK mode key derivation; clarify HMAC-SHA256 rationale (arbitrary provider key input, not virtual key object); add note that HMAC-SHA256 is used (not BLAKE3) because input is arbitrary provider key string |
 | 2.13    | 2026-04-23 | Round 13: fix 1.1 virtual keys self-contradiction — virtual keys apply to HTTP proxy callers only (Python SDK callers bypass proxy, no virtual key enforcement in any SDK path); corrected Summary and enterprise feature list; from comprehensive adversarial review |
@@ -2323,7 +2601,7 @@ In `full` builds, both modules are compiled simultaneously and selected at runti
 
 ## Related RFCs
 
-- RFC-0902: Multi-Provider Routing and Load Balancing
+- RFC-0902: Multi-Provider Routing and Load Balancing (v1.3 defines the 7 routing strategies including Weighted strategy)
 - RFC-0903: Virtual API Key System
 - RFC-0903-B1: Schema Amendments (spend_ledger BLOB)
 - RFC-0903-C1: Extended Schema Amendments (api_keys/teams BLOB)
@@ -2343,7 +2621,14 @@ In `full` builds, both modules are compiled simultaneously and selected at runti
 - `docs/research/any-llm-vs-litellm-comparison.md`
 - `docs/research/litellm-analysis-and-quota-router-comparison.md`
 
+## Version History
+
+| Version | Date | Changes |
+|---------|------|---------|
+| 2.21 | 2026-04-26 | Round 39: fix R39-N1 (Phase 3 QuotaRouterError: replace PLANNED placeholder with FULL SPEC — complete enum definition, From implementations, HTTP status code mapping, Python exception class hierarchy) |
+| 2.20 | 2026-04-26 | Round 38: fix NEW-1 (Phase 3 QuotaRouterError checklist item marked PLANNED per deferred-work rule); fix NEW-2 (line 929: clarify 'full-mode' is alias for default 'full' feature); fix NEW-5 (add SSEEvent/Ssedelta/SseUsage struct definitions to Anthropic SSE transform); fix NEW-7 (add "Router Struct Definition (Normative)" header at line 579); add RFC-0902 v1.3 to Related RFCs (7 routing strategies including Weighted) |
+
 ---
 
 **Submission Date:** 2026-04-21
-**Last Updated:** 2026-04-21
+**Last Updated:** 2026-04-26

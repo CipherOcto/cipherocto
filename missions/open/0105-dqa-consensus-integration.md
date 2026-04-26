@@ -14,11 +14,11 @@ Integrate DQA into stoolap's consensus layer with Merkle state encoding, replay 
 
 ## Acceptance Criteria
 
-- [x] DQA encoding in Merkle state: DqaEncoding serialized, included in state trie
+- [ ] DQA encoding in Merkle state: DqaEncoding serialized, included in state trie
 - [ ] Deterministic view enforcement: CREATE DETERMINISTIC VIEW syntax for DQA-only queries
 - [ ] Consensus replay validation: On replay, DQA ops re-executed and result hashes compared
 - [ ] Fork handling: Detect divergent DQA results within 1 epoch
-- [x] Spec version pinning: DQA_SPEC_VERSION = 1 constant defined
+- [ ] Spec version pinning: DQA_SPEC_VERSION = 1 constant defined (stoolap has NUMERIC_SPEC_VERSION = 2 per RFC-0202-A §4a, but no DQA-specific version constant found)
 
 ## Location
 

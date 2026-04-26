@@ -69,6 +69,9 @@ instant = "0.1"
 # For L1 key cache LRU
 lru = "0.12"
 
+# For Unicode NFC normalization (provider/model normalization per RFC-0909 CONSISTENCY GOAL)
+unicode-normalization = "0.1.25"
+
 [lib]
 name = "quota_router_core"
 path = "src/lib.rs"

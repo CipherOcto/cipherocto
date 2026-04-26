@@ -2,7 +2,7 @@
 
 ## Status
 
-Open
+Claimed
 
 ## RFC
 
@@ -26,6 +26,16 @@ Implement provider/model normalization at the gateway input boundary to fulfill 
 - [ ] Add test case: provider="OpenAI", model="GPT-4" → normalized to "openai", "gpt-4" → same event_id as lowercase version
 - [ ] `cargo clippy --all-targets --all-features -- -D warnings` passes with zero warnings
 - [ ] `cargo test --lib` passes
+
+## Claimant
+
+@claude-code
+
+## Pull Request
+
+#
+
+## Notes
 
 ## Implementation Notes
 
@@ -81,7 +91,7 @@ let event = SpendEvent {
 
 **Cargo dependency to add:**
 ```toml
-unicode-normalization = "1.11"
+unicode-normalization = "0.1.25"
 ```
 
 **Test to add in `keys/mod.rs` `compute_event_id_tests`:**

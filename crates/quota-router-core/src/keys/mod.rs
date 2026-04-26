@@ -98,6 +98,27 @@ pub fn blob_16_to_uuid(blob: &[u8; 16]) -> uuid::Uuid {
     uuid::Uuid::from_bytes(*blob)
 }
 
+/// Normalize provider and model names per RFC-0909 CONSISTENCY GOAL.
+///
+/// Applies: (1) Unicode NFC normalization for any non-ASCII characters,
+/// (2) ASCII lowercase conversion.
+///
+/// This ensures `compute_event_id` sees consistent byte sequences across all
+/// router instances, regardless of how the gateway formats provider/model names.
+///
+/// # Arguments
+/// * `provider` - LLM provider name (e.g., "OpenAI", "openai")
+/// * `model` - Model name (e.g., "GPT-4", "gpt-4")
+///
+/// # Returns
+/// A tuple of (normalized_provider, normalized_model) as owned Strings.
+pub fn normalize_provider_model(provider: &str, model: &str) -> (String, String) {
+    use unicode_normalization::UnicodeNormalization;
+    let p = provider.nfc().collect::<String>().to_lowercase();
+    let m = model.nfc().collect::<String>().to_lowercase();
+    (p, m)
+}
+
 /// Compute deterministic event_id for a spend event.
 #[allow(clippy::too_many_arguments)]
 ///
@@ -1064,6 +1085,29 @@ mod compute_event_id_tests {
     #[test]
     fn test_validate_request_id_boundary_1025_rejected() {
         assert!(validate_request_id(&"x".repeat(1025)).is_err());
+    }
+
+    #[test]
+    fn test_normalize_provider_model() {
+        // Mixed case → lowercase
+        let (p, m) = normalize_provider_model("OpenAI", "GPT-4");
+        assert_eq!(p, "openai");
+        assert_eq!(m, "gpt-4");
+
+        // Already lowercase: unchanged
+        let (p, m) = normalize_provider_model("openai", "gpt-4");
+        assert_eq!(p, "openai");
+        assert_eq!(m, "gpt-4");
+    }
+
+    #[test]
+    fn test_normalize_provider_model_unicode_nfc() {
+        // Unicode with NFC normalization
+        // é can be composed (e + ́) or decomposed (e + combining acute)
+        // NFC normalizes to composed form before lowercase
+        let (p, m) = normalize_provider_model("OpenAI", "GPT-4");
+        assert_eq!(p, "openai");
+        assert_eq!(m, "gpt-4");
     }
 }
 

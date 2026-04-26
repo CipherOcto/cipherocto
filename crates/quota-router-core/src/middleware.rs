@@ -149,26 +149,30 @@ impl<S: KeyStorage> KeyMiddleware<S> {
         // Validate request_id first — must be 1..=1024 bytes
         crate::keys::validate_request_id(request_id)?;
 
-        // Compute deterministic event_id
+        // Normalize provider/model per RFC-0909 CONSISTENCY GOAL — must apply to BOTH:
+        // (1) compute_event_id inputs, and (2) SpendEvent.provider/SpendEvent.model storage
+        let (provider, model) = crate::keys::normalize_provider_model(provider, model);
+
+        // (1) Compute deterministic event_id with normalized inputs
         let event_id = crate::keys::compute_event_id(
             request_id,
             &key_id,
-            provider,
-            model,
+            &provider,
+            &model,
             input_tokens,
             output_tokens,
             &pricing_hash,
             token_source,
         );
 
-        // Build the SpendEvent
+        // (2) Build SpendEvent with the SAME normalized local variables
         let event = SpendEvent {
             event_id: event_id.clone(),
             request_id: request_id.to_string(),
             key_id,
             team_id,
-            provider: provider.to_string(),
-            model: model.to_string(),
+            provider, // normalized String, directly (no .to_string() needed)
+            model,    // normalized String, directly (no .to_string() needed)
             input_tokens,
             output_tokens,
             cost_amount,

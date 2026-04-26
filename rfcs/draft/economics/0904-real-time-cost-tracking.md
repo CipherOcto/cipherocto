@@ -108,7 +108,10 @@ RFC-0909 uses `cost_amount BIGINT NOT NULL` in spend_ledger. This RFC specifies 
 ```rust
 // CostError imported from RFC-0910 (Pricing Table Registry) — canonical definition.
 // CostError is NOT defined in this RFC; it is imported to enable error conversion below.
-use crate::rfc0910::CostError;
+//
+// NOTE: `crate::rfc0910` is an example import path within a monorepo layout (all RFCs
+// implemented in the quota-router-core crate). In a crate-separated layout, use the
+// appropriate external crate path (e.g., `quota_router_pricing::CostError`).
 
 // compute_cost delegates to rfc0910::compute_cost (RFC-0910 §Cost Calculation).
 // Uses the same integer arithmetic (checked_mul, checked_div, checked_add).

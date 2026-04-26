@@ -477,16 +477,36 @@ async fn chat_completions(
     let response = ROUTER.route_and_forward(req).await?;
 
     // 3. Record usage in storage (deduct from budget, record spend event)
-    // Build SpendEvent from response — key_id, request_id, provider, model, tokens, pricing_hash
+    // Build SpendEvent — all fields sourced from correct origins per RFC-0904/RFC-0910
+    // NOTE: request_id must come from the *incoming* gateway request (req.request_id),
+    // NOT from response (ProviderResponse has no request_id field).
+    let pricing = PRICING_TABLE.get(req.provider, req.model)?;
+    let pricing_hash = pricing.compute_pricing_hash();
+    let token_source = get_canonical_tokenizer(req.model);
+    let cost_amount = compute_cost(pricing, input_tokens, output_tokens)?;
     let event = SpendEvent {
+        event_id: compute_event_id(
+            req.request_id,
+            &api_key.key_id,
+            req.provider,
+            req.model,
+            input_tokens,
+            output_tokens,
+            &pricing_hash,
+            token_source,
+        ),
+        request_id: req.request_id.to_string(),
         key_id: api_key.key_id,
-        request_id: response.request_id.clone(),
+        team_id: api_key.team_id,
         provider: req.provider.clone(),
         model: req.model.clone(),
         input_tokens: response.usage.prompt_tokens,
         output_tokens: response.usage.completion_tokens,
-        pricing_hash: response.pricing_hash,
-        token_source: response.token_source,
+        cost_amount,
+        pricing_hash,
+        token_source,
+        tokenizer_version: Some(token_source.to_string()),
+        provider_usage_json: None,
         timestamp: Utc::now().timestamp(),
     };
     STORAGE.record_spend(&event).await?;
@@ -928,7 +948,7 @@ crates/quota-router-core/
 default = ["full"]           # Both provider integration strategies
 litellm-mode = ["hyper", "axum"]  # Native Rust HTTP forwarding (reqwest)
 any-llm-mode = ["py-o3"]    # Python SDK delegation via PyO3
-full-mode = ["litellm-mode", "any-llm-mode"]  # Compile both strategies simultaneously — 'full' is the default feature, 'full-mode' is an alias for convenience
+full-mode = ["full"]          # Alias for the default 'full' feature — enables both provider integration strategies simultaneously
 
 # Interface layers (always available when respective mode is enabled):
 hyper = ["dep:hyper", "dep:hyper-util", "dep:axum"]
@@ -987,6 +1007,31 @@ This section specifies the unified error type for RFC-0917's public API surface.
 | `RouterError` | RFC-0917 (fallback.rs) | `Router(RouterError)` |
 | `RegistryError` | RFC-0910 | `Registry(RegistryError)` |
 | `StorageError` | RFC-0903/0904 | `Storage(StorageError)` |
+
+**RouterError enum (RFC-0917):**
+
+```rust
+/// Router-level errors during request dispatch and provider selection.
+/// Defined here for completeness; the canonical definition is in
+/// `crates/quota-router-core/src/fallback.rs` in the codebase.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum RouterError {
+    /// Provider returned 429 Rate Limit.
+    RateLimit,
+    /// Requested provider is not configured or available.
+    ProviderUnavailable,
+    /// Authentication failed with the provider.
+    AuthError,
+    /// Content policy violation from provider.
+    ContentPolicyViolation,
+    /// Request exceeds provider's context window limit.
+    ContextWindowExceeded,
+    /// Request timed out waiting for provider response.
+    Timeout,
+    /// Unclassified router error.
+    Unknown,
+}
+```
 
 **StorageError enum (RFC-0903/0904):**
 
@@ -1521,7 +1566,8 @@ pub async fn check_budget_limit(
 pub async fn get_octo_w_balance(&self, key_id: &[u8; 16]) -> Result<u64, StorageError>;
 
 /// Deduct OCTO-W for pay-per-token marketplace calls
-pub async fn deduct_octo_w(&self, key_id: &[u8; 16], amount: u64) -> Result<(), InsufficientBalanceError>;
+/// Returns remaining balance on success (needed for caller-side logging/audit)
+pub async fn deduct_octo_w(&self, key_id: &[u8; 16], amount: u64) -> Result<u64, StorageError>;
 ```
 
 **Two separate concepts:**

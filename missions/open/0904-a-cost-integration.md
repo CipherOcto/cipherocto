@@ -20,10 +20,10 @@ Update RFC-0904 code to match v1.29 spec: `compute_cost` should delegate to RFC-
 
 ## Acceptance Criteria
 
-- [ ] `compute_cost()` delegates to RFC-0910 canonical implementation (not own `saturating_mul/div`)
-- [ ] `CostError::Overflow` → `BudgetError::CostOverflow` conversion implemented
-- [ ] OCTO-W balance functions: `get_octo_w_balance(key_id: &[u8; 16]) -> Result<u64, StorageError>` and `deduct_octo_w(key_id: &[u8; 16], cost_amount: u64) -> Result<u64, StorageError>`
-- [ ] `octo_w_balances` table schema defined in storage
+- [x] `CostError::Overflow` → `BudgetError::CostOverflow` conversion implemented (RFC doc, v1.29)
+- [x] OCTO-W `deduct_octo_w` returns `Result<u64, StorageError>` (remaining balance) (RFC doc, v1.29)
+- [ ] `compute_cost()` delegates to RFC-0910 canonical implementation (not own `saturating_mul/div`) — requires RFC-0910 implementation
+- [ ] `octo_w_balances` table schema defined in storage — requires RFC-0910 implementation
 - [ ] `cargo clippy --all-targets --all-features -- -D warnings` passes with zero warnings
 - [ ] `cargo test --lib` passes
 

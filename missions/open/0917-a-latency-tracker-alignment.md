@@ -24,7 +24,8 @@ Align RFC-0917 implementation with RFC-0917 v2.21 changes:
 
 - [x] `LatencyTracker` struct added with `record(provider: &str, latency_us: u64)` and `best_provider() -> Option<&str>` using integer u64 microseconds
 - [x] Remove duplicate `full` feature TOML block (was in RFC text, removed in v2.18)
-- [x] Phase 3 `QuotaRouterError` fully specified (R2-5 resolved): complete enum definition, From implementations, HTTP status code mapping, Python exception hierarchy
+- [x] RouterError enum defined explicitly in RFC-0917 (R8-H1 fix: RateLimit, ProviderUnavailable, AuthError, ContentPolicyViolation, ContextWindowExceeded, Timeout, Unknown)
+- [x] SpendEvent construction fixed — request_id from req, pricing_hash from registry, token_source from tokenizer dispatch, all required fields present (XC-5 fix)
 - [x] A3 Router struct marked as non-normative pseudocode in code comments (added in v2.18)
 - [ ] `cargo clippy --all-targets --all-features -- -D warnings` passes with zero warnings
 - [ ] `cargo test --lib` passes

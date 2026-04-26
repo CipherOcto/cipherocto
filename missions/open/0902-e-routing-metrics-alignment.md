@@ -14,7 +14,7 @@ None (can proceed independently)
 
 ## Summary
 
-Update `crates/quota-router-core/src/router.rs` to match RFC-0902 v1.5 changes:
+Update `crates/quota-router-core/src/router.rs` to match RFC-0902 v1.6 changes:
 1. Replace f64 latency tracking with u64 microseconds in ProviderWithState
 2. Add success_count/total_count u64 metrics
 3. Add Weighted routing strategy (7th strategy, currently missing)
@@ -36,7 +36,7 @@ Update `crates/quota-router-core/src/router.rs` to match RFC-0902 v1.5 changes:
 - [ ] `latency_based_impl` updated to call `avg_latency_us()` instead of `avg_latency()`
 - [ ] `record_success(&mut self)` method added to `ProviderWithState` — increments `success_count`
 - [ ] Success tracking is **external to Router**: router client calls `record_success()` after provider response succeeds, then calls `record_request_end()` to record latency
-- [ ] `ProviderBudgetLimiting` disposition documented in code comment (out of scope per RFC-0902 v1.5)
+- [ ] `ProviderBudgetLimiting` disposition documented in code comment (out of scope per RFC-0902 v1.6)
 - [ ] `Display` and `FromStr` updated for `Weighted` variant
 - [ ] `Default` impl for `RouterConfig` updated to initialize `weights: HashMap::new()`
 - [ ] Tests updated: all `vec![f64]` latency literals → `vec![u64]` microseconds; `record_request_end(..., f64, ...)` → `record_request_end(..., u64, ...)`
@@ -101,7 +101,7 @@ impl ProviderWithState {
 
 `Weighted` is semantically distinct from `SimpleShuffle`:
 - `SimpleShuffle`: Weights derived from provider's rpm/tpm configuration (`get_routing_weight()`)
-- `Weighted`: Weights explicitly configured via global `RouterConfig.weights` map (model_name → u32)
+- `Weighted`: Weights explicitly configured via global `RouterConfig.weights` map (provider.name → u32)
 
 **RouterConfig needs this new field:**
 ```rust

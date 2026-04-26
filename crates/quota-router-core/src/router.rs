@@ -323,7 +323,12 @@ impl Router {
     fn weighted_impl(providers: &[ProviderWithState], weights: &HashMap<String, u32>) -> usize {
         let weight_list: Vec<u32> = providers
             .iter()
-            .map(|p| weights.get(&p.provider.name).copied().unwrap_or_else(|| p.get_routing_weight()))
+            .map(|p| {
+                weights
+                    .get(&p.provider.name)
+                    .copied()
+                    .unwrap_or_else(|| p.get_routing_weight())
+            })
             .collect();
 
         let total_weight: u32 = weight_list.iter().sum();
@@ -571,10 +576,7 @@ mod tests {
         let providers = test_providers();
         let config = RouterConfig {
             routing_strategy: RoutingStrategy::Weighted,
-            weights: HashMap::from([
-                ("openai".to_string(), 10),
-                ("azure".to_string(), 1),
-            ]),
+            weights: HashMap::from([("openai".to_string(), 10), ("azure".to_string(), 1)]),
             ..Default::default()
         };
         let mut router = Router::new(config, providers);

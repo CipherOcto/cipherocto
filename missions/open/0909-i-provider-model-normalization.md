@@ -18,21 +18,24 @@ Implement provider/model normalization at the gateway input boundary to fulfill 
 
 ## Acceptance Criteria
 
-- [ ] Gateway input layer normalizes `provider` and `model` to lowercase ASCII before storage and before calling `compute_event_id`
-- [ ] Unicode NFC normalization applied for any non-ASCII characters (via `unicode-normalization` crate)
-- [ ] Normalization applied at `process_response` entry point (before `compute_event_id` is called)
+- [ ] `unicode-normalization` crate added to `Cargo.toml`
+- [ ] `normalize_provider_model(provider, model)` function added to `crates/quota-router-core/src/keys/mod.rs` — applies NFC normalization then lowercase ASCII
+- [ ] Gateway input layer (middleware) normalizes `provider` and `model` to lowercase ASCII before storage and before calling `compute_event_id`
+- [ ] Normalization applied at `process_response` entry point in `middleware.rs` (before `compute_event_id` is called)
 - [ ] Test vector TV1 still passes (provider="openai", model="gpt-4" — already lowercase)
-- [ ] Add test case with mixed-case input: provider="OpenAI", model="GPT-4" → normalized to "openai", "gpt-4" → same event_id as lowercase version
+- [ ] Add test case: provider="OpenAI", model="GPT-4" → normalized to "openai", "gpt-4" → same event_id as lowercase version
 - [ ] `cargo clippy --all-targets --all-features -- -D warnings` passes with zero warnings
 - [ ] `cargo test --lib` passes
 
 ## Implementation Notes
 
-**File:** `crates/quota-router-core/src/keys/mod.rs` or gateway input layer
+**File:** `crates/quota-router-core/src/keys/mod.rs` (normalization function)
 
-**Normalization function to add:**
+**File:** `crates/quota-router-core/src/middleware.rs` (call site)
+
+**Normalization function to add in `keys/mod.rs`:**
 ```rust
-fn normalize_provider_model(provider: &str, model: &str) -> (String, String) {
+pub fn normalize_provider_model(provider: &str, model: &str) -> (String, String) {
     use unicode_normalization::UnicodeNormalization;
     let p = provider.nfc().collect::<String>().to_lowercase();
     let m = model.nfc().collect::<String>().to_lowercase();
@@ -40,4 +43,58 @@ fn normalize_provider_model(provider: &str, model: &str) -> (String, String) {
 }
 ```
 
-**Call site:** In `process_response`, apply normalization before passing to `compute_event_id`.
+**Call site in `middleware.rs` `process_response` — apply normalization BEFORE compute_event_id AND before SpendEvent construction:**
+```rust
+// Validate request_id first — must be 1..=1024 bytes
+crate::keys::validate_request_id(request_id)?;
+
+// Normalize provider/model per RFC-0909 CONSISTENCY GOAL — must apply to BOTH:
+// (1) compute_event_id inputs, and (2) SpendEvent.provider/SpendEvent.model storage
+let (provider, model) = crate::keys::normalize_provider_model(provider, model);
+
+// (1) Compute deterministic event_id with normalized inputs
+let event_id = crate::keys::compute_event_id(
+    request_id,
+    &key_id,
+    &provider,
+    &model,
+    input_tokens,
+    output_tokens,
+    &pricing_hash,
+    token_source,
+);
+
+// (2) Build SpendEvent with the SAME normalized local variables (not the original parameters)
+// provider and model are now owned String locals from normalize_provider_model
+let event = SpendEvent {
+    event_id: event_id.clone(),
+    request_id: request_id.to_string(),
+    key_id,
+    team_id,
+    provider: provider,   // ← normalized String, directly (no .to_string() needed)
+    model: model,         // ← normalized String, directly (no .to_string() needed)
+    // ...
+};
+```
+
+**CRITICAL:** The normalized `provider` and `model` (owned `String` locals from `normalize_provider_model`) MUST be used for BOTH `compute_event_id` AND `SpendEvent` construction. Do NOT pass the original `&str` parameters to `SpendEvent.provider`/`SpendEvent.model`.
+
+**Cargo dependency to add:**
+```toml
+unicode-normalization = "1.11"
+```
+
+**Test to add in `keys/mod.rs` `compute_event_id_tests`:**
+```rust
+#[test]
+fn test_normalize_provider_model() {
+    let (p, m) = normalize_provider_model("OpenAI", "GPT-4");
+    assert_eq!(p, "openai");
+    assert_eq!(m, "gpt-4");
+
+    // Already lowercase: unchanged
+    let (p, m) = normalize_provider_model("openai", "gpt-4");
+    assert_eq!(p, "openai");
+    assert_eq!(m, "gpt-4");
+}
+```

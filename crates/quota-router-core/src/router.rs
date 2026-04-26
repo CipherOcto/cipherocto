@@ -23,6 +23,8 @@ pub enum RoutingStrategy {
     CostBased,
     /// Route based on current usage (RPM/TPM)
     UsageBased,
+    /// Weighted distribution based on explicitly configured weights (distinct from SimpleShuffle)
+    Weighted,
 }
 
 impl std::fmt::Display for RoutingStrategy {
@@ -34,6 +36,7 @@ impl std::fmt::Display for RoutingStrategy {
             RoutingStrategy::LatencyBased => write!(f, "latency-based"),
             RoutingStrategy::CostBased => write!(f, "cost-based"),
             RoutingStrategy::UsageBased => write!(f, "usage-based"),
+            RoutingStrategy::Weighted => write!(f, "weighted"),
         }
     }
 }
@@ -49,6 +52,7 @@ impl std::str::FromStr for RoutingStrategy {
             "latency-based" | "latency_based" | "latency" => Ok(RoutingStrategy::LatencyBased),
             "cost-based" | "cost_based" | "cost" => Ok(RoutingStrategy::CostBased),
             "usage-based" | "usage_based" | "usage" => Ok(RoutingStrategy::UsageBased),
+            "weighted" => Ok(RoutingStrategy::Weighted),
             _ => Err(format!("Unknown routing strategy: {}", s)),
         }
     }
@@ -66,6 +70,11 @@ pub struct RouterConfig {
     /// Enable verbose logging
     #[serde(default)]
     pub verbose: bool,
+    /// Global weights map for Weighted strategy: provider.name → weight
+    /// Used by Weighted routing to select providers with explicit weights.
+    /// If a provider.name is not in weights, falls back to get_routing_weight() (rpm/tpm-derived).
+    #[serde(default)]
+    pub weights: HashMap<String, u32>,
 }
 
 fn default_latency_window() -> usize {
@@ -78,6 +87,7 @@ impl Default for RouterConfig {
             routing_strategy: RoutingStrategy::SimpleShuffle,
             latency_window: 10,
             verbose: false,
+            weights: HashMap::new(),
         }
     }
 }
@@ -88,8 +98,12 @@ pub struct ProviderWithState {
     pub provider: Provider,
     /// Current active requests (for LeastBusy)
     pub active_requests: u32,
-    /// Rolling latency samples (for LatencyBased)
-    pub latencies: Vec<f64>,
+    /// Rolling latency samples in microseconds (for LatencyBased)
+    pub latencies: Vec<u64>,
+    /// Success count (u64)
+    pub success_count: u64,
+    /// Total request count (u64)
+    pub total_count: u64,
     /// Current RPM usage (for UsageBased)
     pub current_rpm: u32,
     /// Current TPM usage (for UsageBased)
@@ -102,6 +116,8 @@ impl ProviderWithState {
             provider,
             active_requests: 0,
             latencies: Vec::new(),
+            success_count: 0,
+            total_count: 0,
             current_rpm: 0,
             current_tpm: 0,
         }
@@ -112,17 +128,23 @@ impl ProviderWithState {
         self.active_requests = self.active_requests.saturating_add(1);
     }
 
-    /// Record a request end with latency
-    pub fn request_ended(&mut self, latency_ms: f64, tokens: u32, latency_window: usize) {
+    /// Record a request end with latency (in microseconds)
+    pub fn request_ended(&mut self, latency_us: u64, tokens: u32, latency_window: usize) {
         self.active_requests = self.active_requests.saturating_sub(1);
-        self.latencies.push(latency_ms);
-        // Trim latencies to window size
+        self.latencies.push(latency_us);
+        // Trim latencies to window size (sliding window)
         if self.latencies.len() > latency_window {
             self.latencies
                 .drain(0..self.latencies.len() - latency_window);
         }
         self.current_rpm = self.current_rpm.saturating_add(1);
         self.current_tpm = self.current_tpm.saturating_add(tokens);
+        self.total_count = self.total_count.saturating_add(1);
+    }
+
+    /// Record a successful request (increments success_count)
+    pub fn record_success(&mut self) {
+        self.success_count = self.success_count.saturating_add(1);
     }
 
     /// Reset RPM/TPM counters (call periodically for sliding window)
@@ -131,12 +153,12 @@ impl ProviderWithState {
         self.current_tpm = 0;
     }
 
-    /// Get average latency
-    pub fn avg_latency(&self) -> f64 {
+    /// Get average latency in microseconds
+    pub fn avg_latency_us(&self) -> u64 {
         if self.latencies.is_empty() {
-            f64::MAX // Very high latency for unproven providers
+            u64::MAX // Very high latency for unproven providers
         } else {
-            self.latencies.iter().sum::<f64>() / self.latencies.len() as f64
+            self.latencies.iter().sum::<u64>() / self.latencies.len() as u64
         }
     }
 
@@ -232,6 +254,7 @@ impl Router {
             RoutingStrategy::LatencyBased => Self::latency_based_impl(providers, latency_window),
             RoutingStrategy::CostBased => Self::simple_shuffle_impl(providers), // Fallback
             RoutingStrategy::UsageBased => Self::usage_based_impl(providers),
+            RoutingStrategy::Weighted => Self::weighted_impl(providers, &self.config.weights),
         };
 
         Some(selected_idx)
@@ -280,11 +303,7 @@ impl Router {
         providers
             .iter()
             .enumerate()
-            .min_by(|(_, a), (_, b)| {
-                a.avg_latency()
-                    .partial_cmp(&b.avg_latency())
-                    .unwrap_or(std::cmp::Ordering::Equal)
-            })
+            .min_by_key(|(_, p)| p.avg_latency_us())
             .map(|(i, _)| i)
             .unwrap_or(0)
     }
@@ -299,6 +318,33 @@ impl Router {
             .unwrap_or(0)
     }
 
+    /// Weighted: Select provider using global weights map (provider.name → weight)
+    /// Falls back to get_routing_weight() if provider not in weights map
+    fn weighted_impl(providers: &[ProviderWithState], weights: &HashMap<String, u32>) -> usize {
+        let weight_list: Vec<u32> = providers
+            .iter()
+            .map(|p| weights.get(&p.provider.name).copied().unwrap_or_else(|| p.get_routing_weight()))
+            .collect();
+
+        let total_weight: u32 = weight_list.iter().sum();
+
+        if total_weight == 0 {
+            rand::rng().random_range(0..providers.len())
+        } else {
+            let mut cumulative = 0u32;
+            let weighted: Vec<u32> = weight_list
+                .iter()
+                .map(|&w| {
+                    cumulative += w;
+                    cumulative
+                })
+                .collect();
+
+            let roll = rand::rng().random_range(1..=total_weight);
+            weighted.iter().position(|&w| w >= roll).unwrap_or(0)
+        }
+    }
+
     /// Record request start for a specific provider index
     pub fn record_request_start(&mut self, model_group: &str, index: usize) {
         if let Some(providers) = self.providers.get_mut(model_group) {
@@ -308,18 +354,21 @@ impl Router {
         }
     }
 
-    /// Record request end for a specific provider index
+    /// Record request end for a specific provider index (latency in microseconds)
+    // ProviderBudgetLimiting is OUT OF SCOPE for this module.
+    // Per-provider budget limiting is handled by the budget enforcement layer (RFC-0904).
+    // CostBased routing selects lowest-cost provider but does not enforce per-provider budgets.
     pub fn record_request_end(
         &mut self,
         model_group: &str,
         index: usize,
-        latency_ms: f64,
+        latency_us: u64,
         tokens: u32,
     ) {
         let latency_window = self.config.latency_window;
         if let Some(providers) = self.providers.get_mut(model_group) {
             if let Some(p) = providers.get_mut(index) {
-                p.request_ended(latency_ms, tokens, latency_window);
+                p.request_ended(latency_us, tokens, latency_window);
             }
         }
     }
@@ -453,6 +502,10 @@ mod tests {
             "usage-based".parse::<RoutingStrategy>().unwrap(),
             RoutingStrategy::UsageBased
         );
+        assert_eq!(
+            "weighted".parse::<RoutingStrategy>().unwrap(),
+            RoutingStrategy::Weighted
+        );
     }
 
     #[test]
@@ -462,16 +515,17 @@ mod tests {
             routing_strategy: RoutingStrategy::LatencyBased,
             latency_window: 10,
             verbose: false,
+            weights: HashMap::new(),
         };
         let mut router = Router::new(config, providers);
 
-        // Set latencies - azure should be faster
+        // Set latencies (in microseconds) - azure should be faster
         if let Some(providers) = router.providers.get_mut("gpt-3.5-turbo") {
             for p in providers.iter_mut() {
                 if p.provider.name == "azure" {
-                    p.latencies = vec![100.0, 110.0, 105.0]; // Fast: ~105ms avg
+                    p.latencies = vec![100_000, 110_000, 105_000]; // Fast: ~105ms avg
                 } else {
-                    p.latencies = vec![500.0, 510.0, 505.0]; // Slow: ~505ms avg
+                    p.latencies = vec![500_000, 510_000, 505_000]; // Slow: ~505ms avg
                 }
             }
         }
@@ -513,6 +567,39 @@ mod tests {
     }
 
     #[test]
+    fn test_weighted_routing() {
+        let providers = test_providers();
+        let config = RouterConfig {
+            routing_strategy: RoutingStrategy::Weighted,
+            weights: HashMap::from([
+                ("openai".to_string(), 10),
+                ("azure".to_string(), 1),
+            ]),
+            ..Default::default()
+        };
+        let mut router = Router::new(config, providers);
+
+        // Should favor openai (weight 10) over azure (weight 1)
+        let mut openai_count = 0;
+        let mut azure_count = 0;
+
+        for _ in 0..1000 {
+            if let Some(idx) = router.route("gpt-3.5-turbo") {
+                if let Some(p) = router.get_provider("gpt-3.5-turbo", idx) {
+                    if p.provider.name == "openai" {
+                        openai_count += 1;
+                    } else {
+                        azure_count += 1;
+                    }
+                }
+            }
+        }
+
+        // OpenAI should be selected significantly more often (10:1 weight ratio)
+        assert!(openai_count > azure_count * 5);
+    }
+
+    #[test]
     fn test_request_tracking() {
         let providers = test_providers();
         let config = RouterConfig::default();
@@ -527,14 +614,40 @@ mod tests {
             assert_eq!(p.active_requests, 1);
         }
 
-        // Record request end
-        router.record_request_end("gpt-3.5-turbo", idx, 150.0, 100);
+        // Record request end (latency in microseconds)
+        router.record_request_end("gpt-3.5-turbo", idx, 150_000, 100);
 
         // Check active requests decreased and latency recorded
         if let Some(p) = router.get_provider("gpt-3.5-turbo", idx) {
             assert_eq!(p.active_requests, 0);
             assert!(!p.latencies.is_empty());
             assert_eq!(p.current_rpm, 1);
+            assert_eq!(p.total_count, 1);
+        }
+    }
+
+    #[test]
+    fn test_success_tracking() {
+        let providers = test_providers();
+        let config = RouterConfig::default();
+        let mut router = Router::new(config, providers);
+
+        let idx = router.route("gpt-3.5-turbo").unwrap();
+        router.record_request_start("gpt-3.5-turbo", idx);
+
+        // Get provider and record success
+        if let Some(p) = router.get_provider("gpt-3.5-turbo", idx) {
+            p.record_success();
+            assert_eq!(p.success_count, 1);
+        }
+
+        // Record request end
+        router.record_request_end("gpt-3.5-turbo", idx, 100_000, 50);
+
+        // Verify total_count incremented
+        if let Some(p) = router.get_provider("gpt-3.5-turbo", idx) {
+            assert_eq!(p.total_count, 1);
+            assert_eq!(p.success_count, 1);
         }
     }
 }

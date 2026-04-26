@@ -1171,7 +1171,7 @@ impl From<StorageError> for QuotaRouterError {
 | `Budget(BudgetError::KeyBudgetExceeded { .. })` | 403 | Per-key budget exceeded |
 | `Budget(BudgetError::TeamBudgetExceeded { .. })` | 403 | Team budget exceeded |
 | `Budget(BudgetError::InsufficientBalance { .. })` | 403 | OCTO-W balance insufficient |
-| `Budget(BudgetError::CostOverflow)` | 500 | Cost computation overflow (deployment error) |
+| `Budget(BudgetError::CostOverflow)` | 422 | Cost computation overflow (deployment misconfiguration — do not retry) |
 | `Budget(BudgetError::ModelNotFound(_))` | 404 | Model not in pricing table |
 | `Router(RouterError::RateLimit)` | 429 | Provider rate limited |
 | `Router(RouterError::ProviderUnavailable)` | 503 | Provider unavailable |
@@ -1238,7 +1238,7 @@ EXCEPTION_MAP = {
     ("Budget", "KeyBudgetExceeded"): (BudgetException, 403),
     ("Budget", "TeamBudgetExceeded"): (BudgetException, 403),
     ("Budget", "InsufficientBalance"): (BudgetException, 403),
-    ("Budget", "CostOverflow"): (BudgetException, 500),
+    ("Budget", "CostOverflow"): (BudgetException, 422),
     ("Budget", "ModelNotFound"): (BudgetException, 404),
     ("Router", "RateLimit"): (RouterException, 429),
     ("Router", "ProviderUnavailable"): (RouterException, 503),
@@ -2181,9 +2181,11 @@ const KNOWN_PROVIDERS: &[&str] = &[
 /// - `gpt-4o` → provider="openai" (default), model="gpt-4o"
 /// - `openai/gpt-4o-0613` → provider="openai", model="gpt-4o-0613"
 ///
-/// Reject:
-/// - Model strings with unknown provider prefixes (e.g., `unknown/gpt-4`)
-/// - Ambiguous formats where neither delimiter's provider matches (both delimiters present)
+/// **Graceful degradation:**
+/// - Model strings with unknown provider prefixes (e.g., `unknown/gpt-4`) → use `default_provider` (NOT an error). An `UnknownProviderPrefix` event is emitted at WARN level for operator awareness.
+/// - Ambiguous formats where neither delimiter's provider matches → use `default_provider`
+///
+/// **Note:** `KNOWN_PROVIDERS` SHOULD be dynamically loadable from `config.yaml` rather than hardcoded. Deployers adding new providers (e.g., `x-ai`) MUST add the provider prefix to the config to avoid graceful degradation to `default_provider`.
 fn parse_model_string(model: &str, default_provider: &str) -> Result<(&str, &str), ModelParseError> {
     let colon_idx = model.find(':');
     let slash_idx = model.find('/');
@@ -2671,6 +2673,7 @@ In `full` builds, both modules are compiled simultaneously and selected at runti
 
 | Version | Date | Changes |
 |---------|------|---------|
+| 2.22 | 2026-04-26 | Round 41: fix HI-04 (CostOverflow → HTTP 422, not 500 — deployment misconfiguration should not trigger retry); fix MD-04 (parse_model_string: use default_provider on unknown prefix, emit UnknownProviderPrefix WARN event; document dynamic KNOWN_PROVIDERS loading) |
 | 2.21 | 2026-04-26 | Round 39: fix R39-N1 (Phase 3 QuotaRouterError: replace PLANNED placeholder with FULL SPEC — complete enum definition, From implementations, HTTP status code mapping, Python exception class hierarchy) |
 | 2.20 | 2026-04-26 | Round 38: fix NEW-1 (Phase 3 QuotaRouterError checklist item marked PLANNED per deferred-work rule); fix NEW-2 (line 929: clarify 'full-mode' is alias for default 'full' feature); fix NEW-5 (add SSEEvent/Ssedelta/SseUsage struct definitions to Anthropic SSE transform); fix NEW-7 (add "Router Struct Definition (Normative)" header at line 579); add RFC-0902 v1.3 to Related RFCs (7 routing strategies including Weighted) |
 

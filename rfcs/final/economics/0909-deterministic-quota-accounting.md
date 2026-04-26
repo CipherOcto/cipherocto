@@ -438,7 +438,7 @@ Events must be processed in deterministic order. Two paths exist with different 
 
 | Path | Ordering | Consumer |
 |------|----------|----------|
-| **Canonical (external verification)** | `event_id ASC` | External verifiers who reconstruct events from logs; they have the event stream but not `created_at` |
+| **Canonical (external verification)** | `event_id ASC` (ASCII lexicographic) | External verifiers who reconstruct events from logs; they have the event stream but not `created_at` |
 | **Internal (DB audit)** | `ORDER BY created_at ASC, event_id ASC` | Internal audit where `created_at` is authoritative insertion order |
 
 **Critical distinction:** The Summary promise ("two independent nodes processing the same requests produce identical quota results") applies to the **canonical path** — routers processing identical requests produce identical event streams, and external verifiers reading those streams compute identical Merkle roots using `event_id`-only ordering.

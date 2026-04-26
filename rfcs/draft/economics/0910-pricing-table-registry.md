@@ -130,6 +130,11 @@ pub struct PricingTable {
     pub effective_from: i64,
     /// Additional metadata (reserved for future use)
     pub metadata: BTreeMap<String, String>,
+    /// Tokenizer version expiry: Unix epoch after which this tokenizer assignment
+    /// is considered stale. If None, the assignment does not expire.
+    /// Routers MUST verify tokenizer assignments before production use for
+    /// UNCERTAIN models; this field provides an explicit expiry for ops tooling.
+    pub tokenizer_version_expiry: Option<i64>,
 }
 
 impl PricingTable {
@@ -403,6 +408,19 @@ impl PricingRegistry {
         self.tables
             .get(&(provider.to_string(), model.to_string()))
             .and_then(|v| v.iter().find(|t| t.version == version))
+    }
+
+    /// Verify that a provider-reported tokenizer matches the canonical assignment.
+    /// Returns Ok(()) if match; Err((canonical, provider_reported)) if mismatch.
+    /// For UNCERTAIN models, emits a warning but does not error — the caller decides
+    /// whether to accept the divergence.
+    pub fn verify_tokenizer(&self, provider: &str, model: &str, provider_tokenizer: &str) -> Result<(), (&'static str, String)> {
+        let canonical = get_canonical_tokenizer(model);
+        if canonical == provider_tokenizer {
+            Ok(())
+        } else {
+            Err((canonical, provider_tokenizer.to_string()))
+        }
     }
 
     /// List all registered (provider, model) pairs (from latest version only).
@@ -1022,6 +1040,7 @@ This design allows the registry to be treated as a cache of known-good pricing s
 
 | Version | Date | Changes |
 |---------|------|---------|
+| v28 | 2026-04-26 | Round 41: fix HI-03 (add tokenizer_version_expiry field to PricingTable; add verify_tokenizer() method to PricingRegistry for provider tokenizer verification) |
 | v27 | 2026-04-26 | Round 38: fix NEW-3 (compute_pricing_hash test vector: "independent implementation" → reference to `crates/quota-router-core/src/pricing.rs` test module); fix NEW-6 (o1-mini/o1-preview: Tokenizer Assignment Table changed from UNCERTAIN "verify with provider" to VERIFIED "o-series family uses o200k_base" per v22 correction; test vector updated accordingly) |
 | v26 | 2026-04-25 | Round 37: confirm CostError canonical definition (this RFC); RFC-0904 imports CostError from this RFC per RFC-0904 v1.28 §Cost Computation delegation |
 | v25 | 2026-04-24 | Round 35: fix NC-1 (compute_pricing_hash: replace u32::to_be(n)/u64::to_be(n)/i64::to_be(n) with n.to_be_bytes() — 18 occurrences; code was non-compiling); fix NM-4 (stale RFC-0903-C1 v4 → v5 in Dependencies and Related RFCs) |

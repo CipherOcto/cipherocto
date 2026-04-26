@@ -1,4 +1,4 @@
-# Mission: RFC-0902 v1.5 Alignment — Integer Metrics + Weighted Strategy
+# Mission: RFC-0902 v1.6 Alignment — Integer Metrics + Weighted Strategy
 
 ## Status
 
@@ -6,7 +6,7 @@ Open
 
 ## RFC
 
-RFC-0902 v1.5 (Accepted): Multi-Provider Routing and Load Balancing
+RFC-0902 v1.6 (Accepted): Multi-Provider Routing and Load Balancing
 
 ## Dependencies
 

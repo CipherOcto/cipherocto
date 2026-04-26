@@ -2,7 +2,7 @@
 
 ## Status
 
-PR Submitted
+Archived
 
 ## RFC
 

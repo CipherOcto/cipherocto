@@ -6,7 +6,7 @@ Open
 
 ## RFC
 
-RFC-0910 v25 (Draft): Pricing Table Registry
+RFC-0910 v27 (Draft): Pricing Table Registry
 
 **Note:** RFC-0910 is Draft, not Accepted. Implementation should not proceed until RFC is Accepted per BLUEPRINT.md rules. Mission created for planning and tracking purposes.
 

@@ -6,7 +6,7 @@ Open
 
 ## RFC
 
-RFC-0904 v1.27 (Draft): Real-Time Cost Tracking
+RFC-0904 v1.29 (Draft): Real-Time Cost Tracking
 
 **Note:** RFC-0904 is Draft, not Accepted. Mission created for planning and tracking purposes.
 
@@ -16,7 +16,7 @@ RFC-0904 v1.27 (Draft): Real-Time Cost Tracking
 
 ## Summary
 
-Update RFC-0904 code to match v1.27 spec: `compute_cost` should delegate to RFC-0910's canonical implementation, and OCTO-W balance functions should align with the RFC spec.
+Update RFC-0904 code to match v1.29 spec: `compute_cost` should delegate to RFC-0910's canonical implementation, and OCTO-W balance functions should align with the RFC spec.
 
 ## Acceptance Criteria
 

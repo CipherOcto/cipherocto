@@ -2,7 +2,7 @@
 
 ## Status
 
-Claimed
+Completed
 
 ## RFC
 
@@ -14,28 +14,28 @@ None (can proceed independently)
 
 ## Acceptance Criteria
 
-- [ ] `ProviderWithState.latencies: Vec<f64>` → `latencies: Vec<u64>` (integer microseconds, per-sample storage for sliding window)
-- [ ] Add `avg_latency_us()` method that computes rolling average from samples (not stored separately)
-- [ ] `ProviderWithState` add `success_count: u64, total_count: u64` fields
-- [ ] `total_count` incremented on every `request_ended` call
-- [ ] `success_count` incremented when `record_success()` is called (HTTP 2xx response)
-- [ ] `request_ended` signature: `latency_ms: f64` → `latency_us: u64` (microseconds)
-- [ ] `avg_latency()` removed (replaced by `avg_latency_us()` returning `u64`)
-- [ ] `RouterConfig` add `weights: HashMap<String, u32>` — global provider-name→weight map for Weighted strategy
-- [ ] `Weighted` routing strategy added using global `weights` config (distinct from `SimpleShuffle`)
-- [ ] `Weighted` requires new `weighted_impl(providers, weights) -> usize` method (simple_shuffle_impl has no access to config.weights)
-- [ ] `Weighted` added to `route()` match: `RoutingStrategy::Weighted => Self::weighted_impl(providers, &self.config.weights)`
-- [ ] `latency_based_impl` updated to call `avg_latency_us()` instead of `avg_latency()`
-- [ ] `record_success(&mut self)` method added to `ProviderWithState` — increments `success_count`
-- [ ] Success tracking is **external to Router**: router client calls `record_success()` after provider response succeeds, then calls `record_request_end()` to record latency
-- [ ] `ProviderBudgetLimiting` disposition documented in code comment (out of scope per RFC-0902 v1.6)
-- [ ] `Display` and `FromStr` updated for `Weighted` variant
-- [ ] `Default` impl for `RouterConfig` updated to initialize `weights: HashMap::new()`
-- [ ] Tests updated: all `vec![f64]` latency literals → `vec![u64]` microseconds; `record_request_end(..., f64, ...)` → `record_request_end(..., u64, ...)`
-- [ ] Test for `Weighted` strategy: `"weighted".parse::<RoutingStrategy>()` round-trip test added
-- [ ] Tests for `success_count`/`total_count`: `record_success()` and `request_ended()` behavior verified
-- [ ] `cargo clippy --all-targets --all-features -- -D warnings` passes with zero warnings
-- [ ] `cargo test --lib` passes
+- [x] `ProviderWithState.latencies: Vec<f64>` → `latencies: Vec<u64>` (integer microseconds, per-sample storage for sliding window)
+- [x] Add `avg_latency_us()` method that computes rolling average from samples (not stored separately)
+- [x] `ProviderWithState` add `success_count: u64, total_count: u64` fields
+- [x] `total_count` incremented on every `request_ended` call
+- [x] `success_count` incremented when `record_success()` is called (HTTP 2xx response)
+- [x] `request_ended` signature: `latency_ms: f64` → `latency_us: u64` (microseconds)
+- [x] `avg_latency()` removed (replaced by `avg_latency_us()` returning `u64`)
+- [x] `RouterConfig` add `weights: HashMap<String, u32>` — global provider-name→weight map for Weighted strategy
+- [x] `Weighted` routing strategy added using global `weights` config (distinct from `SimpleShuffle`)
+- [x] `Weighted` requires new `weighted_impl(providers, weights) -> usize` method (simple_shuffle_impl has no access to config.weights)
+- [x] `Weighted` added to `route()` match: `RoutingStrategy::Weighted => Self::weighted_impl(providers, &self.config.weights)`
+- [x] `latency_based_impl` updated to call `avg_latency_us()` instead of `avg_latency()`
+- [x] `record_success(&mut self)` method added to `ProviderWithState` — increments `success_count`
+- [x] Success tracking is **external to Router**: router client calls `record_success()` after provider response succeeds, then calls `record_request_end()` to record latency
+- [x] `ProviderBudgetLimiting` disposition documented in code comment (out of scope per RFC-0902 v1.6)
+- [x] `Display` and `FromStr` updated for `Weighted` variant
+- [x] `Default` impl for `RouterConfig` updated to initialize `weights: HashMap::new()`
+- [x] Tests updated: all `vec![f64]` latency literals → `vec![u64]` microseconds; `record_request_end(..., f64, ...)` → `record_request_end(..., u64, ...)`
+- [x] Test for `Weighted` strategy: `"weighted".parse::<RoutingStrategy>()` round-trip test added
+- [x] Tests for `success_count`/`total_count`: `record_success()` and `request_ended()` behavior verified
+- [x] `cargo clippy --all-targets --all-features -- -D warnings` passes with zero warnings
+- [x] `cargo test --lib` passes
 
 ## Implementation Notes
 

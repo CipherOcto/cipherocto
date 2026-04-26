@@ -2,7 +2,7 @@
 
 ## Status
 
-Claimed
+PR Submitted
 
 ## RFC
 
@@ -18,14 +18,14 @@ Implement provider/model normalization at the gateway input boundary to fulfill 
 
 ## Acceptance Criteria
 
-- [ ] `unicode-normalization` crate added to `Cargo.toml`
-- [ ] `normalize_provider_model(provider, model)` function added to `crates/quota-router-core/src/keys/mod.rs` — applies NFC normalization then lowercase ASCII
-- [ ] Gateway input layer (middleware) normalizes `provider` and `model` to lowercase ASCII before storage and before calling `compute_event_id`
-- [ ] Normalization applied at `process_response` entry point in `middleware.rs` (before `compute_event_id` is called)
-- [ ] Test vector TV1 still passes (provider="openai", model="gpt-4" — already lowercase)
-- [ ] Add test case: provider="OpenAI", model="GPT-4" → normalized to "openai", "gpt-4" → same event_id as lowercase version
-- [ ] `cargo clippy --all-targets --all-features -- -D warnings` passes with zero warnings
-- [ ] `cargo test --lib` passes
+- [x] `unicode-normalization` crate added to `Cargo.toml`
+- [x] `normalize_provider_model(provider, model)` function added to `crates/quota-router-core/src/keys/mod.rs` — applies NFC normalization then lowercase ASCII
+- [x] Gateway input layer (middleware) normalizes `provider` and `model` to lowercase ASCII before storage and before calling `compute_event_id`
+- [x] Normalization applied at `process_response` entry point in `middleware.rs` (before `compute_event_id` is called)
+- [x] Test vector TV1 still passes (provider="openai", model="gpt-4" — already lowercase)
+- [x] Add test case: provider="OpenAI", model="GPT-4" → normalized to "openai", "gpt-4" → same event_id as lowercase version
+- [x] `cargo clippy --all-targets --all-features -- -D warnings` passes with zero warnings
+- [x] `cargo test --lib` passes
 
 ## Claimant
 
@@ -33,7 +33,7 @@ Implement provider/model normalization at the gateway input boundary to fulfill 
 
 ## Pull Request
 
-#
+https://github.com/CipherOcto/cipherocto/commit/5faf31f
 
 ## Notes
 

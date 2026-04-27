@@ -237,7 +237,7 @@ impl PricingRegistry {
     }
 
     /// Get the active (latest version) pricing for a provider/model.
-    pub fn get(&self, provider: &str, model: &str) -> Option<&PricingTable> {
+    pub fn get_pricing(&self, provider: &str, model: &str) -> Option<&PricingTable> {
         self.tables
             .get(&(provider.to_string(), model.to_string()))
             .and_then(|v| v.first())
@@ -254,6 +254,13 @@ impl PricingRegistry {
             .get(&(provider.to_string(), model.to_string()))
             .map(|v| v.iter().collect())
             .unwrap_or_default()
+    }
+
+    /// Get a specific version of pricing for a provider/model.
+    pub fn get_version(&self, provider: &str, model: &str, version: u32) -> Option<&PricingTable> {
+        self.get_versions(provider, model)
+            .into_iter()
+            .find(|t| t.version == version)
     }
 
     /// Verify that a provider-reported tokenizer matches the canonical assignment.
@@ -637,7 +644,7 @@ mod registry_tests {
         let table = make_table("openai", "gpt-4", 1, 1_700_000_000);
         let hash = registry.register(table).unwrap();
         assert_eq!(hash.len(), 32);
-        assert_eq!(registry.get("openai", "gpt-4").unwrap().version, 1);
+        assert_eq!(registry.get_pricing("openai", "gpt-4").unwrap().version, 1);
     }
 
     #[test]
@@ -688,7 +695,7 @@ mod registry_tests {
         registry
             .register(make_table("openai", "gpt-4", 2, 1_700_000_100))
             .unwrap();
-        let latest = registry.get("openai", "gpt-4").unwrap();
+        let latest = registry.get_pricing("openai", "gpt-4").unwrap();
         assert_eq!(latest.version, 2, "should return latest version");
     }
 
@@ -703,11 +710,48 @@ mod registry_tests {
     }
 
     #[test]
+    fn test_get_version() {
+        let mut registry = PricingRegistry::default();
+        registry
+            .register(make_table("openai", "gpt-4", 1, 1_700_000_000))
+            .unwrap();
+        registry
+            .register(make_table("openai", "gpt-4", 2, 1_700_000_100))
+            .unwrap();
+        let v1 = registry.get_version("openai", "gpt-4", 1).unwrap();
+        let v2 = registry.get_version("openai", "gpt-4", 2).unwrap();
+        assert_eq!(v1.version, 1);
+        assert_eq!(v2.version, 2);
+        assert!(registry.get_version("openai", "gpt-4", 99).is_none());
+    }
+
+    #[test]
     fn test_table_id_too_long() {
         let mut registry = PricingRegistry::default();
         let mut table = make_table("openai", "gpt-4", 1, 1_700_000_000);
         table.table_id = "a".repeat(129);
         let result = registry.register(table);
         assert!(matches!(result, Err(RegistryError::TableIdTooLong { .. })));
+    }
+
+    #[test]
+    fn test_verify_tokenizer_match() {
+        let registry = PricingRegistry::default();
+        assert!(registry
+            .verify_tokenizer("openai", "gpt-4", "tiktoken-cl100k_base-v1.2.3")
+            .is_ok());
+        assert!(registry
+            .verify_tokenizer("openai", "o1-mini", "tiktoken-o200k_base")
+            .is_ok());
+    }
+
+    #[test]
+    fn test_verify_tokenizer_mismatch() {
+        let registry = PricingRegistry::default();
+        let result = registry.verify_tokenizer("openai", "gpt-4", "wrong-tokenizer");
+        assert!(result.is_err());
+        let (canonical, reported) = result.unwrap_err();
+        assert_eq!(canonical, "tiktoken-cl100k_base-v1.2.3");
+        assert_eq!(reported, "wrong-tokenizer");
     }
 }

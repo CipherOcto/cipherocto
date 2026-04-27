@@ -2,7 +2,7 @@
 
 ## Status
 
-Accepted (v2.24)
+Accepted (v2.25)
 
 ## Authors
 
@@ -14,12 +14,14 @@ Accepted (v2.24)
 
 ## Summary
 
-Define a dual-mode query router that operates under Rust feature gates: **LiteLLM Mode** (native Rust HTTP forwarding to provider REST APIs, like LiteLLM's custom HTTP clients) and **any-llm Mode** (Python SDK delegation via PyO3 to official provider SDKs, like any-llm's delegation approach). The modes differ in **how providers are called** and **which interface is exposed**:
-- **LiteLLM Mode** exposes HTTP proxy only (OpenAI-compatible endpoints).
-- **any-llm Mode** exposes Python SDK only (`pip install quota_router` → `completion()`).
-- **`full`** (both feature gates enabled) exposes **both** HTTP proxy and Python SDK simultaneously.
+Define a dual-mode query router that operates under Rust feature gates: **LiteLLM Mode** (native Rust HTTP forwarding to provider REST APIs, like LiteLLM's custom HTTP clients) and **any-llm Mode** (Python SDK delegation via PyO3 to official provider SDKs, like any-llm's delegation approach). **Both modes expose BOTH interfaces (HTTP proxy and Python SDK).** The modes differ only in **how providers are called** (integration strategy), not which interfaces are available:
+- **LiteLLM Mode** uses `reqwest` (native Rust HTTP) to call provider REST APIs.
+- **any-llm Mode** uses PyO3 to call official Python SDKs.
+- Both modes provide **both** HTTP proxy (`/v1/chat/completions`) **and** Python SDK (`pip install quota_router` → `completion()`).
 
-Most enterprise features (budgets, rate limiting, Prometheus, RFC-0909/0910) are shared across modes — enforced at the Router level via `Router::global()`. Virtual keys (RFC-0903) are enforced via HTTP proxy auth middleware (`validate_key()`) which applies only when requests enter via the HTTP proxy interface. Python SDK callers bypass the proxy and do not have virtual key enforcement — this applies equally to LiteLLM Mode and any-llm Mode Python SDK paths. The mode gate controls provider integration strategy (`reqwest` vs. PyO3) and which interface is exposed (HTTP vs. SDK).
+**`full`** (both feature gates enabled) enables **both** integration strategies simultaneously (reqwest + PyO3) plus **both** interfaces.
+
+Most enterprise features (budgets, rate limiting, Prometheus, RFC-0909/0910) are shared across modes — enforced at the Router level via `Router::global()`. Virtual keys (RFC-0903) are enforced via HTTP proxy auth middleware (`validate_key()`) which applies only when requests enter via the HTTP proxy interface. Python SDK callers bypass the proxy and do not have virtual key enforcement — this applies equally to LiteLLM Mode and any-llm Mode Python SDK paths. The mode gate controls provider integration strategy (`reqwest` vs. PyO3), NOT which interface is exposed.
 
 ## Motivation
 
@@ -49,14 +51,16 @@ The dual-mode architecture differentiates **how providers are called**, not whic
 | Protocol control | Full (custom HTTP implementation) | Delegated to SDK |
 | Correctness guarantee | Via audit + test | Via official SDK |
 
-**Interface availability differs by mode:**
+**Both modes have BOTH interfaces available:**
 
 | Interface | LiteLLM Mode | any-llm Mode | `full` |
 |-----------|:------------:|:------------:|:------:|
-| HTTP proxy (`/v1/chat/completions`) | ✅ | ❌ | ✅ |
-| Python SDK (`pip install`) | ❌ | ✅ | ✅ |
+| HTTP proxy (`/v1/chat/completions`) | ✅ | ✅ | ✅ |
+| Python SDK (`pip install`) | ✅ | ✅ | ✅ |
 
-**Both modes enforce identical enterprise features** (interface differs by mode):
+The modes differ in **provider integration strategy**, not interface availability.
+
+**Both modes enforce identical enterprise features:**
 - Virtual API keys (RFC-0903) — **HTTP proxy only** (Python SDK callers bypass proxy, no virtual key enforcement)
 - Budget enforcement (RFC-0904)
 - Rate limiting (RFC-0902)
@@ -66,16 +70,16 @@ The dual-mode architecture differentiates **how providers are called**, not whic
 - OCTO-W balance (RFC-0900)
 - stoolap persistence (RFC-0903-B1/C1)
 
-The mode gate controls **both** interface exposure (HTTP vs. SDK) and provider integration strategy (`reqwest` vs. PyO3).
+The mode gate controls **provider integration strategy** (`reqwest` vs. PyO3), NOT interface exposure. Both interfaces are always available.
 
 ### Architectural Diagram
 
 ```mermaid
 flowchart TB
-    subgraph Interface["Interface Layer (per-feature)"]
+    subgraph Interface["Interface Layer (BOTH interfaces in BOTH modes)"]
         direction TB
-        HTTP[HTTP Proxy<br/>/v1/chat/completions<br/>litellm-mode OR full]
-        SDK[Python SDK<br/>completion() / acompletion()<br/>any-llm-mode OR full]
+        HTTP[HTTP Proxy<br/>/v1/chat/completions<br/>Available in ALL modes]
+        SDK[Python SDK<br/>completion() / acompletion()<br/>Available in ALL modes]
     end
 
     subgraph LiteLLM["LiteLLM Mode (reqwest HTTP — litellm-mode OR full)"]
@@ -83,7 +87,7 @@ flowchart TB
         LMR[Router] --> LMH[reqwest HTTP<br/>Native Rust → Provider REST APIs]
     end
 
-    subgraph AnyLLM["any-llm Mode (Python SDK — any-llm-mode OR full)"]
+    subgraph AnyLLM["any-llm Mode (PyO3 SDK — any-llm-mode OR full)"]
         direction TB
         AMR[Router] --> AMP[PyO3 Bridge<br/>Python SDKs: Anthropic·OpenAI·Mistral·etc.]
     end
@@ -104,55 +108,59 @@ flowchart TB
     classDef interface fill:#f0fff0
 ```
 
-**Key architectural point:** The `Shared` core is always compiled. The **interface** (HTTP proxy vs Python SDK) and the **provider strategy** (reqwest HTTP vs Python SDK) are selected by the feature gate. These are **mutually exclusive per mode** — `litellm-mode` gives you HTTP proxy + reqwest; `any-llm-mode` gives you Python SDK + PyO3 bridge; `full` gives you both interfaces and both strategies simultaneously.
+**Key architectural point:** The `Shared` core is always compiled. **Both modes expose BOTH interfaces (HTTP proxy and Python SDK).** The feature gate selects the **provider integration strategy** (reqwest HTTP vs PyO3 SDK), NOT the interface:
+- `litellm-mode`: Uses `reqwest` (native Rust HTTP) to call providers. Both interfaces available.
+- `any-llm-mode`: Uses PyO3 to call official Python SDKs. Both interfaces available.
+- `full`: Uses both `reqwest` AND PyO3 strategies simultaneously. Both interfaces available.
 
 **What each mode builds:**
 
 | Feature | `litellm-mode` | `any-llm-mode` | `full` |
-|---------|---------------|----------------|-------|
+|---------|:--------------:|:--------------:|:------:|
 | Native Rust HTTP (`reqwest`) | ✅ | ❌ | ✅ |
 | Python SDK delegation (PyO3) | ❌ | ✅ | ✅ |
-| HTTP proxy interface (`hyper`/`axum`) | ✅ | ❌ | ✅ |
-| Python SDK interface (`py-o3`) | ❌ | ✅ | ✅ |
+| HTTP proxy interface (`hyper`/`axum`) | ✅ | ✅ | ✅ |
+| Python SDK interface (`py-o3`) | ✅ | ✅ | ✅ |
 | Enterprise features | ✅ | ✅ | ✅ |
 | stoolap storage | ✅ | ✅ | ✅ |
 
+**Both modes have BOTH interfaces.** The difference is in provider integration strategy (reqwest vs PyO3).
+
 ### Rust Feature Gates
 
-The dual-mode architecture uses Cargo feature gates to select the **provider integration strategy** and **which interfaces are available**:
+The dual-mode architecture uses Cargo feature gates to select the **provider integration strategy**. **Both interfaces (HTTP proxy and Python SDK) are always compiled regardless of mode:**
 
 ```toml
 # Cargo.toml (quota-router-core)
 [features]
 default = ["full"]           # Both provider integration strategies + both interfaces
-litellm-mode = ["hyper", "axum"]  # Native Rust HTTP forwarding (no Python SDK deps for providers)
-any-llm-mode = ["py-o3"]    # Python SDK delegation via PyO3 (official provider SDKs)
+litellm-mode = ["hyper", "axum"]  # Provider strategy: reqwest (native Rust HTTP)
+any-llm-mode = ["py-o3"]    # Provider strategy: PyO3 (official Python SDKs)
 # IMPORTANT: litellm-mode and any-llm-mode are MUTUALLY EXCLUSIVE (single-mode only).
 # These flags enable ONE provider strategy. The full flag enables BOTH strategies
 # simultaneously WITHOUT enabling either single-mode flag (preventing cfg overlap).
 full = ["hyper", "axum", "py-o3"]  # Both strategies simultaneously
 
-# Interface availability:
-# - HTTP proxy (hyper/axum): compiled when litellm-mode OR full
-# - Python SDK (py-o3): compiled when any-llm-mode OR full
+# INTERFACES: Both HTTP proxy (hyper/axum) AND Python SDK (pyo3) are ALWAYS compiled.
+# The feature flag selects which PROVIDER INTEGRATION STRATEGY to use.
 ```
 
-**What each feature controls (provider integration strategy, not interface):**
+**What each feature controls (provider integration strategy):**
 
 | Feature | Provider Integration | Python Provider SDKs |
-|---------|--------------------|--------------------|
+|---------|:-------------------|:-------------------|
 | `litellm-mode` | Native Rust HTTP (`reqwest`) to provider REST APIs | ❌ None |
 | `any-llm-mode` | Python SDK delegation via PyO3 (Anthropic, OpenAI, Mistral, etc.) | ✅ Via PyO3 |
 | `full` (default) | Both strategies simultaneously | Both |
 
-**Interfaces (compiled per feature flag, not shared):**
+**Interfaces (ALWAYS available in all modes):**
 
 | Interface | `litellm-mode` | `any-llm-mode` | `full` |
 |-----------|:--------------:|:---------------:|:------:|
-| HTTP proxy (`/v1/chat/completions`) | ✅ | ❌ | ✅ |
-| Python SDK (`pip install`) | ❌ | ✅ | ✅ |
+| HTTP proxy (`/v1/chat/completions`) | ✅ | ✅ | ✅ |
+| Python SDK (`pip install`) | ✅ | ✅ | ✅ |
 
-**Note:** `hyper`/`axum` for the HTTP proxy and `pyo3` for the Python SDK are compiled **only** when the respective feature is enabled. The `litellm-mode` / `any-llm-mode` gate controls which interface is available AND which provider integration strategy is used. `full` is required for both interfaces to coexist in one binary.
+**The feature flag selects the provider integration strategy, NOT the interface. All interfaces are available in all modes.**
 
 ## Scope
 
@@ -164,8 +172,8 @@ full = ["hyper", "axum", "py-o3"]  # Both strategies simultaneously
 |-----------|-------------|-------------|
 | Native HTTP Forwarding | `litellm-mode` | `reqwest`-based HTTP calls to provider REST APIs (Rust, no Python SDK deps) |
 | Python SDK Delegation | `any-llm-mode` | PyO3 bridge calling official Python SDKs (Anthropic, OpenAI, Mistral, etc.) |
-| HTTP Proxy Server | `litellm-mode` or `full` | `hyper`/`axum` OpenAI-compatible proxy endpoints |
-| Python SDK Interface | `any-llm-mode` or `full` | PyO3 bindings for `pip install` Python SDK |
+| HTTP Proxy Server | (always) | `hyper`/`axum` OpenAI-compatible proxy endpoints |
+| Python SDK Interface | (always) | PyO3 bindings for `pip install` Python SDK |
 | Shared Router | (none) | RFC-0902 router + all 7 routing strategies |
 | Enterprise Features | (none) | Virtual keys, budgets, rate limiting, Prometheus, RFC-0903/0904/0909/0910 |
 | stoolap Storage | (none) | RFC-0903-B1/C1 persistence |
@@ -214,9 +222,7 @@ Like any-llm's approach: delegation to official provider SDKs for maximum HTTP t
 
 #### LiteLLM Mode: Native HTTP Forwarding
 
-LiteLLM Mode calls providers via native Rust HTTP (`reqwest`). Available interface: HTTP proxy only (Python SDK requires `full` build).
-
-**Via HTTP proxy:**
+LiteLLM Mode calls providers via native Rust HTTP (`reqwest`). **Both interfaces are available:** HTTP proxy AND Python SDK. The mode controls the provider integration strategy only.
 ```mermaid
 sequenceDiagram
     participant Client as HTTP Client<br/>(any language)
@@ -241,11 +247,9 @@ sequenceDiagram
     Gateway-->>Client: HTTP 200
 ```
 
-> **Note:** The Python SDK interface (`pip install`) is NOT available in LiteLLM Mode alone — it requires the `full` build (both litellm-mode and any-llm-mode feature gates enabled).
-
 #### any-llm Mode: Python SDK Delegation
 
-any-llm Mode calls providers via official Python SDKs through PyO3. Available interfaces: HTTP proxy and Python SDK.
+any-llm Mode calls providers via official Python SDKs through PyO3. **Both interfaces are available:** HTTP proxy AND Python SDK.
 
 **Via Python SDK:**
 ```python
@@ -256,8 +260,6 @@ from quota_router import completion
 # through PyO3 bridge — not reqwest
 response = completion(model="anthropic/claude-opus-4", messages=[...])
 ```
-
-> **Note:** The HTTP proxy interface is NOT available in any-llm Mode alone — it requires the `full` build (both litellm-mode and any-llm-mode feature gates enabled). The above Python SDK example is the sole interface for any-llm-mode.
 
 **Both modes enforce identical enterprise features:** virtual keys (RFC-0903), budgets (RFC-0904), rate limits (RFC-0902), spend ledger (RFC-0909), Prometheus metrics.
 
@@ -284,11 +286,12 @@ pub mod native_http;  // reqwest HTTP forwarding — LiteLLM Mode / full
 #[cfg(any(feature = "any-llm-mode", feature = "full"))]
 pub mod py_bridge;    // PyO3 → official Python SDKs — any-llm Mode / full
 
-#[cfg(any(feature = "litellm-mode", feature = "full"))]
-pub mod gateway;      // HTTP proxy server (hyper/axum) — LiteLLM Mode
+// BOTH interfaces available in ALL modes (controlled by feature flags, not mutually exclusive):
+#[cfg(any(feature = "litellm-mode", feature = "any-llm-mode", feature = "full"))]
+pub mod gateway;      // HTTP proxy server (hyper/axum) — ALWAYS available
 
-#[cfg(any(feature = "any-llm-mode", feature = "full"))]
-pub mod python_sdk;   // Python SDK bindings (PyO3) — any-llm Mode
+#[cfg(any(feature = "litellm-mode", feature = "any-llm-mode", feature = "full"))]
+pub mod python_sdk;   // Python SDK bindings (PyO3) — ALWAYS available
 
 // Shared core (always compiled):
 pub mod router;       // RFC-0902 router
@@ -2757,6 +2760,7 @@ In `full` builds, both modules are compiled simultaneously and selected at runti
 
 | Version | Date | Changes |
 |---------|------|---------|
+| 2.25 | 2026-04-27 | Round 43: FIX CRITICAL SELF-CONTRADICTION — both modes have BOTH interfaces. Removed all claims that litellm-mode lacks Python SDK and any-llm-mode lacks HTTP proxy. Feature tables, notes, mermaid diagrams, and rust code updated to make clear: modes differ only in PROVIDER INTEGRATION STRATEGY (reqwest vs PyO3), NOT in interface availability. |
 | 2.24 | 2026-04-27 | Round 42 remaining: fix X4 (PyO3 GIL release at .await points); fix X6 (compile_error! arm for mutually exclusive features); fix X11 (Router::global() init order + singleton identity) |
 | 2.23 | 2026-04-27 | Round 42: fix X7 (Critical) — add `.to_lowercase()` before `get_canonical_tokenizer` (tokenizer lookup is case-sensitive; uppercase model names fall through to wrong fallback) |
 | 2.22 | 2026-04-26 | Round 41: fix HI-04 (CostOverflow → HTTP 422, not 500 — deployment misconfiguration should not trigger retry); fix MD-04 (parse_model_string: use default_provider on unknown prefix, emit UnknownProviderPrefix WARN event; document dynamic KNOWN_PROVIDERS loading) |

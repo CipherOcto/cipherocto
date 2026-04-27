@@ -2,7 +2,7 @@
 
 ## Status
 
-In Progress — 20 API functions + 16 exceptions implemented, provider integrations remaining (2026-04-27)
+In Progress — 20 API functions + 16 exceptions + model parsing done, remaining: streaming, set_api_key/get_budget_status/get_metrics (2026-04-27)
 
 ## RFC
 
@@ -83,7 +83,7 @@ AnyLLMError (base)
 - [ ] `set_api_key()` — validates and registers key with storage
 - [ ] `get_budget_status()` — returns current spend vs limit
 - [ ] `get_metrics()` — returns Prometheus metrics dict
-- [ ] **Model string parsing** (`provider/model` and `provider:model` formats)
+- [x] **Model string parsing** (`provider/model` and `provider:model` formats) — parse_model(), parse_model_strict() implemented
 - [x] **QuotaRouterError** — spec done; From impls + Error traits needed
 
 **Note:** All 20 API functions and 16 exceptions are implemented as mocks/stubs. Actual provider integrations, streaming, and storage integration remain to be implemented.
@@ -95,6 +95,6 @@ AnyLLMError (base)
 - [x] Exception hierarchy matches any-llm's AnyLLMError hierarchy (all 16 implemented)
 - [ ] `set_api_key()`, `get_budget_status()`, `get_metrics()` implemented
 - [ ] Streaming via PyO3 async generators
-- [ ] Model string parsing handles `provider/model` and `provider:model`
+- [x] Model string parsing handles `provider/model` and `provider:model` (parse_model, parse_model_strict)
 - [x] `QuotaRouterError` with From impls and Error trait impls for all wrapped types
 - [x] `cargo clippy -D warnings` and `cargo test --lib` pass

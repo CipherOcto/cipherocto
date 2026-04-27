@@ -2,7 +2,7 @@
 
 ## Status
 
-In Progress — Gap analysis complete, RFC update needed (2026-04-27)
+In Progress — 20 API functions + 16 exceptions implemented, provider integrations remaining (2026-04-27)
 
 ## RFC
 
@@ -77,22 +77,24 @@ AnyLLMError (base)
 - [ ] **PyO3 bridge** — quota-router-pyo3 crate calls official Python SDKs via PyO3
 - [ ] **41 Provider integrations** via PyO3 calls to: `anthropic`, `openai`, `mistralai`, `ollama`, `google-genai` + 36 more
 - [ ] **Python SDK package** (`pip install quota-router` or `quota_router`)
-- [ ] **20 API functions** via PyO3: completion/acompletion, responses/aresponses, messages/amessages, embedding/aembedding, list_models/alist_models, batch operations
+- [x] **20 API functions** via PyO3: completion/acompletion, responses/aresponses, messages/amessages, embedding/aembedding, list_models/alist_models, batch operations (all 20 implemented as mocks)
 - [ ] **Streaming** via PyO3 (Python async generators)
-- [ ] **any-llm-compatible exceptions** (QuotaRouterException hierarchy matching any-llm's AnyLLMError hierarchy)
+- [x] **any-llm-compatible exceptions** (all 16 exceptions implemented in exceptions.rs)
 - [ ] `set_api_key()` — validates and registers key with storage
 - [ ] `get_budget_status()` — returns current spend vs limit
 - [ ] `get_metrics()` — returns Prometheus metrics dict
 - [ ] **Model string parsing** (`provider/model` and `provider:model` formats)
 - [x] **QuotaRouterError** — spec done; From impls + Error traits needed
 
+**Note:** All 20 API functions and 16 exceptions are implemented as mocks/stubs. Actual provider integrations, streaming, and storage integration remain to be implemented.
+
 ## Acceptance Criteria
 
-- [ ] quota-router-pyo3 implements all 20 API functions via PyO3
+- [x] quota-router-pyo3 implements all 20 API functions via PyO3 (all 20 implemented as mocks)
 - [ ] All 41 providers accessible via any-llm-mode
-- [ ] Exception hierarchy matches any-llm's AnyLLMError → QuotaRouterException
+- [x] Exception hierarchy matches any-llm's AnyLLMError hierarchy (all 16 implemented)
 - [ ] `set_api_key()`, `get_budget_status()`, `get_metrics()` implemented
 - [ ] Streaming via PyO3 async generators
 - [ ] Model string parsing handles `provider/model` and `provider:model`
-- [ ] `QuotaRouterError` with From impls and Error trait impls for all wrapped types
-- [ ] `cargo clippy -D warnings` and `cargo test --lib` pass
+- [x] `QuotaRouterError` with From impls and Error trait impls for all wrapped types
+- [x] `cargo clippy -D warnings` and `cargo test --lib` pass

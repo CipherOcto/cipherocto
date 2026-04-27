@@ -191,6 +191,95 @@ impl EmbeddingsResponse {
     }
 }
 
+/// Chat completion chunk for streaming responses
+#[derive(Debug, Clone)]
+pub struct ChatCompletionChunk {
+    pub id: String,
+    pub object: String,
+    pub created: u64,
+    pub model: String,
+    pub choices: Vec<ChunkChoice>,
+}
+
+impl ChatCompletionChunk {
+    pub fn new(id: impl Into<String>, model: impl Into<String>, choice: ChunkChoice) -> Self {
+        Self {
+            id: id.into(),
+            object: "chat.completion.chunk".to_string(),
+            created: std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_secs(),
+            model: model.into(),
+            choices: vec![choice],
+        }
+    }
+
+    pub fn to_dict(&self, py: Python<'_>) -> PyResult<Py<PyAny>> {
+        let dict = PyDict::new(py);
+
+        dict.set_item("id", &self.id)?;
+        dict.set_item("object", &self.object)?;
+        dict.set_item("created", self.created)?;
+        dict.set_item("model", &self.model)?;
+
+        // Convert chunk choices to dicts
+        let choices_list: &PyList = PyList::new(py, &[] as &[&dyn pyo3::ToPyObject]);
+        for c in &self.choices {
+            choices_list.append(c.to_dict(py)?)?;
+        }
+        dict.set_item("choices", choices_list)?;
+
+        Ok(dict.into())
+    }
+}
+
+/// Choice within a streaming chunk
+#[derive(Debug, Clone)]
+pub struct ChunkChoice {
+    pub index: u32,
+    pub delta: Message,
+    pub finish_reason: Option<String>,
+}
+
+impl ChunkChoice {
+    pub fn new(index: u32, delta: Message) -> Self {
+        Self {
+            index,
+            delta,
+            finish_reason: None,
+        }
+    }
+
+    pub fn with_finish_reason(
+        index: u32,
+        delta: Message,
+        finish_reason: impl Into<String>,
+    ) -> Self {
+        Self {
+            index,
+            delta,
+            finish_reason: Some(finish_reason.into()),
+        }
+    }
+
+    pub fn to_dict(&self, py: Python<'_>) -> PyResult<Py<PyAny>> {
+        let dict = PyDict::new(py);
+        dict.set_item("index", self.index)?;
+
+        let delta_dict = PyDict::new(py);
+        delta_dict.set_item("role", &self.delta.role)?;
+        delta_dict.set_item("content", &self.delta.content)?;
+        dict.set_item("delta", delta_dict)?;
+
+        if let Some(ref reason) = self.finish_reason {
+            dict.set_item("finish_reason", reason)?;
+        }
+
+        Ok(dict.into())
+    }
+}
+
 // PyO3 conversions for Message
 impl<'source> FromPyObject<'source> for Message {
     fn extract(ob: &'source PyAny) -> PyResult<Self> {

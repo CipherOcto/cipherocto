@@ -7,6 +7,7 @@ mod completion;
 mod exceptions;
 mod model;
 mod sdk;
+mod streaming;
 mod types;
 
 use pyo3::prelude::*;

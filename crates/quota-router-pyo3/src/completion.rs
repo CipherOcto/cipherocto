@@ -3,6 +3,7 @@
 #![allow(clippy::too_many_arguments)]
 #![allow(deprecated)]
 
+use crate::streaming::{chunks_to_pylist, create_chunk_list};
 use crate::types::{ChatCompletion, Choice, Message};
 use pyo3::prelude::*;
 use pyo3::types::{PyDict, PyList};
@@ -18,7 +19,7 @@ pub fn completion(
     _max_tokens: Option<i32>,
     _top_p: Option<f64>,
     _n: Option<i32>,
-    _stream: Option<bool>,
+    stream: Option<bool>,
     _stop: Option<String>,
     _presence_penalty: Option<f64>,
     _frequency_penalty: Option<f64>,
@@ -28,12 +29,25 @@ pub fn completion(
 ) -> PyResult<Py<PyAny>> {
     // Log the request parameters (for debugging)
     println!(
-        "completion called: model={}, messages={}",
+        "completion called: model={}, messages={}, stream={:?}",
         model,
-        messages.len()
+        messages.len(),
+        stream
     );
 
-    // Convert messages to response choices
+    // Get the content from the first message for streaming
+    let content = messages
+        .first()
+        .map(|m| format!("Echo: {}", m.content))
+        .unwrap_or_default();
+
+    // If streaming requested, return a list of chunks
+    if stream == Some(true) {
+        let chunks = create_chunk_list(model, content);
+        return Python::with_gil(|py| chunks_to_pylist(chunks, py));
+    }
+
+    // Non-streaming response
     let choices: Vec<Choice> = messages
         .iter()
         .enumerate()

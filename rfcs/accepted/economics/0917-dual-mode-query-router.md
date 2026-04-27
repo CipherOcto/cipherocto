@@ -992,19 +992,80 @@ py-o3 = ["dep:pyo3", "dep:pyo3-ffi"]
 - [ ] Auth middleware (API key validation)
 - [ ] Admin endpoints for key/budget management
 
-### Phase 3: any-llm Mode — Python SDK Delegation
+### Phase 3: any-llm Mode — Python SDK via PyO3
 
-- [ ] PyO3 bridge module calling official Python SDKs
-- [ ] Provider SDK integrations: `anthropic`, `openai`, `mistralai`, `ollama`, `google-genai`
-- [ ] Python SDK interface (`pip install quota_router`)
-- [ ] `completion()` / `acompletion()` / `embedding()` / `aembedding()`
-- [ ] Streaming support (Python generator via PyO3)
-- [ ] LiteLLM-compatible exception types
+**Goal:** Reimplement the full any-llm Python SDK API surface in Rust via PyO3. any-llm-mode is a drop-in replacement for the any-llm SDK at `../any-llm/src/`. It is NOT a wrapper around any-llm — it replaces any-llm entirely by reimplementing the same API, same 41 providers, same 20 API functions, in Rust with PyO3 bindings to quota-router-core.
+
+#### Providers — 41 total (all must be supported)
+
+```
+anthropic, azure, azureanthropic, azureopenai, bedrock, cerebras, cohere,
+dashscope, databricks, deepseek, fireworks, gateway, gemini, groq, huggingface,
+inception, llama, llamacpp, llamafile, lmstudio, minimax, mistral, moonshot,
+mzai, nebius, ollama, openai, openrouter, perplexity, platform, portkey,
+sagemaker, sambanova, together, vertexai, vertexaianthropic, vllm, voyage,
+watsonx, xai, zai
+```
+
+#### API Functions — 20 (all must be callable via PyO3)
+
+| Function | Description |
+|----------|-------------|
+| `completion()` / `acompletion()` | Text completion |
+| `responses()` / `aresponses()` | Responses API |
+| `messages()` / `amessages()` | Messages API (Claude-style) |
+| `embedding()` / `aembedding()` | Embeddings |
+| `list_models()` / `alist_models()` | List available models |
+| `create_batch()` / `acreate_batch()` | Create batch job |
+| `retrieve_batch()` / `aretrieve_batch()` | Retrieve batch status |
+| `cancel_batch()` / `acancel_batch()` | Cancel batch job |
+| `list_batches()` / `alist_batches()` | List batch jobs |
+| `retrieve_batch_results()` / `aretrieve_batch_results()` | Get batch results |
+
+#### Phase 3 Checklist
+
+- [ ] **PyO3 bridge** — quota-router-pyo3 calls official Python SDKs via PyO3
+- [ ] **41 Provider integrations** via PyO3 (see provider list above)
+- [ ] **Python SDK package** (`pip install quota-router`)
+- [ ] **20 API functions** via PyO3 (see function table above)
+- [ ] **Streaming** via PyO3 async generators
+- [ ] **Exception hierarchy** matching any-llm's AnyLLMError → QuotaRouterException (see §Exception Mapping)
 - [ ] `set_api_key()` — validates and registers key with storage
 - [ ] `get_budget_status()` — returns current spend vs limit
 - [ ] `get_metrics()` — returns Prometheus metrics dict
-- [ ] Model string parsing (both `provider/model` and `provider:model` formats)
+- [ ] **Model string parsing** (`provider/model` and `provider:model` formats)
 - [x] **QuotaRouterError unified error type** — fully specified below
+
+#### Exception Mapping
+
+any-llm-mode exceptions MUST match the any-llm SDK exception hierarchy for drop-in compatibility:
+
+```python
+class QuotaRouterException(Exception):
+    """Base exception for QuotaRouterError variants."""
+    def __init__(self, message: str, code: str, status: int, details: dict | None = None):
+        super().__init__(message)
+        self.code = code
+        self.status = status
+        self.details = details or {}
+
+class RateLimitError(QuotaRouterException): pass
+class AuthenticationError(QuotaRouterException): pass
+class InvalidRequestError(QuotaRouterException): pass
+class ProviderError(QuotaRouterException): pass
+class ContentFilterError(QuotaRouterException): pass
+class ModelNotFoundError(QuotaRouterException): pass
+class ContextLengthExceededError(QuotaRouterException): pass
+class MissingApiKeyError(QuotaRouterException): pass
+class UnsupportedProviderError(QuotaRouterException): pass
+class UnsupportedParameterError(QuotaRouterException): pass
+class InsufficientFundsError(QuotaRouterException): pass
+class UpstreamProviderError(QuotaRouterException): pass
+class GatewayTimeoutError(QuotaRouterException): pass
+class LengthFinishReasonError(QuotaRouterException): pass
+class ContentFilterFinishReasonError(QuotaRouterException): pass
+class BatchNotCompleteError(QuotaRouterException): pass
+```
 
 #### QuotaRouterError Unified Error Type
 

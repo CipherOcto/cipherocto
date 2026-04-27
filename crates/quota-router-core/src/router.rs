@@ -220,6 +220,8 @@ impl LatencyTracker {
 }
 
 /// Router - handles routing decisions across multiple providers
+/// **Non-normative pseudocode** (per RFC-0917 A3 Router struct — actual implementation
+/// may differ from the spec pseudocode while maintaining equivalent behavior).
 #[derive(Debug)]
 pub struct Router {
     config: RouterConfig,

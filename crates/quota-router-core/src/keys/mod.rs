@@ -231,10 +231,9 @@ pub fn compute_cost_from_pricing_table(
     input_tokens: u32,
     output_tokens: u32,
 ) -> Result<u64, BudgetError> {
-    crate::pricing::compute_cost(pricing, input_tokens, output_tokens)
-        .map_err(|e| match e {
-            crate::pricing::CostError::Overflow { .. } => BudgetError::CostOverflow,
-        })
+    crate::pricing::compute_cost(pricing, input_tokens, output_tokens).map_err(|e| match e {
+        crate::pricing::CostError::Overflow { .. } => BudgetError::CostOverflow,
+    })
 }
 
 /// Reconstruct per-key spend aggregates from an ordered slice of SpendEvents.

@@ -3,11 +3,12 @@
 
 use crate::exceptions::ProviderError;
 use crate::providers::base::{ProviderFeatures, ProviderMetadata, LLMProvider};
-use crate::types::{ChatCompletion, Choice, EmbeddingsResponse, Embedding, Message};
+use crate::types::{ChatCompletion, Choice, EmbeddingsResponse, Message};
 use pyo3::prelude::*;
 use std::sync::Mutex;
 
 /// xai provider implementation
+#[allow(clippy::upper_case_acronyms)]
 pub struct XAIProvider {
     metadata: ProviderMetadata,
     api_key: Mutex<Option<String>>,

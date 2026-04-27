@@ -3,11 +3,12 @@
 
 use crate::exceptions::ProviderError;
 use crate::providers::base::{ProviderFeatures, ProviderMetadata, LLMProvider};
-use crate::types::{ChatCompletion, Choice, EmbeddingsResponse, Embedding, Message};
+use crate::types::{ChatCompletion, Choice, EmbeddingsResponse, Message};
 use pyo3::prelude::*;
 use std::sync::Mutex;
 
 /// zai provider implementation
+#[allow(clippy::upper_case_acronyms)]
 pub struct ZAIProvider {
     metadata: ProviderMetadata,
     api_key: Mutex<Option<String>>,

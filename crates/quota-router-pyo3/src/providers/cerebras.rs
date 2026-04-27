@@ -3,7 +3,7 @@
 
 use crate::exceptions::ProviderError;
 use crate::providers::base::{ProviderFeatures, ProviderMetadata, LLMProvider};
-use crate::types::{ChatCompletion, Choice, EmbeddingsResponse, Embedding, Message};
+use crate::types::{ChatCompletion, Choice, EmbeddingsResponse, Message};
 use pyo3::prelude::*;
 use std::sync::Mutex;
 

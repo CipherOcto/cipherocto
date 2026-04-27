@@ -2,7 +2,7 @@
 
 ## Status
 
-Draft (v2.22)
+Draft (v2.23)
 
 ## Authors
 
@@ -482,7 +482,8 @@ async fn chat_completions(
     // NOT from response (ProviderResponse has no request_id field).
     let pricing = PRICING_TABLE.get(req.provider, req.model)?;
     let pricing_hash = pricing.compute_pricing_hash();
-    let token_source = get_canonical_tokenizer(req.model);
+    // NOTE: get_canonical_tokenizer is case-sensitive; model name MUST be lowercase
+    let token_source = get_canonical_tokenizer(&req.model.to_lowercase());
     let cost_amount = compute_cost(pricing, input_tokens, output_tokens)?;
     let event = SpendEvent {
         event_id: compute_event_id(
@@ -2673,6 +2674,7 @@ In `full` builds, both modules are compiled simultaneously and selected at runti
 
 | Version | Date | Changes |
 |---------|------|---------|
+| 2.23 | 2026-04-27 | Round 42: fix X7 (Critical) — add `.to_lowercase()` before `get_canonical_tokenizer` (tokenizer lookup is case-sensitive; uppercase model names fall through to wrong fallback) |
 | 2.22 | 2026-04-26 | Round 41: fix HI-04 (CostOverflow → HTTP 422, not 500 — deployment misconfiguration should not trigger retry); fix MD-04 (parse_model_string: use default_provider on unknown prefix, emit UnknownProviderPrefix WARN event; document dynamic KNOWN_PROVIDERS loading) |
 | 2.21 | 2026-04-26 | Round 39: fix R39-N1 (Phase 3 QuotaRouterError: replace PLANNED placeholder with FULL SPEC — complete enum definition, From implementations, HTTP status code mapping, Python exception class hierarchy) |
 | 2.20 | 2026-04-26 | Round 38: fix NEW-1 (Phase 3 QuotaRouterError checklist item marked PLANNED per deferred-work rule); fix NEW-2 (line 929: clarify 'full-mode' is alias for default 'full' feature); fix NEW-5 (add SSEEvent/Ssedelta/SseUsage struct definitions to Anthropic SSE transform); fix NEW-7 (add "Router Struct Definition (Normative)" header at line 579); add RFC-0902 v1.3 to Related RFCs (7 routing strategies including Weighted) |

@@ -2,7 +2,7 @@
 
 ## Status
 
-Draft (v1.30)
+Draft (v1.31)
 
 ## Authors
 
@@ -114,10 +114,11 @@ RFC-0909 uses `cost_amount BIGINT NOT NULL` in spend_ledger. This RFC specifies 
 // appropriate external crate path (e.g., `quota_router_pricing::CostError`).
 
 // compute_cost delegates to rfc0910::compute_cost (RFC-0910 §Cost Calculation).
-// Uses the same integer arithmetic (checked_mul, checked_div, checked_add).
+// Obtains a PricingTable from PricingRegistry::get first — the registry returns
+// RFC-0910's PricingTable struct, which is what rfc0910::compute_cost expects.
 // Error conversion: CostError::Overflow → BudgetError::CostOverflow.
 pub fn compute_cost(
-    pricing: &PricingModel,
+    pricing: &PricingTable,
     input_tokens: u32,
     output_tokens: u32,
 ) -> Result<u64, BudgetError> {
@@ -212,7 +213,8 @@ pub fn check_budget(&self, key: &ApiKey) -> Result<(), KeyError> {
     let spend = self.storage.get_spend(&key.key_id)?;
 
     if let Some(s) = spend {
-        let remaining = key.budget_limit - s.total_spend;
+        // Use i128 to prevent overflow if total_spend exceeds i64::MAX
+        let remaining = (key.budget_limit as i128 - s.total_spend as i128) as i64;
         if remaining <= 0 {
             return Err(KeyError::BudgetExceeded {
                 current: s.total_spend as u64,
@@ -238,7 +240,8 @@ pub fn check_budget(&self, key: &ApiKey) -> Result<(), KeyError> {
 
     let spend = self.storage.get_spend(&key.key_id)?;
     if let Some(s) = spend {
-        let remaining = key.budget_limit - s.total_spend;
+        // Use i128 to prevent overflow if total_spend exceeds i64::MAX
+        let remaining = (key.budget_limit as i128 - s.total_spend as i128) as i64;
         if remaining <= 0 {
             return Err(KeyError::BudgetExceeded {
                 current: s.total_spend as u64,
@@ -1095,6 +1098,7 @@ The soft check is non-locking — it's possible (though unlikely) that another c
 
 | Version | Date       | Changes                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                            |
 | ------- | ---------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 1.31    | 2026-04-27 | Round 42: fix X2 (Critical) — compute_cost parameter corrected to `&PricingTable` (obtain from PricingRegistry::get first); fix X5 (High) — check_budget subtraction uses i128 cast to prevent overflow when total_spend > i64::MAX |
 | 1.30    | 2026-04-26 | Round 41: fix CR-02 (add period_start parameter + idempotent reset behavior to POST /admin/internal/budget/reset) |
 | 1.29    | 2026-04-26 | Round 38: fix NEW-4 (CostError import: add explicit `use crate::rfc0910::CostError` comment in §Cost Calculation to clarify CostError is imported from RFC-0910, not defined locally) |
 | 1.28    | 2026-04-25 | Round 37 fixes from external review: fix NEW-C2 (octo_w_balances DDL: add `FOREIGN KEY (key_id) REFERENCES api_keys(key_id) ON DELETE CASCADE` to prevent orphan balance rows on key deletion) |
@@ -1926,8 +1930,3 @@ The RFC documented only the budget-checked version.
 ## Related Use Cases
 
 - Enhanced Quota Router Gateway
-
----
-
-**Submission Date:** 2026-04-22
-**Last Updated:** 2026-04-22

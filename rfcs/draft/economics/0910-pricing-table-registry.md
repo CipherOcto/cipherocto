@@ -2,7 +2,7 @@
 
 ## Status
 
-Draft (v28)
+Draft (v29)
 
 ## Authors
 
@@ -128,13 +128,11 @@ pub struct PricingTable {
     /// replaced by a table with effective_from≤T (would create a retroactive price change).
     /// NOT used for time-based query (see Note below).
     pub effective_from: i64,
-    /// Additional metadata (reserved for future use)
+    /// Additional metadata (reserved for future use).
+    /// Key `tokenizer_version_expiry` (i64, Unix epoch) MAY be stored here to indicate when the
+    /// tokenizer assignment is considered stale. This avoids adding a 9th struct field which
+    /// would break `compute_pricing_hash` determinism (fields 1-8 only per DCS Entry 16).
     pub metadata: BTreeMap<String, String>,
-    /// Tokenizer version expiry: Unix epoch after which this tokenizer assignment
-    /// is considered stale. If None, the assignment does not expire.
-    /// Routers MUST verify tokenizer assignments before production use for
-    /// UNCERTAIN models; this field provides an explicit expiry for ops tooling.
-    pub tokenizer_version_expiry: Option<i64>,
 }
 
 impl PricingTable {
@@ -414,6 +412,9 @@ impl PricingRegistry {
     /// Returns Ok(()) if match; Err((canonical, provider_reported)) if mismatch.
     /// For UNCERTAIN models, emits a warning but does not error — the caller decides
     /// whether to accept the divergence.
+    ///
+    /// To check expiry, inspect `metadata.get("tokenizer_version_expiry")` and compare
+    /// against the current Unix epoch. If the expiry has passed, the assignment is stale.
     pub fn verify_tokenizer(&self, provider: &str, model: &str, provider_tokenizer: &str) -> Result<(), (&'static str, String)> {
         let canonical = get_canonical_tokenizer(model);
         if canonical == provider_tokenizer {
@@ -1040,6 +1041,7 @@ This design allows the registry to be treated as a cache of known-good pricing s
 
 | Version | Date | Changes |
 |---------|------|---------|
+| v29 | 2026-04-27 | Round 42: fix X9 (Critical) — remove tokenizer_version_expiry from PricingTable struct (was 9th field, breaking compute_pricing_hash determinism); moved to metadata BTreeMap with key "tokenizer_version_expiry"; update verify_tokenizer() doc comment to note metadata inspection for expiry |
 | v28 | 2026-04-26 | Round 41: fix HI-03 (add tokenizer_version_expiry field to PricingTable; add verify_tokenizer() method to PricingRegistry for provider tokenizer verification) |
 | v27 | 2026-04-26 | Round 38: fix NEW-3 (compute_pricing_hash test vector: "independent implementation" → reference to `crates/quota-router-core/src/pricing.rs` test module); fix NEW-6 (o1-mini/o1-preview: Tokenizer Assignment Table changed from UNCERTAIN "verify with provider" to VERIFIED "o-series family uses o200k_base" per v22 correction; test vector updated accordingly) |
 | v26 | 2026-04-25 | Round 37: confirm CostError canonical definition (this RFC); RFC-0904 imports CostError from this RFC per RFC-0904 v1.28 §Cost Computation delegation |

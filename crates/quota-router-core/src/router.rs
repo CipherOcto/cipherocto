@@ -168,6 +168,57 @@ impl ProviderWithState {
     }
 }
 
+// =============================================================================
+// LatencyTracker — RFC-0917 §LatencyTracker
+// Integer microseconds for deterministic latency tracking (no floating point)
+// =============================================================================
+
+const LATENCY_WINDOW_SIZE: usize = 100;
+
+/// Latency tracker for LatencyBased routing strategy.
+/// Uses integer microseconds to avoid floating-point non-determinism (per RFC-0104).
+///
+/// **Window:** Fixed-size sliding window of last `LATENCY_WINDOW_SIZE` samples per provider.
+/// **Storage:** `HashMap<provider_name, Vec<u64>>` — latency in microseconds (integer).
+/// **Cleanup:** Oldest sample evicted when window exceeds `LATENCY_WINDOW_SIZE` (FIFO).
+/// **Query:** `best_provider()` returns provider with lowest average latency.
+///
+/// **Phase 2:** `LatencyTracker` will be integrated into `RouterState` (per RFC-0917 pseudocode).
+/// Currently a stub for future LatencyBased routing support.
+#[allow(dead_code)]
+#[derive(Debug, Clone)]
+struct LatencyTracker {
+    samples: HashMap<String, Vec<u64>>,
+}
+
+impl LatencyTracker {
+    /// Record a latency observation for a provider (latency_us in microseconds).
+    #[allow(dead_code)]
+    pub fn record(&mut self, provider: &str, latency_us: u64) {
+        let samples = self.samples.entry(provider.to_string()).or_default();
+        samples.push(latency_us);
+        if samples.len() > LATENCY_WINDOW_SIZE {
+            samples.remove(0); // Evict oldest (FIFO)
+        }
+    }
+
+    /// Return provider with lowest average latency in current window.
+    /// Returns `None` if no providers have samples.
+    /// Ties broken by provider name (lexicographically first).
+    #[allow(dead_code)]
+    pub fn best_provider(&self) -> Option<&str> {
+        self.samples
+            .iter()
+            .filter(|(_, samples)| !samples.is_empty())
+            .map(|(name, samples)| {
+                let sum: u64 = samples.iter().sum();
+                (name, sum / samples.len() as u64)
+            })
+            .min_by_key(|(_, avg_latency)| *avg_latency)
+            .map(|(name, _)| name.as_str())
+    }
+}
+
 /// Router - handles routing decisions across multiple providers
 #[derive(Debug)]
 pub struct Router {

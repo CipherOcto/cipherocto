@@ -282,7 +282,11 @@ impl ContextLengthExceededError {
 }
 
 impl ContextLengthExceededError {
-    pub fn new(message: impl Into<String>, model: impl Into<String>, max_tokens: Option<u32>) -> Self {
+    pub fn new(
+        message: impl Into<String>,
+        model: impl Into<String>,
+        max_tokens: Option<u32>,
+    ) -> Self {
         Self {
             message: message.into(),
             model: model.into(),
@@ -476,7 +480,11 @@ impl UpstreamProviderError {
 }
 
 impl UpstreamProviderError {
-    pub fn new(message: impl Into<String>, provider: impl Into<String>, upstream_code: Option<String>) -> Self {
+    pub fn new(
+        message: impl Into<String>,
+        provider: impl Into<String>,
+        upstream_code: Option<String>,
+    ) -> Self {
         Self {
             message: message.into(),
             provider: provider.into(),
@@ -557,7 +565,11 @@ impl LengthFinishReasonError {
 }
 
 impl LengthFinishReasonError {
-    pub fn new(message: impl Into<String>, model: impl Into<String>, finish_reason: impl Into<String>) -> Self {
+    pub fn new(
+        message: impl Into<String>,
+        model: impl Into<String>,
+        finish_reason: impl Into<String>,
+    ) -> Self {
         Self {
             message: message.into(),
             model: model.into(),
@@ -636,7 +648,11 @@ impl BatchNotCompleteError {
 }
 
 impl BatchNotCompleteError {
-    pub fn new(message: impl Into<String>, batch_id: impl Into<String>, status: impl Into<String>) -> Self {
+    pub fn new(
+        message: impl Into<String>,
+        batch_id: impl Into<String>,
+        status: impl Into<String>,
+    ) -> Self {
         Self {
             message: message.into(),
             batch_id: batch_id.into(),

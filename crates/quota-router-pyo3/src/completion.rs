@@ -217,17 +217,24 @@ pub fn messages(
     _stop: Option<String>,
     _user: Option<String>,
 ) -> PyResult<Py<PyAny>> {
-    println!("messages called: model={}, messages={}", model, messages.len());
+    println!(
+        "messages called: model={}, messages={}",
+        model,
+        messages.len()
+    );
 
     // Mock response
     Python::with_gil(|py| {
         let dict = PyDict::new(py);
         dict.set_item("id", format!("msg-{}", uuid::Uuid::new_v4()))?;
         dict.set_item("object", "chat.completion.message")?;
-        dict.set_item("created", std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap()
-            .as_secs())?;
+        dict.set_item(
+            "created",
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_secs(),
+        )?;
 
         let role_dict = PyDict::new(py);
         role_dict.set_item("role", "assistant")?;
@@ -256,16 +263,23 @@ pub async fn amessages(
     _stop: Option<String>,
     _user: Option<String>,
 ) -> PyResult<Py<PyAny>> {
-    println!("amessages called: model={}, messages={}", model, messages.len());
+    println!(
+        "amessages called: model={}, messages={}",
+        model,
+        messages.len()
+    );
 
     Python::with_gil(|py| {
         let dict = PyDict::new(py);
         dict.set_item("id", format!("msg-{}", uuid::Uuid::new_v4()))?;
         dict.set_item("object", "chat.completion.message")?;
-        dict.set_item("created", std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap()
-            .as_secs())?;
+        dict.set_item(
+            "created",
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_secs(),
+        )?;
 
         let role_dict = PyDict::new(py);
         role_dict.set_item("role", "assistant")?;
@@ -303,10 +317,13 @@ pub fn responses(
         let dict = PyDict::new(py);
         dict.set_item("id", format!("resp-{}", uuid::Uuid::new_v4()))?;
         dict.set_item("object", "response")?;
-        dict.set_item("created", std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap()
-            .as_secs())?;
+        dict.set_item(
+            "created",
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_secs(),
+        )?;
         dict.set_item("model", &model)?;
 
         let output_dict = PyDict::new(py);
@@ -344,10 +361,13 @@ pub async fn aresponses(
         let dict = PyDict::new(py);
         dict.set_item("id", format!("resp-{}", uuid::Uuid::new_v4()))?;
         dict.set_item("object", "response")?;
-        dict.set_item("created", std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap()
-            .as_secs())?;
+        dict.set_item(
+            "created",
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_secs(),
+        )?;
         dict.set_item("model", &model)?;
 
         let output_dict = PyDict::new(py);
@@ -392,15 +412,20 @@ pub fn list_models(_provider: Option<String>) -> PyResult<Py<PyAny>> {
             ("llama-3.1-70b-instruct", "meta-llama"),
         ];
 
-        let data_list = PyList::new(py, models.iter().enumerate().map(|(i, (id, provider))| {
-            let model_dict = PyDict::new(py);
-            model_dict.set_item("id", *id).unwrap();
-            model_dict.set_item("object", "model").unwrap();
-            model_dict.set_item("provider", *provider).unwrap();
-            model_dict.set_item("created", 1700000000u64 + i as u64).unwrap();
-            model_dict.set_item("context_window", 128000).unwrap();
-            model_dict.to_object(py)
-        }));
+        let data_list = PyList::new(
+            py,
+            models.iter().enumerate().map(|(i, (id, provider))| {
+                let model_dict = PyDict::new(py);
+                model_dict.set_item("id", *id).unwrap();
+                model_dict.set_item("object", "model").unwrap();
+                model_dict.set_item("provider", *provider).unwrap();
+                model_dict
+                    .set_item("created", 1700000000u64 + i as u64)
+                    .unwrap();
+                model_dict.set_item("context_window", 128000).unwrap();
+                model_dict.to_object(py)
+            }),
+        );
 
         dict.set_item("data", data_list)?;
         Ok::<_, PyErr>(dict.into())
@@ -421,7 +446,10 @@ pub async fn alist_models(provider: Option<String>) -> PyResult<Py<PyAny>> {
 
 /// create_batch - Sync create batch API
 #[pyfunction]
-#[pyo3(name = "create_batch", text_signature = "(model, input_file_id, **kwargs)")]
+#[pyo3(
+    name = "create_batch",
+    text_signature = "(model, input_file_id, **kwargs)"
+)]
 pub fn create_batch(
     model: String,
     input_file_id: String,
@@ -429,16 +457,22 @@ pub fn create_batch(
     _completion_window: Option<String>,
     _metadata: Option<String>,
 ) -> PyResult<Py<PyAny>> {
-    println!("create_batch called: model={}, input_file_id={}", model, input_file_id);
+    println!(
+        "create_batch called: model={}, input_file_id={}",
+        model, input_file_id
+    );
 
     Python::with_gil(|py| {
         let dict = PyDict::new(py);
         dict.set_item("id", format!("batch-{}", uuid::Uuid::new_v4()))?;
         dict.set_item("object", "batch")?;
-        dict.set_item("created_at", std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap()
-            .as_secs())?;
+        dict.set_item(
+            "created_at",
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_secs(),
+        )?;
         dict.set_item("model", &model)?;
         dict.set_item("input_file_id", &input_file_id)?;
         dict.set_item("status", "validating")?;
@@ -504,10 +538,13 @@ pub fn cancel_batch(batch_id: String) -> PyResult<Py<PyAny>> {
         dict.set_item("input_file_id", "file-abc123")?;
         dict.set_item("status", "cancelled")?;
         dict.set_item("completion_window", "24h")?;
-        dict.set_item("cancelled_at", std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap()
-            .as_secs())?;
+        dict.set_item(
+            "cancelled_at",
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_secs(),
+        )?;
         dict.set_item("metadata", PyDict::new(py))?;
         Ok::<_, PyErr>(dict.into())
     })
@@ -523,7 +560,11 @@ pub async fn acancel_batch(batch_id: String) -> PyResult<Py<PyAny>> {
 /// list_batches - Sync list batches API
 #[pyfunction]
 #[pyo3(name = "list_batches")]
-pub fn list_batches(_limit: Option<i32>, _after: Option<String>, _before: Option<String>) -> PyResult<Py<PyAny>> {
+pub fn list_batches(
+    _limit: Option<i32>,
+    _after: Option<String>,
+    _before: Option<String>,
+) -> PyResult<Py<PyAny>> {
     println!("list_batches called");
 
     Python::with_gil(|py| {
@@ -537,17 +578,22 @@ pub fn list_batches(_limit: Option<i32>, _after: Option<String>, _before: Option
             (2, "in_progress", "file-2"),
         ];
 
-        let data_list = PyList::new(py, batches.iter().map(|(i, status, file_id)| {
-            let batch_dict = PyDict::new(py);
-            batch_dict.set_item("id", format!("batch-{}", i)).unwrap();
-            batch_dict.set_item("object", "batch").unwrap();
-            batch_dict.set_item("created_at", 1700000000u64 + *i as u64 * 3600).unwrap();
-            batch_dict.set_item("model", "gpt-4o").unwrap();
-            batch_dict.set_item("input_file_id", *file_id).unwrap();
-            batch_dict.set_item("status", *status).unwrap();
-            batch_dict.set_item("completion_window", "24h").unwrap();
-            batch_dict.to_object(py)
-        }));
+        let data_list = PyList::new(
+            py,
+            batches.iter().map(|(i, status, file_id)| {
+                let batch_dict = PyDict::new(py);
+                batch_dict.set_item("id", format!("batch-{}", i)).unwrap();
+                batch_dict.set_item("object", "batch").unwrap();
+                batch_dict
+                    .set_item("created_at", 1700000000u64 + *i as u64 * 3600)
+                    .unwrap();
+                batch_dict.set_item("model", "gpt-4o").unwrap();
+                batch_dict.set_item("input_file_id", *file_id).unwrap();
+                batch_dict.set_item("status", *status).unwrap();
+                batch_dict.set_item("completion_window", "24h").unwrap();
+                batch_dict.to_object(py)
+            }),
+        );
 
         dict.set_item("data", data_list)?;
         dict.set_item("has_more", false)?;
@@ -558,7 +604,11 @@ pub fn list_batches(_limit: Option<i32>, _after: Option<String>, _before: Option
 /// alist_batches - Async list batches API
 #[pyfunction]
 #[pyo3(name = "alist_batches")]
-pub async fn alist_batches(limit: Option<i32>, after: Option<String>, before: Option<String>) -> PyResult<Py<PyAny>> {
+pub async fn alist_batches(
+    limit: Option<i32>,
+    after: Option<String>,
+    before: Option<String>,
+) -> PyResult<Py<PyAny>> {
     list_batches(limit, after, before)
 }
 

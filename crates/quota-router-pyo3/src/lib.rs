@@ -35,10 +35,26 @@ fn quota_router(m: &PyModule) -> PyResult<()> {
     // Register sync completion functions
     m.add_function(wrap_pyfunction!(completion::completion, m)?)?;
     m.add_function(wrap_pyfunction!(completion::embedding, m)?)?;
+    m.add_function(wrap_pyfunction!(completion::messages, m)?)?;
+    m.add_function(wrap_pyfunction!(completion::responses, m)?)?;
+    m.add_function(wrap_pyfunction!(completion::list_models, m)?)?;
+    m.add_function(wrap_pyfunction!(completion::create_batch, m)?)?;
+    m.add_function(wrap_pyfunction!(completion::retrieve_batch, m)?)?;
+    m.add_function(wrap_pyfunction!(completion::cancel_batch, m)?)?;
+    m.add_function(wrap_pyfunction!(completion::list_batches, m)?)?;
+    m.add_function(wrap_pyfunction!(completion::retrieve_batch_results, m)?)?;
 
     // Register async completion functions (using pyo3 experimental-async)
     m.add_function(wrap_pyfunction!(completion::acompletion, m)?)?;
     m.add_function(wrap_pyfunction!(completion::aembedding, m)?)?;
+    m.add_function(wrap_pyfunction!(completion::amessages, m)?)?;
+    m.add_function(wrap_pyfunction!(completion::aresponses, m)?)?;
+    m.add_function(wrap_pyfunction!(completion::alist_models, m)?)?;
+    m.add_function(wrap_pyfunction!(completion::acreate_batch, m)?)?;
+    m.add_function(wrap_pyfunction!(completion::aretrieve_batch, m)?)?;
+    m.add_function(wrap_pyfunction!(completion::acancel_batch, m)?)?;
+    m.add_function(wrap_pyfunction!(completion::alist_batches, m)?)?;
+    m.add_function(wrap_pyfunction!(completion::aretrieve_batch_results, m)?)?;
 
     Ok(())
 }

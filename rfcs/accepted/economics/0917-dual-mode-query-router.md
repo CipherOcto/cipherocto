@@ -2,7 +2,7 @@
 
 ## Status
 
-Draft (v2.24)
+Accepted (v2.24)
 
 ## Authors
 

@@ -6,6 +6,7 @@
 mod completion;
 mod exceptions;
 mod model;
+mod sdk;
 mod types;
 
 use pyo3::prelude::*;
@@ -60,6 +61,11 @@ fn quota_router(m: &PyModule) -> PyResult<()> {
     // Register model parsing functions
     m.add_function(wrap_pyfunction!(model::parse_model, m)?)?;
     m.add_function(wrap_pyfunction!(model::parse_model_strict, m)?)?;
+
+    // Register SDK management functions
+    m.add_function(wrap_pyfunction!(sdk::set_api_key, m)?)?;
+    m.add_function(wrap_pyfunction!(sdk::get_budget_status, m)?)?;
+    m.add_function(wrap_pyfunction!(sdk::get_metrics, m)?)?;
 
     Ok(())
 }

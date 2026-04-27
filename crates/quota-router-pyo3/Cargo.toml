@@ -25,5 +25,8 @@ uuid.workspace = true
 # Error handling
 thiserror.workspace = true
 
+# Lazy initialization for global state
+once_cell = "1.19"
+
 [build-dependencies]
 pyo3-build-config = "0.21"

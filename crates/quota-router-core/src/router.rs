@@ -6,6 +6,10 @@ use rand::Rng;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
+// RFC-0917 §Rust Feature Gates: litellm-mode and any-llm-mode are MUTUALLY EXCLUSIVE.
+#[cfg(all(feature = "litellm-mode", feature = "any-llm-mode"))]
+compile_error!("Cannot enable both 'litellm-mode' and 'any-llm-mode' — they are mutually exclusive per RFC-0917 §Rust Feature Gates");
+
 /// Routing strategy types
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 #[serde(rename_all = "kebab-case")]

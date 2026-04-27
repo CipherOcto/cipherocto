@@ -1,7 +1,7 @@
 pub mod errors;
 pub mod models;
 
-pub use errors::{BudgetError, KeyError};
+pub use errors::{BudgetError, KeyError, QuotaRouterError, StorageError};
 pub use models::{
     ApiKey, CreateTeamRequest, GenerateKeyRequest, GenerateKeyResponse, KeySpend, KeyType,
     KeyUpdates, MerkleNode, PricingModel, RevokeKeyRequest, SpendEvent, Team, TokenSource,

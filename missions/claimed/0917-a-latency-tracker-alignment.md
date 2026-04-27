@@ -2,7 +2,7 @@
 
 ## Status
 
-In Progress — RFC-0917 audit found incomplete items (2026-04-27)
+COMPLETED (2026-04-27)
 
 ## RFC
 
@@ -25,8 +25,8 @@ Align RFC-0917 implementation with current spec changes:
 - [x] RouterError enum defined explicitly in RFC-0917 — already exists in `fallback.rs` (RateLimit, ProviderUnavailable, AuthError, ContentPolicyViolation, ContextWindowExceeded, Timeout, Unknown)
 - [x] `cargo clippy --all-targets --all-features -- -D warnings` passes with zero warnings
 - [x] `cargo test --lib` passes (161 tests)
-- [ ] **MISSING:** `QuotaRouterError` unified error type (wraps KeyError, BudgetError, RouterError, RegistryError, StorageError + ProviderError variant)
-- [ ] **MISSING:** Feature gate compile_error (requires litellm-mode/any-llm-mode/full features in Cargo.toml)
+- [x] `QuotaRouterError` unified error type (wraps KeyError, BudgetError, RouterError, RegistryError, StorageError + ProviderError variant)
+- [x] Feature gate compile_error (requires litellm-mode/any-llm-mode/full features in Cargo.toml)
 
 **Note:** Phase 3 items (PyO3 bridge, Provider SDK integrations, Python SDK interface, streaming, etc.) are PLANNED per RFC-0917 §Phase 3 — not yet due.
 
@@ -41,3 +41,25 @@ struct LatencyTracker {
     samples: HashMap<String, Vec<u64>>,  // microseconds, integer
 }
 ```
+
+## Completion Notes
+
+### QuotaRouterError (2026-04-27)
+
+Added unified error type in `crates/quota-router-core/src/keys/errors.rs`:
+- Wraps KeyError, BudgetError, RouterError, RegistryError, StorageError, ProviderError
+- KeyError and BudgetError derive Clone to support QuotaRouterError::Clone
+
+### Feature Gate Compile Error (2026-04-27)
+
+Added RFC-0917 §Rust Feature Gates compile_error to `crates/quota-router-core/src/router.rs`:
+```rust
+#[cfg(all(feature = "litellm-mode", feature = "any-llm-mode"))]
+compile_error!("Cannot enable both 'litellm-mode' and 'any-llm-mode' — they are mutually exclusive per RFC-0917 §Rust Feature Gates");
+```
+
+Feature gates in Cargo.toml:
+- `litellm-mode` (default): hyper, axum, tokio, etc.
+- `any-llm-mode`: empty marker only; PyO3 bindings live in quota-router-pyo3 crate
+- `full`: enables all litellm-mode dependencies (superset of litellm-mode)
+- compile_error fires when both litellm-mode and any-llm-mode are enabled simultaneously

@@ -7,16 +7,18 @@ license.workspace = true
 
 [dependencies]
 # Async
-tokio.workspace = true
+tokio = { version = "1.35", features = ["full"], optional = true }
 async-trait.workspace = true
 
-# HTTP server
-hyper.workspace = true
-hyper-util.workspace = true
-http.workspace = true
-rustls.workspace = true
-rustls-pemfile.workspace = true
-reqwest.workspace = true
+# HTTP server (optional - enabled by litellm-mode/full)
+hyper = { version = "1.3", features = ["full"], optional = true }
+hyper-util = { version = "0.1", features = ["full"], optional = true }
+http = { version = "1", optional = true }
+http-body = { version = "1.0", optional = true }
+http-body-util = { version = "0.1", optional = true }
+rustls = { version = "0.23", optional = true }
+rustls-pemfile = { version = "2.1", optional = true }
+reqwest = { version = "0.13", features = ["json"], optional = true }
 
 # Config
 directories.workspace = true
@@ -41,18 +43,14 @@ thiserror.workspace = true
 # Database
 stoolap = { git = "https://github.com/CipherOcto/stoolap", branch = "feat/blockchain-sql" }
 
-# HTTP body parsing
-http-body = "1.0"
-http-body-util.workspace = true
-
 # For HMAC-SHA256 key hashing
 hmac-sha256 = "1.1"
 
 # For SHA256 (used in event_id computation)
-sha2 = "0.10"
+sha2.workspace = true
 
 # For BLAKE3 (used in tokenizer_id derivation)
-blake3 = "1"
+blake3.workspace = true
 
 # For hex encoding of key hashes
 hex = "0.4"
@@ -72,9 +70,22 @@ lru = "0.12"
 # For Unicode NFC normalization (provider/model normalization per RFC-0909 CONSISTENCY GOAL)
 unicode-normalization = "0.1.25"
 
+# HTTP framework (for litellm-mode)
+axum = { version = "0.7", optional = true }
+
 [lib]
 name = "quota_router_core"
 path = "src/lib.rs"
+
+[features]
+# Feature gates per RFC-0917 §Rust Feature Gates
+# NOTE: pyo3 integration is provided by quota-router-pyo3 crate, not quota-router-core.
+# any-llm-mode in core is a marker for build configuration; actual Python bindings
+# are in the quota-router-pyo3 crate which re-exports quota-router-core.
+default = ["litellm-mode"]
+litellm-mode = ["tokio", "hyper", "hyper-util", "http", "http-body", "http-body-util", "rustls", "rustls-pemfile", "reqwest", "axum"]
+any-llm-mode = []
+full = ["tokio", "hyper", "hyper-util", "http", "http-body", "http-body-util", "rustls", "rustls-pemfile", "reqwest", "axum"]
 
 [[bench]]
 name = "key_hash_storage_bench"

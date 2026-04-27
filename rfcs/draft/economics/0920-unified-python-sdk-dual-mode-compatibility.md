@@ -2,7 +2,7 @@
 
 ## Status
 
-Draft
+Draft (v1.2 — 2026-04-27)
 
 ## Authors
 
@@ -50,14 +50,14 @@ The current `quota-router-pyo3` crate only implements any-llm-style (per RFC-091
 
 ## Design Goals
 
-| Goal | Target | Metric |
-|------|--------|--------|
-| G1 | <10ms function call overhead | Latency (PyO3 call into Rust) |
-| G2 | 100% LiteLLM API compatibility | Test coverage against LiteLLM test suite |
-| G3 | 100% any-llm API compatibility | Test coverage against any-llm test suite |
-| G4 | pip installable | PyPI package |
-| G5 | Type hints | mypy pass |
-| G6 | Both API styles work | `completion(provider="openai", ...)` AND `completion(model="openai:gpt-4o", ...)` |
+| Goal | Target                         | Metric                                                                            |
+| ---- | ------------------------------ | --------------------------------------------------------------------------------- |
+| G1   | <10ms function call overhead   | Latency (PyO3 call into Rust)                                                     |
+| G2   | 100% LiteLLM API compatibility | Test coverage against LiteLLM test suite                                          |
+| G3   | 100% any-llm API compatibility | Test coverage against any-llm test suite                                          |
+| G4   | pip installable                | PyPI package                                                                      |
+| G5   | Type hints                     | mypy pass                                                                         |
+| G6   | Both API styles work           | `completion(provider="openai", ...)` AND `completion(model="openai:gpt-4o", ...)` |
 
 ## Specification
 
@@ -85,6 +85,7 @@ The SDK operates in two modes determined at **deployment time** (via feature fla
 ```
 
 **Key insight**: The SDK **accepts both calling conventions** regardless of mode. Mode determines:
+
 1. Which provider integration strategy is compiled (reqwest HTTP vs PyO3 SDK)
 2. Default behavior when `provider` param is absent
 
@@ -268,9 +269,9 @@ def resolve_provider(
     )
 ```
 
-### Supported Providers (41)
+### Supported Providers (42)
 
-Both modes support identical 41 providers:
+Both modes support identical 42 providers (union of any-llm + missing providers):
 
 ```
 openai, anthropic, mistral, ollama, gemini,
@@ -280,10 +281,13 @@ gateway, groq, huggingface, inception, llama,
 llamacpp, llamafile, lmstudio, minimax, moonshot,
 mzai, nebius, openrouter, perplexity, platform,
 portkey, sagemaker, sambanova, together, vertexai,
-vertexaianthropic, vllm, voyage, watsonx, xai, zai
+vertexaianthropic, vllm, voyage, watsonx, xai, zai,
+deepinfra
 ```
 
-### Exception Hierarchy
+**Gap vs any-llm**: any-llm has 39 providers; quota-router adds `deepinfra` (not in any-llm).
+
+**Gap vs litellm**: litellm has 100+ providers. Missing from quota-router: `replicate`, `azure_ai`, `bedrock_mantle`, `anyscale`, `fireworks_ai`, `localai`, `manifest`, `mimechat`, `nlp_cloud`, `predibase`, `proai`, `qianfan`, `sagemaker_chat`, `together_ai`, `yandex`, `yi`, `zhipuai`, and many `openai_like` providers. These can be added as needed via the provider plugin system.
 
 Matches LiteLLM exceptions + quota-router specifics:
 
@@ -462,7 +466,7 @@ def list_models(
 
 ### Model Response Type
 
-```python
+````python
 @dataclass
 class Model:
     id: str           # Full model ID (e.g., "gpt-4o")
@@ -501,13 +505,14 @@ class Usage:
     prompt_tokens: int
     completion_tokens: int
     total_tokens: int
-```
+````
 
 This matches OpenAI's chat completion response format for maximum compatibility.
 
 ### session_label Handling
 
 `session_label: Optional[str] = None` is used for **metrics grouping and tracing**. It is:
+
 - Passed to the router's metrics system for correlation
 - **NOT** passed to provider SDKs (providers don't understand it)
 - Useful for grouping requests by user session or feature area
@@ -526,6 +531,210 @@ client_args: {
 ```
 
 If `client_args` conflicts with `api_key` or `api_base`, `client_args` takes precedence for provider SDK initialization.
+
+### Gap Analysis vs Reference Implementations
+
+This section documents known gaps between RFC-0920 and the reference implementations (any-llm, litellm) that may need to be addressed in future phases.
+
+#### Completion Parameters Gap
+
+**Parameters present in litellm but missing from RFC-0920:**
+
+| Parameter                       | Type                            | Description                                | Priority |
+| ------------------------------- | ------------------------------- | ------------------------------------------ | -------- |
+| `timeout`                       | `float \| str \| httpx.Timeout` | Request timeout with httpx.Timeout support | Medium   |
+| `extra_headers`                 | `dict`                          | Additional headers to pass to provider     | Low      |
+| `base_url`                      | `str`                           | Alias for `api_base` (LiteLLM convention)  | Low      |
+| `api_version`                   | `str`                           | API version for Azure-style providers      | Low      |
+| `model_list`                    | `list`                          | Alternative model configuration            | Medium   |
+| `web_search_options`            | `dict`                          | Web search for supported providers         | Low      |
+| `modalities`                    | `list`                          | Audio output modalities                    | Low      |
+| `audio`                         | `dict`                          | Audio parameters                           | Low      |
+| `prediction`                    | `dict`                          | Prediction content for o1 models           | Low      |
+| `thinking`                      | `dict`                          | Anthropic extended thinking budget         | Medium   |
+| `shared_session`                | `ClientSession`                 | Shared httpx session                       | Low      |
+| `enable_json_schema_validation` | `bool`                          | Validate response vs schema                | Low      |
+
+**Parameters present in any-llm but missing from RFC-0920:**
+
+| Parameter                | Type          | Description                        | Priority |
+| ------------------------ | ------------- | ---------------------------------- | -------- |
+| `system`                 | `str \| list` | System message(s) for messages API | Medium   |
+| `top_k`                  | `int`         | Top-k sampling for Anthropic       | Low      |
+| `truncation`             | `str`         | Cohere truncation strategy         | Low      |
+| `service_tier`           | `str`         | Azure OpenAI service tier          | Low      |
+| `background`             | `bool`        | Run request in background          | Low      |
+| `safety_identifier`      | `str`         | Content safety category            | Low      |
+| `prompt_cache_key`       | `str`         | Prompt caching key                 | Low      |
+| `prompt_cache_retention` | `str`         | Prompt cache TTL                   | Low      |
+| `conversation`           | `str`         | Conversation ID for continuity     | Low      |
+
+#### Streaming Gap
+
+**Gap severity: High**
+
+| Aspect               | litellm               | any-llm                              | RFC-0920    |
+| -------------------- | --------------------- | ------------------------------------ | ----------- |
+| Sync stream return   | `CustomStreamWrapper` | `Iterator[ChatCompletionChunk]`      | Mock chunks |
+| Async stream return  | `AsyncIterator`       | `AsyncIterator[ChatCompletionChunk]` | Mock chunks |
+| Sync-to-async bridge | N/A                   | `async_iter_to_sync_iter()`          | Missing     |
+
+**any-llm async bridge implementation** (`any-llm/src/any_llm/utils/aio.py`):
+
+```python
+def async_iter_to_sync_iter(async_iter, timeout=60):
+    """Bridge async iterator to sync iterator using background thread."""
+    queue = queue.Queue(maxsize=1)
+    exception = [None]
+
+    def consume_async():
+        try:
+            import asyncio
+            loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(loop)
+            async def run():
+                async for item in async_iter:
+                    queue.put(item, timeout=timeout)
+                queue.put(StopIteration, timeout=timeout)
+            loop.run_until_complete(run())
+        except Exception as e:
+            exception[0] = e
+            queue.put(StopIteration, timeout=timeout)
+
+    thread = threading.Thread(target=consume_async, daemon=True)
+    thread.start()
+
+    while True:
+        item = queue.get(timeout=timeout * 2)
+        if isinstance(item, type(StopIteration)):
+            if exception[0]:
+                raise exception[0]
+            break
+        yield item
+```
+
+RFC-0920 should adopt any-llm's async bridge pattern for sync streaming compatibility.
+
+#### Batch API Gap
+
+**Gap severity: High**
+
+| Feature                          | litellm | any-llm | RFC-0920   |
+| -------------------------------- | ------- | ------- | ---------- |
+| `batch_completion()` (in-memory) | ✅      | ❌      | ❌ Missing |
+| `batch_completion_models()`      | ✅      | ❌      | ❌ Missing |
+| `input_file_path` (local file)   | ❌      | ✅      | ✅ Spec'd  |
+
+**litellm `batch_completion()` signature** (`litellm/litellm/batch_completion/main.py`):
+
+```python
+def batch_completion(
+    model: str,
+    messages: List,
+    functions: Optional[List] = None,
+    function_call: Optional[str] = None,
+    temperature: Optional[float] = None,
+    top_p: Optional[float] = None,
+    n: Optional[int] = None,
+    stream: Optional[bool] = None,
+    stop=None,
+    max_tokens: Optional[int] = None,
+    presence_penalty: Optional[float] = None,
+    frequency_penalty: Optional[float] = None,
+    logit_bias: Optional[dict] = None,
+    user: Optional[str] = None,
+    deployment_id=None,
+    request_timeout: Optional[int] = None,
+    timeout: Optional[int] = 600,
+    max_workers: Optional[int] = 100,  # Parallelism
+    **kwargs,
+) -> List[response]
+```
+
+This is distinct from the file-based Batch API. RFC-0920 should add:
+
+```python
+def batch_completion(
+    model: str,
+    messages: List[Dict],
+    *,
+    temperature: Optional[float] = None,
+    max_tokens: Optional[int] = None,
+    n: Optional[int] = None,
+    timeout: Optional[int] = 600,
+    max_workers: int = 100,
+    **kwargs,
+) -> List[CompletionResponse]:
+    """
+    Submit multiple completion requests in parallel.
+    Returns list of responses in same order as inputs.
+    """
+```
+
+#### Router Gap
+
+**Gap severity: High (implementation incomplete)**
+
+| Feature                         | litellm         | any-llm | RFC-0920   |
+| ------------------------------- | --------------- | ------- | ---------- |
+| Load balancing strategies       | ✅ 6 strategies | ❌      | ✅ Spec'd  |
+| `cache_responses`               | ✅              | ❌      | ❌ Missing |
+| `redis_url`                     | ✅              | ❌      | ❌ Missing |
+| `num_retries` per call          | ✅              | ❌      | ❌ Missing |
+| `logger_fn`                     | ✅              | ❌      | ❌ Missing |
+| `enable_json_schema_validation` | ✅              | ❌      | ❌ Missing |
+
+**litellm routing strategies** (`litellm/router.py`):
+
+```python
+routing_strategy: Literal[
+    "simple-shuffle",      # Random selection
+    "least-busy",          # Fewest active requests
+    "usage-based-routing", # Lowest usage
+    "latency-based-routing", # Lowest latency
+    "cost-based-routing",  # Lowest cost
+    "usage-based-routing-v2",
+] = "simple-shuffle"
+```
+
+RFC-0920 Router implementation should include these strategies.
+
+#### Exception Mapping Gap (any-llm Style)
+
+**Gap severity: Medium**
+
+any-llm provides unified exception mapping via regex patterns (`any-llm/src/any_llm/utils/exception_handler.py`). When `ANY_LLM_UNIFIED_EXCEPTIONS=1`:
+
+```python
+EXCEPTION_PATTERNS = [
+    (r"invalid_api_key", "AuthenticationError"),
+    (r"incorrect_api_key", "AuthenticationError"),
+    (r"rate_limit", "RateLimitError"),
+    (r"context_length", "ContextLengthExceededError"),
+    (r"model_not_found", "ModelNotFoundError"),
+    (r"content_filter", "ContentFilterError"),
+    # ... more patterns
+]
+```
+
+RFC-0920 should add an optional unified exception mapping mode for any-llm compatibility.
+
+#### Platform Provider (any-api Style)
+
+**Gap severity: Medium**
+
+any-llm supports a `PlatformProvider` that wraps any provider with an any-api format key (`any-...`). This allows generic API key handling for providers not explicitly supported.
+
+RFC-0920 does not currently spec this. If needed, add:
+
+```python
+class PlatformProvider:
+    """Wrapper for any-api format keys."""
+    def __init__(self, api_key: str, **kwargs):
+        # Parse any-... format, extract underlying provider
+        platform_key = PlatformKey(api_key=api_key)
+        self.provider = PROVIDER_MAP[platform_key.provider](**kwargs)
+```
 
 ### Batch API Signature
 
@@ -626,12 +835,12 @@ full = ["pyo3/extension-module"]  # Both modes
 
 Mode is selected at **build time** via Cargo feature flags:
 
-| Installation | Mode | Provider Strategy |
-|-------------|------|-----------------|
-| `pip install quota-router` (from PyPI, wheels) | `full` | Both (reqwest + PyO3) |
-| `cargo build --features litellm-mode` | `litellm-mode` | reqwest only |
-| `cargo build --features any-llm-mode` | `any-llm-mode` | PyO3 only |
-| `cargo build --features full` (default) | `full` | Both |
+| Installation                                   | Mode           | Provider Strategy     |
+| ---------------------------------------------- | -------------- | --------------------- |
+| `pip install quota-router` (from PyPI, wheels) | `full`         | Both (reqwest + PyO3) |
+| `cargo build --features litellm-mode`          | `litellm-mode` | reqwest only          |
+| `cargo build --features any-llm-mode`          | `any-llm-mode` | PyO3 only             |
+| `cargo build --features full` (default)        | `full`         | Both                  |
 
 **Runtime detection:** The SDK exposes `quota_router.get_deployment_mode()`:
 
@@ -667,11 +876,11 @@ litellm = sys.modules[__name__]  # Enables: import quota_router as litellm
 
 ## Performance Targets
 
-| Metric | Target | Notes |
-|--------|--------|-------|
-| Function call overhead | <10ms | PyO3 → Rust call latency (matches RFC-0908 G1) |
-| SDK import time | <100ms | Cold import |
-| Memory per provider | <10MB | Cached Python client |
+| Metric                 | Target | Notes                                          |
+| ---------------------- | ------ | ---------------------------------------------- |
+| Function call overhead | <10ms  | PyO3 → Rust call latency (matches RFC-0908 G1) |
+| SDK import time        | <100ms | Cold import                                    |
+| Memory per provider    | <10MB  | Cached Python client                           |
 
 ## Test Compatibility
 
@@ -699,14 +908,15 @@ pytest tests/test_anyllm_compat.py -v
 
 The SDK has **two incompatible API key handling modes** with different security properties:
 
-| Aspect | `set_api_key()` (recommended) | `api_key=...` per-call |
-|--------|-------------------------------|------------------------|
-| Key storage | Rust memory (enforceable) | Goes directly to provider SDK |
-| Budget enforcement | Enforceable (Rust holds key) | **NOT enforceable** (SDK bypasses Rust) |
-| Virtual key (RFC-0903) | Enforceable | **NOT enforceable** |
-| Traceability | Key identity → Rust → Provider | Key identity → Provider directly |
+| Aspect                 | `set_api_key()` (recommended)  | `api_key=...` per-call                  |
+| ---------------------- | ------------------------------ | --------------------------------------- |
+| Key storage            | Rust memory (enforceable)      | Goes directly to provider SDK           |
+| Budget enforcement     | Enforceable (Rust holds key)   | **NOT enforceable** (SDK bypasses Rust) |
+| Virtual key (RFC-0903) | Enforceable                    | **NOT enforceable**                     |
+| Traceability           | Key identity → Rust → Provider | Key identity → Provider directly        |
 
 **Warning:** When using `api_key="sk-..."` per-call parameter, the key goes directly to the provider SDK. The Rust core never sees it. This means:
+
 - Budget enforcement (RFC-0904) is **bypassed**
 - Virtual key validation (RFC-0903) is **bypassed**
 - Spend recording uses the **default key**, not the per-call key
@@ -722,15 +932,15 @@ The SDK has **two incompatible API key handling modes** with different security 
 
 ## Comparison with RFC-0908
 
-| Aspect | RFC-0908 | RFC-0920 |
-|--------|----------|----------|
-| LiteLLM compatibility | ✅ Yes | ✅ Yes |
-| any-llm compatibility | ❌ No | ✅ Yes |
-| `provider` param | ✅ Separate | ✅ Both styles |
-| `provider:model` format | ❌ No | ✅ Yes |
-| `set_api_key()` style | ❌ No | ✅ Yes |
-| Router class | ✅ Yes | ✅ Yes |
-| 41 providers | Partial | ✅ All 41 |
+| Aspect                  | RFC-0908    | RFC-0920       |
+| ----------------------- | ----------- | -------------- |
+| LiteLLM compatibility   | ✅ Yes      | ✅ Yes         |
+| any-llm compatibility   | ❌ No       | ✅ Yes         |
+| `provider` param        | ✅ Separate | ✅ Both styles |
+| `provider:model` format | ❌ No       | ✅ Yes         |
+| `set_api_key()` style   | ❌ No       | ✅ Yes         |
+| Router class            | ✅ Yes      | ✅ Yes         |
+| 41 providers            | Partial     | ✅ All 41      |
 
 ## Implementation Phases
 
@@ -741,34 +951,51 @@ The SDK has **two incompatible API key handling modes** with different security 
 - [ ] Exception hierarchy with error codes
 - [ ] **Replace mock with real PyO3 SDK calls** — current `quota-router-pyo3` completion functions are mock stubs that echo messages
 - [ ] Basic test suite
+- [ ] Async iterator bridge for sync streaming (`async_iter_to_sync_iter()`)
 
 **Note:** Phase 1 MUST replace the current mock implementations with real provider SDK calls via PyO3.
 
 ### Phase 2: Full Provider Coverage
 
-- [ ] Anthropic provider integration
+- [ ] Anthropic provider integration (with `thinking` and `cache_control` support)
 - [ ] Mistral provider integration
-- [ ] All 41 providers (mock until real SDK available)
+- [ ] All 42 providers (mock until real SDK available)
 - [ ] Embedding API
 - [ ] Model listing
+- [ ] `timeout` parameter with httpx.Timeout support
+- [ ] `extra_headers`, `base_url`, `api_version` parameters
 
 ### Phase 3: Enterprise Features
 
-- [ ] Router class
-- [ ] Batch API
+- [ ] Router class with load balancing strategies
+- [ ] `batch_completion()` and `batch_completion_models()` (in-memory parallel batch)
+- [ ] Batch API (file-based)
 - [ ] Responses API
-- [ ] Messages API
+- [ ] Messages API (with `system`, `top_k`, `truncation` support)
 - [ ] Budget/metrics APIs
+- [ ] `cache_responses` support
+- [ ] `redis_url` for distributed caching
+- [ ] `num_retries` per-call retry logic
+- [ ] `logger_fn` custom logger
+- [ ] Exception regex mapping mode (`ANY_LLM_UNIFIED_EXCEPTIONS=1`)
+- [ ] Platform provider (any-api key format)
+
+### Phase 4: Full LiteLLM Compatibility (Future)
+
+- [ ] Remaining litellm-only parameters: `modalities`, `audio`, `prediction`, `web_search_options`, `shared_session`
+- [ ] All litellm routing strategies (6 total)
+- [ ] `enable_json_schema_validation`
+- [ ] Additional providers from litellm ecosystem as needed
 
 ## Key Files to Modify
 
-| File | Change |
-|------|--------|
-| `crates/quota-router-pyo3/src/lib.rs` | Unified SDK exports |
-| `crates/quota-router-pyo3/src/completion.rs` | Dual-mode completion |
-| `crates/quota-router-pyo3/src/providers/` | Provider implementations |
-| `crates/quota-router-pyo3/src/exceptions.rs` | Exception hierarchy |
-| `crates/quota-router-pyo3/src/sdk.rs` | set_api_key, budget APIs |
+| File                                         | Change                   |
+| -------------------------------------------- | ------------------------ |
+| `crates/quota-router-pyo3/src/lib.rs`        | Unified SDK exports      |
+| `crates/quota-router-pyo3/src/completion.rs` | Dual-mode completion     |
+| `crates/quota-router-pyo3/src/providers/`    | Provider implementations |
+| `crates/quota-router-pyo3/src/exceptions.rs` | Exception hierarchy      |
+| `crates/quota-router-pyo3/src/sdk.rs`        | set_api_key, budget APIs |
 
 ## Future Work
 
@@ -780,6 +1007,7 @@ The SDK has **two incompatible API key handling modes** with different security 
 ## Rationale
 
 The dual-style approach maximizes adoption by meeting users where they are:
+
 - LiteLLM users keep their `provider=` param pattern
 - any-llm users keep their `provider:model` pattern
 - Both can coexist in the same codebase
@@ -788,10 +1016,11 @@ This is the only approach that achieves true drop-in replacement for both ecosys
 
 ## Version History
 
-| Version | Date | Changes |
-|---------|------|---------|
-| 1.1 | 2026-04-27 | Fix all adversarial review issues: C2 (security model docs), C3 (raise error not silent fallback), C4 (ambiguity detection), C5 (case-insensitive provider lookup); I1 (G1=<10ms), I2 (stream=None), I3 (list_models spec), I4 (typed CompletionResponse), I5 (session_label docs), I6 (client_args schema), I7 (error codes), I8 (GIL isolation); L1 (Phase 1 clarify), L2 (deployment mode), L3 (batch API), L4 (RFC-0904 required) |
-| 1.0 | 2026-04-27 | Initial draft |
+| Version | Date       | Changes                                                                                                                                                                                                                                                                                                                                                                                                                               |
+| ------- | ---------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 1.2     | 2026-04-27 | Gap analysis vs any-llm/litellm: add missing completion params (timeout, thinking, system, etc.), streaming async bridge spec, batch_completion() spec, router strategies, exception mapping, platform provider. Phase 4 added for full LiteLLM compat. Provider count 41→42 (added deepinfra).                                                                                                                                       |
+| 1.1     | 2026-04-27 | Fix all adversarial review issues: C2 (security model docs), C3 (raise error not silent fallback), C4 (ambiguity detection), C5 (case-insensitive provider lookup); I1 (G1=<10ms), I2 (stream=None), I3 (list_models spec), I4 (typed CompletionResponse), I5 (session_label docs), I6 (client_args schema), I7 (error codes), I8 (GIL isolation); L1 (Phase 1 clarify), L2 (deployment mode), L3 (batch API), L4 (RFC-0904 required) |
+| 1.0     | 2026-04-27 | Initial draft                                                                                                                                                                                                                                                                                                                                                                                                                         |
 
 ## Related RFCs
 

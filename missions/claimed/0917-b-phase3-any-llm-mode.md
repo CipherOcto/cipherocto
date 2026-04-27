@@ -2,10 +2,11 @@
 
 ## Status
 
-In Progress — Core SDK implementation complete, provider integrations remaining (2026-04-27)
+In Progress — Core SDK complete, provider integrations remaining (2026-04-27)
 
-Completed: 20 API functions, 16 exceptions, model parsing, streaming, set_api_key, get_budget_status, get_metrics
-Remaining: 41 provider integrations (PyO3 calls to Python SDKs), Python SDK package
+**Completed:** 20 API functions, 16 exceptions, model parsing, streaming, set_api_key, get_budget_status, get_metrics, Python SDK package structure
+
+**Remaining:** 41 provider integrations (PyO3 calls to Python SDKs) — requires official Python SDK integration per provider
 
 ## RFC
 
@@ -79,7 +80,7 @@ AnyLLMError (base)
 
 - [ ] **PyO3 bridge** — quota-router-pyo3 crate calls official Python SDKs via PyO3
 - [ ] **41 Provider integrations** via PyO3 calls to: `anthropic`, `openai`, `mistralai`, `ollama`, `google-genai` + 36 more
-- [ ] **Python SDK package** (`pip install quota-router` or `quota_router`)
+- [x] **Python SDK package** (pyproject.toml + python/quota_router/__init__.py)
 - [x] **20 API functions** via PyO3 (all 20 implemented as mocks)
 - [x] **Streaming** via PyO3 chunk-based streaming when stream=True
 - [x] **any-llm-compatible exceptions** (all 16 exceptions implemented in exceptions.rs)

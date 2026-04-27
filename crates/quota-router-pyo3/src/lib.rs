@@ -6,6 +6,7 @@
 mod completion;
 mod exceptions;
 mod model;
+mod providers;
 mod sdk;
 mod streaming;
 mod types;
@@ -67,6 +68,11 @@ fn quota_router(m: &PyModule) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(sdk::set_api_key, m)?)?;
     m.add_function(wrap_pyfunction!(sdk::get_budget_status, m)?)?;
     m.add_function(wrap_pyfunction!(sdk::get_metrics, m)?)?;
+
+    // Register provider functions
+    m.add_function(wrap_pyfunction!(providers::factory::get_supported_providers, m)?)?;
+    m.add_function(wrap_pyfunction!(providers::factory::is_provider_supported, m)?)?;
+    m.add_function(wrap_pyfunction!(providers::factory::get_provider_info, m)?)?;
 
     Ok(())
 }

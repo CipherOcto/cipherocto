@@ -303,35 +303,26 @@ This happens to match, but `stream=None` vs `stream=False` semantic difference c
 
 | ID | Severity | Issue | Status |
 |----|----------|-------|--------|
-| C1 | ~~Critical~~ | RFC-0917 mode contradiction | **INVALID** — RFC-0917 v2.25 fixed |
-| C2 | Critical | Security model conflict | Document key trust boundary |
-| C3 | Critical | Silent OpenAI fallback | Raise MissingProviderError |
-| C4 | Important | Model names containing providers | Add ambiguity detection |
-| C5 | Important | Case sensitivity unspecified | Normalize to lowercase |
-| I1 | Important | G1 target conflict | Match RFC-0908 or justify |
-| I2 | Important | Stream default mismatch | Use `None` not `False` |
-| I3 | Important | Missing list_models() spec | Add complete signature |
-| I4 | Important | Untyped return Dict | Use typed response class |
-| I5 | Low | session_label dropped | Document handling |
-| I6 | Low | client_args undefined | Define schema |
-| I7 | Low | Exception code unused | Remove or define codes |
-| I8 | Low | GIL boundary claim wrong | Fix isolation language |
-| L1 | Low | Mock vs real impl | Clarify Phase 1 |
-| L2 | Low | Mode selection unspecified | Add deployment section |
-| L3 | Low | Batch API gap | Define signature |
-| L4 | Low | InsufficientFundsError dependency | Move to Requires |
+| C1 | ~~Critical~~ | RFC-0917 mode contradiction | **FIXED** — RFC-0917 v2.25 corrected |
+| C2 | Critical | Security model conflict | **FIXED** — Key trust boundary documented in v1.1 |
+| C3 | Critical | Silent OpenAI fallback | **FIXED** — Raises MissingProviderError in v1.1 |
+| C4 | Important | Model names containing providers | **FIXED** — Ambiguity detection added in v1.1 |
+| C5 | Important | Case sensitivity unspecified | **FIXED** — Normalized to lowercase in v1.1 |
+| I1 | Important | G1 target conflict | **FIXED** — Matches RFC-0908 (<10ms) in v1.1 |
+| I2 | Important | Stream default mismatch | **FIXED** — `None` not `False` in v1.1 |
+| I3 | Important | Missing list_models() spec | **FIXED** — Complete signature in v1.1 |
+| I4 | Important | Untyped return Dict | **FIXED** — Typed CompletionResponse in v1.1 |
+| I5 | Low | session_label dropped | **FIXED** — Handling documented in v1.1 |
+| I6 | Low | client_args undefined | **FIXED** — Schema defined in v1.1 |
+| I7 | Low | Exception code unused | **FIXED** — Error codes defined in v1.1 |
+| I8 | Low | GIL boundary claim wrong | **FIXED** — Isolation language corrected in v1.1 |
+| L1 | Low | Mock vs real impl | **FIXED** — Phase 1 clarified in v1.1 |
+| L2 | Low | Mode selection unspecified | **FIXED** — Deployment section added in v1.1 |
+| L3 | Low | Batch API gap | **FIXED** — Signatures defined in v1.1 |
+| L4 | Low | InsufficientFundsError dependency | **FIXED** — RFC-0904 moved to Requires in v1.1 |
 
 ---
 
 ## Recommendation
 
-**Return to Draft.** After RFC-0917 v2.25 correction, C1 is resolved. Remaining: 2 critical, 5 important, 5 low issues.
-
-**Next Steps (C2-C5 remain):**
-1. ~~Fix C1: Reconcile with RFC-0917's mode exclusivity~~ — **DONE** (RFC-0917 fixed)
-2. Fix C2: Document key trust boundary clearly
-3. Fix C3: Remove silent OpenAI fallback
-4. Fix C4: Add provider/model ambiguity detection
-5. Fix C5: Normalize provider names case-insensitively
-
-After fixes, re-submit for review.
+**All issues resolved in RFC-0920 v1.1.** Return to review queue.

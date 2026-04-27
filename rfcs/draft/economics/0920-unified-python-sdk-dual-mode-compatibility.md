@@ -2,7 +2,7 @@
 
 ## Status
 
-Draft (v1.2 — 2026-04-27)
+Draft (v1.4 — 2026-04-27)
 
 ## Authors
 
@@ -22,10 +22,11 @@ Define a unified Python SDK via PyO3 that supports **both** LiteLLM-style API (s
 
 - RFC-0917: Dual-Mode Query Router (Accepted)
 - RFC-0904: Real-Time Cost Tracking (for `InsufficientFundsError`)
+- RFC-0913: stoolap-pubsub-cache-invalidation (Required for `cache_responses` via stoolap semantic cache)
 
 **Optional:**
 
-- RFC-0902: Multi-Provider Routing and Load Balancing
+- RFC-0902: Multi-Provider Routing and Load Balancing (Required for Router class)
 - RFC-0903: Virtual API Key System
 - RFC-0909: Deterministic Quota Accounting
 - RFC-0910: Pricing Table Registry
@@ -534,209 +535,634 @@ If `client_args` conflicts with `api_key` or `api_base`, `client_args` takes pre
 
 ### Gap Analysis vs Reference Implementations
 
-This section documents known gaps between RFC-0920 and the reference implementations (any-llm, litellm) that may need to be addressed in future phases.
+This section documents gaps between RFC-0920 and the reference implementations (any-llm, litellm), with **actual specifications** for each gap.
 
-#### Completion Parameters Gap
+#### Missing Completion Parameters
 
-**Parameters present in litellm but missing from RFC-0920:**
+**Parameters present in litellm but not yet specced in RFC-0920:**
 
-| Parameter                       | Type                            | Description                                | Priority |
-| ------------------------------- | ------------------------------- | ------------------------------------------ | -------- |
-| `timeout`                       | `float \| str \| httpx.Timeout` | Request timeout with httpx.Timeout support | Medium   |
-| `extra_headers`                 | `dict`                          | Additional headers to pass to provider     | Low      |
-| `base_url`                      | `str`                           | Alias for `api_base` (LiteLLM convention)  | Low      |
-| `api_version`                   | `str`                           | API version for Azure-style providers      | Low      |
-| `model_list`                    | `list`                          | Alternative model configuration            | Medium   |
-| `web_search_options`            | `dict`                          | Web search for supported providers         | Low      |
-| `modalities`                    | `list`                          | Audio output modalities                    | Low      |
-| `audio`                         | `dict`                          | Audio parameters                           | Low      |
-| `prediction`                    | `dict`                          | Prediction content for o1 models           | Low      |
-| `thinking`                      | `dict`                          | Anthropic extended thinking budget         | Medium   |
-| `shared_session`                | `ClientSession`                 | Shared httpx session                       | Low      |
-| `enable_json_schema_validation` | `bool`                          | Validate response vs schema                | Low      |
+| Parameter                       | Type                            | Description                                | Spec Location           |
+| ------------------------------- | ------------------------------- | ------------------------------------------ | ----------------------- |
+| `timeout`                       | `float \| str \| httpx.Timeout` | Request timeout with httpx.Timeout support | §Timeout Parameter      |
+| `thinking`                      | `dict`                          | Anthropic extended thinking budget         | §Thinking Parameter     |
+| `model_list`                    | `list`                          | Alternative model configuration            | §Model List             |
+| `extra_headers`                 | `dict`                          | Additional headers to pass to provider     | §Extra Headers          |
+| `base_url`                      | `str`                           | Alias for `api_base`                       | §Base URL Alias         |
+| `api_version`                   | `str`                           | API version for Azure-style providers      | §API Version            |
+| `web_search_options`            | `dict`                          | Web search for supported providers         | §Web Search Options     |
+| `modalities`                    | `list`                          | Audio output modalities                    | §Modalities             |
+| `audio`                         | `dict`                          | Audio parameters                           | §Audio Parameters       |
+| `prediction`                    | `dict`                          | Prediction content for o1 models           | §Prediction             |
+| `shared_session`                | `ClientSession`                 | Shared httpx session                       | §Shared Session         |
+| `enable_json_schema_validation` | `bool`                          | Validate response vs schema                | §JSON Schema Validation |
 
-**Parameters present in any-llm but missing from RFC-0920:**
+**Parameters present in any-llm but not yet specced in RFC-0920:**
 
-| Parameter                | Type          | Description                        | Priority |
-| ------------------------ | ------------- | ---------------------------------- | -------- |
-| `system`                 | `str \| list` | System message(s) for messages API | Medium   |
-| `top_k`                  | `int`         | Top-k sampling for Anthropic       | Low      |
-| `truncation`             | `str`         | Cohere truncation strategy         | Low      |
-| `service_tier`           | `str`         | Azure OpenAI service tier          | Low      |
-| `background`             | `bool`        | Run request in background          | Low      |
-| `safety_identifier`      | `str`         | Content safety category            | Low      |
-| `prompt_cache_key`       | `str`         | Prompt caching key                 | Low      |
-| `prompt_cache_retention` | `str`         | Prompt cache TTL                   | Low      |
-| `conversation`           | `str`         | Conversation ID for continuity     | Low      |
+| Parameter                | Type          | Description                        | Spec Location        |
+| ------------------------ | ------------- | ---------------------------------- | -------------------- |
+| `system`                 | `str \| list` | System message(s) for messages API | §System Parameter    |
+| `top_k`                  | `int`         | Top-k sampling for Anthropic       | §Top K               |
+| `truncation`             | `str`         | Cohere truncation strategy         | §Truncation          |
+| `service_tier`           | `str`         | Azure OpenAI service tier          | §Service Tier        |
+| `background`             | `bool`        | Run request in background          | §Background Requests |
+| `safety_identifier`      | `str`         | Content safety category            | §Safety Identifier   |
+| `prompt_cache_key`       | `str`         | Prompt caching key                 | §Prompt Cache        |
+| `prompt_cache_retention` | `str`         | Prompt cache TTL                   | §Prompt Cache        |
+| `conversation`           | `str`         | Conversation ID for continuity     | §Conversation        |
 
-#### Streaming Gap
+#### Sync Streaming — Async Iterator Bridge
 
-**Gap severity: High**
+**Severity: High**
 
-| Aspect               | litellm               | any-llm                              | RFC-0920    |
-| -------------------- | --------------------- | ------------------------------------ | ----------- |
-| Sync stream return   | `CustomStreamWrapper` | `Iterator[ChatCompletionChunk]`      | Mock chunks |
-| Async stream return  | `AsyncIterator`       | `AsyncIterator[ChatCompletionChunk]` | Mock chunks |
-| Sync-to-async bridge | N/A                   | `async_iter_to_sync_iter()`          | Missing     |
+When `completion(model="...", messages=[...], stream=True)` is called synchronously (not async), and the underlying provider SDK is async-only, the SDK must bridge the async stream to a sync iterator.
 
-**any-llm async bridge implementation** (`any-llm/src/any_llm/utils/aio.py`):
+This applies to **any-llm-mode** (PyO3 Python SDK calls) where providers may be async-first.
+
+**Specification:**
 
 ```python
-def async_iter_to_sync_iter(async_iter, timeout=60):
-    """Bridge async iterator to sync iterator using background thread."""
-    queue = queue.Queue(maxsize=1)
-    exception = [None]
+# quota_router/streaming.py
 
-    def consume_async():
+import asyncio
+import queue
+import threading
+from typing import AsyncIterator, Iterator, TypeVar
+
+T = TypeVar("T")
+
+def async_iter_to_sync_iter(
+    async_iter: AsyncIterator[T],
+    timeout: float = 60.0,
+) -> Iterator[T]:
+    """
+    Bridge an async iterator to a sync iterator using a background thread.
+
+    Used when sync completion() is called but the underlying provider SDK
+    is async-only. The background thread drives the async iterator and
+    yields items to a synchronous queue.
+
+    Args:
+        async_iter: AsyncIterator to consume
+        timeout: Max seconds between items before StopIteration
+
+    Yields:
+        Items from the async iterator
+
+    Raises:
+        Exception: Any exception raised by the async iterator
+
+    Note:
+        The background thread is daemon=True — it will not prevent
+        the main process from exiting.
+    """
+    q: queue.Queue[T | type(StopIteration)] = queue.Queue(maxsize=1)
+    exception_store = [None]  # Mutate to share exception
+
+    def consume_async() -> None:
         try:
-            import asyncio
             loop = asyncio.new_event_loop()
             asyncio.set_event_loop(loop)
-            async def run():
-                async for item in async_iter:
-                    queue.put(item, timeout=timeout)
-                queue.put(StopIteration, timeout=timeout)
+            async def run() -> None:
+                try:
+                    async for item in async_iter:
+                        q.put(item, timeout=timeout)
+                except StopAsyncIteration:
+                    q.put(StopIteration, timeout=timeout)
             loop.run_until_complete(run())
-        except Exception as e:
-            exception[0] = e
-            queue.put(StopIteration, timeout=timeout)
+        except Exception as e:  # noqa: BLE001
+            exception_store[0] = e
+            q.put(StopIteration, timeout=timeout)
 
     thread = threading.Thread(target=consume_async, daemon=True)
     thread.start()
 
     while True:
-        item = queue.get(timeout=timeout * 2)
+        item = q.get(timeout=timeout * 2)
         if isinstance(item, type(StopIteration)):
-            if exception[0]:
-                raise exception[0]
+            if exception_store[0] is not None:
+                raise exception_store[0]
             break
         yield item
 ```
 
-RFC-0920 should adopt any-llm's async bridge pattern for sync streaming compatibility.
-
-#### Batch API Gap
-
-**Gap severity: High**
-
-| Feature                          | litellm | any-llm | RFC-0920   |
-| -------------------------------- | ------- | ------- | ---------- |
-| `batch_completion()` (in-memory) | ✅      | ❌      | ❌ Missing |
-| `batch_completion_models()`      | ✅      | ❌      | ❌ Missing |
-| `input_file_path` (local file)   | ❌      | ✅      | ✅ Spec'd  |
-
-**litellm `batch_completion()` signature** (`litellm/litellm/batch_completion/main.py`):
+**Sync streaming return type** (any-llm-mode):
 
 ```python
-def batch_completion(
-    model: str,
-    messages: List,
-    functions: Optional[List] = None,
-    function_call: Optional[str] = None,
-    temperature: Optional[float] = None,
-    top_p: Optional[float] = None,
-    n: Optional[int] = None,
-    stream: Optional[bool] = None,
-    stop=None,
-    max_tokens: Optional[int] = None,
-    presence_penalty: Optional[float] = None,
-    frequency_penalty: Optional[float] = None,
-    logit_bias: Optional[dict] = None,
-    user: Optional[str] = None,
-    deployment_id=None,
-    request_timeout: Optional[int] = None,
-    timeout: Optional[int] = 600,
-    max_workers: Optional[int] = 100,  # Parallelism
-    **kwargs,
-) -> List[response]
-```
-
-This is distinct from the file-based Batch API. RFC-0920 should add:
-
-```python
-def batch_completion(
+def completion(
     model: str,
     messages: List[Dict],
     *,
+    stream: bool = False,
+    **kwargs,
+) -> Union[CompletionResponse, Iterator[ChatCompletionChunk]]:
+    """
+    When stream=True in any-llm-mode, returns Iterator[ChatCompletionChunk].
+    The iterator is created by bridging the async provider stream via
+    async_iter_to_sync_iter().
+    """
+```
+
+#### In-Memory Batch Completion
+
+**Severity: High**
+
+`batch_completion()` submits multiple completion requests in parallel threads, returning a list of responses in input order. Distinct from file-based Batch API.
+
+**Specification:**
+
+```python
+# quota_router/batch.py
+
+from concurrent.futures import ThreadPoolExecutor, as_completed
+from typing import List, Dict, Optional, Union
+
+def batch_completion(
+    model: str,
+    messages: List[List[Dict]],
+    *,
+    # Completion params (subset of acompletion)
+    provider: Optional[str] = None,
     temperature: Optional[float] = None,
+    top_p: Optional[float] = None,
     max_tokens: Optional[int] = None,
     n: Optional[int] = None,
     timeout: Optional[int] = 600,
     max_workers: int = 100,
+    api_key: Optional[str] = None,
+    api_base: Optional[str] = None,
     **kwargs,
 ) -> List[CompletionResponse]:
     """
     Submit multiple completion requests in parallel.
-    Returns list of responses in same order as inputs.
+
+    Args:
+        model: Model identifier (e.g., "openai:gpt-4o")
+        messages: List of message lists, one per request
+        provider: Provider name (optional if model has prefix)
+        temperature: Sampling temperature
+        top_p: Nucleus sampling
+        max_tokens: Max tokens per response
+        n: Number of completions per request
+        timeout: Request timeout in seconds
+        max_workers: Max parallel threads
+        api_key: Override API key
+        api_base: Override base URL
+
+    Returns:
+        List[CompletionResponse] in same order as messages input
+
+    Raises:
+        BatchPartialFailureError: If some requests fail (partial results returned)
+
+    Note:
+        Uses ThreadPoolExecutor internally. For async batch, use
+        abatch_completion() with asyncio.gather().
+
+        **GIL consideration:** In any-llm mode, Python SDK calls hold the GIL
+        and ThreadPoolExecutor provides no parallelism. Prefer abatch_completion()
+        (asyncio.gather) for any-llm mode. For litellm mode (Rust reqwest),
+        threads are fine since Rust releases the GIL during HTTP calls.
     """
+    if not messages:
+        return []
+
+    results: List[Optional[CompletionResponse]] = [None] * len(messages)
+    errors: List[Optional[Exception]] = [None] * len(messages)
+
+    def submit_one(idx: int, msgs: List[Dict]) -> None:
+        try:
+            # Call completion (sync) for each message set
+            result = completion(
+                model=model,
+                messages=msgs,
+                provider=provider,
+                temperature=temperature,
+                top_p=top_p,
+                max_tokens=max_tokens,
+                n=n,
+                timeout=timeout,
+                api_key=api_key,
+                api_base=api_base,
+                **kwargs,
+            )
+            results[idx] = result
+        except Exception as e:  # noqa: BLE001
+            errors[idx] = e
+
+    with ThreadPoolExecutor(max_workers=max_workers) as executor:
+        futures = [
+            executor.submit(submit_one, i, msgs)
+            for i, msgs in enumerate(messages)
+        ]
+        for future in as_completed(futures):
+            pass  # Exceptions stored in errors list
+
+    # Check for any errors
+    failed_count = sum(1 for e in errors if e is not None)
+    if failed_count > 0:
+        # Return partial results + raise on completion
+        raise BatchPartialFailureError(
+            message=f"{failed_count}/{len(messages)} requests failed",
+            successful=[r for r in results if r is not None],
+            failed=[(i, e) for i, e in enumerate(errors) if e is not None],
+        )
+
+    return results  # type: ignore[return-value]
 ```
 
-#### Router Gap
-
-**Gap severity: High (implementation incomplete)**
-
-| Feature                         | litellm         | any-llm | RFC-0920                                   |
-| ------------------------------- | --------------- | ------- | ------------------------------------------ |
-| Load balancing strategies       | ✅ 6 strategies | ❌      | ✅ Spec'd                                  |
-| `cache_responses`               | ✅ (Redis)      | ❌      | ⚠️ Use stoolap (RFC-0913)                  |
-| `redis_url`                     | ✅              | ❌      | ❌ N/A — stoolap replaces Redis (RFC-0914) |
-| `num_retries` per call          | ✅              | ❌      | ❌ Missing                                 |
-| `logger_fn`                     | ✅              | ❌      | ❌ Missing                                 |
-| `enable_json_schema_validation` | ✅              | ❌      | ❌ Missing                                 |
-
-**Note on storage architecture:** liteLLM uses Redis for caching, pub/sub, and distributed locks. quota-router uses **stoolap** (RFC-0912, RFC-0913, RFC-0914) — an MVCC-based SQL database with WAL pub/sub that replaces Redis entirely. The `cache_responses` gap should be filled using stoolap's semantic cache (predicate subsumption, 300s TTL), NOT Redis. There is no `redis_url` parameter — stoolap is the sole persistence layer.
-
-**litellm routing strategies** (`litellm/router.py`):
+**Async variant:**
 
 ```python
-routing_strategy: Literal[
-    "simple-shuffle",      # Random selection
-    "least-busy",          # Fewest active requests
-    "usage-based-routing", # Lowest usage
-    "latency-based-routing", # Lowest latency
-    "cost-based-routing",  # Lowest cost
-    "usage-based-routing-v2",
-] = "simple-shuffle"
+async def abatch_completion(
+    model: str,
+    messages: List[List[Dict]],
+    *,
+    provider: Optional[str] = None,
+    temperature: Optional[float] = None,
+    max_tokens: Optional[int] = None,
+    n: Optional[int] = None,
+    max_workers: int = 100,
+    **kwargs,
+) -> List[CompletionResponse]:
+    """
+    Async version: gather responses concurrently using asyncio.
+    """
+    import asyncio
+
+    async def submit_one(msgs: List[Dict]) -> CompletionResponse:
+        return await acompletion(
+            model=model,
+            messages=msgs,
+            provider=provider,
+            temperature=temperature,
+            max_tokens=max_tokens,
+            n=n,
+            **kwargs,
+        )
+
+    return await asyncio.gather(*[submit_one(msgs) for msgs in messages])
 ```
 
-RFC-0920 Router implementation should include these strategies.
+#### Router — Load Balancing Strategies
 
-#### Exception Mapping Gap (any-llm Style)
+**Severity: High**
 
-**Gap severity: Medium**
+Router dispatches to multiple model deployments using configurable strategies.
 
-any-llm provides unified exception mapping via regex patterns (`any-llm/src/any_llm/utils/exception_handler.py`). When `ANY_LLM_UNIFIED_EXCEPTIONS=1`:
+**Important:** Routing strategies, fallback mechanisms, provider state, health checking, and rate limit enforcement are implemented in the **Rust core** per RFC-0902. The Python Router is a **thin wrapper** that delegates to the Rust core via PyO3 — it does NOT reimplement routing logic.
+
+**Specification:**
 
 ```python
-EXCEPTION_PATTERNS = [
-    (r"invalid_api_key", "AuthenticationError"),
-    (r"incorrect_api_key", "AuthenticationError"),
-    (r"rate_limit", "RateLimitError"),
-    (r"context_length", "ContextLengthExceededError"),
-    (r"model_not_found", "ModelNotFoundError"),
-    (r"content_filter", "ContentFilterError"),
-    # ... more patterns
+# quota_router/routing.py
+# Thin Python wrapper around Rust core router (RFC-0902)
+
+from typing import List, Dict, Optional
+
+class Router:
+    """
+    Python wrapper around Rust core router (RFC-0902).
+
+    Routing strategies, fallback mechanisms, provider state, health checking,
+    and rate limit enforcement are implemented in the Rust core. This class
+    provides the Python API surface and delegates to the Rust core via PyO3.
+
+    Routing strategies (from RFC-0902):
+        "simple-shuffle"     — Weighted random (rpm/tpm/weight) — recommended for production
+        "round-robin"        — Sequential rotation
+        "least-busy"          — Fewest active requests
+        "latency-based-routing" — Lowest rolling average latency
+        "cost-based-routing"  — Lowest cost per token (requires RFC-0904)
+        "usage-based-routing" — Lowest cumulative usage
+        "usage-based-routing-v2" — Usage weighted by recency
+        "weighted"            — Explicit per-provider weights (distinct from simple-shuffle)
+
+    Fallback mechanisms (from RFC-0902):
+        max_retries, retry_delay_ms, backoff_multiplier, max_backoff_ms
+        content_policy_fallbacks, context_window_fallbacks
+
+    Provider state (from RFC-0902):
+        active_requests, avg_latency_us, success_count, rpm/tpm limits
+
+    Reference: RFC-0902 §Routing Strategies, §Fallback Mechanisms, §Provider State
+    """
+
+    def __init__(
+        self,
+        model_list: List[Dict],
+        routing_strategy: str = "simple-shuffle",
+        cache_responses: bool = False,  # stoolap semantic cache (RFC-0913)
+        fallbacks: Optional[List[Dict]] = None,  # RFC-0902 fallback config
+        content_policy_fallbacks: Optional[Dict[str, str]] = None,  # model -> fallback_model
+        context_window_fallbacks: Optional[Dict[str, str]] = None,  # model -> larger_context_model
+        num_retries: Optional[int] = None,  # Override RFC-0902 max_retries
+        timeout: Optional[float] = None,
+        logger_fn: Optional[callable] = None,  # RFC-0905 logger
+        **kwargs,
+    ):
+        """
+        Initialize Router with model deployments.
+
+        Args:
+            model_list: List of {"model_name": "...", "litellm_params": {...}}
+            routing_strategy: RFC-0902 routing strategy (string)
+            cache_responses: Enable stoolap semantic cache (RFC-0913)
+            fallbacks: RFC-0902 fallback configuration
+            content_policy_fallbacks: Content policy error mapping
+            context_window_fallbacks: Context window error mapping
+            num_retries: Override RFC-0902's max_retries fallback config
+            timeout: Default request timeout
+            logger_fn: Optional callback for observability (RFC-0905)
+
+        Note:
+            Routing strategies, fallback mechanisms, provider state, health check,
+            and rate limit enforcement are handled by the Rust core per RFC-0902.
+            The Python Router does NOT reimplement these — it passes config to Rust.
+        """
+        self._router = rust_core.Router.new(
+            model_list=model_list,
+            routing_strategy=routing_strategy,
+            cache_responses=cache_responses,
+            fallbacks=fallbacks,
+            content_policy_fallbacks=content_policy_fallbacks,
+            context_window_fallbacks=context_window_fallbacks,
+            max_retries=num_retries,
+            timeout=timeout,
+            logger_fn=logger_fn,
+            **kwargs,
+        )
+
+    def completion(
+        self,
+        model: str,
+        messages: List[Dict],
+        **kwargs,
+    ) -> CompletionResponse:
+        """Delegate to Rust core router via PyO3."""
+        return self._router.completion(model, messages, **kwargs)
+
+    async def acompletion(
+        self,
+        model: str,
+        messages: List[Dict],
+        **kwargs,
+    ) -> CompletionResponse:
+        """Async delegate to Rust core router via PyO3."""
+        return await self._router.acompletion(model, messages, **kwargs)
+```
+
+**Note on `cache_responses`:** Uses **stoolap** (RFC-0913) semantic cache — NOT Redis. Stoolap is the sole persistence layer per RFC-0914. No `redis_url` parameter.
+
+#### Retry Logic
+
+**Severity: Medium**
+
+Per-call retry on transient failure. The retry algorithm (exponential backoff, jitter, retry conditions) is implemented in the **Rust core** per RFC-0902 §Fallback Mechanisms. The Python layer only defines the `num_retries` parameter interface.
+
+**Specification:**
+
+```python
+# Part of acompletion / completion / Router signature
+num_retries: Optional[int] = None,  # Override RFC-0902's max_retries fallback config
+
+# Python layer passes num_retries to Rust core which handles:
+# - Exponential backoff (backoff_multiplier)
+# - Retry delay (retry_delay_ms)
+# - Max backoff (max_backoff_ms)
+# - Retry on: RateLimitError, GatewayTimeoutError, UpstreamProviderError
+# Reference: RFC-0902 §Fallback Mechanisms
+
+# If None: uses RFC-0902's fallback config (max_retries: 3 default)
+# If set: overrides max_retries in Rust core's fallback logic for this call
+```
+
+**Fallback types (from RFC-0902):**
+
+| Type                       | Trigger                     | Description                                   |
+| -------------------------- | --------------------------- | --------------------------------------------- |
+| `fallbacks`                | All errors                  | Route to next model on failure                |
+| `content_policy_fallbacks` | ContentPolicyViolationError | Map to provider with different content policy |
+| `context_window_fallbacks` | ContextWindowExceededError  | Map to model with larger context              |
+
+Reference: RFC-0902 §Fallback Mechanisms
+
+#### Logger Function
+
+**Severity: Low**
+
+Custom logger callback for observability.
+
+**Specification:**
+
+```python
+# Part of completion / acompletion / Router signature
+logger_fn: Optional[Callable[[Dict], None]] = None
+
+# Called on each request:
+def log_request(request: Dict) -> None:
+    """Logs request details. Does NOT block the request."""
+    if logger_fn:
+        try:
+            logger_fn({
+                "model": request["model"],
+                "provider": request["provider"],
+                "tokens_used": request.get("usage", {}),
+                "latency_ms": request["latency_ms"],
+                "status": request.get("status"),
+                "error": request.get("error"),
+            })
+        except Exception:
+            pass  # Never block on logger errors
+```
+
+#### Exception Regex Mapping
+
+**Severity: Medium**
+
+any-llm provides unified exception mapping via regex patterns on upstream error messages. quota-router supports this via `QUOTA_ROUTER_UNIFIED_EXCEPTIONS=1`.
+
+**Specification:**
+
+```python
+# quota_router/exceptions.py
+
+import os
+import re
+
+UNIFIED_EXCEPTION_PATTERNS: list[tuple[str, str, type[QuotaRouterError]]] = [
+    # (regex, code, exception_type)
+    (r"invalid_api_key", "AUTH_ERROR", AuthenticationError),
+    (r"incorrect_api_key", "AUTH_ERROR", AuthenticationError),
+    (r"api_key not found", "MISSING_API_KEY", MissingApiKeyError),
+    (r"rate_limit", "RATE_LIMIT", RateLimitError),
+    (r"429", "RATE_LIMIT", RateLimitError),
+    (r"context_length", "CONTEXT_LENGTH", ContextLengthExceededError),
+    (r"maximum context length", "CONTEXT_LENGTH", ContextLengthExceededError),
+    (r"model_not_found", "MODEL_NOT_FOUND", ModelNotFoundError),
+    (r"model .* not found", "MODEL_NOT_FOUND", ModelNotFoundError),
+    (r"content_filter", "CONTENT_FILTER", ContentFilterError),
+    (r"content filtered", "CONTENT_FILTER", ContentFilterError),
+    (r"insufficient funds", "INSUFFICIENT_FUNDS", InsufficientFundsError),
+    (r"budget exceeded", "INSUFFICIENT_FUNDS", InsufficientFundsError),
+    (r"timeout", "GATEWAY_TIMEOUT", GatewayTimeoutError),
+    (r"502", "UPSTREAM_ERROR", UpstreamProviderError),
+    (r"503", "UPSTREAM_ERROR", UpstreamProviderError),
+    (r"504", "GATEWAY_TIMEOUT", GatewayTimeoutError),
+    (r"lengthfinishreason", "LENGTH_FINISH", LengthFinishReasonError),
+    (r"contentfilterfinishreason", "CONTENT_FILTER_FINISH", ContentFilterFinishReasonError),
 ]
+
+def map_upstream_exception(message: str, status_code: Optional[int] = None) -> QuotaRouterError:
+    """
+    Map an upstream provider exception to a quota-router exception.
+
+    Enabled when QUOTA_ROUTER_UNIFIED_EXCEPTIONS=1 (default: off for liteLLM mode,
+    on for any-llm mode).
+    """
+    for pattern, code, exc_type in UNIFIED_EXCEPTION_PATTERNS:
+        if re.search(pattern, message, re.IGNORECASE):
+            return exc_type(message, code)
+    # Default: wrap as ProviderError
+    return ProviderError(message, "UPSTREAM_ERROR", None)
 ```
 
-RFC-0920 should add an optional unified exception mapping mode for any-llm compatibility.
+#### Platform Provider (any-api Key Format)
 
-#### Platform Provider (any-api Style)
+**Severity: Medium**
 
-**Gap severity: Medium**
+any-llm supports `any-...` API keys that encode the provider internally. quota-router supports this via the `platform` pseudo-provider.
 
-any-llm supports a `PlatformProvider` that wraps any provider with an any-api format key (`any-...`). This allows generic API key handling for providers not explicitly supported.
+**Cross-reference:** Verify consistency with RFC-0917 Phase 3's platform provider concept. The platform provider here is any-llm-style; RFC-0917 Phase 3 may define a different platform integration pattern.
 
-RFC-0920 does not currently spec this. If needed, add:
+**Specification:**
 
 ```python
-class PlatformProvider:
-    """Wrapper for any-api format keys."""
-    def __init__(self, api_key: str, **kwargs):
-        # Parse any-... format, extract underlying provider
-        platform_key = PlatformKey(api_key=api_key)
-        self.provider = PROVIDER_MAP[platform_key.provider](**kwargs)
+# When set_api_key("platform", "any-ant-...") or api_key="any-ant-...":
+# Parse the any-... key to extract the actual provider and key
+
+ANY_KEY_PREFIX_RE = re.compile(r"^any-([a-z]+)-(.+)$")
+
+def parse_platform_key(api_key: str) -> tuple[str, str]:
+    """
+    Parse any-api format key.
+
+    Examples:
+        "any-ant-sk-..." -> ("anthropic", "sk-...")
+        "any-openai-sk-..." -> ("openai", "sk-...")
+        "any-mistral-..." -> ("mistral", "...")
+
+    Returns:
+        (provider_name, underlying_api_key)
+
+    Raises:
+        ValueError: If not a valid any-... key
+    """
+    m = ANY_KEY_PREFIX_RE.match(api_key)
+    if not m:
+        raise ValueError(f"Invalid any-api format: {api_key}")
+    return m.group(1), m.group(2)
+
+# In set_api_key() or api_key resolution:
+if api_key.startswith("any-"):
+    actual_provider, actual_key = parse_platform_key(api_key)
+    _set_key_for_provider(actual_provider, actual_key)
+    _platform_key_map[actual_provider] = "platform"  # Tag for metrics
 ```
+
+#### Timeout Parameter
+
+**Severity: Medium**
+
+**Specification:**
+
+```python
+# Part of completion / acompletion signature
+timeout: Optional[Union[float, str, httpx.Timeout]] = None
+
+# httpx.Timeout support:
+# - float: total timeout in seconds
+# - str: "30s", "1m", etc.
+# - httpx.Timeout: explicit connect/read/write/timeouts
+
+from httpx import Timeout
+
+# Examples:
+completion(model="gpt-4o", messages=[...], timeout=30.0)
+completion(model="gpt-4o", messages=[...], timeout="60s")
+completion(model="gpt-4o", messages=[...], timeout=Timeout(10.0, connect=5.0))
+
+# Default: provider-specific, typically 60s
+```
+
+#### Thinking Parameter (Anthropic Extended Thinking)
+
+**Severity: Medium**
+
+**Specification:**
+
+```python
+# Part of completion / acompletion signature
+thinking: Optional[Dict] = None
+
+# Schema:
+# {
+#     "type": "enabled" | "auto",
+#     "budget_tokens": int  # 1000-20000 for Claude 3.7
+# }
+
+# Example:
+acompletion(
+    model="anthropic:claude-3-7-sonnet-20250620",
+    messages=[...],
+    thinking={
+        "type": "enabled",
+        "budget_tokens": 10000,
+    },
+)
+# Maps to Anthropic API's thinking parameter
+```
+
+#### System Parameter (Anthropic Messages API)
+
+**Severity: Medium**
+
+**Specification:**
+
+```python
+# Part of messages() / amessages() signature
+system: Optional[Union[str, List[Dict]]] = None
+
+# Can be a string or list of content blocks:
+# string: "You are a helpful assistant."
+# list: [{"type": "text", "text": "..."}, {"type": "tool_use", ...}]
+
+# Maps to Anthropic messages API system parameter
+```
+
+#### Additional Parameters (Low Priority — Phase 4)
+
+These are documented here for completeness but specced in Phase 4:
+
+| Parameter                       | Source  | Spec Location |
+| ------------------------------- | ------- | ------------- |
+| `top_k`                         | any-llm | Phase 4       |
+| `truncation`                    | any-llm | Phase 4       |
+| `service_tier`                  | any-llm | Phase 4       |
+| `background`                    | any-llm | Phase 4       |
+| `safety_identifier`             | any-llm | Phase 4       |
+| `prompt_cache_key`              | any-llm | Phase 4       |
+| `prompt_cache_retention`        | any-llm | Phase 4       |
+| `conversation`                  | any-llm | Phase 4       |
+| `extra_headers`                 | litellm | Phase 4       |
+| `base_url`                      | litellm | Phase 4       |
+| `api_version`                   | litellm | Phase 4       |
+| `model_list`                    | litellm | Phase 4       |
+| `web_search_options`            | litellm | Phase 4       |
+| `modalities`                    | litellm | Phase 4       |
+| `audio`                         | litellm | Phase 4       |
+| `prediction`                    | litellm | Phase 4       |
+| `shared_session`                | litellm | Phase 4       |
+| `enable_json_schema_validation` | litellm | Phase 4       |
 
 ### Batch API Signature
 
@@ -969,19 +1395,21 @@ The SDK has **two incompatible API key handling modes** with different security 
 
 ### Phase 3: Enterprise Features
 
-- [ ] Router class with load balancing strategies
-- [ ] `batch_completion()` and `batch_completion_models()` (in-memory parallel batch)
+- [ ] Router class with load balancing strategies (6 strategies specced)
+- [ ] `batch_completion()` and `batch_completion_models()` (in-memory parallel batch — specced above)
 - [ ] Batch API (file-based)
 - [ ] Responses API
 - [ ] Messages API (with `system`, `top_k`, `truncation` support)
 - [ ] Budget/metrics APIs
 - [ ] `cache_responses` support via **stoolap** semantic cache (RFC-0913) — NOT Redis
-- [ ] `num_retries` per-call retry logic
-- [ ] `logger_fn` custom logger
-- [ ] Exception regex mapping mode (`ANY_LLM_UNIFIED_EXCEPTIONS=1`)
-- [ ] Platform provider (any-api key format)
+- [ ] `num_retries` per-call retry logic (specced above)
+- [ ] `logger_fn` custom logger (specced above)
+- [ ] Exception regex mapping mode (`QUOTA_ROUTER_UNIFIED_EXCEPTIONS=1` — specced above)
+- [ ] Platform provider (any-api key format — specced above)
+- [ ] `timeout` with httpx.Timeout support (specced above)
+- [ ] `thinking` parameter for Anthropic extended thinking (specced above)
 
-**Note:** `redis_url` is NOT applicable — stoolap (RFC-0912, RFC-0914) replaces Redis entirely as the persistence layer. Caching uses stoolap's WAL-based pub/sub semantic cache.
+**Note:** `redis_url` is NOT applicable — stoolap (RFC-0912, RFC-0914) replaces Redis entirely as the persistence layer. Caching uses stoolap's WAL-based pub/sub semantic cache per RFC-0913.
 
 ### Phase 4: Full LiteLLM Compatibility (Future)
 
@@ -1021,6 +1449,8 @@ This is the only approach that achieves true drop-in replacement for both ecosys
 
 | Version | Date       | Changes                                                                                                                                                                                                                                                                                                                                                                                                                               |
 | ------- | ---------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 1.4     | 2026-04-27 | Fix adversarial review v1.3 issues: C1 (Router now thin PyO3 wrapper delegating to RFC-0902 Rust core), C2 (num_retries now Python param only, references RFC-0902), C3 (added RFC-0913 to dependencies); I1/I2/I3/I4 (all 7 RFC-0902 strategies + fallback types now referenced); L1 (GIL note added to batch_completion), L3 (platform provider cross-ref to RFC-0917).                                                             |
+| 1.3     | 2026-04-27 | Replace gap analysis with actual specifications: async_iter_to_sync_iter() bridge, batch_completion() with ThreadPoolExecutor, Router 6 strategies, retry logic, logger_fn, exception regex mapping (QUOTA_ROUTER_UNIFIED_EXCEPTIONS=1), platform provider (any-api key format), timeout httpx.Timeout, thinking, system params. Phase 3 updated with all specced items.                                                              |
 | 1.2     | 2026-04-27 | Gap analysis vs any-llm/litellm: add missing completion params (timeout, thinking, system, etc.), streaming async bridge spec, batch_completion() spec, router strategies, exception mapping, platform provider. Phase 4 added for full LiteLLM compat. Provider count 41→42 (added deepinfra). Clarify redis_url=N/A (stoolap replaces Redis per RFC-0912/0914); cache_responses uses stoolap semantic cache per RFC-0913.           |
 | 1.1     | 2026-04-27 | Fix all adversarial review issues: C2 (security model docs), C3 (raise error not silent fallback), C4 (ambiguity detection), C5 (case-insensitive provider lookup); I1 (G1=<10ms), I2 (stream=None), I3 (list_models spec), I4 (typed CompletionResponse), I5 (session_label docs), I6 (client_args schema), I7 (error codes), I8 (GIL isolation); L1 (Phase 1 clarify), L2 (deployment mode), L3 (batch API), L4 (RFC-0904 required) |
 | 1.0     | 2026-04-27 | Initial draft                                                                                                                                                                                                                                                                                                                                                                                                                         |

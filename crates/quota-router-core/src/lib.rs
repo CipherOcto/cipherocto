@@ -9,6 +9,7 @@ pub mod fallback;
 pub mod key_rate_limiter;
 pub mod keys;
 pub mod middleware;
+pub mod pricing;
 pub mod providers;
 pub mod proxy;
 pub mod rate_limit;
@@ -31,6 +32,10 @@ pub use keys::{
     validate_request_id, KeyError,
 };
 pub use middleware::KeyMiddleware;
+pub use pricing::{
+    compute_cost, get_canonical_tokenizer, tokenizer_version_to_id, CostError, PricingRegistry,
+    PricingTable, RegistryError,
+};
 pub use schema::init_database;
 pub use storage::KeyStorage;
 pub use storage::StoolapKeyStorage;

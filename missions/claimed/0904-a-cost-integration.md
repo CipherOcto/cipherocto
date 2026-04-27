@@ -2,17 +2,15 @@
 
 ## Status
 
-Open
+Implemented (2026-04-27)
 
 ## RFC
 
-RFC-0904: Real-Time Cost Tracking
-
-**Note:** RFC-0904 is Draft, not Accepted. Mission created for planning and tracking purposes.
+RFC-0904: Real-Time Cost Tracking (Accepted v1.31)
 
 ## Dependencies
 
-- Mission: RFC-0910 Full Implementation (must complete first — `compute_cost` delegates to RFC-0910)
+- Mission: RFC-0910 Full Implementation ✅ Completed
 
 ## Summary
 
@@ -20,12 +18,12 @@ Update RFC-0904 code to match v1.29 spec: `compute_cost` should delegate to RFC-
 
 ## Acceptance Criteria
 
-- [ ] `compute_cost()` delegates to RFC-0910 canonical implementation (not own `saturating_mul/div`)
-- [ ] `CostError::Overflow` → `BudgetError::CostOverflow` conversion implemented
-- [ ] OCTO-W `deduct_octo_w(key_id: &[u8; 16], cost_amount: u64) -> Result<u64, StorageError>` implemented
-- [ ] `octo_w_balances` table schema defined in storage
-- [ ] `cargo clippy --all-targets --all-features -- -D warnings` passes with zero warnings
-- [ ] `cargo test --lib` passes
+- [x] `compute_cost()` delegates to RFC-0910 canonical implementation (not own `saturating_mul/div`)
+- [x] `CostError::Overflow` → `BudgetError::CostOverflow` conversion implemented
+- [x] OCTO-W `deduct_octo_w(key_id: &[u8; 16], cost_amount: u64) -> Result<u64, KeyError>` implemented
+- [x] `octo_w_balances` table schema defined in storage
+- [x] `cargo clippy --all-targets --all-features -- -D warnings` passes with zero warnings
+- [x] `cargo test --lib` passes (161 tests)
 
 ## Implementation Notes
 
@@ -42,7 +40,7 @@ pub fn compute_cost(...) -> Result<u64, BudgetError> {
 **OCTO-W balance DDL:**
 ```sql
 CREATE TABLE octo_w_balances (
-    key_id BLOB(16) PRIMARY KEY REFERENCES api_keys(key_id) ON DELETE CASCADE,
+    key_id TEXT NOT NULL UNIQUE,
     balance INTEGER NOT NULL DEFAULT 0,
     updated_at INTEGER NOT NULL
 );

@@ -54,6 +54,10 @@ pub trait KeyStorage: Send + Sync {
     /// Ensure a tokenizer version exists in the tokenizers table (on-demand population).
     fn ensure_tokenizer(&self, version: &str, provider: Option<&str>)
         -> Result<[u8; 16], KeyError>;
+
+    // OCTO-W balance operations (RFC-0904 F3)
+    fn get_octo_w_balance(&self, key_id: &str) -> Result<u64, KeyError>;
+    fn deduct_octo_w(&self, key_id: &str, cost_amount: u64) -> Result<u64, KeyError>;
 }
 
 pub struct StoolapKeyStorage {
@@ -945,6 +949,49 @@ impl KeyStorage for StoolapKeyStorage {
         }
 
         Ok(tokenizer_id)
+    }
+
+    fn get_octo_w_balance(&self, key_id: &str) -> Result<u64, KeyError> {
+        let rows = self
+            .db
+            .query(
+                "SELECT balance FROM octo_w_balances WHERE key_id = $1",
+                vec![key_id.into()],
+            )
+            .map_err(|e| KeyError::Storage(e.to_string()))?;
+
+        if let Some(Ok(row)) = rows.into_iter().next() {
+            let balance: i64 = row
+                .get_by_name("balance")
+                .map_err(|e| KeyError::Storage(e.to_string()))?;
+            Ok(balance as u64)
+        } else {
+            Ok(0) // No balance record = 0 (default)
+        }
+    }
+
+    fn deduct_octo_w(&self, key_id: &str, cost_amount: u64) -> Result<u64, KeyError> {
+        // Atomic deduction: UPDATE ... WHERE balance >= cost_amount
+        let rows_affected = self
+            .db
+            .execute(
+                "UPDATE octo_w_balances SET balance = balance - $2, updated_at = strftime('%s', 'now') WHERE key_id = $1 AND balance >= $2",
+                vec![key_id.into(), (cost_amount as i64).into()],
+            )
+            .map_err(|e| KeyError::Storage(e.to_string()))?;
+
+        if rows_affected == 0 {
+            // Check if it's insufficient balance or key not found
+            let current = self.get_octo_w_balance(key_id)?;
+            if current < cost_amount {
+                return Err(KeyError::Storage(format!(
+                    "Insufficient OCTO-W balance: have {}, need {}",
+                    current, cost_amount
+                )));
+            }
+        }
+        // Return new balance
+        self.get_octo_w_balance(key_id)
     }
 }
 

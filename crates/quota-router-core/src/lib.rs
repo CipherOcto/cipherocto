@@ -29,7 +29,7 @@ pub use keys::models::{
 pub use keys::{
     check_route_permission, check_team_key_limit, compute_event_id, compute_key_hash,
     encode_request_id, generate_key_id, generate_key_string, normalize_path, validate_key,
-    validate_request_id, KeyError,
+    validate_request_id, BudgetError, KeyError,
 };
 pub use middleware::KeyMiddleware;
 pub use pricing::{

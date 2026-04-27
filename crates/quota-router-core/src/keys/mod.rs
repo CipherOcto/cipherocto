@@ -1,7 +1,7 @@
 pub mod errors;
 pub mod models;
 
-pub use errors::KeyError;
+pub use errors::{BudgetError, KeyError};
 pub use models::{
     ApiKey, CreateTeamRequest, GenerateKeyRequest, GenerateKeyResponse, KeySpend, KeyType,
     KeyUpdates, MerkleNode, PricingModel, RevokeKeyRequest, SpendEvent, Team, TokenSource,
@@ -219,6 +219,22 @@ pub fn compute_cost(pricing: &PricingModel, input_tokens: u32, output_tokens: u3
     // saturating_add: single-request overflow is impossible (>1.8×10¹⁹ tokens required)
     // This differs from record_spend budget accumulation which uses checked arithmetic.
     prompt_cost.saturating_add(completion_cost)
+}
+
+/// Compute cost delegating to RFC-0910 canonical implementation.
+///
+/// Takes `&PricingTable` (RFC-0910 struct) and returns `Result<u64, BudgetError>`.
+/// Converts `CostError::Overflow` → `BudgetError::CostOverflow`.
+#[inline]
+pub fn compute_cost_from_pricing_table(
+    pricing: &crate::pricing::PricingTable,
+    input_tokens: u32,
+    output_tokens: u32,
+) -> Result<u64, BudgetError> {
+    crate::pricing::compute_cost(pricing, input_tokens, output_tokens)
+        .map_err(|e| match e {
+            crate::pricing::CostError::Overflow { .. } => BudgetError::CostOverflow,
+        })
 }
 
 /// Reconstruct per-key spend aggregates from an ordered slice of SpendEvents.

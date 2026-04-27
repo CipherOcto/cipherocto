@@ -32,6 +32,33 @@ impl Balance {
     }
 }
 
+// =============================================================================
+// OCTO-W Balance Functions (RFC-0904 F3)
+// =============================================================================
+
+use crate::keys::KeyError;
+
+/// Get the current OCTO-W balance for a key.
+/// Returns Ok(u64) with balance in micro-units, or storage error.
+pub fn get_octo_w_balance(
+    storage: &dyn crate::storage::KeyStorage,
+    key_id: &[u8; 16],
+) -> Result<u64, KeyError> {
+    let key_id_str = hex::encode(key_id);
+    storage.get_octo_w_balance(&key_id_str)
+}
+
+/// Deduct cost_amount from OCTO-W balance atomically.
+/// Returns Ok(new_balance) or error if insufficient or storage failure.
+pub fn deduct_octo_w(
+    storage: &dyn crate::storage::KeyStorage,
+    key_id: &[u8; 16],
+    cost_amount: u64,
+) -> Result<u64, KeyError> {
+    let key_id_str = hex::encode(key_id);
+    storage.deduct_octo_w(&key_id_str, cost_amount)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

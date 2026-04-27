@@ -177,6 +177,17 @@ pub fn init_database(db: &stoolap::Database) -> Result<(), KeyError> {
     )
     .map_err(|e| KeyError::Storage(e.to_string()))?;
 
+// RFC-0904/F3: OCTO-W balance table for fee-based budget enforcement.
+db.execute(
+    "CREATE TABLE IF NOT EXISTS octo_w_balances (
+        key_id TEXT NOT NULL UNIQUE,
+        balance INTEGER NOT NULL DEFAULT 0,
+        updated_at INTEGER NOT NULL
+    )",
+    [],
+)
+.map_err(|e| KeyError::Storage(e.to_string()))?;
+
     Ok(())
 }
 

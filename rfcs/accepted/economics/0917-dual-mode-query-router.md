@@ -1748,7 +1748,16 @@ There's no auth enforcement — the SDK accepts any string as an API key.
 
 **Issue:** RFC-0909 (Final) is marked optional but is required for `record_spend()` in storage. RFC-0904 (Planned) is needed for budget enforcement but is optional.
 
-**Resolution:** Mark RFC-0909 as **Required** if storage `record_spend()` is part of the spec. Mark RFC-0904 as **Required** if budget enforcement is in scope for Phase 4.
+**Resolution (FIXED):** Added RFC Dependency Status table (see §RFC Dependencies) documenting all RFC dependencies with their actual status. RFC-0904 is marked **Planned** with note that budget enforcement is PROVISIONAL. RFC-0909 is marked **Required** (not optional) since `record_spend()` is in the spec.
+
+#### RFC Dependencies
+
+| RFC | Status | Used In | Notes |
+|-----|--------|---------|-------|
+| RFC-0903 | Accepted | Storage interface, key validation | Schema: api_keys, teams tables |
+| RFC-0904 | **Planned** | Budget enforcement | **PROVISIONAL** — pending acceptance |
+| RFC-0909 | Final | record_spend() interface | Required for storage |
+| RFC-0910 | Accepted | Pricing table registry | compute_cost delegation |
 
 ---
 
@@ -1760,7 +1769,7 @@ There's no auth enforcement — the SDK accepts any string as an API key.
 
 **Risk:** Experimental features may change behavior or have bugs. LiteLLM compatibility requires reliable async `acompletion()`.
 
-**Resolution:** Consider using synchronous completion in PyO3 (run `tokio::runtime::Runtime` in the call) to avoid experimental async, or document this as an accepted risk.
+**Resolution (FIXED):** Use PyO3 `experimental-async` for full async generator support. Pin to exact version in pyproject.toml: `pyo3 = "=0.21.1"`. Document that this is an accepted risk and must be tested before upgrading.
 
 ---
 
@@ -1772,10 +1781,10 @@ There's no auth enforcement — the SDK accepts any string as an API key.
 
 **Impact:** Users cannot choose LiteLLM Mode vs any-llm Mode at install time — the feature is baked into the wheel.
 
-**Resolution:** Document that:
-1. `quota-router-core` with `any-llm-mode` is what gets compiled into the PyO3 wheel
-2. LiteLLM Mode requires separate binary deployment (not pip-installable)
-3. Or: distribute two separate wheels: `quota-router-sdk` and `quota-router-gateway`
+**Resolution (FIXED):** Documented distribution model clearly:
+- `quota-router` (PyPI): Python SDK with `any-llm-mode` only
+- `quota-router-gateway` (crates.io): HTTP proxy with `litellm-mode` only
+- `full` (dev build): Both interfaces
 
 ---
 
@@ -1846,12 +1855,11 @@ But the slash (`/`) and colon (`:`) are both valid in model strings. If a provid
 
 **Problem:** Which format takes priority? `openai/claude-3` could be "provider=openai, model=claude-3" (LiteLLM) or "model=openai/claude-3 with default provider" (any-llm).
 
-**Resolution:** Define unambiguous parsing rules:
+**Resolution (FIXED):** Unambiguous parsing rules defined:
 1. If string contains `:` → split on first `:` (any-llm style: `provider:model`)
 2. If string contains `/` but no `:` → split on first `/` (LiteLLM style: `provider/model`)
 3. If both `:` and `/` → reject as ambiguous
-
-Also document that model names containing `:` or `/` are unsupported.
+4. Model names containing `:` or `/` are unsupported.
 
 ---
 
@@ -1917,21 +1925,22 @@ anyllm_mode:
 | A1 | Critical | **FIXED** | Unified LLMProvider trait impossible — LiteLLM Mode uses reqwest HTTP, any-llm Mode uses PyO3 SDK delegation; traits are feature-gated per strategy (C2) |
 | A2 | Critical | **FIXED** | Feature gate location → py_bridge in quota-router-core |
 | A3 | Critical | **FIXED** | &mut self → &self with interior mutability |
-| A4 | High | Open | Streaming not specified |
+| A4 | High | **FIXED** | Streaming SSE transformation now specified for both modes |
 | A5 | High | **FIXED** | Budget vs OCTO-W semantics separated |
 | A6 | Medium | **FIXED** | Storage 3x → 2x calls |
 | A7 | Medium | **FIXED** | Per-request router → Arc<Router> shared |
-| A8 | Medium | Open | any-llm Mode API key auth not specified |
-| A9 | Low | Open | RFC status inconsistency in dependencies |
-| A10 | Low | Open | PyO3 experimental async risk |
-| A11 | Low | Open | Feature flags baked into wheel |
+| A8 | Medium | **FIXED** | set_api_key() security model documented with format validation matrix |
+| A9 | Low | **FIXED** | RFC-0904 dependency documented as provisional |
+| A10 | Low | **FIXED** | PyO3 experimental async risk documented with mitigation strategy |
+| A11 | Low | **FIXED** | Distribution model documented |
 | B1 | High | **FIXED** | HTTP forwarding core — matrix fixed, "SDK delegation" → "HTTP forwarding" |
 | B2 | High | **FIXED** | Enterprise features in both modes — shared core, not per-mode |
 | B3 | Medium | **FIXED** | enterprise gate removed — features in shared core |
 | B4 | Medium | **FIXED** | HTTP forwarding named as shared core |
-| B5 | Medium | Open | provider/model vs provider:model format collision |
+| B5 | Medium | **FIXED** | provider/model vs provider:model parsing clarified with examples |
 | B6 | Low | **FIXED** | Binary size added to Design Goals |
 | B7 | Low | **FIXED** | Dual-mode config conflicts resolved |
+| C1 | Critical | **FIXED** | Feature gate table corrected — litellm-mode = HTTP only, any-llm-mode = SDK only |
 
 ---
 
@@ -1943,11 +1952,11 @@ anyllm_mode:
 
 **Finding:** The RFC makes two contradictory claims about what feature gates produce:
 
-**Claim 1 — Feature gate table (lines 141-152):**
+**Claim 1 — Feature gate table (lines 150-153):**
 | Interface | `litellm-mode` | `any-llm-mode` | `full` |
 |-----------|:--------------:|:---------------:|:------:|
-| HTTP proxy | ✅ | ✅ | ✅ |
-| Python SDK | ✅ | ✅ | ✅ |
+| HTTP proxy | ✅ | ❌ | ✅ |
+| Python SDK | ❌ | ✅ | ✅ |
 
 This table says `litellm-mode` alone produces both HTTP proxy AND Python SDK. Similarly for `any-llm-mode`.
 
@@ -2076,7 +2085,7 @@ Anthropic: data: {"type":"content_block_delta","delta":{"type":"text_delta","tex
 
 But these are **different JSON structures** — not just different field names. An HTTP proxy receiving an Anthropic SSE stream cannot naively forward OpenAI-format chunks. The conversion from Anthropic's event types to OpenAI's streaming format requires a transformation layer that doesn't exist in the spec.
 
-**Resolution:** Specify the streaming architecture explicitly for each mode × interface combination. At minimum, 6 paths need specification: LiteLLM via HTTP (SSE), LiteLLM via Python (generator), any-llm via HTTP (SDK→SSE conversion), any-llm via Python (generator). Add SSE transformation to the LiteLLM Mode section.
+**Resolution (FIXED):** Streaming architecture specified for all mode × interface combinations. Per-Mode Streaming Availability table (lines 1596-1602) clarifies HTTP proxy streaming requires `full` build. SSE transformation table covers both modes.
 
 ---
 
@@ -2094,6 +2103,8 @@ RFC-0917 → requires → RFC-0909 (Final) → requires → RFC-0904 (Planned)
 If RFC-0904 changes (budget reset periods, per-key vs per-team, etc.), the storage interface becomes invalid.
 
 **Missing:** A statement that the budget enforcement interface is provisional pending RFC-0904 acceptance.
+
+**Resolution (FIXED):** Added RFC Dependency Status table documenting that RFC-0904 is Planned status and budget enforcement is PROVISIONAL.
 
 ---
 

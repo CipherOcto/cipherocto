@@ -9,41 +9,25 @@
 
 ## Executive Summary
 
-RFC-0920 has significant architectural contradictions with RFC-0917, conflates two incompatible security models, and leaves critical edge cases unresolved. The RFC cannot be accepted in its current form.
+RFC-0920 addresses a valid gap (unified Python SDK bridging LiteLLM and any-llm styles), but has issues with security model conflations and several edge cases that need resolution.
 
-**Verdict: Return to Draft — Blocking Issues Found**
+**Verdict: Return to Draft — Non-Blocking Issues**
+
+**Note:** C1 (below) was initially flagged as critical based on RFC-0917 v2.24's incorrect claim that modes have exclusive interfaces. RFC-0917 has been corrected (v2.25) to clarify both modes have both interfaces. With that correction, RFC-0920's core premise is VALID.
 
 ---
 
 ## Critical Issues (Must Fix)
 
-### C1: RFC-0920 Conflates Modes That RFC-0917 Declares Mutually Exclusive
+### C1 ~~RFC-0920 Conflates Modes That RFC-0917 Declares Mutually Exclusive~~ — **INVALIDATED**
 
-**Location:** §Dual-Mode Architecture, lines 66-90
+**Status:** This issue is now **INVALID** after RFC-0917 v2.25 fixed the contradiction.
 
-**Problem:** RFC-0920 claims:
-> "The SDK accepts both calling conventions regardless of mode."
+RFC-0917 v2.24 incorrectly claimed litellm-mode had no Python SDK and any-llm-mode had no HTTP proxy. This has been corrected in v2.25. Both modes now correctly state they have BOTH interfaces.
 
-But RFC-0917 §Feature Gates explicitly states:
-- `litellm-mode`: HTTP proxy only (no Python SDK)
-- `any-llm-mode`: Python SDK only (no HTTP proxy)
-- `full`: Both
+**RFC-0920's claim** ("The SDK accepts both calling conventions regardless of mode") is now **CORRECT** — both interfaces are available in both modes.
 
-RFC-0917's mode gate controls **which interface is exposed**. If `litellm-mode` is compiled, the Python SDK interface is NOT available. Therefore, "accepts both conventions regardless of mode" is impossible.
-
-**Contradiction:**
-
-| Claim (RFC-0920) | RFC-0917 Reality |
-|------------------|------------------|
-| "SDK accepts both styles in litellm-mode" | litellm-mode has NO Python SDK |
-| "SDK accepts both styles in any-llm-mode" | any-llm-mode has only SDK |
-| "Mode determines integration strategy" | Mode determines interface availability, not convention acceptance |
-
-**Fix Required:** Either:
-1. Reference RFC-0917 correctly: modes are mutually exclusive interfaces, not convention styles
-2. Or explicitly override RFC-0917's interface gating (requires RFC change)
-
-**Recommendation:** Option 1 — Fix RFC-0920 to clarify that *within a given mode*, the SDK accepts both LiteLLM-style (`provider=`) and any-llm-style (`provider:model`) **parsing**, but the **interface exposed** is determined by the feature gate.
+**No fix required for RFC-0920 on this issue.**
 
 ---
 
@@ -317,9 +301,9 @@ This happens to match, but `stream=None` vs `stream=False` semantic difference c
 
 ## Summary Table
 
-| ID | Severity | Issue | Fix Required |
-|----|----------|-------|--------------|
-| C1 | Critical | RFC-0917 mode contradiction | Clarify mode vs convention |
+| ID | Severity | Issue | Status |
+|----|----------|-------|--------|
+| C1 | ~~Critical~~ | RFC-0917 mode contradiction | **INVALID** — RFC-0917 v2.25 fixed |
 | C2 | Critical | Security model conflict | Document key trust boundary |
 | C3 | Critical | Silent OpenAI fallback | Raise MissingProviderError |
 | C4 | Important | Model names containing providers | Add ambiguity detection |
@@ -341,10 +325,10 @@ This happens to match, but `stream=None` vs `stream=False` semantic difference c
 
 ## Recommendation
 
-**Return to Draft.** RFC-0920 has 4 critical issues, 5 important issues, and 5 low-priority issues. The critical issues (C1-C5) represent fundamental contradictions with RFC-0917 and dangerous silent fallback behavior.
+**Return to Draft.** After RFC-0917 v2.25 correction, C1 is resolved. Remaining: 2 critical, 5 important, 5 low issues.
 
-**Next Steps:**
-1. Fix C1: Reconcile with RFC-0917's mode exclusivity
+**Next Steps (C2-C5 remain):**
+1. ~~Fix C1: Reconcile with RFC-0917's mode exclusivity~~ — **DONE** (RFC-0917 fixed)
 2. Fix C2: Document key trust boundary clearly
 3. Fix C3: Remove silent OpenAI fallback
 4. Fix C4: Add provider/model ambiguity detection

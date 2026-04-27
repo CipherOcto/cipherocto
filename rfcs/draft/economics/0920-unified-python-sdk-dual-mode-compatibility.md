@@ -21,12 +21,12 @@ Define a unified Python SDK via PyO3 that supports **both** LiteLLM-style API (s
 **Requires:**
 
 - RFC-0917: Dual-Mode Query Router (Accepted)
+- RFC-0904: Real-Time Cost Tracking (for `InsufficientFundsError`)
 
 **Optional:**
 
 - RFC-0902: Multi-Provider Routing and Load Balancing
 - RFC-0903: Virtual API Key System
-- RFC-0904: Real-Time Cost Tracking
 - RFC-0909: Deterministic Quota Accounting
 - RFC-0910: Pricing Table Registry
 
@@ -156,7 +156,7 @@ async def acompletion(
     max_tokens: Optional[int] = None,
     max_completion_tokens: Optional[int] = None,
     n: Optional[int] = None,
-    stream: Optional[bool] = False,
+    stream: Optional[bool] = None,  # None = sync response; True = streaming; matches LiteLLM behavior
     stream_options: Optional[Dict] = None,
     stop: Optional[Union[str, List[str]]] = None,
     presence_penalty: Optional[float] = None,
@@ -184,7 +184,7 @@ async def acompletion(
 
     # Remaining kwargs passed to provider
     **kwargs,
-) -> Dict[str, Any]:
+) -> CompletionResponse:
     """
     Unified completion supporting both LiteLLM and any-llm calling conventions.
 
@@ -229,25 +229,43 @@ def resolve_provider(
     if provider_param:
         return provider_param, model
 
-    # 2. Parse model string
+    # 2. Parse model string (case-insensitive provider lookup)
     if ":" in model:
         provider, model_name = model.split(":", 1)
-        if is_known_provider(provider):
-            return provider, model_name
+        provider_lower = provider.lower()
+        if is_known_provider(provider_lower):
+            # Ambiguity check: if model_name equals provider, warn
+            if model_name.lower() == provider_lower:
+                import warnings
+                warnings.warn(
+                    f"Ambiguous model string '{model}' — provider and model name are identical. "
+                    f"Assuming provider='{provider_lower}', model='{model_name}'. "
+                    f"To silence this, use explicit provider= parameter.",
+                    UserWarning,
+                    stacklevel=2,
+                )
+            return provider_lower, model_name
     if "/" in model:
         provider, model_name = model.split("/", 1)
-        if is_known_provider(provider):
-            return provider, model_name
+        provider_lower = provider.lower()
+        if is_known_provider(provider_lower):
+            # Ambiguity check
+            if model_name.lower() == provider_lower:
+                import warnings
+                warnings.warn(
+                    f"Ambiguous model string '{model}' — provider and model name are identical. "
+                    f"Assuming provider='{provider_lower}', model='{model_name}'.",
+                    UserWarning,
+                    stacklevel=2,
+                )
+            return provider_lower, model_name
 
-    # 3. Default provider
-    if deployment_mode == "litellm-mode":
-        return "openai", model  # LiteLLM default
-    elif deployment_mode == "any-llm-mode":
-        return "openai", model   # any-llm default
-    else:  # "full"
-        return "openai", model  # Default to OpenAI
-
-    raise MissingProviderError(f"Cannot determine provider for model: {model}")
+    # 3. No provider determined — raise error (NOT silent fallback)
+    raise MissingProviderError(
+        f"Cannot determine provider for model '{model}'. "
+        f"Use provider='<name>' parameter or prefix model with '<provider>:' (e.g., 'openai:gpt-4o'). "
+        f"Known providers: {', '.join(sorted(KNOWN_PROVIDERS))}"
+    )
 ```
 
 ### Supported Providers (41)
@@ -271,10 +289,36 @@ Matches LiteLLM exceptions + quota-router specifics:
 
 ```python
 # quota_router/exceptions.py
+
+# Error codes for programmatic handling (matching LiteLLM convention)
+ERROR_CODES = {
+    "AUTH_ERROR": "AuthenticationError",
+    "RATE_LIMIT": "RateLimitError",
+    "INVALID_REQUEST": "InvalidRequestError",
+    "PROVIDER_ERROR": "ProviderError",
+    "CONTENT_FILTER": "ContentFilterError",
+    "MODEL_NOT_FOUND": "ModelNotFoundError",
+    "CONTEXT_LENGTH": "ContextLengthExceededError",
+    "MISSING_API_KEY": "MissingApiKeyError",
+    "UNSUPPORTED_PROVIDER": "UnsupportedProviderError",
+    "UNSUPPORTED_PARAM": "UnsupportedParameterError",
+    "INSUFFICIENT_FUNDS": "InsufficientFundsError",
+    "UPSTREAM_ERROR": "UpstreamProviderError",
+    "GATEWAY_TIMEOUT": "GatewayTimeoutError",
+    "LENGTH_FINISH": "LengthFinishReasonError",
+    "CONTENT_FILTER_FINISH": "ContentFilterFinishReasonError",
+    "BATCH_NOT_COMPLETE": "BatchNotCompleteError",
+}
+
 class QuotaRouterError(Exception):
     """Base exception for all quota-router errors."""
-    provider: Optional[str]
-    code: str
+    code: str                          # Error code string
+    provider: Optional[str] = None     # Provider name if applicable
+
+    def __init__(self, message: str, code: str, provider: Optional[str] = None):
+        super().__init__(message)
+        self.code = code
+        self.provider = provider
 
 class AuthenticationError(QuotaRouterError):
     """Invalid or missing API key."""
@@ -388,6 +432,178 @@ response = router.completion(
 )
 ```
 
+### list_models() Signature
+
+```python
+def list_models(
+    provider: Optional[str] = None,
+    api_key: Optional[str] = None,
+    api_base: Optional[str] = None,
+    client_args: Optional[Dict] = None,
+) -> List[Model]:
+    """
+    List available models for a provider.
+
+    Args:
+        provider: Provider name (e.g., "openai", "anthropic"). If None, lists all
+                  providers' models.
+        api_key: Override API key for this call.
+        api_base: Override base URL for this call.
+        client_args: Additional provider-specific arguments.
+
+    Returns:
+        List of Model objects with fields: id, name, provider, created, description.
+
+    Raises:
+        MissingApiKeyError: If no API key available.
+        ProviderError: If provider API call fails.
+    """
+```
+
+### Model Response Type
+
+```python
+@dataclass
+class Model:
+    id: str           # Full model ID (e.g., "gpt-4o")
+    name: str         # Display name
+    provider: str      # Provider name (e.g., "openai")
+    created: Optional[int]  # Unix timestamp
+    description: Optional[str]
+    supports: Optional[Dict[str, bool]]  # Feature support flags
+
+### CompletionResponse Type
+
+```python
+@dataclass
+class CompletionResponse:
+    id: str                    # Unique response ID
+    provider: str              # Provider used (e.g., "openai")
+    model: str                 # Model used (e.g., "gpt-4o")
+    object: str = "chat.completion"  # OpenAI-compatible object type
+    created: int              # Unix timestamp
+    choices: List[Choice]     # Response choices
+    usage: Optional[Usage]   # Token usage statistics
+
+@dataclass
+class Choice:
+    index: int
+    message: Message         # Response message
+    finish_reason: str        # "stop", "length", "content_filter", etc.
+
+@dataclass
+class Message:
+    role: str                 # "assistant"
+    content: str              # Response content
+
+@dataclass
+class Usage:
+    prompt_tokens: int
+    completion_tokens: int
+    total_tokens: int
+```
+
+This matches OpenAI's chat completion response format for maximum compatibility.
+
+### session_label Handling
+
+`session_label: Optional[str] = None` is used for **metrics grouping and tracing**. It is:
+- Passed to the router's metrics system for correlation
+- **NOT** passed to provider SDKs (providers don't understand it)
+- Useful for grouping requests by user session or feature area
+
+### client_args Schema
+
+`client_args: Optional[Dict] = None` provides **provider-specific overrides**:
+
+```python
+client_args: {
+    "timeout": 30.0,           # Request timeout in seconds
+    "max_retries": 3,         # Retry count
+    "connection_pool_size": 10, # Connection pool size
+    # Provider-specific options passed through to SDK
+}
+```
+
+If `client_args` conflicts with `api_key` or `api_base`, `client_args` takes precedence for provider SDK initialization.
+
+### Batch API Signature
+
+The batch API supports **both** LiteLLM style (`input_file_path`) and any-llm style (`input_file_id`):
+
+```python
+def batch_create(
+    provider: str,
+    input_file: Union[str, Path],     # Local file path (LiteLLM style)
+    model: str,
+    endpoint: str = "/v1/chat/completions",
+    completion_window: str = "24h",
+    metadata: Optional[Dict] = None,
+    api_key: Optional[str] = None,
+    api_base: Optional[str] = None,
+) -> BatchCreateResponse:
+    """
+    Create a batch job.
+
+    Args:
+        provider: Provider name (e.g., "openai")
+        input_file: Path to JSONL file with requests, OR pre-existing file ID
+                   (if string starts with "file-", treated as file_id; otherwise as path)
+        model: Model to use
+        endpoint: API endpoint (default: /v1/chat/completions)
+        completion_window: Time window (default: "24h")
+        metadata: Optional metadata dict
+        api_key: Override API key
+        api_base: Override base URL
+
+    Returns:
+        BatchCreateResponse with batch_id, status, etc.
+    """
+
+@dataclass
+class BatchCreateResponse:
+    batch_id: str           # e.g., "batch_abc123"
+    status: str           # "validating", "in_progress", "completed", "failed"
+    endpoint: str
+    completion_window: str
+    created_at: int
+    expires_at: int
+    metadata: Optional[Dict]
+
+def batch_retrieve(
+    batch_id: str,
+    provider: str,
+    api_key: Optional[str] = None,
+    api_base: Optional[str] = None,
+) -> BatchRetrieveResponse:
+    """Get batch job status and results."""
+
+def batch_list(
+    provider: str,
+    after: Optional[str] = None,
+    limit: int = 20,
+    api_key: Optional[str] = None,
+    api_base: Optional[str] = None,
+) -> List[BatchCreateResponse]:
+    """List batch jobs for a provider."""
+
+def batch_cancel(
+    batch_id: str,
+    provider: str,
+    api_key: Optional[str] = None,
+    api_base: Optional[str] = None,
+) -> BatchCreateResponse:
+    """Cancel a batch job."""
+
+def batch_results(
+    batch_id: str,
+    provider: str,
+    api_key: Optional[str] = None,
+    api_base: Optional[str] = None,
+) -> List[BatchResultItem]:
+    """Retrieve batch results (after completion)."""
+```
+
 ## Feature Gate Architecture
 
 Per RFC-0917 §Rust Feature Gates:
@@ -400,12 +616,32 @@ any-llm-mode = ["pyo3/extension-module"]
 full = ["pyo3/extension-module"]  # Both modes
 
 # Per RFC-0917 §Rust Feature Gates:
-# - litellm-mode:  HTTP proxy only (hyper/axum compiled, py-o3 NOT for HTTP)
-#                  Python SDK with provider param, OpenAI-compatible interface
-# - any-llm-mode: Python SDK only (py-o3 compiled)
-#                  provider:model format, set_api_key() style
-# - full:         BOTH (both compiled)
+# - litellm-mode:  Uses reqwest (native Rust HTTP) to call providers
+# - any-llm-mode: Uses PyO3 (official Python SDKs) to call providers
+# - full:         Uses both reqwest AND PyO3 simultaneously
+# NOTE: Both HTTP proxy AND Python SDK interfaces are available in ALL modes.
 ```
+
+### Deployment Mode Selection
+
+Mode is selected at **build time** via Cargo feature flags:
+
+| Installation | Mode | Provider Strategy |
+|-------------|------|-----------------|
+| `pip install quota-router` (from PyPI, wheels) | `full` | Both (reqwest + PyO3) |
+| `cargo build --features litellm-mode` | `litellm-mode` | reqwest only |
+| `cargo build --features any-llm-mode` | `any-llm-mode` | PyO3 only |
+| `cargo build --features full` (default) | `full` | Both |
+
+**Runtime detection:** The SDK exposes `quota_router.get_deployment_mode()`:
+
+```python
+import quota_router
+mode = quota_router.get_deployment_mode()
+# Returns: "litellm-mode" | "any-llm-mode" | "full"
+```
+
+**API style is independent of mode:** Both `provider=...` and `provider:model` calling conventions work in all modes.
 
 ## Package Structure
 
@@ -433,7 +669,7 @@ litellm = sys.modules[__name__]  # Enables: import quota_router as litellm
 
 | Metric | Target | Notes |
 |--------|--------|-------|
-| Function call overhead | <5ms | PyO3 → Rust call latency |
+| Function call overhead | <10ms | PyO3 → Rust call latency (matches RFC-0908 G1) |
 | SDK import time | <100ms | Cold import |
 | Memory per provider | <10MB | Cached Python client |
 
@@ -459,9 +695,29 @@ pytest tests/test_anyllm_compat.py -v
 
 ## Security Considerations
 
+### API Key Trust Boundary
+
+The SDK has **two incompatible API key handling modes** with different security properties:
+
+| Aspect | `set_api_key()` (recommended) | `api_key=...` per-call |
+|--------|-------------------------------|------------------------|
+| Key storage | Rust memory (enforceable) | Goes directly to provider SDK |
+| Budget enforcement | Enforceable (Rust holds key) | **NOT enforceable** (SDK bypasses Rust) |
+| Virtual key (RFC-0903) | Enforceable | **NOT enforceable** |
+| Traceability | Key identity → Rust → Provider | Key identity → Provider directly |
+
+**Warning:** When using `api_key="sk-..."` per-call parameter, the key goes directly to the provider SDK. The Rust core never sees it. This means:
+- Budget enforcement (RFC-0904) is **bypassed**
+- Virtual key validation (RFC-0903) is **bypassed**
+- Spend recording uses the **default key**, not the per-call key
+
+**Recommendation:** Use `set_api_key()` for budget-aware deployments. Use `api_key=...` only for one-off calls where budget tracking is not needed.
+
+### General Security
+
 1. **API key handling**: Keys stored in memory only, never persisted
 2. **Environment variable fallback**: Standard env var pattern (`OPENAI_API_KEY`, etc.)
-3. **Provider isolation**: Each provider's SDK runs in separate PyO3 GIL boundary
+3. **Provider isolation**: Provider SDK calls are serialized through PyO3's GIL management (not parallel isolation)
 4. **Input validation**: All parameters validated before passing to provider SDK
 
 ## Comparison with RFC-0908
@@ -482,9 +738,11 @@ pytest tests/test_anyllm_compat.py -v
 
 - [ ] PyO3 Rust core with unified `acompletion()` signature
 - [ ] Provider resolution algorithm (both styles)
-- [ ] Exception hierarchy
-- [ ] OpenAI provider integration (real SDK calls)
+- [ ] Exception hierarchy with error codes
+- [ ] **Replace mock with real PyO3 SDK calls** — current `quota-router-pyo3` completion functions are mock stubs that echo messages
 - [ ] Basic test suite
+
+**Note:** Phase 1 MUST replace the current mock implementations with real provider SDK calls via PyO3.
 
 ### Phase 2: Full Provider Coverage
 
@@ -532,6 +790,7 @@ This is the only approach that achieves true drop-in replacement for both ecosys
 
 | Version | Date | Changes |
 |---------|------|---------|
+| 1.1 | 2026-04-27 | Fix all adversarial review issues: C2 (security model docs), C3 (raise error not silent fallback), C4 (ambiguity detection), C5 (case-insensitive provider lookup); I1 (G1=<10ms), I2 (stream=None), I3 (list_models spec), I4 (typed CompletionResponse), I5 (session_label docs), I6 (client_args schema), I7 (error codes), I8 (GIL isolation); L1 (Phase 1 clarify), L2 (deployment mode), L3 (batch API), L4 (RFC-0904 required) |
 | 1.0 | 2026-04-27 | Initial draft |
 
 ## Related RFCs

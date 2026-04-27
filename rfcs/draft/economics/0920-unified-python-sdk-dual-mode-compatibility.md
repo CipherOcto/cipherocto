@@ -675,14 +675,16 @@ def batch_completion(
 
 **Gap severity: High (implementation incomplete)**
 
-| Feature                         | litellm         | any-llm | RFC-0920   |
-| ------------------------------- | --------------- | ------- | ---------- |
-| Load balancing strategies       | ✅ 6 strategies | ❌      | ✅ Spec'd  |
-| `cache_responses`               | ✅              | ❌      | ❌ Missing |
-| `redis_url`                     | ✅              | ❌      | ❌ Missing |
-| `num_retries` per call          | ✅              | ❌      | ❌ Missing |
-| `logger_fn`                     | ✅              | ❌      | ❌ Missing |
-| `enable_json_schema_validation` | ✅              | ❌      | ❌ Missing |
+| Feature                         | litellm         | any-llm | RFC-0920                                   |
+| ------------------------------- | --------------- | ------- | ------------------------------------------ |
+| Load balancing strategies       | ✅ 6 strategies | ❌      | ✅ Spec'd                                  |
+| `cache_responses`               | ✅ (Redis)      | ❌      | ⚠️ Use stoolap (RFC-0913)                  |
+| `redis_url`                     | ✅              | ❌      | ❌ N/A — stoolap replaces Redis (RFC-0914) |
+| `num_retries` per call          | ✅              | ❌      | ❌ Missing                                 |
+| `logger_fn`                     | ✅              | ❌      | ❌ Missing                                 |
+| `enable_json_schema_validation` | ✅              | ❌      | ❌ Missing                                 |
+
+**Note on storage architecture:** liteLLM uses Redis for caching, pub/sub, and distributed locks. quota-router uses **stoolap** (RFC-0912, RFC-0913, RFC-0914) — an MVCC-based SQL database with WAL pub/sub that replaces Redis entirely. The `cache_responses` gap should be filled using stoolap's semantic cache (predicate subsumption, 300s TTL), NOT Redis. There is no `redis_url` parameter — stoolap is the sole persistence layer.
 
 **litellm routing strategies** (`litellm/router.py`):
 
@@ -973,12 +975,13 @@ The SDK has **two incompatible API key handling modes** with different security 
 - [ ] Responses API
 - [ ] Messages API (with `system`, `top_k`, `truncation` support)
 - [ ] Budget/metrics APIs
-- [ ] `cache_responses` support
-- [ ] `redis_url` for distributed caching
+- [ ] `cache_responses` support via **stoolap** semantic cache (RFC-0913) — NOT Redis
 - [ ] `num_retries` per-call retry logic
 - [ ] `logger_fn` custom logger
 - [ ] Exception regex mapping mode (`ANY_LLM_UNIFIED_EXCEPTIONS=1`)
 - [ ] Platform provider (any-api key format)
+
+**Note:** `redis_url` is NOT applicable — stoolap (RFC-0912, RFC-0914) replaces Redis entirely as the persistence layer. Caching uses stoolap's WAL-based pub/sub semantic cache.
 
 ### Phase 4: Full LiteLLM Compatibility (Future)
 
@@ -1018,7 +1021,7 @@ This is the only approach that achieves true drop-in replacement for both ecosys
 
 | Version | Date       | Changes                                                                                                                                                                                                                                                                                                                                                                                                                               |
 | ------- | ---------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| 1.2     | 2026-04-27 | Gap analysis vs any-llm/litellm: add missing completion params (timeout, thinking, system, etc.), streaming async bridge spec, batch_completion() spec, router strategies, exception mapping, platform provider. Phase 4 added for full LiteLLM compat. Provider count 41→42 (added deepinfra).                                                                                                                                       |
+| 1.2     | 2026-04-27 | Gap analysis vs any-llm/litellm: add missing completion params (timeout, thinking, system, etc.), streaming async bridge spec, batch_completion() spec, router strategies, exception mapping, platform provider. Phase 4 added for full LiteLLM compat. Provider count 41→42 (added deepinfra). Clarify redis_url=N/A (stoolap replaces Redis per RFC-0912/0914); cache_responses uses stoolap semantic cache per RFC-0913.           |
 | 1.1     | 2026-04-27 | Fix all adversarial review issues: C2 (security model docs), C3 (raise error not silent fallback), C4 (ambiguity detection), C5 (case-insensitive provider lookup); I1 (G1=<10ms), I2 (stream=None), I3 (list_models spec), I4 (typed CompletionResponse), I5 (session_label docs), I6 (client_args schema), I7 (error codes), I8 (GIL isolation); L1 (Phase 1 clarify), L2 (deployment mode), L3 (batch API), L4 (RFC-0904 required) |
 | 1.0     | 2026-04-27 | Initial draft                                                                                                                                                                                                                                                                                                                                                                                                                         |
 

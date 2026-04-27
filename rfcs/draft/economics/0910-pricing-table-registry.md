@@ -2,7 +2,7 @@
 
 ## Status
 
-Draft (v29)
+Draft (v30)
 
 ## Authors
 
@@ -756,7 +756,7 @@ CREATE TABLE tokenizer_assignments (
 | Error | Response | Recovery |
 |-------|----------|----------|
 | Unknown model | Return default tokenizer (cl100k_base) | Silent fallthrough; no warning logged |
-| Known model with uncertain assignment (gemini-*, o1-mini, o1-preview) | Return assigned tokenizer (cl100k_base or o200k_base) | Silent; no runtime warning logged — uncertainty is an implementation-time concern (see §Tokenizer Lookup Function Uncertain Assignments) |
+| Known model with uncertain assignment (gemini-*, o1-mini, o1-preview) | Return assigned tokenizer (cl100k_base or o200k_base) | **MUST emit `UnknownTokenizerAssignment` event at WARN level on first use per deployment instance**; uncertainty is an ops concern (see §Tokenizer Lookup Function Uncertain Assignments) |
 | Pricing table not found | Return `None` / `KeyError::NotFound` | Caller must handle; do not fall back |
 | Serialization failure | Panic | Fatal; indicates implementation bug |
 
@@ -1041,6 +1041,7 @@ This design allows the registry to be treated as a cache of known-good pricing s
 
 | Version | Date | Changes |
 |---------|------|---------|
+| v30 | 2026-04-27 | Round 42 remaining: fix X12 (UNCERTAIN models must emit UnknownTokenizerAssignment WARN event on first use per deployment); fix X1 (type alias guidance via metadata) |
 | v29 | 2026-04-27 | Round 42: fix X9 (Critical) — remove tokenizer_version_expiry from PricingTable struct (was 9th field, breaking compute_pricing_hash determinism); moved to metadata BTreeMap with key "tokenizer_version_expiry"; update verify_tokenizer() doc comment to note metadata inspection for expiry |
 | v28 | 2026-04-26 | Round 41: fix HI-03 (add tokenizer_version_expiry field to PricingTable; add verify_tokenizer() method to PricingRegistry for provider tokenizer verification) |
 | v27 | 2026-04-26 | Round 38: fix NEW-3 (compute_pricing_hash test vector: "independent implementation" → reference to `crates/quota-router-core/src/pricing.rs` test module); fix NEW-6 (o1-mini/o1-preview: Tokenizer Assignment Table changed from UNCERTAIN "verify with provider" to VERIFIED "o-series family uses o200k_base" per v22 correction; test vector updated accordingly) |

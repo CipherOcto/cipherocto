@@ -2,7 +2,7 @@
 
 ## Status
 
-Draft (v2.23)
+Draft (v2.24)
 
 ## Authors
 
@@ -581,8 +581,9 @@ pub async fn completion(
         .map_err(|e| PyErr::from(e))?;
 
     // Return as Python dict (OpenAI format)
-    // GIL is already held (py parameter) — no need to acquire it again
-    response.to_dict(py)
+    // In async functions, PyO3 0.21+ does NOT hold the GIL across .await points.
+    // Always use Python::with_gil(|py| ...) for Python object operations after the first .await.
+    Python::with_gil(|py| response.to_dict(py))
 }
 ```
 
@@ -606,6 +607,8 @@ pub struct Router {
     // - litellm-mode: HashMap<String, Arc<dyn native_http::HttpProvider>>
     // - any-llm-mode: HashMap<String, Arc<dyn py_providers::SdkProvider>>
     // - full: HashMap<String, ProviderHandle>
+    #[cfg(all(feature = "full", any(feature = "litellm-mode", feature = "any-llm-mode")))]
+    compile_error!("'full' feature is mutually exclusive with 'litellm-mode' and 'any-llm-mode'; use 'full-mode' alias or specify only one provider integration strategy");
     #[cfg(all(feature = "full", not(any(feature = "litellm-mode", feature = "any-llm-mode"))))]
     provider_impls: HashMap<String, ProviderHandle>,
     #[cfg(all(feature = "litellm-mode", not(feature = "full")))]
@@ -726,7 +729,15 @@ impl Router {
         Ok(response)
     }
 
-    /// Shared global router for SDK mode (PyO3 bridge)
+    /// Shared global router for SDK mode (PyO3 bridge).
+    ///
+    /// Returns `Arc<Self>` from a process-global `OnceLock` initialized at first call.
+    /// The HTTP gateway's `ROUTER` static ref IS `Router::global()` — they are the same singleton.
+    ///
+    /// **Initialization order:** Config MUST be loaded (from `config.yaml` or environment) before
+    /// `Router::global()` is called. The first caller initializes the singleton. Subsequent calls
+    /// return the already-initialized instance. Callers MUST NOT use the router before config
+    /// is loaded — doing so initializes with default/empty config.
     pub fn global() -> Arc<Self> { /* ... */ }
 }
 
@@ -2674,6 +2685,7 @@ In `full` builds, both modules are compiled simultaneously and selected at runti
 
 | Version | Date | Changes |
 |---------|------|---------|
+| 2.24 | 2026-04-27 | Round 42 remaining: fix X4 (PyO3 GIL release at .await points); fix X6 (compile_error! arm for mutually exclusive features); fix X11 (Router::global() init order + singleton identity) |
 | 2.23 | 2026-04-27 | Round 42: fix X7 (Critical) — add `.to_lowercase()` before `get_canonical_tokenizer` (tokenizer lookup is case-sensitive; uppercase model names fall through to wrong fallback) |
 | 2.22 | 2026-04-26 | Round 41: fix HI-04 (CostOverflow → HTTP 422, not 500 — deployment misconfiguration should not trigger retry); fix MD-04 (parse_model_string: use default_provider on unknown prefix, emit UnknownProviderPrefix WARN event; document dynamic KNOWN_PROVIDERS loading) |
 | 2.21 | 2026-04-26 | Round 39: fix R39-N1 (Phase 3 QuotaRouterError: replace PLANNED placeholder with FULL SPEC — complete enum definition, From implementations, HTTP status code mapping, Python exception class hierarchy) |

@@ -7,6 +7,7 @@ license.workspace = true
 
 [lib]
 crate-type = ["cdylib", "rlib"]
+name = "_quota_router"
 
 [dependencies]
 # PyO3 for Python bindings - using 0.21 with experimental async

@@ -29,11 +29,11 @@ Implement RFC-0910 Pricing Table Registry from scratch. Key components:
 - [x] Test vector passes: test table → `4a065c51147d4730379d600c4a491778b98f66a8e381c5dfdf51f42052c32f60`
 - [x] `get_canonical_tokenizer(model: &str) -> &'static str` — exact match + 4-char prefix fallback dispatch
 - [x] Tokenizer assignments: o1-mini → `tiktoken-o200k_base`, o1-preview → `tiktoken-o200k_base`
-- [x] `PricingTable` struct with `register()`, `get()`, `compute_pricing_hash()`
-- [x] `PricingRegistry` struct with versioned registration
+- [x] `PricingTable` struct with `register()`, `get_pricing()`, `compute_pricing_hash()`
+- [x] `PricingRegistry` struct with versioned registration (`get_version()`, `get_by_hash()`, `get_versions()`)
 - [x] `compute_cost()` function (canonical, receives `&PricingTable`)
 - [x] `cargo clippy --all-targets --all-features -- -D warnings` passes with zero warnings
-- [x] `cargo test --lib` passes (158 tests)
+- [x] `cargo test --lib` passes (161 tests)
 
 ## Implementation Notes
 

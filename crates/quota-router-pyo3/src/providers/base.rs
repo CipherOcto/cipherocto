@@ -1,8 +1,8 @@
 // Base provider trait and types for quota-router-pyo3
 // Inspired by any-llm's AnyLLM abstract base class
 
-use crate::types::{ChatCompletion, Message};
 use crate::exceptions::ProviderError;
+use crate::types::{ChatCompletion, Message};
 
 /// Provider feature flags
 #[derive(Debug, Clone)]
@@ -56,10 +56,18 @@ pub trait LLMProvider: Send + Sync {
     ) -> Result<ChatCompletion, ProviderError>;
 
     /// Make an embedding call
-    fn embedding(&self, input: &[String], model: &str) -> Result<crate::types::EmbeddingsResponse, ProviderError>;
+    fn embedding(
+        &self,
+        input: &[String],
+        model: &str,
+    ) -> Result<crate::types::EmbeddingsResponse, ProviderError>;
 
     /// Make an async embedding call
-    async fn aembedding(&self, input: &[String], model: &str) -> Result<crate::types::EmbeddingsResponse, ProviderError>;
+    async fn aembedding(
+        &self,
+        input: &[String],
+        model: &str,
+    ) -> Result<crate::types::EmbeddingsResponse, ProviderError>;
 }
 
 /// Static provider info - shared across all instances of a provider
@@ -113,14 +121,47 @@ impl Providers {
     /// List all supported provider names
     pub fn list_names() -> Vec<&'static str> {
         vec![
-            "openai", "anthropic", "mistral", "ollama", "gemini",
-            "azure", "azureopenai", "azureanthropic", "bedrock", "cerebras",
-            "cohere", "dashscope", "databricks", "deepseek", "fireworks",
-            "gateway", "groq", "huggingface", "inception", "llama",
-            "llamacpp", "llamafile", "lmstudio", "minimax", "moonshot",
-            "mzai", "nebius", "openrouter", "perplexity", "platform",
-            "portkey", "sagemaker", "sambanova", "together", "vertexai",
-            "vertexaianthropic", "vllm", "voyage", "watsonx", "xai", "zai",
+            "openai",
+            "anthropic",
+            "mistral",
+            "ollama",
+            "gemini",
+            "azure",
+            "azureopenai",
+            "azureanthropic",
+            "bedrock",
+            "cerebras",
+            "cohere",
+            "dashscope",
+            "databricks",
+            "deepseek",
+            "fireworks",
+            "gateway",
+            "groq",
+            "huggingface",
+            "inception",
+            "llama",
+            "llamacpp",
+            "llamafile",
+            "lmstudio",
+            "minimax",
+            "moonshot",
+            "mzai",
+            "nebius",
+            "openrouter",
+            "perplexity",
+            "platform",
+            "portkey",
+            "sagemaker",
+            "sambanova",
+            "together",
+            "vertexai",
+            "vertexaianthropic",
+            "vllm",
+            "voyage",
+            "watsonx",
+            "xai",
+            "zai",
         ]
     }
 }

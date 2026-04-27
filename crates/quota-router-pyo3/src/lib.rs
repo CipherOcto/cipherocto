@@ -70,8 +70,14 @@ fn quota_router(m: &PyModule) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(sdk::get_metrics, m)?)?;
 
     // Register provider functions
-    m.add_function(wrap_pyfunction!(providers::factory::get_supported_providers, m)?)?;
-    m.add_function(wrap_pyfunction!(providers::factory::is_provider_supported, m)?)?;
+    m.add_function(wrap_pyfunction!(
+        providers::factory::get_supported_providers,
+        m
+    )?)?;
+    m.add_function(wrap_pyfunction!(
+        providers::factory::is_provider_supported,
+        m
+    )?)?;
     m.add_function(wrap_pyfunction!(providers::factory::get_provider_info, m)?)?;
 
     Ok(())

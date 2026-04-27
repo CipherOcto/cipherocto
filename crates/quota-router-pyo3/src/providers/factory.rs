@@ -2,7 +2,7 @@
 // Handles dynamic provider lookup and instantiation
 
 use crate::exceptions::{ProviderError, UnsupportedProviderError};
-use crate::providers::base::{Providers, ProviderInfo};
+use crate::providers::base::{ProviderInfo, Providers};
 use once_cell::sync::Lazy;
 use pyo3::prelude::*;
 use std::collections::HashMap;
@@ -22,7 +22,10 @@ struct ProviderInstance {
 #[pyfunction]
 #[pyo3(name = "get_supported_providers")]
 pub fn get_supported_providers() -> Vec<String> {
-    Providers::list_names().into_iter().map(String::from).collect()
+    Providers::list_names()
+        .into_iter()
+        .map(String::from)
+        .collect()
 }
 
 /// Check if a provider is supported
@@ -36,10 +39,9 @@ pub fn is_provider_supported(provider: &str) -> bool {
 #[pyfunction]
 #[pyo3(name = "get_provider_info")]
 pub fn get_provider_info(provider: &str) -> PyResult<Py<PyAny>> {
-    let info = Providers::get(provider)
-        .ok_or_else(|| PyErr::new::<pyo3::exceptions::PyValueError, _>(
-            format!("Unknown provider: {}", provider),
-        ))?;
+    let info = Providers::get(provider).ok_or_else(|| {
+        PyErr::new::<pyo3::exceptions::PyValueError, _>(format!("Unknown provider: {}", provider))
+    })?;
 
     Python::with_gil(|py| {
         let dict = pyo3::types::PyDict::new(py);
@@ -51,7 +53,10 @@ pub fn get_provider_info(provider: &str) -> PyResult<Py<PyAny>> {
 
         let features = pyo3::types::PyDict::new(py);
         features.set_item("supports_completion", info.features.supports_completion)?;
-        features.set_item("supports_completion_streaming", info.features.supports_completion_streaming)?;
+        features.set_item(
+            "supports_completion_streaming",
+            info.features.supports_completion_streaming,
+        )?;
         features.set_item("supports_embedding", info.features.supports_embedding)?;
         features.set_item("supports_responses", info.features.supports_responses)?;
         features.set_item("supports_list_models", info.features.supports_list_models)?;
@@ -64,26 +69,30 @@ pub fn get_provider_info(provider: &str) -> PyResult<Py<PyAny>> {
 }
 
 /// Validate that a provider is supported
-pub fn validate_provider(provider: &str) -> Result<&'static ProviderInfo, UnsupportedProviderError> {
+pub fn validate_provider(
+    provider: &str,
+) -> Result<&'static ProviderInfo, UnsupportedProviderError> {
     Providers::get(provider).ok_or_else(|| {
-        UnsupportedProviderError::new(
-            format!("Unknown provider: {}", provider),
-            provider,
-        )
+        UnsupportedProviderError::new(format!("Unknown provider: {}", provider), provider)
     })
 }
 
 /// Resolve API key for a provider
 /// Priority: explicit key > environment variable
-pub fn resolve_api_key(provider_info: &ProviderInfo, explicit_key: Option<&str>) -> Result<String, ProviderError> {
+pub fn resolve_api_key(
+    provider_info: &ProviderInfo,
+    explicit_key: Option<&str>,
+) -> Result<String, ProviderError> {
     let key = if let Some(k) = explicit_key {
         k.to_string()
     } else if let Ok(env_val) = std::env::var(provider_info.env_api_key) {
         env_val
     } else {
         return Err(ProviderError::new(
-            format!("Missing API key for {}. Set {} environment variable or pass api_key parameter.",
-                provider_info.name, provider_info.env_api_key),
+            format!(
+                "Missing API key for {}. Set {} environment variable or pass api_key parameter.",
+                provider_info.name, provider_info.env_api_key
+            ),
             provider_info.name,
         ));
     };
@@ -99,7 +108,10 @@ pub fn resolve_api_key(provider_info: &ProviderInfo, explicit_key: Option<&str>)
 }
 
 /// Resolve API base URL for a provider
-pub fn resolve_api_base(provider_info: &ProviderInfo, explicit_base: Option<&str>) -> Option<String> {
+pub fn resolve_api_base(
+    provider_info: &ProviderInfo,
+    explicit_base: Option<&str>,
+) -> Option<String> {
     if let Some(base) = explicit_base {
         if !base.is_empty() {
             return Some(base.to_string());

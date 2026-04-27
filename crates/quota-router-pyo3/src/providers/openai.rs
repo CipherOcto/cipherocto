@@ -2,8 +2,8 @@
 // Calls OpenAI SDK via PyO3
 
 use crate::exceptions::ProviderError;
-use crate::providers::base::{ProviderFeatures, ProviderMetadata, LLMProvider};
-use crate::types::{ChatCompletion, Choice, EmbeddingsResponse, Embedding, Message};
+use crate::providers::base::{LLMProvider, ProviderFeatures, ProviderMetadata};
+use crate::types::{ChatCompletion, Choice, Embedding, EmbeddingsResponse, Message};
 use pyo3::prelude::*;
 use std::sync::Mutex;
 
@@ -43,9 +43,10 @@ impl OpenAIProvider {
 
     /// Initialize the OpenAI client using PyO3
     fn ensure_client(&self) -> Result<Py<PyAny>, ProviderError> {
-        let mut client_guard = self.client.lock().map_err(|e| {
-            ProviderError::new(format!("Lock error: {}", e), "openai")
-        })?;
+        let mut client_guard = self
+            .client
+            .lock()
+            .map_err(|e| ProviderError::new(format!("Lock error: {}", e), "openai"))?;
 
         if client_guard.is_some() {
             return Ok(client_guard.clone().unwrap());
@@ -56,19 +57,25 @@ impl OpenAIProvider {
         let api_base = self.api_base.lock().unwrap();
 
         Python::with_gil(|py| {
-            let openai = PyModule::import(py, "openai")
-                .map_err(|e| ProviderError::new(format!("Failed to import openai: {}", e), "openai"))?;
-
-            let async_openai_class = openai.getattr("AsyncOpenAI")
-                .map_err(|e| ProviderError::new(format!("Failed to get AsyncOpenAI: {}", e), "openai"))?;
-
-            let key = api_key.as_ref().ok_or_else(|| {
-                ProviderError::new("No API key set", "openai")
+            let openai = PyModule::import(py, "openai").map_err(|e| {
+                ProviderError::new(format!("Failed to import openai: {}", e), "openai")
             })?;
-            let base = api_base.as_ref().map(|s| s.as_str()).unwrap_or("https://api.openai.com/v1");
 
-            let client = async_openai_class.call1((key, base))
-                .map_err(|e| ProviderError::new(format!("Failed to create client: {}", e), "openai"))?;
+            let async_openai_class = openai.getattr("AsyncOpenAI").map_err(|e| {
+                ProviderError::new(format!("Failed to get AsyncOpenAI: {}", e), "openai")
+            })?;
+
+            let key = api_key
+                .as_ref()
+                .ok_or_else(|| ProviderError::new("No API key set", "openai"))?;
+            let base = api_base
+                .as_ref()
+                .map(|s| s.as_str())
+                .unwrap_or("https://api.openai.com/v1");
+
+            let client = async_openai_class.call1((key, base)).map_err(|e| {
+                ProviderError::new(format!("Failed to create client: {}", e), "openai")
+            })?;
 
             let client_py: Py<PyAny> = client.into();
             *client_guard = Some(client_py.clone());
@@ -90,11 +97,9 @@ impl LLMProvider for OpenAIProvider {
 
     fn check_packages(&self) -> Result<(), String> {
         // Check if OpenAI SDK is installed
-        Python::with_gil(|py| {
-            match PyModule::import(py, "openai") {
-                Ok(_) => Ok(()),
-                Err(e) => Err(format!("OpenAI package not installed: {}", e)),
-            }
+        Python::with_gil(|py| match PyModule::import(py, "openai") {
+            Ok(_) => Ok(()),
+            Err(e) => Err(format!("OpenAI package not installed: {}", e)),
         })
     }
 
@@ -135,7 +140,11 @@ impl LLMProvider for OpenAIProvider {
         self.completion(model, messages, false)
     }
 
-    fn embedding(&self, input: &[String], model: &str) -> Result<EmbeddingsResponse, ProviderError> {
+    fn embedding(
+        &self,
+        input: &[String],
+        model: &str,
+    ) -> Result<EmbeddingsResponse, ProviderError> {
         // Mock implementation
         let embeddings: Vec<Embedding> = input
             .iter()
@@ -149,7 +158,11 @@ impl LLMProvider for OpenAIProvider {
         Ok(EmbeddingsResponse::new(model, embeddings))
     }
 
-    async fn aembedding(&self, input: &[String], model: &str) -> Result<EmbeddingsResponse, ProviderError> {
+    async fn aembedding(
+        &self,
+        input: &[String],
+        model: &str,
+    ) -> Result<EmbeddingsResponse, ProviderError> {
         self.embedding(input, model)
     }
 }

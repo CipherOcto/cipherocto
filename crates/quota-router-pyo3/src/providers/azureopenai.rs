@@ -2,7 +2,7 @@
 // Calls azureopenai SDK via PyO3
 
 use crate::exceptions::ProviderError;
-use crate::providers::base::{ProviderFeatures, ProviderMetadata, LLMProvider};
+use crate::providers::base::{LLMProvider, ProviderFeatures, ProviderMetadata};
 use crate::types::{ChatCompletion, Choice, EmbeddingsResponse, Message};
 use pyo3::prelude::*;
 use std::sync::Mutex;
@@ -51,11 +51,9 @@ impl LLMProvider for AZUREOPENAIProvider {
     }
 
     fn check_packages(&self) -> Result<(), String> {
-        Python::with_gil(|py| {
-            match PyModule::import(py, "azureopenai") {
-                Ok(_) => Ok(()),
-                Err(e) => Err(format!("azureopenai package not installed: {}", e)),
-            }
+        Python::with_gil(|py| match PyModule::import(py, "azureopenai") {
+            Ok(_) => Ok(()),
+            Err(e) => Err(format!("azureopenai package not installed: {}", e)),
         })
     }
 
@@ -93,14 +91,22 @@ impl LLMProvider for AZUREOPENAIProvider {
         self.completion(model, messages, false)
     }
 
-    fn embedding(&self, _input: &[String], _model: &str) -> Result<EmbeddingsResponse, ProviderError> {
+    fn embedding(
+        &self,
+        _input: &[String],
+        _model: &str,
+    ) -> Result<EmbeddingsResponse, ProviderError> {
         Err(ProviderError::new(
             "azureopenai does not support embeddings",
             "azureopenai",
         ))
     }
 
-    async fn aembedding(&self, input: &[String], model: &str) -> Result<EmbeddingsResponse, ProviderError> {
+    async fn aembedding(
+        &self,
+        input: &[String],
+        model: &str,
+    ) -> Result<EmbeddingsResponse, ProviderError> {
         self.embedding(input, model)
     }
 }

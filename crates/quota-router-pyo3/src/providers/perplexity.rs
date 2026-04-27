@@ -2,7 +2,7 @@
 // Calls perplexity SDK via PyO3
 
 use crate::exceptions::ProviderError;
-use crate::providers::base::{ProviderFeatures, ProviderMetadata, LLMProvider};
+use crate::providers::base::{LLMProvider, ProviderFeatures, ProviderMetadata};
 use crate::types::{ChatCompletion, Choice, EmbeddingsResponse, Message};
 use pyo3::prelude::*;
 use std::sync::Mutex;
@@ -51,11 +51,9 @@ impl LLMProvider for PERPLEXITYProvider {
     }
 
     fn check_packages(&self) -> Result<(), String> {
-        Python::with_gil(|py| {
-            match PyModule::import(py, "perplexity") {
-                Ok(_) => Ok(()),
-                Err(e) => Err(format!("perplexity package not installed: {}", e)),
-            }
+        Python::with_gil(|py| match PyModule::import(py, "perplexity") {
+            Ok(_) => Ok(()),
+            Err(e) => Err(format!("perplexity package not installed: {}", e)),
         })
     }
 
@@ -93,14 +91,22 @@ impl LLMProvider for PERPLEXITYProvider {
         self.completion(model, messages, false)
     }
 
-    fn embedding(&self, _input: &[String], _model: &str) -> Result<EmbeddingsResponse, ProviderError> {
+    fn embedding(
+        &self,
+        _input: &[String],
+        _model: &str,
+    ) -> Result<EmbeddingsResponse, ProviderError> {
         Err(ProviderError::new(
             "perplexity does not support embeddings",
             "perplexity",
         ))
     }
 
-    async fn aembedding(&self, input: &[String], model: &str) -> Result<EmbeddingsResponse, ProviderError> {
+    async fn aembedding(
+        &self,
+        input: &[String],
+        model: &str,
+    ) -> Result<EmbeddingsResponse, ProviderError> {
         self.embedding(input, model)
     }
 }

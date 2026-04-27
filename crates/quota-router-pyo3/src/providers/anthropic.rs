@@ -2,7 +2,7 @@
 // Calls Anthropic SDK via PyO3
 
 use crate::exceptions::ProviderError;
-use crate::providers::base::{ProviderFeatures, ProviderMetadata, LLMProvider};
+use crate::providers::base::{LLMProvider, ProviderFeatures, ProviderMetadata};
 use crate::types::{ChatCompletion, Choice, Message};
 use pyo3::prelude::*;
 use std::sync::Mutex;
@@ -51,11 +51,9 @@ impl LLMProvider for AnthropicProvider {
     }
 
     fn check_packages(&self) -> Result<(), String> {
-        Python::with_gil(|py| {
-            match PyModule::import(py, "anthropic") {
-                Ok(_) => Ok(()),
-                Err(e) => Err(format!("Anthropic package not installed: {}", e)),
-            }
+        Python::with_gil(|py| match PyModule::import(py, "anthropic") {
+            Ok(_) => Ok(()),
+            Err(e) => Err(format!("Anthropic package not installed: {}", e)),
         })
     }
 
@@ -94,14 +92,22 @@ impl LLMProvider for AnthropicProvider {
         self.completion(model, messages, false)
     }
 
-    fn embedding(&self, _input: &[String], _model: &str) -> Result<crate::types::EmbeddingsResponse, ProviderError> {
+    fn embedding(
+        &self,
+        _input: &[String],
+        _model: &str,
+    ) -> Result<crate::types::EmbeddingsResponse, ProviderError> {
         Err(ProviderError::new(
             "Anthropic does not support embeddings",
             "anthropic",
         ))
     }
 
-    async fn aembedding(&self, input: &[String], model: &str) -> Result<crate::types::EmbeddingsResponse, ProviderError> {
+    async fn aembedding(
+        &self,
+        input: &[String],
+        model: &str,
+    ) -> Result<crate::types::EmbeddingsResponse, ProviderError> {
         self.embedding(input, model)
     }
 }

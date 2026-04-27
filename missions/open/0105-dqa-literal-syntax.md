@@ -6,7 +6,7 @@ Open
 
 ## RFC
 
-RFC-0105 v2.14 (Numeric): Deterministic Quant Arithmetic
+RFC-0105: Deterministic Quant Arithmetic
 
 ## Summary
 

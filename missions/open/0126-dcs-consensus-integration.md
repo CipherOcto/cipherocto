@@ -4,7 +4,7 @@
 Open
 
 ## RFC
-RFC-0126 v2.5.1 (Numeric): Deterministic Serialization
+RFC-0126: Deterministic Serialization
 
 ## Summary
 Integrate DCS with consensus: add gas constants, error codes, and ensure all DCS operations are registered in the consensus module.

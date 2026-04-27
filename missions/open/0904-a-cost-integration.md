@@ -6,7 +6,7 @@ Open
 
 ## RFC
 
-RFC-0904 v1.29 (Draft): Real-Time Cost Tracking
+RFC-0904: Real-Time Cost Tracking
 
 **Note:** RFC-0904 is Draft, not Accepted. Mission created for planning and tracking purposes.
 

@@ -1,4 +1,4 @@
-# Mission: RFC-0917 v2.21 Alignment — LatencyTracker u64 + QuotaRouterError
+# Mission: RFC-0917 Alignment — LatencyTracker u64 + QuotaRouterError
 
 ## Status
 
@@ -6,17 +6,17 @@ Open
 
 ## RFC
 
-RFC-0917 v2.21 (Draft): Dual-Mode Query Router
+RFC-0917: Dual-Mode Query Router
 
 **Note:** RFC-0917 is Draft, not Accepted. Mission created for planning and tracking purposes.
 
 ## Dependencies
 
-- Mission: RFC-0902 v1.3 Alignment (should complete first — shared routing types)
+- Mission: RFC-0902 Alignment (should complete first — shared routing types)
 
 ## Summary
 
-Align RFC-0917 implementation with RFC-0917 v2.21 changes:
+Align RFC-0917 implementation with current spec changes:
 1. Add `LatencyTracker` struct with u64 microseconds (integer, not f64)
 2. Phase 3 `QuotaRouterError` — fully specified (R2-5 resolved), Phase 3 PLANNED items documented
 
@@ -34,7 +34,7 @@ Align RFC-0917 implementation with RFC-0917 v2.21 changes:
 
 **File:** `crates/quota-router-core/src/router.rs`
 
-**LatencyTracker struct (RFC-0917 v2.21):**
+**LatencyTracker struct (RFC-0917):**
 ```rust
 const LATENCY_WINDOW_SIZE: usize = 100;
 struct LatencyTracker {

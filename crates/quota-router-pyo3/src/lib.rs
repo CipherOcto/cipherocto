@@ -5,6 +5,7 @@
 
 mod completion;
 mod exceptions;
+mod model;
 mod types;
 
 use pyo3::prelude::*;
@@ -55,6 +56,10 @@ fn quota_router(m: &PyModule) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(completion::acancel_batch, m)?)?;
     m.add_function(wrap_pyfunction!(completion::alist_batches, m)?)?;
     m.add_function(wrap_pyfunction!(completion::aretrieve_batch_results, m)?)?;
+
+    // Register model parsing functions
+    m.add_function(wrap_pyfunction!(model::parse_model, m)?)?;
+    m.add_function(wrap_pyfunction!(model::parse_model_strict, m)?)?;
 
     Ok(())
 }

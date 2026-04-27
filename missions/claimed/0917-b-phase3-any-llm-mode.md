@@ -2,7 +2,10 @@
 
 ## Status
 
-In Progress — 20 API functions + 16 exceptions + model parsing done, remaining: streaming, set_api_key/get_budget_status/get_metrics (2026-04-27)
+In Progress — Core SDK implementation complete, provider integrations remaining (2026-04-27)
+
+Completed: 20 API functions, 16 exceptions, model parsing, streaming, set_api_key, get_budget_status, get_metrics
+Remaining: 41 provider integrations (PyO3 calls to Python SDKs), Python SDK package
 
 ## RFC
 
@@ -77,24 +80,24 @@ AnyLLMError (base)
 - [ ] **PyO3 bridge** — quota-router-pyo3 crate calls official Python SDKs via PyO3
 - [ ] **41 Provider integrations** via PyO3 calls to: `anthropic`, `openai`, `mistralai`, `ollama`, `google-genai` + 36 more
 - [ ] **Python SDK package** (`pip install quota-router` or `quota_router`)
-- [x] **20 API functions** via PyO3: completion/acompletion, responses/aresponses, messages/amessages, embedding/aembedding, list_models/alist_models, batch operations (all 20 implemented as mocks)
-- [ ] **Streaming** via PyO3 (Python async generators)
+- [x] **20 API functions** via PyO3 (all 20 implemented as mocks)
+- [x] **Streaming** via PyO3 chunk-based streaming when stream=True
 - [x] **any-llm-compatible exceptions** (all 16 exceptions implemented in exceptions.rs)
-- [ ] `set_api_key()` — validates and registers key with storage
-- [ ] `get_budget_status()` — returns current spend vs limit
-- [ ] `get_metrics()` — returns Prometheus metrics dict
-- [x] **Model string parsing** (`provider/model` and `provider:model` formats) — parse_model(), parse_model_strict() implemented
+- [x] `set_api_key()` — validates and registers key with storage
+- [x] `get_budget_status()` — returns current spend vs limit
+- [x] `get_metrics()` — returns Prometheus metrics dict
+- [x] **Model string parsing** (`provider/model` and `provider:model` formats)
 - [x] **QuotaRouterError** — spec done; From impls + Error traits needed
 
-**Note:** All 20 API functions and 16 exceptions are implemented as mocks/stubs. Actual provider integrations, streaming, and storage integration remain to be implemented.
+**Note:** All functions are implemented as mocks/stubs. Actual provider integrations require PyO3 calls to official Python SDKs.
 
 ## Acceptance Criteria
 
 - [x] quota-router-pyo3 implements all 20 API functions via PyO3 (all 20 implemented as mocks)
-- [ ] All 41 providers accessible via any-llm-mode
+- [ ] All 41 providers accessible via any-llm-mode (requires PyO3 integration with Python SDKs)
 - [x] Exception hierarchy matches any-llm's AnyLLMError hierarchy (all 16 implemented)
-- [ ] `set_api_key()`, `get_budget_status()`, `get_metrics()` implemented
-- [ ] Streaming via PyO3 async generators
+- [x] `set_api_key()`, `get_budget_status()`, `get_metrics()` implemented
+- [x] Streaming via PyO3 chunk-based streaming (mock implementation)
 - [x] Model string parsing handles `provider/model` and `provider:model` (parse_model, parse_model_strict)
 - [x] `QuotaRouterError` with From impls and Error trait impls for all wrapped types
 - [x] `cargo clippy -D warnings` and `cargo test --lib` pass

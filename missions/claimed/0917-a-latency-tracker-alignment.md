@@ -2,7 +2,7 @@
 
 ## Status
 
-Completed (2026-04-27)
+In Progress — RFC-0917 audit found incomplete items (2026-04-27)
 
 ## RFC
 
@@ -21,13 +21,14 @@ Align RFC-0917 implementation with current spec changes:
 ## Acceptance Criteria
 
 - [x] `LatencyTracker` struct added with `record(provider: &str, latency_us: u64)` and `best_provider() -> Option<&str>` using integer u64 microseconds
-- [x] Feature gate compile_error documented in code comments (feature flags deferred to Phase 2)
-- [x] RouterError enum defined explicitly in RFC-0917 — already exists in `fallback.rs` (RateLimit, ProviderUnavailable, AuthError, ContentPolicyViolation, ContextWindowExceeded, Timeout, Unknown)
 - [x] A3 Router struct marked as non-normative pseudocode in code comments (RFC-0917)
+- [x] RouterError enum defined explicitly in RFC-0917 — already exists in `fallback.rs` (RateLimit, ProviderUnavailable, AuthError, ContentPolicyViolation, ContextWindowExceeded, Timeout, Unknown)
 - [x] `cargo clippy --all-targets --all-features -- -D warnings` passes with zero warnings
 - [x] `cargo test --lib` passes (161 tests)
+- [ ] **MISSING:** `QuotaRouterError` unified error type (wraps KeyError, BudgetError, RouterError, RegistryError, StorageError + ProviderError variant)
+- [ ] **MISSING:** Feature gate compile_error (requires litellm-mode/any-llm-mode/full features in Cargo.toml)
 
-**Note:** Phase 3 items (SpendEvent construction, full feature gates) are PLANNED per RFC-0917 §Phase 3.
+**Note:** Phase 3 items (PyO3 bridge, Provider SDK integrations, Python SDK interface, streaming, etc.) are PLANNED per RFC-0917 §Phase 3 — not yet due.
 
 ## Implementation Notes
 

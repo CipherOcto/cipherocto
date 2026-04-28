@@ -2,7 +2,7 @@
 
 ## Status
 
-Draft (v1.24 — 2026-04-28)
+Draft (v1.25 — 2026-04-28)
 
 **ARCHITECTURAL CONSTRAINT: HTTP proxy is FOREVER in BOTH litellm-mode and any-llm-mode. See section below.**
 
@@ -926,10 +926,11 @@ This section documents gaps between RFC-0920 and the reference implementations (
 | `truncation`             | `str`         | Cohere truncation strategy         | §Truncation          |
 | `service_tier`           | `str`         | Azure OpenAI service tier          | §Service Tier        |
 | `background`             | `bool`        | Run request in background          | §Background Requests |
-| `safety_identifier`      | `str`         | Content safety category            | §Safety Identifier   |
 | `prompt_cache_key`       | `str`         | Prompt caching key                 | §Prompt Cache        |
 | `prompt_cache_retention` | `str`         | Prompt cache TTL                   | §Prompt Cache        |
 | `conversation`           | `str`         | Conversation ID for continuity     | §Conversation        |
+
+Note: `safety_identifier` is NOT in this table — it IS specced in RFC-0920 (present in sync completion signature, Phase 3).
 
 #### Sync Streaming — Async Iterator Bridge
 
@@ -1976,6 +1977,8 @@ The Router's `num_retries` controls the **fallback loop** (trying different depl
 
 Reference: RFC-0902 §Fallback Mechanisms
 
+**Note on single-target fallbacks:** `context_window_fallbacks` and `content_policy_fallbacks` are single-target — they map a model to exactly one fallback. If the fallback itself suffers from the same error (e.g., context length exceeded), it will be retried repeatedly until `num_retries` is exhausted. For resilience, provide multiple candidates in the generic `fallbacks` list rather than relying on single-target fallbacks for error types that may affect the fallback itself.
+
 #### Logger Function
 
 **Severity: Low**
@@ -2626,6 +2629,7 @@ This is the only approach that achieves true drop-in replacement for both ecosys
 
 | Version | Date       | Changes |
 | ------- | ---------- | ------- |
+| 1.25    | 2026-04-28 | Fix external adversarial review round 7: Observation 1 (cleaned get_budget_status docstring), Observation 2 (safety_identifier removed from any-llm-not-specced table, documented as Phase 3), Observation 3 (added note on single-target fallback behavior and resilience recommendation). |
 | 1.24    | 2026-04-28 | Fix external adversarial review round 6: C6-1 (corrected HTTP proxy embedding — Python IS embedded via PyO3 in Rust core, proxy delegates to core), CH-6 (Router now explicitly sets num_retries=1 in call_kwargs when fallbacks configured — mandatory, not recommended), CM-9 (added GIL management design for concurrent HTTP requests), L11 (ignored — rebuttal: emphatic language is appropriate for critical constraints). |
 | 1.23    | 2026-04-28 | Fix external adversarial review round 5: C5-2 (fallback_idx now local per-request variable, not persisted), C5-3 (last_error stored before continue, raises meaningful error if all fallbacks exhausted), CM-7 (Rust FallbackExecutor coordination now REQUIRED max_retries=1 when fallbacks configured), CM-8 (fallback list iterates once without wrapping), L9 (clarified "DIRECTLY" — proxy calls Rust core which may internally use PyO3), L10 (is_known_provider cross-reference added). |
 | 1.22    | 2026-04-28 | 🚨 MASSIVE RED FLAG 🚨 HTTP proxy is FOREVER in BOTH litellm-mode and any-llm-mode. #1 architectural constraint. Flooded throughout RFC to prevent future incorrect claims. |

@@ -2,7 +2,7 @@
 
 ## Status
 
-Draft (v1.13 — 2026-04-28)
+Draft (v1.14 — 2026-04-28)
 
 ## Authors
 
@@ -231,6 +231,7 @@ async def acompletion(
     # API credentials (override env vars)
     api_key: Optional[str] = None,
     api_base: Optional[str] = None,
+    base_url: Optional[str] = None,  # Alias for api_base (LiteLLM compat)
 
     # Completion parameters
     temperature: Optional[float] = None,
@@ -2333,6 +2334,7 @@ This is the only approach that achieves true drop-in replacement for both ecosys
 
 | Version | Date       | Changes |
 | ------- | ---------- | ------- |
+| 1.14    | 2026-04-28 | Fix adversarial review v1.13 issue: I1 (base_url added to acompletion() signature as alias for api_base, matching sync completion). |
 | 1.13    | 2026-04-28 | Fix adversarial review v1.12 issues: I1 (extra_headers added to acompletion() signature), I2 (response_format now supports Type[Any] for Pydantic BaseModel types). |
 | 1.12    | 2026-04-28 | Fix adversarial review v1.11 issues: I1 (enable_json_schema_validation added to both signatures), I2 (shared_session added to both signatures), I3 (web_search_options added to both signatures), L1 (streaming spec added response_format), L2 (reasoning_effort default changed from "auto" to None to match LiteLLM, with full enum values listed). |
 | 1.11    | 2026-04-28 | Fix adversarial review v1.10 issues: I1 (thinking is structured Dict, not string alias for reasoning_effort), I4 (UnsupportedProviderError added provider_key + supported_providers attrs), I5 (Phase 2 timeout item marked DONE). |

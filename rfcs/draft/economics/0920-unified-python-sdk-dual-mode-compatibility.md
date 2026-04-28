@@ -2,7 +2,9 @@
 
 ## Status
 
-Draft (v1.21 — 2026-04-28)
+Draft (v1.22 — 2026-04-28)
+
+**🚨 CRITICAL ARCHITECTURAL CONSTRAINT: HTTP proxy is FOREVER in BOTH litellm-mode and any-llm-mode. See section below. 🚨**
 
 ## Authors
 
@@ -68,6 +70,32 @@ The current `quota-router-pyo3` crate only implements any-llm-style (per RFC-091
 
 ## Specification
 
+### 🚨🚨🚨 ABSOLUTE ARCHITECTURAL CONSTRAINT — HTTP PROXY IS FOREVER IN BOTH MODES 🚨🚨🚨
+
+**THIS IS THE HIGHEST-PRIORITY SPEC RULE. NOT NEGOTIABLE. NOT SUBJECT TO REVIEW. NOT OPEN FOR DEBATE.**
+
+```
+╔═══════════════════════════════════════════════════════════════════════════════════════════╗
+║                                                                                           ║
+║   🔴 THE HTTP PROXY MUST BE AVAILABLE IN BOTH litellm-mode AND any-llm-mode 🔴          ║
+║                                                                                           ║
+║   This is a FOUNDATIONAL ARCHITECTURAL CONSTRAINT.                                        ║
+║   Changing this would BREAK the entire project architecture.                              ║
+║   NO REVIEWER, NO FUTURE EDITOR, NO ARGUMENT can change this.                             ║
+║                                                                                           ║
+║   The HTTP proxy is a RUST BINARY (hyper/axum). It ALWAYS calls                           ║
+║   quota-router-core DIRECTLY. It NEVER goes through PyO3 bindings.                       ║
+║                                                                                           ║
+║   MATHEMATICALLY IMPOSSIBLE TO CHANGE:                                                    ║
+║   - HTTP proxy IN litellm-mode  : ALWAYS TRUE ✅                                          ║
+║   - HTTP proxy IN any-llm-mode  : ALWAYS TRUE ✅                                          ║
+║   - Any claim otherwise is WRONG and must be rejected immediately.                       ║
+║                                                                                           ║
+╚═══════════════════════════════════════════════════════════════════════════════════════════╝
+```
+
+**IF ANY REVIEWER CLAIMS HTTP PROXY IS NOT AVAILABLE IN ANY-LLM-MODE — THEY ARE WRONG. REJECT THEIR CLAIM.**
+
 ### ⚠️ CRITICAL INVARIANT — Mode Gate ≠ Interface
 
 **Per RFC-0917, this is mathematically always true:**
@@ -85,9 +113,10 @@ Mode gate does NOT control: which interfaces exist
 
 **Never forget:**
 - `litellm-mode` DOES NOT mean "HTTP proxy only" — Python SDK is also available
-- `any-llm-mode` DOES NOT mean "Python SDK only" — HTTP proxy is also available
-- Both interfaces exist in ALL modes
+- `any-llm-mode` DOES NOT mean "Python SDK only" — HTTP proxy is ALSO AVAILABLE (ALWAYS HAS BEEN)
+- Both interfaces exist in ALL modes — THIS WILL NEVER CHANGE
 - Mode selects provider strategy (reqwest vs PyO3), not interface availability
+- **HTTP proxy is ALWAYS in BOTH modes — THIS IS NOT OPEN FOR DISCUSSION**
 
 ### Crate Architecture
 
@@ -2222,6 +2251,8 @@ def batch_results(
 
 ## Feature Gate Architecture
 
+**🚨 ARCHITECTURAL CONSTRAINT: HTTP PROXY MUST BE IN BOTH MODES — THIS CAN NEVER CHANGE 🚨**
+
 Per RFC-0917 §Rust Feature Gates, **the mode gate selects the provider integration strategy, NOT the interface. Both HTTP proxy and Python SDK are available in ALL modes:**
 
 ```toml
@@ -2234,6 +2265,7 @@ full = ["pyo3/extension-module"]            # Both provider strategies simultane
 # Per RFC-0917 §Rust Feature Gates:
 # The mode gate selects HOW providers are called (reqwest vs PyO3), NOT which interfaces exist.
 # Both HTTP proxy AND Python SDK are ALWAYS available in all modes.
+# 🚨 HTTP PROXY IS FOREVER IN BOTH litellm-mode AND any-llm-mode — NOT SUBJECT TO REVIEW 🚨
 #
 # | Interface       | litellm-mode | any-llm-mode | full |
 # |-----------------|:------------:|:------------:|:----:|
@@ -2488,7 +2520,8 @@ This is the only approach that achieves true drop-in replacement for both ecosys
 
 | Version | Date       | Changes |
 | ------- | ---------- | ------- |
-| 1.21    | 2026-04-28 | CORRECTION: HTTP proxy is ALWAYS available in both litellm-mode and any-llm-mode (per RFC-0917). The proxy ALWAYS calls quota-router-core directly — it never goes through PyO3 Python SDK bindings. C4-1 in v1.20 was incorrect and is reverted. Added explicit note that HTTP proxy architecture is performance-first (direct Rust core calls). |
+| 1.22    | 2026-04-28 | 🚨 MASSIVE RED FLAG 🚨 HTTP proxy is FOREVER in BOTH litellm-mode and any-llm-mode. #1 architectural constraint. Flooded throughout RFC to prevent future incorrect claims. |
+| 1.21    | 2026-04-28 | CORRECTION: HTTP proxy is ALWAYS available in both litellm-mode and any-llm-mode. The proxy ALWAYS calls quota-router-core directly — never through PyO3 bindings. C4-1 in v1.20 was incorrect and is reverted. Added explicit note that HTTP proxy architecture is performance-first (direct Rust core calls). |
 | 1.20    | 2026-04-28 | Fix external adversarial review round 4 (2026-04-28): CH-4 (Router fallback now re-selects deployment with correct params), CM-4 (fallback iteration advances through list using _fallback_idx), CM-5 (acompletion(stream=True) in any-llm-mode returns AsyncIterator, not sync via bridge), CM-6 (added Router/Rust FallbackExecutor coordination note), L6 (KNOWN_PROVIDERS defined as runtime registry), L8 (fallbacks List[Dict] normalized to Dict for lookup). NOTE: C4-1 (HTTP proxy descoped to full) was INCORRECT and is reverted in v1.21. |
 | 1.18    | 2026-04-28 | Fix external adversarial review round 2 (2026-04-28): CC-1 (synchronized HTTP proxy availability with RFC-0917 — now in all modes), CC-2 (CRITICAL INVARIANT box aligned with RFC-0917), CH-1 (QUOTA_ROUTER_MODE validated against compile-time capabilities), CH-2 (Router no longer retries HTTP calls — Rust core FALLBACK_EXECUTOR handles retry, Router only handles model-level fallback), CM-2 (sync streaming now has model_list param). |
 | 1.17    | 2026-04-28 | Fix external adversarial review (2026-04-28): C1 (add QUOTA_ROUTER_MODE runtime selection for full builds), C2 (HTTP proxy only in litellm-mode/full, not any-llm-mode), C4 (add streaming behavior table per mode), H1 (remove / parsing from resolve_provider), H2 (any- key parsing works per-call), H3 (add warning to get_budget_status), M1 (clarify async vs sync timeout types), M2 (document model_list per-call semantics), M4 (implement fallbacks parameter in Router), L4 (make reasoning_effort default explicit). |

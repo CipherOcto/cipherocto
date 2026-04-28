@@ -2,7 +2,7 @@
 
 ## Status
 
-Draft (v1.6 — 2026-04-27)
+Draft (v1.7 — 2026-04-28)
 
 ## Authors
 
@@ -1012,6 +1012,94 @@ async def _stream_sync_bridge(
 
 **Note:** LiteLLM mode (HTTP proxy) uses Rust-side SSE transformation. Any-llm mode uses Python-side SSE transformation per above.
 
+#### acompletion() Streaming — AsyncIterator Return Type
+
+**Severity: Important**
+
+**Specification:**
+
+```python
+async def acompletion(
+    model: str,
+    messages: List[Dict],
+    *,
+    stream: Optional[bool] = None,
+    stream_options: Optional[Dict] = None,
+    **kwargs,
+) -> Union[CompletionResponse, AsyncIterator[ChatCompletionChunk]]:
+    """
+    When stream=True, returns an AsyncIterator[ChatCompletionChunk].
+    The caller uses `async for chunk in result:` to consume chunks.
+
+    Reference: LiteLLM's CustomStreamWrapper.__aiter__/__anext__
+    (litellm/litellm_core_utils/streaming_handler.py lines 2017-2075)
+
+    Example:
+        result = await acompletion(model="gpt-4o", messages=[...], stream=True)
+        # result is AsyncIterator[ChatCompletionChunk]
+        async for chunk in result:
+            print(chunk.delta.content, end="")
+    """
+```
+
+**AsyncIterator implementation pattern (per LiteLLM CustomStreamWrapper):**
+
+```python
+class ChatCompletionChunkIterator:
+    """Async iterator for streaming chunks — mimics LiteLLM CustomStreamWrapper."""
+
+    def __init__(self, provider: str, model: str, messages: List[Dict], **kwargs):
+        self.provider = provider
+        self.model = model
+        self.messages = messages
+        self.kwargs = kwargs
+        self._stream = None
+
+    def __aiter__(self) -> "ChatCompletionChunkIterator":
+        return self
+
+    async def __anext__(self) -> ChatCompletionChunk:
+        """Yield chunks from the provider's async stream."""
+        if self._stream is None:
+            self._stream = await self._create_stream()
+        try:
+            async for chunk in self._stream:
+                # Transform to normalized ChatCompletionChunk
+                yield self._transform_chunk(chunk)
+        except StopAsyncIteration:
+            raise StopAsyncIteration
+
+    async def _create_stream(self) -> AsyncIterator:
+        """Create the async stream from the provider SDK."""
+        if self.provider == "openai":
+            from openai import AsyncOpenAI
+            client = AsyncOpenAI()
+            stream = await client.chat.completions.create(
+                model=self.model,
+                messages=self.messages,
+                stream=True,
+                **self.kwargs,
+            )
+            return stream
+        elif self.provider == "anthropic":
+            from anthropic import AsyncAnthropic
+            client = AsyncAnthropic()
+            stream = await client.messages.stream(
+                model=self.model,
+                messages=self.messages,
+                **self.kwargs,
+            )
+            return stream
+        # ... other providers
+
+    def _transform_chunk(self, chunk) -> ChatCompletionChunk:
+        """Provider-specific chunk normalization."""
+        # Provider-specific SSE parsing happens here
+        pass
+```
+
+**Note on SSE parsing:** Phase 1 uses `async_iter_to_sync_iter()` bridge for **sync** streaming with sync providers. For **async** streaming (acompletion with stream=True), the async iterator is returned directly. SSE parsing (F3: provider-specific SSE transformation) is **NOT** part of Phase 1 — Phase 1 returns raw chunks from provider SDKs. F3 covers implementing proper SSE parsing for non-OpenAI-SSE providers.
+
 #### In-Memory Batch Completion
 
 **Severity: High**
@@ -1152,6 +1240,80 @@ async def abatch_completion(
 
     return await asyncio.gather(*[submit_one(msgs) for msgs in messages])
 ```
+
+#### batch_completion_models() — Race Multiple Models (LiteLLM Compatible)
+
+**Severity: Important**
+
+`batch_completion_models()` sends the **same request** to **multiple models concurrently** and returns the **first response** (race condition). Distinct from `batch_completion()` which sends **many messages** to **one model**.
+
+**Reference:** LiteLLM's `batch_completion_models` (`litellm/batch_completion/main.py` lines 128-211).
+
+**Specification:**
+
+```python
+def batch_completion_models(
+    *args,
+    messages: List[Dict],
+    models: Union[str, List[str]],  # One or more models to race
+    **kwargs,
+) -> CompletionResponse:
+    """
+    Send a request to multiple language models concurrently and return
+    the response from the FIRST model that responds.
+
+    Args:
+        *args: Variable-length positional args (passed to completion)
+        messages: The message list to send to ALL models
+        models: Single model name (str) or list of model names to race
+        **kwargs: Passed to completion() for each model
+
+    Returns:
+        CompletionResponse from the first model to respond
+
+    Note:
+        Uses ThreadPoolExecutor with wait(FIRST_COMPLETED) — returns
+        as soon as any model responds. Other requests are cancelled.
+        Distinct from batch_completion() which sends many messages to
+        one model and returns ALL results.
+    """
+    if isinstance(models, str):
+        models = [models]
+
+    # Remove conflicting kwargs
+    kwargs.pop("model", None)
+    kwargs.pop("models", None)
+
+    futures = {}
+    with ThreadPoolExecutor(max_workers=len(models)) as executor:
+        for model in models:
+            futures[model] = executor.submit(
+                completion, *args, model=model, messages=messages, **kwargs
+            )
+
+        # Wait for first completion (FIRST_COMPLETED)
+        done, _ = wait(futures.values(), return_when=FIRST_COMPLETED)
+        for future in done:
+            try:
+                return future.result()
+            except Exception:
+                # First model failed — continue waiting for others
+                continue
+
+    raise AllModelsFailedError(
+        f"All {len(models)} models failed: {[m for m in models]}"
+    )
+```
+
+**Also available:** `batch_completion_models_all_responses()` — returns ALL responses (not just first), as a list.
+
+**Key difference from `batch_completion`:**
+
+| Function | Messages | Models | Returns |
+| -------- | -------- | ------ | ------- |
+| `batch_completion()` | Many message sets | One model | ALL results (List[CompletionResponse]) |
+| `batch_completion_models()` | One message set | Many models | FIRST response (CompletionResponse) |
+| `batch_completion_models_all_responses()` | One message set | Many models | ALL responses (List[CompletionResponse]) |
 
 #### Router — Load Balancing Strategies
 
@@ -1414,12 +1576,15 @@ class Router:
                     self.logger_fn({"model": model, "deployment": model_name, "latency_ms": latency_ms})
                 return result
             except ContextLengthExceededError as e:
+                # Try context_window fallback
+                # `model` = original input (e.g., "gpt-4o"), `model_name` = current model being attempted
                 fallback = self.context_window_fallbacks.get(model)
                 if fallback and attempt < self.num_retries:
-                    model_name = fallback
+                    model_name = fallback  # Overwrite current model attempt with fallback
                     continue
                 raise
             except ContentFilterError as e:
+                # Try content_policy fallback
                 fallback = self.content_policy_fallbacks.get(model)
                 if fallback and attempt < self.num_retries:
                     model_name = fallback
@@ -1818,6 +1983,23 @@ Mode is selected at **build time** via Cargo feature flags. **Mode selects provi
 
 **Key insight:** Even `litellm-mode` builds have Python SDK available. Even `any-llm-mode` builds have HTTP proxy available. Mode controls HOW providers are called, not WHETHER an interface exists.
 
+**Build-time mode selection:**
+- Mode is selected at **compile time** via Cargo feature flags on `quota-router-core`
+- `quota-router-pyo3` (Python SDK) does NOT have per-mode feature flags — it always wraps `quota-router-core`
+- The mode affects which HTTP client is compiled into `quota-router-core`:
+  - `litellm-mode` (default): compiles reqwest (Rust HTTP client) into core
+  - `any-llm-mode`: compiles minimal core (no reqwest) — Python SDK calls providers via PyO3
+  - `full`: compiles both reqwest and PyO3
+- When building the Python SDK wheel, the build system selects the mode:
+  ```bash
+  # Build any-llm-mode Python SDK
+  cargo build --package quota-router-pyo3 --features any-llm-mode --no-default-features
+
+  # Build litellm-mode Python SDK
+  cargo build --package quota-router-pyo3 --features litellm-mode
+  ```
+- The resulting `.so`/`.pyd` binary embeds the mode, readable via `get_deployment_mode()`
+
 **Runtime detection:** The SDK exposes `quota_router.get_deployment_mode()`:
 
 ```python
@@ -1982,7 +2164,7 @@ The SDK has **two incompatible API key handling modes** with different security 
 ### Phase 4: Full LiteLLM Compatibility (Future)
 
 - [ ] Remaining litellm-only parameters: `modalities`, `audio`, `prediction`, `web_search_options`, `shared_session`
-- [ ] All litellm routing strategies (6 total)
+- [ ] All litellm routing strategies (8 total: simple-shuffle, round-robin, least-busy, latency-based-routing, cost-based-routing, usage-based-routing, usage-based-routing-v2, weighted)
 - [ ] `enable_json_schema_validation`
 - [ ] Additional providers from litellm ecosystem as needed
 
@@ -2017,6 +2199,7 @@ This is the only approach that achieves true drop-in replacement for both ecosys
 
 | Version | Date       | Changes |
 | ------- | ---------- | ------- |
+| 1.7     | 2026-04-28 | Fix adversarial review v1.6 issues: I1 (mode selection for Python SDK build explained — feature flags on quota-router-core, not pyo3), I2 (batch_completion_models() specced with reference to LiteLLM impl), I4 (Phase 1 streaming vs F3 SSE parsing clarified — Phase 1 is raw chunks, F3 is proper SSE transformation), I6 (get_deployment_mode() cfg-based compile-time injection), I7 (Phase 4 "6 strategies" corrected to "8"), I8 (acompletion() fallback comment added), I9 (acompletion() streaming AsyncIterator return type spec'd with reference to LiteLLM CustomStreamWrapper). |
 | 1.6     | 2026-04-27 | Fix adversarial review v1.5 issues: C1 (Router.completion() uses explicit import to avoid self-call infinite loop), I1 (get_budget_status behavior in any-llm vs full clarified), I2 (streaming execution path documented), I3 (platform provider RFC-0917 cross-reference verified), I4 (get_deployment_mode() implementation explained), I5 (_select_deployment model param is model_name not model_group), I6 (Phase 1 specifies OpenAI + Anthropic as first providers), L1 (sys.modules mutation removed, explicit import alias), L2 (Phase 3 "6 strategies" corrected to "8"), L3 (F3 streaming vs Phase 1 streaming clarified), L4 (async path now catches Exception like sync), L5 (model vs model_name variable semantics clarified), I7 (version history table aligned). |
 | 1.5     | 2026-04-27 | Fix adversarial review v1.4 issues: I1 (corrected ProxyServer claim — RFC-0917 says both interfaces in all modes, mode controls provider strategy not interface), I2 (Python↔Rust exception mapping added with RouterError table), I3 (real SSE streaming spec added, replacing mock), I6 (set_api_key storage mode clarification), I7 (get_budget_status Balance reference), L3 (list_models now Router.list_models() method for LiteLLM compat). Feature gate section corrected per RFC-0917. |
 | 1.4     | 2026-04-27 | Fix adversarial review v1.3 issues: C1 (Router now thin PyO3 wrapper delegating to RFC-0902 Rust core), C2 (num_retries now Python param only, references RFC-0902), C3 (added RFC-0913 to dependencies); I1/I2/I3/I4 (all 7 RFC-0902 strategies + fallback types now referenced); L1 (GIL note added to batch_completion), L3 (platform provider cross-ref to RFC-0917). |

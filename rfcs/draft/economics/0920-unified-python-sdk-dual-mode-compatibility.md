@@ -2,7 +2,7 @@
 
 ## Status
 
-Draft (v1.15 — 2026-04-28)
+Draft (v1.16 — 2026-04-28)
 
 ## Authors
 
@@ -966,6 +966,8 @@ def completion(
     deployment_id: Optional[str] = None,
     safety_identifier: Optional[str] = None,
     service_tier: Optional[str] = None,
+    # Response format (structured output)
+    response_format: Optional[Union[str, Dict, Type[Any]]] = None,  # Pydantic BaseModel types supported
     # LiteLLM session and validation
     shared_session: Optional[Any] = None,  # ClientSession for session management
     web_search_options: Optional[Dict] = None,  # OpenAI web search options
@@ -2335,8 +2337,8 @@ This is the only approach that achieves true drop-in replacement for both ecosys
 
 | Version | Date       | Changes |
 | ------- | ---------- | ------- |
+| 1.16    | 2026-04-28 | Fix adversarial review v1.15 issue: I1 (response_format added to sync completion() signature, matching async and streaming specs). |
 | 1.15    | 2026-04-28 | Fix adversarial review v1.14 issues: I1 (corrected sync completion note — thinking and reasoning_effort are separate params, not aliases), I2 (added timeout to streaming spec signature). |
-| 1.14    | 2026-04-28 | Fix adversarial review v1.13 issue: I1 (base_url added to acompletion() signature as alias for api_base, matching sync completion). |
 | 1.12    | 2026-04-28 | Fix adversarial review v1.11 issues: I1 (enable_json_schema_validation added to both signatures), I2 (shared_session added to both signatures), I3 (web_search_options added to both signatures), L1 (streaming spec added response_format), L2 (reasoning_effort default changed from "auto" to None to match LiteLLM, with full enum values listed). |
 | 1.11    | 2026-04-28 | Fix adversarial review v1.10 issues: I1 (thinking is structured Dict, not string alias for reasoning_effort), I4 (UnsupportedProviderError added provider_key + supported_providers attrs), I5 (Phase 2 timeout item marked DONE). |
 | 1.10    | 2026-04-28 | Fix adversarial review v1.9 issues: I1 (reasoning_effort default changed to "auto" per any-llm), I2 (sync completion() added api_type), I3 (acompletion() added verbosity), I5 (MissingApiKeyError added env_var_name), I7 (sync completion() reasoning_effort default also "auto" + thinking alias noted), I8 (abatch_completion_models() async variant added), L2 (Phase 2 timeout item clarified as verifying async provider calls). |

@@ -2,7 +2,7 @@
 
 ## Status
 
-Draft (v1.14 — 2026-04-28)
+Draft (v1.15 — 2026-04-28)
 
 ## Authors
 
@@ -971,7 +971,7 @@ def completion(
     web_search_options: Optional[Dict] = None,  # OpenAI web search options
     enable_json_schema_validation: Optional[bool] = None,  # Per-request JSON schema validation override
 
-    # Note: `thinking` (LiteLLM name) is accepted as alias for `reasoning_effort`
+    # Note: `thinking` (structured Dict) and `reasoning_effort` (string enum) are separate parameters in LiteLLM, not aliases
     **kwargs,
 ) -> Union[CompletionResponse, Iterator[ChatCompletionChunk]]:
     """
@@ -1114,6 +1114,7 @@ async def acompletion(
     *,
     stream: Optional[bool] = None,
     stream_options: Optional[Dict] = None,
+    timeout: Optional[Union[float, int]] = None,  # Common for streaming to avoid hanging
     response_format: Optional[Union[str, Dict, Type[Any]]] = None,  # Structured output
     **kwargs,
 ) -> Union[CompletionResponse, AsyncIterator[ChatCompletionChunk]]:
@@ -2334,8 +2335,8 @@ This is the only approach that achieves true drop-in replacement for both ecosys
 
 | Version | Date       | Changes |
 | ------- | ---------- | ------- |
+| 1.15    | 2026-04-28 | Fix adversarial review v1.14 issues: I1 (corrected sync completion note — thinking and reasoning_effort are separate params, not aliases), I2 (added timeout to streaming spec signature). |
 | 1.14    | 2026-04-28 | Fix adversarial review v1.13 issue: I1 (base_url added to acompletion() signature as alias for api_base, matching sync completion). |
-| 1.13    | 2026-04-28 | Fix adversarial review v1.12 issues: I1 (extra_headers added to acompletion() signature), I2 (response_format now supports Type[Any] for Pydantic BaseModel types). |
 | 1.12    | 2026-04-28 | Fix adversarial review v1.11 issues: I1 (enable_json_schema_validation added to both signatures), I2 (shared_session added to both signatures), I3 (web_search_options added to both signatures), L1 (streaming spec added response_format), L2 (reasoning_effort default changed from "auto" to None to match LiteLLM, with full enum values listed). |
 | 1.11    | 2026-04-28 | Fix adversarial review v1.10 issues: I1 (thinking is structured Dict, not string alias for reasoning_effort), I4 (UnsupportedProviderError added provider_key + supported_providers attrs), I5 (Phase 2 timeout item marked DONE). |
 | 1.10    | 2026-04-28 | Fix adversarial review v1.9 issues: I1 (reasoning_effort default changed to "auto" per any-llm), I2 (sync completion() added api_type), I3 (acompletion() added verbosity), I5 (MissingApiKeyError added env_var_name), I7 (sync completion() reasoning_effort default also "auto" + thinking alias noted), I8 (abatch_completion_models() async variant added), L2 (Phase 2 timeout item clarified as verifying async provider calls). |

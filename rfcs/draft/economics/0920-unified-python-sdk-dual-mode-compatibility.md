@@ -2,7 +2,7 @@
 
 ## Status
 
-Draft (v1.10 — 2026-04-28)
+Draft (v1.12 — 2026-04-28)
 
 ## Authors
 
@@ -249,9 +249,8 @@ async def acompletion(
     seed: Optional[int] = None,
 
     # Reasoning (Anthropic, OpenAI o1)
-    reasoning_effort: Optional[str] = "auto",  # Default "auto" matches any-llm/LiteLLM; alias: `thinking` accepted
-    # Note: `thinking` (LiteLLM) and `reasoning_effort` (RFC) are the same parameter.
-    # Both accepted — set via kwargs if using `thinking=`.
+    reasoning_effort: Optional[str] = None,  # LiteLLM-style: "none", "minimal", "low", "medium", "high", "xhigh", "default", "auto"
+    # Note: `reasoning_effort` (string enum) is different from `thinking` (structured Dict below).
 
     # Tools / Function calling
     tools: Optional[List[Dict]] = None,
@@ -274,8 +273,15 @@ async def acompletion(
     deployment_id: Optional[str] = None,  # LiteLLM deployment selection
     verbosity: Optional[Literal["low", "medium", "high"]] = None,  # LiteLLM verbosity
 
+    # Thinking parameter (Anthropic structured thinking budget — different from reasoning_effort)
+    thinking: Optional[Dict] = None,  # any-llm/LiteLLM structured Dict: {"type": "enabled"|"auto", "budget_tokens": int}
+
+    # LiteLLM session and validation
+    shared_session: Optional[Any] = None,  # ClientSession for session management
+    web_search_options: Optional[Dict] = None,  # OpenAI web search options
+    enable_json_schema_validation: Optional[bool] = None,  # Per-request JSON schema validation override
+
     # Remaining kwargs passed to provider
-    # Note: `thinking` (LiteLLM name) is accepted as alias for `reasoning_effort`
     **kwargs,
 ) -> CompletionResponse:
     """
@@ -462,7 +468,8 @@ class MissingApiKeyError(QuotaRouterError):
 
 class UnsupportedProviderError(QuotaRouterError):
     """Provider not supported."""
-    pass
+    provider_key: str  # The provider that was requested
+    supported_providers: List[str]  # List of known providers
 
 class UnsupportedParameterError(QuotaRouterError):
     """Parameter not supported by provider."""
@@ -941,7 +948,7 @@ def completion(
     seed: Optional[int] = None,
     timeout: Optional[Union[float, str, httpx.Timeout]] = None,  # sync uses str/httpx.Timeout
     # LiteLLM sync-specific params
-    reasoning_effort: Optional[str] = "auto",  # Default "auto" matches any-llm/LiteLLM; `thinking` also accepted
+    reasoning_effort: Optional[str] = None,  # LiteLLM-style: "none", "minimal", "low", "medium", "high", "xhigh", "default", "auto"
     functions: Optional[List] = None,  # Legacy — use tools
     function_call: Optional[str] = None,  # Legacy — use tool_choice
     tools: Optional[List[Dict]] = None,
@@ -957,6 +964,11 @@ def completion(
     deployment_id: Optional[str] = None,
     safety_identifier: Optional[str] = None,
     service_tier: Optional[str] = None,
+    # LiteLLM session and validation
+    shared_session: Optional[Any] = None,  # ClientSession for session management
+    web_search_options: Optional[Dict] = None,  # OpenAI web search options
+    enable_json_schema_validation: Optional[bool] = None,  # Per-request JSON schema validation override
+
     # Note: `thinking` (LiteLLM name) is accepted as alias for `reasoning_effort`
     **kwargs,
 ) -> Union[CompletionResponse, Iterator[ChatCompletionChunk]]:
@@ -1100,6 +1112,7 @@ async def acompletion(
     *,
     stream: Optional[bool] = None,
     stream_options: Optional[Dict] = None,
+    response_format: Optional[Union[str, Dict]] = None,  # Structured output
     **kwargs,
 ) -> Union[CompletionResponse, AsyncIterator[ChatCompletionChunk]]:
     """
@@ -2261,7 +2274,7 @@ The SDK has **two incompatible API key handling modes** with different security 
 - [ ] All 42 providers (mock until real SDK available)
 - [ ] Embedding API
 - [ ] Model listing
-- [ ] `timeout` parameter with httpx.Timeout support (specced in sync completion; verify for async provider calls)
+- [ ] `timeout` parameter with httpx.Timeout support (DONE: specced in sync completion; async acompletion() uses float|int per LiteLLM)
 - [ ] `extra_headers`, `base_url`, `api_version` parameters (specced above)
 
 ### Phase 3: Enterprise Features
@@ -2284,9 +2297,8 @@ The SDK has **two incompatible API key handling modes** with different security 
 
 ### Phase 4: Full LiteLLM Compatibility (Future)
 
-- [ ] Remaining litellm-only parameters: `modalities`, `audio`, `prediction`, `web_search_options`, `shared_session`
+- [ ] Remaining litellm-only parameters: `modalities`, `audio`, `prediction`
 - [ ] All litellm routing strategies (8 total: simple-shuffle, round-robin, least-busy, latency-based-routing, cost-based-routing, usage-based-routing, usage-based-routing-v2, weighted)
-- [ ] `enable_json_schema_validation`
 - [ ] Additional providers from litellm ecosystem as needed
 
 ## Key Files to Modify
@@ -2320,6 +2332,8 @@ This is the only approach that achieves true drop-in replacement for both ecosys
 
 | Version | Date       | Changes |
 | ------- | ---------- | ------- |
+| 1.12    | 2026-04-28 | Fix adversarial review v1.11 issues: I1 (enable_json_schema_validation added to both signatures), I2 (shared_session added to both signatures), I3 (web_search_options added to both signatures), L1 (streaming spec added response_format), L2 (reasoning_effort default changed from "auto" to None to match LiteLLM, with full enum values listed). |
+| 1.11    | 2026-04-28 | Fix adversarial review v1.10 issues: I1 (thinking is structured Dict, not string alias for reasoning_effort), I4 (UnsupportedProviderError added provider_key + supported_providers attrs), I5 (Phase 2 timeout item marked DONE). |
 | 1.10    | 2026-04-28 | Fix adversarial review v1.9 issues: I1 (reasoning_effort default changed to "auto" per any-llm), I2 (sync completion() added api_type), I3 (acompletion() added verbosity), I5 (MissingApiKeyError added env_var_name), I7 (sync completion() reasoning_effort default also "auto" + thinking alias noted), I8 (abatch_completion_models() async variant added), L2 (Phase 2 timeout item clarified as verifying async provider calls). |
 | 1.9     | 2026-04-28 | Fix adversarial review v1.8 issues: C1 (mode-aware default provider — litellm-mode/full default to "openai", any-llm-mode raises), I1 (functions/function_call passed through to provider SDK), I2 (modalities, audio, prediction moved Phase 4→Phase 3 as they're in LiteLLM sig), I3/I4/I5/I6 (sync completion() now has explicit timeout, api_version, extra_headers, model_list), I7 (Router raises ModelNotFoundError if model not in model_list), I9 (Phase 1 "replace mock" scope clarified — implementation vs interface), I10 (thinking accepted as alias for reasoning_effort), I11 (Embedded API renamed from "any-llm style" to "LiteLLM-compatibility style"). |
 | 1.8     | 2026-04-28 | Fix adversarial review v1.7 issues: C1 (get_deployment_mode() now uses cfg-based feature flag injection, not hardcoded string), C2 (acompletion() timeout now float\|int per LiteLLM, not str\|httpx.Timeout), C3 (MissingProviderError→ValueError; step 3 default provider removed since any-llm has none), I1 (class-based API clarified out of scope for Phase 1), I2 (async_coro_to_sync_iter vs async_iter_to_sync_iter clarified), I3 (AllModelsFailedError added to exception hierarchy), I4 (any-llm has no in-memory batch noted), I6 (set_api_key() is LiteLLM compat, any-llm has no equivalent), I8 (deployment_id added to unified signature), I9 (safety_identifier moved Phase 4→Phase 3 as it's in LiteLLM sig), I10 (functions/function_call legacy params added), L2 (Phase 1 tests completion() directly, not Router). |

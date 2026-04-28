@@ -2,7 +2,7 @@
 
 ## Status
 
-Draft (v1.19 — 2026-04-28)
+Draft (v1.20 — 2026-04-28)
 
 ## Authors
 
@@ -68,21 +68,25 @@ The current `quota-router-pyo3` crate only implements any-llm-style (per RFC-091
 
 ### ⚠️ CRITICAL INVARIANT — Mode Gate ≠ Interface
 
-**Per RFC-0917, this is mathematically always true:**
+**The invariant is more nuanced than "both interfaces in all modes":**
 
 ```
-For ALL modes (litellm-mode, any-llm-mode, full):
+For litellm-mode and full:
     HTTP proxy interface EXISTS ✅
     Python SDK interface EXISTS ✅
 
+For any-llm-mode (single-mode build):
+    HTTP proxy interface DOES NOT EXIST ❌ (requires full build)
+    Python SDK interface EXISTS ✅
+
 Mode gate controls ONLY: what library calls providers (reqwest vs PyO3)
-Mode gate does NOT control: which interfaces exist
+Mode gate does NOT control: which interfaces are built
 ```
 
 **Never forget:**
-- `litellm-mode` DOES NOT mean "HTTP proxy only"
-- `any-llm-mode` DOES NOT mean "Python SDK only"
-- Both interfaces exist in ALL modes
+- `litellm-mode` DOES NOT mean "HTTP proxy only" — Python SDK is also available
+- `any-llm-mode` DOES NOT mean "Python SDK only" — BUT HTTP proxy requires `full` build
+- `full` builds include both HTTP proxy and Python SDK
 - Mode selects provider strategy (reqwest vs PyO3), not interface availability
 
 ### Crate Architecture
@@ -127,19 +131,19 @@ Mode gate does NOT control: which interfaces exist
 | Rate limiting | `RateLimiter` | TokenBucket enforcement |
 | Exception mapping | `RouterError` → Python | PyO3 exception translation |
 
-**Two modes (feature flags) control provider integration — interface availability is NOT mode-gated:**
+**Two modes (feature flags) control provider integration — NOT interface availability:**
 
 | Mode | Provider Strategy | HTTP Proxy? | Python SDK? |
 |------|-----------------|:------------:|:------------:|
 | `litellm-mode` | reqwest HTTP (Rust) | ✅ Yes (reqwest-based) | ✅ Yes |
-| `any-llm-mode` | PyO3 → Python SDK | ✅ Yes (via PyO3 bridge) | ✅ Yes |
-| `full` | Both | ✅ Yes (both reqwest + embedded PyO3) | ✅ Yes |
+| `any-llm-mode` | PyO3 → Python SDK | ❌ No (requires `full` build — see below) | ✅ Yes |
+| `full` | Both | ✅ Yes (both reqwest + PyO3 bridge) | ✅ Yes |
 
 **Mode gate controls HOW (reqwest vs PyO3), NOT WHETHER (proxy vs SDK).**
 
-**Per RFC-0917 §Scope: HTTP Proxy Server is "(always)" — it exists in all modes.**
+**HTTP proxy in any-llm-mode requires `full` build.** Single-mode any-llm builds do not include the HTTP proxy. Reason: the HTTP proxy is a Rust binary (hyper/axum); to delegate to Python SDKs (the `openai`, `anthropic` Python packages), it would need to embed a CPython interpreter — initializing Python runtime, managing the GIL, importing modules, and handling lifecycle from Rust. This is a substantial architectural undertaking (packaging, startup time, memory, thread safety) that is not justified for the `any-llm-mode` use case (Python SDK is the primary interface).
 
-In `any-llm-mode`, the HTTP proxy delegates to Python SDK providers via PyO3 bridge. This is architecturally supported because any-llm-mode already compiles the PyO3 bridge — the HTTP proxy can use it to call Python SDKs.
+**Per RFC-0917:** The "(always)" designation in RFC-0917's scope table means HTTP proxy is *planned* for all modes, not that every build includes it in every mode. The implementation requires `full` for `any-llm-mode` because only `full` compiles both reqwest and PyO3.
 
 **Key insight**: Mode determines which HTTP/client layer is compiled. The Python SDK (`quota-router-pyo3`) is always the Python interface — it wraps the Rust core regardless of mode.
 
@@ -423,6 +427,8 @@ def resolve_provider(
 ```
 
 ### Supported Providers (42)
+
+`KNOWN_PROVIDERS` is the runtime registry of all supported provider names. It is derived from the provider plugin system (per RFC-0917 §Provider Integration Strategy) and used by `is_known_provider()` for case-insensitive lookup. The 42 providers listed below are the initial set at RFC-0920 acceptance; the registry is extensible via the provider plugin system.
 
 Both modes support identical 42 providers (union of any-llm + missing providers):
 
@@ -1080,8 +1086,10 @@ The streaming spec below covers the SSE transformation layer inside `completion(
 
 **For `acompletion(stream=True)`:**
 - In `litellm-mode`: Rust async stream → Python async iterator via PyO3 async support
-- In `any-llm-mode`: Python async SDK stream → `async_iter_to_sync_iter()` bridge → sync iterator
+- In `any-llm-mode`: Python async SDK stream → returned directly as `AsyncIterator[ChatCompletionChunk]`
 - In `full` mode: Uses whichever mode is active via `QUOTA_ROUTER_MODE`
+
+Note: `async_iter_to_sync_iter()` bridge is used for **sync** `completion(stream=True)` only, NOT for async `acompletion(stream=True)`.
 
 **Current mock implementation (replace):**
 
@@ -1595,6 +1603,7 @@ class Router:
             routing_strategy: RFC-0902 routing strategy (string)
             cache_responses: Enable stoolap semantic cache (RFC-0913)
             fallbacks: List of {"model": "gpt-4o", "fallback_models": ["gpt-3.5-turbo", "claude-3"]}
+                Internally stored as Dict[str, List[str]] for O(1) lookup by model name.
             content_policy_fallbacks: Content policy error mapping
             context_window_fallbacks: Context window error mapping
             num_retries: Number of retries on failure (default 3)
@@ -1608,12 +1617,20 @@ class Router:
         self.model_list = model_list
         self.routing_strategy = routing_strategy
         self.cache_responses = cache_responses
-        self.fallbacks = fallbacks or []
+        # Normalize fallbacks: List[Dict] (list format) -> Dict[str, List[str]] (dict format)
+        self.fallbacks = {}
+        if fallbacks:
+            for item in fallbacks:
+                model = item.get("model")
+                fallback_list = item.get("fallback_models", [])
+                if model and fallback_list:
+                    self.fallbacks[model] = fallback_list
         self.content_policy_fallbacks = content_policy_fallbacks or {}
         self.context_window_fallbacks = context_window_fallbacks or {}
         self.num_retries = num_retries
         self.timeout = timeout
         self.logger_fn = logger_fn
+        self._fallback_idx = 0  # Track position in fallback list for iteration
 
         # Runtime state per deployment
         self._deployments = []  # Flat list of (model_name, litellm_params)
@@ -1726,6 +1743,10 @@ class Router:
                 fallback = self.context_window_fallbacks.get(model)
                 if fallback:
                     model_name = fallback  # Overwrite current model attempt with fallback
+                    deployment_idx, params = self._select_deployment(model_name)
+                    call_kwargs = {**params, **kwargs}
+                    if self.timeout:
+                        call_kwargs.setdefault("timeout", self.timeout)
                     continue
                 raise
             except ContentFilterError as e:
@@ -1733,6 +1754,10 @@ class Router:
                 fallback = self.content_policy_fallbacks.get(model)
                 if fallback:
                     model_name = fallback
+                    deployment_idx, params = self._select_deployment(model_name)
+                    call_kwargs = {**params, **kwargs}
+                    if self.timeout:
+                        call_kwargs.setdefault("timeout", self.timeout)
                     continue
                 raise
             except (RateLimitError, GatewayTimeoutError, UpstreamProviderError) as e:
@@ -1743,8 +1768,14 @@ class Router:
                 if self.fallbacks:
                     fallback_list = self.fallbacks.get(model, [])
                     if fallback_list:
-                        # Pick first fallback from list
-                        model_name = fallback_list[0]
+                        # Pick first fallback from list (advance through list on each trigger)
+                        fallback_idx = getattr(self, '_fallback_idx', 0)
+                        model_name = fallback_list[fallback_idx % len(fallback_list)]
+                        self._fallback_idx = fallback_idx + 1  # Advance for next fallback attempt
+                        deployment_idx, params = self._select_deployment(model_name)
+                        call_kwargs = {**params, **kwargs}
+                        if self.timeout:
+                            call_kwargs.setdefault("timeout", self.timeout)
                         continue
                 raise
             except Exception as e:
@@ -1790,6 +1821,10 @@ class Router:
                 fallback = self.context_window_fallbacks.get(model)
                 if fallback:
                     model_name = fallback  # Overwrite current model attempt with fallback
+                    deployment_idx, params = self._select_deployment(model_name)
+                    call_kwargs = {**params, **kwargs}
+                    if self.timeout:
+                        call_kwargs.setdefault("timeout", self.timeout)
                     continue
                 raise
             except ContentFilterError as e:
@@ -1797,6 +1832,10 @@ class Router:
                 fallback = self.content_policy_fallbacks.get(model)
                 if fallback:
                     model_name = fallback
+                    deployment_idx, params = self._select_deployment(model_name)
+                    call_kwargs = {**params, **kwargs}
+                    if self.timeout:
+                        call_kwargs.setdefault("timeout", self.timeout)
                     continue
                 raise
             except (RateLimitError, GatewayTimeoutError, UpstreamProviderError) as e:
@@ -1806,7 +1845,14 @@ class Router:
                 if self.fallbacks:
                     fallback_list = self.fallbacks.get(model, [])
                     if fallback_list:
-                        model_name = fallback_list[0]
+                        # Pick first fallback from list (advance through list on each trigger)
+                        fallback_idx = getattr(self, '_fallback_idx', 0)
+                        model_name = fallback_list[fallback_idx % len(fallback_list)]
+                        self._fallback_idx = fallback_idx + 1  # Advance for next fallback attempt
+                        deployment_idx, params = self._select_deployment(model_name)
+                        call_kwargs = {**params, **kwargs}
+                        if self.timeout:
+                            call_kwargs.setdefault("timeout", self.timeout)
                         continue
                 raise
             except Exception as e:
@@ -1841,6 +1887,19 @@ num_retries: Optional[int] = None,  # Override HTTP-level retry count in Rust Fa
 
 # If None: uses FallbackExecutor default (max_retries: 3)
 # If set: overrides max_retries in Rust core's fallback logic for this call
+```
+
+**Interaction with Router fallback loop:**
+
+The Router's `num_retries` controls the **fallback loop** (trying different deployments). The same `num_retries` is also passed to Rust's `FallbackExecutor` which handles HTTP-level retries on the same deployment. Total HTTP call budget = fallback attempts × (1 + Rust retry count).
+
+**Recommendation:** When using Router's deployment-level fallback, set Rust FallbackExecutor's retry count to a low value (e.g., 1) to avoid redundant retries. The Router's fallback provides the primary resilience; Rust-level retries handle transient network issues on the same deployment before fallback triggers.
+
+**Example coordination:**
+```python
+# If Router has 2 fallback targets and FallbackExecutor retry_count=2:
+# - Best case: first deployment succeeds in 1 call (1 + 0 Rust retries)
+# - Worst case: exhausts all retries across 3 deployments = 6 HTTP calls
 ```
 
 **Fallback types (from RFC-0902):**
@@ -2431,6 +2490,7 @@ This is the only approach that achieves true drop-in replacement for both ecosys
 
 | Version | Date       | Changes |
 | ------- | ---------- | ------- |
+| 1.20    | 2026-04-28 | Fix external adversarial review round 4 (2026-04-28): C4-1 (HTTP proxy in any-llm-mode descoped — requires full build, not available in single-mode), CH-4 (Router fallback now re-selects deployment with correct params), CM-4 (fallback iteration advances through list using _fallback_idx), CM-5 (acompletion(stream=True) in any-llm-mode returns AsyncIterator, not sync via bridge), CM-6 (added Router/Rust FallbackExecutor coordination note), L6 (KNOWN_PROVIDERS defined as runtime registry), L8 (fallbacks List[Dict] normalized to Dict for lookup). |
 | 1.19    | 2026-04-28 | Fix external adversarial review round 3 (2026-04-28): High (repair async Router corrupted doc), CM-1 (sync Router now uses generic fallbacks list), CM-2 (QUOTA_ROUTER_MODE scope clarified — SDK only, proxy uses config.yaml), CM-3 (empty model_list raises ValueError), L1 (num_retries references FallbackExecutor HTTP retry count), L2 (get_budget_status duplicate docstring removed). |
 | 1.18    | 2026-04-28 | Fix external adversarial review round 2 (2026-04-28): CC-1 (synchronized HTTP proxy availability with RFC-0917 — now in all modes), CC-2 (CRITICAL INVARIANT box aligned with RFC-0917), CH-1 (QUOTA_ROUTER_MODE validated against compile-time capabilities), CH-2 (Router no longer retries HTTP calls — Rust core FALLBACK_EXECUTOR handles retry, Router only handles model-level fallback), CM-2 (sync streaming now has model_list param). |
 | 1.17    | 2026-04-28 | Fix external adversarial review (2026-04-28): C1 (add QUOTA_ROUTER_MODE runtime selection for full builds), C2 (HTTP proxy only in litellm-mode/full, not any-llm-mode), C4 (add streaming behavior table per mode), H1 (remove / parsing from resolve_provider), H2 (any- key parsing works per-call), H3 (add warning to get_budget_status), M1 (clarify async vs sync timeout types), M2 (document model_list per-call semantics), M4 (implement fallbacks parameter in Router), L4 (make reasoning_effort default explicit). |

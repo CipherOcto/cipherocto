@@ -2,7 +2,7 @@
 
 ## Status
 
-Draft (v1.17 — 2026-04-28)
+Draft (v1.18 — 2026-04-28)
 
 ## Authors
 
@@ -127,17 +127,19 @@ Mode gate does NOT control: which interfaces exist
 | Rate limiting | `RateLimiter` | TokenBucket enforcement |
 | Exception mapping | `RouterError` → Python | PyO3 exception translation |
 
-**Two modes (feature flags) control provider integration — NOT interface availability:**
+**Two modes (feature flags) control provider integration — interface availability is NOT mode-gated:**
 
 | Mode | Provider Strategy | HTTP Proxy? | Python SDK? |
 |------|-----------------|:------------:|:------------:|
 | `litellm-mode` | reqwest HTTP (Rust) | ✅ Yes (reqwest-based) | ✅ Yes |
-| `any-llm-mode` | PyO3 → Python SDK | ❌ No (requires full build) | ✅ Yes |
+| `any-llm-mode` | PyO3 → Python SDK | ✅ Yes (via PyO3 bridge) | ✅ Yes |
 | `full` | Both | ✅ Yes (both reqwest + embedded PyO3) | ✅ Yes |
 
 **Mode gate controls HOW (reqwest vs PyO3), NOT WHETHER (proxy vs SDK).**
 
-**HTTP proxy in any-llm-mode requires `full` build** — single-mode any-llm builds do not include HTTP proxy capability. Embedding Python runtime in a Rust HTTP proxy is architecturally complex and not included. Users needing HTTP proxy with Python SDK delegation should use `full` mode.
+**Per RFC-0917 §Scope: HTTP Proxy Server is "(always)" — it exists in all modes.**
+
+In `any-llm-mode`, the HTTP proxy delegates to Python SDK providers via PyO3 bridge. This is architecturally supported because any-llm-mode already compiles the PyO3 bridge — the HTTP proxy can use it to call Python SDKs.
 
 **Key insight**: Mode determines which HTTP/client layer is compiled. The Python SDK (`quota-router-pyo3`) is always the Python interface — it wraps the Rust core regardless of mode.
 
@@ -162,10 +164,24 @@ def get_deployment_mode() -> str:
         QUOTA_ROUTER_MODE=any-llm-mode  # Force Python SDK delegation
         QUOTA_ROUTER_MODE=litellm-mode   # Force reqwest HTTP
         QUOTA_ROUTER_MODE=full           # Use compile-time default (both available)
+
+    Validation: If QUOTA_ROUTER_MODE is set to a mode not compiled in the binary,
+    the function returns the compile-time embedded mode and logs a warning.
+    For example, if QUOTA_ROUTER_MODE=any-llm-mode but the binary only has litellm-mode
+    compiled, it falls back to litellm-mode with a warning.
     """
     env_mode = os.environ.get("QUOTA_ROUTER_MODE")
     if env_mode in ("litellm-mode", "any-llm-mode", "full"):
-        return env_mode
+        # Validate against compile-time capabilities
+        compiled_modes = _get_compiled_modes()  # Returns set of compiled modes
+        if env_mode in compiled_modes or env_mode == "full":
+            return env_mode
+        else:
+            # Requested mode not compiled in — fall back with warning
+            warnings.warn(
+                f"QUOTA_ROUTER_MODE={env_mode} not compiled in this binary. "
+                f"Compiled modes: {compiled_modes}. Falling back to {_EMBEDDED_MODE}."
+            )
     return _EMBEDDED_MODE  # Compile-time mode
 ```
 
@@ -1710,33 +1726,27 @@ class Router:
                 # Try context_window fallback
                 # `model` = original input (e.g., "gpt-4o"), `model_name` = current model being attempted
                 fallback = self.context_window_fallbacks.get(model)
-                if fallback and attempt < self.num_retries:
+                if fallback:
                     model_name = fallback  # Overwrite current model attempt with fallback
                     continue
                 raise
             except ContentFilterError as e:
                 # Try content_policy fallback
                 fallback = self.content_policy_fallbacks.get(model)
-                if fallback and attempt < self.num_retries:
+                if fallback:
                     model_name = fallback
                     continue
                 raise
             except (RateLimitError, GatewayTimeoutError, UpstreamProviderError) as e:
-                last_error = e
-                if attempt < self.num_retries:
-                    time.sleep(2 ** attempt)  # Exponential backoff
-                    continue
+                # DO NOT retry here — Rust core (FallbackExecutor) handles HTTP-level retry
+                # The Router only handles deployment-level fallback (switching to different model)
+                # Routing to a different deployment on error is handled via fallback lists below
                 raise
             except Exception as e:
                 last_error = e
-                if attempt < self.num_retries:
-                    time.sleep(2 ** attempt)
-                    continue
                 raise
 
         raise last_error
-
-    async def acompletion(
         self,
         model: str,
         messages: List[Dict],
@@ -1771,37 +1781,23 @@ class Router:
                 # Try context_window fallback
                 # `model` = original input (e.g., "gpt-4o"), `model_name` = current model being attempted
                 fallback = self.context_window_fallbacks.get(model)
-                if fallback and attempt < self.num_retries:
+                if fallback:
                     model_name = fallback  # Overwrite current model attempt with fallback
                     continue
                 raise
             except ContentFilterError as e:
                 # Try content_policy fallback
                 fallback = self.content_policy_fallbacks.get(model)
-                if fallback and attempt < self.num_retries:
+                if fallback:
                     model_name = fallback
                     continue
                 raise
             except (RateLimitError, GatewayTimeoutError, UpstreamProviderError) as e:
-                last_error = e
-                # Try generic fallbacks list for this model
-                fallback_list = self.fallbacks.get(model, []) if self.fallbacks else []
-                if fallback_list and attempt < self.num_retries:
-                    # Pick next fallback from the list
-                    # This replaces the current model_name with the fallback
-                    # In a real impl, you'd track which fallback you're on
-                    if fallback_list:
-                        model_name = fallback_list[0]
-                        continue
-                if attempt < self.num_retries:
-                    await asyncio.sleep(2 ** attempt)
-                    continue
+                # DO NOT retry here — Rust core (FallbackExecutor) handles HTTP-level retry
+                # The Router only handles deployment-level fallback (switching to different model)
                 raise
             except Exception as e:
                 last_error = e
-                if attempt < self.num_retries:
-                    await asyncio.sleep(2 ** attempt)
-                    continue
                 raise
 
         raise last_error
@@ -2422,6 +2418,7 @@ This is the only approach that achieves true drop-in replacement for both ecosys
 
 | Version | Date       | Changes |
 | ------- | ---------- | ------- |
+| 1.18    | 2026-04-28 | Fix external adversarial review round 2 (2026-04-28): CC-1 (synchronized HTTP proxy availability with RFC-0917 — now in all modes), CC-2 (CRITICAL INVARIANT box aligned with RFC-0917), CH-1 (QUOTA_ROUTER_MODE validated against compile-time capabilities), CH-2 (Router no longer retries HTTP calls — Rust core FALLBACK_EXECUTOR handles retry, Router only handles model-level fallback), CM-2 (sync streaming now has model_list param). |
 | 1.17    | 2026-04-28 | Fix external adversarial review (2026-04-28): C1 (add QUOTA_ROUTER_MODE runtime selection for full builds), C2 (HTTP proxy only in litellm-mode/full, not any-llm-mode), C4 (add streaming behavior table per mode), H1 (remove / parsing from resolve_provider), H2 (any- key parsing works per-call), H3 (add warning to get_budget_status), M1 (clarify async vs sync timeout types), M2 (document model_list per-call semantics), M4 (implement fallbacks parameter in Router), L4 (make reasoning_effort default explicit). |
 | 1.16    | 2026-04-28 | Fix adversarial review v1.15 issue: I1 (response_format added to sync completion() signature, matching async and streaming specs). |
 | 1.15    | 2026-04-28 | Fix adversarial review v1.14 issues: I1 (corrected sync completion note — thinking and reasoning_effort are separate params, not aliases), I2 (added timeout to streaming spec signature). |

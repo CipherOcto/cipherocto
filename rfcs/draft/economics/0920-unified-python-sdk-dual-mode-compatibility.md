@@ -2,7 +2,7 @@
 
 ## Status
 
-Draft (v1.26 — 2026-04-28)
+Draft (v1.27 — 2026-04-28)
 
 **ARCHITECTURAL CONSTRAINT: HTTP proxy is FOREVER in BOTH litellm-mode and any-llm-mode. See section below.**
 
@@ -1165,30 +1165,34 @@ class SSEParser:
 
     @staticmethod
     def parse_openai_sse(chunk: bytes) -> Optional[ChatCompletionChunk]:
-        """OpenAI SSE: pass-through (already normalized)."""
+        """OpenAI SSE: pass-through (already normalized). Phase 2 implementation."""
         # data: {"id":"...","choices":[{"delta":{"content":"..."}}]}
         # Parse and yield ChatCompletionChunk
-        pass
+        # TODO: Implement actual SSE parsing for Phase 2
+        return None  # Stub — real implementation in Phase 2
 
     @staticmethod
     def parse_anthropic_sse(chunk: bytes) -> Optional[ChatCompletionChunk]:
-        """Anthropic event-stream: transform to OpenAI SSE."""
+        """Anthropic event-stream: transform to OpenAI SSE. Phase 2 implementation."""
         # event: message_delta
         # data: {"usage":{"output_tokens":123},"delta":{"text":"..."}}
         # Transform to OpenAI format: {"choices":[{"delta":{"content":"..."}}]}
-        pass
+        # TODO: Implement actual SSE parsing for Phase 2
+        return None  # Stub — real implementation in Phase 2
 
     @staticmethod
     def parse_mistral_sse(chunk: bytes) -> Optional[ChatCompletionChunk]:
-        """Mistral: OpenAI SSE pass-through."""
-        pass
+        """Mistral: OpenAI SSE pass-through. Phase 2 implementation."""
+        # TODO: Implement actual SSE parsing for Phase 2
+        return None  # Stub — real implementation in Phase 2
 
     @staticmethod
     def parse_ollama_sse(chunk: bytes) -> Optional[ChatCompletionChunk]:
-        """Ollama: SSE with custom format."""
+        """Ollama: SSE with custom format. Phase 2 implementation."""
         # data: {"model":"llama3","done":false,"message":{"role":"assistant","content":"..."}}
         # Transform to OpenAI SSE
-        pass
+        # TODO: Implement actual SSE parsing for Phase 2
+        return None  # Stub — real implementation in Phase 2
 
 async def _stream_provider_response(
     provider: str,
@@ -1302,29 +1306,9 @@ class ChatCompletionChunkIterator:
         """Create and return an async iterator over chunks.
 
         Returns an AsyncIterator — not an AsyncGenerator.
+        Phase 2 implementation will add provider-specific stream creation here.
         """
         return ChatCompletionStreamIterator(self.provider, self.model, self.messages, self.kwargs)
-        """Create the async stream from the provider SDK."""
-        if self.provider == "openai":
-            from openai import AsyncOpenAI
-            client = AsyncOpenAI()
-            stream = await client.chat.completions.create(
-                model=self.model,
-                messages=self.messages,
-                stream=True,
-                **self.kwargs,
-            )
-            return stream
-        elif self.provider == "anthropic":
-            from anthropic import AsyncAnthropic
-            client = AsyncAnthropic()
-            stream = await client.messages.stream(
-                model=self.model,
-                messages=self.messages,
-                **self.kwargs,
-            )
-            return stream
-        # ... other providers
 
     def _transform_chunk(self, chunk) -> ChatCompletionChunk:
         """Provider-specific chunk normalization."""
@@ -1335,8 +1319,8 @@ class ChatCompletionChunkIterator:
 class ChatCompletionStreamIterator:
     """Async iterator that wraps provider SDK stream calls.
 
-    This is a separate class (not a generator function) so that __anext__
-    on ChatCompletionChunkIterator can call it and store the iterator.
+    Stores the stream persistently so __anext__ can advance it across calls.
+    Phase 2 implementation creates real provider streams.
     """
 
     def __init__(self, provider: str, model: str, messages: List[Dict], kwargs: dict):
@@ -1344,6 +1328,7 @@ class ChatCompletionStreamIterator:
         self.model = model
         self.messages = messages
         self.kwargs = kwargs
+        self._stream = None  # Lazily initialized stream
 
     def __aiter__(self) -> "ChatCompletionStreamIterator":
         return self
@@ -1351,18 +1336,21 @@ class ChatCompletionStreamIterator:
     async def __anext__(self) -> ChatCompletionChunk:
         """Advance the provider's stream one step.
 
-        This is NOT a coroutine with yield — it returns the next chunk.
+        Lazily initializes stream on first call, then advances it.
         """
-        if self.provider == "openai":
-            from openai import AsyncOpenAI
-            client = AsyncOpenAI()
-            # In real impl, store the stream and advance it
-            # For spec, this returns the next chunk
-            pass
-        elif self.provider == "anthropic":
-            from anthropic import AsyncAnthropic
-            client = AsyncAnthropic()
-            pass
+        if self._stream is None:
+            self._stream = await self._create_stream()
+        try:
+            return await self._stream.__anext__()
+        except StopAsyncIteration:
+            raise StopAsyncIteration
+
+    async def _create_stream(self) -> AsyncIterator:
+        """Create and return the provider's async stream.
+
+        Phase 2 implementation — currently raises StopAsyncIteration.
+        """
+        # Phase 2: Create actual provider streams for OpenAI, Anthropic, etc.
         raise StopAsyncIteration
 ```
 
@@ -1498,21 +1486,32 @@ async def abatch_completion(
 ) -> List[CompletionResponse]:
     """
     Async version: gather responses concurrently using asyncio.
+    Uses asyncio.Semaphore to limit concurrency to max_workers.
     """
     import asyncio
 
-    async def submit_one(msgs: List[Dict]) -> CompletionResponse:
-        return await acompletion(
-            model=model,
-            messages=msgs,
-            provider=provider,
-            temperature=temperature,
-            max_tokens=max_tokens,
-            n=n,
-            **kwargs,
-        )
+    async def submit_one(semaphore: asyncio.Semaphore, msgs: List[Dict]) -> CompletionResponse:
+        async with semaphore:
+            return await acompletion(
+                model=model,
+                messages=msgs,
+                provider=provider,
+                temperature=temperature,
+                max_tokens=max_tokens,
+                n=n,
+                **kwargs,
+            )
 
-    return await asyncio.gather(*[submit_one(msgs) for msgs in messages])
+    semaphore = asyncio.Semaphore(max_workers)
+    results = await asyncio.gather(*[submit_one(semaphore, msgs) for msgs in messages], return_exceptions=True)
+    successful = [r for r in results if not isinstance(r, Exception)]
+    failed = [(i, r) for i, r in enumerate(results) if isinstance(r, Exception)]
+    if failed:
+        raise BatchPartialFailureError(
+            successful=successful,
+            failed=failed,
+        )
+    return successful
 ```
 
 #### batch_completion_models() — Race Multiple Models (LiteLLM Compatible)
@@ -1566,16 +1565,16 @@ def batch_completion_models(
             )
 
         # Wait for first completion (FIRST_COMPLETED)
-    # If first model fails, continue waiting for others until success or all fail
-    remaining = set(futures.values())
-    while remaining:
-        done, remaining = wait(remaining, return_when=FIRST_COMPLETED)
-        for future in done:
-            try:
-                return future.result()
-            except Exception:
-                # Model failed — continue waiting for others
-                continue
+        # If first model fails, continue waiting for others until success or all fail
+        remaining = set(futures.values())
+        while remaining:
+            done, remaining = wait(remaining, return_when=FIRST_COMPLETED)
+            for future in done:
+                try:
+                    return future.result()
+                except Exception:
+                    # Model failed — continue waiting for others
+                    continue
 
     raise AllModelsFailedError(
         f"All {len(models)} models failed: {[m for m in models]}"
@@ -1657,6 +1656,7 @@ import random
 import time
 import threading
 import math
+from collections import deque
 
 class Router:
     """
@@ -1732,6 +1732,7 @@ class Router:
         self._deployments = []  # Flat list of (model_name, litellm_params)
         self._round_robin_index = 0
         self._round_robin_lock = threading.Lock()  # Thread-safe round-robin
+        self._state_lock = threading.Lock()  # Guards _total_spend, _spend_history
         self._active_requests = {}  # deployment_idx -> count
         self._latencies = {}  # deployment_idx -> list of latencies_us
         self._total_spend = {}  # deployment_idx -> float
@@ -1744,7 +1745,7 @@ class Router:
             self._deployments.append((model_name, item.get("litellm_params", {})))
             self._by_model.setdefault(model_name, []).append(i)
             self._active_requests[i] = 0
-            self._latencies[i] = []
+            self._latencies[i] = deque(maxlen=100)
             self._total_spend[i] = 0.0
 
     def _select_deployment(self, model: str) -> int:
@@ -1770,8 +1771,11 @@ class Router:
         elif strategy == "latency-based-routing":
             return min(indices, key=lambda i: self._avg_latency(i))
         elif strategy == "cost-based-routing":
-            # Requires RFC-0904 pricing — fallback to shuffle
-            return random.choice(indices)
+            # Use recorded spend (from _record_spend) for lowest-cost selection
+            if all(self._total_spend.get(i, 0.0) == 0.0 for i in indices):
+                # No spend data yet — fall back to simple-shuffle
+                return random.choice(indices)
+            return min(indices, key=lambda i: self._total_spend[i])
         elif strategy == "usage-based-routing":
             return min(indices, key=lambda i: self._total_spend[i])
         elif strategy == "usage-based-routing-v2":
@@ -1800,33 +1804,35 @@ class Router:
     def _record_request_start(self, idx: int):
         self._active_requests[idx] = self._active_requests.get(idx, 0) + 1
 
-    def _record_request_end(self, idx: int, latency_ms: float, tokens: int):
+    def _record_request_end(self, idx: int, latency_ms: float, prompt_tokens: int, completion_tokens: int):
         self._active_requests[idx] = max(0, self._active_requests.get(idx, 1) - 1)
-        self._latencies[idx].append(int(latency_ms * 1000))  # Store as microseconds
-        if len(self._latencies[idx]) > 100:
-            self._latencies[idx] = self._latencies[idx][-100:]
-        self._record_spend(idx, tokens)
+        self._latencies[idx].append(int(latency_ms * 1000))  # deque auto-discards old items at maxlen
+        self._record_spend(idx, prompt_tokens, completion_tokens)
 
-    def _record_spend(self, idx: int, tokens: int):
+    def _record_spend(self, idx: int, prompt_tokens: int, completion_tokens: int):
         """Record spend for usage-based routing strategies.
 
-        Uses RFC-0910 pricing table to compute approximate cost.
-        If pricing unavailable, uses rough default (~$0.01/1K tokens).
+        Uses RFC-0910 pricing table to compute cost for input AND output tokens separately.
+        Thread-safe via self._state_lock.
         """
-        try:
-            from quota_router import get_pricing  # lazy import
-            pricing = get_pricing(self._deployments[idx][0])
-            cost = pricing.get("input", 0.0) * tokens / 1000.0
-        except Exception:
-            cost = tokens * 0.00001  # ~$0.01/1K tokens default
-        self._total_spend[idx] = self._total_spend.get(idx, 0.0) + cost
-        # Record in spend history for usage-based-routing-v2
-        if idx not in self._spend_history:
-            self._spend_history[idx] = []
-        self._spend_history[idx].append((time.time(), cost))
-        # Keep last 1000 records per deployment to avoid unbounded growth
-        if len(self._spend_history[idx]) > 1000:
-            self._spend_history[idx] = self._spend_history[idx][-1000:]
+        with self._state_lock:
+            try:
+                from quota_router import get_pricing  # lazy import
+                pricing = get_pricing(self._deployments[idx][0])
+                input_cost = pricing.get("input", 0.0) * prompt_tokens / 1000.0
+                output_price = pricing.get("output", pricing.get("input", 0.0))
+                output_cost = output_price * completion_tokens / 1000.0
+                cost = input_cost + output_cost
+            except Exception:
+                cost = (prompt_tokens + completion_tokens) * 0.00001  # ~$0.01/1K tokens default
+            self._total_spend[idx] = self._total_spend.get(idx, 0.0) + cost
+            # Record in spend history for usage-based-routing-v2
+            if idx not in self._spend_history:
+                self._spend_history[idx] = []
+            self._spend_history[idx].append((time.time(), cost))
+            # Keep last 1000 records per deployment to avoid unbounded growth
+            if len(self._spend_history[idx]) > 1000:
+                self._spend_history[idx] = self._spend_history[idx][-1000:]
 
     def _select_by_weighted_spend(self, indices: List[int]) -> int:
         """Select deployment using usage-based-routing-v2 (recency-weighted spend).
@@ -1890,7 +1896,10 @@ class Router:
                 start = time.time()
                 result = _module_completion(model=model_name, messages=messages, **call_kwargs)
                 latency_ms = (time.time() - start) * 1000
-                self._record_request_end(deployment_idx, latency_ms, result.get("usage", {}).get("total_tokens", 0))
+                usage = result.get("usage", {})
+                prompt_tokens = usage.get("prompt_tokens", 0)
+                completion_tokens = usage.get("completion_tokens", 0)
+                self._record_request_end(deployment_idx, latency_ms, prompt_tokens, completion_tokens)
                 if self.logger_fn:
                     self.logger_fn({"model": model, "deployment": model_name, "latency_ms": latency_ms})
                 return result
@@ -1901,7 +1910,8 @@ class Router:
                 fallback = self.context_window_fallbacks.get(model)
                 if fallback:
                     model_name = fallback  # Overwrite current model attempt with fallback
-                    deployment_idx, params = self._select_deployment(model_name)
+                    deployment_idx = self._select_deployment(model_name)
+                    model_name, params = self._deployments[deployment_idx]
                     call_kwargs = {**params, **kwargs}
                     if self.timeout:
                         call_kwargs.setdefault("timeout", self.timeout)
@@ -1913,7 +1923,8 @@ class Router:
                 fallback = self.content_policy_fallbacks.get(model)
                 if fallback:
                     model_name = fallback
-                    deployment_idx, params = self._select_deployment(model_name)
+                    deployment_idx = self._select_deployment(model_name)
+                    model_name, params = self._deployments[deployment_idx]
                     call_kwargs = {**params, **kwargs}
                     if self.timeout:
                         call_kwargs.setdefault("timeout", self.timeout)
@@ -1932,7 +1943,8 @@ class Router:
                         if fallback_idx < len(fallback_list):
                             model_name = fallback_list[fallback_idx]
                             fallback_idx += 1
-                            deployment_idx, params = self._select_deployment(model_name)
+                            deployment_idx = self._select_deployment(model_name)
+                            model_name, params = self._deployments[deployment_idx]
                             call_kwargs = {**params, **kwargs}
                             if self.timeout:
                                 call_kwargs.setdefault("timeout", self.timeout)
@@ -1986,7 +1998,10 @@ class Router:
                 start = time.time()
                 result = await _module_acompletion(model=model_name, messages=messages, **call_kwargs)
                 latency_ms = (time.time() - start) * 1000
-                self._record_request_end(deployment_idx, latency_ms, result.get("usage", {}).get("total_tokens", 0))
+                usage = result.get("usage", {})
+                prompt_tokens = usage.get("prompt_tokens", 0)
+                completion_tokens = usage.get("completion_tokens", 0)
+                self._record_request_end(deployment_idx, latency_ms, prompt_tokens, completion_tokens)
                 if self.logger_fn:
                     self.logger_fn({"model": model, "deployment": model_name, "latency_ms": latency_ms})
                 return result
@@ -1997,7 +2012,8 @@ class Router:
                 fallback = self.context_window_fallbacks.get(model)
                 if fallback:
                     model_name = fallback  # Overwrite current model attempt with fallback
-                    deployment_idx, params = self._select_deployment(model_name)
+                    deployment_idx = self._select_deployment(model_name)
+                    model_name, params = self._deployments[deployment_idx]
                     call_kwargs = {**params, **kwargs}
                     if self.timeout:
                         call_kwargs.setdefault("timeout", self.timeout)
@@ -2009,7 +2025,8 @@ class Router:
                 fallback = self.content_policy_fallbacks.get(model)
                 if fallback:
                     model_name = fallback
-                    deployment_idx, params = self._select_deployment(model_name)
+                    deployment_idx = self._select_deployment(model_name)
+                    model_name, params = self._deployments[deployment_idx]
                     call_kwargs = {**params, **kwargs}
                     if self.timeout:
                         call_kwargs.setdefault("timeout", self.timeout)
@@ -2027,7 +2044,8 @@ class Router:
                         if fallback_idx < len(fallback_list):
                             model_name = fallback_list[fallback_idx]
                             fallback_idx += 1
-                            deployment_idx, params = self._select_deployment(model_name)
+                            deployment_idx = self._select_deployment(model_name)
+                            model_name, params = self._deployments[deployment_idx]
                             call_kwargs = {**params, **kwargs}
                             if self.timeout:
                                 call_kwargs.setdefault("timeout", self.timeout)
@@ -2748,6 +2766,7 @@ This is the only approach that achieves true drop-in replacement for both ecosys
 
 | Version | Date       | Changes |
 | ------- | ---------- | ------- |
+| 1.27    | 2026-04-28 | Fix external adversarial review round 9: C1 RETRACTED (Round 8 rebuttal was wrong — actual crash bug at 6 lines confirmed, now fixed), NC1 (batch_completion_models executor context moved inside with block), NC2 (_record_spend now uses prompt_tokens and completion_tokens separately with output pricing), NC3 (_record_spend thread-safe via _state_lock), NC4 (removed dead code from _create_stream_iter), NC5 (ChatCompletionStreamIterator now stores _stream persistently), NC6 (_latencies uses deque maxlen=100), H4 (cost-based-routing uses _total_spend), H5 (abatch_completion uses return_exceptions=True), M3 (abatch_completion uses asyncio.Semaphore for max_workers), M8 (SSE parser stubs return None with Phase 2 note). M2 rebuttal: MissingApiKeyError.provider has no type conflict. |
 | 1.26    | 2026-04-28 | Fix external adversarial review round 8: H1 (batch_completion_models now waits for remaining models after first failure with loop), H2 (round-robin now thread-safe via threading.Lock), H3 (_record_spend added to record token cost for usage-based routing), H4 (usage-based-routing-v2 implementation with _spend_history and recency-weighted scoring), H7 (resolve_provider normalizes provider_param to lowercase), H8 (_stream_sync_bridge fixed — not async def, returns async_iter_to_sync_iter result), H9 (get_deployment_mode now has single implementation with _get_compiled_modes and _EMBEDDED_MODE defined), M1 (BatchPartialFailureError defined in exception hierarchy), M5 (model_list validation: if empty list passed, raises error), M10 (_EMBEDDED_MODE now defined at module level for get_deployment_mode). |
 | 1.25    | 2026-04-28 | Fix external adversarial review round 7: Observation 1 (cleaned get_budget_status docstring), Observation 2 (safety_identifier removed from any-llm-not-specced table, documented as Phase 3), Observation 3 (added note on single-target fallback behavior and resilience recommendation). |
 | 1.24    | 2026-04-28 | Fix external adversarial review round 6: C6-1 (corrected HTTP proxy embedding — Python IS embedded via PyO3 in Rust core, proxy delegates to core), CH-6 (Router now explicitly sets num_retries=1 in call_kwargs when fallbacks configured — mandatory, not recommended), CM-9 (added GIL management design for concurrent HTTP requests), L11 (ignored — rebuttal: emphatic language is appropriate for critical constraints). |

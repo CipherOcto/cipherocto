@@ -2,7 +2,7 @@
 
 ## Status
 
-Draft (v1.22 — 2026-04-28)
+Draft (v1.23 — 2026-04-28)
 
 **🚨 CRITICAL ARCHITECTURAL CONSTRAINT: HTTP proxy is FOREVER in BOTH litellm-mode and any-llm-mode. See section below. 🚨**
 
@@ -170,7 +170,7 @@ Mode gate does NOT control: which interfaces exist
 
 **Mode gate controls HOW (reqwest vs PyO3), NOT WHETHER (proxy vs SDK).**
 
-**HTTP proxy always calls quota-router-core directly** — it never goes through the PyO3 Python SDK bindings. In any-llm-mode, the proxy calls Rust core which delegates to Python SDKs via PyO3 bridge internally. This is the correct performance-first architecture.
+**HTTP proxy always calls quota-router-core directly** — it never goes through the PyO3 Python SDK bindings. In any-llm-mode, the proxy calls Rust core (which may internally delegate to Python SDKs via PyO3 bridge), but the proxy itself only ever speaks to Rust core. This is the correct performance-first architecture.
 
 **Key insight**: Mode determines which HTTP/client layer is compiled. The Python SDK (`quota-router-pyo3`) is always the Python interface — it wraps the Rust core regardless of mode.
 
@@ -1657,7 +1657,6 @@ class Router:
         self.num_retries = num_retries
         self.timeout = timeout
         self.logger_fn = logger_fn
-        self._fallback_idx = 0  # Track position in fallback list for iteration
 
         # Runtime state per deployment
         self._deployments = []  # Flat list of (model_name, litellm_params)
@@ -1754,6 +1753,7 @@ class Router:
             call_kwargs.setdefault("timeout", self.timeout)
 
         last_error = None
+        fallback_idx = 0  # Per-request state — reset each call, not persisted
         for attempt in range(self.num_retries + 1):
             try:
                 self._record_request_start(deployment_idx)
@@ -1767,6 +1767,7 @@ class Router:
             except ContextLengthExceededError as e:
                 # Try context_window fallback
                 # `model` = original input (e.g., "gpt-4o"), `model_name` = current model being attempted
+                last_error = e  # Store before fallback attempt
                 fallback = self.context_window_fallbacks.get(model)
                 if fallback:
                     model_name = fallback  # Overwrite current model attempt with fallback
@@ -1778,6 +1779,7 @@ class Router:
                 raise
             except ContentFilterError as e:
                 # Try content_policy fallback
+                last_error = e  # Store before fallback attempt
                 fallback = self.content_policy_fallbacks.get(model)
                 if fallback:
                     model_name = fallback
@@ -1790,26 +1792,30 @@ class Router:
             except (RateLimitError, GatewayTimeoutError, UpstreamProviderError) as e:
                 # DO NOT retry here — Rust core (FallbackExecutor) handles HTTP-level retry
                 # The Router only handles deployment-level fallback (switching to different model)
-                # Routing to a different deployment on error is handled via fallback lists below
+                last_error = e  # Store before fallback attempt
                 # Check generic fallbacks list for this model
                 if self.fallbacks:
                     fallback_list = self.fallbacks.get(model, [])
                     if fallback_list:
-                        # Pick first fallback from list (advance through list on each trigger)
-                        fallback_idx = getattr(self, '_fallback_idx', 0)
-                        model_name = fallback_list[fallback_idx % len(fallback_list)]
-                        self._fallback_idx = fallback_idx + 1  # Advance for next fallback attempt
-                        deployment_idx, params = self._select_deployment(model_name)
-                        call_kwargs = {**params, **kwargs}
-                        if self.timeout:
-                            call_kwargs.setdefault("timeout", self.timeout)
-                        continue
+                        # Advance through fallback list once — no wrapping
+                        # Each entry tried once; exhaust list then raise
+                        if fallback_idx < len(fallback_list):
+                            model_name = fallback_list[fallback_idx]
+                            fallback_idx += 1
+                            deployment_idx, params = self._select_deployment(model_name)
+                            call_kwargs = {**params, **kwargs}
+                            if self.timeout:
+                                call_kwargs.setdefault("timeout", self.timeout)
+                            continue
                 raise
             except Exception as e:
                 last_error = e
                 raise
 
-        raise last_error
+        # Fallback: if last_error is set, raise it; otherwise raise meaningful error
+        if last_error:
+            raise last_error
+        raise RouterError("All deployments and fallbacks exhausted")
 
     async def acompletion(
         self,
@@ -1832,6 +1838,7 @@ class Router:
             call_kwargs.setdefault("timeout", self.timeout)
 
         last_error = None
+        fallback_idx = 0  # Per-request state — reset each call, not persisted
         for attempt in range(self.num_retries + 1):
             try:
                 self._record_request_start(deployment_idx)
@@ -1845,6 +1852,7 @@ class Router:
             except ContextLengthExceededError as e:
                 # Try context_window fallback
                 # `model` = original input (e.g., "gpt-4o"), `model_name` = current model being attempted
+                last_error = e  # Store before fallback attempt
                 fallback = self.context_window_fallbacks.get(model)
                 if fallback:
                     model_name = fallback  # Overwrite current model attempt with fallback
@@ -1856,6 +1864,7 @@ class Router:
                 raise
             except ContentFilterError as e:
                 # Try content_policy fallback
+                last_error = e  # Store before fallback attempt
                 fallback = self.content_policy_fallbacks.get(model)
                 if fallback:
                     model_name = fallback
@@ -1868,25 +1877,29 @@ class Router:
             except (RateLimitError, GatewayTimeoutError, UpstreamProviderError) as e:
                 # DO NOT retry here — Rust core (FallbackExecutor) handles HTTP-level retry
                 # The Router only handles deployment-level fallback (switching to different model)
+                last_error = e  # Store before fallback attempt
                 # Check generic fallbacks list for this model
                 if self.fallbacks:
                     fallback_list = self.fallbacks.get(model, [])
                     if fallback_list:
-                        # Pick first fallback from list (advance through list on each trigger)
-                        fallback_idx = getattr(self, '_fallback_idx', 0)
-                        model_name = fallback_list[fallback_idx % len(fallback_list)]
-                        self._fallback_idx = fallback_idx + 1  # Advance for next fallback attempt
-                        deployment_idx, params = self._select_deployment(model_name)
-                        call_kwargs = {**params, **kwargs}
-                        if self.timeout:
-                            call_kwargs.setdefault("timeout", self.timeout)
-                        continue
+                        # Advance through fallback list once — no wrapping
+                        if fallback_idx < len(fallback_list):
+                            model_name = fallback_list[fallback_idx]
+                            fallback_idx += 1
+                            deployment_idx, params = self._select_deployment(model_name)
+                            call_kwargs = {**params, **kwargs}
+                            if self.timeout:
+                                call_kwargs.setdefault("timeout", self.timeout)
+                            continue
                 raise
             except Exception as e:
                 last_error = e
                 raise
 
-        raise last_error
+        # Fallback: if last_error is set, raise it; otherwise raise meaningful error
+        if last_error:
+            raise last_error
+        raise RouterError("All deployments and fallbacks exhausted")
 ```
 
 **Note on `cache_responses`:** Uses **stoolap** (RFC-0913) semantic cache — NOT Redis. Stoolap is the sole persistence layer per RFC-0914. No `redis_url` parameter.
@@ -1920,7 +1933,9 @@ num_retries: Optional[int] = None,  # Override HTTP-level retry count in Rust Fa
 
 The Router's `num_retries` controls the **fallback loop** (trying different deployments). The same `num_retries` is also passed to Rust's `FallbackExecutor` which handles HTTP-level retries on the same deployment. Total HTTP call budget = fallback attempts × (1 + Rust retry count).
 
-**Recommendation:** When using Router's deployment-level fallback, set Rust FallbackExecutor's retry count to a low value (e.g., 1) to avoid redundant retries. The Router's fallback provides the primary resilience; Rust-level retries handle transient network issues on the same deployment before fallback triggers.
+**Normative coordination rule:** When the Python Router is initialised with `fallbacks` or `context_window_fallbacks` or `content_policy_fallbacks`, the Rust core's `FallbackExecutor` MUST be configured with `max_retries = 1` (i.e., no internal retries beyond the first attempt). The Router's fallback loop provides the primary resilience; Rust-level retries are disabled to avoid redundant retry attempts.
+
+**Implementation:** Pass `max_retries=1` to Rust core when initializing Router with any fallback configuration. This is NOT a recommendation — it is a REQUIRED specification.
 
 **Example coordination:**
 ```python
@@ -2520,6 +2535,7 @@ This is the only approach that achieves true drop-in replacement for both ecosys
 
 | Version | Date       | Changes |
 | ------- | ---------- | ------- |
+| 1.23    | 2026-04-28 | Fix external adversarial review round 5: C5-2 (fallback_idx now local per-request variable, not persisted), C5-3 (last_error stored before continue, raises meaningful error if all fallbacks exhausted), CM-7 (Rust FallbackExecutor coordination now REQUIRED max_retries=1 when fallbacks configured), CM-8 (fallback list iterates once without wrapping), L9 (clarified "DIRECTLY" — proxy calls Rust core which may internally use PyO3), L10 (is_known_provider cross-reference added). |
 | 1.22    | 2026-04-28 | 🚨 MASSIVE RED FLAG 🚨 HTTP proxy is FOREVER in BOTH litellm-mode and any-llm-mode. #1 architectural constraint. Flooded throughout RFC to prevent future incorrect claims. |
 | 1.21    | 2026-04-28 | CORRECTION: HTTP proxy is ALWAYS available in both litellm-mode and any-llm-mode. The proxy ALWAYS calls quota-router-core directly — never through PyO3 bindings. C4-1 in v1.20 was incorrect and is reverted. Added explicit note that HTTP proxy architecture is performance-first (direct Rust core calls). |
 | 1.20    | 2026-04-28 | Fix external adversarial review round 4 (2026-04-28): CH-4 (Router fallback now re-selects deployment with correct params), CM-4 (fallback iteration advances through list using _fallback_idx), CM-5 (acompletion(stream=True) in any-llm-mode returns AsyncIterator, not sync via bridge), CM-6 (added Router/Rust FallbackExecutor coordination note), L6 (KNOWN_PROVIDERS defined as runtime registry), L8 (fallbacks List[Dict] normalized to Dict for lookup). NOTE: C4-1 (HTTP proxy descoped to full) was INCORRECT and is reverted in v1.21. |

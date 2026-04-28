@@ -2,7 +2,7 @@
 
 ## Status
 
-Draft (v1.18 — 2026-04-28)
+Draft (v1.19 — 2026-04-28)
 
 ## Authors
 
@@ -186,6 +186,8 @@ def get_deployment_mode() -> str:
 ```
 
 **For pip-installed wheels:** Set `QUOTA_ROUTER_MODE` to switch between LiteLLM-compatible (reqwest) and any-llm-compatible (PyO3) behavior without reinstalling.
+
+**Scope note:** `QUOTA_ROUTER_MODE` affects only the **Python SDK** interface's provider strategy. The HTTP proxy in a `full` build uses a separate configuration (e.g., in `config.yaml`) to determine its provider strategy. The proxy can also be forced to a specific strategy at startup, independent of the SDK's runtime mode.
 
 ### Dual-Mode API Conventions
 
@@ -712,14 +714,6 @@ def get_budget_status(provider: Optional[str] = None) -> BudgetStatus:
     Returns:
         BudgetStatus with balance, total_spend, budget_limit, last_updated
     """
-
-    Args:
-        provider: If None, returns aggregate across all providers.
-                  If set, returns status for that provider's key.
-
-    Returns:
-        BudgetStatus with current balance and spend metrics.
-    """
 ```
 
 **Reference:** RFC-0904 (Real-Time Cost Tracking) for Balance struct definition.
@@ -1026,6 +1020,10 @@ current call only, ignoring any global Router configuration. Each dict follows
 the deployment format: {"model_name": "...", "api_base": "...", "api_key": "...", "rpm": N, "tpm": N}.
 If the requested model is not in the list, raises ModelNotFoundError.
 This parameter does NOT modify the Router's stored deployment list.
+
+Empty list (model_list=[]): Raises ValueError — an empty list explicitly passed
+is treated as a validation error, not as "no list provided" (use model_list=None
+to fall back to default provider resolution).
 """
     deployment_id: Optional[str] = None,
     safety_identifier: Optional[str] = None,
@@ -1741,12 +1739,21 @@ class Router:
                 # DO NOT retry here — Rust core (FallbackExecutor) handles HTTP-level retry
                 # The Router only handles deployment-level fallback (switching to different model)
                 # Routing to a different deployment on error is handled via fallback lists below
+                # Check generic fallbacks list for this model
+                if self.fallbacks:
+                    fallback_list = self.fallbacks.get(model, [])
+                    if fallback_list:
+                        # Pick first fallback from list
+                        model_name = fallback_list[0]
+                        continue
                 raise
             except Exception as e:
                 last_error = e
                 raise
 
         raise last_error
+
+    async def acompletion(
         self,
         model: str,
         messages: List[Dict],
@@ -1795,6 +1802,12 @@ class Router:
             except (RateLimitError, GatewayTimeoutError, UpstreamProviderError) as e:
                 # DO NOT retry here — Rust core (FallbackExecutor) handles HTTP-level retry
                 # The Router only handles deployment-level fallback (switching to different model)
+                # Check generic fallbacks list for this model
+                if self.fallbacks:
+                    fallback_list = self.fallbacks.get(model, [])
+                    if fallback_list:
+                        model_name = fallback_list[0]
+                        continue
                 raise
             except Exception as e:
                 last_error = e
@@ -1817,16 +1830,16 @@ Per-call retry on transient failure. The retry algorithm (exponential backoff, j
 
 ```python
 # Part of acompletion / completion / Router signature
-num_retries: Optional[int] = None,  # Override RFC-0902's max_retries fallback config
+num_retries: Optional[int] = None,  # Override HTTP-level retry count in Rust FallbackExecutor (default 3)
 
 # Python layer passes num_retries to Rust core which handles:
 # - Exponential backoff (backoff_multiplier)
 # - Retry delay (retry_delay_ms)
 # - Max backoff (max_backoff_ms)
 # - Retry on: RateLimitError, GatewayTimeoutError, UpstreamProviderError
-# Reference: RFC-0902 §Fallback Mechanisms
+# Reference: RFC-0902 §Fallback Mechanisms, quota-router-core FallbackExecutor
 
-# If None: uses RFC-0902's fallback config (max_retries: 3 default)
+# If None: uses FallbackExecutor default (max_retries: 3)
 # If set: overrides max_retries in Rust core's fallback logic for this call
 ```
 
@@ -2418,6 +2431,7 @@ This is the only approach that achieves true drop-in replacement for both ecosys
 
 | Version | Date       | Changes |
 | ------- | ---------- | ------- |
+| 1.19    | 2026-04-28 | Fix external adversarial review round 3 (2026-04-28): High (repair async Router corrupted doc), CM-1 (sync Router now uses generic fallbacks list), CM-2 (QUOTA_ROUTER_MODE scope clarified — SDK only, proxy uses config.yaml), CM-3 (empty model_list raises ValueError), L1 (num_retries references FallbackExecutor HTTP retry count), L2 (get_budget_status duplicate docstring removed). |
 | 1.18    | 2026-04-28 | Fix external adversarial review round 2 (2026-04-28): CC-1 (synchronized HTTP proxy availability with RFC-0917 — now in all modes), CC-2 (CRITICAL INVARIANT box aligned with RFC-0917), CH-1 (QUOTA_ROUTER_MODE validated against compile-time capabilities), CH-2 (Router no longer retries HTTP calls — Rust core FALLBACK_EXECUTOR handles retry, Router only handles model-level fallback), CM-2 (sync streaming now has model_list param). |
 | 1.17    | 2026-04-28 | Fix external adversarial review (2026-04-28): C1 (add QUOTA_ROUTER_MODE runtime selection for full builds), C2 (HTTP proxy only in litellm-mode/full, not any-llm-mode), C4 (add streaming behavior table per mode), H1 (remove / parsing from resolve_provider), H2 (any- key parsing works per-call), H3 (add warning to get_budget_status), M1 (clarify async vs sync timeout types), M2 (document model_list per-call semantics), M4 (implement fallbacks parameter in Router), L4 (make reasoning_effort default explicit). |
 | 1.16    | 2026-04-28 | Fix adversarial review v1.15 issue: I1 (response_format added to sync completion() signature, matching async and streaming specs). |

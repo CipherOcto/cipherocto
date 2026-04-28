@@ -17,6 +17,7 @@ pub struct ProviderFeatures {
 }
 
 /// Provider metadata
+#[allow(dead_code)]
 #[derive(Debug, Clone)]
 pub struct ProviderMetadata {
     pub name: String,
@@ -29,6 +30,7 @@ pub struct ProviderMetadata {
 
 /// Trait for LLM providers
 /// Each provider implements this trait to handle API calls to its SDK
+#[allow(dead_code)]
 pub trait LLMProvider: Send + Sync {
     /// Get provider metadata
     fn metadata(&self) -> &ProviderMetadata;

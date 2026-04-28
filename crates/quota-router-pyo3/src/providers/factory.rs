@@ -9,10 +9,12 @@ use std::collections::HashMap;
 use std::sync::Mutex;
 
 /// Global provider registry - stores initialized provider instances
+#[allow(dead_code)]
 static PROVIDER_REGISTRY: Lazy<Mutex<HashMap<String, ProviderInstance>>> =
     Lazy::new(|| Mutex::new(HashMap::new()));
 
 /// Provider instance wrapper
+#[allow(dead_code)]
 struct ProviderInstance {
     api_key: String,
     api_base: Option<String>,
@@ -69,6 +71,7 @@ pub fn get_provider_info(provider: &str) -> PyResult<Py<PyAny>> {
 }
 
 /// Validate that a provider is supported
+#[allow(dead_code)]
 pub fn validate_provider(
     provider: &str,
 ) -> Result<&'static ProviderInfo, UnsupportedProviderError> {
@@ -79,6 +82,7 @@ pub fn validate_provider(
 
 /// Resolve API key for a provider
 /// Priority: explicit key > environment variable
+#[allow(dead_code)]
 pub fn resolve_api_key(
     provider_info: &ProviderInfo,
     explicit_key: Option<&str>,
@@ -108,6 +112,7 @@ pub fn resolve_api_key(
 }
 
 /// Resolve API base URL for a provider
+#[allow(dead_code)]
 pub fn resolve_api_base(
     provider_info: &ProviderInfo,
     explicit_base: Option<&str>,

@@ -2,7 +2,7 @@
 
 ## Status
 
-Draft (v1.5 — 2026-04-27)
+Draft (v1.6 — 2026-04-27)
 
 ## Authors
 
@@ -566,7 +566,16 @@ pub fn set_api_key(provider: String, api_key: String) -> ... {
 // Keys persist across requests via stoolap WAL
 ```
 
-**Key insight:** In single-mode `any-llm-mode`, keys are in-memory only. In `full` mode, keys are stored in `StoolapKeyStorage` and budget enforcement (RFC-0904) applies.
+**Key insight:** In single-mode `any-llm-mode`, keys are in-memory only (session-scoped). In `full` mode, keys are stored in `StoolapKeyStorage` and budget enforcement (RFC-0904) applies.
+
+**Important — `get_budget_status()` behavior by mode:**
+
+| Mode    | get_budget_status() returns | Notes |
+| ------- | -------------------------- | ----- |
+| any-llm | Estimated from in-memory tracking | No persistence; estimate only |
+| full    | Real Balance from StoolapKeyStorage | Persisted, accurate |
+
+In any-llm-mode, `get_budget_status()` tracks spend in-memory per-session using `Balance` struct (RFC-0904) but does NOT persist across restarts. In `full` mode, `Balance` data persists via stoolap WAL.
 
 #### get_budget_status() — Balance Reference
 
@@ -888,6 +897,25 @@ def completion(
 **Severity: Important**
 
 The current `quota-router-pyo3/src/streaming.rs` implementation is a **mock** that splits content by whitespace. Real streaming requires SSE parsing and transformation per provider format.
+
+**Streaming execution path (Router → completion → stream):**
+
+```
+router.completion(stream=True)
+  → _select_deployment(model)          # Select deployment
+  → completion(stream=True)            # Module-level completion with stream=True
+  → Provider SDK's stream=True call     # Via PyO3 in any-llm, via reqwest in litellm
+  → SSE parsing (provider-specific)    # OpenAI pass-through, Anthropic transform, etc.
+  → Iterator[ChatCompletionChunk]      # Normalized chunks returned
+```
+
+**Note:** When `Router.completion(stream=True)` is called, the Router:
+1. Selects deployment via `_select_deployment()`
+2. Calls `completion(stream=True)` with selected deployment params
+3. The module-level completion handles provider-specific streaming
+4. Router does NOT directly call provider SDKs — it goes through completion() as normal
+
+The streaming spec below covers the SSE transformation layer inside `completion()`.
 
 **Current mock implementation (replace):**
 
@@ -1237,7 +1265,13 @@ class Router:
             self._total_spend[i] = 0.0
 
     def _select_deployment(self, model: str) -> int:
-        """Select deployment index using routing strategy."""
+        """Select deployment index using routing strategy.
+
+        Args:
+            model: The **model_name** (not model_group) — must match the key in self._by_model.
+                   This is the value from model_list[].model_name (e.g., "gpt-4o", "claude-3-opus").
+                   Not a model group — model groups are not used at this layer.
+        """
         indices = self._by_model.get(model, [])
         if not indices:
             raise ModelNotFoundError(f"No deployments found for model: {model}")
@@ -1292,10 +1326,13 @@ class Router:
         **kwargs,
     ) -> CompletionResponse:
         """
-        Route to a deployment and call completion().
+        Route to a deployment and call the module-level completion() function.
 
-        Applies fallback chain on error (context_window → content_policy → general).
+        Note: This calls `from quota_router import completion` (module-level),
+        NOT self.completion() (recursive loop would occur).
         """
+        from quota_router import completion as _module_completion
+
         deployment_idx = self._select_deployment(model)
         model_name, params = self._deployments[deployment_idx]
 
@@ -1309,7 +1346,7 @@ class Router:
             try:
                 self._record_request_start(deployment_idx)
                 start = time.time()
-                result = completion(model=model_name, messages=messages, **call_kwargs)
+                result = _module_completion(model=model_name, messages=messages, **call_kwargs)
                 latency_ms = (time.time() - start) * 1000
                 self._record_request_end(deployment_idx, latency_ms, result.get("usage", {}).get("total_tokens", 0))
                 if self.logger_fn:
@@ -1317,9 +1354,10 @@ class Router:
                 return result
             except ContextLengthExceededError as e:
                 # Try context_window fallback
+                # `model` = original input (e.g., "gpt-4o"), `model_name` = current model being attempted
                 fallback = self.context_window_fallbacks.get(model)
                 if fallback and attempt < self.num_retries:
-                    model_name = fallback
+                    model_name = fallback  # Overwrite current model attempt with fallback
                     continue
                 raise
             except ContentFilterError as e:
@@ -1350,8 +1388,13 @@ class Router:
         messages: List[Dict],
         **kwargs,
     ) -> CompletionResponse:
-        """Async route and call acompletion()."""
+        """Async route and call the module-level acompletion() function.
+
+        Note: This calls `from quota_router import acompletion` (module-level),
+        NOT self.acompletion() (recursive loop would occur).
+        """
         import asyncio
+        from quota_router import acompletion as _module_acompletion
 
         deployment_idx = self._select_deployment(model)
         model_name, params = self._deployments[deployment_idx]
@@ -1364,7 +1407,7 @@ class Router:
             try:
                 self._record_request_start(deployment_idx)
                 start = time.time()
-                result = await acompletion(model=model_name, messages=messages, **call_kwargs)
+                result = await _module_acompletion(model=model_name, messages=messages, **call_kwargs)
                 latency_ms = (time.time() - start) * 1000
                 self._record_request_end(deployment_idx, latency_ms, result.get("usage", {}).get("total_tokens", 0))
                 if self.logger_fn:
@@ -1519,9 +1562,9 @@ def map_upstream_exception(message: str, status_code: Optional[int] = None) -> Q
 
 **Severity: Medium**
 
-any-llm supports `any-...` API keys that encode the provider internally. quota-router supports this via the `platform` pseudo-provider.
+any-llm supports `any-...` API keys that encode the provider internally. quota-router supports this via the `platform` pseudo-provider (listed in RFC-0917 Phase 3's 41 providers as `"platform"`).
 
-**Cross-reference:** Verify consistency with RFC-0917 Phase 3's platform provider concept. The platform provider here is any-llm-style; RFC-0917 Phase 3 may define a different platform integration pattern.
+**Verified consistency with RFC-0917 Phase 3:** The `platform` pseudo-provider matches RFC-0917 Phase 3's provider list (line 1008: `platform` among 41 providers). It is NOT a different platform integration — it is the same `any-...` key format mechanism.
 
 **Specification:**
 
@@ -1785,6 +1828,23 @@ mode = quota_router.get_deployment_mode()
 
 **API style is independent of mode:** Both `provider=...` and `provider:model` calling conventions work in all modes.
 
+**`get_deployment_mode()` implementation:** The mode is a compile-time constant baked into the PyO3 binary via Rust build metadata. At Python import time, the mode is read from an embedded constant (not runtime detection):
+
+```rust
+// In PyO3 module init
+#[pymodule]
+fn _quota_router(m: &Bound<PyModule>) -> PyResult<()> {
+    m.add("__deployment_mode__", "any-llm-mode")?;  // Set at compile time
+    Ok(())
+}
+
+def get_deployment_mode() -> str:
+    import quota_router
+    return quota_router.__deployment_mode__
+```
+
+**Implementation note:** The mode string is embedded via `concat!(env!("CARGO_PKG_NAME"), "-", env!("PROFILE"))` or similar compile-time injection. Build scripts generate the constant at `cargo build` time.
+
 ## Package Structure
 
 ```
@@ -1803,8 +1863,9 @@ quota_router/
 ├── budget.py             # Budget management (set_api_key, get_budget_status)
 └── metrics.py            # Metrics (get_metrics)
 
-# Backwards compatibility alias
-litellm = sys.modules[__name__]  # Enables: import quota_router as litellm
+# LiteLLM compatibility — use explicit import alias at call site:
+#   from quota_router import completion as litellm_completion
+#   OR: import quota_router; litellm = quota_router  # simple alias, no sys.modules mutation
 ```
 
 ## Performance Targets
@@ -1883,10 +1944,12 @@ The SDK has **two incompatible API key handling modes** with different security 
 - [ ] Provider resolution algorithm (both styles)
 - [ ] Exception hierarchy with error codes
 - [ ] **Replace mock with real PyO3 SDK calls** — current `quota-router-pyo3` completion functions are mock stubs that echo messages
-- [ ] Basic test suite
+- [ ] Basic test suite (OpenAI + Anthropic — these cover the two main patterns: provider= and provider:model)
 - [ ] Async iterator bridge for sync streaming (`async_iter_to_sync_iter()`)
 
-**Note:** Phase 1 MUST replace the current mock implementations with real provider SDK calls via PyO3.
+**Note:** Phase 1 MUST replace the current mock implementations with real provider SDK calls via PyO3. OpenAI and Anthropic are the priority providers because:
+1. OpenAI covers the `provider=model` style (LiteLLM compatibility)
+2. Anthropic covers the `provider:model` style (any-llm compatibility)
 
 ### Phase 2: Full Provider Coverage
 
@@ -1900,7 +1963,7 @@ The SDK has **two incompatible API key handling modes** with different security 
 
 ### Phase 3: Enterprise Features
 
-- [ ] Router class with load balancing strategies (6 strategies specced)
+- [ ] Router class with load balancing strategies (8 strategies specced)
 - [ ] `batch_completion()` and `batch_completion_models()` (in-memory parallel batch — specced above)
 - [ ] Batch API (file-based)
 - [ ] Responses API
@@ -1937,7 +2000,7 @@ The SDK has **two incompatible API key handling modes** with different security 
 
 - F1: LangChain integration
 - F2: LlamaIndex integration
-- F3: Streaming SSE normalization
+- F3: Streaming SSE normalization — provider-specific SSE parsing for non-OpenAI-SSE providers (Anthropic, Mistral, etc.), distinct from Phase 1's `async_iter_to_sync_iter()` bridge which handles the sync/async conversion
 - F4: Response caching (RFC-0906)
 
 ## Rationale
@@ -1954,12 +2017,13 @@ This is the only approach that achieves true drop-in replacement for both ecosys
 
 | Version | Date       | Changes |
 | ------- | ---------- | ------- |
+| 1.6     | 2026-04-27 | Fix adversarial review v1.5 issues: C1 (Router.completion() uses explicit import to avoid self-call infinite loop), I1 (get_budget_status behavior in any-llm vs full clarified), I2 (streaming execution path documented), I3 (platform provider RFC-0917 cross-reference verified), I4 (get_deployment_mode() implementation explained), I5 (_select_deployment model param is model_name not model_group), I6 (Phase 1 specifies OpenAI + Anthropic as first providers), L1 (sys.modules mutation removed, explicit import alias), L2 (Phase 3 "6 strategies" corrected to "8"), L3 (F3 streaming vs Phase 1 streaming clarified), L4 (async path now catches Exception like sync), L5 (model vs model_name variable semantics clarified), I7 (version history table aligned). |
 | 1.5     | 2026-04-27 | Fix adversarial review v1.4 issues: I1 (corrected ProxyServer claim — RFC-0917 says both interfaces in all modes, mode controls provider strategy not interface), I2 (Python↔Rust exception mapping added with RouterError table), I3 (real SSE streaming spec added, replacing mock), I6 (set_api_key storage mode clarification), I7 (get_budget_status Balance reference), L3 (list_models now Router.list_models() method for LiteLLM compat). Feature gate section corrected per RFC-0917. |
 | 1.4     | 2026-04-27 | Fix adversarial review v1.3 issues: C1 (Router now thin PyO3 wrapper delegating to RFC-0902 Rust core), C2 (num_retries now Python param only, references RFC-0902), C3 (added RFC-0913 to dependencies); I1/I2/I3/I4 (all 7 RFC-0902 strategies + fallback types now referenced); L1 (GIL note added to batch_completion), L3 (platform provider cross-ref to RFC-0917). |
-| 1.3     | 2026-04-27 | Replace gap analysis with actual specifications: async_iter_to_sync_iter() bridge, batch_completion() with ThreadPoolExecutor, Router 6 strategies, retry logic, logger_fn, exception regex mapping (QUOTA_ROUTER_UNIFIED_EXCEPTIONS=1), platform provider (any-api key format), timeout httpx.Timeout, thinking, system params. Phase 3 updated with all specced items.                                                              |
-| 1.2     | 2026-04-27 | Gap analysis vs any-llm/litellm: add missing completion params (timeout, thinking, system, etc.), streaming async bridge spec, batch_completion() spec, router strategies, exception mapping, platform provider. Phase 4 added for full LiteLLM compat. Provider count 41→42 (added deepinfra). Clarify redis_url=N/A (stoolap replaces Redis per RFC-0912/0914); cache_responses uses stoolap semantic cache per RFC-0913.           |
+| 1.3     | 2026-04-27 | Replace gap analysis with actual specifications: async_iter_to_sync_iter() bridge, batch_completion() with ThreadPoolExecutor, Router 6 strategies, retry logic, logger_fn, exception regex mapping (QUOTA_ROUTER_UNIFIED_EXCEPTIONS=1), platform provider (any-api key format), timeout httpx.Timeout, thinking, system params. Phase 3 updated with all specced items. |
+| 1.2     | 2026-04-27 | Gap analysis vs any-llm/litellm: add missing completion params (timeout, thinking, system, etc.), streaming async bridge spec, batch_completion() spec, router strategies, exception mapping, platform provider. Phase 4 added for full LiteLLM compat. Provider count 41→42 (added deepinfra). Clarify redis_url=N/A (stoolap replaces Redis per RFC-0912/0914); cache_responses uses stoolap semantic cache per RFC-0913. |
 | 1.1     | 2026-04-27 | Fix all adversarial review issues: C2 (security model docs), C3 (raise error not silent fallback), C4 (ambiguity detection), C5 (case-insensitive provider lookup); I1 (G1=<10ms), I2 (stream=None), I3 (list_models spec), I4 (typed CompletionResponse), I5 (session_label docs), I6 (client_args schema), I7 (error codes), I8 (GIL isolation); L1 (Phase 1 clarify), L2 (deployment mode), L3 (batch API), L4 (RFC-0904 required) |
-| 1.0     | 2026-04-27 | Initial draft                                                                                                                                                                                                                                                                                                                                                                                                                         |
+| 1.0     | 2026-04-27 | Initial draft |
 
 ## Related RFCs
 

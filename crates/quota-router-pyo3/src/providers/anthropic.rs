@@ -8,6 +8,7 @@ use pyo3::prelude::*;
 use std::sync::Mutex;
 
 /// Anthropic provider implementation
+#[allow(dead_code)]
 pub struct AnthropicProvider {
     metadata: ProviderMetadata,
     api_key: Mutex<Option<String>>,

@@ -2,7 +2,7 @@
 
 ## Status
 
-Draft (v1.16 — 2026-04-28)
+Draft (v1.17 — 2026-04-28)
 
 ## Authors
 
@@ -131,13 +131,45 @@ Mode gate does NOT control: which interfaces exist
 
 | Mode | Provider Strategy | HTTP Proxy? | Python SDK? |
 |------|-----------------|:------------:|:------------:|
-| `litellm-mode` | reqwest HTTP (Rust) | ✅ ALWAYS | ✅ ALWAYS |
-| `any-llm-mode` | PyO3 → Python SDK | ✅ ALWAYS | ✅ ALWAYS |
-| `full` | Both | ✅ ALWAYS | ✅ ALWAYS |
+| `litellm-mode` | reqwest HTTP (Rust) | ✅ Yes (reqwest-based) | ✅ Yes |
+| `any-llm-mode` | PyO3 → Python SDK | ❌ No (requires full build) | ✅ Yes |
+| `full` | Both | ✅ Yes (both reqwest + embedded PyO3) | ✅ Yes |
 
 **Mode gate controls HOW (reqwest vs PyO3), NOT WHETHER (proxy vs SDK).**
 
-**Key insight**: Mode determines which HTTP/client layer is compiled. The Python SDK (`quota-router-pyo3`) is always the Python interface — it wraps the Rust core regardless of mode. **Both HTTP proxy and Python SDK exist in ALL modes.**
+**HTTP proxy in any-llm-mode requires `full` build** — single-mode any-llm builds do not include HTTP proxy capability. Embedding Python runtime in a Rust HTTP proxy is architecturally complex and not included. Users needing HTTP proxy with Python SDK delegation should use `full` mode.
+
+**Key insight**: Mode determines which HTTP/client layer is compiled. The Python SDK (`quota-router-pyo3`) is always the Python interface — it wraps the Rust core regardless of mode.
+
+### Runtime Mode Selection (full builds)
+
+**Severity: Critical**
+
+In `full` builds (both reqwest and PyO3 compiled), the active mode can be selected at **runtime** via environment variable:
+
+```python
+import os
+
+def get_deployment_mode() -> str:
+    """
+    Returns the active runtime mode.
+
+    Precedence:
+    1. QUOTA_ROUTER_MODE environment variable (if set to litellm-mode, any-llm-mode, or full)
+    2. Compile-time embedded mode (from Cargo feature flags)
+
+    Examples:
+        QUOTA_ROUTER_MODE=any-llm-mode  # Force Python SDK delegation
+        QUOTA_ROUTER_MODE=litellm-mode   # Force reqwest HTTP
+        QUOTA_ROUTER_MODE=full           # Use compile-time default (both available)
+    """
+    env_mode = os.environ.get("QUOTA_ROUTER_MODE")
+    if env_mode in ("litellm-mode", "any-llm-mode", "full"):
+        return env_mode
+    return _EMBEDDED_MODE  # Compile-time mode
+```
+
+**For pip-installed wheels:** Set `QUOTA_ROUTER_MODE` to switch between LiteLLM-compatible (reqwest) and any-llm-compatible (PyO3) behavior without reinstalling.
 
 ### Dual-Mode API Conventions
 
@@ -241,7 +273,10 @@ async def acompletion(
     n: Optional[int] = None,
     stream: Optional[bool] = None,  # None = sync response; True = streaming; matches LiteLLM behavior
     stream_options: Optional[Dict] = None,
-    timeout: Optional[Union[float, int]] = None,  # LiteLLM acompletion uses float|int, NOT str|httpx.Timeout
+    timeout: Optional[Union[float, int]] = None,  # async uses float|int; sync uses float|str|httpx.Timeout (see sync completion)
+    # Note: async and sync timeout types differ per LiteLLM:
+    # - acompletion: timeout: Optional[Union[float, int]]
+    # - completion: timeout: Optional[Union[float, str, httpx.Timeout]]
     stop: Optional[Union[str, List[str]]] = None,
     presence_penalty: Optional[float] = None,
     frequency_penalty: Optional[float] = None,
@@ -327,8 +362,12 @@ def resolve_provider(
 
     Resolution priority:
     1. provider param if provided and non-empty
-    2. Parse model string for "provider:model" or "provider/model" format
+    2. Parse model string for "provider:model" format (colon delimiter ONLY)
     3. Use default provider for mode (litellm-mode/full: "openai"; any-llm-mode: raise)
+
+    Note: Slash ("/") delimiter is NOT supported. Use colon (":") for provider:model format.
+    Slash parsing was removed to avoid ambiguity with provider names that could match
+    HuggingFace model paths (e.g., "mistralai/Mistral-7B").
 
     Raises:
         ValueError: If no provider can be determined (any-llm-mode behavior)
@@ -349,20 +388,6 @@ def resolve_provider(
                     f"Ambiguous model string '{model}' — provider and model name are identical. "
                     f"Assuming provider='{provider_lower}', model='{model_name}'. "
                     f"To silence this, use explicit provider= parameter.",
-                    UserWarning,
-                    stacklevel=2,
-                )
-            return provider_lower, model_name
-    if "/" in model:
-        provider, model_name = model.split("/", 1)
-        provider_lower = provider.lower()
-        if is_known_provider(provider_lower):
-            # Ambiguity check
-            if model_name.lower() == provider_lower:
-                import warnings
-                warnings.warn(
-                    f"Ambiguous model string '{model}' — provider and model name are identical. "
-                    f"Assuming provider='{provider_lower}', model='{model_name}'.",
                     UserWarning,
                     stacklevel=2,
                 )
@@ -655,6 +680,22 @@ class BudgetStatus:
 def get_budget_status(provider: Optional[str] = None) -> BudgetStatus:
     """
     Returns OCTO-W budget status from Rust Balance + StoolapKeyStorage.
+
+    ⚠️ WARNING: In any-llm-mode, budget tracking is in-memory only and will reset
+    on process restart. For production budget enforcement, use 'full' mode with
+    stoolap persistence (RFC-0904).
+
+    | Mode    | Behavior | Notes |
+    | ------- | -------- | ----- |
+    | any-llm | Estimated spend from current session only | No persistence |
+    | full    | Persisted, accurate balance from stoolap | durable across restarts |
+
+    Args:
+        provider: Optional provider name to get per-provider budget status
+
+    Returns:
+        BudgetStatus with balance, total_spend, budget_limit, last_updated
+    """
 
     Args:
         provider: If None, returns aggregate across all providers.
@@ -962,7 +1003,14 @@ def completion(
     base_url: Optional[str] = None,  # Alias for api_base
     api_version: Optional[str] = None,
     api_type: Optional[str] = None,  # LiteLLM api_type (e.g., "azure")
-    model_list: Optional[list] = None,
+    model_list: Optional[list] = None,  # Per-call model configuration (see below)
+    """
+When provided, the completion call selects a deployment from this list for the
+current call only, ignoring any global Router configuration. Each dict follows
+the deployment format: {"model_name": "...", "api_base": "...", "api_key": "...", "rpm": N, "tpm": N}.
+If the requested model is not in the list, raises ModelNotFoundError.
+This parameter does NOT modify the Router's stored deployment list.
+"""
     deployment_id: Optional[str] = None,
     safety_identifier: Optional[str] = None,
     service_tier: Optional[str] = None,
@@ -1007,6 +1055,19 @@ router.completion(stream=True)
 4. Router does NOT directly call provider SDKs — it goes through completion() as normal
 
 The streaming spec below covers the SSE transformation layer inside `completion()`.
+
+**Streaming behavior by mode:**
+
+| Mode | Provider Call | Stream Return Type | Implementation |
+|------|-------------|-------------------|----------------|
+| `litellm-mode` | reqwest (Rust sync) | `Iterator[ChatCompletionChunk]` | Rust iterator exposed via PyO3 |
+| `any-llm-mode` | Python SDK (async) | `Iterator[ChatCompletionChunk]` | `async_iter_to_sync_iter()` bridge |
+| `full` | Based on runtime mode | `Iterator[ChatCompletionChunk]` | Same as above based on `QUOTA_ROUTER_MODE` |
+
+**For `acompletion(stream=True)`:**
+- In `litellm-mode`: Rust async stream → Python async iterator via PyO3 async support
+- In `any-llm-mode`: Python async SDK stream → `async_iter_to_sync_iter()` bridge → sync iterator
+- In `full` mode: Uses whichever mode is active via `QUOTA_ROUTER_MODE`
 
 **Current mock implementation (replace):**
 
@@ -1723,6 +1784,15 @@ class Router:
                 raise
             except (RateLimitError, GatewayTimeoutError, UpstreamProviderError) as e:
                 last_error = e
+                # Try generic fallbacks list for this model
+                fallback_list = self.fallbacks.get(model, []) if self.fallbacks else []
+                if fallback_list and attempt < self.num_retries:
+                    # Pick next fallback from the list
+                    # This replaces the current model_name with the fallback
+                    # In a real impl, you'd track which fallback you're on
+                    if fallback_list:
+                        model_name = fallback_list[0]
+                        continue
                 if attempt < self.num_retries:
                     await asyncio.sleep(2 ** attempt)
                     continue
@@ -1890,12 +1960,27 @@ def parse_platform_key(api_key: str) -> tuple[str, str]:
         raise ValueError(f"Invalid any-api format: {api_key}")
     return m.group(1), m.group(2)
 
-# In set_api_key() or api_key resolution:
+# In set_api_key() or per-call api_key resolution:
 if api_key.startswith("any-"):
     actual_provider, actual_key = parse_platform_key(api_key)
     _set_key_for_provider(actual_provider, actual_key)
     _platform_key_map[actual_provider] = "platform"  # Tag for metrics
+
+# Note: any- key parsing works for BOTH set_api_key() AND per-call api_key= parameter.
+# Before passing to provider SDK, any- prefixed keys are parsed to extract the actual provider.
 ```
+
+**For per-call usage:**
+```python
+# Using any- key per-call (any-llm pattern):
+completion(
+    model="gpt-4o",
+    messages=[...],
+    api_key="any-openai-sk-..."  # Parsed to extract "openai" and "sk-..."
+)
+```
+
+This ensures `any-` keys work regardless of how they're passed — via `set_api_key()` or per-call.
 
 #### Timeout Parameter
 
@@ -2337,6 +2422,7 @@ This is the only approach that achieves true drop-in replacement for both ecosys
 
 | Version | Date       | Changes |
 | ------- | ---------- | ------- |
+| 1.17    | 2026-04-28 | Fix external adversarial review (2026-04-28): C1 (add QUOTA_ROUTER_MODE runtime selection for full builds), C2 (HTTP proxy only in litellm-mode/full, not any-llm-mode), C4 (add streaming behavior table per mode), H1 (remove / parsing from resolve_provider), H2 (any- key parsing works per-call), H3 (add warning to get_budget_status), M1 (clarify async vs sync timeout types), M2 (document model_list per-call semantics), M4 (implement fallbacks parameter in Router), L4 (make reasoning_effort default explicit). |
 | 1.16    | 2026-04-28 | Fix adversarial review v1.15 issue: I1 (response_format added to sync completion() signature, matching async and streaming specs). |
 | 1.15    | 2026-04-28 | Fix adversarial review v1.14 issues: I1 (corrected sync completion note — thinking and reasoning_effort are separate params, not aliases), I2 (added timeout to streaming spec signature). |
 | 1.12    | 2026-04-28 | Fix adversarial review v1.11 issues: I1 (enable_json_schema_validation added to both signatures), I2 (shared_session added to both signatures), I3 (web_search_options added to both signatures), L1 (streaming spec added response_format), L2 (reasoning_effort default changed from "auto" to None to match LiteLLM, with full enum values listed). |

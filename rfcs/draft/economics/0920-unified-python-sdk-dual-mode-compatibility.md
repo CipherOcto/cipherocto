@@ -2,9 +2,9 @@
 
 ## Status
 
-Draft (v1.23 — 2026-04-28)
+Draft (v1.24 — 2026-04-28)
 
-**🚨 CRITICAL ARCHITECTURAL CONSTRAINT: HTTP proxy is FOREVER in BOTH litellm-mode and any-llm-mode. See section below. 🚨**
+**ARCHITECTURAL CONSTRAINT: HTTP proxy is FOREVER in BOTH litellm-mode and any-llm-mode. See section below.**
 
 ## Authors
 
@@ -1752,6 +1752,17 @@ class Router:
         if self.timeout:
             call_kwargs.setdefault("timeout", self.timeout)
 
+        # Normative rule (CM-7): When fallbacks are configured, Rust FallbackExecutor
+        # MUST use max_retries=1 to avoid redundant retries. The Router's fallback loop
+        # provides primary resilience; Rust retries are disabled.
+        has_fallbacks = (
+            self.fallbacks or
+            self.context_window_fallbacks or
+            self.content_policy_fallbacks
+        )
+        if has_fallbacks:
+            call_kwargs["num_retries"] = 1  # Force Rust retry count to 1, ignore user value
+
         last_error = None
         fallback_idx = 0  # Per-request state — reset each call, not persisted
         for attempt in range(self.num_retries + 1):
@@ -1836,6 +1847,17 @@ class Router:
         call_kwargs = {**params, **kwargs}
         if self.timeout:
             call_kwargs.setdefault("timeout", self.timeout)
+
+        # Normative rule (CM-7): When fallbacks are configured, Rust FallbackExecutor
+        # MUST use max_retries=1 to avoid redundant retries. The Router's fallback loop
+        # provides primary resilience; Rust retries are disabled.
+        has_fallbacks = (
+            self.fallbacks or
+            self.context_window_fallbacks or
+            self.content_policy_fallbacks
+        )
+        if has_fallbacks:
+            call_kwargs["num_retries"] = 1  # Force Rust retry count to 1, ignore user value
 
         last_error = None
         fallback_idx = 0  # Per-request state — reset each call, not persisted
@@ -2270,26 +2292,37 @@ def batch_results(
 
 ### How it works
 
-The HTTP proxy is a **standalone Rust binary** (hyper/axum). It **never embeds a Python interpreter directly**. It only ever calls `quota-router-core` (Rust).
+The HTTP proxy is a **Rust binary** (hyper/axum) that links to `quota-router-core`. In `any-llm-mode`, `quota-router-core` is compiled with PyO3, which means:
 
 ```
 HTTP proxy process (hyper/axum, Rust):
-  └── calls quota-router-core (Rust)
-         └── in any-llm-mode: Rust core has PyO3 bindings
-                └── calls Python SDKs (openai, anthropic, etc.) via PyO3
+  └── links to quota-router-core (Rust + PyO3)
+         └── in any-llm-mode: Rust core calls Python SDKs via PyO3
+                └── calls Python SDKs (openai, anthropic, etc.)
 ```
 
-**Key insight:** The proxy speaks only Rust to Rust. The PyO3 delegation happens **inside** `quota-router-core`, not inside the proxy process. No CPython embedding in the proxy. No GIL management in the proxy. The proxy has zero awareness of Python.
+**Important clarification:** The proxy process DOES embed Python because `quota-router-core` in any-llm-mode embeds CPython via PyO3. The proxy does not directly call Python APIs — it delegates all Python interactions to the core library. But the Python interpreter runs in the same process space as the proxy.
+
+### What this means practically
+
+1. **Python installation required:** The proxy binary in any-llm-mode requires a compatible Python installation at runtime. It will not start without it.
+
+2. **Startup sequence:** `quota-router-core` initializes the Python interpreter early (via `pyo3::prepare_freethreaded_python()` or equivalent) when the library is loaded.
+
+3. **GIL management:** PyO3 requires GIL management for Python calls. The core library handles this — the proxy's concurrent HTTP requests must be designed to work with this. Specifically:
+   - Each Python SDK call acquires the GIL, executes, then releases
+   - Concurrent HTTP requests may queue on Python calls; design should use async task spawning to avoid blocking the proxy event loop
+   - The core library should use a connection pool or queue for Python calls to manage GIL contention
+
+4. **The proxy has zero direct Python awareness** — it just calls Rust functions in `quota-router-core`. The core library manages all Python interaction including GIL.
 
 ### How Rust core has PyO3 in any-llm-mode
 
 In `any-llm-mode` builds:
 1. `quota-router-core` is compiled with `pyo3/extension-module` feature
-2. The Rust core binary includes PyO3 Rust bindings
+2. The Rust core binary includes PyO3 Rust bindings and links against `libpython`
 3. When the proxy calls into Rust core, the Rust code can invoke Python functions (call Python SDKs)
-4. The proxy process itself remains a pure Rust binary — it just calls Rust functions that happen to invoke Python under the hood
-
-This is exactly how PyO3 works in general: Rust code that *can* call Python, compiled into a binary that *doesn't require* Python unless actually invoked.
+4. The proxy process includes both Rust and Python runtime components
 
 ### What the proxy does in any-llm-mode
 
@@ -2297,11 +2330,9 @@ This is exactly how PyO3 works in general: Rust code that *can* call Python, com
 1. HTTP request arrives at proxy (hyper/axum)
 2. Proxy parses request, validates API key via KeyMiddleware (in Rust core)
 3. Proxy calls quota-router-core completion function (Rust-to-Rust call)
-4. Rust core (in any-llm-mode) executes PyO3 code to call Python SDK
+4. Rust core (in any-llm-mode) acquires GIL, calls Python SDK via PyO3, releases GIL
 5. Response flows back through Rust core → proxy → client
 ```
-
-**No Python interpreter in proxy. No embedding. The proxy just calls Rust.**
 
 ### Comparison to litellm-mode
 
@@ -2310,20 +2341,19 @@ This is exactly how PyO3 works in general: Rust code that *can* call Python, com
 | HTTP proxy process | Rust (hyper/axum) | Rust (hyper/axum) — SAME process |
 | What proxy calls | quota-router-core (Rust) | quota-router-core (Rust) — SAME call |
 | Provider strategy | reqwest (Rust HTTP client) | PyO3 → Python SDK |
-| Python involvement | None in proxy | In Rust core, not proxy |
-| Embedding required | No | No — same architecture |
+| Python involvement | None | Yes — via PyO3 in Rust core |
+| Python installation required | No | Yes |
+| GIL management | N/A | Yes — managed by Rust core |
 
-### Why this design works
+### GIL handling for concurrent requests
 
-PyO3 allows Rust code to be compiled with Python bindings. The resulting binary is a **Rust binary that can optionally call Python**. It does NOT require Python to be present — Python is only invoked at runtime when the PyO3 code path is exercised.
+The primary concern with GIL is that multiple concurrent HTTP requests that call Python SDKs could contend on the GIL. The design approach:
 
-Therefore:
-- The HTTP proxy is a pure Rust binary in ALL modes
-- It calls `quota-router-core` in ALL modes
-- In `any-llm-mode`, `quota-router-core` internally uses PyO3 to call Python SDKs
-- The proxy has NO knowledge of this — it just calls Rust
+- **Rust core uses async task handling** — Python SDK calls are made in async tasks that yield while waiting for the GIL
+- **No global Python lock held across async await points** — GIL is acquired only for the duration of the actual Python SDK call
+- **Concurrent requests serialize on Python calls** — this is acceptable since Python SDK calls are I/O-bound (network) and release the GIL while waiting
 
-**This is not a hand-wave. This is how PyO3 works by design.**
+This is a Phase-3 implementation detail; the key point is that GIL management is the responsibility of `quota-router-core`, not the proxy.
 
 ## Feature Gate Architecture
 
@@ -2596,6 +2626,7 @@ This is the only approach that achieves true drop-in replacement for both ecosys
 
 | Version | Date       | Changes |
 | ------- | ---------- | ------- |
+| 1.24    | 2026-04-28 | Fix external adversarial review round 6: C6-1 (corrected HTTP proxy embedding — Python IS embedded via PyO3 in Rust core, proxy delegates to core), CH-6 (Router now explicitly sets num_retries=1 in call_kwargs when fallbacks configured — mandatory, not recommended), CM-9 (added GIL management design for concurrent HTTP requests), L11 (ignored — rebuttal: emphatic language is appropriate for critical constraints). |
 | 1.23    | 2026-04-28 | Fix external adversarial review round 5: C5-2 (fallback_idx now local per-request variable, not persisted), C5-3 (last_error stored before continue, raises meaningful error if all fallbacks exhausted), CM-7 (Rust FallbackExecutor coordination now REQUIRED max_retries=1 when fallbacks configured), CM-8 (fallback list iterates once without wrapping), L9 (clarified "DIRECTLY" — proxy calls Rust core which may internally use PyO3), L10 (is_known_provider cross-reference added). |
 | 1.22    | 2026-04-28 | 🚨 MASSIVE RED FLAG 🚨 HTTP proxy is FOREVER in BOTH litellm-mode and any-llm-mode. #1 architectural constraint. Flooded throughout RFC to prevent future incorrect claims. |
 | 1.21    | 2026-04-28 | CORRECTION: HTTP proxy is ALWAYS available in both litellm-mode and any-llm-mode. The proxy ALWAYS calls quota-router-core directly — never through PyO3 bindings. C4-1 in v1.20 was incorrect and is reverted. Added explicit note that HTTP proxy architecture is performance-first (direct Rust core calls). |

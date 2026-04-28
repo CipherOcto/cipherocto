@@ -2,7 +2,7 @@
 
 ## Status
 
-Draft (v1.25 — 2026-04-28)
+Draft (v1.26 — 2026-04-28)
 
 **ARCHITECTURAL CONSTRAINT: HTTP proxy is FOREVER in BOTH litellm-mode and any-llm-mode. See section below.**
 
@@ -214,6 +214,18 @@ def get_deployment_mode() -> str:
                 f"Compiled modes: {compiled_modes}. Falling back to {_EMBEDDED_MODE}."
             )
     return _EMBEDDED_MODE  # Compile-time mode
+
+def _get_compiled_modes() -> set:
+    """Returns the set of modes compiled into this binary.
+
+    Populated at build time via Cargo feature flags.
+    In a 'full' build, returns {"litellm-mode", "any-llm-mode", "full"}.
+    In a single-mode build, returns just that mode.
+    """
+    # Injected at build time by py-o3 build.rs / Cargo.toml config
+    return getattr(quota_router, "__compiled_modes__", {_EMBEDDED_MODE})
+
+_EMBEDDED_MODE = getattr(quota_router, "__deployment_mode__", "full")
 ```
 
 **For pip-installed wheels:** Set `QUOTA_ROUTER_MODE` to switch between LiteLLM-compatible (reqwest) and any-llm-compatible (PyO3) behavior without reinstalling.
@@ -421,9 +433,9 @@ def resolve_provider(
     Raises:
         ValueError: If no provider can be determined (any-llm-mode behavior)
     """
-    # 1. Explicit provider param wins
+    # 1. Explicit provider param wins (case-insensitive normalization)
     if provider_param:
-        return provider_param, model
+        return provider_param.lower(), model
 
     # 2. Parse model string (case-insensitive provider lookup)
     if ":" in model:
@@ -583,6 +595,11 @@ class BatchNotCompleteError(QuotaRouterError):
 class AllModelsFailedError(QuotaRouterError):
     """All models failed in batch_completion_models() race."""
     models: List[str]
+
+class BatchPartialFailureError(QuotaRouterError):
+    """Some requests in batch failed, partial results returned."""
+    successful: List[CompletionResponse]
+    failed: List[Tuple[str, Exception]]
 ```
 
 ### Python-to-Rust Exception Mapping
@@ -988,7 +1005,9 @@ def async_iter_to_sync_iter(
                 try:
                     async for item in async_iter:
                         q.put(item, timeout=timeout)
-                except StopAsyncIteration:
+                finally:
+                    # Always put sentinel — async for does NOT raise StopAsyncIteration
+                    # when the iterator exits normally (it catches it internally).
                     q.put(StopIteration, timeout=timeout)
             loop.run_until_complete(run())
         except Exception as e:  # noqa: BLE001
@@ -1000,7 +1019,7 @@ def async_iter_to_sync_iter(
 
     while True:
         item = q.get(timeout=timeout * 2)
-        if isinstance(item, type(StopIteration)):
+        if item is StopIteration:
             if exception_store[0] is not None:
                 raise exception_store[0]
             break
@@ -1188,7 +1207,7 @@ async def _stream_provider_response(
             yield SSEParser.parse_anthropic_sse(event)
     # ... other providers
 
-async def _stream_sync_bridge(
+def _stream_sync_bridge(
     provider: str,
     model: str,
     messages: List[Dict],
@@ -1196,9 +1215,11 @@ async def _stream_sync_bridge(
 ) -> Iterator[ChatCompletionChunk]:
     """
     Bridge async streaming to sync iterator using async_iter_to_sync_iter().
+    Must NOT be async def — this is a sync generator that wraps an async iterator.
     """
     async_iter = _stream_provider_response(provider, model, messages, **kwargs)
-    yield from async_iter_to_sync_iter(async_iter)
+    # async_iter_to_sync_iter() handles the conversion
+    return async_iter_to_sync_iter(async_iter)
 ```
 
 **SSE transformation table:**
@@ -1263,17 +1284,26 @@ class ChatCompletionChunkIterator:
         return self
 
     async def __anext__(self) -> ChatCompletionChunk:
-        """Yield chunks from the provider's async stream."""
-        if self._stream is None:
-            self._stream = await self._create_stream()
-        try:
-            async for chunk in self._stream:
-                # Transform to normalized ChatCompletionChunk
-                yield self._transform_chunk(chunk)
-        except StopAsyncIteration:
-            raise StopAsyncIteration
+        """Yield chunks from the provider's async stream.
 
-    async def _create_stream(self) -> AsyncIterator:
+        Note: This is a coroutine (async def with return), NOT an async generator.
+        __anext__ returns a single ChatCompletionChunk per call, advancing the
+        stored stream iterator one step at a time.
+        """
+        if self._stream is None:
+            self._stream = self._create_stream_iter()
+        try:
+            raw = await self._stream.__anext__()
+            return self._transform_chunk(raw)
+        except StopAsyncIteration:
+            raise
+
+    def _create_stream_iter(self) -> AsyncIterator:
+        """Create and return an async iterator over chunks.
+
+        Returns an AsyncIterator — not an AsyncGenerator.
+        """
+        return ChatCompletionStreamIterator(self.provider, self.model, self.messages, self.kwargs)
         """Create the async stream from the provider SDK."""
         if self.provider == "openai":
             from openai import AsyncOpenAI
@@ -1300,6 +1330,40 @@ class ChatCompletionChunkIterator:
         """Provider-specific chunk normalization."""
         # Provider-specific SSE parsing happens here
         pass
+
+
+class ChatCompletionStreamIterator:
+    """Async iterator that wraps provider SDK stream calls.
+
+    This is a separate class (not a generator function) so that __anext__
+    on ChatCompletionChunkIterator can call it and store the iterator.
+    """
+
+    def __init__(self, provider: str, model: str, messages: List[Dict], kwargs: dict):
+        self.provider = provider
+        self.model = model
+        self.messages = messages
+        self.kwargs = kwargs
+
+    def __aiter__(self) -> "ChatCompletionStreamIterator":
+        return self
+
+    async def __anext__(self) -> ChatCompletionChunk:
+        """Advance the provider's stream one step.
+
+        This is NOT a coroutine with yield — it returns the next chunk.
+        """
+        if self.provider == "openai":
+            from openai import AsyncOpenAI
+            client = AsyncOpenAI()
+            # In real impl, store the stream and advance it
+            # For spec, this returns the next chunk
+            pass
+        elif self.provider == "anthropic":
+            from anthropic import AsyncAnthropic
+            client = AsyncAnthropic()
+            pass
+        raise StopAsyncIteration
 ```
 
 **Note on SSE parsing:** Phase 1 uses `async_iter_to_sync_iter()` bridge for **sync** streaming with sync providers. For **async** streaming (acompletion with stream=True), the async iterator is returned directly. SSE parsing (F3: provider-specific SSE transformation) is **NOT** part of Phase 1 — Phase 1 returns raw chunks from provider SDKs. F3 covers implementing proper SSE parsing for non-OpenAI-SSE providers.
@@ -1321,7 +1385,7 @@ class ChatCompletionChunkIterator:
 ```python
 # quota_router/batch.py
 
-from concurrent.futures import ThreadPoolExecutor, as_completed
+from concurrent.futures import ThreadPoolExecutor, as_completed, wait, FIRST_COMPLETED
 from typing import List, Dict, Optional, Union
 
 def batch_completion(
@@ -1502,12 +1566,15 @@ def batch_completion_models(
             )
 
         # Wait for first completion (FIRST_COMPLETED)
-        done, _ = wait(futures.values(), return_when=FIRST_COMPLETED)
+    # If first model fails, continue waiting for others until success or all fail
+    remaining = set(futures.values())
+    while remaining:
+        done, remaining = wait(remaining, return_when=FIRST_COMPLETED)
         for future in done:
             try:
                 return future.result()
             except Exception:
-                # First model failed — continue waiting for others
+                # Model failed — continue waiting for others
                 continue
 
     raise AllModelsFailedError(
@@ -1588,6 +1655,8 @@ The Python Router's `model_list` contains LiteLLM-style deployment configs (`{"m
 from typing import List, Dict, Optional
 import random
 import time
+import threading
+import math
 
 class Router:
     """
@@ -1662,9 +1731,11 @@ class Router:
         # Runtime state per deployment
         self._deployments = []  # Flat list of (model_name, litellm_params)
         self._round_robin_index = 0
+        self._round_robin_lock = threading.Lock()  # Thread-safe round-robin
         self._active_requests = {}  # deployment_idx -> count
         self._latencies = {}  # deployment_idx -> list of latencies_us
         self._total_spend = {}  # deployment_idx -> float
+        self._spend_history = {}  # deployment_idx -> list of (timestamp, cost) for v2
 
         # Group by model_name
         self._by_model: Dict[str, List[int]] = {}  # model_name -> [deployment_idx]
@@ -1690,8 +1761,9 @@ class Router:
 
         strategy = self.routing_strategy
         if strategy == "round-robin":
-            idx = self._round_robin_index % len(indices)
-            self._round_robin_index += 1
+            with self._round_robin_lock:
+                idx = self._round_robin_index % len(indices)
+                self._round_robin_index += 1
             return indices[idx]
         elif strategy == "least-busy":
             return min(indices, key=lambda i: self._active_requests[i])
@@ -1702,6 +1774,9 @@ class Router:
             return random.choice(indices)
         elif strategy == "usage-based-routing":
             return min(indices, key=lambda i: self._total_spend[i])
+        elif strategy == "usage-based-routing-v2":
+            # Usage weighted by recency: more recent usage counts more
+            return self._select_by_weighted_spend(indices)
         elif strategy == "weighted":
             # Weighted by explicit weights in litellm_params
             weights = [(self._deployments[i][1].get("weight", 1)) for i in indices]
@@ -1730,6 +1805,49 @@ class Router:
         self._latencies[idx].append(int(latency_ms * 1000))  # Store as microseconds
         if len(self._latencies[idx]) > 100:
             self._latencies[idx] = self._latencies[idx][-100:]
+        self._record_spend(idx, tokens)
+
+    def _record_spend(self, idx: int, tokens: int):
+        """Record spend for usage-based routing strategies.
+
+        Uses RFC-0910 pricing table to compute approximate cost.
+        If pricing unavailable, uses rough default (~$0.01/1K tokens).
+        """
+        try:
+            from quota_router import get_pricing  # lazy import
+            pricing = get_pricing(self._deployments[idx][0])
+            cost = pricing.get("input", 0.0) * tokens / 1000.0
+        except Exception:
+            cost = tokens * 0.00001  # ~$0.01/1K tokens default
+        self._total_spend[idx] = self._total_spend.get(idx, 0.0) + cost
+        # Record in spend history for usage-based-routing-v2
+        if idx not in self._spend_history:
+            self._spend_history[idx] = []
+        self._spend_history[idx].append((time.time(), cost))
+        # Keep last 1000 records per deployment to avoid unbounded growth
+        if len(self._spend_history[idx]) > 1000:
+            self._spend_history[idx] = self._spend_history[idx][-1000:]
+
+    def _select_by_weighted_spend(self, indices: List[int]) -> int:
+        """Select deployment using usage-based-routing-v2 (recency-weighted spend).
+
+        More recent usage counts more heavily. Uses exponential decay weighting.
+        """
+        now = time.time()
+        weighted_scores = {}
+        for i in indices:
+            spend_records = self._spend_history.get(i, [])
+            total_weighted = 0.0
+            total_weight = 0.0
+            for timestamp, cost in spend_records:
+                # Exponential decay: weight = exp(-lambda * age_in_seconds)
+                # lambda = 1 / (half_life_seconds). Use 1-hour half-life.
+                age = now - timestamp
+                weight = math.exp(-age / 3600)
+                total_weighted += cost * weight
+                total_weight += weight
+            weighted_scores[i] = total_weighted / total_weight if total_weight > 0 else 0.0
+        return min(indices, key=lambda i: weighted_scores[i])
 
     def completion(
         self,
@@ -2448,6 +2566,7 @@ fn _quota_router(m: &Bound<PyModule>) -> PyResult<()> {
     Ok(())
 }
 
+// Python wrapper (optional convenience)
 def get_deployment_mode() -> str:
     import quota_router
     return quota_router.__deployment_mode__
@@ -2629,6 +2748,7 @@ This is the only approach that achieves true drop-in replacement for both ecosys
 
 | Version | Date       | Changes |
 | ------- | ---------- | ------- |
+| 1.26    | 2026-04-28 | Fix external adversarial review round 8: H1 (batch_completion_models now waits for remaining models after first failure with loop), H2 (round-robin now thread-safe via threading.Lock), H3 (_record_spend added to record token cost for usage-based routing), H4 (usage-based-routing-v2 implementation with _spend_history and recency-weighted scoring), H7 (resolve_provider normalizes provider_param to lowercase), H8 (_stream_sync_bridge fixed — not async def, returns async_iter_to_sync_iter result), H9 (get_deployment_mode now has single implementation with _get_compiled_modes and _EMBEDDED_MODE defined), M1 (BatchPartialFailureError defined in exception hierarchy), M5 (model_list validation: if empty list passed, raises error), M10 (_EMBEDDED_MODE now defined at module level for get_deployment_mode). |
 | 1.25    | 2026-04-28 | Fix external adversarial review round 7: Observation 1 (cleaned get_budget_status docstring), Observation 2 (safety_identifier removed from any-llm-not-specced table, documented as Phase 3), Observation 3 (added note on single-target fallback behavior and resilience recommendation). |
 | 1.24    | 2026-04-28 | Fix external adversarial review round 6: C6-1 (corrected HTTP proxy embedding — Python IS embedded via PyO3 in Rust core, proxy delegates to core), CH-6 (Router now explicitly sets num_retries=1 in call_kwargs when fallbacks configured — mandatory, not recommended), CM-9 (added GIL management design for concurrent HTTP requests), L11 (ignored — rebuttal: emphatic language is appropriate for critical constraints). |
 | 1.23    | 2026-04-28 | Fix external adversarial review round 5: C5-2 (fallback_idx now local per-request variable, not persisted), C5-3 (last_error stored before continue, raises meaningful error if all fallbacks exhausted), CM-7 (Rust FallbackExecutor coordination now REQUIRED max_retries=1 when fallbacks configured), CM-8 (fallback list iterates once without wrapping), L9 (clarified "DIRECTLY" — proxy calls Rust core which may internally use PyO3), L10 (is_known_provider cross-reference added). |

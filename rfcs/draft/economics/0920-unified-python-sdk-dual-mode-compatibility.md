@@ -2,7 +2,7 @@
 
 ## Status
 
-Draft (v1.20 — 2026-04-28)
+Draft (v1.21 — 2026-04-28)
 
 ## Authors
 
@@ -34,6 +34,8 @@ Define a unified Python SDK via PyO3 that supports **both** LiteLLM-style API (s
 **⚠️ MODE GATE ≠ INTERFACE (per RFC-0917):**
 Both HTTP proxy and Python SDK exist in ALL modes (litellm-mode, any-llm-mode, full).
 Mode gate controls provider strategy (reqwest vs PyO3), NOT interface availability.
+
+**HTTP proxy architecture:** The HTTP proxy is a Rust binary (hyper/axum). It ALWAYS calls `quota-router-core` directly — it never goes through the PyO3 Python SDK bindings. The proxy's provider strategy is selected at compile time (litellm-mode = reqwest, any-llm-mode = PyO3 bridge) or at startup (full build via config.yaml).
 
 ## Motivation
 
@@ -68,25 +70,23 @@ The current `quota-router-pyo3` crate only implements any-llm-style (per RFC-091
 
 ### ⚠️ CRITICAL INVARIANT — Mode Gate ≠ Interface
 
-**The invariant is more nuanced than "both interfaces in all modes":**
+**Per RFC-0917, this is mathematically always true:**
 
 ```
-For litellm-mode and full:
+For ALL modes (litellm-mode, any-llm-mode, full):
     HTTP proxy interface EXISTS ✅
     Python SDK interface EXISTS ✅
 
-For any-llm-mode (single-mode build):
-    HTTP proxy interface DOES NOT EXIST ❌ (requires full build)
-    Python SDK interface EXISTS ✅
-
 Mode gate controls ONLY: what library calls providers (reqwest vs PyO3)
-Mode gate does NOT control: which interfaces are built
+Mode gate does NOT control: which interfaces exist
 ```
+
+**HTTP proxy always calls Rust core directly** — it never goes through PyO3 Python SDK bindings.
 
 **Never forget:**
 - `litellm-mode` DOES NOT mean "HTTP proxy only" — Python SDK is also available
-- `any-llm-mode` DOES NOT mean "Python SDK only" — BUT HTTP proxy requires `full` build
-- `full` builds include both HTTP proxy and Python SDK
+- `any-llm-mode` DOES NOT mean "Python SDK only" — HTTP proxy is also available
+- Both interfaces exist in ALL modes
 - Mode selects provider strategy (reqwest vs PyO3), not interface availability
 
 ### Crate Architecture
@@ -136,14 +136,12 @@ Mode gate does NOT control: which interfaces are built
 | Mode | Provider Strategy | HTTP Proxy? | Python SDK? |
 |------|-----------------|:------------:|:------------:|
 | `litellm-mode` | reqwest HTTP (Rust) | ✅ Yes (reqwest-based) | ✅ Yes |
-| `any-llm-mode` | PyO3 → Python SDK | ❌ No (requires `full` build — see below) | ✅ Yes |
+| `any-llm-mode` | PyO3 → Python SDK | ✅ Yes (via PyO3 bridge) | ✅ Yes |
 | `full` | Both | ✅ Yes (both reqwest + PyO3 bridge) | ✅ Yes |
 
 **Mode gate controls HOW (reqwest vs PyO3), NOT WHETHER (proxy vs SDK).**
 
-**HTTP proxy in any-llm-mode requires `full` build.** Single-mode any-llm builds do not include the HTTP proxy. Reason: the HTTP proxy is a Rust binary (hyper/axum); to delegate to Python SDKs (the `openai`, `anthropic` Python packages), it would need to embed a CPython interpreter — initializing Python runtime, managing the GIL, importing modules, and handling lifecycle from Rust. This is a substantial architectural undertaking (packaging, startup time, memory, thread safety) that is not justified for the `any-llm-mode` use case (Python SDK is the primary interface).
-
-**Per RFC-0917:** The "(always)" designation in RFC-0917's scope table means HTTP proxy is *planned* for all modes, not that every build includes it in every mode. The implementation requires `full` for `any-llm-mode` because only `full` compiles both reqwest and PyO3.
+**HTTP proxy always calls quota-router-core directly** — it never goes through the PyO3 Python SDK bindings. In any-llm-mode, the proxy calls Rust core which delegates to Python SDKs via PyO3 bridge internally. This is the correct performance-first architecture.
 
 **Key insight**: Mode determines which HTTP/client layer is compiled. The Python SDK (`quota-router-pyo3`) is always the Python interface — it wraps the Rust core regardless of mode.
 
@@ -195,7 +193,7 @@ def get_deployment_mode() -> str:
 
 ### Dual-Mode API Conventions
 
-**⚠️ Mode ≠ Interface reminder:** Both HTTP proxy and Python SDK exist in ALL modes. The mode selects provider strategy (reqwest vs PyO3), not which interface is available.
+**⚠️ Mode ≠ Interface reminder:** Both HTTP proxy and Python SDK exist in ALL modes. The HTTP proxy ALWAYS calls Rust core directly. Mode selects provider strategy (reqwest vs PyO3), not which interface is available.
 
 The SDK operates in two API conventions (not feature flags — both work in all modes):
 
@@ -2490,8 +2488,8 @@ This is the only approach that achieves true drop-in replacement for both ecosys
 
 | Version | Date       | Changes |
 | ------- | ---------- | ------- |
-| 1.20    | 2026-04-28 | Fix external adversarial review round 4 (2026-04-28): C4-1 (HTTP proxy in any-llm-mode descoped — requires full build, not available in single-mode), CH-4 (Router fallback now re-selects deployment with correct params), CM-4 (fallback iteration advances through list using _fallback_idx), CM-5 (acompletion(stream=True) in any-llm-mode returns AsyncIterator, not sync via bridge), CM-6 (added Router/Rust FallbackExecutor coordination note), L6 (KNOWN_PROVIDERS defined as runtime registry), L8 (fallbacks List[Dict] normalized to Dict for lookup). |
-| 1.19    | 2026-04-28 | Fix external adversarial review round 3 (2026-04-28): High (repair async Router corrupted doc), CM-1 (sync Router now uses generic fallbacks list), CM-2 (QUOTA_ROUTER_MODE scope clarified — SDK only, proxy uses config.yaml), CM-3 (empty model_list raises ValueError), L1 (num_retries references FallbackExecutor HTTP retry count), L2 (get_budget_status duplicate docstring removed). |
+| 1.21    | 2026-04-28 | CORRECTION: HTTP proxy is ALWAYS available in both litellm-mode and any-llm-mode (per RFC-0917). The proxy ALWAYS calls quota-router-core directly — it never goes through PyO3 Python SDK bindings. C4-1 in v1.20 was incorrect and is reverted. Added explicit note that HTTP proxy architecture is performance-first (direct Rust core calls). |
+| 1.20    | 2026-04-28 | Fix external adversarial review round 4 (2026-04-28): CH-4 (Router fallback now re-selects deployment with correct params), CM-4 (fallback iteration advances through list using _fallback_idx), CM-5 (acompletion(stream=True) in any-llm-mode returns AsyncIterator, not sync via bridge), CM-6 (added Router/Rust FallbackExecutor coordination note), L6 (KNOWN_PROVIDERS defined as runtime registry), L8 (fallbacks List[Dict] normalized to Dict for lookup). NOTE: C4-1 (HTTP proxy descoped to full) was INCORRECT and is reverted in v1.21. |
 | 1.18    | 2026-04-28 | Fix external adversarial review round 2 (2026-04-28): CC-1 (synchronized HTTP proxy availability with RFC-0917 — now in all modes), CC-2 (CRITICAL INVARIANT box aligned with RFC-0917), CH-1 (QUOTA_ROUTER_MODE validated against compile-time capabilities), CH-2 (Router no longer retries HTTP calls — Rust core FALLBACK_EXECUTOR handles retry, Router only handles model-level fallback), CM-2 (sync streaming now has model_list param). |
 | 1.17    | 2026-04-28 | Fix external adversarial review (2026-04-28): C1 (add QUOTA_ROUTER_MODE runtime selection for full builds), C2 (HTTP proxy only in litellm-mode/full, not any-llm-mode), C4 (add streaming behavior table per mode), H1 (remove / parsing from resolve_provider), H2 (any- key parsing works per-call), H3 (add warning to get_budget_status), M1 (clarify async vs sync timeout types), M2 (document model_list per-call semantics), M4 (implement fallbacks parameter in Router), L4 (make reasoning_effort default explicit). |
 | 1.16    | 2026-04-28 | Fix adversarial review v1.15 issue: I1 (response_format added to sync completion() signature, matching async and streaming specs). |

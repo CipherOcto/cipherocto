@@ -2264,6 +2264,67 @@ def batch_results(
     """Retrieve batch results (after completion)."""
 ```
 
+## HTTP Proxy Architecture in any-llm-mode
+
+**THIS SECTION IS THE COMPLETE DESIGN FOR HTTP PROXY IN ANY-LLM-MODE. THIS IS NOT DEFERRED — IT IS SPECIFIED NOW.**
+
+### How it works
+
+The HTTP proxy is a **standalone Rust binary** (hyper/axum). It **never embeds a Python interpreter directly**. It only ever calls `quota-router-core` (Rust).
+
+```
+HTTP proxy process (hyper/axum, Rust):
+  └── calls quota-router-core (Rust)
+         └── in any-llm-mode: Rust core has PyO3 bindings
+                └── calls Python SDKs (openai, anthropic, etc.) via PyO3
+```
+
+**Key insight:** The proxy speaks only Rust to Rust. The PyO3 delegation happens **inside** `quota-router-core`, not inside the proxy process. No CPython embedding in the proxy. No GIL management in the proxy. The proxy has zero awareness of Python.
+
+### How Rust core has PyO3 in any-llm-mode
+
+In `any-llm-mode` builds:
+1. `quota-router-core` is compiled with `pyo3/extension-module` feature
+2. The Rust core binary includes PyO3 Rust bindings
+3. When the proxy calls into Rust core, the Rust code can invoke Python functions (call Python SDKs)
+4. The proxy process itself remains a pure Rust binary — it just calls Rust functions that happen to invoke Python under the hood
+
+This is exactly how PyO3 works in general: Rust code that *can* call Python, compiled into a binary that *doesn't require* Python unless actually invoked.
+
+### What the proxy does in any-llm-mode
+
+```
+1. HTTP request arrives at proxy (hyper/axum)
+2. Proxy parses request, validates API key via KeyMiddleware (in Rust core)
+3. Proxy calls quota-router-core completion function (Rust-to-Rust call)
+4. Rust core (in any-llm-mode) executes PyO3 code to call Python SDK
+5. Response flows back through Rust core → proxy → client
+```
+
+**No Python interpreter in proxy. No embedding. The proxy just calls Rust.**
+
+### Comparison to litellm-mode
+
+| Aspect | litellm-mode | any-llm-mode |
+|--------|-------------|-------------|
+| HTTP proxy process | Rust (hyper/axum) | Rust (hyper/axum) — SAME process |
+| What proxy calls | quota-router-core (Rust) | quota-router-core (Rust) — SAME call |
+| Provider strategy | reqwest (Rust HTTP client) | PyO3 → Python SDK |
+| Python involvement | None in proxy | In Rust core, not proxy |
+| Embedding required | No | No — same architecture |
+
+### Why this design works
+
+PyO3 allows Rust code to be compiled with Python bindings. The resulting binary is a **Rust binary that can optionally call Python**. It does NOT require Python to be present — Python is only invoked at runtime when the PyO3 code path is exercised.
+
+Therefore:
+- The HTTP proxy is a pure Rust binary in ALL modes
+- It calls `quota-router-core` in ALL modes
+- In `any-llm-mode`, `quota-router-core` internally uses PyO3 to call Python SDKs
+- The proxy has NO knowledge of this — it just calls Rust
+
+**This is not a hand-wave. This is how PyO3 works by design.**
+
 ## Feature Gate Architecture
 
 **🚨 ARCHITECTURAL CONSTRAINT: HTTP PROXY MUST BE IN BOTH MODES — THIS CAN NEVER CHANGE 🚨**

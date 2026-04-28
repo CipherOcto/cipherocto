@@ -2,7 +2,7 @@
 
 ## Status
 
-Draft (v1.7 — 2026-04-28)
+Draft (v1.10 — 2026-04-28)
 
 ## Authors
 
@@ -216,6 +216,8 @@ from quota_router import set_api_key
 set_api_key("anthropic", "sk-ant-...")
 ```
 
+**Class-based API (any-llm style):** any-llm has `AnyLLM` class with instance methods (`anyllm.completion()`, `anyllm.acompletion()`). The RFC speccs only the **functional API** (`completion()`, `acompletion()`). Class-based API is **NOT in scope** for Phase 1 — only the module-level functions.
+
 ### Unified Function Signature
 
 ```python
@@ -238,6 +240,7 @@ async def acompletion(
     n: Optional[int] = None,
     stream: Optional[bool] = None,  # None = sync response; True = streaming; matches LiteLLM behavior
     stream_options: Optional[Dict] = None,
+    timeout: Optional[Union[float, int]] = None,  # LiteLLM acompletion uses float|int, NOT str|httpx.Timeout
     stop: Optional[Union[str, List[str]]] = None,
     presence_penalty: Optional[float] = None,
     frequency_penalty: Optional[float] = None,
@@ -246,12 +249,19 @@ async def acompletion(
     seed: Optional[int] = None,
 
     # Reasoning (Anthropic, OpenAI o1)
-    reasoning_effort: Optional[str] = None,
+    reasoning_effort: Optional[str] = "auto",  # Default "auto" matches any-llm/LiteLLM; alias: `thinking` accepted
+    # Note: `thinking` (LiteLLM) and `reasoning_effort` (RFC) are the same parameter.
+    # Both accepted — set via kwargs if using `thinking=`.
 
     # Tools / Function calling
     tools: Optional[List[Dict]] = None,
     tool_choice: Optional[Union[str, Dict]] = None,
     parallel_tool_calls: Optional[bool] = None,
+
+    # Legacy function calling (deprecated — use tools/tool_choice)
+    # Kept for LiteLLM compatibility — PASSED THROUGH to provider SDK
+    functions: Optional[List] = None,  # Deprecated: use tools; passed through as-is
+    function_call: Optional[str] = None,  # Deprecated: use tool_choice; passed through as-is
 
     # Response format (structured output)
     response_format: Optional[Union[str, Dict]] = None,
@@ -261,8 +271,11 @@ async def acompletion(
     top_logprobs: Optional[int] = None,
     session_label: Optional[str] = None,
     client_args: Optional[Dict] = None,
+    deployment_id: Optional[str] = None,  # LiteLLM deployment selection
+    verbosity: Optional[Literal["low", "medium", "high"]] = None,  # LiteLLM verbosity
 
     # Remaining kwargs passed to provider
+    # Note: `thinking` (LiteLLM name) is accepted as alias for `reasoning_effort`
     **kwargs,
 ) -> CompletionResponse:
     """
@@ -289,6 +302,13 @@ async def acompletion(
 ### Provider Resolution Algorithm
 
 ```python
+# Default provider per mode (can be overridden via environment/config)
+DEFAULT_PROVIDER_BY_MODE = {
+    "litellm-mode": "openai",  # LiteLLM default
+    "any-llm-mode": None,      # any-llm has no default — must use explicit provider
+    "full": "openai",          # Full mode defaults to LiteLLM behavior
+}
+
 def resolve_provider(
     provider_param: Optional[str],
     model: str,
@@ -300,10 +320,10 @@ def resolve_provider(
     Resolution priority:
     1. provider param if provided and non-empty
     2. Parse model string for "provider:model" or "provider/model" format
-    3. Use default provider for deployment mode
+    3. Use default provider for mode (litellm-mode/full: "openai"; any-llm-mode: raise)
 
     Raises:
-        MissingProviderError: If no provider can be determined
+        ValueError: If no provider can be determined (any-llm-mode behavior)
     """
     # 1. Explicit provider param wins
     if provider_param:
@@ -340,11 +360,14 @@ def resolve_provider(
                 )
             return provider_lower, model_name
 
-    # 3. No provider determined — raise error (NOT silent fallback)
-    raise MissingProviderError(
-        f"Cannot determine provider for model '{model}'. "
-        f"Use provider='<name>' parameter or prefix model with '<provider>:' (e.g., 'openai:gpt-4o'). "
-        f"Known providers: {', '.join(sorted(KNOWN_PROVIDERS))}"
+    # 3. Mode-aware fallback or error
+    default_provider = DEFAULT_PROVIDER_BY_MODE.get(deployment_mode)
+    if default_provider:
+        return default_provider, model
+    # any-llm-mode: no default, raise error (matches any-llm behavior)
+    raise ValueError(
+        f"Invalid model format '{model}'. Expected 'provider:model' format "
+        f"or pass provider='<name>' parameter. Known providers: {', '.join(sorted(KNOWN_PROVIDERS))}"
     )
 ```
 
@@ -435,6 +458,7 @@ class ContextLengthExceededError(QuotaRouterError):
 class MissingApiKeyError(QuotaRouterError):
     """No API key provided and none in environment."""
     provider: str
+    env_var_name: str  # Which env var to set (matches any-llm)
 
 class UnsupportedProviderError(QuotaRouterError):
     """Provider not supported."""
@@ -470,6 +494,10 @@ class BatchNotCompleteError(QuotaRouterError):
     """Batch job not yet complete."""
     batch_id: str
     status: str
+
+class AllModelsFailedError(QuotaRouterError):
+    """All models failed in batch_completion_models() race."""
+    models: List[str]
 ```
 
 ### Python-to-Rust Exception Mapping
@@ -515,14 +543,16 @@ match rust_error {
 
 Reference: RFC-0902 §Fallback Mechanisms (Rust `RouterError` enum definition).
 
-### Embedded API (any-llm Style)
+### Embedded API (LiteLLM-Compatibility Style)
 
-For any-llm compatibility, the SDK must be configured before use:
+For LiteLLM compatibility, the SDK can be configured with persistent API keys before use:
 
 ```python
 from quota_router import set_api_key, get_budget_status
 
-# Set API key for a provider (any-llm style)
+# Set API key for a provider (LiteLLM-style persistence)
+# Note: any-llm has NO set_api_key() — any-llm passes keys per-call or via constructor.
+# set_api_key() is a LiteLLM-compatible feature added by quota-router.
 set_api_key("anthropic", "sk-ant-...")
 set_api_key("openai", "sk-...")
 
@@ -534,6 +564,14 @@ print(f"OCTO-W Balance: {budget['balance']}")
 metrics = get_metrics()
 print(f"Total spend: {metrics['total_spend']}")
 ```
+
+**any-llm key handling vs quota-router:**
+
+| Approach | any-llm | quota-router |
+| -------- | -------- | ------------ |
+| Per-call | `completion(model="...", api_key="sk-...")` | `completion(model="...", api_key="sk-...")` ✓ |
+| Constructor | `AnyLLM(api_key="sk-...")` | N/A |
+| Persistent | **No** `set_api_key()` | `set_api_key()` (LiteLLM compat) |
 
 #### set_api_key() — Storage Clarification
 
@@ -773,7 +811,7 @@ This section documents gaps between RFC-0920 and the reference implementations (
 
 | Parameter                       | Type                            | Description                                | Spec Location           |
 | ------------------------------- | ------------------------------- | ------------------------------------------ | ----------------------- |
-| `timeout`                       | `float \| str \| httpx.Timeout` | Request timeout with httpx.Timeout support | §Timeout Parameter      |
+| `timeout`                       | `float \| str \| httpx.Timeout` | Request timeout (sync completion only); acompletion uses `float \| int` per LiteLLM | §Timeout Parameter      |
 | `thinking`                      | `dict`                          | Anthropic extended thinking budget         | §Thinking Parameter     |
 | `model_list`                    | `list`                          | Alternative model configuration            | §Model List             |
 | `extra_headers`                 | `dict`                          | Additional headers to pass to provider     | §Extra Headers          |
@@ -882,7 +920,44 @@ def completion(
     model: str,
     messages: List[Dict],
     *,
+    # Provider
+    provider: Optional[str] = None,
+    # API credentials
+    api_key: Optional[str] = None,
+    api_base: Optional[str] = None,
+    # Completion params (matching LiteLLM sync completion)
+    temperature: Optional[float] = None,
+    top_p: Optional[float] = None,
+    max_tokens: Optional[int] = None,
+    max_completion_tokens: Optional[int] = None,
+    n: Optional[int] = None,
     stream: bool = False,
+    stream_options: Optional[Dict] = None,
+    stop: Optional[Union[str, List[str]]] = None,
+    presence_penalty: Optional[float] = None,
+    frequency_penalty: Optional[float] = None,
+    logit_bias: Optional[Dict[int, float]] = None,
+    user: Optional[str] = None,
+    seed: Optional[int] = None,
+    timeout: Optional[Union[float, str, httpx.Timeout]] = None,  # sync uses str/httpx.Timeout
+    # LiteLLM sync-specific params
+    reasoning_effort: Optional[str] = "auto",  # Default "auto" matches any-llm/LiteLLM; `thinking` also accepted
+    functions: Optional[List] = None,  # Legacy — use tools
+    function_call: Optional[str] = None,  # Legacy — use tool_choice
+    tools: Optional[List[Dict]] = None,
+    tool_choice: Optional[Union[str, Dict]] = None,
+    parallel_tool_calls: Optional[bool] = None,
+    logprobs: Optional[bool] = None,
+    top_logprobs: Optional[int] = None,
+    extra_headers: Optional[Dict] = None,
+    base_url: Optional[str] = None,  # Alias for api_base
+    api_version: Optional[str] = None,
+    api_type: Optional[str] = None,  # LiteLLM api_type (e.g., "azure")
+    model_list: Optional[list] = None,
+    deployment_id: Optional[str] = None,
+    safety_identifier: Optional[str] = None,
+    service_tier: Optional[str] = None,
+    # Note: `thinking` (LiteLLM name) is accepted as alias for `reasoning_effort`
     **kwargs,
 ) -> Union[CompletionResponse, Iterator[ChatCompletionChunk]]:
     """
@@ -1100,11 +1175,17 @@ class ChatCompletionChunkIterator:
 
 **Note on SSE parsing:** Phase 1 uses `async_iter_to_sync_iter()` bridge for **sync** streaming with sync providers. For **async** streaming (acompletion with stream=True), the async iterator is returned directly. SSE parsing (F3: provider-specific SSE transformation) is **NOT** part of Phase 1 — Phase 1 returns raw chunks from provider SDKs. F3 covers implementing proper SSE parsing for non-OpenAI-SSE providers.
 
+**Bridge function clarification:** quota-router uses `async_iter_to_sync_iter()` (takes AsyncIterator, drives via background thread). any-llm uses `async_coro_to_sync_iter()` (takes coroutine, runs it, yields results). These are different functions for different use cases:
+- `async_coro_to_sync_iter`: coroutine → sync iterator (any-llm pattern)
+- `async_iter_to_sync_iter`: AsyncIterator → sync iterator (RFC pattern)
+
 #### In-Memory Batch Completion
 
 **Severity: High**
 
 `batch_completion()` submits multiple completion requests in parallel threads, returning a list of responses in input order. Distinct from file-based Batch API.
+
+**LiteLLM vs any-llm:** LiteLLM has ThreadPoolExecutor-based `batch_completion()` (in-memory parallel). any-llm has **NO** in-memory batch — only file-based batch via `create_batch()` / `acreate_batch()`. quota-router implements in-memory batch for LiteLLM compatibility; any-llm users must use the file-based batch API.
 
 **Specification:**
 
@@ -1306,6 +1387,38 @@ def batch_completion_models(
 ```
 
 **Also available:** `batch_completion_models_all_responses()` — returns ALL responses (not just first), as a list.
+
+**Async variant:**
+
+```python
+async def abatch_completion_models(
+    *args,
+    messages: List[Dict],
+    models: Union[str, List[str]],
+    **kwargs,
+) -> CompletionResponse:
+    """
+    Async version of batch_completion_models().
+    Sends same request to multiple models concurrently, returns FIRST response.
+    """
+    if isinstance(models, str):
+        models = [models]
+
+    kwargs.pop("model", None)
+    kwargs.pop("models", None)
+
+    async def submit_one(model_name: str) -> CompletionResponse:
+        return await acompletion(model=model_name, messages=messages, **kwargs)
+
+    results = await asyncio.gather(*[submit_one(m) for m in models], return_exceptions=True)
+    for result in results:
+        if not isinstance(result, Exception):
+            return result
+
+    raise AllModelsFailedError(
+        f"All {len(models)} models failed: {[m for m in models]}"
+    )
+```
 
 **Key difference from `batch_completion`:**
 
@@ -1846,18 +1959,18 @@ These are documented here for completeness but specced in Phase 4:
 | `truncation`                    | any-llm | Phase 4       |
 | `service_tier`                  | any-llm | Phase 4       |
 | `background`                    | any-llm | Phase 4       |
-| `safety_identifier`             | any-llm | Phase 4       |
+| `safety_identifier`             | litellm | Phase 3 (LiteLLM sig) |
 | `prompt_cache_key`              | any-llm | Phase 4       |
 | `prompt_cache_retention`        | any-llm | Phase 4       |
 | `conversation`                  | any-llm | Phase 4       |
-| `extra_headers`                 | litellm | Phase 4       |
-| `base_url`                      | litellm | Phase 4       |
-| `api_version`                   | litellm | Phase 4       |
-| `model_list`                    | litellm | Phase 4       |
+| `extra_headers`                 | litellm | Phase 3 (LiteLLM sync sig) |
+| `base_url`                      | litellm | Phase 3 (LiteLLM sig)      |
+| `api_version`                   | litellm | Phase 3 (LiteLLM sync sig) |
+| `model_list`                    | litellm | Phase 3 (LiteLLM sync sig) |
 | `web_search_options`            | litellm | Phase 4       |
-| `modalities`                    | litellm | Phase 4       |
-| `audio`                         | litellm | Phase 4       |
-| `prediction`                    | litellm | Phase 4       |
+| `modalities`                    | litellm | Phase 3 (LiteLLM sig)      |
+| `audio`                         | litellm | Phase 3 (LiteLLM sig)      |
+| `prediction`                    | litellm | Phase 3 (LiteLLM sig)      |
 | `shared_session`                | litellm | Phase 4       |
 | `enable_json_schema_validation` | litellm | Phase 4       |
 
@@ -2016,7 +2129,12 @@ mode = quota_router.get_deployment_mode()
 // In PyO3 module init
 #[pymodule]
 fn _quota_router(m: &Bound<PyModule>) -> PyResult<()> {
-    m.add("__deployment_mode__", "any-llm-mode")?;  // Set at compile time
+    #[cfg(feature = "litellm-mode")]
+    m.add("__deployment_mode__", "litellm-mode")?;
+    #[cfg(feature = "any-llm-mode")]
+    m.add("__deployment_mode__", "any-llm-mode")?;
+    #[cfg(feature = "full")]
+    m.add("__deployment_mode__", "full")?;
     Ok(())
 }
 
@@ -2125,13 +2243,16 @@ The SDK has **two incompatible API key handling modes** with different security 
 - [ ] PyO3 Rust core with unified `acompletion()` signature
 - [ ] Provider resolution algorithm (both styles)
 - [ ] Exception hierarchy with error codes
-- [ ] **Replace mock with real PyO3 SDK calls** — current `quota-router-pyo3` completion functions are mock stubs that echo messages
+- [ ] **Replace mock with real PyO3 SDK calls (OpenAI + Anthropic)** — current `quota-router-pyo3` completion functions are mock stubs that echo messages. Phase 1 replaces these with real provider SDK calls.
 - [ ] Basic test suite (OpenAI + Anthropic — these cover the two main patterns: provider= and provider:model)
+  - **Note:** Phase 1 tests `completion()` / `acompletion()` directly, NOT through Router. Router is Phase 3.
 - [ ] Async iterator bridge for sync streaming (`async_iter_to_sync_iter()`)
 
 **Note:** Phase 1 MUST replace the current mock implementations with real provider SDK calls via PyO3. OpenAI and Anthropic are the priority providers because:
 1. OpenAI covers the `provider=model` style (LiteLLM compatibility)
 2. Anthropic covers the `provider:model` style (any-llm compatibility)
+
+**Why Phase 1 if both interfaces exist in all modes?** The Python SDK interface **exists** in all modes (per RFC-0917 invariant), but the **implementation** is currently mock. Phase 1 replaces the mock with real SDK calls. This is implementation work, not interface work.
 
 ### Phase 2: Full Provider Coverage
 
@@ -2140,8 +2261,8 @@ The SDK has **two incompatible API key handling modes** with different security 
 - [ ] All 42 providers (mock until real SDK available)
 - [ ] Embedding API
 - [ ] Model listing
-- [ ] `timeout` parameter with httpx.Timeout support
-- [ ] `extra_headers`, `base_url`, `api_version` parameters
+- [ ] `timeout` parameter with httpx.Timeout support (specced in sync completion; verify for async provider calls)
+- [ ] `extra_headers`, `base_url`, `api_version` parameters (specced above)
 
 ### Phase 3: Enterprise Features
 
@@ -2199,6 +2320,9 @@ This is the only approach that achieves true drop-in replacement for both ecosys
 
 | Version | Date       | Changes |
 | ------- | ---------- | ------- |
+| 1.10    | 2026-04-28 | Fix adversarial review v1.9 issues: I1 (reasoning_effort default changed to "auto" per any-llm), I2 (sync completion() added api_type), I3 (acompletion() added verbosity), I5 (MissingApiKeyError added env_var_name), I7 (sync completion() reasoning_effort default also "auto" + thinking alias noted), I8 (abatch_completion_models() async variant added), L2 (Phase 2 timeout item clarified as verifying async provider calls). |
+| 1.9     | 2026-04-28 | Fix adversarial review v1.8 issues: C1 (mode-aware default provider — litellm-mode/full default to "openai", any-llm-mode raises), I1 (functions/function_call passed through to provider SDK), I2 (modalities, audio, prediction moved Phase 4→Phase 3 as they're in LiteLLM sig), I3/I4/I5/I6 (sync completion() now has explicit timeout, api_version, extra_headers, model_list), I7 (Router raises ModelNotFoundError if model not in model_list), I9 (Phase 1 "replace mock" scope clarified — implementation vs interface), I10 (thinking accepted as alias for reasoning_effort), I11 (Embedded API renamed from "any-llm style" to "LiteLLM-compatibility style"). |
+| 1.8     | 2026-04-28 | Fix adversarial review v1.7 issues: C1 (get_deployment_mode() now uses cfg-based feature flag injection, not hardcoded string), C2 (acompletion() timeout now float\|int per LiteLLM, not str\|httpx.Timeout), C3 (MissingProviderError→ValueError; step 3 default provider removed since any-llm has none), I1 (class-based API clarified out of scope for Phase 1), I2 (async_coro_to_sync_iter vs async_iter_to_sync_iter clarified), I3 (AllModelsFailedError added to exception hierarchy), I4 (any-llm has no in-memory batch noted), I6 (set_api_key() is LiteLLM compat, any-llm has no equivalent), I8 (deployment_id added to unified signature), I9 (safety_identifier moved Phase 4→Phase 3 as it's in LiteLLM sig), I10 (functions/function_call legacy params added), L2 (Phase 1 tests completion() directly, not Router). |
 | 1.7     | 2026-04-28 | Fix adversarial review v1.6 issues: I1 (mode selection for Python SDK build explained — feature flags on quota-router-core, not pyo3), I2 (batch_completion_models() specced with reference to LiteLLM impl), I4 (Phase 1 streaming vs F3 SSE parsing clarified — Phase 1 is raw chunks, F3 is proper SSE transformation), I6 (get_deployment_mode() cfg-based compile-time injection), I7 (Phase 4 "6 strategies" corrected to "8"), I8 (acompletion() fallback comment added), I9 (acompletion() streaming AsyncIterator return type spec'd with reference to LiteLLM CustomStreamWrapper). |
 | 1.6     | 2026-04-27 | Fix adversarial review v1.5 issues: C1 (Router.completion() uses explicit import to avoid self-call infinite loop), I1 (get_budget_status behavior in any-llm vs full clarified), I2 (streaming execution path documented), I3 (platform provider RFC-0917 cross-reference verified), I4 (get_deployment_mode() implementation explained), I5 (_select_deployment model param is model_name not model_group), I6 (Phase 1 specifies OpenAI + Anthropic as first providers), L1 (sys.modules mutation removed, explicit import alias), L2 (Phase 3 "6 strategies" corrected to "8"), L3 (F3 streaming vs Phase 1 streaming clarified), L4 (async path now catches Exception like sync), L5 (model vs model_name variable semantics clarified), I7 (version history table aligned). |
 | 1.5     | 2026-04-27 | Fix adversarial review v1.4 issues: I1 (corrected ProxyServer claim — RFC-0917 says both interfaces in all modes, mode controls provider strategy not interface), I2 (Python↔Rust exception mapping added with RouterError table), I3 (real SSE streaming spec added, replacing mock), I6 (set_api_key storage mode clarification), I7 (get_budget_status Balance reference), L3 (list_models now Router.list_models() method for LiteLLM compat). Feature gate section corrected per RFC-0917. |

@@ -5,6 +5,16 @@ edition.workspace = true
 authors.workspace = true
 license.workspace = true
 
+# ⚠️ CRITICAL INVARIANT (RFC-0917):
+# This crate provides the Python SDK interface.
+# Mode gate (litellm-mode/any-llm-mode/full) controls PROVIDER STRATEGY, not interface availability.
+# BOTH HTTP proxy AND Python SDK exist in ALL modes.
+# - litellm-mode:  reqwest (native Rust HTTP) → provider REST APIs. HTTP proxy ✅ Python SDK ✅
+# - any-llm-mode:  PyO3 → official Python SDKs. HTTP proxy ✅ Python SDK ✅
+# - full:          Both reqwest AND PyO3. HTTP proxy ✅ Python SDK ✅
+#
+# See RFC-0917 §Rust Feature Gates.
+
 [lib]
 crate-type = ["cdylib", "rlib"]
 name = "_quota_router"

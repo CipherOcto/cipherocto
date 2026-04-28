@@ -2,7 +2,7 @@
 
 ## Status
 
-Draft (v1.4 — 2026-04-27)
+Draft (v1.5 — 2026-04-27)
 
 ## Authors
 
@@ -30,6 +30,10 @@ Define a unified Python SDK via PyO3 that supports **both** LiteLLM-style API (s
 - RFC-0903: Virtual API Key System
 - RFC-0909: Deterministic Quota Accounting
 - RFC-0910: Pricing Table Registry
+
+**⚠️ MODE GATE ≠ INTERFACE (per RFC-0917):**
+Both HTTP proxy and Python SDK exist in ALL modes (litellm-mode, any-llm-mode, full).
+Mode gate controls provider strategy (reqwest vs PyO3), NOT interface availability.
 
 ## Motivation
 
@@ -62,17 +66,92 @@ The current `quota-router-pyo3` crate only implements any-llm-style (per RFC-091
 
 ## Specification
 
-### Dual-Mode Architecture
+### ⚠️ CRITICAL INVARIANT — Mode Gate ≠ Interface
 
-The SDK operates in two modes determined at **deployment time** (via feature flags), not runtime:
+**Per RFC-0917, this is mathematically always true:**
+
+```
+For ALL modes (litellm-mode, any-llm-mode, full):
+    HTTP proxy interface EXISTS ✅
+    Python SDK interface EXISTS ✅
+
+Mode gate controls ONLY: what library calls providers (reqwest vs PyO3)
+Mode gate does NOT control: which interfaces exist
+```
+
+**Never forget:**
+- `litellm-mode` DOES NOT mean "HTTP proxy only"
+- `any-llm-mode` DOES NOT mean "Python SDK only"
+- Both interfaces exist in ALL modes
+- Mode selects provider strategy (reqwest vs PyO3), not interface availability
+
+### Crate Architecture
+
+`quota-router-pyo3` is the **Python SDK crate** that wraps `quota-router-core` via PyO3:
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│              quota-router-pyo3 (Python SDK)                      │
+│  • Registers completion(), acompletion(), set_api_key(), etc.     │
+│  • Calls Rust core via PyO3 (extern crate)                       │
+│  • Provider resolution (provider:model parsing)                    │
+│  • Python-level Router class (selects deployment, calls completion)│
+│  • Exception mapping (Python → unified types)                    │
+└─────────────────────────────────────────────────────────────────┘
+                              │ PyO3
+                              ▼
+┌─────────────────────────────────────────────────────────────────┐
+│              quota-router-core (Rust core)                       │
+│  • KeyMiddleware    — API key validation                        │
+│  • Balance         — OCTO-W spend tracking                      │
+│  • StoolapKeyStorage — Persistence (RFC-0912/0914)            │
+│  • KeyCache (L1)   — In-memory key cache with TTL             │
+│  • RateLimiter     — TokenBucket RPM/TPM enforcement            │
+│  • Router          — Index-based selection (proxy server)        │
+│  • FallbackExecutor — Retry with backoff                       │
+│  • Provider        — Provider config (endpoint, rpm, tpm, weight) │
+│  • PricingRegistry — Token pricing (RFC-0910)                   │
+└─────────────────────────────────────────────────────────────────┘
+```
+
+**Python-to-Rust component mapping:**
+
+| Python API | Rust Core Component | Notes |
+|------------|---------------------|-------|
+| `set_api_key(provider, key)` | `KeyMiddleware::validate_key()` + `StoolapKeyStorage` | Validates then persists |
+| `get_budget_status()` | `Balance` + `StoolapKeyStorage` | Returns OCTO-W spend |
+| `completion()` | `KeyMiddleware` → Provider call | Key validation → actual call |
+| `Router.route()` (at Python level) | None | Python-level deployment selection |
+| `num_retries` | `FallbackExecutor` (in proxy) | Retry via proxy, not Python SDK |
+| `cache_responses` | `KeyCache` + `StoolapKeyStorage` | Semantic cache (RFC-0913) |
+| Rate limiting | `RateLimiter` | TokenBucket enforcement |
+| Exception mapping | `RouterError` → Python | PyO3 exception translation |
+
+**Two modes (feature flags) control provider integration — NOT interface availability:**
+
+| Mode | Provider Strategy | HTTP Proxy? | Python SDK? |
+|------|-----------------|:------------:|:------------:|
+| `litellm-mode` | reqwest HTTP (Rust) | ✅ ALWAYS | ✅ ALWAYS |
+| `any-llm-mode` | PyO3 → Python SDK | ✅ ALWAYS | ✅ ALWAYS |
+| `full` | Both | ✅ ALWAYS | ✅ ALWAYS |
+
+**Mode gate controls HOW (reqwest vs PyO3), NOT WHETHER (proxy vs SDK).**
+
+**Key insight**: Mode determines which HTTP/client layer is compiled. The Python SDK (`quota-router-pyo3`) is always the Python interface — it wraps the Rust core regardless of mode. **Both HTTP proxy and Python SDK exist in ALL modes.**
+
+### Dual-Mode API Conventions
+
+**⚠️ Mode ≠ Interface reminder:** Both HTTP proxy and Python SDK exist in ALL modes. The mode selects provider strategy (reqwest vs PyO3), not which interface is available.
+
+The SDK operates in two API conventions (not feature flags — both work in all modes):
 
 ```
 ┌─────────────────────────────────────────────────────────────────┐
 │                    quota_router Python SDK                       │
 │                                                                 │
 │  ┌─────────────────────┐    ┌─────────────────────┐            │
-│  │   LiteLLM Mode      │    │    any-llm Mode     │            │
-│  │   (feature flag)    │    │   (feature flag)    │            │
+│  │   LiteLLM Convention │    │  any-llm Convention  │            │
+│  │   provider param    │    │  provider:model      │            │
 │  │                     │    │                     │            │
 │  │ completion(        │    │ completion(         │            │
 │  │   provider="openai",│    │   model="openai:...",│           │
@@ -81,14 +160,13 @@ The SDK operates in two modes determined at **deployment time** (via feature fla
 │  │ )                   │    │                     │            │
 │  └─────────────────────┘    └─────────────────────┘            │
 │                                                                 │
-│  Both modes use the same underlying PyO3 → Rust provider calls   │
+│  Both conventions work regardless of mode (litellm/any-llm/full) │
 └─────────────────────────────────────────────────────────────────┘
 ```
 
-**Key insight**: The SDK **accepts both calling conventions** regardless of mode. Mode determines:
-
-1. Which provider integration strategy is compiled (reqwest HTTP vs PyO3 SDK)
-2. Default behavior when `provider` param is absent
+**Convention determines:**
+1. How provider is specified (explicit param vs embedded in model string)
+2. Default provider when not specified
 
 ### API Style 1: LiteLLM-Compatible
 
@@ -394,6 +472,49 @@ class BatchNotCompleteError(QuotaRouterError):
     status: str
 ```
 
+### Python-to-Rust Exception Mapping
+
+**Severity: Important**
+
+Python exceptions defined above map to Rust core `RouterError` variants for fallback logic:
+
+| Python Exception          | Rust `RouterError`      | Trigger                           |
+| ------------------------ | ---------------------- | --------------------------------- |
+| `RateLimitError`          | `RouterError::RateLimit` | 429 response, "rate_limit" in msg |
+| `AuthenticationError`     | `RouterError::AuthError` | 401/403, invalid API key          |
+| `ContextLengthExceededError` | `RouterError::ContextWindowExceeded` | Token limit exceeded       |
+| `ContentFilterError`      | `RouterError::ContentPolicyViolation` | Content policy violation  |
+| `GatewayTimeoutError`     | `RouterError::Timeout`   | 504, timeout                      |
+| `ProviderError`           | `RouterError::ProviderUnavailable` | Provider down/unreachable |
+| `ModelNotFoundError`      | `RouterError::ProviderUnavailable` | Model not found           |
+
+**Two exception sources:**
+
+1. **Upstream provider errors** (regex mapping, `map_upstream_exception()`):
+   - Caught from provider SDK responses
+   - Mapped via `UNIFIED_EXCEPTION_PATTERNS` regex rules
+
+2. **Rust core errors** (via PyO3 exception propagation):
+   - `RouterError` variants translate to Python equivalents
+   - Caught by fallback logic in `Router.completion()` / `Router.acompletion()`
+
+**Implementation:**
+
+```rust
+// In PyO3 bindings — translating Rust RouterError to Python exception
+match rust_error {
+    RouterError::RateLimit => PyErr::new::<RateLimitError, _>(...),
+    RouterError::AuthError => PyErr::new::<AuthenticationError, _>(...),
+    RouterError::ContextWindowExceeded => PyErr::new::<ContextLengthExceededError, _>(...),
+    RouterError::ContentPolicyViolation => PyErr::new::<ContentFilterError, _>(...),
+    RouterError::Timeout => PyErr::new::<GatewayTimeoutError, _>(...),
+    RouterError::ProviderUnavailable => PyErr::new::<ProviderError, _>(...),
+    RouterError::Unknown => PyErr::new::<ProviderError, _>(...),
+}
+```
+
+Reference: RFC-0902 §Fallback Mechanisms (Rust `RouterError` enum definition).
+
 ### Embedded API (any-llm Style)
 
 For any-llm compatibility, the SDK must be configured before use:
@@ -413,6 +534,82 @@ print(f"OCTO-W Balance: {budget['balance']}")
 metrics = get_metrics()
 print(f"Total spend: {metrics['total_spend']}")
 ```
+
+#### set_api_key() — Storage Clarification
+
+**Severity: Important**
+
+The `set_api_key()` function has **two implementation modes**:
+
+| Mode    | Storage              | Budget Enforcement |
+| ------- | -------------------- | ------------------ |
+| any-llm | In-memory (HashMap)  | None               |
+| full    | `StoolapKeyStorage`  | RFC-0904 enforced  |
+
+**any-llm-mode implementation:**
+
+```rust
+// quota-router-pyo3/src/sdk.rs (current)
+static API_KEYS: Lazy<Mutex<HashMap<String, String>>>  // In-memory only
+
+pub fn set_api_key(provider: String, api_key: String) -> ... {
+    // Format validation, then stores in local HashMap
+    // Does NOT persist to StoolapKeyStorage in any-llm-mode
+}
+```
+
+**full-mode implementation:**
+
+```rust
+// When both PyO3 and reqwest are compiled (full build):
+// set_api_key() → KeyMiddleware::validate_key() + StoolapKeyStorage
+// Keys persist across requests via stoolap WAL
+```
+
+**Key insight:** In single-mode `any-llm-mode`, keys are in-memory only. In `full` mode, keys are stored in `StoolapKeyStorage` and budget enforcement (RFC-0904) applies.
+
+#### get_budget_status() — Balance Reference
+
+**Severity: Important**
+
+`get_budget_status()` returns OCTO-W spend data from Rust `Balance` struct:
+
+```rust
+// quota-router-core/src/balance.rs
+pub struct Balance {
+    pub key_id: String,
+    pub team_id: String,
+    pub current_spend: Decimal,
+    pub budget_limit: Option<Decimal>,
+    pub last_updated: DateTime<Utc>,
+}
+```
+
+**Python return type:**
+
+```python
+@dataclass
+class BudgetStatus:
+    balance: float           # Current OCTO-W balance
+    total_spend: float      # Cumulative spend
+    budget_limit: Optional[float]  # Cap if set
+    last_updated: str       # ISO 8601 timestamp
+    key_id: Optional[str]   # For which key (if tracked)
+
+def get_budget_status(provider: Optional[str] = None) -> BudgetStatus:
+    """
+    Returns OCTO-W budget status from Rust Balance + StoolapKeyStorage.
+
+    Args:
+        provider: If None, returns aggregate across all providers.
+                  If set, returns status for that provider's key.
+
+    Returns:
+        BudgetStatus with current balance and spend metrics.
+    """
+```
+
+**Reference:** RFC-0904 (Real-Time Cost Tracking) for Balance struct definition.
 
 ### LiteLLM Router Class
 
@@ -439,6 +636,22 @@ response = router.completion(
 
 ### list_models() Signature
 
+`list_models()` is available as both a **standalone function** and an **instance method on Router** for LiteLLM compatibility:
+
+```python
+# Standalone function
+from quota_router import list_models
+models = list_models(provider="openai")
+
+# Router instance method (LiteLLM style)
+from quota_router import Router
+router = Router(model_list=[...])
+models = router.list_models()  # Returns models for all deployments
+models = router.list_models(provider="openai")  # Filter by provider
+```
+
+**Specification:**
+
 ```python
 def list_models(
     provider: Optional[str] = None,
@@ -463,6 +676,14 @@ def list_models(
         MissingApiKeyError: If no API key available.
         ProviderError: If provider API call fails.
     """
+
+# Router instance method
+class Router:
+    def list_models(
+        self,
+        provider: Optional[str] = None,
+    ) -> List[Model]:
+        """List models from this router's model_list deployments."""
 ```
 
 ### Model Response Type
@@ -662,6 +883,107 @@ def completion(
     """
 ```
 
+#### Real SSE Streaming — Provider-Specific Parsing
+
+**Severity: Important**
+
+The current `quota-router-pyo3/src/streaming.rs` implementation is a **mock** that splits content by whitespace. Real streaming requires SSE parsing and transformation per provider format.
+
+**Current mock implementation (replace):**
+
+```rust
+// quota-router-pyo3/src/streaming.rs (CURRENT — MOCK)
+pub fn create_chunk_list(model: String, content: String) -> Vec<ChatCompletionChunk> {
+    content.split_whitespace().map(|word| ...).collect()
+}
+```
+
+**Real streaming implementation:**
+
+```python
+# quota_router/streaming.py
+
+import sse
+from typing import Iterator, Optional
+
+class SSEParser:
+    """
+    Provider-specific SSE parsing for streaming responses.
+
+    Each provider has a different SSE format. This class normalizes
+    to OpenAI SSE format for compatibility.
+    """
+
+    @staticmethod
+    def parse_openai_sse(chunk: bytes) -> Optional[ChatCompletionChunk]:
+        """OpenAI SSE: pass-through (already normalized)."""
+        # data: {"id":"...","choices":[{"delta":{"content":"..."}}]}
+        # Parse and yield ChatCompletionChunk
+        pass
+
+    @staticmethod
+    def parse_anthropic_sse(chunk: bytes) -> Optional[ChatCompletionChunk]:
+        """Anthropic event-stream: transform to OpenAI SSE."""
+        # event: message_delta
+        # data: {"usage":{"output_tokens":123},"delta":{"text":"..."}}
+        # Transform to OpenAI format: {"choices":[{"delta":{"content":"..."}}]}
+        pass
+
+    @staticmethod
+    def parse_mistral_sse(chunk: bytes) -> Optional[ChatCompletionChunk]:
+        """Mistral: OpenAI SSE pass-through."""
+        pass
+
+    @staticmethod
+    def parse_ollama_sse(chunk: bytes) -> Optional[ChatCompletionChunk]:
+        """Ollama: SSE with custom format."""
+        # data: {"model":"llama3","done":false,"message":{"role":"assistant","content":"..."}}
+        # Transform to OpenAI SSE
+        pass
+
+async def _stream_provider_response(
+    provider: str,
+    model: str,
+    messages: List[Dict],
+    **kwargs,
+) -> AsyncIterator[ChatCompletionChunk]:
+    """
+    Call provider SDK with stream=True, parse SSE, yield normalized chunks.
+    """
+    if provider == "openai":
+        async for chunk in openai_sdk.chat.completions.stream(model=model, messages=messages, **kwargs):
+            yield SSEParser.parse_openai_sse(chunk)
+    elif provider == "anthropic":
+        async for event in anthropic_sdk.messages.stream(model=model, messages=messages, **kwargs):
+            yield SSEParser.parse_anthropic_sse(event)
+    # ... other providers
+
+async def _stream_sync_bridge(
+    provider: str,
+    model: str,
+    messages: List[Dict],
+    **kwargs,
+) -> Iterator[ChatCompletionChunk]:
+    """
+    Bridge async streaming to sync iterator using async_iter_to_sync_iter().
+    """
+    async_iter = _stream_provider_response(provider, model, messages, **kwargs)
+    yield from async_iter_to_sync_iter(async_iter)
+```
+
+**SSE transformation table:**
+
+| Provider  | Native SSE Format           | Normalized To     | Transform Function                |
+| --------- | --------------------------- | ----------------- | --------------------------------- |
+| OpenAI    | OpenAI SSE                  | Pass-through      | `parse_openai_sse()`              |
+| Anthropic | `event: message_delta`       | OpenAI SSE        | `parse_anthropic_sse()`            |
+| Mistral   | OpenAI SSE                  | Pass-through      | `parse_mistral_sse()`              |
+| Ollama    | Custom JSON lines           | OpenAI SSE        | `parse_ollama_sse()`              |
+| Gemini    | Provider-specific           | OpenAI SSE        | Provider-specific                 |
+| Groq      | OpenAI SSE                  | Pass-through      | `parse_openai_sse()`              |
+
+**Note:** LiteLLM mode (HTTP proxy) uses Rust-side SSE transformation. Any-llm mode uses Python-side SSE transformation per above.
+
 #### In-Memory Batch Completion
 
 **Severity: High**
@@ -809,23 +1131,38 @@ async def abatch_completion(
 
 Router dispatches to multiple model deployments using configurable strategies.
 
-**Important:** Routing strategies, fallback mechanisms, provider state, health checking, and rate limit enforcement are implemented in the **Rust core** per RFC-0902. The Python Router is a **thin wrapper** that delegates to the Rust core via PyO3 — it does NOT reimplement routing logic.
+**Important:** The Python Router is a **Python-level class** that calls the Python `completion()` function. It does **NOT** wrap the Rust core `Router`. The Rust `Router` (`quota-router-core/src/router.rs`) is for the proxy server's multi-deployment index selection — it is separate from the Python SDK's routing layer.
+
+**Architecture:**
+
+```
+Python Router (this spec)
+  └── Calls Python completion() function
+        └── PyO3 → Rust core (KeyMiddleware, Balance, Storage)
+
+Rust Router (quota-router-core/src/router.rs)
+  └── Used by ProxyServer for index-based deployment selection
+  └── NOT used by Python SDK
+```
+
+The Python Router's `model_list` contains LiteLLM-style deployment configs (`{"model_name": "gpt-4o", "litellm_params": {"provider": "openai", "api_key": "...", "api_base": "..."}}`). The Router selects a deployment, then calls `completion(provider=..., model=...)` with that deployment's params.
 
 **Specification:**
 
 ```python
 # quota_router/routing.py
-# Thin Python wrapper around Rust core router (RFC-0902)
+# Python-level router that composes completion()
 
 from typing import List, Dict, Optional
+import random
+import time
 
 class Router:
     """
-    Python wrapper around Rust core router (RFC-0902).
+    Python-level router for multi-deployment load balancing.
 
-    Routing strategies, fallback mechanisms, provider state, health checking,
-    and rate limit enforcement are implemented in the Rust core. This class
-    provides the Python API surface and delegates to the Rust core via PyO3.
+    Selects a deployment from model_list using a routing strategy,
+    then calls the Python completion() function with that deployment's params.
 
     Routing strategies (from RFC-0902):
         "simple-shuffle"     — Weighted random (rpm/tpm/weight) — recommended for production
@@ -837,14 +1174,7 @@ class Router:
         "usage-based-routing-v2" — Usage weighted by recency
         "weighted"            — Explicit per-provider weights (distinct from simple-shuffle)
 
-    Fallback mechanisms (from RFC-0902):
-        max_retries, retry_delay_ms, backoff_multiplier, max_backoff_ms
-        content_policy_fallbacks, context_window_fallbacks
-
-    Provider state (from RFC-0902):
-        active_requests, avg_latency_us, success_count, rpm/tpm limits
-
-    Reference: RFC-0902 §Routing Strategies, §Fallback Mechanisms, §Provider State
+    Reference: RFC-0902 §Routing Strategies
     """
 
     def __init__(
@@ -852,10 +1182,10 @@ class Router:
         model_list: List[Dict],
         routing_strategy: str = "simple-shuffle",
         cache_responses: bool = False,  # stoolap semantic cache (RFC-0913)
-        fallbacks: Optional[List[Dict]] = None,  # RFC-0902 fallback config
+        fallbacks: Optional[List[Dict]] = None,  # model -> [fallback_models]
         content_policy_fallbacks: Optional[Dict[str, str]] = None,  # model -> fallback_model
         context_window_fallbacks: Optional[Dict[str, str]] = None,  # model -> larger_context_model
-        num_retries: Optional[int] = None,  # Override RFC-0902 max_retries
+        num_retries: Optional[int] = 3,
         timeout: Optional[float] = None,
         logger_fn: Optional[callable] = None,  # RFC-0905 logger
         **kwargs,
@@ -865,32 +1195,95 @@ class Router:
 
         Args:
             model_list: List of {"model_name": "...", "litellm_params": {...}}
+                Example: {"model_name": "gpt-4o", "litellm_params": {"provider": "openai", "api_key": "...", "rpm_limit": 1000}}
             routing_strategy: RFC-0902 routing strategy (string)
             cache_responses: Enable stoolap semantic cache (RFC-0913)
-            fallbacks: RFC-0902 fallback configuration
+            fallbacks: List of {"model": "gpt-4o", "fallback_models": ["gpt-3.5-turbo", "claude-3"]}
             content_policy_fallbacks: Content policy error mapping
             context_window_fallbacks: Context window error mapping
-            num_retries: Override RFC-0902's max_retries fallback config
+            num_retries: Number of retries on failure (default 3)
             timeout: Default request timeout
             logger_fn: Optional callback for observability (RFC-0905)
 
         Note:
-            Routing strategies, fallback mechanisms, provider state, health check,
-            and rate limit enforcement are handled by the Rust core per RFC-0902.
-            The Python Router does NOT reimplement these — it passes config to Rust.
+            This is a Python-level router. It does NOT wrap the Rust core Router.
+            The Rust Router (quota-router-core/src/router.rs) is for the proxy server.
         """
-        self._router = rust_core.Router.new(
-            model_list=model_list,
-            routing_strategy=routing_strategy,
-            cache_responses=cache_responses,
-            fallbacks=fallbacks,
-            content_policy_fallbacks=content_policy_fallbacks,
-            context_window_fallbacks=context_window_fallbacks,
-            max_retries=num_retries,
-            timeout=timeout,
-            logger_fn=logger_fn,
-            **kwargs,
-        )
+        self.model_list = model_list
+        self.routing_strategy = routing_strategy
+        self.cache_responses = cache_responses
+        self.fallbacks = fallbacks or []
+        self.content_policy_fallbacks = content_policy_fallbacks or {}
+        self.context_window_fallbacks = context_window_fallbacks or {}
+        self.num_retries = num_retries
+        self.timeout = timeout
+        self.logger_fn = logger_fn
+
+        # Runtime state per deployment
+        self._deployments = []  # Flat list of (model_name, litellm_params)
+        self._round_robin_index = 0
+        self._active_requests = {}  # deployment_idx -> count
+        self._latencies = {}  # deployment_idx -> list of latencies_us
+        self._total_spend = {}  # deployment_idx -> float
+
+        # Group by model_name
+        self._by_model: Dict[str, List[int]] = {}  # model_name -> [deployment_idx]
+        for i, item in enumerate(model_list):
+            model_name = item["model_name"]
+            self._deployments.append((model_name, item.get("litellm_params", {})))
+            self._by_model.setdefault(model_name, []).append(i)
+            self._active_requests[i] = 0
+            self._latencies[i] = []
+            self._total_spend[i] = 0.0
+
+    def _select_deployment(self, model: str) -> int:
+        """Select deployment index using routing strategy."""
+        indices = self._by_model.get(model, [])
+        if not indices:
+            raise ModelNotFoundError(f"No deployments found for model: {model}")
+
+        strategy = self.routing_strategy
+        if strategy == "round-robin":
+            idx = self._round_robin_index % len(indices)
+            self._round_robin_index += 1
+            return indices[idx]
+        elif strategy == "least-busy":
+            return min(indices, key=lambda i: self._active_requests[i])
+        elif strategy == "latency-based-routing":
+            return min(indices, key=lambda i: self._avg_latency(i))
+        elif strategy == "cost-based-routing":
+            # Requires RFC-0904 pricing — fallback to shuffle
+            return random.choice(indices)
+        elif strategy == "usage-based-routing":
+            return min(indices, key=lambda i: self._total_spend[i])
+        elif strategy == "weighted":
+            # Weighted by explicit weights in litellm_params
+            weights = [(self._deployments[i][1].get("weight", 1)) for i in indices]
+            total = sum(weights)
+            r = random.uniform(0, total)
+            cumsum = 0
+            for idx, w in zip(indices, weights):
+                cumsum += w
+                if r <= cumsum:
+                    return idx
+            return indices[-1]
+        else:  # simple-shuffle or default
+            return random.choice(indices)
+
+    def _avg_latency(self, idx: int) -> float:
+        lats = self._latencies[idx]
+        if not lats:
+            return float("inf")
+        return sum(lats) / len(lats)
+
+    def _record_request_start(self, idx: int):
+        self._active_requests[idx] = self._active_requests.get(idx, 0) + 1
+
+    def _record_request_end(self, idx: int, latency_ms: float, tokens: int):
+        self._active_requests[idx] = max(0, self._active_requests.get(idx, 1) - 1)
+        self._latencies[idx].append(int(latency_ms * 1000))  # Store as microseconds
+        if len(self._latencies[idx]) > 100:
+            self._latencies[idx] = self._latencies[idx][-100:]
 
     def completion(
         self,
@@ -898,8 +1291,58 @@ class Router:
         messages: List[Dict],
         **kwargs,
     ) -> CompletionResponse:
-        """Delegate to Rust core router via PyO3."""
-        return self._router.completion(model, messages, **kwargs)
+        """
+        Route to a deployment and call completion().
+
+        Applies fallback chain on error (context_window → content_policy → general).
+        """
+        deployment_idx = self._select_deployment(model)
+        model_name, params = self._deployments[deployment_idx]
+
+        # Merge deployment params with call kwargs (call kwargs take precedence)
+        call_kwargs = {**params, **kwargs}
+        if self.timeout:
+            call_kwargs.setdefault("timeout", self.timeout)
+
+        last_error = None
+        for attempt in range(self.num_retries + 1):
+            try:
+                self._record_request_start(deployment_idx)
+                start = time.time()
+                result = completion(model=model_name, messages=messages, **call_kwargs)
+                latency_ms = (time.time() - start) * 1000
+                self._record_request_end(deployment_idx, latency_ms, result.get("usage", {}).get("total_tokens", 0))
+                if self.logger_fn:
+                    self.logger_fn({"model": model, "deployment": model_name, "latency_ms": latency_ms})
+                return result
+            except ContextLengthExceededError as e:
+                # Try context_window fallback
+                fallback = self.context_window_fallbacks.get(model)
+                if fallback and attempt < self.num_retries:
+                    model_name = fallback
+                    continue
+                raise
+            except ContentFilterError as e:
+                # Try content_policy fallback
+                fallback = self.content_policy_fallbacks.get(model)
+                if fallback and attempt < self.num_retries:
+                    model_name = fallback
+                    continue
+                raise
+            except (RateLimitError, GatewayTimeoutError, UpstreamProviderError) as e:
+                last_error = e
+                if attempt < self.num_retries:
+                    time.sleep(2 ** attempt)  # Exponential backoff
+                    continue
+                raise
+            except Exception as e:
+                last_error = e
+                if attempt < self.num_retries:
+                    time.sleep(2 ** attempt)
+                    continue
+                raise
+
+        raise last_error
 
     async def acompletion(
         self,
@@ -907,11 +1350,57 @@ class Router:
         messages: List[Dict],
         **kwargs,
     ) -> CompletionResponse:
-        """Async delegate to Rust core router via PyO3."""
-        return await self._router.acompletion(model, messages, **kwargs)
+        """Async route and call acompletion()."""
+        import asyncio
+
+        deployment_idx = self._select_deployment(model)
+        model_name, params = self._deployments[deployment_idx]
+        call_kwargs = {**params, **kwargs}
+        if self.timeout:
+            call_kwargs.setdefault("timeout", self.timeout)
+
+        last_error = None
+        for attempt in range(self.num_retries + 1):
+            try:
+                self._record_request_start(deployment_idx)
+                start = time.time()
+                result = await acompletion(model=model_name, messages=messages, **call_kwargs)
+                latency_ms = (time.time() - start) * 1000
+                self._record_request_end(deployment_idx, latency_ms, result.get("usage", {}).get("total_tokens", 0))
+                if self.logger_fn:
+                    self.logger_fn({"model": model, "deployment": model_name, "latency_ms": latency_ms})
+                return result
+            except ContextLengthExceededError as e:
+                fallback = self.context_window_fallbacks.get(model)
+                if fallback and attempt < self.num_retries:
+                    model_name = fallback
+                    continue
+                raise
+            except ContentFilterError as e:
+                fallback = self.content_policy_fallbacks.get(model)
+                if fallback and attempt < self.num_retries:
+                    model_name = fallback
+                    continue
+                raise
+            except (RateLimitError, GatewayTimeoutError, UpstreamProviderError) as e:
+                last_error = e
+                if attempt < self.num_retries:
+                    await asyncio.sleep(2 ** attempt)
+                    continue
+                raise
+            except Exception as e:
+                last_error = e
+                if attempt < self.num_retries:
+                    await asyncio.sleep(2 ** attempt)
+                    continue
+                raise
+
+        raise last_error
 ```
 
 **Note on `cache_responses`:** Uses **stoolap** (RFC-0913) semantic cache — NOT Redis. Stoolap is the sole persistence layer per RFC-0914. No `redis_url` parameter.
+
+**Note on relationship to Rust Router:** The Rust core `Router` (`quota-router-core/src/router.rs`) is used by the proxy server (`ProxyServer` in `proxy.rs`) for index-based multi-deployment selection. The Python `Router` is a separate, Python-level implementation that achieves similar goals at the Python API layer. They are **not** the same class.
 
 #### Retry Logic
 
@@ -1243,32 +1732,48 @@ def batch_results(
 
 ## Feature Gate Architecture
 
-Per RFC-0917 §Rust Feature Gates:
+Per RFC-0917 §Rust Feature Gates, **the mode gate selects the provider integration strategy, NOT the interface. Both HTTP proxy and Python SDK are available in ALL modes:**
 
 ```toml
 # Cargo.toml for quota-router-pyo3
 [features]
-litellm-mode = ["pyo3/extension-module"]
-any-llm-mode = ["pyo3/extension-module"]
-full = ["pyo3/extension-module"]  # Both modes
+litellm-mode = ["pyo3/extension-module"]   # Provider strategy: reqwest (native Rust HTTP)
+any-llm-mode = ["pyo3/extension-module"]   # Provider strategy: PyO3 (official Python SDKs)
+full = ["pyo3/extension-module"]            # Both provider strategies simultaneously
 
 # Per RFC-0917 §Rust Feature Gates:
-# - litellm-mode:  Uses reqwest (native Rust HTTP) to call providers
-# - any-llm-mode: Uses PyO3 (official Python SDKs) to call providers
-# - full:         Uses both reqwest AND PyO3 simultaneously
-# NOTE: Both HTTP proxy AND Python SDK interfaces are available in ALL modes.
+# The mode gate selects HOW providers are called (reqwest vs PyO3), NOT which interfaces exist.
+# Both HTTP proxy AND Python SDK are ALWAYS available in all modes.
+#
+# | Interface       | litellm-mode | any-llm-mode | full |
+# |-----------------|:------------:|:------------:|:----:|
+# | HTTP proxy      |      ✅      |      ✅      |  ✅  |
+# | Python SDK      |      ✅      |      ✅      |  ✅  |
+#
+# Mode controls only: what library is used to call providers
+# - litellm-mode:  reqwest (native Rust HTTP) → direct to provider REST APIs
+# - any-llm-mode:  PyO3 → official Python SDKs (Anthropic, OpenAI, Mistral, etc.)
 ```
+
+**Example deployment scenarios:**
+- `litellm-mode` build: Run as HTTP proxy (`ProxyServer` on port 8080) AND use Python SDK via `import quota_router`
+- `any-llm-mode` build: Run as HTTP proxy AND use Python SDK
+- `full` build: Both simultaneously
+
+**⚠️ CRITICAL: Both interfaces exist in ALL modes.** The table below shows provider strategy per mode, NOT which interfaces exist.
 
 ### Deployment Mode Selection
 
-Mode is selected at **build time** via Cargo feature flags:
+Mode is selected at **build time** via Cargo feature flags. **Mode selects provider strategy (reqwest vs PyO3), NOT interface availability:**
 
-| Installation                                   | Mode           | Provider Strategy     |
-| ---------------------------------------------- | -------------- | --------------------- |
-| `pip install quota-router` (from PyPI, wheels) | `full`         | Both (reqwest + PyO3) |
-| `cargo build --features litellm-mode`          | `litellm-mode` | reqwest only          |
-| `cargo build --features any-llm-mode`          | `any-llm-mode` | PyO3 only             |
-| `cargo build --features full` (default)        | `full`         | Both                  |
+| Installation                                   | Mode           | Provider Strategy | HTTP Proxy? | Python SDK? |
+| ---------------------------------------------- | -------------- | ----------------- |:-----------:|:-----------:|
+| `pip install quota-router` (from PyPI, wheels) | `full`         | Both (reqwest + PyO3) | ✅ | ✅ |
+| `cargo build --features litellm-mode`          | `litellm-mode` | reqwest only      | ✅ | ✅ |
+| `cargo build --features any-llm-mode`          | `any-llm-mode` | PyO3 only         | ✅ | ✅ |
+| `cargo build --features full` (default)        | `full`         | Both              | ✅ | ✅ |
+
+**Key insight:** Even `litellm-mode` builds have Python SDK available. Even `any-llm-mode` builds have HTTP proxy available. Mode controls HOW providers are called, not WHETHER an interface exists.
 
 **Runtime detection:** The SDK exposes `quota_router.get_deployment_mode()`:
 
@@ -1447,9 +1952,10 @@ This is the only approach that achieves true drop-in replacement for both ecosys
 
 ## Version History
 
-| Version | Date       | Changes                                                                                                                                                                                                                                                                                                                                                                                                                               |
-| ------- | ---------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| 1.4     | 2026-04-27 | Fix adversarial review v1.3 issues: C1 (Router now thin PyO3 wrapper delegating to RFC-0902 Rust core), C2 (num_retries now Python param only, references RFC-0902), C3 (added RFC-0913 to dependencies); I1/I2/I3/I4 (all 7 RFC-0902 strategies + fallback types now referenced); L1 (GIL note added to batch_completion), L3 (platform provider cross-ref to RFC-0917).                                                             |
+| Version | Date       | Changes |
+| ------- | ---------- | ------- |
+| 1.5     | 2026-04-27 | Fix adversarial review v1.4 issues: I1 (corrected ProxyServer claim — RFC-0917 says both interfaces in all modes, mode controls provider strategy not interface), I2 (Python↔Rust exception mapping added with RouterError table), I3 (real SSE streaming spec added, replacing mock), I6 (set_api_key storage mode clarification), I7 (get_budget_status Balance reference), L3 (list_models now Router.list_models() method for LiteLLM compat). Feature gate section corrected per RFC-0917. |
+| 1.4     | 2026-04-27 | Fix adversarial review v1.3 issues: C1 (Router now thin PyO3 wrapper delegating to RFC-0902 Rust core), C2 (num_retries now Python param only, references RFC-0902), C3 (added RFC-0913 to dependencies); I1/I2/I3/I4 (all 7 RFC-0902 strategies + fallback types now referenced); L1 (GIL note added to batch_completion), L3 (platform provider cross-ref to RFC-0917). |
 | 1.3     | 2026-04-27 | Replace gap analysis with actual specifications: async_iter_to_sync_iter() bridge, batch_completion() with ThreadPoolExecutor, Router 6 strategies, retry logic, logger_fn, exception regex mapping (QUOTA_ROUTER_UNIFIED_EXCEPTIONS=1), platform provider (any-api key format), timeout httpx.Timeout, thinking, system params. Phase 3 updated with all specced items.                                                              |
 | 1.2     | 2026-04-27 | Gap analysis vs any-llm/litellm: add missing completion params (timeout, thinking, system, etc.), streaming async bridge spec, batch_completion() spec, router strategies, exception mapping, platform provider. Phase 4 added for full LiteLLM compat. Provider count 41→42 (added deepinfra). Clarify redis_url=N/A (stoolap replaces Redis per RFC-0912/0914); cache_responses uses stoolap semantic cache per RFC-0913.           |
 | 1.1     | 2026-04-27 | Fix all adversarial review issues: C2 (security model docs), C3 (raise error not silent fallback), C4 (ambiguity detection), C5 (case-insensitive provider lookup); I1 (G1=<10ms), I2 (stream=None), I3 (list_models spec), I4 (typed CompletionResponse), I5 (session_label docs), I6 (client_args schema), I7 (error codes), I8 (GIL isolation); L1 (Phase 1 clarify), L2 (deployment mode), L3 (batch API), L4 (RFC-0904 required) |

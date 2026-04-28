@@ -6,9 +6,20 @@ use rand::Rng;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
-// RFC-0917 §Rust Feature Gates: litellm-mode and any-llm-mode are MUTUALLY EXCLUSIVE.
+// ⚠️ CRITICAL INVARIANT (RFC-0917):
+// litellm-mode and any-llm-mode are MUTUALLY EXCLUSIVE AS BUILD CONFIGURATIONS
+// (you either use reqwest OR PyO3 to call providers, not both in single mode).
+// BUT: BOTH HTTP proxy AND Python SDK exist in ALL modes.
+// The mutual exclusivity is about PROVIDER STRATEGY, not INTERFACE availability.
+//
+// Build configurations:
+//   - litellm-mode: reqwest only
+//   - any-llm-mode: PyO3 only
+//   - full: BOTH reqwest AND PyO3 (a SEPARATE build, not both at once)
+//
+// See RFC-0917 lines 175-176: "HTTP Proxy Server | (always)" and "Python SDK Interface | (always)"
 #[cfg(all(feature = "litellm-mode", feature = "any-llm-mode"))]
-compile_error!("Cannot enable both 'litellm-mode' and 'any-llm-mode' — they are mutually exclusive per RFC-0917 §Rust Feature Gates");
+compile_error!("Cannot enable both 'litellm-mode' and 'any-llm-mode' — use 'full' for both");
 
 /// Routing strategy types
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]

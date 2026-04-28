@@ -79,9 +79,19 @@ path = "src/lib.rs"
 
 [features]
 # Feature gates per RFC-0917 §Rust Feature Gates
-# NOTE: pyo3 integration is provided by quota-router-pyo3 crate, not quota-router-core.
-# any-llm-mode in core is a marker for build configuration; actual Python bindings
-# are in the quota-router-pyo3 crate which re-exports quota-router-core.
+#
+# ⚠️ CRITICAL INVARIANT (RFC-0917):
+# Mode gate controls PROVIDER STRATEGY (reqwest vs PyO3), NOT interface availability.
+# BOTH HTTP proxy AND Python SDK exist in ALL modes (litellm-mode, any-llm-mode, full).
+#
+# - litellm-mode:  reqwest (native Rust HTTP) → provider REST APIs. HTTP proxy ✅ Python SDK ✅
+# - any-llm-mode:  PyO3 → official Python SDKs. HTTP proxy ✅ Python SDK ✅
+# - full:          Both reqwest AND PyO3. HTTP proxy ✅ Python SDK ✅
+#
+# NEVER think "litellm-mode = proxy only" or "any-llm-mode = SDK only".
+# The mode gate controls HOW providers are called, not WHETHER an interface exists.
+#
+# See RFC-0917 lines 175-176: "HTTP Proxy Server | (always)" and "Python SDK Interface | (always)"
 default = ["litellm-mode"]
 litellm-mode = ["tokio", "hyper", "hyper-util", "http", "http-body", "http-body-util", "rustls", "rustls-pemfile", "reqwest", "axum"]
 any-llm-mode = []

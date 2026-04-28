@@ -1,5 +1,15 @@
 // quota-router-core - Core library for quota-router
 // Contains business logic shared between CLI and PyO3 bindings
+//
+// ⚠️ CRITICAL INVARIANT (RFC-0917):
+// Mode gate (litellm-mode/any-llm-mode/full) controls PROVIDER STRATEGY, NOT interface availability.
+// BOTH HTTP proxy AND Python SDK exist in ALL modes:
+//   - litellm-mode:  reqwest → provider REST APIs.    HTTP proxy ✅  Python SDK ✅
+//   - any-llm-mode:  PyO3   → official Python SDKs.  HTTP proxy ✅  Python SDK ✅
+//   - full:          Both reqwest AND PyO3.          HTTP proxy ✅  Python SDK ✅
+//
+// NEVER think "litellm-mode = proxy only" or "any-llm-mode = SDK only".
+// See RFC-0917 lines 175-176: "HTTP Proxy Server | (always)" and "Python SDK Interface | (always)"
 
 pub mod admin;
 pub mod balance;

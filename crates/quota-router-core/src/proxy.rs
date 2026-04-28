@@ -3,6 +3,11 @@
 //! This module handles the actual LLM proxy functionality - forwarding
 //! requests to providers like OpenAI, Anthropic, etc. It is entirely
 //! separate from the admin API (admin.rs) which manages keys and teams.
+//!
+//! ⚠️ CRITICAL INVARIANT (RFC-0917):
+//! This HTTP proxy server EXISTS in ALL modes (litellm-mode, any-llm-mode, full).
+//! Mode gate controls HOW providers are called (reqwest vs PyO3), NOT whether this proxy exists.
+//! NEVER think "litellm-mode = proxy only" — both proxy AND Python SDK exist in all modes.
 
 use crate::balance::Balance;
 use crate::providers::Provider;

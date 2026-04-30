@@ -2,7 +2,7 @@
 
 ## Status
 
-Draft (v1.45 — 2026-04-29)
+Draft (v1.46 — 2026-04-29)
 
 **ARCHITECTURAL CONSTRAINT: HTTP proxy is FOREVER in BOTH litellm-mode and any-llm-mode. See section below.**
 
@@ -1217,8 +1217,10 @@ to fall back to default provider resolution).
     Route and dispatch completion requests.
 
     ⚠️ OPERATIONAL WARNING: cache_bypass=True disables exact-match deduplication
-    and top-level validation. Increases provider request volume and fallback
-    trigger rates during instability. Monitor quota and fallback metrics closely.
+    and top-level validation in the Python SDK layer. In PyO3 builds (any-llm-mode, full),
+    this flag is forwarded to the underlying provider SDK which may apply additional
+    cache/validation semantics. Increases provider request volume and fallback trigger
+    rates during instability. Monitor quota and fallback metrics closely.
 
     When stream=True in any-llm-mode, returns an iterator of chunks.
 
@@ -1340,7 +1342,15 @@ Regex used: `r'\(\s*"([\w.-]+)"\s*,\s*"([\w.-]+)"\s*\)'`. The `\s*` pattern safe
 ```python
 #!/usr/bin/env python3
 # ci/validate_registry_parity.py
-"""Deterministic registry parity validation — no git metadata required."""
+"""Deterministic registry parity validation — no git metadata required.
+
+NOTE: This validates build-time codegen for API compatibility ONLY.
+Runtime routing, caching, and telemetry are owned by RFC-0902 Rust core (proxy)
+or Python Router class (SDK Phase 1).
+
+The Python Router class is specified as a Python-level component (NOT a Rust
+delegation) per RFC-0920 lines 2184-2185. Rust delegation is Phase 2.
+"""
 from pathlib import Path
 import sys, yaml, os, argparse
 
@@ -3724,6 +3734,8 @@ This is the only approach that achieves true drop-in replacement for both ecosys
 
 | Version | Date       | Changes |
 | ------- | ---------- | ------- |
+| 1.45    | 2026-04-29 | Fix external adversarial review round 27: L1 (cache_bypass docstring updated to reference Rust forwarding in PyO3 builds), L2 (CI validator header comment added clarifying build-time stub validation scope). C1, C2, H1, H2, M1, M2 formally rebutted as architecture change requests, not bugs — RFC-0920 explicitly specifies Python Router as Python-level component with no Rust delegation (lines 2184-2185). |
+| 1.44    | 2026-04-29 | Fix external adversarial review round 26: C1 (batch worker cache_bypass explicit binding via functools.partial comment), C2 (CI regex scoped to PROVIDER_SDK_TYPES constant block), H1 (.git/ and ci/ dir markers replace subproject toml files), H2 (counter-based modulo sampling replaces random.random()), M1 (OPERATIONAL WARNING added to completion() function docstring), M2 (Path.absolute() replaces resolve() for container-safe path resolution), L1 (Accepted — codegen enforces pure-literal constraint), L2 (lock_metric_sampling_rate init param + QUOTA_ROUTER_LOCK_METRIC_SAMPLE_RATE env). |
 | 1.43    | 2026-04-29 | Fix external adversarial review round 23: C1 (cache_bypass wired in Router.acompletion and batch methods), C2 (CI regex includes ,? for rustfmt trailing commas), H1 (marker-file search replaces parent.parent fragile traversal), H2 (router_lock_hold_time_us collection adds sampling rate config), M1 (import math confirmed at module level), M2 (cache_bypass docstring adds fallback amplification warning), L1 (codegen contract explicitly forbids inline comments), L2 (add standard v1.43 changelog entry). |
 | 1.42    | 2026-04-29 | Fix external adversarial review round 22: C1 (explicit cache_bypass delegation in Router.completion), C2 (whitespace-agnostic CI regex allows rustfmt), H1 (pure-dict-literal codegen contract + error message), H2 (cache_bypass docstring clarifies kwargs-only validation), M1 (pathlib script-relative path resolution), M2 (math.exp2 decay optimization pushes threshold to >12k RPS), L1 (idiomatic regex character class), L2 (router_lock_hold_time_us histogram definition). |
 | 1.41    | 2026-04-29 | Fix external adversarial review round 21: C1 (docstring aligned with implementation), C2 (try/except around ast.literal_eval + tree.body iteration), H1 (decay math documented with trade-off note), H2 (strict Rust const array format mandated), M1 (comment added clarifying len==1 overlap), M2 (docstring clarifies caller responsibility), L1 (tree.body replaces ast.walk), L2 (now = time.monotonic() captured once). |

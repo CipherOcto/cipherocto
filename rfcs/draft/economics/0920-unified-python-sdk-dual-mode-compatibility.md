@@ -2,7 +2,7 @@
 
 ## Status
 
-Draft (v1.47 — 2026-04-29)
+Draft (v1.48 — 2026-04-29)
 
 **ARCHITECTURAL CONSTRAINT: HTTP proxy is FOREVER in BOTH litellm-mode and any-llm-mode. See section below.**
 
@@ -1247,6 +1247,12 @@ to fall back to default provider resolution).
                           # metrics closely when cache_bypass=True. RECOMMENDED for >50k token payloads.
 
     # Note: `thinking` (structured Dict) and `reasoning_effort` (string enum) are separate parameters in LiteLLM, not aliases
+    # Anthropic thinking param — REQUIRED for drop-in replacement (CRITICAL)
+    thinking: Optional[Dict] = None,
+    # Multi-modal output — REQUIRED for drop-in replacement (HIGH)
+    modalities: Optional[List[str]] = None,  # e.g., ["text", "audio"]
+    audio: Optional[Dict] = None,  # Audio output params
+    prediction: Optional[Dict] = None,  # Predicted outputs (content prediction optimization)
     **kwargs,
 ) -> Union[CompletionResponse, Iterator[ChatCompletionChunk]]:
     """
@@ -1667,6 +1673,12 @@ async def acompletion(
     stream_options: Optional[Dict] = None,
     timeout: Optional[Union[float, int]] = None,  # Common for streaming to avoid hanging
     response_format: Optional[Union[str, Dict, Type[Any]]] = None,  # Structured output
+    # Anthropic thinking param — REQUIRED for drop-in replacement (CRITICAL)
+    thinking: Optional[Dict] = None,
+    # Multi-modal output — REQUIRED for drop-in replacement (HIGH)
+    modalities: Optional[List[str]] = None,  # e.g., ["text", "audio"]
+    audio: Optional[Dict] = None,  # Audio output params
+    prediction: Optional[Dict] = None,  # Predicted outputs (content prediction optimization)
     **kwargs,  # All other params (temperature, max_tokens, etc.) passed to provider
 ) -> Union[CompletionResponse, AsyncIterator[ChatCompletionChunk]]:
     """
@@ -3817,7 +3829,7 @@ This is the only approach that achieves true drop-in replacement for both ecosys
 
 | Version | Date       | Changes |
 | ------- | ---------- | ------- |
-| 1.47    | 2026-04-29 | **CRITICAL CONSTRAINT: Rust-owns-all-heavy-lifting.** Added top-level architectural constraint box (lines 99-128) establishing Rust core as sole owner of all heavy lifting (routing, caching, telemetry, concurrency, batch execution). Python SDK is thin PyO3 binding only. Updated crate architecture diagram and component mapping table to reflect this. Added DEPRECATION NOTICE to Python Router class (lines 2142-2280) — Phase 1 has Python-side routing state for iterative development, Phase 2 replaces with RustRouterHandle delegation. All routing, state, caching, telemetry moved to Rust core. |
+| 1.48    | 2026-04-29 | **CRITICAL** Add missing LiteLLM params: `thinking` (Anthropic structured thinking), `modalities` (multi-modal output), `audio` (audio output params), `prediction` (content prediction optimization) to both sync and async completion signatures. Drop-in replacement parity. |
 | 1.45    | 2026-04-29 | Fix external adversarial review round 27: L1 (cache_bypass docstring updated to reference Rust forwarding in PyO3 builds), L2 (CI validator header comment added clarifying build-time stub validation scope). C1, C2, H1, H2, M1, M2 formally rebutted as architecture change requests, not bugs — RFC-0920 explicitly specifies Python Router as Python-level component with no Rust delegation (lines 2184-2185). |
 | 1.44    | 2026-04-29 | Fix external adversarial review round 26: C1 (batch worker cache_bypass explicit binding via functools.partial comment), C2 (CI regex scoped to PROVIDER_SDK_TYPES constant block), H1 (.git/ and ci/ dir markers replace subproject toml files), H2 (counter-based modulo sampling replaces random.random()), M1 (OPERATIONAL WARNING added to completion() function docstring), M2 (Path.absolute() replaces resolve() for container-safe path resolution), L1 (Accepted — codegen enforces pure-literal constraint), L2 (lock_metric_sampling_rate init param + QUOTA_ROUTER_LOCK_METRIC_SAMPLE_RATE env). |
 | 1.43    | 2026-04-29 | Fix external adversarial review round 23: C1 (cache_bypass wired in Router.acompletion and batch methods), C2 (CI regex includes ,? for rustfmt trailing commas), H1 (marker-file search replaces parent.parent fragile traversal), H2 (router_lock_hold_time_us collection adds sampling rate config), M1 (import math confirmed at module level), M2 (cache_bypass docstring adds fallback amplification warning), L1 (codegen contract explicitly forbids inline comments), L2 (add standard v1.43 changelog entry). |

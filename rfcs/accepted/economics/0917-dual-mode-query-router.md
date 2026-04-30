@@ -2,7 +2,7 @@
 
 ## Status
 
-Accepted (v2.26)
+Accepted (v2.27 — 2026-04-30)
 
 **ARCHITECTURAL CONSTRAINT: Rust-owns-all-heavy-lifting. ALL heavy lifting (routing, caching, telemetry, concurrency, state management, batch execution) MUST be in Rust core. HTTP proxy and Python SDK are thin binding layers only. Each language binding (Python, JS, Go, etc.) adds ONLY marshaling overhead.**
 
@@ -436,6 +436,472 @@ pub mod dynamic {
 ```
 
 **Key difference:** `HttpCompletionRequest` and `SdkCompletionRequest` are **different types**. The HTTP variant encodes the raw request parameters that `reqwest` sends to the REST API. The SDK variant encodes the parameters that the Python SDK accepts — which the SDK internally translates to the HTTP request. These translations differ (e.g., Anthropic SDK does message format conversion), so the request types cannot be unified.
+
+#### litellm-mode: HTTP Client Configuration (Normative)
+
+litellm-mode uses `reqwest` with explicit connection pool and timeout configuration:
+
+```rust
+use reqwest::Client;
+use std::time::Duration;
+
+pub struct HttpClientConfig {
+    pub connect_timeout: Duration,
+    pub read_timeout: Duration,
+    pub write_timeout: Duration,
+    pub pool_max_idle_per_host: usize,
+    pub pool_idle_timeout: Duration,
+}
+
+impl Default for HttpClientConfig {
+    fn default() -> Self {
+        Self {
+            connect_timeout: Duration::from_secs(10),
+            read_timeout: Duration::from_secs(60),
+            write_timeout: Duration::from_secs(10),
+            pool_max_idle_per_host: 16,
+            pool_idle_timeout: Duration::from_secs(90),
+        }
+    }
+}
+
+pub fn create_client(config: HttpClientConfig) -> Client {
+    Client::builder()
+        .connect_timeout(config.connect_timeout)
+        .timeout(config.read_timeout)
+        .write_timeout(config.write_timeout)
+        .pool_max_idle_per_host(config.pool_max_idle_per_host)
+        .pool_idle_timeout(config.pool_idle_timeout)
+        .build()
+        .expect("valid reqwest client")
+}
+```
+
+#### litellm-mode: Request Building (Normative)
+
+Each provider has a request builder that transforms internal types to provider-specific JSON:
+
+```rust
+pub trait ProviderRequest {
+    type Request;
+    type Response;
+
+    fn build_request(
+        &self,
+        model: &str,
+        messages: &[Message],
+        params: &CompletionParams,
+    ) -> Result<Self::Request, RequestBuildError>;
+
+    fn parse_response(
+        &self,
+        response: Self::Response,
+    ) -> Result<CompletionResponse, ResponseParseError>;
+}
+
+pub struct OpenAIRequest {
+    pub model: String,
+    pub messages: Vec<OpenAIMessage>,
+    pub temperature: Option<f64>,
+    pub max_tokens: Option<i32>,
+    pub top_p: Option<f64>,
+    pub n: Option<i32>,
+    pub stream: bool,
+    pub stop: Option<Vec<String>>,
+    pub presence_penalty: Option<f64>,
+    pub frequency_penalty: Option<f64>,
+    pub user: Option<String>,
+    pub reasoning_effort: Option<String>,
+    pub tools: Option<Vec<serde_json::Value>>,
+    pub tool_choice: Option<serde_json::Value>,
+}
+
+impl ProviderRequest for OpenAIRequest {
+    type Request = serde_json::Value;
+    type Response = reqwest::Response;
+
+    fn build_request(
+        &self,
+        model: &str,
+        messages: &[Message],
+        params: &CompletionParams,
+    ) -> Result<Self::Request, RequestBuildError> {
+        let body = serde_json::json!({
+            "model": model,
+            "messages": messages.iter().map(Into::<OpenAIMessage>::into).collect::<Vec<_>>(),
+            "temperature": params.temperature,
+            "max_tokens": params.max_tokens,
+            "top_p": params.top_p,
+            "n": params.n,
+            "stream": params.stream,
+            "stop": params.stop,
+            "presence_penalty": params.presence_penalty,
+            "frequency_penalty": params.frequency_penalty,
+            "user": params.user,
+        });
+        Ok(body)
+    }
+
+    fn parse_response(&self, response: Self::Response) -> Result<CompletionResponse, ResponseParseError> {
+        // Parse ChatCompletion from JSON response
+    }
+}
+```
+
+#### litellm-mode: Error Mapping (Normative)
+
+Provider HTTP errors map to quota-router exception types:
+
+```rust
+#[derive(Debug, thiserror::Error)]
+pub enum ProviderError {
+    #[error("provider request failed: {0}")]
+    RequestFailed(#[from] reqwest::Error),
+
+    #[error("provider returned error: {status} — {message}")]
+    ProviderError { status: u16, message: String },
+
+    #[error("rate limited by provider")]
+    RateLimited,
+
+    #[error("authentication failed")]
+    AuthenticationFailed,
+
+    #[error("context length exceeded")]
+    ContextLengthExceeded,
+
+    #[error("provider timeout")]
+    Timeout,
+}
+
+impl ProviderError {
+    pub fn from_status(status: u16, message: &str) -> Self {
+        match status {
+            401 | 403 => Self::AuthenticationFailed,
+            429 => Self::RateLimited,
+            400 if message.contains("context_length") => Self::ContextLengthExceeded,
+            408 => Self::Timeout,
+            _ => Self::ProviderError { status, message: message.to_string() },
+        }
+    }
+}
+```
+
+#### litellm-mode: Retry Logic (Normative)
+
+Retry with exponential backoff for transient errors:
+
+```rust
+pub struct RetryConfig {
+    pub max_retries: u32,
+    pub base_delay: Duration,
+    pub max_delay: Duration,
+    pub retryable_statuses: Vec<u16>,
+}
+
+impl Default for RetryConfig {
+    fn default() -> Self {
+        Self {
+            max_retries: 3,
+            base_delay: Duration::from_millis(500),
+            max_delay: Duration::from_secs(30),
+            retryable_statuses: vec![429, 500, 502, 503, 504],
+        }
+    }
+}
+
+pub async fn execute_with_retry<C, R>(
+    client: &Client,
+    request: R,
+    config: &RetryConfig,
+) -> Result<C, ProviderError>
+where
+    C: ProviderRequest<Request = R, Response = reqwest::Response>,
+    R: Clone,
+{
+    let mut delay = config.base_delay;
+    let mut last_error = None;
+
+    for attempt in 0..=config.max_retries {
+        let response = client.execute(request.clone()).await;
+
+        match response {
+            Ok(resp) if config.retryable_statuses.contains(&resp.status().as_u16()) && attempt < config.max_retries => {
+                tokio::time::sleep(delay).await;
+                delay = (delay * 2).min(config.max_delay);
+                last_error = Some(resp);
+                continue;
+            }
+            Ok(resp) => return C::parse_response(resp),
+            Err(e) if attempt < config.max_retries => {
+                tokio::time::sleep(delay).await;
+                delay = (delay * 2).min(config.max_delay);
+                last_error = Some(e);
+                continue;
+            }
+            Err(e) => return Err(e.into()),
+        }
+    }
+
+    Err(last_error.unwrap_err().into())
+}
+```
+
+#### litellm-mode: SSE Streaming Parsing (Normative)
+
+Parse Server-Sent Events for streaming responses:
+
+```rust
+pub trait SSEParser {
+    fn parse_line(line: &str) -> Option<Event>;
+}
+
+pub struct OpenAISSEParser;
+
+impl SSEParser for OpenAISSEParser {
+    fn parse_line(line: &str) -> Option<Event> {
+        if line.starts_with("data: ") {
+            let data = &line[6..];
+            if data == "[DONE]" {
+                return None;
+            }
+            serde_json::from_str(data).ok().map(Event::Chunk)
+        } else {
+            None
+        }
+    }
+}
+```
+
+#### any-llm-mode: Provider SDK Type Registry (Normative)
+
+Python SDKs come in two flavors: **sync** (blocking, must use `spawn_blocking`) and **async** (preferred, use `pyo3-asyncio`):
+
+```yaml
+# providers_sdk_types.yaml — shared config for Python + Rust codegen
+providers:
+  openai: async
+  anthropic: async
+  mistral: async
+  google: async
+  ollama: sync
+  deepinfra: async
+  groq: async
+default: sync
+```
+
+**Codegen (Rust):**
+```rust
+const PROVIDER_SDK_TYPES: &[(&str, &str)] = &[
+    ("openai", "async"),
+    ("anthropic", "async"),
+    ("mistral", "async"),
+    ("google", "async"),
+    ("ollama", "sync"),
+    ("deepinfra", "async"),
+    ("groq", "async"),
+    ("default", "sync"),
+];
+```
+
+#### any-llm-mode: Async SDK Integration (Normative)
+
+For async SDKs, use `pyo3-asyncio` to bridge Python async to Rust async:
+
+**Python side (exposed via PyO3):**
+```python
+# python_sdk_bridge.py
+import asyncio
+from typing import Optional, List, Dict, Any, AsyncIterator
+
+class PythonSDKBridge:
+    """PyO3-exposed async completion via official Python SDKs."""
+
+    @staticmethod
+    async def acompletion(
+        provider: str,
+        model: str,
+        messages: List[Dict[str, Any]],
+        api_key: str,
+        api_base: Optional[str] = None,
+        **kwargs
+    ) -> Dict[str, Any]:
+        """Async completion via official Python SDK."""
+        if provider == "openai":
+            from openai import AsyncOpenAI
+            client = AsyncOpenAI(api_key=api_key, base_url=api_base)
+            response = await client.chat.completions.create(
+                model=model,
+                messages=messages,
+                **kwargs
+            )
+            return response.model_dump()
+        elif provider == "anthropic":
+            from anthropic import AsyncAnthropic
+            client = AsyncAnthropic(api_key=api_key, base_url=api_base)
+            response = await client.messages.create(
+                model=model,
+                messages=messages,
+                **kwargs
+            )
+            return response.model_dump()
+        raise ValueError(f"Unknown provider: {provider}")
+
+    @staticmethod
+    async def aembedding(
+        provider: str,
+        model: str,
+        input_text: str,
+        api_key: str,
+        api_base: Optional[str] = None,
+    ) -> List[float]:
+        """Async embedding via official Python SDK."""
+        if provider == "openai":
+            from openai import AsyncOpenAI
+            client = AsyncOpenAI(api_key=api_key, base_url=api_base)
+            response = await client.embeddings.create(
+                model=model,
+                input=input_text,
+            )
+            return response.data[0].embedding
+        raise ValueError(f"Unknown provider: {provider}")
+```
+
+**Rust side (PyO3 bridge):**
+```rust
+use pyo3_asyncio::tokio::into_async;
+use pyo3::prelude::*;
+
+#[pyfunction]
+async fn pyo3_acompletion(
+    py: Python,
+    provider: String,
+    model: String,
+    messages: Vec<Py<PyAny>>,
+    api_key: String,
+    api_base: Option<String>,
+    kwargs: Py<PyAny>,
+) -> PyResult<Py<PyAny>> {
+    let bridge = py.import("quota_router_python_sdk_bridge")?;
+    let result = into_async(bridge.call_method1(
+        "acompletion",
+        (provider, model, messages, api_key, api_base, kwargs),
+    )?).await?;
+    Ok(result)
+}
+```
+
+#### any-llm-mode: Sync SDK Integration (Normative)
+
+For sync SDKs, use `tokio::task::spawn_blocking` to avoid blocking the async executor:
+
+```rust
+async fn call_sync_sdk(request: SyncRequest) -> Result<Response, ProviderError> {
+    let result = tokio::task::spawn_blocking(|| {
+        Python::with_gil(|py| {
+            call_python_sync_sdk(py, &request)
+        })
+    }).await?;
+    Ok(result)
+}
+
+fn call_python_sync_sdk(py: Python, request: &SyncRequest) -> PyResult<Py<PyAny>> {
+    let sdk = py.import("ollama_sdk")?;
+    sdk.call_method1("completion", (/* args */))
+}
+```
+
+#### any-llm-mode: GIL Management (Normative)
+
+The GIL (Global Interpreter Lock) must be managed carefully:
+
+| SDK Type | Pattern | Rationale |
+|---------|---------|-----------|
+| Async SDKs | `pyo3-asyncio` (`into_async`) | Async SDKs release GIL during network I/O; only marshaling needs GIL |
+| Sync SDKs | `spawn_blocking` | Blocking SDKs hold GIL; must not block async executor |
+
+**Critical: Never call sync Python SDKs directly from async Rust context.**
+
+#### any-llm-mode: Error Mapping (Normative)
+
+Python SDK exceptions map to quota-router exception types:
+
+```python
+# python_sdk_errors.py
+from quota_router.exceptions import (
+    AuthenticationError,
+    RateLimitError,
+    BadRequestError,
+    TimeoutError,
+    ProviderError,
+)
+
+def map_python_exception(exc: Exception, provider: str) -> Exception:
+    """Map Python SDK exceptions to quota-router exceptions."""
+    exc_type = type(exc).__name__
+
+    if exc_type == "AuthenticationError":
+        return AuthenticationError(str(exc))
+    elif exc_type == "RateLimitError":
+        return RateLimitError(str(exc))
+    elif exc_type == "BadRequestError":
+        return BadRequestError(str(exc))
+    elif exc_type == "TimeoutError":
+        return TimeoutError(str(exc))
+    elif "context_length" in str(exc).lower():
+        return BadRequestError(f"Context length exceeded: {exc}")
+    else:
+        return ProviderError(f"{provider} error: {exc}")
+```
+
+#### any-llm-mode: Streaming via Async Iteration (Normative)
+
+Python async SDKs return async iterators for streaming. Bridge to Rust async iterator:
+
+**Python side:**
+```python
+async def stream_completion(provider: str, model: str, messages: List[Dict], **kwargs):
+    if provider == "openai":
+        from openai import AsyncOpenAI
+        client = AsyncOpenAI()
+        stream = await client.chat.completions.create(model=model, messages=messages, stream=True, **kwargs)
+        async for chunk in stream:
+            yield chunk.model_dump()
+```
+
+**Rust side:**
+```rust
+use pyo3_asyncio::tokio::into_async;
+
+pub struct AsyncChunkIterator {
+    python_iter: Py<PyAny>,
+}
+
+impl AsyncIterator for AsyncChunkIterator {
+    type Item = Result<ChatCompletionChunk, PyErr>;
+
+    async fn next(&mut self) -> Option<Self::Item> {
+        Python::with_gil(|py| {
+            match self.python_iter.call_method0(py, "__anext__") {
+                Ok(chunk) => Some(Ok(chunk)),
+                Err(_) => None,
+            }
+        })
+    }
+}
+```
+
+#### any-llm-mode: Provider SDK Support Matrix (Normative)
+
+| Provider | Python SDK | SDK Type | Auth | Streaming |
+|----------|-----------|----------|------|-----------|
+| OpenAI | `openai` | async | api_key | async iterator |
+| Anthropic | `anthropic` | async | api_key | async iterator |
+| Mistral | `mistralai` | async | api_key | async iterator |
+| Google AI | `google-generativeai` | async | api_key | async iterator |
+| Ollama | `ollama` | sync | none | sync iterator |
+| DeepInfra | `openai` | async | api_key | async iterator |
+| Groq | `openai` | async | api_key | async iterator |
 
 ### LiteLLM Mode: HTTP Gateway
 
@@ -2719,7 +3185,14 @@ In `full` builds, both modules are compiled simultaneously and selected at runti
 
 | Version | Date       | Changes |
 |---------|------------|---------|
+| 2.27    | 2026-04-30 | **MERGE** Absorbed RFC-0921 and RFC-0922 implementation details: HttpClientConfig, ProviderRequest trait, RetryConfig, ProviderError enum, SSEParser trait (litellm-mode); PythonSDKBridge class, spawn_blocking pattern, GIL management table, AsyncChunkIterator (any-llm-mode). RFC-0921/0922 superseded. |
 | 2.26 | 2026-04-29 | **CRITICAL CONSTRAINT: Rust-owns-all-heavy-lifting.** Added top-level architectural constraint establishing ALL heavy lifting (routing, caching, telemetry, concurrency, state management) in Rust core. HTTP proxy and Python SDK are thin binding layers. |
+| 2.25 | 2026-04-27 | Round 43: FIX CRITICAL SELF-CONTRADICTION — both modes have BOTH interfaces. Removed all claims that litellm-mode lacks Python SDK and any-llm-mode lacks HTTP proxy. Feature tables, notes, mermaid diagrams, and rust code updated to make clear: modes differ only in PROVIDER INTEGRATION STRATEGY (reqwest vs PyO3), NOT in interface availability. |
+| 2.24 | 2026-04-27 | Round 42 remaining: fix X4 (PyO3 GIL release at .await points); fix X6 (compile_error! arm for mutually exclusive features); fix X11 (Router::global() init order + singleton identity) |
+| 2.23 | 2026-04-27 | Round 42: fix X7 (Critical) — add `.to_lowercase()` before `get_canonical_tokenizer` (tokenizer lookup is case-sensitive; uppercase model names fall through to wrong fallback) |
+| 2.22 | 2026-04-26 | Round 41: fix HI-04 (CostOverflow → HTTP 422, not 500 — deployment misconfiguration should not trigger retry); fix MD-04 (parse_model_string: use default_provider on unknown prefix, emit UnknownProviderPrefix WARN event; document dynamic KNOWN_PROVIDERS loading) |
+| 2.21 | 2026-04-26 | Round 39: fix R39-N1 (Phase 3 QuotaRouterError: replace PLANNED placeholder with FULL SPEC — complete enum definition, From implementations, HTTP status code mapping, Python exception class hierarchy) |
+| 2.20 | 2026-04-26 | Round 38: fix NEW-1 (Phase 3 QuotaRouterError checklist item marked PLANNED per deferred-work rule); fix NEW-2 (line 929: clarify 'full-mode' is alias for default 'full' feature); fix NEW-5 (add SSEEvent/Ssedelta/SseUsage struct definitions to Anthropic SSE transform); fix NEW-7 (add "Router Struct Definition (Normative)" header at line 579); add RFC-0902 v1.3 to Related RFCs (7 routing strategies including Weighted) |
 | 2.19 | 2026-04-25 | Round 37: fix XH-1 (line 929: rename duplicate `full` feature to `full-mode` to avoid collision with §Rust Feature Gates definition at line 133) |
 | 2.18 | 2026-04-24 | Round 36: fix NC-4 (routing strategies count 6→7 in Mermaid, scope table, feature matrix, Phase 1 checklist); fix XH-1 (remove duplicate full feature TOML block at lines 111-123); fix NH-2 (mark A3 Router struct pseudocode as non-normative, see lines 583-598 for normative definition); fix NH-4 (add LatencyTracker struct with integer microseconds, eliminate floating-point non-determinism per RFC-0104); fix NM-5 (virtual keys compatibility matrix: any-llm mode cell changed ✅→❌ — SDK callers bypass proxy, not RFC-0903 enforced); fix XH-3 (QuotaRouterError status header corrected: item is Phase 3 PLANNED checklist, no enum defined in RFC body); fix XC-5 (line 480: replace phantom record_spend(&api_key.key_id, &response) with proper SpendEvent construction + STORAGE.record_spend(&event).await?) |
 | 2.17    | 2026-04-24 | Round 32: fix R2-5 (Design) per deferred-work rule — add QuotaRouterError unified error type to Phase 3 checklist; must be spec-ed (not just "deferred") per memory/deferred-vs-unspecified.md; defines enum wrapper with From implementations for KeyError, BudgetError, RouterError, StorageError; retrofitted across RFC-0903/0904/0909/0910/0917 |
@@ -2759,18 +3232,7 @@ In `full` builds, both modules are compiled simultaneously and selected at runti
 - `docs/research/any-llm-vs-litellm-comparison.md`
 - `docs/research/litellm-analysis-and-quota-router-comparison.md`
 
-## Version History
-
-| Version | Date | Changes |
-|---------|------|---------|
-| 2.25 | 2026-04-27 | Round 43: FIX CRITICAL SELF-CONTRADICTION — both modes have BOTH interfaces. Removed all claims that litellm-mode lacks Python SDK and any-llm-mode lacks HTTP proxy. Feature tables, notes, mermaid diagrams, and rust code updated to make clear: modes differ only in PROVIDER INTEGRATION STRATEGY (reqwest vs PyO3), NOT in interface availability. |
-| 2.24 | 2026-04-27 | Round 42 remaining: fix X4 (PyO3 GIL release at .await points); fix X6 (compile_error! arm for mutually exclusive features); fix X11 (Router::global() init order + singleton identity) |
-| 2.23 | 2026-04-27 | Round 42: fix X7 (Critical) — add `.to_lowercase()` before `get_canonical_tokenizer` (tokenizer lookup is case-sensitive; uppercase model names fall through to wrong fallback) |
-| 2.22 | 2026-04-26 | Round 41: fix HI-04 (CostOverflow → HTTP 422, not 500 — deployment misconfiguration should not trigger retry); fix MD-04 (parse_model_string: use default_provider on unknown prefix, emit UnknownProviderPrefix WARN event; document dynamic KNOWN_PROVIDERS loading) |
-| 2.21 | 2026-04-26 | Round 39: fix R39-N1 (Phase 3 QuotaRouterError: replace PLANNED placeholder with FULL SPEC — complete enum definition, From implementations, HTTP status code mapping, Python exception class hierarchy) |
-| 2.20 | 2026-04-26 | Round 38: fix NEW-1 (Phase 3 QuotaRouterError checklist item marked PLANNED per deferred-work rule); fix NEW-2 (line 929: clarify 'full-mode' is alias for default 'full' feature); fix NEW-5 (add SSEEvent/Ssedelta/SseUsage struct definitions to Anthropic SSE transform); fix NEW-7 (add "Router Struct Definition (Normative)" header at line 579); add RFC-0902 v1.3 to Related RFCs (7 routing strategies including Weighted) |
-
 ---
 
 **Submission Date:** 2026-04-21
-**Last Updated:** 2026-04-26
+**Last Updated:** 2026-04-30

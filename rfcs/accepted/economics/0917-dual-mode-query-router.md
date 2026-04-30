@@ -2,7 +2,7 @@
 
 ## Status
 
-Accepted (v2.27 — 2026-04-30)
+Accepted (v2.28 — 2026-04-30)
 
 **ARCHITECTURAL CONSTRAINT: Rust-owns-all-heavy-lifting. ALL heavy lifting (routing, caching, telemetry, concurrency, state management, batch execution) MUST be in Rust core. HTTP proxy and Python SDK are thin binding layers only. Each language binding (Python, JS, Go, etc.) adds ONLY marshaling overhead.**
 
@@ -68,7 +68,8 @@ The modes differ in **provider integration strategy**, not interface availabilit
 - Rate limiting (RFC-0902)
 - Deterministic quota accounting (RFC-0909)
 - Pricing table registry (RFC-0910)
-- Prometheus metrics
+- Prometheus metrics (RFC-0905 for OpenTelemetry OTLP — Planned)
+- Response caching (RFC-0906 — Draft)
 - OCTO-W balance (RFC-0900)
 - stoolap persistence (RFC-0903-B1/C1)
 
@@ -3185,6 +3186,7 @@ In `full` builds, both modules are compiled simultaneously and selected at runti
 
 | Version | Date       | Changes |
 |---------|------------|---------|
+| 2.28    | 2026-04-30 | **FIX** Add missing RFC-0906 (Response Caching, Draft) and RFC-0905 (OpenTelemetry, Planned) references to enterprise features list. |
 | 2.27    | 2026-04-30 | **MERGE** Absorbed RFC-0921 and RFC-0922 implementation details: HttpClientConfig, ProviderRequest trait, RetryConfig, ProviderError enum, SSEParser trait (litellm-mode); PythonSDKBridge class, spawn_blocking pattern, GIL management table, AsyncChunkIterator (any-llm-mode). RFC-0921/0922 superseded. |
 | 2.26 | 2026-04-29 | **CRITICAL CONSTRAINT: Rust-owns-all-heavy-lifting.** Added top-level architectural constraint establishing ALL heavy lifting (routing, caching, telemetry, concurrency, state management) in Rust core. HTTP proxy and Python SDK are thin binding layers. |
 | 2.25 | 2026-04-27 | Round 43: FIX CRITICAL SELF-CONTRADICTION — both modes have BOTH interfaces. Removed all claims that litellm-mode lacks Python SDK and any-llm-mode lacks HTTP proxy. Feature tables, notes, mermaid diagrams, and rust code updated to make clear: modes differ only in PROVIDER INTEGRATION STRATEGY (reqwest vs PyO3), NOT in interface availability. |

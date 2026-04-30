@@ -2,7 +2,7 @@
 
 ## Status
 
-Draft (v1.51 — 2026-04-30)
+Accepted (v1.51 — 2026-04-30)
 
 **ARCHITECTURAL CONSTRAINT: HTTP proxy is FOREVER in BOTH litellm-mode and any-llm-mode. See section below.**
 

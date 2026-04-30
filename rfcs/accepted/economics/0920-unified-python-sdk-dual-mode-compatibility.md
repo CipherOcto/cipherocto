@@ -2,7 +2,7 @@
 
 ## Status
 
-Accepted (v1.55 — 2026-04-30)
+Accepted (v1.56 — 2026-04-30)
 
 **ARCHITECTURAL CONSTRAINT: HTTP proxy is FOREVER in BOTH litellm-mode and any-llm-mode. See section below.**
 
@@ -4153,9 +4153,15 @@ Per RFC-0917 §Rust Feature Gates, **the mode gate selects the provider integrat
 # quota-router-core/Cargo.toml (RFC-0917 canonical definition)
 [features]
 default = ["full"]           # Both strategies + both interfaces
-litellm-mode = ["hyper", "axum"]    # reqwest HTTP only
-any-llm-mode = ["py-o3"]             # PyO3 SDK delegation only
-full = ["hyper", "axum", "py-o3"]  # Both strategies + both interfaces
+
+# Provider integration strategy ONLY — hyper/axum and py-o3 are UNCONDITIONAL
+# (always compiled regardless of which feature flag is set)
+litellm-mode = []             # Provider strategy: reqwest (native Rust HTTP)
+any-llm-mode = []             # Provider strategy: PyO3 (official Python SDKs)
+full = []                     # Both strategies simultaneously
+
+# NOTE: hyper, axum, pyo3, pyo3-ffi are unconditional dependencies.
+# They compile in ALL build configurations — NOT behind feature flags.
 ```
 
 ```toml
@@ -4166,12 +4172,12 @@ quota-router-core = { path = "../quota-router-core", features = ["full"] }
 # Mode is determined by which features quota-router-core was built with
 ```
 
-**Mode controls only: what library is used to call providers**
+**Mode controls only: what library is used to call providers (provider integration strategy)**
 - `litellm-mode` (core): reqwest → direct to provider REST APIs
 - `any-llm-mode` (core): PyO3 → official Python SDKs (Anthropic, OpenAI, Mistral, etc.)
 - `full` (core): Both simultaneously
 
-**Interface availability (all modes identical):**
+**Interface availability (all modes identical — NOT controlled by feature flags):**
 | Interface       | litellm-mode | any-llm-mode | full |
 |-----------------|:------------:|:------------:|:----:|
 | HTTP proxy      |      ✅      |      ✅      |  ✅  |
@@ -4494,6 +4500,7 @@ This is the only approach that achieves true drop-in replacement for both ecosys
 
 | Version | Date       | Changes |
 | ------- | ---------- | ------- |
+| 1.56    | 2026-04-30 | **SYNC** RFC-0920 Feature Gate Architecture (lines 4152-4178): Replaced stale Cargo.toml block with empty feature flags (`litellm-mode = []`, `any-llm-mode = []`, `full = []`) matching RFC-0917 v2.34. hyper/axum/py-o3 are now explicitly documented as UNCONDITIONAL dependencies (always compiled). Comments updated to reflect provider strategy selection only. |
 | 1.55    | 2026-04-30 | **DOCS** RFC-0920 no changes needed — confirms HTTP proxy constraint box (lines 77-95) and Mode Gate ≠ Interface invariant (lines 131-148) already correctly state both interfaces available in all modes. All 8 Round 38 findings formally rebutted as stale-cached review of pre-v1.54 version. |
 | 1.54    | 2026-04-30 | **FIX** Feature Gate Architecture (lines 4149-4175): Replaced incorrect Cargo.toml block — all three modes had identical `pyo3/extension-module` with contradictory comments. quota-router-pyo3 now correctly documented as having NO feature flags; it wraps whatever quota-router-core was compiled with. Mode selection happens at quota-router-core compile time. **FIX** set_api_key() budget enforcement (lines 802-842): Corrected "In-memory, no enforcement" to correctly reflect that budget enforcement (RFC-0904) is active in ALL modes via HMAC-SHA256 key_id + StoolapKeyStorage. **FIX** Provider count: Changed "42" to "41" in header and checklist. Fixed any-llm gap analysis text (was "39+1=40", now correct). **FIX** Python Router NON-NORMATIVE marker: Added explicit note that Phase 1 Python Router violates Rust-owns-all-heavy-lifting constraint and is non-normative placeholder. |
 | 1.53    | 2026-04-30 | **FIX** 0920-C1 (cross-impact): HTTP proxy constraint box corrected — HTTP proxy IS available in any-llm-mode via PyO3 bridge. Box now matches mode table (both ✅ YES). **FIX** 0920-C2: Provider count "42" → "41" (list has 41, not 42). **FIX** 0920-C4 (cross-impact): B5 parsing rules now provider-list matching per RFC-0917 update. **FIX** 0920-C3 (cross-impact): deepinfra added to RFC-0917 Phase 3 list, completing cross-RFC sync. |

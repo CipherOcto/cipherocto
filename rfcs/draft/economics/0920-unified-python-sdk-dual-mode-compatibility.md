@@ -2,7 +2,7 @@
 
 ## Status
 
-Draft (v1.48 — 2026-04-29)
+Draft (v1.49 — 2026-04-30)
 
 **ARCHITECTURAL CONSTRAINT: HTTP proxy is FOREVER in BOTH litellm-mode and any-llm-mode. See section below.**
 
@@ -2189,6 +2189,45 @@ Rust RouterHandle (quota-router-core)
   └── All heavy lifting = routing, state, caching, telemetry in Rust core
 ```
 
+#### Phase 2 Rust ←→ Python State Mapping (Normative)
+
+**Purpose:** Document the authoritative mapping between Python Router state fields and their RFC-0917/Rust-core equivalents. All Python-side state is **ephemeral** (in-memory, lost on restart); Rust-core state persists via stoolap.
+
+| Python Router field (Phase 1) | Type | RFC-0917 Rust equivalent | Persisted? | Notes |
+|-------------------------------|------|--------------------------|-------------|-------|
+| `_round_robin_index` | `int` | `AtomicUsize` in `RouterState` (line 1120) — `fetch_add` for lock-free round-robin | No | Lock-free via atomic; no `threading.Lock` needed |
+| `_round_robin_lock` | `threading.Lock` | **Not needed** — RFC-0917 uses `AtomicUsize.fetch_add()` (no lock) | — | Lock-free eliminates TOCTOU race |
+| `_total_spend[idx]` | `int` (μunits) | `record_spend()` → `STORAGE.record_spend(&event)` → `octo_w_ledger` per RFC-0909 | **Yes** (stoolap) | Ephemeral in Python; persisted in Rust |
+| `_spend_history[idx]` | `deque(maxlen=500)` | `record_spend_with_idempotency()` → `SpendEvent` ledger per RFC-0909 | **Yes** (stoolap) | Persists full history in Rust; Python had in-memory only |
+| `_active_requests[idx]` | `int` | `RouterState.connection_pools` — tracks active requests per deployment | No | In-memory state for `least-busy` strategy |
+| `_latencies[idx]` | `deque(maxlen=100)` | `LatencyTracker.samples: HashMap<String, Vec<u64>>` (lines 1132-1134) — microsecond precision | No | Fixed 100-sample window; `best_provider()` for latency-based routing |
+| `_by_model` | `Dict[str, List[int]]` | `Router.provider_impls: HashMap<String, Vec<ProviderWithState>>` | No | Model → deployment indices mapping |
+
+**Critical notes:**
+- `_state_lock` (Python `threading.Lock`) has **no equivalent in RFC-0917** because Rust core uses lock-free atomics (`AtomicUsize`) or interior mutability (`RwLock<RouterState>`). Python locks are not needed in the Rust delegation layer.
+- All ephemeral Python state (latencies, active requests) is **in-memory only** in Rust core too — process restart resets it identically.
+- All persisted Python state (`_total_spend`, `_spend_history`) maps to **stoolap persistence** via `record_spend()` — survives process restart.
+
+**Phase 2 delegation pattern:**
+
+```python
+# Phase 2: All state in Rust core — Python is thin marshal layer
+class Router:
+    def __init__(self, model_list, routing_strategy="simple-shuffle", **kwargs):
+        self._rust = RustRouterHandle(model_list=model_list, strategy=routing_strategy, **kwargs)
+
+    def _select_deployment(self, model: str) -> int:
+        # Thin delegation — returns deployment index from Rust core
+        return self._rust.select_deployment(model)
+
+    def _record_request_end(self, idx: int, latency_ms: float, prompt_tokens: int, completion_tokens: int):
+        # Thin delegation — Rust core updates latency tracker, records spend
+        self._rust.record_request_end(idx, latency_ms, prompt_tokens, completion_tokens)
+
+    def get_metrics(self) -> Dict:
+        return self._rust.get_metrics()  # Rust Prometheus/OTLP metrics
+```
+
 **Target (Phase 2):**
 
 ```python
@@ -3829,6 +3868,7 @@ This is the only approach that achieves true drop-in replacement for both ecosys
 
 | Version | Date       | Changes |
 | ------- | ---------- | ------- |
+| 1.49    | 2026-04-30 | **ADD** Phase 2 Rust ←→ Python State Mapping table: maps Python Router fields (_round_robin_index, _round_robin_lock, _total_spend, _spend_history, _active_requests, _latencies, _by_model) to RFC-0917 equivalents (AtomicUsize, record_spend, LatencyTracker, RouterState). Documents lock-free atomics, stoolap persistence, and Phase 2 delegation pattern. |
 | 1.48    | 2026-04-29 | **CRITICAL** Add missing LiteLLM params: `thinking` (Anthropic structured thinking), `modalities` (multi-modal output), `audio` (audio output params), `prediction` (content prediction optimization) to both sync and async completion signatures. Drop-in replacement parity. |
 | 1.45    | 2026-04-29 | Fix external adversarial review round 27: L1 (cache_bypass docstring updated to reference Rust forwarding in PyO3 builds), L2 (CI validator header comment added clarifying build-time stub validation scope). C1, C2, H1, H2, M1, M2 formally rebutted as architecture change requests, not bugs — RFC-0920 explicitly specifies Python Router as Python-level component with no Rust delegation (lines 2184-2185). |
 | 1.44    | 2026-04-29 | Fix external adversarial review round 26: C1 (batch worker cache_bypass explicit binding via functools.partial comment), C2 (CI regex scoped to PROVIDER_SDK_TYPES constant block), H1 (.git/ and ci/ dir markers replace subproject toml files), H2 (counter-based modulo sampling replaces random.random()), M1 (OPERATIONAL WARNING added to completion() function docstring), M2 (Path.absolute() replaces resolve() for container-safe path resolution), L1 (Accepted — codegen enforces pure-literal constraint), L2 (lock_metric_sampling_rate init param + QUOTA_ROUTER_LOCK_METRIC_SAMPLE_RATE env). |

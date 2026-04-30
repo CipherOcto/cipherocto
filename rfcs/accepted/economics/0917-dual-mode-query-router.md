@@ -1495,7 +1495,7 @@ py-o3 = ["dep:pyo3", "dep:pyo3-ffi"]
 
 ```
 anthropic, azure, azureanthropic, azureopenai, bedrock, cerebras, cohere,
-dashscope, databricks, deepseek, fireworks, gateway, gemini, groq, huggingface,
+dashscope, databricks, deepinfra, deepseek, fireworks, gateway, gemini, groq, huggingface,
 inception, llama, llamacpp, llamafile, lmstudio, minimax, mistral, moonshot,
 mzai, nebius, ollama, openai, openrouter, perplexity, platform, portkey,
 sagemaker, sambanova, together, vertexai, vertexaianthropic, vllm, voyage,
@@ -2361,11 +2361,18 @@ But the slash (`/`) and colon (`:`) are both valid in model strings. If a provid
 
 **Problem:** Which format takes priority? `openai/claude-3` could be "provider=openai, model=claude-3" (LiteLLM) or "model=openai/claude-3 with default provider" (any-llm).
 
-**Resolution (FIXED):** Unambiguous parsing rules defined:
-1. If string contains `:` → split on first `:` (any-llm style: `provider:model`)
-2. If string contains `/` but no `:` → split on first `/` (LiteLLM style: `provider/model`)
-3. If both `:` and `/` → reject as ambiguous
-4. Model names containing `:` or `/` are unsupported.
+**Resolution (FIXED):** Provider-list matching parsing rules defined (per §B5 Provider Resolution):
+
+1. If string contains `:` → check segment before first `:` against known provider list
+   - If matched → colon format (`provider:model`)
+   - If NOT matched → continue to slash check
+2. If string contains `/` → check segment before first `/` against known provider list
+   - If matched → slash format (`provider/model`)
+   - If NOT matched → use default provider
+3. If both `:` and `/` present → use provider-list matching (not ambiguous if prefix matches)
+4. Model names containing unescaped delimiters without provider prefix → use default
+
+**Rationale:** The RFC-0917 original rule 3 ("reject as ambiguous if both delimiters present") is replaced. When the prefix before a delimiter is a known provider, the delimiter unambiguously signals the format. `ollama/llama3.1:8b` → `provider=ollama, model=llama3.1:8b` (slash match, colon in model name is not ambiguous).
 
 ---
 
@@ -2747,7 +2754,7 @@ Rule 2 would parse `openai/gpt-4o-0613` as `provider="openai"`, `model="gpt-4o-0
 
 **Deeper problem:** The B5 rules don't account for provider-specific model naming conventions. Ollama uses `ollama/llama3.1:8b` (slash + colon). The rules would parse this as `provider="ollama"`, `model="llama3.1"` — losing the `:8b` tag.
 
-**Resolution (FIXED):** Use **provider-list matching** (per litellm's approach). Only treat the first segment as a provider if it matches a known provider. This avoids misrouting when model names coincidentally contain `/` or `:`.
+**Resolution (FIXED):** Provider-list matching rules (per §B5 and the update above). The parsing uses known provider list matching, not hard precedence rules. If the prefix before either delimiter matches a known provider, that format is used. If neither matches, default provider is used (not rejection).
 
 ```rust
 /// Known LLM providers (matched against first segment of model string)
@@ -3220,6 +3227,7 @@ In `full` builds, both modules are compiled simultaneously and selected at runti
 
 | Version | Date       | Changes |
 |---------|------------|---------|
+| 2.30    | 2026-04-30 | **FIX** 0917-C4: Update B5 model parsing rules to provider-list matching (per RFC-0920 §C8). Rule 3 "reject if both" replaced — `ollama/llama3.1:8b` now correctly parses via slash match. **FIX** 0917-C3: Sync deepinfra provider across RFCs — added to Phase 3 provider list. **FIX** 0920-C1/H1 (cross-impact): Corrected HTTP proxy constraint box in RFC-0920 — HTTP proxy IS available in any-llm-mode (via PyO3 bridge), not ❌ NO. Both RFCs now agree: HTTP proxy in all modes, Python SDK in all modes. |
 | 2.29    | 2026-04-30 | **FIX** 0917-C1: execute_with_retry — correct return type (CompletionResponse), fix instance method call (parse_response needs self), separate last_response/last_reqwest_error. **FIX** 0917-C2: Add ModelNotFound to RouterError enum. **FIX** 0917-C3: Correct Assertion A — single-mode builds have one interface, full build has both. **FIX** 0917-H1: pyo3-asyncio into_async → into_future with Python::with_gil. **FIX** 0917-H2/CROSS-1: google→gemini in provider SDK type registry; canonical YAML designated. **FIX** 0917-M1: SSE format_usage — non-raw string for \n\n, usage at root level. **FIX** 0920-C1: Exception base class unified to QuotaRouterError with optional status/provider fields. |
 | 2.27    | 2026-04-30 | **MERGE** Absorbed RFC-0921 and RFC-0922 implementation details: HttpClientConfig, ProviderRequest trait, RetryConfig, ProviderError enum, SSEParser trait (litellm-mode); PythonSDKBridge class, spawn_blocking pattern, GIL management table, AsyncChunkIterator (any-llm-mode). RFC-0921/0922 superseded. |
 | 2.26 | 2026-04-29 | **CRITICAL CONSTRAINT: Rust-owns-all-heavy-lifting.** Added top-level architectural constraint establishing ALL heavy lifting (routing, caching, telemetry, concurrency, state management) in Rust core. HTTP proxy and Python SDK are thin binding layers. |

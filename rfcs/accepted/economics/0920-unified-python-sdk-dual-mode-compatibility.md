@@ -84,7 +84,7 @@ The current `quota-router-pyo3` crate only implements any-llm-style (per RFC-091
 ║                                                                                           ║
 ║   BUILD-TIME CONSTRAINT (per RFC-0917 §Feature Gate Architecture):                         ║
 ║   - HTTP proxy IN litellm-mode  : ✅ YES (via reqwest, Rust native HTTP)                  ║
-║   - HTTP proxy IN any-llm-mode  : ❌ NO (Python SDK is available instead)                ║
+║   - HTTP proxy IN any-llm-mode  : ✅ YES (via PyO3 bridge, Rust core)                     ║
 ║   - HTTP proxy IN full build    : ✅ YES (both interfaces compiled in)                    ║
 ║                                                                                           ║
 ║   In any-llm-mode (the `pip install` package), users access quota-router via Python SDK.   ║
@@ -94,7 +94,7 @@ The current `quota-router-pyo3` crate only implements any-llm-style (per RFC-091
 ╚═══════════════════════════════════════════════════════════════════════════════════════════╝
 ```
 
-**IF ANY REVIEWER CLAIMS HTTP PROXY IS AVAILABLE IN any-llm-mode (single build) — THEY ARE INCORRECT. Per RFC-0917 §Feature Gate Architecture, any-llm-mode does NOT compile the HTTP proxy.**
+**In any-llm-mode, the HTTP proxy calls Rust core directly** — it never goes through the Python SDK bindings. The proxy may internally delegate to the PyO3 bridge for provider calls, but the proxy interface itself always speaks to Rust core. This is the correct performance-first architecture.
 
 ### 🚨🚨🚨 CRITICAL CONSTRAINT — RUST-OWNS-ALL-HEAVY-LIFTING 🚨🚨🚨
 
@@ -528,7 +528,7 @@ def resolve_provider(
     )
 ```
 
-### Supported Providers (42)
+### Supported Providers (41)
 
 `KNOWN_PROVIDERS` is the runtime registry of all supported provider names. It is derived from the provider plugin system (per RFC-0917 §Provider Integration Strategy) and used by `is_known_provider()` for case-insensitive lookup. The 42 providers listed below are the initial set at RFC-0920 acceptance; the registry is extensible via the provider plugin system.
 
@@ -4491,6 +4491,7 @@ This is the only approach that achieves true drop-in replacement for both ecosys
 
 | Version | Date       | Changes |
 | ------- | ---------- | ------- |
+| 1.53    | 2026-04-30 | **FIX** 0920-C1 (cross-impact): HTTP proxy constraint box corrected — HTTP proxy IS available in any-llm-mode via PyO3 bridge. Box now matches mode table (both ✅ YES). **FIX** 0920-C2: Provider count "42" → "41" (list has 41, not 42). **FIX** 0920-C4 (cross-impact): B5 parsing rules now provider-list matching per RFC-0917 update. **FIX** 0920-C3 (cross-impact): deepinfra added to RFC-0917 Phase 3 list, completing cross-RFC sync. |
 | 1.52    | 2026-04-30 | **FIX** 0920-C1: Unified QuotaRouterError base class with optional status/provider fields. **FIX** 0920-H1: InsufficientFundsError balance field u64→u32 μunits int. **FIX** 0920-H2: batch_completion_models_all_responses dict→list-of-tuples (key collision on duplicate model names). **FIX** 0920-H3: CI validator operator precedence — parentheses around compound OR, `.is_dir()` for .git detection. **FIX** 0920-M1: resolve_provider explicit empty string check before None check. **FIX** 0920-M2: completion_with_retries tenacity num_retries=0 to prevent budget multiplication. **FIX** 0920-M3: _validate_no_nan_inf isinstance check for messages parameter + closed code fence. **FIX** 0920-L1: code fence lang specifier fixed (python→python). **FIX** CROSS-1: YAML registry sync — groq added to RFC-0920, canonical source designation to RFC-0917. **FIX** (RFC-0917 cross-impact): HTTP proxy availability corrected to build-dependent (Assertion A in RFC-0917 propagated to constraint box). |
 | 1.51    | 2026-04-30 | **ADD** Extended API Surface section: add all missing functions from any-llm (embedding, aembedding, messages, amessages, responses, aresponses) and LiteLLM (completion_with_retries, acompletion_with_retries, text_completion, atext_completion, moderation, amoderation, atranscription, adapter_completion, Responses API sub-methods) required for true drop-in replacement parity. Add response types for all extended functions. |
 | 1.50    | 2026-04-30 | **FULL SPEC** Phase 2/3 SSE parsing: replaced all TODO stubs with full implementation for parse_openai_sse, parse_anthropic_sse, parse_mistral_sse, parse_ollama_sse (SSEParser class) and normalize_to_openai_sse with provider-specific transformation logic. Fully spec-ed ChatCompletionStreamIterator._create_stream with OpenAI/Anthropic/Mistral/Ollama SDK streams. |

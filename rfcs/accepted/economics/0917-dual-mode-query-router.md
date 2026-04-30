@@ -2,7 +2,7 @@
 
 ## Status
 
-Accepted (v2.33 — 2026-04-30)
+Accepted (v2.34 — 2026-04-30)
 
 **ARCHITECTURAL CONSTRAINT: Rust-owns-all-heavy-lifting. ALL heavy lifting (routing, caching, telemetry, concurrency, state management, batch execution) MUST be in Rust core. HTTP proxy and Python SDK are thin binding layers only. Each language binding (Python, JS, Go, etc.) adds ONLY marshaling overhead.**
 
@@ -133,39 +133,41 @@ flowchart TB
 
 ### Rust Feature Gates
 
-The dual-mode architecture uses Cargo feature gates to select the **provider integration strategy**. **Both interfaces (HTTP proxy and Python SDK) are always compiled regardless of mode:**
+The dual-mode architecture uses Cargo feature gates to select the **provider integration strategy**. **Both interfaces (HTTP proxy and Python SDK) are unconditionally available in every mode — `hyper`, `axum`, and `py-o3` are ALWAYS compiled regardless of which feature flag is set:**
 
 ```toml
 # Cargo.toml (quota-router-core)
 [features]
 default = ["full"]           # Both provider integration strategies + both interfaces
-litellm-mode = ["hyper", "axum"]  # Provider strategy: reqwest (native Rust HTTP)
-any-llm-mode = ["py-o3"]    # Provider strategy: PyO3 (official Python SDKs)
-# IMPORTANT: litellm-mode and any-llm-mode are MUTUALLY EXCLUSIVE (single-mode only).
-# These flags enable ONE provider strategy. The full flag enables BOTH strategies
-# simultaneously WITHOUT enabling either single-mode flag (preventing cfg overlap).
-full = ["hyper", "axum", "py-o3"]  # Both strategies simultaneously
 
-# INTERFACES: Both HTTP proxy (hyper/axum) AND Python SDK (pyo3) are ALWAYS compiled.
-# The feature flag selects which PROVIDER INTEGRATION STRATEGY to use.
+# Provider integration strategy only — hyper/axum and py-o3 are UNCONDITIONAL deps
+# (always compiled regardless of which feature flag is set)
+litellm-mode = []             # Provider strategy: reqwest (native Rust HTTP)
+any-llm-mode = []             # Provider strategy: PyO3 (official Python SDKs)
+full = []                     # Both provider integration strategies simultaneously
+
+# UNCONDITIONAL dependencies — always compiled in ALL modes:
+# - hyper, axum (HTTP proxy interface)
+# - pyo3, pyo3-ffi (Python SDK interface)
+# These are NOT behind feature flags — they compile in every build configuration.
 ```
 
-**What each feature controls (provider integration strategy):**
+**What each feature controls (provider integration strategy only):**
 
 | Feature | Provider Integration | Python Provider SDKs |
 |---------|:-------------------|:-------------------|
-| `litellm-mode` | Native Rust HTTP (`reqwest`) to provider REST APIs | ❌ None |
+| `litellm-mode` | Native Rust HTTP (`reqwest`) to provider REST APIs | ❌ Not used |
 | `any-llm-mode` | Python SDK delegation via PyO3 (Anthropic, OpenAI, Mistral, etc.) | ✅ Via PyO3 |
 | `full` (default) | Both strategies simultaneously | Both |
 
-**Interfaces (ALWAYS available in all modes):**
+**Interfaces (UNCONDITIONALLY available in ALL modes — NOT controlled by feature flags):**
 
 | Interface | `litellm-mode` | `any-llm-mode` | `full` |
 |-----------|:--------------:|:---------------:|:------:|
 | HTTP proxy (`/v1/chat/completions`) | ✅ | ✅ | ✅ |
 | Python SDK (`pip install`) | ✅ | ✅ | ✅ |
 
-**The feature flag selects the provider integration strategy, NOT the interface. All interfaces are available in all modes.**
+**The feature flag selects the provider integration strategy, NOT the interface. All interfaces are unconditionally compiled in all modes.**
 
 ## Scope
 
@@ -282,16 +284,16 @@ response = completion(model="anthropic/claude-opus-4", messages=[...])
 ```rust
 // quota-router-core/src/lib.rs
 
-// Provider integration strategies:
-// In single-mode builds: exactly one is compiled (litellm-mode OR any-llm-mode).
-// In full builds: BOTH are compiled, selected at runtime via ProviderHandle enum.
+// Provider integration strategies (EXCLUSIVE — exactly one per single-mode build):
+// In single-mode builds: exactly one provider strategy is compiled.
+// In full builds: BOTH provider strategies are compiled, selected at runtime via ProviderHandle enum.
 #[cfg(any(feature = "litellm-mode", feature = "full"))]
 pub mod native_http;  // reqwest HTTP forwarding — LiteLLM Mode / full
 
 #[cfg(any(feature = "any-llm-mode", feature = "full"))]
 pub mod py_bridge;    // PyO3 → official Python SDKs — any-llm Mode / full
 
-// BOTH interfaces available in ALL modes (controlled by feature flags, not mutually exclusive):
+// INTERFACES — ALWAYS compiled in ALL modes (unconditional dependencies):
 #[cfg(any(feature = "litellm-mode", feature = "any-llm-mode", feature = "full"))]
 pub mod gateway;      // HTTP proxy server (hyper/axum) — ALWAYS available
 
@@ -1446,7 +1448,7 @@ crates/quota-router-core/
 │   │   └── [feature = "any-llm-mode"]
 │   ├── storage/               # stoolap storage (always)
 │   │   └── mod.rs
-│   └── gateway/               # HTTP server [feature = "litellm-mode" OR "full"]
+│   └── gateway/               # HTTP proxy server — ALWAYS compiled (hyper/axum unconditional)
 │       ├── mod.rs
 │       ├── chat.rs
 │       ├── embeddings.rs
@@ -1461,16 +1463,18 @@ crates/quota-router-core/
 ```toml
 [features]
 default = ["full"]           # Both provider integration strategies
-litellm-mode = ["hyper", "axum"]  # Native Rust HTTP forwarding (reqwest)
-any-llm-mode = ["py-o3"]    # Python SDK delegation via PyO3
-full-mode = ["full"]          # Alias for the default 'full' feature — enables both provider integration strategies simultaneously
 
-# Interface layers (always available when respective mode is enabled):
-hyper = ["dep:hyper", "dep:hyper-util", "dep:axum"]
-py-o3 = ["dep:pyo3", "dep:pyo3-ffi"]
+# Provider integration strategy ONLY — hyper/axum and py-o3 are UNCONDITIONAL
+# (always compiled regardless of which feature flag is set)
+litellm-mode = []             # Provider strategy: reqwest (native Rust HTTP)
+any-llm-mode = []             # Provider strategy: PyO3 (official Python SDKs)
+full = []                     # Both strategies simultaneously
+
+# NOTE: hyper, axum, pyo3, pyo3-ffi are unconditional dependencies.
+# They are ALWAYS compiled — NOT behind feature flags.
 ```
 
-**Enterprise features and interfaces (HTTP proxy + Python SDK) are always included.** The `litellm-mode` / `any-llm-mode` gates control which **provider integration strategy** is compiled in (native HTTP or Python SDK delegation).
+**Enterprise features and interfaces (HTTP proxy + Python SDK) are unconditionally available in ALL modes.** The `litellm-mode` / `any-llm-mode` flags control which **provider integration strategy** is compiled in (native HTTP or Python SDK delegation), NOT which interfaces exist.
 
 ## Implementation Phases
 
@@ -2111,11 +2115,11 @@ This requires both `py-o3` (for calling Python SDKs) and `hyper` (for HTTP respo
 
 | Mode | Streaming via HTTP Proxy | Streaming via Python SDK |
 |------|-------------------------|-------------------------|
-| `litellm-mode` | ✅ SSE via tokio-tower | ❌ (no Python SDK) |
-| `any-llm-mode` | ❌ (no hyper compiled) | ✅ Python generator |
+| `litellm-mode` | ✅ SSE via tokio-tower | ✅ Python generator |
+| `any-llm-mode` | ✅ SSE via PyO3 bridge | ✅ Python generator |
 | `full` | ✅ SSE (both bridges available) | ✅ Python generator |
 
-**Note:** Streaming via HTTP proxy in any-llm Mode requires the `full` build (both hyper and py-o3 compiled).
+**Note:** `hyper` and `py-o3` are **unconditional dependencies** — streaming via HTTP proxy is available in ALL modes, not just `full`.
 
 ---
 
@@ -3234,6 +3238,7 @@ In `full` builds, both modules are compiled simultaneously and selected at runti
 
 | Version | Date       | Changes |
 |---------|------------|---------|
+| 2.34    | 2026-04-30 | **FIX** 1 (Critical): Rust Feature Gates — hyper/axum/py-o3 are now UNCONDITIONAL dependencies (empty feature flags `[]`). Single-mode feature flags no longer enable/disable interfaces. **FIX** 2 (High): Per-Mode Streaming Availability table — any-llm-mode now ✅ for HTTP proxy streaming. **FIX** 3 (High): Feature-Gated Structure directory tree — gateway comment updated to "ALWAYS compiled". **FIX** 4 (High): Cargo Features block — updated to empty flags with explicit UNCONDITIONAL note. **FIX** 5 (Medium): lib.rs source comments — clarified provider strategies are exclusive per single-mode build. |
 | 2.33    | 2026-04-30 | **FIX** 1.1 (Critical): Update "What gets compiled" table (lines 1318-1324) — both interfaces available in all modes (not litellm-mode=HTTP-only, any-llm-mode=SDK-only). **FIX** 1.2: LiteLLM Compatibility Matrix (lines 1354-1355) — both cells corrected to ✅. **FIX** 2.1: A11 resolution text (lines 2299-2301) — clarify single-mode binaries have both interfaces. **FIX** 2.2: C6 resolution bullets (lines 2706-2711) — removed old stale per-flag table; replaced with corrected statement that all interfaces available in all modes. |
 | 2.32    | 2026-04-30 | **FIX** 0917-C1 (Round 5): Update embedded adversarial finding C1 with RESOLVED status — both interfaces now unconditionally available in all modes (hyper + py-o3 both compiled always). Old "litellm-mode=HTTP only, any-llm-mode=SDK only" table replaced with corrected architecture. Line 78 stale note corrected: "both interfaces available only in full builds" → "both interfaces always available in all modes". |
 | 2.31    | 2026-04-30 | **FIX** compile_error! confusion (lines 1105-1112): Added NOTE explaining compile_error! is never triggered because `full = ["hyper", "axum", "py-o3"]` does not enable litellm-mode/any-llm-mode. Mutual exclusivity already enforced at Cargo.toml level. No functional change, clarity only. |

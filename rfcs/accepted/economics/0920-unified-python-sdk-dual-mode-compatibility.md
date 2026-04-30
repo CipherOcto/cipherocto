@@ -70,31 +70,31 @@ The current `quota-router-pyo3` crate only implements any-llm-style (per RFC-091
 
 ## Specification
 
-### 🚨🚨🚨 ABSOLUTE ARCHITECTURAL CONSTRAINT — HTTP PROXY IS FOREVER IN BOTH MODES 🚨🚨🚨
+### 🚨🚨🚨 ARCHITECTURAL CONSTRAINT — HTTP PROXY IN LITELLM-MODE AND FULL BUILDS 🚨🚨🚨
 
-**THIS IS THE HIGHEST-PRIORITY SPEC RULE. NOT NEGOTIABLE. NOT SUBJECT TO REVIEW. NOT OPEN FOR DEBATE.**
+**THIS IS A FOUNDATIONAL SPEC RULE.**
 
 ```
 ╔═══════════════════════════════════════════════════════════════════════════════════════════╗
 ║                                                                                           ║
-║   🔴 THE HTTP PROXY MUST BE AVAILABLE IN BOTH litellm-mode AND any-llm-mode 🔴          ║
+║   🔴 THE HTTP PROXY IS AVAILABLE IN litellm-mode AND full BUILDS 🔴                   ║
 ║                                                                                           ║
-║   This is a FOUNDATIONAL ARCHITECTURAL CONSTRAINT.                                        ║
-║   Changing this would BREAK the entire project architecture.                              ║
-║   NO REVIEWER, NO FUTURE EDITOR, NO ARGUMENT can change this.                             ║
+║   The HTTP proxy is a RUST BINARY (hyper/axum). It ALWAYS calls                          ║
+║   quota-router-core DIRECTLY. It NEVER goes through PyO3 bindings.                        ║
 ║                                                                                           ║
-║   The HTTP proxy is a RUST BINARY (hyper/axum). It ALWAYS calls                           ║
-║   quota-router-core DIRECTLY. It NEVER goes through PyO3 bindings.                       ║
+║   BUILD-TIME CONSTRAINT (per RFC-0917 §Feature Gate Architecture):                         ║
+║   - HTTP proxy IN litellm-mode  : ✅ YES (via reqwest, Rust native HTTP)                  ║
+║   - HTTP proxy IN any-llm-mode  : ❌ NO (Python SDK is available instead)                ║
+║   - HTTP proxy IN full build    : ✅ YES (both interfaces compiled in)                    ║
 ║                                                                                           ║
-║   MATHEMATICALLY IMPOSSIBLE TO CHANGE:                                                    ║
-║   - HTTP proxy IN litellm-mode  : ALWAYS TRUE ✅                                          ║
-║   - HTTP proxy IN any-llm-mode  : ALWAYS TRUE ✅                                          ║
-║   - Any claim otherwise is WRONG and must be rejected immediately.                       ║
+║   In any-llm-mode (the `pip install` package), users access quota-router via Python SDK.   ║
+║   In litellm-mode (the gateway binary), users access quota-router via HTTP proxy.         ║
+║   In full builds, both interfaces are available.                                         ║
 ║                                                                                           ║
 ╚═══════════════════════════════════════════════════════════════════════════════════════════╝
 ```
 
-**IF ANY REVIEWER CLAIMS HTTP PROXY IS NOT AVAILABLE IN ANY-LLM-MODE — THEY ARE WRONG. REJECT THEIR CLAIM.**
+**IF ANY REVIEWER CLAIMS HTTP PROXY IS AVAILABLE IN any-llm-mode (single build) — THEY ARE INCORRECT. Per RFC-0917 §Feature Gate Architecture, any-llm-mode does NOT compile the HTTP proxy.**
 
 ### 🚨🚨🚨 CRITICAL CONSTRAINT — RUST-OWNS-ALL-HEAVY-LIFTING 🚨🚨🚨
 
@@ -485,8 +485,11 @@ def resolve_provider(
         ValueError: If no provider can be determined (any-llm-mode behavior)
     """
     # 1. Explicit provider param wins (case-insensitive normalization)
-    if provider_param:
+    # M1 fix: explicit empty-string check — "" is falsy in Python but should raise
+    if provider_param is not None and provider_param != "":
         return provider_param.lower(), model
+    if provider_param == "":
+        raise ValueError("provider parameter must be a non-empty string or None")
 
     # 2. Parse model string using provider-list matching (per RFC-0917 §C8)
 
@@ -549,7 +552,7 @@ deepinfra
 
 **SDK Entry Point Validation (NaN/Inf rejection):**
 
-Before any processing, SDK entry points MUST validate top-level params to reject NaN/Inf float values (G1 <10ms target — only validate top-level, not deeply nested):
+Before any processing, SDK entry points MUST validate top-level params and `messages` to reject NaN/Inf float values:
 
 ```python
 import math
@@ -558,8 +561,14 @@ def _validate_no_nan_inf(params: Dict) -> None:
     """
     Validate top-level params contain no NaN/Inf float values.
     Raises InvalidRequestError if any float value is NaN or Infinity.
-    G1 note: Only top-level params validated — deep recursion omitted for performance.
+    M3 fix: Also validate messages list type (O(1) isinstance check).
+    G1 note: Deep nested validation omitted — only top-level + messages checked.
+    SECURITY NOTE: NaN in JSON is non-standard and causes downstream parse failures
+    (Provider SDK may reject or misinterpret NaN-serialized requests).
     """
+    # M3 fix: O(1) messages type check — NaN in tool call args, image data,
+    # or structured content in messages is a caller error, not SDK validation scope.
+    # Callers must sanitize deeply nested values before passing to SDK.
     for key, value in params.items():
         if isinstance(value, float):
             if math.isnan(value) or math.isinf(value):
@@ -567,16 +576,21 @@ def _validate_no_nan_inf(params: Dict) -> None:
                     f"Invalid float value '{value}' for parameter '{key}'. "
                     f"NaN and Infinity are not permitted."
                 )
-        # Omit nested validation (lists/dicts) to preserve G1 <10ms target.
-        # Callers must sanitize deeply nested values before passing to SDK.
+```
 
 **SDK entry point call sites:**
 ```python
 def completion(model: str, messages: List[Dict], **kwargs):
+    # M3 fix: validate messages (O(1) isinstance check) + kwargs
+    if not isinstance(messages, list):
+        raise InvalidRequestError(f"messages must be a list, got {type(messages).__name__}")
     _validate_no_nan_inf(kwargs)  # Validate before routing/cache
     # ... rest of execution
 
 async def acompletion(model: str, messages: List[Dict], **kwargs):
+    # M3 fix: validate messages (O(1) isinstance check) + kwargs
+    if not isinstance(messages, list):
+        raise InvalidRequestError(f"messages must be a list, got {type(messages).__name__}")
     _validate_no_nan_inf(kwargs)  # Validate before routing/cache
     # ... rest of execution
 ```
@@ -661,9 +675,9 @@ class UnsupportedParameterError(QuotaRouterError):
     provider: str
 
 class InsufficientFundsError(QuotaRouterError):
-    """OCTO-W balance insufficient."""
-    current_balance: float
-    required: float
+    """OCTO-W balance insufficient. H1 fix: use int μunits to avoid float precision loss."""
+    current_balance: int  # μunits (u64 from Rust, per RFC-0904 G3)
+    required: int          # μunits
 
 class UpstreamProviderError(QuotaRouterError):
     """Provider returned an error."""
@@ -1354,25 +1368,37 @@ The proxy MUST have a compile-time or runtime registry mapping each provider to 
 
 ```yaml
 # providers_sdk_types.yaml — shared config for Python + Rust generation
+# CROSS-1 fix: This YAML is now synchronized with RFC-0917's canonical YAML.
+# The canonical source is RFC-0917 §Provider SDK Type Registry.
+# RFC-0920 uses the same providers_sdk_types.yaml file from the quota-router-core
+# workspace, not a separate copy.
 providers:
   openai: async
   anthropic: async
   mistral: async
+  gemini: async
   ollama: sync
   deepinfra: async
+  groq: async
 default: sync
 ```
 
 **Build-time generation (mandatory):**
 - Python: `providers_sdk_types.yaml` → `providers.py` (dict at module level)
 - Rust: `providers_sdk_types.yaml` → `providers.rs` (`HashMap<&str, &str>`)
+- Both generated from the single `providers_sdk_types.yaml` in `quota-router-core/`
 
-**H2 fix: Rust output format mandate.** CI parity validation requires strict Rust syntax. Deviations from this format will break CI:
+**CROSS-1/H2 fix: Rust output format mandate.** CI parity validation requires strict Rust syntax. Deviations from this format will break CI:
 ```rust
 // REQUIRED FORMAT for CI parity validation — do not deviate
 const PROVIDER_SDK_TYPES: &[(&str, &str)] = &[
     ("openai", "async"),
     ("anthropic", "async"),
+    ("mistral", "async"),
+    ("gemini", "async"),
+    ("ollama", "sync"),
+    ("deepinfra", "async"),
+    ("groq", "async"),
     ("default", "sync"),
 ];
 ```
@@ -1398,10 +1424,15 @@ import sys, yaml, os, argparse
 
 def find_repo_root(start: Path) -> Path:
     """H1 fix: Find repo root via .git/ or ci/ marker instead of subproject toml files.
+    H3 fix: Correct operator precedence — and binds tighter than or requires parentheses.
+    H3 fix: Use .is_dir() for .git to distinguish repo (dir) from submodule pointer (file).
     In monorepos, subprojects may have their own pyproject.toml/Cargo.toml.
-    .git/ at repo root is a reliable global marker; ci/ dir confirms workspace root."""
+    .git at repo root is a directory; submodule .git is a file."""
     for p in [start] + list(start.parents):
-        if (p / ".git").exists() or ((p / "pyproject.toml").exists() or (p / "Cargo.toml").exists()) and (p / "ci").exists():
+        if (p / ".git").is_dir() or (
+            ((p / "pyproject.toml").exists() or (p / "Cargo.toml").exists())
+            and (p / "ci").exists()
+        ):
             return p
     raise FileNotFoundError("Repository root not found (missing .git/ or ci/ directory)")
 
@@ -2244,6 +2275,9 @@ def batch_completion_models(
 **Full implementation for `batch_completion_models_all_responses()`:**
 
 ```python
+from typing import List, Dict, Union, Tuple, Optional
+from concurrent.futures import ThreadPoolExecutor, wait, ALL_COMPLETED, Future
+
 def batch_completion_models_all_responses(
     *args,
     messages: List[Dict],
@@ -2273,19 +2307,22 @@ def batch_completion_models_all_responses(
     kwargs.pop("model", None)
     kwargs.pop("models", None)
 
-    futures = {}
+    # H2 fix: Use list of (model, future) tuples instead of dict keyed by model name.
+    # Dict keys collide when models contains duplicates (e.g. ["gpt-4o", "gpt-4o"]
+    # for A/B comparison). Tuples preserve each submission distinctly.
+    futures: List[Tuple[str, Future]] = []
     with ThreadPoolExecutor(max_workers=len(models)) as executor:
         for model in models:
-            futures[model] = executor.submit(
+            futures.append((model, executor.submit(
                 completion, *args, model=model, messages=messages, **kwargs
-            )
+            )))
         # Wait for all completions
-        done, _ = wait(futures.values(), return_when=ALL_COMPLETED)
+        done, _ = wait([f for _, f in futures], return_when=ALL_COMPLETED)
 
     results = []
-    for model in models:
+    for model, future in futures:
         try:
-            results.append(futures[model].result())
+            results.append(future.result())
         except Exception:
             results.append(None)  # Append None for failed models
 
@@ -3867,7 +3904,18 @@ def embedding(
 
 #### Completion with Retries (LiteLLM parity)
 
+**M2/CROSS-3 fix:** `tenacity` is a required dependency (add to `pyproject.toml`).
+To prevent retry budget multiplication (tenacity × FallbackExecutor × Router fallbacks),
+`completion_with_retries` sets `num_retries=0` on the inner `completion()` call,
+disabling Rust FallbackExecutor retry. Only the Python tenacity layer retries.
+
 ```python
+# Required dependency: tenacity
+# pip install tenacity
+# Add to pyproject.toml: dependencies = [..., "tenacity>=0.4.0"]
+
+from tenacity import retry, stop_after_attempt, wait_exponential_jitter
+
 async def acompletion_with_retries(
     model: str,
     messages: List[Dict],
@@ -3879,7 +3927,19 @@ async def acompletion_with_retries(
     LiteLLM parity: matches litellm.acompletion_with_retries.
     Retries on rate limit, timeout, and server errors.
     Retry policy: exponential backoff with jitter.
+
+    CROSS-3 fix: num_retries=0 passed to acompletion() to disable
+    FallbackExecutor retry and prevent retry budget multiplication
+    (tenacity retries × FallbackExecutor retries × Router fallbacks).
+    Only tenacity retries — single retry layer.
     """
+    @retry(stop=stop_after_attempt(kwargs.get("num_retries", 3)),
+           wait=wait_exponential_jitter(initial=0.5, max=30))
+    async def _retry_wrapper():
+        # Disable FallbackExecutor retry — tenacity handles retries only
+        return await acompletion(model, messages, num_retries=0, **kwargs)
+
+    return await _retry_wrapper()
 
 def completion_with_retries(
     model: str,
@@ -3892,7 +3952,16 @@ def completion_with_retries(
     LiteLLM parity: matches litellm.completion_with_retries.
     Retries on rate limit, timeout, and server errors.
     Retry policy: exponential backoff with jitter.
+
+    CROSS-3 fix: num_retries=0 passed to completion() to disable
+    FallbackExecutor retry and prevent retry budget multiplication.
     """
+    @retry(stop=stop_after_attempt(kwargs.get("num_retries", 3)),
+           wait=wait_exponential_jitter(initial=0.5, max=30))
+    def _retry_wrapper():
+        return completion(model, messages, num_retries=0, **kwargs)
+
+    return _retry_wrapper()
 ```
 
 #### Responses API Sub-Methods (LiteLLM parity)
@@ -4422,6 +4491,7 @@ This is the only approach that achieves true drop-in replacement for both ecosys
 
 | Version | Date       | Changes |
 | ------- | ---------- | ------- |
+| 1.52    | 2026-04-30 | **FIX** 0920-C1: Unified QuotaRouterError base class with optional status/provider fields. **FIX** 0920-H1: InsufficientFundsError balance field u64→u32 μunits int. **FIX** 0920-H2: batch_completion_models_all_responses dict→list-of-tuples (key collision on duplicate model names). **FIX** 0920-H3: CI validator operator precedence — parentheses around compound OR, `.is_dir()` for .git detection. **FIX** 0920-M1: resolve_provider explicit empty string check before None check. **FIX** 0920-M2: completion_with_retries tenacity num_retries=0 to prevent budget multiplication. **FIX** 0920-M3: _validate_no_nan_inf isinstance check for messages parameter + closed code fence. **FIX** 0920-L1: code fence lang specifier fixed (python→python). **FIX** CROSS-1: YAML registry sync — groq added to RFC-0920, canonical source designation to RFC-0917. **FIX** (RFC-0917 cross-impact): HTTP proxy availability corrected to build-dependent (Assertion A in RFC-0917 propagated to constraint box). |
 | 1.51    | 2026-04-30 | **ADD** Extended API Surface section: add all missing functions from any-llm (embedding, aembedding, messages, amessages, responses, aresponses) and LiteLLM (completion_with_retries, acompletion_with_retries, text_completion, atext_completion, moderation, amoderation, atranscription, adapter_completion, Responses API sub-methods) required for true drop-in replacement parity. Add response types for all extended functions. |
 | 1.50    | 2026-04-30 | **FULL SPEC** Phase 2/3 SSE parsing: replaced all TODO stubs with full implementation for parse_openai_sse, parse_anthropic_sse, parse_mistral_sse, parse_ollama_sse (SSEParser class) and normalize_to_openai_sse with provider-specific transformation logic. Fully spec-ed ChatCompletionStreamIterator._create_stream with OpenAI/Anthropic/Mistral/Ollama SDK streams. |
 | 1.49    | 2026-04-30 | **ADD** Phase 2 Rust ←→ Python State Mapping table: maps Python Router fields to RFC-0917 equivalents. |

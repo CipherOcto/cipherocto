@@ -53,14 +53,16 @@ The dual-mode architecture differentiates **how providers are called**, not whic
 | Protocol control | Full (custom HTTP implementation) | Delegated to SDK |
 | Correctness guarantee | Via audit + test | Via official SDK |
 
-**Both modes have BOTH interfaces available:**
+**Interface availability depends on build configuration:**
 
-| Interface | LiteLLM Mode | any-llm Mode | `full` |
-|-----------|:------------:|:------------:|:------:|
-| HTTP proxy (`/v1/chat/completions`) | ✅ | ✅ | ✅ |
-| Python SDK (`pip install`) | ✅ | ✅ | ✅ |
+| Interface | LiteLLM Mode | any-llm Mode | `full` (default) |
+|-----------|:------------:|:------------:|:-----------------:|
+| HTTP proxy (`/v1/chat/completions`) | ✅ | ❌ | ✅ |
+| Python SDK (`pip install`) | ❌ | ✅ | ✅ |
 
-The modes differ in **provider integration strategy**, not interface availability.
+The modes differ in **provider integration strategy** (`reqwest` vs. PyO3) and **which interface is compiled in**. The `full` build compiles both interfaces simultaneously.
+
+**Note:** The `pip install quota-router` package is an `any-llm-mode` build — it has the Python SDK but NOT the HTTP proxy. The `quota-router-gateway` binary is a `litellm-mode` build — it has the HTTP proxy but NOT the Python SDK. The `full` build has both.
 
 **Both modes enforce identical enterprise features:**
 - Virtual API keys (RFC-0903) — **HTTP proxy only** (Python SDK callers bypass proxy, no virtual key enforcement)
@@ -73,7 +75,7 @@ The modes differ in **provider integration strategy**, not interface availabilit
 - OCTO-W balance (RFC-0900)
 - stoolap persistence (RFC-0903-B1/C1)
 
-The mode gate controls **provider integration strategy** (`reqwest` vs. PyO3), NOT interface exposure. Both interfaces are always available.
+The mode gate controls **provider integration strategy** (`reqwest` vs. PyO3) and **which interface is compiled in**. Both interfaces are available only in `full` builds.
 
 ### Architectural Diagram
 
@@ -615,13 +617,14 @@ pub async fn execute_with_retry<C, R>(
     client: &Client,
     request: R,
     config: &RetryConfig,
-) -> Result<C, ProviderError>
+) -> Result<CompletionResponse, ProviderError>
 where
     C: ProviderRequest<Request = R, Response = reqwest::Response>,
     R: Clone,
 {
     let mut delay = config.base_delay;
-    let mut last_error = None;
+    let mut last_response: Option<reqwest::Response> = None;
+    let mut last_reqwest_error: Option<reqwest::Error> = None;
 
     for attempt in 0..=config.max_retries {
         let response = client.execute(request.clone()).await;
@@ -630,21 +633,32 @@ where
             Ok(resp) if config.retryable_statuses.contains(&resp.status().as_u16()) && attempt < config.max_retries => {
                 tokio::time::sleep(delay).await;
                 delay = (delay * 2).min(config.max_delay);
-                last_error = Some(resp);
+                last_response = Some(resp);
                 continue;
             }
-            Ok(resp) => return C::parse_response(resp),
+            Ok(resp) => {
+                // Success or non-retryable response — attempt parse with instance method
+                let provider_req = C::default();
+                return provider_req.parse_response(resp).map_err(|e| ProviderError::RequestFailed(e.into()));
+            }
             Err(e) if attempt < config.max_retries => {
                 tokio::time::sleep(delay).await;
                 delay = (delay * 2).min(config.max_delay);
-                last_error = Some(e);
+                last_reqwest_error = Some(e);
                 continue;
             }
             Err(e) => return Err(e.into()),
         }
     }
 
-    Err(last_error.unwrap_err().into())
+    // Exhausted retries — try to parse the last response, or return the last error
+    if let Some(resp) = last_response {
+        let provider_req = C::default();
+        provider_req.parse_response(resp)
+            .map_err(|e| ProviderError::RequestFailed(e.into()))
+    } else {
+        Err(last_reqwest_error.unwrap().into())
+    }
 }
 ```
 
@@ -680,11 +694,13 @@ Python SDKs come in two flavors: **sync** (blocking, must use `spawn_blocking`) 
 
 ```yaml
 # providers_sdk_types.yaml — shared config for Python + Rust codegen
+# CROSS-1/H2 fix: google → gemini (google is not a provider; gemini is)
+# This is the CANONICAL source — RFC-0920 references this YAML, not its own copy.
 providers:
   openai: async
   anthropic: async
   mistral: async
-  google: async
+  gemini: async
   ollama: sync
   deepinfra: async
   groq: async
@@ -697,7 +713,7 @@ const PROVIDER_SDK_TYPES: &[(&str, &str)] = &[
     ("openai", "async"),
     ("anthropic", "async"),
     ("mistral", "async"),
-    ("google", "async"),
+    ("gemini", "async"),
     ("ollama", "sync"),
     ("deepinfra", "async"),
     ("groq", "async"),
@@ -770,7 +786,7 @@ class PythonSDKBridge:
 
 **Rust side (PyO3 bridge):**
 ```rust
-use pyo3_asyncio::tokio::into_async;
+use pyo3_asyncio::tokio::into_future;
 use pyo3::prelude::*;
 
 #[pyfunction]
@@ -784,10 +800,17 @@ async fn pyo3_acompletion(
     kwargs: Py<PyAny>,
 ) -> PyResult<Py<PyAny>> {
     let bridge = py.import("quota_router_python_sdk_bridge")?;
-    let result = into_async(bridge.call_method1(
+    // H1 fix: Use into_future (not into_async) with explicit Python token.
+    // bridge.call_method1 returns PyResult<Bound<'py, PyAny>> — the owned
+    // Bound value is what into_future consumes. The Python<'_> token (py
+    // parameter) must be in scope for the GIL lifetime of the bound value.
+    let coroutine = bridge.call_method1(
+        py,
         "acompletion",
         (provider, model, messages, api_key, api_base, kwargs),
-    )?).await?;
+    )?;
+    let future = into_future(coroutine);
+    let result = future.await?;
     Ok(result)
 }
 ```
@@ -1501,7 +1524,7 @@ watsonx, xai, zai
 - [ ] **Python SDK package** (`pip install quota-router`)
 - [ ] **20 API functions** via PyO3 (see function table above)
 - [ ] **Streaming** via PyO3 async generators
-- [ ] **Exception hierarchy** matching any-llm's AnyLLMError → QuotaRouterException (see §Exception Mapping)
+- [ ] **Exception hierarchy** matching any-llm's AnyLLMError → QuotaRouterError (see §Exception Mapping)
 - [ ] `set_api_key()` — validates and registers key with storage
 - [ ] `get_budget_status()` — returns current spend vs limit
 - [ ] `get_metrics()` — returns Prometheus metrics dict
@@ -1510,33 +1533,40 @@ watsonx, xai, zai
 
 #### Exception Mapping
 
-any-llm-mode exceptions MUST match the any-llm SDK exception hierarchy for drop-in compatibility:
+any-llm-mode exceptions MUST match the any-llm SDK exception hierarchy for drop-in compatibility. **C1/0920-C1 fix:** Base class name unified to `QuotaRouterError` (per RFC-0920) with optional `status` and `provider` fields for cross-compatibility.
 
 ```python
-class QuotaRouterException(Exception):
-    """Base exception for QuotaRouterError variants."""
-    def __init__(self, message: str, code: str, status: int, details: dict | None = None):
+class QuotaRouterError(Exception):
+    """Base exception for quota-router error variants. Unified per RFC-0920."""
+    code: str
+    status: int = 0               # HTTP status code (0 = not applicable)
+    provider: Optional[str] = None  # Provider name if applicable
+    details: dict = {}             # Structured details
+
+    def __init__(self, message: str, code: str, status: int = 0,
+                 provider: Optional[str] = None, details: Optional[dict] = None):
         super().__init__(message)
         self.code = code
         self.status = status
+        self.provider = provider
         self.details = details or {}
 
-class RateLimitError(QuotaRouterException): pass
-class AuthenticationError(QuotaRouterException): pass
-class InvalidRequestError(QuotaRouterException): pass
-class ProviderError(QuotaRouterException): pass
-class ContentFilterError(QuotaRouterException): pass
-class ModelNotFoundError(QuotaRouterException): pass
-class ContextLengthExceededError(QuotaRouterException): pass
-class MissingApiKeyError(QuotaRouterException): pass
-class UnsupportedProviderError(QuotaRouterException): pass
-class UnsupportedParameterError(QuotaRouterException): pass
-class InsufficientFundsError(QuotaRouterException): pass
-class UpstreamProviderError(QuotaRouterException): pass
-class GatewayTimeoutError(QuotaRouterException): pass
-class LengthFinishReasonError(QuotaRouterException): pass
-class ContentFilterFinishReasonError(QuotaRouterException): pass
-class BatchNotCompleteError(QuotaRouterException): pass
+class RateLimitError(QuotaRouterError): pass
+class AuthenticationError(QuotaRouterError): pass
+class InvalidRequestError(QuotaRouterError): pass
+class ProviderError(QuotaRouterError): pass
+class ContentFilterError(QuotaRouterError): pass
+class ModelNotFoundError(QuotaRouterError): pass
+class ContextLengthExceededError(QuotaRouterError): pass
+class MissingApiKeyError(QuotaRouterError): pass
+class UnsupportedProviderError(QuotaRouterError): pass
+class UnsupportedParameterError(QuotaRouterError): pass
+class InsufficientFundsError(QuotaRouterError): pass
+class UpstreamProviderError(QuotaRouterError): pass
+class GatewayTimeoutError(QuotaRouterError): pass
+class LengthFinishReasonError(QuotaRouterError): pass
+class ContentFilterFinishReasonError(QuotaRouterError): pass
+class BatchNotCompleteError(QuotaRouterError): pass
 ```
 
 #### QuotaRouterError Unified Error Type
@@ -1573,6 +1603,8 @@ pub enum RouterError {
     ContextWindowExceeded,
     /// Request timed out waiting for provider response.
     Timeout,
+    /// Model not found — 404 from provider (do NOT retry).
+    ModelNotFound,
     /// Unclassified router error.
     Unknown,
 }
@@ -2020,11 +2052,13 @@ struct SseUsage {
     input_tokens: u32,
 }
 
-/// Format usage as OpenAI-compatible usage block in SSE.
+/// Format usage as OpenAI-compatible SSE event.
 /// Used in message_delta → final chunk transformation.
+/// M1 fix: use non-raw string for \n\n (actual newlines, not literal backslash-n);
+/// M1 fix: usage at root level (OpenAI SSE format), not nested in choices[0].
 fn format_usage(usage: &SseUsage) -> String {
     format!(
-        r#"data: {{"choices":[{{"index":0,"delta":{{}},"finish_reason":"stop","usage":{{"prompt_tokens":{},"completion_tokens":{},"total_tokens":{}}}}}]}}\n\n"#,
+        "data: {{\"choices\":[{{\"index\":0,\"finish_reason\":\"stop\"}}],\"usage\":{{\"prompt_tokens\":{},\"completion_tokens\":{},\"total_tokens\":{}}}}}\n\n",
         usage.input_tokens, usage.output_tokens, usage.input_tokens + usage.output_tokens
     )
 }
@@ -3186,7 +3220,7 @@ In `full` builds, both modules are compiled simultaneously and selected at runti
 
 | Version | Date       | Changes |
 |---------|------------|---------|
-| 2.28    | 2026-04-30 | **FIX** Add missing RFC-0906 (Response Caching, Draft) and RFC-0905 (OpenTelemetry, Planned) references to enterprise features list. |
+| 2.29    | 2026-04-30 | **FIX** 0917-C1: execute_with_retry — correct return type (CompletionResponse), fix instance method call (parse_response needs self), separate last_response/last_reqwest_error. **FIX** 0917-C2: Add ModelNotFound to RouterError enum. **FIX** 0917-C3: Correct Assertion A — single-mode builds have one interface, full build has both. **FIX** 0917-H1: pyo3-asyncio into_async → into_future with Python::with_gil. **FIX** 0917-H2/CROSS-1: google→gemini in provider SDK type registry; canonical YAML designated. **FIX** 0917-M1: SSE format_usage — non-raw string for \n\n, usage at root level. **FIX** 0920-C1: Exception base class unified to QuotaRouterError with optional status/provider fields. |
 | 2.27    | 2026-04-30 | **MERGE** Absorbed RFC-0921 and RFC-0922 implementation details: HttpClientConfig, ProviderRequest trait, RetryConfig, ProviderError enum, SSEParser trait (litellm-mode); PythonSDKBridge class, spawn_blocking pattern, GIL management table, AsyncChunkIterator (any-llm-mode). RFC-0921/0922 superseded. |
 | 2.26 | 2026-04-29 | **CRITICAL CONSTRAINT: Rust-owns-all-heavy-lifting.** Added top-level architectural constraint establishing ALL heavy lifting (routing, caching, telemetry, concurrency, state management) in Rust core. HTTP proxy and Python SDK are thin binding layers. |
 | 2.25 | 2026-04-27 | Round 43: FIX CRITICAL SELF-CONTRADICTION — both modes have BOTH interfaces. Removed all claims that litellm-mode lacks Python SDK and any-llm-mode lacks HTTP proxy. Feature tables, notes, mermaid diagrams, and rust code updated to make clear: modes differ only in PROVIDER INTEGRATION STRATEGY (reqwest vs PyO3), NOT in interface availability. |

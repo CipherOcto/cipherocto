@@ -2,7 +2,7 @@
 
 ## Status
 
-Accepted (v2.28 — 2026-04-30)
+Accepted (v2.33 — 2026-04-30)
 
 **ARCHITECTURAL CONSTRAINT: Rust-owns-all-heavy-lifting. ALL heavy lifting (routing, caching, telemetry, concurrency, state management, batch execution) MUST be in Rust core. HTTP proxy and Python SDK are thin binding layers only. Each language binding (Python, JS, Go, etc.) adds ONLY marshaling overhead.**
 
@@ -1305,13 +1305,13 @@ impl KeyStorage {
 Modes are determined at **compile time** via feature flags. Enterprise features are always included (built into the shared core):
 
 ```bash
-# Build for Python SDK only (any-llm mode)
+# Build with any-llm-mode provider strategy (PyO3 → Python SDKs)
 cargo build --features "any-llm-mode" --release
 
-# Build for HTTP proxy only (LiteLLM mode)
+# Build with litellm-mode provider strategy (reqwest → direct HTTP)
 cargo build --features "litellm-mode" --release
 
-# Build with both interfaces (default)
+# Build with both provider strategies (full = reqwest + PyO3 simultaneously)
 cargo build --features "full" --release  # any-llm-mode + litellm-mode
 ```
 
@@ -1319,9 +1319,11 @@ cargo build --features "full" --release  # any-llm-mode + litellm-mode
 
 | Build | HTTP Proxy (`:8000`) | Python SDK (`pip install`) | Enterprise Features |
 |-------|---------------------|---------------------------|---------------------|
-| `any-llm-mode` | ❌ | ✅ | ✅ (always) |
-| `litellm-mode` | ✅ | ❌ | ✅ (always) |
+| `any-llm-mode` | ✅ | ✅ | ✅ (always) |
+| `litellm-mode` | ✅ | ✅ | ✅ (always) |
 | `full` (default) | ✅ | ✅ | ✅ (always) |
+
+**Note:** Mode selects **provider integration strategy** only. `any-llm-mode` uses PyO3 → Python SDKs for provider calls; `litellm-mode` uses reqwest for direct HTTP. Both interfaces are **always** compiled in all modes — they are unconditional dependencies.
 
 **Runtime configuration:**
 
@@ -1344,13 +1346,13 @@ For `full` build (both interfaces):
 
 ### LiteLLM Compatibility Matrix
 
-Based on `docs/research/any-llm-vs-litellm-comparison.md`. The dual-mode distinction is **provider integration strategy** (native HTTP vs SDK delegation) AND **which interface is compiled** (HTTP vs Python SDK).
+Based on `docs/research/any-llm-vs-litellm-comparison.md`. The dual-mode distinction is **provider integration strategy** only (native HTTP via reqwest vs SDK delegation via PyO3). Both interfaces (HTTP proxy and Python SDK) are **always** available in all modes.
 
 | Feature | LiteLLM | this RFC (LiteLLM Mode) | any-llm | this RFC (any-llm Mode) |
 |---------|---------|------------------------|---------|------------------------|
 | Provider integration | Custom HTTP (Python) | Native Rust HTTP (`reqwest`) | Official SDKs | Python SDK delegation (PyO3) |
-| OpenAI-compatible API (HTTP) | Yes | ✅ | No | ❌ (requires `full` build) |
-| Python SDK (`pip install`) | Yes | ❌ (requires `full` build) | Yes | ✅ |
+| OpenAI-compatible API (HTTP) | Yes | ✅ | No | ✅ |
+| Python SDK (`pip install`) | Yes | ✅ | Yes | ✅ |
 | Virtual API keys | Yes | ✅ (RFC-0903) | Basic | ❌ (SDK callers bypass proxy) |
 | Budget enforcement | Yes | ✅ (RFC-0904) | Yes | ✅ (RFC-0904) |
 | Load balancing | Yes (7 strategies) | ✅ (RFC-0902) | No | ✅ (RFC-0902) |
@@ -1361,7 +1363,7 @@ Based on `docs/research/any-llm-vs-litellm-comparison.md`. The dual-mode distinc
 | Prometheus metrics | Yes | ✅ | Yes | ✅ |
 | Streaming support | Yes | ✅ | Yes | ✅ |
 
-**Interface parity:** Enterprise features are identical across both modes. The interfaces differ: LiteLLM Mode exposes HTTP proxy; any-llm Mode exposes Python SDK. The `full` build exposes both interfaces. The only difference in provider integration is how providers are called internally.
+**Interface parity:** Enterprise features are identical across both modes. Both interfaces (HTTP proxy and Python SDK) are available in all modes. The only difference is provider integration strategy: LiteLLM Mode uses reqwest for direct HTTP; any-llm Mode uses PyO3 to delegate to official Python SDKs.
 
 ### Exception Parity
 
@@ -2294,9 +2296,9 @@ There's no auth enforcement — the SDK accepts any string as an API key.
 **Impact:** Users cannot choose LiteLLM Mode vs any-llm Mode at install time — the feature is baked into the wheel.
 
 **Resolution (FIXED):** Documented distribution model clearly:
-- `quota-router` (PyPI): Python SDK with `any-llm-mode` only
-- `quota-router-gateway` (crates.io): HTTP proxy with `litellm-mode` only
-- `full` (dev build): Both interfaces
+- `quota-router` (PyPI): `any-llm-mode` binary — both interfaces available (both HTTP proxy and Python SDK), uses PyO3 provider strategy
+- `quota-router-gateway` (crates.io): `litellm-mode` binary — both interfaces available (both HTTP proxy and Python SDK), uses reqwest provider strategy
+- `full` (dev build): Both interfaces, both strategies simultaneously
 
 ---
 
@@ -2701,12 +2703,12 @@ Building with `--features any-llm-mode` alone does NOT compile `hyper`/`axum`. T
 
 **Impact:** Streaming via HTTP proxy in any-llm mode is only possible with `full` builds. The table claiming HTTP proxy is available in `any-llm-mode` alone is false.
 
-**Resolution (FIXED):** The feature gate tables have been corrected to accurately reflect per-flag capabilities:
-- `litellm-mode`: HTTP proxy ✅, Python SDK ❌
-- `any-llm-mode`: HTTP proxy ❌, Python SDK ✅
+**Resolution (RESOLVED in v2.31):** Both `hyper` and `py-o3` are now unconditional dependencies — always compiled regardless of mode. The feature gate tables have been corrected to reflect that all interfaces are available in all modes:
+- `litellm-mode`: HTTP proxy ✅, Python SDK ✅
+- `any-llm-mode`: HTTP proxy ✅, Python SDK ✅
 - `full`: HTTP proxy ✅, Python SDK ✅
 
-Streaming via HTTP proxy in any-llm Mode is only available with `full` builds. The any-llm Mode's streaming is via the Python SDK interface only (Python generator yielding chunks). The HTTP proxy streaming scenario for any-llm Mode is not supported in single-mode builds — requires `full`.
+Mode selects **provider integration strategy** only (reqwest vs PyO3), NOT which interfaces exist. Streaming via HTTP proxy in any-llm Mode works in all builds.
 
 ---
 
@@ -3232,6 +3234,7 @@ In `full` builds, both modules are compiled simultaneously and selected at runti
 
 | Version | Date       | Changes |
 |---------|------------|---------|
+| 2.33    | 2026-04-30 | **FIX** 1.1 (Critical): Update "What gets compiled" table (lines 1318-1324) — both interfaces available in all modes (not litellm-mode=HTTP-only, any-llm-mode=SDK-only). **FIX** 1.2: LiteLLM Compatibility Matrix (lines 1354-1355) — both cells corrected to ✅. **FIX** 2.1: A11 resolution text (lines 2299-2301) — clarify single-mode binaries have both interfaces. **FIX** 2.2: C6 resolution bullets (lines 2706-2711) — removed old stale per-flag table; replaced with corrected statement that all interfaces available in all modes. |
 | 2.32    | 2026-04-30 | **FIX** 0917-C1 (Round 5): Update embedded adversarial finding C1 with RESOLVED status — both interfaces now unconditionally available in all modes (hyper + py-o3 both compiled always). Old "litellm-mode=HTTP only, any-llm-mode=SDK only" table replaced with corrected architecture. Line 78 stale note corrected: "both interfaces available only in full builds" → "both interfaces always available in all modes". |
 | 2.31    | 2026-04-30 | **FIX** compile_error! confusion (lines 1105-1112): Added NOTE explaining compile_error! is never triggered because `full = ["hyper", "axum", "py-o3"]` does not enable litellm-mode/any-llm-mode. Mutual exclusivity already enforced at Cargo.toml level. No functional change, clarity only. |
 | 2.30    | 2026-04-30 | **FIX** 0917-C4: Update B5 model parsing rules to provider-list matching (per RFC-0920 §C8). Rule 3 "reject if both" replaced — `ollama/llama3.1:8b` now correctly parses via slash match. **FIX** 0917-C3: Sync deepinfra provider across RFCs — added to Phase 3 provider list. **FIX** 0920-C1/H1 (cross-impact): Corrected HTTP proxy constraint box in RFC-0920 — HTTP proxy IS available in any-llm-mode (via PyO3 bridge), not ❌ NO. Both RFCs now agree: HTTP proxy in all modes, Python SDK in all modes. |

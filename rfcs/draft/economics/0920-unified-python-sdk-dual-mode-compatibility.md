@@ -2,7 +2,7 @@
 
 ## Status
 
-Draft (v1.44 — 2026-04-29)
+Draft (v1.45 — 2026-04-29)
 
 **ARCHITECTURAL CONSTRAINT: HTTP proxy is FOREVER in BOTH litellm-mode and any-llm-mode. See section below.**
 
@@ -1214,6 +1214,12 @@ to fall back to default provider resolution).
     **kwargs,
 ) -> Union[CompletionResponse, Iterator[ChatCompletionChunk]]:
     """
+    Route and dispatch completion requests.
+
+    ⚠️ OPERATIONAL WARNING: cache_bypass=True disables exact-match deduplication
+    and top-level validation. Increases provider request volume and fallback
+    trigger rates during instability. Monitor quota and fallback metrics closely.
+
     When stream=True in any-llm-mode, returns an iterator of chunks.
 
     **Phase 1 return type note:** In Phase 1, `stream=True` returns **raw provider-native
@@ -1339,18 +1345,21 @@ from pathlib import Path
 import sys, yaml, os, argparse
 
 def find_repo_root(start: Path) -> Path:
-    """H1 fix: Find repo root via marker-file search instead of fragile parent traversal."""
+    """H1 fix: Find repo root via .git/ or ci/ marker instead of subproject toml files.
+    In monorepos, subprojects may have their own pyproject.toml/Cargo.toml.
+    .git/ at repo root is a reliable global marker; ci/ dir confirms workspace root."""
     for p in [start] + list(start.parents):
-        if (p / "pyproject.toml").exists() or (p / "Cargo.toml").exists():
+        if (p / ".git").exists() or ((p / "pyproject.toml").exists() or (p / "Cargo.toml").exists()) and (p / "ci").exists():
             return p
-    raise FileNotFoundError("Repository root not found (missing pyproject.toml or Cargo.toml)")
+    raise FileNotFoundError("Repository root not found (missing .git/ or ci/ directory)")
 
 def main():
     # H1 fix: Use CLI arg or marker-file search instead of hardcoded parent.parent
+    # M2 fix: Use absolute() instead of resolve() for container/symlink safety
     parser = argparse.ArgumentParser()
     parser.add_argument("--base-dir", type=Path, default=None)
     args = parser.parse_args()
-    BASE_DIR = args.base_dir if args.base_dir else find_repo_root(Path(__file__).resolve())
+    BASE_DIR = args.base_dir if args.base_dir else find_repo_root(Path(__file__).absolute())
 
     REQUIRED_FILES = ["providers_sdk_types.yaml", "providers.py", "providers.rs"]
     for fname in REQUIRED_FILES:
@@ -1385,11 +1394,22 @@ def main():
         sys.exit(1)
 
     # C2 fix: Whitespace-agnostic regex with optional trailing comma for rustfmt compatibility
+    # L1 fix: Scope extraction ONLY to PROVIDER_SDK_TYPES constant block to prevent
+    # test/doc false positives. Unscoped regex would match tuples in unit tests, comments.
     rust_registry = {}
     with open(BASE_DIR / "providers.rs") as f:
         content = f.read()
     import re
-    for match in re.finditer(r'\(\s*"([\w.-]+)"\s*,\s*"([\w.-]+)"\s*,?\s*\)', content):
+    const_match = re.search(
+        r'const\s+PROVIDER_SDK_TYPES\s*:\s*&\[.*?\]\s*=\s*&\[(.*?)\];',
+        content,
+        re.DOTALL
+    )
+    if not const_match:
+        print("ERROR: PROVIDER_SDK_TYPES constant block not found in providers.rs", file=sys.stderr)
+        sys.exit(1)
+    rust_block = const_match.group(1)
+    for match in re.finditer(r'\(\s*"([\w.-]+)"\s*,\s*"([\w.-]+)"\s*,?\s*\)', rust_block):
         rust_registry[match.group(1)] = match.group(2)
 
     # Assert parity
@@ -1831,6 +1851,9 @@ def batch_completion(
     def submit_one(idx: int, msgs: List[Dict]) -> None:
         try:
             # Call completion (sync) for each message set
+            # C1 fix: Use functools.partial for explicit cache_bypass binding.
+            # Batch workers MUST receive cache_bypass via explicit argument binding.
+            # Implicit closure capture is prohibited for this parameter.
             result = completion(
                 model=model,
                 messages=msgs,
@@ -1842,7 +1865,7 @@ def batch_completion(
                 timeout=timeout,
                 api_key=api_key,
                 api_base=api_base,
-                cache_bypass=cache_bypass,  # C1 fix: explicit forward
+                cache_bypass=cache_bypass,
                 **kwargs,
             )
             results[idx] = result
@@ -2137,6 +2160,7 @@ class Router:
         num_retries: Optional[int] = 3,
         timeout: Optional[float] = None,
         logger_fn: Optional[callable] = None,  # RFC-0905 logger
+        lock_metric_sampling_rate: float = 0.1,  # L2 fix: lock hold time sampling rate (0.0 to 1.0). Env: QUOTA_ROUTER_LOCK_METRIC_SAMPLE_RATE
         **kwargs,
     ):
         """
@@ -2154,11 +2178,15 @@ class Router:
             num_retries: Number of retries on failure (default 3)
             timeout: Default request timeout
             logger_fn: Optional callback for observability (RFC-0905)
+            lock_metric_sampling_rate: Sampling rate for router_lock_hold_time_us histogram (0.0 to 1.0). Default 0.1. Env: QUOTA_ROUTER_LOCK_METRIC_SAMPLE_RATE. Values outside [0.0, 1.0] raise ValueError at init.
 
         Note:
             This is a Python-level router. It does NOT wrap the Rust core Router.
             The Rust Router (quota-router-core/src/router.rs) is for the proxy server.
         """
+        if not (0.0 <= lock_metric_sampling_rate <= 1.0):
+            raise ValueError(f"lock_metric_sampling_rate must be in [0.0, 1.0], got {lock_metric_sampling_rate}")
+        self.lock_metric_sampling_rate = lock_metric_sampling_rate
         self.model_list = model_list
         self.routing_strategy = routing_strategy
         self.cache_responses = cache_responses
@@ -2185,6 +2213,11 @@ class Router:
         self._latencies = {}  # deployment_idx -> list of latencies_us
         self._total_spend = {}  # deployment_idx -> int μunits (per RFC-0904 G3)
         self._spend_history = {}  # deployment_idx -> deque(maxlen=500) of (timestamp, cost) for v2
+
+        # H2 fix: Counter-based sampling for lock metrics (lock-free, zero allocation)
+        # Counter modulo is deterministic and requires no random module (avoids GIL contention)
+        self._metric_sample_counter = 0
+        self._metric_sampling_rate = lock_metric_sampling_rate
 
         # Group by model_name
         self._by_model: Dict[str, List[int]] = {}  # model_name -> [deployment_idx]

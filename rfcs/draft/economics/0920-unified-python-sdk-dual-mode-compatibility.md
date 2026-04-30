@@ -2,7 +2,7 @@
 
 ## Status
 
-Draft (v1.50 — 2026-04-30)
+Draft (v1.51 — 2026-04-30)
 
 **ARCHITECTURAL CONSTRAINT: HTTP proxy is FOREVER in BOTH litellm-mode and any-llm-mode. See section below.**
 
@@ -3635,6 +3635,379 @@ def batch_results(
     """Retrieve batch results (after completion)."""
 ```
 
+### Extended API Surface — Additional Functions
+
+This section specifies the complete API surface for drop-in replacement parity.
+Missing functions from any-llm and LiteLLM that are REQUIRED for true drop-in compatibility:
+
+#### Text Completion (LiteLLM parity)
+
+```python
+async def atext_completion(
+    model: str,
+    prompt: Union[str, List[str]],
+    **kwargs
+) -> TextCompletionResponse:
+    """
+    Asynchronous text completion (non-chat models).
+
+    LiteLLM parity: matches litellm.atext_completion signature.
+    """
+
+def text_completion(
+    model: str,
+    prompt: Union[str, List[str]],
+    **kwargs
+) -> TextCompletionResponse:
+    """
+    Synchronous text completion (non-chat models).
+
+    LiteLLM parity: matches litellm.text_completion signature.
+    """
+```
+
+#### Moderation (LiteLLM parity)
+
+```python
+async def amoderation(
+    input: Union[str, List[str]],
+    model: Optional[str] = None,
+    api_key: Optional[str] = None,
+    api_base: Optional[str] = None,
+) -> ModerationResponse:
+    """
+    Asynchronous moderation check.
+
+    LiteLLM parity: matches litellm.amoderation signature.
+    """
+
+def moderation(
+    input: Union[str, List[str]],
+    model: Optional[str] = None,
+    api_key: Optional[str] = None,
+    api_base: Optional[str] = None,
+) -> ModerationResponse:
+    """
+    Synchronous moderation check.
+
+    LiteLLM parity: matches litellm.moderation signature.
+    """
+```
+
+#### Transcription (LiteLLM parity)
+
+```python
+async def atranscription(
+    model: str,
+    file: Union[str, Path, BinaryIO],
+    language: Optional[str] = None,
+    prompt: Optional[str] = None,
+    response_format: Optional[str] = None,
+    temperature: Optional[float] = None,
+    timestamp_granularities: Optional[List[str]] = None,
+    api_key: Optional[str] = None,
+    api_base: Optional[str] = None,
+) -> TranscriptionResponse:
+    """
+    Asynchronous audio transcription.
+
+    LiteLLM parity: matches litellm.atranscription signature.
+    """
+```
+
+#### Adapter Completion (LiteLLM parity)
+
+```python
+async def aadapter_completion(
+    model: str,
+    adapter_id: str,
+    messages: List[Dict],
+    **kwargs
+) -> CompletionResponse:
+    """
+    Adapter-based completion (custom model adapters).
+
+    LiteLLM parity: matches litellm.aadapter_completion signature.
+    Phase 4 feature — requires adapter registry infrastructure.
+    """
+```
+
+#### Messages API — Anthropic (any-llm parity)
+
+```python
+async def amessages(
+    model: str,
+    messages: List[Dict],
+    system: Optional[Union[str, List[Dict]]] = None,
+    max_tokens: Optional[int] = None,
+    temperature: Optional[float] = None,
+    top_p: Optional[float] = None,
+    top_k: Optional[int] = None,
+    tools: Optional[List[Dict]] = None,
+    tool_choice: Optional[Union[str, Dict]] = None,
+    streaming: bool = False,
+    thinking: Optional[Dict] = None,
+    api_key: Optional[str] = None,
+    api_base: Optional[str] = None,
+    **kwargs
+) -> AnthropicMessagesResponse:
+    """
+    Anthropic Messages API (not chat completions).
+
+    any-llm parity: matches any_llm.amessages signature.
+    Differs from acompletion() in that it uses Anthropic's native
+    messages endpoint rather than /v1/chat/completions.
+    """
+
+def messages(
+    model: str,
+    messages: List[Dict],
+    system: Optional[Union[str, List[Dict]]] = None,
+    max_tokens: Optional[int] = None,
+    temperature: Optional[float] = None,
+    top_p: Optional[float] = None,
+    top_k: Optional[int] = None,
+    tools: Optional[List[Dict]] = None,
+    tool_choice: Optional[Union[str, Dict]] = None,
+    streaming: bool = False,
+    thinking: Optional[Dict] = None,
+    api_key: Optional[str] = None,
+    api_base: Optional[str] = None,
+    **kwargs
+) -> AnthropicMessagesResponse:
+    """
+    Synchronous Anthropic Messages API.
+
+    any-llm parity: matches any_llm.messages signature.
+    """
+```
+
+#### Responses API — OpenAI (any-llm parity)
+
+```python
+async def aresponses(
+    model: str,
+    input: Union[str, List[Union[str, Dict]]],
+    instructions: Optional[str] = None,
+    tools: Optional[List[Dict]] = None,
+    tool_choice: Optional[Union[str, Dict]] = None,
+    temperature: Optional[float] = None,
+    top_p: Optional[float] = None,
+    max_tokens: Optional[int] = None,
+    modalities: Optional[List[str]] = None,
+    audio: Optional[Dict] = None,
+    store: Optional[bool] = None,
+    metadata: Optional[Dict] = None,
+    api_key: Optional[str] = None,
+    api_base: Optional[str] = None,
+    **kwargs
+) -> ResponsesAPIResponse:
+    """
+    OpenAI Responses API.
+
+    any-llm parity: matches any_llm.aresponses signature.
+    Uses OpenAI's /v1/responses endpoint (not /v1/chat/completions).
+    """
+
+def responses(
+    model: str,
+    input: Union[str, List[Union[str, Dict]]],
+    instructions: Optional[str] = None,
+    tools: Optional[List[Dict]] = None,
+    tool_choice: Optional[Union[str, Dict]] = None,
+    temperature: Optional[float] = None,
+    top_p: Optional[float] = None,
+    max_tokens: Optional[int] = None,
+    modalities: Optional[List[str]] = None,
+    audio: Optional[Dict] = None,
+    store: Optional[bool] = None,
+    metadata: Optional[Dict] = None,
+    api_key: Optional[str] = None,
+    api_base: Optional[str] = None,
+    **kwargs
+) -> ResponsesAPIResponse:
+    """
+    Synchronous OpenAI Responses API.
+
+    any-llm parity: matches any_llm.responses signature.
+    """
+```
+
+#### Embedding (any-llm parity)
+
+```python
+async def aembedding(
+    model: str,
+    input: Union[str, List[str]],
+    api_key: Optional[str] = None,
+    api_base: Optional[str] = None,
+    **kwargs
+) -> EmbeddingResponse:
+    """
+    Asynchronous embedding generation.
+
+    any-llm parity: matches any_llm.aembedding signature.
+    LiteLLM parity: matches litellm.aembedding signature.
+    """
+
+def embedding(
+    model: str,
+    input: Union[str, List[str]],
+    api_key: Optional[str] = None,
+    api_base: Optional[str] = None,
+    **kwargs
+) -> EmbeddingResponse:
+    """
+    Synchronous embedding generation.
+
+    any-llm parity: matches any_llm.embedding signature.
+    LiteLLM parity: matches litellm.embedding signature.
+    """
+```
+
+#### Completion with Retries (LiteLLM parity)
+
+```python
+async def acompletion_with_retries(
+    model: str,
+    messages: List[Dict],
+    **kwargs
+) -> CompletionResponse:
+    """
+    Async completion with automatic retries using tenacity.
+
+    LiteLLM parity: matches litellm.acompletion_with_retries.
+    Retries on rate limit, timeout, and server errors.
+    Retry policy: exponential backoff with jitter.
+    """
+
+def completion_with_retries(
+    model: str,
+    messages: List[Dict],
+    **kwargs
+) -> CompletionResponse:
+    """
+    Sync completion with automatic retries using tenacity.
+
+    LiteLLM parity: matches litellm.completion_with_retries.
+    Retries on rate limit, timeout, and server errors.
+    Retry policy: exponential backoff with jitter.
+    """
+```
+
+#### Responses API Sub-Methods (LiteLLM parity)
+
+```python
+async def aget_responses(
+    response_id: str,
+    api_key: Optional[str] = None,
+    api_base: Optional[str] = None,
+) -> ResponseResource:
+    """Get a specific response by ID."""
+
+async def adelete_responses(
+    response_id: str,
+    api_key: Optional[str] = None,
+    api_base: Optional[str] = None,
+) -> Dict:
+    """Delete a specific response."""
+
+async def acancel_responses(
+    response_id: str,
+    api_key: Optional[str] = None,
+    api_base: Optional[str] = None,
+) -> ResponseResource:
+    """Cancel an in-progress response."""
+
+async def alist_input_items(
+    response_id: str,
+    after: Optional[str] = None,
+    limit: int = 20,
+    api_key: Optional[str] = None,
+    api_base: Optional[str] = None,
+) -> List[InputItem]:
+    """List input items for a response."""
+
+async def acompact_responses(
+    response_id: str,
+    api_key: Optional[str] = None,
+    api_base: Optional[str] = None,
+) -> ResponseResource:
+    """Compact a response for storage efficiency."""
+```
+
+### Response Types for Extended Functions
+
+```python
+@dataclass
+class TextCompletionResponse:
+    id: str
+    object: str = "text_completion"
+    created: int
+    model: str
+    choices: List[TextChoice]
+    usage: Usage
+
+@dataclass
+class TextChoice:
+    text: str
+    index: int
+    finish_reason: Optional[str]
+
+@dataclass
+class ModerationResponse:
+    id: str
+    model: str
+    results: List[ModerationResult]
+
+@dataclass
+class ModerationResult:
+    flagged: bool
+    categories: Dict[str, bool]
+    category_scores: Dict[str, float]
+
+@dataclass
+class TranscriptionResponse:
+    text: str
+    language: Optional[str]
+    duration: Optional[float]
+    segments: Optional[List[Segment]]
+
+@dataclass
+class Segment:
+    id: int
+    start: float
+    end: float
+    text: str
+
+@dataclass
+class AnthropicMessagesResponse:
+    id: str
+    type: str
+    role: str
+    content: List[ContentBlock]
+    model: str
+    stop_reason: Optional[str]
+    stop_sequence: Optional[int]
+    usage: AnthropicUsage
+
+@dataclass
+class ResponsesAPIResponse:
+    id: str
+    object: str
+    model: str
+    created: int
+    instructions: Optional[str]
+    output: List[ResponseOutput]
+    usage: Usage
+
+@dataclass
+class ResponseOutput:
+    index: int
+    type: str
+    content: List[Dict]
+```
+
 ## HTTP Proxy Architecture in any-llm-mode
 
 **THIS SECTION IS THE COMPLETE DESIGN FOR HTTP PROXY IN ANY-LLM-MODE. THIS IS NOT DEFERRED — IT IS SPECIFIED NOW.**
@@ -4049,6 +4422,7 @@ This is the only approach that achieves true drop-in replacement for both ecosys
 
 | Version | Date       | Changes |
 | ------- | ---------- | ------- |
+| 1.51    | 2026-04-30 | **ADD** Extended API Surface section: add all missing functions from any-llm (embedding, aembedding, messages, amessages, responses, aresponses) and LiteLLM (completion_with_retries, acompletion_with_retries, text_completion, atext_completion, moderation, amoderation, atranscription, adapter_completion, Responses API sub-methods) required for true drop-in replacement parity. Add response types for all extended functions. |
 | 1.50    | 2026-04-30 | **FULL SPEC** Phase 2/3 SSE parsing: replaced all TODO stubs with full implementation for parse_openai_sse, parse_anthropic_sse, parse_mistral_sse, parse_ollama_sse (SSEParser class) and normalize_to_openai_sse with provider-specific transformation logic. Fully spec-ed ChatCompletionStreamIterator._create_stream with OpenAI/Anthropic/Mistral/Ollama SDK streams. |
 | 1.49    | 2026-04-30 | **ADD** Phase 2 Rust ←→ Python State Mapping table: maps Python Router fields to RFC-0917 equivalents. |
 | 1.48    | 2026-04-29 | **CRITICAL** Add missing LiteLLM params: `thinking`, `modalities`, `audio`, `prediction` to both sync and async completion signatures. |
@@ -4088,6 +4462,9 @@ This is the only approach that achieves true drop-in replacement for both ecosys
 | 1.4     | 2026-04-27 | Fix adversarial review v1.3 issues: C1 (Router now thin PyO3 wrapper delegating to RFC-0902 Rust core), C2 (num_retries now Python param only, references RFC-0902), C3 (added RFC-0913 to dependencies); I1/I2/I3/I4 (all 7 RFC-0902 strategies + fallback types now referenced); L1 (GIL note added to batch_completion), L3 (platform provider cross-ref to RFC-0917). |
 | 1.3     | 2026-04-27 | Replace gap analysis with actual specifications: async_iter_to_sync_iter() bridge, batch_completion() with ThreadPoolExecutor, Router 6 strategies, retry logic, logger_fn, exception regex mapping (QUOTA_ROUTER_UNIFIED_EXCEPTIONS=1), platform provider (any-api key format), timeout httpx.Timeout, thinking, system params. Phase 3 updated with all specced items. |
 | 1.2     | 2026-04-27 | Gap analysis vs any-llm/litellm: add missing completion params (timeout, thinking, system, etc.), streaming async bridge spec, batch_completion() spec, router strategies, exception mapping, platform provider. Phase 4 added for full LiteLLM compat. Provider count 41→42 (added deepinfra). Clarify redis_url=N/A (stoolap replaces Redis per RFC-0912/0914); cache_responses uses stoolap semantic cache per RFC-0913. |
+| 1.2     | 2026-04-27 | Gap analysis vs any-llm/litellm: add missing completion params (timeout, thinking, system, etc.), streaming async bridge spec, batch_completion() spec, router strategies, exception mapping, platform provider. Phase 4 added for full LiteLLM compat. Provider count 41→42 (added deepinfra). Clarify redis_url=N/A (stoolap replaces Redis per RFC-0912/0914); cache_responses uses stoolap semantic cache per RFC-0913. |
+| 1.2     | 2026-04-27 | Gap analysis vs any-llm/litellm: add missing completion params (timeout, thinking, system, etc.), streaming async bridge spec, batch_completion() spec, router strategies, exception mapping, platform provider. Phase 4 added for full LiteLLM compat. Provider count 41→42 (added deepinfra). Clarify redis_url=N/A (stoolap replaces Redis per RFC-0912/0914); cache_responses uses stoolap semantic cache per RFC-0913. |
+| 1.2     | 2026-04-27 | Gap analysis vs any-llm/litellm: add missing completion params, streaming async bridge spec, batch_completion() spec, router strategies, exception mapping, platform provider. Phase 4 added for full LiteLLM compat. Provider count 41→42 (added deepinfra). Clarify redis_url=N/A (stoolap replaces Redis per RFC-0912/0914); cache_responses uses stoolap semantic cache per RFC-0913. |
 | 1.1     | 2026-04-27 | Fix all adversarial review issues: C2 (security model docs), C3 (raise error not silent fallback), C4 (ambiguity detection), C5 (case-insensitive provider lookup); I1 (G1=<10ms), I2 (stream=None), I3 (list_models spec), I4 (typed CompletionResponse), I5 (session_label docs), I6 (client_args schema), I7 (error codes), I8 (GIL isolation); L1 (Phase 1 clarify), L2 (deployment mode), L3 (batch API), L4 (RFC-0904 required) |
 | 1.0     | 2026-04-27 | Initial draft |
 

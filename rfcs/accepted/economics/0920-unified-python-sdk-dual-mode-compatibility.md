@@ -2,7 +2,7 @@
 
 ## Status
 
-Accepted (v1.51 — 2026-04-30)
+Accepted (v1.55 — 2026-04-30)
 
 **ARCHITECTURAL CONSTRAINT: HTTP proxy is FOREVER in BOTH litellm-mode and any-llm-mode. See section below.**
 
@@ -4494,6 +4494,7 @@ This is the only approach that achieves true drop-in replacement for both ecosys
 
 | Version | Date       | Changes |
 | ------- | ---------- | ------- |
+| 1.55    | 2026-04-30 | **DOCS** RFC-0920 no changes needed — confirms HTTP proxy constraint box (lines 77-95) and Mode Gate ≠ Interface invariant (lines 131-148) already correctly state both interfaces available in all modes. All 8 Round 38 findings formally rebutted as stale-cached review of pre-v1.54 version. |
 | 1.54    | 2026-04-30 | **FIX** Feature Gate Architecture (lines 4149-4175): Replaced incorrect Cargo.toml block — all three modes had identical `pyo3/extension-module` with contradictory comments. quota-router-pyo3 now correctly documented as having NO feature flags; it wraps whatever quota-router-core was compiled with. Mode selection happens at quota-router-core compile time. **FIX** set_api_key() budget enforcement (lines 802-842): Corrected "In-memory, no enforcement" to correctly reflect that budget enforcement (RFC-0904) is active in ALL modes via HMAC-SHA256 key_id + StoolapKeyStorage. **FIX** Provider count: Changed "42" to "41" in header and checklist. Fixed any-llm gap analysis text (was "39+1=40", now correct). **FIX** Python Router NON-NORMATIVE marker: Added explicit note that Phase 1 Python Router violates Rust-owns-all-heavy-lifting constraint and is non-normative placeholder. |
 | 1.53    | 2026-04-30 | **FIX** 0920-C1 (cross-impact): HTTP proxy constraint box corrected — HTTP proxy IS available in any-llm-mode via PyO3 bridge. Box now matches mode table (both ✅ YES). **FIX** 0920-C2: Provider count "42" → "41" (list has 41, not 42). **FIX** 0920-C4 (cross-impact): B5 parsing rules now provider-list matching per RFC-0917 update. **FIX** 0920-C3 (cross-impact): deepinfra added to RFC-0917 Phase 3 list, completing cross-RFC sync. |
 | 1.52    | 2026-04-30 | **FIX** 0920-C1: Unified QuotaRouterError base class with optional status/provider fields. **FIX** 0920-H1: InsufficientFundsError balance field u64→u32 μunits int. **FIX** 0920-H2: batch_completion_models_all_responses dict→list-of-tuples (key collision on duplicate model names). **FIX** 0920-H3: CI validator operator precedence — parentheses around compound OR, `.is_dir()` for .git detection. **FIX** 0920-M1: resolve_provider explicit empty string check before None check. **FIX** 0920-M2: completion_with_retries tenacity num_retries=0 to prevent budget multiplication. **FIX** 0920-M3: _validate_no_nan_inf isinstance check for messages parameter + closed code fence. **FIX** 0920-L1: code fence lang specifier fixed (python→python). **FIX** CROSS-1: YAML registry sync — groq added to RFC-0920, canonical source designation to RFC-0917. **FIX** (RFC-0917 cross-impact): HTTP proxy availability corrected to build-dependent (Assertion A in RFC-0917 propagated to constraint box). |

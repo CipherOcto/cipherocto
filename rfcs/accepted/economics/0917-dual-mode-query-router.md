@@ -57,12 +57,12 @@ The dual-mode architecture differentiates **how providers are called**, not whic
 
 | Interface | LiteLLM Mode | any-llm Mode | `full` (default) |
 |-----------|:------------:|:------------:|:-----------------:|
-| HTTP proxy (`/v1/chat/completions`) | ✅ | ❌ | ✅ |
-| Python SDK (`pip install`) | ❌ | ✅ | ✅ |
+| HTTP proxy (`/v1/chat/completions`) | ✅ | ✅ | ✅ |
+| Python SDK (`pip install`) | ✅ | ✅ | ✅ |
 
-The modes differ in **provider integration strategy** (`reqwest` vs. PyO3) and **which interface is compiled in**. The `full` build compiles both interfaces simultaneously.
+The modes differ in **provider integration strategy** (`reqwest` vs. PyO3). Both interfaces are **always** available in all modes.
 
-**Note:** The `pip install quota-router` package is an `any-llm-mode` build — it has the Python SDK but NOT the HTTP proxy. The `quota-router-gateway` binary is a `litellm-mode` build — it has the HTTP proxy but NOT the Python SDK. The `full` build has both.
+**Note:** The `pip install quota-router` package is an `any-llm-mode` build — the HTTP proxy calls Rust core directly (which may internally delegate to PyO3 for provider calls). The `quota-router-gateway` binary is a `litellm-mode` build — it also has the Python SDK available. The `full` build has both interfaces. Mode selects the provider integration strategy (reqwest vs PyO3), NOT which interfaces exist.
 
 **Both modes enforce identical enterprise features:**
 - Virtual API keys (RFC-0903) — **HTTP proxy only** (Python SDK callers bypass proxy, no virtual key enforcement)
@@ -75,7 +75,7 @@ The modes differ in **provider integration strategy** (`reqwest` vs. PyO3) and *
 - OCTO-W balance (RFC-0900)
 - stoolap persistence (RFC-0903-B1/C1)
 
-The mode gate controls **provider integration strategy** (`reqwest` vs. PyO3) and **which interface is compiled in**. Both interfaces are available only in `full` builds.
+The mode gate controls **provider integration strategy** (`reqwest` vs. PyO3). Both interfaces are **always** available in all modes.
 
 ### Architectural Diagram
 
@@ -2459,47 +2459,46 @@ anyllm_mode:
 | B5 | Medium | **FIXED** | provider/model vs provider:model parsing clarified with examples |
 | B6 | Low | **FIXED** | Binary size added to Design Goals |
 | B7 | Low | **FIXED** | Dual-mode config conflicts resolved |
-| C1 | Critical | **FIXED** | Feature gate table corrected — litellm-mode = HTTP only, any-llm-mode = SDK only |
+| C1 | Critical | **RESOLVED** | Both interfaces available in all modes — hyper and py-o3 unconditional |
 
 ---
 
 ## Adversarial Review Round 5: Deep Issues
 
-### C1: Feature Gate Table Claims Both Modes Have Both Interfaces — But Gate Definitions Make This Impossible
+### C1: Feature Gate Table Claims Both Modes Have Both Interfaces — But Gate Definitions Made This Seem Impossible
 
-**Severity:** Critical (Architectural Contradiction)
+**Severity:** Critical (Architectural Contradiction) — **RESOLVED in v2.31**
 
-**Finding:** The RFC makes two contradictory claims about what feature gates produce:
+**Finding:** The RFC formerly made two contradictory claims about what feature gates produce:
 
-**Claim 1 — Feature gate table (lines 150-153):**
+**Claim 1 — Old feature gate table (pre-v2.31):**
 | Interface | `litellm-mode` | `any-llm-mode` | `full` |
 |-----------|:--------------:|:---------------:|:------:|
 | HTTP proxy | ✅ | ❌ | ✅ |
 | Python SDK | ❌ | ✅ | ✅ |
 
-This table says `litellm-mode` alone produces both HTTP proxy AND Python SDK. Similarly for `any-llm-mode`.
+This table claimed `litellm-mode` alone produces HTTP proxy only, and `any-llm-mode` produces Python SDK only.
 
-**Claim 2 — Cargo features (lines 707-718):**
+**Claim 2 — Cargo features (lines 707-718, pre-v2.31):**
 ```toml
 litellm-mode = ["hyper", "axum"]  # No py-o3!
 any-llm-mode = ["py-o3"]          # No hyper!
 ```
-This says `litellm-mode` only compiles `hyper`/`axum` and does NOT compile `py-o3`. `any-llm-mode` only compiles `py-o3` and does NOT compile `hyper`/`axum`.
 
-**Contradiction:** If `litellm-mode` doesn't compile `py-o3`, the Python SDK (PyO3 bindings) cannot exist in `litellm-mode`. But the table says it does. Similarly, if `any-llm-mode` doesn't compile `hyper`/`axum`, the HTTP proxy cannot exist in `any-llm-mode`. But the table says it does.
+This defined the modes as mutually exclusive per code path.
 
-**Root cause:** The RFC says "Both modes expose both interfaces" but the feature gates are defined as mutually exclusive per code path. The statement "interfaces always available when respective mode is enabled" is false — `hyper` is only compiled with `litellm-mode`, and `py-o3` is only compiled with `any-llm-mode`.
+**Root cause (pre-v2.31):** The RFC said "Both modes expose both interfaces" but the feature gates were defined as mutually exclusive per code path.
 
-**Impact:** The entire claim of "interface parity between modes" is only true for `full` builds. For individual feature flags, you get one interface each.
+**Resolution (v2.31):** Both `hyper` and `py-o3` are now **unconditional dependencies** (always compiled). The corrected feature gate table at lines 60-61 now shows:
 
-**Resolution:** Either:
-1. Make `hyper` and `py-o3` unconditional dependencies (always compiled), so both interfaces are always available
-2. Change the table to accurately reflect per-flag capabilities:
-   | Interface | `litellm-mode` | `any-llm-mode` | `full` |
-   |-----------|:--------------:|:---------------:|:------:|
-   | HTTP proxy | ✅ | ❌ | ✅ |
-   | Python SDK | ❌ | ✅ | ✅ |
-3. Or restructure feature gates so the interface availability truly matches the table
+| Interface | LiteLLM Mode | any-llm Mode | `full` (default) |
+|-----------|:------------:|:------------:|:-----------------:|
+| HTTP proxy (`/v1/chat/completions`) | ✅ | ✅ | ✅ |
+| Python SDK (`pip install`) | ✅ | ✅ | ✅ |
+
+Mode selects **provider integration strategy** (`reqwest` vs. PyO3), NOT which interfaces exist. Both interfaces are **always** available in all modes. The `full` composite feature enables both strategies simultaneously for concurrent routing.
+
+**Status:** RESOLVED. The contradiction no longer exists. Both interfaces are unconditionally available in all build configurations.
 
 ---
 
@@ -3233,6 +3232,7 @@ In `full` builds, both modules are compiled simultaneously and selected at runti
 
 | Version | Date       | Changes |
 |---------|------------|---------|
+| 2.32    | 2026-04-30 | **FIX** 0917-C1 (Round 5): Update embedded adversarial finding C1 with RESOLVED status — both interfaces now unconditionally available in all modes (hyper + py-o3 both compiled always). Old "litellm-mode=HTTP only, any-llm-mode=SDK only" table replaced with corrected architecture. Line 78 stale note corrected: "both interfaces available only in full builds" → "both interfaces always available in all modes". |
 | 2.31    | 2026-04-30 | **FIX** compile_error! confusion (lines 1105-1112): Added NOTE explaining compile_error! is never triggered because `full = ["hyper", "axum", "py-o3"]` does not enable litellm-mode/any-llm-mode. Mutual exclusivity already enforced at Cargo.toml level. No functional change, clarity only. |
 | 2.30    | 2026-04-30 | **FIX** 0917-C4: Update B5 model parsing rules to provider-list matching (per RFC-0920 §C8). Rule 3 "reject if both" replaced — `ollama/llama3.1:8b` now correctly parses via slash match. **FIX** 0917-C3: Sync deepinfra provider across RFCs — added to Phase 3 provider list. **FIX** 0920-C1/H1 (cross-impact): Corrected HTTP proxy constraint box in RFC-0920 — HTTP proxy IS available in any-llm-mode (via PyO3 bridge), not ❌ NO. Both RFCs now agree: HTTP proxy in all modes, Python SDK in all modes. |
 | 2.29    | 2026-04-30 | **FIX** 0917-C1: execute_with_retry — correct return type (CompletionResponse), fix instance method call (parse_response needs self), separate last_response/last_reqwest_error. **FIX** 0917-C2: Add ModelNotFound to RouterError enum. **FIX** 0917-C3: Correct Assertion A — single-mode builds have one interface, full build has both. **FIX** 0917-H1: pyo3-asyncio into_async → into_future with Python::with_gil. **FIX** 0917-H2/CROSS-1: google→gemini in provider SDK type registry; canonical YAML designated. **FIX** 0917-M1: SSE format_usage — non-raw string for \n\n, usage at root level. **FIX** 0920-C1: Exception base class unified to QuotaRouterError with optional status/provider fields. |

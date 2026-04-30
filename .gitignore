@@ -35,3 +35,6 @@ Cargo.lock
 
 # Claude Code
 .claude/plans/
+
+# Adversarial review artifacts (local scratchpads, not committed per memory rule)
+docs/reviews/

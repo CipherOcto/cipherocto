@@ -2,7 +2,7 @@
 
 ## Status
 
-Draft (v1.49 — 2026-04-30)
+Draft (v1.50 — 2026-04-30)
 
 **ARCHITECTURAL CONSTRAINT: HTTP proxy is FOREVER in BOTH litellm-mode and any-llm-mode. See section below.**
 
@@ -1584,34 +1584,117 @@ class SSEParser:
 
     @staticmethod
     def parse_openai_sse(chunk: bytes) -> Optional[ChatCompletionChunk]:
-        """OpenAI SSE: pass-through (already normalized). Phase 2 implementation."""
-        # data: {"id":"...","choices":[{"delta":{"content":"..."}}]}
-        # Parse and yield ChatCompletionChunk
-        # TODO: Implement actual SSE parsing for Phase 2
-        return None  # Stub — real implementation in Phase 2
+        """OpenAI SSE: pass-through (already normalized by OpenAI Python SDK).
+
+        The OpenAI Python SDK yields ChatCompletionChunk objects directly — no
+        transformation needed. This method handles the case where raw SSE bytes
+        are received (e.g., from a custom HTTP client in litellm-mode).
+
+        SSE format: ``data: {"id":"...","choices":[{"delta":{"content":"..."}}]}\n\n``
+        """
+        line = chunk.decode("utf-8").strip()
+        if not line.startswith("data: "):
+            return None
+        data = line[6:]  # Strip "data: "
+        if data == "[DONE]":
+            return None
+        import json
+        try:
+            obj = json.loads(data)
+        except json.JSONDecodeError:
+            return None
+        # Already OpenAI format — construct ChatCompletionChunk from dict
+        return ChatCompletionChunk(
+            id=obj.get("id", ""),
+            choices=[ChoiceDelta(
+                index=0,
+                delta={"content": obj.get("choices", [{}])[0].get("delta", {}).get("content", "")},
+                finish_reason=obj.get("choices", [{}])[0].get("finish_reason"),
+            )]
+        )
 
     @staticmethod
     def parse_anthropic_sse(chunk: bytes) -> Optional[ChatCompletionChunk]:
-        """Anthropic event-stream: transform to OpenAI SSE. Phase 2 implementation."""
-        # event: message_delta
-        # data: {"usage":{"output_tokens":123},"delta":{"text":"..."}}
-        # Transform to OpenAI format: {"choices":[{"delta":{"content":"..."}}]}
-        # TODO: Implement actual SSE parsing for Phase 2
-        return None  # Stub — real implementation in Phase 2
+        """Anthropic event-stream: transform to OpenAI SSE format.
+
+        Anthropic SSE uses event-type lines:
+        ``event: message_delta\ndata: {"usage":{"output_tokens":123},"delta":{"text":"..."}}\n\n``
+
+        Transforms to OpenAI format: ``{"choices":[{"delta":{"content":"..."}}]}``
+        """
+        import json
+        line = chunk.decode("utf-8").strip()
+        if line.startswith("event: "):
+            # Extract event type and data separately
+            event_type = line.split("\n")[0][7:]  # e.g., "message_delta"
+            return None  # Event type lines have no data to parse
+        if not line.startswith("data: "):
+            return None
+        data = line[6:]
+        if data == "[DONE]":
+            return None
+        try:
+            obj = json.loads(data)
+        except json.JSONDecodeError:
+            return None
+        # Anthropic format: {"type": "message_delta", "delta": {"text": "..."}, "usage": {...}}
+        delta = obj.get("delta", {})
+        text = delta.get("text", "")
+        if not text:
+            return None
+        return ChatCompletionChunk(
+            id=f"chatcmpl-{obj.get('message', {}).get('id', '')}",
+            choices=[ChoiceDelta(
+                index=0,
+                delta={"content": text},
+                finish_reason=obj.get("type") == "message_stop" and "stop" or None,
+            )]
+        )
 
     @staticmethod
     def parse_mistral_sse(chunk: bytes) -> Optional[ChatCompletionChunk]:
-        """Mistral: OpenAI SSE pass-through. Phase 2 implementation."""
-        # TODO: Implement actual SSE parsing for Phase 2
-        return None  # Stub — real implementation in Phase 2
+        """Mistral: OpenAI SSE pass-through.
+
+        Mistral API uses OpenAI-compatible SSE format. The Mistral Python SDK
+        parses SSE internally and yields typed objects. This handler is for the
+        case where raw SSE bytes are received from a custom HTTP client.
+
+        SSE format: ``data: {"id":"...","choices":[{"delta":{"content":"..."}}]}\n\n``
+        """
+        # Mistral uses OpenAI-compatible SSE — same parsing as OpenAI
+        return SSEParser.parse_openai_sse(chunk)
 
     @staticmethod
     def parse_ollama_sse(chunk: bytes) -> Optional[ChatCompletionChunk]:
-        """Ollama: SSE with custom format. Phase 2 implementation."""
-        # data: {"model":"llama3","done":false,"message":{"role":"assistant","content":"..."}}
-        # Transform to OpenAI SSE
-        # TODO: Implement actual SSE parsing for Phase 2
-        return None  # Stub — real implementation in Phase 2
+        """Ollama: custom JSON-lines format, transform to OpenAI SSE.
+
+        Ollama SSE format (JSON lines, not SSE-formatted):
+        ``{"model":"llama3","done":false,"message":{"role":"assistant","content":"..."}}\n``
+
+        Transforms to OpenAI format: ``{"choices":[{"delta":{"content":"..."}}]}``
+        """
+        import json
+        line = chunk.decode("utf-8").strip()
+        if not line:
+            return None
+        try:
+            obj = json.loads(line)
+        except json.JSONDecodeError:
+            return None
+        done = obj.get("done", False)
+        message = obj.get("message", {})
+        content = message.get("content", "")
+        if not content and not done:
+            return None
+        model = obj.get("model", "")
+        return ChatCompletionChunk(
+            id=f"chatcmpl-{model}",
+            choices=[ChoiceDelta(
+                index=0,
+                delta={"content": content},
+                finish_reason=done and "stop" or None,
+            )]
+        )
 
 async def _stream_provider_response(
     provider: str,
@@ -1776,10 +1859,52 @@ class ChatCompletionStreamIterator:
     async def _create_stream(self) -> AsyncIterator:
         """Create and return the provider's async stream.
 
-        Phase 2 implementation — currently raises StopAsyncIteration.
+        Phase 2 (fully spec-ed): Creates provider-specific async streams using
+        official Python SDKs. Each provider's SDK returns async iterators of
+        typed objects (not raw SSE bytes).
         """
-        # Phase 2: Create actual provider streams for OpenAI, Anthropic, etc.
-        raise StopAsyncIteration
+        if self.provider == "openai":
+            from openai import AsyncOpenAI
+            client = AsyncOpenAI()
+            stream = await client.chat.completions.create(
+                model=self.model,
+                messages=self.messages,
+                stream=True,
+                **self.kwargs
+            )
+            return stream  # AsyncIterator[ChatCompletionChunk] — already normalized
+        elif self.provider == "anthropic":
+            from anthropic import AsyncAnthropic
+            client = AsyncAnthropic()
+            stream = await client.messages.stream(
+                model=self.model,
+                messages=self.messages,
+                **self.kwargs
+            )
+            return stream  # AsyncIterator[MessageDeltaEvent] — needs transform
+        elif self.provider == "mistral":
+            from mistralai import AsyncMistral
+            client = AsyncMistral()
+            stream = await client.chat.stream(
+                model=self.model,
+                messages=self.messages,
+                **self.kwargs
+            )
+            return stream  # AsyncIterator — Mistral SDK yields typed objects
+        elif self.provider == "ollama":
+            import ollama
+            # ollama Python SDK uses sync client with async .async_stream()
+            async def ollama_stream():
+                sync_stream = ollama.async_stream(
+                    model=self.model,
+                    messages=self.messages,
+                    **self.kwargs
+                )
+                for response in sync_stream:
+                    yield response
+            return ollama_stream()
+        else:
+            raise StopAsyncIteration
 ```
 
 **Note on SSE parsing:** Phase 1 uses `async_iter_to_sync_iter()` bridge for **sync** streaming with sync providers. The bridge is available in Phase 1 — `stream=True` does NOT raise `NotImplementedError`. However, Phase 1 returns **raw provider-native chunks** via the bridge (no SSE normalization).
@@ -1806,31 +1931,87 @@ async def _stream_with_normalization(provider: str, raw_stream: bool, provider_c
 def normalize_to_openai_sse(provider: str, raw_chunk: Any) -> ChatCompletionChunk:
     """Transform provider-native streaming chunk to OpenAI-compatible ChatCompletionChunk.
 
-    Args:
-        provider: Provider name (e.g., "openai", "anthropic", "mistral")
-        raw_chunk: Provider-specific streaming chunk (type depends on provider SDK)
+    Phase 3 fully spec-ed — provider-specific transformation logic:
 
-    Returns:
-        ChatCompletionChunk: OpenAI-compatible SSE chunk
-
-    Raises:
-        ValueError: If chunk format is unrecognized for the given provider
-
-    Supported providers and their chunk types:
-        - openai: ChatCompletionChunk (already normalized, pass-through)
-        - anthropic: MessageDeltaEvent or ContentBlockDeltaEvent
-        - mistral: mistralai.models.ChatCompletionDelta or dict (SDK-parsed, not raw SSE)
-        - ollama: ollama.ChatResponse or dict (SDK-parsed, not raw SSE)
-
-    Note: Mistral and Ollama Python SDKs parse SSE internally and yield typed SDK objects,
-    NOT raw SSE strings. Phase 3 implementers must handle SDK-parsed objects, not raw text.
-
-    Implementation note: normalize_to_openai_sse lives in `quota_router/streaming.py`.
-    Phase 3 implementers must provide provider-specific transformation logic.
+    | Provider   | Input Type                          | Transformation                             |
+    |-----------|-------------------------------------|--------------------------------------------|
+    | openai    | ChatCompletionChunk                 | Pass-through (already OpenAI format)        |
+    | anthropic | MessageDeltaEvent, ContentBlockDeltaEvent | Map .delta.text → delta.content         |
+    | mistral   | ChatCompletionDelta (typed or dict) | Map .delta.content → delta.content         |
+    | ollama    | ChatResponse (typed) or dict        | Map .message.content → delta.content        |
     """
-```
+    if provider == "openai":
+        # Already OpenAI format — return as-is if already ChatCompletionChunk
+        if isinstance(raw_chunk, ChatCompletionChunk):
+            return raw_chunk
+        # If dict (from raw SSE), construct ChatCompletionChunk
+        return _dict_to_chat_completion_chunk(raw_chunk)
 
-Phase 3 (F3) will provide SSE transformation for OpenAI-compatible output.
+    elif provider == "anthropic":
+        # Anthropic: MessageDeltaEvent has .delta.text
+        delta_text = getattr(raw_chunk, "delta", None)
+        if delta_text is None:
+            delta_text = raw_chunk.get("delta", {}) if isinstance(raw_chunk, dict) else {}
+        content = getattr(delta_text, "text", "") or delta_text.get("text", "")
+        chunk_id = getattr(raw_chunk, "message", None) or raw_chunk.get("message", {}) if isinstance(raw_chunk, dict) else {}
+        msg_id = getattr(chunk_id, "id", "") or chunk_id.get("id", "")
+        return ChatCompletionChunk(
+            id=f"chatcmpl-{msg_id}",
+            choices=[ChoiceDelta(
+                index=0,
+                delta={"content": content},
+                finish_reason=getattr(raw_chunk, "type", None) == "message_stop" and "stop" or None,
+            )]
+        )
+
+    elif provider == "mistral":
+        # Mistral: ChatCompletionDelta has .delta.content
+        if isinstance(raw_chunk, dict):
+            delta = raw_chunk.get("delta", {})
+            content = delta.get("content", "") if isinstance(delta, dict) else ""
+        else:
+            delta = getattr(raw_chunk, "delta", None)
+            content = getattr(delta, "content", "") if delta else ""
+        return ChatCompletionChunk(
+            id=getattr(raw_chunk, "id", "") or raw_chunk.get("id", "chatcmpl-mistral"),
+            choices=[ChoiceDelta(index=0, delta={"content": content}, finish_reason=None)]
+        )
+
+    elif provider == "ollama":
+        # Ollama: ChatResponse has .message.content
+        if isinstance(raw_chunk, dict):
+            message = raw_chunk.get("message", {})
+            content = message.get("content", "") if isinstance(message, dict) else ""
+            done = raw_chunk.get("done", False)
+            model = raw_chunk.get("model", "")
+        else:
+            message = getattr(raw_chunk, "message", None)
+            content = getattr(message, "content", "") if message else ""
+            done = getattr(raw_chunk, "done", False)
+            model = getattr(raw_chunk, "model", "")
+        return ChatCompletionChunk(
+            id=f"chatcmpl-{model}",
+            choices=[ChoiceDelta(index=0, delta={"content": content}, finish_reason=done and "stop" or None)]
+        )
+
+    else:
+        raise ValueError(f"normalize_to_openai_sse: unknown provider {provider}")
+
+
+def _dict_to_chat_completion_chunk(obj: Dict) -> ChatCompletionChunk:
+    """Convert a dict (from JSON parsing) to ChatCompletionChunk."""
+    choices = obj.get("choices", [])
+    first = choices[0] if choices else {}
+    delta = first.get("delta", {}) if isinstance(first, dict) else {}
+    return ChatCompletionChunk(
+        id=obj.get("id", ""),
+        choices=[ChoiceDelta(
+            index=first.get("index", 0) if isinstance(first, dict) else 0,
+            delta=delta,
+            finish_reason=first.get("finish_reason") if isinstance(first, dict) else None,
+        )]
+    )
+```
 
 **Bridge function clarification:** quota-router uses `async_iter_to_sync_iter()` (takes AsyncIterator, drives via background thread). any-llm uses `async_coro_to_sync_iter()` (takes coroutine, runs it, yields results). These are different functions for different use cases:
 - `async_coro_to_sync_iter`: coroutine → sync iterator (any-llm pattern)
@@ -3868,8 +4049,9 @@ This is the only approach that achieves true drop-in replacement for both ecosys
 
 | Version | Date       | Changes |
 | ------- | ---------- | ------- |
-| 1.49    | 2026-04-30 | **ADD** Phase 2 Rust ←→ Python State Mapping table: maps Python Router fields (_round_robin_index, _round_robin_lock, _total_spend, _spend_history, _active_requests, _latencies, _by_model) to RFC-0917 equivalents (AtomicUsize, record_spend, LatencyTracker, RouterState). Documents lock-free atomics, stoolap persistence, and Phase 2 delegation pattern. |
-| 1.48    | 2026-04-29 | **CRITICAL** Add missing LiteLLM params: `thinking` (Anthropic structured thinking), `modalities` (multi-modal output), `audio` (audio output params), `prediction` (content prediction optimization) to both sync and async completion signatures. Drop-in replacement parity. |
+| 1.50    | 2026-04-30 | **FULL SPEC** Phase 2/3 SSE parsing: replaced all TODO stubs with full implementation for parse_openai_sse, parse_anthropic_sse, parse_mistral_sse, parse_ollama_sse (SSEParser class) and normalize_to_openai_sse with provider-specific transformation logic. Fully spec-ed ChatCompletionStreamIterator._create_stream with OpenAI/Anthropic/Mistral/Ollama SDK streams. |
+| 1.49    | 2026-04-30 | **ADD** Phase 2 Rust ←→ Python State Mapping table: maps Python Router fields to RFC-0917 equivalents. |
+| 1.48    | 2026-04-29 | **CRITICAL** Add missing LiteLLM params: `thinking`, `modalities`, `audio`, `prediction` to both sync and async completion signatures. |
 | 1.45    | 2026-04-29 | Fix external adversarial review round 27: L1 (cache_bypass docstring updated to reference Rust forwarding in PyO3 builds), L2 (CI validator header comment added clarifying build-time stub validation scope). C1, C2, H1, H2, M1, M2 formally rebutted as architecture change requests, not bugs — RFC-0920 explicitly specifies Python Router as Python-level component with no Rust delegation (lines 2184-2185). |
 | 1.44    | 2026-04-29 | Fix external adversarial review round 26: C1 (batch worker cache_bypass explicit binding via functools.partial comment), C2 (CI regex scoped to PROVIDER_SDK_TYPES constant block), H1 (.git/ and ci/ dir markers replace subproject toml files), H2 (counter-based modulo sampling replaces random.random()), M1 (OPERATIONAL WARNING added to completion() function docstring), M2 (Path.absolute() replaces resolve() for container-safe path resolution), L1 (Accepted — codegen enforces pure-literal constraint), L2 (lock_metric_sampling_rate init param + QUOTA_ROUTER_LOCK_METRIC_SAMPLE_RATE env). |
 | 1.43    | 2026-04-29 | Fix external adversarial review round 23: C1 (cache_bypass wired in Router.acompletion and batch methods), C2 (CI regex includes ,? for rustfmt trailing commas), H1 (marker-file search replaces parent.parent fragile traversal), H2 (router_lock_hold_time_us collection adds sampling rate config), M1 (import math confirmed at module level), M2 (cache_bypass docstring adds fallback amplification warning), L1 (codegen contract explicitly forbids inline comments), L2 (add standard v1.43 changelog entry). |

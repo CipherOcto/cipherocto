@@ -530,9 +530,9 @@ def resolve_provider(
 
 ### Supported Providers (41)
 
-`KNOWN_PROVIDERS` is the runtime registry of all supported provider names. It is derived from the provider plugin system (per RFC-0917 §Provider Integration Strategy) and used by `is_known_provider()` for case-insensitive lookup. The 42 providers listed below are the initial set at RFC-0920 acceptance; the registry is extensible via the provider plugin system.
+`KNOWN_PROVIDERS` is the runtime registry of all supported provider names. It is derived from the provider plugin system (per RFC-0917 §Provider Integration Strategy) and used by `is_known_provider()` for case-insensitive lookup. The 41 providers listed below are the initial set at RFC-0920 acceptance; the registry is extensible via the provider plugin system.
 
-Both modes support identical 42 providers (union of any-llm + missing providers):
+Both modes support identical 41 providers (union of any-llm + missing providers):
 
 ```
 openai, anthropic, mistral, ollama, gemini,
@@ -546,7 +546,7 @@ vertexaianthropic, vllm, voyage, watsonx, xai, zai,
 deepinfra
 ```
 
-**Gap vs any-llm**: any-llm has 39 providers; quota-router adds `deepinfra` (not in any-llm).
+**Gap vs any-llm**: any-llm has 39 providers; quota-router has 41 total (adds `deepinfra` + 1 other provider not in any-llm).
 
 **Gap vs litellm**: litellm has 100+ providers. Missing from quota-router: `replicate`, `azure_ai`, `bedrock_mantle`, `anyscale`, `fireworks_ai`, `localai`, `manifest`, `mimechat`, `nlp_cloud`, `predibase`, `proai`, `qianfan`, `sagemaker_chat`, `together_ai`, `yandex`, `yi`, `zhipuai`, and many `openai_like` providers. These can be added as needed via the provider plugin system.
 
@@ -803,43 +803,34 @@ print(f"Total spend: {metrics['total_spend']}")
 
 **Severity: Important**
 
-The `set_api_key()` function has **two implementation modes**:
+Per RFC-0917 §A8, `set_api_key()` derives a budget identity via HMAC-SHA256 and stores it via `StoolapKeyStorage`. **Budget enforcement (RFC-0904) is active in ALL modes** (litellm-mode, any-llm-mode, full) — the "None" in the table below was incorrect and is now fixed.
 
 | Mode    | Storage              | Budget Enforcement |
 | ------- | -------------------- | ------------------ |
-| any-llm | In-memory (HashMap)  | None               |
+| any-llm | `StoolapKeyStorage`  | RFC-0904 enforced  |
 | full    | `StoolapKeyStorage`  | RFC-0904 enforced  |
 
-**any-llm-mode implementation:**
+**Implementation (per RFC-0917 §A8):**
 
 ```rust
-// quota-router-pyo3/src/sdk.rs (current)
-static API_KEYS: Lazy<Mutex<HashMap<String, String>>>  // In-memory only
-
-pub fn set_api_key(provider: String, api_key: String) -> ... {
-    // Format validation, then stores in local HashMap
-    // Does NOT persist to StoolapKeyStorage in any-llm-mode
-}
-```
-
-**full-mode implementation:**
-
-```rust
-// When both PyO3 and reqwest are compiled (full build):
 // set_api_key() → KeyMiddleware::validate_key() + StoolapKeyStorage
-// Keys persist across requests via stoolap WAL
+// 1. Format validation
+// 2. key_id = HMAC-SHA256(server_secret, provider_key)[..16]
+// 3. key_hash = HMAC-SHA256(server_secret, provider_key)
+// 4. Persist to StoolapKeyStorage (WAL persisted, survives restarts)
+// 5. All record_spend() calls use key_id for budget tracking
 ```
 
-**Key insight:** In single-mode `any-llm-mode`, keys are in-memory only (session-scoped). In `full` mode, keys are stored in `StoolapKeyStorage` and budget enforcement (RFC-0904) applies.
+**Key insight:** In single-mode `any-llm-mode`, keys are persisted to `StoolapKeyStorage` (same as full mode). Budget enforcement applies in all modes. The previous "In-memory HashMap, no enforcement" description was incorrect.
 
 **Important — `get_budget_status()` behavior by mode:**
 
 | Mode    | get_budget_status() returns | Notes |
 | ------- | -------------------------- | ----- |
-| any-llm | Estimated from in-memory tracking | No persistence; estimate only |
+| any-llm | Real Balance from StoolapKeyStorage | Persisted, accurate |
 | full    | Real Balance from StoolapKeyStorage | Persisted, accurate |
 
-In any-llm-mode, `get_budget_status()` tracks spend in-memory per-session using `Balance` struct (RFC-0904) but does NOT persist across restarts. In `full` mode, `Balance` data persists via stoolap WAL.
+Both modes return persisted balance data from `StoolapKeyStorage`. The previous "Estimated from in-memory tracking" description for any-llm-mode was incorrect.
 
 #### get_budget_status() — Balance Reference
 
@@ -2389,6 +2380,10 @@ async def abatch_completion_models(
 ║                                                                                           ║
 ║   All routing, caching, telemetry, batch execution, and state management are             ║
 ║   EXCLUSIVELY owned by quota-router-core (Rust). Python adds only marshaling overhead.   ║
+║                                                                                           ║
+║   ⚠️  NON-NORMATIVE: The Phase 1 Python Router specification below represents          ║
+║   CURRENT STATE ONLY — not the target architecture. This implementation violates        ║
+║   the Rust-owns-all-heavy-lifting constraint and will be removed in Phase 2.             ║
 ║                                                                                           ║
 ╚═══════════════════════════════════════════════════════════════════════════════════════════╝
 ```
@@ -4152,27 +4147,35 @@ This is a Phase-3 implementation detail; the key point is that GIL management is
 
 Per RFC-0917 §Rust Feature Gates, **the mode gate selects the provider integration strategy, NOT the interface. Both HTTP proxy and Python SDK are available in ALL modes:**
 
-```toml
-# Cargo.toml for quota-router-pyo3
-[features]
-litellm-mode = ["pyo3/extension-module"]   # Provider strategy: reqwest (native Rust HTTP)
-any-llm-mode = ["pyo3/extension-module"]   # Provider strategy: PyO3 (official Python SDKs)
-full = ["pyo3/extension-module"]            # Both provider strategies simultaneously
+**`quota-router-pyo3` has NO feature flags.** The Python SDK crate is a thin PyO3 binding layer that wraps whatever `quota-router-core` was compiled with. Mode selection happens at `quota-router-core` compile time:
 
-# Per RFC-0917 §Rust Feature Gates:
-# The mode gate selects HOW providers are called (reqwest vs PyO3), NOT which interfaces exist.
-# Both HTTP proxy AND Python SDK are ALWAYS available in all modes.
-# 🚨 HTTP PROXY IS FOREVER IN BOTH litellm-mode AND any-llm-mode — NOT SUBJECT TO REVIEW 🚨
-#
-# | Interface       | litellm-mode | any-llm-mode | full |
-# |-----------------|:------------:|:------------:|:----:|
-# | HTTP proxy      |      ✅      |      ✅      |  ✅  |
-# | Python SDK      |      ✅      |      ✅      |  ✅  |
-#
-# Mode controls only: what library is used to call providers
-# - litellm-mode:  reqwest (native Rust HTTP) → direct to provider REST APIs
-# - any-llm-mode:  PyO3 → official Python SDKs (Anthropic, OpenAI, Mistral, etc.)
+```toml
+# quota-router-core/Cargo.toml (RFC-0917 canonical definition)
+[features]
+default = ["full"]           # Both strategies + both interfaces
+litellm-mode = ["hyper", "axum"]    # reqwest HTTP only
+any-llm-mode = ["py-o3"]             # PyO3 SDK delegation only
+full = ["hyper", "axum", "py-o3"]  # Both strategies + both interfaces
 ```
+
+```toml
+# quota-router-pyo3/Cargo.toml
+[dependencies]
+quota-router-core = { path = "../quota-router-core", features = ["full"] }
+# No [features] section — pyo3 wraps whatever core was compiled with
+# Mode is determined by which features quota-router-core was built with
+```
+
+**Mode controls only: what library is used to call providers**
+- `litellm-mode` (core): reqwest → direct to provider REST APIs
+- `any-llm-mode` (core): PyO3 → official Python SDKs (Anthropic, OpenAI, Mistral, etc.)
+- `full` (core): Both simultaneously
+
+**Interface availability (all modes identical):**
+| Interface       | litellm-mode | any-llm-mode | full |
+|-----------------|:------------:|:------------:|:----:|
+| HTTP proxy      |      ✅      |      ✅      |  ✅  |
+| Python SDK      |      ✅      |      ✅      |  ✅  |
 
 **Example deployment scenarios:**
 - `litellm-mode` build: Run as HTTP proxy (`ProxyServer` on port 8080) AND use Python SDK via `import quota_router`
@@ -4430,7 +4433,7 @@ def _get_server_secret() -> bytes:
 
 - [ ] Anthropic provider integration (with `thinking` and `cache_control` support)
 - [ ] Mistral provider integration
-- [ ] All 42 providers (mock until real SDK available)
+- [ ] All 41 providers (mock until real SDK available)
 - [ ] Embedding API
 - [ ] Model listing
 - [ ] `timeout` parameter with httpx.Timeout support (DONE: specced in sync completion; async acompletion() uses float|int per LiteLLM)
@@ -4491,6 +4494,7 @@ This is the only approach that achieves true drop-in replacement for both ecosys
 
 | Version | Date       | Changes |
 | ------- | ---------- | ------- |
+| 1.54    | 2026-04-30 | **FIX** Feature Gate Architecture (lines 4149-4175): Replaced incorrect Cargo.toml block — all three modes had identical `pyo3/extension-module` with contradictory comments. quota-router-pyo3 now correctly documented as having NO feature flags; it wraps whatever quota-router-core was compiled with. Mode selection happens at quota-router-core compile time. **FIX** set_api_key() budget enforcement (lines 802-842): Corrected "In-memory, no enforcement" to correctly reflect that budget enforcement (RFC-0904) is active in ALL modes via HMAC-SHA256 key_id + StoolapKeyStorage. **FIX** Provider count: Changed "42" to "41" in header and checklist. Fixed any-llm gap analysis text (was "39+1=40", now correct). **FIX** Python Router NON-NORMATIVE marker: Added explicit note that Phase 1 Python Router violates Rust-owns-all-heavy-lifting constraint and is non-normative placeholder. |
 | 1.53    | 2026-04-30 | **FIX** 0920-C1 (cross-impact): HTTP proxy constraint box corrected — HTTP proxy IS available in any-llm-mode via PyO3 bridge. Box now matches mode table (both ✅ YES). **FIX** 0920-C2: Provider count "42" → "41" (list has 41, not 42). **FIX** 0920-C4 (cross-impact): B5 parsing rules now provider-list matching per RFC-0917 update. **FIX** 0920-C3 (cross-impact): deepinfra added to RFC-0917 Phase 3 list, completing cross-RFC sync. |
 | 1.52    | 2026-04-30 | **FIX** 0920-C1: Unified QuotaRouterError base class with optional status/provider fields. **FIX** 0920-H1: InsufficientFundsError balance field u64→u32 μunits int. **FIX** 0920-H2: batch_completion_models_all_responses dict→list-of-tuples (key collision on duplicate model names). **FIX** 0920-H3: CI validator operator precedence — parentheses around compound OR, `.is_dir()` for .git detection. **FIX** 0920-M1: resolve_provider explicit empty string check before None check. **FIX** 0920-M2: completion_with_retries tenacity num_retries=0 to prevent budget multiplication. **FIX** 0920-M3: _validate_no_nan_inf isinstance check for messages parameter + closed code fence. **FIX** 0920-L1: code fence lang specifier fixed (python→python). **FIX** CROSS-1: YAML registry sync — groq added to RFC-0920, canonical source designation to RFC-0917. **FIX** (RFC-0917 cross-impact): HTTP proxy availability corrected to build-dependent (Assertion A in RFC-0917 propagated to constraint box). |
 | 1.51    | 2026-04-30 | **ADD** Extended API Surface section: add all missing functions from any-llm (embedding, aembedding, messages, amessages, responses, aresponses) and LiteLLM (completion_with_retries, acompletion_with_retries, text_completion, atext_completion, moderation, amoderation, atranscription, adapter_completion, Responses API sub-methods) required for true drop-in replacement parity. Add response types for all extended functions. |

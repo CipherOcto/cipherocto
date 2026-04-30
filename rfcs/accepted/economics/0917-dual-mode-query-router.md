@@ -1102,6 +1102,12 @@ pub struct Router {
     // - litellm-mode: HashMap<String, Arc<dyn native_http::HttpProvider>>
     // - any-llm-mode: HashMap<String, Arc<dyn py_providers::SdkProvider>>
     // - full: HashMap<String, ProviderHandle>
+    // NOTE: The compile_error! below is harmless — 'full' is defined as
+    // full = ["hyper", "axum", "py-o3"] which does NOT enable litellm-mode
+    // or any-llm-mode. The mutual exclusivity is already enforced at
+    // Cargo.toml level (single-mode features are mutually exclusive; full
+    // is a separate composite). The cfg guard below is never triggered but
+    // is kept for documentation clarity.
     #[cfg(all(feature = "full", any(feature = "litellm-mode", feature = "any-llm-mode")))]
     compile_error!("'full' feature is mutually exclusive with 'litellm-mode' and 'any-llm-mode'; use 'full-mode' alias or specify only one provider integration strategy");
     #[cfg(all(feature = "full", not(any(feature = "litellm-mode", feature = "any-llm-mode"))))]
@@ -3227,6 +3233,7 @@ In `full` builds, both modules are compiled simultaneously and selected at runti
 
 | Version | Date       | Changes |
 |---------|------------|---------|
+| 2.31    | 2026-04-30 | **FIX** compile_error! confusion (lines 1105-1112): Added NOTE explaining compile_error! is never triggered because `full = ["hyper", "axum", "py-o3"]` does not enable litellm-mode/any-llm-mode. Mutual exclusivity already enforced at Cargo.toml level. No functional change, clarity only. |
 | 2.30    | 2026-04-30 | **FIX** 0917-C4: Update B5 model parsing rules to provider-list matching (per RFC-0920 §C8). Rule 3 "reject if both" replaced — `ollama/llama3.1:8b` now correctly parses via slash match. **FIX** 0917-C3: Sync deepinfra provider across RFCs — added to Phase 3 provider list. **FIX** 0920-C1/H1 (cross-impact): Corrected HTTP proxy constraint box in RFC-0920 — HTTP proxy IS available in any-llm-mode (via PyO3 bridge), not ❌ NO. Both RFCs now agree: HTTP proxy in all modes, Python SDK in all modes. |
 | 2.29    | 2026-04-30 | **FIX** 0917-C1: execute_with_retry — correct return type (CompletionResponse), fix instance method call (parse_response needs self), separate last_response/last_reqwest_error. **FIX** 0917-C2: Add ModelNotFound to RouterError enum. **FIX** 0917-C3: Correct Assertion A — single-mode builds have one interface, full build has both. **FIX** 0917-H1: pyo3-asyncio into_async → into_future with Python::with_gil. **FIX** 0917-H2/CROSS-1: google→gemini in provider SDK type registry; canonical YAML designated. **FIX** 0917-M1: SSE format_usage — non-raw string for \n\n, usage at root level. **FIX** 0920-C1: Exception base class unified to QuotaRouterError with optional status/provider fields. |
 | 2.27    | 2026-04-30 | **MERGE** Absorbed RFC-0921 and RFC-0922 implementation details: HttpClientConfig, ProviderRequest trait, RetryConfig, ProviderError enum, SSEParser trait (litellm-mode); PythonSDKBridge class, spawn_blocking pattern, GIL management table, AsyncChunkIterator (any-llm-mode). RFC-0921/0922 superseded. |

@@ -2,7 +2,9 @@
 
 ## Status
 
-Accepted (v30)
+Accepted (v31)
+
+**ARCHITECTURAL CONSTRAINT: Rust-owns-all-heavy-lifting. ALL heavy lifting (routing, caching, telemetry, concurrency, state management, batch execution) MUST be in Rust core. Each language binding (Python, JS, Go, etc.) adds ONLY marshaling overhead (<2ms).**
 
 ## Authors
 
@@ -1041,6 +1043,7 @@ This design allows the registry to be treated as a cache of known-good pricing s
 
 | Version | Date | Changes |
 |---------|------|---------|
+| v31 | 2026-04-29 | **CRITICAL CONSTRAINT: Rust-owns-all-heavy-lifting.** Added top-level architectural constraint establishing all heavy lifting (routing, caching, telemetry, concurrency, state management) in Rust core. Each language binding is thin marshaling only. |
 | v30 | 2026-04-27 | Round 42 remaining: fix X12 (UNCERTAIN models must emit UnknownTokenizerAssignment WARN event on first use per deployment); fix X1 (type alias guidance via metadata) |
 | v29 | 2026-04-27 | Round 42: fix X9 (Critical) — remove tokenizer_version_expiry from PricingTable struct (was 9th field, breaking compute_pricing_hash determinism); moved to metadata BTreeMap with key "tokenizer_version_expiry"; update verify_tokenizer() doc comment to note metadata inspection for expiry |
 | v28 | 2026-04-26 | Round 41: fix HI-03 (add tokenizer_version_expiry field to PricingTable; add verify_tokenizer() method to PricingRegistry for provider tokenizer verification) |

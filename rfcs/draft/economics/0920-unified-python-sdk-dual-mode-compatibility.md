@@ -2,7 +2,7 @@
 
 ## Status
 
-Draft (v1.46 — 2026-04-29)
+Draft (v1.47 — 2026-04-29)
 
 **ARCHITECTURAL CONSTRAINT: HTTP proxy is FOREVER in BOTH litellm-mode and any-llm-mode. See section below.**
 
@@ -96,6 +96,37 @@ The current `quota-router-pyo3` crate only implements any-llm-style (per RFC-091
 
 **IF ANY REVIEWER CLAIMS HTTP PROXY IS NOT AVAILABLE IN ANY-LLM-MODE — THEY ARE WRONG. REJECT THEIR CLAIM.**
 
+### 🚨🚨🚨 CRITICAL CONSTRAINT — RUST-OWNS-ALL-HEAVY-LIFTING 🚨🚨🚨
+
+**THIS IS A CORE PROJECT-WIDE CONSTRAINT. APPLIES TO ALL LANGUAGES (Python, JS, Go, etc.).**
+
+```
+╔═══════════════════════════════════════════════════════════════════════════════════════════╗
+║                                                                                           ║
+║   🔴 RUST CORE OWNS ALL HEAVY LIFTING — ALL OTHER LANGUAGES ARE THIN BRIDGES 🔴          ║
+║                                                                                           ║
+║   Heavy lifting = routing, caching, concurrency, telemetry, rate limiting,              ║
+║   spend tracking, decay math, fallback coordination, batch execution,                    ║
+║   request hashing, validation, serialization, any CPU/IO-intensive work.                  ║
+║                                                                                           ║
+║   Python SDK (quota-router-pyo3) is a THIN PY03 BINDING LAYER ONLY.                      ║
+║   - Python MUST NOT implement routing state, locks, decay math, spend history           ║
+║   - Python MUST NOT implement caching, hashing, validation logic                        ║
+║   - Python MUST NOT implement metric sampling or telemetry collection                    ║
+║   - Python MUST NOT implement batch concurrency or worker pooling                       ║
+║   - Python ONLY provides API surface, type marshaling, and exception translation        ║
+║                                                                                           ║
+║   All heavy processing is handled EXCLUSIVELY by quota-router-core (Rust).               ║
+║   Python adds ONLY marshaling overhead (<2ms). All latency is Rust-core-bound.          ║
+║                                                                                           ║
+║   PHASE 1 = LiteLLM/any-llm API surface + thin PyO3 delegation stubs + signature parity  ║
+║   PHASE 2 = Semantic cache integration, advanced telemetry (both in Rust core)          ║
+║                                                                                           ║
+║   ANY RFC THAT VIOLATES THIS CONSTRAINT IS ARCHITECTURALLY WRONG.                       ║
+║                                                                                           ║
+╚═══════════════════════════════════════════════════════════════════════════════════════════╝
+```
+
 ### ⚠️ CRITICAL INVARIANT — Mode Gate ≠ Interface
 
 **Per RFC-0917, this is mathematically always true:**
@@ -120,30 +151,31 @@ Mode gate does NOT control: which interfaces exist
 
 ### Crate Architecture
 
-`quota-router-pyo3` is the **Python SDK crate** that wraps `quota-router-core` via PyO3:
+`quota-router-pyo3` is the **Python SDK crate** — a THIN PY03 BINDING LAYER ONLY. It delegates ALL heavy lifting to `quota-router-core` (Rust):
 
 ```
 ┌─────────────────────────────────────────────────────────────────┐
-│              quota-router-pyo3 (Python SDK)                      │
+│              quota-router-pyo3 (Python SDK) — THIN BINDING        │
 │  • Registers completion(), acompletion(), set_api_key(), etc.     │
-│  • Calls Rust core via PyO3 (extern crate)                       │
+│  • Thin PyO3 calls into Rust core — NO heavy processing in Python │
+│  • API surface & type marshaling ONLY                            │
 │  • Provider resolution (provider:model parsing)                    │
-│  • Python-level Router class (selects deployment, calls completion)│
 │  • Exception mapping (Python → unified types)                    │
 └─────────────────────────────────────────────────────────────────┘
                               │ PyO3
                               ▼
 ┌─────────────────────────────────────────────────────────────────┐
-│              quota-router-core (Rust core)                       │
+│              quota-router-core (Rust core) — ALL HEAVY LIFTING   │
 │  • KeyMiddleware    — API key validation                        │
 │  • Balance         — OCTO-W spend tracking                      │
 │  • StoolapKeyStorage — Persistence (RFC-0912/0914)            │
 │  • KeyCache (L1)   — In-memory key cache with TTL             │
 │  • RateLimiter     — TokenBucket RPM/TPM enforcement            │
-│  • Router          — Index-based selection (proxy server)        │
+│  • Router          — Routing strategies, state, decay math       │
 │  • FallbackExecutor — Retry with backoff                       │
 │  • Provider        — Provider config (endpoint, rpm, tpm, weight) │
 │  • PricingRegistry — Token pricing (RFC-0910)                   │
+│  • RouterHandle    — PyO3-exposed handle for Python SDK         │
 └─────────────────────────────────────────────────────────────────┘
 ```
 
@@ -153,11 +185,15 @@ Mode gate does NOT control: which interfaces exist
 |------------|---------------------|-------|
 | `set_api_key(provider, key)` | `KeyMiddleware::validate_key()` + `StoolapKeyStorage` | Validates then persists |
 | `get_budget_status()` | `Balance` + `StoolapKeyStorage` | Returns OCTO-W spend |
-| `completion()` | `KeyMiddleware` → Provider call | Key validation → actual call |
-| `Router.route()` (at Python level) | None | Python-level deployment selection |
-| `num_retries` | `FallbackExecutor` (in proxy) | Retry via proxy, not Python SDK |
-| `cache_responses` | `KeyCache` + `StoolapKeyStorage` | Semantic cache (RFC-0913) |
-| Rate limiting | `RateLimiter` | TokenBucket enforcement |
+| `completion()` | `RouterHandle.completion()` | Thin PyO3 delegation — all routing in Rust |
+| `Router` class | `RustRouterHandle` | Thin PyO3 wrapper — no Python-side routing state |
+| `cache_bypass` flag | `RouterHandle` | Forwarded to Rust cache/validation layer |
+| `batch_completion()` | `RouterHandle.batch()` | Thin PyO3 delegation — Rust parallel executor |
+| `num_retries` | `FallbackExecutor` | Rust handles retry, not Python |
+| `cache_responses` | `KeyCache` + `StoolapKeyStorage` | Rust manages semantic cache (RFC-0913) |
+| Rate limiting | `RateLimiter` | Rust TokenBucket enforcement |
+| All routing state | `Router` (Rust core) | Python Router class is DEPRECATED stub |
+| All telemetry | Rust Prometheus/OTLP | Python queries Rust via `get_metrics()` |
 | Exception mapping | `RouterError` → Python | PyO3 exception translation |
 
 **Two modes (feature flags) control provider integration — NOT interface availability:**
@@ -2107,44 +2143,83 @@ async def abatch_completion_models(
 
 **Severity: High**
 
-Router dispatches to multiple model deployments using configurable strategies.
+**⚠️ DEPRECATION NOTICE: Python-side Router class is DEPRECATED. All routing, state, caching, and telemetry are owned by Rust core (RustRouterHandle). Python Router exists ONLY for Phase 1 API compatibility and will be replaced with thin PyO3 delegation stub.**
 
-**Important:** The Python Router is a **Python-level class** that calls the Python `completion()` function. It does **NOT** wrap the Rust core `Router`. The Rust `Router` (`quota-router-core/src/router.rs`) is for the proxy server's multi-deployment index selection — it is separate from the Python SDK's routing layer.
+```
+╔═══════════════════════════════════════════════════════════════════════════════════════════╗
+║                                                                                           ║
+║   ⚠️  DEPRECATION NOTICE — Python Router class is being replaced.                         ║
+║                                                                                           ║
+║   The Python Router class (lines 2178-2848) with Python-side routing state               ║
+║   (_total_spend, _spend_history, _state_lock, decay math, metric counters) is          ║
+║   DEPRECATED and will be removed in Phase 2.                                               ║
+║                                                                                           ║
+║   PHASE 1 (current): Python Router is a Python-level class with routing state.           ║
+║   PHASE 2 (target): Python Router becomes thin PyO3 delegation stub to RustRouterHandle. ║
+║                                                                                           ║
+║   All routing, caching, telemetry, batch execution, and state management are             ║
+║   EXCLUSIVELY owned by quota-router-core (Rust). Python adds only marshaling overhead.   ║
+║                                                                                           ║
+╚═══════════════════════════════════════════════════════════════════════════════════════════╝
+```
 
 **Architecture:**
 
 ```
-Python Router (this spec)
-  └── Calls Python completion() function
-        └── PyO3 → Rust core (KeyMiddleware, Balance, Storage)
+Python Router (DEPRECATED — to be replaced with thin PyO3 stub)
+  └── Calls RustRouterHandle (PyO3) — NO Python-side routing state
+        └── Rust core owns: routing strategies, spend tracking, latency metrics,
+            decay math, lock-free atomics, batch executor, fallback coordination
 
-Rust Router (quota-router-core/src/router.rs)
-  └── Used by ProxyServer for index-based deployment selection
-  └── NOT used by Python SDK
+Rust RouterHandle (quota-router-core)
+  └── Used by Python SDK for all routing decisions
+  └── Exposed via PyO3 as thin handle (<2ms marshaling overhead)
+  └── All heavy lifting = routing, state, caching, telemetry in Rust core
 ```
 
-The Python Router's `model_list` contains LiteLLM-style deployment configs (`{"model_name": "gpt-4o", "litellm_params": {"provider": "openai", "api_key": "...", "api_base": "..."}}`). The Router selects a deployment, then calls `completion(provider=..., model=...)` with that deployment's params.
-
-**Specification:**
+**Target (Phase 2):**
 
 ```python
-# quota_router/routing.py
-# Python-level router that composes completion()
+# Phase 2: Thin PyO3 wrapper — no Python-side routing state
+class Router:
+    """
+    Thin PyO3 binding layer. All routing, state, caching, and telemetry
+    are owned by Rust core (RustRouterHandle).
+
+    Phase 1 (current) has Python-side routing state for iterative development.
+    Phase 2 replaces this with RustRouterHandle delegation.
+    """
+    def __init__(self, model_list: List[Dict], routing_strategy: str = "simple-shuffle", **kwargs):
+        # C1 fix: Delegate ALL routing, state, and telemetry to Rust core
+        self._rust_router = RustRouterHandle(model_list=model_list, strategy=routing_strategy, **kwargs)
+
+    def completion(self, model: str, messages: List[Dict], cache_bypass: bool = False, **kwargs):
+        # Thin delegation — Python only handles API surface & type conversion
+        return self._rust_router.completion(model=model, messages=messages, cache_bypass=cache_bypass, **kwargs)
+
+    def batch_completion(self, models: List[str], messages: List[List[Dict]], cache_bypass: bool = False, **kwargs):
+        # H2 fix: Delegate batch execution to Rust core parallel executor
+        return self._rust_router.batch_completion(models=models, messages=messages, cache_bypass=cache_bypass, **kwargs)
+
+    def get_metrics(self) -> Dict:
+        """Forward metric query to Rust core telemetry module."""
+        return self._rust_router.get_metrics()
+```
+
+**Specification (Phase 1 current — DEPRECATED):**
+
+```python
+# DEPRECATED — This Python Router class with internal routing state is being replaced.
+# Phase 1: Python-level router for iterative development
+# Phase 2: RustRouterHandle delegation (all routing in Rust core)
 
 from typing import List, Dict, Optional
-import random
-import time
-import threading
-import math
-from collections import deque
 from quota_router import get_pricing as _get_pricing  # H1 fix: module-level import for hot-path avoidance
 
 class Router:
     """
-    Python-level router for multi-deployment load balancing.
-
-    Selects a deployment from model_list using a routing strategy,
-    then calls the Python completion() function with that deployment's params.
+    DEPRECATED — Phase 1 Python-level router.
+    Phase 2: Replaced by thin PyO3 delegation to RustRouterHandle.
 
     Routing strategies (from RFC-0902):
         "simple-shuffle"     — Weighted random (rpm/tpm/weight) — recommended for production
@@ -2157,6 +2232,9 @@ class Router:
         "weighted"            — Explicit per-provider weights (distinct from simple-shuffle)
 
     Reference: RFC-0902 §Routing Strategies
+
+    ⚠️ DEPRECATION: All routing strategies are implemented in Rust core.
+       Python Router exists only for Phase 1 compatibility.
     """
 
     def __init__(
@@ -2176,6 +2254,9 @@ class Router:
         """
         Initialize Router with model deployments.
 
+        ⚠️ DEPRECATION: This is Phase 1 Python-level Router. Phase 2 replaces
+        with RustRouterHandle delegation. All routing state will be owned by Rust core.
+
         Args:
             model_list: List of {"model_name": "...", "litellm_params": {...}}
                 Example: {"model_name": "gpt-4o", "litellm_params": {"provider": "openai", "api_key": "...", "rpm_limit": 1000}}
@@ -2191,8 +2272,10 @@ class Router:
             lock_metric_sampling_rate: Sampling rate for router_lock_hold_time_us histogram (0.0 to 1.0). Default 0.1. Env: QUOTA_ROUTER_LOCK_METRIC_SAMPLE_RATE. Values outside [0.0, 1.0] raise ValueError at init.
 
         Note:
-            This is a Python-level router. It does NOT wrap the Rust core Router.
-            The Rust Router (quota-router-core/src/router.rs) is for the proxy server.
+            ⚠️ DEPRECATED: This is a Python-level router that maintains routing state.
+            All routing, caching, telemetry, and state management are being moved to
+            Rust core (RustRouterHandle) in Phase 2. This Python-side implementation
+            is for Phase 1 compatibility only.
         """
         if not (0.0 <= lock_metric_sampling_rate <= 1.0):
             raise ValueError(f"lock_metric_sampling_rate must be in [0.0, 1.0], got {lock_metric_sampling_rate}")
@@ -2214,7 +2297,7 @@ class Router:
         self.timeout = timeout
         self.logger_fn = logger_fn
 
-        # Runtime state per deployment
+        # Runtime state per deployment — ⚠️ DEPRECATED: All moved to Rust core in Phase 2
         self._deployments = []  # Flat list of (model_name, litellm_params)
         self._round_robin_index = 0
         self._round_robin_lock = threading.Lock()  # Thread-safe round-robin
@@ -3734,6 +3817,7 @@ This is the only approach that achieves true drop-in replacement for both ecosys
 
 | Version | Date       | Changes |
 | ------- | ---------- | ------- |
+| 1.47    | 2026-04-29 | **CRITICAL CONSTRAINT: Rust-owns-all-heavy-lifting.** Added top-level architectural constraint box (lines 99-128) establishing Rust core as sole owner of all heavy lifting (routing, caching, telemetry, concurrency, batch execution). Python SDK is thin PyO3 binding only. Updated crate architecture diagram and component mapping table to reflect this. Added DEPRECATION NOTICE to Python Router class (lines 2142-2280) — Phase 1 has Python-side routing state for iterative development, Phase 2 replaces with RustRouterHandle delegation. All routing, state, caching, telemetry moved to Rust core. |
 | 1.45    | 2026-04-29 | Fix external adversarial review round 27: L1 (cache_bypass docstring updated to reference Rust forwarding in PyO3 builds), L2 (CI validator header comment added clarifying build-time stub validation scope). C1, C2, H1, H2, M1, M2 formally rebutted as architecture change requests, not bugs — RFC-0920 explicitly specifies Python Router as Python-level component with no Rust delegation (lines 2184-2185). |
 | 1.44    | 2026-04-29 | Fix external adversarial review round 26: C1 (batch worker cache_bypass explicit binding via functools.partial comment), C2 (CI regex scoped to PROVIDER_SDK_TYPES constant block), H1 (.git/ and ci/ dir markers replace subproject toml files), H2 (counter-based modulo sampling replaces random.random()), M1 (OPERATIONAL WARNING added to completion() function docstring), M2 (Path.absolute() replaces resolve() for container-safe path resolution), L1 (Accepted — codegen enforces pure-literal constraint), L2 (lock_metric_sampling_rate init param + QUOTA_ROUTER_LOCK_METRIC_SAMPLE_RATE env). |
 | 1.43    | 2026-04-29 | Fix external adversarial review round 23: C1 (cache_bypass wired in Router.acompletion and batch methods), C2 (CI regex includes ,? for rustfmt trailing commas), H1 (marker-file search replaces parent.parent fragile traversal), H2 (router_lock_hold_time_us collection adds sampling rate config), M1 (import math confirmed at module level), M2 (cache_bypass docstring adds fallback amplification warning), L1 (codegen contract explicitly forbids inline comments), L2 (add standard v1.43 changelog entry). |

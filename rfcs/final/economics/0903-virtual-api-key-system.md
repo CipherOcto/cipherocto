@@ -2,7 +2,9 @@
 
 ## Status
 
-Final (v34 - Stoolap compatibility)
+Final (v35 - Stoolap compatibility)
+
+**ARCHITECTURAL CONSTRAINT: Rust-owns-all-heavy-lifting. ALL heavy lifting (routing, caching, telemetry, concurrency, state management, batch execution) MUST be in Rust core. Each language binding (Python, JS, Go, etc.) adds ONLY marshaling overhead (<2ms).**
 
 ## Authors
 
@@ -2276,6 +2278,8 @@ pub fn check_team_key_limit(db: &Database, team_id: &Uuid) -> Result<(), KeyErro
 ---
 
 ## Changelog
+
+- **v35 (2026-04-29):** **CRITICAL CONSTRAINT: Rust-owns-all-heavy-lifting.** Added top-level architectural constraint establishing all heavy lifting (routing, caching, telemetry, concurrency, state management) in Rust core. Each language binding is thin marshaling only.
 
 - **v34 (2026-04-24):** Fix Critical compilation bug — replace `uuid_to_blob_16(&id)` with `id.to_vec()` for `tokenizer_id` field in all INSERT calls:
   - `record_spend()` at line 1657 — was `uuid_to_blob_16(&id)` expecting `Uuid`, now `id.to_vec()` for `[u8; 16]`

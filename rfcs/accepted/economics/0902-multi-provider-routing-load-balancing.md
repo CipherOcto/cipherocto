@@ -4,6 +4,8 @@
 
 Accepted
 
+**ARCHITECTURAL CONSTRAINT: Rust-owns-all-heavy-lifting. This is a CORE project-wide constraint — ALL heavy lifting (routing, caching, telemetry, concurrency, batch execution, state management) MUST be in Rust core. All other languages are thin binding/integration bridges only.**
+
 ## Authors
 
 - Author: @cipherocto
@@ -38,19 +40,24 @@ The enhanced quota router must support multiple LLM providers with intelligent r
 
 ## Scope
 
+**ALL routing, state management, and heavy processing is in Rust core. Python SDK, HTTP proxy, and any other bindings are thin clients only.**
+
 ### In Scope
 
-- Routing strategies (round-robin, least-busy, latency-based, cost-based)
-- Fallback chain configuration
-- Provider health checking and cooldown periods
-- Weight-based distribution
-- Per-request routing metadata
+- Rust core routing strategies (round-robin, least-busy, latency-based, cost-based) — **ALL implemented in Rust**
+- Fallback chain configuration — **in Rust core**
+- Provider health checking and cooldown periods — **in Rust core**
+- Weight-based distribution — **in Rust core**
+- Per-request routing metadata — **in Rust core**
+- **RustRouterHandle** PyO3-exposed handle for Python SDK thin binding
 
 ### Out of Scope
 
 - Provider API implementation (handled by provider modules)
 - Cost tracking (RFC-0904)
 - Market-based dynamic routing (future phase)
+- **Python-side routing state** — Python SDK uses RustRouterHandle only
+- **Any language implementing routing logic** — only Rust core owns routing
 
 ## Design Goals
 
@@ -126,6 +133,32 @@ class RoutingStrategy(enum.Enum):
 ```
 
 > **ProviderBudgetLimiting disposition:** This strategy (per-provider budget limits) is **out of scope** for this RFC. It is not present in the Rust `RoutingStrategy` enum above. Rationale: Per-provider budget limiting is a separate enforcement dimension from request routing — it is handled by the budget enforcement layer (RFC-0904) rather than the routing layer. `CostBased` routing (lowest-cost provider selection) is the closest equivalent in scope and is included. `ProviderBudgetLimiting` would require a per-provider quota management system that is beyond this RFC's scope.
+
+#### Rust Core Ownership
+
+**ALL routing strategies are implemented EXCLUSIVELY in Rust core (`quota-router-core`).**
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│  quota-router-core (Rust) — ALL routing, state, heavy lifting   │
+│  • RoutingStrategy enum + all strategies                        │
+│  • Router struct with routing state (dashmap, lock-free)        │
+│  • FallbackExecutor                                             │
+│  • RateLimiter (TokenBucket)                                    │
+│  • RouterHandle (PyO3-exposed handle for Python SDK)            │
+└─────────────────────────────────────────────────────────────────┘
+                              │ PyO3
+                              ▼
+┌─────────────────────────────────────────────────────────────────┐
+│  Python SDK (quota-router-pyo3) — THIN BINDING ONLY             │
+│  • Router class is thin PyO3 wrapper to RustRouterHandle        │
+│  • NO Python-side routing state, no locks, no decay math         │
+│  • All routing decisions delegated to Rust core                 │
+│  • Python adds ONLY marshaling overhead (<2ms)                  │
+└─────────────────────────────────────────────────────────────────┘
+```
+
+**For Python SDK:** Use `RustRouterHandle` via PyO3. The Python `Router` class is a thin wrapper that delegates all routing to `RustRouterHandle`. Do NOT implement routing strategies in Python.
 
 ```yaml
 # router_settings in config.yaml
@@ -362,6 +395,7 @@ Multi-provider routing is essential for:
 
 | Version | Date       | Changes |
 | ------- | ---------- | --------|
+| 1.7     | 2026-04-29 | **CRITICAL CONSTRAINT: Rust-owns-all-heavy-lifting.** Added top-level architectural constraint establishing Rust core as sole owner of all routing, state, caching, telemetry, concurrency. Updated Scope section with explicit Rust-core-only language. Added Rust Core Ownership section clarifying Python SDK uses RustRouterHandle only. All routing strategies are Rust-only. |
 | 1.6     | 2026-04-25 | Fix YAML comment: "model_name → weight" → "provider.name → weight" (provider names used as keys, not model names) |
 | 1.5     | 2026-04-25 | Clarify Weighted strategy requires global `weights: HashMap<String, u32>` in RouterConfig (not per-provider weight); add implementation note for Weighted fallback behavior |
 | 1.4     | 2026-04-25 | Fix Key Files table (stale paths: quota-router-cli→quota-router-core); clarify Weighted vs SimpleShuffle (Weighted uses explicit config weights, SimpleShuffle uses rpm/tpm-derived weights); add ProviderWithState naming note |

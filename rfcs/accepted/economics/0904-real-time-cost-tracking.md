@@ -2,7 +2,9 @@
 
 ## Status
 
-Accepted (v1.31)
+Accepted (v1.32)
+
+**ARCHITECTURAL CONSTRAINT: Rust-owns-all-heavy-lifting. ALL heavy lifting (routing, caching, telemetry, concurrency, state management, batch execution) MUST be in Rust core. Each language binding (Python, JS, Go, etc.) adds ONLY marshaling overhead (<2ms).**
 
 ## Authors
 
@@ -1098,6 +1100,7 @@ The soft check is non-locking — it's possible (though unlikely) that another c
 
 | Version | Date       | Changes                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                            |
 | ------- | ---------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 1.32    | 2026-04-29 | **CRITICAL CONSTRAINT: Rust-owns-all-heavy-lifting.** Added top-level architectural constraint establishing all heavy lifting (routing, caching, telemetry, concurrency, state management) in Rust core. Each language binding is thin marshaling only. |
 | 1.31    | 2026-04-27 | Round 42: fix X2 (Critical) — compute_cost parameter corrected to `&PricingTable` (obtain from PricingRegistry::get first); fix X5 (High) — check_budget subtraction uses i128 cast to prevent overflow when total_spend > i64::MAX |
 | 1.30    | 2026-04-26 | Round 41: fix CR-02 (add period_start parameter + idempotent reset behavior to POST /admin/internal/budget/reset) |
 | 1.29    | 2026-04-26 | Round 38: fix NEW-4 (CostError import: add explicit `use crate::rfc0910::CostError` comment in §Cost Calculation to clarify CostError is imported from RFC-0910, not defined locally) |

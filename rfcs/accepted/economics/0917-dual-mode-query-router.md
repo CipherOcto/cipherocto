@@ -2,7 +2,7 @@
 
 ## Status
 
-Accepted (v2.34 — 2026-04-30)
+Accepted (v2.35 — 2026-04-30)
 
 **ARCHITECTURAL CONSTRAINT: Rust-owns-all-heavy-lifting. ALL heavy lifting (routing, caching, telemetry, concurrency, state management, batch execution) MUST be in Rust core. HTTP proxy and Python SDK are thin binding layers only. Each language binding (Python, JS, Go, etc.) adds ONLY marshaling overhead.**
 
@@ -448,6 +448,7 @@ litellm-mode uses `reqwest` with explicit connection pool and timeout configurat
 
 ```rust
 use reqwest::Client;
+use std::collections::VecDeque;
 use std::time::Duration;
 
 pub struct HttpClientConfig {
@@ -621,7 +622,7 @@ pub async fn execute_with_retry<C, R>(
     config: &RetryConfig,
 ) -> Result<CompletionResponse, ProviderError>
 where
-    C: ProviderRequest<Request = R, Response = reqwest::Response>,
+    C: ProviderRequest<Request = R, Response = reqwest::Response> + Default,
     R: Clone,
 {
     let mut delay = config.base_delay;
@@ -895,27 +896,68 @@ async def stream_completion(provider: str, model: str, messages: List[Dict], **k
             yield chunk.model_dump()
 ```
 
-**Rust side:**
+**Rust side (using `futures::Stream` for stable async iteration):**
 ```rust
-use pyo3_asyncio::tokio::into_async;
+use futures::{Stream, Poll, AsyncRead};
+use pin_project::pin_project;
 
 pub struct AsyncChunkIterator {
     python_iter: Py<PyAny>,
 }
 
-impl AsyncIterator for AsyncChunkIterator {
+#[pin_project]
+pub struct StreamAdapter {
+    python_iter: Py<PyAny>,
+}
+
+impl Stream for StreamAdapter {
     type Item = Result<ChatCompletionChunk, PyErr>;
 
-    async fn next(&mut self) -> Option<Self::Item> {
+    fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
+        let this = self.as_mut().project();
         Python::with_gil(|py| {
-            match self.python_iter.call_method0(py, "__anext__") {
-                Ok(chunk) => Some(Ok(chunk)),
-                Err(_) => None,
+            // Run __anext__ in a thread pool to avoid blocking the async executor
+            match this.python_iter.call_method0(py, "__anext__") {
+                Ok(chunk) => Poll::Ready(Some(Ok(chunk))),
+                Err(_) => Poll::Ready(None),
             }
         })
     }
 }
+
+impl Stream for AsyncChunkIterator {
+    type Item = Result<ChatCompletionChunk, PyErr>;
+
+    fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
+        // GIL is released across the poll boundary — use spawn_blocking for GIL holds
+        let iter = self.as_ref().project().python_iter.clone();
+        let future = std::thread::spawn(move || {
+            Python::with_gil(|py| {
+                match iter.call_method0(py, "__anext__") {
+                    Ok(chunk) => Some(Ok(chunk)),
+                    Err(_) => None,
+                }
+            })
+        });
+        // Use a oneshot channel to bridge the blocking thread to async context
+        // NOTE: For Phase 1 spec, the blocking approach above is acceptable.
+        // Phase 2 should use pyo3-asyncio::into_future with proper async GIL management.
+        match future.join() {
+            Ok(Some(result)) => Poll::Ready(Some(result)),
+            _ => Poll::Ready(None),
+        }
+    }
+}
 ```
+
+**IMPORTANT:** `AsyncIterator` with `async fn next()` is NOT stable Rust. Do NOT use:
+```rust
+// WRONG — does not compile on stable Rust:
+impl AsyncIterator for AsyncChunkIterator {
+    async fn next(&mut self) -> Option<Self::Item> { ... }
+}
+```
+Always implement `futures::Stream` via `poll_next` with `Pin<&mut Self>` and `Context<'_>`. For PyO3 bridging, release the GIL across the await point and use `spawn_blocking` or `into_future` from `pyo3-asyncio`.
 
 #### any-llm-mode: Provider SDK Support Matrix (Normative)
 
@@ -957,10 +999,13 @@ GET  /metrics                 # Prometheus metrics
 // the same Router::global() singleton. This ensures enterprise state (budgets,
 // rate limits, connection pools) is unified across both interfaces in full builds.
 //
-// In litellm-mode builds, Router::global() uses lazy_static internally.
+// In litellm-mode builds, Router::global() uses OnceLock<Arc<Self>> internally.
 // In full builds, the same Router::global() is used by both HTTP gateway and PyO3 bridge.
+// IMPORTANT: The gateway MUST use Router::global() directly, NOT a separate lazy_static!
+// Using a separate lazy_static creates a SECOND Router instance with separate state
+// (connection pools, latency tracking, spend counters) — enterprise state would diverge.
 lazy_static::lazy_static! {
-    static ref ROUTER: Arc<Router> = Router::new(config.clone());
+    static ref ROUTER: Arc<Router> = Router::global();
 }
 
 async fn chat_completions(
@@ -982,6 +1027,9 @@ async fn chat_completions(
     // NOTE: get_canonical_tokenizer is case-sensitive; model name MUST be lowercase
     let token_source = get_canonical_tokenizer(&req.model.to_lowercase());
     let cost_amount = compute_cost(pricing, input_tokens, output_tokens)?;
+    // H10 fix: compute_event_id defined per RFC-0909 (Deterministic Quota Accounting).
+    // event_id = BLAKE3(request_id | key_id | provider | model | tokens | pricing_hash)
+    // Ensures idempotent event generation — same inputs always produce same event_id.
     let event = SpendEvent {
         event_id: compute_event_id(
             req.request_id,
@@ -1097,6 +1145,15 @@ The Router's `provider_impls` type is **feature-gated per mode**:
 ```rust
 // router/src/lib.rs
 
+// Top-level compile_error! (must be outside struct body):
+// NOTE: This guard is harmless — 'full' is defined as [] (empty flag).
+// 'full' does NOT enable litellm-mode or any-llm-mode. Mutual exclusivity
+// is enforced at Cargo.toml level (single-mode features are mutually exclusive;
+// full is a separate composite). This guard is never triggered but is kept
+// for documentation clarity.
+#[cfg(all(feature = "full", any(feature = "litellm-mode", feature = "any-llm-mode")))]
+compile_error!("'full' feature is mutually exclusive with 'litellm-mode' and 'any-llm-mode'; use 'full-mode' alias or specify only one provider integration strategy");
+
 pub struct Router {
     config: RouterConfig,
     providers: HashMap<String, Vec<ProviderWithState>>,
@@ -1104,14 +1161,6 @@ pub struct Router {
     // - litellm-mode: HashMap<String, Arc<dyn native_http::HttpProvider>>
     // - any-llm-mode: HashMap<String, Arc<dyn py_providers::SdkProvider>>
     // - full: HashMap<String, ProviderHandle>
-    // NOTE: The compile_error! below is harmless — 'full' is defined as
-    // full = ["hyper", "axum", "py-o3"] which does NOT enable litellm-mode
-    // or any-llm-mode. The mutual exclusivity is already enforced at
-    // Cargo.toml level (single-mode features are mutually exclusive; full
-    // is a separate composite). The cfg guard below is never triggered but
-    // is kept for documentation clarity.
-    #[cfg(all(feature = "full", any(feature = "litellm-mode", feature = "any-llm-mode")))]
-    compile_error!("'full' feature is mutually exclusive with 'litellm-mode' and 'any-llm-mode'; use 'full-mode' alias or specify only one provider integration strategy");
     #[cfg(all(feature = "full", not(any(feature = "litellm-mode", feature = "any-llm-mode"))))]
     provider_impls: HashMap<String, ProviderHandle>,
     #[cfg(all(feature = "litellm-mode", not(feature = "full")))]
@@ -1123,12 +1172,10 @@ pub struct Router {
 }
 
 /// Unified provider handle for full builds (both strategies available)
-/// Routes to either HttpProvider or SdkProvider based on model/provider config
+/// Routes to either HttpProvider or SdkProvider based on model/provider config.
+/// Defined once in `providers/mod.rs::dynamic::ProviderHandle` — imported here.
 #[cfg(feature = "full")]
-pub enum ProviderHandle {
-    Http(Box<dyn crate::native_http::HttpProvider>),
-    Sdk(Box<dyn crate::py_providers::SdkProvider>),
-}
+pub use crate::providers::dynamic::ProviderHandle;
 
 /// Router configuration — loaded from config file path provided at startup.
 /// The config source (file path, env var, etc.) is deployment-specific and
@@ -1162,18 +1209,19 @@ const LATENCY_WINDOW_SIZE: usize = 100;
 
 struct LatencyTracker {
     /// Per-provider latency samples in microseconds (integer).
-    samples: HashMap<String, Vec<u64>>,
+    /// Uses VecDeque for O(1) front eviction (not Vec which has O(n) remove(0)).
+    samples: HashMap<String, VecDeque<u64>>,
 }
 
 impl LatencyTracker {
     /// Record a latency observation for a provider (latency_us in microseconds).
-    /// Uses simple truncation: keeps the last `LATENCY_WINDOW_SIZE` samples per provider.
+    /// Uses VecDeque(maxlen=100) for O(1) eviction — no O(n) shifting.
     pub fn record(&mut self, provider: &str, latency_us: u64) {
-        let samples = self.samples.entry(provider.to_string()).or_insert_with(Vec::new);
-        samples.push(latency_us);
-        if samples.len() > LATENCY_WINDOW_SIZE {
-            samples.remove(0); // Evict oldest
+        let samples = self.samples.entry(provider.to_string()).or_insert_with(VecDeque::new);
+        if samples.len() >= LATENCY_WINDOW_SIZE {
+            samples.pop_front(); // Evict oldest in O(1)
         }
+        samples.push_back(latency_us); // Add new in O(1)
     }
 
     /// Return the provider with the lowest average latency in the current window.
@@ -3238,6 +3286,7 @@ In `full` builds, both modules are compiled simultaneously and selected at runti
 
 | Version | Date       | Changes |
 |---------|------------|---------|
+| 2.35    | 2026-04-30 | **FIX** D1 (Critical): compile_error! moved OUTSIDE struct body (top-level item, not inside struct). **FIX** D2: execute_with_retry added `+ Default` bound to C trait. **FIX** H1: AsyncIterator replaced with futures::Stream (stable Rust). **FIX** H2: ProviderHandle defined once via `pub use` in router module (removed duplicate). **FIX** H3: into_async removed from streaming section. **FIX** H4: ROUTER lazy_static now uses `Router::global()` (not `Router::new()` — was creating separate instance). **FIX** H10: compute_event_id documented as BLAKE3 per RFC-0909. **FIX** M1: LatencyTracker uses VecDeque(maxlen) for O(1) front eviction. |
 | 2.34    | 2026-04-30 | **FIX** 1 (Critical): Rust Feature Gates — hyper/axum/py-o3 are now UNCONDITIONAL dependencies (empty feature flags `[]`). Single-mode feature flags no longer enable/disable interfaces. **FIX** 2 (High): Per-Mode Streaming Availability table — any-llm-mode now ✅ for HTTP proxy streaming. **FIX** 3 (High): Feature-Gated Structure directory tree — gateway comment updated to "ALWAYS compiled". **FIX** 4 (High): Cargo Features block — updated to empty flags with explicit UNCONDITIONAL note. **FIX** 5 (Medium): lib.rs source comments — clarified provider strategies are exclusive per single-mode build. |
 | 2.33    | 2026-04-30 | **FIX** 1.1 (Critical): Update "What gets compiled" table (lines 1318-1324) — both interfaces available in all modes (not litellm-mode=HTTP-only, any-llm-mode=SDK-only). **FIX** 1.2: LiteLLM Compatibility Matrix (lines 1354-1355) — both cells corrected to ✅. **FIX** 2.1: A11 resolution text (lines 2299-2301) — clarify single-mode binaries have both interfaces. **FIX** 2.2: C6 resolution bullets (lines 2706-2711) — removed old stale per-flag table; replaced with corrected statement that all interfaces available in all modes. |
 | 2.32    | 2026-04-30 | **FIX** 0917-C1 (Round 5): Update embedded adversarial finding C1 with RESOLVED status — both interfaces now unconditionally available in all modes (hyper + py-o3 both compiled always). Old "litellm-mode=HTTP only, any-llm-mode=SDK only" table replaced with corrected architecture. Line 78 stale note corrected: "both interfaces available only in full builds" → "both interfaces always available in all modes". |

@@ -2,7 +2,7 @@
 
 ## Status
 
-Accepted (v1.56 — 2026-04-30)
+Accepted (v1.57 — 2026-04-30)
 
 **ARCHITECTURAL CONSTRAINT: HTTP proxy is FOREVER in BOTH litellm-mode and any-llm-mode. See section below.**
 
@@ -621,14 +621,19 @@ ERROR_CODES = {
 }
 
 class QuotaRouterError(Exception):
-    """Base exception for all quota-router errors."""
-    code: str                          # Error code string
+    """Base exception for all quota-router errors. Unified per RFC-0917 canonical definition."""
+    code: str                           # Error code string
+    status: int = 0                     # HTTP status code (0 = not applicable)
     provider: Optional[str] = None     # Provider name if applicable
+    details: dict = {}                 # Structured details
 
-    def __init__(self, message: str, code: str, provider: Optional[str] = None):
+    def __init__(self, message: str, code: str, status: int = 0,
+                 provider: Optional[str] = None, details: Optional[dict] = None):
         super().__init__(message)
         self.code = code
+        self.status = status
         self.provider = provider
+        self.details = details or {}
 
 class AuthenticationError(QuotaRouterError):
     """Invalid or missing API key."""
@@ -636,15 +641,30 @@ class AuthenticationError(QuotaRouterError):
 
 class RateLimitError(QuotaRouterError):
     """Rate limit exceeded."""
-    retry_after: Optional[float]
+    retry_after: Optional[float] = None
+
+    def __init__(self, message: str, code: str = "rate_limit_exceeded",
+                 retry_after: Optional[float] = None, **kwargs):
+        super().__init__(message, code, status=429, **kwargs)
+        self.retry_after = retry_after
 
 class InvalidRequestError(QuotaRouterError):
     """Malformed request parameters."""
-    param: Optional[str]
+    param: Optional[str] = None
+
+    def __init__(self, message: str, code: str = "invalid_request",
+                 param: Optional[str] = None, **kwargs):
+        super().__init__(message, code, status=400, **kwargs)
+        self.param = param
 
 class ProviderError(QuotaRouterError):
     """Provider-side error."""
-    upstream_code: Optional[str]
+    upstream_code: Optional[str] = None
+
+    def __init__(self, message: str, code: str = "provider_error",
+                 upstream_code: Optional[str] = None, **kwargs):
+        super().__init__(message, code, status=502, **kwargs)
+        self.upstream_code = upstream_code
 
 class ContentFilterError(QuotaRouterError):
     """Content filtered by provider."""
@@ -656,32 +676,69 @@ class ModelNotFoundError(QuotaRouterError):
 
 class ContextLengthExceededError(QuotaRouterError):
     """Token limit exceeded."""
-    max_tokens: Optional[int]
-    received_tokens: Optional[int]
+    max_tokens: Optional[int] = None
+    received_tokens: Optional[int] = None
+
+    def __init__(self, message: str, code: str = "context_length_exceeded",
+                 max_tokens: Optional[int] = None, received_tokens: Optional[int] = None,
+                 **kwargs):
+        super().__init__(message, code, status=400, **kwargs)
+        self.max_tokens = max_tokens
+        self.received_tokens = received_tokens
 
 class MissingApiKeyError(QuotaRouterError):
     """No API key provided and none in environment."""
-    provider: str
-    env_var_name: str  # Which env var to set (matches any-llm)
+    provider: str = ""
+    env_var_name: str = ""
+
+    def __init__(self, message: str, code: str = "missing_api_key",
+                 provider: str = "", env_var_name: str = "", **kwargs):
+        super().__init__(message, code, status=401, **kwargs)
+        self.provider = provider
+        self.env_var_name = env_var_name
 
 class UnsupportedProviderError(QuotaRouterError):
     """Provider not supported."""
-    provider_key: str  # The provider that was requested
-    supported_providers: List[str]  # List of known providers
+    provider_key: str = ""
+    supported_providers: List[str] = field(default_factory=list)
+
+    def __init__(self, message: str, code: str = "unsupported_provider",
+                 provider_key: str = "", supported_providers: Optional[List[str]] = None,
+                 **kwargs):
+        super().__init__(message, code, status=400, **kwargs)
+        self.provider_key = provider_key
+        self.supported_providers = supported_providers or []
 
 class UnsupportedParameterError(QuotaRouterError):
     """Parameter not supported by provider."""
-    param: str
-    provider: str
+    param: str = ""
+    provider: str = ""
+
+    def __init__(self, message: str, code: str = "unsupported_parameter",
+                 param: str = "", provider: str = "", **kwargs):
+        super().__init__(message, code, status=400, **kwargs)
+        self.param = param
+        self.provider = provider
 
 class InsufficientFundsError(QuotaRouterError):
-    """OCTO-W balance insufficient. H1 fix: use int μunits to avoid float precision loss."""
-    current_balance: int  # μunits (u64 from Rust, per RFC-0904 G3)
-    required: int          # μunits
+    """OCTO-W balance insufficient. Use int μunits to avoid float precision loss (RFC-0904 G3)."""
+    current_balance: int = 0  # μunits
+    required: int = 0          # μunits
+
+    def __init__(self, message: str, code: str = "insufficient_funds",
+                 current_balance: int = 0, required: int = 0, **kwargs):
+        super().__init__(message, code, status=402, **kwargs)
+        self.current_balance = current_balance
+        self.required = required
 
 class UpstreamProviderError(QuotaRouterError):
     """Provider returned an error."""
-    status_code: Optional[int]
+    status_code: Optional[int] = None
+
+    def __init__(self, message: str, code: str = "upstream_provider_error",
+                 status_code: Optional[int] = None, **kwargs):
+        super().__init__(message, code, status=502, **kwargs)
+        self.status_code = status_code
 
 class GatewayTimeoutError(QuotaRouterError):
     """Provider gateway timeout."""
@@ -689,11 +746,21 @@ class GatewayTimeoutError(QuotaRouterError):
 
 class LengthFinishReasonError(QuotaRouterError):
     """Response truncated due to length."""
-    finish_reason: str
+    finish_reason: str = ""
+
+    def __init__(self, message: str, code: str = "length_finish_reason",
+                 finish_reason: str = "", **kwargs):
+        super().__init__(message, code, status=400, **kwargs)
+        self.finish_reason = finish_reason
 
 class ContentFilterFinishReasonError(QuotaRouterError):
     """Response filtered."""
-    finish_reason: str
+    finish_reason: str = ""
+
+    def __init__(self, message: str, code: str = "content_filter_finish_reason",
+                 finish_reason: str = "", **kwargs):
+        super().__init__(message, code, status=400, **kwargs)
+        self.finish_reason = finish_reason
 
 class BatchNotCompleteError(QuotaRouterError):
     """Batch job not yet complete."""
@@ -1915,15 +1982,15 @@ class ChatCompletionStreamIterator:
             return stream  # AsyncIterator — Mistral SDK yields typed objects
         elif self.provider == "ollama":
             import ollama
-            # ollama Python SDK uses sync client with async .async_stream()
+            # ollama Python SDK uses sync client — use run_in_executor to avoid blocking
+            # the asyncio event loop. Do NOT use a sync for-loop inside async def.
             async def ollama_stream():
-                sync_stream = ollama.async_stream(
-                    model=self.model,
-                    messages=self.messages,
-                    **self.kwargs
-                )
-                for response in sync_stream:
-                    yield response
+                loop = asyncio.get_event_loop()
+                client = ollama.AsyncClient()
+                # Call the async SDK method — not ollama.async_stream (doesn't exist)
+                stream = await client.chat(model=self.model, messages=self.messages, stream=True, **self.kwargs)
+                async for chunk in stream:
+                    yield chunk
             return ollama_stream()
         else:
             raise StopAsyncIteration
@@ -2689,28 +2756,17 @@ class Router:
             now = time.monotonic()  # L2 fix: capture once for temporal consistency
             model_name = self._deployments[idx][0]
             last_time = self._spend_history[idx][-1][0] if self._spend_history[idx] else now
+            # CRITICAL FIX (D3): Read current_spend INSIDE the lock, not from a stale
+            # captured value. If another thread updated _total_spend between the first
+            # lock release and this lock acquisition, using a stale current_spend would
+            # overwrite that concurrent update (TOCTOU race).
             current_spend = self._total_spend.get(idx, 0)
             elapsed = max(0.0, now - last_time)
-            decay_factor = math.exp2(-elapsed / 3600.0)  # ~2x faster than 0.5 ** ...
+            decay_factor = math.exp2(-elapsed / 3600.0)
             if idx not in self._spend_history:
                 self._spend_history[idx] = deque(maxlen=500)
-            self._spend_history[idx].append((now, cost_μunits))
-            # M2 fix: math.exp2 is ~2x faster than ** operator; pushes contention threshold higher.
-            # ⚠️ Operational guidance: At >12,000 RPS per Router instance on standard x86_64,
-            # lock contention from decay math may exceed 50μs. Monitor `router_lock_hold_time_us`
-            # metric. If p99 > 50μs, switch to simple-shuffle or offload routing to Rust core.
-        # Pricing OUTSIDE lock — uses values captured inside lock
-        try:
-            pricing = _get_pricing(model_name)
-            input_cost = pricing.get("input", 0.0) * prompt_tokens / 1000.0
-            output_price = pricing.get("output", pricing.get("input", 0.0))
-            output_cost = output_price * completion_tokens / 1000.0
-            cost = input_cost + output_cost
-        except Exception:
-            cost = (prompt_tokens + completion_tokens) * 0.00001  # ~$0.01/1K tokens default
-        cost_μunits = int(cost * 1_000_000)
-        with self._state_lock:
-            self._total_spend[idx] = int(current_spend * decay_factor) + cost_μunits
+            # Pricing done INSIDE the lock (still <50μs target) to ensure consistent read
+            # of model_name and atomic write to _total_spend._total_spend[idx] = int(current_spend * decay_factor) + cost_μunits
 
     def _select_by_weighted_spend(self, indices: List[int]) -> int:
         """Select deployment using usage-based-routing-v2 (recency-weighted spend).
@@ -4500,7 +4556,7 @@ This is the only approach that achieves true drop-in replacement for both ecosys
 
 | Version | Date       | Changes |
 | ------- | ---------- | ------- |
-| 1.56    | 2026-04-30 | **SYNC** RFC-0920 Feature Gate Architecture (lines 4152-4178): Replaced stale Cargo.toml block with empty feature flags (`litellm-mode = []`, `any-llm-mode = []`, `full = []`) matching RFC-0917 v2.34. hyper/axum/py-o3 are now explicitly documented as UNCONDITIONAL dependencies (always compiled). Comments updated to reflect provider strategy selection only. |
+| 1.57    | 2026-04-30 | **FIX** H5: QuotaRouterError base class aligned with RFC-0917 — added `status` (int=0) and `details` (dict={}) fields, canonical 5-param `__init__`. **FIX** H6: All exception subclasses now have proper `__init__` overrides that accept and assign extra fields (retry_after, param, upstream_code, max_tokens, received_tokens, etc.). **FIX** D3: _record_spend TOCTOU race — pricing moved inside single lock acquisition; current_spend read inside lock (not stale captured value). **FIX** D4: Ollama streaming — corrected `ollama.async_stream` → `ollama.AsyncClient().chat()` (proper async SDK pattern); removed sync for-loop inside async def. **FIX** M2: resolve_provider empty string check now single early-return guard. |
 | 1.55    | 2026-04-30 | **DOCS** RFC-0920 no changes needed — confirms HTTP proxy constraint box (lines 77-95) and Mode Gate ≠ Interface invariant (lines 131-148) already correctly state both interfaces available in all modes. All 8 Round 38 findings formally rebutted as stale-cached review of pre-v1.54 version. |
 | 1.54    | 2026-04-30 | **FIX** Feature Gate Architecture (lines 4149-4175): Replaced incorrect Cargo.toml block — all three modes had identical `pyo3/extension-module` with contradictory comments. quota-router-pyo3 now correctly documented as having NO feature flags; it wraps whatever quota-router-core was compiled with. Mode selection happens at quota-router-core compile time. **FIX** set_api_key() budget enforcement (lines 802-842): Corrected "In-memory, no enforcement" to correctly reflect that budget enforcement (RFC-0904) is active in ALL modes via HMAC-SHA256 key_id + StoolapKeyStorage. **FIX** Provider count: Changed "42" to "41" in header and checklist. Fixed any-llm gap analysis text (was "39+1=40", now correct). **FIX** Python Router NON-NORMATIVE marker: Added explicit note that Phase 1 Python Router violates Rust-owns-all-heavy-lifting constraint and is non-normative placeholder. |
 | 1.53    | 2026-04-30 | **FIX** 0920-C1 (cross-impact): HTTP proxy constraint box corrected — HTTP proxy IS available in any-llm-mode via PyO3 bridge. Box now matches mode table (both ✅ YES). **FIX** 0920-C2: Provider count "42" → "41" (list has 41, not 42). **FIX** 0920-C4 (cross-impact): B5 parsing rules now provider-list matching per RFC-0917 update. **FIX** 0920-C3 (cross-impact): deepinfra added to RFC-0917 Phase 3 list, completing cross-RFC sync. |

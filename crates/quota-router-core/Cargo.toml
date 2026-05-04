@@ -65,7 +65,7 @@ dashmap = "5.0"
 instant = "0.1"
 
 # For L1 key cache LRU
-lru = "0.12"
+lru = "0.18"
 
 # For Unicode NFC normalization (provider/model normalization per RFC-0909 CONSISTENCY GOAL)
 unicode-normalization = "0.1.25"

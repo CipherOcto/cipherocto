@@ -2,7 +2,7 @@
 
 ## Status
 
-Accepted (v2.35 — 2026-04-30)
+Accepted (v2.36 — 2026-05-06)
 
 **ARCHITECTURAL CONSTRAINT: Rust-owns-all-heavy-lifting. ALL heavy lifting (routing, caching, telemetry, concurrency, state management, batch execution) MUST be in Rust core. HTTP proxy and Python SDK are thin binding layers only. Each language binding (Python, JS, Go, etc.) adds ONLY marshaling overhead.**
 
@@ -500,7 +500,6 @@ pub trait ProviderRequest {
     ) -> Result<Self::Request, RequestBuildError>;
 
     fn parse_response(
-        &self,
         response: Self::Response,
     ) -> Result<CompletionResponse, ResponseParseError>;
 }
@@ -548,7 +547,7 @@ impl ProviderRequest for OpenAIRequest {
         Ok(body)
     }
 
-    fn parse_response(&self, response: Self::Response) -> Result<CompletionResponse, ResponseParseError> {
+    fn parse_response(response: Self::Response) -> Result<CompletionResponse, ResponseParseError> {
         // Parse ChatCompletion from JSON response
     }
 }
@@ -640,9 +639,10 @@ where
                 continue;
             }
             Ok(resp) => {
-                // Success or non-retryable response — attempt parse with instance method
-                let provider_req = C::default();
-                return provider_req.parse_response(resp).map_err(|e| ProviderError::RequestFailed(e.into()));
+                // N11 fix: Call parse_response as associated function (not via Default instance).
+                // Using C::default() created a meaningless instance solely to call parse_response,
+                // which is an architectural smell — parse_response should not need request state.
+                return C::parse_response(resp).map_err(|e| ProviderError::RequestFailed(e.into()));
             }
             Err(e) if attempt < config.max_retries => {
                 tokio::time::sleep(delay).await;
@@ -656,8 +656,8 @@ where
 
     // Exhausted retries — try to parse the last response, or return the last error
     if let Some(resp) = last_response {
-        let provider_req = C::default();
-        provider_req.parse_response(resp)
+        // N11 fix: Call parse_response as associated function (not via Default instance)
+        C::parse_response(resp)
             .map_err(|e| ProviderError::RequestFailed(e.into()))
     } else {
         Err(last_reqwest_error.unwrap().into())
@@ -698,6 +698,7 @@ Python SDKs come in two flavors: **sync** (blocking, must use `spawn_blocking`) 
 ```yaml
 # providers_sdk_types.yaml — shared config for Python + Rust codegen
 # CROSS-1/H2 fix: google → gemini (google is not a provider; gemini is)
+# N18 fix: bedrock added — AWS Bedrock uses boto3 (sync) in any-llm-mode.
 # This is the CANONICAL source — RFC-0920 references this YAML, not its own copy.
 providers:
   openai: async
@@ -707,6 +708,7 @@ providers:
   ollama: sync
   deepinfra: async
   groq: async
+  bedrock: sync  # N18 fix: AWS boto3/botocore — sync SDK via spawn_blocking
 default: sync
 ```
 
@@ -720,6 +722,7 @@ const PROVIDER_SDK_TYPES: &[(&str, &str)] = &[
     ("ollama", "sync"),
     ("deepinfra", "async"),
     ("groq", "async"),
+    ("bedrock", "sync"),  // N18 fix: AWS boto3/botocore
     ("default", "sync"),
 ];
 ```
@@ -844,7 +847,7 @@ The GIL (Global Interpreter Lock) must be managed carefully:
 
 | SDK Type | Pattern | Rationale |
 |---------|---------|-----------|
-| Async SDKs | `pyo3-asyncio` (`into_async`) | Async SDKs release GIL during network I/O; only marshaling needs GIL |
+| Async SDKs | `pyo3-asyncio` (`into_future`) | Async SDKs release GIL during network I/O; only marshaling needs GIL |
 | Sync SDKs | `spawn_blocking` | Blocking SDKs hold GIL; must not block async executor |
 
 **Critical: Never call sync Python SDKs directly from async Rust context.**
@@ -898,53 +901,41 @@ async def stream_completion(provider: str, model: str, messages: List[Dict], **k
 
 **Rust side (using `futures::Stream` for stable async iteration):**
 ```rust
-use futures::{Stream, Poll, AsyncRead};
-use pin_project::pin_project;
+use futures::{Stream, Poll};
+use tokio::sync::oneshot;
 
+// N2/N9 fix: Single AsyncChunkIterator using spawn_blocking + oneshot.
+// spawn_blocking releases the Tokio thread (not blocking it) while waiting for the
+// GIL-acquired Python call. The oneshot channel bridges the result back to poll_next.
+// This correctly satisfies the Stream contract: poll_next never blocks the executor.
 pub struct AsyncChunkIterator {
     python_iter: Py<PyAny>,
-}
-
-#[pin_project]
-pub struct StreamAdapter {
-    python_iter: Py<PyAny>,
-}
-
-impl Stream for StreamAdapter {
-    type Item = Result<ChatCompletionChunk, PyErr>;
-
-    fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
-        let this = self.as_mut().project();
-        Python::with_gil(|py| {
-            // Run __anext__ in a thread pool to avoid blocking the async executor
-            match this.python_iter.call_method0(py, "__anext__") {
-                Ok(chunk) => Poll::Ready(Some(Ok(chunk))),
-                Err(_) => Poll::Ready(None),
-            }
-        })
-    }
 }
 
 impl Stream for AsyncChunkIterator {
     type Item = Result<ChatCompletionChunk, PyErr>;
 
     fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
-        // GIL is released across the poll boundary — use spawn_blocking for GIL holds
         let iter = self.as_ref().project().python_iter.clone();
-        let future = std::thread::spawn(move || {
-            Python::with_gil(|py| {
-                match iter.call_method0(py, "__anext__") {
-                    Ok(chunk) => Some(Ok(chunk)),
-                    Err(_) => None,
-                }
-            })
+        let (tx, rx) = oneshot::channel();
+
+        // spawn_blocking releases the Tokio worker thread while GIL is held.
+        // Unlike std::thread::spawn + join() (which blocks the executor thread),
+        // spawn_blocking allows the executor to use that thread for other tasks.
+        tokio::task::spawn_blocking(move || {
+            let result = Python::with_gil(|py| {
+                iter.call_method0(py, "__anext__")
+            });
+            let _ = tx.send(result);
         });
-        // Use a oneshot channel to bridge the blocking thread to async context
-        // NOTE: For Phase 1 spec, the blocking approach above is acceptable.
-        // Phase 2 should use pyo3-asyncio::into_future with proper async GIL management.
-        match future.join() {
-            Ok(Some(result)) => Poll::Ready(Some(result)),
-            _ => Poll::Ready(None),
+
+        // Poll the oneshot receiver — this is where poll_next may return Pending.
+        // If the spawned task hasn't completed yet, the waker is registered and
+        // poll_next will be called again when the oneshot fires.
+        match rx.poll(cx) {
+            Poll::Ready(Ok(Ok(chunk))) => Poll::Ready(Some(Ok(chunk))),
+            Poll::Ready(Ok(Err(_))) | Poll::Ready(Err(_)) => Poll::Ready(None),
+            Poll::Pending => Poll::Pending,
         }
     }
 }
@@ -957,7 +948,7 @@ impl AsyncIterator for AsyncChunkIterator {
     async fn next(&mut self) -> Option<Self::Item> { ... }
 }
 ```
-Always implement `futures::Stream` via `poll_next` with `Pin<&mut Self>` and `Context<'_>`. For PyO3 bridging, release the GIL across the await point and use `spawn_blocking` or `into_future` from `pyo3-asyncio`.
+Always implement `futures::Stream` via `poll_next` with `Pin<&mut Self>` and `Context<'_>`. For PyO3 bridging, use `tokio::task::spawn_blocking` + oneshot channel as shown above. The `spawn_blocking` pattern correctly releases the Tokio worker thread while the GIL is held by the Python call.
 
 #### any-llm-mode: Provider SDK Support Matrix (Normative)
 
@@ -2122,6 +2113,7 @@ fn format_usage(usage: &SseUsage) -> String {
         usage.input_tokens, usage.output_tokens, usage.input_tokens + usage.output_tokens
     )
 }
+```
 
 **Rate limiting for streaming:** Per-request (not per-token). Budget is checked before streaming begins. If the first chunk would exceed budget, the request is rejected before any bytes are sent.
 
@@ -3286,6 +3278,7 @@ In `full` builds, both modules are compiled simultaneously and selected at runti
 
 | Version | Date       | Changes |
 |---------|------------|---------|
+| 2.36    | 2026-05-06 | **FIX** N2: AsyncChunkIterator uses tokio::task::spawn_blocking + oneshot (not blocking std::thread::spawn + join). **FIX** N9: StreamAdapter removed — single AsyncChunkIterator with spawn_blocking/oneshot. **FIX** N10: GIL Management table updated to `into_future` (was `into_async`). **FIX** N11: execute_with_retry parse_response called as associated function (was via C::default()). **FIX** N12: Rust code fence closed before Rate limiting for streaming. **FIX** N18: bedrock added to PROVIDER_SDK_TYPES YAML + Rust + Python registry. |
 | 2.35    | 2026-04-30 | **FIX** D1 (Critical): compile_error! moved OUTSIDE struct body (top-level item, not inside struct). **FIX** D2: execute_with_retry added `+ Default` bound to C trait. **FIX** H1: AsyncIterator replaced with futures::Stream (stable Rust). **FIX** H2: ProviderHandle defined once via `pub use` in router module (removed duplicate). **FIX** H3: into_async removed from streaming section. **FIX** H4: ROUTER lazy_static now uses `Router::global()` (not `Router::new()` — was creating separate instance). **FIX** H10: compute_event_id documented as BLAKE3 per RFC-0909. **FIX** M1: LatencyTracker uses VecDeque(maxlen) for O(1) front eviction. |
 | 2.34    | 2026-04-30 | **FIX** 1 (Critical): Rust Feature Gates — hyper/axum/py-o3 are now UNCONDITIONAL dependencies (empty feature flags `[]`). Single-mode feature flags no longer enable/disable interfaces. **FIX** 2 (High): Per-Mode Streaming Availability table — any-llm-mode now ✅ for HTTP proxy streaming. **FIX** 3 (High): Feature-Gated Structure directory tree — gateway comment updated to "ALWAYS compiled". **FIX** 4 (High): Cargo Features block — updated to empty flags with explicit UNCONDITIONAL note. **FIX** 5 (Medium): lib.rs source comments — clarified provider strategies are exclusive per single-mode build. |
 | 2.33    | 2026-04-30 | **FIX** 1.1 (Critical): Update "What gets compiled" table (lines 1318-1324) — both interfaces available in all modes (not litellm-mode=HTTP-only, any-llm-mode=SDK-only). **FIX** 1.2: LiteLLM Compatibility Matrix (lines 1354-1355) — both cells corrected to ✅. **FIX** 2.1: A11 resolution text (lines 2299-2301) — clarify single-mode binaries have both interfaces. **FIX** 2.2: C6 resolution bullets (lines 2706-2711) — removed old stale per-flag table; replaced with corrected statement that all interfaces available in all modes. |
@@ -3340,7 +3333,3 @@ In `full` builds, both modules are compiled simultaneously and selected at runti
 - `docs/research/any-llm-vs-litellm-comparison.md`
 - `docs/research/litellm-analysis-and-quota-router-comparison.md`
 
----
-
-**Submission Date:** 2026-04-21
-**Last Updated:** 2026-04-30

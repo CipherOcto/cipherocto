@@ -2,7 +2,7 @@
 
 ## Status
 
-Accepted (v1.57 — 2026-04-30)
+Accepted (v1.58 — 2026-05-06)
 
 **ARCHITECTURAL CONSTRAINT: HTTP proxy is FOREVER in BOTH litellm-mode and any-llm-mode. See section below.**
 
@@ -266,7 +266,7 @@ def _get_compiled_modes() -> set:
 
 **⚠️ PyPI wheels are single-mode:** `pip install quota-router` installs an `any-llm-mode` wheel. `QUOTA_ROUTER_MODE` has no effect on PyPI wheels — feature flags are compile-time and cannot be changed at runtime. Attempting to set `QUOTA_ROUTER_MODE=litellm-mode` on a PyPI-installed SDK will be ignored.
 
-**QUOTA_ROUTER_MODE runtime selection ONLY applies to `full` dev builds** (built via `cargo build --features full`). These builds include both reqwest and PyO3 provider strategies and can switch at runtime.
+**QUOTA_ROUTER_MODE runtime selection ONLY applies to `full` dev builds** (built via `cargo build --features full`). These builds include both reqwest and PyO3 provider strategies. However, QUOTA_ROUTER_MODE does NOT switch the provider strategy at runtime — it only changes the `__deployment_mode__` string label and internal routing hints. N16 fix: The mode label returned by `get_deployment_mode()` controls logging/observability, not the actual HTTP call path. In `full` builds, both reqwest and PyO3 are compiled in; the mode label is informational only.
 
 ### Dual-Mode API Conventions
 
@@ -700,7 +700,7 @@ class MissingApiKeyError(QuotaRouterError):
 class UnsupportedProviderError(QuotaRouterError):
     """Provider not supported."""
     provider_key: str = ""
-    supported_providers: List[str] = field(default_factory=list)
+    supported_providers: List[str] = []
 
     def __init__(self, message: str, code: str = "unsupported_provider",
                  provider_key: str = "", supported_providers: Optional[List[str]] = None,
@@ -764,17 +764,36 @@ class ContentFilterFinishReasonError(QuotaRouterError):
 
 class BatchNotCompleteError(QuotaRouterError):
     """Batch job not yet complete."""
-    batch_id: str
-    status: str
+    batch_id: str = ""
+    status: str = ""
+
+    def __init__(self, message: str, code: str = "batch_not_complete",
+                 batch_id: str = "", status: str = "", **kwargs):
+        super().__init__(message, code, status=400, **kwargs)
+        self.batch_id = batch_id
+        self.status = status
 
 class AllModelsFailedError(QuotaRouterError):
     """All models failed in batch_completion_models() race."""
-    models: List[str]
+    models: List[str] = field(default_factory=list)
+
+    def __init__(self, message: str, code: str = "all_models_failed",
+                 models: Optional[List[str]] = None, **kwargs):
+        super().__init__(message, code, status=500, **kwargs)
+        self.models = models or []
 
 class BatchPartialFailureError(QuotaRouterError):
     """Some requests in batch failed, partial results returned."""
-    successful: List[CompletionResponse]
-    failed: List[Tuple[str, Exception]]
+    successful: List[CompletionResponse] = field(default_factory=list)
+    failed: List[Tuple[str, Exception]] = field(default_factory=list)
+
+    def __init__(self, message: str, code: str = "batch_partial_failure",
+                 successful: Optional[List[CompletionResponse]] = None,
+                 failed: Optional[List[Tuple[str, Exception]]] = None,
+                 **kwargs):
+        super().__init__(message, code, status=207, **kwargs)
+        self.successful = successful or []
+        self.failed = failed or []
 ```
 
 ### Python-to-Rust Exception Mapping
@@ -1406,14 +1425,14 @@ async fn handle_completion(req: Request) -> Result<Response, HyperError> {
 
 **For async SDKs (preferred):**
 ```rust
-use pyo3_asyncio::tokio::into_async;
+use pyo3_asyncio::tokio::into_future;
 
 // Python side exposes async function:
 // async def acall_completion(...): ... → AsyncIterator[ChatCompletionChunk]
 
 async fn handle_completion(req: Request) -> Result<Response, HyperError> {
-    // into_async bridges Python async → Rust async without blocking executor threads
-    let py_result = into_async(call_python_completion_async(req)).await?;
+    // N5 fix: into_future (not into_async) — into_async was removed in pyo3-asyncio 0.16+
+    let py_result = into_future(call_python_completion_async(req)).await?;
     Ok(Response::new(Body::from(py_result)))
 }
 ```
@@ -1457,6 +1476,7 @@ const PROVIDER_SDK_TYPES: &[(&str, &str)] = &[
     ("ollama", "sync"),
     ("deepinfra", "async"),
     ("groq", "async"),
+    ("bedrock", "sync"),  // N18 fix: AWS boto3/botocore — sync SDK via spawn_blocking
     ("default", "sync"),
 ];
 ```
@@ -1586,8 +1606,11 @@ PROVIDER_SDK_TYPES = {
     "openai": "async",        # AsyncOpenAI
     "anthropic": "async",    # AsyncAnthropic
     "mistral": "async",       # AsyncMistral
+    "gemini": "async",        # N18 fix: google-generativeai (async)
     "ollama": "sync",         # requests-based sync (no official async SDK)
     "deepinfra": "async",     # AsyncDeepInfra
+    "groq": "async",          # N18 fix: groq also has async SDK
+    "bedrock": "sync",        # N18 fix: AWS boto3/botocore (sync via spawn_blocking)
     # Default: sync is safer — blocks don't starve the async executor
     "default": "sync",
 }
@@ -1608,8 +1631,8 @@ async fn handle_completion(req: Request, provider: &str) -> Result<Response, Hyp
             Ok(Response::new(Body::from(py_result)))
         }
         "async" => {
-            // pyo3-asyncio bridge for async SDKs
-            let py_result = pyo3_asyncio::tokio::into_async(
+            // N5 fix: pyo3_asyncio::tokio::into_future (not into_async — deprecated/removed)
+            let py_result = pyo3_asyncio::tokio::into_future(
                 call_python_sdk_async(req)
             ).await?;
             Ok(Response::new(Body::from(py_result)))
@@ -1709,36 +1732,89 @@ class SSEParser:
         Anthropic SSE uses event-type lines:
         ``event: message_delta\ndata: {"usage":{"output_tokens":123},"delta":{"text":"..."}}\n\n``
 
-        Transforms to OpenAI format: ``{"choices":[{"delta":{"content":"..."}}]}``
+        NOTE: This is a stateless single-function parser. Since event type and data
+        arrive in SEPARATE SSE lines, this function cannot produce output on the event-type
+        line (no data) and cannot produce output on the data line (no remembered event type).
+
+        N7 fix: This method now delegates to a stateful parser class that maintains
+        event-type context across calls. The static method signature is preserved for
+        API compatibility; an internal class handles multi-line SSE state.
         """
+        return _AnthropicSSEParser.parse(chunk)
+
+
+class _AnthropicSSEParser:
+    """Stateful Anthropic SSE parser — maintains event-type context across calls.
+
+    Anthropic SSE events span multiple lines:
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"Hello"}}
+
+    The event type (line 1) and data (line 2) must be remembered together to produce
+    a valid ChatCompletionChunk. This class tracks pending event-type state.
+    """
+
+    _pending_event_type: Optional[str] = None  # class-level state across calls
+
+    @classmethod
+    def parse(cls, chunk: bytes) -> Optional[ChatCompletionChunk]:
         import json
         line = chunk.decode("utf-8").strip()
+        # Blank line — potential SSE event boundary (ignore)
+        if not line:
+            return None
         if line.startswith("event: "):
-            # Extract event type and data separately
-            event_type = line.split("\n")[0][7:]  # e.g., "message_delta"
-            return None  # Event type lines have no data to parse
+            # Extract event type and STORE for the next data line
+            # There may be multiple event: lines before data: — keep updating
+            cls._pending_event_type = line.split("\n")[0][7:]  # e.g., "message_delta"
+            return None  # Event type lines have no content to parse yet
         if not line.startswith("data: "):
             return None
         data = line[6:]
         if data == "[DONE]":
+            cls._pending_event_type = None  # Reset state after terminal event
             return None
         try:
             obj = json.loads(data)
         except json.JSONDecodeError:
+            cls._pending_event_type = None
             return None
-        # Anthropic format: {"type": "message_delta", "delta": {"text": "..."}, "usage": {...}}
-        delta = obj.get("delta", {})
-        text = delta.get("text", "")
-        if not text:
+        # Use the STORED event type from the preceding event: line
+        event_type = cls._pending_event_type
+        cls._pending_event_type = None  # Consume after use (per SSE spec)
+        if event_type is None:
+            # data: line without preceding event: type — cannot parse
             return None
-        return ChatCompletionChunk(
-            id=f"chatcmpl-{obj.get('message', {}).get('id', '')}",
-            choices=[ChoiceDelta(
-                index=0,
-                delta={"content": text},
-                finish_reason=obj.get("type") == "message_stop" and "stop" or None,
-            )]
-        )
+        # Handle content_block_delta events (the main streaming event type)
+        if event_type == "content_block_delta":
+            delta = obj.get("delta", {})
+            text = delta.get("text", "")
+            if not text:
+                return None
+            return ChatCompletionChunk(
+                id=f"chatcmpl-{obj.get('message', {}).get('id', '')}",
+                choices=[ChoiceDelta(
+                    index=obj.get("index", 0),
+                    delta={"content": text},
+                    finish_reason=None,
+                )]
+            )
+        # Handle message_delta — final chunk with usage
+        if event_type == "message_delta":
+            delta = obj.get("delta", {})
+            text = delta.get("text", "")
+            return ChatCompletionChunk(
+                id=f"chatcmpl-{obj.get('message', {}).get('id', '')}",
+                choices=[ChoiceDelta(
+                    index=0,
+                    delta={"content": text},
+                    finish_reason="stop",
+                )]
+            )
+        # Handle message_stop — terminal event
+        if event_type == "message_stop":
+            return None  # Already handled final chunk via message_delta
+        return None
 
     @staticmethod
     def parse_mistral_sse(chunk: bytes) -> Optional[ChatCompletionChunk]:
@@ -1796,10 +1872,16 @@ async def _stream_provider_response(
     """
     if provider == "openai":
         async for chunk in openai_sdk.chat.completions.stream(model=model, messages=messages, **kwargs):
-            yield SSEParser.parse_openai_sse(chunk)
+            # N6 fix: Filter None — parse_openai_sse returns None for non-content SSE events
+            parsed = SSEParser.parse_openai_sse(chunk)
+            if parsed is not None:
+                yield parsed
     elif provider == "anthropic":
         async for event in anthropic_sdk.messages.stream(model=model, messages=messages, **kwargs):
-            yield SSEParser.parse_anthropic_sse(event)
+            # N6 fix: Filter None — parse_anthropic_sse returns None for non-content SSE events
+            parsed = SSEParser.parse_anthropic_sse(event)
+            if parsed is not None:
+                yield parsed
     # ... other providers
 
 def _stream_sync_bridge(
@@ -2295,9 +2377,12 @@ def batch_completion_models(
 
     Note:
         Uses ThreadPoolExecutor with wait(FIRST_COMPLETED) — returns
-        as soon as any model responds. Other requests are cancelled.
+        as soon as any model responds. Other requests run to completion
+        (their results are discarded). The ThreadPoolExecutor waits for
+        all submitted futures when exiting the `with` block.
         Distinct from batch_completion() which sends many messages to
         one model and returns ALL results.
+        N14 fix: "Other requests are cancelled" was incorrect — they run to completion.
     """
     if isinstance(models, str):
         models = [models]
@@ -2341,7 +2426,7 @@ def batch_completion_models_all_responses(
     messages: List[Dict],
     models: Union[str, List[str]],
     **kwargs,
-) -> List[CompletionResponse]:
+) -> List[Optional[CompletionResponse]]:
     """
     Send a request to multiple models concurrently, return ALL responses.
 
@@ -2352,8 +2437,9 @@ def batch_completion_models_all_responses(
         **kwargs: Passed to completion() for each model
 
     Returns:
-        List[CompletionResponse] — ALL responses in model order.
+        List[Optional[CompletionResponse]] — ALL responses in model order.
         Failed models have None at their index.
+        N20 fix: Return type is List[Optional[CompletionResponse]] — None for failures.
 
     Note:
         Uses ThreadPoolExecutor.wait(ALL_COMPLETED) — waits for all
@@ -2652,6 +2738,10 @@ class Router:
             self._active_requests[i] = 0
             self._latencies[i] = deque(maxlen=100)
             self._total_spend[i] = 0
+            # N13/N21 fix: Initialize _spend_history[i] for each deployment index,
+            # parallel to _latencies and _active_requests. Without this, the first
+            # _record_spend call for any deployment_idx raises KeyError.
+            self._spend_history[i] = deque(maxlen=500)
 
     def _select_deployment(self, model: str) -> int:
         """Select deployment index using routing strategy.
@@ -2755,6 +2845,10 @@ class Router:
         with self._state_lock:
             now = time.monotonic()  # L2 fix: capture once for temporal consistency
             model_name = self._deployments[idx][0]
+            # N13/N21 fix: Guard BEFORE access — prevent KeyError on first request.
+            # Initialize _spend_history[i] in __init__ alongside _latencies/_active_requests.
+            if idx not in self._spend_history:
+                self._spend_history[idx] = deque(maxlen=500)
             last_time = self._spend_history[idx][-1][0] if self._spend_history[idx] else now
             # CRITICAL FIX (D3): Read current_spend INSIDE the lock, not from a stale
             # captured value. If another thread updated _total_spend between the first
@@ -2763,10 +2857,18 @@ class Router:
             current_spend = self._total_spend.get(idx, 0)
             elapsed = max(0.0, now - last_time)
             decay_factor = math.exp2(-elapsed / 3600.0)
-            if idx not in self._spend_history:
-                self._spend_history[idx] = deque(maxlen=500)
-            # Pricing done INSIDE the lock (still <50μs target) to ensure consistent read
-            # of model_name and atomic write to _total_spend._total_spend[idx] = int(current_spend * decay_factor) + cost_μunits
+            # N1 fix: Compute pricing and write INSIDE the lock (still <50μs target).
+            # Pricing done here to ensure consistent read of model_name and atomic
+            # write to _total_spend._total_spend[idx] = int(current_spend * decay_factor) + cost_μunits
+            try:
+                pricing = _get_pricing(model_name)
+                input_cost = pricing.get("input", 0.0) * prompt_tokens / 1000.0
+                output_cost = pricing.get("output", pricing.get("input", 0.0)) * completion_tokens / 1000.0
+                cost_μunits = int((input_cost + output_cost) * 1_000_000)
+            except Exception:
+                cost_μunits = (prompt_tokens + completion_tokens) * 10
+            self._spend_history[idx].append((now, cost_μunits))
+            self._total_spend[idx] = int(current_spend * decay_factor) + cost_μunits
 
     def _select_by_weighted_spend(self, indices: List[int]) -> int:
         """Select deployment using usage-based-routing-v2 (recency-weighted spend).
@@ -2845,10 +2947,11 @@ class Router:
         for attempt in range(self.num_retries + 1):
             try:
                 self._record_request_start(deployment_idx)
+                import time  # N22 fix: time.time() used below — import here to avoid NameError
                 start = time.time()
                 # C1 fix: Explicit end-to-end propagation — DO NOT omit cache_bypass here.
-        # Implicit **kwargs forwarding is insufficient due to signature default override.
-        result = _module_completion(model=model_name, messages=messages, cache_bypass=cache_bypass, **call_kwargs)
+                # N8 fix: Implicit **kwargs forwarding is insufficient due to signature default override.
+                result = _module_completion(model=model_name, messages=messages, cache_bypass=cache_bypass, **call_kwargs)
                 latency_ms = (time.time() - start) * 1000
                 usage = result.get("usage", {})
                 prompt_tokens = usage.get("prompt_tokens", 0)
@@ -3523,19 +3626,20 @@ fn normalize_timeout(py_timeout: &Bound<PyAny>) -> PyResult<Duration> {
         });
     }
 
-    // Case 4: httpx.Timeout object → extract .read, .total, or .connect
+    // Case 4: httpx.Timeout object → extract .total, .read, or .connect
     if py_timeout.hasattr("connect")? {
-        // Precedence: .read > .total > .connect > default 60s
-        // Extract .read timeout
-        let read_timeout = py_timeout.getattr("read")?;
-        if let Some(timeout) = read_timeout {
+        // N19 fix: Precedence is .total > .read > .connect > default 60s
+        // .total is the overall request timeout; .read is body-read-only timeout.
+        // .total should take priority — users who set .total expect overall budget.
+        let total = py_timeout.getattr("total")?;
+        if let Some(timeout) = total {
             if let Ok(secs) = timeout.extract::<f64>() {
                 return Ok(Duration::from_secs_f64(secs));
             }
         }
-        // Fall back to .total (total timeout)
-        let total = py_timeout.getattr("total")?;
-        if let Some(timeout) = total {
+        // Fall back to .read (body-read-only)
+        let read_timeout = py_timeout.getattr("read")?;
+        if let Some(timeout) = read_timeout {
             if let Ok(secs) = timeout.extract::<f64>() {
                 return Ok(Duration::from_secs_f64(secs));
             }
@@ -4291,12 +4395,19 @@ mode = quota_router.get_deployment_mode()
 // In PyO3 module init
 #[pymodule]
 fn _quota_router(m: &Bound<PyModule>) -> PyResult<()> {
-    #[cfg(feature = "litellm-mode")]
-    m.add("__deployment_mode__", "litellm-mode")?;
-    #[cfg(feature = "any-llm-mode")]
-    m.add("__deployment_mode__", "any-llm-mode")?;
-    #[cfg(feature = "full")]
-    m.add("__deployment_mode__", "full")?;
+    // N17 fix: cfg_if! ensures exactly ONE m.add call fires in full builds.
+    // In "full" builds, feature "full" is enabled and "any-llm-mode" is NOT
+    // (full = [] in Cargo.toml). Without cfg_if!, both #[cfg(feature = "full")]
+    // and #[cfg(feature = "any-llm-mode")] would evaluate true simultaneously.
+    cfg_if! {
+        if #[cfg(feature = "full")] {
+            m.add("__deployment_mode__", "full")?;
+        } else if #[cfg(feature = "any-llm-mode")] {
+            m.add("__deployment_mode__", "any-llm-mode")?;
+        } else if #[cfg(feature = "litellm-mode")] {
+            m.add("__deployment_mode__", "litellm-mode")?;
+        }
+    }
     Ok(())
 }
 
@@ -4431,7 +4542,15 @@ def _get_server_secret() -> bytes:
             )
         return secret_bytes
 
-    # Dev/test fallback — NOT for production
+    # N15 fix: Dev/test fallback gate — NOT for production.
+    # The fallback (uuid.getnode() machine identity) is vulnerable to key-collision
+    # attacks in multi-tenant environments. Require explicit opt-in flag.
+    if os.environ.get("QUOTA_ROUTER_ALLOW_INSECURE_HMAC_FALLBACK") != "1":
+        raise RuntimeError(
+            "QUOTA_ROUTER_HMAC_SECRET not set and HMAC fallback not enabled. "
+            "Production deployments MUST set QUOTA_ROUTER_HMAC_SECRET env var. "
+            "For local dev/test only, set QUOTA_ROUTER_ALLOW_INSECURE_HMAC_FALLBACK=1."
+        )
     # Use uuid.getnode() for cross-platform machine identity
     import hashlib
     import uuid
@@ -4556,6 +4675,7 @@ This is the only approach that achieves true drop-in replacement for both ecosys
 
 | Version | Date       | Changes |
 | ------- | ---------- | ------- |
+| 1.58    | 2026-05-06 | **FIX** N1: _record_spend pricing and write restored (was missing — only comment remained). **FIX** N3: UnsupportedProviderError `field()` removed (non-dataclass). **FIX** N4: BatchNotCompleteError, AllModelsFailedError, BatchPartialFailureError now have `__init__`. **FIX** N5: into_async → into_future in RFC-0920 proxy code (2 locations). **FIX** N6: _stream_provider_response filters None from SSE parsers. **FIX** N7: parse_anthropic_sse now stateful via _AnthropicSSEParser class (multi-line SSE). **FIX** N8: Router.completion() indentation fixed (comment and result dedented to try block). **FIX** N13/N21: _spend_history initialized in __init__; guard reordered before access. **FIX** N14: batch_completion_models docstring corrected (losers run to completion, not cancelled). **FIX** N15: _get_server_secret fallback gate now enforced. **FIX** N16: QUOTA_ROUTER_MODE clarified as label-only (not provider strategy switch). **FIX** N17: __deployment_mode__ via cfg_if! (mutually exclusive). **FIX** N18: bedrock added to PROVIDER_SDK_TYPES registry (Rust + Python + YAML). **FIX** N19: normalize_timeout precedence corrected (.total > .read > .connect). **FIX** N20: batch_completion_models_all_responses return type List[Optional[CompletionResponse]]. **FIX** N22: Router.completion() imports time inside try block. |
 | 1.57    | 2026-04-30 | **FIX** H5: QuotaRouterError base class aligned with RFC-0917 — added `status` (int=0) and `details` (dict={}) fields, canonical 5-param `__init__`. **FIX** H6: All exception subclasses now have proper `__init__` overrides that accept and assign extra fields (retry_after, param, upstream_code, max_tokens, received_tokens, etc.). **FIX** D3: _record_spend TOCTOU race — pricing moved inside single lock acquisition; current_spend read inside lock (not stale captured value). **FIX** D4: Ollama streaming — corrected `ollama.async_stream` → `ollama.AsyncClient().chat()` (proper async SDK pattern); removed sync for-loop inside async def. **FIX** M2: resolve_provider empty string check now single early-return guard. |
 | 1.55    | 2026-04-30 | **DOCS** RFC-0920 no changes needed — confirms HTTP proxy constraint box (lines 77-95) and Mode Gate ≠ Interface invariant (lines 131-148) already correctly state both interfaces available in all modes. All 8 Round 38 findings formally rebutted as stale-cached review of pre-v1.54 version. |
 | 1.54    | 2026-04-30 | **FIX** Feature Gate Architecture (lines 4149-4175): Replaced incorrect Cargo.toml block — all three modes had identical `pyo3/extension-module` with contradictory comments. quota-router-pyo3 now correctly documented as having NO feature flags; it wraps whatever quota-router-core was compiled with. Mode selection happens at quota-router-core compile time. **FIX** set_api_key() budget enforcement (lines 802-842): Corrected "In-memory, no enforcement" to correctly reflect that budget enforcement (RFC-0904) is active in ALL modes via HMAC-SHA256 key_id + StoolapKeyStorage. **FIX** Provider count: Changed "42" to "41" in header and checklist. Fixed any-llm gap analysis text (was "39+1=40", now correct). **FIX** Python Router NON-NORMATIVE marker: Added explicit note that Phase 1 Python Router violates Rust-owns-all-heavy-lifting constraint and is non-normative placeholder. |

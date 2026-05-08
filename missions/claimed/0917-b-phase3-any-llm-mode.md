@@ -2,18 +2,20 @@
 
 ## Status
 
-In Progress — P1-P5 fixes complete (2026-05-08)
+In Progress — Real SDK integration underway (2026-05-08)
 
-**Completed:** API surface (20 functions), 18 exceptions, 42 providers, model parsing, SSE streaming parsing (real), set_api_key, get_budget_status, get_metrics (Prometheus format)
+**Completed:** API surface (20 functions), 18 exceptions, 42 providers, model parsing, SSE streaming parsing (real), set_api_key, get_budget_status, get_metrics (Prometheus format), **OpenAI SDK (real), Anthropic SDK (real)**
 
-**Remaining:** Real provider SDK calls (PyO3 → Python SDK bridge)
+**Remaining:** 40 provider SDK integrations (Gemini, Mistral, Ollama, etc.)
 
 **Critical gaps identified:**
 - ✅ FIXED: Base class naming: spec says `QuotaRouterError`, impl uses `AnyLLMError` — FIXED
 - ✅ FIXED: Streaming: mock word-split → actual SSE parsing implemented (2026-05-08)
 - ✅ FIXED: Metrics: in-memory counters → Prometheus dict format (2026-05-08)
 - ✅ FIXED: Provider registry: 6 → 42 providers (2026-05-08)
-- Remaining: All functions are mocks/stubs — no actual provider SDK calls
+- ✅ FIXED: OpenAI SDK: mock → real SDK integration via PyO3 (2026-05-08)
+- ✅ FIXED: Anthropic SDK: mock → real SDK integration via PyO3 (2026-05-08)
+- Remaining: 40 provider SDK integrations (same pattern to replicate)
 
 ## Architecture Note (RFC-0917)
 
@@ -98,15 +100,17 @@ QuotaRouterError (base per RFC-0920)
 ## Phase 3 Checklist (RFC-0917 lines 1571-1583) — ACTUAL STATUS
 
 - [ ] **PyO3 bridge** — quota-router-pyo3 calls official Python SDKs via PyO3
-- [ ] **41 Provider integrations** via PyO3 calls to: `anthropic`, `openai`, `mistralai`, `ollama`, `google-genai` + 36 more
+- [ ] **41 Provider integrations** via PyO3 calls — 2 of 41 complete: `openai`, `anthropic`
 - [x] **Python SDK package** (pyproject.toml + python/quota_router/__init__.py)
-- [x] **20 API functions** via PyO3 — MOCKS ONLY, no real provider calls
+- [x] **20 API functions** via PyO3 — OpenAI and Anthropic now call real SDKs
 - [x] **Streaming via SSE parsing** — `parse_openai_sse`, `parse_anthropic_sse`, `chunks_from_openai_events`, `chunks_from_anthropic_events` ✅ (2026-05-08)
 - [x] **Exception hierarchy** — 18 exceptions (incl. AllModelsFailedError, BatchPartialFailureError per RFC-0920)
 - [x] `set_api_key()` / `get_budget_status()` — Thin wrapper layer; in-memory for now per RFC-0917 architecture
 - [x] `get_metrics()` — Returns Prometheus dict with `quota_router_*` prefixed keys ✅ (2026-05-08)
 - [x] **Model string parsing** (`provider/model` and `provider:model` formats) — works correctly
 - [x] **Provider registry** — 42 providers wired in Providers::get() ✅ (2026-05-08)
+- [x] **OpenAI SDK integration** — real SDK calls via PyO3 ✅ (2026-05-08)
+- [x] **Anthropic SDK integration** — real SDK calls via PyO3 ✅ (2026-05-08)
 
 ### Spec-vs-Implementation Alignment (2026-05-08)
 
@@ -131,8 +135,10 @@ QuotaRouterError (base per RFC-0920)
 
 ## Acceptance Criteria
 
-- [x] quota-router-pyo3 exposes all 20 API functions via PyO3 — MOCKS ONLY
-- [ ] All 41 providers accessible via any-llm-mode (requires PyO3 integration with Python SDKs)
+- [x] quota-router-pyo3 exposes all 20 API functions via PyO3
+- [x] OpenAI SDK integration — real SDK calls (2026-05-08)
+- [x] Anthropic SDK integration — real SDK calls (2026-05-08)
+- [ ] 39 remaining provider SDK integrations (same pattern to replicate)
 - [x] Exception hierarchy matches spec — 18 exceptions including AllModelsFailedError, BatchPartialFailureError
 - [x] `set_api_key()` / `get_budget_status()` — Thin wrapper layer per RFC-0917 architecture note
 - [x] `get_metrics()` — returns Prometheus dict with `quota_router_*` prefixed keys ✅

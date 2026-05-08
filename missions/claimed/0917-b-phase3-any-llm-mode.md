@@ -4,9 +4,9 @@
 
 In Progress — Real SDK integration underway (2026-05-08)
 
-**Completed:** API surface (20 functions), 18 exceptions, 42 providers, model parsing, SSE streaming parsing (real), set_api_key, get_budget_status, get_metrics (Prometheus format), **OpenAI SDK (real), Anthropic SDK (real), Mistral SDK (real), Gemini SDK (real), Groq SDK (real), Cohere SDK (real), Perplexity SDK (real), DeepSeek SDK (real), Azure SDK (real), Together SDK (real)**
+**Completed:** API surface (20 functions), 18 exceptions, 42 providers, model parsing, SSE streaming parsing (real), set_api_key, get_budget_status, get_metrics (Prometheus format), **OpenAI SDK (real), Anthropic SDK (real), Mistral SDK (real), Gemini SDK (real), Groq SDK (real), Cohere SDK (real), Perplexity SDK (real), DeepSeek SDK (real), Azure SDK (real), Together SDK (real), Fireworks SDK (real), Cerebras SDK (real), OpenRouter SDK (real), xAI SDK (real), HuggingFace SDK (real), Moonshot SDK (real), Voyage SDK (real)**
 
-**Remaining:** 31 provider SDK integrations (ollama, fireworks, fireworks, etc.)
+**Remaining:** 24 provider SDK integrations (ollama, databricks, etc.)
 
 **Critical gaps identified:**
 - ✅ FIXED: Base class naming: spec says `QuotaRouterError`, impl uses `AnyLLMError` — FIXED

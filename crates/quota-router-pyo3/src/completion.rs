@@ -4,6 +4,7 @@
 #![allow(deprecated)]
 
 use crate::model::ParsedModel;
+use crate::providers::anthropic::AnthropicProvider;
 use crate::providers::base::LLMProvider;
 use crate::providers::openai::OpenAIProvider;
 use crate::streaming::{chunks_to_pylist, create_chunk_list};
@@ -78,7 +79,31 @@ pub fn completion(
         }
     }
 
-    // For non-OpenAI providers, use mock response
+    // For Anthropic provider, use real SDK
+    if parsed.provider == "anthropic" {
+        let provider = AnthropicProvider::new();
+
+        // Initialize with api_key if provided
+        if let Some(key) = api_key {
+            if let Err(e) = provider.init_client(&key, None) {
+                let err_msg = format!("Failed to init Anthropic client: {}", e.message());
+                return Err(pyo3::exceptions::PyRuntimeError::new_err(err_msg));
+            }
+        }
+
+        match provider.completion(&parsed.model, &messages, false) {
+            Ok(response) => {
+                // Convert to Python dict
+                return Python::with_gil(|py| response.to_dict(py));
+            }
+            Err(e) => {
+                let err_msg = format!("Anthropic API error: {}", e.message());
+                return Err(pyo3::exceptions::PyRuntimeError::new_err(err_msg));
+            }
+        }
+    }
+
+    // For other providers, use mock response
     let content = messages
         .first()
         .map(|m| format!("{} Echo: {}", parsed.provider, m.content))

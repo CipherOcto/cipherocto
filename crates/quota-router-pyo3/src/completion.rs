@@ -9,6 +9,7 @@ use crate::providers::azure::AZUREProvider;
 use crate::providers::base::LLMProvider;
 use crate::providers::cerebras::CEREBRASProvider;
 use crate::providers::cohere::COHEREProvider;
+use crate::providers::databricks::DATABRICKSProvider;
 use crate::providers::deepseek::DEEPSEEKProvider;
 use crate::providers::fireworks::FIREWORKSProvider;
 use crate::providers::gemini::GeminiProvider;
@@ -447,6 +448,28 @@ pub fn completion(
             }
             Err(e) => {
                 let err_msg = format!("Voyage API error: {}", e.message());
+                return Err(pyo3::exceptions::PyRuntimeError::new_err(err_msg));
+            }
+        }
+    }
+
+    // For Databricks provider, use real SDK
+    if parsed.provider == "databricks" {
+        let provider = DATABRICKSProvider::new();
+
+        if let Some(key) = api_key {
+            if let Err(e) = provider.init_client(&key, None) {
+                let err_msg = format!("Failed to init Databricks client: {}", e.message());
+                return Err(pyo3::exceptions::PyRuntimeError::new_err(err_msg));
+            }
+        }
+
+        match provider.completion(&parsed.model, &messages, false) {
+            Ok(response) => {
+                return Python::with_gil(|py| response.to_dict(py));
+            }
+            Err(e) => {
+                let err_msg = format!("Databricks API error: {}", e.message());
                 return Err(pyo3::exceptions::PyRuntimeError::new_err(err_msg));
             }
         }

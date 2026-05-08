@@ -3,6 +3,9 @@
 #![allow(clippy::too_many_arguments)]
 #![allow(deprecated)]
 
+use crate::model::ParsedModel;
+use crate::providers::base::LLMProvider;
+use crate::providers::openai::OpenAIProvider;
 use crate::streaming::{chunks_to_pylist, create_chunk_list};
 use crate::types::{ChatCompletion, Choice, Message};
 use pyo3::prelude::*;
@@ -25,7 +28,7 @@ pub fn completion(
     _frequency_penalty: Option<f64>,
     _user: Option<String>,
     // quota-router specific
-    _api_key: Option<String>,
+    api_key: Option<String>,
 ) -> PyResult<Py<PyAny>> {
     // Log the request parameters (for debugging)
     println!(
@@ -35,30 +38,57 @@ pub fn completion(
         stream
     );
 
-    // Get the content from the first message for streaming
-    let content = messages
-        .first()
-        .map(|m| format!("Echo: {}", m.content))
-        .unwrap_or_default();
+    // Parse model string to determine provider
+    let parsed = match ParsedModel::parse(&model) {
+        Ok(p) => p,
+        Err(e) => return Err(pyo3::exceptions::PyValueError::new_err(e)),
+    };
 
-    // If streaming requested, return a list of chunks
+    // If streaming requested, use mock for now (streaming requires async)
     if stream == Some(true) {
+        let content = messages
+            .first()
+            .map(|m| format!("Echo: {}", m.content))
+            .unwrap_or_default();
         let chunks = create_chunk_list(model, content);
         return Python::with_gil(|py| chunks_to_pylist(chunks, py));
     }
 
-    // Non-streaming response
-    let choices: Vec<Choice> = messages
-        .iter()
-        .enumerate()
-        .map(|(i, msg)| {
-            Choice::new(
-                i as u32,
-                Message::new("assistant", format!("Echo: {}", msg.content)),
-                "stop",
-            )
-        })
-        .collect();
+    // For OpenAI provider, use real SDK
+    if parsed.provider == "openai" {
+        let provider = OpenAIProvider::new();
+
+        // Initialize with api_key if provided
+        if let Some(key) = api_key {
+            if let Err(e) = provider.init_client(&key, None) {
+                let err_msg = format!("Failed to init OpenAI client: {}", e.message());
+                return Err(pyo3::exceptions::PyRuntimeError::new_err(err_msg));
+            }
+        }
+
+        match provider.completion(&parsed.model, &messages, false) {
+            Ok(response) => {
+                // Convert to Python dict
+                return Python::with_gil(|py| response.to_dict(py));
+            }
+            Err(e) => {
+                let err_msg = format!("OpenAI API error: {}", e.message());
+                return Err(pyo3::exceptions::PyRuntimeError::new_err(err_msg));
+            }
+        }
+    }
+
+    // For non-OpenAI providers, use mock response
+    let content = messages
+        .first()
+        .map(|m| format!("{} Echo: {}", parsed.provider, m.content))
+        .unwrap_or_default();
+
+    let choices: Vec<Choice> = vec![Choice::new(
+        0,
+        Message::new("assistant", content),
+        "stop",
+    )];
 
     let response =
         ChatCompletion::new(format!("chatcmpl-{}", uuid::Uuid::new_v4()), model, choices);

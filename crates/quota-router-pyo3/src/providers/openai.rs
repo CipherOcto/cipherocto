@@ -5,6 +5,7 @@ use crate::exceptions::ProviderError;
 use crate::providers::base::{LLMProvider, ProviderFeatures, ProviderMetadata};
 use crate::types::{ChatCompletion, Choice, Embedding, EmbeddingsResponse, Message};
 use pyo3::prelude::*;
+use pyo3::types::PyDict;
 use std::sync::Mutex;
 
 /// OpenAI provider implementation
@@ -41,7 +42,7 @@ impl OpenAIProvider {
         }
     }
 
-    /// Initialize the OpenAI client using PyO3
+    /// Initialize the OpenAI client using PyO3 (synchronous client for simplicity)
     fn ensure_client(&self) -> Result<Py<PyAny>, ProviderError> {
         let mut client_guard = self
             .client
@@ -52,17 +53,19 @@ impl OpenAIProvider {
             return Ok(client_guard.clone().unwrap());
         }
 
-        // Create OpenAI client via PyO3
+        // Create OpenAI client via PyO3 using sync client
         let api_key = self.api_key.lock().unwrap();
         let api_base = self.api_base.lock().unwrap();
 
         Python::with_gil(|py| {
+            // Import the sync OpenAI client (not AsyncOpenAI)
             let openai = PyModule::import(py, "openai").map_err(|e| {
                 ProviderError::new(format!("Failed to import openai: {}", e), "openai")
             })?;
 
-            let async_openai_class = openai.getattr("AsyncOpenAI").map_err(|e| {
-                ProviderError::new(format!("Failed to get AsyncOpenAI: {}", e), "openai")
+            // Use the synchronous OpenAI class
+            let openai_class = openai.getattr("OpenAI").map_err(|e| {
+                ProviderError::new(format!("Failed to get OpenAI: {}", e), "openai")
             })?;
 
             let key = api_key
@@ -73,9 +76,14 @@ impl OpenAIProvider {
                 .map(|s| s.as_str())
                 .unwrap_or("https://api.openai.com/v1");
 
-            let client = async_openai_class.call1((key, base)).map_err(|e| {
-                ProviderError::new(format!("Failed to create client: {}", e), "openai")
-            })?;
+            // Create client with api_key and base_url as keyword args
+            let kwargs = PyDict::new(py);
+            kwargs.set_item("api_key", key).unwrap();
+            kwargs.set_item("base_url", base).unwrap();
+
+            let client = openai_class
+                .call((), Some(kwargs))
+                .map_err(|e| ProviderError::new(format!("Failed to create client: {}", e), "openai"))?;
 
             let client_py: Py<PyAny> = client.into();
             *client_guard = Some(client_py.clone());
@@ -107,26 +115,60 @@ impl LLMProvider for OpenAIProvider {
         &self,
         model: &str,
         messages: &[Message],
-        _stream: bool,
+        stream: bool,
     ) -> Result<ChatCompletion, ProviderError> {
-        // Mock implementation - in production, this calls the OpenAI SDK
-        let choices: Vec<Choice> = messages
-            .iter()
-            .enumerate()
-            .map(|(i, msg)| {
-                Choice::new(
-                    i as u32,
-                    Message::new("assistant", format!("OpenAI Echo: {}", msg.content)),
-                    "stop",
-                )
-            })
-            .collect();
+        // Don't support streaming in sync version - use acompletion for streaming
+        if stream {
+            return Err(ProviderError::new(
+                "Streaming not supported in sync completion. Use acompletion() instead.",
+                "openai",
+            ));
+        }
 
-        Ok(ChatCompletion::new(
-            format!("chatcmpl-{}", uuid::Uuid::new_v4()),
-            model,
-            choices,
-        ))
+        // Get or create client
+        let client = self.ensure_client()?;
+
+        // Build messages list for Python SDK
+        let py_messages: Vec<Py<PyDict>> = Python::with_gil(|py| {
+            messages
+                .iter()
+                .map(|msg| {
+                    let dict = PyDict::new(py);
+                    dict.set_item("role", &msg.role).unwrap();
+                    dict.set_item("content", &msg.content).unwrap();
+                    dict.into()
+                })
+                .collect()
+        });
+
+        // Call the Python SDK
+        let py_result: Py<PyAny> = Python::with_gil(|py| {
+            let client_obj = client.as_ref(py);
+
+            // Navigate: client.chat.completions.create(model=model, messages=messages)
+            let chat = client_obj
+                .getattr("chat")
+                .map_err(|e| ProviderError::new(format!("Failed to get chat: {}", e), "openai"))?;
+            let completions = chat
+                .getattr("completions")
+                .map_err(|e| ProviderError::new(format!("Failed to get completions: {}", e), "openai"))?;
+            let create = completions
+                .getattr("create")
+                .map_err(|e| ProviderError::new(format!("Failed to get create: {}", e), "openai"))?;
+
+            // Call with keyword args
+            let kwargs = PyDict::new(py);
+            kwargs.set_item("model", model).unwrap();
+            kwargs.set_item("messages", &py_messages).unwrap();
+
+            create
+                .call((), Some(kwargs))
+                .map_err(|e| ProviderError::new(format!("SDK call failed: {}", e), "openai"))
+                .map(|obj| obj.into())
+        })?;
+
+        // Convert Python response to Rust ChatCompletion
+        Python::with_gil(|py| convert_py_chat_completion(py_result.as_ref(py), model))
     }
 
     async fn acompletion(
@@ -165,6 +207,92 @@ impl LLMProvider for OpenAIProvider {
     ) -> Result<EmbeddingsResponse, ProviderError> {
         self.embedding(input, model)
     }
+}
+
+/// Convert Python ChatCompletion object to Rust ChatCompletion
+fn convert_py_chat_completion(py_obj: &PyAny, _model: &str) -> Result<ChatCompletion, ProviderError> {
+    // The Python SDK returns an object with these attributes:
+    // id, model, choices (list), usage (object with prompt_tokens, completion_tokens, total_tokens)
+
+    let id: String = py_obj
+        .get_item("id")
+        .map_err(|e| ProviderError::new(format!("Failed to get id: {}", e), "openai"))?
+        .extract()
+        .map_err(|e| ProviderError::new(format!("Failed to extract id: {}", e), "openai"))?;
+
+    let model_str: String = py_obj
+        .get_item("model")
+        .map_err(|e| ProviderError::new(format!("Failed to get model: {}", e), "openai"))?
+        .extract()
+        .map_err(|e| ProviderError::new(format!("Failed to extract model: {}", e), "openai"))?;
+
+    let py_choices = py_obj
+        .get_item("choices")
+        .map_err(|e| ProviderError::new(format!("Failed to get choices: {}", e), "openai"))?;
+
+    let choices: Vec<Choice> = if let Ok(list) = py_choices.downcast::<pyo3::types::PyList>() {
+        let mut result = Vec::new();
+        for i in 0..list.len() {
+            let choice_obj = list.get_item(i).unwrap();
+            let index = i as u32;
+
+            let message_obj = choice_obj
+                .get_item("message")
+                .map_err(|e| ProviderError::new(format!("Failed to get message: {}", e), "openai"))?;
+            let role: String = message_obj
+                .get_item("role")
+                .map_err(|e| ProviderError::new(format!("Failed to get role: {}", e), "openai"))?
+                .extract()
+                .map_err(|e| ProviderError::new(format!("Failed to extract role: {}", e), "openai"))?;
+            let content: String = message_obj
+                .get_item("content")
+                .map_err(|e| ProviderError::new(format!("Failed to get content: {}", e), "openai"))?
+                .extract()
+                .map_err(|e| ProviderError::new(format!("Failed to extract content: {}", e), "openai"))?;
+
+            let finish_reason: String = choice_obj
+                .get_item("finish_reason")
+                .map_err(|e| ProviderError::new(format!("Failed to get finish_reason: {}", e), "openai"))?
+                .extract()
+                .unwrap_or_else(|_| "stop".to_string());
+
+            result.push(Choice::new(index, Message::new(role, content), finish_reason));
+        }
+        result
+    } else {
+        return Err(ProviderError::new("choices is not a list", "openai"));
+    };
+
+    let usage_obj = py_obj
+        .get_item("usage")
+        .map_err(|e| ProviderError::new(format!("Failed to get usage: {}", e), "openai"))?;
+    let prompt_tokens: u32 = usage_obj
+        .get_item("prompt_tokens")
+        .map_err(|e| ProviderError::new(format!("Failed to get prompt_tokens: {}", e), "openai"))?
+        .extract()
+        .unwrap_or(0);
+    let completion_tokens: u32 = usage_obj
+        .get_item("completion_tokens")
+        .map_err(|e| ProviderError::new(format!("Failed to get completion_tokens: {}", e), "openai"))?
+        .extract()
+        .unwrap_or(0);
+    let total_tokens: u32 = usage_obj
+        .get_item("total_tokens")
+        .map_err(|e| ProviderError::new(format!("Failed to get total_tokens: {}", e), "openai"))?
+        .extract()
+        .unwrap_or(0);
+
+    Ok(ChatCompletion {
+        id,
+        object: "chat.completion".to_string(),
+        created: std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_secs(),
+        model: model_str,
+        choices,
+        usage: crate::types::Usage::new(prompt_tokens, completion_tokens, total_tokens),
+    })
 }
 
 impl Default for OpenAIProvider {

@@ -179,6 +179,10 @@ impl ProviderError {
             llm_provider: provider.into(),
         }
     }
+
+    pub fn message(&self) -> &str {
+        &self.message
+    }
 }
 
 // =============================================================================

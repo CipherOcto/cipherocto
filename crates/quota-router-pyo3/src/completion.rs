@@ -15,6 +15,7 @@ use crate::providers::gemini::GeminiProvider;
 use crate::providers::groq::GROQProvider;
 use crate::providers::huggingface::HUGGINGFACEProvider;
 use crate::providers::mistral::MistralProvider;
+use crate::providers::moonshot::MOONSHOTProvider;
 use crate::providers::openai::OpenAIProvider;
 use crate::providers::openrouter::OPENROUTERProvider;
 use crate::providers::perplexity::PERPLEXITYProvider;
@@ -401,6 +402,28 @@ pub fn completion(
             }
             Err(e) => {
                 let err_msg = format!("HuggingFace API error: {}", e.message());
+                return Err(pyo3::exceptions::PyRuntimeError::new_err(err_msg));
+            }
+        }
+    }
+
+    // For Moonshot provider, use real SDK
+    if parsed.provider == "moonshot" {
+        let provider = MOONSHOTProvider::new();
+
+        if let Some(key) = api_key {
+            if let Err(e) = provider.init_client(&key, None) {
+                let err_msg = format!("Failed to init Moonshot client: {}", e.message());
+                return Err(pyo3::exceptions::PyRuntimeError::new_err(err_msg));
+            }
+        }
+
+        match provider.completion(&parsed.model, &messages, false) {
+            Ok(response) => {
+                return Python::with_gil(|py| response.to_dict(py));
+            }
+            Err(e) => {
+                let err_msg = format!("Moonshot API error: {}", e.message());
                 return Err(pyo3::exceptions::PyRuntimeError::new_err(err_msg));
             }
         }

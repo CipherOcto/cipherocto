@@ -6,6 +6,7 @@
 use crate::model::ParsedModel;
 use crate::providers::anthropic::AnthropicProvider;
 use crate::providers::base::LLMProvider;
+use crate::providers::gemini::GeminiProvider;
 use crate::providers::mistral::MistralProvider;
 use crate::providers::openai::OpenAIProvider;
 use crate::streaming::{chunks_to_pylist, create_chunk_list};
@@ -123,6 +124,30 @@ pub fn completion(
             }
             Err(e) => {
                 let err_msg = format!("Mistral API error: {}", e.message());
+                return Err(pyo3::exceptions::PyRuntimeError::new_err(err_msg));
+            }
+        }
+    }
+
+    // For Gemini provider, use real SDK
+    if parsed.provider == "gemini" {
+        let provider = GeminiProvider::new();
+
+        // Initialize with api_key if provided
+        if let Some(key) = api_key {
+            if let Err(e) = provider.init_client(&key, None) {
+                let err_msg = format!("Failed to init Gemini client: {}", e.message());
+                return Err(pyo3::exceptions::PyRuntimeError::new_err(err_msg));
+            }
+        }
+
+        match provider.completion(&parsed.model, &messages, false) {
+            Ok(response) => {
+                // Convert to Python dict
+                return Python::with_gil(|py| response.to_dict(py));
+            }
+            Err(e) => {
+                let err_msg = format!("Gemini API error: {}", e.message());
                 return Err(pyo3::exceptions::PyRuntimeError::new_err(err_msg));
             }
         }

@@ -4,9 +4,9 @@
 
 In Progress — Real SDK integration underway (2026-05-08)
 
-**Completed:** API surface (20 functions), 18 exceptions, 42 providers, model parsing, SSE streaming parsing (real), set_api_key, get_budget_status, get_metrics (Prometheus format), **OpenAI SDK (real), Anthropic SDK (real), Mistral SDK (real), Gemini SDK (real), Groq SDK (real), Cohere SDK (real), Perplexity SDK (real), DeepSeek SDK (real), Azure SDK (real), Together SDK (real), Fireworks SDK (real), Cerebras SDK (real), OpenRouter SDK (real), xAI SDK (real), HuggingFace SDK (real), Moonshot SDK (real), Voyage SDK (real)**
+**Completed:** API surface (20 functions), 18 exceptions, 42 providers, model parsing, SSE streaming parsing (real), set_api_key, get_budget_status, get_metrics (Prometheus format), **19 providers with real SDK integration**
 
-**Remaining:** 24 provider SDK integrations (ollama, databricks, etc.)
+**Remaining:** 22 provider SDK integrations (ollama, vertexai, etc.)
 
 **Critical gaps identified:**
 - ✅ FIXED: Base class naming: spec says `QuotaRouterError`, impl uses `AnyLLMError` — FIXED
@@ -105,7 +105,7 @@ QuotaRouterError (base per RFC-0920)
 ## Phase 3 Checklist (RFC-0917 lines 1571-1583) — ACTUAL STATUS
 
 - [ ] **PyO3 bridge** — quota-router-pyo3 calls official Python SDKs via PyO3
-- [ ] **41 Provider integrations** via PyO3 calls — 10 of 41 complete: `openai`, `anthropic`, `mistral`, `gemini`, `groq`, `cohere`, `perplexity`, `deepseek`, `azure`, `together`
+- [ ] **41 Provider integrations** via PyO3 calls — 19 of 41 complete (see list in status)
 - [x] **Python SDK package** (pyproject.toml + python/quota_router/__init__.py)
 - [x] **20 API functions** via PyO3 — OpenAI and Anthropic now call real SDKs
 - [x] **Streaming via SSE parsing** — `parse_openai_sse`, `parse_anthropic_sse`, `chunks_from_openai_events`, `chunks_from_anthropic_events` ✅ (2026-05-08)
@@ -143,7 +143,7 @@ QuotaRouterError (base per RFC-0920)
 - [x] quota-router-pyo3 exposes all 20 API functions via PyO3
 - [x] OpenAI SDK integration — real SDK calls (2026-05-08)
 - [x] Anthropic SDK integration — real SDK calls (2026-05-08)
-- [ ] 39 remaining provider SDK integrations (same pattern to replicate)
+- [ ] 22 remaining provider SDK integrations (ollama, vertexai, bedrock, etc.)
 - [x] Exception hierarchy matches spec — 18 exceptions including AllModelsFailedError, BatchPartialFailureError
 - [x] `set_api_key()` / `get_budget_status()` — Thin wrapper layer per RFC-0917 architecture note
 - [x] `get_metrics()` — returns Prometheus dict with `quota_router_*` prefixed keys ✅

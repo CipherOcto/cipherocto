@@ -13,6 +13,7 @@ use crate::providers::deepseek::DEEPSEEKProvider;
 use crate::providers::fireworks::FIREWORKSProvider;
 use crate::providers::gemini::GeminiProvider;
 use crate::providers::groq::GROQProvider;
+use crate::providers::huggingface::HUGGINGFACEProvider;
 use crate::providers::mistral::MistralProvider;
 use crate::providers::openai::OpenAIProvider;
 use crate::providers::openrouter::OPENROUTERProvider;
@@ -378,6 +379,28 @@ pub fn completion(
             }
             Err(e) => {
                 let err_msg = format!("xAI API error: {}", e.message());
+                return Err(pyo3::exceptions::PyRuntimeError::new_err(err_msg));
+            }
+        }
+    }
+
+    // For HuggingFace provider, use real SDK
+    if parsed.provider == "huggingface" {
+        let provider = HUGGINGFACEProvider::new();
+
+        if let Some(key) = api_key {
+            if let Err(e) = provider.init_client(&key, None) {
+                let err_msg = format!("Failed to init HuggingFace client: {}", e.message());
+                return Err(pyo3::exceptions::PyRuntimeError::new_err(err_msg));
+            }
+        }
+
+        match provider.completion(&parsed.model, &messages, false) {
+            Ok(response) => {
+                return Python::with_gil(|py| response.to_dict(py));
+            }
+            Err(e) => {
+                let err_msg = format!("HuggingFace API error: {}", e.message());
                 return Err(pyo3::exceptions::PyRuntimeError::new_err(err_msg));
             }
         }

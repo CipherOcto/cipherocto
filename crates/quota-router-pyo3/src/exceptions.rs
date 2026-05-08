@@ -411,7 +411,7 @@ impl UnsupportedParameterError {
 #[derive(Debug)]
 pub struct InsufficientFundsError {
     message: String,
-    current_balance: i64,  // µunits (microdollars) per RFC-0920 line 660
+    current_balance: i64, // µunits (microdollars) per RFC-0920 line 660
     required: i64,        // µunits (microdollars) per RFC-0920 line 660
 }
 
@@ -731,11 +731,7 @@ impl BatchPartialFailureError {
 }
 
 impl BatchPartialFailureError {
-    pub fn new(
-        message: impl Into<String>,
-        successful: Vec<String>,
-        failed: Vec<String>,
-    ) -> Self {
+    pub fn new(message: impl Into<String>, successful: Vec<String>, failed: Vec<String>) -> Self {
         Self {
             message: message.into(),
             successful,

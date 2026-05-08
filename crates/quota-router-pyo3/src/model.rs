@@ -15,6 +15,7 @@ const KNOWN_PROVIDERS: &[&str] = &[
     "cohere",
     "dashscope",
     "databricks",
+    "deepinfra",
     "deepseek",
     "fireworks",
     "gateway",

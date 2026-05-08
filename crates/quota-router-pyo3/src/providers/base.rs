@@ -116,6 +116,7 @@ impl Providers {
             "mistral" => Some(&MISTRAL_INFO),
             "ollama" => Some(&OLLAMA_INFO),
             "gemini" => Some(&GEMINI_INFO),
+            "deepinfra" => Some(&DEEPINFRA_INFO),
             _ => None,
         }
     }
@@ -136,6 +137,7 @@ impl Providers {
             "cohere",
             "dashscope",
             "databricks",
+            "deepinfra",
             "deepseek",
             "fireworks",
             "gateway",
@@ -250,6 +252,23 @@ pub const GEMINI_INFO: ProviderInfo = ProviderInfo::new(
         supports_responses: false,
         supports_list_models: true,
         supports_batch: false,
+        supports_messages: true,
+    },
+);
+
+pub const DEEPINFRA_INFO: ProviderInfo = ProviderInfo::new(
+    "deepinfra",
+    "https://deepinfra.com/docs",
+    "DEEPINFRA_API_KEY",
+    Some("DEEPINFRA_BASE_URL"),
+    Some("https://api.deepinfra.com/v1"),
+    ProviderFeatures {
+        supports_completion: true,
+        supports_completion_streaming: true,
+        supports_embedding: true,
+        supports_responses: false,
+        supports_list_models: true,
+        supports_batch: true,
         supports_messages: true,
     },
 );

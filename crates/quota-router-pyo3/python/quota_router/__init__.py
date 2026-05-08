@@ -68,6 +68,8 @@ from ._quota_router import (
     LengthFinishReasonError,
     ContentFilterFinishReasonError,
     BatchNotCompleteError,
+    AllModelsFailedError,
+    BatchPartialFailureError,
 )
 
 # Drop-in alias for any-llm compatibility
@@ -127,5 +129,7 @@ __all__ = [
     "LengthFinishReasonError",
     "ContentFilterFinishReasonError",
     "BatchNotCompleteError",
+    "AllModelsFailedError",
+    "BatchPartialFailureError",
     "AnyLLMError",  # drop-in alias for any-llm
 ]

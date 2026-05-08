@@ -662,6 +662,89 @@ impl BatchNotCompleteError {
 }
 
 // =============================================================================
+// AllModelsFailedError
+// =============================================================================
+
+#[pyclass]
+#[derive(Debug)]
+pub struct AllModelsFailedError {
+    message: String,
+    models: Vec<String>,
+}
+
+#[pymethods]
+impl AllModelsFailedError {
+    fn __str__(&self) -> String {
+        self.message.clone()
+    }
+
+    fn __repr__(&self) -> String {
+        format!("AllModelsFailedError({})", self.message)
+    }
+
+    #[getter]
+    fn get_models(&self) -> Vec<String> {
+        self.models.clone()
+    }
+}
+
+impl AllModelsFailedError {
+    pub fn new(message: impl Into<String>, models: Vec<String>) -> Self {
+        Self {
+            message: message.into(),
+            models,
+        }
+    }
+}
+
+// =============================================================================
+// BatchPartialFailureError
+// =============================================================================
+
+#[pyclass]
+#[derive(Debug)]
+pub struct BatchPartialFailureError {
+    message: String,
+    successful: Vec<String>,
+    failed: Vec<String>,
+}
+
+#[pymethods]
+impl BatchPartialFailureError {
+    fn __str__(&self) -> String {
+        self.message.clone()
+    }
+
+    fn __repr__(&self) -> String {
+        format!("BatchPartialFailureError({})", self.message)
+    }
+
+    #[getter]
+    fn get_successful(&self) -> Vec<String> {
+        self.successful.clone()
+    }
+
+    #[getter]
+    fn get_failed(&self) -> Vec<String> {
+        self.failed.clone()
+    }
+}
+
+impl BatchPartialFailureError {
+    pub fn new(
+        message: impl Into<String>,
+        successful: Vec<String>,
+        failed: Vec<String>,
+    ) -> Self {
+        Self {
+            message: message.into(),
+            successful,
+            failed,
+        }
+    }
+}
+
+// =============================================================================
 // Register all exceptions
 // =============================================================================
 
@@ -684,5 +767,7 @@ pub fn register_exceptions(m: &PyModule) -> PyResult<()> {
     m.add_class::<LengthFinishReasonError>()?;
     m.add_class::<ContentFilterFinishReasonError>()?;
     m.add_class::<BatchNotCompleteError>()?;
+    m.add_class::<AllModelsFailedError>()?;
+    m.add_class::<BatchPartialFailureError>()?;
     Ok(())
 }

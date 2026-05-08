@@ -411,8 +411,8 @@ impl UnsupportedParameterError {
 #[derive(Debug)]
 pub struct InsufficientFundsError {
     message: String,
-    current_balance: f64,
-    required: f64,
+    current_balance: i64,  // µunits (microdollars) per RFC-0920 line 660
+    required: i64,        // µunits (microdollars) per RFC-0920 line 660
 }
 
 #[pymethods]
@@ -426,18 +426,18 @@ impl InsufficientFundsError {
     }
 
     #[getter]
-    fn get_current_balance(&self) -> f64 {
+    fn get_current_balance(&self) -> i64 {
         self.current_balance
     }
 
     #[getter]
-    fn get_required(&self) -> f64 {
+    fn get_required(&self) -> i64 {
         self.required
     }
 }
 
 impl InsufficientFundsError {
-    pub fn new(message: impl Into<String>, current_balance: f64, required: f64) -> Self {
+    pub fn new(message: impl Into<String>, current_balance: i64, required: i64) -> Self {
         Self {
             message: message.into(),
             current_balance,

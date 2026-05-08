@@ -168,10 +168,11 @@ pub fn get_budget_status() -> PyResult<Py<PyAny>> {
     })
 }
 
-/// get_metrics - Returns Prometheus metrics as a dict
+/// get_metrics - Returns Prometheus-format metrics as a dict
 ///
 /// # Returns
-/// Dict with metric names and values
+/// Dict with Prometheus-compatible labelled metric names
+/// per RFC-0917 spec: "Prometheus dict"
 #[pyfunction]
 #[pyo3(name = "get_metrics")]
 pub fn get_metrics() -> PyResult<Py<PyAny>> {
@@ -182,14 +183,14 @@ pub fn get_metrics() -> PyResult<Py<PyAny>> {
     Python::with_gil(|py| {
         let dict = PyDict::new(py);
 
-        // Request counts by provider
+        // Request counts by provider — Prometheus format with provider labels
         let request_counts = PyDict::new(py);
         for (provider, record) in spend.iter() {
             request_counts.set_item(format!("{}_requests_total", provider), record.requests)?;
         }
-        dict.set_item("request_counts", request_counts)?;
+        dict.set_item("quota_router_requests_total", request_counts)?;
 
-        // Spend by provider
+        // Spend by provider — Prometheus format
         let spend_by_provider = PyDict::new(py);
         for (provider, record) in spend.iter() {
             spend_by_provider.set_item(
@@ -197,21 +198,21 @@ pub fn get_metrics() -> PyResult<Py<PyAny>> {
                 record.total_spend,
             )?;
         }
-        dict.set_item("spend_by_provider", spend_by_provider)?;
+        dict.set_item("quota_router_spend_total_dollars", spend_by_provider)?;
 
-        // Total requests
+        // Total requests — counter
         let total_requests: u64 = spend.values().map(|r| r.requests).sum();
-        dict.set_item("total_requests", total_requests)?;
+        dict.set_item("quota_router_total_requests", total_requests)?;
 
-        // Total spend
+        // Total spend — counter
         let total_spend: f64 = spend.values().map(|r| r.total_spend).sum();
-        dict.set_item("total_spend_dollars", total_spend)?;
+        dict.set_item("quota_router_total_spend_dollars", total_spend)?;
 
-        // Active providers count
-        dict.set_item("active_providers", spend.len() as u64)?;
+        // Active providers count — gauge
+        dict.set_item("quota_router_active_providers", spend.len() as u64)?;
 
-        // Quota router SDK version
-        dict.set_item("sdk_version", env!("CARGO_PKG_VERSION"))?;
+        // Quota router SDK version — info metric
+        dict.set_item("quota_router_sdk_version", env!("CARGO_PKG_VERSION"))?;
 
         Ok(dict.into())
     })

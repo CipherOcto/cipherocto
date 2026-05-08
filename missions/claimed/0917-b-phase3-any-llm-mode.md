@@ -2,17 +2,18 @@
 
 ## Status
 
-In Progress — Spec-vs-implementation gap analysis complete (2026-05-07)
+In Progress — P1-P5 fixes complete (2026-05-08)
 
-**Completed:** API surface (20 functions, 16 exceptions, model parsing, streaming structure, set_api_key, get_budget_status, get_metrics, Python SDK package)
+**Completed:** API surface (20 functions), 18 exceptions, 42 providers, model parsing, SSE streaming parsing (real), set_api_key, get_budget_status, get_metrics (Prometheus format)
 
-**Remaining:** 41 provider integrations + spec-implementation alignment fixes
+**Remaining:** Real provider SDK calls (PyO3 → Python SDK bridge)
 
 **Critical gaps identified:**
-- Base class naming: spec says `QuotaRouterError`, impl uses `AnyLLMError` — drop-in replacement will break ✅ FIXED
-- Streaming: mock word-split, not actual SSE parsing (`_AnthropicSSEParser`, `parse_openai_sse` spec-only)
-- Metrics: in-memory counters, not Prometheus dict per spec
-- All functions are mocks/stubs — no actual provider SDK calls
+- ✅ FIXED: Base class naming: spec says `QuotaRouterError`, impl uses `AnyLLMError` — FIXED
+- ✅ FIXED: Streaming: mock word-split → actual SSE parsing implemented (2026-05-08)
+- ✅ FIXED: Metrics: in-memory counters → Prometheus dict format (2026-05-08)
+- ✅ FIXED: Provider registry: 6 → 42 providers (2026-05-08)
+- Remaining: All functions are mocks/stubs — no actual provider SDK calls
 
 ## Architecture Note (RFC-0917)
 
@@ -64,9 +65,9 @@ list_batches(), alist_batches()
 retrieve_batch_results(), aretrieve_batch_results()
 ```
 
-### Exceptions — any-llm exception hierarchy
+### Exceptions — 18 per RFC-0920 (any-llm hierarchy + quota-router specific)
 ```
-AnyLLMError (base)
+QuotaRouterError (base per RFC-0920)
 ├── RateLimitError
 ├── AuthenticationError
 ├── InvalidRequestError
@@ -82,7 +83,9 @@ AnyLLMError (base)
 ├── GatewayTimeoutError
 ├── LengthFinishReasonError
 ├── ContentFilterFinishReasonError
-└── BatchNotCompleteError
+├── BatchNotCompleteError
+├── AllModelsFailedError (quota-router specific per RFC-0920)
+└── BatchPartialFailureError (quota-router specific per RFC-0920)
 ```
 
 ### Additional functions needed (from any-llm internal audit)
@@ -98,22 +101,26 @@ AnyLLMError (base)
 - [ ] **41 Provider integrations** via PyO3 calls to: `anthropic`, `openai`, `mistralai`, `ollama`, `google-genai` + 36 more
 - [x] **Python SDK package** (pyproject.toml + python/quota_router/__init__.py)
 - [x] **20 API functions** via PyO3 — MOCKS ONLY, no real provider calls
-- [ ] **Streaming via PyO3 async generators** — SPEC: `_AnthropicSSEParser`, `parse_openai_sse`; IMPL: mock word-split chunks
-- [x] **Exception hierarchy** — FIXED: base class renamed from `AnyLLMError` to `QuotaRouterError` (2026-05-07)
+- [x] **Streaming via SSE parsing** — `parse_openai_sse`, `parse_anthropic_sse`, `chunks_from_openai_events`, `chunks_from_anthropic_events` ✅ (2026-05-08)
+- [x] **Exception hierarchy** — 18 exceptions (incl. AllModelsFailedError, BatchPartialFailureError per RFC-0920)
 - [x] `set_api_key()` / `get_budget_status()` — Thin wrapper layer; in-memory for now per RFC-0917 architecture
-- [ ] `get_metrics()` — IMPL: in-memory counter; not Prometheus dict per spec
+- [x] `get_metrics()` — Returns Prometheus dict with `quota_router_*` prefixed keys ✅ (2026-05-08)
 - [x] **Model string parsing** (`provider/model` and `provider:model` formats) — works correctly
+- [x] **Provider registry** — 42 providers wired in Providers::get() ✅ (2026-05-08)
 
-### Spec-vs-Implementation Alignment (2026-05-07)
+### Spec-vs-Implementation Alignment (2026-05-08)
 
-**Fixed:** `QuotaRouterError` base class renamed from `AnyLLMError` (2026-05-07)
+**Fixed items (P1-P5):**
+- ✅ `QuotaRouterError` base class renamed from `AnyLLMError` (P1)
+- ✅ Provider registry: 6 → 42 providers (P2)
+- ✅ `get_metrics()`: In-memory counter → Prometheus dict with `quota_router_*` prefix (P3)
+- ✅ `InsufficientFundsError`: `current_balance`/`required` changed from f64 to i64 (µunits) per RFC-0920 (P4)
+- ✅ Streaming: Mock word-split → actual SSE parsing for OpenAI + Anthropic formats (P5)
 
 **Remaining gaps (Phase 3 real SDK integration):**
 
 | Item | Spec (RFC-0917) | Implementation | Gap |
 |------|-----------------|----------------|-----|
-| Streaming | `_AnthropicSSEParser`, `parse_openai_sse` (stateful SSE) | Mock word-split chunks | Not implemented |
-| `get_metrics` | Prometheus dict | In-memory counter | Not Prometheus |
 | Provider SDK calls | PyO3 → official Python SDKs | `LLMProvider` trait with mock impls | Scaffolding exists, calls not wired |
 | `execute_with_retry` + `ProviderRequest` trait | Spec §Fallback | Not in `fallback.rs` | Spec-only pattern |
 | `parse_response` as associated function | Spec §Response Parsing | Not in impl | Spec-only pattern |
@@ -126,10 +133,10 @@ AnyLLMError (base)
 
 - [x] quota-router-pyo3 exposes all 20 API functions via PyO3 — MOCKS ONLY
 - [ ] All 41 providers accessible via any-llm-mode (requires PyO3 integration with Python SDKs)
-- [x] Exception hierarchy matches spec — FIXED: base class renamed from AnyLLMError to QuotaRouterError
+- [x] Exception hierarchy matches spec — 18 exceptions including AllModelsFailedError, BatchPartialFailureError
 - [x] `set_api_key()` / `get_budget_status()` — Thin wrapper layer per RFC-0917 architecture note
-- [ ] `get_metrics()` — returns in-memory counter; not Prometheus dict per spec
+- [x] `get_metrics()` — returns Prometheus dict with `quota_router_*` prefixed keys ✅
 - [x] Model string parsing handles `provider/model` and `provider:model` (parse_model, parse_model_strict) — works correctly
-- [ ] Streaming uses actual SSE parsing (`_AnthropicSSEParser`, `parse_openai_sse`) — CURRENTLY mock word-split
-- [x] `cargo clippy -D warnings` passes ✅ (2026-05-07)
-- [x] `cargo test --lib` passes ✅ (14 tests, 2026-05-07)
+- [x] Streaming uses actual SSE parsing (`parse_openai_sse`, `parse_anthropic_sse`) ✅
+- [x] `cargo clippy -D warnings` passes ✅ (2026-05-08)
+- [x] `cargo test --lib` passes ✅ (21 tests, 2026-05-08)

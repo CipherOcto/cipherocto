@@ -7,8 +7,10 @@ use crate::model::ParsedModel;
 use crate::providers::anthropic::AnthropicProvider;
 use crate::providers::azure::AZUREProvider;
 use crate::providers::base::LLMProvider;
+use crate::providers::cerebras::CEREBRASProvider;
 use crate::providers::cohere::COHEREProvider;
 use crate::providers::deepseek::DEEPSEEKProvider;
+use crate::providers::fireworks::FIREWORKSProvider;
 use crate::providers::gemini::GeminiProvider;
 use crate::providers::groq::GROQProvider;
 use crate::providers::mistral::MistralProvider;
@@ -286,6 +288,50 @@ pub fn completion(
             }
             Err(e) => {
                 let err_msg = format!("Together API error: {}", e.message());
+                return Err(pyo3::exceptions::PyRuntimeError::new_err(err_msg));
+            }
+        }
+    }
+
+    // For Fireworks provider, use real SDK
+    if parsed.provider == "fireworks" {
+        let provider = FIREWORKSProvider::new();
+
+        if let Some(key) = api_key {
+            if let Err(e) = provider.init_client(&key, None) {
+                let err_msg = format!("Failed to init Fireworks client: {}", e.message());
+                return Err(pyo3::exceptions::PyRuntimeError::new_err(err_msg));
+            }
+        }
+
+        match provider.completion(&parsed.model, &messages, false) {
+            Ok(response) => {
+                return Python::with_gil(|py| response.to_dict(py));
+            }
+            Err(e) => {
+                let err_msg = format!("Fireworks API error: {}", e.message());
+                return Err(pyo3::exceptions::PyRuntimeError::new_err(err_msg));
+            }
+        }
+    }
+
+    // For Cerebras provider, use real SDK
+    if parsed.provider == "cerebras" {
+        let provider = CEREBRASProvider::new();
+
+        if let Some(key) = api_key {
+            if let Err(e) = provider.init_client(&key, None) {
+                let err_msg = format!("Failed to init Cerebras client: {}", e.message());
+                return Err(pyo3::exceptions::PyRuntimeError::new_err(err_msg));
+            }
+        }
+
+        match provider.completion(&parsed.model, &messages, false) {
+            Ok(response) => {
+                return Python::with_gil(|py| response.to_dict(py));
+            }
+            Err(e) => {
+                let err_msg = format!("Cerebras API error: {}", e.message());
                 return Err(pyo3::exceptions::PyRuntimeError::new_err(err_msg));
             }
         }

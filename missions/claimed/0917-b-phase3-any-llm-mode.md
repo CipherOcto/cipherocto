@@ -4,9 +4,9 @@
 
 In Progress — Real SDK integration underway (2026-05-08)
 
-**Completed:** API surface (20 functions), 18 exceptions, 42 providers, model parsing, SSE streaming parsing (real), set_api_key, get_budget_status, get_metrics (Prometheus format), **OpenAI SDK (real), Anthropic SDK (real), Mistral SDK (real), Gemini SDK (real), Groq SDK (real), Cohere SDK (real), Perplexity SDK (real)**
+**Completed:** API surface (20 functions), 18 exceptions, 42 providers, model parsing, SSE streaming parsing (real), set_api_key, get_budget_status, get_metrics (Prometheus format), **OpenAI SDK (real), Anthropic SDK (real), Mistral SDK (real), Gemini SDK (real), Groq SDK (real), Cohere SDK (real), Perplexity SDK (real), DeepSeek SDK (real), Azure SDK (real), Together SDK (real)**
 
-**Remaining:** 34 provider SDK integrations (ollama, azure, deepseek, etc.)
+**Remaining:** 31 provider SDK integrations (ollama, fireworks, fireworks, etc.)
 
 **Critical gaps identified:**
 - ✅ FIXED: Base class naming: spec says `QuotaRouterError`, impl uses `AnyLLMError` — FIXED
@@ -105,7 +105,7 @@ QuotaRouterError (base per RFC-0920)
 ## Phase 3 Checklist (RFC-0917 lines 1571-1583) — ACTUAL STATUS
 
 - [ ] **PyO3 bridge** — quota-router-pyo3 calls official Python SDKs via PyO3
-- [ ] **41 Provider integrations** via PyO3 calls — 7 of 41 complete: `openai`, `anthropic`, `mistral`, `gemini`, `groq`, `cohere`, `perplexity`
+- [ ] **41 Provider integrations** via PyO3 calls — 10 of 41 complete: `openai`, `anthropic`, `mistral`, `gemini`, `groq`, `cohere`, `perplexity`, `deepseek`, `azure`, `together`
 - [x] **Python SDK package** (pyproject.toml + python/quota_router/__init__.py)
 - [x] **20 API functions** via PyO3 — OpenAI and Anthropic now call real SDKs
 - [x] **Streaming via SSE parsing** — `parse_openai_sse`, `parse_anthropic_sse`, `chunks_from_openai_events`, `chunks_from_anthropic_events` ✅ (2026-05-08)

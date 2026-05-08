@@ -20,6 +20,7 @@ use crate::providers::moonshot::MOONSHOTProvider;
 use crate::providers::openai::OpenAIProvider;
 use crate::providers::openrouter::OPENROUTERProvider;
 use crate::providers::perplexity::PERPLEXITYProvider;
+use crate::providers::sagemaker::SAGEMAKERProvider;
 use crate::providers::together::TOGETHERProvider;
 use crate::providers::voyage::VOYAGEProvider;
 use crate::providers::xai::XAIProvider;
@@ -470,6 +471,28 @@ pub fn completion(
             }
             Err(e) => {
                 let err_msg = format!("Databricks API error: {}", e.message());
+                return Err(pyo3::exceptions::PyRuntimeError::new_err(err_msg));
+            }
+        }
+    }
+
+    // For SageMaker provider, use real SDK
+    if parsed.provider == "sagemaker" {
+        let provider = SAGEMAKERProvider::new();
+
+        if let Some(key) = api_key {
+            if let Err(e) = provider.init_client(&key, None) {
+                let err_msg = format!("Failed to init SageMaker client: {}", e.message());
+                return Err(pyo3::exceptions::PyRuntimeError::new_err(err_msg));
+            }
+        }
+
+        match provider.completion(&parsed.model, &messages, false) {
+            Ok(response) => {
+                return Python::with_gil(|py| response.to_dict(py));
+            }
+            Err(e) => {
+                let err_msg = format!("SageMaker API error: {}", e.message());
                 return Err(pyo3::exceptions::PyRuntimeError::new_err(err_msg));
             }
         }

@@ -5,6 +5,7 @@
 
 use crate::model::ParsedModel;
 use crate::providers::anthropic::AnthropicProvider;
+use crate::providers::azure::AZUREProvider;
 use crate::providers::base::LLMProvider;
 use crate::providers::cohere::COHEREProvider;
 use crate::providers::deepseek::DEEPSEEKProvider;
@@ -240,6 +241,28 @@ pub fn completion(
             }
             Err(e) => {
                 let err_msg = format!("DeepSeek API error: {}", e.message());
+                return Err(pyo3::exceptions::PyRuntimeError::new_err(err_msg));
+            }
+        }
+    }
+
+    // For Azure provider, use real SDK
+    if parsed.provider == "azure" {
+        let provider = AZUREProvider::new();
+
+        if let Some(key) = api_key {
+            if let Err(e) = provider.init_client(&key, None) {
+                let err_msg = format!("Failed to init Azure client: {}", e.message());
+                return Err(pyo3::exceptions::PyRuntimeError::new_err(err_msg));
+            }
+        }
+
+        match provider.completion(&parsed.model, &messages, false) {
+            Ok(response) => {
+                return Python::with_gil(|py| response.to_dict(py));
+            }
+            Err(e) => {
+                let err_msg = format!("Azure API error: {}", e.message());
                 return Err(pyo3::exceptions::PyRuntimeError::new_err(err_msg));
             }
         }

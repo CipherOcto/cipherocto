@@ -2,15 +2,31 @@
 
 ## Status
 
-In Progress — Core SDK complete, provider integrations remaining (2026-04-27)
+In Progress — Spec-vs-implementation gap analysis complete (2026-05-07)
 
-**Completed:** 20 API functions, 16 exceptions, model parsing, streaming, set_api_key, get_budget_status, get_metrics, Python SDK package structure
+**Completed:** API surface (20 functions, 16 exceptions, model parsing, streaming structure, set_api_key, get_budget_status, get_metrics, Python SDK package)
 
-**Remaining:** 41 provider integrations (PyO3 calls to Python SDKs) — requires official Python SDK integration per provider
+**Remaining:** 41 provider integrations + spec-implementation alignment fixes
+
+**Critical gaps identified:**
+- Base class naming: spec says `QuotaRouterError`, impl uses `AnyLLMError` — drop-in replacement will break ✅ FIXED
+- Streaming: mock word-split, not actual SSE parsing (`_AnthropicSSEParser`, `parse_openai_sse` spec-only)
+- Metrics: in-memory counters, not Prometheus dict per spec
+- All functions are mocks/stubs — no actual provider SDK calls
+
+## Architecture Note (RFC-0917)
+
+PyO3 crate (`quota-router-pyo3`) is a **thin Python binding layer**, NOT a full implementation:
+- It wraps `quota-router-core` via `KeyStorage` trait, not in-memory stubs
+- Provider implementations (openai.rs, anthropic.rs, etc.) have `LLMProvider` trait + mock completion/embedding
+- The `ensure_client()` pattern in providers shows PyO3 → Python SDK bridge scaffolding exists but is unused
+- Actual provider SDK calls (PyO3 → official Python SDKs) are the remaining Phase 3 work
+
+The gap between spec and implementation is primarily about **real SDK integration**, not missing infrastructure.
 
 ## RFC
 
-RFC-0917: Dual-Mode Query Router (Accepted v2.24)
+RFC-0917: Dual-Mode Query Router (Accepted v2.36)
 
 ## Dependencies
 
@@ -76,29 +92,44 @@ AnyLLMError (base)
 - Streaming support (async generators)
 - Model string parsing (both `provider/model` and `provider:model` formats)
 
-## Phase 3 Checklist (RFC-0917 lines 997-1007) — EXPANDED
+## Phase 3 Checklist (RFC-0917 lines 1571-1583) — ACTUAL STATUS
 
-- [ ] **PyO3 bridge** — quota-router-pyo3 crate calls official Python SDKs via PyO3
+- [ ] **PyO3 bridge** — quota-router-pyo3 calls official Python SDKs via PyO3
 - [ ] **41 Provider integrations** via PyO3 calls to: `anthropic`, `openai`, `mistralai`, `ollama`, `google-genai` + 36 more
 - [x] **Python SDK package** (pyproject.toml + python/quota_router/__init__.py)
-- [x] **20 API functions** via PyO3 (all 20 implemented as mocks)
-- [x] **Streaming** via PyO3 chunk-based streaming when stream=True
-- [x] **any-llm-compatible exceptions** (all 16 exceptions implemented in exceptions.rs)
-- [x] `set_api_key()` — validates and registers key with storage
-- [x] `get_budget_status()` — returns current spend vs limit
-- [x] `get_metrics()` — returns Prometheus metrics dict
-- [x] **Model string parsing** (`provider/model` and `provider:model` formats)
-- [x] **QuotaRouterError** — spec done; From impls + Error traits needed
+- [x] **20 API functions** via PyO3 — MOCKS ONLY, no real provider calls
+- [ ] **Streaming via PyO3 async generators** — SPEC: `_AnthropicSSEParser`, `parse_openai_sse`; IMPL: mock word-split chunks
+- [x] **Exception hierarchy** — FIXED: base class renamed from `AnyLLMError` to `QuotaRouterError` (2026-05-07)
+- [x] `set_api_key()` / `get_budget_status()` — Thin wrapper layer; in-memory for now per RFC-0917 architecture
+- [ ] `get_metrics()` — IMPL: in-memory counter; not Prometheus dict per spec
+- [x] **Model string parsing** (`provider/model` and `provider:model` formats) — works correctly
 
-**Note:** All functions are implemented as mocks/stubs. Actual provider integrations require PyO3 calls to official Python SDKs.
+### Spec-vs-Implementation Alignment (2026-05-07)
+
+**Fixed:** `QuotaRouterError` base class renamed from `AnyLLMError` (2026-05-07)
+
+**Remaining gaps (Phase 3 real SDK integration):**
+
+| Item | Spec (RFC-0917) | Implementation | Gap |
+|------|-----------------|----------------|-----|
+| Streaming | `_AnthropicSSEParser`, `parse_openai_sse` (stateful SSE) | Mock word-split chunks | Not implemented |
+| `get_metrics` | Prometheus dict | In-memory counter | Not Prometheus |
+| Provider SDK calls | PyO3 → official Python SDKs | `LLMProvider` trait with mock impls | Scaffolding exists, calls not wired |
+| `execute_with_retry` + `ProviderRequest` trait | Spec §Fallback | Not in `fallback.rs` | Spec-only pattern |
+| `parse_response` as associated function | Spec §Response Parsing | Not in impl | Spec-only pattern |
+| `into_future` (PyO3) | Spec §GIL Table | Not in impl | Spec-only pattern |
+| `_get_server_secret` with RuntimeError | Spec §Server Secret | Not in impl | Spec-only pattern |
+
+**PyO3 architecture per RFC-0917:** The quota-router-pyo3 crate is a thin wrapper layer. Provider implementations use `LLMProvider` trait with `ensure_client()` pattern showing PyO3 → Python SDK bridge scaffolding. Actual provider integration (41 providers) remains the core Phase 3 work beyond API surface.
 
 ## Acceptance Criteria
 
-- [x] quota-router-pyo3 implements all 20 API functions via PyO3 (all 20 implemented as mocks)
+- [x] quota-router-pyo3 exposes all 20 API functions via PyO3 — MOCKS ONLY
 - [ ] All 41 providers accessible via any-llm-mode (requires PyO3 integration with Python SDKs)
-- [x] Exception hierarchy matches any-llm's AnyLLMError hierarchy (all 16 implemented)
-- [x] `set_api_key()`, `get_budget_status()`, `get_metrics()` implemented
-- [x] Streaming via PyO3 chunk-based streaming (mock implementation)
-- [x] Model string parsing handles `provider/model` and `provider:model` (parse_model, parse_model_strict)
-- [x] `QuotaRouterError` with From impls and Error trait impls for all wrapped types
-- [x] `cargo clippy -D warnings` and `cargo test --lib` pass
+- [x] Exception hierarchy matches spec — FIXED: base class renamed from AnyLLMError to QuotaRouterError
+- [x] `set_api_key()` / `get_budget_status()` — Thin wrapper layer per RFC-0917 architecture note
+- [ ] `get_metrics()` — returns in-memory counter; not Prometheus dict per spec
+- [x] Model string parsing handles `provider/model` and `provider:model` (parse_model, parse_model_strict) — works correctly
+- [ ] Streaming uses actual SSE parsing (`_AnthropicSSEParser`, `parse_openai_sse`) — CURRENTLY mock word-split
+- [x] `cargo clippy -D warnings` passes ✅ (2026-05-07)
+- [x] `cargo test --lib` passes ✅ (14 tests, 2026-05-07)

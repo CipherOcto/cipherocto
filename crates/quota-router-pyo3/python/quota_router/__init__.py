@@ -51,7 +51,7 @@ from ._quota_router import (
     get_budget_status,
     get_metrics,
     # Exceptions
-    AnyLLMError,
+    QuotaRouterError,
     RateLimitError,
     AuthenticationError,
     InvalidRequestError,
@@ -69,6 +69,9 @@ from ._quota_router import (
     ContentFilterFinishReasonError,
     BatchNotCompleteError,
 )
+
+# Drop-in alias for any-llm compatibility
+AnyLLMError = QuotaRouterError
 
 __all__ = [
     # Version
@@ -107,7 +110,7 @@ __all__ = [
     "get_budget_status",
     "get_metrics",
     # Exceptions
-    "AnyLLMError",
+    "QuotaRouterError",
     "RateLimitError",
     "AuthenticationError",
     "InvalidRequestError",
@@ -124,4 +127,5 @@ __all__ = [
     "LengthFinishReasonError",
     "ContentFilterFinishReasonError",
     "BatchNotCompleteError",
+    "AnyLLMError",  # drop-in alias for any-llm
 ]

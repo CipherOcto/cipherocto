@@ -1,33 +1,33 @@
-// LiteLLM-compatible exceptions for PyO3 bindings
-// Exception hierarchy matches any-llm's AnyLLMError hierarchy per RFC-0917 Phase 3
+// QuotaRouter exceptions for PyO3 bindings
+// Exception hierarchy per RFC-0917 Phase 3 and RFC-0920
 
 #![allow(dead_code)]
 
 use pyo3::prelude::*;
 
 // =============================================================================
-// Base Exception (AnyLLMError)
+// Base Exception (QuotaRouterError) — per RFC-0917 §Exception Mapping and RFC-0920
 // =============================================================================
 
 #[pyclass]
 #[derive(Debug)]
-pub struct AnyLLMError {
+pub struct QuotaRouterError {
     message: String,
     llm_provider: Option<String>,
 }
 
 #[pymethods]
-impl AnyLLMError {
+impl QuotaRouterError {
     fn __str__(&self) -> String {
         self.message.clone()
     }
 
     fn __repr__(&self) -> String {
-        format!("AnyLLMError({})", self.message)
+        format!("QuotaRouterError({})", self.message)
     }
 }
 
-impl AnyLLMError {
+impl QuotaRouterError {
     pub fn new(message: impl Into<String>) -> Self {
         Self {
             message: message.into(),
@@ -667,7 +667,7 @@ impl BatchNotCompleteError {
 
 /// Register all exceptions in a Python module
 pub fn register_exceptions(m: &PyModule) -> PyResult<()> {
-    m.add_class::<AnyLLMError>()?;
+    m.add_class::<QuotaRouterError>()?;
     m.add_class::<AuthenticationError>()?;
     m.add_class::<RateLimitError>()?;
     m.add_class::<InvalidRequestError>()?;

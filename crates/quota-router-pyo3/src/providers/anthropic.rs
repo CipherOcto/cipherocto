@@ -76,9 +76,9 @@ impl AnthropicProvider {
                 kwargs.set_item("base_url", base.as_str()).unwrap();
             }
 
-            let client = anthropic_class
-                .call((), Some(kwargs))
-                .map_err(|e| ProviderError::new(format!("Failed to create client: {}", e), "anthropic"))?;
+            let client = anthropic_class.call((), Some(kwargs)).map_err(|e| {
+                ProviderError::new(format!("Failed to create client: {}", e), "anthropic")
+            })?;
 
             let client_py: Py<PyAny> = client.into();
             *client_guard = Some(client_py.clone());
@@ -130,7 +130,11 @@ impl LLMProvider for AnthropicProvider {
                 .map(|msg| {
                     let dict = PyDict::new(py);
                     // Map "assistant" to "assistant", others to "user"
-                    let role = if msg.role == "assistant" { "assistant" } else { "user" };
+                    let role = if msg.role == "assistant" {
+                        "assistant"
+                    } else {
+                        "user"
+                    };
                     dict.set_item("role", role).unwrap();
                     dict.set_item("content", &msg.content).unwrap();
                     dict.into()
@@ -143,12 +147,12 @@ impl LLMProvider for AnthropicProvider {
             let client_obj = client.as_ref(py);
 
             // Navigate: client.messages.create(model=model, messages=messages, max_tokens=1024)
-            let messages_attr = client_obj
-                .getattr("messages")
-                .map_err(|e| ProviderError::new(format!("Failed to get messages: {}", e), "anthropic"))?;
-            let create = messages_attr
-                .getattr("create")
-                .map_err(|e| ProviderError::new(format!("Failed to get create: {}", e), "anthropic"))?;
+            let messages_attr = client_obj.getattr("messages").map_err(|e| {
+                ProviderError::new(format!("Failed to get messages: {}", e), "anthropic")
+            })?;
+            let create = messages_attr.getattr("create").map_err(|e| {
+                ProviderError::new(format!("Failed to get create: {}", e), "anthropic")
+            })?;
 
             // Call with keyword args
             let kwargs = PyDict::new(py);
@@ -197,7 +201,10 @@ impl LLMProvider for AnthropicProvider {
 }
 
 /// Convert Anthropic response to Rust ChatCompletion
-fn convert_py_anthropic_response(py_obj: &PyAny, model: &str) -> Result<ChatCompletion, ProviderError> {
+fn convert_py_anthropic_response(
+    py_obj: &PyAny,
+    model: &str,
+) -> Result<ChatCompletion, ProviderError> {
     // Anthropic returns: { id, type, model, role, content: [{type, text}], stop_reason, stop_sequence, usage }
     // We need to convert to OpenAI-style ChatCompletion
 
@@ -218,7 +225,12 @@ fn convert_py_anthropic_response(py_obj: &PyAny, model: &str) -> Result<ChatComp
         .get_item("content")
         .map_err(|e| ProviderError::new(format!("Failed to get content: {}", e), "anthropic"))?
         .get_item(0) // First content block
-        .map_err(|e| ProviderError::new(format!("Failed to get first content block: {}", e), "anthropic"))?
+        .map_err(|e| {
+            ProviderError::new(
+                format!("Failed to get first content block: {}", e),
+                "anthropic",
+            )
+        })?
         .get_item("text")
         .map_err(|e| ProviderError::new(format!("Failed to get text: {}", e), "anthropic"))?
         .extract()
@@ -242,7 +254,9 @@ fn convert_py_anthropic_response(py_obj: &PyAny, model: &str) -> Result<ChatComp
 
     let output_tokens: u32 = usage_obj
         .get_item("output_tokens")
-        .map_err(|e| ProviderError::new(format!("Failed to get output_tokens: {}", e), "anthropic"))?
+        .map_err(|e| {
+            ProviderError::new(format!("Failed to get output_tokens: {}", e), "anthropic")
+        })?
         .extract()
         .unwrap_or(0);
 

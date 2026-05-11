@@ -21,7 +21,8 @@ impl DATABRICKSProvider {
         Self {
             metadata: ProviderMetadata {
                 name: "databricks".to_string(),
-                documentation_url: "https://docs.databricks.com/en/large-language-models/index.html".to_string(),
+                documentation_url:
+                    "https://docs.databricks.com/en/large-language-models/index.html".to_string(),
                 env_api_key: "DATABRICKS_API_KEY".to_string(),
                 env_api_base: Some("DATABRICKS_BASE_URL".to_string()),
                 api_base: None,
@@ -42,7 +43,7 @@ impl DATABRICKSProvider {
     }
 
     #[allow(non_snake_case)]
-fn ensure_client(&self) -> Result<Py<PyAny>, ProviderError> {
+    fn ensure_client(&self) -> Result<Py<PyAny>, ProviderError> {
         let mut client_guard = self
             .client
             .lock()
@@ -57,7 +58,10 @@ fn ensure_client(&self) -> Result<Py<PyAny>, ProviderError> {
 
         Python::with_gil(|py| {
             let databricks = PyModule::import(py, "databricks.sdk").map_err(|e| {
-                ProviderError::new(format!("Failed to import databricks.sdk: {}", e), "databricks")
+                ProviderError::new(
+                    format!("Failed to import databricks.sdk: {}", e),
+                    "databricks",
+                )
             })?;
 
             let dbx_client = databricks.getattr("DBXClient").map_err(|e| {
@@ -75,9 +79,9 @@ fn ensure_client(&self) -> Result<Py<PyAny>, ProviderError> {
                 kwargs.set_item("host", base.as_str()).unwrap();
             }
 
-            let client = dbx_client
-                .call((), Some(kwargs))
-                .map_err(|e| ProviderError::new(format!("Failed to create client: {}", e), "databricks"))?;
+            let client = dbx_client.call((), Some(kwargs)).map_err(|e| {
+                ProviderError::new(format!("Failed to create client: {}", e), "databricks")
+            })?;
 
             let client_py: Py<PyAny> = client.into();
             *client_guard = Some(client_py.clone());
@@ -134,9 +138,9 @@ impl LLMProvider for DATABRICKSProvider {
         let py_result: Py<PyAny> = Python::with_gil(|py| {
             let client_obj = client.as_ref(py);
 
-            let chat = client_obj
-                .getattr("chat")
-                .map_err(|e| ProviderError::new(format!("Failed to get chat: {}", e), "databricks"))?;
+            let chat = client_obj.getattr("chat").map_err(|e| {
+                ProviderError::new(format!("Failed to get chat: {}", e), "databricks")
+            })?;
 
             let kwargs = PyDict::new(py);
             kwargs.set_item("model", model).unwrap();
@@ -179,7 +183,10 @@ impl LLMProvider for DATABRICKSProvider {
     }
 }
 
-fn convert_py_openai_response(py_obj: &PyAny, model: &str) -> Result<ChatCompletion, ProviderError> {
+fn convert_py_openai_response(
+    py_obj: &PyAny,
+    model: &str,
+) -> Result<ChatCompletion, ProviderError> {
     let id: String = py_obj
         .get_item("id")
         .map_err(|e| ProviderError::new(format!("Failed to get id: {}", e), "databricks"))?
@@ -202,27 +209,37 @@ fn convert_py_openai_response(py_obj: &PyAny, model: &str) -> Result<ChatComplet
             let choice_obj = list.get_item(i).unwrap();
             let index = i as u32;
 
-            let message_obj = choice_obj
-                .get_item("message")
-                .map_err(|e| ProviderError::new(format!("Failed to get message: {}", e), "databricks"))?;
+            let message_obj = choice_obj.get_item("message").map_err(|e| {
+                ProviderError::new(format!("Failed to get message: {}", e), "databricks")
+            })?;
             let role: String = message_obj
                 .get_item("role")
-                .map_err(|e| ProviderError::new(format!("Failed to get role: {}", e), "databricks"))?
+                .map_err(|e| {
+                    ProviderError::new(format!("Failed to get role: {}", e), "databricks")
+                })?
                 .extract()
                 .unwrap_or_else(|_| "assistant".to_string());
             let content: String = message_obj
                 .get_item("content")
-                .map_err(|e| ProviderError::new(format!("Failed to get content: {}", e), "databricks"))?
+                .map_err(|e| {
+                    ProviderError::new(format!("Failed to get content: {}", e), "databricks")
+                })?
                 .extract()
                 .unwrap_or_default();
 
             let finish_reason: String = choice_obj
                 .get_item("finish_reason")
-                .map_err(|e| ProviderError::new(format!("Failed to get finish_reason: {}", e), "databricks"))?
+                .map_err(|e| {
+                    ProviderError::new(format!("Failed to get finish_reason: {}", e), "databricks")
+                })?
                 .extract()
                 .unwrap_or_else(|_| "stop".to_string());
 
-            result.push(Choice::new(index, Message::new(role, content), finish_reason));
+            result.push(Choice::new(
+                index,
+                Message::new(role, content),
+                finish_reason,
+            ));
         }
         result
     } else {
@@ -235,17 +252,26 @@ fn convert_py_openai_response(py_obj: &PyAny, model: &str) -> Result<ChatComplet
 
     let prompt_tokens: u32 = usage_obj
         .get_item("prompt_tokens")
-        .map_err(|e| ProviderError::new(format!("Failed to get prompt_tokens: {}", e), "databricks"))?
+        .map_err(|e| {
+            ProviderError::new(format!("Failed to get prompt_tokens: {}", e), "databricks")
+        })?
         .extract()
         .unwrap_or(0);
     let completion_tokens: u32 = usage_obj
         .get_item("completion_tokens")
-        .map_err(|e| ProviderError::new(format!("Failed to get completion_tokens: {}", e), "databricks"))?
+        .map_err(|e| {
+            ProviderError::new(
+                format!("Failed to get completion_tokens: {}", e),
+                "databricks",
+            )
+        })?
         .extract()
         .unwrap_or(0);
     let total_tokens: u32 = usage_obj
         .get_item("total_tokens")
-        .map_err(|e| ProviderError::new(format!("Failed to get total_tokens: {}", e), "databricks"))?
+        .map_err(|e| {
+            ProviderError::new(format!("Failed to get total_tokens: {}", e), "databricks")
+        })?
         .extract()
         .unwrap_or(0);
 

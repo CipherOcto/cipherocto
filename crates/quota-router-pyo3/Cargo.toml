@@ -23,8 +23,8 @@ name = "_quota_router"
 # PyO3 for Python bindings - using 0.21 with experimental async
 pyo3 = { version = "0.21", features = ["extension-module", "experimental-async"] }
 
-# Core library
-quota-router-core = { path = "../quota-router-core" }
+# Core library - explicit any-llm-mode (no default features which would add litellm-mode)
+quota-router-core = { path = "../quota-router-core", default-features = false, features = ["any-llm-mode"] }
 
 # Serialization
 serde.workspace = true

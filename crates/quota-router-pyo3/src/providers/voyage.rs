@@ -70,9 +70,9 @@ impl VOYAGEProvider {
             let kwargs = PyDict::new(py);
             kwargs.set_item("api_key", key).unwrap();
 
-            let client = voyage_class
-                .call((), Some(kwargs))
-                .map_err(|e| ProviderError::new(format!("Failed to create client: {}", e), "voyage"))?;
+            let client = voyage_class.call((), Some(kwargs)).map_err(|e| {
+                ProviderError::new(format!("Failed to create client: {}", e), "voyage")
+            })?;
 
             let client_py: Py<PyAny> = client.into();
             *client_guard = Some(client_py.clone());
@@ -172,7 +172,8 @@ impl LLMProvider for VOYAGEProvider {
             kwargs.set_item("input", input).unwrap();
             kwargs.set_item("model", model).unwrap();
 
-            embed.call((), Some(kwargs))
+            embed
+                .call((), Some(kwargs))
                 .map_err(|e| ProviderError::new(format!("SDK call failed: {}", e), "voyage"))
                 .map(|obj| obj.into())
         })?;
@@ -189,7 +190,10 @@ impl LLMProvider for VOYAGEProvider {
     }
 }
 
-fn convert_py_voyage_response(py_obj: &PyAny, model: &str) -> Result<ChatCompletion, ProviderError> {
+fn convert_py_voyage_response(
+    py_obj: &PyAny,
+    model: &str,
+) -> Result<ChatCompletion, ProviderError> {
     let id: String = py_obj
         .get_item("id")
         .map_err(|e| ProviderError::new(format!("Failed to get id: {}", e), "voyage"))?
@@ -223,7 +227,10 @@ fn convert_py_voyage_response(py_obj: &PyAny, model: &str) -> Result<ChatComplet
     })
 }
 
-fn convert_py_voyage_embedding_response(py_obj: &PyAny, model: &str) -> Result<EmbeddingsResponse, ProviderError> {
+fn convert_py_voyage_embedding_response(
+    py_obj: &PyAny,
+    model: &str,
+) -> Result<EmbeddingsResponse, ProviderError> {
     let data = py_obj
         .get_item("data")
         .map_err(|e| ProviderError::new(format!("Failed to get data: {}", e), "voyage"))?

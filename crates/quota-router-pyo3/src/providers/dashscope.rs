@@ -1,10 +1,11 @@
 // dashscope provider implementation
-// Calls dashscope SDK via PyO3
+// Calls Alibaba DashScope API via PyO3
 
 use crate::exceptions::ProviderError;
 use crate::providers::base::{LLMProvider, ProviderFeatures, ProviderMetadata};
 use crate::types::{ChatCompletion, Choice, EmbeddingsResponse, Message};
 use pyo3::prelude::*;
+use pyo3::types::PyDict;
 use std::sync::Mutex;
 
 /// dashscope provider implementation
@@ -12,6 +13,7 @@ pub struct DASHSCOPEProvider {
     metadata: ProviderMetadata,
     api_key: Mutex<Option<String>>,
     api_base: Mutex<Option<String>>,
+    client: Mutex<Option<Py<PyAny>>>,
 }
 
 impl DASHSCOPEProvider {
@@ -35,7 +37,58 @@ impl DASHSCOPEProvider {
             },
             api_key: Mutex::new(None),
             api_base: Mutex::new(None),
+            client: Mutex::new(None),
         }
+    }
+
+    fn ensure_client(&self) -> Result<Py<PyAny>, ProviderError> {
+        let mut client_guard = self
+            .client
+            .lock()
+            .map_err(|e| ProviderError::new(format!("Lock error: {}", e), "dashscope"))?;
+
+        if client_guard.is_some() {
+            return Ok(client_guard.clone().unwrap());
+        }
+
+        let api_key = self.api_key.lock().unwrap();
+        let api_base = self.api_base.lock().unwrap();
+
+        Python::with_gil(|py| {
+            let openai = PyModule::import(py, "openai").map_err(|e| {
+                ProviderError::new(format!("Failed to import openai: {}", e), "dashscope")
+            })?;
+
+            let openai_class = openai.getattr("OpenAI").map_err(|e| {
+                ProviderError::new(format!("Failed to get OpenAI: {}", e), "dashscope")
+            })?;
+
+            let key = api_key
+                .as_ref()
+                .ok_or_else(|| ProviderError::new("No API key set", "dashscope"))?;
+
+            let kwargs = PyDict::new(py);
+            kwargs.set_item("api_key", key).unwrap();
+
+            if let Some(base) = api_base.as_ref() {
+                kwargs.set_item("base_url", base.as_str()).unwrap();
+            } else {
+                kwargs
+                    .set_item(
+                        "base_url",
+                        "https://dashscope.aliyuncs.com/compatible-mode/v1",
+                    )
+                    .unwrap();
+            }
+
+            let client = openai_class.call((), Some(kwargs)).map_err(|e| {
+                ProviderError::new(format!("Failed to create client: {}", e), "dashscope")
+            })?;
+
+            let client_py: Py<PyAny> = client.into();
+            *client_guard = Some(client_py.clone());
+            Ok(client_py)
+        })
     }
 }
 
@@ -51,9 +104,9 @@ impl LLMProvider for DASHSCOPEProvider {
     }
 
     fn check_packages(&self) -> Result<(), String> {
-        Python::with_gil(|py| match PyModule::import(py, "dashscope") {
+        Python::with_gil(|py| match PyModule::import(py, "openai") {
             Ok(_) => Ok(()),
-            Err(e) => Err(format!("dashscope package not installed: {}", e)),
+            Err(e) => Err(format!("openai package not installed: {}", e)),
         })
     }
 
@@ -61,34 +114,62 @@ impl LLMProvider for DASHSCOPEProvider {
         &self,
         model: &str,
         messages: &[Message],
-        _stream: bool,
+        stream: bool,
     ) -> Result<ChatCompletion, ProviderError> {
-        let choices: Vec<Choice> = messages
-            .iter()
-            .enumerate()
-            .map(|(i, msg)| {
-                Choice::new(
-                    i as u32,
-                    Message::new("assistant", format!("dashscope: {}", msg.content)),
-                    "stop",
-                )
-            })
-            .collect();
+        if stream {
+            return Err(ProviderError::new(
+                "Streaming not supported in sync completion. Use acompletion() instead.",
+                "dashscope",
+            ));
+        }
 
-        Ok(ChatCompletion::new(
-            format!("chatcmpl-{}", uuid::Uuid::new_v4()),
-            model,
-            choices,
-        ))
+        let client = self.ensure_client()?;
+
+        let py_messages: Vec<Py<PyDict>> = Python::with_gil(|py| {
+            messages
+                .iter()
+                .map(|msg| {
+                    let dict = PyDict::new(py);
+                    dict.set_item("role", &msg.role).unwrap();
+                    dict.set_item("content", &msg.content).unwrap();
+                    dict.into()
+                })
+                .collect()
+        });
+
+        let py_result: Py<PyAny> = Python::with_gil(|py| {
+            let client_obj = client.as_ref(py);
+
+            let chat = client_obj.getattr("chat").map_err(|e| {
+                ProviderError::new(format!("Failed to get chat: {}", e), "dashscope")
+            })?;
+            let completions = chat.getattr("completions").map_err(|e| {
+                ProviderError::new(format!("Failed to get completions: {}", e), "dashscope")
+            })?;
+            let create = completions.getattr("create").map_err(|e| {
+                ProviderError::new(format!("Failed to get create: {}", e), "dashscope")
+            })?;
+
+            let kwargs = PyDict::new(py);
+            kwargs.set_item("model", model).unwrap();
+            kwargs.set_item("messages", &py_messages).unwrap();
+
+            create
+                .call((), Some(kwargs))
+                .map_err(|e| ProviderError::new(format!("SDK call failed: {}", e), "dashscope"))
+                .map(|obj| obj.into())
+        })?;
+
+        Python::with_gil(|py| convert_py_openai_response(py_result.as_ref(py), model))
     }
 
     async fn acompletion(
         &self,
         model: &str,
         messages: &[Message],
-        _stream: bool,
+        stream: bool,
     ) -> Result<ChatCompletion, ProviderError> {
-        self.completion(model, messages, false)
+        self.completion(model, messages, stream)
     }
 
     fn embedding(
@@ -109,6 +190,107 @@ impl LLMProvider for DASHSCOPEProvider {
     ) -> Result<EmbeddingsResponse, ProviderError> {
         self.embedding(input, model)
     }
+}
+
+fn convert_py_openai_response(
+    py_obj: &PyAny,
+    model: &str,
+) -> Result<ChatCompletion, ProviderError> {
+    let id: String = py_obj
+        .get_item("id")
+        .map_err(|e| ProviderError::new(format!("Failed to get id: {}", e), "dashscope"))?
+        .extract()
+        .unwrap_or_else(|_| format!("chatcmpl-{}", uuid::Uuid::new_v4()));
+
+    let model_str: String = py_obj
+        .get_item("model")
+        .map_err(|e| ProviderError::new(format!("Failed to get model: {}", e), "dashscope"))?
+        .extract()
+        .unwrap_or_else(|_| model.to_string());
+
+    let py_choices = py_obj
+        .get_item("choices")
+        .map_err(|e| ProviderError::new(format!("Failed to get choices: {}", e), "dashscope"))?;
+
+    let choices: Vec<Choice> = if let Ok(list) = py_choices.downcast::<pyo3::types::PyList>() {
+        let mut result = Vec::new();
+        for i in 0..list.len() {
+            let choice_obj = list.get_item(i).unwrap();
+            let index = i as u32;
+
+            let message_obj = choice_obj.get_item("message").map_err(|e| {
+                ProviderError::new(format!("Failed to get message: {}", e), "dashscope")
+            })?;
+            let role: String = message_obj
+                .get_item("role")
+                .map_err(|e| ProviderError::new(format!("Failed to get role: {}", e), "dashscope"))?
+                .extract()
+                .unwrap_or_else(|_| "assistant".to_string());
+            let content: String = message_obj
+                .get_item("content")
+                .map_err(|e| {
+                    ProviderError::new(format!("Failed to get content: {}", e), "dashscope")
+                })?
+                .extract()
+                .unwrap_or_default();
+
+            let finish_reason: String = choice_obj
+                .get_item("finish_reason")
+                .map_err(|e| {
+                    ProviderError::new(format!("Failed to get finish_reason: {}", e), "dashscope")
+                })?
+                .extract()
+                .unwrap_or_else(|_| "stop".to_string());
+
+            result.push(Choice::new(
+                index,
+                Message::new(role, content),
+                finish_reason,
+            ));
+        }
+        result
+    } else {
+        return Err(ProviderError::new("choices is not a list", "dashscope"));
+    };
+
+    let usage_obj = py_obj
+        .get_item("usage")
+        .map_err(|e| ProviderError::new(format!("Failed to get usage: {}", e), "dashscope"))?;
+
+    let prompt_tokens: u32 = usage_obj
+        .get_item("prompt_tokens")
+        .map_err(|e| {
+            ProviderError::new(format!("Failed to get prompt_tokens: {}", e), "dashscope")
+        })?
+        .extract()
+        .unwrap_or(0);
+    let completion_tokens: u32 = usage_obj
+        .get_item("completion_tokens")
+        .map_err(|e| {
+            ProviderError::new(
+                format!("Failed to get completion_tokens: {}", e),
+                "dashscope",
+            )
+        })?
+        .extract()
+        .unwrap_or(0);
+    let total_tokens: u32 = usage_obj
+        .get_item("total_tokens")
+        .map_err(|e| ProviderError::new(format!("Failed to get total_tokens: {}", e), "dashscope"))?
+        .extract()
+        .unwrap_or(0);
+
+    Ok(ChatCompletion {
+        id,
+        object: "chat.completion".to_string(),
+        created: std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_secs(),
+        model: model_str,
+        choices,
+        usage: crate::types::Usage::new(prompt_tokens, completion_tokens, total_tokens),
+    })
 }
 
 impl Default for DASHSCOPEProvider {

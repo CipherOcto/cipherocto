@@ -60,9 +60,9 @@ impl XAIProvider {
                 ProviderError::new(format!("Failed to import openai: {}", e), "xai")
             })?;
 
-            let openai_class = openai.getattr("OpenAI").map_err(|e| {
-                ProviderError::new(format!("Failed to get OpenAI: {}", e), "xai")
-            })?;
+            let openai_class = openai
+                .getattr("OpenAI")
+                .map_err(|e| ProviderError::new(format!("Failed to get OpenAI: {}", e), "xai"))?;
 
             let key = api_key
                 .as_ref()
@@ -74,9 +74,9 @@ impl XAIProvider {
                 kwargs.set_item("base_url", base.as_str()).unwrap();
             }
 
-            let client = openai_class
-                .call((), Some(kwargs))
-                .map_err(|e| ProviderError::new(format!("Failed to create client: {}", e), "xai"))?;
+            let client = openai_class.call((), Some(kwargs)).map_err(|e| {
+                ProviderError::new(format!("Failed to create client: {}", e), "xai")
+            })?;
 
             let client_py: Py<PyAny> = client.into();
             *client_guard = Some(client_py.clone());
@@ -136,9 +136,9 @@ impl LLMProvider for XAIProvider {
             let chat = client_obj
                 .getattr("chat")
                 .map_err(|e| ProviderError::new(format!("Failed to get chat: {}", e), "xai"))?;
-            let completions = chat
-                .getattr("completions")
-                .map_err(|e| ProviderError::new(format!("Failed to get completions: {}", e), "xai"))?;
+            let completions = chat.getattr("completions").map_err(|e| {
+                ProviderError::new(format!("Failed to get completions: {}", e), "xai")
+            })?;
             let create = completions
                 .getattr("create")
                 .map_err(|e| ProviderError::new(format!("Failed to get create: {}", e), "xai"))?;
@@ -182,7 +182,10 @@ impl LLMProvider for XAIProvider {
     }
 }
 
-fn convert_py_openai_response(py_obj: &PyAny, model: &str) -> Result<ChatCompletion, ProviderError> {
+fn convert_py_openai_response(
+    py_obj: &PyAny,
+    model: &str,
+) -> Result<ChatCompletion, ProviderError> {
     let id: String = py_obj
         .get_item("id")
         .map_err(|e| ProviderError::new(format!("Failed to get id: {}", e), "xai"))?
@@ -221,11 +224,17 @@ fn convert_py_openai_response(py_obj: &PyAny, model: &str) -> Result<ChatComplet
 
             let finish_reason: String = choice_obj
                 .get_item("finish_reason")
-                .map_err(|e| ProviderError::new(format!("Failed to get finish_reason: {}", e), "xai"))?
+                .map_err(|e| {
+                    ProviderError::new(format!("Failed to get finish_reason: {}", e), "xai")
+                })?
                 .extract()
                 .unwrap_or_else(|_| "stop".to_string());
 
-            result.push(Choice::new(index, Message::new(role, content), finish_reason));
+            result.push(Choice::new(
+                index,
+                Message::new(role, content),
+                finish_reason,
+            ));
         }
         result
     } else {

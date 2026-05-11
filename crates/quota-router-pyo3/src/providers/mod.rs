@@ -31,6 +31,8 @@ pub mod dashscope;
 #[allow(dead_code)]
 pub mod databricks;
 #[allow(dead_code)]
+pub mod deepinfra;
+#[allow(dead_code)]
 pub mod deepseek;
 #[allow(dead_code)]
 pub mod fireworks;

@@ -2,7 +2,7 @@
 
 ## Status
 
-Accepted (v1.58 — 2026-05-06)
+Accepted (v1.70 — 2026-05-10)
 
 **ARCHITECTURAL CONSTRAINT: HTTP proxy is FOREVER in BOTH litellm-mode and any-llm-mode. See section below.**
 
@@ -18,11 +18,13 @@ Accepted (v1.58 — 2026-05-06)
 
 Define a unified Python SDK via PyO3 that supports **both** LiteLLM-style API (separate `provider` param) and any-llm-style API (`provider:model` format), enabling drop-in replacement for both LiteLLM and any-llm users. This RFC supersedes RFC-0908 and extends RFC-0917 Phase 3 to provide a single SDK that works in both deployment modes.
 
+**RFC-0920's SOLE ROLE:** RFC-0920 is a **THIN BINDING LAYER** — it defines the Python API surface and type marshaling only. ALL heavy lifting (routing, caching, concurrency, telemetry, rate limiting, spend tracking, decay math, fallback coordination, batch execution) is defined in RFC-0917 and implemented in `quota-router-core` (Rust). RFC-0920 does NOT define routing logic, state management, concurrency patterns, or any CPU/IO-intensive behavior. Any such content in this RFC is DEPRECATED and will be removed.
+
 ## Dependencies
 
 **Requires:**
 
-- RFC-0917: Dual-Mode Query Router (Accepted)
+- RFC-0917: Dual-Mode Query Router (Accepted) — **definitive source for all heavy lifting**
 - RFC-0904: Real-Time Cost Tracking (for `InsufficientFundsError`)
 - RFC-0913: stoolap-pubsub-cache-invalidation (Required for `cache_responses` via stoolap semantic cache)
 
@@ -152,6 +154,36 @@ Mode gate does NOT control: which interfaces exist
 ### Crate Architecture
 
 `quota-router-pyo3` is the **Python SDK crate** — a THIN PY03 BINDING LAYER ONLY. It delegates ALL heavy lifting to `quota-router-core` (Rust):
+
+**CRITICAL: RFC-0920 MUST NEVER DEFINE OR SPECIFY ANY HEAVY LIFTING.**
+
+```
+╔═══════════════════════════════════════════════════════════════════════════════════════════╗
+║                                                                                           ║
+║   🔴 RFC-0920 IS A THIN BINDING LAYER ONLY — NO HEAVY LIFTING 🔴                        ║
+║                                                                                           ║
+║   RFC-0920 DEFINES:                                                                      ║
+║   • Python API surface (function signatures)                                            ║
+║   • Type marshaling (Python ↔ Rust)                                                      ║
+║   • Exception translation (RouterError → Python exceptions)                              ║
+║   • Provider resolution (provider:model parsing)                                        ║
+║                                                                                           ║
+║   RFC-0920 MUST NEVER DEFINE:                                                            ║
+║   • Routing strategies or state management (→ RFC-0917)                               ║
+║   • Decay math, spend tracking, or latency tracking (→ RFC-0917)                      ║
+║   • Batch concurrency or worker pooling (→ RFC-0917)                                   ║
+║   • Caching, hashing, or validation logic (→ RFC-0917)                                 ║
+║   • Telemetry or metric collection (→ RFC-0917)                                         ║
+║                                                                                           ║
+║   RFC-0917 IS THE DEFINITIVE SOURCE FOR ALL HEAVY LIFTING.                              ║
+║   RFC-0920 REFS RFC-0917 ONLY — IT DOES NOT REIMPLEMENT OR EXTEND.                      ║
+║                                                                                           ║
+║   ⚠️  ANY CONTENT IN RFC-0920 THAT DEFINES HEAVY LIFTING IS:                           ║
+║   (1) A BUG IN THIS RFC — NOT A FEATURE                                                 ║
+║   (2) DEPRECATED AND SUBJECT TO REMOVAL WITHOUT NOTICE                                   ║
+║                                                                                           ║
+╚═══════════════════════════════════════════════════════════════════════════════════════════╝
+```
 
 ```
 ┌─────────────────────────────────────────────────────────────────┐
@@ -530,9 +562,9 @@ def resolve_provider(
 
 ### Supported Providers (41)
 
-`KNOWN_PROVIDERS` is the runtime registry of all supported provider names. It is derived from the provider plugin system (per RFC-0917 §Provider Integration Strategy) and used by `is_known_provider()` for case-insensitive lookup. The 41 providers listed below are the initial set at RFC-0920 acceptance; the registry is extensible via the provider plugin system.
+`KNOWN_PROVIDERS` is the runtime registry of all supported provider names. It is derived from the provider plugin system (per RFC-0917 §Provider Integration Strategy) and used by `is_known_provider()` for case-insensitive lookup. The 42 providers listed below are the initial set at RFC-0920 acceptance; the registry is extensible via the provider plugin system.
 
-Both modes support identical 41 providers (union of any-llm + missing providers):
+Both modes support identical 42 providers (union of any-llm + missing providers):
 
 ```
 openai, anthropic, mistral, ollama, gemini,
@@ -546,7 +578,7 @@ vertexaianthropic, vllm, voyage, watsonx, xai, zai,
 deepinfra
 ```
 
-**Gap vs any-llm**: any-llm has 39 providers; quota-router has 41 total (adds `deepinfra` + 1 other provider not in any-llm).
+**Gap vs any-llm**: any-llm has 39 providers; quota-router has 42 total (adds `deepinfra` + 2 others not in any-llm).
 
 **Gap vs litellm**: litellm has 100+ providers. Missing from quota-router: `replicate`, `azure_ai`, `bedrock_mantle`, `anyscale`, `fireworks_ai`, `localai`, `manifest`, `mimechat`, `nlp_cloud`, `predibase`, `proai`, `qianfan`, `sagemaker_chat`, `together_ai`, `yandex`, `yi`, `zhipuai`, and many `openai_like` providers. These can be added as needed via the provider plugin system.
 
@@ -2517,26 +2549,25 @@ async def abatch_completion_models(
 
 **Severity: High**
 
-**⚠️ DEPRECATION NOTICE: Python-side Router class is DEPRECATED. All routing, state, caching, and telemetry are owned by Rust core (RustRouterHandle). Python Router exists ONLY for Phase 1 API compatibility and will be replaced with thin PyO3 delegation stub.**
+**⚠️ DEPRECATION NOTICE (v1.68 UPDATE): The deprecated Python Router class was fully ERASED in v1.68. The current architecture uses thin PyO3 delegation only — RouterHandle (lines 2710-2722) is a thin stub to RustRouterHandle with NO Python-side routing state.**
 
 ```
 ╔═══════════════════════════════════════════════════════════════════════════════════════════╗
 ║                                                                                           ║
-║   ⚠️  DEPRECATION NOTICE — Python Router class is being replaced.                         ║
+║   ⚠️  DEPRECATION NOTICE (v1.68) — Python Router class REMOVED.                           ║
 ║                                                                                           ║
-║   The Python Router class (lines 2178-2848) with Python-side routing state               ║
-║   (_total_spend, _spend_history, _state_lock, decay math, metric counters) is          ║
-║   DEPRECATED and will be removed in Phase 2.                                               ║
+║   Phase 1 Python Router with routing state (_total_spend, _spend_history,               ║
+║   _state_lock, decay math, metric counters) was ERASED in v1.68 (~700 lines removed).   ║
 ║                                                                                           ║
-║   PHASE 1 (current): Python Router is a Python-level class with routing state.           ║
-║   PHASE 2 (target): Python Router becomes thin PyO3 delegation stub to RustRouterHandle. ║
+║   CURRENT ARCHITECTURE (v1.68+): Thin PyO3 delegation via RouterHandle.                 ║
+║   - Python Router class: REMOVED                                                          ║
+║   - Routing strategies: owned by Rust core (per RFC-0917)                                ║
+║   - Spend tracking with decay: owned by Rust core (per RFC-0917)                        ║
+║   - State management: owned by Rust core (per RFC-0917)                                  ║
+║   - Python adds ONLY: marshaling overhead (<2ms)                                          ║
 ║                                                                                           ║
-║   All routing, caching, telemetry, batch execution, and state management are             ║
-║   EXCLUSIVELY owned by quota-router-core (Rust). Python adds only marshaling overhead.   ║
-║                                                                                           ║
-║   ⚠️  NON-NORMATIVE: The Phase 1 Python Router specification below represents          ║
-║   CURRENT STATE ONLY — not the target architecture. This implementation violates        ║
-║   the Rust-owns-all-heavy-lifting constraint and will be removed in Phase 2.             ║
+║   See RFC-0920 line 4408 for removal details.                                             ║
+║   See RFC-0917 v2.44+ for authoritative heavy-lifting definitions.                      ║
 ║                                                                                           ║
 ╚═══════════════════════════════════════════════════════════════════════════════════════════╝
 ```
@@ -2555,7 +2586,256 @@ Rust RouterHandle (quota-router-core)
   └── All heavy lifting = routing, state, caching, telemetry in Rust core
 ```
 
-#### Phase 2 Rust ←→ Python State Mapping (Normative)
+#### RouterHandle / RustRouterHandle — Concrete Definition
+
+**Location:** `quota-router-core/src/python_sdk_entry.rs` (per RFC-0917 v2.38)
+
+**Purpose:** PyO3-exposed entry point for `quota-router-pyo3`. All routing, state, caching, and telemetry are owned by Rust core. Python SDK adds only marshaling overhead (<2ms).
+
+**Construction:** Created via `RouterHandle::new(router, storage)` — router is typically `Router::global()` or a shared `Arc<Router>`. Storage is a persisted `Arc<dyn KeyStorage>` (e.g., `StoolapKeyStorage`).
+
+**Structure:**
+```rust
+// quota-router-core/src/python_sdk_entry.rs
+
+pub struct RouterHandle {
+    router: Arc<Router>,
+    storage: Arc<dyn KeyStorage>,
+}
+
+impl RouterHandle {
+    /// Create new RouterHandle
+    pub fn new(router: Arc<Router>, storage: Arc<dyn KeyStorage>) -> Self
+
+    /// Single completion call — routes, applies fallback, records spend
+    /// Full 22-parameter signature per RFC-0920 lines 58-84, 3735-3751
+    pub async fn completion(
+        &self,
+        model: &str,
+        messages: Vec<SdkMessage>,
+        stream: bool,
+        timeout: Option<f64>,
+        // LiteLLM compatibility params (lines 60-84)
+        temperature: Option<f64>,
+        max_tokens: Option<i32>,
+        top_p: Option<f64>,
+        n: Option<i32>,
+        stop: Option<String>,
+        presence_penalty: Option<f64>,
+        frequency_penalty: Option<f64>,
+        user: Option<String>,
+        seed: Option<i32>,
+        extra_headers: Option<String>,
+        base_url: Option<String>,
+        api_version: Option<String>,
+        api_key: Option<String>,
+        // Phase 4 params (lines 3735-3751)
+        service_tier: Option<String>,
+        background: Option<bool>,
+        prompt_cache_key: Option<String>,
+        prompt_cache_retention: Option<String>,
+        conversation: Option<String>,
+    ) -> Result<SdkCompletionResponse, RouterError> { ... }
+
+    /// Batch completion — same model, parallel requests (per RFC-0920 lines 2508-2514)
+    pub async fn batch_completion(
+        &self,
+        requests: Vec<SdkCompletionRequest>,
+    ) -> Result<Vec<SdkCompletionResponse>, RouterError> { ... }
+
+    /// Batch completion with model race — first response wins (per RFC-0920 line 2509)
+    pub async fn batch_completion_models(
+        &self,
+        models: Vec<String>,
+        messages: Vec<SdkMessage>,
+        // All 22 params
+        temperature: Option<f64>,
+        max_tokens: Option<i32>,
+        top_p: Option<f64>,
+        n: Option<i32>,
+        stream: bool,
+        stop: Option<String>,
+        presence_penalty: Option<f64>,
+        frequency_penalty: Option<f64>,
+        user: Option<String>,
+        seed: Option<i32>,
+        timeout: Option<f64>,
+        extra_headers: Option<String>,
+        base_url: Option<String>,
+        api_version: Option<String>,
+        api_key: Option<String>,
+        service_tier: Option<String>,
+        background: Option<bool>,
+        prompt_cache_key: Option<String>,
+        prompt_cache_retention: Option<String>,
+        conversation: Option<String>,
+    ) -> Result<SdkCompletionResponse, RouterError> { ... }
+
+    /// Batch completion with all responses — all models, all responses (per RFC-0920 line 2510)
+    pub async fn batch_completion_models_all(
+        &self,
+        models: Vec<String>,
+        messages: Vec<SdkMessage>,
+        // All 22 params
+        temperature: Option<f64>,
+        max_tokens: Option<i32>,
+        top_p: Option<f64>,
+        n: Option<i32>,
+        stream: bool,
+        stop: Option<String>,
+        presence_penalty: Option<f64>,
+        frequency_penalty: Option<f64>,
+        user: Option<String>,
+        seed: Option<i32>,
+        timeout: Option<f64>,
+        extra_headers: Option<String>,
+        base_url: Option<String>,
+        api_version: Option<String>,
+        api_key: Option<String>,
+        service_tier: Option<String>,
+        background: Option<bool>,
+        prompt_cache_key: Option<String>,
+        prompt_cache_retention: Option<String>,
+        conversation: Option<String>,
+    ) -> Result<Vec<SdkCompletionResponse>, RouterError> { ... }
+
+    /// Get metrics — forward to Rust Prometheus/OTLP
+    pub fn get_metrics(&self) -> Result<PrometheusDict, RouterError> { ... }
+}
+```
+
+**Python binding (quota-router-pyo3):**
+```python
+class Router:
+    def __init__(self, model_list, routing_strategy="simple-shuffle", **kwargs):
+        self._rust = RustRouterHandle(model_list=model_list, strategy=routing_strategy, **kwargs)
+
+    def completion(self, model, messages, **kwargs):
+        return self._rust.completion(model=model, messages=messages, **kwargs)
+
+    def batch_completion_models(self, models, messages, **kwargs):
+        return self._rust.batch_completion_models(models=models, messages=messages, **kwargs)
+
+    def batch_completion_models_all(self, models, messages, **kwargs):
+        return self._rust.batch_completion_models_all(models=models, messages=messages, **kwargs)
+```
+
+**Note:** `RouterHandle`/`RustRouterHandle` was referenced in this RFC in 12+ places (lines 178, 188, 189, 190, 191, 2520, 2532, 2548, 2552, 2583, 2604, 2607, 2611, 2631, 2639, 2694) but was never concretely defined. RFC-0917 v2.38 now provides the concrete definition in `python_sdk_entry` module with full 22-parameter signature and all three batch methods. The implementation must create `quota-router-core/src/python_sdk_entry.rs` with this `RouterHandle` struct.
+
+#### Direct Rust Client Entry Point
+
+**Location:** `quota-router-core/src/client.rs` (per RFC-0917 v2.38)
+
+External Rust programs (CLI tools, other crates) can call quota-router-core directly without HTTP serialization or PyO3 overhead.
+
+**Structure:**
+```rust
+// quota-router-core/src/client.rs
+
+/// Direct Rust client entry point — no HTTP, no PyO3
+pub struct Client {
+    router: Arc<Router>,
+    storage: Arc<dyn KeyStorage>,
+}
+
+impl Client {
+    /// Create new Client
+    pub fn new(router: Arc<Router>, storage: Arc<dyn KeyStorage>) -> Self
+
+    /// Single completion call — same 22 params as RouterHandle.completion()
+    pub async fn completion(
+        &self,
+        model: &str,
+        messages: Vec<SdkMessage>,
+        stream: bool,
+        timeout: Option<f64>,
+        // ... all 22 params per RFC-0920 lines 58-84, 3735-3751
+    ) -> Result<SdkCompletionResponse, RouterError> { ... }
+
+    /// Batch completion — same model, parallel requests
+    pub async fn batch_completion(
+        &self,
+        requests: Vec<SdkCompletionRequest>,
+    ) -> Result<Vec<SdkCompletionResponse>, RouterError> { ... }
+
+    /// Batch completion with model race — first response wins
+    pub async fn batch_completion_models(
+        &self,
+        models: Vec<String>,
+        messages: Vec<SdkMessage>,
+        // All 22 params available
+        temperature: Option<f64>,
+        max_tokens: Option<i32>,
+        top_p: Option<f64>,
+        n: Option<i32>,
+        stream: bool,
+        stop: Option<String>,
+        presence_penalty: Option<f64>,
+        frequency_penalty: Option<f64>,
+        user: Option<String>,
+        seed: Option<i32>,
+        timeout: Option<f64>,
+        extra_headers: Option<String>,
+        base_url: Option<String>,
+        api_version: Option<String>,
+        api_key: Option<String>,
+        service_tier: Option<String>,
+        background: Option<bool>,
+        prompt_cache_key: Option<String>,
+        prompt_cache_retention: Option<String>,
+        conversation: Option<String>,
+    ) -> Result<SdkCompletionResponse, RouterError> { ... }
+
+    /// Batch completion with all responses — all models, all responses
+    pub async fn batch_completion_models_all(
+        &self,
+        models: Vec<String>,
+        messages: Vec<SdkMessage>,
+        // All 22 params available
+        temperature: Option<f64>,
+        max_tokens: Option<i32>,
+        top_p: Option<f64>,
+        n: Option<i32>,
+        stream: bool,
+        stop: Option<String>,
+        presence_penalty: Option<f64>,
+        frequency_penalty: Option<f64>,
+        user: Option<String>,
+        seed: Option<i32>,
+        timeout: Option<f64>,
+        extra_headers: Option<String>,
+        base_url: Option<String>,
+        api_version: Option<String>,
+        api_key: Option<String>,
+        service_tier: Option<String>,
+        background: Option<bool>,
+        prompt_cache_key: Option<String>,
+        prompt_cache_retention: Option<String>,
+        conversation: Option<String>,
+    ) -> Result<Vec<SdkCompletionResponse>, RouterError> { ... }
+
+    /// Get metrics
+    pub fn get_metrics(&self) -> Result<MetricsDict, RouterError> { ... }
+}
+```
+
+**Usage:**
+```rust
+use quota_router_core::client::Client;
+
+let client = Client::new(router, storage);
+let response = client.completion(model, messages, stream, timeout, ...).await?;
+```
+
+**Three entry points to quota-router-core:**
+
+| Entry Point | Path | Use Case |
+|-------------|------|----------|
+| `gateway` | HTTP proxy | External services, network access |
+| `python_sdk_entry` | PyO3 | Python SDK (quota-router-pyo3) |
+| `client` | Direct Rust | CLI tools, embedded Rust programs |
+
+#### Migration Target: Rust ←→ Python State Mapping (Normative)
 
 **Purpose:** Document the authoritative mapping between Python Router state fields and their RFC-0917/Rust-core equivalents. All Python-side state is **ephemeral** (in-memory, lost on restart); Rust-core state persists via stoolap.
 
@@ -2623,515 +2903,8 @@ class Router:
         return self._rust_router.get_metrics()
 ```
 
-**Specification (Phase 1 current — DEPRECATED):**
-
-```python
-# DEPRECATED — This Python Router class with internal routing state is being replaced.
-# Phase 1: Python-level router for iterative development
-# Phase 2: RustRouterHandle delegation (all routing in Rust core)
-
-from typing import List, Dict, Optional
-from quota_router import get_pricing as _get_pricing  # H1 fix: module-level import for hot-path avoidance
-
-class Router:
-    """
-    DEPRECATED — Phase 1 Python-level router.
-    Phase 2: Replaced by thin PyO3 delegation to RustRouterHandle.
-
-    Routing strategies (from RFC-0902):
-        "simple-shuffle"     — Weighted random (rpm/tpm/weight) — recommended for production
-        "round-robin"        — Sequential rotation
-        "least-busy"          — Fewest active requests
-        "latency-based-routing" — Lowest rolling average latency
-        "cost-based-routing"  — Lowest cost per token (requires RFC-0904)
-        "usage-based-routing" — Lowest cumulative usage
-        "usage-based-routing-v2" — Usage weighted by recency
-        "weighted"            — Explicit per-provider weights (distinct from simple-shuffle)
-
-    Reference: RFC-0902 §Routing Strategies
-
-    ⚠️ DEPRECATION: All routing strategies are implemented in Rust core.
-       Python Router exists only for Phase 1 compatibility.
-    """
-
-    def __init__(
-        self,
-        model_list: List[Dict],
-        routing_strategy: str = "simple-shuffle",
-        cache_responses: bool = False,  # stoolap semantic cache (RFC-0913)
-        fallbacks: Optional[List[Dict]] = None,  # model -> [fallback_models]
-        content_policy_fallbacks: Optional[Dict[str, str]] = None,  # model -> fallback_model
-        context_window_fallbacks: Optional[Dict[str, str]] = None,  # model -> larger_context_model
-        num_retries: Optional[int] = 3,
-        timeout: Optional[float] = None,
-        logger_fn: Optional[callable] = None,  # RFC-0905 logger
-        lock_metric_sampling_rate: float = 0.1,  # L2 fix: lock hold time sampling rate (0.0 to 1.0). Env: QUOTA_ROUTER_LOCK_METRIC_SAMPLE_RATE
-        **kwargs,
-    ):
-        """
-        Initialize Router with model deployments.
-
-        ⚠️ DEPRECATION: This is Phase 1 Python-level Router. Phase 2 replaces
-        with RustRouterHandle delegation. All routing state will be owned by Rust core.
-
-        Args:
-            model_list: List of {"model_name": "...", "litellm_params": {...}}
-                Example: {"model_name": "gpt-4o", "litellm_params": {"provider": "openai", "api_key": "...", "rpm_limit": 1000}}
-            routing_strategy: RFC-0902 routing strategy (string)
-            cache_responses: Enable stoolap semantic cache (RFC-0913)
-            fallbacks: List of {"model": "gpt-4o", "fallback_models": ["gpt-3.5-turbo", "claude-3"]}
-                Internally stored as Dict[str, List[str]] for O(1) lookup by model name.
-            content_policy_fallbacks: Content policy error mapping
-            context_window_fallbacks: Context window error mapping
-            num_retries: Number of retries on failure (default 3)
-            timeout: Default request timeout
-            logger_fn: Optional callback for observability (RFC-0905)
-            lock_metric_sampling_rate: Sampling rate for router_lock_hold_time_us histogram (0.0 to 1.0). Default 0.1. Env: QUOTA_ROUTER_LOCK_METRIC_SAMPLE_RATE. Values outside [0.0, 1.0] raise ValueError at init.
-
-        Note:
-            ⚠️ DEPRECATED: This is a Python-level router that maintains routing state.
-            All routing, caching, telemetry, and state management are being moved to
-            Rust core (RustRouterHandle) in Phase 2. This Python-side implementation
-            is for Phase 1 compatibility only.
-        """
-        if not (0.0 <= lock_metric_sampling_rate <= 1.0):
-            raise ValueError(f"lock_metric_sampling_rate must be in [0.0, 1.0], got {lock_metric_sampling_rate}")
-        self.lock_metric_sampling_rate = lock_metric_sampling_rate
-        self.model_list = model_list
-        self.routing_strategy = routing_strategy
-        self.cache_responses = cache_responses
-        # Normalize fallbacks: List[Dict] (list format) -> Dict[str, List[str]] (dict format)
-        self.fallbacks = {}
-        if fallbacks:
-            for item in fallbacks:
-                model = item.get("model")
-                fallback_list = item.get("fallback_models", [])
-                if model and fallback_list:
-                    self.fallbacks[model] = fallback_list
-        self.content_policy_fallbacks = content_policy_fallbacks or {}
-        self.context_window_fallbacks = context_window_fallbacks or {}
-        self.num_retries = num_retries
-        self.timeout = timeout
-        self.logger_fn = logger_fn
-
-        # Runtime state per deployment — ⚠️ DEPRECATED: All moved to Rust core in Phase 2
-        self._deployments = []  # Flat list of (model_name, litellm_params)
-        self._round_robin_index = 0
-        self._round_robin_lock = threading.Lock()  # Thread-safe round-robin
-        self._state_lock = threading.Lock()  # Guards _total_spend, _spend_history
-        self._active_requests = {}  # deployment_idx -> count
-        self._latencies = {}  # deployment_idx -> list of latencies_us
-        self._total_spend = {}  # deployment_idx -> int μunits (per RFC-0904 G3)
-        self._spend_history = {}  # deployment_idx -> deque(maxlen=500) of (timestamp, cost) for v2
-
-        # H2 fix: Counter-based sampling for lock metrics (lock-free, zero allocation)
-        # Counter modulo is deterministic and requires no random module (avoids GIL contention)
-        self._metric_sample_counter = 0
-        self._metric_sampling_rate = lock_metric_sampling_rate
-
-        # Group by model_name
-        self._by_model: Dict[str, List[int]] = {}  # model_name -> [deployment_idx]
-        for i, item in enumerate(model_list):
-            model_name = item["model_name"]
-            self._deployments.append((model_name, item.get("litellm_params", {})))
-            self._by_model.setdefault(model_name, []).append(i)
-            self._active_requests[i] = 0
-            self._latencies[i] = deque(maxlen=100)
-            self._total_spend[i] = 0
-            # N13/N21 fix: Initialize _spend_history[i] for each deployment index,
-            # parallel to _latencies and _active_requests. Without this, the first
-            # _record_spend call for any deployment_idx raises KeyError.
-            self._spend_history[i] = deque(maxlen=500)
-
-    def _select_deployment(self, model: str) -> int:
-        """Select deployment index using routing strategy.
-
-        Args:
-            model: The **model_name** (not model_group) — must match the key in self._by_model.
-                   This is the value from model_list[].model_name (e.g., "gpt-4o", "claude-3-opus").
-                   Not a model group — model groups are not used at this layer.
-        """
-        indices = self._by_model.get(model, [])
-        if not indices:
-            raise ModelNotFoundError(f"No deployments found for model: {model}")
-
-        strategy = self.routing_strategy
-        if strategy == "round-robin":
-            with self._round_robin_lock:
-                idx = self._round_robin_index % len(indices)
-                self._round_robin_index += 1
-            return indices[idx]
-        elif strategy == "least-busy":
-            return min(indices, key=lambda i: self._active_requests[i])
-        elif strategy == "latency-based-routing":
-            return min(indices, key=lambda i: self._avg_latency(i))
-        elif strategy == "cost-based-routing":
-            # Use recorded spend (from _record_spend) for lowest-cost selection
-            # Thread-safe: acquire lock for read to prevent torn/stale values
-            with self._state_lock:
-                # Copy-on-read snapshot: copy _total_spend values, then compute outside lock
-                # This reduces lock contention vs holding lock through min() computation
-                snapshot = {i: self._total_spend.get(i, 0) for i in indices}
-            if all(v == 0 for v in snapshot.values()):
-                # No spend data yet — fall back to simple-shuffle
-                return random.choice(indices)
-            return min(indices, key=lambda i: snapshot[i])
-        elif strategy == "usage-based-routing":
-            # Thread-safe: copy-on-read snapshot reduces lock contention
-            with self._state_lock:
-                snapshot = {i: self._total_spend.get(i, 0) for i in indices}
-            return min(indices, key=lambda i: snapshot[i])
-        elif strategy == "usage-based-routing-v2":
-            # Usage weighted by recency: more recent usage counts more
-            return self._select_by_weighted_spend(indices)
-        elif strategy == "weighted":
-            # Weighted by explicit weights in litellm_params
-            weights = [(self._deployments[i][1].get("weight", 1)) for i in indices]
-            total = sum(weights)
-            r = random.uniform(0, total)
-            cumsum = 0
-            for idx, w in zip(indices, weights):
-                cumsum += w
-                if r <= cumsum:
-                    return idx
-            # Safety net: shouldn't reach here if weights are valid and total > 0
-            return indices[-1]
-        else:  # simple-shuffle or default
-            return random.choice(indices)
-
-    def _avg_latency(self, idx: int) -> float:
-        lats = self._latencies[idx]
-        if not lats:
-            return float("inf")
-        return sum(lats) / len(lats)
-
-    def _record_request_start(self, idx: int):
-        with self._state_lock:
-            self._active_requests[idx] = self._active_requests.get(idx, 0) + 1
-
-    def _record_request_end(self, idx: int, latency_ms: float, prompt_tokens: int, completion_tokens: int):
-        with self._state_lock:
-            self._active_requests[idx] = max(0, self._active_requests.get(idx, 1) - 1)
-        self._latencies[idx].append(int(latency_ms * 1000))  # deque append is thread-safe
-        self._record_spend(idx, prompt_tokens, completion_tokens)
-
-    def _record_spend(self, idx: int, prompt_tokens: int, completion_tokens: int):
-        """Record spend for usage-based routing strategies.
-
-        Uses RFC-0910 pricing table to compute cost for input AND output tokens separately.
-        Thread-safe via self._state_lock. Lock hold time target <50μs.
-
-        All monetary values stored as int μunits per RFC-0904 G3.
-
-        ⚠️ **Ephemeral routing state**: Routing metrics use `time.monotonic()` and are
-        strictly in-memory. Process restarts, container migrations, or pod rescheduling
-        will reset all spend history and decay state. For persistent routing metrics,
-        use external telemetry or Phase 3 stoolap-backed routing.
-        """
-        import time
-        # C2 fix: Replace setdefault with lock-protected if-not-in check.
-        # setdefault creates deque(maxlen=500) on EVERY request — even when key exists.
-        # This causes per-request allocation churn and GC pressure on the hot path.
-        # The reviewer correctly notes setdefault is NOT atomic — argument evaluation
-        # (deque instantiation) happens BEFORE the function call, due to Python semantics.
-        # Correct approach: lock-protected check inside the already-held lock.
-        #
-        # H1 fix: get_pricing moved to module level (see Router class imports).
-        # Hot-path functions MUST NOT contain inline imports.
-        #
-        # M2 fix: Consolidate ALL state mutations in a SINGLE lock acquisition.
-        # Fragmented lock boundaries (read in one lock, write in another) cause
-        # state drift between _total_spend and _spend_history under concurrency.
-        with self._state_lock:
-            now = time.monotonic()  # L2 fix: capture once for temporal consistency
-            model_name = self._deployments[idx][0]
-            # N13/N21 fix: Guard BEFORE access — prevent KeyError on first request.
-            # Initialize _spend_history[i] in __init__ alongside _latencies/_active_requests.
-            if idx not in self._spend_history:
-                self._spend_history[idx] = deque(maxlen=500)
-            last_time = self._spend_history[idx][-1][0] if self._spend_history[idx] else now
-            # CRITICAL FIX (D3): Read current_spend INSIDE the lock, not from a stale
-            # captured value. If another thread updated _total_spend between the first
-            # lock release and this lock acquisition, using a stale current_spend would
-            # overwrite that concurrent update (TOCTOU race).
-            current_spend = self._total_spend.get(idx, 0)
-            elapsed = max(0.0, now - last_time)
-            decay_factor = math.exp2(-elapsed / 3600.0)
-            # N1 fix: Compute pricing and write INSIDE the lock (still <50μs target).
-            # Pricing done here to ensure consistent read of model_name and atomic
-            # write to _total_spend._total_spend[idx] = int(current_spend * decay_factor) + cost_μunits
-            try:
-                pricing = _get_pricing(model_name)
-                input_cost = pricing.get("input", 0.0) * prompt_tokens / 1000.0
-                output_cost = pricing.get("output", pricing.get("input", 0.0)) * completion_tokens / 1000.0
-                cost_μunits = int((input_cost + output_cost) * 1_000_000)
-            except Exception:
-                cost_μunits = (prompt_tokens + completion_tokens) * 10
-            self._spend_history[idx].append((now, cost_μunits))
-            self._total_spend[idx] = int(current_spend * decay_factor) + cost_μunits
-
-    def _select_by_weighted_spend(self, indices: List[int]) -> int:
-        """Select deployment using usage-based-routing-v2 (recency-weighted spend).
-
-        More recent usage counts more heavily. Uses exponential decay weighting.
-        Thread-safe: holds _state_lock while reading _spend_history.
-        """
-        with self._state_lock:
-            # Use time.monotonic() to avoid NTP clock-rollback inflation.
-            # Clamp age to 0 to handle clock rollback edge cases.
-            now = time.monotonic()
-            weighted_scores = {}
-            for i in indices:
-                spend_records = self._spend_history.get(i, [])
-                total_weighted = 0.0
-                total_weight = 0.0
-                for timestamp, cost in spend_records:
-                    # Exponential decay: weight = exp(-lambda * age_in_seconds)
-                    # lambda = 1 / (half_life_seconds). Use 1-hour half-life.
-                    age = max(0.0, now - timestamp)  # clamp to handle clock rollback
-                    weight = math.exp(-age / 3600)
-                    total_weighted += cost * weight
-                    total_weight += weight
-                weighted_scores[i] = total_weighted / total_weight if total_weight > 0 else 0.0
-            return min(indices, key=lambda i: weighted_scores[i])
-
-    def completion(
-        self,
-        model: str,
-        messages: List[Dict],
-        cache_bypass: bool = False,
-        **kwargs,
-    ) -> CompletionResponse:
-        """
-        Route to a deployment and call the module-level completion() function.
-
-        Note: This calls `from quota_router import completion` (module-level),
-        NOT self.completion() (recursive loop would occur).
-
-        H2 fix: cache_bypass MUST be explicitly forwarded through all delegation layers.
-        """
-        from quota_router import completion as _module_completion
-
-        # H2 fix: Explicit cache_bypass propagation — skip validation when True
-        if not cache_bypass:
-            _validate_no_nan_inf(kwargs)
-
-        deployment_idx = self._select_deployment(model)
-        model_name, params = self._deployments[deployment_idx]
-
-        # Merge deployment params with call kwargs (call kwargs take precedence)
-        call_kwargs = {**params, **kwargs}
-        if self.timeout:
-            call_kwargs.setdefault("timeout", self.timeout)
-
-        # Normative rule (CM-7): When fallbacks are configured, Rust FallbackExecutor
-        # MUST use max_retries=1 to avoid redundant retries. The Router's fallback loop
-        # provides primary resilience; Rust retries are disabled.
-        has_fallbacks = (
-            self.fallbacks or
-            self.context_window_fallbacks or
-            self.content_policy_fallbacks
-        )
-        if has_fallbacks:
-            import warnings
-            warnings.warn(
-                "num_retries overridden to 1: Router fallbacks handle deployment-level "
-                "retry separately. User-provided num_retries is ignored when fallbacks "
-                "are configured to prevent double-retry (Router fallback + Rust HTTP retry).",
-                UserWarning,
-            )
-            call_kwargs["num_retries"] = 1  # Force Rust retry count to 1, ignore user value
-
-        last_error = None
-        fallback_idx = 0  # Per-request state — reset each call, not persisted
-        for attempt in range(self.num_retries + 1):
-            try:
-                self._record_request_start(deployment_idx)
-                import time  # N22 fix: time.time() used below — import here to avoid NameError
-                start = time.time()
-                # C1 fix: Explicit end-to-end propagation — DO NOT omit cache_bypass here.
-                # N8 fix: Implicit **kwargs forwarding is insufficient due to signature default override.
-                result = _module_completion(model=model_name, messages=messages, cache_bypass=cache_bypass, **call_kwargs)
-                latency_ms = (time.time() - start) * 1000
-                usage = result.get("usage", {})
-                prompt_tokens = usage.get("prompt_tokens", 0)
-                completion_tokens = usage.get("completion_tokens", 0)
-                self._record_request_end(deployment_idx, latency_ms, prompt_tokens, completion_tokens)
-                if self.logger_fn:
-                    self.logger_fn({"model": model, "deployment": model_name, "latency_ms": latency_ms})
-                return result
-            except ContextLengthExceededError as e:
-                # Try context_window fallback
-                # `model` = original input (e.g., "gpt-4o"), `model_name` = current model being attempted
-                last_error = e  # Store before fallback attempt
-                fallback = self.context_window_fallbacks.get(model)
-                if fallback:
-                    model_name = fallback  # Overwrite current model attempt with fallback
-                    deployment_idx = self._select_deployment(model_name)
-                    model_name, params = self._deployments[deployment_idx]
-                    call_kwargs = {**params, **kwargs}
-                    if self.timeout:
-                        call_kwargs.setdefault("timeout", self.timeout)
-                    continue
-                raise
-            except ContentFilterError as e:
-                # Try content_policy fallback
-                last_error = e  # Store before fallback attempt
-                fallback = self.content_policy_fallbacks.get(model)
-                if fallback:
-                    model_name = fallback
-                    deployment_idx = self._select_deployment(model_name)
-                    model_name, params = self._deployments[deployment_idx]
-                    call_kwargs = {**params, **kwargs}
-                    if self.timeout:
-                        call_kwargs.setdefault("timeout", self.timeout)
-                    continue
-                raise
-            except (RateLimitError, GatewayTimeoutError, UpstreamProviderError) as e:
-                # DO NOT retry here — Rust core (FallbackExecutor) handles HTTP-level retry
-                # The Router only handles deployment-level fallback (switching to different model)
-                last_error = e  # Store before fallback attempt
-                # Check generic fallbacks list for this model
-                if self.fallbacks:
-                    fallback_list = self.fallbacks.get(model, [])
-                    if fallback_list:
-                        # Advance through fallback list once — no wrapping
-                        # Each entry tried once; exhaust list then raise
-                        if fallback_idx < len(fallback_list):
-                            model_name = fallback_list[fallback_idx]
-                            fallback_idx += 1
-                            deployment_idx = self._select_deployment(model_name)
-                            model_name, params = self._deployments[deployment_idx]
-                            call_kwargs = {**params, **kwargs}
-                            if self.timeout:
-                                call_kwargs.setdefault("timeout", self.timeout)
-                            continue
-                raise
-            except Exception as e:
-                last_error = e
-                raise
-
-        # Fallback: if last_error is set, raise it; otherwise raise meaningful error
-        if last_error:
-            raise last_error
-        raise RouterError("All deployments and fallbacks exhausted")
-
-    async def acompletion(
-        self,
-        model: str,
-        messages: List[Dict],
-        cache_bypass: bool = False,
-        **kwargs,
-    ) -> CompletionResponse:
-        """Async route and call the module-level acompletion() function.
-
-        Note: This calls `from quota_router import acompletion` (module-level),
-        NOT self.acompletion() (recursive loop would occur).
-
-        C1 fix: cache_bypass MUST be explicitly forwarded through all delegation layers.
-        """
-        import asyncio
-        from quota_router import acompletion as _module_acompletion
-
-        # C1 fix: Explicit cache_bypass propagation — skip validation when True
-        if not cache_bypass:
-            _validate_no_nan_inf(kwargs)
-
-        deployment_idx = self._select_deployment(model)
-        model_name, params = self._deployments[deployment_idx]
-        call_kwargs = {**params, **kwargs}
-        if self.timeout:
-            call_kwargs.setdefault("timeout", self.timeout)
-
-        # Normative rule (CM-7): When fallbacks are configured, Rust FallbackExecutor
-        # MUST use max_retries=1 to avoid redundant retries. The Router's fallback loop
-        # provides primary resilience; Rust retries are disabled.
-        has_fallbacks = (
-            self.fallbacks or
-            self.context_window_fallbacks or
-            self.content_policy_fallbacks
-        )
-        if has_fallbacks:
-            import warnings
-            warnings.warn(
-                "num_retries overridden to 1: Router fallbacks handle deployment-level "
-                "retry separately. User-provided num_retries is ignored when fallbacks "
-                "are configured to prevent double-retry (Router fallback + Rust HTTP retry).",
-                UserWarning,
-            )
-            call_kwargs["num_retries"] = 1  # Force Rust retry count to 1, ignore user value
-
-        last_error = None
-        fallback_idx = 0  # Per-request state — reset each call, not persisted
-        for attempt in range(self.num_retries + 1):
-            try:
-                self._record_request_start(deployment_idx)
-                start = time.time()
-                # C1 fix: Explicit end-to-end propagation — DO NOT omit cache_bypass here
-                result = await _module_acompletion(model=model_name, messages=messages, cache_bypass=cache_bypass, **call_kwargs)
-                latency_ms = (time.time() - start) * 1000
-                usage = result.get("usage", {})
-                prompt_tokens = usage.get("prompt_tokens", 0)
-                completion_tokens = usage.get("completion_tokens", 0)
-                self._record_request_end(deployment_idx, latency_ms, prompt_tokens, completion_tokens)
-                if self.logger_fn:
-                    self.logger_fn({"model": model, "deployment": model_name, "latency_ms": latency_ms})
-                return result
-            except ContextLengthExceededError as e:
-                # Try context_window fallback
-                # `model` = original input (e.g., "gpt-4o"), `model_name` = current model being attempted
-                last_error = e  # Store before fallback attempt
-                fallback = self.context_window_fallbacks.get(model)
-                if fallback:
-                    model_name = fallback  # Overwrite current model attempt with fallback
-                    deployment_idx = self._select_deployment(model_name)
-                    model_name, params = self._deployments[deployment_idx]
-                    call_kwargs = {**params, **kwargs}
-                    if self.timeout:
-                        call_kwargs.setdefault("timeout", self.timeout)
-                    continue
-                raise
-            except ContentFilterError as e:
-                # Try content_policy fallback
-                last_error = e  # Store before fallback attempt
-                fallback = self.content_policy_fallbacks.get(model)
-                if fallback:
-                    model_name = fallback
-                    deployment_idx = self._select_deployment(model_name)
-                    model_name, params = self._deployments[deployment_idx]
-                    call_kwargs = {**params, **kwargs}
-                    if self.timeout:
-                        call_kwargs.setdefault("timeout", self.timeout)
-                    continue
-                raise
-            except (RateLimitError, GatewayTimeoutError, UpstreamProviderError) as e:
-                # DO NOT retry here — Rust core (FallbackExecutor) handles HTTP-level retry
-                # The Router only handles deployment-level fallback (switching to different model)
-                last_error = e  # Store before fallback attempt
-                # Check generic fallbacks list for this model
-                if self.fallbacks:
-                    fallback_list = self.fallbacks.get(model, [])
-                    if fallback_list:
-                        # Advance through fallback list once — no wrapping
-                        if fallback_idx < len(fallback_list):
-                            model_name = fallback_list[fallback_idx]
-                            fallback_idx += 1
-                            deployment_idx = self._select_deployment(model_name)
-                            model_name, params = self._deployments[deployment_idx]
-                            call_kwargs = {**params, **kwargs}
-                            if self.timeout:
-                                call_kwargs.setdefault("timeout", self.timeout)
-                            continue
-                raise
-            except Exception as e:
-                last_error = e
-                raise
-
-        # Fallback: if last_error is set, raise it; otherwise raise meaningful error
-        if last_error:
-            raise last_error
-        raise RouterError("All deployments and fallbacks exhausted")
-```
+**Phase 1–2 Reference:**
+All routing state and strategy implementations are defined in RFC-0917 (Router struct, ProviderWithState, RoutingStrategy enum, all 8 strategy algorithms, and SpendTracker with decay math).
 
 **Note on `cache_responses`:** Uses **stoolap** (RFC-0913) cache — NOT Redis. Stoolap is the sole persistence layer per RFC-0914. No `redis_url` parameter.
 
@@ -3503,9 +3276,9 @@ fn map_rust_error_to_python(e: QuotaRouterError) -> PyErr {
 
 **Severity: Medium**
 
-any-llm supports `any-...` API keys that encode the provider internally. quota-router supports this via the `platform` pseudo-provider (listed in RFC-0917 Phase 3's 41 providers as `"platform"`).
+any-llm supports `any-...` API keys that encode the provider internally. quota-router supports this via the `platform` pseudo-provider (listed in RFC-0917 Phase 3's 42 providers as `"platform"`).
 
-**Verified consistency with RFC-0917 Phase 3:** The `platform` pseudo-provider matches RFC-0917 Phase 3's provider list (line 1008: `platform` among 41 providers). It is NOT a different platform integration — it is the same `any-...` key format mechanism.
+**Verified consistency with RFC-0917 Phase 3:** The `platform` pseudo-provider matches RFC-0917 Phase 3's provider list (line 1008: `platform` among 42 providers). It is NOT a different platform integration — it is the same `any-...` key format mechanism.
 
 **Specification:**
 
@@ -3724,31 +3497,6 @@ system: Optional[Union[str, List[Dict]]] = None
 
 # Maps to Anthropic messages API system parameter
 ```
-
-#### Additional Parameters (Low Priority — Phase 4)
-
-These are documented here for completeness but specced in Phase 4:
-
-| Parameter                       | Source  | Spec Location |
-| ------------------------------- | ------- | ------------- |
-| `top_k`                         | any-llm | Phase 4       |
-| `truncation`                    | any-llm | Phase 4       |
-| `service_tier`                  | any-llm | Phase 4       |
-| `background`                    | any-llm | Phase 4       |
-| `safety_identifier`             | litellm | Phase 3 (LiteLLM sig) |
-| `prompt_cache_key`              | any-llm | Phase 4       |
-| `prompt_cache_retention`        | any-llm | Phase 4       |
-| `conversation`                  | any-llm | Phase 4       |
-| `extra_headers`                 | litellm | Phase 3 (LiteLLM sync sig) |
-| `base_url`                      | litellm | Phase 3 (LiteLLM sig)      |
-| `api_version`                   | litellm | Phase 3 (LiteLLM sync sig) |
-| `model_list`                    | litellm | Phase 3 (LiteLLM sync sig) |
-| `web_search_options`            | litellm | Phase 4       |
-| `modalities`                    | litellm | Phase 3 (LiteLLM sig)      |
-| `audio`                         | litellm | Phase 3 (LiteLLM sig)      |
-| `prediction`                    | litellm | Phase 3 (LiteLLM sig)      |
-| `shared_session`                | litellm | Phase 4       |
-| `enable_json_schema_validation` | litellm | Phase 4       |
 
 ### Batch API Signature
 
@@ -4590,7 +4338,7 @@ def _get_server_secret() -> bytes:
 | `provider:model` format | ❌ No       | ✅ Yes         |
 | `set_api_key()` style   | ❌ No       | ✅ Yes         |
 | Router class            | ✅ Yes      | ✅ Yes         |
-| 41 providers            | Partial     | ✅ All 41      |
+| 42 providers            | Partial     | ✅ All 42      |
 
 ## Implementation Phases
 
@@ -4614,7 +4362,7 @@ def _get_server_secret() -> bytes:
 
 - [ ] Anthropic provider integration (with `thinking` and `cache_control` support)
 - [ ] Mistral provider integration
-- [ ] All 41 providers (mock until real SDK available)
+- [ ] All 42 providers (mock until real SDK available)
 - [ ] Embedding API
 - [ ] Model listing
 - [ ] `timeout` parameter with httpx.Timeout support (DONE: specced in sync completion; async acompletion() uses float|int per LiteLLM)
@@ -4638,28 +4386,9 @@ def _get_server_secret() -> bytes:
 
 **Note:** `redis_url` is NOT applicable — stoolap (RFC-0912, RFC-0914) replaces Redis entirely as the persistence layer. Caching uses stoolap's WAL-based pub/sub semantic cache per RFC-0913.
 
-### Phase 4: Full LiteLLM Compatibility (Future)
-
-- [ ] Remaining litellm-only parameters: `modalities`, `audio`, `prediction`
-- [ ] All litellm routing strategies (8 total: simple-shuffle, round-robin, least-busy, latency-based-routing, cost-based-routing, usage-based-routing, usage-based-routing-v2, weighted)
-- [ ] Additional providers from litellm ecosystem as needed
-
-## Key Files to Modify
-
-| File                                         | Change                   |
-| -------------------------------------------- | ------------------------ |
-| `crates/quota-router-pyo3/src/lib.rs`        | Unified SDK exports      |
-| `crates/quota-router-pyo3/src/completion.rs` | Dual-mode completion     |
-| `crates/quota-router-pyo3/src/providers/`    | Provider implementations |
-| `crates/quota-router-pyo3/src/exceptions.rs` | Exception hierarchy      |
-| `crates/quota-router-pyo3/src/sdk.rs`        | set_api_key, budget APIs |
-
 ## Future Work
 
-- F1: LangChain integration
-- F2: LlamaIndex integration
-- F3: Streaming SSE normalization — provider-specific SSE parsing for non-OpenAI-SSE providers (Anthropic, Mistral, etc.), distinct from Phase 1's `async_iter_to_sync_iter()` bridge which handles the sync/async conversion
-- F4: Response caching (RFC-0906)
+- F4: Response caching (RFC-0906) — spec is in RFC-0906
 
 ## Rationale
 
@@ -4675,6 +4404,17 @@ This is the only approach that achieves true drop-in replacement for both ecosys
 
 | Version | Date       | Changes |
 | ------- | ---------- | ------- |
+| 1.70    | 2026-05-10 | **FIX** O1: Provider count corrected from 41→42 throughout (header table, Phase 2 checklist, KNOWN_PROVIDERS description, platform provider reference, acceptance criteria table). Mission 0920-b correctly lists 42 providers with deepinfra; RFC was inconsistent. |
+| 1.69    | 2026-05-10 | **FIX** N1 (Low): Updated stale deprecation notice (line 2552) to reflect v1.68 structural change. The notice previously referenced "Python Router class (lines 2178-2848)" — a class that was ERASED in v1.68. Updated to confirm current RouterHandle is a thin PyO3 delegation stub with NO routing state, and that all heavy lifting resides in RFC-0917. |
+| 1.68    | 2026-05-09 | **ERASE** Deprecated Python Router class (~2907-3387 lines): Removed all Phase 1 Python routing state, 8 routing strategy implementations, `_record_spend` with decay math, `_select_by_weighted_spend`, and all `completion`/`acompletion` methods with fallback logic. RFC-0920 is now purely a thin-binding layer: API surface, type marshaling, exception translation, and Phase 2 state mapping reference. All heavy lifting (ProviderWithState, RoutingStrategy enum, all 8 strategy algorithms, SpendTracker with decay math) is now exclusively in RFC-0917. |
+| 1.67    | 2026-05-09 | **FIX** RFC-0920 thin-binding constraint made explicit: Summary now states sole role is API surface + type marshaling; all heavy lifting is in RFC-0917. Dependencies marks RFC-0917 as "definitive source." Crate Architecture section now has red box: "RFC-0920 MUST NEVER DEFINE ANY HEAVY LIFTING." Phase 4 unspecced items removed per deferred-vs-unspecified rule. |
+| 1.66    | 2026-05-09 | **CROSS** F1: RouterHandle.batch_completion_models_all() in RFC-0917 v2.43 now passes all 22 params (was dropping 20 params). **REMOVE** Phase 4 unspecced items (modalities, audio, prediction, 8 routing strategies, additional providers) per deferred-vs-unspecified rule — no spec means remove. F1/LangChain and F2/LlamaIndex removed (no spec). F3/SSE normalization deferred to RFC-0906 Phase 3. F4/Response caching already references RFC-0906. Cross-reference to F4 (SdkMessage.name clarification) and F6 (duplicate TODO removal). |
+| 1.65    | 2026-05-09 | **CROSS** E1/E2/E3: Client.batch_completion_models() and batch_completion_models_all() now have same 22-param signatures as RouterHandle (per RFC-0917 v2.42). |
+| 1.64    | 2026-05-09 | **CROSS** D4/D7/D8: RFC-0917 v2.41 SdkMessage.role now specifies valid values (user|assistant|system|function|tool). RFC-0920 Python SDK should validate role against these values at entry point. |
+| 1.63    | 2026-05-09 | **FIX** D1/D2: RouterHandle.batch_completion_models() and batch_completion_models_all() now show all 22 params (was only temperature/max_tokens — inconsistent with Client section which had full params). **FIX** D9: batch_completion_models_all() documented as returning only successful responses (failures silently dropped). |
+| 1.62    | 2026-05-09 | **FIX** C1: Client.batch_completion_models() now uses tokio::sync::mpsc (per RFC-0917 v2.39). **FIX** C2: Client.get_metrics() returns Result (matches RouterHandle). **FIX** C6: batch_completion_models() and batch_completion_models_all() now show all 22 params (was only temperature/max_tokens). |
+| 1.61    | 2026-05-09 | **FIX** B1: RouterHandle.completion() now has full 22 params (was incomplete in v1.60). **FIX** B2: Added batch_completion_models() and batch_completion_models_all() to RouterHandle section. **FIX** B5: Added RouterHandle::new() constructor. **FIX** B4: Client section now shows full method list matching RouterHandle. Cross-RFC: RFC-0917 v2.38 provides concrete implementation. |
+| 1.60    | 2026-05-09 | **FIX** A1: Added `client` module entry point for direct Rust-to-core calls (no HTTP, no PyO3). **FIX** A3: RouterHandle.completion() now enumerates all 22 params per lines 58-84. **FIX** A4: Added batch_completion_models() and batch_completion_models_all() to RouterHandle section. **FIX** A8: Version history now notes RFC-0917 v2.37 cross-reference (RouterHandle defined there). Cross-RFC dependency: RFC-0917 v2.37 provides concrete `RouterHandle` struct which RFC-0920 references in 12+ locations. |
 | 1.58    | 2026-05-06 | **FIX** N1: _record_spend pricing and write restored (was missing — only comment remained). **FIX** N3: UnsupportedProviderError `field()` removed (non-dataclass). **FIX** N4: BatchNotCompleteError, AllModelsFailedError, BatchPartialFailureError now have `__init__`. **FIX** N5: into_async → into_future in RFC-0920 proxy code (2 locations). **FIX** N6: _stream_provider_response filters None from SSE parsers. **FIX** N7: parse_anthropic_sse now stateful via _AnthropicSSEParser class (multi-line SSE). **FIX** N8: Router.completion() indentation fixed (comment and result dedented to try block). **FIX** N13/N21: _spend_history initialized in __init__; guard reordered before access. **FIX** N14: batch_completion_models docstring corrected (losers run to completion, not cancelled). **FIX** N15: _get_server_secret fallback gate now enforced. **FIX** N16: QUOTA_ROUTER_MODE clarified as label-only (not provider strategy switch). **FIX** N17: __deployment_mode__ via cfg_if! (mutually exclusive). **FIX** N18: bedrock added to PROVIDER_SDK_TYPES registry (Rust + Python + YAML). **FIX** N19: normalize_timeout precedence corrected (.total > .read > .connect). **FIX** N20: batch_completion_models_all_responses return type List[Optional[CompletionResponse]]. **FIX** N22: Router.completion() imports time inside try block. |
 | 1.57    | 2026-04-30 | **FIX** H5: QuotaRouterError base class aligned with RFC-0917 — added `status` (int=0) and `details` (dict={}) fields, canonical 5-param `__init__`. **FIX** H6: All exception subclasses now have proper `__init__` overrides that accept and assign extra fields (retry_after, param, upstream_code, max_tokens, received_tokens, etc.). **FIX** D3: _record_spend TOCTOU race — pricing moved inside single lock acquisition; current_spend read inside lock (not stale captured value). **FIX** D4: Ollama streaming — corrected `ollama.async_stream` → `ollama.AsyncClient().chat()` (proper async SDK pattern); removed sync for-loop inside async def. **FIX** M2: resolve_provider empty string check now single early-return guard. |
 | 1.55    | 2026-04-30 | **DOCS** RFC-0920 no changes needed — confirms HTTP proxy constraint box (lines 77-95) and Mode Gate ≠ Interface invariant (lines 131-148) already correctly state both interfaces available in all modes. All 8 Round 38 findings formally rebutted as stale-cached review of pre-v1.54 version. |

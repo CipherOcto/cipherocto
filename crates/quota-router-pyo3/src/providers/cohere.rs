@@ -69,9 +69,9 @@ impl COHEREProvider {
             let kwargs = PyDict::new(py);
             kwargs.set_item("api_key", key).unwrap();
 
-            let client = cohere_class
-                .call((), Some(kwargs))
-                .map_err(|e| ProviderError::new(format!("Failed to create client: {}", e), "cohere"))?;
+            let client = cohere_class.call((), Some(kwargs)).map_err(|e| {
+                ProviderError::new(format!("Failed to create client: {}", e), "cohere")
+            })?;
 
             let client_py: Py<PyAny> = client.into();
             *client_guard = Some(client_py.clone());
@@ -170,7 +170,8 @@ impl LLMProvider for COHEREProvider {
             let kwargs = PyDict::new(py);
             kwargs.set_item("texts", input).unwrap();
 
-            embed.call((), Some(kwargs))
+            embed
+                .call((), Some(kwargs))
                 .map_err(|e| ProviderError::new(format!("SDK call failed: {}", e), "cohere"))
                 .map(|obj| obj.into())
         })?;
@@ -187,7 +188,10 @@ impl LLMProvider for COHEREProvider {
     }
 }
 
-fn convert_py_cohere_response(py_obj: &PyAny, model: &str) -> Result<ChatCompletion, ProviderError> {
+fn convert_py_cohere_response(
+    py_obj: &PyAny,
+    model: &str,
+) -> Result<ChatCompletion, ProviderError> {
     let id: String = py_obj
         .get_item("id")
         .map_err(|e| ProviderError::new(format!("Failed to get id: {}", e), "cohere"))?
@@ -217,9 +221,18 @@ fn convert_py_cohere_response(py_obj: &PyAny, model: &str) -> Result<ChatComplet
     let usage_obj = py_obj.get_item("usage");
     let (prompt_tokens, completion_tokens, total_tokens) = match usage_obj {
         Ok(u) => (
-            u.get_item("prompt_tokens").ok().and_then(|v| v.extract::<u32>().ok()).unwrap_or(0),
-            u.get_item("completion_tokens").ok().and_then(|v| v.extract::<u32>().ok()).unwrap_or(0),
-            u.get_item("total_tokens").ok().and_then(|v| v.extract::<u32>().ok()).unwrap_or(0),
+            u.get_item("prompt_tokens")
+                .ok()
+                .and_then(|v| v.extract::<u32>().ok())
+                .unwrap_or(0),
+            u.get_item("completion_tokens")
+                .ok()
+                .and_then(|v| v.extract::<u32>().ok())
+                .unwrap_or(0),
+            u.get_item("total_tokens")
+                .ok()
+                .and_then(|v| v.extract::<u32>().ok())
+                .unwrap_or(0),
         ),
         Err(_) => (0, 0, 0),
     };
@@ -237,7 +250,9 @@ fn convert_py_cohere_response(py_obj: &PyAny, model: &str) -> Result<ChatComplet
     })
 }
 
-fn convert_py_cohere_embedding_response(py_obj: &PyAny) -> Result<EmbeddingsResponse, ProviderError> {
+fn convert_py_cohere_embedding_response(
+    py_obj: &PyAny,
+) -> Result<EmbeddingsResponse, ProviderError> {
     let embeddings: Vec<Embedding> = py_obj
         .get_item("embeddings")
         .map_err(|e| ProviderError::new(format!("Failed to get embeddings: {}", e), "cohere"))?

@@ -81,9 +81,9 @@ impl OpenAIProvider {
             kwargs.set_item("api_key", key).unwrap();
             kwargs.set_item("base_url", base).unwrap();
 
-            let client = openai_class
-                .call((), Some(kwargs))
-                .map_err(|e| ProviderError::new(format!("Failed to create client: {}", e), "openai"))?;
+            let client = openai_class.call((), Some(kwargs)).map_err(|e| {
+                ProviderError::new(format!("Failed to create client: {}", e), "openai")
+            })?;
 
             let client_py: Py<PyAny> = client.into();
             *client_guard = Some(client_py.clone());
@@ -149,12 +149,12 @@ impl LLMProvider for OpenAIProvider {
             let chat = client_obj
                 .getattr("chat")
                 .map_err(|e| ProviderError::new(format!("Failed to get chat: {}", e), "openai"))?;
-            let completions = chat
-                .getattr("completions")
-                .map_err(|e| ProviderError::new(format!("Failed to get completions: {}", e), "openai"))?;
-            let create = completions
-                .getattr("create")
-                .map_err(|e| ProviderError::new(format!("Failed to get create: {}", e), "openai"))?;
+            let completions = chat.getattr("completions").map_err(|e| {
+                ProviderError::new(format!("Failed to get completions: {}", e), "openai")
+            })?;
+            let create = completions.getattr("create").map_err(|e| {
+                ProviderError::new(format!("Failed to get create: {}", e), "openai")
+            })?;
 
             // Call with keyword args
             let kwargs = PyDict::new(py);
@@ -210,7 +210,10 @@ impl LLMProvider for OpenAIProvider {
 }
 
 /// Convert Python ChatCompletion object to Rust ChatCompletion
-fn convert_py_chat_completion(py_obj: &PyAny, _model: &str) -> Result<ChatCompletion, ProviderError> {
+fn convert_py_chat_completion(
+    py_obj: &PyAny,
+    _model: &str,
+) -> Result<ChatCompletion, ProviderError> {
     // The Python SDK returns an object with these attributes:
     // id, model, choices (list), usage (object with prompt_tokens, completion_tokens, total_tokens)
 
@@ -236,27 +239,37 @@ fn convert_py_chat_completion(py_obj: &PyAny, _model: &str) -> Result<ChatComple
             let choice_obj = list.get_item(i).unwrap();
             let index = i as u32;
 
-            let message_obj = choice_obj
-                .get_item("message")
-                .map_err(|e| ProviderError::new(format!("Failed to get message: {}", e), "openai"))?;
+            let message_obj = choice_obj.get_item("message").map_err(|e| {
+                ProviderError::new(format!("Failed to get message: {}", e), "openai")
+            })?;
             let role: String = message_obj
                 .get_item("role")
                 .map_err(|e| ProviderError::new(format!("Failed to get role: {}", e), "openai"))?
                 .extract()
-                .map_err(|e| ProviderError::new(format!("Failed to extract role: {}", e), "openai"))?;
+                .map_err(|e| {
+                    ProviderError::new(format!("Failed to extract role: {}", e), "openai")
+                })?;
             let content: String = message_obj
                 .get_item("content")
                 .map_err(|e| ProviderError::new(format!("Failed to get content: {}", e), "openai"))?
                 .extract()
-                .map_err(|e| ProviderError::new(format!("Failed to extract content: {}", e), "openai"))?;
+                .map_err(|e| {
+                    ProviderError::new(format!("Failed to extract content: {}", e), "openai")
+                })?;
 
             let finish_reason: String = choice_obj
                 .get_item("finish_reason")
-                .map_err(|e| ProviderError::new(format!("Failed to get finish_reason: {}", e), "openai"))?
+                .map_err(|e| {
+                    ProviderError::new(format!("Failed to get finish_reason: {}", e), "openai")
+                })?
                 .extract()
                 .unwrap_or_else(|_| "stop".to_string());
 
-            result.push(Choice::new(index, Message::new(role, content), finish_reason));
+            result.push(Choice::new(
+                index,
+                Message::new(role, content),
+                finish_reason,
+            ));
         }
         result
     } else {
@@ -273,7 +286,9 @@ fn convert_py_chat_completion(py_obj: &PyAny, _model: &str) -> Result<ChatComple
         .unwrap_or(0);
     let completion_tokens: u32 = usage_obj
         .get_item("completion_tokens")
-        .map_err(|e| ProviderError::new(format!("Failed to get completion_tokens: {}", e), "openai"))?
+        .map_err(|e| {
+            ProviderError::new(format!("Failed to get completion_tokens: {}", e), "openai")
+        })?
         .extract()
         .unwrap_or(0);
     let total_tokens: u32 = usage_obj

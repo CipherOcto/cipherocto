@@ -2,11 +2,24 @@
 
 ## Status
 
-COMPLETED (2026-04-27)
+COMPLETED (2026-05-10)
 
 ## RFC
 
-RFC-0917: Dual-Mode Query Router (Accepted v2.24)
+RFC-0917: Dual-Mode Query Router (Accepted v2.50)
+
+## RFC-0917 Role: Heavy Lifting (Rust Core)
+
+**RFC-0917 is the definitive source for ALL heavy lifting:**
+- Routing strategies (8 strategies)
+- Provider dispatch logic
+- State management (ProviderWithState, RouterState)
+- Request/response processing
+- Budget and rate limiting
+- Cache management
+- `native_http` module (reqwest providers for liteLLM-mode)
+
+**RFC-0920 is ONLY for API surface and type marshaling (binding layer).**
 
 ## Dependencies
 
@@ -38,9 +51,11 @@ Align RFC-0917 implementation with current spec changes:
 ```rust
 const LATENCY_WINDOW_SIZE: usize = 100;
 struct LatencyTracker {
-    samples: HashMap<String, Vec<u64>>,  // microseconds, integer
+    samples: HashMap<String, VecDeque<u64>>,  // microseconds, integer, O(1) eviction
 }
 ```
+
+**Key implementation detail:** Uses `VecDeque` for O(1) front eviction instead of `Vec.remove(0)` which is O(n).
 
 ## Completion Notes
 

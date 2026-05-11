@@ -76,9 +76,9 @@ impl MistralProvider {
                 kwargs.set_item("base_url", base.as_str()).unwrap();
             }
 
-            let client = mistral_class
-                .call((), Some(kwargs))
-                .map_err(|e| ProviderError::new(format!("Failed to create client: {}", e), "mistral"))?;
+            let client = mistral_class.call((), Some(kwargs)).map_err(|e| {
+                ProviderError::new(format!("Failed to create client: {}", e), "mistral")
+            })?;
 
             let client_py: Py<PyAny> = client.into();
             *client_guard = Some(client_py.clone());
@@ -143,9 +143,9 @@ impl LLMProvider for MistralProvider {
             let chat = client_obj
                 .getattr("chat")
                 .map_err(|e| ProviderError::new(format!("Failed to get chat: {}", e), "mistral"))?;
-            let complete = chat
-                .getattr("complete")
-                .map_err(|e| ProviderError::new(format!("Failed to get complete: {}", e), "mistral"))?;
+            let complete = chat.getattr("complete").map_err(|e| {
+                ProviderError::new(format!("Failed to get complete: {}", e), "mistral")
+            })?;
 
             // Call with keyword args
             let kwargs = PyDict::new(py);
@@ -199,7 +199,10 @@ impl LLMProvider for MistralProvider {
 }
 
 /// Convert Mistral response to Rust ChatCompletion
-fn convert_py_mistral_response(py_obj: &PyAny, model: &str) -> Result<ChatCompletion, ProviderError> {
+fn convert_py_mistral_response(
+    py_obj: &PyAny,
+    model: &str,
+) -> Result<ChatCompletion, ProviderError> {
     // Mistral returns: { id, model, choices: [{message: {role, content}, finish_reason, index}], usage }
     // Similar to OpenAI format
 
@@ -225,9 +228,9 @@ fn convert_py_mistral_response(py_obj: &PyAny, model: &str) -> Result<ChatComple
             let choice_obj = list.get_item(i).unwrap();
             let index = i as u32;
 
-            let message_obj = choice_obj
-                .get_item("message")
-                .map_err(|e| ProviderError::new(format!("Failed to get message: {}", e), "mistral"))?;
+            let message_obj = choice_obj.get_item("message").map_err(|e| {
+                ProviderError::new(format!("Failed to get message: {}", e), "mistral")
+            })?;
             let role: String = message_obj
                 .get_item("role")
                 .map_err(|e| ProviderError::new(format!("Failed to get role: {}", e), "mistral"))?
@@ -235,17 +238,25 @@ fn convert_py_mistral_response(py_obj: &PyAny, model: &str) -> Result<ChatComple
                 .unwrap_or_else(|_| "assistant".to_string());
             let content: String = message_obj
                 .get_item("content")
-                .map_err(|e| ProviderError::new(format!("Failed to get content: {}", e), "mistral"))?
+                .map_err(|e| {
+                    ProviderError::new(format!("Failed to get content: {}", e), "mistral")
+                })?
                 .extract()
                 .unwrap_or_default();
 
             let finish_reason: String = choice_obj
                 .get_item("finish_reason")
-                .map_err(|e| ProviderError::new(format!("Failed to get finish_reason: {}", e), "mistral"))?
+                .map_err(|e| {
+                    ProviderError::new(format!("Failed to get finish_reason: {}", e), "mistral")
+                })?
                 .extract()
                 .unwrap_or_else(|_| "stop".to_string());
 
-            result.push(Choice::new(index, Message::new(role, content), finish_reason));
+            result.push(Choice::new(
+                index,
+                Message::new(role, content),
+                finish_reason,
+            ));
         }
         result
     } else {
@@ -263,7 +274,9 @@ fn convert_py_mistral_response(py_obj: &PyAny, model: &str) -> Result<ChatComple
         .unwrap_or(0);
     let completion_tokens: u32 = usage_obj
         .get_item("completion_tokens")
-        .map_err(|e| ProviderError::new(format!("Failed to get completion_tokens: {}", e), "mistral"))?
+        .map_err(|e| {
+            ProviderError::new(format!("Failed to get completion_tokens: {}", e), "mistral")
+        })?
         .extract()
         .unwrap_or(0);
     let total_tokens: u32 = usage_obj

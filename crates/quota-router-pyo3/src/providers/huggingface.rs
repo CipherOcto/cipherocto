@@ -56,11 +56,17 @@ impl HUGGINGFACEProvider {
 
         Python::with_gil(|py| {
             let hf = PyModule::import(py, "huggingface_hub").map_err(|e| {
-                ProviderError::new(format!("Failed to import huggingface_hub: {}", e), "huggingface")
+                ProviderError::new(
+                    format!("Failed to import huggingface_hub: {}", e),
+                    "huggingface",
+                )
             })?;
 
             let inference_class = hf.getattr("InferenceClient").map_err(|e| {
-                ProviderError::new(format!("Failed to get InferenceClient: {}", e), "huggingface")
+                ProviderError::new(
+                    format!("Failed to get InferenceClient: {}", e),
+                    "huggingface",
+                )
             })?;
 
             let key = api_key
@@ -73,9 +79,9 @@ impl HUGGINGFACEProvider {
                 kwargs.set_item("base_url", base.as_str()).unwrap();
             }
 
-            let client = inference_class
-                .call((), Some(kwargs))
-                .map_err(|e| ProviderError::new(format!("Failed to create client: {}", e), "huggingface"))?;
+            let client = inference_class.call((), Some(kwargs)).map_err(|e| {
+                ProviderError::new(format!("Failed to create client: {}", e), "huggingface")
+            })?;
 
             let client_py: Py<PyAny> = client.into();
             *client_guard = Some(client_py.clone());
@@ -126,9 +132,9 @@ impl LLMProvider for HUGGINGFACEProvider {
         let py_result: Py<PyAny> = Python::with_gil(|py| {
             let client_obj = client.as_ref(py);
 
-            let chat = client_obj
-                .getattr("chat")
-                .map_err(|e| ProviderError::new(format!("Failed to get chat: {}", e), "huggingface"))?;
+            let chat = client_obj.getattr("chat").map_err(|e| {
+                ProviderError::new(format!("Failed to get chat: {}", e), "huggingface")
+            })?;
 
             // Build messages list
             let msg_dict = PyDict::new(py);
@@ -167,15 +173,16 @@ impl LLMProvider for HUGGINGFACEProvider {
         let py_result: Py<PyAny> = Python::with_gil(|py| {
             let client_obj = client.as_ref(py);
 
-            let embed = client_obj
-                .getattr("embed")
-                .map_err(|e| ProviderError::new(format!("Failed to get embed: {}", e), "huggingface"))?;
+            let embed = client_obj.getattr("embed").map_err(|e| {
+                ProviderError::new(format!("Failed to get embed: {}", e), "huggingface")
+            })?;
 
             let kwargs = PyDict::new(py);
             kwargs.set_item("inputs", input).unwrap();
             kwargs.set_item("model", model).unwrap();
 
-            embed.call((), Some(kwargs))
+            embed
+                .call((), Some(kwargs))
                 .map_err(|e| ProviderError::new(format!("SDK call failed: {}", e), "huggingface"))
                 .map(|obj| obj.into())
         })?;
@@ -197,7 +204,9 @@ fn convert_py_hf_response(py_obj: &PyAny, model: &str) -> Result<ChatCompletion,
         .get_item("choices")
         .map_err(|e| ProviderError::new(format!("Failed to get choices: {}", e), "huggingface"))?
         .get_item(0)
-        .map_err(|e| ProviderError::new(format!("Failed to get first choice: {}", e), "huggingface"))?
+        .map_err(|e| {
+            ProviderError::new(format!("Failed to get first choice: {}", e), "huggingface")
+        })?
         .get_item("message")
         .map_err(|e| ProviderError::new(format!("Failed to get message: {}", e), "huggingface"))?
         .get_item("content")
@@ -221,19 +230,23 @@ fn convert_py_hf_response(py_obj: &PyAny, model: &str) -> Result<ChatCompletion,
 }
 
 fn convert_py_hf_embedding_response(py_obj: &PyAny) -> Result<EmbeddingsResponse, ProviderError> {
-    let embeddings: Vec<crate::types::Embedding> = if let Ok(list) = py_obj.downcast::<pyo3::types::PyList>() {
-        list.into_iter()
-            .enumerate()
-            .map(|(i, item)| {
-                let emb = item.extract::<Vec<f32>>().unwrap_or_default();
-                crate::types::Embedding::new(i as u32, emb)
-            })
-            .collect()
-    } else {
-        Vec::new()
-    };
+    let embeddings: Vec<crate::types::Embedding> =
+        if let Ok(list) = py_obj.downcast::<pyo3::types::PyList>() {
+            list.into_iter()
+                .enumerate()
+                .map(|(i, item)| {
+                    let emb = item.extract::<Vec<f32>>().unwrap_or_default();
+                    crate::types::Embedding::new(i as u32, emb)
+                })
+                .collect()
+        } else {
+            Vec::new()
+        };
 
-    Ok(crate::types::EmbeddingsResponse::new("embedding-model", embeddings))
+    Ok(crate::types::EmbeddingsResponse::new(
+        "embedding-model",
+        embeddings,
+    ))
 }
 
 impl Default for HUGGINGFACEProvider {

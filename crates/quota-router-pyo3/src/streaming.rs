@@ -91,7 +91,9 @@ pub fn parse_anthropic_sse(raw: &[u8]) -> Vec<SSEEvent> {
         let trimmed = line.trim();
         if trimmed.is_empty() {
             // Empty line marks end of event
-            if let (Some(event_type), Some(data_str)) = (current_event_type.take(), current_data.take()) {
+            if let (Some(event_type), Some(data_str)) =
+                (current_event_type.take(), current_data.take())
+            {
                 if data_str == "{}" {
                     events.push(SSEEvent {
                         event_type,
@@ -210,7 +212,10 @@ pub fn chunks_from_openai_events(events: Vec<SSEEvent>, model: String) -> Vec<Ch
 /// # Returns
 /// Vector of ChatCompletionChunk with Anthropic delta extracted
 #[allow(dead_code)]
-pub fn chunks_from_anthropic_events(events: Vec<SSEEvent>, model: String) -> Vec<ChatCompletionChunk> {
+pub fn chunks_from_anthropic_events(
+    events: Vec<SSEEvent>,
+    model: String,
+) -> Vec<ChatCompletionChunk> {
     let id = format!("chatcmpl-{}", uuid::Uuid::new_v4());
     let mut chunks = Vec::new();
     let mut index = 0u32;

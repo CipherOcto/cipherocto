@@ -76,7 +76,7 @@ pub fn validate_provider(
     provider: &str,
 ) -> Result<&'static ProviderInfo, UnsupportedProviderError> {
     Providers::get(provider).ok_or_else(|| {
-        UnsupportedProviderError::new(format!("Unknown provider: {}", provider), provider)
+        UnsupportedProviderError::new(format!("Unknown provider: {}", provider), provider, vec![])
     })
 }
 

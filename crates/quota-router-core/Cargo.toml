@@ -18,7 +18,7 @@ http-body = { version = "1.0", optional = true }
 http-body-util = { version = "0.1", optional = true }
 rustls = { version = "0.23", optional = true }
 rustls-pemfile = { version = "2.1", optional = true }
-reqwest = { version = "0.13", features = ["json"], optional = true }
+reqwest = { version = "0.13", features = ["json", "stream"], optional = true }
 
 # Config
 directories.workspace = true
@@ -58,6 +58,10 @@ hex = "0.4"
 # For percent decoding (path normalization security)
 percent-encoding = "2.1"
 
+# For async streaming (futures::StreamExt)
+futures-core = "0.3"
+futures = "0.3"
+
 # For TokenBucket rate limiter (DashMap for concurrent access)
 dashmap = "5.0"
 
@@ -72,6 +76,9 @@ unicode-normalization = "0.1.25"
 
 # HTTP framework (for litellm-mode)
 axum = { version = "0.7", optional = true }
+
+# PyO3 (for any-llm-mode py_bridge module — calls official Python SDKs)
+pyo3 = { version = "0.21", optional = true }
 
 [lib]
 name = "quota_router_core"
@@ -94,8 +101,8 @@ path = "src/lib.rs"
 # See RFC-0917 lines 175-176: "HTTP Proxy Server | (always)" and "Python SDK Interface | (always)"
 default = ["litellm-mode"]
 litellm-mode = ["tokio", "hyper", "hyper-util", "http", "http-body", "http-body-util", "rustls", "rustls-pemfile", "reqwest", "axum"]
-any-llm-mode = []
-full = ["tokio", "hyper", "hyper-util", "http", "http-body", "http-body-util", "rustls", "rustls-pemfile", "reqwest", "axum"]
+any-llm-mode = ["tokio", "hyper", "hyper-util", "http", "http-body", "http-body-util", "rustls", "rustls-pemfile", "reqwest", "axum", "pyo3"]
+full = ["tokio", "hyper", "hyper-util", "http", "http-body", "http-body-util", "rustls", "rustls-pemfile", "reqwest", "axum", "pyo3"]
 
 [[bench]]
 name = "key_hash_storage_bench"

@@ -188,6 +188,29 @@ pub fn init_database(db: &stoolap::Database) -> Result<(), KeyError> {
     )
     .map_err(|e| KeyError::Storage(e.to_string()))?;
 
+    // Provider API keys table — one provider can have multiple API keys
+    // Used by python_sdk_entry set_api_key/get_budget_status/get_metrics
+    db.execute(
+        "CREATE TABLE IF NOT EXISTS provider_api_keys (
+            id TEXT NOT NULL,
+            provider TEXT NOT NULL,
+            api_key_hash BYTEA(32) NOT NULL,
+            api_key_prefix TEXT NOT NULL,
+            label TEXT,
+            created_at INTEGER NOT NULL,
+            is_active INTEGER DEFAULT 1,
+            UNIQUE(id)
+        )",
+        [],
+    )
+    .map_err(|e| KeyError::Storage(e.to_string()))?;
+
+    db.execute(
+        "CREATE INDEX IF NOT EXISTS idx_provider_keys_provider ON provider_api_keys(provider)",
+        [],
+    )
+    .map_err(|e| KeyError::Storage(e.to_string()))?;
+
     Ok(())
 }
 

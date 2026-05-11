@@ -58,6 +58,30 @@ pub trait KeyStorage: Send + Sync {
     // OCTO-W balance operations (RFC-0904 F3)
     fn get_octo_w_balance(&self, key_id: &str) -> Result<u64, KeyError>;
     fn deduct_octo_w(&self, key_id: &str, cost_amount: u64) -> Result<u64, KeyError>;
+
+    // Provider API key operations (for python_sdk_entry set_api_key/get_budget_status/get_metrics)
+    fn create_provider_key(
+        &self,
+        provider: &str,
+        api_key: &str,
+        label: Option<&str>,
+    ) -> Result<String, KeyError>;
+    fn list_provider_keys(&self, provider: Option<&str>) -> Result<Vec<ProviderKeyInfo>, KeyError>;
+    fn delete_provider_key(&self, id: &str) -> Result<(), KeyError>;
+    fn get_provider_key_by_hash(
+        &self,
+        api_key_hash: &[u8],
+    ) -> Result<Option<ProviderKeyInfo>, KeyError>;
+}
+
+/// Provider API key info for python_sdk_entry
+pub struct ProviderKeyInfo {
+    pub id: String,
+    pub provider: String,
+    pub api_key_prefix: String,
+    pub label: Option<String>,
+    pub created_at: i64,
+    pub is_active: bool,
 }
 
 pub struct StoolapKeyStorage {
@@ -993,7 +1017,144 @@ impl KeyStorage for StoolapKeyStorage {
         // Return new balance
         self.get_octo_w_balance(key_id)
     }
+
+    fn create_provider_key(
+        &self,
+        provider: &str,
+        api_key: &str,
+        label: Option<&str>,
+    ) -> Result<String, KeyError> {
+        use sha2::{Digest, Sha256};
+
+        // Generate unique ID
+        let id = uuid::Uuid::new_v4().to_string();
+
+        // Hash the API key for storage (SHA256 → 32 bytes)
+        let api_key_hash: [u8; 32] = Sha256::digest(api_key.as_bytes()).into();
+
+        // Store prefix (first 8 chars for display)
+        let prefix = if api_key.len() >= 8 {
+            &api_key[..8]
+        } else {
+            api_key
+        };
+
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_secs() as i64;
+
+        let params: Vec<stoolap::Value> = vec![
+            id.clone().into(),
+            provider.into(),
+            stoolap::core::Value::blob(api_key_hash.to_vec()),
+            prefix.into(),
+            label.map(|l| l.to_string()).into(),
+            now.into(),
+            1_i32.into(), // is_active = 1
+        ];
+
+        self.db
+            .execute(
+                "INSERT INTO provider_api_keys (id, provider, api_key_hash, api_key_prefix, label, created_at, is_active) VALUES ($1, $2, $3, $4, $5, $6, $7)",
+                params,
+            )
+            .map_err(|e| KeyError::Storage(e.to_string()))?;
+
+        Ok(id)
+    }
+
+    fn list_provider_keys(&self, provider: Option<&str>) -> Result<Vec<ProviderKeyInfo>, KeyError> {
+        let (query, params): (String, Vec<stoolap::Value>) = match provider {
+            Some(p) => (
+                "SELECT id, provider, api_key_prefix, label, created_at, is_active FROM provider_api_keys WHERE is_active = 1 AND provider = $1".to_string(),
+                vec![p.into()],
+            ),
+            None => (
+                "SELECT id, provider, api_key_prefix, label, created_at, is_active FROM provider_api_keys WHERE is_active = 1".to_string(),
+                vec![],
+            ),
+        };
+
+        let rows = self
+            .db
+            .query(&query, params)
+            .map_err(|e| KeyError::Storage(e.to_string()))?;
+
+        let mut keys = Vec::new();
+        for row in rows {
+            let row = row.map_err(|e| KeyError::Storage(e.to_string()))?;
+            let is_active: i32 = row.get(5).map_err(|e| KeyError::Storage(e.to_string()))?;
+            keys.push(ProviderKeyInfo {
+                id: row.get(0).map_err(|e| KeyError::Storage(e.to_string()))?,
+                provider: row.get(1).map_err(|e| KeyError::Storage(e.to_string()))?,
+                api_key_prefix: row.get(2).map_err(|e| KeyError::Storage(e.to_string()))?,
+                label: row.get(3).map_err(|e| KeyError::Storage(e.to_string()))?,
+                created_at: row.get(4).map_err(|e| KeyError::Storage(e.to_string()))?,
+                is_active: is_active != 0,
+            });
+        }
+
+        Ok(keys)
+    }
+
+    fn delete_provider_key(&self, id: &str) -> Result<(), KeyError> {
+        let rows_affected = self
+            .db
+            .execute(
+                "UPDATE provider_api_keys SET is_active = 0 WHERE id = $1",
+                vec![id.into()],
+            )
+            .map_err(|e| KeyError::Storage(e.to_string()))?;
+
+        if rows_affected == 0 {
+            return Err(KeyError::NotFound);
+        }
+        Ok(())
+    }
+
+    fn get_provider_key_by_hash(
+        &self,
+        api_key_hash: &[u8],
+    ) -> Result<Option<ProviderKeyInfo>, KeyError> {
+        let hash_blob = stoolap::core::Value::blob(api_key_hash.to_vec());
+        let mut rows = self
+            .db
+            .query(
+                "SELECT id, provider, api_key_prefix, label, created_at, is_active FROM provider_api_keys WHERE api_key_hash = $1 AND is_active = 1 LIMIT 1",
+                vec![hash_blob],
+            )
+            .map_err(|e| KeyError::Storage(e.to_string()))?;
+
+        match rows.next() {
+            Some(row) => {
+                let row = row.map_err(|e| KeyError::Storage(e.to_string()))?;
+                let is_active: i32 = row.get(5).map_err(|e| KeyError::Storage(e.to_string()))?;
+                Ok(Some(ProviderKeyInfo {
+                    id: row.get(0).map_err(|e| KeyError::Storage(e.to_string()))?,
+                    provider: row.get(1).map_err(|e| KeyError::Storage(e.to_string()))?,
+                    api_key_prefix: row.get(2).map_err(|e| KeyError::Storage(e.to_string()))?,
+                    label: row.get(3).map_err(|e| KeyError::Storage(e.to_string()))?,
+                    created_at: row.get(4).map_err(|e| KeyError::Storage(e.to_string()))?,
+                    is_active: is_active != 0,
+                }))
+            }
+            None => Ok(None),
+        }
+    }
 }
+
+/// Global storage singleton for python_sdk_entry
+///
+/// Initialized lazily with database path from QUOTA_ROUTER_DB env var,
+/// defaulting to `.quota_router.db` if not set.
+pub static STORAGE: std::sync::LazyLock<StoolapKeyStorage> = std::sync::LazyLock::new(|| {
+    let db_path =
+        std::env::var("QUOTA_ROUTER_DB").unwrap_or_else(|_| ".quota_router.db".to_string());
+    let db = stoolap::Database::open(&db_path).expect("Failed to open database");
+    crate::schema::init_database(&db).expect("Failed to initialize schema");
+    StoolapKeyStorage::new(db)
+});
 
 #[cfg(test)]
 mod tests {

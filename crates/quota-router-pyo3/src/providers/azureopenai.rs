@@ -1,10 +1,11 @@
 // azureopenai provider implementation
-// Calls azureopenai SDK via PyO3
+// Calls Azure OpenAI API via PyO3
 
 use crate::exceptions::ProviderError;
 use crate::providers::base::{LLMProvider, ProviderFeatures, ProviderMetadata};
 use crate::types::{ChatCompletion, Choice, EmbeddingsResponse, Message};
 use pyo3::prelude::*;
+use pyo3::types::PyDict;
 use std::sync::Mutex;
 
 /// azureopenai provider implementation
@@ -12,6 +13,7 @@ pub struct AZUREOPENAIProvider {
     metadata: ProviderMetadata,
     api_key: Mutex<Option<String>>,
     api_base: Mutex<Option<String>>,
+    client: Mutex<Option<Py<PyAny>>>,
 }
 
 impl AZUREOPENAIProvider {
@@ -26,7 +28,7 @@ impl AZUREOPENAIProvider {
                 features: ProviderFeatures {
                     supports_completion: true,
                     supports_completion_streaming: true,
-                    supports_embedding: false,
+                    supports_embedding: true,
                     supports_responses: false,
                     supports_list_models: true,
                     supports_batch: false,
@@ -35,7 +37,51 @@ impl AZUREOPENAIProvider {
             },
             api_key: Mutex::new(None),
             api_base: Mutex::new(None),
+            client: Mutex::new(None),
         }
+    }
+
+    fn ensure_client(&self) -> Result<Py<PyAny>, ProviderError> {
+        let mut client_guard = self
+            .client
+            .lock()
+            .map_err(|e| ProviderError::new(format!("Lock error: {}", e), "azureopenai"))?;
+
+        if client_guard.is_some() {
+            return Ok(client_guard.clone().unwrap());
+        }
+
+        let api_key = self.api_key.lock().unwrap();
+        let api_base = self.api_base.lock().unwrap();
+
+        Python::with_gil(|py| {
+            let azure_openai = PyModule::import(py, "openai").map_err(|e| {
+                ProviderError::new(format!("Failed to import openai: {}", e), "azureopenai")
+            })?;
+
+            let azure_openai_class = azure_openai.getattr("AzureOpenAI").map_err(|e| {
+                ProviderError::new(format!("Failed to get AzureOpenAI: {}", e), "azureopenai")
+            })?;
+
+            let kwargs = PyDict::new(py);
+            if let Some(key) = api_key.as_ref() {
+                kwargs.set_item("api_key", key.as_str()).unwrap();
+            }
+
+            if let Some(base) = api_base.as_ref() {
+                kwargs.set_item("azure_endpoint", base.as_str()).unwrap();
+            }
+
+            kwargs.set_item("api_version", "2024-02-01").unwrap();
+
+            let client = azure_openai_class.call((), Some(kwargs)).map_err(|e| {
+                ProviderError::new(format!("Failed to create client: {}", e), "azureopenai")
+            })?;
+
+            let client_py: Py<PyAny> = client.into();
+            *client_guard = Some(client_py.clone());
+            Ok(client_py)
+        })
     }
 }
 
@@ -51,9 +97,9 @@ impl LLMProvider for AZUREOPENAIProvider {
     }
 
     fn check_packages(&self) -> Result<(), String> {
-        Python::with_gil(|py| match PyModule::import(py, "azureopenai") {
+        Python::with_gil(|py| match PyModule::import(py, "openai") {
             Ok(_) => Ok(()),
-            Err(e) => Err(format!("azureopenai package not installed: {}", e)),
+            Err(e) => Err(format!("openai package not installed: {}", e)),
         })
     }
 
@@ -61,45 +107,92 @@ impl LLMProvider for AZUREOPENAIProvider {
         &self,
         model: &str,
         messages: &[Message],
-        _stream: bool,
+        stream: bool,
     ) -> Result<ChatCompletion, ProviderError> {
-        let choices: Vec<Choice> = messages
-            .iter()
-            .enumerate()
-            .map(|(i, msg)| {
-                Choice::new(
-                    i as u32,
-                    Message::new("assistant", format!("azureopenai: {}", msg.content)),
-                    "stop",
-                )
-            })
-            .collect();
+        if stream {
+            return Err(ProviderError::new(
+                "Streaming not supported in sync completion. Use acompletion() instead.",
+                "azureopenai",
+            ));
+        }
 
-        Ok(ChatCompletion::new(
-            format!("chatcmpl-{}", uuid::Uuid::new_v4()),
-            model,
-            choices,
-        ))
+        let client = self.ensure_client()?;
+
+        let py_messages: Vec<Py<PyDict>> = Python::with_gil(|py| {
+            messages
+                .iter()
+                .map(|msg| {
+                    let dict = PyDict::new(py);
+                    dict.set_item("role", &msg.role).unwrap();
+                    dict.set_item("content", &msg.content).unwrap();
+                    dict.into()
+                })
+                .collect()
+        });
+
+        let py_result: Py<PyAny> = Python::with_gil(|py| {
+            let client_obj = client.as_ref(py);
+
+            let chat = client_obj.getattr("chat").map_err(|e| {
+                ProviderError::new(format!("Failed to get chat: {}", e), "azureopenai")
+            })?;
+            let completions = chat.getattr("completions").map_err(|e| {
+                ProviderError::new(format!("Failed to get completions: {}", e), "azureopenai")
+            })?;
+            let create = completions.getattr("create").map_err(|e| {
+                ProviderError::new(format!("Failed to get create: {}", e), "azureopenai")
+            })?;
+
+            let kwargs = PyDict::new(py);
+            kwargs.set_item("model", model).unwrap();
+            kwargs.set_item("messages", &py_messages).unwrap();
+
+            create
+                .call((), Some(kwargs))
+                .map_err(|e| ProviderError::new(format!("SDK call failed: {}", e), "azureopenai"))
+                .map(|obj| obj.into())
+        })?;
+
+        Python::with_gil(|py| convert_py_openai_response(py_result.as_ref(py), model))
     }
 
     async fn acompletion(
         &self,
         model: &str,
         messages: &[Message],
-        _stream: bool,
+        stream: bool,
     ) -> Result<ChatCompletion, ProviderError> {
-        self.completion(model, messages, false)
+        self.completion(model, messages, stream)
     }
 
     fn embedding(
         &self,
-        _input: &[String],
-        _model: &str,
+        input: &[String],
+        model: &str,
     ) -> Result<EmbeddingsResponse, ProviderError> {
-        Err(ProviderError::new(
-            "azureopenai does not support embeddings",
-            "azureopenai",
-        ))
+        let client = self.ensure_client()?;
+
+        let py_result: Py<PyAny> = Python::with_gil(|py| {
+            let client_obj = client.as_ref(py);
+
+            let embed = client_obj.getattr("embeddings").map_err(|e| {
+                ProviderError::new(format!("Failed to get embeddings: {}", e), "azureopenai")
+            })?;
+            let create = embed.getattr("create").map_err(|e| {
+                ProviderError::new(format!("Failed to get create: {}", e), "azureopenai")
+            })?;
+
+            let kwargs = PyDict::new(py);
+            kwargs.set_item("input", input).unwrap();
+            kwargs.set_item("model", model).unwrap();
+
+            create
+                .call((), Some(kwargs))
+                .map_err(|e| ProviderError::new(format!("SDK call failed: {}", e), "azureopenai"))
+                .map(|obj| obj.into())
+        })?;
+
+        Python::with_gil(|py| convert_py_embedding_response(py_result.as_ref(py), model))
     }
 
     async fn aembedding(
@@ -109,6 +202,137 @@ impl LLMProvider for AZUREOPENAIProvider {
     ) -> Result<EmbeddingsResponse, ProviderError> {
         self.embedding(input, model)
     }
+}
+
+fn convert_py_openai_response(
+    py_obj: &PyAny,
+    model: &str,
+) -> Result<ChatCompletion, ProviderError> {
+    let id: String = py_obj
+        .get_item("id")
+        .map_err(|e| ProviderError::new(format!("Failed to get id: {}", e), "azureopenai"))?
+        .extract()
+        .unwrap_or_else(|_| format!("chatcmpl-{}", uuid::Uuid::new_v4()));
+
+    let model_str: String = py_obj
+        .get_item("model")
+        .map_err(|e| ProviderError::new(format!("Failed to get model: {}", e), "azureopenai"))?
+        .extract()
+        .unwrap_or_else(|_| model.to_string());
+
+    let py_choices = py_obj
+        .get_item("choices")
+        .map_err(|e| ProviderError::new(format!("Failed to get choices: {}", e), "azureopenai"))?;
+
+    let choices: Vec<Choice> = if let Ok(list) = py_choices.downcast::<pyo3::types::PyList>() {
+        let mut result = Vec::new();
+        for i in 0..list.len() {
+            let choice_obj = list.get_item(i).unwrap();
+            let index = i as u32;
+
+            let message_obj = choice_obj.get_item("message").map_err(|e| {
+                ProviderError::new(format!("Failed to get message: {}", e), "azureopenai")
+            })?;
+            let role: String = message_obj
+                .get_item("role")
+                .map_err(|e| {
+                    ProviderError::new(format!("Failed to get role: {}", e), "azureopenai")
+                })?
+                .extract()
+                .unwrap_or_else(|_| "assistant".to_string());
+            let content: String = message_obj
+                .get_item("content")
+                .map_err(|e| {
+                    ProviderError::new(format!("Failed to get content: {}", e), "azureopenai")
+                })?
+                .extract()
+                .unwrap_or_default();
+
+            let finish_reason: String = choice_obj
+                .get_item("finish_reason")
+                .map_err(|e| {
+                    ProviderError::new(format!("Failed to get finish_reason: {}", e), "azureopenai")
+                })?
+                .extract()
+                .unwrap_or_else(|_| "stop".to_string());
+
+            result.push(Choice::new(
+                index,
+                Message::new(role, content),
+                finish_reason,
+            ));
+        }
+        result
+    } else {
+        return Err(ProviderError::new("choices is not a list", "azureopenai"));
+    };
+
+    let usage_obj = py_obj
+        .get_item("usage")
+        .map_err(|e| ProviderError::new(format!("Failed to get usage: {}", e), "azureopenai"))?;
+
+    let prompt_tokens: u32 = usage_obj
+        .get_item("prompt_tokens")
+        .map_err(|e| {
+            ProviderError::new(format!("Failed to get prompt_tokens: {}", e), "azureopenai")
+        })?
+        .extract()
+        .unwrap_or(0);
+    let completion_tokens: u32 = usage_obj
+        .get_item("completion_tokens")
+        .map_err(|e| {
+            ProviderError::new(
+                format!("Failed to get completion_tokens: {}", e),
+                "azureopenai",
+            )
+        })?
+        .extract()
+        .unwrap_or(0);
+    let total_tokens: u32 = usage_obj
+        .get_item("total_tokens")
+        .map_err(|e| {
+            ProviderError::new(format!("Failed to get total_tokens: {}", e), "azureopenai")
+        })?
+        .extract()
+        .unwrap_or(0);
+
+    Ok(ChatCompletion {
+        id,
+        object: "chat.completion".to_string(),
+        created: std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_secs(),
+        model: model_str,
+        choices,
+        usage: crate::types::Usage::new(prompt_tokens, completion_tokens, total_tokens),
+    })
+}
+
+fn convert_py_embedding_response(
+    py_obj: &PyAny,
+    model: &str,
+) -> Result<EmbeddingsResponse, ProviderError> {
+    let data = py_obj
+        .get_item("data")
+        .map_err(|e| ProviderError::new(format!("Failed to get data: {}", e), "azureopenai"))?
+        .downcast::<pyo3::types::PyList>()
+        .map_err(|_| ProviderError::new("data is not a list", "azureopenai"))?;
+
+    let mut embeddings = Vec::new();
+    for i in 0..data.len() {
+        let item = data.get_item(i).unwrap();
+        let embedding_vec = item
+            .get_item("embedding")
+            .map_err(|e| {
+                ProviderError::new(format!("Failed to get embedding: {}", e), "azureopenai")
+            })?
+            .extract::<Vec<f32>>()
+            .unwrap_or_default();
+        embeddings.push(crate::types::Embedding::new(i as u32, embedding_vec));
+    }
+
+    Ok(crate::types::EmbeddingsResponse::new(model, embeddings))
 }
 
 impl Default for AZUREOPENAIProvider {

@@ -64,7 +64,9 @@ impl SAGEMAKERProvider {
             })?;
 
             let kwargs = PyDict::new(py);
-            kwargs.set_item("service_name", "sagemaker-runtime").unwrap();
+            kwargs
+                .set_item("service_name", "sagemaker-runtime")
+                .unwrap();
 
             if let Some(key) = api_key.as_ref() {
                 kwargs.set_item("aws_access_key_id", key).unwrap();
@@ -74,8 +76,9 @@ impl SAGEMAKERProvider {
                 kwargs.set_item("region_name", region.as_str()).unwrap();
             }
 
-            let client = client_fn.call((), Some(kwargs))
-                .map_err(|e| ProviderError::new(format!("Failed to create client: {}", e), "sagemaker"))?;
+            let client = client_fn.call((), Some(kwargs)).map_err(|e| {
+                ProviderError::new(format!("Failed to create client: {}", e), "sagemaker")
+            })?;
 
             let client_py: Py<PyAny> = client.into();
             *client_guard = Some(client_py.clone());
@@ -127,9 +130,9 @@ impl LLMProvider for SAGEMAKERProvider {
         let py_result: Py<PyAny> = Python::with_gil(|py| {
             let client_obj = client.as_ref(py);
 
-            let invoke = client_obj
-                .getattr("invoke_endpoint")
-                .map_err(|e| ProviderError::new(format!("Failed to get invoke_endpoint: {}", e), "sagemaker"))?;
+            let invoke = client_obj.getattr("invoke_endpoint").map_err(|e| {
+                ProviderError::new(format!("Failed to get invoke_endpoint: {}", e), "sagemaker")
+            })?;
 
             let kwargs = PyDict::new(py);
             kwargs.set_item("EndpointName", model).unwrap();
@@ -142,7 +145,8 @@ impl LLMProvider for SAGEMAKERProvider {
             let body_str = format!("{{\"inputs\": \"{}\", \"parameters\": {{}}}}", prompt);
             kwargs.set_item("Body", body_str).unwrap();
 
-            invoke.call((), Some(kwargs))
+            invoke
+                .call((), Some(kwargs))
                 .map_err(|e| ProviderError::new(format!("SDK call failed: {}", e), "sagemaker"))
                 .map(|obj| obj.into())
         })?;
@@ -179,7 +183,10 @@ impl LLMProvider for SAGEMAKERProvider {
     }
 }
 
-fn convert_py_sagemaker_response(py_obj: &PyAny, model: &str) -> Result<ChatCompletion, ProviderError> {
+fn convert_py_sagemaker_response(
+    py_obj: &PyAny,
+    model: &str,
+) -> Result<ChatCompletion, ProviderError> {
     // SageMaker returns JSON body as string in 'Body' field
     let body_str: String = py_obj
         .get_item("Body")
@@ -189,7 +196,9 @@ fn convert_py_sagemaker_response(py_obj: &PyAny, model: &str) -> Result<ChatComp
 
     // Parse JSON response - format is typically {"outputs": ["text"]}
     let content = if body_str.contains("\"outputs\"") {
-        body_str.split("\"outputs\"").nth(1)
+        body_str
+            .split("\"outputs\"")
+            .nth(1)
             .and_then(|s| s.split('[').nth(1))
             .and_then(|s| s.split(']').next())
             .map(|s| s.trim().trim_matches('"').to_string())

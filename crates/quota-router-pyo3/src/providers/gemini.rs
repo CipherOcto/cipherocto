@@ -73,9 +73,9 @@ impl GeminiProvider {
             let kwargs = PyDict::new(py);
             kwargs.set_item("api_key", key).unwrap();
 
-            let client = client_class
-                .call((), Some(kwargs))
-                .map_err(|e| ProviderError::new(format!("Failed to create client: {}", e), "gemini"))?;
+            let client = client_class.call((), Some(kwargs)).map_err(|e| {
+                ProviderError::new(format!("Failed to create client: {}", e), "gemini")
+            })?;
 
             let client_py: Py<PyAny> = client.into();
             *client_guard = Some(client_py.clone());
@@ -134,12 +134,12 @@ impl LLMProvider for GeminiProvider {
             let client_obj = client.as_ref(py);
 
             // Navigate: client.models.generate_content(model=model, contents=[prompt])
-            let models = client_obj
-                .getattr("models")
-                .map_err(|e| ProviderError::new(format!("Failed to get models: {}", e), "gemini"))?;
-            let generate_content = models
-                .getattr("generate_content")
-                .map_err(|e| ProviderError::new(format!("Failed to get generate_content: {}", e), "gemini"))?;
+            let models = client_obj.getattr("models").map_err(|e| {
+                ProviderError::new(format!("Failed to get models: {}", e), "gemini")
+            })?;
+            let generate_content = models.getattr("generate_content").map_err(|e| {
+                ProviderError::new(format!("Failed to get generate_content: {}", e), "gemini")
+            })?;
 
             // Build contents list
             let contents = PyList::new(py, vec![PyDict::new(py)]);
@@ -196,7 +196,10 @@ impl LLMProvider for GeminiProvider {
 }
 
 /// Convert Gemini response to Rust ChatCompletion
-fn convert_py_gemini_response(py_obj: &PyAny, model: &str) -> Result<ChatCompletion, ProviderError> {
+fn convert_py_gemini_response(
+    py_obj: &PyAny,
+    model: &str,
+) -> Result<ChatCompletion, ProviderError> {
     // Gemini returns: { candidates: [{content: {parts: [{text}], role}, finish_reason}], usage_metadata: {...} }
 
     // Get candidates list
@@ -210,21 +213,29 @@ fn convert_py_gemini_response(py_obj: &PyAny, model: &str) -> Result<ChatComplet
         return Err(ProviderError::new("No candidates in response", "gemini"));
     }
 
-    let candidate = candidates.get_item(0).map_err(|e| ProviderError::new(format!("Failed to get candidate: {}", e), "gemini"))?;
-    let candidate = candidate.downcast::<pyo3::types::PyDict>()
+    let candidate = candidates
+        .get_item(0)
+        .map_err(|e| ProviderError::new(format!("Failed to get candidate: {}", e), "gemini"))?;
+    let candidate = candidate
+        .downcast::<pyo3::types::PyDict>()
         .map_err(|_| ProviderError::new("Candidate is not a dict", "gemini"))?;
 
-    let content = candidate.get_item("content")
+    let content = candidate
+        .get_item("content")
         .map_err(|e| ProviderError::new(format!("Failed to get content: {}", e), "gemini"))?
         .ok_or_else(|| ProviderError::new("content is None", "gemini"))?;
-    let parts = content.get_item("parts")
+    let parts = content
+        .get_item("parts")
         .map_err(|e| ProviderError::new(format!("Failed to get parts: {}", e), "gemini"))?
         .downcast::<pyo3::types::PyList>()
         .map_err(|_| ProviderError::new("Parts is not a list", "gemini"))?;
 
     let text = if !parts.is_empty() {
-        let part = parts.get_item(0).map_err(|e| ProviderError::new(format!("Failed to get part: {}", e), "gemini"))?;
-        let part_dict = part.downcast::<pyo3::types::PyDict>()
+        let part = parts
+            .get_item(0)
+            .map_err(|e| ProviderError::new(format!("Failed to get part: {}", e), "gemini"))?;
+        let part_dict = part
+            .downcast::<pyo3::types::PyDict>()
             .map_err(|_| ProviderError::new("Part is not a dict", "gemini"))?;
         match part_dict.get_item("text") {
             Ok(Some(text_obj)) => text_obj.extract::<String>().unwrap_or_default(),
@@ -235,16 +246,30 @@ fn convert_py_gemini_response(py_obj: &PyAny, model: &str) -> Result<ChatComplet
     };
 
     let finish_reason = match candidate.get_item("finish_reason") {
-        Ok(Some(fr_obj)) => fr_obj.extract::<String>().unwrap_or_else(|_| "stop".to_string()),
+        Ok(Some(fr_obj)) => fr_obj
+            .extract::<String>()
+            .unwrap_or_else(|_| "stop".to_string()),
         Ok(None) | Err(_) => "stop".to_string(),
     };
 
     // Get usage metadata
     let (prompt_tokens, completion_tokens, total_tokens) = match py_obj.get_item("usage_metadata") {
         Ok(usage) => (
-            usage.get_item("prompt_token_count").ok().and_then(|v| v.extract::<u32>().ok()).unwrap_or(0),
-            usage.get_item("candidates_token_count").ok().and_then(|v| v.extract::<u32>().ok()).unwrap_or(0),
-            usage.get_item("total_token_count").ok().and_then(|v| v.extract::<u32>().ok()).unwrap_or(0),
+            usage
+                .get_item("prompt_token_count")
+                .ok()
+                .and_then(|v| v.extract::<u32>().ok())
+                .unwrap_or(0),
+            usage
+                .get_item("candidates_token_count")
+                .ok()
+                .and_then(|v| v.extract::<u32>().ok())
+                .unwrap_or(0),
+            usage
+                .get_item("total_token_count")
+                .ok()
+                .and_then(|v| v.extract::<u32>().ok())
+                .unwrap_or(0),
         ),
         Err(_) => (0, 0, 0),
     };

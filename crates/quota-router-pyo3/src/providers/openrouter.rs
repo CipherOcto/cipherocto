@@ -73,9 +73,9 @@ impl OPENROUTERProvider {
                 kwargs.set_item("base_url", base.as_str()).unwrap();
             }
 
-            let client = openai_class
-                .call((), Some(kwargs))
-                .map_err(|e| ProviderError::new(format!("Failed to create client: {}", e), "openrouter"))?;
+            let client = openai_class.call((), Some(kwargs)).map_err(|e| {
+                ProviderError::new(format!("Failed to create client: {}", e), "openrouter")
+            })?;
 
             let client_py: Py<PyAny> = client.into();
             *client_guard = Some(client_py.clone());
@@ -132,15 +132,15 @@ impl LLMProvider for OPENROUTERProvider {
         let py_result: Py<PyAny> = Python::with_gil(|py| {
             let client_obj = client.as_ref(py);
 
-            let chat = client_obj
-                .getattr("chat")
-                .map_err(|e| ProviderError::new(format!("Failed to get chat: {}", e), "openrouter"))?;
-            let completions = chat
-                .getattr("completions")
-                .map_err(|e| ProviderError::new(format!("Failed to get completions: {}", e), "openrouter"))?;
-            let create = completions
-                .getattr("create")
-                .map_err(|e| ProviderError::new(format!("Failed to get create: {}", e), "openrouter"))?;
+            let chat = client_obj.getattr("chat").map_err(|e| {
+                ProviderError::new(format!("Failed to get chat: {}", e), "openrouter")
+            })?;
+            let completions = chat.getattr("completions").map_err(|e| {
+                ProviderError::new(format!("Failed to get completions: {}", e), "openrouter")
+            })?;
+            let create = completions.getattr("create").map_err(|e| {
+                ProviderError::new(format!("Failed to get create: {}", e), "openrouter")
+            })?;
 
             let kwargs = PyDict::new(py);
             kwargs.set_item("model", model).unwrap();
@@ -184,7 +184,10 @@ impl LLMProvider for OPENROUTERProvider {
     }
 }
 
-fn convert_py_openai_response(py_obj: &PyAny, model: &str) -> Result<ChatCompletion, ProviderError> {
+fn convert_py_openai_response(
+    py_obj: &PyAny,
+    model: &str,
+) -> Result<ChatCompletion, ProviderError> {
     let id: String = py_obj
         .get_item("id")
         .map_err(|e| ProviderError::new(format!("Failed to get id: {}", e), "openrouter"))?
@@ -207,27 +210,37 @@ fn convert_py_openai_response(py_obj: &PyAny, model: &str) -> Result<ChatComplet
             let choice_obj = list.get_item(i).unwrap();
             let index = i as u32;
 
-            let message_obj = choice_obj
-                .get_item("message")
-                .map_err(|e| ProviderError::new(format!("Failed to get message: {}", e), "openrouter"))?;
+            let message_obj = choice_obj.get_item("message").map_err(|e| {
+                ProviderError::new(format!("Failed to get message: {}", e), "openrouter")
+            })?;
             let role: String = message_obj
                 .get_item("role")
-                .map_err(|e| ProviderError::new(format!("Failed to get role: {}", e), "openrouter"))?
+                .map_err(|e| {
+                    ProviderError::new(format!("Failed to get role: {}", e), "openrouter")
+                })?
                 .extract()
                 .unwrap_or_else(|_| "assistant".to_string());
             let content: String = message_obj
                 .get_item("content")
-                .map_err(|e| ProviderError::new(format!("Failed to get content: {}", e), "openrouter"))?
+                .map_err(|e| {
+                    ProviderError::new(format!("Failed to get content: {}", e), "openrouter")
+                })?
                 .extract()
                 .unwrap_or_default();
 
             let finish_reason: String = choice_obj
                 .get_item("finish_reason")
-                .map_err(|e| ProviderError::new(format!("Failed to get finish_reason: {}", e), "openrouter"))?
+                .map_err(|e| {
+                    ProviderError::new(format!("Failed to get finish_reason: {}", e), "openrouter")
+                })?
                 .extract()
                 .unwrap_or_else(|_| "stop".to_string());
 
-            result.push(Choice::new(index, Message::new(role, content), finish_reason));
+            result.push(Choice::new(
+                index,
+                Message::new(role, content),
+                finish_reason,
+            ));
         }
         result
     } else {
@@ -240,17 +253,26 @@ fn convert_py_openai_response(py_obj: &PyAny, model: &str) -> Result<ChatComplet
 
     let prompt_tokens: u32 = usage_obj
         .get_item("prompt_tokens")
-        .map_err(|e| ProviderError::new(format!("Failed to get prompt_tokens: {}", e), "openrouter"))?
+        .map_err(|e| {
+            ProviderError::new(format!("Failed to get prompt_tokens: {}", e), "openrouter")
+        })?
         .extract()
         .unwrap_or(0);
     let completion_tokens: u32 = usage_obj
         .get_item("completion_tokens")
-        .map_err(|e| ProviderError::new(format!("Failed to get completion_tokens: {}", e), "openrouter"))?
+        .map_err(|e| {
+            ProviderError::new(
+                format!("Failed to get completion_tokens: {}", e),
+                "openrouter",
+            )
+        })?
         .extract()
         .unwrap_or(0);
     let total_tokens: u32 = usage_obj
         .get_item("total_tokens")
-        .map_err(|e| ProviderError::new(format!("Failed to get total_tokens: {}", e), "openrouter"))?
+        .map_err(|e| {
+            ProviderError::new(format!("Failed to get total_tokens: {}", e), "openrouter")
+        })?
         .extract()
         .unwrap_or(0);
 

@@ -4,7 +4,7 @@
 use crate::providers::Provider;
 use rand::Rng;
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
+use std::collections::{HashMap, VecDeque};
 
 // ⚠️ CRITICAL INVARIANT (RFC-0917):
 // litellm-mode and any-llm-mode are MUTUALLY EXCLUSIVE AS BUILD CONFIGURATIONS
@@ -38,6 +38,8 @@ pub enum RoutingStrategy {
     CostBased,
     /// Route based on current usage (RPM/TPM)
     UsageBased,
+    /// Route using recency-weighted spend (exponential decay — recent usage counts more)
+    UsageBasedV2,
     /// Weighted distribution based on explicitly configured weights (distinct from SimpleShuffle)
     Weighted,
 }
@@ -51,6 +53,7 @@ impl std::fmt::Display for RoutingStrategy {
             RoutingStrategy::LatencyBased => write!(f, "latency-based"),
             RoutingStrategy::CostBased => write!(f, "cost-based"),
             RoutingStrategy::UsageBased => write!(f, "usage-based"),
+            RoutingStrategy::UsageBasedV2 => write!(f, "usage-based-v2"),
             RoutingStrategy::Weighted => write!(f, "weighted"),
         }
     }
@@ -67,6 +70,9 @@ impl std::str::FromStr for RoutingStrategy {
             "latency-based" | "latency_based" | "latency" => Ok(RoutingStrategy::LatencyBased),
             "cost-based" | "cost_based" | "cost" => Ok(RoutingStrategy::CostBased),
             "usage-based" | "usage_based" | "usage" => Ok(RoutingStrategy::UsageBased),
+            "usage-based-v2" | "usage-based-routing-v2" | "usage_based_v2" | "usage_v2" => {
+                Ok(RoutingStrategy::UsageBasedV2)
+            }
             "weighted" => Ok(RoutingStrategy::Weighted),
             _ => Err(format!("Unknown routing strategy: {}", s)),
         }
@@ -194,8 +200,8 @@ const LATENCY_WINDOW_SIZE: usize = 100;
 /// Uses integer microseconds to avoid floating-point non-determinism (per RFC-0104).
 ///
 /// **Window:** Fixed-size sliding window of last `LATENCY_WINDOW_SIZE` samples per provider.
-/// **Storage:** `HashMap<provider_name, Vec<u64>>` — latency in microseconds (integer).
-/// **Cleanup:** Oldest sample evicted when window exceeds `LATENCY_WINDOW_SIZE` (FIFO).
+/// **Storage:** `HashMap<provider_name, VecDeque<u64>>` — latency in microseconds (integer).
+/// **Cleanup:** Oldest sample evicted when window exceeds `LATENCY_WINDOW_SIZE` (O(1) via VecDeque).
 /// **Query:** `best_provider()` returns provider with lowest average latency.
 ///
 /// **Phase 2:** `LatencyTracker` will be integrated into `RouterState` (per RFC-0917 pseudocode).
@@ -203,7 +209,7 @@ const LATENCY_WINDOW_SIZE: usize = 100;
 #[allow(dead_code)]
 #[derive(Debug, Clone)]
 struct LatencyTracker {
-    samples: HashMap<String, Vec<u64>>,
+    samples: HashMap<String, VecDeque<u64>>,
 }
 
 impl LatencyTracker {
@@ -211,10 +217,11 @@ impl LatencyTracker {
     #[allow(dead_code)]
     pub fn record(&mut self, provider: &str, latency_us: u64) {
         let samples = self.samples.entry(provider.to_string()).or_default();
-        samples.push(latency_us);
-        if samples.len() > LATENCY_WINDOW_SIZE {
-            samples.remove(0); // Evict oldest (FIFO)
+        // Push with maxlen=100 for O(1) eviction of oldest element
+        if samples.len() >= LATENCY_WINDOW_SIZE {
+            samples.pop_front();
         }
+        samples.push_back(latency_us);
     }
 
     /// Return provider with lowest average latency in current window.
@@ -322,6 +329,7 @@ impl Router {
             RoutingStrategy::LatencyBased => Self::latency_based_impl(providers, latency_window),
             RoutingStrategy::CostBased => Self::simple_shuffle_impl(providers), // Fallback
             RoutingStrategy::UsageBased => Self::usage_based_impl(providers),
+            RoutingStrategy::UsageBasedV2 => Self::usage_based_impl(providers), // Fallback to UsageBased (v2 needs state access)
             RoutingStrategy::Weighted => Self::weighted_impl(providers, &self.config.weights),
         };
 

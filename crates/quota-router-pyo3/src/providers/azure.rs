@@ -21,7 +21,8 @@ impl AZUREProvider {
         Self {
             metadata: ProviderMetadata {
                 name: "azure".to_string(),
-                documentation_url: "https://learn.microsoft.com/en-us/azure/ai-services/openai/".to_string(),
+                documentation_url: "https://learn.microsoft.com/en-us/azure/ai-services/openai/"
+                    .to_string(),
                 env_api_key: "AZURE_API_KEY".to_string(),
                 env_api_base: Some("AZURE_BASE_URL".to_string()),
                 api_base: None,
@@ -79,9 +80,9 @@ impl AZUREProvider {
                 kwargs.set_item("azure_endpoint", base.as_str()).unwrap();
             }
 
-            let client = azure_class
-                .call((), Some(kwargs))
-                .map_err(|e| ProviderError::new(format!("Failed to create client: {}", e), "azure"))?;
+            let client = azure_class.call((), Some(kwargs)).map_err(|e| {
+                ProviderError::new(format!("Failed to create client: {}", e), "azure")
+            })?;
 
             let client_py: Py<PyAny> = client.into();
             *client_guard = Some(client_py.clone());
@@ -141,9 +142,9 @@ impl LLMProvider for AZUREProvider {
             let chat = client_obj
                 .getattr("chat")
                 .map_err(|e| ProviderError::new(format!("Failed to get chat: {}", e), "azure"))?;
-            let completions = chat
-                .getattr("completions")
-                .map_err(|e| ProviderError::new(format!("Failed to get completions: {}", e), "azure"))?;
+            let completions = chat.getattr("completions").map_err(|e| {
+                ProviderError::new(format!("Failed to get completions: {}", e), "azure")
+            })?;
             let create = completions
                 .getattr("create")
                 .map_err(|e| ProviderError::new(format!("Failed to get create: {}", e), "azure"))?;
@@ -213,9 +214,9 @@ fn convert_py_azure_response(py_obj: &PyAny, model: &str) -> Result<ChatCompleti
             let choice_obj = list.get_item(i).unwrap();
             let index = i as u32;
 
-            let message_obj = choice_obj
-                .get_item("message")
-                .map_err(|e| ProviderError::new(format!("Failed to get message: {}", e), "azure"))?;
+            let message_obj = choice_obj.get_item("message").map_err(|e| {
+                ProviderError::new(format!("Failed to get message: {}", e), "azure")
+            })?;
             let role: String = message_obj
                 .get_item("role")
                 .map_err(|e| ProviderError::new(format!("Failed to get role: {}", e), "azure"))?
@@ -229,11 +230,17 @@ fn convert_py_azure_response(py_obj: &PyAny, model: &str) -> Result<ChatCompleti
 
             let finish_reason: String = choice_obj
                 .get_item("finish_reason")
-                .map_err(|e| ProviderError::new(format!("Failed to get finish_reason: {}", e), "azure"))?
+                .map_err(|e| {
+                    ProviderError::new(format!("Failed to get finish_reason: {}", e), "azure")
+                })?
                 .extract()
                 .unwrap_or_else(|_| "stop".to_string());
 
-            result.push(Choice::new(index, Message::new(role, content), finish_reason));
+            result.push(Choice::new(
+                index,
+                Message::new(role, content),
+                finish_reason,
+            ));
         }
         result
     } else {
@@ -251,7 +258,9 @@ fn convert_py_azure_response(py_obj: &PyAny, model: &str) -> Result<ChatCompleti
         .unwrap_or(0);
     let completion_tokens: u32 = usage_obj
         .get_item("completion_tokens")
-        .map_err(|e| ProviderError::new(format!("Failed to get completion_tokens: {}", e), "azure"))?
+        .map_err(|e| {
+            ProviderError::new(format!("Failed to get completion_tokens: {}", e), "azure")
+        })?
         .extract()
         .unwrap_or(0);
     let total_tokens: u32 = usage_obj

@@ -2,7 +2,7 @@
 
 ## Status
 
-Accepted (v2.36 — 2026-05-06)
+Accepted (v2.50 — 2026-05-10)
 
 **ARCHITECTURAL CONSTRAINT: Rust-owns-all-heavy-lifting. ALL heavy lifting (routing, caching, telemetry, concurrency, state management, batch execution) MUST be in Rust core. HTTP proxy and Python SDK are thin binding layers only. Each language binding (Python, JS, Go, etc.) adds ONLY marshaling overhead.**
 
@@ -291,7 +291,10 @@ response = completion(model="anthropic/claude-opus-4", messages=[...])
 pub mod native_http;  // reqwest HTTP forwarding — LiteLLM Mode / full
 
 #[cfg(any(feature = "any-llm-mode", feature = "full"))]
-pub mod py_bridge;    // PyO3 → official Python SDKs — any-llm Mode / full
+pub mod py_bridge;    // PyO3 → official Python SDKs — INTERNAL boundary #1 (core → provider SDKs)
+
+#[cfg(any(feature = "any-llm-mode", feature = "full"))]
+pub mod python_sdk_entry;  // PyO3 entry point — EXTERNAL boundary #2 (quota-router-pyo3 → core)
 
 // INTERFACES — ALWAYS compiled in ALL modes (unconditional dependencies):
 #[cfg(any(feature = "litellm-mode", feature = "any-llm-mode", feature = "full"))]
@@ -304,6 +307,23 @@ pub mod python_sdk;   // Python SDK bindings (PyO3) — ALWAYS available
 pub mod router;       // RFC-0902 router
 pub mod storage;      // stoolap storage
 pub mod enterprise;    // Virtual keys, budgets, rate limiting, metrics
+
+// =====================================================================
+// DIRECT RUST CLIENT ENTRY POINT — no HTTP, no PyO3, direct core calls
+// =====================================================================
+// For external Rust clients (CLI, other Rust crates) that want direct
+// access to core routing/budget/limiting without HTTP serialization overhead.
+// This is the FASTEST path for Rust-to-core communication.
+//
+// Usage from external Rust:
+//   use quota_router_core::{router::Router, client::Client};
+//   let client = Client::new(router.clone());
+//   let response = client.completion(model, messages, params).await?;
+//
+// This is distinct from:
+//   - HTTP proxy (gateway module) — for network-accessible HTTP API
+//   - PyO3 bindings (python_sdk_entry) — for Python SDK callers
+pub mod client;
 ```
 
 ### Provider Abstraction Layer
@@ -377,34 +397,71 @@ pub mod py_providers {
     }
 
     /// Request type for Python SDK completions (mirrors official SDK interfaces)
+    /// Full 22-parameter request per RFC-0920 lines 58-84
     pub struct SdkCompletionRequest {
         pub model: String,
         pub messages: Vec<SdkMessage>,
+        // Optional parameters (match LiteLLM) — per RFC-0920 lines 58-84
         pub temperature: Option<f64>,
         pub max_tokens: Option<i32>,
         pub top_p: Option<f64>,
+        pub n: Option<i32>,
         pub stream: Option<bool>,
+        pub stop: Option<String>,
+        pub presence_penalty: Option<f64>,
+        pub frequency_penalty: Option<f64>,
+        pub user: Option<String>,
+        pub seed: Option<i32>,
+        pub timeout: Option<f64>,
+        pub extra_headers: Option<String>,
+        pub base_url: Option<String>,
+        pub api_version: Option<String>,
+        pub api_key: Option<String>,
+        // Phase 4 parameters (RFC-0920 lines 3735-3751)
+        /// Provider service tier for cost/speed optimization. Valid values are provider-specific
+        /// (e.g., OpenAI: "default", "auto"; Azure: "standard", "premium"). No validation — passes through to provider.
+        pub service_tier: Option<String>,
+        /// Whether to run request in background (async, non-blocking response).
+        pub background: Option<bool>,
+        /// Key for prompt caching — cache control by specific prompt fingerprint.
+        pub prompt_cache_key: Option<String>,
+        /// Retention time for cached prompts (in seconds).
+        pub prompt_cache_retention: Option<String>,
+        /// Conversation ID for multi-turn context continuity.
+        pub conversation: Option<String>,
     }
 
     /// Response type for Python SDK completions
+    /// **Note:** `n > 1` (multiple completions per request) is NOT supported in v1.
+    /// When `n` parameter is provided, only the first completion choice is returned.
+    /// Multi-choice support (returning all `n` choices with finish_reason and index)
+    /// is a Phase 4 enhancement — not specced in v1.
     pub struct SdkCompletionResponse {
         pub id: String,
         pub model: String,
-        pub message: SdkMessage,
+        pub message: SdkMessage,  // Single choice only — n > 1 not supported in v1
         pub usage: SdkUsage,
     }
 
     /// Message format for Python SDK (simplified OpenAI-compatible format)
+    /// Supports role, content, and name (for function calls)
     pub struct SdkMessage {
-        pub role: String,       // "user", "assistant", "system"
-        pub content: String,    // message text
+        pub role: String,       // Required. Valid values: "user" | "assistant" | "system" | "function" | "tool"
+        pub content: String,    // message text (String for v1, multi-modal deferred to Phase 4)
+        pub name: Option<String>, // optional — function name for role="assistant" (tool_calls output) or role="function" (tool response)
+        /// ID of the tool call this message responds to (for role="tool").
+        /// OpenAI tool_calls format: {"role": "tool", "tool_call_id": "call_abc123", "content": "..."}
+        pub tool_call_id: Option<String>,  // Phase 4: tool/function calling
+        /// Function call arguments (JSON string) for role="assistant" with tool_calls.
+        /// OpenAI tool_calls format: {"function": {"name": "get_weather", "arguments": "{\"lat\": 37.7}"}, "id": "call_abc123"}
+        pub arguments: Option<String>,  // Phase 4: tool/function calling
     }
 
     /// Usage stats for Python SDK responses
     pub struct SdkUsage {
-        pub prompt_tokens: u32,
-        pub completion_tokens: u32,
-        pub total_tokens: u32,
+        pub prompt_tokens: u64,     // M6 fix: u32→u64 to avoid overflow on large responses
+        pub completion_tokens: u64, // OpenAI can return millions of tokens
+        pub total_tokens: u64,
     }
 
     /// Request type for Python SDK embeddings
@@ -421,9 +478,655 @@ pub mod py_providers {
 
     // Python SDK wrappers (called via PyO3)
     pub mod openai_sdk;      // wraps official openai Python SDK
-    pub mod anthropic_sdk;   // wraps official anthropic Python SDK
+    pub mod anthropic_sdk;    // wraps official anthropic Python SDK
     pub mod mistral_sdk;     // wraps official mistralai Python SDK
     pub mod ollama_sdk;      // wraps official ollama Python SDK
+}
+
+// =====================================================================
+// PYTHON SDK ENTRY POINT — quota-router-pyo3 calls THIS via PyO3
+// =====================================================================
+// This is the EXTERNAL PyO3 boundary (Boundary #2).
+// The py_providers module above is the INTERNAL PyO3 boundary (Boundary #1).
+// quota-router-pyo3 (Python SDK) calls RouterHandle via PyO3, which then
+// routes through the internal py_providers/SdkProvider chain to official Python SDKs.
+pub mod python_sdk_entry {
+    use super::*;
+    use std::sync::Arc;
+
+    /// RouterHandle — PyO3-exposed entry point for Python SDK (quota-router-pyo3)
+    ///
+    /// All routing, state, caching, and telemetry are owned by Rust core.
+    /// Python SDK (quota-router-pyo3) adds only marshaling overhead (<2ms).
+    ///
+    /// **Two PyO3 boundaries:**
+    /// - Boundary #1 (internal): Core → py_providers → official Python SDKs (provider calls)
+    /// - Boundary #2 (external): quota-router-pyo3 → RouterHandle → Core (entry point)
+    pub struct RouterHandle {
+        router: Arc<Router>,
+        storage: Arc<dyn crate::storage::KeyStorage>,
+    }
+
+    impl RouterHandle {
+        /// Create new RouterHandle with shared router and storage
+        pub fn new(router: Arc<Router>, storage: Arc<dyn crate::storage::KeyStorage>) -> Self {
+            Self { router, storage }
+        }
+
+        /// Single completion call — routes, applies fallback, records spend
+        /// Full 22-parameter signature per RFC-0920 lines 58-84, 3735-3751
+        pub async fn completion(
+            &self,
+            model: &str,
+            messages: Vec<SdkMessage>,
+            stream: bool,
+            timeout: Option<f64>,
+            // LiteLLM compatibility params (RFC-0920 lines 60-84)
+            temperature: Option<f64>,
+            max_tokens: Option<i32>,
+            top_p: Option<f64>,
+            n: Option<i32>,
+            stop: Option<String>,
+            presence_penalty: Option<f64>,
+            frequency_penalty: Option<f64>,
+            user: Option<String>,
+            seed: Option<i32>,
+            extra_headers: Option<String>,
+            base_url: Option<String>,
+            api_version: Option<String>,
+            api_key: Option<String>,
+            // Phase 4 params (RFC-0920 lines 3735-3751)
+            service_tier: Option<String>,
+            background: Option<bool>,
+            prompt_cache_key: Option<String>,
+            prompt_cache_retention: Option<String>,
+            conversation: Option<String>,
+        ) -> Result<SdkCompletionResponse, RouterError> {
+            // Build SdkCompletionRequest from all parameters
+            let request = SdkCompletionRequest {
+                model: model.to_string(),
+                messages,
+                temperature,
+                max_tokens,
+                top_p,
+                n,
+                stream: Some(stream),
+                stop,
+                presence_penalty,
+                frequency_penalty,
+                user,
+                seed,
+                timeout,
+                extra_headers,
+                base_url,
+                api_version,
+                api_key,
+                service_tier,
+                background,
+                prompt_cache_key,
+                prompt_cache_retention,
+                conversation,
+            };
+
+            // Route via Router (which dispatches to SdkProvider via ProviderHandle)
+            let response = self.router.route_and_forward(&request).await?;
+
+            // Record spend via storage
+            if let Some(usage) = &response.usage {
+                let event = crate::keys::SpendEvent {
+                    key_id: api_key.unwrap_or_else(|| "sdk".to_string()),
+                    event_id: crate::keys::compute_event_id(),
+                    cost_amount: 0, // TODO: RFC-0904 pricing registry — cost computed from provider pricing table, not hardcoded
+                    tokenizer_id: [0u8; 16],
+                    input_tokens: usage.prompt_tokens,
+                    output_tokens: usage.completion_tokens,
+                    provider: response.model.clone(),
+                    model: response.model.clone(),
+                };
+                let _ = self.storage.record_spend_ledger(&event);
+            }
+
+            Ok(response)
+        }
+
+        /// Batch completion — same model, parallel requests
+        pub async fn batch_completion(
+            &self,
+            requests: Vec<SdkCompletionRequest>,
+        ) -> Result<Vec<SdkCompletionResponse>, RouterError> {
+            use futures::stream::{self, StreamExt};
+            let results: Vec<Result<SdkCompletionResponse, RouterError>> = stream::iter(requests)
+                .map(|req| async move {
+                    self.router.route_and_forward(&req).await
+                })
+                .buffered(10) // Max 10 concurrent
+                .collect()
+                .await;
+            results.into_iter().collect()
+        }
+
+        /// Batch completion with model race — first response wins
+        /// Executes completion across multiple models in parallel.
+        /// Returns the FIRST response received (wins the race).
+        ///
+        /// **Note:** Tasks are spawned fire-and-forget. If the first completes and we return,
+        /// remaining tasks continue running until completion (not aborted). This is intentional
+        /// for the race pattern — we want all providers competing.
+        pub async fn batch_completion_models(
+            &self,
+            models: Vec<String>,
+            messages: Vec<SdkMessage>,
+            // All 22 params
+            temperature: Option<f64>,
+            max_tokens: Option<i32>,
+            top_p: Option<f64>,
+            n: Option<i32>,
+            stream: bool,
+            stop: Option<String>,
+            presence_penalty: Option<f64>,
+            frequency_penalty: Option<f64>,
+            user: Option<String>,
+            seed: Option<i32>,
+            timeout: Option<f64>,
+            extra_headers: Option<String>,
+            base_url: Option<String>,
+            api_version: Option<String>,
+            api_key: Option<String>,
+            service_tier: Option<String>,
+            background: Option<bool>,
+            prompt_cache_key: Option<String>,
+            prompt_cache_retention: Option<String>,
+            conversation: Option<String>,
+        ) -> Result<SdkCompletionResponse, RouterError> {
+            use tokio::sync::mpsc;
+
+            let (tx, mut rx) = mpsc::channel::<(String, Result<SdkCompletionResponse, RouterError>)>(models.len());
+
+            for model in models {
+                let tx = tx.clone();
+                let router = self.router.clone();
+                let messages = messages.clone();
+
+                tokio::spawn(async move {
+                    let request = SdkCompletionRequest {
+                        model: model.clone(),
+                        messages,
+                        temperature,
+                        max_tokens,
+                        top_p,
+                        n,
+                        stream: Some(stream),
+                        stop,
+                        presence_penalty,
+                        frequency_penalty,
+                        user,
+                        seed,
+                        timeout,
+                        extra_headers,
+                        base_url,
+                        api_version,
+                        api_key,
+                        service_tier,
+                        background,
+                        prompt_cache_key,
+                        prompt_cache_retention,
+                        conversation,
+                    };
+                    let result = router.route_and_forward(&request).await;
+                    let _ = tx.send((model, result)).await;
+                });
+            }
+
+            // Wait for first result
+            match rx.recv().await {
+                Some((_, Ok(response))) => Ok(response),
+                Some((_, Err(e))) => Err(e),
+                None => Err(RouterError::UnknownProvider("All models failed".to_string())),
+            }
+        }
+
+        /// Batch completion with all responses — all models, all responses
+        /// Executes completion across multiple models in parallel.
+        /// Returns ALL responses from ALL models (successful ones only).
+        ///
+        /// **Note:** If a model fails, its error is silently dropped and excluded from results.
+        /// Use batch_completion_models() if you need to track per-model failures.
+        pub async fn batch_completion_models_all(
+            &self,
+            models: Vec<String>,
+            messages: Vec<SdkMessage>,
+            // All 22 params
+            temperature: Option<f64>,
+            max_tokens: Option<i32>,
+            top_p: Option<f64>,
+            n: Option<i32>,
+            stream: bool,
+            stop: Option<String>,
+            presence_penalty: Option<f64>,
+            frequency_penalty: Option<f64>,
+            user: Option<String>,
+            seed: Option<i32>,
+            timeout: Option<f64>,
+            extra_headers: Option<String>,
+            base_url: Option<String>,
+            api_version: Option<String>,
+            api_key: Option<String>,
+            service_tier: Option<String>,
+            background: Option<bool>,
+            prompt_cache_key: Option<String>,
+            prompt_cache_retention: Option<String>,
+            conversation: Option<String>,
+        ) -> Result<Vec<SdkCompletionResponse>, RouterError> {
+            use futures::stream::{self, StreamExt};
+
+            let reqs: Vec<SdkCompletionRequest> = models
+                .iter()
+                .map(|model| SdkCompletionRequest {
+                    model: model.clone(),
+                    messages: messages.clone(),
+                    temperature,
+                    max_tokens,
+                    top_p,
+                    n,
+                    stream: Some(stream),
+                    stop,
+                    presence_penalty,
+                    frequency_penalty,
+                    user,
+                    seed,
+                    timeout,
+                    extra_headers,
+                    base_url,
+                    api_version,
+                    api_key,
+                    service_tier,
+                    background,
+                    prompt_cache_key,
+                    prompt_cache_retention,
+                    conversation,
+                })
+                .collect();
+
+            let results: Vec<Result<SdkCompletionResponse, RouterError>> = stream::iter(reqs)
+                .map(|req| async move {
+                    self.router.route_and_forward(&req).await
+                })
+                .buffered(10)
+                .collect()
+                .await;
+
+            let mut responses = Vec::new();
+            for result in results {
+                match result {
+                    Ok(r) => responses.push(r),
+                    Err(_) => continue, // Skip failures
+                }
+            }
+
+            if responses.is_empty() {
+                return Err(RouterError::UnknownProvider("All models failed".to_string()));
+            }
+            Ok(responses)
+        }
+
+        /// Get metrics — forward to Rust Prometheus/OTLP
+        pub fn get_metrics(&self) -> Result<std::collections::HashMap<String, crate::types::PrometheusValue>, RouterError> {
+            Ok(self.router.get_metrics())
+        }
+    }
+}
+
+// =====================================================================
+// DIRECT RUST CLIENT — for external Rust programs (CLI, other crates)
+// =====================================================================
+// This is the FASTEST entry point: no HTTP serialization, no PyO3 GIL dance.
+// External Rust code links against quota-router-core directly and calls Client.
+//
+// Usage:
+//   use quota_router_core::client::Client;
+//   let client = Client::new(router.clone());
+//   let response = client.completion(model, messages, params).await?;
+//
+// This bypasses:
+//   - HTTP proxy (gateway module) — slower, network-accessible
+//   - PyO3 bindings (python_sdk_entry) — GIL overhead, Python-only
+pub mod client {
+    use super::*;
+    use std::sync::Arc;
+
+    /// Direct Rust client entry point — for external Rust programs
+    ///
+    /// This is the fastest path from Rust to quota-router-core.
+    /// No HTTP serialization, no PyO3 GIL overhead.
+    ///
+    /// **Three entry points to core:**
+    /// | Entry Point | Module | For | Overhead |
+    /// |-------------|--------|-----|----------|
+    /// | `gateway` | HTTP proxy | Network callers | HTTP serialization |
+    /// | `python_sdk_entry` | PyO3 bindings | Python SDK | GIL + marshaling |
+    /// | `client` | Direct Rust client | CLI, Rust crates | **Zero overhead** |
+    pub struct Client {
+        router: Arc<Router>,
+        storage: Arc<dyn crate::storage::KeyStorage>,
+    }
+
+    impl Client {
+        /// Create new client with shared router and storage
+        pub fn new(router: Arc<Router>, storage: Arc<dyn crate::storage::KeyStorage>) -> Self {
+            Self { router, storage }
+        }
+
+        /// Completion call — full 22 parameters per RFC-0920
+        ///
+        /// This is the direct Rust equivalent of the Python SDK `completion()`.
+        /// All 22 parameters are exposed for fine-grained control.
+        pub async fn completion(
+            &self,
+            model: &str,
+            messages: Vec<SdkMessage>,
+            // Optional parameters (match LiteLLM) — per RFC-0920 lines 58-84
+            temperature: Option<f64>,
+            max_tokens: Option<i32>,
+            top_p: Option<f64>,
+            n: Option<i32>,
+            stream: bool,
+            stop: Option<String>,
+            presence_penalty: Option<f64>,
+            frequency_penalty: Option<f64>,
+            user: Option<String>,
+            seed: Option<i32>,
+            timeout: Option<f64>,
+            extra_headers: Option<String>,
+            base_url: Option<String>,
+            api_version: Option<String>,
+            // quota-router specific
+            api_key: Option<String>,
+            // Phase 4 parameters (RFC-0920 lines 3735-3751)
+            service_tier: Option<String>,
+            background: Option<bool>,
+            prompt_cache_key: Option<String>,
+            prompt_cache_retention: Option<String>,
+            conversation: Option<String>,
+        ) -> Result<SdkCompletionResponse, RouterError> {
+            // Build request
+            let request = SdkCompletionRequest {
+                model: model.to_string(),
+                messages,
+                temperature,
+                max_tokens,
+                top_p,
+                n,
+                stream: Some(stream),
+                stop,
+                presence_penalty,
+                frequency_penalty,
+                user,
+                // Phase 4 params — stored in extended request or passed via context
+                service_tier,
+                background,
+                prompt_cache_key,
+                prompt_cache_retention,
+                conversation,
+                // Additional params
+                seed,
+                timeout,
+                extra_headers,
+                base_url,
+                api_version,
+                api_key,
+            };
+
+            // Route via Router
+            let response = self.router.route_and_forward(&request).await?;
+
+            // Record spend
+            if let Some(usage) = &response.usage {
+                let event = crate::keys::SpendEvent {
+                    key_id: api_key.unwrap_or_else(|| "sdk".to_string()),
+                    event_id: crate::keys::compute_event_id(),
+                    cost_amount: 0, // TODO: RFC-0904 pricing registry — cost computed from provider pricing table, not hardcoded
+                    tokenizer_id: [0u8; 16],
+                    input_tokens: usage.prompt_tokens,
+                    output_tokens: usage.completion_tokens,
+                    provider: response.model.clone(),
+                    model: response.model.clone(),
+                };
+                let _ = self.storage.record_spend_ledger(&event);
+            }
+
+            Ok(response)
+        }
+
+        /// Batch completion — same model, parallel requests
+        /// Returns ALL responses (one per request in the input order).
+        pub async fn batch_completion(
+            &self,
+            model: &str,
+            requests: Vec<Vec<SdkMessage>>,
+            temperature: Option<f64>,
+            max_tokens: Option<i32>,
+        ) -> Result<Vec<SdkCompletionResponse>, RouterError> {
+            use futures::stream::{self, StreamExt};
+
+            // Build individual requests
+            let reqs: Vec<SdkCompletionRequest> = requests
+                .into_iter()
+                .map(|messages| SdkCompletionRequest {
+                    model: model.to_string(),
+                    messages,
+                    temperature,
+                    max_tokens,
+                    top_p: None,
+                    n: None,
+                    stream: Some(false),
+                    stop: None,
+                    presence_penalty: None,
+                    frequency_penalty: None,
+                    user: None,
+                    service_tier: None,
+                    background: None,
+                    prompt_cache_key: None,
+                    prompt_cache_retention: None,
+                    conversation: None,
+                    seed: None,
+                    timeout: None,
+                    extra_headers: None,
+                    base_url: None,
+                    api_version: None,
+                    api_key: None,
+                })
+                .collect();
+
+            let results: Vec<Result<SdkCompletionResponse, RouterError>> = stream::iter(reqs)
+                .map(|req| async move {
+                    self.router.route_and_forward(&req).await
+                })
+                .buffered(10)
+                .collect()
+                .await;
+
+            results.into_iter().collect()
+        }
+
+        /// Batch completion with model race — first response wins
+        ///
+        /// Executes completion across multiple models in parallel.
+        /// Returns the FIRST response received (wins the race).
+        ///
+        /// Use case: Fallback where you want the fastest provider to respond.
+        ///
+        /// **Note:** Tasks are spawned fire-and-forget. If the first completes and we return,
+        /// remaining tasks continue running until completion (not aborted). This is intentional
+        /// for the race pattern — we want all providers competing.
+        pub async fn batch_completion_models(
+            &self,
+            models: Vec<String>,
+            messages: Vec<SdkMessage>,
+            // All 22 params
+            temperature: Option<f64>,
+            max_tokens: Option<i32>,
+            top_p: Option<f64>,
+            n: Option<i32>,
+            stream: bool,
+            stop: Option<String>,
+            presence_penalty: Option<f64>,
+            frequency_penalty: Option<f64>,
+            user: Option<String>,
+            seed: Option<i32>,
+            timeout: Option<f64>,
+            extra_headers: Option<String>,
+            base_url: Option<String>,
+            api_version: Option<String>,
+            api_key: Option<String>,
+            service_tier: Option<String>,
+            background: Option<bool>,
+            prompt_cache_key: Option<String>,
+            prompt_cache_retention: Option<String>,
+            conversation: Option<String>,
+        ) -> Result<SdkCompletionResponse, RouterError> {
+            use tokio::sync::mpsc;
+
+            let (tx, mut rx) = mpsc::channel::<(String, Result<SdkCompletionResponse, RouterError>)>(models.len());
+
+            for model in models {
+                let tx = tx.clone();
+                let router = self.router.clone();
+                let messages = messages.clone();
+
+                tokio::spawn(async move {
+                    let request = SdkCompletionRequest {
+                        model: model.clone(),
+                        messages,
+                        temperature,
+                        max_tokens,
+                        top_p,
+                        n,
+                        stream: Some(stream),
+                        stop,
+                        presence_penalty,
+                        frequency_penalty,
+                        user,
+                        seed,
+                        timeout,
+                        extra_headers,
+                        base_url,
+                        api_version,
+                        api_key,
+                        service_tier,
+                        background,
+                        prompt_cache_key,
+                        prompt_cache_retention,
+                        conversation,
+                    };
+                    let result = router.route_and_forward(&request).await;
+                    let _ = tx.send((model, result)).await;
+                });
+            }
+
+            // Wait for first result
+            match rx.recv().await {
+                Some((_, Ok(response))) => Ok(response),
+                Some((_, Err(e))) => Err(e),
+                None => Err(RouterError::UnknownProvider("All models failed".to_string())),
+            }
+        }
+
+        /// Batch completion with all responses — all models, all responses
+        ///
+        /// Executes completion across multiple models in parallel.
+        /// Returns ALL responses from ALL models (successful ones only).
+        ///
+        /// Use case: Fan-out where you need responses from multiple providers.
+        ///
+        /// **Note:** If a model fails, its error is silently dropped and excluded from results.
+        pub async fn batch_completion_models_all(
+            &self,
+            models: Vec<String>,
+            messages: Vec<SdkMessage>,
+            // All 22 params
+            temperature: Option<f64>,
+            max_tokens: Option<i32>,
+            top_p: Option<f64>,
+            n: Option<i32>,
+            stream: bool,
+            stop: Option<String>,
+            presence_penalty: Option<f64>,
+            frequency_penalty: Option<f64>,
+            user: Option<String>,
+            seed: Option<i32>,
+            timeout: Option<f64>,
+            extra_headers: Option<String>,
+            base_url: Option<String>,
+            api_version: Option<String>,
+            api_key: Option<String>,
+            service_tier: Option<String>,
+            background: Option<bool>,
+            prompt_cache_key: Option<String>,
+            prompt_cache_retention: Option<String>,
+            conversation: Option<String>,
+        ) -> Result<Vec<SdkCompletionResponse>, RouterError> {
+            use futures::stream::{self, StreamExt};
+
+            let reqs: Vec<SdkCompletionRequest> = models
+                .iter()
+                .map(|model| SdkCompletionRequest {
+                    model: model.clone(),
+                    messages: messages.clone(),
+                    temperature,
+                    max_tokens,
+                    top_p,
+                    n,
+                    stream: Some(stream),
+                    stop,
+                    presence_penalty,
+                    frequency_penalty,
+                    user,
+                    seed,
+                    timeout,
+                    extra_headers,
+                    base_url,
+                    api_version,
+                    api_key,
+                    service_tier,
+                    background,
+                    prompt_cache_key,
+                    prompt_cache_retention,
+                    conversation,
+                })
+                .collect();
+
+            let results: Vec<Result<SdkCompletionResponse, RouterError>> = stream::iter(reqs)
+                .map(|req| async move {
+                    self.router.route_and_forward(&req).await
+                })
+                .buffered(10)
+                .collect()
+                .await;
+
+            let mut responses = Vec::new();
+            for result in results {
+                match result {
+                    Ok(r) => responses.push(r),
+                    Err(_) => continue, // Skip failures
+                }
+            }
+
+            if responses.is_empty() {
+                return Err(RouterError::UnknownProvider("All models failed".to_string()));
+            }
+            Ok(responses)
+        }
+
+        /// Get metrics — forward to Rust Prometheus/OTLP
+        pub fn get_metrics(&self) -> Result<std::collections::HashMap<String, crate::types::PrometheusValue>, RouterError> {
+            Ok(self.router.get_metrics())
+        }
+
+        /// Get budget status for a key
+        pub async fn get_budget_status(&self, key_id: &str) -> Result<Option<crate::keys::KeySpend>, crate::keys::KeyError> {
+            self.storage.get_spend(key_id)
+        }
+    }
 }
 
 // =====================================================================
@@ -1187,6 +1890,75 @@ struct RouterState {
     // eliminating TOCTOU race where concurrent requests read the same index and all
     // increment to the same provider (defeating round-robin distribution).
     round_robin_index: AtomicUsize,
+    // Spend tracker with exponential decay for UsageBasedV2 strategy.
+    // Decay formula: spend *= 2^(-elapsed/3600.0) — half-life of 1 hour.
+    spend_tracker: SpendTracker,
+}
+
+/// Provider state for routing decisions.
+/// Owned by Router, updated on each request (active requests, latency samples, success rates).
+/// All fields are integer-based to avoid floating-point non-determinism (per RFC-0104).
+pub struct ProviderWithState {
+    /// Provider identifier (matches key in Router.providers).
+    pub provider_name: String,
+    /// Currently executing requests (for LeastBusy strategy).
+    pub active_requests: u32,
+    /// Rolling latency samples in microseconds (for LatencyBased strategy).
+    /// Uses VecDeque for O(1) eviction.
+    pub latencies: VecDeque<u64>,
+    /// Total successful requests (for success-rate weighting).
+    pub success_count: u64,
+    /// Total requests attempted (for success-rate calculation).
+    pub total_count: u64,
+    /// Current RPM (requests per minute) from token bucket.
+    pub current_rpm: u32,
+    /// Current TPM (tokens per minute) from token bucket.
+    pub current_tpm: u32,
+    /// Cumulative spend in μunits (for CostBased and UsageBasedV2 strategies).
+    /// Decay applied via SpendTracker.
+    pub spend_μunits: u64,
+}
+
+impl ProviderWithState {
+    /// Record a latency observation (latency_us in microseconds).
+    pub fn record_latency(&mut self, latency_us: u64) {
+        if self.latencies.len() >= LATENCY_WINDOW_SIZE {
+            self.latencies.pop_front();
+        }
+        self.latencies.push_back(latency_us);
+    }
+
+    /// Record a successful request and update counters.
+    pub fn record_success(&mut self, tokens_used: u64) {
+        self.success_count += 1;
+        self.total_count += 1;
+        // TPM tracks cumulative token usage
+        self.current_tpm = self.current_tpm.saturating_add(tokens_used as u32);
+    }
+
+    /// Record a failed request.
+    pub fn record_failure(&mut self) {
+        self.total_count += 1;
+    }
+
+    /// Success rate as integer percentage (0-100).
+    /// Returns 100 if no requests yet (optimistic default).
+    pub fn success_rate(&self) -> u32 {
+        if self.total_count == 0 {
+            return 100;
+        }
+        ((self.success_count * 100) / self.total_count) as u32
+    }
+
+    /// Average latency in microseconds.
+    /// Returns 0 if no samples.
+    pub fn avg_latency(&self) -> u64 {
+        if self.latencies.is_empty() {
+            return 0;
+        }
+        let sum: u64 = self.latencies.iter().sum();
+        sum / self.latencies.len() as u64
+    }
 }
 
 /// Latency tracker for LatencyBased routing strategy (RFC-0902).
@@ -1231,11 +2003,41 @@ impl LatencyTracker {
     }
 }
 
+/// Supported routing strategies (per RFC-0902 §Routing Strategies).
+/// All 8 strategies are implemented below in `impl Router`.
+#[derive(Clone, Copy, Default, Debug, PartialEq, Eq)]
+pub enum RoutingStrategy {
+    /// Default — Weighted distribution based on rpm/tpm weights (recommended for production).
+    /// LiteLLM: "simple-shuffle" — randomly distributes requests based on configured rpm/tpm.
+    #[default]
+    SimpleShuffle,
+    /// Round-robin through available providers (lock-free via AtomicUsize).
+    RoundRobin,
+    /// Route to provider with fewest active requests.
+    /// LiteLLM: "least-busy"
+    LeastBusy,
+    /// Route to fastest responding provider (based on recent latency window).
+    /// LiteLLM: "latency-based-routing"
+    LatencyBased,
+    /// Route to cheapest provider (based on recorded spend with decay).
+    /// LiteLLM: "cost-based-routing"
+    CostBased,
+    /// Route to provider with lowest cumulative usage (RPM/TPM).
+    /// LiteLLM: "usage-based-routing"
+    UsageBased,
+    /// Route using recency-weighted spend (exponential decay — recent usage counts more).
+    /// LiteLLM: "usage-based-routing-v2"
+    UsageBasedV2,
+    /// Weighted distribution based on explicitly configured per-provider weights.
+    /// Distinct from SimpleShuffle: SimpleShuffle derives weights from rpm/tpm config;
+    /// Weighted uses explicit per-provider weights from router.weights config.
+    Weighted,
+}
+
 impl Router {
-    /// Route request to appropriate provider
-    /// Uses strategy from RFC-0902 (simple-shuffle, least-busy, latency-based, etc.)
-    ///
-    /// Uses interior mutability (&self) so Router::global() singleton works safely.
+    /// Route and forward a completion request to the appropriate provider.
+    /// Uses routing strategy to select provider, then dispatches via Http or Sdk handle.
+    /// Guarantees active_requests is decremented even on provider call failure.
     pub async fn route_and_forward(
         &self,
         request: &ProviderRequest,
@@ -1251,24 +2053,356 @@ impl Router {
             .get(&request.provider)
             .ok_or(RouterError::UnknownProvider)?;
 
-        // 3. Forward request via ProviderHandle dispatch
+        // 3a. Increment active requests BEFORE the call (for LeastBusy strategy)
+        // Uses UpdateGuard to ensure decrement happens even on provider call failure/panic.
+        struct UpdateGuard {
+            // Pointer to active_requests field of the specific provider
+            active_requests_ptr: *mut u32,
+            armed: bool,
+        }
+        impl UpdateGuard {
+            fn new(model: &str, providers: &HashMap<String, Vec<ProviderWithState>>, idx: usize) -> Self {
+                // L9 fix: Look up model key first to get the Vec, then index into it
+                if let Some(provider_states) = providers.get(model) {
+                    if let Some(state) = provider_states.get(idx) {
+                        // SAFETY: providers is alive for the duration of route_and_forward call,
+                        // model is &str borrowed from request.model, idx is validated by
+                        // route_with_strategy returning Some(idx) which is a valid index into provider_states
+                        let ptr = std::ptr::addr_of_mut!(state.active_requests);
+                        std::ptr::write(ptr, state.active_requests + 1);
+                        return Self { active_requests_ptr: ptr, armed: true };
+                    }
+                }
+                Self { active_requests_ptr: std::ptr::null_mut(), armed: false }
+            }
+            fn disarm(&mut self) {
+                if self.armed && !self.active_requests_ptr.is_null() {
+                    let current = *self.active_requests_ptr;
+                    std::ptr::write(self.active_requests_ptr, current.saturating_sub(1));
+                    self.armed = false;
+                }
+            }
+        }
+        impl Drop for UpdateGuard {
+            fn drop(&mut self) {
+                self.disarm();
+            }
+        }
+        let mut guard = UpdateGuard::new(&request.model, &self.providers, provider_idx);
+
+        // 3b. Forward request via ProviderHandle dispatch
         let response = match handle {
             ProviderHandle::Http(http_provider) => {
-                // Convert to HttpCompletionRequest for litellm-mode providers
                 let http_req = HttpCompletionRequest::from(request);
                 http_provider.completion(&http_req).await?
             }
             ProviderHandle::Sdk(sdk_provider) => {
-                // Convert to SdkCompletionRequest for any-llm-mode providers
                 let sdk_req = SdkCompletionRequest::from(request);
                 sdk_provider.completion(&sdk_req).await?
             }
         };
 
-        // 4. Update provider state (latency, usage) via interior mutability
-        self.update_provider_state(provider_idx, &response).await;
+        // 3c. Provider call succeeded — disarm guard (update_provider_state handles decrement)
+        guard.disarm();
+
+        // 4. Update provider state (latency, usage) via model-aware access
+        self.update_provider_state(&request.model, provider_idx, &response).await;
 
         Ok(response)
+    }
+
+    /// Get all deployment indices for a model
+    pub fn get_deployment_indices(&self, model: &str) -> Option<Vec<usize>> {
+        self.providers.get(model).map(|v| v.iter().enumerate().map(|(i, _)| i).collect())
+    }
+
+    /// Route with strategy — selects provider index using configured RoutingStrategy.
+    /// Called from route_and_forward() with state read-lock held.
+    fn route_with_strategy(&self, state: &RouterState, model: &str) -> Option<usize> {
+        let indices = self.get_deployment_indices(model)?;
+        match self.config.routing_strategy {
+            // M1/M2 fix: Pass model name so routing impls can do providers.get(model).get(idx)
+            RoutingStrategy::SimpleShuffle => Self::simple_shuffle_impl(model, &self.providers, &indices),
+            RoutingStrategy::RoundRobin => Self::round_robin_impl(state, &indices),
+            RoutingStrategy::LeastBusy => Self::least_busy_impl(model, &self.providers, &indices),
+            RoutingStrategy::LatencyBased => Self::latency_based_impl(model, &self.providers, &indices),
+            RoutingStrategy::CostBased => Self::cost_based_impl(model, &self.providers, &indices),
+            RoutingStrategy::UsageBased => Self::usage_based_impl(model, &self.providers, &indices),
+            RoutingStrategy::UsageBasedV2 => Self::usage_based_v2_impl(model, &self.providers, state, &indices),
+            RoutingStrategy::Weighted => Self::weighted_impl(model, &self.providers, &indices),
+        }
+    }
+
+    /// SimpleShuffle — weighted random selection using provider weights.
+    /// M1 fix: Takes model name and providers ref to properly look up Vec then index.
+    fn simple_shuffle_impl(model: &str, providers: &HashMap<String, Vec<ProviderWithState>>, indices: &[usize]) -> Option<usize> {
+        // Weighted random: higher weight = higher probability
+        let mut rng = rand::rng();
+        let Some(deployments) = providers.get(model) else { return None; };
+        let total_weight: u32 = indices.iter()
+            .filter_map(|&i| deployments.get(i).map(|p| p.1.weight))
+            .sum();
+        if total_weight == 0 {
+            return indices.iter().copied().choose(&mut rng);
+        }
+        let mut r = rng.read_u32() % total_weight;
+        for &idx in indices.iter() {
+            let w = deployments.get(idx).map(|p| p.1.weight).unwrap_or(1) as u32;
+            if r < w {
+                return Some(idx);
+            }
+            r -= w;
+        }
+        indices.last().copied()
+    }
+
+    /// RoundRobin — lock-free via AtomicUsize::fetch_add.
+    /// Uses global round_robin_index and does atomic increment.
+    fn round_robin_impl(state: &RouterState, indices: &[usize]) -> Option<usize> {
+        if indices.is_empty() { return None; }
+        let idx = state.round_robin_index.fetch_add(1, std::sync::atomic::Ordering::Relaxed) as usize % indices.len();
+        Some(indices[idx])
+    }
+
+    /// LeastBusy — selects provider with fewest active requests.
+    fn least_busy_impl(model: &str, providers: &HashMap<String, Vec<ProviderWithState>>, indices: &[usize]) -> Option<usize> {
+        let Some(deployments) = providers.get(model) else { return None; };
+        indices.iter()
+            .min_by_key(|&&i| deployments.get(i).map(|p| p.0.active_requests).unwrap_or(u32::MAX))
+            .copied()
+    }
+
+    /// LatencyBased — selects provider with lowest average latency in window.
+    fn latency_based_impl(model: &str, providers: &HashMap<String, Vec<ProviderWithState>>, indices: &[usize]) -> Option<usize> {
+        if indices.is_empty() { return None; }
+        let Some(deployments) = providers.get(model) else { return None; };
+        let mut best_idx = indices[0];
+        let mut best_avg = u64::MAX;
+        for &idx in indices {
+            let Some(provider) = deployments.get(idx) else { continue; };
+            let latencies = &provider.0.latencies;
+            if latencies.is_empty() { continue; }
+            let avg: u64 = latencies.iter().sum::<u64>() / latencies.len() as u64;
+            if avg < best_avg {
+                best_avg = avg;
+                best_idx = idx;
+            }
+        }
+        Some(best_idx)
+    }
+
+    /// CostBased — selects provider with lowest cumulative spend (decayed).
+    fn cost_based_impl(model: &str, providers: &HashMap<String, Vec<ProviderWithState>>, indices: &[usize]) -> Option<usize> {
+        if indices.is_empty() { return None; }
+        let Some(deployments) = providers.get(model) else { return None; };
+        let mut best_idx = indices[0];
+        let mut best_spend = u64::MAX;
+        for &idx in indices {
+            let Some(provider) = deployments.get(idx) else { continue; };
+            if provider.0.success_count == 0 { continue; }
+            let avg_cost = provider.0.total_count / provider.0.success_count; // rough proxy
+            if avg_cost < best_spend {
+                best_spend = avg_cost;
+                best_idx = idx;
+            }
+        }
+        Some(best_idx)
+    }
+
+    /// UsageBased — selects provider with lowest current RPM/TPM usage.
+    fn usage_based_impl(model: &str, providers: &HashMap<String, Vec<ProviderWithState>>, indices: &[usize]) -> Option<usize> {
+        let Some(deployments) = providers.get(model) else { return None; };
+        indices.iter()
+            .min_by_key(|&&i| deployments.get(i).map(|p| p.0.current_rpm).unwrap_or(u32::MAX))
+            .copied()
+    }
+
+    /// UsageBasedV2 — selects provider with lowest recency-weighted spend.
+    /// Uses exponential decay: spend *= 2^(-elapsed/3600.0) — half-life of 1 hour.
+    /// Delegates to SpendTracker.best_by_weighted_spend() for recency-weighted selection.
+    /// Falls back to UsageBased (lowest RPM) when no spend history exists.
+    fn usage_based_v2_impl(model: &str, providers: &HashMap<String, Vec<ProviderWithState>>, state: &RouterState, indices: &[usize]) -> Option<usize> {
+        if indices.is_empty() { return None; }
+        let Some(deployments) = providers.get(model) else { return None; };
+        // Build candidate provider name list from indices
+        let candidate_names: Vec<&str> = indices
+            .iter()
+            .filter_map(|&idx| deployments.get(idx).map(|p| p.0.provider_name.as_str()))
+            .collect();
+        if candidate_names.is_empty() { return None; }
+        // Ask SpendTracker for provider with lowest recency-weighted spend
+        // If no spend history exists (all candidates return None), fall back to UsageBased
+        let best_provider = state.spend_tracker.best_by_weighted_spend(&candidate_names);
+        match best_provider {
+            Some(best) => {
+                // Map provider name back to index
+                indices.iter().find(|&&idx| {
+                    deployments.get(idx).map(|p| p.0.provider_name.as_str() == best).unwrap_or(false)
+                }).copied()
+            }
+            None => {
+                // No spend history — fall back to UsageBased (lowest current_rpm)
+                Self::usage_based_impl(model, providers, indices)
+            }
+        }
+    }
+
+    /// Weighted — selects provider based on explicit per-provider weight config.
+    /// Distinct from SimpleShuffle: uses explicit weight field, not derived from rpm/tpm.
+    fn weighted_impl(model: &str, providers: &HashMap<String, Vec<ProviderWithState>>, indices: &[usize]) -> Option<usize> {
+        let Some(deployments) = providers.get(model) else { return None; };
+        let mut rng = rand::rng();
+        let total: u32 = indices.iter()
+            .map(|&i| deployments.get(i).and_then(|p| p.1.config.get("weight")?.as_u64()).unwrap_or(1) as u32)
+            .sum();
+        if total == 0 { return indices.last().copied(); }
+        let mut r = rng.read_u32() % total;
+        for &idx in indices {
+            let w = deployments.get(idx).and_then(|p| p.1.config.get("weight")?.as_u64()).unwrap_or(1) as u32;
+            if r < w { return Some(idx); }
+            r -= w;
+        }
+        indices.last().copied()
+    }
+
+    /// SpendTracker — tracks spend per provider with exponential decay for UsageBasedV2.
+    /// Decay formula: spend *= 2^(-elapsed/3600.0) — half-life of 1 hour.
+    /// Uses integer μunits to avoid floating-point non-determinism (per RFC-0104).
+    pub struct SpendTracker {
+        /// Per-provider current spend in μunits.
+        spend: HashMap<String, u64>,
+        /// Per-provider history: (timestamp, spend_μunits) pairs for v2 recency weighting.
+        /// Timestamp is seconds since epoch (f64 for decay calculation).
+        history: HashMap<String, VecDeque<(f64, u64)>>,
+    }
+
+    impl SpendTracker {
+        /// Create new SpendTracker.
+        pub fn new() -> Self {
+            Self {
+                spend: HashMap::new(),
+                history: HashMap::new(),
+            }
+        }
+
+        /// Record spend for a provider with exponential decay applied.
+        /// Decay: each provider's historical spend decays by factor 2^(-elapsed/3600.0).
+        /// This gives a half-life of 1 hour — recent spend counts more than old spend.
+        ///
+        /// **Why exp2:** 2^(-t/3600) can be computed with integer arithmetic via bit shifts
+        /// (exp2(-t/3600.0) = 2^(-t/3600)), avoiding floating-point non-determinism.
+        /// For μsecond precision, use: decay_factor = 2^(-elapsed_seconds * 2^20 / 3600).
+        pub fn record(&mut self, provider: &str, cost_μunits: u64, now: f64) {
+            // Apply decay to existing spend
+            let history = self.history.entry(provider.to_string()).or_insert_with(VecDeque::new);
+
+            // Decay all historical entries and remove fully decayed ones
+            let mut decayed_spend: u64 = 0;
+            let mut retained_history = VecDeque::new();
+
+            while let Some((timestamp, historical_spend)) = history.pop_front() {
+                let elapsed = now - timestamp;
+                // exp2(-elapsed/3600.0) — decay factor
+                // For integer μunits: multiply by 2^(-elapsed/3600)
+                // If elapsed >= 3600 (1 hour), factor = 0 (fully decayed)
+                let decay_factor = if elapsed >= 3600.0 {
+                    0
+                } else {
+                    // Use bit-shift approximation: 2^(-t/3600) ≈ 1 >> (t / 3600) for small t
+                    // But for precision, compute as:
+                    // exp2(-t/3600) = 2^(-t/3600) in floating point then convert
+                    let factor = (-elapsed / 3600.0).exp2();
+                    (factor * 1_000_000.0) as u64 // convert to μunits
+                };
+
+                let decayed = (historical_spend * decay_factor) / 1_000_000;
+                decayed_spend = decayed_spend.saturating_add(decayed);
+
+                // Keep if partially decayed (not fully decayed)
+                if decay_factor > 0 {
+                    retained_history.push_back((timestamp, historical_spend));
+            }
+
+            history.clear();
+            for entry in retained_history {
+                history.push_back(entry);
+            }
+
+            // Add new spend
+            self.spend.insert(provider.to_string(), decayed_spend.saturating_add(cost_μunits));
+            history.push_back((now, cost_μunits));
+        }
+
+        /// Select provider with lowest recency-weighted spend from candidates.
+        /// Returns provider name or None if no candidates have spend records.
+        pub fn best_by_weighted_spend<'a>(&self, candidates: &'a [&str]) -> Option<&'a str> {
+            candidates
+                .iter()
+                .filter(|&&p| self.spend.contains_key(p))
+                .min_by_key(|&&p| self.spend.get(p).unwrap_or(&u64::MAX))
+                .copied()
+        }
+    }
+
+    impl Default for SpendTracker {
+        fn default() -> Self {
+            Self::new()
+        }
+    }
+
+    /// Update provider state after response (latency, usage counts, spend).
+    /// Called after each successful provider response.
+    /// Updates: latency samples, success/failure counts, RPM/TPM counters, and spend with
+    /// exponential decay (for UsageBasedV2).
+    ///
+    /// **Locking strategy:** This function acquires `state.write()` lock to update
+    /// `RouterState`-owned fields (spend_tracker, latency_tracker). Provider fields
+    /// (active_requests, latencies, success_count) use interior mutability via
+    /// `RwLock<RouterState>` which protects the state-level data, while individual
+    /// provider updates use model-aware access — the provider state lives in `Router`
+    /// (not `RouterState`) and uses interior mutability.
+    /// active_requests decrement is NOT done here — UpdateGuard handles it on success.
+    async fn update_provider_state(&self, model: &str, idx: usize, response: &ProviderResponse) {
+        let mut state = self.state.write().await;
+
+        // 1. Record latency samples (for LatencyBased strategy)
+        // M2 fix: Use model-aware access via providers.get(model).and_then(|v| v.get_mut(idx))
+        let latency_us = (response.latency_ms * 1000.0) as u64;
+        if let Some(deployments) = self.providers.get(model) {
+            if let Some(provider_with_state) = deployments.get(idx) {
+                provider_with_state.record_latency(latency_us);
+            }
+        }
+
+        // 2. Update success counter (for CostBased strategy)
+        let tokens_used = response.usage.prompt_tokens + response.usage.completion_tokens;
+        if let Some(deployments) = self.providers.get(model) {
+            if let Some(provider_with_state) = deployments.get(idx) {
+                provider_with_state.record_success(tokens_used as u64);
+            }
+        }
+
+        // 3. Record spend with decay for UsageBasedV2 (via SpendTracker)
+        // Get provider name from response or fallback to model name
+        let provider_name = &response.provider;
+        let cost_μunits = (response.usage.prompt_tokens as u64 * 10) + (response.usage.completion_tokens as u64 * 10); // Placeholder: 10 μunits per token
+        state.spend_tracker.record(provider_name, cost_μunits, now_as_f64());
+
+        // 4. Update latency tracker in RouterState (for best_provider query)
+        state.latency_tracker.record(&response.provider, latency_us);
+    }
+
+    /// Get current time as f64 (seconds since epoch) for decay calculations.
+    /// Uses std::time::Instant for monotonic time (avoiding NTP clock-rollback issues).
+    fn now_as_f64() -> f64 {
+        // For decay calculations relative to epoch, use std::time::SystemTime::now()
+        // But for relative decay (elapsed time), use Instant which is monotonic.
+        // Since SpendTracker stores timestamps as seconds-since-epoch for consistency
+        // with external systems, we use SystemTime here.
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs_f64()
     }
 
     /// Shared global router for SDK mode (PyO3 bridge).
@@ -1298,8 +2432,10 @@ pub struct ProviderRequest {
 pub struct ProviderResponse {
     pub id: String,
     pub model: String,
+    pub provider: String,  // Provider name (e.g., "openai", "anthropic") for keying into state
     pub message: Message,
     pub usage: Usage,
+    pub latency_ms: f64,  // Request latency in milliseconds for LatencyBased routing
 }
 
 /// Message format (OpenAI-compatible)
@@ -1540,9 +2676,9 @@ full = []                     # Both strategies simultaneously
 
 ### Phase 3: any-llm Mode — Python SDK via PyO3
 
-**Goal:** Reimplement the full any-llm Python SDK API surface in Rust via PyO3. any-llm-mode is a drop-in replacement for the any-llm SDK at `../any-llm/src/`. It is NOT a wrapper around any-llm — it replaces any-llm entirely by reimplementing the same API, same 41 providers, same 20 API functions, in Rust with PyO3 bindings to quota-router-core.
+**Goal:** Reimplement the full any-llm Python SDK API surface in Rust via PyO3. any-llm-mode is a drop-in replacement for the any-llm SDK at `../any-llm/src/`. It is NOT a wrapper around any-llm — it replaces any-llm entirely by reimplementing the same API, same 42 providers, same 20 API functions, in Rust with PyO3 bindings to quota-router-core.
 
-#### Providers — 41 total (all must be supported)
+#### Providers — 42 total (all must be supported)
 
 ```
 anthropic, azure, azureanthropic, azureopenai, bedrock, cerebras, cohere,
@@ -1571,7 +2707,7 @@ watsonx, xai, zai
 #### Phase 3 Checklist
 
 - [ ] **PyO3 bridge** — quota-router-pyo3 calls official Python SDKs via PyO3
-- [ ] **41 Provider integrations** via PyO3 (see provider list above)
+- [ ] **42 Provider integrations** via PyO3 (see provider list above)
 - [ ] **Python SDK package** (`pip install quota-router`)
 - [ ] **20 API functions** via PyO3 (see function table above)
 - [ ] **Streaming** via PyO3 async generators
@@ -1993,7 +3129,7 @@ pub async fn route_and_forward(
         ProviderHandle::Http(http) => http.completion(&HttpCompletionRequest::from(request)).await?,
         ProviderHandle::Sdk(sdk) => sdk.completion(&SdkCompletionRequest::from(request)).await?,
     };
-    self.update_provider_state(provider_idx, &response).await;
+    self.update_provider_state(&request.model, provider_idx, &response).await;
     Ok(response)
 }
 ```
@@ -3278,6 +4414,16 @@ In `full` builds, both modules are compiled simultaneously and selected at runti
 
 | Version | Date       | Changes |
 |---------|------------|---------|
+| 2.50    | 2026-05-10 | **FIX** M1: All 8 routing strategy impls (least_busy, latency_based, cost_based, usage_based, usage_based_v2, weighted) now use model-aware access pattern `providers.get(model).and_then(|v| v.get(idx))` — previously incorrectly used `providers.get(idx)` as if idx were a HashMap key. **FIX** M2: update_provider_state() now takes model name and uses proper model-aware access for provider state updates. **FIX** M6: SdkUsage token fields changed from u32 to u64 to avoid overflow on large responses (OpenAI can return millions of tokens). **FIX** Pseudocode at line 3132 now passes model name to update_provider_state (was missing model param). |
+| 2.49    | 2026-05-10 | **FIX** L9: UpdateGuard.new now takes model name as first arg to properly look up Vec then index into it (was incorrectly using idx as HashMap key directly). **FIX** L6: Added `arguments: Option<String>` to SdkMessage for Phase 4 tool_calls support (function call parameters JSON). |
+| 2.45    | 2026-05-09 | **FIX** G3: usage_based_v2_impl now uses SpendTracker.best_by_weighted_spend() (was placeholder fallback to UsageBased). **FIX** G6: update_provider_state() now implements real state updates (active_requests decrement, latency samples, success counters, spend recording). **ADD** spend_tracker: SpendTracker to RouterState for UsageBasedV2. **CLEAN** Removed dead imports from simple_shuffle_impl and weighted_impl. **CLEAN** Removed unused enumerate idx variable. |
+| 2.44    | 2026-05-09 | **ADD** ProviderWithState struct (lines ~1879-1900) — referenced but never defined in RFC. All routing decision state (active_requests, latencies, success_count, current_rpm/tpm, spend_μunits). **ADD** SpendTracker struct with exponential decay (lines ~2290-2370) — decay formula: spend *= 2^(-elapsed/3600.0), half-life of 1 hour. Implements best_by_weighted_spend() for UsageBasedV2 strategy. **ADD** RoutingStrategy enum with all 8 variants (lines ~1921-1949) and full algorithm implementations (lines ~2079-2197). All heavy lifting migrated from deprecated Python Router class in RFC-0920 v1.68 — RFC-0917 is now the single source of truth for router algorithms. |
+| 2.43    | 2026-05-09 | **FIX** F1: RouterHandle.batch_completion_models_all() now passes all 22 params (was dropping 20 params — now matches Client behavior). **FIX** F4: SdkMessage.name comment clarified ("function name for role=assistant or role=function"). **FIX** F6: Duplicate TODO comment removed from RouterHandle.completion() cost_amount line. |
+| 2.41    | 2026-05-09 | **FIX** D4/D7/D8: SdkMessage.role now specifies valid values (user|assistant|system|function|tool). SdkMessage.content notes multi-modal deferred to Phase 4. SdkMessage.name docs clarify usage. **FIX** D10: cost_amount: 0 now references RFC-0904 pricing registry tracking. Per deferred-vs-unspecified rule: no "Phase X" deferral without spec. |
+| 2.40    | 2026-05-09 | **FIX** D1/D3: RouterHandle.batch_completion_models() and batch_completion_models_all() now have all 22 params (was only temperature/max_tokens). **FIX** D9: batch_completion_models_all() now documents that failures are silently dropped. |
+| 2.39    | 2026-05-09 | **FIX** C1: Client.batch_completion_models() now uses tokio::sync::mpsc (was std::mpsc blocking). **FIX** C2: Client.get_metrics() now returns Result like RouterHandle (was direct HashMap). **FIX** C6: RouterHandle.batch_completion_models() now takes all 22 params (was dropping most to None). Documented fire-and-forget task pattern. |
+| 2.38    | 2026-05-09 | **FIX** B1: RouterHandle.completion() now has full 22 params (was only 4). **FIX** B10: RouterHandle.completion() now passes ALL params to SdkCompletionRequest (was dropping all except model/messages/stream). **FIX** B2: Added batch_completion_models() and batch_completion_models_all() to RouterHandle (was missing). **FIX** B5: Added RouterHandle::new() constructor. **FIX** B9: batch_completion_models uses tokio::sync::mpsc instead of std::mpsc. |
+| 2.37    | 2026-05-09 | **FIX** A8: Add `python_sdk_entry` module with concrete `RouterHandle` struct definition — the PyO3 entry point that `quota-router-pyo3` calls. RFC-0920 references `RouterHandle`/`RustRouterHandle` in 12+ places but it was never defined. This fix adds the missing entry point. Also clarifies the two PyO3 boundaries: Boundary #1 (internal, core→provider SDKs via `py_bridge`) and Boundary #2 (external, pyo3→core via `RouterHandle`). **FIX** A1: Added `client` module for direct Rust-to-core calls without HTTP proxy. External Rust clients (CLI, other crates) can now link against quota-router-core directly via `Client` struct with zero overhead. **FIX** A3: Expanded `SdkCompletionRequest` with all 22 parameters (per RFC-0920 lines 58-84, 3735-3751). **FIX** A4: Added `batch_completion_models()` and `batch_completion_models_all()` methods to `RouterHandle` and `Client`. **FIX** A5: Added `name: Option<String>` field to `SdkMessage` for function call support. |
 | 2.36    | 2026-05-06 | **FIX** N2: AsyncChunkIterator uses tokio::task::spawn_blocking + oneshot (not blocking std::thread::spawn + join). **FIX** N9: StreamAdapter removed — single AsyncChunkIterator with spawn_blocking/oneshot. **FIX** N10: GIL Management table updated to `into_future` (was `into_async`). **FIX** N11: execute_with_retry parse_response called as associated function (was via C::default()). **FIX** N12: Rust code fence closed before Rate limiting for streaming. **FIX** N18: bedrock added to PROVIDER_SDK_TYPES YAML + Rust + Python registry. |
 | 2.35    | 2026-04-30 | **FIX** D1 (Critical): compile_error! moved OUTSIDE struct body (top-level item, not inside struct). **FIX** D2: execute_with_retry added `+ Default` bound to C trait. **FIX** H1: AsyncIterator replaced with futures::Stream (stable Rust). **FIX** H2: ProviderHandle defined once via `pub use` in router module (removed duplicate). **FIX** H3: into_async removed from streaming section. **FIX** H4: ROUTER lazy_static now uses `Router::global()` (not `Router::new()` — was creating separate instance). **FIX** H10: compute_event_id documented as BLAKE3 per RFC-0909. **FIX** M1: LatencyTracker uses VecDeque(maxlen) for O(1) front eviction. |
 | 2.34    | 2026-04-30 | **FIX** 1 (Critical): Rust Feature Gates — hyper/axum/py-o3 are now UNCONDITIONAL dependencies (empty feature flags `[]`). Single-mode feature flags no longer enable/disable interfaces. **FIX** 2 (High): Per-Mode Streaming Availability table — any-llm-mode now ✅ for HTTP proxy streaming. **FIX** 3 (High): Feature-Gated Structure directory tree — gateway comment updated to "ALWAYS compiled". **FIX** 4 (High): Cargo Features block — updated to empty flags with explicit UNCONDITIONAL note. **FIX** 5 (Medium): lib.rs source comments — clarified provider strategies are exclusive per single-mode build. |

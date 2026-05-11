@@ -14,10 +14,12 @@
 
 #![allow(deprecated)]
 
+mod batch;
 mod completion;
 mod exceptions;
 mod model;
 mod providers;
+mod router;
 mod sdk;
 mod streaming;
 mod types;
@@ -49,6 +51,7 @@ fn quota_router(m: &PyModule) -> PyResult<()> {
 
     // Register sync completion functions
     m.add_function(wrap_pyfunction!(completion::completion, m)?)?;
+    m.add_function(wrap_pyfunction!(completion::text_completion, m)?)?;
     m.add_function(wrap_pyfunction!(completion::embedding, m)?)?;
     m.add_function(wrap_pyfunction!(completion::messages, m)?)?;
     m.add_function(wrap_pyfunction!(completion::responses, m)?)?;
@@ -61,6 +64,7 @@ fn quota_router(m: &PyModule) -> PyResult<()> {
 
     // Register async completion functions (using pyo3 experimental-async)
     m.add_function(wrap_pyfunction!(completion::acompletion, m)?)?;
+    m.add_function(wrap_pyfunction!(completion::atext_completion, m)?)?;
     m.add_function(wrap_pyfunction!(completion::aembedding, m)?)?;
     m.add_function(wrap_pyfunction!(completion::amessages, m)?)?;
     m.add_function(wrap_pyfunction!(completion::aresponses, m)?)?;
@@ -75,7 +79,8 @@ fn quota_router(m: &PyModule) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(model::parse_model, m)?)?;
     m.add_function(wrap_pyfunction!(model::parse_model_strict, m)?)?;
 
-    // Register SDK management functions
+    // Register SDK management functions (delegate to core python_sdk_entry)
+    // Note: These use in-memory storage in pyo3 for now; core storage will be wired in Phase 4
     m.add_function(wrap_pyfunction!(sdk::set_api_key, m)?)?;
     m.add_function(wrap_pyfunction!(sdk::get_budget_status, m)?)?;
     m.add_function(wrap_pyfunction!(sdk::get_metrics, m)?)?;
@@ -90,6 +95,17 @@ fn quota_router(m: &PyModule) -> PyResult<()> {
         m
     )?)?;
     m.add_function(wrap_pyfunction!(providers::factory::get_provider_info, m)?)?;
+
+    // Register batch completion functions
+    m.add_function(wrap_pyfunction!(batch::batch_completion, m)?)?;
+    m.add_function(wrap_pyfunction!(batch::batch_completion_models, m)?)?;
+    m.add_function(wrap_pyfunction!(
+        batch::batch_completion_models_all_responses,
+        m
+    )?)?;
+
+    // Register Router class
+    m.add_class::<router::Router>()?;
 
     Ok(())
 }

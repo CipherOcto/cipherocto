@@ -55,13 +55,12 @@ impl GROQProvider {
         let _api_base = self.api_base.lock().unwrap();
 
         Python::with_gil(|py| {
-            let groq = PyModule::import(py, "groq").map_err(|e| {
-                ProviderError::new(format!("Failed to import groq: {}", e), "groq")
-            })?;
+            let groq = PyModule::import(py, "groq")
+                .map_err(|e| ProviderError::new(format!("Failed to import groq: {}", e), "groq"))?;
 
-            let groq_class = groq.getattr("Groq").map_err(|e| {
-                ProviderError::new(format!("Failed to get Groq: {}", e), "groq")
-            })?;
+            let groq_class = groq
+                .getattr("Groq")
+                .map_err(|e| ProviderError::new(format!("Failed to get Groq: {}", e), "groq"))?;
 
             let key = api_key
                 .as_ref()
@@ -70,9 +69,9 @@ impl GROQProvider {
             let kwargs = PyDict::new(py);
             kwargs.set_item("api_key", key).unwrap();
 
-            let client = groq_class
-                .call((), Some(kwargs))
-                .map_err(|e| ProviderError::new(format!("Failed to create client: {}", e), "groq"))?;
+            let client = groq_class.call((), Some(kwargs)).map_err(|e| {
+                ProviderError::new(format!("Failed to create client: {}", e), "groq")
+            })?;
 
             let client_py: Py<PyAny> = client.into();
             *client_guard = Some(client_py.clone());
@@ -132,9 +131,9 @@ impl LLMProvider for GROQProvider {
             let chat = client_obj
                 .getattr("chat")
                 .map_err(|e| ProviderError::new(format!("Failed to get chat: {}", e), "groq"))?;
-            let completions = chat
-                .getattr("completions")
-                .map_err(|e| ProviderError::new(format!("Failed to get completions: {}", e), "groq"))?;
+            let completions = chat.getattr("completions").map_err(|e| {
+                ProviderError::new(format!("Failed to get completions: {}", e), "groq")
+            })?;
             let create = completions
                 .getattr("create")
                 .map_err(|e| ProviderError::new(format!("Failed to get create: {}", e), "groq"))?;
@@ -220,11 +219,17 @@ fn convert_py_groq_response(py_obj: &PyAny, model: &str) -> Result<ChatCompletio
 
             let finish_reason: String = choice_obj
                 .get_item("finish_reason")
-                .map_err(|e| ProviderError::new(format!("Failed to get finish_reason: {}", e), "groq"))?
+                .map_err(|e| {
+                    ProviderError::new(format!("Failed to get finish_reason: {}", e), "groq")
+                })?
                 .extract()
                 .unwrap_or_else(|_| "stop".to_string());
 
-            result.push(Choice::new(index, Message::new(role, content), finish_reason));
+            result.push(Choice::new(
+                index,
+                Message::new(role, content),
+                finish_reason,
+            ));
         }
         result
     } else {

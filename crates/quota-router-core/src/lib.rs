@@ -11,6 +11,10 @@
 // NEVER think "litellm-mode = proxy only" or "any-llm-mode = SDK only".
 // See RFC-0917 lines 175-176: "HTTP Proxy Server | (always)" and "Python SDK Interface | (always)"
 
+#![allow(deprecated)]
+
+// HTTP server modules (admin, proxy, middleware) — ALWAYS available per RFC-0917 line 182:
+// "HTTP Proxy Server | (always)" — NO feature gate, these are unconditionally compiled
 pub mod admin;
 pub mod balance;
 pub mod cache;
@@ -26,6 +30,32 @@ pub mod rate_limit;
 pub mod router;
 pub mod schema;
 pub mod storage;
+
+// native_http — reqwest → provider REST APIs (INTERNAL boundary #1 per RFC-0917)
+// Only compiled when litellm-mode or full feature is enabled
+#[cfg(any(feature = "litellm-mode", feature = "full"))]
+pub mod native_http;
+
+// py_bridge — PyO3 → official Python SDKs (INTERNAL boundary #1 per RFC-0917)
+// Only compiled when any-llm-mode or full feature is enabled
+#[cfg(any(feature = "any-llm-mode", feature = "full"))]
+pub mod py_bridge;
+
+// python_sdk_entry — PyO3 entry point (EXTERNAL boundary #2 per RFC-0917)
+// Only compiled when any-llm-mode or full feature is enabled
+#[cfg(any(feature = "any-llm-mode", feature = "full"))]
+pub mod python_sdk_entry;
+
+// shared_types — core types without PyO3 deps (used by native_http)
+pub mod shared_types;
+
+// py_bridge types (with PyO3 conversions) — for python_sdk_entry only
+#[cfg(any(feature = "any-llm-mode", feature = "full"))]
+pub mod model;
+
+// Shared types for py_bridge/python_sdk_entry
+#[cfg(any(feature = "any-llm-mode", feature = "full"))]
+pub mod types;
 
 pub use cache::{
     check_budget_soft_limit, rotation_worker, validate_key_with_cache, CacheInvalidation, KeyCache,

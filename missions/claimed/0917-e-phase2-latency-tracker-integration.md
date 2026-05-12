@@ -68,13 +68,13 @@ pub fn record_request_end(
 }
 ```
 
-### 3. best_provider() Usage
+### 3. best_provider_with_ttft() Usage
 
-`LatencyTracker::best_provider()` returns `Option<&str>` (provider name with lowest avg latency across all model groups).
+`LatencyTracker::best_provider_with_ttft()` returns `Option<&str>` (provider name with lowest avg latency across all model groups, using TTFT selection mode for streaming).
 
-**Use case:** When a model group has multiple deployments/providers, `best_provider()` can inform fallback selection even when routing to a different model group.
+**Use case:** When a model group has multiple deployments/providers, `best_provider_with_ttft()` can inform fallback selection even when routing to a different model group.
 
-**NOT used for:** Primary routing (Router.route() uses ProviderWithState.latencies). `best_provider()` is for cross-model-group fallback logic.
+**NOT used for:** Primary routing (Router.route() uses ProviderWithState.latencies). `best_provider_with_ttft()` is for cross-model-group fallback logic.
 
 ### 4. TTFT (Time-To-First-Token) Tracking
 
@@ -105,21 +105,21 @@ impl RouterState {
 |------|--------|
 | `crates/quota-router-core/src/router.rs` | Add `RouterState` struct with `router` + `latency_tracker`, wire `record_request_end()` to call both |
 | `LatencyTracker` struct | Modify `record()` signature to accept optional TTFT parameter (TTFT spec per RFC-0925) |
-| `best_provider()` | TTFT-aware scoring per RFC-0925 §TTFT-Aware Scoring (selection mode, not weighted blend) |
+| `best_provider_with_ttft()` | TTFT-aware scoring per RFC-0925 §TTFT-Aware Scoring (selection mode, not weighted blend) |
 
 ## Acceptance Criteria
 
 - [ ] `RouterState` struct owns both `Router` and `LatencyTracker`
 - [ ] `RouterState::record_request_end()` updates both ProviderWithState and LatencyTracker
 - [ ] `LatencyTracker::record()` accepts optional TTFT parameter (per RFC-0925)
-- [ ] `LatencyTracker::best_provider()` uses TTFT selection mode for streaming (per RFC-0925 §TTFT-Aware Scoring)
+- [ ] `LatencyTracker::best_provider_with_ttft()` uses TTFT selection mode for streaming (per RFC-0925 §TTFT-Aware Scoring)
 - [ ] All Phase 3 tests still pass
-- [ ] `cargo build -p quota-router-core --features litellm-mode` passes
+- [ ] `cargo build -p quota-router-core --features litellm-mode` passes (verify feature gates for latency tracking)
 - [ ] `cargo test -p quota-router-core --lib` passes
 
 ## Deferred Items (Future Work)
 
-These are explicitly out of scope for Phase 2 but specced in future RFCs:
+These are explicitly out of scope for Phase 2 but specced in other RFCs:
 
 | Item | Status | RFC |
 |------|--------|-----|
@@ -148,3 +148,5 @@ Our current `current_rpm` cannot answer "what was my RPM at 2:30pm?" — it's a 
 - Per RFC-0917 A3 Router: routing is non-normative pseudocode — actual implementation may differ while maintaining equivalent behavior
 - LatencyTracker uses integer microseconds (u64) per RFC-0104 determinism requirement
 - VecDeque with maxlen=100 provides O(1) eviction per provider sample window
+- **Pre-implementation verification required:** Confirm Phase 3 `LatencyTracker::record()` signature — if it currently takes `(provider: &str, latency_us: u64)` without TTFT, Phase 2 must extend it to accept optional TTFT parameter
+- **RFC-0925 spec note:** `best_provider_with_ttft()` declares `ttft_weight: f32` parameter but implementation ignores it (uses selection mode, not weighted blend). This is a dead parameter in RFC-0925 — implementer should verify current status before Phase 2 implementation

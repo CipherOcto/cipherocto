@@ -532,6 +532,80 @@ impl LatencyTracker {
             .min_by_key(|(_, score)| *score as u64)
             .map(|(name, _)| *name)
     }
+
+    /// Get best provider considering penalty-adjusted latencies.
+    /// Returns (provider_name, effective_latency) or None if no valid providers.
+    ///
+    /// NOTE: Only considers providers with latency samples in self.samples AND
+    /// that are present in the `available_names` set. Callers must populate
+    /// `available_names` with providers that are not in cooldown.
+    /// Fresh deployments (no latency samples) cannot be selected by this method;
+    /// callers should use a separate strategy when this returns None.
+    ///
+    /// TTFT-only for streaming with data (penalties NOT applied to TTFT).
+    /// Penalty-adjusted latency for non-streaming or streaming without TTFT.
+    pub fn best_provider_with_penalties(
+        &self,
+        penalty_map: &std::collections::HashMap<String, Vec<u64>>,
+        available_names: &std::collections::HashSet<&str>,
+        is_streaming: bool,
+    ) -> Option<(&str, f32)> {
+        let mut candidates: Vec<(&str, f32)> = Vec::new();
+
+        for (name, samples) in &self.samples {
+            let name_str = name.as_str();
+
+            // Filter: must be in available set (not in cooldown) and have samples
+            if !available_names.contains(name_str) {
+                continue;
+            }
+            if samples.is_empty() {
+                continue;
+            }
+
+            // For streaming with TTFT data: use TTFT only, ignore penalties
+            // TTFT measures initial responsiveness; a timeout AFTER first token
+            // shouldn't penalize TTFT
+            if is_streaming {
+                if let Some(ttft_samples) = self.ttft_samples.get(name_str) {
+                    if !ttft_samples.is_empty() {
+                        let ttft_avg =
+                            ttft_samples.iter().sum::<u64>() as f32 / ttft_samples.len() as f32;
+                        candidates.push((name_str, ttft_avg));
+                        continue;
+                    }
+                }
+            }
+
+            // Non-streaming OR streaming without TTFT data: use penalty-adjusted latency
+            let samples_sum: u64 = samples.iter().sum();
+            let base_latency = samples_sum as f32 / samples.len() as f32;
+            let penalties = penalty_map
+                .get(name_str)
+                .map(|p| p.as_slice())
+                .unwrap_or(&[]);
+
+            let effective = if penalties.is_empty() {
+                base_latency
+            } else {
+                let penalty_sum: u64 = penalties.iter().sum();
+                let total_count = samples.len() + penalties.len();
+                (samples_sum as f32 + penalty_sum as f32) / total_count as f32
+            };
+
+            candidates.push((name_str, effective));
+        }
+
+        // Find minimum by score using total ordering on f32 bits.
+        // For positive finite floats (all realistic latencies), bit ordering matches numeric ordering:
+        //   100ms (0x42C80000) < 200ms (0x43480000) < ... < 10s (0x461C4000)
+        // Using to_bits() avoids f32::total_cmp (unstable) and is deterministic.
+        candidates
+            .iter()
+            .map(|(name, score)| (*name, *score, score.to_bits()))
+            .min_by_key(|(_, _, bits)| *bits)
+            .map(|(name, score, _)| (name, score))
+    }
 }
 
 /// RouterState wraps Router with cross-model-group LatencyTracker integration.
@@ -939,14 +1013,14 @@ impl Router {
             }
             RoutingStrategy::LeastBusy => Self::least_busy_impl(providers),
             RoutingStrategy::LatencyBased => {
-                // RFC-0925: Cooldown-aware LatencyBased routing
-                Self::latency_based_with_cooldown_impl(
+                // RFC-0925/0926: Cooldown-aware LatencyBased routing with penalty latency scoring
+                return Self::latency_based_with_cooldown_impl(
                     providers,
                     &mut self.latency_tracker,
                     &self.config.latency_config,
                     is_streaming,
                     latency_window,
-                )
+                );
             }
             RoutingStrategy::CostBased => Self::simple_shuffle_impl(providers), // Fallback
             RoutingStrategy::UsageBased => Self::usage_based_impl(providers),
@@ -999,10 +1073,10 @@ impl Router {
     fn latency_based_with_cooldown_impl(
         providers: &mut [ProviderWithState],
         latency_tracker: &mut LatencyTracker,
-        latency_config: &LatencyConfig,
+        _latency_config: &LatencyConfig,
         is_streaming: bool,
         _latency_window: usize,
-    ) -> usize {
+    ) -> Option<usize> {
         // First, expire any cooldowns that have elapsed
         for p in providers.iter_mut() {
             if p.cooldown_tracker.state == DeploymentState::Cooldown
@@ -1014,57 +1088,51 @@ impl Router {
             }
         }
 
-        // Find available (non-cooldown) deployments
-        let available: Vec<usize> = providers
-            .iter()
-            .enumerate()
-            .filter(|(_, p)| p.cooldown_tracker.is_available())
-            .map(|(i, _)| i)
-            .collect();
+        // Build available set (providers not in cooldown) and penalty map
+        let mut penalty_map: std::collections::HashMap<String, Vec<u64>> =
+            std::collections::HashMap::new();
+        let mut available_names: std::collections::HashSet<&str> =
+            std::collections::HashSet::new();
 
-        if available.is_empty() {
-            // All deployments in cooldown - return first as fallback
-            return 0;
-        }
+        for provider in providers.iter() {
+            // Skip providers in cooldown
+            if !provider.cooldown_tracker.is_available() {
+                continue;
+            }
 
-        // Get available provider names for filtering
-        let available_names: std::collections::HashSet<&str> = available
-            .iter()
-            .map(|&i| providers[i].provider.name.as_str())
-            .collect();
+            let name_str: &str = provider.provider.name.as_str();
+            available_names.insert(name_str);
 
-        // Get best provider using latency tracker
-        let buffer = latency_config.lowest_latency_buffer;
-        let best = latency_tracker.best_provider_with_ttft(is_streaming, buffer);
-
-        // If best is not available (in cooldown), find next-best among available
-        if let Some(best_name) = best {
-            if available_names.contains(best_name) {
-                // Return index of best provider within available set
-                return available
-                    .iter()
-                    .position(|&i| providers[i].provider.name.as_str() == best_name)
-                    .unwrap_or(0);
+            // Build penalty map for this provider (only if penalties exist)
+            let penalties = provider.cooldown_tracker.get_penalty_latencies();
+            if !penalties.is_empty() {
+                penalty_map.insert(provider.provider.name.clone(), penalties.to_vec());
             }
         }
 
-        // Fallback: use best_provider_among for available set
-        let available_best = latency_tracker.best_provider_among(available_names, is_streaming);
-        if let Some(available_best_name) = available_best {
-            return available
-                .iter()
-                .position(|&i| providers[i].provider.name.as_str() == available_best_name)
-                .unwrap_or(0);
+        // If no available providers, return None
+        if available_names.is_empty() {
+            return None;
         }
 
-        // Ultimate fallback: lowest latency among available
-        let fallback_idx = available
+        // Use penalty-adjusted selection when penalties exist, otherwise use standard best_provider_among
+        let best_name = if penalty_map.is_empty() {
+            // No penalties: use standard selection among available providers
+            latency_tracker.best_provider_among(available_names, is_streaming)?
+        } else {
+            // Penalties exist: use penalty-adjusted selection among available providers
+            let (name, _) = latency_tracker.best_provider_with_penalties(
+                &penalty_map,
+                &available_names,
+                is_streaming,
+            )?;
+            name
+        };
+
+        // Return index of best provider
+        providers
             .iter()
-            .enumerate()
-            .min_by_key(|(_, &i)| providers[i].avg_latency_us())
-            .map(|(idx, _)| idx)
-            .unwrap_or(0);
-        available[fallback_idx]
+            .position(|p| p.provider.name.as_str() == best_name)
     }
 
     /// UsageBased: Select provider with lowest current usage
@@ -1390,13 +1458,18 @@ mod tests {
         };
         let mut router = Router::new(config, providers);
 
-        // Set latencies - azure should be faster
+        // Populate latency tracker - azure should be faster
+        // (new implementation uses latency_tracker, not p.latencies)
         if let Some(providers) = router.providers.get_mut("gpt-3.5-turbo") {
             for p in providers.iter_mut() {
                 if p.provider.name == "azure" {
-                    p.latencies = vec![100_000, 110_000, 105_000]; // Fast: ~105ms avg
+                    router.latency_tracker.record("azure", 100_000, None);
+                    router.latency_tracker.record("azure", 110_000, None);
+                    router.latency_tracker.record("azure", 105_000, None);
                 } else {
-                    p.latencies = vec![500_000, 510_000, 505_000]; // Slow: ~505ms avg
+                    router.latency_tracker.record("openai", 500_000, None);
+                    router.latency_tracker.record("openai", 510_000, None);
+                    router.latency_tracker.record("openai", 505_000, None);
                 }
             }
         }

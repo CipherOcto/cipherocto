@@ -2,7 +2,7 @@
 
 ## Status
 
-OPEN — ready to claim
+COMPLETE — all acceptance criteria met (2026-05-12)
 
 ## RFC
 
@@ -77,24 +77,24 @@ Update `latency_based_with_cooldown_impl()` to:
 - [x] `get_penalty_latencies()` — returns reference to penalty_latencies vector
 
 **LatencyTracker changes:**
-- [ ] `best_provider_with_penalties()` — new helper method with penalty-adjusted scoring
+- [x] `best_provider_with_penalties()` — new helper method with penalty-adjusted scoring
 
 **Router integration:**
-- [ ] `latency_based_with_cooldown_impl()` — builds penalty_map, calls best_provider_with_penalties(), changes return type to `Option<usize>`
+- [x] `latency_based_with_cooldown_impl()` — builds penalty_map, calls best_provider_with_penalties(), changes return type to `Option<usize>`
 
 **Testing:**
-- [ ] Penalty increases effective latency ~100x for single timeout
-- [ ] TTFT scoring ignores penalties (per design decision)
-- [ ] `best_provider_with_penalties()` returns `None` for fresh deployments (no samples) — caller must fall back to non-latency strategy
+- [x] Penalty increases effective latency ~100x for single timeout
+- [x] TTFT scoring ignores penalties (per design decision)
+- [x] `best_provider_with_penalties()` returns `None` for fresh deployments (no samples) — caller must fall back to non-latency strategy
 
 ## Acceptance Criteria
 
 - [x] `CooldownTracker.get_penalty_latencies()` returns reference to penalties
-- [ ] `best_provider_with_penalties()` returns `Option<(&str, f32)>` with correct scoring
-- [ ] Penalty-adjusted latency for 99 samples @ 100ms + 1 penalty @ 1000s = ~10.1 seconds effective
-- [ ] TTFT scoring ignores penalties (per RFC-0926 §TTFT Scoring)
-- [ ] `cargo clippy -D warnings` passes
-- [ ] `cargo test --lib` passes
+- [x] `best_provider_with_penalties()` returns `Option<(&str, f32)>` with correct scoring
+- [x] Penalty-adjusted latency for 99 samples @ 100ms + 1 penalty @ 1000s = ~10.1 seconds effective
+- [x] TTFT scoring ignores penalties (per RFC-0926 §TTFT Scoring)
+- [x] `cargo clippy -D warnings` passes
+- [x] `cargo test --lib` passes
 
 ## Key Files to Modify
 

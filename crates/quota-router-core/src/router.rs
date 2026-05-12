@@ -583,7 +583,9 @@ impl RouterState {
         // Router.latency_tracker: used by Router.route() for LatencyBased strategy
         if let Some(name) = provider_name {
             self.latency_tracker.record(&name, latency_us, ttft_us);
-            self.router.latency_tracker.record(&name, latency_us, ttft_us);
+            self.router
+                .latency_tracker
+                .record(&name, latency_us, ttft_us);
         }
     }
 }

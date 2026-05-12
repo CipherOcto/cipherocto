@@ -51,6 +51,11 @@ pub fn best_provider_with_penalties(
     // TTFT-only for streaming with data (penalties NOT applied to TTFT)
     // Penalty-adjusted latency for non-streaming or streaming without TTFT
     // effective_latency = (sum(samples) + sum(penalties)) / (len(samples) + len(penalties))
+    // NOTE: The f32 effective_latency is returned for potential future use (logging/metrics)
+    //       but is not used in current router integration — the router only needs the provider name.
+    // NOTE: Unlike best_provider_with_ttft(), this method does NOT apply lowest_latency_buffer
+    //       filtering. The penalty mechanism (~100x latency increase) serves as a strong discriminator,
+    //       naturally routing traffic away without explicit buffer filtering.
 }
 ```
 
@@ -60,6 +65,8 @@ Update `latency_based_with_cooldown_impl()` to:
 1. Build `available_names` HashSet (providers not in cooldown)
 2. Build `penalty_map` from `CooldownTracker.get_penalty_latencies()`
 3. Call `best_provider_with_penalties()` when penalties exist, otherwise use `best_provider_among()`
+
+**Behavior when `best_provider_with_penalties()` returns `None`:** The existing fallback behavior is preserved — if all available providers have no samples (fresh deployment), `best_provider_among()` also returns `None`, and the function falls through to the ultimate fallback (lowest avg_latency among available providers). The `None` return from `best_provider_with_penalties()` does not short-circuit to a `None` result — it triggers the next fallback layer.
 
 ## Implementation Checklist
 

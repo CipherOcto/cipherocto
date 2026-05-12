@@ -20,6 +20,8 @@ RFC-0926: Penalty Latency Applied to Scoring
 - [x] `CooldownTracker.clear_penalty_latencies()`
 - [x] `CooldownTracker.is_available()`
 
+**Note:** The RFC-0926 §New/Modified Methods table attributes `get_penalty_latencies` to RFC-0926, but it was actually implemented as part of RFC-0925. The mission correctly identifies it as RFC-0925 work.
+
 ## Summary
 
 Integrate penalty latencies stored in `CooldownTracker` into `LatencyTracker` scoring for latency-based routing decisions. When a deployment experiences timeouts or failures, penalty latencies (default 1_000_000_000µs per litellm) should be factored into provider selection to avoid routing to degraded deployments.
@@ -65,8 +67,11 @@ Update `latency_based_with_cooldown_impl()` to:
 1. Build `available_names` HashSet (providers not in cooldown)
 2. Build `penalty_map` from `CooldownTracker.get_penalty_latencies()`
 3. Call `best_provider_with_penalties()` when penalties exist, otherwise use `best_provider_among()`
+4. Change return type from `usize` to `Option<usize>` — propagate `None` to caller when no valid providers available
 
-**Behavior when `best_provider_with_penalties()` returns `None`:** The existing fallback behavior is preserved — if all available providers have no samples (fresh deployment), `best_provider_among()` also returns `None`, and the function falls through to the ultimate fallback (lowest avg_latency among available providers). The `None` return from `best_provider_with_penalties()` does not short-circuit to a `None` result — it triggers the next fallback layer.
+**Return type change:** The function must change from `usize` to `Option<usize>`. When `best_provider_with_penalties()` or `best_provider_among()` returns `None` (no samples for any available provider), propagate `None` to the caller. The caller (`Router.route()`) must handle `None` by falling back to a non-latency-based strategy (e.g., round-robin, first-available).
+
+**Note:** This differs from the current implementation which always returns `usize` via ultimate fallback to `avg_latency_us` minimum. The new behavior lets the caller decide the fallback strategy, per RFC-0926 §Integration Flow step 4.
 
 ## Implementation Checklist
 
@@ -77,7 +82,7 @@ Update `latency_based_with_cooldown_impl()` to:
 - [ ] `best_provider_with_penalties()` — new helper method with penalty-adjusted scoring
 
 **Router integration:**
-- [ ] `latency_based_with_cooldown_impl()` — builds penalty_map and calls best_provider_with_penalties()
+- [ ] `latency_based_with_cooldown_impl()` — builds penalty_map, calls best_provider_with_penalties(), changes return type to `Option<usize>`
 
 **Testing:**
 - [ ] Penalty increases effective latency ~100x for single timeout

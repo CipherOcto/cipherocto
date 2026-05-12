@@ -2,7 +2,7 @@
 
 ## Status
 
-SPECIFIED — ready for implementation (this is the spec, not implementation)
+COMPLETE — all acceptance criteria met (2026-05-12)
 
 ## RFC
 

@@ -20,8 +20,6 @@ RFC-0926: Penalty Latency Applied to Scoring
 - [x] `CooldownTracker.clear_penalty_latencies()`
 - [x] `CooldownTracker.is_available()`
 
-**Note:** The RFC-0926 §New/Modified Methods table attributes `get_penalty_latencies` to RFC-0926, but it was actually implemented as part of RFC-0925. The mission correctly identifies it as RFC-0925 work.
-
 ## Summary
 
 Integrate penalty latencies stored in `CooldownTracker` into `LatencyTracker` scoring for latency-based routing decisions. When a deployment experiences timeouts or failures, penalty latencies (default 1_000_000_000µs per litellm) should be factored into provider selection to avoid routing to degraded deployments.

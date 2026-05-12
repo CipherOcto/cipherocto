@@ -2,7 +2,7 @@
 
 ## Status
 
-Planned
+Accepted (v12 — 2026-05-12)
 
 ## Authors
 
@@ -69,10 +69,10 @@ No new struct fields needed. `CooldownTracker.penalty_latencies: Vec<u64>` alrea
 
 | Method | Signature | Notes |
 |--------|-----------|-------|
-| `get_penalty_latencies` | `pub fn get_penalty_latencies(&self) -> &[u64]` | Returns reference to penalty latencies for query (on CooldownTracker, added by RFC-0926) |
+| `get_penalty_latencies` | `pub fn get_penalty_latencies(&self) -> &[u64]` | Returns reference to penalty latencies for query (on CooldownTracker, defined in RFC-0925, used by RFC-0926) |
 | `best_provider_with_penalties` | `pub fn best_provider_with_penalties(&self, penalty_map: &HashMap<String, Vec<u64>>, available_names: &HashSet<&str>, is_streaming: bool) -> Option<(&str, f32)>` | Returns (name, effective_latency) considering penalty-adjusted scores; only considers providers in `available_names` set; TTFT-only for streaming (new helper on LatencyTracker) |
 
-**Note:** `clear_penalty_latencies` and `record_timeout_penalty` are defined in RFC-0925. RFC-0926 depends on them but does not re-spec them.
+**Note:** `record_timeout_penalty`, `clear_penalty_latencies`, and `get_penalty_latencies` are defined in RFC-0925. RFC-0926 depends on them but does not re-spec them.
 
 ### Scoring Integration
 
@@ -88,6 +88,8 @@ ttft_score = avg_ttft_samples  // No penalty adjustment
 ```
 
 **Implementation note:** `best_provider_with_penalties()` is a new helper method on `LatencyTracker` that accepts a `penalty_map` and `available_names` parameter. The `available_names` set filters out cooldown providers before scoring. The existing `best_provider()` and `best_provider_with_ttft()` methods are unchanged — penalty-adjusted selection uses the new helper.
+
+**Signature verification required:** The `best_provider_among(available_names, is_streaming)` call in the Router integration (Updated integration in Router section) must match the actual signature from RFC-0917 implementation. Verify: `pub fn best_provider_among(&self, available: HashSet<&str>, is_streaming: bool) -> Option<&str>`.
 
 **Note on `lowest_latency_buffer`:** Unlike `best_provider_with_ttft()`, this method does not apply `lowest_latency_buffer` filtering. The penalty mechanism already serves as a strong discriminator — penalized providers have effective latencies ~100x worse, naturally routing traffic away without explicit buffer filtering. When no penalties exist, the caller should use the existing buffer-aware selection path.
 
@@ -117,8 +119,8 @@ ttft_score = avg_ttft_samples  // No penalty adjustment
 
 4. On None return from latency_based_with_cooldown_impl():
    → All available providers have no latency samples (fresh deployment)
-   → Router should fall back to a non-latency-based strategy (e.g., round-robin, first-available)
-   → Or return RouterError::NoAvailableProviders
+   → The **caller** of `latency_based_with_cooldown_impl()` (e.g., `Router.route()`) should fall back to a non-latency-based strategy (e.g., round-robin, first-available)
+   → Or return RouterError::NoAvailableProviders (from RFC-0920 error types)
 ```
 
 ### CooldownTracker Changes
@@ -145,8 +147,6 @@ The penalty-adjusted scoring happens in `Router::latency_based_with_cooldown_imp
 **Proposed helper method on LatencyTracker:**
 
 ```rust
-use std::collections::HashMap;
-
 impl LatencyTracker {
     /// Get best provider considering penalty-adjusted latencies
     /// Returns (provider_name, effective_latency) or None if no valid providers.
@@ -158,8 +158,8 @@ impl LatencyTracker {
     /// callers should use a separate strategy when this returns None.
     pub fn best_provider_with_penalties(
         &self,
-        penalty_map: &HashMap<String, Vec<u64>>,  // provider_name -> penalties (owned String keys)
-        available_names: &HashSet<&str>,  // only consider providers in this set
+        penalty_map: &std::collections::HashMap<String, Vec<u64>>,  // provider_name -> penalties
+        available_names: &std::collections::HashSet<&str>,  // only consider providers in this set
         is_streaming: bool,
     ) -> Option<(&str, f32)> {
         let mut candidates: Vec<(&str, f32)> = Vec::new();
@@ -189,7 +189,8 @@ impl LatencyTracker {
             }
 
             // Non-streaming OR streaming without TTFT data: use penalty-adjusted latency
-            let base_latency = samples.iter().sum::<u64>() as f32 / samples.len() as f32;
+            let samples_sum: u64 = samples.iter().sum();
+            let base_latency = samples_sum as f32 / samples.len() as f32;
             let penalties = penalty_map.get(name_str).map(|p| p.as_slice()).unwrap_or(&[]);
 
             let effective = if penalties.is_empty() {
@@ -197,18 +198,20 @@ impl LatencyTracker {
             } else {
                 let penalty_sum: u64 = penalties.iter().sum();
                 let total_count = samples.len() + penalties.len();
-                (samples.iter().sum::<u64>() as f32 + penalty_sum as f32) / total_count as f32
+                (samples_sum as f32 + penalty_sum as f32) / total_count as f32
             };
 
             candidates.push((name_str, effective));
         }
 
-        // Find minimum by score
-        // Multiply by 1000 to convert µs to sub-ms integers for f32→u64 comparison
-        // (u64::MAX ≈ 18.6 million seconds, comfortably handles all realistic latencies)
+        // Find minimum by score using total ordering on f32 bits.
+        // For positive finite floats (all realistic latencies), bit ordering matches numeric ordering:
+        //   100ms (0x42C80000) < 200ms (0x43480000) < ... < 10s (0x461C4000)
+        // Using to_bits() avoids f32::total_cmp (unstable) and is deterministic.
         candidates.iter()
-            .min_by_key(|(_, score)| (*score * 1000.0) as u64)
-            .map(|(name, score)| (*name, *score))
+            .map(|(name, score)| (*name, score, score.to_bits()))
+            .min_by_key(|(_, _, bits)| *bits)
+            .map(|(name, score, _)| (name, *score))
     }
 }
 ```
@@ -223,13 +226,12 @@ fn latency_based_with_cooldown_impl(
     latency_tracker: &mut LatencyTracker,
     latency_config: &LatencyConfig,
     is_streaming: bool,
-    _latency_window: usize,
 ) -> Option<usize> {
     // ... existing cooldown expiry logic ...
 
     // Build available set (providers not in cooldown) and penalty map
     let mut penalty_map: HashMap<String, Vec<u64>> = HashMap::new();
-    let mut available_names: std::collections::HashSet<&str> = std::collections::HashSet::new();
+    let mut available_names: HashSet<&str> = HashSet::new();
 
     for provider in providers.iter() {
         // Skip providers in cooldown
@@ -240,13 +242,13 @@ fn latency_based_with_cooldown_impl(
         // NOTE: available_names stores &str references into provider.provider.name (String).
         // The HashSet and HashMap must not outlive the providers slice.
         // Since we iterate and consume within this function, references remain valid.
-        let name: &str = provider.provider.name.as_str();
-        available_names.insert(name);
+        let name_str: &str = provider.provider.name.as_str();
+        available_names.insert(name_str);
 
-        // Build penalty map for this provider
-        let penalties = provider.cooldown_tracker.get_penalty_latencies().to_vec();
+        // Build penalty map for this provider (only if penalties exist)
+        let penalties = provider.cooldown_tracker.get_penalty_latencies();
         if !penalties.is_empty() {
-            penalty_map.insert(provider.provider.name.clone(), penalties);
+            penalty_map.insert(provider.provider.name.clone(), penalties.to_vec());
         }
     }
 
@@ -261,7 +263,9 @@ fn latency_based_with_cooldown_impl(
         latency_tracker.best_provider_among(available_names, is_streaming)?
     } else {
         // Penalties exist: use penalty-adjusted selection among available providers
-        let (best_name, _) = latency_tracker.best_provider_with_penalties(&penalty_map, &available_names, is_streaming)?
+        match latency_tracker.best_provider_with_penalties(&penalty_map, &available_names, is_streaming)? {
+            (name, _) => name,
+        }
     };
 
     // Return index of best provider
@@ -334,6 +338,11 @@ RFC-0926 depends on the following existing implementations from RFC-0925:
 
 | Version | Date | Changes |
 |---------|------|---------|
+| 12 | 2026-05-12 | Fix per 11th adversarial review: replace stale line reference with section name reference ("Updated integration in Router section"), add use HashSet alongside HashMap for consistent style |
+| 11 | 2026-05-12 | Fix per 10th adversarial review: remove orphan code fence between impl blocks, fix redundant samples.sum() by computing once and reusing in penalty branch |
+| 10 | 2026-05-12 | Fix per 9th adversarial review: remove use statement from inside impl block (use fully qualified paths instead), fix stale line reference in signature verification note (261→264) |
+| 9 | 2026-05-12 | Fix per 8th adversarial review: fix uninitialized best_name in penalty branch (use match instead of expect), update status header v7→v8, clarify to_bits() comment with concrete examples |
+| 8 | 2026-05-12 | Fix per 7th adversarial review: remove unused _latency_window parameter, fix min_by_key to use to_bits() for safe float comparison, add signature verification note for best_provider_among, add RouterError::NoAvailableProviders reference, fix variable shadowing (best_name → penalty_best), avoid clone when penalties empty |
 | 7 | 2026-05-12 | Fix per 6th adversarial review: specify calling sites (request completion handler, Router.route()), specify None fallback behavior, add 4 resolved Q&A to Open Questions, remove penalty decay from Future Work (conflicts with binary expiry), add is_available() to prerequisites, fix variable shadowing |
 | 6 | 2026-05-12 | Fix per 5th adversarial review: add available_names filter to best_provider_with_penalties (was built but never used), filter cooldown providers BEFORE scoring, consistent availability filtering in both penalty and no-penalty paths |
 | 5 | 2026-05-12 | Fix per 4th adversarial review: update Why Needed to reference new helper not best_provider(), fix fallback to use best_provider_among, clarify clear_penalty_latencies is from RFC-0925, specify timeout/failure types (408/409/429/5xx), document fresh-deployment limitation, update Future Work |

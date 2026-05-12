@@ -2,11 +2,11 @@
 
 ## Status
 
-COMPLETED (2026-05-10)
+COMPLETE — all acceptance criteria met
 
 ## RFC
 
-RFC-0917: Dual-Mode Query Router (Accepted v2.50)
+RFC-0917: Dual-Mode Query Router
 
 ## RFC-0917 Role: Heavy Lifting (Rust Core)
 
@@ -23,25 +23,25 @@ RFC-0917: Dual-Mode Query Router (Accepted v2.50)
 
 ## Dependencies
 
-- Mission: RFC-0902 Alignment ✅ COMPLETED (archived)
+- Mission: RFC-0902 Alignment (see rfcs/archived/)
 
 ## Summary
 
 Align RFC-0917 implementation with current spec changes:
 1. Add `LatencyTracker` struct with u64 microseconds (integer, not f64)
-2. Phase 3 `QuotaRouterError` — fully specified (R2-5 resolved), Phase 3 PLANNED items documented
+2. `QuotaRouterError` — fully specified (R2-5 resolved)
 
 ## Acceptance Criteria
 
 - [x] `LatencyTracker` struct added with `record(provider: &str, latency_us: u64)` and `best_provider() -> Option<&str>` using integer u64 microseconds
-- [x] A3 Router struct marked as non-normative pseudocode in code comments (RFC-0917)
+- [x] Router struct marked as non-normative pseudocode in code comments (RFC-0917 §A3 Router)
 - [x] RouterError enum defined explicitly in RFC-0917 — already exists in `fallback.rs` (RateLimit, ProviderUnavailable, AuthError, ContentPolicyViolation, ContextWindowExceeded, Timeout, Unknown)
 - [x] `cargo clippy --all-targets --all-features -- -D warnings` passes with zero warnings
 - [x] `cargo test --lib` passes (161 tests)
 - [x] `QuotaRouterError` unified error type (wraps KeyError, BudgetError, RouterError, RegistryError, StorageError + ProviderError variant)
 - [x] Feature gate compile_error (requires litellm-mode/any-llm-mode/full features in Cargo.toml)
 
-**Note:** Phase 3 items (PyO3 bridge, Provider SDK integrations, Python SDK interface, streaming, etc.) are PLANNED per RFC-0917 §Phase 3 — not yet due.
+**Note:** Phase 3 items (PyO3 bridge, Provider SDK integrations, Python SDK interface, streaming, etc.) are handled in separate missions per RFC-0917 §Phase 3.
 
 ## Implementation Notes
 
@@ -59,13 +59,15 @@ struct LatencyTracker {
 
 ## Completion Notes
 
-### QuotaRouterError (2026-04-27)
+See `docs/changelogs/mission-0917-a-changelog.md` for implementation history.
+
+### QuotaRouterError
 
 Added unified error type in `crates/quota-router-core/src/keys/errors.rs`:
 - Wraps KeyError, BudgetError, RouterError, RegistryError, StorageError, ProviderError
 - KeyError and BudgetError derive Clone to support QuotaRouterError::Clone
 
-### Feature Gate Compile Error (2026-04-27)
+### Feature Gate Compile Error
 
 Added RFC-0917 §Rust Feature Gates compile_error to `crates/quota-router-core/src/router.rs`:
 ```rust

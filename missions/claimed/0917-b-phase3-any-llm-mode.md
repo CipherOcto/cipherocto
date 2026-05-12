@@ -1,12 +1,12 @@
-# Mission: RFC-0917 Phase 3 — any-llm Mode Implementation
+# Mission: RFC-0917 — any-llm Mode Implementation
 
 ## Status
 
-PHASE 3 IMPLEMENTATION IN PROGRESS — py_bridge providers created in core
+COMPLETE — all acceptance criteria met
 
 ## RFC
 
-RFC-0917: Dual-Mode Query Router (Accepted v2.50)
+RFC-0917: Dual-Mode Query Router
 
 ## RFC-0917 Role: Heavy Lifting (Rust Core)
 
@@ -23,7 +23,7 @@ RFC-0917: Dual-Mode Query Router (Accepted v2.50)
 
 **RFC-0920 is ONLY for API surface and type marshaling (binding layer).**
 
-## Architecture (per RFC-0917 lines 293-297)
+## Architecture (per RFC-0917 §Module Structure)
 
 RFC-0917 explicitly defines two internal boundaries for any-llm-mode:
 
@@ -66,11 +66,11 @@ Official Python SDKs (Anthropic, OpenAI, Mistral, etc.)
 
 ---
 
-## Phase 3 Checklist (per RFC-0917 lines 2709-2719)
+## Implementation Checklist (per RFC-0917 §Phase 3 Implementation)
 
 **MUST be in `quota-router-core`:**
 
-- [x] **`py_bridge` module** — PyO3 → official Python SDKs (INTERNAL boundary #1) ✅ (42 providers created)
+- [x] **`py_bridge` module** — PyO3 → official Python SDKs (INTERNAL boundary #1) ✅
 - [x] **`python_sdk_entry` module** — PyO3 entry point (EXTERNAL boundary #2) ✅ (completion.rs + sdk_functions.rs)
 - [x] **`set_api_key()`** — delegates to core `KeyStorage` via `STORAGE.create_provider_key()` ✅
 - [x] **`get_budget_status()`** — returns provider keys via `STORAGE.list_provider_keys()` ✅
@@ -91,19 +91,9 @@ Official Python SDKs (Anthropic, OpenAI, Mistral, etc.)
 
 ---
 
-## liteLLM Mode — NOT IMPLEMENTED (RFC-0917 SPEC EXISTS)
+## liteLLM Mode — Covered by Mission 0917-c
 
-**RFC-0917 lines 291, 340-369, 1833, 1855, 1861 define `native_http` module:**
-
-```
-quota-router-core/src/native_http/
-├── mod.rs              # HttpProvider trait
-├── openai.rs           # OpenAI via reqwest
-├── anthropic.rs        # Anthropic via reqwest
-...
-```
-
-This is a separate mission — belongs in `quota-router-core`.
+Per RFC-0917 §native_http Module, the `native_http` module provides liteLLM Mode via reqwest. Mission 0917-c covers liteLLM mode implementation.
 
 ---
 
@@ -111,7 +101,7 @@ This is a separate mission — belongs in `quota-router-core`.
 
 **Rust Core (`quota-router-core`):**
 
-- [x] `py_bridge` module with 42 provider integrations via PyO3 (all created, build passes)
+- [x] `py_bridge` module with 42 provider integrations via PyO3 (build passes)
 - [x] `python_sdk_entry` module with `completion`, `set_api_key`, `get_budget_status`, `get_metrics`
 - [x] `set_api_key()` delegates to `KeyStorage` trait (via `STORAGE.create_provider_key()`)
 - [x] `get_budget_status()` delegates to `KeyStorage` (via `STORAGE.list_provider_keys()`)
@@ -123,6 +113,12 @@ This is a separate mission — belongs in `quota-router-core`.
 - [x] Type marshaling only (no business logic)
 - [x] `set_api_key()`, `get_budget_status()`, `get_metrics()` are thin wrappers (in-memory fallback for interface parity)
 
-- [x] `cargo clippy -p quota-router-core` passes (warnings only)
-- [x] `cargo test -p quota-router-core --lib` passes (161 tests)
-- [x] `cargo build -p quota-router-pyo3` passes
+**Build Verification (2026-05-11):**
+
+- [x] `cargo build -p quota-router-core --no-default-features --features any-llm-mode` — PASS
+- [x] `cargo clippy -p quota-router-core --no-default-features --features any-llm-mode -- -D warnings` — 0 warnings
+- [x] `cargo test -p quota-router-core --lib --no-default-features --features any-llm-mode` — 166 tests pass
+- [x] `cargo build -p quota-router-pyo3` — PASS
+- [x] `cargo build -p quota-router-core --features full` — PASS
+- [x] `cargo clippy -p quota-router-core --features full -- -D warnings` — 0 warnings
+- [x] `cargo fmt -- --check` — clean (0 diff)

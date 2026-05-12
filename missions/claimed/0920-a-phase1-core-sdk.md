@@ -6,7 +6,7 @@ In Review — 2026-05-10
 
 ## RFC
 
-RFC-0920 (Economics): Unified Python SDK — Dual-Mode LiteLLM/any-llm Compatibility (Accepted v1.70)
+RFC-0920: Unified Python SDK — Dual-Mode LiteLLM/any-llm Compatibility
 
 ## RFC-0920 Role: API Surface + Type Marshaling (Binding Layer)
 

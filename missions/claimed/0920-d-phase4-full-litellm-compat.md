@@ -6,7 +6,7 @@ In Review — 2026-05-10
 
 ## RFC
 
-RFC-0920 (Economics): Unified Python SDK — Dual-Mode LiteLLM/any-llm Compatibility (Accepted v1.70)
+RFC-0920: Unified Python SDK — Dual-Mode LiteLLM/any-llm Compatibility
 
 **Note:** Phase 4 was removed from RFC-0920 in v1.66 (2026-05-09) per deferred-vs-unspecified rule. All items previously in Phase 4 are either:
 - Moved to Phase 3 (if specced)

@@ -2,7 +2,7 @@
 
 ## Status
 
-In Review — 2026-05-10
+COMPLETE — all acceptance criteria met (2026-05-12)
 
 ## RFC
 

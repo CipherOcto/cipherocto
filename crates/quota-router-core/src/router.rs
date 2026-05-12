@@ -388,7 +388,7 @@ const LATENCY_WINDOW_SIZE: usize = 100;
 /// Currently a stub for future LatencyBased routing support.
 #[allow(dead_code)]
 #[derive(Debug, Clone, Default)]
-struct LatencyTracker {
+pub struct LatencyTracker {
     samples: HashMap<String, VecDeque<u64>>,
     ttft_samples: HashMap<String, VecDeque<u64>>,
 }
@@ -531,6 +531,57 @@ impl LatencyTracker {
             .iter()
             .min_by_key(|(_, score)| *score as u64)
             .map(|(name, _)| *name)
+    }
+}
+
+/// RouterState wraps Router with cross-model-group LatencyTracker integration.
+/// Phase 2 of RFC-0917 integrates LatencyTracker into routing flow.
+#[derive(Debug)]
+pub struct RouterState {
+    pub router: Router,
+    pub latency_tracker: LatencyTracker,
+}
+
+impl RouterState {
+    pub fn new(config: RouterConfig, providers: Vec<Provider>) -> Self {
+        Self {
+            router: Router::new(config, providers),
+            latency_tracker: LatencyTracker::default(),
+        }
+    }
+
+    /// Record request end for a specific provider index (latency in microseconds).
+    /// Updates per-model-group ProviderWithState AND cross-model-group LatencyTracker.
+    /// If ttft_us is Some, also records TTFT for streaming requests.
+    pub fn record_request_end(
+        &mut self,
+        model_group: &str,
+        index: usize,
+        latency_us: u64,
+        tokens: u32,
+        ttft_us: Option<u64>,
+    ) {
+        let latency_window = self.router.config.latency_window;
+
+        // Get provider name for LatencyTracker update (clone to avoid borrow conflict)
+        let provider_name = self
+            .router
+            .providers
+            .get(model_group)
+            .and_then(|p| p.get(index))
+            .map(|p| p.provider.name.clone());
+
+        // Update per-model-group ProviderWithState
+        if let Some(providers) = self.router.providers.get_mut(model_group) {
+            if let Some(p) = providers.get_mut(index) {
+                p.request_ended(latency_us, tokens, latency_window);
+            }
+        }
+
+        // Update cross-model-group LatencyTracker (Phase 2 integration)
+        if let Some(name) = provider_name {
+            self.latency_tracker.record(&name, latency_us, ttft_us);
+        }
     }
 }
 
@@ -1862,6 +1913,28 @@ mod tests {
         // Single deployment should NOT enter cooldown even with high failure rate
         if let Some(p) = router.get_provider("gpt-3.5-turbo", 0) {
             assert_eq!(p.cooldown_tracker.state, DeploymentState::Healthy);
+        }
+    }
+
+    #[test]
+    fn test_router_state_record_request_end_updates_both() {
+        use super::*;
+        let providers = test_providers();
+        let config = RouterConfig::default();
+        let mut rs = RouterState::new(config, providers);
+
+        // Route to get provider index
+        let idx = rs.router.route("gpt-3.5-turbo", false).unwrap();
+
+        // Record request end with TTFT
+        rs.record_request_end("gpt-3.5-turbo", idx, 50000, 100, Some(10000));
+
+        // Verify LatencyTracker got the TTFT sample
+        assert!(rs.latency_tracker.best_provider().is_some());
+
+        // Verify ProviderWithState got the latency update
+        if let Some(p) = rs.router.get_provider("gpt-3.5-turbo", idx) {
+            assert!(p.avg_latency_us() > 0);
         }
     }
 }

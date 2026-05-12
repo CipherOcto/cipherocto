@@ -36,6 +36,14 @@ pub mod storage;
 #[cfg(any(feature = "litellm-mode", feature = "full"))]
 pub mod native_http;
 
+/// Initialize native_http providers (litellm-mode/full only).
+/// Must be called at binary startup before handling requests.
+/// Safe to call multiple times — subsequent calls are no-ops.
+#[cfg(any(feature = "litellm-mode", feature = "full"))]
+pub fn init_native_http_providers() {
+    crate::native_http::init_providers();
+}
+
 // py_bridge — PyO3 → official Python SDKs (INTERNAL boundary #1 per RFC-0917)
 // Only compiled when any-llm-mode or full feature is enabled
 #[cfg(any(feature = "any-llm-mode", feature = "full"))]
@@ -76,6 +84,7 @@ pub use pricing::{
     compute_cost, get_canonical_tokenizer, tokenizer_version_to_id, CostError, PricingRegistry,
     PricingTable, RegistryError,
 };
+pub use router::RouterState;
 pub use schema::init_database;
 pub use storage::KeyStorage;
 pub use storage::StoolapKeyStorage;

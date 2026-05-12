@@ -11,7 +11,7 @@ RFC-0917: Dual-Mode Query Router
 ## Phase 2 Context
 
 Phase 1 (RFC-0917 acceptance) and Phase 3 (missions a, b, c, d) established:
-- `LatencyTracker` struct with `record()` and `best_provider()`
+- `LatencyTracker` struct with `record()` and `best_provider_with_ttft()` (per RFC-0925)
 - `ProviderWithState.latencies` Vec for per-provider sliding window
 - `LatencyBased` routing strategy using `avg_latency_us()`
 - Stub comment: "Phase 2: LatencyTracker will be integrated into RouterState"
@@ -46,10 +46,10 @@ pub struct RouterState {
 
 **Where calls happen:**
 - In `Router::record_request_end()` — after provider completes request
-- LatencyTracker receives (provider_name, latency_us) tuple
+- LatencyTracker receives (provider_name, latency_us, optional TTFT) tuple
 - Updates samples for that provider regardless of model group
 
-**RouterState integration:**
+**RouterState integration (see §4 for TTFT details):**
 ```rust
 pub fn record_request_end(
     &mut self,
@@ -57,13 +57,14 @@ pub fn record_request_end(
     index: usize,
     latency_us: u64,
     tokens: u32,
+    ttft_us: Option<u64>,  // NEW: optional TTFT for streaming
 ) {
     // Existing: update ProviderWithState
     self.router.record_request_end(model_group, index, latency_us, tokens);
 
-    // NEW: update cross-model-group tracker
+    // NEW: update cross-model-group tracker with optional TTFT
     if let Some(p) = self.router.get_provider(model_group, index) {
-        self.latency_tracker.record(&p.provider.name, latency_us);
+        self.latency_tracker.record(&p.provider.name, latency_us, ttft_us);
     }
 }
 ```
@@ -88,6 +89,8 @@ TTFT tracking is **specified in RFC-0925** (Accepted). Phase 2 does NOT re-spec 
 
 ### 5. RouterState::new() Modification
 
+Note: `record_request_end()` signature changes per §2 and §4 — it now accepts optional TTFT parameter.
+
 ```rust
 impl RouterState {
     pub fn new(config: RouterConfig, providers: Vec<Provider>) -> Self {
@@ -110,7 +113,7 @@ impl RouterState {
 ## Acceptance Criteria
 
 - [ ] `RouterState` struct owns both `Router` and `LatencyTracker`
-- [ ] `RouterState::record_request_end()` updates both ProviderWithState and LatencyTracker
+- [ ] `RouterState::record_request_end()` updates both ProviderWithState and LatencyTracker (TTFT flows: request_end → record() → best_provider_with_ttft())
 - [ ] `LatencyTracker::record()` accepts optional TTFT parameter (per RFC-0925)
 - [ ] `LatencyTracker::best_provider_with_ttft()` uses TTFT selection mode for streaming (per RFC-0925 §TTFT-Aware Scoring)
 - [ ] All Phase 3 tests still pass
@@ -148,5 +151,5 @@ Our current `current_rpm` cannot answer "what was my RPM at 2:30pm?" — it's a 
 - Per RFC-0917 A3 Router: routing is non-normative pseudocode — actual implementation may differ while maintaining equivalent behavior
 - LatencyTracker uses integer microseconds (u64) per RFC-0104 determinism requirement
 - VecDeque with maxlen=100 provides O(1) eviction per provider sample window
-- **Pre-implementation verification required:** Confirm Phase 3 `LatencyTracker::record()` signature — if it currently takes `(provider: &str, latency_us: u64)` without TTFT, Phase 2 must extend it to accept optional TTFT parameter
+- **Pre-implementation verification required:** Check both Phase 3 implementation AND RFC-0925 §TTFT-Aware Scoring to confirm `record()` signature. Phase 3 may have `(provider: &str, latency_us: u64)` while RFC-0925 specifies TTFT support. Phase 2 must extend `record()` to accept optional TTFT parameter per RFC-0925.
 - **RFC-0925 spec note:** `best_provider_with_ttft()` declares `ttft_weight: f32` parameter but implementation ignores it (uses selection mode, not weighted blend). This is a dead parameter in RFC-0925 — implementer should verify current status before Phase 2 implementation

@@ -578,9 +578,12 @@ impl RouterState {
             }
         }
 
-        // Update cross-model-group LatencyTracker (Phase 2 integration)
+        // Update cross-model-group LatencyTrackers (both RouterState and Router)
+        // RouterState.latency_tracker: cross-model-group best provider selection
+        // Router.latency_tracker: used by Router.route() for LatencyBased strategy
         if let Some(name) = provider_name {
             self.latency_tracker.record(&name, latency_us, ttft_us);
+            self.router.latency_tracker.record(&name, latency_us, ttft_us);
         }
     }
 }
@@ -1929,8 +1932,11 @@ mod tests {
         // Record request end with TTFT
         rs.record_request_end("gpt-3.5-turbo", idx, 50000, 100, Some(10000));
 
-        // Verify LatencyTracker got the TTFT sample
+        // Verify RouterState.latency_tracker got the sample
         assert!(rs.latency_tracker.best_provider().is_some());
+
+        // Verify Router.latency_tracker (used by LatencyBased routing) also got the sample
+        assert!(rs.router.latency_tracker.best_provider().is_some());
 
         // Verify ProviderWithState got the latency update
         if let Some(p) = rs.router.get_provider("gpt-3.5-turbo", idx) {

@@ -14,11 +14,11 @@ RFC-0926: Penalty Latency Applied to Scoring
 - RFC-0925: Latency-Based Routing Extensions (CooldownTracker, penalty_latencies field)
 - RFC-0917: Dual-Mode Query Router (LatencyTracker)
 
-**Prerequisite implementations (RFC-0925 — already implemented in router.rs):**
-- [x] `CooldownTracker.penalty_latencies: Vec<u64>` — router.rs:260
-- [x] `CooldownTracker.record_timeout_penalty()` — router.rs:283
-- [x] `CooldownTracker.clear_penalty_latencies()` — router.rs:340
-- [x] `CooldownTracker.is_available()` — router.rs:364
+**Prerequisite implementations (RFC-0925 — already implemented):**
+- [x] `CooldownTracker.penalty_latencies: Vec<u64>`
+- [x] `CooldownTracker.record_timeout_penalty()`
+- [x] `CooldownTracker.clear_penalty_latencies()`
+- [x] `CooldownTracker.is_available()`
 
 ## Summary
 
@@ -28,7 +28,7 @@ Integrate penalty latencies stored in `CooldownTracker` into `LatencyTracker` sc
 
 ### 1. CooldownTracker.get_penalty_latencies() — ALREADY IMPLEMENTED
 
-Already exists at router.rs:345:
+Already exists:
 
 ```rust
 pub fn get_penalty_latencies(&self) -> &[u64] {
@@ -79,7 +79,7 @@ Update `latency_based_with_cooldown_impl()` to:
 
 ## Acceptance Criteria
 
-- [x] `CooldownTracker.get_penalty_latencies()` returns reference to penalties (router.rs:345)
+- [x] `CooldownTracker.get_penalty_latencies()` returns reference to penalties
 - [ ] `best_provider_with_penalties()` returns `Option<(&str, f32)>` with correct scoring
 - [ ] Penalty-adjusted latency for 99 samples @ 100ms + 1 penalty @ 1000s = ~10.1 seconds effective
 - [ ] TTFT scoring ignores penalties (per RFC-0926 §TTFT Scoring)

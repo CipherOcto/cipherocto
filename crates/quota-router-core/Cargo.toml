@@ -77,6 +77,9 @@ unicode-normalization = "0.1.25"
 # HTTP framework (for litellm-mode)
 axum = { version = "0.7", optional = true }
 
+# Bytes (for streaming bodies)
+bytes = { version = "1", optional = true }
+
 # PyO3 (for any-llm-mode py_bridge module — calls official Python SDKs)
 pyo3 = { version = "0.21", optional = true }
 
@@ -100,9 +103,9 @@ path = "src/lib.rs"
 #
 # See RFC-0917 lines 175-176: "HTTP Proxy Server | (always)" and "Python SDK Interface | (always)"
 default = ["litellm-mode"]
-litellm-mode = ["tokio", "hyper", "hyper-util", "http", "http-body", "http-body-util", "rustls", "rustls-pemfile", "reqwest", "axum"]
-any-llm-mode = ["tokio", "hyper", "hyper-util", "http", "http-body", "http-body-util", "rustls", "rustls-pemfile", "reqwest", "axum", "pyo3"]
-full = ["tokio", "hyper", "hyper-util", "http", "http-body", "http-body-util", "rustls", "rustls-pemfile", "reqwest", "axum", "pyo3"]
+litellm-mode = ["tokio", "hyper", "hyper-util", "http", "http-body", "http-body-util", "rustls", "rustls-pemfile", "reqwest", "axum", "bytes"]
+any-llm-mode = ["tokio", "hyper", "hyper-util", "http", "http-body", "http-body-util", "rustls", "rustls-pemfile", "reqwest", "axum", "pyo3", "bytes"]
+full = ["tokio", "hyper", "hyper-util", "http", "http-body", "http-body-util", "rustls", "rustls-pemfile", "reqwest", "axum", "pyo3", "bytes"]
 
 [[bench]]
 name = "key_hash_storage_bench"

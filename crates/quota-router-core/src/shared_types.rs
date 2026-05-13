@@ -23,8 +23,7 @@ impl Message {
 }
 
 /// Usage statistics
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[derive(Default)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct Usage {
     #[serde(rename = "prompt_tokens")]
     pub prompt_tokens: u32,
@@ -124,7 +123,11 @@ impl ChunkChoice {
         }
     }
 
-    pub fn with_finish_reason(index: u32, delta: Message, finish_reason: impl Into<String>) -> Self {
+    pub fn with_finish_reason(
+        index: u32,
+        delta: Message,
+        finish_reason: impl Into<String>,
+    ) -> Self {
         Self {
             index,
             delta,

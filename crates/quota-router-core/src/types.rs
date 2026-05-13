@@ -23,8 +23,7 @@ impl Message {
 }
 
 /// Usage statistics
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[derive(Default)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct Usage {
     #[serde(rename = "prompt_tokens")]
     pub prompt_tokens: u32,
@@ -43,7 +42,6 @@ impl Usage {
         }
     }
 }
-
 
 /// Choice in chat completion
 #[derive(Debug, Clone, Serialize, Deserialize)]

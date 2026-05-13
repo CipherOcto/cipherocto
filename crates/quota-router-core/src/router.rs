@@ -1091,8 +1091,7 @@ impl Router {
         // Build available set (providers not in cooldown) and penalty map
         let mut penalty_map: std::collections::HashMap<String, Vec<u64>> =
             std::collections::HashMap::new();
-        let mut available_names: std::collections::HashSet<&str> =
-            std::collections::HashSet::new();
+        let mut available_names: std::collections::HashSet<&str> = std::collections::HashSet::new();
 
         for provider in providers.iter() {
             // Skip providers in cooldown

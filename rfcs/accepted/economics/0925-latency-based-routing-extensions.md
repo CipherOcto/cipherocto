@@ -2,7 +2,7 @@
 
 ## Status
 
-Accepted (v13 — 2026-05-11)
+Accepted (v14 — 2026-05-12)
 
 ## Authors
 
@@ -87,8 +87,6 @@ enum DeploymentState {
 
 /// LatencyConfig for LatencyBased routing
 struct LatencyConfig {
-    /// TTFT weight for streaming (0.0-1.0)
-    ttft_weight: f32,
     /// Latency buffer: select deployments within (lowest_latency + buffer * lowest_latency)
     /// Default: 0.0 (litellm default) = only fastest deployment selected
     lowest_latency_buffer: f32,
@@ -500,8 +498,8 @@ pub fn update_latency_state(
 
 | Version | Date | Changes |
 |---------|------|---------|
+| 14 | 2026-05-12 | Fix: remove dead `ttft_weight` field from LatencyConfig — implementation uses selection mode (TTFT only for streaming), not weighted blend, so field was never used |
 | 13 | 2026-05-11 | Fix: cooldown callback is NOT implemented (not "optional") - litellm always triggers router_cooldown_event_callback via asyncio.create_task() at cooldown_handlers.py:311, but quota-router v1 has no callback; corrected from v12 "optional" which was incorrect |
-| 12 | 2026-05-11 | Fix retryable error codes: 408, 409, 429, 500+ (401/404 are cooldown-eligible but NOT retryable per _should_retry); update cooldown callback to clarify optional (not NOT implemented); add 409 to retryable codes; add note clarifying 401/404 cooldown vs retry behavior |
 | 8 | 2026-05-11 | Fix stale v4 header to v7; fix should_enter_cooldown to check `state == Healthy` (was dead code checking removed Degraded state); remove Degraded from record_latency and is_available match arms; add should_enter_cooldown_on_429 for 429 handling |
 | 7 | 2026-05-11 | Remove Degraded state (litellm has only Healthy/Cooldown); add best_provider_among() method for available set filtering; finalize design decisions: no cooldown callback, yes RPM/TPM integration, no safety bypass |
 | 6 | 2026-05-11 | Major refactor per litellm: remove Recovering state (TTL-based cooldown only); replace consecutive_high_latency with failure_rate tracking; remove latency_threshold_us (no default threshold); update update_latency_state to use success/failure pattern |

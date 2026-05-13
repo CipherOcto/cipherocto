@@ -112,13 +112,13 @@ impl RouterState {
 
 ## Acceptance Criteria
 
-- [ ] `RouterState` struct owns both `Router` and `LatencyTracker`
-- [ ] `RouterState::record_request_end()` updates both ProviderWithState and LatencyTracker (TTFT flows: request_end → record() → best_provider_with_ttft())
-- [ ] `LatencyTracker::record()` accepts optional TTFT parameter (per RFC-0925)
-- [ ] `LatencyTracker::best_provider_with_ttft()` uses TTFT selection mode for streaming (per RFC-0925 §TTFT-Aware Scoring)
-- [ ] All Phase 3 tests still pass
-- [ ] `cargo build -p quota-router-core --features litellm-mode` passes (verify feature gates for latency tracking)
-- [ ] `cargo test -p quota-router-core --lib` passes
+- [x] `RouterState` struct owns both `Router` and `LatencyTracker`
+- [x] `RouterState::record_request_end()` updates both ProviderWithState and LatencyTracker (TTFT flows: request_end → record() → best_provider_with_ttft())
+- [x] `LatencyTracker::record()` accepts optional TTFT parameter (per RFC-0925)
+- [x] `LatencyTracker::best_provider_with_ttft()` uses TTFT selection mode for streaming (per RFC-0925 §TTFT-Aware Scoring)
+- [x] All Phase 3 tests still pass
+- [x] `cargo build -p quota-router-core --features litellm-mode` passes (verify feature gates for latency tracking)
+- [x] `cargo test -p quota-router-core --lib` passes
 
 ## Deferred Items (Future Work)
 
@@ -127,7 +127,7 @@ These are explicitly out of scope for Phase 2 but specced in other RFCs:
 | Item | Status | RFC |
 |------|--------|-----|
 | TPM/RPM per-minute bucket tracking | **Specced in RFC-0924** (Accepted) | RFC-0924: Provider Metrics Bucket Tracking |
-| Alerting when latency exceeds threshold | **Specced in RFC-0905** (planned) | RFC-0905: Observability and Logging |
+| Alerting when latency exceeds threshold | Specced in RFC-0905 (planned) | RFC-0905: Observability and Logging (NOTE: RFC-0905 not yet created) |
 | Latency-based routing extensions (TTFT, cooldown) | **Specced in RFC-0925** (Accepted) | RFC-0925: Latency-Based Routing Extensions |
 | Autoscaling (infrastructure-level) | **Not applicable** — K8s HPA, not quota-router core | N/A |
 

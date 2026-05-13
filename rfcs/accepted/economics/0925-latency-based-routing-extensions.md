@@ -171,6 +171,18 @@ impl CooldownTracker {
         self.failed_requests = self.failed_requests.saturating_add(1);
     }
 
+    /// Get reference to penalty latencies for external query
+    /// Used by RFC-0926 to build penalty_map at scoring time
+    pub fn get_penalty_latencies(&self) -> &[u64] {
+        &self.penalty_latencies
+    }
+
+    /// Clear all penalty latencies (called when cooldown expires)
+    /// RFC-0926: penalty latencies expire with cooldown
+    pub fn clear_penalty_latencies(&mut self) {
+        self.penalty_latencies.clear();
+    }
+
     /// Record a 429 rate limit response
     /// litellm pattern: 429 always triggers cooldown UNLESS it's a single-deployment model group
     /// (single-deployment groups are exempt because they need the traffic)
@@ -258,7 +270,6 @@ impl LatencyTracker {
         &self,
         is_streaming: bool,
         lowest_latency_buffer: f32,
-        ttft_weight: f32,
     ) -> Option<&str> {
         let all_providers: Vec<(&str, f32)> = self.samples
             .iter()
@@ -498,7 +509,7 @@ pub fn update_latency_state(
 
 | Version | Date | Changes |
 |---------|------|---------|
-| 14 | 2026-05-12 | Fix: remove dead `ttft_weight` field from LatencyConfig — implementation uses selection mode (TTFT only for streaming), not weighted blend, so field was never used |
+| 14 | 2026-05-12 | Fix: remove dead `ttft_weight` field from LatencyConfig AND from `best_provider_with_ttft()` signature; add `get_penalty_latencies()` and `clear_penalty_latencies()` methods (used by RFC-0926) |
 | 13 | 2026-05-11 | Fix: cooldown callback is NOT implemented (not "optional") - litellm always triggers router_cooldown_event_callback via asyncio.create_task() at cooldown_handlers.py:311, but quota-router v1 has no callback; corrected from v12 "optional" which was incorrect |
 | 8 | 2026-05-11 | Fix stale v4 header to v7; fix should_enter_cooldown to check `state == Healthy` (was dead code checking removed Degraded state); remove Degraded from record_latency and is_available match arms; add should_enter_cooldown_on_429 for 429 handling |
 | 7 | 2026-05-11 | Remove Degraded state (litellm has only Healthy/Cooldown); add best_provider_among() method for available set filtering; finalize design decisions: no cooldown callback, yes RPM/TPM integration, no safety bypass |

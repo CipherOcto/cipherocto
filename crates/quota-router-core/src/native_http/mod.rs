@@ -187,7 +187,10 @@ impl HttpProviderFactory {
 #[cfg(any(feature = "litellm-mode", feature = "full"))]
 pub fn init_providers() {
     HttpProviderFactory::register("openai", || Box::new(openai::OpenAIProvider::new()));
-    HttpProviderFactory::register("anthropic", || Box::new(anthropic::AnthropicProvider::new()));
+    HttpProviderFactory::register(
+        "anthropic",
+        || Box::new(anthropic::AnthropicProvider::new()),
+    );
     HttpProviderFactory::register("mistral", || Box::new(mistral::MistralProvider::new()));
     HttpProviderFactory::register("gemini", || Box::new(gemini::GeminiProvider::new()));
     HttpProviderFactory::register("azure", || Box::new(azure::AzureProvider::new()));
@@ -195,5 +198,8 @@ pub fn init_providers() {
     HttpProviderFactory::register("ollama", || Box::new(ollama::OllamaProvider::new()));
     HttpProviderFactory::register("groq", || Box::new(groq::GroqProvider::new()));
     HttpProviderFactory::register("together", || Box::new(together::TogetherProvider::new()));
-    HttpProviderFactory::register("replicate", || Box::new(replicate::ReplicateProvider::new()));
+    HttpProviderFactory::register(
+        "replicate",
+        || Box::new(replicate::ReplicateProvider::new()),
+    );
 }

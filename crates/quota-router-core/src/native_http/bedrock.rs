@@ -1,6 +1,9 @@
 // bedrock — AWS Bedrock via reqwest (native_http, LiteLLM mode)
 
-use super::{HttpCompletionRequest, HttpCompletionResponse, HttpEmbeddingRequest, HttpEmbeddingResponse, ProviderError};
+use super::{
+    HttpCompletionRequest, HttpCompletionResponse, HttpEmbeddingRequest, HttpEmbeddingResponse,
+    ProviderError,
+};
 use async_trait::async_trait;
 use reqwest::Client;
 
@@ -69,7 +72,8 @@ impl super::HttpProvider for BedrockProvider {
             "anthropic_version": "bedrock-2023-05-31"
         });
 
-        let resp = self.client
+        let resp = self
+            .client
             .post(&url)
             .header("x-amz-client-id", api_key)
             .header("Content-Type", "application/json")
@@ -79,22 +83,42 @@ impl super::HttpProvider for BedrockProvider {
             .map_err(|e| ProviderError::Network(e.to_string()))?;
 
         if !resp.status().is_success() {
-            return Err(ProviderError::InvalidResponse(format!("HTTP {}", resp.status())));
+            return Err(ProviderError::InvalidResponse(format!(
+                "HTTP {}",
+                resp.status()
+            )));
         }
 
-        let data: BedrockResponse = resp.json().await.map_err(|e| ProviderError::InvalidResponse(e.to_string()))?;
+        let data: BedrockResponse = resp
+            .json()
+            .await
+            .map_err(|e| ProviderError::InvalidResponse(e.to_string()))?;
 
         Ok(HttpCompletionResponse {
             id: format!("bedrock-{}", uuid::Uuid::new_v4()),
             object: "chat.completion".to_string(),
-            created: std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_secs(),
+            created: std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_secs(),
             model: request.model.clone(),
             choices: vec![crate::shared_types::Choice::new(
                 0,
-                crate::shared_types::Message::new("assistant", data.content.first().and_then(|c| c.text.as_ref()).unwrap_or(&String::new()).clone()),
+                crate::shared_types::Message::new(
+                    "assistant",
+                    data.content
+                        .first()
+                        .and_then(|c| c.text.as_ref())
+                        .unwrap_or(&String::new())
+                        .clone(),
+                ),
                 data.stop_reason.unwrap_or_else(|| "stop".to_string()),
             )],
-            usage: crate::shared_types::Usage::new(data.usage.input_tokens, data.usage.output_tokens, data.usage.input_tokens + data.usage.output_tokens),
+            usage: crate::shared_types::Usage::new(
+                data.usage.input_tokens,
+                data.usage.output_tokens,
+                data.usage.input_tokens + data.usage.output_tokens,
+            ),
         })
     }
 
@@ -103,7 +127,9 @@ impl super::HttpProvider for BedrockProvider {
         _request: &HttpEmbeddingRequest,
         _api_key: &str,
     ) -> Result<HttpEmbeddingResponse, ProviderError> {
-        Err(ProviderError::UnsupportedModel("Bedrock embeddings not implemented".to_string()))
+        Err(ProviderError::UnsupportedModel(
+            "Bedrock embeddings not implemented".to_string(),
+        ))
     }
 
     fn routing_weight(&self) -> u32 {

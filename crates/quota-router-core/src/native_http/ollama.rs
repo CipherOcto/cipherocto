@@ -1,6 +1,9 @@
 // ollama — Ollama via reqwest (native_http, LiteLLM mode)
 
-use super::{HttpCompletionRequest, HttpCompletionResponse, HttpEmbeddingRequest, HttpEmbeddingResponse, ProviderError};
+use super::{
+    HttpCompletionRequest, HttpCompletionResponse, HttpEmbeddingRequest, HttpEmbeddingResponse,
+    ProviderError,
+};
 use async_trait::async_trait;
 use reqwest::Client;
 
@@ -33,9 +36,14 @@ impl super::HttpProvider for OllamaProvider {
 
     fn supported_models(&self) -> Vec<&str> {
         vec![
-            "llama3", "llama3.1", "llama3.2",
-            "mistral", "mixtral",
-            "phi3", "qwen2", "codellama",
+            "llama3",
+            "llama3.1",
+            "llama3.2",
+            "mistral",
+            "mixtral",
+            "phi3",
+            "qwen2",
+            "codellama",
         ]
     }
 
@@ -46,7 +54,9 @@ impl super::HttpProvider for OllamaProvider {
     ) -> Result<HttpCompletionResponse, ProviderError> {
         let url = format!("{}/api/chat", self.api_base);
 
-        let messages: Vec<_> = request.messages.iter()
+        let messages: Vec<_> = request
+            .messages
+            .iter()
             .map(|m| {
                 serde_json::json!({
                     "role": m.role,
@@ -68,7 +78,8 @@ impl super::HttpProvider for OllamaProvider {
             body["options"]["num_predict"] = serde_json::json!(max_tokens);
         }
 
-        let resp = self.client
+        let resp = self
+            .client
             .post(&url)
             .header("Content-Type", "application/json")
             .json(&body)
@@ -77,15 +88,24 @@ impl super::HttpProvider for OllamaProvider {
             .map_err(|e| ProviderError::Network(e.to_string()))?;
 
         if !resp.status().is_success() {
-            return Err(ProviderError::InvalidResponse(format!("HTTP {}", resp.status())));
+            return Err(ProviderError::InvalidResponse(format!(
+                "HTTP {}",
+                resp.status()
+            )));
         }
 
-        let data: OllamaResponse = resp.json().await.map_err(|e| ProviderError::InvalidResponse(e.to_string()))?;
+        let data: OllamaResponse = resp
+            .json()
+            .await
+            .map_err(|e| ProviderError::InvalidResponse(e.to_string()))?;
 
         Ok(HttpCompletionResponse {
             id: format!("ollama-{}", uuid::Uuid::new_v4()),
             object: "chat.completion".to_string(),
-            created: std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_secs(),
+            created: std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_secs(),
             model: request.model.clone(),
             choices: vec![crate::shared_types::Choice::new(
                 0,
@@ -108,7 +128,8 @@ impl super::HttpProvider for OllamaProvider {
             "prompt": request.input
         });
 
-        let resp = self.client
+        let resp = self
+            .client
             .post(&url)
             .header("Content-Type", "application/json")
             .json(&body)
@@ -117,10 +138,16 @@ impl super::HttpProvider for OllamaProvider {
             .map_err(|e| ProviderError::Network(e.to_string()))?;
 
         if !resp.status().is_success() {
-            return Err(ProviderError::InvalidResponse(format!("HTTP {}", resp.status())));
+            return Err(ProviderError::InvalidResponse(format!(
+                "HTTP {}",
+                resp.status()
+            )));
         }
 
-        let data: OllamaEmbeddingsResponse = resp.json().await.map_err(|e| ProviderError::InvalidResponse(e.to_string()))?;
+        let data: OllamaEmbeddingsResponse = resp
+            .json()
+            .await
+            .map_err(|e| ProviderError::InvalidResponse(e.to_string()))?;
 
         Ok(HttpEmbeddingResponse {
             object: "list".to_string(),

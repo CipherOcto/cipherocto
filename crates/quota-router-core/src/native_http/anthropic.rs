@@ -2,7 +2,10 @@
 //
 // Per RFC-0917 lines 3185-3190: Anthropic SSE must be converted to OpenAI SSE format.
 
-use super::{HttpCompletionRequest, HttpCompletionResponse, HttpEmbeddingRequest, HttpEmbeddingResponse, ProviderError, StreamingChunk, StreamingResponse};
+use super::{
+    HttpCompletionRequest, HttpCompletionResponse, HttpEmbeddingRequest, HttpEmbeddingResponse,
+    ProviderError, StreamingChunk, StreamingResponse,
+};
 use async_trait::async_trait;
 use futures::StreamExt;
 use reqwest::Client;
@@ -36,10 +39,14 @@ impl super::HttpProvider for AnthropicProvider {
 
     fn supported_models(&self) -> Vec<&str> {
         vec![
-            "claude-3-5-sonnet-latest", "claude-3-5-sonnet-20241022",
-            "claude-3-opus-latest", "claude-3-opus-20240229",
-            "claude-3-sonnet-latest", "claude-3-sonnet-20240229",
-            "claude-3-haiku-latest", "claude-3-haiku-20240307",
+            "claude-3-5-sonnet-latest",
+            "claude-3-5-sonnet-20241022",
+            "claude-3-opus-latest",
+            "claude-3-opus-20240229",
+            "claude-3-sonnet-latest",
+            "claude-3-sonnet-20240229",
+            "claude-3-haiku-latest",
+            "claude-3-haiku-20240307",
         ]
     }
 
@@ -55,13 +62,17 @@ impl super::HttpProvider for AnthropicProvider {
         let url = format!("{}/messages", self.api_base);
 
         // Convert messages to Anthropic format
-        let system = request.messages.iter()
+        let system = request
+            .messages
+            .iter()
             .filter(|m| m.role == "system")
             .map(|m| m.content.clone())
             .collect::<Vec<_>>()
             .join("\n");
 
-        let messages: Vec<_> = request.messages.iter()
+        let messages: Vec<_> = request
+            .messages
+            .iter()
             .filter(|m| m.role != "system")
             .map(|m| {
                 serde_json::json!({
@@ -95,7 +106,8 @@ impl super::HttpProvider for AnthropicProvider {
             body["system"] = serde_json::json!(system);
         }
 
-        let resp = self.client
+        let resp = self
+            .client
             .post(&url)
             .header("x-api-key", api_key)
             .header("anthropic-version", "2023-06-01")
@@ -114,22 +126,42 @@ impl super::HttpProvider for AnthropicProvider {
         if !resp.status().is_success() {
             let status = resp.status();
             let text = resp.text().await.unwrap_or_default();
-            return Err(ProviderError::InvalidResponse(format!("HTTP {}: {}", status, text)));
+            return Err(ProviderError::InvalidResponse(format!(
+                "HTTP {}: {}",
+                status, text
+            )));
         }
 
-        let data: AnthropicResponse = resp.json().await.map_err(|e| ProviderError::InvalidResponse(e.to_string()))?;
+        let data: AnthropicResponse = resp
+            .json()
+            .await
+            .map_err(|e| ProviderError::InvalidResponse(e.to_string()))?;
 
         Ok(HttpCompletionResponse {
             id: format!("msg_{}", uuid::Uuid::new_v4()),
             object: "chat.completion".to_string(),
-            created: std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_secs(),
+            created: std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_secs(),
             model: request.model.clone(),
             choices: vec![crate::shared_types::Choice::new(
                 0,
-                crate::shared_types::Message::new("assistant", data.content.first().and_then(|c| c.text.as_ref()).unwrap_or(&String::new()).clone()),
+                crate::shared_types::Message::new(
+                    "assistant",
+                    data.content
+                        .first()
+                        .and_then(|c| c.text.as_ref())
+                        .unwrap_or(&String::new())
+                        .clone(),
+                ),
                 data.stop_reason.unwrap_or_else(|| "stop".to_string()),
             )],
-            usage: crate::shared_types::Usage::new(data.usage.input_tokens, data.usage.output_tokens, data.usage.input_tokens + data.usage.output_tokens),
+            usage: crate::shared_types::Usage::new(
+                data.usage.input_tokens,
+                data.usage.output_tokens,
+                data.usage.input_tokens + data.usage.output_tokens,
+            ),
         })
     }
 
@@ -138,7 +170,9 @@ impl super::HttpProvider for AnthropicProvider {
         _request: &HttpEmbeddingRequest,
         _api_key: &str,
     ) -> Result<HttpEmbeddingResponse, ProviderError> {
-        Err(ProviderError::UnsupportedModel("Anthropic does not support embeddings".to_string()))
+        Err(ProviderError::UnsupportedModel(
+            "Anthropic does not support embeddings".to_string(),
+        ))
     }
 
     fn routing_weight(&self) -> u32 {
@@ -152,13 +186,17 @@ impl super::HttpProvider for AnthropicProvider {
     ) -> Result<StreamingResponse, ProviderError> {
         let url = format!("{}/messages", self.api_base);
 
-        let system = request.messages.iter()
+        let system = request
+            .messages
+            .iter()
             .filter(|m| m.role == "system")
             .map(|m| m.content.clone())
             .collect::<Vec<_>>()
             .join("\n");
 
-        let messages: Vec<_> = request.messages.iter()
+        let messages: Vec<_> = request
+            .messages
+            .iter()
             .filter(|m| m.role != "system")
             .map(|m| {
                 serde_json::json!({
@@ -192,7 +230,8 @@ impl super::HttpProvider for AnthropicProvider {
             body["system"] = serde_json::json!(system);
         }
 
-        let resp = self.client
+        let resp = self
+            .client
             .post(&url)
             .header("x-api-key", api_key)
             .header("anthropic-version", "2023-06-01")
@@ -210,7 +249,10 @@ impl super::HttpProvider for AnthropicProvider {
         if !resp.status().is_success() {
             let status = resp.status();
             let text = resp.text().await.unwrap_or_default();
-            return Err(ProviderError::InvalidResponse(format!("HTTP {}: {}", status, text)));
+            return Err(ProviderError::InvalidResponse(format!(
+                "HTTP {}: {}",
+                status, text
+            )));
         }
 
         let (tx, rx) = mpsc::channel(100);
@@ -229,8 +271,14 @@ impl super::HttpProvider for AnthropicProvider {
                     Ok(bytes) => {
                         // Parse Anthropic SSE and convert to OpenAI SSE
                         if let Some(event) = AnthropicEvent::parse(&bytes) {
-                            if let Some(openai_sse) = event.to_openai_sse(&chunk_id, &model, created) {
-                                if tx.send(Ok(StreamingChunk::RawSSE(openai_sse.into_bytes()))).await.is_err() {
+                            if let Some(openai_sse) =
+                                event.to_openai_sse(&chunk_id, &model, created)
+                            {
+                                if tx
+                                    .send(Ok(StreamingChunk::RawSSE(openai_sse.into_bytes())))
+                                    .await
+                                    .is_err()
+                                {
                                     break;
                                 }
                             }
@@ -314,11 +362,9 @@ impl AnthropicEvent {
                     model: msg.get("model")?.as_str()?.to_string(),
                 })
             }
-            "content_block_start" => {
-                Some(AnthropicEvent::ContentBlockStart {
-                    index: json.get("index")?.as_u64()? as u32,
-                })
-            }
+            "content_block_start" => Some(AnthropicEvent::ContentBlockStart {
+                index: json.get("index")?.as_u64()? as u32,
+            }),
             "content_block_delta" => {
                 let delta = json.get("delta")?;
                 Some(AnthropicEvent::ContentBlockDelta {
@@ -326,11 +372,9 @@ impl AnthropicEvent {
                     text: delta.get("text")?.as_str()?.to_string(),
                 })
             }
-            "content_block_stop" => {
-                Some(AnthropicEvent::ContentBlockStop {
-                    index: json.get("index")?.as_u64()? as u32,
-                })
-            }
+            "content_block_stop" => Some(AnthropicEvent::ContentBlockStop {
+                index: json.get("index")?.as_u64()? as u32,
+            }),
             "message_delta" => {
                 let delta = json.get("delta")?;
                 Some(AnthropicEvent::MessageDelta {
@@ -379,7 +423,10 @@ mod tests {
 
     #[test]
     fn test_anthropic_to_openai_sse() {
-        let event = AnthropicEvent::ContentBlockDelta { index: 0, text: "Hello".to_string() };
+        let event = AnthropicEvent::ContentBlockDelta {
+            index: 0,
+            text: "Hello".to_string(),
+        };
         let sse = event.to_openai_sse("msg_123", "claude-3", 1234567890);
         assert!(sse.is_some());
         let sse = sse.unwrap();

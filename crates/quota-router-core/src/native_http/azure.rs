@@ -1,6 +1,9 @@
 // azure — Azure OpenAI via reqwest (native_http, LiteLLM mode)
 
-use super::{HttpCompletionRequest, HttpCompletionResponse, HttpEmbeddingRequest, HttpEmbeddingResponse, ProviderError};
+use super::{
+    HttpCompletionRequest, HttpCompletionResponse, HttpEmbeddingRequest, HttpEmbeddingResponse,
+    ProviderError,
+};
 use async_trait::async_trait;
 use reqwest::Client;
 
@@ -38,8 +41,11 @@ impl super::HttpProvider for AzureProvider {
 
     fn supported_models(&self) -> Vec<&str> {
         vec![
-            "gpt-4", "gpt-4-turbo", "gpt-4o",
-            "gpt-35-turbo", "gpt-35-turbo-16k",
+            "gpt-4",
+            "gpt-4-turbo",
+            "gpt-4o",
+            "gpt-35-turbo",
+            "gpt-35-turbo-16k",
         ]
     }
 
@@ -49,7 +55,10 @@ impl super::HttpProvider for AzureProvider {
         api_key: &str,
     ) -> Result<HttpCompletionResponse, ProviderError> {
         let deployment = request.model.clone();
-        let url = format!("{}/openai/deployments/{}/chat/completions?api-version=2024-02-01", self.api_base, deployment);
+        let url = format!(
+            "{}/openai/deployments/{}/chat/completions?api-version=2024-02-01",
+            self.api_base, deployment
+        );
 
         let body = serde_json::json!({
             "messages": request.messages.iter().map(|m| {
@@ -60,7 +69,8 @@ impl super::HttpProvider for AzureProvider {
             }).collect::<Vec<_>>()
         });
 
-        let resp = self.client
+        let resp = self
+            .client
             .post(&url)
             .header("api-key", api_key)
             .header("Content-Type", "application/json")
@@ -70,24 +80,38 @@ impl super::HttpProvider for AzureProvider {
             .map_err(|e| ProviderError::Network(e.to_string()))?;
 
         if !resp.status().is_success() {
-            return Err(ProviderError::InvalidResponse(format!("HTTP {}", resp.status())));
+            return Err(ProviderError::InvalidResponse(format!(
+                "HTTP {}",
+                resp.status()
+            )));
         }
 
-        let data: AzureResponse = resp.json().await.map_err(|e| ProviderError::InvalidResponse(e.to_string()))?;
+        let data: AzureResponse = resp
+            .json()
+            .await
+            .map_err(|e| ProviderError::InvalidResponse(e.to_string()))?;
 
         Ok(HttpCompletionResponse {
             id: data.id,
             object: data.object,
             created: data.created,
             model: data.model,
-            choices: data.choices.into_iter().map(|c| {
-                crate::shared_types::Choice::new(
-                    c.index,
-                    crate::shared_types::Message::new(c.message.role, c.message.content),
-                    c.finish_reason,
-                )
-            }).collect(),
-            usage: crate::shared_types::Usage::new(data.usage.prompt_tokens, data.usage.completion_tokens, data.usage.total_tokens),
+            choices: data
+                .choices
+                .into_iter()
+                .map(|c| {
+                    crate::shared_types::Choice::new(
+                        c.index,
+                        crate::shared_types::Message::new(c.message.role, c.message.content),
+                        c.finish_reason,
+                    )
+                })
+                .collect(),
+            usage: crate::shared_types::Usage::new(
+                data.usage.prompt_tokens,
+                data.usage.completion_tokens,
+                data.usage.total_tokens,
+            ),
         })
     }
 
@@ -97,13 +121,17 @@ impl super::HttpProvider for AzureProvider {
         api_key: &str,
     ) -> Result<HttpEmbeddingResponse, ProviderError> {
         let deployment = request.model.clone();
-        let url = format!("{}/openai/deployments/{}/embeddings?api-version=2024-02-01", self.api_base, deployment);
+        let url = format!(
+            "{}/openai/deployments/{}/embeddings?api-version=2024-02-01",
+            self.api_base, deployment
+        );
 
         let body = serde_json::json!({
             "input": request.input
         });
 
-        let resp = self.client
+        let resp = self
+            .client
             .post(&url)
             .header("api-key", api_key)
             .header("Content-Type", "application/json")
@@ -113,20 +141,34 @@ impl super::HttpProvider for AzureProvider {
             .map_err(|e| ProviderError::Network(e.to_string()))?;
 
         if !resp.status().is_success() {
-            return Err(ProviderError::InvalidResponse(format!("HTTP {}", resp.status())));
+            return Err(ProviderError::InvalidResponse(format!(
+                "HTTP {}",
+                resp.status()
+            )));
         }
 
-        let data: AzureEmbeddingsResponse = resp.json().await.map_err(|e| ProviderError::InvalidResponse(e.to_string()))?;
+        let data: AzureEmbeddingsResponse = resp
+            .json()
+            .await
+            .map_err(|e| ProviderError::InvalidResponse(e.to_string()))?;
 
         Ok(HttpEmbeddingResponse {
             object: "list".to_string(),
-            data: data.data.into_iter().map(|e| crate::shared_types::Embedding {
-                object: e.object,
-                embedding: e.embedding,
-                index: e.index,
-            }).collect(),
+            data: data
+                .data
+                .into_iter()
+                .map(|e| crate::shared_types::Embedding {
+                    object: e.object,
+                    embedding: e.embedding,
+                    index: e.index,
+                })
+                .collect(),
             model: data.model,
-            usage: crate::shared_types::Usage::new(data.usage.prompt_tokens, 0, data.usage.total_tokens),
+            usage: crate::shared_types::Usage::new(
+                data.usage.prompt_tokens,
+                0,
+                data.usage.total_tokens,
+            ),
         })
     }
 

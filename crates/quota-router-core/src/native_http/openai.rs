@@ -1,6 +1,9 @@
 // openai — OpenAI via reqwest (native_http, LiteLLM mode)
 
-use super::{HttpCompletionRequest, HttpCompletionResponse, HttpEmbeddingRequest, HttpEmbeddingResponse, ProviderError, StreamingResponse};
+use super::{
+    HttpCompletionRequest, HttpCompletionResponse, HttpEmbeddingRequest, HttpEmbeddingResponse,
+    ProviderError, StreamingResponse,
+};
 use async_trait::async_trait;
 use futures::StreamExt;
 use reqwest::Client;
@@ -40,8 +43,13 @@ impl super::HttpProvider for OpenAIProvider {
 
     fn supported_models(&self) -> Vec<&str> {
         vec![
-            "gpt-4", "gpt-4-turbo", "gpt-4o", "gpt-4o-mini",
-            "gpt-3.5-turbo", "gpt-4-0613", "gpt-4-32k",
+            "gpt-4",
+            "gpt-4-turbo",
+            "gpt-4o",
+            "gpt-4o-mini",
+            "gpt-3.5-turbo",
+            "gpt-4-0613",
+            "gpt-4-32k",
         ]
     }
 
@@ -94,7 +102,8 @@ impl super::HttpProvider for OpenAIProvider {
             body["user"] = serde_json::json!(user);
         }
 
-        let resp = self.client
+        let resp = self
+            .client
             .post(&url)
             .header("Authorization", format!("Bearer {}", api_key))
             .header("Content-Type", "application/json")
@@ -110,11 +119,17 @@ impl super::HttpProvider for OpenAIProvider {
             return Err(ProviderError::RateLimit("Rate limited".to_string()));
         }
         if !resp.status().is_success() {
-            return Err(ProviderError::InvalidResponse(format!("HTTP {}", resp.status())));
+            return Err(ProviderError::InvalidResponse(format!(
+                "HTTP {}",
+                resp.status()
+            )));
         }
 
         let status = resp.status();
-        let data: OpenAIResponse = resp.json().await.map_err(|e| ProviderError::InvalidResponse(e.to_string()))?;
+        let data: OpenAIResponse = resp
+            .json()
+            .await
+            .map_err(|e| ProviderError::InvalidResponse(e.to_string()))?;
 
         Ok(convert_response(data, status.as_u16()))
     }
@@ -131,7 +146,8 @@ impl super::HttpProvider for OpenAIProvider {
             "model": request.model
         });
 
-        let resp = self.client
+        let resp = self
+            .client
             .post(&url)
             .header("Authorization", format!("Bearer {}", api_key))
             .header("Content-Type", "application/json")
@@ -141,20 +157,34 @@ impl super::HttpProvider for OpenAIProvider {
             .map_err(|e| ProviderError::Network(e.to_string()))?;
 
         if !resp.status().is_success() {
-            return Err(ProviderError::InvalidResponse(format!("HTTP {}", resp.status())));
+            return Err(ProviderError::InvalidResponse(format!(
+                "HTTP {}",
+                resp.status()
+            )));
         }
 
-        let data: OpenAIEmbeddingsResponse = resp.json().await.map_err(|e| ProviderError::InvalidResponse(e.to_string()))?;
+        let data: OpenAIEmbeddingsResponse = resp
+            .json()
+            .await
+            .map_err(|e| ProviderError::InvalidResponse(e.to_string()))?;
 
         Ok(HttpEmbeddingResponse {
             object: "list".to_string(),
-            data: data.data.into_iter().map(|e| crate::shared_types::Embedding {
-                object: e.object,
-                embedding: e.embedding,
-                index: e.index,
-            }).collect(),
+            data: data
+                .data
+                .into_iter()
+                .map(|e| crate::shared_types::Embedding {
+                    object: e.object,
+                    embedding: e.embedding,
+                    index: e.index,
+                })
+                .collect(),
             model: data.model,
-            usage: crate::shared_types::Usage::new(data.usage.prompt_tokens, 0, data.usage.total_tokens),
+            usage: crate::shared_types::Usage::new(
+                data.usage.prompt_tokens,
+                0,
+                data.usage.total_tokens,
+            ),
         })
     }
 
@@ -193,7 +223,8 @@ impl super::HttpProvider for OpenAIProvider {
             body["stop"] = serde_json::json!(stop);
         }
 
-        let resp = self.client
+        let resp = self
+            .client
             .post(&url)
             .header("Authorization", format!("Bearer {}", api_key))
             .header("Content-Type", "application/json")
@@ -208,7 +239,10 @@ impl super::HttpProvider for OpenAIProvider {
             return Err(ProviderError::RateLimit("Rate limited".to_string()));
         }
         if !resp.status().is_success() {
-            return Err(ProviderError::InvalidResponse(format!("HTTP {}", resp.status())));
+            return Err(ProviderError::InvalidResponse(format!(
+                "HTTP {}",
+                resp.status()
+            )));
         }
 
         // For OpenAI, we pass raw SSE bytes through
@@ -223,7 +257,11 @@ impl super::HttpProvider for OpenAIProvider {
                 match chunk_result {
                     Ok(bytes) => {
                         // Send raw SSE bytes to proxy for direct forwarding
-                        if tx.send(Ok(super::StreamingChunk::RawSSE(bytes.to_vec()))).await.is_err() {
+                        if tx
+                            .send(Ok(super::StreamingChunk::RawSSE(bytes.to_vec())))
+                            .await
+                            .is_err()
+                        {
                             break;
                         }
                     }
@@ -289,13 +327,17 @@ struct OpenAIEmbedding {
 }
 
 fn convert_response(data: OpenAIResponse, _status: u16) -> HttpCompletionResponse {
-    let choices = data.choices.into_iter().map(|c| {
-        crate::shared_types::Choice::new(
-            c.index,
-            crate::shared_types::Message::new(c.message.role, c.message.content),
-            c.finish_reason,
-        )
-    }).collect();
+    let choices = data
+        .choices
+        .into_iter()
+        .map(|c| {
+            crate::shared_types::Choice::new(
+                c.index,
+                crate::shared_types::Message::new(c.message.role, c.message.content),
+                c.finish_reason,
+            )
+        })
+        .collect();
 
     HttpCompletionResponse {
         id: data.id,
@@ -303,6 +345,10 @@ fn convert_response(data: OpenAIResponse, _status: u16) -> HttpCompletionRespons
         created: data.created,
         model: data.model,
         choices,
-        usage: crate::shared_types::Usage::new(data.usage.prompt_tokens, data.usage.completion_tokens, data.usage.total_tokens),
+        usage: crate::shared_types::Usage::new(
+            data.usage.prompt_tokens,
+            data.usage.completion_tokens,
+            data.usage.total_tokens,
+        ),
     }
 }

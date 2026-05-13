@@ -35,15 +35,15 @@ RFC-0920: Unified Python SDK — Dual-Mode LiteLLM/any-llm Compatibility
 
 ---
 
-## Phase 2 Checklist (per RFC-0920 lines 4613-4622)
+## Phase 2 Checklist (per RFC-0920 §Phase 2 Parameters)
 
 **All items are BINDING LAYER only — no heavy lifting here.**
 
-- [x] **Anthropic provider** — with `thinking` support (per RFC-0920 line 1342)
+- [x] **Anthropic provider** — with `thinking` support (per RFC-0920 §Anthropic `thinking` parameter)
 - [x] **Mistral provider** — integration
 - [x] **All 42 providers** — via PyO3 → official Python SDKs
 - [x] **Embedding API** — `embedding()` / `aembedding()`
-- [x] **Model listing** — `list_models()` / `alist_models()` per RFC-0920 lines 4617
+- [x] **Model listing** — `list_models()` / `alist_models()` per RFC-0920 §Phase 2 Parameters
 - [x] **`timeout` parameter** — `f64` seconds per spec
 - [x] **`extra_headers`, `base_url`, `api_version` parameters** — per spec
 - [x] **SSEParser implementation** — `parse_openai_sse`, `parse_anthropic_sse` (litellm-mode only)
@@ -87,7 +87,7 @@ So `parse_openai_sse`/`parse_anthropic_sse` are **correctly unused in any-llm-mo
 
 - [x] All 42 providers accessible via any-llm-mode SDK (mock OK where no Python SDK available)
 - [x] `embedding()` / `aembedding()` — correct signature per RFC-0920
-- [x] `list_models()` / `alist_models()` — correct signature per RFC-0920 lines 4617
+- [x] `list_models()` / `alist_models()` — correct signature per RFC-0920 §Phase 2 Parameters
 - [x] `timeout` parameter — signature present per spec
 - [x] `cargo clippy -D warnings` passes
 - [x] `cargo test --lib` passes

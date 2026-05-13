@@ -20,17 +20,17 @@ This mission tracks **Phase 4 parameters that remain specced** in RFC-0920 lines
 
 ---
 
-## Phase 4 Parameters (per RFC-0920 lines 3735-3751)
+## Phase 4 Parameters (per RFC-0920 §Completion/Messages Signatures)
 
 These parameters appear in completion/messages signatures per RFC-0920 spec:
 
-- [x] **`truncation` parameter** — Phase 4 per RFC-0920 line 3735
-- [x] **`top_k` parameter** — Phase 4 per line 3735
-- [x] **`service_tier` parameter** — Phase 4 per line 3735
-- [x] **`background` parameter** — Phase 4 per line 3735
-- [x] **`prompt_cache_key` parameter** — Phase 4 per line 3735
-- [x] **`prompt_cache_retention` parameter** — Phase 4 per line 3735
-- [x] **`conversation` parameter** — Phase 4 per line 3735
+- [x] **`truncation` parameter** — Phase 4 per RFC-0920 §Completion/Messages Signatures
+- [x] **`top_k` parameter** — Phase 4 per RFC-0920 §Completion/Messages Signatures
+- [x] **`service_tier` parameter** — Phase 4 per RFC-0920 §Completion/Messages Signatures
+- [x] **`background` parameter** — Phase 4 per RFC-0920 §Completion/Messages Signatures
+- [x] **`prompt_cache_key` parameter** — Phase 4 per RFC-0920 §Completion/Messages Signatures
+- [x] **`prompt_cache_retention` parameter** — Phase 4 per RFC-0920 §Completion/Messages Signatures
+- [x] **`conversation` parameter** — Phase 4 per RFC-0920 §Completion/Messages Signatures
 
 ### Items Already Specced (NOT Phase 4 pending)
 
@@ -51,12 +51,12 @@ These are already in completion signatures per RFC-0920:
 
 ## Acceptance Criteria
 
-- [x] `truncation` param in messages() — per RFC-0920 line 3735/1159
-- [x] `top_k` param in messages() — per RFC-0920 line 3735
-- [x] `service_tier` param — per RFC-0920 line 3735
-- [x] `background` param — per RFC-0920 line 3735
-- [x] `prompt_cache_key` param — per RFC-0920 line 3735
-- [x] `prompt_cache_retention` param — per RFC-0920 line 3735
-- [x] `conversation` param — per RFC-0920 line 3735
+- [x] `truncation` param in messages() — per RFC-0920 §Completion/Messages Signatures
+- [x] `top_k` param in messages() — per RFC-0920 §Completion/Messages Signatures
+- [x] `service_tier` param — per RFC-0920 §Completion/Messages Signatures
+- [x] `background` param — per RFC-0920 §Completion/Messages Signatures
+- [x] `prompt_cache_key` param — per RFC-0920 §Completion/Messages Signatures
+- [x] `prompt_cache_retention` param — per RFC-0920 §Completion/Messages Signatures
+- [x] `conversation` param — per RFC-0920 §Completion/Messages Signatures
 - [x] `cargo clippy -D warnings` passes
 - [x] `cargo test --lib` passes

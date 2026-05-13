@@ -39,14 +39,14 @@ None — this is the foundational phase.
 
 ---
 
-## Phase 1 Checklist (per RFC-0920 lines 4597-4611)
+## Phase 1 Checklist (per RFC-0920 §Phase 1 Parameters)
 
 - [x] **Replace mock completion()** — real OpenAI SDK via PyO3 (`AsyncOpenAI` client)
 - [x] **Replace mock acompletion()** — async wrapper (Phase 3 for real async)
-- [x] **text_completion() / atext_completion()** — per RFC-0920 lines 3830-3858 (LiteLLM parity)
+- [x] **text_completion() / atext_completion()** — per RFC-0920 §LiteLLM Compatibility (LiteLLM parity)
 - [x] **Provider resolution algorithm** — both styles work (provider= and provider:model)
-- [x] **Exception hierarchy with error codes** — 18 exceptions with proper `__init__` per RFC-0920 spec (lines 623-791)
-- [x] **Basic test suite** — OpenAI + Anthropic (per RFC-0920 line 4603)
+- [x] **Exception hierarchy with error codes** — 18 exceptions with proper `__init__` per RFC-0920 spec (§Exception Hierarchy)
+- [x] **Basic test suite** — OpenAI + Anthropic (per RFC-0920 §Phase 1 Acceptance Criteria)
 
 ---
 
@@ -87,7 +87,7 @@ All exception `__init__` signatures MUST match any-llm for drop-in replacement.
 - [x] Exception constructors match any-llm signatures (drop-in compat)
 - [x] Real OpenAI SDK call replaces mock echo
 - [x] Real Anthropic SDK call replaces mock echo
-- [x] `text_completion()` / `atext_completion()` — working per RFC-0920 lines 3830-3858
+- [x] `text_completion()` / `atext_completion()` — working per RFC-0920 §LiteLLM Compatibility
 - [x] `cargo clippy -D warnings` passes
 - [x] `cargo test --lib` passes
 

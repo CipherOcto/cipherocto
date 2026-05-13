@@ -38,7 +38,7 @@ RFC-0920: Unified Python SDK — Dual-Mode LiteLLM/any-llm Compatibility
 
 ---
 
-## Phase 3 Checklist (per RFC-0920 lines 4623-4639)
+## Phase 3 Checklist (per RFC-0920 §Phase 3 Parameters)
 
 **All items are BINDING LAYER only — heavy lifting stays in RFC-0917/Rust core.**
 

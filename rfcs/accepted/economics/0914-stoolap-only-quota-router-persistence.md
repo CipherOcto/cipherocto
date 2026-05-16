@@ -2,7 +2,7 @@
 
 ## Status
 
-Draft (v8) — Updated schema references and scope clarification
+Accepted (v8) — Updated schema references and scope clarification
 
 ## Authors
 

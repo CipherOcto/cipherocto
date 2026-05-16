@@ -141,10 +141,84 @@ pub struct LiteLLMParams {
     pub context_window_fallback_model: Option<String>,
 }
 
+/// Extract env var name from `os.environ["KEY"]` or `os.environ['KEY']` syntax.
+/// Returns None if the input doesn't match the pattern.
+pub fn extract_os_environ_key(value: &str) -> Option<&str> {
+    let value = value.trim();
+    // Match os.environ["KEY"] or os.environ['KEY']
+    let inner = value.strip_prefix("os.environ[")?.strip_suffix(']')?;
+    // Remove quotes (single or double)
+    let key = inner
+        .strip_prefix('"')
+        .and_then(|s| s.strip_suffix('"'))
+        .or_else(|| inner.strip_prefix('\'').and_then(|s| s.strip_suffix('\'')))?;
+    if key.is_empty() {
+        return None;
+    }
+    Some(key)
+}
+
 impl LiteLLMParams {
-    /// Resolve api_base from api_base or base_url (alias)
-    pub fn resolve_api_base(&self) -> Option<&str> {
-        self.api_base.as_deref().or(self.base_url.as_deref())
+    /// Resolve api_base with 4-tier precedence (RFC-0931):
+    /// 1. Explicit non-empty value (api_base or base_url alias)
+    /// 2. os.environ["KEY"] syntax
+    /// 3. {PROVIDER}_API_BASE env var
+    /// 4. Provider-specific default from RFC-0930 registry
+    pub fn resolve_api_base(&self) -> Option<String> {
+        // Tier 1: Explicit non-empty value
+        if let Some(base) = self.api_base.as_deref().or(self.base_url.as_deref()) {
+            if !base.is_empty() {
+                // Check if it's os.environ syntax
+                if let Some(key) = extract_os_environ_key(base) {
+                    if let Ok(val) = std::env::var(key) {
+                        if !val.is_empty() {
+                            return Some(val);
+                        }
+                    }
+                } else {
+                    return Some(base.to_string());
+                }
+            }
+        }
+
+        // Tier 3: {PROVIDER}_API_BASE env var
+        if !self.provider.is_empty() {
+            let env_key = format!("{}_API_BASE", self.provider.to_uppercase());
+            if let Ok(val) = std::env::var(&env_key) {
+                if !val.is_empty() {
+                    return Some(val);
+                }
+            }
+        }
+
+        // Tier 4: Provider-specific default from RFC-0930 registry
+        if !self.provider.is_empty() {
+            get_provider_default_api_base(&self.provider)
+        } else {
+            None
+        }
+    }
+
+    /// Resolve api_key with 2-tier precedence (RFC-0931).
+    ///
+    /// Tiers: (1) explicit non-empty value, (2) os.environ["KEY"] syntax.
+    ///
+    /// PROVIDER_API_KEY env var is resolved at runtime (RFC-0938), not config time.
+    pub fn resolve_api_key(&self) -> Option<String> {
+        if let Some(key) = self.api_key.as_deref() {
+            if !key.is_empty() {
+                if let Some(env_key) = extract_os_environ_key(key) {
+                    if let Ok(val) = std::env::var(env_key) {
+                        if !val.is_empty() {
+                            return Some(val);
+                        }
+                    }
+                } else {
+                    return Some(key.to_string());
+                }
+            }
+        }
+        None
     }
 }
 
@@ -452,12 +526,9 @@ pub fn to_provider_map(
             None => DispatchInfo::auto_id(&provider, &deployment.litellm_params.model)?,
         };
 
-        // Resolve api_base: explicit > provider default
-        let api_base = deployment
-            .litellm_params
-            .resolve_api_base()
-            .map(|s| s.to_string())
-            .or_else(|| get_provider_default_api_base(&provider));
+        // Resolve api_base: 4-tier precedence (RFC-0931)
+        // Tier 1: explicit value, Tier 2: os.environ, Tier 3: {PROVIDER}_API_BASE, Tier 4: registry
+        let api_base = deployment.litellm_params.resolve_api_base();
 
         let info = DispatchInfo {
             deployment_id: id.clone(),
@@ -921,7 +992,10 @@ mod tests {
             drop_params: None,
             context_window_fallback_model: None,
         };
-        assert_eq!(params.resolve_api_base(), Some("https://api.openai.com/v1"));
+        assert_eq!(
+            params.resolve_api_base(),
+            Some("https://api.openai.com/v1".to_string())
+        );
     }
 
     #[test]
@@ -1361,5 +1435,207 @@ deployments:
             result.unwrap_err(),
             ConfigError::MissingProvider(_)
         ));
+    }
+
+    // ========================================================================
+    // RFC-0931 Tests: Env Var Syntax
+    // ========================================================================
+
+    #[test]
+    fn test_extract_os_environ_key_double_quotes() {
+        assert_eq!(
+            extract_os_environ_key("os.environ[\"MY_KEY\"]"),
+            Some("MY_KEY")
+        );
+    }
+
+    #[test]
+    fn test_extract_os_environ_key_single_quotes() {
+        assert_eq!(
+            extract_os_environ_key("os.environ['MY_KEY']"),
+            Some("MY_KEY")
+        );
+    }
+
+    #[test]
+    fn test_extract_os_environ_key_no_match() {
+        assert_eq!(extract_os_environ_key("plain_value"), None);
+        assert_eq!(extract_os_environ_key("os.environ[]"), None);
+        assert_eq!(extract_os_environ_key("os.environ[\"\"]"), None);
+    }
+
+    #[test]
+    fn test_resolve_api_base_tier1_explicit() {
+        let params = LiteLLMParams {
+            provider: "openai".to_string(),
+            model: "gpt-4o".to_string(),
+            api_key: None,
+            api_base: Some("https://custom.api.com/v1".to_string()),
+            base_url: None,
+            api_version: None,
+            timeout: None,
+            stream_timeout_secs: None,
+            max_retries: None,
+            aws_access_key_id: None,
+            aws_secret_access_key: None,
+            aws_region_name: None,
+            vertex_project: None,
+            vertex_location: None,
+            vertex_credentials: None,
+            organization: None,
+            extra_headers: None,
+            model_group_alias: None,
+            drop_params: None,
+            context_window_fallback_model: None,
+        };
+        assert_eq!(
+            params.resolve_api_base(),
+            Some("https://custom.api.com/v1".to_string())
+        );
+    }
+
+    #[test]
+    fn test_resolve_api_base_tier3_env_var() {
+        std::env::set_var("TESTPROVIDER_API_BASE", "https://env.api.com");
+        let params = LiteLLMParams {
+            provider: "testprovider".to_string(),
+            model: "test-model".to_string(),
+            api_key: None,
+            api_base: None,
+            base_url: None,
+            api_version: None,
+            timeout: None,
+            stream_timeout_secs: None,
+            max_retries: None,
+            aws_access_key_id: None,
+            aws_secret_access_key: None,
+            aws_region_name: None,
+            vertex_project: None,
+            vertex_location: None,
+            vertex_credentials: None,
+            organization: None,
+            extra_headers: None,
+            model_group_alias: None,
+            drop_params: None,
+            context_window_fallback_model: None,
+        };
+        assert_eq!(
+            params.resolve_api_base(),
+            Some("https://env.api.com".to_string())
+        );
+        std::env::remove_var("TESTPROVIDER_API_BASE");
+    }
+
+    #[test]
+    fn test_resolve_api_base_tier4_registry() {
+        let params = LiteLLMParams {
+            provider: "openai".to_string(),
+            model: "gpt-4o".to_string(),
+            api_key: None,
+            api_base: None,
+            base_url: None,
+            api_version: None,
+            timeout: None,
+            stream_timeout_secs: None,
+            max_retries: None,
+            aws_access_key_id: None,
+            aws_secret_access_key: None,
+            aws_region_name: None,
+            vertex_project: None,
+            vertex_location: None,
+            vertex_credentials: None,
+            organization: None,
+            extra_headers: None,
+            model_group_alias: None,
+            drop_params: None,
+            context_window_fallback_model: None,
+        };
+        assert_eq!(
+            params.resolve_api_base(),
+            Some("https://api.openai.com/v1".to_string())
+        );
+    }
+
+    #[test]
+    fn test_resolve_api_key_explicit() {
+        let params = LiteLLMParams {
+            provider: "openai".to_string(),
+            model: "gpt-4o".to_string(),
+            api_key: Some("sk-test123".to_string()),
+            api_base: None,
+            base_url: None,
+            api_version: None,
+            timeout: None,
+            stream_timeout_secs: None,
+            max_retries: None,
+            aws_access_key_id: None,
+            aws_secret_access_key: None,
+            aws_region_name: None,
+            vertex_project: None,
+            vertex_location: None,
+            vertex_credentials: None,
+            organization: None,
+            extra_headers: None,
+            model_group_alias: None,
+            drop_params: None,
+            context_window_fallback_model: None,
+        };
+        assert_eq!(params.resolve_api_key(), Some("sk-test123".to_string()));
+    }
+
+    #[test]
+    fn test_resolve_api_key_os_environ() {
+        std::env::set_var("TEST_MY_API_KEY", "sk-from-env");
+        let params = LiteLLMParams {
+            provider: "openai".to_string(),
+            model: "gpt-4o".to_string(),
+            api_key: Some("os.environ[\"TEST_MY_API_KEY\"]".to_string()),
+            api_base: None,
+            base_url: None,
+            api_version: None,
+            timeout: None,
+            stream_timeout_secs: None,
+            max_retries: None,
+            aws_access_key_id: None,
+            aws_secret_access_key: None,
+            aws_region_name: None,
+            vertex_project: None,
+            vertex_location: None,
+            vertex_credentials: None,
+            organization: None,
+            extra_headers: None,
+            model_group_alias: None,
+            drop_params: None,
+            context_window_fallback_model: None,
+        };
+        assert_eq!(params.resolve_api_key(), Some("sk-from-env".to_string()));
+        std::env::remove_var("TEST_MY_API_KEY");
+    }
+
+    #[test]
+    fn test_resolve_api_key_none() {
+        let params = LiteLLMParams {
+            provider: "openai".to_string(),
+            model: "gpt-4o".to_string(),
+            api_key: None,
+            api_base: None,
+            base_url: None,
+            api_version: None,
+            timeout: None,
+            stream_timeout_secs: None,
+            max_retries: None,
+            aws_access_key_id: None,
+            aws_secret_access_key: None,
+            aws_region_name: None,
+            vertex_project: None,
+            vertex_location: None,
+            vertex_credentials: None,
+            organization: None,
+            extra_headers: None,
+            model_group_alias: None,
+            drop_params: None,
+            context_window_fallback_model: None,
+        };
+        assert_eq!(params.resolve_api_key(), None);
     }
 }

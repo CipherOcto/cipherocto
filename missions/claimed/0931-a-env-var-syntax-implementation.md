@@ -2,7 +2,7 @@
 
 ## Status
 
-Open
+Complete
 
 ## RFC
 
@@ -20,34 +20,34 @@ RFC-0931 specifies `os.environ["KEY"]` syntax for env var resolution in config. 
 
 ### os.environ["KEY"] Syntax
 
-- [ ] Parse `os.environ["KEY"]` and `os.environ['KEY']` syntax
-- [ ] Extract env var name from brackets
-- [ ] Resolve from `std::env::var()`
-- [ ] Return `None` if env var not set
+- [x] Parse `os.environ["KEY"]` and `os.environ['KEY']` syntax
+- [x] Extract env var name from brackets
+- [x] Resolve from `std::env::var()`
+- [x] Return `None` if env var not set
 
 ### resolve_api_key()
 
-- [ ] Tier 1: Explicit non-empty non-os.environ value
-- [ ] Tier 2: `os.environ["KEY"]` syntax
-- [ ] Return `None` if both tiers fail
+- [x] Tier 1: Explicit non-empty non-os.environ value
+- [x] Tier 2: `os.environ["KEY"]` syntax
+- [x] Return `None` if both tiers fail
 
 **Note:** `{PROVIDER}_API_KEY` env var is NOT resolved at config time. It is resolved at runtime by Mission-0938-a's `resolve_api_key()` which checks `ANY_LLM_KEY` first. This ensures correct precedence: config_key > os.environ["KEY"] > ANY_LLM_KEY > {PROVIDER}_API_KEY.
 
 ### resolve_api_base()
 
-- [ ] Tier 1: Explicit non-empty value (existing: api_base or base_url alias)
-- [ ] Tier 2: `os.environ["KEY"]` syntax
-- [ ] Tier 3: `{PROVIDER}_API_BASE` env var
-- [ ] Tier 4: Provider-specific default from RFC-0930 registry (requires Mission-0930-a)
-- [ ] Return `None` if all tiers fail
+- [x] Tier 1: Explicit non-empty value (existing: api_base or base_url alias)
+- [x] Tier 2: `os.environ["KEY"]` syntax
+- [x] Tier 3: `{PROVIDER}_API_BASE` env var
+- [x] Tier 4: Provider-specific default from RFC-0930 registry (requires Mission-0930-a)
+- [x] Return `None` if all tiers fail
 
 ### Tests
 
-- [ ] `os.environ["MY_KEY"]` resolves correctly
-- [ ] `os.environ['MY_KEY']` resolves correctly
-- [ ] Missing env var returns None
-- [ ] Empty `os.environ[""]` returns None
-- [ ] Provider env var fallback works
+- [x] `os.environ["MY_KEY"]` resolves correctly
+- [x] `os.environ['MY_KEY']` resolves correctly
+- [x] Missing env var returns None
+- [x] Empty `os.environ[""]` returns None
+- [x] Provider env var fallback works
 
 ## Key Files
 

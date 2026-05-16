@@ -2,7 +2,7 @@
 
 ## Status
 
-Draft
+Accepted
 
 ## Summary
 
@@ -30,10 +30,18 @@ pub fn infer_provider(model: &str) -> Option<String> {
     // Patterns: "provider/model" or "provider:model"
     // Provider name is lowercased to match factory.rs match arms
     if let Some((provider, _)) = model.split_once('/') {
-        return Some(provider.to_lowercase());
+        let provider = provider.to_lowercase();
+        if provider.is_empty() {
+            return None;  // Leading slash with no provider prefix (e.g., "/gpt-4o")
+        }
+        return Some(provider);
     }
     if let Some((provider, _)) = model.split_once(':') {
-        return Some(provider.to_lowercase());
+        let provider = provider.to_lowercase();
+        if provider.is_empty() {
+            return None;  // Leading colon with no provider prefix
+        }
+        return Some(provider);
     }
     None
 }
@@ -46,6 +54,8 @@ pub fn infer_provider(model: &str) -> Option<String> {
 **`model_name` is the source for provider inference** (not `litellm_params.model`).
 
 The `model_name` field carries the full model identifier as submitted in requests — it may include a provider prefix. The `litellm_params.model` field is the deployment-specific model name (without provider prefix) used for API calls.
+
+**Requirement:** `model_name` MUST be present on `DeploymentConfig` for provider inference to work. If `model_name` is absent and `litellm_params.provider` is also empty, `to_provider_map()` returns `ConfigError::MissingProvider`. There is no fallback to `litellm_params.model` for inference — `litellm_params.model` is used for API calls and auto_id, not for provider inference.
 
 Example YAML:
 ```yaml
@@ -103,9 +113,7 @@ Unlike other providers, Azure cannot infer a default because:
 - The `resource` name is deployment-specific
 - It cannot be derived from model string
 
-**Configuration options for Azure:**
-
-Option A (explicit api_base):
+**Azure requires explicit `api_base` in config:**
 ```yaml
 deployments:
   - model_name: azure/gpt-4o
@@ -114,16 +122,7 @@ deployments:
       api_base: https://my-resource.openai.azure.com/v1
 ```
 
-Option B (resource name + base template):
-```yaml
-deployments:
-  - model_name: azure/gpt-4o
-    litellm_params:
-      model: gpt-4o
-      extra:  # Azure-specific config via litellm_params.extra
-        azure_resource_name: my-resource
-        azure_api_base: https://{resource}.openai.azure.com/v1
-```
+`get_provider_default_api_base("azure")` returns `None`. If `api_base` is not set, the deployment will have no api_base and the caller must handle the absent value.
 
 ### 5. Model String Parsing Integration
 
@@ -155,7 +154,7 @@ pub fn to_provider_map(config: &GatewayConfig) -> Result<HashMap<String, Dispatc
 
         let info = DispatchInfo {
             deployment_id: deployment.deployment_id.clone()
-                .unwrap_or_else(|| format!("{}_{}", provider, deployment.model_name)),
+                .unwrap_or_else(|| DispatchInfo::auto_id(&provider, &deployment.litellm_params.model)),
             provider: provider.clone(),
             model: deployment.litellm_params.model.clone(),
             api_key: deployment.litellm_params.resolve_api_key(),  // RFC-0931
@@ -211,7 +210,7 @@ fn test_infer_provider_unknown() {
 
 #[test]
 fn test_infer_provider_empty_provider() {
-    assert_eq!(infer_provider("/gpt-4o"), Some("".to_string()));  // Empty provider name
+    assert_eq!(infer_provider("/gpt-4o"), None);  // No provider prefix (leading slash only)
 }
 
 #[test]
@@ -243,7 +242,7 @@ deployments:
 
 #[test]
 fn test_to_provider_map_empty_provider_from_split_errors() {
-    // /gpt-4o has no provider prefix, returns empty string from infer_provider
+    // /gpt-4o has no provider prefix, infer_provider returns None
     let yaml = r#"
 deployments:
   - model_name: /gpt-4o
@@ -274,9 +273,18 @@ fn test_provider_default_api_base_returns_correct_values() {
 - [ ] `infer_provider()` normalizes `OpenAI/gpt-4o` → `openai`
 - [ ] `to_provider_map()` uses `model_name` (not `litellm_params.model`) for inference
 - [ ] `to_provider_map()` returns `MissingProvider` error when model has no prefix and provider is empty
-- [ ] `to_provider_map()` populates `DispatchInfo.api_base` with resolved 4-tier value
+- [ ] `to_provider_map()` populates `DispatchInfo.api_base` with resolved 4-tier value (RFC-0931 resolve_api_base)
 - [ ] Azure has no default api_base — requires explicit config
 - [ ] `get_provider_default_api_base()` returns correct defaults for known providers
+- [ ] `infer_provider()` returns `None` for empty provider (leading slash/colon)
+- [ ] `DispatchInfo.auto_id()` uses `litellm_params.model` (not `model_name`) for consistent IDs
 - [ ] Feature-gated to `any-llm-mode` and `full` only
 - [ ] Existing tests still pass
 - [ ] Clippy clean
+
+## Version History
+
+| Version | Date | Changes |
+|---------|------|---------|
+| 2 | 2026-05-15 | Adversarial review R1 fixes: C2 — infer_provider returns None for empty provider (leading slash/colon); M1 — auto_id standardized to use litellm_params.model via DispatchInfo::auto_id(); M4 — Azure Option B removed, Azure requires explicit api_base; m2 — model_name requirement documented (must be present for inference, no fallback); m5 — test comments updated |
+| 1 | 2026-05-14 | Initial draft |

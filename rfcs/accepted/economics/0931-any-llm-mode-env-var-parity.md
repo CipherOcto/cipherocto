@@ -2,7 +2,7 @@
 
 ## Status
 
-Draft
+Accepted
 
 ## Summary
 
@@ -35,10 +35,11 @@ Resolution strips the `os.environ[` prefix and `]` suffix, then looks up the rem
 
 ### 1. Resolution Order
 
-**api_key** — 2-tier resolution (no provider-specific default makes sense for keys):
+**api_key** — 3-tier resolution (no provider-specific default makes sense for keys):
 
-1. Explicit non-empty value in litellm_params (highest priority)
-2. Environment variable: `{PROVIDER}_API_KEY` (only if explicit value is absent)
+1. Explicit non-empty non-`os.environ` value in litellm_params (highest priority)
+2. `os.environ["KEY"]` or `os.environ['KEY']` syntax — resolves from environment
+3. Environment variable: `{PROVIDER}_API_KEY` (only if tiers 1-2 are absent)
 
 **api_base** — 4-tier resolution:
 
@@ -79,7 +80,8 @@ fn extract_os_environ_key(s: &str) -> Option<String> {
     // Strip os.environ[ prefix
     let inner = s.strip_prefix("os.environ")?;
     // Handle both quote styles: ["KEY"] or ['KEY']
-    if inner.starts_with('[') && inner.len() >= 2 {
+    // Minimum: ["x"] = 3 chars after stripping os.environ (bracket + quote + char + quote)
+    if inner.starts_with('[') && inner.len() >= 4 {
         let inner = &inner[1..inner.len() - 1];
         // Strip surrounding quotes (double or single)
         if (inner.starts_with('"') && inner.ends_with('"'))
@@ -299,15 +301,18 @@ fn test_resolve_api_key_os_environ_single_quote() {
 
 #[test]
 fn test_resolve_api_key_os_environ_empty_key() {
-    // os.environ[""] should fail env lookup gracefully
-    std::env::remove_var("");
+    // os.environ[""] — extract_os_environ_key returns Some("") (empty key name)
+    // std::env::var("") fails (empty var name is invalid on most systems)
+    // so this falls through to tier 3 (provider env var)
+    std::env::set_var("OPENAI_API_KEY", "sk-from-provider-env");
     let params = LiteLLMParams {
         provider: "openai".to_string(),
         api_key: Some(r#"os.environ[""]"#.to_string()),
         ..Default::default()
     };
-    // Empty env var name fails, returns None or falls through to provider env var
-    assert!(params.resolve_api_key().is_none());
+    // Falls through to {PROVIDER}_API_KEY env var because std::env::var("") fails
+    assert_eq!(params.resolve_api_key(), Some("sk-from-provider-env".to_string()));
+    std::env::remove_var("OPENAI_API_KEY");
 }
 
 #[test]
@@ -369,3 +374,10 @@ Both improve LiteLLM drop-in compatibility in `any-llm-mode`.
 
 When both are implemented, the resolution order for api_base is:
 1. Explicit value → 2. `os.environ[...]` syntax → 3. `{PROVIDER}_API_BASE` env var → 4. Provider-default from RFC-0930 registry
+
+## Version History
+
+| Version | Date | Changes |
+|---------|------|---------|
+| 2 | 2026-05-15 | Adversarial review R1 fixes: C1 — api_key resolution corrected from 2-tier to 3-tier (os.environ syntax is tier 2); M2 — extract_os_environ_key len check fixed from >= 2 to >= 4 (minimum ["x"] = 4 chars after bracket strip); m3 — test_resolve_api_key_os_environ_empty_key comment corrected (extract_os_environ_key returns Some(""), std::env::var("") fails, falls through to provider env var) |
+| 1 | 2026-05-14 | Initial draft |

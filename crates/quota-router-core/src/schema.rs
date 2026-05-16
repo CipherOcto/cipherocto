@@ -211,6 +211,39 @@ pub fn init_database(db: &stoolap::Database) -> Result<(), KeyError> {
     )
     .map_err(|e| KeyError::Storage(e.to_string()))?;
 
+    // rate_limit_state table (RFC-0914, Mission 0914-a)
+    db.execute(
+        "CREATE TABLE IF NOT EXISTS rate_limit_state (
+            entity_id TEXT NOT NULL,
+            entity_type TEXT NOT NULL,
+            counter_type TEXT NOT NULL,
+            current_count INTEGER NOT NULL DEFAULT 0,
+            window_start INTEGER NOT NULL,
+            last_updated INTEGER NOT NULL,
+            PRIMARY KEY (entity_id, entity_type, counter_type)
+        )",
+        [],
+    )
+    .map_err(|e| KeyError::Storage(e.to_string()))?;
+
+    // budgets table (RFC-0914, Mission 0914-a)
+    db.execute(
+        "CREATE TABLE IF NOT EXISTS budgets (
+            entity_id TEXT NOT NULL,
+            entity_type TEXT NOT NULL,
+            budget_limit INTEGER NOT NULL,
+            period TEXT NOT NULL,
+            current_spend INTEGER NOT NULL DEFAULT 0,
+            soft_limit_pct INTEGER,
+            alert_webhook TEXT,
+            last_reset INTEGER NOT NULL,
+            created_at INTEGER NOT NULL,
+            PRIMARY KEY (entity_id, entity_type)
+        )",
+        [],
+    )
+    .map_err(|e| KeyError::Storage(e.to_string()))?;
+
     Ok(())
 }
 

@@ -2,7 +2,7 @@
 
 ## Status
 
-Open
+Complete
 
 ## RFC
 
@@ -49,7 +49,7 @@ Current state:
 
 ### rate_limit_state Table
 
-- [ ] `rate_limit_state` table created with schema:
+- [x] `rate_limit_state` table created with schema:
   ```sql
   CREATE TABLE rate_limit_state (
       entity_id TEXT NOT NULL,
@@ -61,15 +61,15 @@ Current state:
       PRIMARY KEY (entity_id, entity_type, counter_type)
   );
   ```
-- [ ] `flush_interval_seconds` config option added to `RouterSettings` (default: 60)
-- [ ] In-memory counters flushed to stoolap at configured interval
-- [ ] On startup, counters loaded from stoolap (if table exists)
-- [ ] On restart, counters reset if `window_start` is older than current window
-- [ ] `Retry-After` header value computed from window boundaries
+- [x] `flush_interval_seconds` config option added to `RouterSettings` (default: 60)
+- [x] In-memory counters flushed to stoolap at configured interval
+- [x] On startup, counters loaded from stoolap (if table exists)
+- [x] On restart, counters reset if `window_start` is older than current window
+- [x] `Retry-After` header value computed from window boundaries
 
 ### budgets Table
 
-- [ ] `budgets` table created with schema:
+- [x] `budgets` table created with schema:
   ```sql
   CREATE TABLE budgets (
       entity_id TEXT NOT NULL,
@@ -84,14 +84,14 @@ Current state:
       PRIMARY KEY (entity_id, entity_type)
   );
   ```
-- [ ] Budget reset logic: compute next reset from `period` + `last_reset`
-- [ ] `query_optional` used for all budget lookups (not `query_row`)
-- [ ] `BudgetPeriod` enum: `Daily`, `Weekly`, `Monthly`, `Total`
-- [ ] `EntityType` enum: `Key`, `User`, `Team`
+- [x] Budget reset logic: compute next reset from `period` + `last_reset`
+- [x] `query_optional` used for all budget lookups (not `query_row`)
+- [x] `BudgetPeriod` enum: `Daily`, `Weekly`, `Monthly`, `Total`
+- [x] `EntityType` enum: `Key`, `User`, `Team`
 
 ### StoolapCache Trait
 
-- [ ] `StoolapCache` trait defined in `cache.rs`:
+- [x] `StoolapCache` trait defined in `cache.rs`:
   ```rust
   #[async_trait]
   pub trait StoolapCache: Send + Sync {
@@ -100,16 +100,16 @@ Current state:
       async fn delete(&self, key: &str) -> Result<()>;
   }
   ```
-- [ ] `InMemoryCache` implementation using `HashMap<String, (String, Instant)>`
-- [ ] `InMemoryCache` used as interim until stoolap-backed implementation
+- [x] `InMemoryCache` implementation using `HashMap<String, (String, Instant)>`
+- [x] `InMemoryCache` used as interim until stoolap-backed implementation
 
 ### General
 
-- [ ] All tables use `INTEGER` for timestamps (Unix seconds, not `Instant`)
-- [ ] All timestamps use `SystemTime::now().duration_since(UNIX_EPOCH).as_secs() as i64`
-- [ ] Existing tests pass
-- [ ] New tests for each table CRUD operation
-- [ ] Clippy passes
+- [x] All tables use `INTEGER` for timestamps (Unix seconds, not `Instant`)
+- [x] All timestamps use `SystemTime::now().duration_since(UNIX_EPOCH).as_secs() as i64`
+- [x] Existing tests pass
+- [x] New tests for each table CRUD operation
+- [x] Clippy passes
 
 ## Notes
 

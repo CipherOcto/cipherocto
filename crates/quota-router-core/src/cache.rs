@@ -361,6 +361,136 @@ impl Default for CacheInvalidation {
     }
 }
 
+// =============================================================================
+// Budget types (RFC-0914, Mission 0914-a)
+// =============================================================================
+
+/// Budget period for spend tracking
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub enum BudgetPeriod {
+    Daily,
+    Weekly,
+    Monthly,
+    Total,
+}
+
+impl BudgetPeriod {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Self::Daily => "daily",
+            Self::Weekly => "weekly",
+            Self::Monthly => "monthly",
+            Self::Total => "total",
+        }
+    }
+
+    pub fn parse_period(s: &str) -> Option<Self> {
+        match s {
+            "daily" => Some(Self::Daily),
+            "weekly" => Some(Self::Weekly),
+            "monthly" => Some(Self::Monthly),
+            "total" => Some(Self::Total),
+            _ => None,
+        }
+    }
+
+    /// Compute next reset timestamp from last_reset
+    pub fn next_reset(&self, last_reset: i64) -> Option<i64> {
+        match self {
+            Self::Daily => Some(last_reset + 86400),
+            Self::Weekly => Some(last_reset + 604800),
+            Self::Monthly => Some(last_reset + 2592000), // 30 days
+            Self::Total => None,                         // never resets
+        }
+    }
+}
+
+/// Entity type for budget and rate limit tracking
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub enum EntityType {
+    Key,
+    User,
+    Team,
+}
+
+impl EntityType {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Self::Key => "key",
+            Self::User => "user",
+            Self::Team => "team",
+        }
+    }
+
+    pub fn parse_entity(s: &str) -> Option<Self> {
+        match s {
+            "key" => Some(Self::Key),
+            "user" => Some(Self::User),
+            "team" => Some(Self::Team),
+            _ => None,
+        }
+    }
+}
+
+// =============================================================================
+// StoolapCache trait (RFC-0914, Mission 0914-a)
+// =============================================================================
+
+/// Generic cache interface for secret manager (RFC-0935).
+/// Interim implementation uses in-memory HashMap.
+/// Stoolap-backed implementation is a future phase.
+#[async_trait::async_trait]
+pub trait StoolapCache: Send + Sync {
+    async fn get(&self, key: &str) -> Option<String>;
+    async fn set(&self, key: &str, value: &str, ttl_secs: u64) -> Result<(), String>;
+    async fn delete(&self, key: &str) -> Result<(), String>;
+}
+
+/// In-memory cache implementation (interim until stoolap-backed).
+pub struct InMemoryCache {
+    entries: std::sync::RwLock<std::collections::HashMap<String, (String, Instant)>>,
+}
+
+impl InMemoryCache {
+    pub fn new() -> Self {
+        Self {
+            entries: std::sync::RwLock::new(std::collections::HashMap::new()),
+        }
+    }
+}
+
+impl Default for InMemoryCache {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+#[async_trait::async_trait]
+impl StoolapCache for InMemoryCache {
+    async fn get(&self, key: &str) -> Option<String> {
+        let entries = self.entries.read().unwrap();
+        if let Some((value, cached_at)) = entries.get(key) {
+            // TTL check is done by caller; return value if present
+            let _ = cached_at; // stored for future TTL support
+            Some(value.clone())
+        } else {
+            None
+        }
+    }
+
+    async fn set(&self, key: &str, value: &str, _ttl_secs: u64) -> Result<(), String> {
+        let mut entries = self.entries.write().unwrap();
+        entries.insert(key.to_string(), (value.to_string(), Instant::now()));
+        Ok(())
+    }
+
+    async fn delete(&self, key: &str) -> Result<(), String> {
+        let mut entries = self.entries.write().unwrap();
+        entries.remove(key);
+        Ok(())
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

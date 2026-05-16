@@ -2,7 +2,7 @@
 
 ## Status
 
-Open
+Complete (implemented as part of Mission 0930-a)
 
 ## RFC
 
@@ -23,41 +23,41 @@ Currently, `to_provider_map()` requires explicit `litellm_params.provider` field
 
 ### infer_provider() Function
 
-- [ ] Implement `infer_provider(model: &str) -> Option<String>` in `config.rs`
-- [ ] Split on `/` separator: `openai/gpt-4o` → `Some("openai")`
-- [ ] Split on `:` separator: `openai:gpt-4o` → `Some("openai")`
-- [ ] Lowercase provider name (factory.rs lookup is case-sensitive)
-- [ ] Return `None` for empty provider (e.g., `/gpt-4o` or `:gpt-4o`)
-- [ ] Return `None` for bare model names (e.g., `gpt-4o`)
+- [x] Implement `infer_provider(model: &str) -> Option<String>` in `config.rs` (line 170)
+- [x] Split on `/` separator: `openai/gpt-4o` → `Some("openai")`
+- [x] Split on `:` separator: `openai:gpt-4o` → `Some("openai")`
+- [x] Lowercase provider name (factory.rs lookup is case-sensitive)
+- [x] Return `None` for empty provider (e.g., `/gpt-4o` or `:gpt-4o`)
+- [x] Return `None` for bare model names (e.g., `gpt-4o`)
 
 ### to_provider_map() Integration
 
-- [ ] Update `to_provider_map()` to use `infer_provider()` when `litellm_params.provider` is empty
-- [ ] Resolution order:
+- [x] Update `to_provider_map()` to use `infer_provider()` when `litellm_params.provider` is empty
+- [x] Resolution order:
   1. If `litellm_params.provider` is set → use it
   2. If `litellm_params.provider` is empty → try `infer_provider(model_name)`
   3. If `model_name` has no prefix and provider is empty → return `ConfigError::MissingProvider`
-- [ ] Set inferred provider on params before calling `resolve_api_base()` (for tier 3-4 resolution)
-- [ ] Use `deployment.litellm_params.model` (not `model_name`) for `auto_id()` to avoid double prefix
+- [x] Set inferred provider on params before calling `resolve_api_base()` (for tier 3-4 resolution)
+- [x] Use `deployment.litellm_params.model` (not `model_name`) for `auto_id()` to avoid double prefix
 
 ### ConfigError::MissingProvider (owned by Mission-0930-a)
 
-- [ ] Reference `ConfigError::MissingProvider(String)` added by Mission-0930-a
-- [ ] Return from `to_provider_map()` when provider cannot be determined
-- [ ] Error message includes the model_name that failed inference
+- [x] Reference `ConfigError::MissingProvider(String)` added by Mission-0930-a
+- [x] Return from `to_provider_map()` when provider cannot be determined
+- [x] Error message includes the model_name that failed inference
 
 > **Ownership:** `ConfigError::MissingProvider` is defined by Mission-0930-a. This mission uses it but does NOT add it.
 
 ### Tests
 
-- [ ] `infer_provider("openai/gpt-4o")` → `Some("openai")`
-- [ ] `infer_provider("azure:gpt-4o")` → `Some("azure")`
-- [ ] `infer_provider("OpenAI/gpt-4o")` → `Some("openai")` (lowercased)
-- [ ] `infer_provider("/gpt-4o")` → `None` (empty prefix)
-- [ ] `infer_provider("gpt-4o")` → `None` (no prefix)
-- [ ] `to_provider_map()` with empty provider + prefixed model_name → success
-- [ ] `to_provider_map()` with empty provider + bare model_name → `MissingProvider` error
-- [ ] Inferred provider used for api_base tier 3-4 resolution
+- [x] `infer_provider("openai/gpt-4o")` → `Some("openai")` (test_infer_provider_slash_format)
+- [x] `infer_provider("azure:gpt-4o")` → `Some("azure")` (test_infer_provider_colon_format)
+- [x] `infer_provider("OpenAI/gpt-4o")` → `Some("openai")` (test_infer_provider_case_insensitive)
+- [x] `infer_provider("/gpt-4o")` → `None` (test_infer_provider_empty_prefix)
+- [x] `infer_provider("gpt-4o")` → `None` (test_infer_provider_no_prefix)
+- [x] `to_provider_map()` with empty provider + prefixed model_name → success (test_to_provider_map_inferred_provider)
+- [x] `to_provider_map()` with empty provider + bare model_name → `MissingProvider` error (test_missing_provider_error_from_to_provider_map)
+- [x] Inferred provider used for api_base tier 3-4 resolution (to_provider_map uses get_provider_default_api_base)
 
 ## Key Files
 

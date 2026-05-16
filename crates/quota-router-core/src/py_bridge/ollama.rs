@@ -40,6 +40,11 @@ impl OllamaProvider {
         self
     }
 
+    pub fn with_api_base(mut self, api_base: String) -> Self {
+        self.api_base = Some(api_base);
+        self
+    }
+
     /// Call Ollama completion via Python SDK or OpenAI-compatible API
     pub fn completion(
         &self,

@@ -17,8 +17,7 @@ use crate::py_bridge::PyBridgeError;
 #[cfg(any(feature = "any-llm-mode", feature = "full"))]
 pub struct GeminiProvider {
     api_key: Option<String>,
-    #[allow(dead_code)]
-    api_base: Option<String>, // exists for API consistency; Gemini SDK uses default endpoint
+    api_base: Option<String>,
 }
 
 #[cfg(any(feature = "any-llm-mode", feature = "full"))]
@@ -38,6 +37,11 @@ impl GeminiProvider {
 
     pub fn with_api_key(mut self, api_key: String) -> Self {
         self.api_key = Some(api_key);
+        self
+    }
+
+    pub fn with_api_base(mut self, api_base: String) -> Self {
+        self.api_base = Some(api_base);
         self
     }
 
@@ -65,6 +69,9 @@ impl GeminiProvider {
             // Create client
             let kwargs = PyDict::new(py);
             kwargs.set_item("api_key", api_key).unwrap();
+            if let Some(ref base) = self.api_base {
+                kwargs.set_item("base_url", base).unwrap();
+            }
 
             let client = client_class
                 .call((), Some(kwargs))

@@ -1,6 +1,6 @@
 # RFC-0935: Secret Manager Integration
 
-## Status: Draft
+## Status: Accepted
 
 ## Summary
 
@@ -36,6 +36,8 @@ pub trait SecretWriter: Send + Sync {
 }
 
 // Combined trait for backends that support read+write
+// NOTE: No backend in this RFC implements SecretManager (all are read-only).
+// This trait is reserved for future use when write support is added.
 #[async_trait]
 pub trait SecretManager: SecretReader + SecretWriter {}
 
@@ -74,6 +76,8 @@ pub struct VaultSecretManager {
     client: reqwest::Client,
     base_url: String,
     token: String,
+    mount: String,  // KV v2 mount path (from config, e.g., "secret")
+    // Note: This implementation targets Vault KV v2 only. KV v1 mounts are not supported.
 }
 
 #[derive(serde::Deserialize)]
@@ -89,7 +93,7 @@ struct VaultResponseData {
 #[async_trait]
 impl SecretReader for VaultSecretManager {
     async fn get_secret(&self, key: &str) -> Result<Option<String>, SecretError> {
-        let url = format!("{}/v1/secret/data/{}", self.base_url, urlencoding::encode(key));
+        let url = format!("{}/v1/{}/data/{}", self.base_url, self.mount, urlencoding::encode(key));
         let resp = self.client.get(&url)
             .header("X-Vault-Token", &self.token)
             .send().await
@@ -103,6 +107,7 @@ impl SecretReader for VaultSecretManager {
             .map_err(|e| SecretError::ParseError(e.to_string()))?;
         // KV v2 stores arbitrary key-value pairs — extract field name from key path
         // key format: "secret/path/field_name" where field_name is the Vault key
+        // self.mount is used in the URL path (e.g., /v1/secret/data/{key})
         let field_name = key.rsplit('/').next().unwrap_or(key);
         Ok(data.data.data.get(field_name).cloned())
     }
@@ -132,7 +137,9 @@ impl SecretReader for AwsSecretManager {
 
 Implement `SecretReader` for OIDC tokens with `oidc/` prefix:
 ```rust
-pub struct OidcSecretManager;
+pub struct OidcSecretManager {
+    client: reqwest::Client,  // Reuse client across calls
+}
 
 #[async_trait]
 impl SecretReader for OidcSecretManager {
@@ -148,8 +155,7 @@ impl SecretReader for OidcSecretManager {
 
         match provider {
             "google" => {
-                let client = reqwest::Client::new();
-                let resp = client
+                let resp = self.client
                     .get("http://metadata.google.internal/computeMetadata/v1/instance/service-accounts/default/identity")
                     .query(&[("audience", audience)])
                     .header("Metadata-Flavor", "Google")
@@ -183,14 +189,22 @@ Cache secrets in stoolap to reduce external calls:
 ```rust
 pub struct CachedSecretManager<T: SecretReader> {
     inner: T,
-    cache: StoolapCache,  // Defined in RFC-0914 (stoolap-only persistence)
+    cache: StoolapCache,
     ttl: Duration,
 }
 
-// StoolapCache interface (from RFC-0914):
-// async fn get(&self, key: &str) -> Result<Option<CacheEntry>>
-// async fn set(&self, key: &str, value: &str, expires_at: i64) -> Result<()>
-// CacheEntry { value: String, expires_at: i64 }
+// StoolapCache interface — must be defined before implementation
+// (RFC-0914 may provide this, or define inline)
+pub struct CacheEntry {
+    pub value: String,
+    pub expires_at: i64,  // Unix timestamp
+}
+
+#[async_trait]
+pub trait StoolapCache: Send + Sync {
+    async fn get(&self, key: &str) -> Result<Option<CacheEntry>, SecretError>;
+    async fn set(&self, key: &str, value: &str, expires_at: i64) -> Result<(), SecretError>;
+}
 
 #[async_trait]
 impl<T: SecretReader + Send + Sync> SecretReader for CachedSecretManager<T> {
@@ -229,9 +243,9 @@ Cache format: `(key TEXT PRIMARY KEY, value TEXT, expires_at INTEGER)` — uses 
 
 This RFC provides the `SecretReader` backend. The actual `resolve_api_key()` function is defined in RFC-0938. This RFC does NOT define its own `resolve_api_key()`.
 
-RFC-0938's `resolve_api_key()` uses `std::env::var()` directly for env var fallback. The `SecretReader` trait is used for external secret managers (Vault, AWS, OIDC) only, not for basic env var lookup.
+RFC-0938's `resolve_api_key()` uses `std::env::var()` directly as a fast path. When a `SecretReader` is configured, it is called as an additional fallback tier after `std::env::var()`. For `type: env`, this is equivalent to `std::env::var()` (with `os.environ/` prefix support). For `type: vault/aws/oidc`, it queries the external backend.
 
-**Integration:** When a `SecretReader` is configured (Vault/AWS/OIDC), RFC-0938's `resolve_api_key()` should call `secret_reader.get_secret()` as an additional fallback tier after `std::env::var()`.
+**Integration:** When `secret_manager.type` is configured, RFC-0938's `resolve_api_key()` should call `secret_reader.get_secret()` as tier 5 (after provider-specific env var). The `std::env::var()` calls in RFC-0938 serve as the fast path when no SecretReader is configured.
 
 ### 6. Configuration
 
@@ -266,5 +280,5 @@ secret_manager:
 4. AWS Secrets Manager integration works
 5. OIDC token resolution works for supported providers
 6. Secret caching in stoolap works
-7. Fallback chain: config → secret manager → env var
+7. Fallback chain: config → ANY_LLM_KEY → provider env var → secret manager (per RFC-0938 precedence)
 8. Configuration validation works

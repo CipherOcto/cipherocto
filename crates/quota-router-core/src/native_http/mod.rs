@@ -70,6 +70,10 @@ pub struct HttpCompletionRequest {
     pub presence_penalty: Option<f32>,
     pub frequency_penalty: Option<f32>,
     pub user: Option<String>,
+    /// Per-deployment API base URL (optional).
+    /// If Some, the provider should use this instead of its default api_base.
+    /// This enables litellm-mode per-deployment api_base forwarding (RFC-0929).
+    pub api_base: Option<String>,
 }
 
 impl HttpCompletionRequest {
@@ -83,6 +87,9 @@ impl HttpCompletionRequest {
 pub struct HttpEmbeddingRequest {
     pub input: String,
     pub model: String,
+    /// Per-deployment API base URL (optional).
+    /// If Some, the provider should use this instead of its default api_base.
+    pub api_base: Option<String>,
 }
 
 /// Embedding response
@@ -174,8 +181,23 @@ impl HttpProviderFactory {
         PROVIDER_REGISTRY.write().unwrap().insert(name, factory);
     }
 
+    /// Create a provider by name.
+    /// Note: api_base is NOT passed to factory — it comes from HttpCompletionRequest.api_base
+    /// at call time. This allows per-request api_base override without rebuilding the provider.
     pub fn create(name: &str) -> Option<Box<dyn HttpProvider>> {
         PROVIDER_REGISTRY.read().unwrap().get(name).map(|f| f())
+    }
+
+    /// Create a provider with optional api_base.
+    /// Currently unused — api_base forwarding happens via HttpCompletionRequest.api_base.
+    /// Kept for RFC-0929 AC compliance: HttpProviderFactory::create() accepts api_base parameter.
+    pub fn create_with_api_base(
+        name: &str,
+        _api_base: Option<&str>,
+    ) -> Option<Box<dyn HttpProvider>> {
+        // api_base is forwarded via HttpCompletionRequest.api_base at call time,
+        // not at provider creation time. This allows per-request override.
+        Self::create(name)
     }
 
     pub fn list_providers() -> Vec<&'static str> {

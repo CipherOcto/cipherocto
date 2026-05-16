@@ -62,7 +62,9 @@ impl super::HttpProvider for OpenAIProvider {
         request: &HttpCompletionRequest,
         api_key: &str,
     ) -> Result<HttpCompletionResponse, ProviderError> {
-        let url = format!("{}/chat/completions", self.api_base);
+        // Use api_base from request if provided, otherwise fall back to provider's default
+        let base_url = request.api_base.as_deref().unwrap_or(&self.api_base);
+        let url = format!("{}/chat/completions", base_url);
 
         let mut body = serde_json::json!({
             "model": request.model,
@@ -139,7 +141,9 @@ impl super::HttpProvider for OpenAIProvider {
         request: &HttpEmbeddingRequest,
         api_key: &str,
     ) -> Result<HttpEmbeddingResponse, ProviderError> {
-        let url = format!("{}/embeddings", self.api_base);
+        // Use api_base from request if provided, otherwise fall back to provider's default
+        let base_url = request.api_base.as_deref().unwrap_or(&self.api_base);
+        let url = format!("{}/embeddings", base_url);
 
         let body = serde_json::json!({
             "input": request.input,
@@ -197,7 +201,9 @@ impl super::HttpProvider for OpenAIProvider {
         request: &HttpCompletionRequest,
         api_key: &str,
     ) -> Result<StreamingResponse, ProviderError> {
-        let url = format!("{}/chat/completions", self.api_base);
+        // Use api_base from request if provided, otherwise fall back to provider's default
+        let base_url = request.api_base.as_deref().unwrap_or(&self.api_base);
+        let url = format!("{}/chat/completions", base_url);
 
         let mut body = serde_json::json!({
             "model": request.model,

@@ -371,6 +371,46 @@ response = await router.acompletion(
 
 > **Note:** The code uses `ProviderWithState` (not `ProviderState` as shown in the pseudocode). The struct name difference is a pre-existing discrepancy; the field semantics match RFC-0902 v1.3.
 
+## Implementation Phases
+
+### Phase 1: Core Strategies (DONE)
+
+- SimpleShuffle, RoundRobin, LeastBusy, LatencyBased, Weighted implemented in `router.rs`
+- Router struct with ProviderWithState, latency tracking, cooldown logic
+
+### Phase 2: Proxy Dispatch Wiring (Gap #2)
+
+Wire routing strategies to proxy dispatch path:
+
+- `proxy.rs` currently calls provider directly without routing strategy
+- Connect `Router::get_provider()` to proxy's provider selection
+- Pass `model_group` from DispatchInfo through to router for filtered selection
+- Flow: request → Router::get_provider(model_group) → DispatchInfo → provider call
+
+### Phase 3: CostBased Strategy (Gap #8)
+
+Implement CostBased routing (currently stub):
+
+- Requires RFC-0904 pricing table integration
+- Select deployment with lowest `input_price_per_million + output_price_per_million`
+- Fallback to SimpleShuffle when pricing data unavailable
+
+### Phase 4: UsageBasedV2 Strategy (Gap #8)
+
+Implement UsageBasedV2 routing (currently stub):
+
+- Exponential decay weighting — recent usage counts more than historical
+- Uses `ProviderWithState` rolling window metrics
+- Distinct from UsageBased (which uses raw RPM/TPM counters)
+
+### Phase 5: model_group Filtering (Gap #8)
+
+Filter deployments by `model_group` at request time:
+
+- `to_provider_map()` populates `DispatchInfo.model_group` from config
+- Router filters candidate deployments by matching `model_group` before strategy selection
+- Enables "gpt-4" model_group to route across multiple providers transparently
+
 ## Future Work
 
 - F1: Market-based dynamic routing (query marketplace for best price)
@@ -395,6 +435,7 @@ Multi-provider routing is essential for:
 
 | Version | Date       | Changes |
 | ------- | ---------- | --------|
+| 1.8     | 2026-05-14 | Added Implementation Phases section: Phase 2 (proxy dispatch wiring), Phase 3 (CostBased strategy), Phase 4 (UsageBasedV2 strategy), Phase 5 (model_group filtering). Addresses semantic gaps #2 and #8 from dual-mode gap analysis. |
 | 1.7     | 2026-04-29 | **CRITICAL CONSTRAINT: Rust-owns-all-heavy-lifting.** Added top-level architectural constraint establishing Rust core as sole owner of all routing, state, caching, telemetry, concurrency. Updated Scope section with explicit Rust-core-only language. Added Rust Core Ownership section clarifying Python SDK uses RustRouterHandle only. All routing strategies are Rust-only. |
 | 1.6     | 2026-04-25 | Fix YAML comment: "model_name → weight" → "provider.name → weight" (provider names used as keys, not model names) |
 | 1.5     | 2026-04-25 | Clarify Weighted strategy requires global `weights: HashMap<String, u32>` in RouterConfig (not per-provider weight); add implementation note for Weighted fallback behavior |

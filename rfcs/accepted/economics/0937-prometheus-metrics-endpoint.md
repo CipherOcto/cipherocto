@@ -1,6 +1,6 @@
 # RFC-0937: Prometheus Metrics Endpoint
 
-## Status: Draft
+## Status: Accepted
 
 ## Summary
 
@@ -145,7 +145,7 @@ GET /metrics
 
 Returns Prometheus text format.
 
-**Port and auth:** The `/metrics` endpoint should be served on the same port as the proxy but BYPASSES auth middleware (Prometheus scrapes it without API keys). Add `/metrics` to the auth bypass list in RFC-0932.
+**Port and auth:** The `/metrics` endpoint should be served on the same port as the proxy but BYPASSES auth middleware (Prometheus scrapes it without API keys). The auth bypass is implemented by checking the request path before the auth middleware — if path is `/metrics`, skip auth and return metrics directly. This requires adding a `bypass_paths: Vec<String>` config option to GatewayConfig.
 
 **Security recommendation:** Since `/metrics` exposes operational metadata (key prefixes, provider names, budget entity prefixes) without authentication, restrict access at the network level:
 - Bind metrics to localhost only (`127.0.0.1`) if Prometheus runs on the same host
@@ -165,13 +165,14 @@ async fn handle_request_with_metrics(
 ) -> Result<Response<impl Body>, Infallible> {
     let start = Instant::now();
 
-    metrics.requests_total.inc();
+    // Note: Use .with_label_values(&[provider, model, status]) after response
+    // metrics.requests_total.with_label_values(&[...]).inc();
 
     // Extract key prefix for metrics (safe — no full key exposure)
     let key_prefix = extract_key_from_request(&req)
         .ok()
         .flatten()
-        .map(|k| k.chars().take(8).collect::<String>())
+        .map(|k| k.chars().take(7).collect::<String>())  // 7 chars to match existing middleware.rs convention
         .unwrap_or_default();
 
     // ... existing request handling ...
@@ -199,7 +200,7 @@ metrics:
 
 ## Dependencies
 
-- None (standalone endpoint)
+- GatewayConfig extension: `bypass_paths: Vec<String>` must be added to GatewayConfig (the top-level server config, NOT RouterConfig). This field is added as part of this RFC's implementation.
 - Optional/soft dependencies: RFC-0933 (rate limit metrics), RFC-0934 (budget metrics), RFC-0936 (pre-call check metrics) — metrics for these features are only available when the corresponding RFC is implemented
 
 ## Test Plan
@@ -212,3 +213,5 @@ metrics:
 6. Budget spend is tracked
 7. Provider errors are categorized
 8. Metrics survive restart (stoolap persistence optional)
+9. `/metrics` returns 200 without API key when `bypass_paths` includes `/metrics`
+10. `/v1/chat/completions` still requires auth when `bypass_paths` is configured

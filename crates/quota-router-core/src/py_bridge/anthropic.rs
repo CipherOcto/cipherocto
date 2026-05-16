@@ -40,6 +40,11 @@ impl AnthropicProvider {
         self
     }
 
+    pub fn with_api_base(mut self, api_base: String) -> Self {
+        self.api_base = Some(api_base);
+        self
+    }
+
     /// Call Anthropic completion via Python SDK
     pub fn completion(
         &self,

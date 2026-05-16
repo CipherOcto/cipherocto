@@ -24,6 +24,7 @@ reqwest = { version = "0.13", features = ["json", "stream"], optional = true }
 directories.workspace = true
 serde.workspace = true
 serde_json.workspace = true
+serde_yaml = "0.9"
 
 # Utilities
 uuid.workspace = true

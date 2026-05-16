@@ -50,6 +50,7 @@ pub fn completion(
         &parsed.model,
         &messages,
         api_key.as_deref(),
+        _base_url.as_deref(),
     ) {
         Ok(response) => Python::with_gil(|py| response.to_dict(py)),
         Err(e) => Err(pyo3::exceptions::PyRuntimeError::new_err(format!(

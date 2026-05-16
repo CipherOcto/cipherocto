@@ -37,9 +37,12 @@ Per-deployment `api_base` is stored in `DispatchInfo` and resolved at call time.
 - RFC-0917: Dual-Mode Query Router (py_bridge::factory::completion)
 - RFC-0927: RouterConfig Extension for LiteLLM Compatibility (LiteLLMParams)
 - RFC-0928: Deployment Configuration Schema (GatewayConfig, DeploymentConfig)
+- RFC-0930: Provider Inference from Model String (supersedes §API Change with infer_provider and to_provider_map integration)
+- RFC-0931: any-llm-mode Environment Variable Parity (supersedes §API Change with resolve_api_key and resolve_api_base)
 
 **Required by:**
-- (none — RFC-0920 is a thin binding layer that delegates to RFC-0917/Rust core; this RFC provides the internal dispatch mapping that makes RFC-0928's to_provider_map() functional, but no Accepted RFC currently consumes it as a dependency)
+- RFC-0930: Provider Inference from Model String (modifies to_provider_map() defined in this RFC)
+- RFC-0931: any-llm-mode Environment Variable Parity (called by to_provider_map() via resolve_api_key/resolve_api_base)
 
 ## Design Goals
 
@@ -90,7 +93,7 @@ pub struct DispatchInfo {
     pub tpm: u64,
     /// Model group for routing (multiple deployments with same group routed together)
     /// Sources: model_info.model_group (RFC-0928) OR litellm_params.model_group_alias (LiteLLM compat)
-    /// LiteLLM uses model_group_alias in litellm_params; RFC-0928 uses group in model_info.
+    /// LiteLLM uses model_group_alias in litellm_params; RFC-0928 uses model_group in model_info (serde alias: group).
     /// Resolution: first non-None wins (model_info.model_group checked first via or_else).
     /// Note: Actual LiteLLM precedence is unverified — this implements "first non-None" semantics.
     pub model_group: Option<String>,
@@ -166,6 +169,7 @@ impl DispatchInfo {
 ///     rpm: 1000,
 ///     tpm: 100000,
 ///     model_group: None,
+///     max_retries: None,
 ///     metadata: None,
 /// }
 /// ```
@@ -304,7 +308,8 @@ API key resolution at call time follows LiteLLM's priority order (with any-llm e
 // 2. Embedded api_key from LiteLLMParams — per-deployment fallback
 //    NOTE: This is the RFC-0931-resolved value stored in DispatchInfo.api_key,
 //    NOT the raw LiteLLMParams.api_key. RFC-0931 resolves os.environ["KEY"]
-//    syntax and {PROVIDER}_API_KEY env vars at config load time (to_provider_map).
+//    syntax at config load time (to_provider_map). {PROVIDER}_API_KEY is
+//    resolved at dispatch time (tier 4 in this function).
 // 3. provider_key_storage — provider-scoped lookup (e.g., any-llm set_api_key("openai", key))
 // 4. Environment variable (provider-specific, e.g., OPENAI_API_KEY)
 let resolved_api_key = key_storage.get(&deployment.deployment_id)
@@ -370,17 +375,31 @@ use std::collections::HashMap;
 pub fn to_provider_map(config: &GatewayConfig) -> Result<HashMap<String, DispatchInfo>, ConfigError> {
     let mut map = HashMap::new();
     for deployment in config.get_deployments() {
-        let id = deployment.deployment_id.clone()
-            .unwrap_or_else(|| DispatchInfo::auto_id(
+        let id = match deployment.deployment_id.clone() {
+            Some(id) => id,
+            None => DispatchInfo::auto_id(
                 &deployment.litellm_params.provider,
                 &deployment.litellm_params.model
-            ));
+            )?,
+        };
+        // NOTE: This code is superseded by RFC-0930 §5 which adds:
+        // - infer_provider() for automatic provider detection
+        // - resolve_api_key() (RFC-0931) for 3-tier key resolution
+        // - resolve_api_base() (RFC-0931) for 4-tier base URL resolution
+        // See RFC-0930 §5 for the canonical implementation.
+
+        // Provider: use explicit provider, or infer from model_name (RFC-0930)
+        let provider = deployment.litellm_params.provider.clone()
+            .filter(|p| !p.is_empty())
+            .or_else(|| infer_provider(&deployment.model_name))
+            .ok_or_else(|| ConfigError::MissingProvider(deployment.model_name.clone()))?;
+
         let info = DispatchInfo {
             deployment_id: id.clone(),
-            provider: deployment.litellm_params.provider.clone(),
+            provider: provider.clone(),
             model: deployment.litellm_params.model.clone(),
-            api_key: deployment.litellm_params.api_key.clone(),
-            api_base: deployment.litellm_params.api_base.clone(),  // per-deployment api_base (RFC-0927 LiteLLMParams.api_base verified)
+            api_key: deployment.litellm_params.resolve_api_key(),  // RFC-0931 resolved
+            api_base: deployment.litellm_params.resolve_api_base(),  // RFC-0931 resolved
             rpm: deployment.rpm,
             tpm: deployment.tpm,
             model_group: deployment.model_info.as_ref()
@@ -425,7 +444,7 @@ The following changes are required to support per-deployment api_base in litellm
 ## Known Gaps
 
 1. **litellm-mode api_base gap:** `HttpProviderFactory::create()` doesn't accept per-deployment api_base — see §Implementation Requirements
-2. **py_bridge factory signature change:** `completion()` needs `api_base` parameter — see §Implementation Requirements
+2. ~~**py_bridge factory signature change:** `completion()` needs `api_base` parameter~~ — **RESOLVED** (factory.rs already has 5-arg signature with `api_base: Option<&str>`)
 3. **RFC-0930/0931 integration:** This RFC's §API Change shows raw LiteLLMParams values; RFC-0930/0931 supersede with resolved values (infer_provider, resolve_api_key, resolve_api_base)
 
 ## Test Vectors
@@ -683,7 +702,7 @@ deployments:
 |---------|------|---------|
 | Post-Accept R1 | 2026-05-15 | Adversarial review R1 fixes (cross-RFC consistency): C3 — key resolution §5 clarified that deployment.api_key is RFC-0931-resolved value, not raw LiteLLMParams; M3 — metadata field annotated with RFC-0928 type dependency; M5 — api_base resolution cross-referenced to RFC-0931; m1 — from_litellm_str() deprecated in favor of existing FromStr impl; m4 — auto_id() returns Result<String, ConfigError> instead of panicking; m6 — "Open Questions" renamed to "Known Gaps" with 3 documented gaps; test vectors updated for auto_id Result return |
 | Accept | 2026-05-14 | Accepted after 12-round adversarial review — zero critical/major/minor issues; all round fixes verified; comprehensive test coverage (14 tests) |
-| 17 | 2026-05-13 | Round 5 review fixes: C1 — version header corrected from v15 to v16
+| 17 | 2026-05-13 | Round 5 review fixes: C1 — version header corrected from v15 to v16; version history row properly closed |
 | 16 | 2026-05-13 | Round 4 review fixes: C1 — DispatchInfo api_base doc comment updated (litellm-mode NOT supported, any-llm-mode supported — matches gap analysis); C2 — any-llm-mode integration example corrected to show current 4-arg factory signature (api_base requires factory signature change); m1 — version history corrected to reflect both Security Considerations AND DispatchInfo comment fixes; m2 — any_llm_key_storage replaced with provider_key_storage, comment updated to reference RFC-0903 |
 | 15 | 2026-05-13 | Round 3 review fixes: C1 — fixed Security Considerations api_base claim (now matches gap analysis: litellm-mode NOT supported, any-llm-mode supported); C2 — separated integration examples by mode (any-llm-mode and litellm-mode shown separately); C3 — RateLimitMode now uses `#[derive(Default)]` on enum with `#[default]` attribute, field changed from `Option<RateLimitMode>` to non-optional `RateLimitMode`; M1 — added §Implementation Requirements section for litellm-mode gap; M2 — api_base added to "never log" list in Security Considerations; m1 — "Open Questions" expanded to "Implementation Requirements (litellm-mode Gap)" with 3 required changes; m2 — added parse_config() pseudocode note to test vectors |
 | 14 | 2026-05-13 | api_base per-deployment spec — added to DispatchInfo, to_provider_map(), factory signature; mode-specific handling (litellm-mode reqwest, any-llm-mode PyO3); removed v1 Limitation + Future versions hint (per deferred-vs-unspecified memory rule); **detailed gap analysis**: litellm-mode has implementation gap (HttpProviderFactory.create doesn't pass api_base, Provider.endpoint not forwarded) |

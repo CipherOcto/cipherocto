@@ -68,14 +68,36 @@ impl std::str::FromStr for RoutingStrategy {
             "simple-shuffle" | "simple_shuffle" | "simple" => Ok(RoutingStrategy::SimpleShuffle),
             "round-robin" | "round_robin" | "roundrobin" => Ok(RoutingStrategy::RoundRobin),
             "least-busy" | "least_busy" | "leastbusy" => Ok(RoutingStrategy::LeastBusy),
-            "latency-based" | "latency_based" | "latency" => Ok(RoutingStrategy::LatencyBased),
-            "cost-based" | "cost_based" | "cost" => Ok(RoutingStrategy::CostBased),
+            "latency-based" | "latency_based" | "latency"
+            | "latency-based-routing" | "latency_based_routing" => Ok(RoutingStrategy::LatencyBased),
+            "cost-based" | "cost_based" | "cost"
+            | "cost-based-routing" | "cost_based_routing" => Ok(RoutingStrategy::CostBased),
             "usage-based" | "usage_based" | "usage" => Ok(RoutingStrategy::UsageBased),
-            "usage-based-v2" | "usage-based-routing-v2" | "usage_based_v2" | "usage_v2" => {
+            "usage-based-v2" | "usage-based-routing-v2" | "usage_based_v2" | "usage_v2"
+            | "usage_based_routing_v2" => {
                 Ok(RoutingStrategy::UsageBasedV2)
             }
             "weighted" => Ok(RoutingStrategy::Weighted),
             _ => Err(format!("Unknown routing strategy: {}", s)),
+        }
+    }
+}
+
+impl RoutingStrategy {
+    /// Parse LiteLLM string format to enum with default fallback.
+    /// LiteLLM uses strings like "latency-based-routing", "simple-shuffle".
+    /// Returns SimpleShuffle for unknown strategies (matches LiteLLM default behavior).
+    pub fn from_litellm_str(s: &str) -> Self {
+        match s.to_lowercase().replace("_", "-").as_str() {
+            "simple-shuffle" => RoutingStrategy::SimpleShuffle,
+            "round-robin" => RoutingStrategy::RoundRobin,
+            "least-busy" => RoutingStrategy::LeastBusy,
+            "latency-based" | "latency-based-routing" => RoutingStrategy::LatencyBased,
+            "cost-based" | "cost-based-routing" => RoutingStrategy::CostBased,
+            "usage-based" => RoutingStrategy::UsageBased,
+            "usage-based-v2" | "usage-based-routing-v2" => RoutingStrategy::UsageBasedV2,
+            "weighted" => RoutingStrategy::Weighted,
+            _ => RoutingStrategy::SimpleShuffle,  // Default fallback
         }
     }
 }
@@ -1405,6 +1427,10 @@ mod tests {
             RoutingStrategy::LatencyBased
         );
         assert_eq!(
+            "latency-based-routing".parse::<RoutingStrategy>().unwrap(),
+            RoutingStrategy::LatencyBased
+        );
+        assert_eq!(
             "usage-based".parse::<RoutingStrategy>().unwrap(),
             RoutingStrategy::UsageBased
         );
@@ -1412,6 +1438,34 @@ mod tests {
             "weighted".parse::<RoutingStrategy>().unwrap(),
             RoutingStrategy::Weighted
         );
+    }
+
+    #[test]
+    fn test_routing_strategy_from_litellm_str() {
+        // Standard LiteLLM strategy strings
+        assert_eq!(RoutingStrategy::from_litellm_str("simple-shuffle"), RoutingStrategy::SimpleShuffle);
+        assert_eq!(RoutingStrategy::from_litellm_str("round-robin"), RoutingStrategy::RoundRobin);
+        assert_eq!(RoutingStrategy::from_litellm_str("least-busy"), RoutingStrategy::LeastBusy);
+        assert_eq!(RoutingStrategy::from_litellm_str("latency-based"), RoutingStrategy::LatencyBased);
+        assert_eq!(RoutingStrategy::from_litellm_str("latency-based-routing"), RoutingStrategy::LatencyBased);
+        assert_eq!(RoutingStrategy::from_litellm_str("cost-based"), RoutingStrategy::CostBased);
+        assert_eq!(RoutingStrategy::from_litellm_str("cost-based-routing"), RoutingStrategy::CostBased);
+        assert_eq!(RoutingStrategy::from_litellm_str("usage-based"), RoutingStrategy::UsageBased);
+        assert_eq!(RoutingStrategy::from_litellm_str("usage-based-v2"), RoutingStrategy::UsageBasedV2);
+        assert_eq!(RoutingStrategy::from_litellm_str("usage-based-routing-v2"), RoutingStrategy::UsageBasedV2);
+        assert_eq!(RoutingStrategy::from_litellm_str("weighted"), RoutingStrategy::Weighted);
+
+        // Underscore variants (LiteLLM uses underscores in some configs)
+        assert_eq!(RoutingStrategy::from_litellm_str("latency_based_routing"), RoutingStrategy::LatencyBased);
+        assert_eq!(RoutingStrategy::from_litellm_str("usage_based_v2"), RoutingStrategy::UsageBasedV2);
+
+        // Unknown strategy defaults to SimpleShuffle
+        assert_eq!(RoutingStrategy::from_litellm_str("unknown-strategy"), RoutingStrategy::SimpleShuffle);
+        assert_eq!(RoutingStrategy::from_litellm_str(""), RoutingStrategy::SimpleShuffle);
+
+        // Case insensitive
+        assert_eq!(RoutingStrategy::from_litellm_str("LATENCY-BASED-ROUTING"), RoutingStrategy::LatencyBased);
+        assert_eq!(RoutingStrategy::from_litellm_str("Simple-Shuffle"), RoutingStrategy::SimpleShuffle);
     }
 
     #[test]

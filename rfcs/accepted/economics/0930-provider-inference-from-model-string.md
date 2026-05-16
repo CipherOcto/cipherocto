@@ -80,7 +80,7 @@ When `api_base` is not explicitly set, use provider-specific default:
 | gemini | `https://generativelanguage.googleapis.com` | |
 | cohere | `https://api.cohere.ai` | |
 | voyage | `https://api.voyageai.com/v1` | |
-| azure | — | **No default.** Azure requires explicit `api_base` or `azure_resource_name` + `azure_api_base` in config. See §Azure Special Case. |
+| azure | — | **No default.** Azure requires explicit `api_base` in config. See §Azure Special Case. |
 | *other* | None | No default available — returns `None`. Caller must handle. |
 
 **`None` return ambiguity:** `get_provider_default_api_base()` returns `None` for both "unknown provider" and "known provider with no default". Callers must treat `None` uniformly: "no default available".
@@ -149,19 +149,32 @@ pub fn to_provider_map(config: &GatewayConfig) -> Result<HashMap<String, Dispatc
             .or_else(|| infer_provider(&deployment.model_name))
             .ok_or_else(|| ConfigError::MissingProvider(deployment.model_name.clone()))?;
 
+        // Set inferred provider on litellm_params so resolve_api_base() can use it
+        // for tiers 3 ({PROVIDER}_API_BASE) and 4 (RFC-0930 registry)
+        let mut params = deployment.litellm_params.clone();
+        if params.provider.is_empty() {
+            params.provider = provider.clone();
+        }
+
         // Resolve api_base (steps 4-6) — 4-tier from RFC-0931
-        let api_base = deployment.litellm_params.resolve_api_base();
+        let api_base = params.resolve_api_base();
 
         let info = DispatchInfo {
-            deployment_id: deployment.deployment_id.clone()
-                .unwrap_or_else(|| DispatchInfo::auto_id(&provider, &deployment.litellm_params.model)),
+            deployment_id: match deployment.deployment_id.clone() {
+                Some(id) => id,
+                None => DispatchInfo::auto_id(&provider, &deployment.litellm_params.model)?,
+            },
             provider: provider.clone(),
             model: deployment.litellm_params.model.clone(),
             api_key: deployment.litellm_params.resolve_api_key(),  // RFC-0931
             api_base,  // Already resolved via RFC-0931 4-tier resolution
             rpm: deployment.rpm,
             tpm: deployment.tpm,
-            model_group: deployment.model_info.as_ref().and_then(|m| m.model_group.clone()),
+            model_group: deployment.model_info.as_ref()
+                .and_then(|m| m.model_group.clone())
+                .or_else(|| deployment.litellm_params.model_group_alias.clone()),  // RFC-0929 fallback
+            max_retries: deployment.litellm_params.max_retries
+                .or_else(|| config.router_settings.as_ref().map(|s| s.num_retries)),  // RFC-0929 fallback
             metadata: deployment.metadata.clone(),
         };
         map.insert(info.deployment_id.clone(), info);
@@ -172,11 +185,11 @@ pub fn to_provider_map(config: &GatewayConfig) -> Result<HashMap<String, Dispatc
 
 ### 6. Feature Gate Scope
 
-**This RFC applies to `any-llm-mode` and `full` only.**
+**This RFC applies to all modes.**
 
-`to_provider_map()` is conditionally compiled with `#[cfg(any(feature = "any-llm-mode", feature = "full"))]`. In litellm-mode, the dispatch path uses `HttpProviderFactory` which handles provider dispatch explicitly — no inference needed.
+`to_provider_map()` is used by both litellm-mode and any-llm-mode (per RFC-0929 §4). The function is NOT feature-gated — it must be available in all builds. The `infer_provider()` helper and `get_provider_default_api_base()` registry are also available in all modes.
 
-The feature gate means `to_provider_map()` does not exist in litellm-mode builds. Callers in shared code must be feature-gated accordingly.
+Note: `infer_provider()` returns `None` when provider is explicit (from config), so it has no effect when provider is already set. This is safe for litellm-mode where providers are typically explicit.
 
 ## Implementation
 
@@ -184,8 +197,7 @@ The feature gate means `to_provider_map()` does not exist in litellm-mode builds
 
 | File | Change |
 |------|--------|
-| `crates/quota-router-core/src/config.rs` | Add `infer_provider()` returning `Option<String>`, add `get_provider_default_api_base()` registry, update `to_provider_map()` with integration code |
-| `crates/quota-router-core/src/py_bridge/factory.rs` | Add `get_provider_default_api_base()` function |
+| `crates/quota-router-core/src/config.rs` | Add `infer_provider()` returning `Option<String>`, add `get_provider_default_api_base()` function and registry, add `ConfigError::MissingProvider` variant, update `to_provider_map()` with integration code |
 
 ### Tests
 
@@ -278,9 +290,20 @@ fn test_provider_default_api_base_returns_correct_values() {
 - [ ] `get_provider_default_api_base()` returns correct defaults for known providers
 - [ ] `infer_provider()` returns `None` for empty provider (leading slash/colon)
 - [ ] `DispatchInfo.auto_id()` uses `litellm_params.model` (not `model_name`) for consistent IDs
-- [ ] Feature-gated to `any-llm-mode` and `full` only
+- [ ] Available in all modes (NOT feature-gated)
 - [ ] Existing tests still pass
 - [ ] Clippy clean
+
+## Dependencies
+
+**Requires:**
+- RFC-0929: GatewayConfig Provider Dispatch Mapping (defines DispatchInfo and to_provider_map)
+- RFC-0927: RouterConfig Extension for LiteLLM Compatibility (LiteLLMParams struct)
+- RFC-0928: Deployment Configuration Schema (GatewayConfig, DeploymentConfig)
+
+**Required by:**
+- RFC-0931: any-llm-mode Environment Variable Parity (uses registry for api_base defaults)
+- RFC-0938: YAML Interpolation & Universal Key (completes runtime key resolution — {PROVIDER}_API_KEY and ANY_LLM_KEY resolved at dispatch time by RFC-0938, not by this RFC)
 
 ## Version History
 

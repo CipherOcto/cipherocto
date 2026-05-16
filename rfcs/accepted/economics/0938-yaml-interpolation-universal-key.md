@@ -1,6 +1,6 @@
 # RFC-0938: YAML Interpolation & Universal Key
 
-## Status: Draft
+## Status: Accepted
 
 ## Summary
 
@@ -45,20 +45,30 @@ fn interpolate_yaml(value: &str) -> Result<String> {
                             match chars.next() {
                                 Some('}') => break,
                                 Some(c) => default.push(c),
-                                None => return Err(ConfigError::NotYetSpecified("Unterminated ${...} interpolation".to_string())),
+                                None => return Err(ConfigError::Yaml(serde_yaml::Error::custom("Unterminated ${...} interpolation"))),
                             }
                         }
                         default_value = Some(default);
                         break;
                     }
                     Some(c) => var_name.push(c),
-                    None => return Err(ConfigError::NotYetSpecified("Unterminated ${...} interpolation".to_string())),
+                    None => return Err(ConfigError::Yaml(serde_yaml::Error::custom("Unterminated ${...} interpolation"))),
                 }
             }
 
             // Resolve: env var > default > empty string (NO error on undefined)
             let var_value = std::env::var(&var_name)
                 .unwrap_or_else(|_| default_value.unwrap_or_default());
+
+            // Security: validate interpolated value against YAML injection
+            if var_value.contains('\n') || var_value.contains('"') || var_value.contains('\'') ||
+               var_value.starts_with('{') || var_value.starts_with('[') ||
+               var_value.starts_with('|') || var_value.starts_with('>') {
+                return Err(ConfigError::Yaml(serde_yaml::Error::custom(
+                    format!("Env var {} contains YAML-injection-risk characters", var_name)
+                )));
+            }
+
             result.push_str(&var_value);
         } else {
             result.push(c);
@@ -132,6 +142,8 @@ async fn resolve_api_key(
 
 **Precedence note:** ANY_LLM_KEY is checked BEFORE provider-specific env vars. This matches any-llm's behavior where `ANY_LLM_KEY` is checked in `_create_provider()` before the provider's `ENV_API_KEY_NAME`.
 
+**SecretReader note:** When `secret_manager.type: env` is configured, `EnvSecretManager` (RFC-0935) handles the SecretReader fallback tier. The `std::env::var()` calls in this function serve as the fast path when no SecretReader is configured.
+
 **SecretReader integration:** When RFC-0935 is implemented, `resolve_api_key()` should integrate `SecretReader::get_secret()` as tier 4 (after provider-specific env var, before returning None). This is optional — the function works without it using only env vars.
 
 ### 4. Configuration Example
@@ -173,15 +185,15 @@ description: "Use $$100 for dollar amounts"
 # Workaround 1: Use an env var containing the literal text
 template: ${LITERAL_BRACE}  # LITERAL_BRACE="${VAR}"
 
-# Workaround 2: Use YAML single quotes to prevent interpolation
-template: '${VAR}'  # Single quotes prevent ${} interpolation
+# Workaround 2: Use an env var containing the literal text
+# (Single quotes do NOT prevent interpolation — interpolation runs on raw YAML before parsing)
 
 # Workaround 3: Use Unicode escape if supported by downstream parser
 template: "\u0024{VAR}"  # $ as Unicode escape
 ```
 This is a known limitation of the `$$`-based escaping approach.
 
-**Supported syntax:** Only `${VAR:-default}` (colon-dash) is supported. `${VAR-default}` (without colon) is intentionally NOT supported. This deviates from shell semantics where `:-` substitutes if unset OR empty, while `-` substitutes only if unset.
+**Supported syntax:** Only `${VAR:-default}` (colon-dash) is supported. `${VAR-default}` (without colon) is intentionally NOT supported. The `:-` syntax substitutes if unset OR empty (matching shell behavior). The `-` syntax (substitute only if unset) is not supported.
 
 ### 7. Security
 
@@ -190,11 +202,10 @@ This is a known limitation of the `$$`-based escaping approach.
 - Variables can't contain other variables
 - Log warning when using universal key (ANY_LLM_KEY)
 - Env var values are NOT recursively interpolated
-- YAML injection risk: interpolation happens before YAML parse. If an env var contains YAML structural characters (`:`, `#`, `{`, `}`, `[`, `]`, `|`, `>`), it can break or inject YAML structure. Mitigations:
-  - **Recommended:** Restrict interpolation to values that are already quoted in YAML (e.g., `key: "${VAR}"`)
-  - **Alternative:** Validate that interpolated values don't contain YAML metacharacters before substitution
-  - **Alternative:** Use two-pass approach: parse YAML with placeholders first, then substitute in AST
-  - **Accepted risk:** In containerized deployments where env vars come from trusted sources (ConfigMaps, secrets), the risk is lower. Document this as a deployment consideration.
+- YAML injection risk: interpolation happens before YAML parse. If an env var contains YAML structural characters, it can break or inject YAML structure.
+  - **MUST:** `interpolate_yaml()` MUST validate that interpolated values do not contain characters that could inject new YAML mappings or break existing structure. Specifically, reject values containing `\n` (newline), `"` (double quote — can break out of quoted YAML strings), `'` (single quote — can break out of single-quoted strings), or values that start with `{`, `[`, `|`, or `>` (YAML flow/block indicators). Colons (`:`) and hashes (`#`) are allowed in values because they are common in URLs and descriptions.
+  - This prevents injection attacks where an attacker controls an env var value.
+  - In trusted environments (ConfigMaps, secrets), ensure env var values are sanitized before deployment.
 
 ## Dependencies
 

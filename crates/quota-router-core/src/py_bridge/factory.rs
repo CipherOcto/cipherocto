@@ -11,18 +11,26 @@ use crate::types::Message;
 pub use crate::py_bridge::openai::PyBridgeError;
 
 /// Dispatch completion call to the appropriate provider
+///
+/// Per RFC-0929 REQUIRED changes:
+/// - api_base: Option<&str> — per-deployment API base URL for custom endpoints
+///   Security: api_base is NOT logged — it's forwarded to provider without logging
 #[cfg(any(feature = "any-llm-mode", feature = "full"))]
 pub fn completion(
     provider: &str,
     model: &str,
     messages: &[Message],
     api_key: Option<&str>,
+    api_base: Option<&str>, // per-deployment api_base (RFC-0929)
 ) -> Result<crate::types::ChatCompletion, PyBridgeError> {
     match provider {
         "openai" => {
             let mut p = crate::py_bridge::openai::OpenAIProvider::new();
             if let Some(key) = api_key {
                 p = p.with_api_key(key.to_string());
+            }
+            if let Some(base) = api_base {
+                p = p.with_api_base(base.to_string());
             }
             p.completion(model, messages)
         }
@@ -31,12 +39,18 @@ pub fn completion(
             if let Some(key) = api_key {
                 p = p.with_api_key(key.to_string());
             }
+            if let Some(base) = api_base {
+                p = p.with_api_base(base.to_string());
+            }
             p.completion(model, messages)
         }
         "mistral" => {
             let mut p = crate::py_bridge::mistral::MistralProvider::new();
             if let Some(key) = api_key {
                 p = p.with_api_key(key.to_string());
+            }
+            if let Some(base) = api_base {
+                p = p.with_api_base(base.to_string());
             }
             p.completion(model, messages)
         }
@@ -45,12 +59,18 @@ pub fn completion(
             if let Some(key) = api_key {
                 p = p.with_api_key(key.to_string());
             }
+            if let Some(base) = api_base {
+                p = p.with_api_base(base.to_string());
+            }
             p.completion(model, messages)
         }
         "azure" => {
             let mut p = crate::py_bridge::azure::AzureProvider::new();
             if let Some(key) = api_key {
                 p = p.with_api_key(key.to_string());
+            }
+            if let Some(base) = api_base {
+                p = p.with_api_base(base.to_string());
             }
             p.completion(model, messages)
         }
@@ -59,12 +79,18 @@ pub fn completion(
             if let Some(key) = api_key {
                 p = p.with_api_key(key.to_string());
             }
+            if let Some(base) = api_base {
+                p = p.with_api_base(base.to_string());
+            }
             p.completion(model, messages)
         }
         "voyage" => {
             let mut p = crate::py_bridge::voyage::VoyageProvider::new();
             if let Some(key) = api_key {
                 p = p.with_api_key(key.to_string());
+            }
+            if let Some(base) = api_base {
+                p = p.with_api_base(base.to_string());
             }
             p.completion(model, messages)
         }
@@ -73,12 +99,18 @@ pub fn completion(
             if let Some(key) = api_key {
                 p = p.with_api_key(key.to_string());
             }
+            if let Some(base) = api_base {
+                p = p.with_api_base(base.to_string());
+            }
             p.completion(model, messages)
         }
         "deepseek" => {
             let mut p = crate::py_bridge::deepseek::DeepSeekProvider::new();
             if let Some(key) = api_key {
                 p = p.with_api_key(key.to_string());
+            }
+            if let Some(base) = api_base {
+                p = p.with_api_base(base.to_string());
             }
             p.completion(model, messages)
         }
@@ -87,12 +119,18 @@ pub fn completion(
             if let Some(key) = api_key {
                 p = p.with_api_key(key.to_string());
             }
+            if let Some(base) = api_base {
+                p = p.with_api_base(base.to_string());
+            }
             p.completion(model, messages)
         }
         "together" => {
             let mut p = crate::py_bridge::together::TogetherProvider::new();
             if let Some(key) = api_key {
                 p = p.with_api_key(key.to_string());
+            }
+            if let Some(base) = api_base {
+                p = p.with_api_base(base.to_string());
             }
             p.completion(model, messages)
         }
@@ -101,12 +139,18 @@ pub fn completion(
             if let Some(key) = api_key {
                 p = p.with_api_key(key.to_string());
             }
+            if let Some(base) = api_base {
+                p = p.with_api_base(base.to_string());
+            }
             p.completion(model, messages)
         }
         "fireworks" => {
             let mut p = crate::py_bridge::fireworks::FireworksProvider::new();
             if let Some(key) = api_key {
                 p = p.with_api_key(key.to_string());
+            }
+            if let Some(base) = api_base {
+                p = p.with_api_base(base.to_string());
             }
             p.completion(model, messages)
         }
@@ -115,12 +159,18 @@ pub fn completion(
             if let Some(key) = api_key {
                 p = p.with_api_key(key.to_string());
             }
+            if let Some(base) = api_base {
+                p = p.with_api_base(base.to_string());
+            }
             p.completion(model, messages)
         }
         "deepinfra" => {
             let mut p = crate::py_bridge::deepinfra::DeepInfraProvider::new();
             if let Some(key) = api_key {
                 p = p.with_api_key(key.to_string());
+            }
+            if let Some(base) = api_base {
+                p = p.with_api_base(base.to_string());
             }
             p.completion(model, messages)
         }
@@ -129,12 +179,18 @@ pub fn completion(
             if let Some(key) = api_key {
                 p = p.with_api_key(key.to_string());
             }
+            if let Some(base) = api_base {
+                p = p.with_api_base(base.to_string());
+            }
             p.completion(model, messages)
         }
         "moonshot" => {
             let mut p = crate::py_bridge::moonshot::MoonshotProvider::new();
             if let Some(key) = api_key {
                 p = p.with_api_key(key.to_string());
+            }
+            if let Some(base) = api_base {
+                p = p.with_api_base(base.to_string());
             }
             p.completion(model, messages)
         }
@@ -143,12 +199,18 @@ pub fn completion(
             if let Some(key) = api_key {
                 p = p.with_api_key(key.to_string());
             }
+            if let Some(base) = api_base {
+                p = p.with_api_base(base.to_string());
+            }
             p.completion(model, messages)
         }
         "dashscope" => {
             let mut p = crate::py_bridge::dashscope::DashScopeProvider::new();
             if let Some(key) = api_key {
                 p = p.with_api_key(key.to_string());
+            }
+            if let Some(base) = api_base {
+                p = p.with_api_base(base.to_string());
             }
             p.completion(model, messages)
         }
@@ -157,12 +219,18 @@ pub fn completion(
             if let Some(key) = api_key {
                 p = p.with_api_key(key.to_string());
             }
+            if let Some(base) = api_base {
+                p = p.with_api_base(base.to_string());
+            }
             p.completion(model, messages)
         }
         "llamafile" => {
             let mut p = crate::py_bridge::llamafile::LlamaFileProvider::new();
             if let Some(key) = api_key {
                 p = p.with_api_key(key.to_string());
+            }
+            if let Some(base) = api_base {
+                p = p.with_api_base(base.to_string());
             }
             p.completion(model, messages)
         }
@@ -171,12 +239,18 @@ pub fn completion(
             if let Some(key) = api_key {
                 p = p.with_api_key(key.to_string());
             }
+            if let Some(base) = api_base {
+                p = p.with_api_base(base.to_string());
+            }
             p.completion(model, messages)
         }
         "ollama" => {
             let mut p = crate::py_bridge::ollama::OllamaProvider::new();
             if let Some(key) = api_key {
                 p = p.with_api_key(key.to_string());
+            }
+            if let Some(base) = api_base {
+                p = p.with_api_base(base.to_string());
             }
             p.completion(model, messages)
         }
@@ -185,12 +259,18 @@ pub fn completion(
             if let Some(key) = api_key {
                 p = p.with_api_key(key.to_string());
             }
+            if let Some(base) = api_base {
+                p = p.with_api_base(base.to_string());
+            }
             p.completion(model, messages)
         }
         "xai" => {
             let mut p = crate::py_bridge::xai::XaiProvider::new();
             if let Some(key) = api_key {
                 p = p.with_api_key(key.to_string());
+            }
+            if let Some(base) = api_base {
+                p = p.with_api_base(base.to_string());
             }
             p.completion(model, messages)
         }
@@ -199,12 +279,18 @@ pub fn completion(
             if let Some(key) = api_key {
                 p = p.with_api_key(key.to_string());
             }
+            if let Some(base) = api_base {
+                p = p.with_api_base(base.to_string());
+            }
             p.completion(model, messages)
         }
         "sambanova" => {
             let mut p = crate::py_bridge::sambanova::SambaNovaProvider::new();
             if let Some(key) = api_key {
                 p = p.with_api_key(key.to_string());
+            }
+            if let Some(base) = api_base {
+                p = p.with_api_base(base.to_string());
             }
             p.completion(model, messages)
         }
@@ -213,12 +299,18 @@ pub fn completion(
             if let Some(key) = api_key {
                 p = p.with_api_key(key.to_string());
             }
+            if let Some(base) = api_base {
+                p = p.with_api_base(base.to_string());
+            }
             p.completion(model, messages)
         }
         "watsonx" => {
             let mut p = crate::py_bridge::watsonx::WatsonxProvider::new();
             if let Some(key) = api_key {
                 p = p.with_api_key(key.to_string());
+            }
+            if let Some(base) = api_base {
+                p = p.with_api_base(base.to_string());
             }
             p.completion(model, messages)
         }
@@ -227,12 +319,18 @@ pub fn completion(
             if let Some(key) = api_key {
                 p = p.with_api_key(key.to_string());
             }
+            if let Some(base) = api_base {
+                p = p.with_api_base(base.to_string());
+            }
             p.completion(model, messages)
         }
         "sagemaker" => {
             let mut p = crate::py_bridge::sagemaker::SageMakerProvider::new();
             if let Some(key) = api_key {
                 p = p.with_api_key(key.to_string());
+            }
+            if let Some(base) = api_base {
+                p = p.with_api_base(base.to_string());
             }
             p.completion(model, messages)
         }
@@ -241,12 +339,18 @@ pub fn completion(
             if let Some(key) = api_key {
                 p = p.with_api_key(key.to_string());
             }
+            if let Some(base) = api_base {
+                p = p.with_api_base(base.to_string());
+            }
             p.completion(model, messages)
         }
         "replicate" => {
             let mut p = crate::py_bridge::replicate::ReplicateProvider::new();
             if let Some(key) = api_key {
                 p = p.with_api_key(key.to_string());
+            }
+            if let Some(base) = api_base {
+                p = p.with_api_base(base.to_string());
             }
             p.completion(model, messages)
         }
@@ -255,12 +359,18 @@ pub fn completion(
             if let Some(key) = api_key {
                 p = p.with_api_key(key.to_string());
             }
+            if let Some(base) = api_base {
+                p = p.with_api_base(base.to_string());
+            }
             p.completion(model, messages)
         }
         "aleph_alpha" => {
             let mut p = crate::py_bridge::aleph_alpha::AlephAlphaProvider::new();
             if let Some(key) = api_key {
                 p = p.with_api_key(key.to_string());
+            }
+            if let Some(base) = api_base {
+                p = p.with_api_base(base.to_string());
             }
             p.completion(model, messages)
         }
@@ -269,12 +379,18 @@ pub fn completion(
             if let Some(key) = api_key {
                 p = p.with_api_key(key.to_string());
             }
+            if let Some(base) = api_base {
+                p = p.with_api_base(base.to_string());
+            }
             p.completion(model, messages)
         }
         "infere" => {
             let mut p = crate::py_bridge::infere::InfereProvider::new();
             if let Some(key) = api_key {
                 p = p.with_api_key(key.to_string());
+            }
+            if let Some(base) = api_base {
+                p = p.with_api_base(base.to_string());
             }
             p.completion(model, messages)
         }
@@ -283,12 +399,18 @@ pub fn completion(
             if let Some(key) = api_key {
                 p = p.with_api_key(key.to_string());
             }
+            if let Some(base) = api_base {
+                p = p.with_api_base(base.to_string());
+            }
             p.completion(model, messages)
         }
         "ai_foundry" => {
             let mut p = crate::py_bridge::ai_foundry::AiFoundryProvider::new();
             if let Some(key) = api_key {
                 p = p.with_api_key(key.to_string());
+            }
+            if let Some(base) = api_base {
+                p = p.with_api_base(base.to_string());
             }
             p.completion(model, messages)
         }
@@ -297,6 +419,9 @@ pub fn completion(
             if let Some(key) = api_key {
                 p = p.with_api_key(key.to_string());
             }
+            if let Some(base) = api_base {
+                p = p.with_api_base(base.to_string());
+            }
             p.completion(model, messages)
         }
         "cloudflareai" => {
@@ -304,12 +429,18 @@ pub fn completion(
             if let Some(key) = api_key {
                 p = p.with_api_key(key.to_string());
             }
+            if let Some(base) = api_base {
+                p = p.with_api_base(base.to_string());
+            }
             p.completion(model, messages)
         }
         "workersai" => {
             let mut p = crate::py_bridge::workersai::WorkersProvider::new();
             if let Some(key) = api_key {
                 p = p.with_api_key(key.to_string());
+            }
+            if let Some(base) = api_base {
+                p = p.with_api_base(base.to_string());
             }
             p.completion(model, messages)
         }

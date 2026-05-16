@@ -212,6 +212,7 @@ fn parse_request_body(body: &str) -> Option<NativeHttpRequest> {
         presence_penalty,
         frequency_penalty,
         user,
+        api_base: json.get("api_base").and_then(|v| v.as_str()).map(String::from),
     })
 }
 
@@ -226,6 +227,19 @@ fn parse_request_body(_body: &str) -> Option<()> {
 // =============================================================================
 // Request Handling
 // =============================================================================
+
+/// Resolve API key with priority chain (RFC-0929 §5).
+/// Priority: config_key (from DispatchInfo/litellm_params) → env var ({PROVIDER}_API_KEY)
+fn resolve_api_key(provider: &Provider, config_key: Option<&str>) -> Option<String> {
+    // Priority 1: Config key (from GatewayConfig deployment)
+    if let Some(key) = config_key {
+        if !key.is_empty() {
+            return Some(key.to_string());
+        }
+    }
+    // Priority 2: Environment variable
+    provider.get_api_key()
+}
 
 async fn handle_request<B>(
     req: Request<B>,
@@ -251,8 +265,10 @@ where
         }
     }
 
-    // Get API key from environment
-    let api_key = match provider.get_api_key() {
+    // Resolve API key with priority chain (RFC-0929 §5):
+    // 1. Config key (from DispatchInfo.api_key / litellm_params.api_key)
+    // 2. Environment variable ({PROVIDER_NAME}_API_KEY)
+    let api_key = match resolve_api_key(&provider, None) {
         Some(key) => key,
         None => {
             let resp = Response::builder()
@@ -495,5 +511,63 @@ async fn handle_streaming(
                 .unwrap();
             Ok(resp)
         }
+    }
+}
+
+#[cfg(test)]
+#[cfg(any(feature = "litellm-mode", feature = "full"))]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_parse_request_body_extracts_api_base() {
+        let body = r#"{
+            "model": "gpt-4o",
+            "messages": [{"role": "user", "content": "hello"}],
+            "api_base": "https://custom.azure.com/"
+        }"#;
+        let req = parse_request_body(body).unwrap();
+        assert_eq!(req.api_base, Some("https://custom.azure.com/".to_string()));
+    }
+
+    #[test]
+    fn test_parse_request_body_no_api_base() {
+        let body = r#"{
+            "model": "gpt-4o",
+            "messages": [{"role": "user", "content": "hello"}]
+        }"#;
+        let req = parse_request_body(body).unwrap();
+        assert_eq!(req.api_base, None);
+    }
+
+    #[test]
+    fn test_resolve_api_key_config_priority() {
+        std::env::set_var("TESTPROV_API_KEY", "env-key");
+        let provider = Provider::new("testprov", "https://example.com");
+        // Config key takes priority over env var
+        assert_eq!(
+            resolve_api_key(&provider, Some("config-key")),
+            Some("config-key".to_string())
+        );
+        std::env::remove_var("TESTPROV_API_KEY");
+    }
+
+    #[test]
+    fn test_resolve_api_key_env_fallback() {
+        std::env::set_var("TESTPROV2_API_KEY", "env-key");
+        let provider = Provider::new("testprov2", "https://example.com");
+        // No config key → falls back to env var
+        assert_eq!(
+            resolve_api_key(&provider, None),
+            Some("env-key".to_string())
+        );
+        std::env::remove_var("TESTPROV2_API_KEY");
+    }
+
+    #[test]
+    fn test_resolve_api_key_none_when_missing() {
+        std::env::remove_var("TESTPROV3_API_KEY");
+        let provider = Provider::new("testprov3", "https://example.com");
+        assert_eq!(resolve_api_key(&provider, None), None);
     }
 }

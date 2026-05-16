@@ -49,9 +49,23 @@ RFC-0917's `RouterConfig` is incomplete for LiteLLM compatibility:
 
 ## Scope
 
+### Types Defined in This RFC
+
+This RFC defines the following types in `config.rs`:
+
+- `RoutingStrategyArgs` — strategy-specific routing parameters
+- `LiteLLMParams` — LiteLLM-compatible provider parameters with `api_base`/`base_url` aliasing
+- `LatencyRoutingSettings` — latency-based routing configuration (RFC-0925)
+- `RateLimitMode` — rate limit enforcement mode (Soft default, Hard blocking) per RFC-0929
+
+### Types Referenced (Not Defined Here)
+
+- `RoutingStrategy` enum — defined in RFC-0917's `router.rs`. Do NOT redefine here.
+- `RouterConfig` base — defined in RFC-0917. This RFC extends it without modification.
+
 ### RouterConfig Extension (RFC-0917 §RouterConfig)
 
-Add to existing `RouterConfig`:
+Add to existing `RouterConfig` (in config.rs, not as direct extension to RFC-0917's RouterConfig):
 
 ```rust
 use std::collections::HashMap;

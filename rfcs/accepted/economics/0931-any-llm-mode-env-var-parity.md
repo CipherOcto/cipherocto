@@ -35,11 +35,12 @@ Resolution strips the `os.environ[` prefix and `]` suffix, then looks up the rem
 
 ### 1. Resolution Order
 
-**api_key** — 3-tier resolution (no provider-specific default makes sense for keys):
+**api_key** — 2-tier resolution at config load time:
 
 1. Explicit non-empty non-`os.environ` value in litellm_params (highest priority)
 2. `os.environ["KEY"]` or `os.environ['KEY']` syntax — resolves from environment
-3. Environment variable: `{PROVIDER}_API_KEY` (only if tiers 1-2 are absent)
+
+**Note:** `{PROVIDER}_API_KEY` env var is resolved at runtime by RFC-0938's `resolve_api_key()`, not at config load time. This ensures correct precedence: config > os.environ > ANY_LLM_KEY > {PROVIDER}_API_KEY.
 
 **api_base** — 4-tier resolution:
 
@@ -115,11 +116,9 @@ impl LiteLLMParams {
                 }
             }
         }
-        // 3. {PROVIDER}_API_KEY env var (only if provider is non-empty)
-        if !self.provider.is_empty() {
-            let env_key = format!("{}_API_KEY", self.provider.to_uppercase());
-            return std::env::var(&env_key).ok();
-        }
+        // {PROVIDER}_API_KEY is NOT resolved here — resolved at runtime by
+        // RFC-0938's resolve_api_key() which checks ANY_LLM_KEY first.
+        // This ensures correct precedence: config > os.environ > ANY_LLM_KEY > {PROVIDER}_API_KEY
         None
     }
 }
@@ -130,20 +129,26 @@ impl LiteLLMParams {
 ```rust
 impl LiteLLMParams {
     /// Resolve api_base with 4-tier fallback:
-    /// 1. Explicit non-empty value
+    /// 1. Explicit non-empty value (api_base takes precedence over base_url alias)
     /// 2. os.environ[...] syntax
     /// 3. {PROVIDER}_API_BASE env var
     /// 4. Provider-specific default from RFC-0930 registry
+    ///
+    /// When both `api_base` and `base_url` are set, first non-empty wins.
+    /// `base_url` is a LiteLLM alias for `api_base` (defined via serde alias in RFC-0927).
+    ///
+    /// SUPERSEDES RFC-0927's resolve_api_base() which returned Option<&str> with simple
+    /// api_base.or(base_url). This 4-tier version replaces it with env var resolution.
     pub fn resolve_api_base(&self) -> Option<String> {
-        // 1. Explicit non-empty value
-        if let Some(ref base) = self.api_base {
+        // 1. Explicit non-empty value (check both api_base and base_url, take first non-empty)
+        for base in [self.api_base.as_ref(), self.base_url.as_ref()].iter().flatten() {
             let trimmed = base.trim();
             if !trimmed.is_empty() && !trimmed.starts_with("os.environ") {
-                return Some(base.clone());
+                return Some(trimmed.to_string());
             }
         }
-        // 2. os.environ[...] syntax
-        if let Some(ref base) = self.api_base {
+        // 2. os.environ[...] syntax (check both api_base and base_url alias)
+        for base in [self.api_base.as_ref(), self.base_url.as_ref()].iter().flatten() {
             if let Some(env_name) = extract_os_environ_key(base) {
                 if let Ok(val) = std::env::var(&env_name) {
                     return Some(val);
@@ -177,18 +182,25 @@ Resolve env vars at config load time (during `to_provider_map()`), not at provid
 
 ### 8. Feature Gate Scope
 
-**This RFC applies to `any-llm-mode` and `full` only.**
+**This RFC applies to all modes.**
 
-litellm-mode uses `HttpProviderFactory` which has its own env-var handling in proxy.rs.
+The `resolve_api_key()` and `resolve_api_base()` methods are available in all builds (NOT feature-gated). RFC-0930's `to_provider_map()` calls these methods in all modes.
 
 ```rust
-#[cfg(any(feature = "any-llm-mode", feature = "full"))]
 impl LiteLLMParams {
-    // ... resolution methods
+    // ... resolution methods (available in all modes)
 }
 ```
 
 ## Dependencies
+
+**Requires:**
+- RFC-0927: RouterConfig Extension for LiteLLM Compatibility (LiteLLMParams struct)
+- RFC-0930: Provider Inference from Model String (get_provider_default_api_base for tier 4)
+
+**Required by:**
+- RFC-0930: Provider Inference from Model String (calls resolve_api_key and resolve_api_base in to_provider_map)
+- RFC-0938: YAML Interpolation & Universal Key (calls resolve methods at dispatch time, adds {PROVIDER}_API_KEY and ANY_LLM_KEY resolution)
 
 **RFC-0930 is required for full api_base resolution.**
 
@@ -252,27 +264,27 @@ fn test_resolve_api_key_explicit() {
 }
 
 #[test]
-fn test_resolve_api_key_empty_string_falls_back_to_env() {
-    std::env::set_var("OPENAI_API_KEY", "sk-from-env");
+fn test_resolve_api_key_empty_string_returns_none() {
+    // Empty string treated as absent — resolve_api_key() returns None
+    // {PROVIDER}_API_KEY is resolved at runtime by RFC-0938, not here
     let params = LiteLLMParams {
         provider: "openai".to_string(),
-        api_key: Some("".to_string()),  // Empty string treated as absent
+        api_key: Some("".to_string()),
         ..Default::default()
     };
-    assert_eq!(params.resolve_api_key(), Some("sk-from-env".to_string()));
-    std::env::remove_var("OPENAI_API_KEY");
+    assert_eq!(params.resolve_api_key(), None);
 }
 
 #[test]
-fn test_resolve_api_key_from_env() {
-    std::env::set_var("OPENAI_API_KEY", "sk-from-env");
+fn test_resolve_api_key_none_returns_none() {
+    // api_key: None — resolve_api_key() returns None
+    // {PROVIDER}_API_KEY is resolved at runtime by RFC-0938, not here
     let params = LiteLLMParams {
         provider: "openai".to_string(),
         api_key: None,
         ..Default::default()
     };
-    assert_eq!(params.resolve_api_key(), Some("sk-from-env".to_string()));
-    std::env::remove_var("OPENAI_API_KEY");
+    assert_eq!(params.resolve_api_key(), None);
 }
 
 #[test]
@@ -300,19 +312,28 @@ fn test_resolve_api_key_os_environ_single_quote() {
 }
 
 #[test]
-fn test_resolve_api_key_os_environ_empty_key() {
+fn test_resolve_api_key_os_environ_empty_key_returns_none() {
     // os.environ[""] — extract_os_environ_key returns Some("") (empty key name)
     // std::env::var("") fails (empty var name is invalid on most systems)
-    // so this falls through to tier 3 (provider env var)
-    std::env::set_var("OPENAI_API_KEY", "sk-from-provider-env");
+    // resolve_api_key() returns None — {PROVIDER}_API_KEY resolved at runtime by RFC-0938
     let params = LiteLLMParams {
         provider: "openai".to_string(),
         api_key: Some(r#"os.environ[""]"#.to_string()),
         ..Default::default()
     };
-    // Falls through to {PROVIDER}_API_KEY env var because std::env::var("") fails
-    assert_eq!(params.resolve_api_key(), Some("sk-from-provider-env".to_string()));
-    std::env::remove_var("OPENAI_API_KEY");
+    assert_eq!(params.resolve_api_key(), None);
+}
+
+#[test]
+fn test_resolve_api_key_os_environ_nonexistent_var_returns_none() {
+    // os.environ["NONEXISTENT_VAR_12345"] — env var doesn't exist
+    // resolve_api_key() returns None — {PROVIDER}_API_KEY resolved at runtime by RFC-0938
+    let params = LiteLLMParams {
+        provider: "openai".to_string(),
+        api_key: Some(r#"os.environ["NONEXISTENT_VAR_12345"]"#.to_string()),
+        ..Default::default()
+    };
+    assert_eq!(params.resolve_api_key(), None);
 }
 
 #[test]
@@ -360,7 +381,7 @@ fn test_resolve_api_base_empty_string_falls_back_to_env() {
 - [ ] `resolve_api_base()` treats empty string as absent
 - [ ] `resolve_api_base()` falls back to `{PROVIDER}_API_BASE` env var when explicit value not set
 - [ ] `resolve_api_base()` falls back to provider-default from RFC-0930 registry (tier 4)
-- [ ] Feature-gated to `any-llm-mode` and `full` only
+- [ ] Available in all modes (NOT feature-gated)
 - [ ] Existing tests still pass
 - [ ] Clippy clean
 
@@ -379,5 +400,5 @@ When both are implemented, the resolution order for api_base is:
 
 | Version | Date | Changes |
 |---------|------|---------|
-| 2 | 2026-05-15 | Adversarial review R1 fixes: C1 — api_key resolution corrected from 2-tier to 3-tier (os.environ syntax is tier 2); M2 — extract_os_environ_key len check fixed from >= 2 to >= 4 (minimum ["x"] = 4 chars after bracket strip); m3 — test_resolve_api_key_os_environ_empty_key comment corrected (extract_os_environ_key returns Some(""), std::env::var("") fails, falls through to provider env var) |
+| 2 | 2026-05-15 | Adversarial review R1 fixes: C1 — api_key resolution clarified as 2-tier at config load time (os.environ syntax is tier 2); {PROVIDER}_API_KEY moved to runtime resolution by RFC-0938; M2 — extract_os_environ_key len check fixed from >= 2 to >= 4; tests updated to reflect 2-tier behavior |
 | 1 | 2026-05-14 | Initial draft |

@@ -1,6 +1,6 @@
 # RFC-0936: Pre-call Checks
 
-## Status: Draft
+## Status: Accepted
 
 ## Summary
 
@@ -31,21 +31,15 @@ pub struct ModelInfo {
     pub max_output_tokens: Option<usize>,  // NEW: max output tokens
     pub allowed_tags: Option<Vec<String>>, // NEW: tags that can use this deployment
     pub blocked_tags: Option<Vec<String>>, // NEW: tags that cannot use this deployment
-    pub supports_embeddings: Option<bool>, // NEW: whether deployment supports embeddings
+    // supports_embeddings already exists on ModelInfo (RFC-0928)
 }
 
-// In config.rs — new fields on DeploymentConfig (RFC-0928)
-pub struct DeploymentConfig {
-    // ... existing fields ...
-    pub last_health_check: Option<i64>,  // NEW: Unix timestamp of last health check
-    pub is_healthy: bool,                 // NEW: last known health status (default: true)
-}
-
-// In router.rs — new field on Router
+// In router.rs — NEW fields added to existing Router struct (not a replacement)
+// Note: model_groups() already exists as a method on Router — field name may need adjustment
 pub struct Router {
-    // ... existing fields ...
-    pub model_groups: HashMap<String, Vec<DeploymentConfig>>,  // NEW: grouped deployments
-    pub pre_call_checks: Vec<Box<dyn PreCallCheck>>,           // NEW: check pipeline
+    // ... existing fields from router.rs ...
+    pub deployment_groups: HashMap<String, Vec<DeploymentConfig>>,  // NEW: grouped deployments (renamed to avoid conflict with existing model_groups() method)
+    pub pre_call_checks: Vec<Box<dyn PreCallCheck>>,               // NEW: check pipeline
 }
 
 // New type for completion requests
@@ -182,53 +176,69 @@ impl PreCallCheck for TagFilterCheck {
 
 ### 4. Health Check
 
-Add to DeploymentConfig (RFC-0928 update):
-```rust
-// New fields on DeploymentConfig — use interior mutability for caching
-pub last_health_check: Option<i64>,  // Unix timestamp
-pub is_healthy: bool,                 // Last known health status
-```
-
 ```rust
 pub struct HealthCheck {
     client: reqwest::Client,
     check_interval: Duration,  // Default: 30 seconds
+    health_cache: Arc<RwLock<HashMap<String, HealthState>>>,  // keyed by deployment_id
+}
+
+pub struct HealthState {
+    pub last_check: i64,      // Unix timestamp
+    pub is_healthy: bool,
 }
 
 impl HealthCheck {
-    // Returns (is_healthy, needs_update) — caller updates DeploymentConfig
-    async fn check_health(&self, deployment: &DeploymentConfig) -> (bool, bool) {
-        // Skip health check if recently checked
-        if let Some(last_check) = deployment.last_health_check {
-            let elapsed = Utc::now().timestamp() - last_check;
-            if elapsed < self.check_interval.as_secs() as i64 {
-                return (deployment.is_healthy, false);  // no update needed
+    async fn check_health(&self, deployment_id: &str, api_base: Option<&str>) -> bool {
+        // Check cache first
+        {
+            let cache = self.health_cache.read().unwrap_or_else(|e| e.into_inner());
+            if let Some(state) = cache.get(deployment_id) {
+                let elapsed = Utc::now().timestamp() - state.last_check;
+                if elapsed < self.check_interval.as_secs() as i64 {
+                    return state.is_healthy;
+                }
             }
         }
 
         // Perform health check
-        let api_base = match deployment.litellm_params.api_base.as_deref() {
+        let api_base = match api_base {
             Some(base) if !base.is_empty() => base,
-            _ => return (false, true),  // no api_base configured — mark unhealthy
+            _ => {
+                self.update_cache(deployment_id, false);
+                return false;
+            }
         };
-        let health_url = format!("{}/health", api_base);
+        let health_url = format!("{}/health", api_base.trim_end_matches('/'));
         let is_healthy = match self.client.get(&health_url).timeout(Duration::from_secs(5)).send().await {
-            Ok(resp) => resp.status().is_success(),
-            Err(_) => false,
+            Ok(resp) => {
+                // 2xx = healthy, 404 = no health endpoint (treat as healthy), 5xx = unhealthy
+                resp.status().is_success() || resp.status() == reqwest::StatusCode::NOT_FOUND
+            }
+            Err(_) => false,  // Connection failure = unhealthy
         };
 
-        (is_healthy, true)  // update needed
+        self.update_cache(deployment_id, is_healthy);
+        is_healthy
+    }
+
+    fn update_cache(&self, deployment_id: &str, is_healthy: bool) {
+        let mut cache = self.health_cache.write().unwrap_or_else(|e| e.into_inner());
+        cache.insert(deployment_id.to_string(), HealthState {
+            last_check: Utc::now().timestamp(),
+            is_healthy,
+        });
     }
 }
 
 #[async_trait]
 impl PreCallCheck for HealthCheck {
     async fn check(&self, deployment: &DeploymentConfig, request: &CompletionRequest) -> CheckResult {
-        let (is_healthy, needs_update) = self.check_health(deployment).await;
-
-        // NOTE: Caller must update deployment.last_health_check and deployment.is_healthy
-        // if needs_update is true. Use interior mutability (Arc<RwLock<DeploymentConfig>>)
-        // or have the Router manage health state separately.
+        let deployment_id = deployment.deployment_id.as_deref().unwrap_or("unknown");
+        let is_healthy = self.check_health(
+            deployment_id,
+            deployment.litellm_params.api_base.as_deref(),
+        ).await;
 
         if is_healthy {
             CheckResult::Pass
@@ -241,20 +251,22 @@ impl PreCallCheck for HealthCheck {
 }
 ```
 
-**Note:** Health check results are returned to the caller, which is responsible for updating `DeploymentConfig` fields. Use `Arc<RwLock<DeploymentConfig>>` or a separate health cache managed by the Router.
+**Note:** HealthCheck maintains its own `Arc<RwLock<HashMap<String, HealthState>>>` cache, keyed by deployment_id. The Router creates one `HealthCheck` instance and shares it across all requests via `Arc`.
 
 ### 5. Integration with Router
 
 ```rust
 impl Router {
     pub async fn get_available_deployment(&self, model_group: &str, request: &CompletionRequest) -> Option<usize> {
-        let deployments = self.model_groups.get(model_group)?;
+        // Note: self.providers is the existing field (HashMap<String, Vec<ProviderWithState>>)
+        // deployment_groups is a NEW field added by this RFC
+        let deployments = self.deployment_groups.get(model_group)?;
 
         // Filter by pre-call checks (async)
         let mut valid_indices = Vec::new();
         for (i, d) in deployments.iter().enumerate() {
             let mut all_pass = true;
-            for check in &self.pre_call_checks {
+            for check in &self.pre_call_checks {  // NEW field added by this RFC
                 if let CheckResult::Fail { reason } = check.check(d, request).await {
                     debug!("Deployment {} failed pre-call check: {}", i, reason);
                     all_pass = false;
@@ -314,6 +326,7 @@ router:
 
 - RFC-0927: RouterConfig extension
 - RFC-0928: Deployment configuration schema
+- `tiktoken-rs` crate: Add to Cargo.toml for token estimation. Note: tiktoken is OpenAI-specific (cl100k_base). For non-OpenAI models, the fallback to character/4 approximation will be used.
 
 ## Test Plan
 

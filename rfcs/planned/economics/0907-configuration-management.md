@@ -16,6 +16,10 @@ Define the configuration management system for the enhanced quota router, includ
 
 **Requires:**
 
+**Requires:**
+
+- RFC-0929 (Economics): GatewayConfig Provider Dispatch Mapping (DispatchInfo, to_provider_map)
+
 **Optional:**
 
 - RFC-0900 (Economics): AI Quota Marketplace Protocol
@@ -25,6 +29,8 @@ Define the configuration management system for the enhanced quota router, includ
 - RFC-0904: Real-Time Cost Tracking (pricing settings)
 - RFC-0905: Observability (logging settings)
 - RFC-0906: Response Caching (cache settings)
+- RFC-0930: Provider Inference from Model String (model prefix → provider)
+- RFC-0931: any-llm-mode Environment Variable Parity (env-var resolution)
 
 ## Why Needed
 
@@ -219,6 +225,54 @@ Reference LiteLLM's configuration:
 - `litellm_settings` matches LiteLLM params
 - Environment variable syntax: `os.environ/VAR_NAME`
 
+### os.environ Resolution (LiteLLM Parity)
+
+LiteLLM resolves environment variables at config load time using two syntaxes:
+
+1. **Slash syntax:** `os.environ/VAR_NAME` — resolved via `std::env::var("VAR_NAME")`
+2. **Bracket syntax:** `os.environ['VAR_NAME']` or `os.environ["VAR_NAME"]` — parsed via regex
+
+**Resolution happens in `to_provider_map()` at config load time**, not at provider call time. This catches missing env vars early (fail fast at startup) and matches LiteLLM's behavior.
+
+```rust
+/// Resolve os.environ/VAR_NAME or os.environ['VAR_NAME'] syntax
+fn resolve_env_var(value: &str) -> Result<String, ConfigError> {
+    // Tier 1: os.environ/VAR_NAME (slash syntax)
+    if let Some(var_name) = value.strip_prefix("os.environ/") {
+        return std::env::var(var_name)
+            .map_err(|_| ConfigError::MissingEnvVar(var_name.to_string()));
+    }
+    // Tier 2: os.environ['VAR_NAME'] or os.environ["VAR_NAME"] (bracket syntax)
+    if let Some(caps) = ENV_BRACKET_RE.captures(value) {
+        let var_name = &caps[1];
+        return std::env::var(var_name)
+            .map_err(|_| ConfigError::MissingEnvVar(var_name.to_string()));
+    }
+    // Tier 3: literal value
+    Ok(value.to_string())
+}
+```
+
+### Provider Inference from Model String
+
+When `litellm_params.provider` is empty or omitted, infer provider from model string prefix:
+- `openai/gpt-4o` → provider=`openai`
+- `azure/gpt-4-turbo` → provider=`azure`
+- `anthropic/claude-3-opus` → provider=`anthropic`
+
+This is complementary to RFC-0930 (which specifies the inference logic). RFC-0907 specifies **when** inference runs (at `to_provider_map()` time during config load).
+
+### api_base Fallback Chain
+
+The full api_base resolution order (both modes):
+
+1. Explicit `litellm_params.api_base` value
+2. `os.environ[...]` syntax resolved from environment
+3. `{PROVIDER}_API_BASE` env var (RFC-0931)
+4. Provider-default from RFC-0930 registry
+
+This applies to both litellm-mode (via `HttpCompletionRequest.api_base`) and any-llm-mode (via `py_bridge::factory::completion(api_base)`).
+
 ## Persistence
 
 > **Critical:** Use CipherOcto/stoolap as the persistence layer.
@@ -232,6 +286,8 @@ Store in stoolap:
 
 | File | Change |
 |------|--------|
+| `crates/quota-router-core/src/config.rs` | os.environ resolution in to_provider_map(), provider inference fallback |
+| `crates/quota-router-core/src/py_bridge/factory.rs` | {PROVIDER}_API_BASE env var fallback |
 | `crates/quota-router-cli/src/config.rs` | Enhanced - YAML + validation |
 | `crates/quota-router-cli/src/config_loader.rs` | New - config loading |
 | `crates/quota-router-cli/src/config_watcher.rs` | New - hot reload |
@@ -252,6 +308,13 @@ Configuration management is important for:
 2. **Environment flexibility** - Dev/prod separation
 3. **Operational efficiency** - Hot-reload
 4. **LiteLLM migration** - Match config format exactly
+
+## Version History
+
+| Version | Date       | Changes |
+| ------- | ---------- | --------|
+| 1.1     | 2026-05-14 | Added os.environ resolution spec (slash + bracket syntax), provider inference from model string (complementary to RFC-0930), 4-tier api_base fallback chain, updated dependencies (RFC-0929, RFC-0930, RFC-0931), updated key files |
+| 1.0     | 2026-03-12 | Initial draft |
 
 ---
 

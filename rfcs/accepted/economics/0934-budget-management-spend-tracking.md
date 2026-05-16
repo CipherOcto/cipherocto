@@ -1,10 +1,10 @@
 # RFC-0934: Budget Management & Spend Tracking
 
-## Status: Draft
+## Status: Accepted
 
 ## Summary
 
-Implement real budget management and spend tracking using stoolap, replacing the mock OCTO-W balance checking. This enables per-user, per-team, and per-key budget enforcement.
+Implement real budget management and spend tracking using stoolap, replacing the mock OCTO-W balance checking. This enables per-key budget enforcement. Per-user and per-team budget aggregation is deferred to a future RFC.
 
 ## Motivation
 
@@ -30,9 +30,9 @@ pub struct Budget {
 }
 
 pub enum EntityType {
-    Key,
-    User,
-    Team,
+    Key,    // Only Key is implemented in this RFC
+    User,   // Reserved — per-user budgets deferred to future RFC
+    Team,   // Reserved — per-team budgets deferred to future RFC
 }
 
 pub enum BudgetPeriod {
@@ -59,6 +59,24 @@ fn period_duration_secs(period: &BudgetPeriod) -> i64 {
 
 **Note on monthly period:** Uses fixed 30-day duration (2,592,000 seconds). This means February budgets get 2 extra days, and months with 31 days lose a day. The drift accumulates over time (budget created Jan 1 resets Jan 31, then Mar 2, etc.). This approximation matches LiteLLM's approach and is acceptable for v1. Calendar-month boundaries (1st to 1st) would be more accurate but significantly more complex.
 
+**Stoolap schema:**
+```sql
+CREATE TABLE budgets (
+    entity_id TEXT NOT NULL,
+    entity_type TEXT NOT NULL,  -- 'Key', 'User', 'Team'
+    max_budget BIGINT NOT NULL,
+    current_spend BIGINT NOT NULL DEFAULT 0,
+    soft_limit_pct INTEGER NOT NULL DEFAULT 80,
+    period TEXT NOT NULL,       -- 'Daily', 'Weekly', 'Monthly', 'Total'
+    period_start BIGINT NOT NULL,
+    period_end BIGINT NOT NULL,
+    alert_webhook TEXT,
+    PRIMARY KEY (entity_id, entity_type)
+);
+```
+
+**Known limitation:** Each entity can have only ONE budget row (single period per entity). A key cannot have both a daily budget AND a monthly budget simultaneously. This matches LiteLLM's behavior. To support multiple periods per entity, change PRIMARY KEY to `(entity_id, entity_type, period)`.
+
 **Usage struct:** Use existing `SpendEvent` from `keys/models.rs` or define:
 ```rust
 pub struct Usage {
@@ -81,7 +99,8 @@ async fn track_spend(key: &ApiKey, usage: &Usage, pricing_table: &PricingTable) 
     // Use existing compute_cost() from keys/mod.rs
     // Use pricing.rs compute_cost_from_pricing_table which returns Result<u64, BudgetError>
     // pricing_table is &PricingTable (from pricing.rs), NOT &PricingModel (from keys/models.rs)
-    let cost = compute_cost_from_pricing_table(pricing_table, usage.input_tokens, usage.output_tokens)? as i64;
+    let cost = i64::try_from(compute_cost_from_pricing_table(pricing_table, usage.input_tokens, usage.output_tokens)?)
+        .unwrap_or(i64::MAX);  // Cap at i64::MAX on overflow
 
     // CHECK FIRST, THEN RECORD — avoid charging for blocked requests
     // Atomic check-and-increment: only increments if budget allows
@@ -109,9 +128,9 @@ async fn track_spend(key: &ApiKey, usage: &Usage, pricing_table: &PricingTable) 
 
             return Err(BudgetError::KeyBudgetExceeded {
                 key_id: uuid::Uuid::parse_str(&key.key_id).unwrap_or_default(),
-                current: current_spend as u64,
-                limit: key.budget_limit as u64,
-                requested: cost as u64,
+                current: current_spend.max(0) as u64,
+                limit: key.budget_limit.max(0) as u64,
+                requested: cost.max(0) as u64,
             });
         }
     };
@@ -132,7 +151,7 @@ async fn track_spend(key: &ApiKey, usage: &Usage, pricing_table: &PricingTable) 
 }
 ```
 
-**Note:** Uses existing `compute_cost()` from keys/mod.rs (returns u64, cast to i64). `soft_limit_pct` read from budgets table, not from ApiKey.
+**Note:** Uses existing `compute_cost_from_pricing_table()` from keys/mod.rs (returns Result<u64, BudgetError>, cast to i64). `soft_limit_pct` read from budgets table, not from ApiKey.
 
 ### 3. Budget Enforcement
 
@@ -142,7 +161,9 @@ async fn check_budget(key: &ApiKey) -> Result<()> {
     // Single atomic statement: check limit AND reset period if needed
     // Avoids TOCTOU race between check and reset
     // Use SQL CASE to compute new period_end based on period type
-    let (current_spend, period_end): (i64, i64) = stoolap.query_row(
+    // Use query_optional (not query_row) to handle keys without a budget row —
+    // no budget configured means no limit, so pass through.
+    let result: Option<(i64, i64)> = stoolap.query_optional(
         "UPDATE budgets SET \
          current_spend = CASE WHEN period_end < ? THEN 0 ELSE current_spend END, \
          period_end = CASE WHEN period_end < ? THEN \
@@ -159,9 +180,15 @@ async fn check_budget(key: &ApiKey) -> Result<()> {
         |row| Ok((row.get(0)?, row.get(1)?)),
     ).await?;
 
+    // No budget row = no limit configured → pass through
+    let (current_spend, _period_end) = match result {
+        Some((spend, end)) => (spend, end),
+        None => return Ok(()),
+    };
+
     // Check hard limit — use max_budget from budgets table, not key.budget_limit
     let max_budget: i64 = stoolap.query_row(
-        "SELECT max_budget FROM budgets WHERE entity_id = ?",
+        "SELECT max_budget FROM budgets WHERE entity_id = ? AND entity_type = 'Key'",
         params![key.key_id],
         |row| row.get(0),
     ).await.unwrap_or(key.budget_limit);
@@ -193,7 +220,8 @@ pub fn compute_cost_from_pricing_table(
 
 **Usage in track_spend:**
 ```rust
-let cost = compute_cost_from_pricing_table(pricing_table, usage.input_tokens, usage.output_tokens)? as i64;
+let cost = i64::try_from(compute_cost_from_pricing_table(pricing_table, usage.input_tokens, usage.output_tokens)?)
+        .unwrap_or(i64::MAX);  // Cap at i64::MAX on overflow
 ```
 
 **Note:** Both `compute_cost()` and `compute_cost_from_pricing_table()` use `u32` for token counts. The `pricing_table` parameter is `&PricingTable` (from `pricing.rs`), NOT `&PricingModel` (from `keys/models.rs`).
@@ -224,10 +252,10 @@ When soft_limit_pct exceeded, POST to configured webhook:
 
 ### 6. Management API
 
-- `GET /v1/budgets/{entity_type}/{entity_id}` — get budget
-- `POST /v1/budgets/{entity_type}/{entity_id}` — set budget
-- `DELETE /v1/budgets/{entity_type}/{entity_id}` — remove budget
-- `GET /v1/budgets/{entity_type}/{entity_id}/history` — spend history
+- `GET /budget/{entity_type}/{entity_id}` — get budget (matches RFC-0932 paths)
+- `POST /budget/{entity_type}/{entity_id}` — set budget
+- `DELETE /budget/{entity_type}/{entity_id}` — remove budget
+- `GET /budget/{entity_type}/{entity_id}/history` — spend history
 
 ### 7. Configuration
 
@@ -253,7 +281,7 @@ budget:
 2. Hard limit blocks requests when exceeded
 3. Soft limit triggers alert webhook
 4. Budget reset on period boundary
-5. Per-key, per-user, per-team budgets work independently
+5. Per-key budgets work correctly (per-user and per-team are deferred)
 6. Cost calculation matches expected values
 7. stoolap persistence survives restart
 8. Management API CRUD operations work

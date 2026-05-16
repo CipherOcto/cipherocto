@@ -1,6 +1,10 @@
 // replicate — Replicate Python SDK via PyO3 (INTERNAL boundary #1 per RFC-0917)
 //
 // This module calls the Replicate Python SDK via PyO3.
+//
+// Note: Replicate SDK does NOT support custom base_url - it uses Replicate's default API endpoint.
+// The api_base field exists for interface consistency but is IGNORED by completion().
+// This ensures all py_bridge providers have a uniform interface without special-casing Replicate.
 
 #[cfg(any(feature = "any-llm-mode", feature = "full"))]
 use pyo3::prelude::*;
@@ -12,8 +16,10 @@ use crate::py_bridge::PyBridgeError;
 #[cfg(any(feature = "any-llm-mode", feature = "full"))]
 pub struct ReplicateProvider {
     api_key: Option<String>,
+    // Note: api_base is intentionally IGNORED — Replicate SDK doesn't support custom endpoints.
+    // Field exists for interface consistency with other providers.
     #[allow(dead_code)]
-    api_base: Option<String>, // exists for API consistency; Replicate uses default endpoint
+    api_base: Option<String>,
 }
 
 #[cfg(any(feature = "any-llm-mode", feature = "full"))]
@@ -34,6 +40,12 @@ impl ReplicateProvider {
         self.api_key = Some(api_key);
         self
     }
+
+    pub fn with_api_base(mut self, api_base: String) -> Self {
+        self.api_base = Some(api_base);
+        self
+    }
+
     pub fn completion(
         &self,
         model: &str,

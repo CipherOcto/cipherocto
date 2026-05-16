@@ -1,6 +1,6 @@
 # RFC-0932: Gateway Auth & API Key Management
 
-## Status: Draft
+## Status: Accepted
 
 ## Summary
 
@@ -28,7 +28,7 @@ But the proxy doesn't use any of it. Requests pass through without authenticatio
 // 1. Extract key from request (existing: extract_key_from_request)
 // 2. Validate key (existing: validate_request_key — hash lookup, expiry, revoked check)
 // 3. Check route permission (existing: validate_request_key_for_route — uses allowed_routes)
-// 4. Check budget (existing: check_budget — compares spend vs budget_limit)
+// 4. Check budget (RFC-0934: check_budget — atomic period reset + budget enforcement)
 // 5. Check rate limits (RFC-0933: check_rpm_limit pre-request, check_tpm_limit post-request)
 // 6. Inject ApiKey into request extensions (reuse existing ApiKey struct)
 
@@ -81,16 +81,16 @@ Default route permissions by KeyType (matches existing `check_route_permission()
 | /v1/chat/ | ✓ | ✗ | ✗ |
 | /v1/completions/ | ✓ | ✗ | ✗ |
 | /v1/embeddings/ | ✓ | ✗ | ✗ |
-| /models/, /info | ✓ | ✓ | ✓ |
+| /models/, /info | ✗ | ✗ | ✓ |
 | /key/, /team/, /user/ | ✗ | ✓ | ✗ |
 
-**Note:** `allowed_routes` field on ApiKey can override defaults. Route matching uses prefix matching. Existing code uses paths WITHOUT `/v1/` prefix for management routes. Management keys have access to `/key/`, `/team/`, `/user/` — NOT to LLM endpoints. ReadOnly keys only have access to `/models/` and `/info`.
+**Note:** `allowed_routes` field on ApiKey can override defaults. Route matching uses prefix matching on the full request path (do NOT strip `/v1/` prefix). Clients send `/v1/chat/completions`, `/v1/embeddings`, etc. (with `/v1/` prefix). So `allowed_routes: "/v1/chat"` matches `/v1/chat/completions`. Management routes use paths WITHOUT `/v1/` prefix (`/key/`, `/team/`, `/user/`). Management keys have access to `/key/`, `/team/`, `/user/` — NOT to LLM endpoints. ReadOnly keys only have access to `/models/` and `/info`.
 
 ### 5. Management Endpoints
 
 Expose existing AdminServer functionality via REST:
 
-**POST /v1/keys** — create key
+**POST /key/generate** — create key (matches existing admin.rs paths)
 ```json
 // Request
 {
@@ -106,30 +106,30 @@ Expose existing AdminServer functionality via REST:
 // Response: { "key_id": "...", "key": "sk-qr-...", "key_prefix": "sk-qr-..." }
 ```
 
-**GET /v1/keys** — list keys (with pagination)
+**GET /key/list** — list keys (with pagination, matches existing admin.rs paths)
 ```json
 // Query: ?team_id=...&key_type=LlmApi&limit=100&offset=0
 // Response: { "keys": [...], "total": 42 }
 ```
 
-**DELETE /v1/keys/{id}** — revoke key
+**DELETE /key/{id}** — revoke key (matches existing admin.rs paths)
 ```json
 // Request: { "reason": "Compromised" }
 // Response: { "key_id": "...", "revoked_at": "...", "revoked_by": "..." }
 ```
 
-**POST /v1/keys/{id}/rotate** — rotate key
+**POST /key/{id}/regenerate** — rotate key (matches existing admin.rs paths)
 ```json
 // Response: { "key_id": "...", "new_key": "sk-qr-...", "old_key_revoked_at": "..." }
 ```
 
-**GET /v1/users** — list users
+**GET /team/list** — list teams (matches existing admin.rs paths)
 ```json
 // Query: ?limit=100&offset=0
-// Response: { "users": [...], "total": 10 }
+// Response: { "teams": [...], "total": 10 }
 ```
 
-**GET /v1/budgets/{entity_type}/{entity_id}** — get budget
+**GET /budget/{entity_type}/{entity_id}** — get budget
 
 ### 6. Error Responses
 
@@ -142,7 +142,7 @@ Use existing `KeyError` enum from `keys/mod.rs`:
 | `Expired(i64)` | 401 | `key_expired` | expiry timestamp |
 | `Revoked(String)` | 401 | `key_revoked` | reason |
 | `RouteNotAllowed(String)` | 403 | `route_not_allowed` | route path |
-| `BudgetExceeded { current, limit }` | 403 | `budget_exceeded` | current: u64, limit: u64 |
+| `BudgetExceeded { current, limit }` | 403 | `budget_exceeded` | current: u64, limit: u64 (proxy catches RFC-0934's `BudgetError::KeyBudgetExceeded { key_id, current, limit, requested }` and serializes directly to JSON — `requested` is included in HTTP response even though `KeyError::BudgetExceeded` doesn't have the field) |
 | `TeamBudgetExceeded { current, limit }` | 403 | `team_budget_exceeded` | current: u64, limit: u64 |
 | `TeamKeyLimitExceeded { current, limit }` | 403 | `team_key_limit_exceeded` | current: u32, limit: u32 |
 | `RateLimited { retry_after }` | 429 | `rate_limit_exceeded` | retry_after: u64 |

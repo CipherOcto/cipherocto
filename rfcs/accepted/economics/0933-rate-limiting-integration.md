@@ -1,6 +1,6 @@
 # RFC-0933: Rate Limiting Integration
 
-## Status: Draft
+## Status: Accepted
 
 ## Summary
 
@@ -16,9 +16,12 @@ quota-router has a TokenBucket rate limiter with capacity and refill_rate_per_mi
 
 ```rust
 // proxy.rs - integrate rate limiting
-// Refactor existing check_rate_limits() into two methods:
-// - check_rpm_limit(&ApiKey) -> Result<(), KeyError>  (pre-request, consumes 1 RPM token)
-// - check_tpm_limit(&ApiKey, tokens: u32) -> Result<(), KeyError>  (post-request, consumes TPM tokens)
+// REFACTORING REQUIRED: The existing RateLimiterStore::check_rate_limit() consumes
+// both RPM (1 token) and TPM (N tokens) in a single call. Splitting into separate
+// RPM and TPM methods requires modifying RateLimiterStore internals:
+// - Add check_rpm_only(&ApiKey) -> Result<(), KeyError>  (consumes 1 RPM token only)
+// - Add check_tpm_only(&ApiKey, tokens: u32) -> Result<(), KeyError>  (consumes TPM tokens only)
+// - Keep existing check_rate_limit() for backward compatibility
 // Note: tokens is u32 (not u64) to match existing RateLimiterStore API
 
 // Integration:
@@ -52,12 +55,23 @@ Rate limits apply at multiple scopes:
 
 Priority: per-key > per-user > per-team > global
 
-**Current implementation:** Only per-key rate limiting exists in `RateLimiterStore`. Per-user, per-team, and global scopes require aggregation logic that is not yet specified. These are deferred to a future iteration.
+**Current implementation:** Only per-key rate limiting exists in `RateLimiterStore`. Per-user, per-team, and global scopes require aggregation logic that is not yet specified. These are deferred to a future RFC.
 
 ### 4. Persistence
 
+**Refactored TokenBucket** (replaces existing `Instant`-based implementation):
+```rust
+pub struct TokenBucket {
+    capacity: u64,
+    tokens: u64,
+    refill_rate_per_minute: u64,
+    last_refill: i64,  // Unix timestamp (seconds), replaces std::time::Instant
+    last_access: i64,  // Unix timestamp (seconds)
+}
+```
+
 Rate limit state stored in stoolap:
-- In-memory TokenBucket for fast path (existing `RateLimiterStore`)
+- In-memory TokenBucket for fast path (refactored to use i64 timestamps)
 - Periodic flush to stoolap every 60 seconds (configurable via `flush_interval_seconds`)
 - On graceful shutdown, flush immediately
 - On restart, reload from stoolap to restore bucket state
@@ -74,6 +88,8 @@ CREATE TABLE rate_limit_state (
 ```
 
 **Reload logic:** On startup, read all rows. For each bucket, calculate elapsed time since `last_refill_ts` and advance refill accordingly. Use `std::time::SystemTime` for wall-clock timestamps (not `Instant`, which is process-relative and not serializable).
+
+**Clock drift handling:** On reload, if `last_refill_ts` is in the future (clock drift from NTP adjustment), clamp it to `now` and log a warning. This prevents inflated token grants from clock adjustments.
 
 ### 5. Error Response
 
@@ -95,10 +111,10 @@ HTTP 429 with `Retry-After` header.
 ```yaml
 rate_limiting:
   enabled: true
-  storage: stoolap  # or redis
-  cleanup_interval_seconds: 60
-  default_rpm: 1000
-  default_tpm: 100000
+  storage: stoolap  # per RFC-0914, stoolap-only
+  flush_interval_seconds: 60
+  default_rpm: 100  # matches existing unwrap_or(100) in key_rate_limiter.rs
+  default_tpm: 1000  # matches existing unwrap_or(1000) in key_rate_limiter.rs
 ```
 
 ## Dependencies

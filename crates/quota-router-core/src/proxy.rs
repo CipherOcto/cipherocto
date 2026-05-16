@@ -17,6 +17,7 @@
 use crate::balance::Balance;
 use crate::config::DispatchInfo;
 use crate::keys::compute_key_hash;
+use crate::metrics::Metrics;
 use crate::providers::Provider;
 use crate::storage::KeyStorage;
 use bytes::Bytes;
@@ -98,6 +99,12 @@ impl SseBody {
         Self { receiver }
     }
 
+    fn from_string(body: String) -> Self {
+        let (tx, rx) = tokio::sync::mpsc::channel(1);
+        let _ = tx.try_send(Ok(Bytes::from(body)));
+        Self { receiver: rx }
+    }
+
     fn from_error(message: String) -> Self {
         let (tx, rx) = tokio::sync::mpsc::channel(1);
         let _ = tx.try_send(Ok(Bytes::from(format!("data: Error: {}\n\n", message))));
@@ -133,6 +140,7 @@ pub struct ProxyServer {
     dispatch_map: Arc<HashMap<String, DispatchInfo>>,
     storage: Option<Arc<dyn KeyStorage>>,
     master_key: Option<String>,
+    metrics: Option<Arc<Metrics>>,
 }
 
 impl ProxyServer {
@@ -149,6 +157,7 @@ impl ProxyServer {
             dispatch_map: Arc::new(dispatch_map),
             storage: None,
             master_key: None,
+            metrics: None,
         }
     }
 
@@ -164,6 +173,12 @@ impl ProxyServer {
         self
     }
 
+    /// Set Prometheus metrics (RFC-0937)
+    pub fn with_metrics(mut self, metrics: Arc<Metrics>) -> Self {
+        self.metrics = Some(metrics);
+        self
+    }
+
     pub async fn run(&mut self) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         let addr = SocketAddr::from(([127, 0, 0, 1], self.port));
         let listener = TcpListener::bind(addr).await?;
@@ -175,6 +190,7 @@ impl ProxyServer {
         let dispatch_map = Arc::clone(&self.dispatch_map);
         let storage = self.storage.clone();
         let master_key = self.master_key.clone();
+        let metrics = self.metrics.clone();
 
         // Initialize providers based on mode
         #[cfg(any(feature = "litellm-mode", feature = "full"))]
@@ -191,6 +207,7 @@ impl ProxyServer {
                 let dispatch_map = Arc::clone(&dispatch_map);
                 let storage = storage.clone();
                 let master_key = master_key.clone();
+                let metrics = metrics.clone();
 
                 tokio::spawn(async move {
                     let io = TokioIo::new(stream);
@@ -209,6 +226,7 @@ impl ProxyServer {
                                     dispatch_map,
                                     storage.clone(),
                                     master_key.clone(),
+                                    metrics.clone(),
                                 )
                             }),
                         )
@@ -326,12 +344,33 @@ async fn handle_request<B>(
     dispatch_map: Arc<HashMap<String, DispatchInfo>>,
     storage: Option<Arc<dyn KeyStorage>>,
     master_key: Option<String>,
+    metrics: Option<Arc<Metrics>>,
 ) -> Result<Response<SseBody>, Infallible>
 where
     B: http_body::Body + 'static,
     B::Data: Send,
     B::Error: Send + std::fmt::Debug,
 {
+    let start = std::time::Instant::now();
+
+    // /metrics endpoint (RFC-0937) — bypass auth and proxy
+    if req.uri().path() == "/metrics" {
+        if let Some(ref m) = metrics {
+            let body = m.encode();
+            let resp = Response::builder()
+                .status(StatusCode::OK)
+                .header("content-type", "text/plain; version=0.0.4; charset=utf-8")
+                .body(SseBody::from_string(body))
+                .unwrap();
+            return Ok(resp);
+        }
+    }
+
+    // Record request
+    if let Some(ref m) = metrics {
+        m.requests_total.inc();
+    }
+
     // Gateway auth (RFC-0932)
     if let Some(ref storage) = storage {
         // Extract client key from request headers
@@ -451,15 +490,25 @@ where
     let dispatch_api_base = dispatch.and_then(|d| d.api_base.clone());
     let _dispatch_max_retries = dispatch.and_then(|d| d.max_retries);
 
-    #[cfg(any(feature = "litellm-mode", feature = "full"))]
-    {
-        handle_request_litellm(&body_str, &provider, &api_key, dispatch_api_base.as_deref()).await
+    let result = {
+        #[cfg(any(feature = "litellm-mode", feature = "full"))]
+        {
+            handle_request_litellm(&body_str, &provider, &api_key, dispatch_api_base.as_deref())
+                .await
+        }
+
+        #[cfg(not(any(feature = "litellm-mode", feature = "full")))]
+        {
+            handle_request_anyllm(&body_str, &provider, &api_key).await
+        }
+    };
+
+    // Record request duration
+    if let Some(ref m) = metrics {
+        m.request_duration.observe(start.elapsed().as_secs_f64());
     }
 
-    #[cfg(not(any(feature = "litellm-mode", feature = "full")))]
-    {
-        handle_request_anyllm(&body_str, &provider, &api_key).await
-    }
+    result
 }
 
 #[cfg(any(feature = "litellm-mode", feature = "full"))]

@@ -22,6 +22,7 @@ pub mod config;
 pub mod fallback;
 pub mod key_rate_limiter;
 pub mod keys;
+pub mod metrics;
 pub mod middleware;
 pub mod pricing;
 pub mod providers;

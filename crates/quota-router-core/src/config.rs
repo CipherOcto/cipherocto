@@ -405,6 +405,14 @@ pub struct AnyLlmProviderConfig {
     pub api_base: Option<String>,
 }
 
+fn default_bypass_paths() -> Vec<String> {
+    vec![
+        "/health".to_string(),
+        "/ready".to_string(),
+        "/metrics".to_string(),
+    ]
+}
+
 /// Top-level gateway configuration
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct GatewayConfig {
@@ -425,6 +433,9 @@ pub struct GatewayConfig {
     /// Enable Prometheus metrics endpoint
     #[serde(default)]
     pub enable_metrics: bool,
+    /// Paths that bypass gateway auth (RFC-0937)
+    #[serde(default = "default_bypass_paths")]
+    pub bypass_paths: Vec<String>,
     /// Bootstrap initial API key on startup
     #[serde(default)]
     pub bootstrap_api_key: bool,
@@ -721,6 +732,7 @@ mod tests {
             cors_allow_origins: None,
             pricing: None,
             enable_metrics: false,
+            bypass_paths: default_bypass_paths(),
             bootstrap_api_key: false,
             auto_migrate: false,
             deployments: deployments.clone(),
@@ -776,6 +788,7 @@ mod tests {
             cors_allow_origins: None,
             pricing: None,
             enable_metrics: false,
+            bypass_paths: default_bypass_paths(),
             bootstrap_api_key: false,
             auto_migrate: false,
             deployments: vec![],
@@ -833,6 +846,7 @@ mod tests {
             cors_allow_origins: None,
             pricing: None,
             enable_metrics: false,
+            bypass_paths: default_bypass_paths(),
             bootstrap_api_key: false,
             auto_migrate: false,
             deployments,
@@ -890,6 +904,7 @@ mod tests {
             cors_allow_origins: None,
             pricing: None,
             enable_metrics: false,
+            bypass_paths: default_bypass_paths(),
             bootstrap_api_key: false,
             auto_migrate: false,
             deployments,
@@ -955,6 +970,7 @@ mod tests {
             cors_allow_origins: None,
             pricing: None,
             enable_metrics: false,
+            bypass_paths: default_bypass_paths(),
             bootstrap_api_key: false,
             auto_migrate: false,
             deployments,

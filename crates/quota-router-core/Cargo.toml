@@ -47,6 +47,9 @@ stoolap = { git = "https://github.com/CipherOcto/stoolap", branch = "feat/blockc
 # For HMAC-SHA256 key hashing
 hmac-sha256 = "1.1"
 
+# For HMAC (AWS SigV4 signing)
+hmac = "0.12"
+
 # For SHA256 (used in event_id computation)
 sha2.workspace = true
 
@@ -64,6 +67,9 @@ prometheus = "0.13"
 
 # For percent decoding (path normalization security)
 percent-encoding = "2.1"
+
+# For URL encoding (Vault KV v2 path encoding, RFC-0935)
+urlencoding = "2.1"
 
 # For async streaming (futures::StreamExt)
 futures-core = "0.3"

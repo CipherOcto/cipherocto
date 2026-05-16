@@ -326,6 +326,14 @@ pub struct RouterSettings {
     /// Rate limit enforcement mode (RFC-0929)
     #[serde(default)]
     pub rate_limit_mode: RateLimitMode,
+    /// How often in-memory rate limit counters are flushed to stoolap (seconds).
+    /// Default: 60. Per RFC-0933 §Persistence.
+    #[serde(default = "default_flush_interval")]
+    pub flush_interval_seconds: u64,
+}
+
+fn default_flush_interval() -> u64 {
+    60
 }
 
 impl Default for RouterSettings {
@@ -341,6 +349,7 @@ impl Default for RouterSettings {
             redis_password: None,
             stream_timeout_secs: None,
             rate_limit_mode: RateLimitMode::Soft,
+            flush_interval_seconds: 60,
         }
     }
 }
@@ -405,6 +414,66 @@ pub struct AnyLlmProviderConfig {
     pub api_base: Option<String>,
 }
 
+// ============================================================================
+// RFC-0935 Types (Secret Manager Configuration)
+// ============================================================================
+
+/// Vault KV v2 backend configuration (RFC-0935)
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct VaultConfig {
+    /// Vault server URL (e.g., "https://vault.example.com")
+    pub url: String,
+    /// KV v2 mount path (default: "secret")
+    #[serde(default = "default_vault_mount")]
+    pub mount: String,
+}
+
+fn default_vault_mount() -> String {
+    "secret".to_string()
+}
+
+/// AWS Secrets Manager backend configuration (RFC-0935)
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AwsSecretManagerConfig {
+    /// AWS region (e.g., "us-east-1")
+    pub region: String,
+}
+
+/// Cache configuration for secret manager (RFC-0935)
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SecretCacheConfig {
+    /// Enable caching
+    #[serde(default = "default_true")]
+    pub enabled: bool,
+    /// Cache TTL in seconds (default: 300 = 5 minutes)
+    #[serde(default = "default_secret_cache_ttl")]
+    pub ttl_seconds: u64,
+    /// Maximum cache entries (default: 1000)
+    #[serde(default = "default_secret_cache_max_entries")]
+    pub max_entries: usize,
+}
+
+fn default_secret_cache_ttl() -> u64 {
+    300
+}
+
+fn default_secret_cache_max_entries() -> usize {
+    1000
+}
+
+/// Secret manager configuration (RFC-0935)
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SecretManagerConfig {
+    /// Backend type: "env", "vault", "aws", "oidc"
+    pub r#type: String,
+    /// Vault backend configuration (required when type = "vault")
+    pub vault: Option<VaultConfig>,
+    /// AWS backend configuration (required when type = "aws")
+    pub aws: Option<AwsSecretManagerConfig>,
+    /// Cache configuration
+    pub cache: Option<SecretCacheConfig>,
+}
+
 fn default_bypass_paths() -> Vec<String> {
     vec![
         "/health".to_string(),
@@ -454,6 +523,8 @@ pub struct GatewayConfig {
     pub litellm_settings: Option<LiteLLMSettings>,
     /// Provider configurations (any-llm compatibility)
     pub providers: Option<HashMap<String, AnyLlmProviderConfig>>,
+    /// Secret manager configuration (RFC-0935)
+    pub secret_manager: Option<SecretManagerConfig>,
 }
 
 impl GatewayConfig {
@@ -740,6 +811,7 @@ mod tests {
             router_settings: None,
             litellm_settings: None,
             providers: None,
+            secret_manager: None,
         };
         let result = config.get_deployments();
         assert_eq!(result.len(), 1);
@@ -796,6 +868,7 @@ mod tests {
             router_settings: None,
             litellm_settings: None,
             providers: None,
+            secret_manager: None,
         };
         let result = config.get_deployments();
         assert_eq!(result.len(), 1);
@@ -854,6 +927,7 @@ mod tests {
             router_settings: None,
             litellm_settings: None,
             providers: None,
+            secret_manager: None,
         };
         let map = to_provider_map(&config).unwrap();
         assert!(map.contains_key("openai-gpt4o"));
@@ -912,6 +986,7 @@ mod tests {
             router_settings: None,
             litellm_settings: None,
             providers: None,
+            secret_manager: None,
         };
         let map = to_provider_map(&config).unwrap();
         assert!(map.contains_key("openai_gpt-4o"));
@@ -960,6 +1035,7 @@ mod tests {
             redis_password: None,
             stream_timeout_secs: None,
             rate_limit_mode: RateLimitMode::Soft,
+            flush_interval_seconds: 60,
         };
         let config = GatewayConfig {
             database_url: None,
@@ -978,6 +1054,7 @@ mod tests {
             router_settings: Some(router_settings),
             litellm_settings: None,
             providers: None,
+            secret_manager: None,
         };
         let map = to_provider_map(&config).unwrap();
         let info = map.get("openai_gpt-4o").unwrap();

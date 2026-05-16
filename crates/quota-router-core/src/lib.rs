@@ -30,6 +30,7 @@ pub mod proxy;
 pub mod rate_limit;
 pub mod router;
 pub mod schema;
+pub mod secret_manager;
 pub mod storage;
 
 // native_http — reqwest → provider REST APIs (INTERNAL boundary #1 per RFC-0917)

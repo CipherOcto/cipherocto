@@ -73,6 +73,16 @@ impl TokenBucket {
         self.last_refill = now;
     }
 
+    /// Get the remaining tokens in the bucket (approximate, before refill).
+    pub fn remaining(&self) -> u64 {
+        self.tokens
+    }
+
+    /// Get the bucket capacity.
+    pub fn capacity(&self) -> u64 {
+        self.capacity
+    }
+
     /// Calculate seconds until next token available.
     pub fn retry_after(&self) -> u64 {
         if self.tokens >= 1 {
@@ -93,6 +103,20 @@ impl TokenBucket {
     pub fn is_stale(&self, max_idle_ms: u64) -> bool {
         self.last_access.elapsed().as_millis() as u64 > max_idle_ms
     }
+}
+
+/// Rate limit status returned by check_rpm_only/check_tpm_only.
+///
+/// Contains the limit, remaining tokens, and approximate reset timestamp
+/// for building rate limit response headers.
+#[derive(Debug, Clone)]
+pub struct RateLimitStatus {
+    /// The configured limit (RPM or TPM)
+    pub limit: u64,
+    /// Remaining tokens/requests in the current window
+    pub remaining: u64,
+    /// Approximate Unix timestamp (seconds) when the bucket resets
+    pub reset: u64,
 }
 
 /// Rate limiter store using DashMap for concurrent access.
@@ -132,6 +156,96 @@ impl RateLimiterStore {
         }
 
         // Check TPM (consume tokens for this request)
+        let tpm_bucket = &mut entry.value_mut().1;
+        if !tpm_bucket.try_consume(tokens) {
+            return Err(KeyError::RateLimited {
+                retry_after: tpm_bucket.retry_after(),
+            });
+        }
+
+        Ok(())
+    }
+
+    /// Check and consume RPM tokens only (1 token per request).
+    ///
+    /// Returns `Ok(RateLimitStatus)` with remaining RPM and reset time on success.
+    /// Returns `Err(KeyError::RateLimited)` if RPM limit exceeded.
+    ///
+    /// This method checks ONLY the RPM bucket. It does NOT touch the TPM bucket.
+    /// Used in the pre-request path to enforce request rate limits independently
+    /// from token-based limits. Per RFC-0933, splitting RPM and TPM into separate
+    /// methods avoids the double-counting issue of calling check_rate_limit twice
+    /// (which would consume 2 RPM tokens instead of 1).
+    pub fn check_rpm_only(
+        &self,
+        key_id: &str,
+        rpm_limit: u32,
+    ) -> Result<RateLimitStatus, KeyError> {
+        let mut entry = self.buckets.entry(key_id.to_string()).or_insert_with(|| {
+            (
+                TokenBucket::new(rpm_limit, 0),
+                TokenBucket::new(0, 0), // TPM placeholder, initialized on first TPM check
+            )
+        });
+
+        // If RPM bucket was created as a placeholder (capacity 0) by a prior TPM-only check,
+        // replace it with the correct capacity bucket.
+        if entry.value().0.capacity() == 0 && rpm_limit > 0 {
+            entry.value_mut().0 = TokenBucket::new(rpm_limit, 0);
+        }
+
+        let rpm_bucket = &mut entry.value_mut().0;
+        let remaining_before = rpm_bucket.remaining();
+        let limit = rpm_bucket.capacity();
+
+        if !rpm_bucket.try_consume(1) {
+            return Err(KeyError::RateLimited {
+                retry_after: rpm_bucket.retry_after(),
+            });
+        }
+
+        let remaining = remaining_before.saturating_sub(1);
+        let reset = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_secs()
+            + rpm_bucket.retry_after().max(1);
+
+        Ok(RateLimitStatus {
+            limit,
+            remaining,
+            reset,
+        })
+    }
+
+    /// Check and consume TPM tokens only.
+    ///
+    /// Returns `Ok(())` on success.
+    /// Returns `Err(KeyError::RateLimited)` if TPM limit exceeded.
+    ///
+    /// This method checks ONLY the TPM bucket. It does NOT touch the RPM bucket.
+    /// Used in the post-request path to enforce token-based rate limits.
+    /// Per RFC-0933, splitting RPM and TPM into separate methods avoids the
+    /// double-counting issue.
+    pub fn check_tpm_only(
+        &self,
+        key_id: &str,
+        tokens: u32,
+        tpm_limit: u32,
+    ) -> Result<(), KeyError> {
+        let mut entry = self.buckets.entry(key_id.to_string()).or_insert_with(|| {
+            (
+                TokenBucket::new(0, 0), // RPM placeholder, initialized on first RPM check
+                TokenBucket::new(tpm_limit, 0),
+            )
+        });
+
+        // If TPM bucket was created as a placeholder (capacity 0) by a prior RPM-only check,
+        // replace it with the correct capacity bucket.
+        if entry.value().1.capacity() == 0 && tpm_limit > 0 {
+            entry.value_mut().1 = TokenBucket::new(tpm_limit, 0);
+        }
+
         let tpm_bucket = &mut entry.value_mut().1;
         if !tpm_bucket.try_consume(tokens) {
             return Err(KeyError::RateLimited {
@@ -314,5 +428,96 @@ mod tests {
 
         // Should be able to use again
         assert!(store.check_rate_limit(&key, 0).is_ok());
+    }
+
+    #[test]
+    fn test_check_rpm_only_within_limit() {
+        let store = RateLimiterStore::new();
+
+        // Should allow up to RPM limit
+        for _ in 0..5 {
+            let status = store.check_rpm_only("rpm-test-key", 5).unwrap();
+            assert!(status.remaining < 5);
+            assert_eq!(status.limit, 5);
+        }
+
+        // 6th should fail
+        let result = store.check_rpm_only("rpm-test-key", 5);
+        assert!(result.is_err());
+        assert!(matches!(result.unwrap_err(), KeyError::RateLimited { .. }));
+    }
+
+    #[test]
+    fn test_check_rpm_only_independent_keys() {
+        let store = RateLimiterStore::new();
+
+        // Consume all RPM for key-1
+        for _ in 0..3 {
+            store.check_rpm_only("key-1", 3).unwrap();
+        }
+        assert!(store.check_rpm_only("key-1", 3).is_err());
+
+        // key-2 should still be available
+        assert!(store.check_rpm_only("key-2", 3).is_ok());
+    }
+
+    #[test]
+    fn test_check_tpm_only_within_limit() {
+        let store = RateLimiterStore::new();
+
+        // Should allow up to TPM limit (100 tokens per request, 500 limit)
+        for _ in 0..5 {
+            store.check_tpm_only("tpm-test-key", 100, 500).unwrap();
+        }
+
+        // 6th should fail (600 tokens > 500 limit)
+        let result = store.check_tpm_only("tpm-test-key", 100, 500);
+        assert!(result.is_err());
+        assert!(matches!(result.unwrap_err(), KeyError::RateLimited { .. }));
+    }
+
+    #[test]
+    fn test_check_rpm_only_does_not_affect_tpm() {
+        let store = RateLimiterStore::new();
+
+        // Consume RPM tokens
+        for _ in 0..5 {
+            store.check_rpm_only("mixed-key", 5).unwrap();
+        }
+
+        // TPM should still work (independent bucket)
+        assert!(store.check_tpm_only("mixed-key", 100, 500).is_ok());
+    }
+
+    #[test]
+    fn test_check_tpm_only_does_not_affect_rpm() {
+        let store = RateLimiterStore::new();
+
+        // Consume TPM tokens
+        store.check_tpm_only("mixed-key", 100, 500).unwrap();
+
+        // RPM should still work (independent bucket)
+        assert!(store.check_rpm_only("mixed-key", 5).is_ok());
+    }
+
+    #[test]
+    fn test_check_rpm_only_status_fields() {
+        let store = RateLimiterStore::new();
+
+        let status = store.check_rpm_only("status-key", 10).unwrap();
+        assert_eq!(status.limit, 10);
+        assert_eq!(status.remaining, 9); // consumed 1 of 10
+        assert!(status.reset > 0);
+    }
+
+    #[test]
+    fn test_token_bucket_remaining_and_capacity() {
+        let mut bucket = TokenBucket::new(10, 60);
+        assert_eq!(bucket.remaining(), 10);
+        assert_eq!(bucket.capacity(), 10);
+
+        bucket.try_consume(3);
+        assert_eq!(bucket.remaining(), 7);
+        assert_eq!(bucket.capacity(), 10); // capacity unchanged
     }
 }

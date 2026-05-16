@@ -72,6 +72,56 @@ pub trait KeyStorage: Send + Sync {
         &self,
         api_key_hash: &[u8],
     ) -> Result<Option<ProviderKeyInfo>, KeyError>;
+
+    // Budget operations (RFC-0934)
+    fn upsert_budget(
+        &self,
+        entity_id: &str,
+        entity_type: &str,
+        budget_limit: i64,
+        period: &str,
+        soft_limit_pct: Option<i64>,
+        alert_webhook: Option<&str>,
+    ) -> Result<(), KeyError> {
+        let _ = (
+            entity_id,
+            entity_type,
+            budget_limit,
+            period,
+            soft_limit_pct,
+            alert_webhook,
+        );
+        Ok(())
+    }
+
+    fn get_budget(
+        &self,
+        entity_id: &str,
+        entity_type: &str,
+    ) -> Result<Option<BudgetRow>, KeyError> {
+        let _ = (entity_id, entity_type);
+        Ok(None)
+    }
+
+    fn update_spend(
+        &self,
+        entity_id: &str,
+        entity_type: &str,
+        amount: i64,
+    ) -> Result<(), KeyError> {
+        let _ = (entity_id, entity_type, amount);
+        Ok(())
+    }
+
+    fn reset_budget(
+        &self,
+        entity_id: &str,
+        entity_type: &str,
+        new_period_start: i64,
+    ) -> Result<(), KeyError> {
+        let _ = (entity_id, entity_type, new_period_start);
+        Ok(())
+    }
 }
 
 /// Provider API key info for python_sdk_entry
@@ -82,6 +132,20 @@ pub struct ProviderKeyInfo {
     pub label: Option<String>,
     pub created_at: i64,
     pub is_active: bool,
+}
+
+/// Budget row from the budgets table (RFC-0934)
+#[derive(Debug, Clone)]
+pub struct BudgetRow {
+    pub entity_id: String,
+    pub entity_type: String,
+    pub budget_limit: i64,
+    pub period: String,
+    pub current_spend: i64,
+    pub soft_limit_pct: Option<i64>,
+    pub alert_webhook: Option<String>,
+    pub last_reset: i64,
+    pub created_at: i64,
 }
 
 pub struct StoolapKeyStorage {
@@ -1142,6 +1206,163 @@ impl KeyStorage for StoolapKeyStorage {
             None => Ok(None),
         }
     }
+
+    fn upsert_budget(
+        &self,
+        entity_id: &str,
+        entity_type: &str,
+        budget_limit: i64,
+        period: &str,
+        soft_limit_pct: Option<i64>,
+        alert_webhook: Option<&str>,
+    ) -> Result<(), KeyError> {
+        let existing = self.get_budget(entity_id, entity_type)?;
+
+        if existing.is_some() {
+            let soft_limit_value = match soft_limit_pct {
+                Some(v) => v.into(),
+                None => stoolap::Value::Null(stoolap::DataType::Null),
+            };
+            let webhook_value = match alert_webhook {
+                Some(s) => s.to_string().into(),
+                None => stoolap::Value::Null(stoolap::DataType::Null),
+            };
+
+            self.db.execute(
+                "UPDATE budgets SET budget_limit = $1, period = $2, soft_limit_pct = $3, alert_webhook = $4 WHERE entity_id = $5 AND entity_type = $6",
+                vec![
+                    budget_limit.into(),
+                    period.into(),
+                    soft_limit_value,
+                    webhook_value,
+                    entity_id.into(),
+                    entity_type.into(),
+                ],
+            ).map_err(|e| KeyError::Storage(e.to_string()))?;
+        } else {
+            let now = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_secs() as i64;
+
+            let soft_limit_value = match soft_limit_pct {
+                Some(v) => v.into(),
+                None => stoolap::Value::Null(stoolap::DataType::Null),
+            };
+            let webhook_value = match alert_webhook {
+                Some(s) => s.to_string().into(),
+                None => stoolap::Value::Null(stoolap::DataType::Null),
+            };
+
+            self.db.execute(
+                "INSERT INTO budgets (entity_id, entity_type, budget_limit, period, current_spend, soft_limit_pct, alert_webhook, last_reset, created_at) VALUES ($1, $2, $3, $4, 0, $5, $6, $7, $8)",
+                vec![
+                    entity_id.into(),
+                    entity_type.into(),
+                    budget_limit.into(),
+                    period.into(),
+                    soft_limit_value,
+                    webhook_value,
+                    now.into(),
+                    now.into(),
+                ],
+            ).map_err(|e| KeyError::Storage(e.to_string()))?;
+        }
+
+        Ok(())
+    }
+
+    fn get_budget(
+        &self,
+        entity_id: &str,
+        entity_type: &str,
+    ) -> Result<Option<BudgetRow>, KeyError> {
+        let mut rows = self
+            .db
+            .query(
+                "SELECT * FROM budgets WHERE entity_id = $1 AND entity_type = $2",
+                vec![entity_id.into(), entity_type.into()],
+            )
+            .map_err(|e| KeyError::Storage(e.to_string()))?;
+
+        match rows.next() {
+            Some(row_result) => {
+                let row = row_result.map_err(|e| KeyError::Storage(e.to_string()))?;
+                Ok(Some(BudgetRow {
+                    entity_id: row
+                        .get_by_name("entity_id")
+                        .map_err(|e| KeyError::Storage(e.to_string()))?,
+                    entity_type: row
+                        .get_by_name("entity_type")
+                        .map_err(|e| KeyError::Storage(e.to_string()))?,
+                    budget_limit: row
+                        .get_by_name("budget_limit")
+                        .map_err(|e| KeyError::Storage(e.to_string()))?,
+                    period: row
+                        .get_by_name("period")
+                        .map_err(|e| KeyError::Storage(e.to_string()))?,
+                    current_spend: row
+                        .get_by_name("current_spend")
+                        .map_err(|e| KeyError::Storage(e.to_string()))?,
+                    soft_limit_pct: row
+                        .get_by_name("soft_limit_pct")
+                        .map_err(|e| KeyError::Storage(e.to_string()))?,
+                    alert_webhook: row
+                        .get_by_name("alert_webhook")
+                        .map_err(|e| KeyError::Storage(e.to_string()))?,
+                    last_reset: row
+                        .get_by_name("last_reset")
+                        .map_err(|e| KeyError::Storage(e.to_string()))?,
+                    created_at: row
+                        .get_by_name("created_at")
+                        .map_err(|e| KeyError::Storage(e.to_string()))?,
+                }))
+            }
+            None => Ok(None),
+        }
+    }
+
+    fn update_spend(
+        &self,
+        entity_id: &str,
+        entity_type: &str,
+        amount: i64,
+    ) -> Result<(), KeyError> {
+        let rows_affected = self
+            .db
+            .execute(
+                "UPDATE budgets SET current_spend = current_spend + $1 WHERE entity_id = $2 AND entity_type = $3",
+                vec![amount.into(), entity_id.into(), entity_type.into()],
+            )
+            .map_err(|e| KeyError::Storage(e.to_string()))?;
+
+        if rows_affected == 0 {
+            return Err(KeyError::NotFound);
+        }
+
+        Ok(())
+    }
+
+    fn reset_budget(
+        &self,
+        entity_id: &str,
+        entity_type: &str,
+        new_period_start: i64,
+    ) -> Result<(), KeyError> {
+        let rows_affected = self
+            .db
+            .execute(
+                "UPDATE budgets SET current_spend = 0, last_reset = $1 WHERE entity_id = $2 AND entity_type = $3",
+                vec![new_period_start.into(), entity_id.into(), entity_type.into()],
+            )
+            .map_err(|e| KeyError::Storage(e.to_string()))?;
+
+        if rows_affected == 0 {
+            return Err(KeyError::NotFound);
+        }
+
+        Ok(())
+    }
 }
 
 /// Global storage singleton for python_sdk_entry
@@ -1634,5 +1855,97 @@ mod tests {
             tx.commit().unwrap();
             panic!("No rows returned for AVG");
         }
+    }
+
+    #[test]
+    fn test_upsert_budget_create() {
+        let storage = create_test_storage();
+        storage
+            .upsert_budget("key-1", "key", 100000, "monthly", Some(80), None)
+            .unwrap();
+        let budget = storage.get_budget("key-1", "key").unwrap().unwrap();
+        assert_eq!(budget.entity_id, "key-1");
+        assert_eq!(budget.entity_type, "key");
+        assert_eq!(budget.budget_limit, 100000);
+        assert_eq!(budget.period, "monthly");
+        assert_eq!(budget.soft_limit_pct, Some(80));
+        assert_eq!(budget.alert_webhook, None);
+        assert_eq!(budget.current_spend, 0);
+    }
+
+    #[test]
+    fn test_upsert_budget_update() {
+        let storage = create_test_storage();
+        storage
+            .upsert_budget("key-1", "key", 100000, "monthly", Some(80), None)
+            .unwrap();
+        storage
+            .upsert_budget(
+                "key-1",
+                "key",
+                200000,
+                "weekly",
+                Some(90),
+                Some("https://hook.example.com"),
+            )
+            .unwrap();
+        let budget = storage.get_budget("key-1", "key").unwrap().unwrap();
+        assert_eq!(budget.budget_limit, 200000);
+        assert_eq!(budget.period, "weekly");
+        assert_eq!(budget.soft_limit_pct, Some(90));
+        assert_eq!(
+            budget.alert_webhook,
+            Some("https://hook.example.com".to_string())
+        );
+        // current_spend should be preserved on update
+        assert_eq!(budget.current_spend, 0);
+    }
+
+    #[test]
+    fn test_get_budget_not_found() {
+        let storage = create_test_storage();
+        let result = storage.get_budget("nonexistent", "key").unwrap();
+        assert!(result.is_none());
+    }
+
+    #[test]
+    fn test_update_spend() {
+        let storage = create_test_storage();
+        storage
+            .upsert_budget("key-1", "key", 100000, "monthly", Some(80), None)
+            .unwrap();
+        storage.update_spend("key-1", "key", 5000).unwrap();
+        let budget = storage.get_budget("key-1", "key").unwrap().unwrap();
+        assert_eq!(budget.current_spend, 5000);
+        storage.update_spend("key-1", "key", 3000).unwrap();
+        let budget = storage.get_budget("key-1", "key").unwrap().unwrap();
+        assert_eq!(budget.current_spend, 8000);
+    }
+
+    #[test]
+    fn test_update_spend_not_found() {
+        let storage = create_test_storage();
+        let result = storage.update_spend("nonexistent", "key", 1000);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_reset_budget() {
+        let storage = create_test_storage();
+        storage
+            .upsert_budget("key-1", "key", 100000, "monthly", Some(80), None)
+            .unwrap();
+        storage.update_spend("key-1", "key", 5000).unwrap();
+        storage.reset_budget("key-1", "key", 1000000).unwrap();
+        let budget = storage.get_budget("key-1", "key").unwrap().unwrap();
+        assert_eq!(budget.current_spend, 0);
+        assert_eq!(budget.last_reset, 1000000);
+    }
+
+    #[test]
+    fn test_reset_budget_not_found() {
+        let storage = create_test_storage();
+        let result = storage.reset_budget("nonexistent", "key", 1000000);
+        assert!(result.is_err());
     }
 }

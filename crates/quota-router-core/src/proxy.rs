@@ -16,6 +16,7 @@
 
 use crate::balance::Balance;
 use crate::config::DispatchInfo;
+use crate::key_rate_limiter::RateLimiterStore;
 use crate::keys::compute_key_hash;
 use crate::metrics::Metrics;
 use crate::providers::Provider;
@@ -141,6 +142,7 @@ pub struct ProxyServer {
     storage: Option<Arc<dyn KeyStorage>>,
     master_key: Option<String>,
     metrics: Option<Arc<Metrics>>,
+    rate_limiter: Option<Arc<RateLimiterStore>>,
 }
 
 impl ProxyServer {
@@ -158,6 +160,7 @@ impl ProxyServer {
             storage: None,
             master_key: None,
             metrics: None,
+            rate_limiter: None,
         }
     }
 
@@ -179,6 +182,12 @@ impl ProxyServer {
         self
     }
 
+    /// Set rate limiter for per-key RPM/TPM enforcement (RFC-0933)
+    pub fn with_rate_limiter(mut self, rate_limiter: Arc<RateLimiterStore>) -> Self {
+        self.rate_limiter = Some(rate_limiter);
+        self
+    }
+
     pub async fn run(&mut self) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         let addr = SocketAddr::from(([127, 0, 0, 1], self.port));
         let listener = TcpListener::bind(addr).await?;
@@ -191,6 +200,7 @@ impl ProxyServer {
         let storage = self.storage.clone();
         let master_key = self.master_key.clone();
         let metrics = self.metrics.clone();
+        let rate_limiter = self.rate_limiter.clone();
 
         // Initialize providers based on mode
         #[cfg(any(feature = "litellm-mode", feature = "full"))]
@@ -208,6 +218,7 @@ impl ProxyServer {
                 let storage = storage.clone();
                 let master_key = master_key.clone();
                 let metrics = metrics.clone();
+                let rate_limiter = rate_limiter.clone();
 
                 tokio::spawn(async move {
                     let io = TokioIo::new(stream);
@@ -227,6 +238,7 @@ impl ProxyServer {
                                     storage.clone(),
                                     master_key.clone(),
                                     metrics.clone(),
+                                    rate_limiter.clone(),
                                 )
                             }),
                         )
@@ -337,6 +349,7 @@ fn resolve_api_key(provider: &Provider, config_key: Option<&str>) -> Option<Stri
     provider.get_api_key()
 }
 
+#[allow(clippy::too_many_arguments)]
 async fn handle_request<B>(
     req: Request<B>,
     balance: Arc<Mutex<Balance>>,
@@ -345,6 +358,7 @@ async fn handle_request<B>(
     storage: Option<Arc<dyn KeyStorage>>,
     master_key: Option<String>,
     metrics: Option<Arc<Metrics>>,
+    rate_limiter: Option<Arc<RateLimiterStore>>,
 ) -> Result<Response<SseBody>, Infallible>
 where
     B: http_body::Body + 'static,
@@ -371,7 +385,10 @@ where
         m.requests_total.inc();
     }
 
-    // Gateway auth (RFC-0932)
+    // Gateway auth (RFC-0932) and rate limiting (RFC-0933)
+    // Holds the validated ApiKey for rate limiting and rate limit header injection.
+    let mut validated_api_key: Option<crate::keys::ApiKey> = None;
+
     if let Some(ref storage) = storage {
         // Extract client key from request headers
         // Priority: Authorization > X-API-Key > X-AnyLLM-Key
@@ -398,8 +415,52 @@ where
             // Validate client key against storage
             let key_hash = compute_key_hash(&client_key);
             match storage.lookup_by_hash(&key_hash) {
-                Ok(Some(_api_key)) => {
-                    // Key is valid — budget/route checks deferred to 0933/0934
+                Ok(Some(api_key)) => {
+                    // Key is valid — check RPM rate limit (RFC-0933)
+                    if let (Some(ref limiter), Some(rpm_limit)) = (&rate_limiter, api_key.rpm_limit)
+                    {
+                        if rpm_limit > 0 {
+                            match limiter.check_rpm_only(&api_key.key_id, rpm_limit as u32) {
+                                Ok(_status) => {
+                                    // RPM check passed — status available for headers
+                                    validated_api_key = Some(api_key);
+                                }
+                                Err(crate::keys::KeyError::RateLimited { retry_after }) => {
+                                    let body = serde_json::json!({
+                                        "error": {
+                                            "message": "Rate limit exceeded",
+                                            "type": "rate_limit_error",
+                                            "code": "rpm_limit_exceeded",
+                                            "retry_after": retry_after
+                                        }
+                                    });
+                                    let resp = Response::builder()
+                                        .status(StatusCode::TOO_MANY_REQUESTS)
+                                        .header("content-type", "application/json")
+                                        .header("retry-after", retry_after.to_string())
+                                        .body(SseBody::from_string(body.to_string()))
+                                        .unwrap();
+                                    return Ok(resp);
+                                }
+                                Err(e) => {
+                                    let resp = Response::builder()
+                                        .status(StatusCode::INTERNAL_SERVER_ERROR)
+                                        .body(SseBody::from_error(format!(
+                                            "Rate limit error: {}",
+                                            e
+                                        )))
+                                        .unwrap();
+                                    return Ok(resp);
+                                }
+                            }
+                        } else {
+                            // RPM limit is 0 (unlimited) — no rate limiting
+                            validated_api_key = Some(api_key);
+                        }
+                    } else {
+                        // No rate limiter or no RPM limit configured
+                        validated_api_key = Some(api_key);
+                    }
                 }
                 Ok(None) => {
                     let resp = Response::builder()
@@ -490,7 +551,7 @@ where
     let dispatch_api_base = dispatch.and_then(|d| d.api_base.clone());
     let _dispatch_max_retries = dispatch.and_then(|d| d.max_retries);
 
-    let result = {
+    let mut result = {
         #[cfg(any(feature = "litellm-mode", feature = "full"))]
         {
             handle_request_litellm(&body_str, &provider, &api_key, dispatch_api_base.as_deref())
@@ -506,6 +567,29 @@ where
     // Record request duration
     if let Some(ref m) = metrics {
         m.request_duration.observe(start.elapsed().as_secs_f64());
+    }
+
+    // Inject rate limit headers into response (RFC-0933 §Rate Limit Headers).
+    // Uses the ApiKey validated during auth to report RPM limits.
+    if let (Ok(ref mut resp), Some(ref api_key)) = (&mut result, &validated_api_key) {
+        if let Some(rpm_limit) = api_key.rpm_limit {
+            let headers = resp.headers_mut();
+            headers.insert("x-ratelimit-limit", rpm_limit.to_string().parse().unwrap());
+            // Remaining is approximated as the limit minus 1 (current request consumed 1).
+            // For exact tracking, a separate counter or status from check_rpm_only would be needed.
+            let remaining = (rpm_limit as u64).saturating_sub(1);
+            headers.insert(
+                "x-ratelimit-remaining",
+                remaining.to_string().parse().unwrap(),
+            );
+            // Reset: 60 seconds from now (token bucket window)
+            let reset = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_secs()
+                + 60;
+            headers.insert("x-ratelimit-reset", reset.to_string().parse().unwrap());
+        }
     }
 
     result

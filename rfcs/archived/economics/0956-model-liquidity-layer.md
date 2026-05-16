@@ -3,8 +3,10 @@
 ## Status
 
 **Version:** 1.0
-**Status:** Draft
+**Status:** Superseded by RFC-0955
 **Submission Date:** 2026-03-10
+
+> **Archived:** RFC-0955 is the canonical Model Liquidity Layer spec. RFC-0956 was a simplified draft (models-only, single-owner, 3-way revenue split) that conflicts with 0955's comprehensive design (4 asset types, multi-owner, 5-way split, liquidity pools, governance). Superseded 2026-05-16.
 
 > **Note:** This RFC was renumbered from RFC-0156 to RFC-0956 as part of the category-based numbering system.
 

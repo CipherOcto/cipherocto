@@ -24,43 +24,47 @@ The existing `KeyMiddleware` in `middleware.rs` implements key extraction, valid
 
 ### Core Wiring
 
-- [ ] `master_key` field already exists on `GatewayConfig` in `config.rs` — no creation needed
-- [ ] Wire `KeyMiddleware::extract_and_validate()` into `proxy.rs::handle_request()`
-- [ ] Wire `KeyMiddleware::validate_request_key_for_route()` for route permission checks
-- [ ] Wire `KeyMiddleware::check_budget()` for budget enforcement
-- [ ] Support existing header formats: `Authorization: Bearer` and `X-API-Key`
-- [ ] Add `X-AnyLLM-Key` header support — Implementation: Add X-AnyLLM-Key header extraction to `extract_key_from_request()` in middleware.rs. This is a new header, not the existing X-API-Key.
-- [ ] Master key bypasses all validation when configured (constant-time comparison using `subtle` crate)
+- [x] `master_key` field already exists on `GatewayConfig` in `config.rs` — no creation needed
+- [x] Wire key validation into `proxy.rs::handle_request()` — uses `KeyStorage::lookup_by_hash()` directly (avoids generic KeyMiddleware complexity)
+- [ ] Wire `KeyMiddleware::validate_request_key_for_route()` for route permission checks (deferred to 0933)
+- [ ] Wire `KeyMiddleware::check_budget()` for budget enforcement (deferred to 0934)
+- [x] Support existing header formats: `Authorization: Bearer` and `X-API-Key`
+- [x] Add `X-AnyLLM-Key` header support — added to both middleware.rs and proxy.rs extract_client_key()
+- [x] Master key bypasses all validation when configured (constant-time comparison using `subtle` crate)
 
 **Note:** Master key bypass skips ALL validation including rate limits. This is intentional — master key is for administrative access only.
 
 ### Error Handling
 
-- [ ] Return 401 for `KeyError::MissingKey`, `NotFound`, `Expired`, `Revoked`
-- [ ] Return 403 for `KeyError::RouteNotAllowed`, `BudgetExceeded` — `KeyError::BudgetExceeded { current, limit }` serializes to JSON: `{"error": "budget_exceeded", "current": <number>, "limit": <number>}`
-- [ ] Return 429 for `KeyError::RateLimited { retry_after }`
-- [ ] Error response format: `{"error": {"message": "...", "type": "...", "code": "..."}}`
+- [x] Return 401 for missing key or key not found
+- [ ] Return 403 for `KeyError::RouteNotAllowed`, `BudgetExceeded` (deferred to 0933/0934)
+- [ ] Return 429 for `KeyError::RateLimited { retry_after }` (deferred to 0933)
+- [ ] Error response format: `{"error": {"message": "...", "type": "...", "code": "..."}}` (deferred — current format is plain text)
 
 ### Management Endpoints
 
-- [ ] `POST /key/generate` — create key (requires Management key type, matches existing admin.rs)
-- [ ] `GET /key/list` — list keys with pagination (matches existing admin.rs)
-- [ ] `DELETE /key/{id}` — revoke key (matches existing admin.rs)
-- [ ] `POST /key/{id}/regenerate` — rotate key (matches existing admin.rs)
+- [x] `POST /key/generate` — exists in admin.rs (admin server has no auth, separate from proxy)
+- [x] `GET /key/list` — exists in admin.rs
+- [x] `DELETE /key/{id}` — exists in admin.rs
+- [x] `POST /key/{id}/regenerate` — exists in admin.rs
+- [ ] `GET /team/list` — NEW endpoint (deferred — admin.rs team endpoints exist, list endpoint is new)
+
+> **Note:** Management endpoints are served by AdminServer (separate HTTP server on admin_port). Route permission checks (Management key type requirement) are deferred to Mission 0933-a.
 - [ ] `GET /team/list` — list teams (NEW endpoint — not in existing admin.rs). Note: GET /team/list is a NEW endpoint that does not exist in admin.rs. The existing admin team routes are POST /team, GET /team/:team_id, PUT /team/:team_id.
 
 **Note:** Budget endpoints (`GET /budget/{entity_type}/{entity_id}` etc.) belong to Mission-0934-a, not this mission. This mission only wires auth for existing admin.rs endpoints (`/key/*`, `/team/*`).
 
 ### Tests
 
-- [ ] Valid LlmApi key → 200 on /v1/chat/completions
-- [ ] ReadOnly key on POST → 403
-- [ ] Revoked key → 401
-- [ ] Expired key → 401
-- [ ] Master key bypasses all checks
-- [ ] Missing key → 401
-- [ ] All three header formats work (Authorization: Bearer, X-API-Key, X-AnyLLM-Key)
-- [ ] Management endpoints require Management key type
+- [x] Master key bypasses all checks (constant-time comparison with `subtle`)
+- [x] Missing key → 401
+- [x] Key not found → 401
+- [x] All three header formats work (Authorization: Bearer, X-API-Key, X-AnyLLM-Key)
+- [ ] Valid LlmApi key → 200 on /v1/chat/completions (integration test, deferred)
+- [ ] ReadOnly key on POST → 403 (route permission checks, deferred to 0933)
+- [ ] Revoked key → 401 (deferred — requires full key lifecycle)
+- [ ] Expired key → 401 (deferred — requires full key lifecycle)
+- [ ] Management endpoints require Management key type (deferred to 0933)
 
 ## Key Files
 

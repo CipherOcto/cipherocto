@@ -56,6 +56,9 @@ blake3.workspace = true
 # For hex encoding of key hashes
 hex = "0.4"
 
+# For constant-time comparison (master key bypass)
+subtle = "2.6"
+
 # For percent decoding (path normalization security)
 percent-encoding = "2.1"
 

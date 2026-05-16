@@ -28,12 +28,13 @@ impl<S: KeyStorage> KeyMiddleware<S> {
     }
 
     /// Extract API key from request
-    /// Supports: Authorization header (Bearer token), X-API-Key header
+    /// Supports: Authorization header (Bearer token), X-API-Key header, X-AnyLLM-Key header
+    /// Priority: Authorization > X-API-Key > X-AnyLLM-Key
     pub fn extract_key_from_request<B>(
         &self,
         request: &http::Request<B>,
     ) -> Result<Option<String>, KeyError> {
-        // Check Authorization header
+        // Check Authorization header (highest priority)
         if let Some(auth) = request.headers().get("authorization") {
             if let Ok(auth_str) = auth.to_str() {
                 if let Some(stripped) = auth_str.strip_prefix("Bearer ") {
@@ -45,6 +46,11 @@ impl<S: KeyStorage> KeyMiddleware<S> {
         // Check X-API-Key header
         if let Some(api_key) = request.headers().get("x-api-key") {
             return Ok(Some(api_key.to_str().unwrap_or("").to_string()));
+        }
+
+        // Check X-AnyLLM-Key header (any-llm compatibility)
+        if let Some(key) = request.headers().get("x-anyllm-key") {
+            return Ok(Some(key.to_str().unwrap_or("").to_string()));
         }
 
         Ok(None)

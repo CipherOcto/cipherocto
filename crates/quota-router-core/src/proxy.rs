@@ -16,7 +16,9 @@
 
 use crate::balance::Balance;
 use crate::config::DispatchInfo;
+use crate::keys::compute_key_hash;
 use crate::providers::Provider;
+use crate::storage::KeyStorage;
 use bytes::Bytes;
 use http::{Request, StatusCode};
 use http_body::{Body as HttpBody, Frame};
@@ -32,8 +34,41 @@ use std::net::SocketAddr;
 use std::pin::Pin;
 use std::sync::Arc;
 use std::task::{Context, Poll};
+use subtle::ConstantTimeEq;
 use tokio::net::TcpListener;
 use tracing::info;
+
+/// Extract client API key from request headers.
+/// Priority: Authorization (Bearer) > X-API-Key > X-AnyLLM-Key
+fn extract_client_key<B>(req: &Request<B>) -> Option<String> {
+    // Authorization: Bearer <key>
+    if let Some(auth) = req.headers().get("authorization") {
+        if let Ok(auth_str) = auth.to_str() {
+            if let Some(stripped) = auth_str.strip_prefix("Bearer ") {
+                if !stripped.is_empty() {
+                    return Some(stripped.to_string());
+                }
+            }
+        }
+    }
+    // X-API-Key
+    if let Some(key) = req.headers().get("x-api-key") {
+        if let Ok(key_str) = key.to_str() {
+            if !key_str.is_empty() {
+                return Some(key_str.to_string());
+            }
+        }
+    }
+    // X-AnyLLM-Key (any-llm compatibility)
+    if let Some(key) = req.headers().get("x-anyllm-key") {
+        if let Ok(key_str) = key.to_str() {
+            if !key_str.is_empty() {
+                return Some(key_str.to_string());
+            }
+        }
+    }
+    None
+}
 
 // =============================================================================
 // Feature-gated provider types
@@ -96,6 +131,8 @@ pub struct ProxyServer {
     provider: Provider,
     port: u16,
     dispatch_map: Arc<HashMap<String, DispatchInfo>>,
+    storage: Option<Arc<dyn KeyStorage>>,
+    master_key: Option<String>,
 }
 
 impl ProxyServer {
@@ -110,7 +147,21 @@ impl ProxyServer {
             provider,
             port,
             dispatch_map: Arc::new(dispatch_map),
+            storage: None,
+            master_key: None,
         }
+    }
+
+    /// Set the key storage for gateway auth (RFC-0932)
+    pub fn with_storage(mut self, storage: Arc<dyn KeyStorage>) -> Self {
+        self.storage = Some(storage);
+        self
+    }
+
+    /// Set the master key for gateway auth bypass (RFC-0932)
+    pub fn with_master_key(mut self, master_key: String) -> Self {
+        self.master_key = Some(master_key);
+        self
     }
 
     pub async fn run(&mut self) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
@@ -122,6 +173,8 @@ impl ProxyServer {
         let balance = Arc::clone(&self.balance);
         let provider = self.provider.clone();
         let dispatch_map = Arc::clone(&self.dispatch_map);
+        let storage = self.storage.clone();
+        let master_key = self.master_key.clone();
 
         // Initialize providers based on mode
         #[cfg(any(feature = "litellm-mode", feature = "full"))]
@@ -136,6 +189,8 @@ impl ProxyServer {
                 let balance = Arc::clone(&balance);
                 let provider = provider.clone();
                 let dispatch_map = Arc::clone(&dispatch_map);
+                let storage = storage.clone();
+                let master_key = master_key.clone();
 
                 tokio::spawn(async move {
                     let io = TokioIo::new(stream);
@@ -147,7 +202,14 @@ impl ProxyServer {
                                 let balance = Arc::clone(&balance);
                                 let provider = provider.clone();
                                 let dispatch_map = Arc::clone(&dispatch_map);
-                                handle_request(req, balance, provider, dispatch_map)
+                                handle_request(
+                                    req,
+                                    balance,
+                                    provider,
+                                    dispatch_map,
+                                    storage.clone(),
+                                    master_key.clone(),
+                                )
                             }),
                         )
                         .await
@@ -262,12 +324,62 @@ async fn handle_request<B>(
     balance: Arc<Mutex<Balance>>,
     provider: Provider,
     dispatch_map: Arc<HashMap<String, DispatchInfo>>,
+    storage: Option<Arc<dyn KeyStorage>>,
+    master_key: Option<String>,
 ) -> Result<Response<SseBody>, Infallible>
 where
     B: http_body::Body + 'static,
     B::Data: Send,
     B::Error: Send + std::fmt::Debug,
 {
+    // Gateway auth (RFC-0932)
+    if let Some(ref storage) = storage {
+        // Extract client key from request headers
+        // Priority: Authorization > X-API-Key > X-AnyLLM-Key
+        let client_key = extract_client_key(&req);
+
+        let client_key = match client_key {
+            Some(key) => key,
+            None => {
+                let resp = Response::builder()
+                    .status(StatusCode::UNAUTHORIZED)
+                    .body(SseBody::from_error("Missing API key".to_string()))
+                    .unwrap();
+                return Ok(resp);
+            }
+        };
+
+        // Check master key bypass (constant-time comparison)
+        let is_master = master_key
+            .as_ref()
+            .map(|mk| bool::from(ConstantTimeEq::ct_eq(client_key.as_bytes(), mk.as_bytes())))
+            .unwrap_or(false);
+
+        if !is_master {
+            // Validate client key against storage
+            let key_hash = compute_key_hash(&client_key);
+            match storage.lookup_by_hash(&key_hash) {
+                Ok(Some(_api_key)) => {
+                    // Key is valid — budget/route checks deferred to 0933/0934
+                }
+                Ok(None) => {
+                    let resp = Response::builder()
+                        .status(StatusCode::UNAUTHORIZED)
+                        .body(SseBody::from_error("API key not found".to_string()))
+                        .unwrap();
+                    return Ok(resp);
+                }
+                Err(e) => {
+                    let resp = Response::builder()
+                        .status(StatusCode::INTERNAL_SERVER_ERROR)
+                        .body(SseBody::from_error(format!("Key validation error: {}", e)))
+                        .unwrap();
+                    return Ok(resp);
+                }
+            }
+        }
+    }
+
     // Check balance for proxy requests
     {
         let bal = balance.lock();

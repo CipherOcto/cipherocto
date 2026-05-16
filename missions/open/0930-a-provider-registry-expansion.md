@@ -2,7 +2,7 @@
 
 ## Status
 
-Open
+Complete
 
 ## RFC
 
@@ -20,22 +20,22 @@ RFC-0930 specifies `get_provider_default_api_base()` with a registry of known pr
 
 ### Registry Expansion
 
-- [ ] Add all 41 py_bridge providers to `get_provider_default_api_base()` (verified count from factory.rs match arms)
-- [ ] Each provider has correct default api_base
-- [ ] Azure returns `None` (requires explicit api_base)
+- [x] Add all 41 py_bridge providers to `get_provider_default_api_base()` (verified count from factory.rs match arms)
+- [x] Each provider has correct default api_base
+- [x] Azure returns `None` (requires explicit api_base)
 
 ### ConfigError::MissingProvider
 
-- [ ] Add `MissingProvider` variant to `ConfigError` enum
-- [ ] Return `MissingProvider` from `to_provider_map()` when provider is empty and cannot be inferred from model_name
-- [ ] Error message includes provider name
+- [x] Add `MissingProvider` variant to `ConfigError` enum
+- [x] Return `MissingProvider` from `to_provider_map()` when provider is empty and cannot be inferred from model_name
+- [x] Error message includes provider name
 
 ### Tests
 
-- [ ] All 41 providers have correct default api_base (7 providers with specified defaults per RFC-0930 Section 3.1 table + 34 returning None)
-- [ ] Azure returns None
-- [ ] Unknown provider returns `None` from `get_provider_default_api_base()` (MissingProvider error is from `to_provider_map()`, not this function)
-- [ ] Provider inference works for all providers
+- [x] All 41 providers have correct default api_base (7 providers with specified defaults per RFC-0930 Section 3.1 table + 34 returning None)
+- [x] Azure returns None
+- [x] Unknown provider returns `None` from `get_provider_default_api_base()` (MissingProvider error is from `to_provider_map()`, not this function)
+- [x] Provider inference works for all providers
 
 ## Key Files
 

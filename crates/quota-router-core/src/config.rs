@@ -23,6 +23,8 @@ pub enum ConfigError {
     Yaml(#[from] serde_yaml::Error),
     #[error("Feature not yet specified: {0}")]
     NotYetSpecified(String),
+    #[error("Provider not specified for model: {0}")]
+    MissingProvider(String),
 }
 
 // ============================================================================
@@ -144,6 +146,43 @@ impl LiteLLMParams {
     pub fn resolve_api_base(&self) -> Option<&str> {
         self.api_base.as_deref().or(self.base_url.as_deref())
     }
+}
+
+/// Returns default api_base for provider, or None if no default.
+/// Per RFC-0930 Section 3.1.
+pub fn get_provider_default_api_base(provider: &str) -> Option<String> {
+    match provider {
+        "openai" => Some("https://api.openai.com/v1".to_string()),
+        "anthropic" => Some("https://api.anthropic.com".to_string()),
+        "mistral" => Some("https://api.mistral.ai/v1".to_string()),
+        "gemini" => Some("https://generativelanguage.googleapis.com".to_string()),
+        "cohere" => Some("https://api.cohere.ai".to_string()),
+        "voyage" => Some("https://api.voyageai.com/v1".to_string()),
+        // azure: no default — requires explicit api_base
+        // All other providers: no known default
+        _ => None,
+    }
+}
+
+/// Infer provider name from model string.
+/// Supports "provider/model" and "provider:model" formats.
+/// Per RFC-0930 Section 1.
+pub fn infer_provider(model: &str) -> Option<String> {
+    if let Some((provider, _)) = model.split_once('/') {
+        let provider = provider.to_lowercase();
+        if provider.is_empty() {
+            return None;
+        }
+        return Some(provider);
+    }
+    if let Some((provider, _)) = model.split_once(':') {
+        let provider = provider.to_lowercase();
+        if provider.is_empty() {
+            return None;
+        }
+        return Some(provider);
+    }
+    None
 }
 
 /// Rate limit enforcement mode (matches LiteLLM's enforce_model_rate_limits)
@@ -380,7 +419,7 @@ impl DispatchInfo {
     /// Format: "{provider}_{model}" with underscores
     pub fn auto_id(provider: &str, model: &str) -> Result<String, ConfigError> {
         if provider.is_empty() {
-            return Err(ConfigError::NotYetSpecified(
+            return Err(ConfigError::MissingProvider(
                 "auto_id requires non-empty provider".to_string(),
             ));
         }
@@ -394,29 +433,49 @@ impl DispatchInfo {
 }
 
 /// Convert GatewayConfig to dispatch map
-pub fn to_provider_map(config: &GatewayConfig) -> Result<HashMap<String, DispatchInfo>, ConfigError> {
+pub fn to_provider_map(
+    config: &GatewayConfig,
+) -> Result<HashMap<String, DispatchInfo>, ConfigError> {
     let mut map = HashMap::new();
     for deployment in config.get_deployments() {
+        // Resolve provider: explicit > inferred from model_name > error
+        let provider = if !deployment.litellm_params.provider.is_empty() {
+            deployment.litellm_params.provider.clone()
+        } else if let Some(inferred) = infer_provider(&deployment.model_name) {
+            inferred
+        } else {
+            return Err(ConfigError::MissingProvider(deployment.model_name.clone()));
+        };
+
         let id = match deployment.deployment_id.clone() {
             Some(id) => id,
-            None => DispatchInfo::auto_id(
-                &deployment.litellm_params.provider,
-                &deployment.litellm_params.model,
-            )?,
+            None => DispatchInfo::auto_id(&provider, &deployment.litellm_params.model)?,
         };
+
+        // Resolve api_base: explicit > provider default
+        let api_base = deployment
+            .litellm_params
+            .resolve_api_base()
+            .map(|s| s.to_string())
+            .or_else(|| get_provider_default_api_base(&provider));
+
         let info = DispatchInfo {
             deployment_id: id.clone(),
-            provider: deployment.litellm_params.provider.clone(),
+            provider,
             model: deployment.litellm_params.model.clone(),
             api_key: deployment.litellm_params.api_key.clone(),
-            api_base: deployment.litellm_params.api_base.clone(),
+            api_base,
             rpm: deployment.rpm,
             tpm: deployment.tpm,
-            model_group: deployment.model_info.as_ref()
+            model_group: deployment
+                .model_info
+                .as_ref()
                 .and_then(|m| m.model_group.clone())
                 .or_else(|| deployment.litellm_params.model_group_alias.clone()),
             metadata: deployment.metadata.clone(),
-            max_retries: deployment.litellm_params.max_retries
+            max_retries: deployment
+                .litellm_params
+                .max_retries
                 .or_else(|| config.router_settings.as_ref().map(|s| s.num_retries)),
         };
         map.insert(id, info);
@@ -534,7 +593,7 @@ mod tests {
         assert!(result.is_err());
         assert_eq!(
             result.unwrap_err().to_string(),
-            "Feature not yet specified: auto_id requires non-empty provider"
+            "Provider not specified for model: auto_id requires non-empty provider"
         );
     }
 
@@ -656,7 +715,10 @@ mod tests {
         };
         let result = config.get_deployments();
         assert_eq!(result.len(), 1);
-        assert_eq!(result[0].deployment_id.as_deref(), Some("model-list-deploy"));
+        assert_eq!(
+            result[0].deployment_id.as_deref(),
+            Some("model-list-deploy")
+        );
     }
 
     #[test]
@@ -990,7 +1052,10 @@ deployments:
         let config = parse_config(yaml).unwrap();
         let map = to_provider_map(&config).unwrap();
         let info = map.get("azure-gpt4o").unwrap();
-        assert_eq!(info.api_base, Some("https://openai-gpt-4-test.openai.azure.com/".to_string()));
+        assert_eq!(
+            info.api_base,
+            Some("https://openai-gpt-4-test.openai.azure.com/".to_string())
+        );
         assert_eq!(info.provider, "azure");
     }
 
@@ -1155,7 +1220,10 @@ deployments:
 
         // Verify api_base is in DispatchInfo
         let dispatch_info = map.get("azure-custom").unwrap();
-        assert_eq!(dispatch_info.api_base, Some("https://custom.azure.com/".to_string()));
+        assert_eq!(
+            dispatch_info.api_base,
+            Some("https://custom.azure.com/".to_string())
+        );
 
         // Verify we can create an HttpCompletionRequest with api_base
         use crate::native_http::HttpCompletionRequest;
@@ -1176,11 +1244,122 @@ deployments:
         };
 
         // Verify api_base is forwarded
-        assert_eq!(request.api_base, Some("https://custom.azure.com/".to_string()));
+        assert_eq!(
+            request.api_base,
+            Some("https://custom.azure.com/".to_string())
+        );
 
         // Verify base_url resolution uses request.api_base when provided
-        let base_url = request.api_base.as_deref().unwrap_or("https://api.openai.com/v1");
+        let base_url = request
+            .api_base
+            .as_deref()
+            .unwrap_or("https://api.openai.com/v1");
         assert_eq!(base_url, "https://custom.azure.com/");
         // The actual provider override happens inside completion() - verified by integration test
+    }
+
+    // ========================================================================
+    // RFC-0930 Tests: Provider Registry & Inference
+    // ========================================================================
+
+    #[test]
+    fn test_get_provider_default_api_base_known_providers() {
+        assert_eq!(
+            get_provider_default_api_base("openai"),
+            Some("https://api.openai.com/v1".to_string())
+        );
+        assert_eq!(
+            get_provider_default_api_base("anthropic"),
+            Some("https://api.anthropic.com".to_string())
+        );
+        assert_eq!(
+            get_provider_default_api_base("mistral"),
+            Some("https://api.mistral.ai/v1".to_string())
+        );
+        assert_eq!(
+            get_provider_default_api_base("gemini"),
+            Some("https://generativelanguage.googleapis.com".to_string())
+        );
+        assert_eq!(
+            get_provider_default_api_base("cohere"),
+            Some("https://api.cohere.ai".to_string())
+        );
+        assert_eq!(
+            get_provider_default_api_base("voyage"),
+            Some("https://api.voyageai.com/v1".to_string())
+        );
+    }
+
+    #[test]
+    fn test_get_provider_default_api_base_azure_returns_none() {
+        assert_eq!(get_provider_default_api_base("azure"), None);
+    }
+
+    #[test]
+    fn test_get_provider_default_api_base_unknown_returns_none() {
+        assert_eq!(get_provider_default_api_base("unknown_provider"), None);
+        assert_eq!(get_provider_default_api_base(""), None);
+    }
+
+    #[test]
+    fn test_infer_provider_slash_format() {
+        assert_eq!(infer_provider("openai/gpt-4"), Some("openai".to_string()));
+        assert_eq!(
+            infer_provider("anthropic/claude-3"),
+            Some("anthropic".to_string())
+        );
+        assert_eq!(
+            infer_provider("mistral/mistral-large"),
+            Some("mistral".to_string())
+        );
+    }
+
+    #[test]
+    fn test_infer_provider_colon_format() {
+        assert_eq!(infer_provider("openai:gpt-4"), Some("openai".to_string()));
+        assert_eq!(
+            infer_provider("anthropic:claude-3"),
+            Some("anthropic".to_string())
+        );
+    }
+
+    #[test]
+    fn test_infer_provider_no_prefix() {
+        assert_eq!(infer_provider("gpt-4"), None);
+        assert_eq!(infer_provider("claude-3"), None);
+    }
+
+    #[test]
+    fn test_infer_provider_empty_prefix() {
+        assert_eq!(infer_provider("/gpt-4"), None);
+        assert_eq!(infer_provider(":gpt-4"), None);
+    }
+
+    #[test]
+    fn test_infer_provider_case_insensitive() {
+        assert_eq!(infer_provider("OpenAI/gpt-4"), Some("openai".to_string()));
+        assert_eq!(
+            infer_provider("ANTHROPIC/claude-3"),
+            Some("anthropic".to_string())
+        );
+    }
+
+    #[test]
+    fn test_missing_provider_error_from_to_provider_map() {
+        // Create a config with empty provider and no model prefix
+        let yaml = r#"
+deployments:
+  - model_name: gpt-4o
+    litellm_params:
+      model: gpt-4o
+      provider: ""
+"#;
+        let config = parse_config(yaml).unwrap();
+        let result = to_provider_map(&config);
+        assert!(result.is_err());
+        assert!(matches!(
+            result.unwrap_err(),
+            ConfigError::MissingProvider(_)
+        ));
     }
 }

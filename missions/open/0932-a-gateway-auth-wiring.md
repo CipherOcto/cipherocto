@@ -10,7 +10,11 @@ RFC-0932 (Economics): Gateway Auth & API Key Management
 
 ## Dependencies
 
-- Mission-0929-d: Wire DispatchInfo to Proxy (in progress)
+- Mission-0929-d: Wire DispatchInfo to Proxy (in progress) — must be complete before this mission can be fully tested (proxy dispatch wiring)
+
+### Crate Dependencies
+
+- `subtle` crate: Add to Cargo.toml for constant-time comparison of master key bypass (timing attack prevention)
 
 ## Context
 
@@ -25,22 +29,27 @@ The existing `KeyMiddleware` in `middleware.rs` implements key extraction, valid
 - [ ] Wire `KeyMiddleware::validate_request_key_for_route()` for route permission checks
 - [ ] Wire `KeyMiddleware::check_budget()` for budget enforcement
 - [ ] Support existing header formats: `Authorization: Bearer` and `X-API-Key`
-- [ ] Add `X-AnyLLM-Key` header support (new code in `extract_key_from_request()`)
-- [ ] Master key bypasses all validation when configured (constant-time comparison)
+- [ ] Add `X-AnyLLM-Key` header support — Implementation: Add X-AnyLLM-Key header extraction to `extract_key_from_request()` in middleware.rs. This is a new header, not the existing X-API-Key.
+- [ ] Master key bypasses all validation when configured (constant-time comparison using `subtle` crate)
+
+**Note:** Master key bypass skips ALL validation including rate limits. This is intentional — master key is for administrative access only.
 
 ### Error Handling
 
 - [ ] Return 401 for `KeyError::MissingKey`, `NotFound`, `Expired`, `Revoked`
-- [ ] Return 403 for `KeyError::RouteNotAllowed`, `BudgetExceeded`
+- [ ] Return 403 for `KeyError::RouteNotAllowed`, `BudgetExceeded` — `KeyError::BudgetExceeded { current, limit }` serializes to JSON: `{"error": "budget_exceeded", "current": <number>, "limit": <number>}`
 - [ ] Return 429 for `KeyError::RateLimited { retry_after }`
 - [ ] Error response format: `{"error": {"message": "...", "type": "...", "code": "..."}}`
 
 ### Management Endpoints
 
-- [ ] `POST /v1/keys` — create key (requires Management key type)
-- [ ] `GET /v1/keys` — list keys with pagination
-- [ ] `DELETE /v1/keys/{id}` — revoke key
-- [ ] `POST /v1/keys/{id}/rotate` — rotate key
+- [ ] `POST /key/generate` — create key (requires Management key type, matches existing admin.rs)
+- [ ] `GET /key/list` — list keys with pagination (matches existing admin.rs)
+- [ ] `DELETE /key/{id}` — revoke key (matches existing admin.rs)
+- [ ] `POST /key/{id}/regenerate` — rotate key (matches existing admin.rs)
+- [ ] `GET /team/list` — list teams (NEW endpoint — not in existing admin.rs). Note: GET /team/list is a NEW endpoint that does not exist in admin.rs. The existing admin team routes are POST /team, GET /team/:team_id, PUT /team/:team_id.
+
+**Note:** Budget endpoints (`GET /budget/{entity_type}/{entity_id}` etc.) belong to Mission-0934-a, not this mission. This mission only wires auth for existing admin.rs endpoints (`/key/*`, `/team/*`).
 
 ### Tests
 
@@ -66,4 +75,4 @@ The existing `KeyMiddleware` in `middleware.rs` implements key extraction, valid
 
 The existing `KeyMiddleware` in `middleware.rs` already implements all the hard work (hash lookup, expiry check, budget check, rate limits). This mission is primarily about wiring it into the proxy request path.
 
-**Management endpoints:** The `/v1/keys/*` endpoints specified in this mission are ADDITIONS to the proxy server, NOT replacements for the existing admin API at `/key/*` paths in `admin.rs`. Both will coexist — the admin API is for internal management, the proxy endpoints are for external API key management.
+**Management endpoints:** The `/key/*` endpoints in this mission match the existing admin.rs paths. The proxy server should route these paths to the same handler functions as admin.rs, extending them with auth middleware validation. This is an integration of existing admin endpoints into the proxy's auth flow, not a separate set of endpoints.

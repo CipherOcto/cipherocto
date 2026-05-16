@@ -1,8 +1,8 @@
-# Mission: RFC-0928 — Deployment Configuration Schema Implementation
+# Mission: 0928-a — Deployment Configuration Schema Implementation
 
 ## Status
 
-Open
+Claimed
 
 ## RFC
 
@@ -10,35 +10,72 @@ RFC-0928 (Economics): Deployment Configuration Schema
 
 ## Dependencies
 
-- Mission-0927-a: RFC-0927 RouterConfig Extension Implementation
 - RFC-0917: Dual-Mode Query Router (base provider model)
-- RFC-0927: RouterConfig Extension for LiteLLM Compatibility
+- RFC-0927: RouterConfig Extension for LiteLLM Compatibility (types defined here)
+- **Note:** RoutingStrategy enum already exists in `router.rs` — do NOT redefine
+
+## Context
+
+Mission-0927-a (RFC-0927 RouterConfig Extension) was marked complete in task list, but the types it was supposed to define (`RoutingStrategyArgs`, `LiteLLMParams`) were **not present in codebase**. This mission includes those types AND the RFC-0928 types.
+
+**Already exists:**
+- `RoutingStrategy` enum in `router.rs` (correctly implemented)
+
+**Implemented (from RFC-0927):**
+- `RoutingStrategyArgs`
+- `LiteLLMParams`
+- `LatencyRoutingSettings`
+- `RateLimitMode` (from RFC-0929)
+
+**Implemented (from RFC-0928):**
+- `DeploymentConfig`
+- `RouterSettings`
+- `LiteLLMSettings`
+- `ModelInfo`
+- `PricingConfig`
+- `GatewayConfig`
+- `AnyLlmProviderConfig`
+- `parse_config()` / `load_config()`
+- `to_provider_map()` → returns `Result<HashMap<String, DispatchInfo>, ConfigError>`
 
 ## Acceptance Criteria
 
-- [ ] DeploymentConfig with serde aliases (id, requests_per_minute, tokens_per_minute)
-- [ ] RouterSettings with redis_host, redis_port, redis_password, stream_timeout_secs — with impl Default
-- [ ] LiteLLMSettings with set_google_vertex_ai — with impl Default
-- [ ] ModelInfo with model_group (alias: "group"), supports_embeddings (alias: "embeddings")
-- [ ] PricingConfig with optional per-million and per-second pricing fields
-- [ ] GatewayConfig with Optional<pricing>, providers/AnyLlmProviderConfig
-- [ ] GatewayConfig::get_deployments() method
-- [ ] parse_config() and load_config() functions
-- [ ] to_provider_map() function (returns NotYetSpecified until RFC-0917 mapping complete)
-- [ ] ConfigError enum with NotYetSpecified variant ADDED (do not create new type — ConfigError already exists in config.rs)
-- [ ] All types derive(Debug, Clone, Serialize, Deserialize)
-- [ ] YAML parsing tests for both LiteLLM and any-llm formats
-- [ ] cargo clippy -D warnings passes
-- [ ] cargo test --lib passes
+### RFC-0927 Types
 
-## Key Files to Modify
+- [x] `RoutingStrategyArgs` struct with all fields per RFC-0927 §RoutingStrategyArgs
+- [x] `LiteLLMParams` struct with all fields per RFC-0927 §LiteLLMParams, including `api_base`, `base_url` aliases, `model_group_alias`
+- [x] `LiteLLMParams::resolve_api_base()` method (returns api_base or base_url)
+- [x] `LatencyRoutingSettings` struct per RFC-0927 §LatencyRoutingSettings
+- [x] `RateLimitMode` enum (Soft default, Hard) — required by RFC-0929
 
-| File | Change |
-|------|--------|
-| `crates/quota-router-core/src/config.rs` | Add RFC-0928 types (DeploymentConfig, RouterSettings, LiteLLMSettings, ModelInfo, PricingConfig, GatewayConfig, AnyLlmProviderConfig) and functions (parse_config, load_config, to_provider_map); ConfigError already exists — add NotYetSpecified variant only |
+### RFC-0928 Types
 
-## Notes
+- [x] `DeploymentConfig` with serde aliases: `#[serde(alias = "id")]`, `#[serde(alias = "requests_per_minute")]`, `#[serde(alias = "tokens_per_minute")]`
+- [x] `RouterSettings` with redis_host, redis_port, redis_password, stream_timeout_secs, rate_limit_mode — with impl Default
+- [x] `LiteLLMSettings` with set_google_vertex_ai — with #[derive(Default)]
+- [x] `ModelInfo` with model_group (alias: "group"), supports_embeddings (alias: "embeddings")
+- [x] `PricingConfig` with optional per-million and per-second pricing fields
+- [x] `GatewayConfig` with Optional<pricing>, providers/AnyLlmProviderConfig, deployments, router_settings, litellm_settings
+- [x] `AnyLlmProviderConfig` struct
+- [x] `GatewayConfig::get_deployments()` method — returns deployments if non-empty, else model_list_alias, else empty slice
+- [x] `parse_config(yaml: &str) -> Result<GatewayConfig, ConfigError>` ✓ (serde_yaml added, fully implemented)
+- [x] `load_config(path: &Path) -> Result<GatewayConfig, ConfigError>`
+- [x] `to_provider_map() -> Result<HashMap<String, DispatchInfo>, ConfigError>`
 
-This mission implements the deployment configuration schema. The to_provider_map function returns NotYetSpecified until the actual mapping to RFC-0917's providers HashMap is implemented.
+### RFC-0929 DispatchInfo
 
-**Important:** RoutingStrategyArgs has NO serde rename_all attribute — only RoutingStrategy enum has rename_all = "kebab-case". This is imported from RFC-0927 via Mission-0927-a.
+- [x] `DispatchInfo` struct with fields: deployment_id, provider, model, api_key, api_base, rpm, tpm, model_group, metadata, max_retries
+- [x] `DispatchInfo::auto_id(provider, model) -> String` with "{provider}_{model}" format
+- [x] All types derive(Debug, Clone, Serialize, Deserialize)
+
+### Testing
+
+- [x] Unit tests for DispatchInfo::auto_id, GatewayConfig::get_deployments, to_provider_map
+- [x] cargo clippy -D warnings passes
+- [x] cargo test --lib passes
+
+## Implementation Notes
+
+**RoutingStrategy imported from router.rs:** The enum already exists with correct serde rename_all = "kebab-case". Do not duplicate.
+
+**RouterSettings.rate_limit_mode:** Non-optional RateLimitMode with Default = Soft (per RFC-0929 §API Change).

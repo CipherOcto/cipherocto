@@ -11,6 +11,8 @@ RFC-0935 (Economics): Secret Manager Integration
 ## Dependencies
 
 - Mission-0931-a: Env Var Syntax Implementation (complementary)
+- Mission-0932-a: Gateway Auth Wiring (provides ApiKey context)
+- Mission-0914-a: Stoolap Persistence (Open — for caching secrets; if not yet complete, define an InMemoryCache implementation using `HashMap<String, (String, Instant)>` as interim)
 
 ## Context
 
@@ -23,7 +25,7 @@ RFC-0935 specifies `SecretReader` and `SecretWriter` traits for integrating exte
 - [ ] `SecretReader` trait with `get_secret(&self, key: &str) -> Result<Option<String>, SecretError>`
 - [ ] `SecretWriter` trait with `set_secret()`, `delete_secret()`
 - [ ] `SecretManager` trait combining both
-- [ ] `SecretError` enum: NotFound, AccessDenied, NetworkError, ParseError
+- [ ] `SecretError` enum: NotFound, AccessDenied, NetworkError, ParseError — `ParseError` messages: For Vault deserialization failures, include the JSON path that failed and the serde error message.
 
 ### Implementations
 
@@ -34,9 +36,11 @@ RFC-0935 specifies `SecretReader` and `SecretWriter` traits for integrating exte
 
 ### Caching
 
-- [ ] `CachedSecretManager<T: SecretReader>` wrapper
+- [ ] `CachedSecretManager<T: SecretReader>` wrapper — uses `StoolapCache` trait (defined by Mission-0914-a). Interim implementation: `InMemoryCache` (HashMap-based). When Mission-0914-a completes, switch to stoolap-backed implementation.
 - [ ] Stoolap cache with configurable TTL
 - [ ] Cache format: `(key, value, expires_at)`
+
+**Integration:** RFC-0938's `resolve_api_key()` calls `secret_reader.get_secret()` as the lowest-priority tier (after env vars). This mission provides the `SecretReader` backend; RFC-0938 provides the precedence chain.
 
 ### Tests
 
@@ -45,6 +49,7 @@ RFC-0935 specifies `SecretReader` and `SecretWriter` traits for integrating exte
 - [ ] Cache hit returns cached value
 - [ ] Cache miss fetches from underlying manager
 - [ ] Cache TTL expiration works
+- [ ] Tests must cover: env var backend, Vault backend (mock), AWS Secrets Manager (mock), OIDC token exchange (mock). Use mockall or similar for external service mocking.
 
 ## Key Files
 
@@ -54,3 +59,8 @@ RFC-0935 specifies `SecretReader` and `SecretWriter` traits for integrating exte
 ## Notes
 
 This is a new module. The traits should be in `secret_manager.rs`. Implementations can be in submodules. The cache should use stoolap for persistence.
+
+### Crate Dependencies
+
+- `urlencoding` crate: Add to Cargo.toml (used for Vault KV v2 path encoding)
+- `reqwest` crate features needed: `json`, `rustls-tls` (for Vault and OIDC HTTPS)

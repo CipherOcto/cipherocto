@@ -11,6 +11,7 @@ RFC-0917 (Economics): Dual-Mode Query Router
 ## Dependencies
 
 - Mission-0932-a: Gateway Auth Wiring (provides auth)
+- Mission-0929-d: Wire DispatchInfo to Proxy Dispatch Path (implicit dependency — /chat/completions dispatch uses DispatchInfo)
 
 ## Context
 
@@ -52,3 +53,7 @@ The proxy currently handles all requests as chat completions with no path-based 
 ## Notes
 
 The existing `HttpProvider` trait has `embedding()` method. The `DispatchInfo` map has all model metadata. This mission is about adding route handlers.
+
+### H1: Hard Blocker
+
+Hard blocker: Mission-0932-a (Gateway Auth) must be complete before /chat/completions endpoint can be tested with real auth. The endpoint can be implemented without auth but cannot be integration-tested.

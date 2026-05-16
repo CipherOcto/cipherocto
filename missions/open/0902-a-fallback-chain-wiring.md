@@ -51,3 +51,15 @@ The existing `fallback.rs` implements `FallbackConfig`, `FallbackExecutor`, and 
 ## Notes
 
 The existing `FallbackExecutor` wraps `FallbackConfig` and provides `has_fallback()`, `max_retries()`, `retry_delay()`. The `get_fallback_models()` method returns fallback models based on error type. This mission is about wiring it into the proxy.
+
+### H1: FallbackConfig Location
+
+FallbackConfig should be added to GatewayConfig (top-level), not RouterSettings. Rationale: Fallback chains are cross-cutting (may span multiple router groups). Add field: fallbacks: Option<FallbackConfig>.
+
+### H2: Config Mapping
+
+Config mapping: GatewayConfig.fallbacks (Vec<FallbackEntry>) maps directly to FallbackConfig.fallbacks. No HashMap conversion needed — the YAML structure matches the Rust struct.
+
+### H3: DispatchInfo Integration
+
+When fallback retry triggers, the next model's DispatchInfo is looked up from the dispatch map. If the fallback model is not in the dispatch map, use the original DispatchInfo with only the model name changed.

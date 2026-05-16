@@ -29,8 +29,9 @@ RFC-0931 specifies `os.environ["KEY"]` syntax for env var resolution in config. 
 
 - [ ] Tier 1: Explicit non-empty non-os.environ value
 - [ ] Tier 2: `os.environ["KEY"]` syntax
-- [ ] Tier 3: `{PROVIDER}_API_KEY` env var
-- [ ] Return `None` if all tiers fail
+- [ ] Return `None` if both tiers fail
+
+**Note:** `{PROVIDER}_API_KEY` env var is NOT resolved at config time. It is resolved at runtime by Mission-0938-a's `resolve_api_key()` which checks `ANY_LLM_KEY` first. This ensures correct precedence: config_key > os.environ["KEY"] > ANY_LLM_KEY > {PROVIDER}_API_KEY.
 
 ### resolve_api_base()
 
@@ -56,6 +57,13 @@ RFC-0931 specifies `os.environ["KEY"]` syntax for env var resolution in config. 
 
 The `extract_os_environ_key()` helper function needs to be implemented to parse the bracket syntax.
 
-**resolve_api_key():** Does NOT exist on `LiteLLMParams`. There is a standalone `resolve_api_key()` in `proxy.rs` that takes `(&Provider, Option<&str>)`. This mission should add `resolve_api_key()` as a method on `LiteLLMParams` with the 3-tier resolution.
+**resolve_api_key():** Does NOT exist on `LiteLLMParams`. There is a standalone `resolve_api_key()` in `proxy.rs` that takes `(&Provider, Option<&str>)`. This mission should add `resolve_api_key()` as a method on `LiteLLMParams` with the 2-tier resolution (explicit value, then os.environ syntax).
 
-**resolve_api_base():** Already exists on `LiteLLMParams` in `config.rs` but only checks `api_base` then `base_url` (returns `Option<&str>`). This mission must extend it to 4 tiers. **Breaking change:** The 4-tier implementation returns `Option<String>` (owned) because env var lookup and provider registry lookup produce owned Strings. All callers of `resolve_api_base()` will need updating.
+**resolve_api_base():** Already exists on `LiteLLMParams` in `config.rs` but only checks `api_base` then `base_url` (returns `Option<&str>`). This mission must extend it to 4 tiers. **Breaking change:** The 4-tier implementation returns `Option<String>` (owned) because env var lookup and provider registry lookup produce owned Strings.
+
+**Callers that must be updated (breaking change):**
+1. `to_provider_map()` in `config.rs` — calls `deployment.litellm_params.resolve_api_base()` to get api_base for DispatchInfo. Currently uses `.as_deref()` on the result; must change to handle `Option<String>`.
+2. Any test calling `resolve_api_base()` directly — must update return type assertions from `Option<&str>` to `Option<String>`.
+3. `proxy.rs` — does NOT call `resolve_api_base()` directly (gets api_base from DispatchInfo), so no change needed.
+
+**Migration:** Replace `.as_deref()` call in `to_provider_map()` with direct `Option<String>` usage. The owned String can be moved into `DispatchInfo.api_base` without cloning.

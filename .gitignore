@@ -38,3 +38,14 @@ Cargo.lock
 
 # Adversarial review artifacts (local scratchpads, not committed per memory rule)
 docs/reviews/
+
+# CocoIndex
+.cocoindex_code/
+coco.toml
+cocoindex_main.py
+
+# JCode
+.jcode/
+
+# Python lockfile
+uv.lock

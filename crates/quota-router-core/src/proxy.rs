@@ -15,6 +15,7 @@
 //! - full: Either path is available
 
 use crate::balance::Balance;
+use crate::config::DispatchInfo;
 use crate::providers::Provider;
 use bytes::Bytes;
 use http::{Request, StatusCode};
@@ -25,6 +26,7 @@ use hyper::service::service_fn;
 use hyper::Response;
 use hyper_util::rt::TokioIo;
 use parking_lot::Mutex;
+use std::collections::HashMap;
 use std::convert::Infallible;
 use std::net::SocketAddr;
 use std::pin::Pin;
@@ -93,14 +95,21 @@ pub struct ProxyServer {
     balance: Arc<Mutex<Balance>>,
     provider: Provider,
     port: u16,
+    dispatch_map: Arc<HashMap<String, DispatchInfo>>,
 }
 
 impl ProxyServer {
-    pub fn new(balance: Balance, provider: Provider, port: u16) -> Self {
+    pub fn new(
+        balance: Balance,
+        provider: Provider,
+        port: u16,
+        dispatch_map: HashMap<String, DispatchInfo>,
+    ) -> Self {
         Self {
             balance: Arc::new(Mutex::new(balance)),
             provider,
             port,
+            dispatch_map: Arc::new(dispatch_map),
         }
     }
 
@@ -112,6 +121,7 @@ impl ProxyServer {
 
         let balance = Arc::clone(&self.balance);
         let provider = self.provider.clone();
+        let dispatch_map = Arc::clone(&self.dispatch_map);
 
         // Initialize providers based on mode
         #[cfg(any(feature = "litellm-mode", feature = "full"))]
@@ -120,10 +130,12 @@ impl ProxyServer {
         tokio::spawn(async move {
             let balance = Arc::clone(&balance);
             let provider = provider.clone();
+            let dispatch_map = Arc::clone(&dispatch_map);
 
             while let Ok((stream, _)) = listener.accept().await {
                 let balance = Arc::clone(&balance);
                 let provider = provider.clone();
+                let dispatch_map = Arc::clone(&dispatch_map);
 
                 tokio::spawn(async move {
                     let io = TokioIo::new(stream);
@@ -134,7 +146,8 @@ impl ProxyServer {
                             service_fn(move |req| {
                                 let balance = Arc::clone(&balance);
                                 let provider = provider.clone();
-                                handle_request(req, balance, provider)
+                                let dispatch_map = Arc::clone(&dispatch_map);
+                                handle_request(req, balance, provider, dispatch_map)
                             }),
                         )
                         .await
@@ -212,7 +225,10 @@ fn parse_request_body(body: &str) -> Option<NativeHttpRequest> {
         presence_penalty,
         frequency_penalty,
         user,
-        api_base: json.get("api_base").and_then(|v| v.as_str()).map(String::from),
+        api_base: json
+            .get("api_base")
+            .and_then(|v| v.as_str())
+            .map(String::from),
     })
 }
 
@@ -245,6 +261,7 @@ async fn handle_request<B>(
     req: Request<B>,
     balance: Arc<Mutex<Balance>>,
     provider: Provider,
+    dispatch_map: Arc<HashMap<String, DispatchInfo>>,
 ) -> Result<Response<SseBody>, Infallible>
 where
     B: http_body::Body + 'static,
@@ -265,10 +282,41 @@ where
         }
     }
 
+    // Parse request body first to extract model name for DispatchInfo lookup
+    let (_, body) = req.into_parts();
+    let full_body = match body.collect().await {
+        Ok(bytes) => bytes.to_bytes(),
+        Err(_) => {
+            let resp = Response::builder()
+                .status(StatusCode::BAD_REQUEST)
+                .body(SseBody::from_error(
+                    "Failed to read request body".to_string(),
+                ))
+                .unwrap();
+            return Ok(resp);
+        }
+    };
+    let body_str = String::from_utf8_lossy(&full_body);
+
+    // Extract model name from JSON body for DispatchInfo lookup
+    let request_model = serde_json::from_str::<serde_json::Value>(&body_str)
+        .ok()
+        .and_then(|v| v.get("model")?.as_str().map(String::from));
+
+    // Look up DispatchInfo by model name or model_group
+    let dispatch = request_model.as_ref().and_then(|model| {
+        dispatch_map.values().find(|d| {
+            d.model == *model
+                || d.model_group.as_deref() == Some(model.as_str())
+                || d.deployment_id == *model
+        })
+    });
+
     // Resolve API key with priority chain (RFC-0929 §5):
-    // 1. Config key (from DispatchInfo.api_key / litellm_params.api_key)
+    // 1. Per-request key from DispatchInfo.api_key (config-time resolved)
     // 2. Environment variable ({PROVIDER_NAME}_API_KEY)
-    let api_key = match resolve_api_key(&provider, None) {
+    let config_key = dispatch.and_then(|d| d.api_key.as_deref());
+    let api_key = match resolve_api_key(&provider, config_key) {
         Some(key) => key,
         None => {
             let resp = Response::builder()
@@ -287,25 +335,13 @@ where
         bal.deduct(1);
     }
 
-    // Parse request body
-    let (_, body) = req.into_parts();
-    let full_body = match body.collect().await {
-        Ok(bytes) => bytes.to_bytes(),
-        Err(_) => {
-            let resp = Response::builder()
-                .status(StatusCode::BAD_REQUEST)
-                .body(SseBody::from_error(
-                    "Failed to read request body".to_string(),
-                ))
-                .unwrap();
-            return Ok(resp);
-        }
-    };
-    let body_str = String::from_utf8_lossy(&full_body);
+    // Extract DispatchInfo fields for mode handlers
+    let dispatch_api_base = dispatch.and_then(|d| d.api_base.clone());
+    let _dispatch_max_retries = dispatch.and_then(|d| d.max_retries);
 
     #[cfg(any(feature = "litellm-mode", feature = "full"))]
     {
-        handle_request_litellm(&body_str, &provider, &api_key).await
+        handle_request_litellm(&body_str, &provider, &api_key, dispatch_api_base.as_deref()).await
     }
 
     #[cfg(not(any(feature = "litellm-mode", feature = "full")))]
@@ -319,8 +355,9 @@ async fn handle_request_litellm(
     body_str: &str,
     provider: &Provider,
     api_key: &str,
+    dispatch_api_base: Option<&str>,
 ) -> Result<Response<SseBody>, Infallible> {
-    let request = match parse_request_body(body_str) {
+    let mut request = match parse_request_body(body_str) {
         Some(req) => req,
         None => {
             let resp = Response::builder()
@@ -330,6 +367,13 @@ async fn handle_request_litellm(
             return Ok(resp);
         }
     };
+
+    // Wire api_base from DispatchInfo if not set in request body
+    if request.api_base.is_none() {
+        if let Some(base) = dispatch_api_base {
+            request.api_base = Some(base.to_string());
+        }
+    }
 
     // Check if streaming is requested
     if request.stream == Some(true) {

@@ -5,6 +5,7 @@ use crate::proxy::ProxyServer;
 use anyhow::Result;
 use quota_router_core::admin::AdminServer;
 use quota_router_core::{init_database, StoolapKeyStorage};
+use std::collections::HashMap;
 use tracing::info;
 
 pub async fn init() -> Result<()> {
@@ -60,7 +61,10 @@ pub async fn proxy(proxy_port: u16, admin_port: u16) -> Result<()> {
         .cloned()
         .unwrap_or_else(|| Provider::new("openai", "https://api.openai.com/v1"));
     let balance = Balance::new(config.balance);
-    let mut proxy_server = ProxyServer::new(balance, provider, proxy_port);
+    // Dispatch map is empty when using simple CLI config (no GatewayConfig).
+    // GatewayConfig integration (to_provider_map) comes in a later mission.
+    let dispatch_map = HashMap::new();
+    let mut proxy_server = ProxyServer::new(balance, provider, proxy_port, dispatch_map);
 
     // Run both servers
     tokio::spawn(async move {

@@ -214,7 +214,11 @@ impl CallbackExecutor {
         let dropped_total = Arc::new(AtomicU64::new(0));
         let callbacks = HashMap::new();
 
-        let worker = tokio::spawn(Self::worker_loop(rx));
+        let worker = tokio::spawn(Self::worker_loop(
+            rx,
+            callbacks.clone(),
+            Arc::clone(&dropped_total),
+        ));
 
         Self {
             callbacks,
@@ -250,12 +254,39 @@ impl CallbackExecutor {
     }
 
     /// Background worker processes events from the channel.
-    async fn worker_loop(mut rx: mpsc::Receiver<CallbackEvent>) {
-        while let Some(_event) = rx.recv().await {
-            // Dispatch to all registered targets for this event type
-            // Execute in parallel, log failures but don't propagate
-            // TODO: Wire to actual registered targets in Mission 0947-c
+    /// Dispatches to all registered targets for the event type in parallel.
+    /// Failures are logged but never propagated to the request path.
+    async fn worker_loop(
+        mut rx: mpsc::Receiver<CallbackEvent>,
+        callbacks: HashMap<CallbackType, Vec<Arc<dyn CallbackTarget>>>,
+        dropped_total: Arc<AtomicU64>,
+    ) {
+        while let Some(event) = rx.recv().await {
+            if let Some(targets) = callbacks.get(&event.callback_type) {
+                let handles: Vec<_> = targets
+                    .iter()
+                    .map(|target| {
+                        let target = Arc::clone(target);
+                        let event = event.clone();
+                        tokio::spawn(async move {
+                            if let Err(e) = target.fire(&event).await {
+                                tracing::warn!(
+                                    target = target.name(),
+                                    event_id = %event.event_id,
+                                    error = %e,
+                                    "Callback delivery failed"
+                                );
+                            }
+                        })
+                    })
+                    .collect();
+
+                for handle in handles {
+                    let _ = handle.await;
+                }
+            }
         }
+        let _ = dropped_total;
     }
 
     /// Shutdown the executor gracefully.

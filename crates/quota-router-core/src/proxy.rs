@@ -44,6 +44,14 @@ use subtle::ConstantTimeEq;
 use tokio::net::TcpListener;
 use tracing::info;
 
+/// Extract model name from dispatch map based on path.
+fn extract_model_from_path(
+    path: &str,
+    dispatch_map: &HashMap<String, DispatchInfo>,
+) -> Option<String> {
+    dispatch_map.values().next().map(|d| d.model.clone())
+}
+
 /// Extract client API key from request headers.
 /// Priority: Authorization (Bearer) > X-API-Key > X-AnyLLM-Key
 fn extract_client_key<B>(req: &Request<B>) -> Option<String> {
@@ -149,6 +157,7 @@ pub struct ProxyServer {
     rate_limiter: Option<Arc<RateLimiterStore>>,
     fallback: Option<Arc<FallbackExecutor>>,
     response_cache: Option<Arc<ResponseCache>>,
+    callback_executor: Option<Arc<crate::callbacks::CallbackExecutor>>,
 }
 
 impl ProxyServer {
@@ -169,6 +178,7 @@ impl ProxyServer {
             rate_limiter: None,
             fallback: None,
             response_cache: None,
+            callback_executor: None,
         }
     }
 
@@ -208,6 +218,12 @@ impl ProxyServer {
         self
     }
 
+    /// Set callback executor for async callback delivery (RFC-0947)
+    pub fn with_callback_executor(mut self, executor: crate::callbacks::CallbackExecutor) -> Self {
+        self.callback_executor = Some(Arc::new(executor));
+        self
+    }
+
     pub async fn run(&mut self) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         let addr = SocketAddr::from(([127, 0, 0, 1], self.port));
         let listener = TcpListener::bind(addr).await?;
@@ -223,6 +239,7 @@ impl ProxyServer {
         let rate_limiter = self.rate_limiter.clone();
         let fallback = self.fallback.clone();
         let response_cache = self.response_cache.clone();
+        let callback_executor = self.callback_executor.clone();
 
         // Initialize providers based on mode
         #[cfg(any(feature = "litellm-mode", feature = "full"))]
@@ -245,6 +262,7 @@ impl ProxyServer {
                 let rate_limiter = rate_limiter.clone();
                 let fallback = fallback.clone();
                 let response_cache = response_cache.clone();
+                let callback_executor = callback_executor.clone();
 
                 tokio::spawn(async move {
                     let io = TokioIo::new(stream);
@@ -267,6 +285,7 @@ impl ProxyServer {
                                     rate_limiter.clone(),
                                     fallback.clone(),
                                     response_cache.clone(),
+                                    callback_executor.clone(),
                                 )
                             }),
                         )
@@ -377,6 +396,15 @@ fn parse_request_body(body: &str) -> Option<NativeHttpRequest> {
         .map(|v| v as usize);
     let parallel_tool_calls = json.get("parallel_tool_calls").and_then(|v| v.as_bool());
 
+    // Prompt management fields (RFC-0948)
+    let prompt_id = json
+        .get("prompt_id")
+        .and_then(|v| v.as_str())
+        .map(String::from);
+    let prompt_variables = json.get("prompt_variables").and_then(|v| {
+        serde_json::from_value::<std::collections::HashMap<String, String>>(v.clone()).ok()
+    });
+
     Some(NativeHttpRequest {
         model,
         messages,
@@ -400,6 +428,8 @@ fn parse_request_body(body: &str) -> Option<NativeHttpRequest> {
         logprobs,
         top_logprobs,
         parallel_tool_calls,
+        prompt_id,
+        prompt_variables,
     })
 }
 
@@ -456,6 +486,7 @@ async fn handle_request<B>(
     rate_limiter: Option<Arc<RateLimiterStore>>,
     fallback: Option<Arc<FallbackExecutor>>,
     response_cache: Option<Arc<ResponseCache>>,
+    callback_executor: Option<Arc<crate::callbacks::CallbackExecutor>>,
 ) -> Result<Response<SseBody>, Infallible>
 where
     B: http_body::Body + 'static,
@@ -579,6 +610,48 @@ where
         // Per-team budget check (RFC-0943)
         // TODO: Requires get_budget on KeyStorage trait
         // For now, team budget is checked at the storage level during spend recording
+    }
+
+    // Fire Start callback after key validation and rate limit checks (RFC-0947)
+    if let Some(ref executor) = callback_executor {
+        let event = crate::callbacks::CallbackEvent {
+            event_id: uuid::Uuid::new_v4().to_string(),
+            callback_type: crate::callbacks::CallbackType::Start,
+            timestamp: chrono::Utc::now(),
+            request: crate::callbacks::CallbackRequest {
+                model: String::new(),
+                messages: vec![],
+                temperature: None,
+                max_tokens: None,
+                stream: false,
+                provider: provider.name.clone(),
+                key_id: validated_api_key.as_ref().map(|k| k.key_id.clone()),
+                team_id: validated_api_key
+                    .as_ref()
+                    .and_then(|k| k.team_id.map(|id| id.to_string())),
+                user_id: None,
+            },
+            response: None,
+            error: None,
+            key_metadata: validated_api_key
+                .as_ref()
+                .map(|k| crate::callbacks::KeyMetadata {
+                    key_id: k.key_id.clone(),
+                    key_prefix: k.key_prefix.clone(),
+                    team_id: k.team_id.map(|id| id.to_string()),
+                    user_id: None,
+                    spend_usd: 0.0,
+                    max_budget_usd: Some(k.budget_limit as f64 / 100.0),
+                }),
+            timing: crate::callbacks::CallbackTiming {
+                request_start: chrono::Utc::now(),
+                request_end: None,
+                total_ms: 0,
+                provider_latency_ms: 0,
+                queue_time_ms: 0,
+            },
+        };
+        let _ = executor.fire(event).await;
     }
 
     // Path-based routing (RFC-0917)
@@ -1290,6 +1363,7 @@ where
                 &provider,
                 &api_key,
                 dispatch_api_base.as_deref(),
+                None, // TODO: wire prompt_registry from ProxyServer
             )
             .await;
 
@@ -1402,12 +1476,71 @@ where
     result
 }
 
+/// Resolve prompt template and inject as system message (RFC-0948).
+/// If prompt_id is set, looks up the prompt, renders template with variables,
+/// and prepends a system message to the request.
+#[cfg(any(feature = "litellm-mode", feature = "full"))]
+fn resolve_prompt(
+    request: &mut NativeHttpRequest,
+    prompt_registry: Option<&mut crate::prompts::PromptRegistry>,
+) -> Result<(), String> {
+    let prompt_id = match &request.prompt_id {
+        Some(id) => id.clone(),
+        None => return Ok(()), // No prompt to resolve
+    };
+
+    let registry = match prompt_registry {
+        Some(r) => r,
+        None => return Err("Prompt registry not available".to_string()),
+    };
+
+    // Generate request_id for A/B testing (priority: user field > generated UUID)
+    let request_id = request
+        .user
+        .clone()
+        .unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
+
+    // Resolve prompt (handles A/B testing)
+    let prompt = registry
+        .resolve(&prompt_id, &request_id)
+        .map_err(|e| format!("Prompt resolution failed: {}", e))?;
+
+    // Get variables (use provided or defaults)
+    let variables = request
+        .prompt_variables
+        .as_ref()
+        .cloned()
+        .unwrap_or_default();
+
+    // Render template
+    let rendered = crate::prompts::template::TemplateEngine::render(
+        &prompt.template,
+        &variables,
+        &prompt.defaults,
+    )
+    .map_err(|e| format!("Template render failed: {}", e))?;
+
+    // Prepend system message
+    let system_msg = crate::shared_types::Message {
+        role: "system".to_string(),
+        content: Some(rendered),
+        name: None,
+        tool_calls: None,
+        tool_call_id: None,
+        function_call: None,
+    };
+    request.messages.insert(0, system_msg);
+
+    Ok(())
+}
+
 #[cfg(any(feature = "litellm-mode", feature = "full"))]
 async fn handle_request_litellm(
     body_str: &str,
     provider: &Provider,
     api_key: &str,
     dispatch_api_base: Option<&str>,
+    prompt_registry: Option<&mut crate::prompts::PromptRegistry>,
 ) -> Result<Response<SseBody>, Infallible> {
     let mut request = match parse_request_body(body_str) {
         Some(req) => req,
@@ -1419,6 +1552,15 @@ async fn handle_request_litellm(
             return Ok(resp);
         }
     };
+
+    // Resolve prompt template if prompt_id is set (RFC-0948)
+    if let Err(e) = resolve_prompt(&mut request, prompt_registry) {
+        let resp = Response::builder()
+            .status(StatusCode::BAD_REQUEST)
+            .body(SseBody::from_error(e))
+            .unwrap();
+        return Ok(resp);
+    }
 
     // Wire api_base from DispatchInfo if not set in request body
     if request.api_base.is_none() {
@@ -1872,6 +2014,7 @@ async fn handle_completions_endpoint(
             provider,
             &api_key,
             dispatch_api_base.as_deref(),
+            None, // TODO: wire prompt_registry
         )
         .await
     }
@@ -2057,8 +2200,14 @@ async fn try_fallback_models(
         }
 
         // Try the fallback provider
-        let result =
-            handle_request_litellm(body_str, original_provider, &api_key, fallback_api_base).await;
+        let result = handle_request_litellm(
+            body_str,
+            original_provider,
+            &api_key,
+            fallback_api_base,
+            None,
+        )
+        .await;
 
         // Return if successful
         match &result {

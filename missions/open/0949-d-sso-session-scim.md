@@ -2,6 +2,8 @@
 
 ## Status
 
+Completed
+
 Open
 
 ## RFC
@@ -30,29 +32,29 @@ RFC-0949 (Economics): Enterprise SSO
 - [x] Implement list, get, create, update, patch, deactivate operations
 - [x] Deactivation vs deletion semantics (deactivate preferred — set active=false)
 - [x] SCIM filter syntax documentation (eq, ne, co, sw, ew)
-- [ ] Implement `sync_users()` with per-user error isolation (`SyncResult`/`SyncError`)
+- [x] Implement `sync_users()` with per-user error isolation (`SyncResult`/`SyncError`)
 
 ### SCIM Server-Side Endpoints
 - [x] Implement `GET /scim/v2/Users` — List users (SCIM filter + pagination)
-- [ ] Implement `GET /scim/v2/Users/:id` — Get user
-- [ ] Implement `POST /scim/v2/Users` — Create user
-- [ ] Implement `PUT /scim/v2/Users/:id` — Replace user
-- [ ] Implement `PATCH /scim/v2/Users/:id` — Patch user
-- [ ] Implement `DELETE /scim/v2/Users/:id` — Delete user
-- [ ] Implement `GET /scim/v2/Groups` — List groups
-- [ ] Implement `GET /scim/v2/ServiceProviderConfig` — SCIM service provider config
-- [ ] Implement `GET /scim/v2/ResourceTypes` — SCIM resource types
+- [x] Implement `GET /scim/v2/Users/:id` — Get user
+- [x] Implement `POST /scim/v2/Users` — Create user
+- [x] Implement `PUT /scim/v2/Users/:id` — Replace user
+- [x] Implement `PATCH /scim/v2/Users/:id` — Patch user
+- [x] Implement `DELETE /scim/v2/Users/:id` — Delete user
+- [x] Implement `GET /scim/v2/Groups` — List groups
+- [x] Implement `GET /scim/v2/ServiceProviderConfig` — SCIM service provider config
+- [x] Implement `GET /scim/v2/ResourceTypes` — SCIM resource types
 
 ### SCIM Error Handling
-- [ ] Use SCIM-specific error format (RFC 7644 Section 3.12): `{"schemas": ["urn:ietf:params:scim:api:messages:2.0:Error"], "scimType": "...", "detail": "...", "status": "..."}`
-- [ ] SCIM rate limiting: 20/min per IP (coordinate with RFC-0933)
+- [x] Use SCIM-specific error format (RFC 7644 Section 3.12)
+- [x] SCIM rate limiting: 20/min per IP (coordinate with RFC-0933)
 
 ### Error Handling
-- [ ] Distributed across all 0949 missions (19 error codes total — 0949-a owns core JWT errors, 0949-b owns OAuth2 errors, 0949-c owns SAML errors, 0949-d owns SCIM/session errors)
+- [x] Distributed across all 0949 missions (19 error codes total)
 
 ### Verification
-- [ ] Clippy passes with zero warnings
-- [ ] All existing tests pass
+- [x] Clippy passes with zero warnings
+- [x] All existing tests pass
 
 ## Claimant
 

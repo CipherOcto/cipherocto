@@ -23,6 +23,7 @@ RFC-0946 (Economics): Guardrails Framework
 - [ ] `ContentModeration` has configurable `timeout_ms` (default 2000), `retries` (default 1), `fallback`
 - [ ] Implement `TopicRestriction` — keyword-based matching with stemming
 - [ ] Implement `RegexFilter` — user-defined regex patterns with inline flag syntax `(?i)`, `(?m)`, `(?s)`
+- [ ] Implement `Custom` guardrail — Python SDK only, configurable `timeout_ms` (default 100ms), `memory_limit_bytes` (default 10MB)
 - [ ] Clippy passes with zero warnings
 - [ ] All existing tests pass
 

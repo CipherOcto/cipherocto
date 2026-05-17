@@ -20,7 +20,7 @@ RFC-0946 (Economics): Guardrails Framework
 - [ ] Implement per-key guardrail overrides (via virtual key metadata)
 - [ ] Implement per-model guardrail overrides
 - [ ] Log guardrail events via structured logging (RFC-0905)
-- [ ] Add Prometheus metrics: `guardrail_checks_total`, `guardrail_blocks_total`, `guardrail_latency_seconds`
+- [ ] Add Prometheus metrics: `guardrail_checks_total`, `guardrail_blocks_total`, `guardrail_errors_total`, `guardrail_latency_seconds`
 - [ ] Add LiteLLM-compatible `input_guardrails`/`output_guardrails` config
 - [ ] Clippy passes with zero warnings
 - [ ] All existing tests pass

@@ -10,11 +10,11 @@ RFC-0946 (Economics): Guardrails Framework
 
 ## Dependencies
 
-None
+- RFC-0936: Pre-call Checks (TokenLimit delegates to ContextWindowCheck)
 
 ## Acceptance Criteria
 
-- [ ] Define `GuardrailType` enum (ContentFilter, PiiDetection, JailbreakDetection, TopicRestriction, OpenAiModeration, CustomCode, ExternalApi)
+- [ ] Define `GuardrailType` enum (ContentFilter, PiiDetection, JailbreakDetection, TopicRestriction, OpenAiModeration, CustomCode, ExternalApi, TokenLimit)
 - [ ] Define `GuardrailAction` enum (Block, Warn, Log, Transform)
 - [ ] Define `GuardrailResult` enum (Allow, Block, Warn, Transform, Error)
 - [ ] Define `GuardrailFallback` enum (FailOpen, FailClosed)

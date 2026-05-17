@@ -37,6 +37,11 @@ rand.workspace = true
 tracing.workspace = true
 tracing-subscriber.workspace = true
 
+# OpenTelemetry tracing (RFC-0905)
+opentelemetry = "0.27"
+opentelemetry-otlp = { version = "0.27", features = ["tonic", "trace"] }
+opentelemetry_sdk = { version = "0.27", features = ["rt-tokio"] }
+
 # Errors
 anyhow.workspace = true
 thiserror.workspace = true
@@ -104,6 +109,7 @@ bytes = { version = "1", optional = true }
 pyo3 = { version = "0.21", optional = true }
 regex = "1.12.3"
 base64 = "0.22.1"
+quick-xml = { version = "0.40.1", features = ["serialize"] }
 
 [lib]
 name = "quota_router_core"

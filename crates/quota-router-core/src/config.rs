@@ -7,6 +7,7 @@ use thiserror::Error;
 pub use crate::health::HealthConfig;
 pub use crate::providers::Provider;
 pub use crate::router::RoutingStrategy;
+pub use crate::tracing::TracingConfig;
 
 // ============================================================================
 // Error Types
@@ -556,6 +557,9 @@ pub struct GatewayConfig {
     /// Guardrail system configuration (RFC-0946)
     #[serde(default)]
     pub guardrails: GuardrailConfig,
+    /// OpenTelemetry tracing configuration (RFC-0905)
+    #[serde(default)]
+    pub tracing: TracingConfig,
 }
 
 /// Prompt management configuration (RFC-0948)
@@ -1072,6 +1076,7 @@ mod tests {
             logging: LogConfig::default(),
             prompts: PromptConfig::default(),
             guardrails: GuardrailConfig::default(),
+            tracing: TracingConfig::default(),
         };
         let result = config.get_deployments();
         assert_eq!(result.len(), 1);
@@ -1136,6 +1141,7 @@ mod tests {
             logging: LogConfig::default(),
             prompts: PromptConfig::default(),
             guardrails: GuardrailConfig::default(),
+            tracing: TracingConfig::default(),
         };
         let result = config.get_deployments();
         assert_eq!(result.len(), 1);
@@ -1202,6 +1208,7 @@ mod tests {
             logging: LogConfig::default(),
             prompts: PromptConfig::default(),
             guardrails: GuardrailConfig::default(),
+            tracing: TracingConfig::default(),
         };
         let map = to_provider_map(&config).unwrap();
         assert!(map.contains_key("openai-gpt4o"));
@@ -1268,6 +1275,7 @@ mod tests {
             logging: LogConfig::default(),
             prompts: PromptConfig::default(),
             guardrails: GuardrailConfig::default(),
+            tracing: TracingConfig::default(),
         };
         let map = to_provider_map(&config).unwrap();
         assert!(map.contains_key("openai_gpt-4o"));
@@ -1344,6 +1352,7 @@ mod tests {
             logging: LogConfig::default(),
             prompts: PromptConfig::default(),
             guardrails: GuardrailConfig::default(),
+            tracing: TracingConfig::default(),
         };
         let map = to_provider_map(&config).unwrap();
         let info = map.get("openai_gpt-4o").unwrap();

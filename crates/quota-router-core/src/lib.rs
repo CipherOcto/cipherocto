@@ -39,6 +39,7 @@ pub mod router;
 pub mod schema;
 pub mod secret_manager;
 pub mod storage;
+pub mod tracing;
 
 // native_http — reqwest → provider REST APIs (INTERNAL boundary #1 per RFC-0917)
 // Only compiled when litellm-mode or full feature is enabled

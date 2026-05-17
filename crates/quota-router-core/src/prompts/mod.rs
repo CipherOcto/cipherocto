@@ -273,6 +273,15 @@ impl PromptRegistry {
         self.storage.list_prompts(filter)
     }
 
+    pub fn list_versions(&self, prompt_id: &str) -> Result<Vec<PromptVersion>, PromptError> {
+        Ok(self.storage.list_versions(prompt_id)?)
+    }
+
+    pub fn activate_version(&mut self, prompt_id: &str, version: &str) -> Result<(), PromptError> {
+        self.storage.activate_version(prompt_id, version)?;
+        Ok(())
+    }
+
     /// Resolve prompt with A/B testing support.
     /// If A/B test exists and is active, selects version deterministically.
     /// If A/B test ended, falls back to version_a.

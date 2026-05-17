@@ -163,6 +163,13 @@ impl PromptStorage {
     pub fn remove_ab_test(&mut self, prompt_id: &str) -> Option<AbTest> {
         self.ab_tests.remove(prompt_id)
     }
+
+    pub fn list_versions(&self, prompt_id: &str) -> Result<Vec<PromptVersion>, StorageError> {
+        self.versions
+            .get(prompt_id)
+            .cloned()
+            .ok_or_else(|| StorageError::PromptNotFound(prompt_id.to_string()))
+    }
 }
 
 impl Default for PromptStorage {

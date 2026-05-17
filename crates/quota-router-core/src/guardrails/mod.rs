@@ -570,7 +570,7 @@ impl TopicRestriction {
         if !self.blocked_topics.is_empty() {
             for blocked in &self.blocked_topics {
                 for word in &words {
-                    if word.contains(blocked) || blocked.contains(word) {
+                    if self.topic_matches(word, blocked) {
                         return GuardrailResult::Block {
                             reason: format!("Blocked topic detected: {}", blocked),
                             guardrail: "topic_restriction".to_string(),
@@ -585,7 +585,7 @@ impl TopicRestriction {
             let mut has_allowed_topic = false;
             for allowed in &self.allowed_topics {
                 for word in &words {
-                    if word.contains(allowed) || allowed.contains(word) {
+                    if self.topic_matches(word, allowed) {
                         has_allowed_topic = true;
                         break;
                     }
@@ -602,6 +602,20 @@ impl TopicRestriction {
         }
 
         GuardrailResult::Allow
+    }
+
+    /// Check if a word matches a topic. Requires at least 3-character overlap
+    /// to avoid false positives from single-letter matches.
+    fn topic_matches(&self, word: &str, topic: &str) -> bool {
+        // Exact match
+        if word == topic {
+            return true;
+        }
+        // Only allow substring match if both are at least 3 chars
+        if word.len() >= 3 && topic.len() >= 3 {
+            return word.contains(topic) || topic.contains(word);
+        }
+        false
     }
 }
 

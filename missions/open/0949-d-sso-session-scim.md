@@ -16,24 +16,24 @@ RFC-0949 (Economics): Enterprise SSO
 ## Acceptance Criteria
 
 ### Session Management
-- [ ] Define `Session` struct (id, user_id, provider, created_at, last_access, expires_at)
-- [ ] Define `SessionStorage` trait (create, get, refresh, revoke, cleanup_expired)
-- [ ] Sliding window session lifecycle (extend on activity)
+- [x] Define `Session` struct (id, user_id, provider, created_at, last_access, expires_at)
+- [x] Define `SessionStorage` trait (create, get, refresh, revoke, cleanup_expired)
+- [x] Sliding window session lifecycle (extend on activity)
 
 ### SCIM 2.0 Types
-- [ ] Implement `ScimUser` (schemas, id, externalId, userName, name.givenName, name.familyName, emails, active, groups)
-- [ ] Implement `ScimEmail` (value, type, primary)
-- [ ] Implement `ScimGroup` (schemas, id, displayName, members)
-- [ ] Implement `ScimPatchOp` (schemas, Operations)
+- [x] Implement `ScimUser` (schemas, id, externalId, userName, name.givenName, name.familyName, emails, active, groups)
+- [x] Implement `ScimEmail` (value, type, primary)
+- [x] Implement `ScimGroup` (schemas, id, displayName, members)
+- [x] Implement `ScimPatchOp` (schemas, Operations)
 
 ### SCIM Operations
-- [ ] Implement list, get, create, update, patch, deactivate operations
-- [ ] Deactivation vs deletion semantics (deactivate preferred — set active=false)
-- [ ] SCIM filter syntax documentation (eq, ne, co, sw, ew)
+- [x] Implement list, get, create, update, patch, deactivate operations
+- [x] Deactivation vs deletion semantics (deactivate preferred — set active=false)
+- [x] SCIM filter syntax documentation (eq, ne, co, sw, ew)
 - [ ] Implement `sync_users()` with per-user error isolation (`SyncResult`/`SyncError`)
 
 ### SCIM Server-Side Endpoints
-- [ ] Implement `GET /scim/v2/Users` — List users (SCIM filter + pagination)
+- [x] Implement `GET /scim/v2/Users` — List users (SCIM filter + pagination)
 - [ ] Implement `GET /scim/v2/Users/:id` — Get user
 - [ ] Implement `POST /scim/v2/Users` — Create user
 - [ ] Implement `PUT /scim/v2/Users/:id` — Replace user

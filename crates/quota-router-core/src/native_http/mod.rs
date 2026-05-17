@@ -83,6 +83,9 @@ pub struct HttpCompletionRequest {
     pub logprobs: Option<bool>,
     pub top_logprobs: Option<usize>,
     pub parallel_tool_calls: Option<bool>,
+    // Prompt management fields (RFC-0948)
+    pub prompt_id: Option<String>,
+    pub prompt_variables: Option<std::collections::HashMap<String, String>>,
 }
 
 impl HttpCompletionRequest {

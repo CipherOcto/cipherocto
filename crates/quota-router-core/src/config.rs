@@ -1713,6 +1713,8 @@ deployments:
             logprobs: None,
             top_logprobs: None,
             parallel_tool_calls: None,
+            prompt_id: None,
+            prompt_variables: None,
         };
 
         // Verify api_base is forwarded

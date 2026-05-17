@@ -152,6 +152,12 @@ pub fn extract_traceparent(traceparent: &str) -> Option<(String, String, u8)> {
     }
     let trace_id = parts[1].to_string();
     let span_id = parts[2].to_string();
+    // Validate trace_id and span_id are valid hex strings
+    if !trace_id.chars().all(|c| c.is_ascii_hexdigit())
+        || !span_id.chars().all(|c| c.is_ascii_hexdigit())
+    {
+        return None;
+    }
     let flags = u8::from_str_radix(parts[3], 16).ok()?;
     Some((trace_id, span_id, flags))
 }

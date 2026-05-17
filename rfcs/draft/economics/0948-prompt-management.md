@@ -1,4 +1,4 @@
-# RFC-0948 (Economics): Prompt Management System
+# RFC-0948 (Economics): Prompt Management
 
 ## Status
 
@@ -14,640 +14,480 @@ Draft
 
 ## Summary
 
-Define a prompt management system for storing, versioning, and deploying prompt templates. Enables enterprise users to manage prompts centrally, track versions, and integrate with chat completions via `prompt_id` parameter. Provides LiteLLM-compatible prompt management interface for drop-in replacement compatibility.
+Define a prompt management system for quota-router that enables centralized storage, versioning, deployment, and A/B testing of prompt templates. Provides enterprise users with prompt lifecycle management integrated with the completion endpoints.
 
 ## Dependencies
 
 **Requires:**
 
-- RFC-0914 (Economics): Stoolap-Only Persistence Layer
-- RFC-0903 (Economics): Virtual API Key System (for prompt-key association)
+- RFC-0903 (Economics): Virtual API Key System
+- RFC-0932 (Economics): Team Management
 
 **Optional:**
 
-- RFC-0904 (Economics): Real-Time Cost Tracking (for prompt-level spend)
-- RFC-0905 (Economics): Observability and Logging (for prompt usage metrics)
+- RFC-0904 (Economics): Real-Time Cost Tracking (per-prompt cost tracking)
+- RFC-0947 (Economics): Callback System (prompt change notifications)
+- RFC-0914 (Economics): Stoolap-only persistence (storage backend)
 
 ## Design Goals
 
 | Goal | Target | Metric |
 |------|--------|--------|
-| G1 | <5ms | Prompt retrieval latency |
-| G2 | >1000 | Prompts per workspace |
-| G3 | <1s | Prompt version rollback |
-| G4 | 100% | LiteLLM API compatibility |
+| G1 | <1ms overhead | Template resolution latency |
+| G2 | Full versioning | Semantic versioning with rollback |
+| G3 | A/B testing | Traffic splitting between versions |
+| G4 | Per-team isolation | Team-scoped prompt access |
 
 ## Motivation
 
-### Problem 1: No Centralized Prompt Management
+### Problem
 
-Enterprise users managing AI applications need centralized prompt storage. Currently, prompts are hardcoded in application code or stored in external systems (Git, databases). This creates:
+Enterprise LLM deployments need centralized prompt management:
 
-- Version drift across environments
-- No audit trail for prompt changes
-- Difficult A/B testing of prompt variations
-- No integration with cost tracking per prompt
+1. **Version Control** — Track prompt changes, rollback to previous versions
+2. **Consistency** — Ensure all applications use the same prompts
+3. **A/B Testing** — Test prompt variants with traffic splitting
+4. **Collaboration** — Teams share and iterate on prompts
+5. **Compliance** — Audit trail of prompt changes
 
-### Problem 2: LiteLLM Parity
+### Use Cases
 
-LiteLLM provides prompt template management via its SDK. For quota-router to be a drop-in replacement, it must offer equivalent functionality:
-
-- `litellm.prompt_management.create_prompt()`
-- `litellm.prompt_management.get_prompt()`
-- `litellm.prompt_management.list_prompts()`
-
-### Problem 3: Prompt-Provider Coupling
-
-Different providers may require different prompt formats (system messages, function calling syntax). A prompt management system can abstract these differences, enabling provider-agnostic prompt definitions.
+- **Customer support**: Standardized system prompts for support bots
+- **Code generation**: Tested and validated code generation prompts
+- **Content creation**: Brand-consistent content prompts
+- **Data extraction**: Structured extraction prompts with known accuracy
 
 ## Specification
 
-### System Architecture
-
-```mermaid
-graph TB
-    subgraph API["Admin API"]
-        L["/prompts/list"]
-        G["/prompts/get"]
-        C["/prompts/create"]
-        U["/prompts/update"]
-        D["/prompts/delete"]
-        P["/prompts/publish"]
-    end
-
-    subgraph Storage["Stoolap DB"]
-        PT["prompts table"]
-        PV["prompt_versions table"]
-        PD["prompt_deployments table"]
-    end
-
-    subgraph Integration["Chat Completion"]
-        CH["prompt_id parameter"]
-        RES["Prompt resolution"]
-    end
-
-    L --> PT
-    G --> PT
-    C --> PT
-    U --> PT
-    D --> PT
-    P --> PD
-    CH --> RES
-    RES --> PT
-```
-
-### Data Structures
-
-#### Prompt
+### Prompt Template
 
 ```rust
-/// Stored prompt template
-struct Prompt {
-    /// Unique prompt identifier (UUID)
-    id: Uuid,
-    /// Human-readable prompt name (unique per workspace)
-    name: String,
-    /// Optional description
-    description: Option<String>,
-    /// Current production version
-    current_version: SemVer,
-    /// Associated virtual key ID (None = global)
-    key_id: Option<Uuid>,
-    /// Creation timestamp
-    created_at: DateTime<Utc>,
-    /// Last update timestamp
-    updated_at: DateTime<Utc>,
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PromptTemplate {
+    /// Unique prompt ID
+    pub id: String,
+    /// Human-readable name
+    pub name: String,
+    /// Semantic version (e.g., "1.2.0")
+    pub version: String,
+    /// Team that owns this prompt
+    pub team_id: Option<String>,
+    /// Template content with {{variable}} placeholders
+    pub template: String,
+    /// Default variable values
+    pub defaults: HashMap<String, String>,
+    /// Model this prompt is optimized for
+    pub model: Option<String>,
     /// Tags for organization
-    tags: Vec<String>,
+    pub tags: Vec<String>,
+    /// Creation timestamp
+    pub created_at: DateTime<Utc>,
+    /// Last update timestamp
+    pub updated_at: DateTime<Utc>,
+    /// Created by user
+    pub created_by: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PromptVersion {
+    /// Prompt ID
+    pub prompt_id: String,
+    /// Version string
+    pub version: String,
+    /// Template content
+    pub template: String,
+    /// Change description
+    pub changelog: String,
+    /// Is this the active version?
+    pub active: bool,
+    /// Traffic weight for A/B testing (0.0-1.0)
+    pub weight: f64,
+    /// Created at
+    pub created_at: DateTime<Utc>,
+    /// Created by
+    pub created_by: String,
 }
 ```
 
-#### PromptVersion
+### Template Variables
 
 ```rust
-/// Versioned prompt template
-struct PromptVersion {
-    /// Version identifier (major.minor.patch)
-    version: SemVer,
-    /// Parent prompt ID
-    prompt_id: Uuid,
-    /// Template content with variable placeholders
-    template: String,
-    /// Template variables (name, type, default, required)
-    variables: Vec<TemplateVariable>,
-    /// Provider-specific overrides
-    provider_overrides: HashMap<String, ProviderPromptOverride>,
-    /// Whether this version is published
-    published: bool,
-    /// Version creation timestamp
-    created_at: DateTime<Utc>,
-}
-```
+/// Template variable syntax: {{variable_name}}
+/// Supports: {{variable}}, {{variable | default}}, {{variable | truncate:100}}
+pub struct TemplateEngine;
 
-#### TemplateVariable
-
-```rust
-/// Variable in a prompt template
-struct TemplateVariable {
-    /// Variable name (alphanumeric + underscore)
-    name: String,
-    /// Variable type
-    var_type: VariableType,
-    /// Default value (if optional)
-    default: Option<String>,
-    /// Whether this variable is required
-    required: bool,
-    /// Description for documentation
-    description: Option<String>,
-}
-
-enum VariableType {
-    String,
-    Number,
-    Boolean,
-    Json,
-}
-```
-
-#### ProviderPromptOverride
-
-```rust
-/// Provider-specific prompt formatting
-struct ProviderPromptOverride {
-    /// How to format system messages
-    system_format: Option<SystemFormat>,
-    /// Custom function calling syntax
-    function_format: Option<FunctionFormat>,
-    /// Max tokens override for this provider
-    max_tokens_override: Option<u32>,
-}
-```
-
-### Template Syntax
-
-Templates use double-brace syntax for variable substitution:
-
-```text
-You are a {{role}} assistant specializing in {{domain}}.
-
-User query: {{query}}
-
-Respond in {{format}} format.
-```
-
-Variables:
-- `{{variable_name}}` — required variable
-- `{{variable_name:=default}}` — variable with default
-- `{{variable_name?}}` — optional variable (omitted if not provided)
-
-### Algorithms
-
-#### Prompt Resolution
-
-```rust
-/// Resolve a prompt template with variable substitution
-async fn resolve_prompt(
-    prompt_id: Uuid,
-    version: Option<SemVer>,
-    variables: HashMap<String, String>,
-    provider: &str,
-) -> Result<ResolvedPrompt, PromptError> {
-    // 1. Fetch prompt (specific version or current)
-    let prompt = fetch_prompt(prompt_id, version).await?;
-
-    // 2. Validate all required variables provided
-    validate_variables(&prompt.variables, &variables)?;
-
-    // 3. Apply variable substitution
-    let mut content = prompt.template.clone();
-    for var in &prompt.variables {
-        let value = variables.get(&var.name)
-            .or(var.default.as_ref())
-            .ok_or(PromptError::MissingVariable(var.name.clone()))?;
-        content = content.replace(&format!("{{{{{}}}}}", var.name), value);
+impl TemplateEngine {
+    /// Render template with variables
+    pub fn render(
+        template: &str,
+        variables: &HashMap<String, String>,
+        defaults: &HashMap<String, String>,
+    ) -> Result<String> {
+        // Find all {{variable}} patterns
+        // Replace with variable value or default
+        // Apply filters (truncate, upper, lower, etc.)
     }
+}
 
-    // 4. Apply provider-specific overrides
-    if let Some(override_) = prompt.provider_overrides.get(provider) {
-        content = apply_provider_override(content, override_);
-    }
-
-    Ok(ResolvedPrompt {
-        content,
-        prompt_id,
-        version: prompt.version,
-        resolved_at: Utc::now(),
-    })
+/// Supported filters
+pub enum TemplateFilter {
+    /// Default value: {{var | default:"fallback"}}
+    Default(String),
+    /// Truncate: {{var | truncate:100}}
+    Truncate(usize),
+    /// Uppercase: {{var | upper}}
+    Upper,
+    /// Lowercase: {{var | lower}}
+    Lower,
+    /// Strip whitespace: {{var | strip}}
+    Strip,
 }
 ```
 
-#### Version Rollback
+### Prompt Registry
 
 ```rust
-/// Rollback prompt to a previous version
-async fn rollback_prompt(
-    prompt_id: Uuid,
-    target_version: SemVer,
-) -> Result<(), PromptError> {
-    // 1. Verify target version exists
-    let version = fetch_version(prompt_id, target_version).await?;
+/// Prompt registry — stores and serves prompts
+pub struct PromptRegistry {
+    /// Storage backend (stoolap)
+    storage: PromptStorage,
+    /// In-memory cache (LRU)
+    cache: LruCache<String, PromptTemplate>,
+    /// A/B test state
+    ab_tests: HashMap<String, AbTest>,
+}
 
-    // 2. Create new version as copy of target
-    let new_version = create_version_from(prompt_id, &version).await?;
+impl PromptRegistry {
+    /// Get prompt by ID (latest active version)
+    pub async fn get(&self, prompt_id: &str) -> Result<PromptTemplate>;
 
-    // 3. Update prompt's current_version
-    update_prompt_current_version(prompt_id, new_version.version).await?;
+    /// Get prompt by ID and version
+    pub async fn get_version(&self, prompt_id: &str, version: &str) -> Result<PromptTemplate>;
 
-    // 4. Audit log
-    log_rollback(prompt_id, target_version, new_version.version).await?;
+    /// Create new prompt
+    pub async fn create(&self, prompt: PromptTemplate) -> Result<String>;
 
+    /// Update prompt (creates new version)
+    pub async fn update(&self, prompt_id: &str, template: &str, changelog: &str) -> Result<String>;
+
+    /// Rollback to previous version
+    pub async fn rollback(&self, prompt_id: &str, version: &str) -> Result<()>;
+
+    /// Delete prompt
+    pub async fn delete(&self, prompt_id: &str) -> Result<()>;
+
+    /// List prompts (with filters)
+    pub async fn list(&self, filter: PromptFilter) -> Result<Vec<PromptTemplate>>;
+
+    /// Resolve prompt with A/B testing
+    pub async fn resolve(&self, prompt_id: &str) -> Result<PromptTemplate>;
+}
+```
+
+### A/B Testing
+
+```rust
+/// A/B test configuration
+pub struct AbTest {
+    /// Prompt ID
+    pub prompt_id: String,
+    /// Version A (control)
+    pub version_a: String,
+    /// Version B (treatment)
+    pub version_b: String,
+    /// Traffic weight for version B (0.0-1.0)
+    pub weight_b: f64,
+    /// Start time
+    pub start_at: DateTime<Utc>,
+    /// End time
+    pub end_at: Option<DateTime<Utc>>,
+    /// Metrics collected
+    pub metrics: AbTestMetrics,
+}
+
+impl AbTest {
+    /// Select version based on traffic weight
+    pub fn select_version(&self, request_id: &str) -> String {
+        // Use deterministic hashing of request_id
+        // Ensures same request always gets same version
+        let hash = hash(request_id);
+        if (hash % 1000) as f64 / 1000.0 < self.weight_b {
+            self.version_b.clone()
+        } else {
+            self.version_a.clone()
+        }
+    }
+}
+
+#[derive(Debug, Default)]
+pub struct AbTestMetrics {
+    pub requests_a: u64,
+    pub requests_b: u64,
+    pub avg_latency_a: f64,
+    pub avg_latency_b: f64,
+    pub error_rate_a: f64,
+    pub error_rate_b: f64,
+    pub avg_tokens_a: u64,
+    pub avg_tokens_b: u64,
+}
+```
+
+### Configuration
+
+```yaml
+# In config.yaml
+prompts:
+  enabled: true
+  storage: stoolap  # or sqlite
+  cache_size: 1000  # LRU cache entries
+  cache_ttl: 300    # seconds
+
+  # Default prompt (used when no prompt_id specified)
+  default_prompt: null
+
+  # Per-team prompt isolation
+  team_isolation: true
+```
+
+### API Endpoints
+
+```rust
+// Prompt CRUD
+GET    /prompts                    // List prompts
+POST   /prompts                    // Create prompt
+GET    /prompts/:id                // Get prompt (latest active)
+GET    /prompts/:id/:version       // Get specific version
+PUT    /prompts/:id                // Update prompt (creates new version)
+DELETE /prompts/:id                // Delete prompt
+POST   /prompts/:id/rollback       // Rollback to version
+
+// Prompt versions
+GET    /prompts/:id/versions       // List all versions
+POST   /prompts/:id/versions/:v/activate  // Activate version
+
+// A/B testing
+POST   /prompts/:id/ab-test        // Start A/B test
+GET    /prompts/:id/ab-test        // Get A/B test status
+DELETE /prompts/:id/ab-test        // Stop A/B test
+
+// Usage with completion
+POST   /v1/chat/completions
+{
+  "model": "gpt-4",
+  "prompt_id": "customer-support-v1",
+  "prompt_variables": {
+    "customer_name": "John",
+    "issue": "billing question"
+  },
+  "messages": [...]
+}
+```
+
+### Integration with Completion Endpoints
+
+```rust
+/// Resolve prompt and inject into messages
+pub async fn resolve_prompt(
+    registry: &PromptRegistry,
+    request: &mut ChatCompletionRequest,
+) -> Result<()> {
+    if let Some(prompt_id) = &request.prompt_id {
+        // Resolve prompt (with A/B testing)
+        let prompt = registry.resolve(prompt_id).await?;
+
+        // Render template with variables
+        let rendered = TemplateEngine::render(
+            &prompt.template,
+            &request.prompt_variables.as_ref().unwrap_or(&HashMap::new()),
+            &prompt.defaults,
+        )?;
+
+        // Inject as system message
+        request.messages.insert(0, Message {
+            role: Role::System,
+            content: rendered,
+        });
+    }
     Ok(())
 }
 ```
 
-### Determinism Requirements
+### LiteLLM Interface Parity
 
-Prompt resolution MUST be deterministic:
+```python
+# Python SDK — matches LiteLLM prompt template patterns
+import quota_router
 
-1. Variable substitution order: alphabetical by variable name
-2. Template rendering: no random elements
-3. Version resolution: exact version match (no semver ranges)
-
-This ensures identical prompts produce identical outputs across instances.
-
-### Error Handling
-
-| Error Code | Description | Recovery |
-|------------|-------------|----------|
-| `PROMPT_NOT_FOUND` | Prompt ID doesn't exist | Check ID, create if needed |
-| `VERSION_NOT_FOUND` | Requested version doesn't exist | Check version, list available |
-| `MISSING_VARIABLE` | Required variable not provided | Provide variable or default |
-| `INVALID_TEMPLATE` | Template syntax error | Fix template syntax |
-| `DUPLICATE_NAME` | Prompt name already exists | Use different name |
-| `VERSION_CONFLICT` | Concurrent version update | Retry with fresh read |
-
-### API Endpoints
-
-#### List Prompts
-
-```http
-GET /prompts/list?key_id={optional}&tags={optional}
-Authorization: Bearer {api_key}
-
-Response:
-{
-  "prompts": [
-    {
-      "id": "uuid",
-      "name": "customer-support",
-      "description": "Customer support assistant",
-      "current_version": "1.2.0",
-      "tags": ["support", "production"],
-      "created_at": "2026-05-17T00:00:00Z"
-    }
-  ],
-  "total": 42
-}
-```
-
-#### Get Prompt
-
-```http
-GET /prompts/{prompt_id}?version={optional}
-Authorization: Bearer {api_key}
-
-Response:
-{
-  "id": "uuid",
-  "name": "customer-support",
-  "current_version": "1.2.0",
-  "template": "You are a {{role}} assistant...",
-  "variables": [...],
-  "versions": ["1.0.0", "1.1.0", "1.2.0"]
-}
-```
-
-#### Create Prompt
-
-```http
-POST /prompts/create
-Authorization: Bearer {api_key}
-
-{
-  "name": "customer-support",
-  "description": "Customer support assistant",
-  "template": "You are a {{role}} assistant specializing in {{domain}}.",
-  "variables": [
-    {
-      "name": "role",
-      "type": "string",
-      "required": true
+# Use prompt template
+response = quota_router.completion(
+    model="gpt-4",
+    prompt_id="customer-support-v1",
+    prompt_variables={
+        "customer_name": "John",
+        "issue": "billing question",
     },
-    {
-      "name": "domain",
-      "type": "string",
-      "required": true
-    }
-  ],
-  "tags": ["support"]
-}
+    messages=[{"role": "user", "content": "Help me with my bill"}],
+)
 
-Response:
-{
-  "id": "uuid",
-  "version": "1.0.0"
-}
+# Create prompt
+quota_router.prompts.create(
+    name="customer-support",
+    template="You are a support agent for {{company}}. Customer: {{customer_name}}. Issue: {{issue}}.",
+    model="gpt-4",
+)
 ```
-
-#### Update Prompt
-
-```http
-PUT /prompts/{prompt_id}
-Authorization: Bearer {api_key}
-
-{
-  "template": "Updated template...",
-  "version_bump": "minor",
-  "description": "Updated description"
-}
-
-Response:
-{
-  "version": "1.1.0"
-}
-```
-
-#### Delete Prompt
-
-```http
-DELETE /prompts/{prompt_id}
-Authorization: Bearer {api_key}
-
-Response:
-{
-  "deleted": true,
-  "versions_deleted": 3
-}
-```
-
-#### Publish Version
-
-```http
-POST /prompts/{prompt_id}/publish
-Authorization: Bearer {api_key}
-
-{
-  "version": "1.2.0"
-}
-
-Response:
-{
-  "published": true,
-  "previous_live": "1.1.0"
-}
-```
-
-### Chat Completion Integration
-
-Add `prompt_id` parameter to chat completion requests:
-
-```http
-POST /v1/chat/completions
-Authorization: Bearer {api_key}
-
-{
-  "model": "gpt-4o",
-  "prompt_id": "uuid",
-  "prompt_variables": {
-    "role": "customer support",
-    "domain": "e-commerce"
-  },
-  "messages": [
-    {"role": "user", "content": "How do I return an item?"}
-  ]
-}
-```
-
-Resolution flow:
-1. Fetch prompt by `prompt_id` (or `prompt_name`)
-2. Resolve template with `prompt_variables`
-3. Inject resolved content as system message
-4. Prepend to `messages` array
-5. Forward to provider
 
 ## Performance Targets
 
 | Metric | Target | Notes |
 |--------|--------|-------|
-| Prompt retrieval | <5ms | From stoolap cache |
-| Variable substitution | <1ms | Template rendering |
-| Version rollback | <1s | DB update + cache invalidation |
-| Concurrent prompts | >1000 | Per workspace |
+| Prompt resolution | <1ms | Cache hit |
+| Prompt resolution | <5ms | Cache miss (DB lookup) |
+| Template rendering | <1ms | Per template |
+| A/B test selection | <0.1ms | Hash-based |
+| Storage overhead | <1KB | Per prompt version |
 
 ## Security Considerations
 
 | Threat | Impact | Mitigation |
 |--------|--------|------------|
-| Prompt injection via variables | High | Variable sanitization, max length limits |
-| Unauthorized prompt access | Medium | Key-based access control via RFC-0903 |
-| Prompt exfiltration | Medium | Audit logging, rate limiting |
-| Template DoS (deeply nested) | Low | Template depth limit (max 10 levels) |
-
-### Variable Sanitization
-
-```rust
-fn sanitize_variable(value: &str, var_type: &VariableType) -> Result<String, PromptError> {
-    match var_type {
-        VariableType::String => {
-            // Remove control characters, limit length
-            let cleaned = value.chars()
-                .filter(|c| !c.is_control())
-                .take(10_000)
-                .collect();
-            Ok(cleaned)
-        }
-        VariableType::Number => {
-            value.parse::<f64>()
-                .map(|n| n.to_string())
-                .map_err(|_| PromptError::InvalidVariableType)
-        }
-        VariableType::Boolean => {
-            match value.to_lowercase().as_str() {
-                "true" | "1" | "yes" => Ok("true".into()),
-                "false" | "0" | "no" => Ok("false".into()),
-                _ => Err(PromptError::InvalidVariableType),
-            }
-        }
-        VariableType::Json => {
-            serde_json::from_str::<serde_json::Value>(value)
-                .map(|_| value.to_string())
-                .map_err(|_| PromptError::InvalidVariableType)
-        }
-    }
-}
-```
+| Prompt injection via templates | High | Sanitize template variables |
+| Unauthorized prompt access | Medium | Team-scoped access control |
+| Prompt exfiltration | Medium | Audit log, access controls |
+| Template DoS | Medium | Limit template size, recursion depth |
+| A/B test manipulation | Low | Deterministic hashing, server-side |
 
 ## Adversarial Review
 
 | Threat | Impact | Mitigation |
 |--------|--------|------------|
-| Prompt name squatting | Medium | Namespacing by key_id |
-| Version history exhaustion | Low | Max 100 versions per prompt |
-| Circular variable references | Low | Template parser rejects self-references |
-| Concurrent version conflicts | Medium | Optimistic locking with version check |
-
-## Economic Analysis
-
-Prompt management adds value to enterprise tier:
-
-- **Cost attribution**: Track spend per prompt version
-- **A/B testing**: Compare cost/quality across prompt variations
-- **Audit compliance**: Full version history for regulated industries
-
-## Compatibility
-
-### LiteLLM API Compatibility
-
-Must implement these LiteLLM-compatible interfaces:
-
-```python
-# Python SDK (via quota_router)
-from quota_router import prompt_management
-
-# Create
-prompt = prompt_management.create_prompt(
-    name="customer-support",
-    template="You are a {{role}} assistant...",
-    variables=[{"name": "role", "required": True}]
-)
-
-# Get
-prompt = prompt_management.get_prompt(prompt_id="uuid")
-
-# List
-prompts = prompt_management.list_prompts(tags=["production"])
-
-# Update
-prompt_management.update_prompt(
-    prompt_id="uuid",
-    template="Updated...",
-    version_bump="minor"
-)
-
-# Delete
-prompt_management.delete_prompt(prompt_id="uuid")
-```
-
-### Backward Compatibility
-
-- Existing chat completion endpoints unchanged
-- `prompt_id` is optional parameter
-- No breaking changes to current API
-
-## Test Vectors
-
-### Template Resolution
-
-```rust
-#[test]
-fn test_template_resolution() {
-    let template = "You are a {{role}} assistant specializing in {{domain}}.";
-    let variables = HashMap::from([
-        ("role".into(), "customer support".into()),
-        ("domain".into(), "e-commerce".into()),
-    ]);
-
-    let resolved = resolve_template(template, &variables).unwrap();
-    assert_eq!(resolved, "You are a customer support assistant specializing in e-commerce.");
-}
-```
-
-### Version Rollback
-
-```rust
-#[test]
-fn test_version_rollback() {
-    // Create prompt with versions 1.0.0, 1.1.0, 1.2.0
-    let prompt_id = create_test_prompt();
-
-    // Rollback to 1.0.0
-    rollback_prompt(prompt_id, SemVer::new(1, 0, 0)).await.unwrap();
-
-    // Verify current version is now 1.0.0 copy (1.0.1 or similar)
-    let prompt = get_prompt(prompt_id).await.unwrap();
-    assert_eq!(prompt.current_version.major, 1);
-}
-```
-
-## Alternatives Considered
-
-| Approach | Pros | Cons |
-|----------|------|------|
-| Git-based storage | Native versioning | Requires external dependency |
-| Redis caching | Fast retrieval | Adds infrastructure dependency |
-| File-based storage | Simple | No concurrent access, no versioning |
-| External service (Langfuse) | Feature-rich | Not self-contained, latency |
-
-**Chosen:** Stoolap-only storage matches RFC-0914 persistence strategy, provides versioning via DB rows, and keeps zero external dependencies.
-
-## Implementation Phases
-
-### Phase 1: Core Storage
-
-- [ ] Create `prompts` and `prompt_versions` tables in stoolap
-- [ ] Implement CRUD operations
-- [ ] Template parser with variable substitution
-- [ ] Basic admin API endpoints
-
-### Phase 2: Versioning & Deployment
-
-- [ ] SemVer version management
-- [ ] Publish/rollback operations
-- [ ] Version history tracking
-- [ ] Audit logging
-
-### Phase 3: Integration
-
-- [ ] `prompt_id` parameter in chat completions
-- [ ] Provider-specific overrides
-- [ ] Python SDK `prompt_management` module
-- [ ] LiteLLM-compatible interface
-
-### Phase 4: Enterprise Features
-
-- [ ] Prompt-level cost tracking
-- [ ] A/B testing support
-- [ ] Prompt templates library
-- [ ] Bulk import/export
+| Template injection via variables | High | Sanitize all variable values |
+| Prompt version tampering | High | Immutable versions, audit log |
+| A/B test gaming | Medium | Deterministic assignment, no client control |
+| Cache poisoning | Medium | TTL-based expiry, team isolation |
+| Template recursion | High | Max depth limit (5), no self-reference |
 
 ## Key Files to Modify
 
 | File | Change |
 |------|--------|
-| `crates/quota-router-core/src/prompts/mod.rs` | New - prompt management module |
-| `crates/quota-router-core/src/prompts/store.rs` | New - stoolap storage |
-| `crates/quota-router-core/src/prompts/template.rs` | New - template parser |
-| `crates/quota-router-core/src/prompts/version.rs` | New - version management |
-| `crates/quota-router-core/src/admin.rs` | Add prompt endpoints |
-| `crates/quota-router-core/src/proxy.rs` | Add prompt_id resolution |
-| `crates/quota-router-core/src/config.rs` | Add prompt config |
-| `crates/quota-router-python/src/prompt_management.rs` | New - Python SDK |
+| `crates/quota-router-core/src/prompts/mod.rs` | New — prompt registry, template engine |
+| `crates/quota-router-core/src/prompts/storage.rs` | New — stoolap-backed storage |
+| `crates/quota-router-core/src/prompts/template.rs` | New — template rendering engine |
+| `crates/quota-router-core/src/prompts/ab_test.rs` | New — A/B testing logic |
+| `crates/quota-router-core/src/config.rs` | Add PromptConfig |
+| `crates/quota-router-core/src/admin.rs` | Add prompt CRUD endpoints |
+| `crates/quota-router-core/src/proxy.rs` | Resolve prompt before provider call |
+| `crates/quota-router-core/src/python_sdk/mod.rs` | Add Python prompt support |
+
+## Implementation Phases
+
+### Phase 1: Core Infrastructure
+
+- [ ] Define PromptTemplate, PromptVersion types
+- [ ] Implement PromptRegistry with stoolap storage
+- [ ] Implement TemplateEngine with variable substitution
+- [ ] Add PromptConfig to config.rs
+
+### Phase 2: API & Integration
+
+- [ ] Add prompt CRUD endpoints to admin API
+- [ ] Integrate prompt resolution into proxy.rs
+- [ ] Add prompt_id to ChatCompletionRequest
+- [ ] Implement prompt caching (LRU)
+
+### Phase 3: Versioning & A/B Testing
+
+- [ ] Implement version management (create, rollback, activate)
+- [ ] Implement A/B testing (traffic splitting, metrics)
+- [ ] Add version listing and comparison
+
+### Phase 4: Python SDK & Advanced
+
+- [ ] Add Python SDK prompt support
+- [ ] Implement per-team prompt isolation
+- [ ] Add prompt analytics (usage, cost per prompt)
+- [ ] Add prompt import/export
 
 ## Future Work
 
-- F1: Prompt analytics (usage count, avg latency, cost)
-- F2: Prompt sharing across workspaces
-- F3: Prompt templates marketplace
-- F4: AI-assisted prompt optimization
+- F1: Prompt marketplace (share prompts across teams)
+- F2: Prompt optimization (automated prompt improvement)
+- F3: Prompt analytics dashboard
+- F4: Prompt templates library (pre-built templates)
 - F5: Multi-modal prompt support (images, audio)
 
 ## Rationale
 
-**Why Stoolap-only?** Matches RFC-0914 persistence strategy. No Redis/PostgreSQL dependency. Single-file deployment.
+### Why Stoolap Storage?
 
-**Why SemVer?** Industry standard for versioning. Enables clear communication of breaking vs non-breaking changes.
+- No external dependencies (Redis, PostgreSQL)
+- Single binary deployment
+- Consistent with quota-router's storage strategy
+- Sufficient for prompt management workloads
 
-**Why template variables?** Enables prompt reuse across contexts. Reduces prompt proliferation.
+### Why Deterministic A/B Testing?
+
+- Same request always gets same version (consistency)
+- No client-side manipulation
+- Reproducible results for debugging
+- No sticky sessions required
+
+### Why Immutable Versions?
+
+- Audit trail (who changed what, when)
+- Safe rollback (previous versions are preserved)
+- A/B testing (multiple versions coexist)
+- Compliance (version history is permanent)
+
+## Alternatives Considered
+
+| Approach | Pros | Cons |
+|----------|------|------|
+| External prompt platform (LangSmith) | Feature-rich | External dependency |
+| Git-based prompts | Version control native | Complex, slow |
+| Database-only (no cache) | Simple | Slow for high-QPS |
+| Client-side templates | No server overhead | No versioning, no A/B testing |
+
+## Test Vectors
+
+```rust
+#[test]
+fn test_template_rendering() {
+    let template = "Hello {{name}}, your order {{order_id}} is {{status}}.";
+    let variables = HashMap::from([
+        ("name".to_string(), "John".to_string()),
+        ("order_id".to_string(), "12345".to_string()),
+        ("status".to_string(), "shipped".to_string()),
+    ]);
+    let result = TemplateEngine::render(template, &variables, &HashMap::new()).unwrap();
+    assert_eq!(result, "Hello John, your order 12345 is shipped.");
+}
+
+#[test]
+fn test_template_default_filter() {
+    let template = "Hello {{name | default:World}}";
+    let result = TemplateEngine::render(template, &HashMap::new(), &HashMap::new()).unwrap();
+    assert_eq!(result, "Hello World");
+}
+
+#[test]
+fn test_ab_test_deterministic() {
+    let test = AbTest {
+        prompt_id: "test".to_string(),
+        version_a: "1.0".to_string(),
+        version_b: "2.0".to_string(),
+        weight_b: 0.5,
+        start_at: Utc::now(),
+        end_at: None,
+        metrics: AbTestMetrics::default(),
+    };
+    // Same request_id always gets same version
+    let v1 = test.select_version("req-123");
+    let v2 = test.select_version("req-123");
+    assert_eq!(v1, v2);
+}
+```
 
 ## Version History
 
@@ -658,61 +498,12 @@ fn test_version_rollback() {
 ## Related RFCs
 
 - RFC-0903 (Economics): Virtual API Key System
+- RFC-0932 (Economics): Team Management
 - RFC-0904 (Economics): Real-Time Cost Tracking
-- RFC-0905 (Economics): Observability and Logging
-- RFC-0914 (Economics): Stoolap-Only Persistence Layer
+- RFC-0947 (Economics): Callback System
 
 ## Related Use Cases
 
 - Enhanced Quota Router Gateway
-
-## Appendices
-
-### A. Database Schema
-
-```sql
-CREATE TABLE prompts (
-    id BLOB(16) PRIMARY KEY,
-    name TEXT NOT NULL,
-    description TEXT,
-    current_version_major INTEGER NOT NULL,
-    current_version_minor INTEGER NOT NULL,
-    current_version_patch INTEGER NOT NULL,
-    key_id BLOB(16),
-    tags TEXT,  -- JSON array
-    created_at INTEGER NOT NULL,
-    updated_at INTEGER NOT NULL,
-    UNIQUE(name, key_id)
-);
-
-CREATE TABLE prompt_versions (
-    prompt_id BLOB(16) NOT NULL,
-    version_major INTEGER NOT NULL,
-    version_minor INTEGER NOT NULL,
-    version_patch INTEGER NOT NULL,
-    template TEXT NOT NULL,
-    variables TEXT NOT NULL,  -- JSON array
-    provider_overrides TEXT,  -- JSON object
-    published INTEGER NOT NULL DEFAULT 0,
-    created_at INTEGER NOT NULL,
-    PRIMARY KEY (prompt_id, version_major, version_minor, version_patch),
-    FOREIGN KEY (prompt_id) REFERENCES prompts(id)
-);
-```
-
-### B. LiteLLM Interface Mapping
-
-| LiteLLM Method | quota-router Endpoint |
-|----------------|----------------------|
-| `create_prompt()` | `POST /prompts/create` |
-| `get_prompt()` | `GET /prompts/{id}` |
-| `list_prompts()` | `GET /prompts/list` |
-| `update_prompt()` | `PUT /prompts/{id}` |
-| `delete_prompt()` | `DELETE /prompts/{id}` |
-| `publish_prompt()` | `POST /prompts/{id}/publish` |
-
----
-
-**Draft Date:** 2026-05-17
-**Status:** Draft
-**Next Step:** Community review, then Accepted → create missions
+- Enterprise AI Gateway
+- LiteLLM Drop-in Replacement

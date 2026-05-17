@@ -2,7 +2,7 @@
 
 ## Status
 
-Draft
+Draft (v2 — Round 1 adversarial review fixes)
 
 ## Authors
 
@@ -14,7 +14,7 @@ Draft
 
 ## Summary
 
-Define a callback system for quota-router that enables logging, tracing, and third-party integrations (Langfuse, Datadog, webhooks, custom callbacks) for all LLM requests and responses. Provides parity with LiteLLM's `success_callback` and `failure_callback` interfaces.
+Define a callback system for quota-router that enables logging, tracing, and third-party integrations (Langfuse, Datadog, webhooks, custom callbacks) for all LLM requests and responses. Provides parity with LiteLLM's four callback lists: `input_callback`, `success_callback`, `failure_callback`, and `service_callback`.
 
 ## Dependencies
 
@@ -26,15 +26,15 @@ Define a callback system for quota-router that enables logging, tracing, and thi
 **Optional:**
 
 - RFC-0904 (Economics): Real-Time Cost Tracking (for spend callbacks)
-- RFC-0913 (Economics): Stoolap Pub/Sub (for distributed callback delivery)
+- RFC-0913 (Economics): Stoolap Pub/Sub (for distributed callback delivery — adds durability; without it, callbacks are fire-and-forget in-memory)
 
 ## Design Goals
 
 | Goal | Target | Metric |
 |------|--------|--------|
-| G1 | <1ms overhead | Callback registration latency |
+| G1 | <1ms overhead | Callback dispatch latency (non-blocking send to channel) |
 | G2 | Non-blocking | Callback execution must not block request path |
-| G3 | LiteLLM parity | success_callback, failure_callback, custom callbacks |
+| G3 | LiteLLM parity | input_callback, success_callback, failure_callback, service_callback |
 | G4 | Extensible | Easy to add new callback targets |
 
 ## Motivation
@@ -50,30 +50,45 @@ quota-router has no mechanism for external systems to receive request/response e
 
 ### LiteLLM Compatibility
 
-LiteLLM provides:
-- `litellm.success_callback = ["langfuse", "s3", "custom"]`
-- `litellm.failure_callback = ["langfuse", "sentry"]`
-- `litellm.callbacks = [CustomCallback()]`
+LiteLLM provides four callback lists:
+- `litellm.input_callback` — Fires before provider call; supports input validation, transformation, and rejection
+- `litellm.success_callback` — Fires after successful completion
+- `litellm.failure_callback` — Fires after failure (error, timeout, rate limit)
+- `litellm.service_callback` — Fires for health/monitoring events (provider health, circuit breaker)
+- `litellm.callbacks = [CustomCallback()]` — Custom callback class instances
 
-quota-router must match this interface for drop-in replacement.
+quota-router must match all four lists for drop-in replacement.
 
 ## Specification
 
 ### Callback Types
 
 ```rust
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Hash)]
 pub enum CallbackType {
-    /// Request completed successfully
+    /// Input validation/transformation (pre-provider-call).
+    /// Maps to LiteLLM's input_callback.
+    /// Supports: input validation, transformation, rejection (return error to abort request).
+    Input,
+    /// Request completed successfully (post-provider-call).
+    /// Maps to LiteLLM's success_callback.
     Success,
-    /// Request failed (error, timeout, rate limit)
+    /// Request failed (error, timeout, rate limit).
+    /// Maps to LiteLLM's failure_callback.
     Failure,
-    /// Request started (pre-flight)
+    /// Request started (fires after key validation and rate limit checks,
+    /// before provider selection and HTTP dispatch).
     Start,
-    /// Request completed (post-flight, includes both success and failure)
+    /// Request completed (fires after response is fully received or error occurs;
+    /// always fires regardless of success/failure).
     End,
+    /// Health/monitoring events (provider health, circuit breaker state changes).
+    /// Maps to LiteLLM's service_callback.
+    Service,
 }
 ```
+
+**Start callback timing:** Fires after key validation (`validate_key()`) and rate limit checks, but before provider selection and the outgoing HTTP request to the provider. This ensures `key_id`, `team_id`, and `provider` metadata are available.
 
 ### Callback Targets
 
@@ -97,7 +112,8 @@ pub enum CallbackTarget {
         secret: Option<String>,
         headers: HashMap<String, String>,
     },
-    /// Custom callback function (Python SDK only)
+    /// Custom callback function (Python SDK only — not available via HTTP proxy).
+    /// For HTTP proxy path, use Webhook target instead.
     Custom {
         module: String,
         function: String,
@@ -109,12 +125,14 @@ pub enum CallbackTarget {
 }
 ```
 
+**Limitation:** `CallbackTarget::Custom` is only available via the Python SDK. The HTTP proxy path cannot invoke Python callback functions. Use `Webhook` targets for HTTP proxy integrations.
+
 ### Callback Data Model
 
 ```rust
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CallbackEvent {
-    /// Unique event ID
+    /// Unique event ID (UUIDv4)
     pub event_id: String,
     /// Callback type
     pub callback_type: CallbackType,
@@ -122,10 +140,10 @@ pub struct CallbackEvent {
     pub timestamp: DateTime<Utc>,
     /// Request metadata
     pub request: CallbackRequest,
-    /// Response metadata (None for Start callbacks)
+    /// Response metadata (None for Start/Input/Service callbacks)
     pub response: Option<CallbackResponse>,
     /// Error details (Failure callbacks only)
-    pub error: Option<CallbackError>,
+    pub error: Option<CallbackErrorDetail>,
     /// Virtual key metadata (if applicable)
     pub key_metadata: Option<KeyMetadata>,
     /// Timing information
@@ -135,7 +153,9 @@ pub struct CallbackEvent {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CallbackRequest {
     pub model: String,
-    pub messages: Vec<Message>,
+    /// Message metadata only (roles, content lengths). Full message content
+    /// is NOT included to prevent PII leakage to third-party targets.
+    pub messages: Vec<MessageMetadata>,
     pub temperature: Option<f64>,
     pub max_tokens: Option<u32>,
     pub stream: bool,
@@ -145,23 +165,52 @@ pub struct CallbackRequest {
     pub user_id: Option<String>,
 }
 
+/// Message metadata — no content, no PII risk
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct MessageMetadata {
+    pub role: String,
+    pub content_length: usize,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CallbackResponse {
     pub id: String,
     pub model: String,
-    pub choices: Vec<Choice>,
+    /// Response summary only — no full choices content.
+    /// Prevents PII leakage to third-party targets.
+    pub response_summary: ResponseSummary,
     pub usage: Usage,
     pub latency_ms: u64,
     pub provider: String,
     pub cached: bool,
 }
 
+/// Response summary — metadata only, no content
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct CallbackError {
+pub struct ResponseSummary {
+    pub choice_count: usize,
+    pub finish_reason: Option<String>,
+    pub total_content_length: usize,
+}
+
+/// Error detail for callback events (data model, not error enum)
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CallbackErrorDetail {
     pub error_type: String,
     pub message: String,
     pub status_code: Option<u16>,
     pub provider: Option<String>,
+}
+
+/// Virtual key metadata from RFC-0903
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct KeyMetadata {
+    pub key_id: String,
+    pub key_prefix: String,
+    pub team_id: Option<String>,
+    pub user_id: Option<String>,
+    pub spend_usd: f64,
+    pub max_budget_usd: Option<f64>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -174,12 +223,20 @@ pub struct CallbackTiming {
 }
 ```
 
+**Message types:** `MessageMetadata` and `ResponseSummary` are custom types defined by this RFC (not imported from `types.rs` or `shared_types.rs`) to ensure no full content is ever sent to third-party callback targets.
+
 ### Configuration
 
 ```yaml
 # In config.yaml
 callbacks:
+  # Bounded channel capacity (default: 10000)
+  channel_capacity: 10000
+
   # Global callbacks applied to all requests
+  input:
+    - type: logging
+      level: debug
   success:
     - type: langfuse
       public_key: "${LANGFUSE_PUBLIC_KEY}"
@@ -199,6 +256,9 @@ callbacks:
   end:
     - type: datadog
       api_key: "${DATADOG_API_KEY}"
+  service:
+    - type: logging
+      level: warn
 
   # Per-key overrides
   key_overrides:
@@ -217,16 +277,23 @@ pub struct CallbackExecutor {
     callbacks: HashMap<CallbackType, Vec<CallbackTarget>>,
     /// HTTP client for webhook/langfuse/datadog calls
     client: reqwest::Client,
-    /// Channel for async callback delivery
+    /// Channel for async callback delivery (bounded, configurable capacity)
     tx: mpsc::Sender<CallbackEvent>,
     /// Background worker
     worker: JoinHandle<()>,
 }
 
 impl CallbackExecutor {
-    /// Fire a callback event (non-blocking)
+    /// Create executor with configurable channel capacity
+    pub fn new(capacity: usize) -> Self {
+        let (tx, rx) = mpsc::channel(capacity);
+        // ...
+    }
+
+    /// Fire a callback event (non-blocking).
+    /// Returns Err if channel is full — event is dropped, not retried.
     pub async fn fire(&self, event: CallbackEvent) -> Result<()> {
-        self.tx.send(event).await?;
+        self.tx.try_send(event)?;
         Ok(())
     }
 
@@ -240,17 +307,36 @@ impl CallbackExecutor {
 }
 ```
 
+**Channel overflow behavior:** When the bounded channel is full, `fire()` returns an error and the event is dropped. This is intentional — callbacks must never backpressure the request path. A `callback_dropped_total` metric (RFC-0905) tracks dropped events. Overflow does NOT trigger retry — retry applies only to failed deliveries after successful channel send.
+
+### Streaming Callback Semantics
+
+For streaming requests (`stream: true`):
+- **Start** callback: Fires at stream open (same timing as non-streaming)
+- **Input** callback: Fires before stream request is sent (same as non-streaming)
+- **Success** callback: Fires when stream completes successfully (after last chunk)
+- **Failure** callback: Fires if stream errors mid-way
+- **End** callback: Fires when stream closes (success or failure)
+- **Response** contains aggregated usage and total latency, not per-chunk data
+- **No per-chunk callbacks** — callbacks fire once per request, not per SSE event
+
 ### LiteLLM Interface Parity
 
 ```python
 # Python SDK — matches LiteLLM interface
 import quota_router
 
+# Input callbacks (pre-call validation/transformation)
+quota_router.input_callback = ["custom_validator"]
+
 # Success callbacks
 quota_router.success_callback = ["langfuse", "datadog"]
 
 # Failure callbacks
 quota_router.failure_callback = ["langfuse", "sentry"]
+
+# Service callbacks (health/monitoring)
+quota_router.service_callback = ["prometheus"]
 
 # Custom callbacks
 from quota_router.callbacks import MyCustomCallback
@@ -267,8 +353,8 @@ response = quota_router.completion(
 ### Error Handling
 
 ```rust
-/// Callback errors are logged but never propagated to the caller
-/// A failing callback must never block or fail an LLM request
+/// Callback errors are logged but never propagated to the caller.
+/// A failing callback must never block or fail an LLM request.
 pub enum CallbackError {
     /// Target unreachable (network error)
     TargetUnreachable { target: String, error: String },
@@ -278,6 +364,8 @@ pub enum CallbackError {
     SerializationError { error: String },
     /// Rate limited by target
     RateLimited { target: String, retry_after: Duration },
+    /// Channel full (event dropped)
+    ChannelFull { capacity: usize },
 }
 ```
 
@@ -291,15 +379,17 @@ pub enum CallbackError {
 | Logging | No retry | Best effort |
 | Custom | No retry | Best effort |
 
+Retry applies to failed HTTP deliveries only. Channel overflow (event dropped) does NOT trigger retry.
+
 ## Performance Targets
 
 | Metric | Target | Notes |
 |--------|--------|-------|
-| Callback registration | <1ms | One-time at startup |
 | Callback dispatch | <1ms | Non-blocking send to channel |
 | Callback execution | Async | Background worker, doesn't block request |
 | Memory overhead | <10MB | Per 1K registered callbacks |
 | Webhook latency | <100ms | Target response time |
+| Channel capacity | 10000 | Configurable via `channel_capacity` |
 
 ## Security Considerations
 
@@ -307,18 +397,25 @@ pub enum CallbackError {
 |--------|--------|------------|
 | Webhook URL injection | Medium | Validate URLs, allowlist patterns |
 | Secret leakage | High | Use env vars, never log secrets |
-| Callback flooding | Medium | Rate limit callback execution per target |
+| PII leakage to third parties | High | No full message/response content — metadata only |
+| Callback flooding | Medium | Bounded channel (configurable), rate limit per target |
 | SSRF via webhook | High | Block internal/private IP ranges |
 | Replay attacks | Medium | Sign webhook payloads with HMAC |
+| Custom callback panic | Medium | Catch panics, log error, continue processing |
 
 ### Webhook Payload Signing
 
 ```rust
-/// HMAC-SHA256 signature for webhook payloads
+/// HMAC-SHA256 signature for webhook payloads using the `hmac` crate (0.12)
 fn sign_payload(payload: &[u8], secret: &str) -> String {
-    let key = hmac::Key::new(hmac::HMAC_SHA256, secret.as_bytes());
-    let signature = hmac::sign(&key, payload);
-    format!("sha256={}", hex::encode(signature.as_ref()))
+    use hmac::{Hmac, Mac};
+    use sha2::Sha256;
+
+    let mut mac = Hmac::<Sha256>::new_from_slice(secret.as_bytes())
+        .expect("HMAC can take key of any size");
+    mac.update(payload);
+    let result = mac.finalize();
+    format!("sha256={}", hex::encode(result.into_bytes()))
 }
 
 /// Webhook headers
@@ -332,10 +429,12 @@ fn sign_payload(payload: &[u8], secret: &str) -> String {
 | Threat | Impact | Mitigation |
 |--------|--------|------------|
 | Callback blocks request path | Critical | Async execution, bounded channel |
-| Callback memory leak | High | Bounded channel (10K events), drop on overflow |
+| Callback memory leak | High | Bounded channel (configurable, default 10K), drop on overflow |
+| PII leakage to third-party targets | High | MessageMetadata/ResponseSummary — no content |
 | Webhook SSRF | High | URL validation, block private IPs |
 | Secret in logs | High | Redact all secret fields |
 | Callback storm | Medium | Rate limit per target (100/min) |
+| Custom callback panic | Medium | Catch panics, log error, continue |
 
 ## Key Files to Modify
 
@@ -345,17 +444,16 @@ fn sign_payload(payload: &[u8], secret: &str) -> String {
 | `crates/quota-router-core/src/callbacks/langfuse.rs` | New — Langfuse integration |
 | `crates/quota-router-core/src/callbacks/datadog.rs` | New — Datadog integration |
 | `crates/quota-router-core/src/callbacks/webhook.rs` | New — Webhook delivery with HMAC signing |
-| `crates/quota-router-core/src/config.rs` | Add CallbackConfig struct |
+| `crates/quota-router-core/src/config.rs` | Add CallbackConfig struct with channel_capacity |
 | `crates/quota-router-core/src/proxy.rs` | Fire callbacks at request start/end |
 | `crates/quota-router-core/src/python_sdk/mod.rs` | Add Python callback support |
-| `rfcs/accepted/economics/0947-callback-system.md` | Move to accepted |
 
 ## Implementation Phases
 
 ### Phase 1: Core Infrastructure
 
 - [ ] Define CallbackEvent, CallbackTarget, CallbackExecutor types
-- [ ] Implement async callback executor with bounded channel
+- [ ] Implement async callback executor with configurable bounded channel
 - [ ] Add CallbackConfig to config.rs
 - [ ] Fire callbacks in proxy.rs at request start/end
 
@@ -363,27 +461,27 @@ fn sign_payload(payload: &[u8], secret: &str) -> String {
 
 - [ ] Implement Langfuse target (HTTP API)
 - [ ] Implement Datadog target (HTTP API)
-- [ ] Implement Webhook target with HMAC signing
+- [ ] Implement Webhook target with HMAC signing (using `hmac` + `sha2` crates)
 - [ ] Implement Logging target (integration with RFC-0905)
 
 ### Phase 3: Python SDK Integration
 
-- [ ] Add success_callback/failure_callback to Python SDK
+- [ ] Add input_callback/success_callback/failure_callback/service_callback to Python SDK
 - [ ] Support custom callback functions via PyO3
 - [ ] Match LiteLLM callback interface
 
 ### Phase 4: Advanced Features
 
 - [ ] Per-key callback overrides
-- [ ] Callback rate limiting
+- [ ] Callback rate limiting (100/min per target)
 - [ ] Callback retry with exponential backoff
-- [ ] Callback metrics (fire count, failure count, latency)
+- [ ] Callback metrics (fire count, failure count, latency, dropped count)
 
 ## Future Work
 
 - F1: Callback batching (group events, send in batches)
-- F2: Callback filtering (only fire for specific models/providers)
-- F3: Callback replay (replay missed events from WAL)
+- F2: Callback filtering (per-team, per-model — add `team_overrides` and `model_filters` config)
+- F3: Callback replay (replay missed events from WAL via RFC-0913)
 - F4: Callback analytics dashboard
 
 ## Rationale
@@ -403,9 +501,13 @@ Different targets have different reliability characteristics:
 - Logging: Best effort, no retry needed
 - Custom: User's responsibility, no retry
 
-### Why LiteLLM Compatibility?
+### Why No Content in Callbacks?
 
-quota-router is positioned as a drop-in replacement for LiteLLM. Matching the callback interface (`success_callback`, `failure_callback`) means users can switch without code changes.
+Full message/response content contains PII. Enterprise compliance (GDPR, SOC2) requires that third-party targets receive metadata only. Users who need full content should use the Logging target (RFC-0905) which processes data locally.
+
+### Why WAL is Optional?
+
+WAL (RFC-0913) adds durability but also complexity and latency. For most use cases, fire-and-forget with bounded channel is sufficient. WAL adds replay capability for mission-critical audit trails.
 
 ## Alternatives Considered
 
@@ -414,7 +516,7 @@ quota-router is positioned as a drop-in replacement for LiteLLM. Matching the ca
 | Synchronous callbacks | Simple | Blocks request path |
 | Event bus (pub/sub) | Decoupled | Over-engineered for callbacks |
 | Message queue (Redis) | Durable | External dependency |
-| WAL-based callbacks | Durable, no external deps | Complex, higher latency |
+| WAL-based callbacks | Durable, replayable | Higher latency, added complexity (optional via RFC-0913) |
 
 ## Test Vectors
 
@@ -441,6 +543,19 @@ fn test_webhook_signature() {
     let secret = "test_secret";
     let sig = sign_payload(payload, secret);
     assert!(sig.starts_with("sha256="));
+    // Verify with known HMAC-SHA256 output
+}
+
+#[test]
+fn test_no_content_in_response_summary() {
+    let summary = ResponseSummary {
+        choice_count: 1,
+        finish_reason: Some("stop".to_string()),
+        total_content_length: 42,
+    };
+    let json = serde_json::to_string(&summary).unwrap();
+    assert!(!json.contains("content"));
+    assert!(!json.contains("text"));
 }
 ```
 
@@ -449,6 +564,7 @@ fn test_webhook_signature() {
 | Version | Date | Changes |
 |---------|------|---------|
 | v1 | 2026-05-17 | Initial draft |
+| v2 | 2026-05-17 | Round 1 fixes: added input/service callbacks, fixed CallbackError naming collision, removed PII from responses, added streaming semantics, fixed HMAC to use hmac crate, clarified channel capacity, added KeyMetadata, fixed G1 metric |
 
 ## Related RFCs
 

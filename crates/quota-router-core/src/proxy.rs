@@ -573,6 +573,10 @@ where
                 }
             }
         }
+
+        // Per-team budget check (RFC-0943)
+        // TODO: Requires get_budget on KeyStorage trait
+        // For now, team budget is checked at the storage level during spend recording
     }
 
     // Path-based routing (RFC-0917)

@@ -46,6 +46,17 @@ pub trait KeyStorage: Send + Sync {
         event: &SpendEvent,
     ) -> Result<(), KeyError>;
 
+    /// Query spend ledger entries with optional filters
+    fn query_spend_ledger(
+        &self,
+        key_id: Option<&str>,
+        team_id: Option<&str>,
+        limit: Option<i64>,
+    ) -> Result<Vec<serde_json::Value>, KeyError>;
+
+    /// Get total spend across all keys
+    fn get_total_spend(&self) -> Result<i64, KeyError>;
+
     /// Resolve a tokenizer_id (BLAKE3-16) back to its version string via DB lookup.
     ///
     /// Per RFC-0909 §tokenizer_id_to_version and RFC-0910 §Tokenizer Database Schema.
@@ -1362,6 +1373,76 @@ impl KeyStorage for StoolapKeyStorage {
         }
 
         Ok(())
+    }
+
+    fn query_spend_ledger(
+        &self,
+        key_id: Option<&str>,
+        team_id: Option<&str>,
+        limit: Option<i64>,
+    ) -> Result<Vec<serde_json::Value>, KeyError> {
+        let mut sql = String::from(
+            "SELECT event_id, key_id, team_id, cost_amount, input_tokens, output_tokens, model, created_at FROM spend_ledger WHERE 1=1",
+        );
+        let mut params: Vec<stoolap::Value> = Vec::new();
+        let mut param_idx = 1;
+
+        if let Some(kid) = key_id {
+            sql.push_str(&format!(" AND key_id = ${}", param_idx));
+            params.push(kid.into());
+            param_idx += 1;
+        }
+        if let Some(tid) = team_id {
+            sql.push_str(&format!(" AND team_id = ${}", param_idx));
+            params.push(tid.into());
+            let _ = param_idx;
+        }
+
+        sql.push_str(" ORDER BY created_at DESC");
+
+        if let Some(l) = limit {
+            sql.push_str(&format!(" LIMIT {}", l));
+        } else {
+            sql.push_str(" LIMIT 100");
+        }
+
+        let mut rows = self
+            .db
+            .query(&sql, params)
+            .map_err(|e| KeyError::Storage(e.to_string()))?;
+
+        let mut results = Vec::new();
+        while let Some(Ok(row)) = rows.next() {
+            let entry = serde_json::json!({
+                "event_id": row.get_by_name::<String>("event_id").unwrap_or_default(),
+                "key_id": row.get_by_name::<String>("key_id").unwrap_or_default(),
+                "team_id": row.get_by_name::<String>("team_id").ok(),
+                "cost_amount": row.get_by_name::<i64>("cost_amount").unwrap_or(0),
+                "input_tokens": row.get_by_name::<i64>("input_tokens").unwrap_or(0),
+                "output_tokens": row.get_by_name::<i64>("output_tokens").unwrap_or(0),
+                "model": row.get_by_name::<String>("model").unwrap_or_default(),
+                "created_at": row.get_by_name::<i64>("created_at").unwrap_or(0),
+            });
+            results.push(entry);
+        }
+
+        Ok(results)
+    }
+
+    fn get_total_spend(&self) -> Result<i64, KeyError> {
+        let mut rows = self
+            .db
+            .query(
+                "SELECT COALESCE(SUM(cost_amount), 0) as total FROM spend_ledger",
+                vec![],
+            )
+            .map_err(|e| KeyError::Storage(e.to_string()))?;
+
+        if let Some(Ok(row)) = rows.next() {
+            Ok(row.get_by_name::<i64>("total").unwrap_or(0))
+        } else {
+            Ok(0)
+        }
     }
 }
 

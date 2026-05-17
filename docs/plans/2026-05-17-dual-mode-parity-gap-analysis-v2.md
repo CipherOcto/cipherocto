@@ -28,15 +28,15 @@
 
 ## Remaining Gaps
 
-### P1 — Important (5 items)
+### P1 — Important (5 items) — ALL COMPLETE
 
-| # | Gap | Current State | RFC | Action |
-|---|-----|---------------|-----|--------|
-| 1 | CostBased/UsageBasedV2 routing | Strategies defined but not wired | RFC-0902 | Mission 0902-g |
-| 2 | Dynamic API key override | Per-request key override not implemented | RFC-0903 | Mission 0903-g |
-| 3 | Cost integration | Pricing table exists but not wired to proxy | RFC-0904 | Mission 0904-a |
-| 4 | PyBridge trait refactor | Factory uses match, not trait dispatch | RFC-0917 | Mission 0917-f |
-| 5 | WAL Pub/Sub testing | Cache invalidation not tested end-to-end | RFC-0913 | Mission 0913-d |
+| # | Gap | Current State | RFC | Action | Commit |
+|---|-----|---------------|-----|--------|--------|
+| 1 | CostBased/UsageBasedV2 routing | DONE | RFC-0902 | Mission 0902-g | `f874220` |
+| 2 | Dynamic API key override | DONE | RFC-0903 | Mission 0903-g | `b285a8e` |
+| 3 | Cost integration | DONE | RFC-0904 | Mission 0904-a | `2e11074` |
+| 4 | PyBridge trait refactor | DONE — Factory 486→68 lines (86% reduction), registry pattern | RFC-0917 | Mission 0917-f | `943b9be` |
+| 5 | WAL Pub/Sub testing | DONE — CacheInvalidation with dual-write, 4 integration tests | RFC-0913 | Mission 0913-d | `80cc695` |
 
 ### P2 — Enterprise (5 items)
 
@@ -63,13 +63,13 @@
 
 ## RFC Action Items
 
-### Existing RFCs Needing Updates
+### Existing RFCs — P1 COMPLETE
 
-| RFC | Update | Priority |
-|-----|--------|----------|
-| RFC-0902 | CostBased/UsageBasedV2 implementation spec | P1 |
-| RFC-0903 | Dynamic API key override spec | P1 |
-| RFC-0904 | Cost integration wiring spec | P1 |
+| RFC | Update | Priority | Status |
+|-----|--------|----------|--------|
+| RFC-0902 | CostBased/UsageBasedV2 implementation spec | P1 | DONE (0902-g) |
+| RFC-0903 | Dynamic API key override spec | P1 | DONE (0903-g) |
+| RFC-0904 | Cost integration wiring spec | P1 | DONE (0904-a) |
 
 ### New RFCs Required
 
@@ -85,7 +85,7 @@
 
 The project is **feature-complete for P0 (critical) and P1 (important) gaps**. The remaining work is:
 
-1. **5 P1 missions** with existing RFCs — can be implemented immediately
+1. **5 P1 missions** — ALL COMPLETE (0902-g, 0903-g, 0904-a, 0917-f, 0913-d)
 2. **5 P2 features** without RFCs — need RFC creation first per BLUEPRINT
 
 **No deferred work remains.** All stubs have been replaced with real implementations.
@@ -98,3 +98,4 @@ The project is **feature-complete for P0 (critical) and P1 (important) gaps**. T
 |---------|------|---------|
 | v1 | 2026-05-17 | Initial gap analysis |
 | v2 | 2026-05-17 | Fresh gather — confirmed P0/P1 complete, P2 remaining |
+| v3 | 2026-05-17 | All 5 P1 missions complete (0902-g, 0903-g, 0904-a, 0917-f, 0913-d) |

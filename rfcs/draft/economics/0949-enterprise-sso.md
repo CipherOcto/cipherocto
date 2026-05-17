@@ -137,6 +137,68 @@ pub struct ProviderConfig {
 }
 ```
 
+**ProviderConfig Validation Rules:**
+
+| ProviderType | Required Fields | Optional Fields |
+|--------------|----------------|-----------------|
+| Okta | client_id, client_secret, issuer | scopes |
+| AzureAd | client_id, client_secret, issuer | scopes |
+| GoogleWorkspace | client_id, client_secret | scopes |
+| Auth0 | client_id, client_secret, issuer | scopes |
+| GenericOidc | client_id, issuer | client_secret, scopes |
+| GenericSaml | idp_metadata_url, sp_entity_id, acs_url | — |
+
+Invalid combinations (e.g., `client_id` without `client_secret` for Okta) MUST be rejected at config load time with a descriptive error.
+
+### SSO-to-API-Key Mapping
+
+When an SSO user authenticates, the system MUST map them to a virtual API key for API access:
+
+```rust
+/// SSO-to-API-key mapping
+pub struct SsoKeyMapper {
+    /// Key storage backend
+    key_storage: Arc<dyn KeyStorage>,
+}
+
+impl SsoKeyMapper {
+    /// Get or create virtual key for SSO user
+    pub async fn get_or_create_key(
+        &self,
+        user: &SsoUser,
+        provider: &IdentityProvider,
+    ) -> Result<VirtualKey> {
+        // 1. Look up existing key by user.sub (IdP subject)
+        if let Some(key) = self.key_storage.get_key_by_sso_subject(&user.sub).await? {
+            return Ok(key);
+        }
+
+        // 2. Auto-provision if enabled
+        if provider.auto_provision {
+            let key = VirtualKey {
+                key_id: generate_key_id(),
+                name: format!("sso-{}", user.email.as_deref().unwrap_or(&user.sub)),
+                team_id: provider.default_team.clone(),
+                role: map_role(user),
+                metadata: KeyMetadata {
+                    sso_subject: Some(user.sub.clone()),
+                    sso_provider: Some(provider.id.clone()),
+                    ..Default::default()
+                },
+                ..Default::default()
+            };
+            self.key_storage.create_key(&key).await?;
+            return Ok(key);
+        }
+
+        // 3. No auto-provision — require admin to create key
+        Err(SsoError::NoKeyMapping { user_id: user.sub.clone() })
+    }
+}
+```
+
+The mapping is keyed on `user.sub` (the IdP's subject identifier), which is stable across sessions. When auto-provision is disabled, an admin MUST explicitly create a virtual key and link it to the SSO user.
+
 ### Token Management
 
 ```rust
@@ -150,16 +212,32 @@ pub struct TokenValidator {
     audience: String,
     /// Clock skew tolerance
     clock_skew: Duration,
+    /// Supported signing algorithms
+    supported_algorithms: Vec<JwtAlgorithm>,
+}
+
+/// Supported JWT signing algorithms
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub enum JwtAlgorithm {
+    RS256,  // RSA with SHA-256
+    RS384,  // RSA with SHA-384
+    RS512,  // RSA with SHA-512
+    ES256,  // ECDSA with P-256 and SHA-256
+    ES384,  // ECDSA with P-384 and SHA-384
+    PS256,  // RSASSA-PSS with SHA-256
 }
 
 impl TokenValidator {
     /// Validate JWT token
     pub async fn validate(&self, token: &str) -> Result<TokenClaims> {
-        // 1. Fetch JWKS keys (cached)
-        // 2. Verify signature
-        // 3. Check expiration
-        // 4. Check issuer and audience
-        // 5. Return claims
+        // 1. Decode JWT header
+        // 2. Validate algorithm is in supported_algorithms (reject "none")
+        // 3. Fetch JWKS keys (cached, refresh on unknown kid)
+        // 4. Verify signature using matching key
+        // 5. Check exp claim (with clock_skew tolerance)
+        // 6. Check iss claim matches self.issuer
+        // 7. Check aud claim contains self.audience
+        // 8. Return claims
     }
 
     /// Introspect opaque token
@@ -178,8 +256,250 @@ pub struct TokenClaims {
     pub exp: i64,
     pub iat: i64,
     pub iss: String,
+    pub aud: String,          // Audience
 }
 ```
+
+**JWT Header Format:**
+
+```json
+{
+  "alg": "RS256",
+  "typ": "JWT",
+  "kid": "key-id-from-jwks"
+}
+```
+
+The `alg` field MUST be one of the supported algorithms. Tokens with `alg: "none"` MUST be rejected.
+
+### Token Lifecycle
+
+| Token Type | Lifetime | Refresh Window | Revocation |
+|------------|----------|----------------|------------|
+| Access Token | 1 hour (configurable) | N/A (use refresh token) | Immediate via blacklist |
+| Refresh Token | 7 days (configurable) | Last 24 hours | Immediate via blacklist |
+| Session Token | 30 minutes (configurable) | Sliding window | Immediate via blacklist |
+
+**Refresh Token Rotation:**
+
+When a refresh token is used, the old token is invalidated and a new refresh token is issued. This prevents token theft replay attacks.
+
+**Token Revocation Propagation:**
+
+```rust
+/// Token blacklist for cross-instance revocation
+pub struct TokenBlacklist {
+    /// Shared storage (stoolap)
+    storage: Arc<dyn TokenBlacklistStorage>,
+}
+
+impl TokenBlacklist {
+    /// Revoke a token
+    pub async fn revoke(&self, token_id: &str, expires_at: DateTime<Utc>) -> Result<()> {
+        // Add to blacklist with expiration matching token exp
+        self.storage.add(token_id, expires_at).await
+    }
+
+    /// Check if token is revoked
+    pub async fn is_revoked(&self, token_id: &str) -> Result<bool> {
+        self.storage.contains(token_id).await
+    }
+}
+```
+
+The blacklist uses stoolap for cross-instance propagation. Entries auto-expire when the token would have expired.
+
+### SAML 2.0 Specification
+
+```rust
+/// SAML assertion parser
+pub struct SamlAssertionParser {
+    /// IdP certificate for signature validation
+    idp_certificate: Vec<u8>,
+    /// SP entity ID for audience validation
+    sp_entity_id: String,
+    /// ACS URL for recipient validation
+    acs_url: String,
+}
+
+impl SamlAssertionParser {
+    /// Parse and validate SAML assertion
+    pub fn parse(&self, assertion_xml: &str) -> Result<SamlAssertion> {
+        // 1. Parse XML
+        // 2. Validate XML signature using idp_certificate
+        // 3. Check Conditions/NotBefore and NotOnOrAfter (with clock skew)
+        // 4. Validate Audience matches sp_entity_id
+        // 5. Validate SubjectConfirmationData.Recipient matches acs_url
+        // 6. Extract attributes
+        // 7. Return SamlAssertion
+    }
+
+    /// Map SAML attributes to user properties
+    pub fn map_attributes(&self, assertion: &SamlAssertion) -> SsoUser {
+        SsoUser {
+            sub: assertion.name_id.clone(),
+            email: assertion.attributes.get("email").cloned(),
+            name: assertion.attributes.get("displayName").cloned(),
+            groups: assertion.attributes.get("groups")
+                .map(|g| g.split(',').map(String::from).collect())
+                .unwrap_or_default(),
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct SamlAssertion {
+    pub name_id: String,
+    pub session_index: Option<String>,
+    pub attributes: HashMap<String, String>,
+    pub not_before: DateTime<Utc>,
+    pub not_on_or_after: DateTime<Utc>,
+}
+```
+
+**SP Metadata Generation:**
+
+The system MUST generate SP metadata XML at `GET /auth/sso/saml/metadata`:
+
+```xml
+<EntityDescriptor xmlns="urn:oasis:names:tc:SAML:2.0:metadata"
+                  entityID="{sp_entity_id}">
+  <SPSSODescriptor
+      AuthnRequestsSigned="true"
+      WantAssertionsSigned="true"
+      protocolSupportEnumeration="urn:oasis:names:tc:SAML:2.0:protocol">
+    <SingleLogoutService
+        Binding="urn:oasis:names:tc:SAML:2.0:bindings:HTTP-Redirect"
+        Location="{base_url}/auth/sso/saml/slo"/>
+    <AssertionConsumerService
+        Binding="urn:oasis:names:tc:SAML:2.0:bindings:HTTP-POST"
+        Location="{acs_url}"
+        index="0" isDefault="true"/>
+  </SPSSODescriptor>
+</EntityDescriptor>
+```
+
+### SCIM 2.0 Specification
+
+```rust
+/// SCIM 2.0 user provisioning
+pub struct ScimProvisioner {
+    /// SCIM endpoint URL
+    url: String,
+    /// Bearer token for SCIM API
+    token: String,
+    /// HTTP client
+    client: reqwest::Client,
+}
+
+impl ScimProvisioner {
+    /// List users with filter
+    pub async fn list_users(
+        &self,
+        filter: Option<&str>,
+        start_index: Option<u32>,
+        count: Option<u32>,
+    ) -> Result<ScimListResponse> {
+        // GET /Users?filter={filter}&startIndex={start_index}&count={count}
+        // Supports SCIM filter syntax: userName eq "user@example.com"
+        // Supports pagination via startIndex and count
+    }
+
+    /// Get user by ID
+    pub async fn get_user(&self, user_id: &str) -> Result<ScimUser> {
+        // GET /Users/{user_id}
+    }
+
+    /// Create user
+    pub async fn create_user(&self, user: &ScimUser) -> Result<ScimUser> {
+        // POST /Users
+    }
+
+    /// Update user (full replace)
+    pub async fn update_user(&self, user_id: &str, user: &ScimUser) -> Result<ScimUser> {
+        // PUT /Users/{user_id}
+    }
+
+    /// Patch user (partial update)
+    pub async fn patch_user(
+        &self,
+        user_id: &str,
+        operations: &[ScimPatchOp],
+    ) -> Result<ScimUser> {
+        // PATCH /Users/{user_id}
+        // Supports: add, remove, replace operations
+    }
+
+    /// Deactivate user (soft delete)
+    pub async fn deactivate_user(&self, user_id: &str) -> Result<()> {
+        // PATCH /Users/{user_id} with { "op": "replace", "path": "active", "value": false }
+        // Deactivation preserves user data; deletion removes it
+    }
+
+    /// Sync users from IdP
+    pub async fn sync_users(&self) -> Result<Vec<ScimUser>> {
+        // Paginate through all users using startIndex/count
+        // Map to quota-router users
+        // Create/update/deactivate as needed
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ScimUser {
+    pub id: String,
+    pub user_name: String,
+    pub emails: Vec<ScimEmail>,
+    pub active: bool,
+    pub groups: Vec<ScimGroup>,
+    pub display_name: Option<String>,
+    pub external_id: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ScimEmail {
+    pub value: String,
+    pub primary: bool,
+    #[serde(rename = "type")]
+    pub email_type: Option<String>,  // "work", "home", "other"
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ScimGroup {
+    pub value: String,
+    pub display: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ScimPatchOp {
+    pub op: String,  // "add", "remove", "replace"
+    pub path: Option<String>,
+    pub value: serde_json::Value,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ScimListResponse {
+    pub schemas: Vec<String>,
+    pub total_results: u32,
+    pub start_index: u32,
+    pub items_per_page: u32,
+    pub resources: Vec<ScimUser>,
+}
+
+/// SCIM filter syntax support
+/// - eq: userName eq "user@example.com"
+/// - ne: active ne false
+/// - co: displayName co "John"
+/// - sw: userName sw "admin"
+/// - gt/lt/ge/le: comparison operators
+/// - and/or: logical operators
+/// - not: negation
+/// - group filter: groups eq "group-id"
+```
+
+**Deactivation vs Deletion:**
+
+- **Deactivation** (`active: false`): User is disabled but data is preserved. Default for SCIM deprovisioning.
+- **Deletion** (`DELETE /Users/{id}`): User and data are permanently removed. Only used for GDPR right-to-erasure requests.
 
 ### Configuration
 
@@ -221,6 +541,25 @@ sso:
   team_mapping:
     "engineering": engineering-team
     "data-science": ds-team
+
+  # Token lifecycle
+  token:
+    access_token_lifetime: 3600      # 1 hour (seconds)
+    refresh_token_lifetime: 604800   # 7 days (seconds)
+    session_lifetime: 1800           # 30 minutes (seconds)
+    refresh_window: 86400            # Last 24 hours (seconds)
+
+  # JWT validation
+  jwt:
+    supported_algorithms: [RS256, ES256]
+    clock_skew: 30                   # seconds
+    jwks_cache_ttl: 3600             # 1 hour
+
+  # Rate limiting for auth endpoints
+  rate_limit:
+    login: 10/minute                 # Per IP
+    token_refresh: 30/minute         # Per user
+    token_revoke: 30/minute          # Per user
 ```
 
 ### API Endpoints
@@ -233,6 +572,9 @@ POST /auth/token                  // Token exchange
 POST /auth/token/refresh          // Refresh token
 POST /auth/token/revoke           // Revoke token
 
+// SAML metadata
+GET  /auth/sso/saml/metadata      // SP metadata XML
+
 // User info
 GET  /auth/userinfo               // Get current user info
 GET  /auth/userinfo/claims        // Get token claims
@@ -244,42 +586,55 @@ PUT    /auth/providers/:id         // Update provider
 DELETE /auth/providers/:id         // Delete provider
 ```
 
-### User Provisioning
+### Error Handling
 
-```rust
-/// SCIM-based user provisioning
-pub struct ScimProvisioner {
-    /// SCIM endpoint URL
-    url: String,
-    /// Bearer token for SCIM API
-    token: String,
-    /// HTTP client
-    client: reqwest::Client,
-}
+| Error Code | HTTP Status | Description |
+|------------|-------------|-------------|
+| `sso_provider_not_found` | 404 | SSO provider ID not configured |
+| `sso_provider_disabled` | 403 | SSO provider is disabled |
+| `sso_invalid_state` | 400 | OAuth2 state parameter mismatch or expired |
+| `sso_invalid_code` | 400 | OAuth2 authorization code invalid or expired |
+| `sso_token_expired` | 401 | JWT token has expired |
+| `sso_token_revoked` | 401 | JWT token has been revoked |
+| `sso_token_invalid` | 401 | JWT signature validation failed |
+| `sso_token_algorithm_unsupported` | 400 | JWT algorithm not in supported_algorithms |
+| `sso_token_algorithm_none` | 400 | JWT uses alg=none (rejected) |
+| `sso_audience_mismatch` | 401 | JWT aud claim doesn't match expected audience |
+| `sso_issuer_mismatch` | 401 | JWT iss claim doesn't match expected issuer |
+| `sso_saml_signature_invalid` | 400 | SAML assertion signature validation failed |
+| `sso_saml_assertion_expired` | 400 | SAML assertion NotOnOrAfter has passed |
+| `sso_saml_audience_mismatch` | 400 | SAML Audience doesn't match SP entity ID |
+| `sso_no_key_mapping` | 403 | SSO user has no virtual key and auto_provision is disabled |
+| `sso_user_deactivated` | 403 | SCIM user is deactivated |
+| `sso_provider_error` | 502 | External IdP returned an error |
+| `sso_rate_limited` | 429 | Auth endpoint rate limit exceeded |
 
-impl ScimProvisioner {
-    /// Sync users from IdP
-    pub async fn sync_users(&self) -> Result<Vec<ScimUser>> {
-        // GET /Users from SCIM endpoint
-        // Map to quota-router users
-        // Create/update/deactivate as needed
+**Error Response Format:**
+
+```json
+{
+  "error": {
+    "code": "sso_token_expired",
+    "message": "JWT token has expired",
+    "details": {
+      "expired_at": "2026-05-17T12:00:00Z"
     }
-
-    /// Push user changes to IdP
-    pub async fn push_user(&self, user: &User) -> Result<()> {
-        // POST/PUT /Users to SCIM endpoint
-    }
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ScimUser {
-    pub id: String,
-    pub user_name: String,
-    pub emails: Vec<String>,
-    pub active: bool,
-    pub groups: Vec<String>,
+  }
 }
 ```
+
+### Rate Limiting
+
+Auth endpoints MUST have rate limiting to prevent brute-force and token-harvesting attacks:
+
+| Endpoint | Limit | Scope | Rationale |
+|----------|-------|-------|-----------|
+| `POST /auth/token` | 10/minute | Per IP | Prevent credential stuffing |
+| `POST /auth/token/refresh` | 30/minute | Per user | Prevent refresh token abuse |
+| `POST /auth/token/revoke` | 30/minute | Per user | Prevent revocation spam |
+| `GET /auth/sso/:provider/callback` | 20/minute | Per IP | Prevent callback abuse |
+
+Rate limits use the same mechanism as RFC-0933 (Rate Limiting Integration). Exceeding limits returns `429 Too Many Requests` with `Retry-After` header.
 
 ## Performance Targets
 
@@ -299,16 +654,12 @@ pub struct ScimUser {
 | JWT signature bypass | Critical | Strict validation, reject none algorithm |
 | IdP impersonation | High | Certificate pinning, metadata validation |
 | Token replay | Medium | Token binding, audience validation |
-
-## Adversarial Review
-
-| Threat | Impact | Mitigation |
-|--------|--------|------------|
-| JWT alg=none attack | Critical | Reject tokens without valid signature |
-| State parameter manipulation | High | Cryptographic state, validate on callback |
-| Token leakage via logs | High | Never log tokens, redact all auth headers |
+| Brute-force login | High | Rate limiting (10/min per IP) |
+| Token harvesting | Medium | Rate limiting on /auth/token |
+| Refresh token theft | High | One-time use rotation |
+| SAML assertion forgery | Critical | XML signature validation |
 | SCIM endpoint abuse | Medium | Rate limiting, IP allowlist |
-| Refresh token theft | High | Rotation, one-time use |
+| Token leakage via logs | High | Never log tokens, redact all auth headers |
 
 ## Key Files to Modify
 
@@ -319,6 +670,8 @@ pub struct ScimUser {
 | `crates/quota-router-core/src/auth/saml.rs` | New — SAML 2.0 |
 | `crates/quota-router-core/src/auth/jwt.rs` | New — JWT validation |
 | `crates/quota-router-core/src/auth/scim.rs` | New — SCIM provisioning |
+| `crates/quota-router-core/src/auth/key_mapper.rs` | New — SSO-to-API-key mapping |
+| `crates/quota-router-core/src/auth/blacklist.rs` | New — Token blacklist |
 | `crates/quota-router-core/src/config.rs` | Add SsoConfig |
 | `crates/quota-router-core/src/admin.rs` | Add auth endpoints |
 | `crates/quota-router-core/src/proxy.rs` | Validate JWT in auth middleware |
@@ -331,6 +684,8 @@ pub struct ScimUser {
 - [ ] Implement JWT validation with JWKS caching
 - [ ] Add SsoConfig to config.rs
 - [ ] Add /auth/token endpoints
+- [ ] Implement SsoKeyMapper
+- [ ] Implement TokenBlacklist
 
 ### Phase 2: OAuth2/OIDC
 
@@ -342,12 +697,13 @@ pub struct ScimUser {
 ### Phase 3: SAML
 
 - [ ] Implement SP-initiated SAML SSO
-- [ ] Parse SAML assertions
+- [ ] Parse SAML assertions with XML signature validation
 - [ ] Map SAML attributes to user properties
+- [ ] Generate SP metadata XML
 
 ### Phase 4: SCIM & Advanced
 
-- [ ] Implement SCIM user provisioning
+- [ ] Implement SCIM 2.0 user provisioning
 - [ ] Add role/team mapping from IdP groups
 - [ ] Add SSO analytics and audit log
 
@@ -372,6 +728,10 @@ pub struct ScimUser {
 - Automatic deprovisioning (security requirement)
 - Reduces manual user management overhead
 
+### Why SSO-to-API-Key Mapping?
+
+SSO authenticates users, but quota-router's core authorization model uses virtual API keys (RFC-0903). The SsoKeyMapper bridges this gap: SSO identity → virtual key → authorization. This preserves the existing key-based authorization model while adding SSO authentication.
+
 ## Alternatives Considered
 
 | Approach | Pros | Cons |
@@ -381,11 +741,38 @@ pub struct ScimUser {
 | Custom auth | Flexible | Maintenance burden, security risk |
 | Proxy auth (nginx) | Simple | No user management integration |
 
+## Test Vectors
+
+### JWT Validation
+
+```
+# Valid RS256 token
+Header: {"alg":"RS256","typ":"JWT","kid":"key-1"}
+Payload: {"sub":"user-123","email":"user@example.com","iss":"https://example.okta.com","aud":"quota-router","exp":9999999999}
+Result: PASS
+
+# Expired token
+Header: {"alg":"RS256","typ":"JWT","kid":"key-1"}
+Payload: {"sub":"user-123","iss":"https://example.okta.com","aud":"quota-router","exp":1000000000}
+Result: FAIL — sso_token_expired
+
+# alg=none attack
+Header: {"alg":"none","typ":"JWT"}
+Payload: {"sub":"admin","iss":"https://example.okta.com","aud":"quota-router","exp":9999999999}
+Result: FAIL — sso_token_algorithm_none
+
+# Audience mismatch
+Header: {"alg":"RS256","typ":"JWT","kid":"key-1"}
+Payload: {"sub":"user-123","iss":"https://example.okta.com","aud":"other-app","exp":9999999999}
+Result: FAIL — sso_audience_mismatch
+```
+
 ## Version History
 
 | Version | Date | Changes |
 |---------|------|---------|
 | v1 | 2026-05-17 | Initial draft |
+| v2 | 2026-05-17 | Adversarial review Round 1 fixes — SSO-to-API-key mapping, token lifecycle, SAML spec, SCIM spec, JWT algorithm spec, rate limiting, error handling |
 
 ## Related RFCs
 
@@ -395,5 +782,5 @@ pub struct ScimUser {
 
 ## Related Use Cases
 
-- Enterprise AI Gateway
-- Enhanced Quota Router Gateway
+- [Enterprise AI Gateway](../../docs/use-cases/enhanced-quota-router-gateway.md)
+- [Enhanced Quota Router Gateway](../../docs/use-cases/enhanced-quota-router-gateway.md)

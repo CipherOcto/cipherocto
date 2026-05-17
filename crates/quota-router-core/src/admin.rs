@@ -904,6 +904,226 @@ where
             }
         }
 
+        // SCIM 2.0 endpoints (RFC-0949)
+        ("GET", "/scim/v2/ServiceProviderConfig") => {
+            return json_response(&crate::auth::sso::scim_server::get_service_provider_config());
+        }
+
+        ("GET", "/scim/v2/ResourceTypes") => {
+            return json_response(&crate::auth::sso::scim_server::get_resource_types());
+        }
+
+        ("GET", "/scim/v2/Users") => {
+            let store = crate::auth::sso::scim_server::ScimStore::new();
+            return json_response(&crate::auth::sso::scim_server::list_users(&store));
+        }
+
+        ("POST", "/scim/v2/Users") => {
+            let bytes = match body.collect().await {
+                Ok(b) => b.to_bytes(),
+                Err(_) => {
+                    return Response::builder()
+                        .status(StatusCode::BAD_REQUEST)
+                        .body(
+                            crate::auth::sso::scim::ScimError::new(
+                                "400",
+                                "Failed to read request body",
+                                None,
+                            )
+                            .to_json(),
+                        )
+                        .unwrap();
+                }
+            };
+            let user: crate::auth::sso::scim::ScimUser = match serde_json::from_slice(&bytes) {
+                Ok(u) => u,
+                Err(e) => {
+                    return Response::builder()
+                        .status(StatusCode::BAD_REQUEST)
+                        .body(
+                            crate::auth::sso::scim::ScimError::new(
+                                "400",
+                                &format!("Invalid JSON: {}", e),
+                                Some("invalidSyntax"),
+                            )
+                            .to_json(),
+                        )
+                        .unwrap();
+                }
+            };
+            let store = crate::auth::sso::scim_server::ScimStore::new();
+            match crate::auth::sso::scim_server::create_user(&store, user) {
+                Ok(created) => {
+                    return Response::builder()
+                        .status(StatusCode::CREATED)
+                        .header("content-type", "application/scim+json")
+                        .body(serde_json::to_string(&created).unwrap_or_default())
+                        .unwrap();
+                }
+                Err(e) => {
+                    let status = StatusCode::from_u16(e.status.parse::<u16>().unwrap_or(400))
+                        .unwrap_or(StatusCode::BAD_REQUEST);
+                    return Response::builder()
+                        .status(status)
+                        .header("content-type", "application/scim+json")
+                        .body(e.to_json())
+                        .unwrap();
+                }
+            }
+        }
+
+        ("GET", "/scim/v2/Groups") => {
+            let store = crate::auth::sso::scim_server::ScimStore::new();
+            return json_response(&crate::auth::sso::scim_server::list_groups(&store));
+        }
+
+        ("GET", p) if p.starts_with("/scim/v2/Users/") => {
+            let id = p.trim_start_matches("/scim/v2/Users/");
+            if !id.is_empty() {
+                let store = crate::auth::sso::scim_server::ScimStore::new();
+                match crate::auth::sso::scim_server::get_user(&store, id) {
+                    Ok(user) => {
+                        return Response::builder()
+                            .header("content-type", "application/scim+json")
+                            .body(serde_json::to_string(&user).unwrap_or_default())
+                            .unwrap();
+                    }
+                    Err(e) => {
+                        let status = StatusCode::from_u16(e.status.parse::<u16>().unwrap_or(404))
+                            .unwrap_or(StatusCode::NOT_FOUND);
+                        return Response::builder()
+                            .status(status)
+                            .header("content-type", "application/scim+json")
+                            .body(e.to_json())
+                            .unwrap();
+                    }
+                }
+            }
+        }
+
+        ("PUT", p) if p.starts_with("/scim/v2/Users/") => {
+            let id = p.trim_start_matches("/scim/v2/Users/");
+            if !id.is_empty() {
+                let bytes = match body.collect().await {
+                    Ok(b) => b.to_bytes(),
+                    Err(_) => {
+                        return Response::builder()
+                            .status(StatusCode::BAD_REQUEST)
+                            .body("Failed to read body".to_string())
+                            .unwrap();
+                    }
+                };
+                let user: crate::auth::sso::scim::ScimUser = match serde_json::from_slice(&bytes) {
+                    Ok(u) => u,
+                    Err(e) => {
+                        return Response::builder()
+                            .status(StatusCode::BAD_REQUEST)
+                            .body(
+                                crate::auth::sso::scim::ScimError::new(
+                                    "400",
+                                    &format!("Invalid JSON: {}", e),
+                                    Some("invalidSyntax"),
+                                )
+                                .to_json(),
+                            )
+                            .unwrap();
+                    }
+                };
+                let store = crate::auth::sso::scim_server::ScimStore::new();
+                match crate::auth::sso::scim_server::replace_user(&store, id, user) {
+                    Ok(updated) => {
+                        return Response::builder()
+                            .header("content-type", "application/scim+json")
+                            .body(serde_json::to_string(&updated).unwrap_or_default())
+                            .unwrap();
+                    }
+                    Err(e) => {
+                        let status = StatusCode::from_u16(e.status.parse::<u16>().unwrap_or(400))
+                            .unwrap_or(StatusCode::BAD_REQUEST);
+                        return Response::builder()
+                            .status(status)
+                            .header("content-type", "application/scim+json")
+                            .body(e.to_json())
+                            .unwrap();
+                    }
+                }
+            }
+        }
+
+        ("PATCH", p) if p.starts_with("/scim/v2/Users/") => {
+            let id = p.trim_start_matches("/scim/v2/Users/");
+            if !id.is_empty() {
+                let bytes = match body.collect().await {
+                    Ok(b) => b.to_bytes(),
+                    Err(_) => {
+                        return Response::builder()
+                            .status(StatusCode::BAD_REQUEST)
+                            .body("Failed to read body".to_string())
+                            .unwrap();
+                    }
+                };
+                let patch: crate::auth::sso::scim::ScimPatchOp =
+                    match serde_json::from_slice(&bytes) {
+                        Ok(p) => p,
+                        Err(e) => {
+                            return Response::builder()
+                                .status(StatusCode::BAD_REQUEST)
+                                .body(
+                                    crate::auth::sso::scim::ScimError::new(
+                                        "400",
+                                        &format!("Invalid JSON: {}", e),
+                                        Some("invalidSyntax"),
+                                    )
+                                    .to_json(),
+                                )
+                                .unwrap();
+                        }
+                    };
+                let store = crate::auth::sso::scim_server::ScimStore::new();
+                match crate::auth::sso::scim_server::patch_user(&store, id, patch) {
+                    Ok(patched) => {
+                        return Response::builder()
+                            .header("content-type", "application/scim+json")
+                            .body(serde_json::to_string(&patched).unwrap_or_default())
+                            .unwrap();
+                    }
+                    Err(e) => {
+                        let status = StatusCode::from_u16(e.status.parse::<u16>().unwrap_or(400))
+                            .unwrap_or(StatusCode::BAD_REQUEST);
+                        return Response::builder()
+                            .status(status)
+                            .header("content-type", "application/scim+json")
+                            .body(e.to_json())
+                            .unwrap();
+                    }
+                }
+            }
+        }
+
+        ("DELETE", p) if p.starts_with("/scim/v2/Users/") => {
+            let id = p.trim_start_matches("/scim/v2/Users/");
+            if !id.is_empty() {
+                let store = crate::auth::sso::scim_server::ScimStore::new();
+                match crate::auth::sso::scim_server::delete_user(&store, id) {
+                    Ok(()) => {
+                        return Response::builder()
+                            .status(StatusCode::NO_CONTENT)
+                            .body(String::new())
+                            .unwrap();
+                    }
+                    Err(e) => {
+                        let status = StatusCode::from_u16(e.status.parse::<u16>().unwrap_or(404))
+                            .unwrap_or(StatusCode::NOT_FOUND);
+                        return Response::builder()
+                            .status(status)
+                            .header("content-type", "application/scim+json")
+                            .body(e.to_json())
+                            .unwrap();
+                    }
+                }
+            }
+        }
+
         _ => {}
     }
 
@@ -2012,5 +2232,14 @@ fn handle_delete_provider(provider_id: &str) -> Response<String> {
         .status(StatusCode::OK)
         .header("content-type", "application/json")
         .body(serde_json::json!({"id": provider_id, "deleted": true}).to_string())
+        .unwrap()
+}
+
+/// Helper: serialize any `Serialize` type as a JSON response.
+fn json_response<T: serde::Serialize>(data: &T) -> Response<String> {
+    Response::builder()
+        .status(StatusCode::OK)
+        .header("content-type", "application/json")
+        .body(serde_json::to_string(data).unwrap_or_default())
         .unwrap()
 }

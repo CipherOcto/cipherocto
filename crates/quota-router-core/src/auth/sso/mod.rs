@@ -8,6 +8,9 @@ pub mod mapper;
 pub mod oauth2;
 pub mod pkce;
 pub mod saml;
+pub mod scim;
+pub mod scim_server;
+pub mod session;
 
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;

@@ -200,7 +200,8 @@ pub fn create_request_span(
     use opentelemetry::trace::SpanKind;
 
     let tracer = global::tracer("quota-router");
-    let span = tracer
+    
+    tracer
         .span_builder("request")
         .with_kind(SpanKind::Server)
         .with_attributes(vec![
@@ -208,8 +209,7 @@ pub fn create_request_span(
             KeyValue::new("model", model.to_string()),
             KeyValue::new("provider", provider.to_string()),
         ])
-        .start(&tracer);
-    span
+        .start(&tracer)
 }
 
 #[cfg(test)]

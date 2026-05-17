@@ -360,6 +360,7 @@ pub struct SsoKeyMetadata {
 // ============================================================================
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Default)]
 pub struct SsoConfig {
     /// SSO enabled
     #[serde(default)]
@@ -384,19 +385,6 @@ pub struct SsoConfig {
     pub rate_limit: SsoRateLimitConfig,
 }
 
-impl Default for SsoConfig {
-    fn default() -> Self {
-        Self {
-            enabled: false,
-            providers: Vec::new(),
-            role_mapping: HashMap::new(),
-            team_mapping: HashMap::new(),
-            token: TokenConfig::default(),
-            jwt: JwtValidationConfig::default(),
-            rate_limit: SsoRateLimitConfig::default(),
-        }
-    }
-}
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TokenConfig {

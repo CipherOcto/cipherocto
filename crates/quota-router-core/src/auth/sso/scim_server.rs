@@ -50,7 +50,7 @@ pub fn list_users(
     };
     let start = start_index.unwrap_or(1).saturating_sub(1); // Convert to 0-based
     let limit = count.unwrap_or(100);
-    let list: Vec<ScimUser> = users.values().cloned().skip(start).take(limit).collect();
+    let list: Vec<ScimUser> = users.values().skip(start).cloned().take(limit).collect();
     ScimListResponse::new(list)
 }
 
@@ -181,7 +181,7 @@ pub fn list_groups(
     };
     let start = start_index.unwrap_or(1).saturating_sub(1); // Convert to 0-based
     let limit = count.unwrap_or(100);
-    let list: Vec<ScimGroup> = groups.values().cloned().skip(start).take(limit).collect();
+    let list: Vec<ScimGroup> = groups.values().skip(start).cloned().take(limit).collect();
     ScimListResponse::new(list)
 }
 

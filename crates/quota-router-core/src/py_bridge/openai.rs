@@ -217,6 +217,15 @@ fn convert_response(
 
 /// Re-export as PyBridgeProvider trait for generic use
 #[cfg(any(feature = "any-llm-mode", feature = "full"))]
+/// Streaming chunk from py_bridge
+#[derive(Debug, Clone)]
+pub enum PyBridgeChunk {
+    /// Raw SSE bytes to forward
+    RawSSE(Vec<u8>),
+    /// Structured chunk for conversion
+    Structured(crate::shared_types::ChatCompletionChunk),
+}
+
 pub trait PyBridgeProvider: Send + Sync {
     fn name(&self) -> &str;
     fn completion(
@@ -224,6 +233,20 @@ pub trait PyBridgeProvider: Send + Sync {
         model: &str,
         messages: &[crate::types::Message],
     ) -> Result<crate::types::ChatCompletion, PyBridgeError>;
+
+    /// Streaming completion — returns a receiver for SSE chunks
+    /// Default implementation returns an error (streaming not supported)
+    fn streaming_completion(
+        &self,
+        model: &str,
+        messages: &[crate::types::Message],
+    ) -> Result<tokio::sync::mpsc::Receiver<Result<PyBridgeChunk, PyBridgeError>>, PyBridgeError>
+    {
+        Err(PyBridgeError::ProviderError(format!(
+            "Streaming not supported for provider '{}'",
+            self.name()
+        )))
+    }
 }
 
 #[cfg(any(feature = "any-llm-mode", feature = "full"))]
@@ -238,5 +261,119 @@ impl PyBridgeProvider for OpenAIProvider {
         messages: &[crate::types::Message],
     ) -> Result<crate::types::ChatCompletion, PyBridgeError> {
         self.completion(model, messages)
+    }
+
+    fn streaming_completion(
+        &self,
+        model: &str,
+        messages: &[crate::types::Message],
+    ) -> Result<tokio::sync::mpsc::Receiver<Result<PyBridgeChunk, PyBridgeError>>, PyBridgeError>
+    {
+        let api_key = self
+            .api_key
+            .as_ref()
+            .ok_or_else(|| PyBridgeError::ProviderError("No API key set".to_string()))?
+            .clone();
+        let api_base = self
+            .api_base
+            .clone()
+            .unwrap_or_else(|| "https://api.openai.com/v1".to_string());
+        let model = model.to_string();
+        let messages = messages.to_vec();
+
+        let (tx, rx) = tokio::sync::mpsc::channel(100);
+
+        // Spawn a background thread to call Python SDK with streaming
+        std::thread::spawn(move || {
+            let result = Python::with_gil(|py| {
+                // Import OpenAI SDK
+                let openai = PyModule::import(py, "openai").map_err(|e| {
+                    PyBridgeError::PyError(format!("Failed to import openai: {}", e))
+                })?;
+
+                let openai_class = openai.getattr("OpenAI").map_err(|e| {
+                    PyBridgeError::PyError(format!("Failed to get OpenAI class: {}", e))
+                })?;
+
+                // Create client
+                let kwargs = PyDict::new(py);
+                kwargs.set_item("api_key", &api_key).unwrap();
+                kwargs.set_item("base_url", &api_base).unwrap();
+
+                let client = openai_class.call((), Some(kwargs)).map_err(|e| {
+                    PyBridgeError::PyError(format!("Failed to create client: {}", e))
+                })?;
+
+                // Build messages list
+                let py_messages: Vec<Py<PyDict>> = messages
+                    .iter()
+                    .map(|msg| {
+                        let dict = PyDict::new(py);
+                        dict.set_item("role", &msg.role).unwrap();
+                        dict.set_item("content", &msg.content).unwrap();
+                        dict.into()
+                    })
+                    .collect();
+
+                // Call client.chat.completions.create with stream=True
+                let chat = client
+                    .getattr("chat")
+                    .map_err(|e| PyBridgeError::PyError(format!("Failed to get chat: {}", e)))?;
+                let completions = chat.getattr("completions").map_err(|e| {
+                    PyBridgeError::PyError(format!("Failed to get completions: {}", e))
+                })?;
+                let create = completions
+                    .getattr("create")
+                    .map_err(|e| PyBridgeError::PyError(format!("Failed to get create: {}", e)))?;
+
+                let call_kwargs = PyDict::new(py);
+                call_kwargs.set_item("model", &model).unwrap();
+                call_kwargs.set_item("messages", &py_messages).unwrap();
+                call_kwargs.set_item("stream", true).unwrap();
+
+                let stream = create
+                    .call((), Some(call_kwargs))
+                    .map_err(|e| PyBridgeError::PyError(format!("SDK call failed: {}", e)))?;
+
+                // Iterate over stream and send chunks
+                for chunk_result in stream.iter().map_err(|e| {
+                    PyBridgeError::PyError(format!("Stream iteration failed: {}", e))
+                })? {
+                    let chunk = chunk_result
+                        .map_err(|e| PyBridgeError::PyError(format!("Chunk error: {}", e)))?;
+
+                    // Convert Python chunk to JSON bytes
+                    let json_str: String = py
+                        .import("json")
+                        .map_err(|e| {
+                            PyBridgeError::PyError(format!("Failed to import json: {}", e))
+                        })?
+                        .getattr("dumps")
+                        .map_err(|e| PyBridgeError::PyError(format!("Failed to get dumps: {}", e)))?
+                        .call1((chunk,))
+                        .map_err(|e| {
+                            PyBridgeError::PyError(format!("Failed to serialize chunk: {}", e))
+                        })?
+                        .extract()
+                        .map_err(|e| {
+                            PyBridgeError::PyError(format!("Failed to extract json: {}", e))
+                        })?;
+
+                    let sse_bytes = format!("data: {}\n\n", json_str).into_bytes();
+                    let _ = tx.blocking_send(Ok(PyBridgeChunk::RawSSE(sse_bytes)));
+                }
+
+                // Send DONE marker
+                let _ = tx.blocking_send(Ok(PyBridgeChunk::RawSSE(b"data: [DONE]\n\n".to_vec())));
+
+                Ok::<(), PyBridgeError>(())
+            });
+
+            if let Err(e) = result {
+                let _ = tx.blocking_send(Err(e));
+            }
+        });
+
+        Ok(rx)
     }
 }

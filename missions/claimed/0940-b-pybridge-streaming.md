@@ -2,6 +2,8 @@
 
 ## Status
 
+Complete
+
 Open
 
 ## RFC
@@ -20,15 +22,15 @@ The PyBridgeProvider trait is sync-only with no streaming method. This mission a
 
 ### Trait Extension
 
-- [ ] Add `streaming_completion()` method to PyBridgeProvider trait
-- [ ] Method returns a channel receiver for streaming chunks
-- [ ] Use `tokio::sync::mpsc::channel` for async streaming
+- [x] Add `streaming_completion()` method to PyBridgeProvider trait
+- [x] Method returns a channel receiver for streaming chunks
+- [x] Use `tokio::sync::mpsc::channel` for async streaming
 
 ### Implementation
 
-- [ ] Implement streaming for OpenAI py_bridge provider
-- [ ] Implement streaming for other py_bridge providers (or stub with error)
-- [ ] Wire streaming into handle_request_anyllm()
+- [x] Implement streaming for OpenAI py_bridge provider
+- [x] Implement streaming for other py_bridge providers (or stub with error)
+- [x] Wire streaming into handle_request_anyllm()
 
 ## Files to Modify
 

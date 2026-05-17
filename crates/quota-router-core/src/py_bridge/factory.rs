@@ -450,3 +450,36 @@ pub fn completion(
         ))),
     }
 }
+
+/// Dispatch streaming completion call to the appropriate provider
+///
+/// Returns a receiver for SSE chunks. Only OpenAI provider supports streaming currently.
+#[cfg(any(feature = "any-llm-mode", feature = "full"))]
+pub fn streaming_completion(
+    provider: &str,
+    model: &str,
+    messages: &[Message],
+    api_key: Option<&str>,
+    api_base: Option<&str>,
+) -> Result<
+    tokio::sync::mpsc::Receiver<Result<crate::py_bridge::openai::PyBridgeChunk, PyBridgeError>>,
+    PyBridgeError,
+> {
+    match provider {
+        "openai" => {
+            let mut p = crate::py_bridge::openai::OpenAIProvider::new();
+            if let Some(key) = api_key {
+                p = p.with_api_key(key.to_string());
+            }
+            if let Some(base) = api_base {
+                p = p.with_api_base(base.to_string());
+            }
+            use crate::py_bridge::openai::PyBridgeProvider;
+            p.streaming_completion(model, messages)
+        }
+        _ => Err(PyBridgeError::UnsupportedProvider(format!(
+            "Streaming not supported for provider '{}' in py_bridge",
+            provider
+        ))),
+    }
+}

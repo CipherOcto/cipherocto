@@ -245,7 +245,7 @@ mod tests {
     #[test]
     fn test_extract_traceparent_invalid_format() {
         assert!(extract_traceparent("invalid").is_none());
-        assert!(extract_traceparent("00-trace-span-01").is_none());
+        assert!(extract_traceparent("00-xyz-abc-01").is_none());
     }
 
     #[test]

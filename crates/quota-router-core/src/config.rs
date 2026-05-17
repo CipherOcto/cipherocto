@@ -332,6 +332,9 @@ pub struct RouterSettings {
     /// Default: 60. Per RFC-0933 §Persistence.
     #[serde(default = "default_flush_interval")]
     pub flush_interval_seconds: u64,
+    /// Content policy fallback models (RFC-0902)
+    #[serde(default)]
+    pub content_policy_fallbacks: Option<HashMap<String, Vec<String>>>,
 }
 
 fn default_flush_interval() -> u64 {
@@ -352,6 +355,7 @@ impl Default for RouterSettings {
             stream_timeout_secs: None,
             rate_limit_mode: RateLimitMode::Soft,
             flush_interval_seconds: 60,
+            content_policy_fallbacks: None,
         }
     }
 }
@@ -1103,6 +1107,7 @@ mod tests {
             stream_timeout_secs: None,
             rate_limit_mode: RateLimitMode::Soft,
             flush_interval_seconds: 60,
+            content_policy_fallbacks: None,
         };
         let config = GatewayConfig {
             database_url: None,

@@ -328,6 +328,23 @@ where
                 .body("Team member management coming soon".to_string())
                 .unwrap();
         }
+        // GET /config/get - get current configuration
+        ("GET", "/config/get") => {
+            // TODO: Implement config retrieval
+            return Response::builder()
+                .status(StatusCode::OK)
+                .header("content-type", "application/json")
+                .body(r#"{"message":"Config retrieval coming soon"}"#.to_string())
+                .unwrap();
+        }
+        // POST /config/update - hot-reload configuration
+        ("POST", "/config/update") => {
+            // TODO: Implement config hot-reload
+            return Response::builder()
+                .status(StatusCode::NOT_IMPLEMENTED)
+                .body("Config hot-reload coming soon".to_string())
+                .unwrap();
+        }
         // GET /key/info - key info from token
         ("GET", "/key/info") => {
             return handle_get_key_info(storage, &parts.headers);

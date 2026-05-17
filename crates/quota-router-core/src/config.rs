@@ -553,6 +553,9 @@ pub struct GatewayConfig {
     /// Prompt management configuration (RFC-0948)
     #[serde(default)]
     pub prompts: PromptConfig,
+    /// Guardrail system configuration (RFC-0946)
+    #[serde(default)]
+    pub guardrails: GuardrailConfig,
 }
 
 /// Prompt management configuration (RFC-0948)
@@ -593,6 +596,38 @@ fn default_prompt_cache_size() -> usize {
 
 fn default_prompt_cache_ttl() -> u64 {
     300
+}
+
+/// Guardrail system configuration (RFC-0946).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct GuardrailConfig {
+    /// Enable guardrail system (default: false)
+    #[serde(default)]
+    pub enabled: bool,
+    /// Global input guardrails
+    #[serde(default)]
+    pub input: Vec<crate::guardrails::Guardrail>,
+    /// Global output guardrails
+    #[serde(default)]
+    pub output: Vec<crate::guardrails::Guardrail>,
+    /// Per-model overrides
+    #[serde(default)]
+    pub model_overrides: HashMap<String, Vec<crate::guardrails::Guardrail>>,
+    /// Per-key overrides
+    #[serde(default)]
+    pub key_overrides: HashMap<String, Vec<crate::guardrails::Guardrail>>,
+}
+
+impl Default for GuardrailConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            input: Vec::new(),
+            output: Vec::new(),
+            model_overrides: HashMap::new(),
+            key_overrides: HashMap::new(),
+        }
+    }
 }
 
 impl GatewayConfig {
@@ -884,42 +919,6 @@ impl Default for CallbackConfig {
     }
 }
 
-// ============================================================================
-// RFC-0946 Guardrail Configuration
-// ============================================================================
-
-/// Guardrail system configuration (RFC-0946).
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct GuardrailConfig {
-    /// Enable guardrail system (default: false)
-    #[serde(default)]
-    pub enabled: bool,
-    /// Global input guardrails
-    #[serde(default)]
-    pub input: Vec<crate::guardrails::Guardrail>,
-    /// Global output guardrails
-    #[serde(default)]
-    pub output: Vec<crate::guardrails::Guardrail>,
-    /// Per-model overrides
-    #[serde(default)]
-    pub model_overrides: HashMap<String, Vec<crate::guardrails::Guardrail>>,
-    /// Per-key overrides
-    #[serde(default)]
-    pub key_overrides: HashMap<String, Vec<crate::guardrails::Guardrail>>,
-}
-
-impl Default for GuardrailConfig {
-    fn default() -> Self {
-        Self {
-            enabled: false,
-            input: Vec::new(),
-            output: Vec::new(),
-            model_overrides: HashMap::new(),
-            key_overrides: HashMap::new(),
-        }
-    }
-}
-
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Config {
     pub balance: u64,
@@ -1069,6 +1068,10 @@ mod tests {
             secret_manager: None,
             wal_poll_interval_ms: 50,
             wal_path: None,
+            health: HealthConfig::default(),
+            logging: LogConfig::default(),
+            prompts: PromptConfig::default(),
+            guardrails: GuardrailConfig::default(),
         };
         let result = config.get_deployments();
         assert_eq!(result.len(), 1);
@@ -1129,6 +1132,10 @@ mod tests {
             secret_manager: None,
             wal_poll_interval_ms: 50,
             wal_path: None,
+            health: HealthConfig::default(),
+            logging: LogConfig::default(),
+            prompts: PromptConfig::default(),
+            guardrails: GuardrailConfig::default(),
         };
         let result = config.get_deployments();
         assert_eq!(result.len(), 1);
@@ -1191,6 +1198,10 @@ mod tests {
             secret_manager: None,
             wal_poll_interval_ms: 50,
             wal_path: None,
+            health: HealthConfig::default(),
+            logging: LogConfig::default(),
+            prompts: PromptConfig::default(),
+            guardrails: GuardrailConfig::default(),
         };
         let map = to_provider_map(&config).unwrap();
         assert!(map.contains_key("openai-gpt4o"));
@@ -1253,6 +1264,10 @@ mod tests {
             secret_manager: None,
             wal_poll_interval_ms: 50,
             wal_path: None,
+            health: HealthConfig::default(),
+            logging: LogConfig::default(),
+            prompts: PromptConfig::default(),
+            guardrails: GuardrailConfig::default(),
         };
         let map = to_provider_map(&config).unwrap();
         assert!(map.contains_key("openai_gpt-4o"));
@@ -1325,6 +1340,10 @@ mod tests {
             secret_manager: None,
             wal_poll_interval_ms: 50,
             wal_path: None,
+            health: HealthConfig::default(),
+            logging: LogConfig::default(),
+            prompts: PromptConfig::default(),
+            guardrails: GuardrailConfig::default(),
         };
         let map = to_provider_map(&config).unwrap();
         let info = map.get("openai_gpt-4o").unwrap();

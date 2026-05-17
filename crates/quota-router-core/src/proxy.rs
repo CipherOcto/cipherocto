@@ -275,14 +275,40 @@ impl ProxyServer {
 fn parse_request_body(body: &str) -> Option<NativeHttpRequest> {
     let json: serde_json::Value = serde_json::from_str(body).ok()?;
 
+    // Parse messages — content can be null for tool_calls messages (RFC-0939)
     let messages: Vec<SharedMessage> = json
         .get("messages")?
         .as_array()?
         .iter()
         .filter_map(|m| {
             let role = m.get("role")?.as_str()?.to_string();
-            let content = m.get("content")?.as_str()?.to_string();
-            Some(SharedMessage::new(role, content))
+            let content = m.get("content").and_then(|v| {
+                if v.is_null() {
+                    None
+                } else {
+                    v.as_str().map(String::from)
+                }
+            });
+            // Parse tool_calls if present
+            let tool_calls = m.get("tool_calls").and_then(|v| {
+                serde_json::from_value::<Vec<crate::shared_types::ToolCall>>(v.clone()).ok()
+            });
+            let tool_call_id = m
+                .get("tool_call_id")
+                .and_then(|v| v.as_str())
+                .map(String::from);
+            let function_call = m.get("function_call").and_then(|v| {
+                serde_json::from_value::<crate::shared_types::FunctionCall>(v.clone()).ok()
+            });
+
+            Some(SharedMessage {
+                role,
+                content,
+                name: m.get("name").and_then(|v| v.as_str()).map(String::from),
+                tool_calls,
+                tool_call_id,
+                function_call,
+            })
         })
         .collect();
 
@@ -317,6 +343,24 @@ fn parse_request_body(body: &str) -> Option<NativeHttpRequest> {
         .and_then(|v| v.as_str())
         .map(|v| v.to_string());
 
+    // Function calling fields (RFC-0939)
+    let tools = json
+        .get("tools")
+        .and_then(|v| serde_json::from_value::<Vec<crate::shared_types::Tool>>(v.clone()).ok());
+    let tool_choice = json
+        .get("tool_choice")
+        .and_then(|v| serde_json::from_value::<crate::shared_types::ToolChoice>(v.clone()).ok());
+    let response_format = json.get("response_format").and_then(|v| {
+        serde_json::from_value::<crate::shared_types::ResponseFormat>(v.clone()).ok()
+    });
+    let seed = json.get("seed").and_then(|v| v.as_i64());
+    let logprobs = json.get("logprobs").and_then(|v| v.as_bool());
+    let top_logprobs = json
+        .get("top_logprobs")
+        .and_then(|v| v.as_u64())
+        .map(|v| v as usize);
+    let parallel_tool_calls = json.get("parallel_tool_calls").and_then(|v| v.as_bool());
+
     Some(NativeHttpRequest {
         model,
         messages,
@@ -333,6 +377,13 @@ fn parse_request_body(body: &str) -> Option<NativeHttpRequest> {
             .get("api_base")
             .and_then(|v| v.as_str())
             .map(String::from),
+        tools,
+        tool_choice,
+        response_format,
+        seed,
+        logprobs,
+        top_logprobs,
+        parallel_tool_calls,
     })
 }
 

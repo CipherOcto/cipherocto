@@ -1476,6 +1476,13 @@ deployments:
             frequency_penalty: None,
             user: None,
             api_base: dispatch_info.api_base.clone(),
+            tools: None,
+            tool_choice: None,
+            response_format: None,
+            seed: None,
+            logprobs: None,
+            top_logprobs: None,
+            parallel_tool_calls: None,
         };
 
         // Verify api_base is forwarded

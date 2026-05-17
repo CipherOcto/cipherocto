@@ -63,7 +63,7 @@ impl super::HttpProvider for GeminiProvider {
         let prompt = request
             .messages
             .iter()
-            .map(|m| format!("{}: {}", m.role, m.content))
+            .map(|m| format!("{}: {}", m.role, m.content.as_deref().unwrap_or("")))
             .collect::<Vec<_>>()
             .join("\n");
 

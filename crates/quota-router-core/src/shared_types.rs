@@ -5,19 +5,142 @@
 // It has NO PyO3 dependencies so it's available in all feature configurations.
 
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 
-/// Message for chat completion
+// ============================================================================
+// Function Calling Types (RFC-0939)
+// ============================================================================
+
+/// Tool definition for function calling
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Tool {
+    pub r#type: String, // "function"
+    pub function: FunctionDefinition,
+}
+
+/// Function definition within a tool
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct FunctionDefinition {
+    pub name: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub description: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub parameters: Option<serde_json::Value>, // JSON Schema
+}
+
+/// Tool call in assistant response
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ToolCall {
+    pub id: String,
+    pub r#type: String, // "function"
+    pub function: FunctionCall,
+}
+
+/// Function call details
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct FunctionCall {
+    pub name: String,
+    pub arguments: String, // JSON string
+}
+
+/// Tool choice for request
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(untagged)]
+pub enum ToolChoice {
+    String(String), // "none", "auto", "required"
+    Specific(SpecificToolChoice),
+}
+
+/// Specific tool choice
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SpecificToolChoice {
+    pub r#type: String, // "function"
+    pub function: FunctionName,
+}
+
+/// Function name for specific tool choice
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct FunctionName {
+    pub name: String,
+}
+
+/// Response format specification
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ResponseFormat {
+    pub r#type: String, // "text", "json_object", "json_schema"
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub json_schema: Option<serde_json::Value>,
+}
+
+/// Log probabilities for a single token
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TokenLogProb {
+    pub token: String,
+    pub logprob: f64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub top_logprobs: Option<HashMap<String, f64>>,
+}
+
+/// Log probabilities for a choice
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct LogProbs {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub content: Option<Vec<TokenLogProb>>,
+}
+
+// ============================================================================
+// Core Types
+// ============================================================================
+
+/// Message for chat completion (RFC-0939: extended with function calling fields)
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Message {
     pub role: String,
-    pub content: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub content: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub name: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub tool_calls: Option<Vec<ToolCall>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub tool_call_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub function_call: Option<FunctionCall>, // Legacy format
 }
 
 impl Message {
     pub fn new(role: impl Into<String>, content: impl Into<String>) -> Self {
         Self {
             role: role.into(),
-            content: content.into(),
+            content: Some(content.into()),
+            name: None,
+            tool_calls: None,
+            tool_call_id: None,
+            function_call: None,
+        }
+    }
+
+    /// Create a message with tool calls (content may be null)
+    pub fn with_tool_calls(role: impl Into<String>, tool_calls: Vec<ToolCall>) -> Self {
+        Self {
+            role: role.into(),
+            content: None,
+            name: None,
+            tool_calls: Some(tool_calls),
+            tool_call_id: None,
+            function_call: None,
+        }
+    }
+
+    /// Create a tool response message
+    pub fn tool_response(tool_call_id: impl Into<String>, content: impl Into<String>) -> Self {
+        Self {
+            role: "tool".to_string(),
+            content: Some(content.into()),
+            name: None,
+            tool_calls: None,
+            tool_call_id: Some(tool_call_id.into()),
+            function_call: None,
         }
     }
 }
@@ -43,13 +166,15 @@ impl Usage {
     }
 }
 
-/// Choice in chat completion
+/// Choice in chat completion (RFC-0939: extended with logprobs)
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Choice {
     pub index: u32,
     pub message: Message,
     #[serde(rename = "finish_reason")]
     pub finish_reason: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub logprobs: Option<LogProbs>,
 }
 
 impl Choice {
@@ -58,6 +183,7 @@ impl Choice {
             index,
             message,
             finish_reason: finish_reason.into(),
+            logprobs: None,
         }
     }
 }
@@ -105,13 +231,15 @@ impl ChatCompletionChunk {
     }
 }
 
-/// Choice within a streaming chunk
+/// Choice within a streaming chunk (RFC-0939: extended with tool_calls)
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ChunkChoice {
     pub index: u32,
     pub delta: Message,
     #[serde(rename = "finish_reason", skip_serializing_if = "Option::is_none")]
     pub finish_reason: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub logprobs: Option<LogProbs>,
 }
 
 impl ChunkChoice {
@@ -120,6 +248,7 @@ impl ChunkChoice {
             index,
             delta,
             finish_reason: None,
+            logprobs: None,
         }
     }
 
@@ -132,6 +261,7 @@ impl ChunkChoice {
             index,
             delta,
             finish_reason: Some(finish_reason.into()),
+            logprobs: None,
         }
     }
 }

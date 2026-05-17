@@ -66,7 +66,7 @@ impl super::HttpProvider for AnthropicProvider {
             .messages
             .iter()
             .filter(|m| m.role == "system")
-            .map(|m| m.content.clone())
+            .filter_map(|m| m.content.clone())
             .collect::<Vec<_>>()
             .join("\n");
 
@@ -77,7 +77,9 @@ impl super::HttpProvider for AnthropicProvider {
             .map(|m| {
                 serde_json::json!({
                     "role": m.role,
-                    "content": m.content
+                    "content": m.content,
+                    "tool_calls": m.tool_calls,
+                    "tool_call_id": m.tool_call_id,
                 })
             })
             .collect();
@@ -190,7 +192,7 @@ impl super::HttpProvider for AnthropicProvider {
             .messages
             .iter()
             .filter(|m| m.role == "system")
-            .map(|m| m.content.clone())
+            .filter_map(|m| m.content.clone())
             .collect::<Vec<_>>()
             .join("\n");
 
@@ -201,7 +203,9 @@ impl super::HttpProvider for AnthropicProvider {
             .map(|m| {
                 serde_json::json!({
                     "role": m.role,
-                    "content": m.content
+                    "content": m.content,
+                    "tool_calls": m.tool_calls,
+                    "tool_call_id": m.tool_call_id,
                 })
             })
             .collect();

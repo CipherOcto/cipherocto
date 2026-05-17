@@ -57,6 +57,7 @@ impl std::fmt::Display for ProviderError {
 impl std::error::Error for ProviderError {}
 
 /// Completion request — OpenAI-compatible format per RFC-0917
+/// Extended with function calling fields per RFC-0939
 #[derive(Debug, Clone)]
 pub struct HttpCompletionRequest {
     pub model: String,
@@ -74,6 +75,14 @@ pub struct HttpCompletionRequest {
     /// If Some, the provider should use this instead of its default api_base.
     /// This enables litellm-mode per-deployment api_base forwarding (RFC-0929).
     pub api_base: Option<String>,
+    // Function calling fields (RFC-0939)
+    pub tools: Option<Vec<crate::shared_types::Tool>>,
+    pub tool_choice: Option<crate::shared_types::ToolChoice>,
+    pub response_format: Option<crate::shared_types::ResponseFormat>,
+    pub seed: Option<i64>,
+    pub logprobs: Option<bool>,
+    pub top_logprobs: Option<usize>,
+    pub parallel_tool_calls: Option<bool>,
 }
 
 impl HttpCompletionRequest {

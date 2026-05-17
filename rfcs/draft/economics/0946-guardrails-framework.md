@@ -95,7 +95,9 @@ pub enum Guardrail {
     ContentModeration {
         action: GuardrailAction,
         categories: Vec<String>,
-        /// HTTP timeout for the moderation API call (default: 5s)
+        /// HTTP timeout for the moderation API call (default: 2s).
+        /// ContentModeration runs in the request path, so timeouts add direct latency.
+        /// 2s is recommended for production. Use circuit breaker for API downtime.
         timeout_ms: Option<u64>,
         /// Number of retries on transient failure (default: 1)
         retries: Option<u32>,
@@ -118,13 +120,21 @@ pub enum Guardrail {
         max_input_tokens: Option<u32>,
         max_output_tokens: Option<u32>,
     },
-    /// Regex-based content filter
+    /// Regex-based content filter.
+    /// Flags are specified inline using standard regex syntax:
+    /// - `(?i)` for case-insensitive
+    /// - `(?m)` for multiline
+    /// - `(?s)` for dot-matches-newline
+    /// Example: `"(?i)ignore previous instructions"`
     RegexFilter {
         action: GuardrailAction,
         pattern: String,
         replacement: Option<String>,
     },
-    /// Custom guardrail function (Python SDK only)
+    /// Custom guardrail function (Python SDK only).
+    /// Can be configured in YAML, but requires the Python runtime to be available.
+    /// When the HTTP proxy runs without Python (native_http mode), Custom guardrails
+    /// are skipped with a warning log. Use the Python SDK or py_bridge mode for Custom guardrails.
     Custom {
         name: String,
         module: String,
@@ -222,6 +232,12 @@ impl GuardrailExecutor {
     /// Execution order: global guardrails first (in config order),
     /// then model overrides, then key overrides.
     /// Short-circuit on first Block result.
+    ///
+    /// Override precedence: key overrides run LAST and take effect.
+    /// If model override says topic_restriction: block and key override says
+    /// topic_restriction: warn, BOTH run (key doesn't cancel model). The final
+    /// result is the most restrictive action across all levels:
+    /// Block > Transform > Warn > Log > Allow.
     pub async fn check_input(
         &self,
         request: &ChatCompletionRequest,
@@ -232,7 +248,7 @@ impl GuardrailExecutor {
         // 2. Run model override guardrails (if any)
         // 3. Run key override guardrails (if any)
         // Short-circuit: first Block returns immediately
-        // Collect all Warn results, return combined
+        // If no Block, collect all Warn results and return combined
     }
 
     /// Run output guardrails after receiving from provider
@@ -257,8 +273,11 @@ pub enum GuardrailResult {
     Warn { warnings: Vec<String> },
     /// Request/response was transformed
     Transform { transformed: bool },
-    /// Guardrail execution failed (timeout, panic, external API error)
-    /// Fallback behavior is configurable: fail-open (allow with warning) or fail-closed (block).
+    /// Guardrail execution failed (timeout, panic, external API error).
+    /// This variant is NEVER returned to the caller. The executor consumes it
+    /// and applies the configured fallback behavior:
+    /// - FailOpen: converted to Allow with the error logged as a warning
+    /// - FailClosed: converted to Block with the error as the reason
     Error {
         guardrail: String,
         message: String,
@@ -284,9 +303,16 @@ pub struct PiiDetector {
 }
 
 impl PiiDetector {
+    /// Detect all PII entities in text. Returns one PiiMatch per occurrence.
+    /// A single text may contain multiple PII entities of different types
+    /// (e.g., an email AND an SSN). The caller iterates over all matches
+    /// to apply the configured action (Block/Warn/Transform) to each.
     pub fn detect(&self, text: &str, entities: &[PiiEntity]) -> Vec<PiiMatch> {
-        // Check each entity type
-        // Return matches with positions
+        // For each entity type in `entities`:
+        //   1. Run regex pattern matching
+        //   2. Collect all matches with start/end positions
+        //   3. Create PiiMatch with redacted_value for each
+        // Return all matches sorted by start position
     }
 
     pub fn redact(&self, text: &str, entities: &[PiiEntity]) -> String {
@@ -542,6 +568,7 @@ fn test_guardrail_executor_merge() {
 |---------|------|---------|
 | v1 | 2026-05-17 | Initial draft |
 | v2 | 2026-05-17 | Adversarial review round 1 fixes — C1 (RFC-0936 boundary), C2 (PII value leak), C3 (Error variant), H1 (content moderation timeout), H2 (custom sandboxing), H3 (hot-reload spec), H4 (error handling), M1-M4 (logging, metrics, topic matching, execution order) |
+| v3 | 2026-05-17 | Adversarial review round 2 fixes — H1 (Error fallback contract), M1 (Custom guardrail YAML clarification), M2 (PiiMatch iteration), M3 (override precedence), M4 (ContentModeration timeout 5s→2s), M5 (RegexFilter inline flags) |
 
 ## Related RFCs
 

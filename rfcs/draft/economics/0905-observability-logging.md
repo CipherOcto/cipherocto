@@ -90,7 +90,7 @@ Each log line is a single JSON object written to stdout:
 ```
 
 **Required fields:** `timestamp`, `level`, `component`, `event`
-**Optional fields:** `trace_id`, `span_id`, `request_id`, `provider`, `model`, `status`, `latency_ms`, `error`
+**Optional fields:** `trace_id`, `span_id`, `request_id`, `provider`, `model`, `status`, `latency_ms`, `input_tokens`, `output_tokens`, `error`
 
 #### Log Events
 
@@ -118,6 +118,7 @@ Log events MUST NOT contain:
 
 ```rust
 use tokio::sync::mpsc;
+use std::io::{self, Write};
 
 struct LogWriter {
     sender: mpsc::Sender<LogEvent>,
@@ -127,10 +128,13 @@ impl LogWriter {
     fn new(buffer_size: usize) -> Self {
         let (sender, mut receiver) = mpsc::channel(buffer_size);
         tokio::spawn(async move {
+            let mut stdout = io::stdout();
             while let Some(event) = receiver.recv().await {
                 // Write to stdout (non-blocking)
-                let json = serde_json::to_string(&event).unwrap();
-                println!("{}", json);
+                // Note: NDJSON serializer omits trailing newline; we add it explicitly
+                let mut json = serde_json::to_string(&event).unwrap();
+                json.push('\n');
+                let _ = stdout.write_all(json.as_bytes());
             }
         });
         Self { sender }
@@ -139,6 +143,8 @@ impl LogWriter {
 ```
 
 **Default buffer size:** 10,000 events. When buffer is full, events are dropped with a `log_dropped_total` counter.
+
+**Note on log rotation:** Log rotation is handled by the container runtime (Docker, K8s). The router writes to stdout only. For non-containerized deployments, configure log rotation via systemd-journald or an external log agent.
 
 #### Log Sampling
 
@@ -177,10 +183,12 @@ fn init_tracer(config: &TracingConfig) -> Tracer {
                     KeyValue::new("service.version", env!("CARGO_PKG_VERSION")),
                 ]))
         )
-        .install_simple()
+        .install_batch()  // Use install_batch() for production (non-blocking export)
         .expect("Failed to install tracer")
 }
 ```
+
+**Note:** Use `install_simple()` for development/testing only. Production deployments MUST use `install_batch()` which uses a background thread for non-blocking span export. `install_simple()` blocks on every export and will add latency to request handling.
 
 #### Context Propagation
 

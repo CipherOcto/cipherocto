@@ -2,6 +2,8 @@
 
 ## Status
 
+Complete
+
 Open
 
 ## RFC
@@ -20,29 +22,29 @@ The current `handle_request_anyllm()` in proxy.rs is a stub that returns HTTP 40
 
 ### Core Implementation
 
-- [ ] Replace `handle_request_anyllm()` stub with py_bridge::factory::completion() dispatch
-- [ ] Parse model string (e.g., "openai/gpt-4o") to extract provider
-- [ ] Call py_bridge via tokio::task::spawn_blocking for GIL safety
-- [ ] Convert py_bridge response to OpenAI-compatible JSON
-- [ ] Handle all error types with appropriate HTTP status codes
+- [x] Replace `handle_request_anyllm()` stub with py_bridge::factory::completion() dispatch
+- [x] Parse model string (e.g., "openai/gpt-4o") to extract provider
+- [x] Call py_bridge via tokio::task::spawn_blocking for GIL safety
+- [x] Convert py_bridge response to OpenAI-compatible JSON
+- [x] Handle all error types with appropriate HTTP status codes
 
 ### Streaming
 
-- [ ] Implement streaming via py_bridge::factory::streaming_completion()
-- [ ] Use background Python thread with mpsc channel
-- [ ] Convert chunks to SSE format
+- [x] Implement streaming via py_bridge::factory::streaming_completion()
+- [x] Use background Python thread with mpsc channel
+- [x] Convert chunks to SSE format
 
 ### Fallback
 
-- [ ] Wire fallback chain for any-llm-mode
-- [ ] Use classify_http_error() for error classification
-- [ ] Implement try_fallback_models_anyllm()
+- [x] Wire fallback chain for any-llm-mode
+- [x] Use classify_http_error() for error classification
+- [x] Implement try_fallback_models_anyllm()
 
 ### Error Handling
 
-- [ ] Map py_bridge::PyBridgeError to HTTP status codes
-- [ ] Return structured JSON error responses
-- [ ] Handle PyO3 exceptions gracefully
+- [x] Map py_bridge::PyBridgeError to HTTP status codes
+- [x] Return structured JSON error responses
+- [x] Handle PyO3 exceptions gracefully
 
 ## Files to Modify
 

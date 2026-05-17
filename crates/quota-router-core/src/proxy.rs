@@ -21,6 +21,8 @@ use crate::key_rate_limiter::RateLimiterStore;
 use crate::keys::compute_key_hash;
 use crate::metrics::Metrics;
 use crate::providers::Provider;
+#[cfg(any(feature = "any-llm-mode", feature = "full"))]
+use crate::py_bridge;
 use crate::storage::KeyStorage;
 use bytes::Bytes;
 use http::{Request, StatusCode};
@@ -389,10 +391,10 @@ fn parse_request_body(body: &str) -> Option<NativeHttpRequest> {
 
 #[cfg(not(any(feature = "litellm-mode", feature = "full")))]
 #[allow(dead_code)]
-fn parse_request_body(_body: &str) -> Option<()> {
-    // In any-llm-mode without native_http, we don't parse with NativeHttpRequest
-    // The actual parsing happens via py_bridge
-    None
+fn parse_request_body(body: &str) -> Option<()> {
+    // In any-llm-mode, we parse minimally — just validate JSON is valid
+    let _: serde_json::Value = serde_json::from_str(body).ok()?;
+    Some(())
 }
 
 // =============================================================================
@@ -774,7 +776,8 @@ where
 
         #[cfg(not(any(feature = "litellm-mode", feature = "full")))]
         {
-            handle_request_anyllm(&body_str, &provider, &api_key).await
+            handle_request_anyllm(&body_str, &provider, &api_key, dispatch_api_base.as_deref())
+                .await
         }
     };
 
@@ -902,19 +905,135 @@ async fn handle_request_litellm(
     }
 }
 
-#[cfg(not(any(feature = "litellm-mode", feature = "full")))]
+#[cfg(any(feature = "any-llm-mode", feature = "full"))]
+#[allow(dead_code)]
+async fn handle_request_anyllm(
+    body_str: &str,
+    provider: &Provider,
+    api_key: &str,
+    dispatch_api_base: Option<&str>,
+) -> Result<Response<SseBody>, Infallible> {
+    // Parse JSON to extract model and messages
+    let json: serde_json::Value = match serde_json::from_str(body_str) {
+        Ok(v) => v,
+        Err(_) => {
+            let resp = Response::builder()
+                .status(StatusCode::BAD_REQUEST)
+                .body(SseBody::from_error("Invalid JSON".to_string()))
+                .unwrap();
+            return Ok(resp);
+        }
+    };
+
+    // Extract model name
+    let model = match json.get("model").and_then(|v| v.as_str()) {
+        Some(m) => m.to_string(),
+        None => {
+            let resp = Response::builder()
+                .status(StatusCode::BAD_REQUEST)
+                .body(SseBody::from_error("Missing 'model' field".to_string()))
+                .unwrap();
+            return Ok(resp);
+        }
+    };
+
+    // Extract provider name from model string (e.g., "openai/gpt-4o" -> "openai")
+    let (provider_name, model_name) = if let Some((p, m)) = model.split_once('/') {
+        (p.to_string(), m.to_string())
+    } else {
+        (provider.name.clone(), model.clone())
+    };
+
+    // Extract messages
+    let messages: Vec<crate::types::Message> = json
+        .get("messages")
+        .and_then(|v| v.as_array())
+        .map(|arr| {
+            arr.iter()
+                .filter_map(|m| {
+                    let role = m.get("role")?.as_str()?.to_string();
+                    let content = m
+                        .get("content")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("")
+                        .to_string();
+                    Some(crate::types::Message { role, content })
+                })
+                .collect()
+        })
+        .unwrap_or_default();
+
+    // Call py_bridge via spawn_blocking for GIL safety
+    let provider_name_clone = provider_name.clone();
+    let model_name_clone = model_name.clone();
+    let api_key_clone = api_key.to_string();
+    let api_base_clone = dispatch_api_base.map(|s| s.to_string());
+
+    let result = tokio::task::spawn_blocking(move || {
+        py_bridge::factory::completion(
+            &provider_name_clone,
+            &model_name_clone,
+            &messages,
+            Some(&api_key_clone),
+            api_base_clone.as_deref(),
+        )
+    })
+    .await;
+
+    match result {
+        Ok(Ok(completion)) => {
+            // Convert ChatCompletion to JSON
+            let body = serde_json::to_string(&completion).unwrap_or_else(|_| "{}".to_string());
+            let resp = Response::builder()
+                .status(StatusCode::OK)
+                .header("content-type", "application/json")
+                .body(SseBody::from_string(body))
+                .unwrap();
+            Ok(resp)
+        }
+        Ok(Err(e)) => {
+            // Map PyBridgeError to HTTP status
+            let status = match &e {
+                py_bridge::PyBridgeError::ProviderError(_) => StatusCode::BAD_GATEWAY,
+                py_bridge::PyBridgeError::UnsupportedProvider(_) => StatusCode::BAD_REQUEST,
+                py_bridge::PyBridgeError::PyError(_) => StatusCode::INTERNAL_SERVER_ERROR,
+            };
+
+            let error_body = serde_json::json!({
+                "error": {
+                    "message": e.to_string(),
+                    "type": "provider_error",
+                }
+            });
+
+            let resp = Response::builder()
+                .status(status)
+                .header("content-type", "application/json")
+                .body(SseBody::from_string(error_body.to_string()))
+                .unwrap();
+            Ok(resp)
+        }
+        Err(e) => {
+            let resp = Response::builder()
+                .status(StatusCode::INTERNAL_SERVER_ERROR)
+                .body(SseBody::from_error(format!("Task join error: {}", e)))
+                .unwrap();
+            Ok(resp)
+        }
+    }
+}
+
+#[cfg(not(any(feature = "any-llm-mode", feature = "full")))]
+#[allow(dead_code)]
 async fn handle_request_anyllm(
     _body_str: &str,
     _provider: &Provider,
     _api_key: &str,
+    _dispatch_api_base: Option<&str>,
 ) -> Result<Response<SseBody>, Infallible> {
-    // For any-llm-mode, delegate to py_bridge via python_sdk_entry
-    // This is a placeholder - actual implementation would call python_sdk_entry
     let resp = Response::builder()
-        .status(StatusCode::BAD_REQUEST)
-        .body(SseBody::from_error(
-            "any-llm-mode proxy not yet implemented".to_string(),
-        ))
+        .status(StatusCode::NOT_IMPLEMENTED)
+        .body(SseBody::from_error("any-llm-mode not enabled".to_string()))
         .unwrap();
     Ok(resp)
 }

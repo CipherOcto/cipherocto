@@ -26,6 +26,7 @@ Define enterprise Single Sign-On (SSO) integration for quota-router that support
 **Optional:**
 
 - RFC-0905 (Economics): Observability and Logging (auth event logging)
+- RFC-0933 (Economics): Rate Limiting Integration (auth endpoint rate limits)
 
 ## Design Goals
 
@@ -155,10 +156,28 @@ Invalid combinations (e.g., `client_id` without `client_secret` for Okta) MUST b
 When an SSO user authenticates, the system MUST map them to a virtual API key for API access:
 
 ```rust
+/// Extension trait for KeyStorage to support SSO lookups
+#[async_trait]
+pub trait SsoKeyStorageExt {
+    /// Find virtual key by SSO subject identifier
+    async fn get_key_by_sso_subject(&self, subject: &str) -> Result<Option<VirtualKey>>;
+}
+
+/// Schema extension for VirtualKey metadata (RFC-0903)
+/// These fields are added to KeyMetadata for SSO-linked keys:
+pub struct SsoKeyMetadata {
+    /// IdP subject identifier (stable across sessions)
+    pub sso_subject: Option<String>,
+    /// SSO provider ID (references IdentityProvider.id)
+    pub sso_provider: Option<String>,
+}
+
 /// SSO-to-API-key mapping
 pub struct SsoKeyMapper {
-    /// Key storage backend
-    key_storage: Arc<dyn KeyStorage>,
+    /// Key storage backend with SSO extension
+    key_storage: Arc<dyn SsoKeyStorageExt>,
+    /// Role mapping config (IdP group → quota-router role)
+    role_mapping: HashMap<String, String>,
 }
 
 impl SsoKeyMapper {
@@ -179,7 +198,7 @@ impl SsoKeyMapper {
                 key_id: generate_key_id(),
                 name: format!("sso-{}", user.email.as_deref().unwrap_or(&user.sub)),
                 team_id: provider.default_team.clone(),
-                role: map_role(user),
+                role: self.map_role(user),
                 metadata: KeyMetadata {
                     sso_subject: Some(user.sub.clone()),
                     sso_provider: Some(provider.id.clone()),
@@ -193,6 +212,18 @@ impl SsoKeyMapper {
 
         // 3. No auto-provision — require admin to create key
         Err(SsoError::NoKeyMapping { user_id: user.sub.clone() })
+    }
+
+    /// Map IdP groups to quota-router role using role_mapping config
+    fn map_role(&self, user: &SsoUser) -> String {
+        // Iterate user.groups, find first match in role_mapping
+        // Default to "user" if no match
+        for group in &user.groups {
+            if let Some(role) = self.role_mapping.get(group) {
+                return role.clone();
+            }
+        }
+        "user".to_string()
     }
 }
 ```
@@ -287,6 +318,17 @@ When a refresh token is used, the old token is invalidated and a new refresh tok
 **Token Revocation Propagation:**
 
 ```rust
+/// Token blacklist storage trait (backed by stoolap)
+#[async_trait]
+pub trait TokenBlacklistStorage {
+    /// Add token to blacklist with expiration
+    async fn add(&self, token_id: &str, expires_at: DateTime<Utc>) -> Result<()>;
+    /// Check if token is blacklisted
+    async fn contains(&self, token_id: &str) -> Result<bool>;
+    /// Remove expired entries (background cleanup)
+    async fn cleanup_expired(&self) -> Result<u64>;
+}
+
 /// Token blacklist for cross-instance revocation
 pub struct TokenBlacklist {
     /// Shared storage (stoolap)
@@ -296,7 +338,6 @@ pub struct TokenBlacklist {
 impl TokenBlacklist {
     /// Revoke a token
     pub async fn revoke(&self, token_id: &str, expires_at: DateTime<Utc>) -> Result<()> {
-        // Add to blacklist with expiration matching token exp
         self.storage.add(token_id, expires_at).await
     }
 
@@ -338,10 +379,12 @@ impl SamlAssertionParser {
     pub fn map_attributes(&self, assertion: &SamlAssertion) -> SsoUser {
         SsoUser {
             sub: assertion.name_id.clone(),
-            email: assertion.attributes.get("email").cloned(),
-            name: assertion.attributes.get("displayName").cloned(),
+            email: assertion.attributes.get("email")
+                .and_then(|v| v.first().cloned()),
+            name: assertion.attributes.get("displayName")
+                .and_then(|v| v.first().cloned()),
             groups: assertion.attributes.get("groups")
-                .map(|g| g.split(',').map(String::from).collect())
+                .cloned()
                 .unwrap_or_default(),
         }
     }
@@ -351,7 +394,8 @@ impl SamlAssertionParser {
 pub struct SamlAssertion {
     pub name_id: String,
     pub session_index: Option<String>,
-    pub attributes: HashMap<String, String>,
+    /// Multi-valued SAML attributes (e.g., groups may have multiple values)
+    pub attributes: HashMap<String, Vec<String>>,
     pub not_before: DateTime<Utc>,
     pub not_on_or_after: DateTime<Utc>,
 }
@@ -562,15 +606,68 @@ sso:
     token_revoke: 30/minute          # Per user
 ```
 
+### OAuth2 State Parameter and PKCE
+
+**State Parameter:**
+
+The state parameter prevents CSRF attacks in the OAuth2 authorization code flow:
+
+```rust
+pub struct OAuth2State {
+    /// Random nonce (32 bytes, base64url-encoded)
+    pub nonce: String,
+    /// Timestamp when state was generated
+    pub created_at: DateTime<Utc>,
+    /// Redirect URI after successful auth
+    pub redirect_uri: Option<String>,
+    /// PKCE code_verifier (stored server-side)
+    pub code_verifier: Option<String>,
+}
+
+impl OAuth2State {
+    /// Generate new state with PKCE code_challenge
+    pub fn new_with_pkce() -> (Self, String) {
+        let code_verifier = generate_random_string(43); // 43-128 chars per RFC 7636
+        let code_challenge = base64url(sha256(&code_verifier)); // S256 method
+        let state = Self {
+            nonce: generate_random_string(32),
+            created_at: Utc::now(),
+            redirect_uri: None,
+            code_verifier: Some(code_verifier),
+        };
+        (state, code_challenge)
+    }
+
+    /// Validate state: must exist, not expired (5 min max), nonce match
+    pub fn validate(&self, received_nonce: &str) -> Result<()> {
+        if Utc::now() - self.created_at > Duration::minutes(5) {
+            return Err(SsoError::InvalidState { reason: "expired" });
+        }
+        if self.nonce != received_nonce {
+            return Err(SsoError::InvalidState { reason: "nonce mismatch" });
+        }
+        Ok(())
+    }
+}
+```
+
+**PKCE Implementation:**
+
+- `code_challenge_method`: `S256` (SHA-256) — plain method MUST NOT be used
+- `code_verifier`: 43-128 characters, unreserved characters `[A-Z] / [a-z] / [0-9] / "-" / "." / "_" / "~"`
+- `code_challenge`: `BASE64URL(SHA256(code_verifier))`
+- The server stores `code_verifier` in the state session, then sends `code_verifier` in the token exchange request
+
 ### API Endpoints
 
 ```rust
 // SSO authentication
-GET  /auth/sso/:provider          // Initiate SSO flow
-GET  /auth/sso/:provider/callback // OAuth2/SAML callback
-POST /auth/token                  // Token exchange
+GET  /auth/sso/:provider          // Initiate SSO flow (generates state + PKCE challenge)
+GET  /auth/sso/:provider/callback // OAuth2/SAML callback (validates state, exchanges code)
+POST /auth/token                  // Token exchange (sends code_verifier for PKCE)
 POST /auth/token/refresh          // Refresh token
 POST /auth/token/revoke           // Revoke token
+POST /auth/logout                 // Logout: revoke session, clear cookies, SAML SLO
 
 // SAML metadata
 GET  /auth/sso/saml/metadata      // SP metadata XML
@@ -579,11 +676,25 @@ GET  /auth/sso/saml/metadata      // SP metadata XML
 GET  /auth/userinfo               // Get current user info
 GET  /auth/userinfo/claims        // Get token claims
 
+// Token introspection (RFC 7662)
+POST /auth/token/introspect       // Introspect opaque token (for resource servers)
+
 // Provider management (admin)
 GET    /auth/providers             // List providers
 POST   /auth/providers             // Add provider
 PUT    /auth/providers/:id         // Update provider
 DELETE /auth/providers/:id         // Delete provider
+
+// SCIM 2.0 server endpoints (for IdPs to call)
+GET    /scim/v2/Users              // List users (SCIM filter + pagination)
+GET    /scim/v2/Users/:id          // Get user
+POST   /scim/v2/Users              // Create user
+PUT    /scim/v2/Users/:id          // Replace user
+PATCH  /scim/v2/Users/:id          // Patch user
+DELETE /scim/v2/Users/:id          // Delete user
+GET    /scim/v2/Groups             // List groups
+GET    /scim/v2/ServiceProviderConfig  // SCIM service provider config
+GET    /scim/v2/ResourceTypes      // SCIM resource types
 ```
 
 ### Error Handling
@@ -620,6 +731,116 @@ DELETE /auth/providers/:id         // Delete provider
       "expired_at": "2026-05-17T12:00:00Z"
     }
   }
+}
+```
+
+### Session Management
+
+Sessions track authenticated users and are stored in stoolap for cross-instance consistency:
+
+```rust
+pub struct Session {
+    pub session_id: String,          // UUID
+    pub user_id: String,             // SSO sub claim
+    pub provider_id: String,         // IdentityProvider.id
+    pub created_at: DateTime<Utc>,
+    pub last_accessed_at: DateTime<Utc>,
+    pub expires_at: DateTime<Utc>,   // Sliding window
+    pub ip_address: Option<String>,
+    pub user_agent: Option<String>,
+}
+
+pub trait SessionStorage {
+    async fn create(&self, session: &Session) -> Result<()>;
+    async fn get(&self, session_id: &str) -> Result<Option<Session>>;
+    async fn refresh(&self, session_id: &str, new_expiry: DateTime<Utc>) -> Result<()>;
+    async fn invalidate(&self, session_id: &str) -> Result<()>;
+    async fn invalidate_all_for_user(&self, user_id: &str) -> Result<u64>;
+    async fn cleanup_expired(&self) -> Result<u64>;
+}
+```
+
+**Session lifecycle:**
+- Created on successful SSO authentication
+- Sliding window: each request extends `last_accessed_at` and `expires_at`
+- Max idle timeout: configurable `session_lifetime` (default 30 min)
+- Absolute max lifetime: 24 hours (configurable) — prevents infinite sliding
+- Cleanup: background task removes expired sessions every 5 minutes
+
+**Logout endpoint (`POST /auth/logout`):**
+- Revokes the current session
+- Revokes the refresh token (if provided)
+- For SAML providers: initiates Single Logout (SLO) by redirecting to IdP's SingleLogoutService
+- Clears session cookie
+- Returns `204 No Content`
+
+### SCIM Server-Side Endpoints
+
+quota-router exposes SCIM 2.0 endpoints at `/scim/v2/` for enterprise IdPs to call for user provisioning:
+
+```rust
+/// SCIM server-side request handler
+pub struct ScimServer {
+    user_storage: Arc<dyn UserStorage>,
+    group_storage: Arc<dyn GroupStorage>,
+}
+
+impl ScimServer {
+    /// Handle SCIM errors with proper status codes
+    fn scim_error(status: u16, scim_type: &str, detail: &str) -> ScimError {
+        ScimError {
+            schemas: vec!["urn:ietf:params:scim:api:messages:2.0:Error".to_string()],
+            status,
+            scim_type: Some(scim_type.to_string()),
+            detail: detail.to_string(),
+        }
+    }
+}
+```
+
+**sync_users() error handling:**
+
+```rust
+/// Sync result tracks successes and failures per-user
+pub struct SyncResult {
+    pub created: u32,
+    pub updated: u32,
+    pub deactivated: u32,
+    pub errors: Vec<SyncError>,
+}
+
+pub struct SyncError {
+    pub user_id: String,
+    pub error: String,
+    pub is_retryable: bool,
+}
+
+impl ScimProvisioner {
+    /// Sync users from IdP with per-user error isolation
+    pub async fn sync_users(&self) -> Result<SyncResult> {
+        let mut result = SyncResult::default();
+        let mut start_index = 1;
+        loop {
+            let page = self.list_users(None, Some(start_index), Some(100)).await?;
+            for user in &page.resources {
+                match self.sync_single_user(user).await {
+                    Ok(action) => match action {
+                        SyncAction::Created => result.created += 1,
+                        SyncAction::Updated => result.updated += 1,
+                        SyncAction::Deactivated => result.deactivated += 1,
+                    },
+                    Err(e) => result.errors.push(SyncError {
+                        user_id: user.id.clone(),
+                        error: e.to_string(),
+                        is_retryable: e.is_retryable(),
+                    }),
+                }
+            }
+            if start_index + page.items_per_page > page.total_results { break; }
+            start_index += page.items_per_page;
+        }
+        Ok(result)
+    }
 }
 ```
 
@@ -660,6 +881,26 @@ Rate limits use the same mechanism as RFC-0933 (Rate Limiting Integration). Exce
 | SAML assertion forgery | Critical | XML signature validation |
 | SCIM endpoint abuse | Medium | Rate limiting, IP allowlist |
 | Token leakage via logs | High | Never log tokens, redact all auth headers |
+
+## Adversarial Review
+
+| Threat | Impact | Mitigation |
+|--------|--------|------------|
+| State parameter tampering | High | Server-side state storage, 5 min expiry, nonce validation |
+| PKCE bypass | High | S256 only, reject plain method, verify code_verifier on token exchange |
+| Session fixation | High | New session ID on each login, rotate on privilege escalation |
+| SAML assertion replay | Critical | One-time use (InResponseTo check), NotOnOrAfter validation |
+| SCIM token theft | High | IP allowlist, rate limiting, token rotation |
+| OAuth2 code interception | High | PKCE ensures code alone is insufficient, state prevents CSRF |
+| Token introspection abuse | Medium | Rate limiting, require bearer token with appropriate scopes |
+| Session cookie theft | Medium | Secure flag, HttpOnly, SameSite=Lax, short lifetime |
+| Cross-tenant session access | High | Session scoped to provider_id, cannot access other tenants |
+
+**Design decisions:**
+- State parameter: server-side storage (not JWT) prevents client-side tampering
+- PKCE: S256 mandatory — plain method vulnerable to authorization code interception
+- Session: sliding window with absolute max prevents both idle timeout and infinite sessions
+- SCIM server: quota-router acts as SP (receives provisioning), not just client (calls IdP)
 
 ## Key Files to Modify
 
@@ -773,6 +1014,7 @@ Result: FAIL — sso_audience_mismatch
 |---------|------|---------|
 | v1 | 2026-05-17 | Initial draft |
 | v2 | 2026-05-17 | Adversarial review Round 1 fixes — SSO-to-API-key mapping, token lifecycle, SAML spec, SCIM spec, JWT algorithm spec, rate limiting, error handling |
+| v3 | 2026-05-17 | Adversarial review Round 2 fixes — SsoKeyStorageExt trait, TokenBlacklistStorage trait, OAuth2 state/PKCE spec, SCIM server endpoints, session management, /auth/logout, SAML multi-valued attributes, Adversarial Review section, RFC-0933 dependency |
 
 ## Related RFCs
 

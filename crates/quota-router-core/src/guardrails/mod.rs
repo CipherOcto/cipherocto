@@ -217,12 +217,12 @@ pub trait GuardrailChecker: Send + Sync {
     fn guardrail_type(&self) -> GuardrailType;
 
     /// Check input before sending to provider
-    async fn check_input(&self, input: &str) -> GuardrailResult {
+    async fn check_input(&self, _input: &str) -> GuardrailResult {
         GuardrailResult::Allow
     }
 
     /// Check output after receiving from provider
-    async fn check_output(&self, output: &str) -> GuardrailResult {
+    async fn check_output(&self, _output: &str) -> GuardrailResult {
         GuardrailResult::Allow
     }
 }
@@ -287,7 +287,6 @@ impl PiiDetector {
         for entity in entities {
             if let Some(pattern) = self.patterns.get(entity) {
                 for mat in pattern.find_iter(text) {
-                    let matched_text = mat.as_str();
                     let redacted_value = match entity {
                         PiiEntity::Email => "[EMAIL_REDACTED]".to_string(),
                         PiiEntity::Phone => "[PHONE_REDACTED]".to_string(),
@@ -424,6 +423,230 @@ impl RegexFilter {
         self.replacement
             .as_ref()
             .map(|r| self.pattern.replace_all(text, r.as_str()).to_string())
+    }
+}
+
+// ============================================================================
+// Content Moderation (RFC-0946 Section: Content Moderation)
+// ============================================================================
+
+/// Content moderation guardrail — calls OpenAI-compatible moderation API.
+/// Timeout 2s, 1 retry, fail-open by default.
+pub struct ContentModeration {
+    api_url: String,
+    api_key: String,
+    timeout_ms: u64,
+    retries: u32,
+    fallback: GuardrailFallback,
+    client: reqwest::Client,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+struct ModerationRequest {
+    input: Vec<String>,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+struct ModerationResponse {
+    results: Vec<ModerationResult>,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+struct ModerationResult {
+    flagged: bool,
+    categories: HashMap<String, bool>,
+}
+
+impl ContentModeration {
+    pub fn new(
+        api_url: &str,
+        api_key: &str,
+        timeout_ms: Option<u64>,
+        retries: Option<u32>,
+        fallback: Option<GuardrailFallback>,
+    ) -> Self {
+        Self {
+            api_url: api_url.to_string(),
+            api_key: api_key.to_string(),
+            timeout_ms: timeout_ms.unwrap_or(2000),
+            retries: retries.unwrap_or(1),
+            fallback: fallback.unwrap_or_default(),
+            client: reqwest::Client::new(),
+        }
+    }
+
+    /// Check content against moderation API with retries.
+    pub async fn check(&self, text: &str, categories: &[String]) -> Result<bool, GuardrailError> {
+        let request = ModerationRequest {
+            input: vec![text.to_string()],
+        };
+
+        for attempt in 0..=self.retries {
+            let result = self
+                .client
+                .post(&self.api_url)
+                .header("Authorization", format!("Bearer {}", self.api_key))
+                .header("Content-Type", "application/json")
+                .timeout(std::time::Duration::from_millis(self.timeout_ms))
+                .json(&request)
+                .send()
+                .await;
+
+            match result {
+                Ok(response) => {
+                    if let Ok(moderation) = response.json::<ModerationResponse>().await {
+                        if let Some(result) = moderation.results.first() {
+                            if result.flagged {
+                                // Check if any flagged categories match
+                                for category in categories {
+                                    if result.categories.get(category).copied().unwrap_or(false) {
+                                        return Ok(true);
+                                    }
+                                }
+                            }
+                            return Ok(false);
+                        }
+                    }
+                }
+                Err(_) if attempt < self.retries => continue,
+                Err(e) => {
+                    return Err(GuardrailError::ExternalApiError {
+                        guardrail: "content_moderation".to_string(),
+                        message: e.to_string(),
+                    });
+                }
+            }
+        }
+
+        Ok(false)
+    }
+}
+
+// ============================================================================
+// Topic Restriction (RFC-0946 Section: Topic Restriction)
+// ============================================================================
+
+/// Topic restriction guardrail — keyword-based matching with stemming.
+pub struct TopicRestriction {
+    allowed_topics: Vec<String>,
+    blocked_topics: Vec<String>,
+}
+
+impl TopicRestriction {
+    pub fn new(allowed_topics: Vec<String>, blocked_topics: Vec<String>) -> Self {
+        Self {
+            allowed_topics: allowed_topics.iter().map(|t| t.to_lowercase()).collect(),
+            blocked_topics: blocked_topics.iter().map(|t| t.to_lowercase()).collect(),
+        }
+    }
+
+    /// Simple stemming — just lowercase and remove common suffixes.
+    fn stem(&self, word: &str) -> String {
+        let lower = word.to_lowercase();
+        if lower.ends_with("ing") {
+            lower[..lower.len() - 3].to_string()
+        } else if lower.ends_with("tion") {
+            lower[..lower.len() - 4].to_string()
+        } else if lower.ends_with("ed") {
+            lower[..lower.len() - 2].to_string()
+        } else if lower.ends_with("ly") {
+            lower[..lower.len() - 2].to_string()
+        } else if lower.ends_with("s") && !lower.ends_with("ss") {
+            lower[..lower.len() - 1].to_string()
+        } else {
+            lower
+        }
+    }
+
+    /// Check if text matches blocked topics or doesn't match allowed topics.
+    pub fn check(&self, text: &str) -> GuardrailResult {
+        let text_lower = text.to_lowercase();
+        let words: Vec<String> = text_lower
+            .split_whitespace()
+            .map(|w| self.stem(w))
+            .collect();
+
+        // Check blocked topics first
+        if !self.blocked_topics.is_empty() {
+            for blocked in &self.blocked_topics {
+                for word in &words {
+                    if word.contains(blocked) || blocked.contains(word) {
+                        return GuardrailResult::Block {
+                            reason: format!("Blocked topic detected: {}", blocked),
+                            guardrail: "topic_restriction".to_string(),
+                        };
+                    }
+                }
+            }
+        }
+
+        // Check allowed topics (if specified)
+        if !self.allowed_topics.is_empty() {
+            let mut has_allowed_topic = false;
+            for allowed in &self.allowed_topics {
+                for word in &words {
+                    if word.contains(allowed) || allowed.contains(word) {
+                        has_allowed_topic = true;
+                        break;
+                    }
+                }
+                if has_allowed_topic {
+                    break;
+                }
+            }
+            if !has_allowed_topic {
+                return GuardrailResult::Warn {
+                    warnings: vec!["No allowed topic detected".to_string()],
+                };
+            }
+        }
+
+        GuardrailResult::Allow
+    }
+}
+
+// ============================================================================
+// Custom Guardrail (RFC-0946 Section: Custom Guardrail)
+// ============================================================================
+
+/// Custom guardrail — Python SDK only.
+/// When running in native_http mode, skipped with warning.
+pub struct CustomGuardrail {
+    name: String,
+    module: String,
+    function: String,
+    timeout_ms: u64,
+    memory_limit_bytes: u64,
+}
+
+impl CustomGuardrail {
+    pub fn new(
+        name: &str,
+        module: &str,
+        function: &str,
+        timeout_ms: Option<u64>,
+        memory_limit_bytes: Option<u64>,
+    ) -> Self {
+        Self {
+            name: name.to_string(),
+            module: module.to_string(),
+            function: function.to_string(),
+            timeout_ms: timeout_ms.unwrap_or(100),
+            memory_limit_bytes: memory_limit_bytes.unwrap_or(10 * 1024 * 1024),
+        }
+    }
+
+    /// Execute the custom guardrail.
+    /// In native_http mode, returns Allow with warning.
+    pub async fn execute(&self, _input: &str) -> GuardrailResult {
+        // Custom guardrails require Python runtime
+        // In native_http mode, skip with warning
+        GuardrailResult::Warn {
+            warnings: vec![format!(
+                "Custom guardrail '{}' skipped — requires Python runtime (module: {}, function: {})",
+                self.name, self.module, self.function
+            )],
+        }
     }
 }
 
@@ -752,5 +975,51 @@ mod tests {
         // Warn wins over allow
         let merged = GuardrailExecutor::merge_result(allow.clone(), warn.clone());
         assert!(matches!(merged, GuardrailResult::Warn { .. }));
+    }
+
+    #[test]
+    fn test_topic_restriction_blocked() {
+        let restriction =
+            TopicRestriction::new(vec![], vec!["gambling".to_string(), "casino".to_string()]);
+        let result = restriction.check("I want to play poker at the casino");
+        assert!(matches!(result, GuardrailResult::Block { .. }));
+    }
+
+    #[test]
+    fn test_topic_restriction_allowed() {
+        let restriction = TopicRestriction::new(
+            vec!["coding".to_string(), "programming".to_string()],
+            vec![],
+        );
+        let result = restriction.check("Let's talk about coding in Rust");
+        assert!(matches!(result, GuardrailResult::Allow));
+    }
+
+    #[test]
+    fn test_topic_restriction_no_allowed_topic() {
+        let restriction = TopicRestriction::new(vec!["coding".to_string()], vec![]);
+        let result = restriction.check("I like cooking pasta");
+        assert!(matches!(result, GuardrailResult::Warn { .. }));
+    }
+
+    #[tokio::test]
+    async fn test_custom_guardrail_skips_in_native() {
+        let guardrail = CustomGuardrail::new(
+            "test_guardrail",
+            "my_module",
+            "my_function",
+            Some(100),
+            Some(1024 * 1024),
+        );
+        let result = guardrail.execute("test input").await;
+        assert!(matches!(result, GuardrailResult::Warn { .. }));
+    }
+
+    #[test]
+    fn test_topic_restriction_stemming() {
+        let restriction = TopicRestriction::new(vec![], vec!["gambl".to_string()]);
+        // "gambling" should stem to "gambl"
+        let result = restriction.check("I enjoy gambling");
+        assert!(matches!(result, GuardrailResult::Block { .. }));
     }
 }

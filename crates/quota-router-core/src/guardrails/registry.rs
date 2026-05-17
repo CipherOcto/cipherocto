@@ -54,6 +54,19 @@ pub fn init_guardrails() {
 
     // Regex Filter
     GuardrailRegistry::register("regex_filter", || Arc::new(RegexFilterGuardrail::new()));
+
+    // Content Moderation (OpenAI-compatible)
+    GuardrailRegistry::register("content_moderation", || {
+        Arc::new(ContentModerationGuardrail::new())
+    });
+
+    // Topic Restriction
+    GuardrailRegistry::register("topic_restriction", || {
+        Arc::new(TopicRestrictionGuardrail::new())
+    });
+
+    // Custom (Python SDK only)
+    GuardrailRegistry::register("custom", || Arc::new(CustomGuardrailImpl::new()));
 }
 
 // ============================================================================
@@ -251,6 +264,131 @@ impl GuardrailChecker for RegexFilterGuardrail {
     }
 }
 
+/// Content Moderation guardrail implementation.
+/// Calls OpenAI-compatible moderation API with timeout and retries.
+struct ContentModerationGuardrail {
+    moderation: Option<super::ContentModeration>,
+    categories: Vec<String>,
+}
+
+impl ContentModerationGuardrail {
+    fn new() -> Self {
+        Self {
+            moderation: None,
+            categories: vec![
+                "violence".to_string(),
+                "hate".to_string(),
+                "self_harm".to_string(),
+            ],
+        }
+    }
+}
+
+#[async_trait::async_trait]
+impl GuardrailChecker for ContentModerationGuardrail {
+    fn name(&self) -> &str {
+        "content_moderation"
+    }
+
+    fn guardrail_type(&self) -> GuardrailType {
+        GuardrailType::Output
+    }
+
+    async fn check_output(&self, output: &str) -> super::GuardrailResult {
+        if let Some(moderation) = &self.moderation {
+            match moderation.check(output, &self.categories).await {
+                Ok(flagged) => {
+                    if flagged {
+                        super::GuardrailResult::Block {
+                            reason: "Content moderation flagged".to_string(),
+                            guardrail: self.name().to_string(),
+                        }
+                    } else {
+                        super::GuardrailResult::Allow
+                    }
+                }
+                Err(e) => super::GuardrailResult::Error {
+                    guardrail: self.name().to_string(),
+                    message: e.to_string(),
+                    fallback: super::GuardrailFallback::FailOpen,
+                },
+            }
+        } else {
+            super::GuardrailResult::Allow
+        }
+    }
+}
+
+/// Topic Restriction guardrail implementation.
+/// Keyword-based matching with stemming.
+struct TopicRestrictionGuardrail {
+    restriction: Option<super::TopicRestriction>,
+}
+
+impl TopicRestrictionGuardrail {
+    fn new() -> Self {
+        Self { restriction: None }
+    }
+}
+
+#[async_trait::async_trait]
+impl GuardrailChecker for TopicRestrictionGuardrail {
+    fn name(&self) -> &str {
+        "topic_restriction"
+    }
+
+    fn guardrail_type(&self) -> GuardrailType {
+        GuardrailType::Both
+    }
+
+    async fn check_input(&self, input: &str) -> super::GuardrailResult {
+        if let Some(restriction) = &self.restriction {
+            restriction.check(input)
+        } else {
+            super::GuardrailResult::Allow
+        }
+    }
+
+    async fn check_output(&self, output: &str) -> super::GuardrailResult {
+        self.check_input(output).await
+    }
+}
+
+/// Custom guardrail implementation (Python SDK only).
+/// In native_http mode, skipped with warning.
+struct CustomGuardrailImpl {
+    guardrail: Option<super::CustomGuardrail>,
+}
+
+impl CustomGuardrailImpl {
+    fn new() -> Self {
+        Self { guardrail: None }
+    }
+}
+
+#[async_trait::async_trait]
+impl GuardrailChecker for CustomGuardrailImpl {
+    fn name(&self) -> &str {
+        "custom"
+    }
+
+    fn guardrail_type(&self) -> GuardrailType {
+        GuardrailType::Both
+    }
+
+    async fn check_input(&self, input: &str) -> super::GuardrailResult {
+        if let Some(guardrail) = &self.guardrail {
+            guardrail.execute(input).await
+        } else {
+            super::GuardrailResult::Allow
+        }
+    }
+
+    async fn check_output(&self, output: &str) -> super::GuardrailResult {
+        self.check_input(output).await
+    }
+}
+
 // ============================================================================
 // Tests
 // ============================================================================
@@ -278,6 +416,9 @@ mod tests {
         assert!(guardrails.contains(&"prompt_injection"));
         assert!(guardrails.contains(&"token_limit"));
         assert!(guardrails.contains(&"regex_filter"));
+        assert!(guardrails.contains(&"content_moderation"));
+        assert!(guardrails.contains(&"topic_restriction"));
+        assert!(guardrails.contains(&"custom"));
     }
 
     #[test]

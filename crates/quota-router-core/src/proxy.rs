@@ -694,6 +694,323 @@ where
         return Ok(resp);
     }
 
+    // /v1/moderations — content moderation (RFC-0942)
+    if path == "/v1/moderations" {
+        // Forward to OpenAI moderations API
+        let (_, body) = req.into_parts();
+        let full_body = match body.collect().await {
+            Ok(bytes) => bytes.to_bytes(),
+            Err(_) => {
+                let resp = Response::builder()
+                    .status(StatusCode::BAD_REQUEST)
+                    .body(SseBody::from_error("Failed to read body".to_string()))
+                    .unwrap();
+                return Ok(resp);
+            }
+        };
+
+        let api_key = match resolve_api_key(&provider, None) {
+            Some(key) => key,
+            None => {
+                let resp = Response::builder()
+                    .status(StatusCode::UNAUTHORIZED)
+                    .body(SseBody::from_error("API key not set".to_string()))
+                    .unwrap();
+                return Ok(resp);
+            }
+        };
+
+        let base_url = dispatch_map
+            .values()
+            .find(|d| d.provider == "openai")
+            .and_then(|d| d.api_base.clone())
+            .unwrap_or_else(|| "https://api.openai.com/v1".to_string());
+
+        let client = reqwest::Client::new();
+        let resp = client
+            .post(format!("{}/moderations", base_url))
+            .header("Authorization", format!("Bearer {}", api_key))
+            .header("Content-Type", "application/json")
+            .body(full_body.to_vec())
+            .send()
+            .await;
+
+        match resp {
+            Ok(r) => {
+                let status =
+                    StatusCode::from_u16(r.status().as_u16()).unwrap_or(StatusCode::BAD_GATEWAY);
+                let body_bytes = r.bytes().await.unwrap_or_default();
+                let resp = Response::builder()
+                    .status(status)
+                    .header("content-type", "application/json")
+                    .body(SseBody::from_string(
+                        String::from_utf8_lossy(&body_bytes).to_string(),
+                    ))
+                    .unwrap();
+                return Ok(resp);
+            }
+            Err(e) => {
+                let resp = Response::builder()
+                    .status(StatusCode::BAD_GATEWAY)
+                    .body(SseBody::from_error(format!("Moderation error: {}", e)))
+                    .unwrap();
+                return Ok(resp);
+            }
+        }
+    }
+
+    // /v1/messages — Anthropic Messages API (RFC-0942)
+    if path == "/v1/messages" {
+        let (_, body) = req.into_parts();
+        let full_body = match body.collect().await {
+            Ok(bytes) => bytes.to_bytes(),
+            Err(_) => {
+                let resp = Response::builder()
+                    .status(StatusCode::BAD_REQUEST)
+                    .body(SseBody::from_error("Failed to read body".to_string()))
+                    .unwrap();
+                return Ok(resp);
+            }
+        };
+
+        // Forward to Anthropic Messages API
+        let api_key = match resolve_api_key(&provider, None) {
+            Some(key) => key,
+            None => {
+                let resp = Response::builder()
+                    .status(StatusCode::UNAUTHORIZED)
+                    .body(SseBody::from_error("API key not set".to_string()))
+                    .unwrap();
+                return Ok(resp);
+            }
+        };
+
+        let client = reqwest::Client::new();
+        let resp = client
+            .post("https://api.anthropic.com/v1/messages")
+            .header("x-api-key", &api_key)
+            .header("anthropic-version", "2023-06-01")
+            .header("Content-Type", "application/json")
+            .body(full_body.to_vec())
+            .send()
+            .await;
+
+        match resp {
+            Ok(r) => {
+                let status =
+                    StatusCode::from_u16(r.status().as_u16()).unwrap_or(StatusCode::BAD_GATEWAY);
+                let body_bytes = r.bytes().await.unwrap_or_default();
+                let resp = Response::builder()
+                    .status(status)
+                    .header("content-type", "application/json")
+                    .body(SseBody::from_string(
+                        String::from_utf8_lossy(&body_bytes).to_string(),
+                    ))
+                    .unwrap();
+                return Ok(resp);
+            }
+            Err(e) => {
+                let resp = Response::builder()
+                    .status(StatusCode::BAD_GATEWAY)
+                    .body(SseBody::from_error(format!("Messages error: {}", e)))
+                    .unwrap();
+                return Ok(resp);
+            }
+        }
+    }
+
+    // /v1/images/generations — image generation (RFC-0942)
+    if path == "/v1/images/generations" {
+        let (_, body) = req.into_parts();
+        let full_body = match body.collect().await {
+            Ok(bytes) => bytes.to_bytes(),
+            Err(_) => {
+                let resp = Response::builder()
+                    .status(StatusCode::BAD_REQUEST)
+                    .body(SseBody::from_error("Failed to read body".to_string()))
+                    .unwrap();
+                return Ok(resp);
+            }
+        };
+
+        let api_key = match resolve_api_key(&provider, None) {
+            Some(key) => key,
+            None => {
+                let resp = Response::builder()
+                    .status(StatusCode::UNAUTHORIZED)
+                    .body(SseBody::from_error("API key not set".to_string()))
+                    .unwrap();
+                return Ok(resp);
+            }
+        };
+
+        let base_url = dispatch_map
+            .values()
+            .find(|d| d.provider == "openai")
+            .and_then(|d| d.api_base.clone())
+            .unwrap_or_else(|| "https://api.openai.com/v1".to_string());
+
+        let client = reqwest::Client::new();
+        let resp = client
+            .post(format!("{}/images/generations", base_url))
+            .header("Authorization", format!("Bearer {}", api_key))
+            .header("Content-Type", "application/json")
+            .body(full_body.to_vec())
+            .send()
+            .await;
+
+        match resp {
+            Ok(r) => {
+                let status =
+                    StatusCode::from_u16(r.status().as_u16()).unwrap_or(StatusCode::BAD_GATEWAY);
+                let body_bytes = r.bytes().await.unwrap_or_default();
+                let resp = Response::builder()
+                    .status(status)
+                    .header("content-type", "application/json")
+                    .body(SseBody::from_string(
+                        String::from_utf8_lossy(&body_bytes).to_string(),
+                    ))
+                    .unwrap();
+                return Ok(resp);
+            }
+            Err(e) => {
+                let resp = Response::builder()
+                    .status(StatusCode::BAD_GATEWAY)
+                    .body(SseBody::from_error(format!("Image error: {}", e)))
+                    .unwrap();
+                return Ok(resp);
+            }
+        }
+    }
+
+    // /v1/audio/* — audio endpoints (RFC-0942)
+    if path.starts_with("/v1/audio/") {
+        let (_, body) = req.into_parts();
+        let full_body = match body.collect().await {
+            Ok(bytes) => bytes.to_bytes(),
+            Err(_) => {
+                let resp = Response::builder()
+                    .status(StatusCode::BAD_REQUEST)
+                    .body(SseBody::from_error("Failed to read body".to_string()))
+                    .unwrap();
+                return Ok(resp);
+            }
+        };
+
+        let api_key = match resolve_api_key(&provider, None) {
+            Some(key) => key,
+            None => {
+                let resp = Response::builder()
+                    .status(StatusCode::UNAUTHORIZED)
+                    .body(SseBody::from_error("API key not set".to_string()))
+                    .unwrap();
+                return Ok(resp);
+            }
+        };
+
+        let base_url = dispatch_map
+            .values()
+            .find(|d| d.provider == "openai")
+            .and_then(|d| d.api_base.clone())
+            .unwrap_or_else(|| "https://api.openai.com/v1".to_string());
+
+        let target_url = format!("{}{}", base_url, path);
+
+        let client = reqwest::Client::new();
+        let resp = client
+            .post(&target_url)
+            .header("Authorization", format!("Bearer {}", api_key))
+            .body(full_body.to_vec())
+            .send()
+            .await;
+
+        match resp {
+            Ok(r) => {
+                let status =
+                    StatusCode::from_u16(r.status().as_u16()).unwrap_or(StatusCode::BAD_GATEWAY);
+                let body_bytes = r.bytes().await.unwrap_or_default();
+                let resp = Response::builder()
+                    .status(status)
+                    .body(SseBody::from_string(
+                        String::from_utf8_lossy(&body_bytes).to_string(),
+                    ))
+                    .unwrap();
+                return Ok(resp);
+            }
+            Err(e) => {
+                let resp = Response::builder()
+                    .status(StatusCode::BAD_GATEWAY)
+                    .body(SseBody::from_error(format!("Audio error: {}", e)))
+                    .unwrap();
+                return Ok(resp);
+            }
+        }
+    }
+
+    // /v1/responses — OpenAI Responses API (RFC-0942)
+    if path == "/v1/responses" {
+        let (_, body) = req.into_parts();
+        let full_body = match body.collect().await {
+            Ok(bytes) => bytes.to_bytes(),
+            Err(_) => {
+                let resp = Response::builder()
+                    .status(StatusCode::BAD_REQUEST)
+                    .body(SseBody::from_error("Failed to read body".to_string()))
+                    .unwrap();
+                return Ok(resp);
+            }
+        };
+
+        let api_key = match resolve_api_key(&provider, None) {
+            Some(key) => key,
+            None => {
+                let resp = Response::builder()
+                    .status(StatusCode::UNAUTHORIZED)
+                    .body(SseBody::from_error("API key not set".to_string()))
+                    .unwrap();
+                return Ok(resp);
+            }
+        };
+
+        let base_url = dispatch_map
+            .values()
+            .find(|d| d.provider == "openai")
+            .and_then(|d| d.api_base.clone())
+            .unwrap_or_else(|| "https://api.openai.com/v1".to_string());
+
+        let client = reqwest::Client::new();
+        let resp = client
+            .post(format!("{}/responses", base_url))
+            .header("Authorization", format!("Bearer {}", api_key))
+            .header("Content-Type", "application/json")
+            .body(full_body.to_vec())
+            .send()
+            .await;
+
+        match resp {
+            Ok(r) => {
+                let status =
+                    StatusCode::from_u16(r.status().as_u16()).unwrap_or(StatusCode::BAD_GATEWAY);
+                let body_bytes = r.bytes().await.unwrap_or_default();
+                let resp = Response::builder()
+                    .status(status)
+                    .header("content-type", "application/json")
+                    .body(SseBody::from_string(
+                        String::from_utf8_lossy(&body_bytes).to_string(),
+                    ))
+                    .unwrap();
+                return Ok(resp);
+            }
+            Err(e) => {
+                let resp = Response::builder()
+                    .status(StatusCode::BAD_GATEWAY)
+                    .body(SseBody::from_error(format!("Responses error: {}", e)))
+                    .unwrap();
+                return Ok(resp);
+            }
+        }
+    }
+
     // /{provider}/... — passthrough endpoints (RFC-0942)
     // Known provider prefixes for passthrough routing
     let known_providers = [

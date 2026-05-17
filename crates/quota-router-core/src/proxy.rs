@@ -645,6 +645,46 @@ where
         return result;
     }
 
+    // /v1/completions — legacy text completions (RFC-0942)
+    if path == "/v1/completions" {
+        // Check balance
+        {
+            let bal = balance.lock();
+            if bal.check(1).is_err() {
+                let resp = Response::builder()
+                    .status(StatusCode::PAYMENT_REQUIRED)
+                    .body(SseBody::from_error(
+                        "Insufficient OCTO-W balance".to_string(),
+                    ))
+                    .unwrap();
+                return Ok(resp);
+            }
+        }
+
+        let (_, body) = req.into_parts();
+        let full_body = match body.collect().await {
+            Ok(bytes) => bytes.to_bytes(),
+            Err(_) => {
+                let resp = Response::builder()
+                    .status(StatusCode::BAD_REQUEST)
+                    .body(SseBody::from_error(
+                        "Failed to read request body".to_string(),
+                    ))
+                    .unwrap();
+                return Ok(resp);
+            }
+        };
+        let body_str = String::from_utf8_lossy(&full_body);
+
+        let result = handle_completions_endpoint(&body_str, &provider, &dispatch_map).await;
+
+        if let Some(ref m) = metrics {
+            m.request_duration.observe(start.elapsed().as_secs_f64());
+        }
+
+        return result;
+    }
+
     // /health and /ready — simple health checks
     if path == "/health" || path == "/ready" {
         let resp = Response::builder()
@@ -1212,6 +1252,106 @@ fn handle_models_endpoint(
 // ============================================================================
 // Embeddings endpoint (RFC-0917)
 // ============================================================================
+
+// ============================================================================
+// Completions endpoint (RFC-0942)
+// ============================================================================
+
+/// Handle /v1/completions endpoint — legacy text completions
+#[cfg(any(feature = "litellm-mode", feature = "full"))]
+async fn handle_completions_endpoint(
+    body_str: &str,
+    provider: &Provider,
+    dispatch_map: &HashMap<String, DispatchInfo>,
+) -> Result<Response<SseBody>, Infallible> {
+    let json: serde_json::Value = match serde_json::from_str(body_str) {
+        Ok(v) => v,
+        Err(_) => {
+            let resp = Response::builder()
+                .status(StatusCode::BAD_REQUEST)
+                .body(SseBody::from_error("Invalid JSON".to_string()))
+                .unwrap();
+            return Ok(resp);
+        }
+    };
+
+    let model = json
+        .get("model")
+        .and_then(|v| v.as_str())
+        .unwrap_or("gpt-3.5-turbo-instruct");
+
+    let prompt = json.get("prompt").and_then(|v| v.as_str()).unwrap_or("");
+
+    // Convert to chat completion format
+    let chat_body = serde_json::json!({
+        "model": model,
+        "messages": [{"role": "user", "content": prompt}],
+        "max_tokens": json.get("max_tokens"),
+        "temperature": json.get("temperature"),
+        "top_p": json.get("top_p"),
+        "stop": json.get("stop"),
+        "stream": json.get("stream"),
+    });
+
+    // Look up provider from dispatch map
+    let dispatch = dispatch_map.values().find(|d| {
+        d.model == model || d.model_group.as_deref() == Some(model) || d.deployment_id == model
+    });
+
+    let config_key = dispatch.and_then(|d| d.api_key.as_deref());
+    let api_key = match resolve_api_key(provider, config_key) {
+        Some(key) => key,
+        None => {
+            let resp = Response::builder()
+                .status(StatusCode::UNAUTHORIZED)
+                .body(SseBody::from_error("API key not set".to_string()))
+                .unwrap();
+            return Ok(resp);
+        }
+    };
+
+    let dispatch_api_base = dispatch.and_then(|d| d.api_base.clone());
+
+    // Forward to chat completions handler
+    let chat_body_str = chat_body.to_string();
+
+    #[cfg(any(feature = "litellm-mode", feature = "full"))]
+    {
+        handle_request_litellm(
+            &chat_body_str,
+            provider,
+            &api_key,
+            dispatch_api_base.as_deref(),
+        )
+        .await
+    }
+
+    #[cfg(not(any(feature = "litellm-mode", feature = "full")))]
+    {
+        handle_request_anyllm(
+            &chat_body_str,
+            provider,
+            &api_key,
+            dispatch_api_base.as_deref(),
+        )
+        .await
+    }
+}
+
+#[cfg(not(any(feature = "litellm-mode", feature = "full")))]
+async fn handle_completions_endpoint(
+    _body_str: &str,
+    _provider: &Provider,
+    _dispatch_map: &HashMap<String, DispatchInfo>,
+) -> Result<Response<SseBody>, Infallible> {
+    let resp = Response::builder()
+        .status(StatusCode::NOT_IMPLEMENTED)
+        .body(SseBody::from_error(
+            "Completions not supported in this mode".to_string(),
+        ))
+        .unwrap();
+    Ok(resp)
+}
 
 /// Handle /v1/embeddings endpoint
 #[cfg(any(feature = "litellm-mode", feature = "full"))]

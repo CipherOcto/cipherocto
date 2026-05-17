@@ -2,6 +2,8 @@
 
 ## Status
 
+Complete
+
 Open
 
 ## RFC
@@ -18,11 +20,11 @@ LiteLLM supports the legacy `/v1/completions` endpoint for text completions. Thi
 
 ## Acceptance Criteria
 
-- [ ] Add `/v1/completions` path routing in handle_request
-- [ ] Parse legacy completion request (model, prompt, max_tokens, temperature, etc.)
-- [ ] Convert to chat completion format (prompt → user message)
-- [ ] Forward to provider via existing completion path
-- [ ] Return OpenAI-compatible response format
+- [x] Add `/v1/completions` path routing in handle_request
+- [x] Parse legacy completion request (model, prompt, max_tokens, temperature, etc.)
+- [x] Convert to chat completion format (prompt → user message)
+- [x] Forward to provider via existing completion path
+- [x] Return OpenAI-compatible response format
 
 ## Files to Modify
 

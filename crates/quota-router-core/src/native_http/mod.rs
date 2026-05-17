@@ -93,7 +93,7 @@ pub struct HttpEmbeddingRequest {
 }
 
 /// Embedding response
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize)]
 pub struct HttpEmbeddingResponse {
     pub object: String,
     pub data: Vec<crate::shared_types::Embedding>,

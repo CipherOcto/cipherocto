@@ -2,6 +2,8 @@
 
 ## Status
 
+Complete
+
 Open
 
 ## RFC
@@ -21,28 +23,28 @@ The proxy currently handles all requests as chat completions with no path-based 
 
 ### Endpoints
 
-- [ ] `POST /v1/embeddings` — text embeddings
-- [ ] `GET /v1/models` — list available models
-- [ ] `GET /v1/models/{model}` — get model info
+- [x] `POST /v1/embeddings` — text embeddings
+- [x] `GET /v1/models` — list available models
+- [x] `GET /v1/models/{model}` — get model info
 
 ### Embeddings
 
-- [ ] Parse embedding request body
-- [ ] Route to embedding-capable provider
-- [ ] Return embedding response in OpenAI format
+- [x] Parse embedding request body
+- [x] Route to embedding-capable provider
+- [x] Return embedding response in OpenAI format
 
 ### Models
 
-- [ ] List all models from DispatchInfo map
-- [ ] Filter by provider if requested
-- [ ] Return model list in OpenAI format
+- [x] List all models from DispatchInfo map
+- [x] Filter by provider if requested
+- [x] Return model list in OpenAI format
 
 ### Tests
 
-- [ ] `/v1/embeddings` returns valid embeddings
-- [ ] `/v1/models` returns all configured models
-- [ ] `/v1/models/{model}` returns specific model info
-- [ ] Both endpoints require auth (if auth enabled)
+- [x] `/v1/embeddings` returns valid embeddings
+- [x] `/v1/models` returns all configured models
+- [x] `/v1/models/{model}` returns specific model info
+- [x] Both endpoints require auth (if auth enabled)
 
 ## Key Files
 

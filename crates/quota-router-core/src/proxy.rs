@@ -480,7 +480,99 @@ where
         }
     }
 
-    // Check balance for proxy requests
+    // Path-based routing (RFC-0917)
+    let path = req.uri().path().to_string();
+
+    // /v1/models endpoints — no body parsing needed
+    if path == "/v1/models" || path.starts_with("/v1/models/") {
+        let model_id = path.strip_prefix("/v1/models/").unwrap_or("");
+        let resp = handle_models_endpoint(&dispatch_map, model_id);
+        if let Some(ref m) = metrics {
+            m.request_duration.observe(start.elapsed().as_secs_f64());
+        }
+        return Ok(resp);
+    }
+
+    // /v1/embeddings — needs body parsing but different handler
+    if path == "/v1/embeddings" {
+        // Check balance
+        {
+            let bal = balance.lock();
+            if bal.check(1).is_err() {
+                let resp = Response::builder()
+                    .status(StatusCode::PAYMENT_REQUIRED)
+                    .body(SseBody::from_error(
+                        "Insufficient OCTO-W balance".to_string(),
+                    ))
+                    .unwrap();
+                return Ok(resp);
+            }
+        }
+
+        let (_, body) = req.into_parts();
+        let full_body = match body.collect().await {
+            Ok(bytes) => bytes.to_bytes(),
+            Err(_) => {
+                let resp = Response::builder()
+                    .status(StatusCode::BAD_REQUEST)
+                    .body(SseBody::from_error(
+                        "Failed to read request body".to_string(),
+                    ))
+                    .unwrap();
+                return Ok(resp);
+            }
+        };
+        let body_str = String::from_utf8_lossy(&full_body);
+
+        let request_model = serde_json::from_str::<serde_json::Value>(&body_str)
+            .ok()
+            .and_then(|v| v.get("model")?.as_str().map(String::from));
+
+        let dispatch = request_model.as_ref().and_then(|model| {
+            dispatch_map.values().find(|d| {
+                d.model == *model
+                    || d.model_group.as_deref() == Some(model.as_str())
+                    || d.deployment_id == *model
+            })
+        });
+
+        let config_key = dispatch.and_then(|d| d.api_key.as_deref());
+        let api_key = match resolve_api_key(&provider, config_key) {
+            Some(key) => key,
+            None => {
+                let resp = Response::builder()
+                    .status(StatusCode::UNAUTHORIZED)
+                    .body(SseBody::from_error(
+                        "API key not set in environment".to_string(),
+                    ))
+                    .unwrap();
+                return Ok(resp);
+            }
+        };
+
+        let dispatch_api_base = dispatch.and_then(|d| d.api_base.clone());
+
+        let result =
+            handle_embedding_request(&body_str, &provider, &api_key, dispatch_api_base.as_deref())
+                .await;
+
+        if let Some(ref m) = metrics {
+            m.request_duration.observe(start.elapsed().as_secs_f64());
+        }
+
+        return result;
+    }
+
+    // /health and /ready — simple health checks
+    if path == "/health" || path == "/ready" {
+        let resp = Response::builder()
+            .status(StatusCode::OK)
+            .body(SseBody::from_string(r#"{"status":"ok"}"#.to_string()))
+            .unwrap();
+        return Ok(resp);
+    }
+
+    // Check balance for proxy requests (chat completions)
     {
         let bal = balance.lock();
         if bal.check(1).is_err() {
@@ -801,6 +893,170 @@ async fn handle_streaming(
             Ok(resp)
         }
     }
+}
+
+// ============================================================================
+// Models endpoint (RFC-0917)
+// ============================================================================
+
+/// Handle /v1/models and /v1/models/{model_id} endpoints
+fn handle_models_endpoint(
+    dispatch_map: &HashMap<String, DispatchInfo>,
+    model_id: &str,
+) -> Response<SseBody> {
+    if model_id.is_empty() {
+        // List all models
+        let models: Vec<serde_json::Value> = dispatch_map
+            .values()
+            .map(|d| {
+                serde_json::json!({
+                    "id": d.model,
+                    "object": "model",
+                    "created": 0,
+                    "owned_by": d.provider,
+                    "permission": [],
+                    "root": d.model,
+                    "parent": null,
+                })
+            })
+            .collect();
+
+        let body = serde_json::json!({
+            "object": "list",
+            "data": models,
+        });
+
+        Response::builder()
+            .status(StatusCode::OK)
+            .header("content-type", "application/json")
+            .body(SseBody::from_string(body.to_string()))
+            .unwrap()
+    } else {
+        // Get specific model
+        let dispatch = dispatch_map.values().find(|d| {
+            d.model == model_id
+                || d.model_group.as_deref() == Some(model_id)
+                || d.deployment_id == model_id
+        });
+
+        match dispatch {
+            Some(d) => {
+                let body = serde_json::json!({
+                    "id": d.model,
+                    "object": "model",
+                    "created": 0,
+                    "owned_by": d.provider,
+                    "permission": [],
+                    "root": d.model,
+                    "parent": null,
+                });
+
+                Response::builder()
+                    .status(StatusCode::OK)
+                    .header("content-type", "application/json")
+                    .body(SseBody::from_string(body.to_string()))
+                    .unwrap()
+            }
+            None => Response::builder()
+                .status(StatusCode::NOT_FOUND)
+                .body(SseBody::from_error(format!(
+                    "Model '{}' not found",
+                    model_id
+                )))
+                .unwrap(),
+        }
+    }
+}
+
+// ============================================================================
+// Embeddings endpoint (RFC-0917)
+// ============================================================================
+
+/// Handle /v1/embeddings endpoint
+#[cfg(any(feature = "litellm-mode", feature = "full"))]
+async fn handle_embedding_request(
+    body_str: &str,
+    provider: &Provider,
+    api_key: &str,
+    dispatch_api_base: Option<&str>,
+) -> Result<Response<SseBody>, Infallible> {
+    // Parse embedding request
+    let request: serde_json::Value = match serde_json::from_str(body_str) {
+        Ok(req) => req,
+        Err(_) => {
+            let resp = Response::builder()
+                .status(StatusCode::BAD_REQUEST)
+                .body(SseBody::from_error("Invalid request body".to_string()))
+                .unwrap();
+            return Ok(resp);
+        }
+    };
+
+    let model = request
+        .get("model")
+        .and_then(|v| v.as_str())
+        .unwrap_or("text-embedding-ada-002");
+
+    let input = request
+        .get("input")
+        .cloned()
+        .unwrap_or(serde_json::Value::Null);
+
+    // Build embedding request for provider
+    let embedding_req = crate::native_http::HttpEmbeddingRequest {
+        input: input.to_string(),
+        model: model.to_string(),
+        api_base: dispatch_api_base.map(String::from),
+    };
+
+    // Get provider and call embedding
+    let http_provider = match crate::native_http::HttpProviderFactory::create(&provider.name) {
+        Some(p) => p,
+        None => {
+            let resp = Response::builder()
+                .status(StatusCode::INTERNAL_SERVER_ERROR)
+                .body(SseBody::from_error(format!(
+                    "Provider '{}' not found",
+                    provider.name
+                )))
+                .unwrap();
+            return Ok(resp);
+        }
+    };
+    match http_provider.embedding(&embedding_req, api_key).await {
+        Ok(response) => {
+            let body = serde_json::to_string(&response).unwrap_or_else(|_| "{}".to_string());
+            let resp = Response::builder()
+                .status(StatusCode::OK)
+                .header("content-type", "application/json")
+                .body(SseBody::from_string(body))
+                .unwrap();
+            Ok(resp)
+        }
+        Err(e) => {
+            let resp = Response::builder()
+                .status(StatusCode::INTERNAL_SERVER_ERROR)
+                .body(SseBody::from_error(format!("Embedding error: {}", e)))
+                .unwrap();
+            Ok(resp)
+        }
+    }
+}
+
+#[cfg(not(any(feature = "litellm-mode", feature = "full")))]
+async fn handle_embedding_request(
+    _body_str: &str,
+    _provider: &Provider,
+    _api_key: &str,
+    _dispatch_api_base: Option<&str>,
+) -> Result<Response<SseBody>, Infallible> {
+    let resp = Response::builder()
+        .status(StatusCode::NOT_IMPLEMENTED)
+        .body(SseBody::from_error(
+            "Embeddings not supported in this mode".to_string(),
+        ))
+        .unwrap();
+    Ok(resp)
 }
 
 #[cfg(test)]

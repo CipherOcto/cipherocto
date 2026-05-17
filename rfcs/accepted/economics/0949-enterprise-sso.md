@@ -1016,12 +1016,13 @@ Result: FAIL — sso_audience_mismatch
 | v1 | 2026-05-17 | Initial draft |
 | v2 | 2026-05-17 | Adversarial review Round 1 fixes — SSO-to-API-key mapping, token lifecycle, SAML spec, SCIM spec, JWT algorithm spec, rate limiting, error handling |
 | v3 | 2026-05-17 | Adversarial review Round 2 fixes — SsoKeyStorageExt trait, TokenBlacklistStorage trait, OAuth2 state/PKCE spec, SCIM server endpoints, session management, /auth/logout, SAML multi-valued attributes, Adversarial Review section, RFC-0933 dependency |
+| v4 | 2026-05-17 | Adversarial review Round 3 fixes — chrono dependency added, moved to Accepted status |
 
 ## Related RFCs
 
-- RFC-0903 (Economics): Virtual API Key System
-- RFC-0932 (Economics): Team Management
-- RFC-0905 (Economics): Observability and Logging
+- RFC-0903 (Economics): Virtual API Key System (Accepted)
+- RFC-0932 (Economics): Team Management (Accepted)
+- RFC-0905 (Economics): Observability and Logging (Accepted)
 
 ## Related Use Cases
 

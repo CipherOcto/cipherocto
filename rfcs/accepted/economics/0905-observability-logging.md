@@ -482,12 +482,14 @@ Observability is essential for:
 |---------|------|---------|
 | v1 | 2026-03-12 | Initial (Planned) |
 | v2 | 2026-05-17 | Moved to Draft — deferred metrics to RFC-0937, added tracing spec, health endpoints, logging events, adversarial review |
+| v3 | 2026-05-17 | Adversarial review Round 2 fixes — optional fields consistency, log rotation note, install_batch note, write_all fix |
+| v4 | 2026-05-17 | Adversarial review Round 3 fixes — moved to Accepted status |
 
 ## Related RFCs
 
 - RFC-0937: Prometheus Metrics Endpoint (Accepted) — `/metrics` endpoint
-- RFC-0947: Callback System (Draft) — alerting and third-party integrations
-- RFC-0944: Structured Logging (completed) — existing logging implementation
+- RFC-0947: Callback System (Accepted) — alerting and third-party integrations
+- RFC-0944: Structured Logging (Accepted) — existing logging implementation
 
 ## Related Use Cases
 

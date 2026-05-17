@@ -569,6 +569,7 @@ fn test_guardrail_executor_merge() {
 | v1 | 2026-05-17 | Initial draft |
 | v2 | 2026-05-17 | Adversarial review round 1 fixes — C1 (RFC-0936 boundary), C2 (PII value leak), C3 (Error variant), H1 (content moderation timeout), H2 (custom sandboxing), H3 (hot-reload spec), H4 (error handling), M1-M4 (logging, metrics, topic matching, execution order) |
 | v3 | 2026-05-17 | Adversarial review round 2 fixes — H1 (Error fallback contract), M1 (Custom guardrail YAML clarification), M2 (PiiMatch iteration), M3 (override precedence), M4 (ContentModeration timeout 5s→2s), M5 (RegexFilter inline flags) |
+| v4 | 2026-05-17 | Adversarial review Round 3 fixes — test vector unwrap fix, moved to Accepted status |
 
 ## Related RFCs
 
@@ -579,6 +580,5 @@ fn test_guardrail_executor_merge() {
 
 ## Related Use Cases
 
-- [Enhanced Quota Router Gateway](docs/use-cases/enhanced-quota-router-gateway.md)
-- [Enterprise AI Gateway](docs/use-cases/)
-- [LiteLLM Drop-in Replacement](docs/use-cases/)
+- [Enhanced Quota Router Gateway](../../docs/use-cases/enhanced-quota-router-gateway.md)
+- [LiteLLM Drop-in Replacement](../../docs/use-cases/enhanced-quota-router-gateway.md)

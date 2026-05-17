@@ -565,6 +565,8 @@ fn test_no_content_in_response_summary() {
 |---------|------|---------|
 | v1 | 2026-05-17 | Initial draft |
 | v2 | 2026-05-17 | Round 1 fixes: added input/service callbacks, fixed CallbackError naming collision, removed PII from responses, added streaming semantics, fixed HMAC to use hmac crate, clarified channel capacity, added KeyMetadata, fixed G1 metric |
+| v3 | 2026-05-17 | Adversarial review Round 2 fixes — Start/End clarified as extras, LogLevel reference |
+| v4 | 2026-05-17 | Adversarial review Round 3 fixes — request_end changed to Option<DateTime<Utc>>, moved to Accepted status |
 
 ## Related RFCs
 
@@ -575,5 +577,5 @@ fn test_no_content_in_response_summary() {
 
 ## Related Use Cases
 
-- Enhanced Quota Router Gateway
-- LiteLLM Drop-in Replacement
+- [Enhanced Quota Router Gateway](../../docs/use-cases/enhanced-quota-router-gateway.md)
+- [LiteLLM Drop-in Replacement](../../docs/use-cases/enhanced-quota-router-gateway.md)

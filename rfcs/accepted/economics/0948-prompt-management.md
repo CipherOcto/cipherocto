@@ -662,6 +662,8 @@ fn test_ab_test_weight_boundaries() {
 |---------|------|---------|
 | v1 | 2026-05-17 | Initial draft |
 | v2 | 2026-05-17 | Round 1 fixes: duplicate deps removed, ChatCompletionRequest extension specified, PromptFilter defined, Error Handling section added, request_id source specified, concurrent access (RwLock), Message struct fixed, A/B weight single source (AbTest only) |
+| v3 | 2026-05-17 | Adversarial review Round 2 fixes — AbTestMetrics note, version sort order |
+| v4 | 2026-05-17 | Adversarial review Round 3 fixes — sanitize_value consistency, moved to Accepted status |
 
 ## Related RFCs
 
@@ -672,6 +674,5 @@ fn test_ab_test_weight_boundaries() {
 
 ## Related Use Cases
 
-- Enhanced Quota Router Gateway
-- Enterprise AI Gateway
-- LiteLLM Drop-in Replacement
+- [Enhanced Quota Router Gateway](../../docs/use-cases/enhanced-quota-router-gateway.md)
+- [LiteLLM Drop-in Replacement](../../docs/use-cases/enhanced-quota-router-gateway.md)

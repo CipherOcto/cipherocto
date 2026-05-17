@@ -284,6 +284,30 @@ where
         ("GET", "/global/spend") => {
             return handle_global_spend(storage);
         }
+        // POST /user/new - create user
+        ("POST", "/user/new") => {
+            // TODO: Implement when user storage is available
+            return Response::builder()
+                .status(StatusCode::NOT_IMPLEMENTED)
+                .body("User management coming soon".to_string())
+                .unwrap();
+        }
+        // GET /user/info - get user info
+        ("GET", "/user/info") => {
+            // TODO: Implement when user storage is available
+            return Response::builder()
+                .status(StatusCode::NOT_IMPLEMENTED)
+                .body("User management coming soon".to_string())
+                .unwrap();
+        }
+        // POST /user/update - update user
+        ("POST", "/user/update") => {
+            // TODO: Implement when user storage is available
+            return Response::builder()
+                .status(StatusCode::NOT_IMPLEMENTED)
+                .body("User management coming soon".to_string())
+                .unwrap();
+        }
         // GET /team/list - list all teams
         ("GET", "/team/list") => {
             return handle_list_teams(storage);

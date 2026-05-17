@@ -438,7 +438,7 @@ pub struct ContentModeration {
     api_key: String,
     timeout_ms: u64,
     retries: u32,
-    fallback: GuardrailFallback,
+    _fallback: GuardrailFallback,
     client: reqwest::Client,
 }
 
@@ -471,7 +471,7 @@ impl ContentModeration {
             api_key: api_key.to_string(),
             timeout_ms: timeout_ms.unwrap_or(2000),
             retries: retries.unwrap_or(1),
-            fallback: fallback.unwrap_or_default(),
+            _fallback: fallback.unwrap_or_default(),
             client: reqwest::Client::new(),
         }
     }
@@ -631,6 +631,8 @@ pub struct CustomGuardrail {
     module: String,
     function: String,
     timeout_ms: u64,
+    /// Memory limit — only enforced in Python SDK mode
+    #[allow(dead_code)]
     memory_limit_bytes: u64,
 }
 
@@ -653,7 +655,7 @@ impl CustomGuardrail {
 
     /// Execute the custom guardrail with timeout enforcement.
     /// In native_http mode, returns Allow with warning.
-    pub async fn execute(&self, input: &str) -> GuardrailResult {
+    pub async fn execute(&self, _input: &str) -> GuardrailResult {
         // Custom guardrails require Python runtime
         // In native_http mode, skip with warning
         // Apply timeout even for the warning path to demonstrate enforcement

@@ -299,6 +299,7 @@ impl GuardrailChecker for RegexFilterGuardrail {
 struct ContentModerationGuardrail {
     moderation: Option<super::ContentModeration>,
     categories: Vec<String>,
+    fallback: super::GuardrailFallback,
 }
 
 impl ContentModerationGuardrail {
@@ -310,6 +311,7 @@ impl ContentModerationGuardrail {
                 "hate".to_string(),
                 "self_harm".to_string(),
             ],
+            fallback: super::GuardrailFallback::FailOpen,
         }
     }
 }
@@ -340,7 +342,7 @@ impl GuardrailChecker for ContentModerationGuardrail {
                 Err(e) => super::GuardrailResult::Error {
                     guardrail: self.name().to_string(),
                     message: e.to_string(),
-                    fallback: super::GuardrailFallback::FailOpen,
+                    fallback: self.fallback.clone(),
                 },
             }
         } else {

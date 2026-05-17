@@ -22,6 +22,7 @@ Define a guardrails framework for quota-router that provides input/output valida
 
 - RFC-0903 (Economics): Virtual API Key System
 - RFC-0905 (Economics): Observability and Logging
+- RFC-0936 (Economics): Pre-call Checks (provides ContextWindowCheck; TokenLimit guardrail delegates to it)
 
 **Optional:**
 
@@ -34,7 +35,7 @@ Define a guardrails framework for quota-router that provides input/output valida
 |------|--------|--------|
 | G1 | <5ms overhead | Per-guardrail check latency |
 | G2 | Composable | Multiple guardrails in sequence |
-| G3 | Configurable | YAML-based, hot-reloadable |
+| G3 | Configurable | YAML-based, hot-reloadable via SIGHUP or `/config/update` endpoint (RFC-0907) |
 | G4 | Extensible | Custom guardrail functions via Python SDK |
 
 ## Motivation
@@ -94,14 +95,24 @@ pub enum Guardrail {
     ContentModeration {
         action: GuardrailAction,
         categories: Vec<String>,
+        /// HTTP timeout for the moderation API call (default: 5s)
+        timeout_ms: Option<u64>,
+        /// Number of retries on transient failure (default: 1)
+        retries: Option<u32>,
+        /// Fallback behavior when API is unavailable (default: fail-open)
+        fallback: Option<GuardrailFallback>,
     },
-    /// Restrict topics
+    /// Restrict topics (keyword-based matching with stemming)
     TopicRestriction {
         action: GuardrailAction,
         allowed_topics: Vec<String>,
         blocked_topics: Vec<String>,
     },
     /// Word/token count limits
+    /// NOTE: Delegates to RFC-0936 ContextWindowCheck internally.
+    /// This guardrail wraps the pre-call check as a guardrail action (Block/Warn/Log/Transform)
+    /// so it can participate in the guardrail pipeline. The actual token counting
+    /// is performed by ContextWindowCheck from RFC-0936.
     TokenLimit {
         action: GuardrailAction,
         max_input_tokens: Option<u32>,
@@ -113,11 +124,15 @@ pub enum Guardrail {
         pattern: String,
         replacement: Option<String>,
     },
-    /// Custom guardrail function (Python SDK)
+    /// Custom guardrail function (Python SDK only)
     Custom {
         name: String,
         module: String,
         function: String,
+        /// Execution timeout in milliseconds (default: 100ms)
+        timeout_ms: Option<u64>,
+        /// Memory limit in bytes (default: 10MB)
+        memory_limit_bytes: Option<u64>,
     },
 }
 
@@ -203,16 +218,21 @@ pub struct GuardrailExecutor {
 }
 
 impl GuardrailExecutor {
-    /// Run input guardrails before sending to provider
+    /// Run input guardrails before sending to provider.
+    /// Execution order: global guardrails first (in config order),
+    /// then model overrides, then key overrides.
+    /// Short-circuit on first Block result.
     pub async fn check_input(
         &self,
         request: &ChatCompletionRequest,
         key_id: Option<&str>,
         model: &str,
     ) -> GuardrailResult {
-        // Merge global + model + key guardrails
-        // Run each in sequence
-        // Return Block/Warn/Log/Transform result
+        // 1. Run global input guardrails (in config order)
+        // 2. Run model override guardrails (if any)
+        // 3. Run key override guardrails (if any)
+        // Short-circuit: first Block returns immediately
+        // Collect all Warn results, return combined
     }
 
     /// Run output guardrails after receiving from provider
@@ -237,6 +257,21 @@ pub enum GuardrailResult {
     Warn { warnings: Vec<String> },
     /// Request/response was transformed
     Transform { transformed: bool },
+    /// Guardrail execution failed (timeout, panic, external API error)
+    /// Fallback behavior is configurable: fail-open (allow with warning) or fail-closed (block).
+    Error {
+        guardrail: String,
+        message: String,
+        fallback: GuardrailFallback,
+    },
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub enum GuardrailFallback {
+    /// Fail-open: allow the request but log the error
+    FailOpen,
+    /// Fail-closed: block the request
+    FailClosed,
 }
 ```
 
@@ -263,7 +298,9 @@ pub struct PiiMatch {
     pub entity: PiiEntity,
     pub start: usize,
     pub end: usize,
-    pub value: String,
+    /// Redacted representation of the matched PII (e.g., "[EMAIL_REDACTED]")
+    /// NEVER stores the raw PII value — prevents leakage to logs/callbacks.
+    pub redacted_value: String,
     pub confidence: f64,
 }
 ```
@@ -278,12 +315,22 @@ pub struct PromptInjectionDetector {
 }
 
 impl PromptInjectionDetector {
-    pub fn detect(&self, text: &str) -> f64 {
+    /// Returns Ok(score) where score is 0.0-1.0 for injection likelihood.
+    /// Returns Err if regex compilation fails or input is malformed.
+    pub fn detect(&self, text: &str) -> Result<f64, GuardrailError> {
         // Score 0.0-1.0 for injection likelihood
         // Check patterns: "ignore previous", "system prompt", "jailbreak"
         // Check keywords: "ignore", "forget", "new instructions"
         // Return max score
     }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub enum GuardrailError {
+    RegexError(String),
+    ExternalApiError { guardrail: String, message: String },
+    TimeoutError { guardrail: String, timeout_ms: u64 },
+    CustomError { guardrail: String, message: String },
 }
 ```
 
@@ -331,21 +378,49 @@ response = quota_router.completion(
 
 | Threat | Impact | Mitigation |
 |--------|--------|------------|
-| PII bypass via encoding | High | Decode base64, URL encoding before check |
+| PII bypass via encoding (base64, URL) | High | Decode before checking |
 | Injection via Unicode | High | Normalize Unicode before check |
-| Regex DoS | Medium | Limit pattern complexity, use timeout |
+| Prompt injection via few-shot | Medium | Check all messages, not just last |
+| Regex DoS / catastrophic backtracking | High | Use bounded regex engine, timeout (50ms per pattern) |
+| Guardrail order manipulation | Medium | Fixed execution order (global → model → key), user can't reorder |
+| Memory exhaustion via large input | Medium | Check token limit before PII detection |
 | False positives | Medium | Configurable thresholds, warn vs block |
 | Guardrail bypass | High | Guardrails run in Rust, not user-controllable |
+| PII value leak to logs/callbacks | High | PiiMatch stores redacted_value only, never raw PII |
+| Custom guardrail resource exhaustion | Medium | Timeout (100ms) + memory limit (10MB) + panic catching |
 
-## Adversarial Review
+## Logging Integration (RFC-0905)
 
-| Threat | Impact | Mitigation |
-|--------|--------|------------|
-| PII encoded in base64 | High | Decode before checking |
-| Prompt injection via few-shot | Medium | Check all messages, not just last |
-| Guardrail order manipulation | Medium | Fixed execution order, user can't reorder |
-| Memory exhaustion via large input | Medium | Check token limit before PII detection |
-| Regex catastrophic backtracking | High | Use bounded regex engine, timeout |
+Guardrail events are logged as structured JSON via RFC-0905:
+
+```json
+{
+  "timestamp": "2026-05-17T12:00:00Z",
+  "level": "warn",
+  "component": "guardrails",
+  "event": "guardrail_triggered",
+  "guardrail": "pii_detection",
+  "action": "block",
+  "request_id": "req-abc123",
+  "key_id": "key-456",
+  "model": "gpt-4",
+  "details": {
+    "entity": "email",
+    "confidence": 0.95
+  }
+}
+```
+
+## Prometheus Metrics (RFC-0905/0937)
+
+Guardrail-specific metrics for `/metrics` endpoint:
+
+| Metric | Type | Labels | Description |
+|--------|------|--------|-------------|
+| `quota_router_guardrail_checks_total` | Counter | guardrail, action | Total guardrail checks |
+| `quota_router_guardrail_blocks_total` | Counter | guardrail | Total blocks |
+| `quota_router_guardrail_latency_seconds` | Histogram | guardrail | Per-guardrail latency |
+| `quota_router_guardrail_errors_total` | Counter | guardrail, error_type | Total errors |
 
 ## Key Files to Modify
 
@@ -438,7 +513,7 @@ fn test_pii_detection_email() {
     let text = "Contact me at john@example.com";
     let matches = detector.detect(text, &[PiiEntity::Email]);
     assert_eq!(matches.len(), 1);
-    assert_eq!(matches[0].value, "john@example.com");
+    assert_eq!(matches[0].redacted_value, "[EMAIL_REDACTED]");
 }
 
 #[test]
@@ -466,6 +541,7 @@ fn test_guardrail_executor_merge() {
 | Version | Date | Changes |
 |---------|------|---------|
 | v1 | 2026-05-17 | Initial draft |
+| v2 | 2026-05-17 | Adversarial review round 1 fixes — C1 (RFC-0936 boundary), C2 (PII value leak), C3 (Error variant), H1 (content moderation timeout), H2 (custom sandboxing), H3 (hot-reload spec), H4 (error handling), M1-M4 (logging, metrics, topic matching, execution order) |
 
 ## Related RFCs
 
@@ -476,6 +552,6 @@ fn test_guardrail_executor_merge() {
 
 ## Related Use Cases
 
-- Enhanced Quota Router Gateway
-- Enterprise AI Gateway
-- LiteLLM Drop-in Replacement
+- [Enhanced Quota Router Gateway](docs/use-cases/enhanced-quota-router-gateway.md)
+- [Enterprise AI Gateway](docs/use-cases/)
+- [LiteLLM Drop-in Replacement](docs/use-cases/)

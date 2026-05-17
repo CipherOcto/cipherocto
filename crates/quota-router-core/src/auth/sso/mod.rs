@@ -5,6 +5,9 @@
 pub mod blacklist;
 pub mod jwt;
 pub mod mapper;
+pub mod oauth2;
+pub mod pkce;
+pub mod saml;
 
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -214,6 +217,8 @@ pub struct ProviderConfig {
     pub idp_metadata_url: Option<String>,
     pub sp_entity_id: Option<String>,
     pub acs_url: Option<String>,
+    /// IdP certificate (DER-encoded) for SAML signature validation
+    pub idp_certificate: Option<Vec<u8>>,
     /// SCIM settings
     pub scim_url: Option<String>,
     pub scim_token: Option<String>,
@@ -560,6 +565,7 @@ mod tests {
             idp_metadata_url: None,
             sp_entity_id: None,
             acs_url: None,
+            idp_certificate: None,
             scim_url: None,
             scim_token: None,
         };
@@ -573,6 +579,7 @@ mod tests {
             idp_metadata_url: None,
             sp_entity_id: None,
             acs_url: None,
+            idp_certificate: None,
             scim_url: None,
             scim_token: None,
         };
@@ -587,6 +594,7 @@ mod tests {
             idp_metadata_url: Some("https://idp.com/metadata".into()),
             sp_entity_id: Some("sp-entity".into()),
             acs_url: Some("https://app.com/acs".into()),
+            idp_certificate: None,
             scim_url: None,
             scim_token: None,
         };

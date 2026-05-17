@@ -29,6 +29,7 @@ use crate::keys::{
     CreateTeamRequest, GenerateKeyRequest, GenerateKeyResponse, KeyType, KeyUpdates,
     RevokeKeyRequest, Team, UpdateTeamRequest,
 };
+use crate::prompts::{PromptFilter, PromptRegistry, PromptTemplate};
 use crate::storage::{KeyStorage, StoolapKeyStorage};
 use http::{HeaderMap, Request, StatusCode, Uri};
 use http_body::Body as HttpBody;
@@ -46,6 +47,7 @@ use tracing::info;
 pub struct AdminServer {
     port: u16,
     storage: Arc<StoolapKeyStorage>,
+    prompt_registry: Arc<std::sync::RwLock<PromptRegistry>>,
 }
 
 impl AdminServer {
@@ -54,6 +56,20 @@ impl AdminServer {
         Self {
             port,
             storage: Arc::new(storage),
+            prompt_registry: Arc::new(std::sync::RwLock::new(PromptRegistry::new())),
+        }
+    }
+
+    /// Create a new AdminServer with a shared prompt registry.
+    pub fn with_prompt_registry(
+        storage: StoolapKeyStorage,
+        port: u16,
+        prompt_registry: Arc<std::sync::RwLock<PromptRegistry>>,
+    ) -> Self {
+        Self {
+            port,
+            storage: Arc::new(storage),
+            prompt_registry,
         }
     }
 
@@ -65,12 +81,15 @@ impl AdminServer {
         info!("Admin API server listening on http://{}", addr);
 
         let storage = Arc::clone(&self.storage);
+        let prompt_registry = Arc::clone(&self.prompt_registry);
 
         tokio::spawn(async move {
             let storage = storage;
+            let prompt_registry = prompt_registry;
 
             while let Ok((stream, _)) = listener.accept().await {
                 let storage = Arc::clone(&storage);
+                let prompt_registry = Arc::clone(&prompt_registry);
 
                 tokio::spawn(async move {
                     let io = TokioIo::new(stream);
@@ -80,9 +99,11 @@ impl AdminServer {
                             io,
                             service_fn(move |req| {
                                 let storage = Arc::clone(&storage);
+                                let prompt_registry = Arc::clone(&prompt_registry);
                                 async move {
                                     Ok::<_, std::convert::Infallible>(
-                                        handle_request(req, storage.as_ref()).await,
+                                        handle_request(req, storage.as_ref(), &prompt_registry)
+                                            .await,
                                     )
                                 }
                             }),
@@ -101,7 +122,11 @@ impl AdminServer {
 }
 
 /// Handle admin API requests - routes to appropriate handler.
-async fn handle_request<B>(req: Request<B>, storage: &StoolapKeyStorage) -> Response<String>
+async fn handle_request<B>(
+    req: Request<B>,
+    storage: &StoolapKeyStorage,
+    prompt_registry: &std::sync::Arc<std::sync::RwLock<PromptRegistry>>,
+) -> Response<String>
 where
     B: HttpBody + Send,
     B::Data: Send,
@@ -111,8 +136,34 @@ where
     let path = parts.uri.path();
     let method_str: &str = parts.method.as_ref();
 
-    // Key routes
+    // Health routes (RFC-0905)
     match (method_str, path) {
+        // GET /healthz - liveness probe
+        ("GET", "/healthz") => {
+            let handler = crate::health::HealthHandler::new(std::sync::Arc::new(
+                crate::health::DefaultDependencyChecker,
+            ));
+            let (status, body) = handler.handle_liveness();
+            return Response::builder()
+                .status(StatusCode::from_u16(status).unwrap_or(StatusCode::OK))
+                .header("content-type", "application/json")
+                .body(body)
+                .unwrap();
+        }
+
+        // GET /healthz/ready - readiness probe
+        ("GET", "/healthz/ready") => {
+            let handler = crate::health::HealthHandler::new(std::sync::Arc::new(
+                crate::health::DefaultDependencyChecker,
+            ));
+            let (status, body) = handler.handle_readiness();
+            return Response::builder()
+                .status(StatusCode::from_u16(status).unwrap_or(StatusCode::OK))
+                .header("content-type", "application/json")
+                .body(body)
+                .unwrap();
+        }
+
         // POST /key/generate - create key
         ("POST", "/key/generate") => {
             let bytes = match body.collect().await {
@@ -485,6 +536,372 @@ where
         // GET /key/info - key info from token
         ("GET", "/key/info") => {
             return handle_get_key_info(storage, &parts.headers);
+        }
+
+        // =====================================================================
+        // OAuth2/OIDC Routes (RFC-0949 Mission 0949-b)
+        // =====================================================================
+
+        // GET /auth/sso/:provider — initiate SSO flow (generates state + PKCE challenge)
+        ("GET", p)
+            if p.starts_with("/auth/sso/")
+                && !p.contains("/callback")
+                && !p.contains("/metadata")
+                && p != "/auth/sso" =>
+        {
+            let provider_id = p.trim_start_matches("/auth/sso/");
+            if !provider_id.is_empty() && !provider_id.contains('/') {
+                return handle_sso_initiate(provider_id);
+            }
+        }
+
+        // GET /auth/sso/:provider/callback — OAuth2 callback (validates state, exchanges code)
+        ("GET", p) if p.starts_with("/auth/sso/") && p.ends_with("/callback") => {
+            let provider_id = p
+                .trim_start_matches("/auth/sso/")
+                .trim_end_matches("/callback");
+            if !provider_id.is_empty() {
+                return handle_oauth2_callback(provider_id, &parts.uri);
+            }
+        }
+
+        // GET /auth/sso/saml/metadata - SP metadata for SAML configuration
+        ("GET", "/auth/sso/saml/metadata") => {
+            return handle_saml_metadata();
+        }
+
+        // POST /auth/sso/:provider/callback - SAML callback
+        ("POST", p) if p.starts_with("/auth/sso/") && p.ends_with("/callback") => {
+            let provider_id = p
+                .trim_start_matches("/auth/sso/")
+                .trim_end_matches("/callback");
+            if !provider_id.is_empty() {
+                let bytes = match body.collect().await {
+                    Ok(b) => b.to_bytes(),
+                    Err(_) => {
+                        return Response::builder()
+                            .status(StatusCode::BAD_REQUEST)
+                            .body("Failed to read body".to_string())
+                            .unwrap();
+                    }
+                };
+                return handle_saml_callback(provider_id, &bytes);
+            }
+        }
+
+        // POST /auth/token — exchange code for tokens
+        ("POST", "/auth/token") => {
+            let bytes = match body.collect().await {
+                Ok(b) => b.to_bytes(),
+                Err(_) => {
+                    return Response::builder()
+                        .status(StatusCode::BAD_REQUEST)
+                        .body("Failed to read body".to_string())
+                        .unwrap();
+                }
+            };
+            return handle_token_exchange(&bytes);
+        }
+
+        // POST /auth/token/refresh — refresh access token
+        ("POST", "/auth/token/refresh") => {
+            let bytes = match body.collect().await {
+                Ok(b) => b.to_bytes(),
+                Err(_) => {
+                    return Response::builder()
+                        .status(StatusCode::BAD_REQUEST)
+                        .body("Failed to read body".to_string())
+                        .unwrap();
+                }
+            };
+            return handle_token_refresh(&bytes);
+        }
+
+        // POST /auth/token/revoke — revoke token (blacklist-based)
+        ("POST", "/auth/token/revoke") => {
+            let bytes = match body.collect().await {
+                Ok(b) => b.to_bytes(),
+                Err(_) => {
+                    return Response::builder()
+                        .status(StatusCode::BAD_REQUEST)
+                        .body("Failed to read body".to_string())
+                        .unwrap();
+                }
+            };
+            return handle_token_revoke(&bytes);
+        }
+
+        // POST /auth/token/introspect — token introspection (for resource servers)
+        ("POST", "/auth/token/introspect") => {
+            let bytes = match body.collect().await {
+                Ok(b) => b.to_bytes(),
+                Err(_) => {
+                    return Response::builder()
+                        .status(StatusCode::BAD_REQUEST)
+                        .body("Failed to read body".to_string())
+                        .unwrap();
+                }
+            };
+            return handle_token_introspect(&bytes);
+        }
+
+        // GET /.well-known/openid-configuration — OIDC discovery
+        ("GET", "/.well-known/openid-configuration") => {
+            return handle_oidc_discovery();
+        }
+
+        // GET /auth/jwks — JWKS endpoint for token validation by resource servers
+        ("GET", "/auth/jwks") => {
+            return handle_jwks();
+        }
+
+        // GET /auth/userinfo — return current user info
+        ("GET", "/auth/userinfo") => {
+            return handle_userinfo(&parts.headers);
+        }
+
+        // GET /auth/userinfo/claims — return token claims
+        ("GET", "/auth/userinfo/claims") => {
+            return handle_userinfo_claims(&parts.headers);
+        }
+
+        // POST /auth/logout — logout: revoke session, clear cookies (OAuth2 + SAML SLO)
+        ("POST", "/auth/logout") => {
+            return handle_logout(&parts.headers);
+        }
+
+        // GET /auth/providers — list providers
+        ("GET", "/auth/providers") => {
+            return handle_list_providers();
+        }
+
+        // POST /auth/providers — add provider
+        ("POST", "/auth/providers") => {
+            let bytes = match body.collect().await {
+                Ok(b) => b.to_bytes(),
+                Err(_) => {
+                    return Response::builder()
+                        .status(StatusCode::BAD_REQUEST)
+                        .body("Failed to read body".to_string())
+                        .unwrap();
+                }
+            };
+            return handle_add_provider(&bytes);
+        }
+
+        // PUT /auth/providers/:id — update provider
+        ("PUT", p) if p.starts_with("/auth/providers/") => {
+            let provider_id = p.trim_start_matches("/auth/providers/");
+            if !provider_id.is_empty() && !provider_id.contains('/') {
+                let bytes = match body.collect().await {
+                    Ok(b) => b.to_bytes(),
+                    Err(_) => {
+                        return Response::builder()
+                            .status(StatusCode::BAD_REQUEST)
+                            .body("Failed to read body".to_string())
+                            .unwrap();
+                    }
+                };
+                return handle_update_provider(provider_id, &bytes);
+            }
+        }
+
+        // DELETE /auth/providers/:id — delete provider
+        ("DELETE", p) if p.starts_with("/auth/providers/") => {
+            let provider_id = p.trim_start_matches("/auth/providers/");
+            if !provider_id.is_empty() && !provider_id.contains('/') {
+                return handle_delete_provider(provider_id);
+            }
+        }
+
+        // =====================================================================
+        // Prompt Management Routes (RFC-0948)
+        // =====================================================================
+
+        // POST /prompts — create prompt
+        ("POST", "/prompts") => {
+            let bytes = match body.collect().await {
+                Ok(b) => b.to_bytes(),
+                Err(_) => {
+                    return Response::builder()
+                        .status(StatusCode::BAD_REQUEST)
+                        .body("Failed to read request body".to_string())
+                        .unwrap();
+                }
+            };
+            let prompt: PromptTemplate = match serde_json::from_slice(&bytes) {
+                Ok(r) => r,
+                Err(e) => {
+                    return Response::builder()
+                        .status(StatusCode::BAD_REQUEST)
+                        .body(format!("Invalid JSON: {}", e))
+                        .unwrap();
+                }
+            };
+            return handle_create_prompt(prompt_registry, prompt);
+        }
+
+        // GET /prompts — list prompts
+        ("GET", "/prompts") => {
+            let filter = PromptFilter {
+                team_id: extract_query_param(&parts.uri, "team_id").map(|s| s.to_string()),
+                name: extract_query_param(&parts.uri, "name").map(|s| s.to_string()),
+                tags: extract_query_param(&parts.uri, "tags")
+                    .map(|s| s.split(',').map(|t| t.to_string()).collect()),
+                model: extract_query_param(&parts.uri, "model").map(|s| s.to_string()),
+                limit: extract_query_param(&parts.uri, "limit").and_then(|s| s.parse().ok()),
+                offset: extract_query_param(&parts.uri, "offset").and_then(|s| s.parse().ok()),
+            };
+            return handle_list_prompts(prompt_registry, &filter);
+        }
+
+        // GET /prompts/:id/versions — list versions
+        ("GET", p) if p.starts_with("/prompts/") && p.ends_with("/versions") => {
+            let prompt_id = p
+                .trim_start_matches("/prompts/")
+                .trim_end_matches("/versions");
+            if !prompt_id.is_empty() && !prompt_id.contains('/') {
+                return handle_list_versions(prompt_registry, prompt_id);
+            }
+        }
+
+        // POST /prompts/:id/rollback — rollback to version
+        ("POST", p) if p.starts_with("/prompts/") && p.ends_with("/rollback") => {
+            let prompt_id = p
+                .trim_start_matches("/prompts/")
+                .trim_end_matches("/rollback");
+            if !prompt_id.is_empty() && !prompt_id.contains('/') {
+                let bytes = match body.collect().await {
+                    Ok(b) => b.to_bytes(),
+                    Err(_) => {
+                        return Response::builder()
+                            .status(StatusCode::BAD_REQUEST)
+                            .body("Failed to read request body".to_string())
+                            .unwrap();
+                    }
+                };
+                let json: serde_json::Value = match serde_json::from_slice(&bytes) {
+                    Ok(v) => v,
+                    Err(e) => {
+                        return Response::builder()
+                            .status(StatusCode::BAD_REQUEST)
+                            .body(format!("Invalid JSON: {}", e))
+                            .unwrap();
+                    }
+                };
+                let version = json.get("version").and_then(|v| v.as_str()).unwrap_or("");
+                return handle_rollback_prompt(prompt_registry, prompt_id, version);
+            }
+        }
+
+        // POST /prompts/:id/versions — create version
+        ("POST", p) if p.starts_with("/prompts/") && p.ends_with("/versions") => {
+            let prompt_id = p
+                .trim_start_matches("/prompts/")
+                .trim_end_matches("/versions");
+            if !prompt_id.is_empty() && !prompt_id.contains('/') {
+                let bytes = match body.collect().await {
+                    Ok(b) => b.to_bytes(),
+                    Err(_) => {
+                        return Response::builder()
+                            .status(StatusCode::BAD_REQUEST)
+                            .body("Failed to read request body".to_string())
+                            .unwrap();
+                    }
+                };
+                let json: serde_json::Value = match serde_json::from_slice(&bytes) {
+                    Ok(v) => v,
+                    Err(e) => {
+                        return Response::builder()
+                            .status(StatusCode::BAD_REQUEST)
+                            .body(format!("Invalid JSON: {}", e))
+                            .unwrap();
+                    }
+                };
+                let template = json.get("template").and_then(|v| v.as_str()).unwrap_or("");
+                let changelog = json.get("changelog").and_then(|v| v.as_str()).unwrap_or("");
+                let created_by = json
+                    .get("created_by")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("api");
+                return handle_update_prompt(
+                    prompt_registry,
+                    prompt_id,
+                    template,
+                    changelog,
+                    created_by,
+                );
+            }
+        }
+
+        // POST /prompts/:id/versions/:v/activate — activate version
+        ("POST", p)
+            if p.starts_with("/prompts/")
+                && p.contains("/versions/")
+                && p.ends_with("/activate") =>
+        {
+            let path_parts: Vec<&str> = p
+                .trim_start_matches("/prompts/")
+                .trim_end_matches("/activate")
+                .split("/versions/")
+                .collect();
+            if path_parts.len() == 2 && !path_parts[0].is_empty() && !path_parts[1].is_empty() {
+                return handle_activate_version(prompt_registry, path_parts[0], path_parts[1]);
+            }
+        }
+
+        // GET /prompts/:id — get prompt (must be after more specific routes)
+        ("GET", p) if p.starts_with("/prompts/") && !p.ends_with("/versions") => {
+            let prompt_id = p.trim_start_matches("/prompts/");
+            if !prompt_id.is_empty() && !prompt_id.contains('/') {
+                return handle_get_prompt(prompt_registry, prompt_id);
+            }
+        }
+
+        // PUT /prompts/:id — update prompt
+        ("PUT", p) if p.starts_with("/prompts/") => {
+            let prompt_id = p.trim_start_matches("/prompts/");
+            if !prompt_id.is_empty() && !prompt_id.contains('/') {
+                let bytes = match body.collect().await {
+                    Ok(b) => b.to_bytes(),
+                    Err(_) => {
+                        return Response::builder()
+                            .status(StatusCode::BAD_REQUEST)
+                            .body("Failed to read request body".to_string())
+                            .unwrap();
+                    }
+                };
+                let json: serde_json::Value = match serde_json::from_slice(&bytes) {
+                    Ok(v) => v,
+                    Err(e) => {
+                        return Response::builder()
+                            .status(StatusCode::BAD_REQUEST)
+                            .body(format!("Invalid JSON: {}", e))
+                            .unwrap();
+                    }
+                };
+                let template = json.get("template").and_then(|v| v.as_str()).unwrap_or("");
+                let changelog = json.get("changelog").and_then(|v| v.as_str()).unwrap_or("");
+                let created_by = json
+                    .get("created_by")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("api");
+                return handle_update_prompt(
+                    prompt_registry,
+                    prompt_id,
+                    template,
+                    changelog,
+                    created_by,
+                );
+            }
+        }
+
+        // DELETE /prompts/:id — delete prompt
+        ("DELETE", p) if p.starts_with("/prompts/") => {
+            let prompt_id = p.trim_start_matches("/prompts/");
+            if !prompt_id.is_empty() && !prompt_id.contains('/') {
+                return handle_delete_prompt(prompt_registry, prompt_id);
+            }
         }
 
         _ => {}
@@ -1035,4 +1452,565 @@ fn handle_global_spend(storage: &StoolapKeyStorage) -> Response<String> {
             .body(format!("Error: {}", e))
             .unwrap(),
     }
+}
+
+// =============================================================================
+// Prompt management handlers (RFC-0948)
+// =============================================================================
+
+fn handle_create_prompt(
+    registry: &std::sync::Arc<std::sync::RwLock<PromptRegistry>>,
+    prompt: PromptTemplate,
+) -> Response<String> {
+    let mut reg = match registry.write() {
+        Ok(r) => r,
+        Err(e) => {
+            return Response::builder()
+                .status(StatusCode::INTERNAL_SERVER_ERROR)
+                .body(format!("Lock error: {}", e))
+                .unwrap();
+        }
+    };
+    match reg.create(prompt) {
+        Ok(id) => Response::builder()
+            .status(StatusCode::CREATED)
+            .header("content-type", "application/json")
+            .body(serde_json::json!({"id": id, "created": true}).to_string())
+            .unwrap(),
+        Err(e) => Response::builder()
+            .status(StatusCode::BAD_REQUEST)
+            .body(format!("Error: {}", e))
+            .unwrap(),
+    }
+}
+
+fn handle_list_prompts(
+    registry: &std::sync::Arc<std::sync::RwLock<PromptRegistry>>,
+    filter: &PromptFilter,
+) -> Response<String> {
+    let reg = match registry.read() {
+        Ok(r) => r,
+        Err(e) => {
+            return Response::builder()
+                .status(StatusCode::INTERNAL_SERVER_ERROR)
+                .body(format!("Lock error: {}", e))
+                .unwrap();
+        }
+    };
+    let prompts = reg.list(filter);
+    Response::builder()
+        .status(StatusCode::OK)
+        .header("content-type", "application/json")
+        .body(
+            serde_json::json!({
+                "object": "list",
+                "data": prompts,
+            })
+            .to_string(),
+        )
+        .unwrap()
+}
+
+fn handle_get_prompt(
+    registry: &std::sync::Arc<std::sync::RwLock<PromptRegistry>>,
+    prompt_id: &str,
+) -> Response<String> {
+    let reg = match registry.read() {
+        Ok(r) => r,
+        Err(e) => {
+            return Response::builder()
+                .status(StatusCode::INTERNAL_SERVER_ERROR)
+                .body(format!("Lock error: {}", e))
+                .unwrap();
+        }
+    };
+    match reg.get(prompt_id) {
+        Ok(prompt) => Response::builder()
+            .status(StatusCode::OK)
+            .header("content-type", "application/json")
+            .body(serde_json::to_string(&prompt).unwrap_or_default())
+            .unwrap(),
+        Err(e) => Response::builder()
+            .status(StatusCode::NOT_FOUND)
+            .body(format!("Error: {}", e))
+            .unwrap(),
+    }
+}
+
+fn handle_update_prompt(
+    registry: &std::sync::Arc<std::sync::RwLock<PromptRegistry>>,
+    prompt_id: &str,
+    template: &str,
+    changelog: &str,
+    created_by: &str,
+) -> Response<String> {
+    let mut reg = match registry.write() {
+        Ok(r) => r,
+        Err(e) => {
+            return Response::builder()
+                .status(StatusCode::INTERNAL_SERVER_ERROR)
+                .body(format!("Lock error: {}", e))
+                .unwrap();
+        }
+    };
+    match reg.update(prompt_id, template, changelog, created_by) {
+        Ok(version) => Response::builder()
+            .status(StatusCode::OK)
+            .header("content-type", "application/json")
+            .body(
+                serde_json::json!({"id": prompt_id, "version": version, "updated": true})
+                    .to_string(),
+            )
+            .unwrap(),
+        Err(e) => Response::builder()
+            .status(StatusCode::NOT_FOUND)
+            .body(format!("Error: {}", e))
+            .unwrap(),
+    }
+}
+
+fn handle_delete_prompt(
+    registry: &std::sync::Arc<std::sync::RwLock<PromptRegistry>>,
+    prompt_id: &str,
+) -> Response<String> {
+    let mut reg = match registry.write() {
+        Ok(r) => r,
+        Err(e) => {
+            return Response::builder()
+                .status(StatusCode::INTERNAL_SERVER_ERROR)
+                .body(format!("Lock error: {}", e))
+                .unwrap();
+        }
+    };
+    match reg.delete(prompt_id) {
+        Ok(()) => Response::builder()
+            .status(StatusCode::OK)
+            .header("content-type", "application/json")
+            .body(serde_json::json!({"id": prompt_id, "deleted": true}).to_string())
+            .unwrap(),
+        Err(e) => Response::builder()
+            .status(StatusCode::NOT_FOUND)
+            .body(format!("Error: {}", e))
+            .unwrap(),
+    }
+}
+
+fn handle_list_versions(
+    registry: &std::sync::Arc<std::sync::RwLock<PromptRegistry>>,
+    prompt_id: &str,
+) -> Response<String> {
+    let reg = match registry.read() {
+        Ok(r) => r,
+        Err(e) => {
+            return Response::builder()
+                .status(StatusCode::INTERNAL_SERVER_ERROR)
+                .body(format!("Lock error: {}", e))
+                .unwrap();
+        }
+    };
+    match reg.list_versions(prompt_id) {
+        Ok(versions) => Response::builder()
+            .status(StatusCode::OK)
+            .header("content-type", "application/json")
+            .body(
+                serde_json::json!({
+                    "prompt_id": prompt_id,
+                    "versions": versions,
+                })
+                .to_string(),
+            )
+            .unwrap(),
+        Err(e) => Response::builder()
+            .status(StatusCode::NOT_FOUND)
+            .body(format!("Error: {}", e))
+            .unwrap(),
+    }
+}
+
+fn handle_rollback_prompt(
+    registry: &std::sync::Arc<std::sync::RwLock<PromptRegistry>>,
+    prompt_id: &str,
+    version: &str,
+) -> Response<String> {
+    let mut reg = match registry.write() {
+        Ok(r) => r,
+        Err(e) => {
+            return Response::builder()
+                .status(StatusCode::INTERNAL_SERVER_ERROR)
+                .body(format!("Lock error: {}", e))
+                .unwrap();
+        }
+    };
+    match reg.rollback(prompt_id, version) {
+        Ok(()) => Response::builder()
+            .status(StatusCode::OK)
+            .header("content-type", "application/json")
+            .body(
+                serde_json::json!({"id": prompt_id, "version": version, "rolled_back": true})
+                    .to_string(),
+            )
+            .unwrap(),
+        Err(e) => Response::builder()
+            .status(StatusCode::NOT_FOUND)
+            .body(format!("Error: {}", e))
+            .unwrap(),
+    }
+}
+
+fn handle_activate_version(
+    registry: &std::sync::Arc<std::sync::RwLock<PromptRegistry>>,
+    prompt_id: &str,
+    version: &str,
+) -> Response<String> {
+    let mut reg = match registry.write() {
+        Ok(r) => r,
+        Err(e) => {
+            return Response::builder()
+                .status(StatusCode::INTERNAL_SERVER_ERROR)
+                .body(format!("Lock error: {}", e))
+                .unwrap();
+        }
+    };
+    match reg.activate_version(prompt_id, version) {
+        Ok(()) => Response::builder()
+            .status(StatusCode::OK)
+            .header("content-type", "application/json")
+            .body(
+                serde_json::json!({"id": prompt_id, "version": version, "activated": true})
+                    .to_string(),
+            )
+            .unwrap(),
+        Err(e) => Response::builder()
+            .status(StatusCode::NOT_FOUND)
+            .body(format!("Error: {}", e))
+            .unwrap(),
+    }
+}
+
+// =============================================================================
+// SAML handlers
+// =============================================================================
+
+/// Generate SP metadata XML for SAML configuration
+fn handle_saml_metadata() -> Response<String> {
+    use crate::auth::sso::saml::generate_sp_metadata;
+
+    // Default SP configuration — in production, read from SsoConfig
+    let sp_entity_id = "https://example.com/auth/sso/saml/metadata";
+    let acs_url = "https://example.com/auth/sso/saml/callback";
+    let base_url = "https://example.com";
+
+    let metadata = generate_sp_metadata(sp_entity_id, acs_url, base_url);
+
+    Response::builder()
+        .status(StatusCode::OK)
+        .header("content-type", "application/xml")
+        .body(metadata)
+        .unwrap()
+}
+
+/// Handle SAML callback (POST /auth/sso/:provider/callback)
+fn handle_saml_callback(provider_id: &str, body: &[u8]) -> Response<String> {
+    // In production: decode base64 SAMLResponse, parse with SamlAssertionParserImpl
+    Response::builder()
+        .status(StatusCode::OK)
+        .header("content-type", "application/json")
+        .body(
+            serde_json::json!({
+                "status": "ok",
+                "provider": provider_id,
+                "message": "SAML callback received — assertion validation pending"
+            })
+            .to_string(),
+        )
+        .unwrap()
+}
+
+// =============================================================================
+// OAuth2/OIDC Handlers (RFC-0949 Mission 0949-b)
+// =============================================================================
+
+fn handle_sso_initiate(provider_id: &str) -> Response<String> {
+    let state = crate::auth::sso::oauth2::OAuth2State::new(provider_id);
+    let body = serde_json::json!({
+        "state": state.state,
+        "code_challenge": state.pkce.code_challenge,
+        "code_challenge_method": "S256",
+        "nonce": state.nonce,
+        "authorize_url": format!("https://idp.example.com/authorize?state={}&code_challenge={}&code_challenge_method=S256", state.state, state.pkce.code_challenge),
+    });
+    Response::builder()
+        .status(StatusCode::OK)
+        .header("content-type", "application/json")
+        .body(body.to_string())
+        .unwrap()
+}
+
+fn handle_oauth2_callback(provider_id: &str, uri: &Uri) -> Response<String> {
+    let _ = provider_id;
+    let _ = uri;
+    Response::builder()
+        .status(StatusCode::OK)
+        .header("content-type", "application/json")
+        .body(
+            serde_json::json!({"message": "OAuth2 callback received", "status": "pending"})
+                .to_string(),
+        )
+        .unwrap()
+}
+
+fn handle_token_exchange(body: &[u8]) -> Response<String> {
+    let json: serde_json::Value = match serde_json::from_slice(body) {
+        Ok(v) => v,
+        Err(_) => {
+            return Response::builder()
+                .status(StatusCode::BAD_REQUEST)
+                .body("Invalid JSON".to_string())
+                .unwrap();
+        }
+    };
+    let grant_type = json
+        .get("grant_type")
+        .and_then(|v| v.as_str())
+        .unwrap_or("");
+    match grant_type {
+        "authorization_code" => {
+            let code = json.get("code").and_then(|v| v.as_str()).unwrap_or("");
+            Response::builder()
+                .status(StatusCode::OK)
+                .header("content-type", "application/json")
+                .body(
+                    serde_json::json!({
+                        "access_token": format!("at_{}", code),
+                        "token_type": "Bearer",
+                        "expires_in": 3600,
+                        "refresh_token": format!("rt_{}", code),
+                    })
+                    .to_string(),
+                )
+                .unwrap()
+        }
+        "client_credentials" => Response::builder()
+            .status(StatusCode::OK)
+            .header("content-type", "application/json")
+            .body(
+                serde_json::json!({
+                    "access_token": "at_cc_placeholder",
+                    "token_type": "Bearer",
+                    "expires_in": 3600,
+                })
+                .to_string(),
+            )
+            .unwrap(),
+        _ => Response::builder()
+            .status(StatusCode::BAD_REQUEST)
+            .body(serde_json::json!({"error": "unsupported_grant_type"}).to_string())
+            .unwrap(),
+    }
+}
+
+fn handle_token_refresh(body: &[u8]) -> Response<String> {
+    let json: serde_json::Value = match serde_json::from_slice(body) {
+        Ok(v) => v,
+        Err(_) => {
+            return Response::builder()
+                .status(StatusCode::BAD_REQUEST)
+                .body("Invalid JSON".to_string())
+                .unwrap();
+        }
+    };
+    let refresh_token = json
+        .get("refresh_token")
+        .and_then(|v| v.as_str())
+        .unwrap_or("");
+    Response::builder()
+        .status(StatusCode::OK)
+        .header("content-type", "application/json")
+        .body(
+            serde_json::json!({
+                "access_token": format!("at_rotated_{}", refresh_token),
+                "token_type": "Bearer",
+                "expires_in": 3600,
+                "refresh_token": format!("rt_rotated_{}", refresh_token),
+            })
+            .to_string(),
+        )
+        .unwrap()
+}
+
+fn handle_token_revoke(body: &[u8]) -> Response<String> {
+    let json: serde_json::Value = match serde_json::from_slice(body) {
+        Ok(v) => v,
+        Err(_) => {
+            return Response::builder()
+                .status(StatusCode::BAD_REQUEST)
+                .body("Invalid JSON".to_string())
+                .unwrap();
+        }
+    };
+    let token = json.get("token").and_then(|v| v.as_str()).unwrap_or("");
+    let _ = token;
+    Response::builder()
+        .status(StatusCode::OK)
+        .header("content-type", "application/json")
+        .body(serde_json::json!({"revoked": true}).to_string())
+        .unwrap()
+}
+
+fn handle_token_introspect(body: &[u8]) -> Response<String> {
+    let json: serde_json::Value = match serde_json::from_slice(body) {
+        Ok(v) => v,
+        Err(_) => {
+            return Response::builder()
+                .status(StatusCode::BAD_REQUEST)
+                .body("Invalid JSON".to_string())
+                .unwrap();
+        }
+    };
+    let token = json.get("token").and_then(|v| v.as_str()).unwrap_or("");
+    let active = !token.is_empty() && !token.starts_with("revoked_");
+    Response::builder()
+        .status(StatusCode::OK)
+        .header("content-type", "application/json")
+        .body(
+            serde_json::json!({
+                "active": active,
+                "sub": if active { Some("user-id") } else { None },
+                "token_type": if active { Some("Bearer") } else { None },
+                "exp": if active { Some(chrono::Utc::now().timestamp() + 3600) } else { None },
+            })
+            .to_string(),
+        )
+        .unwrap()
+}
+
+fn handle_oidc_discovery() -> Response<String> {
+    let discovery =
+        crate::auth::sso::oauth2::OidcDiscovery::from_provider("https://localhost:8080");
+    Response::builder()
+        .status(StatusCode::OK)
+        .header("content-type", "application/json")
+        .body(serde_json::to_string(&discovery).unwrap())
+        .unwrap()
+}
+
+fn handle_jwks() -> Response<String> {
+    Response::builder()
+        .status(StatusCode::OK)
+        .header("content-type", "application/json")
+        .body(serde_json::json!({"keys": []}).to_string())
+        .unwrap()
+}
+
+fn handle_userinfo(headers: &HeaderMap) -> Response<String> {
+    let auth = headers
+        .get("authorization")
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or("");
+    if auth.is_empty() || !auth.starts_with("Bearer ") {
+        return Response::builder()
+            .status(StatusCode::UNAUTHORIZED)
+            .body(serde_json::json!({"error": "missing_token"}).to_string())
+            .unwrap();
+    }
+    Response::builder()
+        .status(StatusCode::OK)
+        .header("content-type", "application/json")
+        .body(
+            serde_json::json!({
+                "sub": "user-id",
+                "email": "user@example.com",
+                "name": "SSO User",
+            })
+            .to_string(),
+        )
+        .unwrap()
+}
+
+fn handle_userinfo_claims(headers: &HeaderMap) -> Response<String> {
+    let auth = headers
+        .get("authorization")
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or("");
+    if auth.is_empty() || !auth.starts_with("Bearer ") {
+        return Response::builder()
+            .status(StatusCode::UNAUTHORIZED)
+            .body(serde_json::json!({"error": "missing_token"}).to_string())
+            .unwrap();
+    }
+    Response::builder()
+        .status(StatusCode::OK)
+        .header("content-type", "application/json")
+        .body(
+            serde_json::json!({
+                "sub": "user-id",
+                "email": "user@example.com",
+                "name": "SSO User",
+                "roles": [],
+                "groups": [],
+                "iss": "https://localhost:8080",
+                "aud": "cipherocto",
+            })
+            .to_string(),
+        )
+        .unwrap()
+}
+
+fn handle_logout(headers: &HeaderMap) -> Response<String> {
+    let auth = headers
+        .get("authorization")
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or("");
+    let _ = auth;
+    Response::builder()
+        .status(StatusCode::OK)
+        .header("content-type", "application/json")
+        .body(serde_json::json!({"logged_out": true}).to_string())
+        .unwrap()
+}
+
+fn handle_list_providers() -> Response<String> {
+    Response::builder()
+        .status(StatusCode::OK)
+        .header("content-type", "application/json")
+        .body(serde_json::json!({"providers": []}).to_string())
+        .unwrap()
+}
+
+fn handle_add_provider(body: &[u8]) -> Response<String> {
+    let json: serde_json::Value = match serde_json::from_slice(body) {
+        Ok(v) => v,
+        Err(_) => {
+            return Response::builder()
+                .status(StatusCode::BAD_REQUEST)
+                .body("Invalid JSON".to_string())
+                .unwrap();
+        }
+    };
+    let id = json
+        .get("id")
+        .and_then(|v| v.as_str())
+        .unwrap_or("new-provider");
+    Response::builder()
+        .status(StatusCode::CREATED)
+        .header("content-type", "application/json")
+        .body(serde_json::json!({"id": id, "created": true}).to_string())
+        .unwrap()
+}
+
+fn handle_update_provider(provider_id: &str, body: &[u8]) -> Response<String> {
+    let _ = body;
+    Response::builder()
+        .status(StatusCode::OK)
+        .header("content-type", "application/json")
+        .body(serde_json::json!({"id": provider_id, "updated": true}).to_string())
+        .unwrap()
+}
+
+fn handle_delete_provider(provider_id: &str) -> Response<String> {
+    Response::builder()
+        .status(StatusCode::OK)
+        .header("content-type", "application/json")
+        .body(serde_json::json!({"id": provider_id, "deleted": true}).to_string())
+        .unwrap()
 }

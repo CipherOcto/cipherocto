@@ -2,6 +2,8 @@
 
 ## Status
 
+Complete
+
 Open
 
 ## RFC
@@ -14,10 +16,10 @@ LiteLLM allows direct provider access for unsupported APIs via passthrough. This
 
 ## Acceptance Criteria
 
-- [ ] Add `/{provider}/...` path routing in handle_request
-- [ ] Forward request directly to provider API base
-- [ ] No transformation — raw passthrough
-- [ ] Support Authorization header forwarding
+- [x] Add `/{provider}/...` path routing in handle_request
+- [x] Forward request directly to provider API base
+- [x] No transformation — raw passthrough
+- [x] Support Authorization header forwarding
 
 ## Files to Modify
 

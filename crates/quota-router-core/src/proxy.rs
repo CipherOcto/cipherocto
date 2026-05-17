@@ -694,6 +694,99 @@ where
         return Ok(resp);
     }
 
+    // /{provider}/... — passthrough endpoints (RFC-0942)
+    // Known provider prefixes for passthrough routing
+    let known_providers = [
+        "openai",
+        "anthropic",
+        "mistral",
+        "gemini",
+        "azure",
+        "bedrock",
+        "ollama",
+        "groq",
+        "together",
+        "replicate",
+    ];
+    let path_parts: Vec<&str> = path.trim_start_matches('/').splitn(2, '/').collect();
+    if path_parts.len() == 2 && known_providers.contains(&path_parts[0]) {
+        let provider_name = path_parts[0];
+        let rest_path = path_parts[1];
+
+        // Look up provider's API base from dispatch map
+        let api_base = dispatch_map
+            .values()
+            .find(|d| d.provider == provider_name)
+            .and_then(|d| d.api_base.clone())
+            .unwrap_or_else(|| {
+                // Default API bases
+                match provider_name {
+                    "openai" => "https://api.openai.com/v1".to_string(),
+                    "anthropic" => "https://api.anthropic.com".to_string(),
+                    "mistral" => "https://api.mistral.ai/v1".to_string(),
+                    "groq" => "https://api.groq.com/openai/v1".to_string(),
+                    "together" => "https://api.together.xyz/v1".to_string(),
+                    _ => format!("https://api.{}.com/v1", provider_name),
+                }
+            });
+
+        let target_url = format!("{}/{}", api_base, rest_path);
+
+        // Forward request to provider
+        let client = reqwest::Client::new();
+        let (_, body) = req.into_parts();
+        let full_body = match body.collect().await {
+            Ok(bytes) => bytes.to_bytes(),
+            Err(_) => {
+                let resp = Response::builder()
+                    .status(StatusCode::BAD_REQUEST)
+                    .body(SseBody::from_error("Failed to read body".to_string()))
+                    .unwrap();
+                return Ok(resp);
+            }
+        };
+
+        let mut req_builder = client
+            .post(&target_url)
+            .header("Content-Type", "application/json");
+
+        // Forward Authorization header if present
+        // Note: We can't access original headers after into_parts(), so use provider API key
+        let passthrough_key = dispatch_map
+            .values()
+            .find(|d| d.provider == provider_name)
+            .and_then(|d| d.api_key.clone())
+            .or_else(|| std::env::var(format!("{}_API_KEY", provider_name.to_uppercase())).ok());
+
+        if let Some(key) = passthrough_key {
+            req_builder = req_builder.header("Authorization", format!("Bearer {}", key));
+        }
+
+        let resp = match req_builder.body(full_body.to_vec()).send().await {
+            Ok(resp) => resp,
+            Err(e) => {
+                let resp = Response::builder()
+                    .status(StatusCode::BAD_GATEWAY)
+                    .body(SseBody::from_error(format!("Passthrough error: {}", e)))
+                    .unwrap();
+                return Ok(resp);
+            }
+        };
+
+        let status =
+            StatusCode::from_u16(resp.status().as_u16()).unwrap_or(StatusCode::BAD_GATEWAY);
+        let body_bytes = resp.bytes().await.unwrap_or_default();
+
+        let resp = Response::builder()
+            .status(status)
+            .header("content-type", "application/json")
+            .body(SseBody::from_string(
+                String::from_utf8_lossy(&body_bytes).to_string(),
+            ))
+            .unwrap();
+        return Ok(resp);
+    }
+
     // Check balance for proxy requests (chat completions)
     {
         let bal = balance.lock();

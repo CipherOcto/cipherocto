@@ -32,7 +32,7 @@ None
 - [ ] Implement `TokenBlacklistStorage` trait (add, contains, cleanup_expired)
 
 ### Error Handling
-- [ ] Implement all 19 SSO error codes (sso_provider_not_found, sso_provider_disabled, sso_invalid_state, sso_invalid_code, sso_token_expired, sso_token_revoked, sso_token_invalid, sso_token_algorithm_unsupported, sso_token_algorithm_none, sso_audience_mismatch, sso_issuer_mismatch, sso_saml_signature_invalid, sso_saml_assertion_expired, sso_saml_audience_mismatch, sso_no_key_mapping, sso_user_deactivated, sso_provider_error, sso_rate_limited)
+- [ ] Implement all 18 SSO error codes (sso_provider_not_found, sso_provider_disabled, sso_invalid_state, sso_invalid_code, sso_token_expired, sso_token_revoked, sso_token_invalid, sso_token_algorithm_unsupported, sso_token_algorithm_none, sso_audience_mismatch, sso_issuer_mismatch, sso_saml_signature_invalid, sso_saml_assertion_expired, sso_saml_audience_mismatch, sso_no_key_mapping, sso_user_deactivated, sso_provider_error, sso_rate_limited)
 - [ ] Error response format: `{"error": {"message": "...", "type": "...", "code": "...", "status_code": ...}}`
 
 ### Configuration

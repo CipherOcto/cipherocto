@@ -17,8 +17,8 @@ RFC-0946 (Economics): Guardrails Framework
 - [ ] Implement `PiiDetector` — regex-based detection of emails, SSNs, credit cards, phone numbers
 - [ ] `PiiMatch` uses `redacted_value` (never raw PII in logs)
 - [ ] `PiiDetector.detect()` returns `Vec<PiiMatch>` with start/end positions
-- [ ] Implement `PromptInjectionDetector` — pattern matching for injection attempts
-- [ ] `PromptInjectionDetector.detect()` returns `Result<f64, GuardrailError>`
+- [ ] Implement `PromptInjection` — pattern matching for injection attempts
+- [ ] `PromptInjection.detect()` returns `Result<f64, GuardrailError>`
 - [ ] Implement `ContentModeration` — calls OpenAI-compatible moderation API
 - [ ] `ContentModeration` has configurable `timeout_ms` (default 2000), `retries` (default 1), `fallback`
 - [ ] Implement `TopicRestriction` — keyword-based matching with stemming

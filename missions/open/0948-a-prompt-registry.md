@@ -24,7 +24,7 @@ None
 - [ ] Implement LRU prompt caching
 - [ ] Concurrent access via `Arc<RwLock<PromptRegistry>>`
 - [ ] Add `PromptConfig` to `config.rs` (storage, cache_size)
-- [ ] Error handling: PromptNotFound(404), PromptVersionNotFound(404), TemplateRenderError(400), VariableMissing(400), AbTestNotFound(404), AbTestEnded(410), StorageError(500), PermissionDenied(403)
+- [ ] Error handling: PromptNotFound(404), PromptVersionNotFound(404), TemplateRenderError(500), VariableMissing(400), AbTestNotFound(404), AbTestEnded(fallback to version_a), StorageError(503), CacheTimeout(504)
 - [ ] Clippy passes with zero warnings
 - [ ] All existing tests pass
 

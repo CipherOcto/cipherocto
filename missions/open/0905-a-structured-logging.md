@@ -2,7 +2,7 @@
 
 ## Status
 
-Open
+Completed
 
 ## RFC
 
@@ -14,15 +14,15 @@ None
 
 ## Acceptance Criteria
 
-- [ ] Define `LogLevel` enum (Debug, Info, Warn, Error)
-- [ ] Define `LogEvent` struct with timestamp, level, component, event, trace_id, request_id
-- [ ] Implement NDJSON serialization (one JSON object per line)
-- [ ] Implement PII redaction rules (API keys → `[REDACTED]`, emails → `[EMAIL_REDACTED]`, etc.)
-- [ ] Implement async buffered writer with configurable buffer size and flush interval
-- [ ] Implement log sampling with configurable `sample_rate`
-- [ ] Add `LogConfig` to `config.rs` (level, format, sample_rate, buffer_size, flush_interval_ms)
+- [x] Define `LogLevel` enum (Debug, Info, Warn, Error)
+- [x] Define `LogEvent` struct with timestamp, level, component, event, trace_id, request_id
+- [x] Implement NDJSON serialization (one JSON object per line)
+- [x] Implement PII redaction rules (API keys → `[REDACTED]`, emails → `[EMAIL_REDACTED]`, etc.)
+- [x] Implement async buffered writer with configurable buffer size and flush interval
+- [x] Implement log sampling with configurable `sample_rate`
+- [x] Add `LogConfig` to `config.rs` (level, format, sample_rate, buffer_size, flush_interval_ms)
 - [ ] Integrate structured logging into `proxy.rs` for request/response events
-- [ ] Never-log list: Authorization, X-API-Key, Cookie headers
+- [x] Never-log list: Authorization, X-API-Key, Cookie headers
 - [ ] Clippy passes with zero warnings
 - [ ] All existing tests pass
 

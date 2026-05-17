@@ -299,7 +299,7 @@ impl ProviderConfig {
 // Token Claims
 // ============================================================================
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct TokenClaims {
     /// Subject (user ID from IdP)
     pub sub: String,

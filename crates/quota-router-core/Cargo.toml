@@ -110,6 +110,9 @@ pyo3 = { version = "0.21", optional = true }
 regex = "1.12.3"
 base64 = "0.22.1"
 quick-xml = { version = "0.40.1", features = ["serialize"] }
+jsonwebtoken = { version = "10.4.0", features = ["rsa", "p256", "p384"] }
+ring = "0.17.14"
+rsa = "0.9.10"
 
 [lib]
 name = "quota_router_core"

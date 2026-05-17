@@ -24,6 +24,12 @@ RFC-0949 (Economics): Enterprise SSO
 - [ ] Token lifecycle: access (1h), refresh (7d), session (30m) with refresh rotation
 - [ ] Refresh token rotation on use (old revoked, new issued)
 
+### JWT Signature Verification
+- [ ] Implement JWKS fetch from IdP (with caching, configurable TTL)
+- [ ] Implement JWT signature verification using fetched JWKS
+- [ ] Validate algorithm against allowed algorithms (RS256/RS384/RS512/ES256/ES384/PS256)
+- [ ] Reject tokens with `alg: none`
+
 ### SSO Flow Endpoints
 - [ ] Implement `GET /auth/sso/:provider` — Initiate SSO flow (generates state + PKCE challenge)
 - [ ] Implement `GET /auth/sso/:provider/callback` — OAuth2 callback (validates state, exchanges code)

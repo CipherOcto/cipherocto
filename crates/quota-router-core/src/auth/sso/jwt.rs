@@ -1,8 +1,10 @@
 //! JWT Validation (RFC-0949)
 //!
 //! JWT validation with JWKS caching, clock skew tolerance, and audience/issuer validation.
+//! Implements cryptographic signature verification using JWKS keys.
 
 use super::{JwtAlgorithm, JwtValidationConfig, SsoError, TokenClaims};
+use jsonwebtoken::{decode, decode_header, Algorithm, DecodingKey, Validation};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -66,12 +68,21 @@ impl TokenValidator {
         }
     }
 
-    /// Validate a JWT token and return claims
+    /// Validate a JWT token with cryptographic signature verification
+    ///
+    /// Performs full validation:
+    /// 1. Parse header to get algorithm and kid
+    /// 2. Reject alg=none
+    /// 3. Check algorithm is supported
+    /// 4. Fetch JWKS and find matching key by kid
+    /// 5. Verify cryptographic signature using JWKS key
+    /// 6. Validate audience, issuer, expiry, not-before
     pub async fn validate(
         &self,
         token: &str,
         expected_audience: &str,
         expected_issuer: &str,
+        jwks_url: &str,
     ) -> Result<TokenClaims, SsoError> {
         // 1. Parse header to get algorithm and kid
         let header = self.parse_header(token)?;
@@ -87,41 +98,59 @@ impl TokenValidator {
             return Err(SsoError::TokenAlgorithmUnsupported(header.alg));
         }
 
-        // 4. Decode payload
-        // TODO(RFC-0949): Signature verification requires JWKS key matching by kid,
-        // then RSA/EC signature verification. This is a Phase 2 feature.
-        // Current implementation validates: algorithm, audience, issuer, expiry, not-before.
-        // Tokens with forged signatures will pass until signature verification is implemented.
-        let claims = self.decode_payload(token)?;
+        // 4. Fetch JWKS and find matching key
+        let jwks_keys = self.fetch_jwks(jwks_url).await?;
+        let kid = header.kid.as_deref().unwrap_or("");
+        let jwks_key = jwks_keys
+            .iter()
+            .find(|k| k.kid.as_deref() == Some(kid))
+            .ok_or_else(|| SsoError::TokenInvalid(format!("no JWKS key found for kid: {}", kid)))?;
 
-        // 5. Validate audience
+        // 5. Verify cryptographic signature using JWKS key
+        let claims = self.verify_signature(token, jwks_key, &alg)?;
+
+        // 6. Validate claims
+        self.validate_claims(&claims, expected_audience, expected_issuer)
+    }
+
+    /// Validate token claims (audience, issuer, expiry, not-before)
+    ///
+    /// This method validates the claims without signature verification.
+    /// Used internally by validate() and for testing.
+    pub fn validate_claims(
+        &self,
+        claims: &TokenClaims,
+        expected_audience: &str,
+        expected_issuer: &str,
+    ) -> Result<TokenClaims, SsoError> {
+        // Validate audience
         if claims.aud != expected_audience {
             return Err(SsoError::AudienceMismatch {
                 expected: expected_audience.to_string(),
-                actual: claims.aud,
+                actual: claims.aud.clone(),
             });
         }
 
-        // 6. Validate issuer
+        // Validate issuer
         if claims.iss != expected_issuer {
             return Err(SsoError::IssuerMismatch {
                 expected: expected_issuer.to_string(),
-                actual: claims.iss,
+                actual: claims.iss.clone(),
             });
         }
 
-        // 7. Validate expiration with clock skew
+        // Validate expiration with clock skew
         let now = chrono::Utc::now().timestamp();
         if claims.exp + (self.config.clock_skew as i64) < now {
             return Err(SsoError::TokenExpired);
         }
 
-        // 8. Validate not-before (iat) with clock skew
+        // Validate not-before (iat) with clock skew
         if claims.iat - (self.config.clock_skew as i64) > now {
             return Err(SsoError::TokenInvalid("token used before issued".into()));
         }
 
-        Ok(claims)
+        Ok(claims.clone())
     }
 
     /// Parse JWT header without verification
@@ -137,17 +166,41 @@ impl TokenValidator {
             .map_err(|_| SsoError::TokenInvalid("invalid header JSON".into()))
     }
 
-    /// Decode JWT payload without signature verification
-    fn decode_payload(&self, token: &str) -> Result<TokenClaims, SsoError> {
-        let parts: Vec<&str> = token.split('.').collect();
-        if parts.len() != 3 {
-            return Err(SsoError::TokenInvalid("invalid JWT format".into()));
-        }
+    /// Verify JWT signature using JWKS key
+    fn verify_signature(
+        &self,
+        token: &str,
+        jwks_key: &JwksKey,
+        alg: &JwtAlgorithm,
+    ) -> Result<TokenClaims, SsoError> {
+        // Build decoding key from JWKS key components
+        let decoding_key = build_decoding_key(jwks_key, alg)?;
 
-        let payload_bytes = base64_url_decode(parts[1])
-            .map_err(|_| SsoError::TokenInvalid("invalid payload encoding".into()))?;
-        serde_json::from_slice(&payload_bytes)
-            .map_err(|_| SsoError::TokenInvalid("invalid payload JSON".into()))
+        // Map our algorithm to jsonwebtoken algorithm
+        let json_alg = match alg {
+            JwtAlgorithm::RS256 => Algorithm::RS256,
+            JwtAlgorithm::RS384 => Algorithm::RS384,
+            JwtAlgorithm::RS512 => Algorithm::RS512,
+            JwtAlgorithm::ES256 => Algorithm::ES256,
+            JwtAlgorithm::ES384 => Algorithm::ES384,
+            JwtAlgorithm::PS256 => Algorithm::PS256,
+        };
+
+        // Set up validation (we validate aud/iss/exp/iat ourselves)
+        let mut validation = Validation::new(json_alg);
+        validation.validate_aud = false;
+        validation.validate_exp = false;
+        validation.validate_nbf = false;
+        validation.set_audience::<&str>(&[]); // Disable audience check in jsonwebtoken
+        validation.set_issuer::<&str>(&[]); // Disable issuer check in jsonwebtoken
+
+        // Decode and verify signature
+        let token_data =
+            decode::<TokenClaims>(token, &decoding_key, &validation).map_err(|e| {
+                SsoError::TokenInvalid(format!("JWT signature verification failed: {}", e))
+            })?;
+
+        Ok(token_data.claims)
     }
 
     /// Fetch JWKS from URL with caching
@@ -214,6 +267,45 @@ fn parse_algorithm(alg: &str) -> Result<JwtAlgorithm, SsoError> {
 }
 
 // ============================================================================
+// JWKS Key to DecodingKey Conversion
+// ============================================================================
+
+/// Build a DecodingKey from JWKS key components
+fn build_decoding_key(
+    key: &JwksKey,
+    alg: &JwtAlgorithm,
+) -> Result<DecodingKey, SsoError> {
+    match alg {
+        JwtAlgorithm::RS256 | JwtAlgorithm::RS384 | JwtAlgorithm::RS512 | JwtAlgorithm::PS256 => {
+            // RSA key: needs n (modulus) and e (exponent)
+            let n = key
+                .n
+                .as_ref()
+                .ok_or_else(|| SsoError::TokenInvalid("RSA key missing modulus (n)".into()))?;
+            let e = key
+                .e
+                .as_ref()
+                .ok_or_else(|| SsoError::TokenInvalid("RSA key missing exponent (e)".into()))?;
+            DecodingKey::from_rsa_components(n, e)
+                .map_err(|e| SsoError::TokenInvalid(format!("invalid RSA key: {}", e)))
+        }
+        JwtAlgorithm::ES256 | JwtAlgorithm::ES384 => {
+            // EC key: needs x and y coordinates
+            let x = key
+                .x
+                .as_ref()
+                .ok_or_else(|| SsoError::TokenInvalid("EC key missing x coordinate".into()))?;
+            let y = key
+                .y
+                .as_ref()
+                .ok_or_else(|| SsoError::TokenInvalid("EC key missing y coordinate".into()))?;
+            DecodingKey::from_ec_components(x, y)
+                .map_err(|e| SsoError::TokenInvalid(format!("invalid EC key: {}", e)))
+        }
+    }
+}
+
+// ============================================================================
 // Base64 URL Decoding
 // ============================================================================
 
@@ -254,7 +346,7 @@ mod tests {
         let token = format!("{}.{}.signature", header, payload);
 
         let rt = tokio::runtime::Runtime::new().unwrap();
-        let result = rt.block_on(validator.validate(&token, "audience", "issuer"));
+        let result = rt.block_on(validator.validate(&token, "audience", "issuer", "https://example.com/.well-known/jwks.json"));
         assert!(matches!(result, Err(SsoError::TokenAlgorithmNone)));
     }
 
@@ -263,14 +355,16 @@ mod tests {
         let config = JwtValidationConfig::default();
         let validator = TokenValidator::new(config);
 
-        let header = base64_url_encode(r#"{"alg":"RS256","typ":"JWT"}"#);
-        let payload = base64_url_encode(
-            r#"{"sub":"user","iss":"issuer","aud":"wrong","exp":9999999999,"iat":1000000000}"#,
-        );
-        let token = format!("{}.{}.sig", header, payload);
+        let claims = TokenClaims {
+            sub: "user".to_string(),
+            iss: "issuer".to_string(),
+            aud: "wrong".to_string(),
+            exp: 9999999999,
+            iat: 1000000000,
+            ..Default::default()
+        };
 
-        let rt = tokio::runtime::Runtime::new().unwrap();
-        let result = rt.block_on(validator.validate(&token, "expected", "issuer"));
+        let result = validator.validate_claims(&claims, "expected", "issuer");
         assert!(matches!(result, Err(SsoError::AudienceMismatch { .. })));
     }
 
@@ -279,14 +373,16 @@ mod tests {
         let config = JwtValidationConfig::default();
         let validator = TokenValidator::new(config);
 
-        let header = base64_url_encode(r#"{"alg":"RS256","typ":"JWT"}"#);
-        let payload = base64_url_encode(
-            r#"{"sub":"user","iss":"wrong","aud":"audience","exp":9999999999,"iat":1000000000}"#,
-        );
-        let token = format!("{}.{}.sig", header, payload);
+        let claims = TokenClaims {
+            sub: "user".to_string(),
+            iss: "wrong".to_string(),
+            aud: "audience".to_string(),
+            exp: 9999999999,
+            iat: 1000000000,
+            ..Default::default()
+        };
 
-        let rt = tokio::runtime::Runtime::new().unwrap();
-        let result = rt.block_on(validator.validate(&token, "audience", "expected"));
+        let result = validator.validate_claims(&claims, "audience", "expected");
         assert!(matches!(result, Err(SsoError::IssuerMismatch { .. })));
     }
 
@@ -295,14 +391,16 @@ mod tests {
         let config = JwtValidationConfig::default();
         let validator = TokenValidator::new(config);
 
-        let header = base64_url_encode(r#"{"alg":"RS256","typ":"JWT"}"#);
-        let payload = base64_url_encode(
-            r#"{"sub":"user","iss":"issuer","aud":"audience","exp":1000000000,"iat":999999000}"#,
-        );
-        let token = format!("{}.{}.sig", header, payload);
+        let claims = TokenClaims {
+            sub: "user".to_string(),
+            iss: "issuer".to_string(),
+            aud: "audience".to_string(),
+            exp: 1000000000, // Expired in 2001
+            iat: 999999000,
+            ..Default::default()
+        };
 
-        let rt = tokio::runtime::Runtime::new().unwrap();
-        let result = rt.block_on(validator.validate(&token, "audience", "issuer"));
+        let result = validator.validate_claims(&claims, "audience", "issuer");
         assert!(matches!(result, Err(SsoError::TokenExpired)));
     }
 

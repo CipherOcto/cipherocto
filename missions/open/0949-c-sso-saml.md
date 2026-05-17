@@ -27,6 +27,12 @@ RFC-0949 (Economics): Enterprise SSO
 - [ ] Signature validation (error: `sso_saml_signature_invalid`)
 - [ ] Certificate pinning for IdP impersonation prevention
 
+### XML Signature Verification
+- [ ] Parse XML digital signature (enveloped signature)
+- [ ] Verify signature using idp_certificate (RSA-SHA256 or RSA-SHA1)
+- [ ] Validate certificate chain (not expired, trusted CA or pinned)
+- [ ] Return `sso_saml_signature_invalid` error on verification failure
+
 ### Attribute Mapping
 - [ ] SAML attribute mapping: `HashMap<String, Vec<String>>` (multi-valued)
 - [ ] Map SAML attributes to user properties (name, email, groups)

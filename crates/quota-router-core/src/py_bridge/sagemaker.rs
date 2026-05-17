@@ -4,6 +4,7 @@
 // It is called by python_sdk_entry (EXTERNAL boundary #2).
 
 #[cfg(any(feature = "any-llm-mode", feature = "full"))]
+use super::PyBridgeProvider;
 use pyo3::prelude::*;
 #[cfg(any(feature = "any-llm-mode", feature = "full"))]
 use pyo3::types::{PyDict, PyList};
@@ -234,15 +235,6 @@ fn convert_response(
 
 /// Re-export as PyBridgeProvider trait for generic use
 #[cfg(any(feature = "any-llm-mode", feature = "full"))]
-pub trait PyBridgeProvider: Send + Sync {
-    fn name(&self) -> &str;
-    fn completion(
-        &self,
-        model: &str,
-        messages: &[crate::types::Message],
-    ) -> Result<crate::types::ChatCompletion, PyBridgeError>;
-}
-
 #[cfg(any(feature = "any-llm-mode", feature = "full"))]
 impl PyBridgeProvider for SageMakerProvider {
     fn name(&self) -> &str {
@@ -255,5 +247,15 @@ impl PyBridgeProvider for SageMakerProvider {
         messages: &[crate::types::Message],
     ) -> Result<crate::types::ChatCompletion, PyBridgeError> {
         self.completion(model, messages)
+    }
+
+    fn with_api_key(mut self: Box<Self>, key: String) -> Box<dyn PyBridgeProvider> {
+        self.api_key = Some(key);
+        self
+    }
+
+    fn with_api_base(mut self: Box<Self>, base: String) -> Box<dyn PyBridgeProvider> {
+        self.api_base = Some(base);
+        self
     }
 }

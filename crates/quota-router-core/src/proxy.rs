@@ -227,6 +227,8 @@ impl ProxyServer {
         // Initialize providers based on mode
         #[cfg(any(feature = "litellm-mode", feature = "full"))]
         crate::init_native_http_providers();
+        #[cfg(any(feature = "any-llm-mode", feature = "full"))]
+        crate::init_py_bridge_providers();
 
         tokio::spawn(async move {
             let balance = Arc::clone(&balance);

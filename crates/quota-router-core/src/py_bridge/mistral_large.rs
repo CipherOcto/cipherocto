@@ -1,4 +1,5 @@
 // mistral_large — via OpenAI SDK via PyO3 (INTERNAL boundary #1 per RFC-0917)
+use super::PyBridgeProvider;
 use crate::py_bridge::PyBridgeError;
 #[cfg(any(feature = "any-llm-mode", feature = "full"))]
 use pyo3::prelude::*;
@@ -166,15 +167,27 @@ impl MistralLargeProvider {
     }
 }
 #[cfg(any(feature = "any-llm-mode", feature = "full"))]
-impl crate::py_bridge::openai::PyBridgeProvider for MistralLargeProvider {
+#[cfg(any(feature = "any-llm-mode", feature = "full"))]
+impl PyBridgeProvider for MistralLargeProvider {
     fn name(&self) -> &str {
         "mistral_large"
     }
+
     fn completion(
         &self,
         model: &str,
         messages: &[crate::types::Message],
     ) -> Result<crate::types::ChatCompletion, PyBridgeError> {
         self.completion(model, messages)
+    }
+
+    fn with_api_key(mut self: Box<Self>, key: String) -> Box<dyn PyBridgeProvider> {
+        self.api_key = Some(key);
+        self
+    }
+
+    fn with_api_base(mut self: Box<Self>, base: String) -> Box<dyn PyBridgeProvider> {
+        self.api_base = Some(base);
+        self
     }
 }

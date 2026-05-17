@@ -52,6 +52,14 @@ pub fn init_native_http_providers() {
 #[cfg(any(feature = "any-llm-mode", feature = "full"))]
 pub mod py_bridge;
 
+/// Initialize py_bridge providers (any-llm-mode/full only).
+/// Must be called at binary startup before handling requests.
+/// Safe to call multiple times — subsequent calls are no-ops.
+#[cfg(any(feature = "any-llm-mode", feature = "full"))]
+pub fn init_py_bridge_providers() {
+    crate::py_bridge::init_providers();
+}
+
 // python_sdk_entry — PyO3 entry point (EXTERNAL boundary #2 per RFC-0917)
 // Only compiled when any-llm-mode or full feature is enabled
 #[cfg(any(feature = "any-llm-mode", feature = "full"))]

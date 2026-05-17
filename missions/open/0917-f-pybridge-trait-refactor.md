@@ -25,13 +25,13 @@ Refactoring to trait dispatch would:
 
 ## Acceptance Criteria
 
-- [ ] `factory::completion()` uses trait object dispatch instead of match arms
-- [ ] Provider registry maps provider name → factory function returning `Box<dyn PyBridgeProvider>`
-- [ ] `with_api_key()` and `with_api_base()` called via trait methods (not per-provider builders)
-- [ ] All 41 providers registered in the registry
-- [ ] Existing behavior preserved — no API changes
-- [ ] Clippy passes with zero warnings
-- [ ] All existing tests pass (214+ tests)
+- [x] `factory::completion()` uses trait object dispatch instead of match arms
+- [x] Provider registry maps provider name → factory function returning `Box<dyn PyBridgeProvider>`
+- [x] `with_api_key()` and `with_api_base()` called via trait methods (not per-provider builders)
+- [x] All 41 providers registered in the registry
+- [x] Existing behavior preserved — no API changes
+- [x] Clippy passes with zero warnings
+- [x] All existing tests pass (294 tests)
 
 ## Files to Modify
 

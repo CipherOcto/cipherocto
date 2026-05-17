@@ -226,7 +226,7 @@ pub enum PyBridgeChunk {
     Structured(crate::shared_types::ChatCompletionChunk),
 }
 
-pub trait PyBridgeProvider: Send + Sync {
+pub trait PyBridgeProvider: Send + Sync + 'static {
     fn name(&self) -> &str;
     fn completion(
         &self,
@@ -238,8 +238,8 @@ pub trait PyBridgeProvider: Send + Sync {
     /// Default implementation returns an error (streaming not supported)
     fn streaming_completion(
         &self,
-        model: &str,
-        messages: &[crate::types::Message],
+        _model: &str,
+        _messages: &[crate::types::Message],
     ) -> Result<tokio::sync::mpsc::Receiver<Result<PyBridgeChunk, PyBridgeError>>, PyBridgeError>
     {
         Err(PyBridgeError::ProviderError(format!(
@@ -247,6 +247,12 @@ pub trait PyBridgeProvider: Send + Sync {
             self.name()
         )))
     }
+
+    /// Set API key — builder pattern for trait objects
+    fn with_api_key(self: Box<Self>, key: String) -> Box<dyn PyBridgeProvider>;
+
+    /// Set API base URL — builder pattern for trait objects
+    fn with_api_base(self: Box<Self>, base: String) -> Box<dyn PyBridgeProvider>;
 }
 
 #[cfg(any(feature = "any-llm-mode", feature = "full"))]
@@ -375,5 +381,15 @@ impl PyBridgeProvider for OpenAIProvider {
         });
 
         Ok(rx)
+    }
+
+    fn with_api_key(mut self: Box<Self>, key: String) -> Box<dyn PyBridgeProvider> {
+        self.api_key = Some(key);
+        self
+    }
+
+    fn with_api_base(mut self: Box<Self>, base: String) -> Box<dyn PyBridgeProvider> {
+        self.api_base = Some(base);
+        self
     }
 }

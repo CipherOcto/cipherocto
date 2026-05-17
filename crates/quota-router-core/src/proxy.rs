@@ -1357,6 +1357,23 @@ where
         m.request_duration.observe(start.elapsed().as_secs_f64());
     }
 
+    // Structured request logging (RFC-0944)
+    let duration_ms = start.elapsed().as_millis();
+    let status_code = match &result {
+        Ok(resp) => resp.status().as_u16(),
+        Err(_) => 500,
+    };
+    tracing::info!(
+        method = "POST",
+        path = %path,
+        model = %request_model,
+        provider = %provider.name,
+        status = status_code,
+        duration_ms = duration_ms,
+        user = request_user.as_deref().unwrap_or(""),
+        "request completed"
+    );
+
     // Inject rate limit headers into response (RFC-0933 §Rate Limit Headers).
     // Uses the ApiKey validated during auth to report RPM limits.
     if let (Ok(ref mut resp), Some(ref api_key)) = (&mut result, &validated_api_key) {

@@ -4,7 +4,7 @@
 //! Implements cryptographic signature verification using JWKS keys.
 
 use super::{JwtAlgorithm, JwtValidationConfig, SsoError, TokenClaims};
-use jsonwebtoken::{decode, decode_header, Algorithm, DecodingKey, Validation};
+use jsonwebtoken::{decode, Algorithm, DecodingKey, Validation};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::Arc;

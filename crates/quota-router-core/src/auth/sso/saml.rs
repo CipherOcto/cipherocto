@@ -11,7 +11,6 @@ use quick_xml::events::{BytesEnd, BytesStart, BytesText, Event};
 use quick_xml::Reader;
 use quick_xml::Writer;
 use serde::{Deserialize, Serialize};
-use sha2::{Digest, Sha256};
 use std::collections::HashMap;
 use std::io::Cursor;
 
@@ -587,7 +586,7 @@ fn parse_xml_signature(assertion_xml: &str) -> Result<XmlSignatureComponents, Ss
 /// Note: This is a simplified implementation. For production use,
 /// consider using a full XML-DSIG library like xmlsec.
 fn verify_xml_signature(
-    signed_info_xml: &[u8],
+    _signed_info_xml: &[u8],
     signature_value: &[u8],
     certificate_der: &[u8],
 ) -> Result<(), SsoError> {

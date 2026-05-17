@@ -16,6 +16,7 @@
 
 use crate::balance::Balance;
 use crate::config::DispatchInfo;
+use crate::fallback::FallbackExecutor;
 use crate::key_rate_limiter::RateLimiterStore;
 use crate::keys::compute_key_hash;
 use crate::metrics::Metrics;
@@ -143,6 +144,7 @@ pub struct ProxyServer {
     master_key: Option<String>,
     metrics: Option<Arc<Metrics>>,
     rate_limiter: Option<Arc<RateLimiterStore>>,
+    fallback: Option<Arc<FallbackExecutor>>,
 }
 
 impl ProxyServer {
@@ -161,6 +163,7 @@ impl ProxyServer {
             master_key: None,
             metrics: None,
             rate_limiter: None,
+            fallback: None,
         }
     }
 
@@ -188,6 +191,12 @@ impl ProxyServer {
         self
     }
 
+    /// Set fallback executor for provider failure recovery (RFC-0902)
+    pub fn with_fallback(mut self, fallback: FallbackExecutor) -> Self {
+        self.fallback = Some(Arc::new(fallback));
+        self
+    }
+
     pub async fn run(&mut self) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         let addr = SocketAddr::from(([127, 0, 0, 1], self.port));
         let listener = TcpListener::bind(addr).await?;
@@ -201,6 +210,7 @@ impl ProxyServer {
         let master_key = self.master_key.clone();
         let metrics = self.metrics.clone();
         let rate_limiter = self.rate_limiter.clone();
+        let fallback = self.fallback.clone();
 
         // Initialize providers based on mode
         #[cfg(any(feature = "litellm-mode", feature = "full"))]
@@ -219,6 +229,7 @@ impl ProxyServer {
                 let master_key = master_key.clone();
                 let metrics = metrics.clone();
                 let rate_limiter = rate_limiter.clone();
+                let fallback = fallback.clone();
 
                 tokio::spawn(async move {
                     let io = TokioIo::new(stream);
@@ -239,6 +250,7 @@ impl ProxyServer {
                                     master_key.clone(),
                                     metrics.clone(),
                                     rate_limiter.clone(),
+                                    fallback.clone(),
                                 )
                             }),
                         )
@@ -359,6 +371,7 @@ async fn handle_request<B>(
     master_key: Option<String>,
     metrics: Option<Arc<Metrics>>,
     rate_limiter: Option<Arc<RateLimiterStore>>,
+    fallback: Option<Arc<FallbackExecutor>>,
 ) -> Result<Response<SseBody>, Infallible>
 where
     B: http_body::Body + 'static,
@@ -643,11 +656,53 @@ where
     let dispatch_api_base = dispatch.and_then(|d| d.api_base.clone());
     let _dispatch_max_retries = dispatch.and_then(|d| d.max_retries);
 
+    // Extract model name for fallback lookup
+    let request_model = serde_json::from_str::<serde_json::Value>(&body_str)
+        .ok()
+        .and_then(|v| v.get("model")?.as_str().map(String::from))
+        .unwrap_or_default();
+
+    // Execute with fallback support (RFC-0902)
     let mut result = {
         #[cfg(any(feature = "litellm-mode", feature = "full"))]
         {
-            handle_request_litellm(&body_str, &provider, &api_key, dispatch_api_base.as_deref())
-                .await
+            let primary_result = handle_request_litellm(
+                &body_str,
+                &provider,
+                &api_key,
+                dispatch_api_base.as_deref(),
+            )
+            .await;
+
+            // Check if fallback is needed
+            if let Some(ref executor) = fallback {
+                match &primary_result {
+                    Ok(resp) if resp.status().is_server_error() => {
+                        // Provider returned 5xx — try fallback
+                        let error = classify_http_error(resp.status());
+                        if let Some(fallback_models) =
+                            executor.config().get_fallback_models(&request_model, error)
+                        {
+                            // Try fallback models
+                            try_fallback_models(
+                                &fallback_models,
+                                &dispatch_map,
+                                &provider,
+                                &body_str,
+                                executor.config().max_retries,
+                                executor.config().retry_delay(0),
+                            )
+                            .await
+                            .unwrap_or(primary_result)
+                        } else {
+                            primary_result
+                        }
+                    }
+                    _ => primary_result,
+                }
+            } else {
+                primary_result
+            }
         }
 
         #[cfg(not(any(feature = "litellm-mode", feature = "full")))]
@@ -1057,6 +1112,86 @@ async fn handle_embedding_request(
         ))
         .unwrap();
     Ok(resp)
+}
+
+// ============================================================================
+// Fallback helpers (RFC-0902)
+// ============================================================================
+
+/// Classify HTTP status code into RouterError for fallback lookup
+fn classify_http_error(status: StatusCode) -> crate::fallback::RouterError {
+    match status.as_u16() {
+        429 => crate::fallback::RouterError::RateLimit,
+        503 => crate::fallback::RouterError::ProviderUnavailable,
+        401 | 403 => crate::fallback::RouterError::AuthError,
+        408 | 504 => crate::fallback::RouterError::Timeout,
+        _ => crate::fallback::RouterError::Unknown,
+    }
+}
+
+/// Try fallback models in order, returning the first successful response
+#[cfg(any(feature = "litellm-mode", feature = "full"))]
+async fn try_fallback_models(
+    fallback_models: &[String],
+    dispatch_map: &HashMap<String, DispatchInfo>,
+    original_provider: &Provider,
+    body_str: &str,
+    max_retries: u32,
+    retry_delay_ms: u64,
+) -> Option<Result<Response<SseBody>, Infallible>> {
+    for (attempt, model) in fallback_models.iter().enumerate() {
+        if attempt >= max_retries as usize {
+            break;
+        }
+
+        // Look up fallback model's DispatchInfo
+        let fallback_dispatch = dispatch_map.values().find(|d| {
+            d.model == *model
+                || d.model_group.as_deref() == Some(model.as_str())
+                || d.deployment_id == *model
+        });
+
+        // Get API key for fallback model
+        let fallback_api_key = fallback_dispatch
+            .and_then(|d| d.api_key.as_deref())
+            .and_then(|key| {
+                if key.is_empty() {
+                    None
+                } else {
+                    Some(key.to_string())
+                }
+            })
+            .or_else(|| {
+                std::env::var(format!("{}_API_KEY", original_provider.name.to_uppercase())).ok()
+            });
+
+        let api_key = match fallback_api_key {
+            Some(key) => key,
+            None => continue, // Skip this fallback if no API key
+        };
+
+        let fallback_api_base = fallback_dispatch.and_then(|d| d.api_base.as_deref());
+
+        // Apply retry delay
+        if attempt > 0 {
+            tokio::time::sleep(tokio::time::Duration::from_millis(
+                retry_delay_ms * 2u64.pow(attempt as u32 - 1),
+            ))
+            .await;
+        }
+
+        // Try the fallback provider
+        let result =
+            handle_request_litellm(body_str, original_provider, &api_key, fallback_api_base).await;
+
+        // Return if successful
+        match &result {
+            Ok(resp) if resp.status().is_success() => return Some(result),
+            _ => continue,
+        }
+    }
+
+    None // All fallbacks failed
 }
 
 #[cfg(test)]

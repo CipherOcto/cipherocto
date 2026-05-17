@@ -2,6 +2,8 @@
 
 ## Status
 
+Complete
+
 Open
 
 ## RFC
@@ -20,27 +22,27 @@ The existing `fallback.rs` implements `FallbackConfig`, `FallbackExecutor`, and 
 
 ### Core Wiring
 
-- [ ] Wire `FallbackExecutor` into proxy request path
-- [ ] On provider failure, check `FallbackConfig::get_fallback_models()`
-- [ ] Retry with fallback model on `RouterError::ProviderUnavailable`
-- [ ] Retry with context_window_fallback on `RouterError::ContextWindowExceeded`
-- [ ] Retry with content_policy_fallback on `RouterError::ContentPolicyViolation`
-- [ ] Respect `max_retries` (default 3)
-- [ ] Apply `retry_delay_ms` with `backoff_multiplier`
+- [x] Wire `FallbackExecutor` into proxy request path
+- [x] On provider failure, check `FallbackConfig::get_fallback_models()`
+- [x] Retry with fallback model on `RouterError::ProviderUnavailable`
+- [x] Retry with context_window_fallback on `RouterError::ContextWindowExceeded`
+- [x] Retry with content_policy_fallback on `RouterError::ContentPolicyViolation`
+- [x] Respect `max_retries` (default 3)
+- [x] Apply `retry_delay_ms` with `backoff_multiplier`
 
 ### Configuration
 
-- [ ] Wire existing `FallbackConfig` fields into proxy (already exist in fallback.rs)
-- [ ] Add `FallbackConfig` to `GatewayConfig` or `RouterSettings` (config.rs)
-- [ ] Map `RouterSettings.fallbacks` (HashMap format) to `FallbackConfig.fallbacks` (Vec<FallbackEntry> format)
+- [x] Wire existing `FallbackConfig` fields into proxy (already exist in fallback.rs)
+- [x] Add `FallbackConfig` to `GatewayConfig` or `RouterSettings` (config.rs)
+- [x] Map `RouterSettings.fallbacks` (HashMap format) to `FallbackConfig.fallbacks` (Vec<FallbackEntry> format)
 
 ### Tests
 
-- [ ] Primary provider failure triggers fallback
-- [ ] Context window exceeded triggers context_window_fallback
-- [ ] Content policy violation triggers content_policy_fallback
-- [ ] Max retries limit respected
-- [ ] Backoff delay applied correctly
+- [x] Primary provider failure triggers fallback
+- [x] Context window exceeded triggers context_window_fallback
+- [x] Content policy violation triggers content_policy_fallback
+- [x] Max retries limit respected
+- [x] Backoff delay applied correctly
 
 ## Key Files
 

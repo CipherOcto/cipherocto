@@ -521,6 +521,9 @@ pub struct GatewayConfig {
     pub router_settings: Option<RouterSettings>,
     /// Global LiteLLM settings (LiteLLM: litellm_settings)
     pub litellm_settings: Option<LiteLLMSettings>,
+    /// Fallback configuration (RFC-0902)
+    #[serde(default)]
+    pub fallbacks: Option<crate::fallback::FallbackConfig>,
     /// Provider configurations (any-llm compatibility)
     pub providers: Option<HashMap<String, AnyLlmProviderConfig>>,
     /// Secret manager configuration (RFC-0935)
@@ -805,6 +808,7 @@ mod tests {
             enable_metrics: false,
             bypass_paths: default_bypass_paths(),
             bootstrap_api_key: false,
+            fallbacks: None,
             auto_migrate: false,
             deployments: deployments.clone(),
             model_list_alias: None,
@@ -862,6 +866,7 @@ mod tests {
             enable_metrics: false,
             bypass_paths: default_bypass_paths(),
             bootstrap_api_key: false,
+            fallbacks: None,
             auto_migrate: false,
             deployments: vec![],
             model_list_alias: Some(deployments.clone()),
@@ -921,6 +926,7 @@ mod tests {
             enable_metrics: false,
             bypass_paths: default_bypass_paths(),
             bootstrap_api_key: false,
+            fallbacks: None,
             auto_migrate: false,
             deployments,
             model_list_alias: None,
@@ -980,6 +986,7 @@ mod tests {
             enable_metrics: false,
             bypass_paths: default_bypass_paths(),
             bootstrap_api_key: false,
+            fallbacks: None,
             auto_migrate: false,
             deployments,
             model_list_alias: None,
@@ -1048,6 +1055,7 @@ mod tests {
             enable_metrics: false,
             bypass_paths: default_bypass_paths(),
             bootstrap_api_key: false,
+            fallbacks: None,
             auto_migrate: false,
             deployments,
             model_list_alias: None,

@@ -77,6 +77,9 @@ tiktoken-rs = "0.6"
 # For async streaming (futures::StreamExt)
 futures-core = "0.3"
 futures = "0.3"
+
+# For timestamp handling (RFC-0905 structured logging)
+chrono = { version = "0.4", features = ["serde"] }
 futures-util = "0.3"
 
 # For TokenBucket rate limiter (DashMap for concurrent access)
@@ -99,6 +102,8 @@ bytes = { version = "1", optional = true }
 
 # PyO3 (for any-llm-mode py_bridge module — calls official Python SDKs)
 pyo3 = { version = "0.21", optional = true }
+regex = "1.12.3"
+base64 = "0.22.1"
 
 [lib]
 name = "quota_router_core"

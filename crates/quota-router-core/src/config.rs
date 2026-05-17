@@ -4,6 +4,7 @@ use std::collections::HashMap;
 use std::path::PathBuf;
 use thiserror::Error;
 
+pub use crate::health::HealthConfig;
 pub use crate::providers::Provider;
 pub use crate::router::RoutingStrategy;
 
@@ -543,6 +544,55 @@ pub struct GatewayConfig {
     pub wal_poll_interval_ms: u64,
     /// WAL path for shared storage (RFC-0913)
     pub wal_path: Option<String>,
+    /// Health endpoint configuration (RFC-0905)
+    #[serde(default)]
+    pub health: HealthConfig,
+    /// Structured logging configuration (RFC-0905)
+    #[serde(default)]
+    pub logging: LogConfig,
+    /// Prompt management configuration (RFC-0948)
+    #[serde(default)]
+    pub prompts: PromptConfig,
+}
+
+/// Prompt management configuration (RFC-0948)
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PromptConfig {
+    /// Enable prompt management
+    #[serde(default = "default_true")]
+    pub enabled: bool,
+    /// Storage backend ("stoolap" or "memory")
+    #[serde(default = "default_prompt_storage")]
+    pub storage: String,
+    /// LRU cache size
+    #[serde(default = "default_prompt_cache_size")]
+    pub cache_size: usize,
+    /// Cache TTL in seconds
+    #[serde(default = "default_prompt_cache_ttl")]
+    pub cache_ttl: u64,
+}
+
+impl Default for PromptConfig {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            storage: "stoolap".to_string(),
+            cache_size: 1000,
+            cache_ttl: 300,
+        }
+    }
+}
+
+fn default_prompt_storage() -> String {
+    "stoolap".to_string()
+}
+
+fn default_prompt_cache_size() -> usize {
+    1000
+}
+
+fn default_prompt_cache_ttl() -> u64 {
+    300
 }
 
 impl GatewayConfig {
@@ -725,6 +775,66 @@ pub fn load_config(path: &std::path::Path) -> Result<GatewayConfig, ConfigError>
 }
 
 // ============================================================================
+// RFC-0905 Types (Observability and Logging)
+// ============================================================================
+
+/// Structured logging configuration (RFC-0905)
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct LogConfig {
+    /// Minimum log level (debug, info, warn, error)
+    #[serde(default = "default_log_level")]
+    pub level: String,
+    /// Log format (json, text)
+    #[serde(default = "default_log_format")]
+    pub format: String,
+    /// Log sampling rate (1.0 = log all, 0.1 = log 10%)
+    #[serde(default = "default_sample_rate")]
+    pub sample_rate: f64,
+    /// Async buffer size (number of events)
+    #[serde(default = "default_buffer_size")]
+    pub buffer_size: usize,
+    /// Flush interval in milliseconds
+    #[serde(default = "default_flush_interval_ms")]
+    pub flush_interval_ms: u64,
+    /// Always log errors regardless of sample rate
+    #[serde(default = "default_true")]
+    pub always_log_errors: bool,
+}
+
+fn default_log_level() -> String {
+    "info".to_string()
+}
+
+fn default_log_format() -> String {
+    "json".to_string()
+}
+
+fn default_sample_rate() -> f64 {
+    1.0
+}
+
+fn default_buffer_size() -> usize {
+    10000
+}
+
+fn default_flush_interval_ms() -> u64 {
+    1000
+}
+
+impl Default for LogConfig {
+    fn default() -> Self {
+        Self {
+            level: default_log_level(),
+            format: default_log_format(),
+            sample_rate: default_sample_rate(),
+            buffer_size: default_buffer_size(),
+            flush_interval_ms: default_flush_interval_ms(),
+            always_log_errors: true,
+        }
+    }
+}
+
+// ============================================================================
 // Legacy Config Types (kept for backward compatibility)
 // ============================================================================
 
@@ -746,6 +856,70 @@ fn default_poll_interval() -> u64 {
     50
 }
 
+fn default_channel_capacity() -> usize {
+    10000
+}
+
+// ============================================================================
+// RFC-0947 Callback Configuration
+// ============================================================================
+
+/// Callback system configuration (RFC-0947).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CallbackConfig {
+    /// Enable callback system (default: false)
+    #[serde(default)]
+    pub enabled: bool,
+    /// Bounded channel capacity (default: 10000)
+    #[serde(default = "default_channel_capacity")]
+    pub channel_capacity: usize,
+}
+
+impl Default for CallbackConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            channel_capacity: 10000,
+        }
+    }
+}
+
+// ============================================================================
+// RFC-0946 Guardrail Configuration
+// ============================================================================
+
+/// Guardrail system configuration (RFC-0946).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct GuardrailConfig {
+    /// Enable guardrail system (default: false)
+    #[serde(default)]
+    pub enabled: bool,
+    /// Global input guardrails
+    #[serde(default)]
+    pub input: Vec<crate::guardrails::Guardrail>,
+    /// Global output guardrails
+    #[serde(default)]
+    pub output: Vec<crate::guardrails::Guardrail>,
+    /// Per-model overrides
+    #[serde(default)]
+    pub model_overrides: HashMap<String, Vec<crate::guardrails::Guardrail>>,
+    /// Per-key overrides
+    #[serde(default)]
+    pub key_overrides: HashMap<String, Vec<crate::guardrails::Guardrail>>,
+}
+
+impl Default for GuardrailConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            input: Vec::new(),
+            output: Vec::new(),
+            model_overrides: HashMap::new(),
+            key_overrides: HashMap::new(),
+        }
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Config {
     pub balance: u64,
@@ -754,6 +928,9 @@ pub struct Config {
     pub db_path: PathBuf,
     #[serde(default)]
     pub wal_pubsub: WalPubSubConfig,
+    /// Callback system configuration (RFC-0947)
+    #[serde(default)]
+    pub callbacks: CallbackConfig,
 }
 
 impl Config {
@@ -773,6 +950,7 @@ impl Config {
                     poll_interval_ms: 50,
                     wal_path: None,
                 },
+                callbacks: CallbackConfig::default(),
             })
         }
     }

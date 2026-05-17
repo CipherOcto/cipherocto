@@ -16,16 +16,22 @@
 // HTTP server modules (admin, proxy, middleware) — ALWAYS available per RFC-0917 line 182:
 // "HTTP Proxy Server | (always)" — NO feature gate, these are unconditionally compiled
 pub mod admin;
+pub mod auth;
 pub mod balance;
 pub mod cache;
+pub mod callbacks;
 pub mod config;
 pub mod fallback;
+pub mod guardrails;
+pub mod health;
 pub mod key_rate_limiter;
 pub mod keys;
+pub mod logging;
 pub mod metrics;
 pub mod middleware;
 pub mod pre_call_checks;
 pub mod pricing;
+pub mod prompts;
 pub mod providers;
 pub mod proxy;
 pub mod rate_limit;

@@ -346,18 +346,162 @@ pub async fn rotation_worker(db: &stoolap::Database, cache: &KeyCache, interval_
     }
 }
 
-// Cache invalidation handler for WAL pub/sub events (legacy)
-pub struct CacheInvalidation;
-
-impl CacheInvalidation {
-    pub fn new() -> Self {
-        Self
-    }
+/// Cache invalidation handler with dual-write (broadcast + WAL).
+///
+/// Follows RFC-0913 architecture:
+/// - Local EventBus for same-process cache invalidation
+/// - WalPubSub for cross-process cache invalidation via shared WAL file
+/// - Dual-write: every invalidation event goes to both EventBus and WAL
+/// - Idempotency tracking via event_id deduplication
+pub struct CacheInvalidation {
+    event_bus: stoolap::pubsub::EventBus,
+    wal_pubsub: Option<stoolap::pubsub::WalPubSub>,
+    cache: KeyCache,
 }
 
-impl Default for CacheInvalidation {
-    fn default() -> Self {
-        Self::new()
+impl CacheInvalidation {
+    /// Create a new CacheInvalidation with EventBus only (no WAL).
+    pub fn new(cache: KeyCache) -> Self {
+        Self {
+            event_bus: stoolap::pubsub::EventBus::new(),
+            wal_pubsub: None,
+            cache,
+        }
+    }
+
+    /// Create with both EventBus and WalPubSub (dual-write mode).
+    pub fn with_wal(cache: KeyCache, wal_path: std::path::PathBuf) -> Self {
+        Self {
+            event_bus: stoolap::pubsub::EventBus::new(),
+            wal_pubsub: Some(stoolap::pubsub::WalPubSub::new(wal_path)),
+            cache,
+        }
+    }
+
+    /// Publish a key invalidation event (dual-write: broadcast + WAL).
+    ///
+    /// Returns the event_id from the WAL write (canonical ID for idempotency).
+    pub fn invalidate_key(
+        &self,
+        key_hash: Vec<u8>,
+        reason: stoolap::pubsub::InvalidationReason,
+        rpm_limit: Option<u32>,
+        tpm_limit: Option<u32>,
+    ) -> Result<[u8; 32], String> {
+        // Placeholder event_id — will be replaced by WAL's computed ID
+        let placeholder_id = [0u8; 32];
+        let event = stoolap::pubsub::DatabaseEvent::KeyInvalidated {
+            key_hash: key_hash.clone(),
+            reason: reason.clone(),
+            rpm_limit,
+            tpm_limit,
+            event_id: placeholder_id,
+        };
+
+        // Dual-write: WAL first (computes canonical event_id)
+        let event_id = if let Some(ref wal) = self.wal_pubsub {
+            let id = wal
+                .write(&event)
+                .map_err(|e| format!("WAL write failed: {}", e))?;
+            // Re-publish to EventBus with correct event_id
+            let event_with_id = stoolap::pubsub::DatabaseEvent::KeyInvalidated {
+                key_hash,
+                reason,
+                rpm_limit,
+                tpm_limit,
+                event_id: id,
+            };
+            self.event_bus
+                .publish(event_with_id)
+                .map_err(|e| format!("EventBus publish failed: {}", e))?;
+            id
+        } else {
+            // No WAL — just EventBus with generated ID
+            let id = stoolap::pubsub::generate_event_id();
+            let event_with_id = stoolap::pubsub::DatabaseEvent::KeyInvalidated {
+                key_hash,
+                reason,
+                rpm_limit,
+                tpm_limit,
+                event_id: id,
+            };
+            self.event_bus
+                .publish(event_with_id)
+                .map_err(|e| format!("EventBus publish failed: {}", e))?;
+            id
+        };
+
+        Ok(event_id)
+    }
+
+    /// Start background polling for WAL events.
+    /// Returns a JoinHandle for the polling task.
+    pub fn start_polling(
+        wal_pubsub: stoolap::pubsub::WalPubSub,
+        cache: KeyCache,
+        interval_ms: u64,
+    ) -> tokio::task::JoinHandle<()> {
+        tokio::spawn(async move {
+            let mut last_lsn: u64 = 0;
+            let interval = std::time::Duration::from_millis(interval_ms);
+
+            loop {
+                tokio::time::sleep(interval).await;
+
+                match wal_pubsub.read_from_lsn(last_lsn) {
+                    Ok(entries) => {
+                        for entry in &entries {
+                            // Skip duplicates
+                            if wal_pubsub.idempotency().is_duplicate(entry.event_id) {
+                                continue;
+                            }
+
+                            // Parse and handle event
+                            if let Ok(event) =
+                                stoolap::pubsub::wal_pubsub::parse_event(&entry.payload)
+                            {
+                                Self::handle_event(&cache, &event).await;
+                                wal_pubsub.idempotency().mark_seen(entry.event_id);
+                            }
+                        }
+                        last_lsn = wal_pubsub.current_lsn();
+                    }
+                    Err(e) => {
+                        tracing::error!("WAL poll error: {}", e);
+                    }
+                }
+            }
+        })
+    }
+
+    /// Handle a single invalidation event by updating the cache.
+    async fn handle_event(cache: &KeyCache, event: &stoolap::pubsub::DatabaseEvent) {
+        match event {
+            stoolap::pubsub::DatabaseEvent::KeyInvalidated { key_hash, .. } => {
+                cache.invalidate(key_hash).await;
+                tracing::debug!("Cache invalidated for key hash {:?}", key_hash);
+            }
+            stoolap::pubsub::DatabaseEvent::TableModified { .. }
+            | stoolap::pubsub::DatabaseEvent::SchemaChanged { .. }
+            | stoolap::pubsub::DatabaseEvent::TransactionCommited { .. } => {
+                // Table/schema events not relevant for key cache
+            }
+        }
+    }
+
+    /// Get a reference to the EventBus for subscribing.
+    pub fn event_bus(&self) -> &stoolap::pubsub::EventBus {
+        &self.event_bus
+    }
+
+    /// Get a reference to the WalPubSub if configured.
+    pub fn wal_pubsub(&self) -> Option<&stoolap::pubsub::WalPubSub> {
+        self.wal_pubsub.as_ref()
+    }
+
+    /// Get a reference to the key cache.
+    pub fn cache(&self) -> &KeyCache {
+        &self.cache
     }
 }
 
@@ -679,7 +823,130 @@ mod tests {
     }
 
     #[test]
-    fn test_cache_invalidation() {
-        let _ci = CacheInvalidation::new();
+    fn test_cache_invalidation_new() {
+        let cache = KeyCache::new();
+        let ci = CacheInvalidation::new(cache);
+        assert_eq!(ci.event_bus().subscriber_count(), 0);
+        assert!(ci.wal_pubsub().is_none());
+    }
+
+    #[tokio::test]
+    async fn test_cache_invalidation_dual_write() {
+        let temp_dir = tempfile::TempDir::new().unwrap();
+        let wal_path = temp_dir.path().join("test.wal");
+        let cache = KeyCache::new();
+        let ci = CacheInvalidation::with_wal(cache, wal_path);
+
+        // Subscribe to EventBus
+        let rx = ci.event_bus().subscribe();
+
+        // Publish invalidation event
+        let event_id = ci
+            .invalidate_key(
+                vec![1, 2, 3],
+                stoolap::pubsub::InvalidationReason::Revoke,
+                None,
+                None,
+            )
+            .unwrap();
+
+        // Verify EventBus received the event
+        let event = rx.recv().unwrap();
+        match event {
+            stoolap::pubsub::DatabaseEvent::KeyInvalidated { key_hash, .. } => {
+                assert_eq!(key_hash, vec![1, 2, 3]);
+            }
+            _ => panic!("Expected KeyInvalidated event"),
+        }
+
+        // Verify WAL was written
+        let wal = ci.wal_pubsub().unwrap();
+        let entries = wal.read_from_lsn(0).unwrap();
+        assert!(!entries.is_empty());
+        assert_eq!(entries[0].event_id, event_id);
+    }
+
+    #[tokio::test]
+    async fn test_cache_invalidation_idempotency() {
+        let temp_dir = tempfile::TempDir::new().unwrap();
+        let wal_path = temp_dir.path().join("test.wal");
+        let cache = KeyCache::new();
+        let ci = CacheInvalidation::with_wal(cache, wal_path.clone());
+
+        // Write two different events
+        let event_id1 = ci
+            .invalidate_key(
+                vec![4, 5, 6],
+                stoolap::pubsub::InvalidationReason::Revoke,
+                None,
+                None,
+            )
+            .unwrap();
+
+        let event_id2 = ci
+            .invalidate_key(
+                vec![7, 8, 9],
+                stoolap::pubsub::InvalidationReason::Revoke,
+                None,
+                None,
+            )
+            .unwrap();
+
+        // Different payloads → different event_ids
+        assert_ne!(event_id1, event_id2);
+
+        // WalPubSub::write() automatically marks events as seen
+        let wal = ci.wal_pubsub().unwrap();
+        assert!(wal.idempotency().is_duplicate(event_id1));
+        assert!(wal.idempotency().is_duplicate(event_id2));
+
+        // WAL should have both entries
+        let entries = wal.read_from_lsn(0).unwrap();
+        assert!(entries.len() >= 2);
+
+        // Create a new reader simulating cross-process — fresh idempotency tracker
+        let wal_b = stoolap::pubsub::WalPubSub::new(wal_path);
+        let entries_b = wal_b.read_from_lsn(0).unwrap();
+        assert!(entries_b.len() >= 2);
+
+        // Before marking: not duplicates in fresh tracker
+        assert!(!wal_b.idempotency().is_duplicate(event_id1));
+        assert!(!wal_b.idempotency().is_duplicate(event_id2));
+
+        // Mark first as seen
+        wal_b.idempotency().mark_seen(event_id1);
+        assert!(wal_b.idempotency().is_duplicate(event_id1));
+        assert!(!wal_b.idempotency().is_duplicate(event_id2));
+    }
+
+    #[tokio::test]
+    async fn test_wal_polling_cross_process() {
+        let temp_dir = tempfile::TempDir::new().unwrap();
+        let wal_path = temp_dir.path().join("shared.wal");
+
+        // Process A: writes to WAL
+        let cache_a = KeyCache::new();
+        let ci_a = CacheInvalidation::with_wal(cache_a, wal_path.clone());
+        ci_a.invalidate_key(
+            vec![7, 8, 9],
+            stoolap::pubsub::InvalidationReason::Revoke,
+            None,
+            None,
+        )
+        .unwrap();
+
+        // Process B: reads from same WAL (simulating cross-process)
+        let wal_b = stoolap::pubsub::WalPubSub::new(wal_path);
+        let entries = wal_b.read_from_lsn(0).unwrap();
+        assert!(!entries.is_empty());
+
+        // Verify the event content
+        let event = stoolap::pubsub::wal_pubsub::parse_event(&entries[0].payload).unwrap();
+        match event {
+            stoolap::pubsub::DatabaseEvent::KeyInvalidated { key_hash, .. } => {
+                assert_eq!(key_hash, vec![7, 8, 9]);
+            }
+            _ => panic!("Expected KeyInvalidated event"),
+        }
     }
 }

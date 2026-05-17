@@ -337,6 +337,10 @@ pub struct RouterSettings {
     pub content_policy_fallbacks: Option<HashMap<String, Vec<String>>>,
 }
 
+fn default_wal_poll_interval() -> u64 {
+    50
+}
+
 fn default_flush_interval() -> u64 {
     60
 }
@@ -534,6 +538,11 @@ pub struct GatewayConfig {
     pub providers: Option<HashMap<String, AnyLlmProviderConfig>>,
     /// Secret manager configuration (RFC-0935)
     pub secret_manager: Option<SecretManagerConfig>,
+    /// WAL poll interval in milliseconds (RFC-0913)
+    #[serde(default = "default_wal_poll_interval")]
+    pub wal_poll_interval_ms: u64,
+    /// WAL path for shared storage (RFC-0913)
+    pub wal_path: Option<String>,
 }
 
 impl GatewayConfig {
@@ -880,6 +889,8 @@ mod tests {
             litellm_settings: None,
             providers: None,
             secret_manager: None,
+            wal_poll_interval_ms: 50,
+            wal_path: None,
         };
         let result = config.get_deployments();
         assert_eq!(result.len(), 1);
@@ -938,6 +949,8 @@ mod tests {
             litellm_settings: None,
             providers: None,
             secret_manager: None,
+            wal_poll_interval_ms: 50,
+            wal_path: None,
         };
         let result = config.get_deployments();
         assert_eq!(result.len(), 1);
@@ -998,6 +1011,8 @@ mod tests {
             litellm_settings: None,
             providers: None,
             secret_manager: None,
+            wal_poll_interval_ms: 50,
+            wal_path: None,
         };
         let map = to_provider_map(&config).unwrap();
         assert!(map.contains_key("openai-gpt4o"));
@@ -1058,6 +1073,8 @@ mod tests {
             litellm_settings: None,
             providers: None,
             secret_manager: None,
+            wal_poll_interval_ms: 50,
+            wal_path: None,
         };
         let map = to_provider_map(&config).unwrap();
         assert!(map.contains_key("openai_gpt-4o"));
@@ -1128,6 +1145,8 @@ mod tests {
             litellm_settings: None,
             providers: None,
             secret_manager: None,
+            wal_poll_interval_ms: 50,
+            wal_path: None,
         };
         let map = to_provider_map(&config).unwrap();
         let info = map.get("openai_gpt-4o").unwrap();

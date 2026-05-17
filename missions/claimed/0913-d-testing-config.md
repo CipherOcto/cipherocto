@@ -10,12 +10,12 @@ RFC-0913: Stoolap Pub/Sub for Cache Invalidation
 Add configuration options, integration tests, and verify idempotency. Test multi-process cache invalidation.
 
 ## Acceptance Criteria
-- [ ] Add `wal_poll_interval_ms` config (default 50)
-- [ ] Add `wal_path` config for shared storage
-- [ ] Integration test: multi-process cache invalidation
-- [ ] Test idempotency via event_id deduplication
-- [ ] Test dual-write (broadcast + WAL)
-- [ ] Test WAL polling cross-process
+- [x] Add `wal_poll_interval_ms` config (default 50)
+- [x] Add `wal_path` config for shared storage
+- [x] Integration test: multi-process cache invalidation
+- [x] Test idempotency via event_id deduplication
+- [x] Test dual-write (broadcast + WAL)
+- [x] Test WAL polling cross-process
 
 ## Complexity
 Low

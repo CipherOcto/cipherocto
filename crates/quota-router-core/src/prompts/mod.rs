@@ -296,7 +296,8 @@ impl PromptRegistry {
             let ended = test.end_at.map(|end| Utc::now() > end).unwrap_or(false);
 
             if ended {
-                return Err(PromptError::AbTestEnded(prompt_id.to_string()));
+                // Per RFC: fallback to version_a (control) when test ends
+                return self.get_version(prompt_id, "a");
             }
 
             return self.get_version(prompt_id, &version);

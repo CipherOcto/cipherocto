@@ -4,6 +4,7 @@ use std::collections::HashMap;
 use std::path::PathBuf;
 use thiserror::Error;
 
+use crate::auth::sso::SsoConfig;
 pub use crate::health::HealthConfig;
 pub use crate::providers::Provider;
 pub use crate::router::RoutingStrategy;
@@ -560,6 +561,12 @@ pub struct GatewayConfig {
     /// OpenTelemetry tracing configuration (RFC-0905)
     #[serde(default)]
     pub tracing: TracingConfig,
+    /// SSO configuration (RFC-0949)
+    #[serde(default)]
+    pub sso: SsoConfig,
+    /// Callback system configuration (RFC-0947)
+    #[serde(default)]
+    pub callbacks: CallbackConfig,
 }
 
 /// Prompt management configuration (RFC-0948)
@@ -1077,6 +1084,8 @@ mod tests {
             prompts: PromptConfig::default(),
             guardrails: GuardrailConfig::default(),
             tracing: TracingConfig::default(),
+            sso: SsoConfig::default(),
+            callbacks: CallbackConfig::default(),
         };
         let result = config.get_deployments();
         assert_eq!(result.len(), 1);
@@ -1142,6 +1151,8 @@ mod tests {
             prompts: PromptConfig::default(),
             guardrails: GuardrailConfig::default(),
             tracing: TracingConfig::default(),
+            sso: SsoConfig::default(),
+            callbacks: CallbackConfig::default(),
         };
         let result = config.get_deployments();
         assert_eq!(result.len(), 1);
@@ -1207,6 +1218,8 @@ mod tests {
             health: HealthConfig::default(),
             logging: LogConfig::default(),
             prompts: PromptConfig::default(),
+            sso: SsoConfig::default(),
+            callbacks: CallbackConfig::default(),
             guardrails: GuardrailConfig::default(),
             tracing: TracingConfig::default(),
         };
@@ -1272,6 +1285,8 @@ mod tests {
             wal_poll_interval_ms: 50,
             wal_path: None,
             health: HealthConfig::default(),
+            sso: SsoConfig::default(),
+            callbacks: CallbackConfig::default(),
             logging: LogConfig::default(),
             prompts: PromptConfig::default(),
             guardrails: GuardrailConfig::default(),
@@ -1347,6 +1362,8 @@ mod tests {
             providers: None,
             secret_manager: None,
             wal_poll_interval_ms: 50,
+            sso: SsoConfig::default(),
+            callbacks: CallbackConfig::default(),
             wal_path: None,
             health: HealthConfig::default(),
             logging: LogConfig::default(),

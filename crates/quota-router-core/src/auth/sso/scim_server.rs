@@ -36,13 +36,21 @@ impl Default for ScimStore {
 // SCIM User Operations
 // ============================================================================
 
-/// List all SCIM users.
-pub fn list_users(store: &ScimStore) -> ScimListResponse<ScimUser> {
+/// List SCIM users with optional pagination.
+/// start_index: 1-based offset (default 1)
+/// count: max results per page (default 100)
+pub fn list_users(
+    store: &ScimStore,
+    start_index: Option<usize>,
+    count: Option<usize>,
+) -> ScimListResponse<ScimUser> {
     let users = match store.users.read() {
         Ok(u) => u,
         Err(_) => return ScimListResponse::new(vec![]),
     };
-    let list: Vec<ScimUser> = users.values().cloned().collect();
+    let start = start_index.unwrap_or(1).saturating_sub(1); // Convert to 0-based
+    let limit = count.unwrap_or(100);
+    let list: Vec<ScimUser> = users.values().cloned().skip(start).take(limit).collect();
     ScimListResponse::new(list)
 }
 
@@ -159,13 +167,21 @@ pub fn delete_user(store: &ScimStore, id: &str) -> Result<(), ScimError> {
 // SCIM Group Operations
 // ============================================================================
 
-/// List all SCIM groups.
-pub fn list_groups(store: &ScimStore) -> ScimListResponse<ScimGroup> {
+/// List SCIM groups with optional pagination.
+/// start_index: 1-based offset (default 1)
+/// count: max results per page (default 100)
+pub fn list_groups(
+    store: &ScimStore,
+    start_index: Option<usize>,
+    count: Option<usize>,
+) -> ScimListResponse<ScimGroup> {
     let groups = match store.groups.read() {
         Ok(g) => g,
         Err(_) => return ScimListResponse::new(vec![]),
     };
-    let list: Vec<ScimGroup> = groups.values().cloned().collect();
+    let start = start_index.unwrap_or(1).saturating_sub(1); // Convert to 0-based
+    let limit = count.unwrap_or(100);
+    let list: Vec<ScimGroup> = groups.values().cloned().skip(start).take(limit).collect();
     ScimListResponse::new(list)
 }
 
@@ -270,7 +286,7 @@ mod tests {
     #[test]
     fn test_list_users_empty() {
         let store = ScimStore::new();
-        let resp = list_users(&store);
+        let resp = list_users(&store, None, None);
         assert_eq!(resp.total_results, 0);
     }
 
@@ -279,7 +295,7 @@ mod tests {
         let store = ScimStore::new();
         create_user(&store, ScimUser::new("a@test.com".to_string())).unwrap();
         create_user(&store, ScimUser::new("b@test.com".to_string())).unwrap();
-        let resp = list_users(&store);
+        let resp = list_users(&store, None, None);
         assert_eq!(resp.total_results, 2);
     }
 
@@ -345,7 +361,7 @@ mod tests {
         let store = ScimStore::new();
         create_group(&store, ScimGroup::new("Admins".to_string())).unwrap();
         create_group(&store, ScimGroup::new("Users".to_string())).unwrap();
-        let resp = list_groups(&store);
+        let resp = list_groups(&store, None, None);
         assert_eq!(resp.total_results, 2);
     }
 

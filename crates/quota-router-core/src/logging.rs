@@ -12,19 +12,14 @@ use tokio::sync::mpsc;
 // ============================================================================
 
 /// Log severity levels
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, PartialOrd, Ord, Default)]
 #[serde(rename_all = "lowercase")]
 pub enum LogLevel {
     Debug,
+    #[default]
     Info,
     Warn,
     Error,
-}
-
-impl Default for LogLevel {
-    fn default() -> Self {
-        Self::Info
-    }
 }
 
 impl std::fmt::Display for LogLevel {
@@ -363,7 +358,7 @@ impl StructuredLogger {
     }
 
     /// Log a cache hit event
-    pub async fn cache_hit(&self, request_id: &str, key: &str) {
+    pub async fn cache_hit(&self, request_id: &str, _key: &str) {
         self.log(LogEvent {
             timestamp: String::new(),
             level: LogLevel::Debug,
@@ -384,7 +379,7 @@ impl StructuredLogger {
     }
 
     /// Log a cache miss event
-    pub async fn cache_miss(&self, request_id: &str, key: &str) {
+    pub async fn cache_miss(&self, request_id: &str, _key: &str) {
         self.log(LogEvent {
             timestamp: String::new(),
             level: LogLevel::Debug,

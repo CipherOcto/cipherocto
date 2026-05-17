@@ -197,12 +197,12 @@ impl std::fmt::Display for CallbackError {
 
 /// Callback executor — non-blocking, async.
 pub struct CallbackExecutor {
-    /// Registered callbacks by type.
-    callbacks: HashMap<CallbackType, Vec<Arc<dyn CallbackTarget>>>,
+    /// Registered callbacks by type (shared with worker).
+    callbacks: Arc<std::sync::RwLock<HashMap<CallbackType, Vec<Arc<dyn CallbackTarget>>>>>,
     /// Channel for async callback delivery (bounded, configurable capacity).
     tx: mpsc::Sender<CallbackEvent>,
     /// Background worker handle.
-    worker: JoinHandle<()>,
+    worker: Option<JoinHandle<()>>,
     /// Dropped event counter.
     dropped_total: Arc<AtomicU64>,
 }
@@ -212,28 +212,28 @@ impl CallbackExecutor {
     pub fn new(capacity: usize) -> Self {
         let (tx, rx) = mpsc::channel(capacity);
         let dropped_total = Arc::new(AtomicU64::new(0));
-        let callbacks = HashMap::new();
+        let callbacks: Arc<std::sync::RwLock<HashMap<CallbackType, Vec<Arc<dyn CallbackTarget>>>>> =
+            Arc::new(std::sync::RwLock::new(HashMap::new()));
 
         let worker = tokio::spawn(Self::worker_loop(
             rx,
-            callbacks.clone(),
+            Arc::clone(&callbacks),
             Arc::clone(&dropped_total),
         ));
 
         Self {
             callbacks,
             tx,
-            worker,
+            worker: Some(worker),
             dropped_total,
         }
     }
 
     /// Register a callback target for a specific event type.
-    pub fn register(&mut self, callback_type: CallbackType, target: Arc<dyn CallbackTarget>) {
-        self.callbacks
-            .entry(callback_type)
-            .or_default()
-            .push(target);
+    pub fn register(&self, callback_type: CallbackType, target: Arc<dyn CallbackTarget>) {
+        if let Ok(mut callbacks) = self.callbacks.write() {
+            callbacks.entry(callback_type).or_default().push(target);
+        }
     }
 
     /// Fire a callback event (non-blocking).
@@ -258,18 +258,25 @@ impl CallbackExecutor {
     /// Failures are logged but never propagated to the request path.
     async fn worker_loop(
         mut rx: mpsc::Receiver<CallbackEvent>,
-        callbacks: HashMap<CallbackType, Vec<Arc<dyn CallbackTarget>>>,
+        callbacks: Arc<std::sync::RwLock<HashMap<CallbackType, Vec<Arc<dyn CallbackTarget>>>>>,
         dropped_total: Arc<AtomicU64>,
     ) {
         while let Some(event) = rx.recv().await {
-            if let Some(targets) = callbacks.get(&event.callback_type) {
+            let targets_snapshot = callbacks
+                .read()
+                .ok()
+                .and_then(|c| c.get(&event.callback_type).cloned());
+
+            if let Some(targets) = targets_snapshot {
                 let handles: Vec<_> = targets
                     .iter()
                     .map(|target| {
                         let target = Arc::clone(target);
                         let event = event.clone();
+                        let dropped_total = Arc::clone(&dropped_total);
                         tokio::spawn(async move {
                             if let Err(e) = target.fire(&event).await {
+                                dropped_total.fetch_add(1, Ordering::Relaxed);
                                 tracing::warn!(
                                     target = target.name(),
                                     event_id = %event.event_id,
@@ -286,13 +293,30 @@ impl CallbackExecutor {
                 }
             }
         }
-        let _ = dropped_total;
     }
 
     /// Shutdown the executor gracefully.
-    pub async fn shutdown(self) {
-        drop(self.tx);
-        let _ = self.worker.await;
+    pub async fn shutdown(&mut self) {
+        // Drop the sender to signal the worker to stop
+        // We need to replace it with a new channel to avoid moving out of self
+        let (tx, _rx) = mpsc::channel(1);
+        let old_tx = std::mem::replace(&mut self.tx, tx);
+        drop(old_tx);
+        // Wait for the worker to finish
+        if let Some(handle) = self.worker.take() {
+            let _ = handle.await;
+        }
+    }
+}
+
+impl Drop for CallbackExecutor {
+    fn drop(&mut self) {
+        // Abort the worker task if it's still running
+        if let Some(ref worker) = self.worker {
+            if !worker.is_finished() {
+                worker.abort();
+            }
+        }
     }
 }
 

@@ -123,8 +123,9 @@ fn resolve_variable(
         match f {
             TemplateFilter::Default(_) => {} // Already applied
             TemplateFilter::Truncate(n) => {
-                if value.len() > *n {
-                    value = value[..*n].to_string();
+                let char_count = value.chars().count();
+                if char_count > *n {
+                    value = value.chars().take(*n).collect();
                 }
             }
             TemplateFilter::Upper => {

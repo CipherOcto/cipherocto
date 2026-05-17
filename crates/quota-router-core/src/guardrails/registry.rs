@@ -20,22 +20,37 @@ pub struct GuardrailRegistry;
 impl GuardrailRegistry {
     /// Register a guardrail factory by name.
     pub fn register(name: &'static str, factory: GuardrailFactory) {
-        GUARDRAIL_REGISTRY.write().unwrap().insert(name, factory);
+        if let Ok(mut registry) = GUARDRAIL_REGISTRY.write() {
+            registry.insert(name, factory);
+        } else {
+            tracing::error!("Failed to acquire write lock on GUARDRAIL_REGISTRY");
+        }
     }
 
     /// Create a guardrail instance by name.
     pub fn create(name: &str) -> Option<Arc<dyn GuardrailChecker>> {
-        GUARDRAIL_REGISTRY.read().unwrap().get(name).map(|f| f())
+        GUARDRAIL_REGISTRY
+            .read()
+            .ok()
+            .and_then(|registry| registry.get(name).map(|f| f()))
     }
 
     /// List all registered guardrail names.
     pub fn list_guardrails() -> Vec<&'static str> {
-        GUARDRAIL_REGISTRY.read().unwrap().keys().copied().collect()
+        GUARDRAIL_REGISTRY
+            .read()
+            .ok()
+            .map(|registry| registry.keys().copied().collect())
+            .unwrap_or_default()
     }
 
     /// Check if a guardrail is registered.
     pub fn is_registered(name: &str) -> bool {
-        GUARDRAIL_REGISTRY.read().unwrap().contains_key(name)
+        GUARDRAIL_REGISTRY
+            .read()
+            .ok()
+            .map(|registry| registry.contains_key(name))
+            .unwrap_or(false)
     }
 }
 
@@ -218,6 +233,21 @@ impl GuardrailChecker for TokenLimitGuardrail {
             if estimated_tokens > max {
                 return super::GuardrailResult::Block {
                     reason: format!("Input exceeds token limit: {} > {}", estimated_tokens, max),
+                    guardrail: self.name().to_string(),
+                };
+            }
+        }
+        super::GuardrailResult::Allow
+    }
+
+    async fn check_output(&self, output: &str) -> super::GuardrailResult {
+        // Check output token limit
+        if let Some(max) = self.max_output_tokens {
+            // Rough estimate: 1 token ≈ 4 characters
+            let estimated_tokens = output.len() as u32 / 4;
+            if estimated_tokens > max {
+                return super::GuardrailResult::Block {
+                    reason: format!("Output exceeds token limit: {} > {}", estimated_tokens, max),
                     guardrail: self.name().to_string(),
                 };
             }

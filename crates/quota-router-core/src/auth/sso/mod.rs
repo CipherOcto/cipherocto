@@ -12,6 +12,16 @@ pub mod scim;
 pub mod scim_server;
 pub mod session;
 
+pub use self::blacklist::*;
+pub use self::jwt::*;
+pub use self::mapper::*;
+pub use self::oauth2::*;
+pub use self::pkce::*;
+pub use self::saml::*;
+pub use self::scim::*;
+pub use self::scim_server::*;
+pub use self::session::*;
+
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use thiserror::Error;

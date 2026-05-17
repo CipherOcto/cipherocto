@@ -132,7 +132,10 @@ impl HealthHandler {
         let response = LivenessResponse {
             status: HealthStatus::Ok,
         };
-        (200, serde_json::to_string(&response).unwrap())
+        (
+            200,
+            serde_json::to_string(&response).unwrap_or_else(|_| r#"{"status":"ok"}"#.to_string()),
+        )
     }
 
     /// Handle readiness probe — checks dependencies
@@ -177,7 +180,11 @@ impl HealthHandler {
             status: overall_status,
             checks,
         };
-        (status_code, serde_json::to_string(&response).unwrap())
+        (
+            status_code,
+            serde_json::to_string(&response)
+                .unwrap_or_else(|_| r#"{"status":"error","checks":{}}"#.to_string()),
+        )
     }
 }
 

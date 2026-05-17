@@ -45,8 +45,9 @@ use tokio::net::TcpListener;
 use tracing::info;
 
 /// Extract model name from dispatch map based on path.
+#[allow(dead_code)]
 fn extract_model_from_path(
-    path: &str,
+    _path: &str,
     dispatch_map: &HashMap<String, DispatchInfo>,
 ) -> Option<String> {
     dispatch_map.values().next().map(|d| d.model.clone())

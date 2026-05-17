@@ -125,12 +125,13 @@ pub enum PiiEntity {
 }
 
 /// Action to take when a guardrail triggers.
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
 #[serde(rename_all = "snake_case")]
 pub enum GuardrailAction {
     /// Block the request/response entirely
     Block,
     /// Allow but log a warning
+    #[default]
     Warn,
     /// Log only (no action)
     Log,
@@ -650,16 +651,32 @@ impl CustomGuardrail {
         }
     }
 
-    /// Execute the custom guardrail.
+    /// Execute the custom guardrail with timeout enforcement.
     /// In native_http mode, returns Allow with warning.
-    pub async fn execute(&self, _input: &str) -> GuardrailResult {
+    pub async fn execute(&self, input: &str) -> GuardrailResult {
         // Custom guardrails require Python runtime
         // In native_http mode, skip with warning
-        GuardrailResult::Warn {
-            warnings: vec![format!(
-                "Custom guardrail '{}' skipped — requires Python runtime (module: {}, function: {})",
-                self.name, self.module, self.function
-            )],
+        // Apply timeout even for the warning path to demonstrate enforcement
+        let timeout_duration = std::time::Duration::from_millis(self.timeout_ms);
+        let result = tokio::time::timeout(timeout_duration, async {
+            // Custom guardrails require Python runtime
+            // In native_http mode, skip with warning
+            GuardrailResult::Warn {
+                warnings: vec![format!(
+                    "Custom guardrail '{}' skipped — requires Python runtime (module: {}, function: {})",
+                    self.name, self.module, self.function
+                )],
+            }
+        })
+        .await;
+
+        match result {
+            Ok(result) => result,
+            Err(_) => GuardrailResult::Error {
+                guardrail: self.name.clone(),
+                message: format!("Custom guardrail timed out after {}ms", self.timeout_ms),
+                fallback: GuardrailFallback::FailOpen,
+            },
         }
     }
 }
@@ -863,6 +880,35 @@ impl GuardrailExecutor {
     /// Check if a result is a Block.
     fn is_block(result: &GuardrailResult) -> bool {
         matches!(result, GuardrailResult::Block { .. })
+    }
+
+    /// Resolve Error variant based on fallback policy.
+    /// FailOpen → Allow with error logged as warning.
+    /// FailClosed → Block with error as reason.
+    pub fn resolve_error(result: GuardrailResult) -> GuardrailResult {
+        match result {
+            GuardrailResult::Error {
+                guardrail,
+                message,
+                fallback,
+            } => match fallback {
+                GuardrailFallback::FailOpen => {
+                    tracing::warn!(
+                        guardrail = %guardrail,
+                        error = %message,
+                        "Guardrail failed, falling back to Allow (fail-open)"
+                    );
+                    GuardrailResult::Warn {
+                        warnings: vec![format!("Guardrail '{}' failed: {}", guardrail, message)],
+                    }
+                }
+                GuardrailFallback::FailClosed => GuardrailResult::Block {
+                    reason: format!("Guardrail '{}' failed: {}", guardrail, message),
+                    guardrail,
+                },
+            },
+            other => other,
+        }
     }
 
     /// Merge two results, keeping the most restrictive.

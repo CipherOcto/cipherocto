@@ -915,7 +915,9 @@ where
 
         ("GET", "/scim/v2/Users") => {
             let store = crate::auth::sso::scim_server::ScimStore::new();
-            return json_response(&crate::auth::sso::scim_server::list_users(&store));
+            return json_response(&crate::auth::sso::scim_server::list_users(
+                &store, None, None,
+            ));
         }
 
         ("POST", "/scim/v2/Users") => {
@@ -974,7 +976,9 @@ where
 
         ("GET", "/scim/v2/Groups") => {
             let store = crate::auth::sso::scim_server::ScimStore::new();
-            return json_response(&crate::auth::sso::scim_server::list_groups(&store));
+            return json_response(&crate::auth::sso::scim_server::list_groups(
+                &store, None, None,
+            ));
         }
 
         ("GET", p) if p.starts_with("/scim/v2/Users/") => {
@@ -1926,15 +1930,19 @@ fn handle_saml_metadata() -> Response<String> {
             .header("content-type", "application/xml")
             .body(metadata)
             .unwrap(),
-        Err(e) => json_response(
-            StatusCode::INTERNAL_SERVER_ERROR,
-            &serde_json::json!({"error": format!("SAML metadata generation failed: {}", e)}),
-        ),
+        Err(e) => Response::builder()
+            .status(StatusCode::INTERNAL_SERVER_ERROR)
+            .header("content-type", "application/json")
+            .body(
+                serde_json::json!({"error": format!("SAML metadata generation failed: {}", e)})
+                    .to_string(),
+            )
+            .unwrap(),
     }
 }
 
 /// Handle SAML callback (POST /auth/sso/:provider/callback)
-fn handle_saml_callback(provider_id: &str, body: &[u8]) -> Response<String> {
+fn handle_saml_callback(provider_id: &str, _body: &[u8]) -> Response<String> {
     // In production: decode base64 SAMLResponse, parse with SamlAssertionParserImpl
     Response::builder()
         .status(StatusCode::OK)

@@ -1920,13 +1920,17 @@ fn handle_saml_metadata() -> Response<String> {
     let acs_url = "https://example.com/auth/sso/saml/callback";
     let base_url = "https://example.com";
 
-    let metadata = generate_sp_metadata(sp_entity_id, acs_url, base_url);
-
-    Response::builder()
-        .status(StatusCode::OK)
-        .header("content-type", "application/xml")
-        .body(metadata)
-        .unwrap()
+    match generate_sp_metadata(sp_entity_id, acs_url, base_url) {
+        Ok(metadata) => Response::builder()
+            .status(StatusCode::OK)
+            .header("content-type", "application/xml")
+            .body(metadata)
+            .unwrap(),
+        Err(e) => json_response(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            &serde_json::json!({"error": format!("SAML metadata generation failed: {}", e)}),
+        ),
+    }
 }
 
 /// Handle SAML callback (POST /auth/sso/:provider/callback)

@@ -87,7 +87,11 @@ impl TokenValidator {
             return Err(SsoError::TokenAlgorithmUnsupported(header.alg));
         }
 
-        // 4. Decode payload (without verification for now — we need claims first)
+        // 4. Decode payload
+        // TODO(RFC-0949): Signature verification requires JWKS key matching by kid,
+        // then RSA/EC signature verification. This is a Phase 2 feature.
+        // Current implementation validates: algorithm, audience, issuer, expiry, not-before.
+        // Tokens with forged signatures will pass until signature verification is implemented.
         let claims = self.decode_payload(token)?;
 
         // 5. Validate audience

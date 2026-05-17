@@ -223,9 +223,6 @@ impl SamlAssertionParserImpl {
                         "AttributeValue" | "saml2:AttributeValue" | "saml:AttributeValue" => {
                             // Will read text in next event
                         }
-                        "SessionIndex" | "saml2:SessionIndex" | "saml:SessionIndex" => {
-                            // Will read text in next event
-                        }
                         _ => {}
                     }
                 }
@@ -415,14 +412,20 @@ impl SamlAssertionParserImpl {
 // ============================================================================
 
 /// Generate SP metadata XML for SAML configuration
-pub fn generate_sp_metadata(sp_entity_id: &str, acs_url: &str, base_url: &str) -> String {
+pub fn generate_sp_metadata(
+    sp_entity_id: &str,
+    acs_url: &str,
+    base_url: &str,
+) -> Result<String, SsoError> {
     let mut writer = Writer::new(Cursor::new(Vec::new()));
 
     // EntityDescriptor
     let mut entity_desc = BytesStart::new("EntityDescriptor");
     entity_desc.push_attribute(("xmlns", "urn:oasis:names:tc:SAML:2.0:metadata"));
     entity_desc.push_attribute(("entityID", sp_entity_id));
-    writer.write_event(Event::Start(entity_desc)).unwrap();
+    writer
+        .write_event(Event::Start(entity_desc))
+        .map_err(|e| SsoError::ProviderError(format!("XML write error: {}", e)))?;
 
     // SPSSODescriptor
     let mut sp_sso = BytesStart::new("SPSSODescriptor");
@@ -432,7 +435,9 @@ pub fn generate_sp_metadata(sp_entity_id: &str, acs_url: &str, base_url: &str) -
         "protocolSupportEnumeration",
         "urn:oasis:names:tc:SAML:2.0:protocol",
     ));
-    writer.write_event(Event::Start(sp_sso)).unwrap();
+    writer
+        .write_event(Event::Start(sp_sso))
+        .map_err(|e| SsoError::ProviderError(format!("XML write error: {}", e)))?;
 
     // SingleLogoutService
     let slo_url = format!("{}/auth/sso/saml/slo", base_url);
@@ -442,7 +447,9 @@ pub fn generate_sp_metadata(sp_entity_id: &str, acs_url: &str, base_url: &str) -
         "urn:oasis:names:tc:SAML:2.0:bindings:HTTP-Redirect",
     ));
     slo.push_attribute(("Location", slo_url.as_str()));
-    writer.write_event(Event::Empty(slo)).unwrap();
+    writer
+        .write_event(Event::Empty(slo))
+        .map_err(|e| SsoError::ProviderError(format!("XML write error: {}", e)))?;
 
     // AssertionConsumerService
     let mut acs = BytesStart::new("AssertionConsumerService");
@@ -450,17 +457,20 @@ pub fn generate_sp_metadata(sp_entity_id: &str, acs_url: &str, base_url: &str) -
     acs.push_attribute(("Location", acs_url));
     acs.push_attribute(("index", "0"));
     acs.push_attribute(("isDefault", "true"));
-    writer.write_event(Event::Empty(acs)).unwrap();
+    writer
+        .write_event(Event::Empty(acs))
+        .map_err(|e| SsoError::ProviderError(format!("XML write error: {}", e)))?;
 
     // Close tags
     writer
         .write_event(Event::End(BytesEnd::new("SPSSODescriptor")))
-        .unwrap();
+        .map_err(|e| SsoError::ProviderError(format!("XML write error: {}", e)))?;
     writer
         .write_event(Event::End(BytesEnd::new("EntityDescriptor")))
-        .unwrap();
+        .map_err(|e| SsoError::ProviderError(format!("XML write error: {}", e)))?;
 
-    String::from_utf8(writer.into_inner().into_inner()).unwrap()
+    let bytes = writer.into_inner().into_inner();
+    String::from_utf8(bytes).map_err(|e| SsoError::ProviderError(format!("UTF-8 error: {}", e)))
 }
 
 // ============================================================================
@@ -592,8 +602,8 @@ pub fn parse_idp_metadata(xml: &str) -> Result<IdpMetadata, SsoError> {
 pub fn generate_authn_request(
     sp_entity_id: &str,
     acs_url: &str,
-    idp_sso_url: &str,
-) -> (String, String) {
+    _idp_sso_url: &str,
+) -> Result<(String, String), SsoError> {
     let request_id = format!("_{}", uuid_simple());
     let issue_instant = Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string();
 
@@ -609,18 +619,22 @@ pub fn generate_authn_request(
         "ProtocolBinding",
         "urn:oasis:names:tc:SAML:2.0:bindings:HTTP-POST",
     ));
-    writer.write_event(Event::Start(authn_req)).unwrap();
+    writer
+        .write_event(Event::Start(authn_req))
+        .map_err(|e| SsoError::ProviderError(format!("XML write error: {}", e)))?;
 
     // Issuer
     let mut issuer = BytesStart::new("Issuer");
     issuer.push_attribute(("xmlns", "urn:oasis:names:tc:SAML:2.0:assertion"));
-    writer.write_event(Event::Start(issuer)).unwrap();
+    writer
+        .write_event(Event::Start(issuer))
+        .map_err(|e| SsoError::ProviderError(format!("XML write error: {}", e)))?;
     writer
         .write_event(Event::Text(BytesText::new(sp_entity_id)))
-        .unwrap();
+        .map_err(|e| SsoError::ProviderError(format!("XML write error: {}", e)))?;
     writer
         .write_event(Event::End(BytesEnd::new("Issuer")))
-        .unwrap();
+        .map_err(|e| SsoError::ProviderError(format!("XML write error: {}", e)))?;
 
     // NameIDPolicy
     let mut name_id_policy = BytesStart::new("NameIDPolicy");
@@ -629,14 +643,18 @@ pub fn generate_authn_request(
         "urn:oasis:names:tc:SAML:2.0:nameid-format:unspecified",
     ));
     name_id_policy.push_attribute(("AllowCreate", "true"));
-    writer.write_event(Event::Empty(name_id_policy)).unwrap();
+    writer
+        .write_event(Event::Empty(name_id_policy))
+        .map_err(|e| SsoError::ProviderError(format!("XML write error: {}", e)))?;
 
     writer
         .write_event(Event::End(BytesEnd::new("AuthnRequest")))
-        .unwrap();
+        .map_err(|e| SsoError::ProviderError(format!("XML write error: {}", e)))?;
 
-    let xml = String::from_utf8(writer.into_inner().into_inner()).unwrap();
-    (request_id, xml)
+    let bytes = writer.into_inner().into_inner();
+    let xml = String::from_utf8(bytes)
+        .map_err(|e| SsoError::ProviderError(format!("UTF-8 error: {}", e)))?;
+    Ok((request_id, xml))
 }
 
 /// Simple UUID-like identifier (not cryptographically secure)
@@ -674,7 +692,8 @@ mod tests {
             "https://example.com/saml",
             "https://example.com/acs",
             "https://example.com",
-        );
+        )
+        .unwrap();
         assert!(metadata.contains("entityID=\"https://example.com/saml\""));
         assert!(metadata.contains("Location=\"https://example.com/acs\""));
         assert!(metadata.contains("SingleLogoutService"));
@@ -687,7 +706,8 @@ mod tests {
             "https://example.com/saml",
             "https://example.com/acs",
             "https://idp.example.com/sso",
-        );
+        )
+        .unwrap();
         assert!(id.starts_with('_'));
         assert!(xml.contains("AuthnRequest"));
         assert!(xml.contains("https://example.com/saml"));

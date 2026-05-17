@@ -2,7 +2,7 @@
 
 ## Status
 
-Draft (v2 — Round 1 adversarial review fixes)
+Accepted (v2 — Round 1 adversarial review fixes)
 
 ## Authors
 

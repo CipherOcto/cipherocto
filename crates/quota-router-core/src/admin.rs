@@ -276,6 +276,14 @@ where
             }
         }
 
+        // GET /spend/logs - query spend logs
+        ("GET", "/spend/logs") => {
+            return handle_spend_logs(storage);
+        }
+        // GET /global/spend - aggregate spend
+        ("GET", "/global/spend") => {
+            return handle_global_spend(storage);
+        }
         // GET /key/info - key info from token
         ("GET", "/key/info") => {
             return handle_get_key_info(storage, &parts.headers);
@@ -766,4 +774,28 @@ fn extract_query_param<'a>(uri: &'a Uri, param: &str) -> Option<&'a str> {
 fn extract_key_id_from_regenerate_path(path: &str) -> Option<&str> {
     let without_suffix = path.trim_end_matches("/regenerate");
     without_suffix.strip_prefix("/key/")
+}
+
+// =============================================================================
+// Spend tracking handlers (RFC-0904)
+// =============================================================================
+
+fn handle_spend_logs(_storage: &StoolapKeyStorage) -> Response<String> {
+    // TODO: Implement spend log querying when storage method is available
+    Response::builder()
+        .status(StatusCode::OK)
+        .header("content-type", "application/json")
+        .body(
+            r#"{"object":"list","data":[],"message":"Spend log querying coming soon"}"#.to_string(),
+        )
+        .unwrap()
+}
+
+fn handle_global_spend(_storage: &StoolapKeyStorage) -> Response<String> {
+    // TODO: Implement global spend aggregation when storage method is available
+    Response::builder()
+        .status(StatusCode::OK)
+        .header("content-type", "application/json")
+        .body(r#"{"total_spend":0,"message":"Global spend aggregation coming soon"}"#.to_string())
+        .unwrap()
 }

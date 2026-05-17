@@ -22,6 +22,7 @@ Define enterprise Single Sign-On (SSO) integration for quota-router that support
 
 - RFC-0903 (Economics): Virtual API Key System
 - RFC-0932 (Economics): Team Management
+- `chrono` crate (time handling)
 
 **Optional:**
 

@@ -216,9 +216,10 @@ Variable values MUST be treated as literal text, not template syntax. The templa
 impl TemplateEngine {
     /// Sanitize variable value to prevent injection
     fn sanitize_value(value: &str) -> String {
-        // 1. Reject if value contains {{ (prevents nested template injection)
-        // 2. HTML-escape special characters
-        // 3. Truncate to max length (10KB)
+        // 1. HTML-escape special characters
+        // 2. Truncate to max length (10KB)
+        // Note: Values containing {{ are rendered literally (not rejected)
+        // because the template engine uses single-pass rendering (no re-scan)
     }
 }
 ```

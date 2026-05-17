@@ -216,7 +216,7 @@ pub struct KeyMetadata {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CallbackTiming {
     pub request_start: DateTime<Utc>,
-    pub request_end: DateTime<Utc>,
+    pub request_end: Option<DateTime<Utc>>,
     pub total_ms: u64,
     pub provider_latency_ms: u64,
     pub queue_time_ms: u64,

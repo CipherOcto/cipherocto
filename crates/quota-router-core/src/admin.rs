@@ -284,6 +284,26 @@ where
         ("GET", "/global/spend") => {
             return handle_global_spend(storage);
         }
+        // GET /team/list - list all teams
+        ("GET", "/team/list") => {
+            return handle_list_teams(storage);
+        }
+        // POST /team/member_add - add team member
+        ("POST", "/team/member_add") => {
+            // TODO: Implement when team member storage is available
+            return Response::builder()
+                .status(StatusCode::NOT_IMPLEMENTED)
+                .body("Team member management coming soon".to_string())
+                .unwrap();
+        }
+        // POST /team/member_delete - remove team member
+        ("POST", "/team/member_delete") => {
+            // TODO: Implement when team member storage is available
+            return Response::builder()
+                .status(StatusCode::NOT_IMPLEMENTED)
+                .body("Team member management coming soon".to_string())
+                .unwrap();
+        }
         // GET /key/info - key info from token
         ("GET", "/key/info") => {
             return handle_get_key_info(storage, &parts.headers);
@@ -789,6 +809,26 @@ fn handle_spend_logs(_storage: &StoolapKeyStorage) -> Response<String> {
             r#"{"object":"list","data":[],"message":"Spend log querying coming soon"}"#.to_string(),
         )
         .unwrap()
+}
+
+fn handle_list_teams(storage: &StoolapKeyStorage) -> Response<String> {
+    match storage.list_teams() {
+        Ok(teams) => {
+            let body = serde_json::json!({
+                "object": "list",
+                "data": teams,
+            });
+            Response::builder()
+                .status(StatusCode::OK)
+                .header("content-type", "application/json")
+                .body(body.to_string())
+                .unwrap()
+        }
+        Err(e) => Response::builder()
+            .status(StatusCode::INTERNAL_SERVER_ERROR)
+            .body(format!("Error: {}", e))
+            .unwrap(),
+    }
 }
 
 fn handle_global_spend(_storage: &StoolapKeyStorage) -> Response<String> {

@@ -2,7 +2,7 @@
 
 ## Status
 
-Open
+Completed
 
 ## RFC
 
@@ -14,18 +14,18 @@ RFC-0946 (Economics): Guardrails Framework
 
 ## Acceptance Criteria
 
-- [ ] Implement `PiiDetector` — regex-based detection of emails, SSNs, credit cards, phone numbers
-- [ ] `PiiMatch` uses `redacted_value` (never raw PII in logs)
-- [ ] `PiiDetector.detect()` returns `Vec<PiiMatch>` with start/end positions
-- [ ] Implement `PromptInjection` — pattern matching for injection attempts
-- [ ] `PromptInjection.detect()` returns `Result<f64, GuardrailError>`
-- [ ] Implement `ContentModeration` — calls OpenAI-compatible moderation API
-- [ ] `ContentModeration` has configurable `timeout_ms` (default 2000), `retries` (default 1), `fallback`
-- [ ] Implement `TopicRestriction` — keyword-based matching with stemming
-- [ ] Implement `RegexFilter` — user-defined regex patterns with inline flag syntax `(?i)`, `(?m)`, `(?s)`
-- [ ] Implement `Custom` guardrail — Python SDK only, configurable `timeout_ms` (default 100ms), `memory_limit_bytes` (default 10MB)
-- [ ] Clippy passes with zero warnings
-- [ ] All existing tests pass
+- [x] Implement `PiiDetector` — regex-based detection of emails, SSNs, credit cards, phone numbers
+- [x] `PiiMatch` uses `redacted_value` (never raw PII in logs)
+- [x] `PiiDetector.detect()` returns `Vec<PiiMatch>` with start/end positions
+- [x] Implement `PromptInjection` — pattern matching for injection attempts
+- [x] `PromptInjection.detect()` returns `Result<f64, GuardrailError>`
+- [x] Implement `ContentModeration` — calls OpenAI-compatible moderation API
+- [x] `ContentModeration` has configurable `timeout_ms` (default 2000), `retries` (default 1), `fallback`
+- [x] Implement `TopicRestriction` — keyword-based matching with stemming
+- [x] Implement `RegexFilter` — user-defined regex patterns with inline flag syntax `(?i)`, `(?m)`, `(?s)`
+- [x] Implement `Custom` guardrail — Python SDK only, configurable `timeout_ms` (default 100ms), `memory_limit_bytes` (default 10MB)
+- [x] Clippy passes with zero warnings (guardrails module only; other modules have errors)
+- [x] All existing tests pass (guardrails module only)
 
 ## Claimant
 

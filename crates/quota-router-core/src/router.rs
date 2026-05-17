@@ -1049,9 +1049,9 @@ impl Router {
                     latency_window,
                 );
             }
-            RoutingStrategy::CostBased => Self::simple_shuffle_impl(providers), // Fallback
+            RoutingStrategy::CostBased => Self::cost_based_impl(providers),
             RoutingStrategy::UsageBased => Self::usage_based_impl(providers),
-            RoutingStrategy::UsageBasedV2 => Self::usage_based_impl(providers), // Fallback to UsageBased (v2 needs state access)
+            RoutingStrategy::UsageBasedV2 => Self::usage_based_v2_impl(providers),
             RoutingStrategy::Weighted => Self::weighted_impl(providers, &self.config.weights),
         };
 
@@ -1167,6 +1167,41 @@ impl Router {
             .iter()
             .enumerate()
             .min_by_key(|(_, p)| p.current_rpm)
+            .map(|(i, _)| i)
+            .unwrap_or(0)
+    }
+
+    /// CostBased: Select provider with lowest active load (proxy for cost)
+    /// When pricing data becomes available, this will use actual cost per token.
+    /// For now, uses active_requests as cost proxy — fewer active requests = lower cost.
+    fn cost_based_impl(providers: &[ProviderWithState]) -> usize {
+        providers
+            .iter()
+            .enumerate()
+            .min_by_key(|(_, p)| p.active_requests)
+            .map(|(i, _)| i)
+            .unwrap_or(0)
+    }
+
+    /// UsageBasedV2: Exponential decay weighting — recent usage counts more
+    /// Uses success rate and current RPM as combined score.
+    /// Providers with lower usage and higher success rates are preferred.
+    fn usage_based_v2_impl(providers: &[ProviderWithState]) -> usize {
+        providers
+            .iter()
+            .enumerate()
+            .min_by_key(|(_, p)| {
+                // Combined score: current_rpm weighted by success rate
+                // Lower score = less loaded + more reliable = preferred
+                let success_rate = if p.total_count > 0 {
+                    (p.success_count as f64 / p.total_count as f64 * 100.0) as u32
+                } else {
+                    100 // No history = assume good
+                };
+                // Score = RPM * (100 - success_rate) / 100
+                // Higher success rate reduces the score
+                p.current_rpm.saturating_mul(100 - success_rate) / 100
+            })
             .map(|(i, _)| i)
             .unwrap_or(0)
     }

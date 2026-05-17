@@ -49,3 +49,4 @@ cocoindex_main.py
 
 # Python lockfile
 uv.lock
+.env

@@ -78,6 +78,20 @@ impl super::HttpProvider for OllamaProvider {
             body["options"]["num_predict"] = serde_json::json!(max_tokens);
         }
 
+        // Function calling fields (RFC-0939)
+        if let Some(tools) = &request.tools {
+            body["tools"] = serde_json::to_value(tools).unwrap_or_default();
+        }
+        if let Some(tool_choice) = &request.tool_choice {
+            body["tool_choice"] = serde_json::to_value(tool_choice).unwrap_or_default();
+        }
+        if let Some(response_format) = &request.response_format {
+            body["response_format"] = serde_json::to_value(response_format).unwrap_or_default();
+        }
+        if let Some(seed) = request.seed {
+            body["seed"] = serde_json::json!(seed);
+        }
+
         let resp = self
             .client
             .post(&url)

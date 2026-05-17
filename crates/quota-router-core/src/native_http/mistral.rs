@@ -50,7 +50,7 @@ impl super::HttpProvider for MistralProvider {
     ) -> Result<HttpCompletionResponse, ProviderError> {
         let url = format!("{}/chat/completions", self.api_base);
 
-        let body = serde_json::json!({
+        let mut body = serde_json::json!({
             "model": request.model,
             "messages": request.messages.iter().map(|m| {
                 serde_json::json!({
@@ -59,6 +59,20 @@ impl super::HttpProvider for MistralProvider {
                 })
             }).collect::<Vec<_>>()
         });
+
+        // Function calling fields (RFC-0939)
+        if let Some(tools) = &request.tools {
+            body["tools"] = serde_json::to_value(tools).unwrap_or_default();
+        }
+        if let Some(tool_choice) = &request.tool_choice {
+            body["tool_choice"] = serde_json::to_value(tool_choice).unwrap_or_default();
+        }
+        if let Some(response_format) = &request.response_format {
+            body["response_format"] = serde_json::to_value(response_format).unwrap_or_default();
+        }
+        if let Some(seed) = request.seed {
+            body["seed"] = serde_json::json!(seed);
+        }
 
         let resp = self
             .client

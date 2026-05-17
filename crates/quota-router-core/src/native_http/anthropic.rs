@@ -108,6 +108,25 @@ impl super::HttpProvider for AnthropicProvider {
             body["system"] = serde_json::json!(system);
         }
 
+        // Function calling fields (RFC-0939)
+        if let Some(tools) = &request.tools {
+            // Convert OpenAI tool format to Anthropic format
+            let anthropic_tools: Vec<serde_json::Value> = tools
+                .iter()
+                .map(|t| {
+                    serde_json::json!({
+                        "name": t.function.name,
+                        "description": t.function.description,
+                        "input_schema": t.function.parameters
+                    })
+                })
+                .collect();
+            body["tools"] = serde_json::json!(anthropic_tools);
+        }
+        if let Some(tool_choice) = &request.tool_choice {
+            body["tool_choice"] = serde_json::to_value(tool_choice).unwrap_or_default();
+        }
+
         let resp = self
             .client
             .post(&url)

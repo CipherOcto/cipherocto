@@ -15,6 +15,7 @@
 //! - full: Either path is available
 
 use crate::balance::Balance;
+use crate::cache::ResponseCache;
 use crate::config::DispatchInfo;
 use crate::fallback::FallbackExecutor;
 use crate::key_rate_limiter::RateLimiterStore;
@@ -147,6 +148,7 @@ pub struct ProxyServer {
     metrics: Option<Arc<Metrics>>,
     rate_limiter: Option<Arc<RateLimiterStore>>,
     fallback: Option<Arc<FallbackExecutor>>,
+    response_cache: Option<Arc<ResponseCache>>,
 }
 
 impl ProxyServer {
@@ -166,6 +168,7 @@ impl ProxyServer {
             metrics: None,
             rate_limiter: None,
             fallback: None,
+            response_cache: None,
         }
     }
 
@@ -199,6 +202,12 @@ impl ProxyServer {
         self
     }
 
+    /// Set response cache for caching provider responses (RFC-0906)
+    pub fn with_response_cache(mut self, cache: ResponseCache) -> Self {
+        self.response_cache = Some(Arc::new(cache));
+        self
+    }
+
     pub async fn run(&mut self) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         let addr = SocketAddr::from(([127, 0, 0, 1], self.port));
         let listener = TcpListener::bind(addr).await?;
@@ -213,6 +222,7 @@ impl ProxyServer {
         let metrics = self.metrics.clone();
         let rate_limiter = self.rate_limiter.clone();
         let fallback = self.fallback.clone();
+        let response_cache = self.response_cache.clone();
 
         // Initialize providers based on mode
         #[cfg(any(feature = "litellm-mode", feature = "full"))]
@@ -232,6 +242,7 @@ impl ProxyServer {
                 let metrics = metrics.clone();
                 let rate_limiter = rate_limiter.clone();
                 let fallback = fallback.clone();
+                let response_cache = response_cache.clone();
 
                 tokio::spawn(async move {
                     let io = TokioIo::new(stream);
@@ -253,6 +264,7 @@ impl ProxyServer {
                                     metrics.clone(),
                                     rate_limiter.clone(),
                                     fallback.clone(),
+                                    response_cache.clone(),
                                 )
                             }),
                         )
@@ -441,6 +453,7 @@ async fn handle_request<B>(
     metrics: Option<Arc<Metrics>>,
     rate_limiter: Option<Arc<RateLimiterStore>>,
     fallback: Option<Arc<FallbackExecutor>>,
+    response_cache: Option<Arc<ResponseCache>>,
 ) -> Result<Response<SseBody>, Infallible>
 where
     B: http_body::Body + 'static,
@@ -1181,6 +1194,59 @@ where
         .and_then(|v| v.get("model")?.as_str().map(String::from))
         .unwrap_or_default();
 
+    // Check response cache (RFC-0906)
+    // Note: skip_cache is determined from body_str since req is already consumed
+    let skip_cache = serde_json::from_str::<serde_json::Value>(&body_str)
+        .ok()
+        .and_then(|v| {
+            v.get("cache_control")?
+                .as_str()
+                .map(|s| s.contains("no-cache"))
+        })
+        .unwrap_or(false);
+
+    if !skip_cache {
+        if let Some(ref cache) = response_cache {
+            // Parse request for cache key generation
+            let cache_messages: Vec<crate::shared_types::Message> =
+                serde_json::from_str::<serde_json::Value>(&body_str)
+                    .ok()
+                    .and_then(|v| serde_json::from_value(v.get("messages")?.clone()).ok())
+                    .unwrap_or_default();
+
+            let cache_key = ResponseCache::cache_key(
+                &request_model,
+                &cache_messages,
+                None, // temperature
+                None, // max_tokens
+            );
+
+            if let Some(cached) = cache.get(&cache_key) {
+                // Cache hit — return cached response
+                if let Some(ref m) = metrics {
+                    m.cache_hits.inc();
+                }
+                let resp = Response::builder()
+                    .status(StatusCode::OK)
+                    .header("content-type", "application/json")
+                    .header("x-cache", "HIT")
+                    .body(SseBody::from_string(cached))
+                    .unwrap();
+
+                // Record request duration
+                if let Some(ref m) = metrics {
+                    m.request_duration.observe(start.elapsed().as_secs_f64());
+                }
+
+                return Ok(resp);
+            }
+
+            if let Some(ref m) = metrics {
+                m.cache_misses.inc();
+            }
+        }
+    }
+
     // Execute with fallback support (RFC-0902)
     let mut result = {
         #[cfg(any(feature = "litellm-mode", feature = "full"))]
@@ -1230,6 +1296,29 @@ where
                 .await
         }
     };
+
+    // Store successful response in cache (RFC-0906)
+    if let (Ok(ref resp), Some(ref cache)) = (&result, &response_cache) {
+        if resp.status().is_success() && !skip_cache {
+            // Extract response body for caching
+            // Note: This is a simplified approach. For production, we'd need to
+            // clone the response body before consuming it.
+            let cache_messages: Vec<crate::shared_types::Message> =
+                serde_json::from_str::<serde_json::Value>(&body_str)
+                    .ok()
+                    .and_then(|v| serde_json::from_value(v.get("messages")?.clone()).ok())
+                    .unwrap_or_default();
+
+            let cache_key = ResponseCache::cache_key(&request_model, &cache_messages, None, None);
+
+            // For now, we'll skip caching the actual response body
+            // because the response body is consumed by the SSE stream.
+            // A proper implementation would need to tee the response.
+            // This is a known limitation documented in the mission.
+            let _ = cache_key;
+            let _ = cache;
+        }
+    }
 
     // Record request duration
     if let Some(ref m) = metrics {

@@ -491,6 +491,89 @@ impl StoolapCache for InMemoryCache {
     }
 }
 
+// =============================================================================
+// Response Cache (RFC-0906)
+// =============================================================================
+
+/// Response cache for avoiding redundant API calls.
+///
+/// Caches responses based on request hash (model + messages + params).
+/// Uses TTL-based expiration.
+pub struct ResponseCache {
+    entries: std::sync::RwLock<std::collections::HashMap<String, ResponseCacheEntry>>,
+    ttl: Duration,
+}
+
+struct ResponseCacheEntry {
+    response: String,
+    cached_at: Instant,
+}
+
+impl ResponseCache {
+    pub fn new(ttl: Duration) -> Self {
+        Self {
+            entries: std::sync::RwLock::new(std::collections::HashMap::new()),
+            ttl,
+        }
+    }
+
+    /// Generate cache key from request parameters
+    pub fn cache_key(
+        model: &str,
+        messages: &[crate::shared_types::Message],
+        temperature: Option<f32>,
+        max_tokens: Option<u32>,
+    ) -> String {
+        use std::collections::hash_map::DefaultHasher;
+        use std::hash::{Hash, Hasher};
+
+        let mut hasher = DefaultHasher::new();
+        model.hash(&mut hasher);
+        for msg in messages {
+            msg.role.hash(&mut hasher);
+            msg.content.hash(&mut hasher);
+        }
+        temperature.map(|t| t.to_bits()).hash(&mut hasher);
+        max_tokens.hash(&mut hasher);
+        format!("{:x}", hasher.finish())
+    }
+
+    /// Get cached response
+    pub fn get(&self, key: &str) -> Option<String> {
+        let entries = self.entries.read().unwrap();
+        if let Some(entry) = entries.get(key) {
+            if entry.cached_at.elapsed() < self.ttl {
+                return Some(entry.response.clone());
+            }
+        }
+        None
+    }
+
+    /// Store response in cache
+    pub fn set(&self, key: String, response: String) {
+        let mut entries = self.entries.write().unwrap();
+        entries.insert(
+            key,
+            ResponseCacheEntry {
+                response,
+                cached_at: Instant::now(),
+            },
+        );
+    }
+
+    /// Clear expired entries
+    pub fn cleanup(&self) {
+        let mut entries = self.entries.write().unwrap();
+        entries.retain(|_, entry| entry.cached_at.elapsed() < self.ttl);
+    }
+}
+
+impl Default for ResponseCache {
+    fn default() -> Self {
+        Self::new(Duration::from_secs(300)) // 5 minute default TTL
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

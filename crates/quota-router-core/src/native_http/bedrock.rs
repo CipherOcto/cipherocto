@@ -2,10 +2,12 @@
 
 use super::{
     HttpCompletionRequest, HttpCompletionResponse, HttpEmbeddingRequest, HttpEmbeddingResponse,
-    ProviderError,
+    ProviderError, StreamingChunk, StreamingResponse,
 };
 use async_trait::async_trait;
+use futures::StreamExt;
 use reqwest::Client;
+use tokio::sync::mpsc;
 
 pub struct BedrockProvider {
     client: Client,
@@ -49,6 +51,10 @@ impl super::HttpProvider for BedrockProvider {
             "meta.llama3-1-8b-instruct",
             "mistral.mistral-large-2407",
         ]
+    }
+
+    fn supports_streaming(&self) -> bool {
+        true
     }
 
     async fn completion(
@@ -134,6 +140,181 @@ impl super::HttpProvider for BedrockProvider {
 
     fn routing_weight(&self) -> u32 {
         4
+    }
+
+    async fn streaming_completion(
+        &self,
+        request: &HttpCompletionRequest,
+        api_key: &str,
+    ) -> Result<StreamingResponse, ProviderError> {
+        // Bedrock uses invoke-with-response-stream endpoint
+        let url = format!(
+            "https://bedrock.{}.amazonaws.com/model/{}/invoke-with-response-stream",
+            self.region, request.model
+        );
+
+        // Build request body for Bedrock (varies by provider)
+        let body = serde_json::json!({
+            "messages": request.messages.iter().map(|m| {
+                serde_json::json!({
+                    "role": m.role,
+                    "content": m.content
+                })
+            }).collect::<Vec<_>>(),
+            "anthropic_version": "bedrock-2023-05-31"
+        });
+
+        let resp = self
+            .client
+            .post(&url)
+            .header("x-amz-client-id", api_key)
+            .header("Content-Type", "application/json")
+            .json(&body)
+            .send()
+            .await
+            .map_err(|e| ProviderError::Network(e.to_string()))?;
+
+        if !resp.status().is_success() {
+            let status = resp.status();
+            let text = resp.text().await.unwrap_or_default();
+            return Err(ProviderError::InvalidResponse(format!(
+                "HTTP {}: {}",
+                status, text
+            )));
+        }
+
+        let (tx, rx) = mpsc::channel(100);
+        let model = request.model.clone();
+
+        tokio::spawn(async move {
+            let mut stream = resp.bytes_stream();
+            let chunk_id = format!("bedrock-{}", uuid::Uuid::new_v4());
+            let created = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_secs();
+            let mut buffer = Vec::new();
+
+            while let Some(chunk_result) = stream.next().await {
+                match chunk_result {
+                    Ok(bytes) => {
+                        buffer.extend_from_slice(&bytes);
+                        // AWS EventStream format: process binary-framed messages
+                        // Each message has: total_length (4 bytes), headers_length (4 bytes),
+                        // prelude_crc (4 bytes), headers, payload, message_crc (4 bytes)
+                        while buffer.len() >= 12 {
+                            let total_len =
+                                u32::from_be_bytes([buffer[0], buffer[1], buffer[2], buffer[3]])
+                                    as usize;
+
+                            if buffer.len() < total_len {
+                                break; // Need more data
+                            }
+
+                            let message_bytes: Vec<u8> = buffer.drain(..total_len).collect();
+
+                            // Extract payload (after prelude + headers)
+                            let headers_len = u32::from_be_bytes([
+                                message_bytes[4],
+                                message_bytes[5],
+                                message_bytes[6],
+                                message_bytes[7],
+                            ]) as usize;
+
+                            let payload_start = 12 + headers_len; // prelude(8) + prelude_crc(4) + headers
+                            if payload_start >= message_bytes.len() {
+                                continue;
+                            }
+
+                            let payload = &message_bytes[payload_start..message_bytes.len() - 4]; // exclude message_crc
+
+                            // Parse the JSON payload
+                            if let Ok(json_str) = std::str::from_utf8(payload) {
+                                if let Ok(event) =
+                                    serde_json::from_str::<serde_json::Value>(json_str)
+                                {
+                                    // Check for content_block_delta events
+                                    if let Some(event_type) =
+                                        event.get("type").and_then(|t| t.as_str())
+                                    {
+                                        match event_type {
+                                            "content_block_delta" => {
+                                                if let Some(delta) = event.get("delta") {
+                                                    if let Some(text) =
+                                                        delta.get("text").and_then(|t| t.as_str())
+                                                    {
+                                                        let openai_chunk = format!(
+                                                            "data: {{\"id\":\"{}\",\"object\":\"chat.completion.chunk\",\"created\":{},\"model\":\"{}\",\"choices\":[{{\"index\":0,\"delta\":{{\"content\":\"{}\"}},\"finish_reason\":null}}]}}\n\n",
+                                                            chunk_id,
+                                                            created,
+                                                            model,
+                                                            text.replace('\\', "\\\\").replace('"', "\\\"").replace('\n', "\\n")
+                                                        );
+                                                        if tx
+                                                            .send(Ok(StreamingChunk::RawSSE(
+                                                                openai_chunk.into_bytes(),
+                                                            )))
+                                                            .await
+                                                            .is_err()
+                                                        {
+                                                            break;
+                                                        }
+                                                    }
+                                                }
+                                            }
+                                            "message_delta" => {
+                                                if let Some(delta) = event.get("delta") {
+                                                    if let Some(stop_reason) = delta
+                                                        .get("stop_reason")
+                                                        .and_then(|s| s.as_str())
+                                                    {
+                                                        let finish_chunk = format!(
+                                                            "data: {{\"id\":\"{}\",\"object\":\"chat.completion.chunk\",\"created\":{},\"model\":\"{}\",\"choices\":[{{\"index\":0,\"delta\":{{}},\"finish_reason\":\"{}\"}}]}}\n\n",
+                                                            chunk_id, created, model, stop_reason
+                                                        );
+                                                        let _ = tx
+                                                            .send(Ok(StreamingChunk::RawSSE(
+                                                                finish_chunk.into_bytes(),
+                                                            )))
+                                                            .await;
+                                                        // Send DONE marker
+                                                        let _ = tx
+                                                            .send(Ok(StreamingChunk::RawSSE(
+                                                                "data: [DONE]\n\n"
+                                                                    .as_bytes()
+                                                                    .to_vec(),
+                                                            )))
+                                                            .await;
+                                                    }
+                                                }
+                                            }
+                                            "message_stop" => {
+                                                // Message stop without explicit finish - send DONE
+                                                let _ = tx
+                                                    .send(Ok(StreamingChunk::RawSSE(
+                                                        "data: [DONE]\n\n".as_bytes().to_vec(),
+                                                    )))
+                                                    .await;
+                                            }
+                                            _ => {} // Other event types ignored
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    Err(e) => {
+                        let _ = tx.send(Err(ProviderError::Network(e.to_string()))).await;
+                        break;
+                    }
+                }
+            }
+        });
+
+        Ok(StreamingResponse {
+            receiver: rx,
+            content_type: "text/event-stream",
+        })
     }
 }
 

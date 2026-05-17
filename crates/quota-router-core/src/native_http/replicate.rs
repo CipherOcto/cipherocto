@@ -2,10 +2,12 @@
 
 use super::{
     HttpCompletionRequest, HttpCompletionResponse, HttpEmbeddingRequest, HttpEmbeddingResponse,
-    ProviderError,
+    ProviderError, StreamingChunk, StreamingResponse,
 };
 use async_trait::async_trait;
+use futures::StreamExt;
 use reqwest::Client;
+use tokio::sync::mpsc;
 
 pub struct ReplicateProvider {
     client: Client,
@@ -41,6 +43,10 @@ impl super::HttpProvider for ReplicateProvider {
             "mistralai/pixtral-12b",
             "deepseek-ai/deepseek-v3",
         ]
+    }
+
+    fn supports_streaming(&self) -> bool {
+        true
     }
 
     async fn completion(
@@ -160,6 +166,200 @@ impl super::HttpProvider for ReplicateProvider {
     fn routing_weight(&self) -> u32 {
         3
     }
+
+    async fn streaming_completion(
+        &self,
+        request: &HttpCompletionRequest,
+        api_key: &str,
+    ) -> Result<StreamingResponse, ProviderError> {
+        // Replicate uses a streaming predictions API
+        let base_url = request.api_base.as_deref().unwrap_or(&self.api_base);
+        let create_url = format!("{}/predictions", base_url);
+
+        let last_msg = request
+            .messages
+            .last()
+            .ok_or_else(|| ProviderError::InvalidResponse("No messages provided".to_string()))?;
+
+        let create_body = serde_json::json!({
+            "version": request.model,
+            "stream": true,
+            "input": {
+                "prompt": last_msg.content,
+                "max_tokens": request.max_tokens.unwrap_or(1024),
+            }
+        });
+
+        let create_resp = self
+            .client
+            .post(&create_url)
+            .header("Authorization", format!("Bearer {}", api_key))
+            .header("Content-Type", "application/json")
+            .json(&create_body)
+            .send()
+            .await
+            .map_err(|e| ProviderError::Network(e.to_string()))?;
+
+        if !create_resp.status().is_success() {
+            let status = create_resp.status();
+            let text = create_resp.text().await.unwrap_or_default();
+            return Err(ProviderError::InvalidResponse(format!(
+                "HTTP {}: {}",
+                status, text
+            )));
+        }
+
+        let prediction: ReplicatePrediction = create_resp
+            .json()
+            .await
+            .map_err(|e| ProviderError::InvalidResponse(e.to_string()))?;
+
+        // Get the streaming URL from prediction
+        let stream_url = prediction
+            .urls
+            .stream
+            .or(prediction.urls.get)
+            .ok_or_else(|| {
+                ProviderError::InvalidResponse("No streaming URL available".to_string())
+            })?;
+
+        let resp = self
+            .client
+            .get(&stream_url)
+            .header("Authorization", format!("Bearer {}", api_key))
+            .header("Accept", "text/event-stream")
+            .send()
+            .await
+            .map_err(|e| ProviderError::Network(e.to_string()))?;
+
+        if !resp.status().is_success() {
+            let status = resp.status();
+            let text = resp.text().await.unwrap_or_default();
+            return Err(ProviderError::InvalidResponse(format!(
+                "HTTP {}: {}",
+                status, text
+            )));
+        }
+
+        let (tx, rx) = mpsc::channel(100);
+        let model = request.model.clone();
+
+        tokio::spawn(async move {
+            let mut stream = resp.bytes_stream();
+            let chunk_id = format!("replicate-{}", uuid::Uuid::new_v4());
+            let created = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_secs();
+            let mut buffer = Vec::new();
+
+            while let Some(chunk_result) = stream.next().await {
+                match chunk_result {
+                    Ok(bytes) => {
+                        buffer.extend_from_slice(&bytes);
+                        // Replicate SSE format: process complete lines
+                        while let Some(newline_pos) = buffer.iter().position(|&b| b == b'\n') {
+                            let line: Vec<u8> = buffer.drain(..=newline_pos).collect();
+                            let line_str = match std::str::from_utf8(&line) {
+                                Ok(s) => s.trim(),
+                                Err(_) => continue,
+                            };
+                            if line_str.is_empty() {
+                                continue;
+                            }
+
+                            // Parse SSE event: "event: <type>" and "data: <json>"
+                            if let Some(data_str) = line_str.strip_prefix("data: ") {
+                                if data_str == "[DONE]" {
+                                    let _ = tx
+                                        .send(Ok(StreamingChunk::RawSSE(
+                                            "data: [DONE]\n\n".as_bytes().to_vec(),
+                                        )))
+                                        .await;
+                                    break;
+                                }
+
+                                // Parse Replicate streaming event
+                                if let Ok(event) =
+                                    serde_json::from_str::<serde_json::Value>(data_str)
+                                {
+                                    // Replicate sends output as strings or arrays
+                                    if let Some(output) = event.get("output") {
+                                        let text = if let Some(s) = output.as_str() {
+                                            s.to_string()
+                                        } else if let Some(arr) = output.as_array() {
+                                            arr.iter()
+                                                .filter_map(|v| v.as_str())
+                                                .collect::<Vec<_>>()
+                                                .join("")
+                                        } else {
+                                            continue;
+                                        };
+
+                                        if !text.is_empty() {
+                                            let openai_chunk = format!(
+                                                "data: {{\"id\":\"{}\",\"object\":\"chat.completion.chunk\",\"created\":{},\"model\":\"{}\",\"choices\":[{{\"index\":0,\"delta\":{{\"content\":\"{}\"}},\"finish_reason\":null}}]}}\n\n",
+                                                chunk_id,
+                                                created,
+                                                model,
+                                                text.replace('\\', "\\\\").replace('"', "\\\"").replace('\n', "\\n")
+                                            );
+                                            if tx
+                                                .send(Ok(StreamingChunk::RawSSE(
+                                                    openai_chunk.into_bytes(),
+                                                )))
+                                                .await
+                                                .is_err()
+                                            {
+                                                break;
+                                            }
+                                        }
+                                    }
+
+                                    // Check for completed status
+                                    if let Some(status) =
+                                        event.get("status").and_then(|s| s.as_str())
+                                    {
+                                        if status == "succeeded" || status == "failed" {
+                                            let finish_reason = if status == "succeeded" {
+                                                "stop"
+                                            } else {
+                                                "length"
+                                            };
+                                            let finish_chunk = format!(
+                                                "data: {{\"id\":\"{}\",\"object\":\"chat.completion.chunk\",\"created\":{},\"model\":\"{}\",\"choices\":[{{\"index\":0,\"delta\":{{}},\"finish_reason\":\"{}\"}}]}}\n\n",
+                                                chunk_id, created, model, finish_reason
+                                            );
+                                            let _ = tx
+                                                .send(Ok(StreamingChunk::RawSSE(
+                                                    finish_chunk.into_bytes(),
+                                                )))
+                                                .await;
+                                            let _ = tx
+                                                .send(Ok(StreamingChunk::RawSSE(
+                                                    "data: [DONE]\n\n".as_bytes().to_vec(),
+                                                )))
+                                                .await;
+                                            break;
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    Err(e) => {
+                        let _ = tx.send(Err(ProviderError::Network(e.to_string()))).await;
+                        break;
+                    }
+                }
+            }
+        });
+
+        Ok(StreamingResponse {
+            receiver: rx,
+            content_type: "text/event-stream",
+        })
+    }
 }
 
 #[derive(serde::Deserialize)]
@@ -177,6 +377,8 @@ struct ReplicateUrls {
     cancel: Option<String>,
     #[serde(default)]
     get: Option<String>,
+    #[serde(default)]
+    stream: Option<String>,
 }
 
 #[derive(serde::Deserialize)]

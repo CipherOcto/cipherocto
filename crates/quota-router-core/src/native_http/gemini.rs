@@ -2,10 +2,12 @@
 
 use super::{
     HttpCompletionRequest, HttpCompletionResponse, HttpEmbeddingRequest, HttpEmbeddingResponse,
-    ProviderError,
+    ProviderError, StreamingChunk, StreamingResponse,
 };
 use async_trait::async_trait;
+use futures::StreamExt;
 use reqwest::Client;
+use tokio::sync::mpsc;
 
 pub struct GeminiProvider {
     client: Client,
@@ -46,6 +48,10 @@ impl super::HttpProvider for GeminiProvider {
             "gemini-1.5-flash",
             "gemini-1.5-flash-8b",
         ]
+    }
+
+    fn supports_streaming(&self) -> bool {
+        true
     }
 
     async fn completion(
@@ -185,6 +191,151 @@ impl super::HttpProvider for GeminiProvider {
     fn routing_weight(&self) -> u32 {
         6
     }
+
+    async fn streaming_completion(
+        &self,
+        request: &HttpCompletionRequest,
+        api_key: &str,
+    ) -> Result<StreamingResponse, ProviderError> {
+        // Gemini uses streamGenerateContent endpoint for streaming
+        let base_url = request.api_base.as_deref().unwrap_or(&self.api_base);
+        let url = format!(
+            "{}/models/{}:streamGenerateContent?key={}",
+            base_url, request.model, api_key
+        );
+
+        // Build contents for Gemini - combine messages into a single text prompt
+        let prompt = request
+            .messages
+            .iter()
+            .map(|m| format!("{}: {}", m.role, m.content.as_deref().unwrap_or("")))
+            .collect::<Vec<_>>()
+            .join("\n");
+
+        let body = serde_json::json!({
+            "contents": [{
+                "parts": [{ "text": prompt }],
+                "role": "user"
+            }],
+            "generationConfig": {
+                "temperature": request.temperature.unwrap_or(0.9),
+                "maxOutputTokens": request.max_tokens.unwrap_or(2048),
+                "topP": request.top_p.unwrap_or(0.95),
+            }
+        });
+
+        let resp = self
+            .client
+            .post(&url)
+            .header("Content-Type", "application/json")
+            .json(&body)
+            .send()
+            .await
+            .map_err(|e| ProviderError::Network(e.to_string()))?;
+
+        if !resp.status().is_success() {
+            let status = resp.status();
+            let text = resp.text().await.unwrap_or_default();
+            return Err(ProviderError::InvalidResponse(format!(
+                "HTTP {}: {}",
+                status, text
+            )));
+        }
+
+        let (tx, rx) = mpsc::channel(100);
+        let model = request.model.clone();
+
+        tokio::spawn(async move {
+            let mut stream = resp.bytes_stream();
+            let chunk_id = format!("gemini-{}", uuid::Uuid::new_v4());
+            let created = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_secs();
+            let mut buffer = Vec::new();
+
+            while let Some(chunk_result) = stream.next().await {
+                match chunk_result {
+                    Ok(bytes) => {
+                        buffer.extend_from_slice(&bytes);
+                        // Gemini streams newline-delimited JSON objects
+                        // Process complete lines from buffer
+                        while let Some(newline_pos) = buffer.iter().position(|&b| b == b'\n') {
+                            let line: Vec<u8> = buffer.drain(..=newline_pos).collect();
+                            let line_str = match std::str::from_utf8(&line) {
+                                Ok(s) => s.trim(),
+                                Err(_) => continue,
+                            };
+                            if line_str.is_empty() {
+                                continue;
+                            }
+                            // Skip array brackets at start/end of stream
+                            if line_str == "[" || line_str == "]" {
+                                continue;
+                            }
+                            // Remove trailing comma if present
+                            let json_str = line_str.trim_end_matches(',');
+
+                            // Parse Gemini response chunk
+                            if let Ok(chunk) = serde_json::from_str::<GeminiStreamChunk>(json_str) {
+                                if let Some(text) = chunk
+                                    .candidates
+                                    .first()
+                                    .and_then(|c| c.content.parts.first())
+                                    .and_then(|p| p.text.as_ref())
+                                {
+                                    let openai_chunk = format!(
+                                        "data: {{\"id\":\"{}\",\"object\":\"chat.completion.chunk\",\"created\":{},\"model\":\"{}\",\"choices\":[{{\"index\":0,\"delta\":{{\"content\":\"{}\"}},\"finish_reason\":null}}]}}\n\n",
+                                        chunk_id,
+                                        created,
+                                        model,
+                                        text.replace('\\', "\\\\").replace('"', "\\\"").replace('\n', "\\n")
+                                    );
+                                    if tx
+                                        .send(Ok(StreamingChunk::RawSSE(openai_chunk.into_bytes())))
+                                        .await
+                                        .is_err()
+                                    {
+                                        break;
+                                    }
+                                }
+
+                                // Check for finish reason
+                                let finish_reason = chunk
+                                    .candidates
+                                    .first()
+                                    .and_then(|c| c.finish_reason.as_ref());
+                                if let Some(reason) = finish_reason {
+                                    let finish_chunk = format!(
+                                        "data: {{\"id\":\"{}\",\"object\":\"chat.completion.chunk\",\"created\":{},\"model\":\"{}\",\"choices\":[{{\"index\":0,\"delta\":{{}},\"finish_reason\":\"{}\"}}]}}\n\n",
+                                        chunk_id, created, model, reason
+                                    );
+                                    let _ = tx
+                                        .send(Ok(StreamingChunk::RawSSE(finish_chunk.into_bytes())))
+                                        .await;
+                                    // Send DONE marker
+                                    let _ = tx
+                                        .send(Ok(StreamingChunk::RawSSE(
+                                            "data: [DONE]\n\n".as_bytes().to_vec(),
+                                        )))
+                                        .await;
+                                }
+                            }
+                        }
+                    }
+                    Err(e) => {
+                        let _ = tx.send(Err(ProviderError::Network(e.to_string()))).await;
+                        break;
+                    }
+                }
+            }
+        });
+
+        Ok(StreamingResponse {
+            receiver: rx,
+            content_type: "text/event-stream",
+        })
+    }
 }
 
 #[derive(serde::Deserialize)]
@@ -230,4 +381,11 @@ struct GeminiEmbeddingsResponse {
 #[derive(serde::Deserialize)]
 struct GeminiEmbeddingValues {
     values: Vec<f32>,
+}
+
+/// Gemini streaming response chunk
+#[derive(serde::Deserialize)]
+struct GeminiStreamChunk {
+    #[serde(default)]
+    candidates: Vec<GeminiCandidate>,
 }

@@ -19,11 +19,12 @@ None
 - [ ] Define `PromptFilter` struct (team_id, tags, name, limit, offset)
 - [ ] Implement `PromptRegistry` with stoolap-backed storage (RFC-0914 Required)
 - [ ] Implement `TemplateEngine` with variable substitution (`{{var}}` syntax)
+- [ ] TemplateEngine filters: Default, Truncate, Upper, Lower, Strip
 - [ ] Single-pass rendering (values containing `{{` rendered literally)
 - [ ] Implement LRU prompt caching
 - [ ] Concurrent access via `Arc<RwLock<PromptRegistry>>`
 - [ ] Add `PromptConfig` to `config.rs` (storage, cache_size)
-- [ ] Error handling: 8 error types with HTTP status codes and fallback behavior
+- [ ] Error handling: PromptNotFound(404), PromptVersionNotFound(404), TemplateRenderError(400), VariableMissing(400), AbTestNotFound(404), AbTestEnded(410), StorageError(500), PermissionDenied(403)
 - [ ] Clippy passes with zero warnings
 - [ ] All existing tests pass
 

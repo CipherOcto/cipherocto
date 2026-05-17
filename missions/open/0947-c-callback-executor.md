@@ -17,7 +17,7 @@ RFC-0947 (Economics): Callback System
 
 - [ ] Wire `CallbackExecutor` into `proxy.rs` — fire Start callback after key validation, fire End/Success/Failure after provider response
 - [ ] Streaming callback semantics: fire once per request (not per chunk)
-- [ ] Input callback: fire before provider call (supports input validation/transformation)
+- [ ] Input callback: fire before provider call — supports input validation, transformation, rejection (return error to abort request)
 - [ ] Service callback: fire for health/monitoring events
 - [ ] Add `input_callback`, `success_callback`, `failure_callback`, `service_callback` to Python SDK
 - [ ] Support custom callback functions via PyO3

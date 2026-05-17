@@ -15,14 +15,14 @@ RFC-0948 (Economics): Prompt Management
 
 ## Acceptance Criteria
 
+- [ ] Add `prompt_id: Option<String>` and `prompt_variables: Option<HashMap<String, String>>` to `ChatCompletionRequest`
 - [ ] Integrate prompt resolution into `proxy.rs` — resolve before provider call
 - [ ] `resolve_prompt()` renders template and injects as system message
 - [ ] Implement A/B testing — deterministic hashing (API key ID preferred, X-Request-Id fallback, generated UUID)
 - [ ] Single source of truth for A/B weights: `AbTest.weight_b` only
-- [ ] Implement version management (create, rollback, activate)
-- [ ] Implement prompt analytics (usage count, cost per prompt)
-- [ ] Add Python SDK prompt support
 - [ ] `AbTestMetrics` uses `AtomicU64` for concurrent counter updates
+- [ ] Persist `AbTestMetrics` to stoolap
+- [ ] Add Python SDK prompt support
 - [ ] Clippy passes with zero warnings
 - [ ] All existing tests pass
 

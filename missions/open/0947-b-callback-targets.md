@@ -20,7 +20,7 @@ RFC-0947 (Economics): Callback System
 - [ ] HMAC uses `hmac` + `sha2` crates (not `ring`)
 - [ ] Implement `LoggingTarget` — integration with RFC-0905 structured logging
 - [ ] Each target has configurable timeout and retry policy
-- [ ] Per-target retry with exponential backoff (max 3 attempts)
+- [ ] Per-target retry policy: Webhook/Langfuse/Datadog: 3 attempts exponential (1s, 2s, 4s); Logging/Custom: no retry
 - [ ] ResponseSummary used instead of full response content (no PII leakage)
 - [ ] Clippy passes with zero warnings
 - [ ] All existing tests pass

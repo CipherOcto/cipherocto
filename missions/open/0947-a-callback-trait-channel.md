@@ -20,7 +20,7 @@ None
 - [ ] Define `CallbackTarget` trait with `fire()` method
 - [ ] Implement `CallbackExecutor` with configurable bounded channel (default capacity 10000)
 - [ ] `fire()` returns `Err` when channel full — event dropped, not retried
-- [ ] Background worker processes events from channel
+- [ ] Background worker loop: parallel dispatch to all registered targets per event
 - [ ] `callback_dropped_total` metric for overflow tracking
 - [ ] Add `CallbackConfig` to `config.rs` (enabled, channel_capacity, targets)
 - [ ] Clippy passes with zero warnings

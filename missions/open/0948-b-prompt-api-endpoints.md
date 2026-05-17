@@ -14,7 +14,6 @@ RFC-0948 (Economics): Prompt Management
 
 ## Acceptance Criteria
 
-- [ ] Add `prompt_id: Option<String>` and `prompt_variables: Option<HashMap<String, String>>` to `ChatCompletionRequest`
 - [ ] Implement `POST /prompts` — create prompt
 - [ ] Implement `GET /prompts` — list prompts (with PromptFilter, pagination)
 - [ ] Implement `GET /prompts/:id` — get prompt with active version
@@ -22,7 +21,9 @@ RFC-0948 (Economics): Prompt Management
 - [ ] Implement `DELETE /prompts/:id` — delete prompt
 - [ ] Implement `GET /prompts/:id/versions` — list versions (sorted by creation order)
 - [ ] Implement `POST /prompts/:id/versions` — create version
-- [ ] Rate limiting on CRUD endpoints
+- [ ] Implement `POST /prompts/:id/rollback` — rollback to version
+- [ ] Implement `POST /prompts/:id/versions/:v/activate` — activate version
+- [ ] Rate limiting on CRUD endpoints (per RFC-0933)
 - [ ] Clippy passes with zero warnings
 - [ ] All existing tests pass
 

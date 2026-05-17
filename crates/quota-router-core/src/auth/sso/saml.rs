@@ -395,6 +395,9 @@ impl SamlAssertionParserImpl {
     ///
     /// In production, this should use proper X.509 certificate validation
     /// with ring or rustls. This is a simplified check.
+    ///
+    /// TODO (Phase 2): Implement full XML-DSIG signature verification
+    /// using idp_certificate with ring or xmlsec crate.
     fn validate_signature(&self, _assertion_xml: &str) -> Result<(), SsoError> {
         // In production: verify XML-DSIG signature using idp_certificate
         // For now, check that the certificate is not empty (placeholder)

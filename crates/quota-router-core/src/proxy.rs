@@ -1178,6 +1178,34 @@ where
         }
     };
 
+    // Per-user rate limiting (RFC-0943)
+    // Extract user from request body `user` field
+    let request_user = serde_json::from_str::<serde_json::Value>(&body_str)
+        .ok()
+        .and_then(|v| v.get("user")?.as_str().map(String::from));
+
+    if let (Some(ref rl), Some(ref user_id)) = (&rate_limiter, &request_user) {
+        // Check per-user RPM limit (use a default of 1000 RPM for now)
+        // In production, this would come from a user config or database
+        let user_rpm_limit: u32 = 1000;
+        match rl.check_rpm_only(user_id, user_rpm_limit) {
+            Ok(_) => {}
+            Err(_) => {
+                let resp = Response::builder()
+                    .status(StatusCode::TOO_MANY_REQUESTS)
+                    .header("Retry-After", "60")
+                    .header("X-RateLimit-Limit", user_rpm_limit.to_string())
+                    .header("X-RateLimit-Remaining", "0")
+                    .body(SseBody::from_error(format!(
+                        "Rate limit exceeded for user '{}'",
+                        user_id
+                    )))
+                    .unwrap();
+                return Ok(resp);
+            }
+        }
+    }
+
     // Deduct balance
     {
         let mut bal = balance.lock();

@@ -350,6 +350,10 @@ fn parse_request_body(_body: &str) -> Option<()> {
 
 /// Resolve API key with priority chain (RFC-0929 §5).
 /// Priority: config_key (from DispatchInfo/litellm_params) → env var ({PROVIDER}_API_KEY)
+/// Resolve API key with 3-tier precedence (RFC-0938):
+/// 1. Config key (from GatewayConfig deployment) — highest priority
+/// 2. ANY_LLM_KEY universal env var
+/// 3. {PROVIDER}_API_KEY env var — lowest priority
 fn resolve_api_key(provider: &Provider, config_key: Option<&str>) -> Option<String> {
     // Priority 1: Config key (from GatewayConfig deployment)
     if let Some(key) = config_key {
@@ -357,7 +361,19 @@ fn resolve_api_key(provider: &Provider, config_key: Option<&str>) -> Option<Stri
             return Some(key.to_string());
         }
     }
-    // Priority 2: Environment variable
+
+    // Priority 2: ANY_LLM_KEY universal env var
+    if let Ok(key) = std::env::var("ANY_LLM_KEY") {
+        if !key.is_empty() {
+            tracing::warn!(
+                "Using ANY_LLM_KEY for provider '{}' — consider setting provider-specific key",
+                provider.name
+            );
+            return Some(key);
+        }
+    }
+
+    // Priority 3: Provider-specific env var
     provider.get_api_key()
 }
 

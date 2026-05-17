@@ -25,6 +25,8 @@ pub enum ConfigError {
     NotYetSpecified(String),
     #[error("Provider not specified for model: {0}")]
     MissingProvider(String),
+    #[error("Invalid config: {0}")]
+    Invalid(String),
 }
 
 // ============================================================================
@@ -640,8 +642,66 @@ pub fn to_provider_map(
 }
 
 /// Parse config from YAML string into GatewayConfig
+/// Interpolate `${VAR}` syntax in YAML strings (RFC-0938).
+///
+/// Supports:
+/// - `${VAR}` — env var lookup
+/// - `${VAR:-default}` — env var with default
+/// - `$$` — literal `$` escape
+pub fn interpolate_yaml(yaml: &str) -> String {
+    let mut result = String::with_capacity(yaml.len());
+    let chars: Vec<char> = yaml.chars().collect();
+    let len = chars.len();
+    let mut i = 0;
+
+    while i < len {
+        if chars[i] == '$' {
+            if i + 1 < len && chars[i + 1] == '$' {
+                // $$ escape → literal $
+                result.push('$');
+                i += 2;
+            } else if i + 1 < len && chars[i + 1] == '{' {
+                // ${VAR} or ${VAR:-default}
+                let start = i + 2;
+                let mut end = start;
+                while end < len && chars[end] != '}' {
+                    end += 1;
+                }
+                if end < len {
+                    let var_expr: String = chars[start..end].iter().collect();
+                    if let Some((var_name, default)) = var_expr.split_once(":-") {
+                        // ${VAR:-default}
+                        let val = std::env::var(var_name).unwrap_or_else(|_| default.to_string());
+                        result.push_str(&val);
+                    } else {
+                        // ${VAR}
+                        if let Ok(val) = std::env::var(&var_expr) {
+                            result.push_str(&val);
+                        }
+                        // Undefined → empty string (don't push anything)
+                    }
+                    i = end + 1;
+                } else {
+                    // Unclosed ${ — treat as literal
+                    result.push('$');
+                    i += 1;
+                }
+            } else {
+                result.push(chars[i]);
+                i += 1;
+            }
+        } else {
+            result.push(chars[i]);
+            i += 1;
+        }
+    }
+
+    result
+}
+
 pub fn parse_config(yaml: &str) -> Result<GatewayConfig, ConfigError> {
-    serde_yaml::from_str(yaml).map_err(ConfigError::from)
+    let interpolated = interpolate_yaml(yaml);
+    serde_yaml::from_str(&interpolated).map_err(ConfigError::from)
 }
 
 /// Load config from file path

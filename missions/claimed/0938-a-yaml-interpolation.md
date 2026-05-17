@@ -2,6 +2,8 @@
 
 ## Status
 
+Complete
+
 Open
 
 ## RFC
@@ -24,32 +26,32 @@ RFC-0938 specifies `${VAR}` YAML interpolation and `ANY_LLM_KEY` universal key s
 
 ### YAML Interpolation
 
-- [ ] `interpolate_yaml()` function parses `${VAR}` syntax
-- [ ] `${VAR:-default}` syntax for default values
-- [ ] `$$` escape produces literal `$` character
-- [ ] Undefined variables resolve to empty string
-- [ ] No recursive interpolation
-- [ ] Interpolation happens BEFORE YAML parse
+- [x] `interpolate_yaml()` function parses `${VAR}` syntax
+- [x] `${VAR:-default}` syntax for default values
+- [x] `$$` escape produces literal `$` character
+- [x] Undefined variables resolve to empty string
+- [x] No recursive interpolation
+- [x] Interpolation happens BEFORE YAML parse
 
 ### Universal Key
 
-- [ ] `ANY_LLM_KEY` env var as fallback for all providers
-- [ ] Precedence chain (3-tier, RFC-0938): (1) Explicit config key from YAML (highest), (2) ANY_LLM_KEY env var, (3) {PROVIDER}_API_KEY env var (lowest). Note: RFC-0935's SecretReader is tier 4 when implemented.
-- [ ] Log warning when using universal key
+- [x] `ANY_LLM_KEY` env var as fallback for all providers
+- [x] Precedence chain (3-tier, RFC-0938): (1) Explicit config key from YAML (highest), (2) ANY_LLM_KEY env var, (3) {PROVIDER}_API_KEY env var (lowest). Note: RFC-0935's SecretReader is tier 4 when implemented.
+- [x] Log warning when using universal key
 
 ### Config Loading
 
-- [ ] Update `parse_config()` to call `interpolate_yaml()` before YAML parse
-- [ ] Handle YAML special characters in interpolated values. Validation: Reject interpolated values containing newlines, YAML flow indicators (`{`, `[`, `|`, `>`), and backslash. ALLOW quote characters (`"`, `'`) — real API keys often contain them. The validation prevents YAML structure injection, not value content.
+- [x] Update `parse_config()` to call `interpolate_yaml()` before YAML parse
+- [x] Handle YAML special characters in interpolated values. Validation: Reject interpolated values containing newlines, YAML flow indicators (`{`, `[`, `|`, `>`), and backslash. ALLOW quote characters (`"`, `'`) — real API keys often contain them. The validation prevents YAML structure injection, not value content.
 
 ### Tests
 
-- [ ] `${VAR}` interpolation works
-- [ ] `${VAR:-default}` works (default used when var undefined)
-- [ ] `$$` escape produces literal `$` character
-- [ ] Undefined variable without default resolves to empty string (NOT parse error)
-- [ ] ANY_LLM_KEY works as fallback
-- [ ] Combined precedence (RFC-0938): (1) config_key, (2) ANY_LLM_KEY, (3) {PROVIDER}_API_KEY. SecretReader is tier 4 when implemented.
+- [x] `${VAR}` interpolation works
+- [x] `${VAR:-default}` works (default used when var undefined)
+- [x] `$$` escape produces literal `$` character
+- [x] Undefined variable without default resolves to empty string (NOT parse error)
+- [x] ANY_LLM_KEY works as fallback
+- [x] Combined precedence (RFC-0938): (1) config_key, (2) ANY_LLM_KEY, (3) {PROVIDER}_API_KEY. SecretReader is tier 4 when implemented.
 
 ## Key Files
 

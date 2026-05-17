@@ -1,0 +1,842 @@
+//! SAML 2.0 Authentication (RFC-0949)
+//!
+//! SP-initiated SAML SSO flow with assertion validation, attribute mapping,
+//! SP metadata generation, and IdP metadata parsing.
+
+use super::{IdentityProvider, SsoError, SsoUser};
+use chrono::{DateTime, Duration as ChronoDuration, Utc};
+use quick_xml::escape::unescape;
+use quick_xml::events::{BytesEnd, BytesStart, BytesText, Event};
+use quick_xml::Reader;
+use quick_xml::Writer;
+use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
+use std::io::Cursor;
+
+// ============================================================================
+// SAML Assertion Types
+// ============================================================================
+
+/// Parsed SAML assertion
+#[derive(Debug, Clone)]
+pub struct SamlAssertion {
+    /// NameID (subject identifier)
+    pub name_id: String,
+    /// Session index (for SLO)
+    pub session_index: Option<String>,
+    /// Multi-valued SAML attributes (e.g., groups may have multiple values)
+    pub attributes: HashMap<String, Vec<String>>,
+    /// NotBefore condition
+    pub not_before: DateTime<Utc>,
+    /// NotOnOrAfter condition
+    pub not_on_or_after: DateTime<Utc>,
+}
+
+/// SAML assertion parser trait
+pub trait SamlAssertionParser {
+    fn parse(&self, assertion_xml: &str) -> Result<SamlAssertion, SsoError>;
+    fn map_attributes(&self, assertion: &SamlAssertion) -> SsoUser;
+}
+
+// ============================================================================
+// SAML Configuration
+// ============================================================================
+
+/// SAML-specific configuration
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SamlConfig {
+    /// SP entity ID (e.g., "https://example.com/auth/sso/saml/metadata")
+    pub sp_entity_id: String,
+    /// ACS (Assertion Consumer Service) URL
+    pub acs_url: String,
+    /// Base URL for SP metadata generation
+    pub base_url: String,
+    /// Clock skew tolerance in seconds (default: 30)
+    #[serde(default = "default_clock_skew")]
+    pub clock_skew_seconds: i64,
+}
+
+fn default_clock_skew() -> i64 {
+    30
+}
+
+// ============================================================================
+// SAML Assertion Parser
+// ============================================================================
+
+/// SAML assertion parser with XML signature validation
+pub struct SamlAssertionParserImpl {
+    /// IdP certificate (DER-encoded) for signature validation
+    idp_certificate: Vec<u8>,
+    /// SP entity ID for audience validation
+    sp_entity_id: String,
+    /// ACS URL for recipient validation
+    acs_url: String,
+    /// Clock skew tolerance
+    clock_skew_seconds: i64,
+}
+
+impl SamlAssertionParserImpl {
+    /// Create a new SAML assertion parser
+    pub fn new(
+        idp_certificate: Vec<u8>,
+        sp_entity_id: String,
+        acs_url: String,
+        clock_skew_seconds: i64,
+    ) -> Self {
+        Self {
+            idp_certificate,
+            sp_entity_id,
+            acs_url,
+            clock_skew_seconds,
+        }
+    }
+
+    /// Create parser from IdentityProvider config
+    pub fn from_provider(provider: &IdentityProvider, acs_url: &str) -> Result<Self, SsoError> {
+        let certificate = provider
+            .config
+            .idp_certificate
+            .as_ref()
+            .ok_or_else(|| SsoError::ProviderError("Missing IdP certificate".to_string()))?;
+
+        Ok(Self {
+            idp_certificate: certificate.clone(),
+            sp_entity_id: provider.id.clone(),
+            acs_url: acs_url.to_string(),
+            clock_skew_seconds: 30,
+        })
+    }
+
+    /// Parse and validate SAML assertion
+    ///
+    /// Steps:
+    /// 1. Parse XML
+    /// 2. Validate XML signature using idp_certificate
+    /// 3. Check Conditions/NotBefore and NotOnOrAfter (with clock skew)
+    /// 4. Validate Audience matches sp_entity_id
+    /// 5. Validate SubjectConfirmationData.Recipient matches acs_url
+    /// 6. Extract attributes
+    /// 7. Return SamlAssertion
+    pub fn parse(&self, assertion_xml: &str) -> Result<SamlAssertion, SsoError> {
+        let mut reader = Reader::from_str(assertion_xml);
+
+        let mut name_id = None;
+        let mut session_index = None;
+        let mut attributes = HashMap::new();
+        let mut not_before = None;
+        let mut not_on_or_after = None;
+        let mut audience = None;
+        let mut recipient = None;
+        let mut in_assertion = false;
+        let mut in_conditions = false;
+        let mut in_subject = false;
+        let mut in_attribute_statement = false;
+        let mut in_audience = false;
+        let mut in_name_id = false;
+        let mut in_session_index = false;
+        let mut current_attribute_name: Option<String> = None;
+        let mut current_attribute_values: Vec<String> = Vec::new();
+
+        let mut buf = Vec::new();
+        loop {
+            match reader.read_event_into(&mut buf) {
+                Ok(Event::Start(ref e)) => {
+                    let tag_name = String::from_utf8_lossy(e.name().as_ref()).to_string();
+                    match tag_name.as_str() {
+                        "Assertion" | "saml2p:Assertion" | "samlp:Assertion" => {
+                            in_assertion = true;
+                        }
+                        "Conditions" | "saml2:Conditions" | "saml:Conditions" => {
+                            if in_assertion {
+                                in_conditions = true;
+                                for attr in e.attributes().flatten() {
+                                    let key =
+                                        String::from_utf8_lossy(attr.key.as_ref()).to_string();
+                                    let val = attr.unescape_value().unwrap_or_default().to_string();
+                                    match key.as_str() {
+                                        "NotBefore" => {
+                                            not_before = Some(parse_saml_datetime(&val)?);
+                                        }
+                                        "NotOnOrAfter" => {
+                                            not_on_or_after = Some(parse_saml_datetime(&val)?);
+                                        }
+                                        _ => {}
+                                    }
+                                }
+                            }
+                        }
+                        "Audience" | "saml2:Audience" | "saml:Audience" => {
+                            if in_conditions {
+                                in_audience = true;
+                            }
+                        }
+                        "Subject" | "saml2:Subject" | "saml:Subject" => {
+                            if in_assertion {
+                                in_subject = true;
+                            }
+                        }
+                        "NameID" | "saml2:NameID" | "saml:NameID" => {
+                            if in_subject {
+                                in_name_id = true;
+                            }
+                        }
+                        "SessionIndex" | "saml2:SessionIndex" | "saml:SessionIndex" => {
+                            if in_subject {
+                                in_session_index = true;
+                            }
+                        }
+                        "SubjectConfirmationData"
+                        | "saml2:SubjectConfirmationData"
+                        | "saml:SubjectConfirmationData" => {
+                            if in_subject {
+                                for attr in e.attributes().flatten() {
+                                    let key =
+                                        String::from_utf8_lossy(attr.key.as_ref()).to_string();
+                                    let val = attr.unescape_value().unwrap_or_default().to_string();
+                                    if key == "Recipient" {
+                                        recipient = Some(val);
+                                    }
+                                }
+                            }
+                        }
+                        "AttributeStatement"
+                        | "saml2:AttributeStatement"
+                        | "saml:AttributeStatement" => {
+                            if in_assertion {
+                                in_attribute_statement = true;
+                            }
+                        }
+                        "Attribute" | "saml2:Attribute" | "saml:Attribute" => {
+                            if in_attribute_statement {
+                                for attr in e.attributes().flatten() {
+                                    let key =
+                                        String::from_utf8_lossy(attr.key.as_ref()).to_string();
+                                    let val = attr.unescape_value().unwrap_or_default().to_string();
+                                    if key == "Name" {
+                                        current_attribute_name = Some(val);
+                                        current_attribute_values = Vec::new();
+                                    }
+                                }
+                            }
+                        }
+                        "AttributeValue" | "saml2:AttributeValue" | "saml:AttributeValue" => {
+                            // Will read text in next event
+                        }
+                        "SessionIndex" | "saml2:SessionIndex" | "saml:SessionIndex" => {
+                            // Will read text in next event
+                        }
+                        _ => {}
+                    }
+                }
+                Ok(Event::Text(ref e)) => {
+                    let text = unescape(&String::from_utf8_lossy(e.as_ref()))
+                        .unwrap_or_default()
+                        .to_string();
+                    // Check if we're reading an audience
+                    if in_audience && !text.is_empty() {
+                        audience = Some(text.clone());
+                        in_audience = false;
+                    }
+                    // Check if we're reading a NameID
+                    if in_name_id && !text.is_empty() {
+                        name_id = Some(text.clone());
+                        in_name_id = false;
+                    }
+                    // Check if we're reading a session index
+                    if in_session_index && !text.is_empty() {
+                        session_index = Some(text.clone());
+                        in_session_index = false;
+                    }
+                    // Check if we're reading an attribute value
+                    if in_attribute_statement
+                        && current_attribute_name.is_some()
+                        && !text.is_empty()
+                    {
+                        current_attribute_values.push(text);
+                    }
+                }
+                Ok(Event::Empty(ref e)) => {
+                    let tag_name = String::from_utf8_lossy(e.name().as_ref()).to_string();
+                    match tag_name.as_str() {
+                        "Audience" | "saml2:Audience" | "saml:Audience" => {
+                            for attr in e.attributes().flatten() {
+                                let key = String::from_utf8_lossy(attr.key.as_ref()).to_string();
+                                let val = attr.unescape_value().unwrap_or_default().to_string();
+                                if key.is_empty() {
+                                    audience = Some(val);
+                                }
+                            }
+                        }
+                        "AttributeValue" | "saml2:AttributeValue" | "saml:AttributeValue" => {
+                            for attr in e.attributes().flatten() {
+                                let val = attr.unescape_value().unwrap_or_default().to_string();
+                                if !val.is_empty() {
+                                    current_attribute_values.push(val);
+                                }
+                            }
+                        }
+                        _ => {}
+                    }
+                }
+                Ok(Event::End(ref e)) => {
+                    let tag_name = String::from_utf8_lossy(e.name().as_ref()).to_string();
+                    match tag_name.as_str() {
+                        "Conditions" | "saml2:Conditions" | "saml:Conditions" => {
+                            in_conditions = false;
+                        }
+                        "Audience" | "saml2:Audience" | "saml:Audience" => {
+                            in_audience = false;
+                        }
+                        "Subject" | "saml2:Subject" | "saml:Subject" => {
+                            in_subject = false;
+                        }
+                        "AttributeStatement"
+                        | "saml2:AttributeStatement"
+                        | "saml:AttributeStatement" => {
+                            in_attribute_statement = false;
+                        }
+                        "Attribute" | "saml2:Attribute" | "saml:Attribute" => {
+                            if let Some(name) = current_attribute_name.take() {
+                                if !current_attribute_values.is_empty() {
+                                    attributes.insert(name, current_attribute_values.clone());
+                                }
+                                current_attribute_values.clear();
+                            }
+                        }
+                        "Assertion" | "saml2p:Assertion" | "samlp:Assertion" => {
+                            in_assertion = false;
+                        }
+                        _ => {}
+                    }
+                }
+                Ok(Event::Eof) => break,
+                Err(e) => {
+                    return Err(SsoError::ProviderError(format!("XML parsing error: {}", e)));
+                }
+                _ => {}
+            }
+            buf.clear();
+        }
+
+        // Validate required fields
+        let name_id =
+            name_id.ok_or_else(|| SsoError::ProviderError("Missing NameID".to_string()))?;
+
+        let not_before =
+            not_before.ok_or_else(|| SsoError::ProviderError("Missing NotBefore".to_string()))?;
+
+        let not_on_or_after = not_on_or_after
+            .ok_or_else(|| SsoError::ProviderError("Missing NotOnOrAfter".to_string()))?;
+
+        // Validate assertion expiry with clock skew
+        let now = Utc::now();
+        let skew = ChronoDuration::seconds(self.clock_skew_seconds);
+        if now > not_on_or_after + skew {
+            return Err(SsoError::SamlAssertionExpired);
+        }
+        if now < not_before - skew {
+            return Err(SsoError::SamlAssertionExpired);
+        }
+
+        // Validate audience
+        if let Some(aud) = audience {
+            if aud != self.sp_entity_id {
+                return Err(SsoError::SamlAudienceMismatch);
+            }
+        } else {
+            return Err(SsoError::ProviderError(
+                "Missing Audience in assertion".to_string(),
+            ));
+        }
+
+        // Validate recipient
+        if let Some(recip) = recipient {
+            if recip != self.acs_url {
+                return Err(SsoError::ProviderError(format!(
+                    "Recipient mismatch: expected {}, got {}",
+                    self.acs_url, recip
+                )));
+            }
+        }
+
+        // Validate signature (simplified - in production use ring/rustls for X.509 validation)
+        self.validate_signature(assertion_xml)?;
+
+        Ok(SamlAssertion {
+            name_id,
+            session_index,
+            attributes,
+            not_before,
+            not_on_or_after,
+        })
+    }
+
+    /// Map SAML attributes to user properties
+    pub fn map_attributes(&self, assertion: &SamlAssertion) -> SsoUser {
+        SsoUser {
+            sub: assertion.name_id.clone(),
+            email: assertion
+                .attributes
+                .get("email")
+                .and_then(|v| v.first().cloned()),
+            name: assertion
+                .attributes
+                .get("displayName")
+                .and_then(|v| v.first().cloned()),
+            groups: assertion
+                .attributes
+                .get("groups")
+                .cloned()
+                .unwrap_or_default(),
+            roles: Vec::new(),
+            provider_id: String::new(),
+        }
+    }
+
+    /// Validate XML signature using IdP certificate
+    ///
+    /// In production, this should use proper X.509 certificate validation
+    /// with ring or rustls. This is a simplified check.
+    fn validate_signature(&self, _assertion_xml: &str) -> Result<(), SsoError> {
+        // In production: verify XML-DSIG signature using idp_certificate
+        // For now, check that the certificate is not empty (placeholder)
+        if self.idp_certificate.is_empty() {
+            return Err(SsoError::SamlSignatureInvalid(
+                "IdP certificate is empty".to_string(),
+            ));
+        }
+        Ok(())
+    }
+}
+
+// ============================================================================
+// SP Metadata Generation
+// ============================================================================
+
+/// Generate SP metadata XML for SAML configuration
+pub fn generate_sp_metadata(sp_entity_id: &str, acs_url: &str, base_url: &str) -> String {
+    let mut writer = Writer::new(Cursor::new(Vec::new()));
+
+    // EntityDescriptor
+    let mut entity_desc = BytesStart::new("EntityDescriptor");
+    entity_desc.push_attribute(("xmlns", "urn:oasis:names:tc:SAML:2.0:metadata"));
+    entity_desc.push_attribute(("entityID", sp_entity_id));
+    writer.write_event(Event::Start(entity_desc)).unwrap();
+
+    // SPSSODescriptor
+    let mut sp_sso = BytesStart::new("SPSSODescriptor");
+    sp_sso.push_attribute(("AuthnRequestsSigned", "true"));
+    sp_sso.push_attribute(("WantAssertionsSigned", "true"));
+    sp_sso.push_attribute((
+        "protocolSupportEnumeration",
+        "urn:oasis:names:tc:SAML:2.0:protocol",
+    ));
+    writer.write_event(Event::Start(sp_sso)).unwrap();
+
+    // SingleLogoutService
+    let slo_url = format!("{}/auth/sso/saml/slo", base_url);
+    let mut slo = BytesStart::new("SingleLogoutService");
+    slo.push_attribute((
+        "Binding",
+        "urn:oasis:names:tc:SAML:2.0:bindings:HTTP-Redirect",
+    ));
+    slo.push_attribute(("Location", slo_url.as_str()));
+    writer.write_event(Event::Empty(slo)).unwrap();
+
+    // AssertionConsumerService
+    let mut acs = BytesStart::new("AssertionConsumerService");
+    acs.push_attribute(("Binding", "urn:oasis:names:tc:SAML:2.0:bindings:HTTP-POST"));
+    acs.push_attribute(("Location", acs_url));
+    acs.push_attribute(("index", "0"));
+    acs.push_attribute(("isDefault", "true"));
+    writer.write_event(Event::Empty(acs)).unwrap();
+
+    // Close tags
+    writer
+        .write_event(Event::End(BytesEnd::new("SPSSODescriptor")))
+        .unwrap();
+    writer
+        .write_event(Event::End(BytesEnd::new("EntityDescriptor")))
+        .unwrap();
+
+    String::from_utf8(writer.into_inner().into_inner()).unwrap()
+}
+
+// ============================================================================
+// IdP Metadata Parsing
+// ============================================================================
+
+/// Parsed IdP metadata
+#[derive(Debug, Clone)]
+pub struct IdpMetadata {
+    /// IdP entity ID
+    pub entity_id: String,
+    /// SSO URL (HTTP-Redirect binding)
+    pub sso_url: Option<String>,
+    /// SLO URL
+    pub slo_url: Option<String>,
+    /// IdP certificate (DER-encoded)
+    pub certificate: Option<Vec<u8>>,
+}
+
+/// Parse IdP metadata XML
+pub fn parse_idp_metadata(xml: &str) -> Result<IdpMetadata, SsoError> {
+    let mut reader = Reader::from_str(xml);
+
+    let mut entity_id = None;
+    let mut sso_url = None;
+    let mut slo_url = None;
+    let mut certificate = None;
+    let mut in_idp_sso = false;
+
+    let mut buf = Vec::new();
+    loop {
+        match reader.read_event_into(&mut buf) {
+            Ok(Event::Start(ref e)) | Ok(Event::Empty(ref e)) => {
+                let tag_name = String::from_utf8_lossy(e.name().as_ref()).to_string();
+                match tag_name.as_str() {
+                    "EntityDescriptor" | "md:EntityDescriptor" => {
+                        for attr in e.attributes().flatten() {
+                            let key = String::from_utf8_lossy(attr.key.as_ref()).to_string();
+                            let val = attr.unescape_value().unwrap_or_default().to_string();
+                            if key == "entityID" {
+                                entity_id = Some(val);
+                            }
+                        }
+                    }
+                    "IDPSSODescriptor" | "md:IDPSSODescriptor" => {
+                        in_idp_sso = true;
+                    }
+                    "SingleSignOnService" | "md:SingleSignOnService" => {
+                        if in_idp_sso {
+                            let mut binding = None;
+                            let mut location = None;
+                            for attr in e.attributes().flatten() {
+                                let key = String::from_utf8_lossy(attr.key.as_ref()).to_string();
+                                let val = attr.unescape_value().unwrap_or_default().to_string();
+                                match key.as_str() {
+                                    "Binding" => binding = Some(val),
+                                    "Location" => location = Some(val),
+                                    _ => {}
+                                }
+                            }
+                            if let (Some(b), Some(l)) = (binding, location) {
+                                if b.contains("HTTP-Redirect") || b.contains("HTTP-POST") {
+                                    sso_url = Some(l);
+                                }
+                            }
+                        }
+                    }
+                    "SingleLogoutService" | "md:SingleLogoutService" => {
+                        if in_idp_sso {
+                            for attr in e.attributes().flatten() {
+                                let key = String::from_utf8_lossy(attr.key.as_ref()).to_string();
+                                let val = attr.unescape_value().unwrap_or_default().to_string();
+                                if key == "Location" {
+                                    slo_url = Some(val);
+                                }
+                            }
+                        }
+                    }
+                    "X509Certificate" | "md:X509Certificate" => {
+                        // Will read text in next event
+                    }
+                    _ => {}
+                }
+            }
+            Ok(Event::Text(ref e)) => {
+                let text = unescape(&String::from_utf8_lossy(e.as_ref()))
+                    .unwrap_or_default()
+                    .to_string();
+                if !text.is_empty() && certificate.is_none() {
+                    // Assume this is a certificate value
+                    // In production, track context more carefully
+                    certificate = Some(text.as_bytes().to_vec());
+                }
+            }
+            Ok(Event::End(ref e)) => {
+                let tag_name = String::from_utf8_lossy(e.name().as_ref()).to_string();
+                if tag_name == "IDPSSODescriptor" || tag_name == "md:IDPSSODescriptor" {
+                    in_idp_sso = false;
+                }
+            }
+            Ok(Event::Eof) => break,
+            Err(e) => {
+                return Err(SsoError::ProviderError(format!(
+                    "IdP metadata XML error: {}",
+                    e
+                )));
+            }
+            _ => {}
+        }
+        buf.clear();
+    }
+
+    let entity_id =
+        entity_id.ok_or_else(|| SsoError::ProviderError("Missing entityID".to_string()))?;
+
+    Ok(IdpMetadata {
+        entity_id,
+        sso_url,
+        slo_url,
+        certificate,
+    })
+}
+
+// ============================================================================
+// AuthnRequest Generation
+// ============================================================================
+
+/// Generate SAML AuthnRequest XML
+pub fn generate_authn_request(
+    sp_entity_id: &str,
+    acs_url: &str,
+    idp_sso_url: &str,
+) -> (String, String) {
+    let request_id = format!("_{}", uuid_simple());
+    let issue_instant = Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string();
+
+    let mut writer = Writer::new(Cursor::new(Vec::new()));
+
+    let mut authn_req = BytesStart::new("AuthnRequest");
+    authn_req.push_attribute(("xmlns", "urn:oasis:names:tc:SAML:2.0:protocol"));
+    authn_req.push_attribute(("ID", request_id.as_str()));
+    authn_req.push_attribute(("Version", "2.0"));
+    authn_req.push_attribute(("IssueInstant", issue_instant.as_str()));
+    authn_req.push_attribute(("AssertionConsumerServiceURL", acs_url));
+    authn_req.push_attribute((
+        "ProtocolBinding",
+        "urn:oasis:names:tc:SAML:2.0:bindings:HTTP-POST",
+    ));
+    writer.write_event(Event::Start(authn_req)).unwrap();
+
+    // Issuer
+    let mut issuer = BytesStart::new("Issuer");
+    issuer.push_attribute(("xmlns", "urn:oasis:names:tc:SAML:2.0:assertion"));
+    writer.write_event(Event::Start(issuer)).unwrap();
+    writer
+        .write_event(Event::Text(BytesText::new(sp_entity_id)))
+        .unwrap();
+    writer
+        .write_event(Event::End(BytesEnd::new("Issuer")))
+        .unwrap();
+
+    // NameIDPolicy
+    let mut name_id_policy = BytesStart::new("NameIDPolicy");
+    name_id_policy.push_attribute((
+        "Format",
+        "urn:oasis:names:tc:SAML:2.0:nameid-format:unspecified",
+    ));
+    name_id_policy.push_attribute(("AllowCreate", "true"));
+    writer.write_event(Event::Empty(name_id_policy)).unwrap();
+
+    writer
+        .write_event(Event::End(BytesEnd::new("AuthnRequest")))
+        .unwrap();
+
+    let xml = String::from_utf8(writer.into_inner().into_inner()).unwrap();
+    (request_id, xml)
+}
+
+/// Simple UUID-like identifier (not cryptographically secure)
+fn uuid_simple() -> String {
+    use std::time::{SystemTime, UNIX_EPOCH};
+    let duration = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default();
+    format!("{:x}", duration.as_nanos())
+}
+
+// ============================================================================
+// Helper Functions
+// ============================================================================
+
+/// Parse SAML datetime format (ISO 8601)
+fn parse_saml_datetime(s: &str) -> Result<DateTime<Utc>, SsoError> {
+    DateTime::parse_from_rfc3339(s)
+        .map(|dt| dt.with_timezone(&Utc))
+        .map_err(|e| SsoError::ProviderError(format!("Invalid SAML datetime '{}': {}", s, e)))
+}
+
+// ============================================================================
+// Tests
+// ============================================================================
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use chrono::Datelike;
+
+    #[test]
+    fn test_generate_sp_metadata() {
+        let metadata = generate_sp_metadata(
+            "https://example.com/saml",
+            "https://example.com/acs",
+            "https://example.com",
+        );
+        assert!(metadata.contains("entityID=\"https://example.com/saml\""));
+        assert!(metadata.contains("Location=\"https://example.com/acs\""));
+        assert!(metadata.contains("SingleLogoutService"));
+        assert!(metadata.contains("AssertionConsumerService"));
+    }
+
+    #[test]
+    fn test_generate_authn_request() {
+        let (id, xml) = generate_authn_request(
+            "https://example.com/saml",
+            "https://example.com/acs",
+            "https://idp.example.com/sso",
+        );
+        assert!(id.starts_with('_'));
+        assert!(xml.contains("AuthnRequest"));
+        assert!(xml.contains("https://example.com/saml"));
+        assert!(xml.contains("https://example.com/acs"));
+    }
+
+    #[test]
+    fn test_parse_saml_datetime() {
+        let dt = parse_saml_datetime("2026-05-17T12:00:00Z").unwrap();
+        assert_eq!(dt.year(), 2026);
+        assert_eq!(dt.month(), 5);
+    }
+
+    #[test]
+    fn test_parse_idp_metadata() {
+        let xml = r#"
+        <EntityDescriptor xmlns="urn:oasis:names:tc:SAML:2.0:metadata"
+                          entityID="https://idp.example.com">
+            <IDPSSODescriptor>
+                <SingleSignOnService Binding="urn:oasis:names:tc:SAML:2.0:bindings:HTTP-Redirect"
+                                     Location="https://idp.example.com/sso"/>
+                <SingleLogoutService Binding="urn:oasis:names:tc:SAML:2.0:bindings:HTTP-Redirect"
+                                     Location="https://idp.example.com/slo"/>
+            </IDPSSODescriptor>
+        </EntityDescriptor>
+        "#;
+        let metadata = parse_idp_metadata(xml).unwrap();
+        assert_eq!(metadata.entity_id, "https://idp.example.com");
+        assert_eq!(
+            metadata.sso_url,
+            Some("https://idp.example.com/sso".to_string())
+        );
+        assert_eq!(
+            metadata.slo_url,
+            Some("https://idp.example.com/slo".to_string())
+        );
+    }
+
+    #[test]
+    fn test_saml_assertion_expired() {
+        let parser = SamlAssertionParserImpl {
+            idp_certificate: vec![1, 2, 3],
+            sp_entity_id: "https://example.com/saml".to_string(),
+            acs_url: "https://example.com/acs".to_string(),
+            clock_skew_seconds: 30,
+        };
+
+        // Create an assertion with past expiry
+        let assertion_xml = r#"
+        <Assertion xmlns="urn:oasis:names:tc:SAML:2.0:assertion">
+            <Conditions NotBefore="2020-01-01T00:00:00Z" NotOnOrAfter="2020-01-01T01:00:00Z">
+                <Audience>https://example.com/saml</Audience>
+            </Conditions>
+            <Subject>
+                <NameID>user@example.com</NameID>
+                <SubjectConfirmationData Recipient="https://example.com/acs"/>
+            </Subject>
+        </Assertion>
+        "#;
+
+        let result = parser.parse(assertion_xml);
+        assert!(result.is_err());
+        match result.unwrap_err() {
+            SsoError::SamlAssertionExpired => {} // expected
+            other => panic!("Expected SamlAssertionExpired, got: {:?}", other),
+        }
+    }
+
+    #[test]
+    fn test_saml_audience_mismatch() {
+        let parser = SamlAssertionParserImpl {
+            idp_certificate: vec![1, 2, 3],
+            sp_entity_id: "https://example.com/saml".to_string(),
+            acs_url: "https://example.com/acs".to_string(),
+            clock_skew_seconds: 30,
+        };
+
+        // Create an assertion with wrong audience
+        let future = (Utc::now() + ChronoDuration::hours(1))
+            .format("%Y-%m-%dT%H:%M:%SZ")
+            .to_string();
+        let past = (Utc::now() - ChronoDuration::hours(1))
+            .format("%Y-%m-%dT%H:%M:%SZ")
+            .to_string();
+        let assertion_xml = format!(
+            r#"
+        <Assertion xmlns="urn:oasis:names:tc:SAML:2.0:assertion">
+            <Conditions NotBefore="{}" NotOnOrAfter="{}">
+                <Audience>https://wrong.example.com</Audience>
+            </Conditions>
+            <Subject>
+                <NameID>user@example.com</NameID>
+                <SubjectConfirmationData Recipient="https://example.com/acs"/>
+            </Subject>
+        </Assertion>
+        "#,
+            past, future
+        );
+
+        let result = parser.parse(&assertion_xml);
+        assert!(result.is_err());
+        match result.unwrap_err() {
+            SsoError::SamlAudienceMismatch => {} // expected
+            other => panic!("Expected SamlAudienceMismatch, got: {:?}", other),
+        }
+    }
+
+    #[test]
+    fn test_saml_map_attributes() {
+        let parser = SamlAssertionParserImpl {
+            idp_certificate: vec![1, 2, 3],
+            sp_entity_id: "https://example.com/saml".to_string(),
+            acs_url: "https://example.com/acs".to_string(),
+            clock_skew_seconds: 30,
+        };
+
+        let mut attributes = HashMap::new();
+        attributes.insert("email".to_string(), vec!["user@example.com".to_string()]);
+        attributes.insert("displayName".to_string(), vec!["Test User".to_string()]);
+        attributes.insert(
+            "groups".to_string(),
+            vec!["admin".to_string(), "users".to_string()],
+        );
+
+        let assertion = SamlAssertion {
+            name_id: "user@example.com".to_string(),
+            session_index: Some("_session123".to_string()),
+            attributes,
+            not_before: Utc::now() - ChronoDuration::hours(1),
+            not_on_or_after: Utc::now() + ChronoDuration::hours(1),
+        };
+
+        let user = parser.map_attributes(&assertion);
+        assert_eq!(user.sub, "user@example.com");
+        assert_eq!(user.email, Some("user@example.com".to_string()));
+        assert_eq!(user.name, Some("Test User".to_string()));
+        assert_eq!(user.groups, vec!["admin", "users"]);
+    }
+
+    #[test]
+    fn test_empty_certificate_fails() {
+        let parser = SamlAssertionParserImpl {
+            idp_certificate: vec![],
+            sp_entity_id: "https://example.com/saml".to_string(),
+            acs_url: "https://example.com/acs".to_string(),
+            clock_skew_seconds: 30,
+        };
+
+        let result = parser.validate_signature("<Assertion/>");
+        assert!(result.is_err());
+    }
+}

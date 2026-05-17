@@ -71,6 +71,9 @@ percent-encoding = "2.1"
 # For URL encoding (Vault KV v2 path encoding, RFC-0935)
 urlencoding = "2.1"
 
+# For token estimation (pre-call checks, RFC-0936)
+tiktoken-rs = "0.6"
+
 # For async streaming (futures::StreamExt)
 futures-core = "0.3"
 futures = "0.3"

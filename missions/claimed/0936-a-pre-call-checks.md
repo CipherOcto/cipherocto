@@ -2,6 +2,8 @@
 
 ## Status
 
+Complete
+
 Open
 
 ## RFC
@@ -33,38 +35,38 @@ RFC-0936 specifies `PreCallCheck` trait for filtering deployments before routing
 
 ### Trait
 
-- [ ] `PreCallCheck` async trait with `check(&self, deployment, request) -> CheckResult`
-- [ ] `CheckResult` enum: Pass, Fail { reason }
+- [x] `PreCallCheck` async trait with `check(&self, deployment, request) -> CheckResult`
+- [x] `CheckResult` enum: Pass, Fail { reason }
 
 ### Implementations
 
-- [ ] `ContextWindowCheck` — checks max_input_tokens, max_output_tokens
-- [ ] `TagFilterCheck` — checks allowed_tags, blocked_tags
-- [ ] `HealthCheck` — checks deployment health via HTTP
+- [x] `ContextWindowCheck` — checks max_input_tokens, max_output_tokens
+- [x] `TagFilterCheck` — checks allowed_tags, blocked_tags
+- [x] `HealthCheck` — checks deployment health via HTTP
 
 ### Token Estimation
 
-- [ ] `estimate_tokens()` using tiktoken-rs crate
-- [ ] Fallback to character/4 approximation
-- [ ] Cache tokenizer instances per model
+- [x] `estimate_tokens()` using tiktoken-rs crate
+- [x] Fallback to character/4 approximation
+- [x] Cache tokenizer instances per model
 
 ### Router Integration
 
-- [ ] `get_available_deployment(&self)` filters by pre-call checks. Takes `&self` (immutable) — round-robin index update uses interior mutability via `RefCell<HashMap<String, usize>>` or atomic operations.
-- [ ] `route_to_valid()` does not exist — implement as a new method. The actual routing method in router.rs is `Self::simple_shuffle_impl()`.
-- [ ] Async check execution
+- [x] `get_available_deployment(&self)` filters by pre-call checks. Takes `&self` (immutable) — round-robin index update uses interior mutability via `RefCell<HashMap<String, usize>>` or atomic operations.
+- [x] `route_to_valid()` does not exist — implement as a new method. The actual routing method in router.rs is `Self::simple_shuffle_impl()`.
+- [x] Async check execution
 
 ### DeploymentConfig Updates
 
-- [ ] `DeploymentConfig.model_info` is `Option<ModelInfo>`. Pre-call checks must handle `None` gracefully — skip context window check if `model_info` is not available.
+- [x] `DeploymentConfig.model_info` is `Option<ModelInfo>`. Pre-call checks must handle `None` gracefully — skip context window check if `model_info` is not available.
 
 ### Tests
 
-- [ ] Context window check filters deployments
-- [ ] Tag filter check passes/blocks correctly
-- [ ] Health check marks unhealthy deployments
-- [ ] Router only routes to deployments passing all checks
-- [ ] Requests with no tags pass tag filtering
+- [x] Context window check filters deployments
+- [x] Tag filter check passes/blocks correctly
+- [x] Health check marks unhealthy deployments
+- [x] Router only routes to deployments passing all checks
+- [x] Requests with no tags pass tag filtering
 
 ## Key Files
 

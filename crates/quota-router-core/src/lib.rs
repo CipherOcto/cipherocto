@@ -24,6 +24,7 @@ pub mod key_rate_limiter;
 pub mod keys;
 pub mod metrics;
 pub mod middleware;
+pub mod pre_call_checks;
 pub mod pricing;
 pub mod providers;
 pub mod proxy;

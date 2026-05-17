@@ -77,6 +77,7 @@ tiktoken-rs = "0.6"
 # For async streaming (futures::StreamExt)
 futures-core = "0.3"
 futures = "0.3"
+futures-util = "0.3"
 
 # For TokenBucket rate limiter (DashMap for concurrent access)
 dashmap = "5.0"

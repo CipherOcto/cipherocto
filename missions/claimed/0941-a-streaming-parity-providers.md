@@ -2,6 +2,8 @@
 
 ## Status
 
+Complete
+
 Open
 
 ## RFC
@@ -20,16 +22,16 @@ Only 2/10 native_http providers support streaming (OpenAI, Anthropic). This miss
 
 ### OpenAI-Compatible Providers (Groq, Together, Ollama, Mistral, Azure)
 
-- [ ] Extract shared SSE parsing into helper function
-- [ ] Add `supports_streaming() -> true` to each provider
-- [ ] Implement `streaming_completion()` using shared parser
-- [ ] Test streaming end-to-end
+- [x] Extract shared SSE parsing into helper function
+- [x] Add `supports_streaming() -> true` to each provider
+- [x] Implement `streaming_completion()` using shared parser
+- [x] Test streaming end-to-end
 
 ### Other Providers (Gemini, Bedrock, Replicate)
 
-- [ ] Implement custom SSE parsers for each format
-- [ ] Add `supports_streaming() -> true`
-- [ ] Implement `streaming_completion()`
+- [x] Implement custom SSE parsers for each format
+- [x] Add `supports_streaming() -> true`
+- [x] Implement `streaming_completion()`
 
 ## Files to Modify
 

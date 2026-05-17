@@ -234,3 +234,67 @@ pub fn init_providers() {
         || Box::new(replicate::ReplicateProvider::new()),
     );
 }
+
+/// Shared streaming helper for OpenAI-compatible providers (RFC-0941).
+///
+/// This function handles the common SSE parsing logic for providers that use
+/// OpenAI-compatible streaming format: Groq, Together, Ollama, Mistral, Azure.
+pub async fn stream_openai_compatible(
+    client: &reqwest::Client,
+    url: &str,
+    api_key: &str,
+    body: serde_json::Value,
+) -> Result<StreamingResponse, ProviderError> {
+    let resp = client
+        .post(url)
+        .header("Authorization", format!("Bearer {}", api_key))
+        .header("Content-Type", "application/json")
+        .json(&body)
+        .send()
+        .await
+        .map_err(|e| ProviderError::Network(e.to_string()))?;
+
+    if resp.status() == 401 || resp.status() == 403 {
+        return Err(ProviderError::AuthError(format!("HTTP {}", resp.status())));
+    }
+    if resp.status() == 429 {
+        return Err(ProviderError::RateLimit("Rate limited".to_string()));
+    }
+    if !resp.status().is_success() {
+        return Err(ProviderError::InvalidResponse(format!(
+            "HTTP {}",
+            resp.status()
+        )));
+    }
+
+    let (tx, rx) = tokio::sync::mpsc::channel(100);
+
+    // Spawn task to read SSE bytes and forward them
+    tokio::spawn(async move {
+        let mut stream = resp.bytes_stream();
+        use futures_util::StreamExt;
+
+        while let Some(chunk_result) = stream.next().await {
+            match chunk_result {
+                Ok(bytes) => {
+                    if tx
+                        .send(Ok(StreamingChunk::RawSSE(bytes.to_vec())))
+                        .await
+                        .is_err()
+                    {
+                        break;
+                    }
+                }
+                Err(e) => {
+                    let _ = tx.send(Err(ProviderError::Network(e.to_string()))).await;
+                    break;
+                }
+            }
+        }
+    });
+
+    Ok(StreamingResponse {
+        receiver: rx,
+        content_type: "text/event-stream",
+    })
+}

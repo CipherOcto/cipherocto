@@ -2,7 +2,7 @@
 
 use super::{
     HttpCompletionRequest, HttpCompletionResponse, HttpEmbeddingRequest, HttpEmbeddingResponse,
-    ProviderError,
+    ProviderError, StreamingResponse,
 };
 use async_trait::async_trait;
 use reqwest::Client;
@@ -160,6 +160,45 @@ impl super::HttpProvider for TogetherProvider {
                 data.usage.total_tokens,
             ),
         })
+    }
+
+    fn supports_streaming(&self) -> bool {
+        true
+    }
+
+    async fn streaming_completion(
+        &self,
+        request: &HttpCompletionRequest,
+        api_key: &str,
+    ) -> Result<StreamingResponse, ProviderError> {
+        let base_url = request.api_base.as_deref().unwrap_or(&self.api_base);
+        let url = format!("{}/chat/completions", base_url);
+
+        let mut body = serde_json::json!({
+            "model": request.model,
+            "messages": request.messages.iter().map(|m| {
+                serde_json::json!({
+                    "role": m.role,
+                    "content": m.content
+                })
+            }).collect::<Vec<_>>(),
+            "stream": true
+        });
+
+        if let Some(temp) = request.temperature {
+            body["temperature"] = serde_json::json!(temp);
+        }
+        if let Some(max_tokens) = request.max_tokens {
+            body["max_tokens"] = serde_json::json!(max_tokens);
+        }
+        if let Some(top_p) = request.top_p {
+            body["top_p"] = serde_json::json!(top_p);
+        }
+        if let Some(stop) = &request.stop {
+            body["stop"] = serde_json::json!(stop);
+        }
+
+        super::stream_openai_compatible(&self.client, &url, api_key, body).await
     }
 
     fn routing_weight(&self) -> u32 {

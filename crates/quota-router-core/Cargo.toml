@@ -88,7 +88,7 @@ chrono = { version = "0.4", features = ["serde"] }
 futures-util = "0.3"
 
 # For TokenBucket rate limiter (DashMap for concurrent access)
-dashmap = "5.0"
+dashmap = "6.2"
 
 # For monotonic time in TokenBucket
 instant = "0.1"

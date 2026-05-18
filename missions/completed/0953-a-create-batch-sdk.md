@@ -26,7 +26,7 @@ RFC-0953 (Economics): Extended Python SDK Functions
 - [x] abatch_cancel() async variant exported
 - [x] abatch_list() async variant exported
 - [x] abatch_results() async variant exported
-- [x] Function signatures match RFC-0920 exactly
+- [ ] Function signatures match RFC-0920 exactly
 - [x] PyO3 bindings match Python signatures
 - [x] Streaming support for batch progress
 - [x] Batch file uploads validated

@@ -17,8 +17,8 @@ RFC-0953 (Economics): Extended Python SDK Functions
 ## Acceptance Criteria
 
 - [x] responses() function exported in Python SDK
-- [x] get_response() function exported
-- [x] delete_response() function exported
+- [ ] get_response() function exported
+- [ ] delete_response() function exported
 - [x] aresponses() async variant exported
 - [x] aget_response() async variant exported
 - [x] adelete_response() async variant exported

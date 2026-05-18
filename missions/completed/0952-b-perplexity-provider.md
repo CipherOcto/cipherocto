@@ -20,7 +20,7 @@ None
 - [x] Model string inference works ("perplexity/*")
 - [x] Environment variable config (PERPLEXITY_API_KEY)
 - [x] Citations preserved in response
-- [x] Perplexity-specific params work (return_citations, search_domain_filter, search_recency_filter)
+- [ ] Perplexity-specific params work (deferred to Python SDK) (return_citations, search_domain_filter, search_recency_filter)
 - [x] API key masked in logs
 - [x] Error mapping follows RFC-0920 taxonomy
 - [x] Works in litellm-mode (reqwest)

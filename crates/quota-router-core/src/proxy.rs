@@ -1113,6 +1113,10 @@ where
             .and_then(|v| v.to_str().ok())
             .unwrap_or("")
             .to_string();
+        let file_id = path
+            .strip_prefix("/v1/files/")
+            .filter(|s| !s.is_empty())
+            .map(|s| s.to_string());
         let (_, body) = req.into_parts();
         let full_body = match body.collect().await {
             Ok(bytes) => bytes.to_bytes(),
@@ -1143,7 +1147,20 @@ where
             .unwrap_or_else(|| "https://api.openai.com/v1".to_string());
 
         let client = reqwest::Client::new();
-        let url = format!("{}{}", base_url, path);
+        let upstream_path: String = match (&method, &file_id) {
+            (&http::Method::GET, &None) => "/v1/files".into(),
+            (&http::Method::GET, &Some(ref id)) => format!("/v1/files/{}", id),
+            (&http::Method::DELETE, &Some(ref id)) => format!("/v1/files/{}", id),
+            (&http::Method::POST, _) => "/v1/files".into(),
+            _ => {
+                let resp = Response::builder()
+                    .status(StatusCode::METHOD_NOT_ALLOWED)
+                    .body(SseBody::from_error("Method not allowed".to_string()))
+                    .unwrap();
+                return Ok(resp);
+            }
+        };
+        let url = format!("{}{}", base_url, upstream_path);
         let mut req_builder = match method {
             http::Method::GET => client.get(&url),
             http::Method::DELETE => client.delete(&url),
@@ -1160,13 +1177,7 @@ where
                         .body(full_body.to_vec())
                 }
             }
-            _ => {
-                let resp = Response::builder()
-                    .status(StatusCode::METHOD_NOT_ALLOWED)
-                    .body(SseBody::from_error("Method not allowed".to_string()))
-                    .unwrap();
-                return Ok(resp);
-            }
+            _ => unreachable!(),
         };
         req_builder = req_builder.header("Authorization", format!("Bearer {}", api_key));
         let resp = req_builder.send().await;
@@ -1198,6 +1209,18 @@ where
     // /v1/batches — batch processing (RFC-0951)
     if path.starts_with("/v1/batches") {
         let method = req.method().clone();
+        let path_after_prefix = path.strip_prefix("/v1/batches/").unwrap_or("");
+        let is_cancel = path_after_prefix.ends_with("/cancel");
+        let batch_id = if path_after_prefix.is_empty() {
+            None
+        } else if is_cancel {
+            // Extract batch_id from "/v1/batches/{id}/cancel"
+            path_after_prefix
+                .strip_suffix("/cancel")
+                .map(|s| s.to_string())
+        } else {
+            Some(path_after_prefix.to_string())
+        };
         let (_, body) = req.into_parts();
         let full_body = match body.collect().await {
             Ok(bytes) => bytes.to_bytes(),
@@ -1228,10 +1251,11 @@ where
             .unwrap_or_else(|| "https://api.openai.com/v1".to_string());
 
         let client = reqwest::Client::new();
-        let url = format!("{}{}", base_url, path);
-        let mut req_builder = match method {
-            http::Method::GET => client.get(&url),
-            http::Method::POST => client.post(&url).body(full_body.to_vec()),
+        let upstream_path: String = match (&method, &batch_id, is_cancel) {
+            (&http::Method::POST, &None, false) => "/v1/batches".into(),
+            (&http::Method::GET, &None, false) => "/v1/batches".into(),
+            (&http::Method::GET, &Some(ref id), false) => format!("/v1/batches/{}", id),
+            (&http::Method::POST, &Some(ref id), true) => format!("/v1/batches/{}/cancel", id),
             _ => {
                 let resp = Response::builder()
                     .status(StatusCode::METHOD_NOT_ALLOWED)
@@ -1239,6 +1263,12 @@ where
                     .unwrap();
                 return Ok(resp);
             }
+        };
+        let url = format!("{}{}", base_url, upstream_path);
+        let mut req_builder = match method {
+            http::Method::GET => client.get(&url),
+            http::Method::POST => client.post(&url).body(full_body.to_vec()),
+            _ => unreachable!(),
         };
         req_builder = req_builder.header("Authorization", format!("Bearer {}", api_key));
         let resp = req_builder.send().await;

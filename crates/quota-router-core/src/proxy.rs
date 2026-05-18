@@ -1149,8 +1149,8 @@ where
         let client = reqwest::Client::new();
         let upstream_path: String = match (&method, &file_id) {
             (&http::Method::GET, &None) => "/v1/files".into(),
-            (&http::Method::GET, &Some(ref id)) => format!("/v1/files/{}", id),
-            (&http::Method::DELETE, &Some(ref id)) => format!("/v1/files/{}", id),
+            (&http::Method::GET, Some(id)) => format!("/v1/files/{}", id),
+            (&http::Method::DELETE, Some(id)) => format!("/v1/files/{}", id),
             (&http::Method::POST, _) => "/v1/files".into(),
             _ => {
                 let resp = Response::builder()
@@ -1254,8 +1254,8 @@ where
         let upstream_path: String = match (&method, &batch_id, is_cancel) {
             (&http::Method::POST, &None, false) => "/v1/batches".into(),
             (&http::Method::GET, &None, false) => "/v1/batches".into(),
-            (&http::Method::GET, &Some(ref id), false) => format!("/v1/batches/{}", id),
-            (&http::Method::POST, &Some(ref id), true) => format!("/v1/batches/{}/cancel", id),
+            (&http::Method::GET, Some(id), false) => format!("/v1/batches/{}", id),
+            (&http::Method::POST, Some(id), true) => format!("/v1/batches/{}/cancel", id),
             _ => {
                 let resp = Response::builder()
                     .status(StatusCode::METHOD_NOT_ALLOWED)

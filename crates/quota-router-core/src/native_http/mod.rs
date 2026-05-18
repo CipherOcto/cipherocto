@@ -13,6 +13,8 @@ pub mod azure;
 #[cfg(any(feature = "litellm-mode", feature = "full"))]
 pub mod bedrock;
 #[cfg(any(feature = "litellm-mode", feature = "full"))]
+pub mod databricks;
+#[cfg(any(feature = "litellm-mode", feature = "full"))]
 pub mod gemini;
 #[cfg(any(feature = "litellm-mode", feature = "full"))]
 pub mod groq;
@@ -236,6 +238,9 @@ pub fn init_providers() {
         "replicate",
         || Box::new(replicate::ReplicateProvider::new()),
     );
+    HttpProviderFactory::register("databricks", || {
+        Box::new(databricks::DatabricksProvider::new())
+    });
 }
 
 /// Shared streaming helper for OpenAI-compatible providers (RFC-0941).

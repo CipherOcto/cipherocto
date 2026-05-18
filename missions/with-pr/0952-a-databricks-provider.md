@@ -2,7 +2,7 @@
 
 ## Status
 
-Open
+Claimed
 
 ## RFC
 
@@ -14,21 +14,21 @@ None
 
 ## Acceptance Criteria
 
-- [ ] DatabricksProvider implements HttpProvider trait
-- [ ] Supports chat/completions endpoint
-- [ ] Supports streaming via SSE
-- [ ] Model string inference works ("databricks/*")
-- [ ] Environment variable config (DATABRICKS_BASE_URL, DATABRICKS_API_KEY)
+- [x] DatabricksProvider implements HttpProvider trait
+- [x] Supports chat/completions endpoint
+- [x] Supports streaming via SSE
+- [x] Model string inference works ("databricks/*")
+- [x] Environment variable config (DATABRICKS_BASE_URL, DATABRICKS_API_KEY)
 - [ ] Workspace URL validated (HTTPS only)
-- [ ] Error mapping follows RFC-0920 taxonomy
-- [ ] Works in litellm-mode (reqwest)
-- [ ] Works in any-llm-mode (py_bridge)
-- [ ] Unit tests pass
+- [x] Error mapping follows RFC-0920 taxonomy
+- [x] Works in litellm-mode (reqwest)
+- [x] Works in any-llm-mode (py_bridge)
+- [x] Unit tests pass
 - [ ] Integration tests pass (with mock server)
 
 ## Claimant
 
-Unclaimed
+@claude
 
 ## Pull Request
 

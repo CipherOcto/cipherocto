@@ -136,21 +136,6 @@ impl super::HttpProvider for DatabricksProvider {
         if let Some(fmt) = &request.response_format {
             body["response_format"] = serde_json::to_value(fmt).unwrap_or_default();
         }
-        if let Some(n) = request.n {
-            body["n"] = serde_json::json!(n);
-        }
-        if let Some(penalty) = request.presence_penalty {
-            body["presence_penalty"] = serde_json::json!(penalty);
-        }
-        if let Some(penalty) = request.frequency_penalty {
-            body["frequency_penalty"] = serde_json::json!(penalty);
-        }
-        if let Some(user) = &request.user {
-            body["user"] = serde_json::json!(user);
-        }
-        if let Some(seed) = request.seed {
-            body["seed"] = serde_json::json!(seed);
-        }
 
         let resp = self
             .client

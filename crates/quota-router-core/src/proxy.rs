@@ -1267,7 +1267,10 @@ where
         let url = format!("{}{}", base_url, upstream_path);
         let mut req_builder = match method {
             http::Method::GET => client.get(&url),
-            http::Method::POST => client.post(&url).body(full_body.to_vec()),
+            http::Method::POST => client
+                .post(&url)
+                .header("Content-Type", "application/json")
+                .body(full_body.to_vec()),
             _ => unreachable!(),
         };
         req_builder = req_builder.header("Authorization", format!("Bearer {}", api_key));

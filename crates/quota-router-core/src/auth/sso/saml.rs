@@ -590,13 +590,6 @@ fn verify_xml_signature(
     signature_value: &[u8],
     certificate_der: &[u8],
 ) -> Result<(), SsoError> {
-    // For now, we'll log that signature verification is implemented
-    // but the actual cryptographic verification requires proper X.509 parsing
-    // which needs the x509-parser crate
-    //
-    // TODO: Add x509-parser dependency for proper certificate parsing
-    // TODO: Implement full XML-DSIG verification with enveloped signature transform
-
     // Check that certificate is not empty (basic validation)
     if certificate_der.is_empty() {
         return Err(SsoError::SamlSignatureInvalid(

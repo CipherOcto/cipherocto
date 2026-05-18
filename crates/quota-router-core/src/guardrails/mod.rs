@@ -548,9 +548,7 @@ impl TopicRestriction {
             lower[..lower.len() - 3].to_string()
         } else if lower.ends_with("tion") {
             lower[..lower.len() - 4].to_string()
-        } else if lower.ends_with("ed") {
-            lower[..lower.len() - 2].to_string()
-        } else if lower.ends_with("ly") {
+        } else if lower.ends_with("ed") || lower.ends_with("ly") {
             lower[..lower.len() - 2].to_string()
         } else if lower.ends_with("s") && !lower.ends_with("ss") {
             lower[..lower.len() - 1].to_string()

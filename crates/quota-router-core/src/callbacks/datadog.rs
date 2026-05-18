@@ -33,12 +33,12 @@ impl DatadogTarget {
             Duration::from_secs(4),
         ];
 
-        for attempt in 0..3 {
+        for (attempt, delay) in delays.iter().enumerate() {
             match self.send_once(payload).await {
                 Ok(()) => return Ok(()),
                 Err(e) => {
                     if attempt < 2 {
-                        tokio::time::sleep(delays[attempt]).await;
+                        tokio::time::sleep(*delay).await;
                     } else {
                         return Err(e);
                     }

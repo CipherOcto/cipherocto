@@ -195,10 +195,13 @@ impl std::fmt::Display for CallbackError {
 // Callback Executor
 // ============================================================================
 
+/// Type alias for the callback registry (shared with worker).
+type CallbackRegistry = Arc<std::sync::RwLock<HashMap<CallbackType, Vec<Arc<dyn CallbackTarget>>>>>;
+
 /// Callback executor — non-blocking, async.
 pub struct CallbackExecutor {
     /// Registered callbacks by type (shared with worker).
-    callbacks: Arc<std::sync::RwLock<HashMap<CallbackType, Vec<Arc<dyn CallbackTarget>>>>>,
+    callbacks: CallbackRegistry,
     /// Channel for async callback delivery (bounded, configurable capacity).
     tx: mpsc::Sender<CallbackEvent>,
     /// Background worker handle.
@@ -212,8 +215,7 @@ impl CallbackExecutor {
     pub fn new(capacity: usize) -> Self {
         let (tx, rx) = mpsc::channel(capacity);
         let dropped_total = Arc::new(AtomicU64::new(0));
-        let callbacks: Arc<std::sync::RwLock<HashMap<CallbackType, Vec<Arc<dyn CallbackTarget>>>>> =
-            Arc::new(std::sync::RwLock::new(HashMap::new()));
+        let callbacks: CallbackRegistry = Arc::new(std::sync::RwLock::new(HashMap::new()));
 
         let worker = tokio::spawn(Self::worker_loop(
             rx,
@@ -258,7 +260,7 @@ impl CallbackExecutor {
     /// Failures are logged but never propagated to the request path.
     async fn worker_loop(
         mut rx: mpsc::Receiver<CallbackEvent>,
-        callbacks: Arc<std::sync::RwLock<HashMap<CallbackType, Vec<Arc<dyn CallbackTarget>>>>>,
+        callbacks: CallbackRegistry,
         dropped_total: Arc<AtomicU64>,
     ) {
         while let Some(event) = rx.recv().await {

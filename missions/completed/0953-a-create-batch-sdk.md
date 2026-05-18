@@ -4,7 +4,6 @@
 
 Completed
 
-Open
 
 ## RFC
 
@@ -42,7 +41,6 @@ RFC-0953 (Economics): Extended Python SDK Functions
 
 @claude
 
-Unclaimed
 
 ## Pull Request
 

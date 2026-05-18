@@ -2,7 +2,7 @@
 
 ## Status
 
-Completed
+Open
 
 Open
 
@@ -33,7 +33,6 @@ None
 
 @claude
 
-Unclaimed
 
 ## Pull Request
 

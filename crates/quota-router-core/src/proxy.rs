@@ -1458,7 +1458,7 @@ where
             req_builder = req_builder.header("Authorization", format!("Bearer {}", key));
         }
 
-        let resp = match req_builder.body(full_body.to_vec()).send().await {
+        let resp = match req_builder.send().await {
             Ok(resp) => resp,
             Err(e) => {
                 let resp = Response::builder()

@@ -127,6 +127,7 @@ impl super::HttpProvider for OllamaProvider {
                 "stop".to_string(),
             )],
             usage: crate::shared_types::Usage::new(0, 0, 0),
+            metadata: None,
         })
     }
 

@@ -395,6 +395,11 @@ fn convert_response(data: PerplexityResponse, _status: u16) -> HttpCompletionRes
         })
         .collect();
 
+    // Preserve Perplexity-specific citations in metadata
+    let metadata = data
+        .citations
+        .map(|citations| serde_json::json!({ "citations": citations }));
+
     HttpCompletionResponse {
         id: data.id,
         object: data.object,
@@ -406,6 +411,7 @@ fn convert_response(data: PerplexityResponse, _status: u16) -> HttpCompletionRes
             data.usage.completion_tokens,
             data.usage.total_tokens,
         ),
+        metadata,
     }
 }
 
@@ -480,5 +486,9 @@ mod tests {
             Some("Hello!".to_string())
         );
         assert_eq!(response.usage.total_tokens, 15);
+        // Verify citations are preserved in metadata
+        assert!(response.metadata.is_some());
+        let meta = response.metadata.unwrap();
+        assert_eq!(meta["citations"][0], "https://example.com");
     }
 }

@@ -123,6 +123,7 @@ impl super::HttpProvider for GroqProvider {
                 data.usage.completion_tokens,
                 data.usage.total_tokens,
             ),
+            metadata: None,
         })
     }
 

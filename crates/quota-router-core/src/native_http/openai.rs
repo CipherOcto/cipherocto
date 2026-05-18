@@ -384,5 +384,6 @@ fn convert_response(data: OpenAIResponse, _status: u16) -> HttpCompletionRespons
             data.usage.completion_tokens,
             data.usage.total_tokens,
         ),
+        metadata: None,
     }
 }

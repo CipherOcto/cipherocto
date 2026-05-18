@@ -183,6 +183,7 @@ impl super::HttpProvider for AnthropicProvider {
                 data.usage.output_tokens,
                 data.usage.input_tokens + data.usage.output_tokens,
             ),
+            metadata: None,
         })
     }
 

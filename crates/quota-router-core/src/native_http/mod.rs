@@ -126,6 +126,8 @@ pub struct HttpCompletionResponse {
     pub model: String,
     pub choices: Vec<crate::shared_types::Choice>,
     pub usage: crate::shared_types::Usage,
+    /// Provider-specific metadata (e.g., Perplexity citations)
+    pub metadata: Option<serde_json::Value>,
 }
 
 #[async_trait]

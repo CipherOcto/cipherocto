@@ -117,6 +117,7 @@ impl super::HttpProvider for MistralProvider {
                 data.usage.completion_tokens,
                 data.usage.total_tokens,
             ),
+            metadata: None,
         })
     }
 

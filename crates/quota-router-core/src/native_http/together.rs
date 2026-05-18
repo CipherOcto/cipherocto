@@ -119,6 +119,7 @@ impl super::HttpProvider for TogetherProvider {
                 data.usage.completion_tokens,
                 data.usage.total_tokens,
             ),
+            metadata: None,
         })
     }
 

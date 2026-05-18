@@ -27,8 +27,13 @@ impl DatabricksProvider {
     }
 
     pub fn with_api_base(mut self, api_base: String) -> Self {
-        self.api_base = Self::validate_url(&api_base)
-            .unwrap_or_else(|| "https://dbc-xxx.databricks.com".to_string());
+        self.api_base = Self::validate_url(&api_base).unwrap_or_else(|| {
+            eprintln!(
+                "WARNING: Invalid Databricks URL '{}', using default",
+                api_base
+            );
+            "https://dbc-xxx.databricks.com".to_string()
+        });
         self
     }
 
@@ -415,6 +420,7 @@ fn convert_response(data: DatabricksResponse, _status: u16) -> HttpCompletionRes
             data.usage.completion_tokens,
             data.usage.total_tokens,
         ),
+        metadata: None,
     }
 }
 

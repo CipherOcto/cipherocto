@@ -138,6 +138,7 @@ impl super::HttpProvider for GeminiProvider {
                 data.usage_metadata.candidates_token_count.unwrap_or(0),
                 data.usage_metadata.total_token_count.unwrap_or(0),
             ),
+            metadata: None,
         })
     }
 

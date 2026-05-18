@@ -126,6 +126,7 @@ impl super::HttpProvider for AzureProvider {
                 data.usage.completion_tokens,
                 data.usage.total_tokens,
             ),
+            metadata: None,
         })
     }
 

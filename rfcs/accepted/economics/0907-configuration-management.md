@@ -1,8 +1,22 @@
+---
+title: "RFC-0907: Configuration Management"
+status: Accepted
+version: 1.1
+created: 2026-03-12
+updated: 2026-05-18
+authors:
+  - @cipherocto
+related:
+  - RFC-0929 (GatewayConfig Provider Dispatch)
+  - RFC-0930 (Provider Inference from Model String)
+  - RFC-0931 (any-llm-mode Environment Variable Parity)
+---
+
 # RFC-0907 (Economics): Configuration Management
 
 ## Status
 
-Planned
+Accepted
 
 ## Authors
 
@@ -13,8 +27,6 @@ Planned
 Define the configuration management system for the enhanced quota router, including YAML config files, environment variable overrides, and hot-reload support.
 
 ## Dependencies
-
-**Requires:**
 
 **Requires:**
 
@@ -32,7 +44,7 @@ Define the configuration management system for the enhanced quota router, includ
 - RFC-0930: Provider Inference from Model String (model prefix → provider)
 - RFC-0931: any-llm-mode Environment Variable Parity (env-var resolution)
 
-## Why Needed
+## Motivation
 
 Configuration management enables:
 
@@ -79,7 +91,7 @@ model_list:
     litellm_params:
       model: openai/gpt-4o
       api_base: https://api.openai.com/v1
-      api_key: os.environ/OPENAI_API_KEY
+      api_key: os.environ['OPENAI_API_KEY']
       rpm: 1000
 
   - model_name: anthropic-claude
@@ -101,7 +113,7 @@ litellm_settings:
   cache: true
 
 general_settings:
-  master_key: os.environ/MASTER_KEY
+  master_key: os.environ['MASTER_KEY']
   proxy_port: 4000
   health_check_route: /health
 
@@ -190,8 +202,8 @@ fn validate(&self) -> Result<(), ConfigError> {
 
     // Check required env vars
     for model in &self.model_list {
-        if model.litellm_params.api_key.starts_with("os.environ/") {
-            let var = model.litellm_params.api_key.strip_prefix("os.environ/").unwrap();
+        if model.litellm_params.api_key.starts_with("os.environ[") {
+            let var = extract_os_environ_key(&model.litellm_params.api_key).unwrap();
             if std::env::var(var).is_err() {
                 return Err(ConfigError::MissingEnvVar(var.to_string()));
             }
@@ -223,28 +235,31 @@ Reference LiteLLM's configuration:
 - `model_list` format matches exactly
 - `router_settings` maps to LiteLLM's router
 - `litellm_settings` matches LiteLLM params
-- Environment variable syntax: `os.environ/VAR_NAME`
+- Environment variable syntax: `os.environ['VAR_NAME']` or `${VAR_NAME}`
 
 ### os.environ Resolution (LiteLLM Parity)
 
-LiteLLM resolves environment variables at config load time using two syntaxes:
+LiteLLM resolves environment variables using bracket syntax (per RFC-0931):
 
-1. **Slash syntax:** `os.environ/VAR_NAME` — resolved via `std::env::var("VAR_NAME")`
-2. **Bracket syntax:** `os.environ['VAR_NAME']` or `os.environ["VAR_NAME"]` — parsed via regex
+1. **Bracket syntax (primary):** `os.environ['VAR_NAME']` or `os.environ["VAR_NAME"]` — parsed via regex
+2. **Dollar syntax:** `${VAR_NAME}` — resolved via `std::env::var("VAR_NAME")`
+
+**Note:** The slash syntax `os.environ/VAR_NAME` is a common misreading of LiteLLM's config format (per RFC-0931 line 21). LiteLLM uses bracket syntax `os.environ['KEY']`.
 
 **Resolution happens in `to_provider_map()` at config load time**, not at provider call time. This catches missing env vars early (fail fast at startup) and matches LiteLLM's behavior.
 
 ```rust
-/// Resolve os.environ/VAR_NAME or os.environ['VAR_NAME'] syntax
+/// Resolve os.environ['VAR_NAME'] or ${VAR_NAME} syntax
+/// Per RFC-0931: bracket syntax is primary
 fn resolve_env_var(value: &str) -> Result<String, ConfigError> {
-    // Tier 1: os.environ/VAR_NAME (slash syntax)
-    if let Some(var_name) = value.strip_prefix("os.environ/") {
+    // Tier 1: os.environ['VAR_NAME'] or os.environ["VAR_NAME"] (bracket syntax)
+    if let Some(caps) = ENV_BRACKET_RE.captures(value) {
+        let var_name = &caps[1];
         return std::env::var(var_name)
             .map_err(|_| ConfigError::MissingEnvVar(var_name.to_string()));
     }
-    // Tier 2: os.environ['VAR_NAME'] or os.environ["VAR_NAME"] (bracket syntax)
-    if let Some(caps) = ENV_BRACKET_RE.captures(value) {
-        let var_name = &caps[1];
+    // Tier 2: ${VAR_NAME} (dollar syntax, RFC-0938)
+    if let Some(var_name) = value.strip_prefix("${").and_then(|s| s.strip_suffix('}')) {
         return std::env::var(var_name)
             .map_err(|_| ConfigError::MissingEnvVar(var_name.to_string()));
     }
@@ -273,6 +288,30 @@ The full api_base resolution order (both modes):
 
 This applies to both litellm-mode (via `HttpCompletionRequest.api_base`) and any-llm-mode (via `py_bridge::factory::completion(api_base)`).
 
+## Security Considerations
+
+- API keys MUST be stored securely (environment variables or secret manager)
+- Config files MUST NOT contain plaintext secrets
+- Hot reload MUST validate config before applying
+- Config file permissions SHOULD be restricted (600 or 640)
+- Environment variable overrides take precedence over file values
+
+## Acceptance Criteria
+
+- [ ] YAML config file loads successfully
+- [ ] Environment variable overrides work (os.environ['VAR_NAME'] syntax)
+- [ ] Dollar syntax works (${VAR_NAME})
+- [ ] Config validation catches missing required fields
+- [ ] Config validation catches invalid port numbers
+- [ ] Hot reload via SIGHUP signal works
+- [ ] Hot reload via file watcher works
+- [ ] Invalid config rejected on reload (previous config preserved)
+- [ ] Provider inference from model string works
+- [ ] api_base fallback chain works (4 tiers)
+- [ ] CLI commands work: config validate, config show, config reload
+- [ ] Config snapshots stored in stoolap
+- [ ] All existing tests pass
+
 ## Persistence
 
 > **Critical:** Use CipherOcto/stoolap as the persistence layer.
@@ -282,7 +321,7 @@ Store in stoolap:
 - Config history
 - Effective config (computed)
 
-## Key Files to Modify
+## Key Files
 
 | File | Change |
 |------|--------|

@@ -25,6 +25,8 @@ pub mod ollama;
 #[cfg(any(feature = "litellm-mode", feature = "full"))]
 pub mod openai;
 #[cfg(any(feature = "litellm-mode", feature = "full"))]
+pub mod perplexity;
+#[cfg(any(feature = "litellm-mode", feature = "full"))]
 pub mod replicate;
 #[cfg(any(feature = "litellm-mode", feature = "full"))]
 pub mod together;
@@ -240,6 +242,9 @@ pub fn init_providers() {
     );
     HttpProviderFactory::register("databricks", || {
         Box::new(databricks::DatabricksProvider::new())
+    });
+    HttpProviderFactory::register("perplexity", || {
+        Box::new(perplexity::PerplexityProvider::new())
     });
 }
 

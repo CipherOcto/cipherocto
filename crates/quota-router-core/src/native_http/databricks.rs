@@ -21,12 +21,14 @@ impl DatabricksProvider {
             .unwrap_or_else(|_| "https://dbc-xxx.databricks.com".to_string());
         Self {
             client: Client::new(),
-            api_base: Self::validate_url(&api_base).unwrap_or(api_base),
+            api_base: Self::validate_url(&api_base)
+                .unwrap_or_else(|| "https://dbc-xxx.databricks.com".to_string()),
         }
     }
 
     pub fn with_api_base(mut self, api_base: String) -> Self {
-        self.api_base = Self::validate_url(&api_base).unwrap_or(api_base);
+        self.api_base = Self::validate_url(&api_base)
+            .unwrap_or_else(|| "https://dbc-xxx.databricks.com".to_string());
         self
     }
 

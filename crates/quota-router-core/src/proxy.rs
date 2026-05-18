@@ -1419,6 +1419,7 @@ where
         let target_url = format!("{}/{}", api_base, rest_path);
 
         // Forward request to provider
+        let method = req.method().clone();
         let client = reqwest::Client::new();
         let (_, body) = req.into_parts();
         let full_body = match body.collect().await {
@@ -1432,9 +1433,18 @@ where
             }
         };
 
-        let mut req_builder = client
-            .post(&target_url)
-            .header("Content-Type", "application/json");
+        let mut req_builder = match method {
+            http::Method::GET => client.get(&target_url),
+            http::Method::DELETE => client.delete(&target_url),
+            http::Method::PUT => client
+                .put(&target_url)
+                .header("Content-Type", "application/json")
+                .body(full_body.to_vec()),
+            _ => client
+                .post(&target_url)
+                .header("Content-Type", "application/json")
+                .body(full_body.to_vec()),
+        };
 
         // Forward Authorization header if present
         // Note: We can't access original headers after into_parts(), so use provider API key

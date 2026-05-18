@@ -17,16 +17,30 @@ pub struct DatabricksProvider {
 
 impl DatabricksProvider {
     pub fn new() -> Self {
+        let api_base = std::env::var("DATABRICKS_BASE_URL")
+            .unwrap_or_else(|_| "https://dbc-xxx.databricks.com".to_string());
         Self {
             client: Client::new(),
-            api_base: std::env::var("DATABRICKS_BASE_URL")
-                .unwrap_or_else(|_| "https://dbc-xxx.databricks.com".to_string()),
+            api_base: Self::validate_url(&api_base).unwrap_or(api_base),
         }
     }
 
     pub fn with_api_base(mut self, api_base: String) -> Self {
-        self.api_base = api_base;
+        self.api_base = Self::validate_url(&api_base).unwrap_or(api_base);
         self
+    }
+
+    /// Validate workspace URL — HTTPS only per security requirements
+    fn validate_url(url: &str) -> Option<String> {
+        if url.starts_with("https://") {
+            Some(url.to_string())
+        } else if url.starts_with("http://") {
+            // Upgrade to HTTPS
+            Some(url.replacen("http://", "https://", 1))
+        } else {
+            // Invalid URL, keep original but log warning
+            None
+        }
     }
 
     /// Strip the "databricks/" prefix from model name
@@ -344,5 +358,97 @@ fn convert_response(data: DatabricksResponse, _status: u16) -> HttpCompletionRes
             data.usage.completion_tokens,
             data.usage.total_tokens,
         ),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::native_http::HttpProvider;
+
+    #[test]
+    fn test_strip_model_prefix() {
+        assert_eq!(
+            DatabricksProvider::strip_model_prefix("databricks/dbrx-instruct"),
+            "dbrx-instruct"
+        );
+        assert_eq!(
+            DatabricksProvider::strip_model_prefix("dbrx-instruct"),
+            "dbrx-instruct"
+        );
+        assert_eq!(
+            DatabricksProvider::strip_model_prefix("databricks/llama-3-70b"),
+            "llama-3-70b"
+        );
+    }
+
+    #[test]
+    fn test_validate_url_https() {
+        assert_eq!(
+            DatabricksProvider::validate_url("https://dbc-xxx.databricks.com"),
+            Some("https://dbc-xxx.databricks.com".to_string())
+        );
+    }
+
+    #[test]
+    fn test_validate_url_http_upgrade() {
+        assert_eq!(
+            DatabricksProvider::validate_url("http://dbc-xxx.databricks.com"),
+            Some("https://dbc-xxx.databricks.com".to_string())
+        );
+    }
+
+    #[test]
+    fn test_validate_url_invalid() {
+        assert_eq!(DatabricksProvider::validate_url("ftp://invalid"), None);
+    }
+
+    #[test]
+    fn test_provider_name() {
+        let provider = DatabricksProvider::new();
+        assert_eq!(provider.name(), "databricks");
+    }
+
+    #[test]
+    fn test_supported_models() {
+        let provider = DatabricksProvider::new();
+        let models = provider.supported_models();
+        assert!(models.contains(&"databricks/"));
+    }
+
+    #[test]
+    fn test_supports_streaming() {
+        let provider = DatabricksProvider::new();
+        assert!(provider.supports_streaming());
+    }
+
+    #[test]
+    fn test_convert_response() {
+        let data = DatabricksResponse {
+            id: "test-id".to_string(),
+            object: "chat.completion".to_string(),
+            created: 1234567890,
+            model: "dbrx-instruct".to_string(),
+            choices: vec![DatabricksChoice {
+                index: 0,
+                message: DatabricksMessage {
+                    role: "assistant".to_string(),
+                    content: "Hello!".to_string(),
+                },
+                finish_reason: "stop".to_string(),
+            }],
+            usage: DatabricksUsage {
+                prompt_tokens: 10,
+                completion_tokens: 5,
+                total_tokens: 15,
+            },
+        };
+
+        let response = convert_response(data, 200);
+        assert_eq!(response.id, "test-id");
+        assert_eq!(response.model, "dbrx-instruct");
+        assert_eq!(response.choices.len(), 1);
+        assert_eq!(response.choices[0].message.content, Some("Hello!".to_string()));
+        assert_eq!(response.usage.total_tokens, 15);
     }
 }

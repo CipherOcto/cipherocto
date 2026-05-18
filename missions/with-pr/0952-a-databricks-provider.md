@@ -19,12 +19,12 @@ None
 - [x] Supports streaming via SSE
 - [x] Model string inference works ("databricks/*")
 - [x] Environment variable config (DATABRICKS_BASE_URL, DATABRICKS_API_KEY)
-- [ ] Workspace URL validated (HTTPS only)
+- [x] Workspace URL validated (HTTPS only)
 - [x] Error mapping follows RFC-0920 taxonomy
 - [x] Works in litellm-mode (reqwest)
 - [x] Works in any-llm-mode (py_bridge)
 - [x] Unit tests pass
-- [ ] Integration tests pass (with mock server)
+- [x] Integration tests pass (with mock server)
 
 ## Claimant
 

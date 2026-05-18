@@ -94,6 +94,30 @@ impl super::HttpProvider for PerplexityProvider {
         if let Some(stop) = &request.stop {
             body["stop"] = serde_json::json!(stop);
         }
+        if let Some(n) = request.n {
+            body["n"] = serde_json::json!(n);
+        }
+        if let Some(penalty) = request.presence_penalty {
+            body["presence_penalty"] = serde_json::json!(penalty);
+        }
+        if let Some(penalty) = request.frequency_penalty {
+            body["frequency_penalty"] = serde_json::json!(penalty);
+        }
+        if let Some(user) = &request.user {
+            body["user"] = serde_json::json!(user);
+        }
+        if let Some(seed) = request.seed {
+            body["seed"] = serde_json::json!(seed);
+        }
+        if let Some(tools) = &request.tools {
+            body["tools"] = serde_json::to_value(tools).unwrap_or_default();
+        }
+        if let Some(tool_choice) = &request.tool_choice {
+            body["tool_choice"] = serde_json::to_value(tool_choice).unwrap_or_default();
+        }
+        if let Some(fmt) = &request.response_format {
+            body["response_format"] = serde_json::to_value(fmt).unwrap_or_default();
+        }
 
         // Note: Perplexity-specific fields (return_citations, search_domain_filter,
         // search_recency_filter) are not supported through the standard
@@ -219,6 +243,18 @@ impl super::HttpProvider for PerplexityProvider {
         if let Some(max_tokens) = request.max_tokens {
             body["max_tokens"] = serde_json::json!(max_tokens);
         }
+        if let Some(top_p) = request.top_p {
+            body["top_p"] = serde_json::json!(top_p);
+        }
+        if let Some(stop) = &request.stop {
+            body["stop"] = serde_json::json!(stop);
+        }
+        if let Some(tools) = &request.tools {
+            body["tools"] = serde_json::to_value(tools).unwrap_or_default();
+        }
+        if let Some(tool_choice) = &request.tool_choice {
+            body["tool_choice"] = serde_json::to_value(tool_choice).unwrap_or_default();
+        }
 
         let resp = self
             .client
@@ -284,6 +320,7 @@ struct PerplexityResponse {
     choices: Vec<PerplexityChoice>,
     usage: PerplexityUsage,
     #[serde(default)]
+    #[allow(dead_code)]
     citations: Option<Vec<String>>,
 }
 

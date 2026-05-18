@@ -1106,6 +1106,13 @@ where
 
     // /v1/files — file management (RFC-0951)
     if path.starts_with("/v1/files") {
+        let method = req.method().clone();
+        let content_type = req
+            .headers()
+            .get("content-type")
+            .and_then(|v| v.to_str().ok())
+            .unwrap_or("")
+            .to_string();
         let (_, body) = req.into_parts();
         let full_body = match body.collect().await {
             Ok(bytes) => bytes.to_bytes(),
@@ -1137,13 +1144,32 @@ where
 
         let client = reqwest::Client::new();
         let url = format!("{}{}", base_url, path);
-        let resp = client
-            .post(&url)
-            .header("Authorization", format!("Bearer {}", api_key))
-            .header("Content-Type", "application/json")
-            .body(full_body.to_vec())
-            .send()
-            .await;
+        let mut req_builder = match method {
+            http::Method::GET => client.get(&url),
+            http::Method::DELETE => client.delete(&url),
+            http::Method::POST => {
+                if content_type.contains("multipart/form-data") {
+                    client
+                        .post(&url)
+                        .header("Content-Type", &content_type)
+                        .body(full_body.to_vec())
+                } else {
+                    client
+                        .post(&url)
+                        .header("Content-Type", "application/json")
+                        .body(full_body.to_vec())
+                }
+            }
+            _ => {
+                let resp = Response::builder()
+                    .status(StatusCode::METHOD_NOT_ALLOWED)
+                    .body(SseBody::from_error("Method not allowed".to_string()))
+                    .unwrap();
+                return Ok(resp);
+            }
+        };
+        req_builder = req_builder.header("Authorization", format!("Bearer {}", api_key));
+        let resp = req_builder.send().await;
 
         match resp {
             Ok(r) => {
@@ -1171,6 +1197,7 @@ where
 
     // /v1/batches — batch processing (RFC-0951)
     if path.starts_with("/v1/batches") {
+        let method = req.method().clone();
         let (_, body) = req.into_parts();
         let full_body = match body.collect().await {
             Ok(bytes) => bytes.to_bytes(),
@@ -1202,13 +1229,19 @@ where
 
         let client = reqwest::Client::new();
         let url = format!("{}{}", base_url, path);
-        let resp = client
-            .post(&url)
-            .header("Authorization", format!("Bearer {}", api_key))
-            .header("Content-Type", "application/json")
-            .body(full_body.to_vec())
-            .send()
-            .await;
+        let mut req_builder = match method {
+            http::Method::GET => client.get(&url),
+            http::Method::POST => client.post(&url).body(full_body.to_vec()),
+            _ => {
+                let resp = Response::builder()
+                    .status(StatusCode::METHOD_NOT_ALLOWED)
+                    .body(SseBody::from_error("Method not allowed".to_string()))
+                    .unwrap();
+                return Ok(resp);
+            }
+        };
+        req_builder = req_builder.header("Authorization", format!("Bearer {}", api_key));
+        let resp = req_builder.send().await;
 
         match resp {
             Ok(r) => {

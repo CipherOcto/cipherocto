@@ -62,8 +62,11 @@ impl super::HttpProvider for DatabricksProvider {
     }
 
     fn supported_models(&self) -> Vec<&str> {
-        // Databricks can host any model, use prefix matching
         vec!["databricks/"]
+    }
+
+    fn supports_model(&self, model: &str) -> bool {
+        model.starts_with("databricks/")
     }
 
     fn supports_streaming(&self) -> bool {
@@ -80,8 +83,10 @@ impl super::HttpProvider for DatabricksProvider {
         let endpoint = Self::strip_model_prefix(&request.model);
         let url = format!("{}/serving-endpoints/{}/invocations", base_url, endpoint);
 
+        let model = Self::strip_model_prefix(&request.model);
+
         let mut body = serde_json::json!({
-            "model": request.model,
+            "model": model,
             "messages": request.messages.iter().map(|m| {
                 serde_json::json!({
                     "role": m.role,
@@ -105,6 +110,21 @@ impl super::HttpProvider for DatabricksProvider {
         if let Some(stop) = &request.stop {
             body["stop"] = serde_json::json!(stop);
         }
+        if let Some(n) = request.n {
+            body["n"] = serde_json::json!(n);
+        }
+        if let Some(penalty) = request.presence_penalty {
+            body["presence_penalty"] = serde_json::json!(penalty);
+        }
+        if let Some(penalty) = request.frequency_penalty {
+            body["frequency_penalty"] = serde_json::json!(penalty);
+        }
+        if let Some(user) = &request.user {
+            body["user"] = serde_json::json!(user);
+        }
+        if let Some(seed) = request.seed {
+            body["seed"] = serde_json::json!(seed);
+        }
 
         // Function calling fields
         if let Some(tools) = &request.tools {
@@ -112,6 +132,9 @@ impl super::HttpProvider for DatabricksProvider {
         }
         if let Some(tool_choice) = &request.tool_choice {
             body["tool_choice"] = serde_json::to_value(tool_choice).unwrap_or_default();
+        }
+        if let Some(fmt) = &request.response_format {
+            body["response_format"] = serde_json::to_value(fmt).unwrap_or_default();
         }
 
         let resp = self
@@ -155,9 +178,10 @@ impl super::HttpProvider for DatabricksProvider {
         let endpoint = Self::strip_model_prefix(&request.model);
         let url = format!("{}/serving-endpoints/{}/invocations", base_url, endpoint);
 
+        let model = Self::strip_model_prefix(&request.model);
         let body = serde_json::json!({
             "input": request.input,
-            "model": request.model
+            "model": model
         });
 
         let resp = self
@@ -215,8 +239,9 @@ impl super::HttpProvider for DatabricksProvider {
         let endpoint = Self::strip_model_prefix(&request.model);
         let url = format!("{}/serving-endpoints/{}/invocations", base_url, endpoint);
 
+        let model = Self::strip_model_prefix(&request.model);
         let mut body = serde_json::json!({
-            "model": request.model,
+            "model": model,
             "messages": request.messages.iter().map(|m| {
                 serde_json::json!({
                     "role": m.role,
@@ -231,6 +256,21 @@ impl super::HttpProvider for DatabricksProvider {
         }
         if let Some(max_tokens) = request.max_tokens {
             body["max_tokens"] = serde_json::json!(max_tokens);
+        }
+        if let Some(top_p) = request.top_p {
+            body["top_p"] = serde_json::json!(top_p);
+        }
+        if let Some(stop) = &request.stop {
+            body["stop"] = serde_json::json!(stop);
+        }
+        if let Some(tools) = &request.tools {
+            body["tools"] = serde_json::to_value(tools).unwrap_or_default();
+        }
+        if let Some(tool_choice) = &request.tool_choice {
+            body["tool_choice"] = serde_json::to_value(tool_choice).unwrap_or_default();
+        }
+        if let Some(fmt) = &request.response_format {
+            body["response_format"] = serde_json::to_value(fmt).unwrap_or_default();
         }
 
         let resp = self

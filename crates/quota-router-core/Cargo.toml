@@ -38,7 +38,7 @@ tracing.workspace = true
 tracing-subscriber.workspace = true
 
 # OpenTelemetry tracing (RFC-0905)
-opentelemetry = "0.27"
+opentelemetry = "0.32"
 opentelemetry-otlp = { version = "0.27", features = ["tonic", "trace"] }
 opentelemetry_sdk = { version = "0.27", features = ["rt-tokio"] }
 

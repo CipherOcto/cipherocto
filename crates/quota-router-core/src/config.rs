@@ -610,8 +610,7 @@ fn default_prompt_cache_ttl() -> u64 {
 }
 
 /// Guardrail system configuration (RFC-0946).
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[derive(Default)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct GuardrailConfig {
     /// Enable guardrail system (default: false)
     #[serde(default)]
@@ -629,7 +628,6 @@ pub struct GuardrailConfig {
     #[serde(default)]
     pub key_overrides: HashMap<String, Vec<crate::guardrails::Guardrail>>,
 }
-
 
 impl GatewayConfig {
     /// Get deployments, supporting both "deployments" and "model_list" keys

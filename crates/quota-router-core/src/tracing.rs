@@ -200,7 +200,7 @@ pub fn create_request_span(
     use opentelemetry::trace::SpanKind;
 
     let tracer = global::tracer("quota-router");
-    
+
     tracer
         .span_builder("request")
         .with_kind(SpanKind::Server)

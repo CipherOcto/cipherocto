@@ -1104,6 +1104,214 @@ where
         }
     }
 
+    // /v1/files — file management (RFC-0951)
+    if path.starts_with("/v1/files") {
+        let (_, body) = req.into_parts();
+        let full_body = match body.collect().await {
+            Ok(bytes) => bytes.to_bytes(),
+            Err(_) => {
+                let resp = Response::builder()
+                    .status(StatusCode::BAD_REQUEST)
+                    .body(SseBody::from_error("Failed to read body".to_string()))
+                    .unwrap();
+                return Ok(resp);
+            }
+        };
+
+        let api_key = match resolve_api_key(&provider, None) {
+            Some(key) => key,
+            None => {
+                let resp = Response::builder()
+                    .status(StatusCode::UNAUTHORIZED)
+                    .body(SseBody::from_error("API key not set".to_string()))
+                    .unwrap();
+                return Ok(resp);
+            }
+        };
+
+        let base_url = dispatch_map
+            .values()
+            .find(|d| d.provider == "openai")
+            .and_then(|d| d.api_base.clone())
+            .unwrap_or_else(|| "https://api.openai.com/v1".to_string());
+
+        let client = reqwest::Client::new();
+        let url = format!("{}{}", base_url, path);
+        let resp = client
+            .post(&url)
+            .header("Authorization", format!("Bearer {}", api_key))
+            .header("Content-Type", "application/json")
+            .body(full_body.to_vec())
+            .send()
+            .await;
+
+        match resp {
+            Ok(r) => {
+                let status =
+                    StatusCode::from_u16(r.status().as_u16()).unwrap_or(StatusCode::BAD_GATEWAY);
+                let body_bytes = r.bytes().await.unwrap_or_default();
+                let resp = Response::builder()
+                    .status(status)
+                    .header("content-type", "application/json")
+                    .body(SseBody::from_string(
+                        String::from_utf8_lossy(&body_bytes).to_string(),
+                    ))
+                    .unwrap();
+                return Ok(resp);
+            }
+            Err(e) => {
+                let resp = Response::builder()
+                    .status(StatusCode::BAD_GATEWAY)
+                    .body(SseBody::from_error(format!("Files error: {}", e)))
+                    .unwrap();
+                return Ok(resp);
+            }
+        }
+    }
+
+    // /v1/batches — batch processing (RFC-0951)
+    if path.starts_with("/v1/batches") {
+        let (_, body) = req.into_parts();
+        let full_body = match body.collect().await {
+            Ok(bytes) => bytes.to_bytes(),
+            Err(_) => {
+                let resp = Response::builder()
+                    .status(StatusCode::BAD_REQUEST)
+                    .body(SseBody::from_error("Failed to read body".to_string()))
+                    .unwrap();
+                return Ok(resp);
+            }
+        };
+
+        let api_key = match resolve_api_key(&provider, None) {
+            Some(key) => key,
+            None => {
+                let resp = Response::builder()
+                    .status(StatusCode::UNAUTHORIZED)
+                    .body(SseBody::from_error("API key not set".to_string()))
+                    .unwrap();
+                return Ok(resp);
+            }
+        };
+
+        let base_url = dispatch_map
+            .values()
+            .find(|d| d.provider == "openai")
+            .and_then(|d| d.api_base.clone())
+            .unwrap_or_else(|| "https://api.openai.com/v1".to_string());
+
+        let client = reqwest::Client::new();
+        let url = format!("{}{}", base_url, path);
+        let resp = client
+            .post(&url)
+            .header("Authorization", format!("Bearer {}", api_key))
+            .header("Content-Type", "application/json")
+            .body(full_body.to_vec())
+            .send()
+            .await;
+
+        match resp {
+            Ok(r) => {
+                let status =
+                    StatusCode::from_u16(r.status().as_u16()).unwrap_or(StatusCode::BAD_GATEWAY);
+                let body_bytes = r.bytes().await.unwrap_or_default();
+                let resp = Response::builder()
+                    .status(status)
+                    .header("content-type", "application/json")
+                    .body(SseBody::from_string(
+                        String::from_utf8_lossy(&body_bytes).to_string(),
+                    ))
+                    .unwrap();
+                return Ok(resp);
+            }
+            Err(e) => {
+                let resp = Response::builder()
+                    .status(StatusCode::BAD_GATEWAY)
+                    .body(SseBody::from_error(format!("Batches error: {}", e)))
+                    .unwrap();
+                return Ok(resp);
+            }
+        }
+    }
+
+    // /v1/rerank — reranking API (RFC-0951)
+    if path == "/v1/rerank" {
+        let (_, body) = req.into_parts();
+        let full_body = match body.collect().await {
+            Ok(bytes) => bytes.to_bytes(),
+            Err(_) => {
+                let resp = Response::builder()
+                    .status(StatusCode::BAD_REQUEST)
+                    .body(SseBody::from_error("Failed to read body".to_string()))
+                    .unwrap();
+                return Ok(resp);
+            }
+        };
+
+        let api_key = match resolve_api_key(&provider, None) {
+            Some(key) => key,
+            None => {
+                let resp = Response::builder()
+                    .status(StatusCode::UNAUTHORIZED)
+                    .body(SseBody::from_error("API key not set".to_string()))
+                    .unwrap();
+                return Ok(resp);
+            }
+        };
+
+        // Rerank uses Cohere or Jina
+        let base_url = dispatch_map
+            .values()
+            .find(|d| d.provider == "cohere" || d.provider == "jina")
+            .and_then(|d| d.api_base.clone())
+            .unwrap_or_else(|| "https://api.cohere.ai/v1".to_string());
+
+        let client = reqwest::Client::new();
+        let resp = client
+            .post(format!("{}/rerank", base_url))
+            .header("Authorization", format!("Bearer {}", api_key))
+            .header("Content-Type", "application/json")
+            .body(full_body.to_vec())
+            .send()
+            .await;
+
+        match resp {
+            Ok(r) => {
+                let status =
+                    StatusCode::from_u16(r.status().as_u16()).unwrap_or(StatusCode::BAD_GATEWAY);
+                let body_bytes = r.bytes().await.unwrap_or_default();
+                let resp = Response::builder()
+                    .status(status)
+                    .header("content-type", "application/json")
+                    .body(SseBody::from_string(
+                        String::from_utf8_lossy(&body_bytes).to_string(),
+                    ))
+                    .unwrap();
+                return Ok(resp);
+            }
+            Err(e) => {
+                let resp = Response::builder()
+                    .status(StatusCode::BAD_GATEWAY)
+                    .body(SseBody::from_error(format!("Rerank error: {}", e)))
+                    .unwrap();
+                return Ok(resp);
+            }
+        }
+    }
+
+    // /v1/realtime — WebSocket realtime API (RFC-0951)
+    // Note: WebSocket requires special handling not available in this HTTP handler
+    // This is a placeholder - actual implementation needs WebSocket support
+    if path.starts_with("/v1/realtime") {
+        let resp = Response::builder()
+            .status(StatusCode::NOT_IMPLEMENTED)
+            .body(SseBody::from_error(
+                "WebSocket realtime API not yet implemented".to_string(),
+            ))
+            .unwrap();
+        return Ok(resp);
+    }
+
     // /{provider}/... — passthrough endpoints (RFC-0942)
     // Known provider prefixes for passthrough routing
     let known_providers = [
@@ -1117,6 +1325,8 @@ where
         "groq",
         "together",
         "replicate",
+        "databricks",
+        "perplexity",
     ];
     let path_parts: Vec<&str> = path.trim_start_matches('/').splitn(2, '/').collect();
     if path_parts.len() == 2 && known_providers.contains(&path_parts[0]) {

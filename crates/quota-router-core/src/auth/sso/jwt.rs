@@ -195,10 +195,9 @@ impl TokenValidator {
         validation.set_issuer::<&str>(&[]); // Disable issuer check in jsonwebtoken
 
         // Decode and verify signature
-        let token_data =
-            decode::<TokenClaims>(token, &decoding_key, &validation).map_err(|e| {
-                SsoError::TokenInvalid(format!("JWT signature verification failed: {}", e))
-            })?;
+        let token_data = decode::<TokenClaims>(token, &decoding_key, &validation).map_err(|e| {
+            SsoError::TokenInvalid(format!("JWT signature verification failed: {}", e))
+        })?;
 
         Ok(token_data.claims)
     }
@@ -271,10 +270,7 @@ fn parse_algorithm(alg: &str) -> Result<JwtAlgorithm, SsoError> {
 // ============================================================================
 
 /// Build a DecodingKey from JWKS key components
-fn build_decoding_key(
-    key: &JwksKey,
-    alg: &JwtAlgorithm,
-) -> Result<DecodingKey, SsoError> {
+fn build_decoding_key(key: &JwksKey, alg: &JwtAlgorithm) -> Result<DecodingKey, SsoError> {
     match alg {
         JwtAlgorithm::RS256 | JwtAlgorithm::RS384 | JwtAlgorithm::RS512 | JwtAlgorithm::PS256 => {
             // RSA key: needs n (modulus) and e (exponent)
@@ -346,7 +342,12 @@ mod tests {
         let token = format!("{}.{}.signature", header, payload);
 
         let rt = tokio::runtime::Runtime::new().unwrap();
-        let result = rt.block_on(validator.validate(&token, "audience", "issuer", "https://example.com/.well-known/jwks.json"));
+        let result = rt.block_on(validator.validate(
+            &token,
+            "audience",
+            "issuer",
+            "https://example.com/.well-known/jwks.json",
+        ));
         assert!(matches!(result, Err(SsoError::TokenAlgorithmNone)));
     }
 

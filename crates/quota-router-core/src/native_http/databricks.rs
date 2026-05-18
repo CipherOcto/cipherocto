@@ -448,7 +448,10 @@ mod tests {
         assert_eq!(response.id, "test-id");
         assert_eq!(response.model, "dbrx-instruct");
         assert_eq!(response.choices.len(), 1);
-        assert_eq!(response.choices[0].message.content, Some("Hello!".to_string()));
+        assert_eq!(
+            response.choices[0].message.content,
+            Some("Hello!".to_string())
+        );
         assert_eq!(response.usage.total_tokens, 15);
     }
 }

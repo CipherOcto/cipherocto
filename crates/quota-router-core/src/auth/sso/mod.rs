@@ -359,8 +359,7 @@ pub struct SsoKeyMetadata {
 // SsoConfig (added to config.rs)
 // ============================================================================
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[derive(Default)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct SsoConfig {
     /// SSO enabled
     #[serde(default)]
@@ -384,7 +383,6 @@ pub struct SsoConfig {
     #[serde(default)]
     pub rate_limit: SsoRateLimitConfig,
 }
-
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TokenConfig {

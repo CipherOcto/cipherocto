@@ -35,12 +35,22 @@ try:
         parse_model,
         parse_model_strict,
         # Batch functions
-        create_batch,
-        retrieve_batch,
-        cancel_batch,
-        list_batches,
-        retrieve_batch_results,
+        batch_create,
+        abatch_create,
+        batch_retrieve,
+        abatch_retrieve,
+        batch_cancel,
+        abatch_cancel,
+        batch_list as _native_batch_list,
+        abatch_list as _native_abatch_list,
+        batch_results,
+        abatch_results,
         batch_completion,
+        # Responses functions
+        get_response,
+        aget_response,
+        delete_response,
+        adelete_response,
         # SDK management
         set_api_key,
         get_budget_status,
@@ -72,6 +82,15 @@ try:
         AllModelsFailedError,
         BatchPartialFailureError,
     )
+
+    def batch_list(provider, limit=20, **kwargs):
+        """List batches with default limit=20 per RFC-0920."""
+        return _native_batch_list(provider, limit, **kwargs)
+
+    async def abatch_list(provider, limit=20, **kwargs):
+        """Async list batches with default limit=20 per RFC-0920."""
+        return await _native_abatch_list(provider, limit, **kwargs)
+
 except ImportError:
     # Native extension not installed — stub functions for development
     pass
@@ -115,12 +134,22 @@ __all__ = [
     "parse_model",
     "parse_model_strict",
     # Batch functions
-    "create_batch",
-    "retrieve_batch",
-    "cancel_batch",
-    "list_batches",
-    "retrieve_batch_results",
+    "batch_create",
+    "abatch_create",
+    "batch_retrieve",
+    "abatch_retrieve",
+    "batch_cancel",
+    "abatch_cancel",
+    "batch_list",
+    "abatch_list",
+    "batch_results",
+    "abatch_results",
     "batch_completion",
+    # Responses functions
+    "get_response",
+    "aget_response",
+    "delete_response",
+    "adelete_response",
     # SDK management
     "set_api_key",
     "get_budget_status",

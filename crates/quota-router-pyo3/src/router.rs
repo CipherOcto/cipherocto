@@ -116,8 +116,7 @@ impl Router {
 
     /// completion - Execute completion via router
     ///
-    /// Routes the request based on the current strategy.
-    /// For Phase 3, this is a stub that delegates to completion().
+    /// Routes the request based on the current strategy (round-robin, shuffle, etc).
     pub fn completion(
         &mut self,
         messages: Vec<crate::types::Message>,
@@ -174,45 +173,15 @@ impl Router {
 
     /// acompletion - Async completion via router
     ///
-    /// For Phase 3, this is a stub that delegates to sync completion.
-    /// Round-robin state is only updated on sync completion calls.
+    /// Routes the request based on the current strategy, same as sync completion.
     pub async fn acompletion(
-        &self,
+        &mut self,
         messages: Vec<crate::types::Message>,
         _temperature: Option<f64>,
         _max_tokens: Option<i32>,
     ) -> PyResult<Py<PyAny>> {
-        // For now, delegate to sync completion using first model
-        // Real async router with state updates is Phase 4
-        if self.models.is_empty() {
-            return Err(pyo3::exceptions::PyValueError::new_err(
-                "Router has no models",
-            ));
-        }
-        crate::completion::completion(
-            self.models[0].clone(),
-            messages,
-            _temperature,
-            _max_tokens,
-            None, // top_p
-            None, // n
-            None, // stream
-            None, // stop
-            None, // presence_penalty
-            None, // frequency_penalty
-            None, // user
-            None, // seed
-            None, // timeout
-            None, // extra_headers
-            None, // base_url
-            None, // api_version
-            None, // api_key
-            None, // service_tier
-            None, // background
-            None, // prompt_cache_key
-            None, // prompt_cache_retention
-            None, // conversation
-        )
+        // Delegate to sync completion which handles routing
+        self.completion(messages, _temperature, _max_tokens, None)
     }
 
     /// list_models - List available models
@@ -239,7 +208,7 @@ impl Router {
         )
     }
 
-    /// Get routing statistics (stub for Phase 3)
+    /// Get routing statistics
     fn get_stats(&self) -> PyResult<Py<PyAny>> {
         Python::with_gil(|py| {
             let dict = PyDict::new(py);

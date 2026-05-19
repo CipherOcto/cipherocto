@@ -5,10 +5,8 @@ use super::{
     ProviderError, StreamingResponse,
 };
 use async_trait::async_trait;
-use futures::StreamExt;
 use reqwest::Client;
 use serde::Deserialize;
-use tokio::sync::mpsc;
 
 pub struct PerplexityProvider {
     client: Client,
@@ -24,8 +22,27 @@ impl PerplexityProvider {
     }
 
     pub fn with_api_base(mut self, api_base: String) -> Self {
-        self.api_base = api_base;
+        self.api_base = Self::validate_url(&api_base).unwrap_or_else(|| {
+            eprintln!(
+                "WARNING: Invalid Perplexity URL '{}', using default",
+                api_base
+            );
+            "https://api.perplexity.ai".to_string()
+        });
         self
+    }
+
+    /// Validate API base URL — HTTPS only per security requirements
+    fn validate_url(url: &str) -> Option<String> {
+        if url.starts_with("https://") {
+            Some(url.to_string())
+        } else if url.starts_with("http://") {
+            // Upgrade to HTTPS
+            Some(url.replacen("http://", "https://", 1))
+        } else {
+            // Invalid URL
+            None
+        }
     }
 
     /// Strip the "perplexity/" prefix from model name
@@ -72,60 +89,26 @@ impl super::HttpProvider for PerplexityProvider {
         let url = format!("{}/chat/completions", base_url);
 
         let model = Self::strip_model_prefix(&request.model);
+        let mut body = super::build_openai_compatible_body(request, model);
 
-        let mut body = serde_json::json!({
-            "model": model,
-            "messages": request.messages.iter().map(|m| {
-                serde_json::json!({
-                    "role": m.role,
-                    "content": m.content
-                })
-            }).collect::<Vec<_>>()
-        });
-
-        if let Some(stream) = request.stream {
-            body["stream"] = serde_json::json!(stream);
+        // Merge Perplexity-specific params from provider_params
+        if let Some(params) = &request.provider_params {
+            if let Some(obj) = params.as_object() {
+                for (key, value) in obj {
+                    // return_citations, search_domain_filter, search_recency_filter
+                    if matches!(
+                        key.as_str(),
+                        "return_citations"
+                            | "search_domain_filter"
+                            | "search_recency_filter"
+                            | "return_images"
+                            | "return_related_questions"
+                    ) {
+                        body[key] = value.clone();
+                    }
+                }
+            }
         }
-        if let Some(temp) = request.temperature {
-            body["temperature"] = serde_json::json!(temp);
-        }
-        if let Some(max_tokens) = request.max_tokens {
-            body["max_tokens"] = serde_json::json!(max_tokens);
-        }
-        if let Some(top_p) = request.top_p {
-            body["top_p"] = serde_json::json!(top_p);
-        }
-        if let Some(stop) = &request.stop {
-            body["stop"] = serde_json::json!(stop);
-        }
-        if let Some(n) = request.n {
-            body["n"] = serde_json::json!(n);
-        }
-        if let Some(penalty) = request.presence_penalty {
-            body["presence_penalty"] = serde_json::json!(penalty);
-        }
-        if let Some(penalty) = request.frequency_penalty {
-            body["frequency_penalty"] = serde_json::json!(penalty);
-        }
-        if let Some(user) = &request.user {
-            body["user"] = serde_json::json!(user);
-        }
-        if let Some(seed) = request.seed {
-            body["seed"] = serde_json::json!(seed);
-        }
-        if let Some(tools) = &request.tools {
-            body["tools"] = serde_json::to_value(tools).unwrap_or_default();
-        }
-        if let Some(tool_choice) = &request.tool_choice {
-            body["tool_choice"] = serde_json::to_value(tool_choice).unwrap_or_default();
-        }
-        if let Some(fmt) = &request.response_format {
-            body["response_format"] = serde_json::to_value(fmt).unwrap_or_default();
-        }
-
-        // Note: Perplexity-specific fields (return_citations, search_domain_filter,
-        // search_recency_filter) are not supported through the standard
-        // HttpCompletionRequest interface. Use the Python SDK for these features.
 
         let resp = self
             .client
@@ -137,16 +120,24 @@ impl super::HttpProvider for PerplexityProvider {
             .await
             .map_err(|e| ProviderError::Network(e.to_string()))?;
 
-        if resp.status() == 401 || resp.status() == 403 {
-            return Err(ProviderError::AuthError(format!("HTTP {}", resp.status())));
-        }
-        if resp.status() == 429 {
-            return Err(ProviderError::RateLimit("Rate limited".to_string()));
-        }
         if !resp.status().is_success() {
+            let status = resp.status();
+            let err_body = resp.text().await.unwrap_or_default();
+            if status == 401 || status == 403 {
+                return Err(ProviderError::AuthError(format!(
+                    "HTTP {}: {}",
+                    status, err_body
+                )));
+            }
+            if status == 429 {
+                return Err(ProviderError::RateLimit(format!(
+                    "HTTP {}: {}",
+                    status, err_body
+                )));
+            }
             return Err(ProviderError::InvalidResponse(format!(
-                "HTTP {}",
-                resp.status()
+                "HTTP {}: {}",
+                status, err_body
             )));
         }
 
@@ -185,9 +176,23 @@ impl super::HttpProvider for PerplexityProvider {
             .map_err(|e| ProviderError::Network(e.to_string()))?;
 
         if !resp.status().is_success() {
+            let status = resp.status();
+            let err_body = resp.text().await.unwrap_or_default();
+            if status == 401 || status == 403 {
+                return Err(ProviderError::AuthError(format!(
+                    "HTTP {}: {}",
+                    status, err_body
+                )));
+            }
+            if status == 429 {
+                return Err(ProviderError::RateLimit(format!(
+                    "HTTP {}: {}",
+                    status, err_body
+                )));
+            }
             return Err(ProviderError::InvalidResponse(format!(
-                "HTTP {}",
-                resp.status()
+                "HTTP {}: {}",
+                status, err_body
             )));
         }
 
@@ -229,107 +234,28 @@ impl super::HttpProvider for PerplexityProvider {
         let url = format!("{}/chat/completions", base_url);
 
         let model = Self::strip_model_prefix(&request.model);
+        let mut body = super::build_openai_compatible_body(request, model);
+        body["stream"] = serde_json::json!(true);
 
-        let mut body = serde_json::json!({
-            "model": model,
-            "messages": request.messages.iter().map(|m| {
-                serde_json::json!({
-                    "role": m.role,
-                    "content": m.content
-                })
-            }).collect::<Vec<_>>(),
-            "stream": true
-        });
-
-        if let Some(temp) = request.temperature {
-            body["temperature"] = serde_json::json!(temp);
-        }
-        if let Some(max_tokens) = request.max_tokens {
-            body["max_tokens"] = serde_json::json!(max_tokens);
-        }
-        if let Some(top_p) = request.top_p {
-            body["top_p"] = serde_json::json!(top_p);
-        }
-        if let Some(stop) = &request.stop {
-            body["stop"] = serde_json::json!(stop);
-        }
-        if let Some(tools) = &request.tools {
-            body["tools"] = serde_json::to_value(tools).unwrap_or_default();
-        }
-        if let Some(tool_choice) = &request.tool_choice {
-            body["tool_choice"] = serde_json::to_value(tool_choice).unwrap_or_default();
-        }
-        if let Some(fmt) = &request.response_format {
-            body["response_format"] = serde_json::to_value(fmt).unwrap_or_default();
-        }
-        if let Some(n) = request.n {
-            body["n"] = serde_json::json!(n);
-        }
-        if let Some(penalty) = request.presence_penalty {
-            body["presence_penalty"] = serde_json::json!(penalty);
-        }
-        if let Some(penalty) = request.frequency_penalty {
-            body["frequency_penalty"] = serde_json::json!(penalty);
-        }
-        if let Some(user) = &request.user {
-            body["user"] = serde_json::json!(user);
-        }
-        if let Some(seed) = request.seed {
-            body["seed"] = serde_json::json!(seed);
-        }
-
-        let resp = self
-            .client
-            .post(&url)
-            .header("Authorization", format!("Bearer {}", api_key))
-            .header("Content-Type", "application/json")
-            .json(&body)
-            .send()
-            .await
-            .map_err(|e| ProviderError::Network(e.to_string()))?;
-
-        if resp.status() == 401 || resp.status() == 403 {
-            return Err(ProviderError::AuthError(format!("HTTP {}", resp.status())));
-        }
-        if resp.status() == 429 {
-            return Err(ProviderError::RateLimit("Rate limited".to_string()));
-        }
-        if !resp.status().is_success() {
-            return Err(ProviderError::InvalidResponse(format!(
-                "HTTP {}",
-                resp.status()
-            )));
-        }
-
-        // Perplexity uses OpenAI-compatible SSE format
-        let (tx, rx) = mpsc::channel(100);
-
-        tokio::spawn(async move {
-            let mut stream = resp.bytes_stream();
-
-            while let Some(chunk_result) = stream.next().await {
-                match chunk_result {
-                    Ok(bytes) => {
-                        if tx
-                            .send(Ok(super::StreamingChunk::RawSSE(bytes.to_vec())))
-                            .await
-                            .is_err()
-                        {
-                            break;
-                        }
-                    }
-                    Err(e) => {
-                        let _ = tx.send(Err(ProviderError::Network(e.to_string()))).await;
-                        break;
+        // Merge Perplexity-specific params from provider_params
+        if let Some(params) = &request.provider_params {
+            if let Some(obj) = params.as_object() {
+                for (key, value) in obj {
+                    if matches!(
+                        key.as_str(),
+                        "return_citations"
+                            | "search_domain_filter"
+                            | "search_recency_filter"
+                            | "return_images"
+                            | "return_related_questions"
+                    ) {
+                        body[key] = value.clone();
                     }
                 }
             }
-        });
+        }
 
-        Ok(StreamingResponse {
-            receiver: rx,
-            content_type: "text/event-stream",
-        })
+        super::stream_openai_compatible(&self.client, &url, api_key, body).await
     }
 }
 
@@ -342,7 +268,6 @@ struct PerplexityResponse {
     choices: Vec<PerplexityChoice>,
     usage: PerplexityUsage,
     #[serde(default)]
-    #[allow(dead_code)]
     citations: Option<Vec<String>>,
 }
 
@@ -490,5 +415,128 @@ mod tests {
         assert!(response.metadata.is_some());
         let meta = response.metadata.unwrap();
         assert_eq!(meta["citations"][0], "https://example.com");
+    }
+
+    #[test]
+    fn test_convert_response_empty_choices() {
+        let data = PerplexityResponse {
+            id: "empty-id".to_string(),
+            object: "chat.completion".to_string(),
+            created: 1234567890,
+            model: "sonar-large-online".to_string(),
+            choices: vec![],
+            usage: PerplexityUsage {
+                prompt_tokens: 10,
+                completion_tokens: 0,
+                total_tokens: 10,
+            },
+            citations: None,
+        };
+
+        let response = convert_response(data, 200);
+        assert_eq!(response.id, "empty-id");
+        assert_eq!(response.model, "sonar-large-online");
+        assert!(response.choices.is_empty());
+        assert_eq!(response.usage.total_tokens, 10);
+        assert!(response.metadata.is_none());
+    }
+
+    #[test]
+    fn test_convert_response_error_status() {
+        let data = PerplexityResponse {
+            id: "error-id".to_string(),
+            object: "chat.completion".to_string(),
+            created: 1234567890,
+            model: "sonar-large-online".to_string(),
+            choices: vec![PerplexityChoice {
+                index: 0,
+                message: PerplexityMessage {
+                    role: "assistant".to_string(),
+                    content: "Error occurred".to_string(),
+                },
+                finish_reason: "stop".to_string(),
+            }],
+            usage: PerplexityUsage {
+                prompt_tokens: 5,
+                completion_tokens: 3,
+                total_tokens: 8,
+            },
+            citations: None,
+        };
+
+        // convert_response ignores status; verify it still produces a valid response
+        let response = convert_response(data, 500);
+        assert_eq!(response.id, "error-id");
+        assert_eq!(response.choices.len(), 1);
+        assert_eq!(
+            response.choices[0].message.content,
+            Some("Error occurred".to_string())
+        );
+        assert_eq!(response.usage.total_tokens, 8);
+    }
+
+    #[test]
+    fn test_convert_response_without_citations() {
+        let data = PerplexityResponse {
+            id: "no-cite-id".to_string(),
+            object: "chat.completion".to_string(),
+            created: 1234567890,
+            model: "sonar-small-online".to_string(),
+            choices: vec![PerplexityChoice {
+                index: 0,
+                message: PerplexityMessage {
+                    role: "assistant".to_string(),
+                    content: "No citations".to_string(),
+                },
+                finish_reason: "stop".to_string(),
+            }],
+            usage: PerplexityUsage {
+                prompt_tokens: 8,
+                completion_tokens: 4,
+                total_tokens: 12,
+            },
+            citations: None,
+        };
+
+        let response = convert_response(data, 200);
+        assert_eq!(response.id, "no-cite-id");
+        assert_eq!(response.model, "sonar-small-online");
+        assert_eq!(response.choices.len(), 1);
+        assert!(response.metadata.is_none());
+    }
+
+    #[test]
+    fn test_validate_url_https() {
+        assert_eq!(
+            PerplexityProvider::validate_url("https://api.perplexity.ai"),
+            Some("https://api.perplexity.ai".to_string())
+        );
+    }
+
+    #[test]
+    fn test_validate_url_http_upgrade() {
+        assert_eq!(
+            PerplexityProvider::validate_url("http://api.perplexity.ai"),
+            Some("https://api.perplexity.ai".to_string())
+        );
+    }
+
+    #[test]
+    fn test_validate_url_invalid() {
+        assert_eq!(PerplexityProvider::validate_url("ftp://invalid"), None);
+    }
+
+    #[test]
+    fn test_with_api_base_invalid_url() {
+        let provider = PerplexityProvider::new().with_api_base("ftp://not-a-url".to_string());
+        // Should fall back to default
+        assert_eq!(provider.api_base, "https://api.perplexity.ai");
+    }
+
+    #[test]
+    fn test_with_api_base_valid_url() {
+        let provider =
+            PerplexityProvider::new().with_api_base("https://custom.perplexity.ai".to_string());
+        assert_eq!(provider.api_base, "https://custom.perplexity.ai");
     }
 }

@@ -96,10 +96,22 @@ impl super::HttpProvider for GeminiProvider {
 
         if !resp.status().is_success() {
             let status = resp.status();
-            let text = resp.text().await.unwrap_or_default();
+            let err_body = resp.text().await.unwrap_or_default();
+            if status == 401 || status == 403 {
+                return Err(ProviderError::AuthError(format!(
+                    "HTTP {}: {}",
+                    status, err_body
+                )));
+            }
+            if status == 429 {
+                return Err(ProviderError::RateLimit(format!(
+                    "HTTP {}: {}",
+                    status, err_body
+                )));
+            }
             return Err(ProviderError::InvalidResponse(format!(
                 "HTTP {}: {}",
-                status, text
+                status, err_body
             )));
         }
 
@@ -166,9 +178,23 @@ impl super::HttpProvider for GeminiProvider {
             .map_err(|e| ProviderError::Network(e.to_string()))?;
 
         if !resp.status().is_success() {
+            let status = resp.status();
+            let err_body = resp.text().await.unwrap_or_default();
+            if status == 401 || status == 403 {
+                return Err(ProviderError::AuthError(format!(
+                    "HTTP {}: {}",
+                    status, err_body
+                )));
+            }
+            if status == 429 {
+                return Err(ProviderError::RateLimit(format!(
+                    "HTTP {}: {}",
+                    status, err_body
+                )));
+            }
             return Err(ProviderError::InvalidResponse(format!(
-                "HTTP {}",
-                resp.status()
+                "HTTP {}: {}",
+                status, err_body
             )));
         }
 
@@ -236,10 +262,22 @@ impl super::HttpProvider for GeminiProvider {
 
         if !resp.status().is_success() {
             let status = resp.status();
-            let text = resp.text().await.unwrap_or_default();
+            let err_body = resp.text().await.unwrap_or_default();
+            if status == 401 || status == 403 {
+                return Err(ProviderError::AuthError(format!(
+                    "HTTP {}: {}",
+                    status, err_body
+                )));
+            }
+            if status == 429 {
+                return Err(ProviderError::RateLimit(format!(
+                    "HTTP {}: {}",
+                    status, err_body
+                )));
+            }
             return Err(ProviderError::InvalidResponse(format!(
                 "HTTP {}: {}",
-                status, text
+                status, err_body
             )));
         }
 

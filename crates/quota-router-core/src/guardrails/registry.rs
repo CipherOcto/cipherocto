@@ -224,9 +224,9 @@ impl GuardrailChecker for TokenLimitGuardrail {
     }
 
     async fn check_input(&self, input: &str) -> super::GuardrailResult {
-        // Token counting delegates to RFC-0936 ContextWindowCheck.
-        // This is a placeholder that will be wired to the actual implementation
-        // when Mission 0946-c (Guardrail Engine) integrates with proxy.rs.
+        // Approximate token count (1 token ~ 4 chars). For accurate counting,
+        // replace with a tokenizer (e.g., tiktoken-rs) when Guardrail Engine
+        // (Mission 0946-c) adds per-request guardrail execution to proxy.rs.
         if let Some(max) = self.max_input_tokens {
             // Rough estimate: 1 token ≈ 4 characters
             let estimated_tokens = input.len() as u32 / 4;

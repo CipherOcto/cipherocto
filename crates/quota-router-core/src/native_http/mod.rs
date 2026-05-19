@@ -90,6 +90,9 @@ pub struct HttpCompletionRequest {
     // Prompt management fields (RFC-0948)
     pub prompt_id: Option<String>,
     pub prompt_variables: Option<std::collections::HashMap<String, String>>,
+    /// Provider-specific parameters (e.g., Perplexity return_citations, search_domain_filter).
+    /// Passed through as arbitrary JSON to the provider API.
+    pub provider_params: Option<serde_json::Value>,
 }
 
 impl HttpCompletionRequest {
@@ -250,6 +253,89 @@ pub fn init_providers() {
     });
 }
 
+/// Build an OpenAI-compatible request body from [`HttpCompletionRequest`].
+///
+/// `model` is passed separately because each provider strips its own prefix
+/// (e.g. "databricks/", "perplexity/") before sending.
+///
+/// All optional fields (temperature, max\_tokens, tools, etc.) are included
+/// only when present, matching the wire format expected by OpenAI-compatible APIs.
+pub fn build_openai_compatible_body(
+    request: &HttpCompletionRequest,
+    model: &str,
+) -> serde_json::Value {
+    let mut body = serde_json::json!({
+        "model": model,
+        "messages": request.messages.iter().map(|m| {
+            serde_json::json!({
+                "role": m.role,
+                "content": m.content
+            })
+        }).collect::<Vec<_>>()
+    });
+
+    if let Some(stream) = request.stream {
+        body["stream"] = serde_json::json!(stream);
+    }
+    if let Some(temp) = request.temperature {
+        body["temperature"] = serde_json::json!(temp);
+    }
+    if let Some(max_tokens) = request.max_tokens {
+        body["max_tokens"] = serde_json::json!(max_tokens);
+    }
+    if let Some(top_p) = request.top_p {
+        body["top_p"] = serde_json::json!(top_p);
+    }
+    if let Some(stop) = &request.stop {
+        body["stop"] = serde_json::json!(stop);
+    }
+    if let Some(n) = request.n {
+        body["n"] = serde_json::json!(n);
+    }
+    if let Some(p) = request.presence_penalty {
+        body["presence_penalty"] = serde_json::json!(p);
+    }
+    if let Some(p) = request.frequency_penalty {
+        body["frequency_penalty"] = serde_json::json!(p);
+    }
+    if let Some(user) = &request.user {
+        body["user"] = serde_json::json!(user);
+    }
+    if let Some(seed) = request.seed {
+        body["seed"] = serde_json::json!(seed);
+    }
+    // Function calling fields (RFC-0939)
+    if let Some(tools) = &request.tools {
+        body["tools"] = serde_json::to_value(tools).unwrap_or_default();
+    }
+    if let Some(tool_choice) = &request.tool_choice {
+        body["tool_choice"] = serde_json::to_value(tool_choice).unwrap_or_default();
+    }
+    if let Some(fmt) = &request.response_format {
+        body["response_format"] = serde_json::to_value(fmt).unwrap_or_default();
+    }
+    // Logprobs fields (OpenAI-compatible)
+    if let Some(logprobs) = request.logprobs {
+        body["logprobs"] = serde_json::json!(logprobs);
+    }
+    if let Some(top_logprobs) = request.top_logprobs {
+        body["top_logprobs"] = serde_json::json!(top_logprobs);
+    }
+    // Parallel tool calls (OpenAI-compatible)
+    if let Some(parallel_tool_calls) = request.parallel_tool_calls {
+        body["parallel_tool_calls"] = serde_json::json!(parallel_tool_calls);
+    }
+    // Prompt management fields (RFC-0948)
+    if let Some(prompt_id) = &request.prompt_id {
+        body["prompt_id"] = serde_json::json!(prompt_id);
+    }
+    if let Some(prompt_variables) = &request.prompt_variables {
+        body["prompt_variables"] = serde_json::to_value(prompt_variables).unwrap_or_default();
+    }
+
+    body
+}
+
 /// Shared streaming helper for OpenAI-compatible providers (RFC-0941).
 ///
 /// This function handles the common SSE parsing logic for providers that use
@@ -269,16 +355,24 @@ pub async fn stream_openai_compatible(
         .await
         .map_err(|e| ProviderError::Network(e.to_string()))?;
 
-    if resp.status() == 401 || resp.status() == 403 {
-        return Err(ProviderError::AuthError(format!("HTTP {}", resp.status())));
-    }
-    if resp.status() == 429 {
-        return Err(ProviderError::RateLimit("Rate limited".to_string()));
-    }
     if !resp.status().is_success() {
+        let status = resp.status();
+        let err_body = resp.text().await.unwrap_or_default();
+        if status == 401 || status == 403 {
+            return Err(ProviderError::AuthError(format!(
+                "HTTP {}: {}",
+                status, err_body
+            )));
+        }
+        if status == 429 {
+            return Err(ProviderError::RateLimit(format!(
+                "HTTP {}: {}",
+                status, err_body
+            )));
+        }
         return Err(ProviderError::InvalidResponse(format!(
-            "HTTP {}",
-            resp.status()
+            "HTTP {}: {}",
+            status, err_body
         )));
     }
 

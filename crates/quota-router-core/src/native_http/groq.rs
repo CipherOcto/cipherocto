@@ -38,8 +38,8 @@ impl super::HttpProvider for GroqProvider {
             "llama-3.1-70b-versatile",
             "llama-3.1-8b-instant",
             "mixtral-8x7b-32768",
-            " llama-3.2-1b-preview",
-            " llama-3.2-3b-preview",
+            "llama-3.2-1b-preview",
+            "llama-3.2-3b-preview",
         ]
     }
 
@@ -84,16 +84,24 @@ impl super::HttpProvider for GroqProvider {
             .await
             .map_err(|e| ProviderError::Network(e.to_string()))?;
 
-        if resp.status() == 401 || resp.status() == 403 {
-            return Err(ProviderError::AuthError(format!("HTTP {}", resp.status())));
-        }
-        if resp.status() == 429 {
-            return Err(ProviderError::RateLimit("Rate limited".to_string()));
-        }
         if !resp.status().is_success() {
+            let status = resp.status();
+            let err_body = resp.text().await.unwrap_or_default();
+            if status == 401 || status == 403 {
+                return Err(ProviderError::AuthError(format!(
+                    "HTTP {}: {}",
+                    status, err_body
+                )));
+            }
+            if status == 429 {
+                return Err(ProviderError::RateLimit(format!(
+                    "HTTP {}: {}",
+                    status, err_body
+                )));
+            }
             return Err(ProviderError::InvalidResponse(format!(
-                "HTTP {}",
-                resp.status()
+                "HTTP {}: {}",
+                status, err_body
             )));
         }
 
@@ -150,9 +158,23 @@ impl super::HttpProvider for GroqProvider {
             .map_err(|e| ProviderError::Network(e.to_string()))?;
 
         if !resp.status().is_success() {
+            let status = resp.status();
+            let err_body = resp.text().await.unwrap_or_default();
+            if status == 401 || status == 403 {
+                return Err(ProviderError::AuthError(format!(
+                    "HTTP {}: {}",
+                    status, err_body
+                )));
+            }
+            if status == 429 {
+                return Err(ProviderError::RateLimit(format!(
+                    "HTTP {}: {}",
+                    status, err_body
+                )));
+            }
             return Err(ProviderError::InvalidResponse(format!(
-                "HTTP {}",
-                resp.status()
+                "HTTP {}: {}",
+                status, err_body
             )));
         }
 

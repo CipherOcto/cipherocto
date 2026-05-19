@@ -138,18 +138,24 @@ impl super::HttpProvider for AnthropicProvider {
             .await
             .map_err(|e| ProviderError::Network(e.to_string()))?;
 
-        if resp.status() == 401 || resp.status() == 403 {
-            return Err(ProviderError::AuthError(format!("HTTP {}", resp.status())));
-        }
-        if resp.status() == 429 {
-            return Err(ProviderError::RateLimit("Rate limited".to_string()));
-        }
         if !resp.status().is_success() {
             let status = resp.status();
-            let text = resp.text().await.unwrap_or_default();
+            let err_body = resp.text().await.unwrap_or_default();
+            if status == 401 || status == 403 {
+                return Err(ProviderError::AuthError(format!(
+                    "HTTP {}: {}",
+                    status, err_body
+                )));
+            }
+            if status == 429 {
+                return Err(ProviderError::RateLimit(format!(
+                    "HTTP {}: {}",
+                    status, err_body
+                )));
+            }
             return Err(ProviderError::InvalidResponse(format!(
                 "HTTP {}: {}",
-                status, text
+                status, err_body
             )));
         }
 
@@ -264,18 +270,24 @@ impl super::HttpProvider for AnthropicProvider {
             .await
             .map_err(|e| ProviderError::Network(e.to_string()))?;
 
-        if resp.status() == 401 || resp.status() == 403 {
-            return Err(ProviderError::AuthError(format!("HTTP {}", resp.status())));
-        }
-        if resp.status() == 429 {
-            return Err(ProviderError::RateLimit("Rate limited".to_string()));
-        }
         if !resp.status().is_success() {
             let status = resp.status();
-            let text = resp.text().await.unwrap_or_default();
+            let err_body = resp.text().await.unwrap_or_default();
+            if status == 401 || status == 403 {
+                return Err(ProviderError::AuthError(format!(
+                    "HTTP {}: {}",
+                    status, err_body
+                )));
+            }
+            if status == 429 {
+                return Err(ProviderError::RateLimit(format!(
+                    "HTTP {}: {}",
+                    status, err_body
+                )));
+            }
             return Err(ProviderError::InvalidResponse(format!(
                 "HTTP {}: {}",
-                status, text
+                status, err_body
             )));
         }
 

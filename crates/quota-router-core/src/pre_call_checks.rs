@@ -20,6 +20,21 @@ pub enum CheckResult {
     Fail { reason: String },
 }
 
+/// Result of a context window check with fallback information
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ContextWindowResult {
+    /// Context window check passed
+    Ok,
+    /// Context window exceeded, but fallback models are available
+    Exceeded {
+        input_tokens: u32,
+        max_tokens: u32,
+        fallback_models: Vec<String>,
+    },
+    /// Context window exceeded with no fallbacks available
+    ExceededNoFallback { input_tokens: u32, max_tokens: u32 },
+}
+
 /// Completion request for pre-call checks
 #[derive(Debug, Clone)]
 pub struct CompletionRequest {
@@ -79,6 +94,85 @@ impl ContextWindowCheck {
         let bpe = tiktoken_rs::get_bpe_from_model(model)
             .unwrap_or_else(|_| tiktoken_rs::cl100k_base().unwrap());
         bpe.encode_ordinary(text).len()
+    }
+
+    /// Check context window with fallback information
+    pub fn check_with_fallbacks(
+        &self,
+        deployment: &DeploymentInfo,
+        request: &CompletionRequest,
+        fallback_models: &[String],
+    ) -> ContextWindowResult {
+        // Skip check if no model info available
+        let max_input = match deployment.max_input_tokens {
+            Some(tokens) => tokens as u32,
+            None => return ContextWindowResult::Ok,
+        };
+
+        let max_output = deployment.max_output_tokens.unwrap_or(4096) as u32;
+
+        // Estimate input tokens
+        let input_tokens = {
+            let model = &request.model;
+            let mut total: u32 = 0;
+            for msg in &request.messages {
+                total += 4; // message overhead
+                total += self.estimate_tokens(&msg.role, model) as u32;
+                total += self.estimate_tokens(&msg.content, model) as u32;
+            }
+            total += 2; // reply priming
+            total
+        };
+
+        // Check input tokens against max input
+        if input_tokens > max_input {
+            if fallback_models.is_empty() {
+                return ContextWindowResult::ExceededNoFallback {
+                    input_tokens,
+                    max_tokens: max_input,
+                };
+            }
+            return ContextWindowResult::Exceeded {
+                input_tokens,
+                max_tokens: max_input,
+                fallback_models: fallback_models.to_vec(),
+            };
+        }
+
+        // Check if requested output tokens fit
+        let requested_output = request.max_tokens.unwrap_or(max_output as usize) as u32;
+        if requested_output > max_output {
+            if fallback_models.is_empty() {
+                return ContextWindowResult::ExceededNoFallback {
+                    input_tokens,
+                    max_tokens: max_output,
+                };
+            }
+            return ContextWindowResult::Exceeded {
+                input_tokens,
+                max_tokens: max_output,
+                fallback_models: fallback_models.to_vec(),
+            };
+        }
+
+        // Check total context window
+        let total_tokens = input_tokens + requested_output;
+        let context_window = max_input + max_output;
+        if total_tokens > context_window {
+            if fallback_models.is_empty() {
+                return ContextWindowResult::ExceededNoFallback {
+                    input_tokens,
+                    max_tokens: context_window,
+                };
+            }
+            return ContextWindowResult::Exceeded {
+                input_tokens,
+                max_tokens: context_window,
+                fallback_models: fallback_models.to_vec(),
+            };
+        }
+
+        ContextWindowResult::Ok
     }
 }
 
@@ -429,5 +523,94 @@ mod tests {
             CheckResult::Fail { reason } => assert!(reason.contains("unhealthy")),
             _ => panic!("Expected Fail"),
         }
+    }
+
+    #[test]
+    fn test_context_window_result_ok() {
+        let check = ContextWindowCheck::new();
+        let deployment = test_deployment(Some(8192), Some(4096), vec![], vec![]);
+        let request = test_request(
+            vec![Message {
+                role: "user".to_string(),
+                content: "Hello".to_string(),
+            }],
+            Some(100),
+            vec![],
+        );
+        let fallbacks = vec!["gpt-4".to_string()];
+
+        assert_eq!(
+            check.check_with_fallbacks(&deployment, &request, &fallbacks),
+            ContextWindowResult::Ok
+        );
+    }
+
+    #[test]
+    fn test_context_window_result_exceeded_with_fallbacks() {
+        let check = ContextWindowCheck::new();
+        let deployment = test_deployment(Some(10), Some(4096), vec![], vec![]);
+        let request = test_request(
+            vec![Message {
+                role: "user".to_string(),
+                content: "Hello, this is a longer message for testing".to_string(),
+            }],
+            Some(100),
+            vec![],
+        );
+        let fallbacks = vec!["gpt-3.5-turbo-16k".to_string(), "gpt-4".to_string()];
+
+        match check.check_with_fallbacks(&deployment, &request, &fallbacks) {
+            ContextWindowResult::Exceeded {
+                input_tokens,
+                max_tokens,
+                fallback_models,
+            } => {
+                assert!(input_tokens > 0);
+                assert!(max_tokens > 0);
+                assert_eq!(fallback_models.len(), 2);
+                assert_eq!(fallback_models[0], "gpt-3.5-turbo-16k");
+                assert_eq!(fallback_models[1], "gpt-4");
+            }
+            _ => panic!("Expected Exceeded"),
+        }
+    }
+
+    #[test]
+    fn test_context_window_result_exceeded_no_fallbacks() {
+        let check = ContextWindowCheck::new();
+        let deployment = test_deployment(Some(10), Some(4096), vec![], vec![]);
+        let request = test_request(
+            vec![Message {
+                role: "user".to_string(),
+                content: "Hello, this is a longer message for testing".to_string(),
+            }],
+            Some(100),
+            vec![],
+        );
+        let fallbacks: Vec<String> = vec![];
+
+        match check.check_with_fallbacks(&deployment, &request, &fallbacks) {
+            ContextWindowResult::ExceededNoFallback {
+                input_tokens,
+                max_tokens,
+            } => {
+                assert!(input_tokens > 0);
+                assert!(max_tokens > 0);
+            }
+            _ => panic!("Expected ExceededNoFallback"),
+        }
+    }
+
+    #[test]
+    fn test_context_window_result_no_model_info() {
+        let check = ContextWindowCheck::new();
+        let deployment = test_deployment(None, None, vec![], vec![]);
+        let request = test_request(vec![], Some(100), vec![]);
+        let fallbacks = vec!["gpt-4".to_string()];
+
+        assert_eq!(
+            check.check_with_fallbacks(&deployment, &request, &fallbacks),
+            ContextWindowResult::Ok
+        );
     }
 }

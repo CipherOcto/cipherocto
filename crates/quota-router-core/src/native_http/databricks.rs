@@ -5,10 +5,8 @@ use super::{
     ProviderError, StreamingResponse,
 };
 use async_trait::async_trait;
-use futures::StreamExt;
 use reqwest::Client;
 use serde::Deserialize;
-use tokio::sync::mpsc;
 
 pub struct DatabricksProvider {
     client: Client,
@@ -19,10 +17,16 @@ impl DatabricksProvider {
     pub fn new() -> Self {
         let api_base = std::env::var("DATABRICKS_BASE_URL")
             .unwrap_or_else(|_| "https://dbc-xxx.databricks.com".to_string());
+        let validated = Self::validate_url(&api_base).unwrap_or_else(|| {
+            eprintln!(
+                "WARNING: Invalid DATABRICKS_BASE_URL '{}', using default",
+                api_base
+            );
+            "https://dbc-xxx.databricks.com".to_string()
+        });
         Self {
             client: Client::new(),
-            api_base: Self::validate_url(&api_base)
-                .unwrap_or_else(|| "https://dbc-xxx.databricks.com".to_string()),
+            api_base: validated,
         }
     }
 
@@ -91,58 +95,7 @@ impl super::HttpProvider for DatabricksProvider {
         let url = format!("{}/serving-endpoints/{}/invocations", base_url, endpoint);
 
         let model = Self::strip_model_prefix(&request.model);
-
-        let mut body = serde_json::json!({
-            "model": model,
-            "messages": request.messages.iter().map(|m| {
-                serde_json::json!({
-                    "role": m.role,
-                    "content": m.content
-                })
-            }).collect::<Vec<_>>()
-        });
-
-        if let Some(stream) = request.stream {
-            body["stream"] = serde_json::json!(stream);
-        }
-        if let Some(temp) = request.temperature {
-            body["temperature"] = serde_json::json!(temp);
-        }
-        if let Some(max_tokens) = request.max_tokens {
-            body["max_tokens"] = serde_json::json!(max_tokens);
-        }
-        if let Some(top_p) = request.top_p {
-            body["top_p"] = serde_json::json!(top_p);
-        }
-        if let Some(stop) = &request.stop {
-            body["stop"] = serde_json::json!(stop);
-        }
-        if let Some(n) = request.n {
-            body["n"] = serde_json::json!(n);
-        }
-        if let Some(penalty) = request.presence_penalty {
-            body["presence_penalty"] = serde_json::json!(penalty);
-        }
-        if let Some(penalty) = request.frequency_penalty {
-            body["frequency_penalty"] = serde_json::json!(penalty);
-        }
-        if let Some(user) = &request.user {
-            body["user"] = serde_json::json!(user);
-        }
-        if let Some(seed) = request.seed {
-            body["seed"] = serde_json::json!(seed);
-        }
-
-        // Function calling fields
-        if let Some(tools) = &request.tools {
-            body["tools"] = serde_json::to_value(tools).unwrap_or_default();
-        }
-        if let Some(tool_choice) = &request.tool_choice {
-            body["tool_choice"] = serde_json::to_value(tool_choice).unwrap_or_default();
-        }
-        if let Some(fmt) = &request.response_format {
-            body["response_format"] = serde_json::to_value(fmt).unwrap_or_default();
-        }
+        let body = super::build_openai_compatible_body(request, model);
 
         let resp = self
             .client
@@ -154,16 +107,24 @@ impl super::HttpProvider for DatabricksProvider {
             .await
             .map_err(|e| ProviderError::Network(e.to_string()))?;
 
-        if resp.status() == 401 || resp.status() == 403 {
-            return Err(ProviderError::AuthError(format!("HTTP {}", resp.status())));
-        }
-        if resp.status() == 429 {
-            return Err(ProviderError::RateLimit("Rate limited".to_string()));
-        }
         if !resp.status().is_success() {
+            let status = resp.status();
+            let err_body = resp.text().await.unwrap_or_default();
+            if status == 401 || status == 403 {
+                return Err(ProviderError::AuthError(format!(
+                    "HTTP {}: {}",
+                    status, err_body
+                )));
+            }
+            if status == 429 {
+                return Err(ProviderError::RateLimit(format!(
+                    "HTTP {}: {}",
+                    status, err_body
+                )));
+            }
             return Err(ProviderError::InvalidResponse(format!(
-                "HTTP {}",
-                resp.status()
+                "HTTP {}: {}",
+                status, err_body
             )));
         }
 
@@ -202,9 +163,23 @@ impl super::HttpProvider for DatabricksProvider {
             .map_err(|e| ProviderError::Network(e.to_string()))?;
 
         if !resp.status().is_success() {
+            let status = resp.status();
+            let err_body = resp.text().await.unwrap_or_default();
+            if status == 401 || status == 403 {
+                return Err(ProviderError::AuthError(format!(
+                    "HTTP {}: {}",
+                    status, err_body
+                )));
+            }
+            if status == 429 {
+                return Err(ProviderError::RateLimit(format!(
+                    "HTTP {}: {}",
+                    status, err_body
+                )));
+            }
             return Err(ProviderError::InvalidResponse(format!(
-                "HTTP {}",
-                resp.status()
+                "HTTP {}: {}",
+                status, err_body
             )));
         }
 
@@ -247,106 +222,10 @@ impl super::HttpProvider for DatabricksProvider {
         let url = format!("{}/serving-endpoints/{}/invocations", base_url, endpoint);
 
         let model = Self::strip_model_prefix(&request.model);
-        let mut body = serde_json::json!({
-            "model": model,
-            "messages": request.messages.iter().map(|m| {
-                serde_json::json!({
-                    "role": m.role,
-                    "content": m.content
-                })
-            }).collect::<Vec<_>>(),
-            "stream": true
-        });
+        let mut body = super::build_openai_compatible_body(request, model);
+        body["stream"] = serde_json::json!(true);
 
-        if let Some(temp) = request.temperature {
-            body["temperature"] = serde_json::json!(temp);
-        }
-        if let Some(max_tokens) = request.max_tokens {
-            body["max_tokens"] = serde_json::json!(max_tokens);
-        }
-        if let Some(top_p) = request.top_p {
-            body["top_p"] = serde_json::json!(top_p);
-        }
-        if let Some(stop) = &request.stop {
-            body["stop"] = serde_json::json!(stop);
-        }
-        if let Some(tools) = &request.tools {
-            body["tools"] = serde_json::to_value(tools).unwrap_or_default();
-        }
-        if let Some(tool_choice) = &request.tool_choice {
-            body["tool_choice"] = serde_json::to_value(tool_choice).unwrap_or_default();
-        }
-        if let Some(fmt) = &request.response_format {
-            body["response_format"] = serde_json::to_value(fmt).unwrap_or_default();
-        }
-        if let Some(n) = request.n {
-            body["n"] = serde_json::json!(n);
-        }
-        if let Some(penalty) = request.presence_penalty {
-            body["presence_penalty"] = serde_json::json!(penalty);
-        }
-        if let Some(penalty) = request.frequency_penalty {
-            body["frequency_penalty"] = serde_json::json!(penalty);
-        }
-        if let Some(user) = &request.user {
-            body["user"] = serde_json::json!(user);
-        }
-        if let Some(seed) = request.seed {
-            body["seed"] = serde_json::json!(seed);
-        }
-
-        let resp = self
-            .client
-            .post(&url)
-            .header("Authorization", format!("Bearer {}", api_key))
-            .header("Content-Type", "application/json")
-            .json(&body)
-            .send()
-            .await
-            .map_err(|e| ProviderError::Network(e.to_string()))?;
-
-        if resp.status() == 401 || resp.status() == 403 {
-            return Err(ProviderError::AuthError(format!("HTTP {}", resp.status())));
-        }
-        if resp.status() == 429 {
-            return Err(ProviderError::RateLimit("Rate limited".to_string()));
-        }
-        if !resp.status().is_success() {
-            return Err(ProviderError::InvalidResponse(format!(
-                "HTTP {}",
-                resp.status()
-            )));
-        }
-
-        // Databricks uses OpenAI-compatible SSE format
-        let (tx, rx) = mpsc::channel(100);
-
-        tokio::spawn(async move {
-            let mut stream = resp.bytes_stream();
-
-            while let Some(chunk_result) = stream.next().await {
-                match chunk_result {
-                    Ok(bytes) => {
-                        if tx
-                            .send(Ok(super::StreamingChunk::RawSSE(bytes.to_vec())))
-                            .await
-                            .is_err()
-                        {
-                            break;
-                        }
-                    }
-                    Err(e) => {
-                        let _ = tx.send(Err(ProviderError::Network(e.to_string()))).await;
-                        break;
-                    }
-                }
-            }
-        });
-
-        Ok(StreamingResponse {
-            receiver: rx,
-            content_type: "text/event-stream",
-        })
+        super::stream_openai_compatible(&self.client, &url, api_key, body).await
     }
 }
 
@@ -516,5 +395,74 @@ mod tests {
             Some("Hello!".to_string())
         );
         assert_eq!(response.usage.total_tokens, 15);
+    }
+
+    #[test]
+    fn test_convert_response_empty_choices() {
+        let data = DatabricksResponse {
+            id: "empty-id".to_string(),
+            object: "chat.completion".to_string(),
+            created: 1234567890,
+            model: "dbrx-instruct".to_string(),
+            choices: vec![],
+            usage: DatabricksUsage {
+                prompt_tokens: 10,
+                completion_tokens: 0,
+                total_tokens: 10,
+            },
+        };
+
+        let response = convert_response(data, 200);
+        assert_eq!(response.id, "empty-id");
+        assert_eq!(response.model, "dbrx-instruct");
+        assert!(response.choices.is_empty());
+        assert_eq!(response.usage.total_tokens, 10);
+    }
+
+    #[test]
+    fn test_convert_response_error_status() {
+        let data = DatabricksResponse {
+            id: "error-id".to_string(),
+            object: "chat.completion".to_string(),
+            created: 1234567890,
+            model: "dbrx-instruct".to_string(),
+            choices: vec![DatabricksChoice {
+                index: 0,
+                message: DatabricksMessage {
+                    role: "assistant".to_string(),
+                    content: "Error occurred".to_string(),
+                },
+                finish_reason: "stop".to_string(),
+            }],
+            usage: DatabricksUsage {
+                prompt_tokens: 5,
+                completion_tokens: 3,
+                total_tokens: 8,
+            },
+        };
+
+        // convert_response ignores status; verify it still produces a valid response
+        let response = convert_response(data, 500);
+        assert_eq!(response.id, "error-id");
+        assert_eq!(response.choices.len(), 1);
+        assert_eq!(
+            response.choices[0].message.content,
+            Some("Error occurred".to_string())
+        );
+        assert_eq!(response.usage.total_tokens, 8);
+    }
+
+    #[test]
+    fn test_with_api_base_invalid_url() {
+        let provider = DatabricksProvider::new().with_api_base("ftp://not-a-url".to_string());
+        // Should fall back to default
+        assert_eq!(provider.api_base, "https://dbc-xxx.databricks.com");
+    }
+
+    #[test]
+    fn test_with_api_base_valid_url() {
+        let provider =
+            DatabricksProvider::new().with_api_base("https://custom.databricks.com".to_string());
+        assert_eq!(provider.api_base, "https://custom.databricks.com");
     }
 }

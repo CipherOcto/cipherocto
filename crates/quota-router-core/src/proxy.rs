@@ -21,6 +21,9 @@ use crate::fallback::FallbackExecutor;
 use crate::key_rate_limiter::RateLimiterStore;
 use crate::keys::compute_key_hash;
 use crate::metrics::Metrics;
+use crate::pre_call_checks::{
+    CompletionRequest, ContextWindowCheck, ContextWindowResult, DeploymentInfo,
+};
 use crate::providers::Provider;
 #[cfg(any(feature = "any-llm-mode", feature = "full"))]
 use crate::py_bridge;
@@ -83,6 +86,15 @@ fn extract_client_key<B>(req: &Request<B>) -> Option<String> {
         }
     }
     None
+}
+
+/// Validate resource ID contains only safe characters (alphanumeric, hyphens, underscores).
+/// Rejects path traversal attempts (e.g., `../`, `..%2F`).
+fn validate_resource_id(id: &str) -> bool {
+    !id.is_empty()
+        && id
+            .chars()
+            .all(|c| c.is_alphanumeric() || c == '-' || c == '_')
 }
 
 // =============================================================================
@@ -159,6 +171,8 @@ pub struct ProxyServer {
     fallback: Option<Arc<FallbackExecutor>>,
     response_cache: Option<Arc<ResponseCache>>,
     callback_executor: Option<Arc<crate::callbacks::CallbackExecutor>>,
+    prompt_registry: Option<Arc<std::sync::RwLock<crate::prompts::PromptRegistry>>>,
+    client: reqwest::Client,
 }
 
 impl ProxyServer {
@@ -180,7 +194,18 @@ impl ProxyServer {
             fallback: None,
             response_cache: None,
             callback_executor: None,
+            prompt_registry: None,
+            client: reqwest::Client::builder().build().unwrap_or_default(),
         }
+    }
+
+    /// Set the prompt registry for prompt management (RFC-0948)
+    pub fn with_prompt_registry(
+        mut self,
+        prompt_registry: Arc<std::sync::RwLock<crate::prompts::PromptRegistry>>,
+    ) -> Self {
+        self.prompt_registry = Some(prompt_registry);
+        self
     }
 
     /// Set the key storage for gateway auth (RFC-0932)
@@ -241,6 +266,8 @@ impl ProxyServer {
         let fallback = self.fallback.clone();
         let response_cache = self.response_cache.clone();
         let callback_executor = self.callback_executor.clone();
+        let prompt_registry = self.prompt_registry.clone();
+        let client = self.client.clone();
 
         // Initialize providers based on mode
         #[cfg(any(feature = "litellm-mode", feature = "full"))]
@@ -264,6 +291,8 @@ impl ProxyServer {
                 let fallback = fallback.clone();
                 let response_cache = response_cache.clone();
                 let callback_executor = callback_executor.clone();
+                let prompt_registry = prompt_registry.clone();
+                let client = client.clone();
 
                 tokio::spawn(async move {
                     let io = TokioIo::new(stream);
@@ -287,6 +316,8 @@ impl ProxyServer {
                                     fallback.clone(),
                                     response_cache.clone(),
                                     callback_executor.clone(),
+                                    prompt_registry.clone(),
+                                    client.clone(),
                                 )
                             }),
                         )
@@ -406,6 +437,49 @@ fn parse_request_body(body: &str) -> Option<NativeHttpRequest> {
         serde_json::from_value::<std::collections::HashMap<String, String>>(v.clone()).ok()
     });
 
+    // Provider-specific params (e.g., Perplexity return_citations, search_domain_filter)
+    // Collect any unknown top-level fields into provider_params
+    let known_fields: std::collections::HashSet<&str> = [
+        "model",
+        "messages",
+        "stream",
+        "temperature",
+        "max_tokens",
+        "top_p",
+        "stop",
+        "n",
+        "presence_penalty",
+        "frequency_penalty",
+        "user",
+        "api_base",
+        "tools",
+        "tool_choice",
+        "response_format",
+        "seed",
+        "logprobs",
+        "top_logprobs",
+        "parallel_tool_calls",
+        "prompt_id",
+        "prompt_variables",
+        "provider_params",
+    ]
+    .iter()
+    .copied()
+    .collect();
+    let provider_params = json.get("provider_params").cloned().or_else(|| {
+        let obj = json.as_object()?;
+        let extra: serde_json::Map<String, serde_json::Value> = obj
+            .iter()
+            .filter(|(k, _)| !known_fields.contains(k.as_str()))
+            .map(|(k, v)| (k.clone(), v.clone()))
+            .collect();
+        if extra.is_empty() {
+            None
+        } else {
+            Some(serde_json::Value::Object(extra))
+        }
+    });
+
     Some(NativeHttpRequest {
         model,
         messages,
@@ -431,6 +505,7 @@ fn parse_request_body(body: &str) -> Option<NativeHttpRequest> {
         parallel_tool_calls,
         prompt_id,
         prompt_variables,
+        provider_params,
     })
 }
 
@@ -488,6 +563,8 @@ async fn handle_request<B>(
     fallback: Option<Arc<FallbackExecutor>>,
     response_cache: Option<Arc<ResponseCache>>,
     callback_executor: Option<Arc<crate::callbacks::CallbackExecutor>>,
+    prompt_registry: Option<Arc<std::sync::RwLock<crate::prompts::PromptRegistry>>>,
+    client: reqwest::Client,
 ) -> Result<Response<SseBody>, Infallible>
 where
     B: http_body::Body + 'static,
@@ -609,8 +686,28 @@ where
         }
 
         // Per-team budget check (RFC-0943)
-        // TODO: Requires get_budget on KeyStorage trait
-        // For now, team budget is checked at the storage level during spend recording
+        if let Some(ref api_key) = validated_api_key {
+            if let Some(team_id) = &api_key.team_id {
+                match storage.get_budget(&team_id.to_string(), "team") {
+                    Ok(Some(budget)) => {
+                        if budget.current_spend >= budget.budget_limit {
+                            let resp = Response::builder()
+                                .status(StatusCode::TOO_MANY_REQUESTS)
+                                .body(SseBody::from_error(format!(
+                                    "Team budget exceeded: {} >= {}",
+                                    budget.current_spend, budget.budget_limit
+                                )))
+                                .unwrap();
+                            return Ok(resp);
+                        }
+                    }
+                    Ok(None) => {} // No budget configured for this team
+                    Err(e) => {
+                        tracing::warn!(error = %e, "Budget lookup error for team {}", team_id);
+                    }
+                }
+            }
+        }
     }
 
     // Fire Start callback after key validation and rate limit checks (RFC-0947)
@@ -819,7 +916,7 @@ where
             .and_then(|d| d.api_base.clone())
             .unwrap_or_else(|| "https://api.openai.com/v1".to_string());
 
-        let client = reqwest::Client::new();
+        let client = client.clone();
         let resp = client
             .post(format!("{}/moderations", base_url))
             .header("Authorization", format!("Bearer {}", api_key))
@@ -878,7 +975,7 @@ where
             }
         };
 
-        let client = reqwest::Client::new();
+        let client = client.clone();
         let resp = client
             .post("https://api.anthropic.com/v1/messages")
             .header("x-api-key", &api_key)
@@ -914,6 +1011,15 @@ where
 
     // /v1/images/generations — image generation (RFC-0942)
     if path == "/v1/images/generations" {
+        // Method validation: only POST allowed
+        if *req.method() != http::Method::POST {
+            let resp = Response::builder()
+                .status(StatusCode::METHOD_NOT_ALLOWED)
+                .body(SseBody::from_error("Method not allowed".to_string()))
+                .unwrap();
+            return Ok(resp);
+        }
+
         let (_, body) = req.into_parts();
         let full_body = match body.collect().await {
             Ok(bytes) => bytes.to_bytes(),
@@ -926,7 +1032,28 @@ where
             }
         };
 
-        let api_key = match resolve_api_key(&provider, None) {
+        // Parse body to extract model for dispatch lookup (like chat completions)
+        let body_str = String::from_utf8_lossy(&full_body);
+        let request_model = serde_json::from_str::<serde_json::Value>(&body_str)
+            .ok()
+            .and_then(|v| v.get("model")?.as_str().map(String::from));
+
+        // Map model to provider: dall-e* → openai, stable-diffusion* → stability
+        let dispatch = request_model.as_ref().and_then(|model| {
+            dispatch_map.values().find(|d| {
+                d.model == *model
+                    || d.model_group.as_deref() == Some(model.as_str())
+                    || d.deployment_id == *model
+            })
+        });
+
+        let config_key = dispatch.and_then(|d| d.api_key.as_deref()).or_else(|| {
+            dispatch_map
+                .values()
+                .find(|d| d.provider == "openai")
+                .and_then(|d| d.api_key.as_deref())
+        });
+        let api_key = match resolve_api_key(&provider, config_key) {
             Some(key) => key,
             None => {
                 let resp = Response::builder()
@@ -937,13 +1064,17 @@ where
             }
         };
 
-        let base_url = dispatch_map
-            .values()
-            .find(|d| d.provider == "openai")
+        // Use dispatch api_base, or fall back to openai default
+        let base_url = dispatch
             .and_then(|d| d.api_base.clone())
+            .or_else(|| {
+                dispatch_map
+                    .values()
+                    .find(|d| d.provider == "openai")
+                    .and_then(|d| d.api_base.clone())
+            })
             .unwrap_or_else(|| "https://api.openai.com/v1".to_string());
 
-        let client = reqwest::Client::new();
         let resp = client
             .post(format!("{}/images/generations", base_url))
             .header("Authorization", format!("Bearer {}", api_key))
@@ -1009,7 +1140,7 @@ where
 
         let target_url = format!("{}{}", base_url, path);
 
-        let client = reqwest::Client::new();
+        let client = client.clone();
         let resp = client
             .post(&target_url)
             .header("Authorization", format!("Bearer {}", api_key))
@@ -1071,7 +1202,7 @@ where
             .and_then(|d| d.api_base.clone())
             .unwrap_or_else(|| "https://api.openai.com/v1".to_string());
 
-        let client = reqwest::Client::new();
+        let client = client.clone();
         let resp = client
             .post(format!("{}/responses", base_url))
             .header("Authorization", format!("Bearer {}", api_key))
@@ -1113,10 +1244,49 @@ where
             .and_then(|v| v.to_str().ok())
             .unwrap_or("")
             .to_string();
+        let content_length = req
+            .headers()
+            .get("content-length")
+            .and_then(|v| v.to_str().ok())
+            .and_then(|v| v.parse::<u64>().ok());
+        let query_string = req
+            .uri()
+            .query()
+            .map(|q| format!("?{}", q))
+            .unwrap_or_default();
         let file_id = path
             .strip_prefix("/v1/files/")
             .filter(|s| !s.is_empty())
             .map(|s| s.to_string());
+
+        // Path traversal validation (CRITICAL)
+        if let Some(ref id) = file_id {
+            if !validate_resource_id(id) {
+                let resp = Response::builder()
+                    .status(StatusCode::BAD_REQUEST)
+                    .body(SseBody::from_error(
+                        "Invalid file_id: contains disallowed characters".to_string(),
+                    ))
+                    .unwrap();
+                return Ok(resp);
+            }
+        }
+
+        // File upload size validation: reject > 100MB
+        if method == http::Method::POST {
+            if let Some(len) = content_length {
+                if len > 100 * 1024 * 1024 {
+                    let resp = Response::builder()
+                        .status(StatusCode::PAYLOAD_TOO_LARGE)
+                        .body(SseBody::from_error(
+                            "File upload exceeds 100MB limit".to_string(),
+                        ))
+                        .unwrap();
+                    return Ok(resp);
+                }
+            }
+        }
+
         let (_, body) = req.into_parts();
         let full_body = match body.collect().await {
             Ok(bytes) => bytes.to_bytes(),
@@ -1129,7 +1299,67 @@ where
             }
         };
 
-        let api_key = match resolve_api_key(&provider, None) {
+        // Post-read size check: catches chunked uploads that bypass Content-Length header check
+        if full_body.len() > 100 * 1024 * 1024 {
+            let resp = Response::builder()
+                .status(StatusCode::PAYLOAD_TOO_LARGE)
+                .body(SseBody::from_error(
+                    "File upload exceeds 100MB limit".to_string(),
+                ))
+                .unwrap();
+            return Ok(resp);
+        }
+
+        // Validate purpose field for file uploads (POST with JSON body)
+        if method == http::Method::POST && content_type.contains("application/json") {
+            if let Ok(body_val) = serde_json::from_slice::<serde_json::Value>(&full_body) {
+                if let Some(purpose) = body_val.get("purpose").and_then(|p| p.as_str()) {
+                    let valid_purposes = [
+                        "fine-tune",
+                        "fine-tune-results",
+                        "assistants",
+                        "assistants_output",
+                        "vision",
+                        "batch",
+                        "batch_output",
+                        "user_data",
+                        "evals",
+                    ];
+                    if !valid_purposes.contains(&purpose) {
+                        let resp = Response::builder()
+                            .status(StatusCode::BAD_REQUEST)
+                            .body(SseBody::from_error(format!(
+                                "Invalid purpose '{}'. Valid values: {}",
+                                purpose,
+                                valid_purposes.join(", ")
+                            )))
+                            .unwrap();
+                        return Ok(resp);
+                    }
+                }
+            }
+        }
+
+        // Model-based dispatch for config_key (like chat completions path)
+        let body_str = String::from_utf8_lossy(&full_body);
+        let request_model = serde_json::from_str::<serde_json::Value>(&body_str)
+            .ok()
+            .and_then(|v| v.get("model")?.as_str().map(String::from));
+        let dispatch = request_model.as_ref().and_then(|model| {
+            dispatch_map.values().find(|d| {
+                d.model == *model
+                    || d.model_group.as_deref() == Some(model.as_str())
+                    || d.deployment_id == *model
+            })
+        });
+
+        let config_key = dispatch.and_then(|d| d.api_key.as_deref()).or_else(|| {
+            dispatch_map
+                .values()
+                .find(|d| d.provider == "openai")
+                .and_then(|d| d.api_key.as_deref())
+        });
+        let api_key = match resolve_api_key(&provider, config_key) {
             Some(key) => key,
             None => {
                 let resp = Response::builder()
@@ -1140,13 +1370,16 @@ where
             }
         };
 
-        let base_url = dispatch_map
-            .values()
-            .find(|d| d.provider == "openai")
+        let base_url = dispatch
             .and_then(|d| d.api_base.clone())
+            .or_else(|| {
+                dispatch_map
+                    .values()
+                    .find(|d| d.provider == "openai" || d.provider == "azure")
+                    .and_then(|d| d.api_base.clone())
+            })
             .unwrap_or_else(|| "https://api.openai.com/v1".to_string());
 
-        let client = reqwest::Client::new();
         let upstream_path: String = match (&method, &file_id) {
             (&http::Method::GET, &None) => "/v1/files".into(),
             (&http::Method::GET, Some(id)) => format!("/v1/files/{}", id),
@@ -1160,7 +1393,7 @@ where
                 return Ok(resp);
             }
         };
-        let url = format!("{}{}", base_url, upstream_path);
+        let url = format!("{}{}{}", base_url, upstream_path, query_string);
         let mut req_builder = match method {
             http::Method::GET => client.get(&url),
             http::Method::DELETE => client.delete(&url),
@@ -1209,6 +1442,11 @@ where
     // /v1/batches — batch processing (RFC-0951)
     if path.starts_with("/v1/batches") {
         let method = req.method().clone();
+        let query_string = req
+            .uri()
+            .query()
+            .map(|q| format!("?{}", q))
+            .unwrap_or_default();
         let path_after_prefix = path.strip_prefix("/v1/batches/").unwrap_or("");
         let is_cancel = path_after_prefix.ends_with("/cancel");
         let batch_id = if path_after_prefix.is_empty() {
@@ -1221,6 +1459,20 @@ where
         } else {
             Some(path_after_prefix.to_string())
         };
+
+        // Path traversal validation (CRITICAL)
+        if let Some(ref id) = batch_id {
+            if !validate_resource_id(id) {
+                let resp = Response::builder()
+                    .status(StatusCode::BAD_REQUEST)
+                    .body(SseBody::from_error(
+                        "Invalid batch_id: contains disallowed characters".to_string(),
+                    ))
+                    .unwrap();
+                return Ok(resp);
+            }
+        }
+
         let (_, body) = req.into_parts();
         let full_body = match body.collect().await {
             Ok(bytes) => bytes.to_bytes(),
@@ -1233,7 +1485,26 @@ where
             }
         };
 
-        let api_key = match resolve_api_key(&provider, None) {
+        // Model-based dispatch for config_key (like chat completions path)
+        let body_str = String::from_utf8_lossy(&full_body);
+        let request_model = serde_json::from_str::<serde_json::Value>(&body_str)
+            .ok()
+            .and_then(|v| v.get("model")?.as_str().map(String::from));
+        let dispatch = request_model.as_ref().and_then(|model| {
+            dispatch_map.values().find(|d| {
+                d.model == *model
+                    || d.model_group.as_deref() == Some(model.as_str())
+                    || d.deployment_id == *model
+            })
+        });
+
+        let config_key = dispatch.and_then(|d| d.api_key.as_deref()).or_else(|| {
+            dispatch_map
+                .values()
+                .find(|d| d.provider == "openai")
+                .and_then(|d| d.api_key.as_deref())
+        });
+        let api_key = match resolve_api_key(&provider, config_key) {
             Some(key) => key,
             None => {
                 let resp = Response::builder()
@@ -1244,13 +1515,16 @@ where
             }
         };
 
-        let base_url = dispatch_map
-            .values()
-            .find(|d| d.provider == "openai")
+        let base_url = dispatch
             .and_then(|d| d.api_base.clone())
+            .or_else(|| {
+                dispatch_map
+                    .values()
+                    .find(|d| d.provider == "openai")
+                    .and_then(|d| d.api_base.clone())
+            })
             .unwrap_or_else(|| "https://api.openai.com/v1".to_string());
 
-        let client = reqwest::Client::new();
         let upstream_path: String = match (&method, &batch_id, is_cancel) {
             (&http::Method::POST, &None, false) => "/v1/batches".into(),
             (&http::Method::GET, &None, false) => "/v1/batches".into(),
@@ -1264,7 +1538,7 @@ where
                 return Ok(resp);
             }
         };
-        let url = format!("{}{}", base_url, upstream_path);
+        let url = format!("{}{}{}", base_url, upstream_path, query_string);
         let mut req_builder = match method {
             http::Method::GET => client.get(&url),
             http::Method::POST => client
@@ -1302,6 +1576,15 @@ where
 
     // /v1/rerank — reranking API (RFC-0951)
     if path == "/v1/rerank" {
+        // Method validation: only POST allowed
+        if *req.method() != http::Method::POST {
+            let resp = Response::builder()
+                .status(StatusCode::METHOD_NOT_ALLOWED)
+                .body(SseBody::from_error("Method not allowed".to_string()))
+                .unwrap();
+            return Ok(resp);
+        }
+
         let (_, body) = req.into_parts();
         let full_body = match body.collect().await {
             Ok(bytes) => bytes.to_bytes(),
@@ -1314,7 +1597,28 @@ where
             }
         };
 
-        let api_key = match resolve_api_key(&provider, None) {
+        // Parse body to extract model for dispatch lookup
+        let body_str = String::from_utf8_lossy(&full_body);
+        let request_model = serde_json::from_str::<serde_json::Value>(&body_str)
+            .ok()
+            .and_then(|v| v.get("model")?.as_str().map(String::from));
+
+        // Map model to provider: rerank* → cohere, jina* → jina
+        let dispatch = request_model.as_ref().and_then(|model| {
+            dispatch_map.values().find(|d| {
+                d.model == *model
+                    || d.model_group.as_deref() == Some(model.as_str())
+                    || d.deployment_id == *model
+            })
+        });
+
+        let config_key = dispatch.and_then(|d| d.api_key.as_deref()).or_else(|| {
+            dispatch_map
+                .values()
+                .find(|d| d.provider == "cohere" || d.provider == "jina")
+                .and_then(|d| d.api_key.as_deref())
+        });
+        let api_key = match resolve_api_key(&provider, config_key) {
             Some(key) => key,
             None => {
                 let resp = Response::builder()
@@ -1325,14 +1629,17 @@ where
             }
         };
 
-        // Rerank uses Cohere or Jina
-        let base_url = dispatch_map
-            .values()
-            .find(|d| d.provider == "cohere" || d.provider == "jina")
+        // Use dispatch api_base, or fall back to cohere/jina defaults
+        let base_url = dispatch
             .and_then(|d| d.api_base.clone())
+            .or_else(|| {
+                dispatch_map
+                    .values()
+                    .find(|d| d.provider == "cohere" || d.provider == "jina")
+                    .and_then(|d| d.api_base.clone())
+            })
             .unwrap_or_else(|| "https://api.cohere.ai/v1".to_string());
 
-        let client = reqwest::Client::new();
         let resp = client
             .post(format!("{}/rerank", base_url))
             .header("Authorization", format!("Bearer {}", api_key))
@@ -1399,6 +1706,13 @@ where
         let provider_name = path_parts[0];
         let rest_path = path_parts[1];
 
+        // Preserve query string for forwarding
+        let query_suffix = req
+            .uri()
+            .query()
+            .map(|q| format!("?{}", q))
+            .unwrap_or_default();
+
         // Look up provider's API base from dispatch map
         let api_base = dispatch_map
             .values()
@@ -1416,11 +1730,11 @@ where
                 }
             });
 
-        let target_url = format!("{}/{}", api_base, rest_path);
+        let target_url = format!("{}/{}{}", api_base, rest_path, query_suffix);
 
         // Forward request to provider
         let method = req.method().clone();
-        let client = reqwest::Client::new();
+        let client = client.clone();
         let (_, body) = req.into_parts();
         let full_body = match body.collect().await {
             Ok(bytes) => bytes.to_bytes(),
@@ -1641,47 +1955,246 @@ where
         }
     }
 
+    // Context window pre-check (Issue #3 — RFC-0954 Round 2)
+    // Before dispatching, verify the model's context window can handle the request.
+    // If exceeded and fallbacks are available, try fallback models instead.
+    #[cfg(any(feature = "litellm-mode", feature = "full"))]
+    let context_window_blocked = if let Some(ref executor) = fallback {
+        let cw_check = ContextWindowCheck::new();
+
+        // Build DeploymentInfo from dispatch metadata
+        let (max_input, max_output) = dispatch
+            .and_then(|d| d.metadata.as_ref())
+            .map(|meta| {
+                let max_input = meta
+                    .get("max_input_tokens")
+                    .and_then(|v| v.parse::<usize>().ok());
+                let max_output = meta
+                    .get("max_output_tokens")
+                    .and_then(|v| v.parse::<usize>().ok());
+                (max_input, max_output)
+            })
+            .unwrap_or((None, None));
+
+        let deployment = DeploymentInfo {
+            deployment_id: dispatch
+                .map(|d| d.deployment_id.clone())
+                .unwrap_or_default(),
+            model: request_model.clone(),
+            max_input_tokens: max_input,
+            max_output_tokens: max_output,
+            allowed_tags: vec![],
+            blocked_tags: vec![],
+            health_endpoint: None,
+            is_healthy: true,
+        };
+
+        // Build CompletionRequest from parsed body
+        let completion_request = parse_request_body(&body_str)
+            .map(|parsed| CompletionRequest {
+                messages: parsed
+                    .messages
+                    .iter()
+                    .map(|m| crate::pre_call_checks::Message {
+                        role: m.role.clone(),
+                        content: m.content.clone().unwrap_or_default(),
+                    })
+                    .collect(),
+                max_tokens: parsed.max_tokens.map(|v| v as usize),
+                tags: vec![],
+                model: parsed.model.clone(),
+            })
+            .unwrap_or_else(|| CompletionRequest {
+                messages: vec![],
+                max_tokens: None,
+                tags: vec![],
+                model: request_model.clone(),
+            });
+
+        // Get context window fallback models from config
+        let cw_fallback_models = executor
+            .config()
+            .context_window_fallbacks
+            .get(&request_model)
+            .cloned()
+            .unwrap_or_default();
+
+        match cw_check.check_with_fallbacks(&deployment, &completion_request, &cw_fallback_models) {
+            ContextWindowResult::Ok => None,
+            ContextWindowResult::Exceeded {
+                fallback_models, ..
+            } => Some(fallback_models),
+            ContextWindowResult::ExceededNoFallback {
+                input_tokens,
+                max_tokens,
+            } => {
+                let resp = Response::builder()
+                    .status(StatusCode::BAD_REQUEST)
+                    .body(SseBody::from_error(format!(
+                        "Context window exceeded: input tokens ({}) exceeds max ({})",
+                        input_tokens, max_tokens
+                    )))
+                    .unwrap();
+                return Ok(resp);
+            }
+        }
+    } else {
+        None
+    };
+
+    // Health pre-check (Issue #1 — RFC-0954 Round 2)
+    // Before dispatching, check if the model is healthy. If unhealthy, skip to fallback.
+    #[cfg(any(feature = "litellm-mode", feature = "full"))]
+    let health_blocked = if let Some(ref executor) = fallback {
+        !executor.is_model_healthy(&request_model)
+    } else {
+        false
+    };
+
     // Execute with fallback support (RFC-0902)
     let mut result = {
         #[cfg(any(feature = "litellm-mode", feature = "full"))]
         {
-            let primary_result = handle_request_litellm(
-                &body_str,
-                &provider,
-                &api_key,
-                dispatch_api_base.as_deref(),
-                None, // TODO: wire prompt_registry from ProxyServer
-            )
-            .await;
-
-            // Check if fallback is needed
-            if let Some(ref executor) = fallback {
-                match &primary_result {
-                    Ok(resp) if resp.status().is_server_error() => {
-                        // Provider returned 5xx — try fallback
-                        let error = classify_http_error(resp.status());
-                        if let Some(fallback_models) =
-                            executor.config().get_fallback_models(&request_model, error)
-                        {
-                            // Try fallback models
-                            try_fallback_models(
-                                &fallback_models,
-                                &dispatch_map,
-                                &provider,
-                                &body_str,
-                                executor.config().max_retries,
-                                executor.config().retry_delay(0),
-                            )
-                            .await
-                            .unwrap_or(primary_result)
-                        } else {
-                            primary_result
-                        }
+            // If context window exceeded with fallbacks, try fallback models directly
+            if let Some(ref cw_fallback_models) = context_window_blocked {
+                if let Some(ref executor) = fallback {
+                    tracing::info!(
+                        model = %request_model,
+                        fallback_models = ?cw_fallback_models,
+                        "Context window exceeded — trying fallback models"
+                    );
+                    let fb_result = try_fallback_models(
+                        cw_fallback_models,
+                        &dispatch_map,
+                        &provider,
+                        &body_str,
+                        executor.config().max_retries,
+                        executor.config().retry_delay(0),
+                    )
+                    .await;
+                    if let Some(result) = fb_result {
+                        // Record success on the fallback model that worked
+                        executor.record_success(&request_model);
+                        result
+                    } else {
+                        // All fallbacks failed — record failure and return original error
+                        executor.record_failure(&request_model);
+                        let resp = Response::builder()
+                            .status(StatusCode::BAD_REQUEST)
+                            .body(SseBody::from_error(
+                                "Context window exceeded and all fallback models failed"
+                                    .to_string(),
+                            ))
+                            .unwrap();
+                        Ok(resp)
                     }
-                    _ => primary_result,
+                } else {
+                    // No executor (shouldn't happen since we checked above)
+                    let resp = Response::builder()
+                        .status(StatusCode::BAD_REQUEST)
+                        .body(SseBody::from_error("Context window exceeded".to_string()))
+                        .unwrap();
+                    Ok(resp)
+                }
+            }
+            // If model is unhealthy, skip primary and go straight to fallback
+            else if health_blocked {
+                if let Some(ref executor) = fallback {
+                    tracing::info!(
+                        model = %request_model,
+                        "Model unhealthy — attempting fallback"
+                    );
+                    // Get general fallback models
+                    if let Some(fallback_models) = executor
+                        .config()
+                        .get_fallback_models(&request_model, crate::fallback::RouterError::Unknown)
+                    {
+                        let fb_result = try_fallback_models(
+                            &fallback_models,
+                            &dispatch_map,
+                            &provider,
+                            &body_str,
+                            executor.config().max_retries,
+                            executor.config().retry_delay(0),
+                        )
+                        .await;
+                        if let Some(result) = fb_result {
+                            result
+                        } else {
+                            // All fallbacks failed
+                            let resp = Response::builder()
+                                .status(StatusCode::SERVICE_UNAVAILABLE)
+                                .body(SseBody::from_error(
+                                    "Model unhealthy and all fallback models failed".to_string(),
+                                ))
+                                .unwrap();
+                            Ok(resp)
+                        }
+                    } else {
+                        let resp = Response::builder()
+                            .status(StatusCode::SERVICE_UNAVAILABLE)
+                            .body(SseBody::from_error(
+                                "Model unhealthy and no fallback models configured".to_string(),
+                            ))
+                            .unwrap();
+                        Ok(resp)
+                    }
+                } else {
+                    let resp = Response::builder()
+                        .status(StatusCode::SERVICE_UNAVAILABLE)
+                        .body(SseBody::from_error("Model unhealthy".to_string()))
+                        .unwrap();
+                    Ok(resp)
                 }
             } else {
-                primary_result
+                // Normal path — dispatch to primary provider
+                let primary_result = handle_request_litellm(
+                    &body_str,
+                    &provider,
+                    &api_key,
+                    dispatch_api_base.as_deref(),
+                    prompt_registry.clone(),
+                )
+                .await;
+
+                // Check if fallback is needed
+                if let Some(ref executor) = fallback {
+                    match &primary_result {
+                        Ok(resp)
+                            if resp.status().is_server_error()
+                                || resp.status() == StatusCode::TOO_MANY_REQUESTS =>
+                        {
+                            // Provider returned 5xx or 429 — record failure and try fallback
+                            executor.record_failure(&request_model);
+                            let error = classify_http_error(resp.status());
+                            if let Some(fallback_models) =
+                                executor.config().get_fallback_models(&request_model, error)
+                            {
+                                // Try fallback models
+                                try_fallback_models(
+                                    &fallback_models,
+                                    &dispatch_map,
+                                    &provider,
+                                    &body_str,
+                                    executor.config().max_retries,
+                                    executor.config().retry_delay(0),
+                                )
+                                .await
+                                .unwrap_or(primary_result)
+                            } else {
+                                primary_result
+                            }
+                        }
+                        Ok(ref resp) if resp.status().is_success() => {
+                            // Successful response — record success
+                            executor.record_success(&request_model);
+                            primary_result
+                        }
+                        _ => primary_result,
+                    }
+                } else {
+                    primary_result
+                }
             }
         }
 
@@ -1827,7 +2340,7 @@ async fn handle_request_litellm(
     provider: &Provider,
     api_key: &str,
     dispatch_api_base: Option<&str>,
-    prompt_registry: Option<&mut crate::prompts::PromptRegistry>,
+    prompt_registry: Option<Arc<std::sync::RwLock<crate::prompts::PromptRegistry>>>,
 ) -> Result<Response<SseBody>, Infallible> {
     let mut request = match parse_request_body(body_str) {
         Some(req) => req,
@@ -1841,7 +2354,12 @@ async fn handle_request_litellm(
     };
 
     // Resolve prompt template if prompt_id is set (RFC-0948)
-    if let Err(e) = resolve_prompt(&mut request, prompt_registry) {
+    // Lock and resolve before any .await (RwLockWriteGuard is not Send)
+    let resolve_result = {
+        let mut prompt_guard = prompt_registry.as_ref().map(|r| r.write().unwrap());
+        resolve_prompt(&mut request, prompt_guard.as_deref_mut())
+    };
+    if let Err(e) = resolve_result {
         let resp = Response::builder()
             .status(StatusCode::BAD_REQUEST)
             .body(SseBody::from_error(e))
@@ -2301,7 +2819,7 @@ async fn handle_completions_endpoint(
             provider,
             &api_key,
             dispatch_api_base.as_deref(),
-            None, // TODO: wire prompt_registry
+            None, // Completions endpoint does not resolve prompts — prompt_id is chat-only (RFC-0948)
         )
         .await
     }
@@ -2458,6 +2976,10 @@ async fn try_fallback_models(
         });
 
         // Get API key for fallback model
+        // Use fallback model's provider for env var lookup, not the original provider (RFC-0954)
+        let fallback_provider_name = fallback_dispatch
+            .map(|d| d.provider.as_str())
+            .unwrap_or(&original_provider.name);
         let fallback_api_key = fallback_dispatch
             .and_then(|d| d.api_key.as_deref())
             .and_then(|key| {
@@ -2468,7 +2990,7 @@ async fn try_fallback_models(
                 }
             })
             .or_else(|| {
-                std::env::var(format!("{}_API_KEY", original_provider.name.to_uppercase())).ok()
+                std::env::var(format!("{}_API_KEY", fallback_provider_name.to_uppercase())).ok()
             });
 
         let api_key = match fallback_api_key {
@@ -2487,9 +3009,11 @@ async fn try_fallback_models(
         }
 
         // Try the fallback provider
+        // Create a Provider for the fallback model's provider, not the original
+        let fallback_provider = Provider::new(fallback_provider_name, "");
         let result = handle_request_litellm(
             body_str,
-            original_provider,
+            &fallback_provider,
             &api_key,
             fallback_api_base,
             None,
@@ -2561,5 +3085,48 @@ mod tests {
         std::env::remove_var("TESTPROV3_API_KEY");
         let provider = Provider::new("testprov3", "https://example.com");
         assert_eq!(resolve_api_key(&provider, None), None);
+    }
+
+    // validate_resource_id tests
+
+    #[test]
+    fn test_validate_resource_id_valid_alphanumeric() {
+        assert!(validate_resource_id("batch-123_abc"));
+    }
+
+    #[test]
+    fn test_validate_resource_id_valid_hyphens() {
+        assert!(validate_resource_id("file-abc-def"));
+    }
+
+    #[test]
+    fn test_validate_resource_id_valid_underscores() {
+        assert!(validate_resource_id("file_abc_def"));
+    }
+
+    #[test]
+    fn test_validate_resource_id_rejects_empty() {
+        assert!(!validate_resource_id(""));
+    }
+
+    #[test]
+    fn test_validate_resource_id_rejects_path_traversal() {
+        assert!(!validate_resource_id("../etc/passwd"));
+        assert!(!validate_resource_id("foo/../bar"));
+        assert!(!validate_resource_id("..%2Fetc%2Fpasswd"));
+    }
+
+    #[test]
+    fn test_validate_resource_id_rejects_slashes() {
+        assert!(!validate_resource_id("foo/bar"));
+        assert!(!validate_resource_id("/foo"));
+    }
+
+    #[test]
+    fn test_validate_resource_id_rejects_special_characters() {
+        assert!(!validate_resource_id("file;rm -rf /"));
+        assert!(!validate_resource_id("file<script>"));
+        assert!(!validate_resource_id("file name"));
+        assert!(!validate_resource_id("file@domain"));
     }
 }

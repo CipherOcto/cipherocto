@@ -187,17 +187,92 @@ impl LLMProvider for OpenAIProvider {
         input: &[String],
         model: &str,
     ) -> Result<EmbeddingsResponse, ProviderError> {
-        // Mock implementation
-        let embeddings: Vec<Embedding> = input
-            .iter()
-            .enumerate()
-            .map(|(i, _)| {
-                let embedding: Vec<f32> = (0..1536).map(|_| 0.01).collect();
-                Embedding::new(i as u32, embedding)
-            })
-            .collect();
+        // Get or create client
+        let client = self.ensure_client()?;
 
-        Ok(EmbeddingsResponse::new(model, embeddings))
+        // Call the Python SDK: client.embeddings.create(model=model, input=input)
+        let py_result: Py<PyAny> = Python::with_gil(|py| {
+            let client_obj = client.as_ref(py);
+
+            let embeddings = client_obj.getattr("embeddings").map_err(|e| {
+                ProviderError::new(format!("Failed to get embeddings: {}", e), "openai")
+            })?;
+            let create = embeddings.getattr("create").map_err(|e| {
+                ProviderError::new(format!("Failed to get create: {}", e), "openai")
+            })?;
+
+            let kwargs = PyDict::new(py);
+            kwargs.set_item("model", model).unwrap();
+            kwargs.set_item("input", input).unwrap();
+
+            create
+                .call((), Some(kwargs))
+                .map_err(|e| ProviderError::new(format!("SDK call failed: {}", e), "openai"))
+                .map(|obj| obj.into())
+        })?;
+
+        // Convert Python response to Rust EmbeddingsResponse
+        Python::with_gil(|py| {
+            let obj = py_result.as_ref(py);
+
+            let py_data = obj
+                .get_item("data")
+                .map_err(|e| ProviderError::new(format!("Failed to get data: {}", e), "openai"))?;
+
+            let data_list = py_data
+                .downcast::<pyo3::types::PyList>()
+                .map_err(|e| ProviderError::new(format!("data is not a list: {}", e), "openai"))?;
+
+            let mut embeddings = Vec::new();
+            for i in 0..data_list.len() {
+                let item = data_list.get_item(i).unwrap();
+                let index: u32 = item
+                    .get_item("index")
+                    .and_then(|v| v.extract())
+                    .unwrap_or(i as u32);
+
+                let py_embedding = item.get_item("embedding").map_err(|e| {
+                    ProviderError::new(format!("Failed to get embedding: {}", e), "openai")
+                })?;
+                let embedding_list =
+                    py_embedding
+                        .downcast::<pyo3::types::PyList>()
+                        .map_err(|e| {
+                            ProviderError::new(format!("embedding is not a list: {}", e), "openai")
+                        })?;
+                let embedding_vec: Vec<f32> = (0..embedding_list.len())
+                    .map(|j| {
+                        embedding_list
+                            .get_item(j)
+                            .and_then(|v| v.extract::<f32>())
+                            .unwrap_or(0.0)
+                    })
+                    .collect();
+
+                embeddings.push(Embedding::new(index, embedding_vec));
+            }
+
+            let model_str: String = obj
+                .get_item("model")
+                .and_then(|v| v.extract())
+                .unwrap_or_else(|_| model.to_string());
+
+            let usage_obj = obj
+                .get_item("usage")
+                .map_err(|e| ProviderError::new(format!("Failed to get usage: {}", e), "openai"))?;
+            let prompt_tokens: u32 = usage_obj
+                .get_item("prompt_tokens")
+                .and_then(|v| v.extract())
+                .unwrap_or(0);
+            let total_tokens: u32 = usage_obj
+                .get_item("total_tokens")
+                .and_then(|v| v.extract())
+                .unwrap_or(0);
+
+            let mut response = EmbeddingsResponse::new(model_str, embeddings);
+            response.usage = crate::types::Usage::new(prompt_tokens, 0, total_tokens);
+            Ok(response)
+        })
     }
 
     async fn aembedding(

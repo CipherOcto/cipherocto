@@ -30,12 +30,6 @@ pub fn batch_completion(
     _n: Option<i32>,
 ) -> PyResult<Py<PyAny>> {
     let n = _n.unwrap_or(2).clamp(1, 10) as usize;
-    println!(
-        "batch_completion called: model={}, messages={}, n={}",
-        model,
-        messages.len(),
-        n
-    );
 
     let messages_clone = messages.clone();
     let model_clone = model.clone();
@@ -107,12 +101,6 @@ pub fn batch_completion_models(
     _temperature: Option<f64>,
     _max_tokens: Option<i32>,
 ) -> PyResult<Py<PyAny>> {
-    println!(
-        "batch_completion_models called: models={:?}, messages={}",
-        models,
-        messages.len()
-    );
-
     if models.is_empty() {
         return Err(pyo3::exceptions::PyValueError::new_err(
             "models list cannot be empty",
@@ -191,12 +179,6 @@ pub fn batch_completion_models_all_responses(
     _temperature: Option<f64>,
     _max_tokens: Option<i32>,
 ) -> PyResult<Py<PyAny>> {
-    println!(
-        "batch_completion_models_all_responses called: models={:?}, messages={}",
-        models,
-        messages.len()
-    );
-
     let total_requested = models.len();
 
     if models.is_empty() {

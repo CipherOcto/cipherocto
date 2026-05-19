@@ -47,10 +47,8 @@ use crate::providers::voyage::VOYAGEProvider;
 use crate::providers::watsonx::WATSONXProvider;
 use crate::providers::xai::XAIProvider;
 use crate::providers::zai::ZAIProvider;
-use crate::streaming::{chunks_to_pylist, create_chunk_list};
-use crate::types::{ChatCompletion, Choice, Message};
+use crate::types::Message;
 use pyo3::prelude::*;
-use pyo3::types::{PyDict, PyList, PyString};
 
 /// completion - Sync completion call
 #[pyfunction]
@@ -82,28 +80,18 @@ pub fn completion(
     _prompt_cache_retention: Option<String>,
     _conversation: Option<String>,
 ) -> PyResult<Py<PyAny>> {
-    // Log the request parameters (for debugging)
-    println!(
-        "completion called: model={}, messages={}, stream={:?}",
-        model,
-        messages.len(),
-        stream
-    );
-
     // Parse model string to determine provider
     let parsed = match ParsedModel::parse(&model) {
         Ok(p) => p,
         Err(e) => return Err(pyo3::exceptions::PyValueError::new_err(e)),
     };
 
-    // If streaming requested, use mock for now (streaming requires async)
+    // Streaming requires async mode
     if stream == Some(true) {
-        let content = messages
-            .first()
-            .map(|m| format!("Echo: {}", m.content))
-            .unwrap_or_default();
-        let chunks = create_chunk_list(model, content);
-        return Python::with_gil(|py| chunks_to_pylist(chunks, py));
+        return Err(pyo3::exceptions::PyNotImplementedError::new_err(
+            "Streaming is not supported in synchronous completion(). \
+             Use acompletion(stream=True) for streaming responses.",
+        ));
     }
 
     // For OpenAI provider, use real SDK
@@ -1038,21 +1026,18 @@ pub fn completion(
         }
     }
 
-    // For other providers, use mock response
-    let content = messages
-        .first()
-        .map(|m| format!("{} Echo: {}", parsed.provider, m.content))
-        .unwrap_or_default();
-
-    let choices: Vec<Choice> = vec![Choice::new(0, Message::new("assistant", content), "stop")];
-
-    let response =
-        ChatCompletion::new(format!("chatcmpl-{}", uuid::Uuid::new_v4()), model, choices);
-
-    // Convert to Python dict
-    let result = Python::with_gil(|py| response.to_dict(py))?;
-
-    Ok(result)
+    // Provider not yet supported in any-llm (direct PyO3) mode
+    Err(pyo3::exceptions::PyNotImplementedError::new_err(format!(
+        "Provider '{}' is not yet supported in any-llm (direct) mode. \
+         Use litellm mode (via the quota-router proxy) for this provider, \
+         or switch to a supported provider (openai, anthropic, mistral, gemini, groq, \
+         cohere, perplexity, deepseek, deepinfra, dashscope, azure, azureanthropic, \
+         azureopenai, together, bedrock, fireworks, cerebras, openrouter, xai, \
+         huggingface, mzai, minimax, nebius, moonshot, ollama, voyage, databricks, \
+         sagemaker, sambanova, vertexai, watsonx, gateway, platform, vertexaianthropic, \
+         llama, llamacpp, llamafile, lmstudio, inception, vllm, portkey, zai).",
+        parsed.provider
+    )))
 }
 
 /// acompletion - Async completion call
@@ -1085,14 +1070,6 @@ pub async fn acompletion(
     _prompt_cache_retention: Option<String>,
     _conversation: Option<String>,
 ) -> PyResult<Py<PyAny>> {
-    // Log the request parameters
-    println!(
-        "acompletion called: model={}, messages={}, stream={:?}",
-        model,
-        messages.len(),
-        stream
-    );
-
     // Parse model string to determine provider
     let parsed = match ParsedModel::parse(&model) {
         Ok(p) => p,
@@ -1299,22 +1276,18 @@ pub async fn acompletion(
         }
     }
 
-    // For other providers, use mock response with provider name prefix
-    let content = messages
-        .first()
-        .map(|m| format!("{} Echo: {}", parsed.provider, m.content))
-        .unwrap_or_default();
-
-    let choices: Vec<Choice> = vec![Choice::new(0, Message::new("assistant", content), "stop")];
-
-    let response = ChatCompletion::new(
-        format!("chatcmpl-{}", uuid::Uuid::new_v4()),
-        parsed.model,
-        choices,
-    );
-
-    // Convert to Python dict
-    Python::with_gil(|py| response.to_dict(py))
+    // Provider not yet supported in any-llm (direct PyO3) mode
+    Err(pyo3::exceptions::PyNotImplementedError::new_err(format!(
+        "Provider '{}' is not yet supported in any-llm (direct) mode. \
+         Use litellm mode (via the quota-router proxy) for this provider, \
+         or switch to a supported provider (openai, anthropic, mistral, gemini, groq, \
+         cohere, perplexity, deepseek, deepinfra, dashscope, azure, azureanthropic, \
+         azureopenai, together, bedrock, fireworks, cerebras, openrouter, xai, \
+         huggingface, mzai, minimax, nebius, moonshot, ollama, voyage, databricks, \
+         sagemaker, sambanova, vertexai, watsonx, gateway, platform, vertexaianthropic, \
+         llama, llamacpp, llamafile, lmstudio, inception, vllm, portkey, zai).",
+        parsed.provider
+    )))
 }
 
 /// embedding - Sync embedding call
@@ -1324,69 +1297,18 @@ pub async fn acompletion(
     text_signature = "(input, model, api_key=None, api_base=None, **kwargs)"
 )]
 pub fn embedding(
-    input: Py<PyAny>,
-    model: String,
+    _input: Py<PyAny>,
+    _model: String,
     _api_key: Option<String>,
     _api_base: Option<String>,
 ) -> PyResult<Py<PyAny>> {
-    println!("embedding called: model={}", model);
-
-    // Handle input: could be str or List[str]
-    let inputs: Vec<String> = Python::with_gil(|py| {
-        let py_input = input.as_ref(py);
-        if py_input.is_instance_of::<PyString>() {
-            vec![py_input.extract::<String>().unwrap_or_default()]
-        } else if py_input.is_instance_of::<PyList>() {
-            py_input
-                .extract::<&PyList>()
-                .map(|list| {
-                    list.iter()
-                        .filter_map(|item| item.extract::<String>().ok())
-                        .collect()
-                })
-                .unwrap_or_default()
-        } else {
-            vec![]
-        }
-    });
-
-    // Mock embedding response
-    let embeddings: Vec<crate::types::Embedding> = inputs
-        .iter()
-        .enumerate()
-        .map(|(i, _)| {
-            let embedding: Vec<f32> = (0..384).map(|_| 0.1).collect();
-            crate::types::Embedding::new(i as u32, embedding)
-        })
-        .collect();
-
-    let response = crate::types::EmbeddingsResponse::new(model, embeddings);
-
-    // Convert to dict
-    let result = Python::with_gil(|py| {
-        let dict = PyDict::new(py);
-        dict.set_item("object", "list")?;
-
-        let data_list = PyList::new(py, Vec::<&PyAny>::new());
-        for emb in response.data.iter() {
-            let emb_dict = PyDict::new(py);
-            emb_dict.set_item("object", "embedding")?;
-            emb_dict.set_item("embedding", &emb.embedding)?;
-            emb_dict.set_item("index", emb.index)?;
-            data_list.append(emb_dict)?;
-        }
-        dict.set_item("data", data_list)?;
-        dict.set_item("model", &response.model)?;
-
-        let usage_dict = PyDict::new(py);
-        usage_dict.set_item("prompt_tokens", 0)?;
-        usage_dict.set_item("total_tokens", 0)?;
-        dict.set_item("usage", usage_dict)?;
-
-        Ok::<_, PyErr>(dict.into())
-    })?;
-
-    Ok(result)
+    // Embeddings are not yet implemented in any-llm (direct PyO3) mode.
+    // Use litellm mode (via the quota-router proxy) or call provider SDKs directly.
+    Err(pyo3::exceptions::PyNotImplementedError::new_err(
+        "Embeddings are not yet implemented in any-llm (direct) mode. \
+         Use litellm mode (via the quota-router proxy) for embedding calls, \
+         or call the provider SDK directly.",
+    ))
 }
 
 /// aembedding - Async embedding call (per RFC-0920 lines 4031-4043)
@@ -1396,260 +1318,278 @@ pub fn embedding(
     text_signature = "(input, model, api_key=None, api_base=None, **kwargs)"
 )]
 pub async fn aembedding(
-    input: Py<PyAny>,
-    model: String,
+    _input: Py<PyAny>,
+    _model: String,
     _api_key: Option<String>,
     _api_base: Option<String>,
 ) -> PyResult<Py<PyAny>> {
-    println!("aembedding called: model={}", model);
-
-    // Handle input: could be str or List[str]
-    let inputs: Vec<String> = Python::with_gil(|py| {
-        let py_input = input.as_ref(py);
-        if py_input.is_instance_of::<PyString>() {
-            vec![py_input.extract::<String>().unwrap_or_default()]
-        } else if py_input.is_instance_of::<PyList>() {
-            py_input
-                .extract::<&PyList>()
-                .map(|list| {
-                    list.iter()
-                        .filter_map(|item| item.extract::<String>().ok())
-                        .collect()
-                })
-                .unwrap_or_default()
-        } else {
-            vec![]
-        }
-    });
-
-    // Mock embedding response
-    let embeddings: Vec<crate::types::Embedding> = inputs
-        .iter()
-        .enumerate()
-        .map(|(i, _)| {
-            let embedding: Vec<f32> = (0..384).map(|_| 0.1).collect();
-            crate::types::Embedding::new(i as u32, embedding)
-        })
-        .collect();
-
-    let response = crate::types::EmbeddingsResponse::new(model, embeddings);
-
-    // Convert to dict
-    Python::with_gil(|py| {
-        let dict = PyDict::new(py);
-        dict.set_item("object", "list")?;
-
-        let data_list = PyList::new(py, Vec::<&PyAny>::new());
-        for emb in response.data.iter() {
-            let emb_dict = PyDict::new(py);
-            emb_dict.set_item("object", "embedding")?;
-            emb_dict.set_item("embedding", &emb.embedding)?;
-            emb_dict.set_item("index", emb.index)?;
-            data_list.append(emb_dict)?;
-        }
-        dict.set_item("data", data_list)?;
-        dict.set_item("model", &response.model)?;
-
-        let usage_dict = PyDict::new(py);
-        usage_dict.set_item("prompt_tokens", 0)?;
-        usage_dict.set_item("total_tokens", 0)?;
-        dict.set_item("usage", usage_dict)?;
-
-        Ok::<_, PyErr>(dict.into())
-    })
+    // Embeddings are not yet implemented in any-llm (direct PyO3) mode.
+    // Use litellm mode (via the quota-router proxy) or call provider SDKs directly.
+    Err(pyo3::exceptions::PyNotImplementedError::new_err(
+        "Embeddings are not yet implemented in any-llm (direct) mode. \
+         Use litellm mode (via the quota-router proxy) for embedding calls, \
+         or call the provider SDK directly.",
+    ))
 }
 
 // =============================================================================
-// Messages API (text completion with messages format)
+// Messages API (Anthropic Messages API format)
+// RFC-0920: Anthropic-compatible Messages API
 // =============================================================================
 
-/// messages - Sync messages API call
+/// messages - Sync Anthropic Messages API call
+///
+/// Note: The quota-router proxy does not yet support the Anthropic Messages API endpoint.
+/// Use `completion()` for chat completions. See RFC-0920 for planned support.
 #[pyfunction]
-#[pyo3(name = "messages", text_signature = "(model, messages, **kwargs)")]
+#[pyo3(
+    name = "messages",
+    text_signature = "(model, messages, *, provider=None, **kwargs)"
+)]
 pub fn messages(
     model: String,
-    messages: Vec<Message>,
-    _temperature: Option<f64>,
-    _max_tokens: Option<i32>,
-    _top_p: Option<f64>,
-    _top_k: Option<i32>,
-    _stop: Option<String>,
-    _user: Option<String>,
-    _system: Option<String>,
-    _truncation: Option<String>,
+    messages: Py<PyAny>,
+    max_tokens: Option<i32>,
+    system: Option<String>,
+    temperature: Option<f64>,
+    top_p: Option<f64>,
+    top_k: Option<i32>,
+    stop: Option<Vec<String>>,
+    stream: Option<bool>,
+    tools: Option<Py<PyAny>>,
+    tool_choice: Option<Py<PyAny>>,
+    thinking: Option<Py<PyAny>>,
+    metadata: Option<Py<PyAny>>,
+    api_key: Option<String>,
+    api_base: Option<String>,
+    provider: Option<String>,
 ) -> PyResult<Py<PyAny>> {
-    println!(
-        "messages called: model={}, messages={}",
+    let _ = (
+        provider,
         model,
-        messages.len()
+        messages,
+        max_tokens,
+        system,
+        temperature,
+        top_p,
+        top_k,
+        stop,
+        stream,
+        tools,
+        tool_choice,
+        thinking,
+        metadata,
+        api_key,
+        api_base,
     );
-
-    // Mock response
-    Python::with_gil(|py| {
-        let dict = PyDict::new(py);
-        dict.set_item("id", format!("msg-{}", uuid::Uuid::new_v4()))?;
-        dict.set_item("object", "chat.completion.message")?;
-        dict.set_item(
-            "created",
-            std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .unwrap()
-                .as_secs(),
-        )?;
-
-        let role_dict = PyDict::new(py);
-        role_dict.set_item("role", "assistant")?;
-        role_dict.set_item("content", "Mock response from messages API")?;
-        dict.set_item("role", role_dict)?;
-
-        let usage_dict = PyDict::new(py);
-        usage_dict.set_item("prompt_tokens", 10)?;
-        usage_dict.set_item("completion_tokens", 20)?;
-        usage_dict.set_item("total_tokens", 30)?;
-        dict.set_item("usage", usage_dict)?;
-
-        Ok::<_, PyErr>(dict.into())
-    })
+    Err(pyo3::exceptions::PyNotImplementedError::new_err(
+        "Anthropic Messages API endpoint is not yet implemented in the quota-router proxy. \
+         Use completion() for chat completions instead. See RFC-0920 for planned Messages API support.",
+    ))
 }
 
-/// amessages - Async messages API call
+/// amessages - Async Anthropic Messages API call
 #[pyfunction]
 #[pyo3(name = "amessages")]
 pub async fn amessages(
     model: String,
-    messages: Vec<Message>,
-    _temperature: Option<f64>,
-    _max_tokens: Option<i32>,
-    _top_p: Option<f64>,
-    _top_k: Option<i32>,
-    _stop: Option<String>,
-    _user: Option<String>,
-    _system: Option<String>,
-    _truncation: Option<String>,
+    messages: Py<PyAny>,
+    max_tokens: Option<i32>,
+    system: Option<String>,
+    temperature: Option<f64>,
+    top_p: Option<f64>,
+    top_k: Option<i32>,
+    stop: Option<Vec<String>>,
+    stream: Option<bool>,
+    tools: Option<Py<PyAny>>,
+    tool_choice: Option<Py<PyAny>>,
+    thinking: Option<Py<PyAny>>,
+    metadata: Option<Py<PyAny>>,
+    api_key: Option<String>,
+    api_base: Option<String>,
+    provider: Option<String>,
 ) -> PyResult<Py<PyAny>> {
-    println!(
-        "amessages called: model={}, messages={}",
+    self::messages(
         model,
-        messages.len()
-    );
-
-    Python::with_gil(|py| {
-        let dict = PyDict::new(py);
-        dict.set_item("id", format!("msg-{}", uuid::Uuid::new_v4()))?;
-        dict.set_item("object", "chat.completion.message")?;
-        dict.set_item(
-            "created",
-            std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .unwrap()
-                .as_secs(),
-        )?;
-
-        let role_dict = PyDict::new(py);
-        role_dict.set_item("role", "assistant")?;
-        role_dict.set_item("content", "Mock async response from messages API")?;
-        dict.set_item("role", role_dict)?;
-
-        let usage_dict = PyDict::new(py);
-        usage_dict.set_item("prompt_tokens", 10)?;
-        usage_dict.set_item("completion_tokens", 20)?;
-        usage_dict.set_item("total_tokens", 30)?;
-        dict.set_item("usage", usage_dict)?;
-
-        Ok::<_, PyErr>(dict.into())
-    })
+        messages,
+        max_tokens,
+        system,
+        temperature,
+        top_p,
+        top_k,
+        stop,
+        stream,
+        tools,
+        tool_choice,
+        thinking,
+        metadata,
+        api_key,
+        api_base,
+        provider,
+    )
 }
 
 // =============================================================================
 // Responses API (OpenAI Responses API)
+// RFC-0920: OpenAI-compatible Responses API
 // =============================================================================
 
-/// responses - Sync responses API call
+/// responses - Sync OpenAI Responses API call
+///
+/// Note: The quota-router proxy does not yet support the Responses API endpoint.
+/// Use `completion()` for chat completions. See RFC-0920 for planned support.
 #[pyfunction]
-#[pyo3(name = "responses", text_signature = "(model, input, **kwargs)")]
+#[pyo3(
+    name = "responses",
+    text_signature = "(model, input, *, provider=None, **kwargs)"
+)]
 pub fn responses(
     model: String,
-    input: String,
-    _temperature: Option<f64>,
-    _max_tokens: Option<i32>,
-    _top_p: Option<f64>,
-    _user: Option<String>,
+    input: Py<PyAny>,
+    instructions: Option<String>,
+    temperature: Option<f64>,
+    max_tokens: Option<i32>,
+    top_p: Option<f64>,
+    stream: Option<bool>,
+    tools: Option<Py<PyAny>>,
+    tool_choice: Option<Py<PyAny>>,
+    modalities: Option<Py<PyAny>>,
+    audio: Option<Py<PyAny>>,
+    store: Option<bool>,
+    metadata: Option<Py<PyAny>>,
+    user: Option<String>,
+    api_key: Option<String>,
+    api_base: Option<String>,
+    provider: Option<String>,
 ) -> PyResult<Py<PyAny>> {
-    println!("responses called: model={}, input={}", model, input.len());
-
-    Python::with_gil(|py| {
-        let dict = PyDict::new(py);
-        dict.set_item("id", format!("resp-{}", uuid::Uuid::new_v4()))?;
-        dict.set_item("object", "response")?;
-        dict.set_item(
-            "created",
-            std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .unwrap()
-                .as_secs(),
-        )?;
-        dict.set_item("model", &model)?;
-
-        let output_dict = PyDict::new(py);
-        output_dict.set_item("type", "message")?;
-        let message_dict = PyDict::new(py);
-        message_dict.set_item("role", "assistant")?;
-        message_dict.set_item("content", vec![PyDict::new(py)])?;
-        output_dict.set_item("message", message_dict)?;
-        dict.set_item("output", vec![output_dict])?;
-
-        let usage_dict = PyDict::new(py);
-        usage_dict.set_item("input_tokens", 10)?;
-        usage_dict.set_item("output_tokens", 20)?;
-        usage_dict.set_item("total_tokens", 30)?;
-        dict.set_item("usage", usage_dict)?;
-
-        Ok::<_, PyErr>(dict.into())
-    })
+    let _ = (
+        provider,
+        model,
+        input,
+        instructions,
+        temperature,
+        max_tokens,
+        top_p,
+        stream,
+        tools,
+        tool_choice,
+        modalities,
+        audio,
+        store,
+        metadata,
+        user,
+        api_key,
+        api_base,
+    );
+    Err(pyo3::exceptions::PyNotImplementedError::new_err(
+        "OpenAI Responses API endpoint is not yet implemented in the quota-router proxy. \
+         Use completion() for chat completions instead. See RFC-0920 for planned Responses API support.",
+    ))
 }
 
-/// aresponses - Async responses API call
+/// aresponses - Async OpenAI Responses API call
 #[pyfunction]
 #[pyo3(name = "aresponses")]
 pub async fn aresponses(
     model: String,
-    input: String,
-    _temperature: Option<f64>,
-    _max_tokens: Option<i32>,
-    _top_p: Option<f64>,
-    _user: Option<String>,
+    input: Py<PyAny>,
+    instructions: Option<String>,
+    temperature: Option<f64>,
+    max_tokens: Option<i32>,
+    top_p: Option<f64>,
+    stream: Option<bool>,
+    tools: Option<Py<PyAny>>,
+    tool_choice: Option<Py<PyAny>>,
+    modalities: Option<Py<PyAny>>,
+    audio: Option<Py<PyAny>>,
+    store: Option<bool>,
+    metadata: Option<Py<PyAny>>,
+    user: Option<String>,
+    api_key: Option<String>,
+    api_base: Option<String>,
+    provider: Option<String>,
 ) -> PyResult<Py<PyAny>> {
-    println!("aresponses called: model={}, input={}", model, input.len());
+    self::responses(
+        model,
+        input,
+        instructions,
+        temperature,
+        max_tokens,
+        top_p,
+        stream,
+        tools,
+        tool_choice,
+        modalities,
+        audio,
+        store,
+        metadata,
+        user,
+        api_key,
+        api_base,
+        provider,
+    )
+}
 
-    Python::with_gil(|py| {
-        let dict = PyDict::new(py);
-        dict.set_item("id", format!("resp-{}", uuid::Uuid::new_v4()))?;
-        dict.set_item("object", "response")?;
-        dict.set_item(
-            "created",
-            std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .unwrap()
-                .as_secs(),
-        )?;
-        dict.set_item("model", &model)?;
+/// get_response - Retrieve a response by ID
+#[pyfunction]
+#[pyo3(
+    name = "get_response",
+    text_signature = "(response_id, provider=None, **kwargs)"
+)]
+pub fn get_response(
+    response_id: String,
+    provider: Option<String>,
+    api_key: Option<String>,
+    api_base: Option<String>,
+) -> PyResult<Py<PyAny>> {
+    let _ = (provider, response_id, api_key, api_base);
+    Err(pyo3::exceptions::PyNotImplementedError::new_err(
+        "get_response() is not yet implemented in the quota-router proxy. \
+         See RFC-0920 for planned Responses API support.",
+    ))
+}
 
-        let output_dict = PyDict::new(py);
-        output_dict.set_item("type", "message")?;
-        let message_dict = PyDict::new(py);
-        message_dict.set_item("role", "assistant")?;
-        message_dict.set_item("content", vec![PyDict::new(py)])?;
-        output_dict.set_item("message", message_dict)?;
-        dict.set_item("output", vec![output_dict])?;
+/// aget_response - Async retrieve a response by ID
+#[pyfunction]
+#[pyo3(name = "aget_response")]
+pub async fn aget_response(
+    response_id: String,
+    provider: Option<String>,
+    api_key: Option<String>,
+    api_base: Option<String>,
+) -> PyResult<Py<PyAny>> {
+    self::get_response(response_id, provider, api_key, api_base)
+}
 
-        let usage_dict = PyDict::new(py);
-        usage_dict.set_item("input_tokens", 10)?;
-        usage_dict.set_item("output_tokens", 20)?;
-        usage_dict.set_item("total_tokens", 30)?;
-        dict.set_item("usage", usage_dict)?;
+/// delete_response - Delete a response by ID
+#[pyfunction]
+#[pyo3(
+    name = "delete_response",
+    text_signature = "(response_id, provider=None, **kwargs)"
+)]
+pub fn delete_response(
+    response_id: String,
+    provider: Option<String>,
+    api_key: Option<String>,
+    api_base: Option<String>,
+) -> PyResult<Py<PyAny>> {
+    let _ = (provider, response_id, api_key, api_base);
+    Err(pyo3::exceptions::PyNotImplementedError::new_err(
+        "delete_response() is not yet implemented in the quota-router proxy. \
+         See RFC-0920 for planned Responses API support.",
+    ))
+}
 
-        Ok::<_, PyErr>(dict.into())
-    })
+/// adelete_response - Async delete a response by ID
+#[pyfunction]
+#[pyo3(name = "adelete_response")]
+pub async fn adelete_response(
+    response_id: String,
+    provider: Option<String>,
+    api_key: Option<String>,
+    api_base: Option<String>,
+) -> PyResult<Py<PyAny>> {
+    self::delete_response(response_id, provider, api_key, api_base)
 }
 
 // =============================================================================
@@ -1657,251 +1597,213 @@ pub async fn aresponses(
 // =============================================================================
 
 /// list_models - Sync list models API
+///
+/// Note: Not yet implemented. Real model listing through the proxy
+/// requires the model registry to be wired. See RFC-0920.
 #[pyfunction]
 #[pyo3(name = "list_models")]
 pub fn list_models(_provider: Option<String>) -> PyResult<Py<PyAny>> {
-    println!("list_models called: provider={:?}", _provider);
-
-    Python::with_gil(|py| {
-        let dict = PyDict::new(py);
-        dict.set_item("object", "list")?;
-
-        // Add mock models
-        let models = [
-            ("gpt-4o", "openai"),
-            ("gpt-4o-mini", "openai"),
-            ("claude-3-5-sonnet-20241022", "anthropic"),
-            ("claude-3-5-haiku-20241022", "anthropic"),
-            ("mistral-large-latest", "mistral"),
-            ("llama-3.1-70b-instruct", "meta-llama"),
-        ];
-
-        let data_list = PyList::new(
-            py,
-            models.iter().enumerate().map(|(i, (id, provider))| {
-                let model_dict = PyDict::new(py);
-                model_dict.set_item("id", *id).unwrap();
-                model_dict.set_item("object", "model").unwrap();
-                model_dict.set_item("provider", *provider).unwrap();
-                model_dict
-                    .set_item("created", 1700000000u64 + i as u64)
-                    .unwrap();
-                model_dict.set_item("context_window", 128000).unwrap();
-                model_dict.to_object(py)
-            }),
-        );
-
-        dict.set_item("data", data_list)?;
-        Ok::<_, PyErr>(dict.into())
-    })
+    Err(pyo3::exceptions::PyNotImplementedError::new_err(
+        "list_models() is not yet implemented in the quota-router proxy. \
+         See RFC-0920 for planned model registry support.",
+    ))
 }
 
 /// alist_models - Async list models API
 #[pyfunction]
 #[pyo3(name = "alist_models")]
 pub async fn alist_models(provider: Option<String>) -> PyResult<Py<PyAny>> {
-    println!("alist_models called: provider={:?}", provider);
     list_models(provider)
 }
 
 // =============================================================================
-// Batch API
+// Batch API (OpenAI Batch API)
+// RFC-0920: OpenAI-compatible Batch API
 // =============================================================================
 
-/// create_batch - Sync create batch API
+/// batch_create - Sync create batch API
+///
+/// Note: The quota-router proxy does not yet support the Batch API endpoint.
+/// Use `batch_completion()` for in-memory parallel batch processing.
+/// See RFC-0920 for planned Batch API support.
 #[pyfunction]
 #[pyo3(
-    name = "create_batch",
-    text_signature = "(model, input_file_id, **kwargs)"
+    name = "batch_create",
+    text_signature = "(provider, input_file, model, **kwargs)"
 )]
-pub fn create_batch(
+pub fn batch_create(
+    provider: String,
+    input_file: String,
     model: String,
-    input_file_id: String,
-    _endpoint: Option<String>,
-    _completion_window: Option<String>,
-    _metadata: Option<String>,
-) -> PyResult<Py<PyAny>> {
-    println!(
-        "create_batch called: model={}, input_file_id={}",
-        model, input_file_id
-    );
-
-    Python::with_gil(|py| {
-        let dict = PyDict::new(py);
-        dict.set_item("id", format!("batch-{}", uuid::Uuid::new_v4()))?;
-        dict.set_item("object", "batch")?;
-        dict.set_item(
-            "created_at",
-            std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .unwrap()
-                .as_secs(),
-        )?;
-        dict.set_item("model", &model)?;
-        dict.set_item("input_file_id", &input_file_id)?;
-        dict.set_item("status", "validating")?;
-        dict.set_item("completion_window", "24h")?;
-        Ok::<_, PyErr>(dict.into())
-    })
-}
-
-/// acreate_batch - Async create batch API
-#[pyfunction]
-#[pyo3(name = "acreate_batch")]
-pub async fn acreate_batch(
-    model: String,
-    input_file_id: String,
     endpoint: Option<String>,
     completion_window: Option<String>,
-    metadata: Option<String>,
+    metadata: Option<Py<PyAny>>,
+    api_key: Option<String>,
+    api_base: Option<String>,
 ) -> PyResult<Py<PyAny>> {
-    create_batch(model, input_file_id, endpoint, completion_window, metadata)
+    let _ = (
+        provider,
+        model,
+        input_file,
+        endpoint,
+        completion_window,
+        metadata,
+        api_key,
+        api_base,
+    );
+    Err(pyo3::exceptions::PyNotImplementedError::new_err(
+        "Batch API endpoint is not yet implemented in the quota-router proxy. \
+         Use batch_completion() for in-memory parallel batch processing. \
+         See RFC-0920 for planned Batch API support.",
+    ))
 }
 
-/// retrieve_batch - Sync retrieve batch API
+/// abatch_create - Async create batch API
 #[pyfunction]
-#[pyo3(name = "retrieve_batch", text_signature = "(batch_id)")]
-pub fn retrieve_batch(batch_id: String) -> PyResult<Py<PyAny>> {
-    println!("retrieve_batch called: batch_id={}", batch_id);
-
-    Python::with_gil(|py| {
-        let dict = PyDict::new(py);
-        dict.set_item("id", &batch_id)?;
-        dict.set_item("object", "batch")?;
-        dict.set_item("created_at", 1700000000u64)?;
-        dict.set_item("model", "gpt-4o")?;
-        dict.set_item("input_file_id", "file-abc123")?;
-        dict.set_item("status", "in_progress")?;
-        dict.set_item("completion_window", "24h")?;
-        dict.set_item("output_file_id", py.None())?;
-        dict.set_item("error_file_id", py.None())?;
-        dict.set_item("metadata", PyDict::new(py))?;
-        Ok::<_, PyErr>(dict.into())
-    })
-}
-
-/// aretrieve_batch - Async retrieve batch API
-#[pyfunction]
-#[pyo3(name = "aretrieve_batch")]
-pub async fn aretrieve_batch(batch_id: String) -> PyResult<Py<PyAny>> {
-    retrieve_batch(batch_id)
-}
-
-/// cancel_batch - Sync cancel batch API
-#[pyfunction]
-#[pyo3(name = "cancel_batch", text_signature = "(batch_id)")]
-pub fn cancel_batch(batch_id: String) -> PyResult<Py<PyAny>> {
-    println!("cancel_batch called: batch_id={}", batch_id);
-
-    Python::with_gil(|py| {
-        let dict = PyDict::new(py);
-        dict.set_item("id", &batch_id)?;
-        dict.set_item("object", "batch")?;
-        dict.set_item("created_at", 1700000000u64)?;
-        dict.set_item("model", "gpt-4o")?;
-        dict.set_item("input_file_id", "file-abc123")?;
-        dict.set_item("status", "cancelled")?;
-        dict.set_item("completion_window", "24h")?;
-        dict.set_item(
-            "cancelled_at",
-            std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .unwrap()
-                .as_secs(),
-        )?;
-        dict.set_item("metadata", PyDict::new(py))?;
-        Ok::<_, PyErr>(dict.into())
-    })
-}
-
-/// acancel_batch - Async cancel batch API
-#[pyfunction]
-#[pyo3(name = "acancel_batch")]
-pub async fn acancel_batch(batch_id: String) -> PyResult<Py<PyAny>> {
-    cancel_batch(batch_id)
-}
-
-/// list_batches - Sync list batches API
-#[pyfunction]
-#[pyo3(name = "list_batches")]
-pub fn list_batches(
-    _limit: Option<i32>,
-    _after: Option<String>,
-    _before: Option<String>,
+#[pyo3(name = "abatch_create")]
+pub async fn abatch_create(
+    provider: String,
+    input_file: String,
+    model: String,
+    endpoint: Option<String>,
+    completion_window: Option<String>,
+    metadata: Option<Py<PyAny>>,
+    api_key: Option<String>,
+    api_base: Option<String>,
 ) -> PyResult<Py<PyAny>> {
-    println!("list_batches called");
-
-    Python::with_gil(|py| {
-        let dict = PyDict::new(py);
-        dict.set_item("object", "list")?;
-
-        // Add mock batches
-        let batches: Vec<(i32, &str, &str)> = vec![
-            (0, "completed", "file-0"),
-            (1, "in_progress", "file-1"),
-            (2, "in_progress", "file-2"),
-        ];
-
-        let data_list = PyList::new(
-            py,
-            batches.iter().map(|(i, status, file_id)| {
-                let batch_dict = PyDict::new(py);
-                batch_dict.set_item("id", format!("batch-{}", i)).unwrap();
-                batch_dict.set_item("object", "batch").unwrap();
-                batch_dict
-                    .set_item("created_at", 1700000000u64 + *i as u64 * 3600)
-                    .unwrap();
-                batch_dict.set_item("model", "gpt-4o").unwrap();
-                batch_dict.set_item("input_file_id", *file_id).unwrap();
-                batch_dict.set_item("status", *status).unwrap();
-                batch_dict.set_item("completion_window", "24h").unwrap();
-                batch_dict.to_object(py)
-            }),
-        );
-
-        dict.set_item("data", data_list)?;
-        dict.set_item("has_more", false)?;
-        Ok::<_, PyErr>(dict.into())
-    })
+    self::batch_create(
+        provider,
+        input_file,
+        model,
+        endpoint,
+        completion_window,
+        metadata,
+        api_key,
+        api_base,
+    )
 }
 
-/// alist_batches - Async list batches API
+/// batch_retrieve - Sync retrieve batch API
 #[pyfunction]
-#[pyo3(name = "alist_batches")]
-pub async fn alist_batches(
-    limit: Option<i32>,
+#[pyo3(
+    name = "batch_retrieve",
+    text_signature = "(batch_id, provider=None, **kwargs)"
+)]
+pub fn batch_retrieve(
+    batch_id: String,
+    provider: Option<String>,
+    api_key: Option<String>,
+    api_base: Option<String>,
+) -> PyResult<Py<PyAny>> {
+    let _ = (provider, batch_id, api_key, api_base);
+    Err(pyo3::exceptions::PyNotImplementedError::new_err(
+        "Batch API endpoint is not yet implemented in the quota-router proxy. \
+         See RFC-0920 for planned Batch API support.",
+    ))
+}
+
+/// abatch_retrieve - Async retrieve batch API
+#[pyfunction]
+#[pyo3(name = "abatch_retrieve")]
+pub async fn abatch_retrieve(
+    batch_id: String,
+    provider: Option<String>,
+    api_key: Option<String>,
+    api_base: Option<String>,
+) -> PyResult<Py<PyAny>> {
+    self::batch_retrieve(batch_id, provider, api_key, api_base)
+}
+
+/// batch_cancel - Sync cancel batch API
+#[pyfunction]
+#[pyo3(
+    name = "batch_cancel",
+    text_signature = "(provider, batch_id, **kwargs)"
+)]
+pub fn batch_cancel(
+    provider: String,
+    batch_id: String,
+    api_key: Option<String>,
+    api_base: Option<String>,
+) -> PyResult<Py<PyAny>> {
+    let _ = (provider, batch_id, api_key, api_base);
+    Err(pyo3::exceptions::PyNotImplementedError::new_err(
+        "Batch API endpoint is not yet implemented in the quota-router proxy. \
+         See RFC-0920 for planned Batch API support.",
+    ))
+}
+
+/// abatch_cancel - Async cancel batch API
+#[pyfunction]
+#[pyo3(name = "abatch_cancel")]
+pub async fn abatch_cancel(
+    provider: String,
+    batch_id: String,
+    api_key: Option<String>,
+    api_base: Option<String>,
+) -> PyResult<Py<PyAny>> {
+    self::batch_cancel(provider, batch_id, api_key, api_base)
+}
+
+/// batch_list - Sync list batches API
+#[pyfunction]
+#[pyo3(name = "batch_list", text_signature = "(provider, limit=20, **kwargs)")]
+pub fn batch_list(
+    provider: String,
+    limit: i32,
     after: Option<String>,
-    before: Option<String>,
+    api_key: Option<String>,
+    api_base: Option<String>,
 ) -> PyResult<Py<PyAny>> {
-    list_batches(limit, after, before)
+    let _ = (provider, limit, after, api_key, api_base);
+    Err(pyo3::exceptions::PyNotImplementedError::new_err(
+        "Batch API endpoint is not yet implemented in the quota-router proxy. \
+         See RFC-0920 for planned Batch API support.",
+    ))
 }
 
-/// retrieve_batch_results - Sync retrieve batch results API
+/// abatch_list - Async list batches API
 #[pyfunction]
-#[pyo3(name = "retrieve_batch_results", text_signature = "(batch_id)")]
-pub fn retrieve_batch_results(batch_id: String) -> PyResult<Py<PyAny>> {
-    println!("retrieve_batch_results called: batch_id={}", batch_id);
-
-    Python::with_gil(|py| {
-        let dict = PyDict::new(py);
-        dict.set_item("id", &batch_id)?;
-        dict.set_item("object", "batch")?;
-        dict.set_item("status", "completed")?;
-        dict.set_item("output_file_id", "file-output-abc123")?;
-        dict.set_item("error_file_id", py.None())?;
-        dict.set_item("created_at", 1700000000u64)?;
-        dict.set_item("completed_at", 1700010000u64)?;
-        dict.set_item("expires_at", 1700090000u64)?;
-        dict.set_item("metadata", PyDict::new(py))?;
-        Ok::<_, PyErr>(dict.into())
-    })
+#[pyo3(name = "abatch_list")]
+pub async fn abatch_list(
+    provider: String,
+    limit: i32,
+    after: Option<String>,
+    api_key: Option<String>,
+    api_base: Option<String>,
+) -> PyResult<Py<PyAny>> {
+    self::batch_list(provider, limit, after, api_key, api_base)
 }
 
-/// aretrieve_batch_results - Async retrieve batch results API
+/// batch_results - Sync retrieve batch results API
 #[pyfunction]
-#[pyo3(name = "aretrieve_batch_results")]
-pub async fn aretrieve_batch_results(batch_id: String) -> PyResult<Py<PyAny>> {
-    retrieve_batch_results(batch_id)
+#[pyo3(
+    name = "batch_results",
+    text_signature = "(batch_id, provider=None, **kwargs)"
+)]
+pub fn batch_results(
+    batch_id: String,
+    provider: Option<String>,
+    api_key: Option<String>,
+    api_base: Option<String>,
+) -> PyResult<Py<PyAny>> {
+    let _ = (provider, batch_id, api_key, api_base);
+    Err(pyo3::exceptions::PyNotImplementedError::new_err(
+        "Batch API endpoint is not yet implemented in the quota-router proxy. \
+         See RFC-0920 for planned Batch API support.",
+    ))
+}
+
+/// abatch_results - Async retrieve batch results API
+#[pyfunction]
+#[pyo3(name = "abatch_results")]
+pub async fn abatch_results(
+    batch_id: String,
+    provider: Option<String>,
+    api_key: Option<String>,
+    api_base: Option<String>,
+) -> PyResult<Py<PyAny>> {
+    self::batch_results(batch_id, provider, api_key, api_base)
 }
 
 // =============================================================================
@@ -1924,12 +1826,6 @@ pub fn text_completion(
     _top_p: Option<f64>,
     api_key: Option<String>,
 ) -> PyResult<Py<PyAny>> {
-    println!(
-        "text_completion called: model={}, prompt_len={}",
-        model,
-        prompt.len()
-    );
-
     // Parse model string to determine provider
     let parsed = match ParsedModel::parse(&model) {
         Ok(p) => p,
@@ -2042,12 +1938,6 @@ pub async fn atext_completion(
     _timeout: Option<f64>,
     api_key: Option<String>,
 ) -> PyResult<Py<PyAny>> {
-    println!(
-        "atext_completion called: model={}, prompt_len={}",
-        model,
-        prompt.len()
-    );
-
     // Parse model string to determine provider
     let parsed = match ParsedModel::parse(&model) {
         Ok(p) => p,

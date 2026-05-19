@@ -56,11 +56,13 @@ fn quota_router(m: &PyModule) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(completion::messages, m)?)?;
     m.add_function(wrap_pyfunction!(completion::responses, m)?)?;
     m.add_function(wrap_pyfunction!(completion::list_models, m)?)?;
-    m.add_function(wrap_pyfunction!(completion::create_batch, m)?)?;
-    m.add_function(wrap_pyfunction!(completion::retrieve_batch, m)?)?;
-    m.add_function(wrap_pyfunction!(completion::cancel_batch, m)?)?;
-    m.add_function(wrap_pyfunction!(completion::list_batches, m)?)?;
-    m.add_function(wrap_pyfunction!(completion::retrieve_batch_results, m)?)?;
+    m.add_function(wrap_pyfunction!(completion::batch_create, m)?)?;
+    m.add_function(wrap_pyfunction!(completion::batch_retrieve, m)?)?;
+    m.add_function(wrap_pyfunction!(completion::batch_cancel, m)?)?;
+    m.add_function(wrap_pyfunction!(completion::batch_list, m)?)?;
+    m.add_function(wrap_pyfunction!(completion::batch_results, m)?)?;
+    m.add_function(wrap_pyfunction!(completion::get_response, m)?)?;
+    m.add_function(wrap_pyfunction!(completion::delete_response, m)?)?;
 
     // Register async completion functions (using pyo3 experimental-async)
     m.add_function(wrap_pyfunction!(completion::acompletion, m)?)?;
@@ -69,11 +71,13 @@ fn quota_router(m: &PyModule) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(completion::amessages, m)?)?;
     m.add_function(wrap_pyfunction!(completion::aresponses, m)?)?;
     m.add_function(wrap_pyfunction!(completion::alist_models, m)?)?;
-    m.add_function(wrap_pyfunction!(completion::acreate_batch, m)?)?;
-    m.add_function(wrap_pyfunction!(completion::aretrieve_batch, m)?)?;
-    m.add_function(wrap_pyfunction!(completion::acancel_batch, m)?)?;
-    m.add_function(wrap_pyfunction!(completion::alist_batches, m)?)?;
-    m.add_function(wrap_pyfunction!(completion::aretrieve_batch_results, m)?)?;
+    m.add_function(wrap_pyfunction!(completion::abatch_create, m)?)?;
+    m.add_function(wrap_pyfunction!(completion::abatch_retrieve, m)?)?;
+    m.add_function(wrap_pyfunction!(completion::abatch_cancel, m)?)?;
+    m.add_function(wrap_pyfunction!(completion::abatch_list, m)?)?;
+    m.add_function(wrap_pyfunction!(completion::abatch_results, m)?)?;
+    m.add_function(wrap_pyfunction!(completion::aget_response, m)?)?;
+    m.add_function(wrap_pyfunction!(completion::adelete_response, m)?)?;
 
     // Register model parsing functions
     m.add_function(wrap_pyfunction!(model::parse_model, m)?)?;

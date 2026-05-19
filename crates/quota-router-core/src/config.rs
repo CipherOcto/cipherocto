@@ -1720,6 +1720,7 @@ deployments:
             parallel_tool_calls: None,
             prompt_id: None,
             prompt_variables: None,
+            provider_params: None,
         };
 
         // Verify api_base is forwarded

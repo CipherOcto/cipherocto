@@ -346,7 +346,7 @@ class TestEmbedding:
             error_str = str(e).lower()
             assert any(kw in error_str for kw in [
                 "not support", "not found", "404", "405", "unsupported",
-                "not implemented", "invalid", "error",
+                "not implemented", "not yet implemented", "invalid", "error",
             ]), f"Unexpected error: {e}"
 
     def test_async_embedding(self):

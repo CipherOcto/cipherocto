@@ -2426,7 +2426,7 @@ async fn handle_request_anyllm(
     // Call py_bridge via spawn_blocking for GIL safety
     let provider_name_clone = provider_name.clone();
     let model_name_clone = model_name.clone();
-    let api_key_clone = api_key.to_string();
+    let api_key_clone = api_key.map(|s| s.to_string()).unwrap_or_default();
     let api_base_clone = dispatch_api_base.map(|s| s.to_string());
 
     let result = tokio::task::spawn_blocking(move || {
@@ -2840,7 +2840,7 @@ async fn handle_embedding_request(
 async fn handle_embedding_request(
     _body_str: &str,
     _provider: &Provider,
-    _api_key: &str,
+    _api_key: Option<&str>,
     _dispatch_api_base: Option<&str>,
 ) -> Result<Response<SseBody>, Infallible> {
     let resp = Response::builder()

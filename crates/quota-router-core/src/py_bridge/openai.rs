@@ -84,6 +84,12 @@ impl OpenAIProvider {
             kwargs.set_item("api_key", api_key).unwrap();
             kwargs.set_item("base_url", api_base).unwrap();
 
+            // Some OpenAI-compatible endpoints send incorrect Content-Encoding headers.
+            // Set Accept-Encoding: identity to avoid decompression errors.
+            let headers = PyDict::new(py);
+            headers.set_item("Accept-Encoding", "identity").unwrap();
+            kwargs.set_item("default_headers", headers).unwrap();
+
             let client = openai_class
                 .call((), Some(kwargs))
                 .map_err(|e| PyBridgeError::PyError(format!("Failed to create client: {}", e)))?;
@@ -131,19 +137,19 @@ fn convert_response(
     _py: Python<'_>,
 ) -> Result<crate::types::ChatCompletion, PyBridgeError> {
     let id: String = py_obj
-        .get_item("id")
+        .getattr("id")
         .map_err(|e| PyBridgeError::PyError(format!("Failed to get id: {}", e)))?
         .extract()
         .map_err(|e| PyBridgeError::PyError(format!("Failed to extract id: {}", e)))?;
 
     let model_str: String = py_obj
-        .get_item("model")
+        .getattr("model")
         .map_err(|e| PyBridgeError::PyError(format!("Failed to get model: {}", e)))?
         .extract()
         .map_err(|e| PyBridgeError::PyError(format!("Failed to extract model: {}", e)))?;
 
     let py_choices = py_obj
-        .get_item("choices")
+        .getattr("choices")
         .map_err(|e| PyBridgeError::PyError(format!("Failed to get choices: {}", e)))?;
 
     let choices: Vec<crate::types::Choice> = if let Ok(list) = py_choices.downcast::<PyList>() {
@@ -153,21 +159,21 @@ fn convert_response(
             let index = i as u32;
 
             let message_obj = choice_obj
-                .get_item("message")
+                .getattr("message")
                 .map_err(|e| PyBridgeError::PyError(format!("Failed to get message: {}", e)))?;
             let role: String = message_obj
-                .get_item("role")
+                .getattr("role")
                 .map_err(|e| PyBridgeError::PyError(format!("Failed to get role: {}", e)))?
                 .extract()
                 .map_err(|e| PyBridgeError::PyError(format!("Failed to extract role: {}", e)))?;
             let content: String = message_obj
-                .get_item("content")
+                .getattr("content")
                 .map_err(|e| PyBridgeError::PyError(format!("Failed to get content: {}", e)))?
                 .extract()
                 .map_err(|e| PyBridgeError::PyError(format!("Failed to extract content: {}", e)))?;
 
             let finish_reason: String = choice_obj
-                .get_item("finish_reason")
+                .getattr("finish_reason")
                 .map_err(|e| PyBridgeError::PyError(format!("Failed to get finish_reason: {}", e)))?
                 .extract()
                 .unwrap_or_else(|_| "stop".to_string());
@@ -184,20 +190,20 @@ fn convert_response(
     };
 
     let usage_obj = py_obj
-        .get_item("usage")
+        .getattr("usage")
         .map_err(|e| PyBridgeError::PyError(format!("Failed to get usage: {}", e)))?;
     let prompt_tokens: u32 = usage_obj
-        .get_item("prompt_tokens")
+        .getattr("prompt_tokens")
         .map_err(|e| PyBridgeError::PyError(format!("Failed to get prompt_tokens: {}", e)))?
         .extract()
         .unwrap_or(0);
     let completion_tokens: u32 = usage_obj
-        .get_item("completion_tokens")
+        .getattr("completion_tokens")
         .map_err(|e| PyBridgeError::PyError(format!("Failed to get completion_tokens: {}", e)))?
         .extract()
         .unwrap_or(0);
     let total_tokens: u32 = usage_obj
-        .get_item("total_tokens")
+        .getattr("total_tokens")
         .map_err(|e| PyBridgeError::PyError(format!("Failed to get total_tokens: {}", e)))?
         .extract()
         .unwrap_or(0);

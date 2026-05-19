@@ -1,56 +1,36 @@
 // Completion functions for PyO3 bindings
+//
+// Delegates to quota-router-core's py_bridge module which calls official
+// Python SDKs via PyO3. This avoids duplicating provider implementations.
 
 #![allow(clippy::too_many_arguments)]
 #![allow(deprecated)]
 
 use crate::model::ParsedModel;
-use crate::providers::anthropic::AnthropicProvider;
-use crate::providers::azure::AZUREProvider;
-use crate::providers::azureanthropic::AZUREANTHROPICProvider;
-use crate::providers::azureopenai::AZUREOPENAIProvider;
-use crate::providers::base::LLMProvider;
-use crate::providers::bedrock::BEDROCKProvider;
-use crate::providers::cerebras::CEREBRASProvider;
-use crate::providers::cohere::COHEREProvider;
-use crate::providers::dashscope::DASHSCOPEProvider;
-use crate::providers::databricks::DATABRICKSProvider;
-use crate::providers::deepinfra::DEEPINFRAProvider;
-use crate::providers::deepseek::DEEPSEEKProvider;
-use crate::providers::fireworks::FIREWORKSProvider;
-use crate::providers::gateway::GATEWAYProvider;
-use crate::providers::gemini::GeminiProvider;
-use crate::providers::groq::GROQProvider;
-use crate::providers::huggingface::HUGGINGFACEProvider;
-use crate::providers::inception::INCEPTIONProvider;
-use crate::providers::llama::LLAMAProvider;
-use crate::providers::llamacpp::LLAMACPPProvider;
-use crate::providers::llamafile::LLAMAFILEProvider;
-use crate::providers::lmstudio::LMSTUDIOProvider;
-use crate::providers::minimax::MINIMAXProvider;
-use crate::providers::mistral::MistralProvider;
-use crate::providers::moonshot::MOONSHOTProvider;
-use crate::providers::mzai::MZAIProvider;
-use crate::providers::nebius::NEBIUSProvider;
-use crate::providers::ollama::OLLAMAProvider;
-use crate::providers::openai::OpenAIProvider;
-use crate::providers::openrouter::OPENROUTERProvider;
-use crate::providers::perplexity::PERPLEXITYProvider;
-use crate::providers::platform::PLATFORMProvider;
-use crate::providers::portkey::PORTKEYProvider;
-use crate::providers::sagemaker::SAGEMAKERProvider;
-use crate::providers::sambanova::SAMBANOVAProvider;
-use crate::providers::together::TOGETHERProvider;
-use crate::providers::vertexai::VERTEXAIProvider;
-use crate::providers::vertexaianthropic::VERTEXAIANTHROPICProvider;
-use crate::providers::vllm::VLLMProvider;
-use crate::providers::voyage::VOYAGEProvider;
-use crate::providers::watsonx::WATSONXProvider;
-use crate::providers::xai::XAIProvider;
-use crate::providers::zai::ZAIProvider;
 use crate::types::Message;
 use pyo3::prelude::*;
+use std::sync::Once;
+
+/// Initialize py_bridge providers once at startup
+static INIT_PY_BRIDGE: Once = Once::new();
+
+fn ensure_py_bridge_initialized() {
+    INIT_PY_BRIDGE.call_once(|| {
+        quota_router_core::init_py_bridge_providers();
+    });
+}
+
+/// Convert PyO3 Message to core Message
+fn to_core_messages(messages: &[Message]) -> Vec<quota_router_core::types::Message> {
+    messages
+        .iter()
+        .map(|m| quota_router_core::types::Message::new(&m.role, &m.content))
+        .collect()
+}
 
 /// completion - Sync completion call
+///
+/// Delegates to quota-router-core's py_bridge which calls official Python SDKs.
 #[pyfunction]
 #[pyo3(name = "completion", text_signature = "(model, messages, **kwargs)")]
 pub fn completion(
@@ -94,953 +74,44 @@ pub fn completion(
         ));
     }
 
-    // For OpenAI provider, use real SDK
-    if parsed.provider == "openai" {
-        let provider = OpenAIProvider::new();
+    // Initialize py_bridge providers (once)
+    ensure_py_bridge_initialized();
 
-        // Initialize with api_key if provided
-        if let Some(key) = api_key {
-            if let Err(e) = provider.init_client(&key, None) {
-                let err_msg = format!("Failed to init OpenAI client: {}", e.message());
-                return Err(pyo3::exceptions::PyRuntimeError::new_err(err_msg));
-            }
-        }
+    // Create provider from py_bridge factory
+    let mut provider =
+        quota_router_core::py_bridge::PyBridgeProviderFactory::create(&parsed.provider)
+            .ok_or_else(|| {
+                pyo3::exceptions::PyNotImplementedError::new_err(format!(
+            "Provider '{}' is not supported. Use litellm mode (via the quota-router proxy) \
+             for this provider, or check the provider name.",
+            parsed.provider
+        ))
+            })?;
 
-        match provider.completion(&parsed.model, &messages, false) {
-            Ok(response) => {
-                // Convert to Python dict
-                return Python::with_gil(|py| response.to_dict(py));
-            }
-            Err(e) => {
-                let err_msg = format!("OpenAI API error: {}", e.message());
-                return Err(pyo3::exceptions::PyRuntimeError::new_err(err_msg));
-            }
-        }
+    // Configure provider with API key and base URL
+    if let Some(key) = api_key {
+        provider = provider.with_api_key(key);
+    }
+    if let Some(base) = _base_url {
+        provider = provider.with_api_base(base);
     }
 
-    // For Anthropic provider, use real SDK
-    if parsed.provider == "anthropic" {
-        let provider = AnthropicProvider::new();
-
-        // Initialize with api_key if provided
-        if let Some(key) = api_key {
-            if let Err(e) = provider.init_client(&key, None) {
-                let err_msg = format!("Failed to init Anthropic client: {}", e.message());
-                return Err(pyo3::exceptions::PyRuntimeError::new_err(err_msg));
-            }
-        }
-
-        match provider.completion(&parsed.model, &messages, false) {
-            Ok(response) => {
-                // Convert to Python dict
-                return Python::with_gil(|py| response.to_dict(py));
-            }
-            Err(e) => {
-                let err_msg = format!("Anthropic API error: {}", e.message());
-                return Err(pyo3::exceptions::PyRuntimeError::new_err(err_msg));
-            }
-        }
-    }
-
-    // For Mistral provider, use real SDK
-    if parsed.provider == "mistral" {
-        let provider = MistralProvider::new();
-
-        // Initialize with api_key if provided
-        if let Some(key) = api_key {
-            if let Err(e) = provider.init_client(&key, None) {
-                let err_msg = format!("Failed to init Mistral client: {}", e.message());
-                return Err(pyo3::exceptions::PyRuntimeError::new_err(err_msg));
-            }
-        }
-
-        match provider.completion(&parsed.model, &messages, false) {
-            Ok(response) => {
-                // Convert to Python dict
-                return Python::with_gil(|py| response.to_dict(py));
-            }
-            Err(e) => {
-                let err_msg = format!("Mistral API error: {}", e.message());
-                return Err(pyo3::exceptions::PyRuntimeError::new_err(err_msg));
-            }
-        }
-    }
-
-    // For Gemini provider, use real SDK
-    if parsed.provider == "gemini" {
-        let provider = GeminiProvider::new();
-
-        // Initialize with api_key if provided
-        if let Some(key) = api_key {
-            if let Err(e) = provider.init_client(&key, None) {
-                let err_msg = format!("Failed to init Gemini client: {}", e.message());
-                return Err(pyo3::exceptions::PyRuntimeError::new_err(err_msg));
-            }
-        }
-
-        match provider.completion(&parsed.model, &messages, false) {
-            Ok(response) => {
-                // Convert to Python dict
-                return Python::with_gil(|py| response.to_dict(py));
-            }
-            Err(e) => {
-                let err_msg = format!("Gemini API error: {}", e.message());
-                return Err(pyo3::exceptions::PyRuntimeError::new_err(err_msg));
-            }
-        }
-    }
-
-    // For Groq provider, use real SDK
-    if parsed.provider == "groq" {
-        let provider = GROQProvider::new();
-
-        if let Some(key) = api_key {
-            if let Err(e) = provider.init_client(&key, None) {
-                let err_msg = format!("Failed to init Groq client: {}", e.message());
-                return Err(pyo3::exceptions::PyRuntimeError::new_err(err_msg));
-            }
-        }
-
-        match provider.completion(&parsed.model, &messages, false) {
-            Ok(response) => {
-                return Python::with_gil(|py| response.to_dict(py));
-            }
-            Err(e) => {
-                let err_msg = format!("Groq API error: {}", e.message());
-                return Err(pyo3::exceptions::PyRuntimeError::new_err(err_msg));
-            }
-        }
-    }
-
-    // For Cohere provider, use real SDK
-    if parsed.provider == "cohere" {
-        let provider = COHEREProvider::new();
-
-        if let Some(key) = api_key {
-            if let Err(e) = provider.init_client(&key, None) {
-                let err_msg = format!("Failed to init Cohere client: {}", e.message());
-                return Err(pyo3::exceptions::PyRuntimeError::new_err(err_msg));
-            }
-        }
-
-        match provider.completion(&parsed.model, &messages, false) {
-            Ok(response) => {
-                return Python::with_gil(|py| response.to_dict(py));
-            }
-            Err(e) => {
-                let err_msg = format!("Cohere API error: {}", e.message());
-                return Err(pyo3::exceptions::PyRuntimeError::new_err(err_msg));
-            }
-        }
-    }
-
-    // For Perplexity provider, use real SDK
-    if parsed.provider == "perplexity" {
-        let provider = PERPLEXITYProvider::new();
-
-        if let Some(key) = api_key {
-            if let Err(e) = provider.init_client(&key, None) {
-                let err_msg = format!("Failed to init Perplexity client: {}", e.message());
-                return Err(pyo3::exceptions::PyRuntimeError::new_err(err_msg));
-            }
-        }
-
-        match provider.completion(&parsed.model, &messages, false) {
-            Ok(response) => {
-                return Python::with_gil(|py| response.to_dict(py));
-            }
-            Err(e) => {
-                let err_msg = format!("Perplexity API error: {}", e.message());
-                return Err(pyo3::exceptions::PyRuntimeError::new_err(err_msg));
-            }
-        }
-    }
-
-    // For DeepSeek provider, use real SDK
-    if parsed.provider == "deepseek" {
-        let provider = DEEPSEEKProvider::new();
-
-        if let Some(key) = api_key {
-            if let Err(e) = provider.init_client(&key, None) {
-                let err_msg = format!("Failed to init DeepSeek client: {}", e.message());
-                return Err(pyo3::exceptions::PyRuntimeError::new_err(err_msg));
-            }
-        }
-
-        match provider.completion(&parsed.model, &messages, false) {
-            Ok(response) => {
-                return Python::with_gil(|py| response.to_dict(py));
-            }
-            Err(e) => {
-                let err_msg = format!("DeepSeek API error: {}", e.message());
-                return Err(pyo3::exceptions::PyRuntimeError::new_err(err_msg));
-            }
-        }
-    }
-
-    // For DeepInfra provider, use real SDK
-    if parsed.provider == "deepinfra" {
-        let provider = DEEPINFRAProvider::new();
-
-        if let Some(key) = api_key {
-            if let Err(e) = provider.init_client(&key, None) {
-                let err_msg = format!("Failed to init DeepInfra client: {}", e.message());
-                return Err(pyo3::exceptions::PyRuntimeError::new_err(err_msg));
-            }
-        }
-
-        match provider.completion(&parsed.model, &messages, false) {
-            Ok(response) => {
-                return Python::with_gil(|py| response.to_dict(py));
-            }
-            Err(e) => {
-                let err_msg = format!("DeepInfra API error: {}", e.message());
-                return Err(pyo3::exceptions::PyRuntimeError::new_err(err_msg));
-            }
-        }
-    }
-
-    // For DashScope provider, use real SDK
-    if parsed.provider == "dashscope" {
-        let provider = DASHSCOPEProvider::new();
-
-        if let Some(key) = api_key {
-            if let Err(e) = provider.init_client(&key, None) {
-                let err_msg = format!("Failed to init DashScope client: {}", e.message());
-                return Err(pyo3::exceptions::PyRuntimeError::new_err(err_msg));
-            }
-        }
-
-        match provider.completion(&parsed.model, &messages, false) {
-            Ok(response) => {
-                return Python::with_gil(|py| response.to_dict(py));
-            }
-            Err(e) => {
-                let err_msg = format!("DashScope API error: {}", e.message());
-                return Err(pyo3::exceptions::PyRuntimeError::new_err(err_msg));
-            }
-        }
-    }
-
-    // For Azure provider, use real SDK
-    if parsed.provider == "azure" {
-        let provider = AZUREProvider::new();
-
-        if let Some(key) = api_key {
-            if let Err(e) = provider.init_client(&key, None) {
-                let err_msg = format!("Failed to init Azure client: {}", e.message());
-                return Err(pyo3::exceptions::PyRuntimeError::new_err(err_msg));
-            }
-        }
-
-        match provider.completion(&parsed.model, &messages, false) {
-            Ok(response) => {
-                return Python::with_gil(|py| response.to_dict(py));
-            }
-            Err(e) => {
-                let err_msg = format!("Azure API error: {}", e.message());
-                return Err(pyo3::exceptions::PyRuntimeError::new_err(err_msg));
-            }
-        }
-    }
-
-    // For AzureAnthropic provider, use real SDK
-    if parsed.provider == "azureanthropic" {
-        let provider = AZUREANTHROPICProvider::new();
-
-        if let Some(key) = api_key {
-            if let Err(e) = provider.init_client(&key, None) {
-                let err_msg = format!("Failed to init AzureAnthropic client: {}", e.message());
-                return Err(pyo3::exceptions::PyRuntimeError::new_err(err_msg));
-            }
-        }
-
-        match provider.completion(&parsed.model, &messages, false) {
-            Ok(response) => {
-                return Python::with_gil(|py| response.to_dict(py));
-            }
-            Err(e) => {
-                let err_msg = format!("AzureAnthropic API error: {}", e.message());
-                return Err(pyo3::exceptions::PyRuntimeError::new_err(err_msg));
-            }
-        }
-    }
-
-    // For AzureOpenAI provider, use real SDK
-    if parsed.provider == "azureopenai" {
-        let provider = AZUREOPENAIProvider::new();
-
-        if let Some(key) = api_key {
-            if let Err(e) = provider.init_client(&key, None) {
-                let err_msg = format!("Failed to init AzureOpenAI client: {}", e.message());
-                return Err(pyo3::exceptions::PyRuntimeError::new_err(err_msg));
-            }
-        }
-
-        match provider.completion(&parsed.model, &messages, false) {
-            Ok(response) => {
-                return Python::with_gil(|py| response.to_dict(py));
-            }
-            Err(e) => {
-                let err_msg = format!("AzureOpenAI API error: {}", e.message());
-                return Err(pyo3::exceptions::PyRuntimeError::new_err(err_msg));
-            }
-        }
-    }
-
-    // For Together provider, use real SDK
-    if parsed.provider == "together" {
-        let provider = TOGETHERProvider::new();
-
-        if let Some(key) = api_key {
-            if let Err(e) = provider.init_client(&key, None) {
-                let err_msg = format!("Failed to init Together client: {}", e.message());
-                return Err(pyo3::exceptions::PyRuntimeError::new_err(err_msg));
-            }
-        }
-
-        match provider.completion(&parsed.model, &messages, false) {
-            Ok(response) => {
-                return Python::with_gil(|py| response.to_dict(py));
-            }
-            Err(e) => {
-                let err_msg = format!("Together API error: {}", e.message());
-                return Err(pyo3::exceptions::PyRuntimeError::new_err(err_msg));
-            }
-        }
-    }
-
-    // For Bedrock provider, use real SDK
-    if parsed.provider == "bedrock" {
-        let provider = BEDROCKProvider::new();
-
-        if let Some(key) = api_key {
-            if let Err(e) = provider.init_client(&key, None) {
-                let err_msg = format!("Failed to init Bedrock client: {}", e.message());
-                return Err(pyo3::exceptions::PyRuntimeError::new_err(err_msg));
-            }
-        }
-
-        match provider.completion(&parsed.model, &messages, false) {
-            Ok(response) => {
-                return Python::with_gil(|py| response.to_dict(py));
-            }
-            Err(e) => {
-                let err_msg = format!("Bedrock API error: {}", e.message());
-                return Err(pyo3::exceptions::PyRuntimeError::new_err(err_msg));
-            }
-        }
-    }
-
-    // For Fireworks provider, use real SDK
-    if parsed.provider == "fireworks" {
-        let provider = FIREWORKSProvider::new();
-
-        if let Some(key) = api_key {
-            if let Err(e) = provider.init_client(&key, None) {
-                let err_msg = format!("Failed to init Fireworks client: {}", e.message());
-                return Err(pyo3::exceptions::PyRuntimeError::new_err(err_msg));
-            }
-        }
-
-        match provider.completion(&parsed.model, &messages, false) {
-            Ok(response) => {
-                return Python::with_gil(|py| response.to_dict(py));
-            }
-            Err(e) => {
-                let err_msg = format!("Fireworks API error: {}", e.message());
-                return Err(pyo3::exceptions::PyRuntimeError::new_err(err_msg));
-            }
-        }
-    }
-
-    // For Cerebras provider, use real SDK
-    if parsed.provider == "cerebras" {
-        let provider = CEREBRASProvider::new();
-
-        if let Some(key) = api_key {
-            if let Err(e) = provider.init_client(&key, None) {
-                let err_msg = format!("Failed to init Cerebras client: {}", e.message());
-                return Err(pyo3::exceptions::PyRuntimeError::new_err(err_msg));
-            }
-        }
-
-        match provider.completion(&parsed.model, &messages, false) {
-            Ok(response) => {
-                return Python::with_gil(|py| response.to_dict(py));
-            }
-            Err(e) => {
-                let err_msg = format!("Cerebras API error: {}", e.message());
-                return Err(pyo3::exceptions::PyRuntimeError::new_err(err_msg));
-            }
-        }
-    }
-
-    // For OpenRouter provider, use real SDK
-    if parsed.provider == "openrouter" {
-        let provider = OPENROUTERProvider::new();
-
-        if let Some(key) = api_key {
-            if let Err(e) = provider.init_client(&key, None) {
-                let err_msg = format!("Failed to init OpenRouter client: {}", e.message());
-                return Err(pyo3::exceptions::PyRuntimeError::new_err(err_msg));
-            }
-        }
-
-        match provider.completion(&parsed.model, &messages, false) {
-            Ok(response) => {
-                return Python::with_gil(|py| response.to_dict(py));
-            }
-            Err(e) => {
-                let err_msg = format!("OpenRouter API error: {}", e.message());
-                return Err(pyo3::exceptions::PyRuntimeError::new_err(err_msg));
-            }
-        }
-    }
-
-    // For xAI provider, use real SDK
-    if parsed.provider == "xai" {
-        let provider = XAIProvider::new();
-
-        if let Some(key) = api_key {
-            if let Err(e) = provider.init_client(&key, None) {
-                let err_msg = format!("Failed to init xAI client: {}", e.message());
-                return Err(pyo3::exceptions::PyRuntimeError::new_err(err_msg));
-            }
-        }
-
-        match provider.completion(&parsed.model, &messages, false) {
-            Ok(response) => {
-                return Python::with_gil(|py| response.to_dict(py));
-            }
-            Err(e) => {
-                let err_msg = format!("xAI API error: {}", e.message());
-                return Err(pyo3::exceptions::PyRuntimeError::new_err(err_msg));
-            }
-        }
-    }
-
-    // For HuggingFace provider, use real SDK
-    if parsed.provider == "huggingface" {
-        let provider = HUGGINGFACEProvider::new();
-
-        if let Some(key) = api_key {
-            if let Err(e) = provider.init_client(&key, None) {
-                let err_msg = format!("Failed to init HuggingFace client: {}", e.message());
-                return Err(pyo3::exceptions::PyRuntimeError::new_err(err_msg));
-            }
-        }
-
-        match provider.completion(&parsed.model, &messages, false) {
-            Ok(response) => {
-                return Python::with_gil(|py| response.to_dict(py));
-            }
-            Err(e) => {
-                let err_msg = format!("HuggingFace API error: {}", e.message());
-                return Err(pyo3::exceptions::PyRuntimeError::new_err(err_msg));
-            }
-        }
-    }
-
-    // For MZAI provider, use real SDK
-    if parsed.provider == "mzai" {
-        let provider = MZAIProvider::new();
-
-        if let Some(key) = api_key {
-            if let Err(e) = provider.init_client(&key, None) {
-                let err_msg = format!("Failed to init MZAI client: {}", e.message());
-                return Err(pyo3::exceptions::PyRuntimeError::new_err(err_msg));
-            }
-        }
-
-        match provider.completion(&parsed.model, &messages, false) {
-            Ok(response) => {
-                return Python::with_gil(|py| response.to_dict(py));
-            }
-            Err(e) => {
-                let err_msg = format!("MZAI API error: {}", e.message());
-                return Err(pyo3::exceptions::PyRuntimeError::new_err(err_msg));
-            }
-        }
-    }
-
-    // For MiniMax provider, use real SDK
-    if parsed.provider == "minimax" {
-        let provider = MINIMAXProvider::new();
-
-        if let Some(key) = api_key {
-            if let Err(e) = provider.init_client(&key, None) {
-                let err_msg = format!("Failed to init MiniMax client: {}", e.message());
-                return Err(pyo3::exceptions::PyRuntimeError::new_err(err_msg));
-            }
-        }
-
-        match provider.completion(&parsed.model, &messages, false) {
-            Ok(response) => {
-                return Python::with_gil(|py| response.to_dict(py));
-            }
-            Err(e) => {
-                let err_msg = format!("MiniMax API error: {}", e.message());
-                return Err(pyo3::exceptions::PyRuntimeError::new_err(err_msg));
-            }
-        }
-    }
-
-    // For Nebius provider, use real SDK
-    if parsed.provider == "nebius" {
-        let provider = NEBIUSProvider::new();
-
-        if let Some(key) = api_key {
-            if let Err(e) = provider.init_client(&key, None) {
-                let err_msg = format!("Failed to init Nebius client: {}", e.message());
-                return Err(pyo3::exceptions::PyRuntimeError::new_err(err_msg));
-            }
-        }
-
-        match provider.completion(&parsed.model, &messages, false) {
-            Ok(response) => {
-                return Python::with_gil(|py| response.to_dict(py));
-            }
-            Err(e) => {
-                let err_msg = format!("Nebius API error: {}", e.message());
-                return Err(pyo3::exceptions::PyRuntimeError::new_err(err_msg));
-            }
-        }
-    }
-
-    // For Moonshot provider, use real SDK
-    if parsed.provider == "moonshot" {
-        let provider = MOONSHOTProvider::new();
-
-        if let Some(key) = api_key {
-            if let Err(e) = provider.init_client(&key, None) {
-                let err_msg = format!("Failed to init Moonshot client: {}", e.message());
-                return Err(pyo3::exceptions::PyRuntimeError::new_err(err_msg));
-            }
-        }
-
-        match provider.completion(&parsed.model, &messages, false) {
-            Ok(response) => {
-                return Python::with_gil(|py| response.to_dict(py));
-            }
-            Err(e) => {
-                let err_msg = format!("Moonshot API error: {}", e.message());
-                return Err(pyo3::exceptions::PyRuntimeError::new_err(err_msg));
-            }
-        }
-    }
-
-    // For Ollama provider, use real SDK
-    if parsed.provider == "ollama" {
-        let provider = OLLAMAProvider::new();
-
-        if let Some(key) = api_key {
-            if let Err(e) = provider.init_client(&key, None) {
-                let err_msg = format!("Failed to init Ollama client: {}", e.message());
-                return Err(pyo3::exceptions::PyRuntimeError::new_err(err_msg));
-            }
-        }
-
-        match provider.completion(&parsed.model, &messages, false) {
-            Ok(response) => {
-                return Python::with_gil(|py| response.to_dict(py));
-            }
-            Err(e) => {
-                let err_msg = format!("Ollama API error: {}", e.message());
-                return Err(pyo3::exceptions::PyRuntimeError::new_err(err_msg));
-            }
-        }
-    }
-
-    // For Voyage provider, use real SDK
-    if parsed.provider == "voyage" {
-        let provider = VOYAGEProvider::new();
-
-        if let Some(key) = api_key {
-            if let Err(e) = provider.init_client(&key, None) {
-                let err_msg = format!("Failed to init Voyage client: {}", e.message());
-                return Err(pyo3::exceptions::PyRuntimeError::new_err(err_msg));
-            }
-        }
-
-        match provider.completion(&parsed.model, &messages, false) {
-            Ok(response) => {
-                return Python::with_gil(|py| response.to_dict(py));
-            }
-            Err(e) => {
-                let err_msg = format!("Voyage API error: {}", e.message());
-                return Err(pyo3::exceptions::PyRuntimeError::new_err(err_msg));
-            }
-        }
-    }
-
-    // For Databricks provider, use real SDK
-    if parsed.provider == "databricks" {
-        let provider = DATABRICKSProvider::new();
-
-        if let Some(key) = api_key {
-            if let Err(e) = provider.init_client(&key, None) {
-                let err_msg = format!("Failed to init Databricks client: {}", e.message());
-                return Err(pyo3::exceptions::PyRuntimeError::new_err(err_msg));
-            }
-        }
-
-        match provider.completion(&parsed.model, &messages, false) {
-            Ok(response) => {
-                return Python::with_gil(|py| response.to_dict(py));
-            }
-            Err(e) => {
-                let err_msg = format!("Databricks API error: {}", e.message());
-                return Err(pyo3::exceptions::PyRuntimeError::new_err(err_msg));
-            }
-        }
-    }
-
-    // For SageMaker provider, use real SDK
-    if parsed.provider == "sagemaker" {
-        let provider = SAGEMAKERProvider::new();
-
-        if let Some(key) = api_key {
-            if let Err(e) = provider.init_client(&key, None) {
-                let err_msg = format!("Failed to init SageMaker client: {}", e.message());
-                return Err(pyo3::exceptions::PyRuntimeError::new_err(err_msg));
-            }
-        }
-
-        match provider.completion(&parsed.model, &messages, false) {
-            Ok(response) => {
-                return Python::with_gil(|py| response.to_dict(py));
-            }
-            Err(e) => {
-                let err_msg = format!("SageMaker API error: {}", e.message());
-                return Err(pyo3::exceptions::PyRuntimeError::new_err(err_msg));
-            }
-        }
-    }
-
-    // For SambaNova provider, use real SDK
-    if parsed.provider == "sambanova" {
-        let provider = SAMBANOVAProvider::new();
-
-        if let Some(key) = api_key {
-            if let Err(e) = provider.init_client(&key, None) {
-                let err_msg = format!("Failed to init SambaNova client: {}", e.message());
-                return Err(pyo3::exceptions::PyRuntimeError::new_err(err_msg));
-            }
-        }
-
-        match provider.completion(&parsed.model, &messages, false) {
-            Ok(response) => {
-                return Python::with_gil(|py| response.to_dict(py));
-            }
-            Err(e) => {
-                let err_msg = format!("SambaNova API error: {}", e.message());
-                return Err(pyo3::exceptions::PyRuntimeError::new_err(err_msg));
-            }
-        }
-    }
-
-    // For VertexAI provider, use real SDK
-    if parsed.provider == "vertexai" {
-        let provider = VERTEXAIProvider::new();
-
-        if let Some(key) = api_key {
-            if let Err(e) = provider.init_client(&key, None) {
-                let err_msg = format!("Failed to init VertexAI client: {}", e.message());
-                return Err(pyo3::exceptions::PyRuntimeError::new_err(err_msg));
-            }
-        }
-
-        match provider.completion(&parsed.model, &messages, false) {
-            Ok(response) => {
-                return Python::with_gil(|py| response.to_dict(py));
-            }
-            Err(e) => {
-                let err_msg = format!("VertexAI API error: {}", e.message());
-                return Err(pyo3::exceptions::PyRuntimeError::new_err(err_msg));
-            }
-        }
-    }
-
-    // For Watsonx provider, use real SDK
-    if parsed.provider == "watsonx" {
-        let provider = WATSONXProvider::new();
-
-        if let Some(key) = api_key {
-            if let Err(e) = provider.init_client(&key, None) {
-                let err_msg = format!("Failed to init Watsonx client: {}", e.message());
-                return Err(pyo3::exceptions::PyRuntimeError::new_err(err_msg));
-            }
-        }
-
-        match provider.completion(&parsed.model, &messages, false) {
-            Ok(response) => {
-                return Python::with_gil(|py| response.to_dict(py));
-            }
-            Err(e) => {
-                let err_msg = format!("Watsonx API error: {}", e.message());
-                return Err(pyo3::exceptions::PyRuntimeError::new_err(err_msg));
-            }
-        }
-    }
-
-    // For Gateway provider, use real SDK
-    if parsed.provider == "gateway" {
-        let provider = GATEWAYProvider::new();
-
-        if let Some(key) = api_key {
-            if let Err(e) = provider.init_client(&key, None) {
-                let err_msg = format!("Failed to init Gateway client: {}", e.message());
-                return Err(pyo3::exceptions::PyRuntimeError::new_err(err_msg));
-            }
-        }
-
-        match provider.completion(&parsed.model, &messages, false) {
-            Ok(response) => {
-                return Python::with_gil(|py| response.to_dict(py));
-            }
-            Err(e) => {
-                let err_msg = format!("Gateway API error: {}", e.message());
-                return Err(pyo3::exceptions::PyRuntimeError::new_err(err_msg));
-            }
-        }
-    }
-
-    // For Platform provider, use real SDK
-    if parsed.provider == "platform" {
-        let provider = PLATFORMProvider::new();
-
-        if let Some(key) = api_key {
-            if let Err(e) = provider.init_client(&key, None) {
-                let err_msg = format!("Failed to init Platform client: {}", e.message());
-                return Err(pyo3::exceptions::PyRuntimeError::new_err(err_msg));
-            }
-        }
-
-        match provider.completion(&parsed.model, &messages, false) {
-            Ok(response) => {
-                return Python::with_gil(|py| response.to_dict(py));
-            }
-            Err(e) => {
-                let err_msg = format!("Platform API error: {}", e.message());
-                return Err(pyo3::exceptions::PyRuntimeError::new_err(err_msg));
-            }
-        }
-    }
-
-    // For VertexAI Anthropic provider, use real SDK
-    if parsed.provider == "vertexaianthropic" {
-        let provider = VERTEXAIANTHROPICProvider::new();
-
-        if let Some(key) = api_key {
-            if let Err(e) = provider.init_client(&key, None) {
-                let err_msg = format!("Failed to init VertexAI Anthropic client: {}", e.message());
-                return Err(pyo3::exceptions::PyRuntimeError::new_err(err_msg));
-            }
-        }
-
-        match provider.completion(&parsed.model, &messages, false) {
-            Ok(response) => {
-                return Python::with_gil(|py| response.to_dict(py));
-            }
-            Err(e) => {
-                let err_msg = format!("VertexAI Anthropic API error: {}", e.message());
-                return Err(pyo3::exceptions::PyRuntimeError::new_err(err_msg));
-            }
-        }
-    }
-
-    // For Llama provider, use real SDK
-    if parsed.provider == "llama" {
-        let provider = LLAMAProvider::new();
-
-        if let Some(key) = api_key {
-            if let Err(e) = provider.init_client(&key, None) {
-                let err_msg = format!("Failed to init Llama client: {}", e.message());
-                return Err(pyo3::exceptions::PyRuntimeError::new_err(err_msg));
-            }
-        }
-
-        match provider.completion(&parsed.model, &messages, false) {
-            Ok(response) => {
-                return Python::with_gil(|py| response.to_dict(py));
-            }
-            Err(e) => {
-                let err_msg = format!("Llama API error: {}", e.message());
-                return Err(pyo3::exceptions::PyRuntimeError::new_err(err_msg));
-            }
-        }
-    }
-
-    // For LlamaCPP provider, use real SDK
-    if parsed.provider == "llamacpp" {
-        let provider = LLAMACPPProvider::new();
-
-        if let Some(key) = api_key {
-            if let Err(e) = provider.init_client(&key, None) {
-                let err_msg = format!("Failed to init LlamaCPP client: {}", e.message());
-                return Err(pyo3::exceptions::PyRuntimeError::new_err(err_msg));
-            }
-        }
-
-        match provider.completion(&parsed.model, &messages, false) {
-            Ok(response) => {
-                return Python::with_gil(|py| response.to_dict(py));
-            }
-            Err(e) => {
-                let err_msg = format!("LlamaCPP API error: {}", e.message());
-                return Err(pyo3::exceptions::PyRuntimeError::new_err(err_msg));
-            }
-        }
-    }
-
-    // For Llamafile provider, use real SDK
-    if parsed.provider == "llamafile" {
-        let provider = LLAMAFILEProvider::new();
-
-        if let Some(key) = api_key {
-            if let Err(e) = provider.init_client(&key, None) {
-                let err_msg = format!("Failed to init Llamafile client: {}", e.message());
-                return Err(pyo3::exceptions::PyRuntimeError::new_err(err_msg));
-            }
-        }
-
-        match provider.completion(&parsed.model, &messages, false) {
-            Ok(response) => {
-                return Python::with_gil(|py| response.to_dict(py));
-            }
-            Err(e) => {
-                let err_msg = format!("Llamafile API error: {}", e.message());
-                return Err(pyo3::exceptions::PyRuntimeError::new_err(err_msg));
-            }
-        }
-    }
-
-    // For LMStudio provider, use real SDK
-    if parsed.provider == "lmstudio" {
-        let provider = LMSTUDIOProvider::new();
-
-        if let Some(key) = api_key {
-            if let Err(e) = provider.init_client(&key, None) {
-                let err_msg = format!("Failed to init LMStudio client: {}", e.message());
-                return Err(pyo3::exceptions::PyRuntimeError::new_err(err_msg));
-            }
-        }
-
-        match provider.completion(&parsed.model, &messages, false) {
-            Ok(response) => {
-                return Python::with_gil(|py| response.to_dict(py));
-            }
-            Err(e) => {
-                let err_msg = format!("LMStudio API error: {}", e.message());
-                return Err(pyo3::exceptions::PyRuntimeError::new_err(err_msg));
-            }
-        }
-    }
-
-    // For Inception provider, use real SDK
-    if parsed.provider == "inception" {
-        let provider = INCEPTIONProvider::new();
-
-        if let Some(key) = api_key {
-            if let Err(e) = provider.init_client(&key, None) {
-                let err_msg = format!("Failed to init Inception client: {}", e.message());
-                return Err(pyo3::exceptions::PyRuntimeError::new_err(err_msg));
-            }
-        }
-
-        match provider.completion(&parsed.model, &messages, false) {
-            Ok(response) => {
-                return Python::with_gil(|py| response.to_dict(py));
-            }
-            Err(e) => {
-                let err_msg = format!("Inception API error: {}", e.message());
-                return Err(pyo3::exceptions::PyRuntimeError::new_err(err_msg));
-            }
-        }
-    }
-
-    // For vLLM provider, use real SDK
-    if parsed.provider == "vllm" {
-        let provider = VLLMProvider::new();
-
-        if let Some(key) = api_key {
-            if let Err(e) = provider.init_client(&key, None) {
-                let err_msg = format!("Failed to init vLLM client: {}", e.message());
-                return Err(pyo3::exceptions::PyRuntimeError::new_err(err_msg));
-            }
-        }
-
-        match provider.completion(&parsed.model, &messages, false) {
-            Ok(response) => {
-                return Python::with_gil(|py| response.to_dict(py));
-            }
-            Err(e) => {
-                let err_msg = format!("vLLM API error: {}", e.message());
-                return Err(pyo3::exceptions::PyRuntimeError::new_err(err_msg));
-            }
-        }
-    }
-
-    // For Portkey provider, use real SDK
-    if parsed.provider == "portkey" {
-        let provider = PORTKEYProvider::new();
-
-        if let Some(key) = api_key {
-            if let Err(e) = provider.init_client(&key, None) {
-                let err_msg = format!("Failed to init Portkey client: {}", e.message());
-                return Err(pyo3::exceptions::PyRuntimeError::new_err(err_msg));
-            }
-        }
-
-        match provider.completion(&parsed.model, &messages, false) {
-            Ok(response) => {
-                return Python::with_gil(|py| response.to_dict(py));
-            }
-            Err(e) => {
-                let err_msg = format!("Portkey API error: {}", e.message());
-                return Err(pyo3::exceptions::PyRuntimeError::new_err(err_msg));
-            }
-        }
-    }
-
-    // For ZAI provider, use real SDK
-    if parsed.provider == "zai" {
-        let provider = ZAIProvider::new();
-
-        if let Some(key) = api_key {
-            if let Err(e) = provider.init_client(&key, None) {
-                let err_msg = format!("Failed to init ZAI client: {}", e.message());
-                return Err(pyo3::exceptions::PyRuntimeError::new_err(err_msg));
-            }
-        }
-
-        match provider.completion(&parsed.model, &messages, false) {
-            Ok(response) => {
-                return Python::with_gil(|py| response.to_dict(py));
-            }
-            Err(e) => {
-                let err_msg = format!("ZAI API error: {}", e.message());
-                return Err(pyo3::exceptions::PyRuntimeError::new_err(err_msg));
-            }
-        }
-    }
-
-    // Provider not yet supported in any-llm (direct PyO3) mode
-    Err(pyo3::exceptions::PyNotImplementedError::new_err(format!(
-        "Provider '{}' is not yet supported in any-llm (direct) mode. \
-         Use litellm mode (via the quota-router proxy) for this provider, \
-         or switch to a supported provider (openai, anthropic, mistral, gemini, groq, \
-         cohere, perplexity, deepseek, deepinfra, dashscope, azure, azureanthropic, \
-         azureopenai, together, bedrock, fireworks, cerebras, openrouter, xai, \
-         huggingface, mzai, minimax, nebius, moonshot, ollama, voyage, databricks, \
-         sagemaker, sambanova, vertexai, watsonx, gateway, platform, vertexaianthropic, \
-         llama, llamacpp, llamafile, lmstudio, inception, vllm, portkey, zai).",
-        parsed.provider
-    )))
+    // Convert messages and call provider
+    let core_messages = to_core_messages(&messages);
+    let result = provider
+        .completion(&parsed.model, &core_messages)
+        .map_err(|e| {
+            pyo3::exceptions::PyRuntimeError::new_err(format!("{}: {}", parsed.provider, e))
+        })?;
+
+    // Convert core ChatCompletion to Python dict
+    Python::with_gil(|py| result.to_dict(py))
 }
 
 /// acompletion - Async completion call
+///
+/// Delegates to sync completion(). The blocking happens inside Python's GIL
+/// (py_bridge calls Python SDKs), so spawn_blocking is not needed.
 #[pyfunction]
 #[pyo3(name = "acompletion")]
 pub async fn acompletion(
@@ -1070,224 +141,30 @@ pub async fn acompletion(
     _prompt_cache_retention: Option<String>,
     _conversation: Option<String>,
 ) -> PyResult<Py<PyAny>> {
-    // Parse model string to determine provider
-    let parsed = match ParsedModel::parse(&model) {
-        Ok(p) => p,
-        Err(e) => return Err(pyo3::exceptions::PyValueError::new_err(e)),
-    };
-
-    let stream = stream.unwrap_or(false);
-
-    // For OpenAI provider, use real SDK
-    if parsed.provider == "openai" {
-        let provider = crate::providers::openai::OpenAIProvider::new();
-
-        if let Some(key) = api_key {
-            if let Err(e) = provider.init_client(&key, None) {
-                let err_msg = format!("Failed to init OpenAI client: {}", e.message());
-                return Err(pyo3::exceptions::PyRuntimeError::new_err(err_msg));
-            }
-        }
-
-        match provider.completion(&parsed.model, &messages, stream) {
-            Ok(response) => {
-                return Python::with_gil(|py| response.to_dict(py));
-            }
-            Err(e) => {
-                let err_msg = format!("OpenAI API error: {}", e.message());
-                return Err(pyo3::exceptions::PyRuntimeError::new_err(err_msg));
-            }
-        }
-    }
-
-    // For Anthropic provider, use real SDK
-    if parsed.provider == "anthropic" {
-        let provider = crate::providers::anthropic::AnthropicProvider::new();
-
-        if let Some(key) = api_key {
-            if let Err(e) = provider.init_client(&key, None) {
-                let err_msg = format!("Failed to init Anthropic client: {}", e.message());
-                return Err(pyo3::exceptions::PyRuntimeError::new_err(err_msg));
-            }
-        }
-
-        match provider.completion(&parsed.model, &messages, stream) {
-            Ok(response) => {
-                return Python::with_gil(|py| response.to_dict(py));
-            }
-            Err(e) => {
-                let err_msg = format!("Anthropic API error: {}", e.message());
-                return Err(pyo3::exceptions::PyRuntimeError::new_err(err_msg));
-            }
-        }
-    }
-
-    // For Mistral provider, use real SDK
-    if parsed.provider == "mistral" {
-        let provider = crate::providers::mistral::MistralProvider::new();
-
-        if let Some(key) = api_key {
-            if let Err(e) = provider.init_client(&key, None) {
-                let err_msg = format!("Failed to init Mistral client: {}", e.message());
-                return Err(pyo3::exceptions::PyRuntimeError::new_err(err_msg));
-            }
-        }
-
-        match provider.completion(&parsed.model, &messages, stream) {
-            Ok(response) => {
-                return Python::with_gil(|py| response.to_dict(py));
-            }
-            Err(e) => {
-                let err_msg = format!("Mistral API error: {}", e.message());
-                return Err(pyo3::exceptions::PyRuntimeError::new_err(err_msg));
-            }
-        }
-    }
-
-    // For Gemini provider, use real SDK
-    if parsed.provider == "gemini" {
-        let provider = crate::providers::gemini::GeminiProvider::new();
-
-        if let Some(key) = api_key {
-            if let Err(e) = provider.init_client(&key, None) {
-                let err_msg = format!("Failed to init Gemini client: {}", e.message());
-                return Err(pyo3::exceptions::PyRuntimeError::new_err(err_msg));
-            }
-        }
-
-        match provider.completion(&parsed.model, &messages, stream) {
-            Ok(response) => {
-                return Python::with_gil(|py| response.to_dict(py));
-            }
-            Err(e) => {
-                let err_msg = format!("Gemini API error: {}", e.message());
-                return Err(pyo3::exceptions::PyRuntimeError::new_err(err_msg));
-            }
-        }
-    }
-
-    // For Groq provider, use real SDK
-    if parsed.provider == "groq" {
-        let provider = crate::providers::groq::GROQProvider::new();
-
-        if let Some(key) = api_key {
-            if let Err(e) = provider.init_client(&key, None) {
-                let err_msg = format!("Failed to init Groq client: {}", e.message());
-                return Err(pyo3::exceptions::PyRuntimeError::new_err(err_msg));
-            }
-        }
-
-        match provider.completion(&parsed.model, &messages, stream) {
-            Ok(response) => {
-                return Python::with_gil(|py| response.to_dict(py));
-            }
-            Err(e) => {
-                let err_msg = format!("Groq API error: {}", e.message());
-                return Err(pyo3::exceptions::PyRuntimeError::new_err(err_msg));
-            }
-        }
-    }
-
-    // For Cohere provider, use real SDK
-    if parsed.provider == "cohere" {
-        let provider = crate::providers::cohere::COHEREProvider::new();
-
-        if let Some(key) = api_key {
-            if let Err(e) = provider.init_client(&key, None) {
-                let err_msg = format!("Failed to init Cohere client: {}", e.message());
-                return Err(pyo3::exceptions::PyRuntimeError::new_err(err_msg));
-            }
-        }
-
-        match provider.completion(&parsed.model, &messages, stream) {
-            Ok(response) => {
-                return Python::with_gil(|py| response.to_dict(py));
-            }
-            Err(e) => {
-                let err_msg = format!("Cohere API error: {}", e.message());
-                return Err(pyo3::exceptions::PyRuntimeError::new_err(err_msg));
-            }
-        }
-    }
-
-    // For Perplexity provider, use real SDK
-    if parsed.provider == "perplexity" {
-        let provider = crate::providers::perplexity::PERPLEXITYProvider::new();
-
-        if let Some(key) = api_key {
-            if let Err(e) = provider.init_client(&key, None) {
-                let err_msg = format!("Failed to init Perplexity client: {}", e.message());
-                return Err(pyo3::exceptions::PyRuntimeError::new_err(err_msg));
-            }
-        }
-
-        match provider.completion(&parsed.model, &messages, stream) {
-            Ok(response) => {
-                return Python::with_gil(|py| response.to_dict(py));
-            }
-            Err(e) => {
-                let err_msg = format!("Perplexity API error: {}", e.message());
-                return Err(pyo3::exceptions::PyRuntimeError::new_err(err_msg));
-            }
-        }
-    }
-
-    // For DeepSeek provider, use real SDK
-    if parsed.provider == "deepseek" {
-        let provider = crate::providers::deepseek::DEEPSEEKProvider::new();
-
-        if let Some(key) = api_key {
-            if let Err(e) = provider.init_client(&key, None) {
-                let err_msg = format!("Failed to init DeepSeek client: {}", e.message());
-                return Err(pyo3::exceptions::PyRuntimeError::new_err(err_msg));
-            }
-        }
-
-        match provider.completion(&parsed.model, &messages, stream) {
-            Ok(response) => {
-                return Python::with_gil(|py| response.to_dict(py));
-            }
-            Err(e) => {
-                let err_msg = format!("DeepSeek API error: {}", e.message());
-                return Err(pyo3::exceptions::PyRuntimeError::new_err(err_msg));
-            }
-        }
-    }
-
-    // For DeepInfra provider, use real SDK
-    if parsed.provider == "deepinfra" {
-        let provider = crate::providers::deepinfra::DEEPINFRAProvider::new();
-
-        if let Some(key) = api_key {
-            if let Err(e) = provider.init_client(&key, None) {
-                let err_msg = format!("Failed to init DeepInfra client: {}", e.message());
-                return Err(pyo3::exceptions::PyRuntimeError::new_err(err_msg));
-            }
-        }
-
-        match provider.completion(&parsed.model, &messages, stream) {
-            Ok(response) => {
-                return Python::with_gil(|py| response.to_dict(py));
-            }
-            Err(e) => {
-                let err_msg = format!("DeepInfra API error: {}", e.message());
-                return Err(pyo3::exceptions::PyRuntimeError::new_err(err_msg));
-            }
-        }
-    }
-
-    // Provider not yet supported in any-llm (direct PyO3) mode
-    Err(pyo3::exceptions::PyNotImplementedError::new_err(format!(
-        "Provider '{}' is not yet supported in any-llm (direct) mode. \
-         Use litellm mode (via the quota-router proxy) for this provider, \
-         or switch to a supported provider (openai, anthropic, mistral, gemini, groq, \
-         cohere, perplexity, deepseek, deepinfra, dashscope, azure, azureanthropic, \
-         azureopenai, together, bedrock, fireworks, cerebras, openrouter, xai, \
-         huggingface, mzai, minimax, nebius, moonshot, ollama, voyage, databricks, \
-         sagemaker, sambanova, vertexai, watsonx, gateway, platform, vertexaianthropic, \
-         llama, llamacpp, llamafile, lmstudio, inception, vllm, portkey, zai).",
-        parsed.provider
-    )))
+    completion(
+        model,
+        messages,
+        _temperature,
+        _max_tokens,
+        _top_p,
+        _n,
+        stream,
+        _stop,
+        _presence_penalty,
+        _frequency_penalty,
+        _user,
+        _seed,
+        _timeout,
+        _extra_headers,
+        _base_url,
+        _api_version,
+        api_key,
+        _service_tier,
+        _background,
+        _prompt_cache_key,
+        _prompt_cache_retention,
+        _conversation,
+    )
 }
 
 /// embedding - Sync embedding call
@@ -1297,13 +174,12 @@ pub async fn acompletion(
     text_signature = "(input, model, api_key=None, api_base=None, **kwargs)"
 )]
 pub fn embedding(
-    _input: Py<PyAny>,
-    _model: String,
-    _api_key: Option<String>,
-    _api_base: Option<String>,
+    input: Py<PyAny>,
+    model: String,
+    api_key: Option<String>,
+    api_base: Option<String>,
 ) -> PyResult<Py<PyAny>> {
-    // Embeddings are not yet implemented in any-llm (direct PyO3) mode.
-    // Use litellm mode (via the quota-router proxy) or call provider SDKs directly.
+    let _ = (input, model, api_key, api_base);
     Err(pyo3::exceptions::PyNotImplementedError::new_err(
         "Embeddings are not yet implemented in any-llm (direct) mode. \
          Use litellm mode (via the quota-router proxy) for embedding calls, \
@@ -1318,13 +194,12 @@ pub fn embedding(
     text_signature = "(input, model, api_key=None, api_base=None, **kwargs)"
 )]
 pub async fn aembedding(
-    _input: Py<PyAny>,
-    _model: String,
-    _api_key: Option<String>,
-    _api_base: Option<String>,
+    input: Py<PyAny>,
+    model: String,
+    api_key: Option<String>,
+    api_base: Option<String>,
 ) -> PyResult<Py<PyAny>> {
-    // Embeddings are not yet implemented in any-llm (direct PyO3) mode.
-    // Use litellm mode (via the quota-router proxy) or call provider SDKs directly.
+    let _ = (input, model, api_key, api_base);
     Err(pyo3::exceptions::PyNotImplementedError::new_err(
         "Embeddings are not yet implemented in any-llm (direct) mode. \
          Use litellm mode (via the quota-router proxy) for embedding calls, \
@@ -1826,74 +701,13 @@ pub fn text_completion(
     _top_p: Option<f64>,
     api_key: Option<String>,
 ) -> PyResult<Py<PyAny>> {
-    // Parse model string to determine provider
-    let parsed = match ParsedModel::parse(&model) {
-        Ok(p) => p,
-        Err(e) => return Err(pyo3::exceptions::PyValueError::new_err(e)),
-    };
-
-    // For OpenAI provider, use real SDK
-    if parsed.provider == "openai" {
-        let provider = OpenAIProvider::new();
-
-        if let Some(key) = api_key {
-            if let Err(e) = provider.init_client(&key, None) {
-                let err_msg = format!("Failed to init OpenAI client: {}", e.message());
-                return Err(pyo3::exceptions::PyRuntimeError::new_err(err_msg));
-            }
-        }
-
-        // Build messages from prompt (converting text completion to chat format)
-        let messages = vec![Message {
-            role: "user".to_string(),
-            content: prompt,
-        }];
-
-        match provider.completion(&parsed.model, &messages, false) {
-            Ok(response) => {
-                return Python::with_gil(|py| response.to_dict(py));
-            }
-            Err(e) => {
-                let err_msg = format!("OpenAI API error: {}", e.message());
-                return Err(pyo3::exceptions::PyRuntimeError::new_err(err_msg));
-            }
-        }
-    }
-
-    // For Anthropic provider, use real SDK
-    if parsed.provider == "anthropic" {
-        let provider = AnthropicProvider::new();
-
-        if let Some(key) = api_key {
-            if let Err(e) = provider.init_client(&key, None) {
-                let err_msg = format!("Failed to init Anthropic client: {}", e.message());
-                return Err(pyo3::exceptions::PyRuntimeError::new_err(err_msg));
-            }
-        }
-
-        let messages = vec![Message {
-            role: "user".to_string(),
-            content: prompt,
-        }];
-
-        match provider.completion(&parsed.model, &messages, false) {
-            Ok(response) => {
-                return Python::with_gil(|py| response.to_dict(py));
-            }
-            Err(e) => {
-                let err_msg = format!("Anthropic API error: {}", e.message());
-                return Err(pyo3::exceptions::PyRuntimeError::new_err(err_msg));
-            }
-        }
-    }
-
-    // For other providers, use chat completion with prompt wrapped as user message
+    // Wrap prompt as a user message and delegate to completion()
     let messages = vec![Message {
         role: "user".to_string(),
         content: prompt,
     }];
 
-    let chat_result = completion(
+    completion(
         model,
         messages,
         _temperature,
@@ -1916,9 +730,7 @@ pub fn text_completion(
         None, // prompt_cache_key
         None, // prompt_cache_retention
         None, // conversation
-    )?;
-
-    Ok(chat_result)
+    )
 }
 
 /// atext_completion - Asynchronous text completion (non-chat models)
@@ -1938,67 +750,7 @@ pub async fn atext_completion(
     _timeout: Option<f64>,
     api_key: Option<String>,
 ) -> PyResult<Py<PyAny>> {
-    // Parse model string to determine provider
-    let parsed = match ParsedModel::parse(&model) {
-        Ok(p) => p,
-        Err(e) => return Err(pyo3::exceptions::PyValueError::new_err(e)),
-    };
-
-    // For OpenAI provider, use real SDK
-    if parsed.provider == "openai" {
-        let provider = OpenAIProvider::new();
-
-        if let Some(key) = api_key {
-            if let Err(e) = provider.init_client(&key, None) {
-                let err_msg = format!("Failed to init OpenAI client: {}", e.message());
-                return Err(pyo3::exceptions::PyRuntimeError::new_err(err_msg));
-            }
-        }
-
-        let messages = vec![Message {
-            role: "user".to_string(),
-            content: prompt,
-        }];
-
-        match provider.acompletion(&parsed.model, &messages, false).await {
-            Ok(response) => {
-                return Python::with_gil(|py| response.to_dict(py));
-            }
-            Err(e) => {
-                let err_msg = format!("OpenAI API error: {}", e.message());
-                return Err(pyo3::exceptions::PyRuntimeError::new_err(err_msg));
-            }
-        }
-    }
-
-    // For Anthropic provider, use real SDK
-    if parsed.provider == "anthropic" {
-        let provider = AnthropicProvider::new();
-
-        if let Some(key) = api_key {
-            if let Err(e) = provider.init_client(&key, None) {
-                let err_msg = format!("Failed to init Anthropic client: {}", e.message());
-                return Err(pyo3::exceptions::PyRuntimeError::new_err(err_msg));
-            }
-        }
-
-        let messages = vec![Message {
-            role: "user".to_string(),
-            content: prompt,
-        }];
-
-        match provider.acompletion(&parsed.model, &messages, false).await {
-            Ok(response) => {
-                return Python::with_gil(|py| response.to_dict(py));
-            }
-            Err(e) => {
-                let err_msg = format!("Anthropic API error: {}", e.message());
-                return Err(pyo3::exceptions::PyRuntimeError::new_err(err_msg));
-            }
-        }
-    }
-
-    // Fallback: use async completion
+    // Wrap prompt as a user message and delegate to acompletion()
     let messages = vec![Message {
         role: "user".to_string(),
         content: prompt,

@@ -146,10 +146,7 @@ async fn test_chat_completion_basic() {
         result.get("choices").is_some(),
         "Response should have choices"
     );
-    assert!(
-        result.get("model").is_some(),
-        "Response should have model"
-    );
+    assert!(result.get("model").is_some(), "Response should have model");
 
     let choices = result["choices"].as_array().unwrap();
     assert!(!choices.is_empty(), "Choices should not be empty");
@@ -182,9 +179,7 @@ async fn test_chat_completion_with_system() {
         .expect("request should succeed");
 
     assert_eq!(result["_status"], 200);
-    let content = result["choices"][0]["message"]["content"]
-        .as_str()
-        .unwrap();
+    let content = result["choices"][0]["message"]["content"].as_str().unwrap();
     assert!(!content.is_empty(), "Response should not be empty");
 }
 
@@ -288,7 +283,11 @@ async fn test_chat_completion_usage() {
 
     assert!(prompt > 0, "prompt_tokens should be > 0");
     assert!(completion > 0, "completion_tokens should be > 0");
-    assert_eq!(total, prompt + completion, "total should equal prompt + completion");
+    assert_eq!(
+        total,
+        prompt + completion,
+        "total should equal prompt + completion"
+    );
 }
 
 // ============================================================================
@@ -515,7 +514,11 @@ async fn test_chat_completion_large_prompt() {
         .await
         .expect("request should succeed");
 
-    assert_eq!(result["_status"], 200, "Large prompt should work: {}", result);
+    assert_eq!(
+        result["_status"], 200,
+        "Large prompt should work: {}",
+        result
+    );
 }
 
 // ============================================================================
@@ -544,7 +547,9 @@ async fn test_chat_completion_stop_sequences() {
     let status = result.status();
     if status == 200 {
         let resp: Value = result.json().await.unwrap();
-        let content = resp["choices"][0]["message"]["content"].as_str().unwrap_or("");
+        let content = resp["choices"][0]["message"]["content"]
+            .as_str()
+            .unwrap_or("");
         assert!(!content.is_empty(), "Response should not be empty");
     } else {
         // Some providers may not support stop sequences or may reject the format

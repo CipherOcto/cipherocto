@@ -1,12 +1,13 @@
 //! End-to-end integration tests for quota-router in litellm-mode.
 //!
 //! These tests start a real proxy server and make real HTTP requests to the
-//! configured OpenAI-compatible endpoint (mimo-v2.5-pro via opengateway).
+//! configured OpenAI-compatible endpoint (mimo via opengateway).
+//!
+//! The opengateway endpoint does not require an API key.
 //!
 //! Run with: cargo test -p quota-router-core --test e2e_proxy --features litellm-mode -- --test-threads=1
 //!
 //! Requires:
-//!   - ANTHROPIC_AUTH_TOKEN env var set to a valid API key
 //!   - Network access to opengateway.gitlawb.com
 
 use reqwest::Client;
@@ -17,8 +18,8 @@ use tokio::net::TcpListener;
 
 use quota_router_core::balance::Balance;
 use quota_router_core::config::DispatchInfo;
-use quota_router_core::proxy::ProxyServer;
 use quota_router_core::providers::Provider;
+use quota_router_core::proxy::ProxyServer;
 
 // Re-export for convenience
 use std::collections::HashMap;
@@ -27,15 +28,10 @@ use std::collections::HashMap;
 const TEST_API_BASE: &str = "https://opengateway.gitlawb.com/v1/xiaomi-mimo";
 
 /// Model to use in tests
-const TEST_MODEL: &str = "mimo-v2.5-pro";
+const TEST_MODEL: &str = "mimo-v2-flash";
 
-/// Get the API key from environment, skipping test if not set
-fn get_api_key() -> String {
-    std::env::var("ANTHROPIC_AUTH_TOKEN").expect("ANTHROPIC_AUTH_TOKEN must be set for e2e tests")
-}
-
-/// Build a standard dispatch map for the test endpoint
-fn build_dispatch_map(api_key: &str) -> HashMap<String, DispatchInfo> {
+/// Build a standard dispatch map for the test endpoint (no API key needed)
+fn build_dispatch_map() -> HashMap<String, DispatchInfo> {
     let mut map = HashMap::new();
     map.insert(
         "mimo".to_string(),
@@ -43,7 +39,7 @@ fn build_dispatch_map(api_key: &str) -> HashMap<String, DispatchInfo> {
             deployment_id: "mimo".to_string(),
             provider: "openai".to_string(),
             model: TEST_MODEL.to_string(),
-            api_key: Some(api_key.to_string()),
+            api_key: None,
             api_base: Some(TEST_API_BASE.to_string()),
             rpm: 60,
             tpm: 1_000_000,
@@ -56,10 +52,10 @@ fn build_dispatch_map(api_key: &str) -> HashMap<String, DispatchInfo> {
 }
 
 /// Start a proxy server on a random port and return (base_url, port)
-async fn start_proxy(api_key: &str) -> (String, u16) {
+async fn start_proxy() -> (String, u16) {
     let balance = Balance::new(1_000_000);
     let provider = Provider::new("openai", TEST_API_BASE);
-    let dispatch_map = build_dispatch_map(api_key);
+    let dispatch_map = build_dispatch_map();
 
     // Bind listener first to get the port, then pass to ProxyServer
     let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
@@ -106,7 +102,6 @@ async fn chat_completion(
 
     let resp = client
         .post(format!("{}/v1/chat/completions", base_url))
-        .header("Authorization", format!("Bearer {}", get_api_key()))
         .header("Content-Type", "application/json")
         .json(&body)
         .send()
@@ -134,8 +129,7 @@ async fn chat_completion(
 
 #[tokio::test]
 async fn test_chat_completion_basic() {
-    let api_key = get_api_key();
-    let (base_url, _port) = start_proxy(&api_key).await;
+    let (base_url, _port) = start_proxy().await;
     let client = Client::new();
 
     let messages = vec![json!({"role": "user", "content": "Say 'hello world' and nothing else."})];
@@ -175,8 +169,7 @@ async fn test_chat_completion_basic() {
 
 #[tokio::test]
 async fn test_chat_completion_with_system() {
-    let api_key = get_api_key();
-    let (base_url, _port) = start_proxy(&api_key).await;
+    let (base_url, _port) = start_proxy().await;
     let client = Client::new();
 
     let messages = vec![
@@ -201,11 +194,11 @@ async fn test_chat_completion_with_system() {
 
 #[tokio::test]
 async fn test_chat_completion_streaming() {
-    let api_key = get_api_key();
-    let (base_url, _port) = start_proxy(&api_key).await;
+    let (base_url, _port) = start_proxy().await;
     let client = Client::new();
 
-    let messages = vec![json!({"role": "user", "content": "Count from 1 to 3, one number per line."})];
+    let messages =
+        vec![json!({"role": "user", "content": "Count from 1 to 3, one number per line."})];
 
     let body = json!({
         "model": TEST_MODEL,
@@ -215,7 +208,6 @@ async fn test_chat_completion_streaming() {
 
     let resp = client
         .post(format!("{}/v1/chat/completions", base_url))
-        .header("Authorization", format!("Bearer {}", get_api_key()))
         .header("Content-Type", "application/json")
         .json(&body)
         .send()
@@ -227,7 +219,10 @@ async fn test_chat_completion_streaming() {
 
     // Some providers may not support streaming or may return errors
     if status == 200 {
-        assert!(text.contains("data:"), "SSE response should contain 'data:' lines");
+        assert!(
+            text.contains("data:"),
+            "SSE response should contain 'data:' lines"
+        );
         assert!(
             text.contains("[DONE]"),
             "SSE stream should end with [DONE], got: {}",
@@ -235,12 +230,18 @@ async fn test_chat_completion_streaming() {
         );
 
         // Parse at least one SSE chunk as valid JSON
-        let chunks: Vec<&str> = text.lines().filter(|l| l.starts_with("data: ") && !l.contains("[DONE]")).collect();
+        let chunks: Vec<&str> = text
+            .lines()
+            .filter(|l| l.starts_with("data: ") && !l.contains("[DONE]"))
+            .collect();
         assert!(!chunks.is_empty(), "Should have at least one data chunk");
 
         let chunk_json: Value = serde_json::from_str(&chunks[0]["data: ".len()..])
             .expect("First SSE chunk should be valid JSON");
-        assert!(chunk_json.get("choices").is_some(), "Chunk should have choices");
+        assert!(
+            chunk_json.get("choices").is_some(),
+            "Chunk should have choices"
+        );
     } else {
         // Provider may not support streaming — verify we get a proper error
         assert!(
@@ -258,8 +259,7 @@ async fn test_chat_completion_streaming() {
 
 #[tokio::test]
 async fn test_chat_completion_usage() {
-    let api_key = get_api_key();
-    let (base_url, _port) = start_proxy(&api_key).await;
+    let (base_url, _port) = start_proxy().await;
     let client = Client::new();
 
     let messages = vec![json!({"role": "user", "content": "Say 'yes'."})];
@@ -297,8 +297,7 @@ async fn test_chat_completion_usage() {
 
 #[tokio::test]
 async fn test_chat_completion_temperature() {
-    let api_key = get_api_key();
-    let (base_url, _port) = start_proxy(&api_key).await;
+    let (base_url, _port) = start_proxy().await;
     let client = Client::new();
 
     let messages = vec![json!({"role": "user", "content": "Say exactly: 'the quick brown fox'"})];
@@ -311,7 +310,6 @@ async fn test_chat_completion_temperature() {
 
     let result = client
         .post(format!("{}/v1/chat/completions", base_url))
-        .header("Authorization", format!("Bearer {}", get_api_key()))
         .header("Content-Type", "application/json")
         .json(&body)
         .send()
@@ -338,8 +336,7 @@ async fn test_chat_completion_temperature() {
 
 #[tokio::test]
 async fn test_chat_completion_max_tokens() {
-    let api_key = get_api_key();
-    let (base_url, _port) = start_proxy(&api_key).await;
+    let (base_url, _port) = start_proxy().await;
     let client = Client::new();
 
     // Small delay to avoid rate limiting when running after other tests
@@ -355,7 +352,6 @@ async fn test_chat_completion_max_tokens() {
 
     let result = client
         .post(format!("{}/v1/chat/completions", base_url))
-        .header("Authorization", format!("Bearer {}", get_api_key()))
         .header("Content-Type", "application/json")
         .json(&body)
         .send()
@@ -387,8 +383,7 @@ async fn test_chat_completion_max_tokens() {
 
 #[tokio::test]
 async fn test_chat_completion_invalid_model() {
-    let api_key = get_api_key();
-    let (base_url, _port) = start_proxy(&api_key).await;
+    let (base_url, _port) = start_proxy().await;
     let client = Client::new();
 
     let messages = vec![json!({"role": "user", "content": "Hello"})];
@@ -400,7 +395,6 @@ async fn test_chat_completion_invalid_model() {
 
     let result = client
         .post(format!("{}/v1/chat/completions", base_url))
-        .header("Authorization", format!("Bearer {}", get_api_key()))
         .header("Content-Type", "application/json")
         .json(&body)
         .send()
@@ -417,49 +411,12 @@ async fn test_chat_completion_invalid_model() {
 }
 
 // ============================================================================
-// Test: Missing API key — proxy may or may not enforce auth
-// ============================================================================
-
-#[tokio::test]
-async fn test_chat_completion_no_auth() {
-    let api_key = get_api_key();
-    let (base_url, _port) = start_proxy(&api_key).await;
-    let client = Client::new();
-
-    let messages = vec![json!({"role": "user", "content": "Hello"})];
-
-    let body = json!({
-        "model": TEST_MODEL,
-        "messages": messages,
-    });
-
-    let result = client
-        .post(format!("{}/v1/chat/completions", base_url))
-        .header("Content-Type", "application/json")
-        .json(&body)
-        .send()
-        .await
-        .expect("request should complete");
-
-    // Without master_key configured, the proxy may forward the request without
-    // an Authorization header to the upstream provider, which may accept or reject it.
-    // Just verify we get a response (not a panic).
-    let status = result.status();
-    assert!(
-        status.is_success() || status.is_client_error(),
-        "Should get 2xx or 4xx, got: {}",
-        status
-    );
-}
-
-// ============================================================================
-// Test: Empty messages array returns error
+// Test: Empty messages array
 // ============================================================================
 
 #[tokio::test]
 async fn test_chat_completion_empty_messages() {
-    let api_key = get_api_key();
-    let (base_url, _port) = start_proxy(&api_key).await;
+    let (base_url, _port) = start_proxy().await;
     let client = Client::new();
 
     let body = json!({
@@ -469,7 +426,6 @@ async fn test_chat_completion_empty_messages() {
 
     let result = client
         .post(format!("{}/v1/chat/completions", base_url))
-        .header("Authorization", format!("Bearer {}", get_api_key()))
         .header("Content-Type", "application/json")
         .json(&body)
         .send()
@@ -492,12 +448,8 @@ async fn test_chat_completion_empty_messages() {
 
 #[tokio::test]
 async fn test_multiple_sequential_requests() {
-    let api_key = get_api_key();
-    let (base_url, _port) = start_proxy(&api_key).await;
-    let client = Client::builder()
-        .pool_max_idle_per_host(5)
-        .build()
-        .unwrap();
+    let (base_url, _port) = start_proxy().await;
+    let client = Client::builder().pool_max_idle_per_host(5).build().unwrap();
 
     for i in 0..3 {
         let messages = vec![json!({"role": "user", "content": format!("Say exactly: '{}'", i)})];
@@ -516,15 +468,13 @@ async fn test_multiple_sequential_requests() {
 
 #[tokio::test]
 async fn test_concurrent_requests() {
-    let api_key = get_api_key();
-    let (base_url, _port) = start_proxy(&api_key).await;
+    let (base_url, _port) = start_proxy().await;
     let client = Arc::new(Client::new());
 
     let mut handles = vec![];
     for i in 0..3 {
         let client = client.clone();
         let base_url = base_url.clone();
-        let _api_key = api_key.clone();
 
         handles.push(tokio::spawn(async move {
             let messages = vec![json!({"role": "user", "content": format!("Say '{}'", i)})];
@@ -533,8 +483,15 @@ async fn test_concurrent_requests() {
     }
 
     for (i, handle) in handles.into_iter().enumerate() {
-        let result = handle.await.expect("task should not panic").expect("request should succeed");
-        assert_eq!(result["_status"], 200, "Concurrent request {} should return 200", i);
+        let result = handle
+            .await
+            .expect("task should not panic")
+            .expect("request should succeed");
+        assert_eq!(
+            result["_status"], 200,
+            "Concurrent request {} should return 200",
+            i
+        );
     }
 }
 
@@ -544,8 +501,7 @@ async fn test_concurrent_requests() {
 
 #[tokio::test]
 async fn test_chat_completion_large_prompt() {
-    let api_key = get_api_key();
-    let (base_url, _port) = start_proxy(&api_key).await;
+    let (base_url, _port) = start_proxy().await;
     let client = Client::new();
 
     // Create a large prompt (but within typical context windows)
@@ -568,8 +524,7 @@ async fn test_chat_completion_large_prompt() {
 
 #[tokio::test]
 async fn test_chat_completion_stop_sequences() {
-    let api_key = get_api_key();
-    let (base_url, _port) = start_proxy(&api_key).await;
+    let (base_url, _port) = start_proxy().await;
     let client = Client::new();
 
     let body = json!({
@@ -580,7 +535,6 @@ async fn test_chat_completion_stop_sequences() {
 
     let result = client
         .post(format!("{}/v1/chat/completions", base_url))
-        .header("Authorization", format!("Bearer {}", get_api_key()))
         .header("Content-Type", "application/json")
         .json(&body)
         .send()
@@ -608,8 +562,7 @@ async fn test_chat_completion_stop_sequences() {
 
 #[tokio::test]
 async fn test_chat_completion_n_choices() {
-    let api_key = get_api_key();
-    let (base_url, _port) = start_proxy(&api_key).await;
+    let (base_url, _port) = start_proxy().await;
     let client = Client::new();
 
     let body = json!({
@@ -620,7 +573,6 @@ async fn test_chat_completion_n_choices() {
 
     let result = client
         .post(format!("{}/v1/chat/completions", base_url))
-        .header("Authorization", format!("Bearer {}", get_api_key()))
         .header("Content-Type", "application/json")
         .json(&body)
         .send()
@@ -652,8 +604,7 @@ async fn test_chat_completion_n_choices() {
 
 #[tokio::test]
 async fn test_health_endpoint() {
-    let api_key = get_api_key();
-    let (base_url, _port) = start_proxy(&api_key).await;
+    let (base_url, _port) = start_proxy().await;
     let client = Client::new();
 
     let result = client
@@ -677,8 +628,7 @@ async fn test_health_endpoint() {
 
 #[tokio::test]
 async fn test_chat_completion_metadata() {
-    let api_key = get_api_key();
-    let (base_url, _port) = start_proxy(&api_key).await;
+    let (base_url, _port) = start_proxy().await;
     let client = Client::new();
 
     let messages = vec![json!({"role": "user", "content": "Hello"})];

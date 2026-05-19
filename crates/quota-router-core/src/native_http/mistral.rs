@@ -46,7 +46,7 @@ impl super::HttpProvider for MistralProvider {
     async fn completion(
         &self,
         request: &HttpCompletionRequest,
-        api_key: &str,
+        api_key: Option<&str>,
     ) -> Result<HttpCompletionResponse, ProviderError> {
         let url = format!("{}/chat/completions", self.api_base);
 
@@ -74,12 +74,15 @@ impl super::HttpProvider for MistralProvider {
             body["seed"] = serde_json::json!(seed);
         }
 
-        let resp = self
+        let mut req_builder = self
             .client
             .post(&url)
-            .header("Authorization", format!("Bearer {}", api_key))
             .header("Content-Type", "application/json")
-            .json(&body)
+            .json(&body);
+        if let Some(key) = api_key {
+            req_builder = req_builder.header("Authorization", format!("Bearer {}", key));
+        }
+        let resp = req_builder
             .send()
             .await
             .map_err(|e| ProviderError::Network(e.to_string()))?;
@@ -138,7 +141,7 @@ impl super::HttpProvider for MistralProvider {
     async fn embedding(
         &self,
         request: &HttpEmbeddingRequest,
-        api_key: &str,
+        api_key: Option<&str>,
     ) -> Result<HttpEmbeddingResponse, ProviderError> {
         let url = format!("{}/embeddings", self.api_base);
 
@@ -147,12 +150,15 @@ impl super::HttpProvider for MistralProvider {
             "model": request.model
         });
 
-        let resp = self
+        let mut req_builder = self
             .client
             .post(&url)
-            .header("Authorization", format!("Bearer {}", api_key))
             .header("Content-Type", "application/json")
-            .json(&body)
+            .json(&body);
+        if let Some(key) = api_key {
+            req_builder = req_builder.header("Authorization", format!("Bearer {}", key));
+        }
+        let resp = req_builder
             .send()
             .await
             .map_err(|e| ProviderError::Network(e.to_string()))?;
@@ -214,7 +220,7 @@ impl super::HttpProvider for MistralProvider {
     async fn streaming_completion(
         &self,
         request: &HttpCompletionRequest,
-        api_key: &str,
+        api_key: Option<&str>,
     ) -> Result<StreamingResponse, ProviderError> {
         let base_url = request.api_base.as_deref().unwrap_or(&self.api_base);
         let url = format!("{}/chat/completions", base_url);

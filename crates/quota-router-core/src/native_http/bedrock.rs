@@ -60,7 +60,7 @@ impl super::HttpProvider for BedrockProvider {
     async fn completion(
         &self,
         request: &HttpCompletionRequest,
-        api_key: &str,
+        api_key: Option<&str>,
     ) -> Result<HttpCompletionResponse, ProviderError> {
         let url = format!(
             "https://bedrock.{}.amazonaws.com/model/{}",
@@ -78,12 +78,15 @@ impl super::HttpProvider for BedrockProvider {
             "anthropic_version": "bedrock-2023-05-31"
         });
 
-        let resp = self
+        let mut req_builder = self
             .client
             .post(&url)
-            .header("x-amz-client-id", api_key)
             .header("Content-Type", "application/json")
-            .json(&body)
+            .json(&body);
+        if let Some(key) = api_key {
+            req_builder = req_builder.header("x-amz-client-id", key);
+        }
+        let resp = req_builder
             .send()
             .await
             .map_err(|e| ProviderError::Network(e.to_string()))?;
@@ -146,7 +149,7 @@ impl super::HttpProvider for BedrockProvider {
     async fn embedding(
         &self,
         _request: &HttpEmbeddingRequest,
-        _api_key: &str,
+        _api_key: Option<&str>,
     ) -> Result<HttpEmbeddingResponse, ProviderError> {
         Err(ProviderError::UnsupportedModel(
             "Bedrock embeddings not implemented".to_string(),
@@ -160,7 +163,7 @@ impl super::HttpProvider for BedrockProvider {
     async fn streaming_completion(
         &self,
         request: &HttpCompletionRequest,
-        api_key: &str,
+        api_key: Option<&str>,
     ) -> Result<StreamingResponse, ProviderError> {
         // Bedrock uses invoke-with-response-stream endpoint
         let url = format!(
@@ -179,12 +182,15 @@ impl super::HttpProvider for BedrockProvider {
             "anthropic_version": "bedrock-2023-05-31"
         });
 
-        let resp = self
+        let mut req_builder = self
             .client
             .post(&url)
-            .header("x-amz-client-id", api_key)
             .header("Content-Type", "application/json")
-            .json(&body)
+            .json(&body);
+        if let Some(key) = api_key {
+            req_builder = req_builder.header("x-amz-client-id", key);
+        }
+        let resp = req_builder
             .send()
             .await
             .map_err(|e| ProviderError::Network(e.to_string()))?;

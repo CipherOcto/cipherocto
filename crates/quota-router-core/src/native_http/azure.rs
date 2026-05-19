@@ -52,7 +52,7 @@ impl super::HttpProvider for AzureProvider {
     async fn completion(
         &self,
         request: &HttpCompletionRequest,
-        api_key: &str,
+        api_key: Option<&str>,
     ) -> Result<HttpCompletionResponse, ProviderError> {
         let deployment = request.model.clone();
         let url = format!(
@@ -83,12 +83,15 @@ impl super::HttpProvider for AzureProvider {
             body["seed"] = serde_json::json!(seed);
         }
 
-        let resp = self
+        let mut req_builder = self
             .client
             .post(&url)
-            .header("api-key", api_key)
             .header("Content-Type", "application/json")
-            .json(&body)
+            .json(&body);
+        if let Some(key) = api_key {
+            req_builder = req_builder.header("api-key", key);
+        }
+        let resp = req_builder
             .send()
             .await
             .map_err(|e| ProviderError::Network(e.to_string()))?;
@@ -147,7 +150,7 @@ impl super::HttpProvider for AzureProvider {
     async fn embedding(
         &self,
         request: &HttpEmbeddingRequest,
-        api_key: &str,
+        api_key: Option<&str>,
     ) -> Result<HttpEmbeddingResponse, ProviderError> {
         let deployment = request.model.clone();
         let url = format!(
@@ -159,12 +162,15 @@ impl super::HttpProvider for AzureProvider {
             "input": request.input
         });
 
-        let resp = self
+        let mut req_builder = self
             .client
             .post(&url)
-            .header("api-key", api_key)
             .header("Content-Type", "application/json")
-            .json(&body)
+            .json(&body);
+        if let Some(key) = api_key {
+            req_builder = req_builder.header("api-key", key);
+        }
+        let resp = req_builder
             .send()
             .await
             .map_err(|e| ProviderError::Network(e.to_string()))?;
@@ -226,7 +232,7 @@ impl super::HttpProvider for AzureProvider {
     async fn streaming_completion(
         &self,
         request: &HttpCompletionRequest,
-        api_key: &str,
+        api_key: Option<&str>,
     ) -> Result<StreamingResponse, ProviderError> {
         let base_url = request.api_base.as_deref().unwrap_or(&self.api_base);
         let deployment = request.model.clone();

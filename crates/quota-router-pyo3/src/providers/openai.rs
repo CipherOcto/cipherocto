@@ -81,6 +81,12 @@ impl OpenAIProvider {
             kwargs.set_item("api_key", key).unwrap();
             kwargs.set_item("base_url", base).unwrap();
 
+            // Some OpenAI-compatible endpoints send incorrect Content-Encoding headers.
+            // Set Accept-Encoding: identity to avoid decompression errors.
+            let headers = PyDict::new(py);
+            headers.set_item("Accept-Encoding", "identity").unwrap();
+            kwargs.set_item("default_headers", headers).unwrap();
+
             let client = openai_class.call((), Some(kwargs)).map_err(|e| {
                 ProviderError::new(format!("Failed to create client: {}", e), "openai")
             })?;

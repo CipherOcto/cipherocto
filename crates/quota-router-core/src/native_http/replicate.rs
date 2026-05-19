@@ -52,7 +52,7 @@ impl super::HttpProvider for ReplicateProvider {
     async fn completion(
         &self,
         request: &HttpCompletionRequest,
-        api_key: &str,
+        api_key: Option<&str>,
     ) -> Result<HttpCompletionResponse, ProviderError> {
         // Replicate uses a predictions API - first create a prediction, then poll
         let create_url = format!("{}/predictions", self.api_base);
@@ -70,12 +70,15 @@ impl super::HttpProvider for ReplicateProvider {
             }
         });
 
-        let create_resp = self
+        let mut req_builder = self
             .client
             .post(&create_url)
-            .header("Authorization", format!("Bearer {}", api_key))
             .header("Content-Type", "application/json")
-            .json(&create_body)
+            .json(&create_body);
+        if let Some(key) = api_key {
+            req_builder = req_builder.header("Authorization", format!("Bearer {}", key));
+        }
+        let create_resp = req_builder
             .send()
             .await
             .map_err(|e| ProviderError::Network(e.to_string()))?;
@@ -117,10 +120,11 @@ impl super::HttpProvider for ReplicateProvider {
                 .cloned()
                 .unwrap_or_else(|| prediction.urls.get.as_deref().unwrap_or("").to_string());
 
-            let poll_resp = self
-                .client
-                .get(poll_url)
-                .header("Authorization", format!("Bearer {}", api_key))
+            let mut poll_builder = self.client.get(poll_url);
+            if let Some(key) = api_key {
+                poll_builder = poll_builder.header("Authorization", format!("Bearer {}", key));
+            }
+            let poll_resp = poll_builder
                 .send()
                 .await
                 .map_err(|e| ProviderError::Network(e.to_string()))?;
@@ -171,7 +175,7 @@ impl super::HttpProvider for ReplicateProvider {
     async fn embedding(
         &self,
         _request: &HttpEmbeddingRequest,
-        _api_key: &str,
+        _api_key: Option<&str>,
     ) -> Result<HttpEmbeddingResponse, ProviderError> {
         Err(ProviderError::UnsupportedModel(
             "Replicate does not support embeddings".to_string(),
@@ -185,7 +189,7 @@ impl super::HttpProvider for ReplicateProvider {
     async fn streaming_completion(
         &self,
         request: &HttpCompletionRequest,
-        api_key: &str,
+        api_key: Option<&str>,
     ) -> Result<StreamingResponse, ProviderError> {
         // Replicate uses a streaming predictions API
         let base_url = request.api_base.as_deref().unwrap_or(&self.api_base);
@@ -205,12 +209,15 @@ impl super::HttpProvider for ReplicateProvider {
             }
         });
 
-        let create_resp = self
+        let mut req_builder = self
             .client
             .post(&create_url)
-            .header("Authorization", format!("Bearer {}", api_key))
             .header("Content-Type", "application/json")
-            .json(&create_body)
+            .json(&create_body);
+        if let Some(key) = api_key {
+            req_builder = req_builder.header("Authorization", format!("Bearer {}", key));
+        }
+        let create_resp = req_builder
             .send()
             .await
             .map_err(|e| ProviderError::Network(e.to_string()))?;
@@ -238,11 +245,14 @@ impl super::HttpProvider for ReplicateProvider {
                 ProviderError::InvalidResponse("No streaming URL available".to_string())
             })?;
 
-        let resp = self
+        let mut stream_builder = self
             .client
             .get(&stream_url)
-            .header("Authorization", format!("Bearer {}", api_key))
-            .header("Accept", "text/event-stream")
+            .header("Accept", "text/event-stream");
+        if let Some(key) = api_key {
+            stream_builder = stream_builder.header("Authorization", format!("Bearer {}", key));
+        }
+        let resp = stream_builder
             .send()
             .await
             .map_err(|e| ProviderError::Network(e.to_string()))?;

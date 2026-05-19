@@ -57,7 +57,7 @@ impl super::HttpProvider for AnthropicProvider {
     async fn completion(
         &self,
         request: &HttpCompletionRequest,
-        api_key: &str,
+        api_key: Option<&str>,
     ) -> Result<HttpCompletionResponse, ProviderError> {
         let url = format!("{}/messages", self.api_base);
 
@@ -127,13 +127,16 @@ impl super::HttpProvider for AnthropicProvider {
             body["tool_choice"] = serde_json::to_value(tool_choice).unwrap_or_default();
         }
 
-        let resp = self
+        let mut req_builder = self
             .client
             .post(&url)
-            .header("x-api-key", api_key)
             .header("anthropic-version", "2023-06-01")
             .header("Content-Type", "application/json")
-            .json(&body)
+            .json(&body);
+        if let Some(key) = api_key {
+            req_builder = req_builder.header("x-api-key", key);
+        }
+        let resp = req_builder
             .send()
             .await
             .map_err(|e| ProviderError::Network(e.to_string()))?;
@@ -196,7 +199,7 @@ impl super::HttpProvider for AnthropicProvider {
     async fn embedding(
         &self,
         _request: &HttpEmbeddingRequest,
-        _api_key: &str,
+        _api_key: Option<&str>,
     ) -> Result<HttpEmbeddingResponse, ProviderError> {
         Err(ProviderError::UnsupportedModel(
             "Anthropic does not support embeddings".to_string(),
@@ -210,7 +213,7 @@ impl super::HttpProvider for AnthropicProvider {
     async fn streaming_completion(
         &self,
         request: &HttpCompletionRequest,
-        api_key: &str,
+        api_key: Option<&str>,
     ) -> Result<StreamingResponse, ProviderError> {
         let url = format!("{}/messages", self.api_base);
 
@@ -260,12 +263,16 @@ impl super::HttpProvider for AnthropicProvider {
             body["system"] = serde_json::json!(system);
         }
 
-        let resp = self
+        let mut req_builder = self
             .client
             .post(&url)
-            .header("x-api-key", api_key)
             .header("anthropic-version", "2023-06-01")
             .header("Content-Type", "application/json")
+            .json(&body);
+        if let Some(key) = api_key {
+            req_builder = req_builder.header("x-api-key", key);
+        }
+        let resp = req_builder
             .send()
             .await
             .map_err(|e| ProviderError::Network(e.to_string()))?;

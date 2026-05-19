@@ -809,24 +809,17 @@ where
         });
 
         let config_key = dispatch.and_then(|d| d.api_key.as_deref());
-        let api_key = match resolve_api_key(&provider, config_key) {
-            Some(key) => key,
-            None => {
-                let resp = Response::builder()
-                    .status(StatusCode::UNAUTHORIZED)
-                    .body(SseBody::from_error(
-                        "API key not set in environment".to_string(),
-                    ))
-                    .unwrap();
-                return Ok(resp);
-            }
-        };
+        let api_key = resolve_api_key(&provider, config_key);
 
         let dispatch_api_base = dispatch.and_then(|d| d.api_base.clone());
 
-        let result =
-            handle_embedding_request(&body_str, &provider, &api_key, dispatch_api_base.as_deref())
-                .await;
+        let result = handle_embedding_request(
+            &body_str,
+            &provider,
+            api_key.as_deref(),
+            dispatch_api_base.as_deref(),
+        )
+        .await;
 
         if let Some(ref m) = metrics {
             m.request_duration.observe(start.elapsed().as_secs_f64());
@@ -899,16 +892,7 @@ where
             }
         };
 
-        let api_key = match resolve_api_key(&provider, None) {
-            Some(key) => key,
-            None => {
-                let resp = Response::builder()
-                    .status(StatusCode::UNAUTHORIZED)
-                    .body(SseBody::from_error("API key not set".to_string()))
-                    .unwrap();
-                return Ok(resp);
-            }
-        };
+        let api_key = resolve_api_key(&provider, None);
 
         let base_url = dispatch_map
             .values()
@@ -917,13 +901,14 @@ where
             .unwrap_or_else(|| "https://api.openai.com/v1".to_string());
 
         let client = client.clone();
-        let resp = client
+        let mut req_builder = client
             .post(format!("{}/moderations", base_url))
-            .header("Authorization", format!("Bearer {}", api_key))
             .header("Content-Type", "application/json")
-            .body(full_body.to_vec())
-            .send()
-            .await;
+            .body(full_body.to_vec());
+        if let Some(ref key) = api_key {
+            req_builder = req_builder.header("Authorization", format!("Bearer {}", key));
+        }
+        let resp = req_builder.send().await;
 
         match resp {
             Ok(r) => {
@@ -964,26 +949,18 @@ where
         };
 
         // Forward to Anthropic Messages API
-        let api_key = match resolve_api_key(&provider, None) {
-            Some(key) => key,
-            None => {
-                let resp = Response::builder()
-                    .status(StatusCode::UNAUTHORIZED)
-                    .body(SseBody::from_error("API key not set".to_string()))
-                    .unwrap();
-                return Ok(resp);
-            }
-        };
+        let api_key = resolve_api_key(&provider, None);
 
         let client = client.clone();
-        let resp = client
+        let mut req_builder = client
             .post("https://api.anthropic.com/v1/messages")
-            .header("x-api-key", &api_key)
             .header("anthropic-version", "2023-06-01")
             .header("Content-Type", "application/json")
-            .body(full_body.to_vec())
-            .send()
-            .await;
+            .body(full_body.to_vec());
+        if let Some(ref key) = api_key {
+            req_builder = req_builder.header("x-api-key", key);
+        }
+        let resp = req_builder.send().await;
 
         match resp {
             Ok(r) => {
@@ -1053,16 +1030,7 @@ where
                 .find(|d| d.provider == "openai")
                 .and_then(|d| d.api_key.as_deref())
         });
-        let api_key = match resolve_api_key(&provider, config_key) {
-            Some(key) => key,
-            None => {
-                let resp = Response::builder()
-                    .status(StatusCode::UNAUTHORIZED)
-                    .body(SseBody::from_error("API key not set".to_string()))
-                    .unwrap();
-                return Ok(resp);
-            }
-        };
+        let api_key = resolve_api_key(&provider, config_key);
 
         // Use dispatch api_base, or fall back to openai default
         let base_url = dispatch
@@ -1075,13 +1043,14 @@ where
             })
             .unwrap_or_else(|| "https://api.openai.com/v1".to_string());
 
-        let resp = client
+        let mut req_builder = client
             .post(format!("{}/images/generations", base_url))
-            .header("Authorization", format!("Bearer {}", api_key))
             .header("Content-Type", "application/json")
-            .body(full_body.to_vec())
-            .send()
-            .await;
+            .body(full_body.to_vec());
+        if let Some(ref key) = api_key {
+            req_builder = req_builder.header("Authorization", format!("Bearer {}", key));
+        }
+        let resp = req_builder.send().await;
 
         match resp {
             Ok(r) => {
@@ -1121,16 +1090,7 @@ where
             }
         };
 
-        let api_key = match resolve_api_key(&provider, None) {
-            Some(key) => key,
-            None => {
-                let resp = Response::builder()
-                    .status(StatusCode::UNAUTHORIZED)
-                    .body(SseBody::from_error("API key not set".to_string()))
-                    .unwrap();
-                return Ok(resp);
-            }
-        };
+        let api_key = resolve_api_key(&provider, None);
 
         let base_url = dispatch_map
             .values()
@@ -1141,12 +1101,11 @@ where
         let target_url = format!("{}{}", base_url, path);
 
         let client = client.clone();
-        let resp = client
-            .post(&target_url)
-            .header("Authorization", format!("Bearer {}", api_key))
-            .body(full_body.to_vec())
-            .send()
-            .await;
+        let mut req_builder = client.post(&target_url).body(full_body.to_vec());
+        if let Some(ref key) = api_key {
+            req_builder = req_builder.header("Authorization", format!("Bearer {}", key));
+        }
+        let resp = req_builder.send().await;
 
         match resp {
             Ok(r) => {
@@ -1185,16 +1144,7 @@ where
             }
         };
 
-        let api_key = match resolve_api_key(&provider, None) {
-            Some(key) => key,
-            None => {
-                let resp = Response::builder()
-                    .status(StatusCode::UNAUTHORIZED)
-                    .body(SseBody::from_error("API key not set".to_string()))
-                    .unwrap();
-                return Ok(resp);
-            }
-        };
+        let api_key = resolve_api_key(&provider, None);
 
         let base_url = dispatch_map
             .values()
@@ -1203,13 +1153,14 @@ where
             .unwrap_or_else(|| "https://api.openai.com/v1".to_string());
 
         let client = client.clone();
-        let resp = client
+        let mut req_builder = client
             .post(format!("{}/responses", base_url))
-            .header("Authorization", format!("Bearer {}", api_key))
             .header("Content-Type", "application/json")
-            .body(full_body.to_vec())
-            .send()
-            .await;
+            .body(full_body.to_vec());
+        if let Some(ref key) = api_key {
+            req_builder = req_builder.header("Authorization", format!("Bearer {}", key));
+        }
+        let resp = req_builder.send().await;
 
         match resp {
             Ok(r) => {
@@ -1359,16 +1310,7 @@ where
                 .find(|d| d.provider == "openai")
                 .and_then(|d| d.api_key.as_deref())
         });
-        let api_key = match resolve_api_key(&provider, config_key) {
-            Some(key) => key,
-            None => {
-                let resp = Response::builder()
-                    .status(StatusCode::UNAUTHORIZED)
-                    .body(SseBody::from_error("API key not set".to_string()))
-                    .unwrap();
-                return Ok(resp);
-            }
-        };
+        let api_key = resolve_api_key(&provider, config_key);
 
         let base_url = dispatch
             .and_then(|d| d.api_base.clone())
@@ -1412,7 +1354,9 @@ where
             }
             _ => unreachable!(),
         };
-        req_builder = req_builder.header("Authorization", format!("Bearer {}", api_key));
+        if let Some(ref key) = api_key {
+            req_builder = req_builder.header("Authorization", format!("Bearer {}", key));
+        }
         let resp = req_builder.send().await;
 
         match resp {
@@ -1504,16 +1448,7 @@ where
                 .find(|d| d.provider == "openai")
                 .and_then(|d| d.api_key.as_deref())
         });
-        let api_key = match resolve_api_key(&provider, config_key) {
-            Some(key) => key,
-            None => {
-                let resp = Response::builder()
-                    .status(StatusCode::UNAUTHORIZED)
-                    .body(SseBody::from_error("API key not set".to_string()))
-                    .unwrap();
-                return Ok(resp);
-            }
-        };
+        let api_key = resolve_api_key(&provider, config_key);
 
         let base_url = dispatch
             .and_then(|d| d.api_base.clone())
@@ -1547,7 +1482,9 @@ where
                 .body(full_body.to_vec()),
             _ => unreachable!(),
         };
-        req_builder = req_builder.header("Authorization", format!("Bearer {}", api_key));
+        if let Some(ref key) = api_key {
+            req_builder = req_builder.header("Authorization", format!("Bearer {}", key));
+        }
         let resp = req_builder.send().await;
 
         match resp {
@@ -1618,16 +1555,7 @@ where
                 .find(|d| d.provider == "cohere" || d.provider == "jina")
                 .and_then(|d| d.api_key.as_deref())
         });
-        let api_key = match resolve_api_key(&provider, config_key) {
-            Some(key) => key,
-            None => {
-                let resp = Response::builder()
-                    .status(StatusCode::UNAUTHORIZED)
-                    .body(SseBody::from_error("API key not set".to_string()))
-                    .unwrap();
-                return Ok(resp);
-            }
-        };
+        let api_key = resolve_api_key(&provider, config_key);
 
         // Use dispatch api_base, or fall back to cohere/jina defaults
         let base_url = dispatch
@@ -1640,13 +1568,14 @@ where
             })
             .unwrap_or_else(|| "https://api.cohere.ai/v1".to_string());
 
-        let resp = client
+        let mut req_builder = client
             .post(format!("{}/rerank", base_url))
-            .header("Authorization", format!("Bearer {}", api_key))
             .header("Content-Type", "application/json")
-            .body(full_body.to_vec())
-            .send()
-            .await;
+            .body(full_body.to_vec());
+        if let Some(ref key) = api_key {
+            req_builder = req_builder.header("Authorization", format!("Bearer {}", key));
+        }
+        let resp = req_builder.send().await;
 
         match resp {
             Ok(r) => {
@@ -1845,18 +1774,7 @@ where
     // 1. Per-request key from DispatchInfo.api_key (config-time resolved)
     // 2. Environment variable ({PROVIDER_NAME}_API_KEY)
     let config_key = dispatch.and_then(|d| d.api_key.as_deref());
-    let api_key = match resolve_api_key(&provider, config_key) {
-        Some(key) => key,
-        None => {
-            let resp = Response::builder()
-                .status(StatusCode::UNAUTHORIZED)
-                .body(SseBody::from_error(
-                    "API key not set in environment".to_string(),
-                ))
-                .unwrap();
-            return Ok(resp);
-        }
-    };
+    let api_key = resolve_api_key(&provider, config_key);
 
     // Per-user rate limiting (RFC-0943)
     // Extract user from request body `user` field
@@ -2151,7 +2069,7 @@ where
                 let primary_result = handle_request_litellm(
                     &body_str,
                     &provider,
-                    &api_key,
+                    api_key.as_deref(),
                     dispatch_api_base.as_deref(),
                     prompt_registry.clone(),
                 )
@@ -2200,8 +2118,13 @@ where
 
         #[cfg(not(any(feature = "litellm-mode", feature = "full")))]
         {
-            handle_request_anyllm(&body_str, &provider, &api_key, dispatch_api_base.as_deref())
-                .await
+            handle_request_anyllm(
+                &body_str,
+                &provider,
+                api_key.as_deref(),
+                dispatch_api_base.as_deref(),
+            )
+            .await
         }
     };
 
@@ -2338,7 +2261,7 @@ fn resolve_prompt(
 async fn handle_request_litellm(
     body_str: &str,
     provider: &Provider,
-    api_key: &str,
+    api_key: Option<&str>,
     dispatch_api_base: Option<&str>,
     prompt_registry: Option<Arc<std::sync::RwLock<crate::prompts::PromptRegistry>>>,
 ) -> Result<Response<SseBody>, Infallible> {
@@ -2447,7 +2370,7 @@ async fn handle_request_litellm(
 async fn handle_request_anyllm(
     body_str: &str,
     provider: &Provider,
-    api_key: &str,
+    api_key: Option<&str>,
     dispatch_api_base: Option<&str>,
 ) -> Result<Response<SseBody>, Infallible> {
     // Parse JSON to extract model and messages
@@ -2582,7 +2505,7 @@ async fn handle_request_anyllm(
 #[cfg(any(feature = "litellm-mode", feature = "full"))]
 async fn handle_streaming(
     provider: &Provider,
-    api_key: &str,
+    api_key: Option<&str>,
     request: NativeHttpRequest,
 ) -> Result<Response<SseBody>, Infallible> {
     let provider_name = &provider.name;
@@ -2796,16 +2719,7 @@ async fn handle_completions_endpoint(
     });
 
     let config_key = dispatch.and_then(|d| d.api_key.as_deref());
-    let api_key = match resolve_api_key(provider, config_key) {
-        Some(key) => key,
-        None => {
-            let resp = Response::builder()
-                .status(StatusCode::UNAUTHORIZED)
-                .body(SseBody::from_error("API key not set".to_string()))
-                .unwrap();
-            return Ok(resp);
-        }
-    };
+    let api_key = resolve_api_key(provider, config_key);
 
     let dispatch_api_base = dispatch.and_then(|d| d.api_base.clone());
 
@@ -2817,7 +2731,7 @@ async fn handle_completions_endpoint(
         handle_request_litellm(
             &chat_body_str,
             provider,
-            &api_key,
+            api_key.as_deref(),
             dispatch_api_base.as_deref(),
             None, // Completions endpoint does not resolve prompts — prompt_id is chat-only (RFC-0948)
         )
@@ -2829,7 +2743,7 @@ async fn handle_completions_endpoint(
         handle_request_anyllm(
             &chat_body_str,
             provider,
-            &api_key,
+            api_key.as_deref(),
             dispatch_api_base.as_deref(),
         )
         .await
@@ -2856,7 +2770,7 @@ async fn handle_completions_endpoint(
 async fn handle_embedding_request(
     body_str: &str,
     provider: &Provider,
-    api_key: &str,
+    api_key: Option<&str>,
     dispatch_api_base: Option<&str>,
 ) -> Result<Response<SseBody>, Infallible> {
     // Parse embedding request
@@ -2993,11 +2907,7 @@ async fn try_fallback_models(
                 std::env::var(format!("{}_API_KEY", fallback_provider_name.to_uppercase())).ok()
             });
 
-        let api_key = match fallback_api_key {
-            Some(key) => key,
-            None => continue, // Skip this fallback if no API key
-        };
-
+        let api_key = fallback_api_key;
         let fallback_api_base = fallback_dispatch.and_then(|d| d.api_base.as_deref());
 
         // Apply retry delay
@@ -3014,7 +2924,7 @@ async fn try_fallback_models(
         let result = handle_request_litellm(
             body_str,
             &fallback_provider,
-            &api_key,
+            api_key.as_deref(),
             fallback_api_base,
             None,
         )

@@ -83,7 +83,7 @@ impl super::HttpProvider for PerplexityProvider {
     async fn completion(
         &self,
         request: &HttpCompletionRequest,
-        api_key: &str,
+        api_key: Option<&str>,
     ) -> Result<HttpCompletionResponse, ProviderError> {
         let base_url = request.api_base.as_deref().unwrap_or(&self.api_base);
         let url = format!("{}/chat/completions", base_url);
@@ -110,12 +110,15 @@ impl super::HttpProvider for PerplexityProvider {
             }
         }
 
-        let resp = self
+        let mut req_builder = self
             .client
             .post(&url)
-            .header("Authorization", format!("Bearer {}", api_key))
             .header("Content-Type", "application/json")
-            .json(&body)
+            .json(&body);
+        if let Some(key) = api_key {
+            req_builder = req_builder.header("Authorization", format!("Bearer {}", key));
+        }
+        let resp = req_builder
             .send()
             .await
             .map_err(|e| ProviderError::Network(e.to_string()))?;
@@ -153,7 +156,7 @@ impl super::HttpProvider for PerplexityProvider {
     async fn embedding(
         &self,
         request: &HttpEmbeddingRequest,
-        api_key: &str,
+        api_key: Option<&str>,
     ) -> Result<HttpEmbeddingResponse, ProviderError> {
         let base_url = request.api_base.as_deref().unwrap_or(&self.api_base);
         let url = format!("{}/embeddings", base_url);
@@ -165,12 +168,15 @@ impl super::HttpProvider for PerplexityProvider {
             "model": model
         });
 
-        let resp = self
+        let mut req_builder = self
             .client
             .post(&url)
-            .header("Authorization", format!("Bearer {}", api_key))
             .header("Content-Type", "application/json")
-            .json(&body)
+            .json(&body);
+        if let Some(key) = api_key {
+            req_builder = req_builder.header("Authorization", format!("Bearer {}", key));
+        }
+        let resp = req_builder
             .send()
             .await
             .map_err(|e| ProviderError::Network(e.to_string()))?;
@@ -228,7 +234,7 @@ impl super::HttpProvider for PerplexityProvider {
     async fn streaming_completion(
         &self,
         request: &HttpCompletionRequest,
-        api_key: &str,
+        api_key: Option<&str>,
     ) -> Result<StreamingResponse, ProviderError> {
         let base_url = request.api_base.as_deref().unwrap_or(&self.api_base);
         let url = format!("{}/chat/completions", base_url);

@@ -87,7 +87,7 @@ impl super::HttpProvider for DatabricksProvider {
     async fn completion(
         &self,
         request: &HttpCompletionRequest,
-        api_key: &str,
+        api_key: Option<&str>,
     ) -> Result<HttpCompletionResponse, ProviderError> {
         // Use api_base from request if provided, otherwise fall back to provider's default
         let base_url = request.api_base.as_deref().unwrap_or(&self.api_base);
@@ -97,12 +97,15 @@ impl super::HttpProvider for DatabricksProvider {
         let model = Self::strip_model_prefix(&request.model);
         let body = super::build_openai_compatible_body(request, model);
 
-        let resp = self
+        let mut req_builder = self
             .client
             .post(&url)
-            .header("Authorization", format!("Bearer {}", api_key))
             .header("Content-Type", "application/json")
-            .json(&body)
+            .json(&body);
+        if let Some(key) = api_key {
+            req_builder = req_builder.header("Authorization", format!("Bearer {}", key));
+        }
+        let resp = req_builder
             .send()
             .await
             .map_err(|e| ProviderError::Network(e.to_string()))?;
@@ -140,7 +143,7 @@ impl super::HttpProvider for DatabricksProvider {
     async fn embedding(
         &self,
         request: &HttpEmbeddingRequest,
-        api_key: &str,
+        api_key: Option<&str>,
     ) -> Result<HttpEmbeddingResponse, ProviderError> {
         let base_url = request.api_base.as_deref().unwrap_or(&self.api_base);
         let endpoint = Self::strip_model_prefix(&request.model);
@@ -152,12 +155,15 @@ impl super::HttpProvider for DatabricksProvider {
             "model": model
         });
 
-        let resp = self
+        let mut req_builder = self
             .client
             .post(&url)
-            .header("Authorization", format!("Bearer {}", api_key))
             .header("Content-Type", "application/json")
-            .json(&body)
+            .json(&body);
+        if let Some(key) = api_key {
+            req_builder = req_builder.header("Authorization", format!("Bearer {}", key));
+        }
+        let resp = req_builder
             .send()
             .await
             .map_err(|e| ProviderError::Network(e.to_string()))?;
@@ -215,7 +221,7 @@ impl super::HttpProvider for DatabricksProvider {
     async fn streaming_completion(
         &self,
         request: &HttpCompletionRequest,
-        api_key: &str,
+        api_key: Option<&str>,
     ) -> Result<StreamingResponse, ProviderError> {
         let base_url = request.api_base.as_deref().unwrap_or(&self.api_base);
         let endpoint = Self::strip_model_prefix(&request.model);

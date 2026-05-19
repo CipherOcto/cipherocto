@@ -57,13 +57,16 @@ impl super::HttpProvider for GeminiProvider {
     async fn completion(
         &self,
         request: &HttpCompletionRequest,
-        api_key: &str,
+        api_key: Option<&str>,
     ) -> Result<HttpCompletionResponse, ProviderError> {
         // Gemini uses generate_content endpoint, not chat completions
-        let url = format!(
-            "{}/models/{}:generateContent?key={}",
-            self.api_base, request.model, api_key
-        );
+        let url = match api_key {
+            Some(key) => format!(
+                "{}/models/{}:generateContent?key={}",
+                self.api_base, request.model, key
+            ),
+            None => format!("{}/models/{}:generateContent", self.api_base, request.model),
+        };
 
         // Build contents for Gemini - combine messages into a single text prompt
         let prompt = request
@@ -157,12 +160,15 @@ impl super::HttpProvider for GeminiProvider {
     async fn embedding(
         &self,
         request: &HttpEmbeddingRequest,
-        api_key: &str,
+        api_key: Option<&str>,
     ) -> Result<HttpEmbeddingResponse, ProviderError> {
-        let url = format!(
-            "{}/models/{}:embedContent?key={}",
-            self.api_base, request.model, api_key
-        );
+        let url = match api_key {
+            Some(key) => format!(
+                "{}/models/{}:embedContent?key={}",
+                self.api_base, request.model, key
+            ),
+            None => format!("{}/models/{}:embedContent", self.api_base, request.model),
+        };
 
         let body = serde_json::json!({
             "content": { "parts": [{ "text": request.input }] }
@@ -222,14 +228,20 @@ impl super::HttpProvider for GeminiProvider {
     async fn streaming_completion(
         &self,
         request: &HttpCompletionRequest,
-        api_key: &str,
+        api_key: Option<&str>,
     ) -> Result<StreamingResponse, ProviderError> {
         // Gemini uses streamGenerateContent endpoint for streaming
         let base_url = request.api_base.as_deref().unwrap_or(&self.api_base);
-        let url = format!(
-            "{}/models/{}:streamGenerateContent?key={}",
-            base_url, request.model, api_key
-        );
+        let url = match api_key {
+            Some(key) => format!(
+                "{}/models/{}:streamGenerateContent?key={}",
+                base_url, request.model, key
+            ),
+            None => format!(
+                "{}/models/{}:streamGenerateContent",
+                base_url, request.model
+            ),
+        };
 
         // Build contents for Gemini - combine messages into a single text prompt
         let prompt = request

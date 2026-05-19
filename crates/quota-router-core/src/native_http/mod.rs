@@ -147,14 +147,14 @@ pub trait HttpProvider: Send + Sync {
     async fn completion(
         &self,
         request: &HttpCompletionRequest,
-        api_key: &str,
+        api_key: Option<&str>,
     ) -> Result<HttpCompletionResponse, ProviderError>;
     /// Streaming completion — returns SSE chunks as async iterator
     /// Default implementation returns error for providers that don't support streaming
     async fn streaming_completion(
         &self,
         _request: &HttpCompletionRequest,
-        _api_key: &str,
+        _api_key: Option<&str>,
     ) -> Result<StreamingResponse, ProviderError> {
         Err(ProviderError::UnsupportedModel(format!(
             "{} does not support streaming",
@@ -164,7 +164,7 @@ pub trait HttpProvider: Send + Sync {
     async fn embedding(
         &self,
         request: &HttpEmbeddingRequest,
-        api_key: &str,
+        api_key: Option<&str>,
     ) -> Result<HttpEmbeddingResponse, ProviderError>;
     fn routing_weight(&self) -> u32 {
         1
@@ -343,14 +343,17 @@ pub fn build_openai_compatible_body(
 pub async fn stream_openai_compatible(
     client: &reqwest::Client,
     url: &str,
-    api_key: &str,
+    api_key: Option<&str>,
     body: serde_json::Value,
 ) -> Result<StreamingResponse, ProviderError> {
-    let resp = client
+    let mut req_builder = client
         .post(url)
-        .header("Authorization", format!("Bearer {}", api_key))
         .header("Content-Type", "application/json")
-        .json(&body)
+        .json(&body);
+    if let Some(key) = api_key {
+        req_builder = req_builder.header("Authorization", format!("Bearer {}", key));
+    }
+    let resp = req_builder
         .send()
         .await
         .map_err(|e| ProviderError::Network(e.to_string()))?;

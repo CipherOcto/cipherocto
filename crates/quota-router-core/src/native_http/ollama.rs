@@ -50,7 +50,7 @@ impl super::HttpProvider for OllamaProvider {
     async fn completion(
         &self,
         request: &HttpCompletionRequest,
-        _api_key: &str,
+        _api_key: Option<&str>,
     ) -> Result<HttpCompletionResponse, ProviderError> {
         let url = format!("{}/api/chat", self.api_base);
 
@@ -148,7 +148,7 @@ impl super::HttpProvider for OllamaProvider {
     async fn embedding(
         &self,
         request: &HttpEmbeddingRequest,
-        _api_key: &str,
+        _api_key: Option<&str>,
     ) -> Result<HttpEmbeddingResponse, ProviderError> {
         let url = format!("{}/api/embeddings", self.api_base);
 
@@ -211,7 +211,7 @@ impl super::HttpProvider for OllamaProvider {
     async fn streaming_completion(
         &self,
         request: &HttpCompletionRequest,
-        api_key: &str,
+        api_key: Option<&str>,
     ) -> Result<StreamingResponse, ProviderError> {
         let base_url = request.api_base.as_deref().unwrap_or(&self.api_base);
         let url = format!("{}/chat/completions", base_url);

@@ -59,7 +59,8 @@ impl super::HttpProvider for AnthropicProvider {
         request: &HttpCompletionRequest,
         api_key: Option<&str>,
     ) -> Result<HttpCompletionResponse, ProviderError> {
-        let url = format!("{}/messages", self.api_base);
+        let api_base = request.api_base.as_deref().unwrap_or(&self.api_base);
+        let url = format!("{}/messages", api_base);
 
         // Convert messages to Anthropic format
         let system = request
@@ -181,7 +182,7 @@ impl super::HttpProvider for AnthropicProvider {
                     "assistant",
                     data.content
                         .first()
-                        .and_then(|c| c.text.as_ref())
+                        .and_then(|c| c.text.as_ref().or(c.thinking.as_ref()))
                         .unwrap_or(&String::new())
                         .clone(),
                 ),
@@ -215,7 +216,8 @@ impl super::HttpProvider for AnthropicProvider {
         request: &HttpCompletionRequest,
         api_key: Option<&str>,
     ) -> Result<StreamingResponse, ProviderError> {
-        let url = format!("{}/messages", self.api_base);
+        let api_base = request.api_base.as_deref().unwrap_or(&self.api_base);
+        let url = format!("{}/messages", api_base);
 
         let system = request
             .messages
@@ -350,6 +352,7 @@ impl super::HttpProvider for AnthropicProvider {
 #[allow(dead_code)]
 struct AnthropicResponse {
     id: String,
+    #[serde(rename = "type")]
     #[allow(dead_code)]
     type_: String,
     #[allow(dead_code)]
@@ -364,9 +367,12 @@ struct AnthropicResponse {
 
 #[derive(serde::Deserialize)]
 struct AnthropicContentBlock {
+    #[serde(rename = "type")]
     #[allow(dead_code)]
-    r#type: String,
+    block_type: String,
     text: Option<String>,
+    /// MiniMax extended thinking blocks use "thinking" instead of "text"
+    thinking: Option<String>,
 }
 
 #[derive(serde::Deserialize)]

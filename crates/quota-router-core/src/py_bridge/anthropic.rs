@@ -125,50 +125,65 @@ impl AnthropicProvider {
 #[cfg(any(feature = "any-llm-mode", feature = "full"))]
 fn convert_response(
     py_obj: &PyAny,
-    _py: Python<'_>,
+    py: Python<'_>,
 ) -> Result<crate::types::ChatCompletion, PyBridgeError> {
-    // Anthropic returns: { id, type, model, role, content: [{type, text}], stop_reason, stop_sequence, usage }
-    // Convert to OpenAI-style ChatCompletion
+    // Anthropic returns a Message object with attributes: id, model, content, stop_reason, usage
+    // Use getattr() for object attribute access (not get_item() which is for dicts)
 
     let id: String = py_obj
-        .get_item("id")
+        .getattr("id")
         .map_err(|e| PyBridgeError::PyError(format!("Failed to get id: {}", e)))?
         .extract()
         .map_err(|e| PyBridgeError::PyError(format!("Failed to extract id: {}", e)))?;
 
     let model_str: String = py_obj
-        .get_item("model")
+        .getattr("model")
         .map_err(|e| PyBridgeError::PyError(format!("Failed to get model: {}", e)))?
         .extract()
         .map_err(|e| PyBridgeError::PyError(format!("Failed to extract model: {}", e)))?;
 
     // Extract content from Anthropic response
-    let content: String = py_obj
-        .get_item("content")
-        .map_err(|e| PyBridgeError::PyError(format!("Failed to get content: {}", e)))?
-        .get_item(0) // First content block
-        .map_err(|e| PyBridgeError::PyError(format!("Failed to get first content block: {}", e)))?
-        .get_item("text")
-        .map_err(|e| PyBridgeError::PyError(format!("Failed to get text: {}", e)))?
-        .extract()
-        .map_err(|e| PyBridgeError::PyError(format!("Failed to extract text: {}", e)))?;
+    // Content is a list of content blocks (TextBlock, ThinkingBlock, etc.)
+    let content_blocks = py_obj
+        .getattr("content")
+        .map_err(|e| PyBridgeError::PyError(format!("Failed to get content: {}", e)))?;
+
+    // Find the first TextBlock with a .text attribute
+    let content: String = {
+        let mut text = String::new();
+        let iter = content_blocks.iter().map_err(|e| {
+            PyBridgeError::PyError(format!("Failed to iterate content: {}", e))
+        })?;
+        for block_result in iter {
+            let block = block_result.map_err(|e| {
+                PyBridgeError::PyError(format!("Failed to get content block: {}", e))
+            })?;
+            if let Ok(text_attr) = block.getattr("text") {
+                if let Ok(t) = text_attr.extract::<String>() {
+                    text = t;
+                    break;
+                }
+            }
+        }
+        text
+    };
 
     let stop_reason: String = py_obj
-        .get_item("stop_reason")
+        .getattr("stop_reason")
         .map_err(|e| PyBridgeError::PyError(format!("Failed to get stop_reason: {}", e)))?
         .extract()
         .unwrap_or_else(|_| "stop".to_string());
 
     let usage_obj = py_obj
-        .get_item("usage")
+        .getattr("usage")
         .map_err(|e| PyBridgeError::PyError(format!("Failed to get usage: {}", e)))?;
     let input_tokens: u32 = usage_obj
-        .get_item("input_tokens")
+        .getattr("input_tokens")
         .map_err(|e| PyBridgeError::PyError(format!("Failed to get input_tokens: {}", e)))?
         .extract()
         .unwrap_or(0);
     let output_tokens: u32 = usage_obj
-        .get_item("output_tokens")
+        .getattr("output_tokens")
         .map_err(|e| PyBridgeError::PyError(format!("Failed to get output_tokens: {}", e)))?
         .extract()
         .unwrap_or(0);

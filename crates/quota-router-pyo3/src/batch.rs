@@ -63,6 +63,7 @@ pub fn batch_completion(
                     None, // prompt_cache_key
                     None, // prompt_cache_retention
                     None, // conversation
+                    None, // _mode
                 );
                 (i, result)
             })
@@ -140,6 +141,7 @@ pub fn batch_completion_models(
                 None, // prompt_cache_key
                 None, // prompt_cache_retention
                 None, // conversation
+                None, // _mode
             );
             let _ = tx.send(result);
         });
@@ -220,6 +222,7 @@ pub fn batch_completion_models_all_responses(
                     None, // prompt_cache_key
                     None, // prompt_cache_retention
                     None, // conversation
+                    None, // _mode
                 );
                 (model_name, result)
             })

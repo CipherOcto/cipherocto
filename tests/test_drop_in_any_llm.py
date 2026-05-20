@@ -167,6 +167,7 @@ class TestCompletionAnyLLMStyle:
             [{"role": "user", "content": "Say 'hello'."}],
             api_key=DUMMY_KEY,
             base_url=TEST_API_BASE,
+            _mode="any-llm",
         )
         assert isinstance(response, dict)
         assert "choices" in response
@@ -178,6 +179,7 @@ class TestCompletionAnyLLMStyle:
             [{"role": "user", "content": "Say 'hello'."}],
             api_key=DUMMY_KEY,
             base_url=TEST_API_BASE,
+            _mode="any-llm",
         )
         assert isinstance(response, dict)
         assert "choices" in response
@@ -189,6 +191,7 @@ class TestCompletionAnyLLMStyle:
             [{"role": "user", "content": "Say 'yes'."}],
             api_key=DUMMY_KEY,
             base_url=TEST_API_BASE,
+            _mode="any-llm",
         )
         assert "id" in response
         assert "choices" in response
@@ -228,6 +231,7 @@ class TestAcompletionAnyLLMStyle:
                 [{"role": "user", "content": "Say 'hello'."}],
                 api_key=DUMMY_KEY,
                 base_url=TEST_API_BASE,
+            _mode="any-llm",
             )
 
         response = asyncio.run(run())
@@ -323,6 +327,7 @@ class TestTypicalUsagePatterns:
             messages=[{"role": "user", "content": "What is 2+2?"}],
             api_key=DUMMY_KEY,
             base_url=TEST_API_BASE,
+            _mode="any-llm",
         )
         content = response["choices"][0]["message"]["content"]
         assert isinstance(content, str)
@@ -340,6 +345,7 @@ class TestTypicalUsagePatterns:
             ],
             api_key=DUMMY_KEY,
             base_url=TEST_API_BASE,
+            _mode="any-llm",
         )
         content = response["choices"][0]["message"]["content"]
         assert "alice" in content.lower()
@@ -351,6 +357,7 @@ class TestTypicalUsagePatterns:
             messages=[{"role": "user", "content": "Say 'yes'."}],
             api_key=DUMMY_KEY,
             base_url=TEST_API_BASE,
+            _mode="any-llm",
         )
         usage = response["usage"]
         assert usage["prompt_tokens"] > 0
@@ -365,6 +372,7 @@ class TestTypicalUsagePatterns:
                 messages=[{"role": "user", "content": "Hello"}],
                 api_key=DUMMY_KEY,
                 base_url=TEST_API_BASE,
+            _mode="any-llm",
             )
             assert isinstance(response, dict)
         except any_llm.AuthenticationError:

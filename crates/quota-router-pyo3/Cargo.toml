@@ -19,12 +19,16 @@ license.workspace = true
 crate-type = ["cdylib", "rlib"]
 name = "_quota_router"
 
+[features]
+default = ["full"]
+full = ["quota-router-core/full"]
+
 [dependencies]
 # PyO3 for Python bindings - using 0.21 with experimental async
 pyo3 = { version = "0.21", features = ["extension-module", "experimental-async"] }
 
-# Core library - explicit any-llm-mode (no default features which would add litellm-mode)
-quota-router-core = { path = "../quota-router-core", default-features = false, features = ["any-llm-mode"] }
+# Core library - full mode enables both litellm (reqwest) and any-llm (PyO3) backends
+quota-router-core = { path = "../quota-router-core", default-features = false, features = ["full"] }
 
 # Serialization
 serde.workspace = true
@@ -35,6 +39,9 @@ uuid.workspace = true
 
 # Error handling
 thiserror.workspace = true
+
+# Tokio for litellm-mode async runtime
+tokio = { workspace = true, features = ["rt"] }
 
 # Lazy initialization for global state
 once_cell = "1.19"

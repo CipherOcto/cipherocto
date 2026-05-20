@@ -29,6 +29,7 @@ pub mod keys;
 pub mod logging;
 pub mod metrics;
 pub mod middleware;
+pub mod mode;
 pub mod pre_call_checks;
 pub mod pricing;
 pub mod prompts;

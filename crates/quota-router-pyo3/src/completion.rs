@@ -1,7 +1,10 @@
 // Completion functions for PyO3 bindings
 //
-// Delegates to quota-router-core's py_bridge module which calls official
-// Python SDKs via PyO3. This avoids duplicating provider implementations.
+// Supports both modes:
+// - litellm-mode: delegates to core's native_http (reqwest → provider REST APIs)
+// - any-llm-mode: delegates to core's py_bridge (PyO3 → official Python SDKs)
+//
+// Mode is selected via the module-level `mode` attribute or per-call `_mode` parameter.
 
 #![allow(clippy::too_many_arguments)]
 #![allow(deprecated)]
@@ -11,16 +14,41 @@ use crate::types::Message;
 use pyo3::prelude::*;
 use std::sync::Once;
 
-/// Initialize py_bridge providers once at startup
-static INIT_PY_BRIDGE: Once = Once::new();
+/// Initialize providers once at startup (both modes)
+static INIT_PROVIDERS: Once = Once::new();
 
-fn ensure_py_bridge_initialized() {
-    INIT_PY_BRIDGE.call_once(|| {
+fn ensure_providers_initialized() {
+    INIT_PROVIDERS.call_once(|| {
+        #[cfg(feature = "full")]
+        quota_router_core::init_native_http_providers();
+
+        #[cfg(feature = "full")]
         quota_router_core::init_py_bridge_providers();
     });
 }
 
-/// Convert PyO3 Message to core Message
+/// Get the current mode from module-level setting, or default
+fn get_mode() -> quota_router_core::mode::ProviderMode {
+    // Default based on compiled features
+    quota_router_core::mode::default_mode()
+}
+
+/// Convert PyO3 Message to core shared_types Message (for litellm-mode)
+fn to_shared_messages(messages: &[Message]) -> Vec<quota_router_core::shared_types::Message> {
+    messages
+        .iter()
+        .map(|m| quota_router_core::shared_types::Message {
+            role: m.role.clone(),
+            content: Some(m.content.clone()),
+            name: None,
+            tool_calls: None,
+            tool_call_id: None,
+            function_call: None,
+        })
+        .collect()
+}
+
+/// Convert PyO3 Message to core types Message (for any-llm-mode/py_bridge)
 fn to_core_messages(messages: &[Message]) -> Vec<quota_router_core::types::Message> {
     messages
         .iter()
@@ -28,9 +56,25 @@ fn to_core_messages(messages: &[Message]) -> Vec<quota_router_core::types::Messa
         .collect()
 }
 
+/// Resolve the provider mode from an optional string.
+fn resolve_mode(mode_str: Option<&str>) -> quota_router_core::mode::ProviderMode {
+    match mode_str {
+        Some(s) => quota_router_core::mode::ProviderMode::from_str(s)
+            .unwrap_or_else(|| {
+                eprintln!("Unknown mode '{}', using default", s);
+                get_mode()
+            }),
+        None => get_mode(),
+    }
+}
+
 /// completion - Sync completion call
 ///
-/// Delegates to quota-router-core's py_bridge which calls official Python SDKs.
+/// Supports both modes:
+/// - litellm (default): reqwest → provider REST APIs
+/// - any-llm: PyO3 → official Python SDKs
+///
+/// Pass `_mode="litellm"` or `_mode="any-llm"` to override the default.
 #[pyfunction]
 #[pyo3(name = "completion", text_signature = "(model, messages, **kwargs)")]
 pub fn completion(
@@ -59,6 +103,8 @@ pub fn completion(
     _prompt_cache_key: Option<String>,
     _prompt_cache_retention: Option<String>,
     _conversation: Option<String>,
+    // Mode selection: "litellm" or "any-llm"
+    _mode: Option<String>,
 ) -> PyResult<Py<PyAny>> {
     // Parse model string to determine provider
     let parsed = match ParsedModel::parse(&model) {
@@ -74,21 +120,130 @@ pub fn completion(
         ));
     }
 
-    // Initialize py_bridge providers (once)
-    ensure_py_bridge_initialized();
+    // Initialize providers (once)
+    ensure_providers_initialized();
 
-    // Create provider from py_bridge factory
-    let mut provider =
-        quota_router_core::py_bridge::PyBridgeProviderFactory::create(&parsed.provider)
-            .ok_or_else(|| {
-                pyo3::exceptions::PyNotImplementedError::new_err(format!(
-            "Provider '{}' is not supported. Use litellm mode (via the quota-router proxy) \
-             for this provider, or check the provider name.",
-            parsed.provider
-        ))
-            })?;
+    // Select mode (per-call override or default)
+    let mode = resolve_mode(_mode.as_deref());
 
-    // Configure provider with API key and base URL
+    match mode {
+        #[cfg(feature = "full")]
+        quota_router_core::mode::ProviderMode::LiteLLM => {
+            completion_litellm(&parsed, &messages, temperature, max_tokens, top_p, n, stop,
+                presence_penalty, frequency_penalty, user, seed, api_key, base_url)
+        }
+        #[cfg(feature = "full")]
+        quota_router_core::mode::ProviderMode::AnyLlm => {
+            completion_any_llm(&parsed, &messages, api_key, base_url)
+        }
+        #[cfg(not(feature = "full"))]
+        _ => Err(pyo3::exceptions::PyRuntimeError::new_err("No mode compiled")),
+    }
+}
+
+/// Completion via litellm-mode (reqwest → provider REST APIs)
+#[cfg(feature = "full")]
+fn completion_litellm(
+    parsed: &ParsedModel,
+    messages: &[Message],
+    temperature: Option<f64>,
+    max_tokens: Option<i32>,
+    top_p: Option<f64>,
+    n: Option<i32>,
+    stop: Option<String>,
+    presence_penalty: Option<f64>,
+    frequency_penalty: Option<f64>,
+    user: Option<String>,
+    seed: Option<i32>,
+    api_key: Option<String>,
+    base_url: Option<String>,
+) -> PyResult<Py<PyAny>> {
+    use quota_router_core::native_http::HttpProviderFactory;
+
+    let mut provider = HttpProviderFactory::create(&parsed.provider)
+        .ok_or_else(|| pyo3::exceptions::PyNotImplementedError::new_err(
+            format!("Provider '{}' not supported in litellm-mode", parsed.provider)
+        ))?;
+
+    // Build request
+    let request = quota_router_core::native_http::HttpCompletionRequest {
+        model: parsed.model.clone(),
+        messages: to_shared_messages(messages),
+        stream: Some(false),
+        temperature: temperature.map(|v| v as f32),
+        max_tokens: max_tokens.map(|v| v as u32),
+        top_p: top_p.map(|v| v as f32),
+        stop: stop.map(|s| vec![s]),
+        n: n.map(|v| v as u32),
+        presence_penalty: presence_penalty.map(|v| v as f32),
+        frequency_penalty: frequency_penalty.map(|v| v as f32),
+        user,
+        seed: seed.map(|v| v as i64),
+        api_base: base_url.clone(),
+        tools: None,
+        tool_choice: None,
+        response_format: None,
+        logprobs: None,
+        top_logprobs: None,
+        parallel_tool_calls: None,
+        prompt_id: None,
+        prompt_variables: None,
+        provider_params: None,
+    };
+
+    // Use tokio runtime for async call
+    let rt = tokio::runtime::Runtime::new()
+        .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(format!("Runtime error: {}", e)))?;
+
+    let result = rt.block_on(async {
+        provider.completion(&request, api_key.as_deref()).await
+    }).map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(format!("{}: {}", parsed.provider, e)))?;
+
+    // Convert to Python dict
+    Python::with_gil(|py| {
+        let dict = pyo3::types::PyDict::new(py);
+        dict.set_item("id", &result.id)?;
+        dict.set_item("object", &result.object)?;
+        dict.set_item("created", result.created)?;
+        dict.set_item("model", &result.model)?;
+
+        let choices: Vec<_> = result.choices.iter().map(|c| {
+            let choice_dict = pyo3::types::PyDict::new(py);
+            choice_dict.set_item("index", c.index).ok();
+            let msg_dict = pyo3::types::PyDict::new(py);
+            msg_dict.set_item("role", &c.message.role).ok();
+            msg_dict.set_item("content", &c.message.content).ok();
+            choice_dict.set_item("message", msg_dict).ok();
+            choice_dict.set_item("finish_reason", &c.finish_reason).ok();
+            choice_dict
+        }).collect();
+        dict.set_item("choices", choices)?;
+
+        let usage_dict = pyo3::types::PyDict::new(py);
+        usage_dict.set_item("prompt_tokens", result.usage.prompt_tokens)?;
+        usage_dict.set_item("completion_tokens", result.usage.completion_tokens)?;
+        usage_dict.set_item("total_tokens", result.usage.total_tokens)?;
+        dict.set_item("usage", usage_dict)?;
+
+        Ok(dict.into())
+    })
+}
+
+/// Completion via any-llm-mode (PyO3 → Python SDKs)
+#[cfg(feature = "full")]
+fn completion_any_llm(
+    parsed: &ParsedModel,
+    messages: &[Message],
+    api_key: Option<String>,
+    base_url: Option<String>,
+) -> PyResult<Py<PyAny>> {
+    use quota_router_core::py_bridge::PyBridgeProviderFactory;
+
+    let mut provider = PyBridgeProviderFactory::create(&parsed.provider)
+        .ok_or_else(|| pyo3::exceptions::PyNotImplementedError::new_err(
+            format!("Provider '{}' not supported in any-llm-mode", parsed.provider)
+        ))?;
+
     if let Some(key) = api_key {
         provider = provider.with_api_key(key);
     }
@@ -96,15 +251,10 @@ pub fn completion(
         provider = provider.with_api_base(base);
     }
 
-    // Convert messages and call provider
-    let core_messages = to_core_messages(&messages);
-    let result = provider
-        .completion(&parsed.model, &core_messages)
-        .map_err(|e| {
-            pyo3::exceptions::PyRuntimeError::new_err(format!("{}: {}", parsed.provider, e))
-        })?;
+    let core_messages = to_core_messages(messages);
+    let result = provider.completion(&parsed.model, &core_messages)
+        .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(format!("{}: {}", parsed.provider, e)))?;
 
-    // Convert core ChatCompletion to Python dict
     Python::with_gil(|py| result.to_dict(py))
 }
 
@@ -140,6 +290,8 @@ pub async fn acompletion(
     _prompt_cache_key: Option<String>,
     _prompt_cache_retention: Option<String>,
     _conversation: Option<String>,
+    // Mode selection: "litellm" or "any-llm"
+    _mode: Option<String>,
 ) -> PyResult<Py<PyAny>> {
     completion(
         model,
@@ -164,6 +316,7 @@ pub async fn acompletion(
         _prompt_cache_key,
         _prompt_cache_retention,
         _conversation,
+        _mode,
     )
 }
 
@@ -730,6 +883,7 @@ pub fn text_completion(
         None, // prompt_cache_key
         None, // prompt_cache_retention
         None, // conversation
+        None, // _mode
     )
 }
 
@@ -779,6 +933,7 @@ pub async fn atext_completion(
         None, // prompt_cache_key
         None, // prompt_cache_retention
         None, // conversation
+        None, // _mode
     )
     .await
 }

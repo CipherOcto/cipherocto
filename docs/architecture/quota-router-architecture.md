@@ -869,92 +869,95 @@ sequenceDiagram
 **orthogonal**. Both deployments expose BOTH interfaces (HTTP proxy + Python SDK).
 The mode selects the **provider integration strategy** only.
 
-### 10.1 Deployment Targets
+### 10.1 Feature Gate Matrix (verified against lib.rs)
+
+| Feature Gate | `proxy` (HTTP) | `python_sdk_entry` (SDK) | `native_http` (reqwest) | `py_bridge` (PyO3) |
+|--------------|----------------|--------------------------|-------------------------|---------------------|
+| `litellm-mode` | Always | ❌ | ✅ | ❌ |
+| `any-llm-mode` | Always | ✅ | ❌ | ✅ |
+| `full` | Always | ✅ | ✅ | ✅ |
+
+**Source:** `crates/quota-router-core/src/lib.rs` lines 37-85
+
+- `proxy` — no feature gate, always compiled
+- `native_http` — `#[cfg(any(feature = "litellm-mode", feature = "full"))]`
+- `py_bridge` — `#[cfg(any(feature = "any-llm-mode", feature = "full"))]`
+- `python_sdk_entry` — `#[cfg(any(feature = "any-llm-mode", feature = "full"))]`
+
+### 10.2 Build Configurations
 
 ```mermaid
 graph TB
-    subgraph Binary["Binary Deployment<br/>(quota-router-gateway)"]
+    subgraph Binary["Binary Build<br/>(litellm-mode or full)"]
         direction TB
-        B1[HTTP Proxy<br/>Primary Interface]
-        B2[Python SDK<br/>Also Available]
-        B3[Default Mode: litellm<br/>(reqwest)]
+        B1[HTTP Proxy<br/>Always Available]
+        B2[native_http<br/>reqwest Providers]
+        B3[Mode Router]
     end
 
-    subgraph Pip["Pip Deployment<br/>(pip install quota-router)"]
+    subgraph Pip["Pip Build<br/>(any-llm-mode or full)"]
         direction TB
-        P1[Python SDK<br/>Primary Interface]
-        P2[HTTP Proxy<br/>Also Available]
-        P3[Default Mode: any-llm<br/>(PyO3)]
+        P1[Python SDK<br/>python_sdk_entry]
+        P2[py_bridge<br/>Python SDK Providers]
+        P3[Mode Router]
     end
 
-    subgraph Shared["Shared Core<br/>(quota-router-core)"]
-        S1[Mode Router]
-        S2[All Enterprise Features]
-        S3[Both Provider Backends]
+    subgraph Full["Full Build<br/>(full feature)"]
+        direction TB
+        F1[HTTP Proxy]
+        F2[Python SDK]
+        F3[native_http + py_bridge]
+        F4[Mode Router]
     end
-
-    Binary --> Shared
-    Pip --> Shared
 
     style Binary fill:#e8f5e9
     style Pip fill:#e3f2fd
-    style Shared fill:#fff3e0
+    style Full fill:#fff3e0
 ```
 
-### 10.2 Runtime Mode Selection
+### 10.3 Runtime Mode Selection
 
-Both deployments support switching modes at runtime. The mode only controls
-which provider backend is used (reqwest vs PyO3), NOT which interface is available.
+When compiled with `full`, the mode router selects which provider backend
+is used. The mode does NOT change which interfaces are available — those
+are determined at compile time by feature gates.
 
 ```mermaid
 graph TB
-    subgraph Input["Any Interface"]
-        I1[HTTP Proxy Request]
-        I2[Python SDK Call]
+    subgraph Interfaces["Available Interfaces<br/>(determined by feature gates)"]
+        I1[HTTP Proxy<br/>always compiled]
+        I2[Python SDK<br/>any-llm-mode or full only]
     end
 
-    subgraph Mode["Mode Selection"]
-        M1{Runtime Mode?}
+    subgraph Mode["Mode Router<br/>(runtime selection)"]
+        M1{Selected Mode?}
     end
 
     subgraph LiteLLM["litellm (reqwest)"]
         L1[HttpProviderFactory]
-        L2[Direct REST API]
+        L2[native_http Providers]
     end
 
     subgraph AnyLLM["any-llm (PyO3)"]
         A1[PyBridgeProviderFactory]
-        A2[Official Python SDKs]
+        A2[py_bridge Providers]
     end
 
     subgraph Providers["Provider APIs"]
         P1[40+ LLM Providers]
     end
 
-    Input --> Mode
+    Interfaces --> Mode
     M1 -->|litellm| LiteLLM
     M1 -->|any-llm| AnyLLM
     LiteLLM --> Providers
     AnyLLM --> Providers
 
-    style Input fill:#e3f2fd
+    style Interfaces fill:#e3f2fd
     style Mode fill:#fff3e0
     style LiteLLM fill:#e8f5e9
     style AnyLLM fill:#fce4ec
     style Providers fill:#f3e5f5
 ```
-
-### 10.3 Mode vs Interface Matrix
-
-| Deployment | Interface | litellm Mode | any-llm Mode |
-|------------|-----------|--------------|--------------|
-| Binary | HTTP Proxy | reqwest → REST API | PyO3 → Python SDK |
-| Binary | Python SDK | reqwest → REST API | PyO3 → Python SDK |
-| Pip | HTTP Proxy | reqwest → REST API | PyO3 → Python SDK |
-| Pip | Python SDK | reqwest → REST API | PyO3 → Python SDK |
-
-**Key point:** Every cell in this matrix is available. The mode selects the
-provider strategy, not the interface.
 
 ---
 

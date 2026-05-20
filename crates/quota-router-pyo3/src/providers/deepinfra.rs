@@ -6,6 +6,7 @@ use crate::providers::base::{LLMProvider, ProviderFeatures, ProviderMetadata};
 use crate::types::{ChatCompletion, Choice, Message};
 use pyo3::prelude::*;
 use pyo3::types::PyDict;
+use pyo3::PyErr;
 use std::sync::Mutex;
 
 /// deepinfra provider implementation
@@ -39,11 +40,11 @@ impl DEEPINFRAProvider {
         }
     }
 
-    fn ensure_client(&self) -> Result<Py<PyAny>, ProviderError> {
+    fn ensure_client(&self) -> Result<Py<PyAny>, PyErr> {
         let mut client_guard = self
             .client
             .lock()
-            .map_err(|e| ProviderError::new(format!("Lock error: {}", e), "deepinfra"))?;
+            .map_err(|e| ProviderError::new_err(format!("Lock error: {}", e)))?;
 
         if client_guard.is_some() {
             return Ok(client_guard.clone().unwrap());
@@ -52,17 +53,16 @@ impl DEEPINFRAProvider {
         let api_key = self.api_key.lock().unwrap();
 
         Python::with_gil(|py| {
-            let openai = PyModule::import(py, "openai").map_err(|e| {
-                ProviderError::new(format!("Failed to import openai: {}", e), "deepinfra")
-            })?;
+            let openai = PyModule::import(py, "openai")
+                .map_err(|e| ProviderError::new_err(format!("Failed to import openai: {}", e)))?;
 
-            let openai_class = openai.getattr("OpenAI").map_err(|e| {
-                ProviderError::new(format!("Failed to get OpenAI: {}", e), "deepinfra")
-            })?;
+            let openai_class = openai
+                .getattr("OpenAI")
+                .map_err(|e| ProviderError::new_err(format!("Failed to get OpenAI: {}", e)))?;
 
             let key = api_key
                 .as_ref()
-                .ok_or_else(|| ProviderError::new("No API key set", "deepinfra"))?;
+                .ok_or_else(|| ProviderError::new_err("No API key set"))?;
 
             let kwargs = PyDict::new(py);
             kwargs.set_item("api_key", key).unwrap();
@@ -70,9 +70,9 @@ impl DEEPINFRAProvider {
                 .set_item("base_url", "https://api.deepinfra.com/v1")
                 .unwrap();
 
-            let client = openai_class.call((), Some(kwargs)).map_err(|e| {
-                ProviderError::new(format!("Failed to create client: {}", e), "deepinfra")
-            })?;
+            let client = openai_class
+                .call((), Some(kwargs))
+                .map_err(|e| ProviderError::new_err(format!("Failed to create client: {}", e)))?;
 
             let client_py: Py<PyAny> = client.into();
             *client_guard = Some(client_py.clone());
@@ -86,7 +86,7 @@ impl LLMProvider for DEEPINFRAProvider {
         &self.metadata
     }
 
-    fn init_client(&self, api_key: &str, _api_base: Option<&str>) -> Result<(), ProviderError> {
+    fn init_client(&self, api_key: &str, _api_base: Option<&str>) -> Result<(), PyErr> {
         *self.api_key.lock().unwrap() = Some(api_key.to_string());
         Ok(())
     }
@@ -103,11 +103,10 @@ impl LLMProvider for DEEPINFRAProvider {
         model: &str,
         messages: &[Message],
         stream: bool,
-    ) -> Result<ChatCompletion, ProviderError> {
+    ) -> Result<ChatCompletion, PyErr> {
         if stream {
-            return Err(ProviderError::new(
+            return Err(ProviderError::new_err(
                 "Streaming not supported in sync completion. Use acompletion() instead.",
-                "deepinfra",
             ));
         }
 
@@ -128,15 +127,15 @@ impl LLMProvider for DEEPINFRAProvider {
         let py_result: Py<PyAny> = Python::with_gil(|py| {
             let client_obj = client.as_ref(py);
 
-            let chat = client_obj.getattr("chat").map_err(|e| {
-                ProviderError::new(format!("Failed to get chat: {}", e), "deepinfra")
-            })?;
-            let completions = chat.getattr("completions").map_err(|e| {
-                ProviderError::new(format!("Failed to get completions: {}", e), "deepinfra")
-            })?;
-            let create = completions.getattr("create").map_err(|e| {
-                ProviderError::new(format!("Failed to get create: {}", e), "deepinfra")
-            })?;
+            let chat = client_obj
+                .getattr("chat")
+                .map_err(|e| ProviderError::new_err(format!("Failed to get chat: {}", e)))?;
+            let completions = chat
+                .getattr("completions")
+                .map_err(|e| ProviderError::new_err(format!("Failed to get completions: {}", e)))?;
+            let create = completions
+                .getattr("create")
+                .map_err(|e| ProviderError::new_err(format!("Failed to get create: {}", e)))?;
 
             let kwargs = PyDict::new(py);
             kwargs.set_item("model", model).unwrap();
@@ -144,7 +143,7 @@ impl LLMProvider for DEEPINFRAProvider {
 
             create
                 .call((), Some(kwargs))
-                .map_err(|e| ProviderError::new(format!("SDK call failed: {}", e), "deepinfra"))
+                .map_err(|e| ProviderError::new_err(format!("SDK call failed: {}", e)))
                 .map(|obj| obj.into())
         })?;
 
@@ -156,7 +155,7 @@ impl LLMProvider for DEEPINFRAProvider {
         model: &str,
         messages: &[Message],
         stream: bool,
-    ) -> Result<ChatCompletion, ProviderError> {
+    ) -> Result<ChatCompletion, PyErr> {
         self.completion(model, messages, stream)
     }
 
@@ -164,10 +163,9 @@ impl LLMProvider for DEEPINFRAProvider {
         &self,
         _input: &[String],
         _model: &str,
-    ) -> Result<crate::types::EmbeddingsResponse, ProviderError> {
-        Err(ProviderError::new(
+    ) -> Result<crate::types::EmbeddingsResponse, PyErr> {
+        Err(ProviderError::new_err(
             "deepinfra does not support embeddings",
-            "deepinfra",
         ))
     }
 
@@ -175,30 +173,27 @@ impl LLMProvider for DEEPINFRAProvider {
         &self,
         input: &[String],
         model: &str,
-    ) -> Result<crate::types::EmbeddingsResponse, ProviderError> {
+    ) -> Result<crate::types::EmbeddingsResponse, PyErr> {
         self.embedding(input, model)
     }
 }
 
-fn convert_py_openai_response(
-    py_obj: &PyAny,
-    model: &str,
-) -> Result<ChatCompletion, ProviderError> {
+fn convert_py_openai_response(py_obj: &PyAny, model: &str) -> Result<ChatCompletion, PyErr> {
     let id: String = py_obj
         .get_item("id")
-        .map_err(|e| ProviderError::new(format!("Failed to get id: {}", e), "deepinfra"))?
+        .map_err(|e| ProviderError::new_err(format!("Failed to get id: {}", e)))?
         .extract()
         .unwrap_or_else(|_| format!("chatcmpl-{}", uuid::Uuid::new_v4()));
 
     let model_str: String = py_obj
         .get_item("model")
-        .map_err(|e| ProviderError::new(format!("Failed to get model: {}", e), "deepinfra"))?
+        .map_err(|e| ProviderError::new_err(format!("Failed to get model: {}", e)))?
         .extract()
         .unwrap_or_else(|_| model.to_string());
 
     let py_choices = py_obj
         .get_item("choices")
-        .map_err(|e| ProviderError::new(format!("Failed to get choices: {}", e), "deepinfra"))?;
+        .map_err(|e| ProviderError::new_err(format!("Failed to get choices: {}", e)))?;
 
     let choices: Vec<Choice> = if let Ok(list) = py_choices.downcast::<pyo3::types::PyList>() {
         let mut result = Vec::new();
@@ -206,27 +201,23 @@ fn convert_py_openai_response(
             let choice_obj = list.get_item(i).unwrap();
             let index = i as u32;
 
-            let message_obj = choice_obj.get_item("message").map_err(|e| {
-                ProviderError::new(format!("Failed to get message: {}", e), "deepinfra")
-            })?;
+            let message_obj = choice_obj
+                .get_item("message")
+                .map_err(|e| ProviderError::new_err(format!("Failed to get message: {}", e)))?;
             let role: String = message_obj
                 .get_item("role")
-                .map_err(|e| ProviderError::new(format!("Failed to get role: {}", e), "deepinfra"))?
+                .map_err(|e| ProviderError::new_err(format!("Failed to get role: {}", e)))?
                 .extract()
                 .unwrap_or_else(|_| "assistant".to_string());
             let content: String = message_obj
                 .get_item("content")
-                .map_err(|e| {
-                    ProviderError::new(format!("Failed to get content: {}", e), "deepinfra")
-                })?
+                .map_err(|e| ProviderError::new_err(format!("Failed to get content: {}", e)))?
                 .extract()
                 .unwrap_or_default();
 
             let finish_reason: String = choice_obj
                 .get_item("finish_reason")
-                .map_err(|e| {
-                    ProviderError::new(format!("Failed to get finish_reason: {}", e), "deepinfra")
-                })?
+                .map_err(|e| ProviderError::new_err(format!("Failed to get finish_reason: {}", e)))?
                 .extract()
                 .unwrap_or_else(|_| "stop".to_string());
 
@@ -238,33 +229,26 @@ fn convert_py_openai_response(
         }
         result
     } else {
-        return Err(ProviderError::new("choices is not a list", "deepinfra"));
+        return Err(ProviderError::new_err("choices is not a list"));
     };
 
     let usage_obj = py_obj
         .get_item("usage")
-        .map_err(|e| ProviderError::new(format!("Failed to get usage: {}", e), "deepinfra"))?;
+        .map_err(|e| ProviderError::new_err(format!("Failed to get usage: {}", e)))?;
 
     let prompt_tokens: u32 = usage_obj
         .get_item("prompt_tokens")
-        .map_err(|e| {
-            ProviderError::new(format!("Failed to get prompt_tokens: {}", e), "deepinfra")
-        })?
+        .map_err(|e| ProviderError::new_err(format!("Failed to get prompt_tokens: {}", e)))?
         .extract()
         .unwrap_or(0);
     let completion_tokens: u32 = usage_obj
         .get_item("completion_tokens")
-        .map_err(|e| {
-            ProviderError::new(
-                format!("Failed to get completion_tokens: {}", e),
-                "deepinfra",
-            )
-        })?
+        .map_err(|e| ProviderError::new_err(format!("Failed to get completion_tokens: {}", e)))?
         .extract()
         .unwrap_or(0);
     let total_tokens: u32 = usage_obj
         .get_item("total_tokens")
-        .map_err(|e| ProviderError::new(format!("Failed to get total_tokens: {}", e), "deepinfra"))?
+        .map_err(|e| ProviderError::new_err(format!("Failed to get total_tokens: {}", e)))?
         .extract()
         .unwrap_or(0);
 

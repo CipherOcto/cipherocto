@@ -6,6 +6,7 @@ use crate::providers::base::{LLMProvider, ProviderFeatures, ProviderMetadata};
 use crate::types::{ChatCompletion, Choice, EmbeddingsResponse, Message};
 use pyo3::prelude::*;
 use pyo3::types::PyDict;
+use pyo3::PyErr;
 use std::sync::Mutex;
 
 /// vertexai provider implementation
@@ -41,11 +42,11 @@ impl VERTEXAIProvider {
         }
     }
 
-    fn ensure_client(&self) -> Result<Py<PyAny>, ProviderError> {
+    fn ensure_client(&self) -> Result<Py<PyAny>, PyErr> {
         let mut client_guard = self
             .client
             .lock()
-            .map_err(|e| ProviderError::new(format!("Lock error: {}", e), "vertexai"))?;
+            .map_err(|e| ProviderError::new_err(format!("Lock error: {}", e)))?;
 
         if client_guard.is_some() {
             return Ok(client_guard.clone().unwrap());
@@ -54,24 +55,23 @@ impl VERTEXAIProvider {
         let api_key = self.api_key.lock().unwrap();
         let project_id = api_key
             .as_ref()
-            .ok_or_else(|| ProviderError::new("No API key set", "vertexai"))?;
+            .ok_or_else(|| ProviderError::new_err("No API key set"))?;
 
         Python::with_gil(|py| {
-            let vertexai = PyModule::import(py, "vertexai").map_err(|e| {
-                ProviderError::new(format!("Failed to import vertexai: {}", e), "vertexai")
-            })?;
+            let vertexai = PyModule::import(py, "vertexai")
+                .map_err(|e| ProviderError::new_err(format!("Failed to import vertexai: {}", e)))?;
 
-            let init_fn = vertexai.getattr("init").map_err(|e| {
-                ProviderError::new(format!("Failed to get init: {}", e), "vertexai")
-            })?;
+            let init_fn = vertexai
+                .getattr("init")
+                .map_err(|e| ProviderError::new_err(format!("Failed to get init: {}", e)))?;
 
             let kwargs = PyDict::new(py);
             kwargs.set_item("project", project_id.as_str()).unwrap();
             kwargs.set_item("location", "us-central1").unwrap();
 
-            init_fn.call((), Some(kwargs)).map_err(|e| {
-                ProviderError::new(format!("Failed to init vertexai: {}", e), "vertexai")
-            })?;
+            init_fn
+                .call((), Some(kwargs))
+                .map_err(|e| ProviderError::new_err(format!("Failed to init vertexai: {}", e)))?;
 
             let client_py: Py<PyAny> = py.None();
             *client_guard = Some(client_py.clone());
@@ -85,7 +85,7 @@ impl LLMProvider for VERTEXAIProvider {
         &self.metadata
     }
 
-    fn init_client(&self, api_key: &str, api_base: Option<&str>) -> Result<(), ProviderError> {
+    fn init_client(&self, api_key: &str, api_base: Option<&str>) -> Result<(), PyErr> {
         *self.api_key.lock().unwrap() = Some(api_key.to_string());
         *self.api_base.lock().unwrap() = api_base.map(String::from);
         Ok(())
@@ -103,11 +103,10 @@ impl LLMProvider for VERTEXAIProvider {
         model: &str,
         messages: &[Message],
         stream: bool,
-    ) -> Result<ChatCompletion, ProviderError> {
+    ) -> Result<ChatCompletion, PyErr> {
         if stream {
-            return Err(ProviderError::new(
+            return Err(ProviderError::new_err(
                 "Streaming not supported in sync completion. Use acompletion() instead.",
-                "vertexai",
             ));
         }
 
@@ -121,23 +120,22 @@ impl LLMProvider for VERTEXAIProvider {
             .join("\n");
 
         let py_result: Py<PyAny> = Python::with_gil(|py| {
-            let vertexai = PyModule::import(py, "vertexai").map_err(|e| {
-                ProviderError::new(format!("Failed to import vertexai: {}", e), "vertexai")
-            })?;
+            let vertexai = PyModule::import(py, "vertexai")
+                .map_err(|e| ProviderError::new_err(format!("Failed to import vertexai: {}", e)))?;
 
             let generative_model = vertexai.getattr("GenerativeModel").map_err(|e| {
-                ProviderError::new(format!("Failed to get GenerativeModel: {}", e), "vertexai")
+                ProviderError::new_err(format!("Failed to get GenerativeModel: {}", e))
             })?;
 
             let kwargs = PyDict::new(py);
             kwargs.set_item("model_name", model).unwrap();
 
-            let model_obj = generative_model.call((), Some(kwargs)).map_err(|e| {
-                ProviderError::new(format!("Failed to create model: {}", e), "vertexai")
-            })?;
+            let model_obj = generative_model
+                .call((), Some(kwargs))
+                .map_err(|e| ProviderError::new_err(format!("Failed to create model: {}", e)))?;
 
             let generate_content = model_obj.getattr("generate_content").map_err(|e| {
-                ProviderError::new(format!("Failed to get generate_content: {}", e), "vertexai")
+                ProviderError::new_err(format!("Failed to get generate_content: {}", e))
             })?;
 
             let content_kwarg = PyDict::new(py);
@@ -149,7 +147,7 @@ impl LLMProvider for VERTEXAIProvider {
 
             generate_content
                 .call1((vec![content_obj],))
-                .map_err(|e| ProviderError::new(format!("SDK call failed: {}", e), "vertexai"))
+                .map_err(|e| ProviderError::new_err(format!("SDK call failed: {}", e)))
                 .map(|obj| obj.into())
         })?;
 
@@ -161,59 +159,47 @@ impl LLMProvider for VERTEXAIProvider {
         model: &str,
         messages: &[Message],
         stream: bool,
-    ) -> Result<ChatCompletion, ProviderError> {
+    ) -> Result<ChatCompletion, PyErr> {
         self.completion(model, messages, stream)
     }
 
-    fn embedding(
-        &self,
-        _input: &[String],
-        _model: &str,
-    ) -> Result<EmbeddingsResponse, ProviderError> {
-        Err(ProviderError::new(
+    fn embedding(&self, _input: &[String], _model: &str) -> Result<EmbeddingsResponse, PyErr> {
+        Err(ProviderError::new_err(
             "vertexai does not support embeddings",
-            "vertexai",
         ))
     }
 
-    async fn aembedding(
-        &self,
-        input: &[String],
-        model: &str,
-    ) -> Result<EmbeddingsResponse, ProviderError> {
+    async fn aembedding(&self, input: &[String], model: &str) -> Result<EmbeddingsResponse, PyErr> {
         self.embedding(input, model)
     }
 }
 
-fn convert_py_vertex_response(
-    py_obj: &PyAny,
-    model: &str,
-) -> Result<ChatCompletion, ProviderError> {
+fn convert_py_vertex_response(py_obj: &PyAny, model: &str) -> Result<ChatCompletion, PyErr> {
     // Vertex AI returns a GenerateContentResponse object
     // We need to parse candidates[0].content.parts[0].text
     let candidates = py_obj
         .get_item("candidates")
-        .map_err(|e| ProviderError::new(format!("Failed to get candidates: {}", e), "vertexai"))?;
+        .map_err(|e| ProviderError::new_err(format!("Failed to get candidates: {}", e)))?;
 
-    let first_candidate = candidates.get_item(0).map_err(|e| {
-        ProviderError::new(format!("Failed to get first candidate: {}", e), "vertexai")
-    })?;
+    let first_candidate = candidates
+        .get_item(0)
+        .map_err(|e| ProviderError::new_err(format!("Failed to get first candidate: {}", e)))?;
 
     let content = first_candidate
         .get_item("content")
-        .map_err(|e| ProviderError::new(format!("Failed to get content: {}", e), "vertexai"))?;
+        .map_err(|e| ProviderError::new_err(format!("Failed to get content: {}", e)))?;
 
     let parts = content
         .get_item("parts")
-        .map_err(|e| ProviderError::new(format!("Failed to get parts: {}", e), "vertexai"))?;
+        .map_err(|e| ProviderError::new_err(format!("Failed to get parts: {}", e)))?;
 
     let first_part = parts
         .get_item(0)
-        .map_err(|e| ProviderError::new(format!("Failed to get first part: {}", e), "vertexai"))?;
+        .map_err(|e| ProviderError::new_err(format!("Failed to get first part: {}", e)))?;
 
     let text: String = first_part
         .get_item("text")
-        .map_err(|e| ProviderError::new(format!("Failed to get text: {}", e), "vertexai"))?
+        .map_err(|e| ProviderError::new_err(format!("Failed to get text: {}", e)))?
         .extract()
         .unwrap_or_default();
 

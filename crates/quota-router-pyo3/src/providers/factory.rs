@@ -5,6 +5,7 @@ use crate::exceptions::{ProviderError, UnsupportedProviderError};
 use crate::providers::base::{ProviderInfo, Providers};
 use once_cell::sync::Lazy;
 use pyo3::prelude::*;
+use pyo3::PyErr;
 use std::collections::HashMap;
 use std::sync::Mutex;
 
@@ -72,12 +73,9 @@ pub fn get_provider_info(provider: &str) -> PyResult<Py<PyAny>> {
 
 /// Validate that a provider is supported
 #[allow(dead_code)]
-pub fn validate_provider(
-    provider: &str,
-) -> Result<&'static ProviderInfo, UnsupportedProviderError> {
-    Providers::get(provider).ok_or_else(|| {
-        UnsupportedProviderError::new(format!("Unknown provider: {}", provider), provider, vec![])
-    })
+pub fn validate_provider(provider: &str) -> Result<&'static ProviderInfo, PyErr> {
+    Providers::get(provider)
+        .ok_or_else(|| UnsupportedProviderError::new_err(format!("Unknown provider: {}", provider)))
 }
 
 /// Resolve API key for a provider
@@ -86,26 +84,23 @@ pub fn validate_provider(
 pub fn resolve_api_key(
     provider_info: &ProviderInfo,
     explicit_key: Option<&str>,
-) -> Result<String, ProviderError> {
+) -> Result<String, PyErr> {
     let key = if let Some(k) = explicit_key {
         k.to_string()
     } else if let Ok(env_val) = std::env::var(provider_info.env_api_key) {
         env_val
     } else {
-        return Err(ProviderError::new(
-            format!(
-                "Missing API key for {}. Set {} environment variable or pass api_key parameter.",
-                provider_info.name, provider_info.env_api_key
-            ),
-            provider_info.name,
-        ));
+        return Err(ProviderError::new_err(format!(
+            "Missing API key for {}. Set {} environment variable or pass api_key parameter.",
+            provider_info.name, provider_info.env_api_key
+        )));
     };
 
     if key.is_empty() {
-        return Err(ProviderError::new(
-            format!("API key for {} is empty", provider_info.name),
-            provider_info.name,
-        ));
+        return Err(ProviderError::new_err(format!(
+            "API key for {} is empty",
+            provider_info.name
+        )));
     }
 
     Ok(key)

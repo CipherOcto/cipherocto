@@ -6,6 +6,7 @@ use crate::providers::base::{LLMProvider, ProviderFeatures, ProviderMetadata};
 use crate::types::{ChatCompletion, Choice, EmbeddingsResponse, Message};
 use pyo3::prelude::*;
 use pyo3::types::PyDict;
+use pyo3::PyErr;
 use std::sync::Mutex;
 
 /// voyage provider implementation
@@ -41,11 +42,11 @@ impl VOYAGEProvider {
         }
     }
 
-    fn ensure_client(&self) -> Result<Py<PyAny>, ProviderError> {
+    fn ensure_client(&self) -> Result<Py<PyAny>, PyErr> {
         let mut client_guard = self
             .client
             .lock()
-            .map_err(|e| ProviderError::new(format!("Lock error: {}", e), "voyage"))?;
+            .map_err(|e| ProviderError::new_err(format!("Lock error: {}", e)))?;
 
         if client_guard.is_some() {
             return Ok(client_guard.clone().unwrap());
@@ -55,24 +56,23 @@ impl VOYAGEProvider {
         let _api_base = self.api_base.lock().unwrap();
 
         Python::with_gil(|py| {
-            let voyage = PyModule::import(py, "voyageai").map_err(|e| {
-                ProviderError::new(format!("Failed to import voyageai: {}", e), "voyage")
-            })?;
+            let voyage = PyModule::import(py, "voyageai")
+                .map_err(|e| ProviderError::new_err(format!("Failed to import voyageai: {}", e)))?;
 
-            let voyage_class = voyage.getattr("VoyageAI").map_err(|e| {
-                ProviderError::new(format!("Failed to get VoyageAI: {}", e), "voyage")
-            })?;
+            let voyage_class = voyage
+                .getattr("VoyageAI")
+                .map_err(|e| ProviderError::new_err(format!("Failed to get VoyageAI: {}", e)))?;
 
             let key = api_key
                 .as_ref()
-                .ok_or_else(|| ProviderError::new("No API key set", "voyage"))?;
+                .ok_or_else(|| ProviderError::new_err("No API key set"))?;
 
             let kwargs = PyDict::new(py);
             kwargs.set_item("api_key", key).unwrap();
 
-            let client = voyage_class.call((), Some(kwargs)).map_err(|e| {
-                ProviderError::new(format!("Failed to create client: {}", e), "voyage")
-            })?;
+            let client = voyage_class
+                .call((), Some(kwargs))
+                .map_err(|e| ProviderError::new_err(format!("Failed to create client: {}", e)))?;
 
             let client_py: Py<PyAny> = client.into();
             *client_guard = Some(client_py.clone());
@@ -86,7 +86,7 @@ impl LLMProvider for VOYAGEProvider {
         &self.metadata
     }
 
-    fn init_client(&self, api_key: &str, api_base: Option<&str>) -> Result<(), ProviderError> {
+    fn init_client(&self, api_key: &str, api_base: Option<&str>) -> Result<(), PyErr> {
         *self.api_key.lock().unwrap() = Some(api_key.to_string());
         *self.api_base.lock().unwrap() = api_base.map(String::from);
         Ok(())
@@ -104,11 +104,10 @@ impl LLMProvider for VOYAGEProvider {
         model: &str,
         messages: &[Message],
         stream: bool,
-    ) -> Result<ChatCompletion, ProviderError> {
+    ) -> Result<ChatCompletion, PyErr> {
         if stream {
-            return Err(ProviderError::new(
+            return Err(ProviderError::new_err(
                 "Streaming not supported in sync completion. Use acompletion() instead.",
-                "voyage",
             ));
         }
 
@@ -131,14 +130,14 @@ impl LLMProvider for VOYAGEProvider {
 
             let chat = client_obj
                 .getattr("chat")
-                .map_err(|e| ProviderError::new(format!("Failed to get chat: {}", e), "voyage"))?;
+                .map_err(|e| ProviderError::new_err(format!("Failed to get chat: {}", e)))?;
 
             let kwargs = PyDict::new(py);
             kwargs.set_item("model", model).unwrap();
             kwargs.set_item("messages", &py_messages).unwrap();
 
             chat.call((), Some(kwargs))
-                .map_err(|e| ProviderError::new(format!("SDK call failed: {}", e), "voyage"))
+                .map_err(|e| ProviderError::new_err(format!("SDK call failed: {}", e)))
                 .map(|obj| obj.into())
         })?;
 
@@ -150,15 +149,11 @@ impl LLMProvider for VOYAGEProvider {
         model: &str,
         messages: &[Message],
         stream: bool,
-    ) -> Result<ChatCompletion, ProviderError> {
+    ) -> Result<ChatCompletion, PyErr> {
         self.completion(model, messages, stream)
     }
 
-    fn embedding(
-        &self,
-        input: &[String],
-        model: &str,
-    ) -> Result<EmbeddingsResponse, ProviderError> {
+    fn embedding(&self, input: &[String], model: &str) -> Result<EmbeddingsResponse, PyErr> {
         let client = self.ensure_client()?;
 
         let py_result: Py<PyAny> = Python::with_gil(|py| {
@@ -166,7 +161,7 @@ impl LLMProvider for VOYAGEProvider {
 
             let embed = client_obj
                 .getattr("embed")
-                .map_err(|e| ProviderError::new(format!("Failed to get embed: {}", e), "voyage"))?;
+                .map_err(|e| ProviderError::new_err(format!("Failed to get embed: {}", e)))?;
 
             let kwargs = PyDict::new(py);
             kwargs.set_item("input", input).unwrap();
@@ -174,41 +169,34 @@ impl LLMProvider for VOYAGEProvider {
 
             embed
                 .call((), Some(kwargs))
-                .map_err(|e| ProviderError::new(format!("SDK call failed: {}", e), "voyage"))
+                .map_err(|e| ProviderError::new_err(format!("SDK call failed: {}", e)))
                 .map(|obj| obj.into())
         })?;
 
         Python::with_gil(|py| convert_py_voyage_embedding_response(py_result.as_ref(py), model))
     }
 
-    async fn aembedding(
-        &self,
-        input: &[String],
-        model: &str,
-    ) -> Result<EmbeddingsResponse, ProviderError> {
+    async fn aembedding(&self, input: &[String], model: &str) -> Result<EmbeddingsResponse, PyErr> {
         self.embedding(input, model)
     }
 }
 
-fn convert_py_voyage_response(
-    py_obj: &PyAny,
-    model: &str,
-) -> Result<ChatCompletion, ProviderError> {
+fn convert_py_voyage_response(py_obj: &PyAny, model: &str) -> Result<ChatCompletion, PyErr> {
     let id: String = py_obj
         .get_item("id")
-        .map_err(|e| ProviderError::new(format!("Failed to get id: {}", e), "voyage"))?
+        .map_err(|e| ProviderError::new_err(format!("Failed to get id: {}", e)))?
         .extract()
         .unwrap_or_else(|_| format!("chatcmpl-{}", uuid::Uuid::new_v4()));
 
     let model_str: String = py_obj
         .get_item("model")
-        .map_err(|e| ProviderError::new(format!("Failed to get model: {}", e), "voyage"))?
+        .map_err(|e| ProviderError::new_err(format!("Failed to get model: {}", e)))?
         .extract()
         .unwrap_or_else(|_| model.to_string());
 
     let text: String = py_obj
         .get_item("text")
-        .map_err(|e| ProviderError::new(format!("Failed to get text: {}", e), "voyage"))?
+        .map_err(|e| ProviderError::new_err(format!("Failed to get text: {}", e)))?
         .extract()
         .unwrap_or_default();
 
@@ -230,19 +218,19 @@ fn convert_py_voyage_response(
 fn convert_py_voyage_embedding_response(
     py_obj: &PyAny,
     model: &str,
-) -> Result<EmbeddingsResponse, ProviderError> {
+) -> Result<EmbeddingsResponse, PyErr> {
     let data = py_obj
         .get_item("data")
-        .map_err(|e| ProviderError::new(format!("Failed to get data: {}", e), "voyage"))?
+        .map_err(|e| ProviderError::new_err(format!("Failed to get data: {}", e)))?
         .downcast::<pyo3::types::PyList>()
-        .map_err(|_| ProviderError::new("data is not a list", "voyage"))?;
+        .map_err(|_| ProviderError::new_err("data is not a list"))?;
 
     let mut embeddings = Vec::new();
     for i in 0..data.len() {
         let item = data.get_item(i).unwrap();
         let embedding_vec = item
             .get_item("embedding")
-            .map_err(|e| ProviderError::new(format!("Failed to get embedding: {}", e), "voyage"))?
+            .map_err(|e| ProviderError::new_err(format!("Failed to get embedding: {}", e)))?
             .extract::<Vec<f32>>()
             .unwrap_or_default();
         embeddings.push(crate::types::Embedding::new(i as u32, embedding_vec));

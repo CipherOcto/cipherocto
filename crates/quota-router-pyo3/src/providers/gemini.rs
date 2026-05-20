@@ -6,6 +6,7 @@ use crate::providers::base::{LLMProvider, ProviderFeatures, ProviderMetadata};
 use crate::types::{ChatCompletion, Choice, EmbeddingsResponse, Message};
 use pyo3::prelude::*;
 use pyo3::types::{PyDict, PyList};
+use pyo3::PyErr;
 use std::sync::Mutex;
 
 /// Gemini provider implementation
@@ -43,11 +44,11 @@ impl GeminiProvider {
     }
 
     /// Initialize the Gemini client using PyO3
-    fn ensure_client(&self) -> Result<Py<PyAny>, ProviderError> {
+    fn ensure_client(&self) -> Result<Py<PyAny>, PyErr> {
         let mut client_guard = self
             .client
             .lock()
-            .map_err(|e| ProviderError::new(format!("Lock error: {}", e), "gemini"))?;
+            .map_err(|e| ProviderError::new_err(format!("Lock error: {}", e)))?;
 
         if client_guard.is_some() {
             return Ok(client_guard.clone().unwrap());
@@ -58,24 +59,24 @@ impl GeminiProvider {
         Python::with_gil(|py| {
             // Import the Google GenAI SDK
             let genai = PyModule::import(py, "google.genai").map_err(|e| {
-                ProviderError::new(format!("Failed to import google.genai: {}", e), "gemini")
+                ProviderError::new_err(format!("Failed to import google.genai: {}", e))
             })?;
 
-            let client_class = genai.getattr("Client").map_err(|e| {
-                ProviderError::new(format!("Failed to get Client: {}", e), "gemini")
-            })?;
+            let client_class = genai
+                .getattr("Client")
+                .map_err(|e| ProviderError::new_err(format!("Failed to get Client: {}", e)))?;
 
             let key = api_key
                 .as_ref()
-                .ok_or_else(|| ProviderError::new("No API key set", "gemini"))?;
+                .ok_or_else(|| ProviderError::new_err("No API key set"))?;
 
             // Create client with api_key
             let kwargs = PyDict::new(py);
             kwargs.set_item("api_key", key).unwrap();
 
-            let client = client_class.call((), Some(kwargs)).map_err(|e| {
-                ProviderError::new(format!("Failed to create client: {}", e), "gemini")
-            })?;
+            let client = client_class
+                .call((), Some(kwargs))
+                .map_err(|e| ProviderError::new_err(format!("Failed to create client: {}", e)))?;
 
             let client_py: Py<PyAny> = client.into();
             *client_guard = Some(client_py.clone());
@@ -89,7 +90,7 @@ impl LLMProvider for GeminiProvider {
         &self.metadata
     }
 
-    fn init_client(&self, api_key: &str, api_base: Option<&str>) -> Result<(), ProviderError> {
+    fn init_client(&self, api_key: &str, api_base: Option<&str>) -> Result<(), PyErr> {
         *self.api_key.lock().unwrap() = Some(api_key.to_string());
         *self.api_base.lock().unwrap() = api_base.map(String::from);
         Ok(())
@@ -107,12 +108,11 @@ impl LLMProvider for GeminiProvider {
         model: &str,
         messages: &[Message],
         stream: bool,
-    ) -> Result<ChatCompletion, ProviderError> {
+    ) -> Result<ChatCompletion, PyErr> {
         // Don't support streaming in sync version
         if stream {
-            return Err(ProviderError::new(
+            return Err(ProviderError::new_err(
                 "Streaming not supported in sync completion. Use acompletion() instead.",
-                "gemini",
             ));
         }
 
@@ -134,11 +134,11 @@ impl LLMProvider for GeminiProvider {
             let client_obj = client.as_ref(py);
 
             // Navigate: client.models.generate_content(model=model, contents=[prompt])
-            let models = client_obj.getattr("models").map_err(|e| {
-                ProviderError::new(format!("Failed to get models: {}", e), "gemini")
-            })?;
+            let models = client_obj
+                .getattr("models")
+                .map_err(|e| ProviderError::new_err(format!("Failed to get models: {}", e)))?;
             let generate_content = models.getattr("generate_content").map_err(|e| {
-                ProviderError::new(format!("Failed to get generate_content: {}", e), "gemini")
+                ProviderError::new_err(format!("Failed to get generate_content: {}", e))
             })?;
 
             // Build contents list
@@ -158,7 +158,7 @@ impl LLMProvider for GeminiProvider {
 
             generate_content
                 .call((), Some(kwargs))
-                .map_err(|e| ProviderError::new(format!("SDK call failed: {}", e), "gemini"))
+                .map_err(|e| ProviderError::new_err(format!("SDK call failed: {}", e)))
                 .map(|obj| obj.into())
         })?;
 
@@ -171,72 +171,58 @@ impl LLMProvider for GeminiProvider {
         model: &str,
         messages: &[Message],
         stream: bool,
-    ) -> Result<ChatCompletion, ProviderError> {
+    ) -> Result<ChatCompletion, PyErr> {
         self.completion(model, messages, stream)
     }
 
-    fn embedding(
-        &self,
-        _input: &[String],
-        _model: &str,
-    ) -> Result<EmbeddingsResponse, ProviderError> {
-        Err(ProviderError::new(
-            "Gemini does not support embeddings",
-            "gemini",
-        ))
+    fn embedding(&self, _input: &[String], _model: &str) -> Result<EmbeddingsResponse, PyErr> {
+        Err(ProviderError::new_err("Gemini does not support embeddings"))
     }
 
-    async fn aembedding(
-        &self,
-        input: &[String],
-        model: &str,
-    ) -> Result<EmbeddingsResponse, ProviderError> {
+    async fn aembedding(&self, input: &[String], model: &str) -> Result<EmbeddingsResponse, PyErr> {
         self.embedding(input, model)
     }
 }
 
 /// Convert Gemini response to Rust ChatCompletion
-fn convert_py_gemini_response(
-    py_obj: &PyAny,
-    model: &str,
-) -> Result<ChatCompletion, ProviderError> {
+fn convert_py_gemini_response(py_obj: &PyAny, model: &str) -> Result<ChatCompletion, PyErr> {
     // Gemini returns: { candidates: [{content: {parts: [{text}], role}, finish_reason}], usage_metadata: {...} }
 
     // Get candidates list
     let candidates = py_obj
         .get_item("candidates")
-        .map_err(|e| ProviderError::new(format!("Failed to get candidates: {}", e), "gemini"))?
+        .map_err(|e| ProviderError::new_err(format!("Failed to get candidates: {}", e)))?
         .downcast::<pyo3::types::PyList>()
-        .map_err(|_| ProviderError::new("candidates is not a list", "gemini"))?;
+        .map_err(|_| ProviderError::new_err("candidates is not a list"))?;
 
     if candidates.is_empty() {
-        return Err(ProviderError::new("No candidates in response", "gemini"));
+        return Err(ProviderError::new_err("No candidates in response"));
     }
 
     let candidate = candidates
         .get_item(0)
-        .map_err(|e| ProviderError::new(format!("Failed to get candidate: {}", e), "gemini"))?;
+        .map_err(|e| ProviderError::new_err(format!("Failed to get candidate: {}", e)))?;
     let candidate = candidate
         .downcast::<pyo3::types::PyDict>()
-        .map_err(|_| ProviderError::new("Candidate is not a dict", "gemini"))?;
+        .map_err(|_| ProviderError::new_err("Candidate is not a dict"))?;
 
     let content = candidate
         .get_item("content")
-        .map_err(|e| ProviderError::new(format!("Failed to get content: {}", e), "gemini"))?
-        .ok_or_else(|| ProviderError::new("content is None", "gemini"))?;
+        .map_err(|e| ProviderError::new_err(format!("Failed to get content: {}", e)))?
+        .ok_or_else(|| ProviderError::new_err("content is None"))?;
     let parts = content
         .get_item("parts")
-        .map_err(|e| ProviderError::new(format!("Failed to get parts: {}", e), "gemini"))?
+        .map_err(|e| ProviderError::new_err(format!("Failed to get parts: {}", e)))?
         .downcast::<pyo3::types::PyList>()
-        .map_err(|_| ProviderError::new("Parts is not a list", "gemini"))?;
+        .map_err(|_| ProviderError::new_err("Parts is not a list"))?;
 
     let text = if !parts.is_empty() {
         let part = parts
             .get_item(0)
-            .map_err(|e| ProviderError::new(format!("Failed to get part: {}", e), "gemini"))?;
+            .map_err(|e| ProviderError::new_err(format!("Failed to get part: {}", e)))?;
         let part_dict = part
             .downcast::<pyo3::types::PyDict>()
-            .map_err(|_| ProviderError::new("Part is not a dict", "gemini"))?;
+            .map_err(|_| ProviderError::new_err("Part is not a dict"))?;
         match part_dict.get_item("text") {
             Ok(Some(text_obj)) => text_obj.extract::<String>().unwrap_or_default(),
             Ok(None) | Err(_) => String::new(),

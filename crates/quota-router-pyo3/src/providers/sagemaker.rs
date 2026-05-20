@@ -6,6 +6,7 @@ use crate::providers::base::{LLMProvider, ProviderFeatures, ProviderMetadata};
 use crate::types::{ChatCompletion, Choice, EmbeddingsResponse, Message};
 use pyo3::prelude::*;
 use pyo3::types::PyDict;
+use pyo3::PyErr;
 use std::sync::Mutex;
 
 /// sagemaker provider implementation
@@ -41,11 +42,11 @@ impl SAGEMAKERProvider {
         }
     }
 
-    fn ensure_client(&self) -> Result<Py<PyAny>, ProviderError> {
+    fn ensure_client(&self) -> Result<Py<PyAny>, PyErr> {
         let mut client_guard = self
             .client
             .lock()
-            .map_err(|e| ProviderError::new(format!("Lock error: {}", e), "sagemaker"))?;
+            .map_err(|e| ProviderError::new_err(format!("Lock error: {}", e)))?;
 
         if client_guard.is_some() {
             return Ok(client_guard.clone().unwrap());
@@ -55,13 +56,12 @@ impl SAGEMAKERProvider {
         let api_base = self.api_base.lock().unwrap();
 
         Python::with_gil(|py| {
-            let boto3 = PyModule::import(py, "boto3").map_err(|e| {
-                ProviderError::new(format!("Failed to import boto3: {}", e), "sagemaker")
-            })?;
+            let boto3 = PyModule::import(py, "boto3")
+                .map_err(|e| ProviderError::new_err(format!("Failed to import boto3: {}", e)))?;
 
-            let client_fn = boto3.getattr("client").map_err(|e| {
-                ProviderError::new(format!("Failed to get client: {}", e), "sagemaker")
-            })?;
+            let client_fn = boto3
+                .getattr("client")
+                .map_err(|e| ProviderError::new_err(format!("Failed to get client: {}", e)))?;
 
             let kwargs = PyDict::new(py);
             kwargs
@@ -76,9 +76,9 @@ impl SAGEMAKERProvider {
                 kwargs.set_item("region_name", region.as_str()).unwrap();
             }
 
-            let client = client_fn.call((), Some(kwargs)).map_err(|e| {
-                ProviderError::new(format!("Failed to create client: {}", e), "sagemaker")
-            })?;
+            let client = client_fn
+                .call((), Some(kwargs))
+                .map_err(|e| ProviderError::new_err(format!("Failed to create client: {}", e)))?;
 
             let client_py: Py<PyAny> = client.into();
             *client_guard = Some(client_py.clone());
@@ -92,7 +92,7 @@ impl LLMProvider for SAGEMAKERProvider {
         &self.metadata
     }
 
-    fn init_client(&self, api_key: &str, api_base: Option<&str>) -> Result<(), ProviderError> {
+    fn init_client(&self, api_key: &str, api_base: Option<&str>) -> Result<(), PyErr> {
         *self.api_key.lock().unwrap() = Some(api_key.to_string());
         *self.api_base.lock().unwrap() = api_base.map(String::from);
         Ok(())
@@ -110,11 +110,10 @@ impl LLMProvider for SAGEMAKERProvider {
         model: &str,
         messages: &[Message],
         stream: bool,
-    ) -> Result<ChatCompletion, ProviderError> {
+    ) -> Result<ChatCompletion, PyErr> {
         if stream {
-            return Err(ProviderError::new(
+            return Err(ProviderError::new_err(
                 "Streaming not supported in sync completion. Use acompletion() instead.",
-                "sagemaker",
             ));
         }
 
@@ -131,7 +130,7 @@ impl LLMProvider for SAGEMAKERProvider {
             let client_obj = client.as_ref(py);
 
             let invoke = client_obj.getattr("invoke_endpoint").map_err(|e| {
-                ProviderError::new(format!("Failed to get invoke_endpoint: {}", e), "sagemaker")
+                ProviderError::new_err(format!("Failed to get invoke_endpoint: {}", e))
             })?;
 
             let kwargs = PyDict::new(py);
@@ -147,7 +146,7 @@ impl LLMProvider for SAGEMAKERProvider {
 
             invoke
                 .call((), Some(kwargs))
-                .map_err(|e| ProviderError::new(format!("SDK call failed: {}", e), "sagemaker"))
+                .map_err(|e| ProviderError::new_err(format!("SDK call failed: {}", e)))
                 .map(|obj| obj.into())
         })?;
 
@@ -159,38 +158,26 @@ impl LLMProvider for SAGEMAKERProvider {
         model: &str,
         messages: &[Message],
         stream: bool,
-    ) -> Result<ChatCompletion, ProviderError> {
+    ) -> Result<ChatCompletion, PyErr> {
         self.completion(model, messages, stream)
     }
 
-    fn embedding(
-        &self,
-        _input: &[String],
-        _model: &str,
-    ) -> Result<EmbeddingsResponse, ProviderError> {
-        Err(ProviderError::new(
+    fn embedding(&self, _input: &[String], _model: &str) -> Result<EmbeddingsResponse, PyErr> {
+        Err(ProviderError::new_err(
             "sagemaker does not support embeddings",
-            "sagemaker",
         ))
     }
 
-    async fn aembedding(
-        &self,
-        input: &[String],
-        model: &str,
-    ) -> Result<EmbeddingsResponse, ProviderError> {
+    async fn aembedding(&self, input: &[String], model: &str) -> Result<EmbeddingsResponse, PyErr> {
         self.embedding(input, model)
     }
 }
 
-fn convert_py_sagemaker_response(
-    py_obj: &PyAny,
-    model: &str,
-) -> Result<ChatCompletion, ProviderError> {
+fn convert_py_sagemaker_response(py_obj: &PyAny, model: &str) -> Result<ChatCompletion, PyErr> {
     // SageMaker returns JSON body as string in 'Body' field
     let body_str: String = py_obj
         .get_item("Body")
-        .map_err(|e| ProviderError::new(format!("Failed to get Body: {}", e), "sagemaker"))?
+        .map_err(|e| ProviderError::new_err(format!("Failed to get Body: {}", e)))?
         .extract()
         .unwrap_or_default();
 

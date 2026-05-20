@@ -6,6 +6,7 @@ use crate::providers::base::{LLMProvider, ProviderFeatures, ProviderMetadata};
 use crate::types::{ChatCompletion, Choice, Message};
 use pyo3::prelude::*;
 use pyo3::types::PyDict;
+use pyo3::PyErr;
 use std::sync::Mutex;
 
 /// vertexaianthropic provider implementation
@@ -41,11 +42,11 @@ impl VERTEXAIANTHROPICProvider {
         }
     }
 
-    fn ensure_client(&self) -> Result<Py<PyAny>, ProviderError> {
+    fn ensure_client(&self) -> Result<Py<PyAny>, PyErr> {
         let mut client_guard = self
             .client
             .lock()
-            .map_err(|e| ProviderError::new(format!("Lock error: {}", e), "vertexaianthropic"))?;
+            .map_err(|e| ProviderError::new_err(format!("Lock error: {}", e)))?;
 
         if client_guard.is_some() {
             return Ok(client_guard.clone().unwrap());
@@ -59,9 +60,8 @@ impl VERTEXAIANTHROPICProvider {
             .clone()
             .or_else(|| std::env::var("GOOGLE_CLOUD_PROJECT").ok())
             .ok_or_else(|| {
-                ProviderError::new(
+                ProviderError::new_err(
                     "GOOGLE_CLOUD_PROJECT env var or project_id required for VertexAI",
-                    "vertexaianthropic",
                 )
             })?;
 
@@ -73,30 +73,21 @@ impl VERTEXAIANTHROPICProvider {
         Python::with_gil(|py| {
             // Import anthropic package
             let anthropic = PyModule::import(py, "anthropic").map_err(|e| {
-                ProviderError::new(
-                    format!("Failed to import anthropic: {}", e),
-                    "vertexaianthropic",
-                )
+                ProviderError::new_err(format!("Failed to import anthropic: {}", e))
             })?;
 
             // Get AsyncAnthropicVertex class
             let vertex_class = anthropic.getattr("AsyncAnthropicVertex").map_err(|e| {
-                ProviderError::new(
-                    format!("Failed to get AsyncAnthropicVertex: {}", e),
-                    "vertexaianthropic",
-                )
+                ProviderError::new_err(format!("Failed to get AsyncAnthropicVertex: {}", e))
             })?;
 
             let kwargs = PyDict::new(py);
             kwargs.set_item("project_id", proj_id.as_str()).unwrap();
             kwargs.set_item("region", region_str.as_str()).unwrap();
 
-            let client = vertex_class.call((), Some(kwargs)).map_err(|e| {
-                ProviderError::new(
-                    format!("Failed to create client: {}", e),
-                    "vertexaianthropic",
-                )
-            })?;
+            let client = vertex_class
+                .call((), Some(kwargs))
+                .map_err(|e| ProviderError::new_err(format!("Failed to create client: {}", e)))?;
 
             let client_py: Py<PyAny> = client.into();
             *client_guard = Some(client_py.clone());
@@ -110,7 +101,7 @@ impl LLMProvider for VERTEXAIANTHROPICProvider {
         &self.metadata
     }
 
-    fn init_client(&self, api_key: &str, api_base: Option<&str>) -> Result<(), ProviderError> {
+    fn init_client(&self, api_key: &str, api_base: Option<&str>) -> Result<(), PyErr> {
         // For vertexai, api_key parameter contains project_id
         *self.project_id.lock().unwrap() = Some(api_key.to_string());
         *self.region.lock().unwrap() = api_base.map(String::from);
@@ -129,11 +120,10 @@ impl LLMProvider for VERTEXAIANTHROPICProvider {
         model: &str,
         messages: &[Message],
         stream: bool,
-    ) -> Result<ChatCompletion, ProviderError> {
+    ) -> Result<ChatCompletion, PyErr> {
         if stream {
-            return Err(ProviderError::new(
+            return Err(ProviderError::new_err(
                 "Streaming not supported in sync completion. Use acompletion() instead.",
-                "vertexaianthropic",
             ));
         }
 
@@ -154,15 +144,12 @@ impl LLMProvider for VERTEXAIANTHROPICProvider {
         let py_result: Py<PyAny> = Python::with_gil(|py| {
             let client_obj = client.as_ref(py);
 
-            let messages_attr = client_obj.getattr("messages").map_err(|e| {
-                ProviderError::new(
-                    format!("Failed to get messages: {}", e),
-                    "vertexaianthropic",
-                )
-            })?;
-            let create = messages_attr.getattr("create").map_err(|e| {
-                ProviderError::new(format!("Failed to get create: {}", e), "vertexaianthropic")
-            })?;
+            let messages_attr = client_obj
+                .getattr("messages")
+                .map_err(|e| ProviderError::new_err(format!("Failed to get messages: {}", e)))?;
+            let create = messages_attr
+                .getattr("create")
+                .map_err(|e| ProviderError::new_err(format!("Failed to get create: {}", e)))?;
 
             let kwargs = PyDict::new(py);
             kwargs.set_item("model", model).unwrap();
@@ -171,9 +158,7 @@ impl LLMProvider for VERTEXAIANTHROPICProvider {
 
             create
                 .call((), Some(kwargs))
-                .map_err(|e| {
-                    ProviderError::new(format!("SDK call failed: {}", e), "vertexaianthropic")
-                })
+                .map_err(|e| ProviderError::new_err(format!("SDK call failed: {}", e)))
                 .map(|obj| obj.into())
         })?;
 
@@ -185,7 +170,7 @@ impl LLMProvider for VERTEXAIANTHROPICProvider {
         model: &str,
         messages: &[Message],
         stream: bool,
-    ) -> Result<ChatCompletion, ProviderError> {
+    ) -> Result<ChatCompletion, PyErr> {
         self.completion(model, messages, stream)
     }
 
@@ -193,10 +178,9 @@ impl LLMProvider for VERTEXAIANTHROPICProvider {
         &self,
         _input: &[String],
         _model: &str,
-    ) -> Result<crate::types::EmbeddingsResponse, ProviderError> {
-        Err(ProviderError::new(
+    ) -> Result<crate::types::EmbeddingsResponse, PyErr> {
+        Err(ProviderError::new_err(
             "vertexaianthropic does not support embeddings",
-            "vertexaianthropic",
         ))
     }
 
@@ -204,56 +188,41 @@ impl LLMProvider for VERTEXAIANTHROPICProvider {
         &self,
         input: &[String],
         model: &str,
-    ) -> Result<crate::types::EmbeddingsResponse, ProviderError> {
+    ) -> Result<crate::types::EmbeddingsResponse, PyErr> {
         self.embedding(input, model)
     }
 }
 
-fn convert_py_anthropic_response(
-    py_obj: &PyAny,
-    model: &str,
-) -> Result<ChatCompletion, ProviderError> {
+fn convert_py_anthropic_response(py_obj: &PyAny, model: &str) -> Result<ChatCompletion, PyErr> {
     let id: String = py_obj
         .get_item("id")
-        .map_err(|e| ProviderError::new(format!("Failed to get id: {}", e), "vertexaianthropic"))?
+        .map_err(|e| ProviderError::new_err(format!("Failed to get id: {}", e)))?
         .extract()
         .unwrap_or_else(|_| format!("chatcmpl-{}", uuid::Uuid::new_v4()));
 
     let model_str: String = py_obj
         .get_item("model")
-        .map_err(|e| {
-            ProviderError::new(format!("Failed to get model: {}", e), "vertexaianthropic")
-        })?
+        .map_err(|e| ProviderError::new_err(format!("Failed to get model: {}", e)))?
         .extract()
         .unwrap_or_else(|_| model.to_string());
 
-    let content_blocks = py_obj.get_item("content").map_err(|e| {
-        ProviderError::new(format!("Failed to get content: {}", e), "vertexaianthropic")
-    })?;
+    let content_blocks = py_obj
+        .get_item("content")
+        .map_err(|e| ProviderError::new_err(format!("Failed to get content: {}", e)))?;
 
     let choices: Vec<Choice> = if let Ok(list) = content_blocks.downcast::<pyo3::types::PyList>() {
         let mut result = Vec::new();
         for (i, block) in list.iter().enumerate() {
             let block_type: String = block
                 .get_item("type")
-                .map_err(|e| {
-                    ProviderError::new(
-                        format!("Failed to get block type: {}", e),
-                        "vertexaianthropic",
-                    )
-                })?
+                .map_err(|e| ProviderError::new_err(format!("Failed to get block type: {}", e)))?
                 .extract()
                 .unwrap_or_default();
 
             if block_type == "text" {
                 let text: String = block
                     .get_item("text")
-                    .map_err(|e| {
-                        ProviderError::new(
-                            format!("Failed to get text: {}", e),
-                            "vertexaianthropic",
-                        )
-                    })?
+                    .map_err(|e| ProviderError::new_err(format!("Failed to get text: {}", e)))?
                     .extract()
                     .unwrap_or_default();
 
@@ -273,34 +242,21 @@ fn convert_py_anthropic_response(
         }
         result
     } else {
-        return Err(ProviderError::new(
-            "content is not a list",
-            "vertexaianthropic",
-        ));
+        return Err(ProviderError::new_err("content is not a list"));
     };
 
-    let usage_obj = py_obj.get_item("usage").map_err(|e| {
-        ProviderError::new(format!("Failed to get usage: {}", e), "vertexaianthropic")
-    })?;
+    let usage_obj = py_obj
+        .get_item("usage")
+        .map_err(|e| ProviderError::new_err(format!("Failed to get usage: {}", e)))?;
 
     let input_tokens: u32 = usage_obj
         .get_item("input_tokens")
-        .map_err(|e| {
-            ProviderError::new(
-                format!("Failed to get input_tokens: {}", e),
-                "vertexaianthropic",
-            )
-        })?
+        .map_err(|e| ProviderError::new_err(format!("Failed to get input_tokens: {}", e)))?
         .extract()
         .unwrap_or(0);
     let output_tokens: u32 = usage_obj
         .get_item("output_tokens")
-        .map_err(|e| {
-            ProviderError::new(
-                format!("Failed to get output_tokens: {}", e),
-                "vertexaianthropic",
-            )
-        })?
+        .map_err(|e| ProviderError::new_err(format!("Failed to get output_tokens: {}", e)))?
         .extract()
         .unwrap_or(0);
 

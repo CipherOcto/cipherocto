@@ -49,6 +49,16 @@ fn quota_router(m: &PyModule) -> PyResult<()> {
     // Add version
     m.add("__version__", env!("CARGO_PKG_VERSION"))?;
 
+    // LiteLLM-compatible module-level settings
+    let py = m.py();
+    m.add("drop_params", false)?;
+    m.add("set_verbose", false)?;
+    m.add("api_key", py.None())?;
+    m.add("api_base", py.None())?;
+    m.add("num_retries", 3)?;
+    m.add("request_timeout", 30)?;
+    m.add("cache", false)?;
+
     // Register sync completion functions
     m.add_function(wrap_pyfunction!(completion::completion, m)?)?;
     m.add_function(wrap_pyfunction!(completion::text_completion, m)?)?;

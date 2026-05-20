@@ -6,6 +6,7 @@ use crate::providers::base::{LLMProvider, ProviderFeatures, ProviderMetadata};
 use crate::types::{ChatCompletion, Choice, EmbeddingsResponse, Message};
 use pyo3::prelude::*;
 use pyo3::types::PyDict;
+use pyo3::PyErr;
 use std::sync::Mutex;
 
 /// watsonx provider implementation
@@ -42,11 +43,11 @@ impl WATSONXProvider {
         }
     }
 
-    fn ensure_client(&self) -> Result<Py<PyAny>, ProviderError> {
+    fn ensure_client(&self) -> Result<Py<PyAny>, PyErr> {
         let mut client_guard = self
             .client
             .lock()
-            .map_err(|e| ProviderError::new(format!("Lock error: {}", e), "watsonx"))?;
+            .map_err(|e| ProviderError::new_err(format!("Lock error: {}", e)))?;
 
         if client_guard.is_some() {
             return Ok(client_guard.clone().unwrap());
@@ -58,29 +59,23 @@ impl WATSONXProvider {
         Python::with_gil(|py| {
             let ibm_cloud =
                 PyModule::import(py, "ibm_cloud_sdk_core.authenticators").map_err(|e| {
-                    ProviderError::new(
-                        format!("Failed to import ibm_cloud_sdk_core: {}", e),
-                        "watsonx",
-                    )
+                    ProviderError::new_err(format!("Failed to import ibm_cloud_sdk_core: {}", e))
                 })?;
 
             let authenticator = ibm_cloud.getattr("IAMAuthenticator").map_err(|e| {
-                ProviderError::new(format!("Failed to get IAMAuthenticator: {}", e), "watsonx")
+                ProviderError::new_err(format!("Failed to get IAMAuthenticator: {}", e))
             })?;
 
             let key = api_key
                 .as_ref()
-                .ok_or_else(|| ProviderError::new("No API key set", "watsonx"))?;
+                .ok_or_else(|| ProviderError::new_err("No API key set"))?;
 
             let auth = authenticator.call1((key,)).map_err(|e| {
-                ProviderError::new(format!("Failed to create authenticator: {}", e), "watsonx")
+                ProviderError::new_err(format!("Failed to create authenticator: {}", e))
             })?;
 
             let watsonx = PyModule::import(py, "watsonx.language_model").map_err(|e| {
-                ProviderError::new(
-                    format!("Failed to import watsonx.language_model: {}", e),
-                    "watsonx",
-                )
+                ProviderError::new_err(format!("Failed to import watsonx.language_model: {}", e))
             })?;
 
             let kwargs = PyDict::new(py);
@@ -96,13 +91,9 @@ impl WATSONXProvider {
 
             let client = watsonx
                 .getattr("WatsonxLLM")
-                .map_err(|e| {
-                    ProviderError::new(format!("Failed to get WatsonxLLM: {}", e), "watsonx")
-                })?
+                .map_err(|e| ProviderError::new_err(format!("Failed to get WatsonxLLM: {}", e)))?
                 .call((), Some(kwargs))
-                .map_err(|e| {
-                    ProviderError::new(format!("Failed to create client: {}", e), "watsonx")
-                })?;
+                .map_err(|e| ProviderError::new_err(format!("Failed to create client: {}", e)))?;
 
             let client_py: Py<PyAny> = client.into();
             *client_guard = Some(client_py.clone());
@@ -116,7 +107,7 @@ impl LLMProvider for WATSONXProvider {
         &self.metadata
     }
 
-    fn init_client(&self, api_key: &str, api_base: Option<&str>) -> Result<(), ProviderError> {
+    fn init_client(&self, api_key: &str, api_base: Option<&str>) -> Result<(), PyErr> {
         *self.api_key.lock().unwrap() = Some(api_key.to_string());
         *self.api_base.lock().unwrap() = api_base.map(String::from);
         Ok(())
@@ -137,11 +128,10 @@ impl LLMProvider for WATSONXProvider {
         model: &str,
         messages: &[Message],
         stream: bool,
-    ) -> Result<ChatCompletion, ProviderError> {
+    ) -> Result<ChatCompletion, PyErr> {
         if stream {
-            return Err(ProviderError::new(
+            return Err(ProviderError::new_err(
                 "Streaming not supported in sync completion. Use acompletion() instead.",
-                "watsonx",
             ));
         }
 
@@ -157,9 +147,9 @@ impl LLMProvider for WATSONXProvider {
         let py_result: Py<PyAny> = Python::with_gil(|py| {
             let client_obj = client.as_ref(py);
 
-            let generate = client_obj.getattr("generate").map_err(|e| {
-                ProviderError::new(format!("Failed to get generate: {}", e), "watsonx")
-            })?;
+            let generate = client_obj
+                .getattr("generate")
+                .map_err(|e| ProviderError::new_err(format!("Failed to get generate: {}", e)))?;
 
             let params = PyDict::new(py);
             params.set_item("prompt", &prompt).unwrap();
@@ -167,7 +157,7 @@ impl LLMProvider for WATSONXProvider {
 
             generate
                 .call1((params,))
-                .map_err(|e| ProviderError::new(format!("SDK call failed: {}", e), "watsonx"))
+                .map_err(|e| ProviderError::new_err(format!("SDK call failed: {}", e)))
                 .map(|obj| obj.into())
         })?;
 
@@ -179,45 +169,33 @@ impl LLMProvider for WATSONXProvider {
         model: &str,
         messages: &[Message],
         stream: bool,
-    ) -> Result<ChatCompletion, ProviderError> {
+    ) -> Result<ChatCompletion, PyErr> {
         self.completion(model, messages, stream)
     }
 
-    fn embedding(
-        &self,
-        _input: &[String],
-        _model: &str,
-    ) -> Result<EmbeddingsResponse, ProviderError> {
-        Err(ProviderError::new(
+    fn embedding(&self, _input: &[String], _model: &str) -> Result<EmbeddingsResponse, PyErr> {
+        Err(ProviderError::new_err(
             "watsonx does not support embeddings",
-            "watsonx",
         ))
     }
 
-    async fn aembedding(
-        &self,
-        input: &[String],
-        model: &str,
-    ) -> Result<EmbeddingsResponse, ProviderError> {
+    async fn aembedding(&self, input: &[String], model: &str) -> Result<EmbeddingsResponse, PyErr> {
         self.embedding(input, model)
     }
 }
 
-fn convert_py_watsonx_response(
-    py_obj: &PyAny,
-    model: &str,
-) -> Result<ChatCompletion, ProviderError> {
+fn convert_py_watsonx_response(py_obj: &PyAny, model: &str) -> Result<ChatCompletion, PyErr> {
     let results = py_obj
         .get_item("results")
-        .map_err(|e| ProviderError::new(format!("Failed to get results: {}", e), "watsonx"))?;
+        .map_err(|e| ProviderError::new_err(format!("Failed to get results: {}", e)))?;
 
     let first_result = results
         .get_item(0)
-        .map_err(|e| ProviderError::new(format!("Failed to get first result: {}", e), "watsonx"))?;
+        .map_err(|e| ProviderError::new_err(format!("Failed to get first result: {}", e)))?;
 
     let text: String = first_result
         .get_item("generated_text")
-        .map_err(|e| ProviderError::new(format!("Failed to get generated_text: {}", e), "watsonx"))?
+        .map_err(|e| ProviderError::new_err(format!("Failed to get generated_text: {}", e)))?
         .extract()
         .unwrap_or_default();
 

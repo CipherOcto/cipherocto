@@ -37,19 +37,19 @@ pub fn completion(
     model: String,
     messages: Vec<Message>,
     // Optional parameters (match LiteLLM)
-    _temperature: Option<f64>,
-    _max_tokens: Option<i32>,
-    _top_p: Option<f64>,
-    _n: Option<i32>,
+    temperature: Option<f64>,
+    max_tokens: Option<i32>,
+    top_p: Option<f64>,
+    n: Option<i32>,
     stream: Option<bool>,
-    _stop: Option<String>,
-    _presence_penalty: Option<f64>,
-    _frequency_penalty: Option<f64>,
-    _user: Option<String>,
-    _seed: Option<i32>,
-    _timeout: Option<f64>,
+    stop: Option<String>,
+    presence_penalty: Option<f64>,
+    frequency_penalty: Option<f64>,
+    user: Option<String>,
+    seed: Option<i32>,
+    timeout: Option<f64>,
     _extra_headers: Option<String>,
-    _base_url: Option<String>,
+    base_url: Option<String>,
     _api_version: Option<String>,
     // quota-router specific
     api_key: Option<String>,
@@ -92,7 +92,7 @@ pub fn completion(
     if let Some(key) = api_key {
         provider = provider.with_api_key(key);
     }
-    if let Some(base) = _base_url {
+    if let Some(base) = base_url {
         provider = provider.with_api_base(base);
     }
 
@@ -118,19 +118,19 @@ pub async fn acompletion(
     model: String,
     messages: Vec<Message>,
     // Optional parameters (match LiteLLM)
-    _temperature: Option<f64>,
-    _max_tokens: Option<i32>,
-    _top_p: Option<f64>,
-    _n: Option<i32>,
+    temperature: Option<f64>,
+    max_tokens: Option<i32>,
+    top_p: Option<f64>,
+    n: Option<i32>,
     stream: Option<bool>,
-    _stop: Option<String>,
-    _presence_penalty: Option<f64>,
-    _frequency_penalty: Option<f64>,
-    _user: Option<String>,
-    _seed: Option<i32>,
-    _timeout: Option<f64>,
+    stop: Option<String>,
+    presence_penalty: Option<f64>,
+    frequency_penalty: Option<f64>,
+    user: Option<String>,
+    seed: Option<i32>,
+    timeout: Option<f64>,
     _extra_headers: Option<String>,
-    _base_url: Option<String>,
+    base_url: Option<String>,
     _api_version: Option<String>,
     // quota-router specific
     api_key: Option<String>,
@@ -144,19 +144,19 @@ pub async fn acompletion(
     completion(
         model,
         messages,
-        _temperature,
-        _max_tokens,
-        _top_p,
-        _n,
+        temperature,
+        max_tokens,
+        top_p,
+        n,
         stream,
-        _stop,
-        _presence_penalty,
-        _frequency_penalty,
-        _user,
-        _seed,
-        _timeout,
+        stop,
+        presence_penalty,
+        frequency_penalty,
+        user,
+        seed,
+        timeout,
         _extra_headers,
-        _base_url,
+        base_url,
         _api_version,
         api_key,
         _service_tier,
@@ -691,14 +691,14 @@ pub async fn abatch_results(
 pub fn text_completion(
     model: String,
     prompt: String,
-    _frequency_penalty: Option<f64>,
+    frequency_penalty: Option<f64>,
     _logprobs: Option<i32>,
-    _max_tokens: Option<i32>,
-    _presence_penalty: Option<f64>,
-    _stop: Option<Vec<String>>,
+    max_tokens: Option<i32>,
+    presence_penalty: Option<f64>,
+    stop: Option<Vec<String>>,
     _stream: Option<bool>,
-    _temperature: Option<f64>,
-    _top_p: Option<f64>,
+    temperature: Option<f64>,
+    top_p: Option<f64>,
     api_key: Option<String>,
 ) -> PyResult<Py<PyAny>> {
     // Wrap prompt as a user message and delegate to completion()
@@ -710,14 +710,14 @@ pub fn text_completion(
     completion(
         model,
         messages,
-        _temperature,
-        _max_tokens,
-        _top_p,
+        temperature,
+        max_tokens,
+        top_p,
         None, // n
         _stream,
-        None, // stop
-        _presence_penalty,
-        _frequency_penalty,
+        stop.and_then(|v| if v.is_empty() { None } else { Some(v.join(",")) }),
+        presence_penalty,
+        frequency_penalty,
         None, // user
         None, // seed
         None, // timeout
@@ -739,15 +739,15 @@ pub fn text_completion(
 pub async fn atext_completion(
     model: String,
     prompt: String,
-    _frequency_penalty: Option<f64>,
+    frequency_penalty: Option<f64>,
     _logprobs: Option<i32>,
-    _max_tokens: Option<i32>,
-    _presence_penalty: Option<f64>,
-    _stop: Option<Vec<String>>,
+    max_tokens: Option<i32>,
+    presence_penalty: Option<f64>,
+    stop: Option<Vec<String>>,
     _stream: Option<bool>,
-    _temperature: Option<f64>,
-    _top_p: Option<f64>,
-    _timeout: Option<f64>,
+    temperature: Option<f64>,
+    top_p: Option<f64>,
+    timeout: Option<f64>,
     api_key: Option<String>,
 ) -> PyResult<Py<PyAny>> {
     // Wrap prompt as a user message and delegate to acompletion()
@@ -759,17 +759,17 @@ pub async fn atext_completion(
     acompletion(
         model,
         messages,
-        _temperature,
-        _max_tokens,
-        _top_p,
+        temperature,
+        max_tokens,
+        top_p,
         None, // n
         _stream,
-        None, // stop
-        _presence_penalty,
-        _frequency_penalty,
+        stop.and_then(|v| if v.is_empty() { None } else { Some(v.join(",")) }),
+        presence_penalty,
+        frequency_penalty,
         None,     // user
         None,     // seed
-        _timeout, // timeout
+        timeout,  // timeout
         None,     // extra_headers
         None,     // base_url
         None,     // api_version

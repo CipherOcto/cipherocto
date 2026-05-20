@@ -27,7 +27,7 @@ def _completion(**kwargs):
     """Helper to call completion with default endpoint."""
     import quota_router as qr
     kwargs.setdefault("api_key", DUMMY_KEY)
-    kwargs.setdefault("_base_url", TEST_API_BASE)
+    kwargs.setdefault("base_url", TEST_API_BASE)
     return qr.completion(**kwargs)
 
 
@@ -35,7 +35,7 @@ def _acompletion(**kwargs):
     """Helper to call acompletion with default endpoint."""
     import quota_router as qr
     kwargs.setdefault("api_key", DUMMY_KEY)
-    kwargs.setdefault("_base_url", TEST_API_BASE)
+    kwargs.setdefault("base_url", TEST_API_BASE)
     return qr.acompletion(**kwargs)
 
 
@@ -283,7 +283,7 @@ class TestLiteLLMCompat:
             model=TEST_MODEL,
             messages=[{"role": "user", "content": "Say 'yes'."}],
             api_key=DUMMY_KEY,
-            _base_url=TEST_API_BASE,
+            base_url=TEST_API_BASE,
         )
 
         assert "choices" in response

@@ -6,6 +6,7 @@ use crate::providers::base::{LLMProvider, ProviderFeatures, ProviderMetadata};
 use crate::types::{ChatCompletion, Choice, EmbeddingsResponse, Message};
 use pyo3::prelude::*;
 use pyo3::types::PyDict;
+use pyo3::PyErr;
 use std::sync::Mutex;
 
 /// platform provider implementation
@@ -43,11 +44,11 @@ impl PLATFORMProvider {
         }
     }
 
-    fn ensure_platform_client(&self) -> Result<Py<PyAny>, ProviderError> {
+    fn ensure_platform_client(&self) -> Result<Py<PyAny>, PyErr> {
         let mut client_guard = self
             .platform_client
             .lock()
-            .map_err(|e| ProviderError::new(format!("Lock error: {}", e), "platform"))?;
+            .map_err(|e| ProviderError::new_err(format!("Lock error: {}", e)))?;
 
         if client_guard.is_some() {
             return Ok(client_guard.clone().unwrap());
@@ -56,19 +57,16 @@ impl PLATFORMProvider {
         Python::with_gil(|py| {
             let platform_client_module =
                 PyModule::import(py, "any_llm_platform_client").map_err(|e| {
-                    ProviderError::new(
-                        format!("Failed to import any_llm_platform_client: {}", e),
-                        "platform",
-                    )
+                    ProviderError::new_err(format!(
+                        "Failed to import any_llm_platform_client: {}",
+                        e
+                    ))
                 })?;
 
             let client_class = platform_client_module
                 .getattr("AnyLLMPlatformClient")
                 .map_err(|e| {
-                    ProviderError::new(
-                        format!("Failed to get AnyLLMPlatformClient: {}", e),
-                        "platform",
-                    )
+                    ProviderError::new_err(format!("Failed to get AnyLLMPlatformClient: {}", e))
                 })?;
 
             // Get platform URL from env or use default
@@ -84,10 +82,7 @@ impl PLATFORMProvider {
                 .unwrap();
 
             let client = client_class.call((), Some(kwargs)).map_err(|e| {
-                ProviderError::new(
-                    format!("Failed to create platform client: {}", e),
-                    "platform",
-                )
+                ProviderError::new_err(format!("Failed to create platform client: {}", e))
             })?;
 
             let client_py: Py<PyAny> = client.into();
@@ -96,20 +91,20 @@ impl PLATFORMProvider {
         })
     }
 
-    fn ensure_wrapped_client(&self, provider_name: &str) -> Result<Py<PyAny>, ProviderError> {
+    fn ensure_wrapped_client(&self, provider_name: &str) -> Result<Py<PyAny>, PyErr> {
         let mut client_guard = self
             .client
             .lock()
-            .map_err(|e| ProviderError::new(format!("Lock error: {}", e), "platform"))?;
+            .map_err(|e| ProviderError::new_err(format!("Lock error: {}", e)))?;
 
         if client_guard.is_some() {
             return Ok(client_guard.clone().unwrap());
         }
 
         let any_llm_key = self.any_llm_key.lock().unwrap();
-        let key = any_llm_key.as_ref().ok_or_else(|| {
-            ProviderError::new("ANY_LLM_KEY required for platform provider", "platform")
-        })?;
+        let key = any_llm_key
+            .as_ref()
+            .ok_or_else(|| ProviderError::new_err("ANY_LLM_KEY required for platform provider"))?;
 
         let platform_client = self.ensure_platform_client()?;
 
@@ -119,10 +114,10 @@ impl PLATFORMProvider {
             let method = client_obj
                 .getattr("aget_decrypted_provider_key")
                 .map_err(|e| {
-                    ProviderError::new(
-                        format!("Failed to get aget_decrypted_provider_key: {}", e),
-                        "platform",
-                    )
+                    ProviderError::new_err(format!(
+                        "Failed to get aget_decrypted_provider_key: {}",
+                        e
+                    ))
                 })?;
 
             // Call async method - for now we use sync wrapper pattern
@@ -133,32 +128,26 @@ impl PLATFORMProvider {
 
             // Use sync equivalent or blocking call
             let pyo3_coroutine = method.call((), Some(kwargs)).map_err(|e| {
-                ProviderError::new(
-                    format!("Failed to call aget_decrypted_provider_key: {}", e),
-                    "platform",
-                )
+                ProviderError::new_err(format!("Failed to call aget_decrypted_provider_key: {}", e))
             })?;
 
-            Ok(pyo3_coroutine.into())
+            Ok::<Py<PyAny>, PyErr>(pyo3_coroutine.into())
         })?;
 
         // For simplicity, create an OpenAI client with the retrieved key
         // In real implementation, would create the appropriate provider type
         Python::with_gil(|py| {
-            let openai = PyModule::import(py, "openai").map_err(|e| {
-                ProviderError::new(format!("Failed to import openai: {}", e), "platform")
-            })?;
+            let openai = PyModule::import(py, "openai")
+                .map_err(|e| ProviderError::new_err(format!("Failed to import openai: {}", e)))?;
 
-            let openai_class = openai.getattr("OpenAI").map_err(|e| {
-                ProviderError::new(format!("Failed to get OpenAI: {}", e), "platform")
-            })?;
+            let openai_class = openai
+                .getattr("OpenAI")
+                .map_err(|e| ProviderError::new_err(format!("Failed to get OpenAI: {}", e)))?;
 
             let api_key: String = provider_key_result
                 .as_ref(py)
                 .get_item("api_key")
-                .map_err(|e| {
-                    ProviderError::new(format!("Failed to get api_key: {}", e), "platform")
-                })?
+                .map_err(|e| ProviderError::new_err(format!("Failed to get api_key: {}", e)))?
                 .extract()
                 .unwrap_or_default();
 
@@ -170,9 +159,9 @@ impl PLATFORMProvider {
                 kwargs.set_item("base_url", base.as_str()).unwrap();
             }
 
-            let client = openai_class.call((), Some(kwargs)).map_err(|e| {
-                ProviderError::new(format!("Failed to create client: {}", e), "platform")
-            })?;
+            let client = openai_class
+                .call((), Some(kwargs))
+                .map_err(|e| ProviderError::new_err(format!("Failed to create client: {}", e)))?;
 
             let client_py: Py<PyAny> = client.into();
             *client_guard = Some(client_py.clone());
@@ -186,7 +175,7 @@ impl LLMProvider for PLATFORMProvider {
         &self.metadata
     }
 
-    fn init_client(&self, api_key: &str, api_base: Option<&str>) -> Result<(), ProviderError> {
+    fn init_client(&self, api_key: &str, api_base: Option<&str>) -> Result<(), PyErr> {
         *self.any_llm_key.lock().unwrap() = Some(api_key.to_string());
         *self.api_base.lock().unwrap() = api_base.map(String::from);
         Ok(())
@@ -207,11 +196,10 @@ impl LLMProvider for PLATFORMProvider {
         model: &str,
         messages: &[Message],
         stream: bool,
-    ) -> Result<ChatCompletion, ProviderError> {
+    ) -> Result<ChatCompletion, PyErr> {
         if stream {
-            return Err(ProviderError::new(
+            return Err(ProviderError::new_err(
                 "Streaming not supported in sync completion. Use acompletion() instead.",
-                "platform",
             ));
         }
 
@@ -234,15 +222,15 @@ impl LLMProvider for PLATFORMProvider {
         let py_result: Py<PyAny> = Python::with_gil(|py| {
             let client_obj = client.as_ref(py);
 
-            let chat = client_obj.getattr("chat").map_err(|e| {
-                ProviderError::new(format!("Failed to get chat: {}", e), "platform")
-            })?;
-            let completions = chat.getattr("completions").map_err(|e| {
-                ProviderError::new(format!("Failed to get completions: {}", e), "platform")
-            })?;
-            let create = completions.getattr("create").map_err(|e| {
-                ProviderError::new(format!("Failed to get create: {}", e), "platform")
-            })?;
+            let chat = client_obj
+                .getattr("chat")
+                .map_err(|e| ProviderError::new_err(format!("Failed to get chat: {}", e)))?;
+            let completions = chat
+                .getattr("completions")
+                .map_err(|e| ProviderError::new_err(format!("Failed to get completions: {}", e)))?;
+            let create = completions
+                .getattr("create")
+                .map_err(|e| ProviderError::new_err(format!("Failed to get create: {}", e)))?;
 
             let kwargs = PyDict::new(py);
             kwargs.set_item("model", model).unwrap();
@@ -250,7 +238,7 @@ impl LLMProvider for PLATFORMProvider {
 
             create
                 .call((), Some(kwargs))
-                .map_err(|e| ProviderError::new(format!("SDK call failed: {}", e), "platform"))
+                .map_err(|e| ProviderError::new_err(format!("SDK call failed: {}", e)))
                 .map(|obj| obj.into())
         })?;
 
@@ -262,26 +250,22 @@ impl LLMProvider for PLATFORMProvider {
         model: &str,
         messages: &[Message],
         stream: bool,
-    ) -> Result<ChatCompletion, ProviderError> {
+    ) -> Result<ChatCompletion, PyErr> {
         self.completion(model, messages, stream)
     }
 
-    fn embedding(
-        &self,
-        input: &[String],
-        model: &str,
-    ) -> Result<EmbeddingsResponse, ProviderError> {
+    fn embedding(&self, input: &[String], model: &str) -> Result<EmbeddingsResponse, PyErr> {
         let client = self.ensure_wrapped_client("openai")?;
 
         let py_result: Py<PyAny> = Python::with_gil(|py| {
             let client_obj = client.as_ref(py);
 
-            let embed = client_obj.getattr("embeddings").map_err(|e| {
-                ProviderError::new(format!("Failed to get embeddings: {}", e), "platform")
-            })?;
-            let create = embed.getattr("create").map_err(|e| {
-                ProviderError::new(format!("Failed to get create: {}", e), "platform")
-            })?;
+            let embed = client_obj
+                .getattr("embeddings")
+                .map_err(|e| ProviderError::new_err(format!("Failed to get embeddings: {}", e)))?;
+            let create = embed
+                .getattr("create")
+                .map_err(|e| ProviderError::new_err(format!("Failed to get create: {}", e)))?;
 
             let kwargs = PyDict::new(py);
             kwargs.set_item("input", input).unwrap();
@@ -289,41 +273,34 @@ impl LLMProvider for PLATFORMProvider {
 
             create
                 .call((), Some(kwargs))
-                .map_err(|e| ProviderError::new(format!("SDK call failed: {}", e), "platform"))
+                .map_err(|e| ProviderError::new_err(format!("SDK call failed: {}", e)))
                 .map(|obj| obj.into())
         })?;
 
         Python::with_gil(|py| convert_py_embedding_response(py_result.as_ref(py), model))
     }
 
-    async fn aembedding(
-        &self,
-        input: &[String],
-        model: &str,
-    ) -> Result<EmbeddingsResponse, ProviderError> {
+    async fn aembedding(&self, input: &[String], model: &str) -> Result<EmbeddingsResponse, PyErr> {
         self.embedding(input, model)
     }
 }
 
-fn convert_py_openai_response(
-    py_obj: &PyAny,
-    model: &str,
-) -> Result<ChatCompletion, ProviderError> {
+fn convert_py_openai_response(py_obj: &PyAny, model: &str) -> Result<ChatCompletion, PyErr> {
     let id: String = py_obj
         .get_item("id")
-        .map_err(|e| ProviderError::new(format!("Failed to get id: {}", e), "platform"))?
+        .map_err(|e| ProviderError::new_err(format!("Failed to get id: {}", e)))?
         .extract()
         .unwrap_or_else(|_| format!("chatcmpl-{}", uuid::Uuid::new_v4()));
 
     let model_str: String = py_obj
         .get_item("model")
-        .map_err(|e| ProviderError::new(format!("Failed to get model: {}", e), "platform"))?
+        .map_err(|e| ProviderError::new_err(format!("Failed to get model: {}", e)))?
         .extract()
         .unwrap_or_else(|_| model.to_string());
 
     let py_choices = py_obj
         .get_item("choices")
-        .map_err(|e| ProviderError::new(format!("Failed to get choices: {}", e), "platform"))?;
+        .map_err(|e| ProviderError::new_err(format!("Failed to get choices: {}", e)))?;
 
     let choices: Vec<Choice> = if let Ok(list) = py_choices.downcast::<pyo3::types::PyList>() {
         let mut result = Vec::new();
@@ -331,27 +308,23 @@ fn convert_py_openai_response(
             let choice_obj = list.get_item(i).unwrap();
             let index = i as u32;
 
-            let message_obj = choice_obj.get_item("message").map_err(|e| {
-                ProviderError::new(format!("Failed to get message: {}", e), "platform")
-            })?;
+            let message_obj = choice_obj
+                .get_item("message")
+                .map_err(|e| ProviderError::new_err(format!("Failed to get message: {}", e)))?;
             let role: String = message_obj
                 .get_item("role")
-                .map_err(|e| ProviderError::new(format!("Failed to get role: {}", e), "platform"))?
+                .map_err(|e| ProviderError::new_err(format!("Failed to get role: {}", e)))?
                 .extract()
                 .unwrap_or_else(|_| "assistant".to_string());
             let content: String = message_obj
                 .get_item("content")
-                .map_err(|e| {
-                    ProviderError::new(format!("Failed to get content: {}", e), "platform")
-                })?
+                .map_err(|e| ProviderError::new_err(format!("Failed to get content: {}", e)))?
                 .extract()
                 .unwrap_or_default();
 
             let finish_reason: String = choice_obj
                 .get_item("finish_reason")
-                .map_err(|e| {
-                    ProviderError::new(format!("Failed to get finish_reason: {}", e), "platform")
-                })?
+                .map_err(|e| ProviderError::new_err(format!("Failed to get finish_reason: {}", e)))?
                 .extract()
                 .unwrap_or_else(|_| "stop".to_string());
 
@@ -363,31 +336,26 @@ fn convert_py_openai_response(
         }
         result
     } else {
-        return Err(ProviderError::new("choices is not a list", "platform"));
+        return Err(ProviderError::new_err("choices is not a list"));
     };
 
     let usage_obj = py_obj
         .get_item("usage")
-        .map_err(|e| ProviderError::new(format!("Failed to get usage: {}", e), "platform"))?;
+        .map_err(|e| ProviderError::new_err(format!("Failed to get usage: {}", e)))?;
 
     let prompt_tokens: u32 = usage_obj
         .get_item("prompt_tokens")
-        .map_err(|e| ProviderError::new(format!("Failed to get prompt_tokens: {}", e), "platform"))?
+        .map_err(|e| ProviderError::new_err(format!("Failed to get prompt_tokens: {}", e)))?
         .extract()
         .unwrap_or(0);
     let completion_tokens: u32 = usage_obj
         .get_item("completion_tokens")
-        .map_err(|e| {
-            ProviderError::new(
-                format!("Failed to get completion_tokens: {}", e),
-                "platform",
-            )
-        })?
+        .map_err(|e| ProviderError::new_err(format!("Failed to get completion_tokens: {}", e)))?
         .extract()
         .unwrap_or(0);
     let total_tokens: u32 = usage_obj
         .get_item("total_tokens")
-        .map_err(|e| ProviderError::new(format!("Failed to get total_tokens: {}", e), "platform"))?
+        .map_err(|e| ProviderError::new_err(format!("Failed to get total_tokens: {}", e)))?
         .extract()
         .unwrap_or(0);
 
@@ -404,22 +372,19 @@ fn convert_py_openai_response(
     })
 }
 
-fn convert_py_embedding_response(
-    py_obj: &PyAny,
-    model: &str,
-) -> Result<EmbeddingsResponse, ProviderError> {
+fn convert_py_embedding_response(py_obj: &PyAny, model: &str) -> Result<EmbeddingsResponse, PyErr> {
     let data = py_obj
         .get_item("data")
-        .map_err(|e| ProviderError::new(format!("Failed to get data: {}", e), "platform"))?
+        .map_err(|e| ProviderError::new_err(format!("Failed to get data: {}", e)))?
         .downcast::<pyo3::types::PyList>()
-        .map_err(|_| ProviderError::new("data is not a list", "platform"))?;
+        .map_err(|_| ProviderError::new_err("data is not a list"))?;
 
     let mut embeddings = Vec::new();
     for i in 0..data.len() {
         let item = data.get_item(i).unwrap();
         let embedding_vec = item
             .get_item("embedding")
-            .map_err(|e| ProviderError::new(format!("Failed to get embedding: {}", e), "platform"))?
+            .map_err(|e| ProviderError::new_err(format!("Failed to get embedding: {}", e)))?
             .extract::<Vec<f32>>()
             .unwrap_or_default();
         embeddings.push(crate::types::Embedding::new(i as u32, embedding_vec));

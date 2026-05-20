@@ -14,7 +14,7 @@ __version__ = "0.1.0"
 
 # Import from native extension (installed by maturin)
 try:
-    from quota_router_native import (
+    from .quota_router import (
         # Core completion functions
         completion,
         acompletion,

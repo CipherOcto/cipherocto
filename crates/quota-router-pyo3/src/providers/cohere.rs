@@ -6,6 +6,7 @@ use crate::providers::base::{LLMProvider, ProviderFeatures, ProviderMetadata};
 use crate::types::{ChatCompletion, Choice, Embedding, EmbeddingsResponse, Message};
 use pyo3::prelude::*;
 use pyo3::types::PyDict;
+use pyo3::PyErr;
 use std::sync::Mutex;
 
 /// cohere provider implementation
@@ -41,11 +42,11 @@ impl COHEREProvider {
         }
     }
 
-    fn ensure_client(&self) -> Result<Py<PyAny>, ProviderError> {
+    fn ensure_client(&self) -> Result<Py<PyAny>, PyErr> {
         let mut client_guard = self
             .client
             .lock()
-            .map_err(|e| ProviderError::new(format!("Lock error: {}", e), "cohere"))?;
+            .map_err(|e| ProviderError::new_err(format!("Lock error: {}", e)))?;
 
         if client_guard.is_some() {
             return Ok(client_guard.clone().unwrap());
@@ -54,24 +55,23 @@ impl COHEREProvider {
         let api_key = self.api_key.lock().unwrap();
 
         Python::with_gil(|py| {
-            let cohere = PyModule::import(py, "cohere").map_err(|e| {
-                ProviderError::new(format!("Failed to import cohere: {}", e), "cohere")
-            })?;
+            let cohere = PyModule::import(py, "cohere")
+                .map_err(|e| ProviderError::new_err(format!("Failed to import cohere: {}", e)))?;
 
-            let cohere_class = cohere.getattr("Client").map_err(|e| {
-                ProviderError::new(format!("Failed to get Client: {}", e), "cohere")
-            })?;
+            let cohere_class = cohere
+                .getattr("Client")
+                .map_err(|e| ProviderError::new_err(format!("Failed to get Client: {}", e)))?;
 
             let key = api_key
                 .as_ref()
-                .ok_or_else(|| ProviderError::new("No API key set", "cohere"))?;
+                .ok_or_else(|| ProviderError::new_err("No API key set"))?;
 
             let kwargs = PyDict::new(py);
             kwargs.set_item("api_key", key).unwrap();
 
-            let client = cohere_class.call((), Some(kwargs)).map_err(|e| {
-                ProviderError::new(format!("Failed to create client: {}", e), "cohere")
-            })?;
+            let client = cohere_class
+                .call((), Some(kwargs))
+                .map_err(|e| ProviderError::new_err(format!("Failed to create client: {}", e)))?;
 
             let client_py: Py<PyAny> = client.into();
             *client_guard = Some(client_py.clone());
@@ -85,7 +85,7 @@ impl LLMProvider for COHEREProvider {
         &self.metadata
     }
 
-    fn init_client(&self, api_key: &str, api_base: Option<&str>) -> Result<(), ProviderError> {
+    fn init_client(&self, api_key: &str, api_base: Option<&str>) -> Result<(), PyErr> {
         *self.api_key.lock().unwrap() = Some(api_key.to_string());
         *self.api_base.lock().unwrap() = api_base.map(String::from);
         Ok(())
@@ -103,11 +103,10 @@ impl LLMProvider for COHEREProvider {
         model: &str,
         messages: &[Message],
         stream: bool,
-    ) -> Result<ChatCompletion, ProviderError> {
+    ) -> Result<ChatCompletion, PyErr> {
         if stream {
-            return Err(ProviderError::new(
+            return Err(ProviderError::new_err(
                 "Streaming not supported in sync completion. Use acompletion() instead.",
-                "cohere",
             ));
         }
 
@@ -130,14 +129,14 @@ impl LLMProvider for COHEREProvider {
 
             let chat = client_obj
                 .getattr("chat")
-                .map_err(|e| ProviderError::new(format!("Failed to get chat: {}", e), "cohere"))?;
+                .map_err(|e| ProviderError::new_err(format!("Failed to get chat: {}", e)))?;
 
             let kwargs = PyDict::new(py);
             kwargs.set_item("model", model).unwrap();
             kwargs.set_item("messages", &py_messages).unwrap();
 
             chat.call((), Some(kwargs))
-                .map_err(|e| ProviderError::new(format!("SDK call failed: {}", e), "cohere"))
+                .map_err(|e| ProviderError::new_err(format!("SDK call failed: {}", e)))
                 .map(|obj| obj.into())
         })?;
 
@@ -149,15 +148,11 @@ impl LLMProvider for COHEREProvider {
         model: &str,
         messages: &[Message],
         stream: bool,
-    ) -> Result<ChatCompletion, ProviderError> {
+    ) -> Result<ChatCompletion, PyErr> {
         self.completion(model, messages, stream)
     }
 
-    fn embedding(
-        &self,
-        input: &[String],
-        _model: &str,
-    ) -> Result<EmbeddingsResponse, ProviderError> {
+    fn embedding(&self, input: &[String], _model: &str) -> Result<EmbeddingsResponse, PyErr> {
         let client = self.ensure_client()?;
 
         let py_result: Py<PyAny> = Python::with_gil(|py| {
@@ -165,54 +160,47 @@ impl LLMProvider for COHEREProvider {
 
             let embed = client_obj
                 .getattr("embed")
-                .map_err(|e| ProviderError::new(format!("Failed to get embed: {}", e), "cohere"))?;
+                .map_err(|e| ProviderError::new_err(format!("Failed to get embed: {}", e)))?;
 
             let kwargs = PyDict::new(py);
             kwargs.set_item("texts", input).unwrap();
 
             embed
                 .call((), Some(kwargs))
-                .map_err(|e| ProviderError::new(format!("SDK call failed: {}", e), "cohere"))
+                .map_err(|e| ProviderError::new_err(format!("SDK call failed: {}", e)))
                 .map(|obj| obj.into())
         })?;
 
         Python::with_gil(|py| convert_py_cohere_embedding_response(py_result.as_ref(py)))
     }
 
-    async fn aembedding(
-        &self,
-        input: &[String],
-        model: &str,
-    ) -> Result<EmbeddingsResponse, ProviderError> {
+    async fn aembedding(&self, input: &[String], model: &str) -> Result<EmbeddingsResponse, PyErr> {
         self.embedding(input, model)
     }
 }
 
-fn convert_py_cohere_response(
-    py_obj: &PyAny,
-    model: &str,
-) -> Result<ChatCompletion, ProviderError> {
+fn convert_py_cohere_response(py_obj: &PyAny, model: &str) -> Result<ChatCompletion, PyErr> {
     let id: String = py_obj
         .get_item("id")
-        .map_err(|e| ProviderError::new(format!("Failed to get id: {}", e), "cohere"))?
+        .map_err(|e| ProviderError::new_err(format!("Failed to get id: {}", e)))?
         .extract()
         .unwrap_or_else(|_| format!("chatcmpl-{}", uuid::Uuid::new_v4()));
 
     let model_str: String = py_obj
         .get_item("model")
-        .map_err(|e| ProviderError::new(format!("Failed to get model: {}", e), "cohere"))?
+        .map_err(|e| ProviderError::new_err(format!("Failed to get model: {}", e)))?
         .extract()
         .unwrap_or_else(|_| model.to_string());
 
     let text: String = py_obj
         .get_item("text")
-        .map_err(|e| ProviderError::new(format!("Failed to get text: {}", e), "cohere"))?
+        .map_err(|e| ProviderError::new_err(format!("Failed to get text: {}", e)))?
         .extract()
         .unwrap_or_default();
 
     let finish_reason: String = py_obj
         .get_item("finish_reason")
-        .map_err(|e| ProviderError::new(format!("Failed to get finish_reason: {}", e), "cohere"))?
+        .map_err(|e| ProviderError::new_err(format!("Failed to get finish_reason: {}", e)))?
         .extract()
         .unwrap_or_else(|_| "stop".to_string());
 
@@ -250,12 +238,10 @@ fn convert_py_cohere_response(
     })
 }
 
-fn convert_py_cohere_embedding_response(
-    py_obj: &PyAny,
-) -> Result<EmbeddingsResponse, ProviderError> {
+fn convert_py_cohere_embedding_response(py_obj: &PyAny) -> Result<EmbeddingsResponse, PyErr> {
     let embeddings: Vec<Embedding> = py_obj
         .get_item("embeddings")
-        .map_err(|e| ProviderError::new(format!("Failed to get embeddings: {}", e), "cohere"))?
+        .map_err(|e| ProviderError::new_err(format!("Failed to get embeddings: {}", e)))?
         .extract::<Vec<Vec<f32>>>()
         .unwrap_or_default()
         .into_iter()

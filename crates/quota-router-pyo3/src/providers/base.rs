@@ -1,8 +1,8 @@
 // Base provider trait and types for quota-router-pyo3
 // Inspired by any-llm's AnyLLM abstract base class
 
-use crate::exceptions::ProviderError;
 use crate::types::{ChatCompletion, Message};
+use pyo3::PyErr;
 
 /// Provider feature flags
 #[derive(Debug, Clone)]
@@ -36,7 +36,7 @@ pub trait LLMProvider: Send + Sync {
     fn metadata(&self) -> &ProviderMetadata;
 
     /// Initialize the provider client with API key and optional base URL
-    fn init_client(&self, api_key: &str, api_base: Option<&str>) -> Result<(), ProviderError>;
+    fn init_client(&self, api_key: &str, api_base: Option<&str>) -> Result<(), PyErr>;
 
     /// Check if required packages are available
     fn check_packages(&self) -> Result<(), String>;
@@ -47,7 +47,7 @@ pub trait LLMProvider: Send + Sync {
         model: &str,
         messages: &[Message],
         stream: bool,
-    ) -> Result<ChatCompletion, ProviderError>;
+    ) -> Result<ChatCompletion, PyErr>;
 
     /// Make an async completion call
     async fn acompletion(
@@ -55,21 +55,21 @@ pub trait LLMProvider: Send + Sync {
         model: &str,
         messages: &[Message],
         stream: bool,
-    ) -> Result<ChatCompletion, ProviderError>;
+    ) -> Result<ChatCompletion, PyErr>;
 
     /// Make an embedding call
     fn embedding(
         &self,
         input: &[String],
         model: &str,
-    ) -> Result<crate::types::EmbeddingsResponse, ProviderError>;
+    ) -> Result<crate::types::EmbeddingsResponse, PyErr>;
 
     /// Make an async embedding call
     async fn aembedding(
         &self,
         input: &[String],
         model: &str,
-    ) -> Result<crate::types::EmbeddingsResponse, ProviderError>;
+    ) -> Result<crate::types::EmbeddingsResponse, PyErr>;
 }
 
 /// Static provider info - shared across all instances of a provider

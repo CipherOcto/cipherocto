@@ -519,7 +519,7 @@ graph TD
     subgraph Reliability["Reliability Layer"]
         RL1[fallback.rs<br/>Fallback & Health]
         RL2[rate_limit.rs<br/>Rate Limiting]
-        RL3[retry.rs<br/>Retry Logic]
+        RL3[key_rate_limiter.rs<br/>Key Rate Limiting]
     end
 
     subgraph Enterprise["Enterprise Features"]

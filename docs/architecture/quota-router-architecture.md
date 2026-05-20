@@ -863,110 +863,98 @@ sequenceDiagram
 
 ---
 
-## 10. Deployment Modes
+## 10. Deployment and Mode Selection
 
-### 10.1 LiteLLM Mode (HTTP Proxy)
+**Important:** Deployment (binary vs pip) and runtime mode (litellm vs any-llm) are
+**orthogonal**. Both deployments expose BOTH interfaces (HTTP proxy + Python SDK).
+The mode selects the **provider integration strategy** only.
+
+### 10.1 Deployment Targets
 
 ```mermaid
 graph TB
-    subgraph Deployment["litellm-mode Deployment"]
+    subgraph Binary["Binary Deployment<br/>(quota-router-gateway)"]
         direction TB
-        S1[quota-router server<br/>Binary]
-        S2[reqwest HTTP Client<br/>Connection Pool]
-        S3[12 native_http Providers]
+        B1[HTTP Proxy<br/>Primary Interface]
+        B2[Python SDK<br/>Also Available]
+        B3[Default Mode: litellm<br/>(reqwest)]
     end
 
-    subgraph Clients["Clients"]
-        C1[HTTP Clients]
-        C2[curl/Postman]
-        C3[SDK HTTP Calls]
+    subgraph Pip["Pip Deployment<br/>(pip install quota-router)"]
+        direction TB
+        P1[Python SDK<br/>Primary Interface]
+        P2[HTTP Proxy<br/>Also Available]
+        P3[Default Mode: any-llm<br/>(PyO3)]
     end
 
-    subgraph Providers["Provider APIs"]
-        P1[OpenAI]
-        P2[Anthropic]
-        P3[Others]
+    subgraph Shared["Shared Core<br/>(quota-router-core)"]
+        S1[Mode Router]
+        S2[All Enterprise Features]
+        S3[Both Provider Backends]
     end
 
-    Clients -->|HTTP| S1
-    S1 --> S2
-    S2 --> S3
-    S3 -->|reqwest| Providers
+    Binary --> Shared
+    Pip --> Shared
 
-    style Deployment fill:#e8f5e9
-    style Clients fill:#e3f2fd
-    style Providers fill:#fce4ec
+    style Binary fill:#e8f5e9
+    style Pip fill:#e3f2fd
+    style Shared fill:#fff3e0
 ```
 
-### 10.2 Any-LLM Mode (Python SDK)
+### 10.2 Runtime Mode Selection
+
+Both deployments support switching modes at runtime. The mode only controls
+which provider backend is used (reqwest vs PyO3), NOT which interface is available.
 
 ```mermaid
 graph TB
-    subgraph Deployment["any-llm-mode Deployment"]
-        direction TB
-        S1[Python Application]
-        S2[quota_router PyO3 Module]
-        S3[40+ py_bridge Providers]
+    subgraph Input["Any Interface"]
+        I1[HTTP Proxy Request]
+        I2[Python SDK Call]
     end
 
-    subgraph PythonSDKs["Python SDKs"]
-        PS1[openai SDK]
-        PS2[anthropic SDK]
-        PS3[google-generativeai]
-        PS4[cohere SDK]
-        PS5[40+ more]
+    subgraph Mode["Mode Selection"]
+        M1{Runtime Mode?}
     end
 
-    subgraph Providers["Provider APIs"]
-        P1[OpenAI]
-        P2[Anthropic]
-        P3[Google]
-        P4[Others]
+    subgraph LiteLLM["litellm (reqwest)"]
+        L1[HttpProviderFactory]
+        L2[Direct REST API]
     end
 
-    S1 --> S2
-    S2 --> S3
-    S3 --> PythonSDKs
-    PythonSDKs --> Providers
-
-    style Deployment fill:#e3f2fd
-    style PythonSDKs fill:#fff3e0
-    style Providers fill:#fce4ec
-```
-
-### 10.3 Full Mode (Both)
-
-```mermaid
-graph TB
-    subgraph Full["Full Mode Deployment"]
-        direction TB
-        S1[quota-router server<br/>HTTP Proxy]
-        S2[Python SDK<br/>PyO3 Binding]
-        SM[Mode Router<br/>mode.rs]
-    end
-
-    subgraph Backends["Backend Selection"]
-        B1{Mode?}
-        B2[native_http<br/>reqwest]
-        B3[py_bridge<br/>Python SDKs]
+    subgraph AnyLLM["any-llm (PyO3)"]
+        A1[PyBridgeProviderFactory]
+        A2[Official Python SDKs]
     end
 
     subgraph Providers["Provider APIs"]
         P1[40+ LLM Providers]
     end
 
-    S1 --> SM
-    S2 --> SM
-    SM --> B1
-    B1 -->|litellm| B2
-    B1 -->|any-llm| B3
-    B2 --> P1
-    B3 --> P1
+    Input --> Mode
+    M1 -->|litellm| LiteLLM
+    M1 -->|any-llm| AnyLLM
+    LiteLLM --> Providers
+    AnyLLM --> Providers
 
-    style Full fill:#fff3e0
-    style Backends fill:#e8f5e9
-    style Providers fill:#fce4ec
+    style Input fill:#e3f2fd
+    style Mode fill:#fff3e0
+    style LiteLLM fill:#e8f5e9
+    style AnyLLM fill:#fce4ec
+    style Providers fill:#f3e5f5
 ```
+
+### 10.3 Mode vs Interface Matrix
+
+| Deployment | Interface | litellm Mode | any-llm Mode |
+|------------|-----------|--------------|--------------|
+| Binary | HTTP Proxy | reqwest → REST API | PyO3 → Python SDK |
+| Binary | Python SDK | reqwest → REST API | PyO3 → Python SDK |
+| Pip | HTTP Proxy | reqwest → REST API | PyO3 → Python SDK |
+| Pip | Python SDK | reqwest → REST API | PyO3 → Python SDK |
+
+**Key point:** Every cell in this matrix is available. The mode selects the
+provider strategy, not the interface.
 
 ---
 

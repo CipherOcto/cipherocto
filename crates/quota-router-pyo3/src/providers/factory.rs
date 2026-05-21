@@ -1,7 +1,7 @@
 // Provider factory for creating and dispatching to providers
 // Handles dynamic provider lookup and instantiation
 
-use crate::providers::base::{ProviderInfo, Providers};
+use crate::providers::base::Providers;
 use pyo3::prelude::*;
 use pyo3::PyErr;
 

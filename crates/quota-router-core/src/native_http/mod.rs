@@ -166,9 +166,56 @@ pub trait HttpProvider: Send + Sync {
         request: &HttpEmbeddingRequest,
         api_key: Option<&str>,
     ) -> Result<HttpEmbeddingResponse, ProviderError>;
+    /// Retrieve a response by ID (OpenAI Responses API).
+    /// Default returns UnsupportedModel for providers that don't support it.
+    async fn get_response(
+        &self,
+        _response_id: &str,
+        _api_key: Option<&str>,
+        _api_base: Option<&str>,
+    ) -> Result<HttpResponseObject, ProviderError> {
+        Err(ProviderError::UnsupportedModel(format!(
+            "{} does not support the Responses API",
+            self.name()
+        )))
+    }
+    /// Delete a response by ID (OpenAI Responses API).
+    /// Default returns UnsupportedModel for providers that don't support it.
+    async fn delete_response(
+        &self,
+        _response_id: &str,
+        _api_key: Option<&str>,
+        _api_base: Option<&str>,
+    ) -> Result<HttpDeletedObject, ProviderError> {
+        Err(ProviderError::UnsupportedModel(format!(
+            "{} does not support the Responses API",
+            self.name()
+        )))
+    }
     fn routing_weight(&self) -> u32 {
         1
     }
+}
+
+/// Response object from OpenAI Responses API
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct HttpResponseObject {
+    pub id: String,
+    pub object: String,
+    pub model: String,
+    pub status: String,
+    pub output: Vec<serde_json::Value>,
+    pub usage: Option<serde_json::Value>,
+    #[serde(flatten)]
+    pub extra: std::collections::HashMap<String, serde_json::Value>,
+}
+
+/// Deleted object response from OpenAI Responses API
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct HttpDeletedObject {
+    pub id: String,
+    pub object: String,
+    pub deleted: bool,
 }
 
 /// Streaming response — channel-based SSE chunk delivery

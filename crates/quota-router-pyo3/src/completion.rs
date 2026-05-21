@@ -427,12 +427,11 @@ pub async fn aembedding(
 
 /// messages - Sync Anthropic Messages API call
 ///
-/// Note: The quota-router proxy does not yet support the Anthropic Messages API endpoint.
-/// Use `completion()` for chat completions. See RFC-0920 for planned support.
+/// messages - Anthropic Messages API call (delegates to native_http anthropic provider)
 #[pyfunction]
 #[pyo3(
     name = "messages",
-    text_signature = "(model, messages, *, provider=None, **kwargs)"
+    text_signature = "(model, messages, max_tokens, *, provider=None, **kwargs)"
 )]
 pub fn messages(
     model: String,
@@ -441,43 +440,150 @@ pub fn messages(
     system: Option<String>,
     temperature: Option<f64>,
     top_p: Option<f64>,
-    top_k: Option<i32>,
+    _top_k: Option<i32>,
     stop_sequences: Option<Vec<String>>,
     stream: Option<bool>,
-    tools: Option<Py<PyAny>>,
-    tool_choice: Option<Py<PyAny>>,
-    thinking: Option<Py<PyAny>>,
-    metadata: Option<Py<PyAny>>,
-    cache_control: Option<Py<PyAny>>,
+    _tools: Option<Py<PyAny>>,
+    _tool_choice: Option<Py<PyAny>>,
+    _thinking: Option<Py<PyAny>>,
+    _metadata: Option<Py<PyAny>>,
+    _cache_control: Option<Py<PyAny>>,
     api_key: Option<String>,
     api_base: Option<String>,
     client_args: Option<Py<PyAny>>,
     provider: Option<String>,
+    _mode: Option<String>,
 ) -> PyResult<Py<PyAny>> {
+    ensure_providers_initialized();
     let _ = (
-        provider,
-        model,
-        messages,
-        max_tokens,
-        system,
-        temperature,
-        top_p,
-        top_k,
-        stop_sequences,
-        stream,
-        tools,
-        tool_choice,
-        thinking,
-        metadata,
-        cache_control,
-        api_key,
-        api_base,
         client_args,
+        _top_k,
+        _tools,
+        _tool_choice,
+        _thinking,
+        _metadata,
+        _cache_control,
     );
-    Err(pyo3::exceptions::PyNotImplementedError::new_err(
-        "Anthropic Messages API endpoint is not yet implemented in the quota-router proxy. \
-         Use completion() for chat completions instead. See RFC-0920 for planned Messages API support.",
-    ))
+
+    let provider_name = provider.as_deref().unwrap_or("anthropic");
+    let mode = resolve_mode(_mode.as_deref());
+
+    // Extract messages from Python object
+    let py_messages: Vec<Message> = Python::with_gil(|py| -> PyResult<Vec<Message>> {
+        let list: &pyo3::types::PyList = messages
+            .downcast(py)
+            .map_err(|_| pyo3::exceptions::PyTypeError::new_err("messages must be a list"))?;
+        let mut result = Vec::new();
+        for item in list.iter() {
+            let dict: &pyo3::types::PyDict = item.downcast().map_err(|_| {
+                pyo3::exceptions::PyTypeError::new_err("each message must be a dict")
+            })?;
+            let role = match dict.get_item("role")? {
+                Some(v) => v.extract::<String>().unwrap_or_else(|_| "user".to_string()),
+                None => "user".to_string(),
+            };
+            let content = match dict.get_item("content")? {
+                Some(v) => v.extract::<String>().unwrap_or_default(),
+                None => String::new(),
+            };
+            result.push(Message { role, content });
+        }
+        Ok(result)
+    })?;
+
+    // Prepend system message if provided
+    let mut all_messages = Vec::new();
+    if let Some(ref sys) = system {
+        all_messages.push(Message {
+            role: "system".to_string(),
+            content: sys.clone(),
+        });
+    }
+    all_messages.extend(py_messages);
+
+    match mode {
+        #[cfg(feature = "full")]
+        quota_router_core::mode::ProviderMode::LiteLLM => {
+            let provider_impl =
+                quota_router_core::native_http::HttpProviderFactory::create(provider_name)
+                    .ok_or_else(|| {
+                        pyo3::exceptions::PyNotImplementedError::new_err(format!(
+                            "Provider '{}' not supported in litellm-mode",
+                            provider_name
+                        ))
+                    })?;
+
+            let shared_messages = to_shared_messages(&all_messages);
+            let request = quota_router_core::native_http::HttpCompletionRequest {
+                model: model.clone(),
+                messages: shared_messages,
+                stream,
+                temperature: temperature.map(|t| t as f32),
+                max_tokens: Some(max_tokens as u32),
+                top_p: top_p.map(|p| p as f32),
+                stop: stop_sequences,
+                n: None,
+                presence_penalty: None,
+                frequency_penalty: None,
+                user: None,
+                api_base: api_base.clone(),
+                tools: None,
+                tool_choice: None,
+                response_format: None,
+                seed: None,
+                logprobs: None,
+                top_logprobs: None,
+                parallel_tool_calls: None,
+                prompt_id: None,
+                prompt_variables: None,
+                provider_params: None,
+            };
+
+            let rt = tokio::runtime::Runtime::new().map_err(|e| {
+                pyo3::exceptions::PyRuntimeError::new_err(format!("Runtime error: {}", e))
+            })?;
+
+            let result = rt
+                .block_on(async { provider_impl.completion(&request, api_key.as_deref()).await })
+                .map_err(|e| {
+                    pyo3::exceptions::PyRuntimeError::new_err(format!("{}: {}", provider_name, e))
+                })?;
+
+            Python::with_gil(|py| {
+                let dict = pyo3::types::PyDict::new(py);
+                dict.set_item("id", &result.id)?;
+                dict.set_item("type", "message")?;
+                dict.set_item("role", "assistant")?;
+                let content_list = pyo3::types::PyList::empty(py);
+                let content_block = pyo3::types::PyDict::new(py);
+                content_block.set_item("type", "text")?;
+                if let Some(choice) = result.choices.first() {
+                    content_block.set_item("text", &choice.message.content)?;
+                }
+                content_list.append(content_block)?;
+                dict.set_item("content", content_list)?;
+                dict.set_item("model", &result.model)?;
+                if let Some(choice) = result.choices.first() {
+                    dict.set_item("stop_reason", &choice.finish_reason)?;
+                }
+                let usage_dict = pyo3::types::PyDict::new(py);
+                usage_dict.set_item("input_tokens", result.usage.prompt_tokens)?;
+                usage_dict.set_item("output_tokens", result.usage.completion_tokens)?;
+                dict.set_item("usage", usage_dict)?;
+                Ok(dict.into())
+            })
+        }
+        #[cfg(feature = "full")]
+        quota_router_core::mode::ProviderMode::AnyLlm => {
+            Err(pyo3::exceptions::PyNotImplementedError::new_err(
+                "messages() is not yet supported in any-llm-mode. Use litellm-mode.",
+            ))
+        }
+        #[cfg(not(feature = "full"))]
+        _ => Err(pyo3::exceptions::PyRuntimeError::new_err(
+            "No mode compiled",
+        )),
+    }
 }
 
 /// amessages - Async Anthropic Messages API call
@@ -502,6 +608,7 @@ pub async fn amessages(
     api_base: Option<String>,
     client_args: Option<Py<PyAny>>,
     provider: Option<String>,
+    _mode: Option<String>,
 ) -> PyResult<Py<PyAny>> {
     self::messages(
         model,
@@ -522,6 +629,7 @@ pub async fn amessages(
         api_base,
         client_args,
         provider,
+        _mode,
     )
 }
 
@@ -626,66 +734,179 @@ pub async fn aresponses(
 }
 
 // =============================================================================
-// Text Completion API (LiteLLM parity)
+// Responses API Sub-Methods (per RFC-0920 / RFC-0953)
+
+/// get_response - Retrieve a response by ID from provider storage (OpenAI Responses API)
 #[pyfunction]
 #[pyo3(
     name = "get_response",
-    text_signature = "(response_id, provider=None, **kwargs)"
+    text_signature = "(provider, response_id, **kwargs)"
 )]
 pub fn get_response(
+    provider: String,
     response_id: String,
-    provider: Option<String>,
     api_key: Option<String>,
     api_base: Option<String>,
+    client_args: Option<Py<PyAny>>,
+    _mode: Option<String>,
 ) -> PyResult<Py<PyAny>> {
-    let _ = (provider, response_id, api_key, api_base);
-    Err(pyo3::exceptions::PyNotImplementedError::new_err(
-        "get_response() is not yet implemented in the quota-router proxy. \
-         See RFC-0920 for planned Responses API support.",
-    ))
+    ensure_providers_initialized();
+    let _ = client_args;
+    let mode = resolve_mode(_mode.as_deref());
+
+    match mode {
+        #[cfg(feature = "full")]
+        quota_router_core::mode::ProviderMode::LiteLLM => {
+            let provider_impl = quota_router_core::native_http::HttpProviderFactory::create(
+                &provider,
+            )
+            .ok_or_else(|| {
+                pyo3::exceptions::PyNotImplementedError::new_err(format!(
+                    "Provider '{}' not supported in litellm-mode",
+                    provider
+                ))
+            })?;
+
+            let rt = tokio::runtime::Runtime::new().map_err(|e| {
+                pyo3::exceptions::PyRuntimeError::new_err(format!("Runtime error: {}", e))
+            })?;
+
+            let result = rt
+                .block_on(async {
+                    provider_impl
+                        .get_response(&response_id, api_key.as_deref(), api_base.as_deref())
+                        .await
+                })
+                .map_err(|e| {
+                    pyo3::exceptions::PyRuntimeError::new_err(format!("{}: {}", provider, e))
+                })?;
+
+            Python::with_gil(|py| {
+                let dict = pyo3::types::PyDict::new(py);
+                dict.set_item("id", &result.id)?;
+                dict.set_item("object", &result.object)?;
+                dict.set_item("model", &result.model)?;
+                dict.set_item("status", &result.status)?;
+                // Convert serde_json::Value output to Python string (JSON)
+                let output_str =
+                    serde_json::to_string(&result.output).unwrap_or_else(|_| "[]".to_string());
+                let json_module = py.import("json")?;
+                let output_obj = json_module.call_method1("loads", (output_str,))?;
+                dict.set_item("output", output_obj)?;
+                if let Some(usage) = &result.usage {
+                    let usage_str =
+                        serde_json::to_string(usage).unwrap_or_else(|_| "{}".to_string());
+                    let usage_obj = json_module.call_method1("loads", (usage_str,))?;
+                    dict.set_item("usage", usage_obj)?;
+                }
+                Ok(dict.into())
+            })
+        }
+        #[cfg(feature = "full")]
+        quota_router_core::mode::ProviderMode::AnyLlm => {
+            Err(pyo3::exceptions::PyNotImplementedError::new_err(
+                "get_response() is not yet supported in any-llm-mode. Use litellm-mode.",
+            ))
+        }
+        #[cfg(not(feature = "full"))]
+        _ => Err(pyo3::exceptions::PyRuntimeError::new_err(
+            "No mode compiled",
+        )),
+    }
 }
 
 /// aget_response - Async retrieve a response by ID
 #[pyfunction]
 #[pyo3(name = "aget_response")]
 pub async fn aget_response(
+    provider: String,
     response_id: String,
-    provider: Option<String>,
     api_key: Option<String>,
     api_base: Option<String>,
+    client_args: Option<Py<PyAny>>,
+    _mode: Option<String>,
 ) -> PyResult<Py<PyAny>> {
-    self::get_response(response_id, provider, api_key, api_base)
+    self::get_response(provider, response_id, api_key, api_base, client_args, _mode)
 }
 
-/// delete_response - Delete a response by ID
+/// delete_response - Delete a response by ID from provider storage (OpenAI Responses API)
 #[pyfunction]
 #[pyo3(
     name = "delete_response",
-    text_signature = "(response_id, provider=None, **kwargs)"
+    text_signature = "(provider, response_id, **kwargs)"
 )]
 pub fn delete_response(
+    provider: String,
     response_id: String,
-    provider: Option<String>,
     api_key: Option<String>,
     api_base: Option<String>,
+    client_args: Option<Py<PyAny>>,
+    _mode: Option<String>,
 ) -> PyResult<Py<PyAny>> {
-    let _ = (provider, response_id, api_key, api_base);
-    Err(pyo3::exceptions::PyNotImplementedError::new_err(
-        "delete_response() is not yet implemented in the quota-router proxy. \
-         See RFC-0920 for planned Responses API support.",
-    ))
+    ensure_providers_initialized();
+    let _ = client_args;
+    let mode = resolve_mode(_mode.as_deref());
+
+    match mode {
+        #[cfg(feature = "full")]
+        quota_router_core::mode::ProviderMode::LiteLLM => {
+            let provider_impl = quota_router_core::native_http::HttpProviderFactory::create(
+                &provider,
+            )
+            .ok_or_else(|| {
+                pyo3::exceptions::PyNotImplementedError::new_err(format!(
+                    "Provider '{}' not supported in litellm-mode",
+                    provider
+                ))
+            })?;
+
+            let rt = tokio::runtime::Runtime::new().map_err(|e| {
+                pyo3::exceptions::PyRuntimeError::new_err(format!("Runtime error: {}", e))
+            })?;
+
+            let result = rt
+                .block_on(async {
+                    provider_impl
+                        .delete_response(&response_id, api_key.as_deref(), api_base.as_deref())
+                        .await
+                })
+                .map_err(|e| {
+                    pyo3::exceptions::PyRuntimeError::new_err(format!("{}: {}", provider, e))
+                })?;
+
+            Python::with_gil(|py| {
+                let dict = pyo3::types::PyDict::new(py);
+                dict.set_item("id", &result.id)?;
+                dict.set_item("object", &result.object)?;
+                dict.set_item("deleted", result.deleted)?;
+                Ok(dict.into())
+            })
+        }
+        #[cfg(feature = "full")]
+        quota_router_core::mode::ProviderMode::AnyLlm => {
+            Err(pyo3::exceptions::PyNotImplementedError::new_err(
+                "delete_response() is not yet supported in any-llm-mode. Use litellm-mode.",
+            ))
+        }
+        #[cfg(not(feature = "full"))]
+        _ => Err(pyo3::exceptions::PyRuntimeError::new_err(
+            "No mode compiled",
+        )),
+    }
 }
 
 /// adelete_response - Async delete a response by ID
 #[pyfunction]
 #[pyo3(name = "adelete_response")]
 pub async fn adelete_response(
+    provider: String,
     response_id: String,
-    provider: Option<String>,
     api_key: Option<String>,
     api_base: Option<String>,
+    client_args: Option<Py<PyAny>>,
+    _mode: Option<String>,
 ) -> PyResult<Py<PyAny>> {
-    self::delete_response(response_id, provider, api_key, api_base)
+    self::delete_response(provider, response_id, api_key, api_base, client_args, _mode)
 }
 
 // =============================================================================

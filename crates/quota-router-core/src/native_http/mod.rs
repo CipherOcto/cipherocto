@@ -192,6 +192,17 @@ pub trait HttpProvider: Send + Sync {
             self.name()
         )))
     }
+    /// Create a response via OpenAI Responses API.
+    async fn create_response(
+        &self,
+        _request: &HttpResponsesRequest,
+        _api_key: Option<&str>,
+    ) -> Result<HttpResponseObject, ProviderError> {
+        Err(ProviderError::UnsupportedModel(format!(
+            "{} does not support the Responses API",
+            self.name()
+        )))
+    }
     /// List available models for this provider.
     async fn list_models(
         &self,
@@ -224,6 +235,35 @@ pub struct HttpModelObject {
 pub struct HttpListModelsResponse {
     pub object: String,
     pub data: Vec<HttpModelObject>,
+}
+
+/// Request for OpenAI Responses API
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct HttpResponsesRequest {
+    pub model: String,
+    pub input: serde_json::Value,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub instructions: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub temperature: Option<f64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub max_output_tokens: Option<u32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub top_p: Option<f64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub stream: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub tools: Option<serde_json::Value>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub tool_choice: Option<serde_json::Value>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub store: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub metadata: Option<serde_json::Value>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub user: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub api_base: Option<String>,
 }
 
 /// Response object from OpenAI Responses API

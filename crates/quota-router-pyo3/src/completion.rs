@@ -717,7 +717,7 @@ pub async fn amessages(
 /// responses - Sync OpenAI Responses API call
 ///
 /// Note: The quota-router proxy does not yet support the Responses API endpoint.
-/// Use `completion()` for chat completions. See RFC-0920 for planned support.
+/// responses - OpenAI Responses API call
 #[pyfunction]
 #[pyo3(
     name = "responses",
@@ -741,29 +741,141 @@ pub fn responses(
     api_base: Option<String>,
     client_args: Option<Py<PyAny>>,
     provider: Option<String>,
+    _mode: Option<String>,
 ) -> PyResult<Py<PyAny>> {
-    let _ = (
-        provider,
-        model,
-        input.or(input_data),
-        instructions,
-        temperature,
-        max_output_tokens,
-        top_p,
-        stream,
-        tools,
-        tool_choice,
-        store,
-        metadata,
-        user,
-        api_key,
-        api_base,
-        client_args,
-    );
-    Err(pyo3::exceptions::PyNotImplementedError::new_err(
-        "OpenAI Responses API endpoint is not yet implemented in the quota-router proxy. \
-         Use completion() for chat completions instead. See RFC-0920 for planned Responses API support.",
-    ))
+    ensure_providers_initialized();
+    let _ = client_args;
+
+    // Dual-convention: accept both `input` (litellm) and `input_data` (any-llm)
+    let data = input.or(input_data).ok_or_else(|| {
+        pyo3::exceptions::PyTypeError::new_err(
+            "responses() requires either `input` or `input_data` parameter",
+        )
+    })?;
+
+    // Convert input to JSON value
+    let input_json: serde_json::Value = Python::with_gil(|py| -> PyResult<serde_json::Value> {
+        if let Ok(s) = data.extract::<String>(py) {
+            return Ok(serde_json::Value::String(s));
+        }
+        // For complex types, serialize via json module
+        let json_module = py.import("json")?;
+        let serialized = json_module.call_method1("dumps", (data,))?;
+        let s: String = serialized.extract()?;
+        serde_json::from_str(&s).map_err(|e| pyo3::exceptions::PyValueError::new_err(e.to_string()))
+    })?;
+
+    let provider_name = provider.as_deref().unwrap_or("openai");
+    let mode = resolve_mode(_mode.as_deref());
+
+    match mode {
+        #[cfg(feature = "full")]
+        quota_router_core::mode::ProviderMode::LiteLLM => {
+            let provider_impl =
+                quota_router_core::native_http::HttpProviderFactory::create(provider_name)
+                    .ok_or_else(|| {
+                        pyo3::exceptions::PyNotImplementedError::new_err(format!(
+                            "Provider '{}' not supported in litellm-mode",
+                            provider_name
+                        ))
+                    })?;
+
+            // Convert tools/tool_choice to JSON if provided
+            let tools_json = Python::with_gil(|py| -> PyResult<Option<serde_json::Value>> {
+                if let Some(ref t) = tools {
+                    let json_module = py.import("json")?;
+                    let serialized = json_module.call_method1("dumps", (t,))?;
+                    let s: String = serialized.extract()?;
+                    return Ok(Some(
+                        serde_json::from_str(&s).unwrap_or(serde_json::Value::Null),
+                    ));
+                }
+                Ok(None)
+            })?;
+            let tool_choice_json = Python::with_gil(|py| -> PyResult<Option<serde_json::Value>> {
+                if let Some(ref tc) = tool_choice {
+                    let json_module = py.import("json")?;
+                    let serialized = json_module.call_method1("dumps", (tc,))?;
+                    let s: String = serialized.extract()?;
+                    return Ok(Some(
+                        serde_json::from_str(&s).unwrap_or(serde_json::Value::Null),
+                    ));
+                }
+                Ok(None)
+            })?;
+            let metadata_json = Python::with_gil(|py| -> PyResult<Option<serde_json::Value>> {
+                if let Some(ref m) = metadata {
+                    let json_module = py.import("json")?;
+                    let serialized = json_module.call_method1("dumps", (m,))?;
+                    let s: String = serialized.extract()?;
+                    return Ok(Some(
+                        serde_json::from_str(&s).unwrap_or(serde_json::Value::Null),
+                    ));
+                }
+                Ok(None)
+            })?;
+
+            let request = quota_router_core::native_http::HttpResponsesRequest {
+                model: model.clone(),
+                input: input_json,
+                instructions,
+                temperature,
+                max_output_tokens: max_output_tokens.map(|v| v as u32),
+                top_p,
+                stream,
+                tools: tools_json,
+                tool_choice: tool_choice_json,
+                store,
+                metadata: metadata_json,
+                user,
+                api_base: api_base.clone(),
+            };
+
+            let rt = tokio::runtime::Runtime::new().map_err(|e| {
+                pyo3::exceptions::PyRuntimeError::new_err(format!("Runtime error: {}", e))
+            })?;
+
+            let result = rt
+                .block_on(async {
+                    provider_impl
+                        .create_response(&request, api_key.as_deref())
+                        .await
+                })
+                .map_err(|e| {
+                    pyo3::exceptions::PyRuntimeError::new_err(format!("{}: {}", provider_name, e))
+                })?;
+
+            Python::with_gil(|py| {
+                let dict = pyo3::types::PyDict::new(py);
+                dict.set_item("id", &result.id)?;
+                dict.set_item("object", &result.object)?;
+                dict.set_item("model", &result.model)?;
+                dict.set_item("status", &result.status)?;
+                let json_module = py.import("json")?;
+                let output_str =
+                    serde_json::to_string(&result.output).unwrap_or_else(|_| "[]".to_string());
+                let output_obj = json_module.call_method1("loads", (output_str,))?;
+                dict.set_item("output", output_obj)?;
+                if let Some(usage) = &result.usage {
+                    let usage_str =
+                        serde_json::to_string(usage).unwrap_or_else(|_| "{}".to_string());
+                    let usage_obj = json_module.call_method1("loads", (usage_str,))?;
+                    dict.set_item("usage", usage_obj)?;
+                }
+                Ok(dict.into())
+            })
+        }
+        #[cfg(feature = "full")]
+        quota_router_core::mode::ProviderMode::AnyLlm => {
+            Err(pyo3::exceptions::PyNotImplementedError::new_err(
+                "responses() is not yet supported in any-llm-mode. Use litellm-mode.",
+            ))
+        }
+        #[cfg(not(feature = "full"))]
+        _ => Err(pyo3::exceptions::PyRuntimeError::new_err(
+            "No mode compiled",
+        )),
+    }
 }
 
 /// aresponses - Async OpenAI Responses API call
@@ -787,6 +899,7 @@ pub async fn aresponses(
     api_base: Option<String>,
     client_args: Option<Py<PyAny>>,
     provider: Option<String>,
+    _mode: Option<String>,
 ) -> PyResult<Py<PyAny>> {
     self::responses(
         model,
@@ -806,6 +919,7 @@ pub async fn aresponses(
         api_base,
         client_args,
         provider,
+        _mode,
     )
 }
 

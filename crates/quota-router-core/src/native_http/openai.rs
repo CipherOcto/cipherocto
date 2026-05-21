@@ -2,8 +2,8 @@
 
 use super::{
     HttpCompletionRequest, HttpCompletionResponse, HttpDeletedObject, HttpEmbeddingRequest,
-    HttpEmbeddingResponse, HttpListModelsResponse, HttpResponseObject, ProviderError,
-    StreamingResponse,
+    HttpEmbeddingResponse, HttpListModelsResponse, HttpResponseObject, HttpResponsesRequest,
+    ProviderError, StreamingResponse,
 };
 use async_trait::async_trait;
 use futures::StreamExt;
@@ -490,6 +490,56 @@ impl super::HttpProvider for OpenAIProvider {
         }
 
         resp.json::<HttpListModelsResponse>()
+            .await
+            .map_err(|e| ProviderError::InvalidResponse(e.to_string()))
+    }
+
+    async fn create_response(
+        &self,
+        request: &HttpResponsesRequest,
+        api_key: Option<&str>,
+    ) -> Result<HttpResponseObject, ProviderError> {
+        let base_url = request.api_base.as_deref().unwrap_or(&self.api_base);
+        let url = format!("{}/responses", base_url);
+
+        let body = serde_json::to_value(request)
+            .map_err(|e| ProviderError::InvalidResponse(e.to_string()))?;
+
+        let mut req_builder = self
+            .client
+            .post(&url)
+            .header("Content-Type", "application/json");
+        if let Some(key) = api_key {
+            req_builder = req_builder.header("Authorization", format!("Bearer {}", key));
+        }
+        let resp = req_builder
+            .json(&body)
+            .send()
+            .await
+            .map_err(|e| ProviderError::Network(e.to_string()))?;
+
+        if !resp.status().is_success() {
+            let status = resp.status();
+            let err_body = resp.text().await.unwrap_or_default();
+            if status == 401 || status == 403 {
+                return Err(ProviderError::AuthError(format!(
+                    "HTTP {}: {}",
+                    status, err_body
+                )));
+            }
+            if status == 429 {
+                return Err(ProviderError::RateLimit(format!(
+                    "HTTP {}: {}",
+                    status, err_body
+                )));
+            }
+            return Err(ProviderError::InvalidResponse(format!(
+                "HTTP {}: {}",
+                status, err_body
+            )));
+        }
+
+        resp.json::<HttpResponseObject>()
             .await
             .map_err(|e| ProviderError::InvalidResponse(e.to_string()))
     }

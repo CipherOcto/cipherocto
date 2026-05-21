@@ -192,9 +192,38 @@ pub trait HttpProvider: Send + Sync {
             self.name()
         )))
     }
+    /// List available models for this provider.
+    async fn list_models(
+        &self,
+        _api_key: Option<&str>,
+        _api_base: Option<&str>,
+    ) -> Result<HttpListModelsResponse, ProviderError> {
+        Err(ProviderError::UnsupportedModel(format!(
+            "{} does not support list_models",
+            self.name()
+        )))
+    }
     fn routing_weight(&self) -> u32 {
         1
     }
+}
+
+/// Model object from list_models
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct HttpModelObject {
+    pub id: String,
+    pub object: String,
+    pub created: u64,
+    pub owned_by: String,
+    #[serde(flatten)]
+    pub extra: std::collections::HashMap<String, serde_json::Value>,
+}
+
+/// List models response
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct HttpListModelsResponse {
+    pub object: String,
+    pub data: Vec<HttpModelObject>,
 }
 
 /// Response object from OpenAI Responses API

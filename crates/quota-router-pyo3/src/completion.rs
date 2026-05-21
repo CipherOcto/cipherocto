@@ -362,25 +362,104 @@ pub fn embedding(
     api_base: Option<String>,
     client_args: Option<Py<PyAny>>,
     timeout: Option<f64>,
+    _mode: Option<String>,
 ) -> PyResult<Py<PyAny>> {
+    ensure_providers_initialized();
+    let _ = (dimensions, encoding_format, client_args, timeout);
+
     // Dual-convention: accept both `input` (litellm) and `inputs` (any-llm)
-    let _data = input.or(inputs);
-    let _ = (
-        model,
-        _data,
-        dimensions,
-        encoding_format,
-        provider,
-        api_key,
-        api_base,
-        client_args,
-        timeout,
-    );
-    Err(pyo3::exceptions::PyNotImplementedError::new_err(
-        "Embeddings are not yet implemented in any-llm (direct) mode. \
-         Use litellm mode (via the quota-router proxy) for embedding calls, \
-         or call the provider SDK directly.",
-    ))
+    let data = input.or(inputs).ok_or_else(|| {
+        pyo3::exceptions::PyTypeError::new_err(
+            "embedding() requires either `input` or `inputs` parameter",
+        )
+    })?;
+
+    // Extract input text from Python object (string or list of strings)
+    let input_text: String = Python::with_gil(|py| -> PyResult<String> {
+        if let Ok(s) = data.extract::<String>(py) {
+            return Ok(s);
+        }
+        if let Ok(list) = data.downcast::<pyo3::types::PyList>(py) {
+            let parts: Vec<String> = list
+                .iter()
+                .map(|item| item.extract::<String>().unwrap_or_default())
+                .collect();
+            return Ok(parts.join(" "));
+        }
+        Err(pyo3::exceptions::PyTypeError::new_err(
+            "input must be a string or list of strings",
+        ))
+    })?;
+
+    let provider_name = provider.as_deref().unwrap_or("openai");
+    let mode = resolve_mode(_mode.as_deref());
+
+    match mode {
+        #[cfg(feature = "full")]
+        quota_router_core::mode::ProviderMode::LiteLLM => {
+            let provider_impl =
+                quota_router_core::native_http::HttpProviderFactory::create(provider_name)
+                    .ok_or_else(|| {
+                        pyo3::exceptions::PyNotImplementedError::new_err(format!(
+                            "Provider '{}' not supported in litellm-mode",
+                            provider_name
+                        ))
+                    })?;
+
+            let request = quota_router_core::native_http::HttpEmbeddingRequest {
+                input: input_text,
+                model: model.clone(),
+                api_base: api_base.clone(),
+            };
+
+            let rt = tokio::runtime::Runtime::new().map_err(|e| {
+                pyo3::exceptions::PyRuntimeError::new_err(format!("Runtime error: {}", e))
+            })?;
+
+            let result = rt
+                .block_on(async { provider_impl.embedding(&request, api_key.as_deref()).await })
+                .map_err(|e| {
+                    pyo3::exceptions::PyRuntimeError::new_err(format!("{}: {}", provider_name, e))
+                })?;
+
+            Python::with_gil(|py| {
+                let dict = pyo3::types::PyDict::new(py);
+                dict.set_item("object", &result.object)?;
+                dict.set_item("model", &result.model)?;
+
+                let data_list = pyo3::types::PyList::empty(py);
+                for emb in &result.data {
+                    let emb_dict = pyo3::types::PyDict::new(py);
+                    emb_dict.set_item("object", &emb.object)?;
+                    emb_dict.set_item("index", emb.index)?;
+                    let embedding_list = pyo3::types::PyList::empty(py);
+                    for val in &emb.embedding {
+                        embedding_list.append(*val)?;
+                    }
+                    emb_dict.set_item("embedding", embedding_list)?;
+                    data_list.append(emb_dict)?;
+                }
+                dict.set_item("data", data_list)?;
+
+                let usage_dict = pyo3::types::PyDict::new(py);
+                usage_dict.set_item("prompt_tokens", result.usage.prompt_tokens)?;
+                usage_dict.set_item("total_tokens", result.usage.total_tokens)?;
+                dict.set_item("usage", usage_dict)?;
+
+                Ok(dict.into())
+            })
+        }
+        #[cfg(feature = "full")]
+        quota_router_core::mode::ProviderMode::AnyLlm => {
+            Err(pyo3::exceptions::PyNotImplementedError::new_err(
+                "embedding() is not yet supported in any-llm-mode. Use litellm-mode.",
+            ))
+        }
+        #[cfg(not(feature = "full"))]
+        _ => Err(pyo3::exceptions::PyRuntimeError::new_err(
+            "No mode compiled",
+        )),
+    }
 }
 
 /// aembedding - Async embedding call
@@ -400,11 +479,12 @@ pub async fn aembedding(
     api_base: Option<String>,
     client_args: Option<Py<PyAny>>,
     timeout: Option<f64>,
+    _mode: Option<String>,
 ) -> PyResult<Py<PyAny>> {
-    let _data = input.or(inputs);
-    let _ = (
+    embedding(
         model,
-        _data,
+        input,
+        inputs,
         dimensions,
         encoding_format,
         provider,
@@ -412,12 +492,8 @@ pub async fn aembedding(
         api_base,
         client_args,
         timeout,
-    );
-    Err(pyo3::exceptions::PyNotImplementedError::new_err(
-        "Embeddings are not yet implemented in any-llm (direct) mode. \
-         Use litellm mode (via the quota-router proxy) for embedding calls, \
-         or call the provider SDK directly.",
-    ))
+        _mode,
+    )
 }
 
 // =============================================================================
@@ -924,12 +1000,66 @@ pub fn list_models(
     api_key: Option<String>,
     api_base: Option<String>,
     client_args: Option<Py<PyAny>>,
+    _mode: Option<String>,
 ) -> PyResult<Py<PyAny>> {
-    let _ = (provider, api_key, api_base, client_args);
-    Err(pyo3::exceptions::PyNotImplementedError::new_err(
-        "list_models() is not yet implemented in the quota-router proxy. \
-         See RFC-0920 for planned model registry support.",
-    ))
+    ensure_providers_initialized();
+    let _ = client_args;
+    let mode = resolve_mode(_mode.as_deref());
+
+    match mode {
+        #[cfg(feature = "full")]
+        quota_router_core::mode::ProviderMode::LiteLLM => {
+            let provider_impl = quota_router_core::native_http::HttpProviderFactory::create(
+                &provider,
+            )
+            .ok_or_else(|| {
+                pyo3::exceptions::PyNotImplementedError::new_err(format!(
+                    "Provider '{}' not supported in litellm-mode",
+                    provider
+                ))
+            })?;
+
+            let rt = tokio::runtime::Runtime::new().map_err(|e| {
+                pyo3::exceptions::PyRuntimeError::new_err(format!("Runtime error: {}", e))
+            })?;
+
+            let result = rt
+                .block_on(async {
+                    provider_impl
+                        .list_models(api_key.as_deref(), api_base.as_deref())
+                        .await
+                })
+                .map_err(|e| {
+                    pyo3::exceptions::PyRuntimeError::new_err(format!("{}: {}", provider, e))
+                })?;
+
+            Python::with_gil(|py| {
+                let dict = pyo3::types::PyDict::new(py);
+                dict.set_item("object", &result.object)?;
+                let data_list = pyo3::types::PyList::empty(py);
+                for model in &result.data {
+                    let model_dict = pyo3::types::PyDict::new(py);
+                    model_dict.set_item("id", &model.id)?;
+                    model_dict.set_item("object", &model.object)?;
+                    model_dict.set_item("created", model.created)?;
+                    model_dict.set_item("owned_by", &model.owned_by)?;
+                    data_list.append(model_dict)?;
+                }
+                dict.set_item("data", data_list)?;
+                Ok(dict.into())
+            })
+        }
+        #[cfg(feature = "full")]
+        quota_router_core::mode::ProviderMode::AnyLlm => {
+            Err(pyo3::exceptions::PyNotImplementedError::new_err(
+                "list_models() is not yet supported in any-llm-mode. Use litellm-mode.",
+            ))
+        }
+        #[cfg(not(feature = "full"))]
+        _ => Err(pyo3::exceptions::PyRuntimeError::new_err(
+            "No mode compiled",
+        )),
+    }
 }
 
 /// alist_models - Async list models API
@@ -940,8 +1070,9 @@ pub async fn alist_models(
     api_key: Option<String>,
     api_base: Option<String>,
     client_args: Option<Py<PyAny>>,
+    _mode: Option<String>,
 ) -> PyResult<Py<PyAny>> {
-    list_models(provider, api_key, api_base, client_args)
+    list_models(provider, api_key, api_base, client_args, _mode)
 }
 
 // =============================================================================

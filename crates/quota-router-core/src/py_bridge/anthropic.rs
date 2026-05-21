@@ -151,9 +151,9 @@ fn convert_response(
     // Find the first TextBlock with a .text attribute
     let content: String = {
         let mut text = String::new();
-        let iter = content_blocks.iter().map_err(|e| {
-            PyBridgeError::PyError(format!("Failed to iterate content: {}", e))
-        })?;
+        let iter = content_blocks
+            .iter()
+            .map_err(|e| PyBridgeError::PyError(format!("Failed to iterate content: {}", e)))?;
         for block_result in iter {
             let block = block_result.map_err(|e| {
                 PyBridgeError::PyError(format!("Failed to get content block: {}", e))

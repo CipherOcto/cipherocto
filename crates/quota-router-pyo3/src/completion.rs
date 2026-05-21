@@ -59,11 +59,10 @@ fn to_core_messages(messages: &[Message]) -> Vec<quota_router_core::types::Messa
 /// Resolve the provider mode from an optional string.
 fn resolve_mode(mode_str: Option<&str>) -> quota_router_core::mode::ProviderMode {
     match mode_str {
-        Some(s) => quota_router_core::mode::ProviderMode::from_str(s)
-            .unwrap_or_else(|| {
-                eprintln!("Unknown mode '{}', using default", s);
-                get_mode()
-            }),
+        Some(s) => quota_router_core::mode::ProviderMode::from_str(s).unwrap_or_else(|| {
+            eprintln!("Unknown mode '{}', using default", s);
+            get_mode()
+        }),
         None => get_mode(),
     }
 }
@@ -128,16 +127,29 @@ pub fn completion(
 
     match mode {
         #[cfg(feature = "full")]
-        quota_router_core::mode::ProviderMode::LiteLLM => {
-            completion_litellm(&parsed, &messages, temperature, max_tokens, top_p, n, stop,
-                presence_penalty, frequency_penalty, user, seed, api_key, base_url)
-        }
+        quota_router_core::mode::ProviderMode::LiteLLM => completion_litellm(
+            &parsed,
+            &messages,
+            temperature,
+            max_tokens,
+            top_p,
+            n,
+            stop,
+            presence_penalty,
+            frequency_penalty,
+            user,
+            seed,
+            api_key,
+            base_url,
+        ),
         #[cfg(feature = "full")]
         quota_router_core::mode::ProviderMode::AnyLlm => {
             completion_any_llm(&parsed, &messages, api_key, base_url)
         }
         #[cfg(not(feature = "full"))]
-        _ => Err(pyo3::exceptions::PyRuntimeError::new_err("No mode compiled")),
+        _ => Err(pyo3::exceptions::PyRuntimeError::new_err(
+            "No mode compiled",
+        )),
     }
 }
 
@@ -160,10 +172,12 @@ fn completion_litellm(
 ) -> PyResult<Py<PyAny>> {
     use quota_router_core::native_http::HttpProviderFactory;
 
-    let mut provider = HttpProviderFactory::create(&parsed.provider)
-        .ok_or_else(|| pyo3::exceptions::PyNotImplementedError::new_err(
-            format!("Provider '{}' not supported in litellm-mode", parsed.provider)
-        ))?;
+    let mut provider = HttpProviderFactory::create(&parsed.provider).ok_or_else(|| {
+        pyo3::exceptions::PyNotImplementedError::new_err(format!(
+            "Provider '{}' not supported in litellm-mode",
+            parsed.provider
+        ))
+    })?;
 
     // Build request
     let request = quota_router_core::native_http::HttpCompletionRequest {
@@ -195,9 +209,11 @@ fn completion_litellm(
     let rt = tokio::runtime::Runtime::new()
         .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(format!("Runtime error: {}", e)))?;
 
-    let result = rt.block_on(async {
-        provider.completion(&request, api_key.as_deref()).await
-    }).map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(format!("{}: {}", parsed.provider, e)))?;
+    let result = rt
+        .block_on(async { provider.completion(&request, api_key.as_deref()).await })
+        .map_err(|e| {
+            pyo3::exceptions::PyRuntimeError::new_err(format!("{}: {}", parsed.provider, e))
+        })?;
 
     // Convert to Python dict
     Python::with_gil(|py| {
@@ -207,16 +223,20 @@ fn completion_litellm(
         dict.set_item("created", result.created)?;
         dict.set_item("model", &result.model)?;
 
-        let choices: Vec<_> = result.choices.iter().map(|c| {
-            let choice_dict = pyo3::types::PyDict::new(py);
-            choice_dict.set_item("index", c.index).ok();
-            let msg_dict = pyo3::types::PyDict::new(py);
-            msg_dict.set_item("role", &c.message.role).ok();
-            msg_dict.set_item("content", &c.message.content).ok();
-            choice_dict.set_item("message", msg_dict).ok();
-            choice_dict.set_item("finish_reason", &c.finish_reason).ok();
-            choice_dict
-        }).collect();
+        let choices: Vec<_> = result
+            .choices
+            .iter()
+            .map(|c| {
+                let choice_dict = pyo3::types::PyDict::new(py);
+                choice_dict.set_item("index", c.index).ok();
+                let msg_dict = pyo3::types::PyDict::new(py);
+                msg_dict.set_item("role", &c.message.role).ok();
+                msg_dict.set_item("content", &c.message.content).ok();
+                choice_dict.set_item("message", msg_dict).ok();
+                choice_dict.set_item("finish_reason", &c.finish_reason).ok();
+                choice_dict
+            })
+            .collect();
         dict.set_item("choices", choices)?;
 
         let usage_dict = pyo3::types::PyDict::new(py);
@@ -239,10 +259,12 @@ fn completion_any_llm(
 ) -> PyResult<Py<PyAny>> {
     use quota_router_core::py_bridge::PyBridgeProviderFactory;
 
-    let mut provider = PyBridgeProviderFactory::create(&parsed.provider)
-        .ok_or_else(|| pyo3::exceptions::PyNotImplementedError::new_err(
-            format!("Provider '{}' not supported in any-llm-mode", parsed.provider)
-        ))?;
+    let mut provider = PyBridgeProviderFactory::create(&parsed.provider).ok_or_else(|| {
+        pyo3::exceptions::PyNotImplementedError::new_err(format!(
+            "Provider '{}' not supported in any-llm-mode",
+            parsed.provider
+        ))
+    })?;
 
     if let Some(key) = api_key {
         provider = provider.with_api_key(key);
@@ -252,8 +274,11 @@ fn completion_any_llm(
     }
 
     let core_messages = to_core_messages(messages);
-    let result = provider.completion(&parsed.model, &core_messages)
-        .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(format!("{}: {}", parsed.provider, e)))?;
+    let result = provider
+        .completion(&parsed.model, &core_messages)
+        .map_err(|e| {
+            pyo3::exceptions::PyRuntimeError::new_err(format!("{}: {}", parsed.provider, e))
+        })?;
 
     Python::with_gil(|py| result.to_dict(py))
 }
@@ -324,15 +349,33 @@ pub async fn acompletion(
 #[pyfunction]
 #[pyo3(
     name = "embedding",
-    text_signature = "(input, model, api_key=None, api_base=None, **kwargs)"
+    text_signature = "(model, input=None, inputs=None, *, provider=None, api_key=None, api_base=None, **kwargs)"
 )]
 pub fn embedding(
-    input: Py<PyAny>,
     model: String,
+    input: Option<Py<PyAny>>,  // litellm convention
+    inputs: Option<Py<PyAny>>, // any-llm convention
+    dimensions: Option<i32>,
+    encoding_format: Option<String>,
+    provider: Option<String>,
     api_key: Option<String>,
     api_base: Option<String>,
+    client_args: Option<Py<PyAny>>,
+    timeout: Option<f64>,
 ) -> PyResult<Py<PyAny>> {
-    let _ = (input, model, api_key, api_base);
+    // Dual-convention: accept both `input` (litellm) and `inputs` (any-llm)
+    let _data = input.or(inputs);
+    let _ = (
+        model,
+        _data,
+        dimensions,
+        encoding_format,
+        provider,
+        api_key,
+        api_base,
+        client_args,
+        timeout,
+    );
     Err(pyo3::exceptions::PyNotImplementedError::new_err(
         "Embeddings are not yet implemented in any-llm (direct) mode. \
          Use litellm mode (via the quota-router proxy) for embedding calls, \
@@ -340,19 +383,36 @@ pub fn embedding(
     ))
 }
 
-/// aembedding - Async embedding call (per RFC-0920 lines 4031-4043)
+/// aembedding - Async embedding call
 #[pyfunction]
 #[pyo3(
     name = "aembedding",
-    text_signature = "(input, model, api_key=None, api_base=None, **kwargs)"
+    text_signature = "(model, input, *, provider=None, api_key=None, api_base=None, **kwargs)"
 )]
 pub async fn aembedding(
-    input: Py<PyAny>,
     model: String,
+    input: Option<Py<PyAny>>,  // litellm convention
+    inputs: Option<Py<PyAny>>, // any-llm convention
+    dimensions: Option<i32>,
+    encoding_format: Option<String>,
+    provider: Option<String>,
     api_key: Option<String>,
     api_base: Option<String>,
+    client_args: Option<Py<PyAny>>,
+    timeout: Option<f64>,
 ) -> PyResult<Py<PyAny>> {
-    let _ = (input, model, api_key, api_base);
+    let _data = input.or(inputs);
+    let _ = (
+        model,
+        _data,
+        dimensions,
+        encoding_format,
+        provider,
+        api_key,
+        api_base,
+        client_args,
+        timeout,
+    );
     Err(pyo3::exceptions::PyNotImplementedError::new_err(
         "Embeddings are not yet implemented in any-llm (direct) mode. \
          Use litellm mode (via the quota-router proxy) for embedding calls, \
@@ -377,19 +437,21 @@ pub async fn aembedding(
 pub fn messages(
     model: String,
     messages: Py<PyAny>,
-    max_tokens: Option<i32>,
+    max_tokens: i32,
     system: Option<String>,
     temperature: Option<f64>,
     top_p: Option<f64>,
     top_k: Option<i32>,
-    stop: Option<Vec<String>>,
+    stop_sequences: Option<Vec<String>>,
     stream: Option<bool>,
     tools: Option<Py<PyAny>>,
     tool_choice: Option<Py<PyAny>>,
     thinking: Option<Py<PyAny>>,
     metadata: Option<Py<PyAny>>,
+    cache_control: Option<Py<PyAny>>,
     api_key: Option<String>,
     api_base: Option<String>,
+    client_args: Option<Py<PyAny>>,
     provider: Option<String>,
 ) -> PyResult<Py<PyAny>> {
     let _ = (
@@ -401,14 +463,16 @@ pub fn messages(
         temperature,
         top_p,
         top_k,
-        stop,
+        stop_sequences,
         stream,
         tools,
         tool_choice,
         thinking,
         metadata,
+        cache_control,
         api_key,
         api_base,
+        client_args,
     );
     Err(pyo3::exceptions::PyNotImplementedError::new_err(
         "Anthropic Messages API endpoint is not yet implemented in the quota-router proxy. \
@@ -422,19 +486,21 @@ pub fn messages(
 pub async fn amessages(
     model: String,
     messages: Py<PyAny>,
-    max_tokens: Option<i32>,
+    max_tokens: i32,
     system: Option<String>,
     temperature: Option<f64>,
     top_p: Option<f64>,
     top_k: Option<i32>,
-    stop: Option<Vec<String>>,
+    stop_sequences: Option<Vec<String>>,
     stream: Option<bool>,
     tools: Option<Py<PyAny>>,
     tool_choice: Option<Py<PyAny>>,
     thinking: Option<Py<PyAny>>,
     metadata: Option<Py<PyAny>>,
+    cache_control: Option<Py<PyAny>>,
     api_key: Option<String>,
     api_base: Option<String>,
+    client_args: Option<Py<PyAny>>,
     provider: Option<String>,
 ) -> PyResult<Py<PyAny>> {
     self::messages(
@@ -445,14 +511,16 @@ pub async fn amessages(
         temperature,
         top_p,
         top_k,
-        stop,
+        stop_sequences,
         stream,
         tools,
         tool_choice,
         thinking,
         metadata,
+        cache_control,
         api_key,
         api_base,
+        client_args,
         provider,
     )
 }
@@ -469,45 +537,44 @@ pub async fn amessages(
 #[pyfunction]
 #[pyo3(
     name = "responses",
-    text_signature = "(model, input, *, provider=None, **kwargs)"
+    text_signature = "(model, input=None, input_data=None, *, provider=None, **kwargs)"
 )]
 pub fn responses(
     model: String,
-    input: Py<PyAny>,
+    input: Option<Py<PyAny>>,      // litellm convention
+    input_data: Option<Py<PyAny>>, // any-llm convention
     instructions: Option<String>,
     temperature: Option<f64>,
-    max_tokens: Option<i32>,
+    max_output_tokens: Option<i32>,
     top_p: Option<f64>,
     stream: Option<bool>,
     tools: Option<Py<PyAny>>,
     tool_choice: Option<Py<PyAny>>,
-    modalities: Option<Py<PyAny>>,
-    audio: Option<Py<PyAny>>,
     store: Option<bool>,
     metadata: Option<Py<PyAny>>,
     user: Option<String>,
     api_key: Option<String>,
     api_base: Option<String>,
+    client_args: Option<Py<PyAny>>,
     provider: Option<String>,
 ) -> PyResult<Py<PyAny>> {
     let _ = (
         provider,
         model,
-        input,
+        input.or(input_data),
         instructions,
         temperature,
-        max_tokens,
+        max_output_tokens,
         top_p,
         stream,
         tools,
         tool_choice,
-        modalities,
-        audio,
         store,
         metadata,
         user,
         api_key,
         api_base,
+        client_args,
     );
     Err(pyo3::exceptions::PyNotImplementedError::new_err(
         "OpenAI Responses API endpoint is not yet implemented in the quota-router proxy. \
@@ -520,45 +587,46 @@ pub fn responses(
 #[pyo3(name = "aresponses")]
 pub async fn aresponses(
     model: String,
-    input: Py<PyAny>,
+    input: Option<Py<PyAny>>,      // litellm convention
+    input_data: Option<Py<PyAny>>, // any-llm convention
     instructions: Option<String>,
     temperature: Option<f64>,
-    max_tokens: Option<i32>,
+    max_output_tokens: Option<i32>,
     top_p: Option<f64>,
     stream: Option<bool>,
     tools: Option<Py<PyAny>>,
     tool_choice: Option<Py<PyAny>>,
-    modalities: Option<Py<PyAny>>,
-    audio: Option<Py<PyAny>>,
     store: Option<bool>,
     metadata: Option<Py<PyAny>>,
     user: Option<String>,
     api_key: Option<String>,
     api_base: Option<String>,
+    client_args: Option<Py<PyAny>>,
     provider: Option<String>,
 ) -> PyResult<Py<PyAny>> {
     self::responses(
         model,
         input,
+        input_data,
         instructions,
         temperature,
-        max_tokens,
+        max_output_tokens,
         top_p,
         stream,
         tools,
         tool_choice,
-        modalities,
-        audio,
         store,
         metadata,
         user,
         api_key,
         api_base,
+        client_args,
         provider,
     )
 }
 
-/// get_response - Retrieve a response by ID
+// =============================================================================
+// Text Completion API (LiteLLM parity)
 #[pyfunction]
 #[pyo3(
     name = "get_response",
@@ -630,7 +698,13 @@ pub async fn adelete_response(
 /// requires the model registry to be wired. See RFC-0920.
 #[pyfunction]
 #[pyo3(name = "list_models")]
-pub fn list_models(_provider: Option<String>) -> PyResult<Py<PyAny>> {
+pub fn list_models(
+    provider: String,
+    api_key: Option<String>,
+    api_base: Option<String>,
+    client_args: Option<Py<PyAny>>,
+) -> PyResult<Py<PyAny>> {
+    let _ = (provider, api_key, api_base, client_args);
     Err(pyo3::exceptions::PyNotImplementedError::new_err(
         "list_models() is not yet implemented in the quota-router proxy. \
          See RFC-0920 for planned model registry support.",
@@ -640,8 +714,13 @@ pub fn list_models(_provider: Option<String>) -> PyResult<Py<PyAny>> {
 /// alist_models - Async list models API
 #[pyfunction]
 #[pyo3(name = "alist_models")]
-pub async fn alist_models(provider: Option<String>) -> PyResult<Py<PyAny>> {
-    list_models(provider)
+pub async fn alist_models(
+    provider: String,
+    api_key: Option<String>,
+    api_base: Option<String>,
+    client_args: Option<Py<PyAny>>,
+) -> PyResult<Py<PyAny>> {
+    list_models(provider, api_key, api_base, client_args)
 }
 
 // =============================================================================
@@ -657,27 +736,27 @@ pub async fn alist_models(provider: Option<String>) -> PyResult<Py<PyAny>> {
 #[pyfunction]
 #[pyo3(
     name = "batch_create",
-    text_signature = "(provider, input_file, model, **kwargs)"
+    text_signature = "(provider, input_file, endpoint, **kwargs)"
 )]
 pub fn batch_create(
     provider: String,
     input_file: String,
-    model: String,
-    endpoint: Option<String>,
+    endpoint: String,
     completion_window: Option<String>,
     metadata: Option<Py<PyAny>>,
     api_key: Option<String>,
     api_base: Option<String>,
+    client_args: Option<Py<PyAny>>,
 ) -> PyResult<Py<PyAny>> {
     let _ = (
         provider,
-        model,
         input_file,
         endpoint,
         completion_window,
         metadata,
         api_key,
         api_base,
+        client_args,
     );
     Err(pyo3::exceptions::PyNotImplementedError::new_err(
         "Batch API endpoint is not yet implemented in the quota-router proxy. \
@@ -692,22 +771,22 @@ pub fn batch_create(
 pub async fn abatch_create(
     provider: String,
     input_file: String,
-    model: String,
-    endpoint: Option<String>,
+    endpoint: String,
     completion_window: Option<String>,
     metadata: Option<Py<PyAny>>,
     api_key: Option<String>,
     api_base: Option<String>,
+    client_args: Option<Py<PyAny>>,
 ) -> PyResult<Py<PyAny>> {
     self::batch_create(
         provider,
         input_file,
-        model,
         endpoint,
         completion_window,
         metadata,
         api_key,
         api_base,
+        client_args,
     )
 }
 
@@ -715,15 +794,16 @@ pub async fn abatch_create(
 #[pyfunction]
 #[pyo3(
     name = "batch_retrieve",
-    text_signature = "(batch_id, provider=None, **kwargs)"
+    text_signature = "(provider, batch_id, **kwargs)"
 )]
 pub fn batch_retrieve(
+    provider: String,
     batch_id: String,
-    provider: Option<String>,
     api_key: Option<String>,
     api_base: Option<String>,
+    client_args: Option<Py<PyAny>>,
 ) -> PyResult<Py<PyAny>> {
-    let _ = (provider, batch_id, api_key, api_base);
+    let _ = (provider, batch_id, api_key, api_base, client_args);
     Err(pyo3::exceptions::PyNotImplementedError::new_err(
         "Batch API endpoint is not yet implemented in the quota-router proxy. \
          See RFC-0920 for planned Batch API support.",
@@ -734,12 +814,13 @@ pub fn batch_retrieve(
 #[pyfunction]
 #[pyo3(name = "abatch_retrieve")]
 pub async fn abatch_retrieve(
+    provider: String,
     batch_id: String,
-    provider: Option<String>,
     api_key: Option<String>,
     api_base: Option<String>,
+    client_args: Option<Py<PyAny>>,
 ) -> PyResult<Py<PyAny>> {
-    self::batch_retrieve(batch_id, provider, api_key, api_base)
+    self::batch_retrieve(provider, batch_id, api_key, api_base, client_args)
 }
 
 /// batch_cancel - Sync cancel batch API
@@ -753,8 +834,9 @@ pub fn batch_cancel(
     batch_id: String,
     api_key: Option<String>,
     api_base: Option<String>,
+    client_args: Option<Py<PyAny>>,
 ) -> PyResult<Py<PyAny>> {
-    let _ = (provider, batch_id, api_key, api_base);
+    let _ = (provider, batch_id, api_key, api_base, client_args);
     Err(pyo3::exceptions::PyNotImplementedError::new_err(
         "Batch API endpoint is not yet implemented in the quota-router proxy. \
          See RFC-0920 for planned Batch API support.",
@@ -769,21 +851,23 @@ pub async fn abatch_cancel(
     batch_id: String,
     api_key: Option<String>,
     api_base: Option<String>,
+    client_args: Option<Py<PyAny>>,
 ) -> PyResult<Py<PyAny>> {
-    self::batch_cancel(provider, batch_id, api_key, api_base)
+    self::batch_cancel(provider, batch_id, api_key, api_base, client_args)
 }
 
 /// batch_list - Sync list batches API
 #[pyfunction]
-#[pyo3(name = "batch_list", text_signature = "(provider, limit=20, **kwargs)")]
+#[pyo3(name = "batch_list", text_signature = "(provider, **kwargs)")]
 pub fn batch_list(
     provider: String,
-    limit: i32,
+    limit: Option<i32>,
     after: Option<String>,
     api_key: Option<String>,
     api_base: Option<String>,
+    client_args: Option<Py<PyAny>>,
 ) -> PyResult<Py<PyAny>> {
-    let _ = (provider, limit, after, api_key, api_base);
+    let _ = (provider, limit, after, api_key, api_base, client_args);
     Err(pyo3::exceptions::PyNotImplementedError::new_err(
         "Batch API endpoint is not yet implemented in the quota-router proxy. \
          See RFC-0920 for planned Batch API support.",
@@ -795,27 +879,29 @@ pub fn batch_list(
 #[pyo3(name = "abatch_list")]
 pub async fn abatch_list(
     provider: String,
-    limit: i32,
+    limit: Option<i32>,
     after: Option<String>,
     api_key: Option<String>,
     api_base: Option<String>,
+    client_args: Option<Py<PyAny>>,
 ) -> PyResult<Py<PyAny>> {
-    self::batch_list(provider, limit, after, api_key, api_base)
+    self::batch_list(provider, limit, after, api_key, api_base, client_args)
 }
 
 /// batch_results - Sync retrieve batch results API
 #[pyfunction]
 #[pyo3(
     name = "batch_results",
-    text_signature = "(batch_id, provider=None, **kwargs)"
+    text_signature = "(provider, batch_id, **kwargs)"
 )]
 pub fn batch_results(
+    provider: String,
     batch_id: String,
-    provider: Option<String>,
     api_key: Option<String>,
     api_base: Option<String>,
+    client_args: Option<Py<PyAny>>,
 ) -> PyResult<Py<PyAny>> {
-    let _ = (provider, batch_id, api_key, api_base);
+    let _ = (provider, batch_id, api_key, api_base, client_args);
     Err(pyo3::exceptions::PyNotImplementedError::new_err(
         "Batch API endpoint is not yet implemented in the quota-router proxy. \
          See RFC-0920 for planned Batch API support.",
@@ -826,12 +912,13 @@ pub fn batch_results(
 #[pyfunction]
 #[pyo3(name = "abatch_results")]
 pub async fn abatch_results(
+    provider: String,
     batch_id: String,
-    provider: Option<String>,
     api_key: Option<String>,
     api_base: Option<String>,
+    client_args: Option<Py<PyAny>>,
 ) -> PyResult<Py<PyAny>> {
-    self::batch_results(batch_id, provider, api_key, api_base)
+    self::batch_results(provider, batch_id, api_key, api_base, client_args)
 }
 
 // =============================================================================
@@ -868,7 +955,13 @@ pub fn text_completion(
         top_p,
         None, // n
         _stream,
-        stop.and_then(|v| if v.is_empty() { None } else { Some(v.join(",")) }),
+        stop.and_then(|v| {
+            if v.is_empty() {
+                None
+            } else {
+                Some(v.join(","))
+            }
+        }),
         presence_penalty,
         frequency_penalty,
         None, // user
@@ -918,15 +1011,21 @@ pub async fn atext_completion(
         top_p,
         None, // n
         _stream,
-        stop.and_then(|v| if v.is_empty() { None } else { Some(v.join(",")) }),
+        stop.and_then(|v| {
+            if v.is_empty() {
+                None
+            } else {
+                Some(v.join(","))
+            }
+        }),
         presence_penalty,
         frequency_penalty,
-        None,     // user
-        None,     // seed
-        timeout,  // timeout
-        None,     // extra_headers
-        None,     // base_url
-        None,     // api_version
+        None,    // user
+        None,    // seed
+        timeout, // timeout
+        None,    // extra_headers
+        None,    // base_url
+        None,    // api_version
         api_key,
         None, // service_tier
         None, // background

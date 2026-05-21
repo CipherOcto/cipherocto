@@ -42,16 +42,24 @@ impl ProviderMode {
 /// because it's faster and has no Python dependency.
 pub fn default_mode() -> ProviderMode {
     #[cfg(all(feature = "litellm-mode", not(feature = "any-llm-mode")))]
-    { return ProviderMode::LiteLLM; }
+    {
+        return ProviderMode::LiteLLM;
+    }
 
     #[cfg(all(feature = "any-llm-mode", not(feature = "litellm-mode")))]
-    { return ProviderMode::AnyLlm; }
+    {
+        return ProviderMode::AnyLlm;
+    }
 
     #[cfg(feature = "full")]
-    { return ProviderMode::LiteLLM; }
+    {
+        return ProviderMode::LiteLLM;
+    }
 
     #[cfg(not(any(feature = "litellm-mode", feature = "any-llm-mode", feature = "full")))]
-    { compile_error!("At least one of 'litellm-mode', 'any-llm-mode', or 'full' must be enabled") }
+    {
+        compile_error!("At least one of 'litellm-mode', 'any-llm-mode', or 'full' must be enabled")
+    }
 }
 
 /// Check if litellm-mode is available.
@@ -109,9 +117,18 @@ mod tests {
 
     #[test]
     fn test_mode_from_str() {
-        assert_eq!(ProviderMode::from_str("litellm"), Some(ProviderMode::LiteLLM));
-        assert_eq!(ProviderMode::from_str("any-llm"), Some(ProviderMode::AnyLlm));
-        assert_eq!(ProviderMode::from_str("LITELLM"), Some(ProviderMode::LiteLLM));
+        assert_eq!(
+            ProviderMode::from_str("litellm"),
+            Some(ProviderMode::LiteLLM)
+        );
+        assert_eq!(
+            ProviderMode::from_str("any-llm"),
+            Some(ProviderMode::AnyLlm)
+        );
+        assert_eq!(
+            ProviderMode::from_str("LITELLM"),
+            Some(ProviderMode::LiteLLM)
+        );
         assert_eq!(ProviderMode::from_str("invalid"), None);
     }
 }

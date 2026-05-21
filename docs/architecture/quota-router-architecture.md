@@ -24,8 +24,8 @@
 ## 1. System Overview
 
 Quota Router is a Rust-based AI API gateway that provides a unified interface for
-routing requests to 40+ LLM providers. It supports two deployment modes: an HTTP
-proxy (litellm-compatible) and a Python SDK (any-llm-compatible).
+routing requests to 44 LLM providers. It exposes two interfaces — an HTTP proxy
+and a Python SDK — both available regardless of runtime mode (litellm or any-llm).
 
 ```mermaid
 graph TB
@@ -59,7 +59,7 @@ graph TB
     subgraph Providers["Provider Layer"]
         direction TB
         P1[native_http<br/>12 Providers<br/>reqwest HTTP]
-        P2[py_bridge<br/>40+ Providers<br/>Python SDKs]
+        P2[py_bridge<br/>42 Providers<br/>Python SDKs]
     end
 
     subgraph External["External Services"]
@@ -67,7 +67,7 @@ graph TB
         E2[Anthropic API]
         E3[Google Gemini]
         E4[Azure OpenAI]
-        E5[40+ Providers]
+        E5[44 Providers]
     end
 
     Clients --> Interfaces
@@ -100,6 +100,8 @@ graph LR
         L6[batch.rs<br/>Batch Functions]
         L7[providers/<br/>Provider Wrappers]
         L8[types.rs<br/>Python Types]
+        L9[sdk.rs<br/>SDK Utilities]
+        L10[streaming.rs<br/>Streaming Support]
     end
 
     subgraph Core["quota-router-core"]
@@ -107,7 +109,7 @@ graph LR
         C1[proxy.rs<br/>HTTP Proxy Server]
         C2[mode.rs<br/>Mode Router]
         C3[native_http/<br/>12 HTTP Providers]
-        C4[py_bridge/<br/>40+ Python Providers]
+        C4[py_bridge/<br/>42 Python Providers]
         C5[router.rs<br/>Routing Logic]
         C6[fallback.rs<br/>Fallback & Health]
         C7[config.rs<br/>Configuration]
@@ -129,6 +131,14 @@ graph LR
 
 ### 2.2 Feature Gates
 
+**Source:** `crates/quota-router-core/src/lib.rs` lines 32-85
+
+- `mode` — `pub mod mode;` (line 32, no `#[cfg]` gate) — **always compiled**
+- `proxy` — `pub mod proxy;` (line 37, no `#[cfg]` gate) — **always compiled**
+- `native_http` — `#[cfg(any(feature = "litellm-mode", feature = "full"))]` (line 47)
+- `py_bridge` — `#[cfg(any(feature = "any-llm-mode", feature = "full"))]` (line 60)
+- `python_sdk_entry` — `#[cfg(any(feature = "any-llm-mode", feature = "full"))]` (line 73)
+
 ```mermaid
 graph TD
     subgraph Features["Feature Gates"]
@@ -137,28 +147,32 @@ graph TD
         F3["full"]
     end
 
-    subgraph Modules["Compiled Modules"]
-        M1[native_http/]
-        M2[py_bridge/]
-        M3[proxy.rs]
-        M4[mode.rs]
+    subgraph Always["Always Compiled"]
+        A1[proxy.rs]
+        A2[mode.rs]
+        A3[config.rs]
+        A4[router.rs]
+        A5[fallback.rs]
     end
 
-    F1 -->|enables| M1
-    F1 -->|enables| M3
-    F1 -->|enables| M4
+    subgraph Gated["Feature-Gated"]
+        G1[native_http/]
+        G2[py_bridge/]
+        G3[python_sdk_entry]
+    end
 
-    F2 -->|enables| M2
-    F2 -->|enables| M4
-
-    F3 -->|enables| M1
-    F3 -->|enables| M2
-    F3 -->|enables| M3
-    F3 -->|enables| M4
+    F1 -->|enables| G1
+    F2 -->|enables| G2
+    F2 -->|enables| G3
+    F3 -->|enables| G1
+    F3 -->|enables| G2
+    F3 -->|enables| G3
 
     style F1 fill:#e3f2fd
     style F2 fill:#e8f5e9
     style F3 fill:#fff3e0
+    style Always fill:#fff3e0
+    style Gated fill:#fce4ec
 ```
 
 ---
@@ -166,7 +180,9 @@ graph TD
 ## 3. Dual-Mode Architecture
 
 The mode gate controls HOW providers are called, not WHETHER an interface exists.
-Both HTTP proxy and Python SDK exist in ALL modes.
+The HTTP proxy is always compiled. The Python SDK (`python_sdk_entry`) requires
+`any-llm-mode` or `full` feature gates — in practice, `quota-router-pyo3` always
+compiles with `full`, so both interfaces are available in the pip-installed package.
 
 ```mermaid
 graph TB
@@ -196,7 +212,7 @@ graph TB
     subgraph Providers["Provider APIs"]
         P1[OpenAI API]
         P2[Anthropic API]
-        P3[40+ Providers]
+        P3[44 Providers]
     end
 
     Input --> ModeRouter
@@ -293,8 +309,8 @@ sequenceDiagram
     participant API as LLM API
 
     User->>SDK: qr.completion(model, messages, _mode="litellm")
-    SDK->>SDK: ParseModel(model)
-    SDK->>Mode: resolve_mode("litellm")
+    SDK->>SDK: ParsedModel::parse(model)
+    SDK->>Mode: ProviderMode::from_str("litellm")
     Mode-->>SDK: ProviderMode::LiteLLM
 
     SDK->>Factory: create(provider_name)
@@ -323,8 +339,8 @@ sequenceDiagram
     participant API as LLM API
 
     User->>SDK: qr.completion(model, messages, _mode="any-llm")
-    SDK->>SDK: ParseModel(model)
-    SDK->>Mode: resolve_mode("any-llm")
+    SDK->>SDK: ParsedModel::parse(model)
+    SDK->>Mode: ProviderMode::from_str("any-llm")
     Mode-->>SDK: ProviderMode::AnyLlm
 
     SDK->>Factory: create(provider_name)
@@ -373,7 +389,7 @@ graph TB
         N12[replicate.rs]
     end
 
-    subgraph PyBridge["py_bridge/ Providers<br/>(40+ providers, Python SDKs)"]
+    subgraph PyBridge["py_bridge/ Providers<br/>(42 providers, Python SDKs)"]
         direction TB
         P1[openai.rs]
         P2[anthropic.rs]
@@ -383,7 +399,7 @@ graph TB
         P6[gemini.rs]
         P7[bedrock.rs]
         P8[vertexai.rs]
-        P9[40+ more...]
+        P9[34 more...]
     end
 
     subgraph Factory["Factory Pattern"]
@@ -405,11 +421,15 @@ graph TB
 
 ### 5.2 HttpProvider Trait
 
+**Source:** `crates/quota-router-core/src/native_http/mod.rs` lines 136-172
+
 ```rust
+#[async_trait]
 pub trait HttpProvider: Send + Sync {
     fn name(&self) -> &str;
-    fn supported_models(&self) -> Vec<String>;
-    fn supports_streaming(&self) -> bool;
+    fn supported_models(&self) -> Vec<&str>;
+    fn supports_model(&self, model: &str) -> bool { /* default */ }
+    fn supports_streaming(&self) -> bool { false } // default
 
     async fn completion(
         &self,
@@ -417,6 +437,7 @@ pub trait HttpProvider: Send + Sync {
         api_key: Option<&str>,
     ) -> Result<HttpCompletionResponse, ProviderError>;
 
+    // Default: returns UnsupportedModel error
     async fn streaming_completion(
         &self,
         request: &HttpCompletionRequest,
@@ -428,30 +449,34 @@ pub trait HttpProvider: Send + Sync {
         request: &HttpEmbeddingRequest,
         api_key: Option<&str>,
     ) -> Result<HttpEmbeddingResponse, ProviderError>;
+
+    fn routing_weight(&self) -> u32 { 1 } // default
 }
 ```
 
 ### 5.3 PyBridgeProvider Trait
 
-```rust
-pub trait PyBridgeProvider: Send + Sync {
-    fn name(&self) -> &str;
-    fn supported_models(&self) -> Vec<String>;
+**Source:** `crates/quota-router-core/src/py_bridge/openai.rs` lines 235-262
 
-    fn with_api_key(self: Box<Self>, api_key: String) -> Box<dyn PyBridgeProvider>;
-    fn with_api_base(self: Box<Self>, api_base: String) -> Box<dyn PyBridgeProvider>;
+```rust
+pub trait PyBridgeProvider: Send + Sync + 'static {
+    fn name(&self) -> &str;
 
     fn completion(
         &self,
         model: &str,
-        messages: &[Message],
-    ) -> Result<ChatCompletion, String>;
+        messages: &[crate::types::Message],
+    ) -> Result<crate::types::ChatCompletion, PyBridgeError>;
 
-    fn embedding(
+    // Default: returns "Streaming not supported" error
+    fn streaming_completion(
         &self,
         model: &str,
-        inputs: &[String],
-    ) -> Result<EmbeddingsResponse, String>;
+        messages: &[crate::types::Message],
+    ) -> Result<tokio::sync::mpsc::Receiver<Result<PyBridgeChunk, PyBridgeError>>, PyBridgeError>;
+
+    fn with_api_key(self: Box<Self>, key: String) -> Box<dyn PyBridgeProvider>;
+    fn with_api_base(self: Box<Self>, base: String) -> Box<dyn PyBridgeProvider>;
 }
 ```
 
@@ -461,14 +486,26 @@ pub trait PyBridgeProvider: Send + Sync {
 classDiagram
     class HttpCompletionRequest {
         +model: String
-        +messages: Vec~HttpMessage~
+        +messages: Vec~Message~
         +stream: Option~bool~
         +temperature: Option~f32~
         +max_tokens: Option~u32~
         +top_p: Option~f32~
         +stop: Option~Vec~String~~
+        +n: Option~u32~
+        +presence_penalty: Option~f32~
+        +frequency_penalty: Option~f32~
+        +user: Option~String~
         +api_base: Option~String~
         +tools: Option~Vec~Tool~~
+        +tool_choice: Option~ToolChoice~
+        +response_format: Option~ResponseFormat~
+        +seed: Option~i64~
+        +logprobs: Option~bool~
+        +top_logprobs: Option~usize~
+        +parallel_tool_calls: Option~bool~
+        +prompt_id: Option~String~
+        +prompt_variables: Option~HashMap~
         +provider_params: Option~Value~
     }
 
@@ -506,7 +543,7 @@ classDiagram
 graph TD
     subgraph Entry["Entry Points"]
         E1[proxy.rs<br/>HTTP Proxy]
-        E2[completion.rs<br/>Python SDK]
+        E2[python_sdk_entry/<br/>Python SDK]
     end
 
     subgraph Routing["Routing Layer"]
@@ -576,23 +613,38 @@ graph TD
 
 | Module | File | Purpose |
 |--------|------|---------|
-| **proxy** | `proxy.rs` | HTTP proxy server, request handling, endpoint routing |
-| **mode** | `mode.rs` | Mode selection (litellm vs any-llm), default mode |
-| **config** | `config.rs` | Configuration loading, dispatch map, model groups |
-| **router** | `router.rs` | Provider routing strategies, load balancing |
-| **fallback** | `fallback.rs` | Fallback chains, health tracking, circuit breaking |
-| **pre_call_checks** | `pre_call_checks.rs` | Context window validation, pre-flight checks |
-| **rate_limit** | `rate_limit.rs` | Rate limiting per provider/model |
+| **admin** | `admin.rs` | Admin API endpoints |
+| **auth** | `auth/` | Authentication (API keys, SSO, JWT) |
+| **balance** | `balance.rs` | Balance tracking for OCTO-W budgets |
 | **cache** | `cache.rs` | Response caching |
 | **callbacks** | `callbacks/` | Event hooks for logging, metrics |
+| **config** | `config.rs` | Configuration loading, dispatch map, model groups |
+| **fallback** | `fallback.rs` | Fallback chains, health tracking, circuit breaking |
 | **guardrails** | `guardrails/` | Content filtering, safety checks |
-| **prompts** | `prompts/` | Prompt template management |
-| **pricing** | `pricing.rs` | Cost calculation, budget tracking |
-| **auth** | `auth/` | Authentication (API keys, SSO, JWT) |
+| **health** | `health.rs` | Health check endpoints |
+| **key_rate_limiter** | `key_rate_limiter.rs` | Per-key rate limiting |
 | **keys** | `keys/` | Virtual API key management |
+| **logging** | `logging.rs` | Structured logging setup |
+| **metrics** | `metrics.rs` | Prometheus metrics collection |
+| **middleware** | `middleware.rs` | HTTP middleware (auth, logging, rate limit) |
+| **mode** | `mode.rs` | Mode selection (litellm vs any-llm), default mode |
+| **model** | `model.rs` | Model parsing and validation |
+| **pre_call_checks** | `pre_call_checks.rs` | Context window validation, pre-flight checks |
+| **pricing** | `pricing.rs` | Cost calculation, budget tracking |
+| **prompts** | `prompts/` | Prompt template management |
+| **providers** | `providers.rs` | Provider registry and trait definitions |
+| **proxy** | `proxy.rs` | HTTP proxy server, request handling, endpoint routing |
+| **py_bridge** | `py_bridge/` | 42 providers using Python SDKs |
+| **python_sdk_entry** | `python_sdk_entry/` | Python SDK entry point (PyO3 module) |
+| **rate_limit** | `rate_limit.rs` | Rate limiting per provider/model |
+| **router** | `router.rs` | Provider routing strategies, load balancing |
+| **schema** | `schema.rs` | JSON schema validation |
+| **secret_manager** | `secret_manager.rs` | Secret storage and retrieval |
+| **shared_types** | `shared_types.rs` | Types shared between crates (Message, Choice, Usage) |
 | **storage** | `storage.rs` | Storage trait, persistence abstraction |
+| **tracing** | `tracing.rs` | Distributed tracing setup |
+| **types** | `types.rs` | Per-crate types (ChatCompletion, etc.) |
 | **native_http** | `native_http/` | 12 providers using reqwest HTTP |
-| **py_bridge** | `py_bridge/` | 40+ providers using Python SDKs |
 
 ---
 
@@ -608,12 +660,14 @@ classDiagram
         +name: Option~String~
         +tool_calls: Option~Vec~ToolCall~~
         +tool_call_id: Option~String~
+        +function_call: Option~FunctionCall~
     }
 
     class Choice {
         +index: u32
         +message: Message
         +finish_reason: String
+        +logprobs: Option~LogProbs~
     }
 
     class Usage {
@@ -641,6 +695,8 @@ classDiagram
         +rpm: u32
         +tpm: u64
         +model_group: Option~String~
+        +metadata: Option~HashMap~String~~String~~
+        +max_retries: Option~u32~
     }
 
     class ProviderMode {
@@ -662,7 +718,10 @@ graph LR
         S1[Message]
         S2[Choice]
         S3[Usage]
-        S4[ChatCompletion]
+    end
+
+    subgraph Types["types.rs<br/>(per-crate)"]
+        T1[ChatCompletion]
     end
 
     subgraph Core["native_http types"]
@@ -678,11 +737,12 @@ graph LR
     end
 
     S1 <--> C1
-    S4 <--> C3
+    T1 <--> C3
     S1 <--> P1
-    S4 <--> P2
+    T1 <--> P2
 
     style Shared fill:#e8f5e9
+    style Types fill:#fff9c4
     style Core fill:#e3f2fd
     style PyO3 fill:#fce4ec
 ```
@@ -730,6 +790,50 @@ classDiagram
         <<Safety>>
     }
 
+    class MissingApiKeyError {
+        <<Auth>>
+    }
+
+    class UnsupportedProviderError {
+        <<Config>>
+    }
+
+    class UnsupportedParameterError {
+        <<Config>>
+    }
+
+    class InsufficientFundsError {
+        <<Budget>>
+    }
+
+    class UpstreamProviderError {
+        <<502>>
+    }
+
+    class GatewayTimeoutError {
+        <<504>>
+    }
+
+    class LengthFinishReasonError {
+        <<Finish>>
+    }
+
+    class ContentFilterFinishReasonError {
+        <<Finish>>
+    }
+
+    class BatchNotCompleteError {
+        <<Batch>>
+    }
+
+    class AllModelsFailedError {
+        <<Router>>
+    }
+
+    class BatchPartialFailureError {
+        <<Batch>>
+    }
+
     QuotaRouterError <|-- AuthenticationError
     QuotaRouterError <|-- RateLimitError
     QuotaRouterError <|-- InvalidRequestError
@@ -737,6 +841,17 @@ classDiagram
     QuotaRouterError <|-- ModelNotFoundError
     QuotaRouterError <|-- ContextLengthExceededError
     QuotaRouterError <|-- ContentFilterError
+    QuotaRouterError <|-- MissingApiKeyError
+    QuotaRouterError <|-- UnsupportedProviderError
+    QuotaRouterError <|-- UnsupportedParameterError
+    QuotaRouterError <|-- InsufficientFundsError
+    QuotaRouterError <|-- UpstreamProviderError
+    QuotaRouterError <|-- GatewayTimeoutError
+    QuotaRouterError <|-- LengthFinishReasonError
+    QuotaRouterError <|-- ContentFilterFinishReasonError
+    QuotaRouterError <|-- BatchNotCompleteError
+    QuotaRouterError <|-- AllModelsFailedError
+    QuotaRouterError <|-- BatchPartialFailureError
 ```
 
 ### 8.2 Error Mapping
@@ -781,14 +896,23 @@ graph LR
     style Python fill:#e3f2fd
 ```
 
-### 8.3 LiteLLM-Compatible Aliases
+### 8.3 Dual QuotaRouterError
 
-| Quota Router Name | LiteLLM Alias |
+There are two distinct `QuotaRouterError` types in the codebase:
+
+1. **PyO3 Python exception** (`crates/quota-router-pyo3/src/exceptions.rs`) — the hierarchy shown above, used for Python-facing errors
+2. **Rust `thiserror` enum** (`crates/quota-router-core/src/keys/errors.rs`) — wraps domain-specific Rust errors (`KeyError`, `BudgetError`, `RouterError`, `RegistryError`, `StorageError`, `ProviderError`)
+
+These are separate types with different variant sets. The PyO3 hierarchy is what Python users interact with; the `thiserror` enum is used internally by the Rust core.
+
+### 8.4 LiteLLM-Compatible Aliases
+
+| Quota Router Name | LiteLLM/AnyLLM Alias |
 |-------------------|---------------|
 | `InsufficientFundsError` | `BudgetExceededError` |
 | `UpstreamProviderError` | `ServiceUnavailableError` |
 | `GatewayTimeoutError` | `APIConnectionError`, `Timeout` |
-| `QuotaRouterError` | `APIError` |
+| `QuotaRouterError` | `APIError`, `AnyLLMError` |
 | `ModelNotFoundError` | `NotFoundError` |
 | `ContextLengthExceededError` | `ContextWindowExceededError` |
 | `ContentFilterError` | `ContentPolicyViolationError` |
@@ -808,10 +932,10 @@ graph TD
     end
 
     subgraph ConfigModule["config.rs"]
-        CM1[RouterConfig]
-        CM2[Deployment]
-        CM3[Gateway]
-        CM4[ProviderConfig]
+        CM1[RouterSettings]
+        CM2[DeploymentConfig]
+        CM3[GatewayConfig]
+        CM4[AnyLlmProviderConfig]
     end
 
     subgraph Dispatch["Dispatch Map"]
@@ -877,12 +1001,12 @@ The mode selects the **provider integration strategy** only.
 | `any-llm-mode` | Always | ✅ | ❌ | ✅ |
 | `full` | Always | ✅ | ✅ | ✅ |
 
-**Source:** `crates/quota-router-core/src/lib.rs` lines 37-85
+**Source:** `crates/quota-router-core/src/lib.rs` lines 32-85
 
-- `proxy` — no feature gate, always compiled
-- `native_http` — `#[cfg(any(feature = "litellm-mode", feature = "full"))]`
-- `py_bridge` — `#[cfg(any(feature = "any-llm-mode", feature = "full"))]`
-- `python_sdk_entry` — `#[cfg(any(feature = "any-llm-mode", feature = "full"))]`
+- `proxy` — no feature gate, always compiled (line 37)
+- `native_http` — `#[cfg(any(feature = "litellm-mode", feature = "full"))]` (line 47)
+- `py_bridge` — `#[cfg(any(feature = "any-llm-mode", feature = "full"))]` (line 60)
+- `python_sdk_entry` — `#[cfg(any(feature = "any-llm-mode", feature = "full"))]` (line 73)
 
 ### 10.2 Build Configurations
 
@@ -943,7 +1067,7 @@ graph TB
     end
 
     subgraph Providers["Provider APIs"]
-        P1[40+ LLM Providers]
+        P1[44 LLM Providers]
     end
 
     Interfaces --> Mode
@@ -969,7 +1093,7 @@ graph TB
 graph TB
     subgraph Tests["Test Pyramid"]
         direction TB
-        T1["Unit Tests<br/>481 tests<br/>quota-router-core"]
+        T1["Unit Tests<br/>486 tests<br/>quota-router-core"]
         T2["Rust E2E Tests<br/>15 tests<br/>proxy + real endpoint"]
         T3["Python E2E Tests<br/>25 tests<br/>SDK + real endpoint"]
         T4["Drop-in Tests<br/>75 tests<br/>litellm + any-llm compat"]
@@ -992,13 +1116,14 @@ graph TB
 
 | Test Type | Count | Coverage |
 |-----------|-------|----------|
-| Unit tests (core) | 481 | All modules |
+| Unit tests (core) | 486 | All modules (445 `#[test]` + 41 `#[tokio::test]`) |
 | Rust E2E (proxy) | 15 | OpenAI endpoint via proxy |
 | Python E2E (SDK) | 25 | OpenAI endpoint via SDK |
-| Drop-in litellm | 38 | litellm compatibility |
-| Drop-in any-llm | 37 | any-llm compatibility |
+| Drop-in litellm | 35 | litellm compatibility |
+| Drop-in any-llm | 40 | any-llm compatibility |
 | Anthropic E2E | 18 | Anthropic endpoint (both modes) |
-| **Total** | **614** | |
+| Smoke tests | 8 | Basic integration checks |
+| **Total** | **627** | |
 
 ### 11.3 Test Endpoints
 
@@ -1030,11 +1155,13 @@ graph TB
 
 ### PyBridge Providers (any-llm-mode)
 
-40+ providers including all native HTTP providers plus:
-Cohere, Fireworks, Cerebras, OpenRouter, XAI, HuggingFace, MZAI, MiniMax,
-Nebius, Moonshot, Voyage, Sagemaker, Sambanova, VertexAI, Watsonx, Gateway,
-Platform, Llama, LlamaCpp, Llamafile, LMStudio, Inception, VLLM, Portkey,
-ZAI, DeepInfra, DashScope, DeepSeek, and more.
+42 providers total. Includes 10 of 12 native HTTP providers (excludes Databricks
+and Perplexity) plus:
+AI21, AI Foundry, Aleph Alpha, Cerebras, CloudflareAI, Cohere, Conjure,
+DashScope, DeepInfra, DeepSeek, Fireworks, HuggingFace, Inception, Infere,
+Level AI, LlamaCpp, Llamafile, LMStudio, MiniMax, Mistral Large, Moonshot,
+Nebius, NVIDIA, OpenRouter, Portkey, Sagemaker, Sambanova, Voyage, Watsonx,
+WorkersAI, XAI.
 
 ---
 
@@ -1046,6 +1173,8 @@ ZAI, DeepInfra, DashScope, DeepSeek, and more.
 |----------|------|--------|
 | `completion()` | Both | Implemented |
 | `acompletion()` | Both | Implemented |
+| `text_completion()` | Both | Implemented |
+| `atext_completion()` | Both | Implemented |
 | `embedding()` | any-llm | NotImplementedError |
 | `aembedding()` | any-llm | NotImplementedError |
 | `messages()` | any-llm | NotImplementedError |
@@ -1053,16 +1182,63 @@ ZAI, DeepInfra, DashScope, DeepSeek, and more.
 | `responses()` | any-llm | NotImplementedError |
 | `aresponses()` | any-llm | NotImplementedError |
 | `batch_create()` | any-llm | NotImplementedError |
+| `batch_retrieve()` | any-llm | NotImplementedError |
+| `batch_cancel()` | any-llm | NotImplementedError |
+| `batch_list()` | any-llm | NotImplementedError |
+| `batch_results()` | any-llm | NotImplementedError |
 | `list_models()` | any-llm | NotImplementedError |
+| `alist_models()` | any-llm | NotImplementedError |
+| `get_response()` | any-llm | NotImplementedError |
+| `delete_response()` | any-llm | NotImplementedError |
+| `abatch_create()` | any-llm | NotImplementedError |
+| `abatch_retrieve()` | any-llm | NotImplementedError |
+| `abatch_cancel()` | any-llm | NotImplementedError |
+| `abatch_list()` | any-llm | NotImplementedError |
+| `abatch_results()` | any-llm | NotImplementedError |
+| `aget_response()` | any-llm | NotImplementedError |
+| `adelete_response()` | any-llm | NotImplementedError |
+
+### SDK Management Functions
+
+| Function | Status |
+|----------|--------|
+| `set_api_key()` | Implemented |
+| `get_budget_status()` | Implemented |
+| `get_metrics()` | Implemented |
+| `parse_model()` | Implemented |
+| `parse_model_strict()` | Implemented |
+
+### Provider Functions
+
+| Function | Status |
+|----------|--------|
+| `get_supported_providers()` | Implemented |
+| `is_provider_supported()` | Implemented |
+| `get_provider_info()` | Implemented |
+
+### Batch Completion Functions
+
+| Function | Status |
+|----------|--------|
+| `batch_completion()` | Implemented |
+| `batch_completion_models()` | Implemented |
+| `batch_completion_models_all_responses()` | Implemented |
 
 ### Router Class
 
 | Method | Status |
 |--------|--------|
+| `__init__()` / `new()` | Implemented |
 | `completion()` | Implemented |
 | `acompletion()` | Implemented |
 | `list_models()` | Implemented |
 | `get_metrics()` | Implemented |
+| `get_stats()` | Implemented |
+| `get_strategy()` | Implemented |
+| `set_strategy()` | Implemented |
+| `get_models()` | Implemented |
+| `__len__()` | Implemented |
+| `__repr__()` | Implemented |
 
 ---
 

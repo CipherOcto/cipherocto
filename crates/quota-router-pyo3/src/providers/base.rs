@@ -1,9 +1,6 @@
 // Base provider trait and types for quota-router-pyo3
 // Inspired by any-llm's AnyLLM abstract base class
 
-use crate::types::{ChatCompletion, Message};
-use pyo3::PyErr;
-
 /// Provider feature flags
 #[derive(Debug, Clone)]
 pub struct ProviderFeatures {
@@ -14,62 +11,6 @@ pub struct ProviderFeatures {
     pub supports_list_models: bool,
     pub supports_batch: bool,
     pub supports_messages: bool,
-}
-
-/// Provider metadata
-#[allow(dead_code)]
-#[derive(Debug, Clone)]
-pub struct ProviderMetadata {
-    pub name: String,
-    pub documentation_url: String,
-    pub env_api_key: String,
-    pub env_api_base: Option<String>,
-    pub api_base: Option<String>,
-    pub features: ProviderFeatures,
-}
-
-/// Trait for LLM providers
-/// Each provider implements this trait to handle API calls to its SDK
-#[allow(dead_code)]
-pub trait LLMProvider: Send + Sync {
-    /// Get provider metadata
-    fn metadata(&self) -> &ProviderMetadata;
-
-    /// Initialize the provider client with API key and optional base URL
-    fn init_client(&self, api_key: &str, api_base: Option<&str>) -> Result<(), PyErr>;
-
-    /// Check if required packages are available
-    fn check_packages(&self) -> Result<(), String>;
-
-    /// Make a completion call
-    fn completion(
-        &self,
-        model: &str,
-        messages: &[Message],
-        stream: bool,
-    ) -> Result<ChatCompletion, PyErr>;
-
-    /// Make an async completion call
-    async fn acompletion(
-        &self,
-        model: &str,
-        messages: &[Message],
-        stream: bool,
-    ) -> Result<ChatCompletion, PyErr>;
-
-    /// Make an embedding call
-    fn embedding(
-        &self,
-        input: &[String],
-        model: &str,
-    ) -> Result<crate::types::EmbeddingsResponse, PyErr>;
-
-    /// Make an async embedding call
-    async fn aembedding(
-        &self,
-        input: &[String],
-        model: &str,
-    ) -> Result<crate::types::EmbeddingsResponse, PyErr>;
 }
 
 /// Static provider info - shared across all instances of a provider

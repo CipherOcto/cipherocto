@@ -1,25 +1,9 @@
 // Provider factory for creating and dispatching to providers
 // Handles dynamic provider lookup and instantiation
 
-use crate::exceptions::{ProviderError, UnsupportedProviderError};
 use crate::providers::base::{ProviderInfo, Providers};
-use once_cell::sync::Lazy;
 use pyo3::prelude::*;
 use pyo3::PyErr;
-use std::collections::HashMap;
-use std::sync::Mutex;
-
-/// Global provider registry - stores initialized provider instances
-#[allow(dead_code)]
-static PROVIDER_REGISTRY: Lazy<Mutex<HashMap<String, ProviderInstance>>> =
-    Lazy::new(|| Mutex::new(HashMap::new()));
-
-/// Provider instance wrapper
-#[allow(dead_code)]
-struct ProviderInstance {
-    api_key: String,
-    api_base: Option<String>,
-}
 
 /// Get the list of supported provider names
 #[pyfunction]
@@ -71,62 +55,6 @@ pub fn get_provider_info(provider: &str) -> PyResult<Py<PyAny>> {
     })
 }
 
-/// Validate that a provider is supported
-#[allow(dead_code)]
-pub fn validate_provider(provider: &str) -> Result<&'static ProviderInfo, PyErr> {
-    Providers::get(provider)
-        .ok_or_else(|| UnsupportedProviderError::new_err(format!("Unknown provider: {}", provider)))
-}
-
-/// Resolve API key for a provider
-/// Priority: explicit key > environment variable
-#[allow(dead_code)]
-pub fn resolve_api_key(
-    provider_info: &ProviderInfo,
-    explicit_key: Option<&str>,
-) -> Result<String, PyErr> {
-    let key = if let Some(k) = explicit_key {
-        k.to_string()
-    } else if let Ok(env_val) = std::env::var(provider_info.env_api_key) {
-        env_val
-    } else {
-        return Err(ProviderError::new_err(format!(
-            "Missing API key for {}. Set {} environment variable or pass api_key parameter.",
-            provider_info.name, provider_info.env_api_key
-        )));
-    };
-
-    if key.is_empty() {
-        return Err(ProviderError::new_err(format!(
-            "API key for {} is empty",
-            provider_info.name
-        )));
-    }
-
-    Ok(key)
-}
-
-/// Resolve API base URL for a provider
-#[allow(dead_code)]
-pub fn resolve_api_base(
-    provider_info: &ProviderInfo,
-    explicit_base: Option<&str>,
-) -> Option<String> {
-    if let Some(base) = explicit_base {
-        if !base.is_empty() {
-            return Some(base.to_string());
-        }
-    }
-    if let Some(env_var) = provider_info.env_api_base {
-        if let Ok(env_val) = std::env::var(env_var) {
-            if !env_val.is_empty() {
-                return Some(env_val);
-            }
-        }
-    }
-    provider_info.api_base.map(String::from)
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -144,11 +72,5 @@ mod tests {
         let info = Providers::get("openai").unwrap();
         assert_eq!(info.name, "openai");
         assert_eq!(info.env_api_key, "OPENAI_API_KEY");
-    }
-
-    #[test]
-    fn test_validate_provider() {
-        assert!(validate_provider("openai").is_ok());
-        assert!(validate_provider("unknown").is_err());
     }
 }

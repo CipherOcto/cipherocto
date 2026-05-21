@@ -59,7 +59,7 @@ graph TB
     subgraph Providers["Provider Layer"]
         direction TB
         P1[native_http<br/>12 Providers<br/>reqwest HTTP]
-        P2[py_bridge<br/>42 Providers<br/>Python SDKs]
+        P2[py_bridge<br/>44 Providers<br/>Python SDKs]
     end
 
     subgraph External["External Services"]
@@ -67,7 +67,7 @@ graph TB
         E2[Anthropic API]
         E3[Google Gemini]
         E4[Azure OpenAI]
-        E5[44 Providers]
+        E5[52 Providers]
     end
 
     Clients --> Interfaces
@@ -109,7 +109,7 @@ graph LR
         C1[proxy.rs<br/>HTTP Proxy Server]
         C2[mode.rs<br/>Mode Router]
         C3[native_http/<br/>12 HTTP Providers]
-        C4[py_bridge/<br/>42 Python Providers]
+        C4[py_bridge/<br/>44 Python Providers]
         C5[router.rs<br/>Routing Logic]
         C6[fallback.rs<br/>Fallback & Health]
         C7[config.rs<br/>Configuration]
@@ -389,7 +389,7 @@ graph TB
         N12[replicate.rs]
     end
 
-    subgraph PyBridge["py_bridge/ Providers<br/>(42 providers, Python SDKs)"]
+    subgraph PyBridge["py_bridge/ Providers<br/>(44 providers, Python SDKs)"]
         direction TB
         P1[openai.rs]
         P2[anthropic.rs]
@@ -634,7 +634,7 @@ graph TD
 | **prompts** | `prompts/` | Prompt template management |
 | **providers** | `providers.rs` | Provider registry and trait definitions |
 | **proxy** | `proxy.rs` | HTTP proxy server, request handling, endpoint routing |
-| **py_bridge** | `py_bridge/` | 42 providers using Python SDKs |
+| **py_bridge** | `py_bridge/` | 44 providers using Python SDKs |
 | **python_sdk_entry** | `python_sdk_entry/` | Python SDK entry point (PyO3 module) |
 | **rate_limit** | `rate_limit.rs` | Rate limiting per provider/model |
 | **router** | `router.rs` | Provider routing strategies, load balancing |
@@ -1029,7 +1029,7 @@ graph TB
         direction TB
         A1[HTTP Proxy<br/>Always Available]
         A2[Python SDK<br/>python_sdk_entry]
-        A3[py_bridge<br/>42 PyO3 Providers]
+        A3[py_bridge<br/>44 PyO3 Providers]
         A4[Mode Router<br/>any-only]
         style AnyLlm fill:#e3f2fd
     end
@@ -1039,7 +1039,7 @@ graph TB
         F1[HTTP Proxy]
         F2[Python SDK]
         F3[native_http<br/>12 reqwest Providers]
-        F4[py_bridge<br/>42 PyO3 Providers]
+        F4[py_bridge<br/>44 PyO3 Providers]
         F5[Mode Router<br/>switches at runtime]
         style Full fill:#fff3e0
     end
@@ -1050,10 +1050,10 @@ graph TB
 | Build | HTTP Proxy | Python SDK | reqwest Providers | PyO3 Providers | Mode Selection |
 |-------|-----------|------------|-------------------|----------------|----------------|
 | `litellm-mode` | ✅ | ❌ | 12 | ❌ | Fixed at compile time |
-| `any-llm-mode` | ✅ | ✅ | ❌ | 42 | Fixed at compile time |
-| `full` | ✅ | ✅ | 12 | 42 | **Runtime switchable** |
+| `any-llm-mode` | ✅ | ✅ | ❌ | 44 | Fixed at compile time |
+| `full` | ✅ | ✅ | 12 | 44 | **Runtime switchable** |
 
-**Key point:** The mode gate controls which provider backend is available, not which interfaces. The `litellm-mode` build still has HTTP proxy + library interface; `any-llm-mode` build still has HTTP proxy + library interface. Only the provider backends differ (12 reqwest vs 42 PyO3).
+**Key point:** The mode gate controls which provider backend is available, not which interfaces. The `litellm-mode` build still has HTTP proxy + library interface; `any-llm-mode` build still has HTTP proxy + library interface. Only the provider backends differ (12 reqwest vs 44 PyO3).
 
 ### 10.3 Runtime Mode Selection
 
@@ -1171,7 +1171,7 @@ graph TB
 
 ### PyBridge Providers (any-llm-mode)
 
-42 providers total. Includes 10 of 12 native HTTP providers (excludes Databricks
+44 providers total. Includes 10 of 12 native HTTP providers (excludes Databricks
 and Perplexity) plus:
 AI21, AI Foundry, Aleph Alpha, Cerebras, CloudflareAI, Cohere, Conjure,
 DashScope, DeepInfra, DeepSeek, Fireworks, HuggingFace, Inception, Infere,

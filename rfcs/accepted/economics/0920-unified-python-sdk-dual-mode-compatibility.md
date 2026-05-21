@@ -2,7 +2,7 @@
 
 ## Status
 
-Accepted (v1.70 — 2026-05-10)
+Accepted (v1.72 — 2026-05-21)
 
 **ARCHITECTURAL CONSTRAINT: HTTP proxy is FOREVER in BOTH litellm-mode and any-llm-mode. See section below.**
 
@@ -1059,23 +1059,23 @@ models = router.list_models(provider="openai")  # Filter by provider
 
 ```python
 def list_models(
-    provider: Optional[str] = None,
+    provider: str,
     api_key: Optional[str] = None,
     api_base: Optional[str] = None,
-    client_args: Optional[Dict] = None,
-) -> List[Model]:
+    client_args: Optional[Dict[str, Any]] = None,
+    **kwargs
+) -> Sequence[Model]:
     """
     List available models for a provider.
 
     Args:
-        provider: Provider name (e.g., "openai", "anthropic"). If None, lists all
-                  providers' models.
+        provider: Provider name (e.g., "openai", "anthropic"). Required.
         api_key: Override API key for this call.
         api_base: Override base URL for this call.
         client_args: Additional provider-specific arguments.
 
     Returns:
-        List of Model objects with fields: id, name, provider, created, description.
+        Sequence of Model objects with fields: id, name, provider, created, description.
 
     Raises:
         MissingApiKeyError: If no API key available.
@@ -1087,7 +1087,7 @@ class Router:
     def list_models(
         self,
         provider: Optional[str] = None,
-    ) -> List[Model]:
+    ) -> Sequence[Model]:
         """List models from this router's model_list deployments."""
 ```
 
@@ -1527,7 +1527,7 @@ Runtime routing, caching, and telemetry are owned by RFC-0902 Rust core (proxy)
 or Python Router class (SDK Phase 1).
 
 The Python Router class is specified as a Python-level component (NOT a Rust
-delegation) per RFC-0920 lines 2184-2185. Rust delegation is Phase 2.
+delegation) per RFC-0920 Python Router specification. Rust delegation is Phase 2.
 """
 from pathlib import Path
 import sys, yaml, os, argparse
@@ -1782,7 +1782,7 @@ class _AnthropicSSEParser:
         event: content_block_delta
         data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"Hello"}}
 
-    The event type (line 1) and data (line 2) must be remembered together to produce
+    The event type and data fields must be remembered together to produce
     a valid ChatCompletionChunk. This class tracks pending event-type state.
     """
 
@@ -1972,7 +1972,7 @@ async def acompletion(
     The caller uses `async for chunk in result:` to consume chunks.
 
     Reference: LiteLLM's CustomStreamWrapper.__aiter__/__anext__
-    (litellm/litellm_core_utils/streaming_handler.py lines 2017-2075)
+    (litellm/litellm_core_utils/streaming_handler.py `stream_chunk_handler` method)
 
     Example:
         result = await acompletion(model="gpt-4o", messages=[...], stream=True)
@@ -2383,7 +2383,7 @@ async def abatch_completion(
 
 `batch_completion_models()` sends the **same request** to **multiple models concurrently** and returns the **first response** (race condition). Distinct from `batch_completion()` which sends **many messages** to **one model**.
 
-**Reference:** LiteLLM's `batch_completion_models` (`litellm/batch_completion/main.py` lines 128-211).
+**Reference:** LiteLLM's `batch_completion_models` (`litellm/batch_completion/main.py`).
 
 **Specification:**
 
@@ -2549,7 +2549,7 @@ async def abatch_completion_models(
 
 **Severity: High**
 
-**⚠️ DEPRECATION NOTICE (v1.68 UPDATE): The deprecated Python Router class was fully ERASED in v1.68. The current architecture uses thin PyO3 delegation only — RouterHandle (lines 2710-2722) is a thin stub to RustRouterHandle with NO Python-side routing state.**
+**⚠️ DEPRECATION NOTICE (v1.68 UPDATE): The deprecated Python Router class was fully ERASED in v1.68. The current architecture uses thin PyO3 delegation only — RouterHandle is a thin stub to RustRouterHandle with NO Python-side routing state.**
 
 ```
 ╔═══════════════════════════════════════════════════════════════════════════════════════════╗
@@ -2566,7 +2566,7 @@ async def abatch_completion_models(
 ║   - State management: owned by Rust core (per RFC-0917)                                  ║
 ║   - Python adds ONLY: marshaling overhead (<2ms)                                          ║
 ║                                                                                           ║
-║   See RFC-0920 line 4408 for removal details.                                             ║
+║   See RFC-0920 version history for removal details.                                       ║
 ║   See RFC-0917 v2.44+ for authoritative heavy-lifting definitions.                      ║
 ║                                                                                           ║
 ╚═══════════════════════════════════════════════════════════════════════════════════════════╝
@@ -2608,14 +2608,14 @@ impl RouterHandle {
     pub fn new(router: Arc<Router>, storage: Arc<dyn KeyStorage>) -> Self
 
     /// Single completion call — routes, applies fallback, records spend
-    /// Full 22-parameter signature per RFC-0920 lines 58-84, 3735-3751
+    /// Full 22-parameter signature per RFC-0920 Completion API and LiteLLM compatibility sections
     pub async fn completion(
         &self,
         model: &str,
         messages: Vec<SdkMessage>,
         stream: bool,
         timeout: Option<f64>,
-        // LiteLLM compatibility params (lines 60-84)
+        // LiteLLM compatibility params
         temperature: Option<f64>,
         max_tokens: Option<i32>,
         top_p: Option<f64>,
@@ -2629,7 +2629,7 @@ impl RouterHandle {
         base_url: Option<String>,
         api_version: Option<String>,
         api_key: Option<String>,
-        // Phase 4 params (lines 3735-3751)
+        // Phase 4 params (Extended API Surface)
         service_tier: Option<String>,
         background: Option<bool>,
         prompt_cache_key: Option<String>,
@@ -2637,13 +2637,13 @@ impl RouterHandle {
         conversation: Option<String>,
     ) -> Result<SdkCompletionResponse, RouterError> { ... }
 
-    /// Batch completion — same model, parallel requests (per RFC-0920 lines 2508-2514)
+    /// Batch completion — same model, parallel requests (per RFC-0920 Batch Completion section)
     pub async fn batch_completion(
         &self,
         requests: Vec<SdkCompletionRequest>,
     ) -> Result<Vec<SdkCompletionResponse>, RouterError> { ... }
 
-    /// Batch completion with model race — first response wins (per RFC-0920 line 2509)
+    /// Batch completion with model race — first response wins (per RFC-0920 Batch Completion section)
     pub async fn batch_completion_models(
         &self,
         models: Vec<String>,
@@ -2671,7 +2671,7 @@ impl RouterHandle {
         conversation: Option<String>,
     ) -> Result<SdkCompletionResponse, RouterError> { ... }
 
-    /// Batch completion with all responses — all models, all responses (per RFC-0920 line 2510)
+    /// Batch completion with all responses — all models, all responses (per RFC-0920 Batch Completion section)
     pub async fn batch_completion_models_all(
         &self,
         models: Vec<String>,
@@ -2720,7 +2720,7 @@ class Router:
         return self._rust.batch_completion_models_all(models=models, messages=messages, **kwargs)
 ```
 
-**Note:** `RouterHandle`/`RustRouterHandle` was referenced in this RFC in 12+ places (lines 178, 188, 189, 190, 191, 2520, 2532, 2548, 2552, 2583, 2604, 2607, 2611, 2631, 2639, 2694) but was never concretely defined. RFC-0917 v2.38 now provides the concrete definition in `python_sdk_entry` module with full 22-parameter signature and all three batch methods. The implementation must create `quota-router-core/src/python_sdk_entry.rs` with this `RouterHandle` struct.
+**Note:** `RouterHandle`/`RustRouterHandle` is referenced throughout this RFC but was never concretely defined here. RFC-0917 v2.38 provides the concrete definition in `python_sdk_entry` module with full 22-parameter signature and all three batch methods. The implementation must create `quota-router-core/src/python_sdk_entry.rs` with this `RouterHandle` struct.
 
 #### Direct Rust Client Entry Point
 
@@ -2749,7 +2749,7 @@ impl Client {
         messages: Vec<SdkMessage>,
         stream: bool,
         timeout: Option<f64>,
-        // ... all 22 params per RFC-0920 lines 58-84, 3735-3751
+        // ... all 22 params per RFC-0920 Completion API and Extended API Surface sections
     ) -> Result<SdkCompletionResponse, RouterError> { ... }
 
     /// Batch completion — same model, parallel requests
@@ -2841,12 +2841,12 @@ let response = client.completion(model, messages, stream, timeout, ...).await?;
 
 | Python Router field (Phase 1) | Type | RFC-0917 Rust equivalent | Persisted? | Notes |
 |-------------------------------|------|--------------------------|-------------|-------|
-| `_round_robin_index` | `int` | `AtomicUsize` in `RouterState` (line 1120) — `fetch_add` for lock-free round-robin | No | Lock-free via atomic; no `threading.Lock` needed |
+| `_round_robin_index` | `int` | `AtomicUsize` in `RouterState` — `fetch_add` for lock-free round-robin | No | Lock-free via atomic; no `threading.Lock` needed |
 | `_round_robin_lock` | `threading.Lock` | **Not needed** — RFC-0917 uses `AtomicUsize.fetch_add()` (no lock) | — | Lock-free eliminates TOCTOU race |
 | `_total_spend[idx]` | `int` (μunits) | `record_spend()` → `STORAGE.record_spend(&event)` → `octo_w_ledger` per RFC-0909 | **Yes** (stoolap) | Ephemeral in Python; persisted in Rust |
 | `_spend_history[idx]` | `deque(maxlen=500)` | `record_spend_with_idempotency()` → `SpendEvent` ledger per RFC-0909 | **Yes** (stoolap) | Persists full history in Rust; Python had in-memory only |
 | `_active_requests[idx]` | `int` | `RouterState.connection_pools` — tracks active requests per deployment | No | In-memory state for `least-busy` strategy |
-| `_latencies[idx]` | `deque(maxlen=100)` | `LatencyTracker.samples: HashMap<String, Vec<u64>>` (lines 1132-1134) — microsecond precision | No | Fixed 100-sample window; `best_provider()` for latency-based routing |
+| `_latencies[idx]` | `deque(maxlen=100)` | `LatencyTracker.samples: HashMap<String, Vec<u64>>` — microsecond precision | No | Fixed 100-sample window; `best_provider()` for latency-based routing |
 | `_by_model` | `Dict[str, List[int]]` | `Router.provider_impls: HashMap<String, Vec<ProviderWithState>>` | No | Model → deployment indices mapping |
 
 **Critical notes:**
@@ -3278,7 +3278,7 @@ fn map_rust_error_to_python(e: QuotaRouterError) -> PyErr {
 
 any-llm supports `any-...` API keys that encode the provider internally. quota-router supports this via the `platform` pseudo-provider (listed in RFC-0917 Phase 3's 42 providers as `"platform"`).
 
-**Verified consistency with RFC-0917 Phase 3:** The `platform` pseudo-provider matches RFC-0917 Phase 3's provider list (line 1008: `platform` among 42 providers). It is NOT a different platform integration — it is the same `any-...` key format mechanism.
+**Verified consistency with RFC-0917 Phase 3:** The `platform` pseudo-provider matches RFC-0917 Phase 3's provider list (`platform` among 42 providers). It is NOT a different platform integration — it is the same `any-...` key format mechanism.
 
 **Specification:**
 
@@ -3506,12 +3506,14 @@ The batch API supports **both** LiteLLM style (`input_file_path`) and any-llm st
 def batch_create(
     provider: str,
     input_file: Union[str, Path],     # Local file path (LiteLLM style)
-    model: str,
-    endpoint: str = "/v1/chat/completions",
+    endpoint: str,
+    *,
     completion_window: str = "24h",
-    metadata: Optional[Dict] = None,
+    metadata: Optional[Dict[str, str]] = None,
     api_key: Optional[str] = None,
     api_base: Optional[str] = None,
+    client_args: Optional[Dict[str, Any]] = None,
+    **kwargs
 ) -> BatchCreateResponse:
     """
     Create a batch job.
@@ -3520,12 +3522,12 @@ def batch_create(
         provider: Provider name (e.g., "openai")
         input_file: Path to JSONL file with requests, OR pre-existing file ID
                    (if string starts with "file-", treated as file_id; otherwise as path)
-        model: Model to use
-        endpoint: API endpoint (default: /v1/chat/completions)
+        endpoint: API endpoint (e.g., "/v1/chat/completions")
         completion_window: Time window (default: "24h")
         metadata: Optional metadata dict
         api_key: Override API key
         api_base: Override base URL
+        client_args: Additional provider-specific arguments
 
     Returns:
         BatchCreateResponse with batch_id, status, etc.
@@ -3542,36 +3544,48 @@ class BatchCreateResponse:
     metadata: Optional[Dict]
 
 def batch_retrieve(
-    batch_id: str,
     provider: str,
+    batch_id: str,
+    *,
     api_key: Optional[str] = None,
     api_base: Optional[str] = None,
+    client_args: Optional[Dict[str, Any]] = None,
+    **kwargs
 ) -> BatchRetrieveResponse:
     """Get batch job status and results."""
 
 def batch_list(
     provider: str,
+    *,
     after: Optional[str] = None,
-    limit: int = 20,
+    limit: Optional[int] = None,
     api_key: Optional[str] = None,
     api_base: Optional[str] = None,
-) -> List[BatchCreateResponse]:
+    client_args: Optional[Dict[str, Any]] = None,
+    **kwargs
+) -> Sequence[BatchCreateResponse]:
     """List batch jobs for a provider."""
 
 def batch_cancel(
-    batch_id: str,
     provider: str,
+    batch_id: str,
+    *,
     api_key: Optional[str] = None,
     api_base: Optional[str] = None,
-) -> BatchCreateResponse:
+    client_args: Optional[Dict[str, Any]] = None,
+    **kwargs
+) -> BatchRetrieveResponse:
     """Cancel a batch job."""
 
 def batch_results(
-    batch_id: str,
     provider: str,
+    batch_id: str,
+    *,
     api_key: Optional[str] = None,
     api_base: Optional[str] = None,
-) -> List[BatchResultItem]:
+    client_args: Optional[Dict[str, Any]] = None,
+    **kwargs
+) -> BatchResult:
     """Retrieve batch results (after completion)."""
 ```
 
@@ -3675,133 +3689,188 @@ async def aadapter_completion(
 #### Messages API — Anthropic (any-llm parity)
 
 ```python
-async def amessages(
-    model: str,
-    messages: List[Dict],
-    system: Optional[Union[str, List[Dict]]] = None,
-    max_tokens: Optional[int] = None,
-    temperature: Optional[float] = None,
-    top_p: Optional[float] = None,
-    top_k: Optional[int] = None,
-    tools: Optional[List[Dict]] = None,
-    tool_choice: Optional[Union[str, Dict]] = None,
-    streaming: bool = False,
-    thinking: Optional[Dict] = None,
-    api_key: Optional[str] = None,
-    api_base: Optional[str] = None,
-    **kwargs
-) -> AnthropicMessagesResponse:
-    """
-    Anthropic Messages API (not chat completions).
-
-    any-llm parity: matches any_llm.amessages signature.
-    Differs from acompletion() in that it uses Anthropic's native
-    messages endpoint rather than /v1/chat/completions.
-    """
-
 def messages(
     model: str,
     messages: List[Dict],
+    max_tokens: int,
+    *,
+    provider: Optional[str] = None,
     system: Optional[Union[str, List[Dict]]] = None,
-    max_tokens: Optional[int] = None,
     temperature: Optional[float] = None,
     top_p: Optional[float] = None,
     top_k: Optional[int] = None,
+    stream: Optional[bool] = None,
+    stop_sequences: Optional[List[str]] = None,
     tools: Optional[List[Dict]] = None,
     tool_choice: Optional[Union[str, Dict]] = None,
-    streaming: bool = False,
+    metadata: Optional[Dict[str, Any]] = None,
     thinking: Optional[Dict] = None,
+    cache_control: Optional[Dict[str, Any]] = None,
     api_key: Optional[str] = None,
     api_base: Optional[str] = None,
+    client_args: Optional[Dict[str, Any]] = None,
     **kwargs
 ) -> AnthropicMessagesResponse:
     """
     Synchronous Anthropic Messages API.
 
     any-llm parity: matches any_llm.messages signature.
+    Differs from completion() in that it uses Anthropic's native
+    messages endpoint rather than /v1/chat/completions.
+    """
+
+async def amessages(
+    model: str,
+    messages: List[Dict],
+    max_tokens: int,
+    *,
+    provider: Optional[str] = None,
+    system: Optional[Union[str, List[Dict]]] = None,
+    temperature: Optional[float] = None,
+    top_p: Optional[float] = None,
+    top_k: Optional[int] = None,
+    stream: Optional[bool] = None,
+    stop_sequences: Optional[List[str]] = None,
+    tools: Optional[List[Dict]] = None,
+    tool_choice: Optional[Union[str, Dict]] = None,
+    metadata: Optional[Dict[str, Any]] = None,
+    thinking: Optional[Dict] = None,
+    cache_control: Optional[Dict[str, Any]] = None,
+    api_key: Optional[str] = None,
+    api_base: Optional[str] = None,
+    client_args: Optional[Dict[str, Any]] = None,
+    **kwargs
+) -> AnthropicMessagesResponse:
+    """
+    Asynchronous Anthropic Messages API.
+
+    any-llm parity: matches any_llm.amessages signature.
     """
 ```
 
 #### Responses API — OpenAI (any-llm parity)
 
 ```python
-async def aresponses(
-    model: str,
-    input: Union[str, List[Union[str, Dict]]],
-    instructions: Optional[str] = None,
-    tools: Optional[List[Dict]] = None,
-    tool_choice: Optional[Union[str, Dict]] = None,
-    temperature: Optional[float] = None,
-    top_p: Optional[float] = None,
-    max_tokens: Optional[int] = None,
-    modalities: Optional[List[str]] = None,
-    audio: Optional[Dict] = None,
-    store: Optional[bool] = None,
-    metadata: Optional[Dict] = None,
-    api_key: Optional[str] = None,
-    api_base: Optional[str] = None,
-    **kwargs
-) -> ResponsesAPIResponse:
-    """
-    OpenAI Responses API.
-
-    any-llm parity: matches any_llm.aresponses signature.
-    Uses OpenAI's /v1/responses endpoint (not /v1/chat/completions).
-    """
-
 def responses(
     model: str,
-    input: Union[str, List[Union[str, Dict]]],
+    input: Union[str, List[Union[str, Dict]]] = None,      # litellm convention
+    input_data: Union[str, List[Union[str, Dict]]] = None,  # any-llm convention
+    *,
+    provider: Optional[str] = None,
     instructions: Optional[str] = None,
     tools: Optional[List[Dict]] = None,
     tool_choice: Optional[Union[str, Dict]] = None,
+    max_output_tokens: Optional[int] = None,
     temperature: Optional[float] = None,
     top_p: Optional[float] = None,
-    max_tokens: Optional[int] = None,
-    modalities: Optional[List[str]] = None,
-    audio: Optional[Dict] = None,
+    stream: Optional[bool] = None,
+    include: Optional[List[str]] = None,
+    parallel_tool_calls: Optional[bool] = None,
+    previous_response_id: Optional[str] = None,
+    reasoning: Optional[Dict] = None,
+    text: Optional[Dict] = None,
+    presence_penalty: Optional[float] = None,
+    frequency_penalty: Optional[float] = None,
+    truncation: Optional[str] = None,
     store: Optional[bool] = None,
-    metadata: Optional[Dict] = None,
+    service_tier: Optional[str] = None,
+    user: Optional[str] = None,
+    metadata: Optional[Dict[str, Any]] = None,
+    background: Optional[bool] = None,
+    safety_identifier: Optional[str] = None,
     api_key: Optional[str] = None,
     api_base: Optional[str] = None,
+    client_args: Optional[Dict[str, Any]] = None,
     **kwargs
 ) -> ResponsesAPIResponse:
     """
     Synchronous OpenAI Responses API.
 
     any-llm parity: matches any_llm.responses signature.
+    Uses OpenAI's /v1/responses endpoint (not /v1/chat/completions).
+    """
+
+async def aresponses(
+    model: str,
+    input: Union[str, List[Union[str, Dict]]] = None,      # litellm convention
+    input_data: Union[str, List[Union[str, Dict]]] = None,  # any-llm convention
+    *,
+    provider: Optional[str] = None,
+    instructions: Optional[str] = None,
+    tools: Optional[List[Dict]] = None,
+    tool_choice: Optional[Union[str, Dict]] = None,
+    max_output_tokens: Optional[int] = None,
+    temperature: Optional[float] = None,
+    top_p: Optional[float] = None,
+    stream: Optional[bool] = None,
+    include: Optional[List[str]] = None,
+    parallel_tool_calls: Optional[bool] = None,
+    previous_response_id: Optional[str] = None,
+    reasoning: Optional[Dict] = None,
+    text: Optional[Dict] = None,
+    presence_penalty: Optional[float] = None,
+    frequency_penalty: Optional[float] = None,
+    truncation: Optional[str] = None,
+    store: Optional[bool] = None,
+    service_tier: Optional[str] = None,
+    user: Optional[str] = None,
+    metadata: Optional[Dict[str, Any]] = None,
+    background: Optional[bool] = None,
+    safety_identifier: Optional[str] = None,
+    api_key: Optional[str] = None,
+    api_base: Optional[str] = None,
+    client_args: Optional[Dict[str, Any]] = None,
+    **kwargs
+) -> ResponsesAPIResponse:
+    """
+    Asynchronous OpenAI Responses API.
+
+    any-llm parity: matches any_llm.aresponses signature.
     """
 ```
 
 #### Embedding (any-llm parity)
 
 ```python
-async def aembedding(
-    model: str,
-    input: Union[str, List[str]],
-    api_key: Optional[str] = None,
-    api_base: Optional[str] = None,
-    **kwargs
-) -> EmbeddingResponse:
-    """
-    Asynchronous embedding generation.
-
-    any-llm parity: matches any_llm.aembedding signature.
-    LiteLLM parity: matches litellm.aembedding signature.
-    """
-
 def embedding(
     model: str,
-    input: Union[str, List[str]],
+    input: Union[str, List[str]] = None,  # litellm convention
+    inputs: Union[str, List[str]] = None,  # any-llm convention
+    *,
+    dimensions: Optional[int] = None,
+    encoding_format: Optional[str] = None,
+    provider: Optional[str] = None,
     api_key: Optional[str] = None,
     api_base: Optional[str] = None,
+    client_args: Optional[Dict[str, Any]] = None,
+    timeout: Union[float, httpx.Timeout] = 600,
     **kwargs
 ) -> EmbeddingResponse:
     """
     Synchronous embedding generation.
 
-    any-llm parity: matches any_llm.embedding signature.
-    LiteLLM parity: matches litellm.embedding signature.
+    Dual-convention: accepts both `input` (litellm) and `inputs` (any-llm).
+    Implementation resolves: data = input if input is not None else inputs.
+    """
+
+async def aembedding(
+    model: str,
+    input: Union[str, List[str]] = None,  # litellm convention
+    inputs: Union[str, List[str]] = None,  # any-llm convention
+    *,
+    dimensions: Optional[int] = None,
+    encoding_format: Optional[str] = None,
+    provider: Optional[str] = None,
+    api_key: Optional[str] = None,
+    api_base: Optional[str] = None,
+    client_args: Optional[Dict[str, Any]] = None,
+    timeout: Union[float, httpx.Timeout] = 600,
+    **kwargs
+) -> EmbeddingResponse:
+    """
+    Asynchronous embedding generation.
+
+    Dual-convention: accepts both `input` (litellm) and `inputs` (any-llm).
     """
 ```
 
@@ -3870,19 +3939,49 @@ def completion_with_retries(
 #### Responses API Sub-Methods (LiteLLM parity)
 
 ```python
-async def aget_responses(
+def get_response(
+    provider: str,
     response_id: str,
+    *,
     api_key: Optional[str] = None,
     api_base: Optional[str] = None,
-) -> ResponseResource:
-    """Get a specific response by ID."""
+    client_args: Optional[Dict[str, Any]] = None,
+    **kwargs
+) -> ResponsesAPIResponse:
+    """Get a specific response by ID from provider storage."""
 
-async def adelete_responses(
+def delete_response(
+    provider: str,
     response_id: str,
+    *,
     api_key: Optional[str] = None,
     api_base: Optional[str] = None,
-) -> Dict:
-    """Delete a specific response."""
+    client_args: Optional[Dict[str, Any]] = None,
+    **kwargs
+) -> ResponsesAPIResponse:
+    """Delete a specific response from provider storage."""
+
+async def aget_response(
+    provider: str,
+    response_id: str,
+    *,
+    api_key: Optional[str] = None,
+    api_base: Optional[str] = None,
+    client_args: Optional[Dict[str, Any]] = None,
+    **kwargs
+) -> ResponsesAPIResponse:
+    """Async: Get a specific response by ID from provider storage."""
+
+async def adelete_response(
+    provider: str,
+    response_id: str,
+    *,
+    api_key: Optional[str] = None,
+    api_base: Optional[str] = None,
+    client_args: Optional[Dict[str, Any]] = None,
+    **kwargs
+) -> ResponsesAPIResponse:
+    """Async: Delete a specific response from provider storage."""
 
 async def acancel_responses(
     response_id: str,
@@ -4198,25 +4297,163 @@ quota_router/
 | SDK import time        | <100ms | Cold import                                    |
 | Memory per provider    | <10MB  | Cached Python client                           |
 
-## Test Compatibility
+## Test Specifications
 
-### LiteLLM Test Compatibility
+### Test File Mapping
 
-The SDK must pass LiteLLM's test suite for completion, embedding, and model listing.
+| Test File | Covers |
+|-----------|--------|
+| `tests/test_drop_in_litellm.py` | LiteLLM drop-in compatibility |
+| `tests/test_drop_in_any_llm.py` | any-llm drop-in compatibility |
+| `tests/e2e_python.py` | E2E via OpenAI endpoint |
+| `tests/e2e_anthropic.py` | E2E via Anthropic endpoint |
+| `tests/smoke_test.py` | Basic import and structure |
 
-```bash
-# Run LiteLLM compatibility tests
-pytest tests/test_litellm_compat.py -v
+### embedding() / aembedding() Tests
 
-# Coverage target: 100% of LiteLLM API surface
-```
+**Parameter Validation:**
+- `test_embedding_positional_args`: `embedding("text-embedding-3-small", ["hello"])` — positional model, input
+- `test_embedding_keyword_model`: `embedding(model="text-embedding-3-small", input=["hello"])` — keyword model
+- `test_embedding_litellm_convention`: `embedding(model="...", input=["hello"])` — litellm uses `input=`
+- `test_embedding_anyllm_convention`: `embedding(model="...", inputs=["hello"])` — any-llm uses `inputs=`
+- `test_embedding_both_params_error`: `embedding(model="...", input=["a"], inputs=["b"])` — must raise error (ambiguous)
+- `test_embedding_neither_param_error`: `embedding(model="...")` — must raise error (no input)
+- `test_embedding_empty_input`: `embedding(model="...", input=[])` — empty list
+- `test_embedding_string_input`: `embedding(model="...", input="hello")` — single string
+- `test_embedding_list_input`: `embedding(model="...", input=["hello", "world"])` — list of strings
 
-### any-llm Test Compatibility
+**Return Type:**
+- `test_embedding_returns_object`: response has `.data`, `.model`, `.usage` fields
+- `test_embedding_data_is_list`: `response.data` is a list of embedding objects
+- `test_embedding_data_has_embedding`: each item has `.embedding` (list of floats)
+- `test_embedding_usage_has_tokens`: `response.usage.prompt_tokens > 0`
 
-```bash
-# Run any-llm compatibility tests
-pytest tests/test_anyllm_compat.py -v
-```
+**Advanced:**
+- `test_embedding_client_args`: `embedding(model, input=["hello"], client_args={"timeout": 30})`
+
+**Error Handling:**
+- `test_embedding_invalid_model`: raises `ModelNotFoundError`
+- `test_embedding_no_api_key`: raises `AuthenticationError` or `MissingApiKeyError`
+- `test_embedding_rate_limited`: raises `RateLimitError` with `retry_after`
+
+**Async:**
+- `test_aembedding_returns_coroutine`: `aembedding(...)` returns a coroutine
+- `test_aembedding_same_result_as_sync`: `await aembedding(...)` matches `embedding(...)`
+
+### messages() / amessages() Tests
+
+**Parameter Validation:**
+- `test_messages_required_params`: `messages(model, messages, max_tokens)` — all required
+- `test_messages_max_tokens_required`: `messages(model="...", messages=[...])` without max_tokens raises TypeError
+- `test_messages_system_optional`: `messages(model, messages, max_tokens, system="You are helpful")` — system is optional
+- `test_messages_system_union_type`: system accepts both `str` and `list[dict]` (Anthropic content blocks)
+- `test_messages_stream_param`: `messages(model, messages, max_tokens, stream=True)` — uses `stream` not `streaming`
+- `test_messages_stop_sequences`: `messages(model, messages, max_tokens, stop_sequences=["END"])` — uses `stop_sequences` not `stop`
+- `test_messages_thinking_optional`: `messages(model, messages, max_tokens, thinking={"type": "enabled", "budget_tokens": 1000})`
+- `test_messages_cache_control_optional`: `messages(model, messages, max_tokens, cache_control={"type": "ephemeral"})`
+- `test_messages_client_args`: `messages(model, messages, max_tokens, client_args={"timeout": 30})`
+
+**Provider Routing:**
+- `test_messages_routes_to_anthropic`: messages() routes to Anthropic Messages API
+- `test_messages_with_provider_kwarg`: `messages(model="...", messages=[...], max_tokens=100, provider="anthropic")`
+
+**Error Handling:**
+- `test_messages_invalid_model`: raises `ModelNotFoundError`
+- `test_messages_no_api_key`: raises `AuthenticationError` or `MissingApiKeyError`
+
+### responses() / aresponses() Tests
+
+**Parameter Validation:**
+- `test_responses_litellm_convention`: `responses(model="...", input="Hello")` — litellm uses `input=`
+- `test_responses_anyllm_convention`: `responses(model="...", input_data="Hello")` — any-llm uses `input_data=`
+- `test_responses_both_params_error`: `responses(model="...", input="a", input_data="b")` — must raise error
+- `test_responses_neither_param_error`: `responses(model="...")` — must raise error
+- `test_responses_max_output_tokens`: `responses(model, input, max_output_tokens=100)` — not `max_tokens`
+- `test_responses_instructions_optional`: `responses(model, input, instructions="Be helpful")`
+- `test_responses_client_args`: `responses(model, input, client_args={"timeout": 30})`
+
+**Error Handling:**
+- `test_responses_invalid_model`: raises `ModelNotFoundError`
+- `test_responses_no_api_key`: raises `AuthenticationError` or `MissingApiKeyError`
+
+### batch Functions Tests
+
+**batch_create():**
+- `test_batch_create_required_params`: `batch_create(provider, input_file, endpoint)` — all required
+- `test_batch_create_no_model`: `batch_create` does NOT accept `model` param
+- `test_batch_create_endpoint_required`: `batch_create(provider, input_file)` without endpoint raises TypeError
+- `test_batch_create_client_args`: `batch_create(provider, input_file, endpoint, client_args={"timeout": 30})`
+- `test_batch_create_return_type`: returns `BatchCreateResponse` with `.batch_id`, `.status` fields
+
+**batch_retrieve():**
+- `test_batch_retrieve_param_order`: `batch_retrieve(provider, batch_id)` — provider first
+- `test_batch_retrieve_provider_required`: `batch_retrieve(batch_id="...")` without provider raises TypeError
+- `test_batch_retrieve_return_type`: returns `BatchRetrieveResponse` with `.status`, `.output_file_id` fields
+
+**batch_cancel():**
+- `test_batch_cancel_param_order`: `batch_cancel(provider, batch_id)` — provider first
+- `test_batch_cancel_return_type`: returns `BatchRetrieveResponse`
+
+**batch_list():**
+- `test_batch_list_required_params`: `batch_list(provider)` — provider required
+- `test_batch_list_limit_optional`: `batch_list(provider, limit=10)` — limit is optional
+- `test_batch_list_return_type`: returns `Sequence[BatchCreateResponse]`
+
+**batch_results():**
+- `test_batch_results_param_order`: `batch_results(provider, batch_id)` — provider first
+- `test_batch_results_return_type`: returns `BatchResult` with `.results` list
+- `test_batch_results_not_complete_error`: raises `BatchNotCompleteError` if batch not done
+
+### list_models() Tests
+
+**Parameter Validation:**
+- `test_list_models_provider_required`: `list_models(provider="openai")` — provider is required
+- `test_list_models_no_provider_error`: `list_models()` without provider raises TypeError
+- `test_list_models_optional_params`: `list_models(provider, api_key="...", api_base="...")`
+- `test_list_models_client_args`: `list_models(provider, client_args={"timeout": 30})`
+
+**Return Type:**
+- `test_list_models_return_type`: returns `Sequence[Model]` with `.id`, `.name`, `.provider`, `.created` fields
+
+**Error Handling:**
+- `test_list_models_no_api_key`: raises `AuthenticationError` or `MissingApiKeyError`
+- `test_list_models_bad_provider`: raises `UnsupportedProviderError`
+
+### Dual-Convention Tests (Drop-in Compatibility)
+
+**LiteLLM Convention:**
+- `test_litellm_embedding_input_kwarg`: `import quota_router as litellm; litellm.embedding(model="...", input=[...])`
+- `test_litellm_responses_input_kwarg`: `import quota_router as litellm; litellm.responses(model="...", input="...")`
+
+**any-llm Convention:**
+- `test_anyllm_embedding_inputs_kwarg`: `import quota_router as any_llm; any_llm.embedding(model="...", inputs=[...])`
+- `test_anyllm_responses_input_data_kwarg`: `import quota_router as any_llm; any_llm.responses(model="...", input_data="...")`
+
+### Exception Compatibility Tests
+
+**LiteLLM Aliases:**
+- `test_budget_exceeded_alias`: `BudgetExceededError` catches `InsufficientFundsError`
+- `test_service_unavailable_alias`: `ServiceUnavailableError` catches `UpstreamProviderError`
+- `test_api_connection_alias`: `APIConnectionError` catches `GatewayTimeoutError`
+- `test_timeout_alias`: `Timeout` catches `GatewayTimeoutError`
+- `test_api_error_alias`: `APIError` catches `QuotaRouterError`
+- `test_not_found_alias`: `NotFoundError` catches `ModelNotFoundError`
+- `test_context_window_alias`: `ContextWindowExceededError` catches `ContextLengthExceededError`
+- `test_content_policy_alias`: `ContentPolicyViolationError` catches `ContentFilterError`
+
+**any-llm Exceptions:**
+- `test_anyllm_error_base`: `AnyLLMError` catches `QuotaRouterError`
+- `test_authentication_error`: `AuthenticationError` is catchable
+- `test_rate_limit_error`: `RateLimitError` is catchable
+- `test_invalid_request_error`: `InvalidRequestError` is catchable
+- `test_provider_error`: `ProviderError` is catchable
+- `test_content_filter_error`: `ContentFilterError` is catchable
+- `test_model_not_found_error`: `ModelNotFoundError` is catchable
+- `test_context_length_exceeded_error`: `ContextLengthExceededError` is catchable
+- `test_missing_api_key_error`: `MissingApiKeyError` is catchable
+- `test_unsupported_provider_error`: `UnsupportedProviderError` is catchable
+- `test_unsupported_parameter_error`: `UnsupportedParameterError` is catchable
+- `test_batch_not_complete_error`: `BatchNotCompleteError` is catchable
 
 ## Security Considerations
 
@@ -4386,6 +4623,131 @@ def _get_server_secret() -> bytes:
 
 **Note:** `redis_url` is NOT applicable — stoolap (RFC-0912, RFC-0914) replaces Redis entirely as the persistence layer. Caching uses stoolap's WAL-based pub/sub semantic cache per RFC-0913.
 
+## Async Implementation Specification
+
+### Current State
+
+All `a*` functions (`acompletion`, `aembedding`, `amessages`, `aresponses`, `abatch_*`, `alist_models`) are **sync wrappers** — they call their sync counterparts and block the Python event loop.
+
+```rust
+// CURRENT: acompletion blocks the event loop
+pub async fn acompletion(...) -> PyResult<Py<PyAny>> {
+    completion(...)  // sync call — blocks!
+}
+```
+
+### Target State
+
+All `a*` functions must be **true async** — they `.await` the Rust core's async provider dispatch without blocking the Python event loop.
+
+### How It Works
+
+**pyo3 0.21 `experimental-async`** (already enabled in `Cargo.toml`):
+- `pub async fn` in `#[pyfunction]` creates a native Python coroutine
+- pyo3 manages the tokio runtime internally
+- The coroutine can `.await` Rust futures without blocking
+
+**Rust core already has async traits:**
+```rust
+// quota-router-core/src/native_http/mod.rs
+#[async_trait]
+pub trait HttpProvider: Send + Sync {
+    async fn completion(&self, request: &HttpCompletionRequest, api_key: Option<&str>) -> Result<HttpCompletionResponse, ProviderError>;
+    async fn streaming_completion(&self, request: &HttpCompletionRequest, api_key: Option<&str>) -> Result<StreamingResponse, ProviderError>;
+    async fn embedding(&self, request: &HttpEmbeddingRequest, api_key: Option<&str>) -> Result<HttpEmbeddingResponse, ProviderError>;
+}
+```
+
+### Required Changes
+
+**1. Create async dispatch function in `completion.rs`:**
+
+```rust
+async fn dispatch_completion_async(
+    provider: &dyn HttpProvider,
+    request: &HttpCompletionRequest,
+    api_key: Option<&str>,
+) -> Result<HttpCompletionResponse, ProviderError> {
+    provider.completion(request, api_key).await
+}
+```
+
+**2. Update `acompletion()` to use async dispatch:**
+
+```rust
+#[pyfunction]
+#[pyo3(name = "acompletion")]
+pub async fn acompletion(...) -> PyResult<Py<PyAny>> {
+    let parsed = ParsedModel::parse(&model)?;
+    let provider = HttpProviderFactory::create(&parsed.provider, &parsed.model);
+    let request = build_request(...);
+
+    // True async — does NOT block the event loop
+    let result = provider.completion(&request, api_key.as_deref()).await
+        .map_err(|e| ...)?;
+
+    // Convert to Python dict
+    Python::with_gil(|py| { ... })
+}
+```
+
+**3. Apply same pattern to all `a*` functions:**
+- `aembedding()` → `provider.embedding(&request, api_key).await`
+- `amessages()` → async provider dispatch (once Messages API is implemented)
+- `aresponses()` → async provider dispatch (once Responses API is implemented)
+- `abatch_*` → async provider dispatch (once Batch API is implemented)
+
+**4. Remove sync wrapper pattern:**
+
+```rust
+// BEFORE (sync wrapper — blocks event loop)
+pub async fn acompletion(...) -> PyResult<Py<PyAny>> {
+    completion(...)  // BAD: blocks
+}
+
+// AFTER (true async — non-blocking)
+pub async fn acompletion(...) -> PyResult<Py<PyAny>> {
+    provider.completion(&request, api_key).await  // GOOD: non-blocking
+}
+```
+
+### Provider Factory Async Support
+
+The `HttpProviderFactory::create()` returns a `Box<dyn HttpProvider>`. Since `HttpProvider` is `#[async_trait]`, calling `.completion().await` on it is already supported. No changes needed to the trait or factory.
+
+### py_bridge (any-llm-mode) Async
+
+For `py_bridge` providers (any-llm-mode), async dispatch requires calling the Python provider's async method from Rust. This uses `pyo3_asyncio`:
+
+```rust
+// py_bridge async dispatch
+async fn dispatch_py_bridge_async(
+    provider: &dyn PyBridgeProvider,
+    model: &str,
+    messages: &[Message],
+) -> Result<ChatCompletion, PyBridgeError> {
+    // PyBridgeProvider::completion() is sync (calls Python SDK)
+    // For true async, need to call Python's async method via pyo3_asyncio
+    // This is a Phase 2 enhancement for py_bridge
+}
+```
+
+**Note:** `py_bridge` providers call Python SDKs (which may be async). True async for py_bridge requires `pyo3_asyncio` to bridge Rust async ↔ Python async. This is separate from `native_http` async (which is pure Rust).
+
+### Scope
+
+| Function | native_http async | py_bridge async |
+|----------|------------------|-----------------|
+| `acompletion()` | Phase 1 | Phase 2 (pyo3_asyncio) |
+| `aembedding()` | Phase 1 | Phase 2 |
+| `amessages()` | Phase 1 | Phase 2 |
+| `aresponses()` | Phase 1 | Phase 2 |
+| `abatch_*` | Phase 1 | Phase 2 |
+| `alist_models()` | Phase 1 | Phase 2 |
+
+Phase 1: `native_http` providers use Rust async (tokio + reqwest async).
+Phase 2: `py_bridge` providers use `pyo3_asyncio` to call Python async SDKs.
+
 ## Future Work
 
 - F4: Response caching (RFC-0906) — spec is in RFC-0906
@@ -4404,8 +4766,10 @@ This is the only approach that achieves true drop-in replacement for both ecosys
 
 | Version | Date       | Changes |
 | ------- | ---------- | ------- |
+| 1.72    | 2026-05-21 | **SPEC** Added sync get_response()/delete_response() with `provider` first param, matching test specs. Added async variants aget_response()/adelete_response(). |
+| 1.71    | 2026-05-21 | **FIX** C3: Removed stale `model` param from batch_create() docstring. **FIX** H3: Updated test specs — removed NotImplementedError stubs for batch/messages/responses, added return type and error handling tests. **FIX** H6: Added thinking/cache_control/client_args tests for messages(). **FIX** M3/M4: Added client_args tests for embedding() and list_models(). |
 | 1.70    | 2026-05-10 | **FIX** O1: Provider count corrected from 41→42 throughout (header table, Phase 2 checklist, KNOWN_PROVIDERS description, platform provider reference, acceptance criteria table). Mission 0920-b correctly lists 42 providers with deepinfra; RFC was inconsistent. |
-| 1.69    | 2026-05-10 | **FIX** N1 (Low): Updated stale deprecation notice (line 2552) to reflect v1.68 structural change. The notice previously referenced "Python Router class (lines 2178-2848)" — a class that was ERASED in v1.68. Updated to confirm current RouterHandle is a thin PyO3 delegation stub with NO routing state, and that all heavy lifting resides in RFC-0917. |
+| 1.69    | 2026-05-10 | **FIX** N1 (Low): Updated stale deprecation notice to reflect v1.68 structural change. The notice previously referenced "Python Router class" — a class that was ERASED in v1.68. Updated to confirm current RouterHandle is a thin PyO3 delegation stub with NO routing state, and that all heavy lifting resides in RFC-0917. |
 | 1.68    | 2026-05-09 | **ERASE** Deprecated Python Router class (~2907-3387 lines): Removed all Phase 1 Python routing state, 8 routing strategy implementations, `_record_spend` with decay math, `_select_by_weighted_spend`, and all `completion`/`acompletion` methods with fallback logic. RFC-0920 is now purely a thin-binding layer: API surface, type marshaling, exception translation, and Phase 2 state mapping reference. All heavy lifting (ProviderWithState, RoutingStrategy enum, all 8 strategy algorithms, SpendTracker with decay math) is now exclusively in RFC-0917. |
 | 1.67    | 2026-05-09 | **FIX** RFC-0920 thin-binding constraint made explicit: Summary now states sole role is API surface + type marshaling; all heavy lifting is in RFC-0917. Dependencies marks RFC-0917 as "definitive source." Crate Architecture section now has red box: "RFC-0920 MUST NEVER DEFINE ANY HEAVY LIFTING." Phase 4 unspecced items removed per deferred-vs-unspecified rule. |
 | 1.66    | 2026-05-09 | **CROSS** F1: RouterHandle.batch_completion_models_all() in RFC-0917 v2.43 now passes all 22 params (was dropping 20 params). **REMOVE** Phase 4 unspecced items (modalities, audio, prediction, 8 routing strategies, additional providers) per deferred-vs-unspecified rule — no spec means remove. F1/LangChain and F2/LlamaIndex removed (no spec). F3/SSE normalization deferred to RFC-0906 Phase 3. F4/Response caching already references RFC-0906. Cross-reference to F4 (SdkMessage.name clarification) and F6 (duplicate TODO removal). |
@@ -4414,18 +4778,18 @@ This is the only approach that achieves true drop-in replacement for both ecosys
 | 1.63    | 2026-05-09 | **FIX** D1/D2: RouterHandle.batch_completion_models() and batch_completion_models_all() now show all 22 params (was only temperature/max_tokens — inconsistent with Client section which had full params). **FIX** D9: batch_completion_models_all() documented as returning only successful responses (failures silently dropped). |
 | 1.62    | 2026-05-09 | **FIX** C1: Client.batch_completion_models() now uses tokio::sync::mpsc (per RFC-0917 v2.39). **FIX** C2: Client.get_metrics() returns Result (matches RouterHandle). **FIX** C6: batch_completion_models() and batch_completion_models_all() now show all 22 params (was only temperature/max_tokens). |
 | 1.61    | 2026-05-09 | **FIX** B1: RouterHandle.completion() now has full 22 params (was incomplete in v1.60). **FIX** B2: Added batch_completion_models() and batch_completion_models_all() to RouterHandle section. **FIX** B5: Added RouterHandle::new() constructor. **FIX** B4: Client section now shows full method list matching RouterHandle. Cross-RFC: RFC-0917 v2.38 provides concrete implementation. |
-| 1.60    | 2026-05-09 | **FIX** A1: Added `client` module entry point for direct Rust-to-core calls (no HTTP, no PyO3). **FIX** A3: RouterHandle.completion() now enumerates all 22 params per lines 58-84. **FIX** A4: Added batch_completion_models() and batch_completion_models_all() to RouterHandle section. **FIX** A8: Version history now notes RFC-0917 v2.37 cross-reference (RouterHandle defined there). Cross-RFC dependency: RFC-0917 v2.37 provides concrete `RouterHandle` struct which RFC-0920 references in 12+ locations. |
+| 1.60    | 2026-05-09 | **FIX** A1: Added `client` module entry point for direct Rust-to-core calls (no HTTP, no PyO3). **FIX** A3: RouterHandle.completion() now enumerates all 22 params per Completion API section. **FIX** A4: Added batch_completion_models() and batch_completion_models_all() to RouterHandle section. **FIX** A8: Version history now notes RFC-0917 v2.37 cross-reference (RouterHandle defined there). Cross-RFC dependency: RFC-0917 v2.37 provides concrete `RouterHandle` struct which RFC-0920 references throughout. |
 | 1.58    | 2026-05-06 | **FIX** N1: _record_spend pricing and write restored (was missing — only comment remained). **FIX** N3: UnsupportedProviderError `field()` removed (non-dataclass). **FIX** N4: BatchNotCompleteError, AllModelsFailedError, BatchPartialFailureError now have `__init__`. **FIX** N5: into_async → into_future in RFC-0920 proxy code (2 locations). **FIX** N6: _stream_provider_response filters None from SSE parsers. **FIX** N7: parse_anthropic_sse now stateful via _AnthropicSSEParser class (multi-line SSE). **FIX** N8: Router.completion() indentation fixed (comment and result dedented to try block). **FIX** N13/N21: _spend_history initialized in __init__; guard reordered before access. **FIX** N14: batch_completion_models docstring corrected (losers run to completion, not cancelled). **FIX** N15: _get_server_secret fallback gate now enforced. **FIX** N16: QUOTA_ROUTER_MODE clarified as label-only (not provider strategy switch). **FIX** N17: __deployment_mode__ via cfg_if! (mutually exclusive). **FIX** N18: bedrock added to PROVIDER_SDK_TYPES registry (Rust + Python + YAML). **FIX** N19: normalize_timeout precedence corrected (.total > .read > .connect). **FIX** N20: batch_completion_models_all_responses return type List[Optional[CompletionResponse]]. **FIX** N22: Router.completion() imports time inside try block. |
 | 1.57    | 2026-04-30 | **FIX** H5: QuotaRouterError base class aligned with RFC-0917 — added `status` (int=0) and `details` (dict={}) fields, canonical 5-param `__init__`. **FIX** H6: All exception subclasses now have proper `__init__` overrides that accept and assign extra fields (retry_after, param, upstream_code, max_tokens, received_tokens, etc.). **FIX** D3: _record_spend TOCTOU race — pricing moved inside single lock acquisition; current_spend read inside lock (not stale captured value). **FIX** D4: Ollama streaming — corrected `ollama.async_stream` → `ollama.AsyncClient().chat()` (proper async SDK pattern); removed sync for-loop inside async def. **FIX** M2: resolve_provider empty string check now single early-return guard. |
-| 1.55    | 2026-04-30 | **DOCS** RFC-0920 no changes needed — confirms HTTP proxy constraint box (lines 77-95) and Mode Gate ≠ Interface invariant (lines 131-148) already correctly state both interfaces available in all modes. All 8 Round 38 findings formally rebutted as stale-cached review of pre-v1.54 version. |
-| 1.54    | 2026-04-30 | **FIX** Feature Gate Architecture (lines 4149-4175): Replaced incorrect Cargo.toml block — all three modes had identical `pyo3/extension-module` with contradictory comments. quota-router-pyo3 now correctly documented as having NO feature flags; it wraps whatever quota-router-core was compiled with. Mode selection happens at quota-router-core compile time. **FIX** set_api_key() budget enforcement (lines 802-842): Corrected "In-memory, no enforcement" to correctly reflect that budget enforcement (RFC-0904) is active in ALL modes via HMAC-SHA256 key_id + StoolapKeyStorage. **FIX** Provider count: Changed "42" to "41" in header and checklist. Fixed any-llm gap analysis text (was "39+1=40", now correct). **FIX** Python Router NON-NORMATIVE marker: Added explicit note that Phase 1 Python Router violates Rust-owns-all-heavy-lifting constraint and is non-normative placeholder. |
+| 1.55    | 2026-04-30 | **DOCS** RFC-0920 no changes needed — confirms HTTP proxy constraint box and Mode Gate ≠ Interface invariant already correctly state both interfaces available in all modes. All 8 Round 38 findings formally rebutted as stale-cached review of pre-v1.54 version. |
+| 1.54    | 2026-04-30 | **FIX** Feature Gate Architecture: Replaced incorrect Cargo.toml block — all three modes had identical `pyo3/extension-module` with contradictory comments. quota-router-pyo3 now correctly documented as having NO feature flags; it wraps whatever quota-router-core was compiled with. Mode selection happens at quota-router-core compile time. **FIX** set_api_key() budget enforcement: Corrected "In-memory, no enforcement" to correctly reflect that budget enforcement (RFC-0904) is active in ALL modes via HMAC-SHA256 key_id + StoolapKeyStorage. **FIX** Provider count: Changed "42" to "41" in header and checklist. Fixed any-llm gap analysis text (was "39+1=40", now correct). **FIX** Python Router NON-NORMATIVE marker: Added explicit note that Phase 1 Python Router violates Rust-owns-all-heavy-lifting constraint and is non-normative placeholder. |
 | 1.53    | 2026-04-30 | **FIX** 0920-C1 (cross-impact): HTTP proxy constraint box corrected — HTTP proxy IS available in any-llm-mode via PyO3 bridge. Box now matches mode table (both ✅ YES). **FIX** 0920-C2: Provider count "42" → "41" (list has 41, not 42). **FIX** 0920-C4 (cross-impact): B5 parsing rules now provider-list matching per RFC-0917 update. **FIX** 0920-C3 (cross-impact): deepinfra added to RFC-0917 Phase 3 list, completing cross-RFC sync. |
 | 1.52    | 2026-04-30 | **FIX** 0920-C1: Unified QuotaRouterError base class with optional status/provider fields. **FIX** 0920-H1: InsufficientFundsError balance field u64→u32 μunits int. **FIX** 0920-H2: batch_completion_models_all_responses dict→list-of-tuples (key collision on duplicate model names). **FIX** 0920-H3: CI validator operator precedence — parentheses around compound OR, `.is_dir()` for .git detection. **FIX** 0920-M1: resolve_provider explicit empty string check before None check. **FIX** 0920-M2: completion_with_retries tenacity num_retries=0 to prevent budget multiplication. **FIX** 0920-M3: _validate_no_nan_inf isinstance check for messages parameter + closed code fence. **FIX** 0920-L1: code fence lang specifier fixed (python→python). **FIX** CROSS-1: YAML registry sync — groq added to RFC-0920, canonical source designation to RFC-0917. **FIX** (RFC-0917 cross-impact): HTTP proxy availability corrected to build-dependent (Assertion A in RFC-0917 propagated to constraint box). |
 | 1.51    | 2026-04-30 | **ADD** Extended API Surface section: add all missing functions from any-llm (embedding, aembedding, messages, amessages, responses, aresponses) and LiteLLM (completion_with_retries, acompletion_with_retries, text_completion, atext_completion, moderation, amoderation, atranscription, adapter_completion, Responses API sub-methods) required for true drop-in replacement parity. Add response types for all extended functions. |
 | 1.50    | 2026-04-30 | **FULL SPEC** Phase 2/3 SSE parsing: replaced all TODO stubs with full implementation for parse_openai_sse, parse_anthropic_sse, parse_mistral_sse, parse_ollama_sse (SSEParser class) and normalize_to_openai_sse with provider-specific transformation logic. Fully spec-ed ChatCompletionStreamIterator._create_stream with OpenAI/Anthropic/Mistral/Ollama SDK streams. |
 | 1.49    | 2026-04-30 | **ADD** Phase 2 Rust ←→ Python State Mapping table: maps Python Router fields to RFC-0917 equivalents. |
 | 1.48    | 2026-04-29 | **CRITICAL** Add missing LiteLLM params: `thinking`, `modalities`, `audio`, `prediction` to both sync and async completion signatures. |
-| 1.45    | 2026-04-29 | Fix external adversarial review round 27: L1 (cache_bypass docstring updated to reference Rust forwarding in PyO3 builds), L2 (CI validator header comment added clarifying build-time stub validation scope). C1, C2, H1, H2, M1, M2 formally rebutted as architecture change requests, not bugs — RFC-0920 explicitly specifies Python Router as Python-level component with no Rust delegation (lines 2184-2185). |
+| 1.45    | 2026-04-29 | Fix external adversarial review round 27: L1 (cache_bypass docstring updated to reference Rust forwarding in PyO3 builds), L2 (CI validator header comment added clarifying build-time stub validation scope). C1, C2, H1, H2, M1, M2 formally rebutted as architecture change requests, not bugs — RFC-0920 explicitly specifies Python Router as Python-level component with no Rust delegation. |
 | 1.44    | 2026-04-29 | Fix external adversarial review round 26: C1 (batch worker cache_bypass explicit binding via functools.partial comment), C2 (CI regex scoped to PROVIDER_SDK_TYPES constant block), H1 (.git/ and ci/ dir markers replace subproject toml files), H2 (counter-based modulo sampling replaces random.random()), M1 (OPERATIONAL WARNING added to completion() function docstring), M2 (Path.absolute() replaces resolve() for container-safe path resolution), L1 (Accepted — codegen enforces pure-literal constraint), L2 (lock_metric_sampling_rate init param + QUOTA_ROUTER_LOCK_METRIC_SAMPLE_RATE env). |
 | 1.43    | 2026-04-29 | Fix external adversarial review round 23: C1 (cache_bypass wired in Router.acompletion and batch methods), C2 (CI regex includes ,? for rustfmt trailing commas), H1 (marker-file search replaces parent.parent fragile traversal), H2 (router_lock_hold_time_us collection adds sampling rate config), M1 (import math confirmed at module level), M2 (cache_bypass docstring adds fallback amplification warning), L1 (codegen contract explicitly forbids inline comments), L2 (add standard v1.43 changelog entry). |
 | 1.42    | 2026-04-29 | Fix external adversarial review round 22: C1 (explicit cache_bypass delegation in Router.completion), C2 (whitespace-agnostic CI regex allows rustfmt), H1 (pure-dict-literal codegen contract + error message), H2 (cache_bypass docstring clarifies kwargs-only validation), M1 (pathlib script-relative path resolution), M2 (math.exp2 decay optimization pushes threshold to >12k RPS), L1 (idiomatic regex character class), L2 (router_lock_hold_time_us histogram definition). |

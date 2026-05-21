@@ -4,8 +4,6 @@
 
 Completed
 
-Open
-
 ## RFC
 
 RFC-0953 (Economics): Extended Python SDK Functions
@@ -37,8 +35,6 @@ RFC-0953 (Economics): Extended Python SDK Functions
 
 @claude
 
-Unclaimed
-
 ## Pull Request
 
 None
@@ -46,6 +42,21 @@ None
 ## Notes
 
 - Anthropic Messages API (native format)
-- max_tokens is optional per RFC-0920 (not required)
+- max_tokens is now REQUIRED per RFC-0920 (was optional at original implementation time)
 - Thin PyO3 binding to Rust core per RFC-0908 architectural constraint
 - Content blocks: text, image, tool_use, tool_result
+
+## Signature Changes (2026-05-21)
+
+RFC-0920 and RFC-0953 signatures were updated. Follow-up mission needed:
+
+| Function | Change |
+|----------|--------|
+| `messages()` | `max_tokens` now REQUIRED (not optional) — matches any-llm convention |
+| `messages()` | `stop` renamed to `stop_sequences` |
+| `messages()` | `stream` param — already correct, no rename needed |
+| `messages()` | `system` type changed to `Optional[Union[str, List[Dict]]]` (supports content blocks) |
+| `messages()` | Added `cache_control`, `client_args` params |
+| `amessages()` | Same changes as `messages()` |
+
+Status: **NEEDS FOLLOW-UP** — signatures no longer match RFC-0920.

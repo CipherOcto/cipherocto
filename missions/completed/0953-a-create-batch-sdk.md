@@ -52,3 +52,17 @@ None
 - NOT create_batch, get_batch, cancel_batch, list_batches
 - provider parameter is REQUIRED (no default value)
 - Thin PyO3 binding to Rust core per RFC-0908 architectural constraint
+
+## Signature Changes (2026-05-21)
+
+RFC-0920 and RFC-0953 signatures were updated. Follow-up mission needed:
+
+| Function | Change |
+|----------|--------|
+| `batch_create()` | Removed `model` param, made `endpoint` required, added `client_args` |
+| `batch_retrieve()` | Order changed to `(provider, batch_id)`, `provider` required |
+| `batch_cancel()` | Added `client_args` |
+| `batch_list()` | `limit` now optional, added `client_args` |
+| `batch_results()` | Order changed to `(provider, batch_id)`, `provider` required, added `client_args` |
+
+Status: **NEEDS FOLLOW-UP** — signatures no longer match RFC-0920.

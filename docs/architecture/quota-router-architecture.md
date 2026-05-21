@@ -989,17 +989,20 @@ sequenceDiagram
 
 ## 10. Deployment and Mode Selection
 
+Three feature gates produce three build configurations. Both deployments (binary and pip) can be built with any of the three — the choice determines which interfaces and provider backends are included.
+
 **Important:** Deployment (binary vs pip) and runtime mode (litellm vs any-llm) are
-**orthogonal**. Both deployments expose BOTH interfaces (HTTP proxy + Python SDK).
-The mode selects the **provider integration strategy** only.
+**orthogonal** to the interfaces exposed. Both deployments expose BOTH interfaces
+(HTTP proxy + library/binding call). The mode gate controls the **provider integration
+backend** (reqwest vs PyO3), not the available interfaces.
 
 ### 10.1 Feature Gate Matrix (verified against lib.rs)
 
 | Feature Gate | `proxy` (HTTP) | `python_sdk_entry` (SDK) | `native_http` (reqwest) | `py_bridge` (PyO3) |
 |--------------|----------------|--------------------------|-------------------------|---------------------|
-| `litellm-mode` | Always | ❌ | ✅ | ❌ |
-| `any-llm-mode` | Always | ✅ | ❌ | ✅ |
-| `full` | Always | ✅ | ✅ | ✅ |
+| `litellm-mode` | ✅ | ❌ | ✅ | ❌ |
+| `any-llm-mode` | ✅ | ✅ | ❌ | ✅ |
+| `full` | ✅ | ✅ | ✅ | ✅ |
 
 **Source:** `crates/quota-router-core/src/lib.rs` lines 32-85
 
@@ -1010,34 +1013,47 @@ The mode selects the **provider integration strategy** only.
 
 ### 10.2 Build Configurations
 
+Each feature gate produces a distinct build with specific interfaces and providers:
+
 ```mermaid
 graph TB
-    subgraph Binary["Binary Build<br/>(litellm-mode or full)"]
+    subgraph Litellm["litellm-mode Build"]
         direction TB
-        B1[HTTP Proxy<br/>Always Available]
-        B2[native_http<br/>reqwest Providers]
-        B3[Mode Router]
+        L1[HTTP Proxy<br/>Always Available]
+        L2[native_http<br/>12 reqwest Providers]
+        L3[Mode Router<br/>lite-only]
+        style Litellm fill:#e8f5e9
     end
 
-    subgraph Pip["Pip Build<br/>(any-llm-mode or full)"]
+    subgraph AnyLlm["any-llm-mode Build"]
         direction TB
-        P1[Python SDK<br/>python_sdk_entry]
-        P2[py_bridge<br/>Python SDK Providers]
-        P3[Mode Router]
+        A1[HTTP Proxy<br/>Always Available]
+        A2[Python SDK<br/>python_sdk_entry]
+        A3[py_bridge<br/>42 PyO3 Providers]
+        A4[Mode Router<br/>any-only]
+        style AnyLlm fill:#e3f2fd
     end
 
-    subgraph Full["Full Build<br/>(full feature)"]
+    subgraph Full["full Build"]
         direction TB
         F1[HTTP Proxy]
         F2[Python SDK]
-        F3[native_http + py_bridge]
-        F4[Mode Router]
+        F3[native_http<br/>12 reqwest Providers]
+        F4[py_bridge<br/>42 PyO3 Providers]
+        F5[Mode Router<br/>switches at runtime]
+        style Full fill:#fff3e0
     end
-
-    style Binary fill:#e8f5e9
-    style Pip fill:#e3f2fd
-    style Full fill:#fff3e0
 ```
+
+#### Build Configuration Summary
+
+| Build | HTTP Proxy | Python SDK | reqwest Providers | PyO3 Providers | Mode Selection |
+|-------|-----------|------------|-------------------|----------------|----------------|
+| `litellm-mode` | ✅ | ❌ | 12 | ❌ | Fixed at compile time |
+| `any-llm-mode` | ✅ | ✅ | ❌ | 42 | Fixed at compile time |
+| `full` | ✅ | ✅ | 12 | 42 | **Runtime switchable** |
+
+**Key point:** The mode gate controls which provider backend is available, not which interfaces. The `litellm-mode` build still has HTTP proxy + library interface; `any-llm-mode` build still has HTTP proxy + library interface. Only the provider backends differ (12 reqwest vs 42 PyO3).
 
 ### 10.3 Runtime Mode Selection
 

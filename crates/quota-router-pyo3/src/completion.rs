@@ -1194,11 +1194,44 @@ pub async fn alist_models(
 // RFC-0920: OpenAI-compatible Batch API
 // =============================================================================
 
-/// batch_create - Sync create batch API
-///
-/// Note: The quota-router proxy does not yet support the Batch API endpoint.
-/// Use `batch_completion()` for in-memory parallel batch processing.
-/// See RFC-0920 for planned Batch API support.
+/// Helper: Convert HttpBatchObject to Python dict
+fn batch_to_dict(batch: &quota_router_core::native_http::HttpBatchObject) -> PyResult<Py<PyAny>> {
+    Python::with_gil(|py| {
+        let dict = pyo3::types::PyDict::new(py);
+        dict.set_item("id", &batch.id)?;
+        dict.set_item("object", &batch.object)?;
+        dict.set_item("endpoint", &batch.endpoint)?;
+        dict.set_item("status", &batch.status)?;
+        dict.set_item("input_file_id", &batch.input_file_id)?;
+        if let Some(ref ofi) = batch.output_file_id {
+            dict.set_item("output_file_id", ofi)?;
+        }
+        if let Some(ref efi) = batch.error_file_id {
+            dict.set_item("error_file_id", efi)?;
+        }
+        if let Some(ref cw) = batch.completion_window {
+            dict.set_item("completion_window", cw)?;
+        }
+        if let Some(ca) = batch.created_at {
+            dict.set_item("created_at", ca)?;
+        }
+        if let Some(ref rc) = batch.request_counts {
+            let json_module = py.import("json")?;
+            let rc_str = serde_json::to_string(rc).unwrap_or_else(|_| "{}".to_string());
+            let rc_obj = json_module.call_method1("loads", (rc_str,))?;
+            dict.set_item("request_counts", rc_obj)?;
+        }
+        if let Some(ref md) = batch.metadata {
+            let json_module = py.import("json")?;
+            let md_str = serde_json::to_string(md).unwrap_or_else(|_| "{}".to_string());
+            let md_obj = json_module.call_method1("loads", (md_str,))?;
+            dict.set_item("metadata", md_obj)?;
+        }
+        Ok(dict.into())
+    })
+}
+
+/// batch_create - Create a batch job via provider Batch API
 #[pyfunction]
 #[pyo3(
     name = "batch_create",
@@ -1213,22 +1246,72 @@ pub fn batch_create(
     api_key: Option<String>,
     api_base: Option<String>,
     client_args: Option<Py<PyAny>>,
+    _mode: Option<String>,
 ) -> PyResult<Py<PyAny>> {
-    let _ = (
-        provider,
-        input_file,
-        endpoint,
-        completion_window,
-        metadata,
-        api_key,
-        api_base,
-        client_args,
-    );
-    Err(pyo3::exceptions::PyNotImplementedError::new_err(
-        "Batch API endpoint is not yet implemented in the quota-router proxy. \
-         Use batch_completion() for in-memory parallel batch processing. \
-         See RFC-0920 for planned Batch API support.",
-    ))
+    ensure_providers_initialized();
+    let _ = client_args;
+    let mode = resolve_mode(_mode.as_deref());
+
+    let metadata_json = Python::with_gil(|py| -> PyResult<Option<serde_json::Value>> {
+        if let Some(ref m) = metadata {
+            let json_module = py.import("json")?;
+            let serialized = json_module.call_method1("dumps", (m,))?;
+            let s: String = serialized.extract()?;
+            return Ok(Some(
+                serde_json::from_str(&s).unwrap_or(serde_json::Value::Null),
+            ));
+        }
+        Ok(None)
+    })?;
+
+    match mode {
+        #[cfg(feature = "full")]
+        quota_router_core::mode::ProviderMode::LiteLLM => {
+            let provider_impl = quota_router_core::native_http::HttpProviderFactory::create(
+                &provider,
+            )
+            .ok_or_else(|| {
+                pyo3::exceptions::PyNotImplementedError::new_err(format!(
+                    "Provider '{}' not supported in litellm-mode",
+                    provider
+                ))
+            })?;
+
+            let request = quota_router_core::native_http::HttpBatchCreateRequest {
+                input_file,
+                endpoint,
+                completion_window: completion_window.unwrap_or_else(|| "24h".to_string()),
+                metadata: metadata_json,
+                api_base: api_base.clone(),
+            };
+
+            let rt = tokio::runtime::Runtime::new().map_err(|e| {
+                pyo3::exceptions::PyRuntimeError::new_err(format!("Runtime error: {}", e))
+            })?;
+
+            let result = rt
+                .block_on(async {
+                    provider_impl
+                        .batch_create(&request, api_key.as_deref())
+                        .await
+                })
+                .map_err(|e| {
+                    pyo3::exceptions::PyRuntimeError::new_err(format!("{}: {}", provider, e))
+                })?;
+
+            batch_to_dict(&result)
+        }
+        #[cfg(feature = "full")]
+        quota_router_core::mode::ProviderMode::AnyLlm => {
+            Err(pyo3::exceptions::PyNotImplementedError::new_err(
+                "batch_create() is not yet supported in any-llm-mode. Use litellm-mode.",
+            ))
+        }
+        #[cfg(not(feature = "full"))]
+        _ => Err(pyo3::exceptions::PyRuntimeError::new_err(
+            "No mode compiled",
+        )),
+    }
 }
 
 /// abatch_create - Async create batch API
@@ -1243,6 +1326,7 @@ pub async fn abatch_create(
     api_key: Option<String>,
     api_base: Option<String>,
     client_args: Option<Py<PyAny>>,
+    _mode: Option<String>,
 ) -> PyResult<Py<PyAny>> {
     self::batch_create(
         provider,
@@ -1253,10 +1337,11 @@ pub async fn abatch_create(
         api_key,
         api_base,
         client_args,
+        _mode,
     )
 }
 
-/// batch_retrieve - Sync retrieve batch API
+/// batch_retrieve - Retrieve a batch job
 #[pyfunction]
 #[pyo3(
     name = "batch_retrieve",
@@ -1268,12 +1353,52 @@ pub fn batch_retrieve(
     api_key: Option<String>,
     api_base: Option<String>,
     client_args: Option<Py<PyAny>>,
+    _mode: Option<String>,
 ) -> PyResult<Py<PyAny>> {
-    let _ = (provider, batch_id, api_key, api_base, client_args);
-    Err(pyo3::exceptions::PyNotImplementedError::new_err(
-        "Batch API endpoint is not yet implemented in the quota-router proxy. \
-         See RFC-0920 for planned Batch API support.",
-    ))
+    ensure_providers_initialized();
+    let _ = client_args;
+    let mode = resolve_mode(_mode.as_deref());
+
+    match mode {
+        #[cfg(feature = "full")]
+        quota_router_core::mode::ProviderMode::LiteLLM => {
+            let provider_impl = quota_router_core::native_http::HttpProviderFactory::create(
+                &provider,
+            )
+            .ok_or_else(|| {
+                pyo3::exceptions::PyNotImplementedError::new_err(format!(
+                    "Provider '{}' not supported in litellm-mode",
+                    provider
+                ))
+            })?;
+
+            let rt = tokio::runtime::Runtime::new().map_err(|e| {
+                pyo3::exceptions::PyRuntimeError::new_err(format!("Runtime error: {}", e))
+            })?;
+
+            let result = rt
+                .block_on(async {
+                    provider_impl
+                        .batch_retrieve(&batch_id, api_key.as_deref(), api_base.as_deref())
+                        .await
+                })
+                .map_err(|e| {
+                    pyo3::exceptions::PyRuntimeError::new_err(format!("{}: {}", provider, e))
+                })?;
+
+            batch_to_dict(&result)
+        }
+        #[cfg(feature = "full")]
+        quota_router_core::mode::ProviderMode::AnyLlm => {
+            Err(pyo3::exceptions::PyNotImplementedError::new_err(
+                "batch_retrieve() is not yet supported in any-llm-mode. Use litellm-mode.",
+            ))
+        }
+        #[cfg(not(feature = "full"))]
+        _ => Err(pyo3::exceptions::PyRuntimeError::new_err(
+            "No mode compiled",
+        )),
+    }
 }
 
 /// abatch_retrieve - Async retrieve batch API
@@ -1285,11 +1410,12 @@ pub async fn abatch_retrieve(
     api_key: Option<String>,
     api_base: Option<String>,
     client_args: Option<Py<PyAny>>,
+    _mode: Option<String>,
 ) -> PyResult<Py<PyAny>> {
-    self::batch_retrieve(provider, batch_id, api_key, api_base, client_args)
+    self::batch_retrieve(provider, batch_id, api_key, api_base, client_args, _mode)
 }
 
-/// batch_cancel - Sync cancel batch API
+/// batch_cancel - Cancel a batch job
 #[pyfunction]
 #[pyo3(
     name = "batch_cancel",
@@ -1301,12 +1427,52 @@ pub fn batch_cancel(
     api_key: Option<String>,
     api_base: Option<String>,
     client_args: Option<Py<PyAny>>,
+    _mode: Option<String>,
 ) -> PyResult<Py<PyAny>> {
-    let _ = (provider, batch_id, api_key, api_base, client_args);
-    Err(pyo3::exceptions::PyNotImplementedError::new_err(
-        "Batch API endpoint is not yet implemented in the quota-router proxy. \
-         See RFC-0920 for planned Batch API support.",
-    ))
+    ensure_providers_initialized();
+    let _ = client_args;
+    let mode = resolve_mode(_mode.as_deref());
+
+    match mode {
+        #[cfg(feature = "full")]
+        quota_router_core::mode::ProviderMode::LiteLLM => {
+            let provider_impl = quota_router_core::native_http::HttpProviderFactory::create(
+                &provider,
+            )
+            .ok_or_else(|| {
+                pyo3::exceptions::PyNotImplementedError::new_err(format!(
+                    "Provider '{}' not supported in litellm-mode",
+                    provider
+                ))
+            })?;
+
+            let rt = tokio::runtime::Runtime::new().map_err(|e| {
+                pyo3::exceptions::PyRuntimeError::new_err(format!("Runtime error: {}", e))
+            })?;
+
+            let result = rt
+                .block_on(async {
+                    provider_impl
+                        .batch_cancel(&batch_id, api_key.as_deref(), api_base.as_deref())
+                        .await
+                })
+                .map_err(|e| {
+                    pyo3::exceptions::PyRuntimeError::new_err(format!("{}: {}", provider, e))
+                })?;
+
+            batch_to_dict(&result)
+        }
+        #[cfg(feature = "full")]
+        quota_router_core::mode::ProviderMode::AnyLlm => {
+            Err(pyo3::exceptions::PyNotImplementedError::new_err(
+                "batch_cancel() is not yet supported in any-llm-mode. Use litellm-mode.",
+            ))
+        }
+        #[cfg(not(feature = "full"))]
+        _ => Err(pyo3::exceptions::PyRuntimeError::new_err(
+            "No mode compiled",
+        )),
+    }
 }
 
 /// abatch_cancel - Async cancel batch API
@@ -1318,8 +1484,9 @@ pub async fn abatch_cancel(
     api_key: Option<String>,
     api_base: Option<String>,
     client_args: Option<Py<PyAny>>,
+    _mode: Option<String>,
 ) -> PyResult<Py<PyAny>> {
-    self::batch_cancel(provider, batch_id, api_key, api_base, client_args)
+    self::batch_cancel(provider, batch_id, api_key, api_base, client_args, _mode)
 }
 
 /// batch_list - Sync list batches API
@@ -1328,16 +1495,70 @@ pub async fn abatch_cancel(
 pub fn batch_list(
     provider: String,
     limit: Option<i32>,
-    after: Option<String>,
+    _after: Option<String>,
     api_key: Option<String>,
     api_base: Option<String>,
     client_args: Option<Py<PyAny>>,
+    _mode: Option<String>,
 ) -> PyResult<Py<PyAny>> {
-    let _ = (provider, limit, after, api_key, api_base, client_args);
-    Err(pyo3::exceptions::PyNotImplementedError::new_err(
-        "Batch API endpoint is not yet implemented in the quota-router proxy. \
-         See RFC-0920 for planned Batch API support.",
-    ))
+    ensure_providers_initialized();
+    let _ = (client_args, _after);
+    let mode = resolve_mode(_mode.as_deref());
+
+    match mode {
+        #[cfg(feature = "full")]
+        quota_router_core::mode::ProviderMode::LiteLLM => {
+            let provider_impl = quota_router_core::native_http::HttpProviderFactory::create(
+                &provider,
+            )
+            .ok_or_else(|| {
+                pyo3::exceptions::PyNotImplementedError::new_err(format!(
+                    "Provider '{}' not supported in litellm-mode",
+                    provider
+                ))
+            })?;
+
+            let rt = tokio::runtime::Runtime::new().map_err(|e| {
+                pyo3::exceptions::PyRuntimeError::new_err(format!("Runtime error: {}", e))
+            })?;
+
+            let result = rt
+                .block_on(async {
+                    provider_impl
+                        .batch_list(
+                            api_key.as_deref(),
+                            api_base.as_deref(),
+                            limit.map(|l| l as u32),
+                        )
+                        .await
+                })
+                .map_err(|e| {
+                    pyo3::exceptions::PyRuntimeError::new_err(format!("{}: {}", provider, e))
+                })?;
+
+            Python::with_gil(|py| {
+                let dict = pyo3::types::PyDict::new(py);
+                dict.set_item("object", &result.object)?;
+                dict.set_item("has_more", result.has_more)?;
+                let data_list = pyo3::types::PyList::empty(py);
+                for batch in &result.data {
+                    data_list.append(batch_to_dict(batch)?)?;
+                }
+                dict.set_item("data", data_list)?;
+                Ok(dict.into())
+            })
+        }
+        #[cfg(feature = "full")]
+        quota_router_core::mode::ProviderMode::AnyLlm => {
+            Err(pyo3::exceptions::PyNotImplementedError::new_err(
+                "batch_list() is not yet supported in any-llm-mode. Use litellm-mode.",
+            ))
+        }
+        #[cfg(not(feature = "full"))]
+        _ => Err(pyo3::exceptions::PyRuntimeError::new_err(
+            "No mode compiled",
+        )),
+    }
 }
 
 /// abatch_list - Async list batches API
@@ -1350,8 +1571,17 @@ pub async fn abatch_list(
     api_key: Option<String>,
     api_base: Option<String>,
     client_args: Option<Py<PyAny>>,
+    _mode: Option<String>,
 ) -> PyResult<Py<PyAny>> {
-    self::batch_list(provider, limit, after, api_key, api_base, client_args)
+    self::batch_list(
+        provider,
+        limit,
+        after,
+        api_key,
+        api_base,
+        client_args,
+        _mode,
+    )
 }
 
 /// batch_results - Sync retrieve batch results API
@@ -1366,12 +1596,60 @@ pub fn batch_results(
     api_key: Option<String>,
     api_base: Option<String>,
     client_args: Option<Py<PyAny>>,
+    _mode: Option<String>,
 ) -> PyResult<Py<PyAny>> {
-    let _ = (provider, batch_id, api_key, api_base, client_args);
-    Err(pyo3::exceptions::PyNotImplementedError::new_err(
-        "Batch API endpoint is not yet implemented in the quota-router proxy. \
-         See RFC-0920 for planned Batch API support.",
-    ))
+    ensure_providers_initialized();
+    let _ = client_args;
+    let mode = resolve_mode(_mode.as_deref());
+
+    match mode {
+        #[cfg(feature = "full")]
+        quota_router_core::mode::ProviderMode::LiteLLM => {
+            let provider_impl = quota_router_core::native_http::HttpProviderFactory::create(
+                &provider,
+            )
+            .ok_or_else(|| {
+                pyo3::exceptions::PyNotImplementedError::new_err(format!(
+                    "Provider '{}' not supported in litellm-mode",
+                    provider
+                ))
+            })?;
+
+            let rt = tokio::runtime::Runtime::new().map_err(|e| {
+                pyo3::exceptions::PyRuntimeError::new_err(format!("Runtime error: {}", e))
+            })?;
+
+            let result = rt
+                .block_on(async {
+                    provider_impl
+                        .batch_results(&batch_id, api_key.as_deref(), api_base.as_deref())
+                        .await
+                })
+                .map_err(|e| {
+                    pyo3::exceptions::PyRuntimeError::new_err(format!("{}: {}", provider, e))
+                })?;
+
+            Python::with_gil(|py| {
+                let dict = pyo3::types::PyDict::new(py);
+                let json_module = py.import("json")?;
+                let results_str =
+                    serde_json::to_string(&result.results).unwrap_or_else(|_| "[]".to_string());
+                let results_obj = json_module.call_method1("loads", (results_str,))?;
+                dict.set_item("results", results_obj)?;
+                Ok(dict.into())
+            })
+        }
+        #[cfg(feature = "full")]
+        quota_router_core::mode::ProviderMode::AnyLlm => {
+            Err(pyo3::exceptions::PyNotImplementedError::new_err(
+                "batch_results() is not yet supported in any-llm-mode. Use litellm-mode.",
+            ))
+        }
+        #[cfg(not(feature = "full"))]
+        _ => Err(pyo3::exceptions::PyRuntimeError::new_err(
+            "No mode compiled",
+        )),
+    }
 }
 
 /// abatch_results - Async retrieve batch results API
@@ -1383,8 +1661,9 @@ pub async fn abatch_results(
     api_key: Option<String>,
     api_base: Option<String>,
     client_args: Option<Py<PyAny>>,
+    _mode: Option<String>,
 ) -> PyResult<Py<PyAny>> {
-    self::batch_results(provider, batch_id, api_key, api_base, client_args)
+    self::batch_results(provider, batch_id, api_key, api_base, client_args, _mode)
 }
 
 // =============================================================================

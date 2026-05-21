@@ -1,6 +1,7 @@
 // openai — OpenAI via reqwest (native_http, LiteLLM mode)
 
 use super::{
+    HttpBatchCreateRequest, HttpBatchListResponse, HttpBatchObject, HttpBatchResultsResponse,
     HttpCompletionRequest, HttpCompletionResponse, HttpDeletedObject, HttpEmbeddingRequest,
     HttpEmbeddingResponse, HttpListModelsResponse, HttpResponseObject, HttpResponsesRequest,
     ProviderError, StreamingResponse,
@@ -542,6 +543,179 @@ impl super::HttpProvider for OpenAIProvider {
         resp.json::<HttpResponseObject>()
             .await
             .map_err(|e| ProviderError::InvalidResponse(e.to_string()))
+    }
+
+    async fn batch_create(
+        &self,
+        request: &HttpBatchCreateRequest,
+        api_key: Option<&str>,
+    ) -> Result<HttpBatchObject, ProviderError> {
+        let base_url = request.api_base.as_deref().unwrap_or(&self.api_base);
+        let url = format!("{}/batches", base_url);
+
+        let body = serde_json::to_value(request)
+            .map_err(|e| ProviderError::InvalidResponse(e.to_string()))?;
+
+        let mut req_builder = self
+            .client
+            .post(&url)
+            .header("Content-Type", "application/json");
+        if let Some(key) = api_key {
+            req_builder = req_builder.header("Authorization", format!("Bearer {}", key));
+        }
+        let resp = req_builder
+            .json(&body)
+            .send()
+            .await
+            .map_err(|e| ProviderError::Network(e.to_string()))?;
+
+        if !resp.status().is_success() {
+            let status = resp.status();
+            let err_body = resp.text().await.unwrap_or_default();
+            return Err(self::status_error(status, &err_body));
+        }
+
+        resp.json::<HttpBatchObject>()
+            .await
+            .map_err(|e| ProviderError::InvalidResponse(e.to_string()))
+    }
+
+    async fn batch_retrieve(
+        &self,
+        batch_id: &str,
+        api_key: Option<&str>,
+        api_base: Option<&str>,
+    ) -> Result<HttpBatchObject, ProviderError> {
+        let base_url = api_base.unwrap_or(&self.api_base);
+        let url = format!("{}/batches/{}", base_url, batch_id);
+
+        let mut req_builder = self.client.get(&url);
+        if let Some(key) = api_key {
+            req_builder = req_builder.header("Authorization", format!("Bearer {}", key));
+        }
+        let resp = req_builder
+            .send()
+            .await
+            .map_err(|e| ProviderError::Network(e.to_string()))?;
+
+        if !resp.status().is_success() {
+            let status = resp.status();
+            let err_body = resp.text().await.unwrap_or_default();
+            return Err(self::status_error(status, &err_body));
+        }
+
+        resp.json::<HttpBatchObject>()
+            .await
+            .map_err(|e| ProviderError::InvalidResponse(e.to_string()))
+    }
+
+    async fn batch_cancel(
+        &self,
+        batch_id: &str,
+        api_key: Option<&str>,
+        api_base: Option<&str>,
+    ) -> Result<HttpBatchObject, ProviderError> {
+        let base_url = api_base.unwrap_or(&self.api_base);
+        let url = format!("{}/batches/{}/cancel", base_url, batch_id);
+
+        let mut req_builder = self.client.post(&url);
+        if let Some(key) = api_key {
+            req_builder = req_builder.header("Authorization", format!("Bearer {}", key));
+        }
+        let resp = req_builder
+            .send()
+            .await
+            .map_err(|e| ProviderError::Network(e.to_string()))?;
+
+        if !resp.status().is_success() {
+            let status = resp.status();
+            let err_body = resp.text().await.unwrap_or_default();
+            return Err(self::status_error(status, &err_body));
+        }
+
+        resp.json::<HttpBatchObject>()
+            .await
+            .map_err(|e| ProviderError::InvalidResponse(e.to_string()))
+    }
+
+    async fn batch_list(
+        &self,
+        api_key: Option<&str>,
+        api_base: Option<&str>,
+        limit: Option<u32>,
+    ) -> Result<HttpBatchListResponse, ProviderError> {
+        let base_url = api_base.unwrap_or(&self.api_base);
+        let mut url = format!("{}/batches", base_url);
+        if let Some(l) = limit {
+            url = format!("{}?limit={}", url, l);
+        }
+
+        let mut req_builder = self.client.get(&url);
+        if let Some(key) = api_key {
+            req_builder = req_builder.header("Authorization", format!("Bearer {}", key));
+        }
+        let resp = req_builder
+            .send()
+            .await
+            .map_err(|e| ProviderError::Network(e.to_string()))?;
+
+        if !resp.status().is_success() {
+            let status = resp.status();
+            let err_body = resp.text().await.unwrap_or_default();
+            return Err(self::status_error(status, &err_body));
+        }
+
+        resp.json::<HttpBatchListResponse>()
+            .await
+            .map_err(|e| ProviderError::InvalidResponse(e.to_string()))
+    }
+
+    async fn batch_results(
+        &self,
+        batch_id: &str,
+        api_key: Option<&str>,
+        api_base: Option<&str>,
+    ) -> Result<HttpBatchResultsResponse, ProviderError> {
+        let base_url = api_base.unwrap_or(&self.api_base);
+        let url = format!("{}/batches/{}/results", base_url, batch_id);
+
+        let mut req_builder = self.client.get(&url);
+        if let Some(key) = api_key {
+            req_builder = req_builder.header("Authorization", format!("Bearer {}", key));
+        }
+        let resp = req_builder
+            .send()
+            .await
+            .map_err(|e| ProviderError::Network(e.to_string()))?;
+
+        if !resp.status().is_success() {
+            let status = resp.status();
+            let err_body = resp.text().await.unwrap_or_default();
+            return Err(self::status_error(status, &err_body));
+        }
+
+        // Results are returned as JSONL, parse each line
+        let text = resp
+            .text()
+            .await
+            .map_err(|e| ProviderError::InvalidResponse(e.to_string()))?;
+        let results: Vec<serde_json::Value> = text
+            .lines()
+            .filter(|line| !line.trim().is_empty())
+            .filter_map(|line| serde_json::from_str(line).ok())
+            .collect();
+
+        Ok(HttpBatchResultsResponse { results })
+    }
+}
+
+fn status_error(status: reqwest::StatusCode, body: &str) -> ProviderError {
+    if status == 401 || status == 403 {
+        ProviderError::AuthError(format!("HTTP {}: {}", status, body))
+    } else if status == 429 {
+        ProviderError::RateLimit(format!("HTTP {}: {}", status, body))
+    } else {
+        ProviderError::InvalidResponse(format!("HTTP {}: {}", status, body))
     }
 }
 

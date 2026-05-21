@@ -203,6 +203,65 @@ pub trait HttpProvider: Send + Sync {
             self.name()
         )))
     }
+    /// Create a batch job.
+    async fn batch_create(
+        &self,
+        _request: &HttpBatchCreateRequest,
+        _api_key: Option<&str>,
+    ) -> Result<HttpBatchObject, ProviderError> {
+        Err(ProviderError::UnsupportedModel(format!(
+            "{} does not support the Batch API",
+            self.name()
+        )))
+    }
+    /// Retrieve a batch job.
+    async fn batch_retrieve(
+        &self,
+        _batch_id: &str,
+        _api_key: Option<&str>,
+        _api_base: Option<&str>,
+    ) -> Result<HttpBatchObject, ProviderError> {
+        Err(ProviderError::UnsupportedModel(format!(
+            "{} does not support the Batch API",
+            self.name()
+        )))
+    }
+    /// Cancel a batch job.
+    async fn batch_cancel(
+        &self,
+        _batch_id: &str,
+        _api_key: Option<&str>,
+        _api_base: Option<&str>,
+    ) -> Result<HttpBatchObject, ProviderError> {
+        Err(ProviderError::UnsupportedModel(format!(
+            "{} does not support the Batch API",
+            self.name()
+        )))
+    }
+    /// List batch jobs.
+    async fn batch_list(
+        &self,
+        _api_key: Option<&str>,
+        _api_base: Option<&str>,
+        _limit: Option<u32>,
+    ) -> Result<HttpBatchListResponse, ProviderError> {
+        Err(ProviderError::UnsupportedModel(format!(
+            "{} does not support the Batch API",
+            self.name()
+        )))
+    }
+    /// Get batch results.
+    async fn batch_results(
+        &self,
+        _batch_id: &str,
+        _api_key: Option<&str>,
+        _api_base: Option<&str>,
+    ) -> Result<HttpBatchResultsResponse, ProviderError> {
+        Err(ProviderError::UnsupportedModel(format!(
+            "{} does not support the Batch API",
+            self.name()
+        )))
+    }
     /// List available models for this provider.
     async fn list_models(
         &self,
@@ -228,6 +287,78 @@ pub struct HttpModelObject {
     pub owned_by: String,
     #[serde(flatten)]
     pub extra: std::collections::HashMap<String, serde_json::Value>,
+}
+
+/// Batch create request
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct HttpBatchCreateRequest {
+    pub input_file: String,
+    pub endpoint: String,
+    pub completion_window: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub metadata: Option<serde_json::Value>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub api_base: Option<String>,
+}
+
+/// Batch object from OpenAI Batch API
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct HttpBatchObject {
+    pub id: String,
+    pub object: String,
+    pub endpoint: String,
+    pub status: String,
+    #[serde(default)]
+    pub input_file_id: String,
+    #[serde(default)]
+    pub output_file_id: Option<String>,
+    #[serde(default)]
+    pub error_file_id: Option<String>,
+    #[serde(default)]
+    pub errors: Option<serde_json::Value>,
+    #[serde(default)]
+    pub completion_window: Option<String>,
+    #[serde(default)]
+    pub created_at: Option<u64>,
+    #[serde(default)]
+    pub in_progress_at: Option<u64>,
+    #[serde(default)]
+    pub expires_at: Option<u64>,
+    #[serde(default)]
+    pub finalizing_at: Option<u64>,
+    #[serde(default)]
+    pub completed_at: Option<u64>,
+    #[serde(default)]
+    pub failed_at: Option<u64>,
+    #[serde(default)]
+    pub expired_at: Option<u64>,
+    #[serde(default)]
+    pub cancelling_at: Option<u64>,
+    #[serde(default)]
+    pub cancelled_at: Option<u64>,
+    #[serde(default)]
+    pub request_counts: Option<serde_json::Value>,
+    #[serde(default)]
+    pub metadata: Option<serde_json::Value>,
+}
+
+/// Batch list response
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct HttpBatchListResponse {
+    pub object: String,
+    pub data: Vec<HttpBatchObject>,
+    #[serde(default)]
+    pub has_more: bool,
+    #[serde(default)]
+    pub first_id: Option<String>,
+    #[serde(default)]
+    pub last_id: Option<String>,
+}
+
+/// Batch results response
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct HttpBatchResultsResponse {
+    pub results: Vec<serde_json::Value>,
 }
 
 /// List models response

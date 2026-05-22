@@ -411,8 +411,8 @@ const LATENCY_WINDOW_SIZE: usize = 100;
 /// **Cleanup:** Oldest sample evicted when window exceeds `LATENCY_WINDOW_SIZE` (O(1) via VecDeque).
 /// **Query:** `best_provider()` returns provider with lowest average latency.
 ///
-/// **Phase 2:** `LatencyTracker` will be integrated into `RouterState` (per RFC-0917 pseudocode).
-/// Currently a stub for future LatencyBased routing support.
+/// Implemented per RFC-0925 (Latency-Based Routing Extensions).
+/// Integrated into `RouterState` via `RouterConfig.latency_config`.
 #[allow(dead_code)]
 #[derive(Debug, Clone, Default)]
 pub struct LatencyTracker {

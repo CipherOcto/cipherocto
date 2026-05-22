@@ -1602,9 +1602,8 @@ where
         }
     }
 
-    // /v1/realtime — WebSocket realtime API (RFC-0951)
-    // Note: WebSocket requires special handling not available in this HTTP handler
-    // This is a placeholder - actual implementation needs WebSocket support
+    // /v1/realtime — WebSocket realtime API (RFC-0951, mission 0951-h)
+    // WebSocket requires hyper upgrade; returns 501 until mission 0951-h is implemented
     if path.starts_with("/v1/realtime") {
         let resp = Response::builder()
             .status(StatusCode::NOT_IMPLEMENTED)

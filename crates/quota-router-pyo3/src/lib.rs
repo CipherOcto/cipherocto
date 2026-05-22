@@ -43,6 +43,16 @@ use pyo3::prelude::*;
 /// ```
 #[pymodule]
 fn quota_router(m: &PyModule) -> PyResult<()> {
+    // Initialize Tokio runtime and permanently enter its context on this thread.
+    // This ensures the reactor is available when async functions (litellm-mode)
+    // use reqwest for HTTP calls. Without this, asyncio.run() has no Tokio context.
+    // mem::forget prevents the guard from calling exit() on drop.
+    #[cfg(feature = "full")]
+    {
+        let guard = pyo3_asyncio_0_21::tokio::get_runtime().enter();
+        std::mem::forget(guard);
+    }
+
     // Register exception classes
     exceptions::register_exceptions(m)?;
 

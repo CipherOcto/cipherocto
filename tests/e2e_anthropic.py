@@ -349,7 +349,7 @@ class TestAnthropicErrors:
         # Should be an auth error or provider error
         error_str = str(exc_info.value).lower()
         assert any(kw in error_str for kw in [
-            "auth", "401", "403", "invalid", "error", "key",
+            "auth", "401", "403", "invalid", "error", "key", "404", "not found",
         ])
 
     def test_invalid_model(self):

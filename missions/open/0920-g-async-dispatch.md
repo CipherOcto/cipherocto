@@ -2,7 +2,7 @@
 
 ## Status
 
-Open
+Completed
 
 ## RFC
 
@@ -36,15 +36,15 @@ pub async fn acompletion(...) -> PyResult<Py<PyAny>> {
 
 ## Acceptance Criteria
 
-- [ ] `acompletion()` does NOT block the event loop
-- [ ] `await acompletion()` returns same result as `completion()`
-- [ ] `aembedding()` does NOT block the event loop (once implemented)
-- [ ] `amessages()` does NOT block the event loop (once implemented)
-- [ ] `aresponses()` does NOT block the event loop (once implemented)
-- [ ] `abatch_*()` do NOT block the event loop (once implemented)
-- [ ] `alist_models()` does NOT block the event loop (once implemented)
-- [ ] pyo3 0.21 `experimental-async` creates native Python coroutines
-- [ ] No `rt.block_on()` calls in any `a*` function
+- [x] `acompletion()` does NOT block the event loop
+- [x] `await acompletion()` returns same result as `completion()`
+- [x] `aembedding()` does NOT block the event loop
+- [x] `amessages()` does NOT block the event loop
+- [x] `aresponses()` does NOT block the event loop
+- [x] `abatch_*()` do NOT block the event loop
+- [x] `alist_models()` does NOT block the event loop
+- [x] pyo3 0.21 `experimental-async` creates native Python coroutines
+- [x] No `rt.block_on()` calls in any `a*` function
 
 ## Key Files
 

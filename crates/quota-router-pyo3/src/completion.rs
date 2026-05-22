@@ -182,6 +182,7 @@ pub fn completion(
             seed,
             api_key,
             base_url,
+            timeout,
         ),
         #[cfg(feature = "full")]
         quota_router_core::mode::ProviderMode::AnyLlm => {
@@ -210,6 +211,7 @@ fn completion_litellm(
     seed: Option<i32>,
     api_key: Option<String>,
     base_url: Option<String>,
+    timeout: Option<f64>,
 ) -> PyResult<Py<PyAny>> {
     use quota_router_core::native_http::HttpProviderFactory;
 
@@ -244,7 +246,7 @@ fn completion_litellm(
         prompt_id: None,
         prompt_variables: None,
         provider_params: None,
-        timeout: None,
+        timeout,
     };
 
     // Use tokio runtime for async call
@@ -373,7 +375,6 @@ pub async fn acompletion(
         _prompt_cache_key,
         _prompt_cache_retention,
         _conversation,
-        timeout,
         n,
         seed,
     );
@@ -414,7 +415,7 @@ pub async fn acompletion(
                 prompt_id: None,
                 prompt_variables: None,
                 provider_params: None,
-                timeout: None,
+                timeout,
             };
 
             // True async: await the provider's async completion method
@@ -507,7 +508,7 @@ pub fn embedding(
     _mode: Option<String>,
 ) -> PyResult<Py<PyAny>> {
     ensure_providers_initialized();
-    let _ = (dimensions, encoding_format, client_args, timeout);
+    let _ = (dimensions, encoding_format, client_args);
 
     // Dual-convention: accept both `input` (litellm) and `inputs` (any-llm)
     let data = input.or(inputs).ok_or_else(|| {
@@ -552,7 +553,7 @@ pub fn embedding(
                 input: input_text,
                 model: model.clone(),
                 api_base: api_base.clone(),
-                timeout: None,
+                timeout,
             };
 
             let rt = tokio::runtime::Runtime::new().map_err(|e| {
@@ -624,7 +625,7 @@ pub async fn aembedding(
 ) -> PyResult<Py<PyAny>> {
     // True async dispatch for litellm-mode
     ensure_providers_initialized();
-    let _ = (&dimensions, &encoding_format, &client_args, &timeout);
+    let _ = (&dimensions, &encoding_format, &client_args);
     let data = input.or(inputs).ok_or_else(|| {
         pyo3::exceptions::PyTypeError::new_err("embedding() requires either `input` or `inputs`")
     })?;
@@ -660,7 +661,7 @@ pub async fn aembedding(
                 input: input_text,
                 model: model.clone(),
                 api_base: api_base.clone(),
-                timeout: None,
+                timeout,
             };
             let result = provider_impl
                 .embedding(&request, api_key.as_deref())

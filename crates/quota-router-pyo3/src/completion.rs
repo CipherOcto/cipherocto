@@ -318,31 +318,134 @@ pub async fn acompletion(
     // Mode selection: "litellm" or "any-llm"
     _mode: Option<String>,
 ) -> PyResult<Py<PyAny>> {
-    completion(
-        model,
-        messages,
-        temperature,
-        max_tokens,
-        top_p,
-        n,
-        stream,
-        stop,
-        presence_penalty,
-        frequency_penalty,
-        user,
-        seed,
-        timeout,
+    // True async dispatch — no rt.block_on(), no blocking the event loop
+    ensure_providers_initialized();
+    let parsed = match ParsedModel::parse(&model) {
+        Ok(p) => p,
+        Err(e) => return Err(pyo3::exceptions::PyValueError::new_err(e)),
+    };
+    let mode = resolve_mode(_mode.as_deref());
+    let _ = (
         _extra_headers,
-        base_url,
         _api_version,
-        api_key,
         _service_tier,
         _background,
         _prompt_cache_key,
         _prompt_cache_retention,
         _conversation,
-        _mode,
-    )
+        timeout,
+        n,
+        seed,
+    );
+
+    match mode {
+        #[cfg(feature = "full")]
+        quota_router_core::mode::ProviderMode::LiteLLM => {
+            let provider =
+                quota_router_core::native_http::HttpProviderFactory::create(&parsed.provider)
+                    .ok_or_else(|| {
+                        pyo3::exceptions::PyNotImplementedError::new_err(format!(
+                            "Provider '{}' not supported in litellm-mode",
+                            parsed.provider
+                        ))
+                    })?;
+
+            let shared_messages = to_shared_messages(&messages);
+            let request = quota_router_core::native_http::HttpCompletionRequest {
+                model: parsed.model.clone(),
+                messages: shared_messages,
+                stream,
+                temperature: temperature.map(|t| t as f32),
+                max_tokens: max_tokens.map(|m| m as u32),
+                top_p: top_p.map(|p| p as f32),
+                stop: stop.map(|s| vec![s]),
+                n: n.map(|n| n as u32),
+                presence_penalty: presence_penalty.map(|p| p as f32),
+                frequency_penalty: frequency_penalty.map(|f| f as f32),
+                user,
+                api_base: base_url,
+                tools: None,
+                tool_choice: None,
+                response_format: None,
+                seed: seed.map(|s| s as i64),
+                logprobs: None,
+                top_logprobs: None,
+                parallel_tool_calls: None,
+                prompt_id: None,
+                prompt_variables: None,
+                provider_params: None,
+            };
+
+            // True async: await the provider's async completion method
+            let result = provider
+                .completion(&request, api_key.as_deref())
+                .await
+                .map_err(|e| {
+                    pyo3::exceptions::PyRuntimeError::new_err(format!("{}: {}", parsed.provider, e))
+                })?;
+
+            Python::with_gil(|py| {
+                let dict = pyo3::types::PyDict::new(py);
+                dict.set_item("id", &result.id)?;
+                dict.set_item("object", &result.object)?;
+                dict.set_item("created", result.created)?;
+                dict.set_item("model", &result.model)?;
+                let choices_list = pyo3::types::PyList::empty(py);
+                for choice in &result.choices {
+                    let choice_dict = pyo3::types::PyDict::new(py);
+                    choice_dict.set_item("index", choice.index)?;
+                    let message_dict = pyo3::types::PyDict::new(py);
+                    message_dict.set_item("role", &choice.message.role)?;
+                    message_dict.set_item("content", &choice.message.content)?;
+                    choice_dict.set_item("message", message_dict)?;
+                    choice_dict.set_item("finish_reason", &choice.finish_reason)?;
+                    choices_list.append(choice_dict)?;
+                }
+                dict.set_item("choices", choices_list)?;
+                let usage_dict = pyo3::types::PyDict::new(py);
+                usage_dict.set_item("prompt_tokens", result.usage.prompt_tokens)?;
+                usage_dict.set_item("completion_tokens", result.usage.completion_tokens)?;
+                usage_dict.set_item("total_tokens", result.usage.total_tokens)?;
+                dict.set_item("usage", usage_dict)?;
+                Ok(dict.into())
+            })
+        }
+        #[cfg(feature = "full")]
+        quota_router_core::mode::ProviderMode::AnyLlm => {
+            let provider =
+                quota_router_core::py_bridge::PyBridgeProviderFactory::create(&parsed.provider)
+                    .ok_or_else(|| {
+                        pyo3::exceptions::PyNotImplementedError::new_err(format!(
+                            "Provider '{}' not supported in any-llm-mode",
+                            parsed.provider
+                        ))
+                    })?;
+
+            let provider = if let Some(key) = api_key {
+                provider.with_api_key(key)
+            } else {
+                provider
+            };
+            let provider = if let Some(base) = base_url {
+                provider.with_api_base(base)
+            } else {
+                provider
+            };
+
+            let core_messages = to_core_messages(&messages);
+            let result = provider
+                .completion(&parsed.model, &core_messages)
+                .map_err(|e| {
+                    pyo3::exceptions::PyRuntimeError::new_err(format!("{}: {}", parsed.provider, e))
+                })?;
+
+            Python::with_gil(|py| result.to_dict(py))
+        }
+        #[cfg(not(feature = "full"))]
+        _ => Err(pyo3::exceptions::PyRuntimeError::new_err(
+            "No mode compiled",
+        )),
+    }
 }
 
 /// embedding - Sync embedding call

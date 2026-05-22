@@ -864,27 +864,154 @@ pub async fn amessages(
     provider: Option<String>,
     _mode: Option<String>,
 ) -> PyResult<Py<PyAny>> {
-    self::messages(
-        model,
-        messages,
-        max_tokens,
-        system,
-        temperature,
-        top_p,
-        top_k,
-        stop_sequences,
-        stream,
-        tools,
-        tool_choice,
-        thinking,
-        metadata,
-        cache_control,
-        api_key,
-        api_base,
-        client_args,
-        provider,
-        _mode,
-    )
+    // True async dispatch — no rt.block_on(), no blocking the event loop
+    ensure_providers_initialized();
+    let _ = (
+        &top_k,
+        &tools,
+        &tool_choice,
+        &thinking,
+        &metadata,
+        &cache_control,
+        &client_args,
+    );
+
+    let provider_name = provider.as_deref().unwrap_or("anthropic");
+    let mode = resolve_mode(_mode.as_deref());
+
+    // Extract messages from Python object
+    let py_messages: Vec<Message> = Python::with_gil(|py| -> PyResult<Vec<Message>> {
+        let list: &pyo3::types::PyList = messages
+            .downcast(py)
+            .map_err(|_| pyo3::exceptions::PyTypeError::new_err("messages must be a list"))?;
+        let mut result = Vec::new();
+        for item in list.iter() {
+            let dict: &pyo3::types::PyDict = item.downcast().map_err(|_| {
+                pyo3::exceptions::PyTypeError::new_err("each message must be a dict")
+            })?;
+            let role = match dict.get_item("role")? {
+                Some(v) => v.extract::<String>().unwrap_or_else(|_| "user".to_string()),
+                None => "user".to_string(),
+            };
+            let content = match dict.get_item("content")? {
+                Some(v) => v.extract::<String>().unwrap_or_default(),
+                None => String::new(),
+            };
+            result.push(Message { role, content });
+        }
+        Ok(result)
+    })?;
+
+    // Prepend system message if provided
+    let mut all_messages = Vec::new();
+    if let Some(ref sys) = system {
+        all_messages.push(Message {
+            role: "system".to_string(),
+            content: sys.clone(),
+        });
+    }
+    all_messages.extend(py_messages);
+
+    match mode {
+        #[cfg(feature = "full")]
+        quota_router_core::mode::ProviderMode::LiteLLM => {
+            let provider_impl =
+                quota_router_core::native_http::HttpProviderFactory::create(provider_name)
+                    .ok_or_else(|| {
+                        pyo3::exceptions::PyNotImplementedError::new_err(format!(
+                            "Provider '{}' not supported in litellm-mode",
+                            provider_name
+                        ))
+                    })?;
+
+            let shared_messages = to_shared_messages(&all_messages);
+            let request = quota_router_core::native_http::HttpCompletionRequest {
+                model: model.clone(),
+                messages: shared_messages,
+                stream,
+                temperature: temperature.map(|t| t as f32),
+                max_tokens: Some(max_tokens as u32),
+                top_p: top_p.map(|p| p as f32),
+                stop: stop_sequences,
+                n: None,
+                presence_penalty: None,
+                frequency_penalty: None,
+                user: None,
+                api_base: api_base.clone(),
+                tools: None,
+                tool_choice: None,
+                response_format: None,
+                seed: None,
+                logprobs: None,
+                top_logprobs: None,
+                parallel_tool_calls: None,
+                prompt_id: None,
+                prompt_variables: None,
+                provider_params: None,
+            };
+
+            // True async: await the provider's async completion method
+            let result = provider_impl
+                .completion(&request, api_key.as_deref())
+                .await
+                .map_err(|e| {
+                    pyo3::exceptions::PyRuntimeError::new_err(format!("{}: {}", provider_name, e))
+                })?;
+
+            Python::with_gil(|py| {
+                let dict = pyo3::types::PyDict::new(py);
+                dict.set_item("id", &result.id)?;
+                dict.set_item("type", "message")?;
+                dict.set_item("role", "assistant")?;
+                let content_list = pyo3::types::PyList::empty(py);
+                let content_block = pyo3::types::PyDict::new(py);
+                content_block.set_item("type", "text")?;
+                if let Some(choice) = result.choices.first() {
+                    content_block.set_item("text", &choice.message.content)?;
+                }
+                content_list.append(content_block)?;
+                dict.set_item("content", content_list)?;
+                dict.set_item("model", &result.model)?;
+                if let Some(choice) = result.choices.first() {
+                    dict.set_item("stop_reason", &choice.finish_reason)?;
+                }
+                let usage_dict = pyo3::types::PyDict::new(py);
+                usage_dict.set_item("input_tokens", result.usage.prompt_tokens)?;
+                usage_dict.set_item("output_tokens", result.usage.completion_tokens)?;
+                dict.set_item("usage", usage_dict)?;
+                Ok(dict.into())
+            })
+        }
+        #[cfg(feature = "full")]
+        quota_router_core::mode::ProviderMode::AnyLlm => {
+            // Fall back to sync messages() — py_bridge is synchronous
+            self::messages(
+                model,
+                Python::with_gil(|py| messages.clone_ref(py)),
+                max_tokens,
+                system,
+                temperature,
+                top_p,
+                top_k,
+                stop_sequences,
+                stream,
+                tools,
+                tool_choice,
+                thinking,
+                metadata,
+                cache_control,
+                api_key,
+                api_base,
+                client_args,
+                Some(provider_name.to_string()),
+                _mode,
+            )
+        }
+        #[cfg(not(feature = "full"))]
+        _ => Err(pyo3::exceptions::PyRuntimeError::new_err(
+            "No mode compiled",
+        )),
+    }
 }
 
 // =============================================================================
@@ -1079,26 +1206,154 @@ pub async fn aresponses(
     provider: Option<String>,
     _mode: Option<String>,
 ) -> PyResult<Py<PyAny>> {
-    self::responses(
-        model,
-        input,
-        input_data,
-        instructions,
-        temperature,
-        max_output_tokens,
-        top_p,
-        stream,
-        tools,
-        tool_choice,
-        store,
-        metadata,
-        user,
-        api_key,
-        api_base,
-        client_args,
-        provider,
-        _mode,
-    )
+    // True async dispatch — no rt.block_on(), no blocking the event loop
+    ensure_providers_initialized();
+    let _ = &client_args;
+
+    // Dual-convention: accept both `input` (litellm) and `input_data` (any-llm)
+    let data = input.or(input_data).ok_or_else(|| {
+        pyo3::exceptions::PyTypeError::new_err(
+            "responses() requires either `input` or `input_data` parameter",
+        )
+    })?;
+
+    // Clone data for potential any-llm fallback before it's consumed by the JSON closure
+    let data_clone = Python::with_gil(|py| data.clone_ref(py));
+
+    // Convert input to JSON value
+    let input_json: serde_json::Value = Python::with_gil(|py| -> PyResult<serde_json::Value> {
+        if let Ok(s) = data.extract::<String>(py) {
+            return Ok(serde_json::Value::String(s));
+        }
+        let json_module = py.import("json")?;
+        let serialized = json_module.call_method1("dumps", (data,))?;
+        let s: String = serialized.extract()?;
+        serde_json::from_str(&s).map_err(|e| pyo3::exceptions::PyValueError::new_err(e.to_string()))
+    })?;
+
+    let provider_name = provider.as_deref().unwrap_or("openai");
+    let mode = resolve_mode(_mode.as_deref());
+
+    match mode {
+        #[cfg(feature = "full")]
+        quota_router_core::mode::ProviderMode::LiteLLM => {
+            let provider_impl =
+                quota_router_core::native_http::HttpProviderFactory::create(provider_name)
+                    .ok_or_else(|| {
+                        pyo3::exceptions::PyNotImplementedError::new_err(format!(
+                            "Provider '{}' not supported in litellm-mode",
+                            provider_name
+                        ))
+                    })?;
+
+            // Convert tools/tool_choice/metadata to JSON if provided
+            let tools_json = Python::with_gil(|py| -> PyResult<Option<serde_json::Value>> {
+                if let Some(ref t) = tools {
+                    let json_module = py.import("json")?;
+                    let serialized = json_module.call_method1("dumps", (t,))?;
+                    let s: String = serialized.extract()?;
+                    return Ok(Some(
+                        serde_json::from_str(&s).unwrap_or(serde_json::Value::Null),
+                    ));
+                }
+                Ok(None)
+            })?;
+            let tool_choice_json = Python::with_gil(|py| -> PyResult<Option<serde_json::Value>> {
+                if let Some(ref tc) = tool_choice {
+                    let json_module = py.import("json")?;
+                    let serialized = json_module.call_method1("dumps", (tc,))?;
+                    let s: String = serialized.extract()?;
+                    return Ok(Some(
+                        serde_json::from_str(&s).unwrap_or(serde_json::Value::Null),
+                    ));
+                }
+                Ok(None)
+            })?;
+            let metadata_json = Python::with_gil(|py| -> PyResult<Option<serde_json::Value>> {
+                if let Some(ref m) = metadata {
+                    let json_module = py.import("json")?;
+                    let serialized = json_module.call_method1("dumps", (m,))?;
+                    let s: String = serialized.extract()?;
+                    return Ok(Some(
+                        serde_json::from_str(&s).unwrap_or(serde_json::Value::Null),
+                    ));
+                }
+                Ok(None)
+            })?;
+
+            let request = quota_router_core::native_http::HttpResponsesRequest {
+                model: model.clone(),
+                input: input_json,
+                instructions,
+                temperature,
+                max_output_tokens: max_output_tokens.map(|v| v as u32),
+                top_p,
+                stream,
+                tools: tools_json,
+                tool_choice: tool_choice_json,
+                store,
+                metadata: metadata_json,
+                user,
+                api_base: api_base.clone(),
+            };
+
+            // True async: await the provider's async create_response method
+            let result = provider_impl
+                .create_response(&request, api_key.as_deref())
+                .await
+                .map_err(|e| {
+                    pyo3::exceptions::PyRuntimeError::new_err(format!("{}: {}", provider_name, e))
+                })?;
+
+            Python::with_gil(|py| {
+                let dict = pyo3::types::PyDict::new(py);
+                dict.set_item("id", &result.id)?;
+                dict.set_item("object", &result.object)?;
+                dict.set_item("model", &result.model)?;
+                dict.set_item("status", &result.status)?;
+                let json_module = py.import("json")?;
+                let output_str =
+                    serde_json::to_string(&result.output).unwrap_or_else(|_| "[]".to_string());
+                let output_obj = json_module.call_method1("loads", (output_str,))?;
+                dict.set_item("output", output_obj)?;
+                if let Some(usage) = &result.usage {
+                    let usage_str =
+                        serde_json::to_string(usage).unwrap_or_else(|_| "{}".to_string());
+                    let usage_obj = json_module.call_method1("loads", (usage_str,))?;
+                    dict.set_item("usage", usage_obj)?;
+                }
+                Ok(dict.into())
+            })
+        }
+        #[cfg(feature = "full")]
+        quota_router_core::mode::ProviderMode::AnyLlm => {
+            // Fall back to sync responses() — py_bridge is synchronous
+            self::responses(
+                model,
+                Some(data_clone),
+                None,
+                instructions,
+                temperature,
+                max_output_tokens,
+                top_p,
+                stream,
+                tools,
+                tool_choice,
+                store,
+                metadata,
+                user,
+                api_key,
+                api_base,
+                client_args,
+                Some(provider_name.to_string()),
+                _mode,
+            )
+        }
+        #[cfg(not(feature = "full"))]
+        _ => Err(pyo3::exceptions::PyRuntimeError::new_err(
+            "No mode compiled",
+        )),
+    }
 }
 
 // =============================================================================
@@ -1364,7 +1619,58 @@ pub async fn alist_models(
     client_args: Option<Py<PyAny>>,
     _mode: Option<String>,
 ) -> PyResult<Py<PyAny>> {
-    list_models(provider, api_key, api_base, client_args, _mode)
+    // True async dispatch — no rt.block_on(), no blocking the event loop
+    ensure_providers_initialized();
+    let _ = &client_args;
+    let mode = resolve_mode(_mode.as_deref());
+
+    match mode {
+        #[cfg(feature = "full")]
+        quota_router_core::mode::ProviderMode::LiteLLM => {
+            let provider_impl = quota_router_core::native_http::HttpProviderFactory::create(
+                &provider,
+            )
+            .ok_or_else(|| {
+                pyo3::exceptions::PyNotImplementedError::new_err(format!(
+                    "Provider '{}' not supported in litellm-mode",
+                    provider
+                ))
+            })?;
+
+            // True async: await the provider's async list_models method
+            let result = provider_impl
+                .list_models(api_key.as_deref(), api_base.as_deref())
+                .await
+                .map_err(|e| {
+                    pyo3::exceptions::PyRuntimeError::new_err(format!("{}: {}", provider, e))
+                })?;
+
+            Python::with_gil(|py| {
+                let dict = pyo3::types::PyDict::new(py);
+                dict.set_item("object", &result.object)?;
+                let data_list = pyo3::types::PyList::empty(py);
+                for model in &result.data {
+                    let model_dict = pyo3::types::PyDict::new(py);
+                    model_dict.set_item("id", &model.id)?;
+                    model_dict.set_item("object", &model.object)?;
+                    model_dict.set_item("created", model.created)?;
+                    model_dict.set_item("owned_by", &model.owned_by)?;
+                    data_list.append(model_dict)?;
+                }
+                dict.set_item("data", data_list)?;
+                Ok(dict.into())
+            })
+        }
+        #[cfg(feature = "full")]
+        quota_router_core::mode::ProviderMode::AnyLlm => {
+            // Fall back to sync list_models() — py_bridge is synchronous
+            list_models(provider, api_key, api_base, client_args, _mode)
+        }
+        #[cfg(not(feature = "full"))]
+        _ => Err(pyo3::exceptions::PyRuntimeError::new_err(
+            "No mode compiled",
+        )),
+    }
 }
 
 // =============================================================================
@@ -1506,17 +1812,74 @@ pub async fn abatch_create(
     client_args: Option<Py<PyAny>>,
     _mode: Option<String>,
 ) -> PyResult<Py<PyAny>> {
-    self::batch_create(
-        provider,
-        input_file,
-        endpoint,
-        completion_window,
-        metadata,
-        api_key,
-        api_base,
-        client_args,
-        _mode,
-    )
+    // True async dispatch — no rt.block_on(), no blocking the event loop
+    ensure_providers_initialized();
+    let _ = &client_args;
+    let mode = resolve_mode(_mode.as_deref());
+
+    let metadata_json = Python::with_gil(|py| -> PyResult<Option<serde_json::Value>> {
+        if let Some(ref m) = metadata {
+            let json_module = py.import("json")?;
+            let serialized = json_module.call_method1("dumps", (m,))?;
+            let s: String = serialized.extract()?;
+            return Ok(Some(
+                serde_json::from_str(&s).unwrap_or(serde_json::Value::Null),
+            ));
+        }
+        Ok(None)
+    })?;
+
+    match mode {
+        #[cfg(feature = "full")]
+        quota_router_core::mode::ProviderMode::LiteLLM => {
+            let provider_impl = quota_router_core::native_http::HttpProviderFactory::create(
+                &provider,
+            )
+            .ok_or_else(|| {
+                pyo3::exceptions::PyNotImplementedError::new_err(format!(
+                    "Provider '{}' not supported in litellm-mode",
+                    provider
+                ))
+            })?;
+
+            let request = quota_router_core::native_http::HttpBatchCreateRequest {
+                input_file,
+                endpoint,
+                completion_window: completion_window.unwrap_or_else(|| "24h".to_string()),
+                metadata: metadata_json,
+                api_base: api_base.clone(),
+            };
+
+            // True async: await the provider's async batch_create method
+            let result = provider_impl
+                .batch_create(&request, api_key.as_deref())
+                .await
+                .map_err(|e| {
+                    pyo3::exceptions::PyRuntimeError::new_err(format!("{}: {}", provider, e))
+                })?;
+
+            batch_to_dict(&result)
+        }
+        #[cfg(feature = "full")]
+        quota_router_core::mode::ProviderMode::AnyLlm => {
+            // Fall back to sync batch_create() — py_bridge is synchronous
+            self::batch_create(
+                provider,
+                input_file,
+                endpoint,
+                completion_window,
+                metadata,
+                api_key,
+                api_base,
+                client_args,
+                _mode,
+            )
+        }
+        #[cfg(not(feature = "full"))]
+        _ => Err(pyo3::exceptions::PyRuntimeError::new_err(
+            "No mode compiled",
+        )),
+    }
 }
 
 /// batch_retrieve - Retrieve a batch job
@@ -1590,7 +1953,44 @@ pub async fn abatch_retrieve(
     client_args: Option<Py<PyAny>>,
     _mode: Option<String>,
 ) -> PyResult<Py<PyAny>> {
-    self::batch_retrieve(provider, batch_id, api_key, api_base, client_args, _mode)
+    // True async dispatch — no rt.block_on(), no blocking the event loop
+    ensure_providers_initialized();
+    let _ = &client_args;
+    let mode = resolve_mode(_mode.as_deref());
+
+    match mode {
+        #[cfg(feature = "full")]
+        quota_router_core::mode::ProviderMode::LiteLLM => {
+            let provider_impl = quota_router_core::native_http::HttpProviderFactory::create(
+                &provider,
+            )
+            .ok_or_else(|| {
+                pyo3::exceptions::PyNotImplementedError::new_err(format!(
+                    "Provider '{}' not supported in litellm-mode",
+                    provider
+                ))
+            })?;
+
+            // True async: await the provider's async batch_retrieve method
+            let result = provider_impl
+                .batch_retrieve(&batch_id, api_key.as_deref(), api_base.as_deref())
+                .await
+                .map_err(|e| {
+                    pyo3::exceptions::PyRuntimeError::new_err(format!("{}: {}", provider, e))
+                })?;
+
+            batch_to_dict(&result)
+        }
+        #[cfg(feature = "full")]
+        quota_router_core::mode::ProviderMode::AnyLlm => {
+            // Fall back to sync batch_retrieve() — py_bridge is synchronous
+            self::batch_retrieve(provider, batch_id, api_key, api_base, client_args, _mode)
+        }
+        #[cfg(not(feature = "full"))]
+        _ => Err(pyo3::exceptions::PyRuntimeError::new_err(
+            "No mode compiled",
+        )),
+    }
 }
 
 /// batch_cancel - Cancel a batch job
@@ -1664,7 +2064,44 @@ pub async fn abatch_cancel(
     client_args: Option<Py<PyAny>>,
     _mode: Option<String>,
 ) -> PyResult<Py<PyAny>> {
-    self::batch_cancel(provider, batch_id, api_key, api_base, client_args, _mode)
+    // True async dispatch — no rt.block_on(), no blocking the event loop
+    ensure_providers_initialized();
+    let _ = &client_args;
+    let mode = resolve_mode(_mode.as_deref());
+
+    match mode {
+        #[cfg(feature = "full")]
+        quota_router_core::mode::ProviderMode::LiteLLM => {
+            let provider_impl = quota_router_core::native_http::HttpProviderFactory::create(
+                &provider,
+            )
+            .ok_or_else(|| {
+                pyo3::exceptions::PyNotImplementedError::new_err(format!(
+                    "Provider '{}' not supported in litellm-mode",
+                    provider
+                ))
+            })?;
+
+            // True async: await the provider's async batch_cancel method
+            let result = provider_impl
+                .batch_cancel(&batch_id, api_key.as_deref(), api_base.as_deref())
+                .await
+                .map_err(|e| {
+                    pyo3::exceptions::PyRuntimeError::new_err(format!("{}: {}", provider, e))
+                })?;
+
+            batch_to_dict(&result)
+        }
+        #[cfg(feature = "full")]
+        quota_router_core::mode::ProviderMode::AnyLlm => {
+            // Fall back to sync batch_cancel() — py_bridge is synchronous
+            self::batch_cancel(provider, batch_id, api_key, api_base, client_args, _mode)
+        }
+        #[cfg(not(feature = "full"))]
+        _ => Err(pyo3::exceptions::PyRuntimeError::new_err(
+            "No mode compiled",
+        )),
+    }
 }
 
 /// batch_list - Sync list batches API
@@ -1751,15 +2188,66 @@ pub async fn abatch_list(
     client_args: Option<Py<PyAny>>,
     _mode: Option<String>,
 ) -> PyResult<Py<PyAny>> {
-    self::batch_list(
-        provider,
-        limit,
-        after,
-        api_key,
-        api_base,
-        client_args,
-        _mode,
-    )
+    // True async dispatch — no rt.block_on(), no blocking the event loop
+    ensure_providers_initialized();
+    let _ = (&client_args, &after);
+    let mode = resolve_mode(_mode.as_deref());
+
+    match mode {
+        #[cfg(feature = "full")]
+        quota_router_core::mode::ProviderMode::LiteLLM => {
+            let provider_impl = quota_router_core::native_http::HttpProviderFactory::create(
+                &provider,
+            )
+            .ok_or_else(|| {
+                pyo3::exceptions::PyNotImplementedError::new_err(format!(
+                    "Provider '{}' not supported in litellm-mode",
+                    provider
+                ))
+            })?;
+
+            // True async: await the provider's async batch_list method
+            let result = provider_impl
+                .batch_list(
+                    api_key.as_deref(),
+                    api_base.as_deref(),
+                    limit.map(|l| l as u32),
+                )
+                .await
+                .map_err(|e| {
+                    pyo3::exceptions::PyRuntimeError::new_err(format!("{}: {}", provider, e))
+                })?;
+
+            Python::with_gil(|py| {
+                let dict = pyo3::types::PyDict::new(py);
+                dict.set_item("object", &result.object)?;
+                dict.set_item("has_more", result.has_more)?;
+                let data_list = pyo3::types::PyList::empty(py);
+                for batch in &result.data {
+                    data_list.append(batch_to_dict(batch)?)?;
+                }
+                dict.set_item("data", data_list)?;
+                Ok(dict.into())
+            })
+        }
+        #[cfg(feature = "full")]
+        quota_router_core::mode::ProviderMode::AnyLlm => {
+            // Fall back to sync batch_list() — py_bridge is synchronous
+            self::batch_list(
+                provider,
+                limit,
+                after,
+                api_key,
+                api_base,
+                client_args,
+                _mode,
+            )
+        }
+        #[cfg(not(feature = "full"))]
+        _ => Err(pyo3::exceptions::PyRuntimeError::new_err(
+            "No mode compiled",
+        )),
+    }
 }
 
 /// batch_results - Sync retrieve batch results API
@@ -1841,7 +2329,52 @@ pub async fn abatch_results(
     client_args: Option<Py<PyAny>>,
     _mode: Option<String>,
 ) -> PyResult<Py<PyAny>> {
-    self::batch_results(provider, batch_id, api_key, api_base, client_args, _mode)
+    // True async dispatch — no rt.block_on(), no blocking the event loop
+    ensure_providers_initialized();
+    let _ = &client_args;
+    let mode = resolve_mode(_mode.as_deref());
+
+    match mode {
+        #[cfg(feature = "full")]
+        quota_router_core::mode::ProviderMode::LiteLLM => {
+            let provider_impl = quota_router_core::native_http::HttpProviderFactory::create(
+                &provider,
+            )
+            .ok_or_else(|| {
+                pyo3::exceptions::PyNotImplementedError::new_err(format!(
+                    "Provider '{}' not supported in litellm-mode",
+                    provider
+                ))
+            })?;
+
+            // True async: await the provider's async batch_results method
+            let result = provider_impl
+                .batch_results(&batch_id, api_key.as_deref(), api_base.as_deref())
+                .await
+                .map_err(|e| {
+                    pyo3::exceptions::PyRuntimeError::new_err(format!("{}: {}", provider, e))
+                })?;
+
+            Python::with_gil(|py| {
+                let dict = pyo3::types::PyDict::new(py);
+                let json_module = py.import("json")?;
+                let results_str =
+                    serde_json::to_string(&result.results).unwrap_or_else(|_| "[]".to_string());
+                let results_obj = json_module.call_method1("loads", (results_str,))?;
+                dict.set_item("results", results_obj)?;
+                Ok(dict.into())
+            })
+        }
+        #[cfg(feature = "full")]
+        quota_router_core::mode::ProviderMode::AnyLlm => {
+            // Fall back to sync batch_results() — py_bridge is synchronous
+            self::batch_results(provider, batch_id, api_key, api_base, client_args, _mode)
+        }
+        #[cfg(not(feature = "full"))]
+        _ => Err(pyo3::exceptions::PyRuntimeError::new_err(
+            "No mode compiled",
+        )),
+    }
 }
 
 // =============================================================================

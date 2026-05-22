@@ -1,9 +1,9 @@
 ---
 title: "RFC-0951: Extended API Endpoints"
 status: Accepted
-version: 0.1.0
+version: 0.2.0
 created: 2026-05-18
-updated: 2026-05-18
+updated: 2026-05-22
 authors:
   - quota-router team
 related:
@@ -297,6 +297,9 @@ POST /v1/rerank -> RerankResponse
 // WebSocket connection
 WS /v1/realtime?model=gpt-4o-realtime-preview
 
+// Authentication: api_key via query param or Authorization header
+// ws://localhost:8080/v1/realtime?model=gpt-4o-realtime-preview&api_key=sk-...
+
 // Client events
 struct RealtimeClientEvent {
     type: String,                    // "session.update", "conversation.item.create", etc.
@@ -309,6 +312,64 @@ struct RealtimeServerEvent {
     // ... event-specific fields
 }
 ```
+
+### WebSocket-Specific Considerations (RFC-0951-h)
+
+**⚠️ NOT a simple passthrough proxy.** OpenAI Realtime requires stateful, bidirectional event relay.
+
+**Architecture:**
+```
+Client  ←→  quota-router  ←→  OpenAI wss://api.openai.com/v1/realtime
+              (relay)       (upstream WS)
+```
+
+**Session State Required:**
+- Session ID tracking
+- Conversation context (items created, deleted)
+- Response partials (text deltas, audio deltas)
+- Upstream connection lifecycle
+
+**Event Relay Model (bidirectional):**
+```
+Client → quota-router → OpenAI: session.update, conversation.item.create, response.create
+Client ← quota-router ← OpenAI: session.created, response.text.delta, response.audio.delta
+```
+
+**Mode Gate Implications (per RFC-0917 invariant):**
+| Mode | Behavior | Notes |
+|------|----------|-------|
+| litellm-mode | reqwest-based WS client | Direct WS connection to OpenAI |
+| any-llm-mode | py_bridge WS relay | Python SDK WS support **VERIFIED BEFORE IMPLEMENTATION** |
+
+**Error Mapping (WebSocket-specific):**
+| Scenario | WS Close Code | RFC-0920 Equivalent |
+|----------|---------------|---------------------|
+| Auth required | 4001 | AuthenticationError |
+| Invalid API key | 4002 | AuthenticationError |
+| Rate limited | 4003 | RateLimitError |
+| Invalid event JSON | 4004 | InvalidRequestError |
+| Frame too large (>4096B) | 4005 | InvalidRequestError |
+| Upstream WS error | 4006 | ProviderError |
+| Connection timeout | 4007 | TimeoutError |
+
+**Security Requirements:**
+- API key required in query param or Upgrade header
+- Max frame size: 4096 bytes
+- Max concurrent connections per API key: 10
+- Per-connection message rate limit: 100 msg/s
+- Connection idle timeout: 5 minutes
+- Proper WS close handshake on logout/expiry
+
+**Implementation Dependencies:**
+- `tokio-tungstenite` for WebSocket client/server
+- Hyper with WebSocket upgrade support
+- Session state management infrastructure
+- Bidirectional event routing
+
+**NOT included in this RFC:**
+- Audio format transcoding
+- Multiple simultaneous upstream connections
+- Non-OpenAI realtime providers (provider-specific protocol)
 
 ### Routing Integration
 
@@ -387,4 +448,5 @@ All endpoints MUST use the error taxonomy from RFC-0920:
 
 | Version | Date | Changes |
 |---------|------|---------|
+| 0.2.0 | 2026-05-22 | Add WebSocket-specific considerations (RFC-0951-h); clarify bidirectional relay model; add mode gate implications; add error mapping table |
 | 0.1.0 | 2026-05-18 | Initial draft |

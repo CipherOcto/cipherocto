@@ -506,6 +506,7 @@ fn parse_request_body(body: &str) -> Option<NativeHttpRequest> {
         prompt_id,
         prompt_variables,
         provider_params,
+        timeout: None,
     })
 }
 
@@ -2800,6 +2801,7 @@ async fn handle_embedding_request(
         input: input.to_string(),
         model: model.to_string(),
         api_base: dispatch_api_base.map(String::from),
+        timeout: None,
     };
 
     // Get provider and call embedding

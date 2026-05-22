@@ -244,6 +244,7 @@ fn completion_litellm(
         prompt_id: None,
         prompt_variables: None,
         provider_params: None,
+        timeout: None,
     };
 
     // Use tokio runtime for async call
@@ -413,6 +414,7 @@ pub async fn acompletion(
                 prompt_id: None,
                 prompt_variables: None,
                 provider_params: None,
+                timeout: None,
             };
 
             // True async: await the provider's async completion method
@@ -550,6 +552,7 @@ pub fn embedding(
                 input: input_text,
                 model: model.clone(),
                 api_base: api_base.clone(),
+                timeout: None,
             };
 
             let rt = tokio::runtime::Runtime::new().map_err(|e| {
@@ -657,6 +660,7 @@ pub async fn aembedding(
                 input: input_text,
                 model: model.clone(),
                 api_base: api_base.clone(),
+                timeout: None,
             };
             let result = provider_impl
                 .embedding(&request, api_key.as_deref())
@@ -824,6 +828,7 @@ pub fn messages(
                 prompt_id: None,
                 prompt_variables: None,
                 provider_params: None,
+                timeout: None,
             };
 
             let rt = tokio::runtime::Runtime::new().map_err(|e| {
@@ -979,6 +984,7 @@ pub async fn amessages(
                 prompt_id: None,
                 prompt_variables: None,
                 provider_params: None,
+                timeout: None,
             };
 
             // True async: await the provider's async completion method
@@ -1145,6 +1151,7 @@ pub fn responses(
                 metadata: metadata_json,
                 user,
                 api_base: api_base.clone(),
+                timeout: None,
             };
 
             let rt = tokio::runtime::Runtime::new().map_err(|e| {
@@ -1282,6 +1289,7 @@ pub async fn aresponses(
                 metadata: metadata_json,
                 user,
                 api_base: api_base.clone(),
+                timeout: None,
             };
 
             // True async: await the provider's async create_response method
@@ -1378,7 +1386,7 @@ pub fn get_response(
             let result = rt
                 .block_on(async {
                     provider_impl
-                        .get_response(&response_id, api_key.as_deref(), api_base.as_deref())
+                        .get_response(&response_id, api_key.as_deref(), api_base.as_deref(), None)
                         .await
                 })
                 .map_err(|e| provider_error_to_py(e, &provider))?;
@@ -1465,7 +1473,12 @@ pub fn delete_response(
             let result = rt
                 .block_on(async {
                     provider_impl
-                        .delete_response(&response_id, api_key.as_deref(), api_base.as_deref())
+                        .delete_response(
+                            &response_id,
+                            api_key.as_deref(),
+                            api_base.as_deref(),
+                            None,
+                        )
                         .await
                 })
                 .map_err(|e| provider_error_to_py(e, &provider))?;
@@ -1546,7 +1559,7 @@ pub fn list_models(
             let result = rt
                 .block_on(async {
                     provider_impl
-                        .list_models(api_key.as_deref(), api_base.as_deref())
+                        .list_models(api_key.as_deref(), api_base.as_deref(), None)
                         .await
                 })
                 .map_err(|e| provider_error_to_py(e, &provider))?;
@@ -1610,7 +1623,7 @@ pub async fn alist_models(
 
             // True async: await the provider's async list_models method
             let result = provider_impl
-                .list_models(api_key.as_deref(), api_base.as_deref())
+                .list_models(api_key.as_deref(), api_base.as_deref(), None)
                 .await
                 .map_err(|e| provider_error_to_py(e, &provider))?;
 
@@ -1727,6 +1740,7 @@ pub fn batch_create(
                 completion_window: completion_window.unwrap_or_else(|| "24h".to_string()),
                 metadata: metadata_json,
                 api_base: api_base.clone(),
+                timeout: None,
             };
 
             let rt = tokio::runtime::Runtime::new().map_err(|e| {
@@ -1801,6 +1815,7 @@ pub async fn abatch_create(
                 completion_window: completion_window.unwrap_or_else(|| "24h".to_string()),
                 metadata: metadata_json,
                 api_base: api_base.clone(),
+                timeout: None,
             };
 
             // True async: await the provider's async batch_create method
@@ -1871,7 +1886,7 @@ pub fn batch_retrieve(
             let result = rt
                 .block_on(async {
                     provider_impl
-                        .batch_retrieve(&batch_id, api_key.as_deref(), api_base.as_deref())
+                        .batch_retrieve(&batch_id, api_key.as_deref(), api_base.as_deref(), None)
                         .await
                 })
                 .map_err(|e| provider_error_to_py(e, &provider))?;
@@ -1922,7 +1937,7 @@ pub async fn abatch_retrieve(
 
             // True async: await the provider's async batch_retrieve method
             let result = provider_impl
-                .batch_retrieve(&batch_id, api_key.as_deref(), api_base.as_deref())
+                .batch_retrieve(&batch_id, api_key.as_deref(), api_base.as_deref(), None)
                 .await
                 .map_err(|e| provider_error_to_py(e, &provider))?;
 
@@ -1978,7 +1993,7 @@ pub fn batch_cancel(
             let result = rt
                 .block_on(async {
                     provider_impl
-                        .batch_cancel(&batch_id, api_key.as_deref(), api_base.as_deref())
+                        .batch_cancel(&batch_id, api_key.as_deref(), api_base.as_deref(), None)
                         .await
                 })
                 .map_err(|e| provider_error_to_py(e, &provider))?;
@@ -2029,7 +2044,7 @@ pub async fn abatch_cancel(
 
             // True async: await the provider's async batch_cancel method
             let result = provider_impl
-                .batch_cancel(&batch_id, api_key.as_deref(), api_base.as_deref())
+                .batch_cancel(&batch_id, api_key.as_deref(), api_base.as_deref(), None)
                 .await
                 .map_err(|e| provider_error_to_py(e, &provider))?;
 
@@ -2087,6 +2102,7 @@ pub fn batch_list(
                             api_key.as_deref(),
                             api_base.as_deref(),
                             limit.map(|l| l as u32),
+                            None,
                         )
                         .await
                 })
@@ -2153,6 +2169,7 @@ pub async fn abatch_list(
                     api_key.as_deref(),
                     api_base.as_deref(),
                     limit.map(|l| l as u32),
+                    None,
                 )
                 .await
                 .map_err(|e| provider_error_to_py(e, &provider))?;
@@ -2227,7 +2244,7 @@ pub fn batch_results(
             let result = rt
                 .block_on(async {
                     provider_impl
-                        .batch_results(&batch_id, api_key.as_deref(), api_base.as_deref())
+                        .batch_results(&batch_id, api_key.as_deref(), api_base.as_deref(), None)
                         .await
                 })
                 .map_err(|e| provider_error_to_py(e, &provider))?;
@@ -2284,7 +2301,7 @@ pub async fn abatch_results(
 
             // True async: await the provider's async batch_results method
             let result = provider_impl
-                .batch_results(&batch_id, api_key.as_deref(), api_base.as_deref())
+                .batch_results(&batch_id, api_key.as_deref(), api_base.as_deref(), None)
                 .await
                 .map_err(|e| provider_error_to_py(e, &provider))?;
 

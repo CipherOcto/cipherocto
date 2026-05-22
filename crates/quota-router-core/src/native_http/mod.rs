@@ -93,6 +93,8 @@ pub struct HttpCompletionRequest {
     /// Provider-specific parameters (e.g., Perplexity return_citations, search_domain_filter).
     /// Passed through as arbitrary JSON to the provider API.
     pub provider_params: Option<serde_json::Value>,
+    /// Request timeout in seconds (None = provider default, typically 600s)
+    pub timeout: Option<f64>,
 }
 
 impl HttpCompletionRequest {
@@ -109,6 +111,8 @@ pub struct HttpEmbeddingRequest {
     /// Per-deployment API base URL (optional).
     /// If Some, the provider should use this instead of its default api_base.
     pub api_base: Option<String>,
+    /// Request timeout in seconds (None = provider default)
+    pub timeout: Option<f64>,
 }
 
 /// Embedding response
@@ -173,6 +177,7 @@ pub trait HttpProvider: Send + Sync {
         _response_id: &str,
         _api_key: Option<&str>,
         _api_base: Option<&str>,
+        _timeout: Option<f64>,
     ) -> Result<HttpResponseObject, ProviderError> {
         Err(ProviderError::UnsupportedModel(format!(
             "{} does not support the Responses API",
@@ -186,6 +191,7 @@ pub trait HttpProvider: Send + Sync {
         _response_id: &str,
         _api_key: Option<&str>,
         _api_base: Option<&str>,
+        _timeout: Option<f64>,
     ) -> Result<HttpDeletedObject, ProviderError> {
         Err(ProviderError::UnsupportedModel(format!(
             "{} does not support the Responses API",
@@ -220,6 +226,7 @@ pub trait HttpProvider: Send + Sync {
         _batch_id: &str,
         _api_key: Option<&str>,
         _api_base: Option<&str>,
+        _timeout: Option<f64>,
     ) -> Result<HttpBatchObject, ProviderError> {
         Err(ProviderError::UnsupportedModel(format!(
             "{} does not support the Batch API",
@@ -232,6 +239,7 @@ pub trait HttpProvider: Send + Sync {
         _batch_id: &str,
         _api_key: Option<&str>,
         _api_base: Option<&str>,
+        _timeout: Option<f64>,
     ) -> Result<HttpBatchObject, ProviderError> {
         Err(ProviderError::UnsupportedModel(format!(
             "{} does not support the Batch API",
@@ -244,6 +252,7 @@ pub trait HttpProvider: Send + Sync {
         _api_key: Option<&str>,
         _api_base: Option<&str>,
         _limit: Option<u32>,
+        _timeout: Option<f64>,
     ) -> Result<HttpBatchListResponse, ProviderError> {
         Err(ProviderError::UnsupportedModel(format!(
             "{} does not support the Batch API",
@@ -256,6 +265,7 @@ pub trait HttpProvider: Send + Sync {
         _batch_id: &str,
         _api_key: Option<&str>,
         _api_base: Option<&str>,
+        _timeout: Option<f64>,
     ) -> Result<HttpBatchResultsResponse, ProviderError> {
         Err(ProviderError::UnsupportedModel(format!(
             "{} does not support the Batch API",
@@ -267,6 +277,7 @@ pub trait HttpProvider: Send + Sync {
         &self,
         _api_key: Option<&str>,
         _api_base: Option<&str>,
+        _timeout: Option<f64>,
     ) -> Result<HttpListModelsResponse, ProviderError> {
         Err(ProviderError::UnsupportedModel(format!(
             "{} does not support list_models",
@@ -299,6 +310,9 @@ pub struct HttpBatchCreateRequest {
     pub metadata: Option<serde_json::Value>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub api_base: Option<String>,
+    /// Request timeout in seconds (None = provider default)
+    #[serde(skip)]
+    pub timeout: Option<f64>,
 }
 
 /// Batch object from OpenAI Batch API
@@ -395,6 +409,9 @@ pub struct HttpResponsesRequest {
     pub user: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub api_base: Option<String>,
+    /// Request timeout in seconds (None = provider default)
+    #[serde(skip)]
+    pub timeout: Option<f64>,
 }
 
 /// Response object from OpenAI Responses API

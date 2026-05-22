@@ -128,6 +128,9 @@ impl super::HttpProvider for OpenAIProvider {
         if let Some(key) = api_key {
             req_builder = req_builder.header("Authorization", format!("Bearer {}", key));
         }
+        if let Some(t) = request.timeout {
+            req_builder = req_builder.timeout(std::time::Duration::from_secs_f64(t));
+        }
         let resp = req_builder
             .send()
             .await
@@ -184,6 +187,9 @@ impl super::HttpProvider for OpenAIProvider {
             .json(&body);
         if let Some(key) = api_key {
             req_builder = req_builder.header("Authorization", format!("Bearer {}", key));
+        }
+        if let Some(t) = request.timeout {
+            req_builder = req_builder.timeout(std::time::Duration::from_secs_f64(t));
         }
         let resp = req_builder
             .send()
@@ -360,6 +366,7 @@ impl super::HttpProvider for OpenAIProvider {
         response_id: &str,
         api_key: Option<&str>,
         api_base: Option<&str>,
+        timeout: Option<f64>,
     ) -> Result<HttpResponseObject, ProviderError> {
         let base_url = api_base.unwrap_or(&self.api_base);
         let url = format!("{}/responses/{}", base_url, response_id);
@@ -370,6 +377,9 @@ impl super::HttpProvider for OpenAIProvider {
             .header("Content-Type", "application/json");
         if let Some(key) = api_key {
             req_builder = req_builder.header("Authorization", format!("Bearer {}", key));
+        }
+        if let Some(t) = timeout {
+            req_builder = req_builder.timeout(std::time::Duration::from_secs_f64(t));
         }
         let resp = req_builder
             .send()
@@ -407,6 +417,7 @@ impl super::HttpProvider for OpenAIProvider {
         response_id: &str,
         api_key: Option<&str>,
         api_base: Option<&str>,
+        timeout: Option<f64>,
     ) -> Result<HttpDeletedObject, ProviderError> {
         let base_url = api_base.unwrap_or(&self.api_base);
         let url = format!("{}/responses/{}", base_url, response_id);
@@ -417,6 +428,9 @@ impl super::HttpProvider for OpenAIProvider {
             .header("Content-Type", "application/json");
         if let Some(key) = api_key {
             req_builder = req_builder.header("Authorization", format!("Bearer {}", key));
+        }
+        if let Some(t) = timeout {
+            req_builder = req_builder.timeout(std::time::Duration::from_secs_f64(t));
         }
         let resp = req_builder
             .send()
@@ -453,6 +467,7 @@ impl super::HttpProvider for OpenAIProvider {
         &self,
         api_key: Option<&str>,
         api_base: Option<&str>,
+        timeout: Option<f64>,
     ) -> Result<HttpListModelsResponse, ProviderError> {
         let base_url = api_base.unwrap_or(&self.api_base);
         let url = format!("{}/models", base_url);
@@ -463,6 +478,9 @@ impl super::HttpProvider for OpenAIProvider {
             .header("Content-Type", "application/json");
         if let Some(key) = api_key {
             req_builder = req_builder.header("Authorization", format!("Bearer {}", key));
+        }
+        if let Some(t) = timeout {
+            req_builder = req_builder.timeout(std::time::Duration::from_secs_f64(t));
         }
         let resp = req_builder
             .send()
@@ -512,6 +530,9 @@ impl super::HttpProvider for OpenAIProvider {
             .header("Content-Type", "application/json");
         if let Some(key) = api_key {
             req_builder = req_builder.header("Authorization", format!("Bearer {}", key));
+        }
+        if let Some(t) = request.timeout {
+            req_builder = req_builder.timeout(std::time::Duration::from_secs_f64(t));
         }
         let resp = req_builder
             .json(&body)
@@ -563,6 +584,9 @@ impl super::HttpProvider for OpenAIProvider {
         if let Some(key) = api_key {
             req_builder = req_builder.header("Authorization", format!("Bearer {}", key));
         }
+        if let Some(t) = request.timeout {
+            req_builder = req_builder.timeout(std::time::Duration::from_secs_f64(t));
+        }
         let resp = req_builder
             .json(&body)
             .send()
@@ -585,6 +609,7 @@ impl super::HttpProvider for OpenAIProvider {
         batch_id: &str,
         api_key: Option<&str>,
         api_base: Option<&str>,
+        timeout: Option<f64>,
     ) -> Result<HttpBatchObject, ProviderError> {
         let base_url = api_base.unwrap_or(&self.api_base);
         let url = format!("{}/batches/{}", base_url, batch_id);
@@ -592,6 +617,9 @@ impl super::HttpProvider for OpenAIProvider {
         let mut req_builder = self.client.get(&url);
         if let Some(key) = api_key {
             req_builder = req_builder.header("Authorization", format!("Bearer {}", key));
+        }
+        if let Some(t) = timeout {
+            req_builder = req_builder.timeout(std::time::Duration::from_secs_f64(t));
         }
         let resp = req_builder
             .send()
@@ -614,6 +642,7 @@ impl super::HttpProvider for OpenAIProvider {
         batch_id: &str,
         api_key: Option<&str>,
         api_base: Option<&str>,
+        timeout: Option<f64>,
     ) -> Result<HttpBatchObject, ProviderError> {
         let base_url = api_base.unwrap_or(&self.api_base);
         let url = format!("{}/batches/{}/cancel", base_url, batch_id);
@@ -621,6 +650,9 @@ impl super::HttpProvider for OpenAIProvider {
         let mut req_builder = self.client.post(&url);
         if let Some(key) = api_key {
             req_builder = req_builder.header("Authorization", format!("Bearer {}", key));
+        }
+        if let Some(t) = timeout {
+            req_builder = req_builder.timeout(std::time::Duration::from_secs_f64(t));
         }
         let resp = req_builder
             .send()
@@ -643,6 +675,7 @@ impl super::HttpProvider for OpenAIProvider {
         api_key: Option<&str>,
         api_base: Option<&str>,
         limit: Option<u32>,
+        timeout: Option<f64>,
     ) -> Result<HttpBatchListResponse, ProviderError> {
         let base_url = api_base.unwrap_or(&self.api_base);
         let mut url = format!("{}/batches", base_url);
@@ -653,6 +686,9 @@ impl super::HttpProvider for OpenAIProvider {
         let mut req_builder = self.client.get(&url);
         if let Some(key) = api_key {
             req_builder = req_builder.header("Authorization", format!("Bearer {}", key));
+        }
+        if let Some(t) = timeout {
+            req_builder = req_builder.timeout(std::time::Duration::from_secs_f64(t));
         }
         let resp = req_builder
             .send()
@@ -675,6 +711,7 @@ impl super::HttpProvider for OpenAIProvider {
         batch_id: &str,
         api_key: Option<&str>,
         api_base: Option<&str>,
+        timeout: Option<f64>,
     ) -> Result<HttpBatchResultsResponse, ProviderError> {
         let base_url = api_base.unwrap_or(&self.api_base);
         let url = format!("{}/batches/{}/results", base_url, batch_id);
@@ -682,6 +719,9 @@ impl super::HttpProvider for OpenAIProvider {
         let mut req_builder = self.client.get(&url);
         if let Some(key) = api_key {
             req_builder = req_builder.header("Authorization", format!("Bearer {}", key));
+        }
+        if let Some(t) = timeout {
+            req_builder = req_builder.timeout(std::time::Duration::from_secs_f64(t));
         }
         let resp = req_builder
             .send()

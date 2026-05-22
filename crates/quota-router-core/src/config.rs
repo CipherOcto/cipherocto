@@ -1721,6 +1721,7 @@ deployments:
             prompt_id: None,
             prompt_variables: None,
             provider_params: None,
+            timeout: None,
         };
 
         // Verify api_base is forwarded

@@ -2,7 +2,7 @@
 
 ## Status
 
-In Progress (secondary gaps identified)
+Completed
 
 ## RFC
 
@@ -40,15 +40,15 @@ None
 - [x] JWT config: jwks_cache_ttl (default 3600), clock_skew (default 30), supported_algorithms
 - [x] Token config: access_token_ttl (1h), refresh_token_ttl (7d), session_ttl (30m)
 
-### Production Storage Backends (Secondary Gaps — In Progress)
-- [ ] Implement `StoolapTokenBlacklistStorage` — persistent token blacklist via stoolap
-- [ ] Implement `SsoKeyStorageExt` on `StoolapKeyStorage` — production SSO key storage
-- [ ] Wire token blacklist into OAuth2FlowHandler for logout/revocation support
-- [ ] Add `token_blacklist` table to `schema.rs` initialization
+### Production Storage Backends (Secondary Gaps — Completed)
+- [x] Implement `StoolapTokenBlacklistStorage` — persistent token blacklist via stoolap
+- [x] Implement `SsoKeyStorageExt` on `StoolapKeyStorage` — production SSO key storage
+- [x] Wire token blacklist into OAuth2FlowHandler for logout/revocation support
+- [x] Add `token_blacklist` table to `schema.rs` initialization
 
 ### Verification
-- [ ] Clippy passes with zero warnings
-- [ ] All existing tests pass
+- [x] Clippy passes with zero warnings
+- [x] All existing tests pass
 
 ## Claimant
 
@@ -65,11 +65,16 @@ Key files:
 - `crates/quota-router-core/src/auth/sso/jwt.rs` — JWT validation with JWKS caching
 - `crates/quota-router-core/src/auth/sso/mapper.rs` — SSO-to-API-key mapping
 - `crates/quota-router-core/src/auth/sso/blacklist.rs` — Token blacklist trait + in-memory impl
-- `crates/quota-router-core/src/auth/sso/oauth2.rs` — OAuth2 flow handler with id_token decoding (fixed 947fa31)
+- `crates/quota-router-core/src/auth/sso/blacklist_stoolap.rs` — Production TokenBlacklistStorage via stoolap
+- `crates/quota-router-core/src/auth/sso/mapper_stoolap.rs` — Production SsoKeyStorageExt via stoolap
+- `crates/quota-router-core/src/auth/sso/oauth2.rs` — OAuth2 flow handler with id_token decoding and blacklist revocation
 - `crates/quota-router-core/src/config.rs` — SsoConfig
+- `crates/quota-router-core/src/schema.rs` — token_blacklist table
+- `crates/quota-router-core/src/keys/models.rs` — KeyType::Sso variant
+- `crates/quota-router-core/src/storage.rs` — KeyUpdates.metadata field
 
-Secondary gaps require:
-1. `blacklist_stoolap.rs` — production TokenBlacklistStorage via stoolap
-2. `mapper_stoolap.rs` — production SsoKeyStorageExt wrapping StoolapKeyStorage
-3. Schema update to add `token_blacklist` table
-4. Wire both into config and OAuth2FlowHandler
+Production storage backends completed:
+1. `blacklist_stoolap.rs` — ✅ production TokenBlacklistStorage via stoolap
+2. `mapper_stoolap.rs` — ✅ production SsoKeyStorageExt wrapping StoolapKeyStorage
+3. Schema update to add `token_blacklist` table — ✅
+4. Wire both into config and OAuth2FlowHandler — ✅ (revoke_with_blacklist method)

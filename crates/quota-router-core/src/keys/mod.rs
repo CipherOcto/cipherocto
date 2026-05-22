@@ -548,6 +548,7 @@ pub fn check_route_permission(key: &ApiKey, route: &str) -> bool {
                 || normalized.starts_with("/user/")
         }
         KeyType::ReadOnly => normalized.starts_with("/models/") || normalized.starts_with("/info"),
+        KeyType::Sso => true,     // SSO keys mapped from IdP - allow all routes
         KeyType::Default => true, // Allow all
     }
 }

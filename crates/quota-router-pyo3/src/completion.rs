@@ -311,7 +311,7 @@ fn convert_async_response(
 /// Resolve the provider mode from an optional string.
 fn resolve_mode(mode_str: Option<&str>) -> quota_router_core::mode::ProviderMode {
     match mode_str {
-        Some(s) => quota_router_core::mode::ProviderMode::from_str(s).unwrap_or_else(|| {
+        Some(s) => quota_router_core::mode::ProviderMode::parse(s).unwrap_or_else(|| {
             eprintln!("Unknown mode '{}', using default", s);
             get_mode()
         }),

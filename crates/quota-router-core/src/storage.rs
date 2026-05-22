@@ -176,6 +176,7 @@ impl StoolapKeyStorage {
             "llm_api" => KeyType::LlmApi,
             "management" => KeyType::Management,
             "read_only" => KeyType::ReadOnly,
+            "sso" => KeyType::Sso,
             _ => KeyType::Default,
         };
 
@@ -390,6 +391,10 @@ impl KeyStorage for StoolapKeyStorage {
         if let Some(description) = &updates.description {
             set_clauses.push(format!("description = ${}", params.len() + 1));
             params.push(description.clone().into());
+        }
+        if let Some(metadata) = &updates.metadata {
+            set_clauses.push(format!("metadata = ${}", params.len() + 1));
+            params.push(metadata.clone().into());
         }
 
         if set_clauses.is_empty() {
@@ -1548,6 +1553,7 @@ mod tests {
                     revocation_reason: None,
                     key_type: None,
                     description: Some("Updated key".to_string()),
+                    metadata: None,
                 },
             )
             .unwrap();

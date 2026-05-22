@@ -1293,6 +1293,7 @@ fn handle_revoke_key(
         revocation_reason: req.reason,
         key_type: None,
         description: None,
+        metadata: None,
     };
 
     if let Err(e) = storage.update_key(key_id, &updates) {
@@ -1405,6 +1406,7 @@ fn handle_rotate_key(
         revocation_reason: Some("Rotated".to_string()),
         key_type: None,
         description: None,
+        metadata: None,
     };
 
     if let Err(e) = storage.update_key(key_id, &updates) {

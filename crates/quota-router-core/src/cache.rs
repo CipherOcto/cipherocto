@@ -314,6 +314,7 @@ pub async fn rotation_worker(db: &stoolap::Database, cache: &KeyCache, interval_
                     revoked_by: None,
                     key_type: None,
                     description: None,
+                    metadata: None,
                 },
             ) {
                 tracing::error!(

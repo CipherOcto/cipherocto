@@ -19,7 +19,7 @@ pub enum ProviderMode {
 
 impl ProviderMode {
     /// Parse from string: "litellm" or "any-llm"
-    pub fn from_str(s: &str) -> Option<Self> {
+    pub fn parse(s: &str) -> Option<Self> {
         match s.to_lowercase().as_str() {
             "litellm" | "litellm-mode" | "litellm_mode" => Some(ProviderMode::LiteLLM),
             "any-llm" | "any-llm-mode" | "any_llm" | "any_llm_mode" => Some(ProviderMode::AnyLlm),
@@ -43,17 +43,17 @@ impl ProviderMode {
 pub fn default_mode() -> ProviderMode {
     #[cfg(all(feature = "litellm-mode", not(feature = "any-llm-mode")))]
     {
-        return ProviderMode::LiteLLM;
+        ProviderMode::LiteLLM
     }
 
     #[cfg(all(feature = "any-llm-mode", not(feature = "litellm-mode")))]
     {
-        return ProviderMode::AnyLlm;
+        ProviderMode::AnyLlm
     }
 
     #[cfg(feature = "full")]
     {
-        return ProviderMode::LiteLLM;
+        ProviderMode::LiteLLM
     }
 
     #[cfg(not(any(feature = "litellm-mode", feature = "any-llm-mode", feature = "full")))]
@@ -116,19 +116,10 @@ mod tests {
     }
 
     #[test]
-    fn test_mode_from_str() {
-        assert_eq!(
-            ProviderMode::from_str("litellm"),
-            Some(ProviderMode::LiteLLM)
-        );
-        assert_eq!(
-            ProviderMode::from_str("any-llm"),
-            Some(ProviderMode::AnyLlm)
-        );
-        assert_eq!(
-            ProviderMode::from_str("LITELLM"),
-            Some(ProviderMode::LiteLLM)
-        );
-        assert_eq!(ProviderMode::from_str("invalid"), None);
+    fn test_mode_parse() {
+        assert_eq!(ProviderMode::parse("litellm"), Some(ProviderMode::LiteLLM));
+        assert_eq!(ProviderMode::parse("any-llm"), Some(ProviderMode::AnyLlm));
+        assert_eq!(ProviderMode::parse("LITELLM"), Some(ProviderMode::LiteLLM));
+        assert_eq!(ProviderMode::parse("invalid"), None);
     }
 }

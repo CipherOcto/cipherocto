@@ -3,8 +3,10 @@
 //! Enterprise Single Sign-On support for OAuth2, OIDC, and SAML authentication.
 
 pub mod blacklist;
+pub mod blacklist_stoolap;
 pub mod jwt;
 pub mod mapper;
+pub mod mapper_stoolap;
 pub mod oauth2;
 pub mod pkce;
 pub mod saml;
@@ -359,7 +361,7 @@ pub struct SsoKeyMetadata {
 // SsoConfig (added to config.rs)
 // ============================================================================
 
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[derive(Clone, Serialize, Deserialize, Default)]
 pub struct SsoConfig {
     /// SSO enabled
     #[serde(default)]
@@ -382,6 +384,31 @@ pub struct SsoConfig {
     /// Rate limiting configuration
     #[serde(default)]
     pub rate_limit: SsoRateLimitConfig,
+    /// Optional token blacklist storage for logout/revocation support
+    #[serde(skip)]
+    pub blacklist_storage: Option<std::sync::Arc<dyn TokenBlacklistStorage>>,
+}
+
+impl std::fmt::Debug for SsoConfig {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("SsoConfig")
+            .field("enabled", &self.enabled)
+            .field("providers", &self.providers)
+            .field("role_mapping", &self.role_mapping)
+            .field("team_mapping", &self.team_mapping)
+            .field("token", &self.token)
+            .field("jwt", &self.jwt)
+            .field("rate_limit", &self.rate_limit)
+            .field(
+                "blacklist_storage",
+                &if self.blacklist_storage.is_some() {
+                    "Some(...)"
+                } else {
+                    "None"
+                },
+            )
+            .finish()
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

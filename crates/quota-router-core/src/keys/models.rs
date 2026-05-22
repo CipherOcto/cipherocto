@@ -8,6 +8,7 @@ pub enum KeyType {
     LlmApi,
     Management,
     ReadOnly,
+    Sso,
 }
 
 impl std::fmt::Display for KeyType {
@@ -16,6 +17,7 @@ impl std::fmt::Display for KeyType {
             KeyType::LlmApi => write!(f, "llm_api"),
             KeyType::Management => write!(f, "management"),
             KeyType::ReadOnly => write!(f, "read_only"),
+            KeyType::Sso => write!(f, "sso"),
             KeyType::Default => write!(f, "default"),
         }
     }
@@ -44,7 +46,7 @@ pub struct ApiKey {
     pub metadata: Option<String>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct KeyUpdates {
     pub budget_limit: Option<i64>,
     pub rpm_limit: Option<i32>,
@@ -55,6 +57,7 @@ pub struct KeyUpdates {
     pub revocation_reason: Option<String>,
     pub key_type: Option<KeyType>,
     pub description: Option<String>,
+    pub metadata: Option<String>,
 }
 
 /// Team - group of API keys with shared budget

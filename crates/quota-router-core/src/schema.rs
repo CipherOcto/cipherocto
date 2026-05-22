@@ -244,6 +244,24 @@ pub fn init_database(db: &stoolap::Database) -> Result<(), KeyError> {
     )
     .map_err(|e| KeyError::Storage(e.to_string()))?;
 
+    // Token blacklist for SSO token revocation (RFC-0949 Phase 5)
+    db.execute(
+        "CREATE TABLE IF NOT EXISTS token_blacklist (
+            token_id TEXT NOT NULL,
+            expires_at INTEGER NOT NULL,
+            created_at INTEGER NOT NULL,
+            UNIQUE(token_id)
+        )",
+        [],
+    )
+    .map_err(|e| KeyError::Storage(e.to_string()))?;
+
+    db.execute(
+        "CREATE INDEX IF NOT EXISTS idx_token_blacklist_expires ON token_blacklist(expires_at)",
+        [],
+    )
+    .map_err(|e| KeyError::Storage(e.to_string()))?;
+
     Ok(())
 }
 

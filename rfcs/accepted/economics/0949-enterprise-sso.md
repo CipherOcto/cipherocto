@@ -954,16 +954,18 @@ Rate limits use the same mechanism as RFC-0933 (Rate Limiting Integration). Exce
 
 ### Phase 5: Production Storage Backends
 
-- [ ] Implement `StoolapTokenBlacklistStorage` — persistent token blacklist
+- [x] Implement `StoolapTokenBlacklistStorage` — persistent token blacklist
   - New file: `auth/sso/blacklist_stoolap.rs`
-  - Schema: `token_blacklist(token_id TEXT PRIMARY KEY, expires_at INTEGER, created_at INTEGER)`
+  - Schema: `token_blacklist(token_id TEXT UNIQUE, expires_at INTEGER, created_at INTEGER)`
   - Add index on `expires_at` for efficient cleanup queries
-- [ ] Implement `SsoKeyStorageExt` on `StoolapKeyStorage` — production SSO key storage
+- [x] Implement `SsoKeyStorageExt` on `StoolapKeyStorage` — production SSO key storage
   - New file: `auth/sso/mapper_stoolap.rs`
   - Query `api_keys.metadata` JSON for `sso_subject` lookups
   - Add `KeyType::Sso` variant to distinguish SSO-provisioned keys
-- [ ] Wire blacklist into OAuth2FlowHandler for logout/revocation
-- [ ] Update SsoConfig to accept injectable storage backends
+- [x] Wire blacklist into OAuth2FlowHandler for logout/revocation
+  - Added `revoke_with_blacklist()` method to OAuth2FlowHandler
+  - Added `blacklist_storage` field to SsoConfig
+- [x] Update SsoConfig to accept injectable storage backends
 
 ## Future Work
 

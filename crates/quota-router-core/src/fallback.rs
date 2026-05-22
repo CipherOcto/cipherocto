@@ -159,16 +159,15 @@ impl FallbackConfig {
 }
 
 /// Health state for a model
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub enum HealthState {
-    /// Model is healthy and available
+    #[default]
     Healthy,
-    /// Model is unhealthy (exceeded allowed_fails consecutive failures)
     Unhealthy,
 }
 
 /// Per-model health tracking with consecutive failure counting
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub struct ModelHealthTracker {
     /// Current health state
     pub state: HealthState,
@@ -208,12 +207,6 @@ impl ModelHealthTracker {
     /// Check if model is available
     pub fn is_available(&self) -> bool {
         self.state == HealthState::Healthy
-    }
-}
-
-impl Default for ModelHealthTracker {
-    fn default() -> Self {
-        Self::new()
     }
 }
 
@@ -271,9 +264,7 @@ impl FallbackExecutor {
     /// Record a successful request for a model - resets consecutive failures
     pub fn record_success(&self, model: &str) {
         let mut health = self.model_health.lock();
-        let tracker = health
-            .entry(model.to_string())
-            .or_insert_with(ModelHealthTracker::new);
+        let tracker = health.entry(model.to_string()).or_default();
         tracker.record_success();
     }
 
@@ -282,9 +273,7 @@ impl FallbackExecutor {
     pub fn record_failure(&self, model: &str) {
         let allowed_fails = self.config.allowed_fails;
         let mut health = self.model_health.lock();
-        let tracker = health
-            .entry(model.to_string())
-            .or_insert_with(ModelHealthTracker::new);
+        let tracker = health.entry(model.to_string()).or_default();
         tracker.record_failure();
         if tracker.should_mark_unhealthy(allowed_fails) {
             tracker.mark_unhealthy();
@@ -306,9 +295,7 @@ impl FallbackExecutor {
     /// Reset a model's health to healthy (e.g., after cooldown)
     pub fn reset_model_health(&self, model: &str) {
         let mut health = self.model_health.lock();
-        let tracker = health
-            .entry(model.to_string())
-            .or_insert_with(ModelHealthTracker::new);
+        let tracker = health.entry(model.to_string()).or_default();
         tracker.record_success();
     }
 }

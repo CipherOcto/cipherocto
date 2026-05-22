@@ -584,19 +584,94 @@ pub async fn aembedding(
     timeout: Option<f64>,
     _mode: Option<String>,
 ) -> PyResult<Py<PyAny>> {
-    embedding(
-        model,
-        input,
-        inputs,
-        dimensions,
-        encoding_format,
-        provider,
-        api_key,
-        api_base,
-        client_args,
-        timeout,
-        _mode,
-    )
+    // True async dispatch for litellm-mode
+    ensure_providers_initialized();
+    let _ = (&dimensions, &encoding_format, &client_args, &timeout);
+    let data = input.or(inputs).ok_or_else(|| {
+        pyo3::exceptions::PyTypeError::new_err("embedding() requires either `input` or `inputs`")
+    })?;
+    let input_text: String = Python::with_gil(|py| -> PyResult<String> {
+        if let Ok(s) = data.extract::<String>(py) {
+            return Ok(s);
+        }
+        if let Ok(list) = data.downcast::<pyo3::types::PyList>(py) {
+            let parts: Vec<String> = list
+                .iter()
+                .map(|i| i.extract::<String>().unwrap_or_default())
+                .collect();
+            return Ok(parts.join(" "));
+        }
+        Err(pyo3::exceptions::PyTypeError::new_err(
+            "input must be a string or list of strings",
+        ))
+    })?;
+    let provider_name = provider.as_deref().unwrap_or("openai");
+    let mode = resolve_mode(_mode.as_deref());
+    match mode {
+        #[cfg(feature = "full")]
+        quota_router_core::mode::ProviderMode::LiteLLM => {
+            let provider_impl =
+                quota_router_core::native_http::HttpProviderFactory::create(provider_name)
+                    .ok_or_else(|| {
+                        pyo3::exceptions::PyNotImplementedError::new_err(format!(
+                            "Provider '{}' not supported",
+                            provider_name
+                        ))
+                    })?;
+            let request = quota_router_core::native_http::HttpEmbeddingRequest {
+                input: input_text,
+                model: model.clone(),
+                api_base: api_base.clone(),
+            };
+            let result = provider_impl
+                .embedding(&request, api_key.as_deref())
+                .await
+                .map_err(|e| {
+                    pyo3::exceptions::PyRuntimeError::new_err(format!("{}: {}", provider_name, e))
+                })?;
+            Python::with_gil(|py| {
+                let dict = pyo3::types::PyDict::new(py);
+                dict.set_item("object", &result.object)?;
+                dict.set_item("model", &result.model)?;
+                let data_list = pyo3::types::PyList::empty(py);
+                for emb in &result.data {
+                    let emb_dict = pyo3::types::PyDict::new(py);
+                    emb_dict.set_item("object", &emb.object)?;
+                    emb_dict.set_item("index", emb.index)?;
+                    let el = pyo3::types::PyList::empty(py);
+                    for v in &emb.embedding {
+                        el.append(*v)?;
+                    }
+                    emb_dict.set_item("embedding", el)?;
+                    data_list.append(emb_dict)?;
+                }
+                dict.set_item("data", data_list)?;
+                let u = pyo3::types::PyDict::new(py);
+                u.set_item("prompt_tokens", result.usage.prompt_tokens)?;
+                u.set_item("total_tokens", result.usage.total_tokens)?;
+                dict.set_item("usage", u)?;
+                Ok(dict.into())
+            })
+        }
+        #[cfg(feature = "full")]
+        quota_router_core::mode::ProviderMode::AnyLlm => embedding(
+            model,
+            None,
+            Some(data),
+            dimensions,
+            encoding_format,
+            Some(provider_name.to_string()),
+            api_key,
+            api_base,
+            client_args,
+            timeout,
+            _mode,
+        ),
+        #[cfg(not(feature = "full"))]
+        _ => Err(pyo3::exceptions::PyRuntimeError::new_err(
+            "No mode compiled",
+        )),
+    }
 }
 
 // =============================================================================

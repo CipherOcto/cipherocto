@@ -1433,7 +1433,50 @@ pub async fn aget_response(
     client_args: Option<Py<PyAny>>,
     _mode: Option<String>,
 ) -> PyResult<Py<PyAny>> {
-    self::get_response(provider, response_id, api_key, api_base, client_args, _mode)
+    // True async dispatch for litellm-mode
+    ensure_providers_initialized();
+    let _ = client_args;
+    let mode = resolve_mode(_mode.as_deref());
+    match mode {
+        #[cfg(feature = "full")]
+        quota_router_core::mode::ProviderMode::LiteLLM => {
+            let provider_impl = quota_router_core::native_http::HttpProviderFactory::create(
+                &provider,
+            )
+            .ok_or_else(|| {
+                pyo3::exceptions::PyNotImplementedError::new_err(format!(
+                    "Provider '{}' not supported in litellm-mode",
+                    provider
+                ))
+            })?;
+            let result = provider_impl
+                .get_response(&response_id, api_key.as_deref(), api_base.as_deref(), None)
+                .await
+                .map_err(|e| provider_error_to_py(e, &provider))?;
+            Python::with_gil(|py| {
+                let dict = pyo3::types::PyDict::new(py);
+                dict.set_item("id", &result.id)?;
+                dict.set_item("object", &result.object)?;
+                dict.set_item("model", &result.model)?;
+                dict.set_item("status", &result.status)?;
+                let output_obj =
+                    json_to_python(py, &serde_json::Value::Array(result.output.clone()))?;
+                dict.set_item("output", output_obj)?;
+                if let Some(usage) = &result.usage {
+                    dict.set_item("usage", json_to_python(py, usage)?)?;
+                }
+                Ok(dict.into())
+            })
+        }
+        #[cfg(feature = "full")]
+        quota_router_core::mode::ProviderMode::AnyLlm => {
+            self::get_response(provider, response_id, api_key, api_base, client_args, _mode)
+        }
+        #[cfg(not(feature = "full"))]
+        _ => Err(pyo3::exceptions::PyRuntimeError::new_err(
+            "No mode compiled",
+        )),
+    }
 }
 
 /// delete_response - Delete a response by ID from provider storage (OpenAI Responses API)
@@ -1516,7 +1559,43 @@ pub async fn adelete_response(
     client_args: Option<Py<PyAny>>,
     _mode: Option<String>,
 ) -> PyResult<Py<PyAny>> {
-    self::delete_response(provider, response_id, api_key, api_base, client_args, _mode)
+    // True async dispatch for litellm-mode
+    ensure_providers_initialized();
+    let _ = client_args;
+    let mode = resolve_mode(_mode.as_deref());
+    match mode {
+        #[cfg(feature = "full")]
+        quota_router_core::mode::ProviderMode::LiteLLM => {
+            let provider_impl = quota_router_core::native_http::HttpProviderFactory::create(
+                &provider,
+            )
+            .ok_or_else(|| {
+                pyo3::exceptions::PyNotImplementedError::new_err(format!(
+                    "Provider '{}' not supported in litellm-mode",
+                    provider
+                ))
+            })?;
+            let result = provider_impl
+                .delete_response(&response_id, api_key.as_deref(), api_base.as_deref(), None)
+                .await
+                .map_err(|e| provider_error_to_py(e, &provider))?;
+            Python::with_gil(|py| {
+                let dict = pyo3::types::PyDict::new(py);
+                dict.set_item("id", &result.id)?;
+                dict.set_item("object", &result.object)?;
+                dict.set_item("deleted", result.deleted)?;
+                Ok(dict.into())
+            })
+        }
+        #[cfg(feature = "full")]
+        quota_router_core::mode::ProviderMode::AnyLlm => {
+            self::delete_response(provider, response_id, api_key, api_base, client_args, _mode)
+        }
+        #[cfg(not(feature = "full"))]
+        _ => Err(pyo3::exceptions::PyRuntimeError::new_err(
+            "No mode compiled",
+        )),
+    }
 }
 
 // =============================================================================

@@ -4,7 +4,7 @@
 //! token lifecycle, and OIDC discovery endpoints.
 
 use super::pkce::PkceChallenge;
-use super::{IdentityProvider, SsoError, TokenClaims};
+use super::{IdentityProvider, JwtValidationConfig, SsoError, TokenClaims, TokenValidator};
 use chrono::{DateTime, Duration, Utc};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -167,6 +167,10 @@ pub struct OAuth2FlowHandler {
     pending_states: Arc<RwLock<HashMap<String, OAuth2State>>>,
     /// Session store.
     pub sessions: SsoSessionStore,
+    /// JWT validator for id_token decoding.
+    validator: Option<TokenValidator>,
+    /// JWT validation config.
+    jwt_config: JwtValidationConfig,
 }
 
 impl OAuth2FlowHandler {
@@ -174,7 +178,24 @@ impl OAuth2FlowHandler {
         Self {
             pending_states: Arc::new(RwLock::new(HashMap::new())),
             sessions: SsoSessionStore::new(),
+            validator: None,
+            jwt_config: JwtValidationConfig::default(),
         }
+    }
+
+    /// Create handler with JWT validator for id_token decoding.
+    pub fn with_jwt_validator(jwt_config: JwtValidationConfig) -> Self {
+        Self {
+            pending_states: Arc::new(RwLock::new(HashMap::new())),
+            sessions: SsoSessionStore::new(),
+            validator: Some(TokenValidator::new(jwt_config.clone())),
+            jwt_config,
+        }
+    }
+
+    /// Set JWT validator after construction.
+    pub fn set_validator(&mut self, validator: TokenValidator) {
+        self.validator = Some(validator);
     }
 
     /// Initiate SSO flow — generates state + PKCE challenge.
@@ -261,19 +282,69 @@ impl OAuth2FlowHandler {
         )
         .await?;
 
-        // Create session
+        // Decode id_token if present and validator is available
+        let (sub, email, name, groups, roles) = if let (Some(ref validator), Some(ref id_token)) =
+            (&self.validator, &token_response.id_token)
+        {
+            let issuer = provider.config.issuer.as_deref().unwrap_or("https://idp.example.com");
+            let client_id = provider.config.client_id.as_deref().unwrap_or("");
+            let jwks_url = format!("{}/.well-known/jwks.json", issuer);
+
+            match validator
+                .validate(id_token, client_id, issuer, &jwks_url)
+                .await
+            {
+                Ok(claims) => (
+                    claims.sub.clone(),
+                    claims.email.clone(),
+                    claims.name.clone(),
+                    claims.groups.clone(),
+                    claims.roles.clone(),
+                ),
+                Err(e) => {
+                    return Err(SsoError::TokenInvalid(format!(
+                        "id_token validation failed: {}",
+                        e
+                    )));
+                }
+            }
+        } else if let Some(ref id_token) = token_response.id_token {
+            // No validator but id_token present — decode header to get sub (unvalidated)
+            match decode_id_token_claims(id_token) {
+                Ok(claims) => (
+                    claims.sub.clone(),
+                    claims.email.clone(),
+                    claims.name.clone(),
+                    claims.groups.clone(),
+                    claims.roles.clone(),
+                ),
+                Err(e) => {
+                    return Err(SsoError::TokenInvalid(format!(
+                        "failed to decode id_token: {}",
+                        e
+                    )));
+                }
+            }
+        } else {
+            // No id_token available
+            return Err(SsoError::TokenInvalid(
+                "no id_token in token response (required for user identification)".into(),
+            ));
+        };
+
+        // Create session with real claims
         let session = SsoSession {
             session_id: generate_random_string(32),
-            sub: "idp-sub-placeholder".to_string(),
+            sub: sub.clone(),
             provider_id: provider.id.clone(),
             access_token: token_response.access_token.clone(),
             refresh_token: token_response.refresh_token.clone(),
             claims: TokenClaims {
-                sub: "idp-sub-placeholder".to_string(),
-                email: None,
-                name: None,
-                groups: vec![],
-                roles: vec![],
+                sub,
+                email,
+                name,
+                groups,
+                roles,
                 exp: (Utc::now() + Duration::hours(1)).timestamp(),
                 iat: Utc::now().timestamp(),
                 iss: provider.config.issuer.clone().unwrap_or_default(),
@@ -335,6 +406,35 @@ impl Default for OAuth2FlowHandler {
     fn default() -> Self {
         Self::new()
     }
+}
+
+// ============================================================================
+// ID Token Decoding (fallback when no validator available)
+// ============================================================================
+
+/// Decode id_token claims without signature verification (for fallback use).
+/// This extracts claims from the payload but does NOT verify the signature.
+/// Use TokenValidator.validate() for production use with signature verification.
+fn decode_id_token_claims(id_token: &str) -> Result<TokenClaims, SsoError> {
+    let parts: Vec<&str> = id_token.split('.').collect();
+    if parts.len() != 3 {
+        return Err(SsoError::TokenInvalid("invalid JWT format".into()));
+    }
+
+    let payload_bytes = base64_url_decode(parts[1])
+        .map_err(|_| SsoError::TokenInvalid("invalid payload encoding".into()))?;
+
+    let claims: TokenClaims = serde_json::from_slice(&payload_bytes)
+        .map_err(|_| SsoError::TokenInvalid("invalid payload JSON".into()))?;
+
+    Ok(claims)
+}
+
+fn base64_url_decode(input: &str) -> Result<Vec<u8>, &'static str> {
+    use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
+    URL_SAFE_NO_PAD
+        .decode(input)
+        .map_err(|_| "invalid base64url")
 }
 
 // ============================================================================

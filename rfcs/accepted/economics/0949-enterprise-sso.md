@@ -913,28 +913,31 @@ Rate limits use the same mechanism as RFC-0933 (Rate Limiting Integration). Exce
 | `crates/quota-router-core/src/auth/jwt.rs` | New — JWT validation |
 | `crates/quota-router-core/src/auth/scim.rs` | New — SCIM provisioning |
 | `crates/quota-router-core/src/auth/key_mapper.rs` | New — SSO-to-API-key mapping |
-| `crates/quota-router-core/src/auth/blacklist.rs` | New — Token blacklist |
-| `crates/quota-router-core/src/config.rs` | Add SsoConfig |
+| `crates/quota-router-core/src/auth/blacklist.rs` | New — Token blacklist trait + in-memory impl |
+| `crates/quota-router-core/src/auth/sso/blacklist_stoolap.rs` | New — Production TokenBlacklistStorage via stoolap |
+| `crates/quota-router-core/src/auth/sso/mapper_stoolap.rs` | New — Production SsoKeyStorageExt via stoolap |
+| `crates/quota-router-core/src/config.rs` | Add SsoConfig with storage backends |
 | `crates/quota-router-core/src/admin.rs` | Add auth endpoints |
 | `crates/quota-router-core/src/proxy.rs` | Validate JWT in auth middleware |
+| `crates/quota-router-core/src/schema.rs` | Add `token_blacklist` table init |
 
 ## Implementation Phases
 
 ### Phase 1: Core Infrastructure
 
-- [ ] Define SsoFlow, IdentityProvider, TokenClaims types
-- [ ] Implement JWT validation with JWKS caching
-- [ ] Add SsoConfig to config.rs
-- [ ] Add /auth/token endpoints
-- [ ] Implement SsoKeyMapper
-- [ ] Implement TokenBlacklist
+- [x] Define SsoFlow, IdentityProvider, TokenClaims types
+- [x] Implement JWT validation with JWKS caching
+- [x] Add SsoConfig to config.rs
+- [x] Add /auth/token endpoints
+- [x] Implement SsoKeyMapper
+- [x] Implement TokenBlacklist
 
 ### Phase 2: OAuth2/OIDC
 
-- [ ] Implement Authorization Code + PKCE flow
-- [ ] Implement Client Credentials flow
-- [ ] Add provider management endpoints
-- [ ] Integrate with virtual key system
+- [x] Implement Authorization Code + PKCE flow
+- [x] Implement Client Credentials flow
+- [x] Add provider management endpoints
+- [x] Integrate with virtual key system
 
 ### Phase 3: SAML
 
@@ -948,6 +951,19 @@ Rate limits use the same mechanism as RFC-0933 (Rate Limiting Integration). Exce
 - [ ] Implement SCIM 2.0 user provisioning
 - [ ] Add role/team mapping from IdP groups
 - [ ] Add SSO analytics and audit log
+
+### Phase 5: Production Storage Backends
+
+- [ ] Implement `StoolapTokenBlacklistStorage` — persistent token blacklist
+  - New file: `auth/sso/blacklist_stoolap.rs`
+  - Schema: `token_blacklist(token_id TEXT PRIMARY KEY, expires_at INTEGER, created_at INTEGER)`
+  - Add index on `expires_at` for efficient cleanup queries
+- [ ] Implement `SsoKeyStorageExt` on `StoolapKeyStorage` — production SSO key storage
+  - New file: `auth/sso/mapper_stoolap.rs`
+  - Query `api_keys.metadata` JSON for `sso_subject` lookups
+  - Add `KeyType::Sso` variant to distinguish SSO-provisioned keys
+- [ ] Wire blacklist into OAuth2FlowHandler for logout/revocation
+- [ ] Update SsoConfig to accept injectable storage backends
 
 ## Future Work
 

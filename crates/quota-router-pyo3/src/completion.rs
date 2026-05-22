@@ -97,6 +97,217 @@ fn provider_error_to_py(
     }
 }
 
+// =============================================================================
+// Phase 2: Native async helpers (AsyncOpenAI / AsyncAnthropic via pyo3_asyncio)
+// =============================================================================
+
+/// Check if a provider has a native async Python SDK.
+#[cfg(feature = "full")]
+fn supports_native_async(provider: &str) -> bool {
+    matches!(provider, "openai" | "anthropic")
+}
+
+/// Create a Python async completion coroutine using AsyncOpenAI or AsyncAnthropic.
+/// Returns a Python awaitable that can be converted to a Rust future via pyo3_asyncio.
+#[cfg(feature = "full")]
+fn create_async_completion_py<'py>(
+    py: Python<'py>,
+    provider: &str,
+    model: &str,
+    messages: &[quota_router_core::types::Message],
+    api_key: Option<&str>,
+    api_base: Option<&str>,
+) -> PyResult<Py<PyAny>> {
+    match provider {
+        "openai" => {
+            let openai = py.import("openai")?;
+            let async_class = openai.getattr("AsyncOpenAI")?;
+            let kwargs = pyo3::types::PyDict::new(py);
+            if let Some(key) = api_key {
+                kwargs.set_item("api_key", key)?;
+            }
+            if let Some(base) = api_base {
+                kwargs.set_item("base_url", base)?;
+            }
+            let headers = pyo3::types::PyDict::new(py);
+            headers.set_item("Accept-Encoding", "identity")?;
+            kwargs.set_item("default_headers", headers)?;
+            let client = async_class.call((), Some(kwargs))?;
+
+            let py_messages = pyo3::types::PyList::empty(py);
+            for msg in messages {
+                let dict = pyo3::types::PyDict::new(py);
+                dict.set_item("role", &msg.role)?;
+                dict.set_item("content", &msg.content)?;
+                py_messages.append(dict)?;
+            }
+
+            let chat = client.getattr("chat")?;
+            let completions = chat.getattr("completions")?;
+            let create = completions.getattr("create")?;
+            let call_kwargs = pyo3::types::PyDict::new(py);
+            call_kwargs.set_item("model", model)?;
+            call_kwargs.set_item("messages", py_messages)?;
+            create.call((), Some(call_kwargs)).map(|r| r.into())
+        }
+        "anthropic" => {
+            let anthropic = py.import("anthropic")?;
+            let async_class = anthropic.getattr("AsyncAnthropic")?;
+            let kwargs = pyo3::types::PyDict::new(py);
+            if let Some(key) = api_key {
+                kwargs.set_item("api_key", key)?;
+            }
+            if let Some(base) = api_base {
+                kwargs.set_item("base_url", base)?;
+            }
+            let client = async_class.call((), Some(kwargs))?;
+
+            let py_messages = pyo3::types::PyList::empty(py);
+            for msg in messages {
+                let dict = pyo3::types::PyDict::new(py);
+                let role = if msg.role == "assistant" {
+                    "assistant"
+                } else {
+                    "user"
+                };
+                dict.set_item("role", role)?;
+                dict.set_item("content", &msg.content)?;
+                py_messages.append(dict)?;
+            }
+
+            let messages_attr = client.getattr("messages")?;
+            let create = messages_attr.getattr("create")?;
+            let call_kwargs = pyo3::types::PyDict::new(py);
+            call_kwargs.set_item("model", model)?;
+            call_kwargs.set_item("messages", py_messages)?;
+            call_kwargs.set_item("max_tokens", 1024)?;
+            create.call((), Some(call_kwargs)).map(|r| r.into())
+        }
+        _ => Err(pyo3::exceptions::PyNotImplementedError::new_err(format!(
+            "Native async not available for provider '{}'",
+            provider
+        ))),
+    }
+}
+
+/// Create a Python async embedding coroutine using AsyncOpenAI.
+#[cfg(feature = "full")]
+fn create_async_embedding_py<'py>(
+    py: Python<'py>,
+    provider: &str,
+    model: &str,
+    input: &str,
+    api_key: Option<&str>,
+    api_base: Option<&str>,
+) -> PyResult<Py<PyAny>> {
+    match provider {
+        "openai" => {
+            let openai = py.import("openai")?;
+            let async_class = openai.getattr("AsyncOpenAI")?;
+            let kwargs = pyo3::types::PyDict::new(py);
+            if let Some(key) = api_key {
+                kwargs.set_item("api_key", key)?;
+            }
+            if let Some(base) = api_base {
+                kwargs.set_item("base_url", base)?;
+            }
+            let client = async_class.call((), Some(kwargs))?;
+
+            let embeddings = client.getattr("embeddings")?;
+            let create = embeddings.getattr("create")?;
+            let call_kwargs = pyo3::types::PyDict::new(py);
+            call_kwargs.set_item("model", model)?;
+            call_kwargs.set_item("input", input)?;
+            create.call((), Some(call_kwargs)).map(|r| r.into())
+        }
+        _ => Err(pyo3::exceptions::PyNotImplementedError::new_err(format!(
+            "Native async embedding not available for provider '{}'",
+            provider
+        ))),
+    }
+}
+
+/// Create a Python async messages coroutine using AsyncAnthropic.
+#[cfg(feature = "full")]
+fn create_async_messages_py<'py>(
+    py: Python<'py>,
+    model: &str,
+    messages: &[Message],
+    max_tokens: i32,
+    system: Option<&str>,
+    temperature: Option<f64>,
+    top_p: Option<f64>,
+    stop_sequences: Option<&[String]>,
+    api_key: Option<&str>,
+    api_base: Option<&str>,
+) -> PyResult<Py<PyAny>> {
+    let anthropic = py.import("anthropic")?;
+    let async_class = anthropic.getattr("AsyncAnthropic")?;
+    let kwargs = pyo3::types::PyDict::new(py);
+    if let Some(key) = api_key {
+        kwargs.set_item("api_key", key)?;
+    }
+    if let Some(base) = api_base {
+        kwargs.set_item("base_url", base)?;
+    }
+    let client = async_class.call((), Some(kwargs))?;
+
+    let py_messages = pyo3::types::PyList::empty(py);
+    for msg in messages {
+        let dict = pyo3::types::PyDict::new(py);
+        let role = if msg.role == "assistant" {
+            "assistant"
+        } else {
+            "user"
+        };
+        dict.set_item("role", role)?;
+        dict.set_item("content", &msg.content)?;
+        py_messages.append(dict)?;
+    }
+
+    let messages_attr = client.getattr("messages")?;
+    let create = messages_attr.getattr("create")?;
+    let call_kwargs = pyo3::types::PyDict::new(py);
+    call_kwargs.set_item("model", model)?;
+    call_kwargs.set_item("messages", py_messages)?;
+    call_kwargs.set_item("max_tokens", max_tokens)?;
+    if let Some(temp) = temperature {
+        call_kwargs.set_item("temperature", temp)?;
+    }
+    if let Some(tp) = top_p {
+        call_kwargs.set_item("top_p", tp)?;
+    }
+    if let Some(sys) = system {
+        call_kwargs.set_item("system", sys)?;
+    }
+    if let Some(stops) = stop_sequences {
+        call_kwargs.set_item("stop_sequences", stops)?;
+    }
+    create.call((), Some(call_kwargs)).map(|r| r.into())
+}
+
+/// Convert async Python response to dict using the provider's convert_response.
+#[cfg(feature = "full")]
+fn convert_async_response(
+    py: pyo3::Python<'_>,
+    result_py: &pyo3::types::PyAny,
+    provider: &str,
+) -> PyResult<Py<PyAny>> {
+    let chat_completion = match provider {
+        "openai" => quota_router_core::py_bridge::openai::convert_response(result_py, py)
+            .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(format!("openai: {}", e)))?,
+        "anthropic" => quota_router_core::py_bridge::anthropic::convert_response(result_py, py)
+            .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(format!("anthropic: {}", e)))?,
+        _ => {
+            return Err(pyo3::exceptions::PyNotImplementedError::new_err(format!(
+                "Response conversion not supported for provider '{}'",
+                provider
+            )))
+        }
+    };
+    chat_completion.to_dict(py)
+}
+
 /// Resolve the provider mode from an optional string.
 fn resolve_mode(mode_str: Option<&str>) -> quota_router_core::mode::ProviderMode {
     match mode_str {
@@ -452,48 +663,81 @@ pub async fn acompletion(
         }
         #[cfg(feature = "full")]
         quota_router_core::mode::ProviderMode::AnyLlm => {
-            let provider =
-                quota_router_core::py_bridge::PyBridgeProviderFactory::create(&parsed.provider)
-                    .ok_or_else(|| {
-                        pyo3::exceptions::PyNotImplementedError::new_err(format!(
-                            "Provider '{}' not supported in any-llm-mode",
-                            parsed.provider
-                        ))
-                    })?;
-
-            let provider = if let Some(key) = api_key {
-                provider.with_api_key(key)
-            } else {
-                provider
-            };
-            let provider = if let Some(base) = base_url {
-                provider.with_api_base(base)
-            } else {
-                provider
-            };
-
-            let core_messages = to_core_messages(&messages);
-            let model = parsed.model.clone();
             let provider_name = parsed.provider.clone();
 
-            // spawn_blocking: move provider + data into blocking thread
-            let result =
-                tokio::task::spawn_blocking(move || provider.completion(&model, &core_messages))
-                    .await
-                    .map_err(|e| {
-                        pyo3::exceptions::PyRuntimeError::new_err(format!(
-                            "spawn_blocking failed: {}",
-                            e
-                        ))
-                    })?
-                    .map_err(|e| {
-                        pyo3::exceptions::PyRuntimeError::new_err(format!(
-                            "{}: {}",
-                            provider_name, e
+            if supports_native_async(&provider_name) {
+                // Phase 2: Native async via AsyncOpenAI / AsyncAnthropic
+                let core_messages = to_core_messages(&messages);
+                let model = parsed.model.clone();
+                let pn = provider_name.clone();
+                let ak = api_key.clone();
+                let ab = base_url.clone();
+
+                let result_py = Python::with_gil(|py| {
+                    let awaitable = create_async_completion_py(
+                        py,
+                        &pn,
+                        &model,
+                        &core_messages,
+                        ak.as_deref(),
+                        ab.as_deref(),
+                    )?;
+                    pyo3_asyncio_0_21::tokio::into_future(awaitable.into_bound(py))
+                })
+                .map_err(|e| {
+                    pyo3::exceptions::PyRuntimeError::new_err(format!(
+                        "{}: Failed to create async call: {}",
+                        provider_name, e
+                    ))
+                })?
+                .await
+                .map_err(|e| {
+                    pyo3::exceptions::PyRuntimeError::new_err(format!("{}: {}", provider_name, e))
+                })?;
+
+                Python::with_gil(|py| {
+                    convert_async_response(py, result_py.as_ref(py), &provider_name)
+                })
+            } else {
+                // Phase 1 fallback: spawn_blocking for providers without async SDKs
+                let provider =
+                    quota_router_core::py_bridge::PyBridgeProviderFactory::create(&provider_name)
+                        .ok_or_else(|| {
+                        pyo3::exceptions::PyNotImplementedError::new_err(format!(
+                            "Provider '{}' not supported in any-llm-mode",
+                            provider_name
                         ))
                     })?;
 
-            Python::with_gil(|py| result.to_dict(py))
+                let provider = if let Some(key) = api_key {
+                    provider.with_api_key(key)
+                } else {
+                    provider
+                };
+                let provider = if let Some(base) = base_url {
+                    provider.with_api_base(base)
+                } else {
+                    provider
+                };
+
+                let core_messages = to_core_messages(&messages);
+                let model = parsed.model.clone();
+                let pn = provider_name.clone();
+
+                let result = tokio::task::spawn_blocking(move || {
+                    provider.completion(&model, &core_messages)
+                })
+                .await
+                .map_err(|e| {
+                    pyo3::exceptions::PyRuntimeError::new_err(format!(
+                        "spawn_blocking failed: {}",
+                        e
+                    ))
+                })?
+                .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(format!("{}: {}", pn, e)))?;
+
+                Python::with_gil(|py| result.to_dict(py))
+            }
         }
         #[cfg(not(feature = "full"))]
         _ => Err(pyo3::exceptions::PyRuntimeError::new_err(
@@ -707,30 +951,108 @@ pub async fn aembedding(
         }
         #[cfg(feature = "full")]
         quota_router_core::mode::ProviderMode::AnyLlm => {
-            let model_clone = model.clone();
-            let provider_name_clone = provider_name.to_string();
-            let api_key_clone = api_key.clone();
-            let api_base_clone = api_base.clone();
-            let mode_clone = _mode.clone();
-            tokio::task::spawn_blocking(move || {
-                embedding(
-                    model_clone,
-                    None,
-                    Some(data),
-                    dimensions,
-                    encoding_format,
-                    Some(provider_name_clone),
-                    api_key_clone,
-                    api_base_clone,
-                    client_args,
-                    timeout,
-                    mode_clone,
-                )
-            })
-            .await
-            .map_err(|e| {
-                pyo3::exceptions::PyRuntimeError::new_err(format!("spawn_blocking failed: {}", e))
-            })?
+            let pn = provider_name.to_string();
+
+            if supports_native_async(&pn) {
+                // Phase 2: Native async embedding via AsyncOpenAI
+                let model_clone = model.clone();
+                let input_clone = input_text.clone();
+                let ak = api_key.clone();
+                let ab = api_base.clone();
+
+                let result_py = Python::with_gil(|py| {
+                    let awaitable = create_async_embedding_py(
+                        py,
+                        &pn,
+                        &model_clone,
+                        &input_clone,
+                        ak.as_deref(),
+                        ab.as_deref(),
+                    )?;
+                    pyo3_asyncio_0_21::tokio::into_future(awaitable.into_bound(py))
+                })
+                .map_err(|e| {
+                    pyo3::exceptions::PyRuntimeError::new_err(format!(
+                        "{}: Failed to create async call: {}",
+                        pn, e
+                    ))
+                })?
+                .await
+                .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(format!("{}: {}", pn, e)))?;
+
+                Python::with_gil(|py| {
+                    let result_ref = result_py.as_ref(py);
+                    let dict = pyo3::types::PyDict::new(py);
+                    let data_attr: &pyo3::types::PyAny =
+                        result_ref.getattr("data").map_err(|e| {
+                            pyo3::exceptions::PyRuntimeError::new_err(format!(
+                                "Failed to get data: {}",
+                                e
+                            ))
+                        })?;
+                    let data_list = pyo3::types::PyList::empty(py);
+                    for item_result in data_attr.iter()? {
+                        let item = item_result?;
+                        let emb_dict = pyo3::types::PyDict::new(py);
+                        let obj: String = item.getattr("object")?.extract().unwrap_or_default();
+                        let index: u32 = item.getattr("index")?.extract().unwrap_or(0);
+                        emb_dict.set_item("object", obj)?;
+                        emb_dict.set_item("index", index)?;
+                        let embedding_list = pyo3::types::PyList::empty(py);
+                        let emb_data = item.getattr("embedding")?;
+                        for v in emb_data.iter()? {
+                            let val: f64 = v?.extract()?;
+                            embedding_list.append(val)?;
+                        }
+                        emb_dict.set_item("embedding", embedding_list)?;
+                        data_list.append(emb_dict)?;
+                    }
+                    dict.set_item("data", data_list)?;
+                    if let Ok(model_val) = result_ref.getattr("model") {
+                        dict.set_item("model", model_val)?;
+                    }
+                    if let Ok(usage) = result_ref.getattr("usage") {
+                        let u = pyo3::types::PyDict::new(py);
+                        if let Ok(pt) = usage.getattr("prompt_tokens") {
+                            u.set_item("prompt_tokens", pt)?;
+                        }
+                        if let Ok(tt) = usage.getattr("total_tokens") {
+                            u.set_item("total_tokens", tt)?;
+                        }
+                        dict.set_item("usage", u)?;
+                    }
+                    Ok(dict.into())
+                })
+            } else {
+                // Phase 1 fallback
+                let model_clone = model.clone();
+                let provider_name_clone = provider_name.to_string();
+                let api_key_clone = api_key.clone();
+                let api_base_clone = api_base.clone();
+                let mode_clone = _mode.clone();
+                tokio::task::spawn_blocking(move || {
+                    embedding(
+                        model_clone,
+                        None,
+                        Some(data),
+                        dimensions,
+                        encoding_format,
+                        Some(provider_name_clone),
+                        api_key_clone,
+                        api_base_clone,
+                        client_args,
+                        timeout,
+                        mode_clone,
+                    )
+                })
+                .await
+                .map_err(|e| {
+                    pyo3::exceptions::PyRuntimeError::new_err(format!(
+                        "spawn_blocking failed: {}",
+                        e
+                    ))
+                })?
+            }
         }
         #[cfg(not(feature = "full"))]
         _ => Err(pyo3::exceptions::PyRuntimeError::new_err(
@@ -1047,47 +1369,128 @@ pub async fn amessages(
         }
         #[cfg(feature = "full")]
         quota_router_core::mode::ProviderMode::AnyLlm => {
-            // Clone args that need to move into spawn_blocking
-            let messages_clone = messages.clone();
-            let model_clone = model.clone();
-            let system_clone = system.clone();
-            let stop_sequences_clone = stop_sequences.clone();
-            let tools_clone = tools.clone();
-            let tool_choice_clone = tool_choice.clone();
-            let thinking_clone = thinking.clone();
-            let metadata_clone = metadata.clone();
-            let cache_control_clone = cache_control.clone();
-            let api_key_clone = api_key.clone();
-            let api_base_clone = api_base.clone();
-            let provider_name_clone = provider_name.to_string();
-            let mode_clone = _mode.clone();
-            tokio::task::spawn_blocking(move || {
-                self::messages(
-                    model_clone,
-                    messages_clone,
-                    max_tokens,
-                    system_clone,
-                    temperature,
-                    top_p,
-                    top_k,
-                    stop_sequences_clone,
-                    stream,
-                    tools_clone,
-                    tool_choice_clone,
-                    thinking_clone,
-                    metadata_clone,
-                    cache_control_clone,
-                    api_key_clone,
-                    api_base_clone,
-                    client_args,
-                    Some(provider_name_clone),
-                    mode_clone,
-                )
-            })
-            .await
-            .map_err(|e| {
-                pyo3::exceptions::PyRuntimeError::new_err(format!("spawn_blocking failed: {}", e))
-            })?
+            let pn = provider_name.to_string();
+
+            if supports_native_async(&pn) {
+                // Phase 2: Native async messages via AsyncAnthropic
+                let model_clone = model.clone();
+                let ak = api_key.clone();
+                let ab = api_base.clone();
+                let stop_ref = stop_sequences.as_deref();
+                let sys_ref = system.as_deref();
+
+                let result_py = Python::with_gil(|py| {
+                    let awaitable = create_async_messages_py(
+                        py,
+                        &model_clone,
+                        &all_messages,
+                        max_tokens,
+                        sys_ref,
+                        temperature,
+                        top_p,
+                        stop_ref,
+                        ak.as_deref(),
+                        ab.as_deref(),
+                    )?;
+                    pyo3_asyncio_0_21::tokio::into_future(awaitable.into_bound(py))
+                })
+                .map_err(|e| {
+                    pyo3::exceptions::PyRuntimeError::new_err(format!(
+                        "{}: Failed to create async call: {}",
+                        pn, e
+                    ))
+                })?
+                .await
+                .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(format!("{}: {}", pn, e)))?;
+
+                // Convert Anthropic async response to dict format
+                Python::with_gil(|py| {
+                    let result_ref = result_py.as_ref(py);
+                    let dict = pyo3::types::PyDict::new(py);
+                    if let Ok(id) = result_ref.getattr("id") {
+                        dict.set_item("id", id)?;
+                    }
+                    dict.set_item("type", "message")?;
+                    if let Ok(role) = result_ref.getattr("role") {
+                        dict.set_item("role", role)?;
+                    }
+                    if let Ok(content) = result_ref.getattr("content") {
+                        let content_list = pyo3::types::PyList::empty(py);
+                        for block_result in content.iter()? {
+                            let block = block_result?;
+                            if let Ok(text) = block.getattr("text") {
+                                let content_block = pyo3::types::PyDict::new(py);
+                                content_block.set_item("type", "text")?;
+                                content_block.set_item("text", text)?;
+                                content_list.append(content_block)?;
+                            }
+                        }
+                        dict.set_item("content", content_list)?;
+                    }
+                    if let Ok(model_val) = result_ref.getattr("model") {
+                        dict.set_item("model", model_val)?;
+                    }
+                    if let Ok(stop_reason) = result_ref.getattr("stop_reason") {
+                        dict.set_item("stop_reason", stop_reason)?;
+                    }
+                    if let Ok(usage) = result_ref.getattr("usage") {
+                        let usage_dict = pyo3::types::PyDict::new(py);
+                        if let Ok(it) = usage.getattr("input_tokens") {
+                            usage_dict.set_item("input_tokens", it)?;
+                        }
+                        if let Ok(ot) = usage.getattr("output_tokens") {
+                            usage_dict.set_item("output_tokens", ot)?;
+                        }
+                        dict.set_item("usage", usage_dict)?;
+                    }
+                    Ok(dict.into())
+                })
+            } else {
+                // Phase 1 fallback: spawn_blocking
+                let messages_clone = messages.clone();
+                let model_clone = model.clone();
+                let system_clone = system.clone();
+                let stop_sequences_clone = stop_sequences.clone();
+                let tools_clone = tools.clone();
+                let tool_choice_clone = tool_choice.clone();
+                let thinking_clone = thinking.clone();
+                let metadata_clone = metadata.clone();
+                let cache_control_clone = cache_control.clone();
+                let api_key_clone = api_key.clone();
+                let api_base_clone = api_base.clone();
+                let provider_name_clone = provider_name.to_string();
+                let mode_clone = _mode.clone();
+                tokio::task::spawn_blocking(move || {
+                    self::messages(
+                        model_clone,
+                        messages_clone,
+                        max_tokens,
+                        system_clone,
+                        temperature,
+                        top_p,
+                        top_k,
+                        stop_sequences_clone,
+                        stream,
+                        tools_clone,
+                        tool_choice_clone,
+                        thinking_clone,
+                        metadata_clone,
+                        cache_control_clone,
+                        api_key_clone,
+                        api_base_clone,
+                        client_args,
+                        Some(provider_name_clone),
+                        mode_clone,
+                    )
+                })
+                .await
+                .map_err(|e| {
+                    pyo3::exceptions::PyRuntimeError::new_err(format!(
+                        "spawn_blocking failed: {}",
+                        e
+                    ))
+                })?
+            }
         }
         #[cfg(not(feature = "full"))]
         _ => Err(pyo3::exceptions::PyRuntimeError::new_err(

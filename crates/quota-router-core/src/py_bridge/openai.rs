@@ -132,7 +132,7 @@ impl OpenAIProvider {
 
 /// Convert Python ChatCompletion response to Rust ChatCompletion
 #[cfg(any(feature = "any-llm-mode", feature = "full"))]
-fn convert_response(
+pub fn convert_response(
     py_obj: &PyAny,
     _py: Python<'_>,
 ) -> Result<crate::types::ChatCompletion, PyBridgeError> {

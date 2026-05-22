@@ -473,11 +473,25 @@ pub async fn acompletion(
             };
 
             let core_messages = to_core_messages(&messages);
-            let result = provider
-                .completion(&parsed.model, &core_messages)
-                .map_err(|e| {
-                    pyo3::exceptions::PyRuntimeError::new_err(format!("{}: {}", parsed.provider, e))
-                })?;
+            let model = parsed.model.clone();
+            let provider_name = parsed.provider.clone();
+
+            // spawn_blocking: move provider + data into blocking thread
+            let result =
+                tokio::task::spawn_blocking(move || provider.completion(&model, &core_messages))
+                    .await
+                    .map_err(|e| {
+                        pyo3::exceptions::PyRuntimeError::new_err(format!(
+                            "spawn_blocking failed: {}",
+                            e
+                        ))
+                    })?
+                    .map_err(|e| {
+                        pyo3::exceptions::PyRuntimeError::new_err(format!(
+                            "{}: {}",
+                            provider_name, e
+                        ))
+                    })?;
 
             Python::with_gil(|py| result.to_dict(py))
         }
@@ -692,19 +706,32 @@ pub async fn aembedding(
             })
         }
         #[cfg(feature = "full")]
-        quota_router_core::mode::ProviderMode::AnyLlm => embedding(
-            model,
-            None,
-            Some(data),
-            dimensions,
-            encoding_format,
-            Some(provider_name.to_string()),
-            api_key,
-            api_base,
-            client_args,
-            timeout,
-            _mode,
-        ),
+        quota_router_core::mode::ProviderMode::AnyLlm => {
+            let model_clone = model.clone();
+            let provider_name_clone = provider_name.to_string();
+            let api_key_clone = api_key.clone();
+            let api_base_clone = api_base.clone();
+            let mode_clone = _mode.clone();
+            tokio::task::spawn_blocking(move || {
+                embedding(
+                    model_clone,
+                    None,
+                    Some(data),
+                    dimensions,
+                    encoding_format,
+                    Some(provider_name_clone),
+                    api_key_clone,
+                    api_base_clone,
+                    client_args,
+                    timeout,
+                    mode_clone,
+                )
+            })
+            .await
+            .map_err(|e| {
+                pyo3::exceptions::PyRuntimeError::new_err(format!("spawn_blocking failed: {}", e))
+            })?
+        }
         #[cfg(not(feature = "full"))]
         _ => Err(pyo3::exceptions::PyRuntimeError::new_err(
             "No mode compiled",
@@ -1020,28 +1047,47 @@ pub async fn amessages(
         }
         #[cfg(feature = "full")]
         quota_router_core::mode::ProviderMode::AnyLlm => {
-            // Fall back to sync messages() — py_bridge is synchronous
-            self::messages(
-                model,
-                Python::with_gil(|py| messages.clone_ref(py)),
-                max_tokens,
-                system,
-                temperature,
-                top_p,
-                top_k,
-                stop_sequences,
-                stream,
-                tools,
-                tool_choice,
-                thinking,
-                metadata,
-                cache_control,
-                api_key,
-                api_base,
-                client_args,
-                Some(provider_name.to_string()),
-                _mode,
-            )
+            // Clone args that need to move into spawn_blocking
+            let messages_clone = messages.clone();
+            let model_clone = model.clone();
+            let system_clone = system.clone();
+            let stop_sequences_clone = stop_sequences.clone();
+            let tools_clone = tools.clone();
+            let tool_choice_clone = tool_choice.clone();
+            let thinking_clone = thinking.clone();
+            let metadata_clone = metadata.clone();
+            let cache_control_clone = cache_control.clone();
+            let api_key_clone = api_key.clone();
+            let api_base_clone = api_base.clone();
+            let provider_name_clone = provider_name.to_string();
+            let mode_clone = _mode.clone();
+            tokio::task::spawn_blocking(move || {
+                self::messages(
+                    model_clone,
+                    messages_clone,
+                    max_tokens,
+                    system_clone,
+                    temperature,
+                    top_p,
+                    top_k,
+                    stop_sequences_clone,
+                    stream,
+                    tools_clone,
+                    tool_choice_clone,
+                    thinking_clone,
+                    metadata_clone,
+                    cache_control_clone,
+                    api_key_clone,
+                    api_base_clone,
+                    client_args,
+                    Some(provider_name_clone),
+                    mode_clone,
+                )
+            })
+            .await
+            .map_err(|e| {
+                pyo3::exceptions::PyRuntimeError::new_err(format!("spawn_blocking failed: {}", e))
+            })?
         }
         #[cfg(not(feature = "full"))]
         _ => Err(pyo3::exceptions::PyRuntimeError::new_err(
@@ -1317,27 +1363,43 @@ pub async fn aresponses(
         }
         #[cfg(feature = "full")]
         quota_router_core::mode::ProviderMode::AnyLlm => {
-            // Fall back to sync responses() — py_bridge is synchronous
-            self::responses(
-                model,
-                Some(data_clone),
-                None,
-                instructions,
-                temperature,
-                max_output_tokens,
-                top_p,
-                stream,
-                tools,
-                tool_choice,
-                store,
-                metadata,
-                user,
-                api_key,
-                api_base,
-                client_args,
-                Some(provider_name.to_string()),
-                _mode,
-            )
+            // Clone args that need to move into spawn_blocking
+            let model_clone = model.clone();
+            let instructions_clone = instructions.clone();
+            let tools_clone = tools.clone();
+            let tool_choice_clone = tool_choice.clone();
+            let metadata_clone = metadata.clone();
+            let user_clone = user.clone();
+            let api_key_clone = api_key.clone();
+            let api_base_clone = api_base.clone();
+            let provider_name_clone = provider_name.to_string();
+            let mode_clone = _mode.clone();
+            tokio::task::spawn_blocking(move || {
+                self::responses(
+                    model_clone,
+                    Some(data_clone),
+                    None,
+                    instructions_clone,
+                    temperature,
+                    max_output_tokens,
+                    top_p,
+                    stream,
+                    tools_clone,
+                    tool_choice_clone,
+                    store,
+                    metadata_clone,
+                    user_clone,
+                    api_key_clone,
+                    api_base_clone,
+                    client_args,
+                    Some(provider_name_clone),
+                    mode_clone,
+                )
+            })
+            .await
+            .map_err(|e| {
+                pyo3::exceptions::PyRuntimeError::new_err(format!("spawn_blocking failed: {}", e))
+            })?
         }
         #[cfg(not(feature = "full"))]
         _ => Err(pyo3::exceptions::PyRuntimeError::new_err(
@@ -1470,7 +1532,25 @@ pub async fn aget_response(
         }
         #[cfg(feature = "full")]
         quota_router_core::mode::ProviderMode::AnyLlm => {
-            self::get_response(provider, response_id, api_key, api_base, client_args, _mode)
+            // Clone args that need to move into spawn_blocking
+            let provider_clone = provider.clone();
+            let api_key_clone = api_key.clone();
+            let api_base_clone = api_base.clone();
+            let mode_clone = _mode.clone();
+            tokio::task::spawn_blocking(move || {
+                self::get_response(
+                    provider_clone,
+                    response_id,
+                    api_key_clone,
+                    api_base_clone,
+                    client_args,
+                    mode_clone,
+                )
+            })
+            .await
+            .map_err(|e| {
+                pyo3::exceptions::PyRuntimeError::new_err(format!("spawn_blocking failed: {}", e))
+            })?
         }
         #[cfg(not(feature = "full"))]
         _ => Err(pyo3::exceptions::PyRuntimeError::new_err(
@@ -1589,7 +1669,25 @@ pub async fn adelete_response(
         }
         #[cfg(feature = "full")]
         quota_router_core::mode::ProviderMode::AnyLlm => {
-            self::delete_response(provider, response_id, api_key, api_base, client_args, _mode)
+            // Clone args that need to move into spawn_blocking
+            let provider_clone = provider.clone();
+            let api_key_clone = api_key.clone();
+            let api_base_clone = api_base.clone();
+            let mode_clone = _mode.clone();
+            tokio::task::spawn_blocking(move || {
+                self::delete_response(
+                    provider_clone,
+                    response_id,
+                    api_key_clone,
+                    api_base_clone,
+                    client_args,
+                    mode_clone,
+                )
+            })
+            .await
+            .map_err(|e| {
+                pyo3::exceptions::PyRuntimeError::new_err(format!("spawn_blocking failed: {}", e))
+            })?
         }
         #[cfg(not(feature = "full"))]
         _ => Err(pyo3::exceptions::PyRuntimeError::new_err(
@@ -1725,8 +1823,24 @@ pub async fn alist_models(
         }
         #[cfg(feature = "full")]
         quota_router_core::mode::ProviderMode::AnyLlm => {
-            // Fall back to sync list_models() — py_bridge is synchronous
-            list_models(provider, api_key, api_base, client_args, _mode)
+            // Clone args that need to move into spawn_blocking
+            let provider_clone = provider.clone();
+            let api_key_clone = api_key.clone();
+            let api_base_clone = api_base.clone();
+            let mode_clone = _mode.clone();
+            tokio::task::spawn_blocking(move || {
+                list_models(
+                    provider_clone,
+                    api_key_clone,
+                    api_base_clone,
+                    client_args,
+                    mode_clone,
+                )
+            })
+            .await
+            .map_err(|e| {
+                pyo3::exceptions::PyRuntimeError::new_err(format!("spawn_blocking failed: {}", e))
+            })?
         }
         #[cfg(not(feature = "full"))]
         _ => Err(pyo3::exceptions::PyRuntimeError::new_err(
@@ -1908,18 +2022,32 @@ pub async fn abatch_create(
         }
         #[cfg(feature = "full")]
         quota_router_core::mode::ProviderMode::AnyLlm => {
-            // Fall back to sync batch_create() — py_bridge is synchronous
-            self::batch_create(
-                provider,
-                input_file,
-                endpoint,
-                completion_window,
-                metadata,
-                api_key,
-                api_base,
-                client_args,
-                _mode,
-            )
+            // Clone args that need to move into spawn_blocking
+            let provider_clone = provider.clone();
+            let input_file_clone = input_file.clone();
+            let endpoint_clone = endpoint.clone();
+            let completion_window_clone = completion_window.clone();
+            let metadata_clone = metadata.clone();
+            let api_key_clone = api_key.clone();
+            let api_base_clone = api_base.clone();
+            let mode_clone = _mode.clone();
+            tokio::task::spawn_blocking(move || {
+                self::batch_create(
+                    provider_clone,
+                    input_file_clone,
+                    endpoint_clone,
+                    completion_window_clone,
+                    metadata_clone,
+                    api_key_clone,
+                    api_base_clone,
+                    client_args,
+                    mode_clone,
+                )
+            })
+            .await
+            .map_err(|e| {
+                pyo3::exceptions::PyRuntimeError::new_err(format!("spawn_blocking failed: {}", e))
+            })?
         }
         #[cfg(not(feature = "full"))]
         _ => Err(pyo3::exceptions::PyRuntimeError::new_err(
@@ -2025,8 +2153,25 @@ pub async fn abatch_retrieve(
         }
         #[cfg(feature = "full")]
         quota_router_core::mode::ProviderMode::AnyLlm => {
-            // Fall back to sync batch_retrieve() — py_bridge is synchronous
-            self::batch_retrieve(provider, batch_id, api_key, api_base, client_args, _mode)
+            // Clone args that need to move into spawn_blocking
+            let provider_clone = provider.clone();
+            let api_key_clone = api_key.clone();
+            let api_base_clone = api_base.clone();
+            let mode_clone = _mode.clone();
+            tokio::task::spawn_blocking(move || {
+                self::batch_retrieve(
+                    provider_clone,
+                    batch_id,
+                    api_key_clone,
+                    api_base_clone,
+                    client_args,
+                    mode_clone,
+                )
+            })
+            .await
+            .map_err(|e| {
+                pyo3::exceptions::PyRuntimeError::new_err(format!("spawn_blocking failed: {}", e))
+            })?
         }
         #[cfg(not(feature = "full"))]
         _ => Err(pyo3::exceptions::PyRuntimeError::new_err(
@@ -2132,8 +2277,25 @@ pub async fn abatch_cancel(
         }
         #[cfg(feature = "full")]
         quota_router_core::mode::ProviderMode::AnyLlm => {
-            // Fall back to sync batch_cancel() — py_bridge is synchronous
-            self::batch_cancel(provider, batch_id, api_key, api_base, client_args, _mode)
+            // Clone args that need to move into spawn_blocking
+            let provider_clone = provider.clone();
+            let api_key_clone = api_key.clone();
+            let api_base_clone = api_base.clone();
+            let mode_clone = _mode.clone();
+            tokio::task::spawn_blocking(move || {
+                self::batch_cancel(
+                    provider_clone,
+                    batch_id,
+                    api_key_clone,
+                    api_base_clone,
+                    client_args,
+                    mode_clone,
+                )
+            })
+            .await
+            .map_err(|e| {
+                pyo3::exceptions::PyRuntimeError::new_err(format!("spawn_blocking failed: {}", e))
+            })?
         }
         #[cfg(not(feature = "full"))]
         _ => Err(pyo3::exceptions::PyRuntimeError::new_err(
@@ -2268,16 +2430,27 @@ pub async fn abatch_list(
         }
         #[cfg(feature = "full")]
         quota_router_core::mode::ProviderMode::AnyLlm => {
-            // Fall back to sync batch_list() — py_bridge is synchronous
-            self::batch_list(
-                provider,
-                limit,
-                after,
-                api_key,
-                api_base,
-                client_args,
-                _mode,
-            )
+            // Clone args that need to move into spawn_blocking
+            let provider_clone = provider.clone();
+            let after_clone = after.clone();
+            let api_key_clone = api_key.clone();
+            let api_base_clone = api_base.clone();
+            let mode_clone = _mode.clone();
+            tokio::task::spawn_blocking(move || {
+                self::batch_list(
+                    provider_clone,
+                    limit,
+                    after_clone,
+                    api_key_clone,
+                    api_base_clone,
+                    client_args,
+                    mode_clone,
+                )
+            })
+            .await
+            .map_err(|e| {
+                pyo3::exceptions::PyRuntimeError::new_err(format!("spawn_blocking failed: {}", e))
+            })?
         }
         #[cfg(not(feature = "full"))]
         _ => Err(pyo3::exceptions::PyRuntimeError::new_err(
@@ -2395,8 +2568,25 @@ pub async fn abatch_results(
         }
         #[cfg(feature = "full")]
         quota_router_core::mode::ProviderMode::AnyLlm => {
-            // Fall back to sync batch_results() — py_bridge is synchronous
-            self::batch_results(provider, batch_id, api_key, api_base, client_args, _mode)
+            // Clone args that need to move into spawn_blocking
+            let provider_clone = provider.clone();
+            let api_key_clone = api_key.clone();
+            let api_base_clone = api_base.clone();
+            let mode_clone = _mode.clone();
+            tokio::task::spawn_blocking(move || {
+                self::batch_results(
+                    provider_clone,
+                    batch_id,
+                    api_key_clone,
+                    api_base_clone,
+                    client_args,
+                    mode_clone,
+                )
+            })
+            .await
+            .map_err(|e| {
+                pyo3::exceptions::PyRuntimeError::new_err(format!("spawn_blocking failed: {}", e))
+            })?
         }
         #[cfg(not(feature = "full"))]
         _ => Err(pyo3::exceptions::PyRuntimeError::new_err(

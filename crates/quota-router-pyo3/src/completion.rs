@@ -56,6 +56,47 @@ fn to_core_messages(messages: &[Message]) -> Vec<quota_router_core::types::Messa
         .collect()
 }
 
+/// Convert a Python object to serde_json::Value via json.dumps
+fn python_to_json(py: Python<'_>, obj: &Py<PyAny>) -> PyResult<serde_json::Value> {
+    let json_module = py.import("json")?;
+    let serialized = json_module.call_method1("dumps", (obj,))?;
+    let s: String = serialized.extract()?;
+    serde_json::from_str(&s).map_err(|e| pyo3::exceptions::PyValueError::new_err(e.to_string()))
+}
+
+/// Convert serde_json::Value to Python object via json.loads
+fn json_to_python(py: Python<'_>, val: &serde_json::Value) -> PyResult<Py<PyAny>> {
+    let s = serde_json::to_string(val).unwrap_or_else(|_| "null".to_string());
+    let json_module = py.import("json")?;
+    let obj = json_module.call_method1("loads", (s,))?;
+    Ok(obj.into())
+}
+
+/// Map ProviderError to appropriate Python exception
+fn provider_error_to_py(
+    e: quota_router_core::native_http::ProviderError,
+    provider: &str,
+) -> pyo3::PyErr {
+    use quota_router_core::native_http::ProviderError;
+    match e {
+        ProviderError::AuthError(msg) => {
+            pyo3::exceptions::PyPermissionError::new_err(format!("{}: {}", provider, msg))
+        }
+        ProviderError::RateLimit(msg) => {
+            pyo3::exceptions::PyConnectionError::new_err(format!("{}: {}", provider, msg))
+        }
+        ProviderError::UnsupportedModel(msg) => {
+            pyo3::exceptions::PyNotImplementedError::new_err(format!("{}: {}", provider, msg))
+        }
+        ProviderError::Network(msg) => {
+            pyo3::exceptions::PyConnectionError::new_err(format!("{}: {}", provider, msg))
+        }
+        ProviderError::InvalidResponse(msg) => {
+            pyo3::exceptions::PyRuntimeError::new_err(format!("{}: {}", provider, msg))
+        }
+    }
+}
+
 /// Resolve the provider mode from an optional string.
 fn resolve_mode(mode_str: Option<&str>) -> quota_router_core::mode::ProviderMode {
     match mode_str {
@@ -211,9 +252,7 @@ fn completion_litellm(
 
     let result = rt
         .block_on(async { provider.completion(&request, api_key.as_deref()).await })
-        .map_err(|e| {
-            pyo3::exceptions::PyRuntimeError::new_err(format!("{}: {}", parsed.provider, e))
-        })?;
+        .map_err(|e| provider_error_to_py(e, &parsed.provider))?;
 
     // Convert to Python dict
     Python::with_gil(|py| {
@@ -380,9 +419,7 @@ pub async fn acompletion(
             let result = provider
                 .completion(&request, api_key.as_deref())
                 .await
-                .map_err(|e| {
-                    pyo3::exceptions::PyRuntimeError::new_err(format!("{}: {}", parsed.provider, e))
-                })?;
+                .map_err(|e| provider_error_to_py(e, &parsed.provider))?;
 
             Python::with_gil(|py| {
                 let dict = pyo3::types::PyDict::new(py);
@@ -521,9 +558,7 @@ pub fn embedding(
 
             let result = rt
                 .block_on(async { provider_impl.embedding(&request, api_key.as_deref()).await })
-                .map_err(|e| {
-                    pyo3::exceptions::PyRuntimeError::new_err(format!("{}: {}", provider_name, e))
-                })?;
+                .map_err(|e| provider_error_to_py(e, provider_name))?;
 
             Python::with_gil(|py| {
                 let dict = pyo3::types::PyDict::new(py);
@@ -626,9 +661,7 @@ pub async fn aembedding(
             let result = provider_impl
                 .embedding(&request, api_key.as_deref())
                 .await
-                .map_err(|e| {
-                    pyo3::exceptions::PyRuntimeError::new_err(format!("{}: {}", provider_name, e))
-                })?;
+                .map_err(|e| provider_error_to_py(e, provider_name))?;
             Python::with_gil(|py| {
                 let dict = pyo3::types::PyDict::new(py);
                 dict.set_item("object", &result.object)?;
@@ -799,9 +832,7 @@ pub fn messages(
 
             let result = rt
                 .block_on(async { provider_impl.completion(&request, api_key.as_deref()).await })
-                .map_err(|e| {
-                    pyo3::exceptions::PyRuntimeError::new_err(format!("{}: {}", provider_name, e))
-                })?;
+                .map_err(|e| provider_error_to_py(e, provider_name))?;
 
             Python::with_gil(|py| {
                 let dict = pyo3::types::PyDict::new(py);
@@ -954,9 +985,7 @@ pub async fn amessages(
             let result = provider_impl
                 .completion(&request, api_key.as_deref())
                 .await
-                .map_err(|e| {
-                    pyo3::exceptions::PyRuntimeError::new_err(format!("{}: {}", provider_name, e))
-                })?;
+                .map_err(|e| provider_error_to_py(e, provider_name))?;
 
             Python::with_gil(|py| {
                 let dict = pyo3::types::PyDict::new(py);
@@ -1064,10 +1093,7 @@ pub fn responses(
             return Ok(serde_json::Value::String(s));
         }
         // For complex types, serialize via json module
-        let json_module = py.import("json")?;
-        let serialized = json_module.call_method1("dumps", (data,))?;
-        let s: String = serialized.extract()?;
-        serde_json::from_str(&s).map_err(|e| pyo3::exceptions::PyValueError::new_err(e.to_string()))
+        python_to_json(py, &data)
     })?;
 
     let provider_name = provider.as_deref().unwrap_or("openai");
@@ -1088,34 +1114,19 @@ pub fn responses(
             // Convert tools/tool_choice to JSON if provided
             let tools_json = Python::with_gil(|py| -> PyResult<Option<serde_json::Value>> {
                 if let Some(ref t) = tools {
-                    let json_module = py.import("json")?;
-                    let serialized = json_module.call_method1("dumps", (t,))?;
-                    let s: String = serialized.extract()?;
-                    return Ok(Some(
-                        serde_json::from_str(&s).unwrap_or(serde_json::Value::Null),
-                    ));
+                    return Ok(Some(python_to_json(py, t)?));
                 }
                 Ok(None)
             })?;
             let tool_choice_json = Python::with_gil(|py| -> PyResult<Option<serde_json::Value>> {
                 if let Some(ref tc) = tool_choice {
-                    let json_module = py.import("json")?;
-                    let serialized = json_module.call_method1("dumps", (tc,))?;
-                    let s: String = serialized.extract()?;
-                    return Ok(Some(
-                        serde_json::from_str(&s).unwrap_or(serde_json::Value::Null),
-                    ));
+                    return Ok(Some(python_to_json(py, tc)?));
                 }
                 Ok(None)
             })?;
             let metadata_json = Python::with_gil(|py| -> PyResult<Option<serde_json::Value>> {
                 if let Some(ref m) = metadata {
-                    let json_module = py.import("json")?;
-                    let serialized = json_module.call_method1("dumps", (m,))?;
-                    let s: String = serialized.extract()?;
-                    return Ok(Some(
-                        serde_json::from_str(&s).unwrap_or(serde_json::Value::Null),
-                    ));
+                    return Ok(Some(python_to_json(py, m)?));
                 }
                 Ok(None)
             })?;
@@ -1146,9 +1157,7 @@ pub fn responses(
                         .create_response(&request, api_key.as_deref())
                         .await
                 })
-                .map_err(|e| {
-                    pyo3::exceptions::PyRuntimeError::new_err(format!("{}: {}", provider_name, e))
-                })?;
+                .map_err(|e| provider_error_to_py(e, provider_name))?;
 
             Python::with_gil(|py| {
                 let dict = pyo3::types::PyDict::new(py);
@@ -1156,15 +1165,11 @@ pub fn responses(
                 dict.set_item("object", &result.object)?;
                 dict.set_item("model", &result.model)?;
                 dict.set_item("status", &result.status)?;
-                let json_module = py.import("json")?;
-                let output_str =
-                    serde_json::to_string(&result.output).unwrap_or_else(|_| "[]".to_string());
-                let output_obj = json_module.call_method1("loads", (output_str,))?;
+                let output_obj =
+                    json_to_python(py, &serde_json::Value::Array(result.output.clone()))?;
                 dict.set_item("output", output_obj)?;
                 if let Some(usage) = &result.usage {
-                    let usage_str =
-                        serde_json::to_string(usage).unwrap_or_else(|_| "{}".to_string());
-                    let usage_obj = json_module.call_method1("loads", (usage_str,))?;
+                    let usage_obj = json_to_python(py, usage)?;
                     dict.set_item("usage", usage_obj)?;
                 }
                 Ok(dict.into())
@@ -1225,10 +1230,7 @@ pub async fn aresponses(
         if let Ok(s) = data.extract::<String>(py) {
             return Ok(serde_json::Value::String(s));
         }
-        let json_module = py.import("json")?;
-        let serialized = json_module.call_method1("dumps", (data,))?;
-        let s: String = serialized.extract()?;
-        serde_json::from_str(&s).map_err(|e| pyo3::exceptions::PyValueError::new_err(e.to_string()))
+        python_to_json(py, &data)
     })?;
 
     let provider_name = provider.as_deref().unwrap_or("openai");
@@ -1249,34 +1251,19 @@ pub async fn aresponses(
             // Convert tools/tool_choice/metadata to JSON if provided
             let tools_json = Python::with_gil(|py| -> PyResult<Option<serde_json::Value>> {
                 if let Some(ref t) = tools {
-                    let json_module = py.import("json")?;
-                    let serialized = json_module.call_method1("dumps", (t,))?;
-                    let s: String = serialized.extract()?;
-                    return Ok(Some(
-                        serde_json::from_str(&s).unwrap_or(serde_json::Value::Null),
-                    ));
+                    return Ok(Some(python_to_json(py, t)?));
                 }
                 Ok(None)
             })?;
             let tool_choice_json = Python::with_gil(|py| -> PyResult<Option<serde_json::Value>> {
                 if let Some(ref tc) = tool_choice {
-                    let json_module = py.import("json")?;
-                    let serialized = json_module.call_method1("dumps", (tc,))?;
-                    let s: String = serialized.extract()?;
-                    return Ok(Some(
-                        serde_json::from_str(&s).unwrap_or(serde_json::Value::Null),
-                    ));
+                    return Ok(Some(python_to_json(py, tc)?));
                 }
                 Ok(None)
             })?;
             let metadata_json = Python::with_gil(|py| -> PyResult<Option<serde_json::Value>> {
                 if let Some(ref m) = metadata {
-                    let json_module = py.import("json")?;
-                    let serialized = json_module.call_method1("dumps", (m,))?;
-                    let s: String = serialized.extract()?;
-                    return Ok(Some(
-                        serde_json::from_str(&s).unwrap_or(serde_json::Value::Null),
-                    ));
+                    return Ok(Some(python_to_json(py, m)?));
                 }
                 Ok(None)
             })?;
@@ -1301,9 +1288,7 @@ pub async fn aresponses(
             let result = provider_impl
                 .create_response(&request, api_key.as_deref())
                 .await
-                .map_err(|e| {
-                    pyo3::exceptions::PyRuntimeError::new_err(format!("{}: {}", provider_name, e))
-                })?;
+                .map_err(|e| provider_error_to_py(e, provider_name))?;
 
             Python::with_gil(|py| {
                 let dict = pyo3::types::PyDict::new(py);
@@ -1311,15 +1296,11 @@ pub async fn aresponses(
                 dict.set_item("object", &result.object)?;
                 dict.set_item("model", &result.model)?;
                 dict.set_item("status", &result.status)?;
-                let json_module = py.import("json")?;
-                let output_str =
-                    serde_json::to_string(&result.output).unwrap_or_else(|_| "[]".to_string());
-                let output_obj = json_module.call_method1("loads", (output_str,))?;
+                let output_obj =
+                    json_to_python(py, &serde_json::Value::Array(result.output.clone()))?;
                 dict.set_item("output", output_obj)?;
                 if let Some(usage) = &result.usage {
-                    let usage_str =
-                        serde_json::to_string(usage).unwrap_or_else(|_| "{}".to_string());
-                    let usage_obj = json_module.call_method1("loads", (usage_str,))?;
+                    let usage_obj = json_to_python(py, usage)?;
                     dict.set_item("usage", usage_obj)?;
                 }
                 Ok(dict.into())
@@ -1400,9 +1381,7 @@ pub fn get_response(
                         .get_response(&response_id, api_key.as_deref(), api_base.as_deref())
                         .await
                 })
-                .map_err(|e| {
-                    pyo3::exceptions::PyRuntimeError::new_err(format!("{}: {}", provider, e))
-                })?;
+                .map_err(|e| provider_error_to_py(e, &provider))?;
 
             Python::with_gil(|py| {
                 let dict = pyo3::types::PyDict::new(py);
@@ -1410,16 +1389,12 @@ pub fn get_response(
                 dict.set_item("object", &result.object)?;
                 dict.set_item("model", &result.model)?;
                 dict.set_item("status", &result.status)?;
-                // Convert serde_json::Value output to Python string (JSON)
-                let output_str =
-                    serde_json::to_string(&result.output).unwrap_or_else(|_| "[]".to_string());
-                let json_module = py.import("json")?;
-                let output_obj = json_module.call_method1("loads", (output_str,))?;
+                // Convert serde_json::Value output to Python object
+                let output_obj =
+                    json_to_python(py, &serde_json::Value::Array(result.output.clone()))?;
                 dict.set_item("output", output_obj)?;
                 if let Some(usage) = &result.usage {
-                    let usage_str =
-                        serde_json::to_string(usage).unwrap_or_else(|_| "{}".to_string());
-                    let usage_obj = json_module.call_method1("loads", (usage_str,))?;
+                    let usage_obj = json_to_python(py, usage)?;
                     dict.set_item("usage", usage_obj)?;
                 }
                 Ok(dict.into())
@@ -1493,9 +1468,7 @@ pub fn delete_response(
                         .delete_response(&response_id, api_key.as_deref(), api_base.as_deref())
                         .await
                 })
-                .map_err(|e| {
-                    pyo3::exceptions::PyRuntimeError::new_err(format!("{}: {}", provider, e))
-                })?;
+                .map_err(|e| provider_error_to_py(e, &provider))?;
 
             Python::with_gil(|py| {
                 let dict = pyo3::types::PyDict::new(py);
@@ -1576,9 +1549,7 @@ pub fn list_models(
                         .list_models(api_key.as_deref(), api_base.as_deref())
                         .await
                 })
-                .map_err(|e| {
-                    pyo3::exceptions::PyRuntimeError::new_err(format!("{}: {}", provider, e))
-                })?;
+                .map_err(|e| provider_error_to_py(e, &provider))?;
 
             Python::with_gil(|py| {
                 let dict = pyo3::types::PyDict::new(py);
@@ -1641,9 +1612,7 @@ pub async fn alist_models(
             let result = provider_impl
                 .list_models(api_key.as_deref(), api_base.as_deref())
                 .await
-                .map_err(|e| {
-                    pyo3::exceptions::PyRuntimeError::new_err(format!("{}: {}", provider, e))
-                })?;
+                .map_err(|e| provider_error_to_py(e, &provider))?;
 
             Python::with_gil(|py| {
                 let dict = pyo3::types::PyDict::new(py);
@@ -1700,15 +1669,11 @@ fn batch_to_dict(batch: &quota_router_core::native_http::HttpBatchObject) -> PyR
             dict.set_item("created_at", ca)?;
         }
         if let Some(ref rc) = batch.request_counts {
-            let json_module = py.import("json")?;
-            let rc_str = serde_json::to_string(rc).unwrap_or_else(|_| "{}".to_string());
-            let rc_obj = json_module.call_method1("loads", (rc_str,))?;
+            let rc_obj = json_to_python(py, rc)?;
             dict.set_item("request_counts", rc_obj)?;
         }
         if let Some(ref md) = batch.metadata {
-            let json_module = py.import("json")?;
-            let md_str = serde_json::to_string(md).unwrap_or_else(|_| "{}".to_string());
-            let md_obj = json_module.call_method1("loads", (md_str,))?;
+            let md_obj = json_to_python(py, md)?;
             dict.set_item("metadata", md_obj)?;
         }
         Ok(dict.into())
@@ -1738,12 +1703,7 @@ pub fn batch_create(
 
     let metadata_json = Python::with_gil(|py| -> PyResult<Option<serde_json::Value>> {
         if let Some(ref m) = metadata {
-            let json_module = py.import("json")?;
-            let serialized = json_module.call_method1("dumps", (m,))?;
-            let s: String = serialized.extract()?;
-            return Ok(Some(
-                serde_json::from_str(&s).unwrap_or(serde_json::Value::Null),
-            ));
+            return Ok(Some(python_to_json(py, m)?));
         }
         Ok(None)
     })?;
@@ -1779,9 +1739,7 @@ pub fn batch_create(
                         .batch_create(&request, api_key.as_deref())
                         .await
                 })
-                .map_err(|e| {
-                    pyo3::exceptions::PyRuntimeError::new_err(format!("{}: {}", provider, e))
-                })?;
+                .map_err(|e| provider_error_to_py(e, &provider))?;
 
             batch_to_dict(&result)
         }
@@ -1819,12 +1777,7 @@ pub async fn abatch_create(
 
     let metadata_json = Python::with_gil(|py| -> PyResult<Option<serde_json::Value>> {
         if let Some(ref m) = metadata {
-            let json_module = py.import("json")?;
-            let serialized = json_module.call_method1("dumps", (m,))?;
-            let s: String = serialized.extract()?;
-            return Ok(Some(
-                serde_json::from_str(&s).unwrap_or(serde_json::Value::Null),
-            ));
+            return Ok(Some(python_to_json(py, m)?));
         }
         Ok(None)
     })?;
@@ -1854,9 +1807,7 @@ pub async fn abatch_create(
             let result = provider_impl
                 .batch_create(&request, api_key.as_deref())
                 .await
-                .map_err(|e| {
-                    pyo3::exceptions::PyRuntimeError::new_err(format!("{}: {}", provider, e))
-                })?;
+                .map_err(|e| provider_error_to_py(e, &provider))?;
 
             batch_to_dict(&result)
         }
@@ -1923,9 +1874,7 @@ pub fn batch_retrieve(
                         .batch_retrieve(&batch_id, api_key.as_deref(), api_base.as_deref())
                         .await
                 })
-                .map_err(|e| {
-                    pyo3::exceptions::PyRuntimeError::new_err(format!("{}: {}", provider, e))
-                })?;
+                .map_err(|e| provider_error_to_py(e, &provider))?;
 
             batch_to_dict(&result)
         }
@@ -1975,9 +1924,7 @@ pub async fn abatch_retrieve(
             let result = provider_impl
                 .batch_retrieve(&batch_id, api_key.as_deref(), api_base.as_deref())
                 .await
-                .map_err(|e| {
-                    pyo3::exceptions::PyRuntimeError::new_err(format!("{}: {}", provider, e))
-                })?;
+                .map_err(|e| provider_error_to_py(e, &provider))?;
 
             batch_to_dict(&result)
         }
@@ -2034,9 +1981,7 @@ pub fn batch_cancel(
                         .batch_cancel(&batch_id, api_key.as_deref(), api_base.as_deref())
                         .await
                 })
-                .map_err(|e| {
-                    pyo3::exceptions::PyRuntimeError::new_err(format!("{}: {}", provider, e))
-                })?;
+                .map_err(|e| provider_error_to_py(e, &provider))?;
 
             batch_to_dict(&result)
         }
@@ -2086,9 +2031,7 @@ pub async fn abatch_cancel(
             let result = provider_impl
                 .batch_cancel(&batch_id, api_key.as_deref(), api_base.as_deref())
                 .await
-                .map_err(|e| {
-                    pyo3::exceptions::PyRuntimeError::new_err(format!("{}: {}", provider, e))
-                })?;
+                .map_err(|e| provider_error_to_py(e, &provider))?;
 
             batch_to_dict(&result)
         }
@@ -2147,9 +2090,7 @@ pub fn batch_list(
                         )
                         .await
                 })
-                .map_err(|e| {
-                    pyo3::exceptions::PyRuntimeError::new_err(format!("{}: {}", provider, e))
-                })?;
+                .map_err(|e| provider_error_to_py(e, &provider))?;
 
             Python::with_gil(|py| {
                 let dict = pyo3::types::PyDict::new(py);
@@ -2214,9 +2155,7 @@ pub async fn abatch_list(
                     limit.map(|l| l as u32),
                 )
                 .await
-                .map_err(|e| {
-                    pyo3::exceptions::PyRuntimeError::new_err(format!("{}: {}", provider, e))
-                })?;
+                .map_err(|e| provider_error_to_py(e, &provider))?;
 
             Python::with_gil(|py| {
                 let dict = pyo3::types::PyDict::new(py);
@@ -2291,16 +2230,12 @@ pub fn batch_results(
                         .batch_results(&batch_id, api_key.as_deref(), api_base.as_deref())
                         .await
                 })
-                .map_err(|e| {
-                    pyo3::exceptions::PyRuntimeError::new_err(format!("{}: {}", provider, e))
-                })?;
+                .map_err(|e| provider_error_to_py(e, &provider))?;
 
             Python::with_gil(|py| {
                 let dict = pyo3::types::PyDict::new(py);
-                let json_module = py.import("json")?;
-                let results_str =
-                    serde_json::to_string(&result.results).unwrap_or_else(|_| "[]".to_string());
-                let results_obj = json_module.call_method1("loads", (results_str,))?;
+                let results_obj =
+                    json_to_python(py, &serde_json::Value::Array(result.results.clone()))?;
                 dict.set_item("results", results_obj)?;
                 Ok(dict.into())
             })
@@ -2351,16 +2286,12 @@ pub async fn abatch_results(
             let result = provider_impl
                 .batch_results(&batch_id, api_key.as_deref(), api_base.as_deref())
                 .await
-                .map_err(|e| {
-                    pyo3::exceptions::PyRuntimeError::new_err(format!("{}: {}", provider, e))
-                })?;
+                .map_err(|e| provider_error_to_py(e, &provider))?;
 
             Python::with_gil(|py| {
                 let dict = pyo3::types::PyDict::new(py);
-                let json_module = py.import("json")?;
-                let results_str =
-                    serde_json::to_string(&result.results).unwrap_or_else(|_| "[]".to_string());
-                let results_obj = json_module.call_method1("loads", (results_str,))?;
+                let results_obj =
+                    json_to_python(py, &serde_json::Value::Array(result.results.clone()))?;
                 dict.set_item("results", results_obj)?;
                 Ok(dict.into())
             })

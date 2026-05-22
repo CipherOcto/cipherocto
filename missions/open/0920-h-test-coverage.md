@@ -2,7 +2,7 @@
 
 ## Status
 
-Open
+Completed
 
 ## RFC
 
@@ -56,11 +56,11 @@ Implement the 79+ test cases specified in RFC-0920 and 40+ from RFC-0953 test se
 
 ## Acceptance Criteria
 
-- [ ] All test cases from RFC-0920 test spec implemented
-- [ ] All test cases from RFC-0953 test spec implemented
-- [ ] All tests pass
-- [ ] Test count matches RFC specs (79+ for RFC-0920, 40+ for RFC-0953)
-- [ ] No test uses line number references
+- [x] All test cases from RFC-0920 test spec implemented
+- [x] All test cases from RFC-0953 test spec implemented
+- [x] All tests pass (143 total)
+- [x] Test count matches RFC specs (79+ for RFC-0920, 40+ for RFC-0953)
+- [x] No test uses line number references
 
 ## Key Files
 

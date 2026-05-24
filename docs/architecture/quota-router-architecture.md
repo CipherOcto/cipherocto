@@ -2,7 +2,7 @@
 
 > **Version:** 1.0.0
 > **Date:** 2026-05-20
-> **Status:** Revised (Round 3 — post adversarial review)
+> **Status:** Revised (Round 4 — post adversarial review)
 > **Crates:** `quota-router-core`, `quota-router-pyo3`
 
 ## Table of Contents
@@ -152,9 +152,12 @@ graph TD
     subgraph Always["Always Compiled (27 modules)"]
         A1[proxy.rs, mode.rs, config.rs]
         A2[router.rs, fallback.rs, admin.rs]
-        A3[auth, balance, cache, callbacks]
+        A3[auth, balance, cache, callbacks, providers]
         A4[guardrails, health, keys, metrics]
         A5[pricing, prompts, schema, storage]
+        A6[middleware, pre_call_checks, rate_limit]
+        A7[key_rate_limiter, logging, secret_manager]
+        A8[tracing, shared_types]
     end
 
     subgraph Gated["Feature-Gated"]
@@ -1274,7 +1277,7 @@ Watsonx, WorkersAI, XAI.
 
 ### Routing Strategies
 
-**Source:** `crates/quota-router-core/src/router.rs` lines 10-44 (`RoutingStrategy` enum)
+**Source:** `crates/quota-router-core/src/router.rs` lines 25-46 (`RoutingStrategy` enum)
 
 | Strategy | Description |
 |----------|-------------|

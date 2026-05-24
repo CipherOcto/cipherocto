@@ -2,7 +2,7 @@
 
 > **Version:** 1.0.0
 > **Date:** 2026-05-20
-> **Status:** Active
+> **Status:** Revised (Round 2 — post adversarial review)
 > **Crates:** `quota-router-core`, `quota-router-pyo3`
 
 ## Table of Contents
@@ -59,7 +59,7 @@ graph TB
     subgraph Providers["Provider Layer"]
         direction TB
         P1[native_http<br/>12 Providers<br/>reqwest HTTP]
-        P2[py_bridge<br/>44 Providers<br/>Python SDKs]
+        P2[py_bridge<br/>42 Providers<br/>Python SDKs]
     end
 
     subgraph External["External Services"]
@@ -67,7 +67,7 @@ graph TB
         E2[Anthropic API]
         E3[Google Gemini]
         E4[Azure OpenAI]
-        E5[52 Providers]
+        E5[44 Unique Providers]
     end
 
     Clients --> Interfaces
@@ -109,7 +109,7 @@ graph LR
         C1[proxy.rs<br/>HTTP Proxy Server]
         C2[mode.rs<br/>Mode Router]
         C3[native_http/<br/>12 HTTP Providers]
-        C4[py_bridge/<br/>44 Python Providers]
+        C4[py_bridge/<br/>42 Python Providers]
         C5[router.rs<br/>Routing Logic]
         C6[fallback.rs<br/>Fallback & Health]
         C7[config.rs<br/>Configuration]
@@ -131,13 +131,15 @@ graph LR
 
 ### 2.2 Feature Gates
 
-**Source:** `crates/quota-router-core/src/lib.rs` lines 32-85
+**Source:** `crates/quota-router-core/src/lib.rs` lines 18-85
 
-- `mode` — `pub mod mode;` (line 32, no `#[cfg]` gate) — **always compiled**
-- `proxy` — `pub mod proxy;` (line 37, no `#[cfg]` gate) — **always compiled**
-- `native_http` — `#[cfg(any(feature = "litellm-mode", feature = "full"))]` (line 47)
-- `py_bridge` — `#[cfg(any(feature = "any-llm-mode", feature = "full"))]` (line 60)
-- `python_sdk_entry` — `#[cfg(any(feature = "any-llm-mode", feature = "full"))]` (line 73)
+27 modules are **always compiled** (no feature gate), including: admin, auth, balance, cache, callbacks, config, fallback, guardrails, health, key_rate_limiter, keys, logging, metrics, middleware, mode, pre_call_checks, pricing, prompts, providers, proxy, rate_limit, router, schema, secret_manager, storage, tracing, shared_types.
+
+Feature-gated modules:
+- `native_http` — `#[cfg(any(feature = "litellm-mode", feature = "full"))]` (line 47-48)
+- `py_bridge` — `#[cfg(any(feature = "any-llm-mode", feature = "full"))]` (line 60-61)
+- `python_sdk_entry` — `#[cfg(any(feature = "any-llm-mode", feature = "full"))]` (line 73-74)
+- `model` + `types` — `#[cfg(any(feature = "any-llm-mode", feature = "full"))]` (lines 80-85)
 
 ```mermaid
 graph TD
@@ -147,23 +149,25 @@ graph TD
         F3["full"]
     end
 
-    subgraph Always["Always Compiled"]
-        A1[proxy.rs]
-        A2[mode.rs]
-        A3[config.rs]
-        A4[router.rs]
-        A5[fallback.rs]
+    subgraph Always["Always Compiled (27 modules)"]
+        A1[proxy.rs, mode.rs, config.rs]
+        A2[router.rs, fallback.rs, admin.rs]
+        A3[auth, balance, cache, callbacks]
+        A4[guardrails, health, keys, metrics]
+        A5[pricing, prompts, schema, storage]
     end
 
     subgraph Gated["Feature-Gated"]
         G1[native_http/]
         G2[py_bridge/]
         G3[python_sdk_entry]
+        G4[model.rs, types.rs]
     end
 
     F1 -->|enables| G1
     F2 -->|enables| G2
     F2 -->|enables| G3
+    F2 -->|enables| G4
     F3 -->|enables| G1
     F3 -->|enables| G2
     F3 -->|enables| G3
@@ -212,7 +216,7 @@ graph TB
     subgraph Providers["Provider APIs"]
         P1[OpenAI API]
         P2[Anthropic API]
-        P3[44 Providers]
+        P3[42 Providers]
     end
 
     Input --> ModeRouter
@@ -389,11 +393,11 @@ graph TB
         N12[replicate.rs]
     end
 
-    subgraph PyBridge["py_bridge/ Providers<br/>(44 providers, Python SDKs)"]
+    subgraph PyBridge["py_bridge/ Providers<br/>(42 providers, Python SDKs)"]
         direction TB
         P1[openai.rs]
         P2[anthropic.rs]
-        P3[mistral.rs]
+        P3[mistral.rs, mistral_large.rs]
         P4[cohere.rs]
         P5[groq.rs]
         P6[gemini.rs]
@@ -421,7 +425,7 @@ graph TB
 
 ### 5.2 HttpProvider Trait
 
-**Source:** `crates/quota-router-core/src/native_http/mod.rs` lines 136-172
+**Source:** `crates/quota-router-core/src/native_http/mod.rs` lines 140-290
 
 ```rust
 #[async_trait]
@@ -450,13 +454,28 @@ pub trait HttpProvider: Send + Sync {
         api_key: Option<&str>,
     ) -> Result<HttpEmbeddingResponse, ProviderError>;
 
+    // OpenAI Responses API (default: UnsupportedModel)
+    async fn get_response(&self, ...) -> Result<HttpResponseObject, ProviderError>;
+    async fn delete_response(&self, ...) -> Result<HttpDeletedObject, ProviderError>;
+    async fn create_response(&self, ...) -> Result<HttpResponseObject, ProviderError>;
+
+    // OpenAI Batch API (default: UnsupportedModel)
+    async fn batch_create(&self, ...) -> Result<HttpBatchObject, ProviderError>;
+    async fn batch_retrieve(&self, ...) -> Result<HttpBatchObject, ProviderError>;
+    async fn batch_cancel(&self, ...) -> Result<HttpBatchObject, ProviderError>;
+    async fn batch_list(&self, ...) -> Result<HttpBatchListResponse, ProviderError>;
+    async fn batch_results(&self, ...) -> Result<HttpBatchResultsResponse, ProviderError>;
+
+    // Model listing (default: UnsupportedModel)
+    async fn list_models(&self, ...) -> Result<HttpListModelsResponse, ProviderError>;
+
     fn routing_weight(&self) -> u32 { 1 } // default
 }
 ```
 
 ### 5.3 PyBridgeProvider Trait
 
-**Source:** `crates/quota-router-core/src/py_bridge/openai.rs` lines 235-262
+**Source:** `crates/quota-router-core/src/py_bridge/openai.rs` lines 235-265
 
 ```rust
 pub trait PyBridgeProvider: Send + Sync + 'static {
@@ -507,6 +526,7 @@ classDiagram
         +prompt_id: Option~String~
         +prompt_variables: Option~HashMap~
         +provider_params: Option~Value~
+        +timeout: Option~f64~
     }
 
     class HttpCompletionResponse {
@@ -628,13 +648,13 @@ graph TD
 | **metrics** | `metrics.rs` | Prometheus metrics collection |
 | **middleware** | `middleware.rs` | HTTP middleware (auth, logging, rate limit) |
 | **mode** | `mode.rs` | Mode selection (litellm vs any-llm), default mode |
-| **model** | `model.rs` | Model parsing and validation |
+| **model** | `model.rs` | Model parsing and validation (any-llm-mode/full only) |
 | **pre_call_checks** | `pre_call_checks.rs` | Context window validation, pre-flight checks |
 | **pricing** | `pricing.rs` | Cost calculation, budget tracking |
 | **prompts** | `prompts/` | Prompt template management |
 | **providers** | `providers.rs` | Provider registry and trait definitions |
 | **proxy** | `proxy.rs` | HTTP proxy server, request handling, endpoint routing |
-| **py_bridge** | `py_bridge/` | 44 providers using Python SDKs |
+| **py_bridge** | `py_bridge/` | 42 providers using Python SDKs |
 | **python_sdk_entry** | `python_sdk_entry/` | Python SDK entry point (PyO3 module) |
 | **rate_limit** | `rate_limit.rs` | Rate limiting per provider/model |
 | **router** | `router.rs` | Provider routing strategies, load balancing |
@@ -643,7 +663,7 @@ graph TD
 | **shared_types** | `shared_types.rs` | Types shared between crates (Message, Choice, Usage) |
 | **storage** | `storage.rs` | Storage trait, persistence abstraction |
 | **tracing** | `tracing.rs` | Distributed tracing setup |
-| **types** | `types.rs` | Per-crate types (ChatCompletion, etc.) |
+| **types** | `types.rs` | Per-crate types (ChatCompletion, etc.) (any-llm-mode/full only) |
 | **native_http** | `native_http/` | 12 providers using reqwest HTTP |
 
 ---
@@ -1029,7 +1049,7 @@ graph TB
         direction TB
         A1[HTTP Proxy<br/>Always Available]
         A2[Python SDK<br/>python_sdk_entry]
-        A3[py_bridge<br/>44 PyO3 Providers]
+        A3[py_bridge<br/>42 PyO3 Providers]
         A4[Mode Router<br/>any-only]
         style AnyLlm fill:#e3f2fd
     end
@@ -1039,7 +1059,7 @@ graph TB
         F1[HTTP Proxy]
         F2[Python SDK]
         F3[native_http<br/>12 reqwest Providers]
-        F4[py_bridge<br/>44 PyO3 Providers]
+        F4[py_bridge<br/>42 PyO3 Providers]
         F5[Mode Router<br/>switches at runtime]
         style Full fill:#fff3e0
     end
@@ -1050,10 +1070,10 @@ graph TB
 | Build | HTTP Proxy | Python SDK | reqwest Providers | PyO3 Providers | Mode Selection |
 |-------|-----------|------------|-------------------|----------------|----------------|
 | `litellm-mode` | ✅ | ❌ | 12 | ❌ | Fixed at compile time |
-| `any-llm-mode` | ✅ | ✅ | ❌ | 44 | Fixed at compile time |
-| `full` | ✅ | ✅ | 12 | 44 | **Runtime switchable** |
+| `any-llm-mode` | ✅ | ✅ | ❌ | 42 | Fixed at compile time |
+| `full` | ✅ | ✅ | 12 | 42 | **Runtime switchable** |
 
-**Key point:** The mode gate controls which provider backend is available, not which interfaces. The `litellm-mode` build still has HTTP proxy + library interface; `any-llm-mode` build still has HTTP proxy + library interface. Only the provider backends differ (12 reqwest vs 44 PyO3).
+**Key point:** The mode gate controls which provider backend is available, not which interfaces. The `litellm-mode` build still has HTTP proxy + library interface; `any-llm-mode` build still has HTTP proxy + library interface. Only the provider backends differ (12 reqwest vs 42 PyO3).
 
 ### 10.3 Runtime Mode Selection
 
@@ -1083,7 +1103,7 @@ graph TB
     end
 
     subgraph Providers["Provider APIs"]
-        P1[44 LLM Providers]
+        P1[44 Unique LLM Providers]
     end
 
     Interfaces --> Mode
@@ -1109,37 +1129,49 @@ graph TB
 graph TB
     subgraph Tests["Test Pyramid"]
         direction TB
-        T1["Unit Tests<br/>486 tests<br/>quota-router-core"]
-        T2["Rust E2E Tests<br/>15 tests<br/>proxy + real endpoint"]
-        T3["Python E2E Tests<br/>25 tests<br/>SDK + real endpoint"]
-        T4["Drop-in Tests<br/>75 tests<br/>litellm + any-llm compat"]
-        T5["Anthropic E2E Tests<br/>18 tests<br/>Anthropic endpoint"]
+        T1["Unit Tests<br/>492 tests<br/>quota-router-core"]
+        T2["PyO3 Unit Tests<br/>16 tests<br/>quota-router-pyo3"]
+        T3["Rust E2E Tests<br/>15 tests<br/>proxy + real endpoint"]
+        T4["Python E2E Tests<br/>25 tests<br/>SDK + real endpoint"]
+        T5["Drop-in Tests<br/>75 tests<br/>litellm + any-llm compat"]
+        T6["Extended SDK Tests<br/>68 tests<br/>extended_sdk + list_models"]
+        T7["Anthropic E2E Tests<br/>18 tests<br/>Anthropic endpoint"]
+        T8["Smoke Tests<br/>8 tests"]
     end
 
-    T1 --> T2
-    T2 --> T3
+    T1 --> T3
+    T2 --> T4
     T3 --> T4
     T4 --> T5
+    T5 --> T6
+    T6 --> T7
+    T7 --> T8
 
     style T1 fill:#e8f5e9
-    style T2 fill:#e3f2fd
-    style T3 fill:#fff3e0
-    style T4 fill:#fce4ec
-    style T5 fill:#f3e5f5
+    style T2 fill:#e8f5e9
+    style T3 fill:#e3f2fd
+    style T4 fill:#fff3e0
+    style T5 fill:#fce4ec
+    style T6 fill:#fce4ec
+    style T7 fill:#f3e5f5
+    style T8 fill:#f3e5f5
 ```
 
 ### 11.2 Test Coverage
 
 | Test Type | Count | Coverage |
 |-----------|-------|----------|
-| Unit tests (core) | 486 | All modules (445 `#[test]` + 41 `#[tokio::test]`) |
+| Unit tests (core) | 492 | All modules (445 `#[test]` + 47 `#[tokio::test]`) |
+| PyO3 unit tests | 16 | quota-router-pyo3 bindings |
 | Rust E2E (proxy) | 15 | OpenAI endpoint via proxy |
 | Python E2E (SDK) | 25 | OpenAI endpoint via SDK |
 | Drop-in litellm | 35 | litellm compatibility |
 | Drop-in any-llm | 40 | any-llm compatibility |
+| Extended SDK | 38 | Extended SDK functions |
+| List models | 30 | Model listing via SDK |
 | Anthropic E2E | 18 | Anthropic endpoint (both modes) |
 | Smoke tests | 8 | Basic integration checks |
-| **Total** | **627** | |
+| **Total** | **717** | |
 
 ### 11.3 Test Endpoints
 
@@ -1171,13 +1203,13 @@ graph TB
 
 ### PyBridge Providers (any-llm-mode)
 
-44 providers total. Includes 10 of 12 native HTTP providers (excludes Databricks
+42 providers total. Includes 10 of 12 native HTTP providers (excludes Databricks
 and Perplexity) plus:
 AI21, AI Foundry, Aleph Alpha, Cerebras, CloudflareAI, Cohere, Conjure,
 DashScope, DeepInfra, DeepSeek, Fireworks, HuggingFace, Inception, Infere,
 Level AI, LlamaCpp, Llamafile, LMStudio, MiniMax, Mistral Large, Moonshot,
-Nebius, NVIDIA, OpenRouter, Portkey, Sagemaker, Sambanova, Voyage, Watsonx,
-WorkersAI, XAI.
+Nebius, NVIDIA, OpenRouter, Portkey, Sagemaker, Sambanova, VertexAI, Voyage,
+Watsonx, WorkersAI, XAI.
 
 ---
 
@@ -1191,28 +1223,28 @@ WorkersAI, XAI.
 | `acompletion()` | Both | Implemented |
 | `text_completion()` | Both | Implemented |
 | `atext_completion()` | Both | Implemented |
-| `embedding()` | any-llm | NotImplementedError |
-| `aembedding()` | any-llm | NotImplementedError |
-| `messages()` | any-llm | NotImplementedError |
-| `amessages()` | any-llm | NotImplementedError |
-| `responses()` | any-llm | NotImplementedError |
-| `aresponses()` | any-llm | NotImplementedError |
-| `batch_create()` | any-llm | NotImplementedError |
-| `batch_retrieve()` | any-llm | NotImplementedError |
-| `batch_cancel()` | any-llm | NotImplementedError |
-| `batch_list()` | any-llm | NotImplementedError |
-| `batch_results()` | any-llm | NotImplementedError |
-| `list_models()` | any-llm | NotImplementedError |
-| `alist_models()` | any-llm | NotImplementedError |
-| `get_response()` | any-llm | NotImplementedError |
-| `delete_response()` | any-llm | NotImplementedError |
-| `abatch_create()` | any-llm | NotImplementedError |
-| `abatch_retrieve()` | any-llm | NotImplementedError |
-| `abatch_cancel()` | any-llm | NotImplementedError |
-| `abatch_list()` | any-llm | NotImplementedError |
-| `abatch_results()` | any-llm | NotImplementedError |
-| `aget_response()` | any-llm | NotImplementedError |
-| `adelete_response()` | any-llm | NotImplementedError |
+| `embedding()` | litellm | Implemented (litellm only) |
+| `aembedding()` | litellm | Implemented (litellm only) |
+| `messages()` | litellm | Implemented (litellm only) |
+| `amessages()` | litellm | Implemented (litellm only) |
+| `responses()` | litellm | Implemented (litellm only) |
+| `aresponses()` | litellm | Implemented (litellm only) |
+| `batch_create()` | litellm | Implemented (litellm only) |
+| `batch_retrieve()` | litellm | Implemented (litellm only) |
+| `batch_cancel()` | litellm | Implemented (litellm only) |
+| `batch_list()` | litellm | Implemented (litellm only) |
+| `batch_results()` | litellm | Implemented (litellm only) |
+| `list_models()` | litellm | Implemented (litellm only) |
+| `alist_models()` | litellm | Implemented (litellm only) |
+| `get_response()` | litellm | Implemented (litellm only) |
+| `delete_response()` | litellm | Implemented (litellm only) |
+| `abatch_create()` | litellm | Implemented (litellm only) |
+| `abatch_retrieve()` | litellm | Implemented (litellm only) |
+| `abatch_cancel()` | litellm | Implemented (litellm only) |
+| `abatch_list()` | litellm | Implemented (litellm only) |
+| `abatch_results()` | litellm | Implemented (litellm only) |
+| `aget_response()` | litellm | Implemented (litellm only) |
+| `adelete_response()` | litellm | Implemented (litellm only) |
 
 ### SDK Management Functions
 
@@ -1239,6 +1271,21 @@ WorkersAI, XAI.
 | `batch_completion()` | Implemented |
 | `batch_completion_models()` | Implemented |
 | `batch_completion_models_all_responses()` | Implemented |
+
+### Routing Strategies
+
+**Source:** `crates/quota-router-core/src/router.rs` lines 10-44 (`RoutingStrategy` enum)
+
+| Strategy | Description |
+|----------|-------------|
+| `simple-shuffle` | Random provider selection (default) |
+| `round-robin` | Cyclic rotation across providers |
+| `least-busy` | Select provider with fewest active requests |
+| `latency-based` | Route to lowest-latency provider |
+| `cost-based` | Route to cheapest provider per token |
+| `usage-based` | Balance based on token usage distribution |
+| `usage-based-v2` | Improved usage-based with smoothing |
+| `weighted` | User-configured provider weights |
 
 ### Router Class
 

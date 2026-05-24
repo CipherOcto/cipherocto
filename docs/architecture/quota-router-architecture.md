@@ -2,7 +2,7 @@
 
 > **Version:** 1.0.0
 > **Date:** 2026-05-20
-> **Status:** Revised (Round 4 — post adversarial review)
+> **Status:** Revised (Round 5 — post adversarial review)
 > **Crates:** `quota-router-core`, `quota-router-pyo3`
 
 ## Table of Contents
@@ -174,6 +174,7 @@ graph TD
     F3 -->|enables| G1
     F3 -->|enables| G2
     F3 -->|enables| G3
+    F3 -->|enables| G4
 
     style F1 fill:#e3f2fd
     style F2 fill:#e8f5e9
@@ -219,7 +220,7 @@ graph TB
     subgraph Providers["Provider APIs"]
         P1[OpenAI API]
         P2[Anthropic API]
-        P3[42 Providers]
+        P3[44 Unique Providers]
     end
 
     Input --> ModeRouter
@@ -406,7 +407,7 @@ graph TB
         P6[gemini.rs]
         P7[bedrock.rs]
         P8[vertexai.rs]
-        P9[34 more...]
+        P9[33 more...]
     end
 
     subgraph Factory["Factory Pattern"]

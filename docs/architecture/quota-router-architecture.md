@@ -2,7 +2,7 @@
 
 > **Version:** 1.0.0
 > **Date:** 2026-05-20
-> **Status:** Revised (Round 2 — post adversarial review)
+> **Status:** Revised (Round 3 — post adversarial review)
 > **Crates:** `quota-router-core`, `quota-router-pyo3`
 
 ## Table of Contents
@@ -16,7 +16,7 @@
 7. [Data Types](#7-data-types)
 8. [Error Handling](#8-error-handling)
 9. [Configuration](#9-configuration)
-10. [Deployment Modes](#10-deployment-modes)
+10. [Deployment and Mode Selection](#10-deployment-and-mode-selection)
 11. [Test Architecture](#11-test-architecture)
 
 ---
@@ -475,7 +475,7 @@ pub trait HttpProvider: Send + Sync {
 
 ### 5.3 PyBridgeProvider Trait
 
-**Source:** `crates/quota-router-core/src/py_bridge/openai.rs` lines 235-265
+**Source:** `crates/quota-router-core/src/py_bridge/openai.rs` lines 235-262
 
 ```rust
 pub trait PyBridgeProvider: Send + Sync + 'static {

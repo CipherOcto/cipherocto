@@ -41,7 +41,7 @@ IronClaw is a secure personal AI assistant built in Rust by NEAR AI. It emphasiz
 | **Language** | Rust (edition 2024, rustc >=1.92) | `Cargo.toml` |
 | **License** | MIT OR Apache-2.0 | `Cargo.toml` |
 | **Authors** | NEAR AI | `Cargo.toml` |
-| **Architecture** | Cargo workspace (28 member crates) | `Cargo.toml` |
+| **Architecture** | Cargo workspace (29 path crates + root) | `Cargo.toml` |
 | **Total Files** | 1,694 indexed | CocoIndex |
 | **Code Chunks** | 46,498 | CocoIndex |
 | **Extracted Symbols** | 1,024 (regex-based, Rust undercount) | CocoIndex |
@@ -71,7 +71,7 @@ graph LR
 |-----------|----------|----------|
 | **Language** | TypeScript (Node.js) | Rust |
 | **Database** | SQLite + LanceDB | PostgreSQL or libSQL/Turso |
-| **Sandbox** | None (trusted execution) | WASM (Wasmtime) + Docker containers |
+| **Sandbox** | Docker/Podman containers | WASM (Wasmtime) + Docker containers |
 | **Security Model** | Extension trust via code review | Capability-based, credential injection, leak detection |
 | **Extension System** | npm packages + plugin SDK | WASM modules + MCP servers + channel relays |
 | **Vector Search** | LanceDB (separate process) | pgvector or libSQL native vectors |
@@ -191,7 +191,7 @@ graph LR
         C6[ironclaw_wasm<br/>WIT component runtime]
         C7[ironclaw_mcp<br/>MCP adapter]
         C8[ironclaw_skills<br/>Skill management]
-        C9["28 path crates + root"]
+        C9["29 path crates + root"]
     end
 
     E1 --> Core
@@ -202,7 +202,7 @@ graph LR
 
 ## 3. Crate Topology
 
-IronClaw organizes its codebase into 28 workspace crates with strict dependency ordering. The layering follows a "Reborn" architecture with clear host/service separation.
+IronClaw organizes its codebase into 29 workspace crates with strict dependency ordering. The layering follows a "Reborn" architecture with clear host/service separation.
 
 ```mermaid
 graph TB
@@ -248,7 +248,12 @@ graph TB
         IG[ironclaw_gateway<br/>frontend assets]
         IE2[ironclaw_engine<br/>Reborn execution engine]
         IO[ironclaw_oauth<br/>OAuth flows]
+        ISCR[ironclaw_scripts<br/>script runner]
         ITU[ironclaw_tui<br/>terminal UI]
+    end
+
+    subgraph TestCrates["Test Crates"]
+        IARCH[ironclaw_architecture<br/>contract tests]
     end
 
     IC --> IH
@@ -1065,7 +1070,7 @@ graph TB
 
 ### 11.4 Migrations
 
-- **PostgreSQL**: Refinery-managed `V1__initial.sql` through `V9__flexible_embedding_dimension.sql`
+- **PostgreSQL**: Refinery-managed `V1__initial.sql` through `V27__root_filesystem_entries_directories.sql` (27 migrations)
 - **libSQL**: `INCREMENTAL_MIGRATIONS` in `libsql_migrations.rs` (CREATE IF NOT EXISTS, no ALTER TABLE)
 
 ---
@@ -1259,7 +1264,7 @@ The heartbeat system provides proactive background execution:
 |--------|-------|
 | **Primary Language** | Rust (edition 2024) |
 | **Minimum Rust Version** | 1.92 |
-| **Workspace Crates** | 28 member crates |
+| **Workspace Crates** | 29 path crates + root |
 | **Total Files** | 1,694 |
 | **Code Chunks** | 46,498 |
 | **Database Backends** | 2 (PostgreSQL, libSQL) |
@@ -1473,6 +1478,7 @@ sequenceDiagram
 | `CODEX_AUTH_PATH` | Override Codex auth.json path | `~/.codex/auth.json` |
 | `OPENAI_CODEX_MODEL` | OpenAI Codex model name | — |
 | `OPENAI_CODEX_CLIENT_ID` | OpenAI Codex OAuth client ID | — |
+| `OPENAI_CODEX_API_URL` | OpenAI Codex API base URL override | — |
 | `GITHUB_COPILOT_MODEL` | GitHub Copilot model override | — |
 | `GITHUB_COPILOT_EXTRA_HEADERS` | Additional Copilot request headers | — |
 

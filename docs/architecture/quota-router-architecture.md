@@ -2,7 +2,7 @@
 
 > **Version:** 1.0.0
 > **Date:** 2026-05-20
-> **Status:** Revised (Round 6 — post adversarial review)
+> **Status:** Final (Round 7 — 0 findings, adversarial review complete)
 > **Crates:** `quota-router-core`, `quota-router-pyo3`
 
 ## Table of Contents

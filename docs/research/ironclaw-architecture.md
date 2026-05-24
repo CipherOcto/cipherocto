@@ -1027,6 +1027,9 @@ graph TB
     DB --> TFS["ToolFailureStore<br/>4 methods"]
     DB --> SS["SettingsStore<br/>8 methods"]
     DB --> WS["WorkspaceStore<br/>13 methods"]
+    DB --> UP["UserStore"]
+    DB --> CP["ChannelPairingStore"]
+    DB --> IS["IdentityStore"]
     DB --> RM["run_migrations()"]
 
     style DB fill:#e3f2fd
@@ -1037,6 +1040,9 @@ graph TB
     style TFS fill:#e0f2f1
     style SS fill:#fff3e0
     style WS fill:#e3f2fd
+    style UP fill:#fff9c4
+    style CP fill:#fff9c4
+    style IS fill:#fff9c4
 ```
 
 ### 11.2 Database Sub-Traits

@@ -1316,10 +1316,11 @@ The workspace excludes several companion projects:
 
 | Path | Description |
 |------|-------------|
-| `channels-src/*` | Channel implementations (Discord, Telegram, Slack, WeChat, WhatsApp, Feishu) |
-| `tools-src/*` | Tool implementations (GitHub, Gmail, Google Calendar/Docs/Drive/Sheets/Slides, Slack, Telegram) |
+| `channels-src/*` | Channel implementations (Discord, Feishu, Telegram, Slack, WeChat, WhatsApp) |
+| `tools-src/*` | Tool implementations (Composio, GitHub, Gmail, Google Calendar/Docs/Drive/Sheets/Slides, Slack, Telegram) |
 | `crates/ironclaw_silk_decoder` | Silk decoder crate |
 | `fuzz/` | Fuzz testing harnesses |
+| `crates/ironclaw_safety/fuzz/` | Safety crate fuzz harnesses |
 
 ---
 

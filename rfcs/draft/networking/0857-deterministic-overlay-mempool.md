@@ -252,30 +252,6 @@ DOM extends RFC-0843's transaction model with overlay intents:
 - Execution classes are extensible (values 0x0007-0xFFFF)
 - Mempool hierarchy is configurable per mission
 
-## Implementation Phases
-
-### Phase 1: Core Mempool (Months 1-3)
-- OverlayIntent with DCS serialization
-- Canonical admission rules
-- Deterministic ordering
-- Replay protection
-
-### Phase 2: Mission Scoping (Months 3-5)
-- Mission-scoped mempool isolation
-- Hierarchical mempool layering
-- IntentType routing
-
-### Phase 3: Propagation and Sync (Months 5-8)
-- DGP integration for intent propagation
-- Anti-entropy mempool reconciliation
-- Multi-transport dissemination
-
-### Phase 4: Economics and Proofs (Months 8-12)
-- Economic prioritization
-- Proof-carrying intents (RFC-0854)
-- AI execution queue scheduling
-- Resource market integration
-
 ## Test Vectors
 
 ### Intent Serialization (DCS Canonical)
@@ -375,7 +351,33 @@ When the mempool reaches capacity, the evicted intent must be identical across a
 - [Agent Marketplace](../../docs/use-cases/agent-marketplace.md)
 - [Hybrid AI-Blockchain Runtime](../../docs/use-cases/hybrid-ai-blockchain-runtime.md)
 
-## Key Files
+## Implementation Phases
+
+### Phase 1: Core Intent Structure (Months 1-3)
+- `OverlayIntent` struct with DCS serialization
+- Intent type enum and execution class hierarchy
+- Deterministic admission pipeline
+- Replay cache integration
+
+### Phase 2: Ordering and Eviction (Months 3-6)
+- Canonical ordering by (execution_class, economic_weight, timestamp, sequence, intent_id)
+- Deterministic eviction policy
+- Mempool state root computation (Merkle commitment)
+- Capacity management
+
+### Phase 3: Mission Integration (Months 6-9)
+- Mission-scoped mempool isolation
+- Hierarchical mempool structure (GLOBAL → CONSENSUS, MISSION, PRIVATE, LOCAL)
+- DGP integration for multi-transport propagation
+- Anti-entropy reconciliation via Merkle summaries
+
+### Phase 4: Economics and Optimization (Months 9-12)
+- Economic weight computation with DQA/DFP integration
+- Priority-based scheduling
+- Performance benchmarks
+- Adversarial test suite
+
+## Key Files to Modify
 
 | File | Change |
 |------|--------|

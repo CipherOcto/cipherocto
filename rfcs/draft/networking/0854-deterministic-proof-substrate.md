@@ -295,6 +295,34 @@ DOT / DGP Networking
 | Backend compromise | High | Cryptographic agility — swap to alternate backend | Backend migration test |
 | Witness manipulation | High | DQA/DFP deterministic witness generation | Witness determinism test |
 
+## Compatibility
+
+### RFC-0843 Integration
+
+DPS extends RFC-0843's consensus layer with proof-carrying capabilities:
+
+- RFC-0843 provides block production and consensus primitives
+- DPS adds verifiable proof attachment to consensus artifacts
+- Proof verification integrates with RFC-0843's block validation pipeline
+
+### Backend Interoperability
+
+DPS supports multiple proof system backends through the `DeterministicProofSystem` trait:
+
+- STARK (STWO/RISC0) — transparent, no trusted setup, post-quantum
+- PLONK — succinct proofs, universal setup
+- Halo2 — no trusted setup, recursive composition
+- zkVM — general-purpose verifiable computation
+
+Backend selection is per-mission, allowing different privacy/cost tradeoffs.
+
+### Forward Compatibility
+
+- `ProofSuiteId` is extensible (new backends without protocol changes)
+- Proof blobs are opaque to consensus (only verification result matters)
+- `ProofExecutionModel` enum supports future execution models
+- Backend migration is possible via dual-verification during transition
+
 ## Test Vectors
 
 ### Proof Generation (STARK Backend)
@@ -429,7 +457,7 @@ Different missions have different trust/security requirements:
 
 A single global proof system forces all missions to accept the same tradeoffs. Mission-scoped verifiers allow each mission to choose the optimal system.
 
-## Compatibility
+## Forward Compatibility
 
 - **RFC-0850 (DOT):** DPS proof commitments are embedded in DOT envelopes via ProofCarryingEnvelope
 - **RFC-0853 (OCrypt):** DPS uses OCrypt primitives (BLAKE3-256, Ed25519) for proof signatures
@@ -438,6 +466,28 @@ A single global proof system forces all missions to accept the same tradeoffs. M
 - **RFC-0630 (Proof-of-Inference):** DPS generalizes PoI's proof model to arbitrary proof systems
 - **RFC-0650 (Proof Aggregation):** DPS integrates with recursive aggregation protocol
 - **Forward compatibility:** ProofSuiteId is extensible (0x0005-0xFFFF for future proof systems)
+
+## Future Work
+
+- F1: GPU-accelerated proof generation with STWO SIMD
+- F2: Formal verification of DeterministicProofSystem trait
+- F3: Proof market integration for decentralized proving
+- F4: Cross-chain proof verification bridges
+- F5: Hardware accelerator support (FPGA, ASIC) for proving
+- F6: Proof composition DSL for mission-specific proof pipelines
+- F7: Integration with Ethereum's EIP-4844 blob proofs
+- F8: Post-quantum proof system migration
+
+## Future Work
+
+- F1: Post-quantum proof system integration (Lattice-based, STARK-Lattice hybrids)
+- F2: Hardware-accelerated proof generation (GPU, FPGA, ASIC)
+- F3: Cross-chain proof verification bridges
+- F4: Proof marketplace for decentralized proof generation
+- F5: AI-optimized proof system selection based on mission characteristics
+- F6: Zero-knowledge machine learning (ZKML) integration via Cairo/STWO
+- F7: Proof composition for complex multi-step verification
+- F8: Formal verification of proof system implementations
 
 ## Key Files to Modify
 

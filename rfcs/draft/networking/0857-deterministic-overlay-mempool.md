@@ -345,12 +345,6 @@ When the mempool reaches capacity, the evicted intent must be identical across a
 - F7: Stealth mempools for hidden mission coordination
 - F8: Integration with hardware security modules for intent signing
 
-## Related Use Cases
-
-- [Decentralized Mission Execution](../../docs/use-cases/decentralized-mission-execution.md)
-- [Agent Marketplace](../../docs/use-cases/agent-marketplace.md)
-- [Hybrid AI-Blockchain Runtime](../../docs/use-cases/hybrid-ai-blockchain-runtime.md)
-
 ## Implementation Phases
 
 ### Phase 1: Core Intent Structure (Months 1-3)

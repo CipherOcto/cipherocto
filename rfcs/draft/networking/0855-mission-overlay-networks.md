@@ -179,7 +179,7 @@ Every MON possesses a globally unique mission identity.
 struct MissionId {
     /// Network identifier
     network_id: u32,
-    /// SHA-256 of mission genesis material (creator + creation_epoch + nonce)
+    /// BLAKE3-256 of mission genesis material (creator + creation_epoch + nonce)
     mission_hash: [u8; 32],
 }
 ```
@@ -187,7 +187,7 @@ struct MissionId {
 **Derivation:**
 
 ```text
-mission_hash = SHA-256(
+mission_hash = BLAKE3-256(
     creator_peer_id ||
     creation_epoch ||
     genesis_nonce
@@ -370,7 +370,7 @@ struct MissionNode {
 **Membership Commitment:**
 
 ```text
-membership_commitment = SHA-256(
+membership_commitment = BLAKE3-256(
     mission_id ||
     peer_id ||
     role_flags ||
@@ -496,7 +496,7 @@ struct TopologyCommitment {
     route_root: [u8; 32],
     /// Epoch of commitment
     epoch: u64,
-    /// Commitment = SHA-256(participant_root || route_root || epoch)
+    /// Commitment = BLAKE3-256(participant_root || route_root || epoch)
     commitment: [u8; 32],
 }
 ```
@@ -1190,7 +1190,7 @@ Input:
   genesis_nonce = [0xAB; 32]
 
 Expected:
-  mission_hash = SHA-256([0x01; 32] || 0x00000000000003E8 || [0xAB; 32])
+  mission_hash = BLAKE3-256([0x01; 32] || 0x00000000000003E8 || [0xAB; 32])
   mission_id = { network_id: 1, mission_hash: [computed] }
 ```
 
@@ -1219,7 +1219,7 @@ Input:
 Expected:
   participant_root = Merkle([entry1_hash, entry2_hash])
   route_root = Merkle([...])
-  commitment = SHA-256(participant_root || route_root || epoch_u64)
+  commitment = BLAKE3-256(participant_root || route_root || epoch_u64)
 ```
 
 ### Lifecycle State Transition

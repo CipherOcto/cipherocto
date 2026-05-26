@@ -239,6 +239,20 @@ Objects remain valid within network-defined replay horizon. Gateways maintain `s
 | Consensus | Permanent |
 | Archive | Long-term storage |
 
+## RFC-0008 Execution Class Mapping
+
+| DGP Operation | Class | Rationale |
+|---------------|-------|-----------|
+| Object hash computation | A | Consensus-critical identity |
+| Canonical processing order | A | Consensus-critical ordering |
+| Deduplication check | A | Consensus-critical identity |
+| Signature verification | A | Consensus-critical validation |
+| Anti-entropy Merkle root | A | Consensus-critical state |
+| Replay cache eviction | A | Must be deterministic across nodes |
+| Fragment reassembly | B | Deterministic given fragments |
+| Gossip propagation | C | Transport-dependent, non-deterministic |
+| Peer discovery | C | Non-deterministic network conditions |
+
 ## Performance Targets
 
 | Metric | Target |
@@ -431,19 +445,6 @@ Without Merkle summaries:
 3. Reconciliation becomes O(n) instead of O(log n)
 
 Binary Merkle descent locates divergent objects in O(log n) comparisons.
-
-## RFC-0008 Execution Class Mapping
-
-| DGP Operation | Class | Rationale |
-|---------------|-------|-----------|
-| Object hash computation | A | Consensus-critical identity |
-| Canonical processing order | A | Consensus-critical ordering |
-| Deduplication check | A | Consensus-critical identity |
-| Signature verification | A | Consensus-critical validation |
-| Anti-entropy Merkle root | A | Consensus-critical state |
-| Gossip propagation | C | Transport-dependent, non-deterministic |
-| Fragment reassembly | B | Deterministic given fragments |
-| Replay cache eviction | A | Must be deterministic across nodes |
 
 ## Key Files to Modify
 

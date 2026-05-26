@@ -768,6 +768,19 @@ This is enforced by:
 2. Canonical scoring uses fixed weights (not AI-derived)
 3. Route selection is a pure function of (advertisements, weights, trust)
 
+## RFC-0008 Execution Class Mapping
+
+| DRS Operation | Class | Rationale |
+|---------------|-------|-----------|
+| Route score computation | A | Consensus-critical scoring |
+| Canonical route ordering | A | Consensus-critical selection |
+| Route commitment hash | A | Consensus-critical commitment |
+| Trust score computation | A | Consensus-critical weight |
+| Route selection | A | Consensus-critical decision |
+| Route discovery | C | Non-deterministic network conditions |
+| Latency measurement | C | Non-deterministic timing |
+| Physical route probing | C | Non-deterministic transport |
+
 ## Performance Targets
 
 | Metric | Target | Measurement |

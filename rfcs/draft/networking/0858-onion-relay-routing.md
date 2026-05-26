@@ -171,7 +171,7 @@ The top-level route descriptor:
 #[derive(Clone, Debug)]
 #[repr(C)]
 struct OnionRoute {
-    /// Unique route identifier (SHA-256 of route construction inputs)
+    /// Unique route identifier (BLAKE3-256 of route construction inputs)
     route_id: [u8; 32],
     /// Mission identifier (zero if not mission-scoped)
     mission_id: [u8; 32],
@@ -195,7 +195,7 @@ struct OnionRoute {
 **Route ID Derivation:**
 
 ```text
-route_id = SHA-256(
+route_id = BLAKE3-256(
     mission_id ||
     route_epoch ||
     hop_count ||
@@ -633,7 +633,7 @@ Construction:
   Inner: encrypt payload for destination
 
 Expected route_id:
-  SHA-256(mission_id || epoch || hop_count || entry || exit || timestamp)
+  BLAKE3-256(mission_id || epoch || hop_count || entry || exit || timestamp)
 ```
 
 ### Session Key Derivation
@@ -659,10 +659,10 @@ Input:
   epoch = 1000
 
 Expected:
-  relay_hash = SHA-256(relay_sequence_bytes)
-  transport_hash = SHA-256(transport_vector_bytes)
-  diversity_hash = SHA-256(diversity_score_bytes)
-  commitment = SHA-256(relay_hash || transport_hash || diversity_hash || epoch)
+  relay_hash = BLAKE3-256(relay_sequence_bytes)
+  transport_hash = BLAKE3-256(transport_vector_bytes)
+  diversity_hash = BLAKE3-256(diversity_score_bytes)
+  commitment = BLAKE3-256(relay_hash || transport_hash || diversity_hash || epoch)
 ```
 
 ## Alternatives Considered

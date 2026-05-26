@@ -190,7 +190,7 @@ struct ProofCarryingEnvelope {
     /// Identifier for the proof system used (see Section 3)
     proof_system_id: u16,
 
-    /// SHA-256 of the proof blob for integrity verification
+    /// BLAKE3-256 of the proof blob for integrity verification
     proof_commitment: [u8; 32],
 
     /// Merkle root of the public inputs to the proof
@@ -212,7 +212,7 @@ struct ProofCarryingEnvelope {
 ```text
 1. Compute the proof using the appropriate prover backend
 2. Serialize the proof blob using RFC-0126 DCS
-3. Compute proof_commitment = SHA-256(proof_blob)
+3. Compute proof_commitment = BLAKE3-256(proof_blob)
 4. Compute public_input_root = Merkle(public_inputs)
 5. Wrap in ProofCarryingEnvelope with the DOT envelope
 6. Sign the PCE envelope (extends RFC-0850 signature over proof fields)
@@ -416,7 +416,7 @@ function verify_proof_carrying_envelope(pce):
         return Invalid
 
     // Step 2: Verify proof commitment
-    if SHA-256(pce.proof_blob) != pce.proof_commitment:
+    if BLAKE3-256(pce.proof_blob) != pce.proof_commitment:
         return Invalid
 
     // Step 3: Select proof system backend
@@ -452,7 +452,7 @@ All PCE operations MUST be explicitly mapped to RFC-0008 execution classes:
 |-----------|-------|-----------|
 | Proof generation | Class C | Probabilistic — depends on prover runtime, hardware, witness generation |
 | Proof blob serialization | Class C | May vary across prover implementations |
-| Proof commitment computation (SHA-256) | Class A | Deterministic hash of proof blob |
+| Proof commitment computation (BLAKE3-256) | Class A | Deterministic hash of proof blob |
 | Public input root computation (Merkle) | Class A | Deterministic Merkle root |
 | Proof verification | Class A | Deterministic verification algorithm |
 | Aggregated proof verification | Class A | O(1) deterministic verification |
@@ -524,7 +524,7 @@ Any DOT envelope MAY have a proof attached. The attachment process:
 
 ```text
 1. Generate proof using appropriate prover (DPS backend)
-2. Compute proof_commitment = SHA-256(proof_blob)
+2. Compute proof_commitment = BLAKE3-256(proof_blob)
 3. Compute public_input_root = Merkle(public_inputs)
 4. Create ProofCarryingEnvelope wrapping the DOT envelope
 5. Sign the PCE (signature covers envelope + proof fields)
@@ -752,7 +752,7 @@ Exceeding these latencies triggers a performance degradation warning. Consensus 
 | Proof system downgrade attack | Medium | Mission policy enforcement | Policy compliance test |
 | Recursive proof manipulation | High | Inner proof commitment verification | Aggregation test vectors |
 | Consensus boundary breach | Critical | Code-level enforcement of separation | Static analysis + review |
-| Proof blob tampering | High | proof_commitment = SHA-256(proof_blob) | Commitment verification test |
+| Proof blob tampering | High | proof_commitment = BLAKE3-256(proof_blob) | Commitment verification test |
 | Cross-mission proof replay | Medium | mission_id scoping | Replay detection test |
 
 ## Economic Analysis
@@ -813,8 +813,8 @@ Input:
   public_inputs = [b"input1", b"input2"]
 
 Expected:
-  proof_commitment = SHA-256(proof_blob)
-  public_input_root = Merkle(SHA-256("input1"), SHA-256("input2"))
+  proof_commitment = BLAKE3-256(proof_blob)
+  public_input_root = Merkle(BLAKE3-256("input1"), BLAKE3-256("input2"))
   signature covers: envelope_bytes || 0x0001 || proof_commitment || public_input_root || 0x0001 || 0x00
 ```
 
@@ -867,7 +867,7 @@ Expected:
 | 1.1 | Implement `ProofCarryingEnvelope` struct | RFC-0850 |
 | 1.2 | Implement `ProofSystemId` and `ProofExecutionModel` enums | — |
 | 1.3 | Implement `ProofMetadata` struct | — |
-| 1.4 | Implement proof commitment computation (SHA-256) | — |
+| 1.4 | Implement proof commitment computation (BLAKE3-256) | — |
 | 1.5 | Implement public input Merkle root computation | — |
 | 1.6 | Implement STWO backend integration | RFC-0854 |
 | 1.7 | Implement deterministic verification pipeline | — |

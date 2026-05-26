@@ -92,23 +92,21 @@ impl DotGateway {
         source_peer_key: &[u8; 32],
         current_epoch: u64,
     ) -> Result<ProcessingResult, DotError> {
-        // 1. Verify envelope_id derivation (Class A)
-        let expected_id = envelope.derive_envelope_id();
-        if envelope.envelope_id != expected_id {
-            return Err(DotError::PayloadHashMismatch {
-                expected: expected_id,
-                actual: envelope.envelope_id,
+        // 0. Version validation — RFC MUST: reject unsupported versions
+        if envelope.version != 1 {
+            return Err(DotError::UnsupportedVersion {
+                version: envelope.version,
             });
         }
 
-        // 2. Verify signature against source peer's key (Class A)
+        // 1. Verify envelope_id derivation (Class A)
         envelope.verify(source_peer_key)?;
 
-        // 3. Check replay cache (Class A)
+        // 2. Check replay cache (Class A)
         let mut cache = self.replay_cache.write().await;
         cache.check_and_insert(envelope.envelope_id, current_epoch)?;
 
-        // 4. Forward to all adapters (Class C — transport-dependent)
+        // 3. Forward to all adapters (Class C — transport-dependent)
         // Note: In production, this would iterate over connected domains
         // and forward to the appropriate adapter(s).
 

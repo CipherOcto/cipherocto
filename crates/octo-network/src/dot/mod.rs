@@ -80,6 +80,7 @@ impl DotGateway {
 
     /// Process an incoming envelope through the deterministic pipeline:
     ///
+    /// 0. Validate protocol version (fail-fast)
     /// 1. Verify envelope_id derivation (Class A)
     /// 2. Verify signature against source peer's public key (Class A)
     /// 3. Check replay cache (Class A)

@@ -71,7 +71,7 @@ impl ReplayCache {
         // Collect expired keys from by_time (sorted by timestamp)
         let expired: Vec<(u64, [u8; 32])> = self
             .by_time
-            .range(..(cutoff, [0xff; 32]))
+            .range(..(cutoff, [0x00; 32]))
             .map(|(k, _)| *k)
             .collect();
         for (ts, id) in expired {

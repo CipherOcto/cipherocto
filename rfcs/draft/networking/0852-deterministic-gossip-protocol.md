@@ -158,7 +158,7 @@ NOT: receive time, transport order, platform sequence, thread order.
 
 ### 5. Deduplication
 
-**Object identity:** `object_hash` (SHA-256 of canonical payload)
+**Object identity:** `object_hash` (BLAKE3-256 of canonical payload)
 
 **Duplicate rule:** If identical `object_hash` received → process once, relay per policy.
 
@@ -295,7 +295,7 @@ Objects remain valid within network-defined replay horizon. Gateways maintain `s
 | Eclipse relay | High | Multi-carrier diversity constraints | Multi-gateway test |
 | Replay storm | High | Hash replay cache with deterministic eviction | Replay detection test |
 | Route poisoning | Medium | Signed advertisements (Ed25519) | Signature verification test |
-| Mutation attack | Critical | Payload commitment (SHA-256 hash) | Hash verification test |
+| Mutation attack | Critical | Payload commitment (BLAKE3-256 hash) | Hash verification test |
 | Carrier censorship | High | Parallel multi-transport propagation | Blocked carrier test |
 | Consensus manipulation | Critical | Deterministic processing order | Ordering consistency test |
 | Deduplication bypass | Medium | Global object_hash tracking | Duplicate detection test |
@@ -357,10 +357,10 @@ DGP extends RFC-0843's gossipsub with deterministic semantics:
 ### Canonical Processing Order
 
 ```text
-Object A: domain_id={1, mission_1}, timestamp=100, hash=SHA-256("A")
-Object B: domain_id={1, mission_1}, timestamp=100, hash=SHA-256("B")
-Object C: domain_id={1, mission_1}, timestamp=200, hash=SHA-256("C")
-Object D: domain_id={2, mission_2}, timestamp=50, hash=SHA-256("D")
+Object A: domain_id={1, mission_1}, timestamp=100, hash=BLAKE3-256("A")
+Object B: domain_id={1, mission_1}, timestamp=100, hash=BLAKE3-256("B")
+Object C: domain_id={1, mission_1}, timestamp=200, hash=BLAKE3-256("C")
+Object D: domain_id={2, mission_2}, timestamp=50, hash=BLAKE3-256("D")
 
 Canonical order: D < A < B < C
 Reason: D has lower domain_id (2 > 1 is wrong — 1 < 2 so A,B come first)
@@ -373,16 +373,16 @@ Reason: D has lower domain_id (2 > 1 is wrong — 1 < 2 so A,B come first)
 ### Deduplication
 
 ```text
-Received object_1 with hash=SHA-256("payload_1") → Process, add to seen set
-Received object_2 with hash=SHA-256("payload_1") → Duplicate, skip processing
-Received object_3 with hash=SHA-256("payload_2") → Process, add to seen set
+Received object_1 with hash=BLAKE3-256("payload_1") → Process, add to seen set
+Received object_2 with hash=BLAKE3-256("payload_1") → Duplicate, skip processing
+Received object_3 with hash=BLAKE3-256("payload_2") → Process, add to seen set
 ```
 
 ### Anti-Entropy Reconciliation
 
 ```text
-Node A state_root = SHA-256(Merkle(objects_A))
-Node B state_root = SHA-256(Merkle(objects_B))
+Node A state_root = BLAKE3-256(Merkle(objects_A))
+Node B state_root = BLAKE3-256(Merkle(objects_B))
 
 If roots differ:
   Binary Merkle descent to locate divergent objects
@@ -431,6 +431,19 @@ Without Merkle summaries:
 3. Reconciliation becomes O(n) instead of O(log n)
 
 Binary Merkle descent locates divergent objects in O(log n) comparisons.
+
+## RFC-0008 Execution Class Mapping
+
+| DGP Operation | Class | Rationale |
+|---------------|-------|-----------|
+| Object hash computation | A | Consensus-critical identity |
+| Canonical processing order | A | Consensus-critical ordering |
+| Deduplication check | A | Consensus-critical identity |
+| Signature verification | A | Consensus-critical validation |
+| Anti-entropy Merkle root | A | Consensus-critical state |
+| Gossip propagation | C | Transport-dependent, non-deterministic |
+| Fragment reassembly | B | Deterministic given fragments |
+| Replay cache eviction | A | Must be deterministic across nodes |
 
 ## Key Files to Modify
 

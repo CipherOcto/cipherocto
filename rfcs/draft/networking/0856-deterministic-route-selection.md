@@ -243,6 +243,9 @@ struct DeterministicRoute {
     route_epoch: u64,
     /// Maximum hop count
     ttl_hops: u16,
+    /// Route validity expiry epoch (DRS-H3 fix)
+    /// Routes MUST be discarded after this epoch. 0 = no expiry.
+    valid_until_epoch: u64,
     /// Ed25519 signature over canonical route bytes
     signature: [u8; 64],
 }
@@ -251,7 +254,7 @@ struct DeterministicRoute {
 #### 4.2 Route ID Derivation
 
 ```text
-route_id = SHA-256(
+route_id = BLAKE3-256(
     version ||
     source_gateway ||
     destination_gateway ||
@@ -319,7 +322,12 @@ This is the most critical section for consensus safety.
 All nodes MUST compute route preference identically.
 
 ```rust
-/// Network-defined deterministic constants
+/// Network-defined deterministic constants (DRS-C2 fix)
+/// Set at genesis or via governance proposal (RFC-0001).
+/// All nodes MUST use identical weights for the same epoch.
+/// Weight changes activate at a deterministic future epoch (current_epoch + grace_period).
+#[derive(Clone, Debug)]
+#[repr(C)]
 struct ScoringWeights {
     /// Trust weight (0-1000000, 6 decimal precision)
     trust_weight: u32,
@@ -329,24 +337,41 @@ struct ScoringWeights {
     censorship_weight: u32,
     /// Cost weight (0-1000000)
     cost_weight: u32,
+    /// Epoch when these weights become active
+    activation_epoch: u64,
 }
 
-/// Compute deterministic route score
+/// Compute deterministic route score (DRS-C1 fix: all u64 arithmetic)
+/// ALL intermediate values MUST use u64 to prevent overflow.
+/// Saturating arithmetic is used: if any component overflows, it saturates to u64::MAX.
 fn compute_route_score(
     route: &DeterministicRoute,
     weights: &ScoringWeights,
 ) -> u64 {
-    // All arithmetic uses integer math (no floating point)
-    let trust_component = (route.trust_score as u64) * (weights.trust_weight as u64);
-    let bandwidth_component = (route.bandwidth_class as u64) * (weights.bandwidth_weight as u64);
-    let censorship_component = (route.censorship_resistance_class as u64) * (weights.censorship_weight as u64);
-    let cost_component = (route.route_cost as u64) * (weights.cost_weight as u64);
+    // All arithmetic uses u64 integer math (no floating point, no u32 intermediates)
+    let trust_component = (route.trust_score as u64).saturating_mul(weights.trust_weight as u64);
+    let bandwidth_component = (route.bandwidth_class as u64).saturating_mul(weights.bandwidth_weight as u64);
+    let censorship_component = (route.censorship_resistance_class as u64).saturating_mul(weights.censorship_weight as u64);
+    let cost_component = (route.route_cost as u64).saturating_mul(weights.cost_weight as u64);
 
     // Score = trust + bandwidth + censorship - cost
-    // All values are scaled by 1000000 for precision
-    trust_component + bandwidth_component + censorship_component - cost_component
+    // Saturating add/sub to prevent overflow/underflow
+    trust_component
+        .saturating_add(bandwidth_component)
+        .saturating_add(censorship_component)
+        .saturating_sub(cost_component)
 }
 ```
+
+**Weight Configuration Protocol (DRS-C2 fix):**
+
+Scoring weights are network-level constants with the following properties:
+
+- **Genesis:** Initial weights are set in the genesis block
+- **Governance:** Weight changes require governance proposal (per RFC-0001) with 2/3 stake-weighted vote
+- **Activation:** New weights activate at `activation_epoch = proposal_approval_epoch + grace_period` (default grace: 1000 epochs)
+- **Determinism:** All nodes MUST use identical weights for the same epoch. Weight lookup uses `(epoch → weights)` mapping sorted by `activation_epoch`
+- **Scope:** Weights are global (apply to all routes). Mission-specific weight overrides are allowed only within mission-scoped route domains (Section 13.2)
 
 #### 6.2 Forbidden Inputs
 
@@ -467,12 +492,18 @@ struct TrustFactors {
     consensus_participation: u32,
 }
 
-/// Compute composite trust score
-fn compute_trust_score(factors: &TrustFactors) -> u32 {
+/// Compute composite trust score (DRS-H1 fix: cap stake_weight)
+/// stake_weight contribution is capped via diminishing returns to prevent whale domination.
+/// Cap: stake_weight_capped = min(stake_weight, median_stake * 10)
+/// This ensures no single entity can dominate trust scoring regardless of stake size.
+fn compute_trust_score(factors: &TrustFactors, median_stake: u64) -> u32 {
     // Weighted sum, all integer arithmetic
     let uptime = factors.historical_uptime as u64;
     let relay = (factors.relay_attestations.min(1000) as u64) * 1000;
-    let stake = (factors.stake_weight.min(1_000_000_000) as u64) / 1000;
+    // DRS-H1 fix: cap stake_weight to prevent centralization
+    let stake_cap = median_stake.saturating_mul(10);
+    let stake_capped = factors.stake_weight.min(stake_cap);
+    let stake = stake_capped / 1000;
     let mission = factors.mission_trust as u64;
     let consensus = factors.consensus_participation as u64;
 
@@ -584,8 +615,25 @@ enum MultiPathPolicy {
     Failover = 0x0001,
     /// Propagate on all paths simultaneously
     Redundant = 0x0002,
-    /// Split traffic across paths
+    /// Split traffic across paths (deterministic — see below)
     LoadBalance = 0x0003,
+}
+
+/// Deterministic Load Balancing (DRS-H2 fix)
+/// Traffic split MUST be deterministic: packet_n routes to route[n % route_count]
+/// where route_count is the total number of routes in the MultiPathRoute (primary + secondaries).
+/// All nodes MUST use this exact algorithm. Probabilistic splitting is FORBIDDEN.
+fn select_route_for_packet(
+    multipath: &MultiPathRoute,
+    packet_sequence_number: u64,
+) -> &DeterministicRoute {
+    let all_routes_count = 1 + multipath.secondaries.len(); // primary + secondaries
+    let index = (packet_sequence_number % all_routes_count as u64) as usize;
+    if index == 0 {
+        &multipath.primary
+    } else {
+        &multipath.secondaries[index - 1]
+    }
 }
 ```
 

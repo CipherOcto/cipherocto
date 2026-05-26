@@ -63,7 +63,7 @@ GDP extends RFC-0843 (OCTO-Network Protocol) peer discovery with overlay-specifi
 | G1: Sovereign Discovery | No centralized registry | Zero single points of failure |
 | G2: Deterministic Visibility | Canonical discovery ordering | Identical output from identical input |
 | G3: Platform Independence | Transport-agnostic | Works across all DOT carriers |
-| G4: Byzantine Tolerance | Adversarial-resistant | Survive 33% malicious gateways |
+| G4: Byzantine Tolerance | Adversarial-resistant | Survive f < n/3 malicious gateways (BFT threshold) |
 | G5: Opportunistic Networking | Dynamic route acquisition | <5s discovery time |
 | G6: Partition Recovery | Autonomous healing | Convergence after partition |
 | G7: Replay Safety | Canonical advertisements | Zero replay acceptance |
@@ -96,14 +96,19 @@ Without GDP:
 Every gateway possesses a sovereign cryptographic identity (extends RFC-0850 Section 3.2):
 
 ```rust
+/// Canonical GatewayIdentity (defined in RFC-0850 Section 3.2, referenced here)
 struct GatewayIdentity {
-    gateway_id: [u8; 32],       // SHA-256(public_key || network_id || creation_epoch)
+    gateway_id: [u8; 32],       // BLAKE3-256(public_key || network_id || creation_epoch)
     public_key: [u8; 32],       // Ed25519 public key
     network_id: u32,
     gateway_class: u16,
     creation_epoch: u64,
+    supported_platforms: u64,   // Bitmask of supported platform types
+    capabilities: u64,          // Bitmask of gateway capabilities
 }
 ```
+
+**Note:** This struct is defined canonically in RFC-0850 Section 3.2. GDP uses the same definition. Any field additions MUST be made in RFC-0850 and referenced here.
 
 ### 2. Discovery Scope
 
@@ -145,6 +150,18 @@ struct GatewayAdvertisement {
 
 **Canonicalization:** Endpoint ordering by `(transport_type, endpoint_hash)`, capability ordering by enum value, route ordering by `(destination, next_hop)` — all lexicographic.
 
+**Merkle Root Computation:**
+
+All Merkle roots (`capabilities_root`, `transport_root`, `route_root`, `trust_root`) use the same algorithm:
+
+1. Canonicalize the items (sort by the ordering rules above)
+2. Compute leaf hashes: `leaf_i = BLAKE3-256(canonical_bytes(item_i))`
+3. Build binary Merkle tree: `parent = BLAKE3-256(left_child || right_child)`
+4. If odd number of leaves, duplicate the last leaf
+5. The root is the hash of the final parent node
+
+**Empty sets:** If a set is empty, the Merkle root is `[0x00; 32]` (all zeros).
+
 ### 5. Capability Advertisement
 
 ```rust
@@ -167,7 +184,7 @@ enum GatewayCapability {
 ```rust
 struct OverlayEndpoint {
     transport_type: u16,        // Per RFC-0850 platform types
-    endpoint_hash: [u8; 32],    // SHA-256 of platform endpoint ID
+    endpoint_hash: [u8; 32],    // BLAKE3-256 of platform endpoint ID
     priority: u16,              // Lower = preferred
     bandwidth_class: u16,       // 0-255
     flags: u64,
@@ -187,7 +204,9 @@ struct RouteVector {
 }
 ```
 
-**Deterministic scoring:** `score = trust_weight * 0.5 + bandwidth_class * 0.3 + latency_class * 0.2`
+**Deterministic scoring (integer-only):** `score = trust_weight * 5 + bandwidth_class * 3 + latency_class * 2`
+
+**Note:** All weights are integers multiplied by 10 to eliminate floating-point arithmetic. Per RFC-0008, consensus-critical scoring MUST use Class A (Protocol Deterministic) operations. Floating-point is forbidden. See RFC-0105 (DQA) for the deterministic numeric foundation.
 
 ### 8. Discovery Lifecycle
 
@@ -212,30 +231,49 @@ struct GatewayCacheEntry {
     last_seen: u64,
     trust_score: u32,
     identity: GatewayIdentity,
+    /// MUST be sorted by enum value (ascending) for deterministic Merkle computation
     capabilities: Vec<GatewayCapability>,
+    /// MUST be sorted by (transport_type, endpoint_hash) for deterministic Merkle computation
     endpoints: Vec<OverlayEndpoint>,
 }
 ```
 
-**Deterministic eviction:** lowest trust → oldest unseen → lowest route utility.
+**Determinism Requirement:** `capabilities` MUST be sorted by `GatewayCapability` enum value (ascending) and `endpoints` MUST be sorted by `(transport_type, endpoint_hash)` (lexicographic) before Merkle root computation. This ensures all nodes compute identical `capabilities_root` and `transport_root` for the same advertisement.
+
+**Deterministic eviction:** lowest trust → oldest unseen → lowest route utility. Ties broken by lexicographic `gateway_id`.
 
 ### 11. Anti-Sybil Mechanisms
 
 - Stake-gated discovery (minimum OCTO-B for global propagation)
 - Diversity constraints: transport, geographic, organizational, trust-source
 
-### 12. Failure Detection
+### 12. Gateway Heartbeat and Failure Detection
 
-Gateway considered degraded after N missed heartbeats (default: 3, network-configured).
+**Heartbeat Structure:**
+
+```rust
+struct GatewayHeartbeat {
+    gateway_id: [u8; 32],
+    sequence: u64,              // Strictly monotonic per gateway
+    active_routes: u32,
+    load_class: u16,            // 0-255 (0=idle, 255=overloaded)
+    uptime_class: u16,          // 0-255 (0=just started, 255=long-running)
+    signature: [u8; 64],        // Ed25519 signature over canonical bytes
+}
+```
+
+**Failure Detection:** Gateway considered degraded after N missed heartbeats (default: 3, network-configured). Heartbeat interval: 30s (default). Failure detection: 90s (3 × 30s).
+
+**Deterministic ordering:** Heartbeats are processed in `(gateway_id, sequence)` order. Duplicate or out-of-order heartbeats MUST be rejected.
 
 ### 13. Discovery Gossip
 
-| Mode | Use |
-|------|-----|
-| Flood | Bootstrap |
-| Incremental | Normal operation |
-| Anti-entropy | State healing (Merkle exchange) |
-| Directed sync | Mission overlays |
+| Mode | Use | When |
+|------|-----|------|
+| Flood | Bootstrap | Node startup, < 5 known gateways |
+| Incremental | Normal operation | Steady state, propagate new/updated advertisements |
+| Anti-entropy | State healing | Every 60s (default), Merkle summary exchange |
+| Directed sync | Mission overlays | On mission join, sync mission-scoped gateways |
 
 ## Performance Targets
 
@@ -322,10 +360,19 @@ Gateways earn discovery rewards for:
 Global advertisement propagation requires minimum stake:
 
 ```text
-min_stake = base_stake * (1 + discovery_scope_multiplier)
+min_stake = base_stake * (10 + scope_multiplier) / 10
 ```
 
-Where `discovery_scope_multiplier` scales with visibility scope (LOCAL=0, REGIONAL=0.5, MISSION=1.0, GLOBAL=2.0).
+Where `base_stake` is a network governance parameter (default: 100 OCTO-B, adjustable via governance vote). `scope_multiplier` scales with visibility scope using integer arithmetic:
+
+| Scope | Multiplier | Effective Stake |
+|-------|-----------|-----------------|
+| LOCAL | 0 | 100 OCTO-B |
+| REGIONAL | 5 | 150 OCTO-B |
+| MISSION | 10 | 200 OCTO-B |
+| GLOBAL | 20 | 300 OCTO-B |
+
+**Note:** All arithmetic is integer-only per RFC-0008 Class A requirements. Floating-point is forbidden for consensus-critical operations.
 
 ## Compatibility
 
@@ -356,10 +403,10 @@ Input:
   sequence = 1
   logical_timestamp = 1000
   gateway_class = 0x0001 (Edge)
-  capabilities_root = SHA-256(capability_entries)
-  transport_root = SHA-256(transport_entries)
-  route_root = SHA-256(route_entries)
-  trust_root = SHA-256(trust_entries)
+  capabilities_root = BLAKE3-256(capability_entries)
+  transport_root = BLAKE3-256(transport_entries)
+  route_root = BLAKE3-256(route_entries)
+  trust_root = BLAKE3-256(trust_entries)
   overlay_endpoints = [endpoint_1]
 
 Expected: Canonical DCS bytes with fields in declaration order
@@ -368,9 +415,9 @@ Expected: Canonical DCS bytes with fields in declaration order
 ### Deterministic Discovery Ordering
 
 ```text
-Gateway A: network_id=1, gateway_id=[0x01;32], sequence=1, hash=SHA-256("A")
-Gateway B: network_id=1, gateway_id=[0x01;32], sequence=1, hash=SHA-256("B")
-Gateway C: network_id=1, gateway_id=[0x01;32], sequence=2, hash=SHA-256("C")
+Gateway A: network_id=1, gateway_id=[0x01;32], sequence=1, hash=BLAKE3-256("A")
+Gateway B: network_id=1, gateway_id=[0x01;32], sequence=1, hash=BLAKE3-256("B")
+Gateway C: network_id=1, gateway_id=[0x01;32], sequence=2, hash=BLAKE3-256("C")
 
 Canonical order: A < B < C
 Reason: A and B have same (network_id, gateway_id, sequence), A.hash < B.hash

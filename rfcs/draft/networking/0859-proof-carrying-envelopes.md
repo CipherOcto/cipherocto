@@ -3,7 +3,7 @@ title: "RFC-0859: Proof-Carrying Envelopes (PCE)"
 status: Draft
 version: 1.0.0
 created: 2026-05-25
-updated: 2026-05-25
+updated: 2026-05-26
 authors:
   - CipherOcto Core Team
 related:
@@ -59,7 +59,10 @@ PCE transforms DOT envelopes from opaque message carriers into **cryptographical
 - RFC-0650 (Proof Systems): Proof Aggregation Protocol — recursive aggregation
 - RFC-0631 (Proof Systems): Proof-of-Dataset Integrity — dataset proofs
 - RFC-0855 (Networking): Mission Overlay Networks — mission-scoped proofs
+- RFC-0857 (Networking): Deterministic Overlay Mempool — proof-carrying intent submission
 - RFC-0860 (Networking): Proof-of-Relay — relay attestation
+- RFC-0104 (Numeric): DFP — deterministic floating point for consensus-critical arithmetic
+- RFC-0105 (Numeric): DQA — deterministic quant arithmetic for proof sizing and fee computation
 
 ## Design Goals
 
@@ -441,7 +444,45 @@ function verify_proof_carrying_envelope(pce):
     return result ? Valid : Invalid
 ```
 
-#### 5.3 Consensus Boundary (CRITICAL)
+#### 3.4 Execution Class Mapping (RFC-0008)
+
+All PCE operations MUST be explicitly mapped to RFC-0008 execution classes:
+
+| Operation | Class | Rationale |
+|-----------|-------|-----------|
+| Proof generation | Class C | Probabilistic — depends on prover runtime, hardware, witness generation |
+| Proof blob serialization | Class C | May vary across prover implementations |
+| Proof commitment computation (SHA-256) | Class A | Deterministic hash of proof blob |
+| Public input root computation (Merkle) | Class A | Deterministic Merkle root |
+| Proof verification | Class A | Deterministic verification algorithm |
+| Aggregated proof verification | Class A | O(1) deterministic verification |
+| Proof system selection | Class A | Deterministic lookup by proof_system_id |
+| Signature verification | Class A | Ed25519 deterministic verification |
+
+**Critical invariant:** Proof generation is Class C (non-deterministic). Proof verification is Class A (deterministic). Consensus depends ONLY on verification results, never on generation details.
+
+#### 5.3 Canonical Proof Boundary (CRITICAL)
+
+This is the hard determinism boundary for PCE. Violation is a consensus-critical bug.
+
+**Consensus NEVER depends on:**
+
+- Prover runtime or implementation (different provers may use different algorithms)
+- Hardware acceleration used for proving (GPU, FPGA, ASIC, CPU)
+- Proving time or wall-clock duration (proof generation is inherently non-deterministic)
+- Memory layout during proof generation (heap vs stack, allocator behavior)
+- Parallel execution order during proving (thread scheduling, work-stealing)
+- Witness generation order (intermediate computation order)
+- Proof blob byte equality (the same logical proof may serialize differently)
+
+**Consensus MAY depend ONLY on:**
+
+- `public_inputs` — the claimed inputs to computation (Merkle-committed)
+- `canonical_verifier` — the proof system's deterministic verification algorithm
+- `proof_bytes` — the serialized proof blob (as committed in proof_commitment)
+- `verification_result` — the deterministic boolean result (Valid/Invalid)
+
+**Enforcement:** The verification pipeline (Section 5.2) is the ONLY path from proof bytes to consensus state. No other code path may inspect proof generation details for consensus purposes.
 
 Consensus MUST NOT depend on:
 
@@ -612,7 +653,25 @@ struct MissionProofPolicy {
 | Relay Audit | RelayProof | STWO | Efficient aggregation |
 | Governance | ValidatorAttestation | Any | Flexible |
 
-### 9. Token Economics
+### 9. DOM Integration
+
+PCE integrates with the Deterministic Overlay Mempool (RFC-0857) for proof-carrying intent submission:
+
+- The `ProofSubmission` intent type in DOM carries a `ProofCarryingEnvelope` as its payload
+- PCE proof verification results determine whether the `ProofSubmission` intent is admitted to the mempool
+- Invalid proofs cause the intent to be rejected at the admission layer
+- Valid proofs are propagated via DGP (RFC-0852) alongside the intent
+
+```rust
+// DOM intent carrying a PCE
+struct ProofSubmissionIntent {
+    intent_type: IntentType::ProofSubmission,
+    pce: ProofCarryingEnvelope,
+    // ... other OverlayIntent fields
+}
+```
+
+### 10. Token Economics
 
 PCE integrates with CipherOcto's multi-token economy:
 
@@ -643,6 +702,19 @@ PCE integrates with CipherOcto's multi-token economy:
 | Proof size (SNARK) | <1KB | Groth16 proof |
 | Parallel verification throughput | >1000 proofs/s | 8-core commodity machine |
 | Envelope PCE overhead | <50% | Proof fields vs bare envelope |
+
+**Maximum Verification Latency (per proof system):**
+
+| Proof System | Max Verification Latency | Rationale |
+|-------------|-------------------------|-----------|
+| STARK (STWO/Winterfell/Cairo) | <100ms | Must not block block production |
+| PLONK | <50ms | Succinct verification |
+| Halo2 | <80ms | PLONKish verification |
+| Groth16 | <20ms | Smallest proofs, fastest verify |
+| RISC Zero / SP1 (zkVM) | <200ms | Larger verification circuits |
+| Aggregated (RFC-0650) | <10ms | O(1) regardless of child count |
+
+Exceeding these latencies triggers a performance degradation warning. Consensus nodes MUST reject proofs that exceed 2x the max latency to prevent verification DoS.
 
 ## Security Considerations
 
@@ -915,6 +987,7 @@ Without aggregation, N proofs require N verifications. With recursive aggregatio
 | Version | Date | Changes |
 |---------|------|---------|
 | 1.0.0 | 2026-05-25 | Initial draft — PCE format, proof systems, verification, aggregation, phases |
+| 1.1.0 | 2026-05-26 | Adversarial review fixes: canonical proof boundary, RFC-0008 execution classes, verification latency, DOM integration, deterministic numerics |
 
 ## Related RFCs
 

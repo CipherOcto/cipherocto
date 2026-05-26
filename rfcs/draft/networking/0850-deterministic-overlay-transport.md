@@ -56,6 +56,8 @@ DOT extends RFC-0843 (OCTO-Network Protocol) by adding an overlay transport abst
 - RFC-0126 (Numeric): Deterministic Serialization — canonical encoding
 - RFC-0008 (Process): Deterministic AI Execution Boundary — execution classes
 
+> **Note:** RFC-0009 and RFC-0126 are currently in "Planned" status. Dependencies on these RFCs assume they will be Accepted before DOT implementation begins. If they are not Accepted by implementation time, the relevant specifications (identity key format, canonical serialization) MUST be inlined in this RFC.
+
 **Optional:**
 
 - RFC-0102 (Numeric): Wallet Cryptography — key pair format
@@ -212,12 +214,12 @@ A broadcast domain is any shared communication surface that can carry DOT envelo
 struct BroadcastDomainId {
     /// Platform type identifier (see table above)
     platform_type: u16,
-    /// SHA-256 of platform-specific group/channel/room identifier
+    /// BLAKE3-256 of platform-specific group/channel/room identifier
     domain_hash: [u8; 32],
 }
 ```
 
-**Determinism Requirement:** `domain_hash` MUST be computed from the canonical platform identifier string (e.g., `"telegram:-1001234567890"`, `"discord:channel:9876543210"`) using SHA-256. Platform-specific ID formats MUST be normalized to lowercase, trimmed strings before hashing.
+**Determinism Requirement:** `domain_hash` MUST be computed from the canonical platform identifier string (e.g., `"telegram:-1001234567890"`, `"discord:channel:9876543210"`) using BLAKE3-256. Platform-specific ID formats MUST be normalized to lowercase, trimmed strings before hashing.
 
 #### 3.2 Overlay Gateway Node (OGN)
 
@@ -260,6 +262,17 @@ struct GatewayIdentity {
 enum GatewayClass {
     Edge = 0x0001,
     Relay = 0x0002,
+    Consensus = 0x0003,
+    Archive = 0x0004,
+    Stealth = 0x0005,
+    Translation = 0x0006,
+}
+
+/// Bitmask for gateway role capabilities (a gateway can serve multiple roles)
+#[repr(u64)]
+enum GatewayRoleFlags {
+    Edge = 0x0001,
+    Relay = 0x0002,
     Consensus = 0x0004,
     Archive = 0x0008,
     Stealth = 0x0010,
@@ -267,7 +280,7 @@ enum GatewayClass {
 }
 ```
 
-**Determinism Requirement:** `gateway_id` MUST be derived as `SHA-256(public_key || network_id || creation_epoch)`. This ensures deterministic derivation from identity material.
+**Determinism Requirement:** `gateway_id` MUST be derived as `BLAKE3-256(public_key || network_id || creation_epoch)`. This ensures deterministic derivation from identity material.
 
 #### 3.3 Deterministic Envelope (DEN)
 
@@ -299,25 +312,42 @@ struct DeterministicEnvelope {
     /// Maximum hop count before discard
     ttl_hops: u16,
 
-    /// SHA-256 of canonical payload bytes
+    /// BLAKE3-256 of canonical payload bytes
     payload_hash: [u8; 32],
 
     /// Merkle root of route trace (for replay verification)
+    /// Populated when FLAG_ROUTE_TRACE_PRESENT is set.
+    /// Route trace = ordered list of (gateway_id, logical_timestamp) pairs the envelope has traversed.
+    /// Merkle leaves = BLAKE3-256(gateway_id || logical_timestamp), sorted by hop order.
+    /// If FLAG_ROUTE_TRACE_PRESENT is not set, this field MUST be [0x00; 32].
     route_trace_root: [u8; 32],
 
-    /// Protocol flags (bitmask)
+    /// Protocol flags (bitmask, see EnvelopeFlags)
     flags: u64,
 
     /// Ed25519 signature over canonical envelope bytes
     signature: [u8; 64],
+}
+
+/// Flag values for DeterministicEnvelope.flags
+#[repr(u64)]
+enum EnvelopeFlags {
+    /// Payload is encrypted (RFC-0853 OCrypt)
+    ENCRYPTED = 0x0001,
+    /// Envelope is fragmented (see Section 9)
+    FRAGMENTED = 0x0002,
+    /// Envelope is mission-scoped (mission_id is non-zero)
+    MISSION_SCOPED = 0x0004,
+    /// Route trace is populated (route_trace_root is valid)
+    ROUTE_TRACE_PRESENT = 0x0008,
+    /// All other flags are reserved and MUST be ignored on receipt
 }
 ```
 
 **Envelope ID Derivation:**
 
 ```text
-envelope_id = SHA-256(
-    version ||
+envelope_id = BLAKE3-256(
     network_id ||
     message_type ||
     source_peer ||
@@ -326,6 +356,8 @@ envelope_id = SHA-256(
     payload_hash
 )
 ```
+
+**Note:** `version` is excluded from `envelope_id` derivation to ensure envelope identity remains stable across protocol version upgrades. The version field is present in the envelope header for parsing purposes but does not affect the envelope's canonical identity.
 
 **Canonical Serialization:** All envelope fields MUST be serialized using RFC-0126 Deterministic Canonical Serialization (DCS). Field order is fixed as declared in the struct. Multi-byte integers are big-endian. No padding, no alignment holes.
 
@@ -418,10 +450,49 @@ Platform-specific metadata MUST NEVER affect consensus.
 | Envelope serialization | Class A (Protocol Deterministic) | Consensus-critical |
 | Signature verification | Class A | Consensus-critical |
 | Logical timestamp ordering | Class A | Consensus-critical |
-| Route computation | Class A | Consensus-critical |
-| Gateway discovery | Class B (Deterministic Off-Chain) | Configurable timeouts |
+| Route scoring algorithm | Class A | Deterministic scoring only (see RFC-0856) |
+| Route discovery/selection | Class B (Deterministic Off-Chain) | May use configurable timeouts |
+| Gateway discovery | Class B | Configurable timeouts |
 | Platform adapter I/O | Class C (Probabilistic) | Inherently non-deterministic |
 | Message delivery | Class C | Platform-dependent timing |
+
+**Clarification:** "Route scoring algorithm" (the deterministic computation of route scores from inputs) is Class A. "Route discovery/selection" (finding available routes, probing connectivity) is Class B because it may involve timeouts and retries. The scoring MUST be deterministic; the discovery process does not need to be.
+
+#### 4.5 Error Types
+
+DOT defines a unified error taxonomy for cross-RFC compatibility:
+
+```rust
+#[derive(Clone, Debug)]
+enum DotError {
+    // Envelope errors
+    InvalidSignature { envelope_id: [u8; 32] },
+    ReplayDetected { envelope_id: [u8; 32], first_seen: u64 },
+    CanonicalizationFailed { reason: &'static str },
+    EnvelopeTooLarge { size: usize, max: usize },
+    InvalidEnvelopeId { expected: [u8; 32], computed: [u8; 32] },
+
+    // Fragmentation errors
+    FragmentTimeout { envelope_id: [u8; 32], received: u16, total: u16 },
+    FragmentDuplicate { envelope_id: [u8; 32], index: u16 },
+    FragmentIndexOutOfBounds { index: u16, total: u16 },
+
+    // Gateway errors
+    UnknownGateway { gateway_id: [u8; 32] },
+    GatewayCapacityExceeded { gateway_id: [u8; 32] },
+    UnsupportedPlatform { platform_type: u16 },
+
+    // Routing errors
+    RouteNotFound { destination: [u8; 32] },
+    RouteExpired { route_id: [u8; 32] },
+    TtlExceeded { envelope_id: [u8; 32], ttl: u16 },
+
+    // Platform adapter errors
+    PlatformAdapterError { platform: u16, detail: &'static str },
+    RateLimitExceeded { platform: u16, retry_after: u64 },
+    PlatformUnavailable { platform: u16 },
+}
+```
 
 ### 5. Logical Timestamp Model
 
@@ -549,7 +620,7 @@ struct RouteCommitment {
     weights_hash: [u8; 32],
     /// Network epoch
     epoch: u64,
-    /// Commitment = SHA-256(gateway_sequence_hash || weights_hash || epoch)
+    /// Commitment = BLAKE3-256(gateway_sequence_hash || weights_hash || epoch)
     commitment: [u8; 32],
 }
 ```
@@ -647,7 +718,7 @@ struct EnvelopeFragment {
     fragment_index: u16,
     /// Total fragment count
     fragment_total: u16,
-    /// SHA-256 of complete envelope
+    /// BLAKE3-256 of complete envelope
     envelope_hash: [u8; 32],
     /// Fragment payload bytes
     payload: Vec<u8>,
@@ -658,7 +729,7 @@ struct EnvelopeFragment {
 
 1. Fragments MUST be self-describing (include `envelope_id`, `fragment_index`, `fragment_total`)
 2. Fragment payloads MUST NOT exceed platform maximum minus fragment header size
-3. Reassembly MUST wait for all fragments within a configurable timeout
+3. Reassembly MUST wait for all fragments within a configurable timeout (default: 30s, min: 5s, max: 300s)
 4. Partial reassembly MUST be discarded on timeout
 5. Reassembly order is deterministic: fragments are ordered by `fragment_index`
 
@@ -704,8 +775,8 @@ Gateways maintain a replay cache:
 
 ```rust
 struct ReplayCache {
-    /// Map of envelope_id → first_seen_timestamp
-    seen: HashMap<[u8; 32], u64>,
+    /// Map of envelope_id → first_seen_timestamp (BTreeMap for deterministic iteration order)
+    seen: BTreeMap<[u8; 32], u64>,
     /// Replay window duration (network-configured)
     window_duration: u64,
     /// Maximum cache entries before eviction
@@ -713,7 +784,9 @@ struct ReplayCache {
 }
 ```
 
-Eviction is deterministic: oldest entries are evicted first when `max_entries` is reached.
+**Determinism Requirement:** `BTreeMap` is used instead of `HashMap` because BTreeMap provides deterministic iteration order (sorted by key). When the cache is full, eviction removes the entry with the smallest `first_seen` timestamp. If timestamps are equal, the entry with the lexicographically smallest `envelope_id` is evicted.
+
+**Note:** If multiple entries have the same `first_seen` timestamp, eviction MUST use lexicographic ordering of `envelope_id` as a deterministic tiebreaker.
 
 ### 12. Failure Domains
 
@@ -894,7 +967,7 @@ Input:
   origin_gateway = [0x02; 32]
   logical_timestamp = 1000
   ttl_hops = 10
-  payload_hash = SHA-256("hello world")
+  payload_hash = BLAKE3-256("hello world")
   flags = 0
 
 Expected canonical bytes (hex):
@@ -915,7 +988,7 @@ Expected canonical bytes (hex):
 
 ```text
 Input: platform_type = 0x0001 (Telegram), platform_id = "telegram:-1001234567890"
-domain_hash = SHA-256("telegram:-1001234567890")
+domain_hash = BLAKE3-256("telegram:-1001234567890")
 Expected domain_id = { platform_type: 0x0001, domain_hash: [computed] }
 ```
 

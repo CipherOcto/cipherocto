@@ -3,7 +3,7 @@ title: "RFC-0858: Onion Relay Routing (ORR)"
 status: Draft
 version: 1.0.0
 created: 2026-05-25
-updated: 2026-05-25
+updated: 2026-05-26
 authors:
   - CipherOcto Core Team
 related:
@@ -64,6 +64,8 @@ The key innovation: **relays forward encrypted envelopes without knowing the sou
 - RFC-0857 (Networking): DOM — onion-wrapped intent submission
 - RFC-0854 (Networking): DPS — ZK proof integration for relay verification
 - RFC-0860 (Networking): PoRelay — cryptographic relay proof generation
+- RFC-0104 (Numeric): DFP — deterministic floating point for consensus-critical arithmetic
+- RFC-0105 (Numeric): DQA — deterministic quant arithmetic for fee/trust computation
 
 ## Design Goals
 
@@ -453,7 +455,35 @@ Onion routes SHOULD rotate periodically. Rotation triggers:
 - Relay compromise suspicion
 - Mission policy change
 
-### 10. Determinism Requirements
+### 10. Replay Protection
+
+ORR replay protection operates at two layers:
+
+**Outer Layer (before decryption):**
+
+Each onion envelope carries a `(route_id, sequence, logical_timestamp)` triple in the authenticated outer metadata. Gateways check this against their replay cache before attempting decryption. This prevents replay of entire onion envelopes.
+
+```text
+replay_key = (route_id, sequence, logical_timestamp)
+if replay_key in replay_cache: reject
+replay_cache.insert(replay_key)
+```
+
+**Inner Layer (after decryption):**
+
+After peeling a layer, relays verify the inner envelope's `(envelope_id, payload_hash)` against RFC-0850's canonical replay protection. This prevents replay of inner payloads even if the outer onion wrapper is different.
+
+**Replay Window Scope:**
+
+- Outer replay: per-gateway, window duration = `ORR_REPLAY_WINDOW` (network-configured, default 1 hour)
+- Inner replay: per-mission or global, per RFC-0850 Section 11.2
+- Cache eviction: deterministic (oldest entries first, lexicographic tiebreaker on replay_key)
+
+**Interaction with Layered Encryption:**
+
+The outer replay check is performed on plaintext metadata (route_id, sequence, timestamp) that is included in the onion's authenticated but unencrypted header. This allows gateways to reject replays without performing any decryption.
+
+### 11. Determinism Requirements
 
 | Operation | Class | Rationale |
 |-----------|-------|-----------|
@@ -786,6 +816,7 @@ Global anonymity sets are vulnerable to intersection attacks. Mission-scoped dom
 | Version | Date | Changes |
 |---------|------|---------|
 | 1.0.0 | 2026-05-25 | Initial draft — core onion protocol, layered encryption, cover traffic, mission domains |
+| 1.1.0 | 2026-05-26 | Adversarial review fixes: replay protection specification, deterministic numerics references |
 
 ## Related RFCs
 

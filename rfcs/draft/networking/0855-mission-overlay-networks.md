@@ -32,6 +32,8 @@ Draft
 
 Mission Overlay Networks (MON) define temporary or persistent sovereign overlay topologies constructed dynamically for coordinated distributed activity within the CipherOcto ecosystem.
 
+> **Terminology Disambiguation:** This RFC uses "Mission" to mean a runtime overlay network coordination construct, distinct from BLUEPRINT "Missions" which are implementation work items (e.g., `missions/open/0909-d-replay-events.md`) with lifecycle `Open → Claimed → With-PR → Archived`. MON missions are runtime coordination events; BLUEPRINT missions are governance/development tasks. They are orthogonal — a BLUEPRINT mission MAY trigger creation of a MON mission, and a MON mission MAY reference a BLUEPRINT mission, but they share no lifecycle or infrastructure.
+
 A MON represents:
 
 - A mission-scoped overlay civilization
@@ -102,6 +104,21 @@ MONs enable CipherOcto nodes to autonomously form AI swarms, compute clusters, c
 ### Relationship to RFC-0850
 
 RFC-0850 defines the transport layer (envelopes, gateways, platform adapters). MONs define the coordination layer above transport — they consume DOT envelopes and add mission-scoped isolation, membership, topology, execution, and governance.
+
+### Relationship to BLUEPRINT Missions (MON-H5 fix)
+
+CipherOcto has two distinct "mission" concepts:
+
+| Aspect | BLUEPRINT Mission | MON Mission |
+|--------|-------------------|-------------|
+| Definition | Implementation work item | Runtime overlay network |
+| Lifecycle | Open → Claimed → With-PR → Archived | Created → Discovering → Forming → Active → ... |
+| Duration | Days to weeks | Minutes to months |
+| Participants | Developer + reviewer | 2-10,000 nodes |
+| Purpose | Ship code/fixes | Coordinate distributed activity |
+| Location | `missions/open/`, `missions/archived/` | Runtime state (no static files) |
+
+**Interaction:** A BLUEPRINT mission MAY trigger creation of a MON mission (e.g., "test the new networking code across 10 nodes"). A MON mission MAY reference a BLUEPRINT mission in its descriptor metadata. They share no lifecycle, no state, and no infrastructure.
 
 ## Specification
 
@@ -199,12 +216,16 @@ struct MissionDescriptor {
     mission_root: [u8; 32],
     /// Maximum number of participants (0 = unlimited)
     max_participants: u32,
+    /// Minimum participants for mission formation (MON-C3 fix)
+    min_participants: u32,
     /// Mission TTL in epochs (0 = permanent)
     ttl_epochs: u64,
     /// Mission flags (bitmask)
     flags: u64,
 }
 ```
+
+**Canonical Serialization Order (MON-M6 fix):** Fields MUST be serialized in declaration order using RFC-0126 DCS: `mission_id, mission_type, creation_epoch, governance_model, cryptographic_suite, mission_root, max_participants, min_participants, ttl_epochs, flags`. Multi-byte integers are big-endian.
 
 #### 2.3 Mission Types
 
@@ -285,10 +306,29 @@ enum MissionState {
 | Degraded | Recovering | Reconciliation protocol initiated | Yes |
 | Recovering | Active | State convergence verified | Yes |
 | Active | Terminated | Mission completion or governance decision | Yes |
+| Active | Terminated | TTL expiry (`current_epoch >= creation_epoch + ttl_epochs`) | Yes (automatic) |
 | Degraded | Terminated | Unrecoverable failure or TTL expiry | Yes |
 | Terminated | Archived | State snapshot committed | Yes |
 
 **Determinism Requirement:** All state transitions MUST be deterministic given identical mission state. Transition triggers MUST NOT depend on wall-clock timing, local heuristics, or non-deterministic inputs.
+
+**State Consensus Mechanism (MON-C4 fix):**
+
+State transitions require participant consensus to prevent split-brain scenarios:
+
+| Transition | Trigger | Consensus Requirement |
+|-----------|---------|----------------------|
+| Active → Degraded | `failed_participants > tolerance_threshold` where `tolerance_threshold = floor(active_participants / 3)` | Automatic (deterministic heartbeat check) |
+| Degraded → Recovering | Coordinator proposes reconciliation | Coordinator approval (no vote needed) |
+| Recovering → Active | State convergence verified via Merkle roots | 2/3 majority vote on convergence proof |
+| Any → Terminated | Mission completion or TTL expiry | Coordinator proposal + 2/3 majority vote |
+
+**Heartbeat Protocol:**
+
+- Each participant broadcasts heartbeat every `heartbeat_interval` epochs (network-configured, default: 10)
+- A participant is considered failed after `missed_heartbeats` consecutive misses (default: 3)
+- Heartbeat failures are deterministic: given identical heartbeat history, all nodes agree on which participants are failed
+- The `tolerance_threshold` is computed as `floor(active_participants / 3)` — mission degrades when more than 1/3 of participants fail
 
 #### 3.3 Mission Genesis
 
@@ -314,7 +354,9 @@ struct MissionNode {
     peer_id: [u8; 32],
     /// Role flags (bitmask — see Section 4.2)
     role_flags: u64,
-    /// Trust score (0-1000, network-computed)
+    /// Trust score (0-1000, network-computed per DRS Section 9.1)
+    /// Computed by each node deterministically from: historical_uptime, relay_attestations,
+    /// stake_weight, mission_trust, consensus_participation. Recomputed on each epoch transition.
     trust_score: u32,
     /// Merkle root of node capabilities
     capability_root: [u8; 32],
@@ -351,10 +393,43 @@ membership_commitment = SHA-256(
 
 **Role Constraints:**
 
-- A node MAY hold multiple roles simultaneously
+- A node MAY hold multiple roles simultaneously, subject to compatibility constraints below
 - Coordinator role requires `trust_score >= 500`
 - Validator role requires `trust_score >= 300`
 - Prover role requires proof generation capability (verified via GDP capability advertisement)
+
+**Role Compatibility Constraints (MON-H2 fix):**
+
+| Constraint | Rule | Rationale |
+|-----------|------|-----------|
+| Coordinator + Prover | FORBIDDEN | Prevents centralized proof authority |
+| Coordinator + Aggregator | FORBIDDEN | Prevents centralized aggregation authority |
+| Observer + Coordinator | FORBIDDEN | Observers cannot control mission |
+| Max roles per node | 4 | Prevents role concentration |
+| Role escalation | Requires Coordinator approval or 2/3 vote | Prevents unauthorized privilege gain |
+
+**Role Transition Rules:**
+
+- Observer → Executor/Relay/Validator: Requires Coordinator approval
+- Any → Coordinator: Requires 2/3 participant vote (existing coordinators cannot unilaterally appoint)
+- Any role removal: Self-removal always allowed; forced removal requires Coordinator + 1/3 vote
+
+**Dual-Stake Requirements (CROSS-C1 fix):**
+
+All mission participants MUST satisfy dual-stake requirements per the token design:
+
+| Role | Global Stake (OCTO) | Role Stake | Min Total |
+|------|-------------------|------------|-----------|
+| Coordinator | 1,000 OCTO | OCTO-O | 1,000 OCTO + OCTO-O minimum |
+| Executor | 1,000 OCTO | OCTO-A | 1,000 OCTO + OCTO-A minimum |
+| Relay | 1,000 OCTO | OCTO-B | 1,000 OCTO + OCTO-B minimum |
+| Validator | 1,000 OCTO | OCTO-N | 1,000 OCTO + OCTO-N minimum |
+| Observer | 1,000 OCTO | None | 1,000 OCTO |
+| Archivist | 1,000 OCTO | OCTO-S | 1,000 OCTO + OCTO-S minimum |
+| Prover | 1,000 OCTO | OCTO-A | 1,000 OCTO + OCTO-A minimum |
+| Aggregator | 1,000 OCTO | OCTO-O | 1,000 OCTO + OCTO-O minimum |
+
+The 1,000 OCTO global stake minimum comes from the blockchain integration's `Global_Stake` configuration.
 
 #### 4.3 Membership Admission
 
@@ -382,14 +457,14 @@ enum AdmissionPolicy {
 
 #### 5.1 Topology Models
 
-| Model | Structure | Use Case | Resilience |
-|-------|-----------|----------|------------|
-| Mesh | Full connectivity | High resilience | Excellent |
-| Hierarchical | Tree with coordinators | Enterprise | Good |
-| Star | Central coordinator | Lightweight | Poor |
-| Swarm | Fluid, task-oriented | AI collectives | Good |
-| Ring | Circular sequencing | Distributed sequencing | Moderate |
-| Hybrid | Adaptive combination | General purpose | Variable |
+| Model | Structure | Use Case | Resilience | Min Participants |
+|-------|-----------|----------|------------|-----------------|
+| Mesh | Full connectivity | High resilience | Excellent | 2 |
+| Hierarchical | Tree with coordinators | Enterprise | Good | 3 (1 coordinator + 2 workers) |
+| Star | Central coordinator | Lightweight | Poor | 2 (1 coordinator + 1 worker) |
+| Swarm | Fluid, task-oriented | AI collectives | Good | 5 (for quorum diversity) |
+| Ring | Circular sequencing | Distributed sequencing | Moderate | 3 (minimum ring) |
+| Hybrid | Adaptive combination | General purpose | Variable | 2 |
 
 ```rust
 #[repr(u16)]
@@ -428,6 +503,10 @@ struct TopologyCommitment {
 
 **Determinism Requirement:** Participant and route entries MUST be sorted lexicographically by `(peer_id, role_flags)` before Merkle commitment. Given identical membership, all nodes MUST compute identical topology commitment.
 
+**Topology Entry Format (MON-H1 fix):**
+
+A topology entry is `(peer_id: [u8; 32], role_flags: u64, connection_list: Vec<[u8; 32]>)` where `connection_list` is the sorted list of connected peer IDs. Entries are canonically ordered by `(peer_id, role_flags)` lexicographic comparison. The Merkle tree is constructed as a binary tree over sorted entry hashes. When topology changes (member join/leave/role change), the commitment is recomputed deterministically from the new sorted entry set.
+
 ### 6. Mission Routing
 
 #### 6.1 Scoped Routing
@@ -440,7 +519,15 @@ Mission A traffic MUST NOT leak into Mission B routing scope
 
 except through explicit bridge policies defined by governance.
 
-**Isolation Mechanism:** All DOT envelopes carry `mission_id`. Gateways MUST verify `mission_id` membership before forwarding. Envelopes with unknown or unauthorized `mission_id` MUST be dropped.
+**Isolation Mechanism (MON-H3 fix):** All DOT envelopes carry `mission_id`. Gateways MUST verify `mission_id` membership before forwarding. Envelopes with unknown or unauthorized `mission_id` MUST be dropped.
+
+**Cryptographic Isolation Enforcement:**
+
+1. All mission-scoped envelopes MUST be encrypted with mission-specific keys from the MissionKeyHierarchy (Section 7.1)
+2. Gateways MUST verify the envelope's `mission_id` against their active mission membership set before forwarding
+3. Gateways MUST decrypt and re-encrypt mission envelopes using per-hop session keys (per RFC-0853)
+4. Envelopes failing mission key verification MUST be dropped and logged as potential isolation breach
+5. A compromised gateway forwarding Mission A envelopes to Mission B participants will fail decryption at the receiving end (different mission_root_key)
 
 #### 6.2 Adaptive Overlay Routing
 
@@ -474,6 +561,25 @@ struct MissionKeyHierarchy {
     execution_keys_root: [u8; 32],
 }
 ```
+
+**Genesis Secret Derivation (MON-C2 fix):**
+
+The `mission_genesis_secret` is deterministically derived from the creator's identity material:
+
+```text
+mission_genesis_secret = HKDF-BLAKE3(
+    secret = creator_private_key,
+    salt = mission_id.mission_hash,
+    info = "mission-genesis-secret"
+)
+```
+
+Where `creator_private_key` is the Ed25519 private key of the mission creator. This ensures:
+
+- Only the creator can derive the genesis secret initially
+- The secret is deterministic from mission identity (reproducible)
+- Distribution to participants uses encrypted channels (per RFC-0853)
+- Compromise of genesis secret requires rekey (see Section 7.2)
 
 **Key Derivation:**
 
@@ -580,6 +686,16 @@ struct MissionAdvertisement {
 ```
 
 **Discovery Isolation:** Stealth missions MUST NOT be discoverable via public GDP queries. Only nodes with the mission's discovery key can decrypt stealth advertisements.
+
+**GDP Scope Mapping (MON-M5 fix):**
+
+| MON Discovery Scope | GDP Scope Equivalent | Notes |
+|--------------------|---------------------|-------|
+| Public | GLOBAL | Discoverable across entire overlay |
+| Invite-only | PRIVATE | Restricted to invited peers |
+| Stealth | PRIVATE (encrypted) | Hidden existence, encrypted advertisements |
+| Federated | REGIONAL | Limited to trusted domain set |
+| Ephemeral | MISSION | Temporary, scoped to mission lifetime |
 
 ### 9. Mission Gossip
 
@@ -713,6 +829,28 @@ Missions MAY define policies for:
 - **Privacy rules** — encryption mandates, metadata minimization
 - **Termination conditions** — when mission ends, who decides
 
+#### 11.3 Governance Specification (MON-H4 fix)
+
+**Decision Types and Quorum Requirements:**
+
+| Decision | Quorum | Mechanism |
+|----------|--------|-----------|
+| Admission (new member) | Coordinator approval OR 1/3 vote | Centralized: Coordinator decides; DAO/Federated: vote |
+| Role assignment | Coordinator approval OR 1/3 vote | Same as admission |
+| Topology change | 2/3 vote | All governance models except Centralized |
+| Mission termination | 2/3 vote + Coordinator proposal | Coordinator proposes, participants vote |
+| Policy modification | 2/3 vote | Requires explicit proposal with diff |
+| Emergency rekey | Coordinator authority | No vote (time-critical) |
+| Participant expulsion | Coordinator + 1/3 vote | Evidence-based (proof of misbehavior) |
+
+**Governance Model Behaviors:**
+
+- **Centralized:** Coordinator has final authority on all decisions. Participants can appeal to Coordinator but cannot override.
+- **DAO:** Token-weighted voting (OCTO stake determines vote weight). Quorum is percentage of total staked OCTO in mission.
+- **Federated:** Each organizational domain gets equal vote weight. Quorum is percentage of domains.
+- **AI-Assisted:** AI coordinator proposes actions; participants ratify with 2/3 vote. AI cannot override human veto.
+- **Autonomous:** Protocol rules only — no human intervention. Decisions are deterministic from mission state (e.g., auto-expel after N failed heartbeats).
+
 ### 12. Mission State Model
 
 #### 12.1 Canonical Mission State
@@ -764,12 +902,14 @@ Partitioned mission segments MAY continue operating independently:
 
 Upon reconnection:
 
-1. Partitions exchange Merkle state summaries
-2. Binary Merkle descent locates divergent state
+1. Partitions exchange Merkle state summaries (Merkle roots of participant set, execution history, gossip state)
+2. Binary Merkle descent locates divergent state entries
 3. Divergent state is reconciled using deterministic rules:
-   - Higher `logical_timestamp` wins for conflicting state
-   - For equal timestamps, lower `gateway_id` wins
-4. Reconciled state is committed as new mission root
+   - Higher `logical_timestamp` wins for conflicting state entries
+   - For equal timestamps, lower `gateway_id` wins (lexicographic comparison)
+   - Participant sets are union-merged (participants in either partition are retained)
+   - Execution history is merged by `(task_id, logical_timestamp)` ordering
+4. Reconciled state is committed as new mission root via Merkle re-computation
 
 **Determinism Requirement:** Reconciliation MUST produce identical result regardless of which partition initiates.
 
@@ -844,6 +984,26 @@ Global coordinator
 
 Each level has scoped authority and communication channels.
 
+#### 16.3 AI Swarm Specification (MON-H6 fix)
+
+**Agent Discovery within Mission:**
+
+AI agents discover each other via the mission's gossip domain (Section 9). Each agent publishes capabilities to the MissionGossipScope. The Coordinator assigns tasks to agents matching required capabilities.
+
+**Work Distribution:**
+
+Tasks are dispatched via `ExecutionTask` (Section 10.2) with `targets` specifying executor peer IDs. If `targets` is empty, tasks broadcast to all Executors. Load balancing uses deterministic round-robin: `executor_index = task_sequence_number % executor_count`.
+
+**Result Aggregation:**
+
+Executors return results to the Coordinator (or designated Aggregator). The Coordinator deterministically orders results by `(task_id, executor_peer_id)` and produces a Merkle commitment of aggregated results.
+
+**Failure Model:**
+
+- Partial swarm failure: Coordinator reassigns tasks from failed executors to healthy ones after `missed_heartbeats` threshold
+- Coordinator failure: New Coordinator elected via governance model (Section 11)
+- Split-brain: Each partition continues independently; reconciliation on reconnection (Section 13.2)
+
 ### 17. Token Economics Integration
 
 | Activity | Token | Rationale |
@@ -854,6 +1014,16 @@ Each level has scoped authority and communication channels.
 | Gateway uptime | OCTO-N | Node operation |
 | Storage/archival | OCTO-S | Historical persistence |
 | Proof generation | OCTO-A | ZK proof computation |
+
+**Slashing Conditions (MON-M2 fix):**
+
+| Violation | Penalty | Evidence |
+|-----------|---------|----------|
+| Invalid task result | Slash OCTO-A stake | Proof of incorrect computation |
+| Envelope forgery | Slash all stakes | Signature verification failure |
+| Isolation breach | Slash OCTO-B/O stake | Cross-mission envelope proof |
+| Free-riding (no contribution) | Slash OCTO stake proportional to inactivity | Heartbeat failure history |
+| Coordinator misbehavior | Slash OCTO-O stake + demotion | Governance vote with evidence |
 
 **Mission Resource Markets (Future):**
 
@@ -934,6 +1104,27 @@ Integration with RFC-0858 (ORR) for mission-internal privacy.
 | Non-deterministic admission | Critical | Deterministic policy evaluation |
 | Non-deterministic topology | Critical | Sorted Merkle commitment |
 | Non-deterministic reconciliation | Critical | Deterministic conflict resolution |
+
+### RFC-0008 Execution Class Mapping (CROSS-C3 fix)
+
+Per RFC-0008, each operation MUST be mapped to an execution class:
+
+| Operation | Class | Rationale |
+|-----------|-------|-----------|
+| MissionId derivation | A | Consensus-critical identity |
+| MissionDescriptor serialization | A | Consensus-critical state |
+| State transition evaluation | A | Consensus-critical lifecycle |
+| Admission policy evaluation | A | Consensus-critical membership |
+| Topology Merkle commitment | A | Consensus-critical state |
+| Key hierarchy derivation | A | Consensus-critical cryptography |
+| Heartbeat failure detection | A | Consensus-critical liveness |
+| Partition reconciliation | A | Consensus-critical state convergence |
+| Mission advertisement creation | B | Off-chain but deterministic |
+| Gateway discovery (GDP integration) | B | Off-chain but deterministic |
+| Execution task dispatch | B | Off-chain, deterministic ordering |
+| AI inference (within mission) | C | Inherently probabilistic |
+| AI swarm coordination | C | Inherently probabilistic |
+| Platform adapter I/O | C | Non-deterministic transport |
 
 ## Adversarial Review
 

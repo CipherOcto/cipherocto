@@ -3,7 +3,7 @@ title: "RFC-0857: Deterministic Overlay Mempool (DOM)"
 status: Draft
 version: 1.0.0
 created: 2026-05-25
-updated: 2026-05-25
+updated: 2026-05-26
 authors:
   - CipherOcto Core Team
 related:
@@ -174,6 +174,39 @@ Deterministic eviction order: lowest priority → lowest economic weight → old
 
 All mempool-critical arithmetic MUST use deterministic numeric semantics (RFC-0104 DFP, RFC-0105 DQA), especially for fee ordering, stake weighting, reward computation, AI execution pricing.
 
+### 11. Determinism Requirements (RFC-0008 Execution Classes)
+
+All DOM operations MUST be explicitly mapped to RFC-0008 execution classes:
+
+| Operation | Class | Rationale |
+|-----------|-------|-----------|
+| Intent serialization (DCS) | Class A | Consensus-critical canonical bytes |
+| Signature verification | Class A | Consensus-critical admission |
+| Canonical ordering computation | Class A | All nodes must derive identical order |
+| Admission validation | Class A | Consensus-critical intent acceptance |
+| Mempool state root computation | Class A | Consensus-critical Merkle root |
+| Deterministic eviction | Class A | All nodes must evict identical intents |
+| Fee computation (DQA/DFP) | Class A | Consensus-critical economic ordering |
+| Platform adapter I/O | Class C | Non-deterministic transport delivery |
+| Intent propagation timing | Class C | Non-deterministic network latency |
+| Anti-entropy reconciliation | Class B | Configurable timeouts |
+
+**Violation of Class A boundaries is a consensus-critical bug.** All Class A operations MUST use RFC-0104 DFP and RFC-0105 DQA for numeric computation.
+
+### 12. Mempool Capacity Limits
+
+Each mempool scope has a default capacity limit. Nodes MUST evict deterministically when capacity is reached.
+
+| Scope | Default Capacity | Eviction Trigger |
+|-------|-----------------|------------------|
+| GLOBAL | 100,000 intents | Lowest class → lowest weight → oldest timestamp |
+| CONSENSUS | 50,000 intents | Same rule |
+| MISSION | 10,000 intents | Same rule |
+| PRIVATE | 1,000 intents | Same rule |
+| LOCAL | 100 intents | Same rule |
+
+Capacities are network-configurable parameters. All nodes in a network MUST use identical capacity limits for deterministic eviction behavior.
+
 ## Performance Targets
 
 | Metric | Target |
@@ -236,6 +269,20 @@ intent_fee = base_fee × intent_type_multiplier × (1 + priority_premium)
 
 Where `intent_type_multiplier` scales by execution class and `priority_premium` is optional sender-chosen uplift.
 
+**Fee Distribution (per whitepaper §10.6):**
+
+Intent fees follow the existing CipherOcto fee distribution model:
+
+| Recipient | Share | Token | Rationale |
+|-----------|-------|-------|-----------|
+| Relay/Prover | 70% | OCTO-B | Direct relay service |
+| Orchestrator | 10% | OCTO-O | Coordination overhead |
+| Treasury | 10% | OCTO | Protocol sustainability |
+| Burn | 5% | OCTO | Deflationary pressure |
+| Governance | 5% | OCTO | Governance rewards |
+
+This ensures intent fees integrate with the existing economic model rather than creating a parallel fee system.
+
 ## Compatibility
 
 ### RFC-0843 Integration
@@ -258,13 +305,13 @@ DOM extends RFC-0843's transaction model with overlay intents:
 
 ```
 OverlayIntent:
-  intent_id       = SHA-256(sender_id || sequence || logical_timestamp)
+  intent_id       = BLAKE3-256(sender_id || sequence || logical_timestamp)
   intent_type     = 0x0001 (Transaction)
   mission_id      = [0x00; 32] (global)
   sender_id       = [0xAA; 32]
   sequence        = 42
   logical_timestamp = 1000000
-  payload_root    = SHA-256(canonical_payload_bytes)
+  payload_root    = BLAKE3-256(canonical_payload_bytes)
   economic_weight = 1000
   execution_class = 4 (Standard)
   signature       = Ed25519_sign(sender_privkey, canonical_bytes)
@@ -389,6 +436,7 @@ When the mempool reaches capacity, the evicted intent must be identical across a
 | Version | Date | Changes |
 |---------|------|---------|
 | 1.0.0 | 2026-05-25 | Initial draft |
+| 1.1.0 | 2026-05-26 | Adversarial review fixes: RFC-0008 execution class mapping, fee distribution model, mempool capacity limits |
 
 ## Related RFCs
 

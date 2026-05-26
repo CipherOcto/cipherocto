@@ -3,7 +3,7 @@ title: "RFC-0860: Proof-of-Relay (PoRelay)"
 status: Draft
 version: 1.0.0
 created: 2026-05-25
-updated: 2026-05-25
+updated: 2026-05-26
 authors:
   - CipherOcto Core Team
 related:
@@ -59,6 +59,8 @@ The key innovation: **gateways earn rewards proportional to cryptographically ve
 
 - RFC-0630 (Proof Systems): Proof-of-Inference — related proof mechanism
 - RFC-0650 (Proof Systems): Proof Aggregation — recursive aggregation primitives
+- RFC-0104 (Numeric): DFP — deterministic floating point for consensus-critical arithmetic
+- RFC-0105 (Numeric): DQA — deterministic quant arithmetic for trust score and reward computation
 
 ## Design Goals
 
@@ -160,7 +162,30 @@ flowchart TB
     STAKE --> REWARD
 ```
 
-### 2. Proof Types
+### 2. Determinism Requirements (RFC-0008 Execution Classes)
+
+All PoRelay operations MUST be explicitly mapped to RFC-0008 execution classes:
+
+| Operation | Class | Rationale |
+|-----------|-------|-----------|
+| Forwarding proof generation | Class C | Depends on relay runtime state |
+| Availability proof generation | Class C | Depends on heartbeat timing |
+| Bandwidth proof generation | Class C | Depends on relay I/O |
+| Uptime proof generation | Class C | Depends on continuous operation |
+| Forwarding proof verification | Class A | Ed25519 + hash verification, deterministic |
+| Availability proof verification | Class A | Signature + Merkle verification, deterministic |
+| Bandwidth proof verification | Class A | Signature + Merkle verification, deterministic |
+| Uptime proof verification | Class A | Signature + Merkle verification, deterministic |
+| Trust score computation | Class A | Composite formula, deterministic arithmetic |
+| Gateway heartbeat verification | Class A | Ed25519 + sequence monotonicity, deterministic |
+| Score decay computation | Class A | Exponential decay formula, deterministic |
+| Stake multiplier computation | Class A | Integer arithmetic, deterministic |
+| Proof archival | Class B | Storage operations, configurable timeouts |
+| Reward distribution | Class A | Proportional allocation, deterministic |
+
+**Critical invariant:** Trust score computation MUST be Class A. All nodes MUST derive identical trust scores from identical proof sets. Use RFC-0104 DFP and RFC-0105 DQA for all consensus-critical arithmetic in score computation.
+
+### 3. Proof Types
 
 #### 2.1 Forwarding Proof
 
@@ -172,7 +197,7 @@ Proves that a gateway correctly forwarded an envelope to the next hop.
 struct ForwardingProof {
     /// Gateway that performed the relay
     relay_gateway: [u8; 32],
-    /// SHA-256 of the forwarded envelope (NOT the payload)
+    /// BLAKE3-256 of the forwarded envelope (NOT the payload)
     envelope_hash: [u8; 32],
     /// Destination domain or next-hop gateway
     destination: [u8; 32],
@@ -180,7 +205,7 @@ struct ForwardingProof {
     logical_timestamp: u64,
     /// Sequence number (monotonic per gateway)
     sequence: u64,
-    /// SHA-256(destination || logical_timestamp || sequence)
+    /// BLAKE3-256(destination || logical_timestamp || sequence)
     /// Proves the relay knew the correct destination at the correct time
     commitment: [u8; 32],
     /// Ed25519 signature over (relay_gateway || envelope_hash || commitment)
@@ -192,9 +217,9 @@ struct ForwardingProof {
 
 ```text
 1. Receive envelope E from upstream
-2. Compute envelope_hash = SHA-256(canonical_bytes(E))
+2. Compute envelope_hash = BLAKE3-256(canonical_bytes(E))
 3. Select next-hop destination D (per RFC-0856 deterministic route selection)
-4. Compute commitment = SHA-256(D || logical_timestamp || sequence)
+4. Compute commitment = BLAKE3-256(D || logical_timestamp || sequence)
 5. Sign: signature = Ed25519_sign(relay_gateway || envelope_hash || commitment, private_key)
 6. Forward envelope to D
 7. Store ForwardingProof locally for aggregation
@@ -313,7 +338,7 @@ struct BandwidthProof {
 
 ```text
 For each envelope E relayed:
-1. Compute envelope_hash = SHA-256(canonical_bytes(E))
+1. Compute envelope_hash = BLAKE3-256(canonical_bytes(E))
 2. Record (envelope_hash, byte_count, source_peer, destination)
 3. Add to window Merkle tree
 
@@ -557,6 +582,8 @@ Route selection (RFC-0856) weights gateways by `composite` score. A Sybil attack
 | Availability Proof | OCTO-N | `uptime_hours * OCTO_N_PER_HOUR * availability_score / 1000` |
 | Bandwidth Proof | OCTO-B | `bytes_relayed * OCTO_B_PER_BYTE` |
 | Uptime Proof | OCTO-N | `compliant_windows * OCTO_N_PER_WINDOW` |
+| Proof Archival | OCTO-S | Long-term storage of proof history for audit and replay |
+| Aggregated Proof Storage | OCTO-S | Storage of recursive aggregation artifacts |
 
 #### 7.2 Penalty Conditions
 
@@ -711,12 +738,12 @@ Both use the same Deterministic Proof Substrate for recursive aggregation, enabl
 ```text
 Input:
   relay_gateway = [0xAA; 32]
-  envelope_hash = SHA-256(envelope_bytes)
+  envelope_hash = BLAKE3-256(envelope_bytes)
   destination = [0xBB; 32]
   logical_timestamp = 5000
   sequence = 42
 
-  commitment = SHA-256([0xBB; 32] || 0x0000000000001388 || 0x000000000000002A)
+  commitment = BLAKE3-256([0xBB; 32] || 0x0000000000001388 || 0x000000000000002A)
   signature = Ed25519_sign([0xAA; 32] || envelope_hash || commitment, private_key)
 
 Expected verification:
@@ -848,6 +875,7 @@ A Sybil attacker creating 1000 gateways that all forward to the same destination
 | Version | Date | Changes |
 |---------|------|---------|
 | 1.0.0 | 2026-05-25 | Initial draft — proof types, trust scoring, aggregation, economics |
+| 1.1.0 | 2026-05-26 | Adversarial review fixes: RFC-0008 execution class mapping, OCTO-S proof archival, deterministic numerics |
 
 ## Related RFCs
 

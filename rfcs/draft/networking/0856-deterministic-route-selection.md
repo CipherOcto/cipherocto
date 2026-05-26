@@ -530,6 +530,21 @@ struct TrustRoot {
 
 Trust entries are ordered by `(gateway_id, factor_type)` for deterministic Merkle construction.
 
+#### 9.3 Stake Requirements (CROSS-C1, CROSS-C2 fixes)
+
+All gateways participating in DRS routing MUST satisfy the dual-stake model (per token design):
+
+| Stake Type | Requirement | Purpose |
+|-----------|-------------|---------|
+| **Global Stake (OCTO)** | Minimum 1,000 OCTO | Security deposit, subject to slashing for misbehavior |
+| **Role Stake (OCTO-B)** | Per-network configurable | Service-level guarantee for bandwidth provision |
+
+- Gateways MUST stake BOTH OCTO (global) AND OCTO-B (bandwidth) to participate in route relay
+- The 1,000 OCTO minimum is defined in blockchain-integration.md (`Global_Stake.min_stake`)
+- Stake slashing applies for: route forgery, censorship, Byzantine behavior
+- High-reputation gateways MAY reduce required collateral (meritocratic scaling)
+- Dual-stake prevents: role tourism, stake-and-dump, farm-and-dump
+
 ### 10. Adaptive Route Evolution
 
 #### 10.1 Dynamic Reconfiguration
@@ -677,7 +692,35 @@ struct MissionRoutePolicy {
 
 Different MONs MAY use different deterministic scoring constants. Mission scoring weights override network defaults for mission-scoped routes.
 
-### 14. Route Persistence
+### 14. Route Revocation (DRS-H4 fix)
+
+A gateway MUST be able to revoke its routes if compromised or decommissioned.
+
+```rust
+#[derive(Clone, Debug)]
+#[repr(C)]
+struct RouteRevocation {
+    /// Gateway requesting revocation
+    gateway_id: [u8; 32],
+    /// Route IDs to revoke (empty = revoke all routes from this gateway)
+    route_ids: Vec<[u8; 32]>,
+    /// Epoch of revocation
+    revocation_epoch: u64,
+    /// Ed25519 signature by gateway's key
+    signature: [u8; 64],
+}
+```
+
+Revocation messages propagate via DGP (RFC-0852) as `MessageType::RouteAnnouncement` with a revocation flag. Upon receipt:
+
+1. Verify signature against gateway's public key
+2. Remove matching routes from local cache
+3. Propagate revocation to peers via DGP
+4. Log revocation for audit trail
+
+Revocations are irrevocable — a revoked route cannot be un-revoked. The gateway MUST issue a new route advertisement to replace revoked routes.
+
+### 15. Route Persistence
 
 #### 14.1 Route Cache
 

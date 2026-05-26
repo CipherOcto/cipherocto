@@ -47,6 +47,9 @@ cocoindex_main.py
 # JCode
 # .jcode/
 
+# Understand-Anything knowledge graph
+.understand-anything/
+
 # Python lockfile
 uv.lock
 .env

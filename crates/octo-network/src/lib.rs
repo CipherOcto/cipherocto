@@ -35,7 +35,7 @@ impl Network {
         let mut peers = self.peers.write().await;
         let peer_count = peers.len() + 1;
         peers.push(peer_id.clone());
-        println!("🌐 Peer added: {} (total: {} peers)", peer_id, peer_count);
+        tracing::info!(peer = %peer_id, total = peer_count, "peer added");
         Ok(())
     }
 

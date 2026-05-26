@@ -40,7 +40,7 @@ impl OverlaySequence {
 
 impl PartialOrd for OverlaySequence {
     fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
-        Some(self.canonical_cmp(other))
+        Some(std::cmp::Ord::cmp(self, other))
     }
 }
 

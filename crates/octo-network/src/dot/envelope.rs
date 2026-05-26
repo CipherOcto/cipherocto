@@ -104,9 +104,9 @@ impl DeterministicEnvelope {
         // 1. Verify envelope_id derivation
         let expected_id = self.derive_envelope_id();
         if self.envelope_id != expected_id {
-            return Err(DotError::PayloadHashMismatch {
+            return Err(DotError::InvalidEnvelopeId {
                 expected: expected_id,
-                actual: self.envelope_id,
+                computed: self.envelope_id,
             });
         }
 

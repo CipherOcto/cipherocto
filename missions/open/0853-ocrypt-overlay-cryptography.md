@@ -48,6 +48,6 @@ Very High
 
 ## Reference
 
-- RFC-0853: Overlay Cryptography (§3, §4, §5, §12, §13)
+- RFC-0853: Overlay Cryptography (§3, §4, §5, §6, §13)
 - `docs/07-developers/networking-implementation-guide.md` (Error Types, Cargo Dependencies)
 - `crates/octo-core/src/identity.rs` (existing Identity to extend)

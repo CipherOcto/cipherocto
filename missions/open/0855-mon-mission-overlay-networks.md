@@ -46,6 +46,7 @@ Very High
 
 - Mission 0850: DOT Core Envelope and Native P2P
 - Mission 0851: GDP Gateway Discovery
+- Mission 0852: DGP Deterministic Gossip
 - Mission 0853: OCrypt Overlay Cryptography
 
 ## Implementation Notes
@@ -58,6 +59,6 @@ Very High
 
 ## Reference
 
-- RFC-0855: Mission Overlay Networks (§4, §5, §6, §7, §8)
+- RFC-0855: Mission Overlay Networks (§2, §3, §4, §5, §7)
 - `docs/07-developers/networking-implementation-guide.md` (Module Tree)
 - `docs/BLUEPRINT.md` (existing mission system for disambiguation)

@@ -42,8 +42,12 @@ High
 ## Prerequisites
 
 - Mission 0850: DOT Core Envelope and Native P2P
+- Mission 0853: OCrypt Overlay Cryptography
 - Mission 0854: DPS Deterministic Proof Substrate
-- Mission 0857: DOM Deterministic Overlay Mempool
+
+## Optional Dependencies
+
+- Mission 0857: DOM Deterministic Overlay Mempool (for intent proof attachment)
 
 ## Implementation Notes
 
@@ -55,5 +59,5 @@ High
 
 ## Reference
 
-- RFC-0859: Proof-Carrying Envelopes (§4, §5, §6)
+- RFC-0859: Proof-Carrying Envelopes (§2, §4, §5, §6, §9)
 - `docs/07-developers/networking-implementation-guide.md` (Module Tree, Error Types)

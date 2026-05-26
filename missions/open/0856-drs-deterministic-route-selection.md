@@ -40,6 +40,9 @@ High
 
 - Mission 0850: DOT Core Envelope and Native P2P
 - Mission 0851: GDP Gateway Discovery
+- Mission 0852: DGP Deterministic Gossip
+- Mission 0853: OCrypt Overlay Cryptography
+- Mission 0855: MON Mission Overlay Networks
 
 ## Implementation Notes
 

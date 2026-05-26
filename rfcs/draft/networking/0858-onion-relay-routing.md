@@ -56,6 +56,8 @@ The key innovation: **relays forward encrypted envelopes without knowing the sou
 - RFC-0850 (Networking): DOT — deterministic envelope format, broadcast domains
 - RFC-0853 (Networking): OCrypt — X25519, HKDF-BLAKE3, ChaCha20-Poly1305
 - RFC-0856 (Networking): DRS — deterministic route selection
+- RFC-0008 (Process): Deterministic AI Execution Boundary — execution class mapping for determinism requirements
+- RFC-0008 (Process): Deterministic AI Execution Boundary — execution class definitions (NEW-C1)
 
 **Optional:**
 
@@ -483,7 +485,7 @@ After peeling a layer, relays verify the inner envelope's `(envelope_id, payload
 
 The outer replay check is performed on plaintext metadata (route_id, sequence, timestamp) that is included in the onion's authenticated but unencrypted header. This allows gateways to reject replays without performing any decryption.
 
-### 11. Determinism Requirements
+### 11. Determinism Requirements (per RFC-0008)
 
 | Operation | Class | Rationale |
 |-----------|-------|-----------|

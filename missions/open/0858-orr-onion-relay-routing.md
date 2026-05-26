@@ -52,5 +52,5 @@ Very High
 
 ## Reference
 
-- RFC-0858: Onion Relay Routing (§4, §5, §6, §7, §13)
+- RFC-0858: Onion Relay Routing (§4, §5, §6, §7, §10)
 - `docs/07-developers/networking-implementation-guide.md` (Module Tree)

@@ -1,0 +1,58 @@
+# Mission: MON Mission Overlay Networks
+
+## Status
+
+Open
+
+## RFC
+
+RFC-0855: Mission Overlay Networks (MON)
+
+## Summary
+
+Implement mission overlay networks with mission identity, lifecycle state machine (8 states), membership roles, topology models, key hierarchy derivation, and integration with BLUEPRINT's existing mission system.
+
+## Acceptance Criteria
+
+- [ ] `MissionId` with network_id, mission_hash, version
+- [ ] `MissionDescriptor` with mission_id, name, description, lifecycle_state, topology_model, creation_epoch, coordinator, min_participants
+- [ ] Mission lifecycle state machine: Created → Discovering → Forming → Active → Degraded → Recovering → Terminated → Archived
+- [ ] State transitions require 2/3 majority voting (Coordinator proposes)
+- [ ] `MissionNode` with peer_id, role_flags, trust_score, capability_root, join_epoch
+- [ ] 8 roles: Coordinator, Executor, Relay, Validator, Observer, Archivist, Prover, Aggregator
+- [ ] Role escalation prevention: Observer→Executor requires Coordinator, any→Coordinator requires 2/3 vote
+- [ ] Topology models: Mesh, Hierarchical, Star, Swarm, Ring, Hybrid with minimum participants
+- [ ] `mission_genesis_secret` derivation: HKDF-BLAKE3(creator_peer_id || creation_epoch || nonce, "mission-genesis-secret")
+- [ ] Mission naming disambiguation from BLUEPRINT missions (section in RFC)
+- [ ] `MonError` enum with all error variants
+- [ ] Unit tests: 15+ tests covering lifecycle transitions, role enforcement, key derivation
+- [ ] `cargo fmt -- --check` passes
+- [ ] `cargo test -p octo-network` passes
+
+## Location
+
+`crates/octo-network/src/mon/`
+
+## Complexity
+
+Very High
+
+## Prerequisites
+
+- Mission 0850: DOT Core Envelope and Native P2P
+- Mission 0851: GDP Gateway Discovery
+- Mission 0853: OCrypt Overlay Cryptography
+
+## Implementation Notes
+
+- See `docs/07-developers/networking-implementation-guide.md` for concrete Rust code
+- MON "missions" are overlay coordination events — NOT BLUEPRINT implementation missions
+- Minimum participants: Mesh=2, Hierarchical=3, Star=2, Swarm=5, Ring=3, Hybrid=2
+- Key hierarchy uses HKDF-BLAKE3 for all derivation
+- Topology Merkle commitment for deterministic replay
+
+## Reference
+
+- RFC-0855: Mission Overlay Networks (§4, §5, §6, §7, §8)
+- `docs/07-developers/networking-implementation-guide.md` (Module Tree)
+- `docs/BLUEPRINT.md` (existing mission system for disambiguation)

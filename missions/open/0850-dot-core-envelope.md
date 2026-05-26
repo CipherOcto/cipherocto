@@ -20,7 +20,9 @@ Implement the deterministic envelope format, broadcast domain IDs, overlay seque
 - [ ] `ReplayCache` with BTreeMap, deterministic eviction, configurable window
 - [ ] `PlatformAdapter` trait with async send/receive/canonicalize
 - [ ] `NativeP2P` adapter implementation using libp2p gossipsub
-- [ ] `DotError` enum with all error variants
+- [ ] `DotError` enum with all error variants (InvalidSignature, ReplayDetected, InvalidEnvelopeId, CanonicalizationFailed, EnvelopeTooLarge, UnsupportedVersion, TtlExpired, etc.)
+- [ ] `CanonicalEvent` struct for cross-platform event normalization (MessageType, payload, metadata)
+- [ ] `EnvelopeFlags` enum with ENCRYPTED, FRAGMENTED, MISSION_SCOPED, ROUTE_TRACE_PRESENT
 - [ ] Unit tests: 15+ tests covering determinism, serialization, replay detection
 - [ ] Integration test: envelope round-trip through NativeP2P adapter
 - [ ] `cargo fmt -- --check` passes

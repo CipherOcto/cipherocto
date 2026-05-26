@@ -36,7 +36,8 @@ Very High
 ## Prerequisites
 
 - Mission 0853: OCrypt Overlay Cryptography
-- Mission 0858: ORR Onion Relay Routing
+
+> **Note:** This mission provides the onion encryption primitives that Mission 0858 (ORR) depends on. Mission 0858 should depend on BOTH 0853 AND 0853b.
 
 ## Implementation Notes
 

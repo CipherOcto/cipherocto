@@ -119,9 +119,14 @@ trait DeterministicProofSystem {
     type Proof;
     type VerificationKey;
     type PublicInputs;
+    type Witness;
 
-    /// Generate a proof given trace commitment and public inputs
+    /// Generate a proof given witness data, trace commitment, and public inputs.
+    /// witness: computation trace, intermediate values, randomness seed
+    /// trace_commitment: Merkle root of the computation trace
+    /// public_inputs: inputs visible to verifier
     fn prove(
+        witness: &Self::Witness,
         trace_commitment: [u8; 32],
         public_inputs: Self::PublicInputs,
     ) -> Result<Self::Proof, ProofError>;
@@ -135,31 +140,113 @@ trait DeterministicProofSystem {
 
     /// Compute proof commitment (hash of proof for Merkle trees)
     fn proof_commitment(proof: &Self::Proof) -> [u8; 32];
+
+    /// Return the execution model for this proof system
+    fn execution_model() -> ProofExecutionModel;
+}
+```
+
+**ProofError Enum:**
+
+```rust
+enum ProofError {
+    /// Witness data is invalid or incomplete
+    InvalidWitness { reason: &'static str },
+    /// Trace commitment does not match witness
+    TraceMismatch { expected: [u8; 32], computed: [u8; 32] },
+    /// Proof generation failed (backend-specific)
+    ProofGenerationFailed { backend: &'static str, detail: &'static str },
+    /// Verification failed — proof is invalid
+    VerificationFailed,
+    /// Verification key is invalid
+    InvalidVerificationKey,
+    /// Unsupported proof system
+    UnsupportedProofSystem { suite_id: ProofSuiteId },
+    /// Consensus boundary violation
+    ConsensusBoundaryViolation { operation: &'static str },
 }
 ```
 
 ### 2. Proof Execution Models
 
 ```rust
-enum ProofExecutionModel {
+/// RFC-0008 execution class mapping for proof operations
+enum ProofExecutionClass {
+    /// Class A: Protocol Deterministic — consensus-critical
+    /// Proof verification MUST be deterministic across all implementations
+    ClassA,
+    /// Class B: Deterministic Off-Chain — deterministic but not consensus-ordered
+    /// Proof generation with deterministic witness (DQA/DFP inputs)
+    ClassB,
+    /// Class C: Probabilistic — non-deterministic
+    /// Proof generation with OS randomness, hardware acceleration
+    ClassC,
+}
+
+/// Backend execution model (circuit type)
+enum ProofCircuitModel {
     AIR,        // Algebraic Intermediate Representation (STARKs)
     R1CS,       // Rank-1 Constraint Systems (SNARKs)
     PLONKISH,   // PLONK-style circuits
     zkVM,       // Zero-knowledge virtual machine
     Recursive,  // Recursive composition
 }
+
+/// RFC-0008 execution class mapping for DPS operations
+/// | DPS Operation                | Class | Rationale |
+/// |------------------------------|-------|-----------|
+/// | Proof verification           | A     | Consensus-critical — must be identical |
+/// | Proof commitment computation | A     | Consensus-critical — Merkle inclusion |
+/// | Public input canonicalization| A     | Consensus-critical — serialization |
+/// | Proof generation (DQA witness)| B    | Deterministic witness, off-chain |
+/// | Proof generation (OS random) | C     | Non-deterministic randomness |
+/// | Witness generation (DQA/DFP) | B     | Deterministic numeric computation |
+/// | Backend selection            | B     | Mission-configured, not consensus-ordered |
+/// | Recursive aggregation        | B     | Deterministic given child proofs |
+/// | Proof serialization          | A     | Must be canonical (RFC-0126) |
 ```
 
 ### 3. Proof Suite Identification
 
 ```rust
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[repr(C)]
 struct ProofSuiteId {
-    proof_system: u16,      // STARK=1, PLONK=2, Halo2=3, RISC0=4, zkVM=5
-    field_id: u16,          // Field identifier
-    hash_id: u16,           // Hash function used in proof
-    recursion_scheme: u16,  // Recursion strategy
+    proof_system: u16,      // STARK=1, PLONK=2, Halo2=3, RISC0=4, SP1=5
+    field_id: u16,          // Field identifier (see registry below)
+    hash_id: u16,           // Hash function used in proof (see CryptoSuiteId)
+    recursion_scheme: u16,  // Recursion strategy (see registry below)
 }
 ```
+
+**Proof System Registry:**
+
+| ID | Backend | Notes |
+|----|---------|-------|
+| 0x0001 | STARK (STWO) | Transparent, no trusted setup, Cairo traces |
+| 0x0002 | PLONK | Succinct proofs, universal setup |
+| 0x0003 | Halo2 | No trusted setup, recursive composition |
+| 0x0004 | RISC0 | RISC-V zkVM, STARK-based |
+| 0x0005 | SP1 | RISC-V zkVM, PLONK-based |
+
+**Recursion Scheme Registry:**
+
+| ID | Scheme | Notes |
+|----|--------|-------|
+| 0x0000 | None | No recursion |
+| 0x0001 | Binary tree | RFC-0650 binary aggregation |
+| 0x0002 | Accumulation | Halo2 accumulation scheme |
+| 0x0003 | Folding | Nova/Nova-style folding |
+
+**Field ID Registry:**
+
+| ID | Field | Notes |
+|----|-------|-------|
+| 0x0001 | BN254 | Ethereum-compatible |
+| 0x0002 | BLS12-381 | Standard pairing curve |
+| 0x0003 | Goldilocks | STWO-native, 64-bit |
+
+**Backend Registration:** New backends are registered by assigning a new `proof_system` ID (0x0006-0xFFFF). Implementations MUST support at least STARK (0x0001). Other backends are optional per mission configuration.
 
 ### 4. Proof-Carrying Envelopes (RFC-0859 integration)
 
@@ -183,7 +270,7 @@ This enables: verifiable AI inference, mission correctness proofs, validator pro
 
 ### 6. Deterministic Witness Model
 
-Small numeric divergence (`0.30000000001` vs `0.29999999998`) can completely invalidate proofs. CipherOcto's deterministic numeric stack (RFC-0104 DFP, RFC-0105 DQA) becomes a ZK-safe arithmetic substrate for witness generation.
+Small numeric divergence (`0.30000000001` vs `0.29999999998`) can completely invalidates proofs. CipherOcto's deterministic numeric stack (RFC-0104 DFP, RFC-0105 DQA) becomes a ZK-safe arithmetic substrate for witness generation.
 
 **DQA properties and AIR benefits:**
 
@@ -194,6 +281,37 @@ Small numeric divergence (`0.30000000001` vs `0.29999999998`) can completely inv
 | Canonicalization | Stable witness generation |
 | Deterministic rounding | Reproducible traces |
 | Bounded ranges | Lower proving cost |
+
+**WitnessGenerator trait:**
+
+```rust
+trait WitnessGenerator {
+    type Input;
+    type Witness;
+
+    /// Generate a deterministic witness from DQA/DFP inputs.
+    /// MUST use RFC-0105 DQA arithmetic for all numeric operations.
+    /// MUST use RFC-0104 DFP for any floating-point conversion.
+    /// MUST produce identical witness given identical inputs across all implementations.
+    fn generate(
+        input: &Self::Input,
+        trace_commitment: &[u8; 32],
+    ) -> Result<Self::Witness, ProofError>;
+
+    /// Convert floating-point values to field elements deterministically
+    fn fp_to_field_element(value: DfpValue, field_prime: &[u8; 32]) -> [u8; 32];
+}
+```
+
+**DQA/DFP → Witness integration:**
+
+```text
+1. Input values are represented as DQA fixed-point integers (RFC-0105)
+2. Floating-point inputs are converted via DFP canonicalization (RFC-0104)
+3. All arithmetic uses DQA's integer core (no floating-point in witness generation)
+4. Field element conversion: DQA integer → mod field_prime (deterministic)
+5. Witness is serialized via RFC-0126 DCS before passing to prover
+```
 
 ### 7. Mission-Scoped Verifiers
 
@@ -211,6 +329,19 @@ CipherOcto supports all under one deterministic substrate.
 
 ### 8. Recursive Aggregation
 
+DPS integrates with RFC-0650 (Proof Aggregation Protocol) for recursive proof compression.
+
+**RFC-0650 Actor Model:**
+
+| Actor | Role | Token |
+|-------|------|-------|
+| Worker | Produces individual proofs | OCTO-A (compute) |
+| Collector | Gathers proofs from workers | OCTO-B (bandwidth) |
+| Aggregator | Builds recursive aggregation tree | OCTO-A (compute) |
+| Verifier | Validates aggregated proofs | OCTO-N (node ops) |
+
+**Aggregation Tree (Binary Recursion per RFC-0650):**
+
 ```text
 Level 0: Individual proofs (per-computation)
   ↓ aggregate
@@ -222,6 +353,14 @@ Level 3: Global proof (per-epoch)
 ```
 
 Verification at any level is O(1) regardless of child count.
+
+**Double-aggregation resolution (RFC-0650 first-seen-wins):**
+
+If two aggregators produce competing aggregated proofs for the same set of children, the first proof seen by the network wins. This is deterministic because all nodes process the same canonical ordering of proofs.
+
+**RFC-0630 (Proof-of-Inference) integration:**
+
+DPS generalizes RFC-0630's proof model. RFC-0630 defines Proof Structure as `(model_id, input_hash, output_hash, stark_proof)` — this maps to DPS's `DeterministicProofSystem` trait with `PublicInputs = (model_id, input_hash, output_hash)` and `Proof = stark_proof`. RFC-0630's verification modes (full, sampling, optimistic) are mission-scoped policies configured per `ProofSuiteId`.
 
 ### 9. Integration with OCrypt
 
@@ -265,10 +404,12 @@ DOT / DGP Networking
 - ProofExecutionModel enum
 - STARK backend integration (STWO or RISC0)
 
-### Phase 2: Proof-Carrying Envelopes (Months 3-6)
-- ProofCarryingEnvelope (RFC-0859)
+### Phase 2: Witness Generation and Verifier Registry (Months 3-6)
+- WitnessGenerator trait implementation
+- DQA/DFP witness integration (RFC-0104/0105)
 - Mission-scoped verifier registry
-- DQA/DFP witness integration
+- ProofError handling
+- Backend registration mechanism
 
 ### Phase 3: Recursive Aggregation (Months 6-9)
 - Multi-level aggregation pipeline
@@ -329,13 +470,13 @@ Backend selection is per-mission, allowing different privacy/cost tradeoffs.
 
 ```text
 Input:
-  trace_commitment = SHA-256("test_execution_trace")
-  public_inputs = { mission_id: [0x01; 32], result_hash: SHA-256("result") }
+  trace_commitment = BLAKE3-256("test_execution_trace")
+  public_inputs = { mission_id: [0x01; 32], result_hash: BLAKE3-256("result") }
   proof_suite = ProofSuiteId { proof_system: 1 (STARK), field_id: 1, hash_id: 1, recursion_scheme: 0 }
 
 Expected:
   proof_blob = [valid STARK proof bytes]
-  proof_commitment = SHA-256(proof_blob)
+  proof_commitment = BLAKE3-256(proof_blob)
   verification_result = true when verified with matching vk
 ```
 
@@ -344,7 +485,7 @@ Expected:
 ```text
 Input:
   vk = [verification key for STARK suite]
-  public_inputs = { mission_id: [0x01; 32], result_hash: SHA-256("result") }
+  public_inputs = { mission_id: [0x01; 32], result_hash: BLAKE3-256("result") }
   proof = [proof from generation vector above]
 
 Expected:
@@ -470,24 +611,13 @@ A single global proof system forces all missions to accept the same tradeoffs. M
 ## Future Work
 
 - F1: GPU-accelerated proof generation with STWO SIMD
-- F2: Formal verification of DeterministicProofSystem trait
-- F3: Proof market integration for decentralized proving
-- F4: Cross-chain proof verification bridges
+- F2: Formal verification of DeterministicProofSystem trait properties (determinism, completeness, soundness)
+- F3: Proof market integration for decentralized proving (supply/demand pricing)
+- F4: Cross-chain proof verification bridges (Ethereum, Cosmos, Solana)
 - F5: Hardware accelerator support (FPGA, ASIC) for proving
 - F6: Proof composition DSL for mission-specific proof pipelines
-- F7: Integration with Ethereum's EIP-4844 blob proofs
-- F8: Post-quantum proof system migration
-
-## Future Work
-
-- F1: Post-quantum proof system integration (Lattice-based, STARK-Lattice hybrids)
-- F2: Hardware-accelerated proof generation (GPU, FPGA, ASIC)
-- F3: Cross-chain proof verification bridges
-- F4: Proof marketplace for decentralized proof generation
-- F5: AI-optimized proof system selection based on mission characteristics
-- F6: Zero-knowledge machine learning (ZKML) integration via Cairo/STWO
-- F7: Proof composition for complex multi-step verification
-- F8: Formal verification of proof system implementations
+- F7: ZKML integration via Cairo/STWO for verifiable AI inference
+- F8: Post-quantum proof system migration (Lattice-based, STARK-Lattice hybrids)
 
 ## Key Files to Modify
 

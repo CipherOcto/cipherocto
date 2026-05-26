@@ -114,11 +114,14 @@ Without OCrypt:
 **Future Agility:**
 
 ```rust
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[repr(C)]
 struct CryptoSuiteId {
     hash_id: u16,
     signature_id: u16,
     kex_id: u16,
     aead_id: u16,
+    kdf_id: u16,
 }
 ```
 
@@ -170,6 +173,20 @@ struct EncryptedEnvelope {
 }
 ```
 
+**AAD (Associated Authenticated Data) Format:**
+
+AAD MUST include all context-binding fields to prevent context-swapping attacks:
+
+```text
+aad = envelope_id || sender_ephemeral_public || mission_id || logical_timestamp
+```
+
+Where:
+- `envelope_id` — binds ciphertext to specific envelope (prevents cross-envelope replay)
+- `sender_ephemeral_public` — binds to sender (prevents sender impersonation)
+- `mission_id` — binds to mission scope (prevents cross-mission injection)
+- `logical_timestamp` — provides ordering context (prevents reordering attacks)
+
 **Deterministic validation:** Encryption MAY be probabilistic. Validation MUST remain deterministic. Consensus verifies: canonical plaintext hash, signature validity, envelope structure, replay invariants — NOT ciphertext byte equality.
 
 ### 5. Session Key Establishment
@@ -181,6 +198,8 @@ X25519 → HKDF-BLAKE3 → ChaCha20-Poly1305
 All relay sessions SHOULD use ephemeral keys. Compromise of long-term identity keys MUST NOT expose past traffic.
 
 **Session scope:** Peer, Gateway, Mission, Route, Broadcast Domain.
+
+**Mutual Authentication:** Session establishment MUST include authentication to prevent MITM attacks. After X25519 key exchange, both parties MUST sign the shared transcript (ephemeral_public_a || ephemeral_public_b || session_key) with their long-term identity keys. Verification of the remote party's signature proves control of the claimed identity. Without mutual authentication, relay impersonation is possible.
 
 ### 6. Mission Cryptography
 
@@ -219,7 +238,7 @@ struct GatewayAttestation {
 }
 ```
 
-### 10. Onion Relay Extension (Preview)
+### 10. Onion Relay Extension
 
 ```text
 Payload → encrypt for relay N → encrypt for relay N-1 → ... → encrypt for relay entry
@@ -227,7 +246,38 @@ Payload → encrypt for relay N → encrypt for relay N-1 → ... → encrypt fo
 
 Each relay knows ONLY: previous hop, next hop, local instructions. NOT: origin, destination, full route, mission topology.
 
-Full specification in RFC-0858 (Onion Relay Routing).
+**Onion Layer Construction:**
+
+```rust
+struct OnionLayer {
+    /// Encrypted next-hop instructions + inner layers
+    encrypted_payload: Vec<u8>,
+    /// Ephemeral public key for this layer (X25519)
+    ephemeral_key: [u8; 32],
+    /// Nonce for ChaCha20-Poly1305 (derived from shared secret)
+    nonce: [u8; 24],
+    /// Authentication tag
+    auth_tag: [u8; 16],
+}
+```
+
+**Layer encryption order (inside-out):**
+
+1. Encrypt payload with exit relay's session key → `layer_N`
+2. Wrap `layer_N` with next-hop instructions + middle relay's session key → `layer_N-1`
+3. Continue until entry relay → `layer_1`
+
+**Relay session key derivation:**
+
+```text
+shared_secret = X25519(ephemeral_secret, relay_public_key)
+session_key = HKDF-BLAKE3(shared_secret, "ocrypt:onion:v1", hop_index || route_id)
+nonce = HKDF-BLAKE3(session_key, "ocrypt:nonce:v1", layer_index)[0..24]
+```
+
+**Forward secrecy:** Each layer uses a fresh ephemeral X25519 key. Compromise of one relay's key does NOT expose other layers or past sessions.
+
+Full routing specification in RFC-0858 (Onion Relay Routing).
 
 ### 11. Deterministic Randomness
 
@@ -239,17 +289,66 @@ HKDF(seed || context || epoch)
 
 Forbidden sources for consensus: OS entropy timing, hardware RNG variance, platform randomness APIs, nondeterministic nonce generation.
 
-### 12. Key Rotation
+### 12. Key Rotation and Revocation
 
 Identity keys MAY rotate. Rotation MUST produce signed successor linkage.
 
 Session keys SHOULD rotate aggressively, especially for high-value missions and validator traffic.
+
+**Key Revocation:** If a key is compromised:
+
+1. **Immediate:** Publish a signed revocation message containing `(compromised_key_id, revocation_epoch, successor_key_id, signature_by_successor)`
+2. **Grace period:** 24 hours for peers to observe revocation via GDP (RFC-0851)
+3. **After grace period:** All signatures by compromised key are rejected
+4. **No CRL equivalent:** Revocation is distributed via gossip (RFC-0852) — no centralized revocation list
+5. **Retroactive invalidation:** Signatures made BEFORE revocation epoch remain valid (to avoid chain reorganization)
 
 ### 13. Consensus Boundary
 
 **Consensus MUST NOT depend on:** ciphertext bytes, encryption randomness, carrier metadata, platform timestamps, packet fragmentation.
 
 **Consensus MAY depend on:** canonical plaintext hashes, deterministic serialization, verified signatures, Merkle commitments, route commitments.
+
+**RFC-0008 Execution Class Mapping:**
+
+| OCrypt Operation | Execution Class | Rationale |
+|-----------------|-----------------|-----------|
+| BLAKE3-256 hash | Class A (Protocol Deterministic) | Consensus-critical state root |
+| Ed25519 signature verify | Class A | Consensus-critical authentication |
+| Ed25519 signature sign | Class B (Deterministic Off-Chain) | Deterministic but not consensus-ordered |
+| X25519 key exchange | Class B | Session establishment, not consensus |
+| ChaCha20-Poly1305 encrypt | Class C (Probabilistic) | Nonce may use OS randomness |
+| ChaCha20-Poly1305 decrypt | Class B | Deterministic given key+nonce |
+| HKDF-BLAKE3 key derivation | Class A | Deterministic derivation |
+| Merkle tree construction | Class A | Consensus-critical commitments |
+| Nonce generation (consensus) | Class A | Deterministic derivation required |
+| Nonce generation (non-consensus) | Class C | OS randomness acceptable |
+
+**Consensus Boundary Enforcement:**
+
+```rust
+/// Error types that enforce the consensus boundary
+enum CryptoError {
+    /// Attempted non-deterministic operation in consensus-critical path
+    ConsensusBoundaryViolation { operation: &'static str, context: &'static str },
+    /// Nonce reuse detected (catastrophic for ChaCha20-Poly1305)
+    NonceReuse { nonce: [u8; 24], first_use_epoch: u64, second_use_epoch: u64 },
+    /// Invalid nonce derivation
+    InvalidNonce { reason: &'static str },
+    /// Key derivation failure
+    KeyDerivationFailure { stage: &'static str },
+    /// Signature verification failed
+    InvalidSignature,
+    /// Proof verification failed
+    InvalidProof,
+    /// Replay detected
+    ReplayDetected { envelope_id: [u8; 32] },
+    /// Algorithm not supported
+    UnsupportedAlgorithm { suite_id: CryptoSuiteId },
+}
+```
+
+**Structural enforcement:** Consensus-critical code paths MUST NOT call functions that source OS randomness or wall-clock time. Implementations SHOULD use type-system separation (e.g., `ConsensusContext` vs `SessionContext`) to enforce this at compile time.
 
 ## Performance Targets
 
@@ -324,10 +423,10 @@ Input:
   identity_epoch = 0
 
 Derivation:
-  peer_id = SHA-256(public_key || identity_epoch || "ocrypt:identity:v1")
+  peer_id = BLAKE3-256(public_key || identity_epoch || "ocrypt:identity:v1")
 
 Expected:
-  peer_id = SHA-256([0x42; 32] || [0x00; 8] || "ocrypt:identity:v1")
+  peer_id = BLAKE3-256([0x42; 32] || [0x00; 8] || "ocrypt:identity:v1")
 ```
 
 ### Test Vector 2: Session Handshake
@@ -354,7 +453,10 @@ Key derivation:
   )
 
 Encryption:
-  nonce = [0x00; 24]  (deterministic for consensus: HKDF(seed || context || epoch))
+  nonce = HKDF-BLAKE3(session_key, "ocrypt:nonce:v1", aad || epoch)[0..24]
+  // WARNING: Nonce MUST be unique per (session_key, message). Reuse is catastrophic.
+  // For consensus-critical paths: deterministic derivation from (session_key, aad, epoch)
+  // For non-consensus paths: OS randomness is acceptable
   ciphertext = ChaCha20-Poly1305-Seal(session_key, nonce, plaintext, aad)
 ```
 
@@ -365,7 +467,7 @@ Input:
   plaintext = "DOT/1/hello world"
   sender_ephemeral_secret = [0xC1; 32]
   recipient_public_key = [0xD1; 32]
-  envelope_id = SHA-256("test_envelope")
+  envelope_id = BLAKE3-256("test_envelope")
 
 Derivation:
   sender_ephemeral_public = X25519_base(sender_ephemeral_secret)
@@ -376,7 +478,7 @@ Derivation:
   ciphertext = ChaCha20-Poly1305-Seal(session_key, nonce, plaintext, aad)
 
 Expected EncryptedEnvelope:
-  envelope_hash = SHA-256(plaintext)
+  envelope_hash = BLAKE3-256(plaintext)
   sender_ephemeral_key = sender_ephemeral_public
   nonce = [derived]
   ciphertext = [derived]
@@ -389,6 +491,9 @@ Expected EncryptedEnvelope:
 Input:
   mission_id = [0x01; 32]
   mission_root_seed = [0xF1; 32]
+  // Note: In practice, mission_root_seed is derived from:
+  //   mission_root_seed = HKDF-BLAKE3(coordinator_identity_key, "ocrypt:mission:seed:v1", mission_id)
+  // or from a DKG ceremony for decentralized mission creation
 
 Derivation:
   mission_root_key = HKDF-BLAKE3(mission_root_seed, "ocrypt:mission:root:v1", mission_id, 32)

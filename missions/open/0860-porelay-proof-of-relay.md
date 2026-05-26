@@ -14,8 +14,13 @@ Implement proof-of-relay with relay proofs (forwarding, availability, bandwidth,
 
 ## Acceptance Criteria
 
-- [ ] `RelayProof` with proof_type, relay_gateway, envelope_hash, timestamp, signature
-- [ ] 4 proof types: Forwarding, Availability, Bandwidth, Uptime
+- [ ] `ForwardingProof` with envelope_hash, relay_gateway, next_hop, timestamp, signature
+- [ ] `AvailabilityProof` with gateway_id, epoch_start, epoch_end, uptime_ratio, signature
+- [ ] `BandwidthProof` with gateway_id, bytes_relayed, epoch, signature
+- [ ] `UptimeProof` with gateway_id, consecutive_epochs, signature
+- [ ] `RelayScore` with forwarding_score, availability_score, bandwidth_score, uptime_score, aggregate
+- [ ] `AggregatedRelayProof` with constituent_proofs, aggregation_root
+- [ ] `GatewayAdvertisementWithPoR` extending GatewayAdvertisement with relay_proofs
 - [ ] `GatewayHeartbeat` with gateway_id, sequence, active_routes, load_class, uptime_class, signature
 - [ ] `TrustScore` with historical_uptime, proof_of_relay, stake_weight, mission_trust, consensus_participation
 - [ ] Trust score computation is RFC-0008 Class A (deterministic)

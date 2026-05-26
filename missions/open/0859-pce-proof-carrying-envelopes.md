@@ -15,6 +15,10 @@ Implement proof-carrying envelopes with proof attachment, verification pipeline,
 ## Acceptance Criteria
 
 - [ ] `ProofCarryingEnvelope` with envelope (RFC-0850), proof_system_id, proof_commitment, public_input_root, proof_blob
+- [ ] `ProofSystemId` struct with backend_id, scheme_id, security_level
+- [ ] `VerificationResult` struct with valid, verification_time_us, error_detail
+- [ ] `AggregatedProof` struct with constituent_proofs, aggregation_root, proof_count
+- [ ] `MissionProofPolicy` struct with required_proof_types, min_security_level, max_verification_time_ms
 - [ ] Proof verification pipeline: deserialize → verify commitment → verify proof → check execution class
 - [ ] Canonical proof boundary: consensus NEVER depends on prover runtime, hardware, proving time
 - [ ] Consensus MAY depend ONLY on: (public_inputs, canonical_verifier, proof_bytes, verification_result)

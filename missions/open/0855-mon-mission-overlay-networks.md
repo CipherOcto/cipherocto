@@ -16,6 +16,11 @@ Implement mission overlay networks with mission identity, lifecycle state machin
 
 - [ ] `MissionId` with network_id, mission_hash, version
 - [ ] `MissionDescriptor` with mission_id, name, description, lifecycle_state, topology_model, creation_epoch, coordinator, min_participants
+- [ ] `MissionState` enum: Created, Discovering, Forming, Active, Degraded, Recovering, Terminated, Archived
+- [ ] `AdmissionPolicy` struct: open, invite_only, stealth, capability_required, stake_minimum
+- [ ] `TopologyModel` enum: Mesh, Hierarchical, Star, Swarm, Ring, Hybrid
+- [ ] `TopologyCommitment` struct: Merkle root of gateway sequence for deterministic replay
+- [ ] `MissionKeyHierarchy` with mission_root_key, transport_keys_root, relay_keys_root, execution_keys_root
 - [ ] Mission lifecycle state machine: Created → Discovering → Forming → Active → Degraded → Recovering → Terminated → Archived
 - [ ] State transitions require 2/3 majority voting (Coordinator proposes)
 - [ ] `MissionNode` with peer_id, role_flags, trust_score, capability_root, join_epoch

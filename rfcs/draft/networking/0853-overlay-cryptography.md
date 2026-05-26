@@ -10,11 +10,8 @@ related:
   - RFC-0850 (Networking): Deterministic Overlay Transport
   - RFC-0851 (Networking): Gateway Discovery Protocol
   - RFC-0852 (Networking): Deterministic Gossip Protocol
-  - RFC-0009 (Process): Identity Management
   - RFC-0102 (Numeric): Wallet Cryptography
-  - RFC-0949 (Economics): Enterprise SSO
-  - RFC-0105 (Numeric): Deterministic Quant Arithmetic
-  - RFC-0104 (Numeric): Deterministic Floating Point
+  - RFC-0009 (Process): Identity Management
 ---
 
 # RFC-0853: Overlay Cryptography (OCrypt)
@@ -33,1123 +30,512 @@ Draft
 
 ## Summary
 
-Overlay Cryptography (OCrypt) defines the cryptographic model for CipherOcto overlay networking. OCrypt provides sovereign overlay identity, deterministic cryptographic envelopes, transport-independent encryption, mission-scoped trust domains, forward secrecy, replay-safe signatures, onion-capable relay encryption, multi-hop confidentiality, and deterministic canonical cryptographic boundaries.
+Overlay Cryptography (OCrypt) defines the cryptographic model for CipherOcto overlay networking.
 
-The most important invariant:
+OCrypt provides:
 
-> **External platforms MUST NEVER be trusted for confidentiality, authenticity, ordering, or integrity.** All trust exists ONLY inside the CipherOcto cryptographic layer.
+- Sovereign overlay identity (platform-independent)
+- Deterministic cryptographic envelopes
+- Transport-independent encryption
+- Mission-scoped trust domains
+- Forward secrecy via ephemeral session keys
+- Replay-safe signatures
+- Onion-capable relay encryption
+- Multi-hop confidentiality
+- Deterministic canonical cryptographic boundaries
 
-OCrypt is explicitly designed for hostile heterogeneous transport environments where underlying communication carriers are assumed observable, mutable, censorable, replayable, and adversarial.
+The core invariant: **External platforms MUST NEVER be trusted for confidentiality, authenticity, ordering, or integrity.** All trust exists ONLY inside the CipherOcto cryptographic layer.
 
 ## Dependencies
 
 **Requires:**
 
-- RFC-0850 (Networking): Deterministic Overlay Transport — envelope format, gateway model
-- RFC-0851 (Networking): Gateway Discovery Protocol — gateway identity advertisement
-- RFC-0852 (Networking): Deterministic Gossip Protocol — propagation primitives
-- RFC-0105 (Numeric): Deterministic Quant Arithmetic — ZK-safe arithmetic for witness generation
-- RFC-0104 (Numeric): Deterministic Floating Point — deterministic numeric semantics
+- RFC-0850 (Networking): DOT — envelope format
+- RFC-0851 (Networking): GDP — gateway discovery
+- RFC-0852 (Networking): DGP — gossip propagation
+- RFC-0102 (Numeric): Wallet Cryptography — key formats
+- RFC-0009 (Process): Identity Management — identity model
 
 **Optional:**
 
-- RFC-0009 (Process): Identity Management — core identity model
-- RFC-0102 (Numeric): Wallet Cryptography — key pair format
-- RFC-0949 (Economics): Enterprise SSO — IdentityProvider model
-- RFC-0854 (Networking): Deterministic Proof Substrate — ZK proof integration
+- RFC-0854 (Networking): DPS — proof substrate
 
 ## Design Goals
 
 | Goal | Target | Metric |
 |------|--------|--------|
-| G1: Sovereign Identity | Platform-independent | Identity survives platform account loss |
-| G2: Deterministic Verification | 100% replay consistency | Identical verification results across all implementations |
-| G3: Forward Secrecy | Session compromise isolation | Compromise of long-term keys does not expose past traffic |
-| G4: Transport Independence | Carrier-agnostic | Encryption works over any DOT carrier (RFC-0850) |
-| G5: Replay Resistance | Zero false positives | Valid envelopes never rejected; replayed envelopes always detected |
-| G6: Mission Isolation | Cryptographic compartmentalization | Compromise of one mission does not affect others |
-| G7: Multi-Hop Privacy | Onion-capable | Relay nodes cannot reconstruct full route |
-| G8: Cryptographic Agility | Algorithm upgradeability | Hash, signature, KEX, AEAD can be upgraded independently |
-| G9: Byzantine Resilience | Hostile relay tolerance | Malicious gateways cannot forge, replay, or undetectably modify envelopes |
+| G1: Sovereign Identity | Platform-independent identity | Zero platform dependency |
+| G2: Deterministic Verification | Consensus-safe validation | 100% identical verification |
+| G3: Forward Secrecy | Session compromise isolation | Past traffic protected |
+| G4: Transport Independence | Carrier-agnostic encryption | Works across all carriers |
+| G5: Replay Resistance | Cryptographic replay prevention | Zero replay acceptance |
+| G6: Mission Isolation | Scoped cryptographic overlays | Zero cross-mission leakage |
+| G7: Multi-Hop Privacy | Onion-capable routing | Relay knowledge isolation |
+| G8: Cryptographic Agility | Upgradeable algorithms | Algorithm migration support |
 
 ## Motivation
 
 ### CAN WE? — Feasibility Research
 
-The fundamental question: **Can we build a cryptographic layer that operates above hostile heterogeneous communication platforms while maintaining deterministic consensus guarantees?**
+The CipherOcto overlay requires cryptography that:
 
-Research confirms feasibility through:
+1. Works across hostile, observable, mutable, censorable, replayable transports
+2. Remains deterministic at the consensus boundary
+3. Supports mission-scoped trust domains
+4. Enables forward secrecy for relay sessions
+5. Supports onion routing for privacy
 
-- **Ed25519/X25519** provide battle-tested asymmetric cryptography with 128-bit security
-- **ChaCha20-Poly1305** is a proven AEAD cipher used in TLS 1.3, WireGuard, and Noise Protocol
-- **BLAKE3** provides high-performance hashing with hardware acceleration
-- **Noise Protocol Framework** demonstrates protocol composition for session establishment
-- **MLS (Messaging Layer Security)** demonstrates group key management at scale
-- **RFC-0126 DCS** provides deterministic serialization for consensus-critical data
-
-CipherOcto's deterministic numeric stack (RFC-0104, RFC-0105) becomes strategically important as a ZK-safe arithmetic substrate for witness generation in proof-carrying envelopes.
+Modern cryptographic primitives (Ed25519, X25519, ChaCha20-Poly1305, BLAKE3) are well-suited for these requirements.
 
 ### WHY? — Why This Matters
 
 Without OCrypt:
 
-- Platform operators can read all overlay traffic
-- Man-in-the-middle attacks are trivial on untrusted carriers
-- Replay attacks disrupt consensus
-- Identity is tied to platform accounts (lost when accounts are banned)
-- No mission compartmentalization — all traffic is linkable
-- No onion routing — traffic analysis reveals overlay topology
-- No forward secrecy — key compromise exposes all historical traffic
-
-OCrypt provides the cryptographic foundation that makes DOT (RFC-0850) safe to use over untrusted platforms.
-
-### Relationship to RFC-0009 and RFC-0102
-
-RFC-0009 (Identity Management) defines the base identity model for CipherOcto. OCrypt extends this with:
-
-- Overlay-specific identity derivation (Section 6)
-- Platform binding proofs (Section 6.3)
-- Session key management (Section 8)
-- Mission-scoped key hierarchies (Section 10)
-
-RFC-0102 (Wallet Cryptography) defines key pair formats. OCrypt uses the same Ed25519/X25519 primitives for consistency.
+- Platform operators can read mission data
+- Replay attacks succeed trivially
+- No forward secrecy — one key compromise exposes all traffic
+- No mission isolation — all traffic is linkable
+- No onion routing — all communication is observable
 
 ## Specification
 
-### 1. System Architecture
+### 1. Cryptographic Primitives
 
-```mermaid
-flowchart TB
-    subgraph Application["Application Layer"]
-        APP[Mission Execution]
-    end
+| Function | Algorithm | Notes |
+|----------|-----------|-------|
+| Hashing | BLAKE3-256 | Fast, parallelizable, deterministic |
+| Signatures | Ed25519 | 64-byte signatures, fast verification |
+| Key Exchange | X25519 | Ephemeral key agreement |
+| AEAD | ChaCha20-Poly1305 | Authenticated encryption |
+| KDF | HKDF-BLAKE3 | Key derivation |
+| Merkle Trees | BLAKE3 | State commitments |
+| Randomness | Deterministic CSPRNG profile | Consensus-safe randomness |
 
-    subgraph OCrypt["OCrypt Layer"]
-        ID[Identity Domain]
-        SESS[Session Domain]
-        MISS[Mission Domain]
-    end
+**Future Agility:**
 
-    subgraph Primitives["Cryptographic Primitives"]
-        HASH[BLAKE3-256]
-        SIG[Ed25519]
-        KEX[X25519]
-        AEAD[ChaCha20-Poly1305]
-        KDF[HKDF-BLAKE3]
-    end
-
-    subgraph DOT["DOT Transport (RFC-0850)"]
-        ENV[Deterministic Envelope]
-        GW[Gateway Federation]
-    end
-
-    subgraph Carriers["Platform Carriers"]
-        TG[Telegram]
-        DC[Discord]
-        MX[Matrix]
-        P2P[Native P2P]
-    end
-
-    APP --> ID
-    APP --> SESS
-    APP --> MISS
-    ID --> HASH
-    ID --> SIG
-    SESS --> KEX
-    SESS --> AEAD
-    SESS --> KDF
-    MISS --> HASH
-    MISS --> SIG
-    MISS --> AEAD
-    ID --> ENV
-    SESS --> ENV
-    MISS --> ENV
-    ENV --> GW
-    GW --> TG
-    GW --> DC
-    GW --> MX
-    GW --> P2P
+```rust
+struct CryptoSuiteId {
+    hash_id: u16,
+    signature_id: u16,
+    kex_id: u16,
+    aead_id: u16,
+}
 ```
 
 ### 2. Cryptographic Domains
 
-OCrypt operates across three distinct cryptographic domains with different lifetimes and trust models.
+| Domain | Lifetime | Use Case |
+|--------|----------|----------|
+| Identity | Long-lived | Gateway identity, validator identity, governance |
+| Session | Ephemeral | Relay encryption, forward secrecy |
+| Mission | Mission-scoped | Temporary overlays, AI swarms, compartmentalization |
 
-#### 2.1 Identity Domain
-
-Long-lived sovereign identity. Used for:
-
-- Gateway identity (RFC-0850)
-- Validator identity
-- Mission authority
-- Governance participation
-
-**Lifetime:** Months to years. Rotation is infrequent and requires signed successor linkage.
-
-**Trust model:** Self-sovereign. No centralized PKI. Trust emerges from mission membership, PoR reputation, signed introductions, governance, and overlay economics.
-
-#### 2.2 Session Domain
-
-Ephemeral session keys. Used for:
-
-- Relay encryption between gateways
-- Transient communication channels
-- Forward secrecy
-
-**Lifetime:** Minutes to hours. Aggressive rotation recommended.
-
-**Trust model:** Ephemeral. Compromise of session keys MUST NOT compromise identity keys or past sessions.
-
-#### 2.3 Mission Domain
-
-Mission-scoped cryptographic namespace. Used for:
-
-- Temporary overlay encryption
-- AI swarm coordination
-- Task compartmentalization
-
-**Lifetime:** Mission duration. Rekeying on member rotation or compromise.
-
-**Trust model:** Mission-scoped. Compromise of one mission MUST NOT compromise other missions, overlay identity, or unrelated sessions.
-
-### 3. Cryptographic Primitives
-
-#### 3.1 Mandatory Algorithms
-
-| Function | Algorithm | Key Size | Security Level |
-|----------|-----------|----------|---------------|
-| Hashing | BLAKE3-256 | N/A (output 256-bit) | 128-bit collision |
-| Signatures | Ed25519 | 32-byte public, 64-byte signature | 128-bit |
-| Key Exchange | X25519 | 32-byte public, 32-byte shared secret | 128-bit |
-| AEAD | ChaCha20-Poly1305 | 32-byte key, 12-byte nonce, 16-byte tag | 128-bit |
-| KDF | HKDF-BLAKE3 | Variable input, variable output | 128-bit |
-| Merkle Trees | BLAKE3 | N/A | 128-bit |
-| Randomness | Deterministic CSPRNG | HKDF-based derivation | 128-bit |
-
-#### 3.2 Algorithm Agility
-
-OCrypt MUST support future algorithm migration via `CryptoSuiteId`:
+### 3. Sovereign Identity Model
 
 ```rust
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-#[repr(C)]
-struct CryptoSuiteId {
-    /// Hash algorithm identifier
-    hash_id: u16,
-    /// Signature algorithm identifier
-    signature_id: u16,
-    /// Key exchange algorithm identifier
-    kex_id: u16,
-    /// AEAD algorithm identifier
-    aead_id: u16,
-}
-
-// Initial suite (v1)
-const CRYPTO_SUITE_V1: CryptoSuiteId = CryptoSuiteId {
-    hash_id: 0x0001,        // BLAKE3-256
-    signature_id: 0x0001,   // Ed25519
-    kex_id: 0x0001,         // X25519
-    aead_id: 0x0001,        // ChaCha20-Poly1305
-};
-```
-
-**Versioning Rule:** Nodes MUST reject envelopes using unsupported crypto suites. Nodes MUST NOT downgrade to weaker suites. Suite negotiation uses the highest mutually supported suite.
-
-#### 3.3 Post-Quantum Roadmap
-
-Future suites SHOULD add:
-
-| Primitive | Candidate | Suite ID |
-|-----------|-----------|----------|
-| Signatures | Dilithium (ML-DSA) | `signature_id: 0x0002` |
-| KEX | Kyber (ML-KEM) | `kex_id: 0x0002` |
-| Hashing | BLAKE3/SHA3 hybrid | `hash_id: 0x0002` |
-
-**Guidance:** OCrypt should NOT bind to one proving system. Instead, define a deterministic proof substrate abstraction (RFC-0854) capable of hosting multiple proof systems.
-
-### 4. Sovereign Identity Model
-
-#### 4.1 Overlay Identity (extends RFC-0009)
-
-```rust
-#[derive(Clone, Debug)]
-#[repr(C)]
 struct OverlayIdentity {
-    /// Peer identifier (SHA-256 of public_key)
     peer_id: [u8; 32],
-    /// Ed25519 public key
     public_key: [u8; 32],
-    /// Identity creation epoch
     identity_epoch: u64,
-    /// Merkle root of capabilities
     capabilities_root: [u8; 32],
-    /// Ed25519 signature over (peer_id || public_key || identity_epoch || capabilities_root)
     signature: [u8; 64],
 }
 ```
 
-**Derivation:**
+Identity MUST remain independent from Telegram accounts, Discord usernames, Matrix IDs, IP addresses, DNS names, device identifiers.
 
-```text
-peer_id = SHA-256(public_key)
-identity_signature = Ed25519_sign(
-    private_key,
-    peer_id || public_key || identity_epoch || capabilities_root
-)
-```
-
-#### 4.2 Identity Independence
-
-Identity MUST remain independent from:
-
-- Telegram accounts
-- Discord usernames
-- Matrix IDs
-- IP addresses
-- DNS names
-- Device identifiers
-- Any platform-specific identifier
-
-**Verification:** Identity verification uses only `public_key` and `signature`. No platform context is required.
-
-#### 4.3 Platform Binding
-
-Optional platform bindings MAY exist to link overlay identity to platform accounts:
+**Platform Binding (optional):**
 
 ```rust
-#[derive(Clone, Debug)]
-#[repr(C)]
 struct PlatformBinding {
-    /// Platform type (per RFC-0850)
     platform_type: u16,
-    /// SHA-256 of platform-specific external identifier
     external_identifier_hash: [u8; 32],
-    /// Ed25519 proof that identity holder controls platform account
     proof_signature: [u8; 64],
 }
 ```
 
-**Critical Rule:** Platform bindings MUST NEVER become consensus authority. They are convenience mappings only. Loss of a platform account MUST NOT affect overlay identity.
+Bindings MUST NEVER become consensus authority.
 
-**Proof Construction:**
+### 4. Deterministic Envelope Encryption
 
-```text
-proof_signature = Ed25519_sign(
-    identity_private_key,
-    platform_type || external_identifier_hash
-)
-```
-
-Verification confirms that the identity holder claims association with the platform account. It does NOT prove the platform account holder claims the identity (that requires a separate platform-side proof).
-
-### 5. Consensus Boundary (Most Critical Section)
-
-#### 5.1 Consensus MUST NOT Depend On
-
-- Ciphertext bytes
-- Encryption randomness (nonces, IVs)
-- Carrier metadata (platform timestamps, message IDs)
-- Platform timestamps
-- Packet fragmentation details
-- Session key material
-- AEAD tag bytes
-
-#### 5.2 Consensus MAY Depend On
-
-- Canonical plaintext hashes (BLAKE3-256)
-- Deterministic serialization (RFC-0126 DCS)
-- Verified Ed25519 signatures
-- Merkle commitments
-- Route commitments (RFC-0850)
-- Replay identifiers (envelope_id, sequence, logical_timestamp)
-
-#### 5.3 Enforcement
-
-Every consensus-critical code path MUST verify against the boundary rules. The OCrypt implementation MUST include debug-mode assertions that detect boundary violations.
-
-### 6. Deterministic Envelope Encryption
-
-#### 6.1 Canonical Encryption Boundary
-
-Critical invariant:
-
-```text
-plaintext canonicalization MUST occur BEFORE encryption
-```
-
-This ensures that:
-
-1. Different implementations produce identical plaintext bytes
-2. Signature verification operates over canonical data
-3. Consensus can verify plaintext hashes independently of encryption
-
-#### 6.2 Envelope Encryption Model
+**Canonical encryption boundary:** plaintext canonicalization MUST occur BEFORE encryption.
 
 ```rust
-#[derive(Clone, Debug)]
-#[repr(C)]
 struct EncryptedEnvelope {
-    /// SHA-256 of the canonical plaintext envelope
     envelope_hash: [u8; 32],
-    /// Ephemeral X25519 public key for this envelope
     sender_ephemeral_key: [u8; 32],
-    /// 96-bit nonce (random, MUST NOT repeat for same key)
-    nonce: [u8; 12],
-    /// ChaCha20-Poly1305 encrypted payload
+    nonce: [u8; 24],
     ciphertext: Vec<u8>,
-    /// 128-bit Poly1305 authentication tag
     auth_tag: [u8; 16],
 }
 ```
 
-#### 6.3 Encryption Procedure
+**Deterministic validation:** Encryption MAY be probabilistic. Validation MUST remain deterministic. Consensus verifies: canonical plaintext hash, signature validity, envelope structure, replay invariants — NOT ciphertext byte equality.
+
+### 5. Session Key Establishment
 
 ```text
-1. Serialize plaintext envelope using RFC-0126 DCS → canonical_bytes
-2. Compute envelope_hash = BLAKE3-256(canonical_bytes)
-3. Generate ephemeral X25519 keypair (ephemeral_private, sender_ephemeral_key)
-4. Compute shared_secret = X25519(ephemeral_private, recipient_public_key)
-5. Derive symmetric_key = HKDF-BLAKE3(shared_secret, nonce, 32)
-6. Encrypt: (ciphertext, auth_tag) = ChaCha20-Poly1305-seal(
-       key: symmetric_key,
-       nonce: nonce,
-       plaintext: canonical_bytes,
-       aad: envelope_hash || sender_ephemeral_key || nonce
-   )
-7. Output EncryptedEnvelope
+X25519 → HKDF-BLAKE3 → ChaCha20-Poly1305
 ```
-
-#### 6.4 Decryption Procedure
-
-```text
-1. Parse EncryptedEnvelope
-2. Compute shared_secret = X25519(recipient_private_key, sender_ephemeral_key)
-3. Derive symmetric_key = HKDF-BLAKE3(shared_secret, nonce, 32)
-4. Decrypt: plaintext = ChaCha20-Poly1305-open(
-       key: symmetric_key,
-       nonce: nonce,
-       ciphertext: ciphertext,
-       aad: envelope_hash || sender_ephemeral_key || nonce,
-       tag: auth_tag
-   )
-5. Verify: BLAKE3-256(plaintext) == envelope_hash
-6. Deserialize plaintext using RFC-0126 DCS → DeterministicEnvelope
-```
-
-#### 6.5 Deterministic Validation
-
-Encryption itself MAY be probabilistic (random nonces are acceptable). Validation MUST remain deterministic.
-
-Consensus MUST verify:
-
-- `envelope_hash` matches canonical plaintext hash
-- Signature validity over canonical plaintext
-- Envelope structure validity
-- Replay invariants
-
-Consensus MUST NOT verify:
-
-- Ciphertext byte equality (different nonces produce different ciphertext)
-- Specific nonce values
-- AEAD tag bytes
-
-### 7. Session Key Establishment
-
-#### 7.1 Session Handshake
-
-```text
-Initiator                              Responder
-    |                                       |
-    |--- ephemeral_public_key ------------->|
-    |                                       |
-    |<-- ephemeral_public_key --------------|
-    |                                       |
-    shared_secret = X25519(my_priv, their_pub)
-    symmetric_key = HKDF-BLAKE3(shared_secret, session_context, 32)
-```
-
-**Session Context:**
-
-```text
-session_context = "ocrypt-session-v1"
-    || initiator_peer_id
-    || responder_peer_id
-    || session_epoch
-    || crypto_suite_id
-```
-
-#### 7.2 Forward Secrecy
 
 All relay sessions SHOULD use ephemeral keys. Compromise of long-term identity keys MUST NOT expose past traffic.
 
-**Implementation:** Generate new X25519 keypair per session. Destroy ephemeral private key after session establishment. For Perfect Forward Secrecy (PFS), use ephemeral-per-message keys (see Section 7.3).
+**Session scope:** Peer, Gateway, Mission, Route, Broadcast Domain.
 
-#### 7.3 Per-Message Keys
-
-For high-security missions, derive per-message keys:
-
-```text
-message_key = HKDF-BLAKE3(
-    symmetric_key,
-    "ocrypt-message" || message_sequence || logical_timestamp,
-    32
-)
-```
-
-Each message uses a derived key, so compromise of one message key does not expose others.
-
-#### 7.4 Session Scoping
-
-| Scope | Description | Lifetime |
-|-------|-------------|----------|
-| Peer | Direct node-to-node session | Minutes to hours |
-| Gateway | Relay session between gateways | Hours |
-| Mission | Mission-wide mesh key | Mission duration |
-| Route | Multi-hop onion path key | Route lifetime |
-| Broadcast Domain | Shared carrier encryption | Domain membership |
-
-### 8. Onion Relay Extension
-
-#### 8.1 Onion Layer Construction
-
-```text
-Payload
-→ encrypt for relay N (exit)
-→ encrypt for relay N-1
-→ encrypt for relay N-2
-→ ...
-→ encrypt for relay 1 (entry)
-```
-
-Each layer uses X25519 key exchange + ChaCha20-Poly1305 encryption with per-hop keys.
-
-#### 8.2 Onion Hop Structure
+### 6. Mission Cryptography
 
 ```rust
-#[derive(Clone, Debug)]
-#[repr(C)]
-struct OnionHop {
-    /// Relay gateway identifier
-    relay_gateway: [u8; 32],
-    /// X25519 ephemeral public key for this hop
-    ephemeral_key: [u8; 32],
-    /// Encrypted next-hop routing instruction
-    encrypted_next_hop: Vec<u8>,
-    /// Encrypted payload fragment (for this relay's view)
-    encrypted_payload_fragment: Vec<u8>,
-}
-```
-
-#### 8.3 Relay Knowledge Isolation
-
-Each relay SHOULD know ONLY:
-
-- Previous hop (where the onion came from)
-- Next hop (where to forward it)
-- Local relay instructions
-
-Each relay MUST NOT know:
-
-- Origin identity
-- Final destination
-- Full route topology
-- Total route length
-- Mission identity (unless it is the exit relay)
-
-#### 8.4 Deterministic Onion Constraints
-
-Consensus-sensitive metadata MUST remain canonical outside onion layers. The onion envelope wrapper (visible to all relays) contains only:
-
-- `envelope_hash` (for replay protection)
-- `route_commitment` (for route verification)
-- `hop_count_hint` (optional, for timeout estimation)
-
-No mission data, payload content, or routing intent is visible.
-
-### 9. Mission Cryptography
-
-#### 9.1 Mission Root Key
-
-Each mission MAY possess a cryptographic root:
-
-```rust
-#[derive(Clone, Debug)]
-#[repr(C)]
-struct MissionRootKey {
-    /// Mission identifier
-    mission_id: [u8; 32],
-    /// Key epoch (incremented on rekey)
-    epoch: u64,
-    /// X25519 public component
-    public_component: [u8; 32],
-}
-```
-
-**Derivation:**
-
-```text
-mission_key = HKDF-BLAKE3(
-    coordinator_private_key,
-    "ocrypt-mission" || mission_id || epoch,
-    32
-)
-```
-
-#### 9.2 Mission Key Hierarchy
-
-```rust
-#[derive(Clone, Debug)]
-#[repr(C)]
 struct MissionKeyHierarchy {
-    /// Mission root key (coordinator-held)
     mission_root_key: [u8; 32],
-    /// Merkle root of transport keys
     transport_keys_root: [u8; 32],
-    /// Merkle root of relay keys
     relay_keys_root: [u8; 32],
-    /// Merkle root of execution keys
     execution_keys_root: [u8; 32],
 }
 ```
 
-This hierarchy enables:
+Mission overlays SHOULD support: member rotation, emergency rekey, partition recovery, compromised-node eviction.
 
-- Selective key distribution (relays don't get execution keys)
-- Efficient rekeying (rotate one subtree without affecting others)
-- Proof of key membership
+Compromise of one mission MUST NOT compromise other missions, overlay identity, or unrelated sessions.
 
-#### 9.3 Mission Rekeying
+### 7. Replay Protection
 
-Mission overlays SHOULD support:
+Every encrypted envelope MUST include `(envelope_id, sequence, logical_timestamp)` inside authenticated data.
 
-- **Member rotation:** New member gets current keys; old member's keys are rotated
-- **Emergency rekey:** Immediate key rotation on suspected compromise
-- **Partition recovery:** Key reconciliation after network partition
-- **Compromised-node eviction:** Remove node's key access without disrupting other members
+### 8. Signature Model
 
-#### 9.4 Mission Compartmentalization
+Signatures MUST cover: canonical payload, metadata, route commitment, mission scope, replay identifiers.
 
-Compromise of one mission MUST NOT compromise:
+All signatures operate over canonical serialized bytes ONLY (per RFC-0126).
 
-- Other missions
-- Overlay identity
-- Unrelated sessions
-
-**Enforcement:** Mission keys are derived from mission-specific context. No shared secret between missions.
-
-### 10. Replay Protection
-
-#### 10.1 Replay Invariants
-
-Every encrypted envelope MUST include inside authenticated data (AAD):
-
-```text
-(envelope_id, sequence, logical_timestamp)
-```
-
-This ensures:
-
-- Same envelope cannot be replayed (envelope_id is unique)
-- Out-of-order delivery is detectable (sequence)
-- Stale envelopes are rejectable (logical_timestamp within window)
-
-#### 10.2 Replay Cache
+### 9. Gateway Attestation
 
 ```rust
-struct ReplayCache {
-    /// Map of (mission_id, sender_id) → (sequence, logical_timestamp)
-    seen: HashMap<([u8; 32], [u8; 32]), (u64, u64)>,
-    /// Replay window duration
-    window_duration: u64,
-    /// Maximum cache entries
-    max_entries: u32,
-}
-```
-
-**Eviction:** Deterministic — oldest entries evicted first when `max_entries` is reached.
-
-### 11. Signature Model
-
-#### 11.1 Signature Scope
-
-Signatures MUST cover:
-
-- Canonical payload (RFC-0126 DCS bytes)
-- Metadata (message_type, mission_id, logical_timestamp)
-- Route commitment
-- Mission scope (if applicable)
-- Replay identifiers (envelope_id, sequence)
-
-#### 11.2 Canonical Signing Order
-
-All signatures MUST operate over:
-
-```text
-canonical serialized bytes (RFC-0126 DCS)
-```
-
-NEVER platform-native representations.
-
-#### 11.3 Signature Verification
-
-```text
-valid = Ed25519_verify(
-    public_key: signer_public_key,
-    message: canonical_bytes,
-    signature: signature_bytes
-)
-```
-
-Verification MUST be deterministic. All implementations MUST agree on signature validity for identical inputs.
-
-### 12. Gateway Cryptography
-
-#### 12.1 Gateway Attestation
-
-Gateways MAY issue signed attestations for relay participation:
-
-```rust
-#[derive(Clone, Debug)]
-#[repr(C)]
 struct GatewayAttestation {
-    /// Gateway identifier
     gateway_id: [u8; 32],
-    /// Attestation type
     attestation_type: u16,
-    /// Merkle root of attested data
     payload_root: [u8; 32],
-    /// Attestation timestamp (logical)
     timestamp: u64,
-    /// Ed25519 signature
     signature: [u8; 64],
 }
 ```
 
-**Attestation Types:**
+### 10. Onion Relay Extension (Preview)
 
-| Type | Value | Purpose |
-|------|-------|---------|
-| RelayProof | 0x0001 | Proof of relay participation |
-| BandwidthProof | 0x0002 | Proof of bandwidth provided |
-| AvailabilityProof | 0x0003 | Proof of uptime |
-| DeliveryProof | 0x0004 | Proof of envelope delivery |
+```text
+Payload → encrypt for relay N → encrypt for relay N-1 → ... → encrypt for relay entry
+```
 
-#### 12.2 Proof-of-Relay
+Each relay knows ONLY: previous hop, next hop, local instructions. NOT: origin, destination, full route, mission topology.
 
-Relay proofs enable economic validation of relay participation. See RFC-0860 (Proof-of-Relay) for the full specification.
+Full specification in RFC-0858 (Onion Relay Routing).
 
-### 13. Deterministic Randomness
-
-#### 13.1 Consensus-Sensitive Randomness
+### 11. Deterministic Randomness
 
 Consensus cryptography MUST use deterministic randomness derivation:
 
 ```text
-deterministic_random = HKDF-BLAKE3(
-    seed,
-    context || epoch || counter,
-    output_length
-)
+HKDF(seed || context || epoch)
 ```
 
-Where `seed` is derived from consensus-agreed material (block hash, validator set).
+Forbidden sources for consensus: OS entropy timing, hardware RNG variance, platform randomness APIs, nondeterministic nonce generation.
 
-#### 13.2 Forbidden Sources
+### 12. Key Rotation
 
-Consensus-sensitive operations MUST NOT depend on:
+Identity keys MAY rotate. Rotation MUST produce signed successor linkage.
 
-- OS entropy timing
-- Hardware RNG variance
-- Platform randomness APIs
-- Nondeterministic nonce generation
+Session keys SHOULD rotate aggressively, especially for high-value missions and validator traffic.
 
-**Exception:** Encryption nonces MAY use OS entropy (they are not consensus-critical). Consensus verification does not check nonce values.
+### 13. Consensus Boundary
 
-### 14. Transport Carrier Protection
+**Consensus MUST NOT depend on:** ciphertext bytes, encryption randomness, carrier metadata, platform timestamps, packet fragmentation.
 
-#### 14.1 Carrier Obfuscation
-
-Payloads SHOULD appear opaque to carrier platforms. Platforms SHOULD observe only:
-
-- Ciphertext
-- Random-looking blobs
-- Relay metadata (gateway IDs, route commitments)
-
-#### 14.2 Traffic Fingerprint Resistance
-
-Future extensions MAY include:
-
-- Padding (normalize message sizes)
-- Timing normalization (batch sends)
-- Cover traffic (decoy envelopes)
-- Fragmentation camouflage (uniform fragment sizes)
-
-### 15. Key Rotation
-
-#### 15.1 Identity Rotation
-
-Overlay identities MAY rotate keys. Rotation MUST produce a signed successor linkage:
-
-```rust
-#[repr(C)]
-struct KeyRotation {
-    /// Previous public key
-    previous_public_key: [u8; 32],
-    /// New public key
-    new_public_key: [u8; 32],
-    /// Rotation epoch
-    rotation_epoch: u64,
-    /// Signature by previous key
-    signature: [u8; 64],
-}
-```
-
-**Verification:** `Ed25519_verify(previous_public_key, previous_public_key || new_public_key || rotation_epoch, signature)`
-
-#### 15.2 Session Rotation
-
-Session keys SHOULD rotate aggressively, especially for:
-
-- High-value missions
-- Validator traffic
-- AI coordination swarms
-- Privacy-sensitive communication
-
-### 16. Native Interoperability
-
-OCrypt SHOULD integrate with:
-
-| System | Purpose | Integration Point |
-|--------|---------|-------------------|
-| Noise Protocol | Session establishment | Noise IK pattern for handshake |
-| MLS | Group messaging | MLS key schedule for mission groups |
-| libp2p security | Native overlay | libp2p noise handshake |
-| Matrix Olm/Megolm | Federation interop | Olm session for Matrix bridge |
-| Nostr NIP crypto | Relay interop | NIP-04 encryption for Nostr bridge |
-
-### 17. Test Vectors
-
-#### 17.1 BLAKE3-256 Hashing
-
-```text
-Input: "hello world"
-Output: d74981efa70a0c880b8d8c1985d075dbcbf679b99a5f9914e5aaf96b831a9e24
-```
-
-#### 17.2 Ed25519 Signature
-
-```text
-Private key (seed): 0000000000000000000000000000000000000000000000000000000000000000
-Public key: 3b6a27bcceb6a42d62a3a8d02a6f0d73653215771de243a63ac048a18b59da29
-Message: "test"
-Signature: (deterministic from Ed25519 implementation)
-```
-
-#### 17.3 X25519 Key Exchange
-
-```text
-Alice private: a]0]0]0]0]0]0]0]0]0]0]0]0]0]0]0]0]0]0]0]0]0]0]0]0]0]0]0]0]0]0]0
-Alice public:  (derived)
-Bob private:   0101010101010101010101010101010101010101010101010101010101010101
-Bob public:    (derived)
-Shared secret: (deterministic from X25519 implementation)
-```
-
-#### 17.4 Envelope Encryption Round-Trip
-
-```text
-Input plaintext: DeterministicEnvelope { version: 1, network_id: 1, ... }
-Step 1: DCS serialize → canonical_bytes
-Step 2: envelope_hash = BLAKE3-256(canonical_bytes)
-Step 3: Generate ephemeral keypair
-Step 4: shared_secret = X25519(ephemeral_private, recipient_public)
-Step 5: symmetric_key = HKDF-BLAKE3(shared_secret, nonce, 32)
-Step 6: (ciphertext, auth_tag) = ChaCha20-Poly1305-seal(symmetric_key, nonce, canonical_bytes, aad)
-Step 7: Decrypt and verify: BLAKE3-256(decrypted) == envelope_hash
-```
+**Consensus MAY depend on:** canonical plaintext hashes, deterministic serialization, verified signatures, Merkle commitments, route commitments.
 
 ## Performance Targets
 
-| Metric | Target | Measurement |
-|--------|--------|-------------|
-| BLAKE3-256 hash | <1µs/KB | Single-threaded |
-| Ed25519 sign | <50µs | Single signature |
-| Ed25519 verify | <100µs | Single verification |
-| X25519 key exchange | <200µs | Single ECDH |
-| ChaCha20-Poly1305 encrypt | <1µs/KB | Single-threaded |
-| HKDF-BLAKE3 derive | <5µs | Single derivation |
-| Envelope encrypt (1KB) | <500µs | Full pipeline |
-| Envelope decrypt (1KB) | <500µs | Full pipeline |
-| Onion layer (1KB) | <5ms | 3-hop onion |
+| Metric | Target |
+|--------|--------|
+| Ed25519 sign | <1ms |
+| Ed25519 verify | <5ms |
+| X25519 key exchange | <1ms |
+| ChaCha20-Poly1305 encrypt | <1µs/byte |
+| BLAKE3 hash | <1µs/KB |
+| Session establishment | <10ms |
 
 ## Security Considerations
 
-### Consensus Attacks
-
-| Attack | Impact | Mitigation |
+| Threat | Impact | Mitigation |
 |--------|--------|------------|
-| Ciphertext manipulation | Critical | Poly1305 auth tag verification |
-| Signature forgery | Critical | Ed25519 verification at every gateway |
-| Replay attack | High | Replay cache + logical timestamp validation |
-| Consensus boundary violation | Critical | Canonical plaintext verification, not ciphertext |
-| Key substitution | High | Identity key binding in signed envelopes |
+| MITM | Critical | Signed key exchange |
+| Replay | High | Replay cache |
+| Route correlation | High | Onion routing (RFC-0858) |
+| Metadata harvesting | Medium | Cover traffic |
+| Gateway compromise | High | Forward secrecy |
+| Carrier censorship | Medium | Multi-transport propagation |
+| Payload mutation | Critical | Canonical signatures |
 
-### Economic Exploits
+## Implementation Phases
 
-| Attack | Impact | Mitigation |
-|--------|--------|------------|
-| Key spam | Medium | Stake requirements for gateway identity |
-| Session exhaustion | Medium | Session limits per gateway |
-| Free-riding relay | Low | Proof-of-Relay verification (RFC-0860) |
+### Phase 1: Core Crypto (Months 1-3)
+- BLAKE3-256, Ed25519, X25519 integration
+- EncryptedEnvelope with ChaCha20-Poly1305
+- Session key establishment (X25519 → HKDF → AEAD)
+- Replay protection
 
-### Proof Forgery
+### Phase 2: Mission Cryptography (Months 3-5)
+- MissionKeyHierarchy
+- Mission rekeying
+- Compartmentalization enforcement
+- Platform binding verification
 
-| Attack | Impact | Mitigation |
-|--------|--------|------------|
-| Invalid envelope signature | Critical | Ed25519 verification |
-| Tampered payload | Critical | envelope_hash verification |
-| Forg attestation | High | Gateway signature verification |
+### Phase 3: Attestation and Agility (Months 5-8)
+- GatewayAttestation
+- CryptoSuiteId algorithm negotiation
+- Key rotation with successor linkage
+- Deterministic randomness derivation
 
-### Replay Attacks
-
-| Attack | Impact | Mitigation |
-|--------|--------|------------|
-| Stale envelope replay | High | Replay cache with configurable window |
-| Cross-mission replay | Medium | mission_id scoping in replay cache |
-| Cross-network replay | Medium | network_id scoping |
-
-### Determinism Violations
-
-| Attack | Impact | Mitigation |
-|--------|--------|------------|
-| Non-deterministic serialization | Critical | RFC-0126 DCS mandatory |
-| Platform metadata leakage | Critical | Consensus boundary rules |
-| Clock-dependent ordering | Critical | Logical timestamps only |
+### Phase 4: Onion and Privacy (Months 8-12)
+- Onion layer construction (RFC-0858 integration)
+- Cover traffic generation
+- Stealth mission support
+- Post-quantum readiness (Dilithium, Kyber)
 
 ## Adversarial Review
 
 | Threat | Impact | Mitigation | Verification |
 |--------|--------|------------|--------------|
-| MITM on envelope exchange | Critical | X25519 key exchange + signature | Test with intercepted keys |
-| Key compromise | Critical | Forward secrecy + rekeying | Compromise simulation test |
-| Replay storm | High | Replay cache | Replay flood test |
-| Weak random source | Critical | Deterministic CSPRNG for consensus | Random source audit |
-| Algorithm downgrade | High | CryptoSuiteId versioning | Downgrade attempt test |
-| Onion route correlation | Medium | Cover traffic + padding | Traffic analysis test |
-| Mission key leakage | High | Compartmentalization | Cross-mission isolation test |
+| Key compromise (long-term) | Critical | Forward secrecy via ephemeral session keys | Compromise simulation test |
+| Replay attack | High | `(envelope_id, sequence, logical_timestamp)` in authenticated data | Replay cache exhaustion test |
+| Metadata leakage | Medium | Cover traffic, metadata minimization | Traffic analysis simulation |
+| Forward secrecy violation | Critical | Ephemeral X25519 per session, key rotation with successor linkage | Past-session decryption attempt after key compromise |
+| Consensus isolation breach | Critical | Canonical plaintext hash verification, ciphertext excluded from consensus state | Fuzz test with mutated ciphertext |
+| Sybil via identity forgery | High | Ed25519 signature verification at every gateway, peer_id derivation from public key | Forged identity rejection test |
+| Onion routing de-anonymization | High | Layered encryption, relay knowledge isolation (prev/next hop only), cover traffic | Correlation attack simulation |
+| Mission cross-contamination | High | Mission-scoped key hierarchy, compartmentalized derivation | Cross-mission key leak test |
+| Platform metadata injection | Medium | Transport isolation rule — platform IDs never in authenticated data | Injection attack test |
+
+## Test Vectors
+
+### Test Vector 1: Identity Derivation
+
+```text
+Input:
+  public_key = [0x42; 32]  (Ed25519 public key)
+  identity_epoch = 0
+
+Derivation:
+  peer_id = SHA-256(public_key || identity_epoch || "ocrypt:identity:v1")
+
+Expected:
+  peer_id = SHA-256([0x42; 32] || [0x00; 8] || "ocrypt:identity:v1")
+```
+
+### Test Vector 2: Session Handshake
+
+```text
+Alice:
+  ephemeral_secret_a = [0xA1; 32]
+  ephemeral_public_a = X25519_base(ephemeral_secret_a)
+
+Bob:
+  ephemeral_secret_b = [0xB1; 32]
+  ephemeral_public_b = X25519_base(ephemeral_secret_b)
+
+Shared secret:
+  shared = X25519(ephemeral_secret_a, ephemeral_public_b)
+        == X25519(ephemeral_secret_b, ephemeral_public_a)
+
+Key derivation:
+  session_key = HKDF-BLAKE3(
+    ikm = shared,
+    salt = "ocrypt:session:v1",
+    info = ephemeral_public_a || ephemeral_public_b,
+    length = 32
+  )
+
+Encryption:
+  nonce = [0x00; 24]  (deterministic for consensus: HKDF(seed || context || epoch))
+  ciphertext = ChaCha20-Poly1305-Seal(session_key, nonce, plaintext, aad)
+```
+
+### Test Vector 3: Envelope Encryption
+
+```text
+Input:
+  plaintext = "DOT/1/hello world"
+  sender_ephemeral_secret = [0xC1; 32]
+  recipient_public_key = [0xD1; 32]
+  envelope_id = SHA-256("test_envelope")
+
+Derivation:
+  sender_ephemeral_public = X25519_base(sender_ephemeral_secret)
+  shared_secret = X25519(sender_ephemeral_secret, recipient_public_key)
+  session_key = HKDF-BLAKE3(shared_secret, "ocrypt:envelope:v1", envelope_id, 32)
+  nonce = HKDF-BLAKE3(session_key, "ocrypt:nonce:v1", envelope_id, 24)
+  aad = envelope_id || sender_ephemeral_public
+  ciphertext = ChaCha20-Poly1305-Seal(session_key, nonce, plaintext, aad)
+
+Expected EncryptedEnvelope:
+  envelope_hash = SHA-256(plaintext)
+  sender_ephemeral_key = sender_ephemeral_public
+  nonce = [derived]
+  ciphertext = [derived]
+  auth_tag = [last 16 bytes of ChaCha20-Poly1305 output]
+```
+
+### Test Vector 4: Mission Key Hierarchy
+
+```text
+Input:
+  mission_id = [0x01; 32]
+  mission_root_seed = [0xF1; 32]
+
+Derivation:
+  mission_root_key = HKDF-BLAKE3(mission_root_seed, "ocrypt:mission:root:v1", mission_id, 32)
+  transport_keys_root = HKDF-BLAKE3(mission_root_key, "ocrypt:mission:transport:v1", mission_id, 32)
+  relay_keys_root = HKDF-BLAKE3(mission_root_key, "ocrypt:mission:relay:v1", mission_id, 32)
+  execution_keys_root = HKDF-BLAKE3(mission_root_key, "ocrypt:mission:execution:v1", mission_id, 32)
+```
 
 ## Economic Analysis
 
-### Market Dynamics
+### Token Integration
 
-OCrypt enables cryptographic service markets:
+| Activity | Token | Rationale |
+|----------|-------|-----------|
+| Relay crypto overhead | OCTO-B | Bandwidth consumed by encrypted envelope relay |
+| Gateway crypto operations | OCTO-N | Ed25519 sign/verify, X25519 key exchange compute cost |
+| Key management coordination | OCTO-O | Mission key hierarchy derivation, rotation orchestration |
+| Identity registration | OCTO-N | Gateway identity staking for Sybil resistance |
+| Onion relay participation | OCTO-B | Multi-hop relay bandwidth premium |
 
-- **Key management services:** OCTO-N for identity custodianship
-- **Session relay:** OCTO-B for encrypted relay bandwidth
-- **Proof generation:** OCTO-S for attestation storage
-- **Mission coordination:** OCTO-O for key distribution orchestration
+### Crypto Cost Model
 
-### Gateway Cryptographic Costs
+```text
+crypto_cost_per_envelope = sign_cost + verify_cost + encrypt_cost + kex_cost
+```
 
-| Operation | Cost Factor | Rationale |
-|-----------|------------|-----------|
-| Signature verification | Low | CPU-bound, <100µs |
-| Envelope encryption | Medium | CPU + ephemeral key generation |
-| Onion layer construction | High | Per-hop key derivation + encryption |
-| Session establishment | Medium | X25519 key exchange |
-| Replay cache maintenance | Low | Memory-bound, O(1) lookup |
+| Operation | Relative Cost | Token |
+|-----------|--------------|-------|
+| Ed25519 sign | 1x | OCTO-N |
+| Ed25519 verify | 0.2x | OCTO-N |
+| X25519 key exchange | 0.5x | OCTO-N |
+| ChaCha20-Poly1305 encrypt | 0.01x | OCTO-B |
+| BLAKE3 hash | 0.001x | OCTO-B |
+
+### Stake Requirements
+
+Global identity registration requires minimum stake to prevent Sybil attacks:
+
+```text
+identity_stake = base_stake * (1 + capability_count * 0.1)
+```
 
 ## Compatibility
 
-### Backward Compatibility
+### RFC-0843 Integration
 
-- OCrypt v1 uses suite CRYPTO_SUITE_V1 (Ed25519/X25519/ChaCha20-Poly1305/BLAKE3)
-- Future suites MUST be negotiated via CryptoSuiteId
-- Nodes MUST reject envelopes using unsupported suites
+OCrypt extends RFC-0843's libp2p security model:
+
+- RFC-0843 uses libp2p's Noise Protocol for transport encryption
+- OCrypt adds overlay-level encryption independent of transport
+- OCrypt adds mission-scoped key compartmentalization
+- OCrypt adds onion relay encryption for privacy
 
 ### Forward Compatibility
 
-- CryptoSuiteId allows algorithm upgrades
-- Reserved fields in data structures allow extension
-- Post-quantum algorithms can be added as new suite IDs
+- `CryptoSuiteId` enables algorithm migration without protocol changes
+- Post-quantum algorithms (Dilithium, Kyber) can be added as new suite IDs
+- Key rotation with successor linkage enables graceful algorithm transitions
 
-### RFC-0009 Integration
+### Interoperability
 
-OCrypt extends RFC-0009 (Identity Management) with:
-
-- Overlay-specific identity derivation (Section 4.1)
-- Platform binding proofs (Section 4.3)
-- Key rotation protocol (Section 15.1)
-
-### RFC-0102 Integration
-
-OCrypt uses the same Ed25519/X25519 key formats as RFC-0102 (Wallet Cryptography) for consistency.
+| Protocol | Integration Point |
+|----------|-------------------|
+| Noise Protocol | libp2p transport security (RFC-0843) |
+| MLS (Messaging Layer Security) | Group key management for mission overlays |
+| libp2p security | Native P2P transport encryption |
+| Matrix Olm/Megolm | Matrix room encryption bridging |
+| Nostr NIP-04/44 | Nostr relay encryption bridging |
 
 ## Alternatives Considered
 
 | Approach | Pros | Cons | Decision |
 |----------|------|------|----------|
-| TLS over each carrier | Proven, standardized | Per-carrier, no overlay abstraction | Insufficient |
-| Signal Protocol | Excellent ratchet | Group-focused, not overlay-focused | Too narrow |
-| Noise Protocol only | Clean, composable | No mission scoping | Supplemented by OCrypt |
-| Custom everything | Full control | No peer review, high risk | Too dangerous |
-| MLS only | Group key management | Not designed for relay routing | Complementary only |
+| Noise Protocol only | Proven, libp2p native | No mission compartmentalization, no onion routing | Supplemented by OCrypt |
+| MLS (Messaging Layer Security) | Group key management, forward secrecy | Complex, not designed for overlay routing | Partial adoption for mission groups |
+| Custom crypto | Full control | Risky, untested, slow development | Rejected — use proven primitives |
+| Signal Protocol | Double ratchet, forward secrecy | Synchronous model, no overlay routing fit | Rejected — wrong abstraction |
+| NaCl/libsodium | Simple, proven | No algorithm agility, limited KDF options | Rejected — insufficient flexibility |
 
-**Decision:** OCrypt combines Noise-style session establishment with mission-scoped key hierarchies and platform-agnostic encryption, using proven primitives (Ed25519/X25519/ChaCha20-Poly1305/BLAKE3).
-
-## Implementation Phases
-
-### Phase 1: Core Primitives (Months 1-2)
-
-| Task | Description | RFC Dependency |
-|------|-------------|----------------|
-| 1.1 | Implement BLAKE3-256 hashing wrapper | — |
-| 1.2 | Implement Ed25519 sign/verify wrapper | RFC-0102 |
-| 1.3 | Implement X25519 key exchange wrapper | RFC-0102 |
-| 1.4 | Implement ChaCha20-Poly1305 encrypt/decrypt | — |
-| 1.5 | Implement HKDF-BLAKE3 key derivation | — |
-| 1.6 | Implement CryptoSuiteId with suite negotiation | — |
-| 1.7 | Write unit tests for all primitives | — |
-
-**Deliverables:** Cryptographic primitive wrappers, suite negotiation.
-
-### Phase 2: Envelope Encryption (Months 2-4)
-
-| Task | Description | RFC Dependency |
-|------|-------------|----------------|
-| 2.1 | Implement OverlayIdentity (extends RFC-0009) | RFC-0009 |
-| 2.2 | Implement PlatformBinding with proof signatures | — |
-| 2.3 | Implement EncryptedEnvelope encrypt/decrypt | — |
-| 2.4 | Implement session handshake (X25519 + HKDF) | — |
-| 2.5 | Implement per-message key derivation | — |
-| 2.6 | Implement replay cache with deterministic eviction | — |
-| 2.7 | Write envelope round-trip tests | — |
-
-**Deliverables:** Identity model, envelope encryption, session management, replay cache.
-
-### Phase 3: Mission Cryptography (Months 4-6)
-
-| Task | Description | RFC Dependency |
-|------|-------------|----------------|
-| 3.1 | Implement MissionRootKey derivation | — |
-| 3.2 | Implement MissionKeyHierarchy | — |
-| 3.3 | Implement mission rekeying protocol | — |
-| 3.4 | Implement compartmentalization verification | — |
-| 3.5 | Implement GatewayAttestation | — |
-| 3.6 | Write mission isolation tests | — |
-
-**Deliverables:** Mission key management, attestation, isolation tests.
-
-### Phase 4: Onion and Advanced Features (Months 6-9)
-
-| Task | Description | RFC Dependency |
-|------|-------------|----------------|
-| 4.1 | Implement onion hop construction | — |
-| 4.2 | Implement onion layer peeling | — |
-| 4.3 | Implement relay knowledge isolation | — |
-| 4.4 | Implement deterministic randomness derivation | — |
-| 4.5 | Implement key rotation protocol | — |
-| 4.6 | Implement Noise Protocol integration | — |
-| 4.7 | Write adversarial test suite | — |
-
-**Deliverables:** Onion routing, key rotation, adversarial tests.
-
-## Key Files to Modify
-
-| File | Change |
-|------|--------|
-| `crates/octo-crypto/src/lib.rs` | OCrypt root module |
-| `crates/octo-crypto/src/primitives/mod.rs` | Primitive wrappers |
-| `crates/octo-crypto/src/primitives/hash.rs` | BLAKE3-256 |
-| `crates/octo-crypto/src/primitives/sign.rs` | Ed25519 |
-| `crates/octo-crypto/src/primitives/kex.rs` | X25519 |
-| `crates/octo-crypto/src/primitives/aead.rs` | ChaCha20-Poly1305 |
-| `crates/octo-crypto/src/primitives/kdf.rs` | HKDF-BLAKE3 |
-| `crates/octo-crypto/src/suite.rs` | CryptoSuiteId |
-| `crates/octo-crypto/src/identity.rs` | OverlayIdentity |
-| `crates/octo-crypto/src/binding.rs` | PlatformBinding |
-| `crates/octo-crypto/src/envelope.rs` | EncryptedEnvelope |
-| `crates/octo-crypto/src/session.rs` | Session handshake |
-| `crates/octo-crypto/src/mission.rs` | Mission key hierarchy |
-| `crates/octo-crypto/src/onion.rs` | Onion relay |
-| `crates/octo-crypto/src/replay.rs` | Replay cache |
-| `crates/octo-crypto/src/random.rs` | Deterministic CSPRNG |
-| `crates/octo-crypto/src/rotation.rs` | Key rotation |
-
-## Future Work
-
-- F1: Post-quantum algorithm migration (Dilithium, Kyber)
-- F2: MLS integration for mission group key management
-- F3: Cover traffic generation for traffic analysis resistance
-- F4: Noise Protocol IK pattern integration
-- F5: Threshold signatures for mission governance
-- F6: Zero-knowledge proof integration (RFC-0854)
-- F7: Hardware security module (HSM) support
-- F8: Formal verification of cryptographic protocols
+**Decision:** OCrypt uses proven primitives (Ed25519, X25519, ChaCha20-Poly1305, BLAKE3) composed into an overlay-specific cryptographic model.
 
 ## Rationale
 
 ### Why BLAKE3 over SHA-256?
 
-BLAKE3 provides:
+- BLAKE3 is ~14x faster than SHA-256 on modern CPUs
+- BLAKE3 supports native parallelism (tree hashing)
+- BLAKE3 output is 256 bits — same security level as SHA-256
+- BLAKE3 is deterministic (unlike SHA-256 which is also deterministic, but BLAKE3's parallelism enables faster Merkle tree computation)
+- Used by: Zcash, WireGuard (BLAKE2s variant)
 
-- Hardware acceleration (SIMD)
-- Parallelism (tree hashing)
-- Smaller code footprint
-- Equivalent security (128-bit collision resistance)
-- Better performance (up to 14x faster on modern CPUs)
+### Why Ed25519?
 
-### Why Ed25519 over ECDSA?
+- 64-byte signatures (compact for overlay envelopes)
+- Fast verification (~3x faster than ECDSA P-256)
+- Deterministic signing (RFC 6979) — no nonce reuse risks
+- Widely supported: libsodium, ring, ed25519-dalek
+- Used by: Matrix, Nostr, Tor, Signal
 
-Ed25519 provides:
+### Why ChaCha20-Poly1305?
 
-- Deterministic signatures (no random nonce required — eliminates a major failure mode)
-- Simpler implementation (fewer side-channel concerns)
-- Smaller signatures (64 bytes vs 70-72 for ECDSA)
-- Wide adoption (TLS 1.3, SSH, WireGuard, Signal)
+- AEAD (authenticated encryption with associated data)
+- Fast on devices without AES hardware acceleration
+- Constant-time implementation (no timing side channels)
+- 96-bit nonce + 128-bit auth tag — sufficient security margin
+- Used by: TLS 1.3, WireGuard, Signal, Matrix
 
-### Why ChaCha20-Poly1305 over AES-GCM?
+### Why isolate cryptographic trust from platforms?
 
-ChaCha20-Poly1305 provides:
+Platforms are Byzantine-capable transport carriers. If cryptography depended on platform trust:
 
-- Better performance on devices without AES hardware (mobile, IoT)
-- Simpler implementation (no AES-NI dependency)
-- Equivalent security (128-bit)
-- No nonce-misuse catastrophic failure (unlike AES-GCM)
+1. A compromised platform could forge envelopes
+2. Platform metadata could leak into consensus
+3. Replay protection would require platform cooperation
+4. Mission isolation would depend on platform access control
 
-### Why separate cryptographic domains?
+OCrypt ensures that **all cryptographic trust is sovereign** — independent of any platform.
 
-Separating Identity, Session, and Mission domains ensures:
+## Key Files to Modify
 
-- Compromise of one domain does not cascade
-- Key lifetimes are appropriate for each use case
-- Revocation is scoped (revoke a mission without revoking identity)
-- Forward secrecy is achievable (session keys are ephemeral)
+| File | Change |
+|------|--------|
+| `crates/octo-crypto/src/ocrypt/mod.rs` | OCrypt module root |
+| `crates/octo-crypto/src/ocrypt/envelope.rs` | EncryptedEnvelope |
+| `crates/octo-crypto/src/ocrypt/session.rs` | Session key establishment |
+| `crates/octo-crypto/src/ocrypt/identity.rs` | OverlayIdentity |
+| `crates/octo-crypto/src/ocrypt/mission.rs` | MissionKeyHierarchy |
+| `crates/octo-crypto/src/ocrypt/attestation.rs` | GatewayAttestation |
+| `crates/octo-crypto/src/ocrypt/onion.rs` | Onion layer construction |
+| `crates/octo-crypto/src/ocrypt/randomness.rs` | Deterministic CSPRNG |
 
 ## Version History
 
 | Version | Date | Changes |
 |---------|------|---------|
-| 1.0.0 | 2026-05-25 | Initial draft — primitives, identity, envelope encryption, sessions, missions, onion |
+| 1.0.0 | 2026-05-25 | Initial draft |
 
 ## Related RFCs
 
-- RFC-0850 (Networking): DOT — transport layer
-- RFC-0851 (Networking): GDP — gateway discovery
-- RFC-0852 (Networking): DGP — gossip propagation
-- RFC-0854 (Networking): Deterministic Proof Substrate — ZK integration
-- RFC-0858 (Networking): Onion Relay Routing — privacy routing
-- RFC-0860 (Networking): Proof-of-Relay — relay attestation
-- RFC-0009 (Process): Identity Management — base identity model
-- RFC-0102 (Numeric): Wallet Cryptography — key formats
-- RFC-0126 (Numeric): Deterministic Serialization — canonical encoding
-- RFC-0104 (Numeric): DFP — deterministic floating point
-- RFC-0105 (Numeric): DQA — deterministic quant arithmetic
-- RFC-0949 (Economics): Enterprise SSO — IdentityProvider model
+- RFC-0850 (Networking): DOT — envelope format
+- RFC-0854 (Networking): DPS — proof substrate
+- RFC-0858 (Networking): ORR — onion routing
+- RFC-0860 (Networking): PoRelay — relay proofs
+- RFC-0102 (Numeric): Wallet Cryptography
+- RFC-0009 (Process): Identity Management
 
 ## Related Use Cases
 
 - [Privacy-Preserving Query Routing](../../docs/use-cases/privacy-preserving-query-routing.md)
 - [Decentralized Mission Execution](../../docs/use-cases/decentralized-mission-execution.md)
-- [Agent Marketplace](../../docs/use-cases/agent-marketplace.md)
-- [Verifiable AI Agents in DeFi](../../docs/use-cases/verifiable-ai-agents-defi.md)

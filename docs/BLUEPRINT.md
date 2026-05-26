@@ -498,6 +498,12 @@ One-paragraph overview of what this RFC defines.
 
 - RFC-XXXX: [Title]
 
+> **Dependency Validation Rules:**
+> 1. Dependencies MUST form a DAG (no cycles)
+> 2. All "Requires" RFCs MUST be listed as mission prerequisites
+> 3. Optional dependencies MUST be documented separately from required
+> 4. Dependencies on "Planned" RFCs MUST note the assumption they will be Accepted
+
 ## Design Goals
 
 Specific measurable objectives (G1, G2, G3...).
@@ -534,6 +540,16 @@ Canonical algorithms with deterministic behavior.
 
 MUST specify deterministic behavior if affecting consensus, proofs, or verification.
 
+### RFC-0008 Execution Class Mapping
+
+Every RFC MUST include a table mapping its operations to execution classes:
+
+| Operation | Class | Rationale |
+|-----------|-------|-----------|
+| [operation] | A/B/C | [why] |
+
+This is required for all RFCs, not just those touching consensus. If an RFC has no consensus-critical operations, state "All operations are Class C" explicitly.
+
 ### Error Handling
 
 Error codes and recovery strategies.
@@ -566,6 +582,14 @@ Analysis of failure modes and mitigations.
 ## Economic Analysis
 
 (Optional) Market dynamics and economic attack surfaces.
+
+### Token Economics Reference
+
+For any RFC touching participation, staking, governance, or economic incentives, include a reference to the dual-stake model:
+
+> Participants MUST satisfy dual-stake requirements: 1,000 OCTO global stake + role-specific stake per `docs/04-tokenomics/token-design.md`.
+
+Omit this section only if the RFC has no economic implications.
 
 ## Compatibility
 
@@ -698,6 +722,23 @@ Missions that must be completed before this one:
 - [ ] Criteria 1
 - [ ] Criteria 2
 
+### Type Coverage
+
+For each RFC type defined in the Specification section, note which mission implements it:
+
+| RFC Type | Implemented By |
+|----------|---------------|
+| TypeName1 | This mission |
+| TypeName2 | Sub-mission 0850a |
+
+If types are deferred to sub-missions, list them explicitly. No RFC type should be unaccounted for.
+
+### Implementation Guide
+
+Link to companion implementation guide if one exists:
+
+- `docs/07-developers/{topic}-implementation-guide.md`
+
 ## Claimant
 
 @username
@@ -718,6 +759,26 @@ Implementation notes, blockers, decisions.
 - One mission = One claimable unit
 - Missions are timeboxed
 - Missions MUST declare dependencies on other missions
+
+**Multi-Mission Decomposition:**
+
+When an RFC has 10+ types, 4+ phases, or 1000+ lines of specification, decompose into multiple missions:
+
+| Mission | Naming | Purpose |
+|---------|--------|---------|
+| Base mission | `0850-dot-core-envelope.md` | Core types, foundation |
+| Feature missions | `0850a-dot-envelope-fragmentation.md` | Major subsystems |
+| Feature missions | `0850b-dot-gateway-federation.md` | Additional features |
+
+**Naming convention:** `{RFC-number}{letter}-{abbreviation}-{description}.md` (e.g., `0850a`, `0850b`)
+
+**When to split:**
+- RFC has >10 specification types
+- RFC has >4 implementation phases
+- Some features are Phase 2+ while core is Phase 1
+- Different features have different prerequisite chains
+
+**Coverage tracking:** The base mission's Type Coverage table should list which sub-mission implements each deferred type.
 
 **Mission Dependency Model:**
 
@@ -775,6 +836,23 @@ The key distinction: **Humans provide intent, agents provide implementation deta
 7. Merge → mission to missions/archived/
 ```
 
+### Agent Failure Recovery
+
+Agents may fail during implementation (API errors, tool failures, stuck processes). Recovery guidance:
+
+| Failure Type | Detection | Action |
+|-------------|-----------|--------|
+| Agent stuck (>10 min no output) | Check output file line count | Relaunch with fresh agent |
+| Repeated tool failures | Check error messages in output | Check partial progress, relaunch |
+| Fork-inside-fork error | Agent reports "fork not available" | Relaunch without subagent nesting |
+| File conflict (Edit NotFound) | Agent reports file modified | Re-read file before editing |
+
+**Partial progress verification:**
+1. Check `git diff` for uncommitted changes from the failed agent
+2. Run `cargo check` / `cargo test` to verify code state
+3. Run `grep -c` to verify what was actually changed
+4. Commit working changes before relaunching
+
 ---
 
 ## Human vs Agent Roles
@@ -805,6 +883,108 @@ The key distinction: **Humans provide intent, agents provide implementation deta
    - Needs Work → Continue discussion
 
 **Consensus Required:** At least 2 maintainer approvals, no blocking objections.
+
+---
+
+## Adversarial Review Process
+
+> **Lessons learned from networking RFCs (0850-0860):** A structured adversarial review process catches issues that community review misses. Multi-round review with severity classification and iterative fix loops produces spec-clean RFCs.
+
+### Severity Classification
+
+| Severity | Definition | Action |
+|----------|-----------|--------|
+| **CRITICAL** | Consensus-breaking, security vulnerability, or spec violation | MUST fix before Accept |
+| **HIGH** | Missing required sections, incorrect types, broken cross-references | SHOULD fix before Accept |
+| **MEDIUM** | Incomplete coverage, naming inconsistencies, missing optional sections | SHOULD fix |
+| **LOW** | Style, dead code, minor improvements | NICE to fix |
+
+### Multi-Round Review Loop
+
+```
+Round 1: Initial adversarial review
+   │
+   ├─ Findings → Fix all CRITICAL + HIGH
+   │
+   ▼
+Round 2: Post-fix verification
+   │
+   ├─ Verify Round 1 fixes applied correctly
+   ├─ Scan for NEW issues introduced by fixes
+   │
+   ├─ 0 CRITICAL/HIGH → Summary, done
+   │
+   └─ Issues remain → Fix → Round 3
+```
+
+### Review Artifact Management
+
+- **Review files go in `docs/reviews/`** — ephemeral scratchpads, NOT committed to git
+- Each round produces a new file (e.g., `rfc-0850-adversarial-review-r2.md`)
+- The final summary goes in the RFC's Version History section
+- `docs/reviews/` is in `.gitignore`
+
+### Agent Orchestration for Reviews
+
+- Launch parallel review agents (one per RFC group) for efficiency
+- Each agent reads the RFC files and cross-references with cocoindex semantic search
+- Fix agents read the review file first, then use Edit for targeted changes
+- Verification agents confirm fixes and scan for new issues
+
+---
+
+## Cross-RFC Consistency
+
+> **Lesson from networking RFCs:** Cross-RFC inconsistencies (duplicate types, missing references, broken dependencies) are only caught by systematic validation.
+
+### Consistency Checklist
+
+Before accepting any RFC that is part of a family:
+
+| Check | Description |
+|-------|-------------|
+| **Shared types** | Types defined in multiple RFCs must be identical or explicitly extended |
+| **Token economics** | RFCs touching participation/staking MUST reference the dual-stake model |
+| **Execution classes** | Every RFC MUST include an RFC-0008 execution class mapping table |
+| **Dependency graph** | Dependencies MUST form a DAG (no cycles) |
+| **Prerequisite alignment** | Mission prerequisites MUST match RFC "Requires" section |
+| **Section references** | Mission RFC section references MUST point to existing sections |
+
+### Dependency Validation Rules
+
+1. **DAG requirement:** The dependency graph across all RFCs MUST be acyclic
+2. **Requires completeness:** All "Requires" RFCs MUST be listed as mission prerequisites
+3. **Optional separation:** Optional dependencies MUST be documented separately from required
+4. **Status check:** Dependencies on "Planned" RFCs MUST note the assumption they will be Accepted
+
+---
+
+## Tools
+
+### CocoIndex Semantic Search
+
+Available for RFC cross-referencing, code pattern discovery, and spec completeness verification:
+
+```bash
+/home/mmacedoeu/_w/shared-venv/bin/python pipelines/targets/search_cli.py "your query" --json -k 10
+```
+
+Use cases:
+- **RFC cross-referencing:** Find all references to a type, struct, or concept across RFCs
+- **Code pattern discovery:** Find existing implementations that ground spec decisions
+- **Spec completeness:** Verify all RFC types appear in mission acceptance criteria
+
+### Implementation Guides
+
+For complex RFCs (10+ types, 4+ phases), create a companion implementation guide at `docs/07-developers/{topic}-implementation-guide.md` with:
+- Module tree (exact `mod.rs` layout)
+- Compilable Rust code for core types
+- Error type definitions with `thiserror`
+- Trait definitions with `async-trait`
+- Config schemas (YAML/TOML)
+- Testing strategy and test patterns
+
+The guide bridges spec→code. Missions point to it instead of duplicating implementation detail.
 
 ---
 

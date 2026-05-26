@@ -429,6 +429,16 @@ Different missions have different trust/security requirements:
 
 A single global proof system forces all missions to accept the same tradeoffs. Mission-scoped verifiers allow each mission to choose the optimal system.
 
+## Compatibility
+
+- **RFC-0850 (DOT):** DPS proof commitments are embedded in DOT envelopes via ProofCarryingEnvelope
+- **RFC-0853 (OCrypt):** DPS uses OCrypt primitives (BLAKE3-256, Ed25519) for proof signatures
+- **RFC-0126 (DCS):** Proof serialization uses Deterministic Canonical Serialization
+- **RFC-0104/RFC-0105 (DFP/DQA):** Witness generation uses deterministic numeric arithmetic
+- **RFC-0630 (Proof-of-Inference):** DPS generalizes PoI's proof model to arbitrary proof systems
+- **RFC-0650 (Proof Aggregation):** DPS integrates with recursive aggregation protocol
+- **Forward compatibility:** ProofSuiteId is extensible (0x0005-0xFFFF for future proof systems)
+
 ## Key Files to Modify
 
 | File | Change |

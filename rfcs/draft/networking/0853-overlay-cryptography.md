@@ -520,6 +520,17 @@ OCrypt ensures that **all cryptographic trust is sovereign** — independent of 
 | `crates/octo-crypto/src/ocrypt/onion.rs` | Onion layer construction |
 | `crates/octo-crypto/src/ocrypt/randomness.rs` | Deterministic CSPRNG |
 
+## Future Work
+
+- F1: Post-quantum cryptography migration (Dilithium, Kyber, BLAKE3/SHA3 hybrid)
+- F2: Hardware security module (HSM) integration for gateway keys
+- F3: Threshold cryptography for distributed key management
+- F4: Zero-knowledge identity proofs (prove identity attributes without revealing keys)
+- F5: Cross-chain identity bridging for multi-network participation
+- F6: Encrypted group messaging for mission-scoped communication
+- F7: Key rotation automation with minimal downtime
+- F8: Formal verification of cryptographic protocol correctness
+
 ## Version History
 
 | Version | Date | Changes |

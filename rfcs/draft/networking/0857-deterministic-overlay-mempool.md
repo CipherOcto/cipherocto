@@ -23,6 +23,14 @@ related:
 
 Draft
 
+## Authors
+
+- Author: @cipherocto
+
+## Maintainers
+
+- Maintainer: @cipherocto
+
 ## Summary
 
 The Deterministic Overlay Mempool (DOM) defines the canonical pending-state coordination layer for CipherOcto overlays. DOM generalizes "transactions" into Overlay Intents and provides deterministic pending object ordering, replay-safe propagation, mission-scoped pools, censorship-resistant dissemination, canonical admission rules, deterministic eviction, proof-compatible execution queues, and multi-transport mempool federation.
@@ -32,6 +40,32 @@ The Deterministic Overlay Mempool (DOM) defines the canonical pending-state coor
 **Requires:** RFC-0850 (DOT), RFC-0851 (GDP), RFC-0852 (DGP), RFC-0853 (OCrypt), RFC-0855 (MON), RFC-0856 (DRS), RFC-0104 (DFP), RFC-0105 (DQA)
 
 **Optional:** RFC-0854 (DPS), RFC-0859 (PCE)
+
+## Motivation
+
+### CAN WE? — Feasibility Research
+
+The fundamental question: **Can we build a deterministic pending-state coordination layer for heterogeneous overlay intents?**
+
+Research confirms feasibility through:
+
+- **Ethereum mempool** demonstrates transaction ordering with economic prioritization (EIP-1559)
+- **RFC-0104/0105** provide deterministic numeric primitives for fee computation
+- **RFC-0850/0852** provide deterministic envelope propagation
+- **Database partitioning** proves mission-scoped isolation is feasible
+- **Priority queue algorithms** provide deterministic ordering with canonical tiebreaking
+
+### WHY? — Why This Matters
+
+Without DOM:
+
+- Traditional mempools only handle transactions — CipherOcto must coordinate 8 intent types
+- No mission isolation — all intents compete in a single global pool
+- Non-deterministic ordering breaks consensus — different nodes process intents differently
+- No economic prioritization — time-sensitive intents get no priority guarantee
+- No multi-transport propagation — intents are limited to single-carrier delivery
+
+DOM enables CipherOcto to coordinate heterogeneous overlay activities with deterministic semantics compatible with blockchain consensus.
 
 ## Design Goals
 
@@ -149,6 +183,75 @@ All mempool-critical arithmetic MUST use deterministic numeric semantics (RFC-01
 | Mempool sync | <5s for 10K intents |
 | Eviction cycle | <10ms |
 
+## Security Considerations
+
+### Consensus Attacks
+
+| Attack | Impact | Mitigation |
+|--------|--------|------------|
+| Intent forgery | High | Ed25519 signature verification |
+| Replay attack | High | Replay cache + logical timestamp validation |
+| Ordering manipulation | High | Canonical ordering by (class, weight, ts, seq, id) |
+| Consensus isolation violation | Critical | Deterministic admission rules — platform metadata never in consensus |
+
+### Economic Exploits
+
+| Attack | Impact | Mitigation |
+|--------|--------|------------|
+| Fee manipulation | Medium | Deterministic fee ordering via RFC-0105 DQA |
+| Priority gaming | Medium | Execution class is intent-type-determined, not sender-chosen |
+| Mempool flooding | Medium | Economic friction via OCTO-B staking |
+| Free-riding | Low | Intent fees required for admission |
+
+## Adversarial Review
+
+| Threat | Impact | Mitigation | Verification |
+|--------|--------|------------|--------------|
+| Intent forgery | High | Ed25519 signature at admission | Signature verification test |
+| Replay attack | High | Replay cache with deterministic eviction | Replay detection test |
+| Ordering manipulation | Critical | Canonical ordering invariant | Ordering consistency test |
+| Mempool flooding | Medium | Economic friction + rate limiting | Flood resistance test |
+| Mission isolation breach | High | Mission-scoped mempool separation | Isolation test |
+| Eviction manipulation | Medium | Deterministic eviction order | Eviction consistency test |
+| Free-riding | Low | OCTO-B intent fees | Fee enforcement test |
+| Priority gaming | Medium | Class determined by intent type | Priority test |
+
+## Economic Analysis
+
+### Token Integration
+
+| Activity | Token | Rationale |
+|----------|-------|-----------|
+| Intent submission fee | OCTO-B | Economic friction to prevent spam |
+| Priority ordering | OCTO-B | Higher fees for higher priority within class |
+| Mempool relay | OCTO-B | Bandwidth for intent propagation |
+| Consensus intents | OCTO-N | Validator participation rewards |
+| Mission intents | OCTO-O | Mission coordination fees |
+
+### Fee Model
+
+```text
+intent_fee = base_fee × intent_type_multiplier × (1 + priority_premium)
+```
+
+Where `intent_type_multiplier` scales by execution class and `priority_premium` is optional sender-chosen uplift.
+
+## Compatibility
+
+### RFC-0843 Integration
+
+DOM extends RFC-0843's transaction model with overlay intents:
+
+- RFC-0843 handles blockchain transactions — DOM generalizes to overlay intents
+- DOM intents propagate via DGP (RFC-0852) over DOT carriers (RFC-0850)
+- Consensus intents integrate with RFC-0843 block production
+
+### Forward Compatibility
+
+- Intent types are extensible (values 0x0009-0xFFFF for future types)
+- Execution classes are extensible (values 0x0007-0xFFFF)
+- Mempool hierarchy is configurable per mission
+
 ## Implementation Phases
 
 ### Phase 1: Core Mempool (Months 1-3)
@@ -254,6 +357,23 @@ Not all intents are equal. A consensus vote that determines block finality is mo
 ### Why deterministic eviction?
 
 When the mempool reaches capacity, the evicted intent must be identical across all nodes. Non-deterministic eviction (e.g., LRU with wall-clock timestamps) causes state divergence: Node A evicts intent X while Node B evicts intent Y, leading to different mempool state roots. Deterministic eviction by (lowest class → lowest weight → oldest timestamp) ensures convergence even under capacity pressure.
+
+## Future Work
+
+- F1: Adaptive fee markets with dynamic base fee adjustment
+- F2: Cross-membridge: intent bridging between separate overlay networks
+- F3: Zero-knowledge mempool proofs (prove intent validity without revealing content)
+- F4: AI-driven intent scheduling optimization
+- F5: Hierarchical economic weighting with nested mission budgets
+- F6: Intent batching for throughput optimization
+- F7: Stealth mempools for hidden mission coordination
+- F8: Integration with hardware security modules for intent signing
+
+## Related Use Cases
+
+- [Decentralized Mission Execution](../../docs/use-cases/decentralized-mission-execution.md)
+- [Agent Marketplace](../../docs/use-cases/agent-marketplace.md)
+- [Hybrid AI-Blockchain Runtime](../../docs/use-cases/hybrid-ai-blockchain-runtime.md)
 
 ## Key Files
 

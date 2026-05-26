@@ -395,3 +395,9 @@ When the mempool reaches capacity, the evicted intent must be identical across a
 - RFC-0850-0856 (Networking): All dependency layers
 - RFC-0858 (Networking): ORR — privacy for intents
 - RFC-0859 (Networking): PCE — proof-carrying intents
+
+## Related Use Cases
+
+- [Decentralized Mission Execution](../../docs/use-cases/decentralized-mission-execution.md)
+- [Agent Marketplace](../../docs/use-cases/agent-marketplace.md)
+- [Hybrid AI-Blockchain Runtime](../../docs/use-cases/hybrid-ai-blockchain-runtime.md)

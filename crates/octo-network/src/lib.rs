@@ -7,12 +7,16 @@
 //! - Message routing
 //! - Provider coordination
 //! - Network simulation (MVP)
+//! - Deterministic Overlay Transport (DOT) — RFC-0850
 //!
 //! In Phase 1: Local simulation with loopback peers
 //! In Phase 2+: libp2p-based decentralized networking
 
 use anyhow::Result;
 use tokio::sync::RwLock;
+
+/// Deterministic Overlay Transport module — RFC-0850.
+pub mod dot;
 
 pub struct Network {
     peers: RwLock<Vec<String>>,

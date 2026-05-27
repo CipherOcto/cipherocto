@@ -1288,7 +1288,7 @@ Input:
 
 Expected:
   mission_hash = BLAKE3-256([0x01; 32] || 0x00000000000003E8 || [0xAB; 32])
-  mission_id = { network_id: 1, mission_hash: [computed] }
+  mission_id = { network_id: 1, mission_hash: [computed], version: 1 }
 ```
 
 ### Key Hierarchy Derivation

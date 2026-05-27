@@ -249,7 +249,7 @@ struct ProofSuiteId {
 | 0x0002 | BLS12-381 | Standard pairing curve |
 | 0x0003 | Goldilocks | STWO-native, 64-bit |
 
-**Backend Registration:** New backends are registered by assigning a new `proof_system` ID (0x0006-0xFFFF). Implementations MUST support at least STARK (0x0001). Other backends are optional per mission configuration.
+**Backend Registration:** New backends are registered by assigning a new `proof_system` ID (0x0009-0xFFFF). Implementations MUST support at least STARK (0x0001). Other backends are optional per mission configuration.
 
 ### 4. Proof-Carrying Envelopes (RFC-0859 integration)
 
@@ -420,7 +420,7 @@ If two aggregators produce competing aggregated proofs for the same set of child
 
 DPS generalizes RFC-0630's proof model. RFC-0630 defines Proof Structure as `(model_id, input_hash, output_hash, stark_proof)` — this maps to DPS's `DeterministicProofSystem` trait with `PublicInputs = (model_id, input_hash, output_hash)` and `Proof = stark_proof`. RFC-0630's verification modes (full, sampling, optimistic) are mission-scoped policies configured per `ProofSuiteId`.
 
-### 9. Integration with OCrypt
+### 10. Integration with OCrypt
 
 ```text
 Application / Missions
@@ -697,7 +697,7 @@ A single global proof system forces all missions to accept the same tradeoffs. M
 - **RFC-0104/RFC-0105 (DFP/DQA):** Witness generation uses deterministic numeric arithmetic
 - **RFC-0630 (Proof-of-Inference):** DPS generalizes PoI's proof model to arbitrary proof systems
 - **RFC-0650 (Proof Aggregation):** DPS integrates with recursive aggregation protocol
-- **Forward compatibility:** ProofSuiteId is extensible (0x0005-0xFFFF for future proof systems)
+- **Forward compatibility:** ProofSuiteId is extensible (0x0009-0xFFFF for future proof systems)
 
 ## Future Work
 

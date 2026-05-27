@@ -246,7 +246,7 @@ struct DeterministicRoute {
     /// Merkle root of transport vectors
     transport_vector_root: [u8; 32],
     /// Trust score (0-1000000, 6 decimal precision)
-    trust_score: u32,
+    trust_score: u64,
     /// Bandwidth class (0-65535)
     bandwidth_class: u16,
     /// Latency class (0-65535)
@@ -746,9 +746,9 @@ Revocation messages propagate via DGP (RFC-0852) as `MessageType::RouteAnnouncem
 
 Revocations are irrevocable — a revoked route cannot be un-revoked. The gateway MUST issue a new route advertisement to replace revoked routes.
 
-### 14. Route Persistence
+### 15. Route Persistence
 
-#### 14.1 Route Cache
+#### 15.1 Route Cache
 
 ```rust
 #[derive(Clone, Debug)]
@@ -763,13 +763,13 @@ struct RouteCacheEntry {
     /// Computed route score
     route_score: u64,
     /// Trust score at last validation
-    trust_score: u32,
+    trust_score: u64,
     /// Cache validity (epoch-based)
     valid_until: u64,
 }
 ```
 
-#### 14.2 Deterministic Eviction
+#### 15.2 Deterministic Eviction
 
 Eviction MUST follow canonical ordering:
 
@@ -785,7 +785,7 @@ Cache capacity is network-configured. When full, entries are evicted in the orde
 - Maximum TTL: 1000 epochs
 - Expiration: deterministic by `valid_until_epoch < current_epoch` comparison
 
-#### 14.3 Cache Invalidation
+#### 15.3 Cache Invalidation
 
 Cache entries are invalidated when:
 
@@ -794,7 +794,7 @@ Cache entries are invalidated when:
 - Trust score drops below mission minimum
 - Route signature verification fails
 
-### 15. Partition Resilience
+### 16. Partition Resilience
 
 DRS assumes network fragmentation is inevitable.
 
@@ -812,7 +812,7 @@ anti-entropy route reconciliation
 
 MUST restore deterministic convergence. Nodes exchange route summaries via DGP (RFC-0852) and reconcile differences deterministically.
 
-### 16. Token Economics Integration
+### 17. Token Economics Integration
 
 | Activity | Token | Rationale |
 |----------|-------|-----------|
@@ -822,7 +822,7 @@ MUST restore deterministic convergence. Nodes exchange route summaries via DGP (
 | Mission routing | OCTO-O | Orchestration of mission-specific routes |
 | Route attestation | OCTO-S | Storage of route proofs (future) |
 
-### 17. AI-Native Routing
+### 18. AI-Native Routing
 
 #### 17.1 AI-Assisted Optimization
 

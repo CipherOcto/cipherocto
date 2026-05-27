@@ -49,4 +49,6 @@ High
 ## Reference
 
 - RFC-0857 §6: Mempool Propagation
-- RFC-0857 §10: Deterministic Numerics
+- RFC-0857 §7: Mempool Root
+- RFC-0857 §11: Deterministic Numerics
+- RFC-0857 §13: Mempool Capacity Limits

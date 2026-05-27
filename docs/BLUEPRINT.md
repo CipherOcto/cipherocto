@@ -696,7 +696,7 @@ missions/open/ → Available to claim
 missions/claimed/ → Someone working on it
 missions/with-pr/ → PR submitted
 missions/archived/ → Completed or abandoned
-```
+````
 
 **Template:**
 

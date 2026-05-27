@@ -100,51 +100,98 @@ DGP: `chaotic heterogeneous carrier fabric`
 ### 2. Gossip Domain
 
 ```rust
+#[repr(u16)]
+enum GossipScope {
+    GLOBAL = 0x0001,
+    REGIONAL = 0x0002,
+    MISSION = 0x0003,
+    PRIVATE = 0x0004,
+    LOCAL = 0x0005,
+    CONSENSUS = 0x0006,
+    // 0x0007-0xFFFF: Reserved for future use
+}
+
 struct GossipDomainId {
     network_id: u32,
     mission_id: [u8; 32],
-    scope: u16,     // GLOBAL, REGIONAL, MISSION, PRIVATE, LOCAL, CONSENSUS
+    scope: u16,     // GossipScope enum values
 }
 ```
 
-| Domain | Purpose |
-|--------|---------|
-| GLOBAL | Entire overlay |
-| REGIONAL | Geographic cluster |
-| MISSION | Temporary mission mesh |
-| PRIVATE | Encrypted subgroup |
-| LOCAL | Nearby peers |
-| CONSENSUS | Validator propagation |
+| Domain | Purpose | Default TTL |
+|--------|---------|-------------|
+| GLOBAL | Entire overlay | 20 hops |
+| REGIONAL | Geographic cluster | 10 hops |
+| MISSION | Temporary mission mesh | 5 hops |
+| PRIVATE | Encrypted subgroup | 3 hops |
+| LOCAL | Nearby peers | 3 hops |
+| CONSENSUS | Validator propagation | 10 hops |
+
+**Domain ID Mapping (RFC-0850 ↔ RFC-0852):**
+
+When wrapping a DOT `DeterministicEnvelope` as a `GossipObject`:
+- `object_type = Envelope (0x0001)`
+- `domain_id.network_id` = envelope's `network_id`
+- `domain_id.mission_id` = envelope's `mission_id`
+- `domain_id.scope` = derived from the GDP `DiscoveryScope` mapping (see RFC-0851)
+- `object_hash = BLAKE3-256(dcs_serialize(GossipObject))` — NOT the DOT `payload_hash`
+
+The `BroadcastDomainId` and `GossipDomainId` are separate types serving different purposes: `BroadcastDomainId` identifies platform-specific communication surfaces; `GossipDomainId` identifies gossip propagation domains. Conversion happens at the adapter layer, not in the canonical serialization.
 
 ### 3. Canonical Gossip Object
 
 ```rust
+#[repr(u16)]
+enum GossipObjectType {
+    Envelope = 0x0001,
+    RouteUpdate = 0x0002,
+    ConsensusFragment = 0x0003,
+    MissionState = 0x0004,
+    VectorCommitment = 0x0005,
+    ZkProof = 0x0006,
+    DiscoveryAdvertisement = 0x0007,
+    SnapshotFragment = 0x0008,
+    // 0x0009-0xFFFF: Reserved for future use
+}
+
+/// Bit layout for GossipObject.propagation_flags: u64
+/// Each flag indicates which gossip mode(s) should propagate this object.
+const FLAG_FLOOD: u64           = 0x0001;  // Flood to all peers
+const FLAG_INCREMENTAL: u64     = 0x0002;  // Only to peers missing this object
+const FLAG_ANTI_ENTROPY: u64    = 0x0004;  // Include in anti-entropy sync
+const FLAG_DIRECTED: u64        = 0x0008;  // Targeted to specific peers
+const FLAG_RELIABLE: u64        = 0x0010;  // Require acknowledgment
+const FLAG_COMPRESSED: u64      = 0x0020;  // Payload is compressed
+// Bits 6-63: Reserved (MUST be zero)
+
 struct GossipObject {
-    object_type: u16,
-    object_hash: [u8; 32],
+    object_type: u16,           // GossipObjectType enum
+    object_hash: [u8; 32],      // BLAKE3-256(dcs_serialize(GossipObject))
     object_size: u32,
     domain_id: GossipDomainId,
     logical_timestamp: u64,
     origin_gateway: [u8; 32],
     ttl_hops: u16,
-    propagation_flags: u64,
+    propagation_flags: u64,     // FLAG_* bitmask
     payload_root: [u8; 32],
     signature: [u8; 64],
 }
 ```
 
+**object_hash derivation:** `object_hash = BLAKE3-256(dcs_serialize(GossipObject))` for all object types. This is distinct from DOT's `payload_hash` — even when `object_type = Envelope`, the `object_hash` covers the entire `GossipObject` (including `domain_id`, `ttl_hops`, etc.), not just the wrapped envelope payload.
+
 **Gossipable Payloads:**
 
-| Type | Description |
-|------|-------------|
-| Envelope | DOT messages |
-| RouteUpdate | Gateway topology |
-| ConsensusFragment | Partial blocks/checkpoints |
-| MissionState | Mission coordination |
-| VectorCommitment | AI/vector state |
-| ZkProof | Proof propagation |
-| DiscoveryAdvertisement | GDP advertisement |
-| SnapshotFragment | State synchronization |
+| Type | Description | Payload Content |
+|------|-------------|-----------------|
+| Envelope | DOT messages | DCS-serialized `DeterministicEnvelope` |
+| RouteUpdate | Gateway topology | Route change announcement |
+| ConsensusFragment | Partial blocks/checkpoints | Consensus data |
+| MissionState | Mission coordination | Mission lifecycle updates |
+| VectorCommitment | AI/vector state | Merkle root of vector data |
+| ZkProof | Proof propagation | ZK proof bytes |
+| DiscoveryAdvertisement | GDP advertisement | DCS-serialized `GatewayAdvertisement` |
+| SnapshotFragment | State synchronization | Chunk of state snapshot |
 
 ### 4. Deterministic Propagation Rules
 
@@ -162,7 +209,10 @@ NOT: receive time, transport order, platform sequence, thread order.
 
 **Duplicate rule:** If identical `object_hash` received → process once, relay per policy.
 
-**Conflicting payload rule:** If same logical identity but different `payload_hash` → `FIRST_VALID_HASH_WINS` using deterministic ordering.
+**Conflicting payload rule:** If same logical identity but different `object_hash`:
+- `FIRST_VALID_HASH_WINS` — the object with the lexicographically lowest `object_hash` that passes signature verification is canonical
+- Tie-breaking when hashes are equal (should not happen with BLAKE3-256, but defined for safety): lowest lexicographic `origin_gateway` wins
+- Deterministic ordering: `(object_hash ASC, origin_gateway ASC)`
 
 ### 6. Gossip Modes
 
@@ -199,7 +249,7 @@ enum GossipPriority {
 }
 ```
 
-Scheduling: Critical → Consensus → Mission → Standard → Bulk
+Scheduling: Critical → Consensus → Mission → Standard → Bulk → Archive
 
 ### 9. Time Model
 
@@ -215,6 +265,10 @@ A single object MAY propagate via Telegram + Discord + Matrix + QUIC + Nostr + B
 
 Large state synchronization SHOULD use Bloom filters, Merkle roots, bitmap summaries, range commitments.
 
+**Bloom filter hash requirement (H5):** Bloom filters MUST use BLAKE3-256 as the hash function. AHasher, SipHash, and other non-deterministic hashers MUST NOT be used. Each Bloom filter hash iteration uses: `BLAKE3-256(object_hash || iteration_index)`. This ensures deterministic behavior across all nodes (Class A requirement).
+
+**Fragment reassembly (M7):** Fragments are collected by `object_hash` and reassembled in `fragment_index` order. Timeout for incomplete reassembly is configurable (default: 30 seconds). On timeout, partial fragments are discarded and a warning is logged. Reassembled payload is verified against `payload_root` before processing.
+
 Large objects MAY fragment:
 
 ```rust
@@ -228,7 +282,25 @@ struct GossipFragment {
 
 ### 12. Replay Protection
 
-Objects remain valid within network-defined replay horizon. Gateways maintain `seen_object_hashes` within replay window.
+Objects remain valid within network-defined replay horizon. Gateways maintain a `GossipReplayCache` modeled after DOT's `ReplayCache` (RFC-0850 §11.2).
+
+```rust
+/// Gossip replay cache for deduplication.
+/// Uses BTreeMap for deterministic iteration order (Class A requirement).
+struct GossipReplayCache {
+    /// Object hash → first seen logical timestamp
+    seen: BTreeMap<[u8; 32], u64>,
+    /// Maximum entries before eviction
+    max_entries: u32,
+    /// Replay window in logical time units
+    window_duration: u64,
+}
+```
+
+**Deterministic eviction policy:**
+1. Always purge entries outside the replay window first
+2. If still at capacity, evict the entry with smallest `(first_seen, object_hash)` — BTreeMap's natural ordering provides deterministic iteration
+3. Tie-breaking: lexicographic `object_hash` (same as DOT's approach)
 
 ### 13. Retention Classes
 

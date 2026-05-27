@@ -204,7 +204,7 @@ struct EncryptedEnvelope {
 AAD MUST include all context-binding fields to prevent context-swapping attacks:
 
 ```text
-aad = envelope_id || sender_ephemeral_public || mission_id || logical_timestamp
+aad = envelope_id || sender_ephemeral_public || mission_id || logical_timestamp || sequence
 ```
 
 Where:
@@ -212,6 +212,7 @@ Where:
 - `sender_ephemeral_public` — binds to sender (prevents sender impersonation)
 - `mission_id` — binds to mission scope (prevents cross-mission injection)
 - `logical_timestamp` — provides ordering context (prevents reordering attacks)
+- `sequence` — enables replay detection without decryption (prevents replay attacks)
 
 **Deterministic validation:** Encryption MAY be probabilistic. Validation MUST remain deterministic. Consensus verifies: canonical plaintext hash, signature validity, envelope structure, replay invariants — NOT ciphertext byte equality.
 
@@ -530,7 +531,7 @@ Derivation:
   nonce = HKDF-BLAKE3(session_key, "ocrypt:nonce:v1", envelope_id, 24)
   mission_id = [0x01; 32]
   logical_timestamp = [0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x01]
-  aad = envelope_id || sender_ephemeral_public || mission_id || logical_timestamp
+  aad = envelope_id || sender_ephemeral_public || mission_id || logical_timestamp || sequence
   ciphertext = ChaCha20-Poly1305-Seal(session_key, nonce, plaintext, aad)
 
 Expected EncryptedEnvelope:

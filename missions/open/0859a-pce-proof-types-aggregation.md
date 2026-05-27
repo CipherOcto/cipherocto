@@ -14,7 +14,7 @@ Implement proof type registry, proof attachment protocol (how proofs attach to i
 
 ## Acceptance Criteria
 
-- [ ] `ProofType` enum #[repr(u16)] matching RFC §4.1: InferenceProof, DatasetIntegrityProof, MissionExecutionProof, RelayProof, ValidatorAttestation, AggregatedProof, MembershipProof, StateTransitionProof, DataIntegrityProof
+- [ ] `ProofType` enum #[repr(u16)] matching RFC §4.1: InferenceProof, DatasetIntegrityProof, MissionExecutionProof, RelayProof, ValidatorAttestation, AggregatedProof, MembershipProof, StateTransitionProof, Custom(u16)
 - [ ] Proof type registry: map ProofType → verification function
 - [ ] Proof attachment protocol: how proofs attach to DOM intents (RFC-0857)
 - [ ] Attachment validation: verify proof matches intent type

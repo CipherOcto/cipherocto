@@ -299,7 +299,7 @@ struct ProofSystemCapabilities {
     /// Proof system identifier
     system_id: ProofSystemId,
     /// Execution model
-    execution_model: ProofExecutionModel,
+    execution_model: ProofCircuitModel,
     /// Typical proof size in bytes
     typical_proof_size: u32,
     /// Typical verification time in microseconds
@@ -369,7 +369,7 @@ struct ProofMetadata {
     /// The proof system used
     proof_system: ProofSystemId,
     /// Execution model
-    execution_model: ProofExecutionModel,
+    execution_model: ProofCircuitModel,
     /// Timestamp when proof was generated (logical, not wall-clock)
     generation_timestamp: u64,
     /// Optional: the computation hash being proved
@@ -459,7 +459,7 @@ All PCE operations MUST be explicitly mapped to RFC-0008 execution classes:
 
 **Critical invariant:** Proof generation is Class C (non-deterministic). Proof verification is Class A (deterministic). Consensus depends ONLY on verification results, never on generation details.
 
-#### 5.3 Canonical Proof Boundary (CRITICAL)
+#### 5.4 Canonical Proof Boundary (CRITICAL)
 
 This is the hard determinism boundary for PCE. Violation is a consensus-critical bug.
 
@@ -482,19 +482,9 @@ This is the hard determinism boundary for PCE. Violation is a consensus-critical
 
 **Enforcement:** The verification pipeline (Section 5.2) is the ONLY path from proof bytes to consensus state. No other code path may inspect proof generation details for consensus purposes.
 
-Consensus MUST NOT depend on:
-
-- Prover runtime or implementation
-- Hardware acceleration used for proving
-- Proving time or wall-clock duration
-- Memory layout during proof generation
-- Parallel execution order during proving
-- Witness generation order
-- Proof blob byte equality (same proof may serialize differently)
-
 **Violation of this boundary is a consensus-critical bug.**
 
-#### 5.4 Parallel Verification
+#### 5.5 Parallel Verification
 
 Proofs on independent envelopes MAY be verified in parallel. Verification of a single proof MUST be sequential and deterministic.
 
@@ -800,7 +790,7 @@ This asymmetry (expensive to prove, cheap to verify) is the fundamental economic
 ### Forward Compatibility
 
 - `ProofSystemId` is extensible (0x0009-0xFFFF reserved)
-- `ProofExecutionModel` is extensible
+- `ProofCircuitModel` is extensible
 - `ProofType` is extensible
 - New proof backends are registered via the proof system registration protocol
 
@@ -810,7 +800,7 @@ PCE uses the Deterministic Proof Substrate as its proof system abstraction:
 
 - `DeterministicProofSystem` trait from RFC-0854 is the verification interface
 - Proof system registration uses RFC-0854's registry protocol
-- Execution models align with RFC-0854's `ProofExecutionModel` enum
+- Execution models align with RFC-0854's `ProofCircuitModel` enum
 
 ## Test Vectors
 
@@ -876,7 +866,7 @@ Expected:
 | Task | Description | RFC Dependency |
 |------|-------------|----------------|
 | 1.1 | Implement `ProofCarryingEnvelope` struct | RFC-0850 |
-| 1.2 | Implement `ProofSystemId` and `ProofExecutionModel` enums | — |
+| 1.2 | Implement `ProofSystemId` and `ProofCircuitModel` enums | — |
 | 1.3 | Implement `ProofMetadata` struct | — |
 | 1.4 | Implement proof commitment computation (BLAKE3-256) | — |
 | 1.5 | Implement public input Merkle root computation | — |

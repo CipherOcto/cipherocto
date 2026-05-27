@@ -21,7 +21,7 @@ Implement proof-carrying envelopes with proof attachment, verification pipeline,
 - [ ] `MissionProofPolicy` with mission_id, required_proof_types, allowed_proof_systems, min_security_level, require_aggregation, max_proof_age (6 fields per RFC §8)
 - [ ] Proof verification pipeline: deserialize → verify commitment → verify proof → check execution class
 - [ ] Canonical proof boundary: consensus NEVER depends on prover runtime, hardware, proving time
-- [ ] Verification latency requirements per proof system (STARK <50ms, PLONK <50ms, RISC0 <200ms) per RFC §5.2
+- [ ] Verification latency requirements per proof system (STARK <100ms, PLONK <50ms, RISC0 <200ms) per RFC Performance Targets
 - [ ] RFC-0008 execution class mapping: proof generation=Class C, verification=Class A
 - [ ] Integration with RFC-0854 (DPS) for proof system abstraction
 - [ ] Integration with RFC-0857 (DOM) for intent proof attachment

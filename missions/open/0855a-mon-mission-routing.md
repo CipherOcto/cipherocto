@@ -47,3 +47,5 @@ High
 ## Reference
 
 - RFC-0855 §6: Mission Routing
+- RFC-0856: Deterministic Route Selection
+- RFC-0851: Gateway Discovery Protocol

@@ -19,7 +19,7 @@ Implement mission discovery with 5 scopes (Public, Invite-only, Stealth, Federat
 - [ ] Invite-only missions: require invitation from Coordinator
 - [ ] Stealth missions: encrypted advertisements, only capability key holders can decrypt
 - [ ] Mission gossip integration with DGP (RFC-0852)
-- [ ] 7 gossip classes: Coordination, Consensus, Execution, AI, Archive, Emergency, Standard
+- [ ] 7 propagation classes: Emergency, Consensus, Coordination, Execution, Ai, Standard, Archive (maps to DGP GossipPriority per RFC-0855 §9.2 mapping table)
 - [ ] Mission-scoped gossip isolation (Mission A gossip separate from Mission B)
 - [ ] Unit tests: 10+ tests covering each discovery scope, gossip class isolation
 - [ ] `cargo fmt -- --check` passes

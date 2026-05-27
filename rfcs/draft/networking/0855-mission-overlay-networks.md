@@ -59,6 +59,7 @@ MONs build on DOT (RFC-0850) for transport, GDP (RFC-0851) for gateway discovery
 
 - RFC-0854 (Networking): DPS — proof-carrying mission execution
 - RFC-0856 (Networking): DRS — deterministic route selection for mission routing
+- RFC-0859 (Networking): PCE — proof-carrying envelopes (future)
 - RFC-0008 (Process): Deterministic AI Execution Boundary — execution classes
 - RFC-0009 (Process): Identity Management — peer identity model
 
@@ -181,6 +182,8 @@ struct MissionId {
     network_id: u32,
     /// BLAKE3-256 of mission genesis material (creator + creation_epoch + nonce)
     mission_hash: [u8; 32],
+    /// Protocol version
+    version: u16,
 }
 ```
 
@@ -188,9 +191,9 @@ struct MissionId {
 
 ```text
 mission_hash = BLAKE3-256(
-    creator_peer_id ||
-    creation_epoch ||
-    genesis_nonce
+    creator_peer_id: [u8; 32] ||
+    creation_epoch: u64 (8 bytes, big-endian) ||
+    genesis_nonce: [u8; 32]
 )
 ```
 
@@ -204,6 +207,8 @@ mission_hash = BLAKE3-256(
 struct MissionDescriptor {
     /// Unique mission identifier
     mission_id: MissionId,
+    /// Descriptor version for optimistic concurrency
+    descriptor_version: u64,
     /// Mission type (see Section 2.3)
     mission_type: u16,
     /// Epoch when mission was created
@@ -312,6 +317,8 @@ enum MissionState {
 
 **Determinism Requirement:** All state transitions MUST be deterministic given identical mission state. Transition triggers MUST NOT depend on wall-clock timing, local heuristics, or non-deterministic inputs.
 
+**Note on PAUSED State:** MON does not support a PAUSED state. Missions that experience participant failures transition to Degraded, not Paused. This is by design: pausing would require non-deterministic human intervention to resume, violating the determinism requirement. Missions degrade gracefully and recover automatically when participants return.
+
 **State Consensus Mechanism (MON-C4 fix):**
 
 State transitions require participant consensus to prevent split-brain scenarios:
@@ -321,6 +328,7 @@ State transitions require participant consensus to prevent split-brain scenarios
 | Active → Degraded | `failed_participants > tolerance_threshold` where `tolerance_threshold = floor(active_participants / 3)` | Automatic (deterministic heartbeat check) |
 | Degraded → Recovering | Coordinator proposes reconciliation | Coordinator approval (no vote needed) |
 | Recovering → Active | State convergence verified via Merkle roots | 2/3 majority vote on convergence proof |
+| Forming → Active | Topology Merkle root committed | Automatic (deterministic topology verification) |
 | Any → Terminated | Mission completion or TTL expiry | Coordinator proposal + 2/3 majority vote |
 
 **Heartbeat Protocol:**
@@ -405,7 +413,7 @@ membership_commitment = BLAKE3-256(
 | Coordinator + Prover | FORBIDDEN | Prevents centralized proof authority |
 | Coordinator + Aggregator | FORBIDDEN | Prevents centralized aggregation authority |
 | Observer + Coordinator | FORBIDDEN | Observers cannot control mission |
-| Max roles per node | 4 | Prevents role concentration |
+| Max roles per node | 4 | Prevents role concentration. Any 4-role combination not explicitly forbidden by the constraints above is valid. |
 | Role escalation | Requires Coordinator approval or 2/3 vote | Prevents unauthorized privilege gain |
 
 **Role Transition Rules:**
@@ -465,6 +473,8 @@ enum AdmissionPolicy {
 | Swarm | Fluid, task-oriented | AI collectives | Good | 5 (for quorum diversity) |
 | Ring | Circular sequencing | Distributed sequencing | Moderate | 3 (minimum ring) |
 | Hybrid | Adaptive combination | General purpose | Variable | 2 |
+
+**Note:** When `min_participants` in MissionDescriptor differs from the TopologyModel default, the descriptor value takes precedence.
 
 ```rust
 #[repr(u16)]
@@ -622,6 +632,8 @@ Mission overlays SHOULD support:
 
 **Rekey Protocol:**
 
+Rekeying follows RFC-0853 Section 12 with MON-specific adaptations: coordinator initiates rekeying, participants notified via DGP gossip, backward secrecy achieved by deriving new keys from fresh entropy.
+
 1. Coordinator generates new `mission_root_key` material
 2. Distributes via encrypted channel to honest participants
 3. New key hierarchy derived from updated root
@@ -662,6 +674,25 @@ enum MissionDiscoveryScope {
 
 **R4-M1 fix:** Renamed from `DiscoveryScope` to `MissionDiscoveryScope` and discriminants moved to 0x0100-0x0104 to avoid collision with RFC-0851 GDP's `DiscoveryScope` (0x0001-0x0006). These are semantically different: GDP scopes describe gateway visibility, MON scopes describe mission discoverability. The mapping is defined in RFC-0851 Section 2 (C-GDP-1 fix).
 
+**Scope Conversion Functions:**
+
+```rust
+fn mission_scope_to_gdp(scope: MissionDiscoveryScope) -> DiscoveryScope {
+    match scope {
+        MissionDiscoveryScope::Public => DiscoveryScope::Global,
+        MissionDiscoveryScope::InviteOnly => DiscoveryScope::Private,
+        MissionDiscoveryScope::Stealth => DiscoveryScope::Private,  // + stealth flag
+        MissionDiscoveryScope::Federated => DiscoveryScope::Regional,
+        MissionDiscoveryScope::Ephemeral => DiscoveryScope::Mission,
+    }
+}
+
+fn mission_scope_to_route(scope: MissionDiscoveryScope) -> RouteScopeFlag {
+    // Conversion via GDP scope as intermediary
+    route_scope_from_discovery(mission_scope_to_gdp(scope))
+}
+```
+
 #### 8.2 Mission Advertisement
 
 ```rust
@@ -689,13 +720,15 @@ struct MissionAdvertisement {
 
 **Discovery Isolation:** Stealth missions MUST NOT be discoverable via public GDP queries. Only nodes with the mission's discovery key can decrypt stealth advertisements.
 
+**Ephemeral Advertisement Behavior:** Ephemeral missions use short-lived advertisements with TTL = 5 hops. Advertisements auto-expire after the mission's configured lifetime.
+
 **GDP Scope Mapping (MON-M5 fix):**
 
 | MON Discovery Scope | GDP Scope Equivalent | Notes |
 |--------------------|---------------------|-------|
 | Public | GLOBAL | Discoverable across entire overlay |
 | Invite-only | PRIVATE | Restricted to invited peers |
-| Stealth | PRIVATE (encrypted) | Hidden existence, encrypted advertisements |
+| Stealth | PRIVATE + stealth flag | Hidden existence, encrypted advertisements |
 | Federated | REGIONAL | Limited to trusted domain set |
 | Ephemeral | MISSION | Temporary, scoped to mission lifetime |
 
@@ -742,6 +775,18 @@ enum MissionPropagationClass {
     Archive = 0x0007,
 }
 ```
+
+**DGP GossipPriority Mapping:**
+
+| MissionPropagationClass | GossipPriority (RFC-0852) | Notes |
+|------------------------|--------------------------|-------|
+| Emergency | Critical | Mission-critical alerts |
+| Consensus | Consensus | Validator coordination |
+| Coordination | Mission | Mission lifecycle events |
+| Execution | Bulk | Compute task distribution |
+| Ai | Standard | AI inference results |
+| Standard | Standard | General mission traffic |
+| Archive | Archive | Historical data |
 
 **Determinism Requirement:** Propagation scheduling MUST be deterministic given identical gossip state. Priority ordering MUST NOT depend on local queue timing.
 
@@ -790,7 +835,7 @@ Mission-critical execution MUST remain deterministic per RFC-0008:
 |-----------|----------------|-----------|
 | Task dispatch | Class A | Consensus-critical ordering |
 | Result collection | Class A | Deterministic aggregation |
-| AI inference | Class B | Deterministic with canonical kernels |
+| AI inference | Class C | Inherently probabilistic |
 | Training | Class C | Inherently probabilistic |
 
 Execution validity MUST NOT depend on:
@@ -821,6 +866,16 @@ enum GovernanceModel {
 ```
 
 #### 11.2 Governance Policies
+
+```rust
+struct GovernancePolicy {
+    model: GovernanceModel,
+    quorum_numerator: u16,
+    quorum_denominator: u16,
+    proposal_deadline_epochs: u64,
+    emergency_authority: EmergencyAuthority,
+}
+```
 
 Missions MAY define policies for:
 
@@ -1017,6 +1072,17 @@ Executors return results to the Coordinator (or designated Aggregator). The Coor
 | Storage/archival | OCTO-S | Historical persistence |
 | Proof generation | OCTO-A | ZK proof computation |
 
+**Mission Operation Token Amounts:**
+
+| Operation | Token | Amount | Rationale |
+|-----------|-------|--------|-----------|
+| Mission message relay | OCTO-B | 0.001 per envelope | Bandwidth cost |
+| Compute job execution | OCTO-A | 0.01 per job | Compute cost |
+| Coordination action | OCTO-O | 0.005 per action | Orchestration overhead |
+| State archival | OCTO-S | 0.001 per snapshot | Storage cost |
+| Validation vote | OCTO-N | 0.002 per vote | Node operation |
+| Proof generation | OCTO-A | 0.05 per proof | ZK compute cost |
+
 **Slashing Conditions (MON-M2 fix):**
 
 | Violation | Penalty | Evidence |
@@ -1048,6 +1114,21 @@ Future MONs MAY conceal:
 #### 18.2 Onion Mission Routing
 
 Integration with RFC-0858 (ORR) for mission-internal privacy.
+
+### 19. Error Types
+
+```rust
+enum MonError {
+    InvalidMissionId { mission_hash: [u8; 32] },
+    MissionNotActive { current_state: u16 },
+    AdmissionDenied { reason: u16 },
+    TopologyViolation { constraint: String },
+    GovernanceRejected { proposal_id: [u8; 32] },
+    ScopeViolation { required: u16, actual: u16 },
+    KeyDerivationFailed { context: String },
+    RekeyingFailed { reason: String },
+}
+```
 
 ## Performance Targets
 

@@ -22,7 +22,7 @@ Implement mission governance models (5 types), partition resilience (automatic r
 - [ ] Autonomous governance: AI-only decision making
 - [ ] Partition resilience: automatic recovery when network partitions heal
 - [ ] State reconciliation via anti-entropy after partition
-- [ ] Multi-transport mobility: seamless switching between carriers (QUIC → Telegram → Bluetooth)
+- [ ] Multi-transport mobility: seamless switching between carriers (QUIC → Telegram → Bluetooth). Included in governance mission because governance proposals must reach all participants regardless of transport changes during voting periods.
 - [ ] Identity preservation across transport changes
 - [ ] Unit tests: 10+ tests covering each governance model, partition recovery, mobility
 - [ ] `cargo fmt -- --check` passes

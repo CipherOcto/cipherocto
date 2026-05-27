@@ -626,7 +626,7 @@ GDP extends RFC-0843's peer discovery with overlay-specific features:
 - Gateway class enum is extensible (values 0x0007-0x003F reserved for future roles, 0x0040-0xFFFF available)
 - Capability flags are extensible (bitmask allows 64 capability types)
 - Discovery scopes are extensible (values 0x0007-0x00FE for future scopes, 0x00FF-0xFFFF reserved)
-- MissionDiscoveryScope (RFC-0855) uses 0x0100-0x0105 range to avoid collision
+- MissionDiscoveryScope (RFC-0855) uses 0x0100-0x0104 range to avoid collision
 
 ## Test Vectors
 

@@ -14,10 +14,10 @@ Implement mission overlay networks with mission identity, lifecycle state machin
 
 ## Acceptance Criteria
 
-- [ ] `MissionId` with network_id, mission_hash, version
+- [ ] `MissionId` with network_id, mission_hash, version (RFC §2.1)
 - [ ] `MissionDescriptor` with mission_id, name, description, lifecycle_state, topology_model, creation_epoch, coordinator, min_participants
 - [ ] `MissionState` enum: Created, Discovering, Forming, Active, Degraded, Recovering, Terminated, Archived
-- [ ] `AdmissionPolicy` struct: open, invite_only, stealth, capability_required, stake_minimum
+- [ ] `AdmissionPolicy` enum: Open, InviteOnly, StakeGated, TrustGated, CapabilityGated (RFC §4.3)
 - [ ] `TopologyModel` enum: Mesh, Hierarchical, Star, Swarm, Ring, Hybrid
 - [ ] `TopologyCommitment` struct: Merkle root of gateway sequence for deterministic replay
 - [ ] `MissionKeyHierarchy` with mission_root_key, transport_keys_root, relay_keys_root, execution_keys_root
@@ -27,7 +27,7 @@ Implement mission overlay networks with mission identity, lifecycle state machin
 - [ ] 8 roles: Coordinator, Executor, Relay, Validator, Observer, Archivist, Prover, Aggregator
 - [ ] Role escalation prevention: Observer→Executor requires Coordinator, any→Coordinator requires 2/3 vote
 - [ ] Topology models: Mesh, Hierarchical, Star, Swarm, Ring, Hybrid with minimum participants
-- [ ] `mission_genesis_secret` derivation: HKDF-BLAKE3(creator_peer_id || creation_epoch || nonce, "mission-genesis-secret")
+- [ ] `mission_genesis_secret` derivation: HKDF-BLAKE3(secret=creator_private_key, salt=mission_id.mission_hash, info="mission-genesis-secret") (RFC §7.1)
 - [ ] Mission naming disambiguation from BLUEPRINT missions (section in RFC)
 - [ ] `MonError` enum with all error variants
 - [ ] Unit tests: 15+ tests covering lifecycle transitions, role enforcement, key derivation

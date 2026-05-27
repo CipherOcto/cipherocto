@@ -20,7 +20,7 @@ Implement distributed execution with AI swarm coordination, compute job distribu
 - [ ] Federated inference: distributed AI inference across mission nodes
 - [ ] Proof-carrying missions: execution results include ZK proof of correctness
 - [ ] Integration with DPS (RFC-0854) for proof generation
-- [ ] Integration with PCE (RFC-0859) for proof attachment
+- [ ] Integration with PCE (RFC-0859) for proof attachment (optional dependency)
 - [ ] Unit tests: 8+ tests covering job distribution, proof attachment
 - [ ] `cargo fmt -- --check` passes
 - [ ] `cargo test -p octo-network` passes

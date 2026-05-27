@@ -14,11 +14,11 @@ Implement gateway attestation (signed capability proofs), key rotation with back
 
 ## Acceptance Criteria
 
-- [ ] `GatewayAttestation` with gateway_id, capabilities_hash, timestamp, signature
+- [ ] `GatewayAttestation` with gateway_id, attestation_type, payload_root, timestamp, signature
 - [ ] Attestation verification against gateway public key
 - [ ] Key rotation: new key signs old key for backward compatibility
 - [ ] Re-keying: mission keys rotated with new epoch
-- [ ] Key revocation: signed revocation notice propagated via GDP
+- [ ] Key revocation: signed revocation notice propagated via GDP; key revocation propagation uses DGP gossip (Mission 0852) when available
 - [ ] Revocation takes effect within configurable grace period
 - [ ] Integration with GDP (RFC-0851) for attestation propagation
 - [ ] Unit tests: 10+ tests covering attestation, rotation, revocation, grace period
@@ -27,7 +27,7 @@ Implement gateway attestation (signed capability proofs), key rotation with back
 
 ## Location
 
-`crates/octo-network/src/ocrypt/mod.rs` (attestation, key management)
+`crates/octo-network/src/ocrypt/attestation.rs` and `crates/octo-network/src/ocrypt/key_rotation.rs`
 
 ## Complexity
 

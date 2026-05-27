@@ -17,7 +17,7 @@ Implement the onion relay cryptographic extension with per-hop encryption, relay
 - [ ] Per-hop encryption: each relay layer uses distinct session key
 - [ ] Relay knowledge isolation: each relay knows only previous/next hop
 - [ ] Layered key derivation: X25519 shared secret → HKDF-BLAKE3 → per-hop keys
-- [ ] Deterministic randomness: BLAKE3-CTR-drbg for consensus-safe random generation
+- [ ] Deterministic randomness: HKDF-BLAKE3 derivation for consensus-safe random generation
 - [ ] Nonce uniqueness: HKDF-BLAKE3(session_key, "ocrypt:nonce:v1", ...)[0..24]
 - [ ] Forward secrecy: compromise of one relay doesn't expose full route
 - [ ] Integration with ORR (RFC-0858) for route construction
@@ -31,19 +31,19 @@ Implement the onion relay cryptographic extension with per-hop encryption, relay
 
 ## Complexity
 
-Very High
+High
 
 ## Prerequisites
 
 - Mission 0853: OCrypt Overlay Cryptography
 
-> **Note:** This mission provides the onion encryption primitives that Mission 0858 (ORR) depends on. Mission 0858 should depend on BOTH 0853 AND 0853b.
+> **Note:** This mission implements onion encryption primitives (OnionHop construction, per-hop key derivation). Mission 0858 implements route construction, relay selection, cover traffic, and proof-of-relay. Mission 0858 should depend on BOTH 0853 AND 0853b.
 
 ## Implementation Notes
 
 - Per-hop encryption: encrypt for exit → wrap for middle → wrap for entry
 - Relay sees: encrypted_next_hop + encrypted_payload_fragment (one layer)
-- Deterministic randomness uses BLAKE3 in CTR mode (not OS random)
+- Deterministic randomness uses HKDF-BLAKE3 derivation per RFC-0853 §11
 - Nonce MUST be unique per message — HKDF derivation ensures this
 
 ## Reference

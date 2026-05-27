@@ -52,12 +52,12 @@ The core invariant: **External platforms MUST NEVER be trusted for confidentiali
 
 - RFC-0850 (Networking): DOT — envelope format
 - RFC-0851 (Networking): GDP — gateway discovery
-- RFC-0852 (Networking): DGP — gossip propagation
 - RFC-0102 (Numeric): Wallet Cryptography — key formats
 - RFC-0009 (Process): Identity Management — identity model
 
 **Optional:**
 
+- RFC-0852 (Networking): DGP — gossip propagation (required only for key revocation propagation)
 - RFC-0854 (Networking): DPS — proof substrate
 
 ## Design Goals
@@ -99,6 +99,20 @@ Without OCrypt:
 
 ## Specification
 
+### System Architecture
+
+```mermaid
+graph TD
+    A[Identity Layer] --> B[Session Layer]
+    B --> C[Envelope Encryption]
+    C --> D[Mission Crypto]
+    D --> E[Onion Extension]
+    A -->|extends| F[RFC-0850 GatewayIdentity]
+    B -->|X25519 + HKDF| C
+    D -->|mission-scoped keys| C
+    E -->|per-hop keys| B
+```
+
 ### 1. Cryptographic Primitives
 
 | Function | Algorithm | Notes |
@@ -107,9 +121,17 @@ Without OCrypt:
 | Signatures | Ed25519 | 64-byte signatures, fast verification |
 | Key Exchange | X25519 | Ephemeral key agreement |
 | AEAD | ChaCha20-Poly1305 | Authenticated encryption |
-| KDF | HKDF-BLAKE3 | Key derivation |
+| KDF | HKDF-BLAKE3 | Key derivation (see §1.1) |
 | Merkle Trees | BLAKE3 | State commitments |
 | Randomness | Deterministic CSPRNG profile | Consensus-safe randomness |
+
+### 1.1 HKDF-BLAKE3 Definition
+
+HKDF-BLAKE3 = HKDF (RFC 5869) using HMAC-BLAKE3 as the underlying PRF, where HMAC-BLAKE3 uses BLAKE3's keyed hash mode. Parameters:
+- **IKM** = input key material
+- **Salt** = context string (domain separation)
+- **Info** = purpose tag (algorithm-specific)
+- **Output length** = requested bytes
 
 **Future Agility:**
 
@@ -158,6 +180,10 @@ struct PlatformBinding {
 ```
 
 Bindings MUST NEVER become consensus authority.
+
+**Relationship to GatewayIdentity (RFC-0850):**
+
+OverlayIdentity is the cryptographic identity layer. GatewayIdentity (RFC-0850 §3.2) is the network-layer identity. A gateway has both: GatewayIdentity for routing, OverlayIdentity for cryptographic operations. The `peer_id` in OverlayIdentity corresponds to `gateway_id` in GatewayIdentity. GatewayIdentity handles routing and discovery; OverlayIdentity handles signing, encryption, and attestation.
 
 ### 4. Deterministic Envelope Encryption
 
@@ -220,6 +246,15 @@ Compromise of one mission MUST NOT compromise other missions, overlay identity, 
 
 Every encrypted envelope MUST include `(envelope_id, sequence, logical_timestamp)` inside authenticated data.
 
+**Replay Cache Specification:**
+
+- **Structure:** `BTreeMap<([u8; 32], u64), u64>` — `(envelope_id, sequence) → logical_timestamp` for deterministic iteration (Class A requirement)
+- **Scope:** Per-mission (each mission has its own replay cache)
+- **Window:** 1 hour OR 10,000 entries, whichever reached first
+- **Eviction policy:** Purge entries outside the window first. If still at capacity, evict by smallest `(logical_timestamp, envelope_id)` — BTreeMap natural ordering provides deterministic eviction
+- **Exhaustion behavior:** When cache is full and no entries can be evicted, reject new envelopes until space is available. Log a warning.
+- **Key rotation interaction:** Rotation does NOT reset the replay window. Old entries remain valid until they naturally expire.
+
 ### 8. Signature Model
 
 Signatures MUST cover: canonical payload, metadata, route commitment, mission scope, replay identifiers.
@@ -248,18 +283,7 @@ Each relay knows ONLY: previous hop, next hop, local instructions. NOT: origin, 
 
 **Onion Layer Construction:**
 
-```rust
-struct OnionLayer {
-    /// Encrypted next-hop instructions + inner layers
-    encrypted_payload: Vec<u8>,
-    /// Ephemeral public key for this layer (X25519)
-    ephemeral_key: [u8; 32],
-    /// Nonce for ChaCha20-Poly1305 (derived from shared secret)
-    nonce: [u8; 24],
-    /// Authentication tag
-    auth_tag: [u8; 16],
-}
-```
+The `OnionHop` struct defined in RFC-0858 §2.2 is the canonical onion layer type. OCrypt provides the cryptographic primitives (key derivation, encryption) that ORR uses to construct and process `OnionHop` structures.
 
 **Layer encryption order (inside-out):**
 
@@ -277,15 +301,21 @@ nonce = HKDF-BLAKE3(session_key, "ocrypt:nonce:v1", layer_index)[0..24]
 
 **Forward secrecy:** Each layer uses a fresh ephemeral X25519 key. Compromise of one relay's key does NOT expose other layers or past sessions.
 
-Full routing specification in RFC-0858 (Onion Relay Routing).
+Routing specification in RFC-0858 (Onion Relay Routing). OCrypt defines the cryptographic primitives; ORR defines the routing protocol.
 
 ### 11. Deterministic Randomness
 
 Consensus cryptography MUST use deterministic randomness derivation:
 
 ```text
-HKDF(seed || context || epoch)
+output = HKDF-BLAKE3(ikm=seed, salt=context, info=epoch_bytes.to_be_bytes(), length=output_len)
 ```
+
+Where:
+- `seed` = input key material (IKM)
+- `context` = domain separation string (salt)
+- `epoch_bytes` = 8-byte big-endian epoch value (info)
+- `output_len` = requested number of output bytes
 
 Forbidden sources for consensus: OS entropy timing, hardware RNG variance, platform randomness APIs, nondeterministic nonce generation.
 
@@ -349,6 +379,30 @@ enum CryptoError {
 ```
 
 **Structural enforcement:** Consensus-critical code paths MUST NOT call functions that source OS randomness or wall-clock time. Implementations SHOULD use type-system separation (e.g., `ConsensusContext` vs `SessionContext`) to enforce this at compile time.
+
+### 14. Error Handling
+
+```rust
+/// Error types that enforce the consensus boundary
+enum CryptoError {
+    /// Attempted non-deterministic operation in consensus-critical path
+    ConsensusBoundaryViolation { operation: &'static str, context: &'static str },
+    /// Nonce reuse detected (catastrophic for ChaCha20-Poly1305)
+    NonceReuse { nonce: [u8; 24], first_use_epoch: u64, second_use_epoch: u64 },
+    /// Invalid nonce derivation
+    InvalidNonce { reason: &'static str },
+    /// Key derivation failure
+    KeyDerivationFailure { stage: &'static str },
+    /// Signature verification failed
+    InvalidSignature,
+    /// Proof verification failed
+    InvalidProof,
+    /// Replay detected
+    ReplayDetected { envelope_id: [u8; 32] },
+    /// Algorithm not supported
+    UnsupportedAlgorithm { suite_id: CryptoSuiteId },
+}
+```
 
 ## Performance Targets
 
@@ -474,7 +528,9 @@ Derivation:
   shared_secret = X25519(sender_ephemeral_secret, recipient_public_key)
   session_key = HKDF-BLAKE3(shared_secret, "ocrypt:envelope:v1", envelope_id, 32)
   nonce = HKDF-BLAKE3(session_key, "ocrypt:nonce:v1", envelope_id, 24)
-  aad = envelope_id || sender_ephemeral_public
+  mission_id = [0x01; 32]
+  logical_timestamp = [0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x01]
+  aad = envelope_id || sender_ephemeral_public || mission_id || logical_timestamp
   ciphertext = ChaCha20-Poly1305-Seal(session_key, nonce, plaintext, aad)
 
 Expected EncryptedEnvelope:
@@ -616,14 +672,14 @@ OCrypt ensures that **all cryptographic trust is sovereign** — independent of 
 
 | File | Change |
 |------|--------|
-| `crates/octo-crypto/src/ocrypt/mod.rs` | OCrypt module root |
-| `crates/octo-crypto/src/ocrypt/envelope.rs` | EncryptedEnvelope |
-| `crates/octo-crypto/src/ocrypt/session.rs` | Session key establishment |
-| `crates/octo-crypto/src/ocrypt/identity.rs` | OverlayIdentity |
-| `crates/octo-crypto/src/ocrypt/mission.rs` | MissionKeyHierarchy |
-| `crates/octo-crypto/src/ocrypt/attestation.rs` | GatewayAttestation |
-| `crates/octo-crypto/src/ocrypt/onion.rs` | Onion layer construction |
-| `crates/octo-crypto/src/ocrypt/randomness.rs` | Deterministic CSPRNG |
+| `crates/octo-network/src/ocrypt/mod.rs` | OCrypt module root |
+| `crates/octo-network/src/ocrypt/envelope.rs` | EncryptedEnvelope |
+| `crates/octo-network/src/ocrypt/session.rs` | Session key establishment |
+| `crates/octo-network/src/ocrypt/identity.rs` | OverlayIdentity |
+| `crates/octo-network/src/ocrypt/mission.rs` | MissionKeyHierarchy |
+| `crates/octo-network/src/ocrypt/attestation.rs` | GatewayAttestation |
+| `crates/octo-network/src/ocrypt/onion.rs` | Onion layer construction |
+| `crates/octo-network/src/ocrypt/randomness.rs` | Deterministic CSPRNG |
 
 ## Future Work
 
@@ -641,10 +697,13 @@ OCrypt ensures that **all cryptographic trust is sovereign** — independent of 
 | Version | Date | Changes |
 |---------|------|---------|
 | 1.0.0 | 2026-05-25 | Initial draft |
+| 1.1.0 | 2026-05-27 | Round 1 adversarial review fixes — 20 issues (1C, 5H, 5M, 3L) |
 
 ## Related RFCs
 
 - RFC-0850 (Networking): DOT — envelope format
+- RFC-0851 (Networking): GDP — gateway discovery
+- RFC-0852 (Networking): DGP — gossip propagation (optional, for key revocation)
 - RFC-0854 (Networking): DPS — proof substrate
 - RFC-0858 (Networking): ORR — onion routing
 - RFC-0860 (Networking): PoRelay — relay proofs

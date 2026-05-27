@@ -14,12 +14,12 @@ Implement the cryptographic layer with CryptoSuiteId, sovereign identity extensi
 
 ## Acceptance Criteria
 
-- [ ] `CryptoSuiteId` with hash_id, sign_id, kdf_id, aead_id, key_exchange_id
-- [ ] Sovereign identity extending octo-core's Identity with Ed25519 public_key
-- [ ] PlatformBinding with platform, external_id_hash, proof_signature
+- [ ] `CryptoSuiteId` with hash_id, signature_id, kdf_id, aead_id, kex_id
+- [ ] Implement `OverlayIdentity` with peer_id, public_key, identity_epoch, capabilities_root, signature
+- [ ] PlatformBinding with platform_type, external_identifier_hash, proof_signature
 - [ ] Session handshake: X25519 → HKDF-BLAKE3 → ChaCha20-Poly1305
 - [ ] Forward secrecy via ephemeral per-message keys
-- [ ] Mission key hierarchy: mission_root_key, transport_keys_root, relay_keys_root
+- [ ] Mission key hierarchy: mission_root_key, transport_keys_root, relay_keys_root, execution_keys_root
 - [ ] Envelope encryption/decryption with canonicalization before encryption
 - [ ] `CryptoError` enum with ConsensusBoundaryViolation variant
 - [ ] Unit tests: 15+ tests covering key derivation, encryption round-trip, nonce uniqueness
@@ -48,6 +48,6 @@ Very High
 
 ## Reference
 
-- RFC-0853: Overlay Cryptography (§3, §4, §5, §6, §13)
+- RFC-0853: Overlay Cryptography (§1, §3, §4, §5, §6, §7, §13, §14)
 - `docs/07-developers/networking-implementation-guide.md` (Error Types, Cargo Dependencies)
 - `crates/octo-core/src/identity.rs` (existing Identity to extend)

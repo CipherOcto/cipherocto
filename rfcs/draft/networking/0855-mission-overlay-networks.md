@@ -651,14 +651,16 @@ Built on GDP (RFC-0851).
 
 ```rust
 #[repr(u16)]
-enum DiscoveryScope {
-    Public = 0x0001,
-    InviteOnly = 0x0002,
-    Stealth = 0x0003,
-    Federated = 0x0004,
-    Ephemeral = 0x0005,
+enum MissionDiscoveryScope {
+    Public = 0x0100,
+    InviteOnly = 0x0101,
+    Stealth = 0x0102,
+    Federated = 0x0103,
+    Ephemeral = 0x0104,
 }
 ```
+
+**R4-M1 fix:** Renamed from `DiscoveryScope` to `MissionDiscoveryScope` and discriminants moved to 0x0100-0x0104 to avoid collision with RFC-0851 GDP's `DiscoveryScope` (0x0001-0x0006). These are semantically different: GDP scopes describe gateway visibility, MON scopes describe mission discoverability. The mapping is defined in RFC-0851 Section 2 (C-GDP-1 fix).
 
 #### 8.2 Mission Advertisement
 
@@ -670,8 +672,8 @@ struct MissionAdvertisement {
     mission_id: MissionId,
     /// Mission descriptor
     descriptor: MissionDescriptor,
-    /// Discovery scope
-    scope: DiscoveryScope,
+    /// Mission discovery scope
+    scope: MissionDiscoveryScope,
     /// Current participant count
     participant_count: u32,
     /// Minimum participants for formation

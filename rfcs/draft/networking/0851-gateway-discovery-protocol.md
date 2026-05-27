@@ -115,21 +115,6 @@ enum DiscoveryScope {
 }
 ```
 
-**C-GDP-5 fix — DiscoveryScope vs RouteScopeFlag mapping:**
-
-RFC-0856 defines `RouteScopeFlag` as a `#[repr(u64)]` bitmask for route domain isolation. GDP's `DiscoveryScope` uses `#[repr(u16)]` sequential discriminants for gateway visibility. The mapping between them:
-
-| GDP DiscoveryScope | Value | RFC-0856 RouteScopeFlag | Value | Notes |
-|-------------------|-------|------------------------|-------|-------|
-| Local | 0x0001 | Local | 0x0010 | Same concept, different repr |
-| Regional | 0x0002 | Regional | 0x0002 | Same concept, same value |
-| Mission | 0x0003 | Mission | 0x0004 | Same concept, different value |
-| Global | 0x0004 | Global | 0x0001 | Same concept, different value |
-| Private | 0x0005 | Private | 0x0008 | Same concept, different value |
-| Consensus | 0x0006 | Consensus | 0x0020 | Same concept, different value |
-
-`DiscoveryScope` is for gateway visibility (who can see this gateway). `RouteScopeFlag` is for route domain isolation (which routes are visible). They describe the same 6 scopes but use different representations because they serve different purposes. Implementations MUST convert between them using this mapping table, not by direct numeric cast.
-
 **C-GDP-1 fix — DiscoveryScope vs MON MissionDiscoveryScope:**
 
 RFC-0855 (MON) defines `MissionDiscoveryScope` (a separate enum with different semantics) for mission-specific visibility. MON's scopes describe **who can discover a mission**, while GDP's scopes describe **how broadly a gateway advertises**. The mapping is:
@@ -301,7 +286,7 @@ struct GatewayCacheEntry {
 
 **Determinism Requirement:** `capabilities` MUST be sorted by `GatewayCapability` enum value (ascending) and `endpoints` MUST be sorted by `(transport_type, endpoint_hash)` (lexicographic) before Merkle root computation. This ensures all nodes compute identical `capabilities_root` and `transport_root` for the same advertisement.
 
-**Deterministic eviction:** lowest trust → oldest unseen → lowest route utility. Ties broken by lexicographic `gateway_id`.
+**Deterministic eviction:** Uses the composite eviction formula defined in Section 13 (M-GDP-2). Lower eviction_score → evicted first. Ties broken by lexicographic `gateway_id`.
 
 ### 11. Anti-Sybil Mechanisms
 
@@ -452,7 +437,7 @@ eviction_score = trust_score * 10 + utility_score * 5 + recency_score * 2
 ```
 
 Where:
-- `trust_score` = RFC-0860 `RelayScore.aggregate` (0-1000)
+- `trust_score` = RFC-0860 `RelayScore.composite` (0-1000)
 - `utility_score` = number of routes using this gateway in last 100 epochs (0-1000)
 - `recency_score` = 1000 - min(1000, current_epoch - last_seen)
 
@@ -584,21 +569,6 @@ GDP's `GatewayCapability` extends RFC-0850's `GatewayRoleFlags` bitmask. The bas
 
 **Note:** Bitmask positions (u64) and MissionDiscoveryScope discriminants (u16) are independent namespaces. GDP extensions use 0x0040+ to avoid overlap with MissionDiscoveryScope range (0x0100-0x0105) where ZkVerification (0x0400) and MissionCoordinator (0x0800) are clearly separated.
 
-**M-GDP-1 fix — OverlayEndpoint:**
-
-`OverlayEndpoint` is defined in RFC-0851 Section 6 (not RFC-0850). It represents a platform-specific transport endpoint for gateway communication.
-
-**M-GDP-9 fix — Mission 0851c DGP integration:**
-
-Mission 0851c acceptance criteria now specify:
-- GDP advertisements wrap as DGP `GossipObject` with `object_type = DiscoveryAdvertisement`
-- GDP DiscoveryScope maps to DGP GossipDomainId.scope (Local→LOCAL, Regional→REGIONAL, etc.)
-- TTL per scope: Local=3, Regional=10, Mission=5, Global=20, Private=3, Consensus=10
-
-**M-GDP-1 fix — OverlayEndpoint:**
-
-`OverlayEndpoint` is defined in RFC-0851 Section 6 (not RFC-0850). It represents a platform-specific transport endpoint for gateway communication. The `endpoint_hash` is BLAKE3-256 of the platform endpoint ID (e.g., Telegram group ID, Matrix room ID).
-
 **M-GDP-8 fix — Advertisement Expiration:**
 
 Advertisements expire after `logical_timestamp + EXPIRY_EPOCHS` (default: 100 epochs, network-configurable). Expired advertisements are removed from cache during purge cycles. This supplements sequence monotonicity with temporal bounds and prevents stale gateway entries from accumulating.
@@ -634,7 +604,7 @@ eviction_score = trust_score * 10 + utility_score * 5 + recency_score * 2
 ```
 
 Where:
-- `trust_score` = RFC-0860 `RelayScore.aggregate` (0-1000)
+- `trust_score` = RFC-0860 `RelayScore.composite` (0-1000)
 - `utility_score` = number of routes using this gateway in last 100 epochs (0-1000)
 - `recency_score` = 1000 - min(1000, current_epoch - last_seen)
 
@@ -729,14 +699,28 @@ Reason: A and B have same (network_id, gateway_id, sequence), A.hash < B.hash
 
 ### Cache Eviction Order
 
-```text
-Cache entries:
-  X: trust=100, last_seen=1000, utility=50
-  Y: trust=50,  last_seen=2000, utility=80
-  Z: trust=100, last_seen=1500, utility=30
+Using the composite eviction formula from Section 13 (M-GDP-2):
+`eviction_score = trust_score * 10 + utility_score * 5 + recency_score * 2`
+where `recency_score = 1000 - min(1000, current_epoch - last_seen)`
 
-Eviction order: Y → Z → X
-Reason: Y has lowest trust (50), then Z has lower utility (30), then X
+```text
+Cache entries (current_epoch = 2000):
+  X: trust=100, last_seen=1000, utility=50
+     recency = 1000 - min(1000, 2000-1000) = 0
+     score = 100*10 + 50*5 + 0*2 = 1250
+
+  Y: trust=50,  last_seen=2000, utility=80
+     recency = 1000 - min(1000, 2000-2000) = 1000
+     score = 50*10 + 80*5 + 1000*2 = 2900
+
+  Z: trust=100, last_seen=1500, utility=30
+     recency = 1000 - min(1000, 2000-1500) = 500
+     score = 100*10 + 30*5 + 500*2 = 2150
+
+Eviction order: X → Z → Y
+Reason: X has lowest eviction_score (1250) due to zero recency (last_seen=1000,
+oldest entry). Z is next (2150) with moderate recency and low utility.
+Y is last (2900) — lowest trust but most recent and highest utility.
 ```
 
 ## Alternatives Considered

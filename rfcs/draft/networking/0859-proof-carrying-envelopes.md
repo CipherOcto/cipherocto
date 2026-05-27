@@ -264,8 +264,7 @@ enum ProofSystemId {
     PLONK = 0x0007,
     /// Cairo — StarkWare's native execution model
     Cairo = 0x0008,
-    /// Future systems
-    Reserved(u16),
+    // 0x0009-0xFFFF: Reserved for future proof systems
 }
 ```
 
@@ -276,7 +275,7 @@ enum ProofSystemId {
 ///
 /// This determines how the proof's circuit/constraints are structured.
 #[repr(u16)]
-enum ProofExecutionModel {
+enum ProofCircuitModel {
     /// AIR constraints (STARK-native)
     AIR = 0x0001,
     /// R1CS (rank-1 constraint system, SNARK-native)
@@ -284,11 +283,10 @@ enum ProofExecutionModel {
     /// PLONKish (customizable gate constraints)
     PLONKISH = 0x0003,
     /// zkVM (virtual machine execution trace)
-    ZKVM = 0x0004,
+    zkVM = 0x0004,
     /// Recursive composition of inner proofs
     Recursive = 0x0005,
-    /// Custom execution model (registered via DPS)
-    Custom(u16),
+    // 0x0006-0xFFFF: Reserved for future circuit models
 }
 ```
 

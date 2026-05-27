@@ -19,9 +19,11 @@ Implement onion-compatible routing where route computation supports ORR (RFC-085
 - [ ] Mission-aware routing: geographic isolation (restrict to specific regions)
 - [ ] Trusted-only relays: filter routes by trust threshold
 - [ ] Low-bandwidth mode: prefer LoRa/Bluetooth for constrained environments
-- [ ] Stealth routing: minimize metadata leakage in route selection
+- [ ] Stealth routing: minimize metadata leakage by preferring high-censorship-resistance carriers, avoiding known surveillance ASNs, randomizing hop selection within trust bounds (RFC §13)
 - [ ] Route persistence: cache routes for reuse (configurable TTL)
-- [ ] Partition resilience: automatic route recomputation on network partition
+- [ ] Partition resilience: automatic route recomputation on network partition (RFC §15)
+- [ ] Token economics integration: route cost calculation per RFC §16
+- [ ] AI-native routing: adaptive weight optimization per RFC §17
 - [ ] Integration with ORR (RFC-0858) for onion route construction
 - [ ] Unit tests: 10+ tests covering onion compatibility, mission modes, partition recovery
 - [ ] `cargo fmt -- --check` passes

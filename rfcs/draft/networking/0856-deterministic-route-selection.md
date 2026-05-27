@@ -65,6 +65,7 @@ DRS builds on RFC-0850 (DOT) overlay transport, RFC-0851 (GDP) gateway discovery
 **Optional:**
 
 - RFC-0854 (Networking): Deterministic Proof Substrate — route attestation
+- RFC-0858 (Networking): Onion Relay Routing — onion-compatible route construction
 - RFC-0860 (Networking): Proof-of-Relay — relay verification
 - RFC-0102 (Numeric): Wallet Cryptography — key format
 
@@ -201,6 +202,19 @@ enum RouteScopeFlag {
     Local       = 0x0010,
     Consensus   = 0x0020,
 }
+
+/// Convert GDP DiscoveryScope to DRS RouteScopeFlag
+/// Mapping defined in RFC-0851 Section 2 (C-GDP-5 fix)
+fn route_scope_from_discovery(scope: DiscoveryScope) -> RouteScopeFlag {
+    match scope {
+        DiscoveryScope::Local => RouteScopeFlag::Local,
+        DiscoveryScope::Regional => RouteScopeFlag::Regional,
+        DiscoveryScope::Mission => RouteScopeFlag::Mission,
+        DiscoveryScope::Global => RouteScopeFlag::Global,
+        DiscoveryScope::Private => RouteScopeFlag::Private,
+        DiscoveryScope::Consensus => RouteScopeFlag::Consensus,
+    }
+}
 ```
 
 #### 3.2 Domain Isolation
@@ -212,6 +226,8 @@ Routes in one domain MUST NOT implicitly affect another domain. Cross-domain rou
 Route domains are canonically ordered by `(network_id, mission_id, scope_flags)` using lexicographic byte comparison.
 
 ### 4. Canonical Route Object
+
+The `DeterministicRoute` struct is the in-memory representation. The "canonical route" refers to its RFC-0126 DCS serialized form.
 
 #### 4.1 Route Advertisement
 
@@ -330,13 +346,15 @@ All nodes MUST compute route preference identically.
 #[repr(C)]
 struct ScoringWeights {
     /// Trust weight (0-1000000, 6 decimal precision)
-    trust_weight: u32,
+    trust_weight: u64,
     /// Bandwidth weight (0-1000000)
-    bandwidth_weight: u32,
+    bandwidth_weight: u64,
+    /// Latency weight (0-1000000)
+    latency_weight: u64,
     /// Censorship resistance weight (0-1000000)
-    censorship_weight: u32,
+    censorship_weight: u64,
     /// Cost weight (0-1000000)
-    cost_weight: u32,
+    cost_weight: u64,
     /// Epoch when these weights become active
     activation_epoch: u64,
 }
@@ -349,15 +367,17 @@ fn compute_route_score(
     weights: &ScoringWeights,
 ) -> u64 {
     // All arithmetic uses u64 integer math (no floating point, no u32 intermediates)
-    let trust_component = (route.trust_score as u64).saturating_mul(weights.trust_weight as u64);
-    let bandwidth_component = (route.bandwidth_class as u64).saturating_mul(weights.bandwidth_weight as u64);
-    let censorship_component = (route.censorship_resistance_class as u64).saturating_mul(weights.censorship_weight as u64);
-    let cost_component = (route.route_cost as u64).saturating_mul(weights.cost_weight as u64);
+    let trust_component = (route.trust_score as u64).saturating_mul(weights.trust_weight);
+    let bandwidth_component = (route.bandwidth_class as u64).saturating_mul(weights.bandwidth_weight);
+    let latency_component = (route.latency_class as u64).saturating_mul(weights.latency_weight);
+    let censorship_component = (route.censorship_resistance_class as u64).saturating_mul(weights.censorship_weight);
+    let cost_component = (route.route_cost as u64).saturating_mul(weights.cost_weight);
 
-    // Score = trust + bandwidth + censorship - cost
+    // Score = trust + bandwidth + latency + censorship - cost
     // Saturating add/sub to prevent overflow/underflow
     trust_component
         .saturating_add(bandwidth_component)
+        .saturating_add(latency_component)
         .saturating_add(censorship_component)
         .saturating_sub(cost_component)
 }
@@ -479,36 +499,40 @@ Route trust incorporates multiple factors:
 ```rust
 #[derive(Clone, Debug)]
 #[repr(C)]
-struct TrustFactors {
+struct TrustScore {
     /// Historical uptime score (0-1000000)
-    historical_uptime: u32,
-    /// Proof-of-Relay attestations (count)
-    relay_attestations: u32,
+    historical_uptime: u64,
+    /// Proof-of-Relay attestations (count, from RFC-0860)
+    proof_of_relay: u64,
     /// Stake weight (micro OCTO)
     stake_weight: u64,
     /// Mission-specific trust (0-1000000)
-    mission_trust: u32,
+    mission_trust: u64,
     /// Consensus participation score (0-1000000)
-    consensus_participation: u32,
+    consensus_participation: u64,
 }
 
 /// Compute composite trust score (DRS-H1 fix: cap stake_weight)
 /// stake_weight contribution is capped via diminishing returns to prevent whale domination.
 /// Cap: stake_weight_capped = min(stake_weight, median_stake * 10)
 /// This ensures no single entity can dominate trust scoring regardless of stake size.
-fn compute_trust_score(factors: &TrustFactors, median_stake: u64) -> u32 {
-    // Weighted sum, all integer arithmetic
-    let uptime = factors.historical_uptime as u64;
-    let relay = (factors.relay_attestations.min(1000) as u64) * 1000;
+///
+/// Design constraint: proof_of_relay attestations are capped at 1000 (prevents gaming
+/// by accumulating excessive attestations). This is a protocol constant, not configurable.
+fn compute_trust_score(factors: &TrustScore, median_stake: u64) -> u64 {
+    // Weighted sum, all u64 arithmetic with saturating operations
+    let uptime = factors.historical_uptime;
+    // Cap attestations at 1000 (design constant) — saturating_mul for safety
+    let relay = (factors.proof_of_relay.min(1000)).saturating_mul(1000);
     // DRS-H1 fix: cap stake_weight to prevent centralization
     let stake_cap = median_stake.saturating_mul(10);
     let stake_capped = factors.stake_weight.min(stake_cap);
     let stake = stake_capped / 1000;
-    let mission = factors.mission_trust as u64;
-    let consensus = factors.consensus_participation as u64;
+    let mission = factors.mission_trust;
+    let consensus = factors.consensus_participation;
 
-    let total = uptime + relay + stake + mission + consensus;
-    (total.min(1_000_000)) as u32
+    let total = uptime.saturating_add(relay).saturating_add(stake).saturating_add(mission).saturating_add(consensus);
+    total.min(1_000_000)
 }
 ```
 
@@ -612,6 +636,8 @@ DRS computes the logical route; OCrypt (RFC-0853) wraps it in onion layers. The 
 #### 12.1 Simultaneous Route Utilization
 
 Traffic MAY propagate across multiple routes concurrently.
+
+**Note:** `MultiPathRoute` is Class C (non-consensus) — the `Vec` allocation is acceptable because multi-path selection is a local optimization, not a consensus-critical operation. The deterministic load balancing algorithm (`select_route_for_packet`) IS Class A.
 
 ```rust
 #[repr(C)]
@@ -720,7 +746,7 @@ Revocation messages propagate via DGP (RFC-0852) as `MessageType::RouteAnnouncem
 
 Revocations are irrevocable — a revoked route cannot be un-revoked. The gateway MUST issue a new route advertisement to replace revoked routes.
 
-### 15. Route Persistence
+### 14. Route Persistence
 
 #### 14.1 Route Cache
 
@@ -752,6 +778,12 @@ lowest score → oldest unseen → highest cost
 ```
 
 Cache capacity is network-configured. When full, entries are evicted in the order above.
+
+**TTL Defaults:**
+- Default TTL: 100 epochs
+- Minimum TTL: 1 epoch
+- Maximum TTL: 1000 epochs
+- Expiration: deterministic by `valid_until_epoch < current_epoch` comparison
 
 #### 14.3 Cache Invalidation
 
@@ -820,9 +852,16 @@ This is enforced by:
 | Route commitment hash | A | Consensus-critical commitment |
 | Trust score computation | A | Consensus-critical weight |
 | Route selection | A | Consensus-critical decision |
+| Mission-aware policy evaluation | A | Consensus-critical constraint |
+| Route revocation verification | A | Consensus-critical validation |
+| Route cache eviction | A | Deterministic eviction required |
+| Partition resilience recomputation | A | Consensus-critical recovery |
+| Multi-path selection | C | Local optimization (non-consensus) |
+| Multi-path load balancing algorithm | A | Deterministic packet routing |
 | Route discovery | C | Non-deterministic network conditions |
 | Latency measurement | C | Non-deterministic timing |
 | Physical route probing | C | Non-deterministic transport |
+| Onion route construction | C | ORR-dependent (non-consensus) |
 
 ## Performance Targets
 
@@ -932,6 +971,21 @@ DRS extends RFC-0843 routing:
 - DRS adds overlay abstraction, trust weighting, mission scoping
 - Native P2P routes use RFC-0843; overlay routes use DRS
 
+## Error Types
+
+```rust
+enum DrsError {
+    RouteNotFound { route_id: [u8; 32] },
+    ScoringOverflow { component: String },
+    InvalidWeights { field: String },
+    CacheFull { max_entries: u32 },
+    RevocationFailed { reason: String },
+    TrustComputationFailed { factor: String },
+    InvalidRouteDomain { domain: [u8; 32] },
+    SignatureVerificationFailed,
+}
+```
+
 ## Test Vectors
 
 ### Route Scoring
@@ -940,22 +994,25 @@ DRS extends RFC-0843 routing:
 Input:
   route.trust_score = 800000 (0.8)
   route.bandwidth_class = 50000
+  route.latency_class = 30000
   route.censorship_resistance_class = 70000
   route.route_cost = 1000
 
   weights.trust_weight = 500000 (0.5)
   weights.bandwidth_weight = 300000 (0.3)
+  weights.latency_weight = 100000 (0.1)
   weights.censorship_weight = 200000 (0.2)
   weights.cost_weight = 100000 (0.1)
 
 Expected:
   trust_component = 800000 × 500000 = 400000000000
   bandwidth_component = 50000 × 300000 = 15000000000
+  latency_component = 30000 × 100000 = 3000000000
   censorship_component = 70000 × 200000 = 14000000000
   cost_component = 1000 × 100000 = 100000000
 
-  score = 400000000000 + 15000000000 + 14000000000 - 100000000
-        = 428900000000
+  score = 400000000000 + 15000000000 + 3000000000 + 14000000000 - 100000000
+        = 431900000000
 ```
 
 ### Route Ordering
@@ -977,14 +1034,14 @@ Reason: D has highest score
 ```text
 Input:
   historical_uptime = 900000
-  relay_attestations = 500
+  proof_of_relay = 500
   stake_weight = 500000000
   mission_trust = 800000
   consensus_participation = 700000
 
 Expected:
   uptime = 900000
-  relay = 500 × 1000 = 500000
+  relay = min(500, 1000) × 1000 = 500000
   stake = 500000000 / 1000 = 500000
   mission = 800000
   consensus = 700000

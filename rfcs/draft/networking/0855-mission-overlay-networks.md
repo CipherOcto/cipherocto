@@ -228,9 +228,16 @@ struct MissionDescriptor {
     /// Mission flags (bitmask)
     flags: u64,
 }
+
+/// Bit layout for MissionDescriptor.flags: u64
+const MISSION_FLAG_STEALTH: u64       = 0x0001;  // Mission existence hidden
+const MISSION_FLAG_AUTO_RECOVER: u64  = 0x0002;  // Automatic partition recovery
+const MISSION_FLAG_PROOF_REQUIRED: u64 = 0x0004; // Execution proofs mandatory
+const MISSION_FLAG_EPHEMERAL: u64     = 0x0008;  // Mission auto-terminates on TTL
+// Bits 4-63: Reserved (MUST be zero)
 ```
 
-**Canonical Serialization Order (MON-M6 fix):** Fields MUST be serialized in declaration order using RFC-0126 DCS: `mission_id, mission_type, creation_epoch, governance_model, cryptographic_suite, mission_root, max_participants, min_participants, ttl_epochs, flags`. Multi-byte integers are big-endian.
+**Canonical Serialization Order (MON-M6 fix):** Fields MUST be serialized in declaration order using RFC-0126 DCS: `mission_id, descriptor_version, mission_type, creation_epoch, governance_model, cryptographic_suite, mission_root, max_participants, min_participants, ttl_epochs, flags`. Multi-byte integers are big-endian.
 
 #### 2.3 Mission Types
 
@@ -874,6 +881,13 @@ struct GovernancePolicy {
     quorum_denominator: u16,
     proposal_deadline_epochs: u64,
     emergency_authority: EmergencyAuthority,
+}
+
+#[repr(u16)]
+enum EmergencyAuthority {
+    Coordinator = 0x0001,    // Coordinator has unilateral emergency authority
+    Quorum = 0x0002,         // Emergency requires reduced quorum (1/3)
+    None = 0x0003,           // No emergency authority (all decisions require full quorum)
 }
 ```
 

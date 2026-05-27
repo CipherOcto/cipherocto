@@ -15,7 +15,7 @@ Implement mission overlay networks with mission identity, lifecycle state machin
 ## Acceptance Criteria
 
 - [ ] `MissionId` with network_id, mission_hash, version (RFC §2.1)
-- [ ] `MissionDescriptor` with mission_id, name, description, lifecycle_state, topology_model, creation_epoch, coordinator, min_participants
+- [ ] `MissionDescriptor` with mission_id, descriptor_version, mission_type, creation_epoch, governance_model, cryptographic_suite, mission_root, max_participants, min_participants, ttl_epochs, flags (RFC §2.2)
 - [ ] `MissionState` enum: Created, Discovering, Forming, Active, Degraded, Recovering, Terminated, Archived
 - [ ] `AdmissionPolicy` enum: Open, InviteOnly, StakeGated, TrustGated, CapabilityGated (RFC §4.3)
 - [ ] `TopologyModel` enum: Mesh, Hierarchical, Star, Swarm, Ring, Hybrid

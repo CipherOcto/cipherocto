@@ -300,7 +300,7 @@ Every HEARTBEAT_INTERVAL (network-configured, default 30s):
 **Availability Score:**
 
 ```text
-availability_score = heartbeat_count / expected_heartbeat_count
+availability_score = heartbeat_count * 1000 / expected_heartbeat_count
 expected_heartbeat_count = window_duration / HEARTBEAT_INTERVAL
 ```
 
@@ -377,7 +377,7 @@ struct UptimeProof {
 **Uptime Score:**
 
 ```text
-uptime_score = compliant_windows / total_windows
+uptime_score = compliant_windows * 1000 / total_windows
 ```
 
 ### 4. Relay Score Model

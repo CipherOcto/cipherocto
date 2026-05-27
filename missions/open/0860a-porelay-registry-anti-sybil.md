@@ -6,7 +6,7 @@ Open
 
 ## RFC
 
-RFC-0860: Proof-of-Relay (PoRelay) — §6, §7
+RFC-0860: Proof-of-Relay (PoRelay) — §5, §6, §7, §8
 
 ## Summary
 
@@ -14,7 +14,7 @@ Implement the trust registry for relay scores, anti-Sybil mechanisms (stake veri
 
 ## Acceptance Criteria
 
-- [ ] `TrustRegistry`: map gateway_id → RelayScore (RFC §6.1)
+- [ ] `TrustRegistry`: map gateway_id → RelayScore (RFC §6)
 - [ ] Trust registry persistence (deterministic ordering)
 - [ ] Trust score update: on new relay proof, recompute trust
 - [ ] Anti-Sybil: stake-gated participation (minimum OCTO-B stake)

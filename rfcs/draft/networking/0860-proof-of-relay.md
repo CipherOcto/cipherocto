@@ -187,7 +187,7 @@ All PoRelay operations MUST be explicitly mapped to RFC-0008 execution classes:
 
 ### 3. Proof Types
 
-#### 2.1 Forwarding Proof
+#### 3.1 Forwarding Proof
 
 Proves that a gateway correctly forwarded an envelope to the next hop.
 
@@ -237,7 +237,7 @@ struct ForwardingProof {
 
 **Privacy Property:** The proof reveals `envelope_hash` (a hash, not the envelope itself) and `destination` (a gateway ID, not payload content). Message contents are never exposed.
 
-#### 2.2 Availability Proof
+#### 3.2 Availability Proof
 
 Proves that a gateway was online and responsive during a time window.
 
@@ -306,7 +306,7 @@ expected_heartbeat_count = window_duration / HEARTBEAT_INTERVAL
 
 A gateway with `availability_score >= 0.95` is considered "highly available."
 
-#### 2.3 Bandwidth Proof
+#### 3.3 Bandwidth Proof
 
 Proves the volume of data a gateway relayed during a time window.
 
@@ -349,7 +349,7 @@ At window end:
 7. Sign bandwidth proof
 ```
 
-#### 2.4 Uptime Proof
+#### 3.4 Uptime Proof
 
 Proves continuous gateway operation over an extended period.
 
@@ -380,7 +380,7 @@ struct UptimeProof {
 uptime_score = compliant_windows / total_windows
 ```
 
-### 3. Relay Score Model
+### 4. Relay Score Model
 
 The RelayScore combines all proof types into a single trust metric.
 
@@ -785,13 +785,13 @@ Input:
   uptime_score = 900
   diversity_bonus = 400
   stake_multiplier = 1500 (1.5x)
-  WF=0.30, WA=0.25, WB=0.20, WU=0.15, WD=0.10
+  WF=300, WA=250, WB=200, WU=150, WD=100 (basis points, total=1000)
 
-  raw = 800*0.30 + 950*0.25 + 700*0.20 + 900*0.15 + 400*0.10
-      = 240 + 237.5 + 140 + 135 + 40
-      = 792.5
+  raw = 800*300 + 950*250 + 700*200 + 900*150 + 400*100
+      = 240000 + 237500 + 140000 + 135000 + 40000
+      = 792500
 
-  composite = 792.5 * 1500 / 1000 = 1188.75 → 1188 (integer)
+  composite = 792500 * 1500 / 1000 = 1188750 / 1000 = 1188
 ```
 
 ## Alternatives Considered

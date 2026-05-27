@@ -1,9 +1,9 @@
 ---
 title: "RFC-0858: Onion Relay Routing (ORR)"
 status: Draft
-version: 1.0.0
+version: 1.1.0
 created: 2026-05-25
-updated: 2026-05-26
+updated: 2026-05-27
 authors:
   - CipherOcto Core Team
 related:
@@ -170,7 +170,7 @@ flowchart LR
 The top-level route descriptor:
 
 ```rust
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 #[repr(C)]
 struct OnionRoute {
     /// Unique route identifier (BLAKE3-256 of route construction inputs)
@@ -212,14 +212,19 @@ route_id = BLAKE3-256(
 Each hop in the onion carries encrypted routing instructions:
 
 ```rust
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 #[repr(C)]
 struct OnionHop {
+    /// Hop index in the route (0 = entry, hop_count-1 = exit)
+    hop_index: u16,
     /// Relay gateway identifier
     relay_gateway: [u8; 32],
-    /// Transport vector for next hop (per RFC-0856)
+    /// Merkle root of remaining route's transport vectors (per RFC-0856 §5.3)
+    /// For onion hops, this is the root of transport vectors from this hop to the exit,
+    /// known only to the source. Each relay verifies its own transport vector is included.
     transport_vector_root: [u8; 32],
     /// Encrypted next-hop instructions (only decryptable by this relay)
+    /// 128 bytes = 96 bytes plaintext instructions + 16 bytes Poly1305 MAC tag + 16 bytes padding
     encrypted_next_hop: [u8; 128],
     /// Encrypted payload fragment (peeled at this hop)
     encrypted_payload_fragment: Vec<u8>,
@@ -242,6 +247,60 @@ Each relay class has strictly bounded knowledge:
 | Destination | Payload content | Source (if anonymous), route |
 
 **Invariant:** No relay possesses both source and destination information simultaneously.
+
+#### 2.4 Error Types
+
+```rust
+#[derive(Clone, Debug)]
+enum OrrError {
+    InvalidHopIndex { index: u16, max: u16 },
+    MacVerificationFailed { hop_index: u16 },
+    DecryptionFailed { hop_index: u16 },
+    ReplayDetected { route_id: [u8; 32], sequence: u64 },
+    RouteExpired { route_id: [u8; 32], epoch: u64 },
+    InvalidRouteCount { expected: u16, actual: u16 },
+    TransportFallbackExhausted { hop_index: u16 },
+    CoverTrafficGenerationFailed { reason: String },
+    DomainIsolationViolation { source_domain: [u8; 32], target_domain: [u8; 32] },
+    ForwardSecrecyViolation { detail: String },
+}
+```
+
+#### 2.5 Cover Policy
+
+```rust
+#[derive(Clone, Debug)]
+#[repr(C)]
+enum CoverPolicy {
+    /// Constant rate: minimum envelopes per time period
+    Constant { min_rate: u32 },
+    /// Proportional: cover traffic as ratio of real traffic (basis points, 100 = 1%)
+    Proportional { ratio: u16 },
+    /// Burst matching: cover traffic during detected bursts
+    Burst { sensitivity: u8 },
+    /// Disabled: no cover traffic (testing only)
+    Disabled,
+}
+```
+
+#### 2.6 Route Commitment
+
+```rust
+#[derive(Clone, Debug, PartialEq, Eq)]
+#[repr(C)]
+struct RouteCommitment {
+    /// BLAKE3-256 of relay sequence
+    relay_hash: [u8; 32],
+    /// BLAKE3-256 of transport vectors
+    transport_hash: [u8; 32],
+    /// BLAKE3-256 of diversity scores
+    diversity_hash: [u8; 32],
+    /// Network epoch
+    epoch: u64,
+    /// Final commitment = BLAKE3-256(relay_hash || transport_hash || diversity_hash || epoch)
+    commitment: [u8; 32],
+}
+```
 
 ### 3. Layered Encryption Protocol
 
@@ -291,26 +350,35 @@ Forward secrecy is achieved through:
 All session keys are derived using HKDF-BLAKE3 (per RFC-0853):
 
 ```rust
-#[repr(C)]
+/// Derive per-hop session key (aligned with RFC-0853 §10)
 fn derive_hop_session_key(
     shared_secret: &[u8; 32],
     hop_index: u16,
     route_id: &[u8; 32],
 ) -> [u8; 32] {
-    let info = format!("onion-hop-{}-{:02x}", hop_index, hex::encode(route_id));
-    hkdf_blake3_expand(shared_secret, info.as_bytes(), 32)
+    // salt = hop_index as big-endian u16 bytes
+    let mut salt = [0u8; 2];
+    salt.copy_from_slice(&hop_index.to_be_bytes());
+    // info = route_id (raw 32 bytes)
+    hkdf_blake3_expand(shared_secret, &salt, route_id, 32)
 }
 ```
 
+**Domain separation:** `info = "ocrypt:onion:v1"` (per RFC-0853 §10)
+
 #### 4.2 Nonce Construction
 
-Nonces MUST be deterministic to prevent reuse:
+Nonces MUST be deterministic to prevent reuse. Nonce construction is aligned with RFC-0853 §10:
 
 ```text
-nonce = BLAKE3-256(session_key || hop_index || route_id)[0..12]
+nonce = HKDF-BLAKE3(session_key, "ocrypt:nonce:v1", hop_index)[0..12]
 ```
 
-This ensures the same (session_key, hop_index, route_id) always produces the same nonce, while different combinations produce different nonces.
+This ensures:
+- Domain separation via `"ocrypt:nonce:v1"` info string
+- ChaCha20-Poly1305 requires exactly 12-byte nonces
+- Same (session_key, hop_index) always produces the same nonce
+- Different combinations produce different nonces
 
 ### 5. Multi-Transport Onion Paths
 
@@ -334,13 +402,13 @@ Each hop uses a different transport carrier, preventing single-carrier observati
 Transport vectors are selected during route construction:
 
 ```rust
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 #[repr(C)]
 struct TransportVector {
     /// Transport type (per RFC-0850 platform types)
     transport_type: u16,
-    /// Broadcast domain for this hop
-    domain_id: [u8; 34],
+    /// Broadcast domain for this hop (BLAKE3-256 hash, 32 bytes)
+    domain_id: [u8; 32],
     /// Priority within transport class
     priority: u16,
     /// Bandwidth class (0-255)
@@ -370,14 +438,15 @@ If primary transport fails:
 Cover envelopes use the same format as real envelopes:
 
 ```rust
+#[derive(Clone, Debug, PartialEq, Eq)]
 #[repr(C)]
 struct CoverEnvelope {
     /// Same structure as OnionRoute
     route: OnionRoute,
     /// Same layered encryption as real traffic
     layered_payload: Vec<u8>,
-    /// Cover flag (encrypted in innermost layer, only destination knows)
-    is_cover: bool,
+    // Note: cover flag is encrypted in the innermost layer, visible only to the destination.
+    // Cover envelopes MUST be indistinguishable from real envelopes at every relay.
 }
 ```
 
@@ -413,7 +482,7 @@ Cover envelopes MUST be indistinguishable from real envelopes:
 Missions can create isolated anonymity domains:
 
 ```rust
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 #[repr(C)]
 struct OnionDomain {
     /// Mission identifier
@@ -463,7 +532,7 @@ ORR replay protection operates at two layers:
 
 **Outer Layer (before decryption):**
 
-Each onion envelope carries a `(route_id, sequence, logical_timestamp)` triple in the authenticated outer metadata. Gateways check this against their replay cache before attempting decryption. This prevents replay of entire onion envelopes.
+Each onion envelope carries a `(route_id, sequence, logical_timestamp)` triple in the authenticated outer metadata. These fields come from the DOT envelope (RFC-0850) wrapping the onion — `sequence` and `logical_timestamp` are DOT envelope fields, not ORR-specific fields. Gateways check this against their replay cache before attempting decryption. This prevents replay of entire onion envelopes.
 
 ```text
 replay_key = (route_id, sequence, logical_timestamp)
@@ -485,7 +554,7 @@ After peeling a layer, relays verify the inner envelope's `(envelope_id, payload
 
 The outer replay check is performed on plaintext metadata (route_id, sequence, timestamp) that is included in the onion's authenticated but unencrypted header. This allows gateways to reject replays without performing any decryption.
 
-### 11. Determinism Requirements (per RFC-0008)
+### RFC-0008 Execution Class Mapping
 
 | Operation | Class | Rationale |
 |-----------|-------|-----------|
@@ -583,6 +652,10 @@ onion_relay_cost = base_relay_cost * hop_count * (1 + cover_traffic_ratio)
 
 Where `cover_traffic_ratio` is the percentage of decoy traffic (default 20%).
 
+## Proof-of-Relay Integration
+
+Relay forwarding proofs (RFC-0860) are attached as the innermost authenticated data in each onion layer. Relay proof generation and verification follow RFC-0860 Section 6. Detailed specification of the `RelayForwardProof` struct and its integration with onion envelopes is defined in RFC-0860.
+
 ## Compatibility
 
 ### RFC-0843 Integration
@@ -647,8 +720,8 @@ Input:
   route_id = [0xAA; 32]
 
 Expected:
-  session_key = HKDF-BLAKE3(shared_secret, "onion-hop-0-aaaa...")[0..32]
-  nonce = BLAKE3-256(session_key || 0 || route_id)[0..12]
+  session_key = HKDF-BLAKE3(shared_secret, salt=[0x00,0x00], info=route_id)[0..32]
+  nonce = HKDF-BLAKE3(session_key, "ocrypt:nonce:v1", 0)[0..12]
 ```
 
 ### Route Commitment
@@ -818,7 +891,7 @@ Global anonymity sets are vulnerable to intersection attacks. Mission-scoped dom
 | Version | Date | Changes |
 |---------|------|---------|
 | 1.0.0 | 2026-05-25 | Initial draft — core onion protocol, layered encryption, cover traffic, mission domains |
-| 1.1.0 | 2026-05-26 | Adversarial review fixes: replay protection specification, deterministic numerics references |
+| 1.1.0 | 2026-05-27 | Round 1 adversarial review — 29 fixes (4C, 8H, 11M, 6L): OCrypt alignment, OrrError, CoverPolicy, RouteCommitment, hop_index, nonce fix |
 
 ## Related RFCs
 
@@ -833,7 +906,7 @@ Global anonymity sets are vulnerable to intersection attacks. Mission-scoped dom
 
 ## Related Use Cases
 
-- [Privacy-Preserving Query Routing](../../docs/use-cases/privacy-preserving-query-routing.md)
-- [Decentralized Mission Execution](../../docs/use-cases/decentralized-mission-execution.md)
-- [Agent Marketplace](../../docs/use-cases/agent-marketplace.md)
-- [Verifiable AI Agents DeFi](../../docs/use-cases/verifiable-ai-agents-defi.md)
+- [Privacy-Preserving Query Routing](docs/use-cases/privacy-preserving-query-routing.md)
+- [Decentralized Mission Execution](docs/use-cases/decentralized-mission-execution.md)
+- [Agent Marketplace](docs/use-cases/agent-marketplace.md)
+- [Verifiable AI Agents DeFi](docs/use-cases/verifiable-ai-agents-defi.md)

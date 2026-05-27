@@ -15,14 +15,15 @@ Implement multi-transport onion paths (Telegram → Matrix → QUIC → Bluetoot
 ## Acceptance Criteria
 
 - [ ] Multi-transport onion paths: each hop can use different transport carrier
+- [ ] `TransportVector` struct (per RFC-0858 §2.3) with transport_type, carrier_platform, domain_id, priority, hop_duration
 - [ ] Path construction: maximize transport diversity across hops
 - [ ] Carrier selection: prefer carriers with highest censorship resistance
 - [ ] Route rotation: periodic path changes (configurable interval)
-- [ ] Rotation trigger: time-based, usage-based, or suspicion-based
-- [ ] Seamless rotation: new route established before old route terminated
+- [ ] Rotation trigger: time-based or suspicion-based (per RFC-0858 §9)
+- [ ] Seamless rotation: new route established before old route terminated (dual-route handshake)
 - [ ] Identity preservation: same peer_id across route changes
 - [ ] Integration with DRS (RFC-0856) for path computation
-- [ ] Unit tests: 8+ tests covering multi-transport paths, rotation triggers, identity preservation
+- [ ] Unit tests: 10+ tests covering multi-transport paths, rotation triggers, identity preservation
 - [ ] `cargo fmt -- --check` passes
 - [ ] `cargo test -p octo-network` passes
 

@@ -193,7 +193,7 @@ OverlayIdentity is the cryptographic identity layer. GatewayIdentity (RFC-0850 ย
 struct EncryptedEnvelope {
     envelope_hash: [u8; 32],
     sender_ephemeral_key: [u8; 32],
-    nonce: [u8; 24],
+    nonce: [u8; 12],
     ciphertext: Vec<u8>,
     auth_tag: [u8; 16],
 }
@@ -297,7 +297,7 @@ The `OnionHop` struct defined in RFC-0858 ยง2.2 is the canonical onion layer typ
 ```text
 shared_secret = X25519(ephemeral_secret, relay_public_key)
 session_key = HKDF-BLAKE3(shared_secret, "ocrypt:onion:v1", hop_index || route_id)
-nonce = HKDF-BLAKE3(session_key, "ocrypt:nonce:v1", layer_index)[0..24]
+nonce = HKDF-BLAKE3(session_key, "ocrypt:nonce:v1", layer_index)[0..12]
 ```
 
 **Forward secrecy:** Each layer uses a fresh ephemeral X25519 key. Compromise of one relay's key does NOT expose other layers or past sessions.
@@ -363,7 +363,7 @@ enum CryptoError {
     /// Attempted non-deterministic operation in consensus-critical path
     ConsensusBoundaryViolation { operation: &'static str, context: &'static str },
     /// Nonce reuse detected (catastrophic for ChaCha20-Poly1305)
-    NonceReuse { nonce: [u8; 24], first_use_epoch: u64, second_use_epoch: u64 },
+    NonceReuse { nonce: [u8; 12], first_use_epoch: u64, second_use_epoch: u64 },
     /// Invalid nonce derivation
     InvalidNonce { reason: &'static str },
     /// Key derivation failure
@@ -389,7 +389,7 @@ enum CryptoError {
     /// Attempted non-deterministic operation in consensus-critical path
     ConsensusBoundaryViolation { operation: &'static str, context: &'static str },
     /// Nonce reuse detected (catastrophic for ChaCha20-Poly1305)
-    NonceReuse { nonce: [u8; 24], first_use_epoch: u64, second_use_epoch: u64 },
+    NonceReuse { nonce: [u8; 12], first_use_epoch: u64, second_use_epoch: u64 },
     /// Invalid nonce derivation
     InvalidNonce { reason: &'static str },
     /// Key derivation failure
@@ -508,7 +508,7 @@ Key derivation:
   )
 
 Encryption:
-  nonce = HKDF-BLAKE3(session_key, "ocrypt:nonce:v1", aad || epoch)[0..24]
+  nonce = HKDF-BLAKE3(session_key, "ocrypt:nonce:v1", aad || epoch)[0..12]
   // WARNING: Nonce MUST be unique per (session_key, message). Reuse is catastrophic.
   // For consensus-critical paths: deterministic derivation from (session_key, aad, epoch)
   // For non-consensus paths: OS randomness is acceptable
@@ -528,7 +528,7 @@ Derivation:
   sender_ephemeral_public = X25519_base(sender_ephemeral_secret)
   shared_secret = X25519(sender_ephemeral_secret, recipient_public_key)
   session_key = HKDF-BLAKE3(shared_secret, "ocrypt:envelope:v1", envelope_id, 32)
-  nonce = HKDF-BLAKE3(session_key, "ocrypt:nonce:v1", envelope_id, 24)
+  nonce = HKDF-BLAKE3(session_key, "ocrypt:nonce:v1", envelope_id, 12)
   mission_id = [0x01; 32]
   logical_timestamp = [0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x01]
   aad = envelope_id || sender_ephemeral_public || mission_id || logical_timestamp || sequence

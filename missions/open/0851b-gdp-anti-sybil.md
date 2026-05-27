@@ -42,8 +42,9 @@ High
 
 The original acceptance criteria were too vague. Updated with concrete values from RFC-0851 Section 11:
 
-- [ ] Stake-gated discovery: minimum OCTO per scope (Local=0, Regional=500, Global=1000)
-- [ ] OCTO-B role stake per scope (Local=0, Regional=50, Global=100)
+- [ ] Stake-gated discovery: minimum OCTO per scope (Local=0, Regional=500, Global=1000, Consensus=1000)
+- [ ] OCTO-B role stake per scope (Local=0, Regional=50, Global=100, Consensus=200)
+- [ ] Mission and Private scopes per RFC-0851 Section 11.1 (mission-defined / invite-only)
 - [ ] Diversity constraint: `diversity_score = transport_diversity * 3 + geographic_diversity * 2 + trust_diversity * 1`
 - [ ] Minimum diversity thresholds: Regional ≥ 2 transports, Global ≥ 3 transports + 2 regions
 - [ ] Non-compliant gateways deprioritized (score = 0), not rejected

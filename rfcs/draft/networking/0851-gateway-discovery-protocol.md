@@ -541,16 +541,74 @@ GDP economic integration follows RFC-0850 Section 13 and RFC-0860 Section 7. Gat
 
 **M-GDP-10 fix — GatewayCapability vs GatewayRoleFlags:**
 
-GDP's `GatewayCapability` extends RFC-0850's `GatewayRoleFlags` bitmask. The base 6 capabilities (Edge=0x0001 through Translation=0x0020) are inherited from RFC-0850. GDP adds 4 extensions:
+GDP's `GatewayCapability` extends RFC-0850's `GatewayRoleFlags` bitmask. The base 6 capabilities (Edge=0x0001 through Translation=0x0020) are inherited from RFC-0850. GDP adds 6 extensions:
 
 | Capability | Bit Position | Description |
 |-----------|-------------|-------------|
-| AIExecution | 0x0040 | AI inference gateway |
-| VectorIndex | 0x0080 | Vector search endpoint |
-| ZkVerification | 0x0100 | ZK proof verification |
-| MissionCoordinator | 0x0200 | Mission lifecycle management |
+| Storage | 0x0040 | Decentralized storage gateway |
+| OnionRelay | 0x0080 | Onion routing relay node |
+| AIExecution | 0x0100 | AI inference gateway |
+| VectorIndex | 0x0200 | Vector search endpoint |
+| ZkVerification | 0x0400 | ZK proof verification |
+| MissionCoordinator | 0x0800 | Mission lifecycle management |
 
-The `capabilities_root` Merkle tree commits to the full capability set including GDP extensions.
+**Note:** Bitmask positions (u64) and MissionDiscoveryScope discriminants (u16) are independent namespaces. GDP extensions use 0x0040+ to avoid overlap with MissionDiscoveryScope range (0x0100-0x0105) where ZkVerification (0x0400) and MissionCoordinator (0x0800) are clearly separated.
+
+**M-GDP-1 fix — OverlayEndpoint:**
+
+`OverlayEndpoint` is defined in RFC-0851 Section 6 (not RFC-0850). It represents a platform-specific transport endpoint for gateway communication.
+
+**M-GDP-9 fix — Mission 0851c DGP integration:**
+
+Mission 0851c acceptance criteria now specify:
+- GDP advertisements wrap as DGP `GossipObject` with `object_type = DiscoveryAdvertisement`
+- GDP DiscoveryScope maps to DGP GossipDomainId.scope (Local→LOCAL, Regional→REGIONAL, etc.)
+- TTL per scope: Local=3, Regional=10, Mission=5, Global=20, Private=3, Consensus=10
+
+**M-GDP-1 fix — OverlayEndpoint:**
+
+`OverlayEndpoint` is defined in RFC-0851 Section 6 (not RFC-0850). It represents a platform-specific transport endpoint for gateway communication. The `endpoint_hash` is BLAKE3-256 of the platform endpoint ID (e.g., Telegram group ID, Matrix room ID).
+
+**M-GDP-8 fix — Advertisement Expiration:**
+
+Advertisements expire after `logical_timestamp + EXPIRY_EPOCHS` (default: 100 epochs, network-configurable). Expired advertisements are removed from cache during purge cycles. This supplements sequence monotonicity with temporal bounds and prevents stale gateway entries from accumulating.
+
+**M-GDP-3 fix — Lifecycle States:**
+
+```rust
+#[repr(u16)]
+enum DiscoveryLifecycle {
+    Bootstrap = 0x0001,     // < 5 known gateways, flood mode
+    Expansion = 0x0002,     // Growing peer graph, incremental gossip
+    Stabilization = 0x0003, // Steady state, trust-weighted neighbors
+    Degraded = 0x0004,      // Partition detected, anti-entropy mode
+    Recovering = 0x0005,    // Healing after partition
+}
+```
+
+Transition conditions:
+- Bootstrap → Expansion: ≥ 5 known gateways
+- Expansion → Stabilization: < 10% new gateways per epoch
+- Any → Degraded: > 33% of known gateways unreachable
+- Degraded → Recovering: anti-entropy reconciliation succeeds
+- Recovering → Stabilization: < 5% divergence in Merkle summaries
+
+**M-GDP-6 fix — Consensus Discovery:**
+
+Consensus gateways use `DiscoveryScope::Consensus` (0x0006) for validator discovery. This maps to DGP's CONSENSUS gossip domain. Consensus discovery has higher stake requirements (1,000 OCTO + 200 OCTO-B) and requires validator-grade trust scores.
+
+**M-GDP-2 fix — Cache Eviction Formula:**
+
+```text
+eviction_score = trust_score * 10 + utility_score * 5 + recency_score * 2
+```
+
+Where:
+- `trust_score` = RFC-0860 `RelayScore.aggregate` (0-1000)
+- `utility_score` = number of routes using this gateway in last 100 epochs (0-1000)
+- `recency_score` = 1000 - min(1000, current_epoch - last_seen)
+
+Lower eviction_score → evicted first. Ties broken by lexicographic `gateway_id`. This formula is deterministic (all integer arithmetic per RFC-0008 Class A) and produces consistent results across all nodes.
 
 ## Compatibility
 

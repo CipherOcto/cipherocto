@@ -1,8 +1,8 @@
-//! Platform adapter trait and supporting types (RFC-0850 §8)
+//! Platform adapter trait (RFC-0850 §8)
 
 use async_trait::async_trait;
 
-use crate::dot::domain::BroadcastDomainId;
+use crate::dot::domain::{BroadcastDomainId, PlatformType};
 use crate::dot::envelope::DeterministicEnvelope;
 use crate::dot::error::PlatformAdapterError;
 
@@ -44,8 +44,6 @@ pub struct CapabilityReport {
 /// Trait for platform-specific transport adapters
 ///
 /// Each adapter bridges one or more broadcast domains into the DOT overlay.
-/// Implementations MUST handle platform-specific encoding/decoding but
-/// MUST NOT affect consensus ordering.
 #[async_trait]
 pub trait PlatformAdapter: Send + Sync {
     /// Send a deterministic envelope to the platform.
@@ -72,4 +70,7 @@ pub trait PlatformAdapter: Send + Sync {
 
     /// Compute deterministic domain ID from platform-specific identifier.
     fn domain_id(&self, platform_id: &str) -> BroadcastDomainId;
+
+    /// The platform type this adapter handles.
+    fn platform_type(&self) -> PlatformType;
 }

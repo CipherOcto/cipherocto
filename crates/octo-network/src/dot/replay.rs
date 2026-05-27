@@ -2,19 +2,19 @@
 //!
 //! RFC-0850 §11.2: Canonical Replay Protection
 //!
-//! Eviction strategy: when at capacity, evicts the entry with the smallest
-//! (first_seen, envelope_id) pair — matching the RFC's deterministic rule:
-//! "smallest first_seen timestamp; if equal, lexicographically smallest envelope_id."
+//! Uses dual BTreeMaps for deterministic eviction per RFC:
+//! - `by_id`: O(1) duplicate lookup by envelope_id
+//! - `by_time`: deterministic eviction by (first_seen, envelope_id)
 
 use std::collections::BTreeMap;
 
-use super::error::DotError;
+use crate::dot::error::DotError;
 
 /// Replay cache for envelope deduplication.
 ///
-/// Two maps maintain the same data in different orderings:
+/// Dual BTreeMaps maintain the same data in different orderings:
 /// - `by_id`: envelope_id → first_seen (O(1) duplicate lookup)
-/// - `by_time`: (first_seen, envelope_id) → () (deterministic eviction by time, then ID)
+/// - `by_time`: (first_seen, envelope_id) → () (deterministic eviction)
 pub struct ReplayCache {
     by_id: BTreeMap<[u8; 32], u64>,
     by_time: BTreeMap<(u64, [u8; 32]), ()>,

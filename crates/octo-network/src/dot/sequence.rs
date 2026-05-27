@@ -1,12 +1,11 @@
-//! Overlay sequence numbers
-//!
-//! RFC-0850 §5: Logical Timestamp Model
+//! Overlay sequence numbers (RFC-0850 §5)
 
 use serde::{Deserialize, Serialize};
 
-/// Overlay sequence for deterministic ordering
+/// Logical sequence number for deterministic ordering
 ///
 /// Order: (epoch, monotonic_counter, gateway_id)
+/// This ensures deterministic ordering independent of wall-clock time.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[repr(C)]
 pub struct OverlaySequence {

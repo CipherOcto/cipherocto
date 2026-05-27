@@ -1,7 +1,9 @@
 //! Gateway identity and capacity (RFC-0850 §3.2)
 
+use serde::{Deserialize, Serialize};
+
 /// Gateway role classification
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[repr(u16)]
 pub enum GatewayClass {
     Edge = 0x0001,
@@ -13,7 +15,7 @@ pub enum GatewayClass {
 }
 
 /// Bitmask for gateway role capabilities (a gateway can serve multiple roles)
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[repr(u64)]
 pub enum GatewayRoleFlags {
     Edge = 0x0001,
@@ -27,7 +29,7 @@ pub enum GatewayRoleFlags {
 /// Gateway identity extending RFC-0009 Identity
 ///
 /// gateway_id = BLAKE3-256(public_key || network_id || creation_epoch)
-#[derive(Clone, Debug)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[repr(C)]
 pub struct GatewayIdentity {
     /// Unique gateway identifier (32 bytes, derived from public key)
@@ -94,7 +96,7 @@ impl GatewayIdentity {
 }
 
 /// Gateway capacity declaration for deterministic routing
-#[derive(Clone, Debug)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[repr(C)]
 pub struct GatewayCapacity {
     /// Maximum envelopes per second

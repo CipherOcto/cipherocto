@@ -1,4 +1,4 @@
-//! Native P2P adapter using libp2p (RFC-0850 §3.1, PlatformType::NativeP2P)
+//! Native P2P adapter (RFC-0850 §3.1, PlatformType::NativeP2P)
 
 use async_trait::async_trait;
 
@@ -9,7 +9,7 @@ use crate::dot::domain::{BroadcastDomainId, PlatformType};
 use crate::dot::envelope::DeterministicEnvelope;
 use crate::dot::error::PlatformAdapterError;
 
-/// Native P2P adapter using libp2p gossipsub
+/// Native P2P adapter using libp2p gossipsub.
 ///
 /// This is the preferred DOT transport — lowest latency, highest reliability,
 /// no platform API limits.
@@ -37,7 +37,6 @@ impl PlatformAdapter for NativeP2PAdapter {
         _envelope: &DeterministicEnvelope,
     ) -> Result<DeliveryReceipt, PlatformAdapterError> {
         // TODO: Implement libp2p gossipsub publish
-        // For now, return a placeholder receipt
         Ok(DeliveryReceipt {
             platform_message_id: "native-p2p-placeholder".to_string(),
             delivered_at: 0,
@@ -56,7 +55,6 @@ impl PlatformAdapter for NativeP2PAdapter {
         &self,
         _raw: &RawPlatformMessage,
     ) -> Result<DeterministicEnvelope, PlatformAdapterError> {
-        // TODO: Deserialize envelope from raw bytes
         Err(PlatformAdapterError::ApiError {
             code: 501,
             message: "NativeP2P canonicalize not yet implemented".to_string(),
@@ -74,6 +72,10 @@ impl PlatformAdapter for NativeP2PAdapter {
 
     fn domain_id(&self, platform_id: &str) -> BroadcastDomainId {
         BroadcastDomainId::new(PlatformType::NativeP2P, platform_id)
+    }
+
+    fn platform_type(&self) -> PlatformType {
+        PlatformType::NativeP2P
     }
 }
 

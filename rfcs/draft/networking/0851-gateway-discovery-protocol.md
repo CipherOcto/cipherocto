@@ -115,6 +115,21 @@ enum DiscoveryScope {
 }
 ```
 
+**C-GDP-5 fix — DiscoveryScope vs RouteScopeFlag mapping:**
+
+RFC-0856 defines `RouteScopeFlag` as a `#[repr(u64)]` bitmask for route domain isolation. GDP's `DiscoveryScope` uses `#[repr(u16)]` sequential discriminants for gateway visibility. The mapping between them:
+
+| GDP DiscoveryScope | Value | RFC-0856 RouteScopeFlag | Value | Notes |
+|-------------------|-------|------------------------|-------|-------|
+| Local | 0x0001 | Local | 0x0010 | Same concept, different repr |
+| Regional | 0x0002 | Regional | 0x0002 | Same concept, same value |
+| Mission | 0x0003 | Mission | 0x0004 | Same concept, different value |
+| Global | 0x0004 | Global | 0x0001 | Same concept, different value |
+| Private | 0x0005 | Private | 0x0008 | Same concept, different value |
+| Consensus | 0x0006 | Consensus | 0x0020 | Same concept, different value |
+
+`DiscoveryScope` is for gateway visibility (who can see this gateway). `RouteScopeFlag` is for route domain isolation (which routes are visible). They describe the same 6 scopes but use different representations because they serve different purposes. Implementations MUST convert between them using this mapping table, not by direct numeric cast.
+
 **C-GDP-1 fix — DiscoveryScope vs MON MissionDiscoveryScope:**
 
 RFC-0855 (MON) defines `MissionDiscoveryScope` (a separate enum with different semantics) for mission-specific visibility. MON's scopes describe **who can discover a mission**, while GDP's scopes describe **how broadly a gateway advertises**. The mapping is:
@@ -128,6 +143,21 @@ RFC-0855 (MON) defines `MissionDiscoveryScope` (a separate enum with different s
 | Ephemeral | Mission | Mission discoverable within mission lifetime |
 
 MON uses a separate `MissionDiscoveryScope` enum (`#[repr(u16)]` starting at `0x0100`) to avoid discriminant collision.
+
+**C-GDP-5 fix — DiscoveryScope vs RouteScopeFlag (RFC-0856):**
+
+RFC-0856 defines `RouteScopeFlag` as a `#[repr(u64)]` bitmask. GDP's `DiscoveryScope` uses `#[repr(u16)]` sequential discriminants. The mapping between them is:
+
+| GDP DiscoveryScope | DRS RouteScopeFlag | Type | Notes |
+|-------------------|-------------------|------|-------|
+| Local (0x0001) | Local (0x0010) | u16 enum → u64 bit | Different repr, different values |
+| Regional (0x0002) | Regional (0x0002) | u16 enum → u64 bit | Same value, different types |
+| Mission (0x0003) | Mission (0x0004) | u16 enum → u64 bit | Different values |
+| Global (0x0004) | Global (0x0001) | u16 enum → u64 bit | Different values |
+| Private (0x0005) | Private (0x0008) | u16 enum → u64 bit | Different values |
+| Consensus (0x0006) | Consensus (0x0020) | u16 enum → u64 bit | Different values |
+
+**Conversion function:** `route_scope_from_discovery(scope: DiscoveryScope) -> RouteScopeFlag` MUST be defined in the implementation. GDP scope is for discovery visibility; DRS scope is for route domain isolation. Both are needed but serve different purposes.
 
 **C-GDP-2 fix — RFC-0008 Execution Class Mapping:**
 

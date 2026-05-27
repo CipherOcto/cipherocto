@@ -54,7 +54,7 @@ The original acceptance criteria were too vague. Updated with concrete values fr
 
 ## Implementation Notes
 
-- Stake requirements scale with visibility scope (LOCAL=0, REGIONAL=0.5, MISSION=1.0, GLOBAL=2.0)
+- Stake requirements scale with visibility scope (LOCAL=0, REGIONAL=500, MISSION=1000, GLOBAL=1000) — integer OCTO values per Section 11.1, RFC-0008 Class A compliant
 - Diversity constraints prevent eclipse attacks (multiple transports, geographic regions)
 - PoRelay integration provides trust scores for discovery weighting
 

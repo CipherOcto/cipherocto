@@ -14,7 +14,7 @@ Implement discovery scopes (LOCAL, REGIONAL, MISSION, GLOBAL, PRIVATE), discover
 
 ## Acceptance Criteria
 
-- [ ] `DiscoveryScope` enum: Local, Regional, Mission, Global, Private
+- [ ] `DiscoveryScope` enum: Local(0x0001), Regional(0x0002), Mission(0x0003), Global(0x0004), Private(0x0005), Consensus(0x0006)
 - [ ] Discovery plane separated from data plane (no recursive routing)
 - [ ] Bootstrap phase: static seed list, QR/bootstrap blob, local broadcast, trusted peers
 - [ ] Expansion phase: gateway advertises peers, peer graph expands recursively

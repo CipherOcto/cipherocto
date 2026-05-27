@@ -9,10 +9,16 @@ pub enum DotError {
     InvalidSignature { envelope_id: [u8; 32] },
 
     #[error("Envelope {envelope_id:?} already seen at epoch {first_seen}")]
-    ReplayDetected { envelope_id: [u8; 32], first_seen: u64 },
+    ReplayDetected {
+        envelope_id: [u8; 32],
+        first_seen: u64,
+    },
 
     #[error("Payload hash mismatch: expected {expected:?}, got {actual:?}")]
-    PayloadHashMismatch { expected: [u8; 32], actual: [u8; 32] },
+    PayloadHashMismatch {
+        expected: [u8; 32],
+        actual: [u8; 32],
+    },
 
     #[error("Invalid envelope ID: expected {expected:?}, computed {computed:?}")]
     InvalidEnvelopeId {

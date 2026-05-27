@@ -442,7 +442,7 @@ function verify_proof_carrying_envelope(pce):
     return result ? Valid : Invalid
 ```
 
-#### 3.4 Execution Class Mapping (RFC-0008)
+#### 5.3 Execution Class Mapping (RFC-0008)
 
 All PCE operations MUST be explicitly mapped to RFC-0008 execution classes:
 
@@ -491,13 +491,6 @@ Consensus MUST NOT depend on:
 - Parallel execution order during proving
 - Witness generation order
 - Proof blob byte equality (same proof may serialize differently)
-
-Consensus MAY depend ONLY on:
-
-- `public_inputs` — the claimed inputs to computation
-- `canonical_verifier` — the proof system's deterministic verification algorithm
-- `proof_bytes` — the serialized proof blob
-- `verification_result` — the deterministic boolean result
 
 **Violation of this boundary is a consensus-critical bug.**
 

@@ -412,25 +412,28 @@ struct RelayScore {
 
 **Score Weights (network-configured constants):**
 
-| Weight | Default | Rationale |
-|--------|---------|-----------|
-| WF (forwarding) | 0.30 | Core relay function |
-| WA (availability) | 0.25 | Must be online to relay |
-| WB (bandwidth) | 0.20 | Volume of useful work |
-| WU (uptime) | 0.15 | Long-term reliability |
-| WD (diversity) | 0.10 | Anti-Sybil, anti-eclipse |
+| Weight | Default (basis points) | Rationale |
+|--------|------------------------|-----------|
+| WF (forwarding) | 300 | Core relay function |
+| WA (availability) | 250 | Must be online to relay |
+| WB (bandwidth) | 200 | Volume of useful work |
+| WU (uptime) | 150 | Long-term reliability |
+| WD (diversity) | 100 | Anti-Sybil, anti-eclipse |
+| **Total** | **1000** | Integer-only arithmetic (Class A) |
 
 **Composite Score Calculation:**
 
 ```text
-raw_score = forwarding_score * WF
-          + availability_score * WA
-          + bandwidth_score * WB
-          + uptime_score * WU
-          + diversity_bonus * WD
+raw_score = forwarding_score * 300
+          + availability_score * 250
+          + bandwidth_score * 200
+          + uptime_score * 150
+          + diversity_bonus * 100
 
 composite = raw_score * stake_multiplier / 1000
 ```
+
+All weights are integer basis points (total=1000). No floating-point arithmetic (RFC-0008 Class A).
 
 **Stake Multiplier:**
 
@@ -535,11 +538,10 @@ Every EPOCH (network-configured):
 Scores decay over time to prevent stale reputation:
 
 ```text
-effective_score = current_score * decay_factor^(epochs_since_last_proof)
-decay_factor = 0.95 (network-configured)
+effective_score = current_score * (950 ^ epochs_since_last_proof) / (1000 ^ epochs_since_last_proof)
 ```
 
-A gateway that stops providing proofs gradually loses trust score, reaching zero after ~60 epochs of inactivity.
+Integer-only decay computation (RFC-0008 Class A). Decay factor = 950/1000 = 0.95 equivalent. A gateway that stops providing proofs gradually loses trust score, reaching near-zero after ~60 epochs of inactivity.
 
 ### 6. Anti-Sybil Mechanisms
 

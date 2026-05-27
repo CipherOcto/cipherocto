@@ -248,7 +248,7 @@ enum DomError {
 
 All mempool-critical arithmetic MUST use deterministic numeric semantics (RFC-0104 DFP, RFC-0105 DQA), especially for fee ordering, stake weighting, reward computation, AI execution pricing.
 
-### 11. Determinism Requirements (RFC-0008 Execution Classes)
+### 12. Determinism Requirements (RFC-0008 Execution Classes)
 
 All DOM operations MUST be explicitly mapped to RFC-0008 execution classes:
 
@@ -267,7 +267,7 @@ All DOM operations MUST be explicitly mapped to RFC-0008 execution classes:
 
 **Violation of Class A boundaries is a consensus-critical bug.** All Class A operations MUST use RFC-0104 DFP and RFC-0105 DQA for numeric computation.
 
-### 12. Mempool Capacity Limits
+### 13. Mempool Capacity Limits
 
 Each mempool scope has a default capacity limit. Nodes MUST evict deterministically when capacity is reached.
 

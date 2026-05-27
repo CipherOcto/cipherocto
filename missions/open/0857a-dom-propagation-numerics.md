@@ -6,7 +6,7 @@ Open
 
 ## RFC
 
-RFC-0857: Deterministic Overlay Mempool (DOM) — §6, §10
+RFC-0857: Deterministic Overlay Mempool (DOM) — §6, §7, §11, §13
 
 ## Summary
 

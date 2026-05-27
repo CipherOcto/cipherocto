@@ -798,11 +798,11 @@ Cache entries are invalidated when:
 
 DRS assumes network fragmentation is inevitable.
 
-#### 15.1 Autonomous Partition Routing
+#### 16.1 Autonomous Partition Routing
 
 Partitioned overlay segments MAY continue routing independently using cached routes.
 
-#### 15.2 Reconciliation
+#### 16.2 Reconciliation
 
 Upon reconnection:
 
@@ -824,7 +824,7 @@ MUST restore deterministic convergence. Nodes exchange route summaries via DGP (
 
 ### 18. AI-Native Routing
 
-#### 17.1 AI-Assisted Optimization
+#### 18.1 AI-Assisted Optimization
 
 AI agents MAY:
 
@@ -833,7 +833,7 @@ AI agents MAY:
 - Suggest relay diversity improvements
 - Optimize mission-specific scoring weights
 
-#### 17.2 Deterministic AI Constraint
+#### 18.2 Deterministic AI Constraint
 
 AI-assisted routing MUST NOT violate deterministic replay guarantees. AI MAY propose, but canonical route selection MUST remain deterministic given shared state.
 

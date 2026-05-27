@@ -95,32 +95,55 @@ Without GDP:
 
 Every gateway possesses a sovereign cryptographic identity (extends RFC-0850 Section 3.2):
 
-```rust
-/// Canonical GatewayIdentity (defined in RFC-0850 Section 3.2, referenced here)
-struct GatewayIdentity {
-    gateway_id: [u8; 32],       // BLAKE3-256(public_key || network_id || creation_epoch)
-    public_key: [u8; 32],       // Ed25519 public key
-    network_id: u32,
-    gateway_class: u16,
-    creation_epoch: u64,
-    supported_platforms: u64,   // Bitmask of supported platform types
-    capabilities: u64,          // Bitmask of gateway capabilities
-}
-```
+GDP uses the canonical `GatewayIdentity` struct defined in RFC-0850 Section 3.2. The `gateway_class` field uses the `GatewayClass` enum (not raw `u16`). Any field additions MUST be made in RFC-0850 and referenced here.
 
-**Note:** This struct is defined canonically in RFC-0850 Section 3.2. GDP uses the same definition. Any field additions MUST be made in RFC-0850 and referenced here.
+**C-GDP-3 fix:** RFC-0851 now references RFC-0850's `GatewayClass` enum for `gateway_class` instead of raw `u16`. The implementation at `crates/octo-network/src/dot/gateway.rs` uses `GatewayClass` consistently.
 
 ### 2. Discovery Scope
 
+GDP defines discovery scopes for gateway visibility. These are the **canonical** discovery scopes used by all overlay protocols.
+
 ```rust
+#[repr(u16)]
 enum DiscoveryScope {
     Local = 0x0001,       // Same broadcast domain
     Regional = 0x0002,    // Geographic/latency region
     Mission = 0x0003,     // Temporary overlay visibility
     Global = 0x0004,      // Entire DOT mesh
     Private = 0x0005,     // Invite-only discovery
+    Consensus = 0x0006,   // Validator/consensus node discovery
 }
 ```
+
+**C-GDP-1 fix — DiscoveryScope vs MON MissionDiscoveryScope:**
+
+RFC-0855 (MON) defines `MissionDiscoveryScope` (a separate enum with different semantics) for mission-specific visibility. MON's scopes describe **who can discover a mission**, while GDP's scopes describe **how broadly a gateway advertises**. The mapping is:
+
+| MON MissionDiscoveryScope | GDP DiscoveryScope | Notes |
+|---------------------------|-------------------|-------|
+| Public | Global | Mission discoverable by all gateways |
+| InviteOnly | Private | Mission discoverable only by invited gateways |
+| Stealth | Private + stealth flag | Mission existence hidden, requires discovery key |
+| Federated | Regional | Mission discoverable within trusted federation |
+| Ephemeral | Mission | Mission discoverable within mission lifetime |
+
+MON uses a separate `MissionDiscoveryScope` enum (`#[repr(u16)]` starting at `0x0100`) to avoid discriminant collision.
+
+**C-GDP-2 fix — RFC-0008 Execution Class Mapping:**
+
+| GDP Operation | Execution Class | Rationale |
+|---------------|-----------------|-----------|
+| Advertisement serialization | Class A | Consensus-critical identity |
+| Advertisement signature verification | Class A | Consensus-critical validation |
+| Discovery ordering by (network_id, gateway_id, sequence, hash) | Class A | Consensus-critical ordering |
+| Cache eviction ordering | Class A | Consensus-critical state |
+| Heartbeat verification | Class A | Consensus-critical liveness |
+| Heartbeat failure detection | Class A | Consensus-critical liveness |
+| Route scoring (integer arithmetic) | Class A | Consensus-critical scoring |
+| Gateway discovery (finding gateways) | Class B | Configurable timeouts |
+| Discovery lifecycle transitions | Class B | Configurable timeouts |
+| Advertisement propagation | Class C | Transport-dependent |
+| Platform adapter I/O | Class C | Inherently non-deterministic |
 
 ### 3. Discovery Plane vs Data Plane
 
@@ -244,29 +267,138 @@ struct GatewayCacheEntry {
 
 ### 11. Anti-Sybil Mechanisms
 
-- Stake-gated discovery (minimum OCTO-B for global propagation)
-- Diversity constraints: transport, geographic, organizational, trust-source
+GDP MUST assume adversarial gateway creation. Anti-sybil integrates with RFC-0860 (PoRelay) Section 6.
+
+**11.1 Stake-Gated Discovery**
+
+Minimum stake required per discovery scope (per BLUEPRINT dual-stake model):
+
+| Scope | OCTO Global Stake | OCTO-B Role Stake | Rationale |
+|-------|-------------------|-------------------|-----------|
+| Local | 0 | 0 | Same broadcast domain, trust assumed |
+| Regional | 500 OCTO | 50 OCTO-B | Moderate barrier |
+| Mission | Mission-defined | Mission-defined | Per MON governance |
+| Global | 1,000 OCTO | 100 OCTO-B | Highest barrier, Sybil-resistant |
+| Private | Invite-only | Inviter-determined | Trust delegated to inviter |
+| Consensus | 1,000 OCTO | 200 OCTO-B | Validator-grade trust required |
+
+The 1,000 OCTO global minimum comes from `docs/01-foundation/whitepaper/v1.0-whitepaper.md` §11.2.4 (Dual-Stake Anti-Sybil model).
+
+**11.2 Diversity Constraints**
+
+Gateways MUST maintain diversity across:
+
+| Dimension | Metric | Minimum Threshold |
+|-----------|--------|-------------------|
+| Transport | Number of distinct platform types | ≥ 2 for Regional, ≥ 3 for Global |
+| Geographic | Number of distinct regions | ≥ 2 for Global |
+| Trust-source | Number of distinct trust attestors | ≥ 2 for Regional |
+
+Non-compliant gateways are deprioritized (not rejected) in discovery ordering. Diversity score: `diversity_score = transport_diversity * 3 + geographic_diversity * 2 + trust_diversity * 1`.
+
+**11.3 Rejection Behavior**
+
+| Condition | Action |
+|-----------|--------|
+| Stake below minimum for scope | Advertisement silently dropped |
+| Zero diversity for Global scope | Advertisement deprioritized (score = 0) |
+| Known Sybil cluster (correlated behavior) | All cluster members deprioritized |
+
+**11.4 Integration with RFC-0860**
+
+GDP's `trust_root` Merkle commitment references RFC-0860 Section 2.2 `RelayScore`. Gateways with higher PoRelay trust scores receive higher discovery priority.
 
 ### 12. Gateway Heartbeat and Failure Detection
 
-**Heartbeat Structure:**
+**H-GDP-1 fix:** The canonical `GatewayHeartbeat` struct is defined in RFC-0860 Section 2.2. GDP references RFC-0860's definition and specifies only the processing rules here.
+
+**GDP Heartbeat Processing Rules:**
+
+- Heartbeats are processed in `(gateway_id, sequence)` order
+- Duplicate or out-of-order heartbeats MUST be rejected
+- Gateway considered degraded after N missed heartbeats (default: 3, network-configured)
+- Heartbeat interval: 30s (default)
+- Failure detection: 90s (3 × 30s)
+- On failure detection: gateway removed from active discovery, trust score decremented
+
+**H-GDP-2 fix — GatewayCapacity Integration:**
+
+RFC-0850's `GatewayCapacity` is conveyed as part of the capability Merkle tree under `capabilities_root`. Gateways include capacity information as entries in the capabilities Merkle tree. Discovering gateways can verify capacity claims against observed behavior.
+
+**H-GDP-3 fix — GdpError Enum:**
 
 ```rust
-struct GatewayHeartbeat {
-    gateway_id: [u8; 32],
-    sequence: u64,              // Strictly monotonic per gateway
-    active_routes: u32,
-    load_class: u16,            // 0-255 (0=idle, 255=overloaded)
-    uptime_class: u16,          // 0-255 (0=just started, 255=long-running)
-    signature: [u8; 64],        // Ed25519 signature over canonical bytes
+#[derive(Clone, Debug)]
+enum GdpError {
+    // Advertisement errors
+    InvalidAdvertisement { reason: &'static str },
+    StaleSequence { got: u64, minimum: u64 },
+    ReplayDetected { gateway_id: [u8; 32], sequence: u64 },
+    InvalidSignature { gateway_id: [u8; 32] },
+
+    // Capability errors
+    CapabilityMismatch { required: u64, available: u64 },
+    InsufficientStake { scope: u16, required: u64, available: u64 },
+
+    // Cache errors
+    CacheFull { max_entries: u32 },
+
+    // Heartbeat errors
+    HeartbeatTimeout { gateway_id: [u8; 32], missed: u32 },
+    HeartbeatOutOfOrder { gateway_id: [u8; 32], got: u64, expected: u64 },
+
+    // Discovery errors
+    ScopeNotPermitted { scope: u16, stake: u64 },
+    DiversityViolation { dimension: &'static str, required: u32, actual: u32 },
 }
 ```
 
-**Failure Detection:** Gateway considered degraded after N missed heartbeats (default: 3, network-configured). Heartbeat interval: 30s (default). Failure detection: 90s (3 × 30s).
-
-**Deterministic ordering:** Heartbeats are processed in `(gateway_id, sequence)` order. Duplicate or out-of-order heartbeats MUST be rejected.
-
 ### 13. Discovery Gossip
+
+**H-GDP-5 fix — DGP Integration:**
+
+GDP advertisements are propagated as DGP `DiscoveryAdvertisement` objects (RFC-0852 Section 3). The integration is:
+
+| GDP DiscoveryScope | DGP GossipDomainId.scope | Default TTL |
+|-------------------|-------------------------|-------------|
+| Local | LOCAL | 3 hops |
+| Regional | REGIONAL | 10 hops |
+| Mission | MISSION | 5 hops |
+| Global | GLOBAL | 20 hops |
+| Private | PRIVATE | 3 hops |
+| Consensus | CONSENSUS | 10 hops |
+
+GDP advertisements wrap into DGP `GossipObject` with `object_type = DiscoveryAdvertisement` and `domain_id` derived from `DiscoveryScope`.
+
+**M-GDP-8 fix — Advertisement Expiration:**
+
+Advertisements expire after `logical_timestamp + EXPIRY_EPOCHS` (default: 100 epochs). Expired advertisements are removed from cache during purge. This supplements sequence monotonicity with temporal bounds.
+
+**M-GDP-6 fix — Consensus Discovery:**
+
+Consensus gateways use `DiscoveryScope::Consensus` (0x0006) for validator discovery. This maps to DGP's CONSENSUS gossip domain. Consensus discovery has higher stake requirements (1,000 OCTO + 200 OCTO-B) and requires validator-grade trust.
+
+**M-GDP-3 fix — Lifecycle States:**
+
+```rust
+#[repr(u16)]
+enum DiscoveryLifecycle {
+    Bootstrap = 0x0001,     // < 5 known gateways, flood mode
+    Expansion = 0x0002,     // Growing peer graph, incremental gossip
+    Stabilization = 0x0003, // Steady state, trust-weighted neighbors
+    Degraded = 0x0004,      // Partition detected, anti-entropy mode
+    Recovering = 0x0005,    // Healing after partition
+}
+```
+
+Transition conditions:
+- Bootstrap → Expansion: ≥ 5 known gateways
+- Expansion → Stabilization: < 10% new gateways per epoch
+- Any → Degraded: > 33% of known gateways unreachable
+- Degraded → Recovering: anti-entropy reconciliation succeeds
+- Recovering → Stabilization: < 5% divergence in Merkle summaries
+
+**Gossip Modes:**
 
 | Mode | Use | When |
 |------|-----|------|
@@ -274,6 +406,23 @@ struct GatewayHeartbeat {
 | Incremental | Normal operation | Steady state, propagate new/updated advertisements |
 | Anti-entropy | State healing | Every 60s (default), Merkle summary exchange |
 | Directed sync | Mission overlays | On mission join, sync mission-scoped gateways |
+
+**M-GDP-2 fix — Cache Eviction Formula:**
+
+```text
+eviction_score = trust_score * 10 + utility_score * 5 + recency_score * 2
+```
+
+Where:
+- `trust_score` = RFC-0860 `RelayScore.aggregate` (0-1000)
+- `utility_score` = number of routes using this gateway in last 100 epochs (0-1000)
+- `recency_score` = 1000 - min(1000, current_epoch - last_seen)
+
+Lower eviction_score → evicted first. Ties broken by lexicographic `gateway_id`.
+
+**M-GDP-1 fix — OverlayEndpoint:**
+
+`OverlayEndpoint` is defined in RFC-0851 Section 6 (not RFC-0850). It represents a platform-specific transport endpoint for gateway communication. |
 
 ## Performance Targets
 
@@ -387,11 +536,48 @@ GDP extends RFC-0843's peer discovery with overlay-specific features:
 
 ### Forward Compatibility
 
-- Gateway class enum is extensible (values 0x0040-0xFFFF for future roles)
+- Gateway class enum is extensible (values 0x0007-0x003F reserved for future roles, 0x0040-0xFFFF available)
 - Capability flags are extensible (bitmask allows 64 capability types)
-- Discovery scopes are extensible (values 0x0006-0xFFFF for future scopes)
+- Discovery scopes are extensible (values 0x0007-0x00FE for future scopes, 0x00FF-0xFFFF reserved)
+- MissionDiscoveryScope (RFC-0855) uses 0x0100-0x0105 range to avoid collision
 
 ## Test Vectors
+
+### Heartbeat Processing
+
+```text
+Heartbeat A: gateway_id=[0x01;32], sequence=1 → ACCEPTED (first heartbeat)
+Heartbeat B: gateway_id=[0x01;32], sequence=1 → REJECTED (duplicate sequence)
+Heartbeat C: gateway_id=[0x01;32], sequence=3 → REJECTED (out of order, expected 2)
+Heartbeat D: gateway_id=[0x01;32], sequence=2 → ACCEPTED (next in sequence)
+```
+
+### Merkle Root Computation
+
+```text
+Empty set: root = [0x00; 32]
+
+Single item: root = BLAKE3-256(canonical_bytes(item))
+
+Two items: root = BLAKE3-256(leaf_0 || leaf_1)
+
+Three items: root = BLAKE3-256(
+    BLAKE3-256(leaf_0 || leaf_1),
+    BLAKE3-256(leaf_2 || leaf_2)  // duplicate last leaf
+)
+```
+
+### Stake Verification
+
+```text
+Gateway with 500 OCTO + 50 OCTO-B:
+  - Regional scope: ACCEPTED (≥ 500 + 50)
+  - Global scope: REJECTED (< 1000 + 100)
+
+Gateway with 1000 OCTO + 100 OCTO-B:
+  - Regional scope: ACCEPTED
+  - Global scope: ACCEPTED
+```
 
 ### Gateway Advertisement Serialization
 
@@ -513,6 +699,7 @@ Deterministic eviction by (trust, utility, age) ensures convergence.
 - RFC-0850 (Networking): DOT — gateway identity, broadcast domains
 - RFC-0843 (Networking): OCTO-Network Protocol — base peer discovery
 - RFC-0852 (Networking): DGP — gossip propagation
+- RFC-0855 (Networking): MON — mission overlay networks consuming GDP discovery
 - RFC-0856 (Networking): DRS — route selection
 - RFC-0860 (Networking): PoRelay — trust scoring
 

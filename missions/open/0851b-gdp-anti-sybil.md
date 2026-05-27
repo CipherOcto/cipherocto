@@ -38,6 +38,19 @@ High
 - Mission 0851a: GDP Discovery Scopes and Lifecycle
 - Mission 0860: PoRelay Proof-of-Relay
 
+## Updated Acceptance Criteria (M-GDP-5 fix)
+
+The original acceptance criteria were too vague. Updated with concrete values from RFC-0851 Section 11:
+
+- [ ] Stake-gated discovery: minimum OCTO per scope (Local=0, Regional=500, Global=1000)
+- [ ] OCTO-B role stake per scope (Local=0, Regional=50, Global=100)
+- [ ] Diversity constraint: `diversity_score = transport_diversity * 3 + geographic_diversity * 2 + trust_diversity * 1`
+- [ ] Minimum diversity thresholds: Regional ≥ 2 transports, Global ≥ 3 transports + 2 regions
+- [ ] Non-compliant gateways deprioritized (score = 0), not rejected
+- [ ] Sybil cluster detection via correlated behavior analysis
+- [ ] Integration with RFC-0860 Section 6 anti-sybil model
+- [ ] 10+ tests covering stake gating, diversity enforcement, Sybil detection
+
 ## Implementation Notes
 
 - Stake requirements scale with visibility scope (LOCAL=0, REGIONAL=0.5, MISSION=1.0, GLOBAL=2.0)

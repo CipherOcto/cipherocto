@@ -37,6 +37,8 @@ Medium
 
 - Mission 0851: GDP Gateway Discovery
 
+> **Note (H-GDP-7):** Mission 0851a implements GDP's 6 discovery scopes (Local, Regional, Mission, Global, Private, Consensus). RFC-0855 MON defines a separate `MissionDiscoveryScope` enum (starting at 0x0100) for mission-specific visibility. The mapping between GDP scopes and MON scopes is defined in RFC-0851 Section 2.
+
 ## Implementation Notes
 
 - Discovery plane handles visibility/topology; data plane handles envelope routing

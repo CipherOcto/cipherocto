@@ -700,7 +700,7 @@ struct MissionRoutePolicy {
     /// Mission identifier
     mission_id: [u8; 32],
     /// Minimum trust score required
-    min_trust_score: u32,
+    min_trust_score: u64,
     /// Required transport types (bitmask)
     required_transports: u64,
     /// Forbidden transport types (bitmask)

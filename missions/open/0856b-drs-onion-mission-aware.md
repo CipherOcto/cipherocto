@@ -6,7 +6,7 @@ Open
 
 ## RFC
 
-RFC-0856: Deterministic Route Selection (DRS) — §11, §13
+RFC-0856: Deterministic Route Selection (DRS) — §11, §13, §16, §17, §18
 
 ## Summary
 
@@ -21,9 +21,9 @@ Implement onion-compatible routing where route computation supports ORR (RFC-085
 - [ ] Low-bandwidth mode: prefer LoRa/Bluetooth for constrained environments
 - [ ] Stealth routing: minimize metadata leakage by preferring high-censorship-resistance carriers, avoiding known surveillance ASNs, randomizing hop selection within trust bounds (RFC §13)
 - [ ] Route persistence: cache routes for reuse (configurable TTL)
-- [ ] Partition resilience: automatic route recomputation on network partition (RFC §15)
-- [ ] Token economics integration: route cost calculation per RFC §16
-- [ ] AI-native routing: adaptive weight optimization per RFC §17
+- [ ] Partition resilience: automatic route recomputation on network partition (RFC §16)
+- [ ] Token economics integration: route cost calculation per RFC §17
+- [ ] AI-native routing: adaptive weight optimization per RFC §18
 - [ ] Integration with ORR (RFC-0858) for onion route construction
 - [ ] Unit tests: 10+ tests covering onion compatibility, mission modes, partition recovery
 - [ ] `cargo fmt -- --check` passes
@@ -54,4 +54,6 @@ High
 
 - RFC-0856 §11: Onion-Compatible Routing
 - RFC-0856 §13: Mission-Aware Routing
-- RFC-0856 §15: Partition Resilience
+- RFC-0856 §16: Partition Resilience
+- RFC-0856 §17: Token Economics Integration
+- RFC-0856 §18: AI-Native Routing

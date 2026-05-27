@@ -18,7 +18,7 @@ Implement mempool propagation via DGP (RFC-0852), Merkle state root computation,
 - [ ] Mission-scoped propagation: intents only propagate within mission domain
 - [ ] `MempoolStateRoot`: BLAKE3-256 Merkle root of all pending intents
 - [ ] State root recomputed on every admission/eviction (deterministic)
-- [ ] Fee computation uses RFC-0105 DQA for deterministic arithmetic
+- [ ] Fee computation uses RFC-0105 DQA for deterministic arithmetic (DQA provides fixed-point decimal types; DFP/RFC-0104 provides the encoding)
 - [ ] Fee ordering: no floating-point, integer-only (DQA fixed-point)
 - [ ] Economic weight comparison uses DQA canonical ordering
 - [ ] Anti-entropy reconciliation: Merkle summary exchange for mempool sync

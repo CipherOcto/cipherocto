@@ -14,14 +14,16 @@ Implement the deterministic overlay mempool with overlay intents (8 types), exec
 
 ## Acceptance Criteria
 
-- [ ] `OverlayIntent` with intent_id, intent_type, mission_id, sender_id, sequence, logical_timestamp, payload_root, economic_weight, execution_class, signature
+- [ ] `OverlayIntent` with intent_id, intent_type, mission_id, sender_id, sequence, logical_timestamp, expiration, payload_root, economic_weight, execution_class, signature (RFC §1)
 - [ ] `IntentType` enum: Transaction, MissionCommand, AIExecution, ConsensusVote, ProofSubmission, ResourceLease, GovernanceProposal, RelayCommitment
 - [ ] `ExecutionClass` enum: CriticalConsensus, Consensus, MissionCritical, Economic, Standard, Bulk, Archive
-- [ ] Canonical ordering: (execution_class, economic_weight DESC, logical_timestamp, sequence, intent_id)
+- [ ] Canonical ordering: (execution_class ASC, economic_weight DESC, logical_timestamp ASC, sequence ASC, intent_id ASC) per RFC §4
 - [ ] Deterministic admission: signature, replay window, sequence, mission authorization, resource constraints
 - [ ] Deterministic eviction: lowest class → lowest weight → oldest timestamp
 - [ ] Mission-scoped mempool isolation
-- [ ] Fee model references $100→70/10/10/5/5 distribution (whitepaper)
+- [ ] Fee model: base_fee=1 OCTO, intent_type_multiplier per class (RFC Economic Analysis), priority_premium max 2.0
+- [ ] Fee distribution: 70/10/10/5/5 (whitepaper §10.6)
+- [ ] IntentType to ExecutionClass mapping table (RFC §6.1)
 - [ ] Capacity limits: max_pending_intents=100,000, max_per_mission=10,000
 - [ ] `MempoolStateRoot` with BLAKE3-256 Merkle commitment
 - [ ] `DomError` enum with all error variants

@@ -91,63 +91,118 @@ struct OverlayIntent {
     sender_id: [u8; 32],
     sequence: u64,
     logical_timestamp: u64,
+    expiration: u64,
     payload_root: [u8; 32],
     economic_weight: u64,
     execution_class: u16,
     signature: [u8; 64],
 }
 
+#[repr(u16)]
 enum IntentType {
-    Transaction,        // Economic state transition
-    MissionCommand,     // Overlay coordination
-    AIExecution,        // Inference/execution request
-    ConsensusVote,      // Validator participation
-    ProofSubmission,    // ZK proof delivery
-    ResourceLease,      // Resource market request
-    GovernanceProposal, // Governance coordination
-    RelayCommitment,    // Relay participation
+    Transaction = 0x0001,        // Economic state transition
+    MissionCommand = 0x0002,     // Overlay coordination
+    AIExecution = 0x0003,        // Inference/execution request
+    ConsensusVote = 0x0004,      // Validator participation
+    ProofSubmission = 0x0005,    // ZK proof delivery
+    ResourceLease = 0x0006,      // Resource market request
+    GovernanceProposal = 0x0007, // Governance coordination
+    RelayCommitment = 0x0008,    // Relay participation
+    // 0x0009-0xFFFF: Reserved for future types
 }
 ```
+
+**Intent expiration:** `expiration = logical_timestamp + domain_TTL`. Default TTL per scope (from DGP-0852):
+
+| Scope | Default TTL (logical time units) |
+|-------|----------------------------------|
+| GLOBAL | 20 |
+| CONSENSUS | 10 |
+| MISSION | 5 |
+| PRIVATE | 3 |
+| LOCAL | 3 |
+| REGIONAL | 10 |
+
+**Sequence mandate:** `sequence` MUST be monotonically increasing per `(sender_id, mission_id)`. Reuse of a sequence number is a protocol violation.
+
+**Payload clarification:** The payload itself is transmitted as part of the DGP GossipObject wrapper (see Section 6.1). The OverlayIntent contains only the `payload_root` hash for verification.
 
 ### 2. Mission-Scoped Mempools
 
 Each MON MAY maintain its own mempool. DOM supports layered pools:
 
 ```text
-GLOBAL → CONSENSUS → MISSION → PRIVATE → LOCAL
+GLOBAL → CONSENSUS → REGIONAL → MISSION → PRIVATE → LOCAL
 ```
 
 ### 3. Deterministic Admission
 
 Admission MUST validate: signature validity, replay window, sequence validity, mission authorization, resource constraints, canonical serialization.
 
+**Mission authorization:** Verified via the mission's AdmissionPolicy (RFC-0855 §4.3). DOM admission checks that the sender's peer_id is in the mission's membership set.
+
 **Forbidden inputs:** local latency, wall-clock timing, CPU load, thread order, local bandwidth, transport origin.
 
 ### 4. Canonical Intent Ordering
 
-Pending intents ordered by: `(execution_class, economic_weight, logical_timestamp, sequence, intent_id)`
+Pending intents ordered by: `(execution_class ASC, economic_weight DESC, logical_timestamp ASC, sequence ASC, intent_id ASC)`
+
+Sort directions:
+- `execution_class ASC` — lower class number = higher priority (CriticalConsensus=0x0000 first)
+- `economic_weight DESC` — higher weight = higher priority within same class
+- `logical_timestamp ASC` — older intents first within same class+weight
+- `sequence ASC` — lower sequence first within same class+weight+timestamp
+- `intent_id ASC` — lexicographic tiebreaker (lowest hash wins)
 
 Tie-breaking: lowest lexicographic `intent_id` wins.
 
 ### 5. Execution Classes
 
 ```rust
+#[repr(u16)]
 enum ExecutionClass {
-    CriticalConsensus,
-    Consensus,
-    MissionCritical,
-    Economic,
-    Standard,
-    Bulk,
-    Archive,
+    CriticalConsensus = 0x0000,
+    Consensus = 0x0001,
+    MissionCritical = 0x0002,
+    Economic = 0x0003,
+    Standard = 0x0004,
+    Bulk = 0x0005,
+    Archive = 0x0006,
+    // 0x0007-0xFFFF: Reserved for future classes
 }
 ```
 
-Scheduling: CriticalConsensus → Consensus → MissionCritical → Economic → Standard → Bulk
+Scheduling: CriticalConsensus → Consensus → MissionCritical → Economic → Standard → Bulk → Archive
 
 ### 6. Mempool Propagation (extends RFC-0852)
 
 DOM objects propagate via deterministic gossip. Nodes SHOULD propagate only unseen intents. Anti-entropy reconciliation via Merkle summaries.
+
+#### 6.1 DGP Integration
+
+DOM intents wrap into DGP `GossipObject` as follows:
+
+| Field | Value |
+|-------|-------|
+| `object_type` | `MempoolIntent` (0x0009 from DOT MessageType) |
+| `payload` | DCS-serialized `OverlayIntent` |
+| `domain_id` | `GossipDomainId` derived from `mission_id` + mempool scope |
+| `object_hash` | `BLAKE3-256(dcs_serialize(GossipObject))` |
+
+**IntentType to ExecutionClass mapping:**
+
+| IntentType | Default ExecutionClass | Rationale |
+|-----------|----------------------|-----------|
+| ConsensusVote | Consensus | Validator participation is consensus-critical |
+| GovernanceProposal | Consensus | Governance decisions require consensus |
+| MissionCommand | MissionCritical | Mission coordination is time-sensitive |
+| ProofSubmission | MissionCritical | Proof delivery is time-sensitive |
+| Transaction | Economic | Economic state transitions |
+| ResourceLease | Economic | Resource market operations |
+| AIExecution | Standard | AI inference requests |
+| RelayCommitment | Standard | Relay participation |
+
+**Rate limiting:** Max 100 intents per sender per logical_timestamp window. Violation = intent silently dropped (not rejected with error).
 
 ### 7. Mempool Root
 
@@ -162,6 +217,8 @@ struct MempoolStateRoot {
 
 Given identical inputs, all compliant nodes MUST derive identical mempool state.
 
+**Merkle tree construction:** Binary tree using BLAKE3-256. Leaves are intents in canonical order (Section 4). Empty mempool root = `BLAKE3-256(empty_input)`. Internal nodes = `BLAKE3-256(left_child || right_child)`.
+
 ### 8. Economic Prioritization
 
 Intent ordering MAY incorporate: fees, stake weight, relay rewards, proof rewards, mission incentives. Fee prioritization MUST remain deterministic — no local heuristics.
@@ -170,7 +227,24 @@ Intent ordering MAY incorporate: fees, stake weight, relay rewards, proof reward
 
 Deterministic eviction order: lowest priority → lowest economic weight → oldest pending. Expired intents MUST be removed identically across nodes.
 
-### 10. Deterministic Numerics
+### 10. Error Types
+
+```rust
+enum DomError {
+    InvalidSignature { intent_id: [u8; 32] },
+    ReplayDetected { intent_id: [u8; 32], first_seen: u64 },
+    SequenceInvalid { sender_id: [u8; 32], sequence: u64 },
+    MissionUnauthorized { mission_id: [u8; 32], sender_id: [u8; 32] },
+    CapacityExceeded { scope: u16, max_entries: u32 },
+    InvalidIntentType { intent_type: u16 },
+    InvalidExecutionClass { execution_class: u16 },
+    FeeInsufficient { required: u64, provided: u64 },
+    SerializationError { reason: String },
+    AdmissionRejected { intent_id: [u8; 32], reason: u16 },
+}
+```
+
+### 11. Deterministic Numerics
 
 All mempool-critical arithmetic MUST use deterministic numeric semantics (RFC-0104 DFP, RFC-0105 DQA), especially for fee ordering, stake weighting, reward computation, AI execution pricing.
 
@@ -201,6 +275,7 @@ Each mempool scope has a default capacity limit. Nodes MUST evict deterministica
 |-------|-----------------|------------------|
 | GLOBAL | 100,000 intents | Lowest class → lowest weight → oldest timestamp |
 | CONSENSUS | 50,000 intents | Same rule |
+| REGIONAL | 5,000 intents | Same rule |
 | MISSION | 10,000 intents | Same rule |
 | PRIVATE | 1,000 intents | Same rule |
 | LOCAL | 100 intents | Same rule |
@@ -267,7 +342,19 @@ Capacities are network-configurable parameters. All nodes in a network MUST use 
 intent_fee = base_fee × intent_type_multiplier × (1 + priority_premium)
 ```
 
-Where `intent_type_multiplier` scales by execution class and `priority_premium` is optional sender-chosen uplift.
+Where `base_fee = 1 OCTO unit` and `intent_type_multiplier` scales by execution class:
+
+| ExecutionClass | intent_type_multiplier |
+|----------------|----------------------|
+| CriticalConsensus | 10x |
+| Consensus | 8x |
+| MissionCritical | 6x |
+| Economic | 4x |
+| Standard | 2x |
+| Bulk | 1x |
+| Archive | 0.5x |
+
+`priority_premium` is optional sender-chosen uplift. **Bounds:** max 2.0 (200% uplift). Values > 2.0 are clamped to 2.0.
 
 **Fee Distribution (per whitepaper §10.6):**
 
@@ -437,6 +524,7 @@ When the mempool reaches capacity, the evicted intent must be identical across a
 |---------|------|---------|
 | 1.0.0 | 2026-05-25 | Initial draft |
 | 1.1.0 | 2026-05-26 | Adversarial review fixes: RFC-0008 execution class mapping, fee distribution model, mempool capacity limits |
+| 1.2.0 | 2026-05-27 | Round 1 adversarial review: enum repr, DomError, sort directions, fee params, expiration, rate limiting, mission auth, DGP mapping, REGIONAL scope |
 
 ## Related RFCs
 

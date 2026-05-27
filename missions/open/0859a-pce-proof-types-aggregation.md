@@ -14,7 +14,7 @@ Implement proof type registry, proof attachment protocol (how proofs attach to i
 
 ## Acceptance Criteria
 
-- [ ] `ProofType` enum: TransactionValidity, StateTransition, ComputeCorrectness, DataIntegrity, ComplianceProof
+- [ ] `ProofType` enum #[repr(u16)] matching RFC §4.1: InferenceProof, DatasetIntegrityProof, MissionExecutionProof, RelayProof, ValidatorAttestation, AggregatedProof, MembershipProof, StateTransitionProof, DataIntegrityProof
 - [ ] Proof type registry: map ProofType → verification function
 - [ ] Proof attachment protocol: how proofs attach to DOM intents (RFC-0857)
 - [ ] Attachment validation: verify proof matches intent type
@@ -28,7 +28,7 @@ Implement proof type registry, proof attachment protocol (how proofs attach to i
 
 ## Location
 
-`crates/octo-network/src/pce/mod.rs` (types, attachment, aggregation)
+`crates/octo-network/src/dot/pce/mod.rs` (types, attachment, aggregation)
 
 ## Complexity
 

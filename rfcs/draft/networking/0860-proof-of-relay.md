@@ -609,7 +609,29 @@ Network pays OCTO-N for gateway uptime
   → Uptime proof required for eligibility
 ```
 
-### 8. Integration with DOT
+### 8. Error Types
+
+```rust
+#[repr(u16)]
+enum PoRelayError {
+    /// Proof signature verification failed
+    InvalidSignature = 0x0001,
+    /// Proof epoch is stale or future
+    InvalidEpoch = 0x0002,
+    /// Gateway not found in trust registry
+    GatewayNotFound = 0x0003,
+    /// Proof replay detected
+    ReplayDetected = 0x0004,
+    /// Insufficient stake for proof generation
+    InsufficientStake = 0x0005,
+    /// Diversity constraint violation
+    DiversityViolation = 0x0006,
+    /// Slashing threshold exceeded
+    SlashingTriggered { reason: String } = 0x0007,
+}
+```
+
+### 9. Integration with DOT
 
 PoRelay integrates with RFC-0850 (DOT) as follows:
 

@@ -14,15 +14,15 @@ Implement proof-of-relay with relay proofs (forwarding, availability, bandwidth,
 
 ## Acceptance Criteria
 
-- [ ] `ForwardingProof` with envelope_hash, relay_gateway, next_hop, timestamp, signature
-- [ ] `AvailabilityProof` with gateway_id, epoch_start, epoch_end, uptime_ratio, signature
-- [ ] `BandwidthProof` with gateway_id, bytes_relayed, epoch, signature
-- [ ] `UptimeProof` with gateway_id, consecutive_epochs, signature
-- [ ] `RelayScore` with forwarding_score, availability_score, bandwidth_score, uptime_score, aggregate
-- [ ] `AggregatedRelayProof` with constituent_proofs, aggregation_root
-- [ ] `GatewayAdvertisementWithPoR` extending GatewayAdvertisement with relay_proofs
-- [ ] `GatewayHeartbeat` with gateway_id, sequence, active_routes, load_class, uptime_class, signature
-- [ ] `TrustScore` with historical_uptime, proof_of_relay, stake_weight, mission_trust, consensus_participation
+- [ ] `ForwardingProof` with envelope_hash, relay_gateway_id, next_hop_gateway_id, hop_index, timestamp, signature (6 fields per RFC §4.1)
+- [ ] `AvailabilityProof` with gateway_id, epoch_start, epoch_end, availability_score, signature (5 fields per RFC §4.2)
+- [ ] `BandwidthProof` with gateway_id, epoch, bytes_relayed, bandwidth_class, signature (5 fields per RFC §4.3)
+- [ ] `UptimeProof` with gateway_id, epoch, consecutive_epochs, signature (4 fields per RFC §4.4)
+- [ ] `RelayScore` with gateway_id, epoch, forwarding_score, availability_score, bandwidth_score, uptime_score, diversity_bonus, stake_multiplier, composite (9 fields per RFC §5.2)
+- [ ] `AggregatedRelayProof` with constituent_proofs, aggregation_root, relay_count (3 fields per RFC §7)
+- [ ] `GatewayAdvertisementWithPoR` extending GatewayAdvertisement with relay_proofs (RFC §3.1)
+- [ ] `GatewayHeartbeat` with gateway_id, sequence, active_routes, load_class, uptime_class, logical_timestamp, signature (7 fields per RFC §2.2)
+- [ ] Trust score integration: RelayScore feeds into TrustScore.proof_of_relay (RFC-0856 §9.1)
 - [ ] Trust score computation is RFC-0008 Class A (deterministic)
 - [ ] Slashing conditions: invalid proofs, downtime threshold, malicious routing
 - [ ] OCTO-B token for relay bandwidth rewards

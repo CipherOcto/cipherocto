@@ -662,7 +662,27 @@ struct ProofSubmissionIntent {
 }
 ```
 
-### 10. Token Economics
+### 10. Error Types
+
+```rust
+#[repr(u16)]
+enum PceError {
+    /// Proof signature verification failed
+    InvalidSignature = 0x0001,
+    /// proof_commitment does not match proof_blob
+    CommitmentMismatch = 0x0002,
+    /// Unsupported proof_system_id
+    UnsupportedSystem = 0x0003,
+    /// Proof blob failed parsing or structure validation
+    MalformedProof = 0x0004,
+    /// public_inputs do not match proof
+    InputMismatch = 0x0005,
+    /// Aggregation failure
+    AggregationError { reason: String } = 0x0006,
+}
+```
+
+### 11. Token Economics
 
 PCE integrates with CipherOcto's multi-token economy:
 

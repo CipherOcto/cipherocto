@@ -105,4 +105,10 @@ mod tests {
         let id2 = BroadcastDomainId::new(PlatformType::Discord, "group:123");
         assert_ne!(id1, id2);
     }
+
+    #[test]
+    fn test_domain_id_from_bytes_too_short() {
+        let result = BroadcastDomainId::from_canonical_bytes(&[0u8; 10]);
+        assert!(result.is_err());
+    }
 }

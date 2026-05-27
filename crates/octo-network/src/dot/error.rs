@@ -5,15 +5,14 @@ use thiserror::Error;
 /// Errors specific to the Deterministic Overlay Transport layer
 #[derive(Debug, Error)]
 pub enum DotError {
-    // Envelope errors
     #[error("Invalid signature on envelope {envelope_id:?}")]
     InvalidSignature { envelope_id: [u8; 32] },
 
     #[error("Envelope {envelope_id:?} already seen at epoch {first_seen}")]
-    ReplayDetected {
-        envelope_id: [u8; 32],
-        first_seen: u64,
-    },
+    ReplayDetected { envelope_id: [u8; 32], first_seen: u64 },
+
+    #[error("Payload hash mismatch: expected {expected:?}, got {actual:?}")]
+    PayloadHashMismatch { expected: [u8; 32], actual: [u8; 32] },
 
     #[error("Invalid envelope ID: expected {expected:?}, computed {computed:?}")]
     InvalidEnvelopeId {
@@ -21,34 +20,29 @@ pub enum DotError {
         computed: [u8; 32],
     },
 
-    #[error("Canonicalization failed: {reason}")]
-    CanonicalizationFailed { reason: &'static str },
-
-    #[error("Envelope too large: {size} bytes exceeds {max} bytes")]
-    EnvelopeTooLarge { size: usize, max: usize },
-
     #[error("Unsupported protocol version: {version} (expected 1)")]
     UnsupportedVersion { version: u16 },
 
-    // TTL
     #[error("Envelope expired: ttl_hops={ttl}, current_hops={hops}")]
     TtlExpired { ttl: u16, hops: u16 },
 
-    // Platform adapter errors
     #[error("Platform adapter error: {0}")]
     PlatformAdapter(#[from] PlatformAdapterError),
 
-    // Fragmentation
     #[error("Fragment reassembly timeout for envelope {envelope_id:?}")]
     FragmentTimeout { envelope_id: [u8; 32] },
 
-    // Serialization
     #[error("Canonical serialization error: {0}")]
     Serialization(String),
 
-    // Consensus boundary
     #[error("Consensus boundary violation: {operation}")]
     ConsensusBoundaryViolation { operation: String },
+
+    #[error("Invalid key length: expected {expected}, got {got}")]
+    InvalidKeyLength { expected: usize, got: usize },
+
+    #[error("Ed25519 error: {0}")]
+    Ed25519(String),
 }
 
 /// Errors from platform-specific adapters

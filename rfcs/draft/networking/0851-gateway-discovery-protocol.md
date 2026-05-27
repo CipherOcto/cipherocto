@@ -188,19 +188,27 @@ All Merkle roots (`capabilities_root`, `transport_root`, `route_root`, `trust_ro
 ### 5. Capability Advertisement
 
 ```rust
+#[repr(u64)]
 enum GatewayCapability {
-    Relay = 0x0001,
-    Consensus = 0x0002,
-    Storage = 0x0003,
-    Archive = 0x0004,
-    OnionRelay = 0x0005,
-    Translation = 0x0006,
-    AIExecution = 0x0007,
-    VectorIndex = 0x0008,
-    ZkVerification = 0x0009,
-    MissionCoordinator = 0x000A,
+    // Base capabilities (inherited from RFC-0850 GatewayRoleFlags)
+    Edge = 0x0001,
+    Relay = 0x0002,
+    Consensus = 0x0004,
+    Archive = 0x0008,
+    Stealth = 0x0010,
+    Translation = 0x0020,
+
+    // GDP-specific extensions (HIGH-1 fix: aligned with RFC-0850 base)
+    Storage = 0x0040,
+    OnionRelay = 0x0080,
+    AIExecution = 0x0100,
+    VectorIndex = 0x0200,
+    ZkVerification = 0x0400,
+    MissionCoordinator = 0x0800,
 }
 ```
+
+**HIGH-1 fix:** `GatewayCapability` now uses `#[repr(u64)]` bitmask positions aligned with RFC-0850's `GatewayRoleFlags` for the base 6 (Edge through Translation). GDP-specific extensions use higher bit positions (0x0040+). This resolves the contradiction between Section 6, M-GDP-10, and RFC-0850.
 
 ### 6. Transport Advertisement
 
@@ -506,22 +514,20 @@ Gateways earn discovery rewards for:
 
 ### Stake Requirements
 
-Global advertisement propagation requires minimum stake:
+**MEDIUM-1 fix — Stake values reconciled with Section 11.1:**
 
-```text
-min_stake = base_stake * (10 + scope_multiplier) / 10
-```
+The authoritative stake requirements are defined in Section 11.1 (Anti-Sybil Mechanisms). This section references them for economic analysis. The dual-stake model requires both OCTO global stake and OCTO-B role stake:
 
-Where `base_stake` is a network governance parameter (default: 100 OCTO-B, adjustable via governance vote). `scope_multiplier` scales with visibility scope using integer arithmetic:
+| Scope | OCTO Global Stake | OCTO-B Role Stake | Source |
+|-------|-------------------|-------------------|--------|
+| Local | 0 | 0 | §11.1 |
+| Regional | 500 OCTO | 50 OCTO-B | §11.1 |
+| Mission | Mission-defined | Mission-defined | MON governance |
+| Global | 1,000 OCTO | 100 OCTO-B | §11.1 (whitepaper S11.2.4) |
+| Private | Invite-only | Inviter-determined | §11.1 |
+| Consensus | 1,000 OCTO | 200 OCTO-B | §11.1 |
 
-| Scope | Multiplier | Effective Stake |
-|-------|-----------|-----------------|
-| LOCAL | 0 | 100 OCTO-B |
-| REGIONAL | 5 | 150 OCTO-B |
-| MISSION | 10 | 200 OCTO-B |
-| GLOBAL | 20 | 300 OCTO-B |
-
-**Note:** All arithmetic is integer-only per RFC-0008 Class A requirements. Floating-point is forbidden for consensus-critical operations.
+**Note:** All arithmetic is integer-only per RFC-0008 Class A requirements. Floating-point is forbidden for consensus-critical operations. The 1,000 OCTO global minimum comes from `docs/01-foundation/whitepaper/v1.0-whitepaper.md` §11.2.4.
 
 **M-GDP-4 fix — Economic Integration:**
 

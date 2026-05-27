@@ -17,7 +17,7 @@ Implement gateway discovery with advertisements, capability Merkle commitments, 
 - [ ] `GatewayIdentity` extends DOT's identity with gateway_id, public_key, network_id, gateway_class, creation_epoch
 - [ ] `GatewayAdvertisement` with version, gateway_id, network_id, sequence, logical_timestamp, gateway_class, capabilities_root, transport_root, route_root, trust_root, overlay_endpoints, signature
 - [ ] `GatewayCapability` enum with Relay, Consensus, Storage, Archive, OnionRelay, Translation, AIExecution, VectorIndex, ZkVerification, MissionCoordinator
-- [ ] `GatewayHeartbeat` with gateway_id, sequence, active_routes, load_class, uptime_class, signature
+- [ ] `GatewayHeartbeat` with gateway_id, sequence, active_routes, load_class, uptime_class, logical_timestamp, signature (7 fields per RFC-0860 §2.2)
 - [ ] `GatewayCache` with BTreeMap, deterministic eviction by (trust, utility, age)
 - [ ] Discovery lifecycle: bootstrap → expansion → stabilization
 - [ ] Heartbeat timeout detection after N missed heartbeats

@@ -29,9 +29,16 @@ Implement recursive proof aggregation following RFC-0650 (Proof Aggregation Prot
 
 `crates/octo-network/src/dps/aggregation.rs`
 
+## Key Files
+
+| File | Change |
+|------|--------|
+| `aggregation.rs` | New file — recursive aggregation logic |
+| `mod.rs` | Add aggregation module |
+
 ## Complexity
 
-Very High
+High (3-5 days)
 
 ## Prerequisites
 

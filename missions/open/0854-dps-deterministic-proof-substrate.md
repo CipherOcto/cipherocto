@@ -19,10 +19,13 @@ Implement the ZK proof abstraction layer with DeterministicProofSystem trait, Pr
 - [ ] `ProofExecutionClass` enum: ClassA (verification), ClassB (deterministic witness), ClassC (OS random)
 - [ ] `ProofCircuitModel` enum: AIR, R1CS, PLONKISH, zkVM, Recursive
 - [ ] `ProofError` enum with InvalidWitness, TraceMismatch, ProofGenerationFailed, VerificationFailed, ConsensusBoundaryViolation
-- [ ] Proof system registry (0x0001=STARK, 0x0002=PLONK, 0x0003=Halo2, 0x0004=RISC0, 0x0005=SP1)
+- [ ] Proof system registry (0x0001=STWO, 0x0002=RiscZero, 0x0003=SP1, 0x0004=Winterfell, 0x0005=Halo2, 0x0006=Groth16, 0x0007=PLONK, 0x0008=Cairo)
 - [ ] `WitnessGenerator` trait with generate and fp_to_field_element
 - [ ] DQA/DFP integration for deterministic witness generation
 - [ ] Mission-scoped verifier configuration
+- [ ] `VerifierRegistry` with BTreeMap entries, proof_suite, verification_key, registered_at, expires_at
+- [ ] `MissionProofRequirement` with mission_id, required_backend, fallback_backends
+- [ ] Backend capability advertisement via GDP bitmask (RFC-0851 §5)
 - [ ] RFC-0008 execution class mapping table
 - [ ] Unit tests: 10+ tests covering trait implementation, proof commitment, execution class
 - [ ] `cargo fmt -- --check` passes
@@ -32,9 +35,21 @@ Implement the ZK proof abstraction layer with DeterministicProofSystem trait, Pr
 
 `crates/octo-network/src/dps/`
 
+## Key Files
+
+| File | Change |
+|------|--------|
+| `mod.rs` | DPS module root |
+| `trait.rs` | DeterministicProofSystem trait |
+| `suite.rs` | ProofSuiteId and registries |
+| `error.rs` | ProofError enum |
+| `execution.rs` | ProofExecutionClass, ProofCircuitModel |
+| `witness.rs` | WitnessGenerator trait |
+| `verifier.rs` | VerifierRegistry, MissionProofRequirement |
+
 ## Complexity
 
-Very High
+High (3-5 days)
 
 ## Prerequisites
 

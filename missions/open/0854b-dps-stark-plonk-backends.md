@@ -10,12 +10,12 @@ RFC-0854: Deterministic Proof Substrate (DPS) — §3, Phase 2
 
 ## Summary
 
-Implement concrete proof backends for STARK (STWO) and PLONK, providing real prove/verify implementations behind the DeterministicProofSystem trait.
+Implement concrete proof backends for STARK (STWO) and PLONK, providing real prove/verify implementations behind the DeterministicProofSystem trait. STWO is StarkWare's STARK implementation; STARK is the proof system category.
 
 ## Acceptance Criteria
 
 - [ ] STARK (STWO) backend: prove(), verify(), proof_commitment() using Cairo traces
-- [ ] PLONK backend: prove(), verify(), proof_commitment() using R1CS circuits
+- [ ] PLONK backend: prove(), verify(), proof_commitment() using PLONKish circuits
 - [ ] Backend registry: register backends by ProofSuiteId
 - [ ] STARK properties: transparent (no trusted setup), AIR constraints, massive parallelism
 - [ ] PLONK properties: succinct proofs, universal setup
@@ -29,9 +29,17 @@ Implement concrete proof backends for STARK (STWO) and PLONK, providing real pro
 
 `crates/octo-network/src/dps/backends/`
 
+## Key Files
+
+| File | Change |
+|------|--------|
+| `backends/mod.rs` | Backend module root |
+| `backends/stark.rs` | STARK (STWO) backend implementation |
+| `backends/plonk.rs` | PLONK backend implementation |
+
 ## Complexity
 
-Very High
+High (3-5 days)
 
 ## Prerequisites
 
@@ -40,7 +48,7 @@ Very High
 ## Implementation Notes
 
 - STARK (STWO): Cairo execution traces, AIR constraints, SIMD-friendly
-- PLONK: R1CS circuits, universal trusted setup, succinct proofs
+- PLONK: PLONKish circuits, universal trusted setup, succinct proofs
 - Backend selection is mission-configured, not consensus-ordered
 - Each backend implements DeterministicProofSystem trait independently
 

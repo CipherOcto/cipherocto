@@ -141,8 +141,8 @@ trait DeterministicProofSystem {
     /// Compute proof commitment (hash of proof for Merkle trees)
     fn proof_commitment(proof: &Self::Proof) -> [u8; 32];
 
-    /// Return the execution model for this proof system
-    fn execution_model() -> ProofExecutionModel;
+    /// Return the circuit model for this proof system
+    fn circuit_model() -> ProofCircuitModel;
 }
 ```
 
@@ -219,15 +219,18 @@ struct ProofSuiteId {
 }
 ```
 
-**Proof System Registry:**
+**Proof System Registry (aligned with RFC-0859 ProofSystemId):**
 
 | ID | Backend | Notes |
 |----|---------|-------|
-| 0x0001 | STARK (STWO) | Transparent, no trusted setup, Cairo traces |
-| 0x0002 | PLONK | Succinct proofs, universal setup |
-| 0x0003 | Halo2 | No trusted setup, recursive composition |
-| 0x0004 | RISC0 | RISC-V zkVM, STARK-based |
-| 0x0005 | SP1 | RISC-V zkVM, PLONK-based |
+| 0x0001 | STWO (STARK) | Transparent, no trusted setup, Cairo traces |
+| 0x0002 | RiscZero | RISC-V zkVM, STARK-based |
+| 0x0003 | SP1 | RISC-V zkVM, PLONK-based |
+| 0x0004 | Winterfell | STARK backend, Rust-native |
+| 0x0005 | Halo2 | No trusted setup, recursive composition |
+| 0x0006 | Groth16 | Succinct SNARK, trusted setup |
+| 0x0007 | PLONK | Succinct proofs, universal setup |
+| 0x0008 | Cairo | STARK-based, Cairo traces |
 
 **Recursion Scheme Registry:**
 
@@ -253,12 +256,28 @@ struct ProofSuiteId {
 ```rust
 struct ProofCarryingEnvelope {
     envelope: DeterministicEnvelope,    // RFC-0850
-    proof_system_id: u16,
-    proof_commitment: [u8; 32],
-    public_input_root: [u8; 32],
-    proof_blob: Vec<u8>,
+    proof_system_id: u16,               // ProofSystemId enum
+    proof_commitment: [u8; 32],         // BLAKE3-256(proof_blob)
+    public_input_root: [u8; 32],        // Merkle root of public inputs
+    proof_blob: Vec<u8>,                // Serialized proof (RFC-0126)
+    execution_model: u16,               // ProofCircuitModel enum
+    parent_proof_commitment: Option<[u8; 32]>,  // For recursive aggregation (Section 8)
 }
 ```
+
+**Construction algorithm:**
+1. Serialize proof via RFC-0126 DCS → `proof_blob`
+2. Compute `proof_commitment = BLAKE3-256(proof_blob)`
+3. Compute `public_input_root = Merkle root of canonicalized public inputs`
+4. Set `execution_model` to the `ProofCircuitModel` variant for this backend
+5. For recursive aggregation: set `parent_proof_commitment` to the parent's `proof_commitment`
+
+**Verification flow (RFC-0859):**
+1. Look up `proof_system_id` in ProofSystemId registry
+2. Load verification key for the identified backend
+3. Deserialize `proof_blob` via RFC-0126
+4. Call `DeterministicProofSystem::verify(vk, public_inputs, proof)`
+5. For recursive proofs: verify parent proof commitment chain
 
 This enables: verifiable AI inference, mission correctness proofs, validator proofs, distributed execution attestations, privacy-preserving coordination.
 
@@ -327,7 +346,46 @@ Different missions MAY require different proof systems:
 
 CipherOcto supports all under one deterministic substrate.
 
-### 8. Recursive Aggregation
+**Verifier Registry:**
+
+```rust
+struct VerifierRegistry {
+    entries: BTreeMap<[u8; 32], VerifierEntry>,  // BTreeMap for deterministic iteration
+}
+
+struct VerifierEntry {
+    proof_suite: ProofSuiteId,
+    verification_key: Vec<u8>,
+    registered_at: u64,
+    expires_at: Option<u64>,
+}
+```
+
+**Mission Proof Requirement:**
+
+```rust
+struct MissionProofRequirement {
+    mission_id: [u8; 32],
+    required_backend: u16,       // ProofSystemId
+    fallback_backends: Vec<u16>, // Ordered fallback list
+}
+```
+
+**Backend Capability Advertisement:** Nodes advertise supported backends via GDP capability bitmask (RFC-0851 §5). Bit positions: STWO=0x0100, RiscZero=0x0200, SP1=0x0400, Winterfell=0x0800, Halo2=0x1000, Groth16=0x2000, PLONK=0x4000, Cairo=0x8000.
+
+**CryptoSuiteId Reference:** The `hash_id` field in `ProofSuiteId` uses values from `CryptoSuiteId` defined in RFC-0853 Section 3 (e.g., 0x0001=SHA-256, 0x0002=BLAKE3-256).
+
+### 8. Verification Key Management
+
+**VK Generation:** Each backend generates VKs during setup. STARK backends derive VKs transparently from circuit description. SNARK/PLONK backends require trusted setup ceremony.
+
+**VK Distribution:** VKs are distributed via GDP (RFC-0851) as part of gateway capability advertisement. VKs are committed in Merkle trees under `capabilities_root`.
+
+**VK Rotation:** VKs rotate when backend parameters change. Rotation uses dual-verification period (old + new VK accepted) with configurable transition window. VK revocation uses DGP gossip (RFC-0852) when available.
+
+**VK Relationship to OCrypt:** VKs are protected by OCrypt (RFC-0853) key hierarchy. VK signing keys derive from the mission root key via `HKDF-BLAKE3(mission_root_key, "dps:vk:sign:v1", mission_id, 32)`.
+
+### 9. Recursive Aggregation
 
 DPS integrates with RFC-0650 (Proof Aggregation Protocol) for recursive proof compression.
 
@@ -395,14 +453,18 @@ DOT / DGP Networking
 | Prover side-channel | Medium | Proof boundary isolation |
 | Witness manipulation | High | DQA/DFP deterministic numerics |
 | Backend compromise | High | Cryptographic agility (swap backend) |
+| Proof replay | High | Epoch + nonce in proof, replay cache per mission |
+| Malformed proof DoS | High | Size limits, sandboxed verification, timeout |
+| VK compromise | Critical | Rotation via Mission 0853a, dual-verification window |
+| Proof malleability | Medium | Proof commitment = BLAKE3-256(canonical_proof_bytes) |
 
 ## Implementation Phases
 
 ### Phase 1: Core Abstraction (Months 1-3)
 - DeterministicProofSystem trait
 - ProofSuiteId
-- ProofExecutionModel enum
-- STARK backend integration (STWO or RISC0)
+- ProofExecutionClass and ProofCircuitModel enums
+- STARK backend integration (STWO or RiscZero)
 
 ### Phase 2: Witness Generation and Verifier Registry (Months 3-6)
 - WitnessGenerator trait implementation
@@ -461,7 +523,7 @@ Backend selection is per-mission, allowing different privacy/cost tradeoffs.
 
 - `ProofSuiteId` is extensible (new backends without protocol changes)
 - Proof blobs are opaque to consensus (only verification result matters)
-- `ProofExecutionModel` enum supports future execution models
+- `ProofCircuitModel` enum supports future circuit types
 - Backend migration is possible via dual-verification during transition
 
 ## Test Vectors
@@ -510,6 +572,32 @@ Execution:
 All three steps MUST produce identical output across all implementations.
 ```
 
+### Error Path Test Vectors
+
+```text
+Input:
+  proof_blob = [0x00; 10]  // malformed: too short for any backend
+
+Expected:
+  ProofError::ProofGenerationFailed { backend: "any", detail: "proof_blob too short" }
+```
+
+```text
+Input:
+  proof_system_id = 0xFFFF  // unknown proof system
+
+Expected:
+  ProofError::UnsupportedProofSystem { suite_id: ProofSuiteId { proof_system: 0xFFFF, ... } }
+```
+
+```text
+Input:
+  public_inputs = {}  // empty
+
+Expected:
+  ProofError::InvalidWitness { reason: "public_inputs cannot be empty" }
+```
+
 ## Economic Analysis
 
 ### Token Integration
@@ -536,11 +624,14 @@ cost = base_cost * constraint_multiplier * backend_premium
 
 | Backend | Relative Cost | Proof Size | Verification Speed |
 |---------|--------------|------------|-------------------|
-| STARK (STWO) | 1.0x | ~50KB | ~5ms |
-| PLONK | 2.5x | ~1KB | ~3ms |
+| STWO (STARK) | 1.0x | ~50KB | ~5ms |
+| RiscZero | 1.5x | ~100KB | ~10ms |
+| SP1 | 2.0x | ~50KB | ~8ms |
+| Winterfell | 1.2x | ~60KB | ~6ms |
 | Halo2 | 3.0x | ~1KB | ~3ms |
-| RISC0 | 1.5x | ~100KB | ~10ms |
-| zkVM | 2.0x | ~50KB | ~8ms |
+| Groth16 | 4.0x | ~0.5KB | ~2ms |
+| PLONK | 2.5x | ~1KB | ~3ms |
+| Cairo | 1.0x | ~50KB | ~5ms |
 
 ### Aggregation Economics
 
@@ -602,7 +693,7 @@ A single global proof system forces all missions to accept the same tradeoffs. M
 
 - **RFC-0850 (DOT):** DPS proof commitments are embedded in DOT envelopes via ProofCarryingEnvelope
 - **RFC-0853 (OCrypt):** DPS uses OCrypt primitives (BLAKE3-256, Ed25519) for proof signatures
-- **RFC-0126 (DCS):** Proof serialization uses Deterministic Canonical Serialization
+- **RFC-0126 (DCS):** Proof serialization uses Deterministic Canonical Serialization. RFC-0126 status: Accepted. Fallback: if RFC-0126 is not yet implemented, use big-endian byte serialization with length-prefixed fields.
 - **RFC-0104/RFC-0105 (DFP/DQA):** Witness generation uses deterministic numeric arithmetic
 - **RFC-0630 (Proof-of-Inference):** DPS generalizes PoI's proof model to arbitrary proof systems
 - **RFC-0650 (Proof Aggregation):** DPS integrates with recursive aggregation protocol
@@ -623,22 +714,23 @@ A single global proof system forces all missions to accept the same tradeoffs. M
 
 | File | Change |
 |------|--------|
-| `crates/octo-proof/src/dps/mod.rs` | DPS module root |
-| `crates/octo-proof/src/dps/trait.rs` | DeterministicProofSystem |
-| `crates/octo-proof/src/dps/suite.rs` | ProofSuiteId |
-| `crates/octo-proof/src/dps/envelope.rs` | ProofCarryingEnvelope |
-| `crates/octo-proof/src/dps/recursive.rs` | Recursive aggregation |
-| `crates/octo-proof/src/dps/verifier.rs` | Verifier registry |
-| `crates/octo-proof/src/dps/witness.rs` | Deterministic witness |
-| `crates/octo-proof/src/backends/stark.rs` | STARK backend |
-| `crates/octo-proof/src/backends/plonk.rs` | PLONK backend |
-| `crates/octo-proof/src/backends/halo2.rs` | Halo2 backend |
+| `crates/octo-network/src/dps/mod.rs` | DPS module root |
+| `crates/octo-network/src/dps/trait.rs` | DeterministicProofSystem |
+| `crates/octo-network/src/dps/suite.rs` | ProofSuiteId |
+| `crates/octo-network/src/dps/envelope.rs` | ProofCarryingEnvelope |
+| `crates/octo-network/src/dps/recursive.rs` | Recursive aggregation |
+| `crates/octo-network/src/dps/verifier.rs` | Verifier registry |
+| `crates/octo-network/src/dps/witness.rs` | Deterministic witness |
+| `crates/octo-network/src/dps/backends/stark.rs` | STARK backend |
+| `crates/octo-network/src/dps/backends/plonk.rs` | PLONK backend |
+| `crates/octo-network/src/dps/backends/halo2.rs` | Halo2 backend |
 
 ## Version History
 
 | Version | Date | Changes |
 |---------|------|---------|
 | 1.0.0 | 2026-05-25 | Initial draft |
+| 1.1.0 | 2026-05-27 | Round 1 adversarial review — 24 fixes (3C, 8H, 8M, 5L) |
 
 ## Related RFCs
 

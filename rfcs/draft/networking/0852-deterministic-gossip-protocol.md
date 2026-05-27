@@ -443,17 +443,28 @@ DGP extends RFC-0843's gossipsub with deterministic semantics:
 ### Canonical Processing Order
 
 ```text
-Object A: domain_id={1, mission_1}, timestamp=100, hash=BLAKE3-256("A")
-Object B: domain_id={1, mission_1}, timestamp=100, hash=BLAKE3-256("B")
-Object C: domain_id={1, mission_1}, timestamp=200, hash=BLAKE3-256("C")
-Object D: domain_id={2, mission_2}, timestamp=50, hash=BLAKE3-256("D")
+All objects share network_id=1.
 
-Canonical order: D < A < B < C
-Reason: D has lower domain_id (2 > 1 is wrong — 1 < 2 so A,B come first)
-        Actually: domain_id ordering is by (network_id, mission_id, scope)
-        Assuming same network: A and B have same timestamp, A.hash < B.hash
-        C has higher timestamp
-        D has different domain — ordered by domain_id bytes
+Object A: domain={1, mission_1, scope=GLOBAL}, timestamp=100, hash=BLAKE3-256("A")
+Object B: domain={1, mission_1, scope=GLOBAL}, timestamp=100, hash=BLAKE3-256("B")
+Object C: domain={1, mission_1, scope=GLOBAL}, timestamp=200, hash=BLAKE3-256("C")
+Object D: domain={1, mission_2, scope=GLOBAL}, timestamp=50, hash=BLAKE3-256("D")
+
+Canonical order: (domain_id, logical_timestamp, object_hash)
+
+Step 1 — Sort by domain_id (lexicographic on dcs_serialize(GossipDomainId)):
+  domain {1, mission_1, GLOBAL} < domain {1, mission_2, GLOBAL}
+  → Group 1: [A, B, C], Group 2: [D]
+
+Step 2 — Sort within each group by logical_timestamp:
+  Group 1: timestamp 100 = 100 (A, B tie), then 200 (C)
+  Group 2: timestamp 50 (D only)
+
+Step 3 — Tiebreak same-timestamp objects by object_hash:
+  A.hash = BLAKE3-256("A"), B.hash = BLAKE3-256("B")
+  Since BLAKE3-256("A") < BLAKE3-256("B") lexicographically, A < B
+
+Final canonical order: A < B < C < D
 ```
 
 ### Deduplication
@@ -533,10 +544,39 @@ Binary Merkle descent locates divergent objects in O(log n) comparisons.
 | `crates/octo-network/src/dgp/directed.rs` | Directed gossip |
 | `crates/octo-network/src/dgp/fragment.rs` | Fragmentation |
 
+## Error Types
+
+```rust
+/// DGP error types (RFC-0852)
+#[derive(Debug, Error)]
+pub enum DgpError {
+    #[error("duplicate object: {object_hash:?}")]
+    DuplicateObject { object_hash: [u8; 32] },
+
+    #[error("invalid signature on object {object_hash:?}")]
+    InvalidSignature { object_hash: [u8; 32] },
+
+    #[error("object {object_hash:?} replay detected, first seen at {first_seen}")]
+    ReplayDetected { object_hash: [u8; 32], first_seen: u64 },
+
+    #[error("object {object_hash:?} TTL expired: {ttl}")]
+    TtlExpired { object_hash: [u8; 32], ttl: u16 },
+
+    #[error("domain mismatch: expected {expected:?}, got {actual:?}")]
+    DomainMismatch { expected: GossipDomainId, actual: GossipDomainId },
+
+    #[error("fragment assembly failed for {object_hash:?}: {reason}")]
+    FragmentAssemblyFailed { object_hash: [u8; 32], reason: String },
+
+    #[error("invalid object type: {object_type}")]
+    InvalidObjectType { object_type: u16 },
+}
+```
+
 ## Future Work
 
 - F1: Adaptive gossip frequency based on network conditions
-- F2: Compressed gossip using Bloom filter summaries
+- F2: Advanced Bloom filter compression (counting Bloom filters, scalable Bloom filters) — basic Bloom filter compression is specified in Section 11
 - F3: Zero-knowledge gossip proofs (prove delivery without revealing content)
 - F4: Cross-chain gossip bridging for multi-network state synchronization
 - F5: GPU-accelerated Merkle reconciliation for high-throughput nodes
@@ -548,14 +588,17 @@ Binary Merkle descent locates divergent objects in O(log n) comparisons.
 
 | Version | Date | Changes |
 |---------|------|---------|
-| 1.0.0 | 2026-05-25 | Initial draft |
+| 1.0.0 | 2026-05-27 | Initial draft with Round 1 adversarial review fixes |
 
 ## Related RFCs
 
-- RFC-0850 (Networking): DOT — envelope format
-- RFC-0851 (Networking): GDP — discovery
+- RFC-0850 (Networking): DOT — envelope format, transport abstraction
+- RFC-0851 (Networking): GDP — discovery, scope mapping
+- RFC-0853 (Networking): OCrypt — encrypted gossip domains
 - RFC-0855 (Networking): MON — mission overlays
 - RFC-0857 (Networking): DOM — overlay mempool
+- RFC-0126 (Numeric): DCS — deterministic canonical serialization
+- RFC-0630 (Proof Systems): Proof-of-Inference — token economics
 
 ## Related Use Cases
 

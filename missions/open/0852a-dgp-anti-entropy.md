@@ -42,6 +42,8 @@ High
 - Binary descent: compare roots → if differ, compare child roots → locate divergent leaf
 - Reconciliation is bidirectional: both peers exchange missing objects
 - Periodic interval prevents state drift over time
+- **Merkle tree parameters:** BLAKE3-256 hash function, binary tree (2 children per node), leaves sorted by object_hash lexicographic order before tree construction
+- **GossipStateSummary** includes domain_id, state_root (Merkle root), object_count, watermark (highest logical_timestamp)
 
 ## Reference
 

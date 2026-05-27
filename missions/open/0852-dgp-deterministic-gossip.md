@@ -18,7 +18,7 @@ Implement deterministic gossip with gossip objects, domains, canonical processin
 - [ ] `GossipDomainId` with network_id, mission_id, scope
 - [ ] Canonical processing order: (domain_id, logical_timestamp, object_hash)
 - [ ] Deduplication by object_hash with FIRST_VALID_HASH_WINS conflict resolution
-- [ ] Anti-entropy Merkle reconciliation with GossipStateSummary exchange
+- [ ] GossipReplayCache with BTreeMap, deterministic eviction (RFC-0852 §12)
 - [ ] Flood gossip mode for bootstrap
 - [ ] Incremental gossip mode for normal operation
 - [ ] Directed gossip mode for mission-scoped propagation

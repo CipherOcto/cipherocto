@@ -6,7 +6,7 @@ Open
 
 ## RFC
 
-RFC-0860: Proof-of-Relay (PoRelay) — §5, §6
+RFC-0860: Proof-of-Relay (PoRelay) — §6, §7
 
 ## Summary
 

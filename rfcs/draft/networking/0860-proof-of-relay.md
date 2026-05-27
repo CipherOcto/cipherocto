@@ -443,7 +443,7 @@ stake_multiplier = 1000 + min(staked_OCTO_B / STAKE_UNIT, MAX_STAKE_BOOST)
 
 Where `STAKE_UNIT` and `MAX_STAKE_BOOST` are network parameters. This ensures staking provides bounded benefit — sufficient to incentivize commitment but insufficient to allow wealth alone to dominate routing.
 
-### 4. Recursive Proof Aggregation
+### 5. Recursive Proof Aggregation
 
 Individual relay proofs are expensive to verify at scale. PoRelay uses recursive aggregation (per RFC-0854 DPS) to compress proofs.
 
@@ -505,7 +505,7 @@ Input: Set of child proofs {P1, P2, ..., Pn} at level L
 
 **Verification:** O(1) regardless of `proof_count` — verifier checks the STARK proof and signature, not individual children.
 
-### 5. Trust Registry
+### 6. Trust Registry
 
 The Trust Registry maintains composite scores for all known gateways.
 
@@ -543,7 +543,7 @@ effective_score = current_score * (950 ^ epochs_since_last_proof) / (1000 ^ epoc
 
 Integer-only decay computation (RFC-0008 Class A). Decay factor = 950/1000 = 0.95 equivalent. A gateway that stops providing proofs gradually loses trust score, reaching near-zero after ~60 epochs of inactivity.
 
-### 6. Anti-Sybil Mechanisms
+### 7. Anti-Sybil Mechanisms
 
 #### 6.1 Stake-Gated Proof Generation
 
@@ -574,7 +574,7 @@ If peer_diversity < MIN_PEER_DIVERSITY:
 
 Route selection (RFC-0856) weights gateways by `composite` score. A Sybil attacker splitting stake across N gateways each has score `total_stake / N`, making the attack strictly worse than concentrating stake on one honest gateway.
 
-### 7. Economic Integration
+### 8. Economic Integration
 
 #### 7.1 Reward Distribution
 
@@ -609,7 +609,7 @@ Network pays OCTO-N for gateway uptime
   → Uptime proof required for eligibility
 ```
 
-### 8. Error Types
+### 9. Error Types
 
 ```rust
 #[repr(u16)]
@@ -631,7 +631,7 @@ enum PoRelayError {
 }
 ```
 
-### 9. Integration with DOT
+### 10. Integration with DOT
 
 PoRelay integrates with RFC-0850 (DOT) as follows:
 

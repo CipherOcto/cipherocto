@@ -304,7 +304,7 @@ availability_score = heartbeat_count / expected_heartbeat_count
 expected_heartbeat_count = window_duration / HEARTBEAT_INTERVAL
 ```
 
-A gateway with `availability_score >= 0.95` is considered "highly available."
+A gateway with `availability_score >= 950` (basis points) is considered "highly available."
 
 #### 3.3 Bandwidth Proof
 
@@ -363,7 +363,7 @@ struct UptimeProof {
     start_epoch: u64,
     /// Current epoch (end of attested period)
     current_epoch: u64,
-    /// Number of windows with availability_score >= 0.95
+    /// Number of windows with availability_score >= 950
     compliant_windows: u32,
     /// Total number of windows in period
     total_windows: u32,
@@ -447,7 +447,7 @@ Where `STAKE_UNIT` and `MAX_STAKE_BOOST` are network parameters. This ensures st
 
 Individual relay proofs are expensive to verify at scale. PoRelay uses recursive aggregation (per RFC-0854 DPS) to compress proofs.
 
-#### 4.1 Aggregation Hierarchy
+#### 5.1 Aggregation Hierarchy
 
 ```text
 Level 0: Individual relay proofs (per-envelope)
@@ -459,7 +459,7 @@ Level 2: Regional proofs (per-region per-epoch)
 Level 3: Global relay proof (per-epoch)
 ```
 
-#### 4.2 Aggregation Structure
+#### 5.2 Aggregation Structure
 
 ```rust
 #[derive(Clone, Debug)]
@@ -485,7 +485,7 @@ struct AggregatedRelayProof {
 }
 ```
 
-#### 4.3 Aggregation Algorithm
+#### 5.3 Aggregation Algorithm
 
 ```text
 Input: Set of child proofs {P1, P2, ..., Pn} at level L
@@ -545,17 +545,17 @@ Integer-only decay computation (RFC-0008 Class A). Decay factor = 950/1000 = 0.9
 
 ### 7. Anti-Sybil Mechanisms
 
-#### 6.1 Stake-Gated Proof Generation
+#### 7.1 Stake-Gated Proof Generation
 
 Proofs are only economically valuable if the gateway has staked OCTO-B:
 
 ```text
-reward = base_reward * min(staked_amount / MINIMUM_STAKE, 1.0)
+reward = base_reward * min(staked_amount * 1000 / MINIMUM_STAKE, 1000) / 1000
 ```
 
 A gateway with zero stake generates proofs that verify but earn no rewards.
 
-#### 6.2 Diversity Constraints
+#### 7.2 Diversity Constraints
 
 Sybil detection via diversity analysis:
 
@@ -570,13 +570,13 @@ If peer_diversity < MIN_PEER_DIVERSITY:
     flag as potential Sybil (connected to few peers)
 ```
 
-#### 6.3 Stake-Proportional Routing
+#### 7.3 Stake-Proportional Routing
 
 Route selection (RFC-0856) weights gateways by `composite` score. A Sybil attacker splitting stake across N gateways each has score `total_stake / N`, making the attack strictly worse than concentrating stake on one honest gateway.
 
 ### 8. Economic Integration
 
-#### 7.1 Reward Distribution
+#### 8.1 Reward Distribution
 
 | Proof Type | Token | Reward Formula |
 |-----------|-------|----------------|
@@ -587,7 +587,7 @@ Route selection (RFC-0856) weights gateways by `composite` score. A Sybil attack
 | Proof Archival | OCTO-S | Long-term storage of proof history for audit and replay |
 | Aggregated Proof Storage | OCTO-S | Storage of recursive aggregation artifacts |
 
-#### 7.2 Penalty Conditions
+#### 8.2 Penalty Conditions
 
 | Condition | Penalty |
 |-----------|---------|
@@ -596,7 +596,7 @@ Route selection (RFC-0856) weights gateways by `composite` score. A Sybil attack
 | Consensus violation detected | Stake slashing (50%) + gateway ban |
 | Sustained low availability (<50%) | Reward reduction proportional to deficit |
 
-#### 7.3 Economic Flow
+#### 8.3 Economic Flow
 
 ```text
 Mission pays OCTO-B for relay bandwidth

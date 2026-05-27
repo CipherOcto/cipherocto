@@ -14,7 +14,7 @@ Implement the trust registry for relay scores, anti-Sybil mechanisms (stake veri
 
 ## Acceptance Criteria
 
-- [ ] `TrustRegistry`: map gateway_id → RelayScore (RFC §5.1)
+- [ ] `TrustRegistry`: map gateway_id → RelayScore (RFC §6.1)
 - [ ] Trust registry persistence (deterministic ordering)
 - [ ] Trust score update: on new relay proof, recompute trust
 - [ ] Anti-Sybil: stake-gated participation (minimum OCTO-B stake)
@@ -50,6 +50,6 @@ High
 
 ## Reference
 
-- RFC-0860 §5: Trust Registry
-- RFC-0860 §6: Anti-Sybil Mechanisms
-- RFC-0860 §7: Economic Integration
+- RFC-0860 §6: Trust Registry
+- RFC-0860 §7: Anti-Sybil Mechanisms
+- RFC-0860 §8: Economic Integration

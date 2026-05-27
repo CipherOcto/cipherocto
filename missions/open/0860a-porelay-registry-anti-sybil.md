@@ -21,7 +21,7 @@ Implement the trust registry for relay scores, anti-Sybil mechanisms (stake veri
 - [ ] Diversity constraints: prefer diverse gateway connections
 - [ ] Sybil detection: identify clusters of gateways with correlated behavior
 - [ ] Recursive relay proof aggregation: local proofs → regional → global
-- [ ] Integration with DPS (RFC-0854a) for aggregation backend
+- [ ] Integration with DPS (RFC-0854) for aggregation backend
 - [ ] Gateway economics: monthly earnings calculation (OCTO-B + OCTO-N)
 - [ ] Unit tests: 12+ tests covering registry, anti-Sybil, aggregation, economics
 - [ ] `cargo fmt -- --check` passes

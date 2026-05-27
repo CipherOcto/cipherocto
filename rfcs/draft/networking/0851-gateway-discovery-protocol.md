@@ -523,6 +523,29 @@ Where `base_stake` is a network governance parameter (default: 100 OCTO-B, adjus
 
 **Note:** All arithmetic is integer-only per RFC-0008 Class A requirements. Floating-point is forbidden for consensus-critical operations.
 
+**M-GDP-4 fix — Economic Integration:**
+
+GDP economic integration follows RFC-0850 Section 13 and RFC-0860 Section 7. Gateway discovery economics are governed by:
+
+- **Advertisement relay:** OCTO-B per advertisement relayed (per RFC-0850 bandwidth model)
+- **Discovery coordination:** OCTO-O for orchestration of discovery protocols
+- **Gateway uptime:** OCTO-N for stable heartbeat maintenance
+- **Trust integration:** RFC-0860 PoRelay trust scores influence discovery priority
+- **Fee splitting:** Discovery relay earns 10% of the DOT bandwidth fee for advertisements
+
+**M-GDP-10 fix — GatewayCapability vs GatewayRoleFlags:**
+
+GDP's `GatewayCapability` extends RFC-0850's `GatewayRoleFlags` bitmask. The base 6 capabilities (Edge=0x0001 through Translation=0x0020) are inherited from RFC-0850. GDP adds 4 extensions:
+
+| Capability | Bit Position | Description |
+|-----------|-------------|-------------|
+| AIExecution | 0x0040 | AI inference gateway |
+| VectorIndex | 0x0080 | Vector search endpoint |
+| ZkVerification | 0x0100 | ZK proof verification |
+| MissionCoordinator | 0x0200 | Mission lifecycle management |
+
+The `capabilities_root` Merkle tree commits to the full capability set including GDP extensions.
+
 ## Compatibility
 
 ### RFC-0843 Integration

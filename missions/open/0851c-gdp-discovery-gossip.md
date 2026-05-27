@@ -14,12 +14,14 @@ Implement discovery gossip with flood (bootstrap), incremental (normal operation
 
 ## Acceptance Criteria
 
-- [ ] Flood gossip: broadcast aggressively for bootstrap
+- [ ] Flood gossip: broadcast aggressively for bootstrap (DGP object_type = DiscoveryAdvertisement)
 - [ ] Incremental gossip: propagate only unseen advertisements
-- [ ] Anti-entropy gossip: periodic Merkle summary reconciliation
+- [ ] Anti-entropy gossip: periodic Merkle summary reconciliation (60s default)
 - [ ] Directed gossip: targeted propagation for mission overlays
-- [ ] Propagation limits: TTL hops to constrain graph explosion
+- [ ] Propagation limits: TTL hops per scope (Local=3, Regional=10, Mission=5, Global=20, Consensus=10)
 - [ ] Advertisement deduplication by gateway_id + sequence
+- [ ] GDP advertisements wrap as DGP `GossipObject` with `object_type = DiscoveryAdvertisement`
+- [ ] GDP DiscoveryScope maps to DGP GossipDomainId.scope (Local→LOCAL, Regional→REGIONAL, etc.)
 - [ ] Integration with DGP (RFC-0852) gossip infrastructure
 - [ ] Unit tests: 8+ tests covering each gossip mode, TTL enforcement
 - [ ] `cargo fmt -- --check` passes

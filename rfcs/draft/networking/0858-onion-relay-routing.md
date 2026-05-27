@@ -312,7 +312,7 @@ The source constructs the onion by encrypting from the innermost layer outward:
 1. Generate ephemeral X25519 keypair per hop
 2. For each hop (reverse order, exit first):
    a. Compute shared_secret = X25519(ephemeral_private, relay_public)
-   b. Derive session_key = HKDF-BLAKE3(shared_secret, "onion-hop-" || hop_index)
+   b. Derive session_key = HKDF-BLAKE3(shared_secret, "ocrypt:onion:v1", hop_index || route_id)
    c. Encrypt payload_fragment = ChaCha20-Poly1305(session_key, nonce, fragment)
    d. Encrypt next_hop_instructions = ChaCha20-Poly1305(session_key, nonce, instructions)
    e. Compute hop_mac = BLAKE3-256(session_key || encrypted_fragment || encrypted_instructions)
@@ -327,7 +327,7 @@ Each relay peels one layer:
 1. Receive onion envelope
 2. Extract ephemeral_public_key from current hop
 3. Compute shared_secret = X25519(relay_private, ephemeral_public)
-4. Derive session_key = HKDF-BLAKE3(shared_secret, "onion-hop-" || hop_index)
+4. Derive session_key = HKDF-BLAKE3(shared_secret, "ocrypt:onion:v1", hop_index || route_id)
 5. Verify hop_mac against expected value
 6. Decrypt encrypted_next_hop → next relay address + transport instructions
 7. Decrypt encrypted_payload_fragment → inner onion envelope
@@ -356,15 +356,16 @@ fn derive_hop_session_key(
     hop_index: u16,
     route_id: &[u8; 32],
 ) -> [u8; 32] {
-    // salt = hop_index as big-endian u16 bytes
-    let mut salt = [0u8; 2];
-    salt.copy_from_slice(&hop_index.to_be_bytes());
-    // info = route_id (raw 32 bytes)
-    hkdf_blake3_expand(shared_secret, &salt, route_id, 32)
+    // Aligns with RFC-0853 §10:
+    //   salt = "ocrypt:onion:v1"
+    //   info = hop_index || route_id
+    let salt = b"ocrypt:onion:v1";
+    let mut info = [0u8; 34]; // 2 (hop_index) + 32 (route_id)
+    info[0..2].copy_from_slice(&hop_index.to_be_bytes());
+    info[2..34].copy_from_slice(route_id);
+    hkdf_blake3_expand(shared_secret, salt, &info, 32)
 }
 ```
-
-**Domain separation:** `info = "ocrypt:onion:v1"` (per RFC-0853 §10)
 
 #### 4.2 Nonce Construction
 

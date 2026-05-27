@@ -14,10 +14,10 @@ Implement privacy-preserving onion routing with layered encryption (ChaCha20-Pol
 
 ## Acceptance Criteria
 
-- [ ] `OnionRoute` with route_id, mission_id, route_epoch, hop_count, entry_gateway, exit_gateway, layered_route_root
+- [ ] `OnionRoute` with route_id, mission_id, route_epoch, construction_timestamp, hop_count, entry_gateway, exit_gateway, layered_route_root, flags
 - [ ] `OnionHop` with hop_index, relay_gateway, transport_vector_root, encrypted_next_hop, hop_mac, ephemeral_public_key, encrypted_payload_fragment
 - [ ] Layered encryption: payload → encrypt for exit → wrap for intermediate → wrap for entry
-- [ ] Session key derivation: X25519 → HKDF-BLAKE3(secret, salt=hop_index, info=route_id) per RFC-0853 §10
+- [ ] Session key derivation: X25519 → HKDF-BLAKE3(secret, salt="ocrypt:onion:v1", info=hop_index||route_id) per RFC-0853 §10
 - [ ] Forward secrecy via ephemeral X25519 keys per session
 - [ ] Layer peeling: each relay decrypts one layer, sees next hop only
 - [ ] Cover traffic generation with configurable ratio (default 20%), indistinguishable from real traffic
@@ -27,8 +27,6 @@ Implement privacy-preserving onion routing with layered encryption (ChaCha20-Pol
 - [ ] Unit tests: 20+ tests covering encryption round-trip, layer peeling, forward secrecy, nonce derivation, error paths
 - [ ] `cargo fmt -- --check` passes
 - [ ] `cargo test -p octo-network --lib` passes
-- [ ] `cargo fmt -- --check` passes
-- [ ] `cargo test -p octo-network` passes
 
 ## Location
 

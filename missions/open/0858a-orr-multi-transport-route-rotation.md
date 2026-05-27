@@ -15,7 +15,7 @@ Implement multi-transport onion paths (Telegram → Matrix → QUIC → Bluetoot
 ## Acceptance Criteria
 
 - [ ] Multi-transport onion paths: each hop can use different transport carrier
-- [ ] `TransportVector` struct (per RFC-0858 §2.3) with transport_type, carrier_platform, domain_id, priority, hop_duration
+- [ ] `TransportVector` struct (per RFC-0858 §5.2) with transport_type, domain_id, priority, bandwidth_class, censorship_score
 - [ ] Path construction: maximize transport diversity across hops
 - [ ] Carrier selection: prefer carriers with highest censorship resistance
 - [ ] Route rotation: periodic path changes (configurable interval)

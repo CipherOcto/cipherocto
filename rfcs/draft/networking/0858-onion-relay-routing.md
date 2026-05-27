@@ -721,7 +721,7 @@ Input:
   route_id = [0xAA; 32]
 
 Expected:
-  session_key = HKDF-BLAKE3(shared_secret, salt=[0x00,0x00], info=route_id)[0..32]
+  session_key = HKDF-BLAKE3(shared_secret, salt="ocrypt:onion:v1", info=[0x00,0x00]||[0xAA;32])[0..32]
   nonce = HKDF-BLAKE3(session_key, "ocrypt:nonce:v1", 0)[0..12]
 ```
 

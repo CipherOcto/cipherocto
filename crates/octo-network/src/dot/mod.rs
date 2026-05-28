@@ -8,6 +8,7 @@ pub mod config;
 pub mod domain;
 pub mod envelope;
 pub mod error;
+pub mod fragment;
 pub mod gateway;
 pub mod replay;
 pub mod sequence;

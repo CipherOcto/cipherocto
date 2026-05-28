@@ -10,6 +10,7 @@ pub mod envelope;
 pub mod error;
 pub mod fragment;
 pub mod gateway;
+pub mod pce;
 pub mod replay;
 pub mod route;
 pub mod sequence;

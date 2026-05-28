@@ -7,7 +7,9 @@ use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
 pub mod advertisement;
+pub mod anti_sybil;
 pub mod cache;
+pub mod discovery;
 pub mod error;
 pub mod heartbeat;
 pub mod identity;

@@ -27,6 +27,15 @@ pub mod gdp;
 /// Overlay Cryptography (OCrypt) module — RFC-0853.
 pub mod ocrypt;
 
+/// Deterministic Overlay Mempool (DOM) — RFC-0857.
+pub mod dom;
+/// Mission Overlay Networks (MON) — RFC-0855.
+pub mod mon;
+/// Onion Relay Routing (ORR) — RFC-0858.
+pub mod orr;
+/// Proof-of-Relay (PoRelay) — RFC-0860.
+pub mod porelay;
+
 pub struct Network {
     peers: RwLock<Vec<String>>,
 }

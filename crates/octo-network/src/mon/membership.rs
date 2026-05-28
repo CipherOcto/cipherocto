@@ -1,0 +1,140 @@
+//! Mission Membership (RFC-0855 §4)
+
+use serde::{Deserialize, Serialize};
+
+/// Mission node — a participant in a mission overlay.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[repr(C)]
+pub struct MissionNode {
+    pub peer_id: [u8; 32],
+    pub role_flags: u64,
+    pub trust_score: u32,
+    pub capability_root: [u8; 32],
+    pub join_epoch: u64,
+    pub membership_signature: Vec<u8>,
+}
+
+/// Role flag bits (RFC-0855 §4.2)
+pub const ROLE_COORDINATOR: u64 = 0x0001;
+pub const ROLE_EXECUTOR: u64 = 0x0002;
+pub const ROLE_RELAY: u64 = 0x0004;
+pub const ROLE_VALIDATOR: u64 = 0x0008;
+pub const ROLE_OBSERVER: u64 = 0x0010;
+pub const ROLE_ARCHIVIST: u64 = 0x0020;
+pub const ROLE_PROVER: u64 = 0x0040;
+pub const ROLE_AGGREGATOR: u64 = 0x0080;
+
+/// Maximum roles per node.
+pub const MAX_ROLES_PER_NODE: u32 = 4;
+
+/// Minimum trust score for Coordinator role.
+pub const MIN_TRUST_COORDINATOR: u32 = 500;
+/// Minimum trust score for Validator role.
+pub const MIN_TRUST_VALIDATOR: u32 = 300;
+
+/// Check if role combination is valid (RFC-0855 §4.2 constraints).
+pub fn is_valid_role_combination(role_flags: u64) -> bool {
+    let has_coordinator = role_flags & ROLE_COORDINATOR != 0;
+    let has_prover = role_flags & ROLE_PROVER != 0;
+    let has_aggregator = role_flags & ROLE_AGGREGATOR != 0;
+    let has_observer = role_flags & ROLE_OBSERVER != 0;
+
+    // Forbidden combinations
+    if has_coordinator && has_prover {
+        return false;
+    }
+    if has_coordinator && has_aggregator {
+        return false;
+    }
+    if has_observer && has_coordinator {
+        return false;
+    }
+
+    // Max 4 roles
+    let role_count = role_flags.count_ones();
+    role_count <= MAX_ROLES_PER_NODE
+}
+
+/// Admission policy (RFC-0855 §4.3)
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[repr(u16)]
+pub enum AdmissionPolicy {
+    Open = 0x0001,
+    InviteOnly = 0x0002,
+    StakeGated = 0x0003,
+    TrustGated = 0x0004,
+    CapabilityGated = 0x0005,
+}
+
+/// Compute membership commitment: BLAKE3-256(mission_id || peer_id || role_flags || join_epoch)
+pub fn compute_membership_commitment(
+    mission_id: &[u8; 32],
+    peer_id: &[u8; 32],
+    role_flags: u64,
+    join_epoch: u64,
+) -> [u8; 32] {
+    let mut hasher = blake3::Hasher::new();
+    hasher.update(mission_id);
+    hasher.update(peer_id);
+    hasher.update(&role_flags.to_be_bytes());
+    hasher.update(&join_epoch.to_be_bytes());
+    *hasher.finalize().as_bytes()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_valid_role_combinations() {
+        assert!(is_valid_role_combination(ROLE_COORDINATOR));
+        assert!(is_valid_role_combination(
+            ROLE_EXECUTOR | ROLE_RELAY | ROLE_VALIDATOR
+        ));
+        assert!(is_valid_role_combination(ROLE_OBSERVER));
+        assert!(is_valid_role_combination(
+            ROLE_RELAY | ROLE_VALIDATOR | ROLE_ARCHIVIST | ROLE_PROVER
+        ));
+    }
+
+    #[test]
+    fn test_forbidden_role_combinations() {
+        assert!(!is_valid_role_combination(ROLE_COORDINATOR | ROLE_PROVER));
+        assert!(!is_valid_role_combination(
+            ROLE_COORDINATOR | ROLE_AGGREGATOR
+        ));
+        assert!(!is_valid_role_combination(ROLE_OBSERVER | ROLE_COORDINATOR));
+    }
+
+    #[test]
+    fn test_max_roles_enforced() {
+        let five_roles =
+            ROLE_COORDINATOR | ROLE_EXECUTOR | ROLE_RELAY | ROLE_VALIDATOR | ROLE_ARCHIVIST;
+        assert!(!is_valid_role_combination(five_roles));
+    }
+
+    #[test]
+    fn test_membership_commitment_deterministic() {
+        let mission_id = [1u8; 32];
+        let peer_id = [2u8; 32];
+        let c1 = compute_membership_commitment(&mission_id, &peer_id, 5, 100);
+        let c2 = compute_membership_commitment(&mission_id, &peer_id, 5, 100);
+        assert_eq!(c1, c2);
+    }
+
+    #[test]
+    fn test_membership_commitment_different_inputs() {
+        let mission_id = [1u8; 32];
+        let peer1 = [2u8; 32];
+        let peer2 = [3u8; 32];
+        let c1 = compute_membership_commitment(&mission_id, &peer1, 5, 100);
+        let c2 = compute_membership_commitment(&mission_id, &peer2, 5, 100);
+        assert_ne!(c1, c2);
+    }
+
+    #[test]
+    fn test_admission_policy_repr() {
+        assert_eq!(AdmissionPolicy::Open as u16, 0x0001);
+        assert_eq!(AdmissionPolicy::CapabilityGated as u16, 0x0005);
+    }
+}

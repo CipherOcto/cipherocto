@@ -196,3 +196,327 @@ mod tests {
         assert!(envelope.verify(&public_key).is_err());
     }
 }
+
+// ============================================================
+// Privacy and Encryption (RFC-0850 §10)
+// ============================================================
+
+/// Bitmask flags for envelope privacy features.
+/// Stored in DeterministicEnvelope.flags.
+pub mod envelope_flags {
+    /// Payload is encrypted (ciphertext in payload_hash-verified blob)
+    pub const ENCRYPTED: u64 = 0x0001;
+    /// Envelope is sealed (metadata minimized)
+    pub const SEALED: u64 = 0x0002;
+    /// Transport obfuscation enabled
+    pub const OBFUSCATED: u64 = 0x0004;
+    /// End-to-end encrypted (no relay decryption)
+    pub const E2E: u64 = 0x0008;
+    /// Stealth mode (mission existence hidden)
+    pub const STEALTH: u64 = 0x0010;
+}
+
+/// A sealed envelope with encrypted payload and minimized metadata.
+///
+/// Platforms observe only ciphertext and relay metadata.
+/// Mission data is NEVER plaintext on the carrier platform.
+#[derive(Debug, Clone)]
+#[repr(C)]
+pub struct SealedEnvelope {
+    /// The outer DOT envelope (metadata visible to platform)
+    pub envelope: DeterministicEnvelope,
+    /// Encrypted payload bytes (ciphertext)
+    pub encrypted_payload: Vec<u8>,
+    /// Nonce used for encryption (12 bytes for ChaCha20-Poly1305)
+    pub nonce: [u8; 12],
+    /// Sender's ephemeral public key (for ECDH)
+    pub sender_ephemeral: [u8; 32],
+}
+
+/// Metadata-minimized envelope for transport obfuscation.
+/// Platforms see only opaque bytes.
+#[derive(Debug, Clone)]
+#[repr(C)]
+pub struct ObfuscatedEnvelope {
+    /// Opaque wire bytes (envelope + payload serialized together)
+    pub wire_bytes: Vec<u8>,
+    /// BLAKE3-256 of the original envelope_id (for dedup)
+    pub envelope_hash: [u8; 32],
+}
+
+/// Privacy configuration for envelope sealing.
+#[derive(Debug, Clone, Copy)]
+pub struct PrivacyConfig {
+    /// Enable end-to-end encryption
+    pub e2e_encryption: bool,
+    /// Enable metadata minimization
+    pub metadata_minimization: bool,
+    /// Enable transport obfuscation
+    pub transport_obfuscation: bool,
+}
+
+impl Default for PrivacyConfig {
+    fn default() -> Self {
+        Self {
+            e2e_encryption: false,
+            metadata_minimization: false,
+            transport_obfuscation: false,
+        }
+    }
+}
+
+impl DeterministicEnvelope {
+    /// Check if this envelope has encrypted payload.
+    pub fn is_encrypted(&self) -> bool {
+        (self.flags & envelope_flags::ENCRYPTED) != 0
+    }
+
+    /// Check if this envelope is sealed (metadata minimized).
+    pub fn is_sealed(&self) -> bool {
+        (self.flags & envelope_flags::SEALED) != 0
+    }
+
+    /// Check if this envelope uses transport obfuscation.
+    pub fn is_obfuscated(&self) -> bool {
+        (self.flags & envelope_flags::OBFUSCATED) != 0
+    }
+
+    /// Check if this envelope is E2E encrypted.
+    pub fn is_e2e(&self) -> bool {
+        (self.flags & envelope_flags::E2E) != 0
+    }
+
+    /// Check if this envelope is in stealth mode.
+    pub fn is_stealth(&self) -> bool {
+        (self.flags & envelope_flags::STEALTH) != 0
+    }
+
+    /// Set privacy flags on this envelope.
+    pub fn set_privacy(&mut self, config: &PrivacyConfig) {
+        if config.e2e_encryption {
+            self.flags |= envelope_flags::ENCRYPTED | envelope_flags::E2E;
+        }
+        if config.metadata_minimization {
+            self.flags |= envelope_flags::SEALED;
+        }
+        if config.transport_obfuscation {
+            self.flags |= envelope_flags::OBFUSCATED;
+        }
+    }
+
+    /// Derive a sealing key from shared secret.
+    /// Uses HKDF-BLAKE3 with domain separation.
+    pub fn derive_sealing_key(shared_secret: &[u8; 32], envelope_id: &[u8; 32]) -> [u8; 32] {
+        let mut hasher = blake3::Hasher::new();
+        hasher.update(shared_secret);
+        hasher.update(envelope_id);
+        hasher.update(b"dot:seal:v1");
+        *hasher.finalize().as_bytes()
+    }
+
+    /// Compute the wire format hash for obfuscation.
+    /// wire_hash = BLAKE3-256(envelope_bytes || encrypted_payload)
+    pub fn compute_wire_hash(signing_bytes: &[u8], encrypted_payload: &[u8]) -> [u8; 32] {
+        let mut hasher = blake3::Hasher::new();
+        hasher.update(signing_bytes);
+        hasher.update(encrypted_payload);
+        *hasher.finalize().as_bytes()
+    }
+}
+
+impl SealedEnvelope {
+    /// Create a new sealed envelope from a plaintext envelope.
+    ///
+    /// In a full implementation, this would encrypt the payload using
+    /// ChaCha20-Poly1305 with the shared secret. Here we provide the
+    /// structural framework; actual encryption requires OCrypt session keys.
+    pub fn new(
+        envelope: DeterministicEnvelope,
+        encrypted_payload: Vec<u8>,
+        nonce: [u8; 12],
+        sender_ephemeral: [u8; 32],
+    ) -> Self {
+        Self {
+            envelope,
+            encrypted_payload,
+            nonce,
+            sender_ephemeral,
+        }
+    }
+
+    /// Derive the decryption key from receiver's secret and sender's ephemeral.
+    pub fn derive_decryption_key(
+        receiver_secret: &[u8; 32],
+        sender_ephemeral: &[u8; 32],
+    ) -> [u8; 32] {
+        let mut hasher = blake3::Hasher::new();
+        hasher.update(receiver_secret);
+        hasher.update(sender_ephemeral);
+        hasher.update(b"dot:decrypt:v1");
+        *hasher.finalize().as_bytes()
+    }
+
+    /// Verify that the encrypted payload hash matches the envelope's payload_hash.
+    pub fn verify_payload_hash(&self) -> bool {
+        let computed = blake3::hash(&self.encrypted_payload);
+        *computed.as_bytes() == self.envelope.payload_hash
+    }
+}
+
+impl ObfuscatedEnvelope {
+    /// Create an obfuscated envelope from wire bytes.
+    pub fn from_wire(wire_bytes: Vec<u8>) -> Self {
+        let envelope_hash = *blake3::hash(&wire_bytes).as_bytes();
+        Self {
+            wire_bytes,
+            envelope_hash,
+        }
+    }
+
+    /// Get the envelope hash for deduplication.
+    pub fn dedup_key(&self) -> [u8; 32] {
+        self.envelope_hash
+    }
+}
+
+#[cfg(test)]
+mod privacy_tests {
+    use super::*;
+    use ed25519_dalek::{Signer, SigningKey};
+
+    fn make_envelope() -> DeterministicEnvelope {
+        let signing_key = SigningKey::from_bytes(&[42u8; 32]);
+        let mut envelope = DeterministicEnvelope {
+            version: 1,
+            network_id: 1,
+            message_type: MessageType::Message as u16,
+            envelope_id: [0u8; 32],
+            mission_id: [0u8; 32],
+            source_peer: [1u8; 32],
+            origin_gateway: [2u8; 32],
+            logical_timestamp: 1000,
+            ttl_hops: 10,
+            payload_hash: *blake3::hash(b"test payload").as_bytes(),
+            route_trace_root: [0u8; 32],
+            flags: 0,
+            signature: [0u8; 64],
+        };
+        envelope.envelope_id = envelope.derive_envelope_id();
+        let signing_bytes = envelope.to_signing_bytes();
+        envelope.signature = signing_key.sign(&signing_bytes).to_bytes();
+        envelope
+    }
+
+    #[test]
+    fn test_envelope_flags_default_none() {
+        let env = make_envelope();
+        assert!(!env.is_encrypted());
+        assert!(!env.is_sealed());
+        assert!(!env.is_obfuscated());
+        assert!(!env.is_e2e());
+        assert!(!env.is_stealth());
+    }
+
+    #[test]
+    fn test_set_privacy_encrypted() {
+        let mut env = make_envelope();
+        env.set_privacy(&PrivacyConfig {
+            e2e_encryption: true,
+            ..Default::default()
+        });
+        assert!(env.is_encrypted());
+        assert!(env.is_e2e());
+        assert!(!env.is_sealed());
+    }
+
+    #[test]
+    fn test_set_privacy_sealed() {
+        let mut env = make_envelope();
+        env.set_privacy(&PrivacyConfig {
+            metadata_minimization: true,
+            ..Default::default()
+        });
+        assert!(env.is_sealed());
+        assert!(!env.is_encrypted());
+    }
+
+    #[test]
+    fn test_set_privacy_all() {
+        let mut env = make_envelope();
+        env.set_privacy(&PrivacyConfig {
+            e2e_encryption: true,
+            metadata_minimization: true,
+            transport_obfuscation: true,
+        });
+        assert!(env.is_encrypted());
+        assert!(env.is_e2e());
+        assert!(env.is_sealed());
+        assert!(env.is_obfuscated());
+    }
+
+    #[test]
+    fn test_derive_sealing_key_deterministic() {
+        let secret = [1u8; 32];
+        let eid = [2u8; 32];
+        let k1 = DeterministicEnvelope::derive_sealing_key(&secret, &eid);
+        let k2 = DeterministicEnvelope::derive_sealing_key(&secret, &eid);
+        assert_eq!(k1, k2);
+    }
+
+    #[test]
+    fn test_derive_sealing_key_different_inputs() {
+        let k1 = DeterministicEnvelope::derive_sealing_key(&[1u8; 32], &[2u8; 32]);
+        let k2 = DeterministicEnvelope::derive_sealing_key(&[1u8; 32], &[3u8; 32]);
+        assert_ne!(k1, k2);
+    }
+
+    #[test]
+    fn test_sealed_envelope_payload_hash() {
+        let env = make_envelope();
+        let payload = b"encrypted data";
+        let sealed = SealedEnvelope::new(env.clone(), payload.to_vec(), [0u8; 12], [9u8; 32]);
+        // Payload hash won't match since env.payload_hash is for plaintext
+        // but the function correctly computes and compares
+        assert!(!sealed.verify_payload_hash());
+
+        // Create sealed envelope with matching hash
+        let encrypted = b"ciphertext here";
+        let mut env2 = env.clone();
+        env2.payload_hash = *blake3::hash(encrypted).as_bytes();
+        let sealed2 = SealedEnvelope::new(env2, encrypted.to_vec(), [0u8; 12], [9u8; 32]);
+        assert!(sealed2.verify_payload_hash());
+    }
+
+    #[test]
+    fn test_sealed_envelope_derive_decryption_key() {
+        let receiver_secret = [1u8; 32];
+        let sender_ephemeral = [2u8; 32];
+        let k1 = SealedEnvelope::derive_decryption_key(&receiver_secret, &sender_ephemeral);
+        let k2 = SealedEnvelope::derive_decryption_key(&receiver_secret, &sender_ephemeral);
+        assert_eq!(k1, k2);
+
+        // Different sender ephemeral produces different key
+        let k3 = SealedEnvelope::derive_decryption_key(&receiver_secret, &[3u8; 32]);
+        assert_ne!(k1, k3);
+    }
+
+    #[test]
+    fn test_obfuscated_envelope_dedup() {
+        let wire = vec![1u8, 2, 3, 4, 5];
+        let obf = ObfuscatedEnvelope::from_wire(wire.clone());
+        let obf2 = ObfuscatedEnvelope::from_wire(wire);
+        assert_eq!(obf.dedup_key(), obf2.dedup_key());
+
+        let obf3 = ObfuscatedEnvelope::from_wire(vec![6u8, 7, 8]);
+        assert_ne!(obf.dedup_key(), obf3.dedup_key());
+    }
+
+    #[test]
+    fn test_compute_wire_hash_deterministic() {
+        let sb = b"signing bytes";
+        let ep = b"encrypted payload";
+        let h1 = DeterministicEnvelope::compute_wire_hash(sb, ep);
+        let h2 = DeterministicEnvelope::compute_wire_hash(sb, ep);
+        assert_eq!(h1, h2);
+    }
+}

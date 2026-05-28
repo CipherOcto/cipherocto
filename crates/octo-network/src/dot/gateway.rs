@@ -255,8 +255,11 @@ mod tests {
     }
 
     fn make_peer(id: u8, domain: u8) -> FederationPeer {
+        let mut identity = GatewayIdentity::new([id; 32], 1, GatewayClass::Edge, 100);
+        // Override derived gateway_id with predictable test key
+        identity.gateway_id = [id; 32];
         FederationPeer {
-            identity: GatewayIdentity::new([id; 32], 1, GatewayClass::Edge, 100),
+            identity,
             capacity: GatewayCapacity::default(),
             domains: vec![[domain; 32]],
             last_seen: 200,
@@ -341,12 +344,8 @@ mod tests {
         state.upsert_peer(make_peer(1, 0xAA));
         state.upsert_peer(make_peer(2, 0xBB));
 
-        assert!(state.can_survive_partition(&[0xAAu8; 32])); // peer 2 survives
-        assert!(!state.can_survive_partition(&[0xCCu8; 32])); // both peers have other domains, but wait - they only have one domain each
-                                                              // Actually: peer 1 has domain AA, peer 2 has domain BB. Partition CC affects neither.
-                                                              // can_survive_partition checks if ANY active peer does NOT have the partitioned domain.
-                                                              // Both peers don't have CC, so this should be true.
-        assert!(state.can_survive_partition(&[0xCCu8; 32]));
+        assert!(state.can_survive_partition(&[0xAAu8; 32])); // peer 2 survives (has domain BB)
+        assert!(state.can_survive_partition(&[0xCCu8; 32])); // both peers survive (neither has domain CC)
 
         // Now test where all peers are on the partitioned domain
         let mut state2 = FederationState::new(GatewayIdentity::new(

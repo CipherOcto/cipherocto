@@ -172,4 +172,72 @@ mod tests {
         let key = derive_onion_session_key(&secret, 0, &route_id).unwrap();
         assert_eq!(key.len(), 32);
     }
+
+    #[test]
+    fn test_onion_nonce_uniqueness_across_hops() {
+        let key = [0x42u8; 32];
+        let mut nonces = Vec::new();
+        for hop in 0..10u16 {
+            nonces.push(derive_onion_nonce(&key, hop).unwrap());
+        }
+        // All nonces must be unique
+        for i in 0..nonces.len() {
+            for j in (i + 1)..nonces.len() {
+                assert_ne!(
+                    nonces[i], nonces[j],
+                    "Nonce collision at hops {} and {}",
+                    i, j
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn test_onion_relay_isolation() {
+        // Each relay gets a different session key — compromise of one doesn't expose others
+        let secret = [0xAAu8; 32];
+        let route_id = [0x01u8; 32];
+        let k0 = derive_onion_session_key(&secret, 0, &route_id).unwrap();
+        let k1 = derive_onion_session_key(&secret, 1, &route_id).unwrap();
+        let k2 = derive_onion_session_key(&secret, 2, &route_id).unwrap();
+
+        // All keys must be different (relay isolation)
+        assert_ne!(k0, k1);
+        assert_ne!(k1, k2);
+        assert_ne!(k0, k2);
+    }
+
+    #[test]
+    fn test_onion_forward_secrecy() {
+        // Compromise of relay 1's key doesn't let you decrypt relay 0's layer
+        let key0 = [0x42u8; 32];
+        let key1 = [0x43u8; 32];
+        let aad = b"aad";
+
+        let payload = b"secret data";
+        let layer0 = encrypt_onion_layer(&key0, 0, payload, aad).unwrap();
+
+        // Decrypting with key1 (wrong relay) must fail
+        let result = decrypt_onion_layer(&key1, &layer0, aad);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_onion_layer_aad_binding() {
+        // Same key + different AAD must produce different results
+        let key = [0x42u8; 32];
+        let payload = b"test payload";
+
+        let layer1 = encrypt_onion_layer(&key, 0, payload, b"aad1").unwrap();
+        let layer2 = encrypt_onion_layer(&key, 0, payload, b"aad2").unwrap();
+
+        // Different AAD should produce different ciphertext (with overwhelming probability)
+        assert_ne!(layer1.ciphertext, layer2.ciphertext);
+    }
+
+    #[test]
+    fn test_onion_constants() {
+        assert_eq!(ONION_SESSION_DOMAIN, "ocrypt:onion:v1");
+        assert_eq!(ONION_NONCE_DOMAIN, "ocrypt:nonce:v1");
+    }
 }

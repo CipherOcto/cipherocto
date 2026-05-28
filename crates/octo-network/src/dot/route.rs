@@ -134,8 +134,7 @@ pub fn select_best_route(routes: &[GatewayRoute]) -> Option<&GatewayRoute> {
     routes.iter().filter(|r| r.active).max_by(|a, b| {
         a.score
             .cmp(&b.score)
-            .reverse()
-            .then_with(|| a.gateway_id.cmp(&b.gateway_id))
+            .then_with(|| b.gateway_id.cmp(&a.gateway_id))
     })
 }
 

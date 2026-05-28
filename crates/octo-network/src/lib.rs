@@ -29,6 +29,8 @@ pub mod ocrypt;
 
 /// Deterministic Overlay Mempool (DOM) — RFC-0857.
 pub mod dom;
+/// Deterministic Route Selection (DRS) — RFC-0856.
+pub mod drs;
 /// Mission Overlay Networks (MON) — RFC-0855.
 pub mod mon;
 /// Onion Relay Routing (ORR) — RFC-0858.

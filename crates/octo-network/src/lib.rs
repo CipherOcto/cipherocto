@@ -18,6 +18,10 @@ use tokio::sync::RwLock;
 /// Deterministic Overlay Transport module — RFC-0850.
 pub mod dot;
 
+/// Deterministic Gossip Protocol — RFC-0852.
+pub mod dgp;
+/// Deterministic Proof Substrate (DPS) — RFC-0854.
+pub mod dps;
 /// Gateway Discovery Protocol — RFC-0851.
 pub mod gdp;
 /// Overlay Cryptography (OCrypt) module — RFC-0853.

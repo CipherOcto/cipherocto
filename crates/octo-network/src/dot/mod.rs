@@ -11,6 +11,7 @@ pub mod error;
 pub mod fragment;
 pub mod gateway;
 pub mod replay;
+pub mod route;
 pub mod sequence;
 
 pub use adapters::native_p2p::NativeP2PAdapter;

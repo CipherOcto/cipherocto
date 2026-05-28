@@ -18,6 +18,11 @@ use tokio::sync::RwLock;
 /// Deterministic Overlay Transport module — RFC-0850.
 pub mod dot;
 
+/// Gateway Discovery Protocol — RFC-0851.
+pub mod gdp;
+/// Overlay Cryptography (OCrypt) module — RFC-0853.
+pub mod ocrypt;
+
 pub struct Network {
     peers: RwLock<Vec<String>>,
 }

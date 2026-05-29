@@ -1,0 +1,44 @@
+[package]
+name = "octo-adapter-whatsapp"
+version = "0.1.0"
+edition = "2021"
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+# WhatsApp Web protocol (oxidezap/whatsapp-rust)
+whatsapp-rust = { git = "https://github.com/oxidezap/whatsapp-rust", rev = "9734fb2ec544e22b7055147aa3e73b6889e3ff0d", default-features = false, features = ["tokio-runtime", "tokio-transport", "ureq-client", "signal"] }
+wacore = { git = "https://github.com/oxidezap/whatsapp-rust", rev = "9734fb2ec544e22b7055147aa3e73b6889e3ff0d", default-features = false }
+wacore-binary = { git = "https://github.com/oxidezap/whatsapp-rust", rev = "9734fb2ec544e22b7055147aa3e73b6889e3ff0d", default-features = false }
+waproto = { git = "https://github.com/oxidezap/whatsapp-rust", rev = "9734fb2ec544e22b7055147aa3e73b6889e3ff0d", default-features = false }
+whatsapp-rust-tokio-transport = { git = "https://github.com/oxidezap/whatsapp-rust", rev = "9734fb2ec544e22b7055147aa3e73b6889e3ff0d" }
+whatsapp-rust-ureq-http-client = { git = "https://github.com/oxidezap/whatsapp-rust", rev = "9734fb2ec544e22b7055147aa3e73b6889e3ff0d" }
+qrcode = "0.14"
+serde-big-array = "0.5"
+bytes = "1"
+
+# Shared dependencies
+tokio = { version = "1", features = ["sync", "time", "fs", "rt-multi-thread", "macros"] }
+async-trait = "0.1"
+anyhow = "1"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+blake3 = "1"
+base64 = "0.22"
+chrono = { version = "0.4", features = ["clock"] }
+parking_lot = "0.12"
+shellexpand = "3"
+prost = "0.14"
+tracing = "0.1"
+uuid = { version = "1", features = ["v4"] }
+
+# SQL storage (CipherOcto stoolap fork)
+stoolap = { git = "https://github.com/CipherOcto/stoolap", branch = "feat/blockchain-sql" }
+
+# DOT types from sibling crate
+octo-network = { path = "../octo-network" }
+
+[dev-dependencies]
+tempfile = "3"
+tokio = { version = "1", features = ["macros", "rt-multi-thread"] }

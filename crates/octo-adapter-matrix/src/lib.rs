@@ -470,6 +470,43 @@ impl PlatformAdapter for MatrixAdapter {
             Err(_) => Err(transport_err("Health check timed out after 5s")),
         }
     }
+
+    async fn upload_media(
+        &self,
+        filename: &str,
+        data: &[u8],
+        mime_type: &str,
+    ) -> Result<String, PlatformAdapterError> {
+        // Use the existing upload_media method
+        self.upload_media(filename, data, mime_type)
+            .await
+            .map(|resp| resp.content_uri)
+            .map_err(|e| transport_err(format!("Upload failed: {e}")))
+    }
+
+    async fn download_media(
+        &self,
+        media_id: &str,
+    ) -> Result<Vec<u8>, PlatformAdapterError> {
+        // Download via Matrix media API
+        let url = format!(
+            "{}/_matrix/media/v3/download/{}",
+            self.config.homeserver_url, media_id
+        );
+        let resp = self
+            .client
+            .get(&url)
+            .header("Authorization", format!("Bearer {}", self.config.access_token))
+            .send()
+            .await
+            .map_err(|e| transport_err(format!("Download failed: {e}")))?;
+
+        let bytes = resp
+            .bytes()
+            .await
+            .map_err(|e| transport_err(format!("Download read: {e}")))?;
+        Ok(bytes.to_vec())
+    }
 }
 
 // --- Matrix API types ---

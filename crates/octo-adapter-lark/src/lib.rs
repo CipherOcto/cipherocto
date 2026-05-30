@@ -270,6 +270,25 @@ impl PlatformAdapter for LarkAdapter {
     async fn health_check(&self) -> Result<(), PlatformAdapterError> {
         self.get_tenant_token().await.map(|_| ())
     }
+
+    async fn upload_media(&self, filename: &str, data: &[u8], mime_type: &str) -> Result<String, PlatformAdapterError> {
+        let token = self.get_tenant_token().await?;
+        let url = format!("{}/im/v1/images", self.api_base());
+        let file_part = reqwest::multipart::Part::bytes(data.to_vec())
+            .file_name(filename.to_string())
+            .mime_str(mime_type)
+            .map_err(|e| transport_err(format!("MIME: {e}")))?;
+        let form = reqwest::multipart::Form::new().part("image", file_part);
+        let resp = self.client.post(&url).bearer_auth(&token).multipart(form).send().await
+            .map_err(|e| transport_err(format!("Upload failed: {e}")))?
+            .json::<serde_json::Value>().await
+            .map_err(|e| transport_err(format!("Parse: {e}")))?;
+        let image_key = resp["data"]["image_key"].as_str().unwrap_or("unknown").to_string();
+        Ok(image_key)
+    }
+    async fn download_media(&self, _media_id: &str) -> Result<Vec<u8>, PlatformAdapterError> {
+        Err(PlatformAdapterError::Unreachable { platform: "lark".into(), reason: "download_media not implemented for Lark".into() })
+    }
 }
 
 #[no_mangle]

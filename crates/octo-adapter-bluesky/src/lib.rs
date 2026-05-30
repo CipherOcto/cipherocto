@@ -298,6 +298,27 @@ impl PlatformAdapter for BlueskyAdapter {
         // Try to create/refresh session
         self.ensure_session().await
     }
+
+    async fn upload_media(&self, filename: &str, data: &[u8], mime_type: &str) -> Result<String, PlatformAdapterError> {
+        self.ensure_session().await?;
+        let (access_jwt, did) = {
+            let guard = self.session.lock();
+            let session = guard.as_ref().ok_or_else(|| transport_err("No session"))?;
+            (session.access_jwt.clone(), session.did.clone())
+        };
+        let url = format!("{}/xrpc/com.atproto.repo.uploadBlob", self.config.pds_url);
+        let resp = self.client.post(&url)
+            .header("Authorization", format!("Bearer {}", access_jwt))
+            .header("Content-Type", mime_type)
+            .body(data.to_vec())
+            .send().await.map_err(|e| transport_err(format!("Upload failed: {e}")))?
+            .json::<serde_json::Value>().await.map_err(|e| transport_err(format!("Parse: {e}")))?;
+        let blob_ref = resp["blob"]["ref"]["$link"].as_str().unwrap_or("unknown").to_string();
+        Ok(blob_ref)
+    }
+    async fn download_media(&self, _blob_ref: &str) -> Result<Vec<u8>, PlatformAdapterError> {
+        Err(PlatformAdapterError::Unreachable { platform: "bluesky".into(), reason: "download_media not implemented for Bluesky".into() })
+    }
 }
 
 fn epoch_millis() -> u64 {

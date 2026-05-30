@@ -311,6 +311,13 @@ impl PlatformAdapter for RedditAdapter {
         // Try to get access token
         self.get_access_token().await.map(|_| ())
     }
+
+    async fn upload_media(&self, _filename: &str, _data: &[u8], _mime_type: &str) -> Result<String, PlatformAdapterError> {
+        Err(PlatformAdapterError::Unreachable { platform: "reddit".into(), reason: "Reddit requires URL-based media; direct upload not supported".into() })
+    }
+    async fn download_media(&self, _media_id: &str) -> Result<Vec<u8>, PlatformAdapterError> {
+        Err(PlatformAdapterError::Unreachable { platform: "reddit".into(), reason: "download_media not supported for Reddit".into() })
+    }
 }
 
 // ── Plugin ABI ─────────────────────────────────────────────────────

@@ -257,6 +257,13 @@ impl PlatformAdapter for QQAdapter {
     async fn health_check(&self) -> Result<(), PlatformAdapterError> {
         self.get_access_token().await.map(|_| ())
     }
+
+    async fn upload_media(&self, _filename: &str, _data: &[u8], _mime_type: &str) -> Result<String, PlatformAdapterError> {
+        Err(PlatformAdapterError::Unreachable { platform: "qq".into(), reason: "QQ media upload requires special API flow".into() })
+    }
+    async fn download_media(&self, _media_id: &str) -> Result<Vec<u8>, PlatformAdapterError> {
+        Err(PlatformAdapterError::Unreachable { platform: "qq".into(), reason: "download_media not supported for QQ".into() })
+    }
 }
 
 #[no_mangle]

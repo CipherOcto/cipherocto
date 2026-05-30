@@ -353,6 +353,54 @@ impl PlatformAdapter for DiscordAdapter {
             Err(_) => Err(transport_err("Health check timed out after 5s")),
         }
     }
+
+    async fn upload_media(
+        &self,
+        filename: &str,
+        data: &[u8],
+        mime_type: &str,
+    ) -> Result<String, PlatformAdapterError> {
+        // Upload via webhook as file attachment
+        let webhook_url = &self.config.webhook_url;
+
+        let file_part = reqwest::multipart::Part::bytes(data.to_vec())
+            .file_name(filename.to_string())
+            .mime_str(mime_type)
+            .map_err(|e| transport_err(format!("MIME error: {e}")))?;
+
+        let form = reqwest::multipart::Form::new()
+            .part("file", file_part)
+            .text("content", "DOT media upload");
+
+        let resp = self
+            .client
+            .post(webhook_url)
+            .multipart(form)
+            .send()
+            .await
+            .map_err(|e| transport_err(format!("Upload failed: {e}")))?
+            .json::<serde_json::Value>()
+            .await
+            .map_err(|e| transport_err(format!("Response parse: {e}")))?;
+
+        let msg_id = resp["id"]
+            .as_str()
+            .unwrap_or("unknown")
+            .to_string();
+        Ok(msg_id)
+    }
+
+    async fn download_media(
+        &self,
+        _message_id: &str,
+    ) -> Result<Vec<u8>, PlatformAdapterError> {
+        // Discord webhook messages don't support direct download by message_id
+        // Would need channel API access
+        Err(PlatformAdapterError::Unreachable {
+            platform: "discord".into(),
+            reason: "download_media not supported for webhook-based Discord".into(),
+        })
+    }
 }
 
 // --- Discord API types ---

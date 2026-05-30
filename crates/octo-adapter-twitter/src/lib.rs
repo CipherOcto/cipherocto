@@ -254,6 +254,26 @@ impl PlatformAdapter for TwitterAdapter {
     async fn health_check(&self) -> Result<(), PlatformAdapterError> {
         self.resolve_self_id().await
     }
+
+    async fn upload_media(&self, _filename: &str, data: &[u8], _mime_type: &str) -> Result<String, PlatformAdapterError> {
+        let url = "https://upload.twitter.com/1.1/media/upload.json";
+        let form = reqwest::multipart::Form::new()
+            .part("media", reqwest::multipart::Part::bytes(data.to_vec())
+                .file_name("upload.bin")
+                .mime_str("application/octet-stream")
+                .map_err(|e| transport_err(format!("MIME: {e}")))?);
+        let resp = self.client.post(url)
+            .header("Authorization", format!("Bearer {}", self.config.bearer_token))
+            .multipart(form).send().await
+            .map_err(|e| transport_err(format!("Upload failed: {e}")))?
+            .json::<serde_json::Value>().await
+            .map_err(|e| transport_err(format!("Parse: {e}")))?;
+        let media_id = resp["media_id_string"].as_str().unwrap_or("unknown").to_string();
+        Ok(media_id)
+    }
+    async fn download_media(&self, _media_id: &str) -> Result<Vec<u8>, PlatformAdapterError> {
+        Err(PlatformAdapterError::Unreachable { platform: "twitter".into(), reason: "download_media not supported by Twitter API".into() })
+    }
 }
 
 fn epoch_millis() -> u64 {

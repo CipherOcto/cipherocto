@@ -19,6 +19,42 @@ pub enum PlatformType {
     Bluetooth = 0x000B,
     LoRa = 0x000C,
     WebRTC = 0x000D,
+    Bluesky = 0x000E,
+    Twitter = 0x000F,
+    Reddit = 0x0010,
+    WeChat = 0x0011,
+    DingTalk = 0x0012,
+    Lark = 0x0013,
+    QQ = 0x0014,
+}
+
+impl PlatformType {
+    /// Convert from u16 value to enum variant.
+    pub fn from_u16(val: u16) -> Option<Self> {
+        match val {
+            0x0001 => Some(Self::Telegram),
+            0x0002 => Some(Self::Discord),
+            0x0003 => Some(Self::Matrix),
+            0x0004 => Some(Self::Nostr),
+            0x0005 => Some(Self::Signal),
+            0x0006 => Some(Self::IRC),
+            0x0007 => Some(Self::Slack),
+            0x0008 => Some(Self::WhatsApp),
+            0x0009 => Some(Self::Webhook),
+            0x000A => Some(Self::NativeP2P),
+            0x000B => Some(Self::Bluetooth),
+            0x000C => Some(Self::LoRa),
+            0x000D => Some(Self::WebRTC),
+            0x000E => Some(Self::Bluesky),
+            0x000F => Some(Self::Twitter),
+            0x0010 => Some(Self::Reddit),
+            0x0011 => Some(Self::WeChat),
+            0x0012 => Some(Self::DingTalk),
+            0x0013 => Some(Self::Lark),
+            0x0014 => Some(Self::QQ),
+            _ => None,
+        }
+    }
 }
 
 /// Identifies a broadcast domain (group/channel/room) across platforms
@@ -37,10 +73,34 @@ pub struct BroadcastDomainId {
 impl BroadcastDomainId {
     /// Create a new domain ID from platform type and identifier.
     ///
-    /// The platform_id is normalized (lowercase, trimmed) before hashing.
+    /// The hash input includes the platform type prefix to prevent cross-platform
+    /// collisions (RFC-0850 S3.1): `BLAKE3-256("telegram:{group_id}")`.
     pub fn new(platform_type: PlatformType, platform_id: &str) -> Self {
         let normalized = platform_id.trim().to_lowercase();
-        let hash = blake3::hash(normalized.as_bytes());
+        let prefix = match platform_type {
+            PlatformType::Telegram => "telegram",
+            PlatformType::Discord => "discord",
+            PlatformType::Matrix => "matrix",
+            PlatformType::Nostr => "nostr",
+            PlatformType::Signal => "signal",
+            PlatformType::IRC => "irc",
+            PlatformType::Slack => "slack",
+            PlatformType::WhatsApp => "whatsapp",
+            PlatformType::Webhook => "webhook",
+            PlatformType::NativeP2P => "nativep2p",
+            PlatformType::Bluetooth => "bluetooth",
+            PlatformType::LoRa => "lora",
+            PlatformType::WebRTC => "webrtc",
+            PlatformType::Bluesky => "bluesky",
+            PlatformType::Twitter => "twitter",
+            PlatformType::Reddit => "reddit",
+            PlatformType::WeChat => "wechat",
+            PlatformType::DingTalk => "dingtalk",
+            PlatformType::Lark => "lark",
+            PlatformType::QQ => "qq",
+        };
+        let hash_input = format!("{}:{}", prefix, normalized);
+        let hash = blake3::hash(hash_input.as_bytes());
         Self {
             platform_type: platform_type as u16,
             domain_hash: *hash.as_bytes(),
@@ -64,6 +124,13 @@ impl BroadcastDomainId {
             ));
         }
         let platform_type = u16::from_be_bytes([bytes[0], bytes[1]]);
+        // Validate platform_type corresponds to a known PlatformType variant
+        if PlatformType::from_u16(platform_type).is_none() {
+            return Err(DotError::Serialization(format!(
+                "invalid platform_type: {:#06x}",
+                platform_type
+            )));
+        }
         let mut domain_hash = [0u8; 32];
         domain_hash.copy_from_slice(&bytes[2..34]);
         Ok(Self {

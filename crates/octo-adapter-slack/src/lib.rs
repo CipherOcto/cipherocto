@@ -217,4 +217,49 @@ mod tests {
     #[test] fn test_abi() { assert_eq!(adapter_version(), 1); assert_eq!(platform_type(), 0x0007); }
     #[test] fn test_config() { let a = SlackAdapter::from_config_bytes(serde_json::to_vec(&serde_json::json!({"bot_token":"xoxb-test","channels":["C123"]})).unwrap().as_slice()).unwrap(); assert_eq!(a.config.channels, vec!["C123"]); }
     #[test] fn test_capabilities() { let a = SlackAdapter::new(SlackConfig { bot_token: "".into(), channels: vec![] }); assert_eq!(a.capabilities().max_payload_bytes, 40_000); }
+
+    #[test]
+    fn test_decode_missing_prefix() {
+        assert!(SlackAdapter::decode_envelope("hello").is_err());
+    }
+
+    #[test]
+    fn test_decode_invalid_base64() {
+        assert!(SlackAdapter::decode_envelope("DOT/1/!!!invalid!!!").is_err());
+    }
+
+    #[test]
+    fn test_domain_hash_deterministic() {
+        let h1 = SlackAdapter::domain_hash("C123");
+        let h2 = SlackAdapter::domain_hash("C123");
+        assert_eq!(h1, h2);
+    }
+
+    #[test]
+    fn test_domain_hash_normalized() {
+        assert_eq!(SlackAdapter::domain_hash("C123"), SlackAdapter::domain_hash("c123"));
+    }
+
+    #[test]
+    fn test_capabilities_fragmentation() {
+        let a = SlackAdapter::new(SlackConfig { bot_token: "".into(), channels: vec![] });
+        assert!(a.capabilities().supports_fragmentation);
+        assert!(!a.capabilities().supports_encryption);
+        assert_eq!(a.capabilities().rate_limit_per_second, 1);
+    }
+
+    #[test]
+    fn test_self_handle_none_initially() {
+        let a = SlackAdapter::new(SlackConfig { bot_token: "".into(), channels: vec![] });
+        assert!(a.self_handle().is_none());
+    }
+
+    #[test]
+    fn test_config_multiple_channels() {
+        let a = SlackAdapter::from_config_bytes(serde_json::to_vec(&serde_json::json!({
+            "bot_token": "xoxb-test",
+            "channels": ["C111", "C222", "C333"]
+        })).unwrap().as_slice()).unwrap();
+        assert_eq!(a.config.channels.len(), 3);
+    }
 }

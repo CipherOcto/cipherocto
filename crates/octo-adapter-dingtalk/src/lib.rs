@@ -116,7 +116,11 @@ impl DingTalkAdapter {
     }
 
     /// Send a text message via DingTalk webhook.
-    async fn send_text(&self, text: &str, webhook_url: &str) -> Result<String, PlatformAdapterError> {
+    async fn send_text(
+        &self,
+        text: &str,
+        webhook_url: &str,
+    ) -> Result<String, PlatformAdapterError> {
         let mut body = serde_json::json!({
             "msgtype": "text",
             "text": { "content": text }
@@ -206,12 +210,11 @@ impl PlatformAdapter for DingTalkAdapter {
         }
 
         let text = String::from_utf8_lossy(&raw.payload);
-        let wire_bytes = Self::decode_envelope(&text).map_err(|e| {
-            PlatformAdapterError::ApiError {
+        let wire_bytes =
+            Self::decode_envelope(&text).map_err(|e| PlatformAdapterError::ApiError {
                 code: 400,
                 message: format!("canonicalize failed: {e}"),
-            }
-        })?;
+            })?;
 
         DeterministicEnvelope::from_wire_bytes(&wire_bytes).map_err(|e| {
             PlatformAdapterError::ApiError {
@@ -389,10 +392,9 @@ mod tests {
             "secret": "SECtest123",
             "groups": ["chat1", "chat2"]
         });
-        let adapter = DingTalkAdapter::from_config_bytes(
-            serde_json::to_vec(&json).unwrap().as_slice(),
-        )
-        .unwrap();
+        let adapter =
+            DingTalkAdapter::from_config_bytes(serde_json::to_vec(&json).unwrap().as_slice())
+                .unwrap();
         assert_eq!(adapter.config.groups.len(), 2);
         assert!(adapter.config.secret.is_some());
     }

@@ -124,10 +124,7 @@ impl BlueskyAdapter {
             .ok_or_else(|| transport_err("Missing did"))?
             .to_string();
 
-        *self.session.lock() = Some(Session {
-            access_jwt,
-            did,
-        });
+        *self.session.lock() = Some(Session { access_jwt, did });
 
         tracing::info!("Bluesky session created for {}", self.config.handle);
         Ok(())

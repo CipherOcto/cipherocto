@@ -227,9 +227,13 @@ impl PlatformAdapter for RedditAdapter {
                 transport_err(format!("No subreddit for domain {:?}", domain.domain_hash))
             })?;
 
-        let title = format!("DOT Envelope {:02x}{:02x}{:02x}{:02x}",
-            envelope.envelope_id[0], envelope.envelope_id[1],
-            envelope.envelope_id[2], envelope.envelope_id[3]);
+        let title = format!(
+            "DOT Envelope {:02x}{:02x}{:02x}{:02x}",
+            envelope.envelope_id[0],
+            envelope.envelope_id[1],
+            envelope.envelope_id[2],
+            envelope.envelope_id[3]
+        );
         let post_id = self.post_submission(subreddit, &title, &encoded).await?;
 
         Ok(DeliveryReceipt {
@@ -255,12 +259,11 @@ impl PlatformAdapter for RedditAdapter {
         }
 
         let text = String::from_utf8_lossy(&raw.payload);
-        let wire_bytes = Self::decode_envelope(&text).map_err(|e| {
-            PlatformAdapterError::ApiError {
+        let wire_bytes =
+            Self::decode_envelope(&text).map_err(|e| PlatformAdapterError::ApiError {
                 code: 400,
                 message: format!("canonicalize failed: {e}"),
-            }
-        })?;
+            })?;
 
         DeterministicEnvelope::from_wire_bytes(&wire_bytes).map_err(|e| {
             PlatformAdapterError::ApiError {
@@ -432,10 +435,9 @@ mod tests {
             "refresh_token": "token789",
             "subreddits": ["cipherocto", "dotnetwork"]
         });
-        let adapter = RedditAdapter::from_config_bytes(
-            serde_json::to_vec(&json).unwrap().as_slice(),
-        )
-        .unwrap();
+        let adapter =
+            RedditAdapter::from_config_bytes(serde_json::to_vec(&json).unwrap().as_slice())
+                .unwrap();
         assert_eq!(adapter.config.subreddits.len(), 2);
     }
 }

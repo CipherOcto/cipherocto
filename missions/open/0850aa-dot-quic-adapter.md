@@ -17,12 +17,12 @@ Implement the QUIC platform adapter (`PlatformType::Quic = 0x0015`) using the `q
 - [x] Envelope stream framing (length-prefixed, unidirectional, raw binary)
 - [x] Onion stream protocol (bidirectional, per-route, hop-indexed)
 - [x] Two-layer handshake: QUIC TLS 1.3 (required) + RFC-0853 overlay session (optional, mission-scoped only)
-- [ ] GDP integration (QUIC peer registration as `PlatformType::Quic`)
-- [ ] 0-RTT with replay protection (RFC-0853 §7)
-- [ ] Connection migration support (RFC 9000 §9)
+- [x] GDP integration (QUIC peer registration as `PlatformType::Quic`)
+- [x] 0-RTT with replay protection (RFC-0853 §7)
+- [x] Connection migration support (RFC 9000 §9)
 - [x] `supports_raw_binary: true` in capabilities
 - [x] Gateway configuration schema (listen_addr, tls_cert, max_streams, etc.)
-- [x] 19 tests (connection, stream framing, control protocol, session, migration)
+- [x] 30 tests (connection, stream framing, control protocol, GDP, replay, migration)
 - [x] cargo fmt + clippy clean
 
 ## Implementation Plan

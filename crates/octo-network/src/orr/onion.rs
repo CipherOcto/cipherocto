@@ -138,7 +138,7 @@ pub fn construct_onion(
 
         layers.push(HopLayer {
             hop,
-            ephemeral_private,
+            _ephemeral_private: ephemeral_private,
             encrypted_payload,
         });
 

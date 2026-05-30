@@ -314,7 +314,14 @@ impl PlatformAdapter for DiscordAdapter {
             supports_fragmentation: true,
             supports_encryption: false,
             rate_limit_per_second: Self::rate_limit_per_second(),
-            media_capabilities: None,
+            media_capabilities: Some(octo_network::dot::adapters::MediaCapabilities {
+                max_upload_bytes: 25 * 1024 * 1024, // 25MB
+                supported_mime_types: vec![
+                    "image/jpeg".into(), "image/png".into(), "image/gif".into(),
+                    "video/mp4".into(), "audio/mpeg".into(),
+                    "application/pdf".into(), "application/octet-stream".into(),
+                ],
+            }),
         }
     }
 

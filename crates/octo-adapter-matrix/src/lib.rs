@@ -399,7 +399,14 @@ impl PlatformAdapter for MatrixAdapter {
             supports_fragmentation: true, // Via media upload
             supports_encryption: false,
             rate_limit_per_second: Self::rate_limit_per_second(),
-            media_capabilities: None,
+            media_capabilities: Some(octo_network::dot::adapters::MediaCapabilities {
+                max_upload_bytes: 50 * 1024 * 1024, // 50MB
+                supported_mime_types: vec![
+                    "image/jpeg".into(), "image/png".into(), "image/gif".into(),
+                    "video/mp4".into(), "audio/ogg".into(),
+                    "application/pdf".into(), "application/octet-stream".into(),
+                ],
+            }),
         }
     }
 

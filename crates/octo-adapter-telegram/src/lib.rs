@@ -453,7 +453,14 @@ impl PlatformAdapter for TelegramAdapter {
             supports_fragmentation: true, // Via document attachments
             supports_encryption: false,
             rate_limit_per_second: Self::rate_limit_per_second(),
-            media_capabilities: None,
+            media_capabilities: Some(octo_network::dot::adapters::MediaCapabilities {
+                max_upload_bytes: 50 * 1024 * 1024, // 50MB
+                supported_mime_types: vec![
+                    "image/jpeg".into(), "image/png".into(), "image/gif".into(),
+                    "video/mp4".into(), "audio/ogg".into(),
+                    "application/pdf".into(), "application/octet-stream".into(),
+                ],
+            }),
         }
     }
 
@@ -493,6 +500,90 @@ impl PlatformAdapter for TelegramAdapter {
             Ok(Err(e)) => Err(transport_err(format!("Health check failed: {}", e))),
             Err(_) => Err(transport_err("Health check timed out after 5s")),
         }
+    }
+
+    async fn upload_media(
+        &self,
+        filename: &str,
+        data: &[u8],
+        mime_type: &str,
+    ) -> Result<String, PlatformAdapterError> {
+        // Use first configured chat as target for upload
+        let chat_id = self
+            .config
+            .groups
+            .first()
+            .ok_or_else(|| transport_err("No chats configured"))?;
+
+        let url = format!("{}/sendDocument", self.api_base());
+        let file_part = reqwest::multipart::Part::bytes(data.to_vec())
+            .file_name(filename.to_string())
+            .mime_str(mime_type)
+            .map_err(|e| transport_err(format!("MIME error: {e}")))?;
+
+        let form = reqwest::multipart::Form::new()
+            .text("chat_id", chat_id.clone())
+            .part("document", file_part);
+
+        let resp = self
+            .client
+            .post(&url)
+            .multipart(form)
+            .send()
+            .await
+            .map_err(|e| transport_err(format!("Upload failed: {e}")))?;
+
+        let data: serde_json::Value = resp
+            .json()
+            .await
+            .map_err(|e| transport_err(format!("Response parse: {e}")))?;
+
+        let file_id = data["result"]["document"]["file_id"]
+            .as_str()
+            .unwrap_or("unknown")
+            .to_string();
+
+        Ok(file_id)
+    }
+
+    async fn download_media(
+        &self,
+        message_id: &str,
+    ) -> Result<Vec<u8>, PlatformAdapterError> {
+        // First get file path from file_id
+        let url = format!("{}/getFile?file_id={}", self.api_base(), message_id);
+        let resp = self
+            .client
+            .get(&url)
+            .send()
+            .await
+            .map_err(|e| transport_err(format!("getFile failed: {e}")))?;
+
+        let data: serde_json::Value = resp
+            .json()
+            .await
+            .map_err(|e| transport_err(format!("Response parse: {e}")))?;
+
+        let file_path = data["result"]["file_path"]
+            .as_str()
+            .ok_or_else(|| transport_err("Missing file_path"))?;
+
+        // Download file
+        let file_url = format!(
+            "https://api.telegram.org/file/bot{}/{}",
+            self.config.bot_token, file_path
+        );
+        let bytes = self
+            .client
+            .get(&file_url)
+            .send()
+            .await
+            .map_err(|e| transport_err(format!("Download failed: {e}")))?
+            .bytes()
+            .await
+            .map_err(|e| transport_err(format!("Download read: {e}")))?;
+
+        Ok(bytes.to_vec())
     }
 }
 

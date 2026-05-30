@@ -26,6 +26,7 @@ pub enum PlatformType {
     DingTalk = 0x0012,
     Lark = 0x0013,
     QQ = 0x0014,
+    Quic = 0x0015,
 }
 
 impl PlatformType {
@@ -52,6 +53,7 @@ impl PlatformType {
             0x0012 => Some(Self::DingTalk),
             0x0013 => Some(Self::Lark),
             0x0014 => Some(Self::QQ),
+            0x0015 => Some(Self::Quic),
             _ => None,
         }
     }
@@ -98,6 +100,7 @@ impl BroadcastDomainId {
             PlatformType::DingTalk => "dingtalk",
             PlatformType::Lark => "lark",
             PlatformType::QQ => "qq",
+            PlatformType::Quic => "quic",
         };
         let hash_input = format!("{}:{}", prefix, normalized);
         let hash = blake3::hash(hash_input.as_bytes());

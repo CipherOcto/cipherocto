@@ -450,6 +450,7 @@ impl PlatformAdapter for IrcAdapter {
             supports_fragmentation: true,
             supports_encryption: false,
             rate_limit_per_second: Self::rate_limit_per_second(),
+            media_capabilities: None,
         }
     }
 

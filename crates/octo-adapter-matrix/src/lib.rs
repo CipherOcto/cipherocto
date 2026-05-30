@@ -390,6 +390,7 @@ impl PlatformAdapter for MatrixAdapter {
             supports_fragmentation: true, // Via media upload
             supports_encryption: false,
             rate_limit_per_second: Self::rate_limit_per_second(),
+            media_capabilities: None,
         }
     }
 

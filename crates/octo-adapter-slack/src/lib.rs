@@ -159,7 +159,7 @@ impl PlatformAdapter for SlackAdapter {
     }
 
     fn capabilities(&self) -> CapabilityReport {
-        CapabilityReport { max_payload_bytes: Self::max_payload_bytes(), supports_fragmentation: true, supports_encryption: false, rate_limit_per_second: Self::rate_limit_per_second() }
+        CapabilityReport { max_payload_bytes: Self::max_payload_bytes(), supports_fragmentation: true, supports_encryption: false, rate_limit_per_second: Self::rate_limit_per_second(), media_capabilities: None }
     }
 
     fn domain_id(&self, platform_id: &str) -> BroadcastDomainId { BroadcastDomainId::new(PlatformType::Slack, platform_id) }

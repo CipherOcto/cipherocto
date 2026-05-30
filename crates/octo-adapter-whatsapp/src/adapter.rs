@@ -418,6 +418,7 @@ impl PlatformAdapter for WhatsAppWebAdapter {
             supports_fragmentation: false,
             supports_encryption: true, // Signal Protocol via whatsapp-rust
             rate_limit_per_second: Self::rate_limit_per_second(),
+            media_capabilities: None,
         }
     }
 

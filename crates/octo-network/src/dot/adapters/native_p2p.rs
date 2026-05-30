@@ -37,9 +37,9 @@ impl PlatformAdapter for NativeP2PAdapter {
         _envelope: &DeterministicEnvelope,
     ) -> Result<DeliveryReceipt, PlatformAdapterError> {
         // TODO: Implement libp2p gossipsub publish
-        Ok(DeliveryReceipt {
-            platform_message_id: "native-p2p-placeholder".to_string(),
-            delivered_at: 0,
+        Err(PlatformAdapterError::ApiError {
+            code: 501,
+            message: "NativeP2P send_envelope not yet implemented".to_string(),
         })
     }
 
@@ -67,6 +67,7 @@ impl PlatformAdapter for NativeP2PAdapter {
             supports_fragmentation: true,
             supports_encryption: true,
             rate_limit_per_second: 10000,
+            media_capabilities: None,
         }
     }
 

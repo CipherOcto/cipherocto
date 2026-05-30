@@ -391,6 +391,7 @@ impl PlatformAdapter for NostrAdapter {
             supports_fragmentation: false,
             supports_encryption: false, // DOT has its own encryption
             rate_limit_per_second: Self::rate_limit_per_second(),
+            media_capabilities: None,
         }
     }
 

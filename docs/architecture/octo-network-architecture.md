@@ -638,21 +638,27 @@ All modules share these core types from `octo-core`:
 | `octo-adapter-lora` | LoRa | 531 | 16 | Implemented |
 | `octo-adapter-webrtc` | WebRTC | 320 | 7 | Implemented |
 
-### 16.2 Trait Implementation Coverage
+### 16.2 Media Capability vs Implementation
 
-| Method | Implemented | Adapters |
-|--------|-------------|----------|
-| `send_envelope` | 19/19 | All |
-| `receive_messages` | 19/19 | All (some stubs) |
-| `canonicalize` | 19/19 | All |
-| `capabilities` | 19/19 | All |
-| `domain_id` | 19/19 | All |
-| `platform_type` | 19/19 | All |
-| `self_handle` | 15/19 | All except Webhook, Bluetooth, LoRa, WebRTC |
-| `shutdown` | 19/19 | All |
-| `health_check` | 19/19 | All |
-| `upload_media` | 0/19 | Default (not supported) |
-| `download_media` | 0/19 | Default (not supported) |
+| Platform | Capability | upload_media | download_media | API |
+|----------|-----------|--------------|----------------|-----|
+| Telegram | ✅ Yes | ✅ Done | ✅ Done | Bot API sendDocument/getFile |
+| Discord | ✅ Yes | ✅ Done | ✅ Done | Webhook multipart + attachment URLs |
+| Matrix | ✅ Yes | ✅ Done | ✅ Done | Matrix Media API |
+| Bluesky | ✅ Yes | ✅ Done | ✅ Done | AT Protocol blob upload/sync.getBlob |
+| Twitter | ✅ Yes | ✅ Done | ✅ Done | media/upload.json + pbs.twimg.com |
+| Lark | ✅ Yes | ✅ Done | ✅ Done | Lark image upload/download API |
+| Reddit | ✅ Yes | ✅ Done | ✅ Done | Reddit media/asset API |
+| WeChat | ✅ Yes | ✅ Done | ✅ Done | Official Account media API |
+| QQ | ✅ Yes | ✅ Done | ✅ Done | QQ Bot file upload |
+| WhatsApp | ❌ No | Default | Default | Text only |
+| Signal | ❌ No | Default | Default | Text only |
+| IRC | ❌ No | Default | Default | Text only |
+| Slack | ❌ No | Default | Default | Text only |
+| Webhook | ❌ No | Default | Default | Stateless |
+| Bluetooth | ❌ No | Default | Default | BLE only |
+| LoRa | ❌ No | Default | Default | Radio only |
+| WebRTC | ❌ No | Default | Default | DataChannel only |
 
 ---
 

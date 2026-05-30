@@ -397,6 +397,7 @@ impl PlatformAdapter for NativeP2PAdapter {
             max_payload_bytes: Self::max_payload_bytes(),
             supports_fragmentation: true,
             supports_encryption: true, // libp2p Noise protocol
+            supports_raw_binary: true, // gossipsub carries Vec<u8> natively
             rate_limit_per_second: Self::rate_limit_per_second(),
             media_capabilities: None,
         }
@@ -510,6 +511,7 @@ mod tests {
         assert_eq!(caps.max_payload_bytes, 65_536);
         assert!(caps.supports_fragmentation);
         assert!(caps.supports_encryption);
+        assert!(caps.supports_raw_binary);
         assert_eq!(caps.rate_limit_per_second, 10_000);
     }
 

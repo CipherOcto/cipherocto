@@ -278,6 +278,7 @@ impl PlatformAdapter for RedditAdapter {
             max_payload_bytes: Self::max_payload_bytes(),
             supports_fragmentation: false,
             supports_encryption: false,
+            supports_raw_binary: false,
             rate_limit_per_second: Self::rate_limit_per_second(),
             media_capabilities: Some(octo_network::dot::adapters::MediaCapabilities {
                 max_upload_bytes: 20_971_520, // 20MB
@@ -312,10 +313,18 @@ impl PlatformAdapter for RedditAdapter {
         self.get_access_token().await.map(|_| ())
     }
 
-    async fn upload_media(&self, filename: &str, data: &[u8], mime_type: &str) -> Result<String, PlatformAdapterError> {
+    async fn upload_media(
+        &self,
+        filename: &str,
+        data: &[u8],
+        mime_type: &str,
+    ) -> Result<String, PlatformAdapterError> {
         // Reddit supports image uploads via the media upload endpoint
         let token = self.get_access_token().await?;
-        let subreddit = self.config.subreddits.first()
+        let subreddit = self
+            .config
+            .subreddits
+            .first()
             .ok_or_else(|| transport_err("No subreddits configured"))?;
         let url = format!("{}/api/media/asset", Self::api_base());
         let file_part = reqwest::multipart::Part::bytes(data.to_vec())
@@ -325,11 +334,16 @@ impl PlatformAdapter for RedditAdapter {
         let form = reqwest::multipart::Form::new()
             .part("file", file_part)
             .text("sr", subreddit.clone());
-        let resp = self.client.post(&url)
+        let resp = self
+            .client
+            .post(&url)
             .header("Authorization", format!("Bearer {}", token))
-            .multipart(form).send().await
+            .multipart(form)
+            .send()
+            .await
             .map_err(|e| transport_err(format!("Upload failed: {e}")))?
-            .json::<serde_json::Value>().await
+            .json::<serde_json::Value>()
+            .await
             .map_err(|e| transport_err(format!("Parse: {e}")))?;
         let asset_id = resp["asset_id"].as_str().unwrap_or("unknown").to_string();
         Ok(asset_id)
@@ -341,9 +355,14 @@ impl PlatformAdapter for RedditAdapter {
         } else {
             format!("https://i.redd.it/{}", media_id)
         };
-        let bytes = self.client.get(&url).send().await
+        let bytes = self
+            .client
+            .get(&url)
+            .send()
+            .await
             .map_err(|e| transport_err(format!("Download failed: {e}")))?
-            .bytes().await
+            .bytes()
+            .await
             .map_err(|e| transport_err(format!("Download read: {e}")))?;
         Ok(bytes.to_vec())
     }

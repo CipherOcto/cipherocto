@@ -319,11 +319,12 @@ impl PlatformAdapter for MatrixAdapter {
                     if (e.contains("429")
                         || e.contains("rate limit")
                         || e.contains("M_LIMIT_EXCEEDED"))
-                        && retry_cfg.should_retry(attempt) {
-                            let delay = retry_cfg.delay_for_attempt(attempt);
-                            tokio::time::sleep(delay).await;
-                            continue;
-                        }
+                        && retry_cfg.should_retry(attempt)
+                    {
+                        let delay = retry_cfg.delay_for_attempt(attempt);
+                        tokio::time::sleep(delay).await;
+                        continue;
+                    }
                     return Err(transport_err(e));
                 }
             }
@@ -398,13 +399,18 @@ impl PlatformAdapter for MatrixAdapter {
             max_payload_bytes: Self::max_payload_bytes(),
             supports_fragmentation: true, // Via media upload
             supports_encryption: false,
+            supports_raw_binary: false,
             rate_limit_per_second: Self::rate_limit_per_second(),
             media_capabilities: Some(octo_network::dot::adapters::MediaCapabilities {
                 max_upload_bytes: 50 * 1024 * 1024, // 50MB
                 supported_mime_types: vec![
-                    "image/jpeg".into(), "image/png".into(), "image/gif".into(),
-                    "video/mp4".into(), "audio/ogg".into(),
-                    "application/pdf".into(), "application/octet-stream".into(),
+                    "image/jpeg".into(),
+                    "image/png".into(),
+                    "image/gif".into(),
+                    "video/mp4".into(),
+                    "audio/ogg".into(),
+                    "application/pdf".into(),
+                    "application/octet-stream".into(),
                 ],
             }),
         }
@@ -484,10 +490,7 @@ impl PlatformAdapter for MatrixAdapter {
             .map_err(|e| transport_err(format!("Upload failed: {e}")))
     }
 
-    async fn download_media(
-        &self,
-        media_id: &str,
-    ) -> Result<Vec<u8>, PlatformAdapterError> {
+    async fn download_media(&self, media_id: &str) -> Result<Vec<u8>, PlatformAdapterError> {
         // Download via Matrix media API
         let url = format!(
             "{}/_matrix/media/v3/download/{}",
@@ -496,7 +499,10 @@ impl PlatformAdapter for MatrixAdapter {
         let resp = self
             .client
             .get(&url)
-            .header("Authorization", format!("Bearer {}", self.config.access_token))
+            .header(
+                "Authorization",
+                format!("Bearer {}", self.config.access_token),
+            )
             .send()
             .await
             .map_err(|e| transport_err(format!("Download failed: {e}")))?;

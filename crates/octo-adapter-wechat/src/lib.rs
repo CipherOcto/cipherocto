@@ -234,6 +234,7 @@ impl PlatformAdapter for WeChatAdapter {
             max_payload_bytes: Self::max_payload_bytes(),
             supports_fragmentation: true,
             supports_encryption: false,
+            supports_raw_binary: false,
             rate_limit_per_second: Self::rate_limit_per_second(),
             media_capabilities: Some(MediaCapabilities {
                 max_upload_bytes: 10_485_760,
@@ -260,29 +261,59 @@ impl PlatformAdapter for WeChatAdapter {
         self.get_access_token().await.map(|_| ())
     }
 
-    async fn upload_media(&self, filename: &str, data: &[u8], mime_type: &str) -> Result<String, PlatformAdapterError> {
+    async fn upload_media(
+        &self,
+        filename: &str,
+        data: &[u8],
+        mime_type: &str,
+    ) -> Result<String, PlatformAdapterError> {
         // WeChat Official Account media upload
         let token = self.get_access_token().await?;
-        let media_type = if mime_type.starts_with("image/") { "image" } else { "file" };
-        let url = format!("{}/media/upload?access_token={}&type={}", Self::api_base(), token, media_type);
+        let media_type = if mime_type.starts_with("image/") {
+            "image"
+        } else {
+            "file"
+        };
+        let url = format!(
+            "{}/media/upload?access_token={}&type={}",
+            Self::api_base(),
+            token,
+            media_type
+        );
         let file_part = reqwest::multipart::Part::bytes(data.to_vec())
             .file_name(filename.to_string())
             .mime_str(mime_type)
             .map_err(|e| transport_err(format!("MIME: {e}")))?;
         let form = reqwest::multipart::Form::new().part("media", file_part);
-        let resp = self.client.post(&url).multipart(form).send().await
+        let resp = self
+            .client
+            .post(&url)
+            .multipart(form)
+            .send()
+            .await
             .map_err(|e| transport_err(format!("Upload failed: {e}")))?
-            .json::<serde_json::Value>().await
+            .json::<serde_json::Value>()
+            .await
             .map_err(|e| transport_err(format!("Parse: {e}")))?;
         let media_id = resp["media_id"].as_str().unwrap_or("unknown").to_string();
         Ok(media_id)
     }
     async fn download_media(&self, media_id: &str) -> Result<Vec<u8>, PlatformAdapterError> {
         let token = self.get_access_token().await?;
-        let url = format!("{}/media/{}?access_token={}", Self::api_base(), media_id, token);
-        let bytes = self.client.get(&url).send().await
+        let url = format!(
+            "{}/media/{}?access_token={}",
+            Self::api_base(),
+            media_id,
+            token
+        );
+        let bytes = self
+            .client
+            .get(&url)
+            .send()
+            .await
             .map_err(|e| transport_err(format!("Download failed: {e}")))?
-            .bytes().await
+            .bytes()
+            .await
             .map_err(|e| transport_err(format!("Download read: {e}")))?;
         Ok(bytes.to_vec())
     }

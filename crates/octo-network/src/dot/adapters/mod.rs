@@ -42,6 +42,11 @@ pub struct CapabilityReport {
     pub supports_fragmentation: bool,
     /// Whether the platform supports encryption
     pub supports_encryption: bool,
+    /// Whether the platform carries raw binary payloads (native byte transport).
+    /// Text-based platforms (chat apps) set this to `false` — they require
+    /// DOT/1/{b64} or DOT/2/{msg_id} encoding. Native transports (P2P, WebRTC)
+    /// set this to `true` — they send raw `to_wire_bytes()` directly.
+    pub supports_raw_binary: bool,
     /// Rate limit (messages per second)
     pub rate_limit_per_second: u32,
     /// Media upload capabilities (None if not supported)

@@ -366,11 +366,12 @@ impl PlatformAdapter for TelegramAdapter {
                     last_err = e.clone();
                     // Check for rate limit (429) — parse Retry-After if available
                     if (e.contains("429") || e.contains("Too Many Requests"))
-                        && retry_cfg.should_retry(attempt) {
-                            let delay = retry_cfg.delay_for_attempt(attempt);
-                            tokio::time::sleep(delay).await;
-                            continue;
-                        }
+                        && retry_cfg.should_retry(attempt)
+                    {
+                        let delay = retry_cfg.delay_for_attempt(attempt);
+                        tokio::time::sleep(delay).await;
+                        continue;
+                    }
                     // Non-retryable error
                     return Err(transport_err(e));
                 }
@@ -452,13 +453,18 @@ impl PlatformAdapter for TelegramAdapter {
             max_payload_bytes: Self::max_payload_bytes(),
             supports_fragmentation: true, // Via document attachments
             supports_encryption: false,
+            supports_raw_binary: false,
             rate_limit_per_second: Self::rate_limit_per_second(),
             media_capabilities: Some(octo_network::dot::adapters::MediaCapabilities {
                 max_upload_bytes: 50 * 1024 * 1024, // 50MB
                 supported_mime_types: vec![
-                    "image/jpeg".into(), "image/png".into(), "image/gif".into(),
-                    "video/mp4".into(), "audio/ogg".into(),
-                    "application/pdf".into(), "application/octet-stream".into(),
+                    "image/jpeg".into(),
+                    "image/png".into(),
+                    "image/gif".into(),
+                    "video/mp4".into(),
+                    "audio/ogg".into(),
+                    "application/pdf".into(),
+                    "application/octet-stream".into(),
                 ],
             }),
         }
@@ -546,10 +552,7 @@ impl PlatformAdapter for TelegramAdapter {
         Ok(file_id)
     }
 
-    async fn download_media(
-        &self,
-        message_id: &str,
-    ) -> Result<Vec<u8>, PlatformAdapterError> {
+    async fn download_media(&self, message_id: &str) -> Result<Vec<u8>, PlatformAdapterError> {
         // First get file path from file_id
         let url = format!("{}/getFile?file_id={}", self.api_base(), message_id);
         let resp = self

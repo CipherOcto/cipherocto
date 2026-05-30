@@ -253,6 +253,7 @@ impl PlatformAdapter for BluetoothAdapter {
             max_payload_bytes: Self::max_payload_bytes(),
             supports_fragmentation: false,
             supports_encryption: false, // DOT has its own encryption
+            supports_raw_binary: false,
             rate_limit_per_second: Self::rate_limit_per_second(),
             media_capabilities: None,
         }

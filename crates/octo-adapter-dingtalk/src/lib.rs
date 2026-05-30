@@ -229,6 +229,7 @@ impl PlatformAdapter for DingTalkAdapter {
             max_payload_bytes: Self::max_payload_bytes(),
             supports_fragmentation: false,
             supports_encryption: false,
+            supports_raw_binary: false,
             rate_limit_per_second: Self::rate_limit_per_second(),
             media_capabilities: None, // Robot webhook only supports text/markdown
         }

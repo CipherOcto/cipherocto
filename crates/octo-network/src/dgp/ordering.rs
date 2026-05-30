@@ -47,10 +47,7 @@ pub fn sort_canonical(objects: &mut [GossipObject]) {
 ///
 /// TODO: verify signature natively once RFC-0852 §5 signature scheme is
 /// implemented. Until then callers pass `verify` as a closure.
-pub fn first_valid_hash_wins<F>(
-    objects: &[GossipObject],
-    verify: F,
-) -> Option<&GossipObject>
+pub fn first_valid_hash_wins<F>(objects: &[GossipObject], verify: F) -> Option<&GossipObject>
 where
     F: Fn(&GossipObject) -> bool,
 {

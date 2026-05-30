@@ -241,6 +241,7 @@ impl PlatformAdapter for LarkAdapter {
             max_payload_bytes: Self::max_payload_bytes(),
             supports_fragmentation: false,
             supports_encryption: false,
+            supports_raw_binary: false,
             rate_limit_per_second: Self::rate_limit_per_second(),
             media_capabilities: Some(MediaCapabilities {
                 max_upload_bytes: 52_428_800,
@@ -271,7 +272,12 @@ impl PlatformAdapter for LarkAdapter {
         self.get_tenant_token().await.map(|_| ())
     }
 
-    async fn upload_media(&self, filename: &str, data: &[u8], mime_type: &str) -> Result<String, PlatformAdapterError> {
+    async fn upload_media(
+        &self,
+        filename: &str,
+        data: &[u8],
+        mime_type: &str,
+    ) -> Result<String, PlatformAdapterError> {
         let token = self.get_tenant_token().await?;
         let url = format!("{}/im/v1/images", self.api_base());
         let file_part = reqwest::multipart::Part::bytes(data.to_vec())
@@ -279,19 +285,35 @@ impl PlatformAdapter for LarkAdapter {
             .mime_str(mime_type)
             .map_err(|e| transport_err(format!("MIME: {e}")))?;
         let form = reqwest::multipart::Form::new().part("image", file_part);
-        let resp = self.client.post(&url).bearer_auth(&token).multipart(form).send().await
+        let resp = self
+            .client
+            .post(&url)
+            .bearer_auth(&token)
+            .multipart(form)
+            .send()
+            .await
             .map_err(|e| transport_err(format!("Upload failed: {e}")))?
-            .json::<serde_json::Value>().await
+            .json::<serde_json::Value>()
+            .await
             .map_err(|e| transport_err(format!("Parse: {e}")))?;
-        let image_key = resp["data"]["image_key"].as_str().unwrap_or("unknown").to_string();
+        let image_key = resp["data"]["image_key"]
+            .as_str()
+            .unwrap_or("unknown")
+            .to_string();
         Ok(image_key)
     }
     async fn download_media(&self, media_id: &str) -> Result<Vec<u8>, PlatformAdapterError> {
         let token = self.get_tenant_token().await?;
         let url = format!("{}/im/v1/images/{}", self.api_base(), media_id);
-        let bytes = self.client.get(&url).bearer_auth(&token).send().await
+        let bytes = self
+            .client
+            .get(&url)
+            .bearer_auth(&token)
+            .send()
+            .await
             .map_err(|e| transport_err(format!("Download failed: {e}")))?
-            .bytes().await
+            .bytes()
+            .await
             .map_err(|e| transport_err(format!("Download read: {e}")))?;
         Ok(bytes.to_vec())
     }

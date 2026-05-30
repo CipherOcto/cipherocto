@@ -221,6 +221,7 @@ impl PlatformAdapter for TwitterAdapter {
             max_payload_bytes: Self::max_payload_bytes(),
             supports_fragmentation: true,
             supports_encryption: false,
+            supports_raw_binary: false,
             rate_limit_per_second: Self::rate_limit_per_second(),
             media_capabilities: Some(MediaCapabilities {
                 max_upload_bytes: 5_242_880, // 5MB
@@ -255,20 +256,38 @@ impl PlatformAdapter for TwitterAdapter {
         self.resolve_self_id().await
     }
 
-    async fn upload_media(&self, _filename: &str, data: &[u8], _mime_type: &str) -> Result<String, PlatformAdapterError> {
+    async fn upload_media(
+        &self,
+        _filename: &str,
+        data: &[u8],
+        _mime_type: &str,
+    ) -> Result<String, PlatformAdapterError> {
         let url = "https://upload.twitter.com/1.1/media/upload.json";
-        let form = reqwest::multipart::Form::new()
-            .part("media", reqwest::multipart::Part::bytes(data.to_vec())
+        let form = reqwest::multipart::Form::new().part(
+            "media",
+            reqwest::multipart::Part::bytes(data.to_vec())
                 .file_name("upload.bin")
                 .mime_str("application/octet-stream")
-                .map_err(|e| transport_err(format!("MIME: {e}")))?);
-        let resp = self.client.post(url)
-            .header("Authorization", format!("Bearer {}", self.config.bearer_token))
-            .multipart(form).send().await
+                .map_err(|e| transport_err(format!("MIME: {e}")))?,
+        );
+        let resp = self
+            .client
+            .post(url)
+            .header(
+                "Authorization",
+                format!("Bearer {}", self.config.bearer_token),
+            )
+            .multipart(form)
+            .send()
+            .await
             .map_err(|e| transport_err(format!("Upload failed: {e}")))?
-            .json::<serde_json::Value>().await
+            .json::<serde_json::Value>()
+            .await
             .map_err(|e| transport_err(format!("Parse: {e}")))?;
-        let media_id = resp["media_id_string"].as_str().unwrap_or("unknown").to_string();
+        let media_id = resp["media_id_string"]
+            .as_str()
+            .unwrap_or("unknown")
+            .to_string();
         Ok(media_id)
     }
     async fn download_media(&self, media_id: &str) -> Result<Vec<u8>, PlatformAdapterError> {
@@ -278,9 +297,14 @@ impl PlatformAdapter for TwitterAdapter {
         } else {
             format!("https://pbs.twimg.com/media/{}", media_id)
         };
-        let bytes = self.client.get(&url).send().await
+        let bytes = self
+            .client
+            .get(&url)
+            .send()
+            .await
             .map_err(|e| transport_err(format!("Download failed: {e}")))?
-            .bytes().await
+            .bytes()
+            .await
             .map_err(|e| transport_err(format!("Download read: {e}")))?;
         Ok(bytes.to_vec())
     }

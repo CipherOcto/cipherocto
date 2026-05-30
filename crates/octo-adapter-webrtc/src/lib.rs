@@ -183,6 +183,7 @@ impl PlatformAdapter for WebRTCAdapter {
             max_payload_bytes: Self::max_payload_bytes(),
             supports_fragmentation: false,
             supports_encryption: true, // WebRTC data channels are encrypted via DTLS
+            supports_raw_binary: true,
             rate_limit_per_second: Self::rate_limit_per_second(),
             media_capabilities: None,
         }

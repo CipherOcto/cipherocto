@@ -228,6 +228,7 @@ impl PlatformAdapter for QQAdapter {
             max_payload_bytes: Self::max_payload_bytes(),
             supports_fragmentation: true,
             supports_encryption: false,
+            supports_raw_binary: false,
             rate_limit_per_second: Self::rate_limit_per_second(),
             media_capabilities: Some(MediaCapabilities {
                 max_upload_bytes: 10_485_760,
@@ -258,9 +259,17 @@ impl PlatformAdapter for QQAdapter {
         self.get_access_token().await.map(|_| ())
     }
 
-    async fn upload_media(&self, filename: &str, data: &[u8], mime_type: &str) -> Result<String, PlatformAdapterError> {
+    async fn upload_media(
+        &self,
+        filename: &str,
+        data: &[u8],
+        mime_type: &str,
+    ) -> Result<String, PlatformAdapterError> {
         let token = self.get_access_token().await?;
-        let group_id = self.config.groups.first()
+        let group_id = self
+            .config
+            .groups
+            .first()
             .ok_or_else(|| transport_err("No groups configured"))?;
         let url = format!("{}/v2/groups/{}/files", self.api_base(), group_id);
         let file_part = reqwest::multipart::Part::bytes(data.to_vec())
@@ -268,9 +277,16 @@ impl PlatformAdapter for QQAdapter {
             .mime_str(mime_type)
             .map_err(|e| transport_err(format!("MIME: {e}")))?;
         let form = reqwest::multipart::Form::new().part("file", file_part);
-        let resp = self.client.post(&url).bearer_auth(&token).multipart(form).send().await
+        let resp = self
+            .client
+            .post(&url)
+            .bearer_auth(&token)
+            .multipart(form)
+            .send()
+            .await
             .map_err(|e| transport_err(format!("Upload failed: {e}")))?
-            .json::<serde_json::Value>().await
+            .json::<serde_json::Value>()
+            .await
             .map_err(|e| transport_err(format!("Parse: {e}")))?;
         let file_id = resp["id"].as_str().unwrap_or("unknown").to_string();
         Ok(file_id)
@@ -281,9 +297,14 @@ impl PlatformAdapter for QQAdapter {
         } else {
             return Err(transport_err("QQ download requires a direct URL"));
         };
-        let bytes = self.client.get(&url).send().await
+        let bytes = self
+            .client
+            .get(&url)
+            .send()
+            .await
             .map_err(|e| transport_err(format!("Download failed: {e}")))?
-            .bytes().await
+            .bytes()
+            .await
             .map_err(|e| transport_err(format!("Download read: {e}")))?;
         Ok(bytes.to_vec())
     }

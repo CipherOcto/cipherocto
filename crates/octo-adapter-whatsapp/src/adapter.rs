@@ -417,6 +417,7 @@ impl PlatformAdapter for WhatsAppWebAdapter {
             max_payload_bytes: Self::max_payload_bytes(),
             supports_fragmentation: false,
             supports_encryption: true, // Signal Protocol via whatsapp-rust
+            supports_raw_binary: false,
             rate_limit_per_second: Self::rate_limit_per_second(),
             media_capabilities: None,
         }

@@ -264,6 +264,7 @@ impl PlatformAdapter for BlueskyAdapter {
             max_payload_bytes: Self::max_payload_bytes(),
             supports_fragmentation: true,
             supports_encryption: false,
+            supports_raw_binary: false,
             rate_limit_per_second: Self::rate_limit_per_second(),
             media_capabilities: Some(MediaCapabilities {
                 max_upload_bytes: 976_563, // 1MB image
@@ -299,7 +300,12 @@ impl PlatformAdapter for BlueskyAdapter {
         self.ensure_session().await
     }
 
-    async fn upload_media(&self, filename: &str, data: &[u8], mime_type: &str) -> Result<String, PlatformAdapterError> {
+    async fn upload_media(
+        &self,
+        filename: &str,
+        data: &[u8],
+        mime_type: &str,
+    ) -> Result<String, PlatformAdapterError> {
         self.ensure_session().await?;
         let (access_jwt, did) = {
             let guard = self.session.lock();
@@ -307,13 +313,22 @@ impl PlatformAdapter for BlueskyAdapter {
             (session.access_jwt.clone(), session.did.clone())
         };
         let url = format!("{}/xrpc/com.atproto.repo.uploadBlob", self.config.pds_url);
-        let resp = self.client.post(&url)
+        let resp = self
+            .client
+            .post(&url)
             .header("Authorization", format!("Bearer {}", access_jwt))
             .header("Content-Type", mime_type)
             .body(data.to_vec())
-            .send().await.map_err(|e| transport_err(format!("Upload failed: {e}")))?
-            .json::<serde_json::Value>().await.map_err(|e| transport_err(format!("Parse: {e}")))?;
-        let blob_ref = resp["blob"]["ref"]["$link"].as_str().unwrap_or("unknown").to_string();
+            .send()
+            .await
+            .map_err(|e| transport_err(format!("Upload failed: {e}")))?
+            .json::<serde_json::Value>()
+            .await
+            .map_err(|e| transport_err(format!("Parse: {e}")))?;
+        let blob_ref = resp["blob"]["ref"]["$link"]
+            .as_str()
+            .unwrap_or("unknown")
+            .to_string();
         Ok(blob_ref)
     }
     async fn download_media(&self, blob_ref: &str) -> Result<Vec<u8>, PlatformAdapterError> {
@@ -321,12 +336,21 @@ impl PlatformAdapter for BlueskyAdapter {
         let url = format!(
             "{}/xrpc/com.atproto.sync.getBlob?did={}&cid={}",
             self.config.pds_url,
-            self.session.lock().as_ref().map(|s| s.did.clone()).unwrap_or_default(),
+            self.session
+                .lock()
+                .as_ref()
+                .map(|s| s.did.clone())
+                .unwrap_or_default(),
             blob_ref
         );
-        let bytes = self.client.get(&url).send().await
+        let bytes = self
+            .client
+            .get(&url)
+            .send()
+            .await
             .map_err(|e| transport_err(format!("Download failed: {e}")))?
-            .bytes().await
+            .bytes()
+            .await
             .map_err(|e| transport_err(format!("Download read: {e}")))?;
         Ok(bytes.to_vec())
     }

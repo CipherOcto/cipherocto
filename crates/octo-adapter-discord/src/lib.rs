@@ -252,11 +252,12 @@ impl PlatformAdapter for DiscordAdapter {
                 Err(e) => {
                     last_err = e.clone();
                     if (e.contains("429") || e.contains("rate limit"))
-                        && retry_cfg.should_retry(attempt) {
-                            let delay = retry_cfg.delay_for_attempt(attempt);
-                            tokio::time::sleep(delay).await;
-                            continue;
-                        }
+                        && retry_cfg.should_retry(attempt)
+                    {
+                        let delay = retry_cfg.delay_for_attempt(attempt);
+                        tokio::time::sleep(delay).await;
+                        continue;
+                    }
                     return Err(transport_err(e));
                 }
             }
@@ -313,13 +314,18 @@ impl PlatformAdapter for DiscordAdapter {
             max_payload_bytes: Self::max_payload_bytes(),
             supports_fragmentation: true,
             supports_encryption: false,
+            supports_raw_binary: false,
             rate_limit_per_second: Self::rate_limit_per_second(),
             media_capabilities: Some(octo_network::dot::adapters::MediaCapabilities {
                 max_upload_bytes: 25 * 1024 * 1024, // 25MB
                 supported_mime_types: vec![
-                    "image/jpeg".into(), "image/png".into(), "image/gif".into(),
-                    "video/mp4".into(), "audio/mpeg".into(),
-                    "application/pdf".into(), "application/octet-stream".into(),
+                    "image/jpeg".into(),
+                    "image/png".into(),
+                    "image/gif".into(),
+                    "video/mp4".into(),
+                    "audio/mpeg".into(),
+                    "application/pdf".into(),
+                    "application/octet-stream".into(),
                 ],
             }),
         }
@@ -383,17 +389,11 @@ impl PlatformAdapter for DiscordAdapter {
             .await
             .map_err(|e| transport_err(format!("Response parse: {e}")))?;
 
-        let msg_id = resp["id"]
-            .as_str()
-            .unwrap_or("unknown")
-            .to_string();
+        let msg_id = resp["id"].as_str().unwrap_or("unknown").to_string();
         Ok(msg_id)
     }
 
-    async fn download_media(
-        &self,
-        message_id: &str,
-    ) -> Result<Vec<u8>, PlatformAdapterError> {
+    async fn download_media(&self, message_id: &str) -> Result<Vec<u8>, PlatformAdapterError> {
         // Discord attachment URLs can be retrieved from the message payload
         // message_id is expected to be an attachment URL from the webhook response
         if message_id.starts_with("https://") {

@@ -332,8 +332,7 @@ pub struct ObfuscatedEnvelope {
 }
 
 /// Privacy configuration for envelope sealing.
-#[derive(Debug, Clone, Copy)]
-#[derive(Default)]
+#[derive(Debug, Clone, Copy, Default)]
 pub struct PrivacyConfig {
     /// Enable end-to-end encryption
     pub e2e_encryption: bool,
@@ -342,7 +341,6 @@ pub struct PrivacyConfig {
     /// Enable transport obfuscation
     pub transport_obfuscation: bool,
 }
-
 
 impl DeterministicEnvelope {
     /// Check if this envelope has encrypted payload.

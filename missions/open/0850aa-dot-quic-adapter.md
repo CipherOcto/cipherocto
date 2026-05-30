@@ -11,19 +11,19 @@ Implement the QUIC platform adapter (`PlatformType::Quic = 0x0015`) using the `q
 
 ## Acceptance Criteria
 
-- [ ] `PlatformType::Quic = 0x0015` added to domain registry
-- [ ] `QuicAdapter` struct implementing `PlatformAdapter` trait
-- [ ] Control stream protocol (capabilities, ping/pong, shutdown, key rotation)
-- [ ] Envelope stream framing (length-prefixed, unidirectional, raw binary)
-- [ ] Onion stream protocol (bidirectional, per-route, hop-indexed)
-- [ ] Two-layer handshake: QUIC TLS 1.3 (required) + RFC-0853 overlay session (optional, mission-scoped only)
+- [x] `PlatformType::Quic = 0x0015` added to domain registry
+- [x] `QuicAdapter` struct implementing `PlatformAdapter` trait
+- [x] Control stream protocol (capabilities, ping/pong, shutdown, key rotation)
+- [x] Envelope stream framing (length-prefixed, unidirectional, raw binary)
+- [x] Onion stream protocol (bidirectional, per-route, hop-indexed)
+- [x] Two-layer handshake: QUIC TLS 1.3 (required) + RFC-0853 overlay session (optional, mission-scoped only)
 - [ ] GDP integration (QUIC peer registration as `PlatformType::Quic`)
 - [ ] 0-RTT with replay protection (RFC-0853 §7)
 - [ ] Connection migration support (RFC 9000 §9)
-- [ ] `supports_raw_binary: true` in capabilities
-- [ ] Gateway configuration schema (listen_addr, tls_cert, max_streams, etc.)
-- [ ] 15+ tests (connection, stream framing, control protocol, session, migration)
-- [ ] cargo fmt + clippy clean
+- [x] `supports_raw_binary: true` in capabilities
+- [x] Gateway configuration schema (listen_addr, tls_cert, max_streams, etc.)
+- [x] 19 tests (connection, stream framing, control protocol, session, migration)
+- [x] cargo fmt + clippy clean
 
 ## Implementation Plan
 

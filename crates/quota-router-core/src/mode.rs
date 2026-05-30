@@ -41,24 +41,13 @@ impl ProviderMode {
 /// When both features are compiled (full mode), defaults to LiteLLM (reqwest)
 /// because it's faster and has no Python dependency.
 pub fn default_mode() -> ProviderMode {
-    #[cfg(all(feature = "litellm-mode", not(feature = "any-llm-mode")))]
-    {
-        ProviderMode::LiteLLM
-    }
-
-    #[cfg(all(feature = "any-llm-mode", not(feature = "litellm-mode")))]
-    {
+    // Use cfg!() runtime checks to avoid conflicting #[cfg] blocks when
+    // multiple features are active simultaneously (e.g. "full" + default "litellm-mode").
+    if cfg!(feature = "any-llm-mode") && !cfg!(feature = "litellm-mode") {
         ProviderMode::AnyLlm
-    }
-
-    #[cfg(feature = "full")]
-    {
+    } else {
+        // Default: litellm-mode (also covers full and combined modes)
         ProviderMode::LiteLLM
-    }
-
-    #[cfg(not(any(feature = "litellm-mode", feature = "any-llm-mode", feature = "full")))]
-    {
-        compile_error!("At least one of 'litellm-mode', 'any-llm-mode', or 'full' must be enabled")
     }
 }
 

@@ -99,6 +99,95 @@ impl DeterministicEnvelope {
         buf
     }
 
+    /// Serialize to canonical wire bytes including signature.
+    /// This is the complete envelope for transport across platforms.
+    pub fn to_wire_bytes(&self) -> Vec<u8> {
+        let mut buf = self.to_signing_bytes();
+        buf.extend_from_slice(&self.signature);
+        buf
+    }
+
+    /// Deserialize from wire bytes (must include 64-byte signature at end).
+    pub fn from_wire_bytes(data: &[u8]) -> Result<Self, DotError> {
+        // Signing bytes: 2+4+2+32+32+32+32+8+2+32+32+8 = 218 bytes
+        const SIGNING_LEN: usize = 218;
+        const SIGNATURE_LEN: usize = 64;
+        const WIRE_LEN: usize = SIGNING_LEN + SIGNATURE_LEN;
+
+        if data.len() != WIRE_LEN {
+            return Err(DotError::Serialization(format!(
+                "Invalid wire envelope length: expected {}, got {}",
+                WIRE_LEN,
+                data.len()
+            )));
+        }
+
+        let mut offset = 0;
+        let read_u16 = |data: &[u8], off: &mut usize| -> u16 {
+            let v = u16::from_be_bytes([data[*off], data[*off + 1]]);
+            *off += 2;
+            v
+        };
+        let read_u32 = |data: &[u8], off: &mut usize| -> u32 {
+            let v =
+                u32::from_be_bytes([data[*off], data[*off + 1], data[*off + 2], data[*off + 3]]);
+            *off += 4;
+            v
+        };
+        let read_u64 = |data: &[u8], off: &mut usize| -> u64 {
+            let v = u64::from_be_bytes([
+                data[*off],
+                data[*off + 1],
+                data[*off + 2],
+                data[*off + 3],
+                data[*off + 4],
+                data[*off + 5],
+                data[*off + 6],
+                data[*off + 7],
+            ]);
+            *off += 8;
+            v
+        };
+        let read_bytes = |data: &[u8], off: &mut usize, len: usize| -> [u8; 32] {
+            let mut arr = [0u8; 32];
+            arr.copy_from_slice(&data[*off..*off + len]);
+            *off += len;
+            arr
+        };
+
+        let version = read_u16(data, &mut offset);
+        let network_id = read_u32(data, &mut offset);
+        let message_type = read_u16(data, &mut offset);
+        let envelope_id = read_bytes(data, &mut offset, 32);
+        let mission_id = read_bytes(data, &mut offset, 32);
+        let source_peer = read_bytes(data, &mut offset, 32);
+        let origin_gateway = read_bytes(data, &mut offset, 32);
+        let logical_timestamp = read_u64(data, &mut offset);
+        let ttl_hops = read_u16(data, &mut offset);
+        let payload_hash = read_bytes(data, &mut offset, 32);
+        let route_trace_root = read_bytes(data, &mut offset, 32);
+        let flags = read_u64(data, &mut offset);
+
+        let mut signature = [0u8; 64];
+        signature.copy_from_slice(&data[SIGNING_LEN..WIRE_LEN]);
+
+        Ok(Self {
+            version,
+            network_id,
+            message_type,
+            envelope_id,
+            mission_id,
+            source_peer,
+            origin_gateway,
+            logical_timestamp,
+            ttl_hops,
+            payload_hash,
+            route_trace_root,
+            flags,
+            signature,
+        })
+    }
+
     /// Verify envelope integrity.
     pub fn verify(&self, public_key: &[u8; 32]) -> Result<(), DotError> {
         // 1. Verify envelope_id derivation
@@ -221,7 +310,6 @@ pub mod envelope_flags {
 /// Platforms observe only ciphertext and relay metadata.
 /// Mission data is NEVER plaintext on the carrier platform.
 #[derive(Debug, Clone)]
-#[repr(C)]
 pub struct SealedEnvelope {
     /// The outer DOT envelope (metadata visible to platform)
     pub envelope: DeterministicEnvelope,
@@ -236,7 +324,6 @@ pub struct SealedEnvelope {
 /// Metadata-minimized envelope for transport obfuscation.
 /// Platforms see only opaque bytes.
 #[derive(Debug, Clone)]
-#[repr(C)]
 pub struct ObfuscatedEnvelope {
     /// Opaque wire bytes (envelope + payload serialized together)
     pub wire_bytes: Vec<u8>,
@@ -246,6 +333,7 @@ pub struct ObfuscatedEnvelope {
 
 /// Privacy configuration for envelope sealing.
 #[derive(Debug, Clone, Copy)]
+#[derive(Default)]
 pub struct PrivacyConfig {
     /// Enable end-to-end encryption
     pub e2e_encryption: bool,
@@ -255,15 +343,6 @@ pub struct PrivacyConfig {
     pub transport_obfuscation: bool,
 }
 
-impl Default for PrivacyConfig {
-    fn default() -> Self {
-        Self {
-            e2e_encryption: false,
-            metadata_minimization: false,
-            transport_obfuscation: false,
-        }
-    }
-}
 
 impl DeterministicEnvelope {
     /// Check if this envelope has encrypted payload.

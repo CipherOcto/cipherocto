@@ -24,7 +24,8 @@ pub struct BandwidthProof {
     /// Merkle root of (envelope_hash, byte_count) pairs
     pub relay_merkle_root: [u8; 32],
     /// Ed25519 signature over all above fields
-    pub signature: Vec<u8>,
+    #[serde(with = "serde_bytes")]
+    pub signature: [u8; 64],
 }
 
 impl BandwidthProof {
@@ -40,6 +41,17 @@ impl BandwidthProof {
         buf.extend_from_slice(&self.destination_diversity.to_be_bytes());
         buf.extend_from_slice(&self.relay_merkle_root);
         buf
+    }
+
+    /// Verify the Ed25519 signature.
+    pub fn verify_signature(&self, public_key: &[u8; 32]) -> bool {
+        use ed25519_dalek::{Signature, Verifier, VerifyingKey};
+        let vk = match VerifyingKey::from_bytes(public_key) {
+            Ok(vk) => vk,
+            Err(_) => return false,
+        };
+        let sig = Signature::from_bytes(&self.signature);
+        vk.verify(&self.to_signing_bytes(), &sig).is_ok()
     }
 
     /// Compute bandwidth efficiency score (bytes per envelope, 0-1000 scale)
@@ -69,7 +81,7 @@ mod tests {
             source_diversity: 5,
             destination_diversity: 3,
             relay_merkle_root: [0u8; 32],
-            signature: vec![0u8; 64],
+            signature: [0u8; 64],
         };
         assert_eq!(proof.to_signing_bytes().len(), 104);
     }
@@ -85,7 +97,7 @@ mod tests {
             source_diversity: 5,
             destination_diversity: 3,
             relay_merkle_root: [0u8; 32],
-            signature: vec![0u8; 64],
+            signature: [0u8; 64],
         };
         assert_eq!(proof.efficiency_score(), 1000);
     }
@@ -101,7 +113,7 @@ mod tests {
             source_diversity: 0,
             destination_diversity: 0,
             relay_merkle_root: [0u8; 32],
-            signature: vec![0u8; 64],
+            signature: [0u8; 64],
         };
         assert_eq!(proof.efficiency_score(), 0);
     }

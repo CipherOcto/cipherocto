@@ -26,14 +26,12 @@
 use async_trait::async_trait;
 use base64::Engine;
 use std::collections::BTreeMap;
-use std::sync::Arc;
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::net::TcpStream;
 use tokio::sync::{mpsc, Mutex};
 
 use octo_network::dot::adapters::{
-    backoff::RetryConfig, CapabilityReport, DeliveryReceipt, PlatformAdapter,
-    RawPlatformMessage,
+    backoff::RetryConfig, CapabilityReport, DeliveryReceipt, PlatformAdapter, RawPlatformMessage,
 };
 use octo_network::dot::domain::{BroadcastDomainId, PlatformType};
 use octo_network::dot::envelope::DeterministicEnvelope;
@@ -59,8 +57,12 @@ pub struct IrcConfig {
     pub use_tls: bool,
 }
 
-fn default_port() -> u16 { 6697 }
-fn default_tls() -> bool { true }
+fn default_port() -> u16 {
+    6697
+}
+fn default_tls() -> bool {
+    true
+}
 
 // ── Constants ──────────────────────────────────────────────────────
 
@@ -74,7 +76,7 @@ const PRIVMSG_OVERHEAD: usize = 32;
 const MAX_PAYLOAD_PER_MSG: usize = IRC_MAX_LINE_BYTES - PRIVMSG_OVERHEAD;
 
 /// Keepalive interval (seconds).
-const PING_INTERVAL_SECS: u64 = 120;
+const _PING_INTERVAL_SECS: u64 = 120;
 
 /// DOT/1/ prefix for envelope detection.
 const DOT_PREFIX: &str = "DOT/1/";
@@ -114,7 +116,9 @@ impl IrcAdapter {
     /// Start IRC connection (idempotent).
     async fn ensure_connected(&self) -> Result<(), PlatformAdapterError> {
         let mut connected = self.connected.lock().await;
-        if *connected { return Ok(()); }
+        if *connected {
+            return Ok(());
+        }
 
         let server = self.config.server.clone();
         let port = self.config.port;
@@ -141,7 +145,9 @@ impl IrcAdapter {
         let mut chunks = Vec::new();
         for line in message.split('\n') {
             let line = line.trim_end_matches('\r');
-            if line.is_empty() { continue; }
+            if line.is_empty() {
+                continue;
+            }
 
             if line.len() <= max_bytes {
                 chunks.push(line.to_string());
@@ -175,13 +181,20 @@ impl IrcAdapter {
 
     /// Encode envelope bytes as DOT/1/ base64.
     pub fn encode_envelope(bytes: &[u8]) -> String {
-        format!("DOT/1/{}", base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(bytes))
+        format!(
+            "DOT/1/{}",
+            base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(bytes)
+        )
     }
 
     /// Encode a fragment as DOT/1/F:i/n: base64.
     pub fn encode_fragment(index: u16, total: u16, bytes: &[u8]) -> String {
-        format!("DOT/1/F:{}/{}:{}", index, total,
-            base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(bytes))
+        format!(
+            "DOT/1/F:{}/{}:{}",
+            index,
+            total,
+            base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(bytes)
+        )
     }
 
     /// Decode a DOT/1/ or DOT/1/F: message.
@@ -191,8 +204,7 @@ impl IrcAdapter {
         // Check for fragment prefix
         if let Some(rest) = text.strip_prefix(DOT_FRAGMENT_PREFIX) {
             // Format: i/n:<base64>
-            let colon_pos = rest.find(':')
-                .ok_or("Missing colon in fragment")?;
+            let colon_pos = rest.find(':').ok_or("Missing colon in fragment")?;
             let _header = &rest[..colon_pos];
             let b64 = &rest[colon_pos + 1..];
             return base64::engine::general_purpose::URL_SAFE_NO_PAD
@@ -201,7 +213,8 @@ impl IrcAdapter {
         }
 
         // Check for envelope prefix
-        let b64 = text.strip_prefix(DOT_PREFIX)
+        let b64 = text
+            .strip_prefix(DOT_PREFIX)
             .ok_or("Missing DOT/1/ prefix")?;
         base64::engine::general_purpose::URL_SAFE_NO_PAD
             .decode(b64)
@@ -210,12 +223,17 @@ impl IrcAdapter {
 
     /// Domain hash: `BLAKE3-256("irc:{server}:{channel}")`
     pub fn domain_hash(server: &str, channel: &str) -> [u8; 32] {
-        *blake3::hash(format!("irc:{}:{}", server.trim().to_lowercase(), channel).as_bytes()).as_bytes()
+        *blake3::hash(format!("irc:{}:{}", server.trim().to_lowercase(), channel).as_bytes())
+            .as_bytes()
     }
 
     pub const PLATFORM_TYPE: u16 = 0x0006;
-    pub fn max_payload_bytes() -> usize { MAX_PAYLOAD_PER_MSG }
-    pub fn rate_limit_per_second() -> u32 { 1 } // IRC flood protection
+    pub fn max_payload_bytes() -> usize {
+        MAX_PAYLOAD_PER_MSG
+    }
+    pub fn rate_limit_per_second() -> u32 {
+        1
+    } // IRC flood protection
 }
 
 // ── IRC Protocol ───────────────────────────────────────────────────
@@ -243,7 +261,9 @@ async fn irc_listener(
         match connect_result {
             Ok(stream) => {
                 attempt = 0;
-                if let Err(e) = irc_session(stream, &nickname, &channels, password.as_deref(), &tx).await {
+                if let Err(e) =
+                    irc_session(stream, &nickname, &channels, password.as_deref(), &tx).await
+                {
                     eprintln!("IRC session error: {e}");
                 }
             }
@@ -284,27 +304,39 @@ async fn irc_session(
 
     // Authenticate
     if let Some(pass) = password {
-        writer.write_all(format!("PASS {pass}\r\n").as_bytes()).await
+        writer
+            .write_all(format!("PASS {pass}\r\n").as_bytes())
+            .await
             .map_err(|e| format!("PASS: {e}"))?;
     }
-    writer.write_all(format!("NICK {nickname}\r\n").as_bytes()).await
+    writer
+        .write_all(format!("NICK {nickname}\r\n").as_bytes())
+        .await
         .map_err(|e| format!("NICK: {e}"))?;
-    writer.write_all(format!("USER {nickname} 0 * :CipherOcto DOT Bot\r\n").as_bytes()).await
+    writer
+        .write_all(format!("USER {nickname} 0 * :CipherOcto DOT Bot\r\n").as_bytes())
+        .await
         .map_err(|e| format!("USER: {e}"))?;
 
     // Join channels after MOTD
     let mut joined = false;
     loop {
         line.clear();
-        let n = reader.read_line(&mut line).await
+        let n = reader
+            .read_line(&mut line)
+            .await
             .map_err(|e| format!("Read: {e}"))?;
-        if n == 0 { return Err("Connection closed".into()); }
+        if n == 0 {
+            return Err("Connection closed".into());
+        }
 
         let trimmed = line.trim_end();
 
         // PING/PONG keepalive
         if let Some(server) = trimmed.strip_prefix("PING ") {
-            writer.write_all(format!("PONG {server}\r\n").as_bytes()).await
+            writer
+                .write_all(format!("PONG {server}\r\n").as_bytes())
+                .await
                 .map_err(|e| format!("PONG: {e}"))?;
             continue;
         }
@@ -312,7 +344,9 @@ async fn irc_session(
         // Join channels after RPL_ENDOFMOTD (376) or ERR_NOMOTD (422)
         if !joined && (trimmed.contains(" 376 ") || trimmed.contains(" 422 ")) {
             for ch in channels {
-                writer.write_all(format!("JOIN {ch}\r\n").as_bytes()).await
+                writer
+                    .write_all(format!("JOIN {ch}\r\n").as_bytes())
+                    .await
                     .map_err(|e| format!("JOIN: {e}"))?;
             }
             joined = true;
@@ -353,7 +387,9 @@ fn parse_privmsg(line: &str) -> Option<IrcPrivmsg> {
     let (prefix, rest) = line.split_once(' ')?;
     let sender = prefix.split('!').next()?.to_string();
     let (command, rest) = rest.split_once(' ')?;
-    if command != "PRIVMSG" { return None; }
+    if command != "PRIVMSG" {
+        return None;
+    }
     let (target, text) = rest.split_once(" :")?;
     let id = format!("{}-{}", sender, epoch_millis());
     Some(IrcPrivmsg {
@@ -374,7 +410,10 @@ fn epoch_millis() -> u64 {
 // ── PlatformAdapter ────────────────────────────────────────────────
 
 fn transport_err(msg: impl Into<String>) -> PlatformAdapterError {
-    PlatformAdapterError::Unreachable { platform: "irc".into(), reason: msg.into() }
+    PlatformAdapterError::Unreachable {
+        platform: "irc".into(),
+        reason: msg.into(),
+    }
 }
 
 #[async_trait]
@@ -388,12 +427,17 @@ impl PlatformAdapter for IrcAdapter {
         let encoded = Self::encode_envelope(&wire_bytes);
 
         // Find the channel for this domain
-        let channel = self.config.channels.iter()
+        let channel = self
+            .config
+            .channels
+            .iter()
             .find(|ch| {
                 let hash = Self::domain_hash(&self.config.server, ch);
                 hash == domain.domain_hash
             })
-            .ok_or_else(|| transport_err(format!("No channel for domain {:?}", domain.domain_hash)))?;
+            .ok_or_else(|| {
+                transport_err(format!("No channel for domain {:?}", domain.domain_hash))
+            })?;
 
         // Split if needed (IRC has strict line limits)
         let chunks = Self::split_message(&encoded, MAX_PAYLOAD_PER_MSG);
@@ -433,15 +477,19 @@ impl PlatformAdapter for IrcAdapter {
         Ok(messages)
     }
 
-    fn canonicalize(&self, raw: &RawPlatformMessage) -> Result<DeterministicEnvelope, PlatformAdapterError> {
+    fn canonicalize(
+        &self,
+        raw: &RawPlatformMessage,
+    ) -> Result<DeterministicEnvelope, PlatformAdapterError> {
         if raw.payload.is_empty() {
             return Err(transport_err("Empty payload"));
         }
-        DeterministicEnvelope::from_wire_bytes(&raw.payload)
-            .map_err(|e| PlatformAdapterError::ApiError {
+        DeterministicEnvelope::from_wire_bytes(&raw.payload).map_err(|e| {
+            PlatformAdapterError::ApiError {
                 code: 400,
                 message: format!("canonicalize failed: {e}"),
-            })
+            }
+        })
     }
 
     fn capabilities(&self) -> CapabilityReport {
@@ -485,14 +533,22 @@ impl PlatformAdapter for IrcAdapter {
 // ── Plugin ABI ─────────────────────────────────────────────────────
 
 #[no_mangle]
-pub extern "C" fn adapter_version() -> u32 { 1 }
+pub extern "C" fn adapter_version() -> u32 {
+    1
+}
 
 #[no_mangle]
-pub extern "C" fn platform_type() -> u16 { 0x0006 }
+pub extern "C" fn platform_type() -> u16 {
+    0x0006
+}
 
 #[no_mangle]
+/// # Safety
+/// `config` must point to a valid buffer of at least `len` bytes.
 pub unsafe extern "C" fn create_adapter(config: *const u8, config_len: usize) -> *mut () {
-    if config.is_null() || config_len == 0 { return std::ptr::null_mut(); }
+    if config.is_null() || config_len == 0 {
+        return std::ptr::null_mut();
+    }
     let bytes = std::slice::from_raw_parts(config, config_len);
     match IrcAdapter::from_config_bytes(bytes) {
         Ok(a) => Box::into_raw(Box::new(a)) as *mut (),
@@ -501,6 +557,8 @@ pub unsafe extern "C" fn create_adapter(config: *const u8, config_len: usize) ->
 }
 
 #[no_mangle]
+/// # Safety
+/// `ptr` must be a pointer previously returned by `create_adapter`.
 pub unsafe extern "C" fn destroy_adapter(adapter: *mut ()) {
     if !adapter.is_null() {
         let _ = Box::from_raw(adapter as *mut IrcAdapter);
@@ -645,9 +703,8 @@ mod tests {
             "password": null,
             "use_tls": true
         });
-        let adapter = IrcAdapter::from_config_bytes(
-            serde_json::to_vec(&json).unwrap().as_slice()
-        ).unwrap();
+        let adapter =
+            IrcAdapter::from_config_bytes(serde_json::to_vec(&json).unwrap().as_slice()).unwrap();
         assert_eq!(adapter.config.server, "irc.libera.chat");
         assert_eq!(adapter.config.port, 6697);
         assert_eq!(adapter.config.nickname, "testbot");
@@ -662,9 +719,8 @@ mod tests {
             "nickname": "testbot",
             "channels": ["#test"]
         });
-        let adapter = IrcAdapter::from_config_bytes(
-            serde_json::to_vec(&json).unwrap().as_slice()
-        ).unwrap();
+        let adapter =
+            IrcAdapter::from_config_bytes(serde_json::to_vec(&json).unwrap().as_slice()).unwrap();
         assert_eq!(adapter.config.port, 6697); // default TLS port
         assert!(adapter.config.use_tls); // default true
         assert_eq!(adapter.config.password, None);

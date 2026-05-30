@@ -48,16 +48,27 @@ impl RelayScore {
     /// Formula: raw_score = forwarding * 300 + availability * 250 + bandwidth * 200
     ///          + uptime * 150 + diversity * 100
     ///          composite = raw_score * stake_multiplier / 1000
+    ///
+    /// All component scores must be 0-1000. Out-of-range values are clamped.
     pub fn compute_composite(&mut self) {
-        let raw = (self.forwarding_score as u64).saturating_mul(WEIGHT_FORWARDING)
-            + (self.availability_score as u64).saturating_mul(WEIGHT_AVAILABILITY)
-            + (self.bandwidth_score as u64).saturating_mul(WEIGHT_BANDWIDTH)
-            + (self.uptime_score as u64).saturating_mul(WEIGHT_UPTIME)
-            + (self.diversity_bonus as u64).saturating_mul(WEIGHT_DIVERSITY);
+        // Clamp all component scores to 0-1000
+        self.forwarding_score = self.forwarding_score.min(1000);
+        self.availability_score = self.availability_score.min(1000);
+        self.bandwidth_score = self.bandwidth_score.min(1000);
+        self.uptime_score = self.uptime_score.min(1000);
+        self.diversity_bonus = self.diversity_bonus.min(500); // max 500 per RFC
 
-        self.composite = raw
-            .saturating_mul(self.stake_multiplier as u64)
-            .saturating_div(1000);
+        // Cap stake multiplier to MAX_STAKE_MULTIPLIER
+        let stake_mult = self.stake_multiplier.min(MAX_STAKE_MULTIPLIER);
+
+        let raw = (self.forwarding_score as u64)
+            .saturating_mul(WEIGHT_FORWARDING)
+            .saturating_add((self.availability_score as u64).saturating_mul(WEIGHT_AVAILABILITY))
+            .saturating_add((self.bandwidth_score as u64).saturating_mul(WEIGHT_BANDWIDTH))
+            .saturating_add((self.uptime_score as u64).saturating_mul(WEIGHT_UPTIME))
+            .saturating_add((self.diversity_bonus as u64).saturating_mul(WEIGHT_DIVERSITY));
+
+        self.composite = raw.saturating_mul(stake_mult as u64).saturating_div(1000);
     }
 
     /// Compute score decay for inactive gateways.
@@ -74,11 +85,13 @@ impl RelayScore {
     }
 
     /// Compute stake multiplier from OCTO-B stake amount.
-    /// stake_multiplier = 1000 + min(staked / STAKE_UNIT, MAX_BOOST)
+    /// stake_multiplier = 1000 + min(staked / STAKE_UNIT, max_boost)
+    /// where max_boost is capped so the result never exceeds MAX_STAKE_MULTIPLIER.
     pub fn compute_stake_multiplier(staked: u64, stake_unit: u64, max_boost: u32) -> u32 {
         if stake_unit == 0 {
             return DEFAULT_STAKE_MULTIPLIER;
         }
+        let max_boost = max_boost.min(MAX_STAKE_MULTIPLIER - DEFAULT_STAKE_MULTIPLIER);
         let boost = (staked / stake_unit).min(max_boost as u64) as u32;
         DEFAULT_STAKE_MULTIPLIER.saturating_add(boost)
     }

@@ -49,8 +49,8 @@ pub struct GossipDomainId {
     pub network_id: u32,
     /// Mission identifier (zero for non-mission scopes)
     pub mission_id: [u8; 32],
-    /// GossipScope enum value
-    pub scope: u16,
+    /// Gossip scope (strongly typed)
+    pub scope: GossipScope,
 }
 
 impl GossipDomainId {
@@ -59,7 +59,7 @@ impl GossipDomainId {
         Self {
             network_id,
             mission_id,
-            scope: scope as u16,
+            scope,
         }
     }
 
@@ -68,7 +68,7 @@ impl GossipDomainId {
         let mut buf = [0u8; 38];
         buf[0..4].copy_from_slice(&self.network_id.to_be_bytes());
         buf[4..36].copy_from_slice(&self.mission_id);
-        buf[36..38].copy_from_slice(&self.scope.to_be_bytes());
+        buf[36..38].copy_from_slice(&(self.scope as u16).to_be_bytes());
         buf
     }
 }

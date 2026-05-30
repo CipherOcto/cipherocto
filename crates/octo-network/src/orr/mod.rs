@@ -4,10 +4,12 @@
 //! per-relay knowledge isolation, forward secrecy, and cover traffic generation.
 
 pub mod error;
+pub mod onion;
 pub mod session;
 pub mod types;
 
 pub use error::OrrError;
+pub use onion::{construct_onion, peel_layer, HopConstructionParams, PeeledLayer};
 pub use session::{compute_hop_mac, derive_hop_nonce, derive_hop_session_key};
 pub use types::{
     CoverEnvelope, CoverPolicy, OnionDomain, OnionHop, OnionRoute, RouteCommitment,

@@ -2,21 +2,17 @@
 
 use crate::ocrypt::error::CryptoError;
 use crate::ocrypt::session;
-use blake3;
-use hkdf::Hkdf;
-use sha2::Sha256;
 
 /// Domain separation for onion session key derivation
 const ONION_SESSION_DOMAIN: &str = "ocrypt:onion:v1";
 /// Domain separation for onion nonce derivation
-const ONION_NONCE_DOMAIN: &str = "ocrypt:nonce:v1";
+const ONION_NONCE_DOMAIN: &str = "ocrypt:onion:nonce:v1";
 
 /// A single onion layer — encrypted for one relay hop.
 ///
 /// Each relay knows ONLY: previous hop, next hop, local instructions.
 /// NOT: origin, destination, full route, mission topology.
 #[derive(Clone, Debug, PartialEq, Eq)]
-#[repr(C)]
 pub struct OnionLayer {
     /// Ephemeral public key for this layer (32 bytes)
     pub ephemeral_public: [u8; 32],
@@ -39,12 +35,8 @@ pub fn derive_onion_session_key(
     info[0..2].copy_from_slice(&hop_index.to_be_bytes());
     info[2..34].copy_from_slice(route_id);
 
-    let hk = Hkdf::<Sha256>::new(Some(salt), shared_secret);
     let mut key = [0u8; 32];
-    hk.expand(&info, &mut key)
-        .map_err(|_| CryptoError::KeyDerivationFailure {
-            stage: "onion_session_key",
-        })?;
+    super::hkdf_blake3(salt, shared_secret, &info, &mut key);
     Ok(key)
 }
 
@@ -55,12 +47,8 @@ pub fn derive_onion_nonce(session_key: &[u8; 32], hop_index: u16) -> Result<[u8;
     let mut info = [0u8; 2];
     info.copy_from_slice(&hop_index.to_be_bytes());
 
-    let hk = Hkdf::<Sha256>::new(Some(ONION_NONCE_DOMAIN.as_bytes()), session_key);
     let mut full = [0u8; 32];
-    hk.expand(&info, &mut full)
-        .map_err(|_| CryptoError::KeyDerivationFailure {
-            stage: "onion_nonce",
-        })?;
+    super::hkdf_blake3(ONION_NONCE_DOMAIN.as_bytes(), session_key, &info, &mut full);
 
     let mut nonce = [0u8; 12];
     nonce.copy_from_slice(&full[..12]);
@@ -238,6 +226,6 @@ mod tests {
     #[test]
     fn test_onion_constants() {
         assert_eq!(ONION_SESSION_DOMAIN, "ocrypt:onion:v1");
-        assert_eq!(ONION_NONCE_DOMAIN, "ocrypt:nonce:v1");
+        assert_eq!(ONION_NONCE_DOMAIN, "ocrypt:onion:nonce:v1");
     }
 }

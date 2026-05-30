@@ -21,7 +21,8 @@ pub struct AvailabilityProof {
     /// Number of distinct peers contacted
     pub peer_diversity: u16,
     /// Ed25519 signature over all above fields (canonical serialization)
-    pub signature: Vec<u8>,
+    #[serde(with = "serde_bytes")]
+    pub signature: [u8; 64],
 }
 
 /// Default heartbeat interval in seconds
@@ -62,6 +63,17 @@ impl AvailabilityProof {
         buf.extend_from_slice(&self.peer_diversity.to_be_bytes());
         buf
     }
+
+    /// Verify the Ed25519 signature.
+    pub fn verify_signature(&self, public_key: &[u8; 32]) -> bool {
+        use ed25519_dalek::{Signature, Verifier, VerifyingKey};
+        let vk = match VerifyingKey::from_bytes(public_key) {
+            Ok(vk) => vk,
+            Err(_) => return false,
+        };
+        let sig = Signature::from_bytes(&self.signature);
+        vk.verify(&self.to_signing_bytes(), &sig).is_ok()
+    }
 }
 
 #[cfg(test)]
@@ -77,7 +89,7 @@ mod tests {
             heartbeat_count: 100,
             heartbeat_root: [0u8; 32],
             peer_diversity: 10,
-            signature: vec![0u8; 64],
+            signature: [0u8; 64],
         };
         assert_eq!(proof.availability_score(), 1000);
         assert!(proof.is_highly_available());
@@ -92,7 +104,7 @@ mod tests {
             heartbeat_count: 90,
             heartbeat_root: [0u8; 32],
             peer_diversity: 5,
-            signature: vec![0u8; 64],
+            signature: [0u8; 64],
         };
         assert_eq!(proof.availability_score(), 900);
         assert!(!proof.is_highly_available());
@@ -107,7 +119,7 @@ mod tests {
             heartbeat_count: 0,
             heartbeat_root: [0u8; 32],
             peer_diversity: 0,
-            signature: vec![0u8; 64],
+            signature: [0u8; 64],
         };
         assert_eq!(proof.availability_score(), 0);
     }
@@ -121,7 +133,7 @@ mod tests {
             heartbeat_count: 100,
             heartbeat_root: [0u8; 32],
             peer_diversity: 10,
-            signature: vec![0u8; 64],
+            signature: [0u8; 64],
         };
         assert_eq!(proof.to_signing_bytes().len(), 86);
     }

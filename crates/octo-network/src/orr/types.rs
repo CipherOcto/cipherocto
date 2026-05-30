@@ -65,7 +65,6 @@ impl OnionRoute {
 
 /// OnionHop — per-hop encrypted routing instructions (RFC-0858 §2.2)
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[repr(C)]
 pub struct OnionHop {
     /// Hop index in the route (0 = entry, hop_count-1 = exit)
     pub hop_index: u16,
@@ -74,7 +73,8 @@ pub struct OnionHop {
     /// Merkle root of remaining route's transport vectors
     pub transport_vector_root: [u8; 32],
     /// Encrypted next-hop instructions (128 bytes = 96 plaintext + 16 MAC + 16 padding)
-    pub encrypted_next_hop: Vec<u8>,
+    #[serde(with = "serde_bytes")]
+    pub encrypted_next_hop: [u8; 128],
     /// Encrypted payload fragment (peeled at this hop)
     pub encrypted_payload_fragment: Vec<u8>,
     /// Hop-level MAC for integrity (BLAKE3-256)
@@ -155,7 +155,6 @@ pub enum CoverPolicy {
 
 /// CoverEnvelope — cover traffic envelope (RFC-0858 §6.1)
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[repr(C)]
 pub struct CoverEnvelope {
     /// Same structure as OnionRoute
     pub route: OnionRoute,

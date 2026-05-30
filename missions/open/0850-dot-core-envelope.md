@@ -2,7 +2,7 @@
 
 ## Status
 
-Open
+Implemented (envelope, signing, wire format, tests)
 
 ## RFC
 

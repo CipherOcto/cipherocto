@@ -276,7 +276,9 @@ impl PlatformAdapter for MatrixAdapter {
                 let hash = Self::domain_hash(r);
                 hash == domain.domain_hash
             })
-            .ok_or_else(|| transport_err(format!("No room found for domain {:?}", domain.domain_hash)))?;
+            .ok_or_else(|| {
+                transport_err(format!("No room found for domain {:?}", domain.domain_hash))
+            })?;
 
         // Retry with exponential backoff
         let retry_cfg = octo_network::dot::adapters::backoff::RetryConfig::default();
@@ -285,14 +287,19 @@ impl PlatformAdapter for MatrixAdapter {
         for attempt in 0..=retry_cfg.max_retries {
             let result = if wire_bytes.len() > Self::max_payload_bytes() {
                 // Upload as media file for large envelopes
-                match self.upload_media("envelope.bin", &wire_bytes, "application/octet-stream").await {
+                match self
+                    .upload_media("envelope.bin", &wire_bytes, "application/octet-stream")
+                    .await
+                {
                     Ok(upload) => {
                         let content = serde_json::json!({
                             "msgtype": "m.file",
                             "body": "envelope.bin",
                             "url": upload.content_uri
                         });
-                        self.send_message(room_id, content).await.map(|r| r.event_id)
+                        self.send_message(room_id, content)
+                            .await
+                            .map(|r| r.event_id)
                     }
                     Err(e) => Err(e),
                 }
@@ -309,13 +316,14 @@ impl PlatformAdapter for MatrixAdapter {
                 }
                 Err(e) => {
                     last_err = e.clone();
-                    if e.contains("429") || e.contains("rate limit") || e.contains("M_LIMIT_EXCEEDED") {
-                        if retry_cfg.should_retry(attempt) {
+                    if (e.contains("429")
+                        || e.contains("rate limit")
+                        || e.contains("M_LIMIT_EXCEEDED"))
+                        && retry_cfg.should_retry(attempt) {
                             let delay = retry_cfg.delay_for_attempt(attempt);
                             tokio::time::sleep(delay).await;
                             continue;
                         }
-                    }
                     return Err(transport_err(e));
                 }
             }
@@ -332,7 +340,7 @@ impl PlatformAdapter for MatrixAdapter {
         let sync = self
             .sync(since.as_deref(), 5000)
             .await
-            .map_err(|e| transport_err(e))?;
+            .map_err(transport_err)?;
 
         // Persist next_batch for next call
         if !sync.next_batch.is_empty() {
@@ -377,11 +385,12 @@ impl PlatformAdapter for MatrixAdapter {
             return Err(transport_err("Empty payload"));
         }
         // payload contains full wire bytes from decode_envelope() in receive_messages()
-        DeterministicEnvelope::from_wire_bytes(&raw.payload)
-            .map_err(|e| PlatformAdapterError::ApiError {
+        DeterministicEnvelope::from_wire_bytes(&raw.payload).map_err(|e| {
+            PlatformAdapterError::ApiError {
                 code: 400,
                 message: format!("canonicalize failed: {}", e),
-            })
+            }
+        })
     }
 
     fn capabilities(&self) -> CapabilityReport {
@@ -421,10 +430,19 @@ impl PlatformAdapter for MatrixAdapter {
             Ok(Ok(resp)) => {
                 if resp.status().is_success() {
                     // Also resolve and cache user_id via whoami
-                    let whoami_url = format!("{}/_matrix/client/v3/account/whoami", self.config.homeserver_url);
-                    if let Ok(whoami_resp) = self.client.get(&whoami_url)
-                        .header("Authorization", format!("Bearer {}", self.config.access_token))
-                        .send().await
+                    let whoami_url = format!(
+                        "{}/_matrix/client/v3/account/whoami",
+                        self.config.homeserver_url
+                    );
+                    if let Ok(whoami_resp) = self
+                        .client
+                        .get(&whoami_url)
+                        .header(
+                            "Authorization",
+                            format!("Bearer {}", self.config.access_token),
+                        )
+                        .send()
+                        .await
                     {
                         if let Ok(data) = whoami_resp.json::<serde_json::Value>().await {
                             if let Some(uid) = data["user_id"].as_str() {
@@ -435,7 +453,10 @@ impl PlatformAdapter for MatrixAdapter {
                     }
                     Ok(())
                 } else {
-                    Err(transport_err(format!("Health check failed: HTTP {}", resp.status())))
+                    Err(transport_err(format!(
+                        "Health check failed: HTTP {}",
+                        resp.status()
+                    )))
                 }
             }
             Ok(Err(e)) => Err(transport_err(format!("Health check failed: {}", e))),
@@ -508,6 +529,8 @@ pub extern "C" fn platform_type() -> u16 {
 }
 
 #[no_mangle]
+/// # Safety
+/// `config` must point to a valid buffer of at least `len` bytes.
 pub unsafe extern "C" fn create_adapter(config: *const u8, config_len: usize) -> *mut () {
     if config.is_null() || config_len == 0 {
         return std::ptr::null_mut();
@@ -521,6 +544,8 @@ pub unsafe extern "C" fn create_adapter(config: *const u8, config_len: usize) ->
 }
 
 #[no_mangle]
+/// # Safety
+/// `ptr` must be a pointer previously returned by `create_adapter`.
 pub unsafe extern "C" fn destroy_adapter(adapter: *mut ()) {
     if !adapter.is_null() {
         let _ = Box::from_raw(adapter as *mut MatrixAdapter);

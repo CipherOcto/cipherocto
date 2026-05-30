@@ -1,9 +1,6 @@
 //! Mission key hierarchy (RFC-0853 §6)
 
 use crate::ocrypt::error::CryptoError;
-use blake3;
-use hkdf::Hkdf;
-use sha2::Sha256;
 
 /// Domain separation strings for mission key derivation
 const MISSION_ROOT_DOMAIN: &str = "ocrypt:mission:root:v1";
@@ -74,10 +71,8 @@ impl MissionKeyHierarchy {
         domain: &'static str,
         info: &[u8; 32],
     ) -> Result<[u8; 32], CryptoError> {
-        let hk = Hkdf::<Sha256>::new(Some(domain.as_bytes()), ikm);
         let mut output = [0u8; 32];
-        hk.expand(info, &mut output)
-            .map_err(|_| CryptoError::KeyDerivationFailure { stage: domain })?;
+        super::hkdf_blake3(domain.as_bytes(), ikm, info, &mut output);
         Ok(output)
     }
 }

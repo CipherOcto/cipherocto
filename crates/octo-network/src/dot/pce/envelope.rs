@@ -1,6 +1,7 @@
 //! Proof-Carrying Envelope (RFC-0859 §3.1)
 
 use crate::dot::envelope::DeterministicEnvelope;
+#[cfg(test)]
 use crate::dot::pce::proof_type::ProofSystemId;
 
 /// Proof-Carrying Envelope — wraps a DOT envelope with a zero-knowledge proof.

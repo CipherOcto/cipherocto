@@ -28,6 +28,12 @@ pub enum MonError {
 
     #[error("Rekeying failed: {reason}")]
     RekeyingFailed { reason: String },
+
+    #[error("Invalid governance policy: {reason}")]
+    InvalidGovernancePolicy { reason: String },
+
+    #[error("Invalid role assignment: {reason}")]
+    InvalidRoleAssignment { reason: String },
 }
 
 #[cfg(test)]
@@ -65,6 +71,12 @@ mod tests {
         };
         let _ = MonError::RekeyingFailed {
             reason: "timeout".to_string(),
+        };
+        let _ = MonError::InvalidGovernancePolicy {
+            reason: "denominator is zero".to_string(),
+        };
+        let _ = MonError::InvalidRoleAssignment {
+            reason: "insufficient trust".to_string(),
         };
     }
 }

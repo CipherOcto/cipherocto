@@ -50,7 +50,7 @@ pub enum ProofCircuitModel {
     /// PLONKish (customizable gate constraints)
     PLONKISH = 0x0003,
     /// zkVM (virtual machine execution trace)
-    zkVM = 0x0004,
+    ZkVm = 0x0004,
     /// Recursive composition of inner proofs
     Recursive = 0x0005,
 }

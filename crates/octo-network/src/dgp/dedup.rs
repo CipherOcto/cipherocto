@@ -80,22 +80,43 @@ impl GossipReplayCache {
     }
 }
 
-/// HashSet-based deduplication for O(1) lookup.
+/// BTreeSet-based deduplication for deterministic O(log n) lookup.
+///
+/// Bounded by `max_entries`; evicts the smallest hash when at capacity
+/// (same deterministic policy as `GossipReplayCache`).
 #[derive(Debug, Clone)]
 pub struct DedupSet {
     seen: BTreeSet<[u8; 32]>,
+    max_entries: usize,
 }
 
 impl DedupSet {
-    pub fn new() -> Self {
+    /// Create a new bounded dedup set.
+    pub fn new(max_entries: usize) -> Self {
         Self {
             seen: BTreeSet::new(),
+            max_entries,
         }
     }
 
     /// Returns true if this is a new object (not seen before).
+    /// If at capacity, evicts the smallest hash deterministically before inserting.
     pub fn insert_if_new(&mut self, object_hash: [u8; 32]) -> bool {
-        self.seen.insert(object_hash)
+        if self.seen.contains(&object_hash) {
+            return false;
+        }
+        if self.seen.len() >= self.max_entries {
+            self.evict_one();
+        }
+        self.seen.insert(object_hash);
+        true
+    }
+
+    /// Evict the smallest hash (BTreeMap natural ordering = deterministic).
+    fn evict_one(&mut self) {
+        if let Some(key) = self.seen.iter().next().copied() {
+            self.seen.remove(&key);
+        }
     }
 
     pub fn contains(&self, object_hash: &[u8; 32]) -> bool {
@@ -105,11 +126,15 @@ impl DedupSet {
     pub fn len(&self) -> usize {
         self.seen.len()
     }
+
+    pub fn is_empty(&self) -> bool {
+        self.seen.is_empty()
+    }
 }
 
 impl Default for DedupSet {
     fn default() -> Self {
-        Self::new()
+        Self::new(100_000)
     }
 }
 
@@ -150,7 +175,7 @@ mod tests {
 
     #[test]
     fn test_dedup_set_insert_if_new() {
-        let mut set = DedupSet::new();
+        let mut set = DedupSet::new(1000);
         assert!(set.insert_if_new([0xAA; 32]));
         assert!(!set.insert_if_new([0xAA; 32]));
         assert!(set.insert_if_new([0xBB; 32]));

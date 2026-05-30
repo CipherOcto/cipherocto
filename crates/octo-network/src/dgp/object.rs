@@ -37,6 +37,9 @@ impl GossipObjectType {
 }
 
 /// Propagation flags bitmask.
+///
+/// Note: serde Serialize/Deserialize is used for config/test convenience only.
+/// Consensus-critical serialization uses manual canonical byte encoding per RFC-0126.
 pub const FLAG_FLOOD: u64 = 0x0001;
 pub const FLAG_INCREMENTAL: u64 = 0x0002;
 pub const FLAG_ANTI_ENTROPY: u64 = 0x0004;
@@ -45,6 +48,9 @@ pub const FLAG_RELIABLE: u64 = 0x0010;
 pub const FLAG_COMPRESSED: u64 = 0x0020;
 
 /// Gossip priority for scheduling.
+///
+/// Note: serde derives are for config/test convenience only.
+/// Consensus ordering uses `canonical_sort()` from the ordering module.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 #[repr(u8)]
 pub enum GossipPriority {
@@ -56,8 +62,21 @@ pub enum GossipPriority {
     Archive = 5,
 }
 
+/// Bitmask covering all defined propagation flags (bits 0-5).
+const VALID_FLAGS_MASK: u64 = 0x3F;
+
+/// Validate propagation flags — reserved bits (6-63) must be zero per RFC-0852 §5.
+///
+/// Returns `Ok(())` if valid, `Err(DgpError::InvalidFlags)` if reserved bits are set.
+pub fn validate_flags(flags: u64) -> Result<(), DgpError> {
+    if (flags & !VALID_FLAGS_MASK) != 0 {
+        return Err(DgpError::InvalidFlags { flags });
+    }
+    Ok(())
+}
+
 /// Canonical gossip object (RFC-0852 §3).
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[repr(C)]
 pub struct GossipObject {
     /// Object type
@@ -79,6 +98,7 @@ pub struct GossipObject {
     /// Merkle root of payload
     pub payload_root: [u8; 32],
     /// Ed25519 signature
+    #[serde(with = "serde_bytes")]
     pub signature: [u8; 64],
 }
 

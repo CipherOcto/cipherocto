@@ -56,12 +56,21 @@ impl MempoolPool {
 
     /// Insert an intent into the appropriate mission pool.
     pub fn insert(&mut self, intent: OverlayIntent) -> Result<(), DomError> {
+        // Enforce global capacity
+        if self.total_count() as u32 >= self.max_global {
+            return Err(DomError::CapacityExceeded {
+                scope: 0x0001, // GLOBAL
+                max_entries: self.max_global,
+            });
+        }
+
         let mission_id = intent.mission_id;
+        let scope = self.scopes.get(&mission_id).copied().unwrap_or(0x0003);
         let pool = self.pools.entry(mission_id).or_default();
 
         if pool.len() as u32 >= self.max_per_mission {
             return Err(DomError::CapacityExceeded {
-                scope: 0x0003,
+                scope,
                 max_entries: self.max_per_mission,
             });
         }
@@ -96,6 +105,10 @@ impl MempoolPool {
         for pool in self.pools.values_mut() {
             pool.retain(|i| i.expiration > current_timestamp);
         }
+        // Remove empty pools and their scope entries
+        self.pools.retain(|_, pool| !pool.is_empty());
+        self.scopes
+            .retain(|mission_id, _| self.pools.contains_key(mission_id));
     }
 
     /// Get mission IDs.

@@ -2,7 +2,9 @@
 
 use serde::{Deserialize, Serialize};
 
-use crate::mon::mission_id::MissionId;
+use crate::mon::governance::GovernanceModel;
+use crate::mon::lifecycle::MissionState;
+use crate::mon::mission_id::{MissionId, MissionType};
 
 /// Topology models (RFC-0855 §5.1)
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -77,9 +79,9 @@ pub const MISSION_FLAG_EPHEMERAL: u64 = 0x0008;
 pub struct MissionDescriptor {
     pub mission_id: MissionId,
     pub descriptor_version: u64,
-    pub mission_type: u16,
+    pub mission_type: MissionType,
     pub creation_epoch: u64,
-    pub governance_model: u16,
+    pub governance_model: GovernanceModel,
     pub cryptographic_suite: u16,
     pub mission_root: [u8; 32],
     pub max_participants: u32,
@@ -93,11 +95,12 @@ pub struct MissionDescriptor {
 #[repr(C)]
 pub struct MissionStateRoot {
     pub mission_id: MissionId,
-    pub state: u16,
+    pub state: MissionState,
     pub epoch: u64,
     pub state_root: [u8; 32],
     pub participant_root: [u8; 32],
     pub execution_root: [u8; 32],
+    pub gossip_root: [u8; 32],
 }
 
 #[cfg(test)]

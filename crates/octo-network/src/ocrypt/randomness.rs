@@ -1,12 +1,10 @@
 //! Deterministic randomness derivation (RFC-0853 §11)
 
 use crate::ocrypt::error::CryptoError;
-use hkdf::Hkdf;
-use sha2::Sha256;
 
 /// Derive deterministic randomness for consensus-critical paths.
 ///
-/// output = HKDF-BLAKE3(ikm=seed, salt=context, info=epoch_bytes, length=output_len)
+/// output = HKDF-BLAKE3(salt=context, ikm=seed, info=epoch_bytes, length=output_len)
 ///
 /// Forbidden sources for consensus: OS entropy, hardware RNG, platform APIs.
 pub fn derive_deterministic_random(
@@ -15,13 +13,9 @@ pub fn derive_deterministic_random(
     epoch: u64,
     output_len: usize,
 ) -> Result<Vec<u8>, CryptoError> {
-    let hk = Hkdf::<Sha256>::new(Some(context), seed);
-    let mut output = vec![0u8; output_len];
     let info = epoch.to_be_bytes();
-    hk.expand(&info, &mut output)
-        .map_err(|_| CryptoError::KeyDerivationFailure {
-            stage: "deterministic_randomness",
-        })?;
+    let mut output = vec![0u8; output_len];
+    super::hkdf_blake3(context, seed, &info, &mut output);
     Ok(output)
 }
 

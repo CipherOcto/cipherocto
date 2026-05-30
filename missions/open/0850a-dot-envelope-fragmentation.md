@@ -2,7 +2,7 @@
 
 ## Status
 
-Open
+Implemented (494 lines, 11 tests, fragment_envelope, reassembly)
 
 ## RFC
 

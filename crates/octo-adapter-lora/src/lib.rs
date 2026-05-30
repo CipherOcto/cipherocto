@@ -27,8 +27,7 @@ use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::sync::{mpsc, Mutex};
 
 use octo_network::dot::adapters::{
-    backoff::RetryConfig, CapabilityReport, DeliveryReceipt, PlatformAdapter,
-    RawPlatformMessage,
+    backoff::RetryConfig, CapabilityReport, DeliveryReceipt, PlatformAdapter, RawPlatformMessage,
 };
 use octo_network::dot::domain::{BroadcastDomainId, PlatformType};
 use octo_network::dot::envelope::DeterministicEnvelope;
@@ -91,7 +90,9 @@ impl LoraAdapter {
     /// Start serial listener task (idempotent).
     async fn ensure_listener_started(&self) -> Result<(), PlatformAdapterError> {
         let mut started = self.listener_started.lock().await;
-        if *started { return Ok(()); }
+        if *started {
+            return Ok(());
+        }
 
         let serial_port = self.config.serial_port.clone();
         let baud_rate = self.config.baud_rate;
@@ -126,10 +127,7 @@ impl LoraAdapter {
 
     /// Domain hash: `BLAKE3-256("lora:{device_id}")`
     pub fn domain_hash(device_id: &str) -> [u8; 32] {
-        *blake3::hash(
-            format!("lora:{}", device_id.trim().to_lowercase()).as_bytes(),
-        )
-        .as_bytes()
+        *blake3::hash(format!("lora:{}", device_id.trim().to_lowercase()).as_bytes()).as_bytes()
     }
 
     /// Split a payload into LoRa-safe chunks that fit within the max payload size.
@@ -142,8 +140,12 @@ impl LoraAdapter {
     }
 
     pub const PLATFORM_TYPE: u16 = 0x000C;
-    pub fn max_payload_bytes() -> usize { MAX_PAYLOAD_BYTES }
-    pub fn rate_limit_per_second() -> u32 { 1 }
+    pub fn max_payload_bytes() -> usize {
+        MAX_PAYLOAD_BYTES
+    }
+    pub fn rate_limit_per_second() -> u32 {
+        1
+    }
 }
 
 // ── Serial Listener ────────────────────────────────────────────────
@@ -183,19 +185,12 @@ async fn serial_listener(
                                 if let Ok(line) = std::str::from_utf8(&line_bytes) {
                                     let trimmed = line.trim();
                                     if trimmed.starts_with(DOT_PREFIX) {
-                                        if let Ok(payload) =
-                                            LoraAdapter::decode_message(trimmed)
-                                        {
+                                        if let Ok(payload) = LoraAdapter::decode_message(trimmed) {
                                             let mut metadata = BTreeMap::new();
-                                            metadata.insert(
-                                                "serial_port".into(),
-                                                serial_port.clone(),
-                                            );
+                                            metadata
+                                                .insert("serial_port".into(), serial_port.clone());
                                             let _ = tx.try_send(RawPlatformMessage {
-                                                platform_id: format!(
-                                                    "lora-{}",
-                                                    epoch_millis()
-                                                ),
+                                                platform_id: format!("lora-{}", epoch_millis()),
                                                 payload,
                                                 metadata,
                                             });
@@ -325,7 +320,6 @@ impl PlatformAdapter for LoraAdapter {
         PlatformType::LoRa
     }
 
-
     async fn shutdown(&self) -> Result<(), PlatformAdapterError> {
         Ok(())
     }
@@ -354,6 +348,8 @@ pub extern "C" fn platform_type() -> u16 {
 }
 
 #[no_mangle]
+/// # Safety
+/// `config` must point to a valid buffer of at least `len` bytes.
 pub unsafe extern "C" fn create_adapter(config: *const u8, config_len: usize) -> *mut () {
     if config.is_null() || config_len == 0 {
         return std::ptr::null_mut();
@@ -366,6 +362,8 @@ pub unsafe extern "C" fn create_adapter(config: *const u8, config_len: usize) ->
 }
 
 #[no_mangle]
+/// # Safety
+/// `ptr` must be a pointer previously returned by `create_adapter`.
 pub unsafe extern "C" fn destroy_adapter(adapter: *mut ()) {
     if !adapter.is_null() {
         let _ = Box::from_raw(adapter as *mut LoraAdapter);
@@ -446,10 +444,8 @@ mod tests {
             "baud_rate": 115200,
             "device_id": "lora-node-001"
         });
-        let adapter = LoraAdapter::from_config_bytes(
-            serde_json::to_vec(&json).unwrap().as_slice(),
-        )
-        .unwrap();
+        let adapter =
+            LoraAdapter::from_config_bytes(serde_json::to_vec(&json).unwrap().as_slice()).unwrap();
         assert_eq!(adapter.config.serial_port, "/dev/ttyUSB0");
         assert_eq!(adapter.config.baud_rate, 115200);
         assert_eq!(adapter.config.device_id, "lora-node-001");
@@ -461,10 +457,8 @@ mod tests {
             "serial_port": "/dev/ttyUSB0",
             "device_id": "lora-node-001"
         });
-        let adapter = LoraAdapter::from_config_bytes(
-            serde_json::to_vec(&json).unwrap().as_slice(),
-        )
-        .unwrap();
+        let adapter =
+            LoraAdapter::from_config_bytes(serde_json::to_vec(&json).unwrap().as_slice()).unwrap();
         assert_eq!(adapter.config.baud_rate, 9600);
     }
 

@@ -19,8 +19,7 @@ use serde::Deserialize;
 use tokio::sync::Mutex;
 
 use octo_network::dot::adapters::{
-    backoff::RetryConfig, CapabilityReport, DeliveryReceipt, PlatformAdapter,
-    RawPlatformMessage,
+    backoff::RetryConfig, CapabilityReport, DeliveryReceipt, PlatformAdapter, RawPlatformMessage,
 };
 use octo_network::dot::domain::{BroadcastDomainId, PlatformType};
 use octo_network::dot::envelope::DeterministicEnvelope;
@@ -68,8 +67,12 @@ impl WebRTCAdapter {
     }
 
     pub const PLATFORM_TYPE: u16 = 0x000D;
-    pub fn max_payload_bytes() -> usize { 262_144 }
-    pub fn rate_limit_per_second() -> u32 { 1000 }
+    pub fn max_payload_bytes() -> usize {
+        262_144
+    }
+    pub fn rate_limit_per_second() -> u32 {
+        1000
+    }
 
     /// Encode an envelope as base64 with DOT/1/ prefix.
     pub fn encode_envelope(envelope_bytes: &[u8]) -> String {
@@ -193,7 +196,6 @@ impl PlatformAdapter for WebRTCAdapter {
         PlatformType::WebRTC
     }
 
-
     async fn shutdown(&self) -> Result<(), PlatformAdapterError> {
         Ok(())
     }
@@ -201,12 +203,7 @@ impl PlatformAdapter for WebRTCAdapter {
         // Stub: check signaling URL reachability
         let timeout = std::time::Duration::from_secs(5);
         let client = reqwest::Client::new();
-        match tokio::time::timeout(
-            timeout,
-            client.head(&self.config.signaling_url).send(),
-        )
-        .await
-        {
+        match tokio::time::timeout(timeout, client.head(&self.config.signaling_url).send()).await {
             Ok(Ok(_)) => Ok(()),
             Ok(Err(e)) => Err(transport_err(format!("Health check failed: {e}"))),
             Err(_) => Err(transport_err("Health check timed out")),
@@ -224,12 +221,18 @@ fn epoch_millis() -> u64 {
 // ── Plugin ABI ─────────────────────────────────────────────────────
 
 #[no_mangle]
-pub extern "C" fn adapter_version() -> u32 { 1 }
+pub extern "C" fn adapter_version() -> u32 {
+    1
+}
 
 #[no_mangle]
-pub extern "C" fn platform_type() -> u16 { 0x000D }
+pub extern "C" fn platform_type() -> u16 {
+    0x000D
+}
 
 #[no_mangle]
+/// # Safety
+/// `config` must point to a valid buffer of at least `len` bytes.
 pub unsafe extern "C" fn create_adapter(config: *const u8, config_len: usize) -> *mut () {
     if config.is_null() || config_len == 0 {
         return std::ptr::null_mut();
@@ -242,6 +245,8 @@ pub unsafe extern "C" fn create_adapter(config: *const u8, config_len: usize) ->
 }
 
 #[no_mangle]
+/// # Safety
+/// `ptr` must be a pointer previously returned by `create_adapter`.
 pub unsafe extern "C" fn destroy_adapter(adapter: *mut ()) {
     if !adapter.is_null() {
         let _ = Box::from_raw(adapter as *mut WebRTCAdapter);
@@ -296,9 +301,8 @@ mod tests {
             "ice_servers": ["stun:stun.l.google.com:19302"],
             "peer_id": "peer-abc123"
         });
-        let a =
-            WebRTCAdapter::from_config_bytes(serde_json::to_vec(&json).unwrap().as_slice())
-                .unwrap();
+        let a = WebRTCAdapter::from_config_bytes(serde_json::to_vec(&json).unwrap().as_slice())
+            .unwrap();
         assert_eq!(a.config.signaling_url, "https://signal.example.com/offer");
         assert_eq!(a.config.ice_servers.len(), 1);
         assert_eq!(a.config.peer_id, "peer-abc123");

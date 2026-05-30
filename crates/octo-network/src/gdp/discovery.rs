@@ -141,9 +141,12 @@ impl DiscoveryState {
                 ),
             });
         }
-        if self.peer_count == 0 {
+        if self.peer_count < 5 {
             return Err(GdpError::InvalidAdvertisement {
-                reason: "Cannot start expansion with 0 peers".into(),
+                reason: format!(
+                    "Cannot start expansion with {} peers, need >= 5 (RFC Section 13)",
+                    self.peer_count
+                ),
             });
         }
         self.phase = DiscoveryLifecycle::Expansion;
@@ -237,7 +240,7 @@ mod tests {
         let mut state = DiscoveryState::new(BootstrapMethod::Static);
         assert_eq!(state.phase, DiscoveryLifecycle::Bootstrap);
 
-        // Cannot expand with 0 peers
+        // Cannot expand with fewer than 5 peers (RFC Section 13)
         assert!(state.start_expansion().is_err());
 
         state.add_discovered_peers(5);
@@ -255,7 +258,7 @@ mod tests {
     #[test]
     fn test_discovery_bad_transition() {
         let mut state = DiscoveryState::new(BootstrapMethod::QrBlob);
-        state.add_discovered_peers(1);
+        state.add_discovered_peers(5);
         state.start_expansion().unwrap();
 
         // Cannot go back to bootstrap

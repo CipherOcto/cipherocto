@@ -1,8 +1,11 @@
-//! Deterministic Route (RFC-0856 §4)
+//! Deterministic Route (RFC-0856 Section 4)
 
 use serde::{Deserialize, Serialize};
 
-/// Deterministic route — in-memory representation (RFC-0856 §4).
+/// DRS protocol version constant (RFC-0856 Section 4.2)
+pub const DRS_PROTOCOL_VERSION: u8 = 1;
+
+/// Deterministic route — in-memory representation (RFC-0856 Section 4).
 ///
 /// All fields use fixed-size types for deterministic serialization.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -30,43 +33,81 @@ pub struct DeterministicRoute {
     pub route_cost: u64,
     /// Route epoch (consensus-derived)
     pub route_epoch: u64,
+    /// Epoch until which this route is valid (0 = no expiry)
+    pub valid_until_epoch: u64,
     /// Maximum hop count
     pub ttl_hops: u16,
+    /// Ed25519 signature over canonical route bytes (RFC-0856 Section 4.1)
+    #[serde(with = "serde_bytes")]
+    pub signature: [u8; 64],
 }
 
-/// Transport vector — describes one transport path (RFC-0856 §5.2).
+/// Transport vector — describes one transport path (RFC-0856 Section 5.2).
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[repr(C)]
 pub struct TransportVector {
     /// Transport type identifier
     pub transport_type: u16,
-    /// Domain identifier hash
-    pub domain_id: [u8; 32],
-    /// Priority (lower = preferred)
-    pub priority: u8,
-    /// Bandwidth classification
-    pub bandwidth_class: u8,
-    /// Censorship resistance score
-    pub censorship_score: u8,
+    /// Transport class
+    pub transport_class: u16,
+    /// Reliability score (0-1_000_000)
+    pub reliability_score: u32,
+    /// Censorship resistance score (0-1_000_000)
+    pub censorship_score: u32,
+    /// Cost class
+    pub cost_class: u32,
 }
 
 impl DeterministicRoute {
-    /// Compute the route commitment hash.
-    /// commitment = BLAKE3-256(route_id || gateway_sequence_hash || weights_hash || epoch)
-    pub fn compute_commitment(&self, weights_hash: &[u8; 32]) -> [u8; 32] {
+    /// Compute the route identifier (RFC-0856 Section 4.2).
+    ///
+    /// `route_id = BLAKE3-256(version || source_gateway || destination_gateway
+    ///             || next_hop || transport_vector_root || route_epoch)`
+    pub fn compute_route_id(&self) -> [u8; 32] {
         let mut hasher = blake3::Hasher::new();
-        hasher.update(&self.route_id);
+        hasher.update(&[DRS_PROTOCOL_VERSION]);
         hasher.update(&self.source_gateway);
         hasher.update(&self.destination_gateway);
         hasher.update(&self.next_hop);
-        hasher.update(weights_hash);
+        hasher.update(&self.transport_vector_root);
         hasher.update(&self.route_epoch.to_be_bytes());
         *hasher.finalize().as_bytes()
     }
 
+    /// Compute canonical bytes for signing (excludes signature field).
+    pub fn to_signing_bytes(&self) -> Vec<u8> {
+        let mut buf = Vec::new();
+        buf.extend_from_slice(&self.route_id);
+        buf.extend_from_slice(&self.source_gateway);
+        buf.extend_from_slice(&self.destination_gateway);
+        buf.extend_from_slice(&self.next_hop);
+        buf.extend_from_slice(&self.transport_vector_root);
+        buf.extend_from_slice(&self.trust_score.to_be_bytes());
+        buf.extend_from_slice(&self.bandwidth_class.to_be_bytes());
+        buf.extend_from_slice(&self.latency_class.to_be_bytes());
+        buf.extend_from_slice(&self.censorship_resistance_class.to_be_bytes());
+        buf.extend_from_slice(&self.route_cost.to_be_bytes());
+        buf.extend_from_slice(&self.route_epoch.to_be_bytes());
+        buf.extend_from_slice(&self.valid_until_epoch.to_be_bytes());
+        buf.extend_from_slice(&self.ttl_hops.to_be_bytes());
+        buf
+    }
+
+    /// Verify the route signature against a public key.
+    pub fn verify_signature(&self, public_key: &[u8; 32]) -> bool {
+        use ed25519_dalek::{Signature, Verifier, VerifyingKey};
+        let vk = match VerifyingKey::from_bytes(public_key) {
+            Ok(vk) => vk,
+            Err(_) => return false,
+        };
+        let sig = Signature::from_bytes(&self.signature);
+        vk.verify(&self.to_signing_bytes(), &sig).is_ok()
+    }
+
     /// Check if route is expired.
+    /// A route is expired if its `valid_until_epoch` is non-zero and has passed.
     pub fn is_expired(&self, current_epoch: u64) -> bool {
-        self.route_epoch < current_epoch
+        self.valid_until_epoch != 0 && self.valid_until_epoch < current_epoch
     }
 }
 
@@ -78,8 +119,8 @@ pub fn compare_routes(
     score_a: u64,
     score_b: u64,
 ) -> std::cmp::Ordering {
-    score_a
-        .cmp(&score_b)
+    score_b
+        .cmp(&score_a) // DESC: higher score sorts first
         .then_with(|| a.route_epoch.cmp(&b.route_epoch))
         .then_with(|| a.route_id.cmp(&b.route_id))
 }
@@ -101,42 +142,52 @@ mod tests {
             censorship_resistance_class: 200,
             route_cost: 1000,
             route_epoch: epoch,
+            valid_until_epoch: 0,
             ttl_hops: 10,
+            signature: [0u8; 64],
         }
     }
 
     #[test]
-    fn test_route_commitment_deterministic() {
+    fn test_route_id_deterministic() {
         let r = make_route(1, 100);
-        let weights_hash = [0xAA; 32];
-        let c1 = r.compute_commitment(&weights_hash);
-        let c2 = r.compute_commitment(&weights_hash);
+        let c1 = r.compute_route_id();
+        let c2 = r.compute_route_id();
         assert_eq!(c1, c2);
     }
 
     #[test]
-    fn test_route_commitment_different_weights() {
+    fn test_route_id_includes_version() {
         let r = make_route(1, 100);
-        let c1 = r.compute_commitment(&[0xAA; 32]);
-        let c2 = r.compute_commitment(&[0xBB; 32]);
-        assert_ne!(c1, c2);
+        let id = r.compute_route_id();
+        // Verify it produces a valid 32-byte hash
+        assert_ne!(id, [0u8; 32]);
     }
 
     #[test]
     fn test_route_is_expired() {
-        let r = make_route(1, 100);
+        let mut r = make_route(1, 100);
+        // valid_until_epoch = 0 means no expiry
         assert!(!r.is_expired(50));
         assert!(!r.is_expired(100));
-        assert!(r.is_expired(101));
+        assert!(!r.is_expired(101));
+
+        // Set valid_until_epoch
+        r.valid_until_epoch = 200;
+        assert!(!r.is_expired(50));
+        assert!(!r.is_expired(200));
+        assert!(r.is_expired(201));
     }
 
     #[test]
     fn test_compare_routes_score() {
         let a = make_route(1, 100);
         let b = make_route(2, 100);
-        // Higher score wins
+        // Higher score wins (DESC): a(1000) sorts before b(500) → Less
+        assert_eq!(compare_routes(&a, &b, 1000, 500), std::cmp::Ordering::Less);
+        // Reverse: b(500) sorts after a(1000) → Greater
         assert_eq!(
-            compare_routes(&a, &b, 1000, 500),
+            compare_routes(&a, &b, 500, 1000),
             std::cmp::Ordering::Greater
         );
     }

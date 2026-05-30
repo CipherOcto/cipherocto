@@ -5,8 +5,6 @@ use chacha20poly1305::{
     aead::{AeadInPlace, KeyInit},
     ChaCha20Poly1305, Key, Nonce,
 };
-use hkdf::Hkdf;
-use sha2::Sha256;
 
 /// Domain separation for session key derivation
 pub const SESSION_KEY_DOMAIN: &str = "ocrypt:session:v1";
@@ -46,12 +44,13 @@ pub fn derive_session_key(
     info.extend_from_slice(ephemeral_public_a);
     info.extend_from_slice(ephemeral_public_b);
 
-    let hk = Hkdf::<Sha256>::new(Some(SESSION_KEY_DOMAIN.as_bytes()), shared_secret);
     let mut session_key = [0u8; KEY_SIZE];
-    hk.expand(&info, &mut session_key)
-        .map_err(|_| CryptoError::KeyDerivationFailure {
-            stage: "session_key",
-        })?;
+    super::hkdf_blake3(
+        SESSION_KEY_DOMAIN.as_bytes(),
+        shared_secret,
+        &info,
+        &mut session_key,
+    );
 
     Ok(SessionKeyMaterial { session_key })
 }
@@ -63,10 +62,13 @@ pub fn derive_nonce(
     session_key: &[u8; KEY_SIZE],
     context: &[u8],
 ) -> Result<[u8; NONCE_SIZE], CryptoError> {
-    let hk = Hkdf::<Sha256>::new(Some(NONCE_DOMAIN.as_bytes()), session_key);
     let mut full_nonce = [0u8; 32];
-    hk.expand(context, &mut full_nonce)
-        .map_err(|_| CryptoError::KeyDerivationFailure { stage: "nonce" })?;
+    super::hkdf_blake3(
+        NONCE_DOMAIN.as_bytes(),
+        session_key,
+        context,
+        &mut full_nonce,
+    );
 
     let mut nonce = [0u8; NONCE_SIZE];
     nonce.copy_from_slice(&full_nonce[..NONCE_SIZE]);
@@ -78,12 +80,13 @@ pub fn derive_envelope_key(
     shared_secret: &[u8],
     envelope_id: &[u8; 32],
 ) -> Result<[u8; KEY_SIZE], CryptoError> {
-    let hk = Hkdf::<Sha256>::new(Some(ENVELOPE_KEY_DOMAIN.as_bytes()), shared_secret);
     let mut key = [0u8; KEY_SIZE];
-    hk.expand(envelope_id, &mut key)
-        .map_err(|_| CryptoError::KeyDerivationFailure {
-            stage: "envelope_key",
-        })?;
+    super::hkdf_blake3(
+        ENVELOPE_KEY_DOMAIN.as_bytes(),
+        shared_secret,
+        envelope_id,
+        &mut key,
+    );
     Ok(key)
 }
 

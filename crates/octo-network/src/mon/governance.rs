@@ -34,15 +34,48 @@ pub struct GovernancePolicy {
 }
 
 impl GovernancePolicy {
+    /// Create a validated governance policy.
+    pub fn new(
+        model: GovernanceModel,
+        quorum_numerator: u16,
+        quorum_denominator: u16,
+        proposal_deadline_epochs: u64,
+        emergency_authority: EmergencyAuthority,
+    ) -> Result<Self, crate::mon::error::MonError> {
+        if quorum_denominator == 0 {
+            return Err(crate::mon::error::MonError::InvalidGovernancePolicy {
+                reason: "quorum_denominator must be > 0".to_string(),
+            });
+        }
+        if quorum_numerator > quorum_denominator {
+            return Err(crate::mon::error::MonError::InvalidGovernancePolicy {
+                reason: "quorum_numerator must be <= quorum_denominator".to_string(),
+            });
+        }
+        if proposal_deadline_epochs == 0 {
+            return Err(crate::mon::error::MonError::InvalidGovernancePolicy {
+                reason: "proposal_deadline_epochs must be > 0".to_string(),
+            });
+        }
+        Ok(Self {
+            model,
+            quorum_numerator,
+            quorum_denominator,
+            proposal_deadline_epochs,
+            emergency_authority,
+        })
+    }
+
     /// Default DAO policy: 2/3 quorum, 10 epoch deadline, coordinator emergency.
     pub fn default_dao() -> Self {
-        Self {
-            model: GovernanceModel::Dao,
-            quorum_numerator: 2,
-            quorum_denominator: 3,
-            proposal_deadline_epochs: 10,
-            emergency_authority: EmergencyAuthority::Coordinator,
-        }
+        Self::new(
+            GovernanceModel::Dao,
+            2,
+            3,
+            10,
+            EmergencyAuthority::Coordinator,
+        )
+        .expect("default_dao parameters are valid")
     }
 }
 
@@ -82,5 +115,53 @@ mod tests {
     fn test_emergency_authority_repr() {
         assert_eq!(EmergencyAuthority::Coordinator as u16, 0x0001);
         assert_eq!(EmergencyAuthority::None as u16, 0x0003);
+    }
+
+    #[test]
+    fn test_governance_policy_new_valid() {
+        let p = GovernancePolicy::new(
+            GovernanceModel::Dao,
+            2,
+            3,
+            10,
+            EmergencyAuthority::Coordinator,
+        );
+        assert!(p.is_ok());
+    }
+
+    #[test]
+    fn test_governance_policy_new_zero_denominator() {
+        let p = GovernancePolicy::new(
+            GovernanceModel::Dao,
+            2,
+            0,
+            10,
+            EmergencyAuthority::Coordinator,
+        );
+        assert!(p.is_err());
+    }
+
+    #[test]
+    fn test_governance_policy_new_numerator_exceeds_denominator() {
+        let p = GovernancePolicy::new(
+            GovernanceModel::Dao,
+            5,
+            3,
+            10,
+            EmergencyAuthority::Coordinator,
+        );
+        assert!(p.is_err());
+    }
+
+    #[test]
+    fn test_governance_policy_new_zero_deadline() {
+        let p = GovernancePolicy::new(
+            GovernanceModel::Dao,
+            2,
+            3,
+            0,
+            EmergencyAuthority::Coordinator,
+        );
+        assert!(p.is_err());
     }
 }

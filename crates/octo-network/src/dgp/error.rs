@@ -2,6 +2,8 @@
 
 use thiserror::Error;
 
+use super::domain::GossipDomainId;
+
 /// Errors specific to the Deterministic Gossip Protocol.
 #[derive(Debug, Error)]
 pub enum DgpError {
@@ -25,8 +27,8 @@ pub enum DgpError {
 
     #[error("Domain mismatch: expected {expected:?}, got {actual:?}")]
     DomainMismatch {
-        expected: [u8; 32],
-        actual: [u8; 32],
+        expected: GossipDomainId,
+        actual: GossipDomainId,
     },
 
     #[error("Fragment assembly failed for {object_hash:?}: {reason}")]
@@ -46,6 +48,22 @@ pub enum DgpError {
 
     #[error("Signature verification failed: {0}")]
     SignatureVerificationFailed(String),
+
+    #[error("Payload root mismatch for {object_hash:?}: expected {expected:?}, got {actual:?}")]
+    PayloadRootMismatch {
+        object_hash: [u8; 32],
+        expected: [u8; 32],
+        actual: [u8; 32],
+    },
+
+    #[error("Duplicate fragment index {index} for object {object_hash:?}")]
+    DuplicateFragment { object_hash: [u8; 32], index: u32 },
+
+    #[error("Fragment assembler at capacity ({max_assemblies} assemblies)")]
+    AssemblerFull { max_assemblies: usize },
+
+    #[error("Invalid propagation flags: reserved bits set (flags=0x{flags:016x})")]
+    InvalidFlags { flags: u64 },
 }
 
 #[cfg(test)]

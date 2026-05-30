@@ -19,8 +19,7 @@ use serde::Deserialize;
 use tokio::sync::Mutex;
 
 use octo_network::dot::adapters::{
-    backoff::RetryConfig, CapabilityReport, DeliveryReceipt, PlatformAdapter,
-    RawPlatformMessage,
+    backoff::RetryConfig, CapabilityReport, DeliveryReceipt, PlatformAdapter, RawPlatformMessage,
 };
 use octo_network::dot::domain::{BroadcastDomainId, PlatformType};
 use octo_network::dot::envelope::DeterministicEnvelope;
@@ -83,8 +82,12 @@ impl SignalAdapter {
     }
 
     pub const PLATFORM_TYPE: u16 = 0x0005;
-    pub fn max_payload_bytes() -> usize { 65_536 }
-    pub fn rate_limit_per_second() -> u32 { 5 }
+    pub fn max_payload_bytes() -> usize {
+        65_536
+    }
+    pub fn rate_limit_per_second() -> u32 {
+        5
+    }
 
     /// Encode an envelope as base64 with DOT/1/ prefix.
     pub fn encode_envelope(envelope_bytes: &[u8]) -> String {
@@ -318,12 +321,18 @@ fn epoch_millis() -> u64 {
 // ── Plugin ABI ─────────────────────────────────────────────────────
 
 #[no_mangle]
-pub extern "C" fn adapter_version() -> u32 { 1 }
+pub extern "C" fn adapter_version() -> u32 {
+    1
+}
 
 #[no_mangle]
-pub extern "C" fn platform_type() -> u16 { 0x0005 }
+pub extern "C" fn platform_type() -> u16 {
+    0x0005
+}
 
 #[no_mangle]
+/// # Safety
+/// `config` must point to a valid buffer of at least `len` bytes.
 pub unsafe extern "C" fn create_adapter(config: *const u8, config_len: usize) -> *mut () {
     if config.is_null() || config_len == 0 {
         return std::ptr::null_mut();
@@ -336,6 +345,8 @@ pub unsafe extern "C" fn create_adapter(config: *const u8, config_len: usize) ->
 }
 
 #[no_mangle]
+/// # Safety
+/// `ptr` must be a pointer previously returned by `create_adapter`.
 pub unsafe extern "C" fn destroy_adapter(adapter: *mut ()) {
     if !adapter.is_null() {
         let _ = Box::from_raw(adapter as *mut SignalAdapter);

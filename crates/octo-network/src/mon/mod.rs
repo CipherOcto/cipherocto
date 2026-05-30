@@ -14,6 +14,8 @@ pub mod membership;
 pub mod reconciliation;
 pub mod topology;
 
+pub mod mission_id;
+
 // Re-exports for convenience
 pub use discovery::MissionDiscoveryScope;
 pub use error::MonError;
@@ -23,5 +25,3 @@ pub use lifecycle::MissionState;
 pub use membership::{AdmissionPolicy, MissionNode};
 pub use mission_id::{MissionId, MissionType};
 pub use topology::{MissionDescriptor, TopologyModel};
-
-pub mod mission_id;

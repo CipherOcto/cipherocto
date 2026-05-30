@@ -68,6 +68,19 @@ impl RewardDistribution {
         };
         stake.saturating_mul(basis_points).saturating_div(10000)
     }
+
+    /// Reward reduction for low availability.
+    /// When availability_score < 500, reward is reduced proportionally:
+    ///   reduced = base_reward * availability_score / 500
+    /// When availability_score >= 500, full reward is returned.
+    pub fn reward_reduction(base_reward: u64, availability_score: u16) -> u64 {
+        if availability_score >= 500 {
+            return base_reward;
+        }
+        base_reward
+            .saturating_mul(availability_score as u64)
+            .saturating_div(500)
+    }
 }
 
 #[cfg(test)]

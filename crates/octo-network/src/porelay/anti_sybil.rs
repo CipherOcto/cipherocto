@@ -47,7 +47,7 @@ pub fn has_sufficient_stake(staked: u64) -> bool {
 /// Returns 0-1000 where 1000 = definite Sybil.
 pub fn compute_sybil_risk(source_diversity: u32, dest_diversity: u32, peer_diversity: u16) -> u16 {
     let mut violations = 0u16;
-    let mut total = 3u16;
+    let total = 3u16;
 
     if source_diversity < MIN_SOURCE_DIVERSITY {
         violations += 1;

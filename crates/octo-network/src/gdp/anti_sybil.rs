@@ -6,7 +6,6 @@
 use serde::{Deserialize, Serialize};
 
 use super::types::DiscoveryScope;
-use super::GdpError;
 
 /// Minimum OCTO stake per scope (RFC-0851 §11.1)
 pub fn stake_requirement(scope: &DiscoveryScope) -> StakeGate {
@@ -71,7 +70,7 @@ impl DiversityScore {
     pub fn meets_minimum(&self, scope: &DiscoveryScope) -> bool {
         match scope {
             DiscoveryScope::Local => true, // No minimum
-            DiscoveryScope::Regional => self.transport_diversity >= 2,
+            DiscoveryScope::Regional => self.transport_diversity >= 2 && self.trust_diversity >= 2,
             DiscoveryScope::Global => {
                 self.transport_diversity >= 3 && self.geographic_diversity >= 2
             }
@@ -150,10 +149,22 @@ impl SybilDetector {
     /// Register a gateway advertisement. Returns true if duplicate detected.
     pub fn register(&mut self, gateway_id: [u8; 32], adv_hash: [u8; 32]) -> bool {
         // Check for duplicate advertisement hash
-        let is_duplicate = self
+        let duplicate_gateway = self
             .advertisements
-            .values()
-            .any(|existing| *existing == adv_hash);
+            .iter()
+            .find(|(_, existing)| **existing == adv_hash)
+            .map(|(k, _)| *k);
+
+        let is_duplicate = duplicate_gateway.is_some();
+
+        if let Some(existing_id) = duplicate_gateway {
+            let cluster_id = self.clusters.len() as u32 + 1;
+            self.clusters.push(SybilCluster {
+                cluster_id,
+                members: vec![existing_id, gateway_id],
+                reason: SybilReason::DuplicateAdvertisement,
+            });
+        }
 
         self.advertisements.insert(gateway_id, adv_hash);
         is_duplicate
@@ -169,8 +180,10 @@ impl SybilDetector {
             for j in (i + 1)..ids.len() {
                 // Check if IDs differ only in the last 4 bytes (sequential)
                 if ids[i][..28] == ids[j][..28] {
-                    let a = u32::from_be_bytes(ids[i][28..32].try_into().unwrap());
-                    let b = u32::from_be_bytes(ids[j][28..32].try_into().unwrap());
+                    let a =
+                        u32::from_be_bytes(ids[i][28..32].try_into().expect("slice is 4 bytes"));
+                    let b =
+                        u32::from_be_bytes(ids[j][28..32].try_into().expect("slice is 4 bytes"));
                     if a.abs_diff(b) <= 10 {
                         sequential_pairs.push((ids[i], ids[j]));
                     }
@@ -248,7 +261,7 @@ mod tests {
         let regional_ok = DiversityScore {
             transport_diversity: 2,
             geographic_diversity: 1,
-            trust_diversity: 1,
+            trust_diversity: 2,
         };
         assert!(regional_ok.meets_minimum(&DiscoveryScope::Regional));
 

@@ -14,12 +14,12 @@ pub struct MissionKeyHierarchy {
 
 /// Derive mission genesis secret via HKDF-BLAKE3.
 ///
-/// `genesis_secret = HKDF-BLAKE3(secret=creator_private_key, salt=mission_hash, info="mission-genesis-secret")`
+/// `genesis_secret = HKDF-BLAKE3(salt=mission_hash, ikm=creator_private_key, info="mission-genesis-secret")`
 pub fn derive_genesis_secret(creator_private_key: &[u8], mission_hash: &[u8; 32]) -> [u8; 32] {
     let mut okm = [0u8; 32];
-    hkdf_blake3_expand(
-        creator_private_key,
+    crate::ocrypt::hkdf_blake3(
         mission_hash,
+        creator_private_key,
         b"mission-genesis-secret",
         &mut okm,
     );
@@ -32,33 +32,33 @@ pub fn derive_key_hierarchy(
     mission_hash: &[u8; 32],
 ) -> MissionKeyHierarchy {
     let mut mission_root_key = [0u8; 32];
-    hkdf_blake3_expand(
-        genesis_secret,
+    crate::ocrypt::hkdf_blake3(
         mission_hash,
+        genesis_secret,
         b"mission_root_key",
         &mut mission_root_key,
     );
 
     let mut transport_keys_root = [0u8; 32];
-    hkdf_blake3_expand(
-        &mission_root_key,
+    crate::ocrypt::hkdf_blake3(
         b"transport",
+        &mission_root_key,
         b"transport_keys_root",
         &mut transport_keys_root,
     );
 
     let mut relay_keys_root = [0u8; 32];
-    hkdf_blake3_expand(
-        &mission_root_key,
+    crate::ocrypt::hkdf_blake3(
         b"relay",
+        &mission_root_key,
         b"relay_keys_root",
         &mut relay_keys_root,
     );
 
     let mut execution_keys_root = [0u8; 32];
-    hkdf_blake3_expand(
-        &mission_root_key,
+    crate::ocrypt::hkdf_blake3(
         b"execution",
+        &mission_root_key,
         b"execution_keys_root",
         &mut execution_keys_root,
     );
@@ -69,20 +69,6 @@ pub fn derive_key_hierarchy(
         relay_keys_root,
         execution_keys_root,
     }
-}
-
-/// HKDF-BLAKE3 expand: output = BLAKE3-256(secret || salt || info)[0..output_len]
-///
-/// Simplified HKDF using BLAKE3 keyed mode.
-fn hkdf_blake3_expand(secret: &[u8], salt: &[u8], info: &[u8], output: &mut [u8]) {
-    let mut hasher = blake3::Hasher::new();
-    hasher.update(secret);
-    hasher.update(salt);
-    hasher.update(info);
-    let hash = hasher.finalize();
-    let bytes = hash.as_bytes();
-    let len = output.len().min(32);
-    output[..len].copy_from_slice(&bytes[..len]);
 }
 
 #[cfg(test)]

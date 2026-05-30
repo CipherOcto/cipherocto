@@ -36,7 +36,7 @@ impl PlatformLimit {
     }
 }
 
-/// Self-describing fragment header (42 bytes).
+/// Self-describing fragment header (68 bytes).
 ///
 /// Every fragment carries enough metadata for deterministic reassembly
 /// without external coordination.
@@ -44,6 +44,8 @@ impl PlatformLimit {
 pub struct EnvelopeFragment {
     /// BLAKE3-256 of the original envelope (for integrity verification)
     pub envelope_hash: [u8; 32],
+    /// Globally unique envelope identifier (links fragment to its source envelope)
+    pub envelope_id: [u8; 32],
     /// Fragment index (0-based)
     pub fragment_index: u16,
     /// Total number of fragments
@@ -52,8 +54,8 @@ pub struct EnvelopeFragment {
     pub payload: Vec<u8>,
 }
 
-/// Fragment header size: envelope_hash(32) + index(2) + total(2) = 36 bytes
-pub const FRAGMENT_HEADER_BYTES: usize = 36;
+/// Fragment header size: envelope_hash(32) + envelope_id(32) + index(2) + total(2) = 68 bytes
+pub const FRAGMENT_HEADER_BYTES: usize = 68;
 
 /// Errors during fragmentation or reassembly
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -79,6 +81,8 @@ pub enum FragmentError {
         envelope_hash: [u8; 32],
         computed_hash: [u8; 32],
     },
+    /// Fragment total mismatch: fragment claims a different total than expected
+    TotalMismatch { expected: u16, actual: u16 },
 }
 
 /// Fragment an envelope payload into platform-appropriate pieces.
@@ -90,6 +94,7 @@ pub enum FragmentError {
 /// Returns an error if `platform_limit <= FRAGMENT_HEADER_BYTES`.
 pub fn fragment_envelope(
     envelope_hash: [u8; 32],
+    envelope_id: [u8; 32],
     payload: &[u8],
     platform: PlatformLimit,
 ) -> Result<Vec<EnvelopeFragment>, FragmentError> {
@@ -102,11 +107,18 @@ pub fn fragment_envelope(
     }
     let max_payload = max_total - FRAGMENT_HEADER_BYTES;
 
-    // Calculate total fragments (ceiling division)
+    // Calculate total fragments (ceiling division) with u16 overflow check
     let fragment_total = if payload.is_empty() {
         1u16
     } else {
-        ((payload.len() + max_payload - 1) / max_payload) as u16
+        let raw_count = payload.len().div_ceil(max_payload);
+        if raw_count > u16::MAX as usize {
+            return Err(FragmentError::PayloadTooLarge {
+                payload_size: payload.len(),
+                max_allowed: max_payload * u16::MAX as usize,
+            });
+        }
+        raw_count as u16
     };
 
     if fragment_total == 0 {
@@ -117,6 +129,7 @@ pub fn fragment_envelope(
     if payload.is_empty() {
         fragments.push(EnvelopeFragment {
             envelope_hash,
+            envelope_id,
             fragment_index: 0,
             fragment_total,
             payload: Vec::new(),
@@ -125,6 +138,7 @@ pub fn fragment_envelope(
         for (i, chunk) in payload.chunks(max_payload).enumerate() {
             fragments.push(EnvelopeFragment {
                 envelope_hash,
+                envelope_id,
                 fragment_index: i as u16,
                 fragment_total,
                 payload: chunk.to_vec(),
@@ -153,6 +167,7 @@ pub fn reassemble_fragments(fragments: &[EnvelopeFragment]) -> Result<Vec<u8>, F
     }
 
     let envelope_hash = fragments[0].envelope_hash;
+    let envelope_id = fragments[0].envelope_id;
 
     // Validate all fragments
     for f in fragments {
@@ -166,6 +181,12 @@ pub fn reassemble_fragments(fragments: &[EnvelopeFragment]) -> Result<Vec<u8>, F
             return Err(FragmentError::IntegrityMismatch {
                 expected: envelope_hash,
                 actual: f.envelope_hash,
+            });
+        }
+        if f.envelope_id != envelope_id {
+            return Err(FragmentError::IntegrityMismatch {
+                expected: envelope_id,
+                actual: f.envelope_id,
             });
         }
     }
@@ -186,7 +207,7 @@ pub fn reassemble_fragments(fragments: &[EnvelopeFragment]) -> Result<Vec<u8>, F
 
     // Concatenate in order
     let mut result = Vec::new();
-    for (_idx, chunk) in &map {
+    for chunk in map.values() {
         result.extend_from_slice(chunk);
     }
 
@@ -247,9 +268,9 @@ impl ReassemblyState {
     /// Returns Ok(true) if reassembly is complete, Ok(false) if more fragments needed.
     pub fn add_fragment(&mut self, fragment: EnvelopeFragment) -> Result<bool, FragmentError> {
         if fragment.fragment_total != self.fragment_total {
-            return Err(FragmentError::IndexOutOfRange {
-                index: fragment.fragment_index,
-                total: self.fragment_total,
+            return Err(FragmentError::TotalMismatch {
+                expected: self.fragment_total,
+                actual: fragment.fragment_total,
             });
         }
         if fragment.fragment_index >= self.fragment_total {
@@ -262,6 +283,12 @@ impl ReassemblyState {
             return Err(FragmentError::IntegrityMismatch {
                 expected: self.fragments[&0].envelope_hash,
                 actual: fragment.envelope_hash,
+            });
+        }
+        if fragment.envelope_id != self.fragments[&0].envelope_id {
+            return Err(FragmentError::IntegrityMismatch {
+                expected: self.fragments[&0].envelope_id,
+                actual: fragment.envelope_id,
             });
         }
         self.fragments.insert(fragment.fragment_index, fragment);
@@ -297,8 +324,10 @@ mod tests {
     fn test_fragment_reassemble_roundtrip_irc() {
         let payload = test_payload(1000);
         let envelope_hash = *blake3::hash(&payload).as_bytes();
-        let fragments = fragment_envelope(envelope_hash, &payload, PlatformLimit::Irc).unwrap();
-        // IRC: 512 - 36 = 476 bytes per fragment → ceil(1000/476) = 3 fragments
+        let envelope_id = [0xABu8; 32];
+        let fragments =
+            fragment_envelope(envelope_hash, envelope_id, &payload, PlatformLimit::Irc).unwrap();
+        // IRC: 512 - 68 = 444 bytes per fragment → ceil(1000/444) = 3 fragments
         assert_eq!(fragments.len(), 3);
         assert_eq!(fragments[0].fragment_index, 0);
         assert_eq!(fragments[0].fragment_total, 3);
@@ -313,8 +342,10 @@ mod tests {
     fn test_fragment_reassemble_roundtrip_lora() {
         let payload = test_payload(500);
         let envelope_hash = *blake3::hash(&payload).as_bytes();
-        let fragments = fragment_envelope(envelope_hash, &payload, PlatformLimit::Lora).unwrap();
-        // LoRa: 256 - 36 = 220 bytes per fragment → ceil(500/220) = 3
+        let envelope_id = [0xABu8; 32];
+        let fragments =
+            fragment_envelope(envelope_hash, envelope_id, &payload, PlatformLimit::Lora).unwrap();
+        // LoRa: 256 - 68 = 188 bytes per fragment → ceil(500/188) = 3
         assert_eq!(fragments.len(), 3);
         let reassembled = reassemble_fragments(&fragments).unwrap();
         assert_eq!(reassembled, payload);
@@ -324,8 +355,14 @@ mod tests {
     fn test_fragment_single_fragment() {
         let payload = b"small payload".to_vec();
         let envelope_hash = *blake3::hash(&payload).as_bytes();
-        let fragments =
-            fragment_envelope(envelope_hash, &payload, PlatformLimit::Telegram).unwrap();
+        let envelope_id = [0xABu8; 32];
+        let fragments = fragment_envelope(
+            envelope_hash,
+            envelope_id,
+            &payload,
+            PlatformLimit::Telegram,
+        )
+        .unwrap();
         assert_eq!(fragments.len(), 1);
         assert_eq!(fragments[0].fragment_total, 1);
         let reassembled = reassemble_fragments(&fragments).unwrap();
@@ -336,8 +373,14 @@ mod tests {
     fn test_fragment_empty_payload() {
         let payload = b"".to_vec();
         let envelope_hash = *blake3::hash(&payload).as_bytes();
-        let fragments =
-            fragment_envelope(envelope_hash, &payload, PlatformLimit::Telegram).unwrap();
+        let envelope_id = [0xABu8; 32];
+        let fragments = fragment_envelope(
+            envelope_hash,
+            envelope_id,
+            &payload,
+            PlatformLimit::Telegram,
+        )
+        .unwrap();
         assert_eq!(fragments.len(), 1);
         assert_eq!(fragments[0].payload.len(), 0);
     }
@@ -346,7 +389,9 @@ mod tests {
     fn test_reassemble_incomplete_fails() {
         let payload = test_payload(1000);
         let envelope_hash = *blake3::hash(&payload).as_bytes();
-        let fragments = fragment_envelope(envelope_hash, &payload, PlatformLimit::Irc).unwrap();
+        let envelope_id = [0xABu8; 32];
+        let fragments =
+            fragment_envelope(envelope_hash, envelope_id, &payload, PlatformLimit::Irc).unwrap();
         // Only pass first 2 of 3 fragments
         let incomplete = &fragments[0..2];
         let result = reassemble_fragments(incomplete);
@@ -363,7 +408,9 @@ mod tests {
     fn test_reassemble_integrity_mismatch() {
         let payload = test_payload(1000);
         let envelope_hash = *blake3::hash(&payload).as_bytes();
-        let mut fragments = fragment_envelope(envelope_hash, &payload, PlatformLimit::Irc).unwrap();
+        let envelope_id = [0xABu8; 32];
+        let mut fragments =
+            fragment_envelope(envelope_hash, envelope_id, &payload, PlatformLimit::Irc).unwrap();
         // Corrupt one fragment's envelope_hash
         fragments[1].envelope_hash = [0xFFu8; 32];
         let result = reassemble_fragments(&fragments);
@@ -377,7 +424,9 @@ mod tests {
     fn test_reassemble_out_of_order() {
         let payload = test_payload(1000);
         let envelope_hash = *blake3::hash(&payload).as_bytes();
-        let mut fragments = fragment_envelope(envelope_hash, &payload, PlatformLimit::Irc).unwrap();
+        let envelope_id = [0xABu8; 32];
+        let mut fragments =
+            fragment_envelope(envelope_hash, envelope_id, &payload, PlatformLimit::Irc).unwrap();
         // Reverse order
         fragments.reverse();
         // Reassembly should still work (BTreeMap sorts by index)
@@ -389,7 +438,9 @@ mod tests {
     fn test_reassembly_state_timeout() {
         let payload = test_payload(1000);
         let envelope_hash = *blake3::hash(&payload).as_bytes();
-        let fragments = fragment_envelope(envelope_hash, &payload, PlatformLimit::Irc).unwrap();
+        let envelope_id = [0xABu8; 32];
+        let fragments =
+            fragment_envelope(envelope_hash, envelope_id, &payload, PlatformLimit::Irc).unwrap();
         let mut state = ReassemblyState::new(fragments[0].clone(), 1000);
         state.add_fragment(fragments[1].clone()).unwrap();
         // After 3601 seconds, should be expired with 1-hour timeout
@@ -402,7 +453,9 @@ mod tests {
     fn test_reassembly_state_complete() {
         let payload = test_payload(1000);
         let envelope_hash = *blake3::hash(&payload).as_bytes();
-        let fragments = fragment_envelope(envelope_hash, &payload, PlatformLimit::Irc).unwrap();
+        let envelope_id = [0xABu8; 32];
+        let fragments =
+            fragment_envelope(envelope_hash, envelope_id, &payload, PlatformLimit::Irc).unwrap();
         let mut state = ReassemblyState::new(fragments[0].clone(), 1000);
         assert!(!state.add_fragment(fragments[1].clone()).unwrap());
         assert!(state.add_fragment(fragments[2].clone()).unwrap());
@@ -414,7 +467,9 @@ mod tests {
     fn test_fragments_complete() {
         let payload = test_payload(1000);
         let envelope_hash = *blake3::hash(&payload).as_bytes();
-        let fragments = fragment_envelope(envelope_hash, &payload, PlatformLimit::Irc).unwrap();
+        let envelope_id = [0xABu8; 32];
+        let fragments =
+            fragment_envelope(envelope_hash, envelope_id, &payload, PlatformLimit::Irc).unwrap();
         assert!(!fragments_complete(&fragments[0..2]));
         assert!(fragments_complete(&fragments));
     }
@@ -423,8 +478,14 @@ mod tests {
     fn test_platform_limit_too_small() {
         let payload = b"test".to_vec();
         let envelope_hash = *blake3::hash(&payload).as_bytes();
-        // Custom 10 bytes is smaller than FRAGMENT_HEADER_BYTES (36)
-        let result = fragment_envelope(envelope_hash, &payload, PlatformLimit::Custom(10));
+        let envelope_id = [0xABu8; 32];
+        // Custom 10 bytes is smaller than FRAGMENT_HEADER_BYTES (68)
+        let result = fragment_envelope(
+            envelope_hash,
+            envelope_id,
+            &payload,
+            PlatformLimit::Custom(10),
+        );
         assert!(matches!(
             result,
             Err(FragmentError::PayloadTooLarge { max_allowed: 0, .. })

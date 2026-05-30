@@ -1,4 +1,4 @@
-//! Deterministic Route Selection (DRS) — RFC-0856
+//! Deterministic Route Selection (DRS) -- RFC-0856
 //!
 //! Selects optimal routes across deterministic overlay networks
 //! using trust-weighted scoring and deterministic eviction.
@@ -18,10 +18,15 @@ pub use scoring::{compute_route_score, ScoringWeights};
 pub use trust::{compute_trust_score, TrustScore};
 
 /// DRS protocol version
-pub const DRS_PROTOCOL_VERSION: u16 = 1;
+pub const DRS_PROTOCOL_VERSION: u8 = 1;
 
 /// Maximum routes per cache
 pub const MAX_ROUTES_PER_CACHE: u32 = 10_000;
+
+/// Sentinel value for `valid_until_epoch` meaning the route never expires.
+/// RFC-0856: routes with valid_until_epoch == 0 are treated as persistent
+/// until explicitly revoked or evicted.
+pub const ROUTE_NO_EXPIRY: u64 = 0;
 
 #[cfg(test)]
 mod tests {
@@ -29,7 +34,7 @@ mod tests {
 
     #[test]
     fn test_drs_constants() {
-        assert_eq!(DRS_PROTOCOL_VERSION, 1);
+        assert_eq!(DRS_PROTOCOL_VERSION, 1u8);
         assert_eq!(MAX_ROUTES_PER_CACHE, 10_000);
     }
 
@@ -48,12 +53,14 @@ mod tests {
             censorship_resistance_class: 200,
             route_cost: 1000,
             route_epoch: 100,
+            valid_until_epoch: 0,
             ttl_hops: 10,
+            signature: [0u8; 64],
         };
 
         // Score it
         let weights = ScoringWeights::balanced();
-        let score = compute_route_score(&route, &weights);
+        let score = compute_route_score(&route, &weights).unwrap();
         assert!(score > 0);
 
         // Cache it
@@ -62,7 +69,7 @@ mod tests {
         assert_eq!(cache.len(), 1);
 
         // Retrieve and verify
-        let cached = cache.get(&[0xAA; 32]).unwrap();
+        let cached = cache.get(&[0xAA; 32], 100).unwrap();
         assert_eq!(cached.score, score);
     }
 
@@ -75,7 +82,7 @@ mod tests {
             mission_trust: 50_000,
             consensus_participation: 25_000,
         };
-        let trust = compute_trust_score(&factors, 1000);
+        let trust = compute_trust_score(&factors, 1000).unwrap();
         assert!(trust > 0);
         assert!(trust <= 1_000_000);
     }

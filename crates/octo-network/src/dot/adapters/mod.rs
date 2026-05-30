@@ -151,10 +151,7 @@ pub trait PlatformAdapter: Send + Sync {
     ///
     /// Default: not supported (returns error).
     /// Platforms with `media_capabilities` in their `CapabilityReport` MUST override this.
-    async fn download_media(
-        &self,
-        _message_id: &str,
-    ) -> Result<Vec<u8>, PlatformAdapterError> {
+    async fn download_media(&self, _message_id: &str) -> Result<Vec<u8>, PlatformAdapterError> {
         Err(PlatformAdapterError::Unreachable {
             platform: "unknown".into(),
             reason: "media download not supported by this adapter".into(),

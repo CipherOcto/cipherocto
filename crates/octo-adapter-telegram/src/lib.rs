@@ -201,12 +201,22 @@ impl TelegramAdapter {
             "chat_id": chat_id,
             "action": action
         });
-        let resp = self.client.post(&url).json(&body).send().await
+        let resp = self
+            .client
+            .post(&url)
+            .json(&body)
+            .send()
+            .await
             .map_err(|e| format!("HTTP error: {}", e))?;
-        let data: TelegramResponse<bool> = resp.json().await
+        let data: TelegramResponse<bool> = resp
+            .json()
+            .await
             .map_err(|e| format!("JSON parse error: {}", e))?;
         if !data.ok {
-            return Err(format!("Telegram API error: {}", data.description.unwrap_or_default()));
+            return Err(format!(
+                "Telegram API error: {}",
+                data.description.unwrap_or_default()
+            ));
         }
         Ok(())
     }
@@ -224,7 +234,7 @@ impl TelegramAdapter {
         let text = text.trim();
         let b64 = text
             .strip_prefix("DOT/1/")
-            .ok_or_else(|| format!("Missing DOT/1/ prefix"))?;
+            .ok_or_else(|| "Missing DOT/1/ prefix".to_string())?;
         base64::engine::general_purpose::URL_SAFE_NO_PAD
             .decode(b64)
             .map_err(|e| format!("Base64 decode error: {}", e))
@@ -257,15 +267,25 @@ impl TelegramAdapter {
     /// Fetch bot username from Telegram API (cached after first call).
     pub async fn fetch_bot_username(&self) -> Result<String, String> {
         let url = format!("{}/getMe", self.api_base());
-        let resp = self.client.get(&url).send().await
+        let resp = self
+            .client
+            .get(&url)
+            .send()
+            .await
             .map_err(|e| format!("HTTP error: {}", e))?;
-        let data: TelegramResponse<serde_json::Value> = resp.json().await
+        let data: TelegramResponse<serde_json::Value> = resp
+            .json()
+            .await
             .map_err(|e| format!("JSON parse error: {}", e))?;
         if !data.ok {
-            return Err(format!("Telegram API error: {}", data.description.unwrap_or_default()));
+            return Err(format!(
+                "Telegram API error: {}",
+                data.description.unwrap_or_default()
+            ));
         }
         let result = data.result.ok_or_else(|| "Missing result".to_string())?;
-        let username = result["username"].as_str()
+        let username = result["username"]
+            .as_str()
             .ok_or_else(|| "Missing username field".to_string())?
             .to_string();
         // Cache for self_handle()
@@ -316,7 +336,12 @@ impl PlatformAdapter for TelegramAdapter {
                 let hash = Self::domain_hash(g);
                 hash == domain.domain_hash
             })
-            .ok_or_else(|| transport_err(format!("No group found for domain {:?}", domain.domain_hash)))?;
+            .ok_or_else(|| {
+                transport_err(format!(
+                    "No group found for domain {:?}",
+                    domain.domain_hash
+                ))
+            })?;
 
         // Retry with exponential backoff (ZeroClaw pattern)
         let retry_cfg = octo_network::dot::adapters::backoff::RetryConfig::default();
@@ -324,7 +349,8 @@ impl PlatformAdapter for TelegramAdapter {
 
         for attempt in 0..=retry_cfg.max_retries {
             let result = if encoded.len() > Self::max_payload_bytes() {
-                self.send_document(chat_id, "envelope.bin", &wire_bytes).await
+                self.send_document(chat_id, "envelope.bin", &wire_bytes)
+                    .await
             } else {
                 self.send_message(chat_id, &encoded).await
             };
@@ -339,13 +365,12 @@ impl PlatformAdapter for TelegramAdapter {
                 Err(e) => {
                     last_err = e.clone();
                     // Check for rate limit (429) — parse Retry-After if available
-                    if e.contains("429") || e.contains("Too Many Requests") {
-                        if retry_cfg.should_retry(attempt) {
+                    if (e.contains("429") || e.contains("Too Many Requests"))
+                        && retry_cfg.should_retry(attempt) {
                             let delay = retry_cfg.delay_for_attempt(attempt);
                             tokio::time::sleep(delay).await;
                             continue;
                         }
-                    }
                     // Non-retryable error
                     return Err(transport_err(e));
                 }
@@ -364,7 +389,7 @@ impl PlatformAdapter for TelegramAdapter {
         let updates = self
             .get_updates(Some(offset), 30)
             .await
-            .map_err(|e| transport_err(e))?;
+            .map_err(transport_err)?;
 
         let mut messages = Vec::new();
         let mut max_update_id = offset;
@@ -377,7 +402,9 @@ impl PlatformAdapter for TelegramAdapter {
 
             if let Some(msg) = update.message {
                 // Send typing indicator while processing (ZeroClaw pattern)
-                let _ = self.send_chat_action(&msg.chat.id.to_string(), "typing").await;
+                let _ = self
+                    .send_chat_action(&msg.chat.id.to_string(), "typing")
+                    .await;
 
                 if let Some(text) = msg.text {
                     if let Ok(payload) = Self::decode_envelope(&text) {
@@ -412,11 +439,12 @@ impl PlatformAdapter for TelegramAdapter {
         // payload contains full wire bytes (218 signing + 64 signature = 282 bytes)
         // produced by send_envelope() → to_wire_bytes() → encode_envelope()
         // and decoded by receive_messages() → decode_envelope()
-        DeterministicEnvelope::from_wire_bytes(&raw.payload)
-            .map_err(|e| PlatformAdapterError::ApiError {
+        DeterministicEnvelope::from_wire_bytes(&raw.payload).map_err(|e| {
+            PlatformAdapterError::ApiError {
                 code: 400,
                 message: format!("canonicalize failed: {}", e),
-            })
+            }
+        })
     }
 
     fn capabilities(&self) -> CapabilityReport {
@@ -456,7 +484,10 @@ impl PlatformAdapter for TelegramAdapter {
                 if resp.status().is_success() {
                     Ok(())
                 } else {
-                    Err(transport_err(format!("Health check failed: HTTP {}", resp.status())))
+                    Err(transport_err(format!(
+                        "Health check failed: HTTP {}",
+                        resp.status()
+                    )))
                 }
             }
             Ok(Err(e)) => Err(transport_err(format!("Health check failed: {}", e))),

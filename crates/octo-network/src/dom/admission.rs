@@ -43,8 +43,21 @@ pub fn check_admission(
     current_timestamp: u64,
     replay_cache: &ReplayCache,
     sequence_tracker: &SequenceTracker,
-    _config: &AdmissionConfig,
+    config: &AdmissionConfig,
 ) -> Result<(), DomError> {
+    // TODO: Ed25519 signature verification (RFC-0857 §3)
+    // if !verify_signature(&intent.signature, &sender_public_key) {
+    //     return Err(DomError::InvalidSignature);
+    // }
+
+    // 0. Check global capacity (using replay_cache as proxy for pending intent count)
+    if replay_cache.len() as u32 >= config.max_pending_intents {
+        return Err(DomError::CapacityExceeded {
+            scope: 0x0001, // GLOBAL
+            max_entries: config.max_pending_intents,
+        });
+    }
+
     // 1. Check expiration
     if intent.expiration <= current_timestamp {
         return Err(DomError::AdmissionRejected {

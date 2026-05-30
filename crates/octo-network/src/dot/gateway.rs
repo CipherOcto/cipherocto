@@ -125,7 +125,6 @@ impl Default for GatewayCapacity {
 
 /// Federation peer — a gateway in the overlay federation graph.
 #[derive(Debug, Clone, Serialize, Deserialize)]
-#[repr(C)]
 pub struct FederationPeer {
     /// Peer gateway identity
     pub identity: GatewayIdentity,
@@ -189,7 +188,7 @@ impl FederationState {
         let cutoff = current_epoch.saturating_sub(max_age);
         let mut count = 0;
         for peer in self.peers.values_mut() {
-            if peer.active && peer.last_seen < cutoff {
+            if peer.active && peer.last_seen <= cutoff {
                 peer.active = false;
                 count += 1;
             }
@@ -317,12 +316,27 @@ mod tests {
         let mut peer = make_peer(1, 0xAA);
         peer.last_seen = 50;
         state.upsert_peer(peer);
-        state.upsert_peer(make_peer(2, 0xBB)); // last_seen=200
+        let mut peer2 = make_peer(2, 0xBB);
+        peer2.last_seen = 201; // just above cutoff (cutoff=200 with <=)
+        state.upsert_peer(peer2);
 
         let evicted = state.evict_stale_peers(300, 100); // cutoff=200
         assert_eq!(evicted, 1);
         assert!(!state.peers.get(&[1u8; 32]).unwrap().active);
         assert!(state.peers.get(&[2u8; 32]).unwrap().active);
+    }
+
+    #[test]
+    fn test_federation_evict_stale_peers_boundary() {
+        let local = GatewayIdentity::new([0x01u8; 32], 1, GatewayClass::Relay, 100);
+        let mut state = FederationState::new(local);
+        let mut peer = make_peer(1, 0xAA);
+        peer.last_seen = 200; // exactly at cutoff
+        state.upsert_peer(peer);
+
+        let evicted = state.evict_stale_peers(300, 100); // cutoff=200
+        assert_eq!(evicted, 1);
+        assert!(!state.peers.get(&[1u8; 32]).unwrap().active);
     }
 
     #[test]

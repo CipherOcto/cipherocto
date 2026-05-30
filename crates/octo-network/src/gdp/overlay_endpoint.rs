@@ -12,7 +12,7 @@ pub struct OverlayEndpoint {
     pub endpoint_hash: [u8; 32],
     /// Lower = preferred
     pub priority: u16,
-    /// 0-255
+    /// 0-65535
     pub bandwidth_class: u16,
     /// Endpoint flags
     pub flags: u64,

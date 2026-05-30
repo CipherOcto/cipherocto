@@ -2,11 +2,28 @@
 
 use serde::{Deserialize, Serialize};
 
+mod serde_signature {
+    use serde::{Deserializer, Serializer};
+
+    pub fn serialize<S: Serializer>(sig: &[u8; 64], s: S) -> Result<S::Ok, S::Error> {
+        serde_bytes::serialize(sig.as_ref(), s)
+    }
+
+    pub fn deserialize<'de, D: Deserializer<'de>>(d: D) -> Result<[u8; 64], D::Error> {
+        let v: Vec<u8> = serde_bytes::deserialize(d)?;
+        if v.len() != 64 {
+            return Err(serde::de::Error::invalid_length(v.len(), &"64 bytes"));
+        }
+        let mut arr = [0u8; 64];
+        arr.copy_from_slice(&v);
+        Ok(arr)
+    }
+}
+
 /// Uptime Proof — proves continuous gateway operation over an extended period.
 ///
 /// 7 fields per RFC-0860 §3.4.
 #[derive(Clone, Debug, Serialize, Deserialize)]
-#[repr(C)]
 pub struct UptimeProof {
     /// Gateway being attested
     pub gateway_id: [u8; 32],
@@ -21,7 +38,8 @@ pub struct UptimeProof {
     /// Merkle root of AvailabilityProof commitments
     pub availability_root: [u8; 32],
     /// Ed25519 signature
-    pub signature: Vec<u8>,
+    #[serde(with = "serde_signature")]
+    pub signature: [u8; 64],
 }
 
 impl UptimeProof {
@@ -62,7 +80,7 @@ mod tests {
             compliant_windows: 100,
             total_windows: 100,
             availability_root: [0u8; 32],
-            signature: vec![0u8; 64],
+            signature: [0u8; 64],
         };
         assert_eq!(proof.uptime_score(), 1000);
     }
@@ -76,7 +94,7 @@ mod tests {
             compliant_windows: 95,
             total_windows: 100,
             availability_root: [0u8; 32],
-            signature: vec![0u8; 64],
+            signature: [0u8; 64],
         };
         assert_eq!(proof.uptime_score(), 950);
     }
@@ -90,7 +108,7 @@ mod tests {
             compliant_windows: 0,
             total_windows: 0,
             availability_root: [0u8; 32],
-            signature: vec![0u8; 64],
+            signature: [0u8; 64],
         };
         assert_eq!(proof.uptime_score(), 0);
     }
@@ -104,7 +122,7 @@ mod tests {
             compliant_windows: 95,
             total_windows: 100,
             availability_root: [0u8; 32],
-            signature: vec![0u8; 64],
+            signature: [0u8; 64],
         };
         assert_eq!(proof.to_signing_bytes().len(), 88);
     }

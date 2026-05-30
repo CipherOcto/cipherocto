@@ -45,7 +45,7 @@ impl WitnessInput {
         h.update(&self.input_id);
         h.update(&self.private_inputs);
         h.update(&self.public_inputs);
-        h.update(&self.version.to_le_bytes());
+        h.update(&self.version.to_be_bytes());
         *h.finalize().as_bytes()
     }
 
@@ -69,11 +69,11 @@ impl Witness for WitnessInput {
     fn to_canonical_bytes(&self) -> Vec<u8> {
         let mut buf = Vec::new();
         buf.extend_from_slice(&self.input_id);
-        buf.extend_from_slice(&(self.private_inputs.len() as u32).to_le_bytes());
+        buf.extend_from_slice(&(self.private_inputs.len() as u32).to_be_bytes());
         buf.extend_from_slice(&self.private_inputs);
-        buf.extend_from_slice(&(self.public_inputs.len() as u32).to_le_bytes());
+        buf.extend_from_slice(&(self.public_inputs.len() as u32).to_be_bytes());
         buf.extend_from_slice(&self.public_inputs);
-        buf.extend_from_slice(&self.version.to_le_bytes());
+        buf.extend_from_slice(&self.version.to_be_bytes());
         buf
     }
 

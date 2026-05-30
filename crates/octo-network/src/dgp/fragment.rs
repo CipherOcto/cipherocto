@@ -7,6 +7,9 @@ use super::error::DgpError;
 /// Default reassembly timeout in logical time units.
 const DEFAULT_REASSEMBLY_TIMEOUT: u64 = 30;
 
+/// Default maximum concurrent assemblies.
+const DEFAULT_MAX_ASSEMBLIES: usize = 1024;
+
 /// A single gossip fragment.
 #[derive(Debug, Clone)]
 pub struct GossipFragment {
@@ -29,6 +32,8 @@ pub struct FragmentAssembly {
     pub fragments: BTreeMap<u32, Vec<u8>>,
     /// When reassembly started
     pub started_at: u64,
+    /// Expected BLAKE3-256 root of the reassembled payload
+    payload_root: [u8; 32],
 }
 
 /// Fragment reassembly manager.
@@ -38,6 +43,8 @@ pub struct FragmentAssembler {
     assemblies: BTreeMap<[u8; 32], FragmentAssembly>,
     /// Reassembly timeout
     timeout: u64,
+    /// Maximum concurrent assemblies
+    max_assemblies: usize,
 }
 
 impl FragmentAssembler {
@@ -46,13 +53,24 @@ impl FragmentAssembler {
         Self {
             assemblies: BTreeMap::new(),
             timeout: timeout.unwrap_or(DEFAULT_REASSEMBLY_TIMEOUT),
+            max_assemblies: DEFAULT_MAX_ASSEMBLIES,
         }
     }
 
-    /// Add a fragment. Returns Some(payload) when all fragments are collected.
+    /// Set the maximum number of concurrent in-progress assemblies.
+    pub fn with_max_assemblies(mut self, max: usize) -> Self {
+        self.max_assemblies = max;
+        self
+    }
+
+    /// Add a fragment. Returns `Some(payload)` when all fragments are collected
+    /// and the BLAKE3-256 of the reassembled payload matches `payload_root`.
+    ///
+    /// Returns `None` when still waiting for more fragments.
     pub fn add_fragment(
         &mut self,
         fragment: GossipFragment,
+        payload_root: [u8; 32],
         current_time: u64,
     ) -> Result<Option<Vec<u8>>, DgpError> {
         if fragment.fragment_index >= fragment.fragment_total {
@@ -65,31 +83,75 @@ impl FragmentAssembler {
             });
         }
 
-        let assembly = self
-            .assemblies
-            .entry(fragment.object_hash)
-            .or_insert_with(|| FragmentAssembly {
-                total: fragment.fragment_total,
-                fragments: BTreeMap::new(),
-                started_at: current_time,
-            });
+        // Check if an assembly already exists
+        if let Some(assembly) = self.assemblies.get_mut(&fragment.object_hash) {
+            // Validate consistency
+            if assembly.total != fragment.fragment_total {
+                return Err(DgpError::FragmentAssemblyFailed {
+                    object_hash: fragment.object_hash,
+                    reason: format!(
+                        "fragment_total mismatch: expected {}, got {}",
+                        assembly.total, fragment.fragment_total
+                    ),
+                });
+            }
 
-        // Validate consistency
-        if assembly.total != fragment.fragment_total {
-            return Err(DgpError::FragmentAssemblyFailed {
-                object_hash: fragment.object_hash,
-                reason: format!(
-                    "fragment_total mismatch: expected {}, got {}",
-                    assembly.total, fragment.fragment_total
-                ),
+            // Reject duplicate fragment indices
+            if assembly.fragments.contains_key(&fragment.fragment_index) {
+                return Err(DgpError::DuplicateFragment {
+                    object_hash: fragment.object_hash,
+                    index: fragment.fragment_index,
+                });
+            }
+
+            assembly
+                .fragments
+                .insert(fragment.fragment_index, fragment.payload);
+
+            // Check if complete
+            if assembly.fragments.len() as u32 == assembly.total {
+                let mut result = Vec::new();
+                for i in 0..assembly.total {
+                    if let Some(payload) = assembly.fragments.remove(&i) {
+                        result.extend(payload);
+                    }
+                }
+                let expected_root = assembly.payload_root;
+                self.assemblies.remove(&fragment.object_hash);
+
+                // Verify payload root
+                let actual_root: [u8; 32] = *blake3::hash(&result).as_bytes();
+                if actual_root != expected_root {
+                    return Err(DgpError::PayloadRootMismatch {
+                        object_hash: fragment.object_hash,
+                        expected: expected_root,
+                        actual: actual_root,
+                    });
+                }
+                return Ok(Some(result));
+            }
+
+            return Ok(None);
+        }
+
+        // New assembly — check capacity
+        if self.assemblies.len() >= self.max_assemblies {
+            return Err(DgpError::AssemblerFull {
+                max_assemblies: self.max_assemblies,
             });
         }
 
+        let mut assembly = FragmentAssembly {
+            total: fragment.fragment_total,
+            fragments: BTreeMap::new(),
+            started_at: current_time,
+            payload_root,
+        };
         assembly
             .fragments
             .insert(fragment.fragment_index, fragment.payload);
 
-        // Check if complete
+        // Check if the single fragment completes the assembly
         if assembly.fragments.len() as u32 == assembly.total {
             let mut result = Vec::new();
             for i in 0..assembly.total {
@@ -97,9 +159,19 @@ impl FragmentAssembler {
                     result.extend(payload);
                 }
             }
-            self.assemblies.remove(&fragment.object_hash);
+            // Verify payload root
+            let actual_root: [u8; 32] = *blake3::hash(&result).as_bytes();
+            if actual_root != payload_root {
+                return Err(DgpError::PayloadRootMismatch {
+                    object_hash: fragment.object_hash,
+                    expected: payload_root,
+                    actual: actual_root,
+                });
+            }
             return Ok(Some(result));
         }
+
+        self.assemblies.insert(fragment.object_hash, assembly);
 
         Ok(None)
     }
@@ -135,7 +207,8 @@ mod tests {
     fn test_single_fragment() {
         let mut asm = FragmentAssembler::new(None);
         let frag = make_fragment([0xAA; 32], 0, 1, b"hello");
-        let result = asm.add_fragment(frag, 100).unwrap();
+        let root = *blake3::hash(b"hello").as_bytes();
+        let result = asm.add_fragment(frag, root, 100).unwrap();
         assert_eq!(result, Some(b"hello".to_vec()));
     }
 
@@ -143,30 +216,32 @@ mod tests {
     fn test_multi_fragment_reassembly() {
         let mut asm = FragmentAssembler::new(None);
         let hash = [0xBB; 32];
-        asm.add_fragment(make_fragment(hash, 0, 3, b"aaa"), 100)
+        let payload = b"aaabbbccc";
+        let root = *blake3::hash(payload).as_bytes();
+        asm.add_fragment(make_fragment(hash, 0, 3, b"aaa"), root, 100)
             .unwrap();
-        asm.add_fragment(make_fragment(hash, 2, 3, b"ccc"), 100)
+        asm.add_fragment(make_fragment(hash, 2, 3, b"ccc"), root, 100)
             .unwrap();
         let result = asm
-            .add_fragment(make_fragment(hash, 1, 3, b"bbb"), 100)
+            .add_fragment(make_fragment(hash, 1, 3, b"bbb"), root, 100)
             .unwrap();
-        assert_eq!(result, Some(b"aaabbbccc".to_vec()));
+        assert_eq!(result, Some(payload.to_vec()));
     }
 
     #[test]
     fn test_fragment_index_out_of_range() {
         let mut asm = FragmentAssembler::new(None);
         let frag = make_fragment([0xCC; 32], 5, 3, b"bad");
-        assert!(asm.add_fragment(frag, 100).is_err());
+        assert!(asm.add_fragment(frag, [0u8; 32], 100).is_err());
     }
 
     #[test]
     fn test_fragment_total_mismatch() {
         let mut asm = FragmentAssembler::new(None);
         let hash = [0xDD; 32];
-        asm.add_fragment(make_fragment(hash, 0, 3, b"a"), 100)
+        asm.add_fragment(make_fragment(hash, 0, 3, b"a"), [0u8; 32], 100)
             .unwrap();
-        let result = asm.add_fragment(make_fragment(hash, 1, 2, b"b"), 100);
+        let result = asm.add_fragment(make_fragment(hash, 1, 2, b"b"), [0u8; 32], 100);
         assert!(result.is_err());
     }
 
@@ -174,7 +249,7 @@ mod tests {
     fn test_purge_expired() {
         let mut asm = FragmentAssembler::new(Some(50));
         let hash = [0xEE; 32];
-        asm.add_fragment(make_fragment(hash, 0, 2, b"a"), 100)
+        asm.add_fragment(make_fragment(hash, 0, 2, b"a"), [0u8; 32], 100)
             .unwrap();
         assert_eq!(asm.pending_count(), 1);
         let purged = asm.purge_expired(200);

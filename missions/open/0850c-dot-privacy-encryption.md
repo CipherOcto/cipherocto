@@ -2,7 +2,7 @@
 
 ## Status
 
-Open
+Implemented (1717 lines, 75 tests across attestation, envelope, identity, mission, onion, randomness, session, suite)
 
 ## RFC
 

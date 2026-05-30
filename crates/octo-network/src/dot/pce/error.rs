@@ -22,6 +22,9 @@ pub enum PceError {
 
     #[error("Aggregation failure: {reason}")]
     AggregationError { reason: String },
+
+    #[error("Proof blob exceeds maximum size: {actual} bytes (limit: {limit})")]
+    ProofBlobTooLarge { actual: usize, limit: usize },
 }
 
 #[cfg(test)]

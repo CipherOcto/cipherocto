@@ -105,14 +105,30 @@ impl DotGateway {
             });
         }
 
+        // 0b. Validate flags — reserved bits must be zero
+        // Note: DOT flags are separate from DGP flags; both must be validated at their layer.
+        // The envelope flags field uses the same convention: bits 0-15 defined, 16-63 reserved.
+        const DOT_VALID_FLAGS_MASK: u64 = 0xFFFF;
+        if (envelope.flags & !DOT_VALID_FLAGS_MASK) != 0 {
+            return Err(DotError::Serialization(format!(
+                "Invalid envelope flags: reserved bits set (flags=0x{:016x})",
+                envelope.flags
+            )));
+        }
+
         // 1. Verify envelope_id derivation (Class A)
         envelope.verify(source_peer_key)?;
 
-        // 2. Check replay cache (Class A)
+        // 2. TTL check — reject expired envelopes before forwarding
+        if envelope.ttl_hops == 0 {
+            return Err(DotError::TtlExpired { ttl: 0, hops: 0 });
+        }
+
+        // 3. Check replay cache (Class A)
         let mut cache = self.replay_cache.write().await;
         cache.check_and_insert(envelope.envelope_id, current_epoch)?;
 
-        // 3. Forward to all adapters (Class C — transport-dependent)
+        // 4. Forward to all adapters (Class C — transport-dependent)
         // Note: In production, this would iterate over connected domains
         // and forward to the appropriate adapter(s).
 

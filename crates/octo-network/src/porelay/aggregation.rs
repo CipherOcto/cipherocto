@@ -2,6 +2,24 @@
 
 use serde::{Deserialize, Serialize};
 
+mod serde_signature {
+    use serde::{Deserializer, Serializer};
+
+    pub fn serialize<S: Serializer>(sig: &[u8; 64], s: S) -> Result<S::Ok, S::Error> {
+        serde_bytes::serialize(sig.as_ref(), s)
+    }
+
+    pub fn deserialize<'de, D: Deserializer<'de>>(d: D) -> Result<[u8; 64], D::Error> {
+        let v: Vec<u8> = serde_bytes::deserialize(d)?;
+        if v.len() != 64 {
+            return Err(serde::de::Error::invalid_length(v.len(), &"64 bytes"));
+        }
+        let mut arr = [0u8; 64];
+        arr.copy_from_slice(&v);
+        Ok(arr)
+    }
+}
+
 /// Aggregation hierarchy levels
 pub const LEVEL_LEAF: u8 = 0;
 pub const LEVEL_WINDOW: u8 = 1;
@@ -12,7 +30,6 @@ pub const LEVEL_GLOBAL: u8 = 3;
 ///
 /// 10 fields per RFC-0860 §5.2.
 #[derive(Clone, Debug, Serialize, Deserialize)]
-#[repr(C)]
 pub struct AggregatedRelayProof {
     /// Aggregation level (0 = leaf, 3 = global)
     pub level: u8,
@@ -33,7 +50,8 @@ pub struct AggregatedRelayProof {
     /// STARK proof (via RFC-0854 DPS) proving all children are valid
     pub proof_blob: Vec<u8>,
     /// Ed25519 signature by aggregator
-    pub signature: Vec<u8>,
+    #[serde(with = "serde_signature")]
+    pub signature: [u8; 64],
 }
 
 impl AggregatedRelayProof {
@@ -77,7 +95,7 @@ mod tests {
             average_availability: 950,
             children_root: [0u8; 32],
             proof_blob: vec![],
-            signature: vec![0u8; 64],
+            signature: [0u8; 64],
         }
     }
 

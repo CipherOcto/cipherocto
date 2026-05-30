@@ -125,7 +125,7 @@ impl AnthropicProvider {
 #[cfg(any(feature = "any-llm-mode", feature = "full"))]
 pub fn convert_response(
     py_obj: &PyAny,
-    py: Python<'_>,
+    _py: Python<'_>,
 ) -> Result<crate::types::ChatCompletion, PyBridgeError> {
     // Anthropic returns a Message object with attributes: id, model, content, stop_reason, usage
     // Use getattr() for object attribute access (not get_item() which is for dicts)

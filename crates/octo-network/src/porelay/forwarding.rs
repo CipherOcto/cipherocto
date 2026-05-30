@@ -1,6 +1,21 @@
 //! Forwarding Proof (RFC-0860 §3.1)
 
+#[allow(unused_imports)]
 use serde::{Deserialize, Serialize};
+
+mod serde_sig {
+    use serde::{Deserializer, Serialize, Serializer};
+
+    pub fn serialize<S: Serializer>(sig: &[u8; 64], s: S) -> Result<S::Ok, S::Error> {
+        sig.as_slice().serialize(s)
+    }
+
+    pub fn deserialize<'de, D: Deserializer<'de>>(d: D) -> Result<[u8; 64], D::Error> {
+        let v: Vec<u8> = serde_bytes::deserialize(d)?;
+        v.try_into()
+            .map_err(|_| serde::de::Error::custom("expected exactly 64 bytes for signature"))
+    }
+}
 
 /// Forwarding Proof — proves a gateway correctly forwarded an envelope.
 ///
@@ -21,7 +36,8 @@ pub struct ForwardingProof {
     /// BLAKE3-256(destination || logical_timestamp || sequence)
     pub commitment: [u8; 32],
     /// Ed25519 signature over (relay_gateway || envelope_hash || commitment)
-    pub signature: Vec<u8>,
+    #[serde(with = "serde_sig")]
+    pub signature: [u8; 64],
 }
 
 impl ForwardingProof {
@@ -45,6 +61,31 @@ impl ForwardingProof {
         msg[32..64].copy_from_slice(&self.envelope_hash);
         msg[64..96].copy_from_slice(&self.commitment);
         msg
+    }
+
+    /// Verify the Ed25519 signature over the signing message.
+    pub fn verify_signature(&self, public_key: &[u8; 32]) -> bool {
+        use ed25519_dalek::{Signature, Verifier, VerifyingKey};
+        let vk = match VerifyingKey::from_bytes(public_key) {
+            Ok(vk) => vk,
+            Err(_) => return false,
+        };
+        let sig = Signature::from_bytes(&self.signature);
+        vk.verify(&self.signing_message(), &sig).is_ok()
+    }
+
+    /// Verify the stored commitment against recomputed value.
+    pub fn verify_commitment(&self) -> bool {
+        let expected =
+            Self::compute_commitment(&self.destination, self.logical_timestamp, self.sequence);
+        self.commitment == expected
+    }
+
+    /// Full verification: signature + commitment + sequence monotonicity.
+    pub fn verify_full(&self, public_key: &[u8; 32], previous_sequence: u64) -> bool {
+        self.sequence > previous_sequence
+            && self.verify_commitment()
+            && self.verify_signature(public_key)
     }
 }
 
@@ -77,7 +118,7 @@ mod tests {
             logical_timestamp: 0,
             sequence: 0,
             commitment: [0u8; 32],
-            signature: vec![0u8; 64],
+            signature: [0u8; 64],
         };
         assert_eq!(proof.signing_message().len(), 96);
     }

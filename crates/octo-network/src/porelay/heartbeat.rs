@@ -2,6 +2,20 @@
 
 use serde::{Deserialize, Serialize};
 
+mod serde_sig {
+    use serde::{Deserializer, Serialize, Serializer};
+
+    pub fn serialize<S: Serializer>(sig: &[u8; 64], s: S) -> Result<S::Ok, S::Error> {
+        sig.as_slice().serialize(s)
+    }
+
+    pub fn deserialize<'de, D: Deserializer<'de>>(d: D) -> Result<[u8; 64], D::Error> {
+        let v: Vec<u8> = serde_bytes::deserialize(d)?;
+        v.try_into()
+            .map_err(|_| serde::de::Error::custom("expected exactly 64 bytes for signature"))
+    }
+}
+
 /// Gateway Heartbeat — proves gateway is online and responsive.
 ///
 /// 7 fields per RFC-0860 §3.2.
@@ -21,7 +35,8 @@ pub struct GatewayHeartbeat {
     /// Logical timestamp
     pub logical_timestamp: u64,
     /// Ed25519 signature over all above fields
-    pub signature: Vec<u8>,
+    #[serde(with = "serde_sig")]
+    pub signature: [u8; 64],
 }
 
 impl GatewayHeartbeat {
@@ -35,6 +50,22 @@ impl GatewayHeartbeat {
         buf.push(self.uptime_class);
         buf.extend_from_slice(&self.logical_timestamp.to_be_bytes());
         buf
+    }
+
+    /// Verify the Ed25519 signature.
+    pub fn verify_signature(&self, public_key: &[u8; 32]) -> bool {
+        use ed25519_dalek::{Signature, Verifier, VerifyingKey};
+        let vk = match VerifyingKey::from_bytes(public_key) {
+            Ok(vk) => vk,
+            Err(_) => return false,
+        };
+        let sig = Signature::from_bytes(&self.signature);
+        vk.verify(&self.to_signing_bytes(), &sig).is_ok()
+    }
+
+    /// Full verification: signature + sequence monotonicity.
+    pub fn verify_full(&self, public_key: &[u8; 32], previous_sequence: u64) -> bool {
+        self.sequence > previous_sequence && self.verify_signature(public_key)
     }
 }
 
@@ -73,7 +104,7 @@ mod tests {
             load_class: 0x80,
             uptime_class: 0xC0,
             logical_timestamp: 100,
-            signature: vec![0u8; 64],
+            signature: [0u8; 64],
         };
         assert_eq!(hb.to_signing_bytes().len(), 54);
     }

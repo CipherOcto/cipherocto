@@ -251,13 +251,12 @@ impl PlatformAdapter for DiscordAdapter {
                 }
                 Err(e) => {
                     last_err = e.clone();
-                    if e.contains("429") || e.contains("rate limit") {
-                        if retry_cfg.should_retry(attempt) {
+                    if (e.contains("429") || e.contains("rate limit"))
+                        && retry_cfg.should_retry(attempt) {
                             let delay = retry_cfg.delay_for_attempt(attempt);
                             tokio::time::sleep(delay).await;
                             continue;
                         }
-                    }
                     return Err(transport_err(e));
                 }
             }
@@ -273,7 +272,7 @@ impl PlatformAdapter for DiscordAdapter {
             Some(ch) => self
                 .get_channel_messages(ch, 10)
                 .await
-                .map_err(|e| transport_err(e))?,
+                .map_err(transport_err)?,
             None => Vec::new(),
         };
 
@@ -301,11 +300,12 @@ impl PlatformAdapter for DiscordAdapter {
             return Err(transport_err("Empty payload"));
         }
         // payload contains full wire bytes from decode_envelope() in receive_messages()
-        DeterministicEnvelope::from_wire_bytes(&raw.payload)
-            .map_err(|e| PlatformAdapterError::ApiError {
+        DeterministicEnvelope::from_wire_bytes(&raw.payload).map_err(|e| {
+            PlatformAdapterError::ApiError {
                 code: 400,
                 message: format!("canonicalize failed: {}", e),
-            })
+            }
+        })
     }
 
     fn capabilities(&self) -> CapabilityReport {
@@ -378,6 +378,8 @@ pub extern "C" fn platform_type() -> u16 {
 }
 
 #[no_mangle]
+/// # Safety
+/// `config` must point to a valid buffer of at least `len` bytes.
 pub unsafe extern "C" fn create_adapter(config: *const u8, config_len: usize) -> *mut () {
     if config.is_null() || config_len == 0 {
         return std::ptr::null_mut();
@@ -391,6 +393,8 @@ pub unsafe extern "C" fn create_adapter(config: *const u8, config_len: usize) ->
 }
 
 #[no_mangle]
+/// # Safety
+/// `ptr` must be a pointer previously returned by `create_adapter`.
 pub unsafe extern "C" fn destroy_adapter(adapter: *mut ()) {
     if !adapter.is_null() {
         let _ = Box::from_raw(adapter as *mut DiscordAdapter);

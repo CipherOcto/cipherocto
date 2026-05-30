@@ -74,7 +74,6 @@ impl Default for RouteWeights {
 
 /// Gateway route entry in the overlay graph.
 #[derive(Debug, Clone, Serialize, Deserialize)]
-#[repr(C)]
 pub struct GatewayRoute {
     /// Target gateway ID
     pub gateway_id: [u8; 32],
@@ -92,7 +91,6 @@ pub struct GatewayRoute {
 
 /// Partition event for platform failover.
 #[derive(Debug, Clone, Serialize, Deserialize)]
-#[repr(C)]
 pub struct PartitionEvent {
     /// Affected domain hash
     pub domain_hash: [u8; 32],

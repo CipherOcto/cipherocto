@@ -27,8 +27,7 @@ use tokio::sync::{mpsc, Mutex};
 use tokio_tungstenite::{connect_async, tungstenite::Message};
 
 use octo_network::dot::adapters::{
-    backoff::RetryConfig, CapabilityReport, DeliveryReceipt, PlatformAdapter,
-    RawPlatformMessage,
+    backoff::RetryConfig, CapabilityReport, DeliveryReceipt, PlatformAdapter, RawPlatformMessage,
 };
 use octo_network::dot::domain::{BroadcastDomainId, PlatformType};
 use octo_network::dot::envelope::DeterministicEnvelope;
@@ -116,8 +115,8 @@ pub struct NostrAdapter {
 
 impl NostrAdapter {
     pub async fn new(config: NostrConfig) -> Result<Self, String> {
-        let key_bytes = hex_decode(&config.private_key)
-            .map_err(|_| "Invalid hex in private_key")?;
+        let key_bytes =
+            hex_decode(&config.private_key).map_err(|_| "Invalid hex in private_key")?;
         if key_bytes.len() != 32 {
             return Err("private_key must be 32 bytes (64 hex chars)".into());
         }
@@ -148,7 +147,9 @@ impl NostrAdapter {
     /// Start relay connections (idempotent).
     async fn ensure_relays_started(&self) -> Result<(), PlatformAdapterError> {
         let mut started = self.relays_started.lock().await;
-        if *started { return Ok(()); }
+        if *started {
+            return Ok(());
+        }
 
         for relay_url in &self.config.relays {
             let url = relay_url.clone();
@@ -167,8 +168,8 @@ impl NostrAdapter {
     /// Publish an event to all configured relays.
     async fn publish_event(&self, event: &NostrEvent) -> Result<(), PlatformAdapterError> {
         let msg = serde_json::json!(["EVENT", event]);
-        let msg_str = serde_json::to_string(&msg)
-            .map_err(|e| transport_err(format!("JSON error: {e}")))?;
+        let msg_str =
+            serde_json::to_string(&msg).map_err(|e| transport_err(format!("JSON error: {e}")))?;
 
         let retry = RetryConfig::default();
         let mut published = 0;
@@ -176,7 +177,10 @@ impl NostrAdapter {
         for relay_url in &self.config.relays {
             for attempt in 0..=retry.max_retries {
                 match publish_to_relay(relay_url, &msg_str).await {
-                    Ok(()) => { published += 1; break; }
+                    Ok(()) => {
+                        published += 1;
+                        break;
+                    }
                     Err(e) => {
                         if retry.should_retry(attempt) {
                             tokio::time::sleep(retry.delay_for_attempt(attempt)).await;
@@ -207,8 +211,12 @@ impl NostrAdapter {
     }
 
     pub const PLATFORM_TYPE: u16 = 0x0004;
-    pub fn max_payload_bytes() -> usize { 65_536 }
-    pub fn rate_limit_per_second() -> u32 { 10 }
+    pub fn max_payload_bytes() -> usize {
+        65_536
+    }
+    pub fn rate_limit_per_second() -> u32 {
+        10
+    }
 }
 
 /// Publish a single event to a relay via WebSocket.
@@ -315,7 +323,10 @@ fn parse_nostr_event(val: &serde_json::Value) -> Option<NostrEvent> {
 // ── PlatformAdapter ────────────────────────────────────────────────
 
 fn transport_err(msg: impl Into<String>) -> PlatformAdapterError {
-    PlatformAdapterError::Unreachable { platform: "nostr".into(), reason: msg.into() }
+    PlatformAdapterError::Unreachable {
+        platform: "nostr".into(),
+        reason: msg.into(),
+    }
 }
 
 #[async_trait]
@@ -374,15 +385,19 @@ impl PlatformAdapter for NostrAdapter {
         Ok(messages)
     }
 
-    fn canonicalize(&self, raw: &RawPlatformMessage) -> Result<DeterministicEnvelope, PlatformAdapterError> {
+    fn canonicalize(
+        &self,
+        raw: &RawPlatformMessage,
+    ) -> Result<DeterministicEnvelope, PlatformAdapterError> {
         if raw.payload.is_empty() {
             return Err(transport_err("Empty payload"));
         }
-        DeterministicEnvelope::from_wire_bytes(&raw.payload)
-            .map_err(|e| PlatformAdapterError::ApiError {
+        DeterministicEnvelope::from_wire_bytes(&raw.payload).map_err(|e| {
+            PlatformAdapterError::ApiError {
                 code: 400,
                 message: format!("canonicalize failed: {e}"),
-            })
+            }
+        })
     }
 
     fn capabilities(&self) -> CapabilityReport {
@@ -427,14 +442,22 @@ impl PlatformAdapter for NostrAdapter {
 // ── Plugin ABI ─────────────────────────────────────────────────────
 
 #[no_mangle]
-pub extern "C" fn adapter_version() -> u32 { 1 }
+pub extern "C" fn adapter_version() -> u32 {
+    1
+}
 
 #[no_mangle]
-pub extern "C" fn platform_type() -> u16 { 0x0004 }
+pub extern "C" fn platform_type() -> u16 {
+    0x0004
+}
 
 #[no_mangle]
+/// # Safety
+/// `config` must point to a valid buffer of at least `len` bytes.
 pub unsafe extern "C" fn create_adapter(config: *const u8, config_len: usize) -> *mut () {
-    if config.is_null() || config_len == 0 { return std::ptr::null_mut(); }
+    if config.is_null() || config_len == 0 {
+        return std::ptr::null_mut();
+    }
     let bytes = std::slice::from_raw_parts(config, config_len);
     match NostrAdapter::from_config_bytes(bytes) {
         Ok(a) => Box::into_raw(Box::new(a)) as *mut (),
@@ -443,6 +466,8 @@ pub unsafe extern "C" fn create_adapter(config: *const u8, config_len: usize) ->
 }
 
 #[no_mangle]
+/// # Safety
+/// `ptr` must be a pointer previously returned by `create_adapter`.
 pub unsafe extern "C" fn destroy_adapter(adapter: *mut ()) {
     if !adapter.is_null() {
         let _ = Box::from_raw(adapter as *mut NostrAdapter);
@@ -456,8 +481,11 @@ fn hex_encode(bytes: &[u8]) -> String {
 }
 
 fn hex_decode(hex: &str) -> Result<Vec<u8>, ()> {
-    if hex.len() % 2 != 0 { return Err(()); }
-    (0..hex.len()).step_by(2)
+    if !hex.len().is_multiple_of(2) {
+        return Err(());
+    }
+    (0..hex.len())
+        .step_by(2)
         .map(|i| u8::from_str_radix(&hex[i..i + 2], 16).map_err(|_| ()))
         .collect()
 }
@@ -476,7 +504,9 @@ fn base64_encode(data: &[u8]) -> String {
 
 fn base64_decode(s: &str) -> Result<Vec<u8>, ()> {
     use base64::Engine;
-    base64::engine::general_purpose::STANDARD.decode(s).map_err(|_| ())
+    base64::engine::general_purpose::STANDARD
+        .decode(s)
+        .map_err(|_| ())
 }
 
 fn epoch_millis() -> u64 {
@@ -531,13 +561,7 @@ mod tests {
     #[test]
     fn test_nostr_event_signature_valid() {
         let key = SigningKey::from_bytes(&[42u8; 32]);
-        let event = NostrEvent::create(
-            &key,
-            "test".into(),
-            DOT_EVENT_KIND,
-            vec![],
-            1000,
-        );
+        let event = NostrEvent::create(&key, "test".into(), DOT_EVENT_KIND, vec![], 1000);
         // Verify signature
         let id_bytes = hex_decode(&event.id).unwrap();
         let sig_bytes = hex_decode(&event.sig).unwrap();

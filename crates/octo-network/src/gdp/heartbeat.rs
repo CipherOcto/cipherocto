@@ -1,7 +1,5 @@
 //! Gateway Heartbeat (RFC-0851 §12, references RFC-0860 §2.2)
 
-use serde::{Deserialize, Serialize};
-
 /// Gateway Heartbeat — 7 fields per RFC-0860 §2.2
 #[derive(Debug, Clone)]
 pub struct GatewayHeartbeat {
@@ -11,9 +9,9 @@ pub struct GatewayHeartbeat {
     pub sequence: u64,
     /// Number of active routes
     pub active_routes: u32,
-    /// Load class (0-255)
+    /// Load class (0-65535)
     pub load_class: u16,
-    /// Uptime class (0-255)
+    /// Uptime class (0-65535)
     pub uptime_class: u16,
     /// Logical timestamp
     pub logical_timestamp: u64,

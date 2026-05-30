@@ -31,6 +31,19 @@ pub enum DpsError {
         expected: &'static str,
         actual: &'static str,
     },
+    /// Route trace does not match expected trace
+    TraceMismatch {
+        expected: [u8; 32],
+        actual: [u8; 32],
+    },
+    /// Proof generation backend failed
+    ProofGenerationFailed { reason: &'static str },
+    /// Proof verification failed
+    VerificationFailed { reason: &'static str },
+    /// Verification key is invalid or malformed
+    InvalidVerificationKey { reason: &'static str },
+    /// Consensus boundary violation detected
+    ConsensusBoundaryViolation { reason: &'static str },
 }
 
 impl std::fmt::Display for DpsError {
@@ -79,6 +92,26 @@ impl std::fmt::Display for DpsError {
                     "Invalid circuit model: expected {}, got {}",
                     expected, actual
                 )
+            }
+            Self::TraceMismatch { expected, actual } => {
+                write!(
+                    f,
+                    "Trace mismatch: expected {}, got {}",
+                    hex8(expected),
+                    hex8(actual)
+                )
+            }
+            Self::ProofGenerationFailed { reason } => {
+                write!(f, "Proof generation failed: {}", reason)
+            }
+            Self::VerificationFailed { reason } => {
+                write!(f, "Verification failed: {}", reason)
+            }
+            Self::InvalidVerificationKey { reason } => {
+                write!(f, "Invalid verification key: {}", reason)
+            }
+            Self::ConsensusBoundaryViolation { reason } => {
+                write!(f, "Consensus boundary violation: {}", reason)
             }
         }
     }
@@ -171,6 +204,47 @@ mod tests {
         };
         assert!(e.to_string().contains("R1CS"));
         assert!(e.to_string().contains("AIR"));
+    }
+
+    #[test]
+    fn test_trace_mismatch() {
+        let e = DpsError::TraceMismatch {
+            expected: [0xAA; 32],
+            actual: [0xBB; 32],
+        };
+        assert!(e.to_string().contains("Trace mismatch"));
+    }
+
+    #[test]
+    fn test_proof_generation_failed() {
+        let e = DpsError::ProofGenerationFailed {
+            reason: "backend unavailable",
+        };
+        assert!(e.to_string().contains("backend unavailable"));
+    }
+
+    #[test]
+    fn test_verification_failed() {
+        let e = DpsError::VerificationFailed {
+            reason: "invalid proof structure",
+        };
+        assert!(e.to_string().contains("invalid proof structure"));
+    }
+
+    #[test]
+    fn test_invalid_verification_key() {
+        let e = DpsError::InvalidVerificationKey {
+            reason: "wrong length",
+        };
+        assert!(e.to_string().contains("wrong length"));
+    }
+
+    #[test]
+    fn test_consensus_boundary_violation() {
+        let e = DpsError::ConsensusBoundaryViolation {
+            reason: "cross-boundary proof",
+        };
+        assert!(e.to_string().contains("cross-boundary proof"));
     }
 
     #[test]

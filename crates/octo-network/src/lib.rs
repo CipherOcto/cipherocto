@@ -1,19 +1,19 @@
-//! CipherOcto Network
+//! CipherOcto Network — Deterministic Overlay Networking Stack
 //!
-//! Peer-to-peer networking for the CipherOcto protocol.
+//! Multi-module deterministic overlay networking for the CipherOcto protocol.
 //!
-//! Responsibilities:
-//! - Peer discovery
-//! - Message routing
-//! - Provider coordination
-//! - Network simulation (MVP)
-//! - Deterministic Overlay Transport (DOT) — RFC-0850
-//!
-//! In Phase 1: Local simulation with loopback peers
-//! In Phase 2+: libp2p-based decentralized networking
-
-use anyhow::Result;
-use tokio::sync::RwLock;
+//! Modules:
+//! - DOT (RFC-0850): Deterministic Overlay Transport
+//! - GDP (RFC-0851): Gateway Discovery Protocol
+//! - DGP (RFC-0852): Deterministic Gossip Protocol
+//! - OCrypt (RFC-0853): Overlay Cryptography
+//! - DPS (RFC-0854): Deterministic Proof Substrate
+//! - MON (RFC-0855): Mission Overlay Networks
+//! - DRS (RFC-0856): Deterministic Route Selection
+//! - DOM (RFC-0857): Deterministic Overlay Mempool
+//! - ORR (RFC-0858): Onion Relay Routing
+//! - PCE (RFC-0859): Proof-Carrying Envelopes (under DOT)
+//! - PoRelay (RFC-0860): Proof-of-Relay
 
 /// Deterministic Overlay Transport module — RFC-0850.
 pub mod dot;
@@ -37,45 +37,3 @@ pub mod mon;
 pub mod orr;
 /// Proof-of-Relay (PoRelay) — RFC-0860.
 pub mod porelay;
-
-pub struct Network {
-    peers: RwLock<Vec<String>>,
-}
-
-impl Network {
-    /// Create a new network instance
-    pub fn new() -> Self {
-        Self {
-            peers: RwLock::new(vec![]),
-        }
-    }
-
-    /// Add a peer to the network
-    pub async fn add_peer(&self, peer_id: String) -> Result<()> {
-        let mut peers = self.peers.write().await;
-        let peer_count = peers.len() + 1;
-        peers.push(peer_id.clone());
-        tracing::info!(peer = %peer_id, total = peer_count, "peer added");
-        Ok(())
-    }
-
-    /// Get network status
-    pub async fn status(&self) -> NetworkStatus {
-        let peers = self.peers.read().await;
-        NetworkStatus {
-            peer_count: peers.len(),
-            is_active: !peers.is_empty(),
-        }
-    }
-}
-
-impl Default for Network {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
-pub struct NetworkStatus {
-    pub peer_count: usize,
-    pub is_active: bool,
-}

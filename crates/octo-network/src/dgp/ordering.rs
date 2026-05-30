@@ -36,13 +36,25 @@ pub fn sort_canonical(objects: &mut [GossipObject]) {
     });
 }
 
-/// FIRST_VALID_HASH_WINS conflict resolution.
+/// FIRST_VALID_HASH_WINS conflict resolution (RFC-0852 §5).
 ///
 /// Given multiple objects with the same logical identity but different hashes,
-/// the one with the lexicographically lowest object_hash wins.
+/// selects the lexicographically lowest object_hash among those whose signature
+/// is valid (verified by the caller-supplied predicate). If no candidate has a
+/// valid signature, returns `None`.
+///
 /// Tie-breaking: lowest lexicographic origin_gateway.
-pub fn first_valid_hash_wins(objects: &[GossipObject]) -> Option<&GossipObject> {
-    objects.iter().min_by(|a, b| {
+///
+/// TODO: verify signature natively once RFC-0852 §5 signature scheme is
+/// implemented. Until then callers pass `verify` as a closure.
+pub fn first_valid_hash_wins<F>(
+    objects: &[GossipObject],
+    verify: F,
+) -> Option<&GossipObject>
+where
+    F: Fn(&GossipObject) -> bool,
+{
+    objects.iter().filter(|o| verify(o)).min_by(|a, b| {
         a.object_hash
             .cmp(&b.object_hash)
             .then_with(|| a.origin_gateway.cmp(&b.origin_gateway))
@@ -118,14 +130,14 @@ mod tests {
             make_obj(1, 100, 0xAA, 0x01),
             make_obj(1, 100, 0xCC, 0x03),
         ];
-        let winner = first_valid_hash_wins(&objects).unwrap();
+        let winner = first_valid_hash_wins(&objects, |_| true).unwrap();
         assert_eq!(winner.object_hash[0], 0xAA);
     }
 
     #[test]
     fn test_first_valid_hash_wins_tiebreak_by_origin() {
         let objects = vec![make_obj(1, 100, 0xAA, 0x02), make_obj(1, 100, 0xAA, 0x01)];
-        let winner = first_valid_hash_wins(&objects).unwrap();
+        let winner = first_valid_hash_wins(&objects, |_| true).unwrap();
         assert_eq!(winner.origin_gateway[0], 0x01);
     }
 }

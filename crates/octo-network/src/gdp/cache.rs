@@ -15,8 +15,8 @@ pub struct GatewayCacheEntry {
     pub first_seen: u64,
     /// Epoch when last seen
     pub last_seen: u64,
-    /// Trust score (higher = more trusted)
-    pub trust_score: u64,
+    /// Trust score (higher = more trusted, 0-1000 per RFC Section 10)
+    pub trust_score: u32,
     /// Gateway identity
     pub identity: GatewayIdentity,
     /// Capabilities sorted by enum value
@@ -65,8 +65,8 @@ impl GatewayCache {
         let key = entry.identity.gateway_id;
 
         // If already present, update
-        if self.entries.contains_key(&key) {
-            self.entries.insert(key, entry);
+        if let std::collections::btree_map::Entry::Occupied(mut e) = self.entries.entry(key) {
+            e.insert(entry);
             return;
         }
 
@@ -90,17 +90,18 @@ impl GatewayCache {
         let mut best_evict_score = u64::MAX;
 
         for (key, entry) in self.entries.iter() {
-            let trust_component = entry.trust_score.saturating_mul(10);
-            let recency = current_epoch.saturating_sub(entry.last_seen);
-            let recency_score = recency.min(1000); // cap at 1000
-            let utility_score = entry.endpoints.len() as u64;
+            let trust_component = (entry.trust_score as u64).saturating_mul(10);
+            let recency = current_epoch.saturating_sub(entry.last_seen).min(1000);
+            let recency_score = 1000u64.saturating_sub(recency);
+            // TODO: track route count per gateway (RFC Section 13)
+            let utility_score = 0u64;
             let eviction_score = trust_component
                 .saturating_add(utility_score.saturating_mul(5))
                 .saturating_add(recency_score.saturating_mul(2));
 
             if eviction_score < best_evict_score
                 || (eviction_score == best_evict_score
-                    && best_evict_key.as_ref().map_or(true, |k: &[u8; 32]| key < k))
+                    && best_evict_key.as_ref().is_none_or(|k: &[u8; 32]| key < k))
             {
                 best_evict_score = eviction_score;
                 best_evict_key = Some(*key);
@@ -119,7 +120,7 @@ impl GatewayCache {
     }
 
     pub fn iter(&self) -> impl Iterator<Item = (&[u8; 32], &GatewayCacheEntry)> {
-        self.entries.iter().map(|(k, v)| (k, v))
+        self.entries.iter()
     }
 }
 
@@ -128,7 +129,7 @@ mod tests {
     use super::*;
     use crate::dot::gateway::GatewayClass;
 
-    fn make_entry(id: u8, trust: u64, endpoints: usize) -> GatewayCacheEntry {
+    fn make_entry(id: u8, trust: u32, endpoints: usize) -> GatewayCacheEntry {
         GatewayCacheEntry {
             advertisement_hash: [id; 32],
             first_seen: 100,
@@ -169,7 +170,7 @@ mod tests {
     fn test_cache_deterministic_order() {
         let mut cache = GatewayCache::new(100);
         for i in 0..50u8 {
-            cache.insert(make_entry(i, i as u64 * 10, 1), 1000);
+            cache.insert(make_entry(i, i as u32 * 10, 1), 1000);
         }
         // BTreeMap guarantees deterministic iteration
         let ids: Vec<[u8; 32]> = cache.iter().map(|(_, e)| e.identity.gateway_id).collect();

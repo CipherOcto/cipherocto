@@ -9,6 +9,7 @@
 //! censor, or delay messages, but DGP ensures logical overlay state
 //! converges deterministically.
 
+pub mod anti_entropy;
 pub mod dedup;
 pub mod directed;
 pub mod domain;
@@ -19,6 +20,7 @@ pub mod incremental;
 pub mod object;
 pub mod ordering;
 
+pub use anti_entropy::{AntiEntropyReconciler, GossipStateSummary, ReconciliationResult};
 pub use dedup::{DedupSet, GossipReplayCache};
 pub use directed::DirectedMode;
 pub use domain::{GossipDomainId, GossipScope};
@@ -27,8 +29,8 @@ pub use flood::FloodMode;
 pub use fragment::{FragmentAssembler, GossipFragment};
 pub use incremental::IncrementalMode;
 pub use object::{
-    GossipObject, GossipObjectType, GossipPriority, FLAG_ANTI_ENTROPY, FLAG_COMPRESSED,
-    FLAG_DIRECTED, FLAG_FLOOD, FLAG_INCREMENTAL, FLAG_RELIABLE,
+    validate_flags, GossipObject, GossipObjectType, GossipPriority, FLAG_ANTI_ENTROPY,
+    FLAG_COMPRESSED, FLAG_DIRECTED, FLAG_FLOOD, FLAG_INCREMENTAL, FLAG_RELIABLE,
 };
 pub use ordering::{first_valid_hash_wins, sort_canonical, CanonicalOrderKey};
 
@@ -55,7 +57,7 @@ mod tests {
     #[test]
     fn test_full_pipeline_dedup_ordering() {
         // Simulate: 3 objects arrive out of order, dedup removes one duplicate
-        let mut dedup = DedupSet::new();
+        let mut dedup = DedupSet::new(1000);
         let obj_a = make_test_obj(1, 100, 0xAA);
         let obj_b = make_test_obj(1, 200, 0xBB);
         let obj_c = make_test_obj(1, 100, 0xAA); // duplicate
@@ -78,7 +80,7 @@ mod tests {
         let obj_a = make_test_obj(1, 100, 0xAA);
         let obj_b = make_test_obj(1, 100, 0xBB);
         let candidates = [obj_a, obj_b];
-        let winner = first_valid_hash_wins(&candidates).unwrap();
+        let winner = first_valid_hash_wins(&candidates, |_| true).unwrap();
         assert_eq!(winner.object_hash[0], 0xAA);
     }
 

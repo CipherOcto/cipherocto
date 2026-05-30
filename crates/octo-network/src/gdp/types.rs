@@ -41,6 +41,8 @@ pub enum DiscoveryLifecycle {
     Bootstrap = 0x0001,
     Expansion = 0x0002,
     Stabilization = 0x0003,
+    Degraded = 0x0004,
+    Recovering = 0x0005,
 }
 
 /// Stake requirement for a discovery scope (RFC-0851 §11.1)

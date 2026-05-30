@@ -426,7 +426,7 @@ fn completion_litellm(
 ) -> PyResult<Py<PyAny>> {
     use quota_router_core::native_http::HttpProviderFactory;
 
-    let mut provider = HttpProviderFactory::create(&parsed.provider).ok_or_else(|| {
+    let provider = HttpProviderFactory::create(&parsed.provider).ok_or_else(|| {
         pyo3::exceptions::PyNotImplementedError::new_err(format!(
             "Provider '{}' not supported in litellm-mode",
             parsed.provider

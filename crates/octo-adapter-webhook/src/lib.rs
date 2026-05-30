@@ -25,8 +25,7 @@ use subtle::ConstantTimeEq;
 use tokio::sync::{mpsc, Mutex};
 
 use octo_network::dot::adapters::{
-    backoff::RetryConfig, CapabilityReport, DeliveryReceipt, PlatformAdapter,
-    RawPlatformMessage,
+    backoff::RetryConfig, CapabilityReport, DeliveryReceipt, PlatformAdapter, RawPlatformMessage,
 };
 use octo_network::dot::domain::{BroadcastDomainId, PlatformType};
 use octo_network::dot::envelope::DeterministicEnvelope;
@@ -53,9 +52,15 @@ pub struct WebhookConfig {
     pub hmac_secret: Option<String>,
 }
 
-fn default_send_method() -> String { "POST".into() }
-fn default_listen_port() -> u16 { 8443 }
-fn default_listen_path() -> String { "/dot/v1/envelope".into() }
+fn default_send_method() -> String {
+    "POST".into()
+}
+fn default_listen_port() -> u16 {
+    8443
+}
+fn default_listen_path() -> String {
+    "/dot/v1/envelope".into()
+}
 
 // ── Adapter ────────────────────────────────────────────────────────
 
@@ -97,7 +102,9 @@ impl WebhookAdapter {
     /// Start the HTTP server for receiving webhooks (idempotent).
     async fn ensure_server_started(&self) -> Result<(), PlatformAdapterError> {
         let mut started = self.server_started.lock().await;
-        if *started { return Ok(()); }
+        if *started {
+            return Ok(());
+        }
 
         let listen_port = self.config.listen_port;
         let listen_path = self.config.listen_path.clone();
@@ -128,16 +135,24 @@ impl WebhookAdapter {
     }
 
     pub const PLATFORM_TYPE: u16 = 0x0009;
-    pub fn max_payload_bytes() -> usize { 1_048_576 }
-    pub fn rate_limit_per_second() -> u32 { 100 }
+    pub fn max_payload_bytes() -> usize {
+        1_048_576
+    }
+    pub fn rate_limit_per_second() -> u32 {
+        100
+    }
 
     /// Timing-safe HMAC-SHA256 verification.
     pub fn verify_hmac(secret: &[u8], message: &[u8], expected_hex: &str) -> bool {
-        let Ok(expected_bytes) = hex_decode(expected_hex) else { return false; };
+        let Ok(expected_bytes) = hex_decode(expected_hex) else {
+            return false;
+        };
         let mut mac = Hmac::<Sha256>::new_from_slice(secret).unwrap();
         mac.update(message);
         let computed = mac.finalize().into_bytes();
-        if computed.len() != expected_bytes.len() { return false; }
+        if computed.len() != expected_bytes.len() {
+            return false;
+        }
         bool::from(computed.as_slice().ct_eq(&expected_bytes))
     }
 
@@ -152,8 +167,11 @@ impl WebhookAdapter {
 // ── Hex helpers ────────────────────────────────────────────────────
 
 fn hex_decode(hex: &str) -> Result<Vec<u8>, ()> {
-    if hex.len() % 2 != 0 { return Err(()); }
-    (0..hex.len()).step_by(2)
+    if !hex.len().is_multiple_of(2) {
+        return Err(());
+    }
+    (0..hex.len())
+        .step_by(2)
         .map(|i| u8::from_str_radix(&hex[i..i + 2], 16).map_err(|_| ()))
         .collect()
 }
@@ -211,7 +229,10 @@ fn epoch_millis() -> u64 {
 // ── PlatformAdapter ────────────────────────────────────────────────
 
 fn transport_err(msg: impl Into<String>) -> PlatformAdapterError {
-    PlatformAdapterError::Unreachable { platform: "webhook".into(), reason: msg.into() }
+    PlatformAdapterError::Unreachable {
+        platform: "webhook".into(),
+        reason: msg.into(),
+    }
 }
 
 #[async_trait]
@@ -221,7 +242,10 @@ impl PlatformAdapter for WebhookAdapter {
         _domain: &BroadcastDomainId,
         envelope: &DeterministicEnvelope,
     ) -> Result<DeliveryReceipt, PlatformAdapterError> {
-        let send_url = self.config.send_url.as_ref()
+        let send_url = self
+            .config
+            .send_url
+            .as_ref()
             .ok_or_else(|| transport_err("No send_url configured"))?;
 
         let wire_bytes = envelope.to_wire_bytes();
@@ -287,15 +311,19 @@ impl PlatformAdapter for WebhookAdapter {
         Ok(messages)
     }
 
-    fn canonicalize(&self, raw: &RawPlatformMessage) -> Result<DeterministicEnvelope, PlatformAdapterError> {
+    fn canonicalize(
+        &self,
+        raw: &RawPlatformMessage,
+    ) -> Result<DeterministicEnvelope, PlatformAdapterError> {
         if raw.payload.is_empty() {
             return Err(transport_err("Empty payload"));
         }
-        DeterministicEnvelope::from_wire_bytes(&raw.payload)
-            .map_err(|e| PlatformAdapterError::ApiError {
+        DeterministicEnvelope::from_wire_bytes(&raw.payload).map_err(|e| {
+            PlatformAdapterError::ApiError {
                 code: 400,
                 message: format!("canonicalize failed: {e}"),
-            })
+            }
+        })
     }
 
     fn capabilities(&self) -> CapabilityReport {
@@ -315,7 +343,6 @@ impl PlatformAdapter for WebhookAdapter {
     fn platform_type(&self) -> PlatformType {
         PlatformType::Webhook
     }
-
 
     async fn shutdown(&self) -> Result<(), PlatformAdapterError> {
         Ok(())
@@ -337,14 +364,22 @@ impl PlatformAdapter for WebhookAdapter {
 // ── Plugin ABI ─────────────────────────────────────────────────────
 
 #[no_mangle]
-pub extern "C" fn adapter_version() -> u32 { 1 }
+pub extern "C" fn adapter_version() -> u32 {
+    1
+}
 
 #[no_mangle]
-pub extern "C" fn platform_type() -> u16 { 0x0009 }
+pub extern "C" fn platform_type() -> u16 {
+    0x0009
+}
 
 #[no_mangle]
+/// # Safety
+/// `config` must point to a valid buffer of at least `len` bytes.
 pub unsafe extern "C" fn create_adapter(config: *const u8, config_len: usize) -> *mut () {
-    if config.is_null() || config_len == 0 { return std::ptr::null_mut(); }
+    if config.is_null() || config_len == 0 {
+        return std::ptr::null_mut();
+    }
     let bytes = std::slice::from_raw_parts(config, config_len);
     match WebhookAdapter::from_config_bytes(bytes) {
         Ok(a) => Box::into_raw(Box::new(a)) as *mut (),
@@ -353,6 +388,8 @@ pub unsafe extern "C" fn create_adapter(config: *const u8, config_len: usize) ->
 }
 
 #[no_mangle]
+/// # Safety
+/// `ptr` must be a pointer previously returned by `create_adapter`.
 pub unsafe extern "C" fn destroy_adapter(adapter: *mut ()) {
     if !adapter.is_null() {
         let _ = Box::from_raw(adapter as *mut WebhookAdapter);
@@ -399,7 +436,8 @@ mod tests {
             "send_method": "PUT",
             "hmac_secret": "test-secret"
         });
-        let a = WebhookAdapter::from_config_bytes(serde_json::to_vec(&json).unwrap().as_slice()).unwrap();
+        let a = WebhookAdapter::from_config_bytes(serde_json::to_vec(&json).unwrap().as_slice())
+            .unwrap();
         assert_eq!(a.config.send_url, Some("https://example.com/dot".into()));
         assert_eq!(a.config.listen_port, 9090);
         assert_eq!(a.config.send_method, "PUT");
@@ -452,8 +490,12 @@ mod tests {
     #[test]
     fn test_capabilities() {
         let a = WebhookAdapter::new(WebhookConfig {
-            send_url: None, send_method: "POST".into(), listen_port: 8443,
-            listen_path: "/dot/v1/envelope".into(), auth_header: None, hmac_secret: None,
+            send_url: None,
+            send_method: "POST".into(),
+            listen_port: 8443,
+            listen_path: "/dot/v1/envelope".into(),
+            auth_header: None,
+            hmac_secret: None,
         });
         let c = a.capabilities();
         assert_eq!(c.max_payload_bytes, 1_048_576);
@@ -464,8 +506,12 @@ mod tests {
     #[test]
     fn test_domain_id() {
         let a = WebhookAdapter::new(WebhookConfig {
-            send_url: None, send_method: "POST".into(), listen_port: 8443,
-            listen_path: "/dot/v1/envelope".into(), auth_header: None, hmac_secret: None,
+            send_url: None,
+            send_method: "POST".into(),
+            listen_port: 8443,
+            listen_path: "/dot/v1/envelope".into(),
+            auth_header: None,
+            hmac_secret: None,
         });
         let d = a.domain_id("https://example.com");
         assert_eq!(d.platform_type, PlatformType::Webhook as u16);

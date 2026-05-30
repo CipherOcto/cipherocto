@@ -27,8 +27,7 @@ use std::sync::Arc;
 use tokio::sync::{mpsc, Mutex};
 
 use octo_network::dot::adapters::{
-    backoff::RetryConfig, CapabilityReport, DeliveryReceipt, PlatformAdapter,
-    RawPlatformMessage,
+    backoff::RetryConfig, CapabilityReport, DeliveryReceipt, PlatformAdapter, RawPlatformMessage,
 };
 use octo_network::dot::domain::{BroadcastDomainId, PlatformType};
 use octo_network::dot::envelope::DeterministicEnvelope;
@@ -89,7 +88,9 @@ impl BluetoothAdapter {
     /// Start BLE listener task (idempotent).
     async fn ensure_listener_started(&self) -> Result<(), PlatformAdapterError> {
         let mut started = self.listener_started.lock().await;
-        if *started { return Ok(()); }
+        if *started {
+            return Ok(());
+        }
 
         let device_name = self.config.device_name.clone();
         let service_uuid = self.config.service_uuid.clone();
@@ -125,15 +126,17 @@ impl BluetoothAdapter {
 
     /// Domain hash: `BLAKE3-256("bluetooth:{device_name}")`
     pub fn domain_hash(device_name: &str) -> [u8; 32] {
-        *blake3::hash(
-            format!("bluetooth:{}", device_name.trim().to_lowercase()).as_bytes(),
-        )
-        .as_bytes()
+        *blake3::hash(format!("bluetooth:{}", device_name.trim().to_lowercase()).as_bytes())
+            .as_bytes()
     }
 
     pub const PLATFORM_TYPE: u16 = 0x000B;
-    pub fn max_payload_bytes() -> usize { MAX_PAYLOAD_BYTES }
-    pub fn rate_limit_per_second() -> u32 { 10 }
+    pub fn max_payload_bytes() -> usize {
+        MAX_PAYLOAD_BYTES
+    }
+    pub fn rate_limit_per_second() -> u32 {
+        10
+    }
 }
 
 /// Long-running BLE listener task using `bluetoothctl` subprocess.
@@ -263,7 +266,6 @@ impl PlatformAdapter for BluetoothAdapter {
         PlatformType::Bluetooth
     }
 
-
     async fn shutdown(&self) -> Result<(), PlatformAdapterError> {
         Ok(())
     }
@@ -279,9 +281,7 @@ impl PlatformAdapter for BluetoothAdapter {
                 "bluetoothctl error: {}",
                 String::from_utf8_lossy(&output.stderr)
             ))),
-            Err(e) => Err(transport_err(format!(
-                "bluetoothctl not available: {e}"
-            ))),
+            Err(e) => Err(transport_err(format!("bluetoothctl not available: {e}"))),
         }
     }
 }
@@ -299,6 +299,8 @@ pub extern "C" fn platform_type() -> u16 {
 }
 
 #[no_mangle]
+/// # Safety
+/// `config` must point to a valid buffer of at least `len` bytes.
 pub unsafe extern "C" fn create_adapter(config: *const u8, config_len: usize) -> *mut () {
     if config.is_null() || config_len == 0 {
         return std::ptr::null_mut();
@@ -311,6 +313,8 @@ pub unsafe extern "C" fn create_adapter(config: *const u8, config_len: usize) ->
 }
 
 #[no_mangle]
+/// # Safety
+/// `ptr` must be a pointer previously returned by `create_adapter`.
 pub unsafe extern "C" fn destroy_adapter(adapter: *mut ()) {
     if !adapter.is_null() {
         let _ = Box::from_raw(adapter as *mut BluetoothAdapter);
@@ -391,10 +395,9 @@ mod tests {
             "service_uuid": "12345678-1234-5678-1234-56789abcdef0",
             "characteristic_uuid": "abcdef01-2345-6789-abcd-ef0123456789"
         });
-        let adapter = BluetoothAdapter::from_config_bytes(
-            serde_json::to_vec(&json).unwrap().as_slice(),
-        )
-        .unwrap();
+        let adapter =
+            BluetoothAdapter::from_config_bytes(serde_json::to_vec(&json).unwrap().as_slice())
+                .unwrap();
         assert_eq!(adapter.config.device_name, "cipherocto-ble");
         assert_eq!(
             adapter.config.service_uuid,

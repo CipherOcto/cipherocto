@@ -2,7 +2,7 @@
 
 ## Status
 
-Open
+Implemented (375 lines, 12 tests, FederationState, partition handling)
 
 ## RFC
 
@@ -22,7 +22,8 @@ Implement gateway federation with multi-homing (multiple broadcast domains per g
 - [ ] Routes MUST NOT depend on latency, local heuristics, wall-clock, CPU load
 - [ ] Platform partition handling: automatic rerouting through remaining carriers
 - [ ] Gateway replacement via GDP (RFC-0851) when gateway fails
-- [ ] Unit tests: 10+ tests covering multi-homing, route computation, partition handling
+- [ ] Self-loop prevention: each adapter provides `self_handle()` — gateway drops messages from itself to prevent relay loops
+- [ ] Unit tests: 10+ tests covering multi-homing, route computation, partition handling, self-loop prevention
 - [ ] `cargo fmt -- --check` passes
 - [ ] `cargo test -p octo-network` passes
 

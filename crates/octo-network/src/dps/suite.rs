@@ -46,7 +46,7 @@ pub enum ProofCircuitModel {
     AIR = 0x0001,
     R1CS = 0x0002,
     PLONKISH = 0x0003,
-    zkVM = 0x0004,
+    ZkVm = 0x0004,
     Recursive = 0x0005,
 }
 
@@ -60,6 +60,44 @@ pub enum ProofExecutionClass {
     ClassB = 0x0002,
     /// Probabilistic / human-in-the-loop
     ClassC = 0x0003,
+}
+
+/// Proof suite 4-field composite key (RFC-0854 §3).
+///
+/// Uniquely identifies a proof suite by its proof system, field, hash, and recursion scheme.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct ProofSuiteId {
+    /// Proof system identifier
+    pub proof_system: u16,
+    /// Field identifier
+    pub field_id: u16,
+    /// Hash identifier
+    pub hash_id: u16,
+    /// Recursion scheme identifier
+    pub recursion_scheme: u16,
+}
+
+impl ProofSuiteId {
+    /// Create a new proof suite ID.
+    pub fn new(proof_system: u16, field_id: u16, hash_id: u16, recursion_scheme: u16) -> Self {
+        Self {
+            proof_system,
+            field_id,
+            hash_id,
+            recursion_scheme,
+        }
+    }
+
+    /// Compute BLAKE3-256 hash of this composite key.
+    pub fn to_hash(&self) -> [u8; 32] {
+        use blake3::Hasher;
+        let mut h = Hasher::new();
+        h.update(&self.proof_system.to_be_bytes());
+        h.update(&self.field_id.to_be_bytes());
+        h.update(&self.hash_id.to_be_bytes());
+        h.update(&self.recursion_scheme.to_be_bytes());
+        *h.finalize().as_bytes()
+    }
 }
 
 /// A registered proof suite with its capabilities.
@@ -148,6 +186,39 @@ mod tests {
         assert_eq!(suite.system_id, ProofSystemId::STWO);
         assert_eq!(suite.max_verification_latency_ms, 5000);
         assert_eq!(suite.aggregation_support, AGG_NONE);
+    }
+
+    #[test]
+    fn test_proof_suite_id_new() {
+        let id = ProofSuiteId::new(0x0001, 0x0002, 0x0003, 0x0004);
+        assert_eq!(id.proof_system, 0x0001);
+        assert_eq!(id.field_id, 0x0002);
+        assert_eq!(id.hash_id, 0x0003);
+        assert_eq!(id.recursion_scheme, 0x0004);
+    }
+
+    #[test]
+    fn test_proof_suite_id_to_hash_deterministic() {
+        let id = ProofSuiteId::new(0x0001, 0x0002, 0x0003, 0x0004);
+        let h1 = id.to_hash();
+        let h2 = id.to_hash();
+        assert_eq!(h1, h2);
+    }
+
+    #[test]
+    fn test_proof_suite_id_to_hash_different_inputs() {
+        let id1 = ProofSuiteId::new(0x0001, 0x0002, 0x0003, 0x0004);
+        let id2 = ProofSuiteId::new(0x0001, 0x0002, 0x0003, 0x0005);
+        assert_ne!(id1.to_hash(), id2.to_hash());
+    }
+
+    #[test]
+    fn test_proof_suite_id_equality() {
+        let id1 = ProofSuiteId::new(1, 2, 3, 4);
+        let id2 = ProofSuiteId::new(1, 2, 3, 4);
+        let id3 = ProofSuiteId::new(1, 2, 3, 5);
+        assert_eq!(id1, id2);
+        assert_ne!(id1, id3);
     }
 
     #[test]

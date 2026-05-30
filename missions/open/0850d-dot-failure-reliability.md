@@ -2,7 +2,7 @@
 
 ## Status
 
-Open
+Implemented (205 lines, 9 tests, exponential backoff, RetryConfig, jitter)
 
 ## RFC
 
@@ -18,9 +18,12 @@ Implement Byzantine transport tolerance, platform partition handling, gateway fa
 - [ ] Mutation detection via signature verification at every gateway
 - [ ] Platform partition: automatic rerouting through remaining carriers
 - [ ] Gateway failure: gateway replacement via GDP discovery
+- [ ] Graceful shutdown: pending messages flushed before adapter teardown
+- [ ] Exponential backoff utility: shared `compute_backoff_delay(base, attempt, max, jitter)` for all adapters
+- [ ] Structured logging: all adapters log with module path, action, outcome, and JSON attributes
 - [ ] Token economics: OCTO-B for relay bandwidth, OCTO-O for coordination, OCTO-N for uptime, OCTO-S for storage
 - [ ] Gateway earnings: per validated relay, uptime, deterministic delivery, anti-censorship routing
-- [ ] Carrier premium structure (base rate for NativeP2P, 1.5x for Telegram/Discord, 2.0x for Signal, 3.0x for LoRa)
+- [ ] Carrier premium structure (base rate for NativeP2P, 1.2x for Matrix/Nostr, 1.5x for Telegram/Discord/Slack, 1.0x for IRC/Webhook/WebRTC, 2.0x for Signal/WhatsApp, 3.0x for LoRa/Bluetooth)
 - [ ] Unit tests: 8+ tests covering Byzantine tolerance, partition recovery, token accounting
 - [ ] `cargo fmt -- --check` passes
 - [ ] `cargo test -p octo-network` passes

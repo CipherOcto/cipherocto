@@ -3,7 +3,7 @@
 use thiserror::Error;
 
 /// ORR Error Enum — 10 variants
-#[derive(Error, Debug)]
+#[derive(Error, Clone, Debug)]
 pub enum OrrError {
     #[error("Invalid hop index: {index}, max {max}")]
     InvalidHopIndex { index: u16, max: u16 },

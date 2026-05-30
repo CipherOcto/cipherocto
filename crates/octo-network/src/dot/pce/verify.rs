@@ -3,6 +3,7 @@
 use crate::dot::pce::envelope::ProofCarryingEnvelope;
 use crate::dot::pce::error::PceError;
 use crate::dot::pce::proof_type::{ProofSystemId, VerificationResult};
+use crate::dot::pce::MAX_PROOF_BLOB_SIZE;
 
 /// Verify a Proof-Carrying Envelope through the deterministic pipeline.
 ///
@@ -19,6 +20,14 @@ pub fn verify_pce(
     pce: &ProofCarryingEnvelope,
     public_inputs: &[[u8; 32]],
 ) -> Result<VerificationResult, PceError> {
+    // 0. Enforce MAX_PROOF_BLOB_SIZE
+    if pce.proof_blob.len() > MAX_PROOF_BLOB_SIZE {
+        return Err(PceError::ProofBlobTooLarge {
+            actual: pce.proof_blob.len(),
+            limit: MAX_PROOF_BLOB_SIZE,
+        });
+    }
+
     // 1. Check proof_system_id is supported
     if ProofSystemId::from_u16(pce.proof_system_id).is_none() {
         return Err(PceError::UnsupportedSystem(pce.proof_system_id));
@@ -41,7 +50,8 @@ pub fn verify_pce(
     }
 
     // 5. Backend-specific verification would go here
-    // For now, structural validation passes
+    // TODO: Actual cryptographic proof verification (Class B/C boundary)
+    // Currently returns Valid for structural checks only
     Ok(VerificationResult::Valid)
 }
 
@@ -60,8 +70,8 @@ pub fn compute_merkle_root(leaves: &[[u8; 32]]) -> [u8; 32] {
     let mut level: Vec<[u8; 32]> = leaves.to_vec();
     while level.len() > 1 {
         // Duplicate last leaf if odd count
-        if level.len() % 2 != 0 {
-            let last = *level.last().unwrap();
+        if !level.len().is_multiple_of(2) {
+            let last = *level.last().expect("level is non-empty in merkle loop");
             level.push(last);
         }
         let mut next = Vec::with_capacity(level.len() / 2);

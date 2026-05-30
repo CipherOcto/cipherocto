@@ -2,16 +2,34 @@
 
 use serde::{Deserialize, Serialize};
 
+mod serde_signature {
+    use serde::{Deserializer, Serializer};
+
+    pub fn serialize<S: Serializer>(sig: &[u8; 64], s: S) -> Result<S::Ok, S::Error> {
+        serde_bytes::serialize(sig.as_ref(), s)
+    }
+
+    pub fn deserialize<'de, D: Deserializer<'de>>(d: D) -> Result<[u8; 64], D::Error> {
+        let v: Vec<u8> = serde_bytes::deserialize(d)?;
+        if v.len() != 64 {
+            return Err(serde::de::Error::invalid_length(v.len(), &"64 bytes"));
+        }
+        let mut arr = [0u8; 64];
+        arr.copy_from_slice(&v);
+        Ok(arr)
+    }
+}
+
 /// Mission node — a participant in a mission overlay.
 #[derive(Clone, Debug, Serialize, Deserialize)]
-#[repr(C)]
 pub struct MissionNode {
     pub peer_id: [u8; 32],
     pub role_flags: u64,
     pub trust_score: u32,
     pub capability_root: [u8; 32],
     pub join_epoch: u64,
-    pub membership_signature: Vec<u8>,
+    #[serde(with = "serde_signature")]
+    pub membership_signature: [u8; 64],
 }
 
 /// Role flag bits (RFC-0855 §4.2)
@@ -32,8 +50,37 @@ pub const MIN_TRUST_COORDINATOR: u32 = 500;
 /// Minimum trust score for Validator role.
 pub const MIN_TRUST_VALIDATOR: u32 = 300;
 
+/// Validate that a node's trust score meets the requirements for its assigned roles.
+pub fn validate_role_assignment(
+    role_flags: u64,
+    trust_score: u32,
+) -> Result<(), crate::mon::error::MonError> {
+    if role_flags & ROLE_COORDINATOR != 0 && trust_score < MIN_TRUST_COORDINATOR {
+        return Err(crate::mon::error::MonError::InvalidRoleAssignment {
+            reason: format!(
+                "Coordinator requires trust_score >= {}, got {}",
+                MIN_TRUST_COORDINATOR, trust_score
+            ),
+        });
+    }
+    if role_flags & ROLE_VALIDATOR != 0 && trust_score < MIN_TRUST_VALIDATOR {
+        return Err(crate::mon::error::MonError::InvalidRoleAssignment {
+            reason: format!(
+                "Validator requires trust_score >= {}, got {}",
+                MIN_TRUST_VALIDATOR, trust_score
+            ),
+        });
+    }
+    Ok(())
+}
+
 /// Check if role combination is valid (RFC-0855 §4.2 constraints).
 pub fn is_valid_role_combination(role_flags: u64) -> bool {
+    let role_count = role_flags.count_ones();
+    if role_count == 0 {
+        return false;
+    }
+
     let has_coordinator = role_flags & ROLE_COORDINATOR != 0;
     let has_prover = role_flags & ROLE_PROVER != 0;
     let has_aggregator = role_flags & ROLE_AGGREGATOR != 0;
@@ -51,7 +98,6 @@ pub fn is_valid_role_combination(role_flags: u64) -> bool {
     }
 
     // Max 4 roles
-    let role_count = role_flags.count_ones();
     role_count <= MAX_ROLES_PER_NODE
 }
 
@@ -136,5 +182,38 @@ mod tests {
     fn test_admission_policy_repr() {
         assert_eq!(AdmissionPolicy::Open as u16, 0x0001);
         assert_eq!(AdmissionPolicy::CapabilityGated as u16, 0x0005);
+    }
+
+    #[test]
+    fn test_zero_roles_invalid() {
+        assert!(!is_valid_role_combination(0));
+    }
+
+    #[test]
+    fn test_validate_role_assignment_coordinator_sufficient() {
+        assert!(validate_role_assignment(ROLE_COORDINATOR, 500).is_ok());
+        assert!(validate_role_assignment(ROLE_COORDINATOR, 600).is_ok());
+    }
+
+    #[test]
+    fn test_validate_role_assignment_coordinator_insufficient() {
+        assert!(validate_role_assignment(ROLE_COORDINATOR, 499).is_err());
+    }
+
+    #[test]
+    fn test_validate_role_assignment_validator_sufficient() {
+        assert!(validate_role_assignment(ROLE_VALIDATOR, 300).is_ok());
+        assert!(validate_role_assignment(ROLE_VALIDATOR, 500).is_ok());
+    }
+
+    #[test]
+    fn test_validate_role_assignment_validator_insufficient() {
+        assert!(validate_role_assignment(ROLE_VALIDATOR, 299).is_err());
+    }
+
+    #[test]
+    fn test_validate_role_assignment_no_trust_required_roles() {
+        // Executor and Relay have no minimum trust requirement
+        assert!(validate_role_assignment(ROLE_EXECUTOR | ROLE_RELAY, 0).is_ok());
     }
 }

@@ -6,11 +6,13 @@ use crate::dot::envelope::DeterministicEnvelope;
 use crate::dps::suite::{ProofCircuitModel, ProofSystemId};
 use crate::dps::DpsError;
 
+/// Maximum allowed proof blob size (1 MB).
+pub const MAX_PROOF_BLOB_SIZE: usize = 1_048_576;
+
 /// Proof-carrying envelope — wraps a DOT envelope with proof attachment.
 ///
 /// RFC-0859 §3.1: 7 fields.
 #[derive(Debug, Clone)]
-#[repr(C)]
 pub struct ProofCarryingEnvelope {
     /// The underlying deterministic envelope
     pub envelope: DeterministicEnvelope,
@@ -30,12 +32,20 @@ pub struct ProofCarryingEnvelope {
 
 impl ProofCarryingEnvelope {
     /// Create a new proof-carrying envelope.
+    ///
+    /// Returns `Err` if `proof_blob` exceeds [`MAX_PROOF_BLOB_SIZE`].
     pub fn new(
         envelope: DeterministicEnvelope,
         proof_system: ProofSystemId,
         circuit_model: ProofCircuitModel,
         proof_blob: Vec<u8>,
-    ) -> Self {
+    ) -> Result<Self, DpsError> {
+        if proof_blob.len() > MAX_PROOF_BLOB_SIZE {
+            return Err(DpsError::MalformedProof {
+                reason: "proof blob exceeds MAX_PROOF_BLOB_SIZE (1 MB)",
+            });
+        }
+
         use blake3::Hasher;
 
         let proof_commitment = {
@@ -44,7 +54,7 @@ impl ProofCarryingEnvelope {
             *h.finalize().as_bytes()
         };
 
-        Self {
+        Ok(Self {
             envelope,
             proof_system_id: proof_system.as_u16(),
             proof_commitment,
@@ -52,7 +62,24 @@ impl ProofCarryingEnvelope {
             proof_blob,
             execution_model: circuit_model as u16,
             parent_proof_commitment: None,
+        })
+    }
+
+    /// Validate this envelope.
+    ///
+    /// Rejects zero `public_input_root` and proof blobs exceeding [`MAX_PROOF_BLOB_SIZE`].
+    pub fn validate(&self) -> Result<(), DpsError> {
+        if self.public_input_root == [0u8; 32] {
+            return Err(DpsError::MalformedProof {
+                reason: "public_input_root must not be zero",
+            });
         }
+        if self.proof_blob.len() > MAX_PROOF_BLOB_SIZE {
+            return Err(DpsError::MalformedProof {
+                reason: "proof blob exceeds MAX_PROOF_BLOB_SIZE (1 MB)",
+            });
+        }
+        Ok(())
     }
 
     /// Set public input root.
@@ -93,7 +120,7 @@ impl ProofCarryingEnvelope {
             0x0001 => Some(ProofCircuitModel::AIR),
             0x0002 => Some(ProofCircuitModel::R1CS),
             0x0003 => Some(ProofCircuitModel::PLONKISH),
-            0x0004 => Some(ProofCircuitModel::zkVM),
+            0x0004 => Some(ProofCircuitModel::ZkVm),
             0x0005 => Some(ProofCircuitModel::Recursive),
             _ => None,
         }
@@ -102,10 +129,10 @@ impl ProofCarryingEnvelope {
     /// Serialize proof commitment context for signing.
     pub fn to_signing_bytes(&self) -> Vec<u8> {
         let mut buf = Vec::new();
-        buf.extend_from_slice(&self.proof_system_id.to_le_bytes());
+        buf.extend_from_slice(&self.proof_system_id.to_be_bytes());
         buf.extend_from_slice(&self.proof_commitment);
         buf.extend_from_slice(&self.public_input_root);
-        buf.extend_from_slice(&self.execution_model.to_le_bytes());
+        buf.extend_from_slice(&self.execution_model.to_be_bytes());
         if let Some(parent) = &self.parent_proof_commitment {
             buf.extend_from_slice(parent);
         }
@@ -143,7 +170,8 @@ mod tests {
             ProofSystemId::STWO,
             ProofCircuitModel::AIR,
             vec![1, 2, 3],
-        );
+        )
+        .unwrap();
         assert_eq!(pce.proof_system_id, 0x0001);
         assert_eq!(pce.execution_model, 0x0001);
         assert!(pce.parent_proof_commitment.is_none());
@@ -157,7 +185,8 @@ mod tests {
             ProofSystemId::PLONK,
             ProofCircuitModel::PLONKISH,
             vec![10, 20, 30],
-        );
+        )
+        .unwrap();
         assert!(pce.verify_commitment().is_ok());
     }
 
@@ -169,7 +198,8 @@ mod tests {
             ProofSystemId::STWO,
             ProofCircuitModel::AIR,
             vec![1, 2, 3],
-        );
+        )
+        .unwrap();
         pce.proof_blob = vec![99, 99, 99]; // tamper
         assert!(pce.verify_commitment().is_err());
     }
@@ -183,6 +213,7 @@ mod tests {
             ProofCircuitModel::Recursive,
             vec![1],
         )
+        .unwrap()
         .with_parent([0xAA; 32]);
         assert!(pce.parent_proof_commitment.is_some());
         assert_eq!(pce.parent_proof_commitment.unwrap(), [0xAA; 32]);
@@ -193,6 +224,7 @@ mod tests {
         let env = make_test_envelope();
         let pce =
             ProofCarryingEnvelope::new(env, ProofSystemId::STWO, ProofCircuitModel::AIR, vec![1])
+                .unwrap()
                 .with_public_input_root([0xBB; 32]);
         assert_eq!(pce.public_input_root, [0xBB; 32]);
     }
@@ -205,7 +237,8 @@ mod tests {
             ProofSystemId::Groth16,
             ProofCircuitModel::R1CS,
             vec![1],
-        );
+        )
+        .unwrap();
         assert_eq!(pce.proof_system(), Some(ProofSystemId::Groth16));
     }
 
@@ -213,8 +246,9 @@ mod tests {
     fn test_pce_circuit_model_enum() {
         let env = make_test_envelope();
         let pce =
-            ProofCarryingEnvelope::new(env, ProofSystemId::STWO, ProofCircuitModel::zkVM, vec![1]);
-        assert_eq!(pce.circuit_model(), Some(ProofCircuitModel::zkVM));
+            ProofCarryingEnvelope::new(env, ProofSystemId::STWO, ProofCircuitModel::ZkVm, vec![1])
+                .unwrap();
+        assert_eq!(pce.circuit_model(), Some(ProofCircuitModel::ZkVm));
     }
 
     #[test]
@@ -225,13 +259,15 @@ mod tests {
             ProofSystemId::STWO,
             ProofCircuitModel::AIR,
             vec![1, 2, 3],
-        );
+        )
+        .unwrap();
         let pce2 = ProofCarryingEnvelope::new(
             env,
             ProofSystemId::STWO,
             ProofCircuitModel::AIR,
             vec![1, 2, 3],
-        );
+        )
+        .unwrap();
         assert_eq!(pce1.to_signing_bytes(), pce2.to_signing_bytes());
     }
 
@@ -243,13 +279,52 @@ mod tests {
             ProofSystemId::STWO,
             ProofCircuitModel::AIR,
             vec![1],
-        );
+        )
+        .unwrap();
         let pce_with_parent =
             ProofCarryingEnvelope::new(env, ProofSystemId::STWO, ProofCircuitModel::AIR, vec![1])
+                .unwrap()
                 .with_parent([0xAA; 32]);
         assert_ne!(
             pce_no_parent.to_signing_bytes(),
             pce_with_parent.to_signing_bytes()
         );
+    }
+
+    #[test]
+    fn test_pce_rejects_oversized_blob() {
+        let env = make_test_envelope();
+        let big_blob = vec![0u8; MAX_PROOF_BLOB_SIZE + 1];
+        let result =
+            ProofCarryingEnvelope::new(env, ProofSystemId::STWO, ProofCircuitModel::AIR, big_blob);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_pce_validate_rejects_zero_root() {
+        let env = make_test_envelope();
+        let pce = ProofCarryingEnvelope::new(
+            env,
+            ProofSystemId::STWO,
+            ProofCircuitModel::AIR,
+            vec![1, 2, 3],
+        )
+        .unwrap();
+        // public_input_root is zero by default
+        assert!(pce.validate().is_err());
+    }
+
+    #[test]
+    fn test_pce_validate_ok() {
+        let env = make_test_envelope();
+        let pce = ProofCarryingEnvelope::new(
+            env,
+            ProofSystemId::STWO,
+            ProofCircuitModel::AIR,
+            vec![1, 2, 3],
+        )
+        .unwrap()
+        .with_public_input_root([0xBB; 32]);
+        assert!(pce.validate().is_ok());
     }
 }

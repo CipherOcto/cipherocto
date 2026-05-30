@@ -2,7 +2,7 @@
 //!
 //! Eviction order: lowest class → lowest weight → oldest timestamp.
 
-use crate::dom::intent::{ExecutionClass, OverlayIntent};
+use crate::dom::intent::OverlayIntent;
 
 /// Eviction key: highest execution_class (lowest priority) evicted first.
 /// Uses inverted class so min_by_key picks the right target.
@@ -38,6 +38,7 @@ pub fn find_eviction_target(intents: &[OverlayIntent]) -> Option<usize> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::dom::intent::ExecutionClass;
 
     fn make_intent(class: ExecutionClass, weight: u64, ts: u64, id: u8) -> OverlayIntent {
         OverlayIntent {

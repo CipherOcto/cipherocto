@@ -8,7 +8,6 @@ use blake3;
 ///
 /// AAD = envelope_id || sender_ephemeral_public || mission_id || logical_timestamp || sequence
 #[derive(Clone, Debug, PartialEq, Eq)]
-#[repr(C)]
 pub struct EncryptedEnvelope {
     /// BLAKE3-256 hash of the plaintext (consensus-verifiable)
     pub envelope_hash: [u8; 32],

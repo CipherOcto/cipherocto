@@ -5,12 +5,13 @@
 
 use std::collections::BTreeMap;
 
-use crate::dps::suite::{ProofSuite, ProofSystemId};
-use crate::dps::DpsError;
+use crate::dps::suite::{ProofSuite, ProofSuiteId};
 
 /// A registered verifier entry with verification key.
 #[derive(Debug, Clone)]
 pub struct VerifierEntry {
+    /// Proof suite composite key
+    pub suite_id: ProofSuiteId,
     /// Proof suite configuration
     pub proof_suite: ProofSuite,
     /// Serialized verification key (opaque)
@@ -21,12 +22,12 @@ pub struct VerifierEntry {
     pub expires_at: Option<u64>,
 }
 
-/// Verifier registry — maps proof system ID to verifier entry.
+/// Verifier registry — maps ProofSuiteId hash to verifier entry.
 ///
 /// Uses BTreeMap for deterministic iteration.
 #[derive(Debug, Clone)]
 pub struct VerifierRegistry {
-    entries: BTreeMap<u16, VerifierEntry>,
+    entries: BTreeMap<[u8; 32], VerifierEntry>,
 }
 
 impl VerifierRegistry {
@@ -39,25 +40,24 @@ impl VerifierRegistry {
 
     /// Register a verifier entry.
     pub fn register(&mut self, entry: VerifierEntry) {
-        self.entries
-            .insert(entry.proof_suite.system_id.as_u16(), entry);
+        self.entries.insert(entry.suite_id.to_hash(), entry);
     }
 
-    /// Get a verifier entry by proof system ID.
-    pub fn get(&self, system_id: ProofSystemId) -> Option<&VerifierEntry> {
-        self.entries.get(&system_id.as_u16())
+    /// Get a verifier entry by proof suite ID.
+    pub fn get(&self, suite_id: &ProofSuiteId) -> Option<&VerifierEntry> {
+        self.entries.get(&suite_id.to_hash())
     }
 
-    /// Check if a proof system is registered.
-    pub fn contains(&self, system_id: ProofSystemId) -> bool {
-        self.entries.contains_key(&system_id.as_u16())
+    /// Check if a proof suite is registered.
+    pub fn contains(&self, suite_id: &ProofSuiteId) -> bool {
+        self.entries.contains_key(&suite_id.to_hash())
     }
 
     /// Remove expired entries. Returns count removed.
     pub fn evict_expired(&mut self, current_epoch: u64) -> usize {
         let before = self.entries.len();
         self.entries
-            .retain(|_, entry| entry.expires_at.map_or(true, |exp| exp > current_epoch));
+            .retain(|_, entry| entry.expires_at.is_none_or(|exp| exp > current_epoch));
         before - self.entries.len()
     }
 
@@ -71,8 +71,8 @@ impl VerifierRegistry {
         self.entries.is_empty()
     }
 
-    /// Iterate entries in deterministic order (by system_id).
-    pub fn iter(&self) -> impl Iterator<Item = (&u16, &VerifierEntry)> {
+    /// Iterate entries in deterministic order (by suite_id hash).
+    pub fn iter(&self) -> impl Iterator<Item = (&[u8; 32], &VerifierEntry)> {
         self.entries.iter()
     }
 }
@@ -86,20 +86,36 @@ impl Default for VerifierRegistry {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::dps::suite::{ProofCircuitModel, ProofExecutionClass};
+    use crate::dps::suite::{ProofCircuitModel, ProofExecutionClass, ProofSystemId};
 
-    fn make_entry(id: ProofSystemId) -> VerifierEntry {
+    fn make_suite_id(system: ProofSystemId) -> ProofSuiteId {
+        ProofSuiteId::new(system.as_u16(), 0x0001, 0x0001, 0x0001)
+    }
+
+    fn make_entry(suite_id: ProofSuiteId) -> VerifierEntry {
+        let system = ProofSystemId::from_u16(suite_id.proof_system).unwrap();
         VerifierEntry {
-            proof_suite: ProofSuite::new(id, ProofCircuitModel::AIR, ProofExecutionClass::ClassA),
+            suite_id,
+            proof_suite: ProofSuite::new(
+                system,
+                ProofCircuitModel::AIR,
+                ProofExecutionClass::ClassA,
+            ),
             verification_key: vec![0xAA; 64],
             registered_at: 100,
             expires_at: None,
         }
     }
 
-    fn make_expiring_entry(id: ProofSystemId, expires: u64) -> VerifierEntry {
+    fn make_expiring_entry(suite_id: ProofSuiteId, expires: u64) -> VerifierEntry {
+        let system = ProofSystemId::from_u16(suite_id.proof_system).unwrap();
         VerifierEntry {
-            proof_suite: ProofSuite::new(id, ProofCircuitModel::R1CS, ProofExecutionClass::ClassB),
+            suite_id,
+            proof_suite: ProofSuite::new(
+                system,
+                ProofCircuitModel::R1CS,
+                ProofExecutionClass::ClassB,
+            ),
             verification_key: vec![0xBB; 32],
             registered_at: 100,
             expires_at: Some(expires),
@@ -115,50 +131,61 @@ mod tests {
 
     #[test]
     fn test_registry_register_and_get() {
+        let sid = make_suite_id(ProofSystemId::STWO);
         let mut reg = VerifierRegistry::new();
-        reg.register(make_entry(ProofSystemId::STWO));
+        reg.register(make_entry(sid));
         assert_eq!(reg.len(), 1);
-        assert!(reg.contains(ProofSystemId::STWO));
-        let entry = reg.get(ProofSystemId::STWO).unwrap();
-        assert_eq!(entry.proof_suite.system_id, ProofSystemId::STWO);
+        assert!(reg.contains(&sid));
+        let entry = reg.get(&sid).unwrap();
+        assert_eq!(entry.suite_id, sid);
     }
 
     #[test]
     fn test_registry_get_missing() {
+        let sid = make_suite_id(ProofSystemId::Cairo);
         let reg = VerifierRegistry::new();
-        assert!(reg.get(ProofSystemId::Cairo).is_none());
+        assert!(reg.get(&sid).is_none());
     }
 
     #[test]
     fn test_registry_overwrite() {
+        let sid = make_suite_id(ProofSystemId::STWO);
         let mut reg = VerifierRegistry::new();
-        reg.register(make_entry(ProofSystemId::STWO));
-        reg.register(make_entry(ProofSystemId::STWO)); // overwrite
+        reg.register(make_entry(sid));
+        reg.register(make_entry(sid)); // overwrite
         assert_eq!(reg.len(), 1);
     }
 
     #[test]
     fn test_registry_evict_expired() {
+        let sid_stwo = make_suite_id(ProofSystemId::STWO);
+        let sid_plonk = make_suite_id(ProofSystemId::PLONK);
+        let sid_halo2 = make_suite_id(ProofSystemId::Halo2);
         let mut reg = VerifierRegistry::new();
-        reg.register(make_entry(ProofSystemId::STWO)); // no expiry
-        reg.register(make_expiring_entry(ProofSystemId::PLONK, 200));
-        reg.register(make_expiring_entry(ProofSystemId::Halo2, 300));
+        reg.register(make_entry(sid_stwo)); // no expiry
+        reg.register(make_expiring_entry(sid_plonk, 200));
+        reg.register(make_expiring_entry(sid_halo2, 300));
         let evicted = reg.evict_expired(250);
         assert_eq!(evicted, 1); // PLONK evicted, Halo2 and STWO remain
-        assert!(reg.contains(ProofSystemId::STWO));
-        assert!(!reg.contains(ProofSystemId::PLONK));
-        assert!(reg.contains(ProofSystemId::Halo2));
+        assert!(reg.contains(&sid_stwo));
+        assert!(!reg.contains(&sid_plonk));
+        assert!(reg.contains(&sid_halo2));
     }
 
     #[test]
     fn test_registry_deterministic_iteration() {
+        let sid_cairo = make_suite_id(ProofSystemId::Cairo);
+        let sid_stwo = make_suite_id(ProofSystemId::STWO);
+        let sid_plonk = make_suite_id(ProofSystemId::PLONK);
         let mut reg = VerifierRegistry::new();
-        reg.register(make_entry(ProofSystemId::Cairo));
-        reg.register(make_entry(ProofSystemId::STWO));
-        reg.register(make_entry(ProofSystemId::PLONK));
-        let ids: Vec<u16> = reg.iter().map(|(k, _)| *k).collect();
-        // BTreeMap sorts by key — 0x0001, 0x0007, 0x0008
-        assert_eq!(ids, vec![0x0001, 0x0007, 0x0008]);
+        reg.register(make_entry(sid_cairo));
+        reg.register(make_entry(sid_stwo));
+        reg.register(make_entry(sid_plonk));
+        // BTreeMap sorts by key (the [u8; 32] hash) — deterministic order
+        let hashes: Vec<[u8; 32]> = reg.iter().map(|(k, _)| *k).collect();
+        assert_eq!(hashes.len(), 3);
+        // Verify sorted
+        assert!(hashes.windows(2).all(|w| w[0] <= w[1]));
     }
 
     #[test]

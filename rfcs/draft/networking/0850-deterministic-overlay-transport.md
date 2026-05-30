@@ -902,6 +902,8 @@ QUIC connections between gateways follow a two-layer model:
 
    Client validates the remote identity against the known gateway registry (GDP, RFC-0851). GDP provides the Ed25519 public key for each registered gateway; the client verifies the TLS handshake identity matches.
 
+   **Unknown gateways:** If the connecting peer is NOT in the GDP registry, the gateway accepts the connection but marks the peer as `Unverified`. Unverified peers can exchange heartbeats and capability messages but MUST NOT receive mission traffic, route advertisements, or onion relay data. The gateway MAY promote an unverified peer to `Trusted` after GDP registration completes (see RFC-0851 §4.2).
+
 2. **Overlay session establishment** (OPTIONAL — required only for mission-scoped operations) — After QUIC handshake completes, if the connection will carry mission traffic, both parties execute RFC-0853 §5 mutual authentication over the control stream:
    - Exchange ephemeral X25519 public keys
    - Compute shared secret: `X25519(ephemeral_secret, remote_ephemeral_public)`
@@ -942,7 +944,7 @@ enum ControlMessage {
     Pong(u64) = 0x0004,
     /// Graceful shutdown notice
     Shutdown(ShutdownReason) = 0x0005,
-    /// Session key rotation trigger
+    /// Session key rotation trigger (only valid when overlay session is active)
     KeyRotation(u64) = 0x0006,
 }
 ```
@@ -989,7 +991,7 @@ The stream stays open for the route's lifetime. Multiple hops on the same route 
 
 **Congestion control:** QUIC's built-in congestion control (NewReno or CUBIC) is sufficient for DOT. Gateways SHOULD NOT send faster than the congestion window allows. If the congestion window is full, envelopes are queued in the adapter's outbound buffer (bounded by `max_pending_envelopes`, default: 1024).
 
-**Idle timeout:** Default 120 seconds. Configurable per-gateway. Connections idle beyond the timeout are closed gracefully (control stream sends `Shutdown(IdleTimeout)` before `CONNECTION_CLOSE`).
+**Idle timeout:** Default 120 seconds, configurable per-gateway via `max_idle_timeout_secs`. This is handled at the QUIC transport layer (RFC 9000 §10.1) — if no packets are exchanged for the idle timeout, the connection is closed automatically by QUIC. For intentional shutdown (e.g., maintenance, key rotation), the control stream sends `Shutdown(reason)` before the gateway closes the connection with a graceful `CONNECTION_CLOSE`.
 
 ##### 8.7.5 Integration with CipherOcto Primitives
 

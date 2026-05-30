@@ -330,14 +330,19 @@ impl PlatformAdapter for NativeP2PAdapter {
         domain: &BroadcastDomainId,
         envelope: &DeterministicEnvelope,
     ) -> Result<DeliveryReceipt, PlatformAdapterError> {
+        // Native binary transport: send raw wire bytes directly over gossipsub.
+        // No base64url encoding needed — gossipsub carries Vec<u8> natively.
         let wire_bytes = envelope.to_wire_bytes();
-        let encoded = Self::encode_envelope(&wire_bytes);
         let topic = Self::domain_to_topic(domain);
 
         // Publish via gossipsub
         // For now, return a stub — full swarm integration requires
         // passing the swarm handle through the adapter
-        tracing::info!("NativeP2P send to topic {}: {} bytes", topic, encoded.len());
+        tracing::info!(
+            "NativeP2P send to topic {}: {} bytes",
+            topic,
+            wire_bytes.len()
+        );
 
         Ok(DeliveryReceipt {
             platform_message_id: hex_encode(&envelope.envelope_id),
@@ -365,6 +370,13 @@ impl PlatformAdapter for NativeP2PAdapter {
             return Err(transport_err("Empty payload"));
         }
 
+        // Native P2P carries raw wire bytes — no encoding layer.
+        // Try direct deserialization first (binary path from gossipsub).
+        if let Ok(env) = DeterministicEnvelope::from_wire_bytes(&raw.payload) {
+            return Ok(env);
+        }
+
+        // Fallback: text-based DOT/1/{b64} format (interop with text transports)
         let text = String::from_utf8_lossy(&raw.payload);
         let wire_bytes =
             Self::decode_envelope(&text).map_err(|e| PlatformAdapterError::ApiError {

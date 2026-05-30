@@ -16,7 +16,7 @@ Implement the QUIC platform adapter (`PlatformType::Quic = 0x0015`) using the `q
 - [ ] Control stream protocol (capabilities, ping/pong, shutdown, key rotation)
 - [ ] Envelope stream framing (length-prefixed, unidirectional, raw binary)
 - [ ] Onion stream protocol (bidirectional, per-route, hop-indexed)
-- [ ] Two-layer handshake: QUIC TLS 1.3 + RFC-0853 overlay session
+- [ ] Two-layer handshake: QUIC TLS 1.3 (required) + RFC-0853 overlay session (optional, mission-scoped only)
 - [ ] GDP integration (QUIC peer registration as `PlatformType::Quic`)
 - [ ] 0-RTT with replay protection (RFC-0853 §7)
 - [ ] Connection migration support (RFC 9000 §9)

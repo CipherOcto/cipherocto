@@ -874,11 +874,11 @@ QUIC connections between gateways follow a two-layer model:
 
 ```text
 ┌─────────────────────────────────────────────┐
-│ Overlay Session (RFC-0853 §5)               │
+│ Overlay Session (RFC-0853 §5) [OPTIONAL]    │
 │ X25519 → HKDF-BLAKE3 → ChaCha20-Poly1305   │
-│ Mutual auth via signed transcript            │
+│ Mission-scoped encryption only               │
 ├─────────────────────────────────────────────┤
-│ QUIC Transport Session (TLS 1.3)            │
+│ QUIC Transport Session (TLS 1.3) [REQUIRED] │
 │ Certificate-based or raw public key auth     │
 │ 0-RTT resumption via session tickets         │
 ├─────────────────────────────────────────────┤
@@ -922,7 +922,7 @@ QUIC provides independent, ordered byte streams. DOT uses streams as follows:
 | Stream Type | Purpose | Cardinality | Lifetime |
 |-------------|---------|-------------|----------|
 | **Control** (stream 0) | Session management, capability negotiation, keep-alive | 1 per connection | Connection lifetime |
-| **Envelope** | DOT envelope transport | 1 per envelope (or batch) | Envelope delivery |
+| **Envelope** | DOT envelope transport | 1 per envelope | Envelope delivery |
 | **Onion** | ORR onion relay forwarding | 1 per active route | Route lifetime |
 
 **Control stream (stream 0):**
@@ -998,7 +998,7 @@ The stream stays open for the route's lifetime. Multiple hops on the same route 
 | GDP discovery (RFC-0851) | QUIC gateways register as `PlatformType::Quic` in GDP. `BootstrapMethod::SeedList` provides initial QUIC peer multiaddrs. |
 | OCrypt sessions (RFC-0853) | Optional overlay session inside QUIC for mission-scoped encryption. QUIC TLS 1.3 provides transport-layer auth. |
 | ORR onion routing (RFC-0858) | QUIC can serve as any hop position in an onion route. Onion streams carry encrypted hop layers. |
-| DRS route selection (RFC-0856) | QUIC gateways advertise `bandwidth_class: High` and `censorship_score: 0` in route vectors. |
+| DRS route selection (RFC-0856) | QUIC gateways advertise `bandwidth_class: High` and `censorship_score: Low` (QUIC can be firewalled but is harder to block than TCP). |
 | DGP gossip (RFC-0852) | QUIC carries native binary gossip objects. Multi-transport amplification includes QUIC as carrier. |
 | MON missions (RFC-0855) | Mission key hierarchy derives QUIC-specific transport keys from `transport_keys_root`. |
 | PoRelay (RFC-0860) | QUIC relay attestations include stream-level delivery proofs. |
@@ -1016,6 +1016,7 @@ The stream stays open for the route's lifetime. Multiple hops on the same route 
     "max_idle_timeout_secs": 120,
     "enable_0rtt": true,
     "max_0rtt_bytes": 16384,
+    "max_pending_envelopes": 1024,
     "congestion_control": "cubic"
   }
 }
@@ -1043,6 +1044,9 @@ The stream stays open for the route's lifetime. Multiple hops on the same route 
 - **Amplification attack:** QUIC limits amplification (RFC 9000 §8.1). Gateways MUST validate client address before sending large responses.
 - **Connection ID privacy:** Connection IDs MUST be randomized to prevent traffic correlation across network paths. Gateways SHOULD rotate connection IDs on every new path.
 - **Certificate pinning:** Gateways SHOULD pin peer certificates (or raw public keys) from GDP registry to prevent MITM by compromised CAs.
+- **Stream exhaustion:** Gateways MUST enforce `max_concurrent_streams` (default: 1000). Peers exceeding the limit are rejected with `STREAM_LIMIT_ERROR`. Unidirectional streams (envelope receive) and bidirectional streams (control, onion) have separate limits.
+- **Flow control attacks:** A malicious peer can open streams but never send data, consuming server resources. Gateways MUST enforce per-stream idle timeouts (default: 30s). Streams with no progress for the idle timeout are reset.
+- **Version downgrade:** Gateways MUST negotiate QUIC v1 (RFC 9000) or later. Version negotiation is handled by the QUIC handshake; gateways MUST NOT fall back to QUIC draft versions. Clients MUST abort if the server selects an unknown version.
 
 ### 10. Privacy and Encryption
 

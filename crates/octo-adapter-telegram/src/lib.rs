@@ -443,6 +443,10 @@ impl PlatformAdapter for TelegramAdapter {
         self.cached_bot_username()
     }
 
+    async fn shutdown(&self) -> Result<(), PlatformAdapterError> {
+        Ok(())
+    }
+
     async fn health_check(&self) -> Result<(), PlatformAdapterError> {
         // Lightweight liveness probe: GET /getMe with 5s timeout (ZeroClaw pattern)
         let timeout = std::time::Duration::from_secs(5);

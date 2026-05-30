@@ -193,6 +193,10 @@ impl PlatformAdapter for WebRTCAdapter {
         PlatformType::WebRTC
     }
 
+
+    async fn shutdown(&self) -> Result<(), PlatformAdapterError> {
+        Ok(())
+    }
     async fn health_check(&self) -> Result<(), PlatformAdapterError> {
         // Stub: check signaling URL reachability
         let timeout = std::time::Duration::from_secs(5);

@@ -263,6 +263,10 @@ impl PlatformAdapter for BluetoothAdapter {
         PlatformType::Bluetooth
     }
 
+
+    async fn shutdown(&self) -> Result<(), PlatformAdapterError> {
+        Ok(())
+    }
     async fn health_check(&self) -> Result<(), PlatformAdapterError> {
         // Check if bluetoothctl is available
         match tokio::process::Command::new("bluetoothctl")

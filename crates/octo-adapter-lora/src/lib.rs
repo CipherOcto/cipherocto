@@ -325,6 +325,10 @@ impl PlatformAdapter for LoraAdapter {
         PlatformType::LoRa
     }
 
+
+    async fn shutdown(&self) -> Result<(), PlatformAdapterError> {
+        Ok(())
+    }
     async fn health_check(&self) -> Result<(), PlatformAdapterError> {
         // Check if serial port exists
         match tokio::fs::metadata(&self.config.serial_port).await {

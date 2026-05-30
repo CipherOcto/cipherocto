@@ -316,6 +316,10 @@ impl PlatformAdapter for WebhookAdapter {
         PlatformType::Webhook
     }
 
+
+    async fn shutdown(&self) -> Result<(), PlatformAdapterError> {
+        Ok(())
+    }
     async fn health_check(&self) -> Result<(), PlatformAdapterError> {
         if let Some(ref url) = self.config.send_url {
             let timeout = std::time::Duration::from_secs(5);

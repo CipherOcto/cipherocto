@@ -199,7 +199,7 @@ A broadcast domain is any shared communication surface that can carry DOT envelo
 | Signal | `0x0005` | Group messages | 65536 bytes |
 | IRC | `0x0006` | Channel PRIVMSG | 512 bytes |
 | Slack | `0x0007` | Webhook / Channel API | 40000 bytes |
-| WhatsApp | `0x0008` | Business API messages | 65536 bytes |
+| WhatsApp | `0x0008` | WhatsApp Web protocol (whatsapp-rust) | 65536 bytes |
 | Webhook | `0x0009` | HTTP POST callback | Unlimited |
 | NativeP2P | `0x000A` | libp2p gossipsub | Unlimited |
 | Bluetooth | `0x000B` | BLE mesh | 512 bytes |
@@ -316,10 +316,10 @@ struct DeterministicEnvelope {
     payload_hash: [u8; 32],
 
     /// Merkle root of route trace (for replay verification)
-    /// Populated when FLAG_ROUTE_TRACE_PRESENT is set.
+    /// Populated when E2E flag (0x0008) is set.
     /// Route trace = ordered list of (gateway_id, logical_timestamp) pairs the envelope has traversed.
     /// Merkle leaves = BLAKE3-256(gateway_id || logical_timestamp), sorted by hop order.
-    /// If FLAG_ROUTE_TRACE_PRESENT is not set, this field MUST be [0x00; 32].
+    /// If E2E flag is not set, this field MUST be [0x00; 32].
     route_trace_root: [u8; 32],
 
     /// Protocol flags (bitmask, see EnvelopeFlags)
@@ -334,14 +334,19 @@ struct DeterministicEnvelope {
 enum EnvelopeFlags {
     /// Payload is encrypted (RFC-0853 OCrypt)
     ENCRYPTED = 0x0001,
-    /// Envelope is fragmented (see Section 9)
-    FRAGMENTED = 0x0002,
-    /// Envelope is mission-scoped (mission_id is non-zero)
-    MISSION_SCOPED = 0x0004,
-    /// Route trace is populated (route_trace_root is valid)
-    ROUTE_TRACE_PRESENT = 0x0008,
+    /// Envelope is sealed (sender identity hidden from intermediaries)
+    SEALED = 0x0002,
+    /// Payload is obfuscated (anti-fingerprinting)
+    OBFUSCATED = 0x0004,
+    /// End-to-end encryption envelope (E2E key exchange)
+    E2E = 0x0008,
+    /// Stealth mode (minimal metadata, anti-traffic-analysis)
+    STEALTH = 0x0010,
     /// All other flags are reserved and MUST be ignored on receipt
 }
+```
+
+**Note:** Implementations MAY define additional flags above 0x0010 for platform-specific features.
 ```
 
 **Envelope ID Derivation:**
@@ -493,6 +498,8 @@ enum DotError {
     PlatformUnavailable { platform: u16 },
 }
 ```
+
+**Implementation Note:** The error taxonomy above is the normative specification. Implementations MAY consolidate variants into fewer types as long as the error semantics are preserved.
 
 ### 5. Logical Timestamp Model
 
@@ -650,56 +657,147 @@ enum CanonicalEvent {
 
 #### 8.2 Platform Adapter Contract
 
-Each adapter MUST implement:
+Each adapter MUST implement the following trait:
 
 ```rust
+#[async_trait]
 trait PlatformAdapter: Send + Sync {
-    /// Send a deterministic envelope to the platform
+    /// Send a deterministic envelope to the platform.
     async fn send_envelope(
         &self,
         domain: &BroadcastDomainId,
         envelope: &DeterministicEnvelope,
-    ) -> Result<DeliveryReceipt, TransportError>;
+    ) -> Result<DeliveryReceipt, PlatformAdapterError>;
 
-    /// Receive envelopes from the platform
-    async fn receive_envelope(
+    /// Receive raw messages from the platform.
+    async fn receive_messages(
         &self,
         domain: &BroadcastDomainId,
-    ) -> Result<Vec<RawPlatformMessage>, TransportError>;
+    ) -> Result<Vec<RawPlatformMessage>, PlatformAdapterError>;
 
-    /// Convert platform-specific message to canonical envelope
+    /// Convert platform-specific message to canonical envelope.
     fn canonicalize(
         &self,
         raw: &RawPlatformMessage,
-    ) -> Result<DeterministicEnvelope, CanonicalizationError>;
+    ) -> Result<DeterministicEnvelope, PlatformAdapterError>;
 
-    /// Validate platform capabilities
-    fn validate_capabilities(
-        &self,
-        domain: &BroadcastDomainId,
-    ) -> Result<CapabilityReport, ValidationError>;
+    /// Report platform capabilities.
+    fn capabilities(&self) -> CapabilityReport;
 
-    /// Compute deterministic domain identifier
-    fn deterministic_domain_id(
-        &self,
-        platform_id: &str,
-    ) -> BroadcastDomainId;
+    /// Compute deterministic domain identifier.
+    fn domain_id(&self, platform_id: &str) -> BroadcastDomainId;
 
-    /// Check replay protection
-    fn replay_protection(
-        &self,
-        envelope_id: &[u8; 32],
-    ) -> bool;
+    /// Platform type discriminant.
+    fn platform_type(&self) -> PlatformType;
+
+    /// Check replay protection (optional, default: no check).
+    fn replay_protection(&self, _envelope_id: &[u8; 32]) -> bool { true }
+
+    /// Health check (optional, default: healthy). Async for real liveness probes.
+    async fn health_check(&self) -> Result<(), PlatformAdapterError> { Ok(()) }
+
+    /// Graceful shutdown (optional, default: no-op). Async for flushing pending messages.
+    async fn shutdown(&self) -> Result<(), PlatformAdapterError> { Ok(()) }
+
+    /// Return the bot's own handle/identity on this platform.
+    ///
+    /// Used by the gateway to drop self-authored messages and prevent
+    /// relay loops (ZeroClaw pattern: `self_handle()` + `drop_self_messages()`).
+    ///
+    /// Returns `None` by default (no self-loop protection).
+    /// Adapters that handle inbound traffic MUST override this.
+    fn self_handle(&self) -> Option<String> { None }
 }
 ```
 
-#### 8.3 Payload Encoding
+#### 8.3 Plugin ABI
 
-Envelopes are encoded for platform transport as:
+Platform adapters MAY be loaded dynamically at runtime as shared libraries (`.so`/`.dylib`/`.dll`) or WASM modules.
+
+**cdylib ABI** — First-party Rust adapters compile to `cdylib` and export:
+
+```rust
+/// ABI version for forward compatibility. Current: 1.
+#[no_mangle]
+pub extern "C" fn adapter_version() -> u32;
+
+/// PlatformType discriminant this adapter handles.
+#[no_mangle]
+pub extern "C" fn platform_type() -> u16;
+
+/// Create adapter instance. Returns opaque pointer.
+/// Config is JSON bytes passed from gateway configuration.
+/// Returns null if config is null/empty or creation fails.
+#[no_mangle]
+pub extern "C" fn create_adapter(config: *const u8, config_len: usize) -> *mut ();
+
+/// Destroy adapter instance. Takes ownership and frees memory.
+#[no_mangle]
+pub extern "C" fn destroy_adapter(adapter: *mut ());
+```
+
+**WASM ABI** — Community adapters compile to WASM with equivalent exports:
 
 ```text
-Base64url(envelope_bytes) with DOT prefix "DOT/1/"
+export "adapter" fn adapter_version() -> u32;
+export "adapter" fn platform_type() -> u16;
+export "adapter" fn create(config_ptr: *const u8, config_len: i32) -> i32;
+export "adapter" fn destroy(instance_id: i32);
+export "adapter" fn send(domain_ptr: *const u8, env_ptr: *const u8, env_len: i32) -> i32;
+export "adapter" fn receive(domain_ptr: *const u8) -> i32;
 ```
+
+WASM adapters are sandboxed — all I/O goes through host functions (`http_request`, `log`, `current_epoch`). WASM adapters cannot access filesystem, network, or environment directly.
+
+**ABI Versioning** — If `adapter_version()` returns 0, the adapter is rejected. If the version is older than the host, the adapter loads with graceful degradation (newer methods return `UnsupportedOperation`). If the version is newer, the adapter loads but the host may not call newer methods.
+
+#### 8.4 Adapter Lifecycle
+
+Gateways manage adapter lifecycle:
+
+1. **Discovery** — Scan configured directories for adapter plugins (`.so`/`.wasm` files)
+2. **Loading** — Call `adapter_version()` and `platform_type()` to validate, then `create_adapter()` with JSON config
+3. **Capabilities** — Call `capabilities()` to build carrier table (max payload, rate limits, fragmentation support)
+4. **Health Check** — Periodic liveness probe (default: 60s). Failed adapters remain in registry but are removed from active carrier table
+5. **Shutdown** — Graceful teardown, flush pending messages
+
+#### 8.5 Carrier-Specific Fragmentation
+
+When an envelope exceeds the adapter's `max_payload_bytes`, the gateway fragments it per Section 9. Carrier-specific considerations:
+
+| Carrier | Max Payload | Fragment Strategy |
+|---------|-------------|-------------------|
+| Telegram | 4096 bytes | Document attachment for large fragments |
+| Discord | 2000 bytes | Multi-message with sequence markers |
+| Matrix | 65536 bytes | Rarely fragmented; media upload for large payloads |
+| IRC | 512 bytes | Multi-line with sequence markers |
+| Slack | 40000 bytes | Multi-message with sequence markers |
+| Signal | 65536 bytes | Text only, no fragmentation |
+| Nostr | 65536 bytes | Text only, no fragmentation |
+| WhatsApp | 65536 bytes | Text only, no fragmentation |
+| LoRa | 256 bytes | Mandatory fragmentation, duty-cycle aware |
+| BLE | 244 bytes | Multi-advertisement reassembly |
+| Webhook | Unlimited | No fragmentation needed |
+| WebRTC | 65536 bytes | DataChannel fragmentation |
+
+#### 8.6 Payload Encoding
+
+Envelopes are encoded for platform transport using one of three modes:
+
+```text
+DOT/1/{base64}       → Text mode (base64url-encoded envelope bytes)
+DOT/2/{msg_id}       → Native upload mode (platform message ID reference)
+DOT/F/{base64_frag}  → Fragment mode (base64-encoded fragment with header)
+```
+
+**Mode selection** (deterministic: same payload + same capabilities → same mode):
+- If `payload.len() <= max_text_bytes` → `DOT/1/{base64}` (text mode)
+- If `payload.len() > max_text_bytes && capabilities.supports_upload` → `DOT/2/{msg_id}` (native mode)
+- If `payload.len() > max_text_bytes && !capabilities.supports_upload` → `DOT/F/{fragment}` (fragment mode)
+
+**Determinism guarantee**: Transport mode does NOT affect envelope identity. `payload_hash` verification ensures reassembled bytes are identical regardless of transport mode.
+
+**Fallback**: If native upload fails, adapters MUST fall back to base64 text mode.
 
 For platforms with size limits (IRC: 512 bytes, LoRa: 256 bytes), envelopes MUST be fragmented (see Section 9).
 
@@ -736,6 +834,14 @@ struct EnvelopeFragment {
 #### 9.3 Deterministic Reassembly
 
 Given identical fragment sets, all nodes MUST reassemble to identical envelope bytes. Reassembly concatenates fragment payloads in `fragment_index` order.
+
+#### 9.4 Dual-Mode Transport
+
+For platforms supporting native file upload (Telegram, Discord, Matrix), envelopes MAY be sent via platform media API instead of base64 text. The `DOT/2/{msg_id}` format references an uploaded file by platform message ID.
+
+**Determinism guarantee**: Transport mode does NOT affect envelope identity. `payload_hash` verification ensures reassembled bytes are identical regardless of transport mode.
+
+**Fallback**: If native upload fails, adapters MUST fall back to base64 text mode (`DOT/1/`).
 
 ### 10. Privacy and Encryption
 
@@ -776,7 +882,9 @@ Gateways maintain a replay cache:
 ```rust
 struct ReplayCache {
     /// Map of envelope_id → first_seen_timestamp (BTreeMap for deterministic iteration order)
-    seen: BTreeMap<[u8; 32], u64>,
+    by_id: BTreeMap<[u8; 32], u64>,
+    /// Map of (first_seen_timestamp, envelope_id) → () for efficient time-ordered eviction
+    by_time: BTreeMap<(u64, [u8; 32]), ()>,
     /// Replay window duration (network-configured)
     window_duration: u64,
     /// Maximum cache entries before eviction
@@ -838,7 +946,7 @@ DOT integrates with CipherOcto's multi-token economy (see `docs/04-tokenomics/to
 | Multi-carrier propagation | <2s | Delivery to 3+ carriers simultaneously |
 | Gateway discovery | <5s | New gateway found via GDP |
 | Fragment reassembly | <10s | 10-fragment envelope |
-| Replay cache lookup | <1µs | HashMap lookup |
+| Replay cache lookup | <1µs | BTreeMap lookup |
 | Throughput per gateway | >1000 env/s | Sustained envelope processing |
 
 ## Security Considerations
@@ -913,8 +1021,12 @@ DOT creates a marketplace for transport bandwidth:
 | Native P2P | Base rate | Lowest cost, highest reliability |
 | Matrix/Nostr | 1.2x | Federation overhead |
 | Telegram/Discord | 1.5x | Platform API rate limits |
+| IRC | 1.0x | Text-only, minimal overhead |
+| Slack | 1.5x | Similar to Discord |
 | Signal/WhatsApp | 2.0x | Encrypted messenger overhead |
+| Webhook | 1.0x | Generic HTTP |
 | LoRa/Bluetooth | 3.0x | Limited bandwidth, high value |
+| WebRTC | 1.0x | Direct P2P |
 | Censorship-resistant | 2.5x | Premium for anti-censorship capability |
 
 ### Gateway Economics

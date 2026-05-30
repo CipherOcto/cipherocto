@@ -62,7 +62,7 @@ Add unit tests to DOT adapters to match ZeroClaw's test coverage. Currently Ciph
 - [ ] Test channel ID validation
 - [ ] Test thread_ts handling
 - [ ] Test rate limit (Tier 3: 50 req/min)
-- [ ] Test Socket Mode vs Web API mode
+- [ ] Test polling vs Webhook mode
 
 #### IRC
 - [ ] Test channel name validation (#channel format)
@@ -73,7 +73,7 @@ Add unit tests to DOT adapters to match ZeroClaw's test coverage. Currently Ciph
 - [ ] Test group JID formatting (@g.us)
 - [ ] Test phone number normalization
 - [ ] Test reconnect delay calculation
-- [ ] Test session file paths (WAL/SHM sidecars)
+- [ ] Test session persistence (stoolap)
 
 ## Design Reference
 
@@ -93,7 +93,7 @@ Add unit tests to DOT adapters to match ZeroClaw's test coverage. Currently Ciph
 
 ## Complexity
 
-Low (test-only changes)
+Medium (test-only changes, but many tests per adapter)
 
 ## Prerequisites
 

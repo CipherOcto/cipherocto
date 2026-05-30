@@ -6,7 +6,7 @@ Open
 
 ## RFC
 
-RFC-0850: Deterministic Overlay Transport (DOT) — §8.4
+RFC-0850: Deterministic Overlay Transport (DOT) — §8.2
 
 ## Summary
 

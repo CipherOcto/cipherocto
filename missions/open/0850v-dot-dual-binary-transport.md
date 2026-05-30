@@ -74,7 +74,8 @@ Current approach encodes all envelope bytes as base64 text, adding 33% overhead.
 - [ ] Gateway selects transport mode based on payload size and capabilities:
   - If `payload.len() <= max_text_bytes` → Use `DOT/1/{base64}` (text mode)
   - If `payload.len() > max_text_bytes && capabilities.supports_upload` → Use `DOT/2/{msg_id}` (native mode)
-  - If `payload.len() > max_text_bytes && !capabilities.supports_upload` → Use `DOT/F/{fragment}` (fragment mode)
+  - If `payload.len() > max_text_bytes && !capabilities.supports_upload && capabilities.supports_fragmentation` → Use `DOT/F/{fragment}` (fragment mode)
+  - If `payload.len() > max_text_bytes && !capabilities.supports_upload && !capabilities.supports_fragmentation` → Error: payload too large
 - [ ] Mode selection is deterministic: same payload + same capabilities → same mode
 
 ### Receiver Implementation
@@ -98,7 +99,10 @@ Current approach encodes all envelope bytes as base64 text, adding 33% overhead.
 | IRC | 512B | No | Yes | Fragment for >512B |
 | Nostr | 65KB | No | No | Text only |
 | WhatsApp | 65KB | No | No | Text only |
+| Webhook | Unlimited | No | No | Text only |
 | LoRa | 256B | No | Yes | Fragment for >256B |
+| BLE | 244B | No | No | Text only |
+| WebRTC | 65KB | No | No | Text only |
 
 ### Tests
 

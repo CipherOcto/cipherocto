@@ -2,7 +2,7 @@
 
 ## Status
 
-Open
+Completed (all changes applied in commit 919454a)
 
 ## RFC
 

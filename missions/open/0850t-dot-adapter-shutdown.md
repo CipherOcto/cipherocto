@@ -38,7 +38,7 @@ Without `shutdown()`, adapters may leak connections, leave background tasks runn
 
 ### Slack (`crates/octo-adapter-slack/`)
 
-- [ ] Stop Socket Mode connection if active
+- [ ] Stop polling loop if running
 - [ ] Flush any pending outbound messages
 - [ ] Clear cached state (last_ts)
 
@@ -66,6 +66,16 @@ Without `shutdown()`, adapters may leak connections, leave background tasks runn
 ### Webhook (`crates/octo-adapter-webhook/`)
 
 - [ ] No-op (stateless, no persistent connections)
+
+### Bluetooth (`crates/octo-adapter-bluetooth/`)
+
+- [ ] Close BLE connection if open
+- [ ] Clear cached state
+
+### LoRa (`crates/octo-adapter-lora/`)
+
+- [ ] Close serial connection if open
+- [ ] Clear cached state
 
 ## Design Reference
 

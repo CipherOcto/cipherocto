@@ -32,7 +32,7 @@ reqwest = { version = "0.12", features = ["json"] }
 - [ ] `send_envelope()` — sends DOT envelope via DingTalk robot webhook (text, max 20000 chars)
 - [ ] `receive_messages()` — receives via webhook callback (DingTalk pushes messages)
 - [ ] `canonicalize()` — extracts DOT envelope from message content
-- [ ] `capabilities()`: max_payload=20000, supports_fragmentation=false
+- [ ] `capabilities()`: max_payload=20000 characters, supports_fragmentation=false, media_capabilities=None (robot webhook only supports text/markdown)
 - [ ] `self_handle()` — returns robot's webhook ID
 - [ ] `shutdown()` — clears session webhooks
 - [ ] Auth via webhook URL (no OAuth needed for robot)

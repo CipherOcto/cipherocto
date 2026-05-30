@@ -32,7 +32,8 @@ reqwest = { version = "0.12", features = ["json"] }
 - [ ] `send_envelope()` — sends DOT envelope via QQ bot message API (text, max 2000 chars)
 - [ ] `receive_messages()` — receives via webhook callback (QQ pushes events)
 - [ ] `canonicalize()` — extracts DOT envelope from message content
-- [ ] `capabilities()`: max_payload=2000, supports_fragmentation=true
+- [ ] `capabilities()`: max_payload=2000 characters, supports_fragmentation=true, media_capabilities=Some (images via media upload API)
+- [ ] `media_capabilities`: max_upload_bytes=10485760 (10MB), supported_mime_types=["image/jpeg", "image/png", "image/gif"]
 - [ ] `self_handle()` — returns bot's Open ID
 - [ ] `shutdown()` — clears access token cache
 - [ ] Auth via access_token (auto-refresh, 2h expiry)

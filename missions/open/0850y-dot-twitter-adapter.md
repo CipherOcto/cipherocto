@@ -32,7 +32,8 @@ reqwest = { version = "0.12", features = ["json"] }
 - [ ] `send_envelope()` — posts DOT envelope as a tweet (max 280 chars)
 - [ ] `receive_messages()` — polls `GET /2/users/:id/mentions` or search
 - [ ] `canonicalize()` — extracts DOT envelope from tweet text
-- [ ] `capabilities()`: max_payload=280, supports_fragmentation=true
+- [ ] `capabilities()`: max_payload=280 characters (~206 bytes base64), supports_fragmentation=true, media_capabilities=Some (images/media via `media/upload`)
+- [ ] `media_capabilities`: max_upload_bytes=5242880 (5MB image), supported_mime_types=["image/jpeg", "image/png", "image/gif", "image/webp"]
 - [ ] `self_handle()` — returns bot's Twitter user ID
 - [ ] `shutdown()` — clears cached state
 - [ ] Auth via Bearer token (OAuth2)

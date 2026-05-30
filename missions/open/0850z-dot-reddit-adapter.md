@@ -32,7 +32,8 @@ reqwest = { version = "0.12", features = ["json"] }
 - [ ] `send_envelope()` — posts DOT envelope as a Reddit post or comment (max 10000 chars)
 - [ ] `receive_messages()` — polls `GET /r/{subreddit}/new` for new posts/comments
 - [ ] `canonicalize()` — extracts DOT envelope from post body
-- [ ] `capabilities()`: max_payload=10000, supports_fragmentation=false
+- [ ] `capabilities()`: max_payload=10000 characters, supports_fragmentation=false, media_capabilities=Some (images via `media/upload` or link posts)
+- [ ] `media_capabilities`: max_upload_bytes=20971520 (20MB image), supported_mime_types=["image/jpeg", "image/png", "image/gif"]
 - [ ] `self_handle()` — returns bot's Reddit username
 - [ ] `shutdown()` — clears cached access token
 - [ ] Auth via OAuth2 (client credentials + refresh token)

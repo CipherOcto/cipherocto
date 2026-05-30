@@ -32,7 +32,8 @@ reqwest = { version = "0.12", features = ["json"] }
 - [ ] `send_envelope()` — sends DOT envelope via Lark bot message API (text, max 30000 chars)
 - [ ] `receive_messages()` — receives via webhook callback (Lark pushes events)
 - [ ] `canonicalize()` — extracts DOT envelope from message content
-- [ ] `capabilities()`: max_payload=30000, supports_fragmentation=false
+- [ ] `capabilities()`: max_payload=30000 characters, supports_fragmentation=false, media_capabilities=Some (images/files via media upload API)
+- [ ] `media_capabilities`: max_upload_bytes=52428800 (50MB), supported_mime_types=["image/jpeg", "image/png", "application/pdf"]
 - [ ] `self_handle()` — returns bot's Open ID
 - [ ] `shutdown()` — clears tenant access token cache
 - [ ] Auth via tenant_access_token (auto-refresh, 2h expiry)

@@ -205,13 +205,13 @@ A broadcast domain is any shared communication surface that can carry DOT envelo
 | Bluetooth | `0x000B` | BLE mesh | 512 bytes |
 | LoRa | `0x000C` | LoRa radio | 256 bytes |
 | WebRTC | `0x000D` | DataChannel | 65536 bytes |
-| Bluesky | `0x000E` | AT Protocol posts | 300 bytes |
-| Twitter | `0x000F` | Twitter API v2 tweets | 280 bytes |
-| Reddit | `0x0010` | Reddit API posts/comments | 10000 bytes |
-| WeChat | `0x0011` | WeChat Official Account API | 2048 bytes |
-| DingTalk | `0x0012` | DingTalk robot webhook | 20000 bytes |
-| Lark | `0x0013` | Lark/Feishu bot API | 30000 bytes |
-| QQ | `0x0014` | QQ Official Bot API | 2000 bytes |
+| Bluesky | `0x000E` | AT Protocol posts | 300 graphemes (~221B) | Yes | Images (1MB) |
+| Twitter | `0x000F` | Twitter API v2 tweets | 280 chars (~206B) | Yes | Images (5MB) |
+| Reddit | `0x0010` | Reddit API posts/comments | 10000 chars | No | Images (20MB) |
+| WeChat | `0x0011` | WeChat Official Account API | 2048 chars | Yes | Images (10MB) |
+| DingTalk | `0x0012` | DingTalk robot webhook | 20000 chars | No | None |
+| Lark | `0x0013` | Lark/Feishu bot API | 30000 chars | No | Images/Files (50MB) |
+| QQ | `0x0014` | QQ Official Bot API | 2000 chars | Yes | Images (10MB) |
 
 **Canonical Domain Identifier:**
 

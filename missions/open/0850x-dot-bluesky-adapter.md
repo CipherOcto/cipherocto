@@ -32,7 +32,8 @@ atrium-api = "0.1"  # Official AT Protocol SDK
 - [ ] `send_envelope()` — posts DOT envelope as a Bluesky post (text, max 300 chars)
 - [ ] `receive_messages()` — polls `app.bsky.feed.getTimeline` or subscribes to firehose
 - [ ] `canonicalize()` — extracts DOT envelope from post text
-- [ ] `capabilities()`: max_payload=300 (Bluesky post limit), supports_fragmentation=true
+- [ ] `capabilities()`: max_payload=300 graphemes (~221 bytes base64), supports_fragmentation=true, media_capabilities=Some (images supported via `app.bsky.embed.images`)
+- [ ] `media_capabilities`: max_upload_bytes=976563 (1MB image), supported_mime_types=["image/jpeg", "image/png", "image/webp"]
 - [ ] `self_handle()` — returns bot's DID or handle
 - [ ] `shutdown()` — clears session
 - [ ] Auth via app password (OAuth2-like flow with session JWT)

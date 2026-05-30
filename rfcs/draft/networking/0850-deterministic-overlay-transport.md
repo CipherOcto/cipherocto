@@ -212,6 +212,7 @@ A broadcast domain is any shared communication surface that can carry DOT envelo
 | DingTalk | `0x0012` | DingTalk robot webhook | 20000 chars | No | None |
 | Lark | `0x0013` | Lark/Feishu bot API | 30000 chars | No | Images/Files (50MB) |
 | QQ | `0x0014` | QQ Official Bot API | 2000 chars | Yes | Images (10MB) |
+| QUIC | `0x0015` | QUIC streams (RFC 9000) | Unlimited | — | See §8.7 |
 
 **Canonical Domain Identifier:**
 
@@ -786,18 +787,21 @@ When an envelope exceeds the adapter's `max_payload_bytes`, the gateway fragment
 | BLE | 244 bytes | Multi-advertisement reassembly |
 | Webhook | Unlimited | No fragmentation needed |
 | WebRTC | 65536 bytes | DataChannel fragmentation |
+| QUIC | Unlimited | Stream-level framing, no fragmentation needed (see §8.7) |
 
 #### 8.6 Payload Encoding
 
-Envelopes are encoded for platform transport using one of three modes:
+Envelopes are encoded for platform transport using one of four modes:
 
 ```text
 DOT/1/{base64}       → Text mode (base64url-encoded envelope bytes)
 DOT/2/{msg_id}       → Native upload mode (platform message ID reference)
 DOT/F/{base64_frag}  → Fragment mode (base64-encoded fragment with header)
+RAW/{binary}         → Raw binary mode (native byte transport, see §8.7)
 ```
 
 **Mode selection** (deterministic: same payload + same capabilities → same mode):
+- If `capabilities.supports_raw_binary` → `RAW/{binary}` (raw binary mode — QUIC, WebRTC, NativeP2P)
 - If `payload.len() <= max_text_bytes` → `DOT/1/{base64}` (text mode)
 - If `payload.len() > max_text_bytes && capabilities.supports_upload` → `DOT/2/{msg_id}` (native mode)
 - If `payload.len() > max_text_bytes && !capabilities.supports_upload` → `DOT/F/{fragment}` (fragment mode)
@@ -849,6 +853,179 @@ For platforms supporting native file upload (Telegram, Discord, Matrix), envelop
 **Determinism guarantee**: Transport mode does NOT affect envelope identity. `payload_hash` verification ensures reassembled bytes are identical regardless of transport mode.
 
 **Fallback**: If native upload fails, adapters MUST fall back to base64 text mode (`DOT/1/`).
+
+#### 8.7 QUIC Transport Profile
+
+QUIC (RFC 9000) is the preferred native transport for DOT gateways. It provides multiplexed streams, 0-RTT connection establishment, built-in encryption (TLS 1.3), and connection migration — all critical for overlay gateway federation.
+
+##### 8.7.1 Platform Registration
+
+QUIC uses `PlatformType::Quic = 0x0015`. Domain identifiers follow the standard `BroadcastDomainId` scheme:
+
+```text
+domain_hash = BLAKE3-256("quic:" || canonical_peer_id)
+```
+
+Where `canonical_peer_id` is the gateway's Ed25519 public key encoded as lowercase hex.
+
+##### 8.7.2 Connection Establishment
+
+QUIC connections between gateways follow a two-layer model:
+
+```text
+┌─────────────────────────────────────────────┐
+│ Overlay Session (RFC-0853 §5)               │
+│ X25519 → HKDF-BLAKE3 → ChaCha20-Poly1305   │
+│ Mutual auth via signed transcript            │
+├─────────────────────────────────────────────┤
+│ QUIC Transport Session (TLS 1.3)            │
+│ Certificate-based or raw public key auth     │
+│ 0-RTT resumption via session tickets         │
+├─────────────────────────────────────────────┤
+│ UDP                                          │
+└─────────────────────────────────────────────┘
+```
+
+**Layer responsibilities:**
+
+| Layer | Handles | Key Exchange | Forward Secrecy |
+|-------|---------|-------------|-----------------|
+| QUIC (TLS 1.3) | Transport session, connection migration, congestion control | TLS 1.3 ECDHE | Per-connection key rotation |
+| Overlay (RFC-0853) | Mission-scoped encryption, onion hop keys, relay authentication | X25519 ephemeral | Per-session ephemeral keys |
+
+**Handshake sequence:**
+
+1. **QUIC handshake** — Standard TLS 1.3 handshake. Server presents gateway identity (Ed25519 public key as self-signed certificate, or CA-signed certificate for public gateways). Client validates against known gateway registry (GDP, RFC-0851).
+2. **Overlay session establishment** — After QUIC handshake completes, both parties execute RFC-0853 §5 mutual authentication over an open QUIC stream:
+   - Exchange ephemeral X25519 public keys
+   - Compute shared secret: `X25519(ephemeral_secret, remote_ephemeral_public)`
+   - Derive session key: `HKDF-BLAKE3(shared_secret, "ocrypt:session:v1", ephemeral_a || ephemeral_b)`
+   - Sign transcript: `Ed25519_sign(long_term_secret, ephemeral_a || ephemeral_b || session_key)`
+   - Verify remote signature against GDP-registered identity
+3. **Session ready** — Both parties now have a mutually authenticated, forward-secret overlay session.
+
+**0-RTT data:** Clients MAY send envelopes in 0-RTT data (QUIC early data). 0-RTT envelopes MUST go through replay protection (RFC-0853 §7) before processing. 0-RTT data is NOT forward-secret — this is acceptable for non-sensitive route advertisements and heartbeats. Mission-critical envelopes MUST wait for the full handshake.
+
+##### 8.7.3 Stream Multiplexing Strategy
+
+QUIC provides independent, ordered byte streams. DOT uses streams as follows:
+
+| Stream Type | Purpose | Cardinality | Lifetime |
+|-------------|---------|-------------|----------|
+| **Control** (stream 0) | Session management, capability negotiation, keep-alive | 1 per connection | Connection lifetime |
+| **Envelope** | DOT envelope transport | 1 per envelope (or batch) | Envelope delivery |
+| **Onion** | ORR onion relay forwarding | 1 per active route | Route lifetime |
+
+**Control stream (stream 0):**
+
+The first client-initiated bidirectional stream is the control stream. It carries:
+
+```rust
+#[repr(u16)]
+enum ControlMessage {
+    /// Session capability negotiation (first message after handshake)
+    Capabilities(CapabilityReport) = 0x0001,
+    /// GDP gateway advertisement (periodic)
+    GatewayAdvertisement(GatewayIdentity) = 0x0002,
+    /// Keep-alive ping
+    Ping(u64) = 0x0003,
+    /// Keep-alive pong
+    Pong(u64) = 0x0004,
+    /// Graceful shutdown notice
+    Shutdown(ShutdownReason) = 0x0005,
+    /// Session key rotation trigger
+    KeyRotation(u64) = 0x0006,
+}
+```
+
+Control messages are length-prefixed: `[u32 length][u16 type][payload]`. Length is big-endian, includes the 2-byte type field.
+
+**Envelope streams:**
+
+Each envelope is sent on its own unidirectional stream (client-initiated). Frame format:
+
+```text
+┌──────────────┬───────────────┬───────────────────────┐
+│ length (u32) │ type (u8=0x01)│ envelope_bytes        │
+└──────────────┴───────────────┴───────────────────────┘
+```
+
+- `length`: Big-endian, value = 1 + `envelope_bytes.len()`
+- `type`: `0x01` for envelope, `0x02` for fragment
+- `envelope_bytes`: Raw `DeterministicEnvelope::to_wire_bytes()` — NO base64 encoding
+
+After writing, the stream is finished (`FIN`). The receiver reads until `EOF`, deserializes, and closes the stream. This gives per-envelope flow control and prevents head-of-line blocking between envelopes.
+
+**Onion streams:**
+
+For ORR relay forwarding (RFC-0858), a dedicated bidirectional stream is opened per active route. Hop frames:
+
+```text
+┌──────────────┬───────────────┬──────────────────┬──────────────────┐
+│ length (u32) │ type (u8=0x03)│ hop_index (u16)  │ encrypted_layer  │
+└──────────────┴───────────────┴──────────────────┴──────────────────┘
+```
+
+The stream stays open for the route's lifetime. Multiple hops on the same route reuse the stream. The stream is closed when the route expires or is torn down.
+
+##### 8.7.4 Connection Management
+
+**Connection pooling:** Gateways maintain persistent QUIC connections to known peers. GDP (RFC-0851) provides the peer registry. Connections are lazily established on first envelope to a peer and kept alive via control stream pings.
+
+**Keep-alive:** Control stream pings every 30 seconds. Peer is marked unreachable after 3 consecutive missed pongs (90s). GDP liveness state transitions to `Suspect` after missed pings, `Offline` after timeout.
+
+**Connection migration:** QUIC supports connection migration (RFC 9000 §9) — when a gateway's IP address changes (WiFi → cellular, NAT rebinding), the QUIC connection survives using connection IDs. The overlay session is unaffected. Gateways MUST support at least 2 concurrent connection IDs.
+
+**Congestion control:** QUIC's built-in congestion control (NewReno or CUBIC) is sufficient for DOT. Gateways SHOULD NOT send faster than the congestion window allows. If the congestion window is full, envelopes are queued in the adapter's outbound buffer (bounded by `max_pending_envelopes`, default: 1024).
+
+**Idle timeout:** Default 120 seconds. Configurable per-gateway. Connections idle beyond the timeout are closed gracefully (control stream sends `Shutdown(IdleTimeout)` before `CONNECTION_CLOSE`).
+
+##### 8.7.5 Integration with CipherOcto Primitives
+
+| CipherOcto Primitive | QUIC Integration Point |
+|----------------------|----------------------|
+| GDP discovery (RFC-0851) | QUIC gateways register as `PlatformType::Quic` in GDP. `BootstrapMethod::SeedList` provides initial QUIC peer multiaddrs. |
+| OCrypt sessions (RFC-0853) | Overlay session runs inside QUIC stream after TLS handshake. Double forward secrecy. |
+| ORR onion routing (RFC-0858) | QUIC is the preferred exit hop transport. Onion streams carry encrypted hop layers. |
+| DRS route selection (RFC-0856) | QUIC gateways advertise `bandwidth_class: High` and `censorship_score: 0` in route vectors. |
+| DGP gossip (RFC-0852) | QUIC carries native binary gossip objects. Multi-transport amplification includes QUIC as carrier. |
+| MON missions (RFC-0855) | Mission key hierarchy derives QUIC-specific transport keys from `transport_keys_root`. |
+| PoRelay (RFC-0860) | QUIC relay attestations include stream-level delivery proofs. |
+
+##### 8.7.6 Gateway Configuration
+
+```json
+{
+  "quic": {
+    "listen_addr": "0.0.0.0:47400",
+    "tls_cert_path": "/etc/cipherocto/gateway.pem",
+    "tls_key_path": "/etc/cipherocto/gateway.key",
+    "max_concurrent_streams": 1000,
+    "max_idle_timeout_secs": 120,
+    "enable_0rtt": true,
+    "max_0rtt_bytes": 16384,
+    "congestion_control": "cubic"
+  }
+}
+```
+
+##### 8.7.7 Performance Targets
+
+| Metric | Target | Notes |
+|--------|--------|-------|
+| Connection establishment (1-RTT) | <50ms | LAN, <200ms WAN |
+| 0-RTT resumption | <10ms | Envelope delivery in first flight |
+| Stream open latency | <1ms | After connection established |
+| Envelope throughput | >10,000 env/s | Per connection, 1KB envelopes |
+| Connection migration | <100ms | Seamless IP change recovery |
+| Onion hop latency (QUIC leg) | <20ms | Single QUIC relay hop |
+
+##### 8.7.8 Security Considerations
+
+- **0-RTT replay:** 0-RTT data is replayable. Gateways MUST enforce replay protection (RFC-0853 §7) on all 0-RTT envelopes. Nonces MUST be unique per session.
+- **Amplification attack:** QUIC limits amplification (RFC 9000 §8.1). Gateways MUST validate client address before sending large responses.
+- **Connection ID privacy:** Connection IDs MUST be randomized to prevent traffic correlation across network paths. Gateways SHOULD rotate connection IDs on every new path.
+- **Certificate pinning:** Gateways SHOULD pin peer certificates (or raw public keys) from GDP registry to prevent MITM by compromised CAs.
 
 ### 10. Privacy and Encryption
 
@@ -953,6 +1130,9 @@ DOT integrates with CipherOcto's multi-token economy (see `docs/04-tokenomics/to
 | Multi-carrier propagation | <2s | Delivery to 3+ carriers simultaneously |
 | Gateway discovery | <5s | New gateway found via GDP |
 | Fragment reassembly | <10s | 10-fragment envelope |
+| QUIC connection establishment | <50ms | 1-RTT handshake (LAN) |
+| QUIC 0-RTT resumption | <10ms | Envelope delivery in first flight |
+| QUIC envelope throughput | >10,000 env/s | Per connection, 1KB envelopes |
 | Replay cache lookup | <1µs | BTreeMap lookup |
 | Throughput per gateway | >1000 env/s | Sustained envelope processing |
 
@@ -1205,6 +1385,26 @@ Reason: A and B have same (epoch, counter), A.gateway < B.gateway
 
 **Deliverables:** Encryption, stealth mode, economics, adversarial tests.
 
+### Phase 5: QUIC Native Transport (Months 12-15)
+
+**Goal:** QUIC gateway-to-gateway transport per §8.7.
+
+| Task | Description | RFC Dependency |
+|------|-------------|----------------|
+| 5.1 | Add `PlatformType::Quic = 0x0015` to domain registry | — |
+| 5.2 | Implement `QuicAdapter` using `quinn` crate | RFC 9000 |
+| 5.3 | Implement control stream protocol (capabilities, ping/pong, shutdown) | — |
+| 5.4 | Implement envelope stream framing (length-prefixed, unidirectional) | — |
+| 5.5 | Implement onion stream protocol (bidirectional, per-route) | RFC-0858 |
+| 5.6 | Implement overlay session handshake (RFC-0853 §5 over QUIC stream) | RFC-0853 |
+| 5.7 | Implement GDP integration (QUIC peer registration, discovery) | RFC-0851 |
+| 5.8 | Implement 0-RTT with replay protection | RFC-0853 §7 |
+| 5.9 | Implement connection migration support | RFC 9000 §9 |
+| 5.10 | Write QUIC adapter integration tests | — |
+| 5.11 | Write QUIC performance benchmarks | — |
+
+**Deliverables:** QUIC adapter, stream framing, overlay session, GDP integration, benchmarks.
+
 ## Key Files to Modify
 
 | File | Change |
@@ -1222,6 +1422,7 @@ Reason: A and B have same (epoch, counter), A.gateway < B.gateway
 | `crates/octo-network/src/dot/adapters/discord.rs` | Discord adapter |
 | `crates/octo-network/src/dot/adapters/matrix.rs` | Matrix adapter |
 | `crates/octo-network/src/dot/adapters/nostr.rs` | Nostr adapter |
+| `crates/octo-network/src/dot/adapters/quic.rs` | QUIC adapter (Phase 5) |
 | `crates/octo-network/src/dot/route.rs` | Route computation |
 | `crates/octo-network/src/dot/canonical.rs` | Canonical serialization (extends RFC-0126) |
 
@@ -1235,6 +1436,7 @@ Reason: A and B have same (epoch, counter), A.gateway < B.gateway
 - F6: Cross-chain bridge transports
 - F7: Satellite link support (Starlink, Iridium)
 - F8: Mesh radio integration (Meshtastic)
+- F9: QUIC connection migration with multi-path (RFC 9000 §9 + multipath QUIC drafts)
 
 ## Rationale
 
@@ -1271,6 +1473,7 @@ Logical timestamps provide deterministic ordering independent of physical time.
 | Version | Date | Changes |
 |---------|------|---------|
 | 1.0.0 | 2026-05-25 | Initial draft — core envelope, gateway model, platform adapters, phases |
+| 1.1.0 | 2026-05-30 | Added QUIC Transport Profile (§8.7): stream multiplexing, 0-RTT, connection management, two-layer handshake, `PlatformType::Quic = 0x0015`, `RAW/{binary}` encoding mode, Phase 5 implementation plan |
 
 ## Related RFCs
 

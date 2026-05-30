@@ -890,21 +890,30 @@ QUIC connections between gateways follow a two-layer model:
 
 | Layer | Handles | Key Exchange | Forward Secrecy |
 |-------|---------|-------------|-----------------|
-| QUIC (TLS 1.3) | Transport session, connection migration, congestion control | TLS 1.3 ECDHE | Per-connection key rotation |
-| Overlay (RFC-0853) | Mission-scoped encryption, onion hop keys, relay authentication | X25519 ephemeral | Per-session ephemeral keys |
+| QUIC (TLS 1.3) | Transport session, connection migration, congestion control, mutual authentication | TLS 1.3 ECDHE (X25519 or P-256) | Per-connection key rotation |
+| Overlay (RFC-0853) | Mission-scoped encryption, onion hop keys, relay authentication (OPTIONAL — only when mission context exists) | X25519 ephemeral | Per-session ephemeral keys |
 
 **Handshake sequence:**
 
-1. **QUIC handshake** — Standard TLS 1.3 handshake. Server presents gateway identity (Ed25519 public key as self-signed certificate, or CA-signed certificate for public gateways). Client validates against known gateway registry (GDP, RFC-0851).
-2. **Overlay session establishment** — After QUIC handshake completes, both parties execute RFC-0853 §5 mutual authentication over an open QUIC stream:
+1. **QUIC handshake** — Standard TLS 1.3 handshake. Server authenticates via one of:
+   - **Raw public key** (RFC 7250): Ed25519 public key passed directly in TLS handshake. Preferred for gateways with Ed25519 identity keys — no X.509 infrastructure needed.
+   - **Self-signed X.509 certificate**: Gateway generates an X.509 certificate signed by its own Ed25519 key. Client validates the certificate's public key against the GDP-registered gateway identity (RFC-0851).
+   - **CA-signed certificate**: For public gateways with PKI infrastructure.
+
+   Client validates the remote identity against the known gateway registry (GDP, RFC-0851). GDP provides the Ed25519 public key for each registered gateway; the client verifies the TLS handshake identity matches.
+
+2. **Overlay session establishment** (OPTIONAL — required only for mission-scoped operations) — After QUIC handshake completes, if the connection will carry mission traffic, both parties execute RFC-0853 §5 mutual authentication over the control stream:
    - Exchange ephemeral X25519 public keys
    - Compute shared secret: `X25519(ephemeral_secret, remote_ephemeral_public)`
    - Derive session key: `HKDF-BLAKE3(shared_secret, "ocrypt:session:v1", ephemeral_a || ephemeral_b)`
    - Sign transcript: `Ed25519_sign(long_term_secret, ephemeral_a || ephemeral_b || session_key)`
    - Verify remote signature against GDP-registered identity
-3. **Session ready** — Both parties now have a mutually authenticated, forward-secret overlay session.
+   - **Timeout:** Overlay session establishment MUST complete within 10 seconds. If the handshake does not finish, the connection is closed with `HandshakeTimeout`.
+3. **Session ready** — Both parties now have a mutually authenticated QUIC connection (and optionally a forward-secret overlay session for mission traffic).
 
-**0-RTT data:** Clients MAY send envelopes in 0-RTT data (QUIC early data). 0-RTT envelopes MUST go through replay protection (RFC-0853 §7) before processing. 0-RTT data is NOT forward-secret — this is acceptable for non-sensitive route advertisements and heartbeats. Mission-critical envelopes MUST wait for the full handshake.
+For pure gateway-to-gateway forwarding (route advertisements, heartbeats, capability negotiation), the QUIC TLS 1.3 session alone is sufficient. The overlay session is only needed when mission-scoped keys are required (ORR onion hops, mission gossip, consensus fragments).
+
+**0-RTT data:** Clients MAY send envelopes in 0-RTT data (QUIC early data). 0-RTT envelopes MUST go through replay protection (RFC-0853 §7) before processing. 0-RTT data is NOT forward-secret — this is acceptable for non-sensitive control messages only: heartbeats (`CanonicalEvent::Heartbeat`) and capability negotiation (`ControlMessage::Capabilities`). Route advertisements, mission signals, consensus fragments, and onion relay data MUST wait for the full handshake.
 
 ##### 8.7.3 Stream Multiplexing Strategy
 
@@ -938,21 +947,21 @@ enum ControlMessage {
 }
 ```
 
-Control messages are length-prefixed: `[u32 length][u16 type][payload]`. Length is big-endian, includes the 2-byte type field.
+Control messages are framed: `[u32 frame_len][u16 type][payload]`. `frame_len` is big-endian, value = 2 + `payload.len()`. Consistent framing with envelope and onion streams.
 
 **Envelope streams:**
 
 Each envelope is sent on its own unidirectional stream (client-initiated). Frame format:
 
 ```text
-┌──────────────┬───────────────┬───────────────────────┐
-│ length (u32) │ type (u8=0x01)│ envelope_bytes        │
-└──────────────┴───────────────┴───────────────────────┘
+┌──────────────────┬──────────────────┬───────────────────────┐
+│ frame_len (u32)  │ type (u16=0x0001)│ envelope_bytes        │
+└──────────────────┴──────────────────┴───────────────────────┘
 ```
 
-- `length`: Big-endian, value = 1 + `envelope_bytes.len()`
-- `type`: `0x01` for envelope, `0x02` for fragment
-- `envelope_bytes`: Raw `DeterministicEnvelope::to_wire_bytes()` — NO base64 encoding
+- `frame_len`: Big-endian. Number of bytes in the frame AFTER the `frame_len` field. Value = 2 + `envelope_bytes.len()`.
+- `type`: `0x0001` for envelope, `0x0002` for fragment. Consistent u16 width with control stream.
+- `envelope_bytes`: Raw `DeterministicEnvelope::to_wire_bytes()` — NO base64 encoding.
 
 After writing, the stream is finished (`FIN`). The receiver reads until `EOF`, deserializes, and closes the stream. This gives per-envelope flow control and prevents head-of-line blocking between envelopes.
 
@@ -961,10 +970,12 @@ After writing, the stream is finished (`FIN`). The receiver reads until `EOF`, d
 For ORR relay forwarding (RFC-0858), a dedicated bidirectional stream is opened per active route. Hop frames:
 
 ```text
-┌──────────────┬───────────────┬──────────────────┬──────────────────┐
-│ length (u32) │ type (u8=0x03)│ hop_index (u16)  │ encrypted_layer  │
-└──────────────┴───────────────┴──────────────────┴──────────────────┘
+┌──────────────────┬──────────────────┬──────────────────┬──────────────────┐
+│ frame_len (u32)  │ type (u16=0x0003)│ hop_index (u16)  │ encrypted_layer  │
+└──────────────────┴──────────────────┴──────────────────┴──────────────────┘
 ```
+
+- `frame_len`: Big-endian. Number of bytes after `frame_len`. Value = 2 + 2 + `encrypted_layer.len()`.
 
 The stream stays open for the route's lifetime. Multiple hops on the same route reuse the stream. The stream is closed when the route expires or is torn down.
 
@@ -972,7 +983,7 @@ The stream stays open for the route's lifetime. Multiple hops on the same route 
 
 **Connection pooling:** Gateways maintain persistent QUIC connections to known peers. GDP (RFC-0851) provides the peer registry. Connections are lazily established on first envelope to a peer and kept alive via control stream pings.
 
-**Keep-alive:** Control stream pings every 30 seconds. Peer is marked unreachable after 3 consecutive missed pongs (90s). GDP liveness state transitions to `Suspect` after missed pings, `Offline` after timeout.
+**Keep-alive:** Control stream sends `Ping(nonce)` every 30 seconds. Peer MUST respond with `Pong(nonce)` within 10 seconds. Peer is marked `Suspect` after 2 consecutive missed pongs (60s with no successful pong). Peer is marked `Offline` after 3 consecutive missed pongs (90s). GDP liveness state follows these transitions.
 
 **Connection migration:** QUIC supports connection migration (RFC 9000 §9) — when a gateway's IP address changes (WiFi → cellular, NAT rebinding), the QUIC connection survives using connection IDs. The overlay session is unaffected. Gateways MUST support at least 2 concurrent connection IDs.
 
@@ -985,8 +996,8 @@ The stream stays open for the route's lifetime. Multiple hops on the same route 
 | CipherOcto Primitive | QUIC Integration Point |
 |----------------------|----------------------|
 | GDP discovery (RFC-0851) | QUIC gateways register as `PlatformType::Quic` in GDP. `BootstrapMethod::SeedList` provides initial QUIC peer multiaddrs. |
-| OCrypt sessions (RFC-0853) | Overlay session runs inside QUIC stream after TLS handshake. Double forward secrecy. |
-| ORR onion routing (RFC-0858) | QUIC is the preferred exit hop transport. Onion streams carry encrypted hop layers. |
+| OCrypt sessions (RFC-0853) | Optional overlay session inside QUIC for mission-scoped encryption. QUIC TLS 1.3 provides transport-layer auth. |
+| ORR onion routing (RFC-0858) | QUIC can serve as any hop position in an onion route. Onion streams carry encrypted hop layers. |
 | DRS route selection (RFC-0856) | QUIC gateways advertise `bandwidth_class: High` and `censorship_score: 0` in route vectors. |
 | DGP gossip (RFC-0852) | QUIC carries native binary gossip objects. Multi-transport amplification includes QUIC as carrier. |
 | MON missions (RFC-0855) | Mission key hierarchy derives QUIC-specific transport keys from `transport_keys_root`. |
@@ -998,6 +1009,7 @@ The stream stays open for the route's lifetime. Multiple hops on the same route 
 {
   "quic": {
     "listen_addr": "0.0.0.0:47400",
+    "auth_mode": "raw_public_key",
     "tls_cert_path": "/etc/cipherocto/gateway.pem",
     "tls_key_path": "/etc/cipherocto/gateway.key",
     "max_concurrent_streams": 1000,
@@ -1008,6 +1020,11 @@ The stream stays open for the route's lifetime. Multiple hops on the same route 
   }
 }
 ```
+
+`auth_mode` selects the TLS authentication model (see §8.7.2):
+- `"raw_public_key"`: Ed25519 key used directly via RFC 7250. `tls_cert_path`/`tls_key_path` are ignored; the gateway's Ed25519 identity key is used.
+- `"self_signed"`: Gateway generates a self-signed X.509 certificate from its Ed25519 key. `tls_cert_path`/`tls_key_path` point to the generated cert/key.
+- `"ca_signed"`: Standard PKI. `tls_cert_path`/`tls_key_path` point to CA-issued certificate and private key.
 
 ##### 8.7.7 Performance Targets
 

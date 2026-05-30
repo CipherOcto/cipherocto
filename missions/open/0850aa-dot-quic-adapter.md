@@ -37,16 +37,16 @@ Implement the QUIC platform adapter (`PlatformType::Quic = 0x0015`) using the `q
 - Implement `QuicAdapter` with connection pool, stream management
 
 ### 3. Stream Protocol
-- Control stream (stream 0): length-prefixed `[u32 len][u16 type][payload]`
-- Envelope streams: unidirectional, `[u32 len][u8 type][raw_bytes]`, FIN after write
-- Onion streams: bidirectional, `[u32 len][u8 type][u16 hop_index][encrypted_layer]`
+- Control stream (stream 0): framed `[u32 frame_len][u16 type][payload]`, `frame_len = 2 + payload.len()`
+- Envelope streams: unidirectional, `[u32 frame_len][u16 type][raw_bytes]`, FIN after write
+- Onion streams: bidirectional, `[u32 frame_len][u16 type][u16 hop_index][encrypted_layer]`
+- All type fields are u16 for consistency
 
 ### 4. Session Layer
-- After QUIC handshake, execute RFC-0853 §5 over control stream
-- X25519 ephemeral key exchange
-- HKDF-BLAKE3 session key derivation
-- Ed25519 signed transcript for mutual authentication
-- Session key rotation via control message
+- QUIC TLS 1.3 handles transport-layer mutual authentication
+- Overlay session (RFC-0853 §5) is OPTIONAL, only for mission-scoped operations
+- If needed: X25519 ephemeral key exchange, HKDF-BLAKE3 session key, Ed25519 signed transcript
+- 10-second timeout on overlay session establishment
 
 ### 5. GDP Integration
 - Register QUIC gateways in GDP discovery state
@@ -65,8 +65,7 @@ Implement the QUIC platform adapter (`PlatformType::Quic = 0x0015`) using the `q
 
 ## Dependencies
 
-- `quinn` crate (QUIC implementation in Rust)
-- `rustls` (TLS 1.3, used by quinn)
+- `quinn` crate (QUIC implementation in Rust, includes `rustls`)
 - RFC-0853 `ocrypt::session` (overlay session keys)
 - RFC-0851 `gdp::discovery` (peer discovery)
 

@@ -54,10 +54,9 @@ impl std::fmt::Debug for BlueskyConfig {
 
 // ── Session ────────────────────────────────────────────────────────
 
-/// Cached AT Protocol session (access JWT + refresh JWT)
+/// Cached AT Protocol session (access JWT + DID)
 struct Session {
     access_jwt: String,
-    refresh_jwt: String,
     did: String,
 }
 
@@ -66,7 +65,7 @@ struct Session {
 pub struct BlueskyAdapter {
     config: BlueskyConfig,
     client: reqwest::Client,
-    /// Cached session (access_jwt, refresh_jwt, did)
+    /// Cached session (access_jwt, did)
     session: Arc<Mutex<Option<Session>>>,
 }
 
@@ -96,7 +95,10 @@ impl BlueskyAdapter {
         }
 
         // Create new session
-        let url = format!("{}/xrpc/com.atproto.server.createSession", self.config.pds_url);
+        let url = format!(
+            "{}/xrpc/com.atproto.server.createSession",
+            self.config.pds_url
+        );
         let body = serde_json::json!({
             "identifier": self.config.handle,
             "password": self.config.app_password,
@@ -117,10 +119,6 @@ impl BlueskyAdapter {
             .as_str()
             .ok_or_else(|| transport_err("Missing accessJwt"))?
             .to_string();
-        let refresh_jwt = resp["refreshJwt"]
-            .as_str()
-            .ok_or_else(|| transport_err("Missing refreshJwt"))?
-            .to_string();
         let did = resp["did"]
             .as_str()
             .ok_or_else(|| transport_err("Missing did"))?
@@ -128,16 +126,11 @@ impl BlueskyAdapter {
 
         *self.session.lock() = Some(Session {
             access_jwt,
-            refresh_jwt,
             did,
         });
 
         tracing::info!("Bluesky session created for {}", self.config.handle);
         Ok(())
-    }
-
-    fn api_base() -> &'static str {
-        "https://bsky.social/xrpc"
     }
 
     pub fn encode_envelope(envelope_bytes: &[u8]) -> String {
@@ -177,16 +170,11 @@ impl BlueskyAdapter {
         // Clone values to avoid holding lock across await
         let (access_jwt, did) = {
             let guard = self.session.lock();
-            let session = guard
-                .as_ref()
-                .ok_or_else(|| transport_err("No session"))?;
+            let session = guard.as_ref().ok_or_else(|| transport_err("No session"))?;
             (session.access_jwt.clone(), session.did.clone())
         };
 
-        let url = format!(
-            "{}/xrpc/com.atproto.repo.createRecord",
-            self.config.pds_url
-        );
+        let url = format!("{}/xrpc/com.atproto.repo.createRecord", self.config.pds_url);
         let body = serde_json::json!({
             "repo": did,
             "collection": "app.bsky.feed.post",
@@ -209,10 +197,7 @@ impl BlueskyAdapter {
             .await
             .map_err(|e| transport_err(format!("Post parse failed: {e}")))?;
 
-        let uri = resp["uri"]
-            .as_str()
-            .unwrap_or("unknown")
-            .to_string();
+        let uri = resp["uri"].as_str().unwrap_or("unknown").to_string();
         Ok(uri)
     }
 }
@@ -230,7 +215,7 @@ fn transport_err(msg: impl Into<String>) -> PlatformAdapterError {
 impl PlatformAdapter for BlueskyAdapter {
     async fn send_envelope(
         &self,
-        domain: &BroadcastDomainId,
+        _domain: &BroadcastDomainId,
         envelope: &DeterministicEnvelope,
     ) -> Result<DeliveryReceipt, PlatformAdapterError> {
         let wire_bytes = envelope.to_wire_bytes();
@@ -263,12 +248,11 @@ impl PlatformAdapter for BlueskyAdapter {
         }
 
         let text = String::from_utf8_lossy(&raw.payload);
-        let wire_bytes = Self::decode_envelope(&text).map_err(|e| {
-            PlatformAdapterError::ApiError {
+        let wire_bytes =
+            Self::decode_envelope(&text).map_err(|e| PlatformAdapterError::ApiError {
                 code: 400,
                 message: format!("canonicalize failed: {e}"),
-            }
-        })?;
+            })?;
 
         DeterministicEnvelope::from_wire_bytes(&wire_bytes).map_err(|e| {
             PlatformAdapterError::ApiError {
@@ -452,10 +436,9 @@ mod tests {
             "app_password": "xxxx-xxxx-xxxx-xxxx",
             "pds_url": "https://bsky.social"
         });
-        let adapter = BlueskyAdapter::from_config_bytes(
-            serde_json::to_vec(&json).unwrap().as_slice(),
-        )
-        .unwrap();
+        let adapter =
+            BlueskyAdapter::from_config_bytes(serde_json::to_vec(&json).unwrap().as_slice())
+                .unwrap();
         assert_eq!(adapter.config.handle, "alice.bsky.social");
     }
 
@@ -465,10 +448,9 @@ mod tests {
             "handle": "alice.bsky.social",
             "app_password": "xxxx"
         });
-        let adapter = BlueskyAdapter::from_config_bytes(
-            serde_json::to_vec(&json).unwrap().as_slice(),
-        )
-        .unwrap();
+        let adapter =
+            BlueskyAdapter::from_config_bytes(serde_json::to_vec(&json).unwrap().as_slice())
+                .unwrap();
         assert_eq!(adapter.config.pds_url, "https://bsky.social");
     }
 }

@@ -109,7 +109,10 @@ impl TwitterAdapter {
         let resp = self
             .client
             .post(&url)
-            .header("Authorization", format!("Bearer {}", self.config.bearer_token))
+            .header(
+                "Authorization",
+                format!("Bearer {}", self.config.bearer_token),
+            )
             .json(&body)
             .send()
             .await
@@ -118,10 +121,7 @@ impl TwitterAdapter {
             .await
             .map_err(|e| transport_err(format!("Post parse failed: {e}")))?;
 
-        let tweet_id = resp["data"]["id"]
-            .as_str()
-            .unwrap_or("unknown")
-            .to_string();
+        let tweet_id = resp["data"]["id"].as_str().unwrap_or("unknown").to_string();
         Ok(tweet_id)
     }
 
@@ -138,7 +138,10 @@ impl TwitterAdapter {
         let resp = self
             .client
             .get(&url)
-            .header("Authorization", format!("Bearer {}", self.config.bearer_token))
+            .header(
+                "Authorization",
+                format!("Bearer {}", self.config.bearer_token),
+            )
             .send()
             .await
             .map_err(|e| transport_err(format!("Self ID resolve failed: {e}")))?
@@ -168,7 +171,7 @@ fn transport_err(msg: impl Into<String>) -> PlatformAdapterError {
 impl PlatformAdapter for TwitterAdapter {
     async fn send_envelope(
         &self,
-        domain: &BroadcastDomainId,
+        _domain: &BroadcastDomainId,
         envelope: &DeterministicEnvelope,
     ) -> Result<DeliveryReceipt, PlatformAdapterError> {
         let wire_bytes = envelope.to_wire_bytes();
@@ -199,12 +202,11 @@ impl PlatformAdapter for TwitterAdapter {
         }
 
         let text = String::from_utf8_lossy(&raw.payload);
-        let wire_bytes = Self::decode_envelope(&text).map_err(|e| {
-            PlatformAdapterError::ApiError {
+        let wire_bytes =
+            Self::decode_envelope(&text).map_err(|e| PlatformAdapterError::ApiError {
                 code: 400,
                 message: format!("canonicalize failed: {e}"),
-            }
-        })?;
+            })?;
 
         DeterministicEnvelope::from_wire_bytes(&wire_bytes).map_err(|e| {
             PlatformAdapterError::ApiError {
@@ -377,10 +379,9 @@ mod tests {
             "bearer_token": "AAAAAAAAAAAAAAAAAAAAA",
             "account_id": "1234567890"
         });
-        let adapter = TwitterAdapter::from_config_bytes(
-            serde_json::to_vec(&json).unwrap().as_slice(),
-        )
-        .unwrap();
+        let adapter =
+            TwitterAdapter::from_config_bytes(serde_json::to_vec(&json).unwrap().as_slice())
+                .unwrap();
         assert_eq!(adapter.config.account_id, Some("1234567890".to_string()));
     }
 }

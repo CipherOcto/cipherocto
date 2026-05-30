@@ -1,0 +1,27 @@
+[package]
+name = "octo-adapter-wechat"
+version = "0.1.0"
+edition = "2021"
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+tokio = { version = "1", features = ["sync", "time", "macros", "rt-multi-thread"] }
+async-trait = "0.1"
+anyhow = "1"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+reqwest = { version = "0.12", features = ["json"] }
+blake3 = "1"
+base64 = "0.22"
+chrono = { version = "0.4", features = ["clock"] }
+parking_lot = "0.12"
+tracing = "0.1"
+aes = "0.8"
+ecb = "0.1"
+
+octo-network = { path = "../octo-network" }
+
+[dev-dependencies]
+tokio = { version = "1", features = ["macros", "rt-multi-thread"] }

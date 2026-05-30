@@ -406,6 +406,10 @@ impl PlatformAdapter for NostrAdapter {
         Some(self.public_key_hex())
     }
 
+    async fn shutdown(&self) -> Result<(), PlatformAdapterError> {
+        Ok(())
+    }
+
     async fn health_check(&self) -> Result<(), PlatformAdapterError> {
         // Check if at least one relay is reachable
         let timeout = std::time::Duration::from_secs(5);

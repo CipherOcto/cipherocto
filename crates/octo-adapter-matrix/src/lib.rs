@@ -406,6 +406,12 @@ impl PlatformAdapter for MatrixAdapter {
         self.user_id.try_lock().ok().and_then(|guard| guard.clone())
     }
 
+    async fn shutdown(&self) -> Result<(), PlatformAdapterError> {
+        *self.user_id.lock().await = None;
+        *self.next_batch.lock().unwrap() = None;
+        Ok(())
+    }
+
     async fn health_check(&self) -> Result<(), PlatformAdapterError> {
         // Lightweight liveness probe: GET /versions with 5s timeout
         let timeout = std::time::Duration::from_secs(5);

@@ -171,6 +171,11 @@ impl PlatformAdapter for SlackAdapter {
         self.self_id.try_lock().ok().and_then(|guard| guard.clone())
     }
 
+    async fn shutdown(&self) -> Result<(), PlatformAdapterError> {
+        *self.self_id.lock().await = None;
+        Ok(())
+    }
+
     async fn health_check(&self) -> Result<(), PlatformAdapterError> {
         let timeout = std::time::Duration::from_secs(5);
         let url = format!("{}/auth.test", Self::api_base());

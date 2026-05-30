@@ -465,6 +465,10 @@ impl PlatformAdapter for IrcAdapter {
         Some(self.config.nickname.clone())
     }
 
+    async fn shutdown(&self) -> Result<(), PlatformAdapterError> {
+        Ok(())
+    }
+
     async fn health_check(&self) -> Result<(), PlatformAdapterError> {
         // Check TCP connectivity to the server
         let timeout = std::time::Duration::from_secs(5);

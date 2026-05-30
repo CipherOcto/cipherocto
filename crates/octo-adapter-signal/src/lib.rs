@@ -282,6 +282,10 @@ impl PlatformAdapter for SignalAdapter {
         Some(self.config.phone_number.clone())
     }
 
+    async fn shutdown(&self) -> Result<(), PlatformAdapterError> {
+        Ok(())
+    }
+
     async fn health_check(&self) -> Result<(), PlatformAdapterError> {
         let timeout = std::time::Duration::from_secs(5);
         match tokio::time::timeout(

@@ -286,8 +286,14 @@ impl PlatformAdapter for LarkAdapter {
         let image_key = resp["data"]["image_key"].as_str().unwrap_or("unknown").to_string();
         Ok(image_key)
     }
-    async fn download_media(&self, _media_id: &str) -> Result<Vec<u8>, PlatformAdapterError> {
-        Err(PlatformAdapterError::Unreachable { platform: "lark".into(), reason: "download_media not implemented for Lark".into() })
+    async fn download_media(&self, media_id: &str) -> Result<Vec<u8>, PlatformAdapterError> {
+        let token = self.get_tenant_token().await?;
+        let url = format!("{}/im/v1/images/{}", self.api_base(), media_id);
+        let bytes = self.client.get(&url).bearer_auth(&token).send().await
+            .map_err(|e| transport_err(format!("Download failed: {e}")))?
+            .bytes().await
+            .map_err(|e| transport_err(format!("Download read: {e}")))?;
+        Ok(bytes.to_vec())
     }
 }
 

@@ -312,11 +312,40 @@ impl PlatformAdapter for RedditAdapter {
         self.get_access_token().await.map(|_| ())
     }
 
-    async fn upload_media(&self, _filename: &str, _data: &[u8], _mime_type: &str) -> Result<String, PlatformAdapterError> {
-        Err(PlatformAdapterError::Unreachable { platform: "reddit".into(), reason: "Reddit requires URL-based media; direct upload not supported".into() })
+    async fn upload_media(&self, filename: &str, data: &[u8], mime_type: &str) -> Result<String, PlatformAdapterError> {
+        // Reddit supports image uploads via the media upload endpoint
+        let token = self.get_access_token().await?;
+        let subreddit = self.config.subreddits.first()
+            .ok_or_else(|| transport_err("No subreddits configured"))?;
+        let url = format!("{}/api/media/asset", Self::api_base());
+        let file_part = reqwest::multipart::Part::bytes(data.to_vec())
+            .file_name(filename.to_string())
+            .mime_str(mime_type)
+            .map_err(|e| transport_err(format!("MIME: {e}")))?;
+        let form = reqwest::multipart::Form::new()
+            .part("file", file_part)
+            .text("sr", subreddit.clone());
+        let resp = self.client.post(&url)
+            .header("Authorization", format!("Bearer {}", token))
+            .multipart(form).send().await
+            .map_err(|e| transport_err(format!("Upload failed: {e}")))?
+            .json::<serde_json::Value>().await
+            .map_err(|e| transport_err(format!("Parse: {e}")))?;
+        let asset_id = resp["asset_id"].as_str().unwrap_or("unknown").to_string();
+        Ok(asset_id)
     }
-    async fn download_media(&self, _media_id: &str) -> Result<Vec<u8>, PlatformAdapterError> {
-        Err(PlatformAdapterError::Unreachable { platform: "reddit".into(), reason: "download_media not supported for Reddit".into() })
+    async fn download_media(&self, media_id: &str) -> Result<Vec<u8>, PlatformAdapterError> {
+        // Reddit media can be downloaded via direct URL
+        let url = if media_id.starts_with("https://") {
+            media_id.to_string()
+        } else {
+            format!("https://i.redd.it/{}", media_id)
+        };
+        let bytes = self.client.get(&url).send().await
+            .map_err(|e| transport_err(format!("Download failed: {e}")))?
+            .bytes().await
+            .map_err(|e| transport_err(format!("Download read: {e}")))?;
+        Ok(bytes.to_vec())
     }
 }
 

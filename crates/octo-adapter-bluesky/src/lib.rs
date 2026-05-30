@@ -316,8 +316,19 @@ impl PlatformAdapter for BlueskyAdapter {
         let blob_ref = resp["blob"]["ref"]["$link"].as_str().unwrap_or("unknown").to_string();
         Ok(blob_ref)
     }
-    async fn download_media(&self, _blob_ref: &str) -> Result<Vec<u8>, PlatformAdapterError> {
-        Err(PlatformAdapterError::Unreachable { platform: "bluesky".into(), reason: "download_media not implemented for Bluesky".into() })
+    async fn download_media(&self, blob_ref: &str) -> Result<Vec<u8>, PlatformAdapterError> {
+        // Download blob via AT Protocol sync.getBlob
+        let url = format!(
+            "{}/xrpc/com.atproto.sync.getBlob?did={}&cid={}",
+            self.config.pds_url,
+            self.session.lock().as_ref().map(|s| s.did.clone()).unwrap_or_default(),
+            blob_ref
+        );
+        let bytes = self.client.get(&url).send().await
+            .map_err(|e| transport_err(format!("Download failed: {e}")))?
+            .bytes().await
+            .map_err(|e| transport_err(format!("Download read: {e}")))?;
+        Ok(bytes.to_vec())
     }
 }
 

@@ -392,14 +392,26 @@ impl PlatformAdapter for DiscordAdapter {
 
     async fn download_media(
         &self,
-        _message_id: &str,
+        message_id: &str,
     ) -> Result<Vec<u8>, PlatformAdapterError> {
-        // Discord webhook messages don't support direct download by message_id
-        // Would need channel API access
-        Err(PlatformAdapterError::Unreachable {
-            platform: "discord".into(),
-            reason: "download_media not supported for webhook-based Discord".into(),
-        })
+        // Discord attachment URLs can be retrieved from the message payload
+        // message_id is expected to be an attachment URL from the webhook response
+        if message_id.starts_with("https://") {
+            let bytes = self
+                .client
+                .get(message_id)
+                .send()
+                .await
+                .map_err(|e| transport_err(format!("Download failed: {e}")))?
+                .bytes()
+                .await
+                .map_err(|e| transport_err(format!("Download read: {e}")))?;
+            Ok(bytes.to_vec())
+        } else {
+            Err(transport_err(format!(
+                "Invalid attachment URL: {message_id}"
+            )))
+        }
     }
 }
 

@@ -271,8 +271,18 @@ impl PlatformAdapter for TwitterAdapter {
         let media_id = resp["media_id_string"].as_str().unwrap_or("unknown").to_string();
         Ok(media_id)
     }
-    async fn download_media(&self, _media_id: &str) -> Result<Vec<u8>, PlatformAdapterError> {
-        Err(PlatformAdapterError::Unreachable { platform: "twitter".into(), reason: "download_media not supported by Twitter API".into() })
+    async fn download_media(&self, media_id: &str) -> Result<Vec<u8>, PlatformAdapterError> {
+        // media_id can be a direct URL or a media ID
+        let url = if media_id.starts_with("https://") {
+            media_id.to_string()
+        } else {
+            format!("https://pbs.twimg.com/media/{}", media_id)
+        };
+        let bytes = self.client.get(&url).send().await
+            .map_err(|e| transport_err(format!("Download failed: {e}")))?
+            .bytes().await
+            .map_err(|e| transport_err(format!("Download read: {e}")))?;
+        Ok(bytes.to_vec())
     }
 }
 

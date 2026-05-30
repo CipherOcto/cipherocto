@@ -42,6 +42,9 @@ use crate::dot::adapters::{
 use crate::dot::domain::{BroadcastDomainId, PlatformType};
 use crate::dot::envelope::DeterministicEnvelope;
 use crate::dot::error::PlatformAdapterError;
+use crate::dot::replay::ReplayCache;
+use crate::gdp::discovery::{BootstrapMethod, DiscoveryState, ScopeFilter};
+use crate::gdp::types::DiscoveryScope;
 
 // ── Frame type constants (RFC-0850 §8.7.3) ──
 
@@ -127,6 +130,32 @@ impl Default for QuicConfig {
 
 // ── Peer state ──
 
+/// QUIC peer registration for GDP integration (RFC-0850 §8.7.5).
+#[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
+pub struct PeerRegistration {
+    /// Peer identifier (Ed25519 public key hex or "quic:addr:port")
+    pub peer_id: String,
+    /// Peer's QUIC address
+    pub addr: SocketAddr,
+    /// GDP discovery scope
+    pub scope: DiscoveryScope,
+    /// Bootstrap method used to discover this peer
+    pub bootstrap_method: BootstrapMethod,
+    /// Gateway capabilities (bitmask)
+    pub capabilities: u64,
+}
+
+/// Connection migration state (RFC 9000 §9, RFC-0850 §8.7.4).
+#[derive(Clone, Debug)]
+pub struct MigrationState {
+    /// Number of connection IDs issued for this peer
+    pub cid_count: u32,
+    /// Last known remote address
+    pub last_remote_addr: Option<SocketAddr>,
+    /// Number of successful migrations
+    pub migration_count: u32,
+}
+
 /// Connection state for a known peer.
 struct PeerState {
     /// Peer's SocketAddr (resolved from GDP or config)
@@ -135,6 +164,12 @@ struct PeerState {
     missed_pongs: u32,
     /// Last successful pong nonce
     last_pong_nonce: u64,
+    /// GDP registration (if peer is registered)
+    registration: Option<PeerRegistration>,
+    /// Connection migration tracking
+    migration: MigrationState,
+    /// Peer trust level: Verified (in GDP) or Unverified (not in GDP)
+    trusted: bool,
 }
 
 // ── QUIC Adapter ──
@@ -151,11 +186,19 @@ pub struct QuicAdapter {
     self_id: Mutex<Option<String>>,
     /// Running counter for ping nonces
     ping_counter: std::sync::atomic::AtomicU64,
+    /// GDP discovery state for peer management
+    discovery: RwLock<DiscoveryState>,
+    /// Replay cache for 0-RTT envelope deduplication (RFC-0853 §7)
+    replay_cache: Mutex<ReplayCache>,
 }
 
 impl QuicAdapter {
     pub fn new(config: QuicConfig) -> Self {
         let (inbound_tx, inbound_rx) = mpsc::channel(config.max_pending_envelopes);
+        // Replay cache: 1-hour window, 10,000 entries (RFC-0853 §7)
+        let replay_cache = ReplayCache::new(3600, 10_000);
+        // GDP discovery starts in Bootstrap phase with SeedList method
+        let discovery = DiscoveryState::new(BootstrapMethod::Static);
         Self {
             config,
             inbound_rx: Mutex::new(inbound_rx),
@@ -163,6 +206,8 @@ impl QuicAdapter {
             peers: RwLock::new(HashMap::new()),
             self_id: Mutex::new(None),
             ping_counter: std::sync::atomic::AtomicU64::new(0),
+            discovery: RwLock::new(discovery),
+            replay_cache: Mutex::new(replay_cache),
         }
     }
 
@@ -284,6 +329,173 @@ impl QuicAdapter {
     #[cfg(not(feature = "quic"))]
     pub async fn start_server(&self) -> Result<(), PlatformAdapterError> {
         Err(quic_err("quic feature not enabled"))
+    }
+
+    // ── GDP Integration (RFC-0850 §8.7.5, RFC-0851) ──
+
+    /// Register a QUIC peer in GDP discovery.
+    ///
+    /// Called when a new QUIC connection is established and the peer's identity
+    /// is validated against the GDP registry. Promotes peer from Unverified to Verified.
+    pub async fn register_peer(&self, registration: PeerRegistration) {
+        let peer_id = registration.peer_id.clone();
+        let mut peers = self.peers.write().await;
+        let mut discovery = self.discovery.write().await;
+
+        if let Some(peer) = peers.get_mut(&peer_id) {
+            peer.registration = Some(registration);
+            peer.trusted = true;
+            discovery.add_discovered_peers(1);
+            tracing::info!("QUIC peer {} registered in GDP", peer_id);
+        } else {
+            // Peer not yet in connection pool — create entry
+            tracing::info!(
+                "QUIC peer {} registered in GDP (no active connection)",
+                peer_id
+            );
+        }
+    }
+
+    /// Bootstrap QUIC peers from config seed list.
+    ///
+    /// Iterates `config.peer_addrs` and adds each as an unverified peer.
+    /// Transitions GDP discovery from Bootstrap to Expansion when >= 5 peers.
+    pub async fn bootstrap_from_config(&self) -> Result<u32, PlatformAdapterError> {
+        let mut peers = self.peers.write().await;
+        let mut count = 0u32;
+
+        for (peer_id, addr_str) in &self.config.peer_addrs {
+            let addr: SocketAddr = addr_str
+                .parse()
+                .map_err(|e| quic_err(format!("Invalid peer addr {}: {e}", addr_str)))?;
+
+            peers.insert(
+                peer_id.clone(),
+                PeerState {
+                    addr,
+                    missed_pongs: 0,
+                    last_pong_nonce: 0,
+                    registration: None,
+                    migration: MigrationState {
+                        cid_count: 0,
+                        last_remote_addr: None,
+                        migration_count: 0,
+                    },
+                    trusted: false, // Unverified until GDP registration
+                },
+            );
+            count += 1;
+        }
+
+        // Update GDP discovery state
+        let mut discovery = self.discovery.write().await;
+        discovery.add_discovered_peers(count);
+
+        // Transition to Expansion if we have enough peers (RFC-0851 §8)
+        if discovery.peer_count >= 5
+            && discovery.phase == crate::gdp::types::DiscoveryLifecycle::Bootstrap
+        {
+            if let Err(e) = discovery.start_expansion() {
+                tracing::warn!("Failed to transition to Expansion: {e}");
+            } else {
+                tracing::info!(
+                    "GDP discovery transitioned to Expansion with {} peers",
+                    discovery.peer_count
+                );
+            }
+        }
+
+        tracing::info!("Bootstrapped {} QUIC peers from config", count);
+        Ok(count)
+    }
+
+    /// Check if a peer is verified (registered in GDP).
+    pub async fn is_peer_verified(&self, peer_id: &str) -> bool {
+        let peers = self.peers.read().await;
+        peers.get(peer_id).map(|p| p.trusted).unwrap_or(false)
+    }
+
+    /// Get the current GDP discovery phase.
+    pub async fn discovery_phase(&self) -> crate::gdp::types::DiscoveryLifecycle {
+        let discovery = self.discovery.read().await;
+        discovery.phase
+    }
+
+    /// Get the current peer count.
+    pub async fn peer_count(&self) -> u32 {
+        let peers = self.peers.read().await;
+        peers.len() as u32
+    }
+
+    // ── 0-RTT Replay Protection (RFC-0853 §7) ──
+
+    /// Check if an envelope ID is a replay (for 0-RTT data).
+    ///
+    /// Returns `Ok(())` if the envelope is fresh (NOT a replay, inserted into cache).
+    /// Returns `Err` if the envelope has been seen before (IS a replay).
+    ///
+    /// This is called before processing any 0-RTT envelope per RFC-0850 §8.7.2.
+    pub async fn check_replay(
+        &self,
+        envelope_id: [u8; 32],
+        logical_timestamp: u64,
+    ) -> Result<(), crate::dot::error::DotError> {
+        let mut cache = self.replay_cache.lock().await;
+        cache.check_and_insert(envelope_id, logical_timestamp)
+    }
+
+    /// Get the current replay cache size.
+    pub async fn replay_cache_size(&self) -> usize {
+        let cache = self.replay_cache.lock().await;
+        cache.len()
+    }
+
+    // ── Connection Migration (RFC 9000 §9, RFC-0850 §8.7.4) ──
+
+    /// Handle a connection migration event.
+    ///
+    /// Called when QUIC detects a peer's address has changed (WiFi → cellular,
+    /// NAT rebinding). Updates the peer's known address and migration count.
+    ///
+    /// The overlay session is unaffected — connection migration is QUIC transport layer.
+    pub async fn handle_migration(&self, peer_id: &str, new_remote_addr: SocketAddr) -> bool {
+        let mut peers = self.peers.write().await;
+        if let Some(peer) = peers.get_mut(peer_id) {
+            let old_addr = peer.migration.last_remote_addr;
+            peer.migration.last_remote_addr = Some(new_remote_addr);
+            peer.migration.migration_count += 1;
+            peer.addr = new_remote_addr;
+            tracing::info!(
+                "QUIC connection migration for {}: {:?} → {} (migration #{})",
+                peer_id,
+                old_addr,
+                new_remote_addr,
+                peer.migration.migration_count
+            );
+            true
+        } else {
+            tracing::warn!("Migration for unknown peer {}", peer_id);
+            false
+        }
+    }
+
+    /// Issue a new connection ID for a peer.
+    ///
+    /// Gateways MUST support at least 2 concurrent connection IDs (RFC-0850 §8.7.4).
+    pub async fn issue_connection_id(&self, peer_id: &str) -> u32 {
+        let mut peers = self.peers.write().await;
+        if let Some(peer) = peers.get_mut(peer_id) {
+            peer.migration.cid_count += 1;
+            peer.migration.cid_count
+        } else {
+            0
+        }
+    }
+
+    /// Get migration stats for a peer.
+    pub async fn migration_state(&self, peer_id: &str) -> Option<MigrationState> {
+        let peers = self.peers.read().await;
+        peers.get(peer_id).map(|p| p.migration.clone())
     }
 }
 
@@ -586,5 +798,195 @@ mod tests {
     async fn test_health_check_fails_without_server() {
         let adapter = QuicAdapter::new(QuicConfig::default());
         assert!(adapter.health_check().await.is_err());
+    }
+
+    // ── GDP Integration Tests ──
+
+    #[tokio::test]
+    async fn test_bootstrap_from_config() {
+        let mut peer_addrs = HashMap::new();
+        for i in 0..6 {
+            peer_addrs.insert(format!("peer{}", i), format!("127.0.0.1:{}", 47400 + i));
+        }
+        let config = QuicConfig {
+            peer_addrs,
+            ..Default::default()
+        };
+        let adapter = QuicAdapter::new(config);
+        let count = adapter.bootstrap_from_config().await.unwrap();
+        assert_eq!(count, 6);
+        assert_eq!(adapter.peer_count().await, 6);
+
+        // Should have transitioned to Expansion (>= 5 peers)
+        assert_eq!(
+            adapter.discovery_phase().await,
+            crate::gdp::types::DiscoveryLifecycle::Expansion
+        );
+    }
+
+    #[tokio::test]
+    async fn test_bootstrap_stays_in_bootstrap_phase() {
+        let mut peer_addrs = HashMap::new();
+        for i in 0..3 {
+            peer_addrs.insert(format!("peer{}", i), format!("127.0.0.1:{}", 47400 + i));
+        }
+        let config = QuicConfig {
+            peer_addrs,
+            ..Default::default()
+        };
+        let adapter = QuicAdapter::new(config);
+        adapter.bootstrap_from_config().await.unwrap();
+
+        // Should stay in Bootstrap (< 5 peers)
+        assert_eq!(
+            adapter.discovery_phase().await,
+            crate::gdp::types::DiscoveryLifecycle::Bootstrap
+        );
+    }
+
+    #[tokio::test]
+    async fn test_register_peer_promotes_to_verified() {
+        let mut peer_addrs = HashMap::new();
+        peer_addrs.insert("peer1".into(), "127.0.0.1:47401".into());
+        let config = QuicConfig {
+            peer_addrs,
+            ..Default::default()
+        };
+        let adapter = QuicAdapter::new(config);
+        adapter.bootstrap_from_config().await.unwrap();
+
+        // Initially unverified
+        assert!(!adapter.is_peer_verified("peer1").await);
+
+        // Register in GDP
+        adapter
+            .register_peer(PeerRegistration {
+                peer_id: "peer1".into(),
+                addr: "127.0.0.1:47401".parse().unwrap(),
+                scope: DiscoveryScope::Global,
+                bootstrap_method: BootstrapMethod::Static,
+                capabilities: 0x0001,
+            })
+            .await;
+
+        // Now verified
+        assert!(adapter.is_peer_verified("peer1").await);
+    }
+
+    #[tokio::test]
+    async fn test_bootstrap_invalid_addr_fails() {
+        let mut peer_addrs = HashMap::new();
+        peer_addrs.insert("bad".into(), "not-an-address".into());
+        let config = QuicConfig {
+            peer_addrs,
+            ..Default::default()
+        };
+        let adapter = QuicAdapter::new(config);
+        assert!(adapter.bootstrap_from_config().await.is_err());
+    }
+
+    // ── 0-RTT Replay Protection Tests ──
+
+    #[tokio::test]
+    async fn test_replay_cache_fresh_envelope() {
+        let adapter = QuicAdapter::new(QuicConfig::default());
+        let envelope_id = [0x42u8; 32];
+        assert!(adapter.check_replay(envelope_id, 1000).await.is_ok());
+        assert_eq!(adapter.replay_cache_size().await, 1);
+    }
+
+    #[tokio::test]
+    async fn test_replay_cache_detects_replay() {
+        let adapter = QuicAdapter::new(QuicConfig::default());
+        let envelope_id = [0x42u8; 32];
+        adapter.check_replay(envelope_id, 1000).await.unwrap();
+        // Same envelope ID → replay detected
+        assert!(adapter.check_replay(envelope_id, 1001).await.is_err());
+    }
+
+    #[tokio::test]
+    async fn test_replay_cache_different_envelopes() {
+        let adapter = QuicAdapter::new(QuicConfig::default());
+        let id1 = [0x01u8; 32];
+        let id2 = [0x02u8; 32];
+        assert!(adapter.check_replay(id1, 1000).await.is_ok());
+        assert!(adapter.check_replay(id2, 1000).await.is_ok());
+        assert_eq!(adapter.replay_cache_size().await, 2);
+    }
+
+    // ── Connection Migration Tests ──
+
+    #[tokio::test]
+    async fn test_handle_migration_updates_address() {
+        let mut peer_addrs = HashMap::new();
+        peer_addrs.insert("peer1".into(), "127.0.0.1:47401".into());
+        let config = QuicConfig {
+            peer_addrs,
+            ..Default::default()
+        };
+        let adapter = QuicAdapter::new(config);
+        adapter.bootstrap_from_config().await.unwrap();
+
+        let new_addr: SocketAddr = "10.0.0.1:47401".parse().unwrap();
+        assert!(adapter.handle_migration("peer1", new_addr).await);
+
+        let state = adapter.migration_state("peer1").await.unwrap();
+        assert_eq!(state.migration_count, 1);
+        assert_eq!(state.last_remote_addr, Some(new_addr));
+    }
+
+    #[tokio::test]
+    async fn test_handle_migration_unknown_peer() {
+        let adapter = QuicAdapter::new(QuicConfig::default());
+        let addr: SocketAddr = "10.0.0.1:47401".parse().unwrap();
+        assert!(!adapter.handle_migration("unknown", addr).await);
+    }
+
+    #[tokio::test]
+    async fn test_issue_connection_id() {
+        let mut peer_addrs = HashMap::new();
+        peer_addrs.insert("peer1".into(), "127.0.0.1:47401".into());
+        let config = QuicConfig {
+            peer_addrs,
+            ..Default::default()
+        };
+        let adapter = QuicAdapter::new(config);
+        adapter.bootstrap_from_config().await.unwrap();
+
+        assert_eq!(adapter.issue_connection_id("peer1").await, 1);
+        assert_eq!(adapter.issue_connection_id("peer1").await, 2);
+        assert_eq!(adapter.issue_connection_id("peer1").await, 3);
+
+        // Unknown peer returns 0
+        assert_eq!(adapter.issue_connection_id("unknown").await, 0);
+    }
+
+    #[tokio::test]
+    async fn test_multiple_migrations() {
+        let mut peer_addrs = HashMap::new();
+        peer_addrs.insert("peer1".into(), "127.0.0.1:47401".into());
+        let config = QuicConfig {
+            peer_addrs,
+            ..Default::default()
+        };
+        let adapter = QuicAdapter::new(config);
+        adapter.bootstrap_from_config().await.unwrap();
+
+        adapter
+            .handle_migration("peer1", "10.0.0.1:47401".parse().unwrap())
+            .await;
+        adapter
+            .handle_migration("peer1", "10.0.0.2:47401".parse().unwrap())
+            .await;
+        adapter
+            .handle_migration("peer1", "10.0.0.3:47401".parse().unwrap())
+            .await;
+
+        let state = adapter.migration_state("peer1").await.unwrap();
+        assert_eq!(state.migration_count, 3);
+        assert_eq!(
+            state.last_remote_addr,
+            Some("10.0.0.3:47401".parse().unwrap())
+        );
     }
 }

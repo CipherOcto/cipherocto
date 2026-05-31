@@ -15,6 +15,7 @@ pub mod reconciliation;
 pub mod topology;
 
 pub mod mission_id;
+pub mod routing;
 
 // Re-exports for convenience
 pub use discovery::MissionDiscoveryScope;

@@ -73,6 +73,19 @@ pub struct ReconciliationResult {
     pub missing_from_us: Vec<[u8; 32]>,
 }
 
+/// Configuration for periodic anti-entropy reconciliation.
+#[derive(Debug, Clone)]
+pub struct ReconciliationConfig {
+    /// Interval in seconds between reconciliation rounds.
+    pub interval_secs: u64,
+}
+
+impl Default for ReconciliationConfig {
+    fn default() -> Self {
+        Self { interval_secs: 60 }
+    }
+}
+
 /// Anti-entropy reconciler.
 ///
 /// Given local and remote state summaries, determines which objects
@@ -118,6 +131,112 @@ impl AntiEntropyReconciler {
             missing_from_peer,
             missing_from_us,
         })
+    }
+}
+
+/// Perform binary Merkle descent to locate specific divergent object hashes.
+///
+/// Given two divergent Merkle roots and the full sorted leaf hashes for each side,
+/// performs binary descent by splitting the leaf set in half, comparing left/right
+/// child roots, and recursing into the divergent half. Returns all leaf-level
+/// divergent object hashes from both sides.
+///
+/// # Arguments
+/// * `local_leaves` - Sorted leaf hashes for the local side.
+/// * `remote_leaves` - Sorted leaf hashes for the remote side.
+///
+/// # Returns
+/// A pair `(local_divergent, remote_divergent)` of leaf hashes that differ.
+pub fn binary_merkle_descent(
+    local_leaves: &[[u8; 32]],
+    remote_leaves: &[[u8; 32]],
+) -> (Vec<[u8; 32]>, Vec<[u8; 32]>) {
+    let local_root = compute_merkle_root(local_leaves);
+    let remote_root = compute_merkle_root(remote_leaves);
+
+    // If roots match, no divergence
+    if local_root == remote_root {
+        return (Vec::new(), Vec::new());
+    }
+
+    let mut local_divergent = Vec::new();
+    let mut remote_divergent = Vec::new();
+
+    binary_merkle_descent_inner(
+        local_leaves,
+        remote_leaves,
+        &mut local_divergent,
+        &mut remote_divergent,
+    );
+
+    (local_divergent, remote_divergent)
+}
+
+/// Internal recursive binary Merkle descent.
+///
+/// Splits the leaf set at the midpoint, compares left/right child Merkle roots,
+/// and recurses into whichever half diverges. When a single leaf remains on both
+/// sides with different hashes, both are recorded as divergent.
+fn binary_merkle_descent_inner(
+    local_leaves: &[[u8; 32]],
+    remote_leaves: &[[u8; 32]],
+    local_divergent: &mut Vec<[u8; 32]>,
+    remote_divergent: &mut Vec<[u8; 32]>,
+) {
+    if local_leaves.is_empty() && remote_leaves.is_empty() {
+        return;
+    }
+
+    // Normalize lengths: if one side is shorter, pad with empty
+    let max_len = local_leaves.len().max(remote_leaves.len());
+
+    // Base case: single leaf (or effectively single on at least one side)
+    if max_len == 1 {
+        let l = local_leaves.first().copied().unwrap_or([0u8; 32]);
+        let r = remote_leaves.first().copied().unwrap_or([0u8; 32]);
+        if l != r {
+            // Record only if both sides have actual leaves
+            if local_leaves.len() == 1 {
+                local_divergent.push(l);
+            }
+            if remote_leaves.len() == 1 {
+                remote_divergent.push(r);
+            }
+        }
+        return;
+    }
+
+    let mid = max_len / 2;
+
+    // Split local leaves
+    let (local_left, local_right) = if mid >= local_leaves.len() {
+        (local_leaves, &[][..])
+    } else {
+        local_leaves.split_at(mid)
+    };
+
+    // Split remote leaves
+    let (remote_left, remote_right) = if mid >= remote_leaves.len() {
+        (remote_leaves, &[][..])
+    } else {
+        remote_leaves.split_at(mid)
+    };
+
+    // Compare left halves
+    let local_left_root = compute_merkle_root(local_left);
+    let remote_left_root = compute_merkle_root(remote_left);
+
+    // Compare right halves
+    let local_right_root = compute_merkle_root(local_right);
+    let remote_right_root = compute_merkle_root(remote_right);
+
+    // Recurse into divergent halves
+    if local_left_root != remote_left_root {
+        binary_merkle_descent_inner(local_left, remote_left, local_divergent, remote_divergent);
+    }
+
+    if local_right_root != remote_right_root {
+        binary_merkle_descent_inner(local_right, remote_right, local_divergent, remote_divergent);
     }
 }
 
@@ -288,5 +407,71 @@ mod tests {
     fn test_merkle_root_empty() {
         let root = compute_merkle_root(&[]);
         assert_eq!(root, [0u8; 32]);
+    }
+
+    #[test]
+    fn test_binary_merkle_descent_identical() {
+        let leaves: Vec<[u8; 32]> = vec![[0xAA; 32], [0xBB; 32], [0xCC; 32], [0xDD; 32]];
+        let (local_diff, remote_diff) = binary_merkle_descent(&leaves, &leaves);
+        assert!(local_diff.is_empty());
+        assert!(remote_diff.is_empty());
+    }
+
+    #[test]
+    fn test_binary_merkle_descent_single_divergent() {
+        let local: Vec<[u8; 32]> = vec![[0xAA; 32], [0xBB; 32], [0xCC; 32], [0xDD; 32]];
+        let remote: Vec<[u8; 32]> = vec![[0xAA; 32], [0xBB; 32], [0xEE; 32], [0xDD; 32]];
+        let (local_diff, remote_diff) = binary_merkle_descent(&local, &remote);
+        assert_eq!(local_diff, vec![[0xCC; 32]]);
+        assert_eq!(remote_diff, vec![[0xEE; 32]]);
+    }
+
+    #[test]
+    fn test_binary_merkle_descent_multiple_divergent() {
+        let local: Vec<[u8; 32]> = vec![[0xAA; 32], [0xBB; 32], [0xCC; 32], [0xDD; 32]];
+        let remote: Vec<[u8; 32]> = vec![[0xAA; 32], [0x11; 32], [0xCC; 32], [0x22; 32]];
+        let (local_diff, remote_diff) = binary_merkle_descent(&local, &remote);
+        // BB diverges with 11, DD diverges with 22
+        assert_eq!(local_diff, vec![[0xBB; 32], [0xDD; 32]]);
+        assert_eq!(remote_diff, vec![[0x11; 32], [0x22; 32]]);
+    }
+
+    #[test]
+    fn test_binary_merkle_descent_two_leaves() {
+        let local: Vec<[u8; 32]> = vec![[0xAA; 32], [0xBB; 32]];
+        let remote: Vec<[u8; 32]> = vec![[0xAA; 32], [0xCC; 32]];
+        let (local_diff, remote_diff) = binary_merkle_descent(&local, &remote);
+        assert_eq!(local_diff, vec![[0xBB; 32]]);
+        assert_eq!(remote_diff, vec![[0xCC; 32]]);
+    }
+
+    #[test]
+    fn test_binary_merkle_descent_empty() {
+        let (local_diff, remote_diff) = binary_merkle_descent(&[], &[]);
+        assert!(local_diff.is_empty());
+        assert!(remote_diff.is_empty());
+    }
+
+    #[test]
+    fn test_binary_merkle_descent_fully_divergent() {
+        let local: Vec<[u8; 32]> = vec![[0x01; 32], [0x02; 32], [0x03; 32], [0x04; 32]];
+        let remote: Vec<[u8; 32]> = vec![[0x11; 32], [0x12; 32], [0x13; 32], [0x14; 32]];
+        let (local_diff, remote_diff) = binary_merkle_descent(&local, &remote);
+        assert_eq!(local_diff.len(), 4);
+        assert_eq!(remote_diff.len(), 4);
+        assert_eq!(local_diff, local);
+        assert_eq!(remote_diff, remote);
+    }
+
+    #[test]
+    fn test_reconciliation_config_default() {
+        let config = ReconciliationConfig::default();
+        assert_eq!(config.interval_secs, 60);
+    }
+
+    #[test]
+    fn test_reconciliation_config_custom() {
+        let config = ReconciliationConfig { interval_secs: 120 };
+        assert_eq!(config.interval_secs, 120);
     }
 }

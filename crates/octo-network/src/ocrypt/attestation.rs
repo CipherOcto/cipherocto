@@ -18,6 +18,20 @@ pub struct GatewayAttestation {
     pub signature: [u8; 64],
 }
 
+/// Propagation target for attestations and revocations.
+///
+/// Indicates the recommended network layer for propagating
+/// attestation or revocation messages.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum PropagationTarget {
+    /// Propagate via Global Data Plane (data distribution).
+    Gdp,
+    /// Propagate via DGP gossip protocol (fast propagation).
+    Dgp,
+    /// Direct peer-to-peer propagation (point-to-point).
+    Direct,
+}
+
 impl GatewayAttestation {
     /// Create a new unsigned attestation.
     pub fn new(
@@ -55,6 +69,13 @@ impl GatewayAttestation {
     /// Derive attestation hash = BLAKE3-256(signing_bytes).
     pub fn attestation_hash(&self) -> [u8; 32] {
         *blake3::hash(&self.to_signing_bytes()).as_bytes()
+    }
+
+    /// Get the recommended propagation target for this attestation.
+    ///
+    /// Attestations should be propagated via GDP for reliable data distribution.
+    pub fn propagation_hint(&self) -> PropagationTarget {
+        PropagationTarget::Gdp
     }
 
     /// Verify that the attestation signature is valid for the given public key.
@@ -209,6 +230,13 @@ impl RevocationNotice {
         verifying_key
             .verify(&self.to_signing_bytes(), &sig)
             .map_err(|_| crate::ocrypt::error::CryptoError::InvalidSignature)
+    }
+
+    /// Get the recommended propagation target for this revocation.
+    ///
+    /// Revocations should always use DGP gossip for fast propagation across the network.
+    pub fn propagation_hint(&self) -> PropagationTarget {
+        PropagationTarget::Dgp
     }
 
     /// Check if a given epoch is within the grace period after revocation.
@@ -410,5 +438,25 @@ mod tests {
     #[test]
     fn test_default_revocation_grace_period() {
         assert_eq!(DEFAULT_REVOCATION_GRACE_PERIOD, 86400); // 24 hours in seconds
+    }
+
+    #[test]
+    fn test_propagation_target_variants() {
+        // Verify enum variants exist and are distinct
+        assert_ne!(PropagationTarget::Gdp, PropagationTarget::Dgp);
+        assert_ne!(PropagationTarget::Dgp, PropagationTarget::Direct);
+        assert_ne!(PropagationTarget::Gdp, PropagationTarget::Direct);
+    }
+
+    #[test]
+    fn test_attestation_propagation_hint() {
+        let att = GatewayAttestation::new([0x42u8; 32], 0x0001, [0x01u8; 32], 1000);
+        assert_eq!(att.propagation_hint(), PropagationTarget::Gdp);
+    }
+
+    #[test]
+    fn test_revocation_propagation_hint() {
+        let rev = RevocationNotice::new([0x01u8; 32], 1000, [0x02u8; 32]);
+        assert_eq!(rev.propagation_hint(), PropagationTarget::Dgp);
     }
 }

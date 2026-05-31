@@ -14,16 +14,16 @@ Implement discovery scopes (LOCAL, REGIONAL, MISSION, GLOBAL, PRIVATE), discover
 
 ## Acceptance Criteria
 
-- [ ] `DiscoveryScope` enum: Local(0x0001), Regional(0x0002), Mission(0x0003), Global(0x0004), Private(0x0005), Consensus(0x0006)
-- [ ] Discovery plane separated from data plane (no recursive routing)
-- [ ] Bootstrap phase: static seed list, QR/bootstrap blob, local broadcast, trusted peers
-- [ ] Expansion phase: gateway advertises peers, peer graph expands recursively
-- [ ] Stabilization phase: preferred gateways, trust-weighted neighbors, route diversity
-- [ ] Scope-based filtering: gateways only visible within their scope
-- [ ] Mission-scoped discovery: temporary overlay bootstrap
-- [ ] Unit tests: 8+ tests covering scope filtering, lifecycle transitions
-- [ ] `cargo fmt -- --check` passes
-- [ ] `cargo test -p octo-network` passes
+- [x] `DiscoveryScope` enum: Local(0x0001), Regional(0x0002), Mission(0x0003), Global(0x0004), Private(0x0005), Consensus(0x0006)
+- [x] Discovery plane separated from data plane (no recursive routing)
+- [x] Bootstrap phase: static seed list, QR/bootstrap blob, local broadcast, trusted peers
+- [x] Expansion phase: gateway advertises peers, peer graph expands recursively
+- [x] Stabilization phase: preferred gateways, trust-weighted neighbors, route diversity
+- [x] Scope-based filtering: gateways only visible within their scope
+- [x] Mission-scoped discovery: temporary overlay bootstrap
+- [x] Unit tests: 29 tests covering scope filtering, lifecycle transitions, TTL, gossip modes, deduplication
+- [x] `cargo fmt -- --check` passes
+- [x] `cargo test -p octo-network` passes (643 tests)
 
 ## Location
 

@@ -2,7 +2,7 @@
 
 ## Status
 
-Open
+Implemented (13 tests: DOT/1 DOT/2 DOT/F encode/decode, mode selection, payload_hash verification)
 
 ## RFC
 
@@ -31,6 +31,10 @@ Current approach encodes all envelope bytes as base64 text, adding 33% overhead.
 │  Mode C: DOT/F/{fragment}   → Fragmented (large payloads)  │
 └─────────────────────────────────────────────────────────────┘
 ```
+
+## Claimant
+
+@agent (Jcode)
 
 ## Wire Formats
 

@@ -1,13 +1,15 @@
 # 0850aa — QUIC Adapter Implementation
 
 **RFC:** RFC-0850 §8.7 (QUIC Transport Profile)
-**Status:** Open
+**Status:** Implemented (30 tests: frame encoding, control protocol, GDP integration, replay protection, connection migration)
 **Priority:** High
 **Created:** 2026-05-30
 
 ## Summary
 
 Implement the QUIC platform adapter (`PlatformType::Quic = 0x0015`) using the `quinn` crate, per RFC-0850 §8.7. QUIC is the preferred native transport for gateway-to-gateway communication, offering 0-RTT, multiplexed streams, connection migration, and built-in TLS 1.3 encryption.
+
+**Claimant:** @agent (Jcode)
 
 ## Acceptance Criteria
 

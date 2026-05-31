@@ -2,7 +2,7 @@
 
 ## Status
 
-Open
+Implemented (5 adapters: matrix=11 tests, irc=24, slack=13, signal=8, nostr=13)
 
 ## RFC
 
@@ -18,42 +18,46 @@ Without `self_handle()`, the gateway cannot prevent the bot from responding to i
 
 Telegram and Discord already implement `self_handle()` — this mission brings the remaining adapters to parity.
 
+## Claimant
+
+@agent (Jcode)
+
 ## Acceptance Criteria
 
 ### Matrix (`crates/octo-adapter-matrix/`)
 
-- [ ] Add `self_handle()` returning the bot's Matrix user ID (e.g., `@bot:server`)
-- [ ] Resolve from `matrix-sdk` client's `user_id()` on first call
-- [ ] Cache in `Arc<Mutex<Option<String>>>`
-- [ ] Test: verify self_handle returns Some after client init
+- [x] Add `self_handle()` returning the bot's Matrix user ID (e.g., `@bot:server`)
+- [x] Resolve from `matrix-sdk` client's `user_id()` on first call
+- [x] Cache in `Arc<Mutex<Option<String>>>`
+- [x] Test: verify self_handle returns Some after client init
 
 ### IRC (`crates/octo-adapter-irc/`)
 
-- [ ] Add `self_handle()` returning the configured IRC nickname
-- [ ] Source from `config.nickname` (already available in IRC adapter config)
-- [ ] No caching needed (static config)
-- [ ] Test: verify self_handle returns configured nickname
+- [x] Add `self_handle()` returning the configured IRC nickname
+- [x] Source from `config.nickname` (already available in IRC adapter config)
+- [x] No caching needed (static config)
+- [x] Test: verify self_handle returns configured nickname
 
 ### Slack (`crates/octo-adapter-slack/`)
 
-- [ ] Add `self_handle()` returning the bot's Slack user ID
-- [ ] Resolve via `auth.test` API call (same endpoint used in health_check)
-- [ ] Cache in `Arc<Mutex<Option<String>>>` to avoid repeated API calls
-- [ ] Test: verify self_handle returns Some after auth.test
+- [x] Add `self_handle()` returning the bot's Slack user ID
+- [x] Resolve via `auth.test` API call (same endpoint used in health_check)
+- [x] Cache in `Arc<Mutex<Option<String>>>` to avoid repeated API calls
+- [x] Test: verify self_handle returns Some after auth.test
 
 ### Signal (`crates/octo-adapter-signal/`)
 
-- [ ] Add `self_handle()` returning the bot's Signal phone number
-- [ ] Source from `config.phone_number` (already available in Signal adapter config)
-- [ ] No caching needed (static config)
-- [ ] Test: verify self_handle returns configured phone number
+- [x] Add `self_handle()` returning the bot's Signal phone number
+- [x] Source from `config.phone_number` (already available in Signal adapter config)
+- [x] No caching needed (static config)
+- [x] Test: verify self_handle returns configured phone number
 
 ### Nostr (`crates/octo-adapter-nostr/`)
 
-- [ ] Add `self_handle()` returning the bot's Nostr public key (hex)
-- [ ] Source from `config.nsec` or derived public key
-- [ ] Cache in `Arc<Mutex<Option<String>>>`
-- [ ] Test: verify self_handle returns Some after key derivation
+- [x] Add `self_handle()` returning the bot's Nostr public key (hex)
+- [x] Source from `config.nsec` or derived public key
+- [x] Cache in `Arc<Mutex<Option<String>>>`
+- [x] Test: verify self_handle returns Some after key derivation
 
 ## Design Reference
 

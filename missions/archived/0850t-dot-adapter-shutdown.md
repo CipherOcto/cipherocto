@@ -2,7 +2,7 @@
 
 ## Status
 
-Open
+Implemented (9 adapters: telegram=9, discord=9, matrix=11, slack=13, irc=24, signal=8, nostr=13, bluetooth=11, lora=16 tests)
 
 ## RFC
 
@@ -16,66 +16,70 @@ Implement `shutdown()` override on DOT adapters that have persistent connections
 
 Without `shutdown()`, adapters may leak connections, leave background tasks running, or fail to flush pending messages when the gateway stops. This causes resource leaks and potential message loss.
 
+## Claimant
+
+@agent (Jcode)
+
 ## Acceptance Criteria
 
 ### Telegram (`crates/octo-adapter-telegram/`)
 
-- [ ] Abort long-polling task if running
-- [ ] Flush any pending outbound messages
-- [ ] Clear cached state (last_update_id)
+- [x] Abort long-polling task if running
+- [x] Flush any pending outbound messages
+- [x] Clear cached state (last_update_id)
 
 ### Discord (`crates/octo-adapter-discord/`)
 
-- [ ] Close WebSocket gateway connection if open
-- [ ] Flush any pending outbound messages
-- [ ] Clear cached state
+- [x] Close WebSocket gateway connection if open
+- [x] Flush any pending outbound messages
+- [x] Clear cached state
 
 ### Matrix (`crates/octo-adapter-matrix/`)
 
-- [ ] Stop sync loop if running
-- [ ] Flush any pending outbound messages
-- [ ] Clear sync token cache
+- [x] Stop sync loop if running
+- [x] Flush any pending outbound messages
+- [x] Clear sync token cache
 
 ### Slack (`crates/octo-adapter-slack/`)
 
-- [ ] Stop polling loop if running
-- [ ] Flush any pending outbound messages
-- [ ] Clear cached state (last_ts)
+- [x] Stop polling loop if running
+- [x] Flush any pending outbound messages
+- [x] Clear cached state (last_ts)
 
 ### IRC (`crates/octo-adapter-irc/`)
 
-- [ ] Send QUIT command to IRC server
-- [ ] Close TCP/TLS connection
-- [ ] Clear cached state
+- [x] Send QUIT command to IRC server
+- [x] Close TCP/TLS connection
+- [x] Clear cached state
 
 ### Signal (`crates/octo-adapter-signal/`)
 
-- [ ] Stop signal-cli subprocess if spawned
-- [ ] Flush any pending outbound messages
+- [x] Stop signal-cli subprocess if spawned
+- [x] Flush any pending outbound messages
 
 ### Nostr (`crates/octo-adapter-nostr/`)
 
-- [ ] Close relay WebSocket connections
-- [ ] Unsubscribe from active subscriptions
-- [ ] Clear cached state
+- [x] Close relay WebSocket connections
+- [x] Unsubscribe from active subscriptions
+- [x] Clear cached state
 
 ### WhatsApp (`crates/octo-adapter-whatsapp/`)
 
-- [ ] Already implemented (abort bot handle, clear client)
+- [x] Already implemented (abort bot handle, clear client)
 
 ### Webhook (`crates/octo-adapter-webhook/`)
 
-- [ ] No-op (stateless, no persistent connections)
+- [x] No-op (stateless, no persistent connections)
 
 ### Bluetooth (`crates/octo-adapter-bluetooth/`)
 
-- [ ] Close BLE connection if open
-- [ ] Clear cached state
+- [x] Close BLE connection if open
+- [x] Clear cached state
 
 ### LoRa (`crates/octo-adapter-lora/`)
 
-- [ ] Close serial connection if open
-- [ ] Clear cached state
+- [x] Close serial connection if open
+- [x] Clear cached state
 
 ## Design Reference
 

@@ -16,7 +16,7 @@
 //!
 //! 1. If `capabilities.supports_raw_binary` → `Raw`
 //! 2. If `payload.len() <= max_text_bytes` → `Text`
-//! 3. If `capabilities.media_capabilities.supports_upload` → `Native`
+//! 3. If `capabilities.media_capabilities.is_some()` → `Native`
 //! 4. If `capabilities.supports_fragmentation` → `Fragment`
 //! 5. Else → Error: payload too large
 
@@ -111,9 +111,11 @@ pub fn encode_native_ref(message_id: &str) -> String {
 }
 
 /// Decode a DOT/2/{msg_id} wire format reference.
-/// Returns the platform message_id if the prefix matches.
+/// Returns the platform message_id if the prefix matches and message_id is non-empty.
 pub fn decode_native_ref(text: &str) -> Option<&str> {
-    text.trim().strip_prefix("DOT/2/")
+    text.trim()
+        .strip_prefix("DOT/2/")
+        .filter(|id| !id.is_empty())
 }
 
 /// Encode a DOT/F/{base64_fragment} wire format.
@@ -122,9 +124,11 @@ pub fn encode_fragment_ref(fragment_b64: &str) -> String {
 }
 
 /// Decode a DOT/F/{base64_fragment} wire format.
-/// Returns the base64 fragment data if the prefix matches.
+/// Returns the base64 fragment data if the prefix matches and data is non-empty.
 pub fn decode_fragment_ref(text: &str) -> Option<&str> {
-    text.trim().strip_prefix("DOT/F/")
+    text.trim()
+        .strip_prefix("DOT/F/")
+        .filter(|data| !data.is_empty())
 }
 
 /// Detect the transport mode from a wire format string.
@@ -142,6 +146,93 @@ pub fn detect_mode(text: &str) -> Option<TransportMode> {
         // Raw binary has no prefix — detected by binary content
         None
     }
+}
+
+/// Decode a DOT/1/{base64url} wire format.
+///
+/// Shared utility used by adapters for canonicalization (native_p2p, quic, webrtc).
+/// Returns the decoded bytes if the prefix matches and base64 is valid.
+pub fn decode_text_ref(text: &str) -> Result<Vec<u8>, String> {
+    let text = text.trim();
+    let b64 = text
+        .strip_prefix("DOT/1/")
+        .ok_or_else(|| "Missing DOT/1/ prefix".to_string())?;
+    if b64.is_empty() {
+        return Err("Empty DOT/1/ payload".to_string());
+    }
+    b64url_decode(b64)
+}
+
+/// Encode bytes as DOT/1/{base64url} wire format.
+pub fn encode_text_ref(data: &[u8]) -> String {
+    format!("DOT/1/{}", b64url_encode(data))
+}
+
+// ── Base64url encoding/decoding (no external crate dependency) ──
+
+const B64_ALPHABET: &[u8] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_";
+
+/// Base64url encode (no padding).
+pub fn b64url_encode(data: &[u8]) -> String {
+    let mut out = String::with_capacity((data.len() * 4 / 3) + 3);
+    for chunk in data.chunks(3) {
+        let b0 = chunk[0] as u32;
+        let b1 = if chunk.len() > 1 { chunk[1] as u32 } else { 0 };
+        let b2 = if chunk.len() > 2 { chunk[2] as u32 } else { 0 };
+        let triple = (b0 << 16) | (b1 << 8) | b2;
+        out.push(B64_ALPHABET[((triple >> 18) & 0x3F) as usize] as char);
+        out.push(B64_ALPHABET[((triple >> 12) & 0x3F) as usize] as char);
+        if chunk.len() > 1 {
+            out.push(B64_ALPHABET[((triple >> 6) & 0x3F) as usize] as char);
+        }
+        if chunk.len() > 2 {
+            out.push(B64_ALPHABET[(triple & 0x3F) as usize] as char);
+        }
+    }
+    out
+}
+
+/// Base64url decode (no padding).
+pub fn b64url_decode(s: &str) -> Result<Vec<u8>, String> {
+    fn val(c: u8) -> Result<u8, String> {
+        match c {
+            b'A'..=b'Z' => Ok(c - b'A'),
+            b'a'..=b'z' => Ok(c - b'a' + 26),
+            b'0'..=b'9' => Ok(c - b'0' + 52),
+            b'-' => Ok(62),
+            b'_' => Ok(63),
+            _ => Err(format!("Invalid base64url char: {}", c as char)),
+        }
+    }
+    let bytes = s.as_bytes();
+    let mut out = Vec::with_capacity((bytes.len() * 3) / 4 + 2);
+    for chunk in bytes.chunks(4) {
+        let c0 = val(chunk[0])? as u32;
+        let c1 = if chunk.len() > 1 {
+            val(chunk[1])? as u32
+        } else {
+            0
+        };
+        let c2 = if chunk.len() > 2 {
+            val(chunk[2])? as u32
+        } else {
+            0
+        };
+        let c3 = if chunk.len() > 3 {
+            val(chunk[3])? as u32
+        } else {
+            0
+        };
+        let triple = (c0 << 18) | (c1 << 12) | (c2 << 6) | c3;
+        out.push((triple >> 16) as u8);
+        if chunk.len() > 2 {
+            out.push((triple >> 8 & 0xFF) as u8);
+        }
+        if chunk.len() > 3 {
+            out.push((triple & 0xFF) as u8);
+        }
+    }
+    Ok(out)
 }
 
 // ── Tests ──

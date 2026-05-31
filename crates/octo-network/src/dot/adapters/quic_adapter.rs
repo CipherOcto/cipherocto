@@ -221,6 +221,10 @@ impl QuicAdapter {
 
     /// Encode a frame: `[u32 frame_len][u16 type][payload]`
     pub fn encode_frame(frame_type: u16, payload: &[u8]) -> Vec<u8> {
+        debug_assert!(
+            payload.len() <= u32::MAX as usize - 2,
+            "payload too large for u32 frame_len"
+        );
         let frame_len = 2 + payload.len();
         let mut buf = Vec::with_capacity(4 + frame_len);
         buf.extend_from_slice(&(frame_len as u32).to_be_bytes());
@@ -515,8 +519,8 @@ impl PlatformAdapter for QuicAdapter {
     ) -> Result<DeliveryReceipt, PlatformAdapterError> {
         // Raw binary transport per RFC-0850 §8.7.3
         let wire_bytes = envelope.to_wire_bytes();
-        let frame = Self::encode_envelope_frame(&wire_bytes);
-        let _ = frame; // TODO: send to peer via QUIC stream
+        // TODO: encode as frame and send to peer via QUIC stream
+        let _domain = domain;
 
         let topic = hex_encode(&domain.domain_hash);
         tracing::info!("QUIC send to domain {}: {} bytes", topic, wire_bytes.len());
@@ -554,11 +558,12 @@ impl PlatformAdapter for QuicAdapter {
 
         // Fallback: DOT/1/{b64} text format (interop)
         let text = String::from_utf8_lossy(&raw.payload);
-        let wire_bytes = crate::dot::adapters::native_p2p::NativeP2PAdapter::decode_envelope(&text)
-            .map_err(|e| PlatformAdapterError::ApiError {
+        let wire_bytes = crate::dot::transport::decode_text_ref(&text).map_err(|e| {
+            PlatformAdapterError::ApiError {
                 code: 400,
                 message: format!("canonicalize failed: {e}"),
-            })?;
+            }
+        })?;
 
         DeterministicEnvelope::from_wire_bytes(&wire_bytes).map_err(|e| {
             PlatformAdapterError::ApiError {

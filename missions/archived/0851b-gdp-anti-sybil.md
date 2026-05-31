@@ -2,7 +2,7 @@
 
 ## Status
 
-Open
+Implemented (10 tests: stake gating, diversity enforcement, Sybil detection, network fingerprint)
 
 ## RFC
 
@@ -32,10 +32,14 @@ Implement anti-Sybil mechanisms for gateway discovery including stake-gated disc
 - [x] Integration with PoRelay (RFC-0860) for reliability weighting
 - [x] Integration with RFC-0860 Section 6 anti-sybil model
 
+## Claimant
+
+@agent (Jcode)
+
 ### Verification
 - [x] 10 tests covering stake gating, diversity enforcement, Sybil detection
 - [x] `cargo fmt -- --check` passes
-- [x] `cargo test -p octo-network` passes (643 tests)
+- [x] `cargo test -p octo-network` passes
 
 ## Implementation Notes
 

@@ -2,7 +2,7 @@
 
 ## Status
 
-Open
+Implemented (10 files, 48 tests)
 
 ## RFC
 
@@ -34,6 +34,10 @@ Implement proof-of-relay with relay proofs (forwarding, availability, bandwidth,
 - [x] Unit tests: 48 tests covering proof generation, trust computation, slashing, aggregation, economics
 - [x] `cargo fmt -- --check` passes
 - [x] `cargo test -p octo-network` passes (617 tests)
+
+## Claimant
+
+@agent (Jcode)
 
 ## Location
 

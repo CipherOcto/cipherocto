@@ -2,7 +2,7 @@
 
 ## Status
 
-Open
+Implemented (25 tests: scope mapping, TTL, lifecycle modes, advertisement wrapping, deduplication, pipeline)
 
 ## RFC
 
@@ -25,7 +25,11 @@ Implement discovery gossip with flood (bootstrap), incremental (normal operation
 - [x] Integration with DGP (RFC-0852) gossip infrastructure
 - [x] Unit tests: 12 tests covering each gossip mode, TTL enforcement, deduplication
 - [x] `cargo fmt -- --check` passes
-- [x] `cargo test -p octo-network` passes (636 tests)
+- [x] `cargo test -p octo-network` passes
+
+## Claimant
+
+@agent (Jcode)
 
 ## Location
 

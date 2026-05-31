@@ -2,7 +2,7 @@
 
 ## Status
 
-Claimed
+Implemented (8 files, 75 tests: suite, identity, session, mission keys, envelope, attestation, onion, randomness)
 
 ## RFC
 
@@ -14,17 +14,17 @@ Implement the cryptographic layer with CryptoSuiteId, sovereign identity extensi
 
 ## Acceptance Criteria
 
-- [ ] `CryptoSuiteId` with hash_id, signature_id, kdf_id, aead_id, kex_id
-- [ ] Implement `OverlayIdentity` with peer_id, public_key, identity_epoch, capabilities_root, signature
-- [ ] PlatformBinding with platform_type, external_identifier_hash, proof_signature
-- [ ] Session handshake: X25519 → HKDF-BLAKE3 → ChaCha20-Poly1305
-- [ ] Forward secrecy via ephemeral per-message keys
-- [ ] Mission key hierarchy: mission_root_key, transport_keys_root, relay_keys_root, execution_keys_root
-- [ ] Envelope encryption/decryption with canonicalization before encryption
-- [ ] `CryptoError` enum with ConsensusBoundaryViolation variant
-- [ ] Unit tests: 15+ tests covering key derivation, encryption round-trip, nonce uniqueness
-- [ ] `cargo fmt -- --check` passes
-- [ ] `cargo test -p octo-network` passes
+- [x] `CryptoSuiteId` with hash_id, signature_id, kdf_id, aead_id, kex_id
+- [x] Implement `OverlayIdentity` with peer_id, public_key, identity_epoch, capabilities_root, signature
+- [x] PlatformBinding with platform_type, external_identifier_hash, proof_signature
+- [x] Session handshake: X25519 → HKDF-BLAKE3 → ChaCha20-Poly1305
+- [x] Forward secrecy via ephemeral per-message keys
+- [x] Mission key hierarchy: mission_root_key, transport_keys_root, relay_keys_root, execution_keys_root
+- [x] Envelope encryption/decryption with canonicalization before encryption
+- [x] `CryptoError` enum with ConsensusBoundaryViolation variant
+- [x] Unit tests: 15+ tests covering key derivation, encryption round-trip, nonce uniqueness
+- [x] `cargo fmt -- --check` passes
+- [x] `cargo test -p octo-network` passes (638 total)
 
 ## Claimant
 

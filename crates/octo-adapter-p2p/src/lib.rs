@@ -17,12 +17,12 @@ use async_trait::async_trait;
 use std::collections::HashMap;
 use tokio::sync::{mpsc, Mutex};
 
-use crate::dot::adapters::{
+use octo_network::dot::adapters::{
     CapabilityReport, DeliveryReceipt, PlatformAdapter, RawPlatformMessage,
 };
-use crate::dot::domain::{BroadcastDomainId, PlatformType};
-use crate::dot::envelope::DeterministicEnvelope;
-use crate::dot::error::PlatformAdapterError;
+use octo_network::dot::domain::{BroadcastDomainId, PlatformType};
+use octo_network::dot::envelope::DeterministicEnvelope;
+use octo_network::dot::error::PlatformAdapterError;
 
 /// Configuration for the NativeP2P adapter.
 #[derive(Clone, Debug, serde::Deserialize, serde::Serialize)]
@@ -78,11 +78,11 @@ impl NativeP2PAdapter {
     }
 
     pub fn encode_envelope(envelope_bytes: &[u8]) -> String {
-        crate::dot::transport::encode_text_ref(envelope_bytes)
+        octo_network::dot::transport::encode_text_ref(envelope_bytes)
     }
 
     pub fn decode_envelope(text: &str) -> Result<Vec<u8>, String> {
-        crate::dot::transport::decode_text_ref(text)
+        octo_network::dot::transport::decode_text_ref(text)
     }
 
     pub fn domain_hash(platform_id: &str) -> [u8; 32] {
@@ -101,7 +101,6 @@ impl NativeP2PAdapter {
     }
 
     /// Start the libp2p swarm in a background task.
-    #[cfg(feature = "native-p2p")]
     pub async fn start_swarm(&self) -> Result<(), PlatformAdapterError> {
         use futures::StreamExt;
         use libp2p::gossipsub::{self, Behaviour, Event, MessageAuthenticity, ValidationMode};
@@ -226,19 +225,9 @@ impl NativeP2PAdapter {
         tracing::info!("NativeP2P swarm started on {}", self.config.listen_addr);
         Ok(())
     }
-
-    /// Start the swarm (no-op when native-p2p feature is disabled)
-    #[cfg(not(feature = "native-p2p"))]
-    pub async fn start_swarm(&self) -> Result<(), PlatformAdapterError> {
-        Err(PlatformAdapterError::Unreachable {
-            platform: "nativep2p".into(),
-            reason: "native-p2p feature not enabled".into(),
-        })
-    }
 }
 
 // Composite behaviour for libp2p swarm
-#[cfg(feature = "native-p2p")]
 #[derive(libp2p::swarm::NetworkBehaviour)]
 struct CompositeBehaviour {
     gossipsub: libp2p::gossipsub::Behaviour,
@@ -378,7 +367,7 @@ mod tests {
 
     #[test]
     fn test_b64url_roundtrip() {
-        use crate::dot::transport::{b64url_decode, b64url_encode};
+        use octo_network::dot::transport::{b64url_decode, b64url_encode};
         let data = b"test native p2p envelope data";
         let encoded = b64url_encode(data);
         let decoded = b64url_decode(&encoded).unwrap();
@@ -387,14 +376,14 @@ mod tests {
 
     #[test]
     fn test_b64url_empty() {
-        use crate::dot::transport::{b64url_decode, b64url_encode};
+        use octo_network::dot::transport::{b64url_decode, b64url_encode};
         assert_eq!(b64url_encode(b""), "");
         assert_eq!(b64url_decode("").unwrap(), b"");
     }
 
     #[test]
     fn test_b64url_padding_cases() {
-        use crate::dot::transport::{b64url_decode, b64url_encode};
+        use octo_network::dot::transport::{b64url_decode, b64url_encode};
         // 1 byte, 2 bytes, 3 bytes (all padding variations)
         assert_eq!(b64url_decode(&b64url_encode(&[0x41])).unwrap(), vec![0x41]);
         assert_eq!(

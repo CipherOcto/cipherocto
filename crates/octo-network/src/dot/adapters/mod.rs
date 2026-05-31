@@ -8,7 +8,6 @@ use crate::dot::error::PlatformAdapterError;
 
 pub mod abi;
 pub mod backoff;
-pub mod native_p2p;
 pub mod registry;
 #[cfg(feature = "wasm")]
 pub mod wasm_runtime;

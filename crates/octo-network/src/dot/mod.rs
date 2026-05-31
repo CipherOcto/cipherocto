@@ -16,7 +16,6 @@ pub mod route;
 pub mod sequence;
 pub mod transport;
 
-pub use adapters::native_p2p::NativeP2PAdapter;
 pub use adapters::{CapabilityReport, DeliveryReceipt, PlatformAdapter, RawPlatformMessage};
 pub use config::DotConfig;
 pub use domain::{BroadcastDomainId, PlatformType};

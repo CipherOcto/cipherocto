@@ -2,7 +2,7 @@
 
 ## Status
 
-Open
+Implemented (2 files, 26 tests: drs/mission_routing.rs + mon/reconciliation.rs)
 
 ## RFC
 
@@ -14,15 +14,19 @@ Implement mission-scoped routing where mission traffic is isolated from other mi
 
 ## Acceptance Criteria
 
-- [ ] Mission-scoped route tables: Mission A routes separate from Mission B
-- [ ] Deterministic route selection within mission (DRS integration)
-- [ ] Route isolation: mission traffic MUST NOT leak to non-mission gateways
-- [ ] Mission route commitment: BLAKE3-256(mission_id || route_sequence || epoch)
-- [ ] Route table Merkle commitment for deterministic replay
-- [ ] Integration with DRS (RFC-0856) for route computation
-- [ ] Unit tests: 8+ tests covering route isolation, deterministic selection
-- [ ] `cargo fmt -- --check` passes
-- [ ] `cargo test -p octo-network` passes
+- [x] Mission-scoped route tables: Mission A routes separate from Mission B
+- [x] Deterministic route selection within mission (DRS integration)
+- [x] Route isolation: mission traffic MUST NOT leak to non-mission gateways
+- [x] Mission route commitment: BLAKE3-256(mission_id || route_sequence || epoch)
+- [x] Route table Merkle commitment for deterministic replay
+- [x] Integration with DRS (RFC-0856) for route computation
+- [x] Unit tests: 8+ tests covering route isolation, deterministic selection
+- [x] `cargo fmt -- --check` passes
+- [x] `cargo test -p octo-network` passes
+
+## Claimant
+
+@agent (Jcode)
 
 ## Location
 

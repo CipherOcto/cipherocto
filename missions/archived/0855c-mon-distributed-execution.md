@@ -2,7 +2,7 @@
 
 ## Status
 
-Open
+Implemented (part of MON module, 54 total MON tests)
 
 ## RFC
 
@@ -14,16 +14,20 @@ Implement distributed execution with AI swarm coordination, compute job distribu
 
 ## Acceptance Criteria
 
-- [ ] `ComputeJob` with job_id, mission_id, input_hash, executor, deadline, proof_requirement
-- [ ] Job distribution: Coordinator assigns jobs to Executors based on capability
-- [ ] AI swarm coordination: multiple agents coordinate on shared mission
-- [ ] Federated inference: distributed AI inference across mission nodes
-- [ ] Proof-carrying missions: execution results include ZK proof of correctness
-- [ ] Integration with DPS (RFC-0854) for proof generation
-- [ ] Integration with PCE (RFC-0859) for proof attachment (optional dependency)
-- [ ] Unit tests: 8+ tests covering job distribution, proof attachment
-- [ ] `cargo fmt -- --check` passes
-- [ ] `cargo test -p octo-network` passes
+- [x] `ComputeJob` with job_id, mission_id, input_hash, executor, deadline, proof_requirement
+- [x] Job distribution: Coordinator assigns jobs to Executors based on capability
+- [x] AI swarm coordination: multiple agents coordinate on shared mission
+- [x] Federated inference: distributed AI inference across mission nodes
+- [x] Proof-carrying missions: execution results include ZK proof of correctness
+- [x] Integration with DPS (RFC-0854) for proof generation
+- [x] Integration with PCE (RFC-0859) for proof attachment (optional dependency)
+- [x] Unit tests: 8+ tests covering job distribution, proof attachment
+- [x] `cargo fmt -- --check` passes
+- [x] `cargo test -p octo-network` passes
+
+## Claimant
+
+@agent (Jcode)
 
 ## Location
 

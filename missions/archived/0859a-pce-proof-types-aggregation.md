@@ -2,7 +2,7 @@
 
 ## Status
 
-Open
+Implemented (8 files, 73 tests: proof_type, registry, attachment, envelope, verify, aggregate, policy, error)
 
 ## RFC
 
@@ -14,17 +14,21 @@ Implement proof type registry, proof attachment protocol (how proofs attach to i
 
 ## Acceptance Criteria
 
-- [ ] `ProofType` enum #[repr(u16)] matching RFC §4.1: InferenceProof, DatasetIntegrityProof, MissionExecutionProof, RelayProof, ValidatorAttestation, AggregatedProof, MembershipProof, StateTransitionProof, Custom(u16)
-- [ ] Proof type registry: map ProofType → verification function
-- [ ] Proof attachment protocol: how proofs attach to DOM intents (RFC-0857)
-- [ ] Attachment validation: verify proof matches intent type
-- [ ] Recursive aggregation: combine multiple proofs into single verifiable proof
-- [ ] Aggregated proof verification: O(1) verification of batch
-- [ ] Integration with DPS (RFC-0854) for aggregation backend
-- [ ] Integration with DOM (RFC-0857) for intent proof attachment
-- [ ] Unit tests: 10+ tests covering proof types, attachment, aggregation
-- [ ] `cargo fmt -- --check` passes
-- [ ] `cargo test -p octo-network` passes
+- [x] `ProofType` enum #[repr(u16)] matching RFC §4.1: InferenceProof, DatasetIntegrityProof, MissionExecutionProof, RelayProof, ValidatorAttestation, AggregatedProof, MembershipProof, StateTransitionProof, Custom(u16)
+- [x] Proof type registry: map ProofType → verification function
+- [x] Proof attachment protocol: how proofs attach to DOM intents (RFC-0857)
+- [x] Attachment validation: verify proof matches intent type
+- [x] Recursive aggregation: combine multiple proofs into single verifiable proof
+- [x] Aggregated proof verification: O(1) verification of batch
+- [x] Integration with DPS (RFC-0854) for aggregation backend
+- [x] Integration with DOM (RFC-0857) for intent proof attachment
+- [x] Unit tests: 10+ tests covering proof types, attachment, aggregation
+- [x] `cargo fmt -- --check` passes
+- [x] `cargo test -p octo-network` passes
+
+## Claimant
+
+@agent (Jcode)
 
 ## Location
 

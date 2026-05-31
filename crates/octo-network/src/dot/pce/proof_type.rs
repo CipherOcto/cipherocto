@@ -75,7 +75,42 @@ pub enum ProofType {
     MembershipProof = 0x0007,
     /// State transition proof
     StateTransitionProof = 0x0008,
-    // 0x0009-0xFFFF: Reserved for future proof types
+    // 0x0009-0xFFFE: Reserved for future proof types
+    // 0xFFFF: Custom proof type (use Custom(u16) wrapper)
+}
+
+/// Proof type with support for custom types beyond the standard range.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum ProofTypeValue {
+    /// Standard proof type from the enum
+    Standard(ProofType),
+    /// Custom proof type with application-defined identifier
+    Custom(u16),
+}
+
+impl ProofTypeValue {
+    /// Get the raw u16 value.
+    pub fn as_u16(&self) -> u16 {
+        match self {
+            Self::Standard(pt) => *pt as u16,
+            Self::Custom(val) => *val,
+        }
+    }
+
+    /// Parse from u16, returning Standard for known variants, Custom for others.
+    pub fn from_u16(val: u16) -> Self {
+        match val {
+            0x0001 => Self::Standard(ProofType::InferenceProof),
+            0x0002 => Self::Standard(ProofType::DatasetIntegrityProof),
+            0x0003 => Self::Standard(ProofType::MissionExecutionProof),
+            0x0004 => Self::Standard(ProofType::RelayProof),
+            0x0005 => Self::Standard(ProofType::ValidatorAttestation),
+            0x0006 => Self::Standard(ProofType::AggregatedProof),
+            0x0007 => Self::Standard(ProofType::MembershipProof),
+            0x0008 => Self::Standard(ProofType::StateTransitionProof),
+            _ => Self::Custom(val),
+        }
+    }
 }
 
 /// Result of proof verification (RFC-0859 §5.1)

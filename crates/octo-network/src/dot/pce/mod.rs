@@ -4,6 +4,7 @@
 //! deterministic verification, and recursive aggregation.
 
 pub mod aggregate;
+pub mod attachment;
 pub mod envelope;
 pub mod error;
 pub mod policy;
@@ -12,10 +13,13 @@ pub mod registry;
 pub mod verify;
 
 pub use aggregate::{aggregate_proofs, AggregatedProof};
+pub use attachment::{IntentProofAttachment, ProofTypeEntry, ProofTypeRegistry};
 pub use envelope::ProofCarryingEnvelope;
 pub use error::PceError;
 pub use policy::MissionProofPolicy;
-pub use proof_type::{ProofCircuitModel, ProofSystemId, ProofType, VerificationResult};
+pub use proof_type::{
+    ProofCircuitModel, ProofSystemId, ProofType, ProofTypeValue, VerificationResult,
+};
 pub use registry::{VerifierEntry, VerifierRegistry};
 pub use verify::{compute_merkle_root, verify_canonical_boundary, verify_pce, verify_via_dps};
 

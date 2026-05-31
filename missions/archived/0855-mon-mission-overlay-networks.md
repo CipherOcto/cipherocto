@@ -2,7 +2,7 @@
 
 ## Status
 
-Open
+Implemented (12 files, 54 tests)
 
 ## RFC
 
@@ -33,6 +33,10 @@ Implement mission overlay networks with mission identity, lifecycle state machin
 - [x] Unit tests: 54 tests covering lifecycle transitions, role enforcement, key derivation, governance, topology, membership, reconciliation
 - [x] `cargo fmt -- --check` passes
 - [x] `cargo test -p octo-network` passes (617 tests)
+
+## Claimant
+
+@agent (Jcode)
 
 ## Location
 

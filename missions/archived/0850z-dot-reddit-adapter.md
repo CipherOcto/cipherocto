@@ -1,8 +1,11 @@
 # Mission: DOT Reddit Adapter (PlatformType 0x0010)
 
-## Status
+Implemented (498 lines, 10 tests)
 
-Open
+## Claimant
+
+@agent (Jcode)
+
 
 ## RFC
 
@@ -26,21 +29,21 @@ reqwest = { version = "0.12", features = ["json"] }
 
 ## Acceptance Criteria
 
-- [ ] New crate: `crates/octo-adapter-reddit/`
-- [ ] `RedditConfig`: `client_id`, `client_secret`, `refresh_token`, `subreddits` (list of subreddit names)
-- [ ] Implements `PlatformAdapter` trait with all methods
-- [ ] `send_envelope()` — posts DOT envelope as a Reddit post or comment (max 10000 chars)
-- [ ] `receive_messages()` — polls `GET /r/{subreddit}/new` for new posts/comments
-- [ ] `canonicalize()` — extracts DOT envelope from post body
-- [ ] `capabilities()`: max_payload=10000 characters, supports_fragmentation=false, media_capabilities=Some (images via `media/upload` or link posts)
-- [ ] `media_capabilities`: max_upload_bytes=20971520 (20MB image), supported_mime_types=["image/jpeg", "image/png", "image/gif"]
-- [ ] `self_handle()` — returns bot's Reddit username
-- [ ] `shutdown()` — clears cached access token
-- [ ] Auth via OAuth2 (client credentials + refresh token)
-- [ ] Rate limiting: respect Reddit rate limits (60 requests/min)
-- [ ] Domain hash: `BLAKE3-256("reddit:{subreddit}")`
-- [ ] PlatformType: `0x0010` (new allocation)
-- [ ] Unit tests: 10+ tests
+- [x] New crate: `crates/octo-adapter-reddit/`
+- [x] `RedditConfig`: `client_id`, `client_secret`, `refresh_token`, `subreddits` (list of subreddit names)
+- [x] Implements `PlatformAdapter` trait with all methods
+- [x] `send_envelope()` — posts DOT envelope as a Reddit post or comment (max 10000 chars)
+- [x] `receive_messages()` — polls `GET /r/{subreddit}/new` for new posts/comments
+- [x] `canonicalize()` — extracts DOT envelope from post body
+- [x] `capabilities()`: max_payload=10000 characters, supports_fragmentation=false, media_capabilities=Some (images via `media/upload` or link posts)
+- [x] `media_capabilities`: max_upload_bytes=20971520 (20MB image), supported_mime_types=["image/jpeg", "image/png", "image/gif"]
+- [x] `self_handle()` — returns bot's Reddit username
+- [x] `shutdown()` — clears cached access token
+- [x] Auth via OAuth2 (client credentials + refresh token)
+- [x] Rate limiting: respect Reddit rate limits (60 requests/min)
+- [x] Domain hash: `BLAKE3-256("reddit:{subreddit}")`
+- [x] PlatformType: `0x0010` (new allocation)
+- [x] Unit tests: 10+ tests
 
 ## Complexity
 

@@ -2,7 +2,7 @@
 
 ## Status
 
-Open
+Implemented (1 file, 18 tests)
 
 ## RFC
 
@@ -14,16 +14,20 @@ Implement gateway attestation (signed capability proofs), key rotation with back
 
 ## Acceptance Criteria
 
-- [ ] `GatewayAttestation` with gateway_id, attestation_type, payload_root, timestamp, signature
-- [ ] Attestation verification against gateway public key
-- [ ] Key rotation: new key signs old key for backward compatibility
-- [ ] Re-keying: mission keys rotated with new epoch
-- [ ] Key revocation: signed revocation notice propagated via GDP; key revocation propagation uses DGP gossip (Mission 0852) when available
-- [ ] Revocation takes effect within configurable grace period
-- [ ] Integration with GDP (RFC-0851) for attestation propagation
-- [ ] Unit tests: 10+ tests covering attestation, rotation, revocation, grace period
-- [ ] `cargo fmt -- --check` passes
-- [ ] `cargo test -p octo-network` passes
+- [x] `GatewayAttestation` with gateway_id, attestation_type, payload_root, timestamp, signature
+- [x] Attestation verification against gateway public key
+- [x] Key rotation: new key signs old key for backward compatibility
+- [x] Re-keying: mission keys rotated with new epoch
+- [x] Key revocation: signed revocation notice propagated via GDP; key revocation propagation uses DGP gossip (Mission 0852) when available
+- [x] Revocation takes effect within configurable grace period
+- [x] Integration with GDP (RFC-0851) for attestation propagation
+- [x] Unit tests: 10+ tests covering attestation, rotation, revocation, grace period
+- [x] `cargo fmt -- --check` passes
+- [x] `cargo test -p octo-network` passes
+
+## Claimant
+
+@agent (Jcode)
 
 ## Location
 

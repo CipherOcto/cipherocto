@@ -228,8 +228,14 @@ pub fn relay_satisfies_constraints(
 
     // Stealth mode: censorship resistance gate
     if constraints.stealth_mode {
-        if let Some(stealth) = stealth {
-            if relay_censorship_resistance < stealth.min_censorship_resistance {
+        match stealth {
+            Some(stealth) => {
+                if relay_censorship_resistance < stealth.min_censorship_resistance {
+                    return false;
+                }
+            }
+            None => {
+                // Stealth required but no config — reject relay
                 return false;
             }
         }
@@ -275,6 +281,7 @@ impl PartitionMetrics {
         if total == 0 {
             return PartitionState::Healthy;
         }
+        let reachable = reachable.min(total); // clamp to avoid underflow
         let unreachable_pct = ((total - reachable) * 100) / total;
         if unreachable_pct >= 50 {
             PartitionState::Partitioned
@@ -548,6 +555,23 @@ mod tests {
         ));
     }
 
+    #[test]
+    fn test_stealth_mode_no_config_rejects() {
+        let constraints = MissionRouteConstraints {
+            stealth_mode: true,
+            ..Default::default()
+        };
+        // stealth_mode=true but stealth=None → reject
+        assert!(!relay_satisfies_constraints(
+            100,
+            GeoRegion::Global,
+            BandwidthClass::High,
+            900,
+            &constraints,
+            None,
+        ));
+    }
+
     // ── Partition Resilience Tests ──
 
     #[test]
@@ -571,6 +595,15 @@ mod tests {
         assert_eq!(
             PartitionMetrics::compute_state(10, 4),
             PartitionState::Partitioned
+        );
+    }
+
+    #[test]
+    fn test_partition_state_reachable_exceeds_total() {
+        // Should clamp and not underflow
+        assert_eq!(
+            PartitionMetrics::compute_state(10, 15),
+            PartitionState::Healthy
         );
     }
 

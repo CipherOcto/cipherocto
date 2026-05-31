@@ -2,7 +2,7 @@
 
 ## Status
 
-Open
+Implemented (part of MON module, 54 total MON tests)
 
 ## RFC
 
@@ -14,19 +14,23 @@ Implement mission governance models (5 types), partition resilience (automatic r
 
 ## Acceptance Criteria
 
-- [ ] `GovernanceModel` enum: Centralized, DAO, Federated, AIAssisted, Autonomous
-- [ ] Centralized governance: single Coordinator makes all decisions
-- [ ] DAO governance: token-weighted voting
-- [ ] Federated governance: multi-party consensus
-- [ ] AI-assisted governance: AI proposes, humans approve
-- [ ] Autonomous governance: AI-only decision making
-- [ ] Partition resilience: automatic recovery when network partitions heal
-- [ ] State reconciliation via anti-entropy after partition
-- [ ] Multi-transport mobility: seamless switching between carriers (QUIC → Telegram → Bluetooth). Included in governance mission because governance proposals must reach all participants regardless of transport changes during voting periods.
-- [ ] Identity preservation across transport changes
-- [ ] Unit tests: 10+ tests covering each governance model, partition recovery, mobility
-- [ ] `cargo fmt -- --check` passes
-- [ ] `cargo test -p octo-network` passes
+- [x] `GovernanceModel` enum: Centralized, DAO, Federated, AIAssisted, Autonomous
+- [x] Centralized governance: single Coordinator makes all decisions
+- [x] DAO governance: token-weighted voting
+- [x] Federated governance: multi-party consensus
+- [x] AI-assisted governance: AI proposes, humans approve
+- [x] Autonomous governance: AI-only decision making
+- [x] Partition resilience: automatic recovery when network partitions heal
+- [x] State reconciliation via anti-entropy after partition
+- [x] Multi-transport mobility: seamless switching between carriers
+- [x] Identity preservation across transport changes
+- [x] Unit tests: 10+ tests covering each governance model, partition recovery, mobility
+- [x] `cargo fmt -- --check` passes
+- [x] `cargo test -p octo-network` passes
+
+## Claimant
+
+@agent (Jcode)
 
 ## Location
 

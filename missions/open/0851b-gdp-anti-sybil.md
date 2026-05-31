@@ -15,27 +15,27 @@ Implement anti-Sybil mechanisms for gateway discovery including stake-gated disc
 ## Acceptance Criteria
 
 ### Stake Gating (RFC-0851 §11.1)
-- [ ] Minimum OCTO per scope: Local=0, Regional=500, Global=1000, Consensus=1000
-- [ ] OCTO-B role stake per scope: Local=0, Regional=50, Global=100, Consensus=200
-- [ ] Mission and Private scopes per RFC-0851 Section 11.1 (mission-defined / invite-only)
-- [ ] Insufficient stake → advertisement silently dropped
-- [ ] Stake verification uses integer arithmetic only (RFC-0008 Class A)
+- [x] Minimum OCTO per scope: Local=0, Regional=500, Global=1000, Consensus=1000
+- [x] OCTO-B role stake per scope: Local=0, Regional=50, Global=100, Consensus=200
+- [x] Mission and Private scopes per RFC-0851 Section 11.1 (mission-defined / invite-only)
+- [x] Insufficient stake → advertisement silently dropped
+- [x] Stake verification uses integer arithmetic only (RFC-0008 Class A)
 
 ### Diversity Constraints (RFC-0851 §11.2)
-- [ ] Diversity formula: `diversity_score = transport_diversity * 3 + geographic_diversity * 2 + trust_diversity * 1`
-- [ ] Minimum thresholds: Regional ≥ 2 transports, Global ≥ 3 transports + 2 regions
-- [ ] Non-compliant gateways deprioritized (score = 0), not rejected
-- [ ] Eclipse attack resistance via diversity requirements
+- [x] Diversity formula: `diversity_score = transport_diversity * 3 + geographic_diversity * 2 + trust_diversity * 1`
+- [x] Minimum thresholds: Regional ≥ 2 transports, Global ≥ 3 transports + 2 regions
+- [x] Non-compliant gateways deprioritized (score = 0), not rejected
+- [x] Eclipse attack resistance via diversity requirements
 
 ### Sybil Detection (RFC-0851 §11.3)
-- [ ] Sybil cluster detection via correlated behavior analysis
-- [ ] Integration with PoRelay (RFC-0860) for reliability weighting
-- [ ] Integration with RFC-0860 Section 6 anti-sybil model
+- [x] Sybil cluster detection via correlated behavior analysis
+- [x] Integration with PoRelay (RFC-0860) for reliability weighting
+- [x] Integration with RFC-0860 Section 6 anti-sybil model
 
 ### Verification
-- [ ] 10+ tests covering stake gating, diversity enforcement, Sybil detection
-- [ ] `cargo fmt -- --check` passes
-- [ ] `cargo test -p octo-network` passes
+- [x] 10 tests covering stake gating, diversity enforcement, Sybil detection
+- [x] `cargo fmt -- --check` passes
+- [x] `cargo test -p octo-network` passes (643 tests)
 
 ## Implementation Notes
 

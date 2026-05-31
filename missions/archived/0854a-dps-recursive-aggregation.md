@@ -2,7 +2,7 @@
 
 ## Status
 
-Open
+Implemented (24 tests: aggregation, verification, conflict resolution, depth limits, RFC-0650 actors)
 
 ## RFC
 
@@ -14,16 +14,20 @@ Implement recursive proof aggregation following RFC-0650 (Proof Aggregation Prot
 
 ## Acceptance Criteria
 
-- [ ] Binary tree aggregation: local proofs → regional proofs → global overlay proof
-- [ ] O(1) verification of aggregated proofs
-- [ ] First-seen-wins for double-aggregation conflicts
-- [ ] Integration with RFC-0650 actors: Worker, Collector, Aggregator, Verifier
-- [ ] `AggregatedProof` with child_proofs, aggregation_root, proof_count
-- [ ] Aggregation commitment: BLAKE3-256(child_commitment_0 || child_commitment_1)
-- [ ] Recursive depth limit (configurable, default 10)
-- [ ] Unit tests: 10+ tests covering aggregation, verification, conflict resolution
-- [ ] `cargo fmt -- --check` passes
-- [ ] `cargo test -p octo-network` passes
+- [x] Binary tree aggregation: local proofs → regional proofs → global overlay proof
+- [x] O(1) verification of aggregated proofs
+- [x] First-seen-wins for double-aggregation conflicts
+- [x] Integration with RFC-0650 actors: Worker, Collector, Aggregator, Verifier
+- [x] `AggregatedProof` with child_proofs, aggregation_root, proof_count
+- [x] Aggregation commitment: BLAKE3-256(child_commitment_0 || child_commitment_1)
+- [x] Recursive depth limit (configurable, default 10)
+- [x] Unit tests: 10+ tests covering aggregation, verification, conflict resolution
+- [x] `cargo fmt -- --check` passes
+- [x] `cargo test -p octo-network` passes
+
+## Claimant
+
+@agent (Jcode)
 
 ## Location
 

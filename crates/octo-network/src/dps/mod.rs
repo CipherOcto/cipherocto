@@ -13,7 +13,10 @@ pub mod witness;
 
 pub use envelope::ProofCarryingEnvelope;
 pub use error::DpsError;
-pub use recursive::{AggregatedProof, AggregationMethod};
+pub use recursive::{
+    AggregatedProof, AggregationMethod, AggregationRegistry, AggregationRole, RecursiveAggregator,
+    DEFAULT_MAX_AGGREGATION_DEPTH,
+};
 pub use suite::{ProofCircuitModel, ProofExecutionClass, ProofSuite, ProofSuiteId, ProofSystemId};
 pub use trait_def::DeterministicProofSystem;
 pub use verifier::{VerifierEntry, VerifierRegistry};

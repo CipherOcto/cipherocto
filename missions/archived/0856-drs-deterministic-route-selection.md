@@ -2,7 +2,7 @@
 
 ## Status
 
-Open
+Implemented (8 files, 61 tests)
 
 ## RFC
 
@@ -14,19 +14,23 @@ Implement deterministic route selection with canonical scoring (u64 arithmetic, 
 
 ## Acceptance Criteria
 
-- [ ] `DeterministicRoute` with route_id, source_gateway, destination_gateway, next_hop, transport_vector_root, trust_score, bandwidth_class, latency_class, censorship_resistance_class, route_cost, route_epoch, ttl_hops, signature
-- [ ] `TransportVector` with transport_type, transport_class, reliability_score, censorship_score, cost_class
-- [ ] `ScoringWeights` with trust_weight, bandwidth_weight, latency_weight, censorship_weight, cost_weight (u64 fields) (RFC §6.1)
-- [ ] `compute_route_score()` using u64 arithmetic with saturating_mul (no overflow)
-- [ ] `canonical_route_cmp()`: (score DESC, epoch ASC, route_id ASC)
-- [ ] `RouteCommitment` with BLAKE3-256(gateway_sequence_hash || weights_hash || epoch)
-- [ ] `RouteCache` with BTreeMap, deterministic eviction
-- [ ] Weight configuration: network-level constants at genesis, governance proposal for changes (RFC-0001, 2/3 vote)
-- [ ] RFC-0008 execution class mapping table
-- [ ] `DrsError` enum with all error variants (RFC Error Types section)
-- [ ] Unit tests: 12+ tests covering scoring determinism, overflow safety, ordering, cache eviction
-- [ ] `cargo fmt -- --check` passes
-- [ ] `cargo test -p octo-network` passes
+- [x] `DeterministicRoute` with route_id, source_gateway, destination_gateway, next_hop, transport_vector_root, trust_score, bandwidth_class, latency_class, censorship_resistance_class, route_cost, route_epoch, ttl_hops, signature
+- [x] `TransportVector` with transport_type, transport_class, reliability_score, censorship_score, cost_class
+- [x] `ScoringWeights` with trust_weight, bandwidth_weight, latency_weight, censorship_weight, cost_weight (u64 fields) (RFC §6.1)
+- [x] `compute_route_score()` using u64 arithmetic with saturating_mul (no overflow)
+- [x] `canonical_route_cmp()`: (score DESC, epoch ASC, route_id ASC)
+- [x] `RouteCommitment` with BLAKE3-256(gateway_sequence_hash || weights_hash || epoch)
+- [x] `RouteCache` with BTreeMap, deterministic eviction
+- [x] Weight configuration: network-level constants at genesis, governance proposal for changes (RFC-0001, 2/3 vote)
+- [x] RFC-0008 execution class mapping table
+- [x] `DrsError` enum with all error variants (RFC Error Types section)
+- [x] Unit tests: 12+ tests covering scoring determinism, overflow safety, ordering, cache eviction
+- [x] `cargo fmt -- --check` passes
+- [x] `cargo test -p octo-network` passes (638 total)
+
+## Claimant
+
+@agent (Jcode)
 
 ## Location
 

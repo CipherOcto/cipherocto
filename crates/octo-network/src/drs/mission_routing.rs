@@ -154,7 +154,7 @@ pub struct MissionRouteConstraints {
     pub min_bandwidth: BandwidthClass,
     /// Stealth mode: prefer censorship-resistant carriers
     pub stealth_mode: bool,
-    /// Maximum number of hops
+    /// Maximum number of hops (used during route construction, not per-relay filtering)
     pub max_hops: u16,
     /// Mission ID for scoped routing
     pub mission_id: [u8; 32],
@@ -186,6 +186,7 @@ pub struct StealthConfig {
     /// Avoid known surveillance ASNs (list of ASN prefixes)
     pub blocked_asn_prefixes: Vec<u32>,
     /// Cover traffic ratio (0-100, percentage of dummy traffic)
+    /// TODO: Not yet implemented — reserved for RFC-0856 §13 cover traffic generation
     pub cover_traffic_ratio: u8,
 }
 
@@ -319,6 +320,38 @@ pub struct RouteCostBreakdown {
     pub trust_discount_bps: u16,
     /// Total computed cost
     pub total_cost: u64,
+}
+
+impl RouteCostBreakdown {
+    /// Compute route cost and return full breakdown.
+    pub fn compute(
+        hop_count: u16,
+        bandwidth_class: BandwidthClass,
+        geo_distance_penalty: u32,
+        trust_discount_bps: u16,
+    ) -> Self {
+        let base_cost_per_hop: u64 = 100;
+        let bw_mult: u64 = match bandwidth_class {
+            BandwidthClass::VeryLow => 5000,
+            BandwidthClass::Low => 2000,
+            BandwidthClass::Medium => 1000,
+            BandwidthClass::High => 500,
+            BandwidthClass::VeryHigh => 200,
+        };
+        let bandwidth_multiplier = bw_mult as u32;
+        let hop_cost = base_cost_per_hop * bw_mult / 1000;
+        let geo_penalty = hop_cost * geo_distance_penalty as u64 / 1000;
+        let subtotal = (hop_cost + geo_penalty) * hop_count as u64;
+        let discount = subtotal * trust_discount_bps as u64 / 10000;
+        let total_cost = subtotal.saturating_sub(discount);
+        Self {
+            base_cost_per_hop,
+            bandwidth_multiplier,
+            geo_distance_penalty,
+            trust_discount_bps,
+            total_cost,
+        }
+    }
 }
 
 /// Compute route cost per RFC-0856 §17.

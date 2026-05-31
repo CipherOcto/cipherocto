@@ -7,6 +7,7 @@ pub mod advertisement;
 pub mod anti_sybil;
 pub mod cache;
 pub mod discovery;
+pub mod discovery_gossip;
 pub mod error;
 pub mod heartbeat;
 pub mod identity;

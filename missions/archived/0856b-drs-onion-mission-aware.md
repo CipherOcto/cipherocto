@@ -2,7 +2,7 @@
 
 ## Status
 
-Open
+Implemented (part of DRS module, 61 total DRS tests)
 
 ## RFC
 
@@ -28,6 +28,10 @@ Implement onion-compatible routing where route computation supports ORR (RFC-085
 - [x] Unit tests: 19 tests covering onion compatibility, mission modes, partition recovery, cost, adaptive weights
 - [x] `cargo fmt -- --check` passes
 - [x] `cargo test -p octo-network` passes (636 tests)
+
+## Claimant
+
+@agent (Jcode)
 
 ## Location
 

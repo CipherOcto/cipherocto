@@ -2,7 +2,7 @@
 
 ## Status
 
-Open
+Implemented (1 file, 10 tests)
 
 ## RFC
 
@@ -14,15 +14,19 @@ Implement anti-entropy synchronization with Merkle summary exchange, binary Merk
 
 ## Acceptance Criteria
 
-- [ ] `GossipStateSummary` with domain_id, state_root, object_count, watermark
-- [ ] Merkle summary exchange between peers
-- [ ] Binary Merkle descent to locate divergent objects when roots differ
-- [ ] Periodic reconciliation interval (configurable, default 60s)
-- [ ] State convergence guarantee: given identical valid objects, all nodes reach identical state
-- [ ] Integration with DGP deduplication for efficient sync
-- [ ] Unit tests: 8+ tests covering Merkle exchange, divergence detection, convergence
-- [ ] `cargo fmt -- --check` passes
-- [ ] `cargo test -p octo-network` passes
+- [x] `GossipStateSummary` with domain_id, state_root, object_count, watermark
+- [x] Merkle summary exchange between peers
+- [x] Binary Merkle descent to locate divergent objects when roots differ
+- [x] Periodic reconciliation interval (configurable, default 60s)
+- [x] State convergence guarantee: given identical valid objects, all nodes reach identical state
+- [x] Integration with DGP deduplication for efficient sync
+- [x] Unit tests: 8+ tests covering Merkle exchange, divergence detection, convergence
+- [x] `cargo fmt -- --check` passes
+- [x] `cargo test -p octo-network` passes
+
+## Claimant
+
+@agent (Jcode)
 
 ## Location
 

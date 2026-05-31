@@ -7,6 +7,7 @@ pub mod envelope;
 pub mod error;
 pub mod recursive;
 pub mod suite;
+pub mod trait_def;
 pub mod verifier;
 pub mod witness;
 
@@ -15,4 +16,5 @@ pub use error::DpsError;
 pub use recursive::{AggregatedProof, AggregationMethod};
 pub use suite::{ProofCircuitModel, ProofExecutionClass, ProofSuite, ProofSuiteId, ProofSystemId};
 pub use verifier::{VerifierEntry, VerifierRegistry};
+pub use trait_def::DeterministicProofSystem;
 pub use witness::{Witness, WitnessInput};

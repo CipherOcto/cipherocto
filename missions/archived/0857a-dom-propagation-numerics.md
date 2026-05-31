@@ -2,7 +2,7 @@
 
 ## Status
 
-Open
+Implemented (part of DOM module, 36 total DOM tests)
 
 ## RFC
 
@@ -14,17 +14,21 @@ Implement mempool propagation via DGP (RFC-0852), Merkle state root computation,
 
 ## Acceptance Criteria
 
-- [ ] Mempool propagation: intents propagate via DGP gossip (RFC-0852)
-- [ ] Mission-scoped propagation: intents only propagate within mission domain
-- [ ] `MempoolStateRoot`: BLAKE3-256 Merkle root of all pending intents
-- [ ] State root recomputed on every admission/eviction (deterministic)
-- [ ] Fee computation uses RFC-0105 DQA for deterministic arithmetic (DQA provides fixed-point decimal types; DFP/RFC-0104 provides the encoding)
-- [ ] Fee ordering: no floating-point, integer-only (DQA fixed-point)
-- [ ] Economic weight comparison uses DQA canonical ordering
-- [ ] Anti-entropy reconciliation: Merkle summary exchange for mempool sync
-- [ ] Unit tests: 10+ tests covering propagation, Merkle root, fee computation
-- [ ] `cargo fmt -- --check` passes
-- [ ] `cargo test -p octo-network` passes
+- [x] Mempool propagation: intents propagate via DGP gossip (RFC-0852)
+- [x] Mission-scoped propagation: intents only propagate within mission domain
+- [x] `MempoolStateRoot`: BLAKE3-256 Merkle root of all pending intents
+- [x] State root recomputed on every admission/eviction (deterministic)
+- [x] Fee computation uses RFC-0105 DQA for deterministic arithmetic
+- [x] Fee ordering: no floating-point, integer-only (DQA fixed-point)
+- [x] Economic weight comparison uses DQA canonical ordering
+- [x] Anti-entropy reconciliation: Merkle summary exchange for mempool sync
+- [x] Unit tests: 10+ tests covering propagation, Merkle root, fee computation
+- [x] `cargo fmt -- --check` passes
+- [x] `cargo test -p octo-network` passes
+
+## Claimant
+
+@agent (Jcode)
 
 ## Location
 

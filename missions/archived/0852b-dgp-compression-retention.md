@@ -2,7 +2,7 @@
 
 ## Status
 
-Open
+Implemented (19 tests: bloom filter, bitmap, retention classes, cleanup, anti-entropy integration)
 
 ## RFC
 
@@ -14,18 +14,22 @@ Implement gossip compression (Bloom filters, Merkle roots, bitmap summaries) for
 
 ## Acceptance Criteria
 
-- [ ] Bloom filter summary for quick "is member" checks
-- [ ] Merkle root summary for state verification
-- [ ] Bitmap summary for range commitments
-- [ ] `RetentionClass` enum: Ephemeral, Mission, Consensus, Archive (per RFC-0852 §13)
-- [ ] Retention duration per class (configurable)
-- [ ] Automatic cleanup of expired objects by retention class
-- [ ] Anti-entropy integration: compression summaries usable in anti-entropy sync (Mission 0852a)
-- [ ] Bloom filter hash uses BLAKE3-256 (not AHasher/SipHash) per RFC-0852 §11
-- [ ] Large object fragmentation via `GossipFragment`
-- [ ] Unit tests: 8+ tests covering compression, retention cleanup, fragmentation
-- [ ] `cargo fmt -- --check` passes
-- [ ] `cargo test -p octo-network` passes
+- [x] Bloom filter summary for quick "is member" checks
+- [x] Merkle root summary for state verification
+- [x] Bitmap summary for range commitments
+- [x] `RetentionClass` enum: Ephemeral, Mission, Consensus, Archive (per RFC-0852 §13)
+- [x] Retention duration per class (configurable)
+- [x] Automatic cleanup of expired objects by retention class
+- [x] Anti-entropy integration: compression summaries usable in anti-entropy sync (Mission 0852a)
+- [x] Bloom filter hash uses BLAKE3-256 (not AHasher/SipHash) per RFC-0852 §11
+- [x] Large object fragmentation via `GossipFragment`
+- [x] Unit tests: 8+ tests covering compression, retention cleanup, fragmentation
+- [x] `cargo fmt -- --check` passes
+- [x] `cargo test -p octo-network` passes
+
+## Claimant
+
+@agent (Jcode)
 
 ## Location
 

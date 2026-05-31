@@ -10,6 +10,7 @@
 //! converges deterministically.
 
 pub mod anti_entropy;
+pub mod compression;
 pub mod dedup;
 pub mod directed;
 pub mod domain;
@@ -23,6 +24,10 @@ pub mod ordering;
 pub use anti_entropy::{
     binary_merkle_descent, AntiEntropyReconciler, GossipStateSummary, ReconciliationConfig,
     ReconciliationResult,
+};
+pub use compression::{
+    build_bloom_summary, compute_state_summary, BitmapSummary, BloomSummary, RetentionClass,
+    RetentionManager,
 };
 pub use dedup::{DedupSet, GossipReplayCache};
 pub use directed::DirectedMode;

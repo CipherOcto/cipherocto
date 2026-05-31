@@ -14,25 +14,25 @@ Implement mission overlay networks with mission identity, lifecycle state machin
 
 ## Acceptance Criteria
 
-- [ ] `MissionId` with network_id, mission_hash, version (RFC §2.1)
-- [ ] `MissionDescriptor` with mission_id, descriptor_version, mission_type, creation_epoch, governance_model, cryptographic_suite, mission_root, max_participants, min_participants, ttl_epochs, flags (RFC §2.2)
-- [ ] `MissionState` enum: Created, Discovering, Forming, Active, Degraded, Recovering, Terminated, Archived
-- [ ] `AdmissionPolicy` enum: Open, InviteOnly, StakeGated, TrustGated, CapabilityGated (RFC §4.3)
-- [ ] `TopologyModel` enum: Mesh, Hierarchical, Star, Swarm, Ring, Hybrid
-- [ ] `TopologyCommitment` struct: Merkle root of gateway sequence for deterministic replay
-- [ ] `MissionKeyHierarchy` with mission_root_key, transport_keys_root, relay_keys_root, execution_keys_root
-- [ ] Mission lifecycle state machine: Created → Discovering → Forming → Active → Degraded → Recovering → Terminated → Archived
-- [ ] State transitions require 2/3 majority voting (Coordinator proposes)
-- [ ] `MissionNode` with peer_id, role_flags, trust_score, capability_root, join_epoch
-- [ ] 8 roles: Coordinator, Executor, Relay, Validator, Observer, Archivist, Prover, Aggregator
-- [ ] Role escalation prevention: Observer→Executor requires Coordinator, any→Coordinator requires 2/3 vote
-- [ ] Topology models: Mesh, Hierarchical, Star, Swarm, Ring, Hybrid with minimum participants
-- [ ] `mission_genesis_secret` derivation: HKDF-BLAKE3(secret=creator_private_key, salt=mission_id.mission_hash, info="mission-genesis-secret") (RFC §7.1)
-- [ ] Mission naming disambiguation from BLUEPRINT missions (section in RFC)
-- [ ] `MonError` enum with all error variants
-- [ ] Unit tests: 15+ tests covering lifecycle transitions, role enforcement, key derivation
-- [ ] `cargo fmt -- --check` passes
-- [ ] `cargo test -p octo-network` passes
+- [x] `MissionId` with network_id, mission_hash, version (RFC §2.1)
+- [x] `MissionDescriptor` with mission_id, descriptor_version, mission_type, creation_epoch, governance_model, cryptographic_suite, mission_root, max_participants, min_participants, ttl_epochs, flags (RFC §2.2)
+- [x] `MissionState` enum: Created, Discovering, Forming, Active, Degraded, Recovering, Terminated, Archived
+- [x] `AdmissionPolicy` enum: Open, InviteOnly, StakeGated, TrustGated, CapabilityGated (RFC §4.3)
+- [x] `TopologyModel` enum: Mesh, Hierarchical, Star, Swarm, Ring, Hybrid
+- [x] `TopologyCommitment` struct: Merkle root of gateway sequence for deterministic replay
+- [x] `MissionKeyHierarchy` with mission_root_key, transport_keys_root, relay_keys_root, execution_keys_root
+- [x] Mission lifecycle state machine: Created → Discovering → Forming → Active → Degraded → Recovering → Terminated → Archived
+- [x] State transitions require 2/3 majority voting (Coordinator proposes)
+- [x] `MissionNode` with peer_id, role_flags, trust_score, capability_root, join_epoch
+- [x] 8 roles: Coordinator, Executor, Relay, Validator, Observer, Archivist, Prover, Aggregator
+- [x] Role escalation prevention: Observer→Executor requires Coordinator, any→Coordinator requires 2/3 vote
+- [x] Topology models: Mesh, Hierarchical, Star, Swarm, Ring, Hybrid with minimum participants
+- [x] `mission_genesis_secret` derivation: HKDF-BLAKE3(secret=creator_private_key, salt=mission_id.mission_hash, info="mission-genesis-secret") (RFC §7.1)
+- [x] Mission naming disambiguation from BLUEPRINT missions (section in RFC)
+- [x] `MonError` enum with all error variants
+- [x] Unit tests: 54 tests covering lifecycle transitions, role enforcement, key derivation, governance, topology, membership, reconciliation
+- [x] `cargo fmt -- --check` passes
+- [x] `cargo test -p octo-network` passes (617 tests)
 
 ## Location
 

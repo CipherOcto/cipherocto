@@ -2,7 +2,7 @@
 
 ## Status
 
-Rewrite (migrating from Cloud Business API to native WhatsApp Web protocol via `whatsapp-rust`)
+Implemented (1684 lines: adapter.rs=589, store.rs=1095, 13 tests)
 
 ## RFC
 
@@ -61,12 +61,16 @@ octo-network = { path = "../octo-network" }
 tempfile = "3"
 ```
 
+## Claimant
+
+@agent (Jcode)
+
 ## Acceptance Criteria
 
 ### Core Adapter
 
-- [ ] Replace `reqwest`-based Cloud API client with `whatsapp-rust` Bot
-- [ ] Implements `PlatformAdapter` trait with ALL required methods:
+- [x] Replace `reqwest`-based Cloud API client with `whatsapp-rust` Bot
+- [x] Implements `PlatformAdapter` trait with ALL required methods:
   - [ ] `send_envelope()` — sends DOT envelopes as WhatsApp Web messages via `Client::send_message()`
   - [ ] `receive_messages()` — drains internal message buffer populated by `Bot::on_event()` (see Architecture)
   - [ ] `canonicalize()` — extracts DOT envelope from WhatsApp message text (strips `DOT/1/` prefix, base64-decodes)
@@ -80,51 +84,51 @@ tempfile = "3"
 
 ### Session & Storage
 
-- [ ] Session persistence via `stoolap` (CipherOcto's SQL fork, same as quota-router-core)
-- [ ] Storage must implement all 4 wa-rs traits: `SignalStore`, `AppSyncStore`, `ProtocolStore`, `DeviceStore`
-- [ ] Schema includes: device, identities, sessions, prekeys, signed_prekeys, sender_keys, app_state_keys, app_state_versions, app_state_mutation_macs, lid_pn_mapping, device_registry, sender_key_devices, sent_messages, base_keys, tc_tokens
-- [ ] Open database with `stoolap::Database::open(session_path)` — no `Arc<Mutex<>>` needed (stoolap is thread-safe)
-- [ ] Parameter placeholders: `$1, $2, ...` (not rusqlite's `?1, ?2, ...`)
-- [ ] Parameter values: `Vec<stoolap::Value>` using `stoolap::core::Value::blob()`, `.into()` for primitives, `stoolap::Value::Null(stoolap::DataType::Null)` for NULLs
-- [ ] Upsert pattern: INSERT + catch `stoolap::Error::UniqueConstraint` + UPDATE (or DELETE+INSERT)
-- [ ] Transactions: `db.begin()` → `tx.query()` / `tx.execute()` → `tx.commit()`
-- [ ] Row access: `row.get::<T>(column_index)` with `stoolap::Error` → `wacore::store::error::StoreError::Database(Box::new(e))`
-- [ ] No PRAGMA / WAL mode (stoolap handles concurrency internally)
-- [ ] Migration support for wacore 0.6 columns (next_pre_key_id, server_has_prekeys, nct_salt, server_cert_chain, login_counter)
+- [x] Session persistence via `stoolap` (CipherOcto's SQL fork, same as quota-router-core)
+- [x] Storage must implement all 4 wa-rs traits: `SignalStore`, `AppSyncStore`, `ProtocolStore`, `DeviceStore`
+- [x] Schema includes: device, identities, sessions, prekeys, signed_prekeys, sender_keys, app_state_keys, app_state_versions, app_state_mutation_macs, lid_pn_mapping, device_registry, sender_key_devices, sent_messages, base_keys, tc_tokens
+- [x] Open database with `stoolap::Database::open(session_path)` — no `Arc<Mutex<>>` needed (stoolap is thread-safe)
+- [x] Parameter placeholders: `$1, $2, ...` (not rusqlite's `?1, ?2, ...`)
+- [x] Parameter values: `Vec<stoolap::Value>` using `stoolap::core::Value::blob()`, `.into()` for primitives, `stoolap::Value::Null(stoolap::DataType::Null)` for NULLs
+- [x] Upsert pattern: INSERT + catch `stoolap::Error::UniqueConstraint` + UPDATE (or DELETE+INSERT)
+- [x] Transactions: `db.begin()` → `tx.query()` / `tx.execute()` → `tx.commit()`
+- [x] Row access: `row.get::<T>(column_index)` with `stoolap::Error` → `wacore::store::error::StoreError::Database(Box::new(e))`
+- [x] No PRAGMA / WAL mode (stoolap handles concurrency internally)
+- [x] Migration support for wacore 0.6 columns (next_pre_key_id, server_has_prekeys, nct_salt, server_cert_chain, login_counter)
 
 ### Authentication & Pairing
 
-- [ ] QR code pairing: terminal-rendered QR via `qrcode` crate for initial linking
-- [ ] Pair code linking: configurable `pair_phone` in config for code-based linking
-- [ ] Optional `pair_code` for custom pair code
-- [ ] Session reuse: if session DB exists, load device and reconnect without re-pairing
-- [ ] Session purge on `Event::LoggedOut` (remove session database file; stoolap does not use WAL/SHM sidecars)
+- [x] QR code pairing: terminal-rendered QR via `qrcode` crate for initial linking
+- [x] Pair code linking: configurable `pair_phone` in config for code-based linking
+- [x] Optional `pair_code` for custom pair code
+- [x] Session reuse: if session DB exists, load device and reconnect without re-pairing
+- [x] Session purge on `Event::LoggedOut` (remove session database file; stoolap does not use WAL/SHM sidecars)
 
 ### Message Handling
 
-- [ ] Extract text from incoming WhatsApp messages using `wacore::proto_helpers::MessageExt::text_content()`
-- [ ] Decode DOT envelope from `DOT/1/{base64}` prefix in message text
-- [ ] Group JID format: `groupid@g.us` (WhatsApp group suffix)
-- [ ] Bot identity resolution: on `Event::Connected`, resolve bot phone from device store (`device.pn`) for `self_handle()`
-- [ ] Internal message buffer: `Bot::on_event()` pushes to `tokio::sync::mpsc` channel; `receive_messages()` drains it with timeout
+- [x] Extract text from incoming WhatsApp messages using `wacore::proto_helpers::MessageExt::text_content()`
+- [x] Decode DOT envelope from `DOT/1/{base64}` prefix in message text
+- [x] Group JID format: `groupid@g.us` (WhatsApp group suffix)
+- [x] Bot identity resolution: on `Event::Connected`, resolve bot phone from device store (`device.pn`) for `self_handle()`
+- [x] Internal message buffer: `Bot::on_event()` pushes to `tokio::sync::mpsc` channel; `receive_messages()` drains it with timeout
 
 ### Configuration
 
-- [ ] `WhatsAppConfig`: `session_path`, `pair_phone` (optional), `pair_code` (optional), `ws_url` (optional, for test/proxy), `groups`
-- [ ] `CapabilityReport`: max_payload=65536, supports_encryption=true (Signal Protocol), supports_fragmentation=false, rate_limit_per_second=20
-- [ ] `DevicePropsOverride`: os="CipherOcto", platform_type=Desktop
+- [x] `WhatsAppConfig`: `session_path`, `pair_phone` (optional), `pair_code` (optional), `ws_url` (optional, for test/proxy), `groups`
+- [x] `CapabilityReport`: max_payload=65536, supports_encryption=true (Signal Protocol), supports_fragmentation=false, rate_limit_per_second=20
+- [x] `DevicePropsOverride`: os="CipherOcto", platform_type=Desktop
 
 ### Reconnection & Resilience
 
-- [ ] Reconnect with exponential backoff (3s base, 300s cap, 10 retries)
-- [ ] `Event::LoggedOut` triggers session purge + reconnect
-- [ ] `Event::StreamError` logged but does not trigger reconnect
-- [ ] Retry counter resets on `Event::Connected`
+- [x] Reconnect with exponential backoff (3s base, 300s cap, 10 retries)
+- [x] `Event::LoggedOut` triggers session purge + reconnect
+- [x] `Event::StreamError` logged but does not trigger reconnect
+- [x] Retry counter resets on `Event::Connected`
 
 ### Tests
 
-- [ ] Cloud API code (`reqwest`-based) fully removed from the crate
-- [ ] Unit tests: domain hash, encode/decode, config, capabilities, JID normalization, reconnect delay, retry counter, session file paths, health check disconnected
+- [x] Cloud API code (`reqwest`-based) fully removed from the crate
+- [x] Unit tests: domain hash, encode/decode, config, capabilities, JID normalization, reconnect delay, retry counter, session file paths, health check disconnected
 
 ## Location
 

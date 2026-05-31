@@ -44,7 +44,7 @@ Current approach encodes all envelope bytes as base64 text, adding 33% overhead.
 
 ### PlatformAdapter Trait Extensions
 
-- [ ] Add `MediaCapabilities` to `CapabilityReport`:
+- [x] Add `MediaCapabilities` to `CapabilityReport`:
   ```rust
   pub struct MediaCapabilities {
       pub supports_upload: bool,
@@ -52,7 +52,7 @@ Current approach encodes all envelope bytes as base64 text, adding 33% overhead.
       pub supported_mime_types: Vec<String>,
   }
   ```
-- [ ] Add `upload_media()` method to `PlatformAdapter`:
+- [x] Add `upload_media()` method to `PlatformAdapter`:
   ```rust
   async fn upload_media(
       &self,
@@ -61,7 +61,7 @@ Current approach encodes all envelope bytes as base64 text, adding 33% overhead.
       mime_type: &str,
   ) -> Result<String, PlatformAdapterError>;  // Returns platform message_id
   ```
-- [ ] Add `download_media()` method to `PlatformAdapter`:
+- [x] Add `download_media()` method to `PlatformAdapter`:
   ```rust
   async fn download_media(
       &self,
@@ -71,21 +71,21 @@ Current approach encodes all envelope bytes as base64 text, adding 33% overhead.
 
 ### Transport Mode Selection
 
-- [ ] Gateway selects transport mode based on payload size and capabilities:
+- [x] Gateway selects transport mode based on payload size and capabilities:
   - If `payload.len() <= max_text_bytes` → Use `DOT/1/{base64}` (text mode)
   - If `payload.len() > max_text_bytes && capabilities.supports_upload` → Use `DOT/2/{msg_id}` (native mode)
   - If `payload.len() > max_text_bytes && !capabilities.supports_upload && capabilities.supports_fragmentation` → Use `DOT/F/{fragment}` (fragment mode)
   - If `payload.len() > max_text_bytes && !capabilities.supports_upload && !capabilities.supports_fragmentation` → Error: payload too large
-- [ ] Mode selection is deterministic: same payload + same capabilities → same mode
+- [x] Mode selection is deterministic: same payload + same capabilities → same mode
 
 ### Receiver Implementation
 
-- [ ] Receiver auto-detects mode from `DOT/` prefix:
+- [x] Receiver auto-detects mode from `DOT/` prefix:
   - `DOT/1/` → Decode base64
   - `DOT/2/` → Download from platform using message_id
   - `DOT/F/` → Collect fragments and reassemble
-- [ ] All modes verify `payload_hash` after obtaining bytes
-- [ ] Mode is NOT part of envelope identity — same envelope can be received via different modes
+- [x] All modes verify `payload_hash` after obtaining bytes
+- [x] Mode is NOT part of envelope identity — same envelope can be received via different modes
 
 ### Platform Adapters
 
@@ -106,12 +106,12 @@ Current approach encodes all envelope bytes as base64 text, adding 33% overhead.
 
 ### Tests
 
-- [ ] Test mode selection for each platform
-- [ ] Test `DOT/2/{msg_id}` encode/decode
-- [ ] Test native upload + download roundtrip
-- [ ] Test `payload_hash` verification after native download
-- [ ] Test fallback: native upload fails → falls back to base64
-- [ ] Test deterministic mode selection (same input → same mode)
+- [x] Test mode selection for each platform
+- [x] Test `DOT/2/{msg_id}` encode/decode
+- [x] Test native upload + download roundtrip
+- [x] Test `payload_hash` verification after native download
+- [x] Test fallback: native upload fails → falls back to base64
+- [x] Test deterministic mode selection (same input → same mode)
 
 ## Design Reference
 

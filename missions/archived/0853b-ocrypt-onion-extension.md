@@ -2,7 +2,7 @@
 
 ## Status
 
-Open
+Implemented (13 tests: per-hop encryption, relay isolation, nonce uniqueness, forward secrecy, AAD binding)
 
 ## RFC
 
@@ -14,16 +14,20 @@ Implement the onion relay cryptographic extension with per-hop encryption, relay
 
 ## Acceptance Criteria
 
-- [ ] Per-hop encryption: each relay layer uses distinct session key
-- [ ] Relay knowledge isolation: each relay knows only previous/next hop
-- [ ] Layered key derivation: X25519 shared secret → HKDF-BLAKE3 → per-hop keys
-- [ ] Deterministic randomness: HKDF-BLAKE3 derivation for consensus-safe random generation
-- [ ] Nonce uniqueness: HKDF-BLAKE3(session_key, "ocrypt:nonce:v1", ...)[0..24]
-- [ ] Forward secrecy: compromise of one relay doesn't expose full route
-- [ ] Integration with ORR (RFC-0858) for route construction
-- [ ] Unit tests: 10+ tests covering layered encryption, relay isolation, nonce uniqueness
-- [ ] `cargo fmt -- --check` passes
-- [ ] `cargo test -p octo-network` passes
+- [x] Per-hop encryption: each relay layer uses distinct session key
+- [x] Relay knowledge isolation: each relay knows only previous/next hop
+- [x] Layered key derivation: X25519 shared secret → HKDF-BLAKE3 → per-hop keys
+- [x] Deterministic randomness: HKDF-BLAKE3 derivation for consensus-safe random generation
+- [x] Nonce uniqueness: HKDF-BLAKE3(session_key, "ocrypt:nonce:v1", ...)[0..12]
+- [x] Forward secrecy: compromise of one relay doesn't expose full route
+- [x] Integration with ORR (RFC-0858) for route construction
+- [x] Unit tests: 10+ tests covering layered encryption, relay isolation, nonce uniqueness
+- [x] `cargo fmt -- --check` passes
+- [x] `cargo test -p octo-network` passes
+
+## Claimant
+
+@agent (Jcode)
 
 ## Location
 

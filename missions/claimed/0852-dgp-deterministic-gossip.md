@@ -2,7 +2,7 @@
 
 ## Status
 
-Open
+Claimed
 
 ## RFC
 
@@ -26,6 +26,10 @@ Implement deterministic gossip with gossip objects, domains, canonical processin
 - [ ] Unit tests: 10+ tests covering ordering, dedup, replay cache, modes
 - [ ] `cargo fmt -- --check` passes
 - [ ] `cargo test -p octo-network` passes
+
+## Claimant
+
+@agent (Jcode)
 
 ## Location
 

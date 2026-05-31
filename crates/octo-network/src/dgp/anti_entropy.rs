@@ -242,51 +242,9 @@ fn binary_merkle_descent_inner(
 
 /// Compute a BLAKE3-256 Merkle root from a list of hashes.
 ///
-/// Uses domain separation per RFC 6962:
-/// - Leaf hash: BLAKE3(0x00 || hash)
-/// - Internal hash: BLAKE3(0x01 || left || right)
-///
-/// If the number of leaves is odd, the last element is duplicated for pairing.
-/// Returns zero hash for empty input.
+/// Delegates to the shared `common::merkle` module for RFC 6962 consistency.
 pub fn compute_merkle_root(hashes: &[[u8; 32]]) -> [u8; 32] {
-    if hashes.is_empty() {
-        return [0u8; 32];
-    }
-
-    // Compute leaf hashes with domain separation
-    let mut level: Vec<[u8; 32]> = hashes
-        .iter()
-        .map(|h| {
-            let mut hasher = blake3::Hasher::new();
-            hasher.update(&[0x00]);
-            hasher.update(h);
-            *hasher.finalize().as_bytes()
-        })
-        .collect();
-
-    // Build tree bottom-up
-    while level.len() > 1 {
-        let mut next = Vec::with_capacity(level.len().div_ceil(2));
-        let mut i = 0;
-        while i < level.len() {
-            let left = level[i];
-            let right = if i + 1 < level.len() {
-                level[i + 1]
-            } else {
-                // Duplicate last element for odd count
-                level[i]
-            };
-            let mut hasher = blake3::Hasher::new();
-            hasher.update(&[0x01]);
-            hasher.update(&left);
-            hasher.update(&right);
-            next.push(*hasher.finalize().as_bytes());
-            i += 2;
-        }
-        level = next;
-    }
-
-    level[0]
+    crate::common::merkle::compute_merkle_root(hashes)
 }
 
 #[cfg(test)]

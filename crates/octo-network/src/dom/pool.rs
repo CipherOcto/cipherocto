@@ -155,11 +155,9 @@ impl MempoolStateRoot {
 
 /// Compute the MempoolStateRoot using RFC 6962 domain-separated Merkle tree.
 ///
-/// The root is computed over sorted intent hashes for deterministic ordering.
+/// Delegates to `MempoolStateRoot::compute()` for consistency.
 pub fn compute_state_root(intents: &[OverlayIntent]) -> [u8; 32] {
-    let mut hashes: Vec<[u8; 32]> = intents.iter().map(|i| i.intent_id).collect();
-    hashes.sort();
-    crate::common::merkle::compute_merkle_root(&hashes)
+    MempoolStateRoot::compute(intents)
 }
 
 #[cfg(test)]

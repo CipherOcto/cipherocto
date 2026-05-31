@@ -37,43 +37,9 @@ pub struct GatewayAdvertisement {
 impl GatewayAdvertisement {
     /// Compute the Merkle root of a set of items using BLAKE3-256.
     ///
-    /// Uses RFC 6962 domain separation:
-    /// - Leaf hash: BLAKE3(0x00 || item)
-    /// - Internal hash: BLAKE3(0x01 || left || right)
-    ///
-    /// Empty sets return [0x00; 32].
+    /// Delegates to the shared `common::merkle` module for RFC 6962 consistency.
     pub fn compute_merkle_root(items: &[[u8; 32]]) -> [u8; 32] {
-        if items.is_empty() {
-            return [0u8; 32];
-        }
-        // Compute leaf hashes with domain separation
-        let mut level: Vec<[u8; 32]> = items
-            .iter()
-            .map(|h| {
-                let mut hasher = blake3::Hasher::new();
-                hasher.update(&[0x00]);
-                hasher.update(h);
-                *hasher.finalize().as_bytes()
-            })
-            .collect();
-        // Build tree bottom-up
-        while level.len() > 1 {
-            let mut next = Vec::new();
-            for chunk in level.chunks(2) {
-                let mut hasher = blake3::Hasher::new();
-                hasher.update(&[0x01]);
-                hasher.update(&chunk[0]);
-                if chunk.len() > 1 {
-                    hasher.update(&chunk[1]);
-                } else {
-                    // Duplicate last leaf for odd count
-                    hasher.update(&chunk[0]);
-                }
-                next.push(*hasher.finalize().as_bytes());
-            }
-            level = next;
-        }
-        level[0]
+        crate::common::merkle::compute_merkle_root(items)
     }
 
     /// Compute signing bytes for signature verification.

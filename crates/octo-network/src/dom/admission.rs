@@ -59,10 +59,10 @@ pub fn check_admission(
     }
 
     // 2. Check replay (O(log n) BTreeMap lookup)
-    if replay_cache.contains_key(&intent.intent_id) {
+    if let Some(&first_seen) = replay_cache.get(&intent.intent_id) {
         return Err(DomError::ReplayDetected {
             intent_id: intent.intent_id,
-            first_seen: 0,
+            first_seen,
         });
     }
 

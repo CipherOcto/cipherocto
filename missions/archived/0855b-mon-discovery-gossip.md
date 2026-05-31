@@ -2,7 +2,7 @@
 
 ## Status
 
-Open
+Implemented (part of MON module, 54 total MON tests)
 
 ## RFC
 
@@ -14,16 +14,20 @@ Implement mission discovery with 5 scopes (Public, Invite-only, Stealth, Federat
 
 ## Acceptance Criteria
 
-- [ ] `MissionDiscoveryScope` enum: Public, InviteOnly, Stealth, Federated, Ephemeral
-- [ ] Public missions: discoverable via GDP global scope
-- [ ] Invite-only missions: require invitation from Coordinator
-- [ ] Stealth missions: encrypted advertisements, only capability key holders can decrypt
-- [ ] Mission gossip integration with DGP (RFC-0852)
-- [ ] 7 propagation classes: Emergency, Consensus, Coordination, Execution, Ai, Standard, Archive (maps to DGP GossipPriority per RFC-0855 §9.2 mapping table)
-- [ ] Mission-scoped gossip isolation (Mission A gossip separate from Mission B)
-- [ ] Unit tests: 10+ tests covering each discovery scope, gossip class isolation
-- [ ] `cargo fmt -- --check` passes
-- [ ] `cargo test -p octo-network` passes
+- [x] `MissionDiscoveryScope` enum: Public, InviteOnly, Stealth, Federated, Ephemeral
+- [x] Public missions: discoverable via GDP global scope
+- [x] Invite-only missions: require invitation from Coordinator
+- [x] Stealth missions: encrypted advertisements, only capability key holders can decrypt
+- [x] Mission gossip integration with DGP (RFC-0852)
+- [x] 7 propagation classes: Emergency, Consensus, Coordination, Execution, Ai, Standard, Archive
+- [x] Mission-scoped gossip isolation (Mission A gossip separate from Mission B)
+- [x] Unit tests: 10+ tests covering each discovery scope, gossip class isolation
+- [x] `cargo fmt -- --check` passes
+- [x] `cargo test -p octo-network` passes
+
+## Claimant
+
+@agent (Jcode)
 
 ## Location
 

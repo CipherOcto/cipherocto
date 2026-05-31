@@ -2,7 +2,7 @@
 
 ## Status
 
-Implemented (part of MON module, 54 total MON tests)
+Implemented (21 tests: task, distributor, swarm, federated, proof-carrying)
 
 ## RFC
 

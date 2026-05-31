@@ -2,7 +2,7 @@
 
 ## Status
 
-Open
+Claimed
 
 ## RFC
 
@@ -25,6 +25,10 @@ Implement the cryptographic layer with CryptoSuiteId, sovereign identity extensi
 - [ ] Unit tests: 15+ tests covering key derivation, encryption round-trip, nonce uniqueness
 - [ ] `cargo fmt -- --check` passes
 - [ ] `cargo test -p octo-network` passes
+
+## Claimant
+
+@agent (Jcode)
 
 ## Location
 

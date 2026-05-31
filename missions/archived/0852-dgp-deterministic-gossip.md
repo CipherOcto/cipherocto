@@ -2,7 +2,7 @@
 
 ## Status
 
-Claimed
+Implemented (10 files, 51 tests: object, domain, dedup, ordering, replay cache, flood, incremental, directed, anti-entropy, fragment reassembly)
 
 ## RFC
 
@@ -14,18 +14,18 @@ Implement deterministic gossip with gossip objects, domains, canonical processin
 
 ## Acceptance Criteria
 
-- [ ] `GossipObject` with object_type, object_hash, object_size, domain_id, logical_timestamp, origin_gateway, ttl_hops, propagation_flags, payload_root, signature
-- [ ] `GossipDomainId` with network_id, mission_id, scope
-- [ ] Canonical processing order: (domain_id, logical_timestamp, object_hash)
-- [ ] Deduplication by object_hash with FIRST_VALID_HASH_WINS conflict resolution
-- [ ] GossipReplayCache with BTreeMap, deterministic eviction (RFC-0852 §12)
-- [ ] Flood gossip mode for bootstrap
-- [ ] Incremental gossip mode for normal operation
-- [ ] Directed gossip mode for mission-scoped propagation
-- [ ] `DgpError` enum with all error variants
-- [ ] Unit tests: 10+ tests covering ordering, dedup, replay cache, modes
-- [ ] `cargo fmt -- --check` passes
-- [ ] `cargo test -p octo-network` passes
+- [x] `GossipObject` with object_type, object_hash, object_size, domain_id, logical_timestamp, origin_gateway, ttl_hops, propagation_flags, payload_root, signature
+- [x] `GossipDomainId` with network_id, mission_id, scope
+- [x] Canonical processing order: (domain_id, logical_timestamp, object_hash)
+- [x] Deduplication by object_hash with FIRST_VALID_HASH_WINS conflict resolution
+- [x] GossipReplayCache with BTreeMap, deterministic eviction (RFC-0852 §12)
+- [x] Flood gossip mode for bootstrap
+- [x] Incremental gossip mode for normal operation
+- [x] Directed gossip mode for mission-scoped propagation
+- [x] `DgpError` enum with all error variants
+- [x] Unit tests: 10+ tests covering ordering, dedup, replay cache, modes
+- [x] `cargo fmt -- --check` passes
+- [x] `cargo test -p octo-network` passes (638 total)
 
 ## Claimant
 

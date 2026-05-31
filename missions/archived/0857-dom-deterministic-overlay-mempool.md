@@ -2,7 +2,7 @@
 
 ## Status
 
-Open
+Implemented (8 files, 36 tests)
 
 ## RFC
 
@@ -30,6 +30,10 @@ Implement the deterministic overlay mempool with overlay intents (8 types), exec
 - [x] Unit tests: 36 tests covering ordering, admission, eviction, fee computation, pool management
 - [x] `cargo fmt -- --check` passes
 - [x] `cargo test -p octo-network` passes (617 tests)
+
+## Claimant
+
+@agent (Jcode)
 
 ## Location
 

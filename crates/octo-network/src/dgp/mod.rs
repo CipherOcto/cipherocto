@@ -20,7 +20,10 @@ pub mod incremental;
 pub mod object;
 pub mod ordering;
 
-pub use anti_entropy::{AntiEntropyReconciler, GossipStateSummary, ReconciliationResult};
+pub use anti_entropy::{
+    binary_merkle_descent, AntiEntropyReconciler, GossipStateSummary, ReconciliationConfig,
+    ReconciliationResult,
+};
 pub use dedup::{DedupSet, GossipReplayCache};
 pub use directed::DirectedMode;
 pub use domain::{GossipDomainId, GossipScope};

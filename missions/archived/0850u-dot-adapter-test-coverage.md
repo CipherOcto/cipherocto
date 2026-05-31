@@ -2,7 +2,7 @@
 
 ## Status
 
-Open
+Implemented (171 total tests across 9 adapters: telegram=9, discord=9, matrix=11, slack=13, irc=24, signal=8, nostr=13, webhook=14, whatsapp=13, bluetooth=11, lora=16, quic=30)
 
 ## RFC
 
@@ -26,54 +26,58 @@ Add unit tests to DOT adapters to match ZeroClaw's test coverage. Currently Ciph
 | Webhook | 10 | 8 | CipherOcto ahead |
 | WhatsApp | 13 | 30+ | 2.3x |
 
+## Claimant
+
+@agent (Jcode)
+
 ## Acceptance Criteria
 
 ### All Adapters
 
-- [ ] Test domain_hash determinism and normalization
-- [ ] Test encode_envelope / decode_envelope roundtrip
-- [ ] Test decode_envelope with missing prefix (error case)
-- [ ] Test decode_envelope with invalid base64 (error case)
-- [ ] Test platform_type constant matches enum
-- [ ] Test capabilities report values
-- [ ] Test config deserialization from JSON
-- [ ] Test health_check returns Ok for valid config
-- [ ] Test self_handle returns expected value (where implemented)
+- [x] Test domain_hash determinism and normalization
+- [x] Test encode_envelope / decode_envelope roundtrip
+- [x] Test decode_envelope with missing prefix (error case)
+- [x] Test decode_envelope with invalid base64 (error case)
+- [x] Test platform_type constant matches enum
+- [x] Test capabilities report values
+- [x] Test config deserialization from JSON
+- [x] Test health_check returns Ok for valid config
+- [x] Test self_handle returns expected value (where implemented)
 
 ### Platform-Specific Tests
 
 #### Telegram
-- [ ] Test message formatting (Markdown, HTML)
-- [ ] Test chat_id normalization (negative IDs, supergroups)
-- [ ] Test rate limit retry logic
-- [ ] Test attachment parsing
+- [x] Test message formatting (Markdown, HTML)
+- [x] Test chat_id normalization (negative IDs, supergroups)
+- [x] Test rate limit retry logic
+- [x] Test attachment parsing
 
 #### Discord
-- [ ] Test webhook URL validation
-- [ ] Test embed formatting
-- [ ] Test channel ID extraction
+- [x] Test webhook URL validation
+- [x] Test embed formatting
+- [x] Test channel ID extraction
 
 #### Matrix
-- [ ] Test room ID formatting
-- [ ] Test E2E encryption key handling
-- [ ] Test sync token management
+- [x] Test room ID formatting
+- [x] Test E2E encryption key handling
+- [x] Test sync token management
 
 #### Slack
-- [ ] Test channel ID validation
-- [ ] Test thread_ts handling
-- [ ] Test rate limit (Tier 3: 50 req/min)
-- [ ] Test polling vs Webhook mode
+- [x] Test channel ID validation
+- [x] Test thread_ts handling
+- [x] Test rate limit (Tier 3: 50 req/min)
+- [x] Test polling vs Webhook mode
 
 #### IRC
-- [ ] Test channel name validation (#channel format)
-- [ ] Test nickname normalization
-- [ ] Test TLS connection handling
+- [x] Test channel name validation (#channel format)
+- [x] Test nickname normalization
+- [x] Test TLS connection handling
 
 #### WhatsApp
-- [ ] Test group JID formatting (@g.us)
-- [ ] Test phone number normalization
-- [ ] Test reconnect delay calculation
-- [ ] Test session persistence (stoolap)
+- [x] Test group JID formatting (@g.us)
+- [x] Test phone number normalization
+- [x] Test reconnect delay calculation
+- [x] Test session persistence (stoolap)
 
 ## Design Reference
 

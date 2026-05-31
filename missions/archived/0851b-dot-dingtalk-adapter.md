@@ -1,8 +1,11 @@
 # Mission: DOT DingTalk Adapter (PlatformType 0x0012)
 
-## Status
+Implemented (402 lines, 11 tests)
 
-Open
+## Claimant
+
+@agent (Jcode)
+
 
 ## RFC
 
@@ -26,22 +29,22 @@ reqwest = { version = "0.12", features = ["json"] }
 
 ## Acceptance Criteria
 
-- [ ] New crate: `crates/octo-adapter-dingtalk/`
-- [ ] `DingTalkConfig`: `webhook_url`, `secret` (optional, for signed webhooks), `groups` (group IDs)
-- [ ] Implements `PlatformAdapter` trait with all methods
-- [ ] `send_envelope()` — sends DOT envelope via DingTalk robot webhook (text, max 20000 chars)
-- [ ] `receive_messages()` — receives via webhook callback (DingTalk pushes messages)
-- [ ] `canonicalize()` — extracts DOT envelope from message content
-- [ ] `capabilities()`: max_payload=20000 characters, supports_fragmentation=false, media_capabilities=None (robot webhook only supports text/markdown)
-- [ ] `self_handle()` — returns robot's webhook ID
-- [ ] `shutdown()` — clears session webhooks
-- [ ] Auth via webhook URL (no OAuth needed for robot)
-- [ ] Signed webhook: HMAC-SHA256 with timestamp
-- [ ] Rate limiting: respect DingTalk rate limits (20 messages/min per group)
-- [ ] Per-message session webhooks (DingTalk provides unique webhook per incoming message)
-- [ ] Domain hash: `BLAKE3-256("dingtalk:{group_id}")`
-- [ ] PlatformType: `0x0012` (new allocation)
-- [ ] Unit tests: 10+ tests
+- [x] New crate: `crates/octo-adapter-dingtalk/`
+- [x] `DingTalkConfig`: `webhook_url`, `secret` (optional, for signed webhooks), `groups` (group IDs)
+- [x] Implements `PlatformAdapter` trait with all methods
+- [x] `send_envelope()` — sends DOT envelope via DingTalk robot webhook (text, max 20000 chars)
+- [x] `receive_messages()` — receives via webhook callback (DingTalk pushes messages)
+- [x] `canonicalize()` — extracts DOT envelope from message content
+- [x] `capabilities()`: max_payload=20000 characters, supports_fragmentation=false, media_capabilities=None (robot webhook only supports text/markdown)
+- [x] `self_handle()` — returns robot's webhook ID
+- [x] `shutdown()` — clears session webhooks
+- [x] Auth via webhook URL (no OAuth needed for robot)
+- [x] Signed webhook: HMAC-SHA256 with timestamp
+- [x] Rate limiting: respect DingTalk rate limits (20 messages/min per group)
+- [x] Per-message session webhooks (DingTalk provides unique webhook per incoming message)
+- [x] Domain hash: `BLAKE3-256("dingtalk:{group_id}")`
+- [x] PlatformType: `0x0012` (new allocation)
+- [x] Unit tests: 10+ tests
 
 ## Complexity
 

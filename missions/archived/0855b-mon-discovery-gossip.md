@@ -2,7 +2,7 @@
 
 ## Status
 
-Implemented (part of MON module, 54 total MON tests)
+Implemented (2 new files: discovery.rs + gossip.rs, 27 tests)
 
 ## RFC
 

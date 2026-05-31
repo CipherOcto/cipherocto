@@ -7,6 +7,7 @@ pub mod discovery;
 pub mod economics;
 pub mod error;
 pub mod execution;
+pub mod gossip;
 pub mod governance;
 pub mod keys;
 pub mod lifecycle;
@@ -20,6 +21,10 @@ pub mod routing;
 // Re-exports for convenience
 pub use discovery::MissionDiscoveryScope;
 pub use error::MonError;
+pub use gossip::{
+    MissionGossipMessage, MissionGossipScope, MissionPropagationClass,
+    SCOPE_FLAG_ENCRYPTED, SCOPE_FLAG_PRIORITY, SCOPE_FLAG_RELIABLE,
+};
 pub use governance::{GovernanceModel, GovernancePolicy};
 pub use keys::MissionKeyHierarchy;
 pub use lifecycle::MissionState;

@@ -14,18 +14,18 @@ Implement discovery gossip with flood (bootstrap), incremental (normal operation
 
 ## Acceptance Criteria
 
-- [ ] Flood gossip: broadcast aggressively for bootstrap (DGP object_type = DiscoveryAdvertisement)
-- [ ] Incremental gossip: propagate only unseen advertisements
-- [ ] Anti-entropy gossip: periodic Merkle summary reconciliation (60s default)
-- [ ] Directed gossip: targeted propagation for mission overlays
-- [ ] Propagation limits: TTL hops per scope (Local=3, Regional=10, Mission=5, Global=20, Consensus=10)
-- [ ] Advertisement deduplication by gateway_id + sequence
-- [ ] GDP advertisements wrap as DGP `GossipObject` with `object_type = DiscoveryAdvertisement`
-- [ ] GDP DiscoveryScope maps to DGP GossipDomainId.scope (Local→LOCAL, Regional→REGIONAL, etc.)
-- [ ] Integration with DGP (RFC-0852) gossip infrastructure
-- [ ] Unit tests: 8+ tests covering each gossip mode, TTL enforcement
-- [ ] `cargo fmt -- --check` passes
-- [ ] `cargo test -p octo-network` passes
+- [x] Flood gossip: broadcast aggressively for bootstrap (DGP object_type = DiscoveryAdvertisement)
+- [x] Incremental gossip: propagate only unseen advertisements
+- [x] Anti-entropy gossip: periodic Merkle summary reconciliation (60s default)
+- [x] Directed gossip: targeted propagation for mission overlays
+- [x] Propagation limits: TTL hops per scope (Local=3, Regional=10, Mission=5, Global=20, Consensus=10)
+- [x] Advertisement deduplication by gateway_id + sequence
+- [x] GDP advertisements wrap as DGP `GossipObject` with `object_type = DiscoveryAdvertisement`
+- [x] GDP DiscoveryScope maps to DGP GossipDomainId.scope (Local→LOCAL, Regional→REGIONAL, etc.)
+- [x] Integration with DGP (RFC-0852) gossip infrastructure
+- [x] Unit tests: 12 tests covering each gossip mode, TTL enforcement, deduplication
+- [x] `cargo fmt -- --check` passes
+- [x] `cargo test -p octo-network` passes (636 tests)
 
 ## Location
 

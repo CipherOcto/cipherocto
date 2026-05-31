@@ -150,10 +150,7 @@ pub fn is_discovery_advertisement(obj: &GossipObject) -> bool {
 ///
 /// Filters DiscoveryAdvertisement objects that have the mode's propagation
 /// flag set and have remaining TTL > 0.
-pub fn select_for_mode<'a>(
-    objects: &'a [GossipObject],
-    mode: DiscoveryGossipMode,
-) -> Vec<&'a GossipObject> {
+pub fn select_for_mode(objects: &[GossipObject], mode: DiscoveryGossipMode) -> Vec<&GossipObject> {
     let flag = mode_to_flag(mode);
     objects
         .iter()
@@ -185,6 +182,71 @@ pub fn deduplicate_by_gateway(objects: &[GossipObject]) -> Vec<&GossipObject> {
     }
 
     newest.values().copied().collect()
+}
+
+// ── Pipeline ──
+
+/// Discovery gossip pipeline — wires lifecycle → mode → select → deduplicate.
+///
+/// Orchestrates the full discovery gossip flow:
+/// 1. Select gossip mode from GDP lifecycle state
+/// 2. Filter objects by mode's propagation flag
+/// 3. Deduplicate by gateway_id (newest wins)
+/// 4. Return objects ready for transport
+pub fn propagate(lifecycle: DiscoveryLifecycle, objects: &[GossipObject]) -> Vec<&GossipObject> {
+    let mode = lifecycle_to_gossip_mode(lifecycle);
+    let filtered = select_for_mode(objects, mode);
+    deduplicate_by_gateway_from_refs(&filtered)
+}
+
+/// Deduplicate pre-filtered advertisement references by gateway_id.
+///
+/// Like `deduplicate_by_gateway` but operates on `&[&GossipObject]`
+/// (already filtered) instead of `&[GossipObject]`.
+fn deduplicate_by_gateway_from_refs<'a>(objects: &[&'a GossipObject]) -> Vec<&'a GossipObject> {
+    use std::collections::BTreeMap;
+    let mut newest: BTreeMap<[u8; 32], &'a GossipObject> = BTreeMap::new();
+
+    for &obj in objects {
+        let gw = obj.origin_gateway;
+        newest
+            .entry(gw)
+            .and_modify(|existing| {
+                if obj.logical_timestamp > existing.logical_timestamp {
+                    *existing = obj;
+                }
+            })
+            .or_insert(obj);
+    }
+
+    newest.values().copied().collect()
+}
+
+/// Create and finalize a discovery advertisement for propagation.
+///
+/// Convenience function that wraps, computes hash, and sets size.
+/// The caller still needs to sign the object.
+pub fn create_advertisement(
+    gateway_id: [u8; 32],
+    scope: DiscoveryScope,
+    network_id: u32,
+    mission_id: [u8; 32],
+    logical_timestamp: u64,
+    payload_root: [u8; 32],
+    mode: DiscoveryGossipMode,
+) -> GossipObject {
+    let mut obj = wrap_advertisement(
+        gateway_id,
+        scope,
+        network_id,
+        mission_id,
+        logical_timestamp,
+        payload_root,
+        mode,
+    );
+    // Compute object hash from current fields
+    obj.object_hash = obj.derive_object_hash();
+    obj
 }
 
 // ── Tests ──
@@ -606,5 +668,140 @@ mod tests {
         assert_eq!(deduped[0].origin_gateway, make_gateway_id(0x01));
         assert_eq!(deduped[1].origin_gateway, make_gateway_id(0x02));
         assert_eq!(deduped[2].origin_gateway, make_gateway_id(0x03));
+    }
+
+    // ── Pipeline Tests ──
+
+    #[test]
+    fn test_propagate_bootstrap_floods() {
+        let objects = vec![
+            make_adv(
+                0x01,
+                DiscoveryScope::Global,
+                1000,
+                DiscoveryGossipMode::Flood,
+            ),
+            make_adv(
+                0x02,
+                DiscoveryScope::Global,
+                1001,
+                DiscoveryGossipMode::Incremental,
+            ),
+            make_adv(
+                0x03,
+                DiscoveryScope::Global,
+                1002,
+                DiscoveryGossipMode::Flood,
+            ),
+        ];
+        // Bootstrap → Flood mode → only FLAG_FLOOD objects, deduplicated
+        let result = propagate(DiscoveryLifecycle::Bootstrap, &objects);
+        assert_eq!(result.len(), 2);
+        assert!(result.iter().all(|o| o.has_flag(FLAG_FLOOD)));
+    }
+
+    #[test]
+    fn test_propagate_expansion_incremental() {
+        let objects = vec![
+            make_adv(
+                0x01,
+                DiscoveryScope::Global,
+                1000,
+                DiscoveryGossipMode::Flood,
+            ),
+            make_adv(
+                0x02,
+                DiscoveryScope::Global,
+                1001,
+                DiscoveryGossipMode::Incremental,
+            ),
+            make_adv(
+                0x03,
+                DiscoveryScope::Global,
+                1002,
+                DiscoveryGossipMode::Incremental,
+            ),
+        ];
+        let result = propagate(DiscoveryLifecycle::Expansion, &objects);
+        assert_eq!(result.len(), 2);
+        assert!(result.iter().all(|o| o.has_flag(FLAG_INCREMENTAL)));
+    }
+
+    #[test]
+    fn test_propagate_degraded_anti_entropy() {
+        let objects = vec![
+            make_adv(
+                0x01,
+                DiscoveryScope::Global,
+                1000,
+                DiscoveryGossipMode::AntiEntropy,
+            ),
+            make_adv(
+                0x02,
+                DiscoveryScope::Global,
+                1001,
+                DiscoveryGossipMode::Flood,
+            ),
+        ];
+        let result = propagate(DiscoveryLifecycle::Degraded, &objects);
+        assert_eq!(result.len(), 1);
+        assert!(result[0].has_flag(FLAG_ANTI_ENTROPY));
+    }
+
+    #[test]
+    fn test_propagate_deduplicates_same_gateway() {
+        let objects = vec![
+            make_adv(
+                0x01,
+                DiscoveryScope::Global,
+                1000,
+                DiscoveryGossipMode::Flood,
+            ),
+            make_adv(
+                0x01,
+                DiscoveryScope::Global,
+                2000,
+                DiscoveryGossipMode::Flood,
+            ),
+            make_adv(
+                0x02,
+                DiscoveryScope::Global,
+                1500,
+                DiscoveryGossipMode::Flood,
+            ),
+        ];
+        let result = propagate(DiscoveryLifecycle::Bootstrap, &objects);
+        assert_eq!(result.len(), 2);
+        // Gateway 0x01 should have timestamp 2000
+        let gw1 = result
+            .iter()
+            .find(|o| o.origin_gateway == make_gateway_id(0x01))
+            .unwrap();
+        assert_eq!(gw1.logical_timestamp, 2000);
+    }
+
+    #[test]
+    fn test_propagate_empty() {
+        let objects: Vec<GossipObject> = vec![];
+        let result = propagate(DiscoveryLifecycle::Bootstrap, &objects);
+        assert!(result.is_empty());
+    }
+
+    #[test]
+    fn test_create_advertisement_computes_hash() {
+        let obj = create_advertisement(
+            make_gateway_id(0x01),
+            DiscoveryScope::Global,
+            1,
+            [0u8; 32],
+            1000,
+            [0xAA; 32],
+            DiscoveryGossipMode::Flood,
+        );
+        // object_hash should be computed (not zero)
+        assert_ne!(obj.object_hash, [0u8; 32]);
+        assert!(is_discovery_advertisement(&obj));
+        assert!(obj.has_flag(FLAG_FLOOD));
+        assert_eq!(obj.ttl_hops, 20); // Global
     }
 }

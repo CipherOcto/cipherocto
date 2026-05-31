@@ -33,6 +33,7 @@
 use async_trait::async_trait;
 use std::collections::HashMap;
 use std::net::SocketAddr;
+#[cfg(feature = "quic")]
 use std::sync::Arc;
 use tokio::sync::{mpsc, Mutex, RwLock};
 
@@ -43,14 +44,18 @@ use crate::dot::domain::{BroadcastDomainId, PlatformType};
 use crate::dot::envelope::DeterministicEnvelope;
 use crate::dot::error::PlatformAdapterError;
 use crate::dot::replay::ReplayCache;
-use crate::gdp::discovery::{BootstrapMethod, DiscoveryState, ScopeFilter};
+use crate::gdp::discovery::{BootstrapMethod, DiscoveryState};
 use crate::gdp::types::DiscoveryScope;
 
 // ── Frame type constants (RFC-0850 §8.7.3) ──
-
+// Used in quic feature-gated code
+#[allow(dead_code)]
 const FRAME_TYPE_ENVELOPE: u16 = 0x0001;
+#[allow(dead_code)]
 const FRAME_TYPE_FRAGMENT: u16 = 0x0002;
+#[allow(dead_code)]
 const FRAME_TYPE_ONION: u16 = 0x0003;
+#[allow(dead_code)]
 const FRAME_TYPE_CAPABILITIES: u16 = 0x0004;
 const FRAME_TYPE_PING: u16 = 0x0005;
 const FRAME_TYPE_PONG: u16 = 0x0006;
@@ -157,6 +162,7 @@ pub struct MigrationState {
 }
 
 /// Connection state for a known peer.
+#[allow(dead_code)]
 struct PeerState {
     /// Peer's SocketAddr (resolved from GDP or config)
     addr: SocketAddr,
@@ -175,6 +181,7 @@ struct PeerState {
 // ── QUIC Adapter ──
 
 /// QUIC platform adapter (RFC-0850 §8.7).
+#[allow(dead_code)]
 pub struct QuicAdapter {
     config: QuicConfig,
     /// Inbound message channel (populated by stream accept loop)
@@ -190,14 +197,17 @@ pub struct QuicAdapter {
     discovery: RwLock<DiscoveryState>,
     /// Replay cache for 0-RTT envelope deduplication (RFC-0853 §7)
     replay_cache: Mutex<ReplayCache>,
+    /// QUIC endpoint (set when server starts, feature-gated)
+    #[cfg(feature = "quic")]
+    endpoint: Mutex<Option<quinn::Endpoint>>,
+    /// TLS certificate (DER bytes, set when server starts)
+    cert_der: Mutex<Option<Vec<u8>>>,
 }
 
 impl QuicAdapter {
     pub fn new(config: QuicConfig) -> Self {
         let (inbound_tx, inbound_rx) = mpsc::channel(config.max_pending_envelopes);
-        // Replay cache: 1-hour window, 10,000 entries (RFC-0853 §7)
         let replay_cache = ReplayCache::new(3600, 10_000);
-        // GDP discovery starts in Bootstrap phase with SeedList method
         let discovery = DiscoveryState::new(BootstrapMethod::Static);
         Self {
             config,
@@ -208,6 +218,9 @@ impl QuicAdapter {
             ping_counter: std::sync::atomic::AtomicU64::new(0),
             discovery: RwLock::new(discovery),
             replay_cache: Mutex::new(replay_cache),
+            #[cfg(feature = "quic")]
+            endpoint: Mutex::new(None),
+            cert_der: Mutex::new(None),
         }
     }
 
@@ -297,14 +310,125 @@ impl QuicAdapter {
             .parse()
             .map_err(|e| quic_err(format!("Invalid listen addr: {e}")))?;
 
-        // Generate self-signed cert for now (raw_public_key mode)
-        let (endpoint, _cert) = Self::make_server_endpoint(listen_addr)
+        let (endpoint, cert) = Self::make_server_endpoint(listen_addr)
             .map_err(|e| quic_err(format!("Server endpoint: {e}")))?;
 
+        // Store cert and endpoint
+        *self.cert_der.lock().await = Some(cert);
         *self.self_id.lock().await = Some(format!("quic:{}", listen_addr));
 
+        // Spawn accept loop
+        let inbound_tx = self.inbound_tx.clone();
+        let ep = endpoint.clone();
+        *self.endpoint.lock().await = Some(endpoint);
+
+        tokio::spawn(async move {
+            tracing::info!("QUIC accept loop started on {}", listen_addr);
+            loop {
+                match ep.accept().await {
+                    Some(connecting) => {
+                        let tx = inbound_tx.clone();
+                        tokio::spawn(async move {
+                            match connecting.await {
+                                Ok(conn) => {
+                                    tracing::info!(
+                                        "QUIC connection from {}",
+                                        conn.remote_address()
+                                    );
+                                    // Accept incoming bidirectional streams
+                                    loop {
+                                        match conn.accept_bi().await {
+                                            Ok((mut send, mut recv)) => {
+                                                // Read frame: [u32 frame_len][u16 type][payload]
+                                                let mut header = [0u8; 6];
+                                                match recv.read_exact(&mut header).await {
+                                                    Ok(()) => {
+                                                        if let Ok((ftype, plen)) =
+                                                            QuicAdapter::decode_frame_header(
+                                                                &header,
+                                                            )
+                                                        {
+                                                            if ftype == FRAME_TYPE_ENVELOPE
+                                                                || ftype == FRAME_TYPE_FRAGMENT
+                                                            {
+                                                                let mut payload =
+                                                                    vec![0u8; plen as usize];
+                                                                if recv
+                                                                    .read_exact(&mut payload)
+                                                                    .await
+                                                                    .is_ok()
+                                                                {
+                                                                    let raw = RawPlatformMessage {
+                                                                        platform_id: format!(
+                                                                            "quic:{}",
+                                                                            blake3::hash(&payload)
+                                                                        ),
+                                                                        payload,
+                                                                        metadata: [(
+                                                                            "frame_type".into(),
+                                                                            format!(
+                                                                                "0x{:04x}",
+                                                                                ftype
+                                                                            ),
+                                                                        )]
+                                                                        .into_iter()
+                                                                        .collect(),
+                                                                    };
+                                                                    let _ = tx.try_send(raw);
+                                                                }
+                                                            } else if ftype == FRAME_TYPE_PING {
+                                                                // Respond with PONG
+                                                                let mut nonce_bytes = [0u8; 8];
+                                                                if recv
+                                                                    .read_exact(&mut nonce_bytes)
+                                                                    .await
+                                                                    .is_ok()
+                                                                {
+                                                                    let pong =
+                                                                        QuicAdapter::encode_pong(
+                                                                            u64::from_be_bytes(
+                                                                                nonce_bytes,
+                                                                            ),
+                                                                        );
+                                                                    let _ =
+                                                                        send.write_all(&pong).await;
+                                                                }
+                                                            }
+                                                        }
+                                                    }
+                                                    Err(e) => {
+                                                        tracing::debug!(
+                                                            "QUIC stream read error: {e}"
+                                                        );
+                                                    }
+                                                }
+                                            }
+                                            Err(quinn::ConnectionError::ApplicationClosed(_)) => {
+                                                tracing::info!("QUIC connection closed");
+                                                break;
+                                            }
+                                            Err(e) => {
+                                                tracing::warn!("QUIC accept_bi error: {e}");
+                                                break;
+                                            }
+                                        }
+                                    }
+                                }
+                                Err(e) => {
+                                    tracing::warn!("QUIC connection failed: {e}");
+                                }
+                            }
+                        });
+                    }
+                    None => {
+                        tracing::info!("QUIC endpoint closed");
+                        break;
+                    }
+                }
+            }
+        });
+
         tracing::info!("QUIC server started on {}", listen_addr);
-        let _ = endpoint; // TODO: spawn accept loop
         Ok(())
     }
 
@@ -519,11 +643,51 @@ impl PlatformAdapter for QuicAdapter {
     ) -> Result<DeliveryReceipt, PlatformAdapterError> {
         // Raw binary transport per RFC-0850 §8.7.3
         let wire_bytes = envelope.to_wire_bytes();
-        // TODO: encode as frame and send to peer via QUIC stream
-        let _domain = domain;
+        let domain_hex = hex_encode(&domain.domain_hash);
 
-        let topic = hex_encode(&domain.domain_hash);
-        tracing::info!("QUIC send to domain {}: {} bytes", topic, wire_bytes.len());
+        // Send via QUIC endpoint if available
+        #[cfg(feature = "quic")]
+        {
+            let frame = Self::encode_envelope_frame(&wire_bytes);
+            let peers = self.peers.read().await;
+            let peer = peers.values().find(|p| p.trusted);
+            if let Some(peer) = peer {
+                let ep = self.endpoint.lock().await;
+                if let Some(ref endpoint) = *ep {
+                    let addr = peer.addr;
+                    let conn = endpoint
+                        .connect(addr, "localhost")
+                        .map_err(|e| quic_err(format!("QUIC connect: {e}")))?;
+                    match conn.await {
+                        Ok(connection) => {
+                            let (mut send, _recv) = connection
+                                .open_bi()
+                                .await
+                                .map_err(|e| quic_err(format!("QUIC open_bi: {e}")))?;
+                            send.write_all(&frame)
+                                .await
+                                .map_err(|e| quic_err(format!("QUIC write: {e}")))?;
+                            send.finish().ok();
+                            tracing::info!("QUIC sent {} bytes to {}", frame.len(), addr);
+                        }
+                        Err(e) => {
+                            tracing::warn!("QUIC connection failed: {e}");
+                        }
+                    }
+                }
+            } else {
+                tracing::warn!("QUIC send: no trusted peer for domain {}", domain_hex);
+            }
+        }
+
+        #[cfg(not(feature = "quic"))]
+        {
+            tracing::info!(
+                "QUIC send to domain {}: {} bytes (quic feature disabled)",
+                domain_hex,
+                wire_bytes.len()
+            );
+        }
 
         Ok(DeliveryReceipt {
             platform_message_id: hex_encode(&envelope.envelope_id),

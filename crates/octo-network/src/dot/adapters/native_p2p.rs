@@ -53,70 +53,6 @@ fn hex_encode(bytes: &[u8]) -> String {
     bytes.iter().map(|b| format!("{:02x}", b)).collect()
 }
 
-/// Simple base64url encoding (no padding). Used for DOT/1/ wire format.
-fn b64url_encode(data: &[u8]) -> String {
-    const ALPHABET: &[u8] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_";
-    let mut out = String::with_capacity((data.len() * 4 / 3) + 3);
-    for chunk in data.chunks(3) {
-        let b0 = chunk[0] as u32;
-        let b1 = if chunk.len() > 1 { chunk[1] as u32 } else { 0 };
-        let b2 = if chunk.len() > 2 { chunk[2] as u32 } else { 0 };
-        let triple = (b0 << 16) | (b1 << 8) | b2;
-        out.push(ALPHABET[((triple >> 18) & 0x3F) as usize] as char);
-        out.push(ALPHABET[((triple >> 12) & 0x3F) as usize] as char);
-        if chunk.len() > 1 {
-            out.push(ALPHABET[((triple >> 6) & 0x3F) as usize] as char);
-        }
-        if chunk.len() > 2 {
-            out.push(ALPHABET[(triple & 0x3F) as usize] as char);
-        }
-    }
-    out
-}
-
-/// Simple base64url decoding (no padding).
-fn b64url_decode(s: &str) -> Result<Vec<u8>, String> {
-    fn val(c: u8) -> Result<u8, String> {
-        match c {
-            b'A'..=b'Z' => Ok(c - b'A'),
-            b'a'..=b'z' => Ok(c - b'a' + 26),
-            b'0'..=b'9' => Ok(c - b'0' + 52),
-            b'-' => Ok(62),
-            b'_' => Ok(63),
-            _ => Err(format!("Invalid base64url char: {}", c as char)),
-        }
-    }
-    let bytes = s.as_bytes();
-    let mut out = Vec::with_capacity((bytes.len() * 3) / 4 + 2);
-    for chunk in bytes.chunks(4) {
-        let c0 = val(chunk[0])? as u32;
-        let c1 = if chunk.len() > 1 {
-            val(chunk[1])? as u32
-        } else {
-            0
-        };
-        let c2 = if chunk.len() > 2 {
-            val(chunk[2])? as u32
-        } else {
-            0
-        };
-        let c3 = if chunk.len() > 3 {
-            val(chunk[3])? as u32
-        } else {
-            0
-        };
-        let triple = (c0 << 18) | (c1 << 12) | (c2 << 6) | c3;
-        out.push((triple >> 16) as u8);
-        if chunk.len() > 2 {
-            out.push((triple >> 8 & 0xFF) as u8);
-        }
-        if chunk.len() > 3 {
-            out.push((triple & 0xFF) as u8);
-        }
-    }
-    Ok(out)
-}
-
 impl NativeP2PAdapter {
     pub fn new(config: NativeP2PConfig) -> Self {
         let (inbound_tx, inbound_rx) = mpsc::channel(4096);
@@ -142,15 +78,11 @@ impl NativeP2PAdapter {
     }
 
     pub fn encode_envelope(envelope_bytes: &[u8]) -> String {
-        format!("DOT/1/{}", b64url_encode(envelope_bytes))
+        crate::dot::transport::encode_text_ref(envelope_bytes)
     }
 
     pub fn decode_envelope(text: &str) -> Result<Vec<u8>, String> {
-        let text = text.trim();
-        let b64 = text
-            .strip_prefix("DOT/1/")
-            .ok_or_else(|| "Missing DOT/1/ prefix".to_string())?;
-        b64url_decode(b64)
+        crate::dot::transport::decode_text_ref(text)
     }
 
     pub fn domain_hash(platform_id: &str) -> [u8; 32] {
@@ -446,6 +378,7 @@ mod tests {
 
     #[test]
     fn test_b64url_roundtrip() {
+        use crate::dot::transport::{b64url_decode, b64url_encode};
         let data = b"test native p2p envelope data";
         let encoded = b64url_encode(data);
         let decoded = b64url_decode(&encoded).unwrap();
@@ -454,12 +387,14 @@ mod tests {
 
     #[test]
     fn test_b64url_empty() {
+        use crate::dot::transport::{b64url_decode, b64url_encode};
         assert_eq!(b64url_encode(b""), "");
         assert_eq!(b64url_decode("").unwrap(), b"");
     }
 
     #[test]
     fn test_b64url_padding_cases() {
+        use crate::dot::transport::{b64url_decode, b64url_encode};
         // 1 byte, 2 bytes, 3 bytes (all padding variations)
         assert_eq!(b64url_decode(&b64url_encode(&[0x41])).unwrap(), vec![0x41]);
         assert_eq!(

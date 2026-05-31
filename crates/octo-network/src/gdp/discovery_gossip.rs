@@ -47,14 +47,19 @@ pub fn scope_to_gossip_scope(scope: DiscoveryScope) -> GossipScope {
 
 /// Map GDP DiscoveryScope to a DGP GossipDomainId.
 ///
-/// For Mission scope, the mission_id should be provided from the
-/// GDP ScopeFilter. For other scopes, mission_id is zero.
+/// For Mission scope, the mission_id is used as-is.
+/// For all other scopes, mission_id is forced to zero to prevent
+/// cross-scope domain ID collisions.
 pub fn scope_to_gossip_domain(
     scope: DiscoveryScope,
     network_id: u32,
     mission_id: [u8; 32],
 ) -> GossipDomainId {
-    GossipDomainId::new(network_id, mission_id, scope_to_gossip_scope(scope))
+    let effective_mission = match scope {
+        DiscoveryScope::Mission => mission_id,
+        _ => [0u8; 32], // Non-mission scopes must have zero mission_id
+    };
+    GossipDomainId::new(network_id, effective_mission, scope_to_gossip_scope(scope))
 }
 
 /// Default TTL for a discovery scope (RFC-0851 §13 table).
@@ -104,6 +109,12 @@ pub fn mode_to_flag(mode: DiscoveryGossipMode) -> u64 {
 ///
 /// Wraps the gateway identity into a `DiscoveryAdvertisement` object
 /// with the appropriate scope, TTL, and propagation flags.
+///
+/// **Note:** `object_hash` and `signature` are set to zero.
+/// The caller MUST:
+/// 1. Set `object_size` after serializing the payload
+/// 2. Call `GossipObject::derive_object_hash()` to compute `object_hash`
+/// 3. Sign the object with the gateway's Ed25519 key to fill `signature`
 pub fn wrap_advertisement(
     gateway_id: [u8; 32],
     scope: DiscoveryScope,
@@ -137,43 +148,26 @@ pub fn is_discovery_advertisement(obj: &GossipObject) -> bool {
 
 /// Select objects eligible for the current gossip mode.
 ///
-/// Filters objects by the mode's propagation flag.
+/// Filters DiscoveryAdvertisement objects that have the mode's propagation
+/// flag set and have remaining TTL > 0.
 pub fn select_for_mode<'a>(
     objects: &'a [GossipObject],
     mode: DiscoveryGossipMode,
 ) -> Vec<&'a GossipObject> {
-    match mode {
-        DiscoveryGossipMode::Flood => objects
-            .iter()
-            .filter(|o| is_discovery_advertisement(o) && o.has_flag(FLAG_FLOOD) && o.ttl_hops > 0)
-            .collect(),
-        DiscoveryGossipMode::Incremental => objects
-            .iter()
-            .filter(|o| {
-                is_discovery_advertisement(o) && o.has_flag(FLAG_INCREMENTAL) && o.ttl_hops > 0
-            })
-            .collect(),
-        DiscoveryGossipMode::AntiEntropy => objects
-            .iter()
-            .filter(|o| {
-                is_discovery_advertisement(o) && o.has_flag(FLAG_ANTI_ENTROPY) && o.ttl_hops > 0
-            })
-            .collect(),
-        DiscoveryGossipMode::Directed => objects
-            .iter()
-            .filter(|o| {
-                is_discovery_advertisement(o) && o.has_flag(FLAG_DIRECTED) && o.ttl_hops > 0
-            })
-            .collect(),
-    }
+    let flag = mode_to_flag(mode);
+    objects
+        .iter()
+        .filter(|o| is_discovery_advertisement(o) && o.has_flag(flag) && o.ttl_hops > 0)
+        .collect()
 }
 
-/// Deduplicate advertisements by gateway_id + sequence (logical_timestamp).
+/// Deduplicate advertisements by gateway_id (origin_gateway).
 ///
-/// Returns only the newest advertisement per gateway.
+/// Returns only the newest advertisement (highest logical_timestamp) per gateway.
+/// Uses BTreeMap for deterministic iteration order (consensus requirement).
 pub fn deduplicate_by_gateway(objects: &[GossipObject]) -> Vec<&GossipObject> {
-    use std::collections::HashMap;
-    let mut newest: HashMap<[u8; 32], &GossipObject> = HashMap::new();
+    use std::collections::BTreeMap;
+    let mut newest: BTreeMap<[u8; 32], &GossipObject> = BTreeMap::new();
 
     for obj in objects {
         if !is_discovery_advertisement(obj) {
@@ -190,7 +184,7 @@ pub fn deduplicate_by_gateway(objects: &[GossipObject]) -> Vec<&GossipObject> {
             .or_insert(obj);
     }
 
-    newest.into_values().collect()
+    newest.values().copied().collect()
 }
 
 // ── Tests ──
@@ -475,5 +469,142 @@ mod tests {
         let mission_domain = scope_to_gossip_domain(DiscoveryScope::Mission, 1, [0x42; 32]);
         assert_eq!(mission_domain.scope, GossipScope::MISSION);
         assert_eq!(mission_domain.mission_id, [0x42; 32]);
+    }
+
+    #[test]
+    fn test_scope_to_gossip_domain_non_mission_zeroes_mission_id() {
+        // Non-Mission scopes must force mission_id to zero
+        let domain = scope_to_gossip_domain(DiscoveryScope::Global, 1, [0xFF; 32]);
+        assert_eq!(domain.mission_id, [0u8; 32]);
+
+        let domain = scope_to_gossip_domain(DiscoveryScope::Local, 1, [0xAB; 32]);
+        assert_eq!(domain.mission_id, [0u8; 32]);
+
+        let domain = scope_to_gossip_domain(DiscoveryScope::Consensus, 1, [0x99; 32]);
+        assert_eq!(domain.mission_id, [0u8; 32]);
+
+        // Mission scope preserves mission_id
+        let domain = scope_to_gossip_domain(DiscoveryScope::Mission, 1, [0x42; 32]);
+        assert_eq!(domain.mission_id, [0x42; 32]);
+    }
+
+    #[test]
+    fn test_select_for_mode_anti_entropy() {
+        let objects = vec![
+            make_adv(
+                0x01,
+                DiscoveryScope::Global,
+                1000,
+                DiscoveryGossipMode::Flood,
+            ),
+            make_adv(
+                0x02,
+                DiscoveryScope::Global,
+                1001,
+                DiscoveryGossipMode::AntiEntropy,
+            ),
+            make_adv(
+                0x03,
+                DiscoveryScope::Global,
+                1002,
+                DiscoveryGossipMode::AntiEntropy,
+            ),
+        ];
+        let selected = select_for_mode(&objects, DiscoveryGossipMode::AntiEntropy);
+        assert_eq!(selected.len(), 2);
+        assert!(selected.iter().all(|o| o.has_flag(FLAG_ANTI_ENTROPY)));
+    }
+
+    #[test]
+    fn test_select_for_mode_directed() {
+        let objects = vec![
+            make_adv(
+                0x01,
+                DiscoveryScope::Global,
+                1000,
+                DiscoveryGossipMode::Flood,
+            ),
+            make_adv(
+                0x02,
+                DiscoveryScope::Mission,
+                1001,
+                DiscoveryGossipMode::Directed,
+            ),
+        ];
+        let selected = select_for_mode(&objects, DiscoveryGossipMode::Directed);
+        assert_eq!(selected.len(), 1);
+        assert!(selected[0].has_flag(FLAG_DIRECTED));
+    }
+
+    #[test]
+    fn test_select_for_mode_empty() {
+        let objects: Vec<GossipObject> = vec![];
+        let selected = select_for_mode(&objects, DiscoveryGossipMode::Flood);
+        assert!(selected.is_empty());
+    }
+
+    #[test]
+    fn test_deduplicate_empty() {
+        let objects: Vec<GossipObject> = vec![];
+        let deduped = deduplicate_by_gateway(&objects);
+        assert!(deduped.is_empty());
+    }
+
+    #[test]
+    fn test_deduplicate_all_same_gateway() {
+        let objects = vec![
+            make_adv(
+                0x01,
+                DiscoveryScope::Global,
+                1000,
+                DiscoveryGossipMode::Flood,
+            ),
+            make_adv(
+                0x01,
+                DiscoveryScope::Global,
+                2000,
+                DiscoveryGossipMode::Flood,
+            ),
+            make_adv(
+                0x01,
+                DiscoveryScope::Global,
+                3000,
+                DiscoveryGossipMode::Flood,
+            ),
+        ];
+        let deduped = deduplicate_by_gateway(&objects);
+        assert_eq!(deduped.len(), 1);
+        assert_eq!(deduped[0].logical_timestamp, 3000); // Newest wins
+    }
+
+    #[test]
+    fn test_deduplication_deterministic_order() {
+        // BTreeMap ensures deterministic iteration order
+        let objects = vec![
+            make_adv(
+                0x03,
+                DiscoveryScope::Global,
+                1000,
+                DiscoveryGossipMode::Flood,
+            ),
+            make_adv(
+                0x01,
+                DiscoveryScope::Global,
+                1000,
+                DiscoveryGossipMode::Flood,
+            ),
+            make_adv(
+                0x02,
+                DiscoveryScope::Global,
+                1000,
+                DiscoveryGossipMode::Flood,
+            ),
+        ];
+        let deduped = deduplicate_by_gateway(&objects);
+        assert_eq!(deduped.len(), 3);
+        // Should be ordered by gateway_id (BTreeMap key order)
+        assert_eq!(deduped[0].origin_gateway, make_gateway_id(0x01));
+        assert_eq!(deduped[1].origin_gateway, make_gateway_id(0x02));
+        assert_eq!(deduped[2].origin_gateway, make_gateway_id(0x03));
     }
 }

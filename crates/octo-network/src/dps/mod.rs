@@ -15,6 +15,6 @@ pub use envelope::ProofCarryingEnvelope;
 pub use error::DpsError;
 pub use recursive::{AggregatedProof, AggregationMethod};
 pub use suite::{ProofCircuitModel, ProofExecutionClass, ProofSuite, ProofSuiteId, ProofSystemId};
-pub use verifier::{VerifierEntry, VerifierRegistry};
 pub use trait_def::DeterministicProofSystem;
+pub use verifier::{VerifierEntry, VerifierRegistry};
 pub use witness::{Witness, WitnessInput};

@@ -17,7 +17,7 @@ pub use error::PceError;
 pub use policy::MissionProofPolicy;
 pub use proof_type::{ProofCircuitModel, ProofSystemId, ProofType, VerificationResult};
 pub use registry::{VerifierEntry, VerifierRegistry};
-pub use verify::{compute_merkle_root, verify_canonical_boundary, verify_pce};
+pub use verify::{compute_merkle_root, verify_canonical_boundary, verify_pce, verify_via_dps};
 
 /// PCE protocol version
 pub const PCE_PROTOCOL_VERSION: u16 = 1;

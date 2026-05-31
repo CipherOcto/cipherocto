@@ -34,6 +34,16 @@ pub const SLASH_INVALID_PROOF: u64 = 1000; // 10%
 pub const SLASH_PROOF_REPLAY: u64 = 2500; // 25%
 pub const SLASH_CONSENSUS_VIOLATION: u64 = 5000; // 50%
 
+/// OCTO-S archival cost per byte of proof storage.
+/// OCTO-S is the storage token used for proof archival costs.
+pub const OCTO_S_ARCHIVAL_COST_PER_BYTE: u64 = 1;
+
+/// Compute the archival cost for a proof of given size in bytes.
+/// Uses OCTO-S token: cost = proof_size_bytes * OCTO_S_ARCHIVAL_COST_PER_BYTE.
+pub fn compute_archival_cost(proof_size_bytes: u64) -> u64 {
+    proof_size_bytes.saturating_mul(OCTO_S_ARCHIVAL_COST_PER_BYTE)
+}
+
 impl RewardDistribution {
     /// Compute OCTO-B reward for forwarding
     pub fn forwarding_reward(&self, envelope_count: u64) -> u64 {
@@ -81,6 +91,23 @@ impl RewardDistribution {
             .saturating_mul(availability_score as u64)
             .saturating_div(500)
     }
+}
+
+/// Apply PoR (Proof-of-Relay) boost to a base trust score.
+///
+/// The boost is proportional to the composite relay score:
+///   boosted = base_score * (10000 + por_boost_bps) / 10000
+/// where por_boost_bps = min(composite_score / 10, 5000) (max 50% boost)
+pub fn apply_por_boost(base_score: u64, composite_relay_score: u64) -> u64 {
+    let boost_bps = composite_relay_score.saturating_div(10).min(5000);
+    base_score
+        .saturating_mul(10000u64.saturating_add(boost_bps))
+        .saturating_div(10000)
+}
+
+/// Convert a RelayScore composite to a trust factor in 0-10000 range.
+pub fn relay_score_to_trust_factor(composite_relay_score: u64) -> u64 {
+    composite_relay_score.min(10000)
 }
 
 #[cfg(test)]
@@ -134,5 +161,43 @@ mod tests {
             RewardDistribution::slashing_amount(10000, SlashingCondition::LowAvailability),
             0
         );
+    }
+
+    #[test]
+    fn test_archival_cost() {
+        assert_eq!(compute_archival_cost(1000), 1000);
+        assert_eq!(compute_archival_cost(0), 0);
+    }
+
+    #[test]
+    fn test_archival_cost_per_byte_constant() {
+        assert_eq!(OCTO_S_ARCHIVAL_COST_PER_BYTE, 1);
+    }
+
+    #[test]
+    fn test_por_boost() {
+        // composite=5000 -> boost_bps=500 -> 5% boost
+        let boosted = apply_por_boost(10000, 5000);
+        assert_eq!(boosted, 10500);
+    }
+
+    #[test]
+    fn test_por_boost_max_cap() {
+        // composite=100000 -> boost_bps capped at 5000 -> 50% boost
+        let boosted = apply_por_boost(10000, 100000);
+        assert_eq!(boosted, 15000);
+    }
+
+    #[test]
+    fn test_por_boost_zero() {
+        let boosted = apply_por_boost(10000, 0);
+        assert_eq!(boosted, 10000);
+    }
+
+    #[test]
+    fn test_relay_score_to_trust_factor() {
+        assert_eq!(relay_score_to_trust_factor(5000), 5000);
+        assert_eq!(relay_score_to_trust_factor(15000), 10000); // capped
+        assert_eq!(relay_score_to_trust_factor(0), 0);
     }
 }

@@ -97,6 +97,59 @@ impl RelayScore {
     }
 }
 
+/// PoR boost multiplier for high-scoring relays (1000 = 1.0x, 1500 = 1.5x).
+const POR_BOOST_BASELINE: u64 = 1000;
+const POR_BOOST_MAX: u64 = 2000; // 2.0x max boost
+const POR_BOOST_COMPOSITE_THRESHOLD: u64 = 500_000;
+
+/// Apply a Proof-of-Relay boost multiplier to a base score.
+///
+/// Relays with composite scores above the threshold receive a boost
+/// proportional to their relay score, capped at POR_BOOST_MAX.
+///
+/// boost_factor = baseline + (composite - threshold) / threshold * (max - baseline)
+/// clamped to [baseline, max]
+pub fn apply_por_boost(base_score: u64, relay_score: &RelayScore) -> u64 {
+    let composite = relay_score.composite;
+    if composite < POR_BOOST_COMPOSITE_THRESHOLD {
+        return base_score;
+    }
+
+    let excess = composite.saturating_sub(POR_BOOST_COMPOSITE_THRESHOLD);
+    let boost_range = POR_BOOST_MAX.saturating_sub(POR_BOOST_BASELINE);
+    let boost_factor = POR_BOOST_BASELINE.saturating_add(
+        excess
+            .saturating_mul(boost_range)
+            .saturating_div(POR_BOOST_COMPOSITE_THRESHOLD),
+    );
+    let clamped = boost_factor.min(POR_BOOST_MAX);
+    base_score
+        .saturating_mul(clamped)
+        .saturating_div(POR_BOOST_BASELINE)
+}
+
+/// Convert a RelayScore to a trust factor in the 0-10000 range.
+///
+/// Maps the composite score to a normalized trust value where:
+/// - 0 = untrusted (composite 0)
+/// - 10000 = maximum trust (composite >= max_composite)
+///
+/// The mapping uses a logarithmic-ish scaling with a reference composite
+/// of 1,000,000 (typical high-performing relay with 1.0x stake).
+pub fn relay_score_to_trust_factor(relay_score: &RelayScore) -> u64 {
+    const REFERENCE_COMPOSITE: u64 = 1_000_000;
+    const MAX_TRUST: u64 = 10_000;
+
+    if relay_score.composite == 0 {
+        return 0;
+    }
+
+    let scaled = (relay_score.composite as u128)
+        .saturating_mul(MAX_TRUST as u128)
+        .saturating_div(REFERENCE_COMPOSITE as u128);
+    (scaled.min(MAX_TRUST as u128)) as u64
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -168,5 +221,76 @@ mod tests {
             RelayScore::compute_stake_multiplier(u64::MAX, 1, 5000),
             6000
         );
+    }
+
+    #[test]
+    fn test_por_boost_below_threshold() {
+        let score = make_score(500_000 - 1);
+        assert_eq!(apply_por_boost(10_000, &score), 10_000);
+    }
+
+    #[test]
+    fn test_por_boost_at_threshold() {
+        let score = make_score(500_000);
+        assert_eq!(apply_por_boost(10_000, &score), 10_000);
+    }
+
+    #[test]
+    fn test_por_boost_above_threshold() {
+        let score = make_score(750_000);
+        let boosted = apply_por_boost(10_000, &score);
+        assert!(boosted > 10_000);
+        assert!(boosted <= 20_000); // max 2x
+    }
+
+    #[test]
+    fn test_por_boost_max_cap() {
+        let score = make_score(u64::MAX);
+        let boosted = apply_por_boost(10_000, &score);
+        assert_eq!(boosted, 20_000); // capped at 2x
+    }
+
+    #[test]
+    fn test_por_boost_zero_score() {
+        let score = make_score(0);
+        assert_eq!(apply_por_boost(10_000, &score), 10_000);
+    }
+
+    #[test]
+    fn test_trust_factor_zero_composite() {
+        let score = make_score(0);
+        assert_eq!(relay_score_to_trust_factor(&score), 0);
+    }
+
+    #[test]
+    fn test_trust_factor_reference() {
+        let score = make_score(1_000_000);
+        assert_eq!(relay_score_to_trust_factor(&score), 10_000);
+    }
+
+    #[test]
+    fn test_trust_factor_half() {
+        let score = make_score(500_000);
+        assert_eq!(relay_score_to_trust_factor(&score), 5_000);
+    }
+
+    #[test]
+    fn test_trust_factor_capped() {
+        let score = make_score(2_000_000);
+        assert_eq!(relay_score_to_trust_factor(&score), 10_000);
+    }
+
+    fn make_score(composite: u64) -> RelayScore {
+        RelayScore {
+            gateway_id: [0u8; 32],
+            epoch: 1,
+            forwarding_score: 0,
+            availability_score: 0,
+            bandwidth_score: 0,
+            uptime_score: 0,
+            diversity_bonus: 0,
+            stake_multiplier: 1000,
+            composite,
+        }
     }
 }

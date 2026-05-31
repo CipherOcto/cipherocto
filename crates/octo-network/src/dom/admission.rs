@@ -47,16 +47,16 @@ pub fn check_admission(
     config: &AdmissionConfig,
 ) -> Result<(), DomError> {
     // Ed25519 signature verification (RFC-0857 §3)
-    let vk = VerifyingKey::from_bytes(&intent.sender_id).map_err(|_| {
-        DomError::InvalidSignature {
+    let vk =
+        VerifyingKey::from_bytes(&intent.sender_id).map_err(|_| DomError::InvalidSignature {
             intent_id: intent.intent_id,
-        }
-    })?;
+        })?;
     let sig = Signature::from_bytes(&intent.signature);
     let msg = intent.to_signing_bytes();
-    vk.verify(&msg, &sig).map_err(|_| DomError::InvalidSignature {
-        intent_id: intent.intent_id,
-    })?;
+    vk.verify(&msg, &sig)
+        .map_err(|_| DomError::InvalidSignature {
+            intent_id: intent.intent_id,
+        })?;
 
     // 0. Check global capacity (using replay_cache as proxy for pending intent count)
     if replay_cache.len() as u32 >= config.max_pending_intents {

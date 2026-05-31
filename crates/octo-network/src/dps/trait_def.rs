@@ -146,10 +146,7 @@ mod tests {
 
     #[test]
     fn test_deterministic_proof_system_circuit_model() {
-        assert_eq!(
-            MockProofSystem::circuit_model(),
-            ProofCircuitModel::AIR
-        );
+        assert_eq!(MockProofSystem::circuit_model(), ProofCircuitModel::AIR);
     }
 
     #[test]
@@ -161,7 +158,10 @@ mod tests {
 
         let proof1 = MockProofSystem::prove(&witness1, trace, &public).unwrap();
         let proof2 = MockProofSystem::prove(&witness2, trace, &public).unwrap();
-        assert_ne!(proof1.0, proof2.0, "different witnesses must produce different proofs");
+        assert_ne!(
+            proof1.0, proof2.0,
+            "different witnesses must produce different proofs"
+        );
     }
 
     #[test]
@@ -171,6 +171,9 @@ mod tests {
 
         let proof1 = MockProofSystem::prove(&witness, [0xAA; 32], &public).unwrap();
         let proof2 = MockProofSystem::prove(&witness, [0xBB; 32], &public).unwrap();
-        assert_ne!(proof1.0, proof2.0, "different trace commitments must produce different proofs");
+        assert_ne!(
+            proof1.0, proof2.0,
+            "different trace commitments must produce different proofs"
+        );
     }
 }

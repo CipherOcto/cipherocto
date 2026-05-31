@@ -9,7 +9,7 @@ pub mod onion;
 pub mod session;
 pub mod types;
 
-pub use cover_traffic::{generate_cover_payload, is_cover_ratio_valid, DEFAULT_COVER_RATIO};
+pub use cover_traffic::{check_replay, generate_cover_payload, ORR_EXECUTION_CLASS_TABLE};
 pub use error::OrrError;
 pub use onion::{construct_onion, peel_layer, HopConstructionParams, PeeledLayer};
 pub use session::{compute_hop_mac, derive_hop_nonce, derive_hop_session_key};

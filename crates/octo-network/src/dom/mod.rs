@@ -22,4 +22,4 @@ pub mod propagation;
 pub use error::DomError;
 pub use intent::{ExecutionClass, IntentType, OverlayIntent};
 pub use ordering::canonical_sort;
-pub use pool::MempoolPool;
+pub use pool::{MempoolPool, MempoolStateRoot};

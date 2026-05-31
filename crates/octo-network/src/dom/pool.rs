@@ -256,4 +256,45 @@ mod tests {
         assert_eq!(ordered[0].sequence, 1); // lower sequence first
         assert_eq!(ordered[1].sequence, 2);
     }
+
+    #[test]
+    fn test_mempool_state_root_empty() {
+        let intents: Vec<OverlayIntent> = vec![];
+        let root = MempoolStateRoot::compute(&intents);
+        assert_eq!(root, [0u8; 32]);
+    }
+
+    #[test]
+    fn test_mempool_state_root_deterministic() {
+        let intents = vec![
+            make_intent(0x01, 2, 200),
+            make_intent(0x01, 1, 200),
+            make_intent(0x02, 1, 200),
+        ];
+        let r1 = MempoolStateRoot::compute(&intents);
+        let r2 = MempoolStateRoot::compute(&intents);
+        assert_eq!(r1, r2);
+        assert_ne!(r1, [0u8; 32]);
+    }
+
+    #[test]
+    fn test_mempool_state_root_order_independent() {
+        // Same intents in different order should produce same root
+        let intents_a = vec![make_intent(0x01, 1, 200), make_intent(0x01, 2, 200)];
+        let intents_b = vec![make_intent(0x01, 2, 200), make_intent(0x01, 1, 200)];
+        assert_eq!(
+            MempoolStateRoot::compute(&intents_a),
+            MempoolStateRoot::compute(&intents_b)
+        );
+    }
+
+    #[test]
+    fn test_mempool_state_root_different_intents() {
+        let intents_a = vec![make_intent(0x01, 1, 200)];
+        let intents_b = vec![make_intent(0x02, 1, 200)];
+        assert_ne!(
+            MempoolStateRoot::compute(&intents_a),
+            MempoolStateRoot::compute(&intents_b)
+        );
+    }
 }

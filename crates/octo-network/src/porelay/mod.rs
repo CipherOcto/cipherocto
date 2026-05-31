@@ -24,7 +24,7 @@ pub use error::PoRelayError;
 pub use forwarding::ForwardingProof;
 pub use heartbeat::{GatewayHeartbeat, LoadClass, UptimeClass};
 pub use registry::TrustRegistry;
-pub use score::RelayScore;
+pub use score::{apply_por_boost, relay_score_to_trust_factor, RelayScore};
 pub use uptime::UptimeProof;
 
 /// Extends GatewayAdvertisement with relay proofs (RFC-0860 §10)

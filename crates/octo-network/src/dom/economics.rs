@@ -7,12 +7,12 @@
 use crate::dom::intent::OverlayIntent;
 
 /// Base fee in OCTO units.
-pub const BASE_FEE: u64 = 2;
+pub const BASE_FEE: u64 = 1;
 
 /// Maximum priority premium (200% uplift = 2.0x).
 pub const MAX_PRIORITY_PREMIUM: u64 = 20_000; // basis points (2.0 = 20000bp)
 
-/// Intent type multiplier per execution class (BASE_FEE=2, so Archive=1 gives 0.5x).
+/// Intent type multiplier per execution class (BASE_FEE=1, so Archive=1 gives 0.5x base).
 pub fn intent_type_multiplier(execution_class: u16) -> u64 {
     match execution_class {
         0x0000 => 20, // CriticalConsensus (10x base)
@@ -21,7 +21,7 @@ pub fn intent_type_multiplier(execution_class: u16) -> u64 {
         0x0003 => 8,  // Economic (4x base)
         0x0004 => 4,  // Standard (2x base)
         0x0005 => 2,  // Bulk (1x base)
-        0x0006 => 1,  // Archive (0.5x — 2 * 1 = 2 OCTO)
+        0x0006 => 1,  // Archive (0.5x — 1 * 1 = 1 OCTO)
         _ => 2,
     }
 }
@@ -84,30 +84,30 @@ mod tests {
     fn test_fee_critical_consensus() {
         let intent = make_intent(ExecutionClass::CriticalConsensus);
         let fee = compute_intent_fee(&intent, 0);
-        assert_eq!(fee, 40); // 2 * 20 * 1.0
+        assert_eq!(fee, 20); // 1 * 20 * 1.0
     }
 
     #[test]
     fn test_fee_standard_no_premium() {
         let intent = make_intent(ExecutionClass::Standard);
         let fee = compute_intent_fee(&intent, 0);
-        assert_eq!(fee, 8); // 2 * 4 * 1.0
+        assert_eq!(fee, 4); // 1 * 4 * 1.0
     }
 
     #[test]
     fn test_fee_with_premium() {
         let intent = make_intent(ExecutionClass::Standard);
         let fee = compute_intent_fee(&intent, 1000); // 10% premium
-                                                     // 2 * 4 * 11000 / 10000 = 88000 / 10000 = 8 (integer truncation)
-        assert_eq!(fee, 8);
+                                                     // 1 * 4 * 11000 / 10000 = 44000 / 10000 = 4 (integer truncation)
+        assert_eq!(fee, 4);
     }
 
     #[test]
     fn test_fee_premium_clamped() {
         let intent = make_intent(ExecutionClass::Standard);
         let fee = compute_intent_fee(&intent, 25000); // 250% premium (clamped to 200% cap)
-                                                      // 2 * 4 * 30000 / 10000 = 240000 / 10000 = 24
-        assert_eq!(fee, 24);
+                                                      // 1 * 4 * 30000 / 10000 = 120000 / 10000 = 12
+        assert_eq!(fee, 12);
     }
 
     #[test]

@@ -117,6 +117,69 @@ impl MempoolPool {
     }
 }
 
+/// Mempool state root — BLAKE3-256 Merkle root of all pending intents.
+///
+/// Provides a deterministic fingerprint of the mempool state for consensus.
+/// Intents are sorted by canonical intent_id before hashing.
+pub struct MempoolStateRoot;
+
+impl MempoolStateRoot {
+    /// Compute the Merkle root of all pending intents.
+    ///
+    /// Intents are first sorted by intent_id (ascending) for determinism,
+    /// then hashed as a BLAKE3 Merkle tree over individual intent hashes.
+    pub fn compute(intents: &[OverlayIntent]) -> [u8; 32] {
+        if intents.is_empty() {
+            return [0u8; 32];
+        }
+
+        // Sort by intent_id for deterministic ordering
+        let mut sorted: Vec<&OverlayIntent> = intents.iter().collect();
+        sorted.sort_by(|a, b| a.intent_id.cmp(&b.intent_id));
+
+        // Compute leaf hashes
+        let leaves: Vec<[u8; 32]> = sorted
+            .iter()
+            .map(|intent| {
+                let mut hasher = blake3::Hasher::new();
+                hasher.update(&intent.intent_id);
+                hasher.update(&intent.sequence.to_be_bytes());
+                hasher.update(&intent.mission_id);
+                *hasher.finalize().as_bytes()
+            })
+            .collect();
+
+        merkle_root(&leaves)
+    }
+}
+
+/// Compute a BLAKE3-256 Merkle root from a slice of 32-byte leaves.
+fn merkle_root(leaves: &[[u8; 32]]) -> [u8; 32] {
+    if leaves.is_empty() {
+        return [0u8; 32];
+    }
+    if leaves.len() == 1 {
+        return leaves[0];
+    }
+
+    let mut level = leaves.to_vec();
+    while level.len() > 1 {
+        if !level.len().is_multiple_of(2) {
+            let last = *level.last().expect("level is non-empty in merkle loop");
+            level.push(last);
+        }
+        let mut next = Vec::with_capacity(level.len() / 2);
+        for pair in level.chunks(2) {
+            let mut hasher = blake3::Hasher::new();
+            hasher.update(&pair[0]);
+            hasher.update(&pair[1]);
+            next.push(*hasher.finalize().as_bytes());
+        }
+        level = next;
+    }
+    level[0]
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

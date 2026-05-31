@@ -69,6 +69,25 @@ pub struct OverlayIntent {
     pub signature: [u8; 64],
 }
 
+impl OverlayIntent {
+    /// Canonical signing bytes for Ed25519 signature verification.
+    /// Excludes the signature field itself.
+    pub fn to_signing_bytes(&self) -> Vec<u8> {
+        let mut buf = Vec::with_capacity(128);
+        buf.extend_from_slice(&self.intent_id);
+        buf.extend_from_slice(&self.intent_type.to_be_bytes());
+        buf.extend_from_slice(&self.mission_id);
+        buf.extend_from_slice(&self.sender_id);
+        buf.extend_from_slice(&self.sequence.to_be_bytes());
+        buf.extend_from_slice(&self.logical_timestamp.to_be_bytes());
+        buf.extend_from_slice(&self.expiration.to_be_bytes());
+        buf.extend_from_slice(&self.payload_root);
+        buf.extend_from_slice(&self.economic_weight.to_be_bytes());
+        buf.extend_from_slice(&self.execution_class.to_be_bytes());
+        buf
+    }
+}
+
 /// Default TTL per scope (RFC-0857 §1).
 pub fn default_ttl_for_scope(scope: u16) -> u64 {
     match scope {

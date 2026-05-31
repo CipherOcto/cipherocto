@@ -7,6 +7,7 @@
 
 use crate::dom::error::DomError;
 use crate::dom::intent::OverlayIntent;
+use ed25519_dalek::{Signature, Verifier, VerifyingKey};
 use std::collections::BTreeMap;
 
 /// Sequence tracker per (sender_id, mission_id).
@@ -45,10 +46,17 @@ pub fn check_admission(
     sequence_tracker: &SequenceTracker,
     config: &AdmissionConfig,
 ) -> Result<(), DomError> {
-    // TODO: Ed25519 signature verification (RFC-0857 §3)
-    // if !verify_signature(&intent.signature, &sender_public_key) {
-    //     return Err(DomError::InvalidSignature);
-    // }
+    // Ed25519 signature verification (RFC-0857 §3)
+    let vk = VerifyingKey::from_bytes(&intent.sender_id).map_err(|_| {
+        DomError::InvalidSignature {
+            intent_id: intent.intent_id,
+        }
+    })?;
+    let sig = Signature::from_bytes(&intent.signature);
+    let msg = intent.to_signing_bytes();
+    vk.verify(&msg, &sig).map_err(|_| DomError::InvalidSignature {
+        intent_id: intent.intent_id,
+    })?;
 
     // 0. Check global capacity (using replay_cache as proxy for pending intent count)
     if replay_cache.len() as u32 >= config.max_pending_intents {
@@ -106,26 +114,65 @@ pub fn check_admission(
 mod tests {
     use super::*;
     use crate::dom::intent::ExecutionClass;
+    use ed25519_dalek::{Signer, SigningKey, VerifyingKey};
 
-    fn make_intent(seq: u64, ts: u64, exp: u64) -> OverlayIntent {
-        OverlayIntent {
+    fn make_signing_key() -> SigningKey {
+        SigningKey::from_bytes(&[0xCCu8; 32])
+    }
+
+    fn make_signed_intent(seq: u64, ts: u64, exp: u64) -> (OverlayIntent, VerifyingKey) {
+        let sk = make_signing_key();
+        let vk = sk.verifying_key();
+        let intent = OverlayIntent {
             intent_id: [0xAA; 32],
             intent_type: 0x0001,
             mission_id: [0xBB; 32],
-            sender_id: [0xCC; 32],
+            sender_id: vk.to_bytes(),
             sequence: seq,
             logical_timestamp: ts,
             expiration: exp,
             payload_root: [0u8; 32],
             economic_weight: 100,
             execution_class: ExecutionClass::Economic as u16,
-            signature: [0u8; 64],
-        }
+            signature: [0u8; 64], // placeholder
+        };
+        let msg = intent.to_signing_bytes();
+        let sig = sk.sign(&msg);
+        let mut signed = intent;
+        signed.signature = sig.to_bytes();
+        (signed, vk)
+    }
+
+    #[test]
+    fn test_admission_signature_valid() {
+        let (intent, _vk) = make_signed_intent(1, 100, 200);
+        let result = check_admission(
+            &intent,
+            100,
+            &BTreeMap::new(),
+            &BTreeMap::new(),
+            &Default::default(),
+        );
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_admission_signature_invalid() {
+        let (mut intent, _vk) = make_signed_intent(1, 100, 200);
+        intent.signature[0] ^= 0xFF; // corrupt signature
+        let result = check_admission(
+            &intent,
+            100,
+            &BTreeMap::new(),
+            &BTreeMap::new(),
+            &Default::default(),
+        );
+        assert!(matches!(result, Err(DomError::InvalidSignature { .. })));
     }
 
     #[test]
     fn test_admission_expired() {
-        let intent = make_intent(1, 100, 50); // expiration=50, current=100
+        let (intent, _vk) = make_signed_intent(1, 100, 50); // expiration=50, current=100
         let result = check_admission(
             &intent,
             100,
@@ -138,7 +185,7 @@ mod tests {
 
     #[test]
     fn test_admission_replay() {
-        let intent = make_intent(1, 100, 200);
+        let (intent, _vk) = make_signed_intent(1, 100, 200);
         let mut replay = BTreeMap::new();
         replay.insert(intent.intent_id, 50u64);
         let result = check_admission(&intent, 100, &replay, &BTreeMap::new(), &Default::default());
@@ -147,7 +194,7 @@ mod tests {
 
     #[test]
     fn test_admission_sequence_stale() {
-        let intent = make_intent(5, 100, 200);
+        let (intent, _vk) = make_signed_intent(5, 100, 200);
         let mut seq = BTreeMap::new();
         seq.insert(
             (intent.sender_id.to_vec(), intent.mission_id.to_vec()),
@@ -159,8 +206,12 @@ mod tests {
 
     #[test]
     fn test_admission_invalid_class() {
-        let mut intent = make_intent(1, 100, 200);
+        let (mut intent, _vk) = make_signed_intent(1, 100, 200);
         intent.execution_class = 0x00FF;
+        // Re-sign after mutation
+        let sk = make_signing_key();
+        let msg = intent.to_signing_bytes();
+        intent.signature = sk.sign(&msg).to_bytes();
         let result = check_admission(
             &intent,
             100,
@@ -176,8 +227,12 @@ mod tests {
 
     #[test]
     fn test_admission_invalid_type() {
-        let mut intent = make_intent(1, 100, 200);
+        let (mut intent, _vk) = make_signed_intent(1, 100, 200);
         intent.intent_type = 0x0000;
+        // Re-sign after mutation
+        let sk = make_signing_key();
+        let msg = intent.to_signing_bytes();
+        intent.signature = sk.sign(&msg).to_bytes();
         let result = check_admission(
             &intent,
             100,
@@ -190,7 +245,7 @@ mod tests {
 
     #[test]
     fn test_admission_success() {
-        let intent = make_intent(1, 100, 200);
+        let (intent, _vk) = make_signed_intent(1, 100, 200);
         let result = check_admission(
             &intent,
             100,

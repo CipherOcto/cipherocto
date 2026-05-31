@@ -3,11 +3,13 @@
 //! Privacy-preserving multi-hop relay architecture with layered encryption,
 //! per-relay knowledge isolation, forward secrecy, and cover traffic generation.
 
+pub mod cover_traffic;
 pub mod error;
 pub mod onion;
 pub mod session;
 pub mod types;
 
+pub use cover_traffic::{generate_cover_payload, is_cover_ratio_valid, DEFAULT_COVER_RATIO};
 pub use error::OrrError;
 pub use onion::{construct_onion, peel_layer, HopConstructionParams, PeeledLayer};
 pub use session::{compute_hop_mac, derive_hop_nonce, derive_hop_session_key};

@@ -3,6 +3,7 @@
 //! Provides deterministic proof generation, verification, and aggregation
 //! with protocol-level proof attachment and canonical proof boundaries.
 
+pub mod backends;
 pub mod envelope;
 pub mod error;
 pub mod recursive;

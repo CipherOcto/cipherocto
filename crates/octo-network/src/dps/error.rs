@@ -44,6 +44,8 @@ pub enum DpsError {
     InvalidVerificationKey { reason: &'static str },
     /// Consensus boundary violation detected
     ConsensusBoundaryViolation { reason: &'static str },
+    /// No backend registered for this proof system
+    UnsupportedBackend { system_id: u16 },
 }
 
 impl std::fmt::Display for DpsError {
@@ -112,6 +114,9 @@ impl std::fmt::Display for DpsError {
             }
             Self::ConsensusBoundaryViolation { reason } => {
                 write!(f, "Consensus boundary violation: {}", reason)
+            }
+            Self::UnsupportedBackend { system_id } => {
+                write!(f, "No backend registered for system {:#06x}", system_id)
             }
         }
     }

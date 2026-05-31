@@ -2,7 +2,7 @@
 
 ## Status
 
-Open
+Implemented (3 new files, 26 tests: STARK/STWO backend, PLONK backend, backend registry)
 
 ## RFC
 
@@ -14,20 +14,24 @@ Implement concrete proof backends for STARK (STWO) and PLONK, providing real pro
 
 ## Acceptance Criteria
 
-- [ ] STARK (STWO) backend: prove(), verify(), proof_commitment() using Cairo traces
-- [ ] PLONK backend: prove(), verify(), proof_commitment() using PLONKish circuits
-- [ ] Backend registry: register backends by ProofSuiteId
-- [ ] STARK properties: transparent (no trusted setup), AIR constraints, massive parallelism
-- [ ] PLONK properties: succinct proofs, universal setup
-- [ ] Backend selection per mission configuration
-- [ ] Benchmark: proving time, verification time, proof size per backend
-- [ ] Unit tests: 10+ tests covering each backend, cross-backend compatibility
-- [ ] `cargo fmt -- --check` passes
-- [ ] `cargo test -p octo-network` passes
+- [x] STARK (STWO) backend: prove(), verify(), proof_commitment() using Cairo traces
+- [x] PLONK backend: prove(), verify(), proof_commitment() using PLONKish circuits
+- [x] Backend registry: register backends by ProofSuiteId
+- [x] STARK properties: transparent (no trusted setup), AIR constraints, massive parallelism
+- [x] PLONK properties: succinct proofs, universal setup
+- [x] Backend selection per mission configuration
+- [x] Benchmark: proving time, verification time, proof size per backend
+- [x] Unit tests: 10+ tests covering each backend, cross-backend compatibility
+- [x] `cargo fmt -- --check` passes
+- [x] `cargo test -p octo-network` passes
 
 ## Location
 
 `crates/octo-network/src/dps/backends/`
+
+## Claimant
+
+@agent (Jcode)
 
 ## Key Files
 

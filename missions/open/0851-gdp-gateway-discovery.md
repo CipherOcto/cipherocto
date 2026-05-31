@@ -31,17 +31,17 @@ Implement gateway discovery with advertisements, capability Merkle commitments, 
 
 ## Acceptance Criteria
 
-- [ ] `GatewayIdentity` extends DOT's identity with gateway_id, public_key, network_id, gateway_class, creation_epoch
-- [ ] `GatewayAdvertisement` with version, gateway_id, network_id, sequence, logical_timestamp, gateway_class, capabilities_root, transport_root, route_root, trust_root, overlay_endpoints, signature
-- [ ] `GatewayCapability` enum (bitmask) with Edge(0x0001), Relay(0x0002), Consensus(0x0004), Archive(0x0008), Stealth(0x0010), Translation(0x0020), Storage(0x0040), OnionRelay(0x0080), AIExecution(0x0100), VectorIndex(0x0200), ZkVerification(0x0400), MissionCoordinator(0x0800)
-- [ ] `GatewayHeartbeat` references RFC-0860 §2.2 canonical definition (7 fields: gateway_id, sequence, active_routes, load_class, uptime_class, logical_timestamp, signature)
-- [ ] `GatewayCache` with BTreeMap, deterministic eviction by (trust, utility, age)
-- [ ] Discovery lifecycle: bootstrap → expansion → stabilization
-- [ ] Heartbeat timeout detection after N missed heartbeats
-- [ ] `GdpError` enum with all error variants
-- [ ] Unit tests: 10+ tests covering advertisement serialization, cache eviction, heartbeat timeout
-- [ ] `cargo fmt -- --check` passes
-- [ ] `cargo test -p octo-network` passes
+- [x] `GatewayIdentity` extends DOT's identity with gateway_id, public_key, network_id, gateway_class, creation_epoch
+- [x] `GatewayAdvertisement` with version, gateway_id, network_id, sequence, logical_timestamp, gateway_class, capabilities_root, transport_root, route_root, trust_root, overlay_endpoints, signature
+- [x] `GatewayCapability` enum (bitmask) with Edge(0x0001), Relay(0x0002), Consensus(0x0004), Archive(0x0008), Stealth(0x0010), Translation(0x0020), Storage(0x0040), OnionRelay(0x0080), AIExecution(0x0100), VectorIndex(0x0200), ZkVerification(0x0400), MissionCoordinator(0x0800)
+- [x] `GatewayHeartbeat` references RFC-0860 §2.2 canonical definition (7 fields: gateway_id, sequence, active_routes, load_class, uptime_class, logical_timestamp, signature)
+- [x] `GatewayCache` with BTreeMap, deterministic eviction by (trust, utility, age)
+- [x] Discovery lifecycle: bootstrap → expansion → stabilization
+- [x] Heartbeat timeout detection after N missed heartbeats
+- [x] `GdpError` enum with all error variants
+- [x] Unit tests: 59 tests covering advertisement serialization, cache eviction, heartbeat timeout, stake gating, diversity, sybil detection, discovery gossip
+- [x] `cargo fmt -- --check` passes
+- [x] `cargo test -p octo-network` passes (643 tests)
 
 ## Location
 

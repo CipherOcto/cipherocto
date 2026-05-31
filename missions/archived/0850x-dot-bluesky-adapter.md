@@ -1,8 +1,11 @@
 # Mission: DOT Bluesky Adapter (PlatformType 0x000E)
 
 ## Status
+Implemented (509 lines, 11 tests)
 
-Open
+## Claimant
+
+@agent (Jcode)
 
 ## RFC
 
@@ -26,21 +29,21 @@ atrium-api = "0.1"  # Official AT Protocol SDK
 
 ## Acceptance Criteria
 
-- [ ] New crate: `crates/octo-adapter-bluesky/`
-- [ ] `BlueskyConfig`: `handle` (e.g., `alice.bsky.social`), `app_password`, `pds_url` (optional, default: bsky.social)
-- [ ] Implements `PlatformAdapter` trait with all methods
-- [ ] `send_envelope()` — posts DOT envelope as a Bluesky post (text, max 300 chars)
-- [ ] `receive_messages()` — polls `app.bsky.feed.getTimeline` or subscribes to firehose
-- [ ] `canonicalize()` — extracts DOT envelope from post text
-- [ ] `capabilities()`: max_payload=300 graphemes (~221 bytes base64), supports_fragmentation=true, media_capabilities=Some (images supported via `app.bsky.embed.images`)
-- [ ] `media_capabilities`: max_upload_bytes=976563 (1MB image), supported_mime_types=["image/jpeg", "image/png", "image/webp"]
-- [ ] `self_handle()` — returns bot's DID or handle
-- [ ] `shutdown()` — clears session
-- [ ] Auth via app password (OAuth2-like flow with session JWT)
-- [ ] Rate limiting: respect Bluesky rate limits (300 requests/5min)
-- [ ] Domain hash: `BLAKE3-256("bluesky:{did_or_handle}")`
-- [ ] PlatformType: `0x000E` (new allocation)
-- [ ] Unit tests: 10+ tests
+- [x] New crate: `crates/octo-adapter-bluesky/`
+- [x] `BlueskyConfig`: `handle` (e.g., `alice.bsky.social`), `app_password`, `pds_url` (optional, default: bsky.social)
+- [x] Implements `PlatformAdapter` trait with all methods
+- [x] `send_envelope()` — posts DOT envelope as a Bluesky post (text, max 300 chars)
+- [x] `receive_messages()` — polls `app.bsky.feed.getTimeline` or subscribes to firehose
+- [x] `canonicalize()` — extracts DOT envelope from post text
+- [x] `capabilities()`: max_payload=300 graphemes (~221 bytes base64), supports_fragmentation=true, media_capabilities=Some (images supported via `app.bsky.embed.images`)
+- [x] `media_capabilities`: max_upload_bytes=976563 (1MB image), supported_mime_types=["image/jpeg", "image/png", "image/webp"]
+- [x] `self_handle()` — returns bot's DID or handle
+- [x] `shutdown()` — clears session
+- [x] Auth via app password (OAuth2-like flow with session JWT)
+- [x] Rate limiting: respect Bluesky rate limits (300 requests/5min)
+- [x] Domain hash: `BLAKE3-256("bluesky:{did_or_handle}")`
+- [x] PlatformType: `0x000E` (new allocation)
+- [x] Unit tests: 10+ tests
 
 ## Complexity
 

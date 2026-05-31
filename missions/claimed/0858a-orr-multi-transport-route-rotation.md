@@ -2,7 +2,7 @@
 
 ## Status
 
-Implemented (part of ORR module, 30 total ORR tests)
+Implemented (19 tests: path builder, rotation, identity preservation, diversity)
 
 ## RFC
 

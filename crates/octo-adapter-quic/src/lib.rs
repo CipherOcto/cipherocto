@@ -33,29 +33,24 @@
 use async_trait::async_trait;
 use std::collections::HashMap;
 use std::net::SocketAddr;
-#[cfg(feature = "quic")]
 use std::sync::Arc;
 use tokio::sync::{mpsc, Mutex, RwLock};
 
-use crate::dot::adapters::{
+use octo_network::dot::adapters::{
     CapabilityReport, DeliveryReceipt, PlatformAdapter, RawPlatformMessage,
 };
-use crate::dot::domain::{BroadcastDomainId, PlatformType};
-use crate::dot::envelope::DeterministicEnvelope;
-use crate::dot::error::PlatformAdapterError;
-use crate::dot::replay::ReplayCache;
-use crate::gdp::discovery::{BootstrapMethod, DiscoveryState};
-use crate::gdp::types::DiscoveryScope;
+use octo_network::dot::domain::{BroadcastDomainId, PlatformType};
+use octo_network::dot::envelope::DeterministicEnvelope;
+use octo_network::dot::error::PlatformAdapterError;
+use octo_network::dot::replay::ReplayCache;
+use octo_network::gdp::discovery::{BootstrapMethod, DiscoveryState};
+use octo_network::gdp::types::DiscoveryScope;
 
 // ── Frame type constants (RFC-0850 §8.7.3) ──
-// Used in quic feature-gated code
-#[allow(dead_code)]
+
 const FRAME_TYPE_ENVELOPE: u16 = 0x0001;
-#[allow(dead_code)]
 const FRAME_TYPE_FRAGMENT: u16 = 0x0002;
-#[allow(dead_code)]
 const FRAME_TYPE_ONION: u16 = 0x0003;
-#[allow(dead_code)]
 const FRAME_TYPE_CAPABILITIES: u16 = 0x0004;
 const FRAME_TYPE_PING: u16 = 0x0005;
 const FRAME_TYPE_PONG: u16 = 0x0006;
@@ -162,7 +157,6 @@ pub struct MigrationState {
 }
 
 /// Connection state for a known peer.
-#[allow(dead_code)]
 struct PeerState {
     /// Peer's SocketAddr (resolved from GDP or config)
     addr: SocketAddr,
@@ -181,7 +175,6 @@ struct PeerState {
 // ── QUIC Adapter ──
 
 /// QUIC platform adapter (RFC-0850 §8.7).
-#[allow(dead_code)]
 pub struct QuicAdapter {
     config: QuicConfig,
     /// Inbound message channel (populated by stream accept loop)
@@ -197,8 +190,7 @@ pub struct QuicAdapter {
     discovery: RwLock<DiscoveryState>,
     /// Replay cache for 0-RTT envelope deduplication (RFC-0853 §7)
     replay_cache: Mutex<ReplayCache>,
-    /// QUIC endpoint (set when server starts, feature-gated)
-    #[cfg(feature = "quic")]
+    /// QUIC endpoint (set when server starts)
     endpoint: Mutex<Option<quinn::Endpoint>>,
     /// TLS certificate (DER bytes, set when server starts)
     cert_der: Mutex<Option<Vec<u8>>>,
@@ -218,7 +210,6 @@ impl QuicAdapter {
             ping_counter: std::sync::atomic::AtomicU64::new(0),
             discovery: RwLock::new(discovery),
             replay_cache: Mutex::new(replay_cache),
-            #[cfg(feature = "quic")]
             endpoint: Mutex::new(None),
             cert_der: Mutex::new(None),
         }
@@ -302,7 +293,6 @@ impl QuicAdapter {
     }
 
     /// Start the QUIC server (feature-gated).
-    #[cfg(feature = "quic")]
     pub async fn start_server(&self) -> Result<(), PlatformAdapterError> {
         let listen_addr: SocketAddr = self
             .config
@@ -432,7 +422,6 @@ impl QuicAdapter {
         Ok(())
     }
 
-    #[cfg(feature = "quic")]
     fn make_server_endpoint(
         addr: SocketAddr,
     ) -> Result<(quinn::Endpoint, Vec<u8>), Box<dyn std::error::Error>> {
@@ -451,12 +440,6 @@ impl QuicAdapter {
 
         let endpoint = quinn::Endpoint::server(server_config, addr)?;
         Ok((endpoint, cert_der.to_vec()))
-    }
-
-    /// Start the QUIC server (no-op when quic feature is disabled)
-    #[cfg(not(feature = "quic"))]
-    pub async fn start_server(&self) -> Result<(), PlatformAdapterError> {
-        Err(quic_err("quic feature not enabled"))
     }
 
     // ── GDP Integration (RFC-0850 §8.7.5, RFC-0851) ──
@@ -521,7 +504,7 @@ impl QuicAdapter {
 
         // Transition to Expansion if we have enough peers (RFC-0851 §8)
         if discovery.peer_count >= 5
-            && discovery.phase == crate::gdp::types::DiscoveryLifecycle::Bootstrap
+            && discovery.phase == octo_network::gdp::types::DiscoveryLifecycle::Bootstrap
         {
             if let Err(e) = discovery.start_expansion() {
                 tracing::warn!("Failed to transition to Expansion: {e}");
@@ -544,7 +527,7 @@ impl QuicAdapter {
     }
 
     /// Get the current GDP discovery phase.
-    pub async fn discovery_phase(&self) -> crate::gdp::types::DiscoveryLifecycle {
+    pub async fn discovery_phase(&self) -> octo_network::gdp::types::DiscoveryLifecycle {
         let discovery = self.discovery.read().await;
         discovery.phase
     }
@@ -567,7 +550,7 @@ impl QuicAdapter {
         &self,
         envelope_id: [u8; 32],
         logical_timestamp: u64,
-    ) -> Result<(), crate::dot::error::DotError> {
+    ) -> Result<(), octo_network::dot::error::DotError> {
         let mut cache = self.replay_cache.lock().await;
         cache.check_and_insert(envelope_id, logical_timestamp)
     }
@@ -646,7 +629,6 @@ impl PlatformAdapter for QuicAdapter {
         let domain_hex = hex_encode(&domain.domain_hash);
 
         // Send via QUIC endpoint if available
-        #[cfg(feature = "quic")]
         {
             let frame = Self::encode_envelope_frame(&wire_bytes);
             let peers = self.peers.read().await;
@@ -678,15 +660,6 @@ impl PlatformAdapter for QuicAdapter {
             } else {
                 tracing::warn!("QUIC send: no trusted peer for domain {}", domain_hex);
             }
-        }
-
-        #[cfg(not(feature = "quic"))]
-        {
-            tracing::info!(
-                "QUIC send to domain {}: {} bytes (quic feature disabled)",
-                domain_hex,
-                wire_bytes.len()
-            );
         }
 
         Ok(DeliveryReceipt {
@@ -722,7 +695,7 @@ impl PlatformAdapter for QuicAdapter {
 
         // Fallback: DOT/1/{b64} text format (interop)
         let text = String::from_utf8_lossy(&raw.payload);
-        let wire_bytes = crate::dot::transport::decode_text_ref(&text).map_err(|e| {
+        let wire_bytes = octo_network::dot::transport::decode_text_ref(&text).map_err(|e| {
             PlatformAdapterError::ApiError {
                 code: 400,
                 message: format!("canonicalize failed: {e}"),
@@ -989,7 +962,7 @@ mod tests {
         // Should have transitioned to Expansion (>= 5 peers)
         assert_eq!(
             adapter.discovery_phase().await,
-            crate::gdp::types::DiscoveryLifecycle::Expansion
+            octo_network::gdp::types::DiscoveryLifecycle::Expansion
         );
     }
 
@@ -1009,7 +982,7 @@ mod tests {
         // Should stay in Bootstrap (< 5 peers)
         assert_eq!(
             adapter.discovery_phase().await,
-            crate::gdp::types::DiscoveryLifecycle::Bootstrap
+            octo_network::gdp::types::DiscoveryLifecycle::Bootstrap
         );
     }
 

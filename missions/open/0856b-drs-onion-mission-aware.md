@@ -14,20 +14,20 @@ Implement onion-compatible routing where route computation supports ORR (RFC-085
 
 ## Acceptance Criteria
 
-- [ ] Onion-compatible route construction: compute routes that support layered encryption
-- [ ] Route computation includes per-hop key material
-- [ ] Mission-aware routing: geographic isolation (restrict to specific regions)
-- [ ] Trusted-only relays: filter routes by trust threshold
-- [ ] Low-bandwidth mode: prefer LoRa/Bluetooth for constrained environments
-- [ ] Stealth routing: minimize metadata leakage by preferring high-censorship-resistance carriers, avoiding known surveillance ASNs, randomizing hop selection within trust bounds (RFC §13)
-- [ ] Route persistence: cache routes for reuse (configurable TTL)
-- [ ] Partition resilience: automatic route recomputation on network partition (RFC §16)
-- [ ] Token economics integration: route cost calculation per RFC §17
-- [ ] AI-native routing: adaptive weight optimization per RFC §18
-- [ ] Integration with ORR (RFC-0858) for onion route construction
-- [ ] Unit tests: 10+ tests covering onion compatibility, mission modes, partition recovery
-- [ ] `cargo fmt -- --check` passes
-- [ ] `cargo test -p octo-network` passes
+- [x] Onion-compatible route construction: compute routes that support layered encryption
+- [x] Route computation includes per-hop key material
+- [x] Mission-aware routing: geographic isolation (restrict to specific regions)
+- [x] Trusted-only relays: filter routes by trust threshold
+- [x] Low-bandwidth mode: prefer LoRa/Bluetooth for constrained environments
+- [x] Stealth routing: minimize metadata leakage by preferring high-censorship-resistance carriers, avoiding known surveillance ASNs, randomizing hop selection within trust bounds (RFC §13)
+- [x] Route persistence: cache routes for reuse (configurable TTL)
+- [x] Partition resilience: automatic route recomputation on network partition (RFC §16)
+- [x] Token economics integration: route cost calculation per RFC §17
+- [x] AI-native routing: adaptive weight optimization per RFC §18
+- [x] Integration with ORR (RFC-0858) for onion route construction
+- [x] Unit tests: 19 tests covering onion compatibility, mission modes, partition recovery, cost, adaptive weights
+- [x] `cargo fmt -- --check` passes
+- [x] `cargo test -p octo-network` passes (636 tests)
 
 ## Location
 

@@ -2,7 +2,7 @@
 
 ## Status
 
-Open
+Implemented (35 tests: scope filtering, lifecycle transitions, TTL, stake requirements, bootstrap methods)
 
 ## RFC
 
@@ -23,7 +23,11 @@ Implement discovery scopes (LOCAL, REGIONAL, MISSION, GLOBAL, PRIVATE), discover
 - [x] Mission-scoped discovery: temporary overlay bootstrap
 - [x] Unit tests: 29 tests covering scope filtering, lifecycle transitions, TTL, gossip modes, deduplication
 - [x] `cargo fmt -- --check` passes
-- [x] `cargo test -p octo-network` passes (643 tests)
+- [x] `cargo test -p octo-network` passes
+
+## Claimant
+
+@agent (Jcode)
 
 ## Location
 

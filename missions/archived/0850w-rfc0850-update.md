@@ -2,7 +2,7 @@
 
 ## Status
 
-Completed (all changes applied in commit 919454a)
+Implemented (all 5 updates applied in commit 919454a)
 
 ## RFC
 
@@ -11,6 +11,10 @@ RFC-0850: Deterministic Overlay Transport (DOT)
 ## Summary
 
 Update RFC-0850 to reflect the current state of the implementation and add missing specifications for `self_handle()`, dual binary transport, and platform coverage.
+
+## Claimant
+
+@agent (Jcode)
 
 ## Sections to Update
 
@@ -96,12 +100,12 @@ For platforms supporting native file upload (Telegram, Discord, Matrix), envelop
 
 ## Acceptance Criteria
 
-- [ ] Section 8.2: `self_handle()` added to PlatformAdapter trait
-- [ ] Section 8.5: All 12 platforms listed with max payload and fragment strategy
-- [ ] Section 8.6: `DOT/1/`, `DOT/2/`, `DOT/F/` wire formats documented
-- [ ] Section 9.4: Dual-mode transport section added
-- [ ] Line 202: WhatsApp description updated
-- [ ] All changes are backward-compatible (no breaking changes)
+- [x] Section 8.2: `self_handle()` added to PlatformAdapter trait
+- [x] Section 8.5: All 12 platforms listed with max payload and fragment strategy
+- [x] Section 8.6: `DOT/1/`, `DOT/2/`, `DOT/F/` wire formats documented
+- [x] Section 9.4: Dual-mode transport section added
+- [x] Line 202: WhatsApp description updated
+- [x] All changes are backward-compatible (no breaking changes)
 
 ## Location
 

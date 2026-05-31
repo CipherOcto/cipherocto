@@ -33,8 +33,11 @@ pub struct OnionHopKey {
 ///
 /// Extends a deterministic route with the key derivation info
 /// needed by ORR (RFC-0858) to construct layered encrypted onions.
+///
+/// **Security note:** This struct is for the sender's use only.
+/// Each relay in the onion path only sees its own `OnionHopKey`.
+/// The full route topology must never be shared with relays.
 #[derive(Clone, Debug, Serialize, Deserialize)]
-#[repr(C)]
 pub struct OnionRoute {
     /// Route ID (from DeterministicRoute)
     pub route_id: [u8; 32],
@@ -355,25 +358,21 @@ impl RouteCostBreakdown {
 }
 
 /// Compute route cost per RFC-0856 §17.
+///
+/// Convenience wrapper around `RouteCostBreakdown::compute()`.
 pub fn compute_route_cost(
     hop_count: u16,
     bandwidth_class: BandwidthClass,
     geo_distance_penalty: u32,
     trust_discount_bps: u16,
 ) -> u64 {
-    let base: u64 = 100; // 100 OCTO-units per hop
-    let bw_mult: u64 = match bandwidth_class {
-        BandwidthClass::VeryLow => 5000,
-        BandwidthClass::Low => 2000,
-        BandwidthClass::Medium => 1000,
-        BandwidthClass::High => 500,
-        BandwidthClass::VeryHigh => 200,
-    };
-    let hop_cost = base * bw_mult / 1000;
-    let geo_penalty = hop_cost * geo_distance_penalty as u64 / 1000;
-    let subtotal = (hop_cost + geo_penalty) * hop_count as u64;
-    let discount = subtotal * trust_discount_bps as u64 / 10000;
-    subtotal.saturating_sub(discount)
+    RouteCostBreakdown::compute(
+        hop_count,
+        bandwidth_class,
+        geo_distance_penalty,
+        trust_discount_bps,
+    )
+    .total_cost
 }
 
 // ── AI-Native Routing (RFC-0856 §18) ──

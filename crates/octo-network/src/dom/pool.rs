@@ -149,35 +149,17 @@ impl MempoolStateRoot {
             })
             .collect();
 
-        merkle_root(&leaves)
+        crate::common::merkle::compute_merkle_root(&leaves)
     }
 }
 
-/// Compute a BLAKE3-256 Merkle root from a slice of 32-byte leaves.
-fn merkle_root(leaves: &[[u8; 32]]) -> [u8; 32] {
-    if leaves.is_empty() {
-        return [0u8; 32];
-    }
-    if leaves.len() == 1 {
-        return leaves[0];
-    }
-
-    let mut level = leaves.to_vec();
-    while level.len() > 1 {
-        if !level.len().is_multiple_of(2) {
-            let last = *level.last().expect("level is non-empty in merkle loop");
-            level.push(last);
-        }
-        let mut next = Vec::with_capacity(level.len() / 2);
-        for pair in level.chunks(2) {
-            let mut hasher = blake3::Hasher::new();
-            hasher.update(&pair[0]);
-            hasher.update(&pair[1]);
-            next.push(*hasher.finalize().as_bytes());
-        }
-        level = next;
-    }
-    level[0]
+/// Compute the MempoolStateRoot using RFC 6962 domain-separated Merkle tree.
+///
+/// The root is computed over sorted intent hashes for deterministic ordering.
+pub fn compute_state_root(intents: &[OverlayIntent]) -> [u8; 32] {
+    let mut hashes: Vec<[u8; 32]> = intents.iter().map(|i| i.intent_id).collect();
+    hashes.sort();
+    crate::common::merkle::compute_merkle_root(&hashes)
 }
 
 #[cfg(test)]

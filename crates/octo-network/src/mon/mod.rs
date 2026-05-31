@@ -22,8 +22,8 @@ pub mod routing;
 pub use discovery::MissionDiscoveryScope;
 pub use error::MonError;
 pub use gossip::{
-    MissionGossipMessage, MissionGossipScope, MissionPropagationClass,
-    SCOPE_FLAG_ENCRYPTED, SCOPE_FLAG_PRIORITY, SCOPE_FLAG_RELIABLE,
+    MissionGossipMessage, MissionGossipScope, MissionPropagationClass, SCOPE_FLAG_ENCRYPTED,
+    SCOPE_FLAG_PRIORITY, SCOPE_FLAG_RELIABLE,
 };
 pub use governance::{GovernanceModel, GovernancePolicy};
 pub use keys::MissionKeyHierarchy;

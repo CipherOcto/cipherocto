@@ -199,8 +199,10 @@ mod tests {
 
     #[test]
     fn test_mission_gossip_scope_combined_flags() {
-        let scope =
-            MissionGossipScope::new(test_mission_id(), SCOPE_FLAG_ENCRYPTED | SCOPE_FLAG_RELIABLE);
+        let scope = MissionGossipScope::new(
+            test_mission_id(),
+            SCOPE_FLAG_ENCRYPTED | SCOPE_FLAG_RELIABLE,
+        );
         assert!(scope.has_flag(SCOPE_FLAG_ENCRYPTED));
         assert!(scope.has_flag(SCOPE_FLAG_RELIABLE));
         assert!(!scope.has_flag(SCOPE_FLAG_PRIORITY));

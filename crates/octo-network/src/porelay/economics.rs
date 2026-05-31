@@ -50,11 +50,14 @@ impl RewardDistribution {
         envelope_count.saturating_mul(self.octo_b_per_envelope)
     }
 
-    /// Compute OCTO-N reward for availability
+    /// Compute OCTO-N reward for availability.
+    ///
+    /// `availability_score` is in permille (0-1000). Values above 1000 are clamped.
     pub fn availability_reward(&self, uptime_hours: u64, availability_score: u16) -> u64 {
+        let clamped_score = (availability_score as u64).min(1000);
         uptime_hours
             .saturating_mul(self.octo_n_per_hour)
-            .saturating_mul(availability_score as u64)
+            .saturating_mul(clamped_score)
             .saturating_div(1000)
     }
 

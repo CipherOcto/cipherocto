@@ -251,7 +251,11 @@ impl RevocationNotice {
     }
 }
 
-/// Default grace period for key revocation: 24 hours in seconds.
+/// Default grace period for key revocation.
+///
+/// Value is 86400, representing 24 hours when epochs are in seconds.
+/// The relationship between epochs and wall-clock time is defined by
+/// the protocol's epoch configuration (typically 1 epoch = 1 second).
 pub const DEFAULT_REVOCATION_GRACE_PERIOD: u64 = 86400;
 
 #[cfg(test)]

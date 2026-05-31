@@ -15,6 +15,9 @@
 //! - PCE (RFC-0859): Proof-Carrying Envelopes (under DOT)
 //! - PoRelay (RFC-0860): Proof-of-Relay
 
+/// Common utilities (shared Merkle, etc.).
+pub mod common;
+
 /// Deterministic Overlay Transport module — RFC-0850.
 pub mod dot;
 

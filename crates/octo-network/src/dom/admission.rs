@@ -11,7 +11,8 @@ use ed25519_dalek::{Signature, Verifier, VerifyingKey};
 use std::collections::BTreeMap;
 
 /// Sequence tracker per (sender_id, mission_id).
-pub type SequenceTracker = BTreeMap<(Vec<u8>, Vec<u8>), u64>;
+/// Uses [u8; 32] keys to avoid heap allocation on the hot path.
+pub type SequenceTracker = BTreeMap<([u8; 32], [u8; 32]), u64>;
 
 /// Replay cache — maps intent_id to first_seen logical timestamp.
 pub type ReplayCache = BTreeMap<[u8; 32], u64>;
@@ -39,14 +40,66 @@ impl Default for AdmissionConfig {
 /// Check if an intent passes deterministic admission (RFC-0857 §3).
 ///
 /// Returns Ok(()) if admitted, Err(DomError) if rejected.
+///
+/// Check ordering: cheap checks first, expensive signature verification last.
 pub fn check_admission(
     intent: &OverlayIntent,
     current_timestamp: u64,
     replay_cache: &ReplayCache,
     sequence_tracker: &SequenceTracker,
+    pending_count: u32,
     config: &AdmissionConfig,
 ) -> Result<(), DomError> {
-    // Ed25519 signature verification (RFC-0857 §3)
+    // 1. Check expiration (O(1), cheapest)
+    if intent.expiration <= current_timestamp {
+        return Err(DomError::AdmissionRejected {
+            intent_id: intent.intent_id,
+            reason: 0x0001, // expired
+        });
+    }
+
+    // 2. Check replay (O(log n) BTreeMap lookup)
+    if replay_cache.contains_key(&intent.intent_id) {
+        return Err(DomError::ReplayDetected {
+            intent_id: intent.intent_id,
+            first_seen: 0,
+        });
+    }
+
+    // 3. Validate execution class range (O(1))
+    if intent.execution_class > 0x0006 {
+        return Err(DomError::InvalidExecutionClass {
+            execution_class: intent.execution_class,
+        });
+    }
+
+    // 4. Validate intent type range (O(1))
+    if intent.intent_type == 0 || intent.intent_type > 0x0008 {
+        return Err(DomError::InvalidIntentType {
+            intent_type: intent.intent_type,
+        });
+    }
+
+    // 5. Check global capacity using actual pending count (O(1))
+    if pending_count >= config.max_pending_intents {
+        return Err(DomError::CapacityExceeded {
+            scope: 0x0001, // GLOBAL
+            max_entries: config.max_pending_intents,
+        });
+    }
+
+    // 6. Check sequence monotonicity (O(log n))
+    let key = (intent.sender_id, intent.mission_id);
+    if let Some(&last_seq) = sequence_tracker.get(&key) {
+        if intent.sequence <= last_seq {
+            return Err(DomError::SequenceInvalid {
+                sender_id: intent.sender_id,
+                sequence: intent.sequence,
+            });
+        }
+    }
+
+    // 7. Ed25519 signature verification (expensive, ~50-100us, done last)
     let vk =
         VerifyingKey::from_bytes(&intent.sender_id).map_err(|_| DomError::InvalidSignature {
             intent_id: intent.intent_id,
@@ -57,55 +110,6 @@ pub fn check_admission(
         .map_err(|_| DomError::InvalidSignature {
             intent_id: intent.intent_id,
         })?;
-
-    // 0. Check global capacity (using replay_cache as proxy for pending intent count)
-    if replay_cache.len() as u32 >= config.max_pending_intents {
-        return Err(DomError::CapacityExceeded {
-            scope: 0x0001, // GLOBAL
-            max_entries: config.max_pending_intents,
-        });
-    }
-
-    // 1. Check expiration
-    if intent.expiration <= current_timestamp {
-        return Err(DomError::AdmissionRejected {
-            intent_id: intent.intent_id,
-            reason: 0x0001, // expired
-        });
-    }
-
-    // 2. Check replay
-    if let Some(&first_seen) = replay_cache.get(&intent.intent_id) {
-        return Err(DomError::ReplayDetected {
-            intent_id: intent.intent_id,
-            first_seen,
-        });
-    }
-
-    // 3. Check sequence monotonicity
-    let key = (intent.sender_id.to_vec(), intent.mission_id.to_vec());
-    if let Some(&last_seq) = sequence_tracker.get(&key) {
-        if intent.sequence <= last_seq {
-            return Err(DomError::SequenceInvalid {
-                sender_id: intent.sender_id,
-                sequence: intent.sequence,
-            });
-        }
-    }
-
-    // 4. Validate execution class range
-    if intent.execution_class > 0x0006 {
-        return Err(DomError::InvalidExecutionClass {
-            execution_class: intent.execution_class,
-        });
-    }
-
-    // 5. Validate intent type range
-    if intent.intent_type == 0 || intent.intent_type > 0x0008 {
-        return Err(DomError::InvalidIntentType {
-            intent_type: intent.intent_type,
-        });
-    }
 
     Ok(())
 }
@@ -143,6 +147,10 @@ mod tests {
         (signed, vk)
     }
 
+    fn default_config() -> AdmissionConfig {
+        AdmissionConfig::default()
+    }
+
     #[test]
     fn test_admission_signature_valid() {
         let (intent, _vk) = make_signed_intent(1, 100, 200);
@@ -151,7 +159,8 @@ mod tests {
             100,
             &BTreeMap::new(),
             &BTreeMap::new(),
-            &Default::default(),
+            0,
+            &default_config(),
         );
         assert!(result.is_ok());
     }
@@ -165,7 +174,8 @@ mod tests {
             100,
             &BTreeMap::new(),
             &BTreeMap::new(),
-            &Default::default(),
+            0,
+            &default_config(),
         );
         assert!(matches!(result, Err(DomError::InvalidSignature { .. })));
     }
@@ -178,7 +188,8 @@ mod tests {
             100,
             &BTreeMap::new(),
             &BTreeMap::new(),
-            &Default::default(),
+            0,
+            &default_config(),
         );
         assert!(matches!(result, Err(DomError::AdmissionRejected { .. })));
     }
@@ -188,19 +199,23 @@ mod tests {
         let (intent, _vk) = make_signed_intent(1, 100, 200);
         let mut replay = BTreeMap::new();
         replay.insert(intent.intent_id, 50u64);
-        let result = check_admission(&intent, 100, &replay, &BTreeMap::new(), &Default::default());
+        let result = check_admission(
+            &intent,
+            100,
+            &replay,
+            &BTreeMap::new(),
+            0,
+            &default_config(),
+        );
         assert!(matches!(result, Err(DomError::ReplayDetected { .. })));
     }
 
     #[test]
     fn test_admission_sequence_stale() {
         let (intent, _vk) = make_signed_intent(5, 100, 200);
-        let mut seq = BTreeMap::new();
-        seq.insert(
-            (intent.sender_id.to_vec(), intent.mission_id.to_vec()),
-            10u64,
-        );
-        let result = check_admission(&intent, 100, &BTreeMap::new(), &seq, &Default::default());
+        let mut seq: SequenceTracker = BTreeMap::new();
+        seq.insert((intent.sender_id, intent.mission_id), 10u64);
+        let result = check_admission(&intent, 100, &BTreeMap::new(), &seq, 0, &default_config());
         assert!(matches!(result, Err(DomError::SequenceInvalid { .. })));
     }
 
@@ -217,7 +232,8 @@ mod tests {
             100,
             &BTreeMap::new(),
             &BTreeMap::new(),
-            &Default::default(),
+            0,
+            &default_config(),
         );
         assert!(matches!(
             result,
@@ -238,7 +254,8 @@ mod tests {
             100,
             &BTreeMap::new(),
             &BTreeMap::new(),
-            &Default::default(),
+            0,
+            &default_config(),
         );
         assert!(matches!(result, Err(DomError::InvalidIntentType { .. })));
     }
@@ -251,7 +268,8 @@ mod tests {
             100,
             &BTreeMap::new(),
             &BTreeMap::new(),
-            &Default::default(),
+            0,
+            &default_config(),
         );
         assert!(result.is_ok());
     }

@@ -55,35 +55,11 @@ pub fn verify_pce(
     Ok(VerificationResult::Valid)
 }
 
-/// Compute a simple binary Merkle root from a slice of 32-byte leaves.
+/// Compute a Merkle root with RFC 6962 domain separation.
 ///
-/// Uses BLAKE3-256 for all hashing. Empty input returns zeros.
-/// Odd leaves are duplicated for the final level (standard Merkle convention).
+/// Delegates to the shared `common::merkle` module for consistency.
 pub fn compute_merkle_root(leaves: &[[u8; 32]]) -> [u8; 32] {
-    if leaves.is_empty() {
-        return [0u8; 32];
-    }
-    if leaves.len() == 1 {
-        return leaves[0];
-    }
-
-    let mut level: Vec<[u8; 32]> = leaves.to_vec();
-    while level.len() > 1 {
-        // Duplicate last leaf if odd count
-        if !level.len().is_multiple_of(2) {
-            let last = *level.last().expect("level is non-empty in merkle loop");
-            level.push(last);
-        }
-        let mut next = Vec::with_capacity(level.len() / 2);
-        for pair in level.chunks(2) {
-            let mut hasher = blake3::Hasher::new();
-            hasher.update(&pair[0]);
-            hasher.update(&pair[1]);
-            next.push(*hasher.finalize().as_bytes());
-        }
-        level = next;
-    }
-    level[0]
+    crate::common::merkle::compute_merkle_root(leaves)
 }
 
 /// Verify the canonical proof boundary invariant (RFC-0859 §5.4).
@@ -245,7 +221,14 @@ mod tests {
     #[test]
     fn test_merkle_root_single() {
         let leaf = [0xAAu8; 32];
-        assert_eq!(compute_merkle_root(&[leaf]), leaf);
+        let root = compute_merkle_root(&[leaf]);
+        // With RFC 6962 domain separation: BLAKE3(0x00 || leaf)
+        let expected = crate::common::merkle::hash_leaf(&leaf);
+        assert_eq!(root, expected);
+        assert_ne!(
+            root, leaf,
+            "single leaf must be hashed with domain separation"
+        );
     }
 
     #[test]
@@ -253,11 +236,11 @@ mod tests {
         let a = [0xAAu8; 32];
         let b = [0xBBu8; 32];
         let root = compute_merkle_root(&[a, b]);
-        // root = BLAKE3(a || b)
-        let mut hasher = blake3::Hasher::new();
-        hasher.update(&a);
-        hasher.update(&b);
-        assert_eq!(root, *hasher.finalize().as_bytes());
+        // With RFC 6962: BLAKE3(0x01 || BLAKE3(0x00 || a) || BLAKE3(0x00 || b))
+        let ha = crate::common::merkle::hash_leaf(&a);
+        let hb = crate::common::merkle::hash_leaf(&b);
+        let expected = crate::common::merkle::hash_internal(&ha, &hb);
+        assert_eq!(root, expected);
     }
 
     #[test]

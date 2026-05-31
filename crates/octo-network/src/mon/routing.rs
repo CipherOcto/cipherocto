@@ -40,7 +40,15 @@ impl MissionRouteTable {
     }
 
     /// Insert or update a route entry.
+    ///
+    /// Only updates if the new entry's sequence is higher than the existing one,
+    /// preventing stale routes from overwriting fresh ones.
     pub fn upsert(&mut self, entry: RouteEntry) {
+        if let Some(existing) = self.routes.get(&entry.destination) {
+            if entry.sequence <= existing.sequence {
+                return; // Reject stale update
+            }
+        }
         self.routes.insert(entry.destination, entry);
     }
 
@@ -247,6 +255,28 @@ mod tests {
     fn test_route_table_lookup_missing() {
         let table = MissionRouteTable::new([0x01; 32]);
         assert!(table.lookup(&[0xFF; 32]).is_none());
+    }
+
+    #[test]
+    fn test_route_table_rejects_stale_update() {
+        let mut table = MissionRouteTable::new([0x01; 32]);
+        table.upsert(make_entry(0xAA, 0xBB, 10, 5));
+        // Try to update with lower sequence — should be rejected
+        table.upsert(make_entry(0xAA, 0xCC, 20, 3));
+        let entry = table.lookup(&[0xAA; 32]).unwrap();
+        assert_eq!(entry.next_hop, [0xBB; 32], "stale update must be rejected");
+        assert_eq!(entry.cost, 10);
+        assert_eq!(entry.sequence, 5);
+    }
+
+    #[test]
+    fn test_route_table_accepts_same_sequence_higher() {
+        let mut table = MissionRouteTable::new([0x01; 32]);
+        table.upsert(make_entry(0xAA, 0xBB, 10, 5));
+        // Same sequence — should be rejected (not strictly greater)
+        table.upsert(make_entry(0xAA, 0xCC, 20, 5));
+        let entry = table.lookup(&[0xAA; 32]).unwrap();
+        assert_eq!(entry.next_hop, [0xBB; 32]);
     }
 
     // -- RouteIsolationGuard tests --

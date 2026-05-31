@@ -54,9 +54,9 @@ pub fn scope_to_gdp_scope(scope: MissionDiscoveryScope) -> u16 {
     match scope {
         MissionDiscoveryScope::Public => 0x0004,     // Global
         MissionDiscoveryScope::InviteOnly => 0x0005, // Private
-        MissionDiscoveryScope::Stealth => 0x0005,    // Private + stealth flag
-        MissionDiscoveryScope::Federated => 0x0002,  // Regional
-        MissionDiscoveryScope::Ephemeral => 0x0003,  // Mission
+        MissionDiscoveryScope::Stealth => 0x0005, // Private (stealth handled at advertisement encryption level)
+        MissionDiscoveryScope::Federated => 0x0002, // Regional
+        MissionDiscoveryScope::Ephemeral => 0x0003, // Mission
     }
 }
 
@@ -136,8 +136,8 @@ impl MissionAdvertisement {
         self.scope.requires_encryption()
     }
 
-    /// Whether this advertisement is expired based on TTL.
-    pub fn is_expired(&self, current_hops: u16) -> bool {
+    /// Whether this advertisement's TTL has been exceeded based on hop count.
+    pub fn is_ttl_exceeded(&self, current_hops: u16) -> bool {
         current_hops >= self.scope.default_ttl()
     }
 }
@@ -337,9 +337,9 @@ mod tests {
             [0xCC; 32],
             1000,
         );
-        assert!(!adv.is_expired(3));
-        assert!(adv.is_expired(5));
-        assert!(adv.is_expired(10));
+        assert!(!adv.is_ttl_exceeded(3));
+        assert!(adv.is_ttl_exceeded(5));
+        assert!(adv.is_ttl_exceeded(10));
     }
 
     #[test]

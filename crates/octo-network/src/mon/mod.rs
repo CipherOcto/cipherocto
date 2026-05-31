@@ -25,9 +25,10 @@ pub use gossip::{
     MissionGossipMessage, MissionGossipScope, MissionPropagationClass, SCOPE_FLAG_ENCRYPTED,
     SCOPE_FLAG_PRIORITY, SCOPE_FLAG_RELIABLE,
 };
-pub use governance::{GovernanceModel, GovernancePolicy};
+pub use governance::{GovernanceModel, GovernancePolicy, GovernanceProposal, ProposalState};
 pub use keys::MissionKeyHierarchy;
 pub use lifecycle::MissionState;
 pub use membership::{AdmissionPolicy, MissionNode};
 pub use mission_id::{MissionId, MissionType};
+pub use reconciliation::{MobilitySession, ReconciliationState, TransportCarrier};
 pub use topology::{MissionDescriptor, TopologyModel};

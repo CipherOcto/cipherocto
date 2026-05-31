@@ -2,7 +2,7 @@
 
 ## Status
 
-Implemented (part of MON module, 54 total MON tests)
+Implemented (2 files, 34 tests: governance voting, proposal lifecycle, partition resilience, multi-transport mobility)
 
 ## RFC
 

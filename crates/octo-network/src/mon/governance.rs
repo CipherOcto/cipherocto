@@ -1,16 +1,39 @@
 //! Mission Governance (RFC-0855 §11)
+//!
+//! Governance models determine how state transitions are approved.
+//! Each model has different voting rules and decision mechanisms.
 
 use serde::{Deserialize, Serialize};
+use std::collections::BTreeMap;
 
 /// Governance models (RFC-0855 §11.1)
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[repr(u16)]
 pub enum GovernanceModel {
+    /// Single Coordinator makes all decisions
     Centralized = 0x0001,
+    /// Token-weighted voting
     Dao = 0x0002,
+    /// Multi-party consensus
     Federated = 0x0003,
+    /// AI proposes, humans approve
     AiAssisted = 0x0004,
+    /// AI-only decision making
     Autonomous = 0x0005,
+}
+
+impl GovernanceModel {
+    /// Parse from u16.
+    pub fn from_u16(val: u16) -> Option<Self> {
+        match val {
+            0x0001 => Some(Self::Centralized),
+            0x0002 => Some(Self::Dao),
+            0x0003 => Some(Self::Federated),
+            0x0004 => Some(Self::AiAssisted),
+            0x0005 => Some(Self::Autonomous),
+            _ => None,
+        }
+    }
 }
 
 /// Emergency authority (RFC-0855 §11.2)
@@ -77,6 +100,17 @@ impl GovernancePolicy {
         )
         .expect("default_dao parameters are valid")
     }
+
+    /// Check if a vote count meets quorum.
+    pub fn is_quorum_met(&self, votes_for: u32, total_eligible: u32) -> bool {
+        if total_eligible == 0 {
+            return false;
+        }
+        // votes_for / total_eligible >= quorum_numerator / quorum_denominator
+        // Cross-multiply to avoid floating point
+        (votes_for as u64) * (self.quorum_denominator as u64)
+            >= (self.quorum_numerator as u64) * (total_eligible as u64)
+    }
 }
 
 /// Decision types for governance voting (RFC-0855 §11.3)
@@ -92,15 +126,190 @@ pub enum DecisionType {
     ParticipantExpulsion = 0x0007,
 }
 
+/// Proposal lifecycle states.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[repr(u16)]
+pub enum ProposalState {
+    Created = 0x0001,
+    Voting = 0x0002,
+    Approved = 0x0003,
+    Rejected = 0x0004,
+    Executed = 0x0005,
+    Expired = 0x0006,
+}
+
+/// A governance proposal.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct GovernanceProposal {
+    /// Proposal identifier
+    pub proposal_id: [u8; 32],
+    /// Type of decision
+    pub decision_type: DecisionType,
+    /// Current state
+    pub state: ProposalState,
+    /// Epoch when proposal was created
+    pub created_epoch: u64,
+    /// Epoch when voting deadline expires
+    pub deadline_epoch: u64,
+    /// Proposer gateway ID
+    pub proposer: [u8; 32],
+    /// Votes in favor (gateway_id -> weight)
+    pub votes_for: BTreeMap<[u8; 32], u64>,
+    /// Votes against (gateway_id -> weight)
+    pub votes_against: BTreeMap<[u8; 32], u64>,
+}
+
+impl GovernanceProposal {
+    /// Create a new proposal in Created state.
+    pub fn new(
+        proposal_id: [u8; 32],
+        decision_type: DecisionType,
+        proposer: [u8; 32],
+        created_epoch: u64,
+        deadline_epoch: u64,
+    ) -> Self {
+        Self {
+            proposal_id,
+            decision_type,
+            state: ProposalState::Created,
+            created_epoch,
+            deadline_epoch,
+            proposer,
+            votes_for: BTreeMap::new(),
+            votes_against: BTreeMap::new(),
+        }
+    }
+
+    /// Open voting on this proposal.
+    pub fn open_voting(&mut self) -> bool {
+        if self.state == ProposalState::Created {
+            self.state = ProposalState::Voting;
+            return true;
+        }
+        false
+    }
+
+    /// Cast a vote. Returns false if proposal is not in Voting state.
+    pub fn cast_vote(&mut self, voter: [u8; 32], weight: u64, in_favor: bool) -> bool {
+        if self.state != ProposalState::Voting {
+            return false;
+        }
+        if in_favor {
+            self.votes_for.insert(voter, weight);
+        } else {
+            self.votes_against.insert(voter, weight);
+        }
+        true
+    }
+
+    /// Get total weight of votes in favor.
+    pub fn total_for(&self) -> u64 {
+        self.votes_for.values().sum()
+    }
+
+    /// Get total weight of votes against.
+    pub fn total_against(&self) -> u64 {
+        self.votes_against.values().sum()
+    }
+
+    /// Resolve the proposal based on governance policy.
+    ///
+    /// Returns the new state (Approved, Rejected, or remains Voting).
+    pub fn resolve(
+        &mut self,
+        policy: &GovernancePolicy,
+        total_eligible_voters: u32,
+    ) -> ProposalState {
+        if self.state != ProposalState::Voting {
+            return self.state;
+        }
+
+        let for_count = self.votes_for.len() as u32;
+        let against_count = self.votes_against.len() as u32;
+
+        // Centralized: proposer decides (single coordinator)
+        if policy.model == GovernanceModel::Centralized {
+            self.state = ProposalState::Approved;
+            return self.state;
+        }
+
+        // Autonomous: AI decides based on weighted votes
+        if policy.model == GovernanceModel::Autonomous {
+            if self.total_for() > self.total_against() {
+                self.state = ProposalState::Approved;
+            } else {
+                self.state = ProposalState::Rejected;
+            }
+            return self.state;
+        }
+
+        // DAO, Federated, AiAssisted: quorum + majority
+        if policy.is_quorum_met(for_count + against_count, total_eligible_voters) {
+            if self.total_for() > self.total_against() {
+                self.state = ProposalState::Approved;
+            } else {
+                self.state = ProposalState::Rejected;
+            }
+        }
+
+        self.state
+    }
+
+    /// Mark proposal as expired if deadline has passed.
+    pub fn expire_if_past_deadline(&mut self, current_epoch: u64) -> bool {
+        if self.state == ProposalState::Voting && current_epoch > self.deadline_epoch {
+            self.state = ProposalState::Expired;
+            return true;
+        }
+        false
+    }
+
+    /// Execute an approved proposal.
+    pub fn execute(&mut self) -> bool {
+        if self.state == ProposalState::Approved {
+            self.state = ProposalState::Executed;
+            return true;
+        }
+        false
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn default_policy() -> GovernancePolicy {
+        GovernancePolicy::default_dao()
+    }
+
+    fn make_proposal(proposer: u8) -> GovernanceProposal {
+        GovernanceProposal::new(
+            [0xAA; 32],
+            DecisionType::Admission,
+            [proposer; 32],
+            100,
+            200,
+        )
+    }
+
+    // -- GovernanceModel tests --
 
     #[test]
     fn test_governance_model_repr() {
         assert_eq!(GovernanceModel::Centralized as u16, 0x0001);
         assert_eq!(GovernanceModel::Autonomous as u16, 0x0005);
     }
+
+    #[test]
+    fn test_governance_model_from_u16() {
+        assert_eq!(
+            GovernanceModel::from_u16(0x0001),
+            Some(GovernanceModel::Centralized)
+        );
+        assert_eq!(GovernanceModel::from_u16(0x0099), None);
+    }
+
+    // -- GovernancePolicy tests --
 
     #[test]
     fn test_default_dao_policy() {
@@ -163,5 +372,153 @@ mod tests {
             EmergencyAuthority::Coordinator,
         );
         assert!(p.is_err());
+    }
+
+    #[test]
+    fn test_quorum_met() {
+        let p = default_policy(); // 2/3 quorum
+        assert!(p.is_quorum_met(7, 10)); // 7/10 >= 2/3
+        assert!(!p.is_quorum_met(5, 10)); // 5/10 < 2/3
+    }
+
+    #[test]
+    fn test_quorum_exact() {
+        let p = default_policy(); // 2/3 quorum
+        assert!(p.is_quorum_met(2, 3)); // exact 2/3
+        assert!(p.is_quorum_met(4, 6)); // exact 2/3
+    }
+
+    #[test]
+    fn test_quorum_zero_eligible() {
+        let p = default_policy();
+        assert!(!p.is_quorum_met(0, 0));
+    }
+
+    // -- GovernanceProposal tests --
+
+    #[test]
+    fn test_proposal_lifecycle_centralized() {
+        let policy = GovernancePolicy::new(
+            GovernanceModel::Centralized,
+            1,
+            1,
+            10,
+            EmergencyAuthority::Coordinator,
+        )
+        .unwrap();
+        let mut prop = make_proposal(0x01);
+        assert_eq!(prop.state, ProposalState::Created);
+
+        prop.open_voting();
+        assert_eq!(prop.state, ProposalState::Voting);
+
+        // Centralized: auto-approved
+        prop.resolve(&policy, 5);
+        assert_eq!(prop.state, ProposalState::Approved);
+
+        assert!(prop.execute());
+        assert_eq!(prop.state, ProposalState::Executed);
+    }
+
+    #[test]
+    fn test_proposal_lifecycle_dao_approved() {
+        let policy = default_policy(); // 2/3 quorum
+        let mut prop = make_proposal(0x01);
+        prop.open_voting();
+
+        // 3 for, 1 against out of 5 eligible = 4/5 voted (>= 2/3 quorum), majority for
+        prop.cast_vote([0x01; 32], 100, true);
+        prop.cast_vote([0x02; 32], 80, true);
+        prop.cast_vote([0x03; 32], 60, true);
+        prop.cast_vote([0x04; 32], 40, false);
+
+        prop.resolve(&policy, 5);
+        assert_eq!(prop.state, ProposalState::Approved);
+    }
+
+    #[test]
+    fn test_proposal_lifecycle_dao_rejected() {
+        let policy = default_policy();
+        let mut prop = make_proposal(0x01);
+        prop.open_voting();
+
+        prop.cast_vote([0x01; 32], 10, true);
+        prop.cast_vote([0x02; 32], 100, false);
+        prop.cast_vote([0x03; 32], 80, false);
+
+        prop.resolve(&policy, 3); // 3/3 voted = 100% >= 2/3 quorum
+        assert_eq!(prop.state, ProposalState::Rejected);
+    }
+
+    #[test]
+    fn test_proposal_no_quorum() {
+        let policy = default_policy(); // 2/3 quorum
+        let mut prop = make_proposal(0x01);
+        prop.open_voting();
+
+        // Only 1 voter out of 10 eligible = 1/10 < 2/3
+        prop.cast_vote([0x01; 32], 100, true);
+        prop.resolve(&policy, 10);
+        assert_eq!(prop.state, ProposalState::Voting); // still voting, no quorum
+    }
+
+    #[test]
+    fn test_proposal_autonomous() {
+        let policy = GovernancePolicy::new(
+            GovernanceModel::Autonomous,
+            1,
+            1,
+            10,
+            EmergencyAuthority::None,
+        )
+        .unwrap();
+        let mut prop = make_proposal(0x01);
+        prop.open_voting();
+
+        prop.cast_vote([0x01; 32], 100, true);
+        prop.cast_vote([0x02; 32], 50, false);
+
+        prop.resolve(&policy, 10);
+        assert_eq!(prop.state, ProposalState::Approved); // for > against
+    }
+
+    #[test]
+    fn test_proposal_expire() {
+        let mut prop = make_proposal(0x01);
+        prop.open_voting();
+        assert!(!prop.expire_if_past_deadline(150)); // before deadline
+        assert!(prop.expire_if_past_deadline(201)); // after deadline
+        assert_eq!(prop.state, ProposalState::Expired);
+    }
+
+    #[test]
+    fn test_proposal_cannot_vote_when_not_voting() {
+        let mut prop = make_proposal(0x01);
+        // Still in Created state
+        assert!(!prop.cast_vote([0x01; 32], 100, true));
+    }
+
+    #[test]
+    fn test_proposal_cannot_execute_unapproved() {
+        let mut prop = make_proposal(0x01);
+        prop.open_voting();
+        assert!(!prop.execute()); // not approved yet
+    }
+
+    #[test]
+    fn test_proposal_vote_weights() {
+        let mut prop = make_proposal(0x01);
+        prop.open_voting();
+        prop.cast_vote([0x01; 32], 100, true);
+        prop.cast_vote([0x02; 32], 50, true);
+        prop.cast_vote([0x03; 32], 30, false);
+        assert_eq!(prop.total_for(), 150);
+        assert_eq!(prop.total_against(), 30);
+    }
+
+    #[test]
+    fn test_decision_type_repr() {
+        assert_eq!(DecisionType::Admission as u16, 0x0001);
+        assert_eq!(DecisionType::ParticipantExpulsion as u16, 0x0007);
     }
 }

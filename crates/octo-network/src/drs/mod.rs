@@ -6,6 +6,7 @@
 pub mod cache;
 pub mod domain;
 pub mod error;
+pub mod mission_routing;
 pub mod route;
 pub mod scoring;
 pub mod trust;

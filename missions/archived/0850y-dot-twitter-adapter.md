@@ -1,8 +1,11 @@
 # Mission: DOT Twitter/X Adapter (PlatformType 0x000F)
 
-## Status
+Implemented (441 lines, 10 tests)
 
-Open
+## Claimant
+
+@agent (Jcode)
+
 
 ## RFC
 
@@ -26,21 +29,21 @@ reqwest = { version = "0.12", features = ["json"] }
 
 ## Acceptance Criteria
 
-- [ ] New crate: `crates/octo-adapter-twitter/`
-- [ ] `TwitterConfig`: `bearer_token`, `account_id` (optional), `poll_interval_secs`
-- [ ] Implements `PlatformAdapter` trait with all methods
-- [ ] `send_envelope()` — posts DOT envelope as a tweet (max 280 chars)
-- [ ] `receive_messages()` — polls `GET /2/users/:id/mentions` or search
-- [ ] `canonicalize()` — extracts DOT envelope from tweet text
-- [ ] `capabilities()`: max_payload=280 characters (~206 bytes base64), supports_fragmentation=true, media_capabilities=Some (images/media via `media/upload`)
-- [ ] `media_capabilities`: max_upload_bytes=5242880 (5MB image), supported_mime_types=["image/jpeg", "image/png", "image/gif", "image/webp"]
-- [ ] `self_handle()` — returns bot's Twitter user ID
-- [ ] `shutdown()` — clears cached state
-- [ ] Auth via Bearer token (OAuth2)
-- [ ] Rate limiting: respect Twitter rate limits (300 tweets/3h)
-- [ ] Domain hash: `BLAKE3-256("twitter:{user_id}")`
-- [ ] PlatformType: `0x000F` (new allocation)
-- [ ] Unit tests: 10+ tests
+- [x] New crate: `crates/octo-adapter-twitter/`
+- [x] `TwitterConfig`: `bearer_token`, `account_id` (optional), `poll_interval_secs`
+- [x] Implements `PlatformAdapter` trait with all methods
+- [x] `send_envelope()` — posts DOT envelope as a tweet (max 280 chars)
+- [x] `receive_messages()` — polls `GET /2/users/:id/mentions` or search
+- [x] `canonicalize()` — extracts DOT envelope from tweet text
+- [x] `capabilities()`: max_payload=280 characters (~206 bytes base64), supports_fragmentation=true, media_capabilities=Some (images/media via `media/upload`)
+- [x] `media_capabilities`: max_upload_bytes=5242880 (5MB image), supported_mime_types=["image/jpeg", "image/png", "image/gif", "image/webp"]
+- [x] `self_handle()` — returns bot's Twitter user ID
+- [x] `shutdown()` — clears cached state
+- [x] Auth via Bearer token (OAuth2)
+- [x] Rate limiting: respect Twitter rate limits (300 tweets/3h)
+- [x] Domain hash: `BLAKE3-256("twitter:{user_id}")`
+- [x] PlatformType: `0x000F` (new allocation)
+- [x] Unit tests: 10+ tests
 
 ## Complexity
 

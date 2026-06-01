@@ -23,7 +23,6 @@
 use base64::Engine;
 use matrix_sdk::Client;
 use serde::Deserialize;
-use std::sync::Arc;
 use uuid::Uuid;
 
 /// Matrix adapter configuration.
@@ -282,34 +281,38 @@ impl PlatformAdapter for MatrixAdapter {
         }
 
         let mut result = Vec::new();
-        for (room_id, joined) in &response.rooms.join {
+        for (room_id, joined) in &response.rooms.joined {
             for event in &joined.timeline.events {
-                // Try to extract message body from the event
-                if let Ok(deserialized) = event.event.deserialize() {
-                    if let Some(content) = deserialized.as_original().map(|o| &o.content) {
-                        // Check if this is a room message with text body
-                        if let Ok(msg_content) =
-                            content.get_field::<serde_json::Value>("body")
-                        {
-                            if let Some(body) = msg_content.and_then(|v| v.as_str()) {
-                                if let Ok(payload) = Self::decode_envelope(body) {
-                                    let mut metadata = std::collections::BTreeMap::new();
-                                    let event_id =
-                                        deserialized.event_id().to_string();
-                                    let sender = deserialized.sender().to_string();
-                                    metadata
-                                        .insert("sender".to_string(), sender);
-                                    metadata
-                                        .insert("event_id".to_string(), event_id.clone());
-                                    metadata
-                                        .insert("room_id".to_string(), room_id.to_string());
-                                    result.push(RawPlatformMessage {
-                                        platform_id: event_id,
-                                        payload,
-                                        metadata,
-                                    });
-                                }
-                            }
+                // Use raw JSON to extract message body (robust, avoids type complexity)
+                let raw = event.raw();
+                if let Ok(json) = raw.deserialize_as::<serde_json::Value>() {
+                    // Extract event_id, sender, and content.body
+                    let event_id = json
+                        .get("event_id")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("")
+                        .to_string();
+                    let sender = json
+                        .get("sender")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("")
+                        .to_string();
+                    let body = json
+                        .pointer("/content/body")
+                        .and_then(|v| v.as_str());
+
+                    if let Some(body) = body {
+                        if let Ok(payload) = Self::decode_envelope(body) {
+                            let mut metadata = std::collections::BTreeMap::new();
+                            metadata.insert("sender".to_string(), sender);
+                            metadata.insert("event_id".to_string(), event_id.clone());
+                            metadata
+                                .insert("room_id".to_string(), room_id.to_string());
+                            result.push(RawPlatformMessage {
+                                platform_id: event_id,
+                                payload,
+                                metadata,
+                            });
                         }
                     }
                 }
@@ -423,14 +426,12 @@ impl PlatformAdapter for MatrixAdapter {
     }
 
     async fn download_media(&self, media_id: &str) -> Result<Vec<u8>, PlatformAdapterError> {
-        use matrix_sdk::ruma::MxcUri;
+        use matrix_sdk::ruma::OwnedMxcUri;
 
-        let mxc_uri = MxcUri::parse(media_id).map_err(|e| {
-            transport_err(format!("Invalid MXC URI '{}': {}", media_id, e))
-        })?;
+        let mxc_uri: OwnedMxcUri = media_id.into();
 
         let request = matrix_sdk::media::MediaRequestParameters {
-            source: matrix_sdk::media::MediaSource::Plain(mxc_uri.to_owned()),
+            source: matrix_sdk::media::MediaSource::Plain(mxc_uri),
             format: MediaFormat::File,
         };
 

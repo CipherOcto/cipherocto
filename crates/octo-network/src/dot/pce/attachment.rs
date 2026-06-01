@@ -246,7 +246,6 @@ fn expected_proof_type(intent_type: u16) -> u16 {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::dot::pce::proof_type::ProofSystemId;
 
     // -- ProofTypeRegistry tests --
 

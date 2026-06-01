@@ -19,7 +19,7 @@ pub fn compute_merkle_root(leaves: &[[u8; 32]]) -> [u8; 32] {
     }
 
     // Compute leaf hashes with domain separation
-    let mut level: Vec<[u8; 32]> = leaves.iter().map(|h| hash_leaf(h)).collect();
+    let mut level: Vec<[u8; 32]> = leaves.iter().map(hash_leaf).collect();
 
     // Build tree bottom-up
     while level.len() > 1 {

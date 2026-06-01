@@ -117,7 +117,7 @@ pub struct BitmapSummary {
 impl BitmapSummary {
     /// Create a new bitmap summary for a range.
     pub fn new(range_start: u64, range_count: u64) -> Self {
-        let byte_count = ((range_count + 7) / 8) as usize;
+        let byte_count = range_count.div_ceil(8) as usize;
         Self {
             bits: vec![0u8; byte_count],
             range_start,

@@ -1,0 +1,24 @@
+[package]
+name = "octo-adapter-matrix-sdk"
+version = "0.1.0"
+edition = "2021"
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+# Matrix SDK (minimal: no E2EE, no SQLite)
+matrix-sdk = { version = "0.17.0", default-features = false }
+# Async runtime (embedded for cdylib compatibility)
+tokio = { version = "1.35", features = ["rt-multi-thread", "macros", "time"] }
+# Serialization
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+# DOT encoding
+blake3 = "1.5"
+base64 = "0.22"
+uuid = { version = "1.6", features = ["v4"] }
+# Async trait
+async-trait = "0.1"
+# DOT types (PlatformAdapter trait, envelope, domain, error)
+octo-network = { path = "../octo-network" }

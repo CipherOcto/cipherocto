@@ -56,6 +56,7 @@ impl std::fmt::Debug for MatrixConfig {
 pub struct MatrixAdapter {
     config: MatrixConfig,
     client: Client,
+    #[allow(dead_code)] // Used during construction; kept for cdylib lifecycle
     runtime: tokio::runtime::Runtime,
     /// Sync token for incremental /sync (ZeroClaw pattern).
     next_batch: std::sync::Mutex<Option<String>>,
@@ -98,6 +99,7 @@ impl MatrixAdapter {
     }
 
     /// Run an async operation on the embedded tokio runtime.
+    #[allow(dead_code)] // Available for cdylib hosts without their own runtime
     fn block_on<F: std::future::Future>(&self, future: F) -> F::Output {
         self.runtime.block_on(future)
     }
@@ -147,11 +149,11 @@ impl MatrixAdapter {
 // --- PlatformAdapter trait implementation ---
 
 use async_trait::async_trait;
-use matrix_sdk::ruma::{events::room::message::RoomMessageEventContent, RoomId};
 use matrix_sdk::media::MediaFormat;
+use matrix_sdk::ruma::{events::room::message::RoomMessageEventContent, RoomId};
 use octo_network::dot::adapters::{
-    backoff::RetryConfig, CapabilityReport, DeliveryReceipt, MediaCapabilities,
-    PlatformAdapter, RawPlatformMessage,
+    backoff::RetryConfig, CapabilityReport, DeliveryReceipt, MediaCapabilities, PlatformAdapter,
+    RawPlatformMessage,
 };
 use octo_network::dot::domain::{BroadcastDomainId, PlatformType};
 use octo_network::dot::envelope::DeterministicEnvelope;
@@ -187,9 +189,8 @@ impl PlatformAdapter for MatrixAdapter {
                 transport_err(format!("No room found for domain {:?}", domain.domain_hash))
             })?;
 
-        let room_id = RoomId::parse(room_id_str).map_err(|e| {
-            transport_err(format!("Invalid room ID '{}': {}", room_id_str, e))
-        })?;
+        let room_id = RoomId::parse(room_id_str)
+            .map_err(|e| transport_err(format!("Invalid room ID '{}': {}", room_id_str, e)))?;
 
         let room = self.client.get_room(&room_id).ok_or_else(|| {
             transport_err(format!("Room {} not found in joined rooms", room_id_str))
@@ -202,14 +203,13 @@ impl PlatformAdapter for MatrixAdapter {
         for attempt in 0..=retry_cfg.max_retries {
             let result = if wire_bytes.len() > Self::max_payload_bytes() {
                 // Upload as media file for large envelopes
+                let mime = "application/octet-stream"
+                    .parse::<mime::Mime>()
+                    .unwrap_or(mime::APPLICATION_OCTET_STREAM);
                 match self
                     .client
                     .media()
-                    .upload(
-                        &matrix_sdk::mime::APPLICATION_OCTET_STREAM,
-                        wire_bytes.clone(),
-                        None,
-                    )
+                    .upload(&mime, wire_bytes.clone(), None)
                     .await
                 {
                     Ok(response) => {
@@ -259,7 +259,7 @@ impl PlatformAdapter for MatrixAdapter {
         &self,
         _domain: &BroadcastDomainId,
     ) -> Result<Vec<RawPlatformMessage>, PlatformAdapterError> {
-        use matrix_sdk::sync::SyncSettings;
+        use matrix_sdk::config::SyncSettings;
         use std::time::Duration;
 
         let since = self.next_batch.lock().unwrap().clone();
@@ -297,17 +297,14 @@ impl PlatformAdapter for MatrixAdapter {
                         .and_then(|v| v.as_str())
                         .unwrap_or("")
                         .to_string();
-                    let body = json
-                        .pointer("/content/body")
-                        .and_then(|v| v.as_str());
+                    let body = json.pointer("/content/body").and_then(|v| v.as_str());
 
                     if let Some(body) = body {
                         if let Ok(payload) = Self::decode_envelope(body) {
                             let mut metadata = std::collections::BTreeMap::new();
                             metadata.insert("sender".to_string(), sender);
                             metadata.insert("event_id".to_string(), event_id.clone());
-                            metadata
-                                .insert("room_id".to_string(), room_id.to_string());
+                            metadata.insert("room_id".to_string(), room_id.to_string());
                             result.push(RawPlatformMessage {
                                 platform_id: event_id,
                                 payload,
@@ -377,17 +374,14 @@ impl PlatformAdapter for MatrixAdapter {
     }
 
     async fn health_check(&self) -> Result<(), PlatformAdapterError> {
+        use matrix_sdk::config::SyncSettings;
         use std::time::Duration;
 
         // Lightweight liveness probe: sync_once with zero timeout
-        let sync_settings =
-            matrix_sdk::sync::SyncSettings::default().timeout(Duration::from_millis(1));
+        let sync_settings = SyncSettings::default().timeout(Duration::from_millis(1));
 
-        match tokio::time::timeout(
-            Duration::from_secs(5),
-            self.client.sync_once(sync_settings),
-        )
-        .await
+        match tokio::time::timeout(Duration::from_secs(5), self.client.sync_once(sync_settings))
+            .await
         {
             Ok(Ok(_)) => {
                 // Resolve and cache user_id
@@ -411,9 +405,9 @@ impl PlatformAdapter for MatrixAdapter {
         data: &[u8],
         mime_type: &str,
     ) -> Result<String, PlatformAdapterError> {
-        let mime: matrix_sdk::mime::Mime = mime_type.parse().map_err(|e| {
-            transport_err(format!("Invalid MIME type '{}': {}", mime_type, e))
-        })?;
+        let mime: mime::Mime = mime_type
+            .parse()
+            .map_err(|e| transport_err(format!("Invalid MIME type '{}': {}", mime_type, e)))?;
 
         let response = self
             .client
@@ -426,12 +420,12 @@ impl PlatformAdapter for MatrixAdapter {
     }
 
     async fn download_media(&self, media_id: &str) -> Result<Vec<u8>, PlatformAdapterError> {
-        use matrix_sdk::ruma::OwnedMxcUri;
+        use matrix_sdk::ruma::{events::room::MediaSource, OwnedMxcUri};
 
         let mxc_uri: OwnedMxcUri = media_id.into();
 
         let request = matrix_sdk::media::MediaRequestParameters {
-            source: matrix_sdk::media::MediaSource::Plain(mxc_uri),
+            source: MediaSource::Plain(mxc_uri),
             format: MediaFormat::File,
         };
 
@@ -578,7 +572,11 @@ mod tests {
         });
         let adapter =
             MatrixAdapter::from_config_bytes(serde_json::to_vec(&config).unwrap().as_slice());
-        assert!(adapter.is_ok(), "Adapter creation should succeed: {:?}", adapter.err());
+        assert!(
+            adapter.is_ok(),
+            "Adapter creation should succeed: {:?}",
+            adapter.err()
+        );
     }
 
     #[test]

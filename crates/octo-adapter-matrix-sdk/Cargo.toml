@@ -20,5 +20,7 @@ base64 = "0.22"
 uuid = { version = "1.6", features = ["v4"] }
 # Async trait
 async-trait = "0.1"
+# MIME types
+mime = "0.3"
 # DOT types (PlatformAdapter trait, envelope, domain, error)
 octo-network = { path = "../octo-network" }

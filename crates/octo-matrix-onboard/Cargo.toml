@@ -47,6 +47,12 @@ url = "2.5"
 language-tags = "0.3"
 # QR rendering happens in the core lib
 # OAuth listener lives in the core lib
+# Multi-account stoolap-backed session store (mission 0850h-d). The
+# CLI's `session list / use / remove / import` subcommands open the
+# store at the operator-supplied `--store` path (or the per-platform
+# default). The login flows continue to write the legacy file by
+# default; pass `--store` to write directly to the store.
+octo-session-store = { path = "../octo-session-store" }
 
 [dev-dependencies]
 tempfile = "3.8"

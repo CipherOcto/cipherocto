@@ -9,3 +9,4 @@ pub mod e2ee;
 pub mod oidc;
 pub mod password;
 pub mod qr;
+pub mod session;

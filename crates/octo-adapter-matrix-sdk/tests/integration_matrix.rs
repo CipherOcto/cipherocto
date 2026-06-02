@@ -124,6 +124,13 @@ async fn integration_envelope_round_trip() {
         // it does not exercise the 401 + refresh + persist path).
         config_path: std::path::PathBuf::new(),
         force_writeback: false,
+        // Mission 0850h-d: `use_session_store: false` keeps the
+        // integration test on the in-config path (the test doesn't
+        // persist the session to the multi-account store; that's a
+        // separate integration covered by octo-session-store's
+        // own tests).
+        use_session_store: false,
+        session_store_path: std::path::PathBuf::new(),
         rooms: vec![room_id()],
     };
     let cfg_json = serde_json::to_vec(&cfg).expect("serialize config");

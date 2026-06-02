@@ -40,6 +40,14 @@ pub enum Command {
         #[command(subcommand)]
         action: E2eeAction,
     },
+    /// Multi-account session store operations (mission 0850h-d).
+    /// `login` writes its output to this store when `--store` is
+    /// passed; `session list` / `use` / `remove` / `import` operate
+    /// on the same store.
+    Session {
+        #[command(subcommand)]
+        action: SessionAction,
+    },
     /// Print version and exit.
     Version,
 }
@@ -165,9 +173,20 @@ pub struct QrArgs {
 
 #[derive(Args, Debug)]
 pub struct WhoamiArgs {
-    /// Path to a config file written by `login`.
+    /// Path to a config file written by `login`. Used as the source
+    /// of credentials unless `--store` is also set, in which case
+    /// the store is queried by `(user_id, device_id)` and the
+    /// file is treated as a metadata-only fallback for the
+    /// device-id check.
     #[arg(long)]
     pub config: PathBuf,
+    /// Optional path to the multi-account stoolap session store.
+    /// When set, credentials are loaded from the store row matching
+    /// the config's `(user_id, device_id)`. This is the 0850h-d
+    /// multi-account path; without it, whoami reads the file
+    /// directly (0850h-a / 0850h-c legacy behavior).
+    #[arg(long)]
+    pub store: Option<PathBuf>,
 }
 
 /// Shared flags for every E2EE subcommand.
@@ -236,4 +255,69 @@ pub struct E2eeVerifySessionArgs {
     /// i.e. the device this CLI is logged in as).
     #[arg(long)]
     pub user_id: Option<String>,
+}
+
+#[derive(Subcommand, Debug)]
+pub enum SessionAction {
+    /// List all sessions in the multi-account store, ordered by
+    /// insertion position. Each row prints user_id, device_id,
+    /// homeserver, login type, and a redacted token preview.
+    List(SessionListArgs),
+    /// Mark a session as the most-recently-used. Updates
+    /// `last_used` to the current epoch seconds; does NOT change
+    /// `position` (chronological multi-account ordering is
+    /// preserved).
+    Use(SessionUseArgs),
+    /// Remove a session. Refuses to remove when the row is missing.
+    Remove(SessionRemoveArgs),
+    /// Import a legacy 0850h-a / 0850h-c JSON config into the store.
+    /// Refuses to overwrite an existing `(user_id, device_id)` row
+    /// unless `--force` is set.
+    Import(SessionImportArgs),
+}
+
+#[derive(Args, Debug, Clone)]
+pub struct SessionStoreArgs {
+    /// Path to the multi-account stoolap store. Defaults to the
+    /// per-platform `ProjectDirs("com", "cipherocto", "cipherocto")
+    /// / data_dir() / sessions.db` location.
+    #[arg(long)]
+    pub store: Option<PathBuf>,
+}
+
+#[derive(Args, Debug)]
+pub struct SessionListArgs {
+    #[command(flatten)]
+    pub store: SessionStoreArgs,
+}
+
+#[derive(Args, Debug)]
+pub struct SessionUseArgs {
+    #[command(flatten)]
+    pub store: SessionStoreArgs,
+    /// The Matrix user ID of the session to mark as latest.
+    pub user_id: String,
+    /// The device ID of the session to mark as latest.
+    pub device_id: String,
+}
+
+#[derive(Args, Debug)]
+pub struct SessionRemoveArgs {
+    #[command(flatten)]
+    pub store: SessionStoreArgs,
+    /// The Matrix user ID of the session to remove.
+    pub user_id: String,
+    /// The device ID of the session to remove.
+    pub device_id: String,
+}
+
+#[derive(Args, Debug)]
+pub struct SessionImportArgs {
+    #[command(flatten)]
+    pub store: SessionStoreArgs,
+    /// Path to the legacy JSON config to import.
+    pub file: PathBuf,
+    /// Overwrite an existing row with the same `(user_id, device_id)`.
+    #[arg(long)]
+    pub force: bool,
 }

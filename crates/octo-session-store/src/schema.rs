@@ -1,0 +1,75 @@
+//! Schema migration for the Matrix session store (mission 0850h-d).
+//!
+//! The schema is modeled after EXA's `SessionData` (one row per
+//! `(user_id, device_id)`, columns for tokens / homeserver / login
+//! type / position / last-used) and adapted to stoolap's type system.
+//! `stoolap` uses `INTEGER` for epoch seconds and `TEXT` for variable
+//! length strings; BLOB columns are not used because the on-disk
+//! shape is purely textual (Matrix `@user:server` and `access_token`
+//! are both strings).
+//!
+//! `init_schema` is idempotent (`CREATE TABLE IF NOT EXISTS` + `CREATE
+//! INDEX IF NOT EXISTS`); the store calls it on `new`.
+
+use crate::store::{stoolap_err, SessionStoreError};
+
+/// Create the `sessions` table and its indexes. Safe to call on a
+/// fresh database (the typical case) and on an existing one (the
+/// `IF NOT EXISTS` clauses make every statement a no-op when the
+/// schema is already at the latest version).
+///
+/// Column reference:
+/// - `user_id` / `device_id` — composite primary key. Matrix
+///   `@user:server` is the natural user identifier; the device ID is
+///   the 10-char uppercase alphanumeric assigned at login.
+/// - `homeserver_url` — full URL of the homeserver (e.g.,
+///   `https://matrix.example.com`). Cached for offline CLI use.
+/// - `access_token` — the long-lived (or refresh-rotated) bearer
+///   token. `refresh_token` is NULL for password-only logins that
+///   don't issue refresh tokens.
+/// - `login_type` — see `LoginType`. Drives adapter login dispatch.
+/// - `login_timestamp` — set on `add_session` (epoch seconds),
+///   immutable thereafter.
+/// - `last_used` — updated on every adapter start that successfully
+///   loads the session. `set_latest_session` updates this column to
+///   the current epoch seconds.
+/// - `position` — strictly monotonic on insert. Never changes on
+///   `set_latest_session`. Drives stable multi-account ordering.
+/// - `display_name` / `avatar_url` — UI hints cached from the
+///   homeserver; not authoritative.
+pub fn init_schema(db: &stoolap::Database) -> Result<(), SessionStoreError> {
+    db.execute(
+        "CREATE TABLE IF NOT EXISTS sessions (
+            user_id TEXT NOT NULL,
+            device_id TEXT NOT NULL,
+            homeserver_url TEXT NOT NULL,
+            access_token TEXT NOT NULL,
+            refresh_token TEXT,
+            login_type TEXT NOT NULL,
+            login_timestamp INTEGER NOT NULL,
+            last_used INTEGER NOT NULL,
+            position INTEGER NOT NULL,
+            display_name TEXT,
+            avatar_url TEXT,
+            PRIMARY KEY (user_id, device_id)
+        )",
+        [],
+    )
+    .map_err(stoolap_err)?;
+
+    // Index on position for stable ordering in get_all_sessions.
+    db.execute(
+        "CREATE INDEX IF NOT EXISTS idx_sessions_position ON sessions(position)",
+        [],
+    )
+    .map_err(stoolap_err)?;
+
+    // Index on last_used for get_latest_session.
+    db.execute(
+        "CREATE INDEX IF NOT EXISTS idx_sessions_last_used ON sessions(last_used)",
+        [],
+    )
+    .map_err(stoolap_err)?;
+
+    Ok(())
+}

@@ -366,6 +366,8 @@ mod tests {
             passphrase: None,
             config_path: PathBuf::new(),
             force_writeback: false,
+            use_session_store: true,
+            session_store_path: PathBuf::new(),
             rooms: vec!["!abc:matrix.example.com".into()],
         }
     }

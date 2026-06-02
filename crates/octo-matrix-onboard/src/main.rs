@@ -11,7 +11,7 @@ mod output;
 mod whoami;
 
 use clap::Parser;
-use cli::{Cli, Command, E2eeAction, LoginMode, RecoveryAction};
+use cli::{Cli, Command, E2eeAction, LoginMode, RecoveryAction, SessionAction};
 use error::OnboardError;
 use std::process::ExitCode;
 
@@ -37,6 +37,12 @@ async fn main() -> ExitCode {
                     RecoveryAction::Generate(args) => modes::e2ee::recovery_generate(args).await,
                     RecoveryAction::Restore(args) => modes::e2ee::recovery_restore(args).await,
                 },
+            },
+            Command::Session { action } => match action {
+                SessionAction::List(args) => modes::session::list(args).await,
+                SessionAction::Use(args) => modes::session::use_(args).await,
+                SessionAction::Remove(args) => modes::session::remove(args).await,
+                SessionAction::Import(args) => modes::session::import(args).await,
             },
             Command::Version => {
                 println!("octo-matrix-onboard {}", env!("CARGO_PKG_VERSION"));

@@ -38,6 +38,7 @@ use std::path::PathBuf;
 use uuid::Uuid;
 
 pub mod config_writer;
+pub mod session_loader;
 
 fn redact_token(token: &str) -> String {
     if token.len() > 8 {
@@ -111,8 +112,27 @@ pub struct MatrixConfig {
     /// from the host process when only one writer is expected.
     #[serde(default)]
     pub force_writeback: bool,
+    /// When `true` (the default), the adapter loads the session from
+    /// the multi-account stoolap store when `session_store_path` is
+    /// non-empty. When `false`, the adapter reads the legacy
+    /// single-file config at `config_path` (mission 0850h-a / 0850h-c
+    /// behavior; useful for backward compatibility with deployments
+    /// that pre-date the store).
+    #[serde(default = "default_true")]
+    pub use_session_store: bool,
+    /// On-disk location of the multi-account stoolap store (mission
+    /// 0850h-d). When `PathBuf::new()`, the store path defaults to
+    /// the per-platform `ProjectDirs("com", "cipherocto", "cipherocto")
+    /// / data_dir() / sessions.db` location. Ignored when
+    /// `use_session_store` is `false`.
+    #[serde(default)]
+    pub session_store_path: PathBuf,
     /// Room IDs to monitor
     pub rooms: Vec<String>,
+}
+
+fn default_true() -> bool {
+    true
 }
 
 impl std::fmt::Debug for MatrixConfig {
@@ -151,11 +171,24 @@ impl MatrixAdapter {
     /// Create a new Matrix adapter from config.
     ///
     /// Builds a tokio runtime, initializes the matrix-sdk Client, and
-    /// restores the session from the config's `user_id` / `device_id` /
-    /// `access_token` / `refresh_token`. On 401 the adapter calls the
-    /// SDK's `refresh_access_token` (when `refresh_token` is `Some`) and
-    /// holds the rotated pair in memory; on-disk rotation is deferred to
-    /// mission 0850h-c.
+    /// restores the session from the config. The actual session
+    /// material (access / refresh tokens) is resolved by
+    /// `session_loader::load`, which honors the new mission 0850h-d
+    /// `use_session_store` field:
+    ///
+    /// - `use_session_store = true` (the default): load the row from
+    ///   the multi-account stoolap store at `session_store_path` (or
+    ///   the per-platform default).
+    /// - `use_session_store = false` AND `config_path` is set: read
+    ///   the legacy 0850h-a / 0850h-c JSON file.
+    /// - `use_session_store = false` AND `config_path` is empty: use
+    ///   the config's in-memory `access_token` / `refresh_token`
+    ///   fields directly (cdylib hosts that build a MatrixConfig from
+    ///   a config blob without persisting it).
+    ///
+    /// On 401 the adapter calls the SDK's `refresh_access_token` (when
+    /// `refresh_token` is `Some`) and holds the rotated pair in memory;
+    /// on-disk rotation is mission 0850h-c.
     pub fn new(config: MatrixConfig) -> Result<Self, String> {
         use matrix_sdk::authentication::matrix::MatrixSession;
         use matrix_sdk::ruma::{OwnedDeviceId, OwnedUserId};
@@ -166,15 +199,22 @@ impl MatrixAdapter {
             .build()
             .map_err(|e| format!("Failed to create tokio runtime: {}", e))?;
 
-        let user_id = OwnedUserId::try_from(config.user_id.as_str())
-            .map_err(|e| format!("Invalid user_id '{}': {}", config.user_id, e))?;
-        let device_id = OwnedDeviceId::from(config.device_id.as_str());
+        // Mission 0850h-d: resolve the actual session material via
+        // the loader. The returned `LoadedSession` overrides the
+        // config's `access_token` / `refresh_token` for the SDK
+        // restore call (the original config is kept on `self.config`
+        // for writeback / display purposes).
+        let loaded = session_loader::load(&config).map_err(|e| format!("session load: {}", e))?;
+
+        let user_id = OwnedUserId::try_from(loaded.user_id.as_str())
+            .map_err(|e| format!("Invalid user_id '{}': {}", loaded.user_id, e))?;
+        let device_id = OwnedDeviceId::from(loaded.device_id.as_str());
 
         let session = MatrixSession {
             meta: SessionMeta { user_id, device_id },
             tokens: SessionTokens {
-                access_token: config.access_token.clone(),
-                refresh_token: config.refresh_token.clone(),
+                access_token: loaded.access_token,
+                refresh_token: loaded.refresh_token,
             },
         };
 
@@ -188,9 +228,10 @@ impl MatrixAdapter {
         // host process to pass to `.sqlite_store` directly.
         let _ = &config.passphrase; // silence unused-field warning until wired
 
+        let homeserver_url = loaded.homeserver_url.clone();
         let client = runtime.block_on(async {
             let builder = Client::builder()
-                .homeserver_url(&config.homeserver_url)
+                .homeserver_url(&homeserver_url)
                 // Enable in-memory refresh on 401 when a refresh_token is
                 // present. The SDK rotates tokens internally; the on-disk
                 // config is left untouched (mission 0850h-c writes back).
@@ -206,7 +247,7 @@ impl MatrixAdapter {
         })?;
 
         // Cache the bot user_id for self_handle()
-        let cached_user = std::sync::Mutex::new(Some(config.user_id.clone()));
+        let cached_user = std::sync::Mutex::new(Some(loaded.user_id));
 
         Ok(Self {
             config,
@@ -611,6 +652,13 @@ mod tests {
     /// across parallel tests. The first run is also serialized on a
     /// per-process unique suffix to avoid collisions across `cargo test`
     /// invocations that re-use the same temp dir.
+    ///
+    /// `use_session_store: false` forces the adapter to read the
+    /// in-process `access_token` field directly (mission 0850h-d's
+    /// loader falls back to this when `config_path` is empty and
+    /// `use_session_store` is `false`). The adapter's own unit tests
+    /// are exercising in-memory crypto, not the stoolap store; the
+    /// store's behavior is tested in `octo-session-store`.
     fn test_config_json() -> serde_json::Value {
         let unique = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
@@ -621,6 +669,7 @@ mod tests {
             "user_id": format!("@bot-{}:matrix.example.com", unique),
             "device_id": format!("DEV{}", unique % 1_000_000),
             "access_token": "syt_test",
+            "use_session_store": false,
             "rooms": ["!abc:example.com"]
         })
     }
@@ -749,19 +798,58 @@ mod tests {
 
     #[test]
     fn test_config_writeback_fields_roundtrip() {
-        // Mission 0850h-c: when the host process supplies config_path
-        // and force_writeback, the adapter must capture them so the
-        // 401 + refresh path can persist rotated tokens.
+        // Mission 0850h-c: when the host process supplies
+        // `force_writeback`, the adapter must capture it for the
+        // 401 + refresh path to skip the snapshot check.
+        // (`config_path` is tested separately by the
+        // session_loader tests; combining them in a single test
+        // would require a real on-disk config file.)
         let mut config = test_config_json();
-        config["config_path"] = serde_json::json!("/var/lib/octo/bot.json");
         config["force_writeback"] = serde_json::json!(true);
+        let adapter =
+            MatrixAdapter::from_config_bytes(serde_json::to_vec(&config).unwrap().as_slice())
+                .unwrap();
+        assert!(adapter.config.force_writeback);
+    }
+
+    #[test]
+    fn test_config_path_field_roundtrip() {
+        // Mission 0850h-c: `config_path` is a `PathBuf` that survives
+        // a JSON roundtrip. We write a real on-disk file at that
+        // path (the loader actually reads it) and assert the
+        // adapter captured the field.
+        let unique = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_nanos())
+            .unwrap_or(0);
+        let dir = std::env::temp_dir().join(format!("octo-matrix-rc-{unique}"));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("config.json");
+        let on_disk = serde_json::json!({
+            "homeserver_url": "https://matrix.example.com",
+            "user_id": format!("@bot-{}:matrix.example.com", unique),
+            "device_id": format!("DEV{}", unique % 1_000_000),
+            "access_token": "syt_on_disk",
+            "refresh_token": "syr_on_disk",
+            "rooms": ["!abc:example.com"]
+        });
+        std::fs::write(&path, serde_json::to_vec(&on_disk).unwrap()).unwrap();
+
+        let mut config = test_config_json();
+        // Override user_id/device_id/access_token so the loader's
+        // file read returns the on-disk values (not the
+        // `test_config_json` defaults).
+        config["user_id"] = on_disk["user_id"].clone();
+        config["device_id"] = on_disk["device_id"].clone();
+        config["access_token"] = on_disk["access_token"].clone();
+        config["config_path"] = serde_json::json!(path.to_string_lossy());
+        config["use_session_store"] = serde_json::json!(false);
         let adapter =
             MatrixAdapter::from_config_bytes(serde_json::to_vec(&config).unwrap().as_slice())
                 .unwrap();
         assert_eq!(
             adapter.config.config_path.to_str().unwrap(),
-            "/var/lib/octo/bot.json"
+            path.to_string_lossy()
         );
-        assert!(adapter.config.force_writeback);
     }
 }

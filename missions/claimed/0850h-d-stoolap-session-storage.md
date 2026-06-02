@@ -2,7 +2,7 @@
 
 ## Status
 
-Planned
+Implemented (2026-06-02) — awaits PR
 
 ## RFC
 

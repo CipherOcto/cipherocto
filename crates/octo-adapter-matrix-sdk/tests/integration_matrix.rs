@@ -119,6 +119,11 @@ async fn integration_envelope_round_trip() {
         access_token: sess.access_token.clone(),
         refresh_token: sess.refresh_token.clone(),
         passphrase: None,
+        // Mission 0850h-c: empty config_path disables on-disk writeback
+        // for the integration test (the test only round-trips in-memory;
+        // it does not exercise the 401 + refresh + persist path).
+        config_path: std::path::PathBuf::new(),
+        force_writeback: false,
         rooms: vec![room_id()],
     };
     let cfg_json = serde_json::to_vec(&cfg).expect("serialize config");

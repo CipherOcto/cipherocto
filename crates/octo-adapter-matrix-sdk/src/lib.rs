@@ -34,7 +34,10 @@
 use base64::Engine;
 use matrix_sdk::Client;
 use serde::Deserialize;
+use std::path::PathBuf;
 use uuid::Uuid;
+
+pub mod config_writer;
 
 fn redact_token(token: &str) -> String {
     if token.len() > 8 {
@@ -58,10 +61,15 @@ fn redact_token(token: &str) -> String {
 /// back to disk — the operator supplies it on the CLI as
 /// `--passphrase-stdin` and the adapter holds it in memory only.
 ///
-/// Future mission 0850h-c will additively extend this struct with
-/// `config_path: PathBuf` and `force_writeback: bool`. Field order and
-/// serde tag/untagged behavior are intentionally NOT constrained here
-/// so those additions remain free.
+/// `config_path` / `force_writeback` (mission 0850h-c) control the
+/// on-disk writeback of rotated `access_token` / `refresh_token`
+/// pairs: when `config_path` is non-empty, the adapter writes the
+/// rotated pair back to it (atomic rename + flock) so long-running
+/// daemons survive a process restart without re-onboarding. When
+/// `config_path` is empty, writeback is disabled (in-memory or
+/// read-only deployments). `force_writeback` skips the
+/// before-snapshot check that protects against two long-running
+/// processes clobbering each other's token rotations.
 #[derive(Clone, Deserialize, serde::Serialize)]
 pub struct MatrixConfig {
     /// Matrix homeserver URL
@@ -90,6 +98,19 @@ pub struct MatrixConfig {
     /// — supplied on the CLI as `--passphrase-stdin`.
     #[serde(default, skip_serializing_if = "Option::is_none", skip_serializing)]
     pub passphrase: Option<String>,
+    /// On-disk location of the config file. When the SDK rotates the
+    /// access/refresh-token pair on a 401 response, the adapter writes
+    /// the rotated pair back to this path (mission 0850h-c). When
+    /// `PathBuf::new()` (the default), writeback is disabled — useful
+    /// for in-memory or read-only deployments.
+    #[serde(default)]
+    pub config_path: PathBuf,
+    /// Skip the before-snapshot check on writeback (mission 0850h-c).
+    /// The default `false` protects against two long-running processes
+    /// silently clobbering each other's token rotations; set to `true`
+    /// from the host process when only one writer is expected.
+    #[serde(default)]
+    pub force_writeback: bool,
     /// Room IDs to monitor
     pub rooms: Vec<String>,
 }
@@ -708,5 +729,39 @@ mod tests {
         // store collisions).
         let expected_user = config["user_id"].as_str().unwrap().to_string();
         assert_eq!(adapter.self_handle(), Some(expected_user));
+    }
+
+    #[test]
+    fn test_config_writeback_fields_default() {
+        // Mission 0850h-c: `config_path` and `force_writeback` default
+        // to "no writeback" (empty PathBuf, false bool) when absent
+        // from the on-disk JSON — old configs that pre-date the
+        // mission must continue to deserialize cleanly.
+        let mut config = test_config_json();
+        config.as_object_mut().unwrap().remove("config_path");
+        config.as_object_mut().unwrap().remove("force_writeback");
+        let adapter =
+            MatrixAdapter::from_config_bytes(serde_json::to_vec(&config).unwrap().as_slice())
+                .unwrap();
+        assert!(adapter.config.config_path.as_os_str().is_empty());
+        assert!(!adapter.config.force_writeback);
+    }
+
+    #[test]
+    fn test_config_writeback_fields_roundtrip() {
+        // Mission 0850h-c: when the host process supplies config_path
+        // and force_writeback, the adapter must capture them so the
+        // 401 + refresh path can persist rotated tokens.
+        let mut config = test_config_json();
+        config["config_path"] = serde_json::json!("/var/lib/octo/bot.json");
+        config["force_writeback"] = serde_json::json!(true);
+        let adapter =
+            MatrixAdapter::from_config_bytes(serde_json::to_vec(&config).unwrap().as_slice())
+                .unwrap();
+        assert_eq!(
+            adapter.config.config_path.to_str().unwrap(),
+            "/var/lib/octo/bot.json"
+        );
+        assert!(adapter.config.force_writeback);
     }
 }

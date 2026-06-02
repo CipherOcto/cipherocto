@@ -14,8 +14,15 @@ crate-type = ["cdylib", "rlib"]
 integration-matrix = ["dep:octo-matrix-onboard-core"]
 
 [dependencies]
-# Matrix SDK (minimal: no E2EE, no SQLite)
-matrix-sdk = { version = "0.17.0", default-features = false }
+# Matrix SDK (E2EE + SQLite crypto store, exact pin per 0850h-a SDK Risk note).
+# Feature set is the corrected version of the mission 0850h-b spec:
+# matrix-sdk 0.17.0 has no `rustls-tls` or `sqlite-cryptostore` features —
+# TLS is baked into the embedded reqwest, and the SQLite crypto store is
+# enabled implicitly when both `e2e-encryption` and `sqlite` are set. The
+# `indexeddb-cryptostore` referenced in the mission does not exist in
+# 0.17.0 either; the web-only state/event-cache store is the
+# `indexeddb` feature (not used here — headless CLI).
+matrix-sdk = { version = "=0.17.0", default-features = false, features = ["e2e-encryption", "sqlite", "qrcode"] }
 # Async runtime (embedded for cdylib compatibility)
 tokio = { version = "1.35", features = ["rt-multi-thread", "macros", "time"] }
 # Serialization

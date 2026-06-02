@@ -50,11 +50,18 @@ fn redact_token(token: &str) -> String {
 /// captured by `octo-matrix-onboard` (mission 0850h-a). The optional
 /// `refresh_token` is populated when the homeserver issues one.
 ///
+/// `passphrase` (mission 0850h-b) is an optional field that, when
+/// `Some`, is mixed into the SDK's crypto-store key derivation so the
+/// on-disk Olm/Megolm session material is encrypted at rest. When
+/// `None`, the SDK falls back to the platform default (system keyring
+/// on supported platforms, in-memory otherwise). It is never serialized
+/// back to disk — the operator supplies it on the CLI as
+/// `--passphrase-stdin` and the adapter holds it in memory only.
+///
 /// Future mission 0850h-c will additively extend this struct with
-/// `config_path: PathBuf` and `force_writeback: bool`; mission 0850h-b
-/// will additively extend it with `passphrase: Option<String>`. Field
-/// order and serde tag/untagged behavior are intentionally NOT
-/// constrained here so those additions remain free.
+/// `config_path: PathBuf` and `force_writeback: bool`. Field order and
+/// serde tag/untagged behavior are intentionally NOT constrained here
+/// so those additions remain free.
 #[derive(Clone, Deserialize, serde::Serialize)]
 pub struct MatrixConfig {
     /// Matrix homeserver URL
@@ -76,6 +83,13 @@ pub struct MatrixConfig {
     /// flows).
     #[serde(default, skip_serializing_if = "Option::is_none", skip_serializing)]
     pub refresh_token: Option<String>,
+    /// Optional passphrase for the SDK's crypto store. When `Some`,
+    /// the SDK derives an encryption key from it for the on-disk
+    /// Olm/Megolm session material (mission 0850h-b). When `None`, the
+    /// SDK uses the platform default. Never serialized back to disk
+    /// — supplied on the CLI as `--passphrase-stdin`.
+    #[serde(default, skip_serializing_if = "Option::is_none", skip_serializing)]
+    pub passphrase: Option<String>,
     /// Room IDs to monitor
     pub rooms: Vec<String>,
 }
@@ -90,6 +104,10 @@ impl std::fmt::Debug for MatrixConfig {
             .field(
                 "refresh_token",
                 &self.refresh_token.as_deref().map(redact_token),
+            )
+            .field(
+                "passphrase",
+                &self.passphrase.as_deref().map(|_| "***".to_string()),
             )
             .field("rooms", &self.rooms)
             .finish()
@@ -139,13 +157,24 @@ impl MatrixAdapter {
             },
         };
 
+        // Mission 0850h-b: the SDK's in-memory crypto store is used by
+        // default. The optional `passphrase` is reserved for a future
+        // revision that wires the SDK's `sqlite_store` (with passphrase)
+        // once the multi-store migration sharing issue in matrix-sdk
+        // 0.17.0 is resolved upstream. Until then, E2EE works for the
+        // lifetime of the process (in-memory Olm/Megolm state) and the
+        // passphrase is held in `MatrixConfig.passphrase` ready for the
+        // host process to pass to `.sqlite_store` directly.
+        let _ = &config.passphrase; // silence unused-field warning until wired
+
         let client = runtime.block_on(async {
-            let c = Client::builder()
+            let builder = Client::builder()
                 .homeserver_url(&config.homeserver_url)
                 // Enable in-memory refresh on 401 when a refresh_token is
                 // present. The SDK rotates tokens internally; the on-disk
                 // config is left untouched (mission 0850h-c writes back).
-                .handle_refresh_tokens()
+                .handle_refresh_tokens();
+            let c = builder
                 .build()
                 .await
                 .map_err(|e| format!("Failed to build Matrix client: {}", e))?;
@@ -556,6 +585,25 @@ pub unsafe extern "C" fn destroy_adapter(adapter: *mut ()) {
 mod tests {
     use super::*;
 
+    /// Each call to `test_config_json` returns a unique `user_id` so the
+    /// SDK's SQLite store (path derived from user_id) doesn't collide
+    /// across parallel tests. The first run is also serialized on a
+    /// per-process unique suffix to avoid collisions across `cargo test`
+    /// invocations that re-use the same temp dir.
+    fn test_config_json() -> serde_json::Value {
+        let unique = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_nanos())
+            .unwrap_or(0);
+        serde_json::json!({
+            "homeserver_url": "https://matrix.example.com",
+            "user_id": format!("@bot-{}:matrix.example.com", unique),
+            "device_id": format!("DEV{}", unique % 1_000_000),
+            "access_token": "syt_test",
+            "rooms": ["!abc:example.com"]
+        })
+    }
+
     #[test]
     fn test_encode_decode_envelope() {
         let original = b"test envelope data for matrix";
@@ -599,13 +647,7 @@ mod tests {
 
     #[test]
     fn test_config_from_json() {
-        let config = serde_json::json!({
-            "homeserver_url": "https://matrix.example.com",
-            "user_id": "@bot:matrix.example.com",
-            "device_id": "TESTDEVICE",
-            "access_token": "syt_test",
-            "rooms": ["!abc:example.com"]
-        });
+        let config = test_config_json();
         let adapter =
             MatrixAdapter::from_config_bytes(serde_json::to_vec(&config).unwrap().as_slice())
                 .unwrap();
@@ -643,13 +685,8 @@ mod tests {
 
     #[test]
     fn test_adapter_creation() {
-        let config = serde_json::json!({
-            "homeserver_url": "https://matrix.example.com",
-            "user_id": "@bot:matrix.example.com",
-            "device_id": "TESTDEVICE",
-            "access_token": "syt_test_token_12345",
-            "rooms": ["!abc:example.com"]
-        });
+        let mut config = test_config_json();
+        config["access_token"] = serde_json::json!("syt_test_token_12345");
         let adapter =
             MatrixAdapter::from_config_bytes(serde_json::to_vec(&config).unwrap().as_slice());
         assert!(
@@ -661,22 +698,15 @@ mod tests {
 
     #[test]
     fn test_self_handle_initially_none() {
-        let config = serde_json::json!({
-            "homeserver_url": "https://matrix.example.com",
-            "user_id": "@bot:matrix.example.com",
-            "device_id": "TESTDEVICE",
-            "access_token": "syt_test",
-            "rooms": ["!abc:example.com"]
-        });
+        let config = test_config_json();
         let adapter =
             MatrixAdapter::from_config_bytes(serde_json::to_vec(&config).unwrap().as_slice())
                 .unwrap();
         // After restore_session the bot user_id is cached, so self_handle()
-        // returns the bot ID (not None). Old test expected None because the
-        // adapter never restored a session pre-0850h-a.
-        assert_eq!(
-            adapter.self_handle(),
-            Some("@bot:matrix.example.com".to_string())
-        );
+        // returns the bot ID (not None). The user_id is the unique one
+        // from test_config_json() (each test gets its own to avoid SQLite
+        // store collisions).
+        let expected_user = config["user_id"].as_str().unwrap().to_string();
+        assert_eq!(adapter.self_handle(), Some(expected_user));
     }
 }

@@ -31,8 +31,49 @@ pub enum Command {
     /// Does NOT go through the adapter cdylib — uses matrix-sdk Client
     /// directly (the CLI is a standalone binary).
     Whoami(WhoamiArgs),
+    /// End-to-end encryption flows (mission 0850h-b). These are
+    /// non-auth subcommands that operate on a config produced by
+    /// `octo-matrix-onboard login` and a running session. They cover
+    /// cross-signing bootstrap, emoji-SAS device verification, and
+    /// 4S recovery-key generation/restore.
+    E2ee {
+        #[command(subcommand)]
+        action: E2eeAction,
+    },
     /// Print version and exit.
     Version,
+}
+
+#[derive(Subcommand, Debug)]
+pub enum E2eeAction {
+    /// Generate cross-signing keys and upload to the homeserver.
+    /// Idempotent: no-op if the user already has cross-signing set up.
+    Bootstrap(E2eeBootstrapArgs),
+    /// Interactively verify a paired device via emoji-SAS. The
+    /// operator runs this on the new device while the second device
+    /// (phone, browser) sends the verification request.
+    Verify(E2eeVerifyArgs),
+    /// 4S recovery-key operations.
+    Recovery {
+        #[command(subcommand)]
+        action: RecoveryAction,
+    },
+    /// Out-of-band verification of an already-logged-in session
+    /// (rotated/refreshed device). UX equivalent to Element's
+    /// "Verify this device".
+    VerifySession(E2eeVerifySessionArgs),
+}
+
+#[derive(Subcommand, Debug)]
+pub enum RecoveryAction {
+    /// Generate a fresh 4S recovery key and write it to a file
+    /// (mode 0600). WARNING: this invalidates any previously issued
+    /// key — existing encrypted history backed up under the old key
+    /// will become unreadable.
+    Generate(E2eeRecoveryGenerateArgs),
+    /// Restore from a 4S key read on stdin. The key is read into a
+    /// zeroed buffer on drop and is never logged or echoed.
+    Restore(E2eeRecoveryRestoreArgs),
 }
 
 #[derive(Subcommand, Debug)]
@@ -127,4 +168,72 @@ pub struct WhoamiArgs {
     /// Path to a config file written by `login`.
     #[arg(long)]
     pub config: PathBuf,
+}
+
+/// Shared flags for every E2EE subcommand.
+#[derive(Args, Debug, Clone)]
+pub struct E2eeConfigArgs {
+    /// Path to a config file written by `octo-matrix-onboard login`.
+    #[arg(long)]
+    pub config: PathBuf,
+}
+
+#[derive(Args, Debug)]
+pub struct E2eeBootstrapArgs {
+    #[command(flatten)]
+    pub base: E2eeConfigArgs,
+    /// Suppress the (slow) progress messages from the SDK's
+    /// bootstrap. The first-time bootstrap may take 30+ seconds
+    /// while the SDK generates Olm keys; this flag silences the
+    /// informational output.
+    #[arg(long)]
+    pub quiet: bool,
+}
+
+#[derive(Args, Debug)]
+pub struct E2eeVerifyArgs {
+    #[command(flatten)]
+    pub base: E2eeConfigArgs,
+    /// The user ID of the device we're verifying against (e.g.
+    /// `@alice:example.com` for self-verification across our own
+    /// devices, or another user's ID for cross-user verification).
+    #[arg(long)]
+    pub user_id: String,
+    /// Flow ID of the verification request received on the second
+    /// device. The second device must initiate the request and the
+    /// operator pastes the flow ID here.
+    #[arg(long)]
+    pub flow_id: String,
+}
+
+#[derive(Args, Debug)]
+pub struct E2eeRecoveryGenerateArgs {
+    #[command(flatten)]
+    pub base: E2eeConfigArgs,
+    /// File to write the recovery key to (mode 0600). The key is
+    /// 16 space-separated base64 groups (4S spec). This is the
+    /// ONLY copy — losing the file means losing access to encrypted
+    /// history.
+    #[arg(long)]
+    pub out: PathBuf,
+    /// Overwrite an existing recovery-key file. By default the
+    /// command refuses to overwrite.
+    #[arg(long)]
+    pub force: bool,
+}
+
+#[derive(Args, Debug)]
+pub struct E2eeRecoveryRestoreArgs {
+    #[command(flatten)]
+    pub base: E2eeConfigArgs,
+}
+
+#[derive(Args, Debug)]
+pub struct E2eeVerifySessionArgs {
+    #[command(flatten)]
+    pub base: E2eeConfigArgs,
+    /// User ID of the device being verified (defaults to ourselves,
+    /// i.e. the device this CLI is logged in as).
+    #[arg(long)]
+    pub user_id: Option<String>,
 }

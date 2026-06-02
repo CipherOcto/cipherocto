@@ -118,6 +118,7 @@ async fn integration_envelope_round_trip() {
         device_id: sess.device_id.clone(),
         access_token: sess.access_token.clone(),
         refresh_token: sess.refresh_token.clone(),
+        passphrase: None,
         rooms: vec![room_id()],
     };
     let cfg_json = serde_json::to_vec(&cfg).expect("serialize config");

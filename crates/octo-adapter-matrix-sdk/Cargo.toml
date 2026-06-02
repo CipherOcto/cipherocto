@@ -6,6 +6,13 @@ edition = "2021"
 [lib]
 crate-type = ["cdylib", "rlib"]
 
+[features]
+# Integration test feature — gates the `tests/integration_matrix.rs`
+# test, which requires a running homeserver (started by
+# `scripts/integration-matrix.sh up`). The feature is OFF by default
+# so `cargo test` on a clean tree doesn't try to hit a homeserver.
+integration-matrix = ["dep:octo-matrix-onboard-core"]
+
 [dependencies]
 # Matrix SDK (minimal: no E2EE, no SQLite)
 matrix-sdk = { version = "0.17.0", default-features = false }
@@ -24,3 +31,6 @@ async-trait = "0.1"
 mime = "0.3"
 # DOT types (PlatformAdapter trait, envelope, domain, error)
 octo-network = { path = "../octo-network" }
+# Auth flows (only required for the integration-matrix feature; the
+# production cdylib doesn't link to it).
+octo-matrix-onboard-core = { path = "../octo-matrix-onboard-core", optional = true }

@@ -1,0 +1,33 @@
+[package]
+name = "octo-matrix-onboard-core"
+version = "0.1.0"
+edition = "2021"
+license = "MIT OR Apache-2.0"
+description = "Library half of octo-matrix-onboard: auth flows, session capture, QR rendering, OAuth callback listener."
+
+[dependencies]
+# Pinned to match the adapter; the SDK Risk note (mission 0850h-a) flags
+# that an automatic patch bump to 0.17.x could break the QR module API.
+# matrix-sdk 0.17.0 has no `rustls-tls` or `api` feature — TLS is baked
+# into the embedded reqwest, and login APIs are always available. The
+# mission file's feature list was inaccurate.
+matrix-sdk = { version = "=0.17.0", default-features = false }
+# Async runtime
+tokio = { workspace = true }
+# Localhost OAuth callback listener (axum 0.7 is hyper-1 compatible)
+axum = { version = "0.7", default-features = false, features = ["http1", "tokio", "query"] }
+# Terminal QR rendering (unicode half-block path)
+qrcode = { version = "0.14", default-features = false }
+# Logging
+tracing = { workspace = true }
+# Serialization
+serde = { workspace = true }
+serde_json = { workspace = true }
+# Error handling
+anyhow = { workspace = true }
+thiserror = { workspace = true }
+# URL parsing for OAuth callbacks
+url = "2.5"
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }

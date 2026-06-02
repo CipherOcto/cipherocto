@@ -1,0 +1,52 @@
+[package]
+name = "octo-matrix-onboard"
+version = "0.1.0"
+edition = "2021"
+license = "MIT OR Apache-2.0"
+description = "Standalone CLI that authenticates against a Matrix homeserver and writes a JSON config for octo-adapter-matrix-sdk."
+
+[[bin]]
+name = "octo-matrix-onboard"
+path = "src/main.rs"
+
+[dependencies]
+# Library half — auth flows, session capture, QR rendering, listener
+octo-matrix-onboard-core = { path = "../octo-matrix-onboard-core" }
+# Matrix SDK (must match the core lib's pin).
+# Features:
+#   - `e2e-encryption` + `qrcode` for the QR login mode
+#     (LoginWithGeneratedQrCode is gated behind e2e-encryption).
+#   - No `sqlite`/`indexeddb` — we don't need a state store for a
+#     one-shot login CLI; the default in-memory store is fine.
+#   - The `rustls-tls` / `api` features mentioned in older mission
+#     drafts DO NOT EXIST on matrix-sdk 0.17.0 — TLS is baked into
+#     the embedded reqwest client and login APIs are always
+#     available without an `api` feature flag.
+matrix-sdk = { version = "=0.17.0", default-features = false, features = ["e2e-encryption", "qrcode"] }
+# CLI
+clap = { workspace = true }
+# Async runtime
+tokio = { workspace = true }
+# StreamExt for QR login progress
+tokio-stream = "0.1"
+# Serialization (manual JSON output preserves access_token field,
+# which the adapter's MatrixConfig marks #[serde(skip_serializing)])
+serde = { workspace = true }
+serde_json = { workspace = true }
+# Logging with redaction layer
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
+# Error handling
+anyhow = { workspace = true }
+thiserror = { workspace = true }
+# Config dir resolution (per mission: dirs::config_dir())
+dirs = "5"
+# URL parsing for OAuth
+url = "2.5"
+# BCP-47 language tags for OAuth ClientMetadata Localized fields
+language-tags = "0.3"
+# QR rendering happens in the core lib
+# OAuth listener lives in the core lib
+
+[dev-dependencies]
+tempfile = "3.8"

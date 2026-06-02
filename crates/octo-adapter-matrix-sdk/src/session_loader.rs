@@ -1,8 +1,8 @@
 //! Session loader for the Matrix adapter (mission 0850h-d).
 //!
 //! Decides whether to load a session from the multi-account stoolap
-//! store (`octo-session-store`) or from the legacy single-file JSON
-//! config (missions 0850h-a / 0850h-c), based on
+//! store (`octo-matrix-session-store`) or from the legacy single-file
+//! JSON config (missions 0850h-a / 0850h-c), based on
 //! `MatrixConfig.use_session_store` and `MatrixConfig.session_store_path`.
 //!
 //! ## Behavior
@@ -26,7 +26,9 @@
 
 use crate::config_writer::OnDiskConfig;
 use crate::MatrixConfig;
-use octo_session_store::{default_store_path, SessionRow, SessionStore, StoolapSessionStore};
+use octo_matrix_session_store::{
+    default_store_path, SessionRow, SessionStore, StoolapSessionStore,
+};
 use std::path::PathBuf;
 use thiserror::Error;
 
@@ -161,7 +163,7 @@ fn futures_block_on<F: std::future::Future>(future: F) -> F::Output {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use octo_session_store::{LoginType, StoolapSessionStore};
+    use octo_matrix_session_store::{LoginType, StoolapSessionStore};
     use std::io::Write;
     use std::os::unix::fs::OpenOptionsExt;
 

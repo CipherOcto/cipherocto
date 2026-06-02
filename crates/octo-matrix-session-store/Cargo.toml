@@ -1,5 +1,5 @@
 [package]
-name = "octo-session-store"
+name = "octo-matrix-session-store"
 version = "0.1.0"
 edition = "2021"
 

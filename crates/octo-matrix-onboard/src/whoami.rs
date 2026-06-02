@@ -22,7 +22,7 @@ use crate::cli::WhoamiArgs;
 use crate::error::{OnboardError, Result};
 use matrix_sdk::authentication::matrix::MatrixSession;
 use matrix_sdk::{Client, SessionMeta, SessionTokens};
-use octo_session_store::{SessionStore, StoolapSessionStore};
+use octo_matrix_session_store::{SessionStore, StoolapSessionStore};
 use serde::Deserialize;
 use tracing::info;
 

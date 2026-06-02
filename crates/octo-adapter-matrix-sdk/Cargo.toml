@@ -55,6 +55,6 @@ tracing = { workspace = true }
 # adapter's `MatrixConfig.use_session_store` field (default `true`)
 # controls whether the adapter loads from the store or from the
 # legacy file path. The store is opened via
-# `octo_session_store::StoolapSessionStore::new(path)` and queried
-# by `(user_id, device_id)`.
-octo-session-store = { path = "../octo-session-store" }
+# `octo_matrix_session_store::StoolapSessionStore::new(path)` and
+# queried by `(user_id, device_id)`.
+octo-matrix-session-store = { path = "../octo-matrix-session-store" }

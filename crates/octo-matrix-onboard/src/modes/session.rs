@@ -1,7 +1,7 @@
 //! Multi-account session-store subcommands (mission 0850h-d).
 //!
 //! Four subcommands, all operating on the stoolap-backed store
-//! (`octo-session-store`):
+//! (`octo-matrix-session-store`):
 //!
 //! - `session list` — print all sessions, ordered by insertion
 //!   position. Each row includes user_id, device_id, homeserver,
@@ -17,7 +17,7 @@
 
 use crate::cli::{SessionImportArgs, SessionListArgs, SessionRemoveArgs, SessionUseArgs};
 use crate::error::{OnboardError, Result};
-use octo_session_store::{
+use octo_matrix_session_store::{
     default_store_path, LoginType, SessionRow, SessionStore, SessionStoreError, StoolapSessionStore,
 };
 use std::path::PathBuf;

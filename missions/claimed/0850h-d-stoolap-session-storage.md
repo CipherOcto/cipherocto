@@ -34,13 +34,13 @@ stoolap = { git = "https://github.com/CipherOcto/stoolap", branch = "feat/blockc
 
 ### Crate layout
 
-A new lib crate `octo-session-store` (stoolap-backed) plus a thin
+A new lib crate `octo-matrix-session-store` (stoolap-backed) plus a thin
 integration in `octo-matrix-onboard-core` for `whoami` to read from either
 the file (legacy) or the store (new).
 
 ```
 crates/
-  octo-session-store/                  # new, lib only
+  octo-matrix-session-store/           # new, lib only
     src/
       lib.rs
       schema.rs                        # CREATE TABLE, migrations
@@ -100,7 +100,7 @@ schemas are not wire-compatible; they are structurally analogous.
 
 ## Acceptance Criteria
 
-- [ ] New crate `crates/octo-session-store/` (lib, no binary)
+- [ ] New crate `crates/octo-matrix-session-store/` (lib, no binary)
 - [ ] `Cargo.toml` declares `stoolap` via the CipherOcto fork on
       `feat/blockchain-sql` (pinned commit); no `rusqlite` /
       `sqlx-sqlite` / `diesel-sqlite` / raw `sqlite` crate in
@@ -137,7 +137,7 @@ schemas are not wire-compatible; they are structurally analogous.
 
 ## Location
 
-- `crates/octo-session-store/` (new, lib)
+- `crates/octo-matrix-session-store/` (new, lib)
 - `crates/octo-matrix-onboard-core/src/whoami.rs` (extended)
 - `crates/octo-matrix-onboard/src/modes/session_*.rs` (new subcommands)
 - `crates/octo-adapter-matrix-sdk/src/session_loader.rs` (new)

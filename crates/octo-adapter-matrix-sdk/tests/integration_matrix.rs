@@ -127,7 +127,7 @@ async fn integration_envelope_round_trip() {
         // Mission 0850h-d: `use_session_store: false` keeps the
         // integration test on the in-config path (the test doesn't
         // persist the session to the multi-account store; that's a
-        // separate integration covered by octo-session-store's
+        // separate integration covered by octo-matrix-session-store's
         // own tests).
         use_session_store: false,
         session_store_path: std::path::PathBuf::new(),

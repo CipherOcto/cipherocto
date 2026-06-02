@@ -658,7 +658,7 @@ mod tests {
     /// loader falls back to this when `config_path` is empty and
     /// `use_session_store` is `false`). The adapter's own unit tests
     /// are exercising in-memory crypto, not the stoolap store; the
-    /// store's behavior is tested in `octo-session-store`.
+    /// store's behavior is tested in `octo-matrix-session-store`.
     fn test_config_json() -> serde_json::Value {
         let unique = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)

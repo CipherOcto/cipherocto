@@ -142,8 +142,8 @@ impl Session {
 /// last 4 chars (the standard `syt_…XXXX` form operators expect).
 /// For tokens shorter than 16 chars, returns the first 4 + "...".
 ///
-/// R5-L1: this is one of three `redact_token` implementations
-/// across the four mission crates. Each site has a deliberately
+/// R5-L1: this is one of FOUR `redact_*` implementations across
+/// the four mission crates. Each site has a deliberately
 /// different format policy because each display context calls
 /// for a different balance of brevity and operator-recognizability:
 ///
@@ -152,17 +152,21 @@ impl Session {
 ///   (`Session::access_token_preview`). Uses a 2-tier form
 ///   (first8...last4 / first4...) that reveals slightly more
 ///   of short tokens.
-/// - `crates/octo-adapter-matrix-sdk/src/lib.rs:55` — free-form
-///   diagnostic output (error messages, debug logs). Uses a
-///   3-tier form (first8...last4 / all*** / ***) so operators
-///   can correlate the start AND end of a long token against
-///   the homeserver's UI.
-/// - `crates/octo-matrix-onboard/src/modes/session.rs:50` —
-///   tabular `session list` output. Uses a compact 2-tier form
-///   (first8*** / ***) that keeps the column width
-///   predictable.
+/// - `crates/octo-adapter-matrix-sdk/src/lib.rs:80` — free-form
+///   diagnostic output (error messages, debug logs). Char-based
+///   slicing so a non-ASCII token gets the first 8 / last 4 CHARS.
+///   3-tier shape: `first8...last4` / `all***` / `***`.
+/// - `crates/octo-matrix-onboard/src/modes/session.rs:77` —
+///   tabular `session list` output. R6-M2 fixed the byte-slicing
+///   (R2-H2 missed this site) so the slice is now char-boundary
+///   safe. Shape: `first ≤8 bytes + ***` / `***`.
+/// - `crates/octo-matrix-onboard/src/logging.rs:119` —
+///   tracing-subscriber `FormatEvent` redaction. Char-boundary-
+///   walked byte slice (the only site that walks back, so a
+///   4S recovery key with non-ASCII bytes can't panic).
+///   Shape: `first ≤8 bytes + ***` / `***`.
 ///
-/// If you change this implementation, audit the other two for
+/// If you change this implementation, audit the other three for
 /// consistency. The per-site policies are intentional; the
 /// cross-reference is the missing piece a future maintainer
 /// needs to avoid silent divergence.

@@ -116,6 +116,42 @@ fn is_sensitive_key(name: &str) -> bool {
     REDACT_KEYS.iter().any(|k| lower.contains(k))
 }
 
+/// Redact a string for safe display in tracing output. R2-L7: the
+/// shape is "first 8 bytes (walked back to a UTF-8 char boundary) +
+/// ***" for strings longer than 8 bytes, and "***" for short
+/// strings. R2-H2 follow-on: byte slicing is replaced with
+/// char-boundary walking so a multi-byte UTF-8 boundary in the 8th
+/// byte can't panic.
+///
+/// R6-L2: this is one of FOUR `redact_*` implementations across
+/// the four mission crates. Each site has a deliberately different
+/// format policy because each display context calls for a
+/// different balance of brevity and operator-recognizability:
+///
+/// - `crates/octo-matrix-onboard/src/logging.rs` (THIS FUNCTION) —
+///   tracing-subscriber `FormatEvent` redaction. Walks the 8th
+///   byte back to the nearest char boundary so non-ASCII input
+///   (e.g. a 4S recovery key with Unicode chars) can't panic.
+///   Shape: "first ≤8 bytes + ***" / "***". This is the
+///   only site that walks back — the other three assume ASCII
+///   (Matrix tokens) or use char-based slicing (the adapter).
+/// - `crates/octo-adapter-matrix-sdk/src/lib.rs:80` — free-form
+///   diagnostic output (error messages, debug logs). Char-based
+///   slicing so a non-ASCII token gets the first 8 / last 4 CHARS.
+///   3-tier shape: `first8...last4` / `all***` / `***`.
+/// - `crates/octo-matrix-onboard-core/src/lib.rs:169` — the
+///   one-time "logged in" confirmation message
+///   (`Session::access_token_preview`). 2-tier shape:
+///   `first8...last4` / `first4...`.
+/// - `crates/octo-matrix-onboard/src/modes/session.rs:77` —
+///   tabular `session list` output. R6-M2 fixed the byte-slicing
+///   (R2-H2 missed this site) so the slice is now char-boundary
+///   safe. Shape: `first ≤8 bytes + ***` / `***`.
+///
+/// R5-L1 named "three" sites; R6-L2 added this one. The five-way
+/// divergence is deliberate: the formats serve different display
+/// contexts. The cross-reference is the only thing tying them
+/// together.
 fn redact_value(v: &str) -> String {
     if v.len() > 8 {
         // R2-H2 follow-on: `&v[..8]` slices by BYTES, which would

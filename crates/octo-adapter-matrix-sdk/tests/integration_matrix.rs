@@ -329,9 +329,11 @@ async fn integration_persist_session_to_disk_writes_rotated_pair() {
         .expect("adapter construction from config");
 
     // First call: no rotation yet → no-op (the SDK's session
-    // tokens match the on-disk file).
+    // tokens match the on-disk file). R6-M1: the new signature
+    // takes `force_writeback: bool`; the integration test does
+    // not exercise the force path, so pass `false`.
     let outcome1 = adapter
-        .persist_session_to_disk()
+        .persist_session_to_disk(false)
         .expect("persist_session_to_disk first call");
     assert!(
         !outcome1.written,
@@ -358,9 +360,11 @@ async fn integration_persist_session_to_disk_writes_rotated_pair() {
 
     // The new adapter's session tokens are the rotated pair. The
     // on-disk file still has the old pair. Calling persist should
-    // write the rotated pair to disk.
+    // write the rotated pair to disk. R6-M1: pass `false` — the
+    // test exercises the natural write-on-rotation path, not the
+    // `force_writeback` override.
     let outcome2 = adapter_rotated
-        .persist_session_to_disk()
+        .persist_session_to_disk(false)
         .expect("persist_session_to_disk after rotation");
     assert!(
         outcome2.written,

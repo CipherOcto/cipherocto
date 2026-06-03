@@ -53,8 +53,8 @@ pub mod session_loader;
 /// non-ASCII characters gets the first 8 / last 4 CHARS instead
 /// of the first 8 / last 4 BYTES.
 ///
-/// R5-L1: this is one of three `redact_token` implementations
-/// across the four mission crates. Each site has a deliberately
+/// R5-L1: this is one of FOUR `redact_*` implementations across
+/// the four mission crates. Each site has a deliberately
 /// different format policy because each display context calls
 /// for a different balance of brevity and operator-recognizability:
 ///
@@ -69,11 +69,16 @@ pub mod session_loader;
 ///   (first8...last4 / first4...) that reveals slightly more
 ///   of short tokens.
 /// - `crates/octo-matrix-onboard/src/modes/session.rs:50` —
-///   tabular `session list` output. Uses a compact 2-tier form
-///   (first8*** / ***) that keeps the column width
-///   predictable.
+///   tabular `session list` output. R6-M2 fixed the byte-slicing
+///   (R2-H2 missed this site) so the slice is now char-boundary
+///   safe. Shape: `first ≤8 bytes + ***` / `***`.
+/// - `crates/octo-matrix-onboard/src/logging.rs:119` —
+///   tracing-subscriber `FormatEvent` redaction. Char-boundary-
+///   walked byte slice (the only site that walks back, so a
+///   4S recovery key with non-ASCII bytes can't panic).
+///   Shape: `first ≤8 bytes + ***` / `***`.
 ///
-/// If you change this implementation, audit the other two for
+/// If you change this implementation, audit the other three for
 /// consistency. The per-site policies are intentional; the
 /// cross-reference is the missing piece a future maintainer
 /// needs to avoid silent divergence.
@@ -489,17 +494,32 @@ impl MatrixAdapter {
     /// 1. Captures the **current** access/refresh token from the SDK.
     /// 2. Updates `self.config` with the rotated pair.
     /// 3. Calls `config_writer::writeback` against the snapshot
-    ///    captured at adapter construction (or, if `force_writeback`
-    ///    is set, against the on-disk file as-is).
+    ///    captured at adapter construction. `force_writeback`
+    ///    controls whether the snapshot-drift check is enforced
+    ///    (false = refuse on drift; true = clobber).
     /// 4. Surfaces `WritebackError::LockHeld` as a non-fatal warning
     ///    (the host can retry) and `SnapshotMismatch` as a fatal
     ///    "two writers, refusing to clobber" error unless
-    ///    `force_writeback` is set.
+    ///    `force_writeback` is true.
     ///
     /// When `config_path` is empty, this is a no-op (in-memory or
     /// read-only deployment).
+    ///
+    /// R6-M1: the C ABI export of this function (`persist_session_to_disk`
+    /// at line 1194) takes a per-call `_force_writeback: u8`
+    /// override. R2's original ABI signature exposed the parameter
+    /// but the implementation ignored it, so a C host that passed
+    /// `_force_writeback = 1` expecting a per-call override silently
+    /// got the config-level value. The Rust method now takes a
+    /// `force_writeback: bool` argument that is OR'd with the
+    /// config-level value (the per-call argument is the
+    /// "I'm sure, write it" escape hatch; the config-level
+    /// `force_writeback` is the long-lived "I own this row" knob).
+    /// Pre-R6 callers that pass `self.config.force_writeback`
+    /// (matching the old behaviour) get the same semantics.
     pub fn persist_session_to_disk(
         &self,
+        force_writeback: bool,
     ) -> Result<config_writer::WritebackOutcome, MatrixAdapterError> {
         if self.config.config_path.as_os_str().is_empty() {
             return Ok(config_writer::WritebackOutcome { written: false });
@@ -533,11 +553,21 @@ impl MatrixAdapter {
                 .clone()
                 .unwrap_or_else(|| config_writer::OnDiskConfig::from_config(&self.config))
         };
+        // R6-M1: OR the per-call override with the config-level
+        // `force_writeback`. The C ABI is the only caller that
+        // passes a non-config value; the integration test passes
+        // `false` (matching the config). The OR semantics: if
+        // either side says "force", we force. This means a host
+        // that sets `config.force_writeback = true` once (e.g.,
+        // for a one-shot migration) and then calls the C ABI with
+        // `_force_writeback = 0` still gets the force behaviour —
+        // which matches the pre-R6 contract.
+        let effective_force = force_writeback || self.config.force_writeback;
         let result = config_writer::writeback(
             &self.config.config_path,
             &on_disk_before,
             &rotated,
-            self.config.force_writeback,
+            effective_force,
         );
         // R3-H1: on success (write OR no-op), refresh the snapshot so
         // the NEXT writeback's `on_disk_before` matches what's
@@ -722,13 +752,16 @@ fn transport_err(msg: impl Into<String>) -> PlatformAdapterError {
     }
 }
 
-fn unix_epoch_now() -> u64 {
-    use std::time::{SystemTime, UNIX_EPOCH};
-    SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map(|d| d.as_secs())
-        .unwrap_or(0)
-}
+// R6-L3: `unix_epoch_now` was a third near-duplicate of the
+// "now in epoch seconds" computation. It has been replaced by
+// the canonical `now_epoch` exported from `octo-matrix-session-store`
+// (the leaf crate both this crate and `octo-matrix-onboard` depend
+// on). The single call site at the previous line 870 now uses
+// `octo_matrix_session_store::now_epoch() as u64` — the cast is
+// safe because `now_epoch` returns 0 for pre-1970 clocks, which is
+// the same fallback the previous `unix_epoch_now` produced, and
+// in any realistic case the value is positive and well within
+// `u64::MAX`.
 
 #[async_trait]
 impl PlatformAdapter for MatrixAdapter {
@@ -837,7 +870,7 @@ impl PlatformAdapter for MatrixAdapter {
                     let event_id = sent.response.event_id.to_string();
                     return Ok(DeliveryReceipt {
                         platform_message_id: event_id,
-                        delivered_at: unix_epoch_now(),
+                        delivered_at: octo_matrix_session_store::now_epoch() as u64,
                     });
                 }
                 Err(e) => {
@@ -1200,7 +1233,18 @@ pub unsafe extern "C" fn persist_session_to_disk(
         return 6; // InvalidArg
     }
     let adapter = &*(adapter as *const MatrixAdapter);
-    let outcome_result = adapter.persist_session_to_disk().map(|o| o.written);
+    // R6-M1: forward the host's `_force_writeback` flag to
+    // `MatrixAdapter::persist_session_to_disk`. The Rust method
+    // ORs the per-call override with the config-level
+    // `force_writeback` setting, so a host that wants the default
+    // config-level behavior should pass 0. Previous shape: this
+    // parameter was accepted by the C ABI but dropped on the
+    // floor (the Rust call took no args), so a host that set
+    // `_force_writeback = 1` got the same behavior as `_force_writeback
+    // = 0`. That made the C ABI surface lie about what it would do.
+    let outcome_result = adapter
+        .persist_session_to_disk(_force_writeback != 0)
+        .map(|o| o.written);
     match outcome_result {
         Ok(written) => {
             // R4-L1: this branch is the only success path. It

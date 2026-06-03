@@ -19,10 +19,10 @@ use crate::cli::{SessionImportArgs, SessionListArgs, SessionRemoveArgs, SessionU
 use crate::error::{OnboardError, Result};
 use crate::logging::format_rfc3339_secs;
 use octo_matrix_session_store::{
-    default_store_path, LoginType, SessionRow, SessionStore, SessionStoreError, StoolapSessionStore,
+    default_store_path, now_epoch, LoginType, SessionRow, SessionStore, SessionStoreError,
+    StoolapSessionStore,
 };
 use std::path::PathBuf;
-use std::time::{SystemTime, UNIX_EPOCH};
 
 /// Open the store at the operator-specified path, or at the
 /// per-platform default when `--store` is not set.
@@ -39,44 +39,57 @@ fn open_store(path: Option<&PathBuf>) -> Result<StoolapSessionStore> {
         .map_err(|e| OnboardError::Generic(anyhow::anyhow!("open store: {}", e)))
 }
 
-fn now_epoch() -> i64 {
-    SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map(|d| d.as_secs() as i64)
-        .unwrap_or(0)
-}
-
 /// Redact a token for display: show the first 8 characters and `***`.
 ///
-/// R5-L1: this is one of three `redact_token` implementations
-/// across the four mission crates. Each site has a deliberately
+/// R5-L1: this is one of FOUR `redact_*` implementations across
+/// the four mission crates. Each site has a deliberately
 /// different format policy because each display context calls
 /// for a different balance of brevity and operator-recognizability:
 ///
 /// - `crates/octo-matrix-onboard/src/modes/session.rs` (THIS FILE)
 ///   — tabular `session list` output. Uses a compact 2-tier form
 ///   (first8*** / ***) that keeps the column width predictable.
-///   Unlike the other two sites, this one does NOT show the tail
-///   of the token, because the rows are aligned in a multi-account
-///   table and the tail would be cut off by the column width.
-/// - `crates/octo-adapter-matrix-sdk/src/lib.rs:55` — free-form
-///   diagnostic output (error messages, debug logs). Uses a
-///   3-tier form (first8...last4 / all*** / ***) so operators
-///   can correlate the start AND end of a long token against
-///   the homeserver's UI.
-/// - `crates/octo-matrix-onboard-core/src/lib.rs:144` — the
+///   Unlike the other three sites, this one does NOT show the
+///   tail of the token, because the rows are aligned in a
+///   multi-account table and the tail would be cut off by the
+///   column width. R6-M2 fixed the byte-slicing to walk back to
+///   a char boundary (R2-H2 missed this site when fixing the
+///   adapter copy).
+/// - `crates/octo-adapter-matrix-sdk/src/lib.rs:80` — free-form
+///   diagnostic output (error messages, debug logs). Char-based
+///   slicing so a non-ASCII token gets the first 8 / last 4 CHARS.
+///   3-tier shape: `first8...last4` / `all***` / `***`.
+/// - `crates/octo-matrix-onboard-core/src/lib.rs:169` — the
 ///   one-time "logged in" confirmation message
-///   (`Session::access_token_preview`). Uses a 2-tier form
-///   (first8...last4 / first4...) that reveals slightly more
-///   of short tokens.
+///   (`Session::access_token_preview`). 2-tier shape:
+///   `first8...last4` / `first4...`.
+/// - `crates/octo-matrix-onboard/src/logging.rs:119` —
+///   tracing-subscriber `FormatEvent` redaction. Char-boundary-
+///   walked byte slice (the only site that walks back, so a
+///   4S recovery key with non-ASCII bytes can't panic).
+///   Shape: `first ≤8 bytes + ***` / `***`.
 ///
-/// If you change this implementation, audit the other two for
+/// If you change this implementation, audit the other three for
 /// consistency. The per-site policies are intentional; the
 /// cross-reference is the missing piece a future maintainer
 /// needs to avoid silent divergence.
 fn redact_token(token: &str) -> String {
     if token.len() > 8 {
-        format!("{}***", &token[..8])
+        // R6-M2: the previous shape was `&token[..8]`, which
+        // byte-slices. If byte 8 falls in the middle of a
+        // multi-byte UTF-8 codepoint, the slice panics with
+        // "byte index N is not a char boundary". The adapter
+        // copy at `lib.rs:80` was fixed in R2-H2 to use
+        // char-based slicing, and the logging copy at
+        // `logging.rs:119` walks back to a char boundary on
+        // the same byte slice. This site was missed; the fix
+        // matches the logging copy (the format is identical
+        // — first 8 + ***).
+        let mut end = 8.min(token.len());
+        while end > 0 && !token.is_char_boundary(end) {
+            end -= 1;
+        }
+        format!("{}***", &token[..end])
     } else {
         "***".to_string()
     }
@@ -297,4 +310,150 @@ pub async fn import(args: SessionImportArgs) -> Result<()> {
         user_id, device_id, args.file
     );
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::redact_token;
+
+    /// R6-M2 regression test: a long ASCII token gets the
+    /// "first 8 + ***" form.
+    #[test]
+    fn redact_token_ascii_long() {
+        let r = redact_token("syt_abcdefgh_long_token_xyz");
+        assert_eq!(r, "syt_abcd***", "got: {r}");
+    }
+
+    /// R6-M2 regression test: a token of exactly 8 chars is
+    /// treated as "short" and returns "***".
+    #[test]
+    fn redact_token_at_boundary() {
+        let r = redact_token("12345678");
+        assert_eq!(r, "***", "got: {r}");
+    }
+
+    /// R6-M2 regression test: a token of 9 chars gets the
+    /// "first 8 + ***" form.
+    #[test]
+    fn redact_token_one_above_boundary() {
+        let r = redact_token("123456789");
+        assert_eq!(r, "12345678***", "got: {r}");
+    }
+
+    /// R6-M2 regression test: an empty token returns "***".
+    #[test]
+    fn redact_token_empty() {
+        assert_eq!(redact_token(""), "***");
+    }
+
+    /// R6-M2 regression test: a token where byte 8 falls inside
+    /// a multi-byte UTF-8 codepoint must NOT panic. The fix
+    /// walks byte 8 back to the nearest char boundary. The
+    /// 4S recovery key format in `modes/e2ee.rs` is
+    /// ASCII-only, but the field is otherwise free-form and
+    /// a future change could introduce Unicode — the
+    /// `redact_token` function must be safe.
+    ///
+    /// `用户` is 6 bytes in UTF-8 (2 chars × 3 bytes each).
+    /// `用户syt_abcdefgh_long` is 6 + 16 = 22 bytes; byte 8
+    /// would fall in the middle of the second `户` codepoint
+    /// (which starts at byte 3 and ends at byte 5 inclusive
+    /// — wait, 3 + 3 = 6, so byte 6 starts `s` in `syt_…`).
+    /// Construct a string where the boundary is exactly at
+    /// risk: 8 bytes total, with 1 multi-byte char then ASCII.
+    /// Actually 8 bytes is the "short" branch; need a 9+ byte
+    /// string. Try 3 multi-byte chars + ASCII: `用户` is 6
+    /// bytes, so `用户用户1` is 13 bytes; byte 8 falls mid the
+    /// 2nd `户` (which spans bytes 6..=8, byte 8 is the last
+    /// byte of `户`). Adding a 4th `用` to push past: 16 bytes,
+    /// byte 8 still in the middle of the 3rd char.
+    #[test]
+    fn redact_token_non_ascii_does_not_panic() {
+        // 3 × 用户 (6 bytes) + 1 × 用 (3 bytes) + "12" = 6+6+3+2 = 17 bytes.
+        // Byte 8 falls in the middle of the 2nd `户` codepoint
+        // (which starts at byte 6 and spans bytes 6..=8).
+        // Pre-fix: would panic. Post-fix: walks back to byte 6
+        // (the end of the 1st `户`), giving "用户用户1" — wait
+        // let me trace this carefully:
+        //   bytes 0..=2:  用
+        //   bytes 3..=5:  户
+        //   bytes 6..=8:  用
+        //   bytes 9..=11: 户
+        //   bytes 12..=14: 用
+        //   bytes 15..=16: 1, 2
+        // Byte 8 is the LAST byte of the 2nd `用` (bytes 6..=8).
+        // A byte slice ending at 8 is `&v[..8]`, which is a
+        // char boundary (just after byte 7, end of char 2).
+        // Hmm, the pre-fix code would NOT panic on this.
+        // Let me construct a different example.
+        // Take a 4-byte char (e.g. an emoji like 😀 = 4 bytes).
+        //   v = "😀😀abcd" (4+4+4 = 12 bytes)
+        //   bytes 0..=3:   😀
+        //   bytes 4..=7:   😀
+        //   bytes 8..=11:  a, b, c, d
+        // Byte 8 is the start of `a` — a char boundary. So
+        // `&v[..8]` is `😀😀` (8 bytes = 2 chars), valid.
+        // Need a string where byte 8 is INSIDE a multi-byte
+        // char, not at its end.
+        // Take `a😀😀abc` (1+4+4+3 = 12 bytes):
+        //   bytes 0:       a
+        //   bytes 1..=4:   😀
+        //   bytes 5..=8:   😀
+        //   bytes 9..=11:  a, b, c
+        // Byte 8 is the LAST byte of the 2nd `😀` — so `&v[..8]`
+        // ends at byte 7, mid-codepoint of the 2nd emoji. PANICS.
+        let v = "a😀😀abc"; // 12 bytes
+                            // Just calling redact_token must not panic.
+        let r = redact_token(v);
+        // The fix walks back from byte 8 to the nearest char
+        // boundary below 8. Char boundaries: 0, 1, 5, 9, 10, 11, 12.
+        // The largest one ≤ 8 is 5. So `&v[..5]` = "a😀" (5 bytes).
+        assert_eq!(r, "a😀***", "got: {r}");
+    }
+
+    /// R6-M2 regression test: a Cyrillic-flavored token where
+    /// byte 8 lands in the middle of a 2-byte UTF-8 char. The
+    /// pre-fix code would panic. Post-fix: walks back to the
+    /// previous char boundary.
+    #[test]
+    fn redact_token_cyrillic_boundary() {
+        // 4 × `в` (2 bytes each) + "abcdef" (6 bytes) = 14 bytes.
+        //   bytes 0..=1:   в
+        //   bytes 2..=3:   в
+        //   bytes 4..=5:   в
+        //   bytes 6..=7:   в
+        //   bytes 8..=13:  a, b, c, d, e, f
+        // Byte 8 is `a` — a char boundary. Not a panic case.
+        // Take 3 × `в` + "abcdefgh" = 6+8 = 14 bytes:
+        //   bytes 0..=1:   в
+        //   bytes 2..=3:   в
+        //   bytes 4..=5:   в
+        //   bytes 6..=13:  a..h
+        // Byte 8 is `c` — a char boundary. Still not a panic case.
+        // The right construction: 7 ASCII + 1 Cyrillic, so byte 8
+        // is the FIRST byte of a 2-byte char (must be followed by
+        // another byte, byte 9 is the second byte).
+        //   v = "1234567Ж" = 7 + 2 = 9 bytes
+        //   bytes 0..=6:  1, 2, 3, 4, 5, 6, 7
+        //   bytes 7..=8:  Ж (Cyrillic capital Zhe, U+0416, 2 bytes)
+        // Byte 8 is the SECOND byte of Ж — a char boundary, so
+        // `&v[..8]` ends after `1, 2, 3, 4, 5, 6, 7` (7 bytes) and
+        // is a valid boundary. Not a panic case.
+        // The exact mid-codepoint case: I need a 2-byte char that
+        // STARTS at byte 7 (so byte 8 is the second byte).
+        //   v = "1234567" + 2-byte char starting at byte 7
+        //   = "1234567" + a 2-byte char
+        //   = 7 + 2 = 9 bytes
+        // The 2-byte char spans bytes 7..=8. Byte 7 is the first
+        // byte. So `&v[..7]` is fine (byte 7 is a char boundary
+        // — start of the 2-byte char). `&v[..8]` is mid-codepoint.
+        // That's the panic case.
+        let v = "1234567Ж";
+        let r = redact_token(v);
+        // Walk back from byte 8 to the largest char boundary ≤ 8:
+        //   boundaries: 0, 1, 2, 3, 4, 5, 6, 7, 9
+        //   largest ≤ 8: 7
+        // So the slice is "1234567" (7 bytes) + "***" = "1234567***".
+        assert_eq!(r, "1234567***", "got: {r}");
+    }
 }

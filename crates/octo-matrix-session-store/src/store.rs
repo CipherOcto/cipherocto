@@ -11,7 +11,10 @@
 use crate::models::{LoginType, SessionRow};
 use async_trait::async_trait;
 use std::path::Path;
-use std::time::{SystemTime, UNIX_EPOCH};
+// R6-L3: `SystemTime` / `UNIX_EPOCH` were only used by the
+// local `now_epoch` re-implementation. They are now provided by
+// `crate::now_epoch` in `lib.rs`, so the import is no longer
+// needed here.
 
 /// Errors the store can surface. The host process (CLI or adapter)
 /// decides whether to retry, log, or fail; the store itself does
@@ -161,13 +164,12 @@ impl StoolapSessionStore {
     }
 }
 
-/// Current epoch seconds. Returns 0 if the clock is before the
-/// Unix epoch (defensive — never expected in practice).
+/// R6-L3: thin re-export of the canonical `now_epoch` defined in
+/// `lib.rs`. Kept as a private `fn` so the existing call sites
+/// in this file (`now_epoch()`) don't have to change — the
+/// function is the same one the rest of the workspace calls.
 fn now_epoch() -> i64 {
-    SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map(|d| d.as_secs() as i64)
-        .unwrap_or(0)
+    crate::now_epoch()
 }
 
 /// Convert a `stoolap::ResultRow` to a `SessionRow`. Returns

@@ -39,6 +39,33 @@ pub use models::{LoginType, SessionRow};
 pub use schema::init_schema;
 pub use store::{SessionStore, SessionStoreError, StoolapSessionStore};
 
+/// Current epoch seconds.
+///
+/// R6-L3: this is the canonical implementation of "now in epoch
+/// seconds" for the four mission crates. The `octo-matrix-session-store`
+/// crate is the leaf — both `octo-adapter-matrix-sdk` and
+/// `octo-matrix-onboard` depend on it — so making the function
+/// `pub` here is the natural single source of truth. Previous
+/// shape: three near-identical copies
+/// (`octo-matrix-session-store/src/store.rs:166`,
+/// `octo-matrix-onboard/src/modes/session.rs:42`,
+/// `octo-adapter-matrix-sdk/src/lib.rs:755` as `unix_epoch_now`
+/// returning `u64`) diverged only on the `i64` vs `u64` return
+/// type. The `u64` call site in the adapter now casts from `i64`
+/// at the call boundary, with a short comment explaining why.
+///
+/// Returns 0 if the system clock is before the Unix epoch
+/// (defensive — never expected in practice, but a `SystemTime`
+/// earlier than `UNIX_EPOCH` would otherwise produce a negative
+/// duration and a panic on `as_secs`).
+pub fn now_epoch() -> i64 {
+    use std::time::{SystemTime, UNIX_EPOCH};
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_secs() as i64)
+        .unwrap_or(0)
+}
+
 /// Default on-disk location of the store: per-platform project data
 /// dir + `sessions.db`. On Linux this is
 /// `$XDG_DATA_HOME/cipherocto/sessions.db` (typically

@@ -30,9 +30,16 @@ use crate::store::{stoolap_err, SessionStoreError};
 /// - `login_type` — see `LoginType`. Drives adapter login dispatch.
 /// - `login_timestamp` — set on `add_session` (epoch seconds),
 ///   immutable thereafter.
-/// - `last_used` — updated on every adapter start that successfully
-///   loads the session. `set_latest_session` updates this column to
-///   the current epoch seconds.
+/// - `last_used` — set to the current epoch seconds on `add_session`
+///   (initial value, equal to `login_timestamp` at insert time) and
+///   updated by the dedicated `set_latest_session` method when the
+///   operator marks a row as the most-recently-used. The session
+///   loader (`octo-adapter-matrix-sdk::session_loader::load`) does
+///   NOT touch this column — a successful load does not constitute
+///   a "use" for ordering purposes. R6-L1: a previous version of
+///   this docstring claimed `last_used` is updated on every
+///   adapter start; the SQL at `store.rs:408-433` only updates it
+///   from `set_latest_session`.
 /// - `position` — strictly monotonic on insert. Never changes on
 ///   `set_latest_session`. Drives stable multi-account ordering.
 /// - `display_name` / `avatar_url` — UI hints cached from the

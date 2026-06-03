@@ -24,6 +24,29 @@ use octo_matrix_session_store::{
 };
 use std::path::PathBuf;
 
+/// R20-L1: `From<LoginTypeArg> for LoginType`. The CLI's
+/// `LoginTypeArg` enum (in `crate::cli`) is a clap-friendly mirror
+/// of the store's `LoginType` (in `octo-matrix-session-store`).
+/// The conversion is mechanical (each variant maps 1:1 to its
+/// store-side counterpart), so a `From` impl is the single
+/// source of truth. Previously the call site in
+/// `session::import::login_type_match` was a hand-coded 4-arm
+/// `match` that had to be updated alongside the enums whenever
+/// a new variant was added. The `From` impl makes that
+/// maintenance hazard go away: a future 5th variant (e.g.,
+/// `MagicLink`) would be a one-line change here, and the call
+/// site would continue to work via `.into()`.
+impl From<crate::cli::LoginTypeArg> for LoginType {
+    fn from(arg: crate::cli::LoginTypeArg) -> Self {
+        match arg {
+            crate::cli::LoginTypeArg::Password => LoginType::Password,
+            crate::cli::LoginTypeArg::Oidc => LoginType::Oidc,
+            crate::cli::LoginTypeArg::Sso => LoginType::Sso,
+            crate::cli::LoginTypeArg::Qr => LoginType::Qr,
+        }
+    }
+}
+
 /// Open the store at the operator-specified path, or at the
 /// per-platform default when `--store` is not set.
 fn open_store(path: Option<&PathBuf>) -> Result<StoolapSessionStore> {
@@ -283,12 +306,14 @@ pub async fn import(args: SessionImportArgs) -> Result<()> {
     // is still `Password` for back-compat, but OIDC / SSO / QR
     // operators should set the flag to avoid a misleading `password`
     // label in `session list`.
-    let login_type = match args.login_type {
-        crate::cli::LoginTypeArg::Password => LoginType::Password,
-        crate::cli::LoginTypeArg::Oidc => LoginType::Oidc,
-        crate::cli::LoginTypeArg::Sso => LoginType::Sso,
-        crate::cli::LoginTypeArg::Qr => LoginType::Qr,
-    };
+    //
+    // R20-L1: replace the previous 4-arm `match` with a
+    // `From<LoginTypeArg> for LoginType` `.into()` call. The match
+    // was hand-coded and would have to be updated alongside
+    // `LoginTypeArg` / `LoginType` whenever a 5th variant is added
+    // (e.g., a hypothetical `MagicLink` flow). The `From` impl is
+    // the single source of truth for the CLI↔store mapping.
+    let login_type: LoginType = args.login_type.into();
     let row = SessionRow {
         user_id: user_id.clone(),
         device_id: device_id.clone(),

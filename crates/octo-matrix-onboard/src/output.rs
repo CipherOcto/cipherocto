@@ -19,9 +19,6 @@ use crate::error::{OnboardError, Result};
 use octo_matrix_onboard_core::Session;
 use std::path::{Path, PathBuf};
 
-#[cfg(unix)]
-use std::os::unix::fs::OpenOptionsExt;
-
 /// Resolve the default output path via `dirs::config_dir()`.
 pub fn default_path() -> Result<PathBuf> {
     let mut base = dirs::config_dir()
@@ -33,21 +30,15 @@ pub fn default_path() -> Result<PathBuf> {
 
 /// Write the captured session to the chosen sink.
 ///
-/// At this point the on-disk JSON is built manually so the
-/// `access_token` field is preserved (the adapter's `MatrixConfig`
-/// marks it `#[serde(skip_serializing)]` to prevent the adapter from
-/// rewriting it back). `logging::redact_json` is applied to the
-/// in-memory copy **only for log messages** — the on-disk config
-/// MUST keep the real token (the adapter needs it on next start).
+/// The on-disk JSON is built by `Session::to_disk_json` (R1-L1) so
+/// the `access_token` field is preserved (the adapter's
+/// `MatrixConfig` marks it `#[serde(skip_serializing)]` to prevent
+/// the adapter from rewriting it back). The on-disk config MUST
+/// keep the real token (the adapter needs it on next start); token
+/// redaction is the logging layer's job (see
+/// `crate::logging::RedactingFormat`), not the writer's.
 pub fn write(args: &OutputArgs, session: &Session) -> Result<()> {
-    let json = serde_json::json!({
-        "homeserver_url": session.homeserver_url,
-        "user_id": session.user_id,
-        "device_id": session.device_id,
-        "access_token": session.access_token,
-        "refresh_token": session.refresh_token,
-        "rooms": Vec::<String>::new(),
-    });
+    let json = session.to_disk_json();
 
     if args.stdout {
         let text =
@@ -80,27 +71,39 @@ fn write_atomic(path: &Path, json: &serde_json::Value) -> Result<()> {
 
     let text = serde_json::to_string_pretty(json).map_err(|e| OnboardError::Generic(e.into()))?;
 
-    // Write to a sibling tmp file, then rename onto the target.
-    // Atomic on POSIX; on Windows, rename-over-existing fails — we
-    // delete first when --force is set (caller handles that).
-    let tmp = path.with_extension("json.tmp");
+    // R1-L5: use a `tempfile::NamedTempFile` instead of the
+    // previous `path.with_extension("json.tmp")` sibling. The
+    // previous approach produced a `matrix.json.tmp.tmp` for
+    // `--out matrix.json.tmp` (cosmetic, not a correctness
+    // issue) and, more importantly, leaked the tmp file on
+    // crashes between the open and the rename (the file wasn't
+    // cleaned up on drop). `NamedTempFile` ties the tmp file's
+    // lifetime to a handle that auto-cleans on drop.
+    use std::io::Write;
+    let mut tmp = tempfile::NamedTempFile::new_in(
+        path.parent()
+            .filter(|p| !p.as_os_str().is_empty())
+            .unwrap_or_else(|| std::path::Path::new(".")),
+    )
+    .map_err(|e| OnboardError::BadConfig(format!("create tmp: {}", e)))?;
+
+    // Match the previous 0600 mode on Unix. The temp file is
+    // created in `path.parent()` so the rename stays on the
+    // same filesystem (preserving atomicity on POSIX).
+    #[cfg(unix)]
     {
-        let mut opts = std::fs::OpenOptions::new();
-        opts.write(true).create(true).truncate(true);
-        #[cfg(unix)]
-        {
-            opts.mode(0o600);
-        }
-        let mut f = opts
-            .open(&tmp)
-            .map_err(|e| OnboardError::BadConfig(format!("open({}): {}", tmp.display(), e)))?;
-        use std::io::Write;
-        f.write_all(text.as_bytes())
-            .and_then(|_| f.write_all(b"\n"))
-            .map_err(|e| OnboardError::BadConfig(format!("write({}): {}", tmp.display(), e)))?;
-        f.sync_all()
-            .map_err(|e| OnboardError::BadConfig(format!("sync({}): {}", tmp.display(), e)))?;
+        use std::os::unix::fs::PermissionsExt;
+        let perms = std::fs::Permissions::from_mode(0o600);
+        std::fs::set_permissions(tmp.path(), perms)
+            .map_err(|e| OnboardError::BadConfig(format!("set_permissions: {}", e)))?;
     }
+
+    tmp.write_all(text.as_bytes())
+        .and_then(|_| tmp.write_all(b"\n"))
+        .map_err(|e| OnboardError::BadConfig(format!("write tmp: {}", e)))?;
+    tmp.as_file()
+        .sync_all()
+        .map_err(|e| OnboardError::BadConfig(format!("sync tmp: {}", e)))?;
 
     // On Windows we may need to remove the destination first.
     #[cfg(not(unix))]
@@ -108,13 +111,8 @@ fn write_atomic(path: &Path, json: &serde_json::Value) -> Result<()> {
         std::fs::remove_file(path).ok();
     }
 
-    std::fs::rename(&tmp, path).map_err(|e| {
-        OnboardError::BadConfig(format!(
-            "rename({} -> {}): {}",
-            tmp.display(),
-            path.display(),
-            e
-        ))
+    tmp.persist(path).map_err(|e| {
+        OnboardError::BadConfig(format!("persist tmp to {}: {}", path.display(), e))
     })?;
     Ok(())
 }
@@ -125,13 +123,13 @@ mod tests {
     use tempfile::TempDir;
 
     fn sample_session() -> Session {
-        Session {
-            homeserver_url: "https://matrix.example.com".into(),
-            user_id: "@bot:matrix.example.com".into(),
-            device_id: "ABCDEFGHIJ".into(),
-            access_token: "syt_abcdefgh_long".into(),
-            refresh_token: Some("syr_xyz_123".into()),
-        }
+        Session::new(
+            "https://matrix.example.com".into(),
+            "@bot:matrix.example.com".into(),
+            "ABCDEFGHIJ".into(),
+            "syt_abcdefgh_long".into(),
+            Some("syr_xyz_123".into()),
+        )
     }
 
     #[test]
@@ -203,5 +201,32 @@ mod tests {
         write(&args, &sample_session()).unwrap();
         let perms = std::fs::metadata(&path).unwrap().permissions().mode() & 0o777;
         assert_eq!(perms, 0o600, "expected 0600, got {:o}", perms);
+    }
+
+    #[test]
+    fn write_with_relative_bare_filename_succeeds() {
+        // R1-M9: `Path::parent()` of a bare filename like `matrix.json`
+        // returns `Some("")` on Linux. The `if let Some(parent) = ...`
+        // guard at line 75 means we skip `create_dir_all("")` (which
+        // would otherwise return `InvalidInput`). This test pins down
+        // the contract: a bare-filename path under a tempdir's cwd
+        // writes successfully, and the file lands in that cwd.
+        let dir = TempDir::new().unwrap();
+        let cwd = dir.path().to_path_buf();
+        let args = OutputArgs {
+            out: Some(PathBuf::from("matrix.json")),
+            stdout: false,
+            force: false,
+        };
+        // Run the write with the tempdir as cwd so the bare
+        // `matrix.json` lands inside it (and gets cleaned up with
+        // the tempdir).
+        let prev_cwd = std::env::current_dir().unwrap();
+        std::env::set_current_dir(&cwd).unwrap();
+        let result = write(&args, &sample_session());
+        std::env::set_current_dir(&prev_cwd).unwrap();
+        result.expect("bare-filename path should write successfully");
+        let text = std::fs::read_to_string(cwd.join("matrix.json")).unwrap();
+        assert!(text.contains("syt_abcdefgh_long"));
     }
 }

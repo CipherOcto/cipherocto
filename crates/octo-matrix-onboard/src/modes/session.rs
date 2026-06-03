@@ -28,7 +28,11 @@ use std::time::{SystemTime, UNIX_EPOCH};
 fn open_store(path: Option<&PathBuf>) -> Result<StoolapSessionStore> {
     let resolved = match path {
         Some(p) if !p.as_os_str().is_empty() => p.clone(),
-        _ => default_store_path(),
+        _ => default_store_path().map_err(|e| {
+            OnboardError::BadConfig(format!(
+                "{e} — pass --store <path> to specify the location explicitly"
+            ))
+        })?,
     };
     StoolapSessionStore::new(&resolved)
         .map_err(|e| OnboardError::Generic(anyhow::anyhow!("open store: {}", e)))
@@ -70,18 +74,29 @@ pub async fn list(args: SessionListArgs) -> Result<()> {
         return Ok(());
     }
     eprintln!(
-        "{:<4} {:<32} {:<14} {:<32} {:<10} {:<8} LAST_USED",
-        "POS", "USER_ID", "DEVICE_ID", "HOMESERVER", "TYPE", "AGE"
+        "{:<4} {:<32} {:<14} {:<32} {:<10} {:<12} LAST_USED",
+        "POS", "USER_ID", "DEVICE_ID", "HOMESERVER", "TYPE", "LOGIN_AGE"
     );
     for s in &sessions {
+        // R1-M16: LOGIN_AGE is "time since the store's recorded
+        // `login_timestamp`". For sessions added via `session import`
+        // the legacy 0850h-a / 0850h-c config didn't carry a
+        // timestamp, so the store overwrites it to `now_epoch()` at
+        // import time. The column therefore reports the time since
+        // import, not the time since the original login.
+        let age_label = if s.login_timestamp == 0 {
+            "unknown".to_string()
+        } else {
+            format!("{}s", now_epoch().saturating_sub(s.login_timestamp))
+        };
         eprintln!(
-            "{:<4} {:<32} {:<14} {:<32} {:<10} {:<8} {}",
+            "{:<4} {:<32} {:<14} {:<32} {:<10} {:<12} {}",
             s.position,
             s.user_id,
             s.device_id,
             s.homeserver_url,
             s.login_type.as_str(),
-            format!("{}s", now_epoch().saturating_sub(s.login_timestamp)),
+            age_label,
             epoch_to_iso(s.last_used),
         );
         eprintln!(

@@ -44,11 +44,16 @@ pub use store::{SessionStore, SessionStoreError, StoolapSessionStore};
 /// `$XDG_DATA_HOME/cipherocto/sessions.db` (typically
 /// `~/.local/share/cipherocto/sessions.db`).
 ///
-/// The location can be overridden via `StoolapSessionStore::new(path)`
-/// — used by tests (in-memory) and by deployments that store sessions
-/// in a non-standard location (e.g., a read-only network mount).
-pub fn default_store_path() -> std::path::PathBuf {
+/// Returns `Err(SessionStoreError::NoDefaultPath)` on platforms where
+/// `directories::ProjectDirs::from(...)` cannot derive a per-platform
+/// project data directory (no `$XDG_DATA_HOME` and no `$HOME`). On
+/// such platforms the caller must pass an explicit path to
+/// `StoolapSessionStore::new(path)` — we deliberately do NOT fall
+/// back to a bare relative `sessions.db` in the cwd, which would
+/// silently create a file in whatever directory the CLI happened to
+/// be in (potentially world-writable on shared systems).
+pub fn default_store_path() -> Result<std::path::PathBuf, SessionStoreError> {
     directories::ProjectDirs::from("com", "cipherocto", "cipherocto")
         .map(|p| p.data_dir().join("sessions.db"))
-        .unwrap_or_else(|| std::path::PathBuf::from("sessions.db"))
+        .ok_or(SessionStoreError::NoDefaultPath)
 }

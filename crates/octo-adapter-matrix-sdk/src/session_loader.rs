@@ -19,10 +19,17 @@
 //!   config with no backing store is an unrecoverable configuration
 //!   error).
 //!
+//! The loader is `async` (R1-M23): it does NOT build a runtime
+//! internally. The caller is expected to be running inside an
+//! existing tokio runtime (e.g., `MatrixAdapter::new`'s
+//! `runtime.block_on(...)` call). This avoids the prior
+//! "runtime-inside-runtime" anti-pattern where the loader built a
+//! fresh `current_thread` runtime per call.
+//!
 //! The loader does NOT itself create a `Client`; it returns a
-//! `SessionRow` (or `OnDiskConfig`) and the caller (typically
-//! `MatrixAdapter::new`) does the SDK wiring. Keeping the loader
-//! pure-data makes it easy to test.
+//! `LoadedSession` and the caller (typically `MatrixAdapter::new`)
+//! does the SDK wiring. Keeping the loader pure-data makes it easy
+//! to test.
 
 use crate::config_writer::OnDiskConfig;
 use crate::MatrixConfig;
@@ -74,41 +81,44 @@ pub struct LoadedSession {
 
 /// Load a session according to `MatrixConfig`.
 ///
+/// R1-M23: this is `async` (was sync). The caller MUST be running
+/// inside a tokio runtime. `MatrixAdapter::new` builds a runtime
+/// and uses `runtime.block_on(load(&config))` to drive the loader
+/// — this eliminates the prior per-call `current_thread` runtime
+/// build that the loader used to do internally.
+///
 /// The `config` argument carries the host process's intent: which
 /// source to use, where the store lives, which `(user_id, device_id)`
 /// to look up. The `user_id` / `device_id` are taken from the
 /// `MatrixConfig` itself (so the host only needs to populate
 /// `user_id` + `device_id` once for both store and file sources).
-pub fn load(config: &MatrixConfig) -> Result<LoadedSession, LoadError> {
+pub async fn load(config: &MatrixConfig) -> Result<LoadedSession, LoadError> {
     if config.use_session_store {
-        load_from_store(config)
+        load_from_store(config).await
     } else {
         load_from_file(config)
     }
 }
 
-fn load_from_store(config: &MatrixConfig) -> Result<LoadedSession, LoadError> {
+async fn load_from_store(config: &MatrixConfig) -> Result<LoadedSession, LoadError> {
     let store_path: PathBuf = if config.session_store_path.as_os_str().is_empty() {
-        default_store_path()
+        default_store_path().map_err(|e| match e {
+            octo_matrix_session_store::SessionStoreError::NoDefaultPath => LoadError::NoDefaultPath,
+            other => LoadError::Store(other.to_string()),
+        })?
     } else {
         config.session_store_path.clone()
     };
-    if store_path.as_os_str().is_empty() {
-        return Err(LoadError::NoDefaultPath);
-    }
     let store =
         StoolapSessionStore::new(&store_path).map_err(|e| LoadError::Store(e.to_string()))?;
-    // Use the runtime to drive the async trait method. The adapter
-    // holds a tokio runtime via `MatrixAdapter::new`; for the loader
-    // we block on a fresh runtime when called outside one (e.g.,
-    // from `MatrixAdapter::from_config_bytes`).
-    let session: SessionRow =
-        futures_block_on(async { store.get_session(&config.user_id, &config.device_id).await })
-            .map_err(|e| LoadError::Store(e.to_string()))?
-            .ok_or_else(|| LoadError::NotInStore {
-                user_id: config.user_id.clone(),
-                device_id: config.device_id.clone(),
-            })?;
+    let session: SessionRow = store
+        .get_session(&config.user_id, &config.device_id)
+        .await
+        .map_err(|e| LoadError::Store(e.to_string()))?
+        .ok_or_else(|| LoadError::NotInStore {
+            user_id: config.user_id.clone(),
+            device_id: config.device_id.clone(),
+        })?;
     Ok(LoadedSession {
         user_id: session.user_id,
         device_id: session.device_id,
@@ -147,18 +157,9 @@ fn load_from_file(config: &MatrixConfig) -> Result<LoadedSession, LoadError> {
     })
 }
 
-/// Run a future to completion on a fresh single-threaded tokio
-/// runtime. Used by the synchronous `load` entry point when the
-/// caller doesn't already have a runtime (the `MatrixAdapter::new`
-/// path runs inside an existing runtime; the `from_config_bytes`
-/// path doesn't).
-fn futures_block_on<F: std::future::Future>(future: F) -> F::Output {
-    let rt = tokio::runtime::Builder::new_current_thread()
-        .enable_all()
-        .build()
-        .expect("build current-thread tokio runtime for session loader");
-    rt.block_on(future)
-}
+// R1-M23: removed `futures_block_on` helper — the loader is now
+// `async` and uses the caller's runtime. The `MatrixAdapter::new`
+// path drives the loader via `runtime.block_on(load(&config))`.
 
 #[cfg(test)]
 mod tests {
@@ -190,6 +191,19 @@ mod tests {
         f.write_all(contents.as_bytes()).unwrap();
     }
 
+    /// R1-M23: a per-test current-thread runtime. The loader is
+    /// async now; tests that want to call it need a runtime. A
+    /// fresh `current_thread` runtime per test is fine because
+    /// tests are the only place we still build a runtime for the
+    /// loader (production callers own a `multi_thread` runtime).
+    fn block_on<F: std::future::Future>(future: F) -> F::Output {
+        let rt = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .expect("build current-thread tokio runtime for loader test");
+        rt.block_on(future)
+    }
+
     #[test]
     fn load_from_store_returns_session_row() {
         let dir = tmpdir();
@@ -208,7 +222,7 @@ mod tests {
             display_name: None,
             avatar_url: None,
         };
-        futures_block_on(async { store.add_session(&row, false).await }).unwrap();
+        block_on(async { store.add_session(&row, false).await }).unwrap();
 
         let cfg = MatrixConfig {
             homeserver_url: "https://matrix.example.com".to_string(),
@@ -223,7 +237,7 @@ mod tests {
             session_store_path: store_path,
             rooms: vec![],
         };
-        let loaded = load(&cfg).expect("load from store");
+        let loaded = block_on(load(&cfg)).expect("load from store");
         assert_eq!(loaded.user_id, "@bot:matrix.example.com");
         assert_eq!(loaded.access_token, "syt_xxx");
         assert_eq!(loaded.refresh_token.as_deref(), Some("syr_xxx"));
@@ -248,7 +262,7 @@ mod tests {
             session_store_path: store_path,
             rooms: vec![],
         };
-        let err = load(&cfg).unwrap_err();
+        let err = block_on(load(&cfg)).unwrap_err();
         assert!(matches!(err, LoadError::NotInStore { .. }));
     }
 
@@ -280,7 +294,7 @@ mod tests {
             session_store_path: PathBuf::new(),
             rooms: vec![],
         };
-        let loaded = load(&cfg).expect("load from file");
+        let loaded = block_on(load(&cfg)).expect("load from file");
         assert_eq!(loaded.user_id, "@bot:matrix.example.com");
         assert_eq!(loaded.access_token, "syt_legacy");
         assert_eq!(loaded.refresh_token.as_deref(), Some("syr_legacy"));
@@ -301,7 +315,7 @@ mod tests {
             session_store_path: PathBuf::new(),
             rooms: vec![],
         };
-        let err = load(&cfg).unwrap_err();
+        let err = block_on(load(&cfg)).unwrap_err();
         assert!(matches!(err, LoadError::NoSource));
     }
 }

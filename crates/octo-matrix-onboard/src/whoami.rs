@@ -19,27 +19,11 @@
 //! running the real assertions against the adapter.
 
 use crate::cli::WhoamiArgs;
-use crate::error::{OnboardError, Result};
-use matrix_sdk::authentication::matrix::MatrixSession;
-use matrix_sdk::{Client, SessionMeta, SessionTokens};
+use crate::error::{classify_sdk_err, OnboardError, Result};
+use matrix_sdk::Client;
+use octo_matrix_onboard_core::client_from_config::OnboardConfig;
 use octo_matrix_session_store::{SessionStore, StoolapSessionStore};
-use serde::Deserialize;
 use tracing::info;
-
-/// On-disk config shape. We deserialize minimally here — only the
-/// fields needed to restore a session and call /whoami. The adapter's
-/// `MatrixConfig` is the authoritative schema; this struct exists
-/// only to avoid a hard dependency from the binary to the adapter
-/// crate (the adapter is a cdylib, not a lib the binary should link).
-#[derive(Debug, Clone, Deserialize)]
-struct OnboardConfig {
-    homeserver_url: String,
-    user_id: String,
-    device_id: String,
-    access_token: String,
-    #[serde(default)]
-    refresh_token: Option<String>,
-}
 
 /// Resolved credentials — either from the store (multi-account) or
 /// the file (legacy). The two paths produce the same shape so the
@@ -50,6 +34,31 @@ struct ResolvedSession {
     device_id: String,
     access_token: String,
     refresh_token: Option<String>,
+}
+
+impl From<OnboardConfig> for ResolvedSession {
+    fn from(cfg: OnboardConfig) -> Self {
+        Self {
+            homeserver_url: cfg.homeserver_url,
+            user_id: cfg.user_id,
+            device_id: cfg.device_id,
+            access_token: cfg.access_token,
+            refresh_token: cfg.refresh_token,
+        }
+    }
+}
+
+impl ResolvedSession {
+    fn into_config(self) -> OnboardConfig {
+        OnboardConfig {
+            homeserver_url: self.homeserver_url,
+            user_id: self.user_id,
+            device_id: self.device_id,
+            access_token: self.access_token,
+            refresh_token: self.refresh_token,
+            rooms: Vec::new(),
+        }
+    }
 }
 
 async fn load_from_store(
@@ -92,13 +101,7 @@ fn load_from_file(path: &std::path::Path) -> Result<ResolvedSession> {
         .map_err(|e| OnboardError::BadConfig(format!("read {}: {}", path.display(), e)))?;
     let cfg: OnboardConfig = serde_json::from_slice(&bytes)
         .map_err(|e| OnboardError::BadConfig(format!("parse {}: {}", path.display(), e)))?;
-    Ok(ResolvedSession {
-        homeserver_url: cfg.homeserver_url,
-        user_id: cfg.user_id,
-        device_id: cfg.device_id,
-        access_token: cfg.access_token,
-        refresh_token: cfg.refresh_token,
-    })
+    Ok(cfg.into())
 }
 
 pub async fn run(args: WhoamiArgs) -> Result<()> {
@@ -115,51 +118,33 @@ pub async fn run(args: WhoamiArgs) -> Result<()> {
         _ => file_session,
     };
 
-    let user_id =
-        matrix_sdk::ruma::OwnedUserId::try_from(session.user_id.as_str()).map_err(|e| {
-            OnboardError::BadConfig(format!("invalid user_id '{}': {}", session.user_id, e))
-        })?;
-    let device_id = matrix_sdk::ruma::OwnedDeviceId::from(session.device_id.as_str());
+    let cfg: OnboardConfig = session.into_config();
 
-    let sdk_session = MatrixSession {
-        meta: SessionMeta {
-            user_id: user_id.clone(),
-            device_id: device_id.clone(),
-        },
-        tokens: SessionTokens {
-            access_token: session.access_token.clone(),
-            refresh_token: session.refresh_token.clone(),
-        },
-    };
+    // R1-M14: the Session/SessionMeta/SessionTokens / Client::builder
+    // / restore_session sequence is now in the core crate. The
+    // whoami-specific knob is `handle_refresh_tokens()` so that a
+    // /whoami call can transparently rotate a stale token. We
+    // build the session via the core helper, then drive the SDK
+    // builder here with the refresh knob.
+    let session = cfg
+        .build_session()
+        .map_err(|e| OnboardError::BadConfig(format!("build session: {e}")))?;
 
     let client = Client::builder()
-        .homeserver_url(&session.homeserver_url)
+        .homeserver_url(&cfg.homeserver_url)
         .handle_refresh_tokens()
         .build()
         .await
-        .map_err(|e| {
-            let msg = e.to_string();
-            if msg.contains("dns") || msg.contains("connect") {
-                OnboardError::Unreachable(format!("{}: {}", session.homeserver_url, msg))
-            } else {
-                OnboardError::Generic(anyhow::anyhow!("build client: {}", msg))
-            }
-        })?;
+        .map_err(|e| classify_sdk_err("build client", &e))?;
     client
-        .restore_session(sdk_session)
+        .restore_session(session)
         .await
         .map_err(|e| OnboardError::Generic(anyhow::anyhow!("restore_session: {}", e)))?;
 
-    let who = client.whoami().await.map_err(|e| {
-        let msg = e.to_string();
-        if msg.contains("Unauthorized") || msg.contains("401") || msg.contains("M_UNKNOWN_TOKEN") {
-            OnboardError::AuthRejected(format!("whoami: {}", msg))
-        } else if msg.contains("dns") || msg.contains("connect") {
-            OnboardError::Unreachable(msg)
-        } else {
-            OnboardError::Generic(anyhow::anyhow!("whoami: {}", msg))
-        }
-    })?;
+    let who = client
+        .whoami()
+        .await
+        .map_err(|e| classify_sdk_err("whoami", &e))?;
 
     println!("user_id: {}", who.user_id);
     let server_device = who
@@ -167,10 +152,10 @@ pub async fn run(args: WhoamiArgs) -> Result<()> {
         .as_ref()
         .ok_or_else(|| OnboardError::BadConfig("server returned no device_id in whoami".into()))?;
     println!("device_id: {}", server_device);
-    if server_device.as_str() != session.device_id {
+    if server_device.as_str() != cfg.device_id {
         return Err(OnboardError::BadConfig(format!(
             "device_id mismatch: config says '{}' but server says '{}'",
-            session.device_id, server_device
+            cfg.device_id, server_device
         )));
     }
     info!(user_id = %who.user_id, device_id = %server_device, "whoami ok");

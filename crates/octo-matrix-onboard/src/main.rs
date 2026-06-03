@@ -24,8 +24,14 @@ async fn main() -> ExitCode {
         match cli.command {
             Command::Login { mode } => match mode {
                 LoginMode::Password(args) => modes::password::run(args).await,
-                LoginMode::Oidc(args) => modes::oidc::run(args, false).await,
-                LoginMode::Sso(args) => modes::oidc::run(args, true).await,
+                // R1-L8: `oidc::run` no longer takes a `_sso: bool`
+                // (the parameter was dead — both OIDC and SSO use
+                // the same code path; the binary distinguishes them
+                // by logging context only). The `LoginMode::Sso`
+                // arm remains so `octo-matrix-onboard login sso`
+                // is still a valid subcommand; future divergence
+                // can re-introduce a parameter.
+                LoginMode::Oidc(args) | LoginMode::Sso(args) => modes::oidc::run(args).await,
                 LoginMode::Qr(args) => modes::qr::run(args).await,
             },
             Command::Whoami(args) => whoami::run(args).await,

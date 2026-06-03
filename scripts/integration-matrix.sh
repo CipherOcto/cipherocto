@@ -17,11 +17,23 @@
 # Requirements: docker (the script uses `docker run` and `docker rm`).
 # It does NOT require synapse/conduit CLIs — the homeserver config is
 # baked into the container via bind-mounts.
+#
+# Two CI users are provisioned: `ci` (the canonical test user) and
+# `ci2` (a second user for two-party tests, e.g. mission 0850h-b's
+# encrypted-room round-trip). Both share the password `ci-password`
+# for simplicity — the integration tests don't need distinct
+# credentials, only two distinct MXIDs.
 
 set -euo pipefail
 
 readonly CI_USER="@ci:localhost"
 readonly CI_PASSWORD="ci-password"
+# Mission 0850h-b acceptance: encrypted-room round-trip. Requires two
+# distinct MXIDs in the same room. The script provisions `ci` (the
+# canonical single-user test) and `ci2` (the second user for the
+# two-party encrypted-room test). Both share the same password.
+readonly CI2_USER="@ci2:localhost"
+readonly CI2_PASSWORD="ci-password"
 readonly CONTAINER_NAME_DEFAULT="octo-matrix-ci"
 
 HOMESERVER="synapse"
@@ -184,10 +196,13 @@ wait_for_readiness() {
   return 1
 }
 
-# Register the CI user via Synapse's shared-secret admin API and set
+# Register a CI user via Synapse's shared-secret admin API and set
 # the password. Synapse uses a non-standard endpoint; we hit the
-# /_synapse/admin/v1/register path.
+# /_synapse/admin/v1/register path. Argument: the local-part of
+# the username to create (e.g., "ci" → @ci:localhost). Caller is
+# responsible for invoking this once per user.
 synapse_create_user() {
+  local username="$1"
   local base_url="http://localhost:${PORT}"
   local nonce
   nonce="$(curl -fsS "${base_url}/_synapse/admin/v1/register" \
@@ -207,7 +222,7 @@ synapse_create_user() {
 import json, sys
 print(json.dumps({
   'nonce': '${nonce}',
-  'username': 'ci',
+  'username': '${username}',
   'password': '${CI_PASSWORD}',
   'admin': True,
   'mac': '${mac}',
@@ -217,8 +232,10 @@ print(json.dumps({
 }
 
 # Conduit ships with open registration by default; create the user
-# with the standard /_matrix/client/v3/register endpoint.
+# with the standard /_matrix/client/v3/register endpoint. Argument:
+# the local-part of the username to create.
 conduit_create_user() {
+  local username="$1"
   local base_url="http://localhost:${PORT}"
   local resp
   resp="$(curl -fsS "${base_url}/_matrix/client/v3/register" \
@@ -227,7 +244,7 @@ conduit_create_user() {
 import json
 print(json.dumps({
   'auth': {'type': 'm.login.dummy'},
-  'username': 'ci',
+  'username': '${username}',
   'password': '${CI_PASSWORD}',
 }))
 ")")"
@@ -253,8 +270,9 @@ up_synapse() {
     >/dev/null
 
   wait_for_readiness "http://localhost:${PORT}"
-  synapse_create_user
-  log "synapse is up at http://localhost:${PORT} (user ${CI_USER} / password ${CI_PASSWORD})"
+  synapse_create_user "ci"
+  synapse_create_user "ci2"
+  log "synapse is up at http://localhost:${PORT} (users ${CI_USER}, ${CI2_USER} / password ${CI_PASSWORD})"
   log "run the integration test with:"
   log "  cargo test -p octo-adapter-matrix-sdk --features integration-matrix --test integration_matrix -- --nocapture"
 }
@@ -272,8 +290,9 @@ up_conduit() {
     >/dev/null
 
   wait_for_readiness "http://localhost:${PORT}"
-  conduit_create_user
-  log "conduit is up at http://localhost:${PORT} (user ${CI_USER} / password ${CI_PASSWORD})"
+  conduit_create_user "ci"
+  conduit_create_user "ci2"
+  log "conduit is up at http://localhost:${PORT} (users ${CI_USER}, ${CI2_USER} / password ${CI_PASSWORD})"
   log "run the integration test with:"
   log "  cargo test -p octo-adapter-matrix-sdk --features integration-matrix --test integration_matrix -- --nocapture"
 }

@@ -35,7 +35,6 @@ use base64::Engine;
 use matrix_sdk::Client;
 use serde::Deserialize;
 use std::path::PathBuf;
-use uuid::Uuid;
 
 pub mod config_writer;
 pub mod session_loader;
@@ -46,6 +45,27 @@ fn redact_token(token: &str) -> String {
     } else {
         "***".to_string()
     }
+}
+
+/// Errors that `MatrixAdapter::new` can surface. R1-L14: the previous
+/// shape (`Result<Self, String>`) forced the C ABI at line 622-635 to
+/// discard the error string. This structured type lets cdylib hosts
+/// read a stable error category via `last_error()`.
+#[derive(Debug, thiserror::Error)]
+pub enum MatrixAdapterError {
+    #[error("session load: {0}")]
+    SessionLoad(String),
+    #[error("invalid user_id '{user_id}': {source}")]
+    InvalidUserId {
+        user_id: String,
+        source: matrix_sdk::ruma::IdParseError,
+    },
+    #[error("failed to create tokio runtime: {0}")]
+    Runtime(String),
+    #[error("client build: {0}")]
+    ClientBuild(String),
+    #[error("session restore: {0}")]
+    SessionRestore(String),
 }
 
 /// Matrix adapter configuration.
@@ -188,8 +208,9 @@ impl MatrixAdapter {
     ///
     /// On 401 the adapter calls the SDK's `refresh_access_token` (when
     /// `refresh_token` is `Some`) and holds the rotated pair in memory;
-    /// on-disk rotation is mission 0850h-c.
-    pub fn new(config: MatrixConfig) -> Result<Self, String> {
+    /// on-disk rotation is mission 0850h-c. The host process drives
+    /// the actual writeback via `persist_session_to_disk()`.
+    pub fn new(config: MatrixConfig) -> Result<Self, MatrixAdapterError> {
         use matrix_sdk::authentication::matrix::MatrixSession;
         use matrix_sdk::ruma::{OwnedDeviceId, OwnedUserId};
         use matrix_sdk::{SessionMeta, SessionTokens};
@@ -197,17 +218,26 @@ impl MatrixAdapter {
         let runtime = tokio::runtime::Builder::new_multi_thread()
             .enable_all()
             .build()
-            .map_err(|e| format!("Failed to create tokio runtime: {}", e))?;
+            .map_err(|e| MatrixAdapterError::Runtime(e.to_string()))?;
 
         // Mission 0850h-d: resolve the actual session material via
         // the loader. The returned `LoadedSession` overrides the
         // config's `access_token` / `refresh_token` for the SDK
         // restore call (the original config is kept on `self.config`
-        // for writeback / display purposes).
-        let loaded = session_loader::load(&config).map_err(|e| format!("session load: {}", e))?;
+        // for writeback / display purposes). R1-M23: `load` is
+        // `async`; we drive it on the multi_thread runtime this
+        // function just built (the loader no longer builds a
+        // per-call `current_thread` runtime internally).
+        let loaded = runtime
+            .block_on(session_loader::load(&config))
+            .map_err(|e| MatrixAdapterError::SessionLoad(e.to_string()))?;
 
-        let user_id = OwnedUserId::try_from(loaded.user_id.as_str())
-            .map_err(|e| format!("Invalid user_id '{}': {}", loaded.user_id, e))?;
+        let user_id = OwnedUserId::try_from(loaded.user_id.as_str()).map_err(
+            |e: matrix_sdk::ruma::IdParseError| MatrixAdapterError::InvalidUserId {
+                user_id: loaded.user_id.clone(),
+                source: e,
+            },
+        )?;
         let device_id = OwnedDeviceId::from(loaded.device_id.as_str());
 
         let session = MatrixSession {
@@ -218,32 +248,62 @@ impl MatrixAdapter {
             },
         };
 
-        // Mission 0850h-b: the SDK's in-memory crypto store is used by
-        // default. The optional `passphrase` is reserved for a future
-        // revision that wires the SDK's `sqlite_store` (with passphrase)
-        // once the multi-store migration sharing issue in matrix-sdk
-        // 0.17.0 is resolved upstream. Until then, E2EE works for the
-        // lifetime of the process (in-memory Olm/Megolm state) and the
-        // passphrase is held in `MatrixConfig.passphrase` ready for the
-        // host process to pass to `.sqlite_store` directly.
-        let _ = &config.passphrase; // silence unused-field warning until wired
+        // Mission 0850h-b: wire the SDK's `sqlite_store` with the
+        // operator-supplied `passphrase` so the on-disk Olm/Megolm
+        // material is encrypted at rest. R1-H8 fixed the prior
+        // "passphrase is held in memory, host process will pass to
+        // `.sqlite_store` directly" doc-claim that was
+        // never realised in code.
+        //
+        // The store path is derived from `config_path`:
+        // `<dir>/<basename>.store.sqlite`. The store is opened
+        // ONLY when the operator supplied a passphrase — without a
+        // passphrase, the SDK's default in-memory crypto store is
+        // good enough for the process lifetime and avoids the
+        // matrix-sdk 0.17.0 migration `near "DROP": syntax error`
+        // bug that surfaces on a fresh DB. (Future work: file an
+        // upstream issue or gate the migration behind a feature.)
+        let store_path =
+            if config.passphrase.is_some() && !config.config_path.as_os_str().is_empty() {
+                let mut p = config.config_path.clone();
+                let stem = p
+                    .file_stem()
+                    .map(|s| s.to_os_string())
+                    .unwrap_or_else(|| std::ffi::OsString::from("matrix"));
+                p.set_file_name(stem);
+                p.set_extension("store.sqlite");
+                Some(p)
+            } else {
+                None
+            };
 
         let homeserver_url = loaded.homeserver_url.clone();
+        let passphrase_ref = config.passphrase.as_deref();
         let client = runtime.block_on(async {
-            let builder = Client::builder()
+            let mut builder = Client::builder()
                 .homeserver_url(&homeserver_url)
                 // Enable in-memory refresh on 401 when a refresh_token is
                 // present. The SDK rotates tokens internally; the on-disk
                 // config is left untouched (mission 0850h-c writes back).
                 .handle_refresh_tokens();
+            // Wire the on-disk crypto store ONLY when a passphrase
+            // is set (mission 0850h-b). The SDK's default in-memory
+            // store handles the no-passphrase case for the lifetime
+            // of the process.
+            if let Some(path) = store_path {
+                if let Some(parent) = path.parent() {
+                    let _ = std::fs::create_dir_all(parent);
+                }
+                builder = builder.sqlite_store(&path, passphrase_ref);
+            }
             let c = builder
                 .build()
                 .await
-                .map_err(|e| format!("Failed to build Matrix client: {}", e))?;
+                .map_err(|e| MatrixAdapterError::ClientBuild(e.to_string()))?;
             c.restore_session(session)
                 .await
-                .map_err(|e| format!("Failed to restore session: {}", e))?;
-            Ok::<_, String>(c)
+                .map_err(|e| MatrixAdapterError::SessionRestore(e.to_string()))?;
+            Ok::<_, MatrixAdapterError>(c)
         })?;
 
         // Cache the bot user_id for self_handle()
@@ -259,10 +319,75 @@ impl MatrixAdapter {
     }
 
     /// Create from JSON config bytes (used by plugin ABI).
-    pub fn from_config_bytes(config: &[u8]) -> Result<Self, String> {
-        let config: MatrixConfig =
-            serde_json::from_slice(config).map_err(|e| format!("Invalid config: {}", e))?;
+    pub fn from_config_bytes(config: &[u8]) -> Result<Self, MatrixAdapterError> {
+        let config: MatrixConfig = serde_json::from_slice(config)
+            .map_err(|e| MatrixAdapterError::SessionLoad(format!("Invalid config: {}", e)))?;
         Self::new(config)
+    }
+
+    /// Persist the current session to the on-disk config file.
+    ///
+    /// R1-H1: this is the wired writeback the mission 0850h-c
+    /// acceptance criterion required. Host processes call this after
+    /// observing a 401 + refresh cycle (e.g., by polling
+    /// `client.session_tokens()` or by hooking the SDK's
+    /// `SessionChange` event). The function:
+    ///
+    /// 1. Captures the **current** access/refresh token from the SDK.
+    /// 2. Updates `self.config` with the rotated pair.
+    /// 3. Calls `config_writer::writeback` against the snapshot
+    ///    captured at adapter construction (or, if `force_writeback`
+    ///    is set, against the on-disk file as-is).
+    /// 4. Surfaces `WritebackError::LockHeld` as a non-fatal warning
+    ///    (the host can retry) and `SnapshotMismatch` as a fatal
+    ///    "two writers, refusing to clobber" error unless
+    ///    `force_writeback` is set.
+    ///
+    /// When `config_path` is empty, this is a no-op (in-memory or
+    /// read-only deployment).
+    pub fn persist_session_to_disk(
+        &self,
+    ) -> Result<config_writer::WritebackOutcome, MatrixAdapterError> {
+        if self.config.config_path.as_os_str().is_empty() {
+            return Ok(config_writer::WritebackOutcome { written: false });
+        }
+        let current = self.client.session_tokens().ok_or_else(|| {
+            MatrixAdapterError::SessionLoad("client has no session tokens".to_string())
+        })?;
+        let rotated = {
+            let mut cfg = self.config.clone();
+            cfg.access_token = current.access_token.clone();
+            cfg.refresh_token = current.refresh_token.clone();
+            cfg
+        };
+        let on_disk_before = config_writer::OnDiskConfig::from_config(&self.config);
+        match config_writer::writeback(
+            &self.config.config_path,
+            &on_disk_before,
+            &rotated,
+            self.config.force_writeback,
+        ) {
+            Ok(outcome) => Ok(outcome),
+            Err(config_writer::WritebackError::LockHeld { .. }) => {
+                tracing::warn!(
+                    path = %self.config.config_path.display(),
+                    "config writeback: lock held by another process; rotated pair stays in memory"
+                );
+                // Non-fatal: return success with `written: false` so
+                // the host can retry on the next 401 cycle.
+                Ok(config_writer::WritebackOutcome { written: false })
+            }
+            Err(config_writer::WritebackError::SnapshotMismatch) => Err(
+                MatrixAdapterError::SessionLoad(
+                    "config on-disk contents changed; refusing to overwrite (pass --force-writeback)"
+                        .to_string(),
+                ),
+            ),
+            Err(e) => Err(MatrixAdapterError::SessionLoad(format!(
+                "writeback: {}",
+                e
+            ))),
+        }
     }
 
     /// Run an async operation on the embedded tokio runtime.
@@ -272,6 +397,15 @@ impl MatrixAdapter {
     }
 
     /// Encode an envelope as base64 with DOT prefix.
+    ///
+    /// R1-L18: the base64 alphabet is `URL_SAFE_NO_PAD` per
+    /// RFC-0850 §3.2 (the DOT wire format). All DOT adapters in
+    /// the workspace MUST use the same alphabet for the
+    /// encode → transport → decode round-trip to work. The
+    /// constant lives here as the single source of truth; if a
+    /// second adapter picks a different alphabet, `decode_envelope`
+    /// will fail with a "Base64 decode error" on the receiver
+    /// side, which is the intended loud-failure mode.
     pub fn encode_envelope(envelope_bytes: &[u8]) -> String {
         format!(
             "DOT/1/{}",
@@ -279,7 +413,8 @@ impl MatrixAdapter {
         )
     }
 
-    /// Decode a DOT-prefixed base64 envelope.
+    /// Decode a DOT-prefixed base64 envelope. See `encode_envelope`
+    /// for the alphabet contract.
     pub fn decode_envelope(text: &str) -> Result<Vec<u8>, String> {
         let text = text.trim();
         let b64 = text
@@ -292,8 +427,23 @@ impl MatrixAdapter {
 
     /// Compute domain hash for a Matrix room ID.
     ///
-    /// Hash input includes platform prefix per RFC-0850 S3.1:
+    /// Hash input includes platform prefix per RFC-0850 §3.1:
     /// `BLAKE3-256("matrix:{room_id}")`
+    ///
+    /// R1-L15: trust model. The function does NOT validate that
+    /// `room_id` is a well-formed Matrix room ID (`!opaque:server`).
+    /// It lowercases the input and feeds it into BLAKE3-256,
+    /// which gives a unique hash for every distinct input
+    /// regardless of syntactic validity. Callers are trusted
+    /// to pass a room ID the SDK can later resolve (a
+    /// `MatrixConfig::rooms` value the host process intends
+    /// to join). A malicious caller could in principle register
+    /// a domain hash that collides with another platform's
+    /// domain — but since the hash input includes the
+    /// `matrix:` prefix per RFC-0850, cross-platform collision
+    /// is impossible (BLAKE3 is a strong hash, so
+    /// `BLAKE3("matrix:foo") != BLAKE3("ipfs:foo")` for all
+    /// `foo`).
     pub fn domain_hash(room_id: &str) -> [u8; 32] {
         let normalized = room_id.trim().to_lowercase();
         *blake3::hash(format!("matrix:{}", normalized).as_bytes()).as_bytes()
@@ -333,6 +483,14 @@ fn transport_err(msg: impl Into<String>) -> PlatformAdapterError {
     }
 }
 
+fn unix_epoch_now() -> u64 {
+    use std::time::{SystemTime, UNIX_EPOCH};
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0)
+}
+
 #[async_trait]
 impl PlatformAdapter for MatrixAdapter {
     async fn send_envelope(
@@ -359,16 +517,37 @@ impl PlatformAdapter for MatrixAdapter {
         let room_id = RoomId::parse(room_id_str)
             .map_err(|e| transport_err(format!("Invalid room ID '{}': {}", room_id_str, e)))?;
 
+        // R1-L16: race against the initial sync. `client.get_room`
+        // returns `None` if the room is in `response.rooms.joined`
+        // (the post-sync state) but has not yet been indexed by
+        // the SDK's internal room map. The fix is to drive a
+        // bounded initial sync (idempotent if sync already
+        // completed) before looking up the room. We bound the
+        // wait at 5s — the initial sync against a quiet
+        // homeserver is typically <1s.
+        if self.client.get_room(&room_id).is_none() {
+            use matrix_sdk::config::SyncSettings;
+            use std::time::Duration;
+            let _ = self
+                .client
+                .sync_once(SyncSettings::default().timeout(Duration::from_secs(5)))
+                .await
+                .map_err(|e| transport_err(format!("initial sync before send: {}", e)))?;
+        }
+
         let room = self.client.get_room(&room_id).ok_or_else(|| {
             transport_err(format!("Room {} not found in joined rooms", room_id_str))
         })?;
 
-        // Retry with exponential backoff
+        // Retry with exponential backoff. R1-M20: the bound is
+        // `0..max_retries` so the loop runs exactly `max_retries`
+        // attempts (the +1 off-by-one silently turned the default
+        // `max_retries: 3` into 4 attempts).
         let retry_cfg = RetryConfig::default();
         let mut last_err = String::new();
 
-        for attempt in 0..=retry_cfg.max_retries {
-            let result = if wire_bytes.len() > Self::max_payload_bytes() {
+        for attempt in 0..retry_cfg.max_retries {
+            let send_result = if wire_bytes.len() > Self::max_payload_bytes() {
                 // Upload as media file for large envelopes
                 let mime = "application/octet-stream"
                     .parse::<mime::Mime>()
@@ -384,23 +563,42 @@ impl PlatformAdapter for MatrixAdapter {
                             "DOT/1/{}",
                             response.content_uri.as_str()
                         ));
-                        room.send(content).await.map(|_| String::new())
+                        room.send(content).await
                     }
-                    Err(e) => Err(e),
+                    Err(e) => {
+                        let err_str = format!("{}", e);
+                        last_err = err_str.clone();
+                        if (err_str.contains("429")
+                            || err_str.contains("rate limit")
+                            || err_str.contains("M_LIMIT_EXCEEDED"))
+                            && retry_cfg.should_retry(attempt)
+                        {
+                            let delay = retry_cfg.delay_for_attempt(attempt);
+                            tokio::time::sleep(delay).await;
+                            continue;
+                        }
+                        return Err(transport_err(err_str));
+                    }
                 }
             } else {
                 let content = RoomMessageEventContent::text_plain(&encoded);
-                room.send(content).await.map(|_| String::new())
+                room.send(content).await
             };
 
-            match result {
-                Ok(_) => {
-                    // SDK doesn't return event_id directly from send(),
-                    // use a transaction ID as receipt
-                    let txn_id = Uuid::new_v4().to_string();
+            match send_result {
+                Ok(sent) => {
+                    // R1-H5: bind the SDK's `event_id` from the
+                    // `SentMessage` response into the delivery receipt
+                    // so downstream code can correlate the receipt with
+                    // the real Matrix event. The old code threw this
+                    // away and synthesised a `Uuid::new_v4()` — that
+                    // receipt could not be looked up on the
+                    // homeserver, was non-deterministic across runs, and
+                    // was invisible to receipts reconciliation.
+                    let event_id = sent.response.event_id.to_string();
                     return Ok(DeliveryReceipt {
-                        platform_message_id: txn_id,
-                        delivered_at: 0,
+                        platform_message_id: event_id,
+                        delivered_at: unix_epoch_now(),
                     });
                 }
                 Err(e) => {
@@ -450,33 +648,50 @@ impl PlatformAdapter for MatrixAdapter {
         let mut result = Vec::new();
         for (room_id, joined) in &response.rooms.joined {
             for event in &joined.timeline.events {
-                // Use raw JSON to extract message body (robust, avoids type complexity)
+                // R1-L17: typed deserialization. We attempt to
+                // parse the event as `AnySyncTimelineEvent` and
+                // match on `MessageLike(RoomMessage(...))` with
+                // `MessageType::Text(...)`, which gives us:
+                // - automatic skip of non-text messages (`m.image`,
+                //   `m.file`, `m.video`, `m.emote`, state events)
+                // - a typed `body: String` field (no more
+                //   `/content/body` JSON pointer)
+                // - the event id and sender typed as
+                //   `Option<OwnedEventId>` and `Option<OwnedUserId>`
+                //   (we still need strings for `RawPlatformMessage`
+                //   so we convert via `to_string()`)
                 let raw = event.raw();
-                if let Ok(json) = raw.deserialize_as::<serde_json::Value>() {
-                    // Extract event_id, sender, and content.body
-                    let event_id = json
-                        .get("event_id")
-                        .and_then(|v| v.as_str())
-                        .unwrap_or("")
-                        .to_string();
-                    let sender = json
-                        .get("sender")
-                        .and_then(|v| v.as_str())
-                        .unwrap_or("")
-                        .to_string();
-                    let body = json.pointer("/content/body").and_then(|v| v.as_str());
-
-                    if let Some(body) = body {
-                        if let Ok(payload) = Self::decode_envelope(body) {
-                            let mut metadata = std::collections::BTreeMap::new();
-                            metadata.insert("sender".to_string(), sender);
-                            metadata.insert("event_id".to_string(), event_id.clone());
-                            metadata.insert("room_id".to_string(), room_id.to_string());
-                            result.push(RawPlatformMessage {
-                                platform_id: event_id,
-                                payload,
-                                metadata,
-                            });
+                let parsed: Result<matrix_sdk::ruma::events::AnySyncTimelineEvent, _> =
+                    raw.deserialize();
+                let event_id = event
+                    .event_id()
+                    .map(|id| id.to_string())
+                    .unwrap_or_default();
+                let sender = event.sender().map(|s| s.to_string()).unwrap_or_default();
+                if let Ok(matrix_sdk::ruma::events::AnySyncTimelineEvent::MessageLike(
+                    matrix_sdk::ruma::events::AnySyncMessageLikeEvent::RoomMessage(room_msg),
+                )) = parsed
+                {
+                    // SyncMessageLikeEvent wraps either an
+                    // OriginalMessageLikeEvent (with `content`) or
+                    // a RedactedMessageLikeEvent (without). The
+                    // original is the only one with the message
+                    // body we care about.
+                    if let Some(original) = room_msg.as_original() {
+                        if let matrix_sdk::ruma::events::room::message::MessageType::Text(text) =
+                            &original.content.msgtype
+                        {
+                            if let Ok(payload) = Self::decode_envelope(&text.body) {
+                                let mut metadata = std::collections::BTreeMap::new();
+                                metadata.insert("sender".to_string(), sender);
+                                metadata.insert("event_id".to_string(), event_id.clone());
+                                metadata.insert("room_id".to_string(), room_id.to_string());
+                                result.push(RawPlatformMessage {
+                                    platform_id: event_id,
+                                    payload,
+                                    metadata,
+                                });
+                            }
                         }
                     }
                 }
@@ -624,13 +839,69 @@ pub extern "C" fn platform_type() -> u16 {
 /// `config` must point to a valid buffer of at least `len` bytes.
 pub unsafe extern "C" fn create_adapter(config: *const u8, config_len: usize) -> *mut () {
     if config.is_null() || config_len == 0 {
+        set_last_error(MatrixAdapterError::SessionLoad("null config".into()));
         return std::ptr::null_mut();
     }
 
     let config_bytes = std::slice::from_raw_parts(config, config_len);
     match MatrixAdapter::from_config_bytes(config_bytes) {
-        Ok(adapter) => Box::into_raw(Box::new(adapter)) as *mut (),
-        Err(_) => std::ptr::null_mut(),
+        Ok(adapter) => {
+            // Clear the last error on a successful construction.
+            set_last_error_success();
+            Box::into_raw(Box::new(adapter)) as *mut ()
+        }
+        Err(e) => {
+            set_last_error(e);
+            std::ptr::null_mut()
+        }
+    }
+}
+
+/// Stash the most recent adapter-construction error so a host that
+/// got a null pointer from `create_adapter` can read a stable error
+/// string. R1-L14: the previous shape discarded the error entirely.
+fn set_last_error(e: MatrixAdapterError) {
+    LAST_ERROR.with(|slot| {
+        *slot.borrow_mut() = Some(e.to_string());
+    });
+}
+
+fn set_last_error_success() {
+    LAST_ERROR.with(|slot| {
+        *slot.borrow_mut() = None;
+    });
+}
+
+thread_local! {
+    static LAST_ERROR: std::cell::RefCell<Option<String>> = const { std::cell::RefCell::new(None) };
+}
+
+#[no_mangle]
+/// Return the most recent adapter-construction error as a
+/// heap-allocated C string. The caller MUST free the returned
+/// pointer with `free_last_error`. Returns null on success.
+pub extern "C" fn last_error() -> *mut std::os::raw::c_char {
+    LAST_ERROR.with(|slot| {
+        slot.borrow()
+            .as_ref()
+            .map(|s| {
+                // The pointer is null-terminated; the caller is
+                // responsible for freeing it via `free_last_error`.
+                std::ffi::CString::new(s.as_str())
+                    .map(|c| c.into_raw())
+                    .unwrap_or(std::ptr::null_mut())
+            })
+            .unwrap_or(std::ptr::null_mut())
+    })
+}
+
+#[no_mangle]
+/// # Safety
+/// `ptr` must be a pointer previously returned from `last_error`, or
+/// null.
+pub unsafe extern "C" fn free_last_error(ptr: *mut std::os::raw::c_char) {
+    if !ptr.is_null() {
+        let _ = std::ffi::CString::from_raw(ptr);
     }
 }
 

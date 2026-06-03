@@ -130,14 +130,18 @@ pub fn writeback(
     let lock_path = config_path.with_extension("json.lock");
     let tmp_path = config_path.with_extension("json.tmp");
 
-    // 1. Acquire exclusive flock. fs4's `lock_exclusive` returns
-    //    `Err(io::ErrorKind::WouldBlock)` if another process holds it.
+    // 1. Acquire exclusive flock non-blocking. fs4's `try_lock_exclusive`
+    //    returns `Err(io::ErrorKind::WouldBlock)` when another process
+    //    holds the lock; `lock_exclusive` is BLOCKING and would
+    //    deadlock the worker thread, so we MUST use the non-blocking
+    //    variant here. (Mission 0850h-c acceptance criterion: a
+    //    second writer surfaces `WritebackError::LockHeld`.)
     let lock_file = OpenOptions::new()
         .create(true)
         .truncate(false)
         .write(true)
         .open(&lock_path)?;
-    if let Err(e) = lock_file.lock_exclusive() {
+    if let Err(e) = lock_file.try_lock_exclusive() {
         if e.kind() == std::io::ErrorKind::WouldBlock
             || e.kind() == std::io::ErrorKind::TimedOut
             || e.raw_os_error() == Some(libc::EWOULDBLOCK)
@@ -169,8 +173,18 @@ pub fn writeback(
             }
         }
 
-        // 3. Serialize rotated config to a tmp file (mode 0600 on Unix).
+        // 3. Fast path: if the rotated pair equals what was already on
+        //    disk (in-memory config matches the pre-writeback snapshot),
+        //    skip the rename. This is the `written: false` branch the
+        //    doc on `WritebackOutcome` promised.
         let new_on_disk = OnDiskConfig::from_config(rotated);
+        if &new_on_disk == on_disk_before {
+            info!(
+                path = %config_path.display(),
+                "config writeback: rotated pair unchanged; no-op"
+            );
+            return Ok(WritebackOutcome { written: false });
+        }
         let json = serde_json::to_vec_pretty(&new_on_disk)?;
 
         let mut tmp_file = OpenOptions::new();
@@ -330,6 +344,76 @@ mod tests {
 
         let outcome = writeback(&path, &initial, &rotated, true).unwrap();
         assert!(outcome.written);
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn writeback_returns_lock_held_when_already_locked() {
+        // R1-M22: a second writer must surface `LockHeld` instead
+        // of blocking forever on the flock. R1-H2 changed the
+        // underlying call to `try_lock_exclusive`; this test
+        // proves the error path is reachable.
+        use fs4::FileExt;
+        let dir = tmpdir();
+        let path = dir.join("config.json");
+        let lock_path = path.with_extension("json.lock");
+        let initial = OnDiskConfig {
+            homeserver_url: "https://matrix.example.com".into(),
+            user_id: "@bot:matrix.example.com".into(),
+            device_id: "ABCDEFGHIJ".into(),
+            access_token: "syt_old".into(),
+            refresh_token: Some("syr_old".into()),
+            rooms: vec!["!abc:matrix.example.com".into()],
+        };
+        write_initial(&path, &serde_json::to_string_pretty(&initial).unwrap());
+
+        // Hold the lock from a separate File handle.
+        let holder = std::fs::OpenOptions::new()
+            .write(true)
+            .create(true)
+            .truncate(false)
+            .open(&lock_path)
+            .unwrap();
+        holder.lock_exclusive().unwrap();
+
+        // Now try to writeback — should return LockHeld.
+        let rotated = sample_config();
+        let result = writeback(&path, &initial, &rotated, false);
+        match result {
+            Err(WritebackError::LockHeld { .. }) => {}
+            other => panic!("expected LockHeld, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn writeback_no_op_when_rotated_equals_snapshot() {
+        // R1-M21: the fast-path that was promised by the doc on
+        // `WritebackOutcome::written`. When the rotated config
+        // equals the pre-writeback snapshot, no file is touched
+        // and `written: false` is returned.
+        let dir = tmpdir();
+        let path = dir.join("config.json");
+        let initial = OnDiskConfig {
+            homeserver_url: "https://matrix.example.com".into(),
+            user_id: "@bot:matrix.example.com".into(),
+            device_id: "ABCDEFGHIJ".into(),
+            access_token: "syt_same".into(),
+            refresh_token: Some("syr_same".into()),
+            rooms: vec!["!abc:matrix.example.com".into()],
+        };
+        write_initial(&path, &serde_json::to_string_pretty(&initial).unwrap());
+        let before_mtime = std::fs::metadata(&path).unwrap().modified().unwrap();
+
+        // `rotated` equals `initial` field-for-field → fast path.
+        let mut rotated = sample_config();
+        rotated.access_token = "syt_same".into();
+        rotated.refresh_token = Some("syr_same".into());
+        let outcome = writeback(&path, &initial, &rotated, false).unwrap();
+        assert!(!outcome.written, "expected written: false on no-op");
+
+        // The file was not touched.
+        let after_mtime = std::fs::metadata(&path).unwrap().modified().unwrap();
+        assert_eq!(before_mtime, after_mtime);
     }
 
     #[test]

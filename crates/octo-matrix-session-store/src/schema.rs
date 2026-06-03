@@ -64,6 +64,19 @@ pub fn init_schema(db: &stoolap::Database) -> Result<(), SessionStoreError> {
     )
     .map_err(stoolap_err)?;
 
+    // R1-M25: UNIQUE on `position` so a same-process race between two
+    // `StoolapSessionStore` instances (each computing
+    // `max(position) + 1` from the same snapshot) surfaces as an
+    // `AlreadyExists`-style error from the second insert, not as a
+    // silent collision. The store's documented single-process model
+    // means this is defense in depth, not a fix for a routine case.
+    db.execute(
+        "CREATE UNIQUE INDEX IF NOT EXISTS idx_sessions_position_unique
+         ON sessions(position)",
+        [],
+    )
+    .map_err(stoolap_err)?;
+
     // Index on last_used for get_latest_session.
     db.execute(
         "CREATE INDEX IF NOT EXISTS idx_sessions_last_used ON sessions(last_used)",

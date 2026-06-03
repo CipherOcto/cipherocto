@@ -30,6 +30,11 @@ pub enum SessionStoreError {
         "session already exists for user_id={user_id}, device_id={device_id} (pass force=true to overwrite)"
     )]
     AlreadyExists { user_id: String, device_id: String },
+    /// `default_store_path` could not derive a per-platform location
+    /// (no `$XDG_DATA_HOME` and no home directory on unusual
+    /// platforms). The caller must pass an explicit path.
+    #[error("could not resolve default session store path (no $XDG_DATA_HOME or home directory)")]
+    NoDefaultPath,
 }
 
 pub(crate) fn stoolap_err(e: stoolap::Error) -> SessionStoreError {
@@ -227,6 +232,10 @@ impl SessionStore for StoolapSessionStore {
         }
 
         // Compute position = max(position) + 1 (or 1 if empty).
+        // R1-H7: explicit match on `Some(next)` so a query error
+        // surfaces as `Err` rather than silently falling through to
+        // the `else 1` branch and colliding with the existing
+        // `position = 1` row.
         let next_position: i64 = {
             let mut rows = self
                 .db
@@ -235,11 +244,12 @@ impl SessionStore for StoolapSessionStore {
                     [],
                 )
                 .map_err(stoolap_err)?;
-            if let Some(Ok(r)) = rows.next() {
-                r.get_by_name("next")
-                    .map_err(|e| SessionStoreError::Stoolap(e.to_string()))?
-            } else {
-                1
+            match rows.next() {
+                Some(Ok(r)) => r
+                    .get_by_name("next")
+                    .map_err(|e| SessionStoreError::Stoolap(e.to_string()))?,
+                Some(Err(e)) => return Err(stoolap_err(e)),
+                None => 1,
             }
         };
 
@@ -321,15 +331,18 @@ impl SessionStore for StoolapSessionStore {
                 params,
             )
             .map_err(stoolap_err)?;
-        if let Some(Ok(row)) = rows.next() {
-            Ok(Some(row_to_session(&row)?))
-        } else {
-            Ok(None)
+        // R1-H7: explicit match on `Some(next)` so a mid-iteration
+        // transport / deserialization error surfaces as `Err`, not as
+        // a silently-truncated `Ok(None)`.
+        match rows.next() {
+            Some(Ok(row)) => Ok(Some(row_to_session(&row)?)),
+            Some(Err(e)) => Err(stoolap_err(e)),
+            None => Ok(None),
         }
     }
 
     async fn get_all_sessions(&self) -> Result<Vec<SessionRow>, SessionStoreError> {
-        let mut rows = self
+        let rows = self
             .db
             .query(
                 "SELECT user_id, device_id, homeserver_url, access_token,
@@ -340,27 +353,32 @@ impl SessionStore for StoolapSessionStore {
             )
             .map_err(stoolap_err)?;
         let mut out = Vec::new();
-        while let Some(Ok(row)) = rows.next() {
+        for next in rows {
+            let row = next.map_err(stoolap_err)?;
             out.push(row_to_session(&row)?);
         }
         Ok(out)
     }
 
     async fn get_latest_session(&self) -> Result<Option<SessionRow>, SessionStoreError> {
+        // R1-M26: secondary sort by `position ASC` makes the
+        // tie-break deterministic on `last_used` ties — the older
+        // session (lower `position`, the chronological-insertion
+        // order) wins.
         let mut rows = self
             .db
             .query(
                 "SELECT user_id, device_id, homeserver_url, access_token,
                         refresh_token, login_type, login_timestamp, last_used,
                         position, display_name, avatar_url
-                 FROM sessions ORDER BY last_used DESC LIMIT 1",
+                 FROM sessions ORDER BY last_used DESC, position ASC LIMIT 1",
                 [],
             )
             .map_err(stoolap_err)?;
-        if let Some(Ok(row)) = rows.next() {
-            Ok(Some(row_to_session(&row)?))
-        } else {
-            Ok(None)
+        match rows.next() {
+            Some(Ok(row)) => Ok(Some(row_to_session(&row)?)),
+            Some(Err(e)) => Err(stoolap_err(e)),
+            None => Ok(None),
         }
     }
 
@@ -369,11 +387,12 @@ impl SessionStore for StoolapSessionStore {
             .db
             .query("SELECT COUNT(*) AS n FROM sessions", [])
             .map_err(stoolap_err)?;
-        if let Some(Ok(row)) = rows.next() {
-            row.get_by_name("n")
-                .map_err(|e| SessionStoreError::Stoolap(e.to_string()))
-        } else {
-            Ok(0)
+        match rows.next() {
+            Some(Ok(row)) => row
+                .get_by_name("n")
+                .map_err(|e| SessionStoreError::Stoolap(e.to_string())),
+            Some(Err(e)) => Err(stoolap_err(e)),
+            None => Ok(0),
         }
     }
 

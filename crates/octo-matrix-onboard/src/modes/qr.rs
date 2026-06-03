@@ -30,6 +30,7 @@ use matrix_sdk::Client;
 use octo_matrix_onboard_core::{qrcode_render, session};
 use std::time::Duration;
 use tokio::time::timeout;
+use tokio_stream::StreamExt;
 use tracing::{info, warn};
 
 const CLI_CLIENT_URI: &str = "https://github.com/cipherocto/octo-matrix-onboard";
@@ -180,12 +181,16 @@ fn read_check_code_from_stdin() -> Result<u8> {
         .read_line(&mut line)
         .map_err(|e| OnboardError::Generic(anyhow::anyhow!("read check code: {}", e)))?;
     let _ = io::stderr().write_all(b"\n");
+    // The SDK's `CheckCodeSender::send` takes a `u8` (0..=255) per
+    // matrix-sdk 0.17.0's `authentication/oauth/qrcode/mod.rs`. The
+    // QR-on-the-other-device typically displays a 1- or 2-digit
+    // decimal number; we accept the full u8 range so a wider value
+    // (future MSC revision) doesn't surface as a confusing parse
+    // error.
     line.trim()
         .parse::<u8>()
-        .map_err(|e| OnboardError::BadConfig(format!("check code must be a single digit: {}", e)))
+        .map_err(|e| OnboardError::BadConfig(format!("check code must be a number 0-255: {}", e)))
 }
-
-use tokio_stream::StreamExt;
 
 #[cfg(test)]
 mod tests {

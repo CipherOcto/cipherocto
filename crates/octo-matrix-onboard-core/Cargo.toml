@@ -8,9 +8,9 @@ description = "Library half of octo-matrix-onboard: auth flows, session capture,
 [dependencies]
 # Pinned to match the adapter; the SDK Risk note (mission 0850h-a) flags
 # that an automatic patch bump to 0.17.x could break the QR module API.
-# matrix-sdk 0.17.0 has no `rustls-tls` or `api` feature — TLS is baked
-# into the embedded reqwest, and login APIs are always available. The
-# mission file's feature list was inaccurate.
+# `rustls-tls` is NOT a valid 0.17.0 feature; TLS is provided by the
+# embedded reqwest's default backend (native-tls on Linux). `api` does
+# not exist on 0.17.0 — login APIs are unconditionally available.
 matrix-sdk = { version = "=0.17.0", default-features = false }
 # Async runtime
 tokio = { workspace = true }
@@ -31,3 +31,4 @@ url = "2.5"
 
 [dev-dependencies]
 tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }
+tempfile = "3.8"

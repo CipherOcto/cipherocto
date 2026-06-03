@@ -43,6 +43,19 @@ See `docs/plans/2026-06-02-matrix-auth-onboarding-design.md` (full design).
       listener on `127.0.0.1:port`; `--no-listener` mode for headless servers
 - [ ] `octo-matrix-onboard login sso` — modern Matrix SSO via
       `OAuth::login_sso()` (MSC 2964 / MSC 3861); same listener pattern as oidc
+      *Deviation (R1-L3):* matrix-rust-sdk 0.17.0's `OAuth` module
+      exposes a single `OAuth::login(redirect_uri)` that drives the
+      Authorization Code flow. Modern MSC 3861 SSO *is* OIDC with a
+      different `prompt` value; the legacy `MatrixAuth::login_sso`
+      (the MSC 2964 path) is gated behind the SDK's `sso-login`
+      feature, which pulls in `axum`/`rand`/`tower`. We implement
+      OIDC and SSO on the same code path
+      (`Oidc(args) | Sso(args) => modes::oidc::run(args)`) using
+      `OAuth::login()`. The mission spec references
+      `OAuth::login_sso()` because that was the symbol in the
+      earlier SDK draft; in 0.17.0 the path is `OAuth::login()`.
+      The end-user behavior is unchanged (browser-driven
+      Authorization Code flow with a localhost callback).
 - [ ] `octo-matrix-onboard login qr` — `LoginWithGeneratedQrCode` from the
       SDK's lower-level API (CLI generates, existing client scans);
       rendered to terminal via the `qrcode` crate (unicode half-block);

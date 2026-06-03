@@ -23,12 +23,17 @@ use matrix_sdk::Client;
 use octo_matrix_onboard_core::session;
 use std::io::{self, BufRead, Write};
 use tracing::{info, warn};
+use zeroize::Zeroizing;
 
 pub async fn run(args: PasswordArgs) -> Result<()> {
-    let password = read_password_from_stdin(args.password_stdin)?;
+    let password: Zeroizing<String> = read_password_from_stdin(args.password_stdin)?;
     let client = build_client(&args.homeserver).await?;
     login(&client, &args.user, &password, args.device_name.as_deref()).await?;
-    drop(password); // Best-effort: don't keep the password around any longer than needed.
+    // R1-M11: `Zeroizing<String>` zeros its heap allocation on drop.
+    // The explicit `drop` is no longer needed (the binding goes out
+    // of scope at end of fn), but kept here as a code-review hint
+    // that the lifetime is intentionally short.
+    drop(password);
 
     let sess = session::extract(&client, &args.homeserver).map_err(|e| {
         OnboardError::Generic(anyhow::anyhow!(
@@ -104,7 +109,7 @@ async fn login(
     }
 }
 
-fn read_password_from_stdin(flag_set: bool) -> Result<String> {
+fn read_password_from_stdin(flag_set: bool) -> Result<Zeroizing<String>> {
     if !flag_set {
         return Err(OnboardError::BadConfig(
             "password mode requires --password-stdin (the only accepted form to prevent shell-history leaks)"
@@ -113,19 +118,27 @@ fn read_password_from_stdin(flag_set: bool) -> Result<String> {
     }
     warn!("reading password from stdin (consumed from the first line; never echoed)");
     let stdin = io::stdin();
-    let mut line = String::new();
+    let mut line = Zeroizing::new(String::new());
     let mut handle = stdin.lock();
     handle
         .read_line(&mut line)
         .map_err(|e| OnboardError::Generic(anyhow::anyhow!("read password from stdin: {}", e)))?;
-    // Echo a newline so the operator's terminal isn't left mangled.
-    let _ = io::stderr().write_all(b"\n");
-    let trimmed = line.trim_end_matches(['\n', '\r']).to_string();
+    // Copy the trimmed bytes into a fresh Zeroizing buffer so the
+    // input buffer can be zeroed on drop (the `to_string` returns a
+    // new heap allocation that is owned by the returned `Zeroizing`).
+    let trimmed = Zeroizing::new(line.trim_end_matches(['\n', '\r']).to_string());
     if trimmed.is_empty() {
+        // R1-L7: don't echo a trailing newline when the input is
+        // empty — the operator didn't produce one (stdin was at
+        // EOF, e.g. Ctrl-D). Echoing a newline here would write
+        // a stray blank line into the terminal.
         return Err(OnboardError::BadConfig(
             "empty password read from stdin".into(),
         ));
     }
+    // Echo a newline so the operator's terminal isn't left mangled
+    // (the read_line consumed the operator's trailing newline).
+    let _ = io::stderr().write_all(b"\n");
     Ok(trimmed)
 }
 

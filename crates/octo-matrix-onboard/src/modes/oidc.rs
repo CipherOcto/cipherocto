@@ -18,7 +18,7 @@
 //! feature dependency on `axum`/`rand`/`tower`.
 
 use crate::cli::OidcArgs;
-use crate::error::{OnboardError, Result};
+use crate::error::{classify_sdk_err, OnboardError, Result};
 use crate::output;
 use language_tags::LanguageTag;
 use matrix_sdk::authentication::oauth::registration::{
@@ -37,7 +37,7 @@ use url::Url;
 
 const CLI_CLIENT_URI: &str = "https://github.com/cipherocto/octo-matrix-onboard";
 
-pub async fn run(args: OidcArgs, _sso: bool) -> Result<()> {
+pub async fn run(args: OidcArgs) -> Result<()> {
     let client = build_client(&args.homeserver).await?;
     let redirect_uri = redirect_uri(args.port);
     let device_id = args
@@ -56,7 +56,7 @@ pub async fn run(args: OidcArgs, _sso: bool) -> Result<()> {
         )
         .build()
         .await
-        .map_err(|e| map_oauth_err("OAuth::login.build()", e))?;
+        .map_err(|e| classify_sdk_err("OAuth::login.build()", &e))?;
 
     eprintln!("Open this URL in a browser to authenticate:");
     eprintln!("  {}", auth_data.url);
@@ -100,7 +100,7 @@ pub async fn run(args: OidcArgs, _sso: bool) -> Result<()> {
         .oauth()
         .finish_login(query_or_url)
         .await
-        .map_err(|e| map_sdk_err("OAuth::finish_login", &e))?;
+        .map_err(|e| classify_sdk_err("OAuth::finish_login", &e))?;
 
     let sess = session::extract(&client, &args.homeserver)
         .map_err(|e| OnboardError::Generic(anyhow::anyhow!("session extract after OIDC: {}", e)))?;
@@ -109,7 +109,6 @@ pub async fn run(args: OidcArgs, _sso: bool) -> Result<()> {
         user_id = %sess.user_id,
         device_id = %sess.device_id,
         has_refresh = sess.refresh_token.is_some(),
-        sso = _sso,
         "OIDC login complete"
     );
     output::write(&args.output, &sess)
@@ -139,18 +138,7 @@ async fn build_client(homeserver: &str) -> Result<Client> {
         .homeserver_url(homeserver)
         .build()
         .await
-        .map_err(|e| {
-            let msg = e.to_string();
-            if msg.contains("dns") || msg.contains("DNS") || msg.contains("connect") {
-                OnboardError::Unreachable(format!("{}: {}", homeserver, msg))
-            } else {
-                OnboardError::Generic(anyhow::anyhow!(
-                    "build client against {}: {}",
-                    homeserver,
-                    msg
-                ))
-            }
-        })
+        .map_err(|e| classify_sdk_err(&format!("build client against {homeserver}"), &e))
 }
 
 /// Wait for the operator to paste the final redirect URL on stdin.
@@ -183,36 +171,6 @@ fn query_string_from_url_or_query(q: UrlOrQuery) -> String {
     match q {
         UrlOrQuery::Query(s) => s,
         UrlOrQuery::Url(u) => u.query().unwrap_or("").to_string(),
-    }
-}
-
-fn map_oauth_err(where_: &str, e: matrix_sdk::authentication::oauth::OAuthError) -> OnboardError {
-    let msg = e.to_string();
-    if msg.contains("dns") || msg.contains("DNS") || msg.contains("connect") {
-        OnboardError::Unreachable(format!("{}: {}", where_, msg))
-    } else if msg.contains("access_denied")
-        || msg.contains("Unauthorized")
-        || msg.contains("rejected")
-        || msg.contains("denied")
-    {
-        OnboardError::AuthRejected(format!("{}: {}", where_, msg))
-    } else {
-        OnboardError::Generic(anyhow::anyhow!("{}: {}", where_, msg))
-    }
-}
-
-fn map_sdk_err(where_: &str, e: &matrix_sdk::Error) -> OnboardError {
-    let msg = e.to_string();
-    if msg.contains("dns") || msg.contains("DNS") || msg.contains("connect") {
-        OnboardError::Unreachable(format!("{}: {}", where_, msg))
-    } else if msg.contains("access_denied")
-        || msg.contains("Unauthorized")
-        || msg.contains("rejected")
-        || msg.contains("denied")
-    {
-        OnboardError::AuthRejected(format!("{}: {}", where_, msg))
-    } else {
-        OnboardError::Generic(anyhow::anyhow!("{}: {}", where_, msg))
     }
 }
 

@@ -35,64 +35,36 @@ use crate::cli::{
     E2eeVerifySessionArgs,
 };
 use crate::error::{OnboardError, Result};
-use matrix_sdk::authentication::matrix::MatrixSession;
-use matrix_sdk::ruma::{OwnedDeviceId, OwnedUserId};
-use matrix_sdk::{Client, SessionMeta, SessionTokens};
+use matrix_sdk::Client;
+use octo_matrix_onboard_core::client_from_config::client_from_config as core_client_from_config;
 use std::path::Path;
 use tracing::{info, warn};
 
-/// Read a JSON config file (0850h-a format) and rebuild a logged-in
-/// `Client` ready for E2EE operations. Mirrors the whoami command's
-/// load path so the same config file works for both.
+/// Thin adapter around the core helper: converts the core's
+/// `anyhow::Error` into the CLI's `OnboardError` so the e2ee
+/// subcommands surface the right exit code. R1-M14: this used to
+/// inline the same JSON-parse-then-SDK-build logic as `whoami`;
+/// both now delegate to `octo_matrix_onboard_core::client_from_config`
+/// (the typed `OnboardConfig` struct).
 async fn client_from_config(path: &Path) -> Result<Client> {
-    let bytes = std::fs::read(path)
-        .map_err(|e| OnboardError::BadConfig(format!("read config {:?}: {}", path, e)))?;
-    let cfg: serde_json::Value = serde_json::from_slice(&bytes)
-        .map_err(|e| OnboardError::BadConfig(format!("parse config {:?}: {}", path, e)))?;
-
-    let homeserver_url = cfg["homeserver_url"]
-        .as_str()
-        .ok_or_else(|| OnboardError::BadConfig("missing homeserver_url".into()))?
-        .to_string();
-    let user_id = cfg["user_id"]
-        .as_str()
-        .ok_or_else(|| OnboardError::BadConfig("missing user_id".into()))?
-        .to_string();
-    let device_id = cfg["device_id"]
-        .as_str()
-        .ok_or_else(|| OnboardError::BadConfig("missing device_id".into()))?
-        .to_string();
-    let access_token = cfg["access_token"]
-        .as_str()
-        .ok_or_else(|| OnboardError::BadConfig("missing access_token".into()))?
-        .to_string();
-    let refresh_token = cfg["refresh_token"].as_str().map(str::to_string);
-
-    let user_id_typed = OwnedUserId::try_from(user_id.as_str())
-        .map_err(|e| OnboardError::BadConfig(format!("invalid user_id: {}", e)))?;
-    let device_id_typed = OwnedDeviceId::from(device_id.as_str());
-
-    let session = MatrixSession {
-        meta: SessionMeta {
-            user_id: user_id_typed,
-            device_id: device_id_typed,
-        },
-        tokens: SessionTokens {
-            access_token,
-            refresh_token,
-        },
-    };
-
-    let client = Client::builder()
-        .homeserver_url(&homeserver_url)
-        .build()
+    core_client_from_config(path)
         .await
-        .map_err(|e| OnboardError::Generic(anyhow::anyhow!("build client: {}", e)))?;
-    client
-        .restore_session(session)
-        .await
-        .map_err(|e| OnboardError::Generic(anyhow::anyhow!("restore_session: {}", e)))?;
-    Ok(client)
+        .map_err(|e: anyhow::Error| {
+            // `BadConfig` for any parse / read error so the operator
+            // gets exit 5; SDK build / restore_session errors are
+            // mapped to `Generic` (the core crate only returns
+            // `anyhow::Error`, so we conservatively route everything
+            // to `Generic` and let the message bubble up).
+            let msg = e.to_string();
+            if msg.contains("read config")
+                || msg.contains("parse config")
+                || msg.contains("invalid user_id")
+            {
+                OnboardError::BadConfig(msg)
+            } else {
+                OnboardError::Generic(e)
+            }
+        })
 }
 
 pub async fn bootstrap(args: E2eeBootstrapArgs) -> Result<()> {
@@ -131,13 +103,20 @@ pub async fn verify(_args: E2eeVerifyArgs) -> Result<()> {
     // Full SAS UX requires a TUI crate (`dialoguer` per mission notes).
     // The SDK's `VerificationRequest` and `SasVerification` state
     // machines are the canonical reference; the TUI is a follow-up.
+    //
+    // R1-L10: the error message previously pointed at `docs/`
+    // for the SDK state machine, but `docs/` does not contain such
+    // a doc (the only matrix-related doc is the 0850h-a design
+    // plan). The authoritative reference is upstream:
+    // <https://github.com/matrix-org/matrix-rust-sdk/tree/main/crates/matrix-sdk/src/verification>
     eprintln!("e2ee verify: interactive emoji-SAS flow not yet implemented in this build.");
     eprintln!("Use a verified Element client (mobile/web) to drive the verification; the CLI");
     eprintln!("side of the flow is planned in a follow-up mission (TUI module).");
     warn!("e2ee verify: not yet implemented");
     Err(OnboardError::Generic(anyhow::anyhow!(
-        "e2ee verify: interactive flow not yet implemented; see docs/ for the SDK \
-         state machine that backs this command"
+        "e2ee verify: interactive flow not yet implemented; see the matrix-rust-sdk \
+         verification module for the SDK state machine that backs this command \
+         (matrix-sdk/src/verification)"
     )))
 }
 
@@ -226,9 +205,12 @@ pub async fn recovery_restore(args: E2eeRecoveryRestoreArgs) -> Result<()> {
 /// Atomic write of the recovery key to disk with mode 0600. Mirrors
 /// the write protocol in `output::write_atomic` (mission 0850h-a)
 /// without depending on the on-disk config schema.
+///
+/// R1-M15: the `mode(0o600)` call is Unix-only. On non-Unix the
+/// function still writes the file (default permissions apply) but
+/// does not attempt to set 0600.
 fn write_recovery_key(path: &Path, key: &str) -> Result<()> {
     use std::io::Write;
-    use std::os::unix::fs::OpenOptionsExt;
     let parent = path
         .parent()
         .ok_or_else(|| OnboardError::BadConfig(format!("invalid path {:?}", path)))?;
@@ -237,11 +219,14 @@ fn write_recovery_key(path: &Path, key: &str) -> Result<()> {
 
     let tmp = path.with_extension("tmp");
     {
-        let mut f = std::fs::OpenOptions::new()
-            .write(true)
-            .create(true)
-            .truncate(true)
-            .mode(0o600)
+        let mut opts = std::fs::OpenOptions::new();
+        opts.write(true).create(true).truncate(true);
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::OpenOptionsExt;
+            opts.mode(0o600);
+        }
+        let mut f = opts
             .open(&tmp)
             .map_err(|e| OnboardError::Generic(anyhow::anyhow!("open tmp: {}", e)))?;
         f.write_all(key.as_bytes())

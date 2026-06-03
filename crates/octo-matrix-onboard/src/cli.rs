@@ -108,10 +108,14 @@ pub struct OutputArgs {
     /// Write JSON to stdout instead of a file.
     #[arg(long, conflicts_with = "out")]
     pub stdout: bool,
-    /// Overwrite existing output file. By default the CLI refuses to
-    /// overwrite — protects against re-running against the wrong
-    /// homeserver.
-    #[arg(long)]
+    /// Overwrite existing output file. R1-L2: `--force` is
+    /// meaningful only when writing to a file. clap's
+    /// `requires = "out"` makes the combination `--force
+    /// --stdout` a parse error (the operator sees a clear
+    /// "the following required arguments were not provided"
+    /// message) rather than silently accepting `--force` and
+    /// ignoring it.
+    #[arg(long, requires = "out")]
     pub force: bool,
 }
 
@@ -123,9 +127,13 @@ pub struct PasswordArgs {
     /// MXID or localpart (e.g. @alice:example.com or alice)
     #[arg(long)]
     pub user: String,
-    /// Read password from stdin. This is the ONLY accepted form —
-    /// passing `--password <value>` is rejected at clap level to
-    /// prevent shell-history leaks.
+    /// Read password from stdin. The clap-level rejection of the
+    /// `--password <value>` form is a side effect of the flag being
+    /// boolean (`ArgAction::SetTrue`): clap fails with "unexpected
+    /// argument" because `--password <value>` is parsed as a value-
+    /// taking flag, not the bool. The actual security guarantee is
+    /// that the password is never accepted on the command line at
+    /// all (no shell-history leak), and never logged.
     #[arg(long, action = clap::ArgAction::SetTrue)]
     pub password_stdin: bool,
     /// Device display name (optional). Helps the operator distinguish

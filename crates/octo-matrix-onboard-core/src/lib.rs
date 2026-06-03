@@ -9,6 +9,7 @@
 //! actual flows; the integration test also imports it directly so it can
 //! run the auth code without spawning a subprocess.
 
+pub mod client_from_config;
 pub mod oauth_listener;
 pub mod qrcode_render;
 pub mod session;
@@ -16,6 +17,12 @@ pub mod session;
 /// Captured session material — what the SDK returns after a successful
 /// login. The on-disk JSON written by the binary is built directly from
 /// this struct.
+///
+/// R1-L1: the `access_token` field is private (not `pub`); the
+/// binary's `output` module reads it via the `to_disk_json` method,
+/// which is the single sanctioned path to the on-disk config. CLI
+/// display code that wants a token preview should go through
+/// `access_token_preview` (redacted).
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct Session {
     /// Matrix homeserver URL (e.g. `https://matrix.example.com`).
@@ -24,12 +31,121 @@ pub struct Session {
     pub user_id: String,
     /// Device ID assigned by the homeserver.
     pub device_id: String,
-    /// Access token. NOT serialized into the on-disk JSON via this struct
-    /// directly — the binary's `output` module emits the JSON manually so
-    /// the access_token is included (the adapter's `MatrixConfig` marks
-    /// it `#[serde(skip_serializing)]` to prevent the adapter from
-    /// rewriting it).
-    pub access_token: String,
+    /// Access token. R1-L1: private; access via `to_disk_json` (for
+    /// writing) or `access_token_preview` (for redacted display).
+    access_token: String,
     /// Refresh token, when the homeserver issued one.
     pub refresh_token: Option<String>,
+}
+
+impl Session {
+    /// R1-L1: build a `Session` from material captured during login.
+    /// This is the only public path that constructs a `Session` —
+    /// the `access_token` field is private, so callers (the binary
+    /// and integration tests) must hand the token in through this
+    /// constructor at the moment of capture rather than after the
+    /// fact. The token is then read out only via `to_disk_json`
+    /// (for writing the on-disk config) or `access_token_preview`
+    /// (for redacted display).
+    pub fn new(
+        homeserver_url: String,
+        user_id: String,
+        device_id: String,
+        access_token: String,
+        refresh_token: Option<String>,
+    ) -> Self {
+        Self {
+            homeserver_url,
+            user_id,
+            device_id,
+            access_token,
+            refresh_token,
+        }
+    }
+
+    /// R1-L1: read-only access to the access token. This is the
+    /// sanctioned path for integration tests and the adapter's
+    /// session-load path that need the raw token to hand to the
+    /// Matrix SDK. The token is NOT exposed via a public field;
+    /// callers must go through this method.
+    pub fn access_token(&self) -> &str {
+        &self.access_token
+    }
+
+    /// R1-L1: build the on-disk JSON shape (mission 0850h-a §Output
+    /// contract). This is the ONLY way the access_token leaves the
+    /// library; the binary calls this and writes the result to disk.
+    pub fn to_disk_json(&self) -> serde_json::Value {
+        serde_json::json!({
+            "homeserver_url": self.homeserver_url,
+            "user_id": self.user_id,
+            "device_id": self.device_id,
+            "access_token": self.access_token,
+            "refresh_token": self.refresh_token,
+            "rooms": Vec::<String>::new(),
+        })
+    }
+
+    /// R1-L1: redacted access token preview for CLI display. For
+    /// tokens longer than 16 chars, shows the first 8 + "..." + the
+    /// last 4. For shorter tokens, shows the first 4 + "...".
+    pub fn access_token_preview(&self) -> String {
+        redact_token(&self.access_token)
+    }
+}
+
+/// R1-L1: token redaction helper. Shows the first 8 chars + "..." +
+/// last 4 chars (the standard `syt_…XXXX` form operators expect).
+/// For tokens shorter than 16 chars, returns the first 4 + "...".
+fn redact_token(token: &str) -> String {
+    if token.len() <= 16 {
+        let prefix: String = token.chars().take(4).collect();
+        format!("{prefix}...")
+    } else {
+        let prefix: String = token.chars().take(8).collect();
+        let suffix: String = token
+            .chars()
+            .rev()
+            .take(4)
+            .collect::<Vec<_>>()
+            .into_iter()
+            .rev()
+            .collect();
+        format!("{prefix}...{suffix}")
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn redact_token_long() {
+        // "syt_abcdefgh_long_token_xyz" — 27 chars (>16), so the
+        // long-form redaction is used. First 8 chars: "syt_abcd";
+        // last 4 chars: "_xyz". The middle is elided.
+        let r = redact_token("syt_abcdefgh_long_token_xyz");
+        assert_eq!(r, "syt_abcd..._xyz", "got: {r}");
+    }
+
+    #[test]
+    fn redact_token_short() {
+        let r = redact_token("short");
+        assert_eq!(r, "shor...");
+    }
+
+    #[test]
+    fn to_disk_json_includes_access_token() {
+        let s = Session {
+            homeserver_url: "https://matrix.example.com".into(),
+            user_id: "@bot:matrix.example.com".into(),
+            device_id: "ABCDEFGHIJ".into(),
+            access_token: "syt_real_token_xyz".into(),
+            refresh_token: Some("syr_y".into()),
+        };
+        let v = s.to_disk_json();
+        assert_eq!(v["access_token"], "syt_real_token_xyz");
+        assert_eq!(v["refresh_token"], "syr_y");
+        assert_eq!(v["rooms"].as_array().unwrap().len(), 0);
+    }
 }

@@ -15,16 +15,23 @@ integration-matrix = ["dep:octo-matrix-onboard-core"]
 
 [dependencies]
 # Matrix SDK (E2EE + SQLite crypto store, exact pin per 0850h-a SDK Risk note).
-# Feature set is the corrected version of the mission 0850h-b spec:
-# matrix-sdk 0.17.0 has no `rustls-tls` or `sqlite-cryptostore` features —
-# TLS is baked into the embedded reqwest, and the SQLite crypto store is
-# enabled implicitly when both `e2e-encryption` and `sqlite` are set. The
-# `indexeddb-cryptostore` referenced in the mission does not exist in
-# 0.17.0 either; the web-only state/event-cache store is the
-# `indexeddb` feature (not used here — headless CLI).
+# R1-M18 corrections vs. the mission 0850h-b spec:
+#   - `rustls-tls` is NOT a valid 0.17.0 feature; TLS uses the
+#     embedded reqwest's default backend (native-tls on Linux).
+#   - `sqlite-cryptostore` does not exist on 0.17.0; the SQLite crypto
+#     store is enabled implicitly when both `e2e-encryption` and
+#     `sqlite` are set.
+#   - `indexeddb-cryptostore` does not exist on 0.17.0; the web-only
+#     state/event-cache store is the `indexeddb` feature (not used
+#     here — headless CLI).
 matrix-sdk = { version = "=0.17.0", default-features = false, features = ["e2e-encryption", "sqlite", "qrcode"] }
-# Async runtime (embedded for cdylib compatibility)
-tokio = { version = "1.35", features = ["rt-multi-thread", "macros", "time"] }
+# Async runtime (embedded for cdylib compatibility). R1-L13:
+# use the workspace dep so the version stays in sync with the
+# rest of the workspace. The workspace's tokio uses `features =
+# ["full"]`, which is a superset of the specific features we
+# actually need (rt-multi-thread, macros, time) — keeping the
+# cdylib self-contained.
+tokio = { workspace = true }
 # Serialization
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
@@ -58,3 +65,8 @@ tracing = { workspace = true }
 # `octo_matrix_session_store::StoolapSessionStore::new(path)` and
 # queried by `(user_id, device_id)`.
 octo-matrix-session-store = { path = "../octo-matrix-session-store" }
+
+[dev-dependencies]
+# Integration test (gated by `integration-matrix` feature) needs a
+# tempdir for the on-disk config writeback fixture.
+tempfile = "3.8"

@@ -14,8 +14,7 @@
 //! via the result channel so the CLI can surface a meaningful error.
 
 use anyhow::{Context, Result};
-use axum::{extract::Query, response::Html, routing::get, Router};
-use std::collections::HashMap;
+use axum::{extract::Request, response::Html, routing::get, Router};
 use std::net::SocketAddr;
 use std::sync::Arc;
 use tokio::net::TcpListener;
@@ -23,34 +22,20 @@ use tokio::sync::Notify;
 use tracing::{info, warn};
 
 /// Result of a single OAuth callback.
-#[derive(Debug)]
+#[derive(Debug, PartialEq, Eq)]
 pub enum CallbackResult {
     /// IdP returned a valid `code` (and matching `state`).
     ///
-    /// `raw_query` is the entire query string the IdP redirected
-    /// with, e.g. `code=abc&state=xyz`. The CLI passes it to
-    /// `OAuth::finish_login(UrlOrQuery::Query(raw_query))` so the
-    /// SDK's state validation can run.
+    /// `raw_query` is the **entire, unparsed query string** the IdP
+    /// redirected with — e.g. `code=abc&state=xyz`. The CLI passes it
+    /// unchanged to `OAuth::finish_login(UrlOrQuery::Query(raw_query))`
+    /// so the SDK's state validation can run. We do NOT decode and
+    /// re-encode the values: that round-trip would mangle any
+    /// non-trivial encoding (e.g. `+` ↔ `%2B`, `%` ↔ `%25`, `&` ↔
+    /// `%26`) and break codes the IdP returns with such characters.
     Code { raw_query: String },
     /// IdP returned an error (`error=...&error_description=...`).
     IdpError { code: String, description: String },
-}
-
-#[derive(Debug)]
-struct CallbackParams {
-    code: Option<String>,
-    error: Option<String>,
-    error_description: Option<String>,
-}
-
-impl CallbackParams {
-    fn from_query_map(params: &HashMap<String, String>) -> Self {
-        Self {
-            code: params.get("code").cloned(),
-            error: params.get("error").cloned(),
-            error_description: params.get("error_description").cloned(),
-        }
-    }
 }
 
 /// Spawn a single-shot listener on `127.0.0.1:port` and return the
@@ -60,7 +45,9 @@ impl CallbackParams {
 /// The redirect_uri the CLI must register with the IdP is
 /// `http://127.0.0.1:{port}/callback`.
 pub async fn listen_once(port: u16) -> Result<CallbackResult> {
-    let addr: SocketAddr = format!("127.0.0.1:{}", port).parse().unwrap();
+    let addr: SocketAddr = format!("127.0.0.1:{}", port)
+        .parse()
+        .expect("127.0.0.1:port is always a valid SocketAddr");
     let listener = TcpListener::bind(addr)
         .await
         .with_context(|| format!("Failed to bind {} — is the port already in use?", addr))?;
@@ -74,21 +61,26 @@ pub async fn listen_once(port: u16) -> Result<CallbackResult> {
 
     let app = Router::new().route(
         "/callback",
-        get(move |Query(params): Query<HashMap<String, String>>| {
+        get(move |req: Request| {
             let result_slot = result_for_handler.clone();
             let shutdown = shutdown_for_handler.clone();
             async move {
-                let parsed = CallbackParams::from_query_map(&params);
-                let response_html = if let Some(code) = parsed.code {
+                // Read the raw query string verbatim. `Query<T>` would
+                // percent-decode the values into a HashMap, after
+                // which we cannot faithfully reconstruct the original
+                // bytes (e.g. `+` and `%2B` collapse to the same
+                // String). The SDK's `UrlOrQuery::Query` accepts the
+                // raw string and re-parses it on its side, which is
+                // the supported path.
+                let raw_query = req.uri().query().unwrap_or("").to_owned();
+                let response_html = if let Some(code) = parse_query_key(&raw_query, "code") {
                     info!("Received OAuth code (length={})", code.len());
-                    // Rebuild the raw query so the SDK can validate state.
-                    let raw_query = rebuild_query(&code, params.get("state").map(String::as_str));
                     let mut slot = result_slot.lock().await;
                     *slot = Some(CallbackResult::Code { raw_query });
                     "<html><body><h1>octo-matrix-onboard: success</h1>\
                          <p>You can close this tab and return to the terminal.</p></body></html>"
-                } else if let Some(err) = parsed.error {
-                    let desc = parsed.error_description.unwrap_or_default();
+                } else if let Some(err) = parse_query_key(&raw_query, "error") {
+                    let desc = parse_query_key(&raw_query, "error_description").unwrap_or_default();
                     warn!("IdP returned error: {} — {}", err, desc);
                     let mut slot = result_slot.lock().await;
                     *slot = Some(CallbackResult::IdpError {
@@ -119,22 +111,20 @@ pub async fn listen_once(port: u16) -> Result<CallbackResult> {
         .ok_or_else(|| anyhow::anyhow!("Listener exited without capturing a callback"))
 }
 
-fn rebuild_query(code: &str, state: Option<&str>) -> String {
-    match state {
-        Some(s) => format!("code={}&state={}", urlencoded(code), urlencoded(s)),
-        None => format!("code={}", urlencoded(code)),
+/// Extract a single key's value from a raw query string WITHOUT
+/// percent-decoding. This is good enough for the success/error
+/// branching (we only need to know which keys are present and the
+/// raw-bytes value of `code` for length logging). The full raw
+/// string is preserved for the SDK to re-parse on its own side.
+fn parse_query_key(query: &str, key: &str) -> Option<String> {
+    for pair in query.split('&').filter(|s| !s.is_empty()) {
+        if let Some((lhs, rhs)) = pair.split_once('=') {
+            if lhs == key {
+                return Some(rhs.to_owned());
+            }
+        }
     }
-}
-
-fn urlencoded(s: &str) -> String {
-    // Minimal percent-encoding for the two query keys we know about.
-    // The IdP returns URL-encoded values; we re-encode here so the
-    // SDK can parse the query string uniformly.
-    s.replace('+', "%2B")
-        .replace(' ', "+")
-        .replace('%', "%25")
-        .replace('&', "%26")
-        .replace('=', "%3D")
+    None
 }
 
 #[cfg(test)]
@@ -142,37 +132,140 @@ mod tests {
     use super::*;
 
     #[test]
-    fn callback_params_extracts_code() {
-        let mut params = HashMap::new();
-        params.insert("code".to_string(), "abc123".to_string());
-        let parsed = CallbackParams::from_query_map(&params);
-        assert_eq!(parsed.code.as_deref(), Some("abc123"));
-        assert!(parsed.error.is_none());
+    fn parse_query_key_finds_code() {
+        let q = "code=abc123&state=xyz";
+        assert_eq!(parse_query_key(q, "code").as_deref(), Some("abc123"));
+        assert_eq!(parse_query_key(q, "state").as_deref(), Some("xyz"));
+        assert!(parse_query_key(q, "missing").is_none());
     }
 
     #[test]
-    fn callback_params_extracts_idp_error() {
-        let mut params = HashMap::new();
-        params.insert("error".to_string(), "access_denied".to_string());
-        params.insert(
-            "error_description".to_string(),
-            "user cancelled".to_string(),
+    fn parse_query_key_preserves_percent_encoding() {
+        // R1-H10 regression: the old Query<HashMap> extractor
+        // percent-decoded `abc%23def` to `abc#def`, losing the
+        // distinction. The raw extractor must keep the bytes
+        // verbatim.
+        let q = "code=abc%23def&state=foo%26bar";
+        assert_eq!(parse_query_key(q, "code").as_deref(), Some("abc%23def"));
+        assert_eq!(parse_query_key(q, "state").as_deref(), Some("foo%26bar"));
+    }
+
+    #[test]
+    fn parse_query_key_handles_empty() {
+        assert!(parse_query_key("", "code").is_none());
+        assert!(parse_query_key("&", "code").is_none());
+        assert!(parse_query_key("code", "code").is_none()); // no '='
+    }
+
+    #[test]
+    fn parse_query_key_finds_error() {
+        let q = "error=access_denied&error_description=user+cancelled";
+        assert_eq!(
+            parse_query_key(q, "error").as_deref(),
+            Some("access_denied")
         );
-        let parsed = CallbackParams::from_query_map(&params);
-        assert!(parsed.code.is_none());
-        assert_eq!(parsed.error.as_deref(), Some("access_denied"));
-        assert_eq!(parsed.error_description.as_deref(), Some("user cancelled"));
+        assert_eq!(
+            parse_query_key(q, "error_description").as_deref(),
+            Some("user+cancelled")
+        );
     }
 
-    #[test]
-    fn rebuild_query_with_state() {
-        let q = rebuild_query("abc", Some("xyz"));
-        assert_eq!(q, "code=abc&state=xyz");
+    /// R1-M2: a full listener round-trip on the IdP-error path. The
+    /// listener binds, serves one request, and returns
+    /// `CallbackResult::IdpError`. We use a high port number
+    /// (assigned by the OS would be ideal, but `listen_once` takes
+    /// a fixed `port`; a high port like 49152 is in the IANA
+    /// dynamic range and is unlikely to collide with a real
+    /// homeserver's callback in a CI box).
+    #[tokio::test]
+    async fn listen_once_returns_idp_error_on_error_query() {
+        let port: u16 = 49152;
+        // Bind-free check: if the test box has a server on this
+        // port, skip rather than fail (the test infra can't
+        // control that, but a deliberate collision is unlikely).
+        if std::net::TcpListener::bind(("127.0.0.1", port)).is_err() {
+            eprintln!("port {port} already in use, skipping IdpError test");
+            return;
+        }
+        let listener_task = tokio::spawn(async move { listen_once(port).await });
+
+        // Give the listener a beat to bind.
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+
+        // Send a raw HTTP/1.1 request to avoid pulling in a
+        // reqwest dev-dep (the SDK already has reqwest, but the
+        // core crate deliberately doesn't depend on it for the
+        // listener path).
+        let raw = b"GET /callback?error=access_denied&error_description=user+cancelled HTTP/1.1\r\nHost: 127.0.0.1\r\nConnection: close\r\n\r\n";
+        let mut stream = tokio::net::TcpStream::connect(("127.0.0.1", port))
+            .await
+            .expect("connect to listener");
+        use tokio::io::AsyncWriteExt;
+        stream.write_all(raw).await.expect("send request");
+        // Read until EOF (the server sends Connection: close).
+        let mut buf = Vec::new();
+        use tokio::io::AsyncReadExt;
+        let _ = stream.read_to_end(&mut buf).await;
+        let response = String::from_utf8_lossy(&buf);
+        assert!(
+            response.starts_with("HTTP/1.1 200"),
+            "callback returned {response}"
+        );
+
+        let result = tokio::time::timeout(std::time::Duration::from_secs(5), listener_task)
+            .await
+            .expect("listener did not complete in 5s")
+            .expect("listener task panicked")
+            .expect("listen_once returned an error");
+
+        match result {
+            CallbackResult::IdpError { code, description } => {
+                assert_eq!(code, "access_denied");
+                assert_eq!(description, "user+cancelled");
+            }
+            other => panic!("expected IdpError, got {:?}", other),
+        }
     }
 
-    #[test]
-    fn rebuild_query_without_state() {
-        let q = rebuild_query("abc", None);
-        assert_eq!(q, "code=abc");
+    /// R1-M2: same shape, but the IdP returns a valid `code` and the
+    /// listener captures it. This is the happy-path counterpart to
+    /// the IdpError test.
+    #[tokio::test]
+    async fn listen_once_returns_code_on_success_query() {
+        let port: u16 = 49153;
+        if std::net::TcpListener::bind(("127.0.0.1", port)).is_err() {
+            eprintln!("port {port} already in use, skipping Code test");
+            return;
+        }
+        let listener_task = tokio::spawn(async move { listen_once(port).await });
+
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+
+        let raw = b"GET /callback?code=authcode123&state=xyz HTTP/1.1\r\nHost: 127.0.0.1\r\nConnection: close\r\n\r\n";
+        let mut stream = tokio::net::TcpStream::connect(("127.0.0.1", port))
+            .await
+            .expect("connect to listener");
+        use tokio::io::AsyncWriteExt;
+        stream.write_all(raw).await.expect("send request");
+        let mut buf = Vec::new();
+        use tokio::io::AsyncReadExt;
+        let _ = stream.read_to_end(&mut buf).await;
+
+        let result = tokio::time::timeout(std::time::Duration::from_secs(5), listener_task)
+            .await
+            .expect("listener did not complete in 5s")
+            .expect("listener task panicked")
+            .expect("listen_once returned an error");
+
+        match result {
+            CallbackResult::Code { raw_query } => {
+                assert!(
+                    raw_query.contains("code=authcode123"),
+                    "raw_query={raw_query}"
+                );
+                assert!(raw_query.contains("state=xyz"), "raw_query={raw_query}");
+            }
+            other => panic!("expected Code, got {:?}", other),
+        }
     }
 }

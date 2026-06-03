@@ -13,15 +13,13 @@ path = "src/main.rs"
 # Library half — auth flows, session capture, QR rendering, listener
 octo-matrix-onboard-core = { path = "../octo-matrix-onboard-core" }
 # Matrix SDK (must match the core lib's pin).
-# Features:
+# `rustls-tls` is NOT a valid 0.17.0 feature (TLS is provided by the
+# embedded reqwest's default backend). `api` is not a feature — login
+# APIs are always available.
 #   - `e2e-encryption` + `qrcode` for the QR login mode
 #     (LoginWithGeneratedQrCode is gated behind e2e-encryption).
 #   - No `sqlite`/`indexeddb` — we don't need a state store for a
 #     one-shot login CLI; the default in-memory store is fine.
-#   - The `rustls-tls` / `api` features mentioned in older mission
-#     drafts DO NOT EXIST on matrix-sdk 0.17.0 — TLS is baked into
-#     the embedded reqwest client and login APIs are always
-#     available without an `api` feature flag.
 matrix-sdk = { version = "=0.17.0", default-features = false, features = ["e2e-encryption", "qrcode"] }
 # CLI
 clap = { workspace = true }
@@ -39,6 +37,10 @@ tracing-subscriber = { workspace = true }
 # Error handling
 anyhow = { workspace = true }
 thiserror = { workspace = true }
+# Hidden TTY input (4S recovery key on E2EE restore)
+rpassword = "7"
+# Heap-zeroing wrappers for secret material
+zeroize = "1"
 # Config dir resolution (per mission: dirs::config_dir())
 dirs = "5"
 # URL parsing for OAuth
@@ -50,9 +52,19 @@ language-tags = "0.3"
 # Multi-account stoolap-backed session store (mission 0850h-d). The
 # CLI's `session list / use / remove / import` subcommands open the
 # store at the operator-supplied `--store` path (or the per-platform
-# default). The login flows continue to write the legacy file by
-# default; pass `--store` to write directly to the store.
+# default). The login flows (`login password`, `login oidc`, `login
+# sso`, `login qr`) do NOT auto-import into the store — they continue
+# to write the legacy single-file JSON config. `session import <file>`
+# is the supported way to bring a legacy 0850h-a / 0850h-c config
+# into the multi-account store; the legacy file remains canonical for
+# the login flows.
 octo-matrix-session-store = { path = "../octo-matrix-session-store" }
+# Atomic file writes (R1-L5: `tempfile::NamedTempFile` for the
+# 0600 mode + rename-onto-target flow). Was a dev-dep before;
+# promoted to a runtime dep because `write_atomic` is called
+# in the production write path, not just tests.
+tempfile = "3.8"
 
 [dev-dependencies]
-tempfile = "3.8"
+# Tests use the same `tempfile` crate (TempDir helpers); already
+# in the runtime deps above, no separate dev-dep entry needed.

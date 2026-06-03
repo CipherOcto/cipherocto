@@ -82,10 +82,17 @@ via the SDK's secret-storage APIs, not stored in a CipherOcto schema.
 version = "=0.17.0"
 default-features = false
 features = [
-    "rustls-tls",
     "e2e-encryption",
-    "sqlite-cryptostore",
-    # "indexeddb-cryptostore" excluded — web-only; not used in headless CLI
+    "sqlite",
+    "qrcode",
+    # "rustls-tls" is NOT a valid 0.17.0 feature; TLS uses the
+    #   embedded reqwest's default backend (native-tls on Linux).
+    # "sqlite-cryptostore" does not exist on 0.17.0; the SQLite
+    #   crypto store is enabled implicitly when both
+    #   `e2e-encryption` and `sqlite` are set.
+    # "indexeddb-cryptostore" does not exist on 0.17.0; the
+    #   web-only state/event-cache store is the `indexeddb`
+    #   feature (not used here — headless CLI).
 ]
 ```
 
@@ -100,10 +107,14 @@ The CLI adaptation replaces the Composable View with a TUI prompt
 ## Acceptance Criteria
 
 - [ ] `octo-adapter-matrix-sdk/Cargo.toml` updates `matrix-sdk` to
-      `version = "=0.17.0"` with features `["rustls-tls", "e2e-encryption",
-      "sqlite-cryptostore"]` and `default-features = false` (no
-      `indexeddb-cryptostore` — web-only; exact pin per 0850h-a's
-      SDK Risk note)
+      `version = "=0.17.0"` with features `["e2e-encryption", "sqlite",
+      "qrcode"]` and `default-features = false`. The originally
+      spec'd `rustls-tls` + `sqlite-cryptostore` features are not
+      valid on 0.17.0 (TLS is provided by the embedded reqwest's
+      default backend; the SQLite crypto store is enabled
+      implicitly by `e2e-encryption` + `sqlite`). See the
+      `Cargo.toml` snippet in §Cargo.toml for the exact corrected
+      list and rationale.
 - [ ] `MatrixConfig` gains `passphrase: Option<String>` — new field,
       optional; does not break existing configs that omit it
       (the 0850h-a schema break from `user_id`/`device_id` will
@@ -125,7 +136,11 @@ The CLI adaptation replaces the Composable View with a TUI prompt
       input mode handles the echo suppression), restores secrets bundle
 - [ ] `octo-matrix-onboard e2ee verify-session` — out-of-band verification
       of an existing session
-- [ ] Integration test extended: encrypted-room round-trip succeeds
+- [x] Integration test extended: encrypted-room round-trip succeeds
+      (R1-M19: `integration_encrypted_room_round_trip` in
+      `tests/integration_matrix.rs`; the
+      `scripts/integration-matrix.sh up` script now provisions a
+      second CI user `@ci2:localhost` with the same password)
 - [ ] All previous 0850h-a acceptance criteria still pass (no regression)
 - [ ] `cargo clippy --all-targets --all-features -- -D warnings` passes
 - [ ] `cargo fmt -- --check` passes

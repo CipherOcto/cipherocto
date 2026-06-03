@@ -148,7 +148,7 @@ fn is_sensitive_key(name: &str) -> bool {
 ///   (R2-H2 missed this site) so the slice is now char-boundary
 ///   safe. Shape: `first ≤8 bytes + ***` / `***`.
 ///
-/// R5-L1 named "three" sites; R6-L2 added this one. The five-way
+/// R5-L1 named "three" sites; R6-L2 added this one. The four-way
 /// divergence is deliberate: the formats serve different display
 /// contexts. The cross-reference is the only thing tying them
 /// together.

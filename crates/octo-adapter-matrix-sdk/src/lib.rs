@@ -44,8 +44,20 @@ pub mod session_loader;
 /// length, which was misleading — a 200-char token and a 9-char
 /// token looked identical in logs. The new form shows
 /// "first 8 + ... + last 4" for long tokens (12 chars or more),
-/// "first 8 + ***" for medium (9-11 chars), and "***" for short
-/// (≤ 8 chars or empty).
+/// the full token + "***" for medium (9-11 chars), and "***" for
+/// short (≤ 8 chars or empty).
+///
+/// R7-M2: a previous version of this docstring claimed the
+/// medium branch was "first 8 + ***"; the actual implementation
+/// (line 92 below) emits the full token + "***" for medium
+/// tokens so an operator inspecting logs can correlate a
+/// 9-to-11-char token against the homeserver's UI without
+/// losing the tail. The docstring now matches the
+/// implementation. The "first 8 + ***" form (a) would have
+/// truncated 9-11 char tokens at byte 8, hiding the
+/// distinguishing chars, and (b) would have been a near-duplicate
+/// of the long branch's head — defeating the purpose of the
+/// length-based tiering.
 ///
 /// R2-H2: byte-based slicing is replaced with char-based slicing
 /// so a multi-byte UTF-8 boundary can't panic. A token that is
@@ -338,7 +350,10 @@ impl MatrixAdapter {
     /// `Client::builder()` call below) keeps the rotated pair in
     /// memory. The on-disk config is NOT updated by the SDK; the
     /// host process drives the actual writeback via
-    /// `persist_session_to_disk()` (mission 0850h-c).
+    /// `persist_session_to_disk(force_writeback: bool)`
+    /// (mission 0850h-c; signature changed in R6-M1 — the
+    /// per-call `force_writeback` arg is OR'd with the
+    /// config-level `self.config.force_writeback` setting).
     pub fn new(config: MatrixConfig) -> Result<Self, MatrixAdapterError> {
         use matrix_sdk::authentication::matrix::MatrixSession;
         use matrix_sdk::ruma::{OwnedDeviceId, OwnedUserId};
@@ -1207,7 +1222,11 @@ pub unsafe extern "C" fn destroy_adapter(adapter: *mut ()) {
 ///   because `MatrixAdapter::persist_session_to_disk` already
 ///   treats LockHeld as a no-op success before the C ABI sees it.
 /// - `2` = `SnapshotMismatch` (refused — on-disk contents drifted
-///   since startup, `force_writeback` was false).
+///   since startup, AND both the per-call `_force_writeback` AND
+///   the config-level `force_writeback` were false; R6-M1 changed
+///   the Rust method's semantics so the per-call argument is OR'd
+///   with the config-level setting, but the `SnapshotMismatch`
+///   error only fires when the OR collapses to false).
 /// - `3` = `FileMissing` (refused — file disappeared between
 ///   startup and writeback).
 /// - `4` = `Io` / `Serialize` / generic writeback failure.
@@ -1332,6 +1351,39 @@ mod tests {
         assert!(encoded.starts_with("DOT/1/"));
         let decoded = MatrixAdapter::decode_envelope(&encoded).unwrap();
         assert_eq!(decoded, original);
+    }
+
+    /// R7-M2 regression test: the medium (9-11 char) branch of
+    /// `redact_token` returns the FULL token + `"***"`, not
+    /// `"first 8 + ***"`. R2's docstring claimed `"first 8 + ***"`
+    /// but the implementation always emitted `"all + ***"`; R7-M2
+    /// fixed the docstring and locked the behavior with this
+    /// test.
+    #[test]
+    fn redact_token_medium_emits_full_token() {
+        // 9-char token: implementation must emit all 9 chars + "***".
+        assert_eq!(redact_token("syt_abcde"), "syt_abcde***");
+        // 10-char token: same shape.
+        assert_eq!(redact_token("syt_abcdef"), "syt_abcdef***");
+        // 11-char token: same shape.
+        assert_eq!(redact_token("syt_abcdefg"), "syt_abcdefg***");
+    }
+
+    /// R7-M2 regression test: the short (≤ 8 char) branch is "***"
+    /// only, and the long (≥ 12 char) branch is "first 8 ...
+    /// last 4". These were already covered by the docstring
+    /// examples; this test pins the boundary values.
+    #[test]
+    fn redact_token_short_and_long_boundaries() {
+        // Short — exactly 8 chars: "***"
+        assert_eq!(redact_token("syt_abcd"), "***");
+        // Short — empty
+        assert_eq!(redact_token(""), "***");
+        // Long — exactly 12 chars: first 8 + "..." + last 4
+        // "syt_abcdefgh" = 12 chars indexed 0..=11; first 8 =
+        // "syt_abcd"; last 4 = chars[8..=11] = "efgh". Expected:
+        // "syt_abcd...efgh".
+        assert_eq!(redact_token("syt_abcdefgh"), "syt_abcd...efgh");
     }
 
     #[test]

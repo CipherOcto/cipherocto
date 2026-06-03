@@ -209,10 +209,16 @@ pub struct E2eeConfigArgs {
 pub struct E2eeBootstrapArgs {
     #[command(flatten)]
     pub base: E2eeConfigArgs,
-    /// Suppress the (slow) progress messages from the SDK's
-    /// bootstrap. The first-time bootstrap may take 30+ seconds
-    /// while the SDK generates Olm keys; this flag silences the
-    /// informational output.
+    /// Suppress the CLI's informational "Bootstrapping
+    /// cross-signing — first run may take 30+ seconds..."
+    /// message. R25-L1: the previous docstring claimed this
+    /// flag also suppressed the SDK's progress messages, but
+    /// matrix-sdk 0.17.0's `bootstrap_cross_signing` doesn't
+    /// emit progress output (it's a single async call). The
+    /// flag only silences the CLI's own eprintln. The first-
+    /// time bootstrap may still take 30+ seconds while the
+    /// SDK generates Olm keys; the flag is purely a UX
+    /// preference for the operator's terminal.
     #[arg(long)]
     pub quiet: bool,
 }

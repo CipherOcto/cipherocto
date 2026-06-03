@@ -97,8 +97,8 @@ impl OnboardError {
 ///
 /// The new path inspects the leading `[<status> / <errcode>]`
 /// prefix that ruma's `ruma::api::error::Error::Display` emits
-/// (see `ruma-common-0.18.0/src/api/error.rs:60-72`). That prefix
-/// is the SDK's authoritative transport for the status code, so
+/// when the SDK has a status code to report. That prefix is the
+/// SDK's authoritative transport for the status code, so
 /// dispatching on it is materially more reliable than guessing
 /// from the free-form body text.
 ///

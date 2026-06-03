@@ -1137,13 +1137,29 @@ pub unsafe extern "C" fn destroy_adapter(adapter: *mut ()) {
 
 /// RR2: writeback export. The cdylib exposes `persist_session_to_disk`
 /// so a C-only host can drive token-rotation writeback without
-/// going through Rust. The return value is a status code (0 =
-/// success, 1 = LockHeld (no-op fast path, also "success" — the
-/// rotated pair stays in memory until the next cycle), 2 =
-/// SnapshotMismatch (refused), 3 = FileMissing (refused), 4 = Io,
-/// 5 = Serialize, 6 = InvalidArg). The `written` flag is
-/// returned via `*out_written` (1 if the file was actually
-/// updated, 0 if it was a no-op or a refused write).
+/// going through Rust. The return value is a status code:
+///
+/// - `0` = success. `*out_written` is `1` if the on-disk file was
+///   actually updated, or `0` if the writeback was a no-op
+///   (rotated pair equal to on-disk) or was suppressed because
+///   another process holds the lock (`WritebackError::LockHeld`
+///   is non-fatal and surfaces as `Ok(written: false)` — the
+///   host can retry on the next cycle). R4-L1 collapsed the
+///   previously-promised status `1` (LockHeld) into status `0`
+///   because `MatrixAdapter::persist_session_to_disk` already
+///   treats LockHeld as a no-op success before the C ABI sees it.
+/// - `2` = `SnapshotMismatch` (refused — on-disk contents drifted
+///   since startup, `force_writeback` was false).
+/// - `3` = `FileMissing` (refused — file disappeared between
+///   startup and writeback).
+/// - `4` = `Io` / `Serialize` / generic writeback failure.
+/// - `6` = `InvalidArg` (`adapter` was null).
+///
+/// The `written` flag is returned via `*out_written` (1 if the
+/// file was actually updated, 0 if it was a no-op or a refused
+/// write — but refused writes return non-zero status, so a
+/// non-zero status implies `*out_written` is undefined and the
+/// host should treat it as 0).
 ///
 /// # Safety
 /// `adapter` must be a pointer previously returned by
@@ -1162,6 +1178,15 @@ pub unsafe extern "C" fn persist_session_to_disk(
     let outcome_result = adapter.persist_session_to_disk().map(|o| o.written);
     match outcome_result {
         Ok(written) => {
+            // R4-L1: this branch is the only success path. It
+            // covers BOTH the actual writeback (`written = true`)
+            // AND the two no-op cases: the rotated-pair-equal
+            // fast path and `WritebackError::LockHeld` (which
+            // `MatrixAdapter::persist_session_to_disk` translates
+            // to `Ok(written: false)` before we get here). Host
+            // code should treat `status == 0 && *out_written == 0`
+            // as "rotated pair not persisted, try again later"
+            // without distinguishing the two no-op causes.
             if !out_written.is_null() {
                 *out_written = if written { 1 } else { 0 };
             }
@@ -1181,13 +1206,14 @@ pub unsafe extern "C" fn persist_session_to_disk(
             // io errors like `"open lock file: permission denied"`
             // and misclassified them as LockHeld (status 1 = retry
             // success), hiding the real failure from the host.
-            if msg.contains("is held by another process") {
-                // LockHeld: 1 = "no-op success, retry next cycle"
-                if !out_written.is_null() {
-                    *out_written = 0;
-                }
-                1
-            } else if msg.contains("contents changed; refusing to overwrite") {
+            //
+            // R4-L1: the `"is held by another process"` arm was
+            // removed — `MatrixAdapter::persist_session_to_disk`
+            // translates `WritebackError::LockHeld` to
+            // `Ok(written: false)` before the C ABI sees it, so
+            // this substring can never appear in `msg`. The arm
+            // was dead code.
+            if msg.contains("contents changed; refusing to overwrite") {
                 2
             } else if msg.contains("disappeared between startup and writeback") {
                 3

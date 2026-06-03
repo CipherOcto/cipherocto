@@ -22,6 +22,20 @@
 //!    mostly-atomic on Windows since Rust 1.65+.
 //! 5. Release the flock by dropping the `File`.
 //!
+//! ## Why we do NOT unlink the lock file
+//!
+//! On Linux, `flock(2)` locks the **open file description**
+//! (inode + fd), not the path. If we unlinked the lock path on
+//! any path — happy, contention, or unexpected error — a third
+//! process could `open("lock", O_CREAT)` after the unlink and
+//! get a fresh inode with no flock holder, racing against the
+//! process that still holds the original inode. That breaks the
+//! whole point of the lockfile. The pre-R2 code (`f99df1a`)
+//! left the lock file on disk forever, and we restored that
+//! behaviour in R4 after R2-M14 / R3-M1 introduced the race.
+//! The lock file is a zero-byte coordination point with no
+//! secrets; its persistence is harmless.
+//!
 //! ## Why `fs4` and not `fs2`
 //!
 //! `fs2` is unmaintained; `fs4` is the modern fork that supports both
@@ -187,25 +201,20 @@ pub fn writeback(
                 lock_path = %lock_path.display(),
                 "config writeback skipped: lock held by another process"
             );
-            // R3-M1: best-effort cleanup of the just-created
-            // lock file on the contention path. Without this,
-            // every contention attempt leaks a `<config>.json.lock`
-            // file (the happy path at the bottom of `writeback`
-            // does `remove_file`, but this early-return path was
-            // missed). Closing `lock_file` (drop on return)
-            // releases the flock; `remove_file` is safe because
-            // the next writer's `OpenOptions::create(true)` will
-            // re-create it.
-            drop(lock_file);
-            let _ = std::fs::remove_file(&lock_path);
+            // R4-H1: do NOT unlink the lock file. `flock(2)` is
+            // per-inode on Linux, so unlinking the path while
+            // process A still holds the flock on the original
+            // inode would let process C's `O_CREAT` allocate a
+            // fresh inode with no flock holder, racing A's
+            // writeback. Leaving the file on disk is harmless
+            // (zero-byte, no secrets) and is the pre-R2 design.
+            // `lock_file` drops at the end of this scope,
+            // releasing the flock.
             return Err(WritebackError::LockHeld { lock_path });
         }
-        // R3-M1: same cleanup on the unexpected-error path. The
-        // file was just created above, and if we're bailing with
-        // Io rather than LockHeld the operator has no use for a
-        // leftover file.
-        drop(lock_file);
-        let _ = std::fs::remove_file(&lock_path);
+        // R4-H1: same reasoning on the unexpected-error path —
+        // do NOT unlink. Just propagate the Io error and let
+        // `lock_file` drop at scope exit.
         return Err(WritebackError::Io(e));
     }
 
@@ -295,18 +304,15 @@ pub fn writeback(
         Ok(WritebackOutcome { written: true })
     })();
 
-    // 5. Release flock and remove the lock file. R2-M14: the
-    //    lock file was leaking on every error return — the
-    //    fs4 `unlock` releases the flock but leaves the file on
-    //    disk. `remove_file` is a best-effort cleanup: the
-    //    lockfile's purpose is flock coordination, not
-    //    presence-as-state, so a leftover file is harmless to
-    //    other processes (the next writer's `OpenOptions::new()
-    //    .create(true)` would just truncate and re-acquire).
-    //    Best-effort rather than `?`-propagating so a remove
-    //    failure doesn't mask the real `result`.
+    // 5. Release the flock. R4-H1: do NOT unlink the lock file
+    //    here. The lockfile is a coordination point whose
+    //    presence guarantees the next writer will flock the
+    //    same inode; unlinking it after a successful writeback
+    //    reintroduces the per-inode-vs-per-path race that the
+    //    pre-R2 design (lock file persists) avoided. The
+    //    file is zero-byte and contains no secrets; persistence
+    //    is the design, not a leak.
     let _ = lock_file.unlock();
-    let _ = std::fs::remove_file(&lock_path);
     result
 }
 
@@ -473,29 +479,23 @@ mod tests {
             other => panic!("expected LockHeld, got {:?}", other),
         }
 
-        // R3-M1: the lock file still exists because `holder`
-        // owns it (best-effort `remove_file` after the contention
-        // path can't unlink something another process holds open
-        // — actually on Linux unlink succeeds regardless, but
-        // `holder` is the owner here so the test would observe
-        // either outcome). The acceptance criterion is that AFTER
-        // the holder releases and the file is unlinked, a
-        // subsequent writeback re-creates it cleanly. We can
-        // verify the cleanup hook is at least executed by
-        // releasing the holder and re-running.
+        // R4-H1: the lock file persists. The holder's `lock_file`
+        // and the test's own `holder` both have open fds on the
+        // same inode, so the directory entry is still there too.
+        // Best-effort cleanup at the end of the test for hygiene,
+        // not correctness.
         holder.unlock().unwrap();
         let _ = std::fs::remove_file(&lock_path);
     }
 
-    /// R3-M1: after a contention failure, the just-created lock
-    /// file should be removed so it doesn't accumulate on disk.
-    /// This exercises the contention path with no real holder
-    /// (we simulate WouldBlock by holding the lock from the same
-    /// process, then releasing, then asserting the cleanup
-    /// happens after the lock attempt finishes).
+    /// R4-H1: after a contention failure, the lock file MUST
+    /// still be on disk — it's the per-inode coordination point
+    /// for the next writer. Replaces the R3-M1 test that
+    /// asserted the opposite (which documented the bug we just
+    /// reverted).
     #[test]
     #[cfg(unix)]
-    fn writeback_cleans_up_lock_file_after_contention_release() {
+    fn writeback_preserves_lock_file_after_contention_and_happy_path() {
         use fs4::FileExt;
         let dir = tmpdir();
         let path = dir.path().join("config.json");
@@ -523,14 +523,10 @@ mod tests {
         let rotated = sample_config();
         let _ = writeback(&path, &initial, &rotated, false);
 
-        // Release and re-attempt — the second writeback should
-        // succeed and end with no lingering lock file.
+        // Release the holder and re-attempt — the second
+        // writeback should succeed.
         holder.unlock().unwrap();
         drop(holder);
-        // Some kernels keep the file around until all fds close;
-        // remove explicitly so the next test's writeback starts
-        // from a clean slate.
-        let _ = std::fs::remove_file(&lock_path);
 
         let mut rotated = sample_config();
         rotated.access_token = "syt_new".into();
@@ -538,12 +534,18 @@ mod tests {
         let outcome = writeback(&path, &initial, &rotated, false).unwrap();
         assert!(outcome.written);
 
-        // After the happy path, no lock file should remain.
+        // R4-H1: after a successful writeback, the lock file
+        // MUST still be on disk. The next writer's
+        // `OpenOptions::create(true)` will flock the same
+        // inode; unlinking here would break serialization.
         assert!(
-            !lock_path.exists(),
-            "lock file should not persist after successful writeback: {:?}",
+            lock_path.exists(),
+            "lock file should persist after successful writeback: {:?}",
             lock_path
         );
+
+        // Test hygiene: clean up so the next test starts fresh.
+        let _ = std::fs::remove_file(&lock_path);
     }
 
     #[test]
@@ -607,9 +609,21 @@ mod tests {
             "expected FileMissing, got {:?}",
             result
         );
-        // Confirm the lock file was released (no .json.lock left behind).
+        // R4-H1: the lock file persists by design. The flock was
+        // released (the early-return path drops `lock_file` before
+        // returning), but the directory entry stays — it's the
+        // per-inode coordination point for the next writer. The
+        // R2-M14 assertion that it was cleaned up documented a
+        // bug we just reverted.
         let lock_path = path.with_extension("json.lock");
-        assert!(!lock_path.exists(), "lock file leaked: {:?}", lock_path);
+        assert!(
+            lock_path.exists(),
+            "lock file should persist as flock coordination point: {:?}",
+            lock_path
+        );
+
+        // Test hygiene: clean up so the next test starts fresh.
+        let _ = std::fs::remove_file(&lock_path);
     }
 
     /// R2-M14: `force_writeback = true` bypasses the snapshot check

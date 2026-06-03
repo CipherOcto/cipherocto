@@ -271,12 +271,26 @@ impl std::fmt::Debug for MatrixConfig {
                 "passphrase",
                 &self.passphrase.as_deref().map(|_| "***".to_string()),
             )
+            // R22-L1: the previous hand-rolled Debug omitted the
+            // 4 non-secret adapter-only fields (config_path,
+            // force_writeback, use_session_store, session_store_path),
+            // so an operator running `dbg!(config)` would not see
+            // the on-disk config path or the multi-account store
+            // wiring. None of the 4 are secret (they're a path
+            // or a bool), so they render directly. The passphrase
+            // is the only secret field that needs redaction, and
+            // it's already redacted above.
+            .field("config_path", &self.config_path)
+            .field("force_writeback", &self.force_writeback)
+            .field("use_session_store", &self.use_session_store)
+            .field("session_store_path", &self.session_store_path)
             .field("rooms", &self.rooms)
             .finish()
     }
 }
 
 /// Matrix adapter using matrix-rust-sdk.
+#[derive(Debug)]
 pub struct MatrixAdapter {
     config: MatrixConfig,
     client: Client,

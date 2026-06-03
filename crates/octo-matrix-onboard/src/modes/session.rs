@@ -39,7 +39,15 @@ fn open_store(path: Option<&PathBuf>) -> Result<StoolapSessionStore> {
         .map_err(|e| OnboardError::Generic(anyhow::anyhow!("open store: {}", e)))
 }
 
-/// Redact a token for display: show the first 8 characters and `***`.
+/// Redact a token for display: show the first ≤8 bytes (walked
+/// back to a char boundary so a non-ASCII token doesn't panic)
+/// and `***`. R10-L1: a previous version of this docstring
+/// said "first 8 characters", but the implementation is
+/// byte-based (with the R6-M2 char-boundary walk); for a
+/// non-ASCII token the byte count is less than the char count,
+/// so the docstring is now phrased in bytes to match the
+/// impl. The cross-reference below at the `logging.rs` site
+/// uses the same `first ≤8 bytes` phrasing.
 ///
 /// R5-L1: this is one of FOUR `redact_*` implementations across
 /// the four mission crates. Each site has a deliberately

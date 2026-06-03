@@ -1239,6 +1239,19 @@ pub unsafe extern "C" fn destroy_adapter(adapter: *mut ()) {
 /// - `4` = `Io` / `Serialize` / generic writeback failure.
 /// - `6` = `InvalidArg` (`adapter` was null).
 ///
+/// Status codes `1` and `5` are NOT emitted by the current
+/// implementation: `1` was the pre-R4 `LockHeld` code (R4-L1
+/// collapsed it into `0` because the host can treat
+/// `status == 0 && *out_written == 0` as a no-op retry
+/// regardless of the cause), and `5` is reserved/unused. R10-L2:
+/// a previous version of this docstring silently skipped both
+/// codes; if a host ever observes status `1` or `5` it is a bug
+/// in this crate (the status enum is `{0, 2, 3, 4, 6}` and any
+/// other value would have to be added with a documented
+/// mapping). The reserved range is preserved for a future
+/// `C ABI v2` that splits `LockHeld` out of the success path
+/// (planned but not yet implemented).
+///
 /// The `written` flag is returned via `*out_written` (1 if the
 /// file was actually updated, 0 if it was a no-op or a refused
 /// write — but refused writes return non-zero status, so a

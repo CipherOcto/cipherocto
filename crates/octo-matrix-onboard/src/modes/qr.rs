@@ -18,7 +18,7 @@
 //! 5. Extract session via `session::extract` and write to disk.
 
 use crate::cli::QrArgs;
-use crate::error::{OnboardError, Result};
+use crate::error::{classify_sdk_err, OnboardError, Result};
 use crate::output;
 use matrix_sdk::authentication::oauth::qrcode::{GeneratedQrProgress, LoginProgress};
 use matrix_sdk::authentication::oauth::registration::{
@@ -130,16 +130,19 @@ async fn build_client(homeserver: &str) -> Result<Client> {
         .build()
         .await
         .map_err(|e| {
-            let msg = e.to_string();
-            if msg.contains("dns") || msg.contains("DNS") || msg.contains("connect") {
-                OnboardError::Unreachable(format!("{}: {}", homeserver, msg))
-            } else {
-                OnboardError::Generic(anyhow::anyhow!(
-                    "build client against {}: {}",
-                    homeserver,
-                    msg
-                ))
-            }
+            // R15-L1: same fix as the R14-L1 in `password.rs::build_client` —
+            // route through `classify_sdk_err` (which inspects the leading
+            // `[NNN / errcode]` ruma prefix first) instead of substring-
+            // matching on `"dns"` / `"DNS"` / `"connect"`. The substring
+            // approach is fragile: a 5xx like `"[502] bad gateway; dns
+            // cache miss"` would misclassify as `Unreachable` and the
+            // operator would retry the URL instead of waiting for the
+            // server. R14 fixed `password.rs::build_client` and
+            // `password.rs::login`; this `qr.rs::build_client` was the
+            // other missed call site. The `where_` arg namespaces the
+            // homeserver so the log line keeps the operator context.
+            let where_ = format!("build client against {homeserver}");
+            classify_sdk_err(&where_, &e)
         })
 }
 

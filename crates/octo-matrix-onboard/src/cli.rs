@@ -238,9 +238,10 @@ pub struct E2eeRecoveryGenerateArgs {
     #[command(flatten)]
     pub base: E2eeConfigArgs,
     /// File to write the recovery key to (mode 0600). The key is
-    /// 16 space-separated base64 groups (4S spec). This is the
-    /// ONLY copy — losing the file means losing access to encrypted
-    /// history.
+    /// 12 space-separated groups of 4 alphanumeric characters
+    /// (the 4S format per MSC3861, also enforced structurally by
+    /// `e2ee::validate_four_s_format`). This is the ONLY copy —
+    /// losing the file means losing access to encrypted history.
     #[arg(long)]
     pub out: PathBuf,
     /// Overwrite an existing recovery-key file. By default the

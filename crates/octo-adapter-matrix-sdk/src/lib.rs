@@ -612,7 +612,14 @@ impl MatrixAdapter {
             }
             Err(config_writer::WritebackError::SnapshotMismatch) => Err(
                 MatrixAdapterError::WritebackFailed(
-                    "config on-disk contents changed; refusing to overwrite (pass --force-writeback)"
+                    // R9-L1: replaced the previous non-existent
+                    // `--force-writeback` CLI flag reference. The
+                    // C ABI host has two mechanisms to force a
+                    // writeback: set `force_writeback: true` in
+                    // the on-disk config, or pass
+                    // `_force_writeback=1` to the C ABI per-call
+                    // argument.
+                    "config on-disk contents changed; refusing to overwrite (set `force_writeback: true` in the on-disk config, or pass `_force_writeback=1` to the C ABI)"
                         .to_string(),
                 ),
             ),

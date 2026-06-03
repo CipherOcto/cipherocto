@@ -117,9 +117,14 @@ pub enum WritebackError {
     #[error("config write serialize: {0}")]
     Serialize(#[from] serde_json::Error),
     /// The on-disk file changed between the start-of-process read
-    /// and the writeback snapshot, and `force_writeback` is `false`.
-    /// The on-disk file is left untouched.
-    #[error("config on-disk contents changed; refusing to overwrite (pass --force-writeback)")]
+    /// and the writeback snapshot, and the effective `force_writeback`
+    /// is `false` (per-call argument `false` AND config-level setting
+    /// `force_writeback: false` per R6-M1 OR semantics). The on-disk
+    /// file is left untouched. R9-L1: previously the error message
+    /// suggested a non-existent `--force-writeback` CLI flag; the
+    /// actual mechanisms are the on-disk config field or the per-call
+    /// `force_writeback` argument.
+    #[error("config on-disk contents changed; refusing to overwrite (set `force_writeback: true` in the on-disk config, or pass `true` to the per-call `force_writeback` argument)")]
     SnapshotMismatch,
     /// R2-M14: the on-disk file was present at process start (the
     /// adapter constructed an `on_disk_before` from it) but is

@@ -198,26 +198,7 @@ async fn integration_envelope_round_trip() {
     // verbatim, so any 282-byte payload works for the homeserver
     // leg of the test). Real signature verification is exercised
     // by the unit tests in `octo-network`.
-    let wire = b"DOT/1 integration round-trip payload";
-    let mut envelope_bytes = Vec::with_capacity(282);
-    // Signing bytes (218 bytes):
-    envelope_bytes.extend_from_slice(&1u16.to_be_bytes()); // version
-    envelope_bytes.extend_from_slice(&0xDEAD_BEEFu32.to_be_bytes()); // network_id
-    envelope_bytes.extend_from_slice(&1u16.to_be_bytes()); // message_type
-    envelope_bytes.extend_from_slice(&[0u8; 32]); // envelope_id
-    envelope_bytes.extend_from_slice(&[0u8; 32]); // mission_id
-    envelope_bytes.extend_from_slice(&[0u8; 32]); // source_peer
-    envelope_bytes.extend_from_slice(&[0u8; 32]); // origin_gateway
-    envelope_bytes.extend_from_slice(&0u64.to_be_bytes()); // logical_timestamp
-    envelope_bytes.extend_from_slice(&1u16.to_be_bytes()); // ttl_hops
-    envelope_bytes.extend_from_slice(&[0u8; 32]); // payload_hash
-    envelope_bytes.extend_from_slice(&[0u8; 32]); // route_trace_root
-    envelope_bytes.extend_from_slice(&0u64.to_be_bytes()); // flags
-    debug_assert_eq!(envelope_bytes.len(), 218);
-    // Signature (64 bytes):
-    envelope_bytes.extend_from_slice(&[0u8; 64]);
-    debug_assert_eq!(envelope_bytes.len(), 282);
-
+    let envelope_bytes = make_envelope_bytes();
     let envelope = DeterministicEnvelope::from_wire_bytes(&envelope_bytes)
         .expect("from_wire_bytes accepts the constructed bytes");
     let domain = broadcast_domain_for(&adapter, &room_id());
@@ -246,6 +227,9 @@ async fn integration_envelope_round_trip() {
     // RECEIVE: the loop should pick up the event we just sent.
     // `receive_messages` is synchronous in spirit (driven by an
     // internal sync token), so we retry with a short backoff.
+    // R21-L1: compare `canonical.to_wire_bytes()` against the
+    // 282-byte `envelope_bytes` (not the previous 28-byte `wire`
+    // tag, which was a separate string and never matched).
     let mut found = false;
     for _ in 0..6 {
         let received = adapter
@@ -256,7 +240,7 @@ async fn integration_envelope_round_trip() {
             let canonical = adapter
                 .canonicalize(msg)
                 .expect("canonicalize our own sent envelope");
-            if canonical.to_wire_bytes() == wire {
+            if canonical.to_wire_bytes() == envelope_bytes {
                 found = true;
                 break;
             }
@@ -283,6 +267,49 @@ fn broadcast_domain_for(
 ) -> BroadcastDomainId {
     use octo_network::dot::adapters::PlatformAdapter;
     adapter.domain_id(room_id)
+}
+
+/// R21-L1: build the 282-byte wire bytes for a deterministic
+/// envelope. The two integration round-trip tests
+/// (`integration_envelope_round_trip` and
+/// `integration_encrypted_room_round_trip`) previously had the
+/// same 19-line `envelope_bytes.extend_from_slice(...)` block
+/// inlined. The block builds a valid 218-byte signing-payload +
+/// 64-byte signature layout for the `DeterministicEnvelope` parser;
+/// the test only needs the bytes to round-trip, so the signature
+/// is zero-filled. Extracting the helper reduces the drift
+/// surface: a future change to the envelope wire format (e.g., a
+/// new field per a future RFC revision) would have to be made in
+/// one place, not two.
+///
+/// R21-L1 (also): the receive-loop comparison was previously
+/// `canonical.to_wire_bytes() == wire` where `wire` was a 28-byte
+/// tag string (e.g. `b"DOT/1 integration round-trip payload"`)
+/// that was NOT embedded in the envelope bytes. The comparison
+/// was always false (282 vs 28 bytes), masking any actual
+/// round-trip failure as a "not found" assertion failure. The
+/// fix compares to the 282-byte envelope bytes (now returned
+/// from this helper) so a true round-trip is detected.
+fn make_envelope_bytes() -> Vec<u8> {
+    let mut wire = Vec::with_capacity(282);
+    // Signing bytes (218 bytes):
+    wire.extend_from_slice(&1u16.to_be_bytes()); // version
+    wire.extend_from_slice(&0xDEAD_BEEFu32.to_be_bytes()); // network_id
+    wire.extend_from_slice(&1u16.to_be_bytes()); // message_type
+    wire.extend_from_slice(&[0u8; 32]); // envelope_id
+    wire.extend_from_slice(&[0u8; 32]); // mission_id
+    wire.extend_from_slice(&[0u8; 32]); // source_peer
+    wire.extend_from_slice(&[0u8; 32]); // origin_gateway
+    wire.extend_from_slice(&0u64.to_be_bytes()); // logical_timestamp
+    wire.extend_from_slice(&1u16.to_be_bytes()); // ttl_hops
+    wire.extend_from_slice(&[0u8; 32]); // payload_hash
+    wire.extend_from_slice(&[0u8; 32]); // route_trace_root
+    wire.extend_from_slice(&0u64.to_be_bytes()); // flags
+    debug_assert_eq!(wire.len(), 218);
+    // Signature (64 bytes):
+    wire.extend_from_slice(&[0u8; 64]);
+    debug_assert_eq!(wire.len(), 282);
+    wire
 }
 
 #[tokio::test]
@@ -509,23 +536,7 @@ async fn integration_encrypted_room_round_trip() {
         .expect("adapter2 construction");
 
     // Build the wire bytes (same as integration_envelope_round_trip).
-    let wire = b"DOT/1 e2ee round-trip payload";
-    let mut envelope_bytes = Vec::with_capacity(282);
-    envelope_bytes.extend_from_slice(&1u16.to_be_bytes()); // version
-    envelope_bytes.extend_from_slice(&0xDEAD_BEEFu32.to_be_bytes()); // network_id
-    envelope_bytes.extend_from_slice(&1u16.to_be_bytes()); // message_type
-    envelope_bytes.extend_from_slice(&[0u8; 32]); // envelope_id
-    envelope_bytes.extend_from_slice(&[0u8; 32]); // mission_id
-    envelope_bytes.extend_from_slice(&[0u8; 32]); // source_peer
-    envelope_bytes.extend_from_slice(&[0u8; 32]); // origin_gateway
-    envelope_bytes.extend_from_slice(&0u64.to_be_bytes()); // logical_timestamp
-    envelope_bytes.extend_from_slice(&1u16.to_be_bytes()); // ttl_hops
-    envelope_bytes.extend_from_slice(&[0u8; 32]); // payload_hash
-    envelope_bytes.extend_from_slice(&[0u8; 32]); // route_trace_root
-    envelope_bytes.extend_from_slice(&0u64.to_be_bytes()); // flags
-    debug_assert_eq!(envelope_bytes.len(), 218);
-    envelope_bytes.extend_from_slice(&[0u8; 64]); // signature
-    debug_assert_eq!(envelope_bytes.len(), 282);
+    let envelope_bytes = make_envelope_bytes();
     let envelope = DeterministicEnvelope::from_wire_bytes(&envelope_bytes)
         .expect("from_wire_bytes accepts the constructed bytes");
 
@@ -542,6 +553,9 @@ async fn integration_encrypted_room_round_trip() {
     // --- 6. ci2 receives; SDK decrypts; adapter surfaces plaintext ---
     // The receiver may not have the Megolm key on the very first
     // poll (the key-sharing dance via Olm is async), so retry.
+    // R21-L1: compare `canonical.to_wire_bytes()` against the
+    // 282-byte `envelope_bytes` (not the previous 28-byte `wire`
+    // tag, which was a separate string and never matched).
     let mut decrypted = false;
     for _ in 0..10 {
         let received = adapter2
@@ -553,7 +567,7 @@ async fn integration_encrypted_room_round_trip() {
             // adapter's `canonicalize` returns the plaintext
             // bytes (the structured 282-byte envelope).
             if let Ok(canonical) = adapter2.canonicalize(msg) {
-                if canonical.to_wire_bytes() == wire {
+                if canonical.to_wire_bytes() == envelope_bytes {
                     decrypted = true;
                     break;
                 }

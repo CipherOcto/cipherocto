@@ -49,9 +49,9 @@ pub mod session_loader;
 ///
 /// R7-M2: a previous version of this docstring claimed the
 /// medium branch was "first 8 + ***"; the actual implementation
-/// (line 92 below) emits the full token + "***" for medium
-/// tokens so an operator inspecting logs can correlate a
-/// 9-to-11-char token against the homeserver's UI without
+/// in `redact_token` below emits the full token + "***" for
+/// medium tokens so an operator inspecting logs can correlate
+/// a 9-to-11-char token against the homeserver's UI without
 /// losing the tail. The docstring now matches the
 /// implementation. The "first 8 + ***" form (a) would have
 /// truncated 9-11 char tokens at byte 8, hiding the
@@ -109,8 +109,8 @@ fn redact_token(token: &str) -> String {
 }
 
 /// Errors that `MatrixAdapter::new` can surface. R1-L14: the previous
-/// shape (`Result<Self, String>`) forced the C ABI at line 622-635 to
-/// discard the error string. This structured type lets cdylib hosts
+/// shape (`Result<Self, String>`) forced the C ABI export below
+/// to discard the error string. This structured type lets cdylib hosts
 /// read a stable error category via `last_error()`.
 #[derive(Debug, thiserror::Error)]
 pub enum MatrixAdapterError {
@@ -520,8 +520,9 @@ impl MatrixAdapter {
     /// When `config_path` is empty, this is a no-op (in-memory or
     /// read-only deployment).
     ///
-    /// R6-M1: the C ABI export of this function (`persist_session_to_disk`
-    /// at line 1194) takes a per-call `_force_writeback: u8`
+    /// R6-M1: the C ABI export of this function
+    /// (`persist_session_to_disk`, the `extern "C"` shim at the
+    /// bottom of this file) takes a per-call `_force_writeback: u8`
     /// override. R2's original ABI signature exposed the parameter
     /// but the implementation ignored it, so a C host that passed
     /// `_force_writeback = 1` expecting a per-call override silently
@@ -778,7 +779,8 @@ fn transport_err(msg: impl Into<String>) -> PlatformAdapterError {
 // "now in epoch seconds" computation. It has been replaced by
 // the canonical `now_epoch` exported from `octo-matrix-session-store`
 // (the leaf crate both this crate and `octo-matrix-onboard` depend
-// on). The single call site at the previous line 870 now uses
+// on). The single call site, in `PlatformAdapter::send_envelope`
+// (`delivered_at:` field of the `DeliveryReceipt`), now uses
 // `octo_matrix_session_store::now_epoch() as u64` — the cast is
 // safe because `now_epoch` returns 0 for pre-1970 clocks, which is
 // the same fallback the previous `unix_epoch_now` produced, and

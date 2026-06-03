@@ -206,11 +206,12 @@ mod tests {
     #[test]
     fn write_with_relative_bare_filename_succeeds() {
         // R1-M9: `Path::parent()` of a bare filename like `matrix.json`
-        // returns `Some("")` on Linux. The `if let Some(parent) = ...`
-        // guard at line 75 means we skip `create_dir_all("")` (which
-        // would otherwise return `InvalidInput`). This test pins down
-        // the contract: a bare-filename path under a tempdir's cwd
-        // writes successfully, and the file lands in that cwd.
+        // returns `Some("")` on Linux. The `if let Some(parent) = path.parent()`
+        // guard in `write_atomic` means we skip `create_dir_all("")`
+        // (which would otherwise return `InvalidInput`). This test
+        // pins down the contract: a bare-filename path under a
+        // tempdir's cwd writes successfully, and the file lands in
+        // that cwd.
         let dir = TempDir::new().unwrap();
         let cwd = dir.path().to_path_buf();
         let args = OutputArgs {

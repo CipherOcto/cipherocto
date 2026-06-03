@@ -22,6 +22,7 @@ use crate::cli::WhoamiArgs;
 use crate::error::{classify_sdk_err, OnboardError, Result};
 use matrix_sdk::Client;
 use octo_matrix_onboard_core::client_from_config::OnboardConfig;
+use octo_matrix_onboard_core::CoreError;
 use octo_matrix_session_store::{SessionStore, StoolapSessionStore};
 use tracing::info;
 
@@ -126,9 +127,16 @@ pub async fn run(args: WhoamiArgs) -> Result<()> {
     // /whoami call can transparently rotate a stale token. We
     // build the session via the core helper, then drive the SDK
     // builder here with the refresh knob.
-    let session = cfg
-        .build_session()
-        .map_err(|e| OnboardError::BadConfig(format!("build session: {e}")))?;
+    //
+    // R2-M1: `build_session` now returns a typed `CoreError`. We
+    // route `InvalidUserId` (the only variant this path can
+    // surface) to `BadConfig` so the operator gets exit 5.
+    let session = cfg.build_session().map_err(|e| match e {
+        CoreError::InvalidUserId { value, source } => {
+            OnboardError::BadConfig(format!("invalid user_id {value:?}: {source}"))
+        }
+        other => OnboardError::Generic(anyhow::anyhow!(other)),
+    })?;
 
     let client = Client::builder()
         .homeserver_url(&cfg.homeserver_url)

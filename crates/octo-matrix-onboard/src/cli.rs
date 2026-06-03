@@ -328,4 +328,25 @@ pub struct SessionImportArgs {
     /// Overwrite an existing row with the same `(user_id, device_id)`.
     #[arg(long)]
     pub force: bool,
+    /// R2-M10: the `login_type` recorded in the store. The legacy
+    /// JSON config does not carry a type (it predates 0850h-d), so
+    /// without this flag we default to `password` — which is
+    /// actively misleading for OIDC / SSO / QR logins. The flag
+    /// lets operators tag the import with the correct type.
+    /// Allowed values: `password`, `oidc`, `sso`, `qr`.
+    #[arg(long, value_enum, default_value_t = crate::cli::LoginTypeArg::Password)]
+    pub login_type: crate::cli::LoginTypeArg,
+}
+
+/// CLI-side mirror of the store's `LoginType` enum. R2-M10: lets
+/// the operator set the login type on `session import` rather than
+/// silently defaulting to `password`. Kept in sync with
+/// `octo_matrix_session_store::LoginType` via a `From` impl in
+/// `modes/session.rs`.
+#[derive(clap::ValueEnum, Clone, Copy, Debug, PartialEq, Eq)]
+pub enum LoginTypeArg {
+    Password,
+    Oidc,
+    Sso,
+    Qr,
 }

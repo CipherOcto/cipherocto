@@ -13,6 +13,7 @@
 //! |  3   | Homeserver unreachable / DNS / TLS            |
 //! |  4   | User cancelled (Ctrl-C, QR timeout, etc.)     |
 //! |  5   | Bad config (output path unwritable, etc.)     |
+//! |  6   | Rate-limited (HTTP 429 from the homeserver)   |
 //!
 //! R1-M6: the `Display` impl for each kind variant renders ONLY the
 //! short kind label. The inner `String` is reachable via the

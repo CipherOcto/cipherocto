@@ -11,8 +11,12 @@
 //! (serde_json::Value lookups vs. typed deserialization). This
 //! module is the single canonical implementation; both call sites
 //! now delegate here.
+//!
+//! R2-M1: errors are returned as typed `crate::CoreError` variants
+//! so callers (the CLI's `e2ee` and `whoami` modules) can `match`
+//! on the kind instead of substring-matching on the message.
 
-use anyhow::{Context, Result};
+use crate::CoreError;
 use matrix_sdk::authentication::matrix::MatrixSession;
 use matrix_sdk::ruma::{OwnedDeviceId, OwnedUserId};
 use matrix_sdk::{Client, SessionMeta, SessionTokens};
@@ -46,38 +50,16 @@ pub struct OnboardConfig {
 /// `matrix_sdk::Client`. Returns the original `Client` (the caller
 /// owns the handle) ready for SDK calls like `client.whoami()` or
 /// `client.encryption().bootstrap_cross_signing(...)`.
-///
-/// The on-disk shape is deserialized to the typed `OnboardConfig`
-/// struct (not a runtime `serde_json::Value` walk) so missing or
-/// mistyped fields surface as a clean `anyhow::Error` at parse
-/// time rather than as a string-based check at use time.
-pub async fn client_from_config(path: &Path) -> Result<Client> {
-    let bytes = std::fs::read(path).with_context(|| format!("read config {path:?}"))?;
-    let cfg: OnboardConfig =
-        serde_json::from_slice(&bytes).with_context(|| format!("parse config {path:?}"))?;
-
-    let user_id = OwnedUserId::try_from(cfg.user_id.as_str())
-        .with_context(|| format!("invalid user_id: {}", cfg.user_id))?;
-    let device_id = OwnedDeviceId::from(cfg.device_id.as_str());
-
-    let session = MatrixSession {
-        meta: SessionMeta { user_id, device_id },
-        tokens: SessionTokens {
-            access_token: cfg.access_token,
-            refresh_token: cfg.refresh_token,
-        },
-    };
-
-    let client = Client::builder()
-        .homeserver_url(&cfg.homeserver_url)
-        .build()
-        .await
-        .with_context(|| format!("build client against {}", cfg.homeserver_url))?;
-    client
-        .restore_session(session)
-        .await
-        .context("restore_session")?;
-    Ok(client)
+pub async fn client_from_config(path: &Path) -> Result<Client, CoreError> {
+    let bytes = std::fs::read(path).map_err(|source| CoreError::Read {
+        path: path.to_path_buf(),
+        source,
+    })?;
+    let cfg: OnboardConfig = serde_json::from_slice(&bytes).map_err(|source| CoreError::Parse {
+        path: path.to_path_buf(),
+        source,
+    })?;
+    cfg.build_client().await
 }
 
 impl OnboardConfig {
@@ -97,9 +79,13 @@ impl OnboardConfig {
     /// is intentional; we surface it here so future readers don't
     /// try to "fix" it by adding a redundant `try_from` for the
     /// device_id.
-    pub fn build_session(&self) -> Result<MatrixSession> {
-        let user_id = OwnedUserId::try_from(self.user_id.as_str())
-            .with_context(|| format!("invalid user_id: {}", self.user_id))?;
+    pub fn build_session(&self) -> Result<MatrixSession, CoreError> {
+        let user_id = OwnedUserId::try_from(self.user_id.as_str()).map_err(|source| {
+            CoreError::InvalidUserId {
+                value: self.user_id.clone(),
+                source,
+            }
+        })?;
         let device_id = OwnedDeviceId::from(self.device_id.as_str());
         Ok(MatrixSession {
             meta: SessionMeta { user_id, device_id },
@@ -115,17 +101,20 @@ impl OnboardConfig {
     /// `Client::builder().build()` + `restore_session`. Callers that
     /// need to add `handle_refresh_tokens()` or other builder
     /// methods should use `build_session` directly.
-    pub async fn build_client(&self) -> Result<Client> {
+    pub async fn build_client(&self) -> Result<Client, CoreError> {
         let session = self.build_session()?;
         let client = Client::builder()
             .homeserver_url(&self.homeserver_url)
             .build()
             .await
-            .with_context(|| format!("build client against {}", self.homeserver_url))?;
+            .map_err(|source| CoreError::ClientBuild {
+                homeserver: self.homeserver_url.clone(),
+                source: Box::new(source),
+            })?;
         client
             .restore_session(session)
             .await
-            .context("restore_session")?;
+            .map_err(|e| CoreError::RestoreSession(Box::new(e)))?;
         Ok(client)
     }
 }
@@ -212,5 +201,58 @@ mod tests {
         let parsed: OnboardConfig = serde_json::from_slice(&bytes).unwrap();
         assert_eq!(parsed.user_id, "@bot:matrix.example.com");
         assert_eq!(parsed.refresh_token.as_deref(), Some("syr_y"));
+    }
+
+    /// R2-M1: the error variants from `client_from_config` are
+    /// typed. A missing file surfaces as `CoreError::Read`, a bad
+    /// JSON shape as `CoreError::Parse`, and a malformed user_id
+    /// as `CoreError::InvalidUserId`. The CLI uses these to route
+    /// to the right exit code (read/parse/invalid → `BadConfig`,
+    /// exit 5; SDK build / restore → `Generic`).
+    #[tokio::test]
+    async fn client_from_config_missing_file_returns_read_error() {
+        let dir = TempDir::new().unwrap();
+        let path = dir.path().join("does-not-exist.json");
+        let err = client_from_config(&path).await.expect_err("must error");
+        match err {
+            CoreError::Read { path: p, .. } => {
+                assert_eq!(p, path);
+            }
+            other => panic!("expected CoreError::Read, got {other:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn client_from_config_bad_json_returns_parse_error() {
+        let dir = TempDir::new().unwrap();
+        let path = write_config(&dir, "{ this is not valid json");
+        let err = client_from_config(&path).await.expect_err("must error");
+        match err {
+            CoreError::Parse { path: p, .. } => {
+                assert_eq!(p, path);
+            }
+            other => panic!("expected CoreError::Parse, got {other:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn client_from_config_bad_user_id_returns_invalid_user_id_error() {
+        let dir = TempDir::new().unwrap();
+        let path = write_config(
+            &dir,
+            r#"{
+                "homeserver_url": "https://matrix.example.com",
+                "user_id": "not-an-mxid",
+                "device_id": "ABCDEFGHIJ",
+                "access_token": "syt_x"
+            }"#,
+        );
+        let err = client_from_config(&path).await.expect_err("must error");
+        match err {
+            CoreError::InvalidUserId { value, .. } => {
+                assert_eq!(value, "not-an-mxid");
+            }
+            other => panic!("expected CoreError::InvalidUserId, got {other:?}"),
+        }
     }
 }

@@ -455,17 +455,31 @@ async fn integration_encrypted_room_round_trip() {
         .expect("ci2 join room");
 
     // --- 5. Build the adapter and send an envelope from ci1 ---
+    // R2-H1: set a real on-disk `config_path` so the
+    // `MatrixAdapter::new` gate at lib.rs:267 (passphrase is Some
+    // AND config_path is non-empty) actually wires the
+    // `sqlite_store`. The previous test left `config_path` empty
+    // and the SDK fell back to its in-memory crypto store, which
+    // defeated the R1-H8 acceptance that the encrypted-room
+    // payload exercises the on-disk store wiring. Use a
+    // `tempfile::TempDir` (dev-dep) so the store file is cleaned
+    // up at end of test.
+    let ci1_store_dir = tempfile::TempDir::new().expect("create ci1 tempdir");
+    let ci1_config_path = ci1_store_dir.path().join("ci1-matrix.json");
+    let ci2_store_dir = tempfile::TempDir::new().expect("create ci2 tempdir");
+    let ci2_config_path = ci2_store_dir.path().join("ci2-matrix.json");
     let cfg1 = octo_adapter_matrix_sdk::MatrixConfig {
         homeserver_url: sess1.homeserver_url.clone(),
         user_id: user_id1.to_string(),
         device_id: device_id1.to_string(),
         access_token: sess1.access_token().to_string(),
         refresh_token: sess1.refresh_token.clone(),
-        // Encrypted-room test: passphrase is non-None so the SDK's
-        // sqlite_store is wired (R1-H8). The store path is derived
-        // from the (in-memory) config_path below.
+        // Encrypted-room test: passphrase + non-empty config_path
+        // so the SDK's `sqlite_store` is wired (R1-H8, R2-H1).
+        // The store file path is derived by the adapter as
+        // `<dir>/<stem>.store.sqlite`.
         passphrase: Some("ci-test-passphrase".to_string()),
-        config_path: std::path::PathBuf::new(),
+        config_path: ci1_config_path.clone(),
         force_writeback: false,
         use_session_store: false,
         session_store_path: std::path::PathBuf::new(),
@@ -476,11 +490,14 @@ async fn integration_encrypted_room_round_trip() {
         .expect("adapter1 construction");
 
     // Wire the adapter for ci2 (its own adapter instance, listening
-    // for incoming events on the same room).
+    // for incoming events on the same room). R2-H1: ci2 needs its
+    // OWN on-disk store path so the second `sqlite_store` is opened
+    // against a different file.
     let cfg2 = octo_adapter_matrix_sdk::MatrixConfig {
         access_token: sess2.access_token().to_string(),
         refresh_token: sess2.refresh_token.clone(),
         passphrase: Some("ci2-test-passphrase".to_string()),
+        config_path: ci2_config_path.clone(),
         ..cfg1.clone()
     };
     let cfg2_json = serde_json::to_vec(&cfg2).expect("serialize cfg2");

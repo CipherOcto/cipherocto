@@ -73,9 +73,49 @@ pub async fn list(args: SessionListArgs) -> Result<()> {
         eprintln!("(no sessions in the store)");
         return Ok(());
     }
+    // R2-M11: compute column widths from the actual data so a
+    // long user_id / homeserver URL doesn't get silently
+    // truncated. We pad each value to the max of its column's
+    // data width and the header width, then use `eprintln!` with
+    // the same widths for alignment. (Adding `comfy-table` would
+    // be heavier than this — 4 lines of code, no new dep.)
+    let header = [
+        "POS",
+        "USER_ID",
+        "DEVICE_ID",
+        "HOMESERVER",
+        "TYPE",
+        "LOGIN_AGE",
+    ];
+    let width_user = sessions
+        .iter()
+        .map(|s| s.user_id.chars().count())
+        .max()
+        .unwrap_or(0)
+        .max(header[1].len());
+    let width_device = sessions
+        .iter()
+        .map(|s| s.device_id.chars().count())
+        .max()
+        .unwrap_or(0)
+        .max(header[2].len());
+    let width_homeserver = sessions
+        .iter()
+        .map(|s| s.homeserver_url.chars().count())
+        .max()
+        .unwrap_or(0)
+        .max(header[3].len());
     eprintln!(
-        "{:<4} {:<32} {:<14} {:<32} {:<10} {:<12} LAST_USED",
-        "POS", "USER_ID", "DEVICE_ID", "HOMESERVER", "TYPE", "LOGIN_AGE"
+        "{:<4} {:<wu$} {:<wd$} {:<wh$} {:<10} {:<12} LAST_USED",
+        header[0],
+        header[1],
+        header[2],
+        header[3],
+        header[4],
+        header[5],
+        wu = width_user,
+        wd = width_device,
+        wh = width_homeserver,
     );
     for s in &sessions {
         // R1-M16: LOGIN_AGE is "time since the store's recorded
@@ -90,7 +130,7 @@ pub async fn list(args: SessionListArgs) -> Result<()> {
             format!("{}s", now_epoch().saturating_sub(s.login_timestamp))
         };
         eprintln!(
-            "{:<4} {:<32} {:<14} {:<32} {:<10} {:<12} {}",
+            "{:<4} {:<wu$} {:<wd$} {:<wh$} {:<10} {:<12} {}",
             s.position,
             s.user_id,
             s.device_id,
@@ -98,6 +138,9 @@ pub async fn list(args: SessionListArgs) -> Result<()> {
             s.login_type.as_str(),
             age_label,
             epoch_to_iso(s.last_used),
+            wu = width_user,
+            wd = width_device,
+            wh = width_homeserver,
         );
         eprintln!(
             "     access_token: {}  refresh_token: {}",
@@ -182,18 +225,24 @@ pub async fn import(args: SessionImportArgs) -> Result<()> {
         .to_string();
     let refresh_token = on_disk["refresh_token"].as_str().map(str::to_string);
 
-    // `login_type` is a 0850h-d concept; legacy 0850h-a / 0850h-c
-    // configs don't carry it. Default to `password` (the most
-    // common path) — operators who onboarded via OIDC / SSO / QR
-    // can re-import by hand if they want the type captured
-    // accurately.
+    // R2-M10: the operator can now set the login type via
+    // `--login-type` (the legacy JSON does not carry one). Default
+    // is still `Password` for back-compat, but OIDC / SSO / QR
+    // operators should set the flag to avoid a misleading `password`
+    // label in `session list`.
+    let login_type = match args.login_type {
+        crate::cli::LoginTypeArg::Password => LoginType::Password,
+        crate::cli::LoginTypeArg::Oidc => LoginType::Oidc,
+        crate::cli::LoginTypeArg::Sso => LoginType::Sso,
+        crate::cli::LoginTypeArg::Qr => LoginType::Qr,
+    };
     let row = SessionRow {
         user_id: user_id.clone(),
         device_id: device_id.clone(),
         homeserver_url,
         access_token,
         refresh_token,
-        login_type: LoginType::Password,
+        login_type,
         login_timestamp: 0,
         last_used: 0,
         position: 0,

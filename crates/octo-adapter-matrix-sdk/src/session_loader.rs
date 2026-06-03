@@ -34,7 +34,7 @@
 use crate::config_writer::OnDiskConfig;
 use crate::MatrixConfig;
 use octo_matrix_session_store::{
-    default_store_path, SessionRow, SessionStore, StoolapSessionStore,
+    default_store_path, SessionRow, SessionStore, SessionStoreError, StoolapSessionStore,
 };
 use std::path::PathBuf;
 use thiserror::Error;
@@ -59,9 +59,17 @@ pub enum LoadError {
     /// not present.
     #[error("session not found in store: user_id={user_id}, device_id={device_id}")]
     NotInStore { user_id: String, device_id: String },
-    /// I/O error from the store.
+    /// R2-M13: I/O error from the store. The inner `SessionStoreError`
+    /// carries the structured variant (e.g., `Stoolap`,
+    /// `AlreadyExists`, `NotFound`) so the operator / host can
+    /// branch on the cause (e.g., a `NotFound` here would be a bug
+    /// in the host — the loader already pre-checks for that case;
+    /// an `AlreadyExists` would be unexpected on a read path; a
+    /// `Stoolap` corruption should suggest a wipe-and-restore). The
+    /// previous shape `Store(String)` collapsed all of these into
+    /// a single opaque string.
     #[error("store error: {0}")]
-    Store(String),
+    Store(#[source] SessionStoreError),
     /// I/O error from the legacy file path.
     #[error("config file error: {0}")]
     File(String),
@@ -103,18 +111,17 @@ pub async fn load(config: &MatrixConfig) -> Result<LoadedSession, LoadError> {
 async fn load_from_store(config: &MatrixConfig) -> Result<LoadedSession, LoadError> {
     let store_path: PathBuf = if config.session_store_path.as_os_str().is_empty() {
         default_store_path().map_err(|e| match e {
-            octo_matrix_session_store::SessionStoreError::NoDefaultPath => LoadError::NoDefaultPath,
-            other => LoadError::Store(other.to_string()),
+            SessionStoreError::NoDefaultPath => LoadError::NoDefaultPath,
+            other => LoadError::Store(other),
         })?
     } else {
         config.session_store_path.clone()
     };
-    let store =
-        StoolapSessionStore::new(&store_path).map_err(|e| LoadError::Store(e.to_string()))?;
+    let store = StoolapSessionStore::new(&store_path).map_err(LoadError::Store)?;
     let session: SessionRow = store
         .get_session(&config.user_id, &config.device_id)
         .await
-        .map_err(|e| LoadError::Store(e.to_string()))?
+        .map_err(LoadError::Store)?
         .ok_or_else(|| LoadError::NotInStore {
             user_id: config.user_id.clone(),
             device_id: config.device_id.clone(),
@@ -168,16 +175,13 @@ mod tests {
     use std::io::Write;
     use std::os::unix::fs::OpenOptionsExt;
 
-    fn tmpdir() -> PathBuf {
-        let p = std::env::temp_dir().join(format!(
-            "octo-matrix-loader-{}",
-            std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .unwrap()
-                .as_nanos()
-        ));
-        std::fs::create_dir_all(&p).unwrap();
-        p
+    /// R2-M17: use `tempfile::TempDir` so the directory is auto-
+    /// removed on test completion (and on panic) instead of
+    /// accumulating in `/tmp` forever. The previous `tmpdir()`
+    /// helper built a nanosecond-named path under `std::env::temp_dir()`
+    /// and never cleaned up.
+    fn tmpdir() -> tempfile::TempDir {
+        tempfile::TempDir::new().expect("tempfile::TempDir::new() must succeed on the test box")
     }
 
     fn write_file(path: &std::path::Path, contents: &str) {
@@ -207,7 +211,7 @@ mod tests {
     #[test]
     fn load_from_store_returns_session_row() {
         let dir = tmpdir();
-        let store_path = dir.join("sessions.db");
+        let store_path = dir.path().join("sessions.db");
         let store = StoolapSessionStore::new(&store_path).unwrap();
         let row = SessionRow {
             user_id: "@bot:matrix.example.com".to_string(),
@@ -246,7 +250,7 @@ mod tests {
     #[test]
     fn load_from_store_returns_not_in_store_for_missing_row() {
         let dir = tmpdir();
-        let store_path = dir.join("sessions.db");
+        let store_path = dir.path().join("sessions.db");
         // Just open + init the store; don't add any rows.
         let _ = StoolapSessionStore::new(&store_path).unwrap();
         let cfg = MatrixConfig {
@@ -269,7 +273,7 @@ mod tests {
     #[test]
     fn load_from_file_returns_on_disk_config() {
         let dir = tmpdir();
-        let cfg_path = dir.join("config.json");
+        let cfg_path = dir.path().join("config.json");
         write_file(
             &cfg_path,
             r#"{

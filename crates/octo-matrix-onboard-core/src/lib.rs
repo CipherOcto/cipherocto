@@ -14,6 +14,50 @@ pub mod oauth_listener;
 pub mod qrcode_render;
 pub mod session;
 
+/// Typed error variants for the core crate. R2-M1: a previous
+/// shape returned `anyhow::Error` from `client_from_config`, which
+/// forced the CLI to substring-match on the message to route
+/// errors to the right exit code. The typed variants let callers
+/// `match` directly.
+#[derive(Debug, thiserror::Error)]
+pub enum CoreError {
+    /// Failed to read the on-disk config file.
+    #[error("read config {path:?}: {source}")]
+    Read {
+        path: std::path::PathBuf,
+        #[source]
+        source: std::io::Error,
+    },
+    /// Failed to parse the on-disk config as JSON / `OnboardConfig`.
+    #[error("parse config {path:?}: {source}")]
+    Parse {
+        path: std::path::PathBuf,
+        #[source]
+        source: serde_json::Error,
+    },
+    /// `user_id` did not pass MXID validation.
+    #[error("invalid user_id {value}: {source}")]
+    InvalidUserId {
+        value: String,
+        #[source]
+        source: matrix_sdk::ruma::IdParseError,
+    },
+    /// Failed to build the `matrix_sdk::Client` against the
+    /// configured homeserver. The inner `ClientBuildError` is
+    /// `Box`-wrapped because the SDK's error type is 184+ bytes
+    /// (`result_large_err` clippy lint).
+    #[error("build client against {homeserver}: {source}")]
+    ClientBuild {
+        homeserver: String,
+        #[source]
+        source: Box<matrix_sdk::ClientBuildError>,
+    },
+    /// `restore_session` failed on a freshly built client. The
+    /// inner error is also `Box`-wrapped for the same reason.
+    #[error("restore_session: {0}")]
+    RestoreSession(#[source] Box<matrix_sdk::Error>),
+}
+
 /// Captured session material — what the SDK returns after a successful
 /// login. The on-disk JSON written by the binary is built directly from
 /// this struct.

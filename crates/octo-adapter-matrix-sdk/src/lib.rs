@@ -39,9 +39,28 @@ use std::path::PathBuf;
 pub mod config_writer;
 pub mod session_loader;
 
+/// Redact a token for safe display. R2-L14: the previous form
+/// ("first 8 chars + ***") gave every long token the same output
+/// length, which was misleading — a 200-char token and a 9-char
+/// token looked identical in logs. The new form shows
+/// "first 8 + ... + last 4" for long tokens (12 chars or more),
+/// "first 8 + ***" for medium (9-11 chars), and "***" for short
+/// (≤ 8 chars or empty).
+///
+/// R2-H2: byte-based slicing is replaced with char-based slicing
+/// so a multi-byte UTF-8 boundary can't panic. A token that is
+/// exclusively ASCII has the same output as before; a token with
+/// non-ASCII characters gets the first 8 / last 4 CHARS instead
+/// of the first 8 / last 4 BYTES.
 fn redact_token(token: &str) -> String {
-    if token.len() > 8 {
-        format!("{}***", &token[..8])
+    let chars: Vec<char> = token.chars().collect();
+    if chars.len() >= 12 {
+        let head: String = chars[..8].iter().collect();
+        let tail: String = chars[chars.len() - 4..].iter().collect();
+        format!("{head}...{tail}")
+    } else if chars.len() > 8 {
+        let head: String = chars.iter().collect();
+        format!("{head}***")
     } else {
         "***".to_string()
     }
@@ -66,6 +85,13 @@ pub enum MatrixAdapterError {
     ClientBuild(String),
     #[error("session restore: {0}")]
     SessionRestore(String),
+    /// R2-M4: a writeback failure is conceptually distinct from a
+    /// session-load failure. Pattern-matching on
+    /// `MatrixAdapterError` was treating a snapshot-drift writeback
+    /// as a session-load problem; the new variant routes it to
+    /// the right bucket.
+    #[error("writeback failed: {0}")]
+    WritebackFailed(String),
 }
 
 /// Matrix adapter configuration.
@@ -91,14 +117,40 @@ pub enum MatrixAdapterError {
 /// read-only deployments). `force_writeback` skips the
 /// before-snapshot check that protects against two long-running
 /// processes clobbering each other's token rotations.
+/// Validate a `user_id` MXID at deserialization. R2-M2: the
+/// previous shape deferred validation to `MatrixAdapter::new`,
+/// which meant a malformed MXID silently passed JSON
+/// deserialization for any consumer that did not build an adapter.
+/// The Matrix MXID grammar is well-defined (RFC-0850 §MXID); we
+/// reject malformed values at the boundary.
+fn deserialize_mxid<'de, D>(deserializer: D) -> std::result::Result<String, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    let raw = String::deserialize(deserializer)?;
+    matrix_sdk::ruma::OwnedUserId::try_from(raw.as_str())
+        .map_err(|e| serde::de::Error::custom(format!("invalid MXID {raw:?}: {e}")))?;
+    Ok(raw)
+}
+
 #[derive(Clone, Deserialize, serde::Serialize)]
 pub struct MatrixConfig {
     /// Matrix homeserver URL
     pub homeserver_url: String,
     /// Authenticated user (e.g. `@bot:matrix.example.com`).
     /// Required by `restore_session` — must match `access_token`.
+    /// R2-M2: validated at deserialization via
+    /// `OwnedUserId::try_from`. A malformed MXID surfaces as a
+    /// `serde` error at the boundary, not later as a confusing
+    /// server-side error.
+    #[serde(deserialize_with = "deserialize_mxid")]
     pub user_id: String,
     /// Device ID (e.g. `ABCDEFGHIJ`). Required by `restore_session`.
+    /// R2-M2 (asymmetry): the Matrix spec makes device IDs opaque
+    /// (any string is valid), so ruma's `OwnedDeviceId::validate`
+    /// is a no-op. We do NOT validate here, mirroring ruma's own
+    /// `From<&str>` impl. Mismatched validation asymmetry between
+    /// `user_id` and `device_id` is intentional.
     pub device_id: String,
     /// Access token for authentication (long-lived or
     /// refresh-rotated). Never serialized back to disk; the on-disk
@@ -112,11 +164,18 @@ pub struct MatrixConfig {
     /// flows).
     #[serde(default, skip_serializing_if = "Option::is_none", skip_serializing)]
     pub refresh_token: Option<String>,
-    /// Optional passphrase for the SDK's crypto store. When `Some`,
-    /// the SDK derives an encryption key from it for the on-disk
-    /// Olm/Megolm session material (mission 0850h-b). When `None`, the
-    /// SDK uses the platform default. Never serialized back to disk
-    /// — supplied on the CLI as `--passphrase-stdin`.
+    /// Optional passphrase for the SDK's crypto store. When `Some`
+    /// AND `config_path` is non-empty, the SDK derives an encryption
+    /// key from it for the on-disk Olm/Megolm session material
+    /// (mission 0850h-b). When `passphrase` is `Some` but
+    /// `config_path` is empty, the gate at `MatrixAdapter::new`
+    /// (lib.rs:266-278) does NOT wire `sqlite_store` — the SDK
+    /// falls back to the default in-memory crypto store. This is a
+    /// documented R1-H8 / R2-M5 / R2-H1 design choice (see the
+    /// adapter gate for the rationale). When `None`, the SDK uses
+    /// the default in-memory store regardless of `config_path`.
+    /// Never serialized back to disk — supplied on the CLI as
+    /// `--passphrase-stdin`.
     #[serde(default, skip_serializing_if = "Option::is_none", skip_serializing)]
     pub passphrase: Option<String>,
     /// On-disk location of the config file. When the SDK rotates the
@@ -179,13 +238,40 @@ impl std::fmt::Debug for MatrixConfig {
 pub struct MatrixAdapter {
     config: MatrixConfig,
     client: Client,
-    #[allow(dead_code)] // Used during construction; kept for cdylib lifecycle
+    // R2-L5: the embedded `tokio::runtime::Runtime` is used to
+    // drive the `session_loader::load` future and the SDK's
+    // crypto-store initialization during `MatrixAdapter::new`.
+    // After construction, the SDK owns its own internal
+    // background-task machinery — but we still keep the runtime
+    // alive on the struct: dropping it would invalidate any
+    // timer or interval handles the SDK created against it. The
+    // runtime drops with the adapter; no explicit shutdown
+    // needed.
+    #[allow(dead_code)] // Held for SDK lifetime; read only via Drop.
     runtime: tokio::runtime::Runtime,
     /// Sync token for incremental /sync (ZeroClaw pattern).
     next_batch: std::sync::Mutex<Option<String>>,
     /// Cached bot user ID (e.g., @bot:server)
     user_id: std::sync::Mutex<Option<String>>,
 }
+
+// R2-L18: compile-time assertion that `MatrixAdapter` is
+// `Send + Sync`. The struct holds a `tokio::runtime::Runtime` and
+// a `Client`, both of which are internally `Send + Sync`, but a
+// future change (e.g., adding a `Rc<...>` field) could silently
+// regress this. A `static_assertions::assert_impl_all!` would be
+// the conventional Rust crate, but adding a dev-dep just for one
+// assertion is heavier than the in-line form. The block runs at
+// compile time; if `MatrixAdapter` ever loses `Send` or `Sync`,
+// the build fails here with a clear "the trait `Send` is not
+// implemented for `MatrixAdapter`" message pointing at this
+// const, not at some opaque `Client` internal.
+const _: fn() = || {
+    fn assert_send<T: Send>() {}
+    fn assert_sync<T: Sync>() {}
+    assert_send::<MatrixAdapter>();
+    assert_sync::<MatrixAdapter>();
+};
 
 impl MatrixAdapter {
     /// Create a new Matrix adapter from config.
@@ -206,10 +292,11 @@ impl MatrixAdapter {
     ///   fields directly (cdylib hosts that build a MatrixConfig from
     ///   a config blob without persisting it).
     ///
-    /// On 401 the adapter calls the SDK's `refresh_access_token` (when
-    /// `refresh_token` is `Some`) and holds the rotated pair in memory;
-    /// on-disk rotation is mission 0850h-c. The host process drives
-    /// the actual writeback via `persist_session_to_disk()`.
+    /// On 401 the SDK's `handle_refresh_tokens()` (wired in the
+    /// `Client::builder()` call below) keeps the rotated pair in
+    /// memory. The on-disk config is NOT updated by the SDK; the
+    /// host process drives the actual writeback via
+    /// `persist_session_to_disk()` (mission 0850h-c).
     pub fn new(config: MatrixConfig) -> Result<Self, MatrixAdapterError> {
         use matrix_sdk::authentication::matrix::MatrixSession;
         use matrix_sdk::ruma::{OwnedDeviceId, OwnedUserId};
@@ -319,6 +406,17 @@ impl MatrixAdapter {
     }
 
     /// Create from JSON config bytes (used by plugin ABI).
+    ///
+    /// R2-M12: the on-disk JSON's `config_path` /
+    /// `session_store_path` fields are typed as `PathBuf` and
+    /// therefore must be valid UTF-8. On Windows where paths are
+    /// typically UTF-16, an operator who passes a path with
+    /// non-ASCII characters would see a JSON parse error here,
+    /// not a "path not found" error from the FS. The adapter
+    /// cannot round-trip a non-UTF-8 path through serde_json
+    /// without a custom deserializer; documenting the constraint
+    /// here so the operator can encode the path differently
+    /// (e.g., via a UTF-8 path on a UTF-16 Windows host).
     pub fn from_config_bytes(config: &[u8]) -> Result<Self, MatrixAdapterError> {
         let config: MatrixConfig = serde_json::from_slice(config)
             .map_err(|e| MatrixAdapterError::SessionLoad(format!("Invalid config: {}", e)))?;
@@ -378,22 +476,28 @@ impl MatrixAdapter {
                 Ok(config_writer::WritebackOutcome { written: false })
             }
             Err(config_writer::WritebackError::SnapshotMismatch) => Err(
-                MatrixAdapterError::SessionLoad(
+                MatrixAdapterError::WritebackFailed(
                     "config on-disk contents changed; refusing to overwrite (pass --force-writeback)"
                         .to_string(),
                 ),
             ),
-            Err(e) => Err(MatrixAdapterError::SessionLoad(format!(
+            // RR2: surface `FileMissing` with a distinct, easily
+            // matched message so the C ABI export at the bottom
+            // of this file can distinguish it from a generic Io
+            // failure. The string check at the C boundary is a
+            // stopgap — the right fix is plumbing the typed
+            // error all the way through, which is a larger
+            // refactor.
+            Err(config_writer::WritebackError::FileMissing { path }) => Err(
+                MatrixAdapterError::WritebackFailed(format!(
+                    "writeback: config file {path:?} disappeared between startup and writeback"
+                )),
+            ),
+            Err(e) => Err(MatrixAdapterError::WritebackFailed(format!(
                 "writeback: {}",
                 e
             ))),
         }
-    }
-
-    /// Run an async operation on the embedded tokio runtime.
-    #[allow(dead_code)] // Available for cdylib hosts without their own runtime
-    fn block_on<F: std::future::Future>(&self, future: F) -> F::Output {
-        self.runtime.block_on(future)
     }
 
     /// Encode an envelope as base64 with DOT prefix.
@@ -460,6 +564,51 @@ impl MatrixAdapter {
     /// Rate limit: requests per second.
     pub fn rate_limit_per_second() -> u32 {
         100
+    }
+
+    /// R2-M15: enumerate all sessions in the multi-account store.
+    ///
+    /// Returns a vector of `(user_id, device_id, homeserver_url)`
+    /// tuples — exactly the keys the loader uses internally to
+    /// resolve a row, plus the homeserver URL so the host can
+    /// decide whether the session matches its expected deployment.
+    ///
+    /// `path` may be:
+    /// - `Some(p)` with a non-empty path: open the store at `p`.
+    /// - `Some(p)` with an empty path: treated as `None`
+    ///   (use the per-platform default).
+    /// - `None`: open the per-platform default
+    ///   (`$XDG_DATA_HOME/cipherocto/sessions.db` on Linux, etc.).
+    ///
+    /// Tokens are NOT returned — the API only surfaces identity /
+    /// routing metadata. To load a specific session's tokens, the
+    /// host passes the chosen `(user_id, device_id)` into
+    /// `MatrixConfig` and constructs the adapter; the loader
+    /// resolves the row at construction time.
+    ///
+    /// This is `async` (R1-M23 pattern): the host drives it on its
+    /// own tokio runtime. Tests that want to call it use
+    /// `tokio::runtime::Runtime::block_on(list_sessions(...))`.
+    pub async fn list_sessions(
+        path: Option<&std::path::Path>,
+    ) -> Result<Vec<(String, String, String)>, MatrixAdapterError> {
+        use octo_matrix_session_store::{default_store_path, SessionStore, StoolapSessionStore};
+        let resolved = match path {
+            Some(p) if !p.as_os_str().is_empty() => p.to_path_buf(),
+            _ => {
+                default_store_path().map_err(|e| MatrixAdapterError::SessionLoad(e.to_string()))?
+            }
+        };
+        let store = StoolapSessionStore::new(&resolved)
+            .map_err(|e| MatrixAdapterError::SessionLoad(e.to_string()))?;
+        let rows = store
+            .get_all_sessions()
+            .await
+            .map_err(|e| MatrixAdapterError::SessionLoad(e.to_string()))?;
+        Ok(rows
+            .into_iter()
+            .map(|r| (r.user_id, r.device_id, r.homeserver_url))
+            .collect())
     }
 }
 
@@ -663,15 +812,22 @@ impl PlatformAdapter for MatrixAdapter {
                 let raw = event.raw();
                 let parsed: Result<matrix_sdk::ruma::events::AnySyncTimelineEvent, _> =
                     raw.deserialize();
-                let event_id = event
-                    .event_id()
-                    .map(|id| id.to_string())
-                    .unwrap_or_default();
-                let sender = event.sender().map(|s| s.to_string()).unwrap_or_default();
+                // R2-M6: only extract event_id / sender AFTER the
+                // typed deserialization succeeds. The previous shape
+                // extracted them eagerly and dropped the values on the
+                // error path; moving the extraction inside the `if let
+                // Ok(...)` block scopes the work to the success path
+                // and prevents a future maintainer from accidentally
+                // using the values on the error path.
                 if let Ok(matrix_sdk::ruma::events::AnySyncTimelineEvent::MessageLike(
                     matrix_sdk::ruma::events::AnySyncMessageLikeEvent::RoomMessage(room_msg),
                 )) = parsed
                 {
+                    let event_id = event
+                        .event_id()
+                        .map(|id| id.to_string())
+                        .unwrap_or_default();
+                    let sender = event.sender().map(|s| s.to_string()).unwrap_or_default();
                     // SyncMessageLikeEvent wraps either an
                     // OriginalMessageLikeEvent (with `content`) or
                     // a RedactedMessageLikeEvent (without). The
@@ -914,6 +1070,66 @@ pub unsafe extern "C" fn destroy_adapter(adapter: *mut ()) {
     }
 }
 
+/// RR2: writeback export. The cdylib exposes `persist_session_to_disk`
+/// so a C-only host can drive token-rotation writeback without
+/// going through Rust. The return value is a status code (0 =
+/// success, 1 = LockHeld (no-op fast path, also "success" — the
+/// rotated pair stays in memory until the next cycle), 2 =
+/// SnapshotMismatch (refused), 3 = FileMissing (refused), 4 = Io,
+/// 5 = Serialize, 6 = InvalidArg). The `written` flag is
+/// returned via `*out_written` (1 if the file was actually
+/// updated, 0 if it was a no-op or a refused write).
+///
+/// # Safety
+/// `adapter` must be a pointer previously returned by
+/// `create_adapter`. `out_written` may be null; if non-null, it
+/// must point to a writable `u8` slot.
+#[no_mangle]
+pub unsafe extern "C" fn persist_session_to_disk(
+    adapter: *mut (),
+    _force_writeback: u8,
+    out_written: *mut u8,
+) -> i32 {
+    if adapter.is_null() {
+        return 6; // InvalidArg
+    }
+    let adapter = &*(adapter as *const MatrixAdapter);
+    let outcome_result = adapter.persist_session_to_disk().map(|o| o.written);
+    match outcome_result {
+        Ok(written) => {
+            if !out_written.is_null() {
+                *out_written = if written { 1 } else { 0 };
+            }
+            0
+        }
+        Err(MatrixAdapterError::WritebackFailed(msg)) => {
+            // Map the inner WritebackError to a status code by
+            // re-classifying the message. The MatrixAdapterError
+            // path collapses the typed WritebackError into a
+            // String, so we pattern-match on the string prefix
+            // that `WritebackError::Display` produces (this is
+            // a stopgap until we plumb the typed error through).
+            if msg.contains("lock") {
+                // LockHeld: 1 = "no-op success, retry next cycle"
+                if !out_written.is_null() {
+                    *out_written = 0;
+                }
+                1
+            } else if msg.contains("SnapshotMismatch")
+                || msg.contains("contents changed")
+                || msg.contains("refusing to overwrite")
+            {
+                2
+            } else if msg.contains("FileMissing") || msg.contains("disappeared") {
+                3
+            } else {
+                4 // Io or generic writeback failure
+            }
+        }
+        Err(_) => 4,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1086,16 +1302,26 @@ mod tests {
     #[test]
     fn test_config_path_field_roundtrip() {
         // Mission 0850h-c: `config_path` is a `PathBuf` that survives
-        // a JSON roundtrip. We write a real on-disk file at that
-        // path (the loader actually reads it) and assert the
-        // adapter captured the field.
+        // a JSON roundtrip. R2-M18: the original test overrode
+        // `config["access_token"]` to match the on-disk value
+        // (`"syt_on_disk"`), then asserted only that
+        // `adapter.config.config_path` matched the path. The
+        // assertion was vacuous: with the in-memory value equal to
+        // the on-disk value, the test could not distinguish "the
+        // loader read the file" from "the loader used the
+        // in-memory override". The fix sets the in-memory value to
+        // a DIFFERENT string (`"syt_in_memory"`) and asserts the
+        // SDK client ended up with the on-disk value, proving the
+        // loader actually consulted the file.
         let unique = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .map(|d| d.as_nanos())
             .unwrap_or(0);
-        let dir = std::env::temp_dir().join(format!("octo-matrix-rc-{unique}"));
-        std::fs::create_dir_all(&dir).unwrap();
-        let path = dir.join("config.json");
+        // R2-M17: use `tempfile::TempDir` instead of accumulating
+        // a nanosecond-named dir under `std::env::temp_dir()`.
+        let dir = tempfile::TempDir::new()
+            .expect("tempfile::TempDir::new() must succeed on the test box");
+        let path = dir.path().join("config.json");
         let on_disk = serde_json::json!({
             "homeserver_url": "https://matrix.example.com",
             "user_id": format!("@bot-{}:matrix.example.com", unique),
@@ -1107,12 +1333,14 @@ mod tests {
         std::fs::write(&path, serde_json::to_vec(&on_disk).unwrap()).unwrap();
 
         let mut config = test_config_json();
-        // Override user_id/device_id/access_token so the loader's
-        // file read returns the on-disk values (not the
-        // `test_config_json` defaults).
+        // Override user_id / device_id so the loader's file read
+        // finds the row, but override `access_token` with a
+        // DIFFERENT value (`syt_in_memory`) so the test can
+        // distinguish "loader read the file" from "loader used
+        // the in-memory value".
         config["user_id"] = on_disk["user_id"].clone();
         config["device_id"] = on_disk["device_id"].clone();
-        config["access_token"] = on_disk["access_token"].clone();
+        config["access_token"] = serde_json::json!("syt_in_memory");
         config["config_path"] = serde_json::json!(path.to_string_lossy());
         config["use_session_store"] = serde_json::json!(false);
         let adapter =
@@ -1122,5 +1350,52 @@ mod tests {
             adapter.config.config_path.to_str().unwrap(),
             path.to_string_lossy()
         );
+        // R2-M18: the actual proof — the SDK client was wired with
+        // the on-disk access_token, not the in-memory override.
+        let sdk_session = adapter.client.session().expect("client session");
+        assert_eq!(
+            sdk_session.access_token(),
+            "syt_on_disk",
+            "loader did not read the on-disk access_token; client is wired with {:?}",
+            sdk_session.access_token()
+        );
+        assert_eq!(sdk_session.get_refresh_token(), Some("syr_on_disk"));
+    }
+
+    /// R2-M15: `MatrixAdapter::list_sessions` enumerates all rows
+    /// in a multi-account stoolap store. The host uses this to
+    /// discover which `(user_id, device_id)` pairs are available
+    /// before constructing a `MatrixConfig` for one of them.
+    #[tokio::test]
+    async fn list_sessions_returns_stored_session_metadata() {
+        use octo_matrix_session_store::{LoginType, SessionRow, SessionStore, StoolapSessionStore};
+
+        let dir = tempfile::TempDir::new()
+            .expect("tempfile::TempDir::new() must succeed on the test box");
+        let store_path = dir.path().join("sessions.db");
+        let store = StoolapSessionStore::new(&store_path).unwrap();
+        let row = SessionRow {
+            user_id: "@alice:matrix.example.com".to_string(),
+            device_id: "ALICE_DEV".to_string(),
+            homeserver_url: "https://matrix.example.com".to_string(),
+            access_token: "syt_alice".to_string(),
+            refresh_token: Some("syr_alice".to_string()),
+            login_type: LoginType::Oidc,
+            login_timestamp: 0,
+            last_used: 0,
+            position: 0,
+            display_name: None,
+            avatar_url: None,
+        };
+        store.add_session(&row, false).await.unwrap();
+
+        let sessions = MatrixAdapter::list_sessions(Some(&store_path))
+            .await
+            .expect("list_sessions should succeed");
+        assert_eq!(sessions.len(), 1);
+        let (uid, did, hs) = &sessions[0];
+        assert_eq!(uid, "@alice:matrix.example.com");
+        assert_eq!(did, "ALICE_DEV");
+        assert_eq!(hs, "https://matrix.example.com");
     }
 }

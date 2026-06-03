@@ -107,6 +107,16 @@ pub enum WritebackError {
     /// The on-disk file is left untouched.
     #[error("config on-disk contents changed; refusing to overwrite (pass --force-writeback)")]
     SnapshotMismatch,
+    /// R2-M14: the on-disk file was present at process start (the
+    /// adapter constructed an `on_disk_before` from it) but is
+    /// missing at writeback time. Silently re-writing under these
+    /// conditions destroys the audit trail — a malicious or buggy
+    /// deploy script could delete the file between startup and
+    /// token rotation to force a fresh write. Surfacing this
+    /// explicitly lets the adapter refuse, or the operator
+    /// investigate.
+    #[error("config file {path:?} disappeared between startup and writeback (refusing to silently rewrite)")]
+    FileMissing { path: PathBuf },
 }
 
 /// Result of a successful writeback. `written` is `true` when the
@@ -136,16 +146,42 @@ pub fn writeback(
     //    deadlock the worker thread, so we MUST use the non-blocking
     //    variant here. (Mission 0850h-c acceptance criterion: a
     //    second writer surfaces `WritebackError::LockHeld`.)
-    let lock_file = OpenOptions::new()
+    let mut lock_open = OpenOptions::new();
+    #[cfg(unix)]
+    {
+        // R2-L1: set the mode explicitly. The lockfile contains no
+        // secrets, but the previous `OpenOptions::new()` inherited
+        // the umask, so on a `umask 022` box the lockfile was
+        // world-readable. The actual config file at line ~245 sets
+        // `.mode(0o600)` for the same reason — this just brings the
+        // lockfile in line with that policy.
+        use std::os::unix::fs::OpenOptionsExt;
+        lock_open.mode(0o600);
+    }
+    let lock_file = lock_open
         .create(true)
         .truncate(false)
         .write(true)
         .open(&lock_path)?;
     if let Err(e) = lock_file.try_lock_exclusive() {
+        // R2-M3: on Windows, `LockFileEx` returns
+        // `ERROR_LOCK_VIOLATION` (raw_os_error = 33) when the
+        // region is already exclusively locked. fs4 surfaces this
+        // as a generic `io::Error` without `WouldBlock`, so without
+        // this check the lock-held case would fall through to
+        // `WritebackError::Io` and defeat the non-blocking
+        // guarantee.
+        #[cfg(windows)]
+        const ERROR_LOCK_VIOLATION: i32 = 33;
+        #[cfg(windows)]
+        let is_lock_violation = e.raw_os_error() == Some(ERROR_LOCK_VIOLATION);
+        #[cfg(not(windows))]
+        let is_lock_violation = false;
         if e.kind() == std::io::ErrorKind::WouldBlock
             || e.kind() == std::io::ErrorKind::TimedOut
             || e.raw_os_error() == Some(libc::EWOULDBLOCK)
             || e.raw_os_error() == Some(libc::EAGAIN)
+            || is_lock_violation
         {
             warn!(
                 lock_path = %lock_path.display(),
@@ -158,18 +194,49 @@ pub fn writeback(
 
     // Scope the lock so it's released on early return.
     let result = (|| -> Result<WritebackOutcome, WritebackError> {
-        // 2. Snapshot check.
+        // 2. Snapshot check. R2-M14: a missing file at writeback time
+        //    is now a hard error (was previously silently treated as
+        //    "no drift, proceed"). The file existed at process start
+        //    (the adapter built `on_disk_before` from it), so a
+        //    disappearance between then and now is suspicious — a
+        //    malicious or buggy deploy script could have removed the
+        //    audit trail. We refuse rather than silently rewriting.
         if !force_writeback {
-            if let Ok(current_bytes) = std::fs::read(config_path) {
-                if let Ok(current) = serde_json::from_slice::<OnDiskConfig>(&current_bytes) {
-                    if &current != on_disk_before {
+            match std::fs::read(config_path) {
+                Ok(current_bytes) => {
+                    if let Ok(current) = serde_json::from_slice::<OnDiskConfig>(&current_bytes) {
+                        if &current != on_disk_before {
+                            warn!(
+                                path = %config_path.display(),
+                                "config on-disk contents changed; refusing to overwrite"
+                            );
+                            return Err(WritebackError::SnapshotMismatch);
+                        }
+                    }
+                    // current_bytes failed to deserialize — the file
+                    // exists but is corrupt. Treat that as a snapshot
+                    // drift (the on-disk shape is no longer what we
+                    // expect). This used to be a silent skip in the
+                    // pre-R2 code; surfacing it as SnapshotMismatch
+                    // makes it visible to the operator.
+                    else {
                         warn!(
                             path = %config_path.display(),
-                            "config on-disk contents changed; refusing to overwrite"
+                            "config on-disk contents unparseable; refusing to overwrite"
                         );
                         return Err(WritebackError::SnapshotMismatch);
                     }
                 }
+                Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+                    warn!(
+                        path = %config_path.display(),
+                        "config file disappeared between startup and writeback; refusing to rewrite"
+                    );
+                    return Err(WritebackError::FileMissing {
+                        path: config_path.to_path_buf(),
+                    });
+                }
+                Err(e) => return Err(WritebackError::Io(e)),
             }
         }
 
@@ -211,8 +278,18 @@ pub fn writeback(
         Ok(WritebackOutcome { written: true })
     })();
 
-    // 5. Release flock.
+    // 5. Release flock and remove the lock file. R2-M14: the
+    //    lock file was leaking on every error return — the
+    //    fs4 `unlock` releases the flock but leaves the file on
+    //    disk. `remove_file` is a best-effort cleanup: the
+    //    lockfile's purpose is flock coordination, not
+    //    presence-as-state, so a leftover file is harmless to
+    //    other processes (the next writer's `OpenOptions::new()
+    //    .create(true)` would just truncate and re-acquire).
+    //    Best-effort rather than `?`-propagating so a remove
+    //    failure doesn't mask the real `result`.
     let _ = lock_file.unlock();
+    let _ = std::fs::remove_file(&lock_path);
     result
 }
 
@@ -221,16 +298,11 @@ mod tests {
     use super::*;
     use std::io::Read;
 
-    fn tmpdir() -> PathBuf {
-        let p = std::env::temp_dir().join(format!(
-            "octo-matrix-cfg-{}",
-            std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .unwrap()
-                .as_nanos()
-        ));
-        std::fs::create_dir_all(&p).unwrap();
-        p
+    /// R2-M17: use `tempfile::TempDir` so the directory is auto-
+    /// removed on test completion (and on panic) instead of
+    /// accumulating in `/tmp` forever.
+    fn tmpdir() -> tempfile::TempDir {
+        tempfile::TempDir::new().expect("tempfile::TempDir::new() must succeed on the test box")
     }
 
     fn write_initial(path: &Path, json: &str) {
@@ -264,7 +336,7 @@ mod tests {
     #[test]
     fn writeback_persists_rotated_tokens() {
         let dir = tmpdir();
-        let path = dir.join("config.json");
+        let path = dir.path().join("config.json");
         let initial = OnDiskConfig {
             homeserver_url: "https://matrix.example.com".into(),
             user_id: "@bot:matrix.example.com".into(),
@@ -290,7 +362,7 @@ mod tests {
     #[test]
     fn writeback_refuses_when_snapshot_drifted() {
         let dir = tmpdir();
-        let path = dir.join("config.json");
+        let path = dir.path().join("config.json");
         let initial = OnDiskConfig {
             homeserver_url: "https://matrix.example.com".into(),
             user_id: "@bot:matrix.example.com".into(),
@@ -324,7 +396,7 @@ mod tests {
     #[test]
     fn writeback_force_skips_snapshot_check() {
         let dir = tmpdir();
-        let path = dir.join("config.json");
+        let path = dir.path().join("config.json");
         let initial = OnDiskConfig {
             homeserver_url: "https://matrix.example.com".into(),
             user_id: "@bot:matrix.example.com".into(),
@@ -355,7 +427,7 @@ mod tests {
         // proves the error path is reachable.
         use fs4::FileExt;
         let dir = tmpdir();
-        let path = dir.join("config.json");
+        let path = dir.path().join("config.json");
         let lock_path = path.with_extension("json.lock");
         let initial = OnDiskConfig {
             homeserver_url: "https://matrix.example.com".into(),
@@ -392,7 +464,7 @@ mod tests {
         // equals the pre-writeback snapshot, no file is touched
         // and `written: false` is returned.
         let dir = tmpdir();
-        let path = dir.join("config.json");
+        let path = dir.path().join("config.json");
         let initial = OnDiskConfig {
             homeserver_url: "https://matrix.example.com".into(),
             user_id: "@bot:matrix.example.com".into(),
@@ -416,12 +488,72 @@ mod tests {
         assert_eq!(before_mtime, after_mtime);
     }
 
+    /// R2-M14: the on-disk file is present at process start (the
+    /// adapter built `on_disk_before` from it) but missing at
+    /// writeback time. The pre-R2 code silently treated this as
+    /// "no drift, proceed" and rewrote the file. The fix surfaces
+    /// `WritebackError::FileMissing` so the operator can decide.
+    #[test]
+    fn writeback_refuses_when_file_missing_at_writeback_time() {
+        let dir = tmpdir();
+        let path = dir.path().join("config.json");
+        let snapshot = OnDiskConfig {
+            homeserver_url: "https://matrix.example.com".into(),
+            user_id: "@bot:matrix.example.com".into(),
+            device_id: "ABCDEFGHIJ".into(),
+            access_token: "syt_orig".into(),
+            refresh_token: Some("syr_orig".into()),
+            rooms: vec!["!abc:matrix.example.com".into()],
+        };
+        // Note: do NOT call `write_initial` — the file is intentionally
+        // absent. The snapshot was taken from a prior read at
+        // process start; the file has since been removed (or never
+        // written, e.g. a race with a deploy script).
+        let mut rotated = sample_config();
+        rotated.access_token = "syt_new".into();
+        rotated.refresh_token = Some("syr_new".into());
+        let result = writeback(&path, &snapshot, &rotated, false);
+        assert!(
+            matches!(result, Err(WritebackError::FileMissing { .. })),
+            "expected FileMissing, got {:?}",
+            result
+        );
+        // Confirm the lock file was released (no .json.lock left behind).
+        let lock_path = path.with_extension("json.lock");
+        assert!(!lock_path.exists(), "lock file leaked: {:?}", lock_path);
+    }
+
+    /// R2-M14: `force_writeback = true` bypasses the snapshot check
+    /// (and therefore the FileMissing check). This is the escape
+    /// hatch for the operator who has already decided they want a
+    /// fresh write — the file gets re-created.
+    #[test]
+    fn writeback_force_rewrites_when_file_missing() {
+        let dir = tmpdir();
+        let path = dir.path().join("config.json");
+        let snapshot = OnDiskConfig {
+            homeserver_url: "https://matrix.example.com".into(),
+            user_id: "@bot:matrix.example.com".into(),
+            device_id: "ABCDEFGHIJ".into(),
+            access_token: "syt_orig".into(),
+            refresh_token: Some("syr_orig".into()),
+            rooms: vec!["!abc:matrix.example.com".into()],
+        };
+        let mut rotated = sample_config();
+        rotated.access_token = "syt_new".into();
+        rotated.refresh_token = Some("syr_new".into());
+        let outcome = writeback(&path, &snapshot, &rotated, true).unwrap();
+        assert!(outcome.written, "force writeback should write the file");
+        let written = std::fs::read_to_string(&path).unwrap();
+        assert!(written.contains("syt_new"), "written={written}");
+    }
+
     #[test]
     #[cfg(unix)]
     fn writeback_preserves_0600_mode() {
         use std::os::unix::fs::PermissionsExt;
         let dir = tmpdir();
-        let path = dir.join("config.json");
+        let path = dir.path().join("config.json");
         let initial = OnDiskConfig {
             homeserver_url: "https://matrix.example.com".into(),
             user_id: "@bot:matrix.example.com".into(),

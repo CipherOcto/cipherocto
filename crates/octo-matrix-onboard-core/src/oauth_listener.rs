@@ -170,23 +170,28 @@ mod tests {
         );
     }
 
-    /// R1-M2: a full listener round-trip on the IdP-error path. The
-    /// listener binds, serves one request, and returns
-    /// `CallbackResult::IdpError`. We use a high port number
-    /// (assigned by the OS would be ideal, but `listen_once` takes
-    /// a fixed `port`; a high port like 49152 is in the IANA
-    /// dynamic range and is unlikely to collide with a real
-    /// homeserver's callback in a CI box).
+    /// Pick a free port by binding to port 0 (OS-assigned), reading
+    /// the assigned port, then closing the handle. There's a small
+    /// race window before `listen_once` re-binds, but on a quiet
+    /// test box it's near-zero. R2-M9: replaces the previous
+    /// hardcoded-port tests that silently skipped on collision.
+    fn free_port() -> u16 {
+        let l = std::net::TcpListener::bind(("127.0.0.1", 0))
+            .expect("port 0 must be bindable on the test box");
+        let port = l.local_addr().expect("local_addr on a fresh bind").port();
+        drop(l);
+        port
+    }
+
+    /// R1-M2 + R2-M9: a full listener round-trip on the IdP-error
+    /// path. The listener binds, serves one request, and returns
+    /// `CallbackResult::IdpError`. Uses an OS-assigned port via
+    /// `free_port()` so a busy test box can never silently skip
+    /// the test (the previous hardcoded `49152` would skip on
+    /// collision).
     #[tokio::test]
     async fn listen_once_returns_idp_error_on_error_query() {
-        let port: u16 = 49152;
-        // Bind-free check: if the test box has a server on this
-        // port, skip rather than fail (the test infra can't
-        // control that, but a deliberate collision is unlikely).
-        if std::net::TcpListener::bind(("127.0.0.1", port)).is_err() {
-            eprintln!("port {port} already in use, skipping IdpError test");
-            return;
-        }
+        let port = free_port();
         let listener_task = tokio::spawn(async move { listen_once(port).await });
 
         // Give the listener a beat to bind.
@@ -227,16 +232,12 @@ mod tests {
         }
     }
 
-    /// R1-M2: same shape, but the IdP returns a valid `code` and the
-    /// listener captures it. This is the happy-path counterpart to
-    /// the IdpError test.
+    /// R1-M2 + R2-M9: same shape, but the IdP returns a valid
+    /// `code` and the listener captures it. This is the happy-path
+    /// counterpart to the IdpError test.
     #[tokio::test]
     async fn listen_once_returns_code_on_success_query() {
-        let port: u16 = 49153;
-        if std::net::TcpListener::bind(("127.0.0.1", port)).is_err() {
-            eprintln!("port {port} already in use, skipping Code test");
-            return;
-        }
+        let port = free_port();
         let listener_task = tokio::spawn(async move { listen_once(port).await });
 
         tokio::time::sleep(std::time::Duration::from_millis(50)).await;

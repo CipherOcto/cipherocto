@@ -25,10 +25,16 @@ use std::path::Path;
 
 /// On-disk config shape produced by `octo-matrix-onboard login` and
 /// consumed by the adapter. The set of required fields is the
-/// 0850h-a contract; the on-disk JSON is otherwise a superset of
+/// 0850h-a contract; the on-disk JSON is otherwise a subset of
 /// the adapter's `MatrixConfig` (the adapter adds
 /// `use_session_store` / `session_store_path` / `force_writeback`
-/// / `passphrase` knobs that the CLI does not write).
+/// / `passphrase` / `config_path` knobs that the CLI does not
+/// write — `config_path` is the host-supplied location for the
+/// rotated-token writeback, which the CLI never sees). R12-L1: a
+/// previous version of this docstring listed only FOUR of the
+/// FIVE adapter-only fields; `config_path` was added in 0850h-c
+/// (mission `MatrixAdapter::persist_session_to_disk`) but the
+/// docstring was not updated.
 #[derive(Debug, Clone, Deserialize)]
 pub struct OnboardConfig {
     pub homeserver_url: String,

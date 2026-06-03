@@ -47,6 +47,33 @@ fn now_epoch() -> i64 {
 }
 
 /// Redact a token for display: show the first 8 characters and `***`.
+///
+/// R5-L1: this is one of three `redact_token` implementations
+/// across the four mission crates. Each site has a deliberately
+/// different format policy because each display context calls
+/// for a different balance of brevity and operator-recognizability:
+///
+/// - `crates/octo-matrix-onboard/src/modes/session.rs` (THIS FILE)
+///   — tabular `session list` output. Uses a compact 2-tier form
+///   (first8*** / ***) that keeps the column width predictable.
+///   Unlike the other two sites, this one does NOT show the tail
+///   of the token, because the rows are aligned in a multi-account
+///   table and the tail would be cut off by the column width.
+/// - `crates/octo-adapter-matrix-sdk/src/lib.rs:55` — free-form
+///   diagnostic output (error messages, debug logs). Uses a
+///   3-tier form (first8...last4 / all*** / ***) so operators
+///   can correlate the start AND end of a long token against
+///   the homeserver's UI.
+/// - `crates/octo-matrix-onboard-core/src/lib.rs:144` — the
+///   one-time "logged in" confirmation message
+///   (`Session::access_token_preview`). Uses a 2-tier form
+///   (first8...last4 / first4...) that reveals slightly more
+///   of short tokens.
+///
+/// If you change this implementation, audit the other two for
+/// consistency. The per-site policies are intentional; the
+/// cross-reference is the missing piece a future maintainer
+/// needs to avoid silent divergence.
 fn redact_token(token: &str) -> String {
     if token.len() > 8 {
         format!("{}***", &token[..8])

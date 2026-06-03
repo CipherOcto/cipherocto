@@ -62,10 +62,19 @@ pub trait SessionStore: Send + Sync {
     async fn add_session(&self, row: &SessionRow, force: bool) -> Result<(), SessionStoreError>;
 
     /// Update mutable fields on an existing session. Only
-    /// `access_token`, `refresh_token`, `display_name`, `avatar_url`,
-    /// and `last_used` may be mutated; `user_id`, `device_id`,
-    /// `login_type`, `login_timestamp`, and `position` are immutable
-    /// after insert.
+    /// `access_token`, `refresh_token`, `display_name`, and
+    /// `avatar_url` may be mutated through this method;
+    /// `user_id`, `device_id`, `login_type`, `login_timestamp`,
+    /// and `position` are immutable after insert.
+    ///
+    /// R5-L2: `last_used` is NOT updated by this method — the
+    /// dedicated path for `last_used` is
+    /// [`SessionStore::set_latest_session`], which sets it to
+    /// the current epoch without requiring the caller to know
+    /// the clock. A previous docstring incorrectly listed
+    /// `last_used` as mutable here; the SQL did not (and does
+    /// not) touch it, and adding it would be a behavior change
+    /// (callers would have to know the epoch semantics).
     async fn update_data(&self, row: &SessionRow) -> Result<(), SessionStoreError>;
 
     /// Look up a session by `(user_id, device_id)`. Returns `None`

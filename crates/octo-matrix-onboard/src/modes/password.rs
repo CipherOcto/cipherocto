@@ -17,7 +17,7 @@
 //! to `OnboardError::Unreachable` (exit 3).
 
 use crate::cli::PasswordArgs;
-use crate::error::{OnboardError, Result};
+use crate::error::{classify_sdk_err, OnboardError, Result};
 use crate::output;
 use matrix_sdk::Client;
 use octo_matrix_onboard_core::session;
@@ -57,20 +57,19 @@ async fn build_client(homeserver: &str) -> Result<Client> {
         .build()
         .await
         .map_err(|e| {
-            let msg = e.to_string();
-            if msg.contains("dns")
-                || msg.contains("DNS")
-                || msg.contains("connect")
-                || msg.contains("Connection")
-            {
-                OnboardError::Unreachable(format!("{}: {}", homeserver, msg))
-            } else {
-                OnboardError::Generic(anyhow::anyhow!(
-                    "build client against {}: {}",
-                    homeserver,
-                    msg
-                ))
-            }
+            // R14-L1: same fix as `login` — the previous shape
+            // substring-matched on `"dns"` / `"DNS"` / `"connect"` /
+            // `"Connection"`, all of which can appear in unrelated
+            // SDK error bodies (e.g. `"connection pool error: dns
+            // resolved but TLS handshake failed"` would misclassify
+            // as `Unreachable`). `classify_sdk_err` inspects the
+            // leading `[NNN / errcode]` ruma prefix first, falling
+            // back to a narrower DNS/connect substring heuristic
+            // only when no status code is present. The `where_` arg
+            // namespaces the homeserver so the log line keeps the
+            // operator context.
+            let where_ = format!("build client against {homeserver}");
+            classify_sdk_err(&where_, &e)
         })
 }
 
@@ -90,20 +89,25 @@ async fn login(
     match builder.send().await {
         Ok(_) => Ok(()),
         Err(e) => {
-            let msg = e.to_string();
-            if msg.contains("Unauthorized")
-                || msg.contains("M_FORBIDDEN")
-                || msg.contains("invalid")
-                || msg.contains("401")
-            {
-                Err(OnboardError::AuthRejected(format!("{}: {}", user, msg)))
-            } else if msg.contains("dns") || msg.contains("DNS") || msg.contains("connect") {
-                Err(OnboardError::Unreachable(msg))
-            } else {
-                Err(OnboardError::Generic(anyhow::anyhow!(
-                    "login_username: {}",
-                    msg
-                )))
+            // R14-L1: replaced the previous substring-based
+            // classification with `classify_sdk_err` from
+            // `error.rs`. The old code matched on
+            // `"Unauthorized"` / `"M_FORBIDDEN"` / `"invalid"` /
+            // `"401"`, which are also substrings of unrelated
+            // error bodies (e.g. an SDK internal error like
+            // `"internal: invalid utf-8 in M_FORBIDDEN check"` would
+            // misclassify as `AuthRejected`). R1-M10 / R1-M12 added
+            // `classify_sdk_err` specifically to inspect the leading
+            // `[NNN / errcode]` ruma prefix; `oidc.rs::run` and
+            // `whoami.rs::run` already use it. Password login was
+            // the missed call site. The `where_` arg is namespaced
+            // with the user (when present) so the log line keeps
+            // the operator context that the previous substring
+            // match also surfaced.
+            let where_ = format!("login_username({user})");
+            match classify_sdk_err(&where_, &e) {
+                classified @ OnboardError::AuthRejected(_) => Err(classified),
+                other => Err(other),
             }
         }
     }
@@ -154,26 +158,6 @@ mod tests {
                 assert!(msg.contains("--password-stdin"));
             }
             other => panic!("expected BadConfig, got {:?}", other),
-        }
-    }
-
-    #[test]
-    fn detect_auth_rejected() {
-        // Sanity check the substring detection.
-        let cases = [
-            "M_FORBIDDEN invalid password",
-            "Unauthorized: bad credentials",
-            "HTTP 401",
-            "invalid user_id",
-        ];
-        for msg in cases {
-            assert!(
-                msg.contains("M_FORBIDDEN")
-                    || msg.contains("Unauthorized")
-                    || msg.contains("401")
-                    || msg.contains("invalid"),
-                "should detect auth failure: {msg}"
-            );
         }
     }
 }

@@ -99,13 +99,37 @@ pub enum LoadError {
 /// A loaded session, agnostic of source. The caller passes
 /// `(user_id, device_id, access_token, refresh_token, homeserver_url)`
 /// to `Client::restore_session` to wire the SDK.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Clone, PartialEq, Eq)]
 pub struct LoadedSession {
     pub user_id: String,
     pub device_id: String,
     pub homeserver_url: String,
     pub access_token: String,
     pub refresh_token: Option<String>,
+}
+
+/// R23-L1: hand-rolled `Debug` for `LoadedSession`. The
+/// auto-derived form would print `access_token` and
+/// `refresh_token` in plain text, so any `dbg!(loaded)` or
+/// `tracing::debug!(?loaded)` would leak the loaded tokens to
+/// stderr. The redacted form matches `MatrixConfig::Debug`
+/// (3-tier `redact_token` from the adapter's `crate::redact_token`)
+/// so the four session-bearing data structures
+/// (`MatrixConfig`, `LoadedSession`, `OnboardConfig`,
+/// `SessionRow`) all produce consistent redacted Debug output.
+impl std::fmt::Debug for LoadedSession {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("LoadedSession")
+            .field("user_id", &self.user_id)
+            .field("device_id", &self.device_id)
+            .field("homeserver_url", &self.homeserver_url)
+            .field("access_token", &crate::redact_token(&self.access_token))
+            .field(
+                "refresh_token",
+                &self.refresh_token.as_deref().map(crate::redact_token),
+            )
+            .finish()
+    }
 }
 
 /// Load a session according to `MatrixConfig`.

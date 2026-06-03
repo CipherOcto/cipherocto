@@ -67,7 +67,7 @@ pub enum CoreError {
 /// which is the single sanctioned path to the on-disk config. CLI
 /// display code that wants a token preview should go through
 /// `access_token_preview` (redacted).
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[derive(Clone, serde::Serialize, serde::Deserialize)]
 pub struct Session {
     /// Matrix homeserver URL (e.g. `https://matrix.example.com`).
     pub homeserver_url: String,
@@ -80,6 +80,27 @@ pub struct Session {
     access_token: String,
     /// Refresh token, when the homeserver issued one.
     pub refresh_token: Option<String>,
+}
+
+/// R23-L1: hand-rolled `Debug` for `Session`. The auto-derived
+/// form would print the private `access_token` field in plain
+/// text, so any `dbg!(session)` would leak the captured token
+/// to stderr. The redacted form uses the existing 2-tier
+/// `redact_token` (long → first8...last4, short → first4...)
+/// so the captured session is safe to print for diagnostics.
+impl std::fmt::Debug for Session {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Session")
+            .field("homeserver_url", &self.homeserver_url)
+            .field("user_id", &self.user_id)
+            .field("device_id", &self.device_id)
+            .field("access_token", &redact_token(&self.access_token))
+            .field(
+                "refresh_token",
+                &self.refresh_token.as_deref().map(redact_token),
+            )
+            .finish()
+    }
 }
 
 impl Session {

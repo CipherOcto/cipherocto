@@ -62,7 +62,7 @@ impl std::str::FromStr for LoginType {
 /// One row in the `sessions` table. Returned by
 /// `StoolapSessionStore::get_session` / `get_all_sessions` and
 /// consumed by `MatrixAdapter::new` to rebuild a logged-in client.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SessionRow {
     pub user_id: String,
     pub device_id: String,
@@ -90,4 +90,60 @@ pub struct SessionRow {
     pub display_name: Option<String>,
     /// Cached avatar URL (mxc://, UI hint; not authoritative).
     pub avatar_url: Option<String>,
+}
+
+/// R23-L1: hand-rolled `Debug` for `SessionRow`. The auto-derived
+/// form would print `access_token` and `refresh_token` in plain
+/// text, so any `dbg!(row)` or `tracing::debug!(?row)` would
+/// leak the row's tokens to stderr. The redacted form matches
+/// `MatrixConfig::Debug` (3-tier `redact_token`) so the four
+/// session-bearing data structures (`MatrixConfig`,
+/// `LoadedSession`, `OnboardConfig`, `SessionRow`) all produce
+/// consistent redacted Debug output.
+///
+/// Note: this crate's `redact_token` is crate-private to
+/// `octo-matrix-onboard-core` (the CLI's `access_token_preview`).
+/// We can't call it from here, so we inline a minimal 2-tier
+/// form (`first8...last4` for tokens ≥ 12 chars, `***` for
+/// shorter) — same shape as the core's `access_token_preview`.
+impl std::fmt::Debug for SessionRow {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("SessionRow")
+            .field("user_id", &self.user_id)
+            .field("device_id", &self.device_id)
+            .field("homeserver_url", &self.homeserver_url)
+            .field("access_token", &debug_redact_token(&self.access_token))
+            .field(
+                "refresh_token",
+                &self.refresh_token.as_deref().map(debug_redact_token),
+            )
+            .field("login_type", &self.login_type)
+            .field("login_timestamp", &self.login_timestamp)
+            .field("last_used", &self.last_used)
+            .field("position", &self.position)
+            .field("display_name", &self.display_name)
+            .field("avatar_url", &self.avatar_url)
+            .finish()
+    }
+}
+
+/// 2-tier token redactor for `Debug` output. Mirrors the core
+/// crate's `redact_token` (long → first8...last4, short → ***)
+/// without depending on it across crate boundaries. Used by
+/// `SessionRow`'s `Debug` impl above.
+fn debug_redact_token(token: &str) -> String {
+    if token.len() >= 12 {
+        let head: String = token.chars().take(8).collect();
+        let tail: String = token
+            .chars()
+            .rev()
+            .take(4)
+            .collect::<Vec<_>>()
+            .into_iter()
+            .rev()
+            .collect();
+        format!("{head}...{tail}")
+    } else {
+        "***".to_string()
+    }
 }

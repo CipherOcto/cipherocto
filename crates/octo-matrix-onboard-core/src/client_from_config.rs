@@ -35,7 +35,7 @@ use std::path::Path;
 /// FIVE adapter-only fields; `config_path` was added in 0850h-c
 /// (mission `MatrixAdapter::persist_session_to_disk`) but the
 /// docstring was not updated.
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Clone, Deserialize)]
 pub struct OnboardConfig {
     pub homeserver_url: String,
     pub user_id: String,
@@ -50,6 +50,30 @@ pub struct OnboardConfig {
     /// rooms to auto-join.
     #[serde(default)]
     pub rooms: Vec<String>,
+}
+
+/// R23-L1: hand-rolled `Debug` for `OnboardConfig`. The
+/// auto-derived form would print `access_token` and
+/// `refresh_token` in plain text, so any `dbg!(cfg)` or
+/// `tracing::debug!(?cfg)` would leak the on-disk tokens
+/// to stderr. The redacted form matches `MatrixConfig::Debug`
+/// (3-tier `redact_token`) and `Session::Debug` (this file)
+/// so the four session-bearing data structures all produce
+/// consistent redacted Debug output.
+impl std::fmt::Debug for OnboardConfig {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("OnboardConfig")
+            .field("homeserver_url", &self.homeserver_url)
+            .field("user_id", &self.user_id)
+            .field("device_id", &self.device_id)
+            .field("access_token", &crate::redact_token(&self.access_token))
+            .field(
+                "refresh_token",
+                &self.refresh_token.as_deref().map(crate::redact_token),
+            )
+            .field("rooms", &self.rooms)
+            .finish()
+    }
 }
 
 /// Read a JSON config file and rebuild a logged-in

@@ -75,16 +75,16 @@ pub mod session_loader;
 ///   Uses a 3-tier form (first8...last4 / all*** / ***) so
 ///   operators can correlate the start AND end of a long token
 ///   against the homeserver's UI.
-/// - `crates/octo-matrix-onboard-core/src/lib.rs:144` — the
+/// - `crates/octo-matrix-onboard-core/src/lib.rs:access_token_preview` — the
 ///   one-time "logged in" confirmation message
 ///   (`Session::access_token_preview`). Uses a 2-tier form
 ///   (first8...last4 / first4...) that reveals slightly more
 ///   of short tokens.
-/// - `crates/octo-matrix-onboard/src/modes/session.rs:50` —
+/// - `crates/octo-matrix-onboard/src/modes/session.rs:redact_token` —
 ///   tabular `session list` output. R6-M2 fixed the byte-slicing
 ///   (R2-H2 missed this site) so the slice is now char-boundary
 ///   safe. Shape: `first ≤8 bytes + ***` / `***`.
-/// - `crates/octo-matrix-onboard/src/logging.rs:119` —
+/// - `crates/octo-matrix-onboard/src/logging.rs:redact_value` —
 ///   tracing-subscriber `FormatEvent` redaction. Char-boundary-
 ///   walked byte slice (the only site that walks back, so a
 ///   4S recovery key with non-ASCII bytes can't panic).
@@ -211,7 +211,7 @@ pub struct MatrixConfig {
     /// key from it for the on-disk Olm/Megolm session material
     /// (mission 0850h-b). When `passphrase` is `Some` but
     /// `config_path` is empty, the gate at `MatrixAdapter::new`
-    /// (lib.rs:266-278) does NOT wire `sqlite_store` — the SDK
+    /// (`MatrixAdapter::new`) does NOT wire `sqlite_store` — the SDK
     /// falls back to the default in-memory crypto store. This is a
     /// documented R1-H8 / R2-M5 / R2-H1 design choice (see the
     /// adapter gate for the rationale). When `None`, the SDK uses

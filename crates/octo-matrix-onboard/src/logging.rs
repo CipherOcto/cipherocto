@@ -8,7 +8,7 @@
 //!
 //! The redaction pattern is "first 8 chars + ***" — same shape as the
 //! adapter's `redact_token` helper in
-//! `crates/octo-adapter-matrix-sdk/src/lib.rs:39-45`.
+//! `crates/octo-adapter-matrix-sdk/src/lib.rs:redact_token`.
 //!
 //! ## Architecture
 //!
@@ -135,15 +135,15 @@ fn is_sensitive_key(name: &str) -> bool {
 ///   Shape: "first ≤8 bytes + ***" / "***". This is the
 ///   only site that walks back — the other three assume ASCII
 ///   (Matrix tokens) or use char-based slicing (the adapter).
-/// - `crates/octo-adapter-matrix-sdk/src/lib.rs:80` — free-form
+/// - `crates/octo-adapter-matrix-sdk/src/lib.rs:redact_token` — free-form
 ///   diagnostic output (error messages, debug logs). Char-based
 ///   slicing so a non-ASCII token gets the first 8 / last 4 CHARS.
 ///   3-tier shape: `first8...last4` / `all***` / `***`.
-/// - `crates/octo-matrix-onboard-core/src/lib.rs:169` — the
+/// - `crates/octo-matrix-onboard-core/src/lib.rs:redact_token` — the
 ///   one-time "logged in" confirmation message
 ///   (`Session::access_token_preview`). 2-tier shape:
 ///   `first8...last4` / `first4...`.
-/// - `crates/octo-matrix-onboard/src/modes/session.rs:77` —
+/// - `crates/octo-matrix-onboard/src/modes/session.rs:redact_token` —
 ///   tabular `session list` output. R6-M2 fixed the byte-slicing
 ///   (R2-H2 missed this site) so the slice is now char-boundary
 ///   safe. Shape: `first ≤8 bytes + ***` / `***`.

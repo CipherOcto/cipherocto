@@ -63,15 +63,15 @@ fn open_store(path: Option<&PathBuf>) -> Result<StoolapSessionStore> {
 ///   column width. R6-M2 fixed the byte-slicing to walk back to
 ///   a char boundary (R2-H2 missed this site when fixing the
 ///   adapter copy).
-/// - `crates/octo-adapter-matrix-sdk/src/lib.rs:80` — free-form
+/// - `crates/octo-adapter-matrix-sdk/src/lib.rs:redact_token` — free-form
 ///   diagnostic output (error messages, debug logs). Char-based
 ///   slicing so a non-ASCII token gets the first 8 / last 4 CHARS.
 ///   3-tier shape: `first8...last4` / `all***` / `***`.
-/// - `crates/octo-matrix-onboard-core/src/lib.rs:169` — the
+/// - `crates/octo-matrix-onboard-core/src/lib.rs:redact_token` — the
 ///   one-time "logged in" confirmation message
 ///   (`Session::access_token_preview`). 2-tier shape:
 ///   `first8...last4` / `first4...`.
-/// - `crates/octo-matrix-onboard/src/logging.rs:119` —
+/// - `crates/octo-matrix-onboard/src/logging.rs:redact_value` —
 ///   tracing-subscriber `FormatEvent` redaction. Char-boundary-
 ///   walked byte slice (the only site that walks back, so a
 ///   4S recovery key with non-ASCII bytes can't panic).
@@ -87,9 +87,9 @@ fn redact_token(token: &str) -> String {
         // byte-slices. If byte 8 falls in the middle of a
         // multi-byte UTF-8 codepoint, the slice panics with
         // "byte index N is not a char boundary". The adapter
-        // copy at `lib.rs:80` was fixed in R2-H2 to use
+        // copy at `lib.rs:redact_token` was fixed in R2-H2 to use
         // char-based slicing, and the logging copy at
-        // `logging.rs:119` walks back to a char boundary on
+        // `logging.rs:redact_value` walks back to a char boundary on
         // the same byte slice. This site was missed; the fix
         // matches the logging copy (the format is identical
         // — first 8 + ***).

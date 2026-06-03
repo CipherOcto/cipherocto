@@ -152,15 +152,15 @@ impl Session {
 ///   (`Session::access_token_preview`). Uses a 2-tier form
 ///   (first8...last4 / first4...) that reveals slightly more
 ///   of short tokens.
-/// - `crates/octo-adapter-matrix-sdk/src/lib.rs:80` — free-form
+/// - `crates/octo-adapter-matrix-sdk/src/lib.rs:redact_token` — free-form
 ///   diagnostic output (error messages, debug logs). Char-based
 ///   slicing so a non-ASCII token gets the first 8 / last 4 CHARS.
 ///   3-tier shape: `first8...last4` / `all***` / `***`.
-/// - `crates/octo-matrix-onboard/src/modes/session.rs:77` —
+/// - `crates/octo-matrix-onboard/src/modes/session.rs:redact_token` —
 ///   tabular `session list` output. R6-M2 fixed the byte-slicing
 ///   (R2-H2 missed this site) so the slice is now char-boundary
 ///   safe. Shape: `first ≤8 bytes + ***` / `***`.
-/// - `crates/octo-matrix-onboard/src/logging.rs:119` —
+/// - `crates/octo-matrix-onboard/src/logging.rs:redact_value` —
 ///   tracing-subscriber `FormatEvent` redaction. Char-boundary-
 ///   walked byte slice (the only site that walks back, so a
 ///   4S recovery key with non-ASCII bytes can't panic).

@@ -460,7 +460,7 @@ async fn integration_encrypted_room_round_trip() {
 
     // --- 5. Build the adapter and send an envelope from ci1 ---
     // R2-H1: set a real on-disk `config_path` so the
-    // `MatrixAdapter::new` gate at lib.rs:267 (passphrase is Some
+    // `MatrixAdapter::new` gate (passphrase is Some
     // AND config_path is non-empty) actually wires the
     // `sqlite_store`. The previous test left `config_path` empty
     // and the SDK fell back to its in-memory crypto store, which

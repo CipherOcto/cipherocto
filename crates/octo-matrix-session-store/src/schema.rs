@@ -38,8 +38,8 @@ use crate::store::{stoolap_err, SessionStoreError};
 ///   NOT touch this column — a successful load does not constitute
 ///   a "use" for ordering purposes. R6-L1: a previous version of
 ///   this docstring claimed `last_used` is updated on every
-///   adapter start; the SQL at `store.rs:408-433` only updates it
-///   from `set_latest_session`.
+///   adapter start; the SQL in `store.rs:set_latest_session` only
+///   updates it from `set_latest_session`.
 /// - `position` — strictly monotonic on insert. Never changes on
 ///   `set_latest_session`. Drives stable multi-account ordering.
 /// - `display_name` / `avatar_url` — UI hints cached from the

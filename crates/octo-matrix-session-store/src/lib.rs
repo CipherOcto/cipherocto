@@ -47,12 +47,13 @@ pub use store::{SessionStore, SessionStoreError, StoolapSessionStore};
 /// `octo-matrix-onboard` depend on it — so making the function
 /// `pub` here is the natural single source of truth. Previous
 /// shape: three near-identical copies
-/// (`octo-matrix-session-store/src/store.rs:166`,
-/// `octo-matrix-onboard/src/modes/session.rs:42`,
-/// `octo-adapter-matrix-sdk/src/lib.rs:755` as `unix_epoch_now`
+/// (the local `now_epoch` in `octo-matrix-session-store/src/store.rs`,
+/// `octo-matrix-onboard/src/modes/session.rs`,
+/// and `unix_epoch_now` in `octo-adapter-matrix-sdk/src/lib.rs`
 /// returning `u64`) diverged only on the `i64` vs `u64` return
-/// type. The `u64` call site in the adapter now casts from `i64`
-/// at the call boundary, with a short comment explaining why.
+/// type. R6-L3 removed all three duplicates; the `u64` call site
+/// in the adapter now casts from `i64` at the call boundary,
+/// with a short comment explaining why.
 ///
 /// Returns 0 if the system clock is before the Unix epoch
 /// (defensive — never expected in practice, but a `SystemTime`

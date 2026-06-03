@@ -70,9 +70,30 @@ pub enum LoadError {
     /// a single opaque string.
     #[error("store error: {0}")]
     Store(#[source] SessionStoreError),
-    /// I/O error from the legacy file path.
-    #[error("config file error: {0}")]
-    File(String),
+    /// R19-L1: I/O error reading the legacy config file (e.g.,
+    /// file not found, permission denied). The inner `io::Error`
+    /// carries the typed kind (`ErrorKind::NotFound`,
+    /// `ErrorKind::PermissionDenied`, etc.) so the host can
+    /// branch on the cause (e.g., a `NotFound` suggests the
+    /// operator set the wrong path; a `PermissionDenied` suggests
+    /// a 0600 mode mismatch). The previous shape `File(String)`
+    /// collapsed I/O and parse errors into a single opaque
+    /// string, asymmetric with the typed `Store` variant above.
+    #[error("config file I/O error reading {path:?}: {source}")]
+    FileIo {
+        path: PathBuf,
+        #[source]
+        source: std::io::Error,
+    },
+    /// R19-L1: JSON parse error from the legacy config file.
+    /// The inner `serde_json::Error` carries the line/column
+    /// pointer (e.g., `expected value at line 5 column 12`) so
+    /// the host can surface the operator to the exact location
+    /// in the malformed file. The previous shape `File(String)`
+    /// collapsed I/O and parse errors into a single opaque
+    /// string, asymmetric with the typed `Store` variant above.
+    #[error("config file JSON parse error: {0}")]
+    FileParse(#[source] serde_json::Error),
 }
 
 /// A loaded session, agnostic of source. The caller passes
@@ -152,9 +173,11 @@ fn load_from_file(config: &MatrixConfig) -> Result<LoadedSession, LoadError> {
             refresh_token: config.refresh_token.clone(),
         });
     }
-    let bytes = std::fs::read(&config.config_path).map_err(|e| LoadError::File(e.to_string()))?;
-    let on_disk: OnDiskConfig =
-        serde_json::from_slice(&bytes).map_err(|e| LoadError::File(e.to_string()))?;
+    let bytes = std::fs::read(&config.config_path).map_err(|source| LoadError::FileIo {
+        path: config.config_path.clone(),
+        source,
+    })?;
+    let on_disk: OnDiskConfig = serde_json::from_slice(&bytes).map_err(LoadError::FileParse)?;
     Ok(LoadedSession {
         user_id: on_disk.user_id,
         device_id: on_disk.device_id,
@@ -321,5 +344,67 @@ mod tests {
         };
         let err = block_on(load(&cfg)).unwrap_err();
         assert!(matches!(err, LoadError::NoSource));
+    }
+
+    /// R19-L1: a missing `config_path` for the file-based source
+    /// surfaces as `LoadError::FileIo` (typed `io::Error`, not
+    /// opaque `String`). The variant's `source` is the underlying
+    /// `io::Error` so the host can branch on the kind
+    /// (`ErrorKind::NotFound`, etc.) without substring-matching.
+    #[test]
+    fn load_from_file_missing_returns_file_io_error() {
+        let dir = tmpdir();
+        let cfg_path = dir.path().join("does-not-exist.json");
+        let cfg = MatrixConfig {
+            homeserver_url: "https://matrix.example.com".to_string(),
+            user_id: "@bot:matrix.example.com".to_string(),
+            device_id: "ABCDEFGHIJ".to_string(),
+            access_token: String::new(),
+            refresh_token: None,
+            passphrase: None,
+            config_path: cfg_path.clone(),
+            force_writeback: false,
+            use_session_store: false,
+            session_store_path: PathBuf::new(),
+            rooms: vec![],
+        };
+        let err = block_on(load(&cfg)).unwrap_err();
+        match err {
+            LoadError::FileIo { path, source } => {
+                assert_eq!(path, cfg_path);
+                assert_eq!(source.kind(), std::io::ErrorKind::NotFound);
+            }
+            other => panic!("expected LoadError::FileIo, got {other:?}"),
+        }
+    }
+
+    /// R19-L1: a malformed JSON in `config_path` surfaces as
+    /// `LoadError::FileParse` (typed `serde_json::Error`, not
+    /// opaque `String`). The variant's `source` carries the
+    /// serde error's line/column pointer so the host can surface
+    /// the operator to the exact location.
+    #[test]
+    fn load_from_file_malformed_returns_file_parse_error() {
+        let dir = tmpdir();
+        let cfg_path = dir.path().join("malformed.json");
+        write_file(&cfg_path, "{ this is not valid json");
+        let cfg = MatrixConfig {
+            homeserver_url: "https://matrix.example.com".to_string(),
+            user_id: "@bot:matrix.example.com".to_string(),
+            device_id: "ABCDEFGHIJ".to_string(),
+            access_token: String::new(),
+            refresh_token: None,
+            passphrase: None,
+            config_path: cfg_path,
+            force_writeback: false,
+            use_session_store: false,
+            session_store_path: PathBuf::new(),
+            rooms: vec![],
+        };
+        let err = block_on(load(&cfg)).unwrap_err();
+        assert!(
+            matches!(err, LoadError::FileParse(_)),
+            "expected LoadError::FileParse, got {err:?}"
+        );
     }
 }

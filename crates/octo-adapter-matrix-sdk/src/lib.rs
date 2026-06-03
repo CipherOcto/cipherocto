@@ -372,9 +372,24 @@ impl MatrixAdapter {
         // `async`; we drive it on the multi_thread runtime this
         // function just built (the loader no longer builds a
         // per-call `current_thread` runtime internally).
+        //
+        // R19-L1: route the typed `LoadError` variants through
+        // distinct `SessionLoad` messages so the I/O vs parse
+        // distinction is visible to the host's `last_error()`
+        // (the previous shape `LoadError::File(String)` collapsed
+        // them into a single opaque string, asymmetric with the
+        // typed `Store(#[source] SessionStoreError)` variant).
         let loaded = runtime
             .block_on(session_loader::load(&config))
-            .map_err(|e| MatrixAdapterError::SessionLoad(e.to_string()))?;
+            .map_err(|e| match e {
+                session_loader::LoadError::FileIo { path, source } => {
+                    MatrixAdapterError::SessionLoad(format!("read config {:?}: {}", path, source))
+                }
+                session_loader::LoadError::FileParse(source) => {
+                    MatrixAdapterError::SessionLoad(format!("parse config: {}", source))
+                }
+                other => MatrixAdapterError::SessionLoad(other.to_string()),
+            })?;
 
         let user_id = OwnedUserId::try_from(loaded.user_id.as_str()).map_err(
             |e: matrix_sdk::ruma::IdParseError| MatrixAdapterError::InvalidUserId {

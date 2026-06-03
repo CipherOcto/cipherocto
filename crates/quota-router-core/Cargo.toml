@@ -100,7 +100,7 @@ lru = "0.12"
 unicode-normalization = "0.1.25"
 
 # HTTP framework (for litellm-mode)
-axum = { version = "0.7", optional = true }
+axum = { version = "0.8", optional = true }
 
 # Bytes (for streaming bodies)
 bytes = { version = "1", optional = true }

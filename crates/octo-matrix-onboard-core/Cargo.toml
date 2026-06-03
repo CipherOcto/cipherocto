@@ -15,7 +15,7 @@ matrix-sdk = { version = "=0.17.0", default-features = false }
 # Async runtime
 tokio = { workspace = true }
 # Localhost OAuth callback listener (axum 0.7 is hyper-1 compatible)
-axum = { version = "0.7", default-features = false, features = ["http1", "tokio", "query"] }
+axum = { version = "0.8", default-features = false, features = ["http1", "tokio", "query"] }
 # Terminal QR rendering (unicode half-block path)
 qrcode = { version = "0.14", default-features = false }
 # Logging

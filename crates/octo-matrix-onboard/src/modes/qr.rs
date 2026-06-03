@@ -197,9 +197,14 @@ fn read_check_code_from_stdin() -> Result<u8> {
 
 #[cfg(test)]
 mod tests {
-    #[test]
-    fn check_code_parses_single_digit() {
-        let code: u8 = "3".trim().parse().unwrap();
-        assert_eq!(code, 3);
-    }
+    // R24-L1: removed `check_code_parses_single_digit`. The test
+    // was a tautology: it tested `"3".trim().parse::<u8>()` against
+    // itself, never calling `read_check_code_from_stdin`. The
+    // function's actual logic (stdin read + newline echo + error
+    // mapping) was not exercised. Same antipattern as the
+    // R14-L1 removal of `password::tests::detect_auth_rejected`.
+    // The remaining test surface is the function's documented
+    // behavior in the `///` docstring at line 178-197; an
+    // integration test that mocks stdin would be a future
+    // addition, not an R-round.
 }

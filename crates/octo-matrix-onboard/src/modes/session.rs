@@ -17,6 +17,7 @@
 
 use crate::cli::{SessionImportArgs, SessionListArgs, SessionRemoveArgs, SessionUseArgs};
 use crate::error::{OnboardError, Result};
+use crate::logging::format_rfc3339_secs;
 use octo_matrix_session_store::{
     default_store_path, LoginType, SessionRow, SessionStore, SessionStoreError, StoolapSessionStore,
 };
@@ -55,12 +56,16 @@ fn redact_token(token: &str) -> String {
 }
 
 fn epoch_to_iso(epoch: i64) -> String {
-    // Local ISO-style timestamp without bringing in chrono. We use
-    // the standard `DateTime<UNIX_EPOCH>` formatter via
-    // `format!("{:?}", ...)` (debug formatter includes the timezone
-    // offset as `+00:00`); this is good enough for CLI display.
-    let dt = std::time::UNIX_EPOCH + std::time::Duration::from_secs(epoch.max(0) as u64);
-    format!("{:?}", dt)
+    // R3-L1: produce real RFC 3339 (`YYYY-MM-DDTHH:MM:SSZ`) so the
+    // `LAST_USED` column can be parsed by `date -d` and other RFC
+    // 3339 tools. The previous implementation used `format!("{:?}",
+    // SystemTime)` which renders as Rust's debug format (e.g.
+    // `SystemTime { tv_sec: …, tv_nsec: … }`), not ISO 8601 — the
+    // column claimed to be ISO but wasn't. Defer to the shared
+    // helper in `logging.rs` (`epoch_days_to_ymd` does the heavy
+    // lifting) so there's exactly one date-formatting code path
+    // in the crate.
+    format_rfc3339_secs(epoch)
 }
 
 pub async fn list(args: SessionListArgs) -> Result<()> {

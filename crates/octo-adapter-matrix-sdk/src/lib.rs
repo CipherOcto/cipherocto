@@ -253,6 +253,18 @@ pub struct MatrixAdapter {
     next_batch: std::sync::Mutex<Option<String>>,
     /// Cached bot user ID (e.g., @bot:server)
     user_id: std::sync::Mutex<Option<String>>,
+    /// R3-H1: last-known on-disk snapshot of the config file, used
+    /// by `persist_session_to_disk` as the `on_disk_before` argument
+    /// to `config_writer::writeback`. Without this, the second
+    /// writeback after a token rotation would always fail with
+    /// `SnapshotMismatch` because `self.config.access_token` is the
+    /// original token (not the rotated one written in the previous
+    /// writeback). The snapshot is initialized at construction from
+    /// the actual on-disk file (or `None` if no on-disk config) and
+    /// is updated after each successful writeback (and on the no-op
+    /// fast path, in case the file was rewritten by a sibling
+    /// process between our reads).
+    last_on_disk_snapshot: std::sync::Mutex<Option<config_writer::OnDiskConfig>>,
 }
 
 // R2-L18: compile-time assertion that `MatrixAdapter` is
@@ -396,12 +408,30 @@ impl MatrixAdapter {
         // Cache the bot user_id for self_handle()
         let cached_user = std::sync::Mutex::new(Some(loaded.user_id));
 
+        // R3-H1: capture the actual on-disk snapshot at construction
+        // time so `persist_session_to_disk` can later use it as the
+        // `on_disk_before` argument. If the file is absent or
+        // unparseable, leave the slot as `None` — `writeback` only
+        // uses the snapshot under `!force_writeback`, and the
+        // FileMissing / serde_json paths there handle the absence.
+        // When `config_path` is empty (in-memory deployments) the
+        // writeback is a no-op and the snapshot is never consulted.
+        let last_on_disk_snapshot = if config.config_path.as_os_str().is_empty() {
+            None
+        } else {
+            match std::fs::read(&config.config_path) {
+                Ok(bytes) => serde_json::from_slice::<config_writer::OnDiskConfig>(&bytes).ok(),
+                Err(_) => None,
+            }
+        };
+
         Ok(Self {
             config,
             client,
             runtime,
             next_batch: std::sync::Mutex::new(None),
             user_id: cached_user,
+            last_on_disk_snapshot: std::sync::Mutex::new(last_on_disk_snapshot),
         })
     }
 
@@ -458,13 +488,48 @@ impl MatrixAdapter {
             cfg.refresh_token = current.refresh_token.clone();
             cfg
         };
-        let on_disk_before = config_writer::OnDiskConfig::from_config(&self.config);
-        match config_writer::writeback(
+        // R3-H1: use the last-known on-disk snapshot for the
+        // `on_disk_before` argument. Building it from `&self.config`
+        // (the original behaviour) is wrong after the first
+        // successful writeback: `self.config.access_token` is the
+        // construction-time token, but on-disk holds the rotated
+        // token, so the second writeback would always trip
+        // `SnapshotMismatch`. If the snapshot slot is empty (no
+        // on-disk file at startup, or unparseable) we fall back to
+        // building from `&self.config`, which preserves the original
+        // behaviour for first-time writes — the writeback's own
+        // FileMissing check handles the "file disappeared" case.
+        let on_disk_before = {
+            let guard = self
+                .last_on_disk_snapshot
+                .lock()
+                .expect("last_on_disk_snapshot mutex poisoned");
+            guard
+                .clone()
+                .unwrap_or_else(|| config_writer::OnDiskConfig::from_config(&self.config))
+        };
+        let result = config_writer::writeback(
             &self.config.config_path,
             &on_disk_before,
             &rotated,
             self.config.force_writeback,
-        ) {
+        );
+        // R3-H1: on success (write OR no-op), refresh the snapshot so
+        // the NEXT writeback's `on_disk_before` matches what's
+        // actually on disk. We rebuild from `&rotated` because that's
+        // what `writeback` just persisted; on the no-op path it
+        // matches the previous snapshot. Doing this under the same
+        // lock that we read from is unnecessary because writeback
+        // already serialises against itself via the flock; we just
+        // need a write here.
+        if result.is_ok() {
+            let new_snapshot = config_writer::OnDiskConfig::from_config(&rotated);
+            *self
+                .last_on_disk_snapshot
+                .lock()
+                .expect("last_on_disk_snapshot mutex poisoned") = Some(new_snapshot);
+        }
+        match result {
             Ok(outcome) => Ok(outcome),
             Err(config_writer::WritebackError::LockHeld { .. }) => {
                 tracing::warn!(
@@ -1109,18 +1174,22 @@ pub unsafe extern "C" fn persist_session_to_disk(
             // String, so we pattern-match on the string prefix
             // that `WritebackError::Display` produces (this is
             // a stopgap until we plumb the typed error through).
-            if msg.contains("lock") {
+            //
+            // R3-M3: each branch matches a distinctive substring
+            // unique to one variant's Display. The previous code
+            // matched on `"lock"`, which also matched unrelated
+            // io errors like `"open lock file: permission denied"`
+            // and misclassified them as LockHeld (status 1 = retry
+            // success), hiding the real failure from the host.
+            if msg.contains("is held by another process") {
                 // LockHeld: 1 = "no-op success, retry next cycle"
                 if !out_written.is_null() {
                     *out_written = 0;
                 }
                 1
-            } else if msg.contains("SnapshotMismatch")
-                || msg.contains("contents changed")
-                || msg.contains("refusing to overwrite")
-            {
+            } else if msg.contains("contents changed; refusing to overwrite") {
                 2
-            } else if msg.contains("FileMissing") || msg.contains("disappeared") {
+            } else if msg.contains("disappeared between startup and writeback") {
                 3
             } else {
                 4 // Io or generic writeback failure

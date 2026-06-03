@@ -107,51 +107,62 @@ pub async fn verify(_args: E2eeVerifyArgs) -> Result<()> {
     // a doc (the only matrix-related doc is the 0850h-a design
     // plan). The authoritative reference is upstream:
     // <https://github.com/matrix-org/matrix-rust-sdk/tree/main/crates/matrix-sdk/src/verification>
-    eprintln!("e2ee verify: interactive emoji-SAS flow not yet implemented in this build.");
-    eprintln!("Use a verified Element client (mobile/web) to drive the verification; the CLI");
-    eprintln!("side of the flow is planned in a follow-up mission (TUI module).");
+    //
+    // R3-L2: removed the `eprintln!` lines that duplicated the
+    // error message. The binary's top-level error printer routes
+    // `OnboardError::Display` to stderr, so emitting the same text
+    // twice (once via `eprintln!` and once via the error's Display)
+    // was a duplicated-output bug. The single error below carries
+    // all the hint text.
     warn!("e2ee verify: not yet implemented");
     Err(OnboardError::Generic(anyhow::anyhow!(
-        "e2ee verify: interactive flow not yet implemented; see the matrix-rust-sdk \
-         verification module for the SDK state machine that backs this command \
-         (matrix-sdk/src/verification)"
+        "e2ee verify: interactive emoji-SAS flow not yet implemented in this build. \
+         Use a verified Element client (mobile/web) to drive the verification; the CLI \
+         side of the flow is planned in a follow-up mission (TUI module). The SDK state \
+         machine that backs this command lives in matrix-sdk/src/verification."
     )))
 }
 
 pub async fn verify_session(_args: E2eeVerifySessionArgs) -> Result<()> {
-    eprintln!("e2ee verify-session: out-of-band verification not yet implemented in this build.");
-    eprintln!("Planned in a follow-up mission with the TUI module; until then, run e2ee verify");
-    eprintln!("on the device that sent the request, or use Element's \"Verify this device\" UI.");
+    // R3-L2: same fix as `verify` — drop the duplicated `eprintln!`
+    // lines; the error's Display impl is already routed to stderr
+    // by the binary entrypoint.
     warn!("e2ee verify-session: not yet implemented");
     Err(OnboardError::Generic(anyhow::anyhow!(
-        "e2ee verify-session: not yet implemented"
+        "e2ee verify-session: out-of-band verification not yet implemented in this build. \
+         Planned in a follow-up mission with the TUI module; until then, run e2ee verify \
+         on the device that sent the request, or use Element's \"Verify this device\" UI."
     )))
 }
 
-/// Read a 4S recovery key from stdin into a `Zeroizing<String>` and
-/// zero the buffer on drop. The key is never echoed, never logged,
-/// and never included in error messages.
+/// Read a 4S recovery key from stdin with TTY echo disabled,
+/// returning a `Zeroizing<String>` that zeros its heap buffer on
+/// drop. The key is never echoed, never logged, and never included
+/// in error messages.
 ///
-/// R2-H4: the previous implementation returned a plain `String`
-/// and only cleared the local `line` buffer (not the returned
-/// `trimmed`). The key bytes survived in the heap allocation for
-/// the rest of the caller's lifetime. `Zeroizing<String>` overrides
-/// `Drop` to write zeros into the buffer before deallocating, so
-/// the key bytes do not linger.
+/// R2-H4: heap-zeroing on drop via `Zeroizing<String>`.
+///
+/// R3-H2: previously used `BufRead::read_line` on `io::stdin()`,
+/// which does NOT disable TTY echo. The prompt claimed input was
+/// hidden, but the recovery key appeared in the terminal, in
+/// scrollback, in tmux logs, and in `~/.bash_history`-style
+/// terminal histories. `rpassword::prompt_password` handles the
+/// cross-platform "disable echo, read line, restore echo" dance
+/// (termios on Unix, SetConsoleMode on Windows), with proper
+/// cleanup even if the user hits Ctrl-C mid-input.
 fn read_recovery_key_from_stdin() -> Result<zeroize::Zeroizing<String>> {
-    use std::io::{self, BufRead, Write};
     use zeroize::Zeroizing;
-    eprintln!("Paste the 4S recovery key and press Enter (input is hidden):");
-    let stdin = io::stdin();
-    let mut line = Zeroizing::new(String::new());
-    let mut handle = stdin.lock();
-    // `Zeroizing<String>` derefs to `String`. `BufRead::read_line`
-    // takes `&mut String`; auto-deref handles the coercion.
-    handle
-        .read_line(&mut line)
-        .map_err(|e| OnboardError::Generic(anyhow::anyhow!("read recovery key: {}", e)))?;
-    let _ = io::stderr().write_all(b"\n");
-    let trimmed = Zeroizing::new(line.trim().to_string());
+    let raw =
+        rpassword::prompt_password("Paste the 4S recovery key and press Enter (input is hidden): ")
+            .map_err(|e| OnboardError::Generic(anyhow::anyhow!("read recovery key: {}", e)))?;
+    // Move into a `Zeroizing` wrapper immediately so the heap
+    // buffer is zeroed on drop. `rpassword` returns a plain
+    // `String`; the original allocation goes out of scope at the
+    // end of this function (Rust drops `raw` after `trimmed` is
+    // returned), but we wrap and trim defensively rather than
+    // relying on the move semantics.
+    let owned = Zeroizing::new(raw);
+    let trimmed = Zeroizing::new(owned.trim().to_string());
     if trimmed.is_empty() {
         return Err(OnboardError::Cancelled("empty recovery key".into()));
     }
@@ -292,6 +303,28 @@ fn write_recovery_key(path: &Path, key: &str) -> Result<()> {
     }
 
     let tmp = path.with_extension("tmp");
+    // R3-M2: the tmp file holds the plaintext recovery key under
+    // mode 0600. If any of `open` / `write_all` / `sync_all` /
+    // `rename` fails, we MUST clean it up — otherwise a leftover
+    // `path.tmp` containing the key sits on disk until the next
+    // run. We use a small RAII guard that unlinks the path on
+    // drop unless explicitly disarmed; on the happy path we disarm
+    // it right before `rename` consumes the tmp file.
+    struct TmpGuard<'a> {
+        path: &'a Path,
+        armed: bool,
+    }
+    impl<'a> Drop for TmpGuard<'a> {
+        fn drop(&mut self) {
+            if self.armed {
+                let _ = std::fs::remove_file(self.path);
+            }
+        }
+    }
+    let mut guard = TmpGuard {
+        path: &tmp,
+        armed: true,
+    };
     {
         let mut opts = std::fs::OpenOptions::new();
         opts.write(true).create(true).truncate(true);
@@ -311,6 +344,9 @@ fn write_recovery_key(path: &Path, key: &str) -> Result<()> {
     }
     std::fs::rename(&tmp, path)
         .map_err(|e| OnboardError::Generic(anyhow::anyhow!("rename: {}", e)))?;
+    // Disarm the guard — `rename` consumed the tmp file, so any
+    // `remove_file` on its path would race a future write.
+    guard.armed = false;
     Ok(())
 }
 

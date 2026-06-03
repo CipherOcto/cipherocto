@@ -72,6 +72,28 @@ fn format_rfc3339_now() -> String {
     )
 }
 
+/// R3-L1: format a Unix epoch (seconds since 1970-01-01) as an RFC
+/// 3339 UTC string with no sub-second precision: `YYYY-MM-DDTHH:MM:SSZ`.
+/// Used by `session list` to render the `LAST_USED` column in a
+/// format `date -d` and other RFC 3339 parsers can consume. Negative
+/// epochs (pre-1970) and zero are rendered as `<unknown>` so the
+/// column doesn't carry a misleading 1969-12-31 timestamp for rows
+/// where the field was never written.
+pub(crate) fn format_rfc3339_secs(epoch_secs: i64) -> String {
+    if epoch_secs <= 0 {
+        return "<unknown>".to_string();
+    }
+    let secs = epoch_secs as u64;
+    let (year, month, day) = epoch_days_to_ymd((secs / 86_400) as i64);
+    let hh = (secs / 3600) % 24;
+    let mm = (secs / 60) % 60;
+    let ss = secs % 60;
+    format!(
+        "{:04}-{:02}-{:02}T{:02}:{:02}:{:02}Z",
+        year, month, day, hh, mm, ss
+    )
+}
+
 /// R2-L7: convert a day count since 1970-01-01 to (year, month, day)
 /// in the proleptic Gregorian calendar. Civil-from-days algorithm
 /// from Howard Hinnant's `date` library (public domain).
@@ -484,6 +506,30 @@ pub fn init(verbose: bool) {
 mod tests {
     use super::*;
     use tracing_subscriber::fmt::MakeWriter;
+
+    /// R3-L1: smoke tests for the RFC 3339 helper. The full
+    /// epoch_days_to_ymd table is exercised indirectly via
+    /// `format_rfc3339_now`; here we only need to confirm the
+    /// no-fractional-seconds shape and the `<unknown>` fallback.
+    #[test]
+    fn format_rfc3339_secs_renders_a_known_epoch() {
+        // 2026-01-01T00:00:00Z = 1767225600 seconds since 1970-01-01.
+        let rendered = format_rfc3339_secs(1_767_225_600);
+        assert_eq!(rendered, "2026-01-01T00:00:00Z", "got {rendered}");
+    }
+
+    #[test]
+    fn format_rfc3339_secs_treats_zero_as_unknown() {
+        // Rows in the session store carry `last_used = 0` until
+        // `set_latest_session` is called. Rendering that as
+        // 1970-01-01 would be misleading.
+        assert_eq!(format_rfc3339_secs(0), "<unknown>");
+    }
+
+    #[test]
+    fn format_rfc3339_secs_treats_negative_as_unknown() {
+        assert_eq!(format_rfc3339_secs(-1), "<unknown>");
+    }
 
     /// Captures formatted output to a `Vec<u8>` for assertions.
     #[derive(Clone, Default)]

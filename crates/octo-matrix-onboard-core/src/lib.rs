@@ -116,18 +116,53 @@ impl Session {
         &self.access_token
     }
 
-    /// R1-L1: build the on-disk JSON shape (mission 0850h-a §Output
+    /// R18-L1: build the on-disk JSON shape (mission 0850h-a §Output
     /// contract). This is the ONLY way the access_token leaves the
     /// library; the binary calls this and writes the result to disk.
+    ///
+    /// R18-L1: the on-disk shape is built field-by-field in a
+    /// `serde_json::Map` rather than a `serde_json::json!` macro,
+    /// so the `refresh_token` field is **omitted** when `None`
+    /// (matches `OnDiskConfig::refresh_token` in the adapter's
+    /// `octo-adapter-matrix-sdk/src/config_writer.rs`, which has
+    /// `#[serde(default, skip_serializing_if = "Option::is_none")]`).
+    /// The previous macro form always emitted the field, producing
+    /// `"refresh_token": null` when no refresh token was issued
+    /// (e.g., the password-flow homeserver). The on-disk JSON shape
+    /// then drifted between the CLI writer (6 fields, including
+    /// explicit `null`) and the adapter writer (5 fields, omitting
+    /// the field). Both shapes are readable by both deserializers
+    /// (serde_json's `Option<String>` accepts both `null` and a
+    /// missing field as `None`), but the drift made round-tripping
+    /// a no-rotation writeback cycle rewrite the on-disk file from
+    /// 6-field to 5-field shape — a visible change for an operator
+    /// who diffs the config before and after.
     pub fn to_disk_json(&self) -> serde_json::Value {
-        serde_json::json!({
-            "homeserver_url": self.homeserver_url,
-            "user_id": self.user_id,
-            "device_id": self.device_id,
-            "access_token": self.access_token,
-            "refresh_token": self.refresh_token,
-            "rooms": Vec::<String>::new(),
-        })
+        let mut map = serde_json::Map::with_capacity(6);
+        map.insert(
+            "homeserver_url".to_string(),
+            serde_json::Value::String(self.homeserver_url.clone()),
+        );
+        map.insert(
+            "user_id".to_string(),
+            serde_json::Value::String(self.user_id.clone()),
+        );
+        map.insert(
+            "device_id".to_string(),
+            serde_json::Value::String(self.device_id.clone()),
+        );
+        map.insert(
+            "access_token".to_string(),
+            serde_json::Value::String(self.access_token.clone()),
+        );
+        if let Some(rt) = &self.refresh_token {
+            map.insert(
+                "refresh_token".to_string(),
+                serde_json::Value::String(rt.clone()),
+            );
+        }
+        map.insert("rooms".to_string(), serde_json::Value::Array(vec![]));
+        serde_json::Value::Object(map)
     }
 
     /// R1-L1: redacted access token preview for CLI display. For
@@ -220,5 +255,37 @@ mod tests {
         assert_eq!(v["access_token"], "syt_real_token_xyz");
         assert_eq!(v["refresh_token"], "syr_y");
         assert_eq!(v["rooms"].as_array().unwrap().len(), 0);
+    }
+
+    /// R18-L1: when `refresh_token` is `None`, the on-disk JSON
+    /// OMITS the field (not `"refresh_token": null`). This matches
+    /// the adapter's `OnDiskConfig` (which has
+    /// `skip_serializing_if = "Option::is_none"`) so the on-disk
+    /// shape stays consistent between the CLI writer and the
+    /// adapter's writeback path.
+    #[test]
+    fn to_disk_json_omits_refresh_token_when_none() {
+        let s = Session {
+            homeserver_url: "https://matrix.example.com".into(),
+            user_id: "@bot:matrix.example.com".into(),
+            device_id: "ABCDEFGHIJ".into(),
+            access_token: "syt_real_token_xyz".into(),
+            refresh_token: None,
+        };
+        let v = s.to_disk_json();
+        let obj = v.as_object().expect("to_disk_json returns an object");
+        assert_eq!(
+            obj.len(),
+            5,
+            "expected 5 fields, got {}: {:?}",
+            obj.len(),
+            obj.keys().collect::<Vec<_>>()
+        );
+        assert!(
+            !obj.contains_key("refresh_token"),
+            "refresh_token should be omitted when None"
+        );
+        assert_eq!(obj["access_token"], "syt_real_token_xyz");
+        assert_eq!(obj["rooms"].as_array().unwrap().len(), 0);
     }
 }

@@ -72,8 +72,16 @@ pub struct SessionRow {
     pub login_type: LoginType,
     /// Epoch seconds. Set on insert, never updated.
     pub login_timestamp: i64,
-    /// Epoch seconds. Updated on every successful adapter start that
-    /// loads the session; also updated by `set_latest_session`.
+    /// Epoch seconds. Set to the current epoch on `add_session`
+    /// (initial value, equal to `login_timestamp` at insert time) and
+    /// updated by the dedicated `set_latest_session` method when the
+    /// operator marks a row as the most-recently-used. The session
+    /// loader (`octo-adapter-matrix-sdk::session_loader::load`) does
+    /// NOT touch this column — a successful load does not constitute
+    /// a "use" for ordering purposes. R8-L1: a previous version of
+    /// this docstring claimed `last_used` is updated on every
+    /// adapter start; R6-L1 fixed the same false claim in
+    /// `schema.rs` but missed this field's docstring.
     pub last_used: i64,
     /// Stable multi-account ordering. Strictly monotonic on insert
     /// (`max(position) + 1`); never changes on `set_latest_session`.

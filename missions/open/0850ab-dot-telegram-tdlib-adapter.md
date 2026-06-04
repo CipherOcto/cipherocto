@@ -19,9 +19,9 @@ Replace the existing `octo-adapter-telegram` raw-Bot-API implementation (`missio
 
 ## Dependencies
 
-- **RFC-0850 (Accepted):** Deterministic Overlay Transport, §8.1 (Platform Adapters trait, `CapabilityReport`, `BroadcastDomainId`).
-- **Mission 0850e (Completed):** DOT Adapter Registry & Plugin ABI — the `PlatformAdapter` trait and C ABI shims are already in place.
-- **Mission 0850 (base, Completed):** Core envelope types and the DOT wire format.
+- **RFC-0850:** Deterministic Overlay Transport, §8.1 (Platform Adapters trait, `CapabilityReport`, `BroadcastDomainId`).
+- **Mission 0850e:** DOT Adapter Registry & Plugin ABI — the `PlatformAdapter` trait and C ABI shims are already in place.
+- **Mission 0850:** Core envelope types and the DOT wire format.
 - **TDLib build toolchain:** C++ compiler (gcc/clang/MSVC), CMake ≥ 3.18, and either:
   - Network access at build time for `tdlib-rs`'s `download-tdlib` feature to fetch prebuilt binaries, OR
   - Local TDLib source tree at `$LOCAL_TDLIB_PATH` with the `local-tdlib` feature.
@@ -40,48 +40,48 @@ The cost of these gains is heavier build (C++ toolchain, ~150 MB TDLib binary) a
 
 ### Stack
 
-| Layer | Choice | Rationale |
-|---|---|---|
-| Telegram client | `tdlib-rs` 1.4.x (Rust binding to TDLib C++) | Maintained, ~10K LOC Rust, MIT, used by `tg` and `tgt` reference implementations |
-| TDLib delivery | `tdlib-rs` `download-tdlib` feature (auto-fetch prebuilt) **or** `local-tdlib` (build from `$LOCAL_TDLIB_PATH`) | Matches `tg`/`tgt` build patterns; the `download-tdlib` feature is the recommended default for first-time builds |
-| Async runtime | `tokio` 1.x with `rt-multi-thread` and `time` features | Already in workspace; TDLib's blocking `client_receive` calls are dispatched to a dedicated blocking thread via `tokio::task::spawn_blocking` |
-| JSON | `serde` + `serde_json` | Already in workspace; TDLib returns JSON values that map directly via `tdlib_rs::types` |
-| Crypto (auth_key persistence) | `rusqlite` 0.31+ with bundled feature | TDLib requires persisting the 2048-bit `auth_key` to disk; SQLite is the canonical choice (matches `tg`) |
-| Hashing | `blake3` 1.5 | Already in workspace; needed for `domain_id()` (preserved from `0850f`) |
-| HTTP (webhook fallback) | `reqwest` 0.12 with `rustls-tls` | Already in workspace; for the optional public-webhook path |
+| Layer                         | Choice                                                                                                          | Rationale                                                                                                                                     |
+| ----------------------------- | --------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------- |
+| Telegram client               | `tdlib-rs` 1.4.x (Rust binding to TDLib C++)                                                                    | Maintained, ~10K LOC Rust, MIT, used by `tg` and `tgt` reference implementations                                                              |
+| TDLib delivery                | `tdlib-rs` `download-tdlib` feature (auto-fetch prebuilt) **or** `local-tdlib` (build from `$LOCAL_TDLIB_PATH`) | Matches `tg`/`tgt` build patterns; the `download-tdlib` feature is the recommended default for first-time builds                              |
+| Async runtime                 | `tokio` 1.x with `rt-multi-thread` and `time` features                                                          | Already in workspace; TDLib's blocking `client_receive` calls are dispatched to a dedicated blocking thread via `tokio::task::spawn_blocking` |
+| JSON                          | `serde` + `serde_json`                                                                                          | Already in workspace; TDLib returns JSON values that map directly via `tdlib_rs::types`                                                       |
+| Crypto (auth_key persistence) | `rusqlite` 0.31+ with bundled feature                                                                           | TDLib requires persisting the 2048-bit `auth_key` to disk; SQLite is the canonical choice (matches `tg`)                                      |
+| Hashing                       | `blake3` 1.5                                                                                                    | Already in workspace; needed for `domain_id()` (preserved from `0850f`)                                                                       |
+| HTTP (webhook fallback)       | `reqwest` 0.12 with `rustls-tls`                                                                                | Already in workspace; for the optional public-webhook path                                                                                    |
 
 ### Architecture
 
 The adapter is split into three layers, each independently testable:
 
 1. **Telegram client wrapper** (`src/client.rs`) — Owns the TDLib `Client`, runs the receive loop on a dedicated OS thread, and exposes an async API to the rest of the adapter. Persists auth state to `$data_dir/tdlib/<bot_id>/database`. Surfaces typed Rust enums for: `Update::NewMessage { chat_id, message }`, `Update::MessageEdited { ... }`, `Update::FileDownloaded { file_id, local_path, size }`, etc.
-2. **DOT envelope layer** (`src/envelope.rs`) — Preserves the exact 0850f wire format: 282-byte signing payload + 64-byte signature (BLAKE3-256 domain hash, `BLAKE3("matrix:" + chat_id)` per the RFC-0850 spec). The TDLib `Message` content is parsed to extract the envelope, which is then validated against the `BroadcastDomainId`.
+2. **DOT envelope layer** (`src/envelope.rs`) — Preserves the exact 0850f wire format: 218-byte signing payload + 64-byte signature (282-byte wire envelope) (BLAKE3-256 domain hash, `BLAKE3("telegram:" + chat_id)` per the RFC-0850 spec). The TDLib `Message` content is parsed to extract the envelope, which is then validated against the `BroadcastDomainId`.
 3. **`PlatformAdapter` impl** (`src/adapter.rs`) — Implements the trait from RFC-0850 §8.1. The `send_envelope` path packs the envelope into either:
    - `sendMessage` (≤4096 chars total, default for 282-byte envelopes)
    - `sendDocument` (multi-MB up to 2 GB via TDLib's `messages.sendMultiMedia` + `inputFile::LocalFile`)
    - `messages.sendEncryptedFile` (for E2E-encrypted chats, optional future work)
-   The `receive_messages` path subscribes to TDLib's update stream and yields each new message as a `RawPlatformMessage`.
+     The `receive_messages` path subscribes to TDLib's update stream and yields each new message as a `RawPlatformMessage`.
 
 ### Config
 
 ```yaml
-# config/telegram.yaml (or via `MatrixConfig`-equivalent config struct)
+# config/telegram.yaml (or via `TelegramConfig` config struct)
 telegram:
   # Required: either bot_token (Bot API mode) OR phone + api_id + api_hash (user-account mode)
-  mode: bot              # "bot" | "user" (default: bot)
-  bot_token: "123456:ABC-DEF..."   # required if mode=bot
-  api_id: 12345                     # required if mode=user (from my.telegram.org)
-  api_hash: "0123456789abcdef..."   # required if mode=user
-  phone: "+1234567890"              # required if mode=user on first auth
-  data_dir: "~/.local/share/cipherocto/telegram"   # TDLib auth_key persistence
-  groups: [-1001234567890, -1009876543210]   # list of chat IDs to monitor (Bot mode)
+  mode: bot # "bot" | "user" (default: bot)
+  bot_token: "123456:ABC-DEF..." # required if mode=bot
+  api_id: 12345 # required if mode=user (from my.telegram.org)
+  api_hash: "0123456789abcdef..." # required if mode=user
+  phone: "+1234567890" # required if mode=user on first auth
+  data_dir: "~/.local/share/cipherocto/telegram" # TDLib auth_key persistence
+  groups: [-1001234567890, -1009876543210] # list of chat IDs to monitor (Bot mode)
   # Optional: 2FA password for user mode
   password: null
   # Optional: webhook fallback (matches 0850f's webhook_port)
-  webhook_port: null   # if set, exposes an HTTP server for update delivery
+  webhook_port: null # if set, exposes an HTTP server for update delivery
   # Optional: feature gates
   features:
-    e2e_chats: false   # enable access to secret chats (user mode only)
+    e2e_chats: false # enable access to secret chats (user mode only)
     voice_video: false # enable voice/video call hooks (user mode only)
 ```
 
@@ -132,7 +132,7 @@ This is a **rewrite**, not an additive feature. The migration plan is:
 - [ ] `canonicalize()` extracts envelope from both text and document messages
 - [ ] Fragmentation: large envelopes sent as multi-part documents (preserved from 0850f)
 - [ ] `CapabilityReport`: `max_payload=2_000_000_000` (2 GB), `rate_limit=30/sec per group` (unchanged), `transport_features={file_transfer, push_updates, e2e_chats:optional}`
-- [ ] `domain_id()`: `BroadcastDomainId(0x0001, BLAKE3("matrix:" + chat_id))` (preserved from 0850f)
+- [ ] `domain_id()`: `BroadcastDomainId(0x0001, BLAKE3("telegram:" + chat_id))` (preserved from 0850f)
 - [ ] Config: `mode` (`bot` | `user`), `bot_token` (bot mode), `api_id`+`api_hash`+`phone` (user mode), `data_dir`, `groups`, `webhook_port` (optional), `password` (optional, user mode 2FA)
 - [ ] Error handling: rate limiting (429 retry, exponential backoff), auth expiry (re-prompt), file transfer failure (resumable upload)
 - [ ] Exponential backoff: initial=1s, max=120s, jitter=0-500ms (preserved from 0850f)
@@ -148,19 +148,19 @@ This is a **rewrite**, not an additive feature. The migration plan is:
 
 ### Type Coverage
 
-| RFC-0850 §8.1 Type | Implemented By |
-|--------------------|-----------------|
-| `PlatformAdapter` trait impl | This mission |
-| `CapabilityReport` struct | This mission |
-| `BroadcastDomainId` (BLAKE3-256 of "matrix:" + chat_id) | This mission (preserved from 0850f) |
-| `DeterministicEnvelope` pack/unpack | This mission (preserved from 0850f) |
-| Telegram-specific `sendMessage` integration | **Supersedes** 0850f |
-| Telegram-specific `getUpdates` polling | **Superseded by** TDLib push updates (no polling) |
-| Telegram-specific `sendDocument` integration | This mission (via TDLib `sendDocument`) |
-| Telegram-specific file download (≤ 2 GB) | This mission (new) |
-| Telegram-specific `getMe` (self-loop) | This mission (preserved from 0850f) |
-| Telegram-specific 2FA auth (user mode) | This mission (new) |
-| Telegram-specific E2E chat (secret chats) | Deferred to Phase 3 (future mission) |
+| RFC-0850 §8.1 Type                                        | Implemented By                                    |
+| --------------------------------------------------------- | ------------------------------------------------- |
+| `PlatformAdapter` trait impl                              | This mission                                      |
+| `CapabilityReport` struct                                 | This mission                                      |
+| `BroadcastDomainId` (BLAKE3-256 of "telegram:" + chat_id) | This mission (preserved from 0850f)               |
+| `DeterministicEnvelope` pack/unpack                       | This mission (preserved from 0850f)               |
+| Telegram-specific `sendMessage` integration               | **Supersedes** 0850f                              |
+| Telegram-specific `getUpdates` polling                    | **Superseded by** TDLib push updates (no polling) |
+| Telegram-specific `sendDocument` integration              | This mission (via TDLib `sendDocument`)           |
+| Telegram-specific file download (≤ 2 GB)                  | This mission (new)                                |
+| Telegram-specific `getMe` (self-loop)                     | This mission (preserved from 0850f)               |
+| Telegram-specific 2FA auth (user mode)                    | This mission (new)                                |
+| Telegram-specific E2E chat (secret chats)                 | Deferred to Phase 3 (future mission)              |
 
 ## Implementation Guide
 
@@ -206,24 +206,26 @@ This mission deliberately accepts heavier build complexity (C++ toolchain, ~150 
 
 `grammers` (~50K LOC) is the alternative pure-Rust MTProto client. It's lighter than TDLib (no C++ dependency) but heavier than Bot API in every other dimension:
 
-| Aspect | TDLib (this mission) | `grammers` (alternative) | Raw Bot API (0850f, superseded) |
-|---|---|---|---|
-| C++ dep | Yes (TDLib) | No | No |
-| Pure-Rust | No | Yes | Yes |
-| Transitive Rust deps | ~25 | ~30 | ~5 |
-| Build time (cold) | ~3-5 min | ~3-5 min | ~30s |
-| Binary size (stripped) | 30-50 MB | 30-50 MB | 5-10 MB |
-| User-account features | Yes (TDLib) | Yes (grammers) | No (Bot API only) |
-| Bot API features | Yes (TDLib also wraps Bot API) | No (pure MTProto) | Yes |
-| Media upload limit | 2 GB | 2 GB | 50 MB |
-| Schema maintenance | Telegram (TDLib) | Community (grammers) | us (manually) |
+| Aspect                 | TDLib (this mission)           | `grammers` (alternative) | Raw Bot API (0850f, superseded) |
+| ---------------------- | ------------------------------ | ------------------------ | ------------------------------- |
+| C++ dep                | Yes (TDLib)                    | No                       | No                              |
+| Pure-Rust              | No                             | Yes                      | Yes                             |
+| Transitive Rust deps   | ~25                            | ~30                      | ~5                              |
+| Build time (cold)      | ~3-5 min                       | ~3-5 min                 | ~30s                            |
+| Binary size (stripped) | 30-50 MB                       | 30-50 MB                 | 5-10 MB                         |
+| User-account features  | Yes (TDLib)                    | Yes (grammers)           | No (Bot API only)               |
+| Bot API features       | Yes (TDLib also wraps Bot API) | No (pure MTProto)        | Yes                             |
+| Media upload limit     | 2 GB                           | 2 GB                     | 50 MB                           |
+| Schema maintenance     | Telegram (TDLib)               | Community (grammers)     | us (manually)                   |
 
 TDLib wins on:
+
 - **Schema maintenance**: Telegram maintains the protocol binding. We don't.
 - **Bot API coverage**: TDLib wraps both MTProto and Bot API; `grammers` is pure MTProto (no Bot API shortcuts).
 - **Battle-tested**: TDLib powers Telegram's own iOS/Android/desktop clients, plus dozens of third-party clients. `grammers` is community-maintained.
 
 TDLib loses on:
+
 - **C++ build dependency**: requires gcc/clang/MSVC + CMake at build time. Pure-Rust is easier to cross-compile.
 
 The C++ build cost is a one-time setup; the schema-maintenance savings compound over the life of the project. TDLib wins.
@@ -239,13 +241,13 @@ Both paths share the same `PlatformAdapter` contract from RFC-0850 §8.1, so the
 
 ### Risk register
 
-| Risk | Likelihood | Impact | Mitigation |
-|------|-----------|--------|------------|
-| TDLib schema drift breaks the wrapper | Low | High | TDLib is maintained by Telegram; we follow the upstream `tdlib-rs` crate's release cadence |
-| C++ build fails on a contributor's machine | Medium | Medium | Document the C++ toolchain requirement in the README; provide a pre-built `static-download` feature |
-| Windows ARM gap (TDLib upstream) | High | Low | Document; defer to upstream TDLib fix. Pure-Rust `grammers` is the long-term fallback if needed |
-| TDLib auth_key persistence schema changes | Low | High | Pin `tdlib-rs` version; write a migration test that detects auth_key schema changes |
-| `tokio` runtime conflict with TDLib's blocking receive | Medium | Medium | Dedicated `spawn_blocking` thread for `client_receive`; covered in the implementation guide |
+| Risk                                                   | Likelihood | Impact | Mitigation                                                                                          |
+| ------------------------------------------------------ | ---------- | ------ | --------------------------------------------------------------------------------------------------- |
+| TDLib schema drift breaks the wrapper                  | Low        | High   | TDLib is maintained by Telegram; we follow the upstream `tdlib-rs` crate's release cadence          |
+| C++ build fails on a contributor's machine             | Medium     | Medium | Document the C++ toolchain requirement in the README; provide a pre-built `static-download` feature |
+| Windows ARM gap (TDLib upstream)                       | High       | Low    | Document; defer to upstream TDLib fix. Pure-Rust `grammers` is the long-term fallback if needed     |
+| TDLib auth_key persistence schema changes              | Low        | High   | Pin `tdlib-rs` version; write a migration test that detects auth_key schema changes                 |
+| `tokio` runtime conflict with TDLib's blocking receive | Medium     | Medium | Dedicated `spawn_blocking` thread for `client_receive`; covered in the implementation guide         |
 
 ### Success criteria
 
@@ -259,7 +261,4 @@ Both paths share the same `PlatformAdapter` contract from RFC-0850 §8.1, so the
 
 ---
 
-**Version:** 1.0
-**Submission Date:** 2026-06-04
-**Last Updated:** 2026-06-04
 **Supersedes:** `missions/archived/0850f-dot-telegram-adapter.md` (raw Bot API, 744 LOC, 9 tests)

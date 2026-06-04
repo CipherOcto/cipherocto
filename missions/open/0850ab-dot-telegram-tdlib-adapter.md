@@ -109,6 +109,7 @@ crates/octo-adapter-telegram/
 │   ├── file_download_tests.rs    # 100MB download (5x the Bot API 20MB limit)
 │   ├── user_mode_tests.rs        # phone + api_id auth flow (mocked) — covers AC "User mode test"
 │   ├── self_loop_tests.rs        # drop self-authored messages
+│   ├── auth_key_migration_tests.rs # detect TDLib auth_key schema drift across `tdlib-rs` version bumps
 │   └── integration_matrix.rs     # feature-gated: full round-trip with real Telegram test DC
 ```
 
@@ -143,6 +144,7 @@ This is a **rewrite**, not an additive feature. The migration plan is:
 - [ ] Unit tests use a mock TDLib client (no real TDLib instance required for `cargo test`)
 - [ ] Integration test (feature-gated) round-trips a real envelope against Telegram's test DC
 - [ ] User mode test: `phone + api_id + api_hash` auth flow with mocked TDLib (no real Telegram account needed for `cargo test`)
+- [ ] Auth-key migration test: detects TDLib `auth_key` schema drift across `tdlib-rs` version bumps (covers Risk register row 4 mitigation)
 - [ ] Binary size on Linux x86_64 release with default features: ≤ 30 MB stripped (excluding the TDLib C++ shared library)
 - [ ] Build time on Linux x86_64 release: ≤ 3 min (excluding TDLib download)
 - [ ] Cross-compile support: `cargo build --target aarch64-unknown-linux-gnu` succeeds via `cross`
@@ -242,13 +244,13 @@ Both paths share the same `PlatformAdapter` contract from RFC-0850 §8.1, so the
 
 ### Risk register
 
-| Risk                                                   | Likelihood | Impact | Mitigation                                                                                          |
-| ------------------------------------------------------ | ---------- | ------ | --------------------------------------------------------------------------------------------------- |
-| TDLib schema drift breaks the wrapper                  | Low        | High   | TDLib is maintained by Telegram; we follow the upstream `tdlib-rs` crate's release cadence          |
-| C++ build fails on a contributor's machine             | Medium     | Medium | Document the C++ toolchain requirement in the README; provide a pre-built `static-download` feature |
-| Windows ARM gap (TDLib upstream)                       | High       | Low    | Document; defer to upstream TDLib fix. Pure-Rust `grammers` is the long-term fallback if needed     |
-| TDLib auth_key persistence schema changes              | Low        | High   | Pin `tdlib-rs` version; write a migration test that detects auth_key schema changes                 |
-| `tokio` runtime conflict with TDLib's blocking receive | Medium     | Medium | Dedicated `spawn_blocking` thread for `client_receive`; covered in the implementation guide         |
+| Risk                                                   | Likelihood | Impact | Mitigation                                                                                                                    |
+| ------------------------------------------------------ | ---------- | ------ | ----------------------------------------------------------------------------------------------------------------------------- |
+| TDLib schema drift breaks the wrapper                  | Low        | High   | TDLib is maintained by Telegram; we follow the upstream `tdlib-rs` crate's release cadence                                    |
+| C++ build fails on a contributor's machine             | Medium     | Medium | Document the C++ toolchain requirement in the README; provide a pre-built `static-download` feature                           |
+| Windows ARM gap (TDLib upstream)                       | High       | Low    | Document; defer to upstream TDLib fix. Pure-Rust `grammers` is the long-term fallback if needed                               |
+| TDLib auth_key persistence schema changes              | Low        | High   | Pin `tdlib-rs` version; write a migration test (see `tests/auth_key_migration_tests.rs`) that detects auth_key schema changes |
+| `tokio` runtime conflict with TDLib's blocking receive | Medium     | Medium | Dedicated `spawn_blocking` thread for `client_receive`; covered in the implementation guide                                   |
 
 ### Success criteria
 

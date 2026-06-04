@@ -116,7 +116,7 @@ crates/octo-adapter-telegram/
 
 This is a **rewrite**, not an additive feature. The migration plan is:
 
-1. **Phase 1 (this mission):** Replace `crates/octo-adapter-telegram/src/lib.rs` (the 744-LOC `0850f` implementation) with the new TDLib-backed structure. Move `0850f-dot-telegram-adapter.md` to `missions/archived/superseded/0850f-dot-telegram-adapter.md` with a `Superseded by: missions/open/0850r-dot-telegram-tdlib-adapter.md` link.
+1. **Phase 1 (this mission):** Replace `crates/octo-adapter-telegram/src/lib.rs` (the 744-LOC `0850f` implementation) with the new TDLib-backed structure. Move `0850f-dot-telegram-adapter.md` to `missions/archived/superseded/0850f-dot-telegram-adapter.md` with a `Superseded by: missions/open/0850ab-dot-telegram-tdlib-adapter.md` link.
 2. **Phase 2 (future):** Add a `--features bot-api-compat` Cargo feature that re-exposes the 0850f raw-Bot-API path under a `BotApiTelegramAdapter` type, for low-dependency deployments that don't need TDLib's file transfer or user-mode features.
 3. **Phase 3 (future):** Add E2E chat support (TDLib's `tde2e` layer) for cipherocto channels that need to participate in secret chats.
 
@@ -185,7 +185,7 @@ The following open-source projects were studied for the design (see `docs/review
 
 ## Claimant
 
-@unassigned (claim via `mv missions/open/0850r-dot-telegram-tdlib-adapter.md missions/claimed/0850r-dot-telegram-tdlib-adapter.md`)
+@unassigned (claim via `mv missions/open/0850ab-dot-telegram-tdlib-adapter.md missions/claimed/0850ab-dot-telegram-tdlib-adapter.md`)
 
 ## Pull Request
 

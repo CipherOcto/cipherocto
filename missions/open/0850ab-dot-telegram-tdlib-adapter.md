@@ -125,15 +125,15 @@ This is a **rewrite**, not an additive feature. The migration plan is:
 - [ ] `crates/octo-adapter-telegram/` crate compiles to `cdylib` and `rlib` with default features
 - [ ] With `--features download-tdlib`, a fresh build (no local TDLib) succeeds on Linux x86_64, Linux aarch64, macOS x86_64, macOS arm64, Windows x86_64
 - [ ] With `--features local-tdlib`, a build against `$LOCAL_TDLIB_PATH` succeeds
-- [ ] Implements `PlatformAdapter` trait with all methods (6 required + 3 optional: `replay_protection`, `health_check`, `shutdown`)
+- [ ] Implements `PlatformAdapter` trait with all methods (6 required + 6 optional: `replay_protection`, `health_check`, `shutdown`, `self_handle`, `upload_media`, `download_media`; `self_handle` must override the default to return the bot's user_id, `upload_media`/`download_media` required for the TDLib file transfer feature)
 - [ ] `send_envelope()` writes the 282-byte envelope via `sendMessage` for the small case (preserved from 0850f)
 - [ ] `send_envelope()` writes larger envelopes via `sendDocument` / TDLib's file upload (up to 2 GB)
 - [ ] `receive_messages()` consumes TDLib's update stream (sub-100ms push latency, not polling)
 - [ ] `canonicalize()` extracts envelope from both text and document messages
 - [ ] Fragmentation: large envelopes sent as multi-part documents (preserved from 0850f)
-- [ ] `CapabilityReport`: `max_payload=2_000_000_000` (2 GB), `rate_limit=30/sec per group` (unchanged), `transport_features={file_transfer, push_updates, e2e_chats:optional}`
+- [ ] `CapabilityReport`: `max_payload_bytes=2_000_000_000` (2 GB), `rate_limit_per_second=30` (unchanged), `supports_fragmentation=true` (via document attachments), `supports_encryption=false` (0850f value; user-mode may set true for E2E chats), `supports_raw_binary=false` (Telegram is a chat app, requires DOT/1/ encoding), `media_capabilities=Some(MediaCapabilities { max_upload_bytes: 2_000_000_000, supported_mime_types: vec!["application/octet-stream".into(), "image/*".into(), "video/*".into(), "audio/*".into()] })` (TDLib file transfer)
 - [ ] `domain_id()`: `BroadcastDomainId(0x0001, BLAKE3("telegram:" + chat_id))` (preserved from 0850f)
-- [ ] Config: `mode` (`bot` | `user`), `bot_token` (bot mode), `api_id`+`api_hash`+`phone` (user mode), `data_dir`, `groups`, `webhook_port` (optional), `password` (optional, user mode 2FA)
+- [ ] Config: `mode` (`bot` | `user`), `bot_token` (bot mode), `api_id`+`api_hash`+`phone` (user mode), `data_dir`, `groups`, `webhook_port` (optional), `password` (optional, user mode 2FA), `features` (optional: `e2e_chats` (default `false`, user mode only — feature gate for the Phase 3 E2E mission), `voice_video` (default `false`, user mode only))
 - [ ] Error handling: rate limiting (429 retry, exponential backoff), auth expiry (re-prompt), file transfer failure (resumable upload)
 - [ ] Exponential backoff: initial=1s, max=120s, jitter=0-500ms (preserved from 0850f)
 - [ ] Self-loop prevention: `self_handle()` returns the bot's user_id (or user_id for user mode) to drop self-authored messages
@@ -176,7 +176,7 @@ Companion guide for code-level patterns:
 
 ## Reference Implementations
 
-The following open-source projects were studied for the design (see `docs/reviews/telegram-architecture-comparison-r1.md` for the full analysis):
+The following open-source projects were studied for the design (see `docs/reviews/telegram-architecture-comparison-r1.md` (to be created as part of this mission) for the full analysis):
 
 - **`tg` (larskluge/tg)** — 10,625 LOC Rust CLI; uses `tdlib-rs` 1.3.0; same hybrid user/bot auth pattern. Reference for the receive loop + auth persistence.
 - **`tgt` (FedericoBruzzone/tgt)** — 21,916 LOC Rust TUI; uses `tdlib-rs` 1.4.0 with static linking. Reference for the Cargo.toml `static-download` feature pattern.

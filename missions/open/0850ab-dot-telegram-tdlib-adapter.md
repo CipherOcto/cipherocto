@@ -132,7 +132,7 @@ This is a **rewrite**, not an additive feature. The migration plan is:
 - [ ] `canonicalize()` extracts envelope from both text and document messages
 - [ ] Fragmentation: large envelopes sent as multi-part documents (preserved from 0850f)
 - [ ] `CapabilityReport`: `max_payload=2_000_000_000` (2 GB), `rate_limit=30/sec per group` (unchanged), `transport_features={file_transfer, push_updates, e2e_chats:optional}`
-- [ ] `domain_id()`: `BroadcastDomainId(0x0001, BLAKE3(chat_id))` (preserved from 0850f)
+- [ ] `domain_id()`: `BroadcastDomainId(0x0001, BLAKE3("matrix:" + chat_id))` (preserved from 0850f)
 - [ ] Config: `mode` (`bot` | `user`), `bot_token` (bot mode), `api_id`+`api_hash`+`phone` (user mode), `data_dir`, `groups`, `webhook_port` (optional), `password` (optional, user mode 2FA)
 - [ ] Error handling: rate limiting (429 retry, exponential backoff), auth expiry (re-prompt), file transfer failure (resumable upload)
 - [ ] Exponential backoff: initial=1s, max=120s, jitter=0-500ms (preserved from 0850f)

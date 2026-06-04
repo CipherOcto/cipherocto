@@ -235,7 +235,7 @@ The C++ build cost is a one-time setup; the schema-maintenance savings compound 
 
 ### Why not stay on raw `reqwest`+`serde` (the `0850f` path)?
 
-The 0850f path is correct for the small-envelope use case. This mission does **not** propose removing it. The plan is:
+The 0850f path is correct for the small-envelope use case. This mission's Phase 1 replaces it with TDLib, but the overall plan re-adds it as a `bot-api-compat` Cargo feature in Phase 2 (future) so the raw-Bot-API path is preserved. The plan is:
 
 - **Default path for CipherOcto gateways** (this mission): TDLib. Gets general file transfer, user-mode, push updates.
 - **Low-dep path for resource-constrained deployments** (Phase 2, future mission): retain the 0850f raw-Bot-API implementation as a `bot-api-compat` Cargo feature.

@@ -89,7 +89,7 @@ telegram:
 
 ```
 crates/octo-adapter-telegram/
-├── Cargo.toml                    # cdylib + rlib, tdlib-rs + tokio + reqwest + blake3 + rusqlite
+├── Cargo.toml                    # cdylib + rlib. Deps: tdlib-rs (TDLib binding), tokio (async), reqwest (webhook), rusqlite (auth_key SQLite), serde+serde_json (TDLib JSON), async-trait (PlatformAdapter trait), base64 (envelope encoding), blake3 (domain_id), octo-network (workspace)
 ├── build.rs                      # tdlib-rs build orchestration
 ├── src/
 │   ├── lib.rs                    # re-exports + crate-level docs
@@ -107,7 +107,7 @@ crates/octo-adapter-telegram/
 │   ├── envelope_tests.rs         # round-trip 282-byte envelope
 │   ├── file_upload_tests.rs      # 100MB upload (10x the Bot API 10MB limit)
 │   ├── file_download_tests.rs    # 100MB download (5x the Bot API 20MB limit)
-│   ├── user_mode_tests.rs        # phone + api_id auth flow (mocked)
+│   ├── user_mode_tests.rs        # phone + api_id auth flow (mocked) — covers AC "User mode test"
 │   ├── self_loop_tests.rs        # drop self-authored messages
 │   └── integration_matrix.rs     # feature-gated: full round-trip with real Telegram test DC
 ```
@@ -142,6 +142,7 @@ This is a **rewrite**, not an additive feature. The migration plan is:
 - [ ] **100 MB file download** test (5× Bot API's 20 MB `getFile` limit) — must succeed
 - [ ] Unit tests use a mock TDLib client (no real TDLib instance required for `cargo test`)
 - [ ] Integration test (feature-gated) round-trips a real envelope against Telegram's test DC
+- [ ] User mode test: `phone + api_id + api_hash` auth flow with mocked TDLib (no real Telegram account needed for `cargo test`)
 - [ ] Binary size on Linux x86_64 release with default features: ≤ 30 MB stripped (excluding the TDLib C++ shared library)
 - [ ] Build time on Linux x86_64 release: ≤ 3 min (excluding TDLib download)
 - [ ] Cross-compile support: `cargo build --target aarch64-unknown-linux-gnu` succeeds via `cross`

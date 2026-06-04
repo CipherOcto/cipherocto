@@ -254,8 +254,7 @@ Both paths share the same `PlatformAdapter` contract from RFC-0850 §8.1, so the
 
 - [ ] A CipherOcto gateway can send a 100 MB attachment as a DOT envelope fragment through a Telegram group
 - [ ] A CipherOcto gateway can receive a 100 MB attachment as a DOT envelope fragment from a Telegram group
-- [ ] A CipherOcto user-mode gateway can read its own DMs and access E2E-encrypted chats
-- [ ] A CipherOcto bot-mode gateway can fall back to the 0850f raw-Bot-API path via `--features bot-api-compat`
+- [ ] A CipherOcto user-mode gateway can read its own DMs (E2E-encrypted chat support is Phase 3 future mission, not this)
 - [ ] The adapter's `cargo test` passes without requiring a real TDLib instance (uses mock client)
 - [ ] The adapter's binary is ≤ 30 MB stripped on Linux x86_64 release
 - [ ] The adapter cross-compiles for Linux aarch64, macOS arm64, and Windows x86_64

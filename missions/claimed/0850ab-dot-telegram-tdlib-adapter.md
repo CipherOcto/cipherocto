@@ -2,7 +2,7 @@
 
 ## Status
 
-Open
+Claimed (in progress)
 
 ## RFC
 
@@ -188,7 +188,7 @@ The following open-source projects were studied for the design (see `docs/review
 
 ## Claimant
 
-@unassigned (claim via `mv missions/open/0850ab-dot-telegram-tdlib-adapter.md missions/claimed/0850ab-dot-telegram-tdlib-adapter.md`)
+@claude-code (claimed 2026-06-05, RFC-0850 accepted v1.1.0 in commit `e2fd062`)
 
 ## Pull Request
 

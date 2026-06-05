@@ -1,17 +1,39 @@
 [package]
 name = "octo-adapter-telegram"
-version = "0.1.0"
+version = "0.2.0"
 edition = "2021"
 
 [lib]
 crate-type = ["cdylib", "rlib"]
 
+[features]
+# Default: mock TDLib client, no real TDLib dependency. All unit tests run with this.
+default = []
+# Real TDLib: enables tdlib-rs + rusqlite for auth_key persistence. Adds 150MB TDLib binary + C++ build cost.
+real-tdlib = ["dep:tdlib-rs", "dep:rusqlite"]
+
 [dependencies]
+# Async runtime
+tokio = { version = "1.35", features = ["rt-multi-thread", "macros", "time"] }
+# Serialization
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
-reqwest = { version = "0.12", features = ["json", "multipart"] }
-tokio = { version = "1.35", features = ["rt-multi-thread", "macros", "time"] }
+# Hashing (preserved from 0850f for domain_id)
 blake3 = "1.5"
+# Base64 encoding for envelopes (preserved from 0850f, URL_SAFE_NO_PAD)
 base64 = "0.22"
+# Async traits (PlatformAdapter, TelegramClient)
 async-trait = "0.1"
+# Error handling
+thiserror = "2.0"
+# HTTP (webhook fallback, preserved from 0850f)
+reqwest = { version = "0.12", features = ["json", "multipart"] }
+# Workspace crate providing PlatformAdapter, CapabilityReport, BroadcastDomainId, DeterministicEnvelope
 octo-network = { path = "../octo-network" }
+# Real TDLib (optional, behind feature flag)
+tdlib-rs = { version = "1.4", optional = true }
+rusqlite = { version = "0.37", features = ["bundled"], optional = true }
+
+[dev-dependencies]
+# Test helpers
+tokio = { version = "1.35", features = ["test-util"] }

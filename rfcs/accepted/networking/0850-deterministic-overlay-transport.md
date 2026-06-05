@@ -1,9 +1,9 @@
 ---
 title: "RFC-0850: Deterministic Overlay Transport (DOT)"
-status: Draft
-version: 1.0.0
+status: Accepted
+version: 1.1.0
 created: 2026-05-25
-updated: 2026-05-25
+updated: 2026-06-05
 authors:
   - CipherOcto Core Team
 related:
@@ -18,7 +18,7 @@ related:
 
 ## Status
 
-Draft
+Accepted (v1.1.0)
 
 ## Authors
 

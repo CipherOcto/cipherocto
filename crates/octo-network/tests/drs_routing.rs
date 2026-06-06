@@ -13,7 +13,15 @@ use octo_network::mon::routing::{
     compute_route_commitment, MissionRouteTable, RouteEntry, RouteIsolationGuard,
 };
 
-fn make_route(id_byte: u8, trust: u64, bw: u16, lat: u16, censor: u16, cost: u64, epoch: u64) -> DeterministicRoute {
+fn make_route(
+    id_byte: u8,
+    trust: u64,
+    bw: u16,
+    lat: u16,
+    censor: u16,
+    cost: u64,
+    epoch: u64,
+) -> DeterministicRoute {
     DeterministicRoute {
         route_id: {
             let mut arr = [0u8; 32];
@@ -301,10 +309,7 @@ fn test_mission_route_table_lifecycle() {
 
 #[test]
 fn test_route_isolation_guard() {
-    let guard = RouteIsolationGuard::new(
-        [0xAA; 32],
-        vec![[0x01; 32], [0x02; 32]],
-    );
+    let guard = RouteIsolationGuard::new([0xAA; 32], vec![[0x01; 32], [0x02; 32]]);
 
     assert!(guard.is_authorized(&[0xAA; 32], &[0x01; 32]));
     assert!(guard.is_authorized(&[0xAA; 32], &[0x02; 32]));

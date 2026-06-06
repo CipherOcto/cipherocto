@@ -4,7 +4,9 @@
 //! canonical ordering → eviction → fee distribution.
 //! Also tests cross-module interactions with DGP propagation domain.
 
-use octo_network::dom::admission::{check_admission, AdmissionConfig, ReplayCache, SequenceTracker};
+use octo_network::dom::admission::{
+    check_admission, AdmissionConfig, ReplayCache, SequenceTracker,
+};
 use octo_network::dom::economics::{compute_intent_fee, distribute_fee};
 use octo_network::dom::eviction::find_eviction_target;
 use octo_network::dom::ordering::canonical_sort;
@@ -42,7 +44,17 @@ fn make_intent(
 
 #[test]
 fn test_full_lifecycle_admission_to_pool() {
-    let intent = make_intent(0x01, 0xAA, 0xBB, IntentType::Transaction as u16, ExecutionClass::Economic as u16, 1, 100, 200, 500);
+    let intent = make_intent(
+        0x01,
+        0xAA,
+        0xBB,
+        IntentType::Transaction as u16,
+        ExecutionClass::Economic as u16,
+        1,
+        100,
+        200,
+        500,
+    );
 
     // Admission checks pass (skip signature since we use zeroed keys)
     let replay_cache = ReplayCache::new();
@@ -57,7 +69,17 @@ fn test_full_lifecycle_admission_to_pool() {
 
 #[test]
 fn test_admission_expiration_rejected() {
-    let intent = make_intent(0x01, 0xAA, 0xBB, IntentType::Transaction as u16, ExecutionClass::Economic as u16, 1, 100, 100, 500);
+    let intent = make_intent(
+        0x01,
+        0xAA,
+        0xBB,
+        IntentType::Transaction as u16,
+        ExecutionClass::Economic as u16,
+        1,
+        100,
+        100,
+        500,
+    );
 
     let replay_cache = ReplayCache::new();
     let seq_tracker = SequenceTracker::new();
@@ -70,7 +92,17 @@ fn test_admission_expiration_rejected() {
 
 #[test]
 fn test_admission_replay_rejected() {
-    let intent = make_intent(0x01, 0xAA, 0xBB, IntentType::Transaction as u16, ExecutionClass::Economic as u16, 1, 100, 200, 500);
+    let intent = make_intent(
+        0x01,
+        0xAA,
+        0xBB,
+        IntentType::Transaction as u16,
+        ExecutionClass::Economic as u16,
+        1,
+        100,
+        200,
+        500,
+    );
 
     let mut replay_cache = ReplayCache::new();
     replay_cache.insert(intent.intent_id, 50);
@@ -86,7 +118,17 @@ fn test_admission_replay_rejected() {
 
 #[test]
 fn test_admission_invalid_intent_type() {
-    let intent = make_intent(0x01, 0xAA, 0xBB, 0x0009, ExecutionClass::Standard as u16, 1, 100, 200, 500);
+    let intent = make_intent(
+        0x01,
+        0xAA,
+        0xBB,
+        0x0009,
+        ExecutionClass::Standard as u16,
+        1,
+        100,
+        200,
+        500,
+    );
 
     let replay_cache = ReplayCache::new();
     let seq_tracker = SequenceTracker::new();
@@ -99,7 +141,17 @@ fn test_admission_invalid_intent_type() {
 
 #[test]
 fn test_admission_capacity_exceeded() {
-    let intent = make_intent(0x01, 0xAA, 0xBB, IntentType::Transaction as u16, ExecutionClass::Economic as u16, 1, 100, 200, 500);
+    let intent = make_intent(
+        0x01,
+        0xAA,
+        0xBB,
+        IntentType::Transaction as u16,
+        ExecutionClass::Economic as u16,
+        1,
+        100,
+        200,
+        500,
+    );
 
     let replay_cache = ReplayCache::new();
     let seq_tracker = SequenceTracker::new();
@@ -143,9 +195,39 @@ fn test_pool_canonical_ordering() {
     pool.register_mission(mission, 0x0003);
 
     // Insert in reverse priority order
-    let intent_low = make_intent(0x03, 0xAA, 0xAA, 0x0001, ExecutionClass::Standard as u16, 3, 300, 400, 100);
-    let intent_high = make_intent(0x01, 0xAA, 0xAA, 0x0001, ExecutionClass::Consensus as u16, 1, 100, 200, 500);
-    let intent_mid = make_intent(0x02, 0xAA, 0xAA, 0x0001, ExecutionClass::Economic as u16, 2, 200, 300, 300);
+    let intent_low = make_intent(
+        0x03,
+        0xAA,
+        0xAA,
+        0x0001,
+        ExecutionClass::Standard as u16,
+        3,
+        300,
+        400,
+        100,
+    );
+    let intent_high = make_intent(
+        0x01,
+        0xAA,
+        0xAA,
+        0x0001,
+        ExecutionClass::Consensus as u16,
+        1,
+        100,
+        200,
+        500,
+    );
+    let intent_mid = make_intent(
+        0x02,
+        0xAA,
+        0xAA,
+        0x0001,
+        ExecutionClass::Economic as u16,
+        2,
+        200,
+        300,
+        300,
+    );
 
     pool.insert(intent_low).unwrap();
     pool.insert(intent_high).unwrap();
@@ -197,10 +279,18 @@ fn test_pool_global_capacity_enforced() {
     let mission = [0xAA; 32];
     pool.register_mission(mission, 0x0003);
 
-    pool.insert(make_intent(0x01, 0xAA, 0xAA, 0x0001, 0x0003, 1, 100, 200, 100)).unwrap();
-    pool.insert(make_intent(0x02, 0xAA, 0xAA, 0x0001, 0x0003, 2, 100, 200, 100)).unwrap();
+    pool.insert(make_intent(
+        0x01, 0xAA, 0xAA, 0x0001, 0x0003, 1, 100, 200, 100,
+    ))
+    .unwrap();
+    pool.insert(make_intent(
+        0x02, 0xAA, 0xAA, 0x0001, 0x0003, 2, 100, 200, 100,
+    ))
+    .unwrap();
 
-    let result = pool.insert(make_intent(0x03, 0xAA, 0xAA, 0x0001, 0x0003, 3, 100, 200, 100));
+    let result = pool.insert(make_intent(
+        0x03, 0xAA, 0xAA, 0x0001, 0x0003, 3, 100, 200, 100,
+    ));
     assert!(result.is_err());
     assert!(format!("{}", result.unwrap_err()).contains("Capacity"));
 }
@@ -210,9 +300,39 @@ fn test_pool_global_capacity_enforced() {
 fn test_eviction_priority_ordering() {
     // Low class (archive) should be evicted first
     let intents = vec![
-        make_intent(0x01, 0xAA, 0xBB, 0x0001, ExecutionClass::Consensus as u16, 1, 100, 200, 1000),
-        make_intent(0x02, 0xAA, 0xBB, 0x0001, ExecutionClass::Archive as u16, 1, 100, 200, 1000),
-        make_intent(0x03, 0xAA, 0xBB, 0x0001, ExecutionClass::Standard as u16, 1, 100, 200, 1000),
+        make_intent(
+            0x01,
+            0xAA,
+            0xBB,
+            0x0001,
+            ExecutionClass::Consensus as u16,
+            1,
+            100,
+            200,
+            1000,
+        ),
+        make_intent(
+            0x02,
+            0xAA,
+            0xBB,
+            0x0001,
+            ExecutionClass::Archive as u16,
+            1,
+            100,
+            200,
+            1000,
+        ),
+        make_intent(
+            0x03,
+            0xAA,
+            0xBB,
+            0x0001,
+            ExecutionClass::Standard as u16,
+            1,
+            100,
+            200,
+            1000,
+        ),
     ];
 
     let idx = find_eviction_target(&intents).unwrap();
@@ -223,9 +343,39 @@ fn test_eviction_priority_ordering() {
 #[test]
 fn test_canonical_sort_deterministic_across_calls() {
     let mut intents = vec![
-        make_intent(0x03, 0xAA, 0xBB, 0x0001, ExecutionClass::Standard as u16, 3, 300, 400, 100),
-        make_intent(0x01, 0xAA, 0xBB, 0x0001, ExecutionClass::Consensus as u16, 1, 100, 200, 500),
-        make_intent(0x02, 0xAA, 0xBB, 0x0001, ExecutionClass::Economic as u16, 2, 200, 300, 300),
+        make_intent(
+            0x03,
+            0xAA,
+            0xBB,
+            0x0001,
+            ExecutionClass::Standard as u16,
+            3,
+            300,
+            400,
+            100,
+        ),
+        make_intent(
+            0x01,
+            0xAA,
+            0xBB,
+            0x0001,
+            ExecutionClass::Consensus as u16,
+            1,
+            100,
+            200,
+            500,
+        ),
+        make_intent(
+            0x02,
+            0xAA,
+            0xBB,
+            0x0001,
+            ExecutionClass::Economic as u16,
+            2,
+            200,
+            300,
+            300,
+        ),
     ];
 
     canonical_sort(&mut intents);
@@ -248,8 +398,28 @@ fn test_fee_distribution_sums_to_total() {
 #[test]
 fn test_fee_by_execution_class() {
     // Higher class = higher multiplier = higher fee
-    let intent_consensus = make_intent(0x01, 0xAA, 0xBB, 0x0001, ExecutionClass::Consensus as u16, 1, 100, 200, 100);
-    let intent_standard = make_intent(0x02, 0xAA, 0xBB, 0x0001, ExecutionClass::Standard as u16, 1, 100, 200, 100);
+    let intent_consensus = make_intent(
+        0x01,
+        0xAA,
+        0xBB,
+        0x0001,
+        ExecutionClass::Consensus as u16,
+        1,
+        100,
+        200,
+        100,
+    );
+    let intent_standard = make_intent(
+        0x02,
+        0xAA,
+        0xBB,
+        0x0001,
+        ExecutionClass::Standard as u16,
+        1,
+        100,
+        200,
+        100,
+    );
 
     let fee_c = compute_intent_fee(&intent_consensus, 0);
     let fee_s = compute_intent_fee(&intent_standard, 0);

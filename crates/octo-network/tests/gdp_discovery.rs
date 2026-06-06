@@ -5,12 +5,14 @@
 
 use octo_network::gdp::advertisement::GatewayAdvertisement;
 use octo_network::gdp::discovery::{
-    default_ttl, min_octo_b_for_scope, min_octo_for_scope, DiscoveryState, BootstrapMethod, ScopeFilter,
-    TTL_GLOBAL, TTL_LOCAL, TTL_REGIONAL,
+    default_ttl, min_octo_b_for_scope, min_octo_for_scope, BootstrapMethod, DiscoveryState,
+    ScopeFilter, TTL_GLOBAL, TTL_LOCAL, TTL_REGIONAL,
 };
 use octo_network::gdp::heartbeat::GatewayHeartbeat;
 use octo_network::gdp::identity::GdpGatewayIdentity;
-use octo_network::gdp::types::{DiscoveryLifecycle, DiscoveryScope, GatewayCapability, StakeRequirement};
+use octo_network::gdp::types::{
+    DiscoveryLifecycle, DiscoveryScope, GatewayCapability, StakeRequirement,
+};
 
 use octo_network::dot::gateway::{GatewayClass, GatewayIdentity};
 
@@ -195,7 +197,9 @@ fn test_discovery_state_degradation() {
 
 #[test]
 fn test_gateway_capability_bitmask() {
-    let caps = GatewayCapability::Edge as u64 | GatewayCapability::Relay as u64 | GatewayCapability::Stealth as u64;
+    let caps = GatewayCapability::Edge as u64
+        | GatewayCapability::Relay as u64
+        | GatewayCapability::Stealth as u64;
     assert!(caps & GatewayCapability::Edge as u64 != 0);
     assert!(caps & GatewayCapability::Relay as u64 != 0);
     assert!(caps & GatewayCapability::Stealth as u64 != 0);

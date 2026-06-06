@@ -5,9 +5,12 @@ use std::time::Duration;
 
 use octo_network::dot::adapters::{CapabilityReport, MediaCapabilities};
 use octo_network::dot::domain::{BroadcastDomainId, PlatformType};
-use octo_network::dot::envelope::{DeterministicEnvelope, MessageType, ObfuscatedEnvelope, PrivacyConfig, SealedEnvelope};
+use octo_network::dot::envelope::{
+    DeterministicEnvelope, MessageType, ObfuscatedEnvelope, PrivacyConfig, SealedEnvelope,
+};
 use octo_network::dot::fragment::{
-    fragment_envelope, fragments_complete, reassemble_fragments, EnvelopeFragment, PlatformLimit, ReassemblyState,
+    fragment_envelope, fragments_complete, reassemble_fragments, EnvelopeFragment, PlatformLimit,
+    ReassemblyState,
 };
 use octo_network::dot::gateway::{
     FederationPeer, FederationState, GatewayCapacity, GatewayClass, GatewayIdentity,
@@ -86,18 +89,28 @@ fn test_platform_type_all_variants() {
 fn test_broadcast_domain_all_platforms() {
     // Each platform produces a different domain hash
     let platforms = [
-        PlatformType::Telegram, PlatformType::Discord, PlatformType::Matrix,
-        PlatformType::Nostr, PlatformType::Signal, PlatformType::IRC,
-        PlatformType::NativeP2P, PlatformType::Quic,
+        PlatformType::Telegram,
+        PlatformType::Discord,
+        PlatformType::Matrix,
+        PlatformType::Nostr,
+        PlatformType::Signal,
+        PlatformType::IRC,
+        PlatformType::NativeP2P,
+        PlatformType::Quic,
     ];
-    let hashes: Vec<[u8; 32]> = platforms.iter().map(|p| {
-        BroadcastDomainId::new(*p, "test").domain_hash
-    }).collect();
+    let hashes: Vec<[u8; 32]> = platforms
+        .iter()
+        .map(|p| BroadcastDomainId::new(*p, "test").domain_hash)
+        .collect();
 
     // All should be unique
     for i in 0..hashes.len() {
-        for j in (i+1)..hashes.len() {
-            assert_ne!(hashes[i], hashes[j], "platforms {:?} and {:?} collide", platforms[i], platforms[j]);
+        for j in (i + 1)..hashes.len() {
+            assert_ne!(
+                hashes[i], hashes[j],
+                "platforms {:?} and {:?} collide",
+                platforms[i], platforms[j]
+            );
         }
     }
 }
@@ -147,12 +160,7 @@ fn test_envelope_stealth_flag() {
 #[test]
 fn test_sealed_envelope_lifecycle() {
     let env = make_envelope(0xAA);
-    let sealed = SealedEnvelope::new(
-        env.clone(),
-        vec![0xCD; 128],
-        [0xAB; 12],
-        [0xEF; 32],
-    );
+    let sealed = SealedEnvelope::new(env.clone(), vec![0xCD; 128], [0xAB; 12], [0xEF; 32]);
 
     assert_eq!(sealed.envelope.envelope_id, env.envelope_id);
     assert_eq!(sealed.nonce, [0xAB; 12]);
@@ -242,7 +250,8 @@ fn test_fragment_integrity_hash_mismatch() {
     let payload = vec![0xAB; 100];
     let correct_hash = *blake3::hash(&payload).as_bytes();
 
-    let mut fragments = fragment_envelope(correct_hash, [0xAA; 32], &payload, PlatformLimit::Irc).unwrap();
+    let mut fragments =
+        fragment_envelope(correct_hash, [0xAA; 32], &payload, PlatformLimit::Irc).unwrap();
     // Tamper one fragment's envelope_hash
     fragments[0].envelope_hash[0] ^= 0xFF;
 

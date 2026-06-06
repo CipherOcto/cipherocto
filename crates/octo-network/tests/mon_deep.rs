@@ -5,14 +5,16 @@ use octo_network::mon::discovery::{
     scope_to_gdp_scope, MissionAdvertisement, MissionDiscoveryScope, EPHEMERAL_ADVERTISEMENT_TTL,
 };
 use octo_network::mon::execution::{
-    ExecutionTask, ExecutorCapability, JobDistributor, ProofCarryingResult, SwarmCoordinator, TaskResult, task_type,
+    task_type, ExecutionTask, ExecutorCapability, JobDistributor, ProofCarryingResult,
+    SwarmCoordinator, TaskResult,
 };
 use octo_network::mon::governance::{
-    DecisionType, EmergencyAuthority, GovernanceModel, GovernancePolicy, GovernanceProposal, ProposalState,
+    DecisionType, EmergencyAuthority, GovernanceModel, GovernancePolicy, GovernanceProposal,
+    ProposalState,
 };
 use octo_network::mon::lifecycle::{
-    is_valid_transition, min_participants_for_state_transition, tolerance_threshold,
-    DEFAULT_HEARTBEAT_INTERVAL, DEFAULT_MISSED_HEARTBEATS, MissionState, TransitionTrigger,
+    is_valid_transition, min_participants_for_state_transition, tolerance_threshold, MissionState,
+    TransitionTrigger, DEFAULT_HEARTBEAT_INTERVAL, DEFAULT_MISSED_HEARTBEATS,
 };
 use octo_network::mon::mission_id::MissionId;
 
@@ -83,7 +85,11 @@ fn test_proof_carrying_result_empty_blob() {
         proof_commitment: [0u8; 32],
         epoch: 100,
     };
-    let pcr = ProofCarryingResult { result, proof_blob: vec![], public_inputs: vec![] };
+    let pcr = ProofCarryingResult {
+        result,
+        proof_blob: vec![],
+        public_inputs: vec![],
+    };
     assert!(pcr.verify_proof_commitment());
 }
 
@@ -92,20 +98,34 @@ fn test_proof_carrying_result_with_blob() {
     let blob = vec![0xAB; 64];
     let commitment = *blake3::hash(&blob).as_bytes();
     let result = TaskResult {
-        task_id: [0x01; 32], executor_id: [0x02; 32], result_hash: [0x03; 32],
-        proof_commitment: commitment, epoch: 100,
+        task_id: [0x01; 32],
+        executor_id: [0x02; 32],
+        result_hash: [0x03; 32],
+        proof_commitment: commitment,
+        epoch: 100,
     };
-    let pcr = ProofCarryingResult { result, proof_blob: blob, public_inputs: vec![[0xDD; 32]] };
+    let pcr = ProofCarryingResult {
+        result,
+        proof_blob: blob,
+        public_inputs: vec![[0xDD; 32]],
+    };
     assert!(pcr.verify_proof_commitment());
 }
 
 #[test]
 fn test_proof_carrying_result_mismatch() {
     let result = TaskResult {
-        task_id: [0x01; 32], executor_id: [0x02; 32], result_hash: [0x03; 32],
-        proof_commitment: [0xFF; 32], epoch: 100,
+        task_id: [0x01; 32],
+        executor_id: [0x02; 32],
+        result_hash: [0x03; 32],
+        proof_commitment: [0xFF; 32],
+        epoch: 100,
     };
-    let pcr = ProofCarryingResult { result, proof_blob: vec![0xAB; 64], public_inputs: vec![] };
+    let pcr = ProofCarryingResult {
+        result,
+        proof_blob: vec![0xAB; 64],
+        public_inputs: vec![],
+    };
     assert!(!pcr.verify_proof_commitment());
 }
 
@@ -210,9 +230,8 @@ fn test_swarm_coordinator_lifecycle() {
 
 #[test]
 fn test_governance_proposal_full_lifecycle() {
-    let mut proposal = GovernanceProposal::new(
-        [0xAA; 32], DecisionType::Admission, [0x42; 32], 100, 200,
-    );
+    let mut proposal =
+        GovernanceProposal::new([0xAA; 32], DecisionType::Admission, [0x42; 32], 100, 200);
     assert_eq!(proposal.state, ProposalState::Created);
 
     assert!(proposal.open_voting());
@@ -229,22 +248,25 @@ fn test_governance_proposal_full_lifecycle() {
 
 #[test]
 fn test_governance_proposal_cant_vote_before_open() {
-    let mut proposal = GovernanceProposal::new(
-        [0xAA; 32], DecisionType::Admission, [0x42; 32], 100, 200,
-    );
+    let mut proposal =
+        GovernanceProposal::new([0xAA; 32], DecisionType::Admission, [0x42; 32], 100, 200);
     assert!(!proposal.cast_vote([0x01; 32], 100, true));
 }
 
 #[test]
 fn test_governance_resolve_centralized() {
-    let mut proposal = GovernanceProposal::new(
-        [0xAA; 32], DecisionType::Admission, [0x42; 32], 100, 200,
-    );
+    let mut proposal =
+        GovernanceProposal::new([0xAA; 32], DecisionType::Admission, [0x42; 32], 100, 200);
     proposal.open_voting();
 
     let policy = GovernancePolicy::new(
-        GovernanceModel::Centralized, 1, 1, 10, EmergencyAuthority::Coordinator,
-    ).unwrap();
+        GovernanceModel::Centralized,
+        1,
+        1,
+        10,
+        EmergencyAuthority::Coordinator,
+    )
+    .unwrap();
 
     let state = proposal.resolve(&policy, 10);
     assert_eq!(state, ProposalState::Approved);
@@ -252,41 +274,48 @@ fn test_governance_resolve_centralized() {
 
 #[test]
 fn test_governance_resolve_autonomous() {
-    let mut proposal = GovernanceProposal::new(
-        [0xAA; 32], DecisionType::Admission, [0x42; 32], 100, 200,
-    );
+    let mut proposal =
+        GovernanceProposal::new([0xAA; 32], DecisionType::Admission, [0x42; 32], 100, 200);
     proposal.open_voting();
     proposal.cast_vote([0x01; 32], 100, true);
     proposal.cast_vote([0x02; 32], 50, false);
 
     let policy = GovernancePolicy::new(
-        GovernanceModel::Autonomous, 1, 1, 10, EmergencyAuthority::None,
-    ).unwrap();
+        GovernanceModel::Autonomous,
+        1,
+        1,
+        10,
+        EmergencyAuthority::None,
+    )
+    .unwrap();
 
     assert_eq!(proposal.resolve(&policy, 10), ProposalState::Approved);
 }
 
 #[test]
 fn test_governance_resolve_autonomous_reject() {
-    let mut proposal = GovernanceProposal::new(
-        [0xAA; 32], DecisionType::Admission, [0x42; 32], 100, 200,
-    );
+    let mut proposal =
+        GovernanceProposal::new([0xAA; 32], DecisionType::Admission, [0x42; 32], 100, 200);
     proposal.open_voting();
     proposal.cast_vote([0x01; 32], 30, true);
     proposal.cast_vote([0x02; 32], 100, false);
 
     let policy = GovernancePolicy::new(
-        GovernanceModel::Autonomous, 1, 1, 10, EmergencyAuthority::None,
-    ).unwrap();
+        GovernanceModel::Autonomous,
+        1,
+        1,
+        10,
+        EmergencyAuthority::None,
+    )
+    .unwrap();
 
     assert_eq!(proposal.resolve(&policy, 10), ProposalState::Rejected);
 }
 
 #[test]
 fn test_governance_resolve_dao_quorum_met() {
-    let mut proposal = GovernanceProposal::new(
-        [0xAA; 32], DecisionType::Admission, [0x42; 32], 100, 200,
-    );
+    let mut proposal =
+        GovernanceProposal::new([0xAA; 32], DecisionType::Admission, [0x42; 32], 100, 200);
     proposal.open_voting();
     proposal.cast_vote([0x01; 32], 100, true);
     proposal.cast_vote([0x02; 32], 50, true);
@@ -298,9 +327,8 @@ fn test_governance_resolve_dao_quorum_met() {
 
 #[test]
 fn test_governance_resolve_not_voting() {
-    let mut proposal = GovernanceProposal::new(
-        [0xAA; 32], DecisionType::Admission, [0x42; 32], 100, 200,
-    );
+    let mut proposal =
+        GovernanceProposal::new([0xAA; 32], DecisionType::Admission, [0x42; 32], 100, 200);
     let policy = GovernancePolicy::default_dao();
     assert_eq!(proposal.resolve(&policy, 10), ProposalState::Created);
 }
@@ -320,11 +348,26 @@ fn test_decision_type_variants() {
 
 #[test]
 fn test_mission_discovery_scope_all() {
-    assert_eq!(MissionDiscoveryScope::from_u16(0x0100), Some(MissionDiscoveryScope::Public));
-    assert_eq!(MissionDiscoveryScope::from_u16(0x0101), Some(MissionDiscoveryScope::InviteOnly));
-    assert_eq!(MissionDiscoveryScope::from_u16(0x0102), Some(MissionDiscoveryScope::Stealth));
-    assert_eq!(MissionDiscoveryScope::from_u16(0x0103), Some(MissionDiscoveryScope::Federated));
-    assert_eq!(MissionDiscoveryScope::from_u16(0x0104), Some(MissionDiscoveryScope::Ephemeral));
+    assert_eq!(
+        MissionDiscoveryScope::from_u16(0x0100),
+        Some(MissionDiscoveryScope::Public)
+    );
+    assert_eq!(
+        MissionDiscoveryScope::from_u16(0x0101),
+        Some(MissionDiscoveryScope::InviteOnly)
+    );
+    assert_eq!(
+        MissionDiscoveryScope::from_u16(0x0102),
+        Some(MissionDiscoveryScope::Stealth)
+    );
+    assert_eq!(
+        MissionDiscoveryScope::from_u16(0x0103),
+        Some(MissionDiscoveryScope::Federated)
+    );
+    assert_eq!(
+        MissionDiscoveryScope::from_u16(0x0104),
+        Some(MissionDiscoveryScope::Ephemeral)
+    );
     assert!(MissionDiscoveryScope::from_u16(0x0000).is_none());
 }
 
@@ -339,13 +382,19 @@ fn test_mission_discovery_scope_encryption() {
 fn test_mission_discovery_scope_ttl() {
     assert_eq!(MissionDiscoveryScope::Public.default_ttl(), 20);
     assert_eq!(MissionDiscoveryScope::Stealth.default_ttl(), 5);
-    assert_eq!(MissionDiscoveryScope::Ephemeral.default_ttl(), EPHEMERAL_ADVERTISEMENT_TTL);
+    assert_eq!(
+        MissionDiscoveryScope::Ephemeral.default_ttl(),
+        EPHEMERAL_ADVERTISEMENT_TTL
+    );
 }
 
 #[test]
 fn test_scope_to_gdp_scope_mapping() {
     assert_eq!(scope_to_gdp_scope(MissionDiscoveryScope::Public), 0x0004);
-    assert_eq!(scope_to_gdp_scope(MissionDiscoveryScope::InviteOnly), 0x0005);
+    assert_eq!(
+        scope_to_gdp_scope(MissionDiscoveryScope::InviteOnly),
+        0x0005
+    );
     assert_eq!(scope_to_gdp_scope(MissionDiscoveryScope::Stealth), 0x0005);
     assert_eq!(scope_to_gdp_scope(MissionDiscoveryScope::Federated), 0x0002);
     assert_eq!(scope_to_gdp_scope(MissionDiscoveryScope::Ephemeral), 0x0003);
@@ -355,7 +404,13 @@ fn test_scope_to_gdp_scope_mapping() {
 fn test_mission_advertisement_creation() {
     let mission_id = make_mission_id(0xAA);
     let adv = MissionAdvertisement::new(
-        mission_id, [0xBB; 32], MissionDiscoveryScope::Public, 5, 2, [0x42; 32], 1000,
+        mission_id,
+        [0xBB; 32],
+        MissionDiscoveryScope::Public,
+        5,
+        2,
+        [0x42; 32],
+        1000,
     );
     assert_eq!(adv.participant_count, 5);
     assert_eq!(adv.min_participants, 2);
@@ -367,8 +422,14 @@ fn test_mission_advertisement_creation() {
 
 #[test]
 fn test_min_participants() {
-    assert_eq!(min_participants_for_state_transition(MissionState::Discovering), 2);
-    assert_eq!(min_participants_for_state_transition(MissionState::Active), 0);
+    assert_eq!(
+        min_participants_for_state_transition(MissionState::Discovering),
+        2
+    );
+    assert_eq!(
+        min_participants_for_state_transition(MissionState::Active),
+        0
+    );
 }
 
 #[test]

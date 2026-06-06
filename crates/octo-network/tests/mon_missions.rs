@@ -3,19 +3,16 @@
 //! Tests the full mission lifecycle: MissionId creation → membership →
 //! role validation → governance → route table → lifecycle state machine.
 
-use octo_network::mon::governance::{
-    EmergencyAuthority, GovernanceModel, GovernancePolicy,
-};
+use octo_network::mon::governance::{EmergencyAuthority, GovernanceModel, GovernancePolicy};
 use octo_network::mon::lifecycle::{is_valid_transition, tolerance_threshold, MissionState};
 use octo_network::mon::membership::{
     compute_membership_commitment, is_valid_role_combination, validate_role_assignment,
-    ROLE_COORDINATOR, ROLE_EXECUTOR, ROLE_OBSERVER,
-    ROLE_PROVER, ROLE_RELAY, ROLE_VALIDATOR,
+    ROLE_COORDINATOR, ROLE_EXECUTOR, ROLE_OBSERVER, ROLE_PROVER, ROLE_RELAY, ROLE_VALIDATOR,
 };
 use octo_network::mon::mission_id::{MissionId, MissionType};
 use octo_network::mon::routing::{
-    compute_route_commitment, compute_route_table_merkle,
-    RouteEntry, RouteIsolationGuard, MissionRouteTable,
+    compute_route_commitment, compute_route_table_merkle, MissionRouteTable, RouteEntry,
+    RouteIsolationGuard,
 };
 
 // ── MissionId lifecycle ──
@@ -70,22 +67,58 @@ fn test_mission_type_repr() {
 
 #[test]
 fn test_valid_lifecycle_progression() {
-    assert!(is_valid_transition(MissionState::Created, MissionState::Discovering));
-    assert!(is_valid_transition(MissionState::Discovering, MissionState::Forming));
-    assert!(is_valid_transition(MissionState::Forming, MissionState::Active));
-    assert!(is_valid_transition(MissionState::Active, MissionState::Degraded));
-    assert!(is_valid_transition(MissionState::Degraded, MissionState::Recovering));
-    assert!(is_valid_transition(MissionState::Recovering, MissionState::Active));
-    assert!(is_valid_transition(MissionState::Active, MissionState::Terminated));
-    assert!(is_valid_transition(MissionState::Terminated, MissionState::Archived));
+    assert!(is_valid_transition(
+        MissionState::Created,
+        MissionState::Discovering
+    ));
+    assert!(is_valid_transition(
+        MissionState::Discovering,
+        MissionState::Forming
+    ));
+    assert!(is_valid_transition(
+        MissionState::Forming,
+        MissionState::Active
+    ));
+    assert!(is_valid_transition(
+        MissionState::Active,
+        MissionState::Degraded
+    ));
+    assert!(is_valid_transition(
+        MissionState::Degraded,
+        MissionState::Recovering
+    ));
+    assert!(is_valid_transition(
+        MissionState::Recovering,
+        MissionState::Active
+    ));
+    assert!(is_valid_transition(
+        MissionState::Active,
+        MissionState::Terminated
+    ));
+    assert!(is_valid_transition(
+        MissionState::Terminated,
+        MissionState::Archived
+    ));
 }
 
 #[test]
 fn test_invalid_lifecycle_transitions() {
-    assert!(!is_valid_transition(MissionState::Created, MissionState::Active));
-    assert!(!is_valid_transition(MissionState::Active, MissionState::Created));
-    assert!(!is_valid_transition(MissionState::Archived, MissionState::Active));
-    assert!(!is_valid_transition(MissionState::Terminated, MissionState::Active));
+    assert!(!is_valid_transition(
+        MissionState::Created,
+        MissionState::Active
+    ));
+    assert!(!is_valid_transition(
+        MissionState::Active,
+        MissionState::Created
+    ));
+    assert!(!is_valid_transition(
+        MissionState::Archived,
+        MissionState::Active
+    ));
+    assert!(!is_valid_transition(
+        MissionState::Terminated,
+        MissionState::Active
+    ));
 }
 
 #[test]
@@ -182,8 +215,14 @@ fn test_governance_quorum() {
 
 #[test]
 fn test_governance_model_enum() {
-    assert_eq!(GovernanceModel::from_u16(0x0001), Some(GovernanceModel::Centralized));
-    assert_eq!(GovernanceModel::from_u16(0x0005), Some(GovernanceModel::Autonomous));
+    assert_eq!(
+        GovernanceModel::from_u16(0x0001),
+        Some(GovernanceModel::Centralized)
+    );
+    assert_eq!(
+        GovernanceModel::from_u16(0x0005),
+        Some(GovernanceModel::Autonomous)
+    );
     assert!(GovernanceModel::from_u16(0x0006).is_none());
 }
 
@@ -242,10 +281,7 @@ fn test_route_table_merkle_root_deterministic() {
 
 #[test]
 fn test_route_isolation_guard() {
-    let guard = RouteIsolationGuard::new(
-        [0xAA; 32],
-        vec![[0x01; 32], [0x02; 32]],
-    );
+    let guard = RouteIsolationGuard::new([0xAA; 32], vec![[0x01; 32], [0x02; 32]]);
 
     assert!(guard.is_authorized(&[0xAA; 32], &[0x01; 32]));
     assert!(!guard.is_authorized(&[0xAA; 32], &[0x03; 32]));

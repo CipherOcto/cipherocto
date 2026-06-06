@@ -9,7 +9,7 @@ use octo_network::ocrypt::session::{
     decrypt, derive_consensus_nonce, derive_envelope_key, derive_nonce, derive_session_key,
     encrypt, KEY_SIZE, NONCE_SIZE,
 };
-use octo_network::ocrypt::suite::{DEFAULT_SUITE};
+use octo_network::ocrypt::suite::DEFAULT_SUITE;
 
 // ── HKDF-BLAKE3 ──
 
@@ -68,10 +68,12 @@ fn test_identity_different_epoch_different_id() {
 
 #[test]
 fn test_identity_builder_and_signing() {
-    let identity = OverlayIdentity::new([0x42; 32], 100)
-        .with_capabilities_root([0xAA; 32]);
+    let identity = OverlayIdentity::new([0x42; 32], 100).with_capabilities_root([0xAA; 32]);
 
-    assert_eq!(identity.peer_id, OverlayIdentity::derive_peer_id(&[0x42; 32], 100));
+    assert_eq!(
+        identity.peer_id,
+        OverlayIdentity::derive_peer_id(&[0x42; 32], 100)
+    );
     assert_eq!(identity.capabilities_root, [0xAA; 32]);
 
     let signing_bytes = identity.to_signing_bytes();

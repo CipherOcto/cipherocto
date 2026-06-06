@@ -1,11 +1,15 @@
 //! Deep coverage tests for DGP — retention manager, compression payloads,
 //! anti-entropy edge cases, first_valid_hash_wins, more scope/ordering coverage.
 
-use octo_network::dgp::anti_entropy::{AntiEntropyReconciler, GossipStateSummary, ReconciliationConfig};
-use octo_network::dgp::compression::{BloomSummary, BitmapSummary, RetentionClass, RetentionManager};
+use octo_network::dgp::anti_entropy::{
+    AntiEntropyReconciler, GossipStateSummary, ReconciliationConfig,
+};
+use octo_network::dgp::compression::{
+    BitmapSummary, BloomSummary, RetentionClass, RetentionManager,
+};
 use octo_network::dgp::dedup::{DedupSet, GossipReplayCache};
 use octo_network::dgp::domain::{GossipDomainId, GossipScope};
-use octo_network::dgp::object::{GossipObjectType, GossipObject, FLAG_FLOOD};
+use octo_network::dgp::object::{GossipObject, GossipObjectType, FLAG_FLOOD};
 use octo_network::dgp::ordering::{first_valid_hash_wins, sort_canonical};
 
 fn make_obj(hash_byte: u8, domain_net: u32, scope: GossipScope, ts: u64, ttl: u16) -> GossipObject {
@@ -88,7 +92,7 @@ fn test_retention_manager_cleanup() {
 
     rm.admit([0x01; 32], RetentionClass::Ephemeral, 100); // expires at 160
     rm.admit([0x02; 32], RetentionClass::Consensus, 100); // expires at 86500
-    rm.admit([0x03; 32], RetentionClass::Archive, 100);   // never expires
+    rm.admit([0x03; 32], RetentionClass::Archive, 100); // never expires
 
     let removed = rm.cleanup(200);
     assert_eq!(removed, 1); // only ephemeral expired
@@ -101,10 +105,22 @@ fn test_retention_manager_cleanup() {
 
 #[test]
 fn test_retention_class_all_variants() {
-    assert_eq!(RetentionClass::from_u16(0x0001), Some(RetentionClass::Ephemeral));
-    assert_eq!(RetentionClass::from_u16(0x0002), Some(RetentionClass::Mission));
-    assert_eq!(RetentionClass::from_u16(0x0003), Some(RetentionClass::Consensus));
-    assert_eq!(RetentionClass::from_u16(0x0004), Some(RetentionClass::Archive));
+    assert_eq!(
+        RetentionClass::from_u16(0x0001),
+        Some(RetentionClass::Ephemeral)
+    );
+    assert_eq!(
+        RetentionClass::from_u16(0x0002),
+        Some(RetentionClass::Mission)
+    );
+    assert_eq!(
+        RetentionClass::from_u16(0x0003),
+        Some(RetentionClass::Consensus)
+    );
+    assert_eq!(
+        RetentionClass::from_u16(0x0004),
+        Some(RetentionClass::Archive)
+    );
     assert!(RetentionClass::from_u16(0x0000).is_none());
     assert!(RetentionClass::from_u16(0x0005).is_none());
 }
@@ -233,9 +249,7 @@ fn test_first_valid_hash_wins_filters_invalid() {
 
 #[test]
 fn test_first_valid_hash_wins_none_valid() {
-    let objects = vec![
-        make_obj(0xAA, 1, GossipScope::GLOBAL, 100, 10),
-    ];
+    let objects = vec![make_obj(0xAA, 1, GossipScope::GLOBAL, 100, 10)];
 
     let winner = first_valid_hash_wins(&objects, |_| false);
     assert!(winner.is_none());

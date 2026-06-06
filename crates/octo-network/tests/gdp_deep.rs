@@ -2,7 +2,8 @@
 //! discovery state machine edge cases, bootstrap methods.
 
 use octo_network::gdp::discovery::{
-    default_ttl, min_octo_b_for_scope, min_octo_for_scope, BootstrapMethod, DiscoveryState, ScopeFilter,
+    default_ttl, min_octo_b_for_scope, min_octo_for_scope, BootstrapMethod, DiscoveryState,
+    ScopeFilter,
 };
 use octo_network::gdp::discovery_gossip::{
     is_discovery_advertisement, lifecycle_to_gossip_mode, mode_to_flag, scope_to_gossip_domain,
@@ -15,12 +16,30 @@ use octo_network::gdp::types::{DiscoveryLifecycle, DiscoveryScope, GatewayCapabi
 
 #[test]
 fn test_scope_to_gossip_scope_all() {
-    assert_eq!(scope_to_gossip_scope(DiscoveryScope::Local), octo_network::dgp::domain::GossipScope::LOCAL);
-    assert_eq!(scope_to_gossip_scope(DiscoveryScope::Regional), octo_network::dgp::domain::GossipScope::REGIONAL);
-    assert_eq!(scope_to_gossip_scope(DiscoveryScope::Mission), octo_network::dgp::domain::GossipScope::MISSION);
-    assert_eq!(scope_to_gossip_scope(DiscoveryScope::Global), octo_network::dgp::domain::GossipScope::GLOBAL);
-    assert_eq!(scope_to_gossip_scope(DiscoveryScope::Private), octo_network::dgp::domain::GossipScope::PRIVATE);
-    assert_eq!(scope_to_gossip_scope(DiscoveryScope::Consensus), octo_network::dgp::domain::GossipScope::CONSENSUS);
+    assert_eq!(
+        scope_to_gossip_scope(DiscoveryScope::Local),
+        octo_network::dgp::domain::GossipScope::LOCAL
+    );
+    assert_eq!(
+        scope_to_gossip_scope(DiscoveryScope::Regional),
+        octo_network::dgp::domain::GossipScope::REGIONAL
+    );
+    assert_eq!(
+        scope_to_gossip_scope(DiscoveryScope::Mission),
+        octo_network::dgp::domain::GossipScope::MISSION
+    );
+    assert_eq!(
+        scope_to_gossip_scope(DiscoveryScope::Global),
+        octo_network::dgp::domain::GossipScope::GLOBAL
+    );
+    assert_eq!(
+        scope_to_gossip_scope(DiscoveryScope::Private),
+        octo_network::dgp::domain::GossipScope::PRIVATE
+    );
+    assert_eq!(
+        scope_to_gossip_scope(DiscoveryScope::Consensus),
+        octo_network::dgp::domain::GossipScope::CONSENSUS
+    );
 }
 
 #[test]
@@ -48,19 +67,46 @@ fn test_scope_ttl_all() {
 
 #[test]
 fn test_lifecycle_to_gossip_mode_all() {
-    assert_eq!(lifecycle_to_gossip_mode(DiscoveryLifecycle::Bootstrap), DiscoveryGossipMode::Flood);
-    assert_eq!(lifecycle_to_gossip_mode(DiscoveryLifecycle::Expansion), DiscoveryGossipMode::Incremental);
-    assert_eq!(lifecycle_to_gossip_mode(DiscoveryLifecycle::Stabilization), DiscoveryGossipMode::Incremental);
-    assert_eq!(lifecycle_to_gossip_mode(DiscoveryLifecycle::Degraded), DiscoveryGossipMode::AntiEntropy);
-    assert_eq!(lifecycle_to_gossip_mode(DiscoveryLifecycle::Recovering), DiscoveryGossipMode::Flood);
+    assert_eq!(
+        lifecycle_to_gossip_mode(DiscoveryLifecycle::Bootstrap),
+        DiscoveryGossipMode::Flood
+    );
+    assert_eq!(
+        lifecycle_to_gossip_mode(DiscoveryLifecycle::Expansion),
+        DiscoveryGossipMode::Incremental
+    );
+    assert_eq!(
+        lifecycle_to_gossip_mode(DiscoveryLifecycle::Stabilization),
+        DiscoveryGossipMode::Incremental
+    );
+    assert_eq!(
+        lifecycle_to_gossip_mode(DiscoveryLifecycle::Degraded),
+        DiscoveryGossipMode::AntiEntropy
+    );
+    assert_eq!(
+        lifecycle_to_gossip_mode(DiscoveryLifecycle::Recovering),
+        DiscoveryGossipMode::Flood
+    );
 }
 
 #[test]
 fn test_mode_to_flag_all() {
-    assert_eq!(mode_to_flag(DiscoveryGossipMode::Flood), octo_network::dgp::object::FLAG_FLOOD);
-    assert_eq!(mode_to_flag(DiscoveryGossipMode::Incremental), octo_network::dgp::object::FLAG_INCREMENTAL);
-    assert_eq!(mode_to_flag(DiscoveryGossipMode::AntiEntropy), octo_network::dgp::object::FLAG_ANTI_ENTROPY);
-    assert_eq!(mode_to_flag(DiscoveryGossipMode::Directed), octo_network::dgp::object::FLAG_DIRECTED);
+    assert_eq!(
+        mode_to_flag(DiscoveryGossipMode::Flood),
+        octo_network::dgp::object::FLAG_FLOOD
+    );
+    assert_eq!(
+        mode_to_flag(DiscoveryGossipMode::Incremental),
+        octo_network::dgp::object::FLAG_INCREMENTAL
+    );
+    assert_eq!(
+        mode_to_flag(DiscoveryGossipMode::AntiEntropy),
+        octo_network::dgp::object::FLAG_ANTI_ENTROPY
+    );
+    assert_eq!(
+        mode_to_flag(DiscoveryGossipMode::Directed),
+        octo_network::dgp::object::FLAG_DIRECTED
+    );
 }
 
 // ── Discovery Gossip: wrap advertisement ──
@@ -77,7 +123,10 @@ fn test_wrap_advertisement_global() {
         DiscoveryGossipMode::Flood,
     );
 
-    assert_eq!(obj.object_type, octo_network::dgp::object::GossipObjectType::DiscoveryAdvertisement as u16);
+    assert_eq!(
+        obj.object_type,
+        octo_network::dgp::object::GossipObjectType::DiscoveryAdvertisement as u16
+    );
     assert_eq!(obj.origin_gateway, [0x42; 32]);
     assert_eq!(obj.logical_timestamp, 1000);
     assert!(obj.propagation_flags & octo_network::dgp::object::FLAG_FLOOD != 0);
@@ -103,7 +152,13 @@ fn test_wrap_advertisement_mission_scope() {
 #[test]
 fn test_is_discovery_advertisement_false_for_other() {
     let mut obj = wrap_advertisement(
-        [0x42; 32], DiscoveryScope::Global, 1, [0u8; 32], 1000, [0xBB; 32], DiscoveryGossipMode::Flood,
+        [0x42; 32],
+        DiscoveryScope::Global,
+        1,
+        [0u8; 32],
+        1000,
+        [0xBB; 32],
+        DiscoveryGossipMode::Flood,
     );
     assert!(is_discovery_advertisement(&obj));
 
@@ -229,13 +284,21 @@ fn test_scope_filter_mission_with_id() {
 #[test]
 fn test_gateway_capability_all_bits_unique() {
     let caps = [
-        GatewayCapability::Edge, GatewayCapability::Relay, GatewayCapability::Consensus,
-        GatewayCapability::Archive, GatewayCapability::Stealth, GatewayCapability::Translation,
-        GatewayCapability::Storage, GatewayCapability::OnionRelay, GatewayCapability::AIExecution,
-        GatewayCapability::VectorIndex, GatewayCapability::ZkVerification, GatewayCapability::MissionCoordinator,
+        GatewayCapability::Edge,
+        GatewayCapability::Relay,
+        GatewayCapability::Consensus,
+        GatewayCapability::Archive,
+        GatewayCapability::Stealth,
+        GatewayCapability::Translation,
+        GatewayCapability::Storage,
+        GatewayCapability::OnionRelay,
+        GatewayCapability::AIExecution,
+        GatewayCapability::VectorIndex,
+        GatewayCapability::ZkVerification,
+        GatewayCapability::MissionCoordinator,
     ];
     for i in 0..caps.len() {
-        for j in (i+1)..caps.len() {
+        for j in (i + 1)..caps.len() {
             assert_ne!(caps[i] as u64, caps[j] as u64);
         }
     }

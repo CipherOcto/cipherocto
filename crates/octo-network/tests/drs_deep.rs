@@ -4,14 +4,22 @@
 use octo_network::drs::cache::RouteCache;
 use octo_network::drs::domain::{RouteDomain, RouteScopeFlag};
 use octo_network::drs::mission_routing::{
-    BandwidthClass, GeoRegion, MissionRouteConstraints, PartitionMetrics, PartitionState,
-    StealthConfig, relay_satisfies_constraints,
+    relay_satisfies_constraints, BandwidthClass, GeoRegion, MissionRouteConstraints,
+    PartitionMetrics, PartitionState, StealthConfig,
 };
 use octo_network::drs::route::{compare_routes, DeterministicRoute, TransportVector};
 use octo_network::drs::scoring::{compute_route_score, ScoringWeights};
 use octo_network::drs::trust::{compute_trust_score, TrustScore};
 
-fn make_route(id_byte: u8, trust: u64, bw: u16, lat: u16, censor: u16, cost: u64, epoch: u64) -> DeterministicRoute {
+fn make_route(
+    id_byte: u8,
+    trust: u64,
+    bw: u16,
+    lat: u16,
+    censor: u16,
+    cost: u64,
+    epoch: u64,
+) -> DeterministicRoute {
     DeterministicRoute {
         route_id: {
             let mut arr = [0u8; 32];
@@ -147,8 +155,12 @@ fn test_relay_satisfies_constraints_basic() {
     };
 
     assert!(relay_satisfies_constraints(
-        500, GeoRegion::NorthAmerica, BandwidthClass::Medium, 500,
-        &constraints, None,
+        500,
+        GeoRegion::NorthAmerica,
+        BandwidthClass::Medium,
+        500,
+        &constraints,
+        None,
     ));
 }
 
@@ -164,8 +176,12 @@ fn test_relay_satisfies_constraints_trust_gate() {
     };
 
     assert!(!relay_satisfies_constraints(
-        500, GeoRegion::NorthAmerica, BandwidthClass::Medium, 500,
-        &constraints, None,
+        500,
+        GeoRegion::NorthAmerica,
+        BandwidthClass::Medium,
+        500,
+        &constraints,
+        None,
     ));
 }
 
@@ -181,12 +197,20 @@ fn test_relay_satisfies_constraints_geo_isolation() {
     };
 
     assert!(relay_satisfies_constraints(
-        500, GeoRegion::Europe, BandwidthClass::Medium, 500,
-        &constraints, None,
+        500,
+        GeoRegion::Europe,
+        BandwidthClass::Medium,
+        500,
+        &constraints,
+        None,
     ));
     assert!(!relay_satisfies_constraints(
-        500, GeoRegion::NorthAmerica, BandwidthClass::Medium, 500,
-        &constraints, None,
+        500,
+        GeoRegion::NorthAmerica,
+        BandwidthClass::Medium,
+        500,
+        &constraints,
+        None,
     ));
 }
 
@@ -202,8 +226,12 @@ fn test_relay_satisfies_constraints_bandwidth_gate() {
     };
 
     assert!(!relay_satisfies_constraints(
-        500, GeoRegion::NorthAmerica, BandwidthClass::Low, 500,
-        &constraints, None,
+        500,
+        GeoRegion::NorthAmerica,
+        BandwidthClass::Low,
+        500,
+        &constraints,
+        None,
     ));
 }
 
@@ -227,20 +255,32 @@ fn test_relay_satisfies_constraints_stealth_mode() {
 
     // Relay with low censorship resistance fails
     assert!(!relay_satisfies_constraints(
-        500, GeoRegion::NorthAmerica, BandwidthClass::Medium, 300,
-        &constraints, Some(&stealth),
+        500,
+        GeoRegion::NorthAmerica,
+        BandwidthClass::Medium,
+        300,
+        &constraints,
+        Some(&stealth),
     ));
 
     // Relay with high censorship resistance passes
     assert!(relay_satisfies_constraints(
-        500, GeoRegion::NorthAmerica, BandwidthClass::Medium, 900,
-        &constraints, Some(&stealth),
+        500,
+        GeoRegion::NorthAmerica,
+        BandwidthClass::Medium,
+        900,
+        &constraints,
+        Some(&stealth),
     ));
 
     // No stealth config provided → fails
     assert!(!relay_satisfies_constraints(
-        500, GeoRegion::NorthAmerica, BandwidthClass::Medium, 900,
-        &constraints, None,
+        500,
+        GeoRegion::NorthAmerica,
+        BandwidthClass::Medium,
+        900,
+        &constraints,
+        None,
     ));
 }
 
@@ -269,13 +309,34 @@ fn test_stealth_config_default() {
 
 #[test]
 fn test_partition_state_computation() {
-    assert_eq!(PartitionMetrics::compute_state(10, 10), PartitionState::Healthy);
-    assert_eq!(PartitionMetrics::compute_state(10, 9), PartitionState::Healthy); // 10% down
-    assert_eq!(PartitionMetrics::compute_state(10, 8), PartitionState::Degraded); // 20% down
-    assert_eq!(PartitionMetrics::compute_state(10, 7), PartitionState::Degraded); // 30% down
-    assert_eq!(PartitionMetrics::compute_state(10, 5), PartitionState::Partitioned); // 50% down
-    assert_eq!(PartitionMetrics::compute_state(10, 0), PartitionState::Partitioned);
-    assert_eq!(PartitionMetrics::compute_state(0, 0), PartitionState::Healthy); // edge: zero total
+    assert_eq!(
+        PartitionMetrics::compute_state(10, 10),
+        PartitionState::Healthy
+    );
+    assert_eq!(
+        PartitionMetrics::compute_state(10, 9),
+        PartitionState::Healthy
+    ); // 10% down
+    assert_eq!(
+        PartitionMetrics::compute_state(10, 8),
+        PartitionState::Degraded
+    ); // 20% down
+    assert_eq!(
+        PartitionMetrics::compute_state(10, 7),
+        PartitionState::Degraded
+    ); // 30% down
+    assert_eq!(
+        PartitionMetrics::compute_state(10, 5),
+        PartitionState::Partitioned
+    ); // 50% down
+    assert_eq!(
+        PartitionMetrics::compute_state(10, 0),
+        PartitionState::Partitioned
+    );
+    assert_eq!(
+        PartitionMetrics::compute_state(0, 0),
+        PartitionState::Healthy
+    ); // edge: zero total
 }
 
 // ── GeoRegion enum ──

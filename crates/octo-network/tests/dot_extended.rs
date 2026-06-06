@@ -8,8 +8,8 @@ use octo_network::dot::fragment::{fragment_envelope, reassemble_fragments, Platf
 use octo_network::dot::gateway::{FederationPeer, GatewayCapacity, GatewayClass, GatewayIdentity};
 use octo_network::dot::route::{compute_route_score, RouteCommitment, RouteWeights};
 use octo_network::dot::transport::{
-    decode_fragment_ref, decode_native_ref, encode_fragment_ref, encode_native_ref,
-    select_mode, select_mode_with_max_text, TransportMode,
+    decode_fragment_ref, decode_native_ref, encode_fragment_ref, encode_native_ref, select_mode,
+    select_mode_with_max_text, TransportMode,
 };
 
 fn make_envelope(id_byte: u8) -> DeterministicEnvelope {
@@ -36,7 +36,10 @@ fn make_envelope(id_byte: u8) -> DeterministicEnvelope {
 fn test_platform_type_from_u16() {
     assert_eq!(PlatformType::from_u16(0x0001), Some(PlatformType::Telegram));
     assert_eq!(PlatformType::from_u16(0x0008), Some(PlatformType::WhatsApp));
-    assert_eq!(PlatformType::from_u16(0x000A), Some(PlatformType::NativeP2P));
+    assert_eq!(
+        PlatformType::from_u16(0x000A),
+        Some(PlatformType::NativeP2P)
+    );
     assert_eq!(PlatformType::from_u16(0x0015), Some(PlatformType::Quic));
     assert!(PlatformType::from_u16(0x00FF).is_none());
 }
@@ -143,7 +146,8 @@ fn test_fragment_and_reassemble_irc() {
     let envelope_hash = blake3::hash(&payload).into();
     let envelope_id = [0xAA; 32];
 
-    let fragments = fragment_envelope(envelope_hash, envelope_id, &payload, PlatformLimit::Irc).unwrap();
+    let fragments =
+        fragment_envelope(envelope_hash, envelope_id, &payload, PlatformLimit::Irc).unwrap();
 
     // IRC: 512 - 68 = 444 bytes per fragment, ceil(1000/444) = 3
     assert_eq!(fragments.len(), 3);
@@ -161,7 +165,8 @@ fn test_fragment_and_reassemble_lora() {
     let payload = vec![0xCD; 500];
     let envelope_hash = blake3::hash(&payload).into();
 
-    let fragments = fragment_envelope(envelope_hash, [0xBB; 32], &payload, PlatformLimit::Lora).unwrap();
+    let fragments =
+        fragment_envelope(envelope_hash, [0xBB; 32], &payload, PlatformLimit::Lora).unwrap();
 
     // LoRa: 256 - 68 = 188 bytes per fragment, ceil(500/188) = 3
     assert_eq!(fragments.len(), 3);
@@ -175,7 +180,8 @@ fn test_fragment_single_fragment() {
     let payload = vec![0xAB; 100];
     let envelope_hash = blake3::hash(&payload).into();
 
-    let fragments = fragment_envelope(envelope_hash, [0xCC; 32], &payload, PlatformLimit::Telegram).unwrap();
+    let fragments =
+        fragment_envelope(envelope_hash, [0xCC; 32], &payload, PlatformLimit::Telegram).unwrap();
 
     // Telegram: 4096 - 68 = 4028, 100 fits in one fragment
     assert_eq!(fragments.len(), 1);
@@ -187,7 +193,8 @@ fn test_fragment_single_fragment() {
 #[test]
 fn test_fragment_empty_payload() {
     let envelope_hash = [0u8; 32];
-    let fragments = fragment_envelope(envelope_hash, [0xDD; 32], &[], PlatformLimit::Telegram).unwrap();
+    let fragments =
+        fragment_envelope(envelope_hash, [0xDD; 32], &[], PlatformLimit::Telegram).unwrap();
     assert_eq!(fragments.len(), 1);
     assert!(fragments[0].payload.is_empty());
 }
@@ -198,7 +205,13 @@ fn test_fragment_custom_limit() {
     let envelope_hash = blake3::hash(&payload).into();
 
     // Custom limit: 100 bytes total, 100 - 68 = 32 bytes per fragment
-    let fragments = fragment_envelope(envelope_hash, [0xEE; 32], &payload, PlatformLimit::Custom(100)).unwrap();
+    let fragments = fragment_envelope(
+        envelope_hash,
+        [0xEE; 32],
+        &payload,
+        PlatformLimit::Custom(100),
+    )
+    .unwrap();
 
     assert!(fragments.len() > 1);
 
@@ -211,7 +224,8 @@ fn test_fragment_integrity_mismatch() {
     let payload = vec![0xAB; 100];
     let envelope_hash = blake3::hash(&payload).into();
 
-    let mut fragments = fragment_envelope(envelope_hash, [0xFF; 32], &payload, PlatformLimit::Irc).unwrap();
+    let mut fragments =
+        fragment_envelope(envelope_hash, [0xFF; 32], &payload, PlatformLimit::Irc).unwrap();
 
     // Tamper with fragment payload
     if !fragments[0].payload.is_empty() {
@@ -383,9 +397,15 @@ fn test_transport_mode_custom_max_text() {
     };
 
     // With custom max_text_bytes = 100, a 50-byte payload fits in text
-    assert_eq!(select_mode_with_max_text(50, &caps, 100).unwrap(), TransportMode::Text);
+    assert_eq!(
+        select_mode_with_max_text(50, &caps, 100).unwrap(),
+        TransportMode::Text
+    );
     // 150 bytes > 100 max_text, falls through to fragment
-    assert_eq!(select_mode_with_max_text(150, &caps, 100).unwrap(), TransportMode::Fragment);
+    assert_eq!(
+        select_mode_with_max_text(150, &caps, 100).unwrap(),
+        TransportMode::Fragment
+    );
 }
 
 // ── Wire format encoding ──

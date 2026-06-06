@@ -5,32 +5,30 @@
 
 use octo_network::orr::session::{compute_hop_mac, derive_hop_nonce, derive_hop_session_key};
 use octo_network::orr::types::{
-    OnionRoute, RouteCommitment,
-    ROUTE_FLAG_COVER, ROUTE_FLAG_MISSION_SCOPED, ROUTE_FLAG_STEALTH,
-    TransportVector,
+    OnionRoute, RouteCommitment, TransportVector, ROUTE_FLAG_COVER, ROUTE_FLAG_MISSION_SCOPED,
+    ROUTE_FLAG_STEALTH,
 };
 
 // ── Onion Route lifecycle ──
 
 #[test]
 fn test_onion_route_derive_id_deterministic() {
-    let id1 = OnionRoute::derive_route_id(
-        &[0xAA; 32], 100, 3, &[0x01; 32], &[0x02; 32], 1000,
-    );
-    let id2 = OnionRoute::derive_route_id(
-        &[0xAA; 32], 100, 3, &[0x01; 32], &[0x02; 32], 1000,
-    );
+    let id1 = OnionRoute::derive_route_id(&[0xAA; 32], 100, 3, &[0x01; 32], &[0x02; 32], 1000);
+    let id2 = OnionRoute::derive_route_id(&[0xAA; 32], 100, 3, &[0x01; 32], &[0x02; 32], 1000);
     assert_eq!(id1, id2);
     assert_ne!(id1, [0u8; 32]);
 }
 
 #[test]
 fn test_onion_route_derive_id_different_params() {
-    let id1 = OnionRoute::derive_route_id(
-        &[0xAA; 32], 100, 3, &[0x01; 32], &[0x02; 32], 1000,
-    );
+    let id1 = OnionRoute::derive_route_id(&[0xAA; 32], 100, 3, &[0x01; 32], &[0x02; 32], 1000);
     let id2 = OnionRoute::derive_route_id(
-        &[0xAA; 32], 100, 4, &[0x01; 32], &[0x02; 32], 1000, // different hop count
+        &[0xAA; 32],
+        100,
+        4,
+        &[0x01; 32],
+        &[0x02; 32],
+        1000, // different hop count
     );
     assert_ne!(id1, id2);
 }
@@ -141,48 +139,25 @@ fn test_hop_mac_different_data_different_mac() {
 
 #[test]
 fn test_route_commitment_compute() {
-    let rc = RouteCommitment::compute(
-        [0xAA; 32],
-        [0xBB; 32],
-        [0xCC; 32],
-        100,
-    );
+    let rc = RouteCommitment::compute([0xAA; 32], [0xBB; 32], [0xCC; 32], 100);
 
     assert_ne!(rc.commitment, [0u8; 32]);
 
     // Verify: recomputing with same inputs should match
-    let rc2 = RouteCommitment::compute(
-        [0xAA; 32],
-        [0xBB; 32],
-        [0xCC; 32],
-        100,
-    );
+    let rc2 = RouteCommitment::compute([0xAA; 32], [0xBB; 32], [0xCC; 32], 100);
     assert_eq!(rc.commitment, rc2.commitment);
 
     // Different input → different commitment
     let rc3 = RouteCommitment::compute(
-        [0xAA; 32],
-        [0xBB; 32],
-        [0xCC; 32],
-        101, // different epoch
+        [0xAA; 32], [0xBB; 32], [0xCC; 32], 101, // different epoch
     );
     assert_ne!(rc.commitment, rc3.commitment);
 }
 
 #[test]
 fn test_route_commitment_deterministic() {
-    let rc1 = RouteCommitment::compute(
-        [0xAA; 32],
-        [0xBB; 32],
-        [0xCC; 32],
-        100,
-    );
-    let rc2 = RouteCommitment::compute(
-        [0xAA; 32],
-        [0xBB; 32],
-        [0xCC; 32],
-        100,
-    );
+    let rc1 = RouteCommitment::compute([0xAA; 32], [0xBB; 32], [0xCC; 32], 100);
+    let rc2 = RouteCommitment::compute([0xAA; 32], [0xBB; 32], [0xCC; 32], 100);
     assert_eq!(rc1.commitment, rc2.commitment);
 }
 

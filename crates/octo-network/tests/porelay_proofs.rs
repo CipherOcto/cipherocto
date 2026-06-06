@@ -6,16 +6,24 @@
 use octo_network::porelay::availability::AvailabilityProof;
 use octo_network::porelay::bandwidth::BandwidthProof;
 use octo_network::porelay::economics::{
-    compute_archival_cost, RewardDistribution, SlashingCondition,
-    SLASH_CONSENSUS_VIOLATION, SLASH_INVALID_PROOF, SLASH_PROOF_REPLAY,
+    compute_archival_cost, RewardDistribution, SlashingCondition, SLASH_CONSENSUS_VIOLATION,
+    SLASH_INVALID_PROOF, SLASH_PROOF_REPLAY,
 };
 use octo_network::porelay::registry::TrustRegistry;
 use octo_network::porelay::score::{
-    RelayScore, DEFAULT_STAKE_MULTIPLIER, MAX_STAKE_MULTIPLIER,
-    WEIGHT_AVAILABILITY, WEIGHT_BANDWIDTH, WEIGHT_DIVERSITY, WEIGHT_FORWARDING, WEIGHT_UPTIME,
+    RelayScore, DEFAULT_STAKE_MULTIPLIER, MAX_STAKE_MULTIPLIER, WEIGHT_AVAILABILITY,
+    WEIGHT_BANDWIDTH, WEIGHT_DIVERSITY, WEIGHT_FORWARDING, WEIGHT_UPTIME,
 };
 
-fn make_score(id_byte: u8, fwd: u16, avail: u16, bw: u16, uptime: u16, diversity: u16, stake: u32) -> RelayScore {
+fn make_score(
+    id_byte: u8,
+    fwd: u16,
+    avail: u16,
+    bw: u16,
+    uptime: u16,
+    diversity: u16,
+    stake: u32,
+) -> RelayScore {
     let mut s = RelayScore {
         gateway_id: [id_byte; 32],
         epoch: 1,
@@ -59,11 +67,11 @@ fn test_relay_score_clamps_values() {
     let mut score = RelayScore {
         gateway_id: [0x42; 32],
         epoch: 1,
-        forwarding_score: 1500,  // over 1000 — should be clamped
+        forwarding_score: 1500,   // over 1000 — should be clamped
         availability_score: 2000, // over 1000
         bandwidth_score: 700,
         uptime_score: 900,
-        diversity_bonus: 600,    // over 500 — should be clamped
+        diversity_bonus: 600, // over 500 — should be clamped
         stake_multiplier: DEFAULT_STAKE_MULTIPLIER,
         composite: 0,
     };
@@ -128,12 +136,18 @@ fn test_score_decay_converges_to_zero() {
 
 #[test]
 fn test_stake_multiplier_no_stake() {
-    assert_eq!(RelayScore::compute_stake_multiplier(0, 1000, 5000), DEFAULT_STAKE_MULTIPLIER);
+    assert_eq!(
+        RelayScore::compute_stake_multiplier(0, 1000, 5000),
+        DEFAULT_STAKE_MULTIPLIER
+    );
 }
 
 #[test]
 fn test_stake_multiplier_zero_unit() {
-    assert_eq!(RelayScore::compute_stake_multiplier(1000, 0, 5000), DEFAULT_STAKE_MULTIPLIER);
+    assert_eq!(
+        RelayScore::compute_stake_multiplier(1000, 0, 5000),
+        DEFAULT_STAKE_MULTIPLIER
+    );
 }
 
 #[test]
@@ -402,6 +416,10 @@ fn test_archival_cost() {
 
 #[test]
 fn test_score_weights_sum() {
-    let sum = WEIGHT_FORWARDING + WEIGHT_AVAILABILITY + WEIGHT_BANDWIDTH + WEIGHT_UPTIME + WEIGHT_DIVERSITY;
+    let sum = WEIGHT_FORWARDING
+        + WEIGHT_AVAILABILITY
+        + WEIGHT_BANDWIDTH
+        + WEIGHT_UPTIME
+        + WEIGHT_DIVERSITY;
     assert_eq!(sum, 1000);
 }

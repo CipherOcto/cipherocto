@@ -2,14 +2,14 @@
 //! anti-entropy, directed mode, dedup helpers, ordering.
 
 use octo_network::dgp::anti_entropy::{AntiEntropyReconciler, GossipStateSummary};
-use octo_network::dgp::compression::{BloomSummary, BitmapSummary, RetentionClass};
+use octo_network::dgp::compression::{BitmapSummary, BloomSummary, RetentionClass};
 use octo_network::dgp::dedup::{DedupSet, GossipReplayCache};
 use octo_network::dgp::directed::DirectedMode;
 use octo_network::dgp::domain::{GossipDomainId, GossipScope};
 use octo_network::dgp::flood::FloodMode;
 use octo_network::dgp::object::{
-    validate_flags, GossipObjectType, GossipPriority, GossipObject,
-    FLAG_ANTI_ENTROPY, FLAG_COMPRESSED, FLAG_DIRECTED, FLAG_FLOOD, FLAG_INCREMENTAL, FLAG_RELIABLE,
+    validate_flags, GossipObject, GossipObjectType, GossipPriority, FLAG_ANTI_ENTROPY,
+    FLAG_COMPRESSED, FLAG_DIRECTED, FLAG_FLOOD, FLAG_INCREMENTAL, FLAG_RELIABLE,
 };
 use octo_network::dgp::ordering::sort_canonical;
 
@@ -28,7 +28,13 @@ fn make_obj(hash_byte: u8, flags: u64, ts: u64, ttl: u16) -> GossipObject {
     }
 }
 
-fn make_mission_obj(hash_byte: u8, flags: u64, mission: [u8; 32], ts: u64, ttl: u16) -> GossipObject {
+fn make_mission_obj(
+    hash_byte: u8,
+    flags: u64,
+    mission: [u8; 32],
+    ts: u64,
+    ttl: u16,
+) -> GossipObject {
     GossipObject {
         object_type: GossipObjectType::MissionState as u16,
         object_hash: [hash_byte; 32],
@@ -43,7 +49,13 @@ fn make_mission_obj(hash_byte: u8, flags: u64, mission: [u8; 32], ts: u64, ttl: 
     }
 }
 
-fn make_domain_obj(hash_byte: u8, flags: u64, domain: &GossipDomainId, ts: u64, ttl: u16) -> GossipObject {
+fn make_domain_obj(
+    hash_byte: u8,
+    flags: u64,
+    domain: &GossipDomainId,
+    ts: u64,
+    ttl: u16,
+) -> GossipObject {
     GossipObject {
         object_type: GossipObjectType::Envelope as u16,
         object_hash: [hash_byte; 32],
@@ -62,8 +74,14 @@ fn make_domain_obj(hash_byte: u8, flags: u64, domain: &GossipDomainId, ts: u64, 
 
 #[test]
 fn test_gossip_object_type_from_u16() {
-    assert_eq!(GossipObjectType::from_u16(0x0001), Some(GossipObjectType::Envelope));
-    assert_eq!(GossipObjectType::from_u16(0x0008), Some(GossipObjectType::SnapshotFragment));
+    assert_eq!(
+        GossipObjectType::from_u16(0x0001),
+        Some(GossipObjectType::Envelope)
+    );
+    assert_eq!(
+        GossipObjectType::from_u16(0x0008),
+        Some(GossipObjectType::SnapshotFragment)
+    );
     assert!(GossipObjectType::from_u16(0x00FF).is_none());
 }
 
@@ -222,8 +240,14 @@ fn test_bitmap_count_set() {
 
 #[test]
 fn test_retention_class_enum() {
-    assert_eq!(RetentionClass::from_u16(0x0001), Some(RetentionClass::Ephemeral));
-    assert_eq!(RetentionClass::from_u16(0x0004), Some(RetentionClass::Archive));
+    assert_eq!(
+        RetentionClass::from_u16(0x0001),
+        Some(RetentionClass::Ephemeral)
+    );
+    assert_eq!(
+        RetentionClass::from_u16(0x0004),
+        Some(RetentionClass::Archive)
+    );
     assert!(RetentionClass::from_u16(0x00FF).is_none());
 }
 
@@ -265,13 +289,8 @@ fn test_anti_entropy_reconcile_matching() {
 
     let summary = GossipStateSummary::compute(&domain, &[obj.clone()]);
 
-    let result = AntiEntropyReconciler::reconcile(
-        &summary,
-        &summary,
-        &[obj],
-        &[[0x01; 32]],
-    )
-    .unwrap();
+    let result =
+        AntiEntropyReconciler::reconcile(&summary, &summary, &[obj], &[[0x01; 32]]).unwrap();
 
     assert!(result.missing_from_peer.is_empty());
     assert!(result.missing_from_us.is_empty());

@@ -5,11 +5,10 @@
 //! Also tests cross-module interactions with DOT envelope wrapping.
 
 use octo_network::dps::envelope::ProofCarryingEnvelope;
-use octo_network::dps::recursive::{
-    AggregatedProof, AggregationMethod, RecursiveAggregator,
-
+use octo_network::dps::recursive::{AggregatedProof, AggregationMethod, RecursiveAggregator};
+use octo_network::dps::suite::{
+    ProofCircuitModel, ProofExecutionClass, ProofSuite, ProofSuiteId, ProofSystemId,
 };
-use octo_network::dps::suite::{ProofCircuitModel, ProofExecutionClass, ProofSuite, ProofSuiteId, ProofSystemId};
 use octo_network::dps::verifier::{VerifierEntry, VerifierRegistry};
 use octo_network::dps::witness::{Witness, WitnessInput};
 
@@ -169,12 +168,7 @@ fn test_verifier_registry_full_lifecycle() {
     let mut reg = VerifierRegistry::new();
     assert!(reg.is_empty());
 
-    let suite_id = ProofSuiteId::new(
-        ProofSystemId::STWO.as_u16(),
-        0x0001,
-        0x0001,
-        0x0001,
-    );
+    let suite_id = ProofSuiteId::new(ProofSystemId::STWO.as_u16(), 0x0001, 0x0001, 0x0001);
 
     let entry = VerifierEntry {
         suite_id: suite_id.clone(),
@@ -206,7 +200,11 @@ fn test_verifier_registry_deterministic_iteration() {
         let system = ProofSystemId::from_u16(i + 1).unwrap();
         let entry = VerifierEntry {
             suite_id: sid,
-            proof_suite: ProofSuite::new(system, ProofCircuitModel::AIR, ProofExecutionClass::ClassA),
+            proof_suite: ProofSuite::new(
+                system,
+                ProofCircuitModel::AIR,
+                ProofExecutionClass::ClassA,
+            ),
             verification_key: vec![i as u8; 32],
             registered_at: 100,
             expires_at: None,
@@ -226,7 +224,11 @@ fn test_verifier_registry_eviction() {
     let sid = ProofSuiteId::new(ProofSystemId::STWO.as_u16(), 0x0001, 0x0001, 0x0001);
     let entry = VerifierEntry {
         suite_id: sid,
-        proof_suite: ProofSuite::new(ProofSystemId::STWO, ProofCircuitModel::AIR, ProofExecutionClass::ClassA),
+        proof_suite: ProofSuite::new(
+            ProofSystemId::STWO,
+            ProofCircuitModel::AIR,
+            ProofExecutionClass::ClassA,
+        ),
         verification_key: vec![0xAA; 32],
         registered_at: 100,
         expires_at: Some(200),

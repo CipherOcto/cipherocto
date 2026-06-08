@@ -76,6 +76,20 @@ struct ClientState {
     code_rx: Arc<Mutex<Option<mpsc::Receiver<String>>>>,
     /// Self handle — populated after a successful `get_me` call.
     self_handle: SelfHandle,
+    /// Sender half of the shutdown channel. `Drop` pushes the `client_id`
+    /// through this to ask the receive loop to call
+    /// `tdlib_rs::functions::close` and exit. C3: this replaces a detached
+    /// `std::thread` + nested `current_thread` runtime, which could race
+    /// with the receive loop and leak the TDLib client. The receiver is
+    /// held in `shutdown_rx` below and is moved into the receive loop at
+    /// spawn time; the sender stays on `ClientState` so any `Drop` of a
+    /// `RealTelegramClient` clone can signal the loop.
+    shutdown_tx: mpsc::Sender<ClientId>,
+    /// Receiver half of the shutdown channel. Moved into the receive loop
+    /// by `new_internal`; stored as `Option<...>` so the constructor can
+    /// `take()` it before spawning. After that it lives only on the
+    /// receive loop task; `Drop` does not need it.
+    shutdown_rx: Option<mpsc::Receiver<ClientId>>,
 }
 
 impl ClientState {
@@ -89,6 +103,7 @@ impl ClientState {
         api_hash: String,
     ) -> Self {
         let (code_tx, code_rx) = mpsc::channel(8);
+        let (shutdown_tx, shutdown_rx) = mpsc::channel(1);
         Self {
             client_id,
             running: AtomicBool::new(true),
@@ -105,6 +120,8 @@ impl ClientState {
             code_tx,
             code_rx: Arc::new(Mutex::new(Some(code_rx))),
             self_handle: SelfHandle::new(),
+            shutdown_tx,
+            shutdown_rx: Some(shutdown_rx),
         }
     }
 }
@@ -164,7 +181,7 @@ impl RealTelegramClient {
             create_auth_dirs(dir).map_err(TelegramError::Io)?;
         }
 
-        let state = Arc::new(ClientState::new(
+        let mut state = Arc::new(ClientState::new(
             client_id,
             user_auth.clone(),
             bot_token.clone(),
@@ -173,10 +190,22 @@ impl RealTelegramClient {
             api_hash,
         ));
 
-        // Spawn the receive loop.
+        // Spawn the receive loop. The shutdown receiver is moved in here
+        // (and only here) — `Drop` keeps a `Sender<ClientId>` on the
+        // shared state and `try_send`s the client_id to ask the loop to
+        // close cleanly. C3.
+        //
+        // `Arc::get_mut` succeeds because we are the sole strong
+        // reference to `state` at this point; the clone below is the
+        // second strong ref, and the spawned task takes it.
+        let shutdown_rx = Arc::get_mut(&mut state)
+            .expect("state should have exactly one strong ref before spawn")
+            .shutdown_rx
+            .take()
+            .expect("shutdown_rx is set in ClientState::new and consumed exactly once");
         let state_clone = state.clone();
         tokio::spawn(async move {
-            Self::receive_loop(state_clone).await;
+            Self::receive_loop(state_clone, shutdown_rx).await;
         });
 
         // Wait for Ready state (or Closed / auth error on failure), with 30 s timeout.
@@ -220,7 +249,13 @@ impl RealTelegramClient {
     }
 
     /// The receive loop that processes TDLib updates.
-    async fn receive_loop(state: Arc<ClientState>) {
+    ///
+    /// `shutdown_rx` is the receiver end of the shutdown channel owned by
+    /// `ClientState`. `Drop` pushes the `client_id` through the matching
+    /// sender; on receipt the loop calls `tdlib_rs::functions::close`
+    /// from within this existing tokio runtime (no nested runtime, no
+    /// detached thread — C3) and then exits.
+    async fn receive_loop(state: Arc<ClientState>, mut shutdown_rx: mpsc::Receiver<ClientId>) {
         loop {
             if !state.running.load(Ordering::Acquire) {
                 break;
@@ -228,24 +263,38 @@ impl RealTelegramClient {
             // Use spawn_blocking for the blocking receive() call so we do not
             // block the tokio runtime. New blocking thread per iteration is
             // cheap because tdlib_rs::receive blocks until an update arrives.
-            let result = spawn_blocking(tdlib_rs::receive).await;
-
-            match result {
-                Ok(Some((update, _client_id))) => {
-                    if let Err(e) = Self::handle_update(&state, update).await {
-                        tracing::debug!(error = %e, "tdlib update handler error");
+            let update_fut = spawn_blocking(tdlib_rs::receive);
+            tokio::select! {
+                // Biased so a shutdown signal is observed promptly even if
+                // an update happens to be ready at the same instant.
+                biased;
+                _ = shutdown_rx.recv() => {
+                    let client_id = state.client_id;
+                    if let Err(e) = tdlib_rs::functions::close(client_id).await {
+                        tracing::debug!(error = %e.message, "tdlib close on shutdown failed");
                     }
-                    // Yield so a flood of updates does not starve the runtime.
-                    tokio::task::yield_now().await;
-                }
-                Ok(None) => {
-                    // No update available right now — yield to avoid CPU spinning.
-                    tokio::task::yield_now().await;
-                }
-                Err(_) => {
-                    // Receive error (likely a panic in spawn_blocking or runtime shutdown).
                     state.running.store(false, Ordering::Release);
                     break;
+                }
+                result = update_fut => {
+                    match result {
+                        Ok(Some((update, _client_id))) => {
+                            if let Err(e) = Self::handle_update(&state, update).await {
+                                tracing::debug!(error = %e, "tdlib update handler error");
+                            }
+                            // Yield so a flood of updates does not starve the runtime.
+                            tokio::task::yield_now().await;
+                        }
+                        Ok(None) => {
+                            // No update available right now — yield to avoid CPU spinning.
+                            tokio::task::yield_now().await;
+                        }
+                        Err(_) => {
+                            // Receive error (likely a panic in spawn_blocking or runtime shutdown).
+                            state.running.store(false, Ordering::Release);
+                            break;
+                        }
+                    }
                 }
             }
         }
@@ -676,25 +725,27 @@ fn parse_flood_wait_secs(message: &str) -> Option<u64> {
 }
 
 impl Drop for RealTelegramClient {
+    /// Signal the receive loop to close the TDLib client and exit.
+    ///
+    /// C3: this used to spawn a detached `std::thread` with a fresh
+    /// `current_thread` runtime to call `tdlib_rs::functions::close`. That
+    /// was wrong on three counts: (a) it raced the receive loop — TDLib's
+    /// `close` is not safe to call while `tdlib_rs::receive` is mid-call,
+    /// (b) the thread could outlive the process and leak, and (c) a
+    /// runtime-in-runtime on a non-tdjson thread may not have reached
+    /// TDLib at all.
+    ///
+    /// The new design pushes the `client_id` through a `mpsc::Sender`
+    /// field on `ClientState`. The receive loop `tokio::select!`s on the
+    /// matching receiver alongside `tdlib_rs::receive`; on receipt it
+    /// calls `close` from within the existing tokio runtime and exits.
+    /// `Drop` uses `try_send` (non-blocking) and silently no-ops if the
+    /// receive loop is already gone — the OS reclaims the TDLib client on
+    /// process exit in that case. We do not panic on send failure:
+    /// panicking in `Drop` is unsound under multi-threaded drop.
     fn drop(&mut self) {
         self.state.running.store(false, Ordering::Release);
-        let client_id = self.state.client_id;
-        // Spawn a detached thread to close the TDLib client. We deliberately
-        // do NOT panic on failure: if the runtime cannot be built (FD
-        // exhaustion during process shutdown) the OS will reclaim the TDLib
-        // resources at exit. Panicking during Drop causes std::process::abort
-        // if multiple threads are dropping simultaneously.
-        std::thread::spawn(move || {
-            let rt_result = tokio::runtime::Builder::new_current_thread()
-                .enable_all()
-                .build();
-            if let Ok(rt) = rt_result {
-                rt.block_on(async {
-                    let _ = tdlib_rs::functions::close(client_id).await;
-                });
-            }
-            // On failure, silently no-op. Process exit will reclaim the client.
-        });
+        let _ = self.state.shutdown_tx.try_send(self.state.client_id);
     }
 }
 

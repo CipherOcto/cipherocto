@@ -75,7 +75,7 @@ impl<C: TelegramClient> TelegramAdapter<C> {
     }
 
     /// Look up the chat_id for a domain hash.
-    fn chat_id_for_domain(&self, domain: &BroadcastDomainId) -> Option<String> {
+    pub fn chat_id_for_domain(&self, domain: &BroadcastDomainId) -> Option<String> {
         self.domain_chat_ids
             .read()
             .unwrap()
@@ -224,17 +224,14 @@ impl<C: TelegramClient + Send + Sync> PlatformAdapter for TelegramAdapter<C> {
     }
 
     fn domain_id(&self, platform_id: &str) -> BroadcastDomainId {
-        // Per crates/octo-network/src/dot/domain.rs:80 — PlatformType::Telegram
-        // maps to "telegram:" prefix and normalizes (lowercase + trim) the
-        // platform_id before hashing.
         let domain = BroadcastDomainId::new(PlatformType::Telegram, platform_id);
-        // Auto-register the domain so send_envelope can route to this chat_id.
-        // The chat_id is the normalized platform_id (same string used to
-        // construct the domain); callers can override via register_domain().
+        // Store the normalized form so send_envelope can route the chat_id
+        // without re-parsing whitespace.
+        let normalized = platform_id.trim().to_lowercase();
         self.domain_chat_ids
             .write()
             .unwrap()
-            .insert(domain.domain_hash, platform_id.to_string());
+            .insert(domain.domain_hash, normalized);
         domain
     }
 

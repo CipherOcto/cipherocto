@@ -50,6 +50,24 @@ fn test_domain_id_normalizes_case_and_whitespace() {
     );
 }
 
+/// H1, M10: `domain_id(chat_id)` stores the normalized form in
+/// `domain_chat_ids` so the round-trip via `chat_id_for_domain` returns a
+/// string that `parse::<i64>()` accepts. Previously, the raw
+/// `platform_id` was stored, so a caller passing `"  -1001234567890  ">`
+/// would get whitespace back and the client would fail with a parse error.
+#[test]
+fn test_domain_id_stores_normalized_chat_id() {
+    let config = TelegramConfig::default();
+    let client = MockTelegramClient::new();
+    let adapter = TelegramAdapter::new(config, client);
+    let domain = adapter.domain_id("  -1001234567890  ");
+    let chat_id = adapter.chat_id_for_domain(&domain).unwrap();
+    assert_eq!(
+        chat_id, "-1001234567890",
+        "chat_id should be normalized (trimmed)"
+    );
+}
+
 #[test]
 fn test_capability_report() {
     // Mission AC line 134: CapabilityReport fields

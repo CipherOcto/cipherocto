@@ -29,6 +29,27 @@ fn test_domain_id_uses_telegram_prefix() {
     assert_eq!(id, id2);
 }
 
+/// L6: BroadcastDomainId normalizes platform_id (lowercase + trim) before
+/// hashing, per crates/octo-network/src/dot/domain.rs:81. Verify the
+/// adapter's domain_id honours the same normalization so that two
+/// chat-ids differing only in case collapse to the same domain.
+#[test]
+fn test_domain_id_normalizes_case_and_whitespace() {
+    let config = TelegramConfig::default();
+    let client = MockTelegramClient::new();
+    let adapter = TelegramAdapter::new(config, client);
+    assert_eq!(
+        adapter.domain_id("-100ABC"),
+        adapter.domain_id("-100abc"),
+        "case differences should normalize to the same domain"
+    );
+    assert_eq!(
+        adapter.domain_id("  -1001234567890  "),
+        adapter.domain_id("-1001234567890"),
+        "surrounding whitespace should be trimmed"
+    );
+}
+
 #[test]
 fn test_capability_report() {
     // Mission AC line 134: CapabilityReport fields
@@ -59,4 +80,56 @@ fn test_self_handle_returns_none_by_default() {
     assert!(adapter.self_handle().is_none() || adapter.self_handle().is_some());
     // The PlatformAdapter default for self_handle is None; we override it
     // in Task 9.
+}
+
+/// C2: Bot mode requires api_id + api_hash (R3 review).
+/// `set_tdlib_parameters` for bot mode is required to use real api credentials
+/// from my.telegram.org — synthetic credentials (`api_id=0`, `api_hash=""`)
+/// and `use_test_dc=true` are only valid on the test DC. The config layer
+/// must reject bot configs that lack these fields so production callers
+/// fail fast rather than silently connecting to the test DC.
+#[test]
+fn test_bot_mode_requires_api_credentials() {
+    let config = TelegramConfig {
+        bot_token: Some("123456:ABC".into()),
+        ..TelegramConfig::default()
+    };
+    // No api_id, no api_hash — must be rejected.
+    assert!(config.validate().is_err());
+}
+
+/// C2: Bot mode with api_id=0 is rejected (TDLib sentinel value).
+#[test]
+fn test_bot_mode_rejects_zero_api_id() {
+    let config = TelegramConfig {
+        bot_token: Some("123456:ABC".into()),
+        api_id: Some(0),
+        api_hash: Some("deadbeef".into()),
+        ..TelegramConfig::default()
+    };
+    assert!(config.validate().is_err());
+}
+
+/// C2: Bot mode with empty api_hash is rejected.
+#[test]
+fn test_bot_mode_rejects_empty_api_hash() {
+    let config = TelegramConfig {
+        bot_token: Some("123456:ABC".into()),
+        api_id: Some(12345),
+        api_hash: Some(String::new()),
+        ..TelegramConfig::default()
+    };
+    assert!(config.validate().is_err());
+}
+
+/// C2: Bot mode with valid api_id + api_hash + bot_token is accepted.
+#[test]
+fn test_bot_mode_accepts_valid_credentials() {
+    let config = TelegramConfig {
+        bot_token: Some("123456:ABC".into()),
+        api_id: Some(12345),
+        api_hash: Some("abcdef123456".into()),
+        ..TelegramConfig::default()
+    };
+    assert!(config.validate().is_ok());
 }

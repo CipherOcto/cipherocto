@@ -17,6 +17,7 @@
 
 use crate::auth::{create_auth_dirs, AuthAction, UserAuth};
 use crate::client::{SentMessage, TelegramClient, TelegramUpdate};
+use crate::config::TelegramConfig;
 use crate::error::{Result, TelegramError};
 use crate::self_handle::SelfHandle;
 use async_trait::async_trait;
@@ -51,6 +52,16 @@ struct ClientState {
     bot_token: Option<String>,
     /// TDLib base data directory.
     data_dir: Option<PathBuf>,
+    /// api_id for `set_tdlib_parameters` (bot + user modes).
+    /// Required by TDLib's `set_tdlib_parameters` regardless of mode.
+    /// C2: previously bot mode passed `0`, which is only valid on the
+    /// test DC. Production callers must supply a real api_id from
+    /// my.telegram.org via `TelegramConfig`.
+    api_id: i32,
+    /// api_hash for `set_tdlib_parameters` (bot + user modes).
+    /// C2: previously bot mode passed `String::new()`, which is only
+    /// valid on the test DC.
+    api_hash: String,
     /// Tracks whether set_tdlib_parameters has been called for bot mode.
     bot_params_set: AtomicBool,
     /// Channel for inbound verification codes (user mode).
@@ -68,11 +79,14 @@ struct ClientState {
 }
 
 impl ClientState {
+    #[allow(clippy::too_many_arguments)]
     fn new(
         client_id: ClientId,
         user_auth: Option<UserAuth>,
         bot_token: Option<String>,
         data_dir: Option<PathBuf>,
+        api_id: i32,
+        api_hash: String,
     ) -> Self {
         let (code_tx, code_rx) = mpsc::channel(8);
         Self {
@@ -85,6 +99,8 @@ impl ClientState {
             user_auth,
             bot_token,
             data_dir,
+            api_id,
+            api_hash,
             bot_params_set: AtomicBool::new(false),
             code_tx,
             code_rx: Arc::new(Mutex::new(Some(code_rx))),
@@ -102,23 +118,43 @@ pub struct RealTelegramClient {
 
 impl RealTelegramClient {
     /// Create a new RealTelegramClient for bot mode.
-    /// `bot_token` is the Telegram BotFather token.
-    /// `data_dir` is the directory for TDLib's database and files.
-    pub async fn new(bot_token: Option<String>, data_dir: Option<PathBuf>) -> Result<Self> {
-        Self::new_internal(None, bot_token, data_dir).await
+    ///
+    /// `config` is the validated `TelegramConfig`. Caller must call
+    /// `config.validate()` first; this constructor does not re-validate.
+    /// `config.bot_token` is the Telegram BotFather token.
+    /// `config.data_dir` is the directory for TDLib's database and files.
+    /// `config.api_id` and `config.api_hash` are passed through to
+    /// `set_tdlib_parameters` (C2 — production bot mode requires real
+    /// credentials from my.telegram.org, not the test DC).
+    pub async fn new(config: &TelegramConfig) -> Result<Self> {
+        let api_id = config.api_id.unwrap_or(0);
+        let api_hash = config.api_hash.clone().unwrap_or_default();
+        Self::new_internal(
+            None,
+            config.bot_token.clone(),
+            Some(config.data_dir.clone()),
+            api_id,
+            api_hash,
+        )
+        .await
     }
 
     /// Create a new RealTelegramClient for user mode with the given auth config.
     /// `data_dir` is the directory for TDLib's database and files.
     pub async fn new_user(user_auth: UserAuth, data_dir: Option<PathBuf>) -> Result<Self> {
-        Self::new_internal(Some(user_auth), None, data_dir).await
+        let api_id = user_auth.api_id;
+        let api_hash = user_auth.api_hash.clone();
+        Self::new_internal(Some(user_auth), None, data_dir, api_id, api_hash).await
     }
 
     /// Internal constructor. `user_auth = None` for bot mode, `Some(...)` for user mode.
+    /// `api_id` and `api_hash` are plumbed to `set_tdlib_parameters` regardless of mode.
     async fn new_internal(
         user_auth: Option<UserAuth>,
         bot_token: Option<String>,
         data_dir: Option<PathBuf>,
+        api_id: i32,
+        api_hash: String,
     ) -> Result<Self> {
         let client_id = tdlib_rs::create_client();
 
@@ -133,6 +169,8 @@ impl RealTelegramClient {
             user_auth.clone(),
             bot_token.clone(),
             data_dir.clone(),
+            api_id,
+            api_hash,
         ));
 
         // Spawn the receive loop.
@@ -279,11 +317,15 @@ impl RealTelegramClient {
                         let files_dir = base.join("files");
                         let _ = std::fs::create_dir_all(&db_dir);
                         let _ = std::fs::create_dir_all(&files_dir);
-                        // For bot mode we use the test DC and synthetic api credentials.
-                        // Real bots need real api_id/api_hash from my.telegram.org,
-                        // but TDLib's bot flow does not require them at the param step.
+                        // C2: bot mode uses real api_id/api_hash from
+                        // `TelegramConfig` and the production DC. Synthetic
+                        // credentials (`api_id=0`, `api_hash=""`) and
+                        // `use_test_dc=true` are only valid on the test DC.
+                        // `config::validate()` rejects bot configs that lack
+                        // these fields, so by the time we get here the
+                        // caller has supplied real credentials.
                         let resp = tdlib_rs::functions::set_tdlib_parameters(
-                            true,                                     // use_test_dc
+                            false,                                    // use_test_dc
                             db_dir.to_string_lossy().into_owned(),    // database_directory
                             files_dir.to_string_lossy().into_owned(), // files_directory
                             String::new(),                            // database_encryption_key
@@ -291,11 +333,11 @@ impl RealTelegramClient {
                             true,                                     // use_chat_info_database
                             true,                                     // use_message_database
                             false,                                    // use_secret_chats
-                            0,                   // api_id (bot mode accepts 0 on test DC)
-                            String::new(),       // api_hash
-                            "en".into(),         // language
-                            "CipherOcto".into(), // device_model
-                            String::new(),       // system_version
+                            state.api_id,
+                            state.api_hash.clone(),
+                            "en".into(),                      // language
+                            "CipherOcto".into(),              // device_model
+                            String::new(),                    // system_version
                             env!("CARGO_PKG_VERSION").into(), // app_version
                             state.client_id,
                         )
@@ -604,8 +646,9 @@ impl TelegramClient for RealTelegramClient {
     }
 
     async fn authenticate(&self) -> Result<()> {
-        // Bot mode: caller provides bot token via RealTelegramClient::new()
-        // User mode: caller uses RealTelegramClient::new_user(user_auth) instead.
+        // Bot mode: caller provides the validated `TelegramConfig` (with
+        // bot_token + api_id + api_hash) via `RealTelegramClient::new(&config)`.
+        // User mode: caller uses `RealTelegramClient::new_user(user_auth)` instead.
         // This method is a no-op for bot mode.
         Ok(())
     }

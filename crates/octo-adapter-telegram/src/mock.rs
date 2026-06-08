@@ -23,6 +23,12 @@ pub struct MockTelegramClient {
     sent_doc_data: Arc<Mutex<DocDataMap>>,
     pending_updates: Arc<Mutex<Vec<TelegramUpdate>>>,
     next_msg_id: Arc<Mutex<u64>>,
+    /// Sender id stamped onto doc-derived `NewMessage.from` during
+    /// `receive_updates`. When `0` (default), the field stays empty,
+    /// matching the pre-H5 behavior. When set to a non-zero value, the
+    /// mock uses that value as the `from` string so the adapter's
+    /// self-loop filter (H5) is exercised for document round-trips.
+    mock_sender_id: Arc<Mutex<i64>>,
 }
 
 impl MockTelegramClient {
@@ -33,12 +39,21 @@ impl MockTelegramClient {
             sent_doc_data: Arc::new(Mutex::new(HashMap::new())),
             pending_updates: Arc::new(Mutex::new(Vec::new())),
             next_msg_id: Arc::new(Mutex::new(1)),
+            mock_sender_id: Arc::new(Mutex::new(0)),
         }
     }
 
     /// Inject an update that the next `receive_updates` call will yield.
     pub fn inject_update(&self, update: TelegramUpdate) {
         self.pending_updates.lock().unwrap().push(update);
+    }
+
+    /// Set the sender id used when re-injecting document-derived
+    /// `NewMessage` updates. Pass `0` (the default) to keep the `from`
+    /// field empty, matching the pre-H5 behavior. Pass a non-zero id to
+    /// exercise the adapter's self-loop filter for document round-trips.
+    pub fn set_mock_sender(&self, id: i64) {
+        *self.mock_sender_id.lock().unwrap() = id;
     }
 
     pub fn sent_messages(&self) -> Vec<(String, String)> {
@@ -127,13 +142,25 @@ impl TelegramClient for MockTelegramClient {
             .collect();
         for ((chat_id, _filename), data) in doc_data {
             let encoded = crate::envelope::encode_envelope(&data);
+            // H5: when the caller has set a non-zero mock_sender_id, stamp
+            // it onto the doc-injected NewMessage's `from` field so the
+            // adapter's self-loop filter can match it. When the default
+            // (`0`) is in effect, keep `from` empty to preserve the
+            // pre-H5 behavior (the parser rejects empty, the filter
+            // falls through).
+            let sender_id = *self.mock_sender_id.lock().unwrap();
+            let from = if sender_id == 0 {
+                String::new()
+            } else {
+                sender_id.to_string()
+            };
             self.pending_updates
                 .lock()
                 .unwrap()
                 .push(TelegramUpdate::NewMessage(NewMessage {
                     chat_id: chat_id.parse().unwrap_or(0),
                     message: encoded,
-                    from: String::new(),
+                    from,
                 }));
         }
         let mut pending = self.pending_updates.lock().unwrap();

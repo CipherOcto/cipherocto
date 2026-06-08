@@ -159,3 +159,47 @@ fn test_bot_mode_accepts_valid_credentials() {
     };
     assert!(config.validate().is_ok());
 }
+
+/// H2: `upload_media` errors when more than one domain is registered, because
+/// picking any single one would be non-deterministic by caller intent. The
+/// caller must use `upload_media_to_domain` to disambiguate.
+#[tokio::test]
+async fn test_upload_media_errors_with_multiple_domains() {
+    let config = TelegramConfig::default();
+    let client = MockTelegramClient::new();
+    let adapter = TelegramAdapter::new(config, client);
+    adapter.domain_id("-1001111111111");
+    adapter.domain_id("-1002222222222");
+    let result = adapter
+        .upload_media("file.bin", b"hello", "application/octet-stream")
+        .await;
+    assert!(
+        result.is_err(),
+        "upload_media should error when multiple domains are registered"
+    );
+}
+
+/// H2: `upload_media_to_domain` is the explicit, deterministic routing path.
+/// It uses the caller-provided `BroadcastDomainId` to look up the registered
+/// chat_id and route the document to that exact domain.
+#[tokio::test]
+async fn test_upload_media_to_domain_routes_correctly() {
+    let config = TelegramConfig::default();
+    let client = MockTelegramClient::new();
+    let observer = client.clone();
+    let adapter = TelegramAdapter::new(config, client);
+    let d1 = adapter.domain_id("-1001111111111");
+    let d2 = adapter.domain_id("-1002222222222");
+    let result = adapter
+        .upload_media_to_domain(&d1, "file.bin", b"hello", "application/octet-stream")
+        .await;
+    assert!(
+        result.is_ok(),
+        "upload_media_to_domain should route to the specified domain"
+    );
+    let sent = observer.sent_documents();
+    assert_eq!(sent.len(), 1);
+    assert_eq!(sent[0].0, "-1001111111111");
+    // Sanity check: d2 was registered but not used.
+    let _ = d2;
+}

@@ -266,32 +266,38 @@ impl<C: TelegramClient + Send + Sync> PlatformAdapter for TelegramAdapter<C> {
         &self,
         filename: &str,
         data: &[u8],
-        _mime_type: &str,
+        mime_type: &str,
     ) -> Result<String, PlatformAdapterError> {
-        // H6: use a BTreeMap so iteration is deterministic. Pick the *first*
-        // registered domain (sorted by domain_hash) so the chat_id is
-        // reproducible across processes. Callers who need to target a specific
-        // domain should call `register_domain` and use the result of
-        // `chat_id_for_domain` directly.
-        let chat_id = self
+        // H2: avoid silent non-determinism. If exactly one domain is registered
+        // we can route deterministically. If multiple are registered, picking
+        // any one would be ambiguous from the caller's perspective; require
+        // the explicit `upload_media_to_domain` path instead.
+        let domains: Vec<[u8; 32]> = self
             .domain_chat_ids
             .read()
             .unwrap()
-            .values()
-            .next()
-            .cloned()
-            .ok_or_else(|| PlatformAdapterError::Unreachable {
+            .keys()
+            .copied()
+            .collect();
+        if domains.is_empty() {
+            return Err(PlatformAdapterError::Unreachable {
                 platform: "telegram".into(),
                 reason: "no registered domain for upload_media".into(),
-            })?;
-        self.client
-            .send_document(&chat_id, filename, data)
-            .await
-            .map_err(|e| PlatformAdapterError::Unreachable {
+            });
+        }
+        if domains.len() > 1 {
+            return Err(PlatformAdapterError::Unreachable {
                 platform: "telegram".into(),
-                reason: e.to_string(),
-            })
-            .map(|s| s.id)
+                reason: "multiple domains registered; use upload_media_to_domain to disambiguate"
+                    .into(),
+            });
+        }
+        let domain = BroadcastDomainId {
+            platform_type: PlatformType::Telegram as u16,
+            domain_hash: domains[0],
+        };
+        self.upload_media_to_domain(&domain, filename, data, mime_type)
+            .await
     }
 
     async fn download_media(&self, file_id: &str) -> Result<Vec<u8>, PlatformAdapterError> {
@@ -306,6 +312,35 @@ impl<C: TelegramClient + Send + Sync> PlatformAdapter for TelegramAdapter<C> {
 }
 
 impl<C: TelegramClient> TelegramAdapter<C> {
+    /// Explicit, deterministic upload routing: callers that have multiple
+    /// registered domains can target a specific one by passing the
+    /// `BroadcastDomainId` they obtained from `domain_id(chat_id)` (or by
+    /// constructing one directly). This is the unambiguous counterpart to
+    /// the trait's default `upload_media` (which errors on multi-domain
+    /// configurations; see H2).
+    pub async fn upload_media_to_domain(
+        &self,
+        domain: &BroadcastDomainId,
+        filename: &str,
+        data: &[u8],
+        _mime_type: &str,
+    ) -> Result<String, PlatformAdapterError> {
+        let chat_id =
+            self.chat_id_for_domain(domain)
+                .ok_or_else(|| PlatformAdapterError::Unreachable {
+                    platform: "telegram".into(),
+                    reason: "domain not registered".into(),
+                })?;
+        self.client
+            .send_document(&chat_id, filename, data)
+            .await
+            .map_err(|e| PlatformAdapterError::Unreachable {
+                platform: "telegram".into(),
+                reason: e.to_string(),
+            })
+            .map(|s| s.id)
+    }
+
     /// Run an async send closure with exponential-backoff retry on
     /// `TelegramError::RateLimited`. Non-rate-limit errors return immediately.
     /// This implements H1 from octo-adapter-telegram-adversarial-review-r2.md.

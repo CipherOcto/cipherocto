@@ -12,10 +12,19 @@
 
 // Public modules
 pub mod adapter;
+pub mod auth;
+pub mod cleanup;
 pub mod client;
 pub mod config;
 pub mod envelope;
 pub mod error;
+#[cfg(feature = "real-tdlib")]
+pub mod files;
+#[cfg(feature = "real-tdlib")]
+pub mod groups;
+#[cfg(feature = "real-tdlib")]
+pub mod real_client;
+pub mod self_handle;
 
 // Mock client — a test helper that is always available. Named with the
 // `Mock` prefix to make its purpose obvious; production code should not
@@ -26,7 +35,17 @@ pub mod mock;
 
 // Re-exports
 pub use adapter::TelegramAdapter;
+pub use auth::{AuthAction, AuthError, AuthMode, AuthStateKey, BotIdentity, UserAuth};
 pub use client::TelegramClient;
 pub use config::TelegramConfig;
 pub use error::TelegramError;
+pub use self_handle::{SelfHandle, SelfIdentity};
+// FileError is always available; the Tdlib variant is gated to real-tdlib.
+pub use error::FileError;
+#[cfg(feature = "real-tdlib")]
+pub use files::{FileMetadata, FileProgress};
+#[cfg(feature = "real-tdlib")]
+pub use groups::{ChatInfo, ChatResolver, ChatType, GroupError, MonitoredGroups};
 pub use mock::MockTelegramClient;
+#[cfg(feature = "real-tdlib")]
+pub use real_client::RealTelegramClient;

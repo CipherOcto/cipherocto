@@ -57,8 +57,10 @@ fn test_capability_report() {
     let client = MockTelegramClient::new();
     let adapter = TelegramAdapter::new(config, client);
     let cap = adapter.capabilities();
-    // max_payload_bytes: 2_000_000_000 (2 GB) per TDLib file transfer
-    assert_eq!(cap.max_payload_bytes, 2_000_000_000);
+    // max_payload_bytes: 1024 — envelope is embedded in the caption, and
+    // Telegram's caption field has a hard cap of 1024 characters. A 1 MB
+    // payload would be silently truncated at 1024 chars.
+    assert_eq!(cap.max_payload_bytes, 1024);
     // rate_limit_per_second: 30 (preserved from 0850f)
     assert_eq!(cap.rate_limit_per_second, 30);
     // supports_fragmentation: true (via document attachments)
@@ -67,6 +69,12 @@ fn test_capability_report() {
     assert!(!cap.supports_raw_binary);
     // media_capabilities: Some(...) (TDLib file transfer)
     assert!(cap.media_capabilities.is_some());
+    // Asymmetry: arbitrary media uploaded via upload_media can be up to 2 GB,
+    // even though envelope payload (caption) is capped at 1024 chars.
+    assert_eq!(
+        cap.media_capabilities.as_ref().unwrap().max_upload_bytes,
+        2_000_000_000
+    );
 }
 
 #[test]

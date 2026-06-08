@@ -118,9 +118,14 @@ impl<C: TelegramClient + Send + Sync> PlatformAdapter for TelegramAdapter<C> {
         } else {
             self.send_with_retry(|| {
                 let chat_id = chat_id.clone();
+                let encoded = encoded.clone();
                 let wire = wire.clone();
                 let client = &self.client;
-                async move { client.send_document(&chat_id, "envelope.bin", &wire).await }
+                async move {
+                    client
+                        .send_envelope(&chat_id, &encoded, "envelope.bin", &wire)
+                        .await
+                }
             })
             .await?
         };
@@ -332,7 +337,7 @@ impl<C: TelegramClient> TelegramAdapter<C> {
                     reason: "domain not registered".into(),
                 })?;
         self.client
-            .send_document(&chat_id, filename, data)
+            .send_file(&chat_id, filename, data)
             .await
             .map_err(|e| PlatformAdapterError::Unreachable {
                 platform: "telegram".into(),

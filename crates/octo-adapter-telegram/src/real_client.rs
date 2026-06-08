@@ -572,7 +572,7 @@ impl RealTelegramClient {
     /// Extract text content from a MessageContent enum.
     /// Returns the text for text messages, the (base64-encoded) caption for
     /// document messages, or empty string for other content types. The base64
-    /// caption is set by `send_document` (see `send_document`'s doc-comment);
+    /// caption is set by `send_envelope` (see `send_envelope`'s doc-comment);
     /// the adapter's `canonicalize` decodes it.
     fn extract_message_text(content: &tdlib_rs::enums::MessageContent) -> String {
         match content {
@@ -617,9 +617,10 @@ impl TelegramClient for RealTelegramClient {
         }
     }
 
-    async fn send_document(
+    async fn send_envelope(
         &self,
         chat_id: &str,
+        encoded_envelope: &str,
         filename: &str,
         data: &[u8],
     ) -> Result<SentMessage> {
@@ -630,7 +631,7 @@ impl TelegramClient for RealTelegramClient {
             .map_err(|_| TelegramError::InvalidChatId(chat_id.into()))?;
 
         // Write data to a uniquely-named temp file to avoid collisions.
-        let temp_path = unique_temp_path("octo_doc");
+        let temp_path = unique_temp_path("octo_env");
         {
             let mut file = std::fs::File::create(&temp_path).map_err(TelegramError::Io)?;
             file.write_all(data).map_err(TelegramError::Io)?;
@@ -643,13 +644,12 @@ impl TelegramClient for RealTelegramClient {
         // Wire format: caption is the base64-encoded envelope. The receive path
         // returns the caption as `extract_message_text` for MessageDocument, so
         // the adapter can decode it without an extra round-trip.
-        let encoded = crate::envelope::encode_envelope(data);
         let content = tdlib_rs::types::InputMessageDocument {
             document: tdlib_rs::enums::InputFile::Local(input_file),
             thumbnail: None,
             disable_content_type_detection: false,
             caption: Some(tdlib_rs::types::FormattedText {
-                text: encoded,
+                text: encoded_envelope.to_string(),
                 entities: vec![],
             }),
         };
@@ -671,6 +671,59 @@ impl TelegramClient for RealTelegramClient {
                 // `_filename` is reserved in case the wire format evolves to embed it
                 // alongside the encoded envelope. Currently the encoded envelope is
                 // the entire caption; filename is preserved here for API symmetry.
+                let _ = filename;
+                Ok(SentMessage::new(msg.id.to_string(), msg.date as i64))
+            }
+            Err(e) => Err(Self::classify_tdlib_error(e)),
+        }
+    }
+
+    async fn send_file(&self, chat_id: &str, filename: &str, data: &[u8]) -> Result<SentMessage> {
+        use std::io::Write;
+
+        let chat_id_i64: i64 = chat_id
+            .parse()
+            .map_err(|_| TelegramError::InvalidChatId(chat_id.into()))?;
+
+        // Write data to a uniquely-named temp file to avoid collisions.
+        let temp_path = unique_temp_path("octo_file");
+        {
+            let mut file = std::fs::File::create(&temp_path).map_err(TelegramError::Io)?;
+            file.write_all(data).map_err(TelegramError::Io)?;
+        }
+
+        let input_file = tdlib_rs::types::InputFileLocal {
+            path: temp_path.to_string_lossy().into_owned(),
+        };
+
+        // H6: raw file upload — no caption. The receive path will see a
+        // MessageDocument with an empty caption (`extract_message_text`
+        // returns ""), and the adapter's `canonicalize` rejects non-envelope
+        // payloads (correctly: this is a media upload, not a control message).
+        let content = tdlib_rs::types::InputMessageDocument {
+            document: tdlib_rs::enums::InputFile::Local(input_file),
+            thumbnail: None,
+            disable_content_type_detection: false,
+            caption: None,
+        };
+
+        let result = tdlib_rs::functions::send_message(
+            chat_id_i64,
+            None,
+            None,
+            None,
+            tdlib_rs::enums::InputMessageContent::InputMessageDocument(content),
+            self.state.client_id,
+        )
+        .await;
+
+        crate::cleanup::cleanup_temp_file(&temp_path);
+
+        match result {
+            Ok(tdlib_rs::enums::Message::Message(msg)) => {
+                // `_filename` is reserved in case the wire format evolves to embed
+                // it alongside the file content. Currently the filename is preserved
+                // here for API symmetry with `send_envelope`.
                 let _ = filename;
                 Ok(SentMessage::new(msg.id.to_string(), msg.date as i64))
             }

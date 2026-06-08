@@ -15,11 +15,16 @@ type DocDataMap = HashMap<(String, String), Vec<u8>>;
 pub struct MockTelegramClient {
     sent_messages: Arc<Mutex<Vec<(String, String)>>>,
     sent_documents: Arc<Mutex<Vec<(String, String, usize)>>>,
-    /// Tracks data sent via send_document, keyed by (chat_id, filename).
+    /// Tracks data sent via send_envelope/send_file, keyed by (chat_id, filename).
     /// Used to inject NewMessage updates for the document receive path.
     /// Drained only via `drain_received_documents()`; `receive_updates`
     /// re-injects on every call so callers can re-poll until they choose
     /// to drain (H4 fix — matches at-least-once semantics of receive loops).
+    ///
+    /// H6: prior to the H6 split, this was named `sent_doc_data` and only
+    /// fed by `send_document`. After the split, both `send_envelope` and
+    /// `send_file` populate it (the doc round-trip is the same in both
+    /// cases — only the caption differs).
     sent_doc_data: Arc<Mutex<DocDataMap>>,
     pending_updates: Arc<Mutex<Vec<TelegramUpdate>>>,
     next_msg_id: Arc<Mutex<u64>>,
@@ -99,20 +104,49 @@ impl TelegramClient for MockTelegramClient {
         Ok(SentMessage::new(id, timestamp))
     }
 
-    async fn send_document(
+    async fn send_envelope(
         &self,
         chat_id: &str,
+        encoded_envelope: &str,
         filename: &str,
         data: &[u8],
     ) -> Result<SentMessage> {
-        let id = format!("mock-doc-{}", self.next_msg_id.lock().unwrap());
+        // H6: send_envelope records the encoded envelope in `sent_messages`
+        // (caption path) AND the doc in `sent_documents` (round-trip path).
+        let id = format!("mock-env-{}", self.next_msg_id.lock().unwrap());
         *self.next_msg_id.lock().unwrap() += 1;
+        self.sent_messages
+            .lock()
+            .unwrap()
+            .push((chat_id.to_string(), encoded_envelope.to_string()));
         self.sent_documents.lock().unwrap().push((
             chat_id.to_string(),
             filename.to_string(),
             data.len(),
         ));
         // Store data for receive-path injection (document envelope round-trip).
+        self.sent_doc_data
+            .lock()
+            .unwrap()
+            .insert((chat_id.to_string(), filename.to_string()), data.to_vec());
+        let timestamp = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_secs() as i64)
+            .unwrap_or(0);
+        Ok(SentMessage::new(id, timestamp))
+    }
+
+    async fn send_file(&self, chat_id: &str, filename: &str, data: &[u8]) -> Result<SentMessage> {
+        // H6: send_file records the doc but NOT a caption (the raw upload
+        // path has no envelope to round-trip via the caption channel).
+        let id = format!("mock-file-{}", self.next_msg_id.lock().unwrap());
+        *self.next_msg_id.lock().unwrap() += 1;
+        self.sent_documents.lock().unwrap().push((
+            chat_id.to_string(),
+            filename.to_string(),
+            data.len(),
+        ));
+        // Store data for receive-path injection (document round-trip).
         self.sent_doc_data
             .lock()
             .unwrap()

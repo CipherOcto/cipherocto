@@ -11,6 +11,20 @@
 use crate::error::Result;
 use async_trait::async_trait;
 
+/// Result of sending a message — includes the platform message id and
+/// the Unix timestamp (seconds since epoch) when the message was sent.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct SentMessage {
+    pub id: String,
+    pub timestamp: i64,
+}
+
+impl SentMessage {
+    pub fn new(id: String, timestamp: i64) -> Self {
+        Self { id, timestamp }
+    }
+}
+
 /// A new message update from Telegram.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct NewMessage {
@@ -49,18 +63,47 @@ pub enum TelegramUpdate {
 /// real TDLib client implement this.
 #[async_trait]
 pub trait TelegramClient: Send + Sync {
-    /// Send a text message to a chat. Returns the platform message id.
-    async fn send_message(&self, chat_id: &str, text: &str) -> Result<String>;
+    /// Send a text message to a chat. Returns the message id and timestamp.
+    async fn send_message(&self, chat_id: &str, text: &str) -> Result<SentMessage>;
 
-    /// Send a binary document to a chat. Returns the platform message id.
-    async fn send_document(&self, chat_id: &str, filename: &str, data: &[u8]) -> Result<String>;
+    /// Send a binary envelope. The `encoded_envelope` is set as the caption
+    /// (Telegram's round-trip channel for the wire format); the `data` is
+    /// the file content uploaded. Used by `send_envelope` in the adapter for
+    /// envelopes that exceed the 4096-char text threshold.
+    ///
+    /// H6: split out of the prior unified `send_document` so callers can
+    /// request a raw file upload (`send_file`) without forcing a caption.
+    async fn send_envelope(
+        &self,
+        chat_id: &str,
+        encoded_envelope: &str,
+        filename: &str,
+        data: &[u8],
+    ) -> Result<SentMessage>;
 
-    /// Download a file by message id. Returns the raw bytes.
-    async fn download_file(&self, message_id: &str) -> Result<Vec<u8>>;
+    /// Send a raw file (no caption). Used by `upload_media_to_domain` for
+    /// arbitrary media uploads that should not round-trip through the
+    /// envelope encoder. H6: replaces the prior `send_document` for the
+    /// no-caption upload path.
+    async fn send_file(&self, chat_id: &str, filename: &str, data: &[u8]) -> Result<SentMessage>;
+
+    /// Download a file by TDLib file_id. Returns the raw bytes.
+    ///
+    /// NOTE: The parameter is named `file_id` (not `message_id`) because
+    /// TDLib uses file_ids for downloads. Callers that only have a message
+    /// id must first resolve the message via their platform-specific
+    /// message lookup (this trait does not expose that — the `adapter`
+    /// module's `download_media` is the high-level entry point).
+    async fn download_file(&self, file_id: &str) -> Result<Vec<u8>>;
 
     /// Receive pending updates. Yields all queued updates.
-    async fn receive_updates(&mut self) -> Result<Vec<TelegramUpdate>>;
+    /// Takes `&self` so the trait composes with `PlatformAdapter::receive_messages`
+    /// (which also takes `&self`); interior mutability (Mutex/RwLock) is the
+    /// impl's responsibility.
+    async fn receive_updates(&self) -> Result<Vec<TelegramUpdate>>;
 
     /// Authenticate (for user mode). For bot mode, this is a no-op.
-    async fn authenticate(&mut self) -> Result<()>;
+    /// Takes `&self`; the real TDLib client tracks auth state inside the
+    /// tdjson client (not in our struct), so no&mut self is needed.
+    async fn authenticate(&self) -> Result<()>;
 }

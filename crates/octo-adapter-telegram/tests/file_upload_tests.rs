@@ -8,9 +8,9 @@
 //
 // Note: The 100 MB file size was reduced to 1 MB to avoid 400 MB peak RSS
 // under `cargo test` (parallel by default). The 100 MB claim is verified
-// manually against TDLib; the routing logic (send_message for small, send_document
+// manually against TDLib; the routing logic (send_message for small, send_envelope
 // for large) is the contract being tested, and 1 MB still proves the routing
-// path because send_document is invoked for any non-trivial payload.
+// path because send_envelope (large-envelope) is invoked for any non-trivial payload.
 
 use octo_adapter_telegram::client::TelegramClient;
 use octo_adapter_telegram::mock::MockTelegramClient;
@@ -48,9 +48,10 @@ async fn test_send_document_via_mock() {
 
     assert_eq!(file_data.len(), ONE_MB, "test file should be exactly 1 MB");
 
-    // Send as document
+    // Send as file (no caption) — H6 split: send_file replaces send_document
+    // for the raw upload path.
     let result = mock
-        .send_document("-1001234567890", "test_1mb.bin", &file_data)
+        .send_file("-1001234567890", "test_1mb.bin", &file_data)
         .await;
 
     std::fs::remove_file(&temp_path).ok();
@@ -74,7 +75,7 @@ async fn test_mock_records_large_document() {
     let chat_id = "-1001234567890";
     let filename = "large_envelope.bin";
 
-    mock.send_document(chat_id, filename, &file_data)
+    mock.send_file(chat_id, filename, &file_data)
         .await
         .expect("send should succeed");
 
@@ -116,7 +117,7 @@ async fn test_multiple_large_uploads() {
     // Send 3 large documents in sequence
     for i in 0..3 {
         let filename = format!("large_envelope_part{}.bin", i);
-        let result = mock.send_document(chat_id, &filename, &file_data).await;
+        let result = mock.send_file(chat_id, &filename, &file_data).await;
         assert!(result.is_ok(), "upload {} should succeed", i);
     }
 
@@ -132,7 +133,7 @@ async fn test_upload_with_empty_filename() {
     let file_data = std::fs::read(&temp_path).expect("read temp file");
     std::fs::remove_file(&temp_path).ok();
 
-    let result = mock.send_document("-1001234567890", "", &file_data).await;
+    let result = mock.send_file("-1001234567890", "", &file_data).await;
 
     // Empty filename should still succeed (mock doesn't validate filenames)
     assert!(result.is_ok());
@@ -146,10 +147,7 @@ async fn test_upload_with_empty_filename() {
 #[tokio::test]
 async fn test_mock_receive_updates_re_injects_documents() {
     let client = MockTelegramClient::new();
-    client
-        .send_document("123", "x.bin", b"hello")
-        .await
-        .unwrap();
+    client.send_file("123", "x.bin", b"hello").await.unwrap();
 
     let first = client.receive_updates().await.unwrap();
     let second = client.receive_updates().await.unwrap();
@@ -169,4 +167,80 @@ async fn test_mock_receive_updates_re_injects_documents() {
         0,
         "after drain_received_documents, the doc is no longer re-injected"
     );
+}
+
+/// H6: `send_file` is a new method on `TelegramClient` for raw file uploads
+/// that do NOT set a caption. This test verifies the new API compiles and
+/// runs end-to-end via the mock. The behavior change (caption=None) is
+/// only observable in the real TDLib path.
+#[tokio::test]
+async fn test_send_file_has_no_caption() {
+    let client = MockTelegramClient::new();
+    let sent = client
+        .send_file("-1001234567890", "raw.bin", b"hello world")
+        .await
+        .unwrap();
+    // The mock should have recorded the send. We don't have direct access
+    // to the caption in the mock, so this just verifies the method compiles
+    // and runs.
+    assert!(!sent.id.is_empty());
+}
+
+/// H6: `send_envelope` is a new method on `TelegramClient` for envelope
+/// uploads. The encoded envelope is set as the caption. The mock records
+/// the encoded envelope into `sent_messages` (same bucket as `send_message`)
+/// so the receive path can decode it.
+#[tokio::test]
+async fn test_send_envelope_records_caption() {
+    let client = MockTelegramClient::new();
+    let encoded = "ZW5jb2RlZC1lbnZlbG9wZQ=="; // base64 of "encoded-envelope"
+    let sent = client
+        .send_envelope(
+            "-1001234567890",
+            encoded,
+            "envelope.bin",
+            b"encoded-envelope",
+        )
+        .await
+        .unwrap();
+    assert!(!sent.id.is_empty());
+
+    // The encoded envelope is recorded in `sent_messages` (the caption path).
+    let messages = client.sent_messages();
+    assert_eq!(messages.len(), 1, "should record one envelope send");
+    assert_eq!(messages[0].0, "-1001234567890");
+    assert_eq!(
+        messages[0].1, encoded,
+        "caption should be the encoded envelope"
+    );
+
+    // The doc data is also recorded (used for the receive path round-trip).
+    let docs = client.sent_documents();
+    assert_eq!(docs.len(), 1, "should record one doc send");
+    let (chat_id, filename, size) = &docs[0];
+    assert_eq!(chat_id, "-1001234567890");
+    assert_eq!(filename, "envelope.bin");
+    assert_eq!(*size, b"encoded-envelope".len());
+}
+
+/// H6: `send_file` should NOT record a caption. Verify `sent_messages` stays
+/// empty after a `send_file` call, distinguishing it from `send_envelope`.
+#[tokio::test]
+async fn test_send_file_does_not_record_caption() {
+    let client = MockTelegramClient::new();
+    client
+        .send_file("-1001234567890", "raw.bin", b"hello world")
+        .await
+        .unwrap();
+
+    // send_file should not push to sent_messages (no caption path).
+    let messages = client.sent_messages();
+    assert!(
+        messages.is_empty(),
+        "send_file should NOT record a caption in sent_messages"
+    );
+
+    // But the doc itself IS recorded.
+    let docs = client.sent_documents();
+    assert_eq!(docs.len(), 1, "send_file should still record the doc");
 }

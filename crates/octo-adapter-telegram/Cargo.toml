@@ -10,11 +10,25 @@ crate-type = ["cdylib", "rlib"]
 # Default: mock TDLib client, no real TDLib dependency. All unit tests run with this.
 default = []
 # Real TDLib: enables tdlib-rs + rusqlite for auth_key persistence. Adds 150MB TDLib binary + C++ build cost.
-real-tdlib = ["dep:tdlib-rs", "dep:rusqlite"]
+# Downloads prebuilt TDLib binaries automatically. Set LOCAL_TDLIB_PATH for local builds, or use pkg-config for system TDLib.
+real-tdlib = ["dep:tdlib-rs", "dep:rusqlite", "tdlib-rs/download-tdlib"]
+# Download prebuilt TDLib binaries automatically (default for real-tdlib).
+# Requires network access at build time.
+download-tdlib = ["tdlib-rs/download-tdlib"]
+# Use locally built TDLib from $LOCAL_TDLIB_PATH.
+# Set LOCAL_TDLIB_PATH environment variable to your TDLib source tree.
+local-tdlib = ["tdlib-rs/local-tdlib"]
+# Use system TDLib via pkg-config.
+# Requires tdlib and tdjson system packages installed.
+pkg-config = ["tdlib-rs/pkg-config"]
+# Integration tests that require a real Telegram test DC. Off by default
+# because they need a real account and a long timeout. Enable with:
+#   cargo test -p octo-adapter-telegram --features integration-test
+integration-test = []
 
 [dependencies]
 # Async runtime
-tokio = { version = "1.35", features = ["rt-multi-thread", "macros", "time"] }
+tokio = { version = "1.35", features = ["rt-multi-thread", "macros", "time", "sync"] }
 # Serialization
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
@@ -30,9 +44,13 @@ thiserror = "2.0"
 reqwest = { version = "0.12", features = ["json", "multipart"] }
 # Workspace crate providing PlatformAdapter, CapabilityReport, BroadcastDomainId, DeterministicEnvelope
 octo-network = { path = "../octo-network" }
-# Real TDLib (optional, behind feature flag)
-tdlib-rs = { version = "1.4", optional = true }
+# Real TDLib (optional, behind feature flag). Pinned to 1.4.x — a 1.5 bump
+# would break the explicit `None, None, None, ..., content, client_id` arg
+# list in real_client.rs::send_message, ::send_envelope, and ::send_file.
+tdlib-rs = { version = "=1.4.0", optional = true }
 rusqlite = { version = "0.37", features = ["bundled"], optional = true }
+# Workspace tracing crate for debug-level auth update logging (M7).
+tracing = "0.1"
 
 [dev-dependencies]
 # Test helpers

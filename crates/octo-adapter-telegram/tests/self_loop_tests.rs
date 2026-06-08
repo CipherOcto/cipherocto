@@ -271,7 +271,7 @@ async fn test_document_self_loop_is_filtered() {
     adapter.set_self_user_id(bot_user_id);
 
     // Bot sends a document — this enqueues a doc-derived NewMessage.
-    mock.send_document(&chat_id_str, "x.bin", b"hello")
+    mock.send_file(&chat_id_str, "x.bin", b"hello")
         .await
         .unwrap();
 
@@ -291,7 +291,7 @@ async fn test_document_self_loop_is_filtered() {
     mock.set_mock_sender(99);
     // Drain the prior doc so the receive path doesn't re-inject it again.
     mock.drain_received_documents();
-    mock.send_document(&chat_id_str, "y.bin", b"world")
+    mock.send_file(&chat_id_str, "y.bin", b"world")
         .await
         .unwrap();
     let received2: Vec<_> = adapter.receive_messages(&domain).await.unwrap();

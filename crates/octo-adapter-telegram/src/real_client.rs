@@ -149,7 +149,7 @@ impl RealTelegramClient {
         Self::new_internal(
             None,
             config.bot_token.clone(),
-            Some(config.data_dir.clone()),
+            config.data_dir.clone(),
             api_id,
             api_hash,
         )

@@ -39,9 +39,10 @@ pub struct TelegramConfig {
     #[serde(default)]
     pub phone: Option<String>,
 
-    /// TDLib auth_key persistence directory
+    /// TDLib auth_key persistence directory. Required for user mode.
+    /// For bot mode, defaults to `None` (a temporary directory is used).
     #[serde(default)]
-    pub data_dir: PathBuf,
+    pub data_dir: Option<PathBuf>,
 
     /// List of chat IDs to monitor (Bot mode)
     #[serde(default)]
@@ -107,6 +108,10 @@ impl TelegramConfig {
                 }
                 if self.phone.is_none() || self.phone.as_deref().unwrap().is_empty() {
                     return Err("user mode requires phone".into());
+                }
+                // L3: user mode requires a data_dir for TDLib auth persistence.
+                if self.data_dir.is_none() {
+                    return Err("user mode requires data_dir".into());
                 }
             }
             other => {

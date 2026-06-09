@@ -14,7 +14,7 @@ fn test_default_config() {
     assert!(cfg.password.is_none());
     assert!(cfg.groups.is_empty());
     assert!(cfg.webhook_port.is_none());
-    assert_eq!(cfg.data_dir.to_string_lossy(), "");
+    assert!(cfg.data_dir.is_none());
     assert!(!cfg.features.e2e_chats);
     assert!(!cfg.features.voice_video);
 }

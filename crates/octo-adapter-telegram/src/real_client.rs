@@ -27,7 +27,6 @@ use std::sync::{
     Arc, Mutex,
 };
 use tokio::sync::{mpsc, Notify};
-use tokio::task::spawn_blocking;
 
 /// The TDLib client ID typealias for clarity.
 type ClientId = i32;
@@ -270,17 +269,31 @@ impl RealTelegramClient {
     /// from within this existing tokio runtime (no nested runtime, no
     /// detached thread — C3) and then exits.
     async fn receive_loop(state: Arc<ClientState>, mut shutdown_rx: mpsc::Receiver<ClientId>) {
+        // L15: single long-lived blocking thread for tdlib_rs::receive.
+        // Previously each iteration called spawn_blocking, creating a new
+        // thread per update. The dedicated thread loops on tdlib_rs::receive
+        // and pushes (update, client_id) pairs through an mpsc channel.
+        let (update_tx, mut update_rx) = mpsc::channel::<(tdlib_rs::enums::Update, ClientId)>(256);
+        let state_clone = Arc::clone(&state);
+        std::thread::spawn(move || {
+            while state_clone.running.load(Ordering::Acquire) {
+                match tdlib_rs::receive() {
+                    Some((update, client_id)) => {
+                        if update_tx.blocking_send((update, client_id)).is_err() {
+                            break;
+                        }
+                    }
+                    None => std::thread::yield_now(),
+                }
+            }
+        });
+
+        // Async receive loop reads from the channel.
         loop {
             if !state.running.load(Ordering::Acquire) {
                 break;
             }
-            // Use spawn_blocking for the blocking receive() call so we do not
-            // block the tokio runtime. New blocking thread per iteration is
-            // cheap because tdlib_rs::receive blocks until an update arrives.
-            let update_fut = spawn_blocking(tdlib_rs::receive);
             tokio::select! {
-                // Biased so a shutdown signal is observed promptly even if
-                // an update happens to be ready at the same instant.
                 biased;
                 _ = shutdown_rx.recv() => {
                     let client_id = state.client_id;
@@ -290,25 +303,16 @@ impl RealTelegramClient {
                     state.running.store(false, Ordering::Release);
                     break;
                 }
-                result = update_fut => {
-                    match result {
-                        Ok(Some((update, _client_id))) => {
-                            if let Err(e) = Self::handle_update(&state, update).await {
-                                tracing::debug!(error = %e, "tdlib update handler error");
-                            }
-                            // Yield so a flood of updates does not starve the runtime.
-                            tokio::task::yield_now().await;
-                        }
-                        Ok(None) => {
-                            // No update available right now — yield to avoid CPU spinning.
-                            tokio::task::yield_now().await;
-                        }
-                        Err(_) => {
-                            // Receive error (likely a panic in spawn_blocking or runtime shutdown).
-                            state.running.store(false, Ordering::Release);
-                            break;
-                        }
+                Some((update, _client_id)) = update_rx.recv() => {
+                    if let Err(e) = Self::handle_update(&state, update).await {
+                        tracing::debug!(error = %e, "tdlib update handler error");
                     }
+                    tokio::task::yield_now().await;
+                }
+                else => {
+                    // Channel closed — blocking thread exited.
+                    state.running.store(false, Ordering::Release);
+                    break;
                 }
             }
         }

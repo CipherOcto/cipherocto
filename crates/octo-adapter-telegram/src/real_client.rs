@@ -590,6 +590,8 @@ impl RealTelegramClient {
                 crate::client::MessageEdited {
                     chat_id: edited.chat_id,
                     message_id: edited.message_id.to_string(),
+                    // UpdateMessageEdited does NOT carry the new content field.
+                    // To get the edited text the caller must call get_message.
                     new_text: String::new(),
                 },
             )),
@@ -619,6 +621,10 @@ impl RealTelegramClient {
         match content {
             tdlib_rs::enums::MessageContent::MessageText(msg) => msg.text.text.clone(),
             tdlib_rs::enums::MessageContent::MessageDocument(doc) => doc.caption.text.clone(),
+            tdlib_rs::enums::MessageContent::MessagePhoto(photo) => photo.caption.text.clone(),
+            tdlib_rs::enums::MessageContent::MessageVideo(video) => video.caption.text.clone(),
+            tdlib_rs::enums::MessageContent::MessageAudio(audio) => audio.caption.text.clone(),
+            tdlib_rs::enums::MessageContent::MessageAnimation(anim) => anim.caption.text.clone(),
             _ => String::new(),
         }
     }

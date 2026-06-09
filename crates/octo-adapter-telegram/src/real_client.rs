@@ -64,6 +64,8 @@ struct ClientState {
     api_hash: String,
     /// Tracks whether set_tdlib_parameters has been called for bot mode.
     bot_params_set: AtomicBool,
+    /// Tracks whether set_tdlib_parameters has been called for user mode.
+    user_params_set: AtomicBool,
     /// Channel for inbound verification codes (user mode).
     code_tx: mpsc::Sender<String>,
     /// Receiver end of the verification-code channel. The receive loop
@@ -117,6 +119,7 @@ impl ClientState {
             api_id,
             api_hash,
             bot_params_set: AtomicBool::new(false),
+            user_params_set: AtomicBool::new(false),
             code_tx,
             code_rx: Arc::new(Mutex::new(Some(code_rx))),
             self_handle: SelfHandle::new(),
@@ -406,17 +409,21 @@ impl RealTelegramClient {
                         }
                     }
                 } else if let Some(ref user_auth) = state.user_auth {
-                    if let Err(e) = user_auth
-                        .handle_authorization_state(
-                            auth_state.clone(),
-                            state.client_id,
-                            state.data_dir.as_deref(),
-                        )
-                        .await
-                    {
-                        let msg = format!("user auth: {}", e);
-                        *state.auth_error.lock().unwrap() = Some(msg.clone());
-                        return Err(msg);
+                    // L5: only set parameters once per session to avoid
+                    // redundant TDLib calls on re-emitted WaitTdlibParameters.
+                    if !state.user_params_set.swap(true, Ordering::AcqRel) {
+                        if let Err(e) = user_auth
+                            .handle_authorization_state(
+                                auth_state.clone(),
+                                state.client_id,
+                                state.data_dir.as_deref(),
+                            )
+                            .await
+                        {
+                            let msg = format!("user auth: {}", e);
+                            *state.auth_error.lock().unwrap() = Some(msg.clone());
+                            return Err(msg);
+                        }
                     }
                 }
                 Ok(())

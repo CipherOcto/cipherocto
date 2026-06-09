@@ -307,6 +307,125 @@ async fn test_document_self_loop_is_filtered() {
     assert_eq!(decoded, b"world");
 }
 
+/// H8: verify the adapter shares the `SelfHandle` with the underlying client
+/// via the `with_self_handle` constructor. The shared handle's `user_id`
+/// must drive the adapter's self-loop filter exactly as a local
+/// `set_self_user_id` would. This is the production path: the real client
+/// populates its own `SelfHandle` from `get_me`, and the adapter is wired
+/// to that same instance.
+#[tokio::test]
+async fn test_adapter_with_shared_self_handle() {
+    use octo_adapter_telegram::{TelegramAdapter, TelegramConfig};
+    use octo_network::dot::adapters::PlatformAdapter;
+    use octo_network::dot::domain::BroadcastDomainId;
+
+    let config = TelegramConfig::default();
+    let client = MockTelegramClient::new();
+
+    // Build a self_handle and stamp the bot's user_id on it BEFORE
+    // constructing the adapter. In production, the real client populates
+    // this from `get_me` and the gateway hands the same handle to the
+    // adapter.
+    let handle = SelfHandle::new();
+    handle.set_user_id(42);
+    assert_eq!(handle.user_id(), Some(42));
+
+    let adapter = TelegramAdapter::with_self_handle(config, client.clone(), handle.clone());
+
+    // Clone the handle into a second owner to prove the Arc semantics —
+    // a mutation through one owner must be visible to the adapter.
+    let handle2 = handle.clone();
+    assert_eq!(handle2.user_id(), Some(42));
+    assert_eq!(handle.user_id(), Some(42));
+
+    // Register the domain on the adapter.
+    let chat_id_str = "-1001234567890".to_string();
+    let domain: BroadcastDomainId = adapter.domain_id(&chat_id_str);
+
+    // Stamp the same user_id onto the mock so doc-derived NewMessages
+    // get a `from` that the shared handle can match.
+    client.set_mock_sender(42);
+
+    // Bot sends a document — this enqueues a doc-derived NewMessage
+    // with `from = "42"`.
+    client
+        .send_file(&chat_id_str, "x.bin", b"hello")
+        .await
+        .unwrap();
+
+    // Pull updates from the mock and apply the adapter's self-loop filter.
+    // The doc-injected NewMessage (from=42) must be dropped because the
+    // shared SelfHandle knows self_user_id=42.
+    let received: Vec<_> = adapter.receive_messages(&domain).await.unwrap();
+    assert_eq!(
+        received.len(),
+        0,
+        "shared SelfHandle must drop doc-injected message when from matches"
+    );
+
+    // Sanity check: a different self_user_id (or none) lets the doc
+    // message through. We use a NEW shared handle with a different id
+    // to confirm the filter is reading from the shared instance, not
+    // from a stale copy.
+    let handle3 = SelfHandle::new();
+    let adapter3 =
+        TelegramAdapter::with_self_handle(TelegramConfig::default(), client.clone(), handle3);
+    let domain3: BroadcastDomainId = adapter3.domain_id(&chat_id_str);
+    // Drain the prior doc so the receive path does not re-inject it
+    // again alongside the new one.
+    client.drain_received_documents();
+    client
+        .send_file(&chat_id_str, "y.bin", b"world")
+        .await
+        .unwrap();
+    let received2 = adapter3.receive_messages(&domain3).await.unwrap();
+    assert_eq!(
+        received2.len(),
+        1,
+        "doc-injected message should survive when shared SelfHandle has no self id"
+    );
+    // The receive path carries the base64-encoded envelope as the
+    // message body. Decoding it should round-trip back to "world".
+    let payload_str = std::str::from_utf8(&received2[0].payload).unwrap();
+    let decoded = octo_adapter_telegram::envelope::decode_envelope(payload_str).unwrap();
+    assert_eq!(decoded, b"world");
+
+    // Verify the handle is independently cloneable across threads and
+    // mutations from one clone are visible to the adapter reading through
+    // a separate clone.
+    let handle4 = SelfHandle::new();
+    let adapter4 = TelegramAdapter::with_self_handle(
+        TelegramConfig::default(),
+        client.clone(),
+        handle4.clone(),
+    );
+    let domain4: BroadcastDomainId = adapter4.domain_id(&chat_id_str);
+    client.drain_received_documents();
+    client
+        .send_file(&chat_id_str, "z.bin", b"alpha")
+        .await
+        .unwrap();
+    // No identity on handle4 yet — message should pass through.
+    let pre = adapter4.receive_messages(&domain4).await.unwrap();
+    assert_eq!(pre.len(), 1, "no-self-id handle should not filter");
+
+    // Set the identity through a separate clone of the same handle.
+    handle4.set_user_id(42);
+    client.drain_received_documents();
+    client
+        .send_file(&chat_id_str, "w.bin", b"beta")
+        .await
+        .unwrap();
+    // The adapter's handle4 is a clone — it should see the new identity
+    // and drop the doc message.
+    let post = adapter4.receive_messages(&domain4).await.unwrap();
+    assert_eq!(
+        post.len(),
+        0,
+        "mutation on a separate clone of the shared SelfHandle must be visible to the adapter"
+    );
+}
+
 /// Test adapter-level self-loop filtering (H5). Uses the live TelegramAdapter.
 #[tokio::test]
 async fn test_adapter_filters_self_messages() {

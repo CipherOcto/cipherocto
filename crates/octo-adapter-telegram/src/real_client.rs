@@ -248,6 +248,14 @@ impl RealTelegramClient {
             .map_err(|_| TelegramError::TdlibClient("code channel closed".into()))
     }
 
+    /// H8: clone the `SelfHandle` so the gateway can hand the same
+    /// instance to the adapter. Cheap (Arc clone). The receive loop
+    /// populates this from `get_me` on `Ready`; callers may receive an
+    /// empty handle if the client is queried before auth completes.
+    pub fn self_handle(&self) -> SelfHandle {
+        self.state.self_handle.clone()
+    }
+
     /// The receive loop that processes TDLib updates.
     ///
     /// `shutdown_rx` is the receiver end of the shutdown channel owned by

@@ -44,6 +44,22 @@ impl<C: TelegramClient> TelegramAdapter<C> {
         }
     }
 
+    /// H8: build an adapter that shares a `SelfHandle` with the underlying
+    /// client. This is the production path: the real TDLib client populates
+    /// its `SelfHandle` from `get_me` on `Ready`, and the adapter reads
+    /// from that same instance via Arc. Mocks/tests can use this to wire
+    /// a pre-configured handle without re-fetching. `SelfHandle` is
+    /// cheaply cloneable (`Arc<Mutex<...>>`).
+    pub fn with_self_handle(config: TelegramConfig, client: C, self_handle: SelfHandle) -> Self {
+        Self {
+            config,
+            client,
+            self_handle,
+            domain_chat_ids: RwLock::new(BTreeMap::new()),
+            retry_config: RetryConfig::default(),
+        }
+    }
+
     /// Build an adapter with a custom retry policy (for tests / tuning).
     pub fn with_retry_config(config: TelegramConfig, client: C, retry_config: RetryConfig) -> Self {
         Self {

@@ -124,7 +124,7 @@ impl<C: TelegramClient + Send + Sync> PlatformAdapter for TelegramAdapter<C> {
         // in the caption for the receive path to recover.
         let encoded = envelope::encode_envelope(&wire);
         let sent = if encoded.len() <= 4096 {
-            self.send_with_retry(|| {
+            self.with_retry(|| {
                 let chat_id = chat_id.clone();
                 let encoded = encoded.clone();
                 let client = &self.client;
@@ -132,7 +132,7 @@ impl<C: TelegramClient + Send + Sync> PlatformAdapter for TelegramAdapter<C> {
             })
             .await?
         } else {
-            self.send_with_retry(|| {
+            self.with_retry(|| {
                 let chat_id = chat_id.clone();
                 let encoded = encoded.clone();
                 let wire = wire.clone();
@@ -333,13 +333,12 @@ impl<C: TelegramClient + Send + Sync> PlatformAdapter for TelegramAdapter<C> {
     }
 
     async fn download_media(&self, file_id: &str) -> Result<Vec<u8>, PlatformAdapterError> {
-        self.client
-            .download_file(file_id)
-            .await
-            .map_err(|e| PlatformAdapterError::Unreachable {
-                platform: "telegram".into(),
-                reason: e.to_string(),
-            })
+        self.with_retry(|| {
+            let file_id = file_id.to_string();
+            let client = &self.client;
+            async move { client.download_file(&file_id).await }
+        })
+        .await
     }
 }
 
@@ -363,29 +362,25 @@ impl<C: TelegramClient> TelegramAdapter<C> {
                     platform: "telegram".into(),
                     reason: "domain not registered".into(),
                 })?;
-        self.client
-            .send_file(&chat_id, filename, data)
-            .await
-            .map_err(|e| PlatformAdapterError::Unreachable {
-                platform: "telegram".into(),
-                reason: e.to_string(),
-            })
-            .map(|s| s.id)
+        self.with_retry(|| {
+            let chat_id = chat_id.clone();
+            let filename = filename.to_string();
+            let data = data.to_vec();
+            let client = &self.client;
+            async move { client.send_file(&chat_id, &filename, &data).await }
+        })
+        .await
+        .map(|s| s.id)
     }
 
-    /// Run an async send closure with exponential-backoff retry on
+    /// Run an async closure with exponential-backoff retry on
     /// `TelegramError::RateLimited` and `TelegramError::Transient`.
-    /// Non-recoverable errors return immediately. Implements H1 and M6
-    /// from octo-adapter-telegram-adversarial-review-r2.md / r3.
-    async fn send_with_retry<F, Fut>(
-        &self,
-        mut op: F,
-    ) -> Result<crate::client::SentMessage, PlatformAdapterError>
+    /// Non-recoverable errors return immediately. Generic over success type
+    /// `T` so both send (SentMessage) and download (Vec<u8>) paths use it.
+    async fn with_retry<F, Fut, T>(&self, mut op: F) -> Result<T, PlatformAdapterError>
     where
         F: FnMut() -> Fut,
-        Fut: std::future::Future<
-            Output = Result<crate::client::SentMessage, crate::error::TelegramError>,
-        >,
+        Fut: std::future::Future<Output = Result<T, crate::error::TelegramError>>,
     {
         let mut attempt: u32 = 0;
         loop {

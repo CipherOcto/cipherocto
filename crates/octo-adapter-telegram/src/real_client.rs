@@ -763,7 +763,8 @@ impl TelegramClient for RealTelegramClient {
 
 impl RealTelegramClient {
     /// Map a TDLib error to a structured `TelegramError`, recognizing
-    /// 429-equivalent error codes and FLOOD_WAIT_* messages.
+    /// 429-equivalent error codes, FLOOD_WAIT_* messages, and transient
+    /// (recoverable) errors so the adapter can retry them.
     fn classify_tdlib_error(e: tdlib_rs::types::Error) -> TelegramError {
         // 429 = FLOOD_WAIT_X in TDLib; we expose RateLimited.
         if e.code == 429 {
@@ -771,6 +772,17 @@ impl RealTelegramClient {
             return TelegramError::RateLimited {
                 retry_after_secs: secs,
             };
+        }
+        // M6: 5xx-equivalent error codes and explicit connection-lost
+        // strings are recoverable. `send_with_retry` treats them like
+        // `RateLimited` and applies exponential backoff up to
+        // `RetryConfig::max_retries`. Everything else falls through to the
+        // catch-all `TdlibClient` variant, which surfaces as a fatal error.
+        if (e.code >= 500 && e.code < 600)
+            || e.message.contains("connection failed")
+            || e.message.contains("connection closed")
+        {
+            return TelegramError::Transient(e.message);
         }
         TelegramError::TdlibClient(e.message)
     }

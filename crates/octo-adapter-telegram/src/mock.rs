@@ -34,6 +34,44 @@ pub struct MockTelegramClient {
     /// mock uses that value as the `from` string so the adapter's
     /// self-loop filter (H5) is exercised for document round-trips.
     mock_sender_id: Arc<Mutex<i64>>,
+    /// M6: failure injection for `send_message` and `send_envelope`. While
+    /// the counter is non-zero, the next call decrements it and returns
+    /// the configured error. When it reaches 0, the call returns `Ok`
+    /// as normal. Used by tests to exercise `send_with_retry`'s retry
+    /// paths for `RateLimited` and `Transient` errors.
+    ///
+    /// We store a `FailureSpec` enum (Clone-friendly) rather than a
+    /// `TelegramError` directly, because `TelegramError` derives `Debug`
+    /// and `thiserror::Error` but not `Clone` (its `Io` and `Json` payloads
+    /// are not `Clone`). Each `FailureSpec` is reconstructed into the
+    /// corresponding `TelegramError` on each call.
+    fail_send_message: Arc<Mutex<Option<FailureSpec>>>,
+    fail_send_message_remaining: Arc<Mutex<u32>>,
+    /// M6: monotonically-increasing counter of every `send_message` /
+    /// `send_envelope` call, success or failure-injected. Lets tests
+    /// assert the retry loop re-invoked the operation.
+    send_call_total: Arc<Mutex<u64>>,
+}
+
+/// M6: cloneable failure-injection spec. We can't store a `TelegramError`
+/// directly because it is not `Clone` (its `Io`/`Json` variants embed
+/// non-`Clone` payloads). Instead we store the spec and rebuild the error
+/// on each injected call.
+#[derive(Debug, Clone)]
+pub enum FailureSpec {
+    RateLimited { retry_after_secs: u64 },
+    Transient(String),
+}
+
+impl FailureSpec {
+    fn into_error(self) -> crate::error::TelegramError {
+        match self {
+            FailureSpec::RateLimited { retry_after_secs } => {
+                crate::error::TelegramError::RateLimited { retry_after_secs }
+            }
+            FailureSpec::Transient(msg) => crate::error::TelegramError::Transient(msg),
+        }
+    }
 }
 
 impl MockTelegramClient {
@@ -45,7 +83,26 @@ impl MockTelegramClient {
             pending_updates: Arc::new(Mutex::new(Vec::new())),
             next_msg_id: Arc::new(Mutex::new(1)),
             mock_sender_id: Arc::new(Mutex::new(0)),
+            fail_send_message: Arc::new(Mutex::new(None)),
+            fail_send_message_remaining: Arc::new(Mutex::new(0)),
+            send_call_total: Arc::new(Mutex::new(0)),
         }
+    }
+
+    /// M6: inject a failure for the next `n` `send_message` /
+    /// `send_envelope` calls. Each call decrements `n`; once `n` reaches
+    /// zero the mock returns `Ok` as normal. Used by tests to exercise
+    /// the adapter's `send_with_retry` retry path.
+    pub fn fail_next_n_sends(&self, n: u32, spec: FailureSpec) {
+        *self.fail_send_message.lock().unwrap() = Some(spec);
+        *self.fail_send_message_remaining.lock().unwrap() = n;
+    }
+
+    /// M6: total number of `send_message` / `send_envelope` calls so far,
+    /// including failed-injection calls. Used by tests to assert the
+    /// retry loop actually re-invokes the operation.
+    pub fn send_call_count(&self) -> u64 {
+        *self.send_call_total.lock().unwrap()
     }
 
     /// Inject an update that the next `receive_updates` call will yield.
@@ -79,6 +136,30 @@ impl MockTelegramClient {
     pub fn drain_received_documents(&self) {
         self.sent_doc_data.lock().unwrap().clear();
     }
+
+    /// M6: if a failure has been injected and there are still calls left
+    /// to fail, decrement the counter and return the configured error.
+    /// Otherwise return `None`. Bumps `send_call_total` on every call so
+    /// tests can count attempts (success or failure-injected). Used by
+    /// `send_message` / `send_envelope` to honor `fail_next_n_sends`.
+    ///
+    /// The spec is `clone`d (not `take`n) because the same `FailureSpec`
+    /// must be returned for every injected call — the adapter's retry
+    /// loop may invoke `op()` multiple times, and each one needs to see
+    /// the same failure type.
+    fn maybe_consume_failure_injection(&self) -> Option<crate::error::TelegramError> {
+        *self.send_call_total.lock().unwrap() += 1;
+        let mut remaining = self.fail_send_message_remaining.lock().unwrap();
+        if *remaining == 0 {
+            return None;
+        }
+        *remaining = remaining.saturating_sub(1);
+        self.fail_send_message
+            .lock()
+            .unwrap()
+            .clone()
+            .map(FailureSpec::into_error)
+    }
 }
 
 impl Default for MockTelegramClient {
@@ -96,6 +177,12 @@ impl TelegramClient for MockTelegramClient {
         let _chat_id_i64: i64 = crate::client::parse_chat_id(chat_id).map_err(|e| {
             crate::error::TelegramError::InvalidChatId(format!("{}: {}", e, chat_id))
         })?;
+        // M6: failure-injection. `fail_next_n_sends` decrements a counter on
+        // every call; while it is non-zero, return the configured error so
+        // the adapter's `send_with_retry` retry path can be exercised.
+        if let Some(err) = self.maybe_consume_failure_injection() {
+            return Err(err);
+        }
         let id = format!("mock-msg-{}", self.next_msg_id.lock().unwrap());
         *self.next_msg_id.lock().unwrap() += 1;
         self.sent_messages
@@ -121,6 +208,10 @@ impl TelegramClient for MockTelegramClient {
         let _chat_id_i64: i64 = crate::client::parse_chat_id(chat_id).map_err(|e| {
             crate::error::TelegramError::InvalidChatId(format!("{}: {}", e, chat_id))
         })?;
+        // M6: shared failure-injection with `send_message`.
+        if let Some(err) = self.maybe_consume_failure_injection() {
+            return Err(err);
+        }
         // H6: send_envelope records the encoded envelope in `sent_messages`
         // (caption path) AND the doc in `sent_documents` (round-trip path).
         let id = format!("mock-env-{}", self.next_msg_id.lock().unwrap());

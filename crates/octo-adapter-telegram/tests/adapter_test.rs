@@ -2,7 +2,8 @@
 //! Mission AC line 128: "Implements PlatformAdapter trait with all methods (6 required + 6 optional)"
 
 use octo_adapter_telegram::mock::MockTelegramClient;
-use octo_adapter_telegram::{TelegramAdapter, TelegramConfig};
+use octo_adapter_telegram::{FailureSpec, TelegramAdapter, TelegramConfig};
+use octo_network::dot::adapters::backoff::RetryConfig;
 use octo_network::dot::adapters::PlatformAdapter;
 
 /// H7: shared `parse_chat_id` helper used by both mock and real client.
@@ -215,4 +216,126 @@ async fn test_upload_media_to_domain_routes_correctly() {
     assert_eq!(sent[0].0, "-1001111111111");
     // Sanity check: d2 was registered but not used.
     let _ = d2;
+}
+
+/// M6: `send_with_retry` must retry on `TelegramError::Transient` (5xx /
+/// "connection failed" / "connection closed" from TDLib). The retry loop
+/// is private, so we exercise it through `send_envelope` — the only public
+/// caller of `send_with_retry`. The mock is configured to fail twice with
+/// `Transient` and then succeed. With a tiny backoff config (zero initial
+/// backoff, zero max backoff, zero jitter) and `max_retries=3` the loop
+/// runs: 1 initial + 2 retries = 3 total sends.
+#[tokio::test]
+async fn test_send_with_retry_retries_on_transient() {
+    use octo_network::dot::envelope::DeterministicEnvelope;
+
+    let config = TelegramConfig::default();
+    let client = MockTelegramClient::new();
+    let observer = client.clone();
+    // Tiny backoff: 0 initial, 0 max, 0 jitter — keeps the test sub-second.
+    // 3 retries permitted, so the loop has room for the 2 injected failures
+    // plus 1 success on the third attempt.
+    let retry = RetryConfig {
+        max_retries: 3,
+        initial_backoff_secs: 0,
+        max_backoff_secs: 0,
+        max_jitter_ms: 0,
+    };
+    let adapter = TelegramAdapter::with_retry_config(config, client, retry);
+    let domain = adapter.domain_id("-1001234567890");
+    // Fail the first 2 send_message calls with `Transient`, then succeed.
+    observer.fail_next_n_sends(
+        2,
+        FailureSpec::Transient("connection failed: TDLib 502".into()),
+    );
+    let envelope = DeterministicEnvelope {
+        version: 1,
+        network_id: 42,
+        message_type: 0,
+        envelope_id: [1u8; 32],
+        mission_id: [0u8; 32],
+        source_peer: [2u8; 32],
+        origin_gateway: [3u8; 32],
+        logical_timestamp: 100,
+        ttl_hops: 5,
+        payload_hash: [4u8; 32],
+        route_trace_root: [5u8; 32],
+        flags: 0,
+        signature: [6u8; 64],
+    };
+    let result = adapter.send_envelope(&domain, &envelope).await;
+    assert!(
+        result.is_ok(),
+        "send_envelope should succeed after 2 transient failures: {:?}",
+        result.err()
+    );
+    // 1 initial call + 2 failed-injection calls = 3 total. The third call
+    // (the first retry to fail-free path) actually delivers the message.
+    assert_eq!(
+        observer.send_call_count(),
+        3,
+        "send_with_retry must retry on Transient: expected 3 total calls (1 initial + 2 retries), got {}",
+        observer.send_call_count()
+    );
+    // Sanity: the message that eventually succeeded was actually recorded.
+    let sent = observer.sent_messages();
+    assert_eq!(
+        sent.len(),
+        1,
+        "exactly one successful send should be recorded"
+    );
+}
+
+/// M6 companion: if `Transient` errors exceed `max_retries`, the adapter
+/// must surface a `PlatformAdapterError::Unreachable` rather than retry
+/// forever. The mock fails 10 times with `Transient`, and `max_retries=2`
+/// only permits 2 retries → 3 total calls, the last of which still fails.
+#[tokio::test]
+async fn test_send_with_retry_gives_up_on_transient_after_max_retries() {
+    use octo_network::dot::envelope::DeterministicEnvelope;
+
+    let config = TelegramConfig::default();
+    let client = MockTelegramClient::new();
+    let observer = client.clone();
+    let retry = RetryConfig {
+        max_retries: 2,
+        initial_backoff_secs: 0,
+        max_backoff_secs: 0,
+        max_jitter_ms: 0,
+    };
+    let adapter = TelegramAdapter::with_retry_config(config, client, retry);
+    let domain = adapter.domain_id("-1001234567890");
+    // Inject more failures than the retry budget allows; the loop must give
+    // up rather than drain the counter to zero.
+    observer.fail_next_n_sends(
+        10,
+        FailureSpec::Transient("connection failed: TDLib 503".into()),
+    );
+    let envelope = DeterministicEnvelope {
+        version: 1,
+        network_id: 42,
+        message_type: 0,
+        envelope_id: [1u8; 32],
+        mission_id: [0u8; 32],
+        source_peer: [2u8; 32],
+        origin_gateway: [3u8; 32],
+        logical_timestamp: 100,
+        ttl_hops: 5,
+        payload_hash: [4u8; 32],
+        route_trace_root: [5u8; 32],
+        flags: 0,
+        signature: [6u8; 64],
+    };
+    let result = adapter.send_envelope(&domain, &envelope).await;
+    assert!(
+        result.is_err(),
+        "send_envelope should surface Unreachable when max_retries is exhausted"
+    );
+    // 1 initial + 2 retries (max_retries=2) = 3 total calls.
+    assert_eq!(
+        observer.send_call_count(),
+        3,
+        "expected 1 initial + 2 retries = 3 calls before giving up, got {}",
+        observer.send_call_count()
+    );
 }

@@ -363,8 +363,9 @@ impl<C: TelegramClient> TelegramAdapter<C> {
     }
 
     /// Run an async send closure with exponential-backoff retry on
-    /// `TelegramError::RateLimited`. Non-rate-limit errors return immediately.
-    /// This implements H1 from octo-adapter-telegram-adversarial-review-r2.md.
+    /// `TelegramError::RateLimited` and `TelegramError::Transient`.
+    /// Non-recoverable errors return immediately. Implements H1 and M6
+    /// from octo-adapter-telegram-adversarial-review-r2.md / r3.
     async fn send_with_retry<F, Fut>(
         &self,
         mut op: F,
@@ -390,6 +391,26 @@ impl<C: TelegramClient> TelegramAdapter<C> {
                         Duration::from_secs(retry_after_secs),
                         default_backoff(attempt),
                     );
+                    tokio::time::sleep(backoff).await;
+                    attempt = attempt.saturating_add(1);
+                }
+                // M6: 5xx / "connection failed" / "connection closed" errors
+                // from TDLib are recoverable. Same `should_retry` policy as
+                // `RateLimited`, but the floor is the *configurable* backoff
+                // (no `retry_after_secs` hint from the server, and tests need
+                // a way to shrink the wait without changing `default_backoff`).
+                Err(crate::error::TelegramError::Transient(msg)) => {
+                    if !self.retry_config.should_retry(attempt) {
+                        return Err(PlatformAdapterError::Unreachable {
+                            platform: "telegram".into(),
+                            reason: format!(
+                                "transient error after {} attempts: {}",
+                                attempt + 1,
+                                msg
+                            ),
+                        });
+                    }
+                    let backoff = self.retry_config.delay_for_attempt(attempt);
                     tokio::time::sleep(backoff).await;
                     attempt = attempt.saturating_add(1);
                 }

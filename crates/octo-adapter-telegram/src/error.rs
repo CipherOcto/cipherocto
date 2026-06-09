@@ -14,6 +14,13 @@ pub enum TelegramError {
     #[error("rate limited: retry after {retry_after_secs}s")]
     RateLimited { retry_after_secs: u64 },
 
+    /// M6: transient/recoverable error (5xx, "connection failed", etc.).
+    /// `send_with_retry` retries this with the same exponential-backoff
+    /// policy as `RateLimited`. Once `max_retries` is exhausted the adapter
+    /// surfaces a `PlatformAdapterError::Unreachable` to the caller.
+    #[error("transient error: {0}")]
+    Transient(String),
+
     #[error("TDLib client error: {0}")]
     TdlibClient(String),
 

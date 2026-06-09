@@ -46,6 +46,6 @@ pub use error::FileError;
 pub use files::{FileMetadata, FileProgress};
 #[cfg(feature = "real-tdlib")]
 pub use groups::{ChatInfo, ChatResolver, ChatType, GroupError, MonitoredGroups};
-pub use mock::MockTelegramClient;
+pub use mock::{FailureSpec, MockTelegramClient};
 #[cfg(feature = "real-tdlib")]
 pub use real_client::RealTelegramClient;

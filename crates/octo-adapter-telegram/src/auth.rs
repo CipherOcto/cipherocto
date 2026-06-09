@@ -131,12 +131,8 @@ pub enum AuthAction {
 // =============================================================================
 // User Mode Authentication (TDLib)
 // =============================================================================
-//
-// Bot mode token validation is handled by TDLib's
-// `check_authentication_bot_token` inside `RealTelegramClient`. We previously
-// validated bot tokens here via `reqwest::get` against the Bot API `getMe`
-// endpoint; that code was removed (M12) because TDLib validates the token
-// authoritatively and the function was unused.
+// Bot mode token validation lives in `RealTelegramClient` via TDLib's
+// `check_authentication_bot_token`.
 
 /// User mode authentication state machine.
 /// Follows the TDLib authorization flow:

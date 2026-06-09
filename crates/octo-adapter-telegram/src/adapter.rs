@@ -278,13 +278,20 @@ impl<C: TelegramClient + Send + Sync> PlatformAdapter for TelegramAdapter<C> {
     }
 
     fn self_handle(&self) -> Option<String> {
-        // The trait's `self_handle()` returns the bot's username (or a
-        // `user:<id>` marker if only the user_id is known). Numeric
-        // self-loop filtering is done in `receive_messages` via
-        // `self_handle.user_id()`.
+        // Returns an opaque display string for the bot's identity.
+        // Format is "telegram:user:<id>" (numeric) with user_id preferred,
+        // falling back to "telegram:user:<username>" if only username is
+        // known. Treat as opaque; do not parse. The user_id is the canonical
+        // identifier for self-loop filtering (done in receive_messages via
+        // SelfHandle::is_self).
         self.self_handle
-            .username()
-            .or_else(|| self.self_handle.user_id().map(|id| format!("user:{}", id)))
+            .user_id()
+            .map(|id| format!("telegram:user:{}", id))
+            .or_else(|| {
+                self.self_handle
+                    .username()
+                    .map(|u| format!("telegram:user:{}", u))
+            })
     }
 
     async fn upload_media(

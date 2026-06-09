@@ -11,7 +11,7 @@ crate-type = ["cdylib", "rlib"]
 default = []
 # Real TDLib: enables tdlib-rs + rusqlite for auth_key persistence. Adds 150MB TDLib binary + C++ build cost.
 # Downloads prebuilt TDLib binaries automatically. Set LOCAL_TDLIB_PATH for local builds, or use pkg-config for system TDLib.
-real-tdlib = ["dep:tdlib-rs", "dep:rusqlite", "tdlib-rs/download-tdlib"]
+real-tdlib = ["dep:tdlib-rs", "dep:rusqlite", "tdlib-rs/download-tdlib", "dep:reqwest"]
 # Download prebuilt TDLib binaries automatically (default for real-tdlib).
 # Requires network access at build time.
 download-tdlib = ["tdlib-rs/download-tdlib"]
@@ -40,8 +40,10 @@ base64 = "0.22"
 async-trait = "0.1"
 # Error handling
 thiserror = "2.0"
-# HTTP (webhook fallback, preserved from 0850f)
-reqwest = { version = "0.12", features = ["json", "multipart"] }
+# HTTP client (gated behind real-tdlib: not used for uploads — those go through
+# TDLib. We do use reqwest for any bot-mode HTTP validation when the real TDLib
+# client is enabled, but no other crate paths pull it in.)
+reqwest = { version = "0.12", features = ["json"], optional = true }
 # Workspace crate providing PlatformAdapter, CapabilityReport, BroadcastDomainId, DeterministicEnvelope
 octo-network = { path = "../octo-network" }
 # Real TDLib (optional, behind feature flag). Pinned to 1.4.x — a 1.5 bump

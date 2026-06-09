@@ -23,9 +23,6 @@ pub enum TelegramError {
     #[error("json parse error: {0}")]
     Json(#[from] serde_json::Error),
 
-    #[error("http error: {0}")]
-    Http(#[from] reqwest::Error),
-
     #[error("base64 decode error: {0}")]
     Base64(#[from] base64::DecodeError),
 

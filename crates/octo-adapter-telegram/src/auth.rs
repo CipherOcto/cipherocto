@@ -6,7 +6,8 @@
 //! User mode: Uses phone + api_id + api_hash with interactive 2FA prompt.
 //!
 //! ## Bot Mode
-//! Bot tokens are validated via the Bot API `getMe` endpoint (HTTP).
+//! Bot tokens are validated by TDLib's `check_authentication_bot_token`
+//! (handled inside `RealTelegramClient`).
 //!
 //! ## User Mode
 //! Full Telegram auth flow: set_tdlib_parameters → set_authentication_phone_number
@@ -128,63 +129,14 @@ pub enum AuthAction {
 }
 
 // =============================================================================
-// Bot Mode Authentication
-// =============================================================================
-
-/// Validate a bot token and return bot identity.
-/// Bot mode uses the Bot API's getMe endpoint for validation.
-#[cfg(feature = "real-tdlib")]
-pub async fn validate_bot_token(token: &str) -> AuthResult<BotIdentity> {
-    // Bot API getMe endpoint: https://api.telegram.org/bot<token>/getMe
-    let url = format!("https://api.telegram.org/bot{}/getMe", token);
-
-    let response = reqwest::get(url)
-        .await
-        .map_err(|e| AuthError::InvalidBotToken(format!("network error: {}", e)))?;
-
-    #[derive(serde::Deserialize)]
-    struct GetMeResponse {
-        ok: bool,
-        result: Option<BotInfo>,
-        description: Option<String>,
-    }
-
-    #[derive(serde::Deserialize)]
-    struct BotInfo {
-        id: i64,
-        username: String,
-        first_name: String,
-        last_name: Option<String>,
-    }
-
-    let response: GetMeResponse = response
-        .json()
-        .await
-        .map_err(|e| AuthError::InvalidBotToken(format!("parse error: {}", e)))?;
-
-    if !response.ok {
-        return Err(AuthError::InvalidBotToken(
-            response
-                .description
-                .unwrap_or_else(|| "unknown error".into()),
-        ));
-    }
-
-    let result = response
-        .result
-        .ok_or_else(|| AuthError::InvalidBotToken("empty response".into()))?;
-
-    Ok(BotIdentity {
-        user_id: result.id,
-        username: result.username,
-        first_name: result.first_name,
-        last_name: result.last_name,
-    })
-}
-
-// =============================================================================
 // User Mode Authentication (TDLib)
 // =============================================================================
+//
+// Bot mode token validation is handled by TDLib's
+// `check_authentication_bot_token` inside `RealTelegramClient`. We previously
+// validated bot tokens here via `reqwest::get` against the Bot API `getMe`
+// endpoint; that code was removed (M12) because TDLib validates the token
+// authoritatively and the function was unused.
 
 /// User mode authentication state machine.
 /// Follows the TDLib authorization flow:

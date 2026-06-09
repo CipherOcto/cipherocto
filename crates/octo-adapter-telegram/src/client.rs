@@ -44,8 +44,10 @@ pub enum MessageSender {
     /// A chat (channel, supergroup, basic group) posting on its own
     /// behalf. The wrapped value is the TDLib chat_id (i64).
     Chat(i64),
-    /// TDLib reserved `MessageSender::Chat` variant for hidden/anonymous
-    /// forwards where the source user is hidden. (Mapped to `Hidden`.)
+    /// A message forwarded from a hidden/anonymous source. TDLib's
+    /// current `MessageSender` binding does not emit this variant; it is
+    /// reserved for future TDLib growth. Filter code should treat it as
+    /// "not self-authored" and let the message through.
     Hidden,
     /// Unknown / future variant we don't model yet. Filter code should
     /// treat this as "not self-authored" and let the message through.

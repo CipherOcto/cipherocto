@@ -5,6 +5,7 @@ use crate::client::{NewMessage, SentMessage, TelegramClient, TelegramUpdate};
 use crate::error::Result;
 use async_trait::async_trait;
 use std::collections::HashMap;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 
 /// Type alias for the sent-document data map (chat_id, filename) → bytes.
@@ -27,7 +28,7 @@ pub struct MockTelegramClient {
     /// cases — only the caption differs).
     sent_doc_data: Arc<Mutex<DocDataMap>>,
     pending_updates: Arc<Mutex<Vec<TelegramUpdate>>>,
-    next_msg_id: Arc<Mutex<u64>>,
+    next_msg_id: Arc<AtomicU64>,
     /// Sender id stamped onto doc-derived `NewMessage.from` during
     /// `receive_updates`. When `0` (default), the field stays empty,
     /// matching the pre-H5 behavior. When set to a non-zero value, the
@@ -81,7 +82,7 @@ impl MockTelegramClient {
             sent_documents: Arc::new(Mutex::new(Vec::new())),
             sent_doc_data: Arc::new(Mutex::new(HashMap::new())),
             pending_updates: Arc::new(Mutex::new(Vec::new())),
-            next_msg_id: Arc::new(Mutex::new(1)),
+            next_msg_id: Arc::new(AtomicU64::new(1)),
             mock_sender_id: Arc::new(Mutex::new(0)),
             fail_send_message: Arc::new(Mutex::new(None)),
             fail_send_message_remaining: Arc::new(Mutex::new(0)),
@@ -183,8 +184,10 @@ impl TelegramClient for MockTelegramClient {
         if let Some(err) = self.maybe_consume_failure_injection() {
             return Err(err);
         }
-        let id = format!("mock-msg-{}", self.next_msg_id.lock().unwrap());
-        *self.next_msg_id.lock().unwrap() += 1;
+        let id = format!(
+            "mock-msg-{}",
+            self.next_msg_id.fetch_add(1, Ordering::Relaxed)
+        );
         self.sent_messages
             .lock()
             .unwrap()
@@ -214,8 +217,10 @@ impl TelegramClient for MockTelegramClient {
         }
         // H6: send_envelope records the encoded envelope in `sent_messages`
         // (caption path) AND the doc in `sent_documents` (round-trip path).
-        let id = format!("mock-env-{}", self.next_msg_id.lock().unwrap());
-        *self.next_msg_id.lock().unwrap() += 1;
+        let id = format!(
+            "mock-env-{}",
+            self.next_msg_id.fetch_add(1, Ordering::Relaxed)
+        );
         self.sent_messages
             .lock()
             .unwrap()
@@ -244,8 +249,10 @@ impl TelegramClient for MockTelegramClient {
         })?;
         // H6: send_file records the doc but NOT a caption (the raw upload
         // path has no envelope to round-trip via the caption channel).
-        let id = format!("mock-file-{}", self.next_msg_id.lock().unwrap());
-        *self.next_msg_id.lock().unwrap() += 1;
+        let id = format!(
+            "mock-file-{}",
+            self.next_msg_id.fetch_add(1, Ordering::Relaxed)
+        );
         self.sent_documents.lock().unwrap().push((
             chat_id.to_string(),
             filename.to_string(),

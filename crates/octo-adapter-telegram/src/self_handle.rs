@@ -56,15 +56,20 @@ impl SelfHandle {
 
     /// Cache the bot username (typically set together with `set_user_id`
     /// after a successful `get_me`).
+    ///
+    /// M9: a no-op if `set_user_id` has not been called first. The
+    /// username alone is insufficient to identify "self" — without the
+    /// numeric `user_id` we cannot compare incoming message senders, and
+    /// inserting a `user_id=0` sentinel would silently mis-filter.
     pub fn set_username(&self, username: String) {
         let mut guard = self.cached.lock().unwrap();
         match guard.as_mut() {
             Some(identity) => identity.username = username,
             None => {
-                *guard = Some(SelfIdentity {
-                    user_id: 0,
-                    username,
-                })
+                tracing::warn!(
+                    username = %username,
+                    "set_username called before set_user_id; ignoring (would create user_id=0 sentinel)"
+                );
             }
         }
     }

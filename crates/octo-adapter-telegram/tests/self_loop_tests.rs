@@ -40,6 +40,7 @@ async fn test_self_handle_set_and_get() {
 #[tokio::test]
 async fn test_self_handle_clear() {
     let handle = SelfHandle::new();
+    handle.set_user_id(42);
     handle.set_username("test_bot".to_string());
     assert_eq!(handle.get().unwrap().username, "test_bot");
     handle.clear();

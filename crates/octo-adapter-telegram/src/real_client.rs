@@ -618,7 +618,7 @@ impl TelegramClient for RealTelegramClient {
 
         match result {
             Ok(tdlib_rs::enums::Message::Message(msg)) => {
-                Ok(SentMessage::new(msg.id.to_string(), msg.date as i64))
+                Ok(SentMessage::new(msg.id.to_string(), i64::from(msg.date)))
             }
             Err(e) => Err(Self::classify_tdlib_error(e)),
         }
@@ -678,7 +678,7 @@ impl TelegramClient for RealTelegramClient {
                 // alongside the encoded envelope. Currently the encoded envelope is
                 // the entire caption; filename is preserved here for API symmetry.
                 let _ = filename;
-                Ok(SentMessage::new(msg.id.to_string(), msg.date as i64))
+                Ok(SentMessage::new(msg.id.to_string(), i64::from(msg.date)))
             }
             Err(e) => Err(Self::classify_tdlib_error(e)),
         }
@@ -730,7 +730,7 @@ impl TelegramClient for RealTelegramClient {
                 // it alongside the file content. Currently the filename is preserved
                 // here for API symmetry with `send_envelope`.
                 let _ = filename;
-                Ok(SentMessage::new(msg.id.to_string(), msg.date as i64))
+                Ok(SentMessage::new(msg.id.to_string(), i64::from(msg.date)))
             }
             Err(e) => Err(Self::classify_tdlib_error(e)),
         }

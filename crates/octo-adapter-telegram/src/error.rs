@@ -34,6 +34,51 @@ pub enum TelegramError {
 
     #[error("config error: {0}")]
     Config(String),
+
+    #[error("invalid chat id: {0}")]
+    InvalidChatId(String),
+
+    #[error("send failed: {0}")]
+    SendFailed(String),
+
+    #[error("unimplemented: {0}")]
+    Unimplemented(String),
 }
 
 pub type Result<T> = std::result::Result<T, TelegramError>;
+
+/// File transfer error types. Available in both feature sets; the
+/// `real-tdlib`-specific `Tdlib` variant is feature-gated so callers using
+/// `--no-default-features` still get a useful error type.
+#[derive(Debug, thiserror::Error)]
+pub enum FileError {
+    #[error("file not found: {0}")]
+    NotFound(String),
+
+    #[error("file too large: {size} bytes (max: {max} bytes)")]
+    TooLarge { size: u64, max: u64 },
+
+    #[error("download failed: {0}")]
+    DownloadFailed(String),
+
+    #[error("upload failed: {0}")]
+    UploadFailed(String),
+
+    #[error("invalid file id: {0}")]
+    InvalidFileId(String),
+
+    #[error("read error: {0}")]
+    ReadError(String),
+
+    #[error("write error: {0}")]
+    WriteError(String),
+
+    #[error("unimplemented: {0}")]
+    Unimplemented(String),
+
+    #[cfg(feature = "real-tdlib")]
+    #[error("TDLib error: {message}")]
+    Tdlib { message: String },
+}
+
+pub type FileResult<T> = std::result::Result<T, FileError>;

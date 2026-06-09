@@ -41,6 +41,12 @@ pub struct MockTelegramClient {
     /// as normal. Used by tests to exercise `send_with_retry`'s retry
     /// paths for `RateLimited` and `Transient` errors.
     ///
+    /// NOTE: Only `send_message` and `send_envelope` call this helper.
+    /// `send_file` and `download_file` do NOT consume the failure counter
+    /// — they bypass failure injection entirely. Test authors relying on
+    /// `fail_next_n_sends` must ensure the code path only exercises
+    /// `send_message`/`send_envelope` during the retry window.
+    ///
     /// We store a `FailureSpec` enum (Clone-friendly) rather than a
     /// `TelegramError` directly, because `TelegramError` derives `Debug`
     /// and `thiserror::Error` but not `Clone` (its `Io` and `Json` payloads
@@ -49,7 +55,7 @@ pub struct MockTelegramClient {
     fail_send_message: Arc<Mutex<Option<FailureSpec>>>,
     fail_send_message_remaining: Arc<Mutex<u32>>,
     /// M6: monotonically-increasing counter of every `send_message` /
-    /// `send_envelope` call, success or failure-injected. Lets tests
+    /// `send_envelope` / `send_file` call, success or failure-injected. Lets tests
     /// assert the retry loop re-invoked the operation.
     send_call_total: Arc<Mutex<u64>>,
 }
@@ -91,9 +97,9 @@ impl MockTelegramClient {
     }
 
     /// M6: inject a failure for the next `n` `send_message` /
-    /// `send_envelope` calls. Each call decrements `n`; once `n` reaches
-    /// zero the mock returns `Ok` as normal. Used by tests to exercise
-    /// the adapter's `send_with_retry` retry path.
+    /// `send_envelope` / `send_file` calls. Each call decrements `n`;
+    /// once `n` reaches zero the mock returns `Ok` as normal. Used by
+    /// tests to exercise the adapter's `with_retry` retry path.
     pub fn fail_next_n_sends(&self, n: u32, spec: FailureSpec) {
         *self.fail_send_message.lock().unwrap() = Some(spec);
         *self.fail_send_message_remaining.lock().unwrap() = n;
@@ -247,6 +253,11 @@ impl TelegramClient for MockTelegramClient {
         let _chat_id_i64: i64 = crate::client::parse_chat_id(chat_id).map_err(|e| {
             crate::error::TelegramError::InvalidChatId(format!("{}: {}", e, chat_id))
         })?;
+        // M6: shared failure-injection with `send_message` / `send_envelope`.
+        // NOTE: this also increments `send_call_total`.
+        if let Some(err) = self.maybe_consume_failure_injection() {
+            return Err(err);
+        }
         // H6: send_file records the doc but NOT a caption (the raw upload
         // path has no envelope to round-trip via the caption channel).
         let id = format!(

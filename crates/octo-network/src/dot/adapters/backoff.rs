@@ -127,7 +127,15 @@ impl RetryConfig {
         )
     }
 
-    /// Check if we should retry based on attempt count.
+    /// Check if we should retry after `attempt` failed attempts.
+    ///
+    /// `attempt=0` means "the first attempt has not yet been made";
+    /// `should_retry(0)` returning true permits up to `max_retries` total
+    /// tries. Total attempts = 1 + max_retries.
+    ///
+    /// Example: with `max_retries=3`, `should_retry(0)` returns true
+    /// (allow first attempt), `should_retry(1)` true (first retry),
+    /// `should_retry(2)` true (second retry), `should_retry(3)` false (stop).
     pub fn should_retry(&self, attempt: u32) -> bool {
         attempt < self.max_retries
     }

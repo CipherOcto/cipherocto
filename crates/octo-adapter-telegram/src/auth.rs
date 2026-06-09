@@ -301,7 +301,7 @@ impl UserAuth {
 }
 
 // =============================================================================
-// Auth Persistence
+// Auth Directory Setup
 // =============================================================================
 
 /// Best-effort creation of the TDLib auth directories.

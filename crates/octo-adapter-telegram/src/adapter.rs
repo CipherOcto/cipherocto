@@ -249,10 +249,12 @@ impl<C: TelegramClient + Send + Sync> PlatformAdapter for TelegramAdapter<C> {
     }
 
     fn domain_id(&self, platform_id: &str) -> BroadcastDomainId {
-        let domain = BroadcastDomainId::new(PlatformType::Telegram, platform_id);
+        // Normalize before hashing so whitespace/case differences produce the
+        // same domain hash (R10-C4).
+        let normalized = platform_id.trim().to_lowercase();
+        let domain = BroadcastDomainId::new(PlatformType::Telegram, &normalized);
         // Store the normalized form so send_envelope can route the chat_id
         // without re-parsing whitespace.
-        let normalized = platform_id.trim().to_lowercase();
         self.domain_chat_ids
             .write()
             .unwrap()

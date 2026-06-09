@@ -4,12 +4,12 @@
 use crate::client::{NewMessage, SentMessage, TelegramClient, TelegramUpdate};
 use crate::error::Result;
 use async_trait::async_trait;
-use std::collections::HashMap;
+use std::collections::BTreeMap;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 
 /// Type alias for the sent-document data map (chat_id, filename) → bytes.
-type DocDataMap = HashMap<(String, String), Vec<u8>>;
+type DocDataMap = BTreeMap<(String, String), Vec<u8>>;
 
 /// In-memory mock that records sends and queues injected updates.
 #[derive(Clone)]
@@ -80,7 +80,7 @@ impl MockTelegramClient {
         Self {
             sent_messages: Arc::new(Mutex::new(Vec::new())),
             sent_documents: Arc::new(Mutex::new(Vec::new())),
-            sent_doc_data: Arc::new(Mutex::new(HashMap::new())),
+            sent_doc_data: Arc::new(Mutex::new(BTreeMap::new())),
             pending_updates: Arc::new(Mutex::new(Vec::new())),
             next_msg_id: Arc::new(AtomicU64::new(1)),
             mock_sender_id: Arc::new(Mutex::new(0)),

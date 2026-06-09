@@ -67,6 +67,9 @@ struct ClientState {
     user_params_set: AtomicBool,
     /// Set to true when AuthorizationState::Closed is received.
     closed: AtomicBool,
+    /// JoinHandle for the long-lived tdlib_rs::receive() blocking thread (L15).
+    /// Populated by receive_loop after spawn; joined in Drop.
+    receive_thread: Mutex<Option<std::thread::JoinHandle<()>>>,
     /// Channel for inbound verification codes (user mode).
     code_tx: mpsc::Sender<String>,
     /// Receiver end of the verification-code channel. The receive loop
@@ -122,6 +125,7 @@ impl ClientState {
             bot_params_set: AtomicBool::new(false),
             user_params_set: AtomicBool::new(false),
             closed: AtomicBool::new(false),
+            receive_thread: Mutex::new(None),
             code_tx,
             code_rx: Arc::new(Mutex::new(Some(code_rx))),
             self_handle: SelfHandle::new(),
@@ -275,7 +279,7 @@ impl RealTelegramClient {
         // and pushes (update, client_id) pairs through an mpsc channel.
         let (update_tx, mut update_rx) = mpsc::channel::<(tdlib_rs::enums::Update, ClientId)>(256);
         let state_clone = Arc::clone(&state);
-        std::thread::spawn(move || {
+        let handle = std::thread::spawn(move || {
             while state_clone.running.load(Ordering::Acquire) {
                 match tdlib_rs::receive() {
                     Some((update, client_id)) => {
@@ -287,6 +291,8 @@ impl RealTelegramClient {
                 }
             }
         });
+        // Store the JoinHandle so Drop can join the thread after shutdown.
+        *state.receive_thread.lock().unwrap() = Some(handle);
 
         // Async receive loop reads from the channel.
         loop {
@@ -871,6 +877,11 @@ impl Drop for RealTelegramClient {
     fn drop(&mut self) {
         self.state.running.store(false, Ordering::Release);
         let _ = self.state.shutdown_tx.try_send(self.state.client_id);
+        // L15: join the blocking thread after signaling close. Short timeout
+        // in case the thread is stuck in a long tdlib_rs::receive() call.
+        if let Some(handle) = self.state.receive_thread.lock().unwrap().take() {
+            let _ = handle.join();
+        }
     }
 }
 

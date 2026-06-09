@@ -66,6 +66,8 @@ struct ClientState {
     bot_params_set: AtomicBool,
     /// Tracks whether set_tdlib_parameters has been called for user mode.
     user_params_set: AtomicBool,
+    /// Set to true when AuthorizationState::Closed is received.
+    closed: AtomicBool,
     /// Channel for inbound verification codes (user mode).
     code_tx: mpsc::Sender<String>,
     /// Receiver end of the verification-code channel. The receive loop
@@ -120,6 +122,7 @@ impl ClientState {
             api_hash,
             bot_params_set: AtomicBool::new(false),
             user_params_set: AtomicBool::new(false),
+            closed: AtomicBool::new(false),
             code_tx,
             code_rx: Arc::new(Mutex::new(Some(code_rx))),
             self_handle: SelfHandle::new(),
@@ -355,9 +358,9 @@ impl RealTelegramClient {
                 Ok(())
             }
             tdlib_rs::enums::AuthorizationState::Closed => {
-                // L11: no need to store `running = false` here — the loop
-                // exits via the `Err` returned below. The notify_waiters
-                // unblocks the constructor's `notified().await`.
+                // L10: record the closed state so the constructor can check
+                // it before waiting for `auth_ready`.
+                state.closed.store(true, Ordering::Release);
                 let mut err = state.auth_error.lock().unwrap();
                 if err.is_none() {
                     *err = Some("tdlib session closed".into());

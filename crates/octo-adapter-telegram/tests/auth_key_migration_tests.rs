@@ -7,8 +7,6 @@
 //! rather than silently breaking. TDLib stores auth keys in SQLite, and schema
 //! drift between tdlib-rs versions can cause auth failures.
 
-use std::path::PathBuf;
-
 #[cfg(feature = "real-tdlib")]
 use octo_adapter_telegram::UserAuth;
 

@@ -209,9 +209,9 @@ impl<C: TelegramClient + Send + Sync> PlatformAdapter for TelegramAdapter<C> {
         raw: &RawPlatformMessage,
     ) -> Result<DeterministicEnvelope, PlatformAdapterError> {
         let wire = envelope::decode_envelope(std::str::from_utf8(&raw.payload).map_err(|e| {
-            PlatformAdapterError::Unreachable {
-                platform: "telegram".into(),
-                reason: format!("invalid utf8 in payload: {}", e),
+            PlatformAdapterError::ApiError {
+                code: 400,
+                message: format!("invalid utf8 in payload: {}", e),
             }
         })?)
         .map_err(|e| PlatformAdapterError::Unreachable {

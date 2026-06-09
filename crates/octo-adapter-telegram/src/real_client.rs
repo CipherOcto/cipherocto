@@ -539,18 +539,31 @@ impl RealTelegramClient {
     fn convert_update(update: tdlib_rs::enums::Update) -> Option<TelegramUpdate> {
         match update {
             tdlib_rs::enums::Update::NewMessage(new_msg) => {
-                // L16: keep user_id as i64 on NewMessage. The legacy `from: String`
-                // field is kept for backward-compat but is no longer the canonical
-                // identity (use the structured accessor instead).
-                let _from_id = match &new_msg.message.sender_id {
-                    tdlib_rs::enums::MessageSender::User(user_id) => user_id.user_id,
-                    tdlib_rs::enums::MessageSender::Chat(c) => c.chat_id,
+                // M7: map TDLib's `MessageSender` enum to our structured
+                // `MessageSender` so the adapter's self-loop filter can do
+                // a typed comparison instead of string parsing. TDLib
+                // currently only emits `User` and `Chat`; `Hidden` and
+                // `Unknown` are reserved for future variants and fall
+                // through with an empty legacy string.
+                let from = match &new_msg.message.sender_id {
+                    tdlib_rs::enums::MessageSender::User(user_id) => {
+                        crate::client::MessageSender::User(user_id.user_id)
+                    }
+                    tdlib_rs::enums::MessageSender::Chat(c) => {
+                        crate::client::MessageSender::Chat(c.chat_id)
+                    }
                 };
-                let from = _from_id.to_string();
+                let from_legacy = match &from {
+                    crate::client::MessageSender::User(id)
+                    | crate::client::MessageSender::Chat(id) => id.to_string(),
+                    crate::client::MessageSender::Hidden
+                    | crate::client::MessageSender::Unknown => String::new(),
+                };
                 Some(TelegramUpdate::NewMessage(crate::client::NewMessage {
                     chat_id: new_msg.message.chat_id,
                     message: Self::extract_message_text(&new_msg.message.content),
                     from,
+                    from_legacy,
                 }))
             }
             tdlib_rs::enums::Update::MessageEdited(edited) => Some(TelegramUpdate::MessageEdited(

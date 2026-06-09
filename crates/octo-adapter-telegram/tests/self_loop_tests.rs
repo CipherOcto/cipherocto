@@ -6,7 +6,7 @@
 // These tests verify that messages from the bot itself are correctly identified
 //! and can be filtered out.
 
-use octo_adapter_telegram::client::{NewMessage, TelegramClient, TelegramUpdate};
+use octo_adapter_telegram::client::{MessageSender, NewMessage, TelegramClient, TelegramUpdate};
 use octo_adapter_telegram::mock::MockTelegramClient;
 use octo_adapter_telegram::self_handle::{SelfHandle, SelfIdentity};
 
@@ -86,29 +86,34 @@ async fn test_self_message_filtering_scenario() {
     mock.inject_update(TelegramUpdate::NewMessage(NewMessage {
         chat_id: -1001234567890,
         message: "Hello from bot".to_string(),
-        from: my_user_id.to_string(),
+        from: MessageSender::User(my_user_id),
+        from_legacy: my_user_id.to_string(),
     }));
 
     // Inject a message FROM another user
     mock.inject_update(TelegramUpdate::NewMessage(NewMessage {
         chat_id: -1001234567890,
         message: "Hello from alice".to_string(),
-        from: "999_999_999".to_string(),
+        from: MessageSender::User(999_999_999),
+        from_legacy: "999_999_999".to_string(),
     }));
 
     let updates = mock.receive_updates().await.unwrap();
     assert_eq!(updates.len(), 2, "should have 2 updates");
 
     // Filter out self-authored messages by user_id (H4: numeric comparison).
+    // M7: compare on the structured MessageSender::User(id) — no string
+    // parsing.
     let my_id = self_handle.user_id().unwrap();
     let filtered: Vec<_> = updates
         .iter()
         .filter(|u| {
             if let TelegramUpdate::NewMessage(msg) = u {
-                msg.from
-                    .parse::<i64>()
-                    .map(|id| id != my_id)
-                    .unwrap_or(true)
+                if let MessageSender::User(id) = msg.from {
+                    id != my_id
+                } else {
+                    true
+                }
             } else {
                 true
             }
@@ -117,7 +122,7 @@ async fn test_self_message_filtering_scenario() {
 
     assert_eq!(filtered.len(), 1, "should filter out 1 self message");
     if let TelegramUpdate::NewMessage(msg) = &filtered[0] {
-        assert_eq!(msg.from, "999_999_999");
+        assert_eq!(msg.from_legacy, "999_999_999");
         assert_eq!(msg.message, "Hello from alice");
     }
 }
@@ -150,28 +155,33 @@ async fn test_self_message_filtering_numeric_user_id() {
     mock.inject_update(TelegramUpdate::NewMessage(NewMessage {
         chat_id: -1001234567890,
         message: "My own message".to_string(),
-        from: my_user_id.to_string(),
+        from: MessageSender::User(my_user_id),
+        from_legacy: my_user_id.to_string(),
     }));
 
     // Message from other user
     mock.inject_update(TelegramUpdate::NewMessage(NewMessage {
         chat_id: -1001234567890,
         message: "Other message".to_string(),
-        from: "987654321".to_string(),
+        from: MessageSender::User(987654321),
+        from_legacy: "987654321".to_string(),
     }));
 
     let updates = mock.receive_updates().await;
 
     // Filter self using is_self (the canonical helper).
+    // M7: compare on the structured MessageSender::User(id) — no string
+    // parsing.
     let filtered: Vec<_> = updates
         .unwrap()
         .into_iter()
         .filter(|u| {
             if let TelegramUpdate::NewMessage(msg) = u {
-                msg.from
-                    .parse::<i64>()
-                    .map(|id| !self_handle.is_self(id))
-                    .unwrap_or(true)
+                if let MessageSender::User(id) = msg.from {
+                    !self_handle.is_self(id)
+                } else {
+                    true
+                }
             } else {
                 true
             }
@@ -180,7 +190,7 @@ async fn test_self_message_filtering_numeric_user_id() {
 
     assert_eq!(filtered.len(), 1);
     if let TelegramUpdate::NewMessage(msg) = &filtered[0] {
-        assert_eq!(msg.from, "987654321");
+        assert_eq!(msg.from_legacy, "987654321");
     }
 }
 
@@ -215,20 +225,23 @@ async fn test_filtering_with_empty_self_handle() {
     mock.inject_update(TelegramUpdate::NewMessage(NewMessage {
         chat_id: -1001234567890,
         message: "Any message".to_string(),
-        from: "12345".to_string(),
+        from: MessageSender::User(12345),
+        from_legacy: "12345".to_string(),
     }));
 
     let updates = mock.receive_updates().await.unwrap();
 
     // With no self_handle set, no messages should be filtered as self.
+    // M7: compare on the structured MessageSender::User(id).
     let filtered: Vec<_> = updates
         .into_iter()
         .filter(|u| {
             if let TelegramUpdate::NewMessage(msg) = u {
-                msg.from
-                    .parse::<i64>()
-                    .map(|id| !self_handle.is_self(id))
-                    .unwrap_or(true)
+                if let MessageSender::User(id) = msg.from {
+                    !self_handle.is_self(id)
+                } else {
+                    true
+                }
             } else {
                 true
             }
@@ -446,13 +459,15 @@ async fn test_adapter_filters_self_messages() {
     mock.inject_update(TelegramUpdate::NewMessage(NewMessage {
         chat_id: -1001234567890,
         message: "from self".to_string(),
-        from: "111111111".to_string(),
+        from: MessageSender::User(111_111_111),
+        from_legacy: "111111111".to_string(),
     }));
     // Inject a message from a different user.
     mock.inject_update(TelegramUpdate::NewMessage(NewMessage {
         chat_id: -1001234567890,
         message: "from other".to_string(),
-        from: "222222222".to_string(),
+        from: MessageSender::User(222_222_222),
+        from_legacy: "222222222".to_string(),
     }));
 
     let received: Vec<_> = adapter.receive_messages(&domain).await.unwrap();

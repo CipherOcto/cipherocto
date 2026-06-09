@@ -167,17 +167,21 @@ impl<C: TelegramClient + Send + Sync> PlatformAdapter for TelegramAdapter<C> {
         // H5: filter out self-authored messages at the adapter boundary, not
         // at the gateway. Compare on the numeric user_id (H4) so the filter is
         // robust to formatting changes in the from string.
+        //
+        // M7: compare on the structured `MessageSender` enum (no string
+        // parsing) — the legacy `from_legacy` string is kept in the
+        // outgoing metadata for back-compat.
         let self_id = self.self_handle.user_id();
         let messages = updates
             .into_iter()
             .filter_map(|u| match u {
                 crate::client::TelegramUpdate::NewMessage(nm) => {
                     // Drop self-authored messages.
-                    if let Some(my_id) = self_id {
-                        if let Ok(from_id) = nm.from.parse::<i64>() {
-                            if from_id == my_id {
-                                return None;
-                            }
+                    if let (Some(my_id), crate::client::MessageSender::User(from_id)) =
+                        (self_id, &nm.from)
+                    {
+                        if from_id == &my_id {
+                            return None;
                         }
                     }
                     let msg_domain =
@@ -187,7 +191,7 @@ impl<C: TelegramClient + Send + Sync> PlatformAdapter for TelegramAdapter<C> {
                     }
                     let mut metadata = std::collections::BTreeMap::new();
                     metadata.insert("chat_id".into(), nm.chat_id.to_string());
-                    metadata.insert("from".into(), nm.from);
+                    metadata.insert("from".into(), nm.from_legacy);
                     Some(RawPlatformMessage {
                         platform_id: nm.message.clone(),
                         payload: nm.message.into_bytes(),

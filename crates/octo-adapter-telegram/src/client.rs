@@ -25,12 +25,47 @@ impl SentMessage {
     }
 }
 
+/// Structured sender of a Telegram message.
+///
+/// M7: previously the `from` field on `NewMessage` was a `String` (e.g. `"12345"`).
+/// TDLib distinguishes between user-sourced and chat-sourced messages
+/// (channels/supergroups post on behalf of the chat, not a user), and
+/// disambiguating numeric IDs in string form is brittle — a chat_id and
+/// a user_id could collide as strings. This enum is the canonical form.
+///
+/// Use the enum for self-loop filtering (`MessageSender::User(id)`) and
+/// any other identity-based logic. The legacy string form is kept on
+/// `NewMessage::from_legacy` for back-compat with downstream consumers
+/// that haven't migrated.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum MessageSender {
+    /// A real user. The wrapped value is the TDLib user_id (i64).
+    User(i64),
+    /// A chat (channel, supergroup, basic group) posting on its own
+    /// behalf. The wrapped value is the TDLib chat_id (i64).
+    Chat(i64),
+    /// TDLib reserved `MessageSender::Chat` variant for hidden/anonymous
+    /// forwards where the source user is hidden. (Mapped to `Hidden`.)
+    Hidden,
+    /// Unknown / future variant we don't model yet. Filter code should
+    /// treat this as "not self-authored" and let the message through.
+    Unknown,
+}
+
 /// A new message update from Telegram.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct NewMessage {
     pub chat_id: i64,
     pub message: String,
-    pub from: String,
+    /// Structured sender. Use this for self-loop filtering and any other
+    /// identity-based logic. See `MessageSender` for variant semantics.
+    pub from: MessageSender,
+    /// Legacy string form. Kept for back-compat with downstream consumers
+    /// (e.g. metadata exports to the gateway) that haven't migrated to
+    /// `MessageSender`. For numeric senders (User/Chat) this carries the
+    /// decimal string of the wrapped id; for `Hidden`/`Unknown` it is
+    /// the empty string.
+    pub from_legacy: String,
 }
 
 /// A message-edited update.

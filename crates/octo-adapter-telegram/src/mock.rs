@@ -287,11 +287,21 @@ impl TelegramClient for MockTelegramClient {
             // (`0`) is in effect, keep `from` empty to preserve the
             // pre-H5 behavior (the parser rejects empty, the filter
             // falls through).
+            //
+            // M7: also stamp the structured `MessageSender` so the
+            // adapter's typed self-loop filter (which compares on
+            // `MessageSender::User(id)`) can match. We map the
+            // mock_sender_id to `User(id)` (the typical case) and fall
+            // back to `Unknown` when the default sentinel (`0`) is in
+            // effect.
             let sender_id = *self.mock_sender_id.lock().unwrap();
-            let from = if sender_id == 0 {
-                String::new()
+            let (from, from_legacy) = if sender_id == 0 {
+                (crate::client::MessageSender::Unknown, String::new())
             } else {
-                sender_id.to_string()
+                (
+                    crate::client::MessageSender::User(sender_id),
+                    sender_id.to_string(),
+                )
             };
             self.pending_updates
                 .lock()
@@ -300,6 +310,7 @@ impl TelegramClient for MockTelegramClient {
                     chat_id: chat_id.parse().unwrap_or(0),
                     message: encoded,
                     from,
+                    from_legacy,
                 }));
         }
         let mut pending = self.pending_updates.lock().unwrap();

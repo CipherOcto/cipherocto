@@ -443,13 +443,13 @@ impl<C: TelegramClient> TelegramAdapter<C> {
         message_id: i64,
     ) -> Result<Vec<u8>, PlatformAdapterError> {
         let file_id = self
-            .client
-            .get_file_id_for_message(chat_id, message_id)
-            .await
-            .map_err(|e| PlatformAdapterError::Unreachable {
-                platform: "telegram".into(),
-                reason: e.to_string(),
-            })?;
+            .with_retry(|| {
+                let chat_id = chat_id;
+                let message_id = message_id;
+                let client = &self.client;
+                async move { client.get_file_id_for_message(chat_id, message_id).await }
+            })
+            .await?;
         self.download_media(&file_id).await
     }
 }

@@ -810,6 +810,16 @@ impl TelegramClient for RealTelegramClient {
                     MessageContent::MessageAnimation(anim) => anim.animation.animation.id,
                     MessageContent::MessageVoiceNote(vn) => vn.voice_note.voice.id,
                     MessageContent::MessageVideoNote(vn) => vn.video_note.video.id,
+                    MessageContent::MessageSticker(sticker) => sticker.sticker.sticker.id,
+                    MessageContent::MessagePhoto(photo) => {
+                        // Use the largest available photo size.
+                        photo
+                            .photo
+                            .sizes
+                            .last()
+                            .map(|s| s.photo.id)
+                            .ok_or_else(|| TelegramError::File("photo has no sizes".into()))?
+                    }
                     _ => {
                         return Err(TelegramError::File(
                             "message content type has no extractable file".into(),
@@ -879,8 +889,10 @@ impl Drop for RealTelegramClient {
         let _ = self.state.shutdown_tx.try_send(self.state.client_id);
         // L15: join the blocking thread after signaling close. Short timeout
         // in case the thread is stuck in a long tdlib_rs::receive() call.
-        if let Some(handle) = self.state.receive_thread.lock().unwrap().take() {
-            let _ = handle.join();
+        if let Ok(mut guard) = self.state.receive_thread.lock() {
+            if let Some(handle) = guard.take() {
+                let _ = handle.join();
+            }
         }
     }
 }

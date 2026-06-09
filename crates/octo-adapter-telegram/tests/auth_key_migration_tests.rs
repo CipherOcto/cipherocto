@@ -12,44 +12,14 @@ use std::path::PathBuf;
 #[cfg(feature = "real-tdlib")]
 use octo_adapter_telegram::UserAuth;
 
-/// Test that auth_data_dir constructs the correct path structure.
-/// TDLib stores auth keys in `data_dir/tdlib/<identifier>/database`.
-#[tokio::test]
-async fn test_auth_data_dir_path_structure() {
-    use octo_adapter_telegram::auth::auth_data_dir;
-
-    let base_dir = PathBuf::from("/tmp/octo_test");
-    let identifier = "123456789";
-    let result = auth_data_dir(&base_dir, identifier);
-
-    let expected = base_dir.join("tdlib").join(identifier);
-    assert_eq!(result, expected);
-}
-
-/// Test that auth_data_dir handles different identifiers correctly.
-#[tokio::test]
-async fn test_auth_data_dir_different_identifiers() {
-    use octo_adapter_telegram::auth::auth_data_dir;
-
-    let base_dir = PathBuf::from("/tmp/octo_test");
-
-    // Bot identifier
-    let bot_path = auth_data_dir(&base_dir, "bot_123456");
-    assert!(bot_path.to_str().unwrap().ends_with("bot_123456"));
-
-    // Phone identifier (user mode)
-    let user_path = auth_data_dir(&base_dir, "+1234567890");
-    assert!(user_path.to_str().unwrap().ends_with("+1234567890"));
-}
-
 /// Test that create_auth_dirs creates the full directory hierarchy.
 #[tokio::test]
 async fn test_create_auth_dirs() {
-    use octo_adapter_telegram::auth::{auth_data_dir, create_auth_dirs};
+    use octo_adapter_telegram::auth::create_auth_dirs;
 
     let temp_dir = std::env::temp_dir();
     let test_dir = temp_dir.join(format!("octo_auth_test_{}", std::process::id()));
-    let auth_dir = auth_data_dir(&test_dir, "test_user");
+    let auth_dir = test_dir.join("tdlib").join("test_user");
 
     create_auth_dirs(&auth_dir).expect("create_auth_dirs should succeed");
 

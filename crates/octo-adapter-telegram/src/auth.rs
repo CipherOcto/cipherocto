@@ -304,15 +304,6 @@ impl UserAuth {
 // Auth Persistence
 // =============================================================================
 
-/// Auth key persistence directory.
-/// TDLib stores its auth_key in `data_dir/tdlib/<identifier>/database`.
-/// We don't add our own `octo_auth_meta` table — TDLib manages its own SQLite
-/// database for the auth_key, and the `data_dir/database` directory created
-/// above is the TDLib-managed location.
-pub fn auth_data_dir(base_dir: &std::path::Path, identifier: &str) -> std::path::PathBuf {
-    base_dir.join("tdlib").join(identifier)
-}
-
 /// Best-effort creation of the TDLib auth directories.
 /// `data_dir` is the user-supplied base directory; TDLib's `database_directory`
 /// and `files_directory` will be created as `<data_dir>/database` and

@@ -772,6 +772,34 @@ impl TelegramClient for RealTelegramClient {
         // This method is a no-op for bot mode.
         Ok(())
     }
+
+    /// Resolve a message by chat_id and message_id to its attached file_id.
+    /// L1: uses TDLib's get_message to look up the message, then extracts
+    /// the first file_id from common file-bearing message content types.
+    async fn get_file_id_for_message(&self, chat_id: i64, message_id: i64) -> Result<String> {
+        use tdlib_rs::enums::{Message, MessageContent};
+        let msg = tdlib_rs::functions::get_message(chat_id, message_id, self.state.client_id)
+            .await
+            .map_err(Self::classify_tdlib_error)?;
+        match msg {
+            Message::Message(m) => {
+                let file_id = match m.content {
+                    MessageContent::MessageDocument(doc) => doc.document.document.id,
+                    MessageContent::MessageVideo(video) => video.video.video.id,
+                    MessageContent::MessageAudio(audio) => audio.audio.audio.id,
+                    MessageContent::MessageAnimation(anim) => anim.animation.animation.id,
+                    MessageContent::MessageVoiceNote(vn) => vn.voice_note.voice.id,
+                    MessageContent::MessageVideoNote(vn) => vn.video_note.video.id,
+                    _ => {
+                        return Err(TelegramError::File(
+                            "message content type has no extractable file".into(),
+                        ))
+                    }
+                };
+                Ok(file_id.to_string())
+            }
+        }
+    }
 }
 
 impl RealTelegramClient {

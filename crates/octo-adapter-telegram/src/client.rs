@@ -143,6 +143,15 @@ pub trait TelegramClient: Send + Sync {
     /// Takes `&self`; the real TDLib client tracks auth state inside the
     /// tdjson client (not in our struct), so no&mut self is needed.
     async fn authenticate(&self) -> Result<()>;
+
+    /// Resolve a message by chat_id and message_id to its attached file_id.
+    /// Used by the `download_media_from_message` adapter method.
+    /// Default impl returns Unimplemented for clients that don't support it.
+    async fn get_file_id_for_message(&self, _chat_id: i64, _message_id: i64) -> Result<String> {
+        Err(crate::error::TelegramError::Unimplemented(
+            "get_file_id_for_message not implemented for this client".into(),
+        ))
+    }
 }
 
 /// Parse a chat_id string. Both mock and real client must use this helper

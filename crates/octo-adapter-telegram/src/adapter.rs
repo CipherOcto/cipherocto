@@ -427,4 +427,25 @@ impl<C: TelegramClient> TelegramAdapter<C> {
             }
         }
     }
+
+    /// Resolve a message by chat_id and message_id, then download its
+    /// attached media. First resolves the message to a file_id via
+    /// `get_file_id_for_message`, then downloads the file via
+    /// `download_media`.
+    #[cfg(feature = "real-tdlib")]
+    pub async fn download_media_from_message(
+        &self,
+        chat_id: i64,
+        message_id: i64,
+    ) -> Result<Vec<u8>, PlatformAdapterError> {
+        let file_id = self
+            .client
+            .get_file_id_for_message(chat_id, message_id)
+            .await
+            .map_err(|e| PlatformAdapterError::Unreachable {
+                platform: "telegram".into(),
+                reason: e.to_string(),
+            })?;
+        self.download_media(&file_id).await
+    }
 }

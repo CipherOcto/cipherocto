@@ -5,6 +5,19 @@ use octo_adapter_telegram::mock::MockTelegramClient;
 use octo_adapter_telegram::{TelegramAdapter, TelegramConfig};
 use octo_network::dot::adapters::PlatformAdapter;
 
+/// H7: shared `parse_chat_id` helper used by both mock and real client.
+/// Tests pass on mock and fail on real without this — the mock previously
+/// accepted any string, while the real client required valid `i64`. Both
+/// must agree on the boundary cases.
+#[test]
+fn test_parse_chat_id_rejects_non_numeric() {
+    use octo_adapter_telegram::client::parse_chat_id;
+    assert!(parse_chat_id("123").is_ok());
+    assert!(parse_chat_id("abc").is_err());
+    assert!(parse_chat_id("").is_err());
+    assert!(parse_chat_id("-1001234567890").is_ok());
+}
+
 #[tokio::test]
 async fn test_adapter_implements_platform_adapter() {
     let config = TelegramConfig::default();

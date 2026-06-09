@@ -90,6 +90,12 @@ impl Default for MockTelegramClient {
 #[async_trait]
 impl TelegramClient for MockTelegramClient {
     async fn send_message(&self, chat_id: &str, text: &str) -> Result<SentMessage> {
+        // H7: validate chat_id via the shared helper so mock and real agree.
+        // The mock previously accepted any string, which let tests pass on
+        // mock and fail on real client.
+        let _chat_id_i64: i64 = crate::client::parse_chat_id(chat_id).map_err(|e| {
+            crate::error::TelegramError::InvalidChatId(format!("{}: {}", e, chat_id))
+        })?;
         let id = format!("mock-msg-{}", self.next_msg_id.lock().unwrap());
         *self.next_msg_id.lock().unwrap() += 1;
         self.sent_messages
@@ -111,6 +117,10 @@ impl TelegramClient for MockTelegramClient {
         filename: &str,
         data: &[u8],
     ) -> Result<SentMessage> {
+        // H7: shared chat_id validation with real client.
+        let _chat_id_i64: i64 = crate::client::parse_chat_id(chat_id).map_err(|e| {
+            crate::error::TelegramError::InvalidChatId(format!("{}: {}", e, chat_id))
+        })?;
         // H6: send_envelope records the encoded envelope in `sent_messages`
         // (caption path) AND the doc in `sent_documents` (round-trip path).
         let id = format!("mock-env-{}", self.next_msg_id.lock().unwrap());
@@ -137,6 +147,10 @@ impl TelegramClient for MockTelegramClient {
     }
 
     async fn send_file(&self, chat_id: &str, filename: &str, data: &[u8]) -> Result<SentMessage> {
+        // H7: shared chat_id validation with real client.
+        let _chat_id_i64: i64 = crate::client::parse_chat_id(chat_id).map_err(|e| {
+            crate::error::TelegramError::InvalidChatId(format!("{}: {}", e, chat_id))
+        })?;
         // H6: send_file records the doc but NOT a caption (the raw upload
         // path has no envelope to round-trip via the caption channel).
         let id = format!("mock-file-{}", self.next_msg_id.lock().unwrap());

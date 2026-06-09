@@ -107,3 +107,18 @@ pub trait TelegramClient: Send + Sync {
     /// tdjson client (not in our struct), so no&mut self is needed.
     async fn authenticate(&self) -> Result<()>;
 }
+
+/// Parse a chat_id string. Both mock and real client must use this helper
+/// so they agree on the boundary cases (H7). Without the shared helper,
+/// tests pass on mock (which accepted any string) and fail on real client
+/// (which required valid `i64`).
+///
+/// Task 20 (M8) will extend this to also reject positive IDs — at that
+/// point the helper becomes the single source of truth for chat_id
+/// validation. For now it only enforces "must be a valid i64".
+pub fn parse_chat_id(s: &str) -> std::result::Result<i64, &'static str> {
+    if s.is_empty() {
+        return Err("chat_id is empty");
+    }
+    s.parse::<i64>().map_err(|_| "chat_id is not a valid i64")
+}

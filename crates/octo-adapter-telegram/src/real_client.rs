@@ -586,9 +586,8 @@ impl RealTelegramClient {
 #[async_trait]
 impl TelegramClient for RealTelegramClient {
     async fn send_message(&self, chat_id: &str, text: &str) -> Result<SentMessage> {
-        let chat_id_i64: i64 = chat_id
-            .parse()
-            .map_err(|_| TelegramError::InvalidChatId(chat_id.into()))?;
+        let chat_id_i64: i64 = crate::client::parse_chat_id(chat_id)
+            .map_err(|e| TelegramError::InvalidChatId(format!("{}: {}", e, chat_id)))?;
 
         let content = tdlib_rs::types::InputMessageText {
             text: tdlib_rs::types::FormattedText {
@@ -626,9 +625,8 @@ impl TelegramClient for RealTelegramClient {
     ) -> Result<SentMessage> {
         use std::io::Write;
 
-        let chat_id_i64: i64 = chat_id
-            .parse()
-            .map_err(|_| TelegramError::InvalidChatId(chat_id.into()))?;
+        let chat_id_i64: i64 = crate::client::parse_chat_id(chat_id)
+            .map_err(|e| TelegramError::InvalidChatId(format!("{}: {}", e, chat_id)))?;
 
         // Write data to a uniquely-named temp file to avoid collisions.
         let temp_path = unique_temp_path("octo_env");
@@ -681,9 +679,8 @@ impl TelegramClient for RealTelegramClient {
     async fn send_file(&self, chat_id: &str, filename: &str, data: &[u8]) -> Result<SentMessage> {
         use std::io::Write;
 
-        let chat_id_i64: i64 = chat_id
-            .parse()
-            .map_err(|_| TelegramError::InvalidChatId(chat_id.into()))?;
+        let chat_id_i64: i64 = crate::client::parse_chat_id(chat_id)
+            .map_err(|e| TelegramError::InvalidChatId(format!("{}: {}", e, chat_id)))?;
 
         // Write data to a uniquely-named temp file to avoid collisions.
         let temp_path = unique_temp_path("octo_file");

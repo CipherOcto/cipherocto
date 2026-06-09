@@ -751,9 +751,9 @@ impl TelegramClient for RealTelegramClient {
 
     /// Download a file by its TDLib file_id (as a string).
     async fn download_file(&self, file_id_str: &str) -> Result<Vec<u8>> {
-        let file_id: i32 = file_id_str.parse().map_err(|_| {
-            TelegramError::InvalidChatId(format!("invalid file_id: {}", file_id_str))
-        })?;
+        let file_id: i32 = file_id_str
+            .parse()
+            .map_err(|_| TelegramError::InvalidFileId(file_id_str.into()))?;
 
         crate::files::download_file_bytes(self.state.client_id, file_id)
             .await

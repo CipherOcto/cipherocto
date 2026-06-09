@@ -42,6 +42,9 @@ pub enum TelegramError {
     #[error("invalid chat id: {0}")]
     InvalidChatId(String),
 
+    #[error("invalid file id: {0}")]
+    InvalidFileId(String),
+
     #[error("send failed: {0}")]
     SendFailed(String),
 

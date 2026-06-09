@@ -147,7 +147,10 @@ async fn test_upload_with_empty_filename() {
 #[tokio::test]
 async fn test_mock_receive_updates_re_injects_documents() {
     let client = MockTelegramClient::new();
-    client.send_file("123", "x.bin", b"hello").await.unwrap();
+    client
+        .send_file("-1001234567890", "x.bin", b"hello")
+        .await
+        .unwrap();
 
     let first = client.receive_updates().await.unwrap();
     let second = client.receive_updates().await.unwrap();

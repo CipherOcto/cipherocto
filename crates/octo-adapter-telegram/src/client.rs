@@ -150,12 +150,17 @@ pub trait TelegramClient: Send + Sync {
 /// tests pass on mock (which accepted any string) and fail on real client
 /// (which required valid `i64`).
 ///
-/// Task 20 (M8) will extend this to also reject positive IDs — at that
-/// point the helper becomes the single source of truth for chat_id
-/// validation. For now it only enforces "must be a valid i64".
+/// M8: also rejects positive IDs. Telegram chat_ids are always negative —
+/// `-100…` for supergroups/channels, `-…` for basic groups. Positive
+/// numbers in this position are user IDs and would silently route the
+/// envelope to the wrong peer.
 pub fn parse_chat_id(s: &str) -> std::result::Result<i64, &'static str> {
     if s.is_empty() {
         return Err("chat_id is empty");
     }
-    s.parse::<i64>().map_err(|_| "chat_id is not a valid i64")
+    let n: i64 = s.parse().map_err(|_| "chat_id is not a valid i64")?;
+    if n >= 0 {
+        return Err("chat_id must be negative (Telegram convention)");
+    }
+    Ok(n)
 }

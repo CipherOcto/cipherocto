@@ -6,17 +6,24 @@ use octo_adapter_telegram::{FailureSpec, TelegramAdapter, TelegramConfig};
 use octo_network::dot::adapters::backoff::RetryConfig;
 use octo_network::dot::adapters::PlatformAdapter;
 
-/// H7: shared `parse_chat_id` helper used by both mock and real client.
+/// H7 + M8: shared `parse_chat_id` helper used by both mock and real client.
 /// Tests pass on mock and fail on real without this — the mock previously
 /// accepted any string, while the real client required valid `i64`. Both
-/// must agree on the boundary cases.
+/// must agree on the boundary cases. M8 also requires that positive IDs
+/// are rejected: Telegram chat_ids are always negative, and a positive
+/// number in this position is a user_id that would route the envelope
+/// to the wrong peer.
 #[test]
-fn test_parse_chat_id_rejects_non_numeric() {
+fn test_parse_chat_id_rejects_non_numeric_and_positive() {
     use octo_adapter_telegram::client::parse_chat_id;
-    assert!(parse_chat_id("123").is_ok());
     assert!(parse_chat_id("abc").is_err());
     assert!(parse_chat_id("").is_err());
+    // Positive IDs are rejected — Telegram chat_ids are negative.
+    assert!(parse_chat_id("123").is_err());
+    assert!(parse_chat_id("1234567890").is_err());
+    // Negative IDs (basic group, supergroup, channel) are accepted.
     assert!(parse_chat_id("-1001234567890").is_ok());
+    assert!(parse_chat_id("-123").is_ok());
 }
 
 #[tokio::test]

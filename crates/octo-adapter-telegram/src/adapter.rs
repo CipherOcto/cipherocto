@@ -15,6 +15,7 @@ use std::collections::BTreeMap;
 use std::sync::RwLock;
 use std::time::Duration;
 
+use base64::{Engine as _, engine::general_purpose::STANDARD};
 use crate::client::TelegramClient;
 use crate::config::TelegramConfig;
 use crate::envelope;
@@ -24,6 +25,10 @@ pub struct TelegramAdapter<C: TelegramClient> {
     pub config: TelegramConfig,
     pub client: C,
     self_handle: SelfHandle,
+    /// Ed25519 verifying key for envelope signature verification (CRYPTO-C1).
+    /// `Some(pk)` enables signature verification in `canonicalize`.
+    /// `None` disables verification (INSECURE — remove in production).
+    verifying_key: Option<[u8; 32]>,
     /// Maps domain_hash → chat_id for send Envelope routing.
     /// Auto-populated by `domain_id()` so send_envelope can route correctly.
     /// Uses BTreeMap (not HashMap) so iteration order is deterministic — see
@@ -35,10 +40,18 @@ pub struct TelegramAdapter<C: TelegramClient> {
 
 impl<C: TelegramClient> TelegramAdapter<C> {
     pub fn new(config: TelegramConfig, client: C) -> Self {
+        let verifying_key = config.verifying_key.as_ref().and_then(|b64| {
+            let mut buf = [0u8; 32];
+            let decoded = STANDARD.decode(b64).ok()?;
+            if decoded.len() != 32 { return None; }
+            buf.copy_from_slice(&decoded);
+            Some(buf)
+        });
         Self {
             config,
             client,
             self_handle: SelfHandle::new(),
+            verifying_key,
             domain_chat_ids: RwLock::new(BTreeMap::new()),
             retry_config: RetryConfig::default(),
         }
@@ -51,10 +64,18 @@ impl<C: TelegramClient> TelegramAdapter<C> {
     /// a pre-configured handle without re-fetching. `SelfHandle` is
     /// cheaply cloneable (`Arc<Mutex<...>>`).
     pub fn with_self_handle(config: TelegramConfig, client: C, self_handle: SelfHandle) -> Self {
+        let verifying_key = config.verifying_key.as_ref().and_then(|b64| {
+            let mut buf = [0u8; 32];
+            let decoded = STANDARD.decode(b64).ok()?;
+            if decoded.len() != 32 { return None; }
+            buf.copy_from_slice(&decoded);
+            Some(buf)
+        });
         Self {
             config,
             client,
             self_handle,
+            verifying_key,
             domain_chat_ids: RwLock::new(BTreeMap::new()),
             retry_config: RetryConfig::default(),
         }
@@ -62,10 +83,18 @@ impl<C: TelegramClient> TelegramAdapter<C> {
 
     /// Build an adapter with a custom retry policy (for tests / tuning).
     pub fn with_retry_config(config: TelegramConfig, client: C, retry_config: RetryConfig) -> Self {
+        let verifying_key = config.verifying_key.as_ref().and_then(|b64| {
+            let mut buf = [0u8; 32];
+            let decoded = STANDARD.decode(b64).ok()?;
+            if decoded.len() != 32 { return None; }
+            buf.copy_from_slice(&decoded);
+            Some(buf)
+        });
         Self {
             config,
             client,
             self_handle: SelfHandle::new(),
+            verifying_key,
             domain_chat_ids: RwLock::new(BTreeMap::new()),
             retry_config,
         }
@@ -331,7 +360,7 @@ impl<C: TelegramClient + Send + Sync> PlatformAdapter for TelegramAdapter<C> {
                 message: e.to_string(),
             }
         })?;
-        DeterministicEnvelope::from_wire_bytes(&wire).map_err(|e| {
+        let env = DeterministicEnvelope::from_wire_bytes(&wire).map_err(|e| {
             // R4 C1: `from_wire_bytes` failing on a known-length, known-version
             // payload means the payload is structurally invalid (bad hash,
             // bad signature). This is also an API error, not transport.
@@ -339,7 +368,22 @@ impl<C: TelegramClient + Send + Sync> PlatformAdapter for TelegramAdapter<C> {
                 code: 400,
                 message: e.to_string(),
             }
-        })
+        })?;
+        // CRYPTO-C1: verify the Ed25519 signature if a verifying_key is configured.
+        // Without this check, any chat participant can forge envelopes
+        // (R6 WIRE-C1, R7 CRYPTO-C1).
+        if let Some(pk) = &self.verifying_key {
+            env.verify(pk).map_err(|e| {
+                // CRYPTO-H3: collapse all verify errors to a single ApiError(401)
+                // to avoid timing oracles on error messages.
+                tracing::debug!(error = %e, "canonicalize: signature verification failed");
+                PlatformAdapterError::ApiError {
+                    code: 401,
+                    message: "signature verification failed".into(),
+                }
+            })?;
+        }
+        Ok(env)
     }
 
     fn capabilities(&self) -> CapabilityReport {

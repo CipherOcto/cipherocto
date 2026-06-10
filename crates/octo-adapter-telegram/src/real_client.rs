@@ -22,6 +22,7 @@ use crate::error::{Result, TelegramError};
 use crate::self_handle::SelfHandle;
 use async_trait::async_trait;
 use std::path::PathBuf;
+use parking_lot::Mutex as PlMutex;
 use std::sync::{
     atomic::{AtomicBool, Ordering},
     Arc, Mutex,
@@ -69,7 +70,7 @@ struct ClientState {
     closed: AtomicBool,
     /// JoinHandle for the long-lived tdlib_rs::receive() blocking thread (L15).
     /// Populated by receive_loop after spawn; joined in Drop.
-    receive_thread: Mutex<Option<std::thread::JoinHandle<()>>>,
+    receive_thread: PlMutex<Option<std::thread::JoinHandle<()>>>,
     /// Channel for inbound verification codes (user mode).
     code_tx: mpsc::Sender<String>,
     /// Receiver end of the verification-code channel. The receive loop
@@ -125,7 +126,7 @@ impl ClientState {
             bot_params_set: AtomicBool::new(false),
             user_params_set: AtomicBool::new(false),
             closed: AtomicBool::new(false),
-            receive_thread: Mutex::new(None),
+            receive_thread: PlMutex::new(None),
             code_tx,
             code_rx: Arc::new(Mutex::new(Some(code_rx))),
             self_handle: SelfHandle::new(),
@@ -292,7 +293,7 @@ impl RealTelegramClient {
             }
         });
         // Store the JoinHandle so Drop can join the thread after shutdown.
-        *state.receive_thread.lock().unwrap() = Some(handle);
+        *state.receive_thread.lock() = Some(handle);
 
         // Async receive loop reads from the channel.
         loop {
@@ -381,7 +382,7 @@ impl RealTelegramClient {
             tdlib_rs::enums::AuthorizationState::WaitTdlibParameters => {
                 if state.user_auth.is_none() {
                     // Bot mode
-                    if !state.bot_params_set.swap(true, Ordering::AcqRel) {
+                    if !state.bot_params_set.swap(true, Ordering::Release) {
                         let base = state
                             .data_dir
                             .clone()
@@ -424,7 +425,7 @@ impl RealTelegramClient {
                 } else if let Some(ref user_auth) = state.user_auth {
                     // L5: only set parameters once per session to avoid
                     // redundant TDLib calls on re-emitted WaitTdlibParameters.
-                    if !state.user_params_set.swap(true, Ordering::AcqRel) {
+                    if !state.user_params_set.swap(true, Ordering::Release) {
                         if let Err(e) = user_auth
                             .handle_authorization_state(
                                 auth_state.clone(),
@@ -872,10 +873,8 @@ fn parse_flood_wait_secs(message: &str) -> Option<u64> {
 }
 
 /// Drain the latest verification code from a code_rx mutex.
-/// Returns the stored code (if any) and clears the slot.
-/// CONC-C2: uses parking_lot::Mutex<Option<String>>.
 pub fn drain_code_receiver(
-    code_rx: &std::sync::Arc<parking_lot::Mutex<Option<String>>>,
+    code_rx: &std::sync::Arc<PlMutex<Option<String>>>,
 ) -> Option<String> {
     code_rx.lock().take()
 }
@@ -904,9 +903,19 @@ impl Drop for RealTelegramClient {
         let _ = self.state.shutdown_tx.try_send(self.state.client_id);
         // L15: join the blocking thread after signaling close. Short timeout
         // in case the thread is stuck in a long tdlib_rs::receive() call.
-        if let Ok(mut guard) = self.state.receive_thread.lock() {
-            if let Some(handle) = guard.take() {
-                let _ = handle.join();
+        let mut guard = self.state.receive_thread.lock();
+        if let Some(handle) = guard.take() {
+            // OBS-C4: bounded join with 2-second timeout via recv_timeout.
+            let (tx, rx) = std::sync::mpsc::channel();
+            std::thread::spawn(move || { let _ = tx.send(handle.join()); });
+            match rx.recv_timeout(std::time::Duration::from_secs(2)) {
+                Ok(Ok(())) => tracing::debug!("receive thread joined cleanly"),
+                Ok(Err(panic_err)) => tracing::error!(
+                    "receive thread panicked: {:?}", panic_err
+                ),
+                Err(_) => tracing::warn!(
+                    "receive thread did not join within 2s, detaching"
+                ),
             }
         }
     }

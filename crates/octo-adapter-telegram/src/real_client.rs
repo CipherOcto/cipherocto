@@ -345,6 +345,8 @@ impl RealTelegramClient {
         if let Some(telegram_update) = Self::convert_update(update) {
             // CONC-C1: unbounded mpsc send; if full, drop oldest
             if let Err(e) = state.pending_updates_tx.try_send(telegram_update) {
+                // CR-H2: increment counter so receive_updates can report the loss
+                state.dropped_updates.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
                 tracing::warn!("pending_updates channel full, dropping update");
                 let _ = e;
             }
@@ -687,10 +689,13 @@ impl TelegramClient for RealTelegramClient {
         let chat_id_i64: i64 = crate::client::parse_chat_id(chat_id)
             .map_err(|e| TelegramError::InvalidChatId(format!("{}: {}", e, chat_id)))?;
 
-        // CR-C2: use tempfile::NamedTempFile for RAII cleanup on ? or panic.
+        // CR-C2: keep NamedTempFile alive until after send_message returns.
+        // into_temp_path() would detach from RAII; instead keep tmp alive
+        // and reference the path via tmp.path(). The file is cleaned up
+        // when tmp drops at the end of this function or on ?/panic.
         let mut tmp = tempfile::NamedTempFile::new().map_err(TelegramError::Io)?;
         tmp.write_all(data).map_err(TelegramError::Io)?;
-        let temp_path = tmp.into_temp_path();
+        let temp_path = tmp.path().to_path_buf();
 
         let input_file = tdlib_rs::types::InputFileLocal {
             path: temp_path.to_string_lossy().into_owned(),
@@ -739,10 +744,10 @@ impl TelegramClient for RealTelegramClient {
         let chat_id_i64: i64 = crate::client::parse_chat_id(chat_id)
             .map_err(|e| TelegramError::InvalidChatId(format!("{}: {}", e, chat_id)))?;
 
-        // CR-C2: use tempfile::NamedTempFile for RAII cleanup on ? or panic.
+        // CR-C2: keep NamedTempFile alive until after send_message returns.
         let mut tmp = tempfile::NamedTempFile::new().map_err(TelegramError::Io)?;
         tmp.write_all(data).map_err(TelegramError::Io)?;
-        let temp_path = tmp.into_temp_path();
+        let temp_path = tmp.path().to_path_buf();
 
         let input_file = tdlib_rs::types::InputFileLocal {
             path: temp_path.to_string_lossy().into_owned(),
@@ -801,7 +806,8 @@ impl TelegramClient for RealTelegramClient {
         if dropped > 0 {
             tracing::warn!(dropped, "receive_updates: {} updates were dropped since last poll", dropped);
         }
-        let mut updates = Vec::new();
+        // PERF-L1: pre-allocate for typical poll size
+        let mut updates = Vec::with_capacity(8);
         let mut guard = self.state.pending_updates_rx.lock().unwrap();
         if let Some(rx) = guard.as_mut() {
             use mpsc::error::TryRecvError;

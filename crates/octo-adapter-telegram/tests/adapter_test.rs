@@ -131,6 +131,24 @@ fn test_self_handle_returns_none_by_default() {
     );
 }
 
+/// API-H4: upload_media with no registered domains should error.
+#[test]
+fn test_upload_media_errors_with_zero_domains() {
+    use octo_network::dot::adapters::PlatformAdapter;
+    let config = TelegramConfig::default();
+    let client = MockTelegramClient::new();
+    let adapter = TelegramAdapter::new(config, client);
+    let rt = tokio::runtime::Runtime::new().unwrap();
+    let result = rt.block_on(adapter.upload_media("test.bin", b"data", "application/octet-stream"));
+    match result {
+        Err(octo_network::dot::error::PlatformAdapterError::Unreachable { platform, reason }) => {
+            assert_eq!(platform, "telegram");
+            assert!(reason.contains("no registered domain"), "expected 'no registered domain' error, got: {}", reason);
+        }
+        other => panic!("expected Unreachable for zero domains, got: {:?}", other),
+    }
+}
+
 /// C2: Bot mode requires api_id + api_hash (R3 review).
 /// `set_tdlib_parameters` for bot mode is required to use real api credentials
 /// from my.telegram.org — synthetic credentials (`api_id=0`, `api_hash=""`)
@@ -347,4 +365,181 @@ async fn test_send_with_retry_gives_up_on_transient_after_max_retries() {
         "expected 1 initial + 2 retries = 3 calls before giving up, got {}",
         observer.send_call_count()
     );
+}
+
+
+// =============================================================================
+// API-H2: Ed25519 signature verification tests
+// =============================================================================
+
+/// A DeterministicEnvelope signed with a known key must round-trip through
+/// canonicalize when the adapter has the matching verifying_key.
+#[test]
+fn test_canonicalize_accepts_valid_signature() {
+    use octo_network::dot::adapters::PlatformAdapter;
+    use octo_network::dot::envelope::DeterministicEnvelope;
+    use ed25519_dalek::{Signer, SigningKey, VerifyingKey};
+    use base64::{Engine as _, engine::general_purpose::STANDARD};
+
+    // Use a fixed known key pair (ed25519-dalek 2.x SigningKey::from_keypair_bytes)
+    let seed = [42u8; 32];
+    let signing_key = SigningKey::from_bytes(&seed);
+    let verifying_key: VerifyingKey = signing_key.verifying_key();
+    let vk_bytes = verifying_key.to_bytes();
+
+    // Create a config with the verifying key (base64).
+    // Use struct literal to avoid clippy field-assignment-after-default lint
+    let config = TelegramConfig {
+        verifying_key: Some(STANDARD.encode(vk_bytes)),
+        ..TelegramConfig::default()
+    };
+
+    // Create the envelope and sign it.
+    let mut envelope = DeterministicEnvelope {
+        version: 1,
+        network_id: 42,
+        message_type: 0,
+        envelope_id: [1u8; 32],
+        mission_id: [0u8; 32],
+        source_peer: [2u8; 32],
+        origin_gateway: [3u8; 32],
+        logical_timestamp: 100,
+        ttl_hops: 5,
+        payload_hash: [4u8; 32],
+        route_trace_root: [5u8; 32],
+        flags: 0,
+        signature: [0u8; 64],
+    };
+    // Must derive envelope_id before signing (it's part of the signing payload)
+    envelope.envelope_id = envelope.derive_envelope_id();
+    let signing_bytes = envelope.to_signing_bytes();
+    envelope.signature = signing_key.sign(&signing_bytes).to_bytes();
+
+    let client = MockTelegramClient::new();
+    let adapter = TelegramAdapter::new(config, client);
+    let wire = envelope.to_wire_bytes();
+    // The payload must be base64-encoded text (as it arrives from Telegram)
+    let encoded = octo_adapter_telegram::envelope::encode_envelope(&wire);
+
+    let raw = octo_network::dot::adapters::RawPlatformMessage {
+        platform_id: "test".into(),
+        payload: encoded.into_bytes(),
+        metadata: std::collections::BTreeMap::new(),
+    };
+
+    let result = adapter.canonicalize(&raw);
+    assert!(result.is_ok(), "valid signature should be accepted: {:?}", result.err());
+}
+
+/// An envelope with a wrong signature must be rejected with ApiError(401).
+#[test]
+fn test_canonicalize_rejects_invalid_signature_returns_401() {
+    use octo_network::dot::adapters::PlatformAdapter;
+    use octo_network::dot::envelope::DeterministicEnvelope;
+    use ed25519_dalek::{Signer, SigningKey};
+    use base64::{Engine as _, engine::general_purpose::STANDARD};
+
+    // Use two different fixed keys.
+    let seed1 = [1u8; 32];
+    let signing_key1 = SigningKey::from_bytes(&seed1);
+    let verifying_key = signing_key1.verifying_key();
+    let vk_bytes = verifying_key.to_bytes();
+
+    let seed2 = [2u8; 32];
+    let signing_key2 = SigningKey::from_bytes(&seed2);
+
+    let config = TelegramConfig {
+        verifying_key: Some(STANDARD.encode(vk_bytes)),
+        ..TelegramConfig::default()
+    };
+
+    // Create envelope signed with key2, but verify with key1's verifying_key.
+    let mut envelope = DeterministicEnvelope {
+        version: 1,
+        network_id: 42,
+        message_type: 0,
+        envelope_id: [1u8; 32],
+        mission_id: [0u8; 32],
+        source_peer: [2u8; 32],
+        origin_gateway: [3u8; 32],
+        logical_timestamp: 100,
+        ttl_hops: 5,
+        payload_hash: [4u8; 32],
+        route_trace_root: [5u8; 32],
+        flags: 0,
+        signature: [0u8; 64],
+    };
+    let signing_bytes = envelope.to_signing_bytes();
+    envelope.signature = signing_key2.sign(&signing_bytes).to_bytes();
+
+    let client = MockTelegramClient::new();
+    let adapter = TelegramAdapter::new(config, client);
+    let wire = envelope.to_wire_bytes();
+    // The payload must be base64-encoded text (as it arrives from Telegram)
+    let encoded = octo_adapter_telegram::envelope::encode_envelope(&wire);
+
+    let raw = octo_network::dot::adapters::RawPlatformMessage {
+        platform_id: "test".into(),
+        payload: encoded.into_bytes(),
+        metadata: std::collections::BTreeMap::new(),
+    };
+
+    let result = adapter.canonicalize(&raw);
+    match result {
+        Err(octo_network::dot::error::PlatformAdapterError::ApiError { code, message }) => {
+            assert_eq!(code, 401, "wrong key should give 401, got code={}", code);
+            assert!(message.contains("signature verification failed"), "message: {}", message);
+        }
+        other => panic!("expected ApiError(401), got: {:?}", other),
+    }
+}
+
+/// When no verifying_key is configured, canonicalize must skip verification
+/// and return Ok.
+#[test]
+fn test_canonicalize_no_verifying_key_skips_verify() {
+    use octo_network::dot::adapters::PlatformAdapter;
+    use octo_network::dot::envelope::DeterministicEnvelope;
+    use ed25519_dalek::{Signer, SigningKey};
+
+    let seed = [42u8; 32];
+    let signing_key = SigningKey::from_bytes(&seed);
+
+    let config = TelegramConfig::default();
+    assert!(config.verifying_key.is_none(), "default config should have no verifying_key");
+
+    let mut envelope = DeterministicEnvelope {
+        version: 1,
+        network_id: 42,
+        message_type: 0,
+        envelope_id: [1u8; 32],
+        mission_id: [0u8; 32],
+        source_peer: [2u8; 32],
+        origin_gateway: [3u8; 32],
+        logical_timestamp: 100,
+        ttl_hops: 5,
+        payload_hash: [4u8; 32],
+        route_trace_root: [5u8; 32],
+        flags: 0,
+        signature: [0u8; 64],
+    };
+    // Must derive envelope_id before signing (it's part of the signing payload)
+    envelope.envelope_id = envelope.derive_envelope_id();
+    let signing_bytes = envelope.to_signing_bytes();
+    envelope.signature = signing_key.sign(&signing_bytes).to_bytes();
+
+    let client = MockTelegramClient::new();
+    let adapter = TelegramAdapter::new(config, client);
+    let wire = envelope.to_wire_bytes();
+    // The payload must be base64-encoded text (as it arrives from Telegram)
+    let encoded = octo_adapter_telegram::envelope::encode_envelope(&wire);
+
+    let raw = octo_network::dot::adapters::RawPlatformMessage {
+        platform_id: "test".into(),
+        payload: encoded.into_bytes(),
+        metadata: std::collections::BTreeMap::new(),
+    };
+
+    let result = adapter.canonicalize(&raw);
+    assert!(result.is_ok(), "without verifying_key, canonicalize should pass: {:?}", result.err());
 }

@@ -390,7 +390,7 @@ impl RealTelegramClient {
                             match tdlib_rs::functions::get_me(state.client_id).await {
                                 Ok(me) => {
                                     let tdlib_rs::enums::User::User(u) = me;
-                                    state.self_handle.set_identity(u.id, u.usernames.map_or(String::new(), |un| un.editable_username));
+                                    state.self_handle.set_identity(u.id, u.usernames.map_or(String::new(), |un| un.active_usernames.first().cloned().unwrap_or_default()));
                                 }
                                 Err(e2) => {
                                     tracing::error!(error = %crate::error::redact_credentials(&e2.message), "get_me: retry also failed");
@@ -981,8 +981,12 @@ impl Drop for RealTelegramClient {
         }
         // L15: join the blocking thread after signaling close. Short timeout
         // in case the thread is stuck in a long tdlib_rs::receive() call.
-        let mut guard = self.state.receive_thread.lock();
-        if let Some(handle) = guard.take() {
+        // CONC-M2: scope the mutex guard so it's dropped before thread spawn
+        let handle = {
+            let mut guard = self.state.receive_thread.lock();
+            guard.take()
+        };
+        if let Some(handle) = handle {
             // OBS-C4 + CR-H1: bounded join with progressive timeouts.
             // The receive loop normally responds to shutdown within ~100ms.
             // First attempt: 2s timeout (normal case).

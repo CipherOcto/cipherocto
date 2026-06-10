@@ -31,6 +31,8 @@ pub struct TelegramAdapter<C: TelegramClient> {
     verifying_key: Option<[u8; 32]>,
     /// Maps domain_hash → chat_id for send Envelope routing.
     /// Auto-populated by `domain_id()` so send_envelope can route correctly.
+    /// CancellationToken for cooperative cancellation in with_retry (CR-H4).
+    cancel: tokio_util::sync::CancellationToken,
     /// Uses BTreeMap (not HashMap) so iteration order is deterministic — see
     /// H6 in octo-adapter-telegram-adversarial-review-r2.md.
     domain_chat_ids: RwLock<BTreeMap<[u8; 32], String>>,
@@ -65,6 +67,7 @@ impl<C: TelegramClient> TelegramAdapter<C> {
             client,
             self_handle: SelfHandle::new(),
             verifying_key,
+            cancel: tokio_util::sync::CancellationToken::new(),
             domain_chat_ids: RwLock::new(BTreeMap::new()),
             retry_config: RetryConfig::default(),
         }
@@ -102,6 +105,7 @@ impl<C: TelegramClient> TelegramAdapter<C> {
             client,
             self_handle,
             verifying_key,
+            cancel: tokio_util::sync::CancellationToken::new(),
             domain_chat_ids: RwLock::new(BTreeMap::new()),
             retry_config: RetryConfig::default(),
         }
@@ -134,6 +138,7 @@ impl<C: TelegramClient> TelegramAdapter<C> {
             client,
             self_handle: SelfHandle::new(),
             verifying_key,
+            cancel: tokio_util::sync::CancellationToken::new(),
             domain_chat_ids: RwLock::new(BTreeMap::new()),
             retry_config,
         }
@@ -497,6 +502,9 @@ impl<C: TelegramClient + Send + Sync> PlatformAdapter for TelegramAdapter<C> {
     }
 
     async fn shutdown(&self) -> Result<(), PlatformAdapterError> {
+        // CR-H4: cancel any in-flight with_retry sleeps
+        self.cancel.cancel();
+        tracing::debug!("TelegramAdapter: shutdown initiated, cancellation token fired");
         Ok(())
     }
 
@@ -631,7 +639,17 @@ impl<C: TelegramClient> TelegramAdapter<C> {
                         Duration::from_secs(retry_after_secs),
                         default_backoff(attempt),
                     );
-                    tokio::time::sleep(backoff).await;
+                    // CR-H4: cooperative cancellation during backoff
+                    tokio::select! {
+                        _ = self.cancel.cancelled() => {
+                            tracing::warn!("with_retry: cancelled during rate-limit backoff");
+                            return Err(PlatformAdapterError::Unreachable {
+                                platform: "telegram".into(),
+                                reason: "operation cancelled".into(),
+                            });
+                        }
+                        _ = tokio::time::sleep(backoff) => {}
+                    }
                     attempt = attempt.saturating_add(1);
                 }
                 // M6: 5xx / "connection failed" / "connection closed" errors
@@ -657,7 +675,17 @@ impl<C: TelegramClient> TelegramAdapter<C> {
                         });
                     }
                     let backoff = self.retry_config.delay_for_attempt(attempt);
-                    tokio::time::sleep(backoff).await;
+                    // CR-H4: cooperative cancellation during backoff
+                    tokio::select! {
+                        _ = self.cancel.cancelled() => {
+                            tracing::warn!("with_retry: cancelled during transient backoff");
+                            return Err(PlatformAdapterError::Unreachable {
+                                platform: "telegram".into(),
+                                reason: "operation cancelled".into(),
+                            });
+                        }
+                        _ = tokio::time::sleep(backoff) => {}
+                    }
                     attempt = attempt.saturating_add(1);
                 }
                 // R5 error-prop-C1, H3: non-retryable errors propagate via

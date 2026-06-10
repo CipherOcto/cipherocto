@@ -321,7 +321,8 @@ impl RealTelegramClient {
                     if let Err(e) = Self::handle_update(&state, update).await {
                         tracing::debug!(error = %e, "tdlib update handler error");
                     }
-                    tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+                    // PERF-H4: 10ms sleep imposes ~100 msg/s ceiling. Adjust if throughput is insufficient.
+            tokio::time::sleep(std::time::Duration::from_millis(10)).await;
                 }
                 else => {
                     // Channel closed — blocking thread exited.
@@ -486,6 +487,16 @@ impl RealTelegramClient {
                 }
                 Ok(())
             }
+            tdlib_rs::enums::AuthorizationState::LoggingOut => {
+                tracing::info!("auth: LoggingOut — stopping receive loop");
+                // Signal the loop to stop, then return control
+                state.running.store(false, Ordering::Release);
+                Ok(())
+            }
+            tdlib_rs::enums::AuthorizationState::Closing => {
+                tracing::debug!("auth: Closing — TDLib is shutting down");
+                Ok(())
+            }
             tdlib_rs::enums::AuthorizationState::WaitCode(_) => {
                 if let Some(ref user_auth) = state.user_auth {
                     // C1: drive the auth flow off the new `decide` decision.
@@ -573,6 +584,16 @@ impl RealTelegramClient {
     fn convert_update(update: tdlib_rs::enums::Update) -> Option<TelegramUpdate> {
         match update {
             tdlib_rs::enums::Update::NewMessage(new_msg) => {
+                // SM-H2: skip outgoing messages (sent by the bot/user themselves)
+                // to prevent echo feedback through the adapter's receive path
+                if new_msg.message.is_outgoing {
+                    tracing::trace!(
+                        chat_id = new_msg.message.chat_id,
+                        "convert_update: skipping outgoing message"
+                    );
+                    return None;
+                }
+
                 // M7: map TDLib's `MessageSender` enum to our structured
                 // `MessageSender` so the adapter's self-loop filter can do
                 // a typed comparison instead of string parsing. TDLib

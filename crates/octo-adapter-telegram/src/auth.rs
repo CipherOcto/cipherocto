@@ -305,6 +305,14 @@ impl UserAuth {
                 // Authentication successful
                 Ok(())
             }
+            AuthorizationState::LoggingOut => {
+                // TDLib is being logged out — not an error, but session is ending
+                Ok(())
+            }
+            AuthorizationState::Closing => {
+                // TDLib is closing — not an error
+                Ok(())
+            }
             AuthorizationState::Closed => Err(AuthError::SessionExpired),
             _ => {
                 // Other states (WaitEncryption, WaitRegistration, etc.) - skip

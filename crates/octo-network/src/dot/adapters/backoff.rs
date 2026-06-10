@@ -63,8 +63,16 @@ pub fn simple_jitter(max_jitter_ms: u64) -> u64 {
     if max_jitter_ms == 0 {
         return 0;
     }
-    // Use a simple hash-based jitter for determinism
-    let hash = blake3::hash(&(max_jitter_ms).to_be_bytes());
+    // CR-M1: jitter varies per-attempt by mixing pid + incrementing counter
+    // so thundering-herd scenarios don't synchronize retries.
+    use std::sync::atomic::{AtomicU64, Ordering};
+    static JITTER_COUNTER: AtomicU64 = AtomicU64::new(0);
+    let seq = JITTER_COUNTER.fetch_add(1, Ordering::Relaxed);
+    let mut seed = Vec::with_capacity(16);
+    seed.extend_from_slice(&(max_jitter_ms).to_be_bytes());
+    seed.extend_from_slice(&std::process::id().to_be_bytes());
+    seed.extend_from_slice(&seq.to_be_bytes());
+    let hash = blake3::hash(&seed);
     let bytes = hash.as_bytes();
     let val = u64::from_be_bytes([
         bytes[0], bytes[1], bytes[2], bytes[3], bytes[4], bytes[5], bytes[6], bytes[7],

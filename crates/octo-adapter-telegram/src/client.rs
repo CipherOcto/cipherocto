@@ -140,6 +140,15 @@ pub trait TelegramClient: Send + Sync {
     async fn download_file(&self, file_id: &str) -> Result<Vec<u8>>;
 
     /// Receive pending updates. Yields all queued updates.
+    ///
+    /// # Ordering (API-H1)
+    /// Updates are yielded in **FIFO order** (insertion order). The real TDLib
+    /// client uses an `mpsc` channel which guarantees FIFO. The mock client
+    /// re-injects doc-derived updates after the initial pending_updates are
+    /// consumed, in send order. Downstream consumers should not depend on
+    /// cross-platform ordering between immediate text messages and
+    /// doc-derived re-injections.
+    ///
     /// Takes `&self` so the trait composes with `PlatformAdapter::receive_messages`
     /// (which also takes `&self`); interior mutability (Mutex/RwLock) is the
     /// impl's responsibility.

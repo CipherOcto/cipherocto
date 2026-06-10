@@ -123,6 +123,7 @@ async fn test_mixed_updates_with_file_downloaded() {
         message: "hello".to_string(),
         from: MessageSender::Unknown,
         from_legacy: "alice".to_string(),
+        is_outgoing: false,
     }));
     mock.inject_update(TelegramUpdate::FileDownloaded(FileDownloaded {
         file_id: "file_1".to_string(),
@@ -134,6 +135,7 @@ async fn test_mixed_updates_with_file_downloaded() {
         message: "world".to_string(),
         from: MessageSender::Unknown,
         from_legacy: "bob".to_string(),
+        is_outgoing: false,
     }));
 
     let updates = mock.receive_updates().await.expect("should work");

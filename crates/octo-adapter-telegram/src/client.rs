@@ -38,6 +38,7 @@ impl SentMessage {
 /// `NewMessage::from_legacy` for back-compat with downstream consumers
 /// that haven't migrated.
 #[derive(Clone, Debug, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum MessageSender {
     /// A real user. The wrapped value is the TDLib user_id (i64).
     User(i64),
@@ -68,6 +69,8 @@ pub struct NewMessage {
     /// decimal string of the wrapped id; for `Hidden`/`Unknown` it is
     /// the empty string.
     pub from_legacy: String,
+    /// SM-M5: true when the message was sent by the bot/user themself.
+    pub is_outgoing: bool,
 }
 
 /// A message-edited update.
@@ -90,6 +93,7 @@ pub struct FileDownloaded {
 /// Architecture section (line 57), but does NOT pin specific TDLib type names
 /// since the actual tdlib-rs API may differ (see R6-C-R2).
 #[derive(Clone, Debug, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum TelegramUpdate {
     NewMessage(NewMessage),
     MessageEdited(MessageEdited),

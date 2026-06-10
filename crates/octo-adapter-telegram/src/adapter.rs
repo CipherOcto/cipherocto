@@ -12,7 +12,7 @@ use octo_network::dot::domain::{BroadcastDomainId, PlatformType};
 use octo_network::dot::envelope::DeterministicEnvelope;
 use octo_network::dot::error::PlatformAdapterError;
 use std::collections::BTreeMap;
-use std::sync::RwLock;
+use parking_lot::RwLock;
 use std::time::Duration;
 
 use base64::{Engine as _, engine::general_purpose::STANDARD};
@@ -245,7 +245,6 @@ impl<C: TelegramClient> TelegramAdapter<C> {
         })?;
         self.domain_chat_ids
             .write()
-            .unwrap()
             .insert(domain.domain_hash, normalized);
         Ok(())
     }
@@ -254,7 +253,6 @@ impl<C: TelegramClient> TelegramAdapter<C> {
     pub fn chat_id_for_domain(&self, domain: &BroadcastDomainId) -> Option<String> {
         self.domain_chat_ids
             .read()
-            .unwrap()
             .get(&domain.domain_hash)
             .cloned()
     }
@@ -466,7 +464,6 @@ impl<C: TelegramClient + Send + Sync> PlatformAdapter for TelegramAdapter<C> {
         // without re-parsing whitespace.
         self.domain_chat_ids
             .write()
-            .unwrap()
             .insert(domain.domain_hash, normalized);
         domain
     }
@@ -487,7 +484,7 @@ impl<C: TelegramClient + Send + Sync> PlatformAdapter for TelegramAdapter<C> {
     async fn health_check(&self) -> Result<(), PlatformAdapterError> {
         // OBS-C5: basic health check — report adapter identity state
         let has_identity = self.self_handle.user_id().is_some();
-        let registered_domains = self.domain_chat_ids.read().unwrap().len();
+        let registered_domains = self.domain_chat_ids.read().len();
         tracing::debug!(
             has_identity,
             registered_domains,
@@ -538,7 +535,6 @@ impl<C: TelegramClient + Send + Sync> PlatformAdapter for TelegramAdapter<C> {
         let domains: Vec<[u8; 32]> = self
             .domain_chat_ids
             .read()
-            .unwrap()
             .keys()
             .copied()
             .collect();

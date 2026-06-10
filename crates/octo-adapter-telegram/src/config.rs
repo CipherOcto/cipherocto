@@ -4,7 +4,7 @@
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 
-#[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
 pub struct TelegramFeatures {
     /// Enable access to secret chats (user mode only).
     /// Mission AC line 136: "features.e2e_chats (default false, user mode only)"
@@ -17,7 +17,7 @@ pub struct TelegramFeatures {
     pub voice_video: bool,
 }
 
-#[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
 pub struct TelegramConfig {
     /// "bot" | "user" (default: bot)
     #[serde(default)]
@@ -63,6 +63,24 @@ pub struct TelegramConfig {
     /// Base64-encoded 32-byte public key.
     #[serde(default)]
     pub verifying_key: Option<String>,
+}
+
+impl std::fmt::Debug for TelegramConfig {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("TelegramConfig")
+            .field("mode", &self.mode)
+            .field("bot_token", &self.bot_token.as_ref().map(|_| "<redacted>"))
+            .field("api_id", &self.api_id)
+            .field("api_hash", &self.api_hash.as_ref().map(|_| "<redacted>"))
+            .field("phone", &self.phone.as_ref().map(|_| "<redacted>"))
+            .field("password", &self.password.as_ref().map(|_| "<redacted>"))
+            .field("data_dir", &self.data_dir)
+            .field("groups", &self.groups)
+            .field("webhook_port", &self.webhook_port)
+            .field("features", &self.features)
+            .field("verifying_key", &self.verifying_key)
+            .finish()
+    }
 }
 
 impl TelegramConfig {

@@ -28,6 +28,7 @@ async fn test_mock_client_inject_update() {
         message: "test".to_string(),
         from: MessageSender::Unknown,
         from_legacy: "alice".to_string(),
+        is_outgoing: false,
     }));
     let updates = mock.receive_updates().await.unwrap();
     assert_eq!(updates.len(), 1);

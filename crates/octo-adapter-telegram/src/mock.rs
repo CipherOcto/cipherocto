@@ -316,6 +316,7 @@ impl TelegramClient for MockTelegramClient {
                     message: encoded,
                     from,
                     from_legacy,
+                    is_outgoing: false,
                 }));
         }
         let mut pending = self.pending_updates.lock().unwrap();

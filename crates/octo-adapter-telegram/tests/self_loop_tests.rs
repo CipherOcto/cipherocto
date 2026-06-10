@@ -89,6 +89,7 @@ async fn test_self_message_filtering_scenario() {
         message: "Hello from bot".to_string(),
         from: MessageSender::User(my_user_id),
         from_legacy: my_user_id.to_string(),
+        is_outgoing: false,
     }));
 
     // Inject a message FROM another user
@@ -97,6 +98,7 @@ async fn test_self_message_filtering_scenario() {
         message: "Hello from alice".to_string(),
         from: MessageSender::User(999_999_999),
         from_legacy: "999_999_999".to_string(),
+        is_outgoing: false,
     }));
 
     let updates = mock.receive_updates().await.unwrap();
@@ -158,6 +160,7 @@ async fn test_self_message_filtering_numeric_user_id() {
         message: "My own message".to_string(),
         from: MessageSender::User(my_user_id),
         from_legacy: my_user_id.to_string(),
+        is_outgoing: false,
     }));
 
     // Message from other user
@@ -166,6 +169,7 @@ async fn test_self_message_filtering_numeric_user_id() {
         message: "Other message".to_string(),
         from: MessageSender::User(987654321),
         from_legacy: "987654321".to_string(),
+        is_outgoing: false,
     }));
 
     let updates = mock.receive_updates().await;
@@ -228,6 +232,7 @@ async fn test_filtering_with_empty_self_handle() {
         message: "Any message".to_string(),
         from: MessageSender::User(12345),
         from_legacy: "12345".to_string(),
+        is_outgoing: false,
     }));
 
     let updates = mock.receive_updates().await.unwrap();
@@ -471,6 +476,7 @@ async fn test_adapter_filters_self_messages() {
         message: "from self".to_string(),
         from: MessageSender::User(111_111_111),
         from_legacy: "111111111".to_string(),
+        is_outgoing: false,
     }));
     // Inject a message from a different user.
     mock.inject_update(TelegramUpdate::NewMessage(NewMessage {
@@ -478,6 +484,7 @@ async fn test_adapter_filters_self_messages() {
         message: "from other".to_string(),
         from: MessageSender::User(222_222_222),
         from_legacy: "222222222".to_string(),
+        is_outgoing: false,
     }));
 
     let received: Vec<_> = adapter.receive_messages(&domain).await.unwrap();

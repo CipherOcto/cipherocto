@@ -43,7 +43,7 @@ struct ClientState {
     /// CR-H2: counter of dropped updates due to channel full.
     dropped_updates: std::sync::atomic::AtomicU64,
     /// Receiver for pending updates (CONC-C1).
-    pending_updates_rx: std::sync::Mutex<Option<mpsc::Receiver<TelegramUpdate>>>,
+    pending_updates_rx: parking_lot::Mutex<Option<mpsc::Receiver<TelegramUpdate>>>,
     /// Notified when auth reaches Ready state.
     auth_ready: Notify,
     /// Auth has completed successfully.
@@ -642,6 +642,7 @@ impl RealTelegramClient {
                     message: Self::extract_message_text(&new_msg.message.content),
                     from,
                     from_legacy,
+                    is_outgoing: new_msg.message.is_outgoing,
                 }))
             }
             tdlib_rs::enums::Update::MessageEdited(edited) => Some(TelegramUpdate::MessageEdited(

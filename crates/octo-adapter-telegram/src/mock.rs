@@ -14,6 +14,8 @@ type DocDataMap = BTreeMap<(String, String), Vec<u8>>;
 /// In-memory mock that records sends and queues injected updates.
 #[derive(Clone)]
 pub struct MockTelegramClient {
+    /// API-H3: queue of auth states for authenticate() to process.
+    auth_queue: Arc<Mutex<std::collections::VecDeque<crate::auth::AuthStateKey>>>,
     sent_messages: Arc<Mutex<Vec<(String, String)>>>,
     sent_documents: Arc<Mutex<Vec<(String, String, usize)>>>,
     /// Tracks data sent via send_envelope/send_file, keyed by (chat_id, filename).
@@ -82,8 +84,14 @@ impl FailureSpec {
 }
 
 impl MockTelegramClient {
+    /// API-H3: set the auth state queue for authenticate() to step through.
+    /// Add states in the order they should be processed (e.g., WaitCode, Ready).
+    pub fn set_auth_queue(&self, states: Vec<crate::auth::AuthStateKey>) {
+        *self.auth_queue.lock().unwrap() = states.into();
+    }
     pub fn new() -> Self {
         Self {
+            auth_queue: Arc::new(Mutex::new(std::collections::VecDeque::new())),
             sent_messages: Arc::new(Mutex::new(Vec::new())),
             sent_documents: Arc::new(Mutex::new(Vec::new())),
             sent_doc_data: Arc::new(Mutex::new(BTreeMap::new())),
@@ -323,7 +331,34 @@ impl TelegramClient for MockTelegramClient {
         Ok(std::mem::take(&mut *pending))
     }
 
+    /// Authenticate by stepping through a configurable auth state queue.
+    /// API-H3: the mock now supports setting auth states via set_auth_queue.
     async fn authenticate(&self) -> Result<()> {
+        // Process the auth queue if set, otherwise return Ok as before
+        let mut queue = self.auth_queue.lock().unwrap();
+        if let Some(state) = queue.pop_front() {
+            match state {
+                crate::auth::AuthStateKey::WaitTdlibParameters |
+                crate::auth::AuthStateKey::WaitPhoneNumber |
+                crate::auth::AuthStateKey::WaitCode |
+                crate::auth::AuthStateKey::WaitPassword => {
+                    // These states require user interaction — return error
+                    return Err(crate::error::TelegramError::Auth(
+                        format!("mock auth requires user input for {:?}", state)
+                    ));
+                }
+                crate::auth::AuthStateKey::Ready => {
+                    // Auth completed successfully
+                    return Ok(());
+                }
+                crate::auth::AuthStateKey::Closed |
+                crate::auth::AuthStateKey::Other => {
+                    return Err(crate::error::TelegramError::Auth(
+                        format!("mock auth failed: {:?}", state)
+                    ));
+                }
+            }
+        }
         Ok(())
     }
 

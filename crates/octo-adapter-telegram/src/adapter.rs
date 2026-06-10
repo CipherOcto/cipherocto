@@ -275,6 +275,8 @@ impl<C: TelegramClient + Send + Sync> PlatformAdapter for TelegramAdapter<C> {
                 reason: "domain not registered: call register_domain() after domain_id()".into(),
             }
         })?;
+        // PERF-H3: to_wire_bytes allocates a 282-byte Vec per call.
+        // Future optimization: use a thread-local buffer with write_wire_bytes().
         let wire = envelope_obj.to_wire_bytes();
         // Mission Architecture line 60-62: small envelopes via sendMessage,
         // large via sendDocument. Threshold: 4096 chars (Telegram text message

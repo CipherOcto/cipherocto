@@ -175,7 +175,7 @@ impl RealTelegramClient {
     pub async fn new_user(user_auth: UserAuth, data_dir: Option<PathBuf>) -> Result<Self> {
         let api_id = user_auth.api_id;
         let api_hash = user_auth.api_hash.clone();
-        Self::new_internal(Some(user_auth), None, data_dir, api_id, api_hash).await
+        Self::new_internal(Some(user_auth), None, data_dir, api_id, api_hash.to_string()).await
     }
 
     /// Internal constructor. `user_auth = None` for bot mode, `Some(...)` for user mode.

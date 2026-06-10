@@ -137,6 +137,11 @@ pub async fn download_file(client_id: i32, file_id: i32, priority: i32) -> FileR
 }
 
 /// Download file and return bytes.
+///
+/// R4 H13: Returns the full file as `Vec<u8>`. For files exceeding ~100 MB this
+/// will OOM the adapter. Streaming download is not yet implemented. Callers
+/// should use `download_file(client_id, file_id, size)` for large files and
+/// process the local path directly, or deploy with per-process memory limits.
 #[cfg(feature = "real-tdlib")]
 pub async fn download_file_bytes(client_id: i32, file_id: i32) -> FileResult<Vec<u8>> {
     let local_path = download_file(client_id, file_id, 32).await?;

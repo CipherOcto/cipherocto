@@ -290,37 +290,24 @@ impl TelegramClient for MockTelegramClient {
         // calls yield the document-derived `NewMessage` until the caller
         // explicitly drains via `drain_received_documents()`. H4 fix: this
         // mirrors at-least-once receive semantics.
-        let doc_data: Vec<_> = self
-            .sent_doc_data
-            .lock()
-            .unwrap()
-            .iter()
-            .map(|(k, v)| (k.clone(), v.clone()))
-            .collect();
-        for ((chat_id, _filename), data) in doc_data {
-            let encoded = crate::envelope::encode_envelope(&data);
-            // H5: when the caller has set a non-zero mock_sender_id, stamp
-            // it onto the doc-injected NewMessage's `from` field so the
-            // adapter's self-loop filter can match it. When the default
-            // (`0`) is in effect, keep `from` empty to preserve the
-            // pre-H5 behavior (the parser rejects empty, the filter
-            // falls through).
-            //
-            // M7: also stamp the structured `MessageSender` so the
-            // adapter's typed self-loop filter (which compares on
-            // `MessageSender::User(id)`) can match. We map the
-            // mock_sender_id to `User(id)` (the typical case) and fall
-            // back to `Unknown` when the default sentinel (`0`) is in
-            // effect.
-            let sender_id = *self.mock_sender_id.lock().unwrap();
-            let (from, from_legacy) = if sender_id == 0 {
-                (crate::client::MessageSender::Unknown, String::new())
-            } else {
-                (
-                    crate::client::MessageSender::User(sender_id),
-                    sender_id.to_string(),
-                )
-            };
+        // R6 MEM-C3: iterate under the lock, cloning only the header fields (chat_id, filename)
+        // but NOT the full Vec<u8> data. The data is encoded to base64 while still under
+        // the lock, and only the encoded string (much smaller) is kept for the push loop.
+        // This reduces per-poll allocations from N×(key.clone() + value.clone()) to N×(key.clone()).
+        let pending: Vec<_> = {
+            let guard = self.sent_doc_data.lock().unwrap();
+            guard.iter().map(|((chat_id, _filename), data)| {
+                let encoded = crate::envelope::encode_envelope(data);
+                let sender_id = *self.mock_sender_id.lock().unwrap();
+                let (from, from_legacy) = if sender_id == 0 {
+                    (crate::client::MessageSender::Unknown, String::new())
+                } else {
+                    (crate::client::MessageSender::User(sender_id), sender_id.to_string())
+                };
+                (chat_id.clone(), encoded, from, from_legacy)
+            }).collect()
+        };
+        for (chat_id, encoded, from, from_legacy) in pending {
             self.pending_updates
                 .lock()
                 .unwrap()

@@ -33,7 +33,7 @@ pub enum AuthMode {
     User {
         phone: String,
         api_id: i32,
-        api_hash: String,
+        api_hash: Zeroizing<String>,
         password: Option<Zeroizing<String>>,
     },
 }
@@ -148,7 +148,7 @@ pub enum AuthAction {
 pub struct UserAuth {
     pub phone: String,
     pub api_id: i32,
-    pub api_hash: String,
+    pub api_hash: Zeroizing<String>,
     pub password: Option<Zeroizing<String>>,
 }
 
@@ -169,7 +169,7 @@ impl UserAuth {
         Self {
             phone,
             api_id,
-            api_hash,
+            api_hash: Zeroizing::new(api_hash),
             password: password.map(Zeroizing::new),
         }
     }
@@ -247,7 +247,7 @@ impl UserAuth {
                     true,          // use_message_database
                     false,         // use_secret_chats
                     self.api_id,
-                    self.api_hash.clone(),
+                    self.api_hash.to_string(),
                     "en".into(),                      // language
                     "CipherOcto".into(),              // device_model
                     String::new(),                    // system_version

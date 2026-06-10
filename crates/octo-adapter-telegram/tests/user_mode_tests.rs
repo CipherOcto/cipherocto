@@ -14,7 +14,7 @@ async fn test_auth_mode_user_fields() {
     let mode = AuthMode::User {
         phone: "+1234567890".to_string(),
         api_id: 12345,
-        api_hash: "abcdef123456".to_string(),
+        api_hash: zeroize::Zeroizing::new("abcdef123456".to_string()),
         password: Some(zeroize::Zeroizing::new("secret2fa".to_string())),
     };
 
@@ -27,7 +27,7 @@ async fn test_auth_mode_user_fields() {
         } => {
             assert_eq!(phone, "+1234567890");
             assert_eq!(api_id, 12345);
-            assert_eq!(api_hash, "abcdef123456");
+            assert_eq!(api_hash.as_str(), "abcdef123456");
             assert_eq!(password.map(|z| z.to_string()), Some("secret2fa".to_string()));
         }
         _ => panic!("expected User mode"),
@@ -61,7 +61,7 @@ async fn test_user_auth_construction() {
 
     assert_eq!(auth.phone, "+1234567890");
     assert_eq!(auth.api_id, 12345);
-    assert_eq!(auth.api_hash, "abcdef123456");
+    assert_eq!(auth.api_hash.as_str(), "abcdef123456");
     assert_eq!(auth.password.map(|z| z.to_string()), Some("2fa_password".to_string()));
 }
 
@@ -154,7 +154,7 @@ async fn test_auth_mode_bot_vs_user_inequality() {
     let user_mode = AuthMode::User {
         phone: "+1234567890".to_string(),
         api_id: 12345,
-        api_hash: "abcdef123456".to_string(),
+        api_hash: zeroize::Zeroizing::new("abcdef123456".to_string()),
         password: None::<zeroize::Zeroizing<String>>,
     };
 

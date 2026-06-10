@@ -126,6 +126,12 @@ pub trait TelegramClient: Send + Sync {
 
     /// Download a file by TDLib file_id. Returns the raw bytes.
     ///
+    /// R4 H13: The returned `Vec<u8>` is heap-allocated in full. For files
+    /// exceeding ~100 MB, this will cause significant memory pressure.
+    /// Streaming download (returning `impl AsyncRead`) is planned but not
+    /// yet implemented. A 2 GB file will OOM the adapter — ensure your
+    /// deployment has memory limits or use the size cap in `download_media`.
+    ///
     /// NOTE: The parameter is named `file_id` (not `message_id`) because
     /// TDLib uses file_ids for downloads. Callers that only have a message
     /// id must first resolve the message via their platform-specific

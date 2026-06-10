@@ -38,8 +38,10 @@ struct ClientState {
     client_id: ClientId,
     /// Flag to control the receive loop. `false` ⇒ loop should exit.
     running: AtomicBool,
-    /// Pending updates queue drained by receive_updates().
-    pending_updates: Mutex<Vec<TelegramUpdate>>,
+    /// Pending updates sent via mpsc channel (CONC-C1).
+    pending_updates_tx: mpsc::Sender<TelegramUpdate>,
+    /// Receiver for pending updates (CONC-C1).
+    pending_updates_rx: std::sync::Mutex<Option<mpsc::Receiver<TelegramUpdate>>>,
     /// Notified when auth reaches Ready state.
     auth_ready: Notify,
     /// Auth has completed successfully.
@@ -109,12 +111,14 @@ impl ClientState {
         api_id: i32,
         api_hash: String,
     ) -> Self {
+        let (update_tx, update_rx) = mpsc::channel::<TelegramUpdate>(256);
         let (code_tx, code_rx) = mpsc::channel(8);
         let (shutdown_tx, shutdown_rx) = mpsc::channel(1);
         Self {
             client_id,
             running: AtomicBool::new(true),
-            pending_updates: Mutex::new(Vec::new()),
+            pending_updates_tx: update_tx,
+            pending_updates_rx: std::sync::Mutex::new(Some(update_rx)),
             auth_ready: Notify::new(),
             auth_done: AtomicBool::new(false),
             auth_error: Mutex::new(None),
@@ -336,7 +340,11 @@ impl RealTelegramClient {
             return Self::handle_auth_state(state, auth_state).await;
         }
         if let Some(telegram_update) = Self::convert_update(update) {
-            state.pending_updates.lock().unwrap().push(telegram_update);
+            // CONC-C1: unbounded mpsc send; if full, drop oldest
+            if let Err(e) = state.pending_updates_tx.try_send(telegram_update) {
+                tracing::warn!("pending_updates channel full, dropping update");
+                let _ = e;
+            }
         }
         Ok(())
     }
@@ -788,8 +796,20 @@ impl TelegramClient for RealTelegramClient {
     }
 
     async fn receive_updates(&self) -> Result<Vec<TelegramUpdate>> {
-        let mut pending = self.state.pending_updates.lock().unwrap();
-        Ok(std::mem::take(&mut *pending))
+        // CONC-C1: drain all available updates from mpsc channel
+        let mut updates = Vec::new();
+        let mut guard = self.state.pending_updates_rx.lock().unwrap();
+        if let Some(rx) = guard.as_mut() {
+            use mpsc::error::TryRecvError;
+            loop {
+                match rx.try_recv() {
+                    Ok(msg) => updates.push(msg),
+                    Err(TryRecvError::Empty) => break,
+                    Err(TryRecvError::Disconnected) => break,
+                }
+            }
+        }
+        Ok(updates)
     }
 
     async fn authenticate(&self) -> Result<()> {

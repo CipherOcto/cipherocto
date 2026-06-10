@@ -15,7 +15,7 @@ async fn test_auth_mode_user_fields() {
         phone: "+1234567890".to_string(),
         api_id: 12345,
         api_hash: "abcdef123456".to_string(),
-        password: Some("secret2fa".to_string()),
+        password: Some(zeroize::Zeroizing::new("secret2fa".to_string())),
     };
 
     match mode {
@@ -28,7 +28,7 @@ async fn test_auth_mode_user_fields() {
             assert_eq!(phone, "+1234567890");
             assert_eq!(api_id, 12345);
             assert_eq!(api_hash, "abcdef123456");
-            assert_eq!(password, Some("secret2fa".to_string()));
+            assert_eq!(password.map(|z| z.to_string()), Some("secret2fa".to_string()));
         }
         _ => panic!("expected User mode"),
     }
@@ -38,12 +38,12 @@ async fn test_auth_mode_user_fields() {
 #[tokio::test]
 async fn test_auth_mode_bot_fields() {
     let mode = AuthMode::Bot {
-        token: "123456:ABC-DEF".to_string(),
+        token: zeroize::Zeroizing::new("123456:ABC-DEF".to_string()),
     };
 
     match mode {
         AuthMode::Bot { token } => {
-            assert_eq!(token, "123456:ABC-DEF");
+            assert_eq!(token.as_str(), "123456:ABC-DEF");
         }
         _ => panic!("expected Bot mode"),
     }
@@ -62,7 +62,7 @@ async fn test_user_auth_construction() {
     assert_eq!(auth.phone, "+1234567890");
     assert_eq!(auth.api_id, 12345);
     assert_eq!(auth.api_hash, "abcdef123456");
-    assert_eq!(auth.password, Some("2fa_password".to_string()));
+    assert_eq!(auth.password.map(|z| z.to_string()), Some("2fa_password".to_string()));
 }
 
 /// Verify UserAuth can be constructed without 2FA password.
@@ -132,13 +132,13 @@ async fn test_bot_identity_without_last_name() {
 #[tokio::test]
 async fn test_auth_mode_equality() {
     let mode1 = AuthMode::Bot {
-        token: "123456:ABC".to_string(),
+        token: zeroize::Zeroizing::new("123456:ABC".to_string()),
     };
     let mode2 = AuthMode::Bot {
-        token: "123456:ABC".to_string(),
+        token: zeroize::Zeroizing::new("123456:ABC".to_string()),
     };
     let mode3 = AuthMode::Bot {
-        token: "999999:XYZ".to_string(),
+        token: zeroize::Zeroizing::new("999999:XYZ".to_string()),
     };
 
     assert_eq!(mode1, mode2);
@@ -149,13 +149,13 @@ async fn test_auth_mode_equality() {
 #[tokio::test]
 async fn test_auth_mode_bot_vs_user_inequality() {
     let bot_mode = AuthMode::Bot {
-        token: "123456:ABC".to_string(),
+        token: zeroize::Zeroizing::new("123456:ABC".to_string()),
     };
     let user_mode = AuthMode::User {
         phone: "+1234567890".to_string(),
         api_id: 12345,
         api_hash: "abcdef123456".to_string(),
-        password: None,
+        password: None::<zeroize::Zeroizing<String>>,
     };
 
     assert_ne!(bot_mode, user_mode);

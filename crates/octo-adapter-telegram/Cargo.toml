@@ -14,6 +14,8 @@ default = []
 real-tdlib = ["dep:tdlib-rs", "dep:rusqlite", "tdlib-rs/download-tdlib", "dep:tempfile"]
 # Download prebuilt TDLib binaries automatically (default for real-tdlib).
 # Requires network access at build time.
+# SEC-C1: This downloads unsigned binaries from GitHub. No SHA pin is enforced.
+# Use `pkg-config` with a system TDLib for production deployments.
 download-tdlib = ["tdlib-rs/download-tdlib"]
 # Use locally built TDLib from $LOCAL_TDLIB_PATH.
 # Set LOCAL_TDLIB_PATH environment variable to your TDLib source tree.

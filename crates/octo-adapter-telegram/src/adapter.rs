@@ -218,6 +218,7 @@ impl<C: TelegramClient> TelegramAdapter<C> {
 
 #[async_trait]
 impl<C: TelegramClient + Send + Sync> PlatformAdapter for TelegramAdapter<C> {
+    #[tracing::instrument(skip(self, envelope_obj), fields(chat_id))]
     async fn send_envelope(
         &self,
         domain: &BroadcastDomainId,
@@ -280,6 +281,7 @@ impl<C: TelegramClient + Send + Sync> PlatformAdapter for TelegramAdapter<C> {
         })
     }
 
+    #[tracing::instrument(skip(self), fields(domain_hash = ?domain.domain_hash))]
     async fn receive_messages(
         &self,
         domain: &BroadcastDomainId,
@@ -341,6 +343,7 @@ impl<C: TelegramClient + Send + Sync> PlatformAdapter for TelegramAdapter<C> {
         Ok(messages)
     }
 
+    #[tracing::instrument(skip(self, raw))]
     fn canonicalize(
         &self,
         raw: &RawPlatformMessage,
@@ -409,6 +412,7 @@ impl<C: TelegramClient + Send + Sync> PlatformAdapter for TelegramAdapter<C> {
         }
     }
 
+    #[tracing::instrument(skip(self))]
     fn domain_id(&self, platform_id: &str) -> BroadcastDomainId {
         // Normalize before hashing so whitespace/case differences produce the
         // same domain hash (R10-C4).
@@ -437,6 +441,19 @@ impl<C: TelegramClient + Send + Sync> PlatformAdapter for TelegramAdapter<C> {
     }
 
     async fn health_check(&self) -> Result<(), PlatformAdapterError> {
+        // OBS-C5: basic health check — report adapter identity state
+        let has_identity = self.self_handle.user_id().is_some();
+        let registered_domains = self.domain_chat_ids.read().unwrap().len();
+        tracing::debug!(
+            has_identity,
+            registered_domains,
+            "health_check: adapter state"
+        );
+        if !has_identity {
+            // Missing identity is not fatal (auth may still be pending),
+            // but log it so operators see the adapter is warming up.
+            tracing::info!("health_check: awaiting identity (auth pending)");
+        }
         Ok(())
     }
 

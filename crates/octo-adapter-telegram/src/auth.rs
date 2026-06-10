@@ -16,6 +16,7 @@
 //! Auth state persists to `data_dir/database` and `data_dir/files` via TDLib.
 
 use std::path::Path;
+use zeroize::Zeroizing;
 
 #[cfg(feature = "real-tdlib")]
 use tdlib_rs::enums::AuthorizationState;
@@ -27,13 +28,13 @@ use tdlib_rs::functions;
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum AuthMode {
     /// Bot authentication via bot_token.
-    Bot { token: String },
+    Bot { token: Zeroizing<String> },
     /// User authentication via phone + api_id + api_hash.
     User {
         phone: String,
         api_id: i32,
         api_hash: String,
-        password: Option<String>,
+        password: Option<Zeroizing<String>>,
     },
 }
 
@@ -148,7 +149,7 @@ pub struct UserAuth {
     pub phone: String,
     pub api_id: i32,
     pub api_hash: String,
-    pub password: Option<String>,
+    pub password: Option<Zeroizing<String>>,
 }
 
 impl std::fmt::Debug for UserAuth {
@@ -169,7 +170,7 @@ impl UserAuth {
             phone,
             api_id,
             api_hash,
-            password,
+            password: password.map(Zeroizing::new),
         }
     }
 
@@ -185,7 +186,7 @@ impl UserAuth {
             AuthStateKey::WaitPhoneNumber => AuthAction::SendPhone,
             AuthStateKey::WaitCode => AuthAction::AwaitCode,
             AuthStateKey::WaitPassword => match &self.password {
-                Some(p) => AuthAction::UsePassword(p.clone()),
+                Some(p) => AuthAction::UsePassword(p.to_string()),
                 None => AuthAction::Error(AuthError::TwoFactorRequired),
             },
             AuthStateKey::Ready => AuthAction::Ready,
@@ -290,7 +291,7 @@ impl UserAuth {
             AuthorizationState::WaitPassword(_) => {
                 if let Some(ref password) = self.password {
                     let response =
-                        functions::check_authentication_password(password.clone(), client_id).await;
+                        functions::check_authentication_password(password.to_string(), client_id).await;
 
                     if let Err(e) = response {
                         return Err(AuthError::AuthenticationFailed(e.message));

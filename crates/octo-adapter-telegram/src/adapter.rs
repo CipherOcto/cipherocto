@@ -42,8 +42,21 @@ impl<C: TelegramClient> TelegramAdapter<C> {
     pub fn new(config: TelegramConfig, client: C) -> Self {
         let verifying_key = config.verifying_key.as_ref().and_then(|b64| {
             let mut buf = [0u8; 32];
-            let decoded = STANDARD.decode(b64).ok()?;
-            if decoded.len() != 32 { return None; }
+            let decoded = match STANDARD.decode(b64) {
+                Ok(d) => d,
+                Err(e) => {
+                    tracing::warn!(error = %e, "verifying_key: base64 decode failed, disabling verification");
+                    return None;
+                }
+            };
+            if decoded.len() != 32 {
+                tracing::warn!(
+                    key_len = decoded.len(),
+                    "verifying_key: expected 32 bytes, got {}. disabling verification",
+                    decoded.len()
+                );
+                return None;
+            }
             buf.copy_from_slice(&decoded);
             Some(buf)
         });
@@ -66,8 +79,21 @@ impl<C: TelegramClient> TelegramAdapter<C> {
     pub fn with_self_handle(config: TelegramConfig, client: C, self_handle: SelfHandle) -> Self {
         let verifying_key = config.verifying_key.as_ref().and_then(|b64| {
             let mut buf = [0u8; 32];
-            let decoded = STANDARD.decode(b64).ok()?;
-            if decoded.len() != 32 { return None; }
+            let decoded = match STANDARD.decode(b64) {
+                Ok(d) => d,
+                Err(e) => {
+                    tracing::warn!(error = %e, "verifying_key: base64 decode failed, disabling verification");
+                    return None;
+                }
+            };
+            if decoded.len() != 32 {
+                tracing::warn!(
+                    key_len = decoded.len(),
+                    "verifying_key: expected 32 bytes, got {}. disabling verification",
+                    decoded.len()
+                );
+                return None;
+            }
             buf.copy_from_slice(&decoded);
             Some(buf)
         });
@@ -85,8 +111,21 @@ impl<C: TelegramClient> TelegramAdapter<C> {
     pub fn with_retry_config(config: TelegramConfig, client: C, retry_config: RetryConfig) -> Self {
         let verifying_key = config.verifying_key.as_ref().and_then(|b64| {
             let mut buf = [0u8; 32];
-            let decoded = STANDARD.decode(b64).ok()?;
-            if decoded.len() != 32 { return None; }
+            let decoded = match STANDARD.decode(b64) {
+                Ok(d) => d,
+                Err(e) => {
+                    tracing::warn!(error = %e, "verifying_key: base64 decode failed, disabling verification");
+                    return None;
+                }
+            };
+            if decoded.len() != 32 {
+                tracing::warn!(
+                    key_len = decoded.len(),
+                    "verifying_key: expected 32 bytes, got {}. disabling verification",
+                    decoded.len()
+                );
+                return None;
+            }
             buf.copy_from_slice(&decoded);
             Some(buf)
         });
@@ -581,9 +620,11 @@ impl<C: TelegramClient> TelegramAdapter<C> {
                             max_retries = self.retry_config.max_retries,
                             "with_retry: rate-limited budget exhausted after {} attempts", attempt + 1
                         );
-                        return Err(PlatformAdapterError::Unreachable {
+                        // CR-M3: return RateLimited instead of Unreachable so the
+                        // gateway knows to back off rather than reconnect.
+                        return Err(PlatformAdapterError::RateLimited {
                             platform: "telegram".into(),
-                            reason: format!("rate-limited after {} attempts", attempt + 1),
+                            retry_after_ms: default_backoff(attempt).as_millis() as u64,
                         });
                     }
                     let backoff = std::cmp::max(

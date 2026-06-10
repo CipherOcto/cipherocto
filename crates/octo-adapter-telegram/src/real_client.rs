@@ -40,6 +40,8 @@ struct ClientState {
     running: AtomicBool,
     /// Pending updates sent via mpsc channel (CONC-C1).
     pending_updates_tx: mpsc::Sender<TelegramUpdate>,
+    /// CR-H2: counter of dropped updates due to channel full.
+    dropped_updates: std::sync::atomic::AtomicU64,
     /// Receiver for pending updates (CONC-C1).
     pending_updates_rx: std::sync::Mutex<Option<mpsc::Receiver<TelegramUpdate>>>,
     /// Notified when auth reaches Ready state.
@@ -119,6 +121,7 @@ impl ClientState {
             running: AtomicBool::new(true),
             pending_updates_tx: update_tx,
             pending_updates_rx: std::sync::Mutex::new(Some(update_rx)),
+            dropped_updates: std::sync::atomic::AtomicU64::new(0),
             auth_ready: Notify::new(),
             auth_done: AtomicBool::new(false),
             auth_error: Mutex::new(None),
@@ -684,12 +687,10 @@ impl TelegramClient for RealTelegramClient {
         let chat_id_i64: i64 = crate::client::parse_chat_id(chat_id)
             .map_err(|e| TelegramError::InvalidChatId(format!("{}: {}", e, chat_id)))?;
 
-        // Write data to a uniquely-named temp file to avoid collisions.
-        let temp_path = unique_temp_path("octo_env");
-        {
-            let mut file = std::fs::File::create(&temp_path).map_err(TelegramError::Io)?;
-            file.write_all(data).map_err(TelegramError::Io)?;
-        }
+        // CR-C2: use tempfile::NamedTempFile for RAII cleanup on ? or panic.
+        let mut tmp = tempfile::NamedTempFile::new().map_err(TelegramError::Io)?;
+        tmp.write_all(data).map_err(TelegramError::Io)?;
+        let temp_path = tmp.into_temp_path();
 
         let input_file = tdlib_rs::types::InputFileLocal {
             path: temp_path.to_string_lossy().into_owned(),
@@ -738,12 +739,10 @@ impl TelegramClient for RealTelegramClient {
         let chat_id_i64: i64 = crate::client::parse_chat_id(chat_id)
             .map_err(|e| TelegramError::InvalidChatId(format!("{}: {}", e, chat_id)))?;
 
-        // Write data to a uniquely-named temp file to avoid collisions.
-        let temp_path = unique_temp_path("octo_file");
-        {
-            let mut file = std::fs::File::create(&temp_path).map_err(TelegramError::Io)?;
-            file.write_all(data).map_err(TelegramError::Io)?;
-        }
+        // CR-C2: use tempfile::NamedTempFile for RAII cleanup on ? or panic.
+        let mut tmp = tempfile::NamedTempFile::new().map_err(TelegramError::Io)?;
+        tmp.write_all(data).map_err(TelegramError::Io)?;
+        let temp_path = tmp.into_temp_path();
 
         let input_file = tdlib_rs::types::InputFileLocal {
             path: temp_path.to_string_lossy().into_owned(),
@@ -797,6 +796,11 @@ impl TelegramClient for RealTelegramClient {
 
     async fn receive_updates(&self) -> Result<Vec<TelegramUpdate>> {
         // CONC-C1: drain all available updates from mpsc channel
+        // CR-H2: report dropped updates since last drain
+        let dropped = self.state.dropped_updates.swap(0, std::sync::atomic::Ordering::Relaxed);
+        if dropped > 0 {
+            tracing::warn!(dropped, "receive_updates: {} updates were dropped since last poll", dropped);
+        }
         let mut updates = Vec::new();
         let mut guard = self.state.pending_updates_rx.lock().unwrap();
         if let Some(rx) = guard.as_mut() {
@@ -941,10 +945,3 @@ impl Drop for RealTelegramClient {
     }
 }
 
-/// Generate a unique temp file path under the system temp dir.
-fn unique_temp_path(prefix: &str) -> std::path::PathBuf {
-    use std::sync::atomic::{AtomicU64, Ordering};
-    static COUNTER: AtomicU64 = AtomicU64::new(0);
-    let id = COUNTER.fetch_add(1, Ordering::Relaxed);
-    std::env::temp_dir().join(format!("{}_{}_{}", prefix, std::process::id(), id))
-}

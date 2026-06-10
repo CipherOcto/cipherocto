@@ -563,6 +563,12 @@ impl<C: TelegramClient + Send + Sync> PlatformAdapter for TelegramAdapter<C> {
             .await
     }
 
+    /// Download a file by TDLib file_id.
+    ///
+    /// CR-C1: Retry on `RateLimited` will re-download from byte 0.
+    /// The previous partial download is orphaned in `<data_dir>/files/`.
+    /// TDLib downloads are internally queued; retrying just adds another
+    /// queued chunk. Consider not retrying downloads on RateLimited.
     async fn download_media(&self, file_id: &str) -> Result<Vec<u8>, PlatformAdapterError> {
         self.with_retry(|| {
             let file_id = file_id.to_string();
@@ -580,6 +586,14 @@ impl<C: TelegramClient> TelegramAdapter<C> {
     /// constructing one directly). This is the unambiguous counterpart to
     /// the trait's default `upload_media` (which errors on multi-domain
     /// configurations; see H2).
+    /// Upload a file to a specific domain.
+    ///
+    /// CR-C1: Retry on `RateLimited` will restart the TDLib upload from byte 0.
+    /// This is not idempotent — a partial upload followed by a retry will
+    /// consume 2x bandwidth and may produce duplicate server-side files.
+    /// If rate-limit sensitivity is critical, callers should handle
+    /// `PlatformAdapterError::RateLimited` themselves and decide whether to
+    /// retry the entire upload.
     pub async fn upload_media_to_domain(
         &self,
         domain: &BroadcastDomainId,
@@ -612,6 +626,12 @@ impl<C: TelegramClient> TelegramAdapter<C> {
     /// `TelegramError::RateLimited` and `TelegramError::Transient`.
     /// Non-recoverable errors return immediately. Generic over success type
     /// `T` so both send (SentMessage) and download (Vec<u8>) paths use it.
+    /// Run an async operation with retry on RateLimited and Transient errors.
+    ///
+    /// CR-C1: Assumes the operation is idempotent. For uploads (`send_file`,
+    /// `send_envelope`), retry will restart the TDLib transfer from byte 0,
+    /// wasting bandwidth and potentially creating duplicate messages.
+    /// For downloads, retry orphans the prior partial file.
     async fn with_retry<F, Fut, T>(&self, mut op: F) -> Result<T, PlatformAdapterError>
     where
         F: FnMut() -> Fut,

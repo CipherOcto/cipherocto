@@ -273,6 +273,12 @@ impl RealTelegramClient {
         self.state.self_handle.clone()
     }
 
+    /// PERF-C1: returns the number of updates dropped since last poll due to
+    /// channel capacity exhaustion. The counter is reset on each call.
+    pub fn dropped_updates_count(&self) -> u64 {
+        self.state.dropped_updates.swap(0, std::sync::atomic::Ordering::Relaxed)
+    }
+
     /// The receive loop that processes TDLib updates.
     ///
     /// `shutdown_rx` is the receiver end of the shutdown channel owned by
@@ -951,22 +957,55 @@ impl Drop for RealTelegramClient {
     /// panicking in `Drop` is unsound under multi-threaded drop.
     fn drop(&mut self) {
         self.state.running.store(false, Ordering::Release);
-        let _ = self.state.shutdown_tx.try_send(self.state.client_id);
+        // CR-H1: retry shutdown signal in case the channel was full
+        for _ in 0..3 {
+            if self.state.shutdown_tx.try_send(self.state.client_id).is_ok() {
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(100));
+        }
         // L15: join the blocking thread after signaling close. Short timeout
         // in case the thread is stuck in a long tdlib_rs::receive() call.
         let mut guard = self.state.receive_thread.lock();
         if let Some(handle) = guard.take() {
-            // OBS-C4: bounded join with 2-second timeout via recv_timeout.
+            // OBS-C4 + CR-H1: bounded join with progressive timeouts.
+            // The receive loop normally responds to shutdown within ~100ms.
+            // First attempt: 2s timeout (normal case).
+            // Second attempt: 5s timeout with retried shutdown signal.
+            // If both time out, the thread is stuck — log error and detach.
             let (tx, rx) = std::sync::mpsc::channel();
             std::thread::spawn(move || { let _ = tx.send(handle.join()); });
-            match rx.recv_timeout(std::time::Duration::from_secs(2)) {
-                Ok(Ok(())) => tracing::debug!("receive thread joined cleanly"),
-                Ok(Err(panic_err)) => tracing::error!(
-                    "receive thread panicked: {:?}", panic_err
-                ),
-                Err(_) => tracing::warn!(
-                    "receive thread did not join within 2s, detaching"
-                ),
+            let timeout_1 = std::time::Duration::from_secs(2);
+            let result_1 = rx.recv_timeout(timeout_1);
+            match result_1 {
+                Ok(Ok(())) => {
+                    tracing::debug!("receive thread joined cleanly");
+                    return;
+                }
+                Ok(Err(panic_err)) => {
+                    tracing::error!("receive thread panicked: {:?}", panic_err);
+                    return;
+                }
+                Err(_) => {
+                    // First timeout — retry shutdown signal and wait again.
+                    tracing::warn!("receive thread did not join within 2s, retrying shutdown");
+                    for _ in 0..3 {
+                        if self.state.shutdown_tx.try_send(self.state.client_id).is_ok() {
+                            break;
+                        }
+                        std::thread::sleep(std::time::Duration::from_millis(200));
+                    }
+                    let timeout_2 = std::time::Duration::from_secs(5);
+                    match rx.recv_timeout(timeout_2) {
+                        Ok(Ok(())) => tracing::debug!("receive thread joined on retry"),
+                        Ok(Err(panic_err)) => tracing::error!(
+                            "receive thread panicked on retry: {:?}", panic_err
+                        ),
+                        Err(_) => tracing::error!(
+                            "receive thread did not join within 2+5s, DETACHING — TDLib client MAY LEAK"
+                        ),
+                    }
+                }
             }
         }
     }

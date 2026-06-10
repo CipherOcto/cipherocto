@@ -570,7 +570,8 @@ impl<C: TelegramClient + Send + Sync> PlatformAdapter for TelegramAdapter<C> {
     /// TDLib downloads are internally queued; retrying just adds another
     /// queued chunk. Consider not retrying downloads on RateLimited.
     async fn download_media(&self, file_id: &str) -> Result<Vec<u8>, PlatformAdapterError> {
-        self.with_retry(|| {
+        // CR-C1: non-idempotent — RateLimited not retried for downloads
+        self.with_retry_non_idempotent(|| {
             let file_id = file_id.to_string();
             let client = &self.client;
             async move { client.download_file(&file_id).await }
@@ -607,11 +608,10 @@ impl<C: TelegramClient> TelegramAdapter<C> {
                     platform: "telegram".into(),
                     reason: "domain not registered".into(),
                 })?;
-        // R6 MEM-C1: clone the upload data ONCE outside the retry closure so
-        // that each retry attempt does not re-copy the entire payload.
-        // For a 1 GB upload with 3 retries, this saves 2 GB of churn.
+        // R6 MEM-C1: clone the upload data ONCE outside the retry closure
         let data = data.to_vec();
-        self.with_retry(move || {
+        // CR-C1: use non-idempotent retry — RateLimited is not retried for uploads
+        self.with_retry_non_idempotent(move || {
             let chat_id = chat_id.clone();
             let filename = filename.to_string();
             let data = data.clone();
@@ -714,6 +714,59 @@ impl<C: TelegramClient> TelegramAdapter<C> {
                 // user errors (InvalidChatId, InvalidFileId, Auth, Config,
                 // Envelope, Unimplemented) from being flattened into
                 // `Unreachable` and triggering a gateway reconnect.
+                Err(e) => return Err(e.into()),
+            }
+        }
+    }
+
+    /// Run an async operation with retry on Transient errors ONLY.
+    /// CR-C1: RateLimited errors are returned immediately without retry.
+    /// Use for non-idempotent operations (file uploads, downloads).
+    async fn with_retry_non_idempotent<F, Fut, T>(&self, mut op: F) -> Result<T, PlatformAdapterError>
+    where
+        F: FnMut() -> Fut,
+        Fut: std::future::Future<Output = Result<T, crate::error::TelegramError>>,
+    {
+        let mut attempt: u32 = 0;
+        loop {
+            match op().await {
+                Ok(sent) => return Ok(sent),
+                Err(crate::error::TelegramError::RateLimited { retry_after_secs }) => {
+                    return Err(PlatformAdapterError::RateLimited {
+                        platform: "telegram".into(),
+                        retry_after_ms: retry_after_secs * 1000,
+                    });
+                }
+                Err(crate::error::TelegramError::Transient(msg)) => {
+                    if !self.retry_config.should_retry(attempt) {
+                        tracing::warn!(
+                            attempt,
+                            error = %msg,
+                            max_retries = self.retry_config.max_retries,
+                            "with_retry_non_idempotent: budget exhausted after {} attempts",
+                            attempt + 1
+                        );
+                        return Err(PlatformAdapterError::Unreachable {
+                            platform: "telegram".into(),
+                            reason: format!(
+                                "transient error after {} attempts: {}",
+                                attempt + 1, msg
+                            ),
+                        });
+                    }
+                    let backoff = self.retry_config.delay_for_attempt(attempt);
+                    tokio::select! {
+                        _ = self.cancel.cancelled() => {
+                            tracing::warn!("with_retry_non_idempotent: cancelled");
+                            return Err(PlatformAdapterError::Unreachable {
+                                platform: "telegram".into(),
+                                reason: "operation cancelled".into(),
+                            });
+                        }
+                        _ = tokio::time::sleep(backoff) => {}
+                    }
+                    attempt = attempt.saturating_add(1);
+                }
                 Err(e) => return Err(e.into()),
             }
         }

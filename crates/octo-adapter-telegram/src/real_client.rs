@@ -383,7 +383,20 @@ impl RealTelegramClient {
                         state.self_handle.set_identity(u.id, username);
                     }
                     Err(e) => {
-                        tracing::debug!(error = %e.message, "get_me failed; SelfHandle left empty");
+                        tracing::warn!(error = %crate::error::redact_credentials(&e.message), "get_me failed; SelfHandle left empty");
+                        // SM-M3: one retry for transient get_me failure
+                        if e.code >= 500 || e.message.contains("connection") {
+                            tracing::debug!("get_me: retrying after transient failure");
+                            match tdlib_rs::functions::get_me(state.client_id).await {
+                                Ok(me) => {
+                                    let tdlib_rs::enums::User::User(u) = me;
+                                    state.self_handle.set_identity(u.id, u.usernames.map_or(String::new(), |un| un.editable_username));
+                                }
+                                Err(e2) => {
+                                    tracing::error!(error = %crate::error::redact_credentials(&e2.message), "get_me: retry also failed");
+                                }
+                            }
+                        }
                     }
                 }
                 Ok(())
@@ -549,6 +562,8 @@ impl RealTelegramClient {
                 Ok(())
             }
             _ => {
+                // SM-M1: log unrecognized auth states so operators can audit TDLib binding changes
+                tracing::trace!("handle_auth_state: unrecognized TDLib auth state");
                 if let Some(ref user_auth) = state.user_auth {
                     if let Err(e) = user_auth
                         .handle_authorization_state(

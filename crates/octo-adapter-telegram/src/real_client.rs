@@ -350,6 +350,8 @@ impl RealTelegramClient {
             return Self::handle_auth_state(state, auth_state).await;
         }
         if let Some(telegram_update) = Self::convert_update(update) {
+            // PERF-H4: notify receive loop that updates are available
+            state.update_notify.notify_one();
             // CONC-C1: unbounded mpsc send; if full, drop oldest
             if let Err(e) = state.pending_updates_tx.try_send(telegram_update) {
                 // CR-H2: increment counter so receive_updates can report the loss

@@ -78,8 +78,9 @@ impl ChatResolver {
     /// Resolve a chat identifier to a numeric chat_id.
     /// Accepts: numeric id, @username, or invite link.
     pub async fn resolve(&mut self, identifier: &str, client_id: i32) -> GroupResult<i64> {
-        // Check cache first
+        // Check cache first (OBS-M4)
         if let Some(cached) = self.cache.get(identifier) {
+            tracing::debug!(identifier = %identifier, cached_chat_id = %cached, "ChatResolver: cache hit");
             return Ok(*cached);
         }
 
@@ -112,6 +113,9 @@ impl ChatResolver {
             .await
             .map_err(|e| GroupError::Tdlib { message: e.message })?;
 
+        // Chat is currently a single-variant enum; let-else will fail to
+        // compile if TDLib adds a variant in a future binding update,
+        // which is the desired defensive behaviour.
         let tdlib_rs::enums::Chat::Chat(c) = chat;
         Ok(c.id)
     }
@@ -127,11 +131,28 @@ impl ChatResolver {
             .await
             .map_err(|e| GroupError::Tdlib { message: e.message })?;
 
+        // ChatInviteLinkInfo is currently a single-variant enum.
         let tdlib_rs::enums::ChatInviteLinkInfo::ChatInviteLinkInfo(info) = info;
         if info.chat_id == 0 {
             // TDLib returns 0 when the user has no access to the chat before
             // joining (e.g. private invite that requires an explicit join).
             return Err(GroupError::AccessDenied(link.to_string()));
+        }
+        // R4 C6: Also reject non-zero chat_ids where TDLib reports the chat
+        // is not accessible (accessible_for == 0 means no time limit was set,
+        // which typically indicates the chat cannot be accessed with this link).
+        // This can happen when the bot was previously a member of a group that
+        // changed its invite link, or the chat_id was reassigned to a different
+        // supergroup. Without this check, caching a stale chat_id from a
+        // previous resolve would silently route messages to the wrong peer.
+        if info.accessible_for == 0 {
+            // Invalidate any cached mapping for this link so the next call
+            // re-resolves.
+            // (Cache invalidation is handled by the caller; this check ensures
+            //  we don't return a stale id.)
+            return Err(GroupError::AccessDenied(
+                format!("{} (chat_id={}, not accessible)", link, info.chat_id),
+            ));
         }
         Ok(info.chat_id)
     }
@@ -153,6 +174,7 @@ impl ChatResolver {
             .await
             .map_err(|e| GroupError::Tdlib { message: e.message })?;
 
+        // Chat is currently a single-variant enum (see resolve_username).
         let tdlib_rs::enums::Chat::Chat(c) = chat;
         let chat_type = match c.r#type {
             tdlib_rs::enums::ChatType::Private(_) => ChatType::Private,
@@ -195,8 +217,9 @@ impl Default for ChatResolver {
 #[cfg(feature = "real-tdlib")]
 #[derive(Debug, Clone)]
 pub struct MonitoredGroups {
-    /// Resolved chat_ids to monitor.
-    pub chat_ids: Vec<i64>,
+    /// Resolved chat_ids to monitor. Uses `BTreeSet` for O(log n) lookup
+    /// (R4 M8 — was Vec<i64> which was O(n) per call).
+    pub chat_ids: std::collections::BTreeSet<i64>,
     /// Username to chat_id mappings.
     pub username_map: HashMap<String, i64>,
 }
@@ -206,12 +229,12 @@ impl MonitoredGroups {
     /// Create from a list of identifiers (usernames or numeric ids).
     pub async fn from_identifiers(identifiers: &[String], client_id: i32) -> GroupResult<Self> {
         let mut resolver = ChatResolver::new();
-        let mut chat_ids = Vec::new();
+        let mut chat_ids = std::collections::BTreeSet::new();
         let mut username_map = HashMap::new();
 
         for ident in identifiers {
             let chat_id = resolver.resolve(ident, client_id).await?;
-            chat_ids.push(chat_id);
+            chat_ids.insert(chat_id);
             if ident.starts_with('@') {
                 username_map.insert(ident.trim_start_matches('@').to_string(), chat_id);
             }
@@ -223,7 +246,7 @@ impl MonitoredGroups {
         })
     }
 
-    /// Check if a chat_id is monitored.
+    /// Check if a chat_id is monitored (O(log n)).
     pub fn is_monitored(&self, chat_id: i64) -> bool {
         self.chat_ids.contains(&chat_id)
     }

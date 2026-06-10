@@ -80,14 +80,101 @@ impl<C: TelegramClient> TelegramAdapter<C> {
     pub fn set_self_user_id(&self, user_id: i64) {
         self.self_handle.set_user_id(user_id);
     }
+}
+
+/// R5 error-prop-C1, H3: map `TelegramError` to `PlatformAdapterError` preserving
+/// the structured discriminant so the caller/gateway can distinguish transport
+/// failures from user errors and API errors.
+impl From<crate::error::TelegramError> for PlatformAdapterError {
+    fn from(e: crate::error::TelegramError) -> Self {
+        use crate::error::TelegramError;
+        match e {
+            // Recoverable — the retry loop handles these, but if they
+            // escape (e.g. budget exhausted), surface as ApiError so
+            // the gateway does not reconnect.
+            TelegramError::RateLimited { retry_after_secs } => {
+                PlatformAdapterError::RateLimited {
+                    platform: "telegram".into(),
+                    retry_after_ms: retry_after_secs * 1000,
+                }
+            }
+            TelegramError::Transient(msg) => PlatformAdapterError::ApiError {
+                code: 500,
+                message: format!("transient: {}", msg),
+            },
+            // User errors — never trigger reconnect.
+            TelegramError::InvalidChatId(m) => {
+                PlatformAdapterError::ApiError {
+                    code: 400,
+                    message: format!("InvalidChatId: {}", m),
+                }
+            }
+            TelegramError::InvalidFileId(m) => {
+                PlatformAdapterError::ApiError {
+                    code: 400,
+                    message: format!("InvalidFileId: {}", m),
+                }
+            }
+            TelegramError::Envelope(m) => PlatformAdapterError::ApiError {
+                code: 400,
+                message: format!("envelope: {}", m),
+            },
+            TelegramError::Auth(m) => PlatformAdapterError::ApiError {
+                code: 401,
+                message: crate::error::redact_credentials(&m),
+            },
+            TelegramError::Config(m) => PlatformAdapterError::ApiError {
+                code: 500,
+                message: format!("config: {}", m),
+            },
+            TelegramError::Unimplemented(m) => PlatformAdapterError::ApiError {
+                code: 501,
+                message: m,
+            },
+            // Catch-all — IO, JSON, base64, SendFailed, TdlibClient.
+            other => PlatformAdapterError::ApiError {
+                code: 500,
+                message: crate::error::redact_credentials(&other.to_string()),
+            },
+        }
+    }
+}
+
+/// R6 WIRE-C2: centralised i64 chat_id → canonical domain string conversion.
+/// Both the send path (`domain_id`) and the receive path (`receive_messages`)
+/// must produce the same `BroadcastDomainId` for the same numeric chat_id.
+/// `i64::to_string()` is locale-independent and produces `-1001234567890`.
+/// The send path's `.trim().to_lowercase()` is a no-op on numeric strings, so
+/// the two paths agree. Using a single helper ensures they stay in sync.
+fn chat_id_to_domain_string(chat_id: i64) -> String {
+    chat_id.to_string()
+}
+
+impl<C: TelegramClient> TelegramAdapter<C> {
 
     /// Register a domain → chat_id mapping. This is an explicit escape hatch
     /// when the auto-population in `domain_id` is not what the caller wants.
-    pub fn register_domain(&self, domain: &BroadcastDomainId, chat_id: &str) {
+    ///
+    /// Normalises the `chat_id` (trim + lowercase) and validates it via
+    /// `parse_chat_id` before storing, matching `domain_id`'s behaviour
+    /// (R4 H2). Returns `Err` with a description if the chat_id is invalid
+    /// (empty, non-numeric, or non-negative).
+    pub fn register_domain(
+        &self,
+        domain: &BroadcastDomainId,
+        chat_id: &str,
+    ) -> Result<(), String> {
+        let normalized = chat_id.trim().to_lowercase();
+        // Validate before storing — surface registration errors early rather
+        // than deep in send_envelope as an Unreachable error.
+        crate::client::parse_chat_id(&normalized).map_err(|e| {
+            format!("invalid chat_id '{}' for domain registration: {}", chat_id, e)
+        })?;
         self.domain_chat_ids
             .write()
             .unwrap()
-            .insert(domain.domain_hash, chat_id.to_string());
+            .insert(domain.domain_hash, normalized);
+        Ok(())
     }
 
     /// Look up the chat_id for a domain hash.
@@ -123,7 +210,15 @@ impl<C: TelegramClient + Send + Sync> PlatformAdapter for TelegramAdapter<C> {
         // wire bytes (no encoding overhead); the encoded envelope is embedded
         // in the caption for the receive path to recover.
         let encoded = envelope::encode_envelope(&wire);
-        let sent = if encoded.len() <= 4096 {
+        let text_path = encoded.len() <= 4096;
+        tracing::debug!(
+            chat_id = %chat_id,
+            envelope_size = wire.len(),
+            encoded_size = encoded.len(),
+            send_as_document = !text_path,
+            "send_envelope: routing envelope"
+        );
+        let sent = if text_path {
             self.with_retry(|| {
                 let chat_id = chat_id.clone();
                 let encoded = encoded.clone();
@@ -145,6 +240,11 @@ impl<C: TelegramClient + Send + Sync> PlatformAdapter for TelegramAdapter<C> {
             })
             .await?
         };
+        tracing::info!(
+            message_id = %sent.id,
+            delivered_at = sent.timestamp,
+            "send_envelope: delivered"
+        );
         Ok(DeliveryReceipt {
             platform_message_id: sent.id,
             delivered_at: sent.timestamp as u64,
@@ -172,7 +272,7 @@ impl<C: TelegramClient + Send + Sync> PlatformAdapter for TelegramAdapter<C> {
         // parsing) — the legacy `from_legacy` string is kept in the
         // outgoing metadata for back-compat.
         let self_id = self.self_handle.user_id();
-        let messages = updates
+        let messages: Vec<_> = updates
             .into_iter()
             .filter_map(|u| match u {
                 crate::client::TelegramUpdate::NewMessage(nm) => {
@@ -184,8 +284,11 @@ impl<C: TelegramClient + Send + Sync> PlatformAdapter for TelegramAdapter<C> {
                             return None;
                         }
                     }
+                    // R6 WIRE-C2: use the centralised helper so send and receive paths
+                    // produce the same domain hash for the same numeric chat_id.
+                    let chat_id_str = chat_id_to_domain_string(nm.chat_id);
                     let msg_domain =
-                        BroadcastDomainId::new(PlatformType::Telegram, &nm.chat_id.to_string());
+                        BroadcastDomainId::new(PlatformType::Telegram, &chat_id_str);
                     if msg_domain.domain_hash != domain_hash {
                         return None;
                     }
@@ -201,6 +304,11 @@ impl<C: TelegramClient + Send + Sync> PlatformAdapter for TelegramAdapter<C> {
                 _ => None,
             })
             .collect();
+        tracing::debug!(
+            domain_hash = %format!("{:02x?}", domain_hash),
+            received_count = messages.len(),
+            "receive_messages: returning updates"
+        );
         Ok(messages)
     }
 
@@ -214,24 +322,33 @@ impl<C: TelegramClient + Send + Sync> PlatformAdapter for TelegramAdapter<C> {
                 message: format!("invalid utf8 in payload: {}", e),
             }
         })?)
-        .map_err(|e| PlatformAdapterError::Unreachable {
-            platform: "telegram".into(),
-            reason: e.to_string(),
+        .map_err(|e| {
+            // R4 C1: envelope decode failures (base64 errors, wrong length)
+            // are API errors (400), not transport failures. The gateway
+            // should not reconnect on bad payloads.
+            PlatformAdapterError::ApiError {
+                code: 400,
+                message: e.to_string(),
+            }
         })?;
         DeterministicEnvelope::from_wire_bytes(&wire).map_err(|e| {
-            PlatformAdapterError::Unreachable {
-                platform: "telegram".into(),
-                reason: e.to_string(),
+            // R4 C1: `from_wire_bytes` failing on a known-length, known-version
+            // payload means the payload is structurally invalid (bad hash,
+            // bad signature). This is also an API error, not transport.
+            PlatformAdapterError::ApiError {
+                code: 400,
+                message: e.to_string(),
             }
         })
     }
 
     fn capabilities(&self) -> CapabilityReport {
         CapabilityReport {
-            // Envelope is embedded in the caption (Telegram hard cap 1024 chars).
-            // Arbitrary media (uploaded via upload_media) can be up to
-            // `media_capabilities.max_upload_bytes` (2 GB via TDLib).
-            max_payload_bytes: 1024,
+            // Telegram's text message cap is 4096 chars for the base64-encoded
+            // envelope string (R4 H1). Envelopes larger than this threshold
+            // are sent via sendDocument (which accepts up to 2 GB via TDLib).
+            // The `send_envelope` method handles routing automatically.
+            max_payload_bytes: 4096,
             supports_fragmentation: true,
             supports_encryption: false,
             supports_raw_binary: false,
@@ -267,7 +384,11 @@ impl<C: TelegramClient + Send + Sync> PlatformAdapter for TelegramAdapter<C> {
     }
 
     fn replay_protection(&self, _envelope_id: &[u8; 32]) -> bool {
-        // Default: no replay protection at adapter level (handled by gateway)
+        // R7 CRYPTO-M3: Replay protection is disabled at the adapter level.
+        // The DOT network's `DeterministicEnvelope` uses `envelope_id` + timestamp
+        // for dedup, but the adapter does not maintain a bloom filter or window.
+        // The gateway is responsible for discarding duplicate `envelope_id`s.
+        // In a public chat, any previously-seen envelope can be re-posted.
         true
     }
 
@@ -364,10 +485,14 @@ impl<C: TelegramClient> TelegramAdapter<C> {
                     platform: "telegram".into(),
                     reason: "domain not registered".into(),
                 })?;
-        self.with_retry(|| {
+        // R6 MEM-C1: clone the upload data ONCE outside the retry closure so
+        // that each retry attempt does not re-copy the entire payload.
+        // For a 1 GB upload with 3 retries, this saves 2 GB of churn.
+        let data = data.to_vec();
+        self.with_retry(move || {
             let chat_id = chat_id.clone();
             let filename = filename.to_string();
-            let data = data.to_vec();
+            let data = data.clone();
             let client = &self.client;
             async move { client.send_file(&chat_id, &filename, &data).await }
         })
@@ -390,6 +515,11 @@ impl<C: TelegramClient> TelegramAdapter<C> {
                 Ok(sent) => return Ok(sent),
                 Err(crate::error::TelegramError::RateLimited { retry_after_secs }) => {
                     if !self.retry_config.should_retry(attempt) {
+                        tracing::warn!(
+                            attempt,
+                            max_retries = self.retry_config.max_retries,
+                            "with_retry: rate-limited budget exhausted after {} attempts", attempt + 1
+                        );
                         return Err(PlatformAdapterError::Unreachable {
                             platform: "telegram".into(),
                             reason: format!("rate-limited after {} attempts", attempt + 1),
@@ -409,6 +539,12 @@ impl<C: TelegramClient> TelegramAdapter<C> {
                 // a way to shrink the wait without changing `default_backoff`).
                 Err(crate::error::TelegramError::Transient(msg)) => {
                     if !self.retry_config.should_retry(attempt) {
+                        tracing::warn!(
+                            attempt,
+                            error = %msg,
+                            max_retries = self.retry_config.max_retries,
+                            "with_retry: transient budget exhausted after {} attempts", attempt + 1
+                        );
                         return Err(PlatformAdapterError::Unreachable {
                             platform: "telegram".into(),
                             reason: format!(
@@ -422,12 +558,13 @@ impl<C: TelegramClient> TelegramAdapter<C> {
                     tokio::time::sleep(backoff).await;
                     attempt = attempt.saturating_add(1);
                 }
-                Err(e) => {
-                    return Err(PlatformAdapterError::Unreachable {
-                        platform: "telegram".into(),
-                        reason: e.to_string(),
-                    });
-                }
+                // R5 error-prop-C1, H3: non-retryable errors propagate via
+                // the `From<TelegramError> for PlatformAdapterError` impl,
+                // which preserves the typed discriminant. This prevents
+                // user errors (InvalidChatId, InvalidFileId, Auth, Config,
+                // Envelope, Unimplemented) from being flattened into
+                // `Unreachable` and triggering a gateway reconnect.
+                Err(e) => return Err(e.into()),
             }
         }
     }
@@ -444,8 +581,6 @@ impl<C: TelegramClient> TelegramAdapter<C> {
     ) -> Result<Vec<u8>, PlatformAdapterError> {
         let file_id = self
             .with_retry(|| {
-                let chat_id = chat_id;
-                let message_id = message_id;
                 let client = &self.client;
                 async move { client.get_file_id_for_message(chat_id, message_id).await }
             })

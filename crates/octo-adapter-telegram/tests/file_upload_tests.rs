@@ -173,9 +173,9 @@ async fn test_mock_receive_updates_re_injects_documents() {
 }
 
 /// H6: `send_file` is a new method on `TelegramClient` for raw file uploads
-/// that do NOT set a caption. This test verifies the new API compiles and
-/// runs end-to-end via the mock. The behavior change (caption=None) is
-/// only observable in the real TDLib path.
+/// that do NOT set a caption. This test verifies the api compiles, runs,
+/// and that the returned message has a non-empty id and timestamp.
+/// The no-caption property is verified in `test_send_file_does_not_record_caption`.
 #[tokio::test]
 async fn test_send_file_has_no_caption() {
     let client = MockTelegramClient::new();
@@ -183,10 +183,12 @@ async fn test_send_file_has_no_caption() {
         .send_file("-1001234567890", "raw.bin", b"hello world")
         .await
         .unwrap();
-    // The mock should have recorded the send. We don't have direct access
-    // to the caption in the mock, so this just verifies the method compiles
-    // and runs.
-    assert!(!sent.id.is_empty());
+    assert!(!sent.id.is_empty(), "send_file should return a non-empty message id");
+    assert!(
+        sent.timestamp > 0,
+        "send_file should return a positive timestamp, got {}",
+        sent.timestamp
+    );
 }
 
 /// H6: `send_envelope` is a new method on `TelegramClient` for envelope

@@ -32,13 +32,14 @@ pub mod self_handle;
 // integration tests because Cargo does not auto-enable custom features
 // when building test binaries.
 pub mod mock;
+pub use mock::{FailureSpec, MockTelegramClient};
 
 // Re-exports
 pub use adapter::TelegramAdapter;
 pub use auth::{AuthAction, AuthError, AuthMode, AuthStateKey, BotIdentity, UserAuth};
 pub use client::TelegramClient;
 pub use config::TelegramConfig;
-pub use error::TelegramError;
+pub use error::{redact_credentials, TelegramError};
 pub use self_handle::{SelfHandle, SelfIdentity};
 // FileError is always available; the Tdlib variant is gated to real-tdlib.
 pub use error::FileError;
@@ -46,6 +47,5 @@ pub use error::FileError;
 pub use files::{FileMetadata, FileProgress};
 #[cfg(feature = "real-tdlib")]
 pub use groups::{ChatInfo, ChatResolver, ChatType, GroupError, MonitoredGroups};
-pub use mock::{FailureSpec, MockTelegramClient};
 #[cfg(feature = "real-tdlib")]
-pub use real_client::RealTelegramClient;
+pub use real_client::{drain_code_receiver, RealTelegramClient};

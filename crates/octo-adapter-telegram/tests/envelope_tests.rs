@@ -1,8 +1,11 @@
 //! Round-trip 282-byte envelope test.
 //! Mission AC line 107: "envelope_tests.rs - round-trip 282-byte envelope"
 //! Mission AC line 129: "send_envelope() writes the 282-byte envelope via sendMessage"
+//!
+//! R6 TEST-C3: Also tests decode-envelope error paths (bad length, bad base64, non-UTF8).
 
-use octo_adapter_telegram::envelope::{decode_envelope, encode_envelope};
+use base64::Engine;
+use octo_adapter_telegram::envelope::{decode_envelope, encode_envelope, ENVELOPE_WIRE_LENGTH};
 use octo_network::dot::envelope::DeterministicEnvelope;
 
 #[test]
@@ -72,4 +75,63 @@ fn test_envelope_uses_url_safe_no_pad() {
         !encoded.contains('='),
         "URL_SAFE_NO_PAD should not contain '='"
     );
+}
+
+// =============================================================================
+// R6 TEST-C3: Decode envelope error paths
+// =============================================================================
+
+/// Payload too short (not 282 bytes) should be rejected with Envelope error.
+#[test]
+fn test_decode_envelope_too_short() {
+    let short_payload = base64::engine::general_purpose::URL_SAFE_NO_PAD
+        .encode(b"too short");
+    let result = decode_envelope(&short_payload);
+    assert!(result.is_err(), "should reject short payload");
+    let err = result.unwrap_err();
+    let msg = format!("{}", err);
+    assert!(msg.contains("length mismatch"), "error should mention length mismatch: {}", msg);
+}
+
+/// Payload too long (more than 282 bytes) should be rejected with Envelope error.
+#[test]
+fn test_decode_envelope_too_long() {
+    let long_data = vec![0x42u8; ENVELOPE_WIRE_LENGTH + 10];
+    let long_payload = base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(&long_data);
+    let result = decode_envelope(&long_payload);
+    assert!(result.is_err(), "should reject long payload");
+    let err = result.unwrap_err();
+    let msg = format!("{}", err);
+    assert!(msg.contains("length mismatch"), "error should mention length mismatch: {}", msg);
+}
+
+/// Invalid base64 input should be rejected with Envelope error.
+#[test]
+fn test_decode_envelope_invalid_base64() {
+    let result = decode_envelope("!!!not-valid-base64!!!");
+    assert!(result.is_err(), "should reject invalid base64");
+    let err = result.unwrap_err();
+    let msg = format!("{}", err);
+    assert!(msg.contains("base64"), "error should mention base64: {}", msg);
+}
+
+/// Empty string should be rejected.
+#[test]
+fn test_decode_envelope_empty() {
+    let result = decode_envelope("");
+    assert!(result.is_err(), "should reject empty string");
+}
+
+/// A valid-length but wrong-content payload (not a real envelope) still passes
+/// base64 and length check but is returned as bytes. The `canonicalize` path
+/// then calls `DeterministicEnvelope::from_wire_bytes` which validates structure.
+/// This test asserts the length gate works — it does NOT attempt structural
+/// validation (that's `from_wire_bytes`'s job).
+#[test]
+fn test_decode_envelope_exact_length_random_bytes() {
+    let random_data: Vec<u8> = (0..ENVELOPE_WIRE_LENGTH).map(|i| (i ^ 0xAB) as u8).collect();
+    let encoded = base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(&random_data);
+    let result = decode_envelope(&encoded);
+    assert!(result.is_ok(), "exact-length random bytes should decode successfully");
+    assert_eq!(result.unwrap(), random_data);
 }

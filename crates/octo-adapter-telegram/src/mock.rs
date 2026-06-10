@@ -338,4 +338,14 @@ impl TelegramClient for MockTelegramClient {
     async fn authenticate(&self) -> Result<()> {
         Ok(())
     }
+
+    /// R4 C2: Override the default `get_file_id_for_message` (which returns
+    /// `Unimplemented`) with a stub that synthesises a file_id from the
+    /// chat_id and message_id. The mock does not have real TDLib message
+    /// content, so any lookup by this id will yield empty bytes from
+    /// `download_file` — but the call will not fail with `Unimplemented`,
+    /// matching the real client's contract.
+    async fn get_file_id_for_message(&self, chat_id: i64, message_id: i64) -> Result<String> {
+        Ok(format!("mock-file-{}-{}", chat_id, message_id))
+    }
 }

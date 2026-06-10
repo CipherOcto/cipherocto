@@ -284,46 +284,28 @@ async fn test_user_auth_decides_wait_password_without_password() {
 #[cfg(feature = "real-tdlib")]
 #[tokio::test]
 async fn test_wait_code_submits_code() {
-    use std::sync::{Arc, Mutex};
-    use tokio::sync::mpsc;
+    use parking_lot::Mutex;
+    use std::sync::Arc;
 
-    // Build a channel and a wrapper around the receiver, mirroring the
-    // production shape: the receive loop holds an `Arc<Mutex<Receiver>>`
-    // because `RealTelegramClient` is `Clone` and the loop runs on a spawned
-    // task. The `code_tx` is exposed via `submit_verification_code` to the
-    // outside world.
-    let (code_tx, code_rx) = mpsc::channel::<String>(8);
-    let code_rx = Arc::new(Mutex::new(code_rx));
+    // Build a shared code_rx with the new simplified type (CONC-C2).
+    let code_rx: Arc<parking_lot::Mutex<Option<String>>> = Arc::new(Mutex::new(None));
 
-    // Submit a code as the gateway would.
-    code_tx
-        .send("12345".to_string())
-        .await
-        .expect("send must succeed when the receiver is held");
+    // Store a code as the gateway would via submit_verification_code.
+    *code_rx.lock() = Some("12345".to_string());
 
-    // The receive loop's WaitCode handler drains `code_rx` and returns the
-    // most recent code (or `None` if the channel is empty). The current
-    // production code path lives in `real_client.rs::handle_auth_state`; we
-    // exercise the same drain logic here so the test does not require a
-    // running TDLib client.
-    let latest = {
-        let mut rx = code_rx.lock().unwrap();
-        let mut latest: Option<String> = None;
-        loop {
-            match rx.try_recv() {
-                Ok(code) => latest = Some(code),
-                Err(mpsc::error::TryRecvError::Empty) => break,
-                Err(mpsc::error::TryRecvError::Disconnected) => break,
-            }
-        }
-        latest
-    };
+    // The receive loop's WaitCode handler calls drain_code_receiver to
+    // read and clear the stored code.
+    let latest = octo_adapter_telegram::drain_code_receiver(&code_rx);
 
     assert_eq!(
         latest,
         Some("12345".to_string()),
-        "WaitCode handler must drain the most recent submitted code from code_rx"
+        "drain_code_receiver must return the stored code"
     );
+
+    // Second drain must return None (code was consumed).
+    let empty = octo_adapter_telegram::drain_code_receiver(&code_rx);
+    assert_eq!(empty, None, "second drain must return None (code was consumed)");
 }
 
 /// Test auth key metadata stored alongside TDLib's internal storage.

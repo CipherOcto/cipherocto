@@ -230,7 +230,7 @@ impl RealTelegramClient {
                 .unwrap()
                 .clone()
                 .unwrap_or_else(|| "auth timeout".into());
-            return Err(TelegramError::TdlibClient(err_msg));
+            return Err(TelegramError::TdlibClient { code: 408, message: err_msg });
         }
 
         if !state.auth_done.load(Ordering::Acquire) {
@@ -240,7 +240,7 @@ impl RealTelegramClient {
                 .unwrap()
                 .clone()
                 .unwrap_or_else(|| "auth failed".into());
-            return Err(TelegramError::TdlibClient(err_msg));
+            return Err(TelegramError::TdlibClient { code: 408, message: err_msg });
         }
 
         Ok(Self { state })
@@ -254,7 +254,7 @@ impl RealTelegramClient {
             .code_tx
             .send(code)
             .await
-            .map_err(|_| TelegramError::TdlibClient("code channel closed".into()))
+            .map_err(|_| TelegramError::TdlibClient { code: 500, message: "code channel closed".into() })
     }
 
     /// H8: clone the `SelfHandle` so the gateway can hand the same
@@ -287,7 +287,7 @@ impl RealTelegramClient {
                             break;
                         }
                     }
-                    None => std::thread::yield_now(),
+                    None => std::thread::sleep(std::time::Duration::from_millis(10)),
                 }
             }
         });
@@ -313,7 +313,7 @@ impl RealTelegramClient {
                     if let Err(e) = Self::handle_update(&state, update).await {
                         tracing::debug!(error = %e, "tdlib update handler error");
                     }
-                    tokio::task::yield_now().await;
+                    tokio::time::sleep(std::time::Duration::from_millis(10)).await;
                 }
                 else => {
                     // Channel closed — blocking thread exited.
@@ -861,7 +861,7 @@ impl RealTelegramClient {
         {
             return TelegramError::Transient(e.message);
         }
-        TelegramError::TdlibClient(e.message)
+        TelegramError::TdlibClient { code: e.code as u16, message: e.message }
     }
 }
 
@@ -869,6 +869,15 @@ impl RealTelegramClient {
 fn parse_flood_wait_secs(message: &str) -> Option<u64> {
     let rest = message.strip_prefix("FLOOD_WAIT_")?;
     rest.parse().ok()
+}
+
+/// Drain the latest verification code from a code_rx mutex.
+/// Returns the stored code (if any) and clears the slot.
+/// CONC-C2: uses parking_lot::Mutex<Option<String>>.
+pub fn drain_code_receiver(
+    code_rx: &std::sync::Arc<parking_lot::Mutex<Option<String>>>,
+) -> Option<String> {
+    code_rx.lock().take()
 }
 
 impl Drop for RealTelegramClient {

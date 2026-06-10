@@ -141,12 +141,25 @@ pub enum AuthAction {
 /// 3. WaitCode → check_authentication_code
 /// 4. WaitPassword (if 2FA enabled) → check_authentication_password
 /// 5. Ready
+///
+/// R7 CRYPTO-H2: Manual `Debug` impl redacts `api_hash` and `password` fields.
 #[derive(Clone)]
 pub struct UserAuth {
     pub phone: String,
     pub api_id: i32,
     pub api_hash: String,
     pub password: Option<String>,
+}
+
+impl std::fmt::Debug for UserAuth {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("UserAuth")
+            .field("phone", &self.phone)
+            .field("api_id", &self.api_id)
+            .field("api_hash", &"<redacted>")
+            .field("password", &self.password.as_ref().map(|_| "<redacted>"))
+            .finish()
+    }
 }
 
 impl UserAuth {

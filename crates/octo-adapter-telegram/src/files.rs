@@ -88,17 +88,19 @@ pub(crate) async fn upload_bytes(
 ) -> FileResult<i32> {
     use std::io::Write;
 
-    let temp_path = unique_temp_path("octo_envelope");
-    {
-        let mut file =
-            std::fs::File::create(&temp_path).map_err(|e| FileError::WriteError(e.to_string()))?;
-        file.write_all(data)
-            .map_err(|e| FileError::WriteError(e.to_string()))?;
-    }
+    // R5 resource-C1: use tempfile::NamedTempFile for RAII temp file cleanup.
+    let mut tmp = tempfile::NamedTempFile::new()
+        .map_err(|e| FileError::WriteError(e.to_string()))?;
+    tmp.write_all(data)
+        .map_err(|e| FileError::WriteError(e.to_string()))?;
+    let path_str = tmp.path().to_string_lossy().into_owned();
 
-    let result = upload_file(client_id, chat_id, &temp_path, None).await;
+    let result = upload_file(client_id, chat_id, std::path::Path::new(&path_str), None).await;
 
-    crate::cleanup::cleanup_temp_file(&temp_path);
+    // Keep cleanup as belt-and-suspenders; the NamedTempFile will also
+    // remove the file when `tmp` drops, but cleanup_temp_file handles
+    // the case where the file is still needed past this scope.
+    crate::cleanup::cleanup_temp_file(std::path::Path::new(&path_str));
 
     result
 }

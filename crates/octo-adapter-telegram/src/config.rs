@@ -59,6 +59,10 @@ pub struct TelegramConfig {
     /// Optional: feature gates
     #[serde(default)]
     pub features: TelegramFeatures,
+    /// Ed25519 verifying key for envelope signature verification (R7 CRYPTO-C3).
+    /// Base64-encoded 32-byte public key.
+    #[serde(default)]
+    pub verifying_key: Option<String>,
 }
 
 impl TelegramConfig {
@@ -71,6 +75,15 @@ impl TelegramConfig {
     /// Returns `Err` with a message for the first missing required field.
     pub fn validate(&self) -> std::result::Result<(), String> {
         // Feature gates: e2e_chats and voice_video are user-mode only
+        // CFG-L3: validate groups are parseable as i64
+        for group in &self.groups {
+            if group.parse::<i64>().is_err() {
+                return Err(format!("groups: {} is not a valid i64 chat_id", group));
+            }
+        }
+        if self.webhook_port == Some(0) {
+            return Err("webhook_port must be positive or absent".into());
+        }
         if self.features.e2e_chats && self.mode_str() != "user" {
             return Err("e2e_chats feature is only available in user mode".into());
         }
@@ -87,8 +100,9 @@ impl TelegramConfig {
                 // Synthetic credentials (`api_id=0`, `api_hash=""`) are only
                 // valid on the test DC; production callers must supply real
                 // credentials from my.telegram.org.
-                if self.api_id.is_none() || self.api_id == Some(0) {
-                    return Err("bot mode requires api_id (from my.telegram.org)".into());
+                // M3: api_id must be positive (negative values pass the == Some(0) check).
+                if self.api_id.is_none_or(|id| id <= 0) {
+                    return Err("bot mode requires a positive api_id (from my.telegram.org)".into());
                 }
                 if self.api_hash.is_none() || self.api_hash.as_deref().unwrap().is_empty() {
                     return Err("bot mode requires api_hash (from my.telegram.org)".into());
@@ -100,8 +114,9 @@ impl TelegramConfig {
                 }
                 // L2: api_id == 0 is a sentinel value that TDLib rejects; reject
                 // it at config-validate time so callers fail fast.
-                if self.api_id == Some(0) {
-                    return Err("user mode api_id must be non-zero".into());
+                // M3: also reject negative values.
+                if self.api_id.is_none_or(|id| id <= 0) {
+                    return Err("user mode api_id must be positive".into());
                 }
                 if self.api_hash.is_none() || self.api_hash.as_deref().unwrap().is_empty() {
                     return Err("user mode requires api_hash".into());
@@ -119,5 +134,32 @@ impl TelegramConfig {
             }
         }
         Ok(())
+    }
+
+    /// Load config from environment variables (R7 CFG-C2).
+    /// Supported vars:
+    /// - `TELEGRAM_MODE` — "bot" or "user"
+    /// - `TELEGRAM_BOT_TOKEN` — bot token (mode=bot)
+    /// - `TELEGRAM_API_ID` — api_id from my.telegram.org
+    /// - `TELEGRAM_API_HASH` — api_hash from my.telegram.org
+    /// - `TELEGRAM_PHONE` — phone number (mode=user)
+    /// - `TELEGRAM_PASSWORD` — 2FA password (optional, mode=user)
+    /// - `TELEGRAM_DATA_DIR` — data directory for TDLib database
+    /// - `TELEGRAM_VERIFYING_KEY` — Ed25519 public key (base64, optional)
+    pub fn from_env() -> Self {
+        Self {
+            mode: std::env::var("TELEGRAM_MODE").ok(),
+            bot_token: std::env::var("TELEGRAM_BOT_TOKEN").ok(),
+            api_id: std::env::var("TELEGRAM_API_ID").ok()
+                .and_then(|s| s.parse::<i32>().ok()),
+            api_hash: std::env::var("TELEGRAM_API_HASH").ok(),
+            phone: std::env::var("TELEGRAM_PHONE").ok(),
+            password: std::env::var("TELEGRAM_PASSWORD").ok(),
+            data_dir: std::env::var("TELEGRAM_DATA_DIR").ok().map(std::path::PathBuf::from),
+            groups: vec![],
+            webhook_port: None,
+            features: TelegramFeatures::default(),
+            verifying_key: std::env::var("TELEGRAM_VERIFYING_KEY").ok(),
+        }
     }
 }

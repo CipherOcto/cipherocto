@@ -285,7 +285,10 @@ async fn test_document_self_loop_is_filtered() {
     adapter.set_self_user_id(bot_user_id);
 
     // Bot sends a document — this enqueues a doc-derived NewMessage.
-    mock.send_file(&chat_id_str, "x.bin", b"hello")
+    // Use exactly 282 bytes (ENVELOPE_WIRE_LENGTH) so the round-trip
+    // decode succeeds (R4 C1 envelope length check).
+    let test_data = vec![0x42u8; octo_adapter_telegram::envelope::ENVELOPE_WIRE_LENGTH];
+    mock.send_file(&chat_id_str, "x.bin", &test_data)
         .await
         .unwrap();
 
@@ -305,7 +308,8 @@ async fn test_document_self_loop_is_filtered() {
     mock.set_mock_sender(99);
     // Drain the prior doc so the receive path doesn't re-inject it again.
     mock.drain_received_documents();
-    mock.send_file(&chat_id_str, "y.bin", b"world")
+    let test_data2 = vec![0x42u8; octo_adapter_telegram::envelope::ENVELOPE_WIRE_LENGTH];
+    mock.send_file(&chat_id_str, "y.bin", &test_data2)
         .await
         .unwrap();
     let received2: Vec<_> = adapter.receive_messages(&domain).await.unwrap();
@@ -315,10 +319,10 @@ async fn test_document_self_loop_is_filtered() {
         "doc-injected message should survive when from != self_user_id"
     );
     // The receive path carries the base64-encoded envelope as the
-    // message body. Decoding it should round-trip back to "world".
+    // message body. Decoding it should round-trip back to the test data.
     let payload_str = std::str::from_utf8(&received2[0].payload).unwrap();
     let decoded = octo_adapter_telegram::envelope::decode_envelope(payload_str).unwrap();
-    assert_eq!(decoded, b"world");
+    assert_eq!(decoded, test_data2);
 }
 
 /// H8: verify the adapter shares the `SelfHandle` with the underlying client
@@ -360,10 +364,14 @@ async fn test_adapter_with_shared_self_handle() {
     // get a `from` that the shared handle can match.
     client.set_mock_sender(42);
 
+    // Test data sized to match ENVELOPE_WIRE_LENGTH (282 bytes) so the
+    // envelope round-trip decode succeeds (R4 C1).
+    let test_data = vec![0x42u8; octo_adapter_telegram::envelope::ENVELOPE_WIRE_LENGTH];
+
     // Bot sends a document — this enqueues a doc-derived NewMessage
     // with `from = "42"`.
     client
-        .send_file(&chat_id_str, "x.bin", b"hello")
+        .send_file(&chat_id_str, "x.bin", &test_data)
         .await
         .unwrap();
 
@@ -388,8 +396,9 @@ async fn test_adapter_with_shared_self_handle() {
     // Drain the prior doc so the receive path does not re-inject it
     // again alongside the new one.
     client.drain_received_documents();
+    let test_data2 = vec![0x42u8; octo_adapter_telegram::envelope::ENVELOPE_WIRE_LENGTH];
     client
-        .send_file(&chat_id_str, "y.bin", b"world")
+        .send_file(&chat_id_str, "y.bin", &test_data2)
         .await
         .unwrap();
     let received2 = adapter3.receive_messages(&domain3).await.unwrap();
@@ -399,10 +408,10 @@ async fn test_adapter_with_shared_self_handle() {
         "doc-injected message should survive when shared SelfHandle has no self id"
     );
     // The receive path carries the base64-encoded envelope as the
-    // message body. Decoding it should round-trip back to "world".
+    // message body. Decoding it should round-trip back to test_data2.
     let payload_str = std::str::from_utf8(&received2[0].payload).unwrap();
     let decoded = octo_adapter_telegram::envelope::decode_envelope(payload_str).unwrap();
-    assert_eq!(decoded, b"world");
+    assert_eq!(decoded, test_data2);
 
     // Verify the handle is independently cloneable across threads and
     // mutations from one clone are visible to the adapter reading through

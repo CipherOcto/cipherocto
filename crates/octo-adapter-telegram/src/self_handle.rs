@@ -74,8 +74,9 @@ impl SelfHandle {
         }
     }
 
-    /// Cache both user_id and username in one call.
+    /// Cache both user_id and username in one call (R7 OBS-M1).
     pub fn set_identity(&self, user_id: i64, username: String) {
+        tracing::info!(user_id, username = %username, "SelfHandle: identity set");
         *self.cached.lock().unwrap() = Some(SelfIdentity { user_id, username });
     }
 

@@ -96,10 +96,9 @@ fn test_capability_report() {
     let client = MockTelegramClient::new();
     let adapter = TelegramAdapter::new(config, client);
     let cap = adapter.capabilities();
-    // max_payload_bytes: 1024 — envelope is embedded in the caption, and
-    // Telegram's caption field has a hard cap of 1024 characters. A 1 MB
-    // payload would be silently truncated at 1024 chars.
-    assert_eq!(cap.max_payload_bytes, 1024);
+    // max_payload_bytes: 4096 — the text message cap for the base64-encoded
+    // envelope string. Larger envelopes are sent via sendDocument (R4 H1).
+    assert_eq!(cap.max_payload_bytes, 4096);
     // rate_limit_per_second: 30 (preserved from 0850f)
     assert_eq!(cap.rate_limit_per_second, 30);
     // supports_fragmentation: true (via document attachments)
@@ -123,10 +122,13 @@ fn test_self_handle_returns_none_by_default() {
     let config = TelegramConfig::default();
     let client = MockTelegramClient::new();
     let adapter = TelegramAdapter::new(config, client);
-    // Self-handle requires fetching from the client; mock returns None.
-    assert!(adapter.self_handle().is_none() || adapter.self_handle().is_some());
-    // The PlatformAdapter default for self_handle is None; we override it
-    // in Task 9.
+    // Self-handle requires fetching from the client; with no SelfHandle set,
+    // it should return None.
+    assert!(
+        adapter.self_handle().is_none(),
+        "default adapter without SelfHandle set should return None, got {:?}",
+        adapter.self_handle()
+    );
 }
 
 /// C2: Bot mode requires api_id + api_hash (R3 review).

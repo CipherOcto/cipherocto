@@ -31,7 +31,7 @@ pub enum AuthMode {
     Bot { token: Zeroizing<String> },
     /// User authentication via phone + api_id + api_hash.
     User {
-        phone: String,
+        phone: Zeroizing<String>,
         api_id: i32,
         api_hash: Zeroizing<String>,
         password: Option<Zeroizing<String>>,
@@ -146,7 +146,7 @@ pub enum AuthAction {
 /// R7 CRYPTO-H2: Manual `Debug` impl redacts `api_hash` and `password` fields.
 #[derive(Clone)]
 pub struct UserAuth {
-    pub phone: String,
+    pub phone: Zeroizing<String>,
     pub api_id: i32,
     pub api_hash: Zeroizing<String>,
     pub password: Option<Zeroizing<String>>,
@@ -167,7 +167,7 @@ impl UserAuth {
     /// Create a new user auth context.
     pub fn new(phone: String, api_id: i32, api_hash: String, password: Option<String>) -> Self {
         Self {
-            phone,
+            phone: Zeroizing::new(phone),
             api_id,
             api_hash: Zeroizing::new(api_hash),
             password: password.map(Zeroizing::new),
@@ -264,7 +264,7 @@ impl UserAuth {
             AuthorizationState::WaitPhoneNumber => {
                 // Send phone number for authentication
                 let response = functions::set_authentication_phone_number(
-                    self.phone.clone(),
+                    self.phone.to_string(),
                     None, // settings (default)
                     client_id,
                 )

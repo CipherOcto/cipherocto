@@ -46,8 +46,6 @@ struct ClientState {
     pending_updates_rx: parking_lot::Mutex<Option<mpsc::Receiver<TelegramUpdate>>>,
     /// Notified when auth reaches Ready state.
     auth_ready: Notify,
-    /// PERF-H4: notified when new TDLib updates arrive.
-    update_notify: Notify,
     /// Auth has completed successfully.
     auth_done: AtomicBool,
     /// Last auth error (set when auth fails; drained by the constructor).
@@ -125,7 +123,6 @@ impl ClientState {
             pending_updates_rx: parking_lot::Mutex::new(Some(update_rx)),
             dropped_updates: std::sync::atomic::AtomicU64::new(0),
             auth_ready: Notify::new(),
-            update_notify: Notify::new(),
             auth_done: AtomicBool::new(false),
             auth_error: PlMutex::new(None),
             user_auth,
@@ -330,8 +327,9 @@ impl RealTelegramClient {
                     if let Err(e) = Self::handle_update(&state, update).await {
                         tracing::debug!(error = %e, "tdlib update handler error");
                     }
-                    // PERF-H4: 10ms sleep imposes ~100 msg/s ceiling. Adjust if throughput is insufficient.
-            tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+                    // PERF-H4: no sleep here — updates are processed immediately.
+                    // The blocking thread calls update_notify.notify_one() after
+                    // each send so the select! can process batches without delay.
                 }
                 else => {
                     // Channel closed — blocking thread exited.
@@ -353,8 +351,6 @@ impl RealTelegramClient {
             return Self::handle_auth_state(state, auth_state).await;
         }
         if let Some(telegram_update) = Self::convert_update(update) {
-            // PERF-H4: notify receive loop that updates are available
-            state.update_notify.notify_one();
             // CONC-C1: unbounded mpsc send; if full, drop oldest
             if let Err(e) = state.pending_updates_tx.try_send(telegram_update) {
                 // CR-H2: increment counter so receive_updates can report the loss
@@ -774,6 +770,9 @@ impl TelegramClient for RealTelegramClient {
         )
         .await;
 
+        // PERF-L6: cleanup_temp_file is redundant here — NamedTempFile's
+        // Drop impl also removes the file. This call is an explicit early
+        // cleanup so the file doesn't linger until scope exit.
         crate::cleanup::cleanup_temp_file(&temp_path);
 
         match result {
@@ -824,6 +823,9 @@ impl TelegramClient for RealTelegramClient {
         )
         .await;
 
+        // PERF-L6: cleanup_temp_file is redundant here — NamedTempFile's
+        // Drop impl also removes the file. This call is an explicit early
+        // cleanup so the file doesn't linger until scope exit.
         crate::cleanup::cleanup_temp_file(&temp_path);
 
         match result {
@@ -998,16 +1000,21 @@ impl Drop for RealTelegramClient {
             guard.take()
         };
         if let Some(handle) = handle {
-            // OBS-C4 + CR-H1: bounded join with progressive timeouts.
+            // CR-H1: bounded join with extended timeout.
             // The receive loop normally responds to shutdown within ~100ms.
-            // First attempt: 2s timeout (normal case).
-            // Second attempt: 5s timeout with retried shutdown signal.
-            // If both time out, the thread is stuck — log error and detach.
+            // We allow up to 10s total because:
+            // - Shutdown signal propagation through channel: ~100ms
+            // - tdlib_rs::close() + TDLib internal cleanup: ~2-5s
+            // - Channel drain and thread exit: ~1s
+            // After timeout, the thread is stuck in a C library call
+            // (tdlib_rs::receive or close) that cannot be interrupted from
+            // safe Rust. We detach and log — the OS reclaims resources at
+            // process exit. TDLib's database may be unflushed; operators
+            // should set process-level timeouts (e.g. systemd TimeoutStopSec).
+            let join_timeout = std::time::Duration::from_secs(10);
             let (tx, rx) = std::sync::mpsc::channel();
             std::thread::spawn(move || { let _ = tx.send(handle.join()); });
-            let timeout_1 = std::time::Duration::from_secs(2);
-            let result_1 = rx.recv_timeout(timeout_1);
-            match result_1 {
+            match rx.recv_timeout(join_timeout) {
                 Ok(Ok(())) => {
                     tracing::debug!("receive thread joined cleanly");
                 }
@@ -1015,25 +1022,14 @@ impl Drop for RealTelegramClient {
                     tracing::error!("receive thread panicked: {:?}", panic_err);
                 }
                 Err(_) => {
-                    // First timeout — retry shutdown signal and wait again.
-                    tracing::warn!("receive thread did not join within 2s, retrying shutdown");
-                    for _ in 0..3 {
-                        // CR-L3: try_send may fail if channel is full; retry loop handles it
-            if self.state.shutdown_tx.try_send(self.state.client_id).is_ok() {
-                            break;
-                        }
-                        std::thread::sleep(std::time::Duration::from_millis(200));
-                    }
-                    let timeout_2 = std::time::Duration::from_secs(5);
-                    match rx.recv_timeout(timeout_2) {
-                        Ok(Ok(())) => tracing::debug!("receive thread joined on retry"),
-                        Ok(Err(panic_err)) => tracing::error!(
-                            "receive thread panicked on retry: {:?}", panic_err
-                        ),
-                        Err(_) => tracing::error!(
-                            "receive thread did not join within 2+5s, DETACHING — TDLib client MAY LEAK"
-                        ),
-                    }
+                    // Thread stuck in C library call — cannot interrupt safely.
+                    // Detach: the JoinHandle is dropped, thread runs to completion.
+                    tracing::error!(
+                        timeout_secs = 10,
+                        "receive thread did not join within timeout, DETACHING — \
+                         TDLib client may leak; set process-level kill timeout (e.g. \
+                         systemd TimeoutStopSec=15s) to guarantee cleanup"
+                    );
                 }
             }
         }

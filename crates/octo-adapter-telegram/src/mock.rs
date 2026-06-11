@@ -59,7 +59,7 @@ pub struct MockTelegramClient {
     /// M6: monotonically-increasing counter of every `send_message` /
     /// `send_envelope` / `send_file` call, success or failure-injected. Lets tests
     /// assert the retry loop re-invoked the operation.
-    send_call_total: Arc<Mutex<u64>>,
+    send_call_total: Arc<AtomicU64>,
 }
 
 /// M6: cloneable failure-injection spec. We can't store a `TelegramError`
@@ -100,7 +100,7 @@ impl MockTelegramClient {
             mock_sender_id: Arc::new(Mutex::new(0)),
             fail_send_message: Arc::new(Mutex::new(None)),
             fail_send_message_remaining: Arc::new(Mutex::new(0)),
-            send_call_total: Arc::new(Mutex::new(0)),
+            send_call_total: Arc::new(AtomicU64::new(0)),
         }
     }
 
@@ -117,7 +117,7 @@ impl MockTelegramClient {
     /// including failed-injection calls. Used by tests to assert the
     /// retry loop actually re-invokes the operation.
     pub fn send_call_count(&self) -> u64 {
-        *self.send_call_total.lock().unwrap()
+        self.send_call_total.load(Ordering::Relaxed)
     }
 
     /// Inject an update that the next `receive_updates` call will yield.
@@ -163,7 +163,7 @@ impl MockTelegramClient {
     /// loop may invoke `op()` multiple times, and each one needs to see
     /// the same failure type.
     fn maybe_consume_failure_injection(&self) -> Option<crate::error::TelegramError> {
-        *self.send_call_total.lock().unwrap() += 1;
+        self.send_call_total.fetch_add(1, Ordering::Relaxed);
         let mut remaining = self.fail_send_message_remaining.lock().unwrap();
         if *remaining == 0 {
             return None;

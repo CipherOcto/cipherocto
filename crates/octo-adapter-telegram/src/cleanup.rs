@@ -20,7 +20,7 @@ pub fn cleanup_temp_file(path: &Path) {
             // cleanup was called). Not an actionable error.
             return;
         }
-        tracing::warn!(path = %path.display(), error = %e, "failed to remove temp file (non-fatal)");
+        tracing::debug!(path = %path.display(), error = %e, "failed to remove temp file (non-fatal)");
     }
 }
 

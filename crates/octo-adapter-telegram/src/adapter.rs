@@ -383,6 +383,7 @@ impl<C: TelegramClient + Send + Sync> PlatformAdapter for TelegramAdapter<C> {
                         metadata,
                     })
                 }
+                // API-M2: MessageEdited/FileDownloaded not handled by adapter (future)
                 _ => None,
             })
             .collect();

@@ -176,10 +176,13 @@ pub trait TelegramClient: Send + Sync {
 /// tests pass on mock (which accepted any string) and fail on real client
 /// (which required valid `i64`).
 ///
-/// M8: also rejects positive IDs. Telegram chat_ids are always negative —
-/// `-100…` for supergroups/channels, `-…` for basic groups. Positive
-/// numbers in this position are user IDs and would silently route the
-/// envelope to the wrong peer.
+/// M8: also rejects positive IDs and zero. Telegram chat_ids for
+/// groups/channels are always negative — `-100…` for supergroups/channels,
+/// `-…` for basic groups. Positive numbers are user IDs (would silently
+/// route the envelope to the wrong peer type). `0` is a reserved value
+/// (historically "Replies" chat). User's own "Saved Messages" chat uses
+/// the user's positive user_id — rejected here because CipherOcto
+/// targets group/channel routing, not self-DM.
 pub fn parse_chat_id(s: &str) -> std::result::Result<i64, &'static str> {
     if s.is_empty() {
         return Err("chat_id is empty");

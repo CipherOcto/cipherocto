@@ -60,27 +60,31 @@ pub struct TelegramAdapter<C: TelegramClient> {
 }
 
 impl<C: TelegramClient> TelegramAdapter<C> {
-    pub fn new(config: TelegramConfig, client: C) -> Self {
-        let verifying_key = config.verifying_key.as_ref().and_then(|b64| {
-            let mut buf = [0u8; 32];
-            let decoded = match STANDARD.decode(b64) {
-                Ok(d) => d,
-                Err(e) => {
-                    tracing::warn!(error = %e, "verifying_key: base64 decode failed, disabling verification");
-                    return None;
+    /// M6: decode and validate the verifying_key. Returns `Err` if the key
+    /// is present but malformed (bad base64, wrong length). Returns `Ok(None)`
+    /// if no key is configured (verification disabled by design).
+    fn decode_verifying_key(config: &TelegramConfig) -> std::result::Result<Option<[u8; 32]>, String> {
+        match config.verifying_key.as_ref() {
+            None => Ok(None),
+            Some(b64) => {
+                let decoded = STANDARD.decode(b64)
+                    .map_err(|e| format!("verifying_key: base64 decode failed: {e}"))?;
+                if decoded.len() != 32 {
+                    return Err(format!(
+                        "verifying_key: expected 32 bytes, got {}",
+                        decoded.len()
+                    ));
                 }
-            };
-            if decoded.len() != 32 {
-                tracing::warn!(
-                    key_len = decoded.len(),
-                    "verifying_key: expected 32 bytes, got {}. disabling verification",
-                    decoded.len()
-                );
-                return None;
+                let mut buf = [0u8; 32];
+                buf.copy_from_slice(&decoded);
+                Ok(Some(buf))
             }
-            buf.copy_from_slice(&decoded);
-            Some(buf)
-        });
+        }
+    }
+
+    pub fn new(config: TelegramConfig, client: C) -> Self {
+        let verifying_key = Self::decode_verifying_key(&config)
+            .expect("verifying_key is misconfigured — fix the key or remove it");
         Self {
             config,
             client,
@@ -99,26 +103,8 @@ impl<C: TelegramClient> TelegramAdapter<C> {
     /// a pre-configured handle without re-fetching. `SelfHandle` is
     /// cheaply cloneable (`Arc<Mutex<...>>`).
     pub fn with_self_handle(config: TelegramConfig, client: C, self_handle: SelfHandle) -> Self {
-        let verifying_key = config.verifying_key.as_ref().and_then(|b64| {
-            let mut buf = [0u8; 32];
-            let decoded = match STANDARD.decode(b64) {
-                Ok(d) => d,
-                Err(e) => {
-                    tracing::warn!(error = %e, "verifying_key: base64 decode failed, disabling verification");
-                    return None;
-                }
-            };
-            if decoded.len() != 32 {
-                tracing::warn!(
-                    key_len = decoded.len(),
-                    "verifying_key: expected 32 bytes, got {}. disabling verification",
-                    decoded.len()
-                );
-                return None;
-            }
-            buf.copy_from_slice(&decoded);
-            Some(buf)
-        });
+        let verifying_key = Self::decode_verifying_key(&config)
+            .expect("verifying_key is misconfigured — fix the key or remove it");
         Self {
             config,
             client,
@@ -132,26 +118,8 @@ impl<C: TelegramClient> TelegramAdapter<C> {
 
     /// Build an adapter with a custom retry policy (for tests / tuning).
     pub fn with_retry_config(config: TelegramConfig, client: C, retry_config: RetryConfig) -> Self {
-        let verifying_key = config.verifying_key.as_ref().and_then(|b64| {
-            let mut buf = [0u8; 32];
-            let decoded = match STANDARD.decode(b64) {
-                Ok(d) => d,
-                Err(e) => {
-                    tracing::warn!(error = %e, "verifying_key: base64 decode failed, disabling verification");
-                    return None;
-                }
-            };
-            if decoded.len() != 32 {
-                tracing::warn!(
-                    key_len = decoded.len(),
-                    "verifying_key: expected 32 bytes, got {}. disabling verification",
-                    decoded.len()
-                );
-                return None;
-            }
-            buf.copy_from_slice(&decoded);
-            Some(buf)
-        });
+        let verifying_key = Self::decode_verifying_key(&config)
+            .expect("verifying_key is misconfigured — fix the key or remove it");
         Self {
             config,
             client,
@@ -164,6 +132,11 @@ impl<C: TelegramClient> TelegramAdapter<C> {
     }
 
     /// Cache the bot username for self-loop prevention. Real impl: calls getMe.
+    ///
+    /// **Deprecated:** call `set_identity(user_id, username)` instead, or pair
+    /// with `set_self_user_id`. Calling this alone (without `set_self_user_id`)
+    /// is a no-op that silently disables self-loop prevention.
+    #[deprecated(since = "0.2.0", note = "use set_identity() or pair with set_self_user_id()")]
     pub fn set_bot_username(&self, username: String) {
         self.self_handle.set_username(username);
     }
@@ -195,6 +168,10 @@ impl From<crate::error::TelegramError> for PlatformAdapterError {
                 message: format!("transient: {}", msg),
             },
             // User errors — never trigger reconnect.
+            // L4: 400 (not 404) because this is a client-side validation
+            // error ("chat_id must be negative"). The deeper case "chat
+            // does not exist or bot is not a member" would be 404, but
+            // TDLib does not distinguish these at the error-code level.
             TelegramError::InvalidChatId(m) => {
                 PlatformAdapterError::ApiError {
                     code: 400,

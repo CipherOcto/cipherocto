@@ -36,12 +36,15 @@ pub struct MockTelegramClient {
     sent_doc_data: Arc<Mutex<DocDataMap>>,
     pending_updates: Arc<Mutex<Vec<TelegramUpdate>>>,
     next_msg_id: Arc<AtomicU64>,
-    /// Sender id stamped onto doc-derived `NewMessage.from` during
-    /// `receive_updates`. When `0` (default), the field stays empty,
-    /// matching the pre-H5 behavior. When set to a non-zero value, the
-    /// mock uses that value as the `from` string so the adapter's
-    /// self-loop filter (H5) is exercised for document round-trips.
-    mock_sender_id: Arc<Mutex<i64>>,
+    /// L2: sender id stamped onto doc-derived `NewMessage.from`.
+    /// `None` (default) keeps the `from` field empty. `Some(0)` means
+    /// "sender is user_id 0" (a real, if rare, Telegram user_id).
+    /// `Some(n)` for any n exercises the adapter's self-loop filter.
+    mock_sender_id: Arc<Mutex<Option<i64>>>,
+    /// H2: when true, `send_message` pushes an outgoing `NewMessage`
+    /// to `pending_updates`, mirroring the real client's TDLib event
+    /// that `convert_update` filters via `is_outgoing`.
+    echo_outgoing: Arc<Mutex<bool>>,
     /// M6: failure injection for `send_message` and `send_envelope`. While
     /// the counter is non-zero, the next call decrements it and returns
     /// the configured error. When it reaches 0, the call returns `Ok`
@@ -102,7 +105,8 @@ impl MockTelegramClient {
             sent_doc_data: Arc::new(Mutex::new(BTreeMap::new())),
             pending_updates: Arc::new(Mutex::new(Vec::new())),
             next_msg_id: Arc::new(AtomicU64::new(1)),
-            mock_sender_id: Arc::new(Mutex::new(0)),
+            mock_sender_id: Arc::new(Mutex::new(None)),
+            echo_outgoing: Arc::new(Mutex::new(false)),
             fail_send_message: Arc::new(Mutex::new(None)),
             fail_send_message_remaining: Arc::new(Mutex::new(0)),
             send_call_total: Arc::new(AtomicU64::new(0)),
@@ -131,11 +135,21 @@ impl MockTelegramClient {
     }
 
     /// Set the sender id used when re-injecting document-derived
-    /// `NewMessage` updates. Pass `0` (the default) to keep the `from`
-    /// field empty, matching the pre-H5 behavior. Pass a non-zero id to
+    /// `NewMessage` updates. Pass `None` (the default) to keep the `from`
+    /// field empty, matching the pre-H5 behavior. Pass `Some(id)` to
     /// exercise the adapter's self-loop filter for document round-trips.
-    pub fn set_mock_sender(&self, id: i64) {
+    /// L2: `Some(0)` now correctly represents "sender is user_id 0"
+    /// instead of being used as the "no sender" sentinel.
+    pub fn set_mock_sender(&self, id: Option<i64>) {
         *self.mock_sender_id.lock() = id;
+    }
+
+    /// H2: enable or disable outgoing message echo on `send_message`.
+    /// When enabled, `send_message` pushes an outgoing `NewMessage` to
+    /// `pending_updates`, mirroring the real client's TDLib behavior.
+    /// The adapter's `convert_update` filters these via `is_outgoing`.
+    pub fn set_echo_outgoing(&self, enabled: bool) {
+        *self.echo_outgoing.lock() = enabled;
     }
 
     pub fn sent_messages(&self) -> Vec<(String, String)> {
@@ -146,15 +160,26 @@ impl MockTelegramClient {
         self.sent_documents.lock().clone()
     }
 
+    /// H1: helper to build the sender fields from mock_sender_id.
+    fn build_sender(&self) -> (crate::client::MessageSender, String) {
+        match *self.mock_sender_id.lock() {
+            Some(id) if id != 0 => (
+                crate::client::MessageSender::User(id),
+                id.to_string(),
+            ),
+            _ => (crate::client::MessageSender::Unknown, String::new()),
+        }
+    }
+
     /// Drain the sent-doc map. After this call, subsequent `receive_updates`
     /// will not re-inject document-derived `NewMessage` updates.
     ///
-    /// H4: previously `receive_updates` drained `sent_doc_data` on every call,
-    /// which broke at-least-once semantics — a second poll missed the
-    /// document round-trip. Callers now opt in to draining once they have
-    /// observed the doc-derived message.
+    /// **Deprecated (H1):** docs are now injected exactly once at send time,
+    /// not re-injected on every poll. This method is a no-op kept for
+    /// backward compatibility with existing tests.
+    #[deprecated(since = "0.2.0", note = "docs are now injected once at send time; this is a no-op")]
     pub fn drain_received_documents(&self) {
-        self.sent_doc_data.lock().clear();
+        // No-op: H1 makes re-injection unnecessary.
     }
 
     /// M6: if a failure has been injected and there are still calls left
@@ -209,6 +234,17 @@ impl TelegramClient for MockTelegramClient {
         self.sent_messages
             .lock()
             .push((chat_id.to_string(), text.to_string()));
+        // H2: when echo_outgoing is enabled, push an outgoing NewMessage
+        // mirroring real TDLib behavior. The adapter's convert_update
+        // filters these via is_outgoing.
+        if *self.echo_outgoing.lock() {
+            self.pending_updates.lock().push(TelegramUpdate::NewMessage(NewMessage {
+                chat_id: chat_id.parse().unwrap_or(0),
+                message: text.to_string(),
+                from: crate::client::MessageSender::Unknown,
+                from_legacy: String::new(),
+            }));
+        }
         // Mock timestamp: use current Unix time
         let timestamp = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
@@ -248,10 +284,19 @@ impl TelegramClient for MockTelegramClient {
         ));
         // Store data for receive-path injection (document envelope round-trip).
         // PERF-M2: pre-encode once; receive_updates reads the cached form.
+        // H1: inject the doc-derived NewMessage NOW (exactly-once), not
+        // on every receive_updates poll.
         let encoded_cached = crate::envelope::encode_envelope(data);
         self.sent_doc_data
             .lock()
-            .insert((chat_id.to_string(), filename.to_string()), (data.to_vec(), encoded_cached));
+            .insert((chat_id.to_string(), filename.to_string()), (data.to_vec(), encoded_cached.clone()));
+        let (from, from_legacy) = self.build_sender();
+        self.pending_updates.lock().push(TelegramUpdate::NewMessage(NewMessage {
+            chat_id: chat_id.parse().unwrap_or(0),
+            message: encoded_cached,
+            from,
+            from_legacy,
+        }));
         let timestamp = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .map(|d| d.as_secs() as i64)
@@ -282,10 +327,18 @@ impl TelegramClient for MockTelegramClient {
         ));
         // Store data for receive-path injection (document round-trip).
         // PERF-M2: pre-encode once; receive_updates reads the cached form.
+        // H1: inject the doc-derived NewMessage NOW (exactly-once).
         let encoded_cached = crate::envelope::encode_envelope(data);
         self.sent_doc_data
             .lock()
-            .insert((chat_id.to_string(), filename.to_string()), (data.to_vec(), encoded_cached));
+            .insert((chat_id.to_string(), filename.to_string()), (data.to_vec(), encoded_cached.clone()));
+        let (from, from_legacy) = self.build_sender();
+        self.pending_updates.lock().push(TelegramUpdate::NewMessage(NewMessage {
+            chat_id: chat_id.parse().unwrap_or(0),
+            message: encoded_cached,
+            from,
+            from_legacy,
+        }));
         let timestamp = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .map(|d| d.as_secs() as i64)
@@ -302,43 +355,21 @@ impl TelegramClient for MockTelegramClient {
     }
 
     async fn receive_updates(&self) -> Result<Vec<TelegramUpdate>> {
-        // Re-inject (do NOT drain) sent documents so repeated `receive_updates`
-        // calls yield the document-derived `NewMessage` until the caller
-        // explicitly drains via `drain_received_documents()`. H4 fix: this
-        // mirrors at-least-once receive semantics.
-        // R6 MEM-C3: iterate under the lock, cloning only the header fields (chat_id, filename)
-        // but NOT the full Vec<u8> data.
-        // PERF-M2: read the pre-encoded base64 form from the cache instead
-        // of re-encoding on every poll. The encoding was computed once in
-        // `send_envelope`/`send_file` and stored alongside the raw bytes.
-        let pending: Vec<_> = {
-            let guard = self.sent_doc_data.lock();
-            guard.iter().map(|((chat_id, _filename), (_data, cached_encoded))| {
-                let sender_id = *self.mock_sender_id.lock();
-                let (from, from_legacy) = if sender_id == 0 {
-                    (crate::client::MessageSender::Unknown, String::new())
-                } else {
-                    (crate::client::MessageSender::User(sender_id), sender_id.to_string())
-                };
-                (chat_id.clone(), cached_encoded.clone(), from, from_legacy)
-            }).collect()
-        };
-        for (chat_id, encoded, from, from_legacy) in pending {
-            self.pending_updates
-                .lock()
-                .push(TelegramUpdate::NewMessage(NewMessage {
-                    chat_id: chat_id.parse().unwrap_or(0),
-                    message: encoded,
-                    from,
-                    from_legacy,
-                }));
-        }
+        // H1: docs are now injected exactly once at send time
+        // (send_envelope/send_file push to pending_updates immediately).
+        // No re-injection on poll — each message appears exactly once,
+        // matching real TDLib behavior.
         let mut pending = self.pending_updates.lock();
         Ok(std::mem::take(&mut *pending))
     }
 
     /// Authenticate by stepping through a configurable auth state queue.
     /// API-H3: the mock now supports setting auth states via set_auth_queue.
+    ///
+    /// **L5 note:** Error strings returned by this mock are NOT API-stable.
+    /// Tests should assert on the error variant (e.g. `matches!(err,
+    /// TelegramError::Auth(_))`) rather than the message text, since the
+    /// real client returns different error strings from TDLib.
     async fn authenticate(&self) -> Result<()> {
         // Process the auth queue if set, otherwise return Ok as before
         let mut queue = self.auth_queue.lock();

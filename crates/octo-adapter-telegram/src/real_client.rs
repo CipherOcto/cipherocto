@@ -115,7 +115,9 @@ impl ClientState {
         api_hash: String,
     ) -> Self {
         let (update_tx, update_rx) = mpsc::channel::<TelegramUpdate>(256);
-        let (code_tx, code_rx) = mpsc::channel(8);
+        // L6: reduced code channel from 8 to 1 — only the most recent
+        // code matters; H3 fixes try_send to avoid blocking on overflow.
+        let (code_tx, code_rx) = mpsc::channel(1);
         let (shutdown_tx, shutdown_rx) = mpsc::channel(1);
         Self {
             client_id,
@@ -263,12 +265,28 @@ impl RealTelegramClient {
     /// Submit a verification code for user mode. Called by the gateway in
     /// response to a `WaitCode` auth state. Returns `Err` if the channel is
     /// closed (client was dropped).
+    ///
+    /// H3: uses `try_send` (non-blocking) on a capacity-1 channel. If a
+    /// previous code is already pending and the receive loop hasn't drained
+    /// it yet, the old code is overwritten by calling `drain_latest_code`
+    /// first, then retrying. This prevents deadlock from a blocking send
+    /// on a full channel.
     pub async fn submit_verification_code(&self, code: String) -> Result<()> {
-        self.state
-            .code_tx
-            .send(code)
-            .await
-            .map_err(|_| TelegramError::TdlibClient { code: 500, message: "code channel closed".into() })
+        // Try to send. If the channel is full (previous code not yet drained
+        // by the receive loop), drain the stale code and retry once.
+        match self.state.code_tx.try_send(code) {
+            Ok(()) => Ok(()),
+            Err(tokio::sync::mpsc::error::TrySendError::Full(code)) => {
+                // Drain the stale code from the receive side, then retry.
+                Self::drain_latest_code(&self.state);
+                self.state.code_tx.try_send(code).map_err(|_| TelegramError::Auth(
+                    "code channel still full after drain — receive loop not draining".into()
+                ))
+            }
+            Err(tokio::sync::mpsc::error::TrySendError::Closed(_)) => {
+                Err(TelegramError::TdlibClient { code: 500, message: "code channel closed".into() })
+            }
+        }
     }
 
     /// H8: clone the `SelfHandle` so the gateway can hand the same
@@ -394,8 +412,9 @@ impl RealTelegramClient {
             // CONC-C1: unbounded mpsc send; if full, drop oldest
             if let Err(e) = state.pending_updates_tx.try_send(telegram_update) {
                 // CR-H2: increment counter so receive_updates can report the loss
-                state.dropped_updates.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-                tracing::warn!("pending_updates channel full, dropping update");
+                let total = state.dropped_updates.fetch_add(1, std::sync::atomic::Ordering::Relaxed) + 1;
+                // L3: structured event with running total for metric aggregation
+                tracing::warn!(dropped_total = total, "pending_updates channel full, dropping update");
                 let _ = e;
             }
         }
@@ -585,7 +604,10 @@ impl RealTelegramClient {
                                 // `WaitCode` on the next update tick, at which
                                 // point we will try again. The constructor's
                                 // 30 s timeout still bounds the wait.
-                                tracing::debug!("WaitCode: no verification code submitted yet");
+                                // M4: warn level so operators see this in
+                                // production logs (debug is invisible at
+                                // RUST_LOG=info).
+                                tracing::warn!("WaitCode: no verification code submitted yet — call submit_verification_code()");
                             }
                         }
                         other => {
@@ -601,6 +623,15 @@ impl RealTelegramClient {
                     }
                 }
                 Ok(())
+            }
+            tdlib_rs::enums::AuthorizationState::WaitRegistration(_) => {
+                // M3: first-time user signup is not supported via this adapter.
+                // Surface a descriptive error so the operator knows the user
+                // must register via the Telegram app first.
+                tracing::warn!("auth: WaitRegistration — user account does not exist; registration not supported");
+                let msg = "WaitRegistration: phone number not registered — sign up via the Telegram app first".to_string();
+                *state.auth_error.lock() = Some(msg.clone());
+                Err(msg)
             }
             _ => {
                 // SM-M1: log unrecognized auth states so operators can audit TDLib binding changes
@@ -684,6 +715,11 @@ impl RealTelegramClient {
                     from_legacy,
                 }))
             }
+            // M5: MessageEdited has no is_outgoing or sender_id field in
+            // TDLib's UpdateMessageEdited struct. Self-authored edits will
+            // pass through here. The adapter's self-loop filter cannot
+            // filter them because there is no sender identity to compare.
+            // This is a TDLib API limitation, not an adapter bug.
             tdlib_rs::enums::Update::MessageEdited(edited) => Some(TelegramUpdate::MessageEdited(
                 crate::client::MessageEdited {
                     chat_id: edited.chat_id,
@@ -1024,13 +1060,22 @@ impl Drop for RealTelegramClient {
     fn drop(&mut self) {
         // CR-M4: running=false BEFORE shutdown signal so receive loop stops polling
         self.state.running.store(false, Ordering::Release);
-        // CR-H1: retry shutdown signal in case the channel was full
+        // CR-H1: retry shutdown signal in case the channel was full.
+        // M2: budget is 3x100ms = 300ms. If the receive loop is stuck in
+        // a long TDLib call (e.g. set_tdlib_parameters), the signal may
+        // not be consumed in time. The 10s join timeout below handles
+        // this case — the blocking thread checks `running` before each
+        // tdlib_rs::receive() call and will exit once it sees false.
+        let mut shutdown_sent = false;
         for _ in 0..3 {
-            // CR-L3: try_send may fail if channel is full; retry loop handles it
             if self.state.shutdown_tx.try_send(self.state.client_id).is_ok() {
+                shutdown_sent = true;
                 break;
             }
             std::thread::sleep(std::time::Duration::from_millis(100));
+        }
+        if !shutdown_sent {
+            tracing::warn!("Drop: shutdown signal not consumed within 300ms — receive loop may be stuck in a TDLib call");
         }
         // L15: join the blocking thread after signaling close. Short timeout
         // in case the thread is stuck in a long tdlib_rs::receive() call.

@@ -68,6 +68,11 @@ pub enum AuthError {
     #[error("session expired, re-authenticate")]
     SessionExpired,
 
+    /// M3: first-time user signup via this adapter is not supported.
+    /// Operators should instruct the user to register via the Telegram app.
+    #[error("registration required — sign up via the Telegram app first")]
+    RegistrationRequired,
+
     #[cfg(feature = "real-tdlib")]
     #[error("TDLib error: {message}")]
     Tdlib { message: String },

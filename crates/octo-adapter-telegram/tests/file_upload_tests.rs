@@ -139,13 +139,11 @@ async fn test_upload_with_empty_filename() {
     assert!(result.is_ok());
 }
 
-/// Verify that `receive_updates` re-injects document-derived `NewMessage`
-/// updates on every call until the caller explicitly drains them via
-/// `drain_received_documents()`. H4: prior to the fix, `receive_updates`
-/// drained `sent_doc_data` on first call, so a second `receive_updates`
-/// returned an empty list and the adapter missed the document round-trip.
+/// H1: verify that `receive_updates` yields document-derived `NewMessage`
+/// exactly once (injected at send_file time), not re-injected on every poll.
+/// This matches real TDLib behavior where each update appears once.
 #[tokio::test]
-async fn test_mock_receive_updates_re_injects_documents() {
+async fn test_mock_receive_updates_yields_doc_once() {
     let client = MockTelegramClient::new();
     client
         .send_file("-1001234567890", "x.bin", b"hello")
@@ -158,17 +156,8 @@ async fn test_mock_receive_updates_re_injects_documents() {
     assert_eq!(first.len(), 1, "first receive should yield the doc");
     assert_eq!(
         second.len(),
-        1,
-        "second receive should re-yield the doc (until drained)"
-    );
-
-    // After explicit drain, the doc-derived update is no longer re-injected.
-    client.drain_received_documents();
-    let third = client.receive_updates().await.unwrap();
-    assert_eq!(
-        third.len(),
         0,
-        "after drain_received_documents, the doc is no longer re-injected"
+        "H1: second receive should be empty (inject-once, not re-inject)"
     );
 }
 

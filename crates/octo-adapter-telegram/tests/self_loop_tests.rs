@@ -277,7 +277,7 @@ async fn test_document_self_loop_is_filtered() {
 
     // Tell the mock to stamp the bot's own user_id onto doc-injected NewMessages.
     let bot_user_id = 42_i64;
-    mock.set_mock_sender(bot_user_id);
+    mock.set_mock_sender(Some(bot_user_id));
 
     // Register a domain and set the bot's user_id on the adapter.
     let chat_id_str = "-1001234567890".to_string();
@@ -305,9 +305,8 @@ async fn test_document_self_loop_is_filtered() {
     // Sanity check: change the mock sender to a different id and verify
     // the doc-injected message now survives (so the test is actually
     // exercising the filter, not just the absence of any message).
-    mock.set_mock_sender(99);
-    // Drain the prior doc so the receive path doesn't re-inject it again.
-    mock.drain_received_documents();
+    mock.set_mock_sender(Some(99));
+    // H1: docs are now inject-once, no drain needed.
     let test_data2 = vec![0x42u8; octo_adapter_telegram::envelope::ENVELOPE_WIRE_LENGTH];
     mock.send_file(&chat_id_str, "y.bin", &test_data2)
         .await
@@ -362,7 +361,7 @@ async fn test_adapter_with_shared_self_handle() {
 
     // Stamp the same user_id onto the mock so doc-derived NewMessages
     // get a `from` that the shared handle can match.
-    client.set_mock_sender(42);
+    client.set_mock_sender(Some(42));
 
     // Test data sized to match ENVELOPE_WIRE_LENGTH (282 bytes) so the
     // envelope round-trip decode succeeds (R4 C1).
@@ -393,9 +392,7 @@ async fn test_adapter_with_shared_self_handle() {
     let adapter3 =
         TelegramAdapter::with_self_handle(TelegramConfig::default(), client.clone(), handle3);
     let domain3: BroadcastDomainId = adapter3.domain_id(&chat_id_str);
-    // Drain the prior doc so the receive path does not re-inject it
-    // again alongside the new one.
-    client.drain_received_documents();
+    // H1: docs are now inject-once, no drain needed.
     let test_data2 = vec![0x42u8; octo_adapter_telegram::envelope::ENVELOPE_WIRE_LENGTH];
     client
         .send_file(&chat_id_str, "y.bin", &test_data2)
@@ -423,7 +420,7 @@ async fn test_adapter_with_shared_self_handle() {
         handle4.clone(),
     );
     let domain4: BroadcastDomainId = adapter4.domain_id(&chat_id_str);
-    client.drain_received_documents();
+    // H1: inject-once, no drain needed.
     client
         .send_file(&chat_id_str, "z.bin", b"alpha")
         .await
@@ -434,7 +431,7 @@ async fn test_adapter_with_shared_self_handle() {
 
     // Set the identity through a separate clone of the same handle.
     handle4.set_user_id(42);
-    client.drain_received_documents();
+    // H1: inject-once, no drain needed.
     client
         .send_file(&chat_id_str, "w.bin", b"beta")
         .await

@@ -977,7 +977,7 @@ impl Drop for RealTelegramClient {
     /// calls `close` from within the existing tokio runtime and exits.
     /// `Drop` uses `try_send` (non-blocking) and silently no-ops if the
     /// receive loop is already gone — the OS reclaims the TDLib client on
-    /// process exit in that case. We do not panic on send failure:
+    /// process exit (SIGKILL may leave unflushed TDLib database) in that case. We do not panic on send failure:
     /// panicking in `Drop` is unsound under multi-threaded drop.
     fn drop(&mut self) {
         // CR-M4: running=false BEFORE shutdown signal so receive loop stops polling

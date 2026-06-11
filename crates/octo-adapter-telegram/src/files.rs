@@ -143,6 +143,7 @@ pub async fn download_file(client_id: i32, file_id: i32, priority: i32) -> FileR
 /// should use `download_file(client_id, file_id, size)` for large files and
 /// process the local path directly, or deploy with per-process memory limits.
 #[cfg(feature = "real-tdlib")]
+// CR-H3: TDLib downloadFile creates local file; caller should delete after use
 pub async fn download_file_bytes(client_id: i32, file_id: i32) -> FileResult<Vec<u8>> {
     let local_path = download_file(client_id, file_id, 32).await?;
     std::fs::read(&local_path).map_err(|e| FileError::ReadError(e.to_string()))

@@ -23,3 +23,6 @@ pub fn cleanup_temp_file(path: &Path) {
         tracing::warn!(path = %path.display(), error = %e, "failed to remove temp file (non-fatal)");
     }
 }
+
+// CR-H3: TDLib data_dir/files/ accumulates downloaded files over time.
+// Callers should periodically prune stale files or configure disk quotas.

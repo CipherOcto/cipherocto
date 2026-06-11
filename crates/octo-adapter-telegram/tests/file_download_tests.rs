@@ -17,11 +17,9 @@ const ONE_MB: usize = MB;
 #[tokio::test]
 async fn test_mock_download_returns_empty() {
     let mock = MockTelegramClient::new();
+    // API-L2: mock download_file returns Err by default
     let result = mock.download_file("mock_message_id_123").await;
-    assert!(result.is_ok(), "download should return ok");
-    let data = result.unwrap();
-    // Mock returns empty vec (no real file backing)
-    assert!(data.is_empty(), "mock download should return empty data");
+    assert!(result.is_err(), "mock should return Err for uninjected download");
 }
 
 /// Test that inject_update + receive_updates works for file updates.

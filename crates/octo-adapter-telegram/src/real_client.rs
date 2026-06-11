@@ -51,7 +51,7 @@ struct ClientState {
     /// Auth has completed successfully.
     auth_done: AtomicBool,
     /// Last auth error (set when auth fails; drained by the constructor).
-    auth_error: Mutex<Option<String>>,
+    auth_error: PlMutex<Option<String>>,
     /// User-mode auth config (None for bot mode).
     user_auth: Option<UserAuth>,
     /// Bot token for bot mode (None for user mode).
@@ -86,7 +86,7 @@ struct ClientState {
     /// auth completes (or the client is dropped) and the channel can
     /// close cleanly. `Arc<Mutex<...>>` because `RealTelegramClient` is
     /// `Clone` and the receive loop runs on a `tokio::spawn`'d task.
-    code_rx: Arc<Mutex<Option<mpsc::Receiver<String>>>>,
+    code_rx: Arc<PlMutex<Option<mpsc::Receiver<String>>>>,
     /// Self handle — populated after a successful `get_me` call.
     self_handle: SelfHandle,
     /// Sender half of the shutdown channel. `Drop` pushes the `client_id`
@@ -127,7 +127,7 @@ impl ClientState {
             auth_ready: Notify::new(),
             update_notify: Notify::new(),
             auth_done: AtomicBool::new(false),
-            auth_error: Mutex::new(None),
+            auth_error: PlMutex::new(None),
             user_auth,
             bot_token,
             data_dir,
@@ -138,7 +138,7 @@ impl ClientState {
             closed: AtomicBool::new(false),
             receive_thread: PlMutex::new(None),
             code_tx,
-            code_rx: Arc::new(Mutex::new(Some(code_rx))),
+            code_rx: Arc::new(PlMutex::new(Some(code_rx))),
             self_handle: SelfHandle::new(),
             shutdown_tx,
             shutdown_rx: Some(shutdown_rx),
@@ -238,7 +238,6 @@ impl RealTelegramClient {
             let err_msg = state
                 .auth_error
                 .lock()
-                .unwrap()
                 .clone()
                 .unwrap_or_else(|| "auth timeout".into());
             return Err(TelegramError::TdlibClient { code: 408, message: err_msg });
@@ -248,7 +247,6 @@ impl RealTelegramClient {
             let err_msg = state
                 .auth_error
                 .lock()
-                .unwrap()
                 .clone()
                 .unwrap_or_else(|| "auth failed".into());
             return Err(TelegramError::TdlibClient { code: 408, message: err_msg });
@@ -412,7 +410,7 @@ impl RealTelegramClient {
                 // L10: record the closed state so the constructor can check
                 // it before waiting for `auth_ready`.
                 state.closed.store(true, Ordering::Release);
-                let mut err = state.auth_error.lock().unwrap();
+                let mut err = state.auth_error.lock();
                 if err.is_none() {
                     *err = Some("tdlib session closed".into());
                 }
@@ -458,7 +456,7 @@ impl RealTelegramClient {
                         .await;
                         if let Err(e) = resp {
                             let msg = format!("set_tdlib_parameters: {}", e.message);
-                            *state.auth_error.lock().unwrap() = Some(msg.clone());
+                            *state.auth_error.lock() = Some(msg.clone());
                             return Err(msg);
                         }
                     }
@@ -475,7 +473,7 @@ impl RealTelegramClient {
                             .await
                         {
                             let msg = format!("user auth: {}", e);
-                            *state.auth_error.lock().unwrap() = Some(msg.clone());
+                            *state.auth_error.lock() = Some(msg.clone());
                             return Err(msg);
                         }
                     }
@@ -493,7 +491,7 @@ impl RealTelegramClient {
                         .await;
                         if let Err(e) = token_resp {
                             let msg = format!("bot auth: {}", e.message);
-                            *state.auth_error.lock().unwrap() = Some(msg.clone());
+                            *state.auth_error.lock() = Some(msg.clone());
                             return Err(msg);
                         }
                     }
@@ -507,7 +505,7 @@ impl RealTelegramClient {
                         .await
                     {
                         let msg = format!("user auth: {}", e);
-                        *state.auth_error.lock().unwrap() = Some(msg.clone());
+                        *state.auth_error.lock() = Some(msg.clone());
                         return Err(msg);
                     }
                 }
@@ -543,7 +541,7 @@ impl RealTelegramClient {
                                 .await
                                 {
                                     let msg = format!("check_authentication_code: {}", e.message);
-                                    *state.auth_error.lock().unwrap() = Some(msg.clone());
+                                    *state.auth_error.lock() = Some(msg.clone());
                                     return Err(msg);
                                 }
                             } else {
@@ -595,7 +593,7 @@ impl RealTelegramClient {
     /// this on every `WaitCode` update; if it returns `Some(code)`, the
     /// loop forwards the code via `check_authentication_code`.
     fn drain_latest_code(state: &Arc<ClientState>) -> Option<String> {
-        let mut guard = state.code_rx.lock().unwrap();
+        let mut guard = state.code_rx.lock();
         let rx = guard.as_mut()?;
         let mut latest: Option<String> = None;
         loop {

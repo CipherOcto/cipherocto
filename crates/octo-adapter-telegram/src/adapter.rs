@@ -639,7 +639,7 @@ impl<C: TelegramClient> TelegramAdapter<C> {
     /// `send_envelope`), retry will restart the TDLib transfer from byte 0,
     /// wasting bandwidth and potentially creating duplicate messages.
     /// For downloads, retry orphans the prior partial file.
-    async fn with_retry<F, Fut, T>(&self, mut op: F) -> Result<T, PlatformAdapterError>
+    pub(crate) async fn with_retry<F, Fut, T>(&self, mut op: F) -> Result<T, PlatformAdapterError>
     where
         F: FnMut() -> Fut,
         Fut: std::future::Future<Output = Result<T, crate::error::TelegramError>>,
@@ -730,7 +730,7 @@ impl<C: TelegramClient> TelegramAdapter<C> {
     /// Run an async operation with retry on Transient errors ONLY.
     /// CR-C1: RateLimited errors are returned immediately without retry.
     /// Use for non-idempotent operations (file uploads, downloads).
-    async fn with_retry_non_idempotent<F, Fut, T>(&self, mut op: F) -> Result<T, PlatformAdapterError>
+    pub(crate) async fn with_retry_non_idempotent<F, Fut, T>(&self, mut op: F) -> Result<T, PlatformAdapterError>
     where
         F: FnMut() -> Fut,
         Fut: std::future::Future<Output = Result<T, crate::error::TelegramError>>,

@@ -145,6 +145,9 @@ pub struct SessionListArgs {
     /// Base directory to scan (default: ~/.local/share/octo/telegram/).
     #[arg(long)]
     pub base_dir: Option<PathBuf>,
+    /// Path to TelegramConfig JSON for get_me fallback (default: ~/.config/octo/telegram.json).
+    #[arg(long)]
+    pub config: Option<PathBuf>,
 }
 
 impl SessionListArgs {

@@ -32,10 +32,9 @@ fn is_sensitive_key(name: &str) -> bool {
 }
 
 /// Redact sensitive key substrings in a rendered message body.
-/// For each REDACT_KEY found as a substring, redacts the value that follows
-/// (the next token after `=` or `:`). Only matches keys that are immediately
-/// followed by a separator (=, :, whitespace) to avoid false positives on
-/// already-redacted values or key substrings.
+/// Only matches `key=value` or `key: value` shapes where the key is a
+/// REDACT_KEYS entry. The value is terminated by whitespace, JSON brackets,
+/// quotes, semicolons, or end of string.
 fn redact_body_substrings(body: &str) -> String {
     let mut result = body.to_string();
     for &key in REDACT_KEYS {
@@ -45,23 +44,26 @@ fn redact_body_substrings(body: &str) -> String {
                 break;
             };
             let key_end = pos + key.len();
-            // Only match if followed by a separator (=, :, or whitespace)
-            if key_end >= result.len()
-                || !matches!(result.as_bytes()[key_end], b'=' | b':' | b' ' | b'\t')
-            {
+            // Only match if followed by = or : (not just whitespace)
+            if key_end >= result.len() || !matches!(result.as_bytes()[key_end], b'=' | b':') {
                 break;
             }
-            // Skip separator to find value start
-            let mut val_start = key_end;
-            while val_start < result.len()
-                && matches!(result.as_bytes()[val_start], b'=' | b':' | b' ' | b'\t')
+            // Skip separator (= or :) to find value start
+            let mut val_start = key_end + 1;
+            // For : separator, skip optional space
+            if result.as_bytes()[key_end] == b':'
+                && val_start < result.len()
+                && result.as_bytes()[val_start] == b' '
             {
                 val_start += 1;
             }
-            // Find the end of the value (next whitespace or end of string)
+            // Find the end of the value (terminated by whitespace, brackets, quotes, etc.)
             let mut val_end = val_start;
             while val_end < result.len()
-                && !matches!(result.as_bytes()[val_end], b' ' | b'\t' | b'\n' | b',')
+                && !matches!(
+                    result.as_bytes()[val_end],
+                    b' ' | b'\t' | b'\n' | b'\r' | b',' | b'"' | b']' | b'}' | b')' | b';'
+                )
             {
                 val_end += 1;
             }
@@ -238,5 +240,35 @@ mod tests {
         let input = "error: password=secretvalue123 leaked";
         let result = redact_body_substrings(input);
         assert!(result.contains("password=secretva***"));
+    }
+
+    #[test]
+    fn redact_body_no_false_positive_on_prose() {
+        let input = "my phone is ringing";
+        assert_eq!(redact_body_substrings(input), input);
+    }
+
+    #[test]
+    fn redact_body_stops_at_json_brackets() {
+        let input = r#"api_hash:"val" next=val"#;
+        let result = redact_body_substrings(input);
+        // api_hash:" — the : is a separator, " is a terminator, so value is empty → no redact
+        assert!(
+            result.contains("next=val"),
+            "next=val should survive, got: {}",
+            result
+        );
+    }
+
+    #[test]
+    fn redact_body_stops_at_parens_and_semicolons() {
+        let input = "error: password=secretphrase inside code; other=val";
+        let result = redact_body_substrings(input);
+        assert!(result.contains("password=secretph***"), "got: {}", result);
+        assert!(
+            result.contains("other=val"),
+            "other=val should survive, got: {}",
+            result
+        );
     }
 }

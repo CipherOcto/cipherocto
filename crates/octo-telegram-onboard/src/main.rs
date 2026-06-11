@@ -8,10 +8,13 @@ mod logging;
 use clap::Parser;
 use cli::{Cli, Command, SessionAction};
 use octo_telegram_onboard_core::auth::{
-    classify_tdlib_error, drive_bot_auth, drive_user_auth, validate_api_id, Credentials,
+    classify_tdlib_error, close_tdlib_client, drive_bot_auth, drive_user_auth, validate_api_id,
+    Credentials,
 };
 use octo_telegram_onboard_core::error::{OnboardError, Result};
-use octo_telegram_onboard_core::output::{build_config_json, write_config};
+use octo_telegram_onboard_core::output::{
+    build_config_json, default_config_path_opt, write_config,
+};
 use octo_telegram_onboard_core::session::{SessionMeta, TelegramSession};
 use std::process::ExitCode;
 use zeroize::Zeroizing;
@@ -42,19 +45,21 @@ async fn main() -> ExitCode {
     match result {
         Ok(()) => ExitCode::SUCCESS,
         Err(e) => {
-            let kind = e.to_string();
             match &e {
                 OnboardError::Generic(any) => {
-                    tracing::error!("{}: {:?}", kind, any);
+                    tracing::error!("{:#}", any);
                 }
-                _ => match e.inner() {
-                    Some(detail) if !detail.is_empty() => {
-                        tracing::error!("{}: {}", kind, detail);
+                _ => {
+                    let kind = e.to_string();
+                    match e.inner() {
+                        Some(detail) if !detail.is_empty() => {
+                            tracing::error!("{}: {}", kind, detail);
+                        }
+                        _ => {
+                            tracing::error!("{}", kind);
+                        }
                     }
-                    _ => {
-                        tracing::error!("{}", kind);
-                    }
-                },
+                }
             }
             e.as_exit_code()
         }
@@ -94,13 +99,15 @@ fn validate_verifying_key(key: &str) -> Result<()> {
     Ok(())
 }
 
-/// TDLib get_me flow with a timeout — used by both whoami and session list fallback.
+/// TDLib get_me flow with a timeout — used by whoami and session list fallback.
+/// NOTE: `tdlib_rs::receive()` is process-global; this function assumes no other
+/// TDLib client is active in this process. Do not call in parallel.
 async fn tdlib_get_me_with_timeout(
     data_dir: &std::path::Path,
     api_id: i32,
     api_hash: &str,
     timeout_secs: u64,
-) -> Option<(i64, Option<String>, Option<String>)> {
+) -> std::result::Result<(i64, Option<String>, Option<String>), OnboardError> {
     let client_id = tdlib_rs::create_client();
     let db_dir = data_dir.join("database");
     let files_dir = data_dir.join("files");
@@ -124,8 +131,8 @@ async fn tdlib_get_me_with_timeout(
     )
     .await;
     if let Err(e) = params_err {
-        tracing::debug!(error = %e.message, "set_tdlib_parameters failed in get_me fallback");
-        return None;
+        close_tdlib_client(client_id).await;
+        return Err(classify_tdlib_error(e.message));
     }
 
     let (tx, mut rx) = tokio::sync::mpsc::channel::<bool>(1);
@@ -158,7 +165,9 @@ async fn tdlib_get_me_with_timeout(
     let channel_result = tokio::time::timeout(timeout, rx.recv()).await;
     match channel_result {
         Ok(Some(true)) => {
-            let me_enum = tdlib_rs::functions::get_me(client_id).await.ok()?;
+            let me_enum = tdlib_rs::functions::get_me(client_id)
+                .await
+                .map_err(|e| classify_tdlib_error(e.message))?;
             #[allow(unreachable_patterns)]
             match me_enum {
                 tdlib_rs::enums::User::User(u) => {
@@ -166,12 +175,31 @@ async fn tdlib_get_me_with_timeout(
                         .usernames
                         .as_ref()
                         .and_then(|names| names.active_usernames.first().cloned());
-                    Some((u.id, username, Some(u.first_name)))
+                    close_tdlib_client(client_id).await;
+                    Ok((u.id, username, Some(u.first_name)))
                 }
-                _ => None,
+                _ => {
+                    close_tdlib_client(client_id).await;
+                    Err(OnboardError::Generic(anyhow::anyhow!(
+                        "get_me returned unexpected User variant"
+                    )))
+                }
             }
         }
-        _ => None,
+        Ok(Some(false)) => {
+            close_tdlib_client(client_id).await;
+            Err(OnboardError::AuthRejected(
+                "session expired or invalid".into(),
+            ))
+        }
+        Ok(None) => {
+            close_tdlib_client(client_id).await;
+            Err(OnboardError::Cancelled("whoami channel closed".into()))
+        }
+        Err(_) => {
+            close_tdlib_client(client_id).await;
+            Err(OnboardError::Cancelled("whoami timed out".into()))
+        }
     }
 }
 
@@ -218,6 +246,7 @@ async fn run_bot_setup(args: cli::BotSetupArgs) -> Result<()> {
         std::time::Duration::from_secs(timeout),
     )
     .await?;
+    close_tdlib_client(client_id).await;
 
     SessionMeta::from_session(&session).write(&session.data_dir)?;
 
@@ -275,6 +304,7 @@ async fn run_user_login(args: cli::UserLoginArgs) -> Result<()> {
         std::time::Duration::from_secs(timeout),
     )
     .await?;
+    close_tdlib_client(client_id).await;
 
     SessionMeta::from_session(&session).write(&session.data_dir)?;
 
@@ -292,12 +322,7 @@ async fn run_user_login(args: cli::UserLoginArgs) -> Result<()> {
 async fn run_whoami(args: cli::WhoamiArgs) -> Result<()> {
     let config_path = args
         .config
-        .or_else(|| {
-            let mut base = dirs::config_dir()?;
-            base.push("octo");
-            base.push("telegram.json");
-            Some(base)
-        })
+        .or_else(default_config_path_opt)
         .ok_or_else(|| {
             OnboardError::BadConfig("could not determine config path (use --config)".into())
         })?;
@@ -323,7 +348,8 @@ async fn run_whoami(args: cli::WhoamiArgs) -> Result<()> {
         return Ok(());
     }
 
-    // M7/L4: Validate api_id and api_hash from config
+    // No sidecar — use tdlib_get_me_with_timeout
+    tracing::info!("No session_meta.json found, attempting get_me() via TDLib...");
     let api_id_raw = config["api_id"]
         .as_i64()
         .ok_or_else(|| OnboardError::BadConfig("config missing api_id".into()))?;
@@ -334,96 +360,11 @@ async fn run_whoami(args: cli::WhoamiArgs) -> Result<()> {
         .ok_or_else(|| OnboardError::BadConfig("config missing or empty api_hash".into()))?
         .to_string();
 
-    // No sidecar — use TDLib get_me with spawn_blocking for receive loop (M5)
-    tracing::info!("No session_meta.json found, attempting get_me() via TDLib...");
-    let client_id = tdlib_rs::create_client();
-
-    let db_dir = data_path.join("database");
-    let files_dir = data_path.join("files");
-
-    tdlib_rs::functions::set_tdlib_parameters(
-        false,
-        db_dir.to_string_lossy().into_owned(),
-        files_dir.to_string_lossy().into_owned(),
-        String::new(),
-        true,
-        true,
-        true,
-        false,
-        api_id,
-        api_hash,
-        "en".into(),
-        "CipherOcto-TelegramOnboard".into(),
-        String::new(),
-        env!("CARGO_PKG_VERSION").into(),
-        client_id,
-    )
-    .await
-    .map_err(|e| classify_tdlib_error(e.message))?;
-
-    // M5: Use spawn_blocking for the blocking receive loop,
-    // communicate via an mpsc channel.
-    let (tx, mut rx) = tokio::sync::mpsc::channel::<bool>(1);
-    let timeout = std::time::Duration::from_secs(10);
-
-    let _receive_handle = tokio::task::spawn_blocking(move || {
-        let start = std::time::Instant::now();
-        while start.elapsed() < timeout {
-            if let Some((tdlib_rs::enums::Update::AuthorizationState(ref auth_update), _cid)) =
-                tdlib_rs::receive()
-            {
-                match &auth_update.authorization_state {
-                    tdlib_rs::enums::AuthorizationState::Ready => {
-                        let _ = tx.blocking_send(true);
-                        return;
-                    }
-                    tdlib_rs::enums::AuthorizationState::Closed
-                    | tdlib_rs::enums::AuthorizationState::WaitPhoneNumber => {
-                        let _ = tx.blocking_send(false);
-                        return;
-                    }
-                    _ => {}
-                }
-            }
-            std::thread::sleep(std::time::Duration::from_millis(50));
-        }
-        let _ = tx.blocking_send(false);
-    });
-
-    let channel_result = tokio::time::timeout(timeout, rx.recv()).await;
-
-    match channel_result {
-        Ok(Some(true)) => {
-            // Ready — call get_me
-            let me_enum = tdlib_rs::functions::get_me(client_id)
-                .await
-                .map_err(|e| classify_tdlib_error(e.message))?;
-            #[allow(unreachable_patterns)]
-            let me = match me_enum {
-                tdlib_rs::enums::User::User(u) => u,
-                _ => {
-                    return Err(OnboardError::Generic(anyhow::anyhow!(
-                        "get_me: unexpected User variant"
-                    )))
-                }
-            };
-            let username = me
-                .usernames
-                .as_ref()
-                .and_then(|u| u.active_usernames.first().cloned())
-                .unwrap_or_else(|| "(none)".into());
-            println!(
-                "User ID: {}\nUsername: {}\nFirst name: {}",
-                me.id, username, me.first_name
-            );
-            Ok(())
-        }
-        Ok(Some(false)) => Err(OnboardError::AuthRejected(
-            "Session expired or invalid".into(),
-        )),
-        Ok(None) => Err(OnboardError::Cancelled("whoami channel closed".into())),
-        Err(_) => Err(OnboardError::Cancelled("whoami timed out (10s)".into())),
-    }
+    let (user_id, username, _first_name) =
+        tdlib_get_me_with_timeout(data_path, api_id, &api_hash, 10).await?;
+    let username = username.unwrap_or_else(|| "(none)".into());
+    println!("User ID: {}\nUsername: {}", user_id, username);
+    Ok(())
 }
 
 async fn run_session_list(args: cli::SessionListArgs) -> Result<()> {
@@ -482,27 +423,18 @@ async fn run_session_list(args: cli::SessionListArgs) -> Result<()> {
                     );
                 } else {
                     // Try get_me fallback — read config for api_id/api_hash
-                    let config_path = dirs::config_dir().map(|mut p| {
-                        p.push("octo");
-                        p.push("telegram.json");
-                        p
-                    });
+                    let config_path = args.config.clone().or_else(default_config_path_opt);
                     let fallback = if let Some(cp) = config_path {
                         if let Ok(bytes) = std::fs::read(&cp) {
                             if let Ok(cfg) = serde_json::from_slice::<serde_json::Value>(&bytes) {
-                                let api_id = cfg["api_id"].as_i64().and_then(|v| {
-                                    if v > 0 && v <= i32::MAX as i64 {
-                                        Some(v as i32)
-                                    } else {
-                                        None
-                                    }
-                                });
+                                let api_id =
+                                    cfg["api_id"].as_i64().and_then(|v| validate_api_id(v).ok());
                                 let api_hash = cfg["api_hash"]
                                     .as_str()
                                     .filter(|s| !s.is_empty())
                                     .map(String::from);
                                 if let (Some(aid), Some(ahash)) = (api_id, api_hash) {
-                                    tdlib_get_me_with_timeout(&path, aid, &ahash, 5).await
+                                    tdlib_get_me_with_timeout(&path, aid, &ahash, 5).await.ok()
                                 } else {
                                     None
                                 }

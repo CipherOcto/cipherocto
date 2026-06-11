@@ -12,6 +12,34 @@ use std::sync::Arc;
 use tokio::sync::{mpsc, Notify};
 use zeroize::Zeroizing;
 
+/// Send `AuthorizationState::Close` to TDLib and wait for `Closed`.
+/// Best-effort: if the close or wait fails, logs and returns (the client
+/// handle will leak until process exit, which is the same as not calling this).
+pub async fn close_tdlib_client(client_id: i32) {
+    if let Err(e) = tdlib_rs::functions::close(client_id).await {
+        tracing::debug!(error = %e.message, "tdlib close() failed");
+        return;
+    }
+    // Wait up to 2s for the Closed update
+    let start = std::time::Instant::now();
+    let timeout = std::time::Duration::from_secs(2);
+    while start.elapsed() < timeout {
+        if let Some((tdlib_rs::enums::Update::AuthorizationState(ref update), cid)) =
+            tdlib_rs::receive()
+        {
+            if cid == client_id
+                && matches!(
+                    update.authorization_state,
+                    tdlib_rs::enums::AuthorizationState::Closed
+                )
+            {
+                return;
+            }
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+    }
+}
+
 /// Credentials provided by the operator (CLI args or env vars).
 pub struct Credentials {
     pub phone: Option<String>,

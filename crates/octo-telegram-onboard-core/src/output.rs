@@ -10,11 +10,16 @@ use std::path::{Path, PathBuf};
 
 /// Resolve the default output path via `dirs::config_dir()`.
 pub fn default_config_path() -> Result<PathBuf> {
-    let mut base = dirs::config_dir()
-        .ok_or_else(|| OnboardError::BadConfig("could not determine config directory".into()))?;
+    default_config_path_opt()
+        .ok_or_else(|| OnboardError::BadConfig("could not determine config directory".into()))
+}
+
+/// Resolve the default output path, returning `None` if `dirs::config_dir()` is unavailable.
+pub fn default_config_path_opt() -> Option<PathBuf> {
+    let mut base = dirs::config_dir()?;
     base.push("octo");
     base.push("telegram.json");
-    Ok(base)
+    Some(base)
 }
 
 /// Build the TelegramConfig-compatible JSON from a session.

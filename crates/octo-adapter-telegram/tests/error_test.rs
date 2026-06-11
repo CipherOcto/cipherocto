@@ -138,3 +138,47 @@ fn test_redact_word_boundary_suffix() {
     assert!(result.contains("<redacted>"), "should redact when token+extra fits 30-40 range");
     assert_eq!(result, "<redacted>");
 }
+
+// =============================================================================
+// API-M7: redact_credentials catch-all / backtrack paths
+// =============================================================================
+
+/// API-M7: A digit-colon pattern that looks like a token but has a token
+/// segment that's too short (29 chars) must NOT be redacted. The scanner
+/// must backtrack and emit the original text. This exercises the
+/// "Not a valid token match — backtrack" path in `redact_credentials`.
+#[test]
+fn test_redact_short_token_segment_not_redacted() {
+    // Token segment is 29 chars — one below the 30-char minimum.
+    let input = "auth failed: 12345678:ABCDEFGHIJKLMNOPQRSTUVWXYZAB";
+    let result = redact_credentials(input);
+    assert_eq!(
+        result, input,
+        "29-char token segment should not be redacted"
+    );
+}
+
+/// API-M7: A digit-colon pattern with only 3 chars after colon (well below
+/// the 30-char minimum) must pass through unchanged.
+#[test]
+fn test_redact_very_short_after_colon() {
+    let input = "error code 12345678:abc occurred";
+    let result = redact_credentials(input);
+    assert_eq!(result, input, "3-char after-colon segment should not be redacted");
+}
+
+/// API-M7: A digit-colon with 11-digit prefix (above the 8-10 range)
+/// followed by a valid-length token should NOT be redacted because the
+/// digit count exceeds the 8-10 range. The scanner does not enter the
+/// colon-check path for 11+ digit sequences.
+#[test]
+fn test_redact_11_digit_prefix_not_redacted() {
+    // 11 digits + colon + 35 chars = digit_len=11, outside 8..=10 range
+    let input = "12345678901:ABCdefGHIjklMNOpqrsTUVwxyz-_AB";
+    let result = redact_credentials(input);
+    assert!(
+        !result.contains("<redacted>"),
+        "11-digit prefix should not enter token-check path, got: {}",
+        result
+    );
+}

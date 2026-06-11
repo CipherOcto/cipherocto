@@ -543,3 +543,92 @@ fn test_canonicalize_no_verifying_key_skips_verify() {
     let result = adapter.canonicalize(&raw);
     assert!(result.is_ok(), "without verifying_key, canonicalize should pass: {:?}", result.err());
 }
+
+// =============================================================================
+// API-M4: parse_chat_id edge cases
+// =============================================================================
+
+/// API-M4: `parse_chat_id("0")` must be rejected. Zero is >= 0, so it
+/// falls into the "chat_id must be negative" branch. The mock's
+/// `receive_updates` uses `chat_id.parse().unwrap_or(0)` — if `parse_chat_id`
+/// accepted 0, documents would be silently routed to chat_id 0 which is
+/// a Telegram system sentinel (not a real chat).
+#[test]
+fn test_parse_chat_id_rejects_zero() {
+    use octo_adapter_telegram::client::parse_chat_id;
+    let result = parse_chat_id("0");
+    assert!(result.is_err(), "parse_chat_id('0') must reject zero: got Ok({:?})", result.ok());
+    let err_msg = result.unwrap_err();
+    assert!(
+        err_msg.contains("negative"),
+        "error should mention negative convention, got: {}",
+        err_msg
+    );
+}
+
+// =============================================================================
+// API-M1: TelegramError::Auth -> PlatformAdapterError redaction test
+// =============================================================================
+
+/// API-M1: When `TelegramError::Auth` contains a bot token in its message,
+/// the `From<TelegramError> for PlatformAdapterError` impl must call
+/// `redact_credentials` before surfacing the message. This test verifies
+/// the redaction is applied during error conversion.
+#[test]
+fn test_auth_error_redacts_credentials_in_conversion() {
+    use octo_adapter_telegram::TelegramError;
+    use octo_network::dot::error::PlatformAdapterError;
+
+    // Simulate a TDLib auth error that echoes the bot token
+    let err = TelegramError::Auth(
+        "unauthorized: token 1234567890:ABCdefGHIjklMNOpqrsTUVwxyz-_ABCDE rejected".into()
+    );
+    let platform_err: PlatformAdapterError = err.into();
+    match platform_err {
+        PlatformAdapterError::ApiError { code, message } => {
+            assert_eq!(code, 401, "Auth error should map to 401");
+            assert!(
+                !message.contains("1234567890:ABCdefGHIjklMNOpqrsTUVwxyz-_ABCDE"),
+                "bot token must be redacted in error message, got: {}",
+                message
+            );
+            assert!(
+                message.contains("<redacted>"),
+                "error message should contain <redacted>, got: {}",
+                message
+            );
+            assert!(
+                message.contains("unauthorized"),
+                "original context should be preserved, got: {}",
+                message
+            );
+        }
+        other => panic!("expected ApiError, got: {:?}", other),
+    }
+}
+
+/// API-M1 companion: the catch-all branch in the From impl (for Io, Json,
+/// Base64, SendFailed, TdlibClient) also calls `redact_credentials`.
+#[test]
+fn test_catch_all_error_redacts_credentials() {
+    use octo_adapter_telegram::TelegramError;
+    use octo_network::dot::error::PlatformAdapterError;
+
+    // SendFailed is a catch-all variant
+    let err = TelegramError::SendFailed(
+        "send failed for token 1234567890:ABCdefGHIjklMNOpqrsTUVwxyz-_ABCDE".into()
+    );
+    let platform_err: PlatformAdapterError = err.into();
+    match platform_err {
+        PlatformAdapterError::ApiError { code, message } => {
+            assert_eq!(code, 500, "SendFailed should map to 500");
+            assert!(
+                !message.contains("1234567890:ABCdefGHIjklMNOpqrsTUVwxyz-_ABCDE"),
+                "bot token must be redacted in catch-all path, got: {}",
+                message
+            );
+            assert!(message.contains("<redacted>"), "should contain <redacted>");
+        }
+        other => panic!("expected ApiError, got: {:?}", other),
+    }
+}

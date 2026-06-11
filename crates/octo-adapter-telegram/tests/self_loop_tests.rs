@@ -489,3 +489,47 @@ async fn test_adapter_filters_self_messages() {
     );
     assert_eq!(received[0].payload, b"from other");
 }
+
+// =============================================================================
+// API-M6: set_username before set_user_id
+// =============================================================================
+
+/// API-M6: `set_username` called before `set_user_id` must be a no-op
+/// (logged at warn level). The username alone is insufficient to identify
+/// "self" — without the numeric user_id we cannot compare incoming message
+/// senders, and inserting a `user_id=0` sentinel would silently mis-filter.
+/// This test verifies that the identity stays `None` after the no-op.
+#[test]
+fn test_set_username_before_set_user_id_is_noop() {
+    let handle = SelfHandle::new();
+    // Call set_username FIRST, before set_user_id
+    handle.set_username("early_bot".to_string());
+    // Identity must still be None — the username was ignored.
+    assert_eq!(
+        handle.get(),
+        None,
+        "set_username before set_user_id should be a no-op; identity must remain None"
+    );
+    assert_eq!(
+        handle.user_id(),
+        None,
+        "user_id must be None after no-op set_username"
+    );
+    assert_eq!(
+        handle.username(),
+        None,
+        "username() must return None when no user_id is set"
+    );
+    // Now set_user_id — the identity should appear.
+    handle.set_user_id(42);
+    assert_eq!(handle.get().unwrap().user_id, 42);
+    // The early username was lost (no-op), so it should be empty.
+    assert_eq!(
+        handle.get().unwrap().username,
+        "",
+        "early username should be empty after no-op"
+    );
+    // Setting username AFTER set_user_id works normally.
+    handle.set_username("late_bot".to_string());
+    assert_eq!(handle.get().unwrap().username, "late_bot");
+}

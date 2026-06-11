@@ -5,11 +5,16 @@ use crate::client::{NewMessage, SentMessage, TelegramClient, TelegramUpdate};
 use crate::error::Result;
 use async_trait::async_trait;
 use std::collections::BTreeMap;
+use std::sync::Arc;
+use parking_lot::Mutex;
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::{Arc, Mutex};
 
-/// Type alias for the sent-document data map (chat_id, filename) → bytes.
-type DocDataMap = BTreeMap<(String, String), Vec<u8>>;
+/// Type alias for the sent-document data map.
+/// PERF-M2: stores (raw_bytes, cached_base64_encoding) so that
+/// `receive_updates` can re-inject the encoded envelope without
+/// re-encoding on every poll. The base64 form is computed once in
+/// `send_envelope`/`send_file` and reused on each poll.
+type DocDataMap = BTreeMap<(String, String), (Vec<u8>, String)>;
 
 /// In-memory mock that records sends and queues injected updates.
 #[derive(Clone)]
@@ -87,7 +92,7 @@ impl MockTelegramClient {
     /// API-H3: set the auth state queue for authenticate() to step through.
     /// Add states in the order they should be processed (e.g., WaitCode, Ready).
     pub fn set_auth_queue(&self, states: Vec<crate::auth::AuthStateKey>) {
-        *self.auth_queue.lock().unwrap() = states.into();
+        *self.auth_queue.lock() = states.into();
     }
     pub fn new() -> Self {
         Self {
@@ -109,8 +114,8 @@ impl MockTelegramClient {
     /// once `n` reaches zero the mock returns `Ok` as normal. Used by
     /// tests to exercise the adapter's `with_retry` retry path.
     pub fn fail_next_n_sends(&self, n: u32, spec: FailureSpec) {
-        *self.fail_send_message.lock().unwrap() = Some(spec);
-        *self.fail_send_message_remaining.lock().unwrap() = n;
+        *self.fail_send_message.lock() = Some(spec);
+        *self.fail_send_message_remaining.lock() = n;
     }
 
     /// M6: total number of `send_message` / `send_envelope` calls so far,
@@ -122,7 +127,7 @@ impl MockTelegramClient {
 
     /// Inject an update that the next `receive_updates` call will yield.
     pub fn inject_update(&self, update: TelegramUpdate) {
-        self.pending_updates.lock().unwrap().push(update);
+        self.pending_updates.lock().push(update);
     }
 
     /// Set the sender id used when re-injecting document-derived
@@ -130,15 +135,15 @@ impl MockTelegramClient {
     /// field empty, matching the pre-H5 behavior. Pass a non-zero id to
     /// exercise the adapter's self-loop filter for document round-trips.
     pub fn set_mock_sender(&self, id: i64) {
-        *self.mock_sender_id.lock().unwrap() = id;
+        *self.mock_sender_id.lock() = id;
     }
 
     pub fn sent_messages(&self) -> Vec<(String, String)> {
-        self.sent_messages.lock().unwrap().clone()
+        self.sent_messages.lock().clone()
     }
 
     pub fn sent_documents(&self) -> Vec<(String, String, usize)> {
-        self.sent_documents.lock().unwrap().clone()
+        self.sent_documents.lock().clone()
     }
 
     /// Drain the sent-doc map. After this call, subsequent `receive_updates`
@@ -149,7 +154,7 @@ impl MockTelegramClient {
     /// document round-trip. Callers now opt in to draining once they have
     /// observed the doc-derived message.
     pub fn drain_received_documents(&self) {
-        self.sent_doc_data.lock().unwrap().clear();
+        self.sent_doc_data.lock().clear();
     }
 
     /// M6: if a failure has been injected and there are still calls left
@@ -164,14 +169,13 @@ impl MockTelegramClient {
     /// the same failure type.
     fn maybe_consume_failure_injection(&self) -> Option<crate::error::TelegramError> {
         self.send_call_total.fetch_add(1, Ordering::Relaxed);
-        let mut remaining = self.fail_send_message_remaining.lock().unwrap();
+        let mut remaining = self.fail_send_message_remaining.lock();
         if *remaining == 0 {
             return None;
         }
         *remaining = remaining.saturating_sub(1);
         self.fail_send_message
             .lock()
-            .unwrap()
             .clone()
             .map(FailureSpec::into_error)
     }
@@ -204,7 +208,6 @@ impl TelegramClient for MockTelegramClient {
         );
         self.sent_messages
             .lock()
-            .unwrap()
             .push((chat_id.to_string(), text.to_string()));
         // Mock timestamp: use current Unix time
         let timestamp = std::time::SystemTime::now()
@@ -237,18 +240,18 @@ impl TelegramClient for MockTelegramClient {
         );
         self.sent_messages
             .lock()
-            .unwrap()
             .push((chat_id.to_string(), encoded_envelope.to_string()));
-        self.sent_documents.lock().unwrap().push((
+        self.sent_documents.lock().push((
             chat_id.to_string(),
             filename.to_string(),
             data.len(),
         ));
         // Store data for receive-path injection (document envelope round-trip).
+        // PERF-M2: pre-encode once; receive_updates reads the cached form.
+        let encoded_cached = crate::envelope::encode_envelope(data);
         self.sent_doc_data
             .lock()
-            .unwrap()
-            .insert((chat_id.to_string(), filename.to_string()), data.to_vec());
+            .insert((chat_id.to_string(), filename.to_string()), (data.to_vec(), encoded_cached));
         let timestamp = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .map(|d| d.as_secs() as i64)
@@ -272,16 +275,17 @@ impl TelegramClient for MockTelegramClient {
             "mock-file-{}",
             self.next_msg_id.fetch_add(1, Ordering::Relaxed)
         );
-        self.sent_documents.lock().unwrap().push((
+        self.sent_documents.lock().push((
             chat_id.to_string(),
             filename.to_string(),
             data.len(),
         ));
         // Store data for receive-path injection (document round-trip).
+        // PERF-M2: pre-encode once; receive_updates reads the cached form.
+        let encoded_cached = crate::envelope::encode_envelope(data);
         self.sent_doc_data
             .lock()
-            .unwrap()
-            .insert((chat_id.to_string(), filename.to_string()), data.to_vec());
+            .insert((chat_id.to_string(), filename.to_string()), (data.to_vec(), encoded_cached));
         let timestamp = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .map(|d| d.as_secs() as i64)
@@ -303,26 +307,25 @@ impl TelegramClient for MockTelegramClient {
         // explicitly drains via `drain_received_documents()`. H4 fix: this
         // mirrors at-least-once receive semantics.
         // R6 MEM-C3: iterate under the lock, cloning only the header fields (chat_id, filename)
-        // but NOT the full Vec<u8> data. The data is encoded to base64 while still under
-        // the lock, and only the encoded string (much smaller) is kept for the push loop.
-        // This reduces per-poll allocations from N×(key.clone() + value.clone()) to N×(key.clone()).
+        // but NOT the full Vec<u8> data.
+        // PERF-M2: read the pre-encoded base64 form from the cache instead
+        // of re-encoding on every poll. The encoding was computed once in
+        // `send_envelope`/`send_file` and stored alongside the raw bytes.
         let pending: Vec<_> = {
-            let guard = self.sent_doc_data.lock().unwrap();
-            guard.iter().map(|((chat_id, _filename), data)| {
-                let encoded = crate::envelope::encode_envelope(data);
-                let sender_id = *self.mock_sender_id.lock().unwrap();
+            let guard = self.sent_doc_data.lock();
+            guard.iter().map(|((chat_id, _filename), (_data, cached_encoded))| {
+                let sender_id = *self.mock_sender_id.lock();
                 let (from, from_legacy) = if sender_id == 0 {
                     (crate::client::MessageSender::Unknown, String::new())
                 } else {
                     (crate::client::MessageSender::User(sender_id), sender_id.to_string())
                 };
-                (chat_id.clone(), encoded, from, from_legacy)
+                (chat_id.clone(), cached_encoded.clone(), from, from_legacy)
             }).collect()
         };
         for (chat_id, encoded, from, from_legacy) in pending {
             self.pending_updates
                 .lock()
-                .unwrap()
                 .push(TelegramUpdate::NewMessage(NewMessage {
                     chat_id: chat_id.parse().unwrap_or(0),
                     message: encoded,
@@ -330,7 +333,7 @@ impl TelegramClient for MockTelegramClient {
                     from_legacy,
                 }));
         }
-        let mut pending = self.pending_updates.lock().unwrap();
+        let mut pending = self.pending_updates.lock();
         Ok(std::mem::take(&mut *pending))
     }
 
@@ -338,7 +341,7 @@ impl TelegramClient for MockTelegramClient {
     /// API-H3: the mock now supports setting auth states via set_auth_queue.
     async fn authenticate(&self) -> Result<()> {
         // Process the auth queue if set, otherwise return Ok as before
-        let mut queue = self.auth_queue.lock().unwrap();
+        let mut queue = self.auth_queue.lock();
         if let Some(state) = queue.pop_front() {
             match state {
                 crate::auth::AuthStateKey::WaitTdlibParameters |

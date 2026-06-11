@@ -8,7 +8,8 @@
 //! `tdlib_rs::functions::get_me()` once at startup; mock returns a cached
 //! value set by test code.
 
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
+use parking_lot::Mutex;
 
 /// Identity cached for self-loop prevention.
 ///
@@ -46,7 +47,7 @@ impl SelfHandle {
     /// Cache the bot's numeric user_id.
     /// Real impl: called after TDLib `get_me` succeeds; mock: called by test setup.
     pub fn set_user_id(&self, user_id: i64) {
-        let mut guard = self.cached.lock().unwrap();
+        let mut guard = self.cached.lock();
         let username = guard
             .as_ref()
             .map(|s| s.username.clone())
@@ -62,7 +63,7 @@ impl SelfHandle {
     /// numeric `user_id` we cannot compare incoming message senders, and
     /// inserting a `user_id=0` sentinel would silently mis-filter.
     pub fn set_username(&self, username: String) {
-        let mut guard = self.cached.lock().unwrap();
+        let mut guard = self.cached.lock();
         match guard.as_mut() {
             Some(identity) => identity.username = username,
             None => {
@@ -77,26 +78,25 @@ impl SelfHandle {
     /// Cache both user_id and username in one call (R7 OBS-M1).
     pub fn set_identity(&self, user_id: i64, username: String) {
         tracing::info!(user_id, username = %username, "SelfHandle: identity set");
-        *self.cached.lock().unwrap() = Some(SelfIdentity { user_id, username });
+        *self.cached.lock() = Some(SelfIdentity { user_id, username });
     }
 
     /// Returns the cached bot identity, or None if not yet fetched.
     /// Real impl: value is set by calling TDLib `get_me` on startup.
     /// Mock impl: value is set via `set_user_id`/`set_username` in test setup.
     pub fn get(&self) -> Option<SelfIdentity> {
-        self.cached.lock().unwrap().clone()
+        self.cached.lock().clone()
     }
 
     /// Returns the cached bot user_id (canonical for self-loop comparison).
     pub fn user_id(&self) -> Option<i64> {
-        self.cached.lock().unwrap().as_ref().map(|i| i.user_id)
+        self.cached.lock().as_ref().map(|i| i.user_id)
     }
 
     /// Returns the cached bot username (for display / legacy `self_handle()` consumers).
     pub fn username(&self) -> Option<String> {
         self.cached
             .lock()
-            .unwrap()
             .as_ref()
             .map(|i| i.username.clone())
             .filter(|u| !u.is_empty())
@@ -106,7 +106,7 @@ impl SelfHandle {
     /// Returns `false` if no identity is cached — i.e. an empty self_handle
     /// does not suppress any messages.
     pub fn is_self(&self, user_id: i64) -> bool {
-        match self.cached.lock().unwrap().as_ref() {
+        match self.cached.lock().as_ref() {
             Some(id) => id.user_id == user_id,
             None => false,
         }
@@ -114,7 +114,7 @@ impl SelfHandle {
 
     /// Clear the cached identity (e.g., on logout).
     pub fn clear(&self) {
-        *self.cached.lock().unwrap() = None;
+        *self.cached.lock() = None;
     }
 }
 

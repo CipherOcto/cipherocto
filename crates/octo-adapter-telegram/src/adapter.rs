@@ -219,6 +219,14 @@ impl From<crate::error::TelegramError> for PlatformAdapterError {
 /// `i64::to_string()` is locale-independent and produces `-1001234567890`.
 /// The send path's `.trim().to_lowercase()` is a no-op on numeric strings, so
 /// the two paths agree. Using a single helper ensures they stay in sync.
+///
+/// PERF-M1: `i64::to_string()` allocates a small stack-then-heap string
+/// (~12 chars for a Telegram chat_id). This is called once per received
+/// message, but the dominant cost downstream is the SHA-256 hash in
+/// `BroadcastDomainId::new()` and the BTreeMap lookup, both of which
+/// are O(1) and dwarf the string formatting. Pre-allocating a reusable
+/// buffer (e.g. `itoa` crate or `format_buf!`) would save ~1 alloc per
+/// message but adds complexity for negligible gain. Not optimised further.
 fn chat_id_to_domain_string(chat_id: i64) -> String {
     chat_id.to_string()
 }
@@ -383,8 +391,37 @@ impl<C: TelegramClient + Send + Sync> PlatformAdapter for TelegramAdapter<C> {
                         metadata,
                     })
                 }
-                // API-M2: MessageEdited/FileDownloaded not handled by adapter (future)
-                _ => None,
+                // API-M2: MessageEdited/FileDownloaded not handled by adapter (future).
+                // Log at debug level so operators can see these are being dropped
+                // without cluttering production logs. The gateway should not
+                // depend on receiving these — they are informational only.
+                crate::client::TelegramUpdate::MessageEdited(me) => {
+                    tracing::debug!(
+                        chat_id = me.chat_id,
+                        message_id = %me.message_id,
+                        "receive_messages: dropping MessageEdited (not yet handled)"
+                    );
+                    None
+                }
+                crate::client::TelegramUpdate::FileDownloaded(fd) => {
+                    tracing::debug!(
+                        file_id = %fd.file_id,
+                        local_path = %fd.local_path,
+                        size = fd.size,
+                        "receive_messages: dropping FileDownloaded (not yet handled)"
+                    );
+                    None
+                }
+                // Catch-all for future TelegramUpdate variants added upstream.
+                // The enum is #[non_exhaustive]; this arm ensures forward
+                // compatibility without a compile error.
+                #[allow(unreachable_patterns)]
+                _ => {
+                    tracing::debug!(
+                        "receive_messages: dropping unrecognised TelegramUpdate variant"
+                    );
+                    None
+                }
             })
             .collect();
         tracing::debug!(

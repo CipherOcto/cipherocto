@@ -358,6 +358,7 @@ impl<C: TelegramClient + Send + Sync> PlatformAdapter for TelegramAdapter<C> {
             .filter_map(|u| match u {
                 crate::client::TelegramUpdate::NewMessage(nm) => {
                     // Drop self-authored messages.
+                    // SM-L2: only User sender is self-loop filtered; Chat sender is legitimate
                     if let (Some(my_id), crate::client::MessageSender::User(from_id)) =
                         (self_id, &nm.from)
                     {

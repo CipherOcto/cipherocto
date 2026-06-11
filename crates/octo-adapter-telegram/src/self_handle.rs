@@ -76,8 +76,9 @@ impl SelfHandle {
     }
 
     /// Cache both user_id and username in one call (R7 OBS-M1).
+    /// M4: debug level to avoid leaking user_id in production logs.
     pub fn set_identity(&self, user_id: i64, username: String) {
-        tracing::info!(user_id, username = %username, "SelfHandle: identity set");
+        tracing::debug!(user_id, username = %username, "SelfHandle: identity set");
         *self.cached.lock() = Some(SelfIdentity { user_id, username });
     }
 

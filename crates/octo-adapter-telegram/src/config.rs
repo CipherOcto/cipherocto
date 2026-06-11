@@ -78,7 +78,7 @@ impl std::fmt::Debug for TelegramConfig {
             .field("groups", &self.groups)
             .field("webhook_port", &self.webhook_port)
             .field("features", &self.features)
-            .field("verifying_key", &self.verifying_key)
+            .field("verifying_key", &self.verifying_key.as_ref().map(|_| "<redacted>"))
             .finish()
     }
 }
@@ -97,6 +97,11 @@ impl TelegramConfig {
         if let Some(ref key) = self.verifying_key {
             if key.len() != 44 { // base64 of 32 bytes = Ceil(32*4/3) = 44
                 return Err("verifying_key must be 44-char base64 string (32 bytes)".into());
+            }
+            // M2: also validate that the string is actually valid base64
+            use base64::Engine as _;
+            if let Err(e) = base64::engine::general_purpose::STANDARD.decode(key) {
+                return Err(format!("verifying_key is not valid base64: {}", e));
             }
         }
         // CFG-L3: validate groups are parseable as i64

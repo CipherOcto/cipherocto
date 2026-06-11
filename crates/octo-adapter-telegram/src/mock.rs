@@ -10,11 +10,9 @@ use parking_lot::Mutex;
 use std::sync::atomic::{AtomicU64, Ordering};
 
 /// Type alias for the sent-document data map.
-/// PERF-M2: stores (raw_bytes, cached_base64_encoding) so that
-/// `receive_updates` can re-inject the encoded envelope without
-/// re-encoding on every poll. The base64 form is computed once in
-/// `send_envelope`/`send_file` and reused on each poll.
-type DocDataMap = BTreeMap<(String, String), (Vec<u8>, String)>;
+/// Stores the cached base64 encoding so that the inject-once path
+/// (H1) can construct the doc-derived `NewMessage` without re-encoding.
+type DocDataMap = BTreeMap<(String, String), String>;
 
 /// In-memory mock that records sends and queues injected updates.
 #[derive(Clone)]
@@ -41,17 +39,17 @@ pub struct MockTelegramClient {
     /// "sender is user_id 0" (a real, if rare, Telegram user_id).
     /// `Some(n)` for any n exercises the adapter's self-loop filter.
     mock_sender_id: Arc<Mutex<Option<i64>>>,
-    /// M6: failure injection for `send_message` and `send_envelope`. While
-    /// the counter is non-zero, the next call decrements it and returns
-    /// the configured error. When it reaches 0, the call returns `Ok`
-    /// as normal. Used by tests to exercise `send_with_retry`'s retry
-    /// paths for `RateLimited` and `Transient` errors.
+    /// M6: failure injection for `send_message`, `send_envelope`, and
+    /// `send_file`. While the counter is non-zero, the next call
+    /// decrements it and returns the configured error. When it reaches 0,
+    /// the call returns `Ok` as normal. Used by tests to exercise
+    /// `send_with_retry`'s retry paths for `RateLimited` and `Transient`
+    /// errors.
     ///
-    /// NOTE: Only `send_message` and `send_envelope` call this helper.
-    /// `send_file` and `download_file` do NOT consume the failure counter
-    /// — they bypass failure injection entirely. Test authors relying on
+    /// `download_file` does NOT consume the failure counter — it bypasses
+    /// failure injection entirely. Test authors relying on
     /// `fail_next_n_sends` must ensure the code path only exercises
-    /// `send_message`/`send_envelope` during the retry window.
+    /// `send_message`/`send_envelope`/`send_file` during the retry window.
     ///
     /// We store a `FailureSpec` enum (Clone-friendly) rather than a
     /// `TelegramError` directly, because `TelegramError` derives `Debug`
@@ -262,7 +260,7 @@ impl TelegramClient for MockTelegramClient {
         let encoded_cached = crate::envelope::encode_envelope(data);
         self.sent_doc_data
             .lock()
-            .insert((chat_id.to_string(), filename.to_string()), (data.to_vec(), encoded_cached.clone()));
+            .insert((chat_id.to_string(), filename.to_string()), encoded_cached.clone());
         let (from, from_legacy) = self.build_sender();
         self.pending_updates.lock().push(TelegramUpdate::NewMessage(NewMessage {
             chat_id: chat_id.parse().unwrap_or(0),
@@ -299,12 +297,11 @@ impl TelegramClient for MockTelegramClient {
             data.len(),
         ));
         // Store data for receive-path injection (document round-trip).
-        // PERF-M2: pre-encode once; receive_updates reads the cached form.
         // H1: inject the doc-derived NewMessage NOW (exactly-once).
         let encoded_cached = crate::envelope::encode_envelope(data);
         self.sent_doc_data
             .lock()
-            .insert((chat_id.to_string(), filename.to_string()), (data.to_vec(), encoded_cached.clone()));
+            .insert((chat_id.to_string(), filename.to_string()), encoded_cached.clone());
         let (from, from_legacy) = self.build_sender();
         self.pending_updates.lock().push(TelegramUpdate::NewMessage(NewMessage {
             chat_id: chat_id.parse().unwrap_or(0),
@@ -323,7 +320,7 @@ impl TelegramClient for MockTelegramClient {
     /// Tests should inject real data via sent_doc_data or override as needed.
     async fn download_file(&self, _file_id: &str) -> Result<Vec<u8>> {
         Err(crate::error::TelegramError::File(
-            "mock: no data — inject via MockTelegramClient::set_download_data".into()
+            "mock: no data — use inject_update() with FileDownloaded or override in a test-specific mock".into()
         ))
     }
 

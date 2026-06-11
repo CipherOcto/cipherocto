@@ -145,11 +145,10 @@ pub trait TelegramClient: Send + Sync {
     ///
     /// # Ordering (API-H1)
     /// Updates are yielded in **FIFO order** (insertion order). The real TDLib
-    /// client uses an `mpsc` channel which guarantees FIFO. The mock client
-    /// re-injects doc-derived updates after the initial pending_updates are
-    /// consumed, in send order. Downstream consumers should not depend on
-    /// cross-platform ordering between immediate text messages and
-    /// doc-derived re-injections.
+    /// client uses an `mpsc` channel which guarantees FIFO. The mock injects
+    /// doc-derived updates at send time (H1 — exactly-once), matching real
+    /// TDLib's emit-once behavior. Both mock and real client yield updates
+    /// in insertion order.
     ///
     /// Takes `&self` so the trait composes with `PlatformAdapter::receive_messages`
     /// (which also takes `&self`); interior mutability (Mutex/RwLock) is the

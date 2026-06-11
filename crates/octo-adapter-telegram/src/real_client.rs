@@ -28,6 +28,7 @@ use std::sync::{
     Arc,
 };
 use tokio::sync::{mpsc, Notify};
+use tracing::Instrument;
 
 /// The TDLib client ID typealias for clarity.
 type ClientId = i32;
@@ -221,9 +222,16 @@ impl RealTelegramClient {
             .take()
             .expect("shutdown_rx is set in ClientState::new and consumed exactly once");
         let state_clone = state.clone();
+        // OBS-L2/L3: instrument the spawned receive_loop with a tracing
+        // Span carrying client_id. This provides span-level correlation —
+        // all tracing events emitted within receive_loop (and any entered
+        // child spans) automatically carry the client_id field. Using
+        // `Instrument::instrument()` on the future (rather than a `!Send`
+        // `Entered` guard inside the async fn) keeps the spawned future `Send`.
+        let span = tracing::info_span!("receive_loop", client_id = state_clone.client_id);
         tokio::spawn(async move {
             Self::receive_loop(state_clone, shutdown_rx).await;
-        });
+        }.instrument(span));
 
         // Wait for Ready state (or Closed / auth error on failure), with 30 s timeout.
         let notified = state.auth_ready.notified();
@@ -292,12 +300,10 @@ impl RealTelegramClient {
     /// from within this existing tokio runtime (no nested runtime, no
     /// detached thread — C3) and then exits.
     async fn receive_loop(state: Arc<ClientState>, mut shutdown_rx: mpsc::Receiver<ClientId>) {
-        // OBS-L1: structured log at loop start — includes client_id for
-        // correlation. All subsequent tracing calls within this function
-        // are in the same logical context. A tracing::Span would be ideal
-        // but state's Mutex fields don't impl Debug (required by
-        // #[tracing::instrument(skip(...))]).
-        tracing::info!(client_id = state.client_id, "receive_loop: starting");
+        // OBS-L1/L2/L3: the tracing Span for this function is created at the
+        // spawn site (line ~230) and applied via `Instrument::instrument()`.
+        // All tracing events here automatically carry the client_id field.
+        tracing::info!("receive_loop: starting");
         // L15: single long-lived blocking thread for tdlib_rs::receive.
         // Previously each iteration called spawn_blocking, creating a new
         // thread per update. The dedicated thread loops on tdlib_rs::receive
@@ -364,12 +370,18 @@ impl RealTelegramClient {
                 }
             }
         }
-        // OBS-L1: structured log at loop exit for operational visibility.
-        tracing::info!(client_id = state.client_id, "receive_loop: exited");
+        // OBS-L1/L2/L3: structured log at loop exit for operational visibility.
+        // client_id is inherited from the instrumented span.
+        tracing::info!("receive_loop: exited");
     }
 
     /// Process one TDLib update. Returns `Err` for unrecoverable auth errors
     /// so the loop can record them and the constructor can surface them.
+    ///
+    /// OBS-L2/L3: the parent `receive_loop` span (with client_id) is
+    /// inherited by all events emitted here. Per-update child spans are
+    /// omitted because `Update` does not implement `Debug` and the span
+    /// guard (`Entered`) is `!Send`, preventing its use across `.await`.
     async fn handle_update(
         state: &Arc<ClientState>,
         update: tdlib_rs::enums::Update,

@@ -46,7 +46,7 @@ pub fn compute_backoff_delay(
 ///
 /// Uses: initial=1s, max=120s, jitter=0-500ms.
 pub fn default_backoff(attempt: u32) -> Duration {
-    let jitter_ms = simple_jitter(DEFAULT_MAX_JITTER_MS);
+    let jitter_ms = compute_jitter(DEFAULT_MAX_JITTER_MS);
     compute_backoff_delay(
         DEFAULT_INITIAL_BACKOFF_SECS,
         attempt,
@@ -55,11 +55,15 @@ pub fn default_backoff(attempt: u32) -> Duration {
     )
 }
 
-/// Simple deterministic jitter using attempt as seed.
+/// Compute deterministic jitter from pid + counter hash.
+///
+/// CR-L4: renamed from `simple_jitter` to `compute_jitter` for
+/// naming consistency — the function is not "simple" (it uses blake3)
+/// and `compute_*` matches the crate convention (`compute_backoff_delay`).
 ///
 /// For production, callers should use a proper RNG. This provides
 /// deterministic jitter for testing and consensus-safe paths.
-pub fn simple_jitter(max_jitter_ms: u64) -> u64 {
+pub fn compute_jitter(max_jitter_ms: u64) -> u64 {
     if max_jitter_ms == 0 {
         return 0;
     }
@@ -126,7 +130,7 @@ impl Default for RetryConfig {
 impl RetryConfig {
     /// Compute the backoff delay for a given attempt.
     pub fn delay_for_attempt(&self, attempt: u32) -> Duration {
-        let jitter_ms = simple_jitter(self.max_jitter_ms);
+        let jitter_ms = compute_jitter(self.max_jitter_ms);
         compute_backoff_delay(
             self.initial_backoff_secs,
             attempt,
@@ -183,14 +187,14 @@ mod tests {
     }
 
     #[test]
-    fn test_simple_jitter_zero() {
-        assert_eq!(simple_jitter(0), 0);
+    fn test_compute_jitter_zero() {
+        assert_eq!(compute_jitter(0), 0);
     }
 
     #[test]
-    fn test_simple_jitter_bounded() {
+    fn test_compute_jitter_bounded() {
         for _ in 0..100 {
-            let j = simple_jitter(500);
+            let j = compute_jitter(500);
             assert!(j <= 500);
         }
     }

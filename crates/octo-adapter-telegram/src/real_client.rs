@@ -321,7 +321,8 @@ impl RealTelegramClient {
                 biased;
                 _ = shutdown_rx.recv() => {
                     let client_id = state.client_id;
-                    if let Err(e) = tdlib_rs::functions::close(client_id).await {
+                    if let Err(e) = // CR-M8: fire-and-forget close — error propagation not possible in Drop context
+                    tdlib_rs::functions::close(client_id).await {
                         tracing::debug!(error = %e.message, "tdlib close on shutdown failed");
                     }
                     state.running.store(false, Ordering::Release);
@@ -679,6 +680,7 @@ impl RealTelegramClient {
     /// document messages, or empty string for other content types. The base64
     /// caption is set by `send_envelope` (see `send_envelope`'s doc-comment);
     /// the adapter's `canonicalize` decodes it.
+    // SM-L1: returns empty for ~120 service message variants
     fn extract_message_text(content: &tdlib_rs::enums::MessageContent) -> String {
         match content {
             tdlib_rs::enums::MessageContent::MessageText(msg) => msg.text.text.clone(),

@@ -445,6 +445,7 @@ impl<C: TelegramClient + Send + Sync> PlatformAdapter for TelegramAdapter<C> {
             // envelope string (R4 H1). Envelopes larger than this threshold
             // are sent via sendDocument (which accepts up to 2 GB via TDLib).
             // The `send_envelope` method handles routing automatically.
+            // SM-L3: 4096 is the base64-encoded envelope text cap; larger goes via sendDocument
             max_payload_bytes: 4096,
             supports_fragmentation: true,
             supports_encryption: false,

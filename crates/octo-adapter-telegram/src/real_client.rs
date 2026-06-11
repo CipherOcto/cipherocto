@@ -609,6 +609,7 @@ impl RealTelegramClient {
     }
 
     /// Convert tdlib-rs Update to our TelegramUpdate enum.
+    // SM-L4: sync-only — any future variant needing get_message would need async refactor
     fn convert_update(update: tdlib_rs::enums::Update) -> Option<TelegramUpdate> {
         match update {
             tdlib_rs::enums::Update::NewMessage(new_msg) => {
@@ -985,6 +986,7 @@ impl Drop for RealTelegramClient {
         self.state.running.store(false, Ordering::Release);
         // CR-H1: retry shutdown signal in case the channel was full
         for _ in 0..3 {
+            // CR-L3: try_send may fail if channel is full; retry loop handles it
             if self.state.shutdown_tx.try_send(self.state.client_id).is_ok() {
                 break;
             }
@@ -1018,7 +1020,8 @@ impl Drop for RealTelegramClient {
                     // First timeout — retry shutdown signal and wait again.
                     tracing::warn!("receive thread did not join within 2s, retrying shutdown");
                     for _ in 0..3 {
-                        if self.state.shutdown_tx.try_send(self.state.client_id).is_ok() {
+                        // CR-L3: try_send may fail if channel is full; retry loop handles it
+            if self.state.shutdown_tx.try_send(self.state.client_id).is_ok() {
                             break;
                         }
                         std::thread::sleep(std::time::Duration::from_millis(200));

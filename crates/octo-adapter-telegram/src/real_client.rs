@@ -25,7 +25,7 @@ use std::path::PathBuf;
 use parking_lot::Mutex as PlMutex;
 use std::sync::{
     atomic::{AtomicBool, Ordering},
-    Arc, Mutex,
+    Arc,
 };
 use tokio::sync::{mpsc, Notify};
 

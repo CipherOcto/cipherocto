@@ -23,11 +23,11 @@ pub struct MockTelegramClient {
     auth_queue: Arc<Mutex<std::collections::VecDeque<crate::auth::AuthStateKey>>>,
     sent_messages: Arc<Mutex<Vec<(String, String)>>>,
     sent_documents: Arc<Mutex<Vec<(String, String, usize)>>>,
-    /// Tracks data sent via send_envelope/send_file, keyed by (chat_id, filename).
-    /// Used to inject NewMessage updates for the document receive path.
-    /// Drained only via `drain_received_documents()`; `receive_updates`
-    /// re-injects on every call so callers can re-poll until they choose
-    /// to drain (H4 fix — matches at-least-once semantics of receive loops).
+    /// Tracks data sent via `send_envelope`/`send_file`, keyed by
+    /// `(chat_id, filename)`. Used at send time to construct the
+    /// doc-derived `NewMessage` for the inject-once path (H1).
+    /// Not drained on `receive_updates` — each document is injected
+    /// exactly once at send time, matching real TDLib behavior.
     ///
     /// H6: prior to the H6 split, this was named `sent_doc_data` and only
     /// fed by `send_document`. After the split, both `send_envelope` and
@@ -41,10 +41,6 @@ pub struct MockTelegramClient {
     /// "sender is user_id 0" (a real, if rare, Telegram user_id).
     /// `Some(n)` for any n exercises the adapter's self-loop filter.
     mock_sender_id: Arc<Mutex<Option<i64>>>,
-    /// H2: when true, `send_message` pushes an outgoing `NewMessage`
-    /// to `pending_updates`, mirroring the real client's TDLib event
-    /// that `convert_update` filters via `is_outgoing`.
-    echo_outgoing: Arc<Mutex<bool>>,
     /// M6: failure injection for `send_message` and `send_envelope`. While
     /// the counter is non-zero, the next call decrements it and returns
     /// the configured error. When it reaches 0, the call returns `Ok`
@@ -106,7 +102,6 @@ impl MockTelegramClient {
             pending_updates: Arc::new(Mutex::new(Vec::new())),
             next_msg_id: Arc::new(AtomicU64::new(1)),
             mock_sender_id: Arc::new(Mutex::new(None)),
-            echo_outgoing: Arc::new(Mutex::new(false)),
             fail_send_message: Arc::new(Mutex::new(None)),
             fail_send_message_remaining: Arc::new(Mutex::new(0)),
             send_call_total: Arc::new(AtomicU64::new(0)),
@@ -144,14 +139,6 @@ impl MockTelegramClient {
         *self.mock_sender_id.lock() = id;
     }
 
-    /// H2: enable or disable outgoing message echo on `send_message`.
-    /// When enabled, `send_message` pushes an outgoing `NewMessage` to
-    /// `pending_updates`, mirroring the real client's TDLib behavior.
-    /// The adapter's `convert_update` filters these via `is_outgoing`.
-    pub fn set_echo_outgoing(&self, enabled: bool) {
-        *self.echo_outgoing.lock() = enabled;
-    }
-
     pub fn sent_messages(&self) -> Vec<(String, String)> {
         self.sent_messages.lock().clone()
     }
@@ -163,11 +150,8 @@ impl MockTelegramClient {
     /// H1: helper to build the sender fields from mock_sender_id.
     fn build_sender(&self) -> (crate::client::MessageSender, String) {
         match *self.mock_sender_id.lock() {
-            Some(id) if id != 0 => (
-                crate::client::MessageSender::User(id),
-                id.to_string(),
-            ),
-            _ => (crate::client::MessageSender::Unknown, String::new()),
+            Some(id) => (crate::client::MessageSender::User(id), id.to_string()),
+            None => (crate::client::MessageSender::Unknown, String::new()),
         }
     }
 
@@ -234,17 +218,6 @@ impl TelegramClient for MockTelegramClient {
         self.sent_messages
             .lock()
             .push((chat_id.to_string(), text.to_string()));
-        // H2: when echo_outgoing is enabled, push an outgoing NewMessage
-        // mirroring real TDLib behavior. The adapter's convert_update
-        // filters these via is_outgoing.
-        if *self.echo_outgoing.lock() {
-            self.pending_updates.lock().push(TelegramUpdate::NewMessage(NewMessage {
-                chat_id: chat_id.parse().unwrap_or(0),
-                message: text.to_string(),
-                from: crate::client::MessageSender::Unknown,
-                from_legacy: String::new(),
-            }));
-        }
         // Mock timestamp: use current Unix time
         let timestamp = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)

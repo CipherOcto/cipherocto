@@ -625,13 +625,21 @@ impl RealTelegramClient {
                 Ok(())
             }
             tdlib_rs::enums::AuthorizationState::WaitRegistration(_) => {
-                // M3: first-time user signup is not supported via this adapter.
-                // Surface a descriptive error so the operator knows the user
-                // must register via the Telegram app first.
+                // M3/L2: first-time user signup is not supported via this
+                // adapter. Surface a descriptive error so the operator knows
+                // the user must register via the Telegram app first.
+                // H2: notify_waiters() wakes the constructor immediately
+                // instead of waiting for the 30s timeout. We do NOT set
+                // auth_done=true — the constructor's !auth_done branch
+                // reads auth_error and returns Err.
+                // L2: stop the receive loop after the first WaitRegistration
+                // to prevent repeated warn-log spam from TDLib re-emissions.
                 tracing::warn!("auth: WaitRegistration — user account does not exist; registration not supported");
-                let msg = "WaitRegistration: phone number not registered — sign up via the Telegram app first".to_string();
-                *state.auth_error.lock() = Some(msg.clone());
-                Err(msg)
+                let msg = format!("{}", crate::auth::AuthError::RegistrationRequired);
+                *state.auth_error.lock() = Some(msg);
+                state.running.store(false, Ordering::Release);
+                state.auth_ready.notify_waiters();
+                Err("WaitRegistration: registration required".into())
             }
             _ => {
                 // SM-M1: log unrecognized auth states so operators can audit TDLib binding changes

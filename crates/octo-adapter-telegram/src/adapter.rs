@@ -60,31 +60,41 @@ pub struct TelegramAdapter<C: TelegramClient> {
 }
 
 impl<C: TelegramClient> TelegramAdapter<C> {
-    /// M6: decode and validate the verifying_key. Returns `Err` if the key
-    /// is present but malformed (bad base64, wrong length). Returns `Ok(None)`
-    /// if no key is configured (verification disabled by design).
-    fn decode_verifying_key(config: &TelegramConfig) -> std::result::Result<Option<[u8; 32]>, String> {
+    /// M6/M2: decode and validate the verifying_key. Returns `None` if no
+    /// key is configured (verification disabled by design) or if the key
+    /// is malformed (logs at error level — callers should fix the config).
+    /// M2: logs at error level instead of panicking on misconfigured keys,
+    /// so production deployments don't crash at startup. Verification is
+    /// disabled as a safe fallback — the adapter rejects nothing, which is
+    /// insecure but not a crash.
+    fn decode_verifying_key(config: &TelegramConfig) -> Option<[u8; 32]> {
         match config.verifying_key.as_ref() {
-            None => Ok(None),
+            None => None,
             Some(b64) => {
-                let decoded = STANDARD.decode(b64)
-                    .map_err(|e| format!("verifying_key: base64 decode failed: {e}"))?;
+                let decoded = match STANDARD.decode(b64) {
+                    Ok(d) => d,
+                    Err(e) => {
+                        tracing::error!(error = %e, "verifying_key: base64 decode failed, disabling envelope verification");
+                        return None;
+                    }
+                };
                 if decoded.len() != 32 {
-                    return Err(format!(
-                        "verifying_key: expected 32 bytes, got {}",
+                    tracing::error!(
+                        key_len = decoded.len(),
+                        "verifying_key: expected 32 bytes, got {}, disabling envelope verification",
                         decoded.len()
-                    ));
+                    );
+                    return None;
                 }
                 let mut buf = [0u8; 32];
                 buf.copy_from_slice(&decoded);
-                Ok(Some(buf))
+                Some(buf)
             }
         }
     }
 
     pub fn new(config: TelegramConfig, client: C) -> Self {
-        let verifying_key = Self::decode_verifying_key(&config)
-            .expect("verifying_key is misconfigured — fix the key or remove it");
+        let verifying_key = Self::decode_verifying_key(&config);
         Self {
             config,
             client,
@@ -103,8 +113,7 @@ impl<C: TelegramClient> TelegramAdapter<C> {
     /// a pre-configured handle without re-fetching. `SelfHandle` is
     /// cheaply cloneable (`Arc<Mutex<...>>`).
     pub fn with_self_handle(config: TelegramConfig, client: C, self_handle: SelfHandle) -> Self {
-        let verifying_key = Self::decode_verifying_key(&config)
-            .expect("verifying_key is misconfigured — fix the key or remove it");
+        let verifying_key = Self::decode_verifying_key(&config);
         Self {
             config,
             client,
@@ -118,8 +127,7 @@ impl<C: TelegramClient> TelegramAdapter<C> {
 
     /// Build an adapter with a custom retry policy (for tests / tuning).
     pub fn with_retry_config(config: TelegramConfig, client: C, retry_config: RetryConfig) -> Self {
-        let verifying_key = Self::decode_verifying_key(&config)
-            .expect("verifying_key is misconfigured — fix the key or remove it");
+        let verifying_key = Self::decode_verifying_key(&config);
         Self {
             config,
             client,

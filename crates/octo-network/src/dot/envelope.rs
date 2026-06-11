@@ -84,6 +84,13 @@ impl DeterministicEnvelope {
     /// Excludes signature field.
     pub fn to_signing_bytes(&self) -> Vec<u8> {
         let mut buf = Vec::with_capacity(256);
+        self.write_signing_bytes(&mut buf);
+        buf
+    }
+
+    /// PERF-H3: write signing bytes into existing buffer (avoids allocation).
+    fn write_signing_bytes(&self, buf: &mut Vec<u8>) {
+        buf.clear();
         buf.extend_from_slice(&self.version.to_be_bytes());
         buf.extend_from_slice(&self.network_id.to_be_bytes());
         buf.extend_from_slice(&self.message_type.to_be_bytes());
@@ -96,15 +103,21 @@ impl DeterministicEnvelope {
         buf.extend_from_slice(&self.payload_hash);
         buf.extend_from_slice(&self.route_trace_root);
         buf.extend_from_slice(&self.flags.to_be_bytes());
-        buf
     }
 
     /// Serialize to canonical wire bytes including signature.
     /// This is the complete envelope for transport across platforms.
     pub fn to_wire_bytes(&self) -> Vec<u8> {
-        let mut buf = self.to_signing_bytes();
-        buf.extend_from_slice(&self.signature);
+        let mut buf = Vec::with_capacity(282);
+        self.write_wire_bytes(&mut buf);
         buf
+    }
+
+    /// PERF-H3: write wire format into an existing buffer, avoiding allocation.
+    pub fn write_wire_bytes(&self, buf: &mut Vec<u8>) {
+        buf.clear();
+        self.write_signing_bytes(buf);
+        buf.extend_from_slice(&self.signature);
     }
 
     /// Deserialize from wire bytes (must include 64-byte signature at end).

@@ -658,7 +658,8 @@ impl RealTelegramClient {
                     new_text: String::new(),
                 },
             )),
-            tdlib_rs::enums::Update::File(file_update) => {
+            tdlib_rs::enums::// SM-M3: Update::File only for completed downloads; partial progress dropped
+            Update::File(file_update) => {
                 if !file_update.file.local.path.is_empty() {
                     Some(TelegramUpdate::FileDownloaded(
                         crate::client::FileDownloaded {

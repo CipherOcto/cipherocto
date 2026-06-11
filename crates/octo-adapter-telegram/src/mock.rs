@@ -372,6 +372,7 @@ impl TelegramClient for MockTelegramClient {
     /// `download_file` — but the call will not fail with `Unimplemented`,
     /// matching the real client's contract.
     async fn get_file_id_for_message(&self, chat_id: i64, message_id: i64) -> Result<String> {
+        // API-L6: synthesized mock file_id, never matches download_file
         Ok(format!("mock-file-{}-{}", chat_id, message_id))
     }
 }

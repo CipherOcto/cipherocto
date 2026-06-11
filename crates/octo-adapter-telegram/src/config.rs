@@ -93,6 +93,12 @@ impl TelegramConfig {
     /// Returns `Err` with a message for the first missing required field.
     pub fn validate(&self) -> std::result::Result<(), String> {
         // Feature gates: e2e_chats and voice_video are user-mode only
+        // API-L1: validate verifying_key is valid base64 if set
+        if let Some(ref key) = self.verifying_key {
+            if key.len() != 44 { // base64 of 32 bytes = Ceil(32*4/3) = 44
+                return Err("verifying_key must be 44-char base64 string (32 bytes)".into());
+            }
+        }
         // CFG-L3: validate groups are parseable as i64
         for group in &self.groups {
             if group.parse::<i64>().is_err() {

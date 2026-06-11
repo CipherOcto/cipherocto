@@ -289,8 +289,12 @@ impl TelegramClient for MockTelegramClient {
         Ok(SentMessage::new(id, timestamp))
     }
 
+    /// API-L2: return an error with context instead of silent empty vec.
+    /// Tests should inject real data via sent_doc_data or override as needed.
     async fn download_file(&self, _file_id: &str) -> Result<Vec<u8>> {
-        Ok(Vec::new())
+        Err(crate::error::TelegramError::File(
+            "mock: no data — inject via MockTelegramClient::set_download_data".into()
+        ))
     }
 
     async fn receive_updates(&self) -> Result<Vec<TelegramUpdate>> {

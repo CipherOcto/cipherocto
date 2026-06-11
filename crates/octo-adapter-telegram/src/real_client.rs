@@ -46,6 +46,8 @@ struct ClientState {
     pending_updates_rx: parking_lot::Mutex<Option<mpsc::Receiver<TelegramUpdate>>>,
     /// Notified when auth reaches Ready state.
     auth_ready: Notify,
+    /// PERF-H4: notified when new TDLib updates arrive.
+    update_notify: Notify,
     /// Auth has completed successfully.
     auth_done: AtomicBool,
     /// Last auth error (set when auth fails; drained by the constructor).
@@ -120,9 +122,10 @@ impl ClientState {
             client_id,
             running: AtomicBool::new(true),
             pending_updates_tx: update_tx,
-            pending_updates_rx: std::sync::Mutex::new(Some(update_rx)),
+            pending_updates_rx: parking_lot::Mutex::new(Some(update_rx)),
             dropped_updates: std::sync::atomic::AtomicU64::new(0),
             auth_ready: Notify::new(),
+            update_notify: Notify::new(),
             auth_done: AtomicBool::new(false),
             auth_error: Mutex::new(None),
             user_auth,
@@ -853,8 +856,9 @@ impl TelegramClient for RealTelegramClient {
         }
         // PERF-L1: pre-allocate for typical poll size
         let mut updates = Vec::with_capacity(8);
-        let mut guard = self.state.pending_updates_rx.lock().unwrap();
-        if let Some(rx) = guard.as_mut() {
+        let mut guard = self.state.pending_updates_rx.lock();
+        // parking_lot::MutexGuard derefs to &Option, use as_deref_mut pattern
+        if let Some(ref mut rx) = *guard {
             use mpsc::error::TryRecvError;
             loop {
                 match rx.try_recv() {
@@ -1002,11 +1006,9 @@ impl Drop for RealTelegramClient {
             match result_1 {
                 Ok(Ok(())) => {
                     tracing::debug!("receive thread joined cleanly");
-                    return;
                 }
                 Ok(Err(panic_err)) => {
                     tracing::error!("receive thread panicked: {:?}", panic_err);
-                    return;
                 }
                 Err(_) => {
                     // First timeout — retry shutdown signal and wait again.

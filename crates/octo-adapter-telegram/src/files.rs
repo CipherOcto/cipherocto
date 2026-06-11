@@ -176,12 +176,3 @@ pub fn parse_file_progress(update: &tdlib_rs::enums::Update) -> Option<FileProgr
     }
 }
 
-/// Generate a unique temp file path under the system temp dir.
-#[cfg(feature = "real-tdlib")]
-#[allow(dead_code)] // `real_client` has its own copy; kept for symmetry
-pub(crate) fn unique_temp_path(prefix: &str) -> std::path::PathBuf {
-    use std::sync::atomic::{AtomicU64, Ordering};
-    static COUNTER: AtomicU64 = AtomicU64::new(0);
-    let id = COUNTER.fetch_add(1, Ordering::Relaxed);
-    std::env::temp_dir().join(format!("{}_{}_{}", prefix, std::process::id(), id))
-}

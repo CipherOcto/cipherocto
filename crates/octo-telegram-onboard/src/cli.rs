@@ -89,13 +89,6 @@ pub struct UserLoginArgs {
     #[arg(long, env = "TELEGRAM_PHONE")]
     pub phone: Option<String>,
 
-    /// 2FA password (optional; or $TELEGRAM_PASSWORD). Read from stdin with echo disabled if not provided.
-    /// CI-only: accepts --password <value> and $TELEGRAM_PASSWORD. Hidden from --help to
-    /// discourage shell-history leaks. Unlike octo-matrix-onboard which rejects <value> form
-    /// entirely, this binary allows env-var usage for non-interactive CI pipelines.
-    #[arg(long, env = "TELEGRAM_PASSWORD", hide = true)]
-    pub password: Option<String>,
-
     /// TDLib data directory.
     #[arg(long)]
     pub data_dir: Option<PathBuf>,

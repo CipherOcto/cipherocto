@@ -9,7 +9,6 @@ use clap::Parser;
 use cli::{Cli, Command, SessionAction};
 use octo_telegram_onboard_core::auth::{
     classify_tdlib_error, drive_bot_auth, drive_user_auth, validate_api_id, Credentials,
-    TdlibClientGuard,
 };
 use octo_telegram_onboard_core::error::{OnboardError, Result};
 use octo_telegram_onboard_core::output::{build_config_json, write_config};
@@ -44,13 +43,18 @@ async fn main() -> ExitCode {
         Ok(()) => ExitCode::SUCCESS,
         Err(e) => {
             let kind = e.to_string();
-            match e.inner() {
-                Some(detail) if !detail.is_empty() => {
-                    tracing::error!("{}: {}", kind, detail);
+            match &e {
+                OnboardError::Generic(any) => {
+                    tracing::error!("{}: {:?}", kind, any);
                 }
-                _ => {
-                    tracing::error!("{}", kind);
-                }
+                _ => match e.inner() {
+                    Some(detail) if !detail.is_empty() => {
+                        tracing::error!("{}: {}", kind, detail);
+                    }
+                    _ => {
+                        tracing::error!("{}", kind);
+                    }
+                },
             }
             e.as_exit_code()
         }
@@ -90,6 +94,87 @@ fn validate_verifying_key(key: &str) -> Result<()> {
     Ok(())
 }
 
+/// TDLib get_me flow with a timeout — used by both whoami and session list fallback.
+async fn tdlib_get_me_with_timeout(
+    data_dir: &std::path::Path,
+    api_id: i32,
+    api_hash: &str,
+    timeout_secs: u64,
+) -> Option<(i64, Option<String>, Option<String>)> {
+    let client_id = tdlib_rs::create_client();
+    let db_dir = data_dir.join("database");
+    let files_dir = data_dir.join("files");
+
+    let params_err = tdlib_rs::functions::set_tdlib_parameters(
+        false,
+        db_dir.to_string_lossy().into_owned(),
+        files_dir.to_string_lossy().into_owned(),
+        String::new(),
+        true,
+        true,
+        true,
+        false,
+        api_id,
+        api_hash.to_string(),
+        "en".into(),
+        "CipherOcto-TelegramOnboard".into(),
+        String::new(),
+        env!("CARGO_PKG_VERSION").into(),
+        client_id,
+    )
+    .await;
+    if let Err(e) = params_err {
+        tracing::debug!(error = %e.message, "set_tdlib_parameters failed in get_me fallback");
+        return None;
+    }
+
+    let (tx, mut rx) = tokio::sync::mpsc::channel::<bool>(1);
+    let timeout = std::time::Duration::from_secs(timeout_secs);
+
+    let _receive_handle = tokio::task::spawn_blocking(move || {
+        let start = std::time::Instant::now();
+        while start.elapsed() < timeout {
+            if let Some((tdlib_rs::enums::Update::AuthorizationState(ref auth_update), _cid)) =
+                tdlib_rs::receive()
+            {
+                match &auth_update.authorization_state {
+                    tdlib_rs::enums::AuthorizationState::Ready => {
+                        let _ = tx.blocking_send(true);
+                        return;
+                    }
+                    tdlib_rs::enums::AuthorizationState::Closed
+                    | tdlib_rs::enums::AuthorizationState::WaitPhoneNumber => {
+                        let _ = tx.blocking_send(false);
+                        return;
+                    }
+                    _ => {}
+                }
+            }
+            std::thread::sleep(std::time::Duration::from_millis(50));
+        }
+        let _ = tx.blocking_send(false);
+    });
+
+    let channel_result = tokio::time::timeout(timeout, rx.recv()).await;
+    match channel_result {
+        Ok(Some(true)) => {
+            let me_enum = tdlib_rs::functions::get_me(client_id).await.ok()?;
+            #[allow(unreachable_patterns)]
+            match me_enum {
+                tdlib_rs::enums::User::User(u) => {
+                    let username = u
+                        .usernames
+                        .as_ref()
+                        .and_then(|names| names.active_usernames.first().cloned());
+                    Some((u.id, username, Some(u.first_name)))
+                }
+                _ => None,
+            }
+        }
+        _ => None,
+    }
+}
+
 async fn run_bot_setup(args: cli::BotSetupArgs) -> Result<()> {
     let data_dir = args.resolved_data_dir();
     let out = args.out.clone();
@@ -125,9 +210,9 @@ async fn run_bot_setup(args: cli::BotSetupArgs) -> Result<()> {
     };
 
     tracing::info!(data_dir = %data_dir.display(), "Starting bot auth...");
-    let guard = TdlibClientGuard::new();
+    let client_id = tdlib_rs::create_client();
     let session = drive_bot_auth(
-        guard.id(),
+        client_id,
         &creds,
         &data_dir,
         std::time::Duration::from_secs(timeout),
@@ -172,24 +257,19 @@ async fn run_user_login(args: cli::UserLoginArgs) -> Result<()> {
 
     let verifying_key = args.verifying_key;
 
-    // H1: Password is read from stdin with echo disabled by the auth driver
-    // when WaitPassword is reached and no password was pre-supplied.
-    // The --password flag is hidden and exists only for non-interactive CI.
-    let password = args.password.map(Zeroizing::new);
-
     let creds = Credentials {
         phone: Some(phone),
         api_id,
         api_hash: Zeroizing::new(api_hash),
-        password,
+        password: None,
         bot_token: None,
         verifying_key,
     };
 
     tracing::info!(data_dir = %data_dir.display(), "Starting user auth...");
-    let guard = TdlibClientGuard::new();
+    let client_id = tdlib_rs::create_client();
     let session = drive_user_auth(
-        guard.id(),
+        client_id,
         &creds,
         &data_dir,
         std::time::Duration::from_secs(timeout),
@@ -256,13 +336,12 @@ async fn run_whoami(args: cli::WhoamiArgs) -> Result<()> {
 
     // No sidecar — use TDLib get_me with spawn_blocking for receive loop (M5)
     tracing::info!("No session_meta.json found, attempting get_me() via TDLib...");
-    let guard = TdlibClientGuard::new();
-    let client_id = guard.id();
+    let client_id = tdlib_rs::create_client();
 
     let db_dir = data_path.join("database");
     let files_dir = data_path.join("files");
 
-    let _ = tdlib_rs::functions::set_tdlib_parameters(
+    tdlib_rs::functions::set_tdlib_parameters(
         false,
         db_dir.to_string_lossy().into_owned(),
         files_dir.to_string_lossy().into_owned(),
@@ -279,7 +358,8 @@ async fn run_whoami(args: cli::WhoamiArgs) -> Result<()> {
         env!("CARGO_PKG_VERSION").into(),
         client_id,
     )
-    .await;
+    .await
+    .map_err(|e| classify_tdlib_error(e.message))?;
 
     // M5: Use spawn_blocking for the blocking receive loop,
     // communicate via an mpsc channel.
@@ -385,15 +465,77 @@ async fn run_session_list(args: cli::SessionListArgs) -> Result<()> {
         } else {
             let db_path = path.join("database");
             if db_path.exists() {
-                let (q, no_sidecar, unk) = ("?", "(no sidecar)", "unknown");
-                println!(
-                    "{:<50} {:<6} {:<15} {:<20} {}",
-                    path.display(),
-                    q,
-                    q,
-                    no_sidecar,
-                    unk
-                );
+                // H3: AC line 65 — fallback to get_me() with 5s timeout
+                // for sidecar-less dirs that have a TDLib database.
+                let meta_path = path.join("session_meta.json");
+                let meta_json = std::fs::read_to_string(&meta_path).ok();
+                let meta: Option<SessionMeta> = meta_json
+                    .as_deref()
+                    .and_then(|s| serde_json::from_str(s).ok());
+                if let Some(meta) = meta {
+                    println!(
+                        "{:<50} {:<6} {:<15} {:<20} yes",
+                        path.display(),
+                        meta.mode,
+                        meta.user_id,
+                        meta.username.as_deref().unwrap_or("(none)")
+                    );
+                } else {
+                    // Try get_me fallback — read config for api_id/api_hash
+                    let config_path = dirs::config_dir().map(|mut p| {
+                        p.push("octo");
+                        p.push("telegram.json");
+                        p
+                    });
+                    let fallback = if let Some(cp) = config_path {
+                        if let Ok(bytes) = std::fs::read(&cp) {
+                            if let Ok(cfg) = serde_json::from_slice::<serde_json::Value>(&bytes) {
+                                let api_id = cfg["api_id"].as_i64().and_then(|v| {
+                                    if v > 0 && v <= i32::MAX as i64 {
+                                        Some(v as i32)
+                                    } else {
+                                        None
+                                    }
+                                });
+                                let api_hash = cfg["api_hash"]
+                                    .as_str()
+                                    .filter(|s| !s.is_empty())
+                                    .map(String::from);
+                                if let (Some(aid), Some(ahash)) = (api_id, api_hash) {
+                                    tdlib_get_me_with_timeout(&path, aid, &ahash, 5).await
+                                } else {
+                                    None
+                                }
+                            } else {
+                                None
+                            }
+                        } else {
+                            None
+                        }
+                    } else {
+                        None
+                    };
+
+                    if let Some((user_id, username, _first_name)) = fallback {
+                        println!(
+                            "{:<50} {:<6} {:<15} {:<20} yes (via get_me)",
+                            path.display(),
+                            "?",
+                            user_id,
+                            username.as_deref().unwrap_or("(none)")
+                        );
+                    } else {
+                        let (q, no_sidecar, unk) = ("?", "(no sidecar)", "unknown");
+                        println!(
+                            "{:<50} {:<6} {:<15} {:<20} {}",
+                            path.display(),
+                            q,
+                            q,
+                            no_sidecar,
+                            unk
+                        );
+                    }
+                }
             }
         }
     }

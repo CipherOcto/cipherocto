@@ -38,6 +38,10 @@ pub struct SessionMeta {
 
 impl SessionMeta {
     pub fn from_session(session: &TelegramSession) -> Self {
+        debug_assert!(
+            session.mode.is_some(),
+            "SessionMeta::from_session called without mode set"
+        );
         Self {
             user_id: session.user_id,
             username: session.username.clone(),

@@ -12,29 +12,6 @@ use std::sync::Arc;
 use tokio::sync::{mpsc, Notify};
 use zeroize::Zeroizing;
 
-/// RAII wrapper around a TDLib client ID.
-///
-/// NOTE: `tdlib-rs` v1.4.0 does not expose `td_json_client_destroy` — client
-/// cleanup happens at process exit. This guard exists for API consistency and
-/// to make the client ID lifetime explicit. If a future `tdlib-rs` version
-/// adds `destroy_client`, add it to the `Drop` impl.
-pub struct TdlibClientGuard(i32);
-
-impl Default for TdlibClientGuard {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
-impl TdlibClientGuard {
-    pub fn new() -> Self {
-        Self(tdlib_rs::create_client())
-    }
-    pub fn id(&self) -> i32 {
-        self.0
-    }
-}
-
 /// Credentials provided by the operator (CLI args or env vars).
 pub struct Credentials {
     pub phone: Option<String>,
@@ -48,7 +25,10 @@ pub struct Credentials {
 /// Classify a TDLib error message into the appropriate `OnboardError` variant.
 pub fn classify_tdlib_error(msg: String) -> OnboardError {
     let lower = msg.to_lowercase();
-    if lower.contains("flood") || lower.contains("wait") || lower.contains("too many") {
+    if lower.contains("flood_wait_")
+        || lower.contains("slowmode_wait_")
+        || lower.contains("too many")
+    {
         OnboardError::RateLimited(msg)
     } else if lower.contains("network")
         || lower.contains("connect")
@@ -420,9 +400,9 @@ async fn extract_identity(
     let me = match me_enum {
         tdlib_rs::enums::User::User(u) => u,
         _ => {
-            return Err(OnboardError::Cancelled(
-                "get_me returned unexpected User variant".into(),
-            ))
+            return Err(OnboardError::Generic(anyhow::anyhow!(
+                "get_me returned unexpected User variant"
+            )))
         }
     };
 
@@ -490,6 +470,27 @@ mod tests {
         let e = classify_tdlib_error("invalid bot token".into());
         assert!(matches!(e, OnboardError::AuthRejected(_)));
         assert_eq!(e.exit_code(), 2);
+    }
+
+    #[test]
+    fn classify_wait_registration_is_auth_rejected() {
+        let e = classify_tdlib_error("WAIT_REGISTRATION".into());
+        assert!(matches!(e, OnboardError::AuthRejected(_)));
+        assert_eq!(e.exit_code(), 2);
+    }
+
+    #[test]
+    fn classify_please_wait_is_auth_rejected() {
+        let e = classify_tdlib_error("Please wait for SMS".into());
+        assert!(matches!(e, OnboardError::AuthRejected(_)));
+        assert_eq!(e.exit_code(), 2);
+    }
+
+    #[test]
+    fn classify_flood_wait_300() {
+        let e = classify_tdlib_error("FLOOD_WAIT_300".into());
+        assert!(matches!(e, OnboardError::RateLimited(_)));
+        assert_eq!(e.exit_code(), 6);
     }
 
     #[test]

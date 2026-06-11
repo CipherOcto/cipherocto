@@ -645,7 +645,6 @@ impl RealTelegramClient {
                     message: Self::extract_message_text(&new_msg.message.content),
                     from,
                     from_legacy,
-                    is_outgoing: new_msg.message.is_outgoing,
                 }))
             }
             tdlib_rs::enums::Update::MessageEdited(edited) => Some(TelegramUpdate::MessageEdited(

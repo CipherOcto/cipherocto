@@ -69,8 +69,6 @@ pub struct NewMessage {
     /// decimal string of the wrapped id; for `Hidden`/`Unknown` it is
     /// the empty string.
     pub from_legacy: String,
-    /// SM-M5: true when the message was sent by the bot/user themself.
-    pub is_outgoing: bool,
 }
 
 /// A message-edited update.

@@ -304,7 +304,8 @@ impl RealTelegramClient {
                             break;
                         }
                     }
-                    None => std::thread::sleep(std::time::Duration::from_millis(10)),
+                    None => // CR-L2: bounded by TDLib 2s internal timeout
+                        std::thread::sleep(std::time::Duration::from_millis(10)),
                 }
             }
         });
@@ -977,6 +978,7 @@ impl Drop for RealTelegramClient {
     /// process exit in that case. We do not panic on send failure:
     /// panicking in `Drop` is unsound under multi-threaded drop.
     fn drop(&mut self) {
+        // CR-M4: running=false BEFORE shutdown signal so receive loop stops polling
         self.state.running.store(false, Ordering::Release);
         // CR-H1: retry shutdown signal in case the channel was full
         for _ in 0..3 {

@@ -718,6 +718,7 @@ impl<C: TelegramClient> TelegramAdapter<C> {
                 // user errors (InvalidChatId, InvalidFileId, Auth, Config,
                 // Envelope, Unimplemented) from being flattened into
                 // `Unreachable` and triggering a gateway reconnect.
+                // CR-M5: SendFailed, Auth, Config non-retryable by design
                 Err(e) => return Err(e.into()),
             }
         }

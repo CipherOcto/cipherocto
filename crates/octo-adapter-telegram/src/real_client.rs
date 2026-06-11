@@ -273,6 +273,13 @@ impl RealTelegramClient {
 
     /// PERF-C1: returns the number of updates dropped since last poll due to
     /// channel capacity exhaustion. The counter is reset on each call.
+    ///
+    /// PERF-L2: `Relaxed` ordering is correct here — this counter is
+    /// monotonic per-thread (each thread only increments) and the `swap(0)`
+    /// is a best-effort drain. On ARM (weak memory model), a reader might
+    /// see a stale count, but the counter is purely informational and the
+    /// next poll will pick up any missed increments. `SeqCst` would add
+    /// fence overhead on every update for no correctness benefit.
     pub fn dropped_updates_count(&self) -> u64 {
         self.state.dropped_updates.swap(0, std::sync::atomic::Ordering::Relaxed)
     }
@@ -285,6 +292,12 @@ impl RealTelegramClient {
     /// from within this existing tokio runtime (no nested runtime, no
     /// detached thread — C3) and then exits.
     async fn receive_loop(state: Arc<ClientState>, mut shutdown_rx: mpsc::Receiver<ClientId>) {
+        // OBS-L1: structured log at loop start — includes client_id for
+        // correlation. All subsequent tracing calls within this function
+        // are in the same logical context. A tracing::Span would be ideal
+        // but state's Mutex fields don't impl Debug (required by
+        // #[tracing::instrument(skip(...))]).
+        tracing::info!(client_id = state.client_id, "receive_loop: starting");
         // L15: single long-lived blocking thread for tdlib_rs::receive.
         // Previously each iteration called spawn_blocking, creating a new
         // thread per update. The dedicated thread loops on tdlib_rs::receive
@@ -299,7 +312,20 @@ impl RealTelegramClient {
                             break;
                         }
                     }
-                    None => // CR-L2: bounded by TDLib 2s internal timeout
+                    None => // CR-L2: bounded by TDLib 2s internal timeout.
+                        // PERF-H4 (blocking thread): this 10ms sleep is a CPU
+                        // yield, NOT a latency bottleneck. When tdlib_rs::receive()
+                        // returns None, the thread has no work to do. Without the
+                        // sleep, it would spin-wait at 100% CPU. The 10ms value is
+                        // a balance between CPU efficiency and responsiveness:
+                        // - 1ms would waste CPU on unnecessary wakeups
+                        // - 100ms would add perceptible latency to the first
+                        //   update after an idle period
+                        // - 10ms adds negligible latency (<1 update interval)
+                        //   while keeping CPU usage near-zero during idle.
+                        // The async receive_loop (tokio::select! on update_rx)
+                        // is NOT affected by this sleep — it wakes immediately
+                        // when the blocking thread sends through the channel.
                         std::thread::sleep(std::time::Duration::from_millis(10)),
                 }
             }
@@ -338,6 +364,8 @@ impl RealTelegramClient {
                 }
             }
         }
+        // OBS-L1: structured log at loop exit for operational visibility.
+        tracing::info!(client_id = state.client_id, "receive_loop: exited");
     }
 
     /// Process one TDLib update. Returns `Err` for unrecoverable auth errors

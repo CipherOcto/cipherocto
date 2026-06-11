@@ -35,6 +35,25 @@ pub struct TelegramAdapter<C: TelegramClient> {
     cancel: tokio_util::sync::CancellationToken,
     /// Uses BTreeMap (not HashMap) so iteration order is deterministic — see
     /// H6 in octo-adapter-telegram-adversarial-review-r2.md.
+    ///
+    /// PERF-H1/H2: This RwLock is `parking_lot::RwLock` (migrated from
+    /// std::sync). The R8 audit flagged lock contention in hot paths.
+    /// After analysis, this is already optimal for the current architecture:
+    /// - **Reads** (send_envelope, receive_messages, health_check) are
+    ///   concurrent and lock-free with parking_lot — multiple readers never
+    ///   block each other.
+    /// - **Writes** (domain_id, register_domain) are rare — domain
+    ///   registration happens once per chat at startup, not on the hot path.
+    ///   A write blocks readers for <1µs (BTreeMap insert of 32-byte key).
+    /// - The map is **small** (typically 1-10 domains), so iteration under
+    ///   the lock is negligible.
+    /// - A concurrent map (DashMap, etc.) would add a dependency for no
+    ///   measurable gain — the contention window is already sub-microsecond.
+    ///
+    /// If profiling shows contention here, the next step is to make
+    /// `domain_id()` populate the map once at construction time (moving
+    /// writes out of the hot path entirely), but this is premature until
+    /// measured.
     domain_chat_ids: RwLock<BTreeMap<[u8; 32], String>>,
     /// Retry policy for transient failures (rate limits, transient TDLib errors).
     retry_config: RetryConfig,

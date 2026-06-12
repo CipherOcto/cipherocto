@@ -42,22 +42,23 @@ pub struct SessionMeta {
 }
 
 impl SessionMeta {
-    pub fn from_session(session: &TelegramSession) -> Self {
-        debug_assert!(
-            session.mode.is_some(),
-            "SessionMeta::from_session called without mode set"
-        );
-        Self {
+    pub fn from_session(session: &TelegramSession) -> crate::error::Result<Self> {
+        let mode = session.mode.clone().ok_or_else(|| {
+            crate::error::OnboardError::BadConfig(
+                "TelegramSession::mode must be set before writing sidecar".into(),
+            )
+        })?;
+        Ok(Self {
             user_id: session.user_id,
             username: session.username.clone(),
-            mode: session.mode.clone().unwrap_or_else(|| "bot".into()),
+            mode,
             timestamp: {
                 let now = std::time::SystemTime::now();
                 now.duration_since(std::time::UNIX_EPOCH)
                     .unwrap_or(std::time::Duration::ZERO)
                     .as_secs() as i64
             },
-        }
+        })
     }
 
     /// Write the sidecar file alongside the TDLib database atomically.
@@ -79,10 +80,10 @@ impl SessionMeta {
             if let Err(e) =
                 std::fs::set_permissions(tmp.path(), std::fs::Permissions::from_mode(0o600))
             {
-                tracing::warn!(
-                    path = %path.display(),
-                    error = %e,
-                    "could not set 0600 on sidecar"
+                eprintln!(
+                    "WARNING: could not set 0600 on sidecar path={} error={}",
+                    path.display(),
+                    e
                 );
             }
         }
@@ -123,6 +124,7 @@ mod tests {
         let dir = tempfile::TempDir::new().unwrap();
         let session = sample_session();
         SessionMeta::from_session(&session)
+            .unwrap()
             .write(dir.path())
             .unwrap();
         let read = SessionMeta::read(dir.path()).unwrap();
@@ -132,11 +134,10 @@ mod tests {
     }
 
     #[test]
-    #[should_panic(expected = "SessionMeta::from_session called without mode set")]
-    fn session_meta_from_session_panics_on_none_mode() {
+    fn session_meta_from_session_errors_on_none_mode() {
         let mut session = sample_session();
         session.mode = None;
-        let _ = SessionMeta::from_session(&session);
+        assert!(SessionMeta::from_session(&session).is_err());
     }
 
     #[test]

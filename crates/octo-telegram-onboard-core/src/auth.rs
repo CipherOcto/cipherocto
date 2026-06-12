@@ -362,9 +362,11 @@ pub async fn drive_bot_auth(
     let notify = Arc::new(Notify::new());
     let result: Arc<parking_lot::Mutex<Option<std::result::Result<(), String>>>> =
         Arc::new(parking_lot::Mutex::new(None));
+    let saw_closed = Arc::new(AtomicBool::new(false));
 
     let notify_clone = notify.clone();
     let result_clone = result.clone();
+    let saw_closed_clone = saw_closed.clone();
     let token = bot_token.to_string();
 
     let handle = tokio::task::spawn(async move {
@@ -389,6 +391,7 @@ pub async fn drive_bot_auth(
                         break;
                     }
                     tdlib_rs::enums::AuthorizationState::Closed => {
+                        saw_closed_clone.store(true, Ordering::SeqCst);
                         *result_clone.lock() = Some(Err("TDLib session closed".into()));
                         notify_clone.notify_one();
                         break;
@@ -420,18 +423,24 @@ pub async fn drive_bot_auth(
     };
 
     if let Some(e) = auth_err {
-        close_tdlib_client(client_id).await;
+        if !saw_closed.load(Ordering::SeqCst) {
+            close_tdlib_client(client_id).await;
+        }
         return Err(e);
     }
 
     let session = match extract_identity(client_id, creds, data_dir).await {
         Ok(s) => s,
         Err(e) => {
-            close_tdlib_client(client_id).await;
+            if !saw_closed.load(Ordering::SeqCst) {
+                close_tdlib_client(client_id).await;
+            }
             return Err(e);
         }
     };
-    close_tdlib_client(client_id).await;
+    if !saw_closed.load(Ordering::SeqCst) {
+        close_tdlib_client(client_id).await;
+    }
     Ok(session)
 }
 
@@ -476,6 +485,8 @@ pub async fn drive_user_auth(
 
     let notify_clone = notify.clone();
     let result_clone = result.clone();
+    let saw_closed = Arc::new(AtomicBool::new(false));
+    let saw_closed_clone = saw_closed.clone();
     let phone_owned = phone.to_string();
 
     let handle = tokio::task::spawn(async move {
@@ -556,6 +567,7 @@ pub async fn drive_user_auth(
                         break;
                     }
                     AuthAction::SessionExpired => {
+                        saw_closed_clone.store(true, Ordering::SeqCst);
                         *result_clone.lock() = Some(Err("session expired".into()));
                         notify_clone.notify_one();
                         break;
@@ -628,18 +640,24 @@ pub async fn drive_user_auth(
     };
 
     if let Some(e) = auth_err {
-        close_tdlib_client(client_id).await;
+        if !saw_closed.load(Ordering::SeqCst) {
+            close_tdlib_client(client_id).await;
+        }
         return Err(e);
     }
 
     let session = match extract_identity(client_id, creds, data_dir).await {
         Ok(s) => s,
         Err(e) => {
-            close_tdlib_client(client_id).await;
+            if !saw_closed.load(Ordering::SeqCst) {
+                close_tdlib_client(client_id).await;
+            }
             return Err(e);
         }
     };
-    close_tdlib_client(client_id).await;
+    if !saw_closed.load(Ordering::SeqCst) {
+        close_tdlib_client(client_id).await;
+    }
     Ok(session)
 }
 

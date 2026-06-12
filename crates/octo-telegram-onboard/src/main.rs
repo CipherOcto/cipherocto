@@ -236,7 +236,7 @@ async fn run_bot_setup(args: cli::BotSetupArgs) -> Result<()> {
     )
     .await?;
 
-    SessionMeta::from_session(&session).write(&session.data_dir)?;
+    SessionMeta::from_session(&session)?.write(&session.data_dir)?;
 
     let json = build_full_config(&creds, &session);
 
@@ -290,7 +290,7 @@ async fn run_user_login(args: cli::UserLoginArgs) -> Result<()> {
     )
     .await?;
 
-    SessionMeta::from_session(&session).write(&session.data_dir)?;
+    SessionMeta::from_session(&session)?.write(&session.data_dir)?;
 
     let json = build_full_config(&creds, &session);
 

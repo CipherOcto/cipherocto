@@ -334,6 +334,7 @@ pub fn init(verbose: bool) {
     let filter = EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new(level));
 
     let fmt_layer = tracing_subscriber::fmt::layer()
+        .with_writer(std::io::stderr)
         .with_target(false)
         .event_format(RedactingFormat);
 

@@ -8,8 +8,8 @@ mod logging;
 use clap::Parser;
 use cli::{Cli, Command, SessionAction};
 use octo_telegram_onboard_core::auth::{
-    classify_tdlib_error, close_tdlib_client, drive_bot_auth, drive_user_auth,
-    try_acquire_receive_lock, validate_api_id, Credentials,
+    classify_tdlib_error, close_tdlib_client_with_timeout, drive_bot_auth, drive_user_auth,
+    set_tdlib_parameters_raw, try_acquire_receive_lock, validate_api_id, Credentials,
 };
 use octo_telegram_onboard_core::error::{OnboardError, Result};
 use octo_telegram_onboard_core::keys::validate_verifying_key;
@@ -96,30 +96,11 @@ async fn tdlib_get_me_with_timeout(
 ) -> std::result::Result<(i64, Option<String>, Option<String>), OnboardError> {
     let _receive_guard = try_acquire_receive_lock()?;
     let client_id = tdlib_rs::create_client();
-    let db_dir = data_dir.join("database");
-    let files_dir = data_dir.join("files");
 
-    let params_err = tdlib_rs::functions::set_tdlib_parameters(
-        false,
-        db_dir.to_string_lossy().into_owned(),
-        files_dir.to_string_lossy().into_owned(),
-        String::new(),
-        true,
-        true,
-        true,
-        false,
-        api_id,
-        api_hash.to_string(),
-        "en".into(),
-        "CipherOcto-TelegramOnboard".into(),
-        String::new(),
-        env!("CARGO_PKG_VERSION").into(),
-        client_id,
-    )
-    .await;
+    let params_err = set_tdlib_parameters_raw(client_id, api_id, api_hash, data_dir).await;
     if let Err(e) = params_err {
-        close_tdlib_client(client_id).await;
-        return Err(classify_tdlib_error(e.message));
+        close_tdlib_client_with_timeout(client_id, std::time::Duration::from_secs(2)).await;
+        return Err(e);
     }
 
     let (tx, mut rx) = tokio::sync::mpsc::channel::<bool>(1);
@@ -152,7 +133,7 @@ async fn tdlib_get_me_with_timeout(
         }) {
         Ok(h) => h,
         Err(e) => {
-            close_tdlib_client(client_id).await;
+            close_tdlib_client_with_timeout(client_id, std::time::Duration::from_secs(2)).await;
             return Err(OnboardError::Generic(anyhow::anyhow!(
                 "failed to spawn receive thread: {}",
                 e
@@ -169,7 +150,8 @@ async fn tdlib_get_me_with_timeout(
             let me_enum = match tdlib_rs::functions::get_me(client_id).await {
                 Ok(u) => u,
                 Err(e) => {
-                    close_tdlib_client(client_id).await;
+                    close_tdlib_client_with_timeout(client_id, std::time::Duration::from_secs(2))
+                        .await;
                     return Err(classify_tdlib_error(e.message));
                 }
             };
@@ -180,11 +162,13 @@ async fn tdlib_get_me_with_timeout(
                         .usernames
                         .as_ref()
                         .and_then(|names| names.active_usernames.first().cloned());
-                    close_tdlib_client(client_id).await;
+                    close_tdlib_client_with_timeout(client_id, std::time::Duration::from_secs(2))
+                        .await;
                     Ok((u.id, username, Some(u.first_name)))
                 }
                 _ => {
-                    close_tdlib_client(client_id).await;
+                    close_tdlib_client_with_timeout(client_id, std::time::Duration::from_secs(2))
+                        .await;
                     Err(OnboardError::Generic(anyhow::anyhow!(
                         "get_me returned unexpected User variant"
                     )))
@@ -192,17 +176,17 @@ async fn tdlib_get_me_with_timeout(
             }
         }
         Ok(Some(false)) => {
-            close_tdlib_client(client_id).await;
+            close_tdlib_client_with_timeout(client_id, std::time::Duration::from_secs(2)).await;
             Err(OnboardError::AuthRejected(
                 "session expired or invalid".into(),
             ))
         }
         Ok(None) => {
-            close_tdlib_client(client_id).await;
+            close_tdlib_client_with_timeout(client_id, std::time::Duration::from_secs(2)).await;
             Err(OnboardError::Cancelled("whoami channel closed".into()))
         }
         Err(_) => {
-            close_tdlib_client(client_id).await;
+            close_tdlib_client_with_timeout(client_id, std::time::Duration::from_secs(2)).await;
             Err(OnboardError::Cancelled("whoami timed out".into()))
         }
     }

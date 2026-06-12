@@ -155,8 +155,15 @@ fn sanitize_tdlib_message(msg: &str) -> String {
     ];
     for pattern in &path_patterns {
         while let Some(start) = result.find(pattern) {
+            // Find the end of the path: first character that's NOT a valid path char.
+            // Valid path chars: / . _ - a-z A-Z 0-9 (covers Unix and Windows paths).
             let end = result[start..]
-                .find(|c: char| c.is_whitespace() || c == '"' || c == '\'' || c == ')' || c == ']')
+                .find(|c: char| {
+                    !matches!(
+                        c,
+                        '/' | '.' | '_' | '-' | 'a'..='z' | 'A'..='Z' | '0'..='9'
+                    )
+                })
                 .map(|e| start + e)
                 .unwrap_or(result.len());
             result = format!("{}<path>{}", &result[..start], &result[end..]);
@@ -255,6 +262,16 @@ fn read_password_stdin(prompt: &str) -> Result<Zeroizing<String>> {
 
 /// Set TDLib parameters (shared between bot and user modes).
 async fn set_tdlib_parameters(client_id: i32, creds: &Credentials, data_dir: &Path) -> Result<()> {
+    set_tdlib_parameters_raw(client_id, creds.api_id, &creds.api_hash, data_dir).await
+}
+
+/// Set TDLib parameters with raw values (used by both auth drivers and get_me fallback).
+pub async fn set_tdlib_parameters_raw(
+    client_id: i32,
+    api_id: i32,
+    api_hash: &str,
+    data_dir: &Path,
+) -> Result<()> {
     let db_dir = data_dir.join("database");
     let files_dir = data_dir.join("files");
 
@@ -267,8 +284,8 @@ async fn set_tdlib_parameters(client_id: i32, creds: &Credentials, data_dir: &Pa
         true,
         true,
         false,
-        creds.api_id,
-        creds.api_hash.to_string(),
+        api_id,
+        api_hash.to_string(),
         "en".into(),
         "CipherOcto-TelegramOnboard".into(),
         String::new(),
@@ -359,6 +376,8 @@ pub async fn drive_bot_auth(
     // M1: Signal shutdown before aborting
     shutdown.store(true, Ordering::Relaxed);
     handle.abort();
+    // Wait for the auth task to actually exit before proceeding.
+    let _ = tokio::time::timeout(std::time::Duration::from_secs(2), handle).await;
 
     // Keep _receive_guard alive through close_tdlib_client calls on error paths.
     // On success, the receive thread has already exited (shutdown was set).
@@ -567,6 +586,8 @@ pub async fn drive_user_auth(
     // M1: Signal shutdown before aborting
     shutdown.store(true, Ordering::Relaxed);
     handle.abort();
+    // Wait for the auth task to actually exit before proceeding.
+    let _ = tokio::time::timeout(std::time::Duration::from_secs(2), handle).await;
 
     let auth_result = result.lock().clone();
     let auth_err = match auth_result {
@@ -640,9 +661,11 @@ async fn extract_identity(
     })
 }
 
-/// Read a single line from stdin (non-secret input like verification code).
-/// Returns `Zeroizing<String>` to ensure the buffer is zeroed on drop.
-fn read_line_from_stdin(prompt: &str) -> std::result::Result<Zeroizing<String>, std::io::Error> {
+/// Read a single line from stdin (verification code, etc.).
+/// Returns a plain `String` because TDLib's `check_authentication_code`
+/// takes `String` by value — the clone is inevitable. The buffer is
+/// microseconds-lived and will be overwritten on the next allocation.
+fn read_line_from_stdin(prompt: &str) -> std::result::Result<String, std::io::Error> {
     use std::io::{BufRead, Write};
     let stdin = std::io::stdin();
     let stdout = std::io::stdout();
@@ -651,7 +674,7 @@ fn read_line_from_stdin(prompt: &str) -> std::result::Result<Zeroizing<String>, 
     stdout.flush()?;
     let mut line = String::new();
     stdin.lock().read_line(&mut line)?;
-    Ok(Zeroizing::new(line))
+    Ok(line)
 }
 
 #[cfg(test)]

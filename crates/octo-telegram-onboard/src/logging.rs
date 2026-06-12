@@ -24,6 +24,11 @@ const REDACT_KEYS: &[&str] = &[
     "access_token",
     "refresh_token",
     "verifying_key",
+    "code",
+    "verification_code",
+    "sms_code",
+    "totp",
+    "otp",
 ];
 
 fn is_sensitive_key(name: &str) -> bool {
@@ -259,41 +264,6 @@ impl<'a> Visit for RedactingVisitor<'a> {
     }
 
     fn record_i64(&mut self, field: &Field, value: i64) {
-        if self.first {
-            self.buf.push_str("  ");
-            self.first = false;
-        } else {
-            self.buf.push(' ');
-        }
-        self.buf.push_str(&format!("{}={}", field.name(), value));
-    }
-
-    fn record_u64(&mut self, field: &Field, value: u64) {
-        if self.first {
-            self.buf.push_str("  ");
-            self.first = false;
-        } else {
-            self.buf.push(' ');
-        }
-        self.buf.push_str(&format!("{}={}", field.name(), value));
-    }
-
-    fn record_bool(&mut self, field: &Field, value: bool) {
-        if self.first {
-            self.buf.push_str("  ");
-            self.first = false;
-        } else {
-            self.buf.push(' ');
-        }
-        self.buf.push_str(&format!("{}={}", field.name(), value));
-    }
-
-    fn record_error(&mut self, field: &Field, value: &(dyn std::error::Error + 'static)) {
-        // Delegate to record_debug — errors implement Debug
-        self.record_debug(field, &value);
-    }
-
-    fn record_bytes(&mut self, field: &Field, value: &[u8]) {
         let name = field.name();
         if self.first {
             self.buf.push_str("  ");
@@ -304,9 +274,54 @@ impl<'a> Visit for RedactingVisitor<'a> {
         if is_sensitive_key(name) {
             self.buf.push_str(&format!("{}=***", name));
         } else {
-            self.buf
-                .push_str(&format!("{}=<bytes len={}>", name, value.len()));
+            self.buf.push_str(&format!("{}={}", name, value));
         }
+    }
+
+    fn record_u64(&mut self, field: &Field, value: u64) {
+        let name = field.name();
+        if self.first {
+            self.buf.push_str("  ");
+            self.first = false;
+        } else {
+            self.buf.push(' ');
+        }
+        if is_sensitive_key(name) {
+            self.buf.push_str(&format!("{}=***", name));
+        } else {
+            self.buf.push_str(&format!("{}={}", name, value));
+        }
+    }
+
+    fn record_bool(&mut self, field: &Field, value: bool) {
+        let name = field.name();
+        if self.first {
+            self.buf.push_str("  ");
+            self.first = false;
+        } else {
+            self.buf.push(' ');
+        }
+        if is_sensitive_key(name) {
+            self.buf.push_str(&format!("{}=***", name));
+        } else {
+            self.buf.push_str(&format!("{}={}", name, value));
+        }
+    }
+
+    fn record_error(&mut self, field: &Field, value: &(dyn std::error::Error + 'static)) {
+        // Delegate to record_debug — errors implement Debug
+        self.record_debug(field, &value);
+    }
+
+    fn record_bytes(&mut self, field: &Field, _value: &[u8]) {
+        let name = field.name();
+        if self.first {
+            self.buf.push_str("  ");
+            self.first = false;
+        } else {
+            self.buf.push(' ');
+        }
+        self.buf.push_str(&format!("{}=***", name));
     }
 }
 

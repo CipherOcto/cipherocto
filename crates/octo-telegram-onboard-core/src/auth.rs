@@ -118,22 +118,44 @@ impl Credentials {
 }
 
 /// Classify a TDLib error message into the appropriate `OnboardError` variant.
+/// Sanitizes the message to strip file paths and other PII before embedding.
 pub fn classify_tdlib_error(msg: String) -> OnboardError {
+    let sanitized = sanitize_tdlib_message(&msg);
     let lower = msg.to_lowercase();
     if lower.contains("flood_wait_")
         || lower.contains("slowmode_wait_")
         || lower.contains("too many")
     {
-        OnboardError::RateLimited(msg)
+        OnboardError::RateLimited(sanitized)
     } else if lower.contains("network")
         || lower.contains("connect")
         || lower.contains("dns")
         || lower.contains("timeout")
     {
-        OnboardError::TelegramUnreachable(msg)
+        OnboardError::TelegramUnreachable(sanitized)
     } else {
-        OnboardError::AuthRejected(msg)
+        OnboardError::AuthRejected(sanitized)
     }
+}
+
+/// Sanitize a TDLib error message by stripping file paths and other PII.
+fn sanitize_tdlib_message(msg: &str) -> String {
+    // Replace Unix-style file paths with <path>
+    let mut result = msg.to_string();
+    // Match common path patterns: /home/..., /tmp/..., /var/..., C:\, etc.
+    let path_patterns = [
+        "/home/", "/tmp/", "/var/", "/usr/", "/opt/", "/etc/", "C:\\", "D:\\",
+    ];
+    for pattern in &path_patterns {
+        if let Some(start) = result.find(pattern) {
+            let end = result[start..]
+                .find(|c: char| c.is_whitespace() || c == '"' || c == '\'' || c == ')' || c == ']')
+                .map(|e| start + e)
+                .unwrap_or(result.len());
+            result = format!("{}<path>{}", &result[..start], &result[end..]);
+        }
+    }
+    result
 }
 
 /// Validate and cast `api_id` from i64 (JSON) to i32 (TDLib).
@@ -338,7 +360,13 @@ pub async fn drive_bot_auth(
         return Err(e);
     }
 
-    let session = extract_identity(client_id, creds, data_dir).await?;
+    let session = match extract_identity(client_id, creds, data_dir).await {
+        Ok(s) => s,
+        Err(e) => {
+            close_tdlib_client(client_id).await;
+            return Err(e);
+        }
+    };
     close_tdlib_client(client_id).await;
     Ok(session)
 }
@@ -535,7 +563,13 @@ pub async fn drive_user_auth(
         return Err(e);
     }
 
-    let session = extract_identity(client_id, creds, data_dir).await?;
+    let session = match extract_identity(client_id, creds, data_dir).await {
+        Ok(s) => s,
+        Err(e) => {
+            close_tdlib_client(client_id).await;
+            return Err(e);
+        }
+    };
     close_tdlib_client(client_id).await;
     Ok(session)
 }

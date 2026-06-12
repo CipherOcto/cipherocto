@@ -161,12 +161,12 @@ async fn tdlib_get_me_with_timeout(
                 {
                     match &auth_update.authorization_state {
                         tdlib_rs::enums::AuthorizationState::Ready => {
-                            drop(tx.send(true));
+                            let _ = tx.blocking_send(true);
                             return;
                         }
                         tdlib_rs::enums::AuthorizationState::Closed
                         | tdlib_rs::enums::AuthorizationState::WaitPhoneNumber => {
-                            drop(tx.send(false));
+                            let _ = tx.blocking_send(false);
                             return;
                         }
                         _ => {}
@@ -174,7 +174,7 @@ async fn tdlib_get_me_with_timeout(
                 }
                 std::thread::sleep(std::time::Duration::from_millis(50));
             }
-            drop(tx.send(false));
+            let _ = tx.blocking_send(false);
         })
         .expect("failed to spawn tdlib-get-me-receive thread");
 
@@ -573,12 +573,18 @@ async fn run_session_remove(dir: &std::path::Path, yes: bool) -> Result<()> {
     }
 
     if !yes {
-        use std::io::{BufRead, Write};
-        print!("Remove {}? [y/N] ", dir.display());
-        std::io::stdout().flush().ok();
-        let mut line = String::new();
-        std::io::stdin().lock().read_line(&mut line).ok();
-        if !line.trim().eq_ignore_ascii_case("y") {
+        let dir_display = dir.display().to_string();
+        let confirmed = tokio::task::spawn_blocking(move || {
+            use std::io::{BufRead, Write};
+            print!("Remove {}? [y/N] ", dir_display);
+            std::io::stdout().flush().ok();
+            let mut line = String::new();
+            std::io::stdin().lock().read_line(&mut line).ok();
+            line.trim().eq_ignore_ascii_case("y")
+        })
+        .await
+        .unwrap_or(false);
+        if !confirmed {
             tracing::info!("Aborted");
             return Ok(());
         }

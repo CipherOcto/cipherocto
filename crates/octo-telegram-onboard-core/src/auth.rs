@@ -147,7 +147,7 @@ fn sanitize_tdlib_message(msg: &str) -> String {
         "/home/", "/tmp/", "/var/", "/usr/", "/opt/", "/etc/", "C:\\", "D:\\",
     ];
     for pattern in &path_patterns {
-        if let Some(start) = result.find(pattern) {
+        while let Some(start) = result.find(pattern) {
             let end = result[start..]
                 .find(|c: char| c.is_whitespace() || c == '"' || c == '\'' || c == ')' || c == ']')
                 .map(|e| start + e)
@@ -293,7 +293,13 @@ pub async fn drive_bot_auth(
         return Err(e);
     }
 
-    let (mut rx, shutdown, _receive_guard) = spawn_receive_loop()?;
+    let (mut rx, shutdown, _receive_guard) = match spawn_receive_loop() {
+        Ok(t) => t,
+        Err(e) => {
+            close_tdlib_client(client_id).await;
+            return Err(e);
+        }
+    };
     let notify = Arc::new(Notify::new());
     let result: Arc<parking_lot::Mutex<Option<std::result::Result<(), String>>>> =
         Arc::new(parking_lot::Mutex::new(None));
@@ -399,7 +405,13 @@ pub async fn drive_user_auth(
         None, // 2FA password always read from stdin via read_password_stdin
     );
 
-    let (mut rx, shutdown, _receive_guard) = spawn_receive_loop()?;
+    let (mut rx, shutdown, _receive_guard) = match spawn_receive_loop() {
+        Ok(t) => t,
+        Err(e) => {
+            close_tdlib_client(client_id).await;
+            return Err(e);
+        }
+    };
     let notify = Arc::new(Notify::new());
     let result: Arc<parking_lot::Mutex<Option<std::result::Result<(), String>>>> =
         Arc::new(parking_lot::Mutex::new(None));
@@ -601,18 +613,15 @@ async fn extract_identity(
         "user".to_string()
     };
 
-    let username = me
-        .usernames
-        .as_ref()
-        .and_then(|u| u.active_usernames.first().cloned())
-        .or_else(|| {
-            let eu = &me.usernames.as_ref()?.editable_username;
-            if eu.is_empty() {
+    let username = me.usernames.as_ref().and_then(|u| {
+        u.active_usernames.first().cloned().or_else(|| {
+            if u.editable_username.is_empty() {
                 None
             } else {
-                Some(eu.clone())
+                Some(u.editable_username.clone())
             }
-        });
+        })
+    });
 
     Ok(TelegramSession {
         username,

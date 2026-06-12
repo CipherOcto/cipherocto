@@ -13,7 +13,7 @@ use octo_telegram_onboard_core::auth::{
 };
 use octo_telegram_onboard_core::error::{OnboardError, Result};
 use octo_telegram_onboard_core::output::{
-    build_config_json, default_config_path_opt, write_config,
+    build_config_json, default_config_path_opt, validate_verifying_key, write_config,
 };
 use octo_telegram_onboard_core::session::{SessionMeta, TelegramSession};
 use std::process::ExitCode;
@@ -82,33 +82,6 @@ fn build_full_config(creds: &Credentials, session: &TelegramSession) -> serde_js
     }
 
     json
-}
-
-/// Validate verifying_key is valid base64, exactly 44 chars, and decodes to 32 bytes (Ed25519).
-fn validate_verifying_key(key: &str) -> Result<()> {
-    use base64::Engine as _;
-    if key.len() != 44 {
-        return Err(OnboardError::BadConfig(format!(
-            "verifying_key must be exactly 44 characters (standard base64 of 32 bytes), got {}",
-            key.len()
-        )));
-    }
-    let decoded = base64::engine::general_purpose::STANDARD
-        .decode(key.as_bytes())
-        .map_err(|_| {
-            OnboardError::BadConfig(
-                "verifying_key is not valid standard base64 (URL-safe or unpadded not supported; \
-                 use `base64` CLI or `openssl base64` to convert)"
-                    .into(),
-            )
-        })?;
-    if decoded.len() != 32 {
-        return Err(OnboardError::BadConfig(format!(
-            "verifying_key must decode to 32 bytes (Ed25519), got {}",
-            decoded.len()
-        )));
-    }
-    Ok(())
 }
 
 /// TDLib get_me flow with a timeout — used by whoami and session list fallback.
@@ -184,9 +157,13 @@ async fn tdlib_get_me_with_timeout(
     let _ = receive_handle.join();
     match channel_result {
         Ok(Some(true)) => {
-            let me_enum = tdlib_rs::functions::get_me(client_id)
-                .await
-                .map_err(|e| classify_tdlib_error(e.message))?;
+            let me_enum = match tdlib_rs::functions::get_me(client_id).await {
+                Ok(u) => u,
+                Err(e) => {
+                    close_tdlib_client(client_id).await;
+                    return Err(classify_tdlib_error(e.message));
+                }
+            };
             #[allow(unreachable_patterns)]
             match me_enum {
                 tdlib_rs::enums::User::User(u) => {
@@ -247,13 +224,13 @@ async fn run_bot_setup(args: cli::BotSetupArgs) -> Result<()> {
 
     let verifying_key = args.verifying_key;
 
-    let creds = Credentials {
-        phone: None,
+    let creds = Credentials::try_new(
+        None,
         api_id,
-        api_hash: Zeroizing::new(api_hash),
-        bot_token: Some(Zeroizing::new(bot_token)),
+        Zeroizing::new(api_hash),
+        Some(Zeroizing::new(bot_token)),
         verifying_key,
-    };
+    )?;
 
     tracing::info!(data_dir = %data_dir.display(), "Starting bot auth...");
     let client_id = tdlib_rs::create_client();
@@ -303,13 +280,13 @@ async fn run_user_login(args: cli::UserLoginArgs) -> Result<()> {
 
     let verifying_key = args.verifying_key;
 
-    let creds = Credentials {
-        phone: Some(phone),
+    let creds = Credentials::try_new(
+        Some(phone),
         api_id,
-        api_hash: Zeroizing::new(api_hash),
-        bot_token: None,
+        Zeroizing::new(api_hash),
+        None,
         verifying_key,
-    };
+    )?;
 
     tracing::info!(data_dir = %data_dir.display(), "Starting user auth...");
     let client_id = tdlib_rs::create_client();
@@ -423,12 +400,7 @@ async fn run_session_list(args: cli::SessionListArgs) -> Result<()> {
             if db_path.exists() {
                 // H3: AC line 65 — fallback to get_me() with 5s timeout
                 // for sidecar-less dirs that have a TDLib database.
-                let meta_path = path.join("session_meta.json");
-                let meta_json = std::fs::read_to_string(&meta_path).ok();
-                let meta: Option<SessionMeta> = meta_json
-                    .as_deref()
-                    .and_then(|s| serde_json::from_str(s).ok());
-                if let Some(meta) = meta {
+                if let Some(meta) = SessionMeta::read(&path) {
                     println!(
                         "{:<50} {:<6} {:<15} {:<20} yes",
                         path.display(),
@@ -568,6 +540,15 @@ async fn run_session_remove(dir: &std::path::Path, yes: bool) -> Result<()> {
     if !dir.exists() {
         return Err(OnboardError::BadConfig(format!(
             "directory does not exist: {}",
+            dir.display()
+        )));
+    }
+
+    // Safety check: ensure the directory looks like a Telegram session
+    let is_session = dir.join("session_meta.json").exists() || dir.join("database").is_dir();
+    if !is_session {
+        return Err(OnboardError::BadConfig(format!(
+            "directory does not look like a Telegram session (no session_meta.json or database/): {}",
             dir.display()
         )));
     }

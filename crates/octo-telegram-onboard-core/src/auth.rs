@@ -152,6 +152,12 @@ pub fn classify_tdlib_error(msg: String) -> OnboardError {
         || lower.contains("timeout")
     {
         OnboardError::TelegramUnreachable(sanitized)
+    } else if lower.contains("session expired")
+        || lower.contains("session is closing")
+        || lower.contains("logged out")
+        || lower.contains("authorization revoked")
+    {
+        OnboardError::Cancelled(sanitized)
     } else {
         OnboardError::AuthRejected(sanitized)
     }
@@ -401,7 +407,7 @@ pub async fn drive_bot_auth(
                     tdlib_rs::enums::AuthorizationState::LoggingOut
                     | tdlib_rs::enums::AuthorizationState::Closing => {
                         saw_closed_clone.store(true, Ordering::SeqCst);
-                        *result_clone.lock() = Some(Err("TDLib session is closing".into()));
+                        *result_clone.lock() = Some(Err("session expired".into()));
                         notify_clone.notify_one();
                         break;
                     }
@@ -790,6 +796,20 @@ mod tests {
         let e = classify_tdlib_error("FLOOD_WAIT_300".into());
         assert!(matches!(e, OnboardError::RateLimited(_)));
         assert_eq!(e.exit_code(), 6);
+    }
+
+    #[test]
+    fn classify_session_expired_is_cancelled() {
+        let e = classify_tdlib_error("session expired".into());
+        assert!(matches!(e, OnboardError::Cancelled(_)));
+        assert_eq!(e.exit_code(), 4);
+    }
+
+    #[test]
+    fn classify_session_is_closing_is_cancelled() {
+        let e = classify_tdlib_error("session is closing".into());
+        assert!(matches!(e, OnboardError::Cancelled(_)));
+        assert_eq!(e.exit_code(), 4);
     }
 
     #[test]
